@@ -21,7 +21,13 @@ use crate::commands::pages::write_atomic;
 /// Oberfläche dürfen sich nicht gegenseitig überschreiben.
 static INDEX_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Innerste Sperre: nur unter der Seitensperre (Reihenfolge siehe
+/// `commands::pages::lock`).
 fn lock() -> std::sync::MutexGuard<'static, ()> {
+    debug_assert!(
+        crate::commands::pages::gehalten(),
+        "INDEX_LOCK nur unter der Seitensperre"
+    );
     INDEX_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
@@ -72,6 +78,30 @@ pub fn ki_dir(page_dir: &Path) -> PathBuf {
     page_dir.join("ki")
 }
 
+/// Schreiben in einen Seitenordner unter der Seitensperre: erst prüfen, dass
+/// der Ordner (noch) da ist, dann schreiben, ohne dass ihn dazwischen jemand
+/// verschiebt (Buch löschen, Migration in Buch-Ordner, lva#365). Sonst
+/// entstünde unter dem alten Pfad ein zweiter Seitenordner, und die Seite
+/// läge doppelt vor. Sperrreihenfolge: Seitensperre vor jeder book_ai-Sperre.
+pub fn im_seitenordner<T>(
+    page_dir: &Path,
+    schreiben: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let _seiten = crate::commands::pages::lock();
+    if !page_dir.is_dir() {
+        return Err("Die Seite wurde inzwischen verschoben. Bitte erneut versuchen.".into());
+    }
+    schreiben()
+}
+
+/// Einen Unterordner der Seite anlegen, nie die Seite selbst (siehe
+/// [`im_seitenordner`], das der Aufrufer schon hält).
+pub fn unterordner_anlegen(page_dir: &Path, dir: &Path) -> Result<(), String> {
+    im_seitenordner(page_dir, || {
+        std::fs::create_dir_all(dir).map_err(|e| format!("could not create {}: {e}", dir.display()))
+    })
+}
+
 pub fn cache_dir(page_dir: &Path) -> PathBuf {
     ki_dir(page_dir).join("cache")
 }
@@ -102,8 +132,7 @@ fn load_index(page_dir: &Path) -> Result<Index, String> {
 
 fn save_index(page_dir: &Path, index: &Index) -> Result<(), String> {
     let dir = docs_dir(page_dir);
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+    unterordner_anlegen(page_dir, &dir)?;
     let raw = serde_json::to_string_pretty(index).map_err(|e| e.to_string())?;
     write_atomic(&dir.join("index.json"), raw.as_bytes())
 }
@@ -130,15 +159,16 @@ pub fn create(page_dir: &Path, mut doc: KiDocument, text: &str) -> Result<KiDocu
     doc.id = ulid::Ulid::new().to_string();
     doc.title = fit_title(&doc.title);
     doc.words = super::source::word_count(text);
-    let dir = docs_dir(page_dir);
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
-    write_atomic(&dir.join(format!("{}.md", doc.id)), text.as_bytes())?;
-    let _guard = lock();
-    let mut index = load_index(page_dir)?;
-    index.documents.push(doc.clone());
-    save_index(page_dir, &index)?;
-    Ok(doc)
+    im_seitenordner(page_dir, || {
+        let dir = docs_dir(page_dir);
+        unterordner_anlegen(page_dir, &dir)?;
+        write_atomic(&dir.join(format!("{}.md", doc.id)), text.as_bytes())?;
+        let _guard = lock();
+        let mut index = load_index(page_dir)?;
+        index.documents.push(doc.clone());
+        save_index(page_dir, &index)?;
+        Ok(doc)
+    })
 }
 
 /// Übernommenes Dokument mit genau diesem Text, falls es schon existiert
@@ -175,48 +205,77 @@ pub fn update(
         }
         None => None,
     };
-    let _guard = lock();
-    let mut index = load_index(page_dir)?;
-    // Erst prüfen, dann schreiben: ein unbekanntes Dokument hinterlässt keine
-    // verwaiste Datei (z. B. nach dem Löschen auf einem anderen Gerät).
-    let doc = index
-        .documents
-        .iter_mut()
-        .find(|d| d.id == id)
-        .ok_or("book_ai:document_missing")?;
-    if let Some(title) = title {
-        doc.title = title;
-    }
-    if let Some(text) = text {
-        write_atomic(
-            &docs_dir(page_dir).join(format!("{id}.md")),
-            text.as_bytes(),
-        )?;
-        doc.words = super::source::word_count(&text);
-    }
-    doc.modified_ms = now_ms;
-    let out = doc.clone();
-    save_index(page_dir, &index)?;
-    Ok(out)
+    im_seitenordner(page_dir, || {
+        let _guard = lock();
+        let mut index = load_index(page_dir)?;
+        // Erst prüfen, dann schreiben: ein unbekanntes Dokument hinterlässt keine
+        // verwaiste Datei (z. B. nach dem Löschen auf einem anderen Gerät).
+        let doc = index
+            .documents
+            .iter_mut()
+            .find(|d| d.id == id)
+            .ok_or("book_ai:document_missing")?;
+        if let Some(title) = title {
+            doc.title = title;
+        }
+        if let Some(text) = text {
+            write_atomic(
+                &docs_dir(page_dir).join(format!("{id}.md")),
+                text.as_bytes(),
+            )?;
+            doc.words = super::source::word_count(&text);
+        }
+        doc.modified_ms = now_ms;
+        let out = doc.clone();
+        save_index(page_dir, &index)?;
+        Ok(out)
+    })
 }
 
 pub fn delete(page_dir: &Path, id: &str) -> Result<(), String> {
     let id = checked_id(id)?;
-    let _guard = lock();
-    let mut index = load_index(page_dir)?;
-    let before = index.documents.len();
-    index.documents.retain(|d| d.id != id);
-    if index.documents.len() == before {
-        return Err("book_ai:document_missing".into());
-    }
-    save_index(page_dir, &index)?;
-    let _ = std::fs::remove_file(docs_dir(page_dir).join(format!("{id}.md")));
-    Ok(())
+    im_seitenordner(page_dir, || {
+        let _guard = lock();
+        let mut index = load_index(page_dir)?;
+        let before = index.documents.len();
+        index.documents.retain(|d| d.id != id);
+        if index.documents.len() == before {
+            return Err("book_ai:document_missing".into());
+        }
+        save_index(page_dir, &index)?;
+        let _ = std::fs::remove_file(docs_dir(page_dir).join(format!("{id}.md")));
+        Ok(())
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Schreiben unter der Seitensperre ist verschachtelt wiedereintrittsfähig
+    /// (create → im_seitenordner → unterordner_anlegen → im_seitenordner), und
+    /// eine verschobene Seite entsteht nicht am alten Ort neu.
+    #[test]
+    fn schreiben_unter_seitensperre_ist_verschachtelt_und_legt_keine_seite_an() {
+        let dir = tempfile::tempdir().unwrap();
+        let page = dir.path().join("page_1");
+        std::fs::create_dir_all(&page).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let p = page.clone();
+        std::thread::spawn(move || {
+            let r = create(&p, doc(), "Text");
+            tx.send(r.is_ok()).unwrap();
+        });
+        assert!(rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("keine Verklemmung"));
+        assert!(!crate::commands::pages::gehalten(), "Sperre freigegeben");
+        let weg = dir.path().join("page_2");
+        assert!(create(&weg, doc(), "Text").is_err());
+        assert!(!weg.exists(), "kein Geist-Ordner");
+        assert!(crate::book_ai::terms::save(&weg, &Default::default()).is_err());
+        assert!(!weg.exists());
+    }
 
     fn doc() -> KiDocument {
         KiDocument {

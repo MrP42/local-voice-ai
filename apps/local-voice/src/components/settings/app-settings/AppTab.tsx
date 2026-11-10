@@ -15,6 +15,8 @@ import { UpdateChecksToggle } from "../UpdateChecksToggle";
 import { ShowWhatsNewOnUpdate } from "../ShowWhatsNewOnUpdate";
 import { LocalUpdateDirectory } from "../LocalUpdateDirectory";
 import { AppDataDirectory } from "../AppDataDirectory";
+import { LibraryLayoutSettings } from "../LibraryLayoutSettings";
+import { openSettingsTab } from "@/lib/openSettingsTab";
 import { LogDirectory } from "../debug";
 import { ExperimentalToggle } from "../ExperimentalToggle";
 import { KeyboardImplementationSelector } from "../debug/KeyboardImplementationSelector";
@@ -59,6 +61,24 @@ export const AppTab: React.FC = () => {
         <MeetingRetentionSetting />
         <AppDataDirectory descriptionMode="tooltip" grouped={true} />
         <LogDirectory grouped={true} />
+      </SettingsGroup>
+
+      {/* Buch-Ordner (lva#365): Neu ordnen, alte Ordnung, Sicherungen. */}
+      <SettingsGroup
+        title={t("settings.app.groups.library")}
+        anchor="bibliothek-sicherungen"
+      >
+        <LibraryLayoutSettings grouped={true} />
+        <div className="px-4 py-2 text-xs text-mid-gray">
+          <button
+            type="button"
+            className="underline hover:text-text cursor-pointer max-sm:min-h-[44px] pointer-coarse:min-h-[44px]"
+            onClick={() => openSettingsTab("account", "konto-sicherungen")}
+            data-testid="link-konto-sicherungen"
+          >
+            {t("sync.sicherungen.zuKonto")}
+          </button>
+        </div>
       </SettingsGroup>
 
       {/* Update checking used to sit in the hidden debug page, where nobody

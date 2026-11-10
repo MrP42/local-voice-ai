@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Projekte P4b</title>
+<style>
+:root{
+  --bg:#f5f5f5;--pane:#ffffff;--pane2:#fafafa;--line:#e0e0e0;--text:#242424;--muted:#616161;
+  --accent:#0f6cbd;--accent-soft:#ebf3fc;--sel:#e6eef8;--ok:#0e700e;--warn:#a33f06;--warn-soft:#fdf3ec;--chip:#f0f0f0;--off:#8a8a8a;
+}
+:root[data-theme="dark"]{
+  --bg:#1f1f1f;--pane:#292929;--pane2:#2e2e2e;--line:#3d3d3d;--text:#ffffff;--muted:#c7c7c7;
+  --accent:#479ef5;--accent-soft:#1a2c40;--sel:#243447;--ok:#54b054;--warn:#f1a35c;--warn-soft:#3a2a1c;--chip:#383838;--off:#8f8f8f;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overflow:hidden}
+body{font:14px/1.45 "Segoe UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text)}
+button{font:inherit;color:inherit}
+svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.app{display:grid;grid-template-rows:44px 1fr 32px;height:100%}
+.top{display:flex;align-items:center;gap:12px;padding:0 12px;border-bottom:1px solid var(--line);background:var(--pane)}
+.top b{font-weight:600}
+.main{display:grid;grid-template-columns:56px 1fr;min-height:0}
+.nav{display:flex;flex-direction:column;gap:4px;padding:8px;border-right:1px solid var(--line);background:var(--pane)}
+.nav a{display:grid;place-items:center;width:40px;height:44px;border-radius:6px;color:var(--muted)}
+.nav a.on{background:var(--sel);color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}
+.status{display:flex;align-items:center;gap:16px;padding:0 12px;font-size:12px;color:var(--muted);border-top:1px solid var(--line);background:var(--pane)}
+.work{display:grid;grid-template-columns:232px minmax(0,1fr) 320px;gap:12px;padding:12px;min-height:0}
+.work.zwei{grid-template-columns:232px minmax(0,1fr)}
+.col{background:var(--pane);border:1px solid var(--line);border-radius:8px;min-height:0;overflow:auto;display:flex;flex-direction:column}
+.colhead{display:flex;align-items:center;gap:8px;padding:2px 4px 2px 12px;border-bottom:1px solid var(--line);font-weight:600;min-height:48px}
+.colhead .sp{margin-left:auto;display:flex;gap:2px}
+.ib{flex:none;display:grid;place-items:center;width:44px;height:44px;border-radius:6px;color:var(--muted);border:0;background:none;cursor:pointer}
+.grp{padding:12px 12px 4px;font-size:12px;font-weight:600;color:var(--muted);display:flex;align-items:center;gap:6px}
+.row{display:flex;align-items:center;gap:10px;padding:0 12px;min-height:44px;color:var(--text);border-radius:6px;margin:0 6px}
+.row.on{background:var(--sel)}
+.row.on .nm{font-weight:600}
+.row .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .ct{font-size:12px;color:var(--muted)}
+.row.sub{padding-left:30px}
+.mini{width:22px;height:30px;border-radius:2px;flex:none;background:linear-gradient(160deg,#7b3fa0,#3b1a52)}
+.mini.b2{background:linear-gradient(160deg,#cfe6df,#7aa58f)}
+.btn{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 12px;border-radius:6px;border:1px solid var(--line);background:var(--pane);color:var(--text);font-weight:600;cursor:pointer;white-space:nowrap}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.link{border-color:transparent;background:none;color:var(--accent);padding:0 8px}
+.btn svg{width:16px;height:16px}
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:1px 8px;border-radius:10px;background:var(--chip);color:var(--muted);white-space:nowrap}
+.note{font-size:12px;color:var(--muted)}
+/* Projektseite */
+.phead{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.phead h2{margin:0;font-size:20px}
+.phead .sp{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+.banner{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 16px 0;padding:6px 6px 6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--pane2);font-size:13px}
+.banner.warn{border-color:var(--warn);background:var(--warn-soft)}
+.banner .tx{flex:1;min-width:220px}
+.banner .acts{display:flex;gap:6px;flex-wrap:wrap}
+.list{padding:4px 0 16px}
+.lhead{display:grid;grid-template-columns:minmax(0,1fr) 110px 300px 44px;gap:8px;padding:10px 16px 6px;font-size:12px;color:var(--muted);font-weight:600;border-bottom:1px solid var(--line)}
+.gh{padding:14px 16px 6px;font-size:12px;font-weight:600;color:var(--muted);display:flex;gap:8px;align-items:center}
+.gh .ct{font-weight:400}
+.ent{display:grid;grid-template-columns:minmax(0,1fr) 110px 300px 44px;gap:8px;align-items:center;padding:6px 16px;border-top:1px solid var(--line);min-height:60px}
+.ent .ti{min-width:0}
+.ent .ti b{display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ent .ti .meta{display:flex;gap:6px;flex-wrap:wrap;margin-top:2px}
+.ent .art{font-size:13px;color:var(--muted)}
+.ctxcell{display:flex;align-items:center;gap:4px;flex-wrap:nowrap}
+.sw{width:40px;height:20px;border-radius:10px;background:var(--line);position:relative;display:inline-block;flex:none}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:var(--off)}
+.sw.on{background:var(--accent)}.sw.on::after{left:23px;background:#fff}
+.swb{display:inline-flex;align-items:center;gap:8px;min-height:44px;min-width:44px;border:0;background:none;padding:0 4px;cursor:pointer}
+.swb[aria-disabled="true"]{cursor:not-allowed;opacity:.55}
+.tok{font-size:13px;white-space:nowrap}
+.tok.zero{color:var(--muted)}
+.formb{display:inline-flex;align-items:center;gap:4px;min-height:44px;padding:0 8px;border:1px solid var(--line);border-radius:6px;background:none;cursor:pointer;font-size:13px}
+.formb svg{width:14px;height:14px}
+.hint{display:flex;align-items:center;gap:6px;flex-wrap:wrap;grid-column:1 / -1;margin:-2px 0 4px;font-size:13px;color:var(--warn)}
+.hint svg{width:16px;height:16px}
+.hint .btn{min-height:44px}
+.pop{position:absolute;z-index:5;background:var(--pane);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.18);padding:6px;min-width:280px}
+.pop .ph{font-size:12px;color:var(--muted);font-weight:600;padding:8px 10px 4px}
+.pop .opt{display:flex;align-items:center;gap:10px;min-height:44px;padding:0 10px;border-radius:6px}
+.pop .opt.on{background:var(--sel);font-weight:600}
+.pop .opt .r{margin-left:auto;font-size:12px;color:var(--muted);font-weight:400}
+/* rechte Spalte */
+.ctx{padding:12px 16px;border-bottom:1px solid var(--line)}
+.meter{height:8px;border-radius:4px;background:var(--line);overflow:hidden;margin:8px 0 4px}
+.meter i{display:block;height:100%;background:var(--accent)}
+.meter.over i{background:var(--warn)}
+.box{border:1px solid var(--line);border-radius:8px;padding:12px;margin:12px 16px;background:var(--pane2);font-size:13px}
+.box h3{margin:0 0 6px;font-size:14px}
+.box ul{margin:6px 0 0;padding-left:18px}
+.sumbar{display:none}
+/* Dialoge */
+.dlg{position:fixed;inset:0;background:rgba(0,0,0,.4);display:grid;place-items:center;padding:16px;z-index:10}
+.dlg .card{background:var(--pane);border:1px solid var(--line);border-radius:8px;max-width:560px;width:100%;max-height:calc(100% - 32px);overflow:auto;padding:20px;box-shadow:0 16px 48px rgba(0,0,0,.3)}
+.dlg h3{margin:0 0 8px;font-size:18px}
+.dlg .acts{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:16px}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:8px 0}
+.tabs span{display:inline-flex;align-items:center;padding:0 10px;min-height:44px;color:var(--muted)}
+.tabs span.on{color:var(--text);font-weight:600;box-shadow:inset 0 -2px 0 var(--accent)}
+.pick{display:flex;align-items:center;gap:10px;min-height:44px;padding:0 6px;border-radius:6px}
+.cb{width:18px;height:18px;border:1.5px solid var(--muted);border-radius:3px;flex:none;display:grid;place-items:center}
+.cb.on{background:var(--accent);border-color:var(--accent)}
+.cb.on::after{content:"";width:8px;height:4px;border:2px solid #fff;border-top:0;border-right:0;transform:rotate(-45deg) translate(1px,-1px)}
+.pick .r{margin-left:auto;font-size:12px;color:var(--muted)}
+.drop{border:1.5px dashed var(--line);border-radius:8px;padding:16px;text-align:center;color:var(--muted);margin-top:8px}
+.hidden{display:none!important}
+/* Gespräch */
+.talk{display:flex;flex-direction:column;gap:12px;padding:16px;max-width:760px}
+/* Breiten */
+@media (min-width:2200px){.work{grid-template-columns:280px minmax(0,1fr) 420px}.lhead,.ent{grid-template-columns:minmax(0,1fr) 180px 320px 44px}}
+@media (max-width:1439px){.work{grid-template-columns:200px minmax(0,1fr) 300px}.work.zwei{grid-template-columns:200px minmax(0,1fr)}.lhead,.ent{grid-template-columns:minmax(0,1fr) 100px 300px 44px}}
+@media (max-width:999px){
+  .work{grid-template-columns:64px minmax(0,1fr)}.work.zwei{grid-template-columns:64px minmax(0,1fr)}
+  .work .fl .lbl{display:none}.work .fl .row{padding:0;justify-content:center;margin:0 6px}.work .fl .colhead .sp{display:none}.work .fl .grp{display:none}
+  .rc{display:none}
+  .lhead,.ent{grid-template-columns:minmax(0,1fr) 300px 44px}.lhead .art,.ent .art{display:none}
+  .sumbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;position:sticky;bottom:0;margin-top:auto;background:var(--pane);border-top:1px solid var(--line);padding:4px 4px 4px 16px;font-size:13px}
+  .sumbar .meter{flex:1;min-width:80px;margin:0}
+}
+@media (max-width:620px){
+  .main{grid-template-columns:1fr}.nav{display:none}
+  .work,.work.zwei{grid-template-columns:1fr;padding:8px}
+  .fl{display:none}
+  .lhead{display:none}
+  .ent{grid-template-columns:minmax(0,1fr) 44px;padding:8px 12px}
+  .ent .ctxcell{grid-column:1 / -1;order:3}
+  .ent .hint{order:4}
+  .phead{padding:4px 8px 8px 4px;gap:4px}
+  .phead h2{font-size:18px}
+  .phead .sp{margin-left:0;width:100%}
+  .banner{margin:8px 8px 0}
+  .hint{margin-top:0}
+  .pop{left:8px!important;right:8px;min-width:0}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="top">
+    <svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+    <b>Local Voice AI</b>
+  </div>
+  <div class="main">
+    <nav class="nav" aria-label="Bereiche">
+      <a title="Start"><svg viewBox="0 0 24 24"><path d="M3 11 12 4l9 7v9H3z"/></svg></a>
+      <a title="Aufnahmen"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/></svg></a>
+      <a title="Vorlesen" id="nav-vorlesen"><svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4zM15.5 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"/></svg></a>
+      <a title="Bibliothek"><svg viewBox="0 0 24 24"><path d="M4 4v16M8 4v16M12 4v16M15 5l5 14"/></svg></a>
+      <a title="Sprachgespräch" id="nav-gespraech"><svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/><path d="M9 10v4M12 8.5v7M15 10v4"/></svg></a>
+      <a title="Projekte" id="nav-projekte" class="on"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M8 13h8"/></svg></a>
+    </nav>
+
+    <!-- Projektseite -->
+    <section class="work" id="v-projekt">
+      <div class="col fl" aria-label="Projekte">
+        <div class="colhead"><span class="lbl">Projekte</span><span class="sp"><button class="ib" aria-label="Neues Projekt"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button></span></div>
+        <div class="row on" title="Finanzwissen"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="nm lbl">Finanzwissen</span><span class="ct lbl">9</span></div>
+        <div class="row" title="KI-Strategie LRA"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="nm lbl">KI-Strategie LRA</span><span class="ct lbl">23</span></div>
+        <div class="row" title="Digitaler Posteingang"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="nm lbl">Digitaler Posteingang</span><span class="ct lbl">17</span></div>
+      </div>
+
+      <div class="col" aria-label="Projekt Finanzwissen" style="position:relative">
+        <div class="phead">
+          <button class="ib back-s hidden" aria-label="Zurück zu den Projekten"><svg viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></button>
+          <h2>Finanzwissen</h2><span class="chip">9 Einträge</span>
+          <div class="sp">
+            <button class="btn" id="b-add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Hinzufügen</button>
+          </div>
+        </div>
+        <div id="banners">
+          <div class="banner" id="bn-gefunden">
+            <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v4M12 17.5v.01"/></svg>
+            <span class="tx">Im Projektordner liegt eine Datei, die nicht zum Projekt gehört: <b>Kontoauszug-Okt.txt</b>. Sie wurde nicht aufgenommen.</span>
+            <span class="acts"><button class="btn">Aufnehmen</button><button class="btn link">Im Explorer zeigen</button></span>
+          </div>
+        </div>
+        <div class="list" id="liste">
+          <div class="lhead"><span>Eintrag</span><span class="art">Art</span><span>Als Kontext</span><span></span></div>
+
+          <div class="gh">Bücher <span class="ct">2</span></div>
+          <div class="ent" data-id="rd">
+            <div class="ti"><b>Rich Dad Poor Dad</b><span class="meta"><span class="chip">Deutsch · Hauptfassung</span></span></div>
+            <span class="art">Buch-Ordner</span>
+            <span class="ctxcell"><button class="swb" role="switch" aria-checked="true" aria-label="Rich Dad Poor Dad als Kontext"><span class="sw on"></span></button><button class="formb" id="f-rd" aria-haspopup="menu" aria-label="Form wählen: Kurzbuch">Kurzbuch<svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button><span class="tok">~9 000 Token</span></span>
+            <button class="ib" aria-label="Weitere Aktionen"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button>
+          </div>
+          <div class="ent" data-id="ew">
+            <div class="ti"><b>Der Einfache Weg zum Reichtum</b><span class="meta"><span class="chip">Deutsch · Hauptfassung</span></span></div>
+            <span class="art">Buch-Ordner</span>
+            <span class="ctxcell"><button class="swb" role="switch" aria-checked="true" aria-label="Der Einfache Weg zum Reichtum als Kontext"><span class="sw on"></span></button><button class="formb" aria-haspopup="menu" aria-label="Form wählen: Kurzbuch">Kurzbuch<svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button><span class="tok zero">kein Text</span></span>
+            <button class="ib" aria-label="Weitere Aktionen"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button>
+            <div class="hint"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16v.01"/></svg>Kein Kurzbuch – erstellen oder Volltext wählen. Nicht im Kontext.<button class="btn link">Kurzbuch erstellen</button><button class="btn link">Volltext wählen</button></div>
+          </div>
+
+          <div class="gh">Texte <span class="ct">1</span></div>
+          <div class="ent">
+            <div class="ti"><b>KI-Verordnung Art. 4 Kompetenz</b><span class="meta"><span class="chip">Text ohne Buch</span></span></div>
+            <span class="art">Text</span>
+            <span class="ctxcell"><button class="swb" role="switch" aria-checked="true" aria-label="KI-Verordnung Art. 4 als Kontext"><span class="sw on"></span></button><span class="tok">~1 200 Token</span></span>
+            <button class="ib" aria-label="Weitere Aktionen"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button>
+          </div>
+
+          <div class="gh">Aufnahmen <span class="ct">2</span></div>
+          <div class="ent">
+            <div class="ti"><b>Beratung Altersvorsorge 05.11.</b><span class="meta"><span class="chip">von dir zugeordnet</span></span></div>
+            <span class="art">Aufnahme</span>
+            <span class="ctxcell"><button class="swb" role="switch" aria-checked="true" aria-label="Beratung Altersvorsorge als Kontext"><span class="sw on"></span></button><button class="formb" aria-haspopup="menu" aria-label="Form wählen: Protokoll">Protokoll<svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button><span class="tok">~2 400 Token</span></span>
+            <button class="ib" aria-label="Weitere Aktionen"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button>
+          </div>
+          <div class="ent">
+            <div class="ti"><b>Telefonat Bank 06.11.</b><span class="meta"><span class="chip">über Ordner „Finanzen“</span></span></div>
+            <span class="art">Aufnahme</span>
+            <span class="ctxcell"><button class="swb" role="switch" aria-checked="false" aria-label="Telefonat Bank als Kontext"><span class="sw"></span></button><button class="formb" aria-haspopup="menu" aria-label="Form wählen: Protokoll">Protokoll<svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button><span class="tok zero">aus · ~1 100</span></span>
+            <button class="ib" aria-label="Weitere Aktionen"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button>
+          </div>
+
+          <div class="gh">Dateien im Projektordner <span class="ct">3 Kopien</span></div>
+          <div class="ent">
+            <div class="ti"><b>Notizen-Bank.md</b><span class="meta"><span class="chip">Kopie · 3 KB</span></span></div>
+            <span class="art">Datei</span>
+            <span class="ctxcell"><button class="swb" role="switch" aria-checked="true" aria-label="Notizen-Bank.md als Kontext"><span class="sw on"></span></button><span class="tok">~600 Token</span></span>
+            <button class="ib" aria-label="Weitere Aktionen" id="m-notiz"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button>
+          </div>
+          <div class="ent">
+            <div class="ti"><b>Depotauszug-2026.pdf</b><span class="meta"><span class="chip">Kopie · 180 KB</span></span></div>
+            <span class="art">Datei</span>
+            <span class="ctxcell"><button class="swb" role="switch" aria-checked="false" aria-disabled="true" aria-label="Depotauszug-2026.pdf als Kontext, nicht verfügbar"><span class="sw"></span></button><span class="tok zero">Format nicht als Kontext lesbar</span></span>
+            <button class="ib" aria-label="Weitere Aktionen" id="m-pdf"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button>
+          </div>
+          <div class="ent">
+            <div class="ti"><b>Haushaltsplan.xlsx</b><span class="meta"><span class="chip">Kopie · 24 KB</span></span></div>
+            <span class="art">Datei</span>
+            <span class="ctxcell"><button class="swb" role="switch" aria-checked="false" aria-disabled="true" aria-label="Haushaltsplan.xlsx als Kontext, nicht verfügbar"><span class="sw"></span></button><span class="tok zero">Format nicht als Kontext lesbar</span></span>
+            <button class="ib" aria-label="Weitere Aktionen"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button>
+          </div>
+
+          <div class="gh">Recherchen <span class="ct">1</span></div>
+          <div class="ent">
+            <div class="ti"><b>Recherche ETF-Kosten</b><span class="meta"><span class="chip">Bericht · 12 Quellen</span></span></div>
+            <span class="art">Recherche</span>
+            <span class="ctxcell"><button class="swb" role="switch" aria-checked="true" aria-label="Recherche ETF-Kosten als Kontext"><span class="sw on"></span></button><span class="tok">~1 800 Token</span></span>
+            <button class="ib" aria-label="Weitere Aktionen"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button>
+          </div>
+        </div>
+        <div class="sumbar" id="sumbar"><b id="sum-s">15 000 Token</b><span class="meter" id="meter-s"><i style="width:12%"></i></span><span class="note" id="cnt-s">5 Einträge</span><button class="btn link">Details</button></div>
+
+        <!-- Formwahl -->
+        <div class="pop hidden" id="pop-form" role="menu" aria-label="Form und Fassung" style="left:380px;top:250px">
+          <div class="ph">Form</div>
+          <div class="opt on" role="menuitemradio" aria-checked="true">Kurzbuch<span class="r">~9 000 Token · Vorgabe</span></div>
+          <div class="opt" role="menuitemradio" aria-checked="false">Volltext<span class="r">~182 000 Token</span></div>
+          <div class="ph">Fassung</div>
+          <div class="opt on" role="menuitemradio" aria-checked="true">Deutsch · Hauptfassung</div>
+          <div class="opt" role="menuitemradio" aria-checked="false">English<span class="r">kein Kurzbuch</span></div>
+        </div>
+        <!-- Zeilenmenü -->
+        <div class="pop hidden" id="pop-menu" role="menu" aria-label="Weitere Aktionen" style="right:16px;top:640px">
+          <div class="opt" role="menuitem">Öffnen</div>
+          <div class="opt" role="menuitem">Im Explorer zeigen</div>
+          <div class="opt" role="menuitem">Aus Projekt entfernen …</div>
+        </div>
+      </div>
+
+      <div class="col rc" aria-label="Kontext im Projekt">
+        <div class="colhead">Kontext im Projekt</div>
+        <div class="ctx">
+          <b id="sum">15 000 von 128 000 Token</b>
+          <div class="meter" id="meter"><i style="width:12%"></i></div>
+          <span class="note" id="cnt">5 Einträge als Kontext · Modellfenster GPT-6.1-Terra</span>
+        </div>
+        <div class="box" id="box-fehlt">
+          <h3>Nicht im Kontext</h3>
+          <ul>
+            <li>1 Buch ohne Kurzbuch</li>
+            <li>2 Dateien, deren Format nicht lesbar ist</li>
+            <li>1 Aufnahme ausgeschaltet</li>
+          </ul>
+        </div>
+        <div class="box">
+          <h3>So gilt die Auswahl</h3>
+          Nur eingeschaltete Einträge gehen an die KI, in der gewählten Form. Fehlt die Form, wird nichts ersetzt.
+          Die Auswahl gilt auf diesem Gerät; auf anderen Geräten sind neue Einträge zunächst aus.
+        </div>
+        <div class="box">
+          <h3>KI im Projekt</h3>
+          Chat und Sprachgespräch nutzen diese Auswahl, sobald sie für Projekte freigegeben sind.
+        </div>
+      </div>
+    </section>
+
+    <!-- Vorlesen und Gespräch: Gruppe Projekte -->
+    <section class="work zwei hidden" id="v-leiste">
+      <div class="col fl" aria-label="Ordner">
+        <div class="colhead"><span class="lbl" id="l-titel">Vorlesen</span><span class="sp"><button class="ib" aria-label="Hinzufügen"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button></span></div>
+        <div id="l-oben"></div>
+        <div class="grp lbl"><svg viewBox="0 0 24 24" style="width:14px;height:14px"><path d="m6 9 6 6 6-6"/></svg>Projekte</div>
+        <div class="row sub on" title="Finanzwissen"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="nm lbl">Finanzwissen</span><span class="ct lbl">9</span></div>
+        <div class="row sub" title="KI-Strategie LRA"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="nm lbl">KI-Strategie LRA</span><span class="ct lbl">23</span></div>
+      </div>
+      <div class="col" id="l-body"></div>
+    </section>
+  </div>
+  <div class="status"><span>Nemotron 3.5</span><span>GPT-6.1-Terra (mittel)</span><span style="margin-left:auto">v0.23.x</span></div>
+</div>
+
+<!-- Dialog Hinzufügen -->
+<div class="dlg hidden" id="dlg-add">
+  <div class="card" role="dialog" aria-labelledby="add-t">
+    <h3 id="add-t">Zu „Finanzwissen“ hinzufügen</h3>
+    <div class="tabs" role="tablist"><span class="on" role="tab" aria-selected="true">Aus der App</span><span role="tab" aria-selected="false">Dateien kopieren</span></div>
+    <div class="note" style="margin-bottom:4px">Bücher, Texte und Aufnahmen werden verknüpft, nicht kopiert. Neu hinzugefügte Einträge sind als Kontext eingeschaltet; du kannst das je Eintrag ändern.</div>
+    <div class="grp" style="padding-left:6px">Bücher</div>
+    <div class="pick"><span class="cb on"></span>The Burning Room<span class="r">Buch</span></div>
+    <div class="pick"><span class="cb"></span>Alles Idioten!?<span class="r">Buch</span></div>
+    <div class="grp" style="padding-left:6px">Texte</div>
+    <div class="pick"><span class="cb"></span>Rundschreiben Posteingang<span class="r">Text</span></div>
+    <div class="grp" style="padding-left:6px">Aufnahmen</div>
+    <div class="pick"><span class="cb on"></span>Steuerberatung 07.11.<span class="r">Aufnahme</span></div>
+    <div class="acts"><button class="btn">Abbrechen</button><button class="btn pri">2 hinzufügen</button></div>
+  </div>
+</div>
+<div class="dlg hidden" id="dlg-dateien">
+  <div class="card" role="dialog" aria-labelledby="dat-t">
+    <h3 id="dat-t">Zu „Finanzwissen“ hinzufügen</h3>
+    <div class="tabs" role="tablist"><span role="tab" aria-selected="false">Aus der App</span><span class="on" role="tab" aria-selected="true">Dateien kopieren</span></div>
+    <p style="margin:4px 0">Dateien werden in den Projektordner kopiert und nach dem Kopieren geprüft. Das Original bleibt unverändert. Eine Datei mit gleichem Namen wird nicht überschrieben, die Kopie bekommt „(2)“.</p>
+    <div class="drop">Dateien hierher ziehen<br><button class="btn" style="margin-top:8px">Dateien wählen …</button></div>
+    <p class="note" style="margin:8px 0 0">Als Kontext lesbar sind vorerst .txt und .md. Andere Formate werden aufgenommen und mit Hinweis angezeigt.</p>
+    <div class="acts"><button class="btn">Schließen</button></div>
+  </div>
+</div>
+<div class="dlg hidden" id="dlg-entfernen">
+  <div class="card" role="dialog" aria-labelledby="ent-t">
+    <h3 id="ent-t">„Depotauszug-2026.pdf“ aus dem Projekt nehmen?</h3>
+    <p style="margin:0">Die Kopie im Projektordner kommt in den Papierkorb des Projekts. Dein Original bleibt unberührt.</p>
+    <div class="acts"><button class="btn">Abbrechen</button><button class="btn pri">Aus Projekt nehmen</button></div>
+  </div>
+</div>
+<div class="dlg hidden" id="dlg-entfernen-app">
+  <div class="card" role="dialog" aria-labelledby="enta-t">
+    <h3 id="enta-t">„Rich Dad Poor Dad“ aus dem Projekt nehmen?</h3>
+    <p style="margin:0">Das Buch bleibt in der Bibliothek, mit Fassungen, Hörbuch und KI-Dokumenten. Nur die Verknüpfung zu „Finanzwissen“ entfällt.</p>
+    <div class="acts"><button class="btn">Abbrechen</button><button class="btn pri">Aus Projekt nehmen</button></div>
+  </div>
+</div>
+
+<script>
+const q = new URLSearchParams(location.search);
+document.documentElement.dataset.theme = q.get("t") === "dunkel" ? "dark" : "light";
+const s = q.get("s") || "projekt";
+const $ = (id) => document.getElementById(id);
+const show = (id) => $(id).classList.remove("hidden");
+const hide = (id) => $(id).classList.add("hidden");
+if (innerWidth <= 620) document.querySelector(".back-s").classList.remove("hidden");
+
+if (s === "form") {
+  show("pop-form");
+  if (innerWidth <= 620) { const r = $("f-rd").getBoundingClientRect(); $("pop-form").style.top = (r.bottom - 40) + "px"; }
+}
+if (s === "menu") {
+  show("pop-menu");
+  const r = $("m-pdf").getBoundingClientRect(), col = $("m-pdf").closest(".col").getBoundingClientRect();
+  $("pop-menu").style.top = (r.bottom - col.top + 2) + "px";
+}
+if (s === "hinzufuegen") show("dlg-add");
+if (s === "dateien") show("dlg-dateien");
+if (s === "entfernen") show("dlg-entfernen");
+if (s === "entfernen-app") show("dlg-entfernen-app");
+if (s === "reset") {
+  $("banners").innerHTML = '<div class="banner warn"><svg viewBox="0 0 24 24"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17v.01"/></svg><span class="tx">Die Kontextauswahl dieses Geräts war nicht lesbar. Zur Sicherheit sind alle Einträge ausgeschaltet. Schalte ein, was die KI nutzen soll.</span></div>';
+  document.querySelectorAll(".swb:not([aria-disabled])").forEach(b => { b.setAttribute("aria-checked","false"); b.firstElementChild.classList.remove("on"); });
+  document.querySelectorAll(".tok:not(.zero)").forEach(t => { t.textContent = "aus · " + t.textContent.replace(" Token",""); t.classList.add("zero"); });
+  document.querySelector('[data-id="ew"] .hint').remove();
+  document.querySelector('[data-id="ew"] .tok').textContent = "aus";
+  for (const [a, b] of [["sum","0 von 128 000 Token"],["sum-s","0 Token"],["cnt","Keine Einträge als Kontext"],["cnt-s","0 Einträge"]]) $(a).textContent = b;
+  $("meter").firstElementChild.style.width = "0"; $("meter-s").firstElementChild.style.width = "0";
+  $("box-fehlt").remove();
+}
+if (s === "zugross") {
+  $("banners").innerHTML = '<div class="banner warn"><svg viewBox="0 0 24 24"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17v.01"/></svg><span class="tx">Der Kontext ist größer als das Modellfenster (188 000 von 128 000 Token). Schalte Einträge aus oder wähle eine kürzere Form. Es wird nichts still gekürzt. KI-Aufrufe im Projekt sind gesperrt, bis der Kontext ins Modellfenster passt.</span></div>';
+  const rd = document.querySelector('[data-id="rd"]');
+  rd.querySelector(".formb").firstChild.textContent = "Volltext";
+  rd.querySelector(".tok").textContent = "~182 000 Token";
+  for (const [a, b] of [["sum","188 000 von 128 000 Token"],["sum-s","188 000 Token"]]) $(a).textContent = b;
+  $("meter").classList.add("over"); $("meter").firstElementChild.style.width = "100%";
+  $("meter-s").classList.add("over"); $("meter-s").firstElementChild.style.width = "100%";
+}
+if (s === "leer") {
+  $("banners").innerHTML = "";
+  $("liste").innerHTML = '<div style="max-width:560px;margin:48px auto;padding:0 16px"><h2 style="margin:0 0 8px;font-size:20px">Finanzwissen ist noch leer</h2><p style="color:var(--muted);margin:0 0 16px">Füge Bücher, Texte, Aufnahmen oder Dateien hinzu. App-Inhalte werden verknüpft, Dateien in den Projektordner kopiert.</p><button class="btn pri">Hinzufügen</button></div>';
+  // Beide Zähler aus derselben Quelle: Zahl der Einträge des Projekts.
+  const anzahl = 0;
+  document.querySelector(".phead .chip").textContent = anzahl + " Einträge";
+  document.querySelectorAll('.row[title="Finanzwissen"] .ct').forEach(c => c.textContent = String(anzahl));
+  for (const [a, b] of [["sum","0 von 128 000 Token"],["sum-s","0 Token"],["cnt","Keine Einträge als Kontext"],["cnt-s","0 Einträge"]]) $(a).textContent = b;
+  $("meter").firstElementChild.style.width = "0"; $("meter-s").firstElementChild.style.width = "0";
+  $("box-fehlt").remove();
+}
+if (s === "vorlesen" || s === "gespraech") {
+  hide("v-projekt"); show("v-leiste");
+  $("nav-projekte").classList.remove("on");
+  const ges = s === "gespraech";
+  $(ges ? "nav-gespraech" : "nav-vorlesen").classList.add("on");
+  $("l-titel").textContent = ges ? "Sprachgespräch" : "Vorlesen";
+  $("l-oben").innerHTML = ges
+    ? '<div class="row" title="Neues Gespräch"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span class="nm lbl">Neues Gespräch</span></div><div class="grp lbl"><svg viewBox="0 0 24 24" style="width:14px;height:14px"><path d="m6 9 6 6 6-6"/></svg>Verlauf</div><div class="row sub" title="Notgroschen planen"><svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg><span class="nm lbl">Notgroschen planen</span><span class="ct lbl">gestern</span></div>'
+    : '<div class="row" title="Alle"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span class="nm lbl">Alle</span><span class="ct lbl">14</span></div><div class="grp lbl"><svg viewBox="0 0 24 24" style="width:14px;height:14px"><path d="m6 9 6 6 6-6"/></svg>Bücher</div><div class="row sub" title="Rich Dad Poor Dad"><span class="mini"></span><span class="nm lbl">Rich Dad Poor Dad</span></div><div class="row sub" title="Der Einfache Weg zum Reichtum"><span class="mini b2"></span><span class="nm lbl">Der Einfache Weg zum Reichtum</span></div><div class="grp lbl"><svg viewBox="0 0 24 24" style="width:14px;height:14px"><path d="m6 9 6 6 6-6"/></svg>Texte</div><div class="row sub" title="Ohne Buch"><svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5"/></svg><span class="nm lbl">Ohne Buch</span><span class="ct lbl">6</span></div>';
+  const vorl = '<div class="grp">Bücher</div><div class="row"><span class="mini"></span><span class="nm">Rich Dad Poor Dad</span><span class="chip">Kurzbuch · Kontext</span></div><div class="row"><span class="mini b2"></span><span class="nm">Der Einfache Weg zum Reichtum</span><span class="chip">kein Kurzbuch</span></div><div class="grp">Texte</div><div class="row"><svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5"/></svg><span class="nm">KI-Verordnung Art. 4 Kompetenz</span><span class="chip">Kontext</span></div><p class="note" style="padding:8px 16px">Hier stehen die lesbaren Einträge des Projekts. Aufnahmen, Dateien und Recherchen zeigt die Projektseite.</p>';
+  const gesp = '<div class="talk"><span class="chip" style="align-self:flex-start;padding:4px 10px;white-space:normal">Projekt Finanzwissen · 5 Einträge als Kontext · ~15 000 Token</span><div class="box" style="margin:0"><h3>Gespräch im Projekt</h3>Ein Gespräch in diesem Projekt nutzt nur die eingeschalteten Einträge. Das Gespräch im Projekt wird freigeschaltet, sobald alle KI-Wege diese Auswahl prüfen.</div></div>';
+  $("l-body").innerHTML = '<div class="colhead"><button class="ib back-s2 hidden" aria-label="Zurück zu den Ordnern"><svg viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></button>Finanzwissen<span class="sp"><button class="btn link">Projektseite öffnen</button></span></div>' + (ges ? gesp : vorl);
+  if (innerWidth <= 620) document.querySelector(".back-s2").classList.remove("hidden");
+}
+</script>
+</body>
+</html>

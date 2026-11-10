@@ -324,6 +324,17 @@ const settingUpdaters: {
     commands.changeVoiceCallReadTranscriptsSetting(value as boolean),
   voice_call_knowledge: (value) =>
     commands.changeVoiceCallKnowledgeSetting(value as string[]),
+  // lva#396 N2: freigegebene Notizbuch-Abschnitte
+  // Ein Fehler des Kerns muss werfen, sonst bliebe die nicht gespeicherte Auswahl sichtbar.
+  voice_call_notebook_sections: async (value) => {
+    const r = await commands.changeVoiceNotebookSectionsSetting(
+      value as string[],
+    );
+    if (r.status === "error") throw new Error(r.error);
+  },
+  // ADR-0028 A2: Einstufung vor dem Modellaufruf
+  assistent_einstufung_aktiv: (value) =>
+    commands.changeAssistentEinstufungAktivSetting(value as boolean),
   // lva#325: globaler Sprachassistent
   voice_global_context_enabled: (value) =>
     commands.changeVoiceGlobalContextEnabledSetting(value as boolean),
@@ -477,9 +488,14 @@ export const useSettingsStore = create<SettingsStore>()(
         }
       } catch (error) {
         console.error(`Failed to update setting ${String(key)}:`, error);
-        if (settings) {
-          set({ settings: { ...settings, [key]: originalValue } });
-        }
+        // Nur diesen Schlüssel zurücksetzen und nur, wenn noch dieser Wert gilt: ein spätes
+        // Scheitern darf weder eine neuere Änderung desselben Schlüssels noch andere Schlüssel
+        // überschreiben (Codex lva#418).
+        set((state) =>
+          state.settings && state.settings[key] === value
+            ? { settings: { ...state.settings, [key]: originalValue } }
+            : {},
+        );
       } finally {
         setUpdating(updateKey, false);
       }

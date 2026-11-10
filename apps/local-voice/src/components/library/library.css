@@ -1463,6 +1463,14 @@
   flex-wrap: wrap;
   gap: 8px;
 }
+/* Laufende Transkription oder Kurzbucherstellung: Stand und Balken. */
+.library-kurzbuch__run {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  max-width: 36rem;
+}
 
 /* Cover ändern (Produktseite): das Cover selbst ist der Knopf. */
 .library-hero__cover {
@@ -1770,6 +1778,7 @@
     overflow-wrap: anywhere;
   }
   .library-kurzbuch__actions button,
+  .library-kurzbuch__lang button,
   .library-detail .library-bar button,
   .library-hero .library-actions button,
   .library-title-editor__hint,
@@ -1867,4 +1876,69 @@
     radial-gradient(farthest-side at 50% 100%, rgb(0 0 0 / 0.22), transparent)
       bottom / 100% 10px no-repeat scroll,
     var(--color-background);
+}
+
+/* Dateien im Buch-Ordner (lva#365 P2b-2) */
+.library-files {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.library-files__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.library-files__head h3 {
+  margin: 0;
+  font-size: 13px;
+  flex: 1 1 auto;
+}
+.library-files__tree {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--lib-line);
+  border-radius: 8px;
+  font-size: 13px;
+}
+.library-files__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  min-width: 0;
+}
+.library-files__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.library-files__note,
+.library-files__size {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.library-files__size {
+  margin-inline-start: auto;
+}
+@media (max-width: 640px), (pointer: coarse) {
+  .library-files__reveal {
+    min-height: 44px;
+  }
+  .library-files__row {
+    flex-wrap: wrap;
+    row-gap: 0;
+    padding-block: 2px;
+  }
+  .library-files__note {
+    order: 3;
+    flex-basis: 100%;
+    padding-inline-start: 22px;
+    white-space: normal;
+  }
 }

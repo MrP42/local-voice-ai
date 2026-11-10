@@ -270,6 +270,91 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "library_export_audio")
             return [`${String(args?.outPath)}.${String(args?.format)}`];
           if (cmd === "library_list") return list;
+          // Dateien im Buch-Ordner (lva#365 P2b-2).
+          if (cmd === "library_book_files")
+            return [
+              {
+                rel: "audio",
+                tiefe: 0,
+                ordner: true,
+                bytes: 31_457_280,
+                dateien: 35,
+                zusammengefasst: true,
+              },
+              {
+                rel: "fassungen",
+                tiefe: 0,
+                ordner: true,
+                bytes: 48_000,
+                dateien: 4,
+                zusammengefasst: false,
+              },
+              {
+                rel: "fassungen/page_1",
+                tiefe: 1,
+                ordner: true,
+                bytes: 40_000,
+                dateien: 3,
+                zusammengefasst: false,
+              },
+              {
+                rel: "fassungen/page_1/ki",
+                tiefe: 2,
+                ordner: true,
+                bytes: 8_000,
+                dateien: 2,
+                zusammengefasst: true,
+              },
+              {
+                rel: "fassungen/page_1/effi.epub",
+                tiefe: 2,
+                ordner: false,
+                bytes: 30_000,
+                dateien: 1,
+                zusammengefasst: false,
+              },
+              {
+                rel: "fassungen/page_1/state.json",
+                tiefe: 2,
+                ordner: false,
+                bytes: 2_000,
+                dateien: 1,
+                zusammengefasst: false,
+              },
+              {
+                rel: "fassungen/page_8",
+                tiefe: 1,
+                ordner: true,
+                bytes: 8_000,
+                dateien: 1,
+                zusammengefasst: false,
+              },
+              {
+                rel: "fassungen/page_8/state.json",
+                tiefe: 2,
+                ordner: false,
+                bytes: 8_000,
+                dateien: 1,
+                zusammengefasst: false,
+              },
+              {
+                rel: "buch.json",
+                tiefe: 0,
+                ordner: false,
+                bytes: 1_200,
+                dateien: 1,
+                zusammengefasst: false,
+              },
+              {
+                rel: "cover.jpg",
+                tiefe: 0,
+                ordner: false,
+                bytes: 54_000,
+                dateien: 1,
+                zusammengefasst: false,
+              },
+            ];
+          if (cmd === "library_book_reveal") return null;
           // Kurzbuch (lva#205): Dokumente und Text aus window.__kidocs / __docText.
           if (cmd === "book_ai_documents") {
             // Je Seite eigene Dokumente (Karten je Fassung), sonst für alle gleich.
@@ -752,6 +837,143 @@ test("Kurzbuch aus der Bibliothek: Kern-Aufruf mit Vorlage und Sprache, ohne Vor
   await expect(page.getByTestId("library-kijob-row")).toHaveCount(0);
   expect(await calls(page, "book_ai_summarize")).toHaveLength(1);
 });
+
+// lva#365 P2b-2: Buchdetail „Dateien“ zeigt den Buch-Ordner als Baum.
+for (const theme of ["light", "dark"] as const) {
+  for (const width of [1440, 390]) {
+    test(`Dateien im Buch-Ordner: Baum mit Fassungen und Explorer (${width}, ${theme})`, async ({
+      page,
+    }) => {
+      await setTheme(page, theme);
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto("/");
+      await page
+        .getByRole("button", { name: "„Effi Briest“: Details öffnen" })
+        .click();
+      await page.getByRole("tab", { name: "Dateien" }).click();
+      const files = page.getByTestId("library-files");
+      await expect(files).toBeVisible();
+      await expect(page.getByTestId("library-file")).toHaveCount(10);
+      const haupt = files.locator('[data-rel="fassungen/page_1"]');
+      await expect(haupt).toContainText("page_1/");
+      await expect(haupt).toContainText("Hauptfassung");
+      await expect(
+        files.locator('[data-rel="fassungen/page_8"]'),
+      ).toContainText(width > 640 ? "keiner Fassung zugeordnet" : "page_8/");
+      await expect(files.locator('[data-rel="audio"]')).toContainText(
+        "35 Dateien, 30 MB",
+      );
+      await expect(files.locator('[data-rel="cover.jpg"]')).toContainText(
+        "53 KB",
+      );
+      // Keine waagrechte Scrollleiste.
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      ).toBe(true);
+      const reveal = page.getByTestId("library-files-reveal");
+      if (width <= 640)
+        expect((await reveal.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      await reveal.click();
+      expect(await calls(page, "library_book_reveal")).toEqual([
+        { id: "book_1" },
+      ]);
+      const suffix = `${width}-${theme === "light" ? "hell" : "dunkel"}`;
+      await files.locator('[data-rel="cover.jpg"]').scrollIntoViewIfNeeded();
+      await page.screenshot({ path: shot(`buch-dateien-${suffix}.png`) });
+    });
+  }
+}
+
+// Patrick 07.11.: Kurzbuch zeigt beim Erstellen Abschnitt, Prozent und Balken.
+test("Kurzbuch auf der Produktseite: Fortschritt mit Abschnitten und Abbrechen", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page
+    .getByRole("button", { name: "„Effi Briest“: Details öffnen" })
+    .click();
+  // Knopf passt: kurzer Text, Langform als Name und Tooltip.
+  const ki = page.getByTestId("library-detail-ki");
+  await expect(ki).toHaveText("Erstellen");
+  await expect(ki).toHaveAccessibleName("Mit KI erstellen");
+  expect(await ki.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(
+    true,
+  );
+  const card = page.getByRole("region", { name: "Kurzbuch" });
+  await card.getByTestId("kurzbuch-create").click();
+  await page.evaluate(() =>
+    (window as unknown as { __emit: (e: string, p: unknown) => void }).__emit(
+      "book-ai-progress",
+      { page_id: "page_1", kind: "summary", done: 3, total: 12 },
+    ),
+  );
+  const run = card.getByTestId("kurzbuch-create-progress");
+  await expect(run).toContainText("Abschnitt 3 von 12 · 25 %");
+  await expect(
+    run.getByRole("progressbar", {
+      name: "Fortschritt des Kurzbuchs zu Effi Briest",
+    }),
+  ).toHaveAttribute("aria-valuenow", "25");
+  await expect(card.getByTestId("kurzbuch-cancel")).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    (await card.getByTestId("kurzbuch-cancel").boundingBox())!.height,
+  ).toBeGreaterThanOrEqual(44);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  if (process.env.LV_SHOT_DIR)
+    await page.screenshot({ path: shot("kurzbuch-fortschritt-1440.png") });
+  await page.evaluate(() =>
+    (window as unknown as { __finishSummary: () => void }).__finishSummary(),
+  );
+  await expect(run).toHaveCount(0);
+});
+
+for (const width of [1440, 390])
+  for (const theme of ["light", "dark"] as const)
+    test(`Vorschau Kurzbuch-Fortschritt ${width} ${theme}`, async ({
+      page,
+    }) => {
+      test.skip(!process.env.LV_SHOT_DIR, "nur mit LV_SHOT_DIR");
+      if (theme === "dark")
+        await page.addInitScript(() => {
+          (
+            window as unknown as { __settings: { theme: string } }
+          ).__settings.theme = "dark";
+        });
+      await page.setViewportSize({ width, height: width < 500 ? 844 : 900 });
+      await page.goto("/");
+      await page
+        .getByRole("button", { name: "„Effi Briest“: Details öffnen" })
+        .click();
+      const tag = `${width}-${theme === "dark" ? "dunkel" : "hell"}`;
+      await page.waitForTimeout(300);
+      await page.screenshot({
+        path: shot(`kurzbuch-01-erstellen-knopf-${tag}.png`),
+      });
+      const card = page.getByRole("region", { name: "Kurzbuch" });
+      await card.getByTestId("kurzbuch-create").click();
+      await page.evaluate(() =>
+        (
+          window as unknown as { __emit: (e: string, p: unknown) => void }
+        ).__emit("book-ai-progress", {
+          page_id: "page_1",
+          kind: "summary",
+          done: 5,
+          total: 12,
+        }),
+      );
+      await expect(card.getByTestId("kurzbuch-create-progress")).toContainText(
+        "42 %",
+      );
+      await card.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(300);
+      await page.screenshot({
+        path: shot(`kurzbuch-02-fortschritt-${tag}.png`),
+      });
+    });
 
 test("Hörbuch ohne Text: KI-Dialog verweist auf die Transkription", async ({
   page,

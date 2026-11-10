@@ -1,0 +1,1350 @@
+{
+  "aad": [
+    {
+      "aad_hex": "371f61626c6167655f6f72646e65721f6f72645f3031485a58334b394d324e3450355136523753385439563057581f626c6f625f726566731f1f6b65795f69641f36333064636432391f64656c657465641f30",
+      "aad_utf8": "7\u001fablage_ordner\u001ford_01HZX3K9M2N4P5Q6R7S8T9V0WX\u001fblob_refs\u001f\u001fkey_id\u001f630dcd29\u001fdeleted\u001f0",
+      "blob_refs": [],
+      "collection": "ablage_ordner",
+      "deleted": false,
+      "key_id": "630dcd29",
+      "name": "ordner",
+      "object_id": "ord_01HZX3K9M2N4P5Q6R7S8T9V0WX",
+      "user_id": 7
+    },
+    {
+      "aad_hex": "371f61626c6167655f6f72646e65721f6f72645f3031485a58334b394d324e3450355136523753385439563057581f626c6f625f726566731f1f6b65795f69641f36333064636432391f64656c657465641f31",
+      "aad_utf8": "7\u001fablage_ordner\u001ford_01HZX3K9M2N4P5Q6R7S8T9V0WX\u001fblob_refs\u001f\u001fkey_id\u001f630dcd29\u001fdeleted\u001f1",
+      "blob_refs": [],
+      "collection": "ablage_ordner",
+      "deleted": true,
+      "key_id": "630dcd29",
+      "name": "ordner_grabstein",
+      "object_id": "ord_01HZX3K9M2N4P5Q6R7S8T9V0WX",
+      "user_id": 7
+    },
+    {
+      "aad_hex": "371f61626c6167655f64617465691f6461745f3031485a58334b394d324e3450355136523753385439563057591f626c6f625f726566731f1f6b65795f69641f36333064636432391f64656c657465641f30",
+      "aad_utf8": "7\u001fablage_datei\u001fdat_01HZX3K9M2N4P5Q6R7S8T9V0WY\u001fblob_refs\u001f\u001fkey_id\u001f630dcd29\u001fdeleted\u001f0",
+      "blob_refs": [],
+      "collection": "ablage_datei",
+      "deleted": false,
+      "key_id": "630dcd29",
+      "name": "datei_ohne_refs",
+      "object_id": "dat_01HZX3K9M2N4P5Q6R7S8T9V0WY",
+      "user_id": 7
+    },
+    {
+      "aad_hex": "371f61626c6167655f64617465691f6461745f3031485a58334b394d324e3450355136523753385439563057591f626c6f625f726566731f326336306137326434343763316662363338303831363063383365616432343231323766393431653137636664306264616233373437376534306330666536612c383837383236353132316162393830326539623035303937653661653132346366326433346666623530376662303331346632363037316264396130323862362c623065363030323935386538666437356137396266626537343830363130333537633962373630663337616531613563616162343931323465643730346534341f6b65795f69641f36333064636432391f64656c657465641f30",
+      "aad_utf8": "7\u001fablage_datei\u001fdat_01HZX3K9M2N4P5Q6R7S8T9V0WY\u001fblob_refs\u001f2c60a72d447c1fb63808160c83ead242127f941e17cfd0bdab37477e40c0fe6a,8878265121ab9802e9b05097e6ae124cf2d34ffb507fb0314f26071bd9a028b6,b0e6002958e8fd75a79bfbe7480610357c9b760f37ae1a5caab49124ed704e44\u001fkey_id\u001f630dcd29\u001fdeleted\u001f0",
+      "blob_refs": [
+        "2c60a72d447c1fb63808160c83ead242127f941e17cfd0bdab37477e40c0fe6a",
+        "8878265121ab9802e9b05097e6ae124cf2d34ffb507fb0314f26071bd9a028b6",
+        "b0e6002958e8fd75a79bfbe7480610357c9b760f37ae1a5caab49124ed704e44"
+      ],
+      "collection": "ablage_datei",
+      "deleted": false,
+      "key_id": "630dcd29",
+      "name": "datei_mit_refs",
+      "object_id": "dat_01HZX3K9M2N4P5Q6R7S8T9V0WY",
+      "user_id": 7
+    },
+    {
+      "aad_hex": "371f61626c6167655f64617465691f6461745f3031485a58334b394d324e3450355136523753385439563057591f626c6f625f726566731f326336306137326434343763316662363338303831363063383365616432343231323766393431653137636664306264616233373437376534306330666536611f6b65795f69641f36333064636432391f64656c657465641f30",
+      "aad_utf8": "7\u001fablage_datei\u001fdat_01HZX3K9M2N4P5Q6R7S8T9V0WY\u001fblob_refs\u001f2c60a72d447c1fb63808160c83ead242127f941e17cfd0bdab37477e40c0fe6a\u001fkey_id\u001f630dcd29\u001fdeleted\u001f0",
+      "blob_refs": [
+        "2c60a72d447c1fb63808160c83ead242127f941e17cfd0bdab37477e40c0fe6a"
+      ],
+      "collection": "ablage_datei",
+      "deleted": false,
+      "key_id": "630dcd29",
+      "name": "datei_ein_ref",
+      "object_id": "dat_01HZX3K9M2N4P5Q6R7S8T9V0WY",
+      "user_id": 7
+    },
+    {
+      "aad_hex": "371f61626c6167655f64617465691f6461745f3031485a58334b394d324e3450355136523753385439563057591f626c6f625f726566731f1f6b65795f69641f36333064636432391f64656c657465641f31",
+      "aad_utf8": "7\u001fablage_datei\u001fdat_01HZX3K9M2N4P5Q6R7S8T9V0WY\u001fblob_refs\u001f\u001fkey_id\u001f630dcd29\u001fdeleted\u001f1",
+      "blob_refs": [],
+      "collection": "ablage_datei",
+      "deleted": true,
+      "key_id": "630dcd29",
+      "name": "datei_grabstein",
+      "object_id": "dat_01HZX3K9M2N4P5Q6R7S8T9V0WY",
+      "user_id": 7
+    }
+  ],
+  "grabstein": [
+    {
+      "aad_hex": "371f61626c6167655f6f72646e65721f6f72645f3031485a58334b394d324e3450355136523753385439563057581f626c6f625f726566731f1f6b65795f69641f36333064636432391f64656c657465641f31",
+      "collection": "ablage_ordner",
+      "klartext": "{\"collection\":\"ablage_ordner\",\"deleted\":true,\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\"}",
+      "nonce_hex": "d8833cecf75f631bc6f542d00327f5220ef76731d5fffc32",
+      "object_id": "ord_01HZX3K9M2N4P5Q6R7S8T9V0WX",
+      "payload_base64": "2IM87PdfYxvG9ULQAyf1Ig73ZzHV//wyosG/RodfNLlhluFsmC0o5YzSM/kMcPqHO2QApslWxfnlCl77t0EZ4caL+WZRIzJxvH60ISHhmD2R44lpvvuEIbLw+bTOM12ATtKWKmfYHdvkI1GEZfBAK23ytA9j69dJpeW9",
+      "payload_hex": "d8833cecf75f631bc6f542d00327f5220ef76731d5fffc32a2c1bf46875f34b96196e16c982d28e58cd233f90c70fa873b6400a6c956c5f9e50a5efbb74119e1c68bf96651233271bc7eb42121e1983d91e38969befb8421b2f0f9b4ce335d804ed2962a67d81ddbe423518465f0402b6df2b40f63ebd749a5e5bd"
+    },
+    {
+      "aad_hex": "371f61626c6167655f64617465691f6461745f3031485a58334b394d324e3450355136523753385439563057591f626c6f625f726566731f1f6b65795f69641f36333064636432391f64656c657465641f31",
+      "collection": "ablage_datei",
+      "klartext": "{\"collection\":\"ablage_datei\",\"deleted\":true,\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\"}",
+      "nonce_hex": "d14ffe3364e0e66696e8930a5f8de067023127b77d0560f4",
+      "object_id": "dat_01HZX3K9M2N4P5Q6R7S8T9V0WY",
+      "payload_base64": "0U/+M2Tg5maW6JMKX43gZwIxJ7d9BWD0xv4d3nhYz9L2IIVKlUN2MDPvmbVHGw2RigXRiuWcF4Tw2G28WkesV4O2CEs/0RmhFd1L5vgBwQZTV9us6n2cXihAagaTu31TTMbd2zGEnzfS8DB1L87VYk8lvI8xaopeTPM=",
+      "payload_hex": "d14ffe3364e0e66696e8930a5f8de067023127b77d0560f4c6fe1dde7858cfd2f620854a9543763033ef99b5471b0d918a05d18ae59c1784f0d86dbc5a47ac5783b6084b3fd119a115dd4be6f801c1065357dbacea7d9c5e28406a0693bb7d534cc6dddb31849f37d2f030752fced5624f25bc8f316a8a5e4cf3"
+    }
+  ],
+  "hinweis": "Synthetische Testvektoren der Dokumentenablage (D5). Erzeugt von sync::ablage::vektoren::json_passt_zum_code (LVA_VEKTOREN_SCHREIBEN=1). Nicht von Hand ändern.",
+  "hub_kennungen": [
+    {
+      "hub_kennung": "8878265121ab9802e9b05097e6ae124cf2d34ffb507fb0314f26071bd9a028b6",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "hub_kennung": "2c60a72d447c1fb63808160c83ead242127f941e17cfd0bdab37477e40c0fe6a",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    {
+      "hub_kennung": "b0e6002958e8fd75a79bfbe7480610357c9b760f37ae1a5caab49124ed704e44",
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+    }
+  ],
+  "key_id": "630dcd29",
+  "nutzlast": {
+    "datei": {
+      "blob_refs_hub": [
+        "2c60a72d447c1fb63808160c83ead242127f941e17cfd0bdab37477e40c0fe6a",
+        "8878265121ab9802e9b05097e6ae124cf2d34ffb507fb0314f26071bd9a028b6",
+        "b0e6002958e8fd75a79bfbe7480610357c9b760f37ae1a5caab49124ed704e44"
+      ],
+      "blob_refs_inhalt": [
+        "1111111111111111111111111111111111111111111111111111111111111111",
+        "2222222222222222222222222222222222222222222222222222222222222222",
+        "3333333333333333333333333333333333333333333333333333333333333333"
+      ],
+      "hash": "e5f2c4f489ee48457ba50758ae20afb4dea5cfa1daf215623ade52c781bdfe0d",
+      "kanonisch": "{\"blob_refs\":[\"1111111111111111111111111111111111111111111111111111111111111111\",\"2222222222222222222222222222222222222222222222222222222222222222\",\"3333333333333333333333333333333333333333333333333333333333333333\"],\"entfernt\":[],\"fassungen\":[{\"blob\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"size\":1234,\"texte\":[{\"blob\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"size\":420,\"stand\":\"ok\",\"textrev\":\"aa\"},{\"blob\":\"\",\"code\":\"extrakt.zeit\",\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"size\":420,\"stand\":\"fehler\",\"textrev\":\"ff\",\"versuche\":2,\"versuche_zeit\":1}],\"typ\":\"txt\",\"vorgaenger\":null,\"zeit\":1762700000000},{\"blob\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W3\",\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"original_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"size\":99,\"texte\":[],\"typ\":\"txt\",\"vorgaenger\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"zeit\":1762700100000}],\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"klasse_min\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"public\",\"zaehler\":1},\"name\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"Mietvertrag Köln.txt\",\"zaehler\":2},\"nur_geraet_min\":false,\"ordner\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":3},\"papierkorb\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":null,\"zaehler\":1},\"wahlen\":[{\"ersetzt\":[],\"gegen\":[\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\"],\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"gewaehlt\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W3\",\"id\":\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W4\",\"zaehler\":4}],\"zukunft\":{\"a\":1,\"b\":null}}"
+    },
+    "ordner": {
+      "hash": "3b1a06b073e14c54eced12dbb37f77367fe15655a4235d9fa4b1422e92c30bb8",
+      "kanonisch": "{\"datenklasse\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"erbt\",\"zaehler\":1},\"eltern\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":null,\"zaehler\":1},\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"name\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"Verträge – Übersicht\",\"zaehler\":2},\"nur_geraet\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":false,\"zaehler\":1},\"papierkorb\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":null,\"zaehler\":1},\"zielordner_ki\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":false,\"zaehler\":1},\"zukunft\":{\"a\":[3,\"ü\",null],\"m\":true,\"z\":null}}"
+    }
+  },
+  "schluessel_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "standard_id": "ord_4TCSNDVY1EXTCJA0K1B37445HE",
+  "textfassung": {
+    "datei": "dat_01HZX3K9M2N4P5Q6R7S8T9V0WY",
+    "hub_kennung": "3047e05f0522660f19f2979345acf47d967b09a30d5809c1c0257021b9e16ca1",
+    "json_utf8": "{\"marken_version\":1,\"textrev\":\"22ce1b7c5b6b11423d01124bd33bb0e4a56b6178cc726f7bc050a8bed96fec92\",\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"abschnitte\":[{\"anker\":\"zeile=1\",\"text\":\"Die Miete beträgt 850 Euro.\"},{\"anker\":\"absatz=2\",\"pfad\":[\"§ 4 Laufzeit\"],\"text\":\"Kündigung \\\"zum Quartal\\\" – ohne Frist.\"}]}",
+    "sha256": "c0b677fae8e4a2e4c3ba7ca24bbb96659d84457a573552771f819835437aa344"
+  },
+  "textrev": [
+    {
+      "extraktor": "lva-text",
+      "extraktor_version": "1",
+      "marken_version": 1,
+      "original_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "textrev": "22ce1b7c5b6b11423d01124bd33bb0e4a56b6178cc726f7bc050a8bed96fec92"
+    },
+    {
+      "extraktor": "lva-text",
+      "extraktor_version": "1",
+      "marken_version": 2,
+      "original_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "textrev": "7cd15f7db5bbe7a827de3f4b078d1b6b61f8865611e22ae82636c20d7e9c9436"
+    },
+    {
+      "extraktor": "pdf-extract",
+      "extraktor_version": "0.12.0+lva1",
+      "marken_version": 1,
+      "original_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "textrev": "c8c0037e6bac0002f2a3216831e06c414a63cb32738e87ca7ba4c51d24bab54c"
+    }
+  ],
+  "user_id": 7,
+  "version": 1,
+  "zusatz": {
+    "escapes": {
+      "faelle": [
+        {
+          "aus": "{\"ké\":\"v\",\"s\":\"a\\u0001b\\u001f\\\"\\\\/\\n\\t\\r\\b\\fé😀   end\"}",
+          "ein": "{\"s\":\"a\\u0001b\\u001f\\u007f\\\"\\\\/\\n\\t\\r\\b\\fé😀   end\",\"ké\":\"v\"}",
+          "gueltig": true,
+          "name": "steuerzeichen_und_umlaute"
+        },
+        {
+          "aus": "{\"a/b\":\"c/d/e\"}",
+          "ein": "{\"a\\/b\":\"c\\/d/e\"}",
+          "gueltig": true,
+          "name": "schraegstrich_nicht_escaped"
+        },
+        {
+          "aus": "{\"k\":\"Größe – 日本語 😀\"}",
+          "ein": "{\"k\":\"Größe – 日本語 😀\"}",
+          "gueltig": true,
+          "name": "nicht_ascii_roh"
+        },
+        {
+          "aus": "\"😀\"",
+          "ein": "\"\\ud83d\\ude00\"",
+          "gueltig": true,
+          "name": "ersatzpaar"
+        },
+        {
+          "aus": "\"😀\"",
+          "ein": "\"\\uD83D\\uDE00\"",
+          "gueltig": true,
+          "name": "ersatzpaar_grossbuchstaben"
+        },
+        {
+          "aus": "\"éÜ\"",
+          "ein": "\"\\u00E9\\u00DC\"",
+          "gueltig": true,
+          "name": "hexziffern_grossbuchstaben"
+        },
+        {
+          "aus": "\"éÜ\"",
+          "ein": "\"\\u00e9\\u00dc\"",
+          "gueltig": true,
+          "name": "hexziffern_kleinbuchstaben"
+        },
+        {
+          "aus": "\"éÜ￠\"",
+          "ein": "\"\\u00E9\\u00dc\\uFfE0\"",
+          "gueltig": true,
+          "name": "hexziffern_gemischt"
+        },
+        {
+          "aus": "{\"😀\":1}",
+          "ein": "{\"\\ud83d\\ude00\":1}",
+          "gueltig": true,
+          "name": "schluessel_ersatzpaar_escape"
+        },
+        {
+          "aus": "{\"é\":2,\"é\":1}",
+          "ein": "{\"\\u00e9\":1,\"e\\u0301\":2}",
+          "gueltig": true,
+          "name": "schluessel_zusammengesetzt_zerlegt_escape"
+        },
+        {
+          "aus": "{\"é\":2}",
+          "ein": "{\"\\u00e9\":1,\"é\":2}",
+          "gueltig": true,
+          "name": "schluessel_gleich_roh_und_escape"
+        },
+        {
+          "aus": "{\"a\":{},\"b\":[1,2]}",
+          "ein": " {\n \"b\" : [ 1 , 2 ] ,\t\"a\" : { } }\r\n",
+          "gueltig": true,
+          "name": "leerraum"
+        },
+        {
+          "aus": "[{\"a\":{},\"b\":{\"c\":[true,false,null,{\"y\":[],\"z\":1}],\"d\":null}},\"x\"]",
+          "ein": "[ {\"b\" : {\"d\":null,\"c\":[true, false,null,{\"z\":1,\"y\":[]}]},\n\"a\":{}} , \"x\" ]",
+          "gueltig": true,
+          "name": "verschachtelt"
+        },
+        {
+          "aus": "{\"a\":null,\"b\":[],\"c\":{},\"d\":[null,{\"e\":null}]}",
+          "ein": "{\"a\":null,\"b\":[],\"c\":{},\"d\":[null,{\"e\":null}]}",
+          "gueltig": true,
+          "name": "null_bleibt"
+        },
+        {
+          "aus": null,
+          "ein": "\"a\u0001b\"",
+          "gueltig": false,
+          "name": "steuerzeichen_roh_ungueltig"
+        },
+        {
+          "aus": null,
+          "ein": "\"\\ud800\"",
+          "gueltig": false,
+          "name": "einzelnes_fuehrendes_ersatzzeichen_ungueltig"
+        },
+        {
+          "aus": null,
+          "ein": "\"\\udc00\"",
+          "gueltig": false,
+          "name": "einzelnes_nachfolgendes_ersatzzeichen_ungueltig"
+        },
+        {
+          "aus": null,
+          "ein": "\"\\ud800A\"",
+          "gueltig": false,
+          "name": "ersatzzeichen_ohne_paar_ungueltig"
+        },
+        {
+          "aus": null,
+          "ein": "\"\\x\"",
+          "gueltig": false,
+          "name": "unbekannte_escape_ungueltig"
+        },
+        {
+          "aus": null,
+          "ein": "\"\\u12\"",
+          "gueltig": false,
+          "name": "kurze_u_escape_ungueltig"
+        },
+        {
+          "aus": null,
+          "ein": "﻿1",
+          "gueltig": false,
+          "name": "bom_ungueltig"
+        },
+        {
+          "aus": null,
+          "ein": "[1] x",
+          "gueltig": false,
+          "name": "nachlauf_ungueltig"
+        },
+        {
+          "aus": null,
+          "ein": "[1,]",
+          "gueltig": false,
+          "name": "komma_am_ende_ungueltig"
+        },
+        {
+          "aus": null,
+          "ein": "{\"a\":1,}",
+          "gueltig": false,
+          "name": "objekt_komma_am_ende_ungueltig"
+        },
+        {
+          "aus": null,
+          "ein": "'a'",
+          "gueltig": false,
+          "name": "einfache_anfuehrungszeichen_ungueltig"
+        },
+        {
+          "aus": null,
+          "ein": "",
+          "gueltig": false,
+          "name": "leer_ungueltig"
+        },
+        {
+          "aus": null,
+          "ein": "{\"a\":",
+          "gueltig": false,
+          "name": "unvollstaendig_ungueltig"
+        },
+        {
+          "aus": "\"\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007\\b\\t\\n\\u000b\\f\\r\\u000e\\u000f\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d\\u001e\\u001f\"",
+          "ein": "\"\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007\\u0008\\u0009\\u000a\\u000b\\u000c\\u000d\\u000e\\u000f\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d\\u001e\\u001f\"",
+          "gueltig": true,
+          "name": "alle_steuerzeichen"
+        }
+      ]
+    },
+    "grabstein_benutzer": {
+      "faelle": [
+        {
+          "collection": "ablage_datei",
+          "key_id": "630dcd29",
+          "object_id": "dat_01HZX3K9M2N4P5Q6R7S8T9V0WY",
+          "payload_base64": "rHWrsSKhnFbNPk0eHYPRxpsHHb7wwICGPGy6B5PzB9PvaZtduSJLbhuAaRClk1rTVbyYaaJCrzy99oDGQyErW1hvoR2j1KWSwRvg5w+lGUKfkzpaSun4RDLatmW/uy2QyYlYMM+2H7eWmnoNsQgmeVyfkxQo6ODBxOY=",
+          "user_id": 8
+        },
+        {
+          "collection": "ablage_ordner",
+          "key_id": "630dcd29",
+          "object_id": "ord_01HZX3K9M2N4P5Q6R7S8T9V0WX",
+          "payload_base64": "1d1G87b5Va4rU65kZfEVUfDIHtLiayadxG/4snbCmC3as6ZR3SxKvRvHryM4NMSoRFwWavMyZAh1qteH6px5ufomTeFZ3aPiK3azH1eqrTJoI3liU4h7wH6b1r7YTQx0vok3Sn/ikPObVb6Aoc/6LP+Op+CQL02tBCTn",
+          "user_id": 8
+        },
+        {
+          "collection": "ablage_datei",
+          "key_id": "630dcd29",
+          "object_id": "dat_01HZX3K9M2N4P5Q6R7S8T9V0WY",
+          "payload_base64": "Jc85MwZSq1uVZUO/6lobcXqkDsBnxfTjK8iX2imEWtzvoTHuP8tHjFr3NGulSnBKzwPnNxDVTaCk18GwzFfH5wvEZM9TE9Z33C6P0k8j75YvWCY/1K2KG603fq93eX0NUg1egkowNLINfqWAkKNAoqJtFQ62StnWuuM=",
+          "user_id": -7
+        }
+      ]
+    },
+    "hinweis": "Zusatzvektoren der Dokumentenablage (D5). Erzeugt von sync::ablage::vektoren_zusatz::json_passt_zum_code. Neu schreiben nur mit LVA_VEKTOREN_SCHREIBEN=1 (z. B. LVA_VEKTOREN_SCHREIBEN=1 cargo test --lib sync::ablage::vektoren_zusatz::json_passt_zum_code); ohne die Variable prüft der Test nur. Nicht von Hand ändern. Gruppen: escapes, zahlen, umlaut_schluessel, serde_lesefaelle, id_gueltig, tiefe_127, hub_hex, grabstein_benutzer, zusammenfuehren.",
+    "hub_hex": {
+      "faelle": [
+        {
+          "eingabe": "1fbbb75cd3895be571826b41fee492a3cd94509465c7bb9606285675037f24cb",
+          "hub_kennung": "08d8fe6edc4415c512af3a369d59e5473fefa144043c3ca8d6ea8653210a7322",
+          "name": "klein"
+        },
+        {
+          "eingabe": "1FBBB75CD3895BE571826B41FEE492A3CD94509465C7BB9606285675037F24CB",
+          "hub_kennung": "08d8fe6edc4415c512af3a369d59e5473fefa144043c3ca8d6ea8653210a7322",
+          "name": "gross"
+        },
+        {
+          "eingabe": "+1bbb75cd3895be571826b41fee492a3cd94509465c7bb9606285675037f24cb",
+          "hub_kennung": "b5095597d43b50feb3edf9bedbddf5dc19e7db165a2f60c198ea8cacca0885de",
+          "name": "plus_paar"
+        },
+        {
+          "eingabe": "1fbbb75cd3895be571826b41fee492a3cd94509465c7bb9606285675037f24c",
+          "hub_kennung": null,
+          "name": "zu_kurz"
+        },
+        {
+          "eingabe": "1fbbb75cd3895be571826b41fee492a3cd94509465c7bb9606285675037f24cb00",
+          "hub_kennung": null,
+          "name": "zu_lang"
+        },
+        {
+          "eingabe": "zzbbb75cd3895be571826b41fee492a3cd94509465c7bb9606285675037f24cb",
+          "hub_kennung": null,
+          "name": "kein_hex"
+        },
+        {
+          "eingabe": "-1bbb75cd3895be571826b41fee492a3cd94509465c7bb9606285675037f24cb",
+          "hub_kennung": null,
+          "name": "minus_paar"
+        },
+        {
+          "eingabe": "ébbb75cd3895be571826b41fee492a3cd94509465c7bb9606285675037f24cb",
+          "hub_kennung": null,
+          "name": "nicht_ascii_paar"
+        },
+        {
+          "eingabe": "",
+          "hub_kennung": null,
+          "name": "leer"
+        }
+      ]
+    },
+    "id_gueltig": {
+      "faelle": [
+        {
+          "gueltig": true,
+          "id": "dat_01HZX4Q8E5K2V7M3N9P6R1S0TA",
+          "praefix": "dat_"
+        },
+        {
+          "gueltig": true,
+          "id": "dat_01hzx4q8e5k2v7m3n9p6r1s0ta",
+          "praefix": "dat_"
+        },
+        {
+          "gueltig": true,
+          "id": "dat_8ZZZZZZZZZZZZZZZZZZZZZZZZZ",
+          "praefix": "dat_"
+        },
+        {
+          "gueltig": true,
+          "id": "dat_ZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+          "praefix": "dat_"
+        },
+        {
+          "gueltig": true,
+          "id": "dat_00000000000000000000000000",
+          "praefix": "dat_"
+        },
+        {
+          "gueltig": false,
+          "id": "dat_01HZX4Q8E5K2V7M3N9P6R1S0T",
+          "praefix": "dat_"
+        },
+        {
+          "gueltig": false,
+          "id": "dat_01HZX4Q8E5K2V7M3N9P6R1S0TAA",
+          "praefix": "dat_"
+        },
+        {
+          "gueltig": false,
+          "id": "dat_01HZX4Q8E5K2V7M3N9P6R1S0TI",
+          "praefix": "dat_"
+        },
+        {
+          "gueltig": false,
+          "id": "dat_01HZX4Q8E5K2V7M3N9P6R1S0TL",
+          "praefix": "dat_"
+        },
+        {
+          "gueltig": false,
+          "id": "dat_01HZX4Q8E5K2V7M3N9P6R1S0TO",
+          "praefix": "dat_"
+        },
+        {
+          "gueltig": false,
+          "id": "dat_01HZX4Q8E5K2V7M3N9P6R1S0TU",
+          "praefix": "dat_"
+        },
+        {
+          "gueltig": false,
+          "id": "dat_01hzx4q8e5k2v7m3n9p6r1s0ti",
+          "praefix": "dat_"
+        },
+        {
+          "gueltig": false,
+          "id": "dat_01HZX4Q8E5K2V7M3N9P6R1S0T/",
+          "praefix": "dat_"
+        },
+        {
+          "gueltig": false,
+          "id": "dat_01HZX4Q8E5K2V7M3N9P6R1S0T.",
+          "praefix": "dat_"
+        },
+        {
+          "gueltig": false,
+          "id": "dat_01HZX4Q8E5K2V7M3N9P6R1S0T\n",
+          "praefix": "dat_"
+        },
+        {
+          "gueltig": false,
+          "id": "dat_01HZX4Q8E5K2V7M3N9P6R1S0Tä",
+          "praefix": "dat_"
+        },
+        {
+          "gueltig": false,
+          "id": "dat_../../../../etc/passwd_______",
+          "praefix": "dat_"
+        },
+        {
+          "gueltig": false,
+          "id": "ord_01HZX4Q8E5K2V7M3N9P6R1S0TA",
+          "praefix": "dat_"
+        },
+        {
+          "gueltig": false,
+          "id": "DAT_01HZX4Q8E5K2V7M3N9P6R1S0TA",
+          "praefix": "dat_"
+        },
+        {
+          "gueltig": false,
+          "id": "01HZX4Q8E5K2V7M3N9P6R1S0TA",
+          "praefix": "dat_"
+        },
+        {
+          "gueltig": false,
+          "id": "",
+          "praefix": "dat_"
+        },
+        {
+          "gueltig": true,
+          "id": "ord_01HZX4Q8E5K2V7M3N9P6R1S0TB",
+          "praefix": "ord_"
+        },
+        {
+          "gueltig": true,
+          "id": "g_01HZX4Q8E5K2V7M3N9P6R1S0T1",
+          "praefix": "g_"
+        },
+        {
+          "gueltig": true,
+          "id": "fas_01HZX4Q8E5K2V7M3N9P6R1S0TD",
+          "praefix": "fas_"
+        },
+        {
+          "gueltig": true,
+          "id": "wahl_01HZX4Q8E5K2V7M3N9P6R1S0TF",
+          "praefix": "wahl_"
+        }
+      ]
+    },
+    "serde_lesefaelle": {
+      "faelle": [
+        {
+          "art": "ordner",
+          "json": "{\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"eltern\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"n\",\"zaehler\":1,\"geraet\":\"g_x\"},\"datenklasse\":{\"wert\":\"erbt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"nur_geraet\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"zielordner_ki\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "o_basis",
+          "ok": true
+        },
+        {
+          "art": "ordner",
+          "json": "{\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"eltern\":{\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"n\",\"zaehler\":1,\"geraet\":\"g_x\"},\"datenklasse\":{\"wert\":\"erbt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"nur_geraet\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"zielordner_ki\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "o_eltern_wert_fehlt",
+          "ok": true
+        },
+        {
+          "art": "ordner",
+          "json": "{\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"eltern\":{\"wert\":\"ord_x\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"n\",\"zaehler\":1,\"geraet\":\"g_x\"},\"datenklasse\":{\"wert\":\"erbt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"nur_geraet\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"zielordner_ki\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "o_eltern_wert_string",
+          "ok": true
+        },
+        {
+          "art": "ordner",
+          "json": "{\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"eltern\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"zaehler\":1,\"geraet\":\"g_x\"},\"datenklasse\":{\"wert\":\"erbt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"nur_geraet\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"zielordner_ki\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "o_name_wert_fehlt",
+          "ok": false
+        },
+        {
+          "art": "ordner",
+          "json": "{\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"eltern\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"},\"datenklasse\":{\"wert\":\"erbt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"nur_geraet\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"zielordner_ki\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "o_name_wert_null",
+          "ok": false
+        },
+        {
+          "art": "ordner",
+          "json": "{\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"eltern\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"n\",\"zaehler\":1,\"geraet\":\"g_x\"},\"datenklasse\":{\"wert\":\"erbt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"nur_geraet\":{\"wert\":\"false\",\"zaehler\":1,\"geraet\":\"g_x\"},\"zielordner_ki\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "o_nur_geraet_string",
+          "ok": false
+        },
+        {
+          "art": "ordner",
+          "json": "{\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"eltern\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"n\",\"zaehler\":1,\"geraet\":\"g_x\"},\"datenklasse\":{\"wert\":\"erbt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"nur_geraet\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"zielordner_ki\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"papierkorb\":{\"wert\":1.5,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "o_papierkorb_float",
+          "ok": false
+        },
+        {
+          "art": "ordner",
+          "json": "{\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"eltern\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"n\",\"zaehler\":1,\"geraet\":\"g_x\"},\"datenklasse\":{\"wert\":\"erbt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"nur_geraet\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"zielordner_ki\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"papierkorb\":{\"wert\":-5,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "o_papierkorb_negativ",
+          "ok": true
+        },
+        {
+          "art": "ordner",
+          "json": "{\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"eltern\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"n\",\"zaehler\":1,\"geraet\":\"g_x\"},\"datenklasse\":{\"wert\":\"erbt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"nur_geraet\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"zielordner_ki\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"papierkorb\":{\"wert\":9223372036854775808,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "o_papierkorb_zu_gross",
+          "ok": false
+        },
+        {
+          "art": "ordner",
+          "json": "{\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"eltern\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"n\",\"zaehler\":1,\"geraet\":\"g_x\"},\"datenklasse\":{\"wert\":\"erbt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"nur_geraet\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"zielordner_ki\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"papierkorb\":{\"wert\":9223372036854775807,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "o_papierkorb_max",
+          "ok": true
+        },
+        {
+          "art": "ordner",
+          "json": "{\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"eltern\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"n\",\"zaehler\":1.0,\"geraet\":\"g_x\"},\"datenklasse\":{\"wert\":\"erbt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"nur_geraet\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"zielordner_ki\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "o_zaehler_float",
+          "ok": false
+        },
+        {
+          "art": "ordner",
+          "json": "{\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"eltern\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"n\",\"zaehler\":-1,\"geraet\":\"g_x\"},\"datenklasse\":{\"wert\":\"erbt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"nur_geraet\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"zielordner_ki\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "o_zaehler_negativ",
+          "ok": false
+        },
+        {
+          "art": "ordner",
+          "json": "{\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"eltern\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"n\",\"zaehler\":18446744073709551615,\"geraet\":\"g_x\"},\"datenklasse\":{\"wert\":\"erbt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"nur_geraet\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"zielordner_ki\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "o_zaehler_max",
+          "ok": true
+        },
+        {
+          "art": "ordner",
+          "json": "{\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"eltern\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"n\",\"zaehler\":18446744073709551616,\"geraet\":\"g_x\"},\"datenklasse\":{\"wert\":\"erbt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"nur_geraet\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"zielordner_ki\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "o_zaehler_zu_gross",
+          "ok": false
+        },
+        {
+          "art": "ordner",
+          "json": "{\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"eltern\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"n\",\"zaehler\":1,\"neu\":7,\"geraet\":\"g_x\"},\"datenklasse\":{\"wert\":\"erbt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"nur_geraet\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"zielordner_ki\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "o_register_zusatzfeld",
+          "ok": true
+        },
+        {
+          "art": "ordner",
+          "json": "{\"eltern\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"n\",\"zaehler\":1,\"geraet\":\"g_x\"},\"datenklasse\":{\"wert\":\"erbt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"nur_geraet\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"zielordner_ki\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "o_ohne_id",
+          "ok": false
+        },
+        {
+          "art": "ordner",
+          "json": "{\"id\":5,\"eltern\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"n\",\"zaehler\":1,\"geraet\":\"g_x\"},\"datenklasse\":{\"wert\":\"erbt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"nur_geraet\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"zielordner_ki\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "o_id_zahl",
+          "ok": false
+        },
+        {
+          "art": "ordner",
+          "json": "{\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"eltern\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"n\",\"zaehler\":1,\"geraet\":\"g_x\"},\"datenklasse\":{\"wert\":\"erbt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"nur_geraet\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"zielordner_ki\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_x\"},\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"},\"v\":1,\"x\":null}",
+          "name": "o_extra_v1",
+          "ok": true
+        },
+        {
+          "art": "ordner",
+          "json": "[1,2]",
+          "name": "o_kein_objekt",
+          "ok": false
+        },
+        {
+          "art": "datei",
+          "json": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"a.txt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_x\"},\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "d_minimal",
+          "ok": true
+        },
+        {
+          "art": "datei",
+          "json": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"a.txt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_x\"},\"nur_geraet_min\":null,\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "d_nur_geraet_null",
+          "ok": false
+        },
+        {
+          "art": "datei",
+          "json": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"a.txt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_x\"},\"nur_geraet_min\":true,\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "d_nur_geraet_true",
+          "ok": true
+        },
+        {
+          "art": "datei",
+          "json": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"a.txt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_x\"},\"fassungen\":null,\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "d_fassungen_null",
+          "ok": false
+        },
+        {
+          "art": "datei",
+          "json": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"a.txt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_x\"},\"fassungen\":[{\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"vorgaenger\":null,\"blob\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"size\":10,\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"typ\":\"txt\",\"geraet\":\"g_x\",\"zeit\":1730000000123}],\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "d_fassung_ok",
+          "ok": true
+        },
+        {
+          "art": "datei",
+          "json": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"a.txt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_x\"},\"fassungen\":[{\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"blob\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"size\":10,\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"typ\":\"txt\",\"geraet\":\"g_x\",\"zeit\":1}],\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "d_fassung_vorgaenger_fehlt",
+          "ok": true
+        },
+        {
+          "art": "datei",
+          "json": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"a.txt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_x\"},\"fassungen\":[{\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"blob\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"size\":10,\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"typ\":\"txt\",\"geraet\":\"g_x\",\"zeit\":1.5}],\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "d_fassung_zeit_float",
+          "ok": false
+        },
+        {
+          "art": "datei",
+          "json": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"a.txt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_x\"},\"fassungen\":[{\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"blob\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"size\":10,\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"typ\":\"txt\",\"geraet\":\"g_x\",\"zeit\":-1}],\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "d_fassung_zeit_negativ",
+          "ok": true
+        },
+        {
+          "art": "datei",
+          "json": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"a.txt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_x\"},\"fassungen\":[{\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"blob\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"size\":-1,\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"typ\":\"txt\",\"geraet\":\"g_x\",\"zeit\":1}],\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "d_fassung_size_negativ",
+          "ok": false
+        },
+        {
+          "art": "datei",
+          "json": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"a.txt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_x\"},\"fassungen\":[{\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"blob\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"size\":18446744073709551615,\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"typ\":\"txt\",\"geraet\":\"g_x\",\"zeit\":1}],\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "d_fassung_size_max",
+          "ok": true
+        },
+        {
+          "art": "datei",
+          "json": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"a.txt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_x\"},\"fassungen\":[{\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"blob\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"size\":1,\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"typ\":\"txt\",\"geraet\":\"g_x\",\"zeit\":1,\"texte\":null}],\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "d_fassung_texte_null",
+          "ok": false
+        },
+        {
+          "art": "datei",
+          "json": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"a.txt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_x\"},\"fassungen\":[{\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"blob\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"size\":1,\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"typ\":\"txt\",\"geraet\":\"g_x\",\"zeit\":1,\"texte\":[{\"textrev\":\"aa\",\"blob\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"size\":5,\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"stand\":\"ok\"}]}],\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "d_text_ok",
+          "ok": true
+        },
+        {
+          "art": "datei",
+          "json": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"a.txt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_x\"},\"fassungen\":[{\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"blob\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"size\":1,\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"typ\":\"txt\",\"geraet\":\"g_x\",\"zeit\":1,\"texte\":[{\"textrev\":\"aa\",\"blob\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"size\":5,\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"stand\":\"ok\",\"versuche\":null}]}],\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "d_text_versuche_null",
+          "ok": false
+        },
+        {
+          "art": "datei",
+          "json": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"a.txt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_x\"},\"fassungen\":[{\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"blob\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"size\":1,\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"typ\":\"txt\",\"geraet\":\"g_x\",\"zeit\":1,\"texte\":[{\"textrev\":\"aa\",\"blob\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"size\":5,\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"stand\":\"ok\",\"code\":null}]}],\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "d_text_code_null",
+          "ok": true
+        },
+        {
+          "art": "datei",
+          "json": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"a.txt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_x\"},\"fassungen\":[{\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"blob\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"size\":1,\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"typ\":\"txt\",\"geraet\":\"g_x\",\"zeit\":1,\"texte\":[{\"textrev\":\"aa\",\"blob\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"size\":5,\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"stand\":\"ok\",\"code\":5}]}],\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "d_text_code_zahl",
+          "ok": false
+        },
+        {
+          "art": "datei",
+          "json": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"a.txt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_x\"},\"fassungen\":[{\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"blob\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"size\":1,\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"typ\":\"txt\",\"geraet\":\"g_x\",\"zeit\":1,\"texte\":[{\"textrev\":\"aa\",\"blob\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"size\":5,\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":4294967296,\"stand\":\"ok\"}]}],\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "d_text_marken_zu_gross",
+          "ok": false
+        },
+        {
+          "art": "datei",
+          "json": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"a.txt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_x\"},\"fassungen\":[{\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"blob\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"size\":1,\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"typ\":\"txt\",\"geraet\":\"g_x\",\"zeit\":1,\"texte\":[{\"textrev\":\"aa\",\"blob\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"size\":5,\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":4294967295,\"stand\":\"ok\",\"versuche\":4294967295}]}],\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "d_text_versuche_max",
+          "ok": true
+        },
+        {
+          "art": "datei",
+          "json": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"a.txt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_x\"},\"wahlen\":[{\"id\":\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W4\",\"gewaehlt\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"zaehler\":3,\"geraet\":\"g_x\"}],\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "d_wahl_gegen_fehlt",
+          "ok": true
+        },
+        {
+          "art": "datei",
+          "json": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"a.txt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_x\"},\"wahlen\":[{\"id\":\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W4\",\"gewaehlt\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"gegen\":null,\"zaehler\":3,\"geraet\":\"g_x\"}],\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "d_wahl_gegen_null",
+          "ok": false
+        },
+        {
+          "art": "datei",
+          "json": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"a.txt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_x\"},\"wahlen\":[{\"id\":\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W4\",\"gewaehlt\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"geraet\":\"g_x\"}],\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "d_wahl_ohne_zaehler",
+          "ok": false
+        },
+        {
+          "art": "datei",
+          "json": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"a.txt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_x\"},\"blob_refs\":\"x\",\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "d_blob_refs_string",
+          "ok": false
+        },
+        {
+          "art": "datei",
+          "json": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"a.txt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_x\"},\"blob_refs\":[\"a\",\"b\"],\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "d_blob_refs_liste",
+          "ok": true
+        },
+        {
+          "art": "datei",
+          "json": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"a.txt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_x\"},\"entfernt\":[1],\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "d_entfernt_zahl",
+          "ok": false
+        },
+        {
+          "art": "datei",
+          "json": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"a.txt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "d_ohne_klasse_min",
+          "ok": false
+        },
+        {
+          "art": "datei",
+          "json": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"a.txt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_x\"}}",
+          "name": "d_ohne_papierkorb",
+          "ok": false
+        },
+        {
+          "art": "datei",
+          "json": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":1,\"geraet\":\"g_x\"},\"name\":{\"wert\":\"a.txt\",\"zaehler\":1,\"geraet\":\"g_x\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_x\"},\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_x\"},\"x\":1.0,\"y\":18446744073709551615,\"z\":[null,{\"q\":-0}]}",
+          "name": "d_extra_zahlen",
+          "ok": true
+        }
+      ],
+      "schema_marke": [
+        {
+          "akzeptiert": true,
+          "gelesen": 1,
+          "json": "{}"
+        },
+        {
+          "akzeptiert": true,
+          "gelesen": 1,
+          "json": "{\"v\":1}"
+        },
+        {
+          "akzeptiert": true,
+          "gelesen": 0,
+          "json": "{\"v\":0}"
+        },
+        {
+          "akzeptiert": false,
+          "gelesen": 2,
+          "json": "{\"v\":2}"
+        },
+        {
+          "akzeptiert": false,
+          "gelesen": 99,
+          "json": "{\"v\":99}"
+        },
+        {
+          "akzeptiert": false,
+          "gelesen": 18446744073709551615,
+          "json": "{\"v\":18446744073709551615}"
+        },
+        {
+          "akzeptiert": true,
+          "gelesen": 1,
+          "json": "{\"v\":\"2\"}"
+        },
+        {
+          "akzeptiert": true,
+          "gelesen": 1,
+          "json": "{\"v\":2.0}"
+        },
+        {
+          "akzeptiert": true,
+          "gelesen": 1,
+          "json": "{\"v\":-1}"
+        },
+        {
+          "akzeptiert": true,
+          "gelesen": 1,
+          "json": "{\"v\":null}"
+        },
+        {
+          "akzeptiert": true,
+          "gelesen": 1,
+          "json": "{\"v\":true}"
+        }
+      ]
+    },
+    "tiefe_127": {
+      "max_tiefe_array": 127,
+      "max_tiefe_objekt": 127
+    },
+    "umlaut_schluessel": {
+      "faelle": [
+        {
+          "aus": "{\"Äpfel\":4,\"Zebra\":2,\"a\":6,\"zebra\":1,\"Äpfel\":3,\"äpfel\":5}",
+          "ein": "{\"zebra\":1,\"Zebra\":2,\"Äpfel\":3,\"Äpfel\":4,\"äpfel\":5,\"a\":6}",
+          "gueltig": true,
+          "name": "umlaute_und_grossbuchstaben"
+        },
+        {
+          "aus": "{\"B\":3,\"a\":4,\"é\":2,\"é\":1}",
+          "ein": "{\"é\":1,\"é\":2,\"B\":3,\"a\":4}",
+          "gueltig": true,
+          "name": "zusammengesetzt_und_zerlegt"
+        },
+        {
+          "aus": "{\"\":0,\"~\":2,\"\":3,\"\":4,\"😀\":1}",
+          "ein": "{\"\":0,\"😀\":1,\"~\":2,\"\\u007f\":3,\"\\u0080\":4}",
+          "gueltig": true,
+          "name": "leer_emoji_und_grenzen"
+        },
+        {
+          "aus": "{\"a\":4,\"\":3,\"￠\":2,\"😀\":1}",
+          "ein": "{\"😀\":1,\"￠\":2,\"\":3,\"a\":4}",
+          "gueltig": true,
+          "name": "bmp_ueber_ersatzbereich_roh"
+        },
+        {
+          "aus": "{\"a\":4,\"\":3,\"￠\":2,\"😀\":1}",
+          "ein": "{\"\\ud83d\\ude00\":1,\"\\uffe0\":2,\"\\ue000\":3,\"a\":4}",
+          "gueltig": true,
+          "name": "bmp_ueber_ersatzbereich_escape"
+        },
+        {
+          "aus": "{\"a\\nb\":3,\"a\\\"b\":1,\"a/b\":4,\"a\\\\b\":2}",
+          "ein": "{\"a\\\"b\":1,\"a\\\\b\":2,\"a\\nb\":3,\"a/b\":4}",
+          "gueltig": true,
+          "name": "schluessel_mit_escape"
+        },
+        {
+          "aus": "{\"a\":2,\"b\":{\"c\":null}}",
+          "ein": "{\"a\":1,\"a\":2,\"b\":{\"c\":1,\"c\":null}}",
+          "gueltig": true,
+          "name": "doppelte_schluessel_letzter_gewinnt"
+        }
+      ],
+      "nutzlasten": [
+        {
+          "hash": "f1a327c6c5f735bebc25a734bd999fa25be83a3fd538fb73fad6c7c20eef56fa",
+          "kanonisch": "{\"Äpfel\":4,\"Zebra\":2,\"a\":6,\"datenklasse\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"erbt\",\"zaehler\":1},\"eltern\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":null,\"zaehler\":3},\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"name\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"Verträge\",\"zaehler\":2},\"nur_geraet\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":false,\"zaehler\":1},\"papierkorb\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":null,\"zaehler\":1},\"v\":1,\"zebra\":1,\"zielordner_ki\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\",\"wert\":true,\"zaehler\":1},\"zukunft\":{\"a\":{},\"b\":[]},\"Äpfel\":3,\"äpfel\":5}",
+          "name": "ordner_mit_umlaut_schluesseln_und_v1",
+          "serde_roh": "{\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"eltern\":{\"wert\":null,\"zaehler\":3,\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\"},\"name\":{\"wert\":\"Verträge\",\"zaehler\":2,\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\"},\"datenklasse\":{\"wert\":\"erbt\",\"zaehler\":1,\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\"},\"nur_geraet\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\"},\"zielordner_ki\":{\"wert\":true,\"zaehler\":1,\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\"},\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\"},\"Äpfel\":4,\"Zebra\":2,\"a\":6,\"v\":1,\"zebra\":1,\"zukunft\":{\"a\":{},\"b\":[]},\"Äpfel\":3,\"äpfel\":5}"
+        },
+        {
+          "hash": "898d6a75e39f0a93b86a87aced3729869d99da26619598039a1937890af867c7",
+          "kanonisch": "{\"datenklasse\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\",\"wert\":\"internal\",\"zaehler\":5},\"eltern\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\",\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WW\",\"zaehler\":7},\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"name\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\",\"wert\":\"Rechnungen 2026\",\"zaehler\":6},\"nur_geraet\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":true,\"zaehler\":4},\"papierkorb\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\",\"wert\":1762800000000,\"zaehler\":8},\"zielordner_ki\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":false,\"zaehler\":1}}",
+          "name": "ordner_ohne_null",
+          "serde_roh": "{\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"eltern\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WW\",\"zaehler\":7,\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\"},\"name\":{\"wert\":\"Rechnungen 2026\",\"zaehler\":6,\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\"},\"datenklasse\":{\"wert\":\"internal\",\"zaehler\":5,\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\"},\"nur_geraet\":{\"wert\":true,\"zaehler\":4,\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\"},\"zielordner_ki\":{\"wert\":false,\"zaehler\":1,\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\"},\"papierkorb\":{\"wert\":1762800000000,\"zaehler\":8,\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\"}}"
+        }
+      ]
+    },
+    "user_id": 7,
+    "zahlen": {
+      "faelle": [
+        {
+          "aus": "1.5",
+          "ein": "1.5",
+          "gueltig": true,
+          "name": "1.5"
+        },
+        {
+          "aus": "0.1",
+          "ein": "0.1",
+          "gueltig": true,
+          "name": "0.1"
+        },
+        {
+          "aus": "1e+21",
+          "ein": "1e21",
+          "gueltig": true,
+          "name": "1e21"
+        },
+        {
+          "aus": "1e-7",
+          "ein": "1e-7",
+          "gueltig": true,
+          "name": "1e-7"
+        },
+        {
+          "aus": "0.00001",
+          "ein": "0.00001",
+          "gueltig": true,
+          "name": "0.00001"
+        },
+        {
+          "aus": "123456789.125",
+          "ein": "123456789.125",
+          "gueltig": true,
+          "name": "123456789.125"
+        },
+        {
+          "aus": "1e+16",
+          "ein": "1e16",
+          "gueltig": true,
+          "name": "1e16"
+        },
+        {
+          "aus": "1000000000000000.0",
+          "ein": "1e15",
+          "gueltig": true,
+          "name": "1e15"
+        },
+        {
+          "aus": "1e+20",
+          "ein": "1e20",
+          "gueltig": true,
+          "name": "1e20"
+        },
+        {
+          "aus": "1.2345678901234568e+22",
+          "ein": "12345678901234567890123",
+          "gueltig": true,
+          "name": "12345678901234567890123"
+        },
+        {
+          "aus": "-2.5e-10",
+          "ein": "-2.5e-10",
+          "gueltig": true,
+          "name": "-2.5e-10"
+        },
+        {
+          "aus": "5e-324",
+          "ein": "5e-324",
+          "gueltig": true,
+          "name": "5e-324"
+        },
+        {
+          "aus": "1.7976931348623157e+308",
+          "ein": "1.7976931348623157e308",
+          "gueltig": true,
+          "name": "1.7976931348623157e308"
+        },
+        {
+          "aus": "100.0",
+          "ein": "100.0",
+          "gueltig": true,
+          "name": "100.0"
+        },
+        {
+          "aus": "100.0",
+          "ein": "1E2",
+          "gueltig": true,
+          "name": "1E2"
+        },
+        {
+          "aus": "-0.0",
+          "ein": "-0",
+          "gueltig": true,
+          "name": "-0"
+        },
+        {
+          "aus": "-0.0",
+          "ein": "-0.0",
+          "gueltig": true,
+          "name": "-0.0"
+        },
+        {
+          "aus": "0.5",
+          "ein": "0.5",
+          "gueltig": true,
+          "name": "0.5"
+        },
+        {
+          "aus": "123456789.0",
+          "ein": "123456.789e3",
+          "gueltig": true,
+          "name": "123456.789e3"
+        },
+        {
+          "aus": "0.0001",
+          "ein": "1e-4",
+          "gueltig": true,
+          "name": "1e-4"
+        },
+        {
+          "aus": "9007199254740993",
+          "ein": "9007199254740993",
+          "gueltig": true,
+          "name": "9007199254740993"
+        },
+        {
+          "aus": "18446744073709551615",
+          "ein": "18446744073709551615",
+          "gueltig": true,
+          "name": "18446744073709551615"
+        },
+        {
+          "aus": "1.8446744073709552e+19",
+          "ein": "18446744073709551616",
+          "gueltig": true,
+          "name": "18446744073709551616"
+        },
+        {
+          "aus": "-9223372036854775808",
+          "ein": "-9223372036854775808",
+          "gueltig": true,
+          "name": "-9223372036854775808"
+        },
+        {
+          "aus": "-9.223372036854776e+18",
+          "ein": "-9223372036854775809",
+          "gueltig": true,
+          "name": "-9223372036854775809"
+        },
+        {
+          "aus": "0",
+          "ein": "0",
+          "gueltig": true,
+          "name": "0"
+        },
+        {
+          "aus": "-1",
+          "ein": "-1",
+          "gueltig": true,
+          "name": "-1"
+        },
+        {
+          "aus": "1.0",
+          "ein": "1e0",
+          "gueltig": true,
+          "name": "1e0"
+        },
+        {
+          "aus": "1.2345678901234568e+17",
+          "ein": "123456789012345678.0",
+          "gueltig": true,
+          "name": "123456789012345678.0"
+        },
+        {
+          "aus": "0.000123",
+          "ein": "0.000123",
+          "gueltig": true,
+          "name": "0.000123"
+        },
+        {
+          "aus": "1.5e+300",
+          "ein": "1.5e300",
+          "gueltig": true,
+          "name": "1.5e300"
+        },
+        {
+          "aus": "0.000025",
+          "ein": "2.5e-5",
+          "gueltig": true,
+          "name": "2.5e-5"
+        },
+        {
+          "aus": "0.30000000000000004",
+          "ein": "0.30000000000000004",
+          "gueltig": true,
+          "name": "0.30000000000000004"
+        },
+        {
+          "aus": "100.0",
+          "ein": "1.0e+2",
+          "gueltig": true,
+          "name": "1.0e+2"
+        },
+        {
+          "aus": "-1e-7",
+          "ein": "-1e-7",
+          "gueltig": true,
+          "name": "-1e-7"
+        },
+        {
+          "aus": "[1.0,-0.0,1e+20,0.1]",
+          "ein": "[1.0,-0.0,1e20,0.1]",
+          "gueltig": true,
+          "name": "[1.0,-0.0,1e20,0.1]"
+        },
+        {
+          "aus": "0.00001",
+          "ein": "1e-5",
+          "gueltig": true,
+          "name": "1e-5"
+        },
+        {
+          "aus": "1e-6",
+          "ein": "1e-6",
+          "gueltig": true,
+          "name": "1e-6"
+        },
+        {
+          "aus": "1.5e-6",
+          "ein": "1.5e-6",
+          "gueltig": true,
+          "name": "1.5e-6"
+        },
+        {
+          "aus": "9.99e-7",
+          "ein": "9.99e-7",
+          "gueltig": true,
+          "name": "9.99e-7"
+        },
+        {
+          "aus": "9007199254740992.0",
+          "ein": "9007199254740992.0",
+          "gueltig": true,
+          "name": "9007199254740992.0"
+        },
+        {
+          "aus": "1e+22",
+          "ein": "1e22",
+          "gueltig": true,
+          "name": "1e22"
+        },
+        {
+          "aus": "4.35",
+          "ein": "4.35",
+          "gueltig": true,
+          "name": "4.35"
+        },
+        {
+          "aus": null,
+          "ein": "01",
+          "gueltig": false,
+          "name": "01"
+        },
+        {
+          "aus": null,
+          "ein": "1.",
+          "gueltig": false,
+          "name": "1."
+        },
+        {
+          "aus": null,
+          "ein": ".5",
+          "gueltig": false,
+          "name": ".5"
+        },
+        {
+          "aus": null,
+          "ein": "+1",
+          "gueltig": false,
+          "name": "+1"
+        },
+        {
+          "aus": null,
+          "ein": "-",
+          "gueltig": false,
+          "name": "-"
+        },
+        {
+          "aus": null,
+          "ein": "1e",
+          "gueltig": false,
+          "name": "1e"
+        },
+        {
+          "aus": null,
+          "ein": "1e+",
+          "gueltig": false,
+          "name": "1e+"
+        },
+        {
+          "aus": null,
+          "ein": "1e999",
+          "gueltig": false,
+          "name": "1e999"
+        },
+        {
+          "aus": null,
+          "ein": "--1",
+          "gueltig": false,
+          "name": "--1"
+        },
+        {
+          "aus": null,
+          "ein": "1.e5",
+          "gueltig": false,
+          "name": "1.e5"
+        },
+        {
+          "aus": null,
+          "ein": "0x10",
+          "gueltig": false,
+          "name": "0x10"
+        },
+        {
+          "aus": null,
+          "ein": "NaN",
+          "gueltig": false,
+          "name": "NaN"
+        },
+        {
+          "aus": null,
+          "ein": "Infinity",
+          "gueltig": false,
+          "name": "Infinity"
+        },
+        {
+          "aus": null,
+          "ein": "1_000",
+          "gueltig": false,
+          "name": "1_000"
+        },
+        {
+          "aus": null,
+          "ein": "- 1",
+          "gueltig": false,
+          "name": "- 1"
+        },
+        {
+          "aus": null,
+          "ein": "1 2",
+          "gueltig": false,
+          "name": "1 2"
+        }
+      ],
+      "nicht_endlich": [
+        {
+          "aus": "null",
+          "name": "unendlich"
+        },
+        {
+          "aus": "null",
+          "name": "minus_unendlich"
+        },
+        {
+          "aus": "null",
+          "name": "nan"
+        }
+      ]
+    },
+    "zusammenfuehren": {
+      "datei": {
+        "a": "{\"blob_refs\":[\"1111111111111111111111111111111111111111111111111111111111111111\",\"2222222222222222222222222222222222222222222222222222222222222222\",\"3333333333333333333333333333333333333333333333333333333333333333\"],\"entfernt\":[],\"fassungen\":[{\"blob\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"size\":1234,\"texte\":[{\"blob\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"size\":420,\"stand\":\"ok\",\"textrev\":\"aa\"}],\"typ\":\"txt\",\"vorgaenger\":null,\"zeit\":1762700000000},{\"blob\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W3\",\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"original_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"size\":99,\"texte\":[],\"typ\":\"txt\",\"vorgaenger\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"zeit\":1762700100000}],\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"klasse_min\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"public\",\"zaehler\":1},\"name\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"Vertrag alt.pdf\",\"zaehler\":2},\"nur_a\":1,\"nur_geraet_min\":false,\"ordner\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":3},\"papierkorb\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":null,\"zaehler\":1},\"wahlen\":[{\"ersetzt\":[],\"gegen\":[\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\"],\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"gewaehlt\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W3\",\"id\":\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W4\",\"zaehler\":4}],\"zukunft\":{\"a\":1}}",
+        "b": "{\"blob_refs\":[\"1111111111111111111111111111111111111111111111111111111111111111\",\"4444444444444444444444444444444444444444444444444444444444444444\"],\"entfernt\":[\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W3\"],\"fassungen\":[{\"blob\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"size\":1234,\"texte\":[{\"blob\":\"\",\"code\":\"extrakt.zeit\",\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"size\":420,\"stand\":\"fehler\",\"textrev\":\"aa\",\"versuche\":2,\"versuche_zeit\":1},{\"blob\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"size\":420,\"stand\":\"ok\",\"textrev\":\"bb\"}],\"typ\":\"txt\",\"vorgaenger\":null,\"zeit\":1762700000000},{\"blob\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W6\",\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"original_sha256\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"size\":7,\"texte\":[],\"typ\":\"txt\",\"vorgaenger\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W3\",\"zeit\":1762700200000}],\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"klasse_min\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"internal\",\"zaehler\":1},\"name\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\",\"wert\":\"Vertrag neu.pdf\",\"zaehler\":5},\"nur_b\":true,\"nur_geraet_min\":true,\"ordner\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\",\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WZ\",\"zaehler\":3},\"papierkorb\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\",\"wert\":1762800000000,\"zaehler\":6},\"wahlen\":[{\"ersetzt\":[],\"gegen\":[\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\"],\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"gewaehlt\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W3\",\"id\":\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W4\",\"zaehler\":4},{\"ersetzt\":[\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W4\"],\"gegen\":[\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W3\"],\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\",\"gewaehlt\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W6\",\"id\":\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W7\",\"zaehler\":6}],\"zukunft\":{\"a\":2}}",
+        "ergebnis": "{\"blob_refs\":[\"1111111111111111111111111111111111111111111111111111111111111111\",\"3333333333333333333333333333333333333333333333333333333333333333\",\"4444444444444444444444444444444444444444444444444444444444444444\"],\"entfernt\":[\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W3\"],\"fassungen\":[{\"blob\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"size\":1234,\"texte\":[{\"blob\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"size\":420,\"stand\":\"ok\",\"textrev\":\"aa\"},{\"blob\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"size\":420,\"stand\":\"ok\",\"textrev\":\"bb\"}],\"typ\":\"txt\",\"vorgaenger\":null,\"zeit\":1762700000000},{\"blob\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W6\",\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"original_sha256\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"size\":7,\"texte\":[],\"typ\":\"txt\",\"vorgaenger\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W3\",\"zeit\":1762700200000}],\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"klasse_min\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"public\",\"zaehler\":1},\"name\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\",\"wert\":\"Vertrag neu.pdf\",\"zaehler\":5},\"nur_a\":1,\"nur_b\":true,\"nur_geraet_min\":true,\"ordner\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\",\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WZ\",\"zaehler\":3},\"papierkorb\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\",\"wert\":1762800000000,\"zaehler\":6},\"wahlen\":[{\"ersetzt\":[],\"gegen\":[\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\"],\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"gewaehlt\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W3\",\"id\":\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W4\",\"zaehler\":4},{\"ersetzt\":[\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W4\"],\"gegen\":[\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W3\"],\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\",\"gewaehlt\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W6\",\"id\":\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W7\",\"zaehler\":6}],\"zukunft\":{\"a\":2}}",
+        "ergebnis_hash": "01800fc7faa5a5418a87687f21461e87dc425a4c94e8bf4c8111f25a1578eb04",
+        "ergebnis_hub_refs": [
+          "1156e064ff77cbf106649899929afe3cd09718444ac9673323076425dc2cd4a1",
+          "8878265121ab9802e9b05097e6ae124cf2d34ffb507fb0314f26071bd9a028b6",
+          "b0e6002958e8fd75a79bfbe7480610357c9b760f37ae1a5caab49124ed704e44"
+        ]
+      },
+      "gleiche_kennung": {
+        "serde_roh": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":3,\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\"},\"name\":{\"wert\":\"Mietvertrag Köln.txt\",\"zaehler\":2,\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\"},\"nur_geraet_min\":false,\"fassungen\":[{\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"vorgaenger\":null,\"blob\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"size\":10,\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"typ\":\"txt\",\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"zeit\":1762700000000,\"texte\":[{\"textrev\":\"aa\",\"blob\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"size\":420,\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"stand\":\"ok\"},{\"textrev\":\"aa\",\"blob\":\"\",\"size\":420,\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"stand\":\"fehler\",\"code\":\"extrakt.zeit\",\"versuche\":2,\"versuche_zeit\":1}]},{\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"vorgaenger\":null,\"blob\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"size\":10,\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"typ\":\"txt\",\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"zeit\":1762700900000,\"texte\":[]}],\"wahlen\":[{\"id\":\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W4\",\"gewaehlt\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"gegen\":[],\"ersetzt\":[],\"zaehler\":1,\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\"},{\"id\":\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W4\",\"gewaehlt\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"gegen\":[],\"ersetzt\":[],\"zaehler\":2,\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\"},{\"id\":\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W4\",\"gewaehlt\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"gegen\":[\"x\"],\"ersetzt\":[],\"zaehler\":0,\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\"}],\"entfernt\":[],\"blob_refs\":[],\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\"}}",
+        "treu_hash": "64df6ac8b1f518931f37e3c86a8c2abf46c7b32844e2037bacc9a8604bd871e2",
+        "treu_kanonisch": "{\"blob_refs\":[\"1111111111111111111111111111111111111111111111111111111111111111\",\"3333333333333333333333333333333333333333333333333333333333333333\"],\"entfernt\":[],\"fassungen\":[{\"blob\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"size\":10,\"texte\":[{\"blob\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"size\":420,\"stand\":\"ok\",\"textrev\":\"aa\"},{\"blob\":\"\",\"code\":\"extrakt.zeit\",\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"size\":420,\"stand\":\"fehler\",\"textrev\":\"aa\",\"versuche\":2,\"versuche_zeit\":1}],\"typ\":\"txt\",\"vorgaenger\":null,\"zeit\":1762700000000},{\"blob\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"size\":10,\"texte\":[],\"typ\":\"txt\",\"vorgaenger\":null,\"zeit\":1762700900000}],\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"klasse_min\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"public\",\"zaehler\":1},\"name\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"Mietvertrag Köln.txt\",\"zaehler\":2},\"nur_geraet_min\":false,\"ordner\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":3},\"papierkorb\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":null,\"zaehler\":1},\"wahlen\":[{\"ersetzt\":[],\"gegen\":[],\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"gewaehlt\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"id\":\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W4\",\"zaehler\":1},{\"ersetzt\":[],\"gegen\":[],\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"gewaehlt\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"id\":\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W4\",\"zaehler\":2},{\"ersetzt\":[],\"gegen\":[\"x\"],\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"gewaehlt\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"id\":\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W4\",\"zaehler\":0}]}",
+        "verdichtet_hash": "acc00f3a17742e0fdee5ce0f9e198d8b4e7e7b28f4208491fad54776931e8c7b",
+        "verdichtet_kanonisch": "{\"blob_refs\":[\"1111111111111111111111111111111111111111111111111111111111111111\",\"3333333333333333333333333333333333333333333333333333333333333333\"],\"entfernt\":[],\"fassungen\":[{\"blob\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"size\":10,\"texte\":[{\"blob\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"size\":420,\"stand\":\"ok\",\"textrev\":\"aa\"}],\"typ\":\"txt\",\"vorgaenger\":null,\"zeit\":1762700900000}],\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"klasse_min\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"public\",\"zaehler\":1},\"name\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"Mietvertrag Köln.txt\",\"zaehler\":2},\"nur_geraet_min\":false,\"ordner\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":3},\"papierkorb\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":null,\"zaehler\":1},\"wahlen\":[{\"ersetzt\":[],\"gegen\":[\"x\"],\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"gewaehlt\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"id\":\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W4\",\"zaehler\":0}]}"
+      },
+      "ordner": {
+        "a": "{\"datenklasse\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"erbt\",\"zaehler\":1},\"eltern\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":null,\"zaehler\":1},\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"name\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"Verträge\",\"zaehler\":2},\"nur_geraet\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":false,\"zaehler\":1},\"papierkorb\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":null,\"zaehler\":1},\"zielordner_ki\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":false,\"zaehler\":1},\"zukunft\":{\"a\":[1]}}",
+        "b": "{\"datenklasse\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\",\"wert\":\"internal\",\"zaehler\":3},\"eltern\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\",\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WW\",\"zaehler\":2},\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"name\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"Verträge alt\",\"zaehler\":2},\"neu\":null,\"nur_geraet\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":true,\"zaehler\":1},\"papierkorb\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":1762800000000,\"zaehler\":2},\"zielordner_ki\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\",\"wert\":true,\"zaehler\":0},\"zukunft\":{\"a\":[2]}}",
+        "ergebnis": "{\"datenklasse\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\",\"wert\":\"internal\",\"zaehler\":3},\"eltern\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\",\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WW\",\"zaehler\":2},\"id\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"name\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"Verträge alt\",\"zaehler\":2},\"neu\":null,\"nur_geraet\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":true,\"zaehler\":1},\"papierkorb\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":1762800000000,\"zaehler\":2},\"zielordner_ki\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":false,\"zaehler\":1},\"zukunft\":{\"a\":[2]}}",
+        "ergebnis_hash": "848eafc5beae7d972a736a824839c96cb993e32234d1269aa4dc33f8ea4ed3e5"
+      },
+      "unsortiert": {
+        "hub_refs": [
+          "1156e064ff77cbf106649899929afe3cd09718444ac9673323076425dc2cd4a1",
+          "2c60a72d447c1fb63808160c83ead242127f941e17cfd0bdab37477e40c0fe6a",
+          "8878265121ab9802e9b05097e6ae124cf2d34ffb507fb0314f26071bd9a028b6",
+          "b0e6002958e8fd75a79bfbe7480610357c9b760f37ae1a5caab49124ed704e44"
+        ],
+        "serde_roh": "{\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"ordner\":{\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":3,\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\"},\"name\":{\"wert\":\"Mietvertrag Köln.txt\",\"zaehler\":2,\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\"},\"klasse_min\":{\"wert\":\"public\",\"zaehler\":1,\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\"},\"nur_geraet_min\":false,\"fassungen\":[{\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W3\",\"vorgaenger\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"blob\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"size\":18446744073709551615,\"original_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"typ\":\"txt\",\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\",\"zeit\":1762700100000,\"texte\":[{\"textrev\":\"ff\",\"blob\":\"\",\"size\":420,\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"stand\":\"fehler\",\"code\":\"extrakt.zeit\",\"versuche\":2,\"versuche_zeit\":1}]},{\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"vorgaenger\":null,\"blob\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"size\":1234,\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"typ\":\"txt\",\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"zeit\":1762700000000,\"texte\":[{\"textrev\":\"bb\",\"blob\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"size\":420,\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"stand\":\"kein_text\"},{\"textrev\":\"aa\",\"blob\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"size\":420,\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"stand\":\"ok\"}]}],\"wahlen\":[{\"id\":\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W7\",\"gewaehlt\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W3\",\"gegen\":[\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\"],\"ersetzt\":[\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W4\"],\"zaehler\":9007199254740993,\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\"},{\"id\":\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W4\",\"gewaehlt\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"gegen\":[],\"ersetzt\":[],\"zaehler\":5,\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\"}],\"entfernt\":[\"fas_01HZX3K9M2N4P5Q6R7S8T9V0WB\",\"fas_01HZX3K9M2N4P5Q6R7S8T9V0WA\",\"fas_01HZX3K9M2N4P5Q6R7S8T9V0WB\"],\"blob_refs\":[\"veraltet\"],\"papierkorb\":{\"wert\":null,\"zaehler\":1,\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\"},\"zusatz\":{\"alpha\":[1,2.5,\"x\"],\"u\":\"ü\",\"zeta\":null}}",
+        "sortiert_hash": "eddb3e2a637c50a9c42034d60a0dd6770e674fc81a76c746df881c6f59a24d9c",
+        "sortiert_kanonisch": "{\"blob_refs\":[\"1111111111111111111111111111111111111111111111111111111111111111\",\"2222222222222222222222222222222222222222222222222222222222222222\",\"3333333333333333333333333333333333333333333333333333333333333333\",\"4444444444444444444444444444444444444444444444444444444444444444\"],\"entfernt\":[\"fas_01HZX3K9M2N4P5Q6R7S8T9V0WA\",\"fas_01HZX3K9M2N4P5Q6R7S8T9V0WB\"],\"fassungen\":[{\"blob\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"size\":1234,\"texte\":[{\"blob\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"size\":420,\"stand\":\"ok\",\"textrev\":\"aa\"},{\"blob\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"size\":420,\"stand\":\"kein_text\",\"textrev\":\"bb\"}],\"typ\":\"txt\",\"vorgaenger\":null,\"zeit\":1762700000000},{\"blob\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W3\",\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\",\"original_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"size\":18446744073709551615,\"texte\":[{\"blob\":\"\",\"code\":\"extrakt.zeit\",\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"size\":420,\"stand\":\"fehler\",\"textrev\":\"ff\",\"versuche\":2,\"versuche_zeit\":1}],\"typ\":\"txt\",\"vorgaenger\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"zeit\":1762700100000}],\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"klasse_min\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"public\",\"zaehler\":1},\"name\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"Mietvertrag Köln.txt\",\"zaehler\":2},\"nur_geraet_min\":false,\"ordner\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":3},\"papierkorb\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":null,\"zaehler\":1},\"wahlen\":[{\"ersetzt\":[],\"gegen\":[],\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"gewaehlt\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"id\":\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W4\",\"zaehler\":5},{\"ersetzt\":[\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W4\"],\"gegen\":[\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\"],\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\",\"gewaehlt\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W3\",\"id\":\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W7\",\"zaehler\":9007199254740993}],\"zusatz\":{\"alpha\":[1,2.5,\"x\"],\"u\":\"ü\",\"zeta\":null}}",
+        "treu_hash": "9b578261a4ea766f7501a1920964952ab67f3b3c4f934095c7e2692c7075622e",
+        "treu_kanonisch": "{\"blob_refs\":[\"1111111111111111111111111111111111111111111111111111111111111111\",\"2222222222222222222222222222222222222222222222222222222222222222\",\"3333333333333333333333333333333333333333333333333333333333333333\",\"4444444444444444444444444444444444444444444444444444444444444444\"],\"entfernt\":[\"fas_01HZX3K9M2N4P5Q6R7S8T9V0WB\",\"fas_01HZX3K9M2N4P5Q6R7S8T9V0WA\",\"fas_01HZX3K9M2N4P5Q6R7S8T9V0WB\"],\"fassungen\":[{\"blob\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W3\",\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\",\"original_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"size\":18446744073709551615,\"texte\":[{\"blob\":\"\",\"code\":\"extrakt.zeit\",\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"size\":420,\"stand\":\"fehler\",\"textrev\":\"ff\",\"versuche\":2,\"versuche_zeit\":1}],\"typ\":\"txt\",\"vorgaenger\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"zeit\":1762700100000},{\"blob\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"fas\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"original_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"size\":1234,\"texte\":[{\"blob\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"size\":420,\"stand\":\"kein_text\",\"textrev\":\"bb\"},{\"blob\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"extraktor\":\"lva-text\",\"extraktor_version\":\"1\",\"marken_version\":1,\"size\":420,\"stand\":\"ok\",\"textrev\":\"aa\"}],\"typ\":\"txt\",\"vorgaenger\":null,\"zeit\":1762700000000}],\"id\":\"dat_01HZX3K9M2N4P5Q6R7S8T9V0WY\",\"klasse_min\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"public\",\"zaehler\":1},\"name\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"Mietvertrag Köln.txt\",\"zaehler\":2},\"nur_geraet_min\":false,\"ordner\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":\"ord_01HZX3K9M2N4P5Q6R7S8T9V0WX\",\"zaehler\":3},\"papierkorb\":{\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"wert\":null,\"zaehler\":1},\"wahlen\":[{\"ersetzt\":[\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W4\"],\"gegen\":[\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\"],\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W5\",\"gewaehlt\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W3\",\"id\":\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W7\",\"zaehler\":9007199254740993},{\"ersetzt\":[],\"gegen\":[],\"geraet\":\"g_01HZX3K9M2N4P5Q6R7S8T9V0W1\",\"gewaehlt\":\"fas_01HZX3K9M2N4P5Q6R7S8T9V0W2\",\"id\":\"wahl_01HZX3K9M2N4P5Q6R7S8T9V0W4\",\"zaehler\":5}],\"zusatz\":{\"alpha\":[1,2.5,\"x\"],\"u\":\"ü\",\"zeta\":null}}"
+      }
+    }
+  }
+}

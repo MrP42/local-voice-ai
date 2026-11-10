@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Buch-Ordner und Projekte</title>
+<style>
+:root{
+  --bg:#f5f5f5;--pane:#ffffff;--pane2:#fafafa;--line:#e0e0e0;--text:#242424;--muted:#616161;
+  --accent:#0f6cbd;--accent-soft:#ebf3fc;--sel:#e6eef8;--ok:#0e700e;--warn:#bc4b09;--chip:#f0f0f0;
+}
+:root[data-theme="dark"]{
+  --bg:#1f1f1f;--pane:#292929;--pane2:#2e2e2e;--line:#3d3d3d;--text:#ffffff;--muted:#c7c7c7;
+  --accent:#479ef5;--accent-soft:#1a2c40;--sel:#243447;--ok:#54b054;--warn:#f1a35c;--chip:#383838;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overflow:hidden}
+body{font:14px/1.45 "Segoe UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text)}
+svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.app{display:grid;grid-template-rows:44px 1fr 32px;height:100%}
+.top{display:flex;align-items:center;gap:12px;padding:0 12px;border-bottom:1px solid var(--line);background:var(--pane)}
+.top b{font-weight:600}
+.top .ziel{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:4px 10px;min-height:44px;background:none;font:inherit;cursor:pointer}
+.top .ziel strong{color:var(--text);font-weight:600}
+.main{display:grid;grid-template-columns:56px 1fr;min-height:0}
+.nav{display:flex;flex-direction:column;gap:4px;padding:8px;border-right:1px solid var(--line);background:var(--pane)}
+.nav a{display:grid;place-items:center;width:40px;height:44px;border-radius:6px;color:var(--muted)}
+.nav a.on{background:var(--sel);color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}
+.status{display:flex;align-items:center;gap:16px;padding:0 12px;font-size:12px;color:var(--muted);border-top:1px solid var(--line);background:var(--pane)}
+.work{display:grid;grid-template-columns:232px 300px minmax(380px,1fr) 300px;gap:12px;padding:12px;min-height:0}
+.col{background:var(--pane);border:1px solid var(--line);border-radius:8px;min-height:0;overflow:auto;display:flex;flex-direction:column}
+.colhead{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);font-weight:600;min-height:48px}
+.colhead .sp{margin-left:auto;display:flex;gap:2px}
+.ib{flex:none;display:grid;place-items:center;width:44px;height:44px;border-radius:6px;color:var(--muted);border:0;background:none}
+.grp{padding:12px 12px 4px;font-size:12px;font-weight:600;color:var(--muted);display:flex;align-items:center;gap:6px}
+.row{display:flex;align-items:center;gap:10px;padding:0 12px;min-height:44px;color:var(--text);border-radius:6px;margin:0 6px}
+.row.on{background:var(--sel)}
+.row.on .nm{font-weight:600}
+.row .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .ct{font-size:12px;color:var(--muted)}
+.row.sub{padding-left:30px}
+.mini{width:22px;height:30px;border-radius:2px;flex:none;background:linear-gradient(160deg,#7b3fa0,#3b1a52)}
+.mini.b2{background:linear-gradient(160deg,#cfe6df,#7aa58f)}
+.mini.b3{background:linear-gradient(160deg,#1d3557,#457b9d)}
+.mini.b4{background:linear-gradient(160deg,#d9a441,#7a4e12)}
+.bar{height:3px;background:var(--line);border-radius:2px;overflow:hidden;width:36px}
+.bar i{display:block;height:100%;background:var(--accent)}
+.folderhead{display:flex;gap:12px;padding:12px;border-bottom:1px solid var(--line)}
+.cover{width:64px;height:88px;border-radius:3px;background:linear-gradient(160deg,#7b3fa0,#3b1a52);flex:none;display:grid;place-items:center;color:#ffd84d;font-weight:800;font-size:11px;text-align:center;line-height:1.1}
+.folderhead h2{font-size:15px;margin:0 0 2px;line-height:1.3}
+.folderhead p{margin:0;color:var(--muted);font-size:12px}
+.btn{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 12px;border-radius:6px;border:1px solid var(--line);background:var(--pane);color:var(--text);font:inherit;font-weight:600}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn svg{width:16px;height:16px}
+.it{display:flex;align-items:center;gap:10px;padding:6px 12px;min-height:52px;margin:0 6px;border-radius:6px}
+.it.on{background:var(--sel)}
+.it .tx{flex:1;min-width:0}
+.it .tx b{display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.it .tx span{font-size:12px;color:var(--muted)}
+.it .ico{color:var(--muted)}
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:1px 8px;border-radius:10px;background:var(--chip);color:var(--muted)}
+.chip.ok{color:var(--ok)}.chip.warn{color:var(--warn)}
+.reader{padding:20px 28px;font-family:Georgia,"Times New Roman",serif;font-size:17px;line-height:1.7}
+.reader h1{font-size:22px;line-height:1.3;margin:0 0 12px}
+.crumb{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);padding:10px 16px;border-bottom:1px solid var(--line);min-height:48px;font-family:"Segoe UI",system-ui,sans-serif}
+.crumb b{color:var(--text)}
+.player{margin-top:auto;border-top:1px solid var(--line);padding:10px 16px;display:flex;align-items:center;gap:12px;font-size:13px}
+.play{width:44px;height:44px;border-radius:50%;background:var(--accent);color:#fff;display:grid;place-items:center}
+.tabs{display:flex;gap:4px;padding:0 8px;border-bottom:1px solid var(--line)}
+.tabs span{padding:12px 10px;min-height:44px;color:var(--muted)}
+.tabs span.on{color:var(--text);font-weight:600;box-shadow:inset 0 -2px 0 var(--accent)}
+.toc .row{min-height:44px;font-size:13px}
+.note{font-size:12px;color:var(--muted);padding:8px 12px}
+/* Projektseite */
+.proj{grid-template-columns:232px minmax(0,1fr) 340px}
+.phead{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.phead h2{margin:0;font-size:20px}
+.phead .sp{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+.tbl{width:100%;border-collapse:collapse}
+.tbl th{font-size:12px;color:var(--muted);text-align:left;font-weight:600;padding:8px 12px;border-bottom:1px solid var(--line)}
+.tbl td{padding:6px 12px;border-bottom:1px solid var(--line);height:48px}
+.tbl tr.gh td{font-size:12px;font-weight:600;color:var(--muted);height:36px;background:var(--pane2)}
+.sw{width:40px;height:20px;border-radius:10px;background:var(--line);position:relative;display:inline-block;vertical-align:middle}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:var(--muted)}
+.sw.on{background:var(--accent)}.sw.on::after{left:23px;background:#fff}
+.swcell{display:flex;align-items:center;gap:8px;min-height:44px;border:0;background:none;color:inherit;font:inherit;padding:0 4px;min-width:44px;cursor:pointer}
+.ctx{padding:12px 16px}
+.meter{height:8px;border-radius:4px;background:var(--line);overflow:hidden;margin:8px 0 4px}
+.meter i{display:block;height:100%;background:var(--accent)}
+.box{border:1px solid var(--line);border-radius:8px;padding:12px;margin:12px 16px;background:var(--pane2)}
+.box h3{margin:0 0 6px;font-size:14px}
+.chat{margin:12px 16px;display:flex;flex-direction:column;gap:8px}
+.bub{padding:8px 12px;border-radius:8px;background:var(--pane2);border:1px solid var(--line);font-size:13px}
+.bub.me{align-self:flex-end;background:var(--accent-soft);border-color:transparent}
+/* Ablage */
+.tree{font-family:Consolas,"Cascadia Mono",monospace;font-size:13px;padding:12px 16px;line-height:1.9}
+.tree .d{color:var(--accent);font-weight:600}
+.tree .c{color:var(--muted)}
+.dlg{position:fixed;inset:0;background:rgba(0,0,0,.4);display:grid;place-items:center;padding:16px}
+.dlg .card{background:var(--pane);border:1px solid var(--line);border-radius:8px;max-width:520px;width:100%;padding:20px;box-shadow:0 16px 48px rgba(0,0,0,.3)}
+.dlg h3{margin:0 0 8px;font-size:18px}
+.dlg ul{margin:8px 0 16px;padding-left:20px}
+.dlg .acts{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.back{display:none;align-items:center;gap:4px;padding:2px 6px;border-bottom:1px solid var(--line);font-weight:600}
+.back-r{display:none}
+.work.zust{grid-template-columns:232px minmax(0,1fr)}
+.hidden{display:none!important}
+/* Breiten */
+@media (max-width:1439px){.work{grid-template-columns:200px 280px minmax(380px,1fr)}.work .rc{display:none}.proj{grid-template-columns:200px minmax(0,1fr) 300px}}
+@media (min-width:2200px){.work{grid-template-columns:260px 360px minmax(380px,1fr) 400px}}
+@media (max-width:999px){.work{grid-template-columns:64px 260px minmax(0,1fr)}.work .fl .lbl{display:none}.work .fl .row{padding:0;justify-content:center;margin:0 6px}.work .fl .colhead .sp{display:none}.proj{grid-template-columns:64px minmax(0,1fr)}.proj .rc2{display:none}}
+@media (max-width:620px){
+  .main{grid-template-columns:1fr}.nav{display:none}
+  .work,.proj,.work.zust{grid-template-columns:1fr;padding:8px}
+  .work .fl .lbl{display:inline}
+  body:not([data-ebene="ordner"]) .fl{display:none}
+  body:not([data-ebene="liste"]) .ls{display:none}
+  body:not([data-ebene="reader"]) .rd{display:none}
+  .proj .fl{display:none}.proj .rc2{display:none}
+  .top .ziel span.lang{display:none}
+  .reader{padding:16px;font-size:16px}
+  .back{display:flex}.back-r{display:grid;margin-left:-12px}
+  .tbl .hide-s{display:none}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="top">
+    <svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+    <b>Local Voice AI</b>
+    <button class="ziel" id="ziel" title="Neue Ausgaben werden in diesem Projekt gespeichert" aria-label="Ausgabeziel wählen">
+      <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+      <span class="lang">Speichert in:</span> <strong>Finanzwissen</strong>
+      <svg viewBox="0 0 24 24" style="width:14px;height:14px"><path d="m6 9 6 6 6-6"/></svg>
+    </button>
+  </div>
+  <div class="main">
+    <nav class="nav" aria-label="Bereiche">
+      <a title="Start"><svg viewBox="0 0 24 24"><path d="M3 11 12 4l9 7v9H3z"/></svg></a>
+      <a title="Verlauf"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2"/></svg></a>
+      <a title="Aufnahmen"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/></svg></a>
+      <a class="on" title="Vorlesen" id="nav-vorlesen"><svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4zM15.5 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"/></svg></a>
+      <a title="Bibliothek"><svg viewBox="0 0 24 24"><path d="M4 4v16M8 4v16M12 4v16M15 5l5 14"/></svg></a>
+      <a title="Sprachgespräch"><svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/><path d="M9 10v4M12 8.5v7M15 10v4"/></svg></a>
+      <a title="Projekte" id="nav-projekte"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M8 13h8"/></svg></a>
+    </nav>
+
+    <!-- V1/V2: Vorlesen -->
+    <section class="work" id="v-vorlesen">
+      <div class="col fl" aria-label="Ordner">
+        <div class="colhead"><span class="lbl">Vorlesen</span><span class="sp"><button class="ib" aria-label="Hinzufügen"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button><button class="ib" aria-label="Leiste einklappen"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button></span></div>
+        <div class="row" data-k="alle"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span class="nm lbl">Alle</span><span class="ct lbl">14</span></div>
+        <div class="row"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span class="nm lbl">Zuletzt geöffnet</span></div>
+        <div class="grp lbl"><svg viewBox="0 0 24 24" style="width:14px;height:14px"><path d="m6 9 6 6 6-6"/></svg>Bücher</div>
+        <div class="row sub" data-k="buch"><span class="mini"></span><span class="nm lbl">Rich Dad Poor Dad</span><span class="bar lbl"><i style="width:6%"></i></span></div>
+        <div class="row sub"><span class="mini b2"></span><span class="nm lbl">Der Einfache Weg zum Reichtum</span><span class="bar lbl"><i style="width:1%"></i></span></div>
+        <div class="row sub"><span class="mini b3"></span><span class="nm lbl">The Burning Room</span><span class="bar lbl"><i style="width:40%"></i></span></div>
+        <div class="row sub"><span class="mini b4"></span><span class="nm lbl">Alles Idioten!?</span><span class="bar lbl"><i style="width:12%"></i></span></div>
+        <div class="grp lbl"><svg viewBox="0 0 24 24" style="width:14px;height:14px"><path d="m6 9 6 6 6-6"/></svg>Texte</div>
+        <div class="row sub"><svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5"/></svg><span class="nm lbl">Ohne Buch</span><span class="ct lbl">6</span></div>
+        <div class="grp lbl"><svg viewBox="0 0 24 24" style="width:14px;height:14px"><path d="m6 9 6 6 6-6"/></svg>Projekte</div>
+        <div class="row sub"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="nm lbl">Finanzwissen</span><span class="ct lbl">9</span></div>
+        <div class="row sub"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="nm lbl">KI-Strategie LRA</span><span class="ct lbl">23</span></div>
+      </div>
+
+      <div class="col ls" aria-label="Inhalt des Ordners">
+        <div id="ls-buch">
+          <div class="back"><button class="ib" aria-label="Zurück zu den Ordnern"><svg viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></button>Bücher</div>
+          <div class="folderhead">
+            <div class="cover">RICH<br>DAD<br>POOR<br>DAD</div>
+            <div style="min-width:0">
+              <h2>Rich Dad Poor Dad</h2>
+              <p>Kiyosaki, Robert T. · 2 Fassungen</p>
+              <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+                <span class="btn pri"><svg viewBox="0 0 24 24"><path d="M4 5h6a2 2 0 0 1 2 2v12a2 2 0 0 0-2-2H4zM20 5h-6a2 2 0 0 0-2 2v12a2 2 0 0 1 2-2h6z"/></svg>Weiterlesen</span>
+                <button class="ib" aria-label="Weitere Aktionen" style="border:1px solid var(--line)"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button>
+              </div>
+            </div>
+          </div>
+          <div class="grp">Fassungen</div>
+          <div class="it"><span class="ico"><svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg></span><div class="tx"><b>Deutsch · Hauptfassung</b><span>EPUB · 6 % gelesen</span></div></div>
+          <div class="it"><span class="ico"><svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg></span><div class="tx"><b>English</b><span>Übersetzung · 25 % · Hörbuch 11 min</span></div></div>
+          <div class="grp">Hörbuch</div>
+          <div class="it"><span class="ico"><svg viewBox="0 0 24 24"><path d="M3 14v-2a9 9 0 0 1 18 0v2"/><rect x="3" y="14" width="4" height="6" rx="1"/><rect x="17" y="14" width="4" height="6" rx="1"/></svg></span><div class="tx"><b>Hörbuch Deutsch</b><span>35 Teile · 8 h 42 min</span></div><span class="chip ok">Transkript</span></div>
+          <div class="grp">KI-Dokumente</div>
+          <div class="it on"><span class="ico"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/><path d="M19 15l.8 1.7 1.7.8-1.7.8L19 20l-.8-1.7-1.7-.8 1.7-.8z"/></svg></span><div class="tx"><b>Kurzbuch – Buch</b><span>Fassung Deutsch (Haupt) · 11 Kernaussagen</span></div></div>
+          <div class="it"><span class="ico"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/></svg></span><div class="tx"><b>Begriffe</b><span>Fassung English · 42 Einträge</span></div></div>
+          <div class="grp">Notizen und Anhänge</div>
+          <div class="it"><span class="ico"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5zM9 8h6M9 12h6M9 16h4"/></svg></span><div class="tx"><b>Meine Notizen</b><span>3 Notizen</span></div></div>
+          <div class="it"><span class="ico"><svg viewBox="0 0 24 24"><path d="m21 11-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/></svg></span><div class="tx"><b>Cashflow-Tabelle.xlsx</b><span>Anhang · 24 KB</span></div></div>
+          <p class="note">Ablegen auf diese Liste hängt eine Fassung oder einen Anhang an.</p>
+        </div>
+        <div id="ls-alle" class="hidden">
+          <div class="colhead">Alle <span class="sp"><button class="ib" aria-label="Suchen"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg></button></span></div>
+          <div class="grp">Bücher</div>
+          <div class="it"><span class="mini"></span><div class="tx"><b>Rich Dad Poor Dad</b><span>2 Fassungen · Kurzbuch · Hörbuch</span></div></div>
+          <div class="it"><span class="mini b2"></span><div class="tx"><b>Der Einfache Weg zum Reichtum</b><span>Hörbuch · <span style="color:var(--warn)">Transkription fehlgeschlagen</span></span></div></div>
+          <div class="it"><span class="mini b3"></span><div class="tx"><b>The Burning Room</b><span>English · 40 %</span></div></div>
+          <div class="it"><span class="mini b4"></span><div class="tx"><b>Alles Idioten!?</b><span>Deutsch · 12 %</span></div></div>
+          <div class="grp">Texte ohne Buch</div>
+          <div class="it on"><span class="ico"><svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5"/></svg></span><div class="tx"><b>KI-Verordnung Art. 4 Kompetenz</b><span>Webseite · vor 2 Tagen</span></div></div>
+          <div class="it"><span class="ico"><svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5"/></svg></span><div class="tx"><b>Rundschreiben Posteingang</b><span>DOCX · vor 5 Tagen</span></div></div>
+          <div class="it"><span class="ico"><svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5"/></svg></span><div class="tx"><b>Eingefügter Text</b><span>vor 1 Woche</span></div></div>
+        </div>
+      </div>
+
+      <div class="col rd" aria-label="Reader">
+        <div class="crumb"><button class="ib back-r" aria-label="Zurück zur Liste"><svg viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></button><span>Rich Dad Poor Dad</span><span>›</span><b>Kurzbuch – Buch</b><span style="margin-left:auto" class="chip">Deutsch</span></div>
+        <div class="reader" id="reader">
+          <h1>Zwei Väter: Gegensätzliche Geldansichten bringen Kiyosaki dazu, selbstständig zu entscheiden.</h1>
+          Was prägt eigentlich Ihre Vorstellungen von Geld? Für Kiyosaki beginnt diese Frage zu Hause. Er wächst mit zwei Vätern auf, die hart arbeiten und beträchtlich verdienen, aber ganz unterschiedlich über Geld denken.
+        </div>
+        <div class="player"><span>1:38</span><span class="play"><svg viewBox="0 0 24 24"><path d="M7 5v14l11-7z" fill="currentColor"/></svg></span><span style="color:var(--muted)" id="pos">Kernaussage 1 · Satz 15 von 184</span></div>
+      </div>
+
+      <div class="col rc" aria-label="Kapitel, Notizen, Chat">
+        <div class="tabs"><span class="on">Inhalt</span><span>Notizen</span><span>Chat</span></div>
+        <div class="toc" id="toc">
+          <div class="row"><span class="nm">Worum es geht</span><span class="ct">1</span></div>
+          <div class="row"><span class="nm">Für wen</span><span class="ct">2</span></div>
+          <div class="row on"><span class="nm">Zwei Väter</span><span class="ct">3</span></div>
+          <div class="row"><span class="nm">Hamsterrad</span><span class="ct">5</span></div>
+          <div class="row"><span class="nm">Cashflow</span><span class="ct">7</span></div>
+          <div class="row"><span class="nm">Eigene Geschäfte</span><span class="ct">9</span></div>
+          <div class="row"><span class="nm">Finanz- und Gesetzeskenntnisse</span><span class="ct">11</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- V3: Projektseite -->
+    <section class="work proj hidden" id="v-projekt">
+      <div class="col fl" aria-label="Projekte">
+        <div class="colhead"><span class="lbl">Projekte</span><span class="sp"><button class="ib" aria-label="Neues Projekt"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button></span></div>
+        <div class="row on"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="nm lbl">Finanzwissen</span><span class="ct lbl">9</span></div>
+        <div class="row"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="nm lbl">KI-Strategie LRA</span><span class="ct lbl">23</span></div>
+        <div class="row"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="nm lbl">Digitaler Posteingang</span><span class="ct lbl">17</span></div>
+      </div>
+      <div class="col" aria-label="Projekt">
+        <div class="phead">
+          <h2>Finanzwissen</h2><span class="chip">9 Einträge</span>
+          <div class="sp">
+            <span class="btn"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Hinzufügen</span>
+            <span class="btn"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/></svg>Mit Auswahl …</span>
+          </div>
+        </div>
+        <table class="tbl">
+          <thead><tr><th>Eintrag</th><th class="hide-s">Art</th><th>Als Kontext</th></tr></thead>
+          <tbody>
+            <tr class="gh"><td colspan="3">Bücher</td></tr>
+            <tr><td><b>Rich Dad Poor Dad</b><br><span class="chip">als Kurzbuch</span></td><td class="hide-s">Buch-Ordner</td><td><button class="swcell" role="switch" aria-checked="true" aria-label="Als Kontext"><span class="sw on"></span>~9 000 Token</button></td></tr>
+            <tr><td><b>Der Einfache Weg zum Reichtum</b><br><span class="chip warn">kein Text</span></td><td class="hide-s">Buch-Ordner</td><td><button class="swcell" role="switch" aria-checked="false" aria-label="Als Kontext"><span class="sw"></span>—</button></td></tr>
+            <tr class="gh"><td colspan="3">Aufnahmen</td></tr>
+            <tr><td><b>Beratung Altersvorsorge 05.11.</b><br><span class="chip">als Protokoll</span></td><td class="hide-s">Aufnahme</td><td><button class="swcell" role="switch" aria-checked="true" aria-label="Als Kontext"><span class="sw on"></span>~2 400 Token</button></td></tr>
+            <tr class="gh"><td colspan="3">Dateien im Projektordner</td></tr>
+            <tr><td><b>Depotauszug-2026.pdf</b></td><td class="hide-s">Kopie · 180 KB</td><td><button class="swcell" role="switch" aria-checked="true" aria-label="Als Kontext"><span class="sw on"></span>~3 100 Token</button></td></tr>
+            <tr><td><b>Haushaltsplan.xlsx</b></td><td class="hide-s">Kopie · 24 KB</td><td><button class="swcell" role="switch" aria-checked="false" aria-label="Als Kontext"><span class="sw"></span>—</button></td></tr>
+            <tr class="gh"><td colspan="3">Ausgaben</td></tr>
+            <tr><td><b>Vergleich Kiyosaki und Collins</b><br><span class="chip">KI-Dokument · heute</span></td><td class="hide-s">Ergebnis</td><td><button class="swcell" role="switch" aria-checked="false" aria-label="Als Kontext"><span class="sw"></span>—</button></td></tr>
+            <tr><td><b>Recherche ETF-Kosten</b><br><span class="chip">Bericht · 12 Quellen</span></td><td class="hide-s">Recherche</td><td><button class="swcell" role="switch" aria-checked="true" aria-label="Als Kontext"><span class="sw on"></span>~1 800 Token</button></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="col rc2" aria-label="KI im Projekt">
+        <div class="colhead">KI im Projekt</div>
+        <div class="ctx">
+          <b>Kontext: 16 300 von 128 000 Token</b>
+          <div class="meter"><i style="width:13%"></i></div>
+          <span style="font-size:12px;color:var(--muted)">4 Einträge als Kontext · GPT-6.1-Terra</span>
+        </div>
+        <div class="chat">
+          <div class="bub me">Was raten beide Bücher zum Notgroschen, und passt das zu meinem Haushaltsplan?</div>
+          <div class="bub">Kiyosaki empfiehlt … Collins nennt … <span class="chip">Rich Dad Poor Dad, Kap. 5</span> <span class="chip">Beratung 05.11.</span></div>
+        </div>
+        <div class="box"><h3>Ziel für Ergebnisse</h3><span style="font-size:13px;color:var(--muted)">Neue KI-Dokumente, Protokolle und Exporte landen in <b style="color:var(--text)">Finanzwissen › Ausgaben</b>.</span></div>
+      </div>
+    </section>
+
+
+    <!-- V6: Zustände -->
+    <section class="work proj zust hidden" id="v-zustand">
+      <div class="col fl" aria-label="Ordner">
+        <div class="colhead"><span class="lbl">Vorlesen</span></div>
+        <div class="row"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span class="nm lbl">Alle</span></div>
+        <div class="grp lbl">Bücher</div>
+        <div class="row sub" id="z-buchrow"><span class="mini"></span><span class="nm lbl">Rich Dad Poor Dad</span></div>
+        <div class="grp lbl">Projekte</div>
+        <div class="row sub"><span class="nm lbl" style="color:var(--muted)">Noch keine Projekte</span></div>
+      </div>
+      <div class="col" id="z-body"></div>
+    </section>
+    <!-- V4: Ablage im Buchdetail -->
+    <section class="work proj hidden" id="v-ablage" style="grid-template-columns:minmax(0,1fr)">
+      <div class="col" aria-label="Dateien im Buch-Ordner">
+        <div class="phead"><h2>Dateien im Buch-Ordner</h2><span class="chip">Rich Dad Poor Dad</span><div class="sp"><span class="btn"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Im Explorer zeigen</span></div></div>
+        <div class="tree">
+<span class="d">library/01JC…RDPD/</span><br>
+├─ buch.json <span class="c">  Metadaten, Fassungen</span><br>
+├─ cover.jpg<br>
+├─ <span class="d">fassungen/</span><br>
+│  ├─ <span class="d">de-hauptfassung/</span> <span class="c">  state.json, quelle.epub</span><br>
+│  │  └─ <span class="d">ki/dokumente/</span> <span class="c">  Kurzbuch – Buch.md, Begriffe.md</span><br>
+│  └─ <span class="d">en-01JD…/</span> <span class="c">  state.json, Übersetzung</span><br>
+├─ <span class="d">audio/</span> <span class="c">  35 Teile, 8 h 42 min</span><br>
+├─ <span class="d">transkript/</span> <span class="c">  de.md</span><br>
+├─ <span class="d">notizen/</span><br>
+└─ <span class="d">anhaenge/</span> <span class="c">  Cashflow-Tabelle.xlsx</span>
+        </div>
+      </div>
+      <div class="dlg" id="dlg">
+        <div class="card" role="dialog" aria-labelledby="dlgt">
+          <h3 id="dlgt">Bibliothek neu ordnen</h3>
+          <p style="margin:0">Die Texte, Übersetzungen und KI-Dokumente deiner 9 Bücher werden in je einen Buch-Ordner verschoben. Lose Texte bleiben, wo sie sind.</p>
+          <ul>
+            <li>Vorher wird eine Sicherung angelegt (1,2 GB frei nötig).</li>
+            <li>Fortschritt, Lesezeichen und Stimmen bleiben erhalten.</li>
+            <li>Bei Problemen wird angehalten. Vorhandene Dateien werden nie überschrieben; Wiederherstellung aus der Sicherung ist möglich.</li>
+          </ul>
+          <p class="note" style="padding:0 0 12px">Ziel: C:\Users\…\de.wolffappliedai.localvoiceai\library</p>
+          <div class="acts"><span class="btn">Später</span><span class="btn pri">Jetzt ordnen</span></div>
+        </div>
+      </div>
+    </section>
+  </div>
+  <div class="status"><span>Nemotron 3.5</span><span>GPT-6.1-Terra (mittel)</span><span style="margin-left:auto">v0.23.x</span></div>
+</div>
+<script>
+const q = new URLSearchParams(location.search);
+const t = q.get("t") || "hell";
+document.documentElement.dataset.theme = t === "dunkel" ? "dark" : "light";
+document.body.dataset.ebene = q.get("ebene") || "liste";
+const s = q.get("s") || "buch";
+const show = (id) => document.getElementById(id).classList.remove("hidden");
+const hide = (id) => document.getElementById(id).classList.add("hidden");
+if (s === "alle") {
+  hide("ls-buch"); show("ls-alle");
+  document.querySelector('[data-k="alle"]').classList.add("on");
+  document.querySelector(".crumb").innerHTML = '<button class="ib back-r" aria-label="Zurück zur Liste"><svg viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></button><span>Texte</span><span>›</span><b>KI-Verordnung Art. 4 Kompetenz</b>';
+  document.getElementById("reader").innerHTML = '<h1>Artikel 4 – KI-Kompetenz</h1>Die Anbieter und Betreiber von KI-Systemen ergreifen Maßnahmen, um nach besten Kräften sicherzustellen, dass ihr Personal und andere Personen, die in ihrem Auftrag mit dem Betrieb und der Nutzung von KI-Systemen befasst sind, über ein ausreichendes Maß an KI-Kompetenz verfügen.';
+  document.getElementById("pos").textContent = "Absatz 1 von 3";
+  document.querySelector(".player span").textContent = "0:12";
+  document.getElementById("toc").innerHTML = '<div class="row on"><span class="nm">Artikel 4 – KI-Kompetenz</span><span class="ct">1</span></div><div class="row"><span class="nm">Erwägungsgrund 20</span><span class="ct">2</span></div>';
+} else if (s === "buch") {
+  document.querySelector('[data-k="buch"]').classList.add("on");
+}
+if (s === "projekt") { hide("v-vorlesen"); show("v-projekt");
+  document.getElementById("nav-vorlesen").classList.remove("on"); document.getElementById("nav-projekte").classList.add("on"); }
+if (s === "ablage") { hide("v-vorlesen"); show("v-ablage"); if (q.get("dlg") === "0") hide("dlg"); }
+
+const Z = {
+  leer: ['Noch keine Bücher', 'Ziehe ein EPUB, PDF, DOCX oder Hörbuch hierher oder füge es hinzu. Lose Texte findest du unter „Texte“.', '<span class="btn pri">Buch hinzufügen</span><span class="btn">Text einfügen</span>'],
+  projektleer: ['Finanzwissen ist noch leer', 'Ziehe Bücher, Aufnahmen, Texte oder Dateien hierher. App-Inhalte werden verknüpft, Dateien in den Projektordner kopiert.', '<span class="btn pri">Hinzufügen</span>'],
+  fehlt: ['Datei fehlt', 'Die Fassung „English“ von „Rich Dad Poor Dad“ ist nicht mehr an ihrem Ort. Nichts wurde gelöscht; Fortschritt und KI-Dokumente bleiben erhalten.', '<span class="btn pri">Suchen …</span><span class="btn">Aus Sicherung holen</span><span class="btn">Aus Buch entfernen</span>'],
+  ohneziel: ['Kurzbuch erstellen', 'Speichert in: <b>kein Projekt</b>. Das Kurzbuch gehört zur Fassung Deutsch dieses Buchs. Wähle ein Projekt, wenn es dort zusätzlich erscheinen soll.', '<span class="btn">Projekt wählen</span><span class="btn pri">Erstellen</span>'],
+  migfehler: ['Neu ordnen angehalten', 'Für die Seite „The Burning Room“ gibt es den alten und den neuen Ordner. Es wurde nichts überschrieben, nichts zurückgestellt. Alle anderen Bücher bleiben lesbar; Wiederherstellung aus der Sicherung ist möglich.', '<span class="btn pri">Beide Ordner zeigen</span><span class="btn">Sicherung zurückspielen</span><span class="btn">Später</span>'],
+};
+if (Z[s]) { hide("v-vorlesen"); show("v-zustand");
+  const [h, p, a] = Z[s];
+  document.getElementById("z-body").innerHTML = `<div style="max-width:560px;margin:48px auto;padding:0 16px"><h2 style="margin:0 0 8px;font-size:20px">${h}</h2><p style="color:var(--muted);margin:0 0 16px">${p}</p><div style="display:flex;gap:8px;flex-wrap:wrap">${a}</div></div>`;
+  if (s === "leer") document.getElementById("z-buchrow").outerHTML = '<div class="row sub"><span class="nm lbl" style="color:var(--muted)">Noch keine Bücher</span></div>';
+  if (s === "ohneziel") document.getElementById("ziel").innerHTML = '<span class="lang">Speichert in:</span> <strong>kein Projekt</strong>';
+  if (s === "fehlt") document.getElementById("z-buchrow").insertAdjacentHTML("beforeend", '<span class="chip warn lbl">Datei fehlt</span>');
+}
+</script>
+</body>
+</html>

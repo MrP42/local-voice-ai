@@ -175,6 +175,7 @@ export const Composer: React.FC<ComposerProps> = ({
           disabled={disabled}
           value={value}
           aria-label={labels.message}
+          data-testid="chat-input"
           placeholder={labels.placeholder}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={(e) => {
@@ -198,6 +199,7 @@ export const Composer: React.FC<ComposerProps> = ({
                 className={roundBtn}
                 aria-label={labels.add}
                 title={labels.add}
+                data-guide="plus"
                 aria-haspopup="menu"
                 aria-expanded={menuOpen}
                 aria-controls={menuOpen ? menuId : undefined}

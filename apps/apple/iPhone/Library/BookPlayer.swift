@@ -46,6 +46,8 @@ struct BookPlayerScreen: View {
         .background(VoicePalette.background)
         .sheet(isPresented: $chaptersShown) { AudiobookChapterSheet() }
         .sheet(isPresented: $infoShown) { AudiobookInfoSheet() }
+        .overlay(alignment: .bottom) { LanguageNoticeBar() }
+        .animation(.easeInOut(duration: 0.2), value: playback.languageNotice?.id)
     }
 
     private var subtitle: String {
@@ -64,6 +66,7 @@ struct BookPlayerScreen: View {
 
     @ViewBuilder private var trailing: some View {
         HStack(spacing: 0) {
+            LanguageButton()
             if hasText {
                 ReaderAppearanceButton()
                 BookTalkButton(compact: true)
@@ -264,7 +267,6 @@ struct VoiceControls: View {
             HStack {
                 RateMenu()
                 Spacer(); ControlButton(title: "Stimme", systemImage: "person.wave.2") { voices = true }
-                Spacer(); LiveLanguageButton()
                 if SourceMenu.offered { Spacer(); SourceMenu() }
                 Spacer(); SleepMenu()
             }
@@ -273,41 +275,44 @@ struct VoiceControls: View {
     }
 }
 
-/// Quelle wählen: Hörbuch (Sprecher) oder Vorlesestimme, an derselben Textstelle.
+/// Sprache und Quelle wählen: ein Blatt (`LanguageSourceSheet`). Sprache = Sprachfassung des Buchs (lva#344),
+/// Quelle = Hörbuch (Sprecher) oder Vorlesestimme, jeweils an derselben Stelle.
 struct SourceMenu: View {
     @ObservedObject var playback = LibraryPlayback.shared
+    @State private var shown = false
 
-    /// Nur wenn das Buch Text hat und ein Hörbuch existiert (auf dem iPhone oder im Konto).
-    @MainActor static var offered: Bool {
+    /// Hörbuch und Vorlesestimme zur Wahl: nur wenn das Buch Text hat und ein Hörbuch existiert (iPhone oder Konto).
+    @MainActor static var sourcesOffered: Bool {
         let playback = LibraryPlayback.shared, library = PhoneLibrary.shared
         guard let book = playback.book else { return false }
         return library.hasText(book) && (library.hasAudio(book) || library.audioInAccount(book))
     }
 
+    /// Hat das offene Buch mehrere Sprachfassungen oder ist live übersetzbar (lva#358)?
+    @MainActor static var languagesOffered: Bool {
+        let playback = LibraryPlayback.shared
+        guard let book = playback.book, let raw = PhoneLibrary.shared.rawBook(book.id) else { return false }
+        return BookEditions(book: raw).hasLanguages || LiveLanguageSections.offered
+    }
+
+    @MainActor static var offered: Bool { sourcesOffered || languagesOffered }
+
     var body: some View {
-        let library = PhoneLibrary.shared
-        let audioLocal = playback.book.map { library.hasAudio($0) } ?? false
-        Menu {
-            Button { playback.switchSource(to: .audiobook) } label: {
-                if playback.source == .audiobook { Label("Hörbuch", systemImage: "checkmark") }
-                else { Text(audioLocal ? "Hörbuch" : "Hörbuch (erst im Buch laden)") }
-            }.disabled(!audioLocal)
-            Button { playback.switchSource(to: .voice) } label: {
-                if playback.source == .voice { Label("Vorlesestimme", systemImage: "checkmark") } else { Text("Vorlesestimme") }
-            }
-        } label: {
-            // Gleiches Symbol und gleiche Beschriftung in beiden Quellen; die laufende nennt das Menü (Haken) und VoiceOver.
+        let languages = Self.languagesOffered
+        Button { shown = true } label: {
+            // Gleiches Symbol und gleiche Beschriftung in beiden Quellen; die laufende nennt das Blatt (Haken) und VoiceOver.
             VStack(spacing: 2) {
-                Image(systemName: "arrow.left.arrow.right").font(.title2)
-                Text("Quelle").font(.caption2).lineLimit(1).minimumScaleFactor(0.7)
+                Image(systemName: languages ? "globe" : "arrow.left.arrow.right").font(.title2)
+                Text(languages ? "Sprache" : "Quelle").font(.caption2).lineLimit(1).minimumScaleFactor(0.7)
             }
             .foregroundStyle(VoicePalette.text)  // nicht die App-Tönung: Gelb auf hellem Grund ist zu schwach
             .frame(minWidth: 56, minHeight: 44).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Quelle")
+        .accessibilityLabel(languages ? "Sprache und Quelle" : "Quelle")
         .accessibilityValue(playback.source?.title ?? "")
-        .accessibilityHint("Hörbuch oder Vorlesestimme, die Stelle im Buch bleibt")
+        .accessibilityHint(languages ? "Sprache, Hörbuch oder Vorlesestimme, die Stelle im Buch bleibt" : "Hörbuch oder Vorlesestimme, die Stelle im Buch bleibt")
+        .sheet(isPresented: $shown) { LanguageSourceSheet() }
     }
 }
 

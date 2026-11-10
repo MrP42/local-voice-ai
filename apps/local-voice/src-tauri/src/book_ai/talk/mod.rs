@@ -811,6 +811,11 @@ pub fn map_error_code(err: &str) -> &'static str {
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
+/// Läuft gerade eine Frage an das Buch? (Die Buch-Ordner-Migration startet dann nicht.)
+pub(crate) fn is_running() -> bool {
+    RUNNING.load(Ordering::Acquire)
+}
+
 /// Wie lange eine neue Frage auf eine bereits abgebrochene Vorgängerin wartet
 /// (der Lauf der Vorgängerin endet gleich, der Wächter wird frei).
 pub const BUSY_RETRY: Duration = Duration::from_millis(300);
@@ -1061,6 +1066,15 @@ pub async fn book_talk_ask(
     let registration = CancelRegistration::new(&req.request_id);
     let cancel = registration.flag.clone();
     let settings = crate::settings::get_settings(&app);
+    // ADR-0028 E4: Einstufung in Rust vor jedem Modellaufruf (S0, Fehler, leer, zu lang: kein Aufruf).
+    if let Err(e) = crate::assistent::tor::vor_modellaufruf(
+        &req.question,
+        crate::assistent::sprache_aus(&settings.app_language),
+        None,
+    ) {
+        log::warn!("book_talk: Tor hat die Anfrage abgewiesen");
+        return Err(e);
+    }
     // Schalter aus: Fundstellen-Modus statt Fehler (lva#309); die Oberfläche
     // zeigt die Fundstellen mit einem Hinweis.
     let enabled = settings.book_talk_enabled;

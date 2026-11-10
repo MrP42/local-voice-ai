@@ -40,6 +40,12 @@ ignore-build-dependencies = false
 ignore-dev-dependencies = true
 ignore-transitive-dependencies = false
 
+# Die vendorten WAI-Crates (vendor/wai-*) sind eigener, nicht veroeffentlichter Code
+# (`publish = false`, `LicenseRef-WAI-Proprietary`) und gehoeren nicht ins
+# Drittanbieter-Verzeichnis. Externe Vendor-Kopien (rusqlite_migration, sqlx-sqlite)
+# bleiben drin, weil sie publizierte Crates mit eigener Lizenz sind.
+private = { ignore = true }
+
 # tauri-nspanel (macOS-Fensterplugin, Git-Abhaengigkeit ahkohd/tauri-nspanel) hat
 # kein `license`-Feld im Manifest; das Repository liefert MIT und Apache-2.0 als
 # Dateien. Die Pruefsummen gelten fuer den Commit da9c9a8 aus Cargo.lock; bei

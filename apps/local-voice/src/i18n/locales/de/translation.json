@@ -10,7 +10,9 @@
     "cancel": "Abbrechen"
   },
   "sidebar": {
+    "projekte": "Projekte",
     "library": "Bibliothek",
+    "ablage": "Ablage",
     "general": "Allgemein",
     "models": "Modelle",
     "integrations": "Integrationen",
@@ -237,7 +239,7 @@
         "languageModel": "{{language}} · {{name}}",
         "voices_one": "{{count}} Stimme",
         "voices_other": "{{count}} Stimmen",
-        "gatedNeedsVault": "Auf diesem System erst nach Zustimmung zur Klartext-Ablage des Zugangs verfügbar (Schlüsselbund folgt).",
+        "gatedNeedsVault": "Unter Linux erst nach Zustimmung zur Klartext-Ablage des Zugangs verfügbar.",
         "licenseConsent": "Ich habe die Lizenzen gelesen. Nichtkommerzielle Modelle nutze ich nur nichtkommerziell.",
         "licenseOpen": "Lizenz von „{{name}}“ ansehen",
         "access": {
@@ -478,7 +480,7 @@
         "title": "Eigene Stimmen",
           "summary_one": "{{count}} vorhanden",
           "summary_other": "{{count}} vorhanden",
-          "cloneBlocked": "Klonen ist auf diesem System noch gesperrt: Der Gradium-Schlüssel braucht den Schlüsselbund-Tresor, der mit dem nächsten Update kommt. Stimmdateien lassen sich schon importieren.",
+          "cloneBlocked": "Klonen ist unter Linux gesperrt: Der Gradium-Schlüssel braucht einen sicheren Tresor (Windows, macOS). Stimmdateien lassen sich trotzdem importieren.",
         "intro": "Eigene Stimmen importieren oder mit Gradium aus einer Aufnahme erstellen, auch aus vorhandenen Fish-Stimmen. Sie liegen danach lokal im Phonon-Modell und werden ohne Netz benutzt.",
         "noModel": "Es ist noch kein Phonon-Modell installiert. Neue Stimmen werden gespeichert und stehen bereit, sobald auf der Modellseite ein Modell installiert ist.",
         "empty": "Noch keine eigenen Stimmen.",
@@ -551,7 +553,7 @@
           "hint": "Nur für „Stimme erstellen“. Der Schlüssel wird verschlüsselt auf diesem Rechner abgelegt und nur an api.gradium.ai gesendet. Beim Speichern geht nichts ins Netz.",
           "present": "Ein Schlüssel ist gespeichert.",
           "missing": "Kein Schlüssel gespeichert.",
-          "unsupported": "Dieses System kann den Schlüssel nicht verschlüsselt speichern (nur unter Windows). „Stimme erstellen“ ist hier nicht verfügbar.",
+          "unsupported": "Dieses System kann den Schlüssel nicht verschlüsselt speichern (nur unter Windows und macOS). „Stimme erstellen“ ist hier nicht verfügbar.",
           "problem": "Der gespeicherte Schlüssel ist nicht lesbar: {{problem}}",
           "label": "Gradium-API-Schlüssel",
           "placeholder": "API-Schlüssel eingeben",
@@ -1262,6 +1264,61 @@
     "exportEta": "noch etwa {{time}}",
     "exportEtaComputing": "Restzeit wird berechnet",
     "exportSaved": "Gespeichert: {{path}}",
+    "folders": {
+      "label": "Ordner",
+      "all": "Alle",
+      "books": "Bücher",
+      "noBooks": "Noch keine Bücher",
+      "texts": "Texte",
+      "withoutBook": "Ohne Buch",
+      "back": "Zurück",
+      "noBooksHint": "Ziehe ein EPUB, PDF, DOCX oder Hörbuch hierher oder füge es hinzu. Lose Texte findest du unter „Texte“.",
+      "addBook": "Buch hinzufügen",
+      "noLoose": "Keine losen Texte",
+      "noPages": "Noch keine Seiten",
+      "newPage": "Neue Seite",
+      "editions_one": "{{count}} Fassung",
+      "editions_other": "{{count}} Fassungen",
+      "continue": "Weiterlesen",
+      "groupEditions": "Fassungen",
+      "groupAudio": "Hörbuch",
+      "groupAi": "KI-Dokumente",
+      "mainEdition": "Hauptfassung",
+      "audioTitle": "Hörbuch {{lang}}",
+      "audioMeta_one": "{{count}} Teil · {{duration}}",
+      "audioMeta_other": "{{count}} Teile · {{duration}}",
+      "aiMetaMain": "Fassung {{lang}} (Haupt)",
+      "aiMeta": "Fassung {{lang}}",
+      "missing": "Datei fehlt",
+      "missingHint": "Nichts wurde gelöscht.",
+      "backToFolders": "Zurück zu den Ordnern",
+      "backToList": "Zurück zur Liste",
+      "unknownLang": "Sprache unbekannt",
+      "groupFiles": "Notizen und Anhänge",
+      "noFiles": "Noch keine Notizen oder Anhänge.",
+      "loadError": "Notizen und Anhänge konnten nicht geladen werden.",
+      "reload": "Erneut laden",
+      "missingLocal": "Fehlt auf diesem Gerät – vom Hub wiederherstellen oder in der App löschen",
+      "restore": "Vom Hub wiederherstellen",
+      "restoreFile": "{{name}} vom Hub wiederherstellen",
+      "held": "Name kollidiert mit einer anderen Datei – zurückgehalten",
+      "newNote": "Neue Notiz",
+      "noteTitle": "Titel der Notiz",
+      "noteCreate": "Anlegen",
+      "addAttachment": "Anhang hinzufügen",
+      "openFile": "Mit dem Standardprogramm öffnen",
+      "remove": "Entfernen",
+      "removeFile": "„{{name}}“ entfernen",
+      "removeTitle": "Datei entfernen",
+      "removeAsk": "„{{name}}“ in den Papierkorb der Bibliothek legen? Nach dem nächsten Abgleich verschwindet die Datei auch auf deinen anderen Geräten.",
+      "roleNote": "Notiz",
+      "roleAttachment": "Anhang",
+      "roleTranscript": "Transkript",
+      "roleTranscriptOf": "Transkript {{edition}}",
+      "pending": "Noch nicht auf diesem Gerät",
+      "conflict": "Konfliktkopie",
+      "fileError": "Aktion fehlgeschlagen: {{error}}"
+    },
     "pages": {
       "title": "Seiten",
       "create": "Neue Seite",
@@ -2841,9 +2898,82 @@
         "appearance": "Erscheinungsbild",
         "startup": "Start",
         "storage": "Speicher und Dateien",
+        "library": "Bibliothek und Sicherungen",
         "updates": "Updates",
         "input": "Mikrofon",
         "feedback": "Hörbare Rückmeldung"
+      },
+      "libraryLayout": {
+        "title": "Ordnung der Bibliothek",
+        "description": "Jedes Buch hat einen eigenen Ordner mit seinen Fassungen, Übersetzungen und KI-Dokumenten. Lose Texte bleiben unter „projects“.",
+        "loading": "Wird geprüft …",
+        "ordered": "Alle Bücher liegen in ihren Buch-Ordnern.",
+        "pending_one": "{{count}} Seite liegt noch außerhalb ihres Buch-Ordners.",
+        "pending_other": "{{count}} Seiten liegen noch außerhalb ihrer Buch-Ordner.",
+        "nothing": "Es gibt nichts zu ordnen.",
+        "open": "Bibliothek neu ordnen …",
+        "continue": "Neu ordnen fortsetzen",
+        "continueRollback": "Zurücknehmen fortsetzen",
+        "rollback": "Alte Ordnung wiederherstellen …",
+        "stoppedTitle": "Neu ordnen angehalten",
+        "stoppedText": "Es wurde nichts überschrieben und nichts zurückgestellt. Alle anderen Bücher bleiben lesbar; Wiederherstellung aus der Sicherung ist möglich.",
+        "paths": "Betroffene Ordner",
+        "hints": "Übersprungen",
+        "dialogTitle": "Bibliothek neu ordnen?",
+        "dialogText_one": "Der Text, die Übersetzungen und die KI-Dokumente von {{count}} Seite werden in ihren Buch-Ordner verschoben. Lose Texte bleiben, wo sie sind.",
+        "dialogText_other": "Die Texte, Übersetzungen und KI-Dokumente von {{count}} Seiten werden in je einen Buch-Ordner verschoben. Lose Texte bleiben, wo sie sind.",
+        "dialogBackup": "Vorher wird eine Sicherung angelegt ({{needed}} frei nötig).",
+        "dialogKeep": "Fortschritt, Lesezeichen und Stimmen bleiben erhalten.",
+        "dialogStop": "Bei Problemen wird angehalten. Vorhandene Dateien werden nie überschrieben; Wiederherstellung aus der Sicherung ist möglich.",
+        "dialogNoSpace": "Zu wenig freier Speicher: nötig {{needed}}, frei {{free}}. Bitte Platz schaffen, dann erneut versuchen.",
+        "now": "Jetzt ordnen",
+        "later": "Später",
+        "close": "Schließen",
+        "running": "Wird geordnet …",
+        "done_one": "{{count}} Seite wurde in ihren Buch-Ordner verschoben.",
+        "done_other": "{{count}} Seiten wurden in ihre Buch-Ordner verschoben.",
+        "rollbackTitle": "Alte Ordnung wiederherstellen?",
+        "rollbackText": "Die Fassungen gehen aus den Buch-Ordnern zurück unter „projects“. Fortschritt, Lesezeichen und Stimmen bleiben erhalten. Vorhandene Dateien werden nie überschrieben.",
+        "rollbackApply": "Wiederherstellen",
+        "rolledBack_one": "{{count}} Seite liegt wieder unter „projects“.",
+        "rolledBack_other": "{{count}} Seiten liegen wieder unter „projects“.",
+        "backupsTitle": "Sicherungen",
+        "backupsDescription": "Vor jedem Neuordnen entsteht eine Sicherung. Nach 30 Tagen fragt die App, ob sie gelöscht werden darf.",
+        "noBackups": "Keine Sicherungen vorhanden.",
+        "backupRow": "{{date}} · {{files}} Dateien · {{size}}",
+        "expired": "Älter als 30 Tage",
+        "restore": "Zurückspielen …",
+        "delete": "Löschen …",
+        "restoreTitle": "Sicherung vom {{date}} zurückspielen?",
+        "restoreText": "Die Seiten und Dateien der Sicherung werden wieder angelegt. Was heute an ihrer Stelle liegt, geht vorher in einen Papierkorb unter „sicherungen“; nichts wird überschrieben oder endgültig gelöscht.",
+        "restoreApply": "Zurückspielen",
+        "restored_one": "{{count}} Datei wurde zurückgespielt.",
+        "restored_other": "{{count}} Dateien wurden zurückgespielt.",
+        "restoredTrash": "Was weichen musste, liegt in {{path}}.",
+        "deleteTitle": "Sicherung vom {{date}} löschen?",
+        "deleteText": "Die Sicherung ist älter als 30 Tage. Gelöscht lässt sie sich nicht mehr zurückspielen. Deine Bibliothek bleibt unverändert.",
+        "deleteApply": "Löschen",
+        "deleted": "Die Sicherung wurde gelöscht.",
+        "noSyncTitle": "Dieses Laufwerk kann Änderungen nicht sicher festschreiben",
+        "noSyncText": "Das Zurückspielen wurde nicht begonnen; es wurde nichts geändert. Dieses Laufwerk kann nicht garantieren, dass ein Austausch einen Stromausfall oder Absturz übersteht.",
+        "noSyncWays": "Auswege: die Sicherung in einen neuen Ordner auf einem lokalen Laufwerk exportieren, oder den Datenordner auf ein lokales Laufwerk verschieben und das Zurückspielen dort wiederholen.",
+        "noFileSyncTitle": "Dieses Laufwerk kann nicht einmal Dateien sicher festschreiben; Zurückspielen ist hier nicht möglich",
+        "moveDataDir": "Datenordner umziehen: App vollständig beenden (auch im Infobereich), den gesamten Datenordner auf ein lokales Laufwerk verschieben und den neuen Ort einrichten. Die Anleitung erklärt die Schritte je System.",
+        "moveGuide": "Anleitung zum Umzug",
+        "checking": "Prüfe, ob dieses Laufwerk sicher schreiben kann …",
+        "checkFailed": "Das Laufwerk ließ sich nicht prüfen: {{error}}. Es wird nichts zurückgespielt.",
+        "exportBackup": "Sicherung exportieren …",
+        "exportTitle": "Ordner für die exportierte Sicherung wählen",
+        "exported_one": "Die Sicherung wurde mit {{count}} Datei nach {{path}} kopiert und geprüft.",
+        "exported_other": "Die Sicherung wurde mit {{count}} Dateien nach {{path}} kopiert und geprüft.",
+        "exportedNotDurable": "Achtung: Auch dieser Ordner kann Änderungen nicht sicher festschreiben. Für eine verlässliche Kopie bitte ein lokales Laufwerk wählen.",
+        "exportedPartlyChecked": "Nicht jeder Ordner auf dem Weg zum Ziel hat eine verlässliche Kennung (etwa auf einem Netzlaufwerk); dort wurde über eine Prüfmarke sichergestellt, dass das Ziel außerhalb des Datenordners liegt.",
+        "exportOtherAccess": "Das Ziel liegt auf einem anderen Zugang als der Datenordner und lässt sich nicht sicher von ihm unterscheiden. Nichts wurde exportiert. Bitte auf ein lokales Laufwerk exportieren.",
+        "bestEffortLabel": "Trotzdem zurückspielen, ohne Schutz bei Absturz",
+        "bestEffortWarning": "Bricht der Rechner währenddessen ab, kann ein halber Stand bleiben. Die Sicherung und alles, was weichen muss (Papierkorb unter „sicherungen“), bleiben erhalten.",
+        "bestEffortApply": "Trotzdem zurückspielen",
+        "openDataDir": "Datenordner öffnen",
+        "failed": "Das hat nicht geklappt: {{error}}"
       },
       "localUpdateDir": {
         "title": "Lokaler Update-Ordner",
@@ -3426,7 +3556,7 @@
         "hide": "Adresse verbergen",
         "connect": "Verbinden",
         "checking": "Kalender wird geprüft …",
-        "privacy": "Die Adresse gibt Lesezugriff auf den ganzen Kalender. Sie wird verschlüsselt (Windows-Benutzerkonto) auf diesem Rechner gespeichert und nur an den Kalenderanbieter gesendet.",
+        "privacy": "Die Adresse gibt Lesezugriff auf den ganzen Kalender. Sie wird verschlüsselt (an dein Benutzerkonto gebunden) auf diesem Rechner gespeichert und nur an den Kalenderanbieter gesendet.",
         "helpTitle": "Wo finde ich die Adresse?",
         "outlookTitle": "Outlook (Microsoft 365, Outlook im Web)",
         "outlookSteps": "Einstellungen → Kalender → Freigegebene Kalender → „Kalender veröffentlichen“. Kalender wählen, Berechtigung „Alle Details anzeigen“ (sonst fehlen die Teilnehmenden), „Veröffentlichen“ und den ICS-Link kopieren. Sperrt die IT das Veröffentlichen, erscheint die Option nicht. Veröffentlichte Kalender werden je nach Anbieter mit einigen Stunden Verzögerung aktualisiert.",
@@ -3437,7 +3567,7 @@
       },
       "graph": {
         "title": "Mit Microsoft anmelden (Outlook, Microsoft 365)",
-        "intro": "Liest den Outlook-Kalender direkt über Microsoft Graph, mit Teilnehmenden und Teams-Link. Nur lesend (Calendars.Read); die Anmeldung läuft im Browser, das Anmelde-Token wird verschlüsselt (Windows-Benutzerkonto) auf diesem Rechner gespeichert.",
+        "intro": "Liest den Outlook-Kalender direkt über Microsoft Graph, mit Teilnehmenden und Teams-Link. Nur lesend (Calendars.Read); die Anmeldung läuft im Browser, das Anmelde-Token wird verschlüsselt (an dein Benutzerkonto gebunden) auf diesem Rechner gespeichert.",
         "clientId": "Anwendungs-(Client-)ID der eigenen Entra-App",
         "tenant": "Verzeichnis (Tenant), optional",
         "tenantHint": "„common“ erlaubt Arbeits-, Schul- und private Konten. Für eine einzelne Firma die Verzeichnis-ID oder Domain eintragen.",
@@ -5426,7 +5556,108 @@
     "pending": "{{count}} ausstehend",
     "keyMismatch": "Der Hub trägt Objekte mit einem anderen Schlüssel – wurde das Passwort geändert? Bitte auf allen Geräten neu anmelden.",
     "deadLetters": "{{count}} Objekte abgewiesen (zu groß oder ungültig)",
-    "devices": "Geräte"
+    "devices": "Geräte",
+    "widerrufOffen": "Die Anmeldung eines abgebrochenen Kontowechsels ist am Hub noch nicht widerrufen. Die App versucht es bei jedem Start erneut.",
+    "erneutPruefen": "Erneut prüfen",
+    "nurLokal": {
+      "anzahl_one": "{{count}} Eintrag nur auf diesem Gerät (nicht hochgeladen)",
+      "anzahl_other": "{{count}} Einträge nur auf diesem Gerät (nicht hochgeladen)",
+      "uebernehmen": "Ins Konto übernehmen",
+      "hinweis": "Wird vorher gesichert. Weicht ein Eintrag vom Konto ab, entsteht eine Konfliktkopie; nichts wird überschrieben.",
+      "uebernommen": "Gesichert und ins Konto übernommen. Der Abgleich läuft."
+    },
+    "anmeldung": {
+      "titel": "Lokale Daten gefunden",
+      "titelWechsel": "Daten aus einem anderen Konto gefunden",
+      "beschreibung": "Auf diesem Gerät liegen Daten, die noch nicht zu {{konto}} gehören. Was soll mit ihnen geschehen? Bis zu Ihrer Wahl wird nichts hochgeladen.",
+      "beschreibungWechsel": "Die Daten auf diesem Gerät stammen aus {{vorher}}. Sie melden sich jetzt mit {{konto}} an. Bis zu Ihrer Wahl wird nichts hochgeladen.",
+      "bestand": "Lokaler Bestand",
+      "seiten_one": "{{count}} Seite",
+      "seiten_other": "{{count}} Seiten",
+      "buecher_one": "{{count}} Buch",
+      "buecher_other": "{{count}} Bücher",
+      "fortschritte_one": "{{count}} Lesestand oder Lesezeichen",
+      "fortschritte_other": "{{count}} Lesestände und Lesezeichen",
+      "dateien_one": "{{count}} Buchdatei",
+      "dateien_other": "{{count}} Buchdateien",
+      "einstellungen": "Geänderte Einstellungen",
+      "groesse": "Sicherung vorher: etwa {{groesse}}",
+      "frage": "Was soll mit den lokalen Daten geschehen?",
+      "zusammenfuehren": "Übernehmen und zusammenführen",
+      "zusammenfuehrenText": "Wird vorher gesichert. Lokale Daten und Konto werden vereint; abweichende Seiten erscheinen als Konfliktkopie, nichts wird überschrieben.",
+      "kopierenBestaetigen": "Daten aus {{vorher}} in {{konto}} kopieren",
+      "sichern": "Sichern und …",
+      "sichernText": "Erst wird alles gesichert und geprüft, dann:",
+      "getrennt": "getrennt halten",
+      "getrenntText": "Bleibt auf diesem Gerät, wird nicht hochgeladen. Die Daten des Kontos kommen dazu.",
+      "entfernen": "vom Gerät entfernen",
+      "entfernenText": "Seiten, Bücher und Lesestände verschwinden vom Gerät; danach sehen Sie die Daten des Kontos. Die Sicherung bleibt erhalten.",
+      "kollisionen_one": "{{count}} Eintrag gibt es auch im Konto, mit anderem Inhalt:",
+      "kollisionen_other": "{{count}} Einträge gibt es auch im Konto, mit anderem Inhalt:",
+      "kollisionSeite": "„{{titel}}“ – bleibt als Kopie „(nur auf diesem Gerät)“, das Konto bringt seine Fassung",
+      "kollisionBuch": "„{{titel}}“ – die lokale Fassung bleibt in der Sicherung, auf dem Gerät erscheint die Fassung des Kontos",
+      "unberuehrt": "Besprechungen, Diktate, Stimmen und Modelle bleiben auf diesem Gerät und werden von keiner Wahl berührt.",
+      "knopfZusammenfuehren": "Sichern und zusammenführen",
+      "knopfGetrennt": "Sichern und getrennt halten",
+      "knopfEntfernen": "Sichern und entfernen",
+      "laeuft": "Wird gesichert …",
+      "abbrechen": "Abbrechen",
+      "abgebrochen": "Anmeldung abgebrochen. Auf diesem Gerät wurde nichts verändert.",
+      "erledigt": {
+        "zusammenfuehren": "Gesichert und zusammengeführt. Der erste Abgleich läuft.",
+        "getrennt_halten": "Gesichert. Die lokalen Daten bleiben auf diesem Gerät; die Daten des Kontos kommen dazu.",
+        "entfernen": "Gesichert und vom Gerät entfernt. Die Daten des Kontos werden geladen."
+      }
+    },
+    "abmelden": {
+      "titel": "Abmelden?",
+      "beschreibung": "Sie melden {{konto}} auf diesem Gerät ab.",
+      "behalten": "Abmelden, Daten auf diesem Gerät behalten",
+      "behaltenText": "Seiten, Bücher und Lesestände bleiben. Bei der nächsten Anmeldung fragt die App, was mit Neuem geschehen soll.",
+      "entfernen": "Abmelden und Bibliothek und Seiten vom Gerät entfernen",
+      "entfernenText": "Wird vorher gesichert und geprüft; erst dann wird entfernt. Die Sicherung finden Sie hier unter „Sicherungen“.",
+      "knopf": "Abmelden",
+      "laeuft": "Abmelden …",
+      "abbrechen": "Abbrechen",
+      "entfernt": "Abgemeldet. Die Daten sind gesichert und vom Gerät entfernt."
+    },
+    "sicherungen": {
+      "titel": "Sicherungen bei Kontoaktionen",
+      "hinweis": "Vor jeder Anmeldung mit lokalen Daten, jedem Kontowechsel, Entfernen und Übernehmen sichert die App die lokalen Daten. Sicherungen werden nie automatisch gelöscht.",
+      "zurBibliothek": "Sicherungen der Bibliothek",
+      "zuKonto": "Sicherungen bei Kontoaktionen (Konto & Geräte)",
+      "anlass": {
+        "anmeldung": "vor der Anmeldung",
+        "abmeldung": "vor dem Abmelden",
+        "kollision": "vor dem Trennen gleicher Einträge",
+        "freigabe": "vor dem Übernehmen ins Konto",
+        "schutz": "Schutzsicherung",
+        "vor_wiederherstellen": "vor dem Zurückspielen von Einstellungen"
+      },
+      "wiederherstellen": "Wiederherstellen",
+      "einstellungen": "Einstellungen",
+      "einstellungenHinweis": "Einstellungen aus dieser Sicherung zurückspielen (die aktuellen werden vorher gesichert)",
+      "einstellungenZurueck": "Einstellungen zurückgespielt. Die vorherigen liegen in einer neuen Sicherung.",
+      "ordner": "Ordner öffnen",
+      "loeschen": "Sicherung löschen",
+      "loeschenTitel": "Sicherung löschen?",
+      "loeschenText": "Die Sicherung vom {{datum}} wird endgültig gelöscht. Das lässt sich nicht rückgängig machen.",
+      "fehler": "Aktion mit der Sicherung fehlgeschlagen",
+      "wiederhergestellt": "Sicherung wiederhergestellt",
+      "zurueck_one": "{{count}} Eintrag zurück",
+      "zurueck_other": "{{count}} Einträge zurück",
+      "zusaetzlich_one": "{{count}} abweichender als zusätzlicher Eintrag",
+      "zusaetzlich_other": "{{count}} abweichende als zusätzliche Einträge",
+      "gleich_one": "{{count}} unverändert",
+      "gleich_other": "{{count}} unverändert",
+      "fortschritte_one": "{{count}} Lesestand ergänzt",
+      "fortschritte_other": "{{count}} Lesestände ergänzt",
+      "fortschritteAbweichend_one": "{{count}} abweichender Lesestand blieb in der Sicherung",
+      "fortschritteAbweichend_other": "{{count}} abweichende Lesestände blieben in der Sicherung",
+      "inSicherung_one": "in der Sicherung geblieben: {{liste}}",
+      "inSicherung_other": "in der Sicherung geblieben: {{liste}}",
+      "nurLokal": "Alles Wiederhergestellte bleibt nur auf diesem Gerät."
+    }
   },
   "guard": {
     "memoryLow": "Arbeitsspeicher fast voll: Vorlese- und Sprachmodell-Server wurden gestoppt, damit der Rechner bedienbar bleibt."
@@ -6175,7 +6406,6 @@
   "integrations": {
     "secretStore": {
       "unavailable": {
-        "macos": "Auf macOS derzeit nicht verfügbar: Die sichere Speicherung von Zugangsdaten wird noch nicht unterstützt. Verbindungen mit Passwort, Token oder geheimer Adresse (Microsoft 365, E-Mail-Versand, Kalender, Wissen, Webhooks und Dienste) lassen sich deshalb noch nicht einrichten.",
         "linux": "Unter Linux derzeit nicht verfügbar: Die sichere Speicherung von Zugangsdaten wird noch nicht unterstützt. Verbindungen mit Passwort, Token oder geheimer Adresse (Microsoft 365, E-Mail-Versand, Kalender, Wissen, Webhooks und Dienste) lassen sich deshalb noch nicht einrichten.",
         "short": "Auf diesem System noch nicht verfügbar (keine sichere Speicherung von Zugangsdaten)."
       }
@@ -6584,13 +6814,13 @@
         },
         "webhook": {
           "name": "n8n-Webhook",
-          "description": "Daten aus einem Ablauf an n8n (oder einen anderen Webhook) senden. Die Adresse ist ein Geheimnis und liegt verschlüsselt im Windows-Konto.",
+          "description": "Daten aus einem Ablauf an n8n (oder einen anderen Webhook) senden. Die Adresse ist ein Geheimnis und liegt verschlüsselt und an dein Benutzerkonto gebunden.",
           "action": "Webhook einrichten"
         }
       },
       "services": {
         "title": "Dienste",
-        "description": "Protokolle, Aufgaben und Entscheidungen direkt in die Werkzeuge deines Teams. Angemeldet wird mit einem Schlüssel (API-Token) oder einer Webhook-Adresse; beides liegt verschlüsselt im Windows-Konto.",
+        "description": "Protokolle, Aufgaben und Entscheidungen direkt in die Werkzeuge deines Teams. Angemeldet wird mit einem Schlüssel (API-Token) oder einer Webhook-Adresse; beides liegt verschlüsselt und an dein Benutzerkonto gebunden.",
         "connect": "Verbinden",
         "groups": {
           "chat": {
@@ -6976,7 +7206,7 @@
       "smtp": {
         "title": "Postfach (SMTP) einrichten",
         "titleEdit": "Postfach-Einstellungen",
-        "description": "Zum Senden über dein eigenes Postfach. Das Passwort wird verschlüsselt im Windows-Konto abgelegt, nie in der Datenbank.",
+        "description": "Zum Senden über dein eigenes Postfach. Das Passwort wird verschlüsselt und an dein Benutzerkonto gebunden abgelegt, nie in der Datenbank.",
         "host": "Server",
         "hostPlaceholder": "smtp.example.de",
         "port": "Port",
@@ -7004,7 +7234,7 @@
       "wissen": {
         "title": "Wissensbasis verbinden",
         "titleEdit": "Einstellungen der Wissensbasis",
-        "description": "MCP-Endpunkt des AI-OS. Nur https, der Schlüssel liegt verschlüsselt im Windows-Konto.",
+        "description": "MCP-Endpunkt des AI-OS. Nur https, der Schlüssel liegt verschlüsselt und an dein Benutzerkonto gebunden.",
         "endpoint": "Adresse des Endpunkts",
         "endpointPlaceholder": "https://os.example.de/mcp",
         "tool": "Suchwerkzeug",
@@ -7020,7 +7250,7 @@
         "url": "Adresse des Webhooks",
         "urlWhat": "die Adresse",
         "urlPlaceholder": "https://n8n.example.de/webhook/…",
-        "urlHint": "Die Adresse ist ein Geheimnis, denn sie trägt oft den Schlüssel im Pfad. Sie liegt verschlüsselt im Windows-Konto; angezeigt wird später nur der Server. Erlaubt ist nur https, http nur für diesen Rechner (localhost).",
+        "urlHint": "Die Adresse ist ein Geheimnis, denn sie trägt oft den Schlüssel im Pfad. Sie liegt verschlüsselt und an dein Benutzerkonto gebunden; angezeigt wird später nur der Server. Erlaubt ist nur https, http nur für diesen Rechner (localhost).",
         "n8nHint": "In n8n: Webhook-Knoten öffnen, die „Production URL“ kopieren und den Ablauf aktivieren. Umleitungen folgt die App nie."
       },
       "folder": {
@@ -7037,9 +7267,9 @@
         "optionalLabel": "{{label}} (optional)",
         "token": "Schlüssel (API-Token)",
         "tokenWhat": "Geheimnis",
-        "tokenHint": "Der Schlüssel liegt verschlüsselt im Windows-Konto und geht nur an den Server des Dienstes.",
+        "tokenHint": "Der Schlüssel liegt verschlüsselt und an dein Benutzerkonto gebunden und geht nur an den Server des Dienstes.",
         "webhookUrl": "Webhook-Adresse",
-        "webhookHint": "Die Adresse ist ein Geheimnis (sie trägt den Schlüssel). Sie liegt verschlüsselt im Windows-Konto; angezeigt wird später nur der Server. Nur Adressen des Dienstes werden angenommen.",
+        "webhookHint": "Die Adresse ist ein Geheimnis (sie trägt den Schlüssel). Sie liegt verschlüsselt und an dein Benutzerkonto gebunden; angezeigt wird später nur der Server. Nur Adressen des Dienstes werden angenommen.",
         "help": "So bekommst du den Zugang bei {{service}}",
         "noTestPost": "„Verbindung testen“ prüft hier nur die Adresse und schickt keine Testnachricht in den Kanal.",
         "fields": {
@@ -7232,6 +7462,31 @@
       "wai": "Wolff Applied AI: Navy im hellen, Signalgelb im dunklen Modus."
     }
   },
+  "chatGuide": {
+    "title": "Einführung im Chat",
+    "count": "{{n}} von {{total}}",
+    "voice": "Mit Sprache",
+    "skip": "Überspringen",
+    "back": "Zurück",
+    "next": "Weiter",
+    "step": {
+      "welcome": "Hallo! Ich bin dein Assistent in Local Voice. Ich zeige dir in einer Minute, was hier geht. Du kannst jederzeit überspringen.",
+      "talk": "Mit diesem Knopf sprichst du mit mir wie am Telefon. Du kannst mich jederzeit unterbrechen. Oder du schreibst einfach in die Zeile.",
+      "plus": "Mit dem Plus holst du dir Kontext dazu: eine Datei, eine Recherche im Web und mehr.",
+      "model": "Hier oben wählst du das Modell: lokal auf deinem Rechner oder in der Cloud, schnell oder gründlich.",
+      "knowledge": "Hier siehst du jederzeit, welche Daten ich nutzen darf. Besprechungen, Bücher und Notizen gibst du einzeln frei.",
+      "pages": "Links findest du alles Weitere: Verlauf, Aufnahmen deiner Besprechungen, Vorlesen und deine Bibliothek. Frag mich auch einfach danach.",
+      "story": "Zum Schluss probieren wir etwas aus: Ich erfinde eine kurze Geschichte und lese sie mit mehreren Stimmen vor. Worum soll es gehen?"
+    },
+    "story": {
+      "topic": "Thema der Geschichte",
+      "defaultTopic": "Ein kleiner Drache, der nicht schlafen kann",
+      "go": "Geschichte erzählen",
+      "display": "Erzähl mir eine Geschichte: {{topic}}",
+      "readVoices": "Mit Stimmen vorlesen",
+      "stop": "Vorlesen beenden"
+    }
+  },
   "voiceCall": {
     "tool": {
       "generic": "Nutze das Werkzeug „{{name}}“ …",
@@ -7369,6 +7624,16 @@
       "title": "Worüber möchtest du sprechen?",
       "hint": "Gespräch beginnen und einfach lossprechen. Du kannst jederzeit unterbrechen oder schreiben."
     },
+    "greeting": {
+      "morning": ["Guten Morgen, {{name}}. Womit fangen wir an?", "Guten Morgen, {{name}}. Was steht heute an?"],
+      "day": ["Hallo {{name}}, wie kann ich helfen?", "Hallo {{name}}, was gibt es Neues?"],
+      "evening": ["Guten Abend, {{name}}. Was steht an?", "Guten Abend, {{name}}. Womit kann ich helfen?"],
+      "night": ["Noch wach, {{name}}? Was kann ich tun?", "Hallo {{name}}, woran arbeitest du gerade?"],
+      "morningAnon": ["Guten Morgen. Womit fangen wir an?", "Guten Morgen. Was steht heute an?"],
+      "dayAnon": ["Wie kann ich helfen?", "Was gibt es Neues?"],
+      "eveningAnon": ["Guten Abend. Was steht an?", "Guten Abend. Womit kann ich helfen?"],
+      "nightAnon": ["Noch wach? Was kann ich tun?", "Woran arbeitest du gerade?"]
+    },
     "suggestions": {
       "s1": "Was steht in meinen letzten Protokollen?",
       "s2": "Fasse das gestrige Meeting zusammen",
@@ -7383,6 +7648,7 @@
       "send": "Nachricht senden",
       "removeAttachment": "Anhang „{{name}}“ entfernen",
       "attachFiles": "Dateien anhängen …",
+      "permissions": "Souveränität und Wissen …",
       "fromCorporate": "Aus Corporate LLM",
       "corporateHint": "Corporate LLM verbinden – Skills, Plugins und Konnektoren kommen von dort",
       "documents": "Dokumente",
@@ -7583,12 +7849,50 @@
         "ki_docs": {
           "label": "KI-Dokumente",
           "hint": "Zusammenfassungen und andere KI-Dokumente zu Büchern, nur wenn sie nichts nach deiner Leseposition verraten."
+        },
+        "notebook": {
+          "label": "Notizbuch",
+          "hint": "Seiten aus den Abschnitten, die du unten auswählst. Lesen, suchen und „was habe ich heute notiert“. Inhalte gehen nur an lokale Modelle."
         }
       },
       "global": {
         "title": "Globales Wissen (Vorschau)",
         "switch": "Alle freigegebenen Inhalte durchsuchen",
         "hint": "Vor jeder Antwort sucht die App lokal in den freigegebenen Bereichen und gibt dem Modell die passenden Auszüge mit Belegen. Nur mit lokalem Sprachmodell; Bücher nur bis zu deiner Leseposition."
+      },
+      "notebook": {
+        "groupLabel": "Freigegebene Notizbuch-Abschnitte",
+        "off": "Kein Zugriff; deine Auswahl bleibt gespeichert.",
+        "loading": "Gliederung wird gelesen …",
+        "none": "Noch kein Abschnitt freigegeben: der Assistent liest nichts aus dem Notizbuch.",
+        "summary_one": "{{count}} von {{total}} Abschnitten freigegeben",
+        "summary_other": "{{count}} von {{total}} Abschnitten freigegeben",
+        "rule": "Der Assistent sieht nur diese Abschnitte: andere erscheinen weder in Antworten noch in Zahlen oder Rückfragen. Seiten im Papierkorb liest er nicht. Jede Antwort nennt die Seite als Quelle.",
+        "selectAll": "Alle Abschnitte in {{name}} auswählen",
+        "selectGroup": "Alle Abschnitte der Gruppe {{name}} auswählen",
+        "group": "Gruppe {{name}}",
+        "sectionsIn": "Abschnitte in {{name}}",
+        "whole": "ganz",
+        "countOf_one": "{{count}} von {{total}}",
+        "countOf_other": "{{count}} von {{total}}",
+        "wholeSwitch": "Ganzes Notizbuch {{name}} freigeben",
+        "wholeHint": "Der Assistent darf alle vorhandenen und künftig hinzugefügten Abschnitte lesen und durchsuchen. Neue Abschnitte werden automatisch freigegeben.",
+        "wholeOn": "Alle Abschnitte dieses Notizbuchs sind freigegeben, auch neue.",
+        "pages_one": "{{count}} Seite",
+        "pages_other": "{{count}} Seiten",
+        "fehler": {
+          "title": "Das Notizbuch ist gerade nicht lesbar.",
+          "text": "Versuch es später noch einmal. Bis dahin liest der Assistent nichts aus dem Notizbuch; deine Auswahl bleibt gespeichert."
+        },
+        "saveError": "Die Freigabe konnte nicht gespeichert werden. Es gilt weiter die vorherige Auswahl.",
+        "kein": {
+          "title": "Auf diesem Gerät gibt es noch kein Notizbuch.",
+          "text": "Sobald du die App „Notizbuch“ installiert und eine Seite angelegt hast, erscheinen hier ihre Abschnitte."
+        },
+        "version": {
+          "title": "Diese Notizbuch-Version wird nicht unterstützt.",
+          "text": "Bitte Notizbuch und Local Voice aktualisieren. Bis dahin liest der Assistent nichts aus dem Notizbuch; deine Auswahl bleibt gespeichert."
+        }
       }
     }
   },
@@ -7759,7 +8063,15 @@
         "here": "an diesem Gerät",
         "other": "auf einem anderen Gerät"
       },
+      "notLocal": "Das Hörbuch ({{lang}}) ist auf diesem Gerät noch nicht geladen. Der Abgleich ist angestoßen.",
+      "notOnDevice": "Noch nicht auf diesem Gerät",
+      "syncFailed": "Das Hörbuch ({{lang}}) konnte nicht geladen werden: Der Abgleich ist fehlgeschlagen ({{error}}).",
+      "syncOff": "Das Hörbuch ({{lang}}) liegt nicht auf diesem Gerät, und der Abgleich ist nicht eingerichtet.",
+      "listenEdition": "Hörbuch hören · {{lang}}",
+      "continueEdition": "Weiterhören · {{lang}}",
       "section": {
+        "listen": "Hörbuch {{lang}} abspielen ({{duration}})",
+        "listenNoDuration": "Hörbuch {{lang}} abspielen",
         "title": "Sprachfassungen",
         "edition": "Fassung",
         "progress": "Fortschritt",
@@ -7773,6 +8085,8 @@
         "alignedSome": "Kapitel von {{a}} und {{b}} sind teilweise zugeordnet."
       },
       "menu": {
+        "read": "Text lesen",
+        "listen": "Hörbuch abspielen",
         "primary": "Als Hauptfassung festlegen",
         "align": "Kapitel zuordnen …",
         "export": "Exportieren …",
@@ -7860,7 +8174,7 @@
     },
     "ki": {
       "title": "Mit KI erstellen",
-      "short": "Mit KI erstellen",
+      "short": "Erstellen",
       "menuFor": "KI und Export: {{title}}",
       "menuHint": "Übersetzen, Kurzbuch oder KI-Dokument erstellen, Fassungen exportieren",
       "menuTranslate": "Übersetzen …",
@@ -7971,7 +8285,16 @@
       "languages": "Vorhandene Sprachen",
       "showLang": "Kurzbuch auf {{lang}} zeigen",
       "another": "Weitere Sprache",
-      "createLang": "Erstellen"
+      "createLang": "Erstellen",
+      "failed": "Die Transkription ist fehlgeschlagen. „Erneut versuchen“ startet sie noch einmal.",
+      "failedPartly": "Die Transkription ist unterbrochen. Fertige Abschnitte bleiben erhalten; „Fortsetzen“ transkribiert nur die fehlenden.",
+      "retryTranscript": "Erneut versuchen",
+      "resumeTranscript": "Fortsetzen",
+      "transcriptProgress": "Fortschritt der Transkription von {{title}}",
+      "creating": "Kurzbuch wird erstellt · Abschnitt {{done}} von {{total}} · {{percent}} %",
+      "createProgress": "Fortschritt des Kurzbuchs zu {{title}}",
+      "cancel": "Abbrechen",
+      "cancelling": "wird abgebrochen …"
     },
     "title": "Bibliothek",
     "description": "Bücher und Hörbücher – ein Eintrag je Werk, als Text, Audio oder beides.",
@@ -8050,6 +8373,7 @@
       "none": "Kein Text"
     },
     "audioShort": {
+      "other": "Hörbuch ({{lang}})",
       "ok": "Audio",
       "busy": "…",
       "none": "Kein Audio",
@@ -8058,6 +8382,7 @@
     },
     "job": {
       "parts": "Transkription {{done}} von {{total}}",
+      "percent": "{{percent}} %",
       "partsParallel": "Transkription {{done}} von {{total}} · {{running}} parallel",
       "partsFailed": "Transkription {{done}} von {{total}} · {{failed}} fehlgeschlagen",
       "queued": "Transkription wartet",
@@ -8073,9 +8398,22 @@
     "back": "Bibliothek",
     "by": "von {{authors}}",
     "tabs": "Buchansicht",
+    "bookFiles": {
+      "title": "Dateien im Buch-Ordner",
+      "reveal": "Im Explorer zeigen",
+      "empty": "Der Buch-Ordner ist leer.",
+      "failed": "Dateien nicht lesbar: {{error}}",
+      "metadata": "Metadaten, Fassungen",
+      "primaryEdition": "{{lang}} · Hauptfassung",
+      "edition": "{{lang}}",
+      "looseEdition": "keiner Fassung zugeordnet",
+      "summary_one": "{{count}} Datei, {{size}}",
+      "summary_other": "{{count}} Dateien, {{size}}"
+    },
     "tab": {
       "overview": "Übersicht",
       "versions": "Fassungen",
+      "files": "Dateien",
       "metadata": "Metadaten"
     },
     "noDescription": "Noch kein Klappentext. Unter „Metadaten“ lässt er sich aus Open Library übernehmen oder selbst schreiben.",
@@ -8226,6 +8564,8 @@
     "continueRead": "Weiterlesen",
     "readTitle": "„{{title}}“ lesen",
     "audioSource": {
+      "other": "Audio: Hörbuch der Sprachfassung {{lang}}",
+      "otherRemote": "Audio: Hörbuch der Sprachfassung {{lang}}, noch nicht auf diesem Gerät",
       "audiobook": "Audio: importiertes Hörbuch",
       "narrated": "Audio: per Sprachausgabe vertont",
       "none": "Kein Audio – nur Lesen oder live vorlesen lassen"
@@ -8296,8 +8636,8 @@
       "scope": "Wohin damit?",
       "trash": "In den Papierkorb (wiederherstellbar)",
       "delete": "Endgültig löschen (nicht wiederherstellbar)",
-      "trashHint_one": "Der Eintrag mit Cover und, falls vorhanden, Hörbuch-Kopie ({{size}}) kommt in den Papierkorb und lässt sich 30 Tage lang wiederherstellen. Text oder Transkript bleibt im Vorlesen.",
-      "trashHint_other": "Die Einträge mit Cover und, falls vorhanden, Hörbuch-Kopie ({{size}}) kommen in den Papierkorb und lassen sich 30 Tage lang wiederherstellen. Texte und Transkripte bleiben im Vorlesen.",
+      "trashHint_one": "Der Eintrag mit Cover und, falls vorhanden, Hörbuch-Kopie ({{size}}) kommt in den Papierkorb und lässt sich 30 Tage lang wiederherstellen. Text, Transkript und Sprachfassungen im Buch-Ordner gehen mit und kommen beim Wiederherstellen zurück.",
+      "trashHint_other": "Die Einträge mit Cover und, falls vorhanden, Hörbuch-Kopie ({{size}}) kommen in den Papierkorb und lassen sich 30 Tage lang wiederherstellen. Texte, Transkripte und Sprachfassungen in den Buch-Ordnern gehen mit und kommen beim Wiederherstellen zurück.",
       "deleteHint_one": "Sofort und endgültig gelöscht werden: der Eintrag mit Cover und, falls vorhanden, Hörbuch-Kopie ({{size}}), der zugehörige Text oder das Transkript im Vorlesen ({{texts}}), laufende Transkriptionen und Lesestellen.",
       "deleteHint_other": "Sofort und endgültig gelöscht werden: die Einträge mit Cover und, falls vorhanden, Hörbuch-Kopien ({{size}}), die zugehörigen Texte und Transkripte im Vorlesen ({{texts}}), laufende Transkriptionen und Lesestellen.",
       "sure_one": "Ich habe verstanden: 1 Eintrag ({{size}}) und {{texts}} Text bzw. Transkript im Vorlesen werden endgültig gelöscht.",
@@ -8367,6 +8707,177 @@
     "transcribeMissing": "Fehlende Teile transkribieren",
     "importedParts": "Importiertes Hörbuch in {{count}} Teilen",
     "appendAudio": "Weitere Teile anhängen"
+  },
+  "projektBereich": {
+    "nichtSicherEntfernt": "Die Datei konnte nicht sicher entfernt werden. Sie liegt weiter im Projektordner und wird dir zum Aufnehmen angeboten.",
+    "titel": "Projekte",
+    "beschreibung": "Bücher, Texte, Aufnahmen und Dateien eines Projekts bündeln und je Eintrag festlegen, was als Kontext für die KI dient.",
+    "liste": "Projekte",
+    "gruppeLeiste": "Projekte",
+    "neuesProjekt": "Neues Projekt",
+    "projektName": "Name des Projekts",
+    "klasse": "Datenklasse",
+    "anlegen": "Anlegen",
+    "abbrechen": "Abbrechen",
+    "zurueck": "Zurück zu den Projekten",
+    "ohneName": "Eintrag ohne Leserecht",
+    "eintraege_one": "{{count}} Eintrag",
+    "eintraege_other": "{{count}} Einträge",
+    "kopien_one": "{{count}} Kopie",
+    "kopien_other": "{{count}} Kopien",
+    "hinzufuegen": "Hinzufügen",
+    "entfernt": "Aus dem Projekt genommen.",
+    "geloescht": "Recherche gelöscht.",
+    "gruppen": {
+      "buecher": "Bücher",
+      "texte": "Texte",
+      "aufnahmen": "Aufnahmen",
+      "dateien": "Dateien im Projektordner",
+      "recherchen": "Recherchen"
+    },
+    "kopf": {
+      "eintrag": "Eintrag",
+      "art": "Art",
+      "kontext": "Als Kontext"
+    },
+    "art": {
+      "buch": "Buch",
+      "text": "Text",
+      "aufnahme": "Aufnahme",
+      "datei": "Datei",
+      "recherche": "Recherche"
+    },
+    "zugeordnetPerson": "von dir zugeordnet",
+    "zugeordnetAutomatik": "automatisch zugeordnet",
+    "schalter": "{{name}} als Kontext",
+    "schalterGesperrt": "{{name}} als Kontext, nicht verfügbar",
+    "form": "Form",
+    "fassung": "Fassung",
+    "formUndFassung": "Form und Fassung",
+    "fassungWaehlen": "Fassung wählen: {{name}}",
+    "formWaehlen": "Form wählen: {{form}}",
+    "vorgabe": "Vorgabe",
+    "formen": {
+      "kurzbuch": "Kurzbuch",
+      "volltext": "Volltext",
+      "protokoll": "Protokoll",
+      "transkript": "Transkript",
+      "text": "Text",
+      "auszuege": "Auszüge"
+    },
+    "waehlen": {
+      "volltext": "Volltext wählen",
+      "transkript": "Transkript wählen"
+    },
+    "token": "~{{n}} Token",
+    "tokenAus": "aus · ~{{n}}",
+    "keinText": "kein Text",
+    "hinweis": {
+      "kein_kurzbuch": "Kein Kurzbuch – erstellen oder Volltext wählen.",
+      "kein_protokoll": "Kein Protokoll – erstellen oder Transkript wählen.",
+      "kein_text": "Noch kein Text vorhanden.",
+      "format": "Format nicht als Kontext lesbar",
+      "fehlt": "Quelle fehlt.",
+      "nicht_lesbar": "Kein Leserecht.",
+      "form": "Form passt nicht zum Eintrag.",
+      "auszuege": "Auszüge je Frage aus der Ablage."
+    },
+    "nichtImKontextPunkt": "Nicht im Kontext.",
+    "weitereAktionen": "Weitere Aktionen für {{name}}",
+    "weitereAktionenMenue": "Weitere Aktionen",
+    "entfernenMenue": "Aus Projekt entfernen …",
+    "rechercheLoeschenMenue": "Recherche löschen …",
+    "entfernen": {
+      "titel": "„{{name}}“ aus dem Projekt nehmen?",
+      "titelRecherche": "Recherche „{{name}}“ löschen?",
+      "nehmen": "Aus Projekt nehmen",
+      "loeschen": "Löschen",
+      "text": {
+        "dateien": "Die Kopie im Projektordner kommt in den Papierkorb des Projekts. Dein Original bleibt unberührt.",
+        "buecher": "Das Buch bleibt in der Bibliothek, mit Fassungen, Hörbuch und KI-Dokumenten. Nur die Verknüpfung zu „{{projekt}}“ entfällt.",
+        "texte": "Der Text bleibt im Vorlesen. Nur die Verknüpfung zu „{{projekt}}“ entfällt.",
+        "aufnahmen": "Die Aufnahme bleibt in den Aufnahmen, mit Transkript und Protokoll. Nur die Verknüpfung zu „{{projekt}}“ entfällt.",
+        "recherchen": "Die Recherche wird gelöscht. Das lässt sich nicht rückgängig machen."
+      }
+    },
+    "rechts": "Kontext im Projekt",
+    "summe": "{{summe}} von {{fenster}} Token",
+    "summeKurz": "{{summe}} Token",
+    "meter": "{{prozent}} % des Modellfensters belegt",
+    "zaehl_one": "{{count}} Eintrag als Kontext",
+    "zaehl_other": "{{count}} Einträge als Kontext",
+    "zaehlKeine": "Keine Einträge als Kontext",
+    "eintraegeKurz_one": "{{count}} Eintrag",
+    "eintraegeKurz_other": "{{count}} Einträge",
+    "fenster": "Modellfenster",
+    "fensterModell": "Modellfenster {{modell}}",
+    "details": "Details",
+    "nichtImKontext": "Nicht im Kontext",
+    "fehlt": {
+      "ohneKurzbuch_one": "{{count}} Buch ohne Kurzbuch",
+      "ohneKurzbuch_other": "{{count}} Bücher ohne Kurzbuch",
+      "ohneProtokoll_one": "{{count}} Aufnahme ohne Protokoll",
+      "ohneProtokoll_other": "{{count}} Aufnahmen ohne Protokoll",
+      "formatNichtLesbar_one": "{{count}} Datei, deren Format nicht lesbar ist",
+      "formatNichtLesbar_other": "{{count}} Dateien, deren Format nicht lesbar ist",
+      "ohneText_one": "{{count}} Eintrag ohne lesbaren Text",
+      "ohneText_other": "{{count}} Einträge ohne lesbaren Text",
+      "ausgeschaltet_one": "{{count}} Eintrag ausgeschaltet",
+      "ausgeschaltet_other": "{{count}} Einträge ausgeschaltet"
+    },
+    "geltung": {
+      "titel": "So gilt die Auswahl",
+      "text": "Nur eingeschaltete Einträge gehen an die KI, in der gewählten Form. Fehlt die Form, wird nichts ersetzt. Die Auswahl gilt auf diesem Gerät; auf anderen Geräten sind neue Einträge zunächst aus."
+    },
+    "ki": {
+      "titel": "KI im Projekt",
+      "text": "Chat und Sprachgespräch nutzen diese Auswahl, sobald sie für Projekte freigegeben sind.",
+      "gesperrt": "Gesperrt: KI-Aufrufe im Projekt folgen mit dem nächsten Schritt."
+    },
+    "banner": {
+      "reset": "Die Kontextauswahl dieses Geräts war nicht lesbar. Zur Sicherheit sind alle Einträge ausgeschaltet. Schalte ein, was die KI nutzen soll.",
+      "zuGross": "Der Kontext ist größer als das Modellfenster ({{summe}} von {{fenster}} Token). Schalte Einträge aus oder wähle eine kürzere Form. Es wird nichts still gekürzt. KI-Aufrufe im Projekt sind gesperrt, bis der Kontext ins Modellfenster passt.",
+      "gefunden": "Im Projektordner liegt eine Datei, die nicht zum Projekt gehört:",
+      "nichtAufgenommen": ". Sie wurde nicht aufgenommen.",
+      "aufnehmen": "Aufnehmen"
+    },
+    "leer": {
+      "titel": "{{name}} ist noch leer",
+      "text": "Füge Bücher, Texte, Aufnahmen oder Dateien hinzu. App-Inhalte werden verknüpft, Dateien in den Projektordner kopiert."
+    },
+        "lage": {
+      "fehlt": "Die Dateiliste dieses Projekts fehlt oder ist beschädigt. Dateien im Projektordner werden deshalb nicht angefasst.",
+      "defekt": "Die Dateiliste dieses Projekts fehlt oder ist beschädigt. Dateien im Projektordner werden deshalb nicht angefasst.",
+      "neuer": "Die Dateiliste stammt von einer neueren App-Version. Aktualisiere die App; bis dahin bleiben die Dateien unberührt.",
+      "nicht_lesbar": "Der Projektordner ist gerade nicht lesbar. Prüfe Zugriffsrechte oder Synchronisierung und lade die Seite neu.",
+      "neuAufbauen": "Bestand neu aufbauen",
+      "erneut": "Erneut prüfen",
+      "dialogTitel": "Bestand neu aufbauen?",
+      "dialogText": "Die beschädigte Liste wird beiseitegelegt, nicht gelöscht. Dateien im Projektordner werden dir danach zum Aufnehmen angeboten; Verknüpfungen zu bisherigen Dateien entfallen."
+    },
+    "keins": {
+      "titel": "Noch kein Projekt",
+      "text": "Lege ein Projekt an, um Bücher, Texte, Aufnahmen und Dateien zu bündeln."
+    },
+    "dialog": {
+      "titel": "Zu „{{name}}“ hinzufügen",
+      "ausDerApp": "Aus der App",
+      "dateienKopieren": "Dateien kopieren",
+      "appHinweis": "Bücher, Texte und Aufnahmen werden verknüpft, nicht kopiert. Neu hinzugefügte Einträge sind als Kontext eingeschaltet; du kannst das je Eintrag ändern.",
+      "nichtsFrei": "Alles, was die App kennt, gehört schon zu diesem Projekt.",
+      "nHinzufuegen_one": "{{count}} hinzufügen",
+      "nHinzufuegen_other": "{{count}} hinzufügen",
+      "dateienText": "Dateien werden in den Projektordner kopiert und nach dem Kopieren geprüft. Das Original bleibt unverändert. Eine Datei mit gleichem Namen wird nicht überschrieben, die Kopie bekommt „(2)“.",
+      "dateienWaehlen": "Dateien wählen …",
+      "kopiertLaeuft": "Dateien werden kopiert …",
+      "ladefehler": "Die Liste konnte nicht geladen werden.",
+      "erneut": "Erneut versuchen",
+      "weitereLaden": "Weitere laden",
+      "formatHinweis": "Als Kontext lesbar sind vorerst .txt und .md. Andere Formate werden aufgenommen und mit Hinweis angezeigt.",
+      "kopiert_one": "{{count}} Datei kopiert.",
+      "kopiert_other": "{{count}} Dateien kopiert.",
+      "schliessen": "Schließen"
+    }
   },
   "projekte": {
     "menu": {
@@ -8596,7 +9107,8 @@
       "recherche.unavailable": "Die Recherche ist nicht eingerichtet.",
       "recherche.storage": "Die Recherche konnte nicht gespeichert werden.",
       "projekte.storage": "Das Projektverzeichnis konnte nicht gelesen oder geschrieben werden.",
-      "projekte.not_found": "Nicht gefunden."
+      "projekte.not_found": "Nicht gefunden.",
+      "projekte.stand_veraltet": "Die Auswahl hat sich seit der Anzeige geändert. Bitte neu laden."
     },
     "ergebnis": {
       "modus": "Schnell",
@@ -8609,6 +9121,391 @@
     },
     "vorlesen": {
       "nurLokal": "Bei personenbezogenen Inhalten nur mit lokaler Sprachausgabe."
+    }
+  },
+  "ablage": {
+    "semantik": {
+      "titel": "Semantische Suche",
+      "hinweis": "Findet auch umschriebene Begriffe. Läuft nur auf diesem Gerät; die Vektoren bleiben im lokalen Suchindex und werden nie synchronisiert.",
+      "laden": "Modell laden ({{mb}} MB)",
+      "optIn": "Noch nicht Standard: zeigt öfter Treffer, auch wenn kein passender Beleg existiert.",
+      "abbrechen": "Abbrechen",
+      "entfernen": "Modell entfernen",
+      "fortschritt": "Fortschritt des Modell-Downloads",
+      "prozent": "{{prozent}} Prozent",
+      "fehler": {
+        "allgemein": "Das hat nicht geklappt. Bitte erneut versuchen.",
+        "download": "Das Modell konnte nicht geladen werden. Bitte die Verbindung prüfen und erneut versuchen.",
+        "abgebrochen": "Das Laden wurde abgebrochen. Ein erneuter Start setzt fort.",
+        "laedt": "Das Modell wird gerade geladen.",
+        "belegt": "Der Suchindex wird gerade erweitert. Bitte später erneut versuchen.",
+        "speichern": "Das Modell konnte nicht gespeichert werden.",
+        "entfernen": "Das Modell konnte nicht entfernt werden.",
+        "katalog": "Das Modell ist in dieser Version nicht verfügbar."
+      },
+      "entfernenHinweis": "Gibt {{mb}} MB frei. Die Suche ist danach wörtlich, bis das Modell erneut geladen wird.",
+      "status": {
+        "aus": "Aus – es wird wörtlich gesucht.",
+        "fehlt": "Modell nicht geladen ({{mb}} MB) – bis dahin wird wörtlich gesucht.",
+        "laedt": "Modell wird geladen …",
+        "fehler": "Das Modell konnte nicht geladen werden – es wird wörtlich gesucht.",
+        "nachziehen": "Suchindex wird erweitert …",
+        "neuaufbau": "Suchindex muss für die semantische Suche erweitert werden – bis dahin wird wörtlich gesucht.",
+        "indexfehler": "Suchindex gerade nicht verfügbar – es wird wörtlich gesucht.",
+        "wartet": "Noch {{anzahl}} Textstellen ohne Vektor – bis dahin wird wörtlich gesucht.",
+        "aktiv": "Aktiv – Treffer auch für sinngleiche Begriffe."
+      }
+    },
+    "titel": "Ablage",
+    "beschreibung": "Dokumente ordnen und lokal aufbewahren.",
+    "suche": "Namen und Inhalte durchsuchen",
+    "anker": {
+      "seite": "Seite {{n}}",
+      "absatz": "Absatz {{n}}",
+      "folie": "Folie {{n}}",
+      "zeile": "ab Zeile {{n}}",
+      "teil": "Teil {{n}}",
+      "kopf": "E-Mail-Kopf",
+      "text": "E-Mail-Text",
+      "blatt": "Blatt „{{blatt}}“, Zeilen {{von}}–{{bis}}"
+    },
+    "suchergebnis": {
+      "titel": "Suchergebnisse",
+      "hinweis": "Alle Ordner, ohne Papierkorb",
+      "imNamen": "Im Namen ({{anzahl}})",
+      "imInhalt": "Im Inhalt ({{anzahl}})",
+      "imInhaltOhneZahl": "Im Inhalt",
+      "laedt": "Inhalte werden durchsucht …",
+      "keine": "Kein Treffer im Inhalt.",
+      "fehler": "Die Inhaltssuche ist gerade nicht verfügbar.",
+      "fundstelle": "Fundstelle",
+      "oeffnen": "{{name}} öffnen: {{anker}}"
+    },
+    "laedt": "Ablage wird geladen …",
+    "schliessen": "Schließen",
+    "abbrechen": "Abbrechen",
+    "speichern": "Speichern",
+    "zurueck": "Zurück",
+    "baum": {
+      "knopf": "Ordner wählen",
+      "label": "Ordner",
+      "meine": "Meine Ordner",
+      "wiederhergestellt": "Wiederhergestellt",
+      "weitere": "Weitere Ordner"
+    },
+    "ordner": {
+      "neu": "Neuer Ordner",
+      "name": "Name des Ordners",
+      "anlegen": "Anlegen",
+      "umbenennen": "Umbenennen",
+      "papierkorb": "Ordner in den Papierkorb"
+    },
+    "liste": {
+      "label": "Dateien",
+      "caption": "Dateien in {{name}}",
+      "name": "Name",
+      "geaendert": "Geändert",
+      "groesse": "Größe",
+      "klasse": "Klasse",
+      "stand": "Stand",
+      "dateien_one": "{{count}} Datei",
+      "dateien_other": "{{count}} Dateien"
+    },
+    "stand": {
+      "konflikt": "Konflikt"
+    },
+    "leer": {
+      "titel": "Noch keine Dateien",
+      "formate": "PDF, Word, Excel, Text, Bilder und mehr. Ordner können Sie ebenfalls hineinziehen.",
+      "lokal": "Alles bleibt auf diesem Gerät.",
+      "keineTreffer": "Keine Datei passt zu dieser Suche."
+    },
+    "drop": {
+      "titel": "Dateien in „{{name}}“ ablegen",
+      "hinweis": "Loslassen, um sie zu übernehmen."
+    },
+    "sync": {
+      "synchronisiert": "Synchronisiert",
+      "ausstehend": "Ausstehend",
+      "konflikt": "Konflikt",
+      "wartet_auf_text": "Wartet auf Text",
+      "nur_geraet": "Nur dieses Gerät",
+      "angehalten": "Angehalten (nicht lesbar)",
+      "nicht_erfasst": "Noch nicht erfasst",
+      "cloud": "{{used}} von {{quota}} in der Cloud",
+      "voll": "Cloud-Speicher voll – Hochladen angehalten",
+      "unvollstaendig": "Abgleich unvollständig"
+    },
+    "fuss": {
+      "belegt": "{{size}} belegt",
+      "lokal": "Nur auf diesem Gerät"
+    },
+    "hochladen": {
+      "titel_one": "{{count}} Datei wird abgelegt",
+      "titel_other": "{{count}} Dateien werden abgelegt",
+      "schliessen": "Fertig",
+      "knopf": "Hochladen",
+      "dateien": "Dateien",
+      "ordner": "Ordner",
+      "auswaehlen": "Auswählen",
+      "dateienWaehlen": "Dateien auswählen",
+      "ordnerWaehlen": "Ordner auswählen",
+      "kollisionHinweis": "Eine Datei mit diesem Namen gibt es schon. Was soll geschehen?",
+      "kollisionGruppe": "Auswahl für {{name}}",
+      "neueFassung": "Als neue Fassung",
+      "beideBehalten": "Beide behalten",
+      "ueberspringen": "Überspringen",
+      "erben": "Neue Dateien erben die Einstellungen von „{{name}}“.",
+      "stand": {
+        "laeuft": "Wird abgelegt …",
+        "abgelegt": "Abgelegt",
+        "neue_fassung": "Neue Fassung abgelegt",
+        "kollision": "Name schon vorhanden",
+        "uebersprungen": "Übersprungen",
+        "fehler": "Fehlgeschlagen"
+      }
+    },
+    "papierkorb": {
+      "titel": "Papierkorb",
+      "caption": "Gelöschte Dateien und Ordner",
+      "geloescht": "Gelöscht",
+      "ursprung": "Ursprung",
+      "ohneUrsprung": "Unbekannt",
+      "aktion": "Aktion",
+      "tageRest_one": "noch {{count}} Tag",
+      "tageRest_other": "noch {{count}} Tage",
+      "wiederherstellen": "Wiederherstellen",
+      "wiederherstellenName": "{{name}} wiederherstellen",
+      "endgueltigName": "{{name}} endgültig löschen",
+      "endgueltig": "Endgültig löschen",
+      "endgueltigTitel": "„{{name}}“ endgültig löschen?",
+      "endgueltigText": "Das lässt sich nicht rückgängig machen. Alle Fassungen werden entfernt.",
+      "leeren": "Papierkorb leeren",
+      "leerenTitel_one": "{{count}} Eintrag endgültig löschen?",
+      "leerenTitel_other": "{{count}} Einträge endgültig löschen?",
+      "leerenAktion": "Alles löschen",
+      "leer": "Der Papierkorb ist leer.",
+      "hinweis": "Einträge werden nach 30 Tagen endgültig gelöscht.",
+      "oeffnen": "Papierkorb öffnen"
+    },
+    "details": {
+      "schliessen": "Details schließen",
+      "vorschau": "Vorschau",
+      "vorschauHinweis": "Die Vorschau folgt in einer späteren Version.",
+      "textfassung": "Textfassung",
+      "text": {
+        "ok": "Text bereit",
+        "ausstehend": "Text ausstehend",
+        "kein_text": "Kein Text enthalten",
+        "fehler": "Text nicht erstellt",
+        "nur_online": "Nur online"
+      },
+      "textNoch": "Noch kein Text",
+      "textOhne": "Kein Text für dieses Format",
+      "textFehler": {
+        "ocr_nicht_verfuegbar": "Texterkennung (OCR) ist auf diesem Gerät nicht verfügbar.",
+        "ocr_bild": "Das Bild ließ sich für die Texterkennung nicht lesen.",
+        "ocr": "Die Texterkennung (OCR) ist fehlgeschlagen.",
+        "lesen": "Die Datei ließ sich nicht lesen.",
+        "verknuepfung": "Verknüpfungen werden nicht gelesen.",
+        "hartlink": "Hartlinks werden nicht gelesen.",
+        "geaendert": "Die Datei änderte sich während des Lesens; sie wird erneut versucht.",
+        "allgemein": "Der Text ließ sich nicht erzeugen.",
+        "zeit": "Die Zeitgrenze von 60 Sekunden wurde erreicht.",
+        "abbruch": "Die Speichergrenze wurde erreicht oder das Lesen brach ab.",
+        "zip_grenze": "Das Archiv ist zu groß oder auffällig stark gepackt.",
+        "xml_doctype": "Die Datei enthält unzulässige XML-Bestandteile.",
+        "xml_entitaet": "Die Datei enthält unzulässige XML-Bestandteile.",
+        "pruefsumme": "Die Prüfsumme der Fassung stimmt nicht.",
+        "zu_gross": "Die Datei enthält zu viel Text.",
+        "format": "Das Format wurde nicht erkannt.",
+        "pdf": "Das PDF ließ sich nicht lesen.",
+        "tabelle": "Die Tabelle ließ sich nicht lesen.",
+        "antwort": "Das Leseprogramm lieferte keine gültige Antwort.",
+        "programm": "Das Leseprogramm ließ sich nicht ausführen.",
+        "schutz": "Das Lesen wurde aus Sicherheitsgründen abgelehnt.",
+        "start": "Das Leseprogramm ließ sich nicht starten.",
+        "abgebrochen": "Das Lesen wurde abgebrochen.",
+        "mail": "Die E-Mail-Datei ließ sich nicht lesen.",
+        "xml": "Die XML-Datei ließ sich nicht lesen.",
+        "zip": "Das Archiv ließ sich nicht lesen."
+      },
+      "fassungen": "Fassungen",
+      "fassungAktuell": "{{nummer}} (aktuell)",
+      "abgeloest": "abgelöst",
+      "angaben": "Angaben",
+      "ordner": "Ordner",
+      "ablage": "Ablage",
+      "nurDiesesGeraet": "Nur auf diesem Gerät",
+      "umbenennen": "Datei umbenennen",
+      "papierkorb": "In den Papierkorb"
+    },
+    "ki": {
+      "titel": "KI-Zugriff",
+      "stufe": {
+        "an": "An",
+        "aus": "Aus",
+        "gesperrt": "Gesperrt"
+      },
+      "erklaerung": "Die KI erreicht Dateien auf zwei Wegen: direkt (der Assistent durchsucht die Ablage) und über Projekte als Kontext. „An“ erlaubt beide Wege. „Aus“ (auch ohne eigene Einstellung) sperrt nur den direkten Weg; als Projektkontext bleiben die Dateien nutzbar, solange sie im Projekt eingeschaltet sind. „Gesperrt“ sperrt beide Wege und gewinnt immer, auch gegen „An“ in Unterordnern. Zusätzlich gilt die Datenklasse: „Personenbezogen“ geht nie an Cloud-Modelle, „Vertraulich“ nur an lokale Modelle oder per Ausnahme.",
+      "erben": "Vom übergeordneten Ordner erben",
+      "chipAn": "KI an",
+      "chipUnklar": "KI unklar",
+      "fuerKiFreigegeben": "Für die KI freigegeben",
+      "fuerDieKi": "Für die KI",
+      "verknuepftNichtVerfuegbar": "Nicht verfügbar (verknüpfter Ordner)",
+      "nurAuszuege": "Die KI sieht nur Auszüge, nie die Originale.",
+      "aendern": "Ändern",
+      "zustand": {
+        "an": "An",
+        "aus": "Aus",
+        "gesperrt": "Gesperrt",
+        "unklar": "Unklar"
+      },
+      "geerbtVon": "geerbt von {{name}}",
+      "unklarKurz": "Freigabe unklar",
+      "unklarHinweis": "Die Freigaben dieses Geräts sind nicht eindeutig. Bis zur Klärung bleibt die ganze Ablage für die KI gesperrt.",
+      "unklarMeldung": "Die Freigabe ist unklar. Bitte zuerst neu festlegen.",
+      "unklar": {
+        "neuer": "Die Freigaben stammen von einer neueren Version der App.",
+        "unlesbar": "Die Freigaben sind nicht lesbar."
+      },
+      "neuFestlegen": "Freigaben neu festlegen",
+      "neuFestlegenTitel": "Freigaben neu festlegen?",
+      "neuFestlegenText": "Alle Ordner starten wieder ohne Freigabe. Danach können Sie die Freigaben einzeln setzen.",
+      "neuFestlegenAktion": "Neu festlegen",
+      "wiederhergestelltMeldung": "Die KI-Freigaben wurden aus der Sicherung wiederhergestellt. Alle gesicherten Ordner sind gesperrt, Ordner ohne Eintrag ebenfalls – auf beiden Wegen. Setzen Sie die Freigaben einzeln neu oder bestätigen Sie den Stand.",
+      "bestaetigen": "Stand bestätigen",
+      "bestaetigenTitel": "Wiederhergestellte Freigaben bestätigen?",
+      "bestaetigenText": "Gesperrte und neu gesetzte Ordner bleiben, wie sie sind. Diese Ordner ohne eigenen Eintrag fallen auf „Aus“ zurück (direkter Weg gesperrt, Projektkontext möglich):",
+      "bestaetigenAktion": "Bestätigen"
+    },
+    "klasse": {
+      "titel": "Datenklasse",
+      "erbt": "Erbt vom übergeordneten Ordner",
+      "standard": "Standard",
+      "lang": {
+        "erbt": "Erben",
+        "public": "Öffentlich",
+        "internal": "Intern",
+        "confidential": "Vertraulich",
+        "personal": "Personenbezogen"
+      },
+      "kurz": {
+        "erbt": "Erbt",
+        "public": "Öffentlich",
+        "internal": "Intern",
+        "confidential": "Vertraulich",
+        "personal": "Personenbezogen",
+        "unbekannt": "Unbekannt"
+      }
+    },
+    "nurGeraet": {
+      "titel": "Nur auf diesem Gerät",
+      "hinweis": "Dateien in diesem Ordner verlassen das Gerät nie.",
+      "geerbt": "Von einem übergeordneten Ordner geerbt."
+    },
+    "entwuerfe": {
+      "titel": "KI-Entwürfe",
+      "hinweis": "Entwürfe der KI landen in diesem Ordner."
+    },
+    "einstellungen": {
+      "titel": "Einstellungen für „{{name}}“",
+      "knopf": "Ordnereinstellungen",
+      "nurFrage": "Nur auf diesem Gerät behalten?",
+      "nurFolge": "Die Dateien dieses Ordners und aller Unterordner werden nicht mit anderen Geräten abgeglichen.",
+      "nurBestaetigen": "Nur auf diesem Gerät",
+      "syncFrage": "Wieder mit anderen Geräten abgleichen?",
+      "syncFolge": "Bereits abgelegte Kopien in der Cloud können danach nicht zurückgeholt werden.",
+      "syncBestaetigen": "Abgleich erlauben"
+    },
+    "lage": {
+      "titel": "Die Ablage kann nicht geöffnet werden",
+      "fehlt": "Das Verzeichnis der Ablage fehlt, es liegen aber Dateien vor.",
+      "defekt": "Das Verzeichnis der Ablage ist beschädigt.",
+      "neuer": "Die Ablage stammt von einer neueren Version der App.",
+      "nicht_lesbar": "Das Verzeichnis der Ablage lässt sich nicht lesen.",
+      "neuAufbauen": "Bestand neu aufbauen",
+      "aufgebaut_one": "{{count}} Datei wieder aufgenommen",
+      "aufgebaut_other": "{{count}} Dateien wieder aufgenommen"
+    },
+    "gefunden": {
+      "titel_one": "{{count}} Datei gefunden, die nicht im Verzeichnis steht.",
+      "titel_other": "{{count}} Dateien gefunden, die nicht im Verzeichnis stehen.",
+      "aufnehmen": "Aufnehmen",
+      "ohneTyp": "ohne Typ"
+    },
+    "toast": {
+      "imPapierkorb": "In den Papierkorb gelegt",
+      "wiederhergestellt": "Wiederhergestellt",
+      "gespeichert": "Gespeichert",
+      "aufgenommen": "Aufgenommen",
+      "geloescht": "Endgültig gelöscht",
+      "geleert": "Papierkorb geleert"
+    },
+    "verknuepft": {
+      "gruppe": "Verknüpfte Ordner (nur lesen)",
+      "verknuepfen": "Ordner verknüpfen",
+      "waehlen": "Ordner zum Verknüpfen wählen",
+      "hinweis": "Nur lesen, nur dieses Gerät: Die Dateien bleiben, wo sie sind. Die Ablage liest sie nur für die Suche, ändert nichts daran und lädt nichts hoch. Die KI greift auf verknüpfte Ordner nicht zu.",
+      "hinweisKurz": "Nur lesen, nur dieses Gerät",
+      "angabe": "Verknüpft – nur lesen, nur dieses Gerät",
+      "nichtErreichbar": "Nicht erreichbar",
+      "nichtErreichbarText": "Der verknüpfte Ordner ist gerade nicht erreichbar oder wurde verschoben. Die bekannten Dateien bleiben in der Liste, bis er wieder da ist.",
+      "ausgelassen_one": "{{count}} Eintrag wurde ausgelassen (Verknüpfung oder Hartlink).",
+      "ausgelassen_other": "{{count}} Einträge wurden ausgelassen (Verknüpfungen oder Hartlinks).",
+      "nurOnline_one": "{{count}} Eintrag liegt nur online und wird nicht gelesen.",
+      "nurOnline_other": "{{count}} Einträge liegen nur online und werden nicht gelesen.",
+      "nurOnlineHinweis": "In OneDrive „Immer auf diesem Gerät behalten“ wählen, damit der Text erfasst wird.",
+      "zuViele": "Der Ordner ist sehr groß; nur die ersten 20 000 Dateien werden gelesen.",
+      "leer": "Keine lesbaren Dateien in diesem Ordner",
+      "neuEinlesen": "Neu einlesen",
+      "loesen": "Verknüpfung lösen",
+      "loesenTitel": "„{{name}}“ nicht mehr verknüpfen?",
+      "loesenText": "Die Ablage vergisst den Ordner, seine Textfassungen und Suchtreffer. Die Dateien im Ordner selbst bleiben unverändert.",
+      "loesenAktion": "Verknüpfung lösen",
+      "einstellungenHinweis": "Verknüpfter Ordner: nur lesen, nur dieses Gerät. Er wird nie hochgeladen oder abgeglichen; die KI greift darauf nicht zu. Die Datenklasse bleibt einstellbar.",
+      "toastVerknuepft": "Ordner verknüpft",
+      "toastEingelesen": "Ordner neu eingelesen",
+      "toastGeloest": "Verknüpfung gelöst"
+    },
+    "fehler": {
+      "verknuepft_defekt": "Die Liste der verknüpften Ordner ist beschädigt.",
+      "verknuepft_nur_lesen": "Verknüpfte Ordner sind nur lesbar und bleiben auf diesem Gerät.",
+      "verknuepft_doppelt": "Der Ordner ist schon verknüpft oder liegt in bzw. über einem verknüpften Ordner.",
+      "verknuepft_datenordner": "Der Datenordner der App lässt sich nicht verknüpfen.",
+      "nur_online": "Der Ordner liegt nur online. In OneDrive „Immer auf diesem Gerät behalten“ wählen und erneut verknüpfen.",
+      "verknuepft_wurzel": "Ein ganzes Laufwerk lässt sich nicht verknüpfen.",
+      "kein_ordner": "Bitte einen Ordner wählen.",
+      "nicht_erreichbar": "Der Ordner ist nicht erreichbar.",
+      "hartlink": "Hartlinks werden nicht gelesen.",
+      "allgemein": "Das hat nicht geklappt.",
+      "zaehler_erschoepft": "Die Ablage kann gerade keine Änderungen mehr aufnehmen.",
+      "name_vorhanden": "Dieser Name ist schon vergeben.",
+      "name_ungueltig": "Dieser Name ist nicht erlaubt.",
+      "journal_defekt": "Das Verzeichnis der Ablage ist beschädigt.",
+      "verknuepfung": "Verknüpfungen werden nicht verfolgt.",
+      "zyklus": "Ein Ordner kann nicht in sich selbst liegen.",
+      "nur_geraet_geerbt": "Dieser Ordner erbt „nur dieses Gerät“ von einem übergeordneten Ordner.",
+      "freigabe_unklar": "Die Freigabe ist unklar.",
+      "konflikt": "Die Datei hat einen offenen Konflikt.",
+      "ordner_im_papierkorb": "Der Ordner liegt im Papierkorb.",
+      "nicht_gefunden": "Nicht gefunden.",
+      "nicht_im_papierkorb": "Nicht im Papierkorb.",
+      "schon_im_papierkorb": "Schon im Papierkorb.",
+      "quelle_nicht_lesbar": "Die Quelle lässt sich nicht lesen.",
+      "quelle_ungueltig": "Die Quelle ist keine gewöhnliche Datei.",
+      "pruefsumme": "Die Prüfsumme stimmt nicht.",
+      "speicher": "Das Speichern ist fehlgeschlagen.",
+      "ungueltig": "Ungültige Angabe.",
+      "zu_tief": "Die Ordner sind zu tief verschachtelt.",
+      "zu_viele": "Zu viele Einträge.",
+      "keine_datei": "Keine Datei.",
+      "geraet": "Das ist ein Gerät, keine Datei; nicht übernommen.",
+      "datenstrom": "Alternative Datenströme werden nicht übernommen.",
+      "nicht_neu_aufbaubar": "Der Bestand lässt sich nicht neu aufbauen.",
+      "loeschen_offen": "Ein endgültiges Löschen ist noch nicht abgeschlossen. Bitte später erneut versuchen.",
+      "datei_im_papierkorb": "Die Datei liegt im Papierkorb."
     }
   }
 }

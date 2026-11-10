@@ -17,7 +17,8 @@ import {
   type ReaderRun,
 } from "@/lib/reader/readerDoc";
 import type { SourceRange } from "@/lib/reader/sentenceLocator";
-import { useSentenceClock, type SentenceClock } from "./useSentenceClock";
+import { useSentenceElapsed, type SentenceClock } from "./useSentenceClock";
+import { spokenOffset } from "@/lib/speechTiming";
 import type { TermMark } from "../terms/useBookTerms";
 import "./reader.css";
 
@@ -426,14 +427,19 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   }, [page]);
   const step = geo.colW + geo.gap;
 
-  // Die gerade hörbare Stelle: Anteil des Satzes nach Zeit, auf das Wort
-  // gerundet. Ohne Satzdauer (ältere Engine) bleibt es beim Satz.
-  const within = useSentenceClock(current ? clock : null);
+  // Die gerade hörbare Stelle, auf das Wort gerundet. Meldet der Kern, wann
+  // im Satz gesprochen wird, zählt nur diese Zeit (ohne Nachklang und
+  // Absatzpause, die sonst die Markierung nachhinken ließen); sonst der Anteil
+  // an der Satzdauer. Ohne Satzdauer (ältere Engine) bleibt es beim Satz.
+  // 16 Hz: im Mittel 30 ms statt 60 ms Ablesefehler.
+  const elapsed = useSentenceElapsed(current ? clock : null, 16);
   const word = useMemo(() => {
-    if (!current || !clock || current.end <= current.start) return null;
-    const at = current.start + Math.floor(within * (current.end - current.start));
+    if (!current || !clock || clock.ms <= 0 || current.end <= current.start) return null;
+    const at = clock.speech?.length
+      ? spokenOffset(text, current, clock.speech, elapsed)
+      : current.start + Math.floor((elapsed / clock.ms) * (current.end - current.start));
     return wordAt(text, at, current);
-  }, [current, clock, within, text]);
+  }, [current, clock, elapsed, text]);
 
   const pageOfElement = useCallback(
     (el: Pick<Element, "getClientRects" | "getBoundingClientRect"> | null): number | null => {
@@ -750,7 +756,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     <div className="reader-stage" data-testid="reader-stage">
       <div
         ref={bookRef}
-        className={`reader-book${geo.perView === 2 ? " reader-book--two" : ""}${showSpeakers ? "" : " reader-book--nospeakers"}${geo.narrow ? " reader-book--narrow" : ""}`}
+        className={`reader-book${geo.perView === 2 ? " reader-book--two" : ""}${twoPages ? "" : " reader-book--single"}${showSpeakers ? "" : " reader-book--nospeakers"}${geo.narrow ? " reader-book--narrow" : ""}`}
         style={
           {
             "--reader-fs": `${fontSize}px`,

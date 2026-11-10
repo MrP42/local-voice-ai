@@ -13,12 +13,14 @@ import {
   Cog,
   History,
   Cpu,
-  Phone,
+  BotMessageSquare,
   Plug,
   Users,
   Volume2,
   House,
   Library,
+  FolderArchive,
+  Folder,
   UserRound,
   X,
 } from "lucide-react";
@@ -34,6 +36,8 @@ import { IntegrationsPage } from "./integrations/IntegrationsPage";
 import { VoiceCallPage } from "./voice-call/VoiceCallPage";
 import { KontoProfilSeite } from "./konto/KontoProfilSeite";
 import { LibraryPage } from "./library/LibraryPage";
+import { AblagePage } from "./ablage/AblagePage";
+import { ProjektePage } from "./projekte/ProjektePage";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
 
@@ -58,7 +62,13 @@ interface SectionConfig {
 // General, Advanced, the dictation test and the about page were four separate
 // rows before — four rows of navigation for one activity.
 export const SECTIONS_CONFIG = {
-  home: { labelKey: "workspace.home", icon: House, component: () => null },
+  // lva#394: Das Haus öffnet den Chat (Vorbild ChatGPT); die frühere Kachelseite entfällt.
+  home: {
+    labelKey: "workspace.home",
+    hintKey: "sidebar.voiceCallHint",
+    icon: House,
+    component: VoiceCallPage,
+  },
   history: {
     labelKey: "sidebar.history",
     icon: History,
@@ -69,10 +79,11 @@ export const SECTIONS_CONFIG = {
     icon: Users,
     component: MeetingsSettings,
   },
+  // Altes Sprungziel (Fußleiste, Assistent, gemerkte Auswahl): App.tsx leitet auf „home“ um.
   voice: {
     labelKey: "sidebar.voiceCall",
     hintKey: "sidebar.voiceCallHint",
-    icon: Phone,
+    icon: BotMessageSquare,
     component: VoiceCallPage,
   },
   models: {
@@ -97,6 +108,18 @@ export const SECTIONS_CONFIG = {
     labelKey: "sidebar.library",
     icon: Library,
     component: LibraryPage,
+  },
+  // Dokumentenablage (Spec 2026-11-08, Stufe D1).
+  ablage: {
+    labelKey: "sidebar.ablage",
+    icon: FolderArchive,
+    component: AblagePage,
+  },
+  // lva#365 P4b: Projekte bündeln Bücher, Texte, Aufnahmen und Dateien; je Eintrag „Als Kontext“.
+  projekte: {
+    labelKey: "sidebar.projekte",
+    icon: Folder,
+    component: ProjektePage,
   },
   settings: {
     labelKey: "sidebar.settings",
@@ -128,7 +151,15 @@ interface SidebarProps {
   fuss?: React.ReactNode;
 }
 
-const PRIMARY = ["home", "history", "meetings", "tts", "library", "voice"] as const;
+const PRIMARY = [
+  "home",
+  "history",
+  "meetings",
+  "tts",
+  "library",
+  "ablage",
+  "projekte",
+] as const;
 // Modelle, Integrationen und Einstellungen stehen seit ADR-0027 im Profilmenü
 // (Profilkreis unten links), nicht mehr als Einträge der Navigation.
 

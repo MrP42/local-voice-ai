@@ -673,10 +673,10 @@ async usageBudgetStates() : Promise<Result<BudgetState[], string>> {
 }
 },
 /**
- * Anmelden: Schlüssel ableiten (nur lokal), Token holen, Konto speichern,
- * Ledger leeren, ersten Lauf anstoßen.
+ * Anmelden: Schlüssel ableiten (nur lokal), Token holen. Das Konto wird erst nach der
+ * Entscheidung über vorhandene lokale Daten gespeichert (lva#400, `uebernahme`).
  */
-async syncLogin(email: string, password: string, deviceName: string, url: string | null) : Promise<Result<SyncStatus, string>> {
+async syncLogin(email: string, password: string, deviceName: string, url: string | null) : Promise<Result<AnmeldeErgebnis, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("sync_login", { email, password, deviceName, url }) };
 } catch (e) {
@@ -756,12 +756,89 @@ async booktalkRelayRevoke(deviceKey: string) : Promise<Result<null, string>> {
 }
 },
 /**
- * Abmelden: Token im Hub widerrufen (best effort), Konto und Ledger löschen.
- * Die Seiten bleiben auf diesem Gerät.
+ * Abmelden (lva#400 U7): Herkunft festhalten, Konto und Ledger entfernen, Token im Hub
+ * widerrufen (bei Fehler später erneut). Mit `entfernen` gehen Bibliothek und Seiten nach
+ * geprüfter Sicherung vom Gerät; sonst bleiben alle Daten.
  */
-async syncLogout() : Promise<Result<SyncStatus, string>> {
+async syncLogout(entfernen: boolean) : Promise<Result<SyncStatus, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("sync_logout") };
+    return { status: "ok", data: await TAURI_INVOKE("sync_logout", { entfernen }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async syncAnmeldungOffen() : Promise<Result<Entscheidung | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_anmeldung_offen") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die Wahl im Modal umsetzen (U3, U11).
+ */
+async syncAnmeldungEntscheiden(wahl: AnmeldeWahl, kopierenBestaetigt: boolean) : Promise<Result<SyncStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_anmeldung_entscheiden", { wahl, kopierenBestaetigt }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Abbrechen (U10): Nutzdaten unverändert, wartende Anmeldung weg, Token widerrufen.
+ */
+async syncAnmeldungAbbrechen() : Promise<Result<SyncStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_anmeldung_abbrechen") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async syncSicherungen() : Promise<Result<Sicherung[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_sicherungen") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async syncSicherungWiederherstellen(name: string) : Promise<Result<WiederherstellBericht, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_sicherung_wiederherstellen", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellungen einer Sicherung zurückspielen (vorher Sicherung der aktuellen).
+ */
+async syncSicherungEinstellungen(name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_sicherung_einstellungen", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async syncSicherungLoeschen(name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_sicherung_loeschen", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Nur lokal gehaltene Einträge ins angemeldete Konto übernehmen (U5, Art `uebernahme`).
+ */
+async syncNurLokalUebernehmen() : Promise<Result<SyncStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_nur_lokal_uebernehmen") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -859,6 +936,376 @@ async kontoBildLesen(id: string) : Promise<Result<string | null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Gesamtstand für die Seite „Ablage“ (führt zuvor Wiederanlauf und Papierkorb-Aufräumen aus).
+ */
+async ablageStand() : Promise<Result<AblageSicht, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_stand") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ablageOrdnerAnlegen(eltern: string | null, name: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_ordner_anlegen", { eltern, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ablageOrdnerUmbenennen(id: string, name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_ordner_umbenennen", { id, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ablageOrdnerVerschieben(id: string, eltern: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_ordner_verschieben", { id, eltern }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Datenklasse, „Nur dieses Gerät“ und „KI-Entwürfe“ eines Ordners.
+ */
+async ablageOrdnerEinstellungen(id: string, einstellungen: AblageEinstellungen) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_ordner_einstellungen", { id, einstellungen }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * KI-Freigabe eines Ordners (gerätelokal); `null` = erbt wieder.
+ */
+async ablageKiSetzen(id: string, stufe: KiStufe | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_ki_setzen", { id, stufe }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Freigaben neu festlegen“: nur bei unklarer (defekter) Freigabe; alle Ordner auf „aus“.
+ */
+async ablageFreigabenNeuFestlegen() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_freigaben_neu_festlegen") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Cloud-Ausnahme je (Ordner, Anbieter) für einen vertraulichen Ordner erteilen (`an`) oder entziehen
+ * (D3, Spec §5.1). Gerätelokal in `freigabe.json`.
+ */
+async ablageCloudAusnahmeSetzen(ordner: string, anbieter: string, an: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_cloud_ausnahme_setzen", { ordner, anbieter, an }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einziges schreibendes KI-Werkzeug (D3, Spec §5.5): legt einen Entwurf (Markdown) als neue Datei in
+ * „KI-Entwürfe“ oder in einem Zielordner mit `zielordner_ki` ab. Klasse = Maximum aus Zielordner und
+ * Quellen; ist eine Quelle „nur dieses Gerät“, landet er in „KI-Entwürfe (nur dieses Gerät)“. `quellen`:
+ * Herkunftsmarken (`dokument:<dat>@<fas>#<textrev>`), Verweise oder `dat_…`. `mindestklasse`
+ * (`public` … `personal`): untere Schranke der Klasse; der Assistent übergibt das Maximum aller im
+ * Gespräch gelieferten Auszüge, weil die vom Modell benannten `quellen` unvollständig sein können.
+ */
+async ablageEntwurfAnlegen(ordner: string | null, name: string, inhaltMd: string, quellen: string[], mindestklasse: string | null) : Promise<Result<AblageEntwurf, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_entwurf_anlegen", { ordner, name, inhaltMd, quellen, mindestklasse }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Legt eine Datei oder einen Ordner (mit Struktur) in einem Ordner der Ablage ab. Bei Namenskollision
+ * ohne `wahl` wird nichts geschrieben (Zeile `kollision`).
+ */
+async ablageImportieren(ordner: string, pfad: string, wahl: AblageKollisionswahl | null) : Promise<Result<AblageImportZeile[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_importieren", { ordner, pfad, wahl }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ablageInPapierkorb(art: AblageArt, id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_in_papierkorb", { art, id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ablageWiederherstellen(art: AblageArt, id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_wiederherstellen", { art, id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ablageEndgueltigLoeschen(art: AblageArt, id: string) : Promise<Result<AblageLoeschBericht, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_endgueltig_loeschen", { art, id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ablagePapierkorbLeeren() : Promise<Result<AblageLoeschBericht, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_papierkorb_leeren") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ablageFassungen(datei: string) : Promise<Result<AblageFassung[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_fassungen", { datei }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ablageDateiUmbenennen(id: string, name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_datei_umbenennen", { id, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ablageDateiVerschieben(id: string, ordner: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_datei_verschieben", { id, ordner }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Bestand neu aufbauen“: nur bei fehlendem oder defektem Ablagejournal. Liefert die Zahl der Funde.
+ */
+async ablageBestandNeuAufbauen() : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_bestand_neu_aufbauen") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Nimmt gefundene Originale einer Datei in einem Ordner auf.
+ */
+async ablageGefundeneAufnehmen(datei: string, ordner: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_gefundene_aufnehmen", { datei, ordner }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Volltextsuche in der Ablage (ohne KI): Fundstellen mit Auszug und Anker. Die Namenssuche läuft in der
+ * Oberfläche; beide Ergebnisse zeigt die Seite zusammen.
+ */
+async ablageSuchen(anfrage: string) : Promise<Result<AblageSuchtreffer[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_suchen", { anfrage }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Suchindex neu aufbauen“: `index.db` löschen und aus den Textfassungen neu erzeugen.
+ */
+async ablageIndexNeuAufbauen() : Promise<Result<AblageIndexBericht, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_index_neu_aufbauen") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bricht die laufende Texterzeugung ab (bis zum nächsten Anstoß).
+ */
+async ablageTextAbbrechen() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_text_abbrechen") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Sync-Zustand je Ordner und Datei, Kontingent und letzter Fehler (D4). Ohne Konto: `verbunden = false`.
+ */
+async ablageSyncStand() : Promise<Result<AblageSyncStand, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_sync_stand") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ablageSemantikStand() : Promise<Result<AblageSemantik, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_semantik_stand") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung „Semantische Suche“. Einschalten bettet die vorhandenen Stücke im Hintergrund ein (nur
+ * mit geladenem Modell); Ausschalten gibt das Modell frei, die Suche ist sofort wieder lexikalisch.
+ */
+async ablageSemantikSetzen(an: boolean) : Promise<Result<AblageSemantik, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_semantik_setzen", { an }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Lädt Modell und Zerleger (auf Knopfdruck), je Datei mit Größe und SHA-256 aus dem Katalog.
+ * Fortschritt über `model-download-progress` (Kennung [`semantik::MODELL_ID`]).
+ */
+async ablageSemantikLaden() : Promise<Result<AblageSemantik, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_semantik_laden") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bricht einen laufenden Modell-Download ab (halbe Dateien bleiben für die Fortsetzung liegen).
+ */
+async ablageSemantikAbbrechen() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_semantik_abbrechen") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Entfernt das Modell vom Gerät (auch halbe Downloads). Die Suche ist danach lexikalisch; die
+ * Einstellung bleibt, ein erneutes Laden stellt die semantische Suche wieder her.
+ */
+async ablageSemantikLoeschen() : Promise<Result<AblageSemantik, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_semantik_loeschen") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * D7: verknüpft einen Ordner des Geräts (nur lesen, nur dieses Gerät, nie hochgeladen). Liefert die
+ * Kennung; danach wird er gleich abgetastet, der Index abgeglichen und der Textarbeiter angestoßen.
+ */
+async ablageVerknuepfen(pfad: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_verknuepfen", { pfad }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * D7: löst eine Verknüpfung. Der Ordner und seine Dateien bleiben unberührt; Textfassungen, Index und
+ * Freigabe dieses Geräts zu ihm verschwinden.
+ */
+async ablageVerknuepfungLoesen(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_verknuepfung_loesen", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * D7: „Neu einlesen“: einen (oder ohne Kennung alle) verknüpften Ordner sofort abtasten.
+ */
+async ablageVerknuepftAbtasten(id: string | null) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ablage_verknuepft_abtasten", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stuft eine Aeusserung lokal ein (ADR-0028 E4.1) fuer Ansagen und S0-Vorlagen. `None`, wenn
+ * diese abgeschaltet sind (`assistent_einstufung_aktiv`); das Tor vor dem Modell bleibt davon
+ * unberuehrt. Der Text wird nicht protokolliert.
+ */
+async assistentEinstufen(text: string, sprache: string, conversationId: string | null) : Promise<Result<EinstufungDto | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistent_einstufen", { text, sprache, conversationId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Nimmt die Messpunkte eines Beitrags entgegen (E9). Nur Debug-Zeile ohne Text: das Beitragsmodell
+ * (`conversations`, `ext["local-voice-ai"]`) hat noch keine Felder dafuer, und die Beitraege werden
+ * von der Oberflaeche gespeichert; die Ablage am Beitrag folgt mit der Chat-Startseite.
+ */
+async assistentMessungMelden(messung: MessungDto) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("assistent_messung_melden", { messung }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Letzte vom Tor freigegebene Ausgabe dieses Gespraechs (fuer „wiederholen“); `None` ohne eine.
+ */
+async assistentLetzteAusgabe(conversationId: string | null) : Promise<string | null> {
+    return await TAURI_INVOKE("assistent_letzte_ausgabe", { conversationId });
+},
+/**
+ * Vergisst die letzte Ausgabe (nach einer Antwort, die nicht durch das Tor lief).
+ */
+async assistentAusgabeVergessen(conversationId: string | null) : Promise<void> {
+    await TAURI_INVOKE("assistent_ausgabe_vergessen", { conversationId });
+},
+/**
+ * Ansagen und S0-Vorlagen der Oberflaeche ein- oder ausschalten (Standard an); das Tor bleibt aktiv.
+ */
+async changeAssistentEinstufungAktivSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_assistent_einstufung_aktiv_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async projekteListe() : Promise<Result<SuiteProjekt[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("projekte_liste") };
@@ -926,6 +1373,109 @@ async projektAbgleichen(suiteId: string) : Promise<Result<SyncBericht, string>> 
 async projektBuchZuordnen(suiteId: string, buchId: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("projekt_buch_zuordnen", { suiteId, buchId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektSeiteZuordnen(suiteId: string, seiteId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_seite_zuordnen", { suiteId, seiteId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektSeiteEntfernen(suiteId: string, seiteId: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_seite_entfernen", { suiteId, seiteId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Kopiert die gewählten Dateien in den Projektordner (Prüfung per Größe und SHA-256) und trägt
+ * sie danach ein. Liefert die Datei-IDs.
+ */
+async projektDateienHinzufuegen(suiteId: string, paths: string[]) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_dateien_hinzufuegen", { suiteId, paths }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Legt die Kopie in den Papierkorb des Projekts und nimmt sie aus dem Projekt. `false`: konnte nicht
+ * sicher entfernt werden; die Datei liegt weiter im Projektordner und wird zum Aufnehmen angeboten.
+ */
+async projektDateiEntfernen(suiteId: string, dateiId: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_datei_entfernen", { suiteId, dateiId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektDateienGefunden(suiteId: string) : Promise<Result<GefundeneDatei[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_dateien_gefunden", { suiteId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Zustand des Dateijournals: `null` = lesbar, sonst `fehlt`/`defekt`/`neuer`/`nicht_lesbar`.
+ */
+async projektDateienLage(suiteId: string) : Promise<Result<JournalLage | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_dateien_lage", { suiteId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Bestand neu aufbauen“: nur bei fehlendem oder defektem Dateijournal.
+ */
+async projektDateienNeuAufbauen(suiteId: string) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_dateien_neu_aufbauen", { suiteId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektDateiGefundenAufnehmen(suiteId: string, dateiId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_datei_gefunden_aufnehmen", { suiteId, dateiId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Übersicht „Als Kontext“ (ohne Inhalte): Schalter, Form, Token je Eintrag, Summe, Stand.
+ */
+async projektKontextUebersicht(suiteId: string) : Promise<Result<KontextUebersicht, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_kontext_uebersicht", { suiteId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Schaltet „Als Kontext“ eines Eintrags. `form` ändert die Form, `edition` die Fassung eines
+ * Buchs (leer = Hauptfassung); fehlt eines, bleibt es, wie es ist. `expected_stand`: der `stand` der
+ * angezeigten Übersicht; hat sich die Auswahl seitdem geändert, kommt `projekte.stand_veraltet` und es
+ * ändert sich nichts (P4c-1).
+ */
+async projektKontextSchalten(suiteId: string, eintragId: string, on: boolean, form: KontextForm | null, edition: string | null, expectedStand: string | null) : Promise<Result<KontextUebersicht, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_kontext_schalten", { suiteId, eintragId, on, form, edition, expectedStand }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3788,9 +4338,9 @@ async voiceCallTranscribe(pcm16B64: string) : Promise<Result<string, string>> {
  * fertige Antwort ist der Rückgabewert. Bricht `voice_call_cancel` ab, endet
  * der Aufruf mit `Ok` und leerem Text.
  */
-async voiceCallChat(requestId: string, messages: VoiceCallMessage[], context: SpeakerContext | null) : Promise<Result<string, string>> {
+async voiceCallChat(requestId: string, messages: VoiceCallMessage[], context: SpeakerContext | null, conversationId: string | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("voice_call_chat", { requestId, messages, context }) };
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_chat", { requestId, messages, context, conversationId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3799,9 +4349,9 @@ async voiceCallChat(requestId: string, messages: VoiceCallMessage[], context: Sp
 /**
  * Ein Durchgang eines Modells als roher Textstrom (Ereignisse `delta`, am Ende `usage`).
  */
-async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: string, stufe: string, forFunction: string | null) : Promise<Result<string, string>> {
+async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: string, stufe: string, forFunction: string | null, conversationId: string | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("voice_call_turn", { requestId, messages, modelId, stufe, forFunction }) };
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_turn", { requestId, messages, modelId, stufe, forFunction, conversationId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4751,6 +5301,30 @@ async changeVoiceCallKnowledgeSetting(areas: string[]) : Promise<Result<null, st
 }
 },
 /**
+ * Notizbuch-Abschnitte, die das Gespräch lesen darf (lva#396 N2): `abschnitt:<id>` oder
+ * `notizbuch:<id>`. Gespeichert werden nur gültige Einträge, ohne Doppelte.
+ */
+async changeVoiceNotebookSectionsSetting(sections: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_voice_notebook_sections_setting", { sections }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Gliederung des Notizbuchs für die Freigabe-Einstellung (nur Namen und Seitenzahlen, kein
+ * Inhalt). Ohne Notizbuch auf dem Gerät: Klartext-Fehler.
+ */
+async voiceNotebookOutline() : Promise<Result<NotebookOutline[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_notebook_outline") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Ruft ein lesendes Werkzeug (Bereich frei, Audit über das Tor). `args` ist ein JSON-Objekt als
  * Text, `conversation_id` das laufende Gespräch (es bleibt den Gesprächswerkzeugen verborgen). Die
  * Antwort ist der JSON-Text des Ergebnisses; eine zu lange Antwort wird nie still gekürzt, sondern
@@ -5474,9 +6048,11 @@ async llmWarm() : Promise<Result<string, string>> {
 }
 },
 /**
- * Alle Seiten in Anzeige-Reihenfolge. Gibt es keine, entsteht die erste —
+ * Alle Seiten in Anzeige-Reihenfolge. Gibt es gar keine, entsteht die erste —
  * eine leere Liste hieße für die Oberfläche „nichts, worin man arbeiten
- * kann", und diesen Zustand soll es nie geben.
+ * kann". Sind alle Seiten nur mit ihrem Buch im Papierkorb (Löschkaskade),
+ * entsteht keine: sonst käme bei jedem Wechsel zwischen Papierkorb und
+ * Wiederherstellen eine weitere „Erste Seite“ hinzu. Die Liste ist dann leer.
  */
 async pagesList() : Promise<Result<PageInfo[], string>> {
     try {
@@ -6912,6 +7488,205 @@ async libraryProgressPut(entries: ProgressEntry[]) : Promise<Result<null, string
 }
 },
 /**
+ * Layout, Journalphase, offene Probleme, Anzahl der zu verschiebenden Seiten
+ * und nötiger Platz.
+ */
+async libraryLayoutStatus() : Promise<Result<LibraryLayoutStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_layout_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bücher in Buch-Ordner umziehen (Sicherung → Journal → Schritte). Startet
+ * nur, wenn kein Hintergrundauftrag läuft; hält Sync-Lauf-, Bibliotheks- und
+ * Seitensperre über den ganzen Lauf.
+ */
+async libraryLayoutMigrate() : Promise<Result<LibraryLayoutReport, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_layout_migrate") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Rückfall auf Wunsch: dieselben Schritte rückwärts, ebenfalls im Journal.
+ */
+async libraryLayoutRollback() : Promise<Result<LibraryLayoutReport, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_layout_rollback") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Vorhandene Sicherungen der Buch-Ordner-Migration, neueste zuerst.
+ */
+async libraryBackupList() : Promise<Result<LibraryBackup[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_backup_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Sicherung zurückspielen: erst gegen das Manifest prüfen, dann jedes
+ * vorhandene Ziel in den Papierkorb (`sicherungen/.papierkorb/`), dann den
+ * Stand des Manifests anlegen. Nichts wird überschrieben.
+ */
+async libraryBackupRestore(name: string) : Promise<Result<LibraryBackupRestore, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_backup_restore", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Sicherung zurückspielen im ausdrücklich gewählten Best-Effort-Modus (lva#371):
+ * ein Laufwerk ohne Ordner-Sync hält den Lauf nicht an. Rückfallkopien bleiben.
+ */
+async libraryBackupRestoreBestEffort(name: string) : Promise<Result<LibraryBackupRestore, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_backup_restore_best_effort", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Vor dem Zurückspielen: kann das Laufwerk sicher schreiben? Entscheidet nach dem
+ * tatsächlichen Sync-Ergebnis (Prüfordner unter `sicherungen/`), nicht nach der Art
+ * des Laufwerks.
+ */
+async libraryBackupSyncCheck() : Promise<Result<LibrarySyncCheck, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_backup_sync_check") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Sicherung in einen neuen Ordner unter `ziel` kopieren und prüfen (lva#371). Nur
+ * lesend im Datenordner; die Bibliothekssperre hält ein gleichzeitiges Löschen fern.
+ */
+async libraryBackupExport(name: string, ziel: string) : Promise<Result<LibraryBackupExport, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_backup_export", { name, ziel }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eine Sicherung auf ausdrücklichen Wunsch löschen (nach der Aufbewahrung von 30
+ * Tagen fragt die Oberfläche). Abgelehnt, solange etwas sie noch braucht.
+ */
+async libraryBackupDelete(name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_backup_delete", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Dateien im Buch-Ordner für das Buchdetail (P2b-2). Nur lesend und ohne Sperre:
+ * ein Lauf daneben verändert höchstens, was gerade angezeigt wird.
+ */
+async libraryBookFiles(id: string) : Promise<Result<LibraryBookFile[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_book_files", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Buch-Ordner im Explorer (Finder) zeigen.
+ */
+async libraryBookReveal(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_book_reveal", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Notizen, Anhänge und Transkripte eines Buchs (auch noch nicht geladene).
+ */
+async libraryBookFolderFiles(id: string) : Promise<Result<BookFolderFile[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_book_folder_files", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Neue Notiz anlegen; liefert ihren Pfad im Buch-Ordner.
+ */
+async libraryBookNoteCreate(id: string, title: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_book_note_create", { id, title }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Dateien als Anhänge in den Buch-Ordner kopieren; liefert die neuen Pfade.
+ */
+async libraryBookAttachmentsAdd(id: string, paths: string[]) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_book_attachments_add", { id, paths }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eine Datei mit dem Standardprogramm des Systems öffnen.
+ */
+async libraryBookFileOpen(id: string, rel: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_book_file_open", { id, rel }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eine Datei in den Papierkorb der Bibliothek legen (auf allen Geräten nach dem
+ * nächsten Abgleich).
+ */
+async libraryBookFileRemove(id: string, rel: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_book_file_remove", { id, rel }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eine lokal fehlende Datei vom Hub zurückholen (der nächste Abgleich lädt sie).
+ */
+async libraryBookFileRestore(id: string, rel: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_book_file_restore", { id, rel }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Gespeicherter Abgleich des Buchs (leer, wenn der Text sich geändert hat).
  */
 async audiosyncLoad(bookId: string) : Promise<Result<AudioSyncCache, string>> {
@@ -7772,6 +8547,243 @@ ttsProviderVoiceSample: "tts-provider-voice-sample"
 
 /** user-defined types **/
 
+export type AblageArt = "datei" | "ordner"
+export type AblageDatei = { id: string; name: string; ordner: string; typ: string; groesse: number; geaendert: number; fassungen: number; konflikt: boolean; klasse: string; ki: AblageKi; nur_geraet: boolean; 
+/**
+ * Stand der Textfassung der aktuellen Fassung: `ausstehend`, `ok`, `kein_text` oder `fehler`;
+ * `null` = Format ohne Textfassung (z. B. Bilder).
+ */
+text: string | null; 
+/**
+ * Fehlercode bei `fehler` (z. B. `extrakt.zeit`, `extrakt.zip_grenze`); nie Inhalt.
+ */
+text_code: string | null; 
+/**
+ * D7: Datei eines verknüpften Ordners (nur lesen; Name = Pfad im verknüpften Ordner).
+ */
+verknuepft: boolean }
+export type AblageEinstellungen = { datenklasse: string | null; nur_geraet: boolean | null; zielordner_ki: boolean | null }
+/**
+ * Ergebnis von `ablage_entwurf_anlegen`.
+ */
+export type AblageEntwurf = { dat: string; fas: string; ordner: string; name: string; 
+/**
+ * Wirksame Klasse des Entwurfs (`public` … `personal`).
+ */
+klasse: string; nur_geraet: boolean }
+export type AblageFassung = { fas: string; nummer: number; vorgaenger: string | null; groesse: number; typ: string; zeit: number; aktuell: boolean; kopf: boolean; abgeloest: boolean }
+/**
+ * Fundstelle in einer Datei.
+ */
+export type AblageFundstelle = { 
+/**
+ * Anker nach Markenformat v1 (`seite=3`, `absatz=12`, `blatt=…&zeilen=2-21`, `teil=kopf`, …).
+ */
+anker: string; 
+/**
+ * Überschriftenpfad (DOCX/ODT/HTML) bzw. Blattname.
+ */
+pfad: string[]; auszug: string }
+export type AblageGefunden = { dat: string; typ: string; groesse: number }
+export type AblageImportStand = "abgelegt" | "neue_fassung" | 
+/**
+ * Name vorhanden: nichts geschrieben, die Bedienung wählt.
+ */
+"kollision" | "uebersprungen" | "fehler"
+export type AblageImportZeile = { quelle: string; stand: AblageImportStand; 
+/**
+ * Zielordner dieser Datei (bei Ordnerimport der Unterordner): für die Wiederholung mit Wahl.
+ */
+ordner: string | null; dat: string | null; fas: string | null; name: string | null; code: string | null }
+/**
+ * Bericht eines Abgleichs (Tests, Oberfläche).
+ */
+export type AblageIndexBericht = { geschrieben: number; entfernt: number; dateien: number; stuecke: number }
+export type AblageKi = { 
+/**
+ * `an`, `aus`, `gesperrt` oder `unklar`.
+ */
+zustand: string; 
+/**
+ * Ordner, von dem der Zustand stammt, wenn geerbt.
+ */
+von: string | null; 
+/**
+ * Name dieses Ordners (für „geerbt von …“).
+ */
+von_name: string | null; 
+/**
+ * Kein Eintrag in der Kette (Vorgabe aus).
+ */
+vorgabe: boolean }
+export type AblageKollisionswahl = "neue_fassung" | "beide_behalten"
+export type AblageKorb = { art: AblageArt; id: string; name: string; typ: string; geloescht: number; tage_rest: number; ursprung: string }
+/**
+ * Warum die Ablage nicht geladen werden kann.
+ */
+export type AblageLage = 
+/**
+ * Fehlt, obwohl Dateien vorhanden sind.
+ */
+"fehlt" | 
+/**
+ * Kaputt oder mit ungültigen Kennungen.
+ */
+"defekt" | 
+/**
+ * Von einer neueren App-Version: nicht lesbar und nie neu aufbaubar.
+ */
+"neuer" | 
+/**
+ * Vorübergehend nicht lesbar (Rechte, Sperre, Datenträger): später erneut.
+ */
+"nicht_lesbar"
+export type AblageLoeschBericht = { dateien: number; ordner: number }
+export type AblageOrdner = { id: string; name: string; 
+/**
+ * Wirksamer Elternordner; `null` = oberste Ebene.
+ */
+eltern: string | null; 
+/**
+ * Zyklus oder begrabener Elternordner: vorläufig unter „Wiederhergestellt“.
+ */
+wiederhergestellt: boolean; 
+/**
+ * Gespeicherte Datenklasse (`erbt`, `public`, …).
+ */
+datenklasse: string; 
+/**
+ * Wirksame Klasse (`public` … `personal`, `unbekannt`).
+ */
+klasse: string; nur_geraet: boolean; nur_geraet_wirksam: boolean; zielordner_ki: boolean; ki: AblageKi; dateien: number; 
+/**
+ * D7: verknüpfter Ordner (nur lesen, nur dieses Gerät).
+ */
+verknuepft: boolean }
+/**
+ * Zustand der semantischen Suche für die Seite „Ablage“.
+ */
+export type AblageSemantik = { 
+/**
+ * Einstellung „Semantische Suche“.
+ */
+an: boolean; 
+/**
+ * Ist die semantische Suche Standard (Eval-Tor bestanden)?
+ */
+standard: boolean; 
+/**
+ * Modell und Zerleger liegen vor.
+ */
+modell_bereit: boolean; 
+/**
+ * Download läuft.
+ */
+laedt: boolean; 
+/**
+ * Fortschritt des Downloads über alle Dateien (0–100, nur bei `laedt`).
+ */
+prozent: number; 
+/**
+ * Halbe Downloads liegen im Modellordner (können entfernt werden).
+ */
+reste: boolean; 
+/**
+ * Downloadgröße in MB.
+ */
+groesse_mb: number; 
+/**
+ * Das Modell ließ sich nicht laden (lexikalische Suche aktiv).
+ */
+ladefehler: boolean; 
+/**
+ * Vektoren werden gerade erstellt.
+ */
+nachziehen: boolean; 
+/**
+ * Stücke ohne Vektor (bis zum Ende des Nachziehens wirkt nur die lexikalische Suche).
+ */
+vektoren_fehlen: number; 
+/**
+ * Der Index liegt noch nicht im Vektorraum des Modells (das Nachziehen übernimmt ihn).
+ */
+neuaufbau: boolean; 
+/**
+ * Der Zustand des Suchindex ließ sich nicht lesen.
+ */
+index_fehler: boolean; 
+/**
+ * Die Suche nutzt gerade Vektoren.
+ */
+aktiv: boolean }
+export type AblageSicht = { 
+/**
+ * `null` = lesbar; sonst blockiert alles bis zur Bedienung „Bestand neu aufbauen“ (falls möglich).
+ */
+lage: AblageLage | null; 
+/**
+ * Freigabe unklar: die ganze Ablage ist für die KI gesperrt.
+ */
+freigabe_unklar: KiUnklar | null; ordner: AblageOrdner[]; dateien: AblageDatei[]; papierkorb: AblageKorb[]; gefunden: AblageGefunden[]; 
+/**
+ * Summe der Größen aller Fassungen (lokal belegt).
+ */
+belegt: number; 
+/**
+ * KI-Freigaben wurden automatisch aus der Sicherung wiederhergestellt: Ordner ohne eigenen oder
+ * geerbten Eintrag sind gesperrt, bis die Bedienung sie neu setzt oder den Stand bestätigt.
+ */
+freigabe_wiederhergestellt: boolean; 
+/**
+ * D7: verknüpfte Ordner (gerätelokal, nur lesen) und ihre Dateien.
+ */
+verknuepft: AblageVerknuepft[]; verknuepft_dateien: AblageDatei[] }
+/**
+ * Suchtreffer: Name und/oder Inhalt einer lebenden Datei.
+ */
+export type AblageSuchtreffer = { dat: string; name: string; ordner: string; typ: string; 
+/**
+ * Bester Rang der Fundstellen (0..1).
+ */
+rang: number; stellen: AblageFundstelle[] }
+export type AblageSyncEintrag = { id: string; zustand: AblageSyncZustand }
+/**
+ * Stand des Abgleichs für die Seite „Ablage“.
+ */
+export type AblageSyncStand = { 
+/**
+ * Ein Konto ist angemeldet (sonst zeigt die Seite keine Sync-Zustände).
+ */
+verbunden: boolean; letzter_lauf_ms: number | null; fehler: string | null; kontingent_voll: boolean; 
+/**
+ * Belegt und Kontingent in Bytes (vom Hub), falls bekannt.
+ */
+belegt: number | null; kontingent: number | null; eintraege: AblageSyncEintrag[] }
+/**
+ * Sync-Zustand eines Ordners oder einer Datei.
+ */
+export type AblageSyncZustand = "synchronisiert" | "ausstehend" | "konflikt" | "wartet_auf_text" | "nur_geraet" | "angehalten"
+/**
+ * Ein verknüpfter Ordner für die Oberfläche.
+ */
+export type AblageVerknuepft = { ordner: AblageOrdner; erreichbar: boolean; 
+/**
+ * Übersprungene Einträge (Verknüpfungen, Hartlinks, zu tief).
+ */
+ausgelassen: number; 
+/**
+ * Dateien und Ordner, die nur online liegen (OneDrive „Dateien bei Bedarf“): die Dateien stehen mit Name
+ * und Größe in der Liste, werden aber nie gelesen; Ordner werden nicht betreten.
+ */
+nur_online: number; 
+/**
+ * Mehr als [`MAX_DATEIEN`] Dateien: nur die ersten sind erfasst.
+ */
+zu_viele: boolean; 
+/**
+ * Letztes Abtasten (ms), 0 = noch nie.
+ */
+abgetastet: number }
 export type AccountState = "not_configured" | "no_capabilities" | "needs_sign_in" | "needs_consent" | "ready"
 /**
  * Eine Aufgabe (Zeile in `action_items`). `assignee_label` ist Freitext, die
@@ -7823,6 +8835,12 @@ export type AlignGroup = { a: number[]; b: number[]; confirmed: boolean }
  * Kapitelzuordnung zweier Fassungen, lückenlos in Gruppen.
  */
 export type Alignment = { a: string; b: string; updated: number; device?: string; groups: AlignGroup[] }
+export type AnmeldeErgebnis = { status: SyncStatus; 
+/**
+ * `Some`: das Modal zeigen; `None`: ohne Rückfrage freigegeben.
+ */
+entscheidung: Entscheidung | null }
+export type AnmeldeWahl = "zusammenfuehren" | "getrennt_halten" | "entfernen"
 export type AntwortSicht = { text: string; citations: number[]; unsupported: boolean }
 /**
  * Anfrage an den Abruf.
@@ -8273,6 +9291,12 @@ book_talk_preview_bindings?: PreviewBinding[];
  */
 meeting_voice_suggestions?: boolean; 
 /**
+ * Ablage D6: semantische Suche (lokale Vektoren mit multilingual-e5-small). Wirkt erst, wenn
+ * das Modell geladen ist; ohne Modell bleibt die Suche lexikalisch. Standard aus dem Eval-Tor
+ * (`ablage::semantik::SEMANTIK_STANDARD`).
+ */
+ablage_semantische_suche?: boolean; 
+/**
  * D3 (#70): Bildanalyse fuer Folien. Gemma 4 E4B liest den Text erkannter Folien neu
  * (Zahlen und Tabellen stimmen) und beschreibt sie; dafuer startet der lokale Server
  * kurz mit Bild-Projektor. Standard AUS (der Projektor ist ein optionaler 990-MB-
@@ -8361,6 +9385,12 @@ meeting_mcp_enabled?: boolean;
  */
 meeting_mcp_include_transcript?: boolean; 
 /**
+ * ADR-0028 A2 (E4): Ansagen und S0-Vorlagen der Oberflaeche (lokale Einstufung S0-S3).
+ * Standard AN. Steuert NUR die Oberflaeche; das Tor vor dem Modellaufruf (Rust,
+ * `assistent::tor`) bleibt immer aktiv.
+ */
+assistent_einstufung_aktiv?: boolean; 
+/**
  * Stufe 2 des Sprachgesprächs: darf die Sprach-KI Transkripte von Besprechungen lesen
  * (`meeting_transcript`, Treffer aus dem Transkript)? Getrennt vom MCP-Server; Standard AUS
  * (ADR-0021).
@@ -8374,6 +9404,12 @@ voice_call_read_transcripts?: boolean;
  * `meetings`. Getrennt von den Rechten externer Agenten.
  */
 voice_call_knowledge?: string[]; 
+/**
+ * Notizbuch-Abschnitte, die das Gespräch lesen darf (lva#396 N2, Spec lva#398 §3.2), nur
+ * zusammen mit dem Bereich `notebook`: `abschnitt:<id>` oder `notizbuch:<id>` (ganzes
+ * Notizbuch samt künftiger Abschnitte). Standard LEER: dann ist nichts sichtbar.
+ */
+voice_call_notebook_sections?: string[]; 
 /**
  * Globaler Sprachassistent (lva#325): Abrufindex über die freigegebenen Bereiche
  * (`voice_call_knowledge`, inkl. `books`, `book_notes`, `ki_docs`). Standard AUS: dann
@@ -8753,6 +9789,40 @@ export type BookCharacter = { name: string;
  * voice_id der Stimme, mit der die Figur spricht (`None` = Standard).
  */
 voice_id: string | null; description: string }
+/**
+ * Eine Notiz, ein Anhang oder ein Transkript im Buch-Ordner.
+ */
+export type BookFolderFile = { 
+/**
+ * Pfad relativ zum Buch-Ordner, mit `/` (etwa `notizen/Gedanken.md`).
+ */
+rel: string; 
+/**
+ * `notiz`, `anhang` oder `transkript`.
+ */
+role: string; name: string; bytes: number; modified_ms: number; 
+/**
+ * Fassung (Transkript), sonst leer.
+ */
+edition: string; 
+/**
+ * Von einem anderen Gerät gemeldet, noch nicht geladen.
+ */
+pending: boolean; 
+/**
+ * Konfliktkopie aus dem Abgleich.
+ */
+conflict: boolean; 
+/**
+ * Bekannt, fehlt aber lokal (im Explorer gelöscht, Ordner fehlt): vom Hub
+ * wiederherstellen oder in der App löschen.
+ */
+missing: boolean; 
+/**
+ * Von einem anderen Gerät gemeldet, zurückgehalten: der Name fiele mit einer anderen
+ * Datei zusammen (Groß-/Kleinschreibung, Unicode-Form).
+ */
+held: boolean }
 export type BookPreview = { title: string; pages: number; voices: PackageVoice[]; rights_confirmed: boolean }
 /**
  * Die Antwort in zwei Formen (D5; Form wie `BookTalkAnswer` im Vertrag).
@@ -9633,6 +10703,22 @@ audio_paths: string[] }
  */
 export type EditionTombstone = { id: string; removed_ms: number }
 /**
+ * Ergebnis der Einstufung (Vertragstyp `Einstufung` des Kerns).
+ */
+export type EinstufungDto = { stufe: StufeDto; 
+/**
+ * Kennung der Absicht (Slug der Regeltabelle), z. B. `uhrzeit` oder `mail-lesen`.
+ */
+absicht: string; 
+/**
+ * Ansage ab S1 (Vorlage der Tabelle).
+ */
+ansage: string | null; 
+/**
+ * Vorlagenantwort bei S0.
+ */
+antwort: string | null }
+/**
  * Eintrag des Projektordners. Ohne Leserecht fehlen `title` und `subtitle` (`available` = false).
  */
 export type EintragSicht = { id: string; kind: string; title: string | null; subtitle: string | null; originApp: string | null; dataClass: string | null; available: boolean; assignedAt: string | null; 
@@ -9694,6 +10780,15 @@ recording: number; meeting_id: string; segment_index: number; start_ms: number }
  * Eine Antwortfassung (Vertrag `Variant`, ohne Quellen- und Werkzeugfelder).
  */
 export type EntryVariant = { id: string; text: string; model: string; provider_id?: string | null; status: string; created_at: string; notice?: string | null }
+export type Entscheidung = { konto: string; 
+/**
+ * Konto, aus dem die lokalen Daten zuletzt kamen, wenn es ein anderes ist.
+ */
+vorher_konto: string | null; seiten: number; buecher: number; fortschritte: number; dateien: number; einstellungen: boolean; 
+/**
+ * Größe der Sicherung in Bytes (geschätzt aus dem lokalen Bestand).
+ */
+sicherung_bytes: number; kollisionen: Kollision[] }
 /**
  * Welche Teile in den Export kommen (`meetings_export`, Zwischenablage).
  * Fehlende Felder gelten als „an“: ein Aufruf ohne Auswahl exportiert alles.
@@ -9861,6 +10956,10 @@ effort?: string | null }
  * Fusszeile.
  */
 export type Fusszeile = { zeilen?: string[]; seitenzahl?: boolean }
+/**
+ * Datei im Projektordner ohne Journaleintrag (Absturz), zum bewussten Aufnehmen angeboten.
+ */
+export type GefundeneDatei = { id: string; name: string; size: number }
 export type GenerateOptions = { book_id: string | null; template_id: string; prompt: string; part_title: string; length_words: number; audience: string; tone: string; language: string; with_tags: boolean; allowed_tags: string[]; 
 /**
  * Figuren, die vorkommen sollen (Namen aus dem Buch).
@@ -10089,6 +11188,27 @@ export type JobRunState = "running" |
  */
 "stopping"
 /**
+ * Warum ein Journal nicht geladen werden kann.
+ */
+export type JournalLage = 
+/**
+ * Fehlt, obwohl Dateien vorhanden sind.
+ */
+"fehlt" | 
+/**
+ * Kaputt oder mit ungültigen Namen.
+ */
+"defekt" | 
+/**
+ * Von einer neueren App-Version: nicht lesbar und nie neu aufbaubar (die Version wird vor der
+ * übrigen Form geprüft).
+ */
+"neuer" | 
+/**
+ * Vorübergehend nicht lesbar (Rechte, Sperre, Datenträger): später erneut.
+ */
+"nicht_lesbar"
+/**
  * Sprungziel eines Treffers in der App.
  */
 export type Jump = { kind: SourceKind; id: string; 
@@ -10101,7 +11221,7 @@ offset: number; page: number | null; book_id: string | null }
  */
 export type KeyStatus = { 
 /**
- * Dieses System kann Geheimnisse verschlüsselt ablegen (Windows/DPAPI).
+ * Dieses System kann Geheimnisse verschlüsselt ablegen (Windows/DPAPI, macOS/Schlüsselbund).
  */
 supported: boolean; present: boolean; 
 /**
@@ -10128,6 +11248,23 @@ usage?: KiUsage | null;
  * Dokumenten und Importen.
  */
 language?: string | null }
+export type KiStufe = "an" | "aus" | "gesperrt"
+/**
+ * Warum die Freigabe unklar ist.
+ */
+export type KiUnklar = 
+/**
+ * Kaputt, ungültig oder gelöscht, obwohl es eine `.vorher` gibt.
+ */
+"defekt" | 
+/**
+ * Gerade nicht lesbar (Rechte, Sperre, Datenträger): später erneut.
+ */
+"unlesbar" | 
+/**
+ * Von einer neueren App-Version.
+ */
+"neuer"
 /**
  * Verbrauch eines KI-Dokuments: was vorher geschätzt und was gebraucht wurde.
  */
@@ -10155,6 +11292,63 @@ export type Kind = "youtube" | "ics" | "graph" | "m365" | "smtp" | "folder" | "o
  * WAI Presenter (Etappe 4): Austauschordner fuer Besprechungspakete (`presenter.rs`).
  */
 "presenter"
+export type Kollision = { titel: string; 
+/**
+ * `seite` (wird unter neuer Kennung lokal behalten) oder `buch` (bleibt in der Sicherung).
+ */
+art: string }
+/**
+ * Form, in der ein Eintrag als Kontext dient.
+ */
+export type KontextForm = 
+/**
+ * Buch: Kurzbuch der gewählten Fassung (Vorgabe).
+ */
+"kurzbuch" | 
+/**
+ * Buch: Volltext der gewählten Fassung (nur auf ausdrückliche Wahl).
+ */
+"volltext" | 
+/**
+ * Aufnahme: Protokoll (Vorgabe).
+ */
+"protokoll" | 
+/**
+ * Aufnahme: Transkript (nur auf ausdrückliche Wahl).
+ */
+"transkript" | 
+/**
+ * Text, Datei, Recherche: der Text selbst.
+ */
+"text" | 
+/**
+ * Ablage-Eintrag (Datei oder Ordner, Spec Ablage §5.3): je Frage Top-k-Auszüge mit Abdeckung.
+ */
+"auszuege"
+/**
+ * Übersicht für die Oberfläche: Zeilen, Summe, Anzahl, Stand.
+ */
+export type KontextUebersicht = { rows: KontextZeile[]; tokens: number; count: number; stand: string; 
+/**
+ * Die Auswahl war nicht lesbar; alles gilt als aus, bis neu geschaltet wird.
+ */
+reset: boolean }
+/**
+ * Zeile der Übersicht für die Oberfläche (ohne Inhalte).
+ */
+export type KontextZeile = { id: string; on: boolean; form: KontextForm; 
+/**
+ * Wählbare Formen (erste = Vorgabe).
+ */
+forms: KontextForm[]; edition: string | null; 
+/**
+ * Geschätzte Token des Kontexttexts in der gewählten Form; fehlt, wenn es keinen gibt.
+ */
+tokens: number | null; 
+/**
+ * Hinweis-Code, wenn der Eintrag keinen Text beiträgt.
+ */
+hint: string | null; hintText: string | null }
 /**
  * Teiländerung: fehlende oder `null`-Felder bleiben unverändert, ein leerer Text leert
  * ein optionales Feld.
@@ -10243,6 +11437,43 @@ export type Letterhead = { schema: string; id: string; name: string;
  * Laden eigener Profile immer auf `false` gesetzt, ein Wert aus der Datei zaehlt nie.
  */
 builtin?: boolean; firma: Firma; logo?: Logo | null; farben: Farben; fusszeile: Fusszeile }
+/**
+ * Eine Sicherung unter `sicherungen/`.
+ */
+export type LibraryBackup = { name: string; 
+/**
+ * Erstellt am (Unix-ms).
+ */
+erstellt_ms: number; dateien: number; bytes: number; 
+/**
+ * Älter als die Aufbewahrung (30 Tage): die Oberfläche fragt, ob sie gehen darf.
+ */
+abgelaufen: boolean }
+/**
+ * Ergebnis von „Sicherung exportieren“.
+ */
+export type LibraryBackupExport = { 
+/**
+ * Neuer Ordner mit der Sicherung (absolut).
+ */
+ordner: string; dateien: number; 
+/**
+ * `false`: kopiert und geprüft, aber auch das Ziel sichert nicht dauerhaft.
+ */
+dauerhaft: boolean; 
+/**
+ * `false`: das Ziel liegt nachweislich nicht im Datenordner, aber mindestens ein Glied
+ * seines Pfads war nur über die Prüfmarke auszuschließen (keine Kennung).
+ */
+ziel_vollstaendig_geprueft: boolean }
+/**
+ * Ergebnis von „Sicherung zurückspielen“.
+ */
+export type LibraryBackupRestore = { dateien: number; 
+/**
+ * Papierkorb mit den Zielen, die weichen mussten (relativ zum Datenordner).
+ */
+papierkorb: string | null }
 export type LibraryBook = { 
 /**
  * Leer beim Anlegen; das Backend vergibt `book_<ms>`.
@@ -10299,6 +11530,18 @@ audio_path: string | null;
  */
 audio_paths?: string[] }
 /**
+ * Ein Eintrag der Ansicht „Dateien im Buch-Ordner“.
+ */
+export type LibraryBookFile = { 
+/**
+ * Pfad relativ zum Buch-Ordner, mit `/`.
+ */
+rel: string; tiefe: number; ordner: boolean; bytes: number; dateien: number; 
+/**
+ * Inhalt nicht einzeln gezeigt (zu tief oder zu viele Dateien).
+ */
+zusammengefasst: boolean }
+/**
  * Ein Teil des Hörbuchs als Kapitelmarke (M4B).
  */
 export type LibraryExportChapter = { title: string; duration_ms: number | null }
@@ -10314,6 +11557,75 @@ language: string | null;
  * Absoluter Pfad des Covers (mit oder ohne `?v=`), nur für EPUB.
  */
 cover_path: string | null }
+/**
+ * Ein Befund, der die Buch-Ordner-Ablage anhält.
+ */
+export type LibraryLayoutProblem = { 
+/**
+ * Seiten-ID (leer bei einem allgemeinen Fehler).
+ */
+seite: string; 
+/**
+ * `doppelt`, `fehlt`, `unerwartet` oder `fehler`.
+ */
+art: string; meldung: string; 
+/**
+ * Betroffene Pfade relativ zum Datenordner.
+ */
+pfade: string[] }
+/**
+ * Ergebnis von Migration oder Rückfall.
+ */
+export type LibraryLayoutReport = { phase: string | null; 
+/**
+ * Schritte, die in diesem Lauf etwas geändert haben.
+ */
+erledigt: number; 
+/**
+ * Angehalten: an dieser Stelle wurde nichts weiter verschoben.
+ */
+angehalten: boolean; probleme: LibraryLayoutProblem[]; hinweise: string[] }
+/**
+ * Zustand der Buch-Ordner-Ablage.
+ */
+export type LibraryLayoutStatus = { 
+/**
+ * 1 = Seiten unter `projects/`, 2 = Fassungen im Buch-Ordner.
+ */
+layout: number; 
+/**
+ * Phase des Journals: `geplant`, `gesichert`, `fertig`, `rueckfall`,
+ * `zurueckgenommen`; `None`, wenn es keines gibt.
+ */
+phase: string | null; probleme: LibraryLayoutProblem[]; 
+/**
+ * Übersprungene Seiten mit Grund.
+ */
+hinweise: string[]; 
+/**
+ * Seiten, die noch zu verschieben sind.
+ */
+zu_verschieben: number; 
+/**
+ * Nötiger Platz für die Sicherung (Bytes).
+ */
+platz_benoetigt: number; 
+/**
+ * Freier Platz auf dem Datenträger (Bytes), falls bekannt.
+ */
+platz_frei: number | null }
+/**
+ * Was das Laufwerk des Datenordners beim Sichern tatsächlich kann (lva#371).
+ */
+export type LibrarySyncCheck = { 
+/**
+ * `ok`, `nicht_unterstuetzt` (Ordner-Sync), `datei_nicht_unterstuetzt` oder `fehler`.
+ */
+ergebnis: string; 
+/**
+ * Bei `fehler`: die Ursache.
+ */
+meldung: string | null }
 /**
  * Zustimmung des Nutzers zu den Lizenzangaben eines Anbieters. Gilt nur,
  * solange `fingerprint` dem aktuellen Stand entspricht (siehe
@@ -10788,6 +12100,11 @@ from_metadata: boolean }
 export type MemoryFile = { kind: string; text: string }
 export type MemoryProposal = { verlauf: string; figuren: string; welt: string }
 /**
+ * Messpunkte eines Beitrags (ADR-0028 E9), alle Zeiten in ms relativ zum Start (Sprachende bzw.
+ * Senden). Keine Inhalte.
+ */
+export type MessungDto = { beitrag_id: string; erste_ansage_ms: number | null; erster_inhalt_ms: number | null; fertig_ms: number | null; warm: boolean; weg: WegDto; stufe: StufeDto }
+/**
  * Ein Treffer aus Open Library, als Vorschlag für den Dialog.
  */
 export type MetadataCandidate = { title: string; subtitle: string | null; authors: string[]; first_publish_year: number | null; publisher: string | null; isbn: string | null; language: string | null; pages: number | null; 
@@ -11010,6 +12327,14 @@ export type NewEntry = { id?: string | null; role: string; mode: string; text: s
 export type NoteBlock = { id: string; kind: NoteBlockKind; text: string; at_ms: number | null; checked: boolean }
 export type NoteBlockKind = "paragraph" | "bullet" | "heading" | "todo"
 /**
+ * Ein Notizbuch in der Freigabe-Einstellung.
+ */
+export type NotebookOutline = { id: string; name: string; sections: NotebookOutlineSection[] }
+/**
+ * Ein Abschnitt in der Freigabe-Einstellung.
+ */
+export type NotebookOutlineSection = { id: string; name: string; group: string | null; pages: number }
+/**
  * Einstellungen des Ollama-Sprachanbieters.
  */
 export type OllamaSpeechConfig = { 
@@ -11173,7 +12498,13 @@ modified_ms?: number;
  * `state.json` gelesen — das Schema gehört der Oberfläche, fehlt das
  * Feld, bleibt die Vorschau leer.
  */
-preview?: string }
+preview?: string; 
+/**
+ * Buch, in dessen Ordner die Seite liegt (`library/<buch>/fassungen/<id>`,
+ * lva#365). Leer: die Seite liegt unter `projects/<id>`. Fehlt in älteren
+ * Indizes; dann findet `page_path` die Seite über die Fundortkarte.
+ */
+buch?: string | null }
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
 export type PairStage = 
 /**
@@ -11949,6 +13280,11 @@ export type ShieldCheck = { id: string; level: ShieldLevel; detail: string | nul
 export type ShieldLevel = "green" | "yellow" | "red"
 export type ShieldStatus = { level: ShieldLevel; profile: ComplianceProfile; active_model: string | null; active: Assessment | null; checks: ShieldCheck[] }
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
+export type Sicherung = { name: string; erstellt_ms: number; anlass: string; konto: string | null; seiten: number; buecher: number; dateien: number; bytes: number; 
+/**
+ * Voller Pfad des Sicherungsordners (für „Ordner öffnen“).
+ */
+ordner: string }
 /**
  * Ein Zeitbereich, in dem eine Folie zu sehen ist (ms im Video).
  */
@@ -12220,6 +13556,10 @@ export type Strength =
  */
 "strong"
 /**
+ * Stufe der Einstufung, wie sie die Oberflaeche sieht.
+ */
+export type StufeDto = "S0" | "S1" | "S2" | "S3"
+/**
  * Art des erzeugten Inhalts (Spalte `provenance.subject_kind`). Die Liste ist
  * fest und steht zusaetzlich als CHECK in der Migration.
  */
@@ -12344,7 +13684,23 @@ key_mismatch: boolean;
 /**
  * Anzahl synchronisierter Seiten laut Ledger.
  */
-pages: number }
+pages: number; 
+/**
+ * Einträge, die nur auf diesem Gerät bleiben (lva#400 U5).
+ */
+nur_lokal?: number; 
+/**
+ * Eine Anmeldung wartet auf die Entscheidung über lokale Daten (lva#400 U1).
+ */
+anmeldung_offen?: boolean; 
+/**
+ * Ein Token-Widerruf am Hub steht noch aus (lva#400 U10).
+ */
+widerruf_offen?: boolean; 
+/**
+ * Ein Übergang ist angehalten (z. B. Sicherung nicht lesbar, lva#400 U11).
+ */
+uebergang_fehler?: string | null }
 export type SystemMemory = { ram_total_mb: number; ram_used_mb: number; 
 /**
  * Leer, wenn kein Adapter messbar ist. Software-Adapter (Microsoft
@@ -13079,7 +14435,16 @@ export type WaitReason =
  * Eine Live-Aufnahme laeuft und hat Vorrang.
  */
 "recording"
+/**
+ * Weg der Antwort (Messpunkt E9).
+ */
+export type WegDto = "lokal" | "relay"
 export type WiderspruchSicht = { statement: string; sourceIndices: number[] }
+export type WiederherstellBericht = { zurueck: number; zusaetzlich: number; gleich: number; 
+/**
+ * Abweichende Bücher, die in der Sicherung bleiben (Titel oder Kennung).
+ */
+in_sicherung: string[]; fortschritte_ergaenzt: number; fortschritte_abweichend: number; ordner: string }
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 /**
  * Ein Treffer der Suche (alles fremder Text, bereinigt).

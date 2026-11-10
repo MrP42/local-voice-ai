@@ -1070,7 +1070,28 @@ pub fn library_save(app: AppHandle, book: LibraryBook) -> Result<LibraryBook, St
     }
     validate_book(&book)?;
     write_book(&dir, &book)?;
+    seiten_einlagern(&root, &book.id);
     read_book(&dir).ok_or_else(|| "Buch nach dem Speichern unlesbar.".into())
+}
+
+/// Neue Seiten des Buchs (Import, Transkript, Zusammenführen, Übersetzung) direkt in
+/// seinen Buch-Ordner holen (lva#365 P2b-2). Best effort: scheitert es, bleibt die Seite
+/// unter `projects/` und wird dort gefunden. Der Aufrufer hält die Bibliothekssperre.
+pub(crate) fn seiten_einlagern(root: &Path, id: &str) {
+    let Some(data) = root.parent() else {
+        return;
+    };
+    let _pages = crate::commands::pages::lock();
+    match crate::library_layout::seiten_einlagern(data, id) {
+        Ok(bewegt) if !bewegt.is_empty() => {
+            crate::commands::library_layout::fundortkarte_neu(data);
+        }
+        Ok(_) => {}
+        Err(e) => {
+            crate::commands::library_layout::fundortkarte_neu(data);
+            log::warn!("Buch-Ordner: neue Seiten nicht eingelagert ({e})");
+        }
+    }
 }
 
 /// Buch aus der Bibliothek entfernen, samt Cover und importiertem Hörbuch.
@@ -1083,7 +1104,26 @@ pub fn library_delete(app: AppHandle, id: String) -> Result<(), String> {
     let root = library_root(&app)?;
     let dir = book_dir(&root, &id)?;
     if dir.exists() {
+        seiten_retten(&root, &dir)?;
+        // Notizen, Anhänge und Transkripte (lva#365 P3) nie endgültig löschen.
+        crate::buch_dateien::ordner_retten(&dir, &id)?;
         std::fs::remove_dir_all(&dir).map_err(|e| format!("could not delete book: {e}"))?;
+    }
+    Ok(())
+}
+
+/// Bevor ein Buch-Ordner gelöscht, zusammengeführt oder in den Papierkorb gelegt
+/// wird: seine Fassungen (Vorlesen-Seiten unter `fassungen/`, lva#365) nach
+/// `projects/` zurücklegen, damit keine Bibliotheksaktion eine Seite mitnimmt.
+/// Der Aufrufer hält die Bibliothekssperre; die Seitensperre kommt danach
+/// (Reihenfolge wie im Geräte-Sync).
+fn seiten_retten(root: &Path, dir: &Path) -> Result<(), String> {
+    let Some(data) = root.parent() else {
+        return Ok(());
+    };
+    let _pages = crate::commands::pages::lock();
+    if crate::library_layout::fassungen_auslagern(data, dir)? > 0 {
+        crate::commands::library_layout::fundortkarte_neu(data);
     }
     Ok(())
 }
@@ -1169,11 +1209,37 @@ fn trash_in(root: &Path, ids: &[String]) -> Result<(), String> {
         .map(|l| l.lock().unwrap_or_else(|e| e.into_inner()))
         .collect();
     let _guard = lock();
-    trash_locked(root, ids)
+    trash_locked(root, ids, true)
 }
 
-/// Wie [`trash_in`], die Sperren hält der Aufrufer (Zusammenlegen).
-fn trash_locked(root: &Path, ids: &[String]) -> Result<(), String> {
+/// Löschkaskade (lva#365 P2b-2): mit `kaskade` gehen die Fassungen des Buchs (Seiten
+/// unter `fassungen/`) mit dem Buch in den Papierkorb; Seitenliste und Sync behandeln sie
+/// als „mit dem Buch entfernt“, Wiederherstellen bringt sie zurück, endgültiges Löschen
+/// trägt sie aus. Ohne Kaskade (Zusammenlegen: die Seiten werden Fassungen des Ziels)
+/// kommen sie vorher nach `projects/` zurück.
+fn kaskade_vorbereiten(root: &Path, dir: &Path, kaskade: bool) -> Result<(), String> {
+    let Some(data) = root.parent() else {
+        return Ok(());
+    };
+    if !kaskade {
+        return seiten_retten(root, dir);
+    }
+    crate::library_layout::buch_ordner_bewegbar(data)
+}
+
+/// Nach jeder Bewegung von Buch-Ordnern samt Fassungen: Fundortkarte neu.
+fn karte_neu(root: &Path) {
+    let _pages = crate::commands::pages::lock();
+    if let Some(data) = root.parent() {
+        crate::commands::library_layout::fundortkarte_neu(data);
+    }
+}
+
+/// Wie [`trash_in`], die Sperren hält der Aufrufer (Zusammenlegen: ohne Kaskade).
+fn trash_locked(root: &Path, ids: &[String], kaskade: bool) -> Result<(), String> {
+    // Mit Kaskade wandern Seiten: Leser sollen keinen halben Stand sehen
+    // (Sperrreihenfolge: Bibliothek vor Seiten).
+    let _pages = kaskade.then(crate::commands::pages::lock);
     std::fs::create_dir_all(root.join(TRASH)).map_err(|e| e.to_string())?;
     let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
     let undo = |moved: &[(PathBuf, PathBuf)]| {
@@ -1187,15 +1253,31 @@ fn trash_locked(root: &Path, ids: &[String]) -> Result<(), String> {
             continue;
         }
         let to = trash_dir(root, id)?;
+        // Ein älterer Papierkorb-Eintrag desselben Buchs wird nie ersetzt: er bliebe
+        // sonst auch für „Rückgängig“ verloren. Erst wiederherstellen oder löschen.
         if to.exists() {
-            let _ = std::fs::remove_dir_all(&to);
+            undo(&moved);
+            karte_neu(root);
+            return Err(format!(
+                "Im Papierkorb liegt schon ein älterer Eintrag von „{id}“. Bitte ihn erst \
+                 wiederherstellen oder endgültig löschen; nichts entfernt."
+            ));
+        }
+        if let Err(e) = kaskade_vorbereiten(root, &dir, kaskade) {
+            undo(&moved);
+            karte_neu(root);
+            return Err(e);
         }
         if let Err(e) = std::fs::rename(&dir, &to) {
             undo(&moved);
+            karte_neu(root);
             return Err(format!("Entfernen fehlgeschlagen: {e}"));
         }
         let _ = std::fs::write(to.join(TRASH_STAMP), format!("{}", now_ms() as i64));
         moved.push((dir, to));
+    }
+    if kaskade {
+        karte_neu(root);
     }
     Ok(())
 }
@@ -1204,10 +1286,16 @@ fn trash_locked(root: &Path, ids: &[String]) -> Result<(), String> {
 /// wieder belegt ist, bleibt im Papierkorb (Fehlermeldung nennt es).
 fn restore_in(root: &Path, ids: &[String]) -> Result<Vec<LibraryBook>, String> {
     let _guard = lock();
+    let _pages = crate::commands::pages::lock();
     let mut restored = Vec::new();
     let mut blocked = Vec::new();
+    let mut failed = None;
+    let mut gone = Vec::new();
     for id in ids {
-        let from = trash_dir(root, id)?;
+        let Ok(from) = trash_dir(root, id) else {
+            failed = Some(format!("Ungültige Kennung: {id}"));
+            break;
+        };
         if !from.is_dir() {
             continue;
         }
@@ -1216,14 +1304,49 @@ fn restore_in(root: &Path, ids: &[String]) -> Result<Vec<LibraryBook>, String> {
             blocked.push(id.clone());
             continue;
         }
-        std::fs::rename(&from, &to).map_err(|e| format!("Zurückholen fehlgeschlagen: {e}"))?;
+        // Unterbrochene endgültige Löschung: erst abschließen, nie ein halb
+        // gelöschtes Buch zurückholen.
+        let offen = match crate::library_layout::loeschung_offen(&from) {
+            Ok(o) => o,
+            Err(e) => {
+                failed = Some(e);
+                break;
+            }
+        };
+        if offen {
+            if let Some(data) = root.parent() {
+                if let Err(e) = crate::library_layout::buch_endgueltig_loeschen(data, &from) {
+                    failed = Some(format!("Löschen von {id} nicht abschließbar: {e}"));
+                    break;
+                }
+            }
+            gone.push(id.clone());
+            continue;
+        }
+        if let Err(e) = std::fs::rename(&from, &to) {
+            failed = Some(format!("Zurückholen fehlgeschlagen: {e}"));
+            break;
+        }
         let _ = std::fs::remove_file(to.join(TRASH_STAMP));
         if let Some(book) = read_book(&to) {
             restored.push(book);
         }
     }
+    // Die Fassungen kamen mit dem Buch zurück (Löschkaskade); auch nach einem Fehler
+    // sind schon zurückgeholte Bücher wieder da.
+    karte_neu(root);
+    if let Some(e) = failed {
+        return Err(e);
+    }
     if !blocked.is_empty() {
         return Err(format!("Schon wieder vorhanden: {}", blocked.join(", ")));
+    }
+    if !gone.is_empty() {
+        return Err(format!(
+            "Endgültiges Löschen war unterbrochen und ist jetzt abgeschlossen; nicht \
+             wiederherstellbar: {}",
+            gone.join(", ")
+        ));
     }
     Ok(restored)
 }
@@ -1233,14 +1356,22 @@ fn restore_in(root: &Path, ids: &[String]) -> Result<Vec<LibraryBook>, String> {
 fn purge_in(root: &Path, ids: Option<&[String]>) -> Result<(), String> {
     let _guard = lock();
     let trash = root.join(TRASH);
+    // Löschkaskade: die Fassungen gehen mit, ihre Seiten verlassen den Index; der Sync
+    // meldet sie danach als gelöscht.
+    let endgueltig = |dir: &Path| -> Result<(), String> {
+        let Some(data) = root.parent() else {
+            return std::fs::remove_dir_all(dir).map_err(|e| format!("could not delete book: {e}"));
+        };
+        let _pages = crate::commands::pages::lock();
+        crate::library_layout::buch_endgueltig_loeschen(data, dir)
+            .map(|_| ())
+            .map_err(|e| format!("could not delete book: {e}"))
+    };
     match ids {
         Some(ids) => {
             for id in ids {
-                let dir = trash_dir(root, id)?;
-                if dir.exists() {
-                    std::fs::remove_dir_all(&dir)
-                        .map_err(|e| format!("could not delete book: {e}"))?;
-                }
+                // Auch ohne Ordner: eine unterbrochene Löschung (Absicht) abschließen.
+                endgueltig(&trash_dir(root, id)?)?;
             }
         }
         None => {
@@ -1248,12 +1379,18 @@ fn purge_in(root: &Path, ids: Option<&[String]>) -> Result<(), String> {
                 return Ok(());
             };
             let now = now_ms();
-            for entry in entries.flatten() {
+            // Nur Buch-Einträge; Löschabsichten u. ä. gehören nicht dazu.
+            for entry in entries
+                .flatten()
+                .filter(|e| checked_id(&e.file_name().to_string_lossy()).is_ok())
+            {
                 // Ohne Stempel zählt die Änderungszeit des Ordners (das
                 // Verschieben setzt sie), nie „uralt“.
                 let stamp = removed_ms(&entry.path()).unwrap_or(now);
                 if now - stamp > TRASH_KEEP_MS {
-                    let _ = std::fs::remove_dir_all(entry.path());
+                    if let Err(e) = endgueltig(&entry.path()) {
+                        log::warn!("Papierkorb: alter Eintrag nicht gelöscht ({e})");
+                    }
                 }
             }
         }
@@ -2076,7 +2213,10 @@ fn merge_audio_in(
     }
     let mut leftovers = Vec::new();
     for (dir, book) in &sources {
-        if let Err(e) = std::fs::remove_dir_all(dir) {
+        let entfernt = seiten_retten(root, dir)
+            .and_then(|()| crate::buch_dateien::ordner_retten(dir, &book.id))
+            .and_then(|()| std::fs::remove_dir_all(dir).map_err(|e| e.to_string()));
+        if let Err(e) = entfernt {
             leftovers.push(format!("\u{201e}{}\u{201c}: {e}", book.title));
         }
     }
@@ -2487,8 +2627,11 @@ mod tests {
     }
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("lv-lib-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        // Wie in der App: `<Datenordner>/library`, je Test ein eigener Datenordner
+        // (die Löschkaskade verlangt genau `<data>/library/.papierkorb/<buch>`).
+        let data = std::env::temp_dir().join(format!("lv-lib-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&data);
+        let dir = data.join("library");
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -2959,9 +3102,35 @@ mod tests {
         assert!(!root.join(".papierkorb/book_2").exists());
 
         trash_in(&root, &["book_1".into()]).unwrap();
+        // Gleiche Kennung schon im Papierkorb: abgelehnt, der ältere Eintrag bleibt.
+        audio_book(&root, "book_1", "A2", legacy("hoerbuch.mp3", None, None));
+        assert!(trash_in(&root, &["book_1".into()]).is_err());
+        assert!(root.join("book_1").is_dir());
+        assert!(root.join(".papierkorb/book_1/audio/hoerbuch.mp3").is_file());
+        std::fs::remove_dir_all(root.join("book_1")).unwrap();
         purge_in(&root, Some(&["book_1".into()])).unwrap();
         assert!(!root.join(".papierkorb/book_1").exists());
         assert!(trash_in(&root, &["../x".into()]).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unterbrochenes_loeschen_wird_abgeschlossen_statt_wiederhergestellt() {
+        let root = scratch("trash-absicht");
+        audio_book(&root, "book_1", "A", legacy("hoerbuch.mp3", None, None));
+        trash_in(&root, &["book_1".into()]).unwrap();
+        let absicht = root.join(".papierkorb/.loeschabsicht-book_1.json");
+        let roh = r#"{"buch":"book_1","seiten":[]}"#;
+        std::fs::write(&absicht, roh).unwrap();
+        // Wiederherstellen holt kein halb gelöschtes Buch zurück, sondern schließt ab.
+        assert!(restore_in(&root, &["book_1".into()]).is_err());
+        assert!(!root.join("book_1").exists());
+        assert!(!root.join(".papierkorb/book_1").exists());
+        assert!(!absicht.exists());
+        // Ein wiederholter Purge ohne Ordner schließt eine liegengebliebene Absicht ab.
+        std::fs::write(&absicht, roh).unwrap();
+        purge_in(&root, Some(&["book_1".into()])).unwrap();
+        assert!(!absicht.exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 

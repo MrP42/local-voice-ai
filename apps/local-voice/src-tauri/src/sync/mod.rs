@@ -4,8 +4,10 @@
 //! Bibliothek (Bücher, Fortschritt, Lesezeichen, Dateiablage):
 //! `docs/superpowers/specs/2026-11-02-bibliothek-sync.md`.
 
+pub mod ablage;
 pub mod account;
 pub mod blobs;
+pub mod book_files;
 pub mod books;
 pub mod booktalk_relay;
 pub mod client;
@@ -16,13 +18,15 @@ pub mod engine;
 pub mod ledger;
 pub mod pairing;
 pub mod pairing_proto;
+pub mod uebernahme;
+pub mod uebernahme_kern;
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 pub use engine::{start, SyncEngine, SyncStatus};
 use tauri::{AppHandle, State};
 
-/// Anmelden: Schlüssel ableiten (nur lokal), Token holen, Konto speichern,
-/// Ledger leeren, ersten Lauf anstoßen.
+/// Anmelden: Schlüssel ableiten (nur lokal), Token holen. Das Konto wird erst nach der
+/// Entscheidung über vorhandene lokale Daten gespeichert (lva#400, `uebernahme`).
 #[tauri::command]
 #[specta::specta]
 pub async fn sync_login(
@@ -32,7 +36,7 @@ pub async fn sync_login(
     password: String,
     device_name: String,
     url: Option<String>,
-) -> Result<SyncStatus, String> {
+) -> Result<uebernahme::AnmeldeErgebnis, String> {
     let email = email.trim().to_lowercase();
     if email.is_empty() || password.is_empty() {
         return Err("E-Mail und Passwort eingeben.".into());
@@ -76,15 +80,15 @@ pub async fn sync_login(
         user_email: login.user.email,
         enc_key_b64: B64.encode(key),
     };
-    {
-        // Kein laufender Zyklus darf das neue Konto oder das frische Ledger
-        // mit seinem alten Stand ueberschreiben.
-        let _guard = engine.account_guard().await;
-        account::save(&app, &cfg)?;
-        ledger::remove(&app);
-        engine.refresh_from_config(&app);
+    let ergebnis = uebernahme::anmelden(&app, &engine, cfg).await?;
+    if ergebnis.entscheidung.is_some() {
+        return Ok(ergebnis);
     }
-    Ok(engine.run_once(&app).await)
+    let status = engine.run_once(&app).await;
+    Ok(uebernahme::AnmeldeErgebnis {
+        status,
+        entscheidung: None,
+    })
 }
 
 /// Erlaubt: https zu einem Host ohne Zugangsdaten in der URL, oder http nur
@@ -103,24 +107,24 @@ fn check_hub_url(url: &str) -> Result<(), String> {
     }
 }
 
-/// Abmelden: Token im Hub widerrufen (best effort), Konto und Ledger löschen.
-/// Die Seiten bleiben auf diesem Gerät.
+/// Abmelden (lva#400 U7): Herkunft festhalten, Konto und Ledger entfernen, Token im Hub
+/// widerrufen (bei Fehler später erneut). Mit `entfernen` gehen Bibliothek und Seiten nach
+/// geprüfter Sicherung vom Gerät; sonst bleiben alle Daten.
 #[tauri::command]
 #[specta::specta]
 pub async fn sync_logout(
     app: AppHandle,
     engine: State<'_, SyncEngine>,
+    entfernen: bool,
 ) -> Result<SyncStatus, String> {
-    if let Some(cfg) = account::load(&app) {
-        let client = client::HubClient::new(&cfg.url, &cfg.token);
-        if let Err(e) = client.logout().await {
-            log::warn!("Sync-Logout am Hub fehlgeschlagen: {e} — lokal trotzdem abgemeldet");
-        }
-    }
-    let _guard = engine.account_guard().await;
-    account::remove(&app);
-    ledger::remove(&app);
+    let ergebnis = uebernahme::abmelden(&app, &engine, entfernen).await;
     engine.refresh_from_config(&app);
+    if ergebnis.is_err() && uebernahme::uebergang_offen(&app) {
+        // Abgemeldet, aber Sicherung/Entfernen offen: Wiederanlauf versuchen und den
+        // Stand (mit `uebergang_fehler`) an die Oberfläche melden.
+        engine.run_once(&app).await;
+    }
+    ergebnis?;
     Ok(engine.status())
 }
 

@@ -54,7 +54,15 @@ export default defineConfig(async () => ({
       : undefined,
     watch: {
       // 3. tell vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // Belege und Testausgaben (Bilder, .txt, .md) sind kein App-Code: schreibt ein
+      // Playwright-Worker dort, lud Vite sonst alle offenen Seiten neu und parallele
+      // Tests scheiterten zufällig (Windows-Tor s-412).
+      ignored: [
+        "**/src-tauri/**",
+        "**/docs/**",
+        "**/test-results/**",
+        "**/playwright-report/**",
+      ],
     },
   },
 }));

@@ -1,0 +1,46 @@
+{
+  "hinweis": "Synthetisch (lva#344): ein Buch in Deutsch und Englisch, Schema 2. Dateien erzeugt mock_library_seed.py.",
+  "book": {
+    "id": "book_sprachfassung_demo",
+    "title": "Der Leuchtturm am Rand",
+    "authors": ["Erika Beispiel"],
+    "language": "de",
+    "cover_source": "generated",
+    "added_ms": 1760000000000,
+    "finished": false,
+    "favorite": false,
+    "schema": 2,
+    "work_key": "w_leuchtturm_demo",
+    "text": {"page_id": "page_demo_de", "origin": "document"},
+    "primary": {"edition": "ed_demo_de", "updated": 1760000000000, "device": "pc-demo"},
+    "edition_tombstones": [],
+    "editions": [
+      {"id": "ed_demo_de", "lang": "de", "title": "Der Leuchtturm am Rand", "audio_key": "audio:book_sprachfassung_demo",
+       "origin": "import", "added_ms": 1760000000000, "updated": 1760000000000, "device": "pc-demo",
+       "text": {"page_id": "page_demo_de", "origin": "document"}},
+      {"id": "ed_demo_en", "lang": "en", "title": "The Lighthouse at the Edge", "audio_key": "audio:book_sprachfassung_demo:ed_demo_en",
+       "origin": "join", "added_ms": 1760000001000, "updated": 1760000001000, "device": "pc-demo",
+       "text": {"page_id": "page_demo_en", "origin": "document"}}
+    ],
+    "reading": {"edition": "ed_demo_de", "updated": 1760000002000, "device": "pc-demo",
+                "position": {"key": "audio:book_sprachfassung_demo", "unit": "ms", "offset": 5000}},
+    "alignments": [
+      {"a": "ed_demo_de", "b": "ed_demo_en", "updated": 1760000003000, "device": "pc-demo",
+       "groups": [{"a": [0], "b": [0], "confirmed": true}, {"a": [1], "b": [1], "confirmed": true}, {"a": [2], "b": [2], "confirmed": true}]}
+    ]
+  },
+  "texts": {
+    "ed_demo_de": "Der Leuchtturm am Rand\n\n# Erstes Kapitel\nAm Rand der Bucht stand ein alter Leuchtturm, und niemand wusste mehr, wer ihn gebaut hatte.\n\n# Zweites Kapitel\nIm Herbst kam die Lehrerin mit einem Koffer voller Karten und einer Laterne, die nicht brannte.\n\n# Drittes Kapitel\nAm letzten Abend leuchtete der Turm zum ersten Mal seit Jahren, und das ganze Dorf sah zu.\n",
+    "ed_demo_en": "The Lighthouse at the Edge\n\n# First Chapter\nAt the edge of the bay stood an old lighthouse, and nobody remembered who had built it.\n\n# Second Chapter\nIn autumn the teacher arrived with a suitcase full of maps and a lantern that would not burn.\n\n# Third Chapter\nOn the last evening the tower shone for the first time in years, and the whole village watched.\n"
+  },
+  "audio": {
+    "ed_demo_de": {"narrator": "Synthetisch", "parts": [
+      {"file": "teil_001.wav", "title": "Erstes Kapitel", "seconds": 8},
+      {"file": "teil_002.wav", "title": "Zweites Kapitel", "seconds": 8},
+      {"file": "teil_003.wav", "title": "Drittes Kapitel", "seconds": 8}]},
+    "ed_demo_en": {"narrator": "Synthetic", "parts": [
+      {"file": "ed_demo_en__teil_001.wav", "title": "First Chapter", "seconds": 10},
+      {"file": "ed_demo_en__teil_002.wav", "title": "Second Chapter", "seconds": 10},
+      {"file": "ed_demo_en__teil_003.wav", "title": "Third Chapter", "seconds": 10}]}
+  }
+}

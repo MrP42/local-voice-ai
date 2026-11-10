@@ -584,7 +584,7 @@ pub fn join_in(root: &Path, target_id: &str, sources: &[String]) -> Result<Libra
             normalize(&mut target);
             write_book(&tdir, &target)?;
             // Unter denselben Sperren: niemand ändert die Quellen dazwischen.
-            super::trash_locked(root, sources)
+            super::trash_locked(root, sources, false)
         })();
         if let Err(e) = result {
             // Ganz zurück: Ziel wie vorher, Dateien an ihren alten Ort.
@@ -1545,8 +1545,12 @@ mod tests {
     use super::*;
 
     fn tmp() -> PathBuf {
+        // Eindeutig je Test: Zeit und Zufall allein kollidieren bei parallelen Tests
+        // (grobe Uhr), dann teilten sich zwei Tests denselben Ordner.
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let d = std::env::temp_dir().join(format!(
-            "lv-editions-{}-{}",
+            "lv-editions-{}-{}-{n}",
             std::process::id(),
             now_ms() as i64 + rand_suffix().len() as i64
         ));

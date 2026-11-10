@@ -67,7 +67,31 @@ final class PhoneLibrary: ObservableObject {
 
     var progressURL: URL { root.appendingPathComponent("fortschritt.json") }
     func dir(_ book: LibraryBook) -> URL { root.appendingPathComponent(book.id, isDirectory: true) }
-    func textURL(_ book: LibraryBook) -> URL { dir(book).appendingPathComponent("text.txt") }
+    /// Text des Buchs bzw. der Sicht: `text.txt` gehört der Hauptfassung, jede weitere Fassung hat ihren Text unter
+    /// `editions/<fassung>/text.txt` (Sprachfassungen lva#344). Nur Sichten (`editionId`) lesen die Fassungen.
+    func textURL(_ book: LibraryBook) -> URL {
+        if let id = book.editionId {
+            // Unsichere Kennung: kein Text, nie der flache Text einer anderen Fassung (Pfad, den es nicht gibt).
+            guard Self.isSafeEditionId(id) else { return dir(book).appendingPathComponent("editions/.ungueltig/text.txt") }
+            if id != flatEditionId(book) { return editionTextURL(book, id) }
+        }
+        return dir(book).appendingPathComponent("text.txt")
+    }
+    /// Fassung, der die flachen Dateien (`text.txt`, `files.text/cover/audio`) gehören: die Hauptfassung des Senders
+    /// (`sync.json`), ohne Vermerk die des Buchs.
+    func flatEditionId(_ book: LibraryBook, meta known: SyncMeta? = nil) -> String? {
+        (known ?? meta(book)).flatEdition ?? BookEditions(book: book).primaryId
+    }
+    func editionTextURL(_ book: LibraryBook, _ editionId: String) -> URL {
+        dir(book).appendingPathComponent("editions", isDirectory: true).appendingPathComponent(editionId, isDirectory: true)
+            .appendingPathComponent("text.txt")
+    }
+    /// Kennung kommt vom Netz und landet in Pfaden: wie `valid_edition_id` im Kern.
+    static func isSafeEditionId(_ id: String) -> Bool {
+        id.hasPrefix("ed_") && id.utf8.count <= 80 && id.utf8.allSatisfy {
+            ($0 >= 0x30 && $0 <= 0x39) || ($0 >= 0x41 && $0 <= 0x5a) || ($0 >= 0x61 && $0 <= 0x7a) || $0 == 0x5f || $0 == 0x2d
+        }
+    }
     func hasText(_ book: LibraryBook) -> Bool { FileManager.default.fileExists(atPath: textURL(book).path) }
     func text(_ book: LibraryBook) -> String? { try? String(contentsOf: textURL(book), encoding: .utf8) }
 
@@ -103,12 +127,21 @@ final class PhoneLibrary: ObservableObject {
     func hasAudio(_ book: LibraryBook) -> Bool {
         guard let tracks = book.audio?.allTracks, !tracks.isEmpty else { return false }
         let m = meta(book)
-        guard !m.files.audio.isEmpty else {  // nur lokal, noch nicht im Konto
+        let refs = accountAudio(book, meta: m)
+        guard !refs.isEmpty else {  // nur lokal, noch nicht im Konto
             let folder = dir(book).appendingPathComponent("audio")
             return tracks.allSatisfy { FileManager.default.fileExists(atPath: folder.appendingPathComponent($0.file).path) }
         }
-        let parts = audioParts(m.files.audio)
+        let parts = audioParts(refs)
         return AudioDownload.isCurrent(parts, sizes: parts.map { LibrarySync.fileSize(audioDir(book).appendingPathComponent($0.file)) }, blobs: m.localAudio ?? [:])
+    }
+
+    /// Hörbuchteile dieses Buchs bzw. dieser Sicht laut Konto: Die flachen `files.audio` gehören der Hauptfassung
+    /// des Senders, weitere Fassungen stehen in `files.editions[<fassung>].audio`.
+    func accountAudio(_ book: LibraryBook, meta known: SyncMeta? = nil) -> [BlobRef] {
+        let m = known ?? meta(book)
+        guard let id = book.editionId else { return m.files.audio }
+        return m.files.files(forEdition: id, flat: flatEditionId(book, meta: m)).audio
     }
 
     // MARK: Kurzbücher vom PC
@@ -143,6 +176,7 @@ final class PhoneLibrary: ObservableObject {
         try? FileManager.default.createDirectory(at: dir(entry), withIntermediateDirectories: true)
         FileManager.default.createFile(atPath: dir(entry).appendingPathComponent(Self.kurzbuchMarker).path, contents: Data())
         try? LibraryText.kurzbuchText(markdown).write(to: textURL(entry), atomically: true, encoding: .utf8)
+        copyCover(from: book, to: entry)
         return entry
     }
 
@@ -195,10 +229,62 @@ final class PhoneLibrary: ObservableObject {
         setMeta(book, m)
     }
 
+    /// Vermerke geladener Teile löschen (Teile wurden entfernt).
+    func forgetLocalAudio(bookId: String, files: [String]) {
+        guard let book = books.first(where: { $0.id == bookId }) else { return }
+        var m = meta(book)
+        guard var known = m.localAudio, files.contains(where: { known[$0] != nil }) else { return }
+        for f in files { known[f] = nil }
+        m.localAudio = known
+        setMeta(book, m)
+    }
+
+    /// Kapitelliste des Hörbuchs einer Sicht; fehlende Teildauern kommen aus dem Cache der Hörbuchangaben.
+    func audioChapterList(_ view: LibraryBook) -> ChapterList {
+        let info = cachedAudiobookInfo(view)
+        let fallback = info?.chaptersFromFile == false ? (info?.chapters.map(\.durationMs) ?? []) : []
+        return EditionSwitch.audioChapters(view.audio, fallbackDurations: fallback)
+    }
+
+    /// Sicht auf die Fassung, zu der die flachen Dateien (`files.audio`) gehören; das Buch selbst ohne Fassungen.
+    func flatView(_ book: LibraryBook) -> LibraryBook {
+        guard book.editionId == nil, (book.editions?.arrayValue?.count ?? 0) > 1, let flat = flatEditionId(book),
+              flat != BookEditions(book: book).primaryId else { return book }
+        return view(book, editionId: flat)
+    }
+
+    /// Nur die flachen Hörbuchteile (Hauptfassung des Senders) samt `.part` und Staging entfernen; das Hörbuch weiterer
+    /// Fassungen und lokale Importe bleiben. Liefert den frei gewordenen Platz.
+    func removeFlatAudio(_ book: LibraryBook) -> Int {
+        let flat = flatView(book)
+        let fm = FileManager.default
+        let m = meta(book)
+        var names = Set(audioParts(m.files.audio).map(\.file))
+        for (i, t) in (flat.audio?.allTracks ?? []).enumerated() { names.insert(LibrarySync.audioFileName(t.file, index: i)) }
+        var freed = 0
+        for name in names {
+            for url in [audioDir(book).appendingPathComponent(name), audioDir(book).appendingPathComponent(name).appendingPathExtension("part")] {
+                freed += LibrarySync.fileSize(url) ?? 0
+                try? fm.removeItem(at: url)
+            }
+        }
+        try? fm.removeItem(at: audioDir(book).appendingPathComponent(AudioDownload.stagingFolder))
+        forgetLocalAudio(bookId: book.id, files: Array(names))
+        // Leere Hülle entfernen, damit „nichts lokal“ gilt.
+        if ((try? fm.contentsOfDirectory(atPath: audioDir(book).path)) ?? ["x"]).isEmpty { try? fm.removeItem(at: audioDir(book)) }
+        return freed
+    }
+
+    /// Fortschritt beim Empfang heben (§5.2): die Stelle der gewonnenen Auswahl, wenn der Datensatz älter ist.
+    func liftProgress(_ lift: (position: ReadingPositionRef, updated: Double)) {
+        guard let rec = LibraryProgress.lifting(record(lift.position.key), to: lift.position, updated: lift.updated) else { return }
+        put(lift.position.key, rec)
+    }
+
     /// Dateien entfernen, die das Konto inzwischen ersetzt hat, damit sie neu geladen werden.
     func removeStaleAudio(_ book: LibraryBook) {
         let m = meta(book)
-        for part in audioParts(m.files.audio) {
+        for part in audioParts(accountAudio(book, meta: m)) {
             let file = audioDir(book).appendingPathComponent(part.file)
             guard let size = LibrarySync.fileSize(file) else { continue }
             if !AudioDownload.isCurrent([part], sizes: [size], blobs: m.localAudio ?? [:]) { try? FileManager.default.removeItem(at: file) }
@@ -230,13 +316,193 @@ final class PhoneLibrary: ObservableObject {
         var m = meta(book); m.updated = Self.nowMs(); setMeta(book, m)
     }
 
+    // MARK: Sprachfassungen (lva#344)
+
+    /// Stabile Kennung dieses iPhones für die Register (`device`), nur lokal gespeichert.
+    static var deviceTag: String {
+        let key = "lva.library.device"
+        if let stored = UserDefaults.standard.string(forKey: key), !stored.isEmpty { return stored }
+        let fresh = "ios_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8).lowercased()
+        UserDefaults.standard.set(fresh, forKey: key)
+        return fresh
+    }
+
+    /// Das Buch, wie es im Regal steht (nie eine Sicht).
+    func rawBook(_ id: String) -> LibraryBook? { books.first { $0.id == id } }
+
+    /// Das Buch aus Sicht einer Fassung: Titel, Untertitel, Sprache, Text und Hörbuch der Fassung statt der
+    /// Hauptfassung. Kennung, Ordner und Konto bleiben die des Buchs. Alle Zugriffe auf Text, Hörbuch und
+    /// Fortschritt (`textURL`, `hasAudio`, `audioKey` …) richten sich nach `editionId`.
+    func editionView(_ book: LibraryBook, edition e: BookEdition) -> LibraryBook {
+        var view = book
+        view.editionId = e.id
+        view.title = e.title.trimmingCharacters(in: .whitespaces).isEmpty ? book.title : e.title
+        view.subtitle = e.subtitle
+        if !e.lang.isEmpty { view.language = e.lang }
+        view.text = e.text
+        view.audio = e.audio
+        return view
+    }
+
+    /// Sicht auf die Fassung `editionId`; ohne Sprachfassungen oder bei unbekannter Kennung das Buch selbst.
+    func view(_ book: LibraryBook, editionId: String?) -> LibraryBook {
+        guard let editionId, book.editions != nil else { return book }
+        let editions = BookEditions(book: book)
+        guard !editions.synthesized, editions.hasLanguages, let e = editions.edition(editionId) else { return book }
+        return editionView(book, edition: e)
+    }
+
+    /// Sicht auf die zuletzt aktive Fassung (`reading`, sonst Hauptfassung): für Regal und Buchseite. Ohne
+    /// Sprachfassungen ist es das Buch selbst. Billig, solange das Buch nur eine Fassung hat.
+    func activeView(_ book: LibraryBook) -> LibraryBook {
+        guard (book.editions?.arrayValue?.count ?? 0) > 1 else { return book }
+        let editions = BookEditions(book: book)
+        guard editions.hasLanguages, let e = editions.readingEdition else { return book }
+        return editionView(book, edition: e)
+    }
+
+    /// Liegt etwas zum Hören oder Lesen auf dem iPhone?
+    func isPlayable(_ view: LibraryBook) -> Bool { hasText(view) || hasAudio(view) }
+
+    /// Wie `activeView`, aber nur eine Fassung, die sich auf diesem iPhone abspielen lässt: Hat der PC die
+    /// Auswahl auf eine noch nicht geladene Fassung gesetzt, öffnet der Player die erste, die da ist.
+    func playableView(_ book: LibraryBook) -> LibraryBook {
+        let preferred = activeView(book)
+        guard preferred.editionId != nil, !isPlayable(preferred) else { return preferred }
+        let editions = BookEditions(book: book)
+        var order = editions.editions
+        if let primary = editions.primary { order.insert(primary, at: 0) }
+        for e in order {
+            let candidate = editionView(book, edition: e)
+            if isPlayable(candidate) { return candidate }
+        }
+        return preferred
+    }
+
+    /// Stelle der Zielfassung in den Fortschritt, dann die Auswahl (`reading`) ins Buch schreiben und das Buch
+    /// für den nächsten Abgleich vormerken. Der Fortschritt läuft je Fassung unter `edition.audio_key` bzw.
+    /// `text:<seite>:original`, nie unter der Buchkennung. Liefert das Buch (Regal-Stand) oder `nil`, wenn die
+    /// Fassung nicht lebt. Gehörte und gelesene Bereiche bleiben; die Stelle zählt nicht als gehört.
+    @discardableResult
+    func writeSwitch(bookId: String, plan: SwitchPlan, length: Double) -> LibraryBook? {
+        guard let raw = rawBook(bookId) else { return nil }
+        let now = Self.nowMs()
+        guard let changed = raw.settingReading(edition: plan.to, position: plan.position, device: Self.deviceTag, now: now),
+              (try? write(changed)) != nil else { return nil }
+        var rec = record(plan.position.key) ?? ProgressRecord(offset: 0, length: 0, updated: 0)
+        rec.offset = plan.position.offset
+        if length > 0 { rec.length = length }
+        rec.unit = plan.toMedium == .audio ? .ms : .chars
+        rec.anchor = nil
+        rec.finished = nil  // eine als fertig markierte Zielfassung beginnt an der Zielstelle
+        rec.updated = now
+        put(plan.position.key, rec)
+        touch(changed)
+        return changed
+    }
+
+    /// Stand, den ein Wechsel überschrieben hat, für „Rückgängig“.
+    struct SwitchUndo {
+        let bookId: String
+        let fromEdition: String
+        /// Stelle der Quellfassung zum Zeitpunkt des Wechsels.
+        let fromPosition: ReadingPositionRef?
+        /// Fortschrittsdatensatz der Zielfassung vor dem Wechsel.
+        let targetKey: String
+        let targetRecord: ProgressRecord?
+        /// Spielte es beim Wechsel? Rückgängig startet genauso.
+        let wasPlaying: Bool
+    }
+
+    /// Rückgängig: Auswahl zurück auf die Quellfassung samt Stelle. Was in der Zielfassung seit dem Wechsel
+    /// gehört wurde, bleibt (Vereinigung der Bereiche); Stelle und „fertig“ gelten wie vor dem Wechsel. Datensätze
+    /// sind „jetzt“ geschrieben, sonst überstimmte der Wechselstand sie beim nächsten Abgleich.
+    @discardableResult
+    func undoSwitch(_ undo: SwitchUndo) -> LibraryBook? {
+        guard let raw = rawBook(undo.bookId) else { return nil }
+        let now = Self.nowMs()
+        guard let changed = raw.settingReading(edition: undo.fromEdition, position: undo.fromPosition, device: Self.deviceTag, now: now),
+              (try? write(changed)) != nil else { return nil }
+        if let restored = LibraryProgress.undoingSwitch(current: record(undo.targetKey), before: undo.targetRecord, now: now) {
+            put(undo.targetKey, restored)
+        } else {
+            removeProgress(undo.targetKey)
+        }
+        if let from = undo.fromPosition, var source = record(from.key) {
+            source.offset = from.offset
+            source.updated = now
+            put(from.key, source)
+        }
+        touch(changed)
+        return changed
+    }
+
+    func removeProgress(_ key: String) {
+        guard progress[Self.storageKey(key)] != nil else { return }
+        progress[Self.storageKey(key)] = nil
+        scheduleSave()
+    }
+
+    // MARK: Text weiterer Fassungen
+
+    private func editionTextBlobURL(_ book: LibraryBook, _ editionId: String) -> URL {
+        editionTextURL(book, editionId).deletingLastPathComponent().appendingPathComponent("text.blob")
+    }
+
+    /// Welcher Blob liegt als Text dieser (weiteren) Fassung auf dem iPhone?
+    func editionTextBlob(_ book: LibraryBook, _ editionId: String) -> String? {
+        guard Self.isSafeEditionId(editionId), FileManager.default.fileExists(atPath: editionTextURL(book, editionId).path) else { return nil }
+        return (try? String(contentsOf: editionTextBlobURL(book, editionId), encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func noteEditionText(_ book: LibraryBook, _ editionId: String, blob: String) {
+        guard Self.isSafeEditionId(editionId) else { return }
+        try? blob.write(to: editionTextBlobURL(book, editionId), atomically: true, encoding: .utf8)
+    }
+
+    /// Wechselt die Hauptfassung (am PC), wandern die Texte mit: `text.txt` gehört immer der Hauptfassung, die
+    /// bisherige kommt unter `editions/<fassung>/`, die neue wird zu `text.txt`. Nicht mehr lebende Fassungen
+    /// verlieren ihren Ordner.
+    private func adoptEditionFiles(from old: LibraryBook, to new: LibraryBook, oldFlat: String?, newFlat: String?) {
+        guard old.editions != nil || new.editions != nil else { return }
+        let after = BookEditions(book: new)
+        let fm = FileManager.default
+        let folder = dir(new)
+        if let a = oldFlat, let b = newFlat, a != b, Self.isSafeEditionId(a), Self.isSafeEditionId(b) {
+            let flat = folder.appendingPathComponent("text.txt")
+            let hold = folder.appendingPathComponent("text.wechsel")
+            let oldHome = editionTextURL(new, a), newHome = editionTextURL(new, b)
+            try? fm.removeItem(at: hold)
+            if fm.fileExists(atPath: flat.path) { try? fm.moveItem(at: flat, to: hold) }
+            if fm.fileExists(atPath: newHome.path) {
+                try? fm.moveItem(at: newHome, to: flat)
+                try? fm.removeItem(at: editionTextBlobURL(new, b))
+            }
+            if fm.fileExists(atPath: hold.path) {
+                try? fm.createDirectory(at: oldHome.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try? fm.removeItem(at: oldHome)
+                try? fm.moveItem(at: hold, to: oldHome)
+            }
+        }
+        let live = Set(after.editions.map(\.id))
+        let editionsDir = folder.appendingPathComponent("editions", isDirectory: true)
+        for name in (try? fm.contentsOfDirectory(atPath: editionsDir.path)) ?? [] where !live.contains(name) {
+            try? fm.removeItem(at: editionsDir.appendingPathComponent(name))
+        }
+    }
+
     /// Hörbuch liegt im Konto, aber (noch) nicht auf dem iPhone.
-    func audioInAccount(_ book: LibraryBook) -> Bool { !meta(book).files.audio.isEmpty && !hasAudio(book) }
+    func audioInAccount(_ book: LibraryBook) -> Bool { !accountAudio(book).isEmpty && !hasAudio(book) }
 
     /// Buch aus dem Abgleich übernehmen (ohne eigenen Stand zu erhöhen).
     func storeRemote(_ book: LibraryBook, meta: SyncMeta) throws {
+        let local = rawBook(book.id)
+        let flat = BookEditions.senderPrimary(local: local, incoming: book)
+        if let local { adoptEditionFiles(from: local, to: book, oldFlat: flatEditionId(local), newFlat: flat) }
         try write(book)
         var merged = meta
+        merged.flatEdition = flat
+        merged.sentEditions = self.meta(book).sentEditions
         merged.localAudio = self.meta(book).localAudio  // Lokale Angabe, kommt nicht aus dem Konto.
         setMeta(book, merged)
     }
@@ -246,7 +512,7 @@ final class PhoneLibrary: ObservableObject {
         removeKurzbuchEntries(bookId: id)
         try? FileManager.default.removeItem(at: dir(book))
         BookTalkHistoryStore(directory: BookTalkHistoryStore.standardDirectory()).clear(bookId: book.id)
-        for key in [textKey(book), audioKey(book)] { progress[Self.storageKey(key)] = nil }
+        for key in allProgressKeys(book) { progress[Self.storageKey(key)] = nil }
         writeProgress()
         reload()
     }
@@ -280,7 +546,23 @@ final class PhoneLibrary: ObservableObject {
     }
 
     func textKey(_ book: LibraryBook) -> String { LibraryProgress.textKey(pageId: book.text?.pageId ?? book.id) }
-    func audioKey(_ book: LibraryBook) -> String { LibraryProgress.audioKey(bookId: book.id) }
+    /// Fortschrittsschlüssel des Hörbuchs: der der Fassung, die dieses Buch (bzw. diese Sicht) darstellt, und nie
+    /// aus der Buchkennung abgeleitet, wenn Fassungen da sind (`edition.audio_key`, Spezifikation §4).
+    func audioKey(_ book: LibraryBook) -> String {
+        guard book.editions != nil else { return LibraryProgress.audioKey(bookId: book.id) }
+        let editions = BookEditions(book: book)
+        return (editions.edition(book.editionId) ?? editions.primary)?.audioKey ?? LibraryProgress.audioKey(bookId: book.id)
+    }
+
+    /// Alle Fortschrittsschlüssel des Buchs, über alle Fassungen (zum Löschen).
+    func allProgressKeys(_ book: LibraryBook) -> [String] {
+        var keys = [textKey(book), LibraryProgress.audioKey(bookId: book.id), audioKey(book)]
+        for e in BookEditions(book: book).editions {
+            keys.append(e.audioKey)
+            if let t = e.textKey { keys.append(t) }
+        }
+        return Array(Set(keys))
+    }
 
     // MARK: Schreiben
 
@@ -297,7 +579,7 @@ final class PhoneLibrary: ObservableObject {
         try? write(copy)
         touch(copy)
         if !finished {
-            for key in [textKey(book), audioKey(book)] {
+            for key in allProgressKeys(book) {
                 guard var rec = record(key), rec.finished == true else { continue }
                 rec.finished = false; rec.updated = Self.nowMs()
                 put(key, rec)
@@ -339,7 +621,15 @@ final class PhoneLibrary: ObservableObject {
         try? data.write(to: progressURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 
-    private func write(_ book: LibraryBook) throws {
+    func write(_ book: LibraryBook) throws {
+        var book = book
+        if book.editionId != nil {
+            // Eine Sicht auf eine Sprachfassung gehört nie in `buch.json` (Titel, Text und Hörbuch der Hauptfassung
+            // würden überschrieben): Es zählen nur die Angaben, die sich am Buch selbst ändern.
+            guard var raw = rawBook(book.id) else { return }
+            raw.finished = book.finished; raw.favorite = book.favorite
+            book = raw
+        }
         let enc = JSONEncoder(); enc.outputFormatting = [.prettyPrinted, .sortedKeys]
         try FileManager.default.createDirectory(at: dir(book), withIntermediateDirectories: true)
         try enc.encode(book).write(to: dir(book).appendingPathComponent("buch.json"), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
@@ -351,7 +641,7 @@ final class PhoneLibrary: ObservableObject {
         removeKurzbuchEntries(bookId: book.id)
         try? FileManager.default.removeItem(at: dir(book))
         BookTalkHistoryStore(directory: BookTalkHistoryStore.standardDirectory()).clear(bookId: book.id)
-        for key in [textKey(book), audioKey(book)] { progress[Self.storageKey(key)] = nil }
+        for key in allProgressKeys(book) { progress[Self.storageKey(key)] = nil }
         writeProgress()
         reload()
     }

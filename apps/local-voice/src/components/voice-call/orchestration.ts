@@ -6,6 +6,7 @@ import {
   type ModelCompliance,
 } from "@/bindings";
 import { modelLabel } from "@/lib/modelNames";
+import { ANNOUNCE } from "./ueberbrueckung";
 import type { ChatMessage, ChatSide } from "@/vendor/wai-voice/backend.ts";
 import {
   modelAllowed,
@@ -103,6 +104,8 @@ export interface OrchestrationDeps {
   onStatus(status: CallStatus | null): void;
   /** Das laufende Gespräch (es bleibt den Gesprächswerkzeugen verborgen); `null` bis zum ersten Beitrag; wartet auf ein laufendes Speichern. */
   conversationId?(): string | null | Promise<string | null>;
+  /** Schlüssel der letzten Ausgabe in Rust (Tor: „ja“ nach einer Rückfrage, „wiederholen“); sonst `conversationId`. */
+  ausgabeKey?(): string | null | Promise<string | null>;
 }
 
 export interface Prepared {
@@ -208,21 +211,6 @@ function toVoiceModelShape(m: ModelDescription): VoiceModel {
   };
 }
 
-const ANNOUNCE: Record<string, string> = {
-  meetings_list: "Moment, ich schaue in den Besprechungen nach.",
-  meetings_search: "Moment, ich suche in den Besprechungen.",
-  meeting_transcript: "Moment, ich lese im Transkript nach.",
-  dictations_recent: "Moment, ich schaue in den Diktaten nach.",
-  dictations_search: "Moment, ich suche in den Diktaten.",
-  conversations_list: "Moment, ich schaue in den früheren Gesprächen nach.",
-  conversations_search: "Moment, ich suche in den früheren Gesprächen.",
-  conversation_get: "Moment, ich lese das frühere Gespräch.",
-  calendar_events: "Moment, ich schaue in den Terminen nach.",
-  day_overview: "Moment, ich verschaffe mir einen Überblick über den Tag.",
-  tts_pages_list: "Moment, ich schaue in den Vorlesen-Seiten nach.",
-  tts_page_text: "Moment, ich lese die Seite.",
-};
-
 /** Wissensbereiche des Gesprächs (Schlüssel der Einstellung `voice_call_knowledge`). */
 export const KNOWLEDGE_AREAS = [
   "meetings",
@@ -240,8 +228,18 @@ export type KnowledgeArea = (typeof KNOWLEDGE_AREAS)[number];
  */
 export const GLOBAL_AREAS = ["books", "book_notes", "ki_docs"] as const;
 export type GlobalArea = (typeof GLOBAL_AREAS)[number];
-/** Alle Schlüssel in fester Reihenfolge (wie `normalize_keys` im Kern). */
-export const ALL_AREAS = [...KNOWLEDGE_AREAS, ...GLOBAL_AREAS] as const;
+/**
+ * Bereich „Notizbuch“ (lva#396 N2): eigener Schalter mit Abschnittsauswahl
+ * (`voice_call_notebook_sections`); ohne Abschnitt ist trotz Bereich nichts sichtbar.
+ */
+export const NOTEBOOK_AREA = "notebook" as const;
+export type NotebookArea = typeof NOTEBOOK_AREA;
+/** Alle Schlüssel in fester Reihenfolge (wie `Area::ALL` im Kern). */
+export const ALL_AREAS = [
+  ...KNOWLEDGE_AREAS,
+  ...GLOBAL_AREAS,
+  NOTEBOOK_AREA,
+] as const;
 
 /** Deutsche Namen der Bereiche für den Hinweis an das Modell (Transkripte hängen an den Besprechungen). */
 const AREA_LABEL: Record<KnowledgeArea | "transcripts", string> = {
@@ -258,6 +256,8 @@ export interface KnowledgeState {
   areas: KnowledgeArea[];
   /** `voice_call_read_transcripts`: wirkt nur mit „Besprechungen“. */
   transcripts: boolean;
+  /** Bereich „Notizbuch“ an (Abschnitte wählt die eigene Einstellung). */
+  notebook?: boolean;
 }
 
 export const NO_KNOWLEDGE: KnowledgeState = { areas: [], transcripts: false };
@@ -272,12 +272,13 @@ export function knowledgeFrom(
   return {
     areas: KNOWLEDGE_AREAS.filter((a) => raw.includes(a)),
     transcripts: settings?.voice_call_read_transcripts ?? false,
+    notebook: raw.includes(NOTEBOOK_AREA),
   };
 }
 
 /** Kein Bereich frei (der Standard): das Gespräch bekommt keine Wissenswerkzeuge. */
 export function noKnowledge(k: KnowledgeState): boolean {
-  return k.areas.length === 0;
+  return k.areas.length === 0 && !k.notebook;
 }
 
 const HINT_ORDER = [
@@ -413,6 +414,8 @@ function makeModel(
           modelId: info.id,
           stufe,
           forFunction,
+          conversationId:
+            (await (deps.ausgabeKey ?? deps.conversationId)?.()) ?? null,
         });
         // Auch nach Abbruch noch kurz auf den Verbrauch warten: er zählt trotzdem.
         await Promise.race([
@@ -442,6 +445,22 @@ function parseParameters(json: string): VoiceTool["parameters"] | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Werkzeuge mit persönlichen Daten (Notizbuch): ihre Ergebnisse dürfen nur an ein lokales Modell
+ * gehen (Codex lva#414 M1). Rust setzt das vor jedem Modellaufruf durch; die Oberfläche bietet sie
+ * einem Cloud-Sprecher deshalb gar nicht erst an.
+ */
+export function isLocalOnlyTool(name: string): boolean {
+  return name.startsWith("notizbuch_");
+}
+
+export function onlyLocalAllowed(
+  tools: VoiceTool[],
+  speaker: Pick<ModelDescription, "local">,
+): VoiceTool[] {
+  return speaker.local ? tools : tools.filter((t) => !isLocalOnlyTool(t.name));
 }
 
 /** Werkzeuge der Brücke als Registrierung; was der Vertrag nicht annimmt, fehlt. */
@@ -586,7 +605,10 @@ export class OrchestrationSession {
       return { side: null, blocked: true, systemPrompt };
     }
     if (cfg.useTools) this.tools ??= await listTools();
-    const offered = cfg.useTools ? (this.tools ?? []) : [];
+    const offered = onlyLocalAllowed(
+      cfg.useTools ? (this.tools ?? []) : [],
+      active,
+    );
     const denkerInfo =
       cfg.denkerModelId !== ""
         ? all.find((m) => m.id === cfg.denkerModelId)

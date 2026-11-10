@@ -311,6 +311,10 @@ fn default_llm_effort() -> String {
     "medium".to_string()
 }
 
+fn default_ablage_semantische_suche() -> bool {
+    crate::ablage::semantik::SEMANTIK_STANDARD
+}
+
 fn default_true() -> bool {
     true
 }
@@ -972,6 +976,11 @@ pub struct AppSettings {
     /// geladen ist; ohne den Schluessel gilt `true`. Kein Abgleich ueber Besprechungen.
     #[serde(default = "default_true")]
     pub meeting_voice_suggestions: bool,
+    /// Ablage D6: semantische Suche (lokale Vektoren mit multilingual-e5-small). Wirkt erst, wenn
+    /// das Modell geladen ist; ohne Modell bleibt die Suche lexikalisch. Standard aus dem Eval-Tor
+    /// (`ablage::semantik::SEMANTIK_STANDARD`).
+    #[serde(default = "default_ablage_semantische_suche")]
+    pub ablage_semantische_suche: bool,
     /// D3 (#70): Bildanalyse fuer Folien. Gemma 4 E4B liest den Text erkannter Folien neu
     /// (Zahlen und Tabellen stimmen) und beschreibt sie; dafuer startet der lokale Server
     /// kurz mit Bild-Projektor. Standard AUS (der Projektor ist ein optionaler 990-MB-
@@ -1046,6 +1055,11 @@ pub struct AppSettings {
     /// Treffer aus dem Transkript)? Nur wirksam mit `meeting_mcp_enabled`.
     #[serde(default = "default_true")]
     pub meeting_mcp_include_transcript: bool,
+    /// ADR-0028 A2 (E4): Ansagen und S0-Vorlagen der Oberflaeche (lokale Einstufung S0-S3).
+    /// Standard AN. Steuert NUR die Oberflaeche; das Tor vor dem Modellaufruf (Rust,
+    /// `assistent::tor`) bleibt immer aktiv.
+    #[serde(default = "default_true")]
+    pub assistent_einstufung_aktiv: bool,
     /// Stufe 2 des Sprachgesprächs: darf die Sprach-KI Transkripte von Besprechungen lesen
     /// (`meeting_transcript`, Treffer aus dem Transkript)? Getrennt vom MCP-Server; Standard AUS
     /// (ADR-0021).
@@ -1058,6 +1072,11 @@ pub struct AppSettings {
     /// `meetings`. Getrennt von den Rechten externer Agenten.
     #[serde(default)]
     pub voice_call_knowledge: Vec<String>,
+    /// Notizbuch-Abschnitte, die das Gespräch lesen darf (lva#396 N2, Spec lva#398 §3.2), nur
+    /// zusammen mit dem Bereich `notebook`: `abschnitt:<id>` oder `notizbuch:<id>` (ganzes
+    /// Notizbuch samt künftiger Abschnitte). Standard LEER: dann ist nichts sichtbar.
+    #[serde(default)]
+    pub voice_call_notebook_sections: Vec<String>,
     /// Globaler Sprachassistent (lva#325): Abrufindex über die freigegebenen Bereiche
     /// (`voice_call_knowledge`, inkl. `books`, `book_notes`, `ki_docs`). Standard AUS: dann
     /// kein Indexaufbau, kein Vorwärmen, kein Abruf. Freischaltung erst nach Eval-Tor (Plan M8).
@@ -1986,6 +2005,7 @@ pub fn get_default_settings() -> AppSettings {
         book_talk_subscription_preview: false,
         book_talk_preview_bindings: Vec::new(),
         meeting_voice_suggestions: true,
+        ablage_semantische_suche: default_ablage_semantische_suche(),
         meeting_slide_vision: false,
         meeting_echo_cancellation: MeetingEchoCancellation::Auto,
         meeting_final_model: default_meeting_final_model(),
@@ -2000,8 +2020,10 @@ pub fn get_default_settings() -> AppSettings {
         meeting_reminder_all_events: false,
         meeting_mcp_enabled: false,
         meeting_mcp_include_transcript: true,
+        assistent_einstufung_aktiv: true,
         voice_call_read_transcripts: false,
         voice_call_knowledge: Vec::new(),
+        voice_call_notebook_sections: Vec::new(),
         voice_global_context_enabled: false,
         speech_learning_enabled: false,
         speech_learning_auto_apply: false,

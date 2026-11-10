@@ -6,6 +6,7 @@ mod app_context; // Globaler Sprachassistent: Abrufindex über alle Inhalte
 mod appdata_migration;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod apple_intelligence;
+mod assistent; // ADR-0028 A2: Einstufung, Ansagen, Messung (wai-assistent)
 mod audio_feedback;
 pub mod audio_toolkit;
 mod book_ai; // lva#181: KI-Funktionen im Buch-Reader
@@ -15,7 +16,9 @@ pub mod book_talk_eval {
     pub use crate::book_ai::talk::adapter::*;
     pub use crate::book_ai::talk::eval::*;
 }
+mod ablage; // lva#407 D1, lva#408 D2: Dokumentenablage (Epic #395)
 mod books;
+mod buch_dateien; // lva#365 P3: Notizen, Anhänge, Transkript im Buch-Ordner (Kern)
 mod catalog;
 pub mod cli;
 mod clipboard;
@@ -33,6 +36,7 @@ mod keep_awake; // Vorlesen: Bildschirm wach halten (Sonnen-Knopf)
 mod konto; // ADR-0024 Paket 1: Suite-Profil (lokal)
 mod library; // lva#152: Bibliothek für Bücher und Hörbücher
 mod library_export; // lva#236: Fassungen einzeln exportieren (EPUB, PDF, Word, M4B, MP3)
+mod library_layout; // lva#365 P2a: Buch-Ordner-Ablage (Kern ohne Tauri)
 mod llm_client;
 mod llm_keys;
 mod local_update;
@@ -47,6 +51,11 @@ mod paste_session;
 pub mod portable;
 pub mod portable_parts;
 mod process_guard;
+/// lva#408 D2: Einstieg des Extraktor-Unterprozesses (`lva-extrakt <pfad> <sha256> <typ>` bzw.
+/// `local-voice-ai --lva-extrakt …`). Liefert den Exitcode.
+pub fn lva_extrakt_main(args: &[String]) -> i32 {
+    ablage::extrakt::haupt(args)
+}
 mod projekte; // ADR-0026 PR-7: Suite-Projekte und Recherche
 pub mod provision;
 mod refinement;
@@ -60,6 +69,8 @@ pub mod sprachdienst; // ADR-0021 S2
 mod summarizer;
 mod sync;
 mod tagging;
+#[cfg(test)]
+mod testlog; // gemeinsamer Log-Fänger der Tests
 mod transcription_coordinator;
 mod translator;
 mod tray;
@@ -228,6 +239,11 @@ fn should_force_show_permissions_window(app: &AppHandle) -> bool {
 }
 
 fn initialize_core_logic(app_handle: &AppHandle) {
+    // lva#365 P2a: ein offenes Journal der Buch-Ordner-Ablage auflösen, bevor
+    // irgendetwas die Bibliothek oder die Seiten liest (Sync, Abrufindex,
+    // Oberfläche). Hält bei Doppelung oder Fehlen an und verschiebt nichts.
+    commands::library_layout::start_hook(app_handle);
+
     // Note: Enigo (keyboard/mouse simulation) is NOT initialized here.
     // The frontend is responsible for calling the `initialize_enigo` command
     // after onboarding completes. This avoids triggering permission dialogs
@@ -266,6 +282,10 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     llm_runtime.set_model_dirs(settings::get_settings(app_handle).llm_model_dirs);
     let llm_server = Arc::new(managers::llm::LocalLlmServer::new());
     managers::llm::install_globals(llm_runtime.clone(), llm_server.clone());
+    // Ablage D6: Modellordner und Schalter der semantischen Suche (das Modell lädt erst bei Bedarf).
+    ablage::befehle::semantik_einrichten(app_handle);
+    // Ablage D7: Dateibeobachter der verknüpften Ordner gleich beim Start (nur, wenn es welche gibt).
+    ablage::befehle::beobachter_einrichten(app_handle);
     // Speicherwächter: faellt der freie RAM unter die Notgrenze, stoppt die
     // App ihre eigenen Server (fish-speech, llama-server), bevor Windows in
     // die Auslagerung kippt und unbedienbar wird (Ausfall 15.09.2026).
@@ -1997,6 +2017,14 @@ fn specta_builder() -> Builder<tauri::Wry> {
             sync::booktalk_relay::booktalk_relay_renew_code,
             sync::booktalk_relay::booktalk_relay_revoke,
             sync::sync_logout,
+            sync::uebernahme::sync_anmeldung_offen,
+            sync::uebernahme::sync_anmeldung_entscheiden,
+            sync::uebernahme::sync_anmeldung_abbrechen,
+            sync::uebernahme::sync_sicherungen,
+            sync::uebernahme::sync_sicherung_wiederherstellen,
+            sync::uebernahme::sync_sicherung_einstellungen,
+            sync::uebernahme::sync_sicherung_loeschen,
+            sync::uebernahme::sync_nur_lokal_uebernehmen,
             sync::sync_status,
             sync::sync_now,
             sync::sync_touch,
@@ -2008,6 +2036,42 @@ fn specta_builder() -> Builder<tauri::Wry> {
             konto::konto_bild_setzen,
             konto::konto_bild_entfernen,
             konto::konto_bild_lesen,
+            ablage::befehle::ablage_stand,
+            ablage::befehle::ablage_ordner_anlegen,
+            ablage::befehle::ablage_ordner_umbenennen,
+            ablage::befehle::ablage_ordner_verschieben,
+            ablage::befehle::ablage_ordner_einstellungen,
+            ablage::befehle::ablage_ki_setzen,
+            ablage::befehle::ablage_freigaben_neu_festlegen,
+            ablage::befehle::ablage_cloud_ausnahme_setzen,
+            ablage::befehle::ablage_entwurf_anlegen,
+            ablage::befehle::ablage_importieren,
+            ablage::befehle::ablage_in_papierkorb,
+            ablage::befehle::ablage_wiederherstellen,
+            ablage::befehle::ablage_endgueltig_loeschen,
+            ablage::befehle::ablage_papierkorb_leeren,
+            ablage::befehle::ablage_fassungen,
+            ablage::befehle::ablage_datei_umbenennen,
+            ablage::befehle::ablage_datei_verschieben,
+            ablage::befehle::ablage_bestand_neu_aufbauen,
+            ablage::befehle::ablage_gefundene_aufnehmen,
+            ablage::befehle::ablage_suchen,
+            ablage::befehle::ablage_index_neu_aufbauen,
+            ablage::befehle::ablage_text_abbrechen,
+            ablage::befehle::ablage_sync_stand,
+            ablage::befehle::ablage_semantik_stand,
+            ablage::befehle::ablage_semantik_setzen,
+            ablage::befehle::ablage_semantik_laden,
+            ablage::befehle::ablage_semantik_abbrechen,
+            ablage::befehle::ablage_semantik_loeschen,
+            ablage::befehle::ablage_verknuepfen,
+            ablage::befehle::ablage_verknuepfung_loesen,
+            ablage::befehle::ablage_verknuepft_abtasten,
+            assistent::assistent_einstufen,
+            assistent::assistent_messung_melden,
+            assistent::assistent_letzte_ausgabe,
+            assistent::assistent_ausgabe_vergessen,
+            assistent::change_assistent_einstufung_aktiv_setting,
             projekte::befehle::projekte_liste,
             projekte::befehle::projekt_anlegen,
             projekte::befehle::projekt_web_freigabe,
@@ -2017,6 +2081,16 @@ fn specta_builder() -> Builder<tauri::Wry> {
             projekte::befehle::projekt_ordner_loesen,
             projekte::befehle::projekt_abgleichen,
             projekte::befehle::projekt_buch_zuordnen,
+            projekte::befehle::projekt_seite_zuordnen,
+            projekte::befehle::projekt_seite_entfernen,
+            projekte::befehle::projekt_dateien_hinzufuegen,
+            projekte::befehle::projekt_datei_entfernen,
+            projekte::befehle::projekt_dateien_gefunden,
+            projekte::befehle::projekt_dateien_lage,
+            projekte::befehle::projekt_dateien_neu_aufbauen,
+            projekte::befehle::projekt_datei_gefunden_aufnehmen,
+            projekte::befehle::projekt_kontext_uebersicht,
+            projekte::befehle::projekt_kontext_schalten,
             projekte::befehle::projekt_buch_entfernen,
             projekte::befehle::projekt_besprechung_zuordnen,
             projekte::befehle::projekt_besprechung_entfernen,
@@ -2407,6 +2481,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::voice_tools::voice_tools_list,
             commands::voice_tools::change_voice_call_read_transcripts_setting,
             commands::voice_tools::change_voice_call_knowledge_setting,
+            commands::voice_tools::change_voice_notebook_sections_setting,
+            commands::voice_tools::voice_notebook_outline,
             commands::voice_tools::voice_tool_call,
             // Sprachgespraech Stufe 3: Lernen aus Korrekturen, Einrichtung durch Vorlesen
             speech_learning::speech_learning_feedback,
@@ -2619,6 +2695,23 @@ fn specta_builder() -> Builder<tauri::Wry> {
             library::library_merge_audio,
             library::library_progress_load,
             library::library_progress_put,
+            commands::library_layout::library_layout_status,
+            commands::library_layout::library_layout_migrate,
+            commands::library_layout::library_layout_rollback,
+            commands::library_layout::library_backup_list,
+            commands::library_layout::library_backup_restore,
+            commands::library_layout::library_backup_restore_best_effort,
+            commands::library_layout::library_backup_sync_check,
+            commands::library_layout::library_backup_export,
+            commands::library_layout::library_backup_delete,
+            commands::library_layout::library_book_files,
+            commands::library_layout::library_book_reveal,
+            commands::book_folder::library_book_folder_files,
+            commands::book_folder::library_book_note_create,
+            commands::book_folder::library_book_attachments_add,
+            commands::book_folder::library_book_file_open,
+            commands::book_folder::library_book_file_remove,
+            commands::book_folder::library_book_file_restore,
             hoersync_live::audiosync_load,
             hoersync_live::audiosync_window,
             hoersync_live::audiosync_anchor,

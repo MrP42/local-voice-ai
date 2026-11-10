@@ -23,6 +23,22 @@ WHICH="${1:-all}"
 : "${TAURI_SIGNING_PRIVATE_KEY:?TAURI_SIGNING_PRIVATE_KEY fehlt (ohne .sig lehnt die App jedes Update ab)}"
 export CMAKE_POLICY_VERSION_MINIMUM=3.5
 
+# Signatur mit dem festen lokalen Zertifikat (lva#143), damit macOS Freigaben (Bedienungshilfen,
+# Mikrofon, Schluesselbund-Zugriff auf den Tresor) ueber Updates behaelt. Einrichten:
+# scripts/macos-signing-setup.sh. Ad-hoc nur ausdruecklich mit LVA_ADHOC=1.
+SIGN_NAME="${LVA_SIGNING_NAME:-Local Voice Local Signing}"
+if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+  echo "Signatur: $APPLE_SIGNING_IDENTITY (aus der Umgebung)"
+elif security find-identity -v -p codesigning 2>/dev/null | grep -qF "\"$SIGN_NAME\""; then
+  export APPLE_SIGNING_IDENTITY="$SIGN_NAME"
+  echo "Signatur: $SIGN_NAME"
+elif [ "${LVA_ADHOC:-0}" = 1 ]; then
+  echo "WARNUNG: ad-hoc signiert - macOS fragt nach dem Update alle Freigaben neu ab." >&2
+else
+  echo "Signieridentitaet \"$SIGN_NAME\" fehlt: scripts/macos-signing-setup.sh ausfuehren (oder LVA_ADHOC=1)." >&2
+  exit 1
+fi
+
 VERSION=$(grep -o '"version": "[^"]*"' src-tauri/tauri.conf.json | head -1 | cut -d'"' -f4)
 TAG="app-v$VERSION"
 echo "Version $VERSION, Release $TAG"

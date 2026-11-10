@@ -7,6 +7,7 @@ import {
   knowledgeFrom,
   type KnowledgeArea,
   type KnowledgeState,
+  type NotebookArea,
 } from "./orchestration";
 
 /** Die freigegebenen Wissensbereiche des Gesprächs, wie die Einstellungen sie halten. */
@@ -41,7 +42,7 @@ export function useKnowledgeEditor() {
     [updateSetting, knowledgeChanged],
   );
   const toggle = useCallback(
-    (area: KnowledgeArea | GlobalArea, on: boolean) => {
+    (area: KnowledgeArea | GlobalArea | NotebookArea, on: boolean) => {
       const current = (getSetting("voice_call_knowledge") ?? []) as string[];
       save(
         "voice_call_knowledge",

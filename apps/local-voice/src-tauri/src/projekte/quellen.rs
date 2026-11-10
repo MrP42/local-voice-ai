@@ -4,6 +4,7 @@
 //! Bibliothek), Tests liefern echte Speicher in einem Tempverzeichnis. Die Buecher werden nur
 //! gelesen (Bibliothek, lva#147 bis #152 gehoeren einem anderen Faden).
 
+use super::kontext::{hinweis, Form, Wahl};
 use crate::managers::meetings::store::MeetingStore;
 use std::sync::Arc;
 
@@ -20,6 +21,15 @@ pub struct OrdnerKurz {
     pub id: String,
     pub name: String,
     pub projekt_id: Option<String>,
+}
+
+/// Vorlesen-Seite im Bestand (lva#365 P4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SeiteKurz {
+    pub id: String,
+    pub titel: String,
+    /// Nicht lesbar, solange ihr Buch im Papierkorb liegt.
+    pub lesbar: bool,
 }
 
 pub trait LvaQuellen: Send + Sync {
@@ -41,14 +51,27 @@ pub trait LvaQuellen: Send + Sync {
     fn ordner_projekt_loesen_alle(&self, projekt_id: &str) -> Result<u32, String>;
     /// Suite-Projekte, auf die die Ordner einer Besprechung zeigen.
     fn projekte_der_besprechung(&self, meeting_id: &str) -> Result<Vec<String>, String>;
+    /// Alle Vorlesen-Seiten. `None`: Bestand nicht verfügbar; Seitenverweise bleiben dann
+    /// unbeurteilt und werden nie als verwaist entfernt.
+    fn seiten(&self) -> Result<Option<Vec<SeiteKurz>>, String> {
+        Ok(None)
+    }
+    /// Kontexttext eines App-Inhalts (Seite, Buch, Besprechung) in der gewählten Form.
+    fn kontext_text(&self, _link: &str, _wahl: &Wahl) -> Form {
+        Form::Fehlt(hinweis::NICHT_LESBAR)
+    }
 }
 
 type BuecherFn = dyn Fn() -> Result<Vec<Inhalt>, String> + Send + Sync;
+type SeitenFn = dyn Fn() -> Result<Vec<SeiteKurz>, String> + Send + Sync;
+type TexteFn = dyn Fn(&str, &Wahl) -> Form + Send + Sync;
 
 /// Produktion: Besprechungsspeicher der App; die Buecher liefert die Bibliothek ueber `buecher`.
 pub struct ProdQuellen {
     meetings: Arc<MeetingStore>,
     buecher: Arc<BuecherFn>,
+    seiten: Option<Arc<SeitenFn>>,
+    texte: Option<Arc<TexteFn>>,
 }
 
 impl ProdQuellen {
@@ -59,7 +82,24 @@ impl ProdQuellen {
         Self {
             meetings,
             buecher: Arc::new(buecher),
+            seiten: None,
+            texte: None,
         }
+    }
+
+    /// Seitenbestand der App (Vorlesen).
+    pub fn mit_seiten(
+        mut self,
+        f: impl Fn() -> Result<Vec<SeiteKurz>, String> + Send + Sync + 'static,
+    ) -> Self {
+        self.seiten = Some(Arc::new(f));
+        self
+    }
+
+    /// Leser der Kontexttexte.
+    pub fn mit_texten(mut self, f: impl Fn(&str, &Wahl) -> Form + Send + Sync + 'static) -> Self {
+        self.texte = Some(Arc::new(f));
+        self
     }
 }
 
@@ -122,5 +162,16 @@ impl LvaQuellen for ProdQuellen {
         self.meetings
             .projekte_der_besprechung(meeting_id)
             .map_err(text)
+    }
+
+    fn seiten(&self) -> Result<Option<Vec<SeiteKurz>>, String> {
+        self.seiten.as_ref().map(|f| f()).transpose()
+    }
+
+    fn kontext_text(&self, link: &str, wahl: &Wahl) -> Form {
+        match &self.texte {
+            Some(f) => f(link, wahl),
+            None => Form::Fehlt(hinweis::NICHT_LESBAR),
+        }
     }
 }

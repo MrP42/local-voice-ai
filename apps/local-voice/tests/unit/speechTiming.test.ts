@@ -1,0 +1,200 @@
+// Läuft ohne Zusatzwerkzeuge: node --experimental-strip-types --test tests/unit/speechTiming.test.ts
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  cleanPieces,
+  cleanSpans,
+  clauses,
+  clockElapsed,
+  clockFraction,
+  retimeClock,
+  spokenOffset,
+  startPiece,
+  type SentenceClock,
+} from "../../src/lib/speechTiming.ts";
+
+const whole = (text: string) => ({ start: 0, end: text.length });
+const wordAt = (text: string, at: number) => {
+  let a = at;
+  while (a > 0 && !/\s/.test(text[a - 1])) a--;
+  let b = at;
+  while (b < text.length && !/\s/.test(text[b])) b++;
+  return text.slice(a, b);
+};
+
+test("Nachklang und Absatzpause verzögern die Markierung nicht mehr", () => {
+  // 2 s Stimme, davor 30 ms Vorlauf, dahinter 230 ms Nachklang + 340 ms Absatzpause.
+  const text = "Ich hatte zwei Väter, einen reichen und einen armen.";
+  const spans = [[30, 2030]] as const;
+  // Kurz vor Ende der Stimme ist das letzte Wort zu hören …
+  assert.equal(
+    wordAt(text, spokenOffset(text, whole(text), spans, 1950)),
+    "armen.",
+  );
+  // … die alte Rechnung über die ganze Dauer (2600 ms) stand noch weit davor.
+  const old = Math.floor((1950 / 2600) * text.length);
+  assert.notEqual(wordAt(text, old), "armen.");
+  assert.ok(text.length - old > 10, `alte Rechnung nur bei Zeichen ${old}`);
+});
+
+test("vor dem ersten Laut steht die Markierung am Satzanfang", () => {
+  const text = "Reiche arbeiten nicht für Geld.";
+  assert.equal(spokenOffset(text, whole(text), [[200, 1800]], 100), 0);
+});
+
+test("nach dem letzten Laut bleibt das letzte Wort markiert", () => {
+  const text = "Reiche arbeiten nicht für Geld.";
+  const at = spokenOffset(text, whole(text), [[0, 1500]], 1900);
+  assert.equal(wordAt(text, at), "Geld.");
+});
+
+test("Kommapause hält die Markierung am Wort vor dem Komma", () => {
+  const text = "Ich hatte zwei Väter, einen reichen und einen armen.";
+  // Zwei Abschnitte = zwei Teilsätze, dazwischen 200 ms Kommapause.
+  const spans = [
+    [0, 900],
+    [1100, 2200],
+  ] as const;
+  assert.deepEqual(
+    clauses(text, whole(text)).map((c) => text.slice(c.start, c.end).trim()),
+    ["Ich hatte zwei Väter,", "einen reichen und einen armen."],
+  );
+  assert.equal(
+    wordAt(text, spokenOffset(text, whole(text), spans, 1000)),
+    "Väter,",
+  );
+  // Mit Beginn des zweiten Abschnitts springt sie auf den zweiten Teilsatz.
+  assert.equal(
+    wordAt(text, spokenOffset(text, whole(text), spans, 1110)),
+    "einen",
+  );
+});
+
+test("passen Abschnitte und Teilsätze nicht zusammen, zählt die Sprechzeit als Ganzes", () => {
+  const text = "Eins zwei drei vier fünf sechs sieben acht.";
+  // Drei Abschnitte, aber kein Komma: Pausen werden herausgerechnet.
+  const spans = [
+    [0, 1000],
+    [1500, 2500],
+    [3000, 4000],
+  ] as const;
+  const inPause = spokenOffset(text, whole(text), spans, 1200);
+  const afterPause = spokenOffset(text, whole(text), spans, 1500);
+  assert.equal(
+    inPause,
+    afterPause,
+    "in der Pause läuft die Markierung nicht weiter",
+  );
+  assert.equal(
+    spokenOffset(text, whole(text), spans, 2500),
+    Math.floor((2 / 3) * text.length),
+  );
+});
+
+test("Satz mitten im Text: Offsets bleiben im Bereich", () => {
+  const text = "Vorher. Mitten im Text steht dieser Satz. Danach.";
+  const range = { start: 8, end: 41 };
+  for (const t of [0, 500, 1000, 5000]) {
+    const at = spokenOffset(text, range, [[0, 1000]], t);
+    assert.ok(at >= range.start && at < range.end, `t=${t}: ${at}`);
+  }
+});
+
+test("ungültige Abschnitte aus dem Ereignis fallen weg", () => {
+  assert.deepEqual(cleanSpans(undefined), []);
+  assert.deepEqual(cleanSpans([[10, 5]]), []);
+  assert.deepEqual(
+    cleanSpans([
+      [0, 100],
+      [50, 200],
+    ]),
+    [],
+  );
+  assert.deepEqual(cleanSpans([["a", 1]]), []);
+  assert.deepEqual(
+    cleanSpans([
+      [0, 100],
+      [300, 400],
+    ]),
+    [
+      [0, 100],
+      [300, 400],
+    ],
+  );
+});
+
+const clock = (over: Partial<SentenceClock> = {}): SentenceClock => ({
+  index: 1,
+  at: 1000,
+  ms: 10_000,
+  speed: 1,
+  ...over,
+});
+
+test("Uhr: Stückbeginn setzt nach, das Öffnen dazwischen zählt nicht", () => {
+  // Stück 1 endet nach 4 s Satzzeit; das zweite Stück öffnet 300 ms langsam.
+  const c = clock();
+  const before = clockElapsed(c, 1000 + 4300);
+  assert.equal(before, 4300, "ohne Nachsetzen läuft die Uhr dem Audio voraus");
+  const piece = startPiece(c, 1000 + 4300, 4000);
+  assert.equal(clockElapsed(piece, 1000 + 4300), 4000);
+  assert.equal(clockElapsed(piece, 1000 + 5300), 5000);
+});
+
+test("Uhr: Tempowechsel mitten im Satz springt nicht", () => {
+  const c = clock({ speed: 1 });
+  const now = 1000 + 3000;
+  const before = clockElapsed(c, now);
+  const retimed = { ...retimeClock(c, now, 1), speed: 2 };
+  assert.equal(clockElapsed(retimed, now), before, "kein Sprung beim Wechsel");
+  // Ab jetzt doppelt so schnell.
+  assert.equal(clockElapsed(retimed, now + 1000), before + 2000);
+  // Ohne Neuansetzen wäre die Markierung um 3 s nach vorn gesprungen.
+  assert.equal(clockElapsed({ ...c, speed: 2 }, now), 6000);
+});
+
+test("Uhr: bleibt im Satz und steht am Ende", () => {
+  const c = clock({ base: 9000 });
+  assert.equal(clockElapsed(c, 1000 + 5000), 10_000);
+  assert.equal(clockFraction(c, 1000 + 5000), 1);
+  // Vor `at` (Uhr eben neu gesetzt) nicht zurück unter die Basis gerechnet.
+  assert.equal(clockElapsed(c, 1000), 9000);
+});
+
+test("Abschnitte außerhalb der Satzdauer oder negativ gelten nicht", () => {
+  assert.deepEqual(cleanSpans([[-10, 100]], 1000), []);
+  assert.deepEqual(cleanSpans([[0, 1200]], 1000), []);
+  assert.deepEqual(cleanSpans([[0, 900]], 1000), [[0, 900]]);
+});
+
+test("Uhr hält am Ende des Stücks, bis das nächste gemeldet ist", () => {
+  const c = clock({ pieces: [0, 4000, 4500] });
+  // Stück 1 (4 s) ist durch, das nächste öffnet langsam: die Uhr steht.
+  assert.equal(clockElapsed(c, 1000 + 4000), 4000);
+  assert.equal(clockElapsed(c, 1000 + 9000), 4000);
+  // Pausenstück gemeldet: läuft bis zum nächsten Stückbeginn.
+  const pause = startPiece(c, 1000 + 9000, 4000);
+  assert.equal(clockElapsed(pause, 1000 + 12_000), 4500);
+  const last = startPiece(pause, 1000 + 12_000, 4500);
+  assert.equal(clockElapsed(last, 1000 + 13_000), 5500);
+  assert.equal(clockElapsed(last, 1000 + 99_000), 10_000);
+});
+
+test("Stückanfänge: Unsinn gilt nicht", () => {
+  assert.deepEqual(cleanPieces([0, 500, 400]), []);
+  assert.deepEqual(cleanPieces([0, 2000], 1000), []);
+  assert.deepEqual(cleanPieces([0, 500], 1000), [0, 500]);
+});
+
+test("Tempowechsel während des Haltens gibt das nächste Stück nicht frei", () => {
+  const c = clock({ pieces: [0, 4000, 4500] });
+  // Uhr hält bei 4000 (nächstes Stück öffnet noch).
+  const held = 1000 + 6000;
+  assert.equal(clockElapsed(c, held), 4000);
+  const faster = { ...retimeClock(c, held, 1), speed: 2 };
+  assert.equal(clockElapsed(faster, held), 4000);
+  assert.equal(clockElapsed(faster, held + 3000), 4000, "steht weiter");
+  // Erst die Stückmeldung gibt frei.
+  const go = startPiece(faster, held + 3000, 4000);
+  assert.equal(clockElapsed(go, held + 3100), 4200);
+});

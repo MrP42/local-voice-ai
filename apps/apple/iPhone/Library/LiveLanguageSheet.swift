@@ -1,23 +1,9 @@
 import SwiftUI
 import Translation
 
-// Sprach-Chip und Sprachauswahl der Live-Übersetzung (lva#358, Spez §3, §5, §6).
-
-/// Knopf in der Bedienleiste: zeigt „EN → DE“ bzw. die Buchsprache und öffnet die Auswahl.
-struct LiveLanguageButton: View {
-    @ObservedObject var playback = LibraryPlayback.shared
-    @State private var shown = false
-
-    var body: some View {
-        let source = playback.liveSource.map(LiveLanguages.short) ?? "–"
-        let target = playback.source == .voice ? playback.liveTarget : nil
-        let caption = target.map { "\(source) → \(LiveLanguages.short($0))" } ?? source
-        ControlButton(title: "Sprache", systemImage: "globe", caption: caption) { shown = true }
-            .accessibilityValue(playback.liveTarget.map { "Live übersetzt in \(LiveLanguages.name($0))" } ?? "Original")
-            .accessibilityHint("Liest das Buch live in einer anderen Sprache vor, die Stelle im Buch bleibt")
-            .sheet(isPresented: $shown) { LiveLanguageSheet() }
-    }
-}
+// Live-Übersetzung im Blatt „Sprache“ (lva#358, Spez §3, §5, §6). Kein eigenes Menü: Die Live-Sprachen stehen im
+// selben Blatt wie die Sprachfassungen (`LanguageSourceSheet`, Chip „DE ▾“ und Knopf „Sprache“), damit es nur
+// einen Ort für die Sprache gibt.
 
 /// Kennzeichnung (Spez §6) und Unterlauf-Hinweis mit „Original weiterlesen“ (Spez §4).
 struct LiveStatusLine: View {
@@ -51,8 +37,11 @@ struct LiveStatusLine: View {
     }
 }
 
-/// Auswahl: Original oder eine Live-Sprache. Pakete laden nur auf ausdrücklichen Tipp (Systemzustimmung).
-struct LiveLanguageSheet: View {
+/// Abschnitte „Buchsprache“ (nur ohne Angabe am Buch) und „Live übersetzen“ für das Blatt „Sprache“.
+/// `editionLanguages`: Sprachen, die das Buch als eigene Fassung hat; sie stehen oben und werden hier nicht
+/// noch einmal als Live-Sprache angeboten. Pakete laden nur auf ausdrücklichen Tipp (Systemzustimmung).
+struct LiveLanguageSections: View {
+    var editionLanguages: Set<String> = []
     @ObservedObject var playback = LibraryPlayback.shared
     @Environment(\.dismiss) private var dismiss
     @State private var states: [String: LiveLanguageState] = [:]
@@ -60,41 +49,35 @@ struct LiveLanguageSheet: View {
     @State private var download: TranslationSession.Configuration?
     @State private var message: String?
 
+    /// Live geht nur mit Text (Quellsprache bekannt).
+    @MainActor static var offered: Bool { LibraryPlayback.shared.liveSource != nil }
+
     private var languages: [(code: String, name: String)] {
         let source = playback.liveSource.map(LiveTranslation.base)
-        return LiveLanguages.offered.filter { $0.code != source }
+        return LiveLanguages.offered.filter { $0.code != source && !editionLanguages.contains($0.code) }
     }
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    Button { playback.setLive(nil); dismiss() } label: {
-                        row(title: "Original" + (playback.liveSource.map { " (\(LiveLanguages.name($0)))" } ?? ""),
-                            detail: nil, selected: playback.liveTarget == nil)
+        if Self.offered {
+            sourceSection
+            Section {
+                ForEach(languages, id: \.code) { lang in
+                    let state = states[lang.code] ?? .unknown
+                    Button { choose(lang.code, state) } label: {
+                        row(title: lang.name, detail: detail(lang.code, state), selected: playback.liveTarget == lang.code)
                     }
+                    .buttonStyle(.plain)
+                    .disabled(state == .unsupported || loading != nil || !playback.liveSourceConfirmed)
+                    .accessibilityHint("Liest das Buch live in dieser Sprache vor, die Stelle im Buch bleibt")
                 }
-                sourceSection
-                Section {
-                    ForEach(languages, id: \.code) { lang in
-                        let state = states[lang.code] ?? .unknown
-                        Button { choose(lang.code, state) } label: {
-                            row(title: lang.name, detail: detail(lang.code, state), selected: playback.liveTarget == lang.code)
-                        }
-                        .disabled(state == .unsupported || loading != nil || !playback.liveSourceConfirmed)
-                    }
-                } header: {
-                    Text("Live übersetzen")
-                } footer: {
-                    Text("Der Buchinhalt wird auf dem iPhone übersetzt, nur die gerade gelesene Stelle mit kurzem Vorlauf. Es fallen keine Kosten an. Apple kann Nutzungs- und Leistungsdaten ohne Textinhalt erheben. Maschinelle Übersetzung, Fehler sind möglich.")
-                }
-                if let message {
-                    Section { Text(message).font(.footnote).foregroundStyle(.orange) }
+            } header: {
+                Text("Live übersetzen")
+            } footer: {
+                VStack(alignment: .leading, spacing: 6) {
+                    if let message { Text(message).foregroundStyle(.orange) }
+                    Text("Liest die gewählte Fassung in einer anderen Sprache vor. Übersetzt wird auf dem iPhone, nur die gerade gelesene Stelle mit kurzem Vorlauf, ohne Kosten. Apple kann Nutzungs- und Leistungsdaten ohne Textinhalt erheben. Maschinelle Übersetzung, Fehler sind möglich. Zurück zum Original: oben die aktuelle Sprache antippen.")
                 }
             }
-            .navigationTitle("Sprache")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fertig") { dismiss() } } }
             .task(id: playback.liveSource) { await refresh() }
             .translationTask(download) { session in
                 // Nur für fehlende Pakete: Systemblatt mit Zustimmung, dann laden (Spez §3).
@@ -136,6 +119,8 @@ struct LiveLanguageSheet: View {
                     Button("Ja, stimmt") { playback.confirmLiveSource(source) }
                         .frame(minHeight: 44)
                 }
+            } header: {
+                Text("Buchsprache")
             } footer: {
                 if !playback.liveSourceConfirmed {
                     Text("Aus dem Text erkannt. Bitte bestätigen, bevor live übersetzt wird.")
@@ -145,25 +130,28 @@ struct LiveLanguageSheet: View {
     }
 
     private func row(title: String, detail: String?, selected: Bool) -> some View {
-        HStack {
+        HStack(spacing: 12) {
+            Image(systemName: "checkmark").font(.body.weight(.semibold)).frame(width: 22)
+                .opacity(selected ? 1 : 0).accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).foregroundStyle(VoicePalette.text)
-                if let detail { Text(detail).font(.caption).foregroundStyle(VoicePalette.secondaryText) }
+                Text(title).font(.body)
+                Text(detail ?? "Live übersetzt").font(.footnote).foregroundStyle(VoicePalette.secondaryText)
             }
-            Spacer()
-            if selected { Image(systemName: "checkmark").foregroundStyle(VoicePalette.text).accessibilityHidden(true) }
+            Spacer(minLength: 0)
         }
-        .frame(minHeight: 44).contentShape(Rectangle())
-        .accessibilityAddTraits(selected ? .isSelected : [])
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 
     private func detail(_ code: String, _ state: LiveLanguageState) -> String? {
-        if loading == code { return "Wird geladen …" }
+        if loading == code { return "Live · Sprachpaket wird geladen …" }
         switch state {
         case .installed: return nil
-        case .downloadable: return "Antippen zum Laden"
-        case .unsupported: return "Mit dieser Buchsprache nicht verfügbar"
-        case .unknown: return "Wird geprüft …"
+        case .downloadable: return "Live · Antippen lädt das Sprachpaket"
+        case .unsupported: return "Live · auf diesem iPhone nicht verfügbar"
+        case .unknown: return "Live · wird geprüft …"
         }
     }
 

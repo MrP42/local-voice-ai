@@ -148,6 +148,8 @@ final class LibrarySync: ObservableObject {
         Keychain.delete()
         account = nil
         ledger = SyncLedger(); saveLedger()
+        // Erst jetzt (das Konto ist weg, neue Läufe starten nicht mehr): laufende Ablage-Arbeit abbrechen, abwarten, dann löschen.
+        await AblageSync.shared.kontoVerlassen()
         status = "Nicht angemeldet"
     }
 
@@ -231,20 +233,40 @@ final class LibrarySync: ObservableObject {
                 // Eigener Stand ist neuer und wird beim Senden übertragen. War es nur ein Stern, gilt sonst das Konto.
                 if let favorite = localMeta.pendingFavorite,
                    SyncLedger.onlyFavoriteChanged(pendingFields: localMeta.pendingFields, localFields: try SyncLedger.fieldsHash(local, files: localMeta.files)) {
-                    let book = SyncLedger.mergingPendingFavorite(favorite, into: synced.book, local: local)
-                    let fields = try SyncLedger.fieldsHash(book, files: synced.files)
-                    try library.storeRemote(book, meta: .init(files: synced.files, updated: localMeta.updated, pendingFavorite: favorite, pendingFields: fields))
+                    var book = SyncLedger.mergingPendingFavorite(favorite, into: synced.book, local: local)
+                    var files = synced.files
+                    _ = keepLocalEditions(&book, files: &files, synced: synced, local: local, localMeta: localMeta)
+                    let fields = try SyncLedger.fieldsHash(book, files: files)
+                    try library.storeRemote(book, meta: .init(files: files, updated: localMeta.updated, pendingFavorite: favorite, pendingFields: fields))
+                    if let lift = BookEditions.liftedReading(local: local, incoming: book) { library.liftProgress(lift) }
                 } else if localMeta.files.kurzbuecher != synced.files.kurzbuecher {
                     // Kurzbücher entstehen nur am PC: Sie gelten immer und gehen mit dem eigenen Stand zurück.
                     library.updateFiles(local) { $0.kurzbuecher = synced.files.kurzbuecher }
                 }
             } else {
                 var book = synced.book
+                var files = synced.files
                 // Lokale Fassungen, die das Konto nicht kennt, nicht verlieren.
                 if book.text == nil, let t = local?.text { book.text = t }
-                try library.storeRemote(book, meta: .init(files: synced.files, updated: synced.updated))
-                if book.text == synced.book.text {
-                    hash = LibrarySyncFormat.canonicalHash(try SyncedBook(book: book, files: synced.files, updated: synced.updated).json())
+                // Sprachwechsel dieses iPhones, den der PC noch nicht kennt (lva#344), nicht überschreiben.
+                var keptReading = false
+                var legacyKept = false
+                if let local, let localMeta {
+                    // Altgerät ohne Fassungen: die hiesigen samt Dateiverweisen bleiben (der Kern führt sie ebenso zusammen).
+                    legacyKept = keepLocalEditions(&book, files: &files, synced: synced, local: local, localMeta: localMeta)
+                    let kept = book.keepingNewerReading(from: local)
+                    keptReading = legacyKept || kept.reading != book.reading
+                    book = kept
+                }
+                try library.storeRemote(book, meta: .init(files: files, updated: synced.updated))
+                if let lift = BookEditions.liftedReading(local: local, incoming: book) { library.liftProgress(lift) }
+                // Der Stand weicht vom Konto ab: neu senden. Ausnahme: Echo eines Altgeräts ohne Fassungsfelder, dessen
+                // Fassungsdaten der zuletzt gesendete Stand schon enthielt (sonst schaukelt sich der Abgleich auf).
+                // Dann gilt der lokale Stand als abgeglichen; der PC führt seine Fassungen selbst zusammen.
+                let resend = keptReading && (!legacyKept || BookEditions.needsResend(local: book, files: files, sentFingerprint: localMeta?.sentEditions, incoming: synced.book))
+                if resend { library.touch(book) }
+                if !resend, book.text == synced.book.text {
+                    hash = LibrarySyncFormat.canonicalHash(try SyncedBook(book: book, files: files, updated: synced.updated).json())
                 }
             }
         case LibrarySyncFormat.collectionProgress:
@@ -267,11 +289,43 @@ final class LibrarySync: ObservableObject {
         ledger[remote.collection, remote.objectId] = .init(revision: remote.revision, hash: hash, deleted: false)
     }
 
+    /// Eingehendes Buch von einem Altgerät (Schema < 2, ohne Fassungen) trifft auf lokale Fassungen: Fassungen, Register
+    /// und Zuordnungen bleiben, die flachen Dateien gehören der hiesigen Hauptfassung, die übrigen Verweise bleiben.
+    private func keepLocalEditions(_ book: inout LibraryBook, files: inout BookFiles, synced: SyncedBook, local: LibraryBook, localMeta: PhoneLibrary.SyncMeta) -> Bool {
+        let withEditions = book.keepingEditions(from: local)
+        guard withEditions.editions != book.editions else { return false }
+        book = withEditions
+        files = localMeta.files.receivingLegacy(synced.files, localFlat: library.flatEditionId(local, meta: localMeta),
+                                                senderFlat: BookEditions.senderPrimary(local: local, incoming: synced.book),
+                                                live: Set(BookEditions(book: book).editions.map(\.id)))
+        return true
+    }
+
     private func pushBooks(_ acc: Account) async throws {
         // Texte sind klein: bei jedem Lauf fehlende nachladen (überlebt Abbrüche).
         for book in library.books {
             if let ref = library.meta(book).files.text, !library.hasText(book) {
                 try await downloadBlob(ref, acc, to: library.textURL(book)) { _ in }
+            }
+            // Texte weiterer Sprachfassungen (lva#344) sind ebenso klein: je Fassung unter `editions/<fassung>/`.
+            // Hörbuchteile weiterer Fassungen lädt `AudioDownloads` erst bei Bedarf.
+            let editions = BookEditions(book: book)
+            if !editions.synthesized, editions.hasLanguages {
+                let files = library.meta(book).files
+                let flat = library.flatEditionId(book, meta: library.meta(book))
+                for e in editions.editions where e.id != flat && e.text != nil && PhoneLibrary.isSafeEditionId(e.id) {
+                    guard let ref = files.files(forEdition: e.id).text, ref.size > 0, ref.size <= 32 * 1024 * 1024,
+                          library.editionTextBlob(book, e.id) != ref.blob else { continue }
+                    let target = library.editionTextURL(book, e.id)
+                    try? FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                                            attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
+                    do {
+                        try await downloadBlob(ref, acc, to: target) { _ in }
+                        library.noteEditionText(book, e.id, blob: ref.blob)
+                    }
+                    catch SyncError.http(401, let msg) { throw SyncError.http(401, msg) }
+                    catch { /* Die Sprachliste zeigt es als noch nicht geladen, der nächste Lauf versucht es erneut. */ }
+                }
             }
             // Kurzbücher sind klein: wie Texte gleich mitnehmen. Ungültige Verweise lädt niemand.
             library.pruneKurzbuecher(book)
@@ -291,6 +345,7 @@ final class LibrarySync: ObservableObject {
         }
 
         var objects: [(HubPushObject, String)] = []
+        var fingerprints: [String: String] = [:]
         for book in library.books {
             var meta = library.meta(book)
             // Eigene Dateien zuerst hochladen (Reihenfolge laut Spezifikation).
@@ -325,10 +380,16 @@ final class LibrarySync: ObservableObject {
             let entry = ledger[LibrarySyncFormat.collectionBook, book.id]
             if entry?.hash == hash || ledger.dead[SyncLedger.key(LibrarySyncFormat.collectionBook, book.id)] == hash { continue }
             if value.count > LibrarySyncFormat.maxPlaintext { markDead(LibrarySyncFormat.collectionBook, book.id, hash, "„\(book.title)“ ist zu groß für den Abgleich."); continue }
+            fingerprints[book.id] = current.editionFingerprint(files: meta.files)
             objects.append((try sealObject(LibrarySyncFormat.collectionBook, book.id, value, base: entry?.revision ?? 0, acc), hash))
         }
         try await push(objects, acc)
         for (object, hash) in objects {
+            // Angenommen: Die Fassungsdaten dieses Stands gelten als gesendet (Echo-Erkennung beim Empfang).
+            if ledger[object.collection, object.objectId]?.hash == hash, let fp = fingerprints[object.objectId],
+               let sent = library.books.first(where: { $0.id == object.objectId }) {
+                var m = library.meta(sent); m.sentEditions = fp; library.setMeta(sent, m)
+            }
             guard let book = library.books.first(where: { $0.id == object.objectId }), let local = try? localHash(book),
                   SyncLedger.clearsPendingFavorite(accepted: ledger[object.collection, object.objectId]?.hash, sent: hash, local: local) else { continue }
             library.clearPendingFavorite(bookId: book.id)
@@ -487,6 +548,14 @@ final class LibrarySync: ObservableObject {
     /// schreiben; erst vollständig wird umbenannt. Ein Abbruch setzt beim
     /// nächsten Mal am ersten fehlenden Stück wieder an. Nie die ganze Datei im Speicher.
     private func downloadBlob(_ ref: BlobRef, _ acc: Account, to target: URL, progress: (Int) -> Void) async throws {
+        try await fetchBlob(ref, acc, to: target, bulk: wifiOnly, progress: progress)
+        // Vollständig aus dem Konto geladen: dort also vollständig vorhanden.
+        ledger.uploaded.insert(ref.blob); saveLedger()
+    }
+
+    /// Der Kern von `downloadBlob` ohne das Buchführen im Bibliothek-Ledger (auch für die Dokumentenablage, deren Blobs
+    /// dort nichts verloren haben). `bulk`: Dateiverkehr unter „nur im WLAN“.
+    func fetchBlob(_ ref: BlobRef, _ acc: Account, to target: URL, bulk: Bool, progress: (Int) -> Void) async throws {
         let part = target.appendingPathExtension("part")
         let fm = FileManager.default
         if !fm.fileExists(atPath: part.path) {
@@ -500,7 +569,7 @@ final class LibrarySync: ObservableObject {
         let key = [UInt8](acc.key), userId = acc.userId
         progress(first * chunk)
         for index in first..<ref.chunks {
-            let (code, data) = try await Self.send(acc.url + "/api/v1/voice/blobs/\(ref.blob)/chunks/\(index)", method: "GET", token: acc.token, bulk: wifiOnly)
+            let (code, data) = try await Self.send(acc.url + "/api/v1/voice/blobs/\(ref.blob)/chunks/\(index)", method: "GET", token: acc.token, bulk: bulk)
             guard code == 200 else { throw Self.httpError(code, data) }
             let written = try await Task.detached(priority: .utility) { () throws -> Int in
                 guard let json = try JSONSerialization.jsonObject(with: data) as? [String: String],
@@ -520,8 +589,6 @@ final class LibrarySync: ObservableObject {
         }
         _ = try? fm.removeItem(at: target)
         try fm.moveItem(at: part, to: target)
-        // Vollständig aus dem Konto geladen: dort also vollständig vorhanden.
-        ledger.uploaded.insert(ref.blob); saveLedger()
     }
 
     /// Cover laden (klein, meist ein Stück), als JPEG ablegen und merken,
@@ -543,12 +610,13 @@ final class LibrarySync: ObservableObject {
     /// er pausiert wird oder fehlschlägt; der Zustand steht dann auf der Buchseite.
     func downloadAudio(_ book: LibraryBook) async -> Bool {
         guard account != nil else { error = SyncError.notLoggedIn.localizedDescription; return false }
-        guard !library.meta(book).files.audio.isEmpty, !library.hasAudio(book) else { return library.hasAudio(book) }
+        guard !library.accountAudio(book).isEmpty, !library.hasAudio(book) else { return library.hasAudio(book) }
         let downloads = AudioDownloads.shared
-        downloads.start(book)
+        // Läuft gerade das Hörbuch einer anderen Sprache, lehnt start() ab und meldet es; nicht warten und Erfolg melden.
+        guard downloads.start(book) else { return false }
         // Hält „Nur im WLAN“ das Laden an, nicht stundenlang warten: der Zustand steht auf der Buchseite.
         if downloads.waitsForWifi(book.id) { error = SyncError.offlineRule.localizedDescription; return false }
-        return await downloads.waitUntilDone(book.id)
+        return await downloads.waitUntilDone(book)
     }
 
     /// Ein Blob ist im Konto vollständig (z. B. gerade vollständig von dort geladen).
@@ -564,7 +632,7 @@ final class LibrarySync: ObservableObject {
     /// Darf das Hörbuch vom iPhone? Ohne Netz, nur aus dem bekannten Stand.
     func offloadVerdict(_ book: LibraryBook, confirmed: Set<String>? = nil) -> AudioOffload.Verdict {
         AudioOffload.verdict(loggedIn: account != nil, synced: isSynced(book), downloading: AudioDownloads.shared.isActive(book.id),
-                             localSizes: library.localAudioSizes(book), hasLeftovers: AudioOffload.hasLeftovers(in: library.dir(book)),
+                             localSizes: library.localAudioSizes(library.flatView(book)), hasLeftovers: AudioOffload.hasLeftovers(in: library.dir(book)),
                              account: accountFiles(book), confirmed: confirmed ?? ledger.uploaded)
     }
 
@@ -607,15 +675,10 @@ final class LibrarySync: ObservableObject {
         let playback = LibraryPlayback.shared
         if playback.book?.id == book.id { playback.stop() }
         AudioDownloads.shared.discard(book.id)  // pausierte oder fehlgeschlagene Ladevorgänge
-        do {
-            let freed = try AudioOffload.remove(bookDir: library.dir(book))
-            library.reload()
-            return (.allowed, freed)
-        } catch {
-            self.error = "Entfernen fehlgeschlagen: \(error.localizedDescription)"
-            library.reload()
-            return (verdict, 0)
-        }
+        // Nur die geprüften (flachen) Teile; Hörbuch weiterer Fassungen und Importe bleiben.
+        let freed = library.removeFlatAudio(book)
+        library.reload()
+        return (.allowed, freed)
     }
 
     /// Dateiname eines Hörbuchteils auf dem iPhone: nur ein Name, nie ein Pfad.
