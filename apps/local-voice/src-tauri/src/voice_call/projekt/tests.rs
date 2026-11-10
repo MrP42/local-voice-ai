@@ -108,6 +108,9 @@ struct FakeWeg {
     haengt: AtomicBool,
     /// Wartezeit nach den Textstücken, vor der Rückgabe (langsames Modell).
     verzoegerung: Mutex<Option<Duration>>,
+    /// Löst kurz vor der Rückgabe den Abbruch dieser Anfrage aus (im selben Poll, ohne Abgabe): Er
+    /// trifft den Lauf erst nach dem `select!`, während das Tor urteilt.
+    abbruch_am_ende: Mutex<Option<String>>,
     aufrufe: AtomicU32,
     gesehen: Mutex<Vec<Gesehen>>,
 }
@@ -176,6 +179,10 @@ impl Modellweg for FakeWeg {
         }
         if self.haengt.load(Ordering::SeqCst) {
             std::future::pending::<()>().await;
+        }
+        let abbruch = self.abbruch_am_ende.lock().unwrap().clone();
+        if let Some(id) = abbruch {
+            voice_call_cancel(id);
         }
         match self.fehler.lock().unwrap().clone() {
             Some(f) => Err(f),
@@ -699,6 +706,29 @@ fn langsames_modell_sendet_inhaltsfreie_lebenszeichen_und_nichts_vor_dem_urteil(
                 "{art:?}: kein Inhalt im Lebenszeichen"
             );
             assert_eq!(e.tor.offene_laeufe(), 0);
+        }
+    });
+}
+
+#[test]
+fn abbruch_waehrend_des_urteils_des_tors_registriert_und_meldet_nichts() {
+    lauf(async {
+        for art in ARTEN {
+            let e = env().await;
+            let p = projekt_mit(&e, Klasse::Internal, &[("s1", BELEG)]).await;
+            let id = format!("pt-c9-{art:?}");
+            let weg = FakeWeg::mit(&[ANTWORT]);
+            *weg.abbruch_am_ende.lock().unwrap() = Some(id.clone());
+            let bote = FakeBote::default();
+            let r = durch(&e, &weg, &bote, anfrage(&p, "g1", art, &id, verlauf(FRAGE))).await;
+            assert_eq!(r, Ok(String::new()), "{art:?}");
+            assert_eq!(weg.aufrufe(), 1, "{art:?}: der Versand lief");
+            assert!(!bote.geliefert(), "{art:?}: nichts gezeigt");
+            assert!(!bote.gab("revoked") && !bote.gab("failed"), "{art:?}");
+            assert_eq!(register_anzahl(&e), 0, "{art:?}: nichts registriert");
+            assert!(!im_register(&e, "g1", FREIGEGEBEN), "{art:?}");
+            assert_eq!(e.tor.offene_laeufe(), 0);
+            assert!(!laeuft(&id) && !markiert(&id), "{art:?}");
         }
     });
 }

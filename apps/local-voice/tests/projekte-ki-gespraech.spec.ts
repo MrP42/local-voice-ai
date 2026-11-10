@@ -579,8 +579,14 @@ test.describe("Gespräch im Projekt", () => {
     await beginne(page);
 
     // (a) Das Modell meldet sich gar nicht: nach der Frist verwerfen.
-    await frage(page, "Frage ohne Lebenszeichen");
-    await page.clock.fastForward(31_000);
+    const erste = await frage(page, "Frage ohne Lebenszeichen");
+    await page.waitForFunction(
+      () => (window as any).__listening?.("voice-call") !== 0,
+    );
+    // Ein Lebenszeichen einer fremden Anfrage verlängert diese Frist nicht.
+    await page.clock.fastForward(20_000);
+    await laeuft(page, "vc-fremd-0");
+    await page.clock.fastForward(11_000);
     let leiste = hinweis(page);
     await expect(leiste).toHaveAttribute(
       "data-code",
@@ -591,6 +597,24 @@ test.describe("Gespräch im Projekt", () => {
     await expect(leiste).not.toContainText("Kennung");
     await expect(page.getByText(vorlageText)).toHaveCount(0);
     expect(await aufrufe(page, "voice_call_cancel")).toHaveLength(1);
+    // Ein spätes Stück und `done` nach dem Fristablauf erscheinen nirgends.
+    await page.evaluate((rid) => {
+      const w = window as any;
+      w.__emit("voice-call", {
+        kind: "sentence",
+        request_id: rid,
+        index: 0,
+        text: "SPÄTE-ANTWORT-4711",
+      });
+      w.__emit("voice-call", { kind: "done", request_id: rid });
+      w.__chat.resolve("SPÄTE-ANTWORT-4711");
+    }, erste);
+    await page.waitForTimeout(300);
+    await expect(page.getByText("SPÄTE-ANTWORT-4711")).toHaveCount(0);
+    await expect(page.getByText(vorlageText)).toHaveCount(0);
+    expect(
+      JSON.stringify(await aufrufe(page, "conversation_append_entry")),
+    ).not.toContain("SPÄTE-ANTWORT");
     await page.getByTestId("projekt-hinweis-schliessen").click();
 
     // (b) Es meldet sich dauernd, antwortet aber nie: die harte Obergrenze greift.

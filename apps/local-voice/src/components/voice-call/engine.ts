@@ -1128,95 +1128,100 @@ export class VoiceCallEngine {
         onPiece(s);
       };
       let full = "";
-      if (side) {
-        run.side = side;
-        if (!this.ausgabeKey) {
-          const id = await this.konversation();
-          if (stale()) return;
-          this.ausgabeKey = { id };
-        }
-        const chat = side.chat(id, this.historyFor(text), onModel).then(
-          (r) => (typeof r === "string" ? r : ""),
-          () => "",
-        );
-        const r = await Promise.race([chat, frist.abgelaufen]);
-        if (r === FRIST) {
-          timedOut = true;
-          void side.cancel?.(id);
-        } else full = r;
-        frist.stop();
-        if (stale()) return;
-      } else {
-        const projekt = this.projekt();
-        this.sentenceHandlers.set(id, (e) => {
-          if (stale()) return;
-          if (e.kind === "projekt") {
-            this.meldeProjekt(hinweisAusEreignis(e));
-            return;
+      // Auch bei einem Rücksprung (veraltet, abgebrochen) die Zeitgeber der Frist abräumen.
+      try {
+        if (side) {
+          run.side = side;
+          if (!this.ausgabeKey) {
+            const id = await this.konversation();
+            if (stale()) return;
+            this.ausgabeKey = { id };
           }
-          if (e.kind === "laeuft") {
-            // Lebenszeichen ohne Inhalt: das Tor puffert noch; die Frist läuft weiter.
-            frist.lebenszeichen();
-            return;
-          }
-          if (e.kind === "revoked") {
-            // Freigabe entzogen: Antwort verwerfen (Codex Auflage 9).
-            if (projekt) this.meldeProjekt({ code: "projekt.widerrufen" });
-            this.cancelText(false);
-            if (projekt) this.cb.onVerwerfen?.();
-            return;
-          }
-          if (e.kind === "done" || e.kind === "failed") {
-            if (e.usage) this.cb.onUsage?.(e.usage);
-            finish();
-          }
-          if (e.kind !== "sentence") return;
-          onModel(e.text ?? "");
-        });
-        // Im Projekt geht kein App-Kontext mit; die Kontextnachricht baut das Tor aus dem Projekt.
-        const context = projekt ? null : speakerContext(gctx);
-        const messages = this.messagesFor(text, systemPrompt);
-        // Auch eine Antwort auf abgeleiteten Verlauf gilt als abgeleitet (nicht im Projekt: dort
-        // prüft das Antwortregister in Rust, was vom Verlauf gilt).
-        run.withContext =
-          !projekt && (!!context || messages.some((m) => m.derived));
-        const conversationId = await this.konversation();
-        if (stale()) return;
-        this.ausgabeKey = { id: conversationId };
-        let abgelehnt = false;
-        const chat = invoke<string>("voice_call_chat", {
-          requestId: id,
-          messages,
-          context,
-          conversationId,
-          expectedStand: projekt?.stand ?? null,
-        }).then(
-          (r) => (typeof r === "string" ? r : ""),
-          (e) => {
-            abgelehnt = true;
-            const h = projekt ? hinweisAusFehler(e) : null;
-            projektStopp = h !== null;
-            this.meldeProjekt(h);
-            return "";
-          },
-        );
-        const r = await Promise.race([chat, frist.abgelaufen]);
-        if (r === FRIST) {
-          timedOut = true;
-          // Im Projekt: verwerfen über das Tor, keine Vorlagenzeile, der Hinweis sagt den Grund.
-          if (projekt) {
-            projektStopp = true;
-            this.meldeProjekt({ code: "projekt.zeitueberschreitung" });
-          }
-          void invoke("voice_call_cancel", { requestId: id }).catch(
-            () => undefined,
+          const chat = side.chat(id, this.historyFor(text), onModel).then(
+            (r) => (typeof r === "string" ? r : ""),
+            () => "",
           );
+          const r = await Promise.race([chat, frist.abgelaufen]);
+          if (r === FRIST) {
+            timedOut = true;
+            void side.cancel?.(id);
+          } else full = r;
+          frist.stop();
+          if (stale()) return;
         } else {
-          full = r;
-          if (!stale() && !abgelehnt) await warteMax(streamEnded, 3000);
+          const projekt = this.projekt();
+          this.sentenceHandlers.set(id, (e) => {
+            if (stale()) return;
+            if (e.kind === "projekt") {
+              this.meldeProjekt(hinweisAusEreignis(e));
+              return;
+            }
+            if (e.kind === "laeuft") {
+              // Lebenszeichen ohne Inhalt: das Tor puffert noch; die Frist läuft weiter.
+              frist.lebenszeichen();
+              return;
+            }
+            if (e.kind === "revoked") {
+              // Freigabe entzogen: Antwort verwerfen (Codex Auflage 9).
+              if (projekt) this.meldeProjekt({ code: "projekt.widerrufen" });
+              this.cancelText(false);
+              if (projekt) this.cb.onVerwerfen?.();
+              return;
+            }
+            if (e.kind === "done" || e.kind === "failed") {
+              if (e.usage) this.cb.onUsage?.(e.usage);
+              finish();
+            }
+            if (e.kind !== "sentence") return;
+            onModel(e.text ?? "");
+          });
+          // Im Projekt geht kein App-Kontext mit; die Kontextnachricht baut das Tor aus dem Projekt.
+          const context = projekt ? null : speakerContext(gctx);
+          const messages = this.messagesFor(text, systemPrompt);
+          // Auch eine Antwort auf abgeleiteten Verlauf gilt als abgeleitet (nicht im Projekt: dort
+          // prüft das Antwortregister in Rust, was vom Verlauf gilt).
+          run.withContext =
+            !projekt && (!!context || messages.some((m) => m.derived));
+          const conversationId = await this.konversation();
+          if (stale()) return;
+          this.ausgabeKey = { id: conversationId };
+          let abgelehnt = false;
+          const chat = invoke<string>("voice_call_chat", {
+            requestId: id,
+            messages,
+            context,
+            conversationId,
+            expectedStand: projekt?.stand ?? null,
+          }).then(
+            (r) => (typeof r === "string" ? r : ""),
+            (e) => {
+              abgelehnt = true;
+              const h = projekt ? hinweisAusFehler(e) : null;
+              projektStopp = h !== null;
+              this.meldeProjekt(h);
+              return "";
+            },
+          );
+          const r = await Promise.race([chat, frist.abgelaufen]);
+          if (r === FRIST) {
+            timedOut = true;
+            // Im Projekt: verwerfen über das Tor, keine Vorlagenzeile, der Hinweis sagt den Grund.
+            if (projekt) {
+              projektStopp = true;
+              this.meldeProjekt({ code: "projekt.zeitueberschreitung" });
+            }
+            void invoke("voice_call_cancel", { requestId: id }).catch(
+              () => undefined,
+            );
+          } else {
+            full = r;
+            if (!stale() && !abgelehnt) await warteMax(streamEnded, 3000);
+          }
+          frist.stop();
+          if (stale()) return;
         }
+      } finally {
         frist.stop();
-        if (stale()) return;
       }
       // Mit Orchestrator zählt, was durch den Filter lief (die Rückgabe kann die Überbrückung enthalten).
       const rueckgabe = timedOut || istUeberbrueckung(full) ? "" : full.trim();
@@ -1461,109 +1466,114 @@ export class VoiceCallEngine {
       frist.stop();
       onPiece(s);
     };
-    if (side) {
-      // Denker oder Werkzeuge aktiv: der Orchestrator liefert die Sätze (auch die Überbrückung).
-      turn.side = side;
-      if (!this.ausgabeKey) {
-        const id = await this.konversation();
-        if (dead()) return;
-        this.ausgabeKey = { id };
-      }
-      const chat = side.chat(turn.id, this.historyFor(text), onModel).then(
-        () => "",
-        () => "",
-      );
-      if ((await Promise.race([chat, frist.abgelaufen])) === FRIST) {
-        timedOut = true;
-        void side.cancel?.(turn.id);
-      }
-      frist.stop();
-    } else {
-      // Mit App-Kontext startet das Modell erst nach dem Commit, und der
-      // Kontext wird davor erneut geprüft (Turn, Transkript, Stand; Codex
-      // M5, Auflagen 6–8). Ohne Kontext bleibt der spekulative Start.
-      const projekt = this.projekt();
-      let context = projekt ? null : speakerContext(gctx);
-      if (context) {
-        await turn.committedP;
-        if (dead()) {
-          this.globalContext.discard(turn.id);
-          return;
+    // Auch bei einem Rücksprung (veraltet, abgebrochen) die Zeitgeber der Frist abräumen.
+    try {
+      if (side) {
+        // Denker oder Werkzeuge aktiv: der Orchestrator liefert die Sätze (auch die Überbrückung).
+        turn.side = side;
+        if (!this.ausgabeKey) {
+          const id = await this.konversation();
+          if (dead()) return;
+          this.ausgabeKey = { id };
         }
-        const fresh = await this.globalContext.take(turn.id, text);
-        if (dead()) return;
-        turnCtx = fresh;
-        context = speakerContext(fresh);
-      }
-      const messages = this.messagesFor(text, systemPrompt);
-      // Auch eine Antwort auf abgeleiteten Verlauf gilt als abgeleitet
-      // (Widerruf, Route; Codex M5 Must-fix 1).
-      turn.withContext =
-        !projekt && (!!context || messages.some((m) => m.derived));
-      this.sentenceHandlers.set(turn.id, (e) => {
-        if (e.kind === "projekt") {
-          this.meldeProjekt(hinweisAusEreignis(e));
-          return;
-        }
-        if (e.kind === "laeuft") {
-          // Lebenszeichen ohne Inhalt: das Tor puffert noch; die Frist läuft weiter.
-          frist.lebenszeichen();
-          return;
-        }
-        if (e.kind === "revoked") {
-          // Freigabe entzogen: Antwort und Sprachausgabe sofort beenden.
-          if (projekt) this.meldeProjekt({ code: "projekt.widerrufen" });
-          finishStream();
-          if (this.turn === turn) this.cancelTurn(false);
-          if (projekt) this.cb.onVerwerfen?.();
-          return;
-        }
-        if ((e.kind === "done" || e.kind === "failed") && e.usage)
-          this.cb.onUsage?.(e.usage);
-        if (e.kind === "done" || e.kind === "failed") finishStream();
-        if (e.kind !== "sentence" || dead()) return;
-        onModel(e.text ?? "");
-      });
-      const conversationId = await this.konversation();
-      if (dead()) return;
-      this.ausgabeKey = { id: conversationId };
-      let abgelehnt = false;
-      const chat = invoke<string>("voice_call_chat", {
-        requestId: turn.id,
-        messages,
-        context,
-        conversationId,
-        expectedStand: projekt?.stand ?? null,
-      }).then(
-        (r) => {
-          // Im Projekt ist die Rückgabe der Text, den das Tor freigegeben hat; nur er kommt in den
-          // Verlauf (leer: abgebrochen, widerrufen oder verspätet).
-          if (projekt && typeof r === "string") turn.projektText = r.trim();
-          return "";
-        },
-        (e) => {
-          abgelehnt = true;
-          const h = projekt ? hinweisAusFehler(e) : null;
-          projektStopp = h !== null;
-          this.meldeProjekt(h);
-          return "";
-        },
-      );
-      if ((await Promise.race([chat, frist.abgelaufen])) === FRIST) {
-        timedOut = true;
-        // Im Projekt: verwerfen über das Tor, keine Vorlagenzeile, der Hinweis sagt den Grund.
-        if (projekt) {
-          projektStopp = true;
-          this.meldeProjekt({ code: "projekt.zeitueberschreitung" });
-        }
-        finishStream();
-        void invoke("voice_call_cancel", { requestId: turn.id }).catch(
-          () => undefined,
+        const chat = side.chat(turn.id, this.historyFor(text), onModel).then(
+          () => "",
+          () => "",
         );
-      } else if (!dead() && !abgelehnt) {
-        // Das letzte Häppchen kann nach dem Rückgabewert eintreffen: auf `done` warten.
-        await warteMax(streamEnded, 3000);
+        if ((await Promise.race([chat, frist.abgelaufen])) === FRIST) {
+          timedOut = true;
+          void side.cancel?.(turn.id);
+        }
+        frist.stop();
+      } else {
+        // Mit App-Kontext startet das Modell erst nach dem Commit, und der
+        // Kontext wird davor erneut geprüft (Turn, Transkript, Stand; Codex
+        // M5, Auflagen 6–8). Ohne Kontext bleibt der spekulative Start.
+        const projekt = this.projekt();
+        let context = projekt ? null : speakerContext(gctx);
+        if (context) {
+          await turn.committedP;
+          if (dead()) {
+            this.globalContext.discard(turn.id);
+            return;
+          }
+          const fresh = await this.globalContext.take(turn.id, text);
+          if (dead()) return;
+          turnCtx = fresh;
+          context = speakerContext(fresh);
+        }
+        const messages = this.messagesFor(text, systemPrompt);
+        // Auch eine Antwort auf abgeleiteten Verlauf gilt als abgeleitet
+        // (Widerruf, Route; Codex M5 Must-fix 1).
+        turn.withContext =
+          !projekt && (!!context || messages.some((m) => m.derived));
+        this.sentenceHandlers.set(turn.id, (e) => {
+          if (e.kind === "projekt") {
+            this.meldeProjekt(hinweisAusEreignis(e));
+            return;
+          }
+          if (e.kind === "laeuft") {
+            // Lebenszeichen ohne Inhalt: das Tor puffert noch; die Frist läuft weiter.
+            frist.lebenszeichen();
+            return;
+          }
+          if (e.kind === "revoked") {
+            // Freigabe entzogen: Antwort und Sprachausgabe sofort beenden.
+            if (projekt) this.meldeProjekt({ code: "projekt.widerrufen" });
+            finishStream();
+            if (this.turn === turn) this.cancelTurn(false);
+            if (projekt) this.cb.onVerwerfen?.();
+            return;
+          }
+          if ((e.kind === "done" || e.kind === "failed") && e.usage)
+            this.cb.onUsage?.(e.usage);
+          if (e.kind === "done" || e.kind === "failed") finishStream();
+          if (e.kind !== "sentence" || dead()) return;
+          onModel(e.text ?? "");
+        });
+        const conversationId = await this.konversation();
+        if (dead()) return;
+        this.ausgabeKey = { id: conversationId };
+        let abgelehnt = false;
+        const chat = invoke<string>("voice_call_chat", {
+          requestId: turn.id,
+          messages,
+          context,
+          conversationId,
+          expectedStand: projekt?.stand ?? null,
+        }).then(
+          (r) => {
+            // Im Projekt ist die Rückgabe der Text, den das Tor freigegeben hat; nur er kommt in den
+            // Verlauf (leer: abgebrochen, widerrufen oder verspätet).
+            if (projekt && typeof r === "string") turn.projektText = r.trim();
+            return "";
+          },
+          (e) => {
+            abgelehnt = true;
+            const h = projekt ? hinweisAusFehler(e) : null;
+            projektStopp = h !== null;
+            this.meldeProjekt(h);
+            return "";
+          },
+        );
+        if ((await Promise.race([chat, frist.abgelaufen])) === FRIST) {
+          timedOut = true;
+          // Im Projekt: verwerfen über das Tor, keine Vorlagenzeile, der Hinweis sagt den Grund.
+          if (projekt) {
+            projektStopp = true;
+            this.meldeProjekt({ code: "projekt.zeitueberschreitung" });
+          }
+          finishStream();
+          void invoke("voice_call_cancel", { requestId: turn.id }).catch(
+            () => undefined,
+          );
+        } else if (!dead() && !abgelehnt) {
+          // Das letzte Häppchen kann nach dem Rückgabewert eintreffen: auf `done` warten.
+          await warteMax(streamEnded, 3000);
+        }
+        frist.stop();
       }
+    } finally {
       frist.stop();
     }
     await chain;

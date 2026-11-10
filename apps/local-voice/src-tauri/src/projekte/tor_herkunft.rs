@@ -355,6 +355,27 @@ impl Register {
         self.entfernen(|e| e.gespraech == gespraech)
     }
 
+    /// Entfernt den Eintrag dieser Antwort in diesem Gespräch (Abbruch nach dem Eintragen). Liefert ihre
+    /// Zahl. Wurde die Antwort mit einem früheren, gleichlautenden Eintrag zusammengeführt, geht auch
+    /// dieser verloren: Die Antwort gilt dann im Verlauf als unbekannt und wird verworfen (fail-closed).
+    pub fn antwort_vergessen(&self, gespraech: &str, antwort: &str) -> Result<usize, String> {
+        let _g = sperren();
+        let mut d = match lesen_roh(&self.ordner) {
+            Roh::Gelesen(d) => d,
+            Roh::Fehlt | Roh::Kaputt => return Ok(0),
+            Roh::Unlesbar => return Err(UNLESBAR.into()),
+        };
+        let m = merkmal(&d.salz, antwort);
+        let vorher = d.eintraege.len();
+        d.eintraege
+            .retain(|e| !(e.gespraech == gespraech && e.merkmal == m));
+        let entfernt = vorher - d.eintraege.len();
+        if entfernt > 0 {
+            schreiben(&self.ordner, &d)?;
+        }
+        Ok(entfernt)
+    }
+
     /// Entfernt alle Einträge eines Projekts (Projekt gelöscht). Liefert ihre Zahl.
     pub fn projekt_vergessen(&self, projekt: &str) -> Result<usize, String> {
         self.entfernen(|e| e.projekt == projekt)
