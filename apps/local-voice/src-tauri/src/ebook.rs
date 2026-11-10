@@ -51,7 +51,7 @@ re!(
 // Kapitelanfang im PDF: „Kapitel 3“, „Chapter IV“, „Teil 2“, „Part II“ allein auf der Zeile …
 re!(
     CHAPTER_HEAD_RE,
-    r"(?i)^(?:kapitel|chapter|teil|part|buch|book)\s+(?:\d{1,3}|(?-i:[IVXLCDM]{1,8}))\.?$"
+    r"(?i)^(?:(?:kapitel|chapter|teil|part|buch|book)\s+(?:\d{1,3}|(?-i:[IVXLCDM]{1,8})|(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty)(?:[- ](?:one|two|three|four|five|six|seven|eight|nine))?)|\p{L}{3,}(?:tes|ter|te)\s+(?:kapitel|buch|teil|abschnitt|gesang))\.?$"
 );
 // … oder mit Titel in derselben Zeile: „Kapitel 3: Die Klippe“.
 re!(
@@ -62,6 +62,25 @@ re!(
 re!(
     SPECIAL_HEAD_RE,
     r"(?i)^(?:prolog|epilog|vorwort|nachwort|einleitung|prologue|epilogue|preface|foreword|afterword|introduction)$"
+);
+// Nummer eines Verzeichniseintrags: „KHM 12.“, „12.“, „Kapitel 3:“, „IV.“
+re!(
+    TITLE_ID_RE,
+    r"^(?:\p{L}{1,8}\s+)?(?:\d{1,4}[a-z]?|[IVXLC]{1,6})[.:)]\s"
+);
+re!(
+    NAV_TOC_RE,
+    r#"(?is)<nav\b[^>]*\btype\s*=\s*["']toc["'][^>]*>"#
+);
+re!(NAV_PART_RE, r"(?is)</?ol\b[^>]*>|<a\b[^>]*>.*?</a\s*>");
+re!(NAV_LINK_RE, r"(?is)^<a\b([^>]*)>(.*?)</a\s*>$");
+re!(
+    NCX_PART_RE,
+    r"(?is)</?navPoint\b[^>]*>|<text\b[^>]*>.*?</text\s*>|<content\b[^>]*>"
+);
+re!(
+    SPINE_TOC_RE,
+    r#"(?is)<spine\b[^>]*\btoc\s*=\s*["']([^"']+)["']"#
 );
 re!(BODY_RE, r"(?is)<body\b[^>]*>(.*)</body\s*>");
 re!(DC_TITLE_RE, r"(?is)<dc:title\b[^>]*>(.*?)</dc:title\s*>");
@@ -180,12 +199,14 @@ pub fn epub_to_markdown<R: Read + Seek>(
     let base_dir = opf_path.rsplit_once('/').map_or("", |(d, _)| d);
 
     let mut manifest: HashMap<String, (String, String)> = HashMap::new();
+    let mut nav_path: Option<String> = None;
     for m in ITEM_RE.find_iter(&opf) {
         let a = attributes(m.as_str());
         // Das EPUB3-Inhaltsverzeichnis ist kein Lesetext.
         if a.get("properties")
             .is_some_and(|p| p.split_whitespace().any(|x| x == "nav"))
         {
+            nav_path = a.get("href").map(|h| resolve_path(base_dir, h));
             continue;
         }
         if let (Some(id), Some(href)) = (a.get("id"), a.get("href")) {
@@ -204,6 +225,25 @@ pub fn epub_to_markdown<R: Read + Seek>(
         return Err("EPUB: leere Lesereihenfolge (spine)".into());
     }
 
+    // Inhaltsverzeichnis: EPUB-3-nav, sonst die NCX aus `<spine toc>`.
+    let mut toc: Vec<TocEntry> = nav_path
+        .and_then(|p| {
+            let dir = p.rsplit_once('/').map_or("", |(d, _)| d).to_string();
+            read_entry(archive, &p).ok().map(|x| nav_toc(&x, &dir))
+        })
+        .unwrap_or_default();
+    if toc.is_empty() {
+        let ncx = SPINE_TOC_RE
+            .captures(&opf)
+            .and_then(|c| manifest.get(&c[1]).map(|(p, _)| p.clone()));
+        if let Some(p) = ncx {
+            let dir = p.rsplit_once('/').map_or("", |(d, _)| d).to_string();
+            if let Ok(x) = read_entry(archive, &p) {
+                toc = ncx_toc(&x, &dir);
+            }
+        }
+    }
+
     let mut chapters: Vec<String> = Vec::new();
     for idref in spine {
         let Some((path, media)) = manifest.get(&idref) else {
@@ -219,7 +259,11 @@ pub fn epub_to_markdown<R: Read + Seek>(
         let Ok(xhtml) = read_entry(archive, path) else {
             continue;
         };
-        let md = xhtml_to_markdown(&xhtml);
+        let entries: Vec<&TocEntry> = toc
+            .iter()
+            .filter(|e| e.path.eq_ignore_ascii_case(path))
+            .collect();
+        let md = promote_chapter_lines(&apply_toc(&xhtml_to_markdown(&xhtml), &entries));
         if !md.is_empty() {
             chapters.push(md);
         }
@@ -229,6 +273,179 @@ pub fn epub_to_markdown<R: Read + Seek>(
         return Err("Das EPUB enthält keinen lesbaren Text (evtl. DRM-geschützt)".into());
     }
     Ok(with_title_page(&opf, text))
+}
+
+/// Ein Eintrag im Inhaltsverzeichnis eines EPUBs (nav oder NCX).
+#[derive(Debug, Clone, PartialEq)]
+struct TocEntry {
+    /// Tiefe, 0 = oberste Ebene.
+    depth: usize,
+    title: String,
+    /// Datei im Archiv (aufgelöst) und Sprungmarke.
+    path: String,
+    fragment: Option<String>,
+}
+
+/// Inhaltsverzeichnis aus einem EPUB-3-`nav` (`<nav epub:type="toc">`):
+/// Verschachtelung über `<ol>`, Einträge sind die Links darin.
+fn nav_toc(xhtml: &str, base_dir: &str) -> Vec<TocEntry> {
+    let Some(nav) = NAV_TOC_RE.find(xhtml) else {
+        return Vec::new();
+    };
+    let body = &xhtml[nav.end()..];
+    let body = &body[..body.find("</nav").unwrap_or(body.len())];
+    let mut depth = 0usize;
+    let mut out = Vec::new();
+    let mut pos = 0;
+    while let Some(m) = NAV_PART_RE.find_at(body, pos) {
+        pos = m.end();
+        let tag = m.as_str();
+        let lower = tag.to_ascii_lowercase();
+        if lower.starts_with("<ol") {
+            depth += 1;
+        } else if lower.starts_with("</ol") {
+            depth = depth.saturating_sub(1);
+        } else if let Some(c) = NAV_LINK_RE.captures(tag) {
+            let href = attributes(&c[1]).get("href").cloned().unwrap_or_default();
+            let title = metadata_text(&c[2]);
+            push_toc(&mut out, depth.saturating_sub(1), title, &href, base_dir);
+        }
+    }
+    out
+}
+
+/// Inhaltsverzeichnis aus einer EPUB-2-NCX-Datei (`navPoint`, verschachtelt).
+fn ncx_toc(ncx: &str, base_dir: &str) -> Vec<TocEntry> {
+    let mut depth = 0usize;
+    let mut out = Vec::new();
+    let mut title: Option<String> = None;
+    for m in NCX_PART_RE.find_iter(ncx) {
+        let tag = m.as_str();
+        let lower = tag.to_ascii_lowercase();
+        if lower.starts_with("<navpoint") {
+            depth += 1;
+            title = None;
+        } else if lower.starts_with("</navpoint") {
+            depth = depth.saturating_sub(1);
+        } else if lower.starts_with("<text") {
+            if title.is_none() {
+                title = Some(metadata_text(&TAG_RE.replace_all(tag, "")));
+            }
+        } else if lower.starts_with("<content") {
+            let href = attributes(tag).get("src").cloned().unwrap_or_default();
+            if let Some(t) = title.take() {
+                push_toc(&mut out, depth.saturating_sub(1), t, &href, base_dir);
+            }
+        }
+    }
+    out
+}
+
+fn push_toc(out: &mut Vec<TocEntry>, depth: usize, title: String, href: &str, base_dir: &str) {
+    if title.is_empty() || href.is_empty() || href.contains("://") {
+        return;
+    }
+    let (file, fragment) = match href.split_once('#') {
+        Some((f, frag)) => (f, Some(percent_decode(frag))),
+        None => (href, None),
+    };
+    out.push(TocEntry {
+        depth,
+        title,
+        path: resolve_path(base_dir, file),
+        fragment: fragment.filter(|f| !f.is_empty()),
+    });
+}
+
+/// Text eines Markdown-Blocks ohne Überschriften- und Betonungszeichen.
+fn block_plain(block: &str) -> &str {
+    block
+        .trim()
+        .trim_start_matches('#')
+        .trim()
+        .trim_matches(['*', '_', ' '])
+}
+
+/// Überschriften eines Kapitels nach dem Inhaltsverzeichnis setzen: ein
+/// Absatz, der wörtlich ein Verzeichnistitel ist, wird zur Überschrift
+/// (`##`, darunterliegende Ebenen `###`). Gesucht wird in Reihenfolge der
+/// Einträge; steht ein Eintrag ohne Sprungmarke für die ganze Datei und
+/// beginnt sie ohne Überschrift, kommt der Titel davor. Sonst bleibt der
+/// Text, wie er ist — lieber keine Überschrift als eine falsche.
+fn apply_toc(md: &str, entries: &[&TocEntry]) -> String {
+    if entries.is_empty() {
+        return md.to_string();
+    }
+    let mut blocks: Vec<String> = md.split("\n\n").map(str::to_string).collect();
+    let mut cursor = 0usize;
+    let mut prepend: Option<String> = None;
+    for e in entries {
+        let level = "#".repeat((e.depth + 2).min(3));
+        let found = (cursor..blocks.len()).find(|&i| {
+            let b = &blocks[i];
+            b.chars().count() <= 200 && title_match(block_plain(b), &e.title) == Some(true)
+        });
+        match found {
+            Some(i) => {
+                if !blocks[i].trim_start().starts_with('#') {
+                    blocks[i] = format!("{level} {}", block_plain(&blocks[i]));
+                }
+                cursor = i + 1;
+            }
+            None if e.fragment.is_none() && cursor == 0 && prepend.is_none() => {
+                let starts_with_heading = blocks
+                    .iter()
+                    .find(|b| !b.trim().is_empty())
+                    .is_some_and(|b| b.trim_start().starts_with('#'));
+                if !starts_with_heading {
+                    prepend = Some(format!("{level} {}", e.title));
+                }
+            }
+            None => {}
+        }
+    }
+    let text = blocks.join("\n\n");
+    match prepend {
+        Some(h) => format!("{h}\n\n{text}"),
+        None => text,
+    }
+}
+
+/// Kapitelzeilen als Überschrift: ein Absatz, der nur „Erstes Kapitel“,
+/// „Kapitel 3“, „Chapter IV“, „Prolog“ … ist (auch fett), wird `##`. Folgt
+/// ein kurzer Titel ohne Satzzeichen („Der Brief“), gehört er dazu.
+fn promote_chapter_lines(md: &str) -> String {
+    let blocks: Vec<&str> = md.split("\n\n").collect();
+    let mut out: Vec<String> = Vec::with_capacity(blocks.len());
+    let mut i = 0;
+    while i < blocks.len() {
+        let b = blocks[i];
+        let plain = block_plain(b).trim_end_matches('.');
+        let is_head = !b.trim_start().starts_with('#')
+            && !plain.contains('\n')
+            && (CHAPTER_HEAD_RE.is_match(plain) || SPECIAL_HEAD_RE.is_match(plain));
+        if !is_head {
+            out.push(b.to_string());
+            i += 1;
+            continue;
+        }
+        let next = blocks.get(i + 1).map(|n| block_plain(n));
+        match next {
+            Some(t)
+                if !blocks[i + 1].trim_start().starts_with('#')
+                    && !t.contains('\n')
+                    && looks_like_chapter_title(t, 0) =>
+            {
+                out.push(format!("## {plain}: {t}"));
+                i += 2;
+            }
+            _ => {
+                out.push(format!("## {plain}"));
+                i += 1;
+            }
+        }
+    }
+    out.join("\n\n")
 }
 
 /// Klartext eines Metadatenfelds (Tags, Entities, Leerraum bereinigt).
@@ -677,7 +894,16 @@ fn reflow_lines(raw: Vec<(String, Option<u32>)>) -> String {
         {
             continue;
         }
-        if starts_block(line) {
+        // „… und erst am / 23. kommt.“: eine Zahl mit Punkt am Zeilenanfang
+        // beginnt nur dann einen Listenpunkt, wenn der Satz davor zu Ende ist
+        // oder schon eine Liste läuft.
+        let mid_sentence = line.starts_with(|c: char| c.is_ascii_digit())
+            && !current.is_empty()
+            && !LIST_LINE_RE.is_match(&current)
+            && !current
+                .trim_end_matches(['"', '“', '”', '«', '»', '’', '\'', ')'])
+                .ends_with(['.', '!', '?', ':', '…']);
+        if starts_block(line) && !mid_sentence {
             end_paragraph(&mut current, &mut marks, &mut paragraphs);
         }
         let first_word = line.split(' ').next().unwrap_or_default();
@@ -774,8 +1000,9 @@ fn insert_page_marks(text: &str, marks: &[(usize, u32)]) -> String {
 }
 
 /// Wie viele Zeilen oben und unten einer PDF-Seite höchstens als Kopf-/Fußzeile
-/// in Frage kommen. Auf kurzen Seiten weniger (ein Viertel der Zeilen), damit
-/// der Fließtext einer kurzen Seite nie ganz als „Rand“ gilt.
+/// in Frage kommen. Auf kurzen Seiten weniger (ein Drittel der Zeilen), damit
+/// der Fließtext einer kurzen Seite nie ganz als „Rand“ gilt; entfernt wird
+/// dort ohnehin nur, was sich buchweit wiederholt.
 const RUNNING_LINES: usize = 3;
 
 /// Schlüssel einer Kopf-/Fußzeile für den buchweiten Abgleich: Ziffern zählen
@@ -795,11 +1022,11 @@ fn running_key(line: &str) -> String {
 /// Kein Punkt am Ende („1914.“ ist ein Satzende, „1.“ ein Listenpunkt).
 fn is_page_number(line: &str) -> bool {
     let t = line.trim();
-    let t = t
-        .strip_prefix("Seite")
-        .or_else(|| t.strip_prefix("S."))
-        .or_else(|| t.strip_prefix("Page"))
-        .unwrap_or(t)
+    let lower = t.to_lowercase();
+    let t = ["seite", "s.", "page", "p."]
+        .iter()
+        .find(|p| lower.starts_with(*p))
+        .map_or(t, |p| &t[p.len()..])
         .trim();
     // „12 von 300“ / „12 of 300“ wie „12 / 300“.
     let t = &t.replace(" von ", " / ").replace(" of ", " / ");
@@ -815,9 +1042,24 @@ fn is_page_number(line: &str) -> bool {
             .all(|part| part.chars().filter(char::is_ascii_digit).count() <= 4)
 }
 
+/// Seitenzahl mit Wort davor („Seite 12“, „S. 12“, „Page 12“).
+fn has_page_word(line: &str) -> bool {
+    let l = line.trim_start().to_lowercase();
+    ["seite ", "s. ", "page ", "p. "]
+        .iter()
+        .any(|w| l.starts_with(w))
+}
+
 /// Rand einer Seite: `Some(true)` oben, `Some(false)` unten, `None` Fließtext.
 fn page_zone(len: usize, i: usize) -> Option<bool> {
-    let k = RUNNING_LINES.min(len / 4);
+    // Seiten mit kaum mehr als Kopf- und Fußzeile (Bildtafeln): alle Zeilen
+    // sind Rand.
+    // Bildseiten mit wenigen Zeilen: ein Drittel der Zeilen.
+    let k = if len <= 6 {
+        len.div_ceil(2)
+    } else {
+        RUNNING_LINES.min(len.div_ceil(3))
+    };
     if i < k {
         Some(true)
     } else if i + k >= len {
@@ -907,15 +1149,60 @@ fn clean_running_title(line: &str) -> String {
 /// Danach [`reflow_plain_text`]. Die Seiten hängen mit einem einfachen Umbruch
 /// aneinander — wie bisher bei `extract_text`, das auch keine Seitengrenze
 /// markiert —, damit ein Absatz über eine Seitengrenze ein Absatz bleibt.
+///
+/// Der Import nimmt [`pdf_book_to_text`] (mit Schriftgrößen); diese Form ohne
+/// Größen dient den Tests mit reinem Seitentext.
+#[cfg(test)]
 pub fn pdf_pages_to_text(pages: &[String]) -> String {
+    let book = crate::pdf_text::PdfBook {
+        pages: pages
+            .iter()
+            .map(|p| {
+                p.lines()
+                    .map(|l| crate::pdf_text::PdfLine {
+                        text: l.to_string(),
+                        size: 0.0,
+                        gap: false,
+                    })
+                    .collect()
+            })
+            .collect(),
+        outline: Vec::new(),
+    };
+    pdf_book_to_text(&book)
+}
+
+/// Wie `pdf_pages_to_text`, mit Schriftgrößen und Lesezeichen
+/// ([`crate::pdf_text::read_pdf`]). Zusätzliche Überschriften:
+///
+/// - **Lesezeichen** (Outline) des PDFs, wenn es welche hat — dann allein,
+///   ohne die Heuristiken darunter;
+/// - sonst Einträge eines **Inhaltsverzeichnisses** im Vorspann, die im Text
+///   als eigene Zeile wiederkehren („KHM 12. RAPUNZEL“), in Reihenfolge;
+/// - und Zeilen in **größerer Schrift** als der Fließtext.
+pub fn pdf_book_to_text(book: &crate::pdf_text::PdfBook) -> String {
     use std::collections::{HashMap, HashSet};
-    let page_lines: Vec<Vec<&str>> = pages
+    // Gesperrt gesetzte Wörter („S E I T E 12“) zusammenziehen, Leerzeilen weg.
+    let owned: Vec<Vec<(String, f32, bool)>> = book
+        .pages
         .iter()
-        .map(|p| p.lines().filter(|l| !l.trim().is_empty()).collect())
+        .map(|p| {
+            p.iter()
+                .map(|l| (despace(&l.text), l.size, l.gap))
+                .filter(|(t, _, _)| !t.trim().is_empty())
+                .collect()
+        })
+        .collect();
+    let page_lines: Vec<Vec<&str>> = owned
+        .iter()
+        .map(|p| p.iter().map(|(t, _, _)| t.as_str()).collect())
         .collect();
     let exact_key = |line: &str| line.split_whitespace().collect::<Vec<_>>().join(" ");
 
     let mut masked: HashMap<(bool, String), usize> = HashMap::new();
+    // Je Randzeile mit Zahl: Zahl minus Seitenindex, um mitlaufende
+    // Seitenzahlen in Kopfzeilen zu erkennen („… · Seite 3“).
+    let mut tracking: HashMap<(bool, String), HashMap<i64, usize>> = HashMap::new();
     let mut exact: HashMap<(bool, String), Vec<usize>> = HashMap::new();
     for (p, lines) in page_lines.iter().enumerate() {
         let mut seen = HashSet::new();
@@ -923,8 +1210,16 @@ pub fn pdf_pages_to_text(pages: &[String]) -> String {
             let Some(top) = page_zone(lines.len(), i) else {
                 continue;
             };
-            if seen.insert((top, running_key(line))) {
-                *masked.entry((top, running_key(line))).or_default() += 1;
+            let key = running_key(line);
+            if seen.insert((top, key.clone())) {
+                *masked.entry((top, key.clone())).or_default() += 1;
+                if let Some(n) = last_number(line) {
+                    *tracking
+                        .entry((top, key))
+                        .or_default()
+                        .entry(n as i64 - p as i64)
+                        .or_default() += 1;
+                }
             }
             let pages_of = exact.entry((top, exact_key(line))).or_default();
             if pages_of.last() != Some(&p) {
@@ -941,23 +1236,56 @@ pub fn pdf_pages_to_text(pages: &[String]) -> String {
             run >= 3
         })
     };
-    let running = |top: bool, line: &str| {
-        (with_text >= 10
+    // Kurze PDFs (unter zehn Seiten): eine Randzeile mit Text und einer
+    // Seitenzahl, die Seite für Seite mitzählt, auf mindestens der Hälfte der
+    // Seiten (mindestens drei) ist eine Kopf- oder Fußzeile. „Abschnitt 1“,
+    // „Abschnitt 2“ … bleiben: es braucht zwei Wörter neben der Zahl.
+    let page_counter = |top: bool, line: &str| {
+        let key = (top, running_key(line));
+        let words = line
+            .split_whitespace()
+            .filter(|w| w.chars().any(char::is_alphabetic))
+            .count();
+        words >= 2
             && masked
-                .get(&(top, running_key(line)))
-                .is_some_and(|&n| n >= threshold))
-            || exact
-                .get(&(top, exact_key(line)))
-                .is_some_and(|p| chapter_run(p))
+                .get(&key)
+                .is_some_and(|&n| n >= 3 && n * 2 >= with_text)
+            && tracking.get(&key).is_some_and(|offsets| {
+                let total: usize = offsets.values().sum();
+                offsets.values().max().is_some_and(|&m| m * 5 >= total * 4)
+            })
+    };
+    // Auf Seiten mit höchstens sechs Zeilen (Bildtafeln) zählt nur, was
+    // buchweit Kopf- oder Fußzeile ist, nicht die Kapitelregel.
+    // Buchweit zählt eine Randzeile oben wie unten: manche PDFs schreiben die
+    // Fußzeile im Inhaltsstrom vor den Seitentext.
+    let running = |top: bool, line: &str, short_page: bool| {
+        (with_text >= 10
+            && [top, !top].iter().any(|&t| {
+                masked
+                    .get(&(t, running_key(line)))
+                    .is_some_and(|&n| n >= threshold)
+            }))
+            || (!short_page
+                && exact
+                    .get(&(top, exact_key(line)))
+                    .is_some_and(|p| chapter_run(p)))
+            || page_counter(top, line)
     };
 
     // Gedruckte Seitenzahl = Seitenindex + Versatz (Vorspann ohne Zahl,
     // Kapitelanfänge ohne Zahl): der häufigste Versatz der erkannten Zahlen.
     let mut offsets: HashMap<i64, usize> = HashMap::new();
     for (p, lines) in page_lines.iter().enumerate() {
-        let printed = [lines.first(), lines.last()]
-            .into_iter()
-            .flatten()
+        let edges = [lines.first(), lines.last()].into_iter().flatten();
+        let worded = lines
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| page_zone(lines.len(), *i).is_some())
+            .map(|(_, l)| l)
+            .filter(|l| has_page_word(l));
+        let printed = edges
+            .chain(worded)
             .find(|l| is_page_number(l))
             .and_then(|l| first_number(l));
         if let Some(n) = printed {
@@ -969,25 +1297,32 @@ pub fn pdf_pages_to_text(pages: &[String]) -> String {
         .max_by_key(|&(o, n)| (n, -o.abs()))
         .map_or(1, |(o, _)| o);
 
-    // Pro Seite: die behaltenen Zeilen und der entfernte Lauftitel (oben).
-    let mut kept_pages: Vec<Vec<&str>> = Vec::with_capacity(page_lines.len());
+    // Pro Seite: die behaltenen Zeilen (mit Schriftgröße) und der entfernte
+    // Lauftitel (oben).
+    let mut kept_pages: Vec<Vec<(&str, f32)>> = Vec::with_capacity(page_lines.len());
+    let mut kept_gaps: Vec<Vec<bool>> = Vec::with_capacity(page_lines.len());
     let mut run_titles: Vec<Vec<&str>> = Vec::with_capacity(page_lines.len());
-    for lines in &page_lines {
+    for (p, lines) in page_lines.iter().enumerate() {
         let mut kept = Vec::new();
+        let mut gaps = Vec::new();
         let mut run_title: Vec<&str> = Vec::new();
         for (i, line) in lines.iter().enumerate() {
             let at_edge = i == 0 || i + 1 == lines.len();
             let zone = page_zone(lines.len(), i);
-            let run = zone.is_some_and(|top| running(top, line));
-            if run || (at_edge && is_page_number(line)) {
+            let run = zone.is_some_and(|top| running(top, line, lines.len() <= 6));
+            let numbered =
+                is_page_number(line) && (at_edge || (zone.is_some() && has_page_word(line)));
+            if run || numbered {
                 if run && zone == Some(true) && !is_page_number(line) {
                     run_title.push(*line);
                 }
             } else {
-                kept.push(*line);
+                kept.push((*line, owned[p][i].1));
+                gaps.push(owned[p][i].2);
             }
         }
         kept_pages.push(kept);
+        kept_gaps.push(gaps);
         run_titles.push(run_title);
     }
 
@@ -995,29 +1330,98 @@ pub fn pdf_pages_to_text(pages: &[String]) -> String {
     let mut lengths: Vec<usize> = kept_pages
         .iter()
         .flatten()
-        .map(|l| {
-            l.split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
-                .chars()
-                .count()
-        })
+        .map(|(l, _)| exact_key(l).chars().count())
         .filter(|&n| n > 20)
         .collect();
     lengths.sort_unstable();
     let typical = lengths.get(lengths.len() * 3 / 4).copied().unwrap_or(0);
 
-    // (a) Kapitelüberschriften am Seitenanfang.
-    let mut headings: Vec<Vec<String>> = Vec::with_capacity(kept_pages.len());
+    // Überschriften mitten auf der Seite: je behaltener Zeile (Ebene, Gruppe).
+    // Zeilen einer Gruppe werden zu einer Überschrift verbunden; der Text
+    // kommt aus `titles` (Inhaltsverzeichnis), sonst aus den Zeilen selbst.
+    let mut flags: Vec<Vec<Option<(u8, usize)>>> =
+        kept_pages.iter().map(|k| vec![None; k.len()]).collect();
+    let mut titles: HashMap<usize, String> = HashMap::new();
+    let mut group = 0usize;
+    // Am Seitenanfang eingefügte Überschriften (Lesezeichen ohne Fundstelle).
+    let mut inserted: Vec<Vec<(u8, String)>> = vec![Vec::new(); kept_pages.len()];
+    let has_outline = book.outline.len() >= 2;
+
+    if has_outline {
+        for entry in &book.outline {
+            let level = (entry.level + 2).min(3) as u8;
+            group += 1;
+            let found = [entry.page, entry.page + 1].into_iter().find(|&p| {
+                kept_pages.get(p).is_some_and(|kept| {
+                    mark_title(kept, &mut flags[p], &entry.title, level, group, 0)
+                })
+            });
+            match found {
+                Some(_) => {
+                    titles.insert(group, entry.title.clone());
+                }
+                None => inserted[entry.page].push((level, entry.title.clone())),
+            }
+        }
+    } else {
+        // Inhaltsverzeichnis im ersten Drittel: Einträge im Text wiederfinden.
+        if let Some((entries, start)) = toc_entries(&kept_pages) {
+            let mut cursor = 0usize;
+            let mut matched = 0usize;
+            'pages: for p in start.0..kept_pages.len() {
+                let from = if p == start.0 { start.1 } else { 0 };
+                let mut i = from;
+                while i < kept_pages[p].len() {
+                    if cursor >= entries.len() {
+                        break 'pages;
+                    }
+                    let hit = (cursor..(cursor + 30).min(entries.len()))
+                        .find(|&e| title_match(kept_pages[p][i].0, &entries[e]).is_some());
+                    if let Some(e) = hit {
+                        group += 1;
+                        mark_title(&kept_pages[p], &mut flags[p], &entries[e], 2, group, i);
+                        titles.insert(group, entries[e].clone());
+                        matched += 1;
+                        cursor = e + 1;
+                    }
+                    i += 1;
+                }
+            }
+            // Ein einzelner Treffer ist eher Zufall als ein Verzeichnis.
+            if matched < 2 {
+                for f in flags.iter_mut().flatten() {
+                    *f = None;
+                }
+                titles.clear();
+            }
+        }
+        size_headings(&kept_pages, &mut flags, &mut group, typical);
+    }
+
+    // (a) Kapitelüberschriften am Seitenanfang (nur ohne Lesezeichen).
+    let mut headings: Vec<Vec<(u8, String)>> = Vec::with_capacity(kept_pages.len());
     let mut skip: Vec<usize> = Vec::with_capacity(kept_pages.len());
-    for kept in &kept_pages {
-        let (h, used) = page_chapter_headings(kept, typical);
-        headings.push(h);
+    for (p, kept) in kept_pages.iter().enumerate() {
+        if has_outline || flags[p].first().is_some_and(Option::is_some) {
+            headings.push(Vec::new());
+            skip.push(0);
+            continue;
+        }
+        let lines: Vec<&str> = kept.iter().map(|(l, _)| *l).collect();
+        let (h, used) = page_chapter_headings(&lines, typical);
+        // Eine schon markierte Zeile gehört der Markierung.
+        if flags[p][..used].iter().any(Option::is_some) {
+            headings.push(Vec::new());
+            skip.push(0);
+            continue;
+        }
+        headings.push(h.into_iter().map(|h| (2, h)).collect());
         skip.push(used);
     }
 
-    // (b) Wechselnde Lauftitel, wo (a) nichts fand. Verglichen wird der Titel
-    // ohne Seitenzahl am Rand („12 Die Klippe“ = „Die Klippe“).
+    // (b) Wechselnde Lauftitel, wo sonst nichts gefunden wurde. Verglichen
+    // wird der Titel ohne Seitenzahl am Rand („12 Die Klippe“ = „Die Klippe“).
+    let any_flag = flags.iter().flatten().any(Option::is_some);
     let title_key = |t: &str| clean_running_title(t).to_lowercase();
     let mut title_pages: HashMap<String, usize> = HashMap::new();
     for t in run_titles.iter().flatten() {
@@ -1046,30 +1450,443 @@ pub fn pdf_pages_to_text(pages: &[String]) -> String {
         let flips_back = i >= 2 && titled[i - 2].1 == *key;
         // Der neue Titel muss sich halten (mindestens zwei Seiten).
         let persists = titled.get(i + 1).is_some_and(|n| n.1 == *key);
-        if changed && !flips_back && persists && headings[*p].is_empty() {
-            headings[*p].push(clean_running_title(raw));
+        if changed
+            && !flips_back
+            && persists
+            && !has_outline
+            && !any_flag
+            && headings[*p].is_empty()
+        {
+            headings[*p].push((2, clean_running_title(raw)));
         }
     }
 
+    // Absatzabstände (mehr als anderthalb Zeilen) trennen Absätze, wenn sie
+    // die Ausnahme sind (bis zwei Fünftel der Zeilen); bei weitem
+    // Zeilenabstand stünde sonst jede Zeile für sich.
+    let gap_lines = kept_gaps.iter().flatten().filter(|g| **g).count();
+    let all_lines = kept_gaps.iter().map(Vec::len).sum::<usize>();
+    let use_gaps = gap_lines > 0 && gap_lines * 5 <= all_lines * 2;
+
     let mut out: Vec<(String, Option<u32>)> = Vec::new();
+    let heading = |out: &mut Vec<(String, Option<u32>)>, level: u8, text: &str| {
+        out.push((String::new(), None));
+        out.push((format!("{} {text}", "#".repeat(level as usize)), None));
+        out.push((String::new(), None));
+    };
     for (p, kept) in kept_pages.iter().enumerate() {
         // Ohne zweite Seite keine Marken: ein Einseiter braucht keine Seitenzahl.
-        let mut mark = (pages.len() > 1)
+        let mut mark = (book.pages.len() > 1)
             .then(|| u32::try_from(p as i64 + offset).ok())
             .flatten()
             .filter(|&n| n > 0);
         // Überschriften als eigene Absätze; die Seitenmarke gehört an die
         // erste Textzeile danach, sonst stünde sie mitten in der Überschrift.
-        for h in &headings[p] {
-            out.push((String::new(), None));
-            out.push((format!("## {h}"), None));
-            out.push((String::new(), None));
+        for (level, h) in inserted[p].iter().chain(&headings[p]) {
+            heading(&mut out, *level, h);
         }
-        for line in &kept[skip[p]..] {
-            out.push((line.to_string(), mark.take()));
+        let mut i = skip[p];
+        while i < kept.len() {
+            let Some((level, g)) = flags[p][i] else {
+                let starts_lower = kept[i].0.trim_start().starts_with(char::is_lowercase);
+                if use_gaps && kept_gaps[p][i] && !starts_lower {
+                    out.push((String::new(), None));
+                }
+                out.push((kept[i].0.to_string(), mark.take()));
+                i += 1;
+                continue;
+            };
+            let mut parts = Vec::new();
+            while i < kept.len() && flags[p][i].is_some_and(|(_, h)| h == g) {
+                parts.push(exact_key(kept[i].0));
+                i += 1;
+            }
+            let text = titles
+                .get(&g)
+                .map(|t| heading_text(&parts.join(" "), t))
+                .unwrap_or_else(|| clean_heading(&parts.join(" ")));
+            heading(&mut out, level, &text);
         }
     }
     reflow_lines(out)
+}
+
+/// Gesperrt gesetzte Wörter zusammenziehen: drei und mehr einzelne
+/// Buchstaben mit Leerraum dazwischen („S E I T E 12“ → „SEITE 12“).
+fn despace(line: &str) -> String {
+    let words: Vec<&str> = line.split_whitespace().collect();
+    if words.iter().filter(|w| w.chars().count() == 1).count() < 3 {
+        return line.to_string();
+    }
+    let single = |w: &str| w.chars().count() == 1 && w.chars().all(char::is_alphabetic);
+    let mut out: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < words.len() {
+        let run = words[i..].iter().take_while(|w| single(w)).count();
+        if run >= 3 {
+            out.push(words[i..i + run].concat());
+            i += run;
+        } else {
+            out.push(words[i].to_string());
+            i += 1;
+        }
+    }
+    out.join(" ")
+}
+
+/// Letzte Zahl einer Zeile („… · Seite 12“ → 12).
+fn last_number(line: &str) -> Option<u32> {
+    line.split(|c: char| !c.is_ascii_digit())
+        .rfind(|s| !s.is_empty() && s.len() <= 5)
+        .and_then(|s| s.parse().ok())
+}
+
+/// Vergleichsform eines Titels: klein, nur Buchstaben und Ziffern, ß = ss.
+fn title_norm(s: &str) -> String {
+    s.to_lowercase()
+        .replace('ß', "ss")
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Passt die Zeile zu einem Titel? `Some(true)`: ganz (höchstens ein paar
+/// Zeichen mehr, etwa ein Fußnotenstern); `Some(false)`: sie ist der Anfang
+/// eines mehrzeiligen Titels (mindestens die Hälfte davon).
+fn title_match(line: &str, title: &str) -> Option<bool> {
+    let l = title_norm(line);
+    let t = title_norm(title);
+    if t.chars().filter(|c| c.is_alphabetic()).count() < 2 || l.is_empty() {
+        return None;
+    }
+    if l == t || (l.starts_with(&t) && l.len() <= t.len() + 3) {
+        return Some(true);
+    }
+    if t.starts_with(&l) && t[l.len()..].starts_with(' ') && l.len() * 2 >= t.len() {
+        return Some(false);
+    }
+    // Nummerierte Einträge („KHM 4. Märchen von …“): gleiche Nummer am
+    // Zeilenanfang und danach ein Titel in Großbuchstaben genügt, auch wenn
+    // der Wortlaut abweicht („VOM EINEM“) oder der Titel umbricht.
+    let (Some(ti), Some(li)) = (TITLE_ID_RE.find(title), TITLE_ID_RE.find(line.trim())) else {
+        return None;
+    };
+    // Nur der Titel bis zu einer Klammer oder einem Zitat danach zählt.
+    let rest = line.trim()[li.end()..]
+        .split(['(', '"', '„', '“', '['])
+        .next()
+        .unwrap_or_default();
+    let letters: Vec<char> = rest
+        .chars()
+        .filter(|c| c.is_alphabetic())
+        .take(30)
+        .collect();
+    let upper = letters.iter().filter(|c| c.is_uppercase()).count();
+    (title_norm(ti.as_str()) == title_norm(li.as_str())
+        && letters.len() >= 3
+        && upper * 10 >= letters.len() * 8)
+        .then_some(true)
+}
+
+/// Den Titel ab Zeile `from` der Seite suchen und markieren (bei
+/// mehrzeiligen Titeln die Folgezeilen mit). `true`, wenn gefunden.
+fn mark_title(
+    kept: &[(&str, f32)],
+    flags: &mut [Option<(u8, usize)>],
+    title: &str,
+    level: u8,
+    group: usize,
+    from: usize,
+) -> bool {
+    for i in from..kept.len() {
+        if flags[i].is_some() {
+            continue;
+        }
+        match title_match(kept[i].0, title) {
+            Some(true) => {
+                flags[i] = Some((level, group));
+                return true;
+            }
+            Some(false) => {
+                // Folgezeilen, solange der Titel weitergeht.
+                let mut acc = kept[i].0.to_string();
+                let mut end = i + 1;
+                while end < kept.len() && end < i + 3 {
+                    acc = format!("{acc} {}", kept[end].0);
+                    match title_match(&acc, title) {
+                        Some(true) => {
+                            for f in &mut flags[i..=end] {
+                                *f = Some((level, group));
+                            }
+                            return true;
+                        }
+                        Some(false) => end += 1,
+                        None => break,
+                    }
+                }
+            }
+            None => {}
+        }
+    }
+    false
+}
+
+/// Überschrift eines Inhaltsverzeichnis-Eintrags: der Text aus dem
+/// Verzeichnis, wenn die Zeile im Text in Großbuchstaben steht („KHM 12.
+/// RAPUNZEL*“ → „KHM 12. Rapunzel“), sonst die Zeile selbst.
+fn heading_text(line: &str, title: &str) -> String {
+    let letters: Vec<char> = line.chars().filter(|c| c.is_alphabetic()).collect();
+    let upper = letters.iter().filter(|c| c.is_uppercase()).count();
+    if letters.len() >= 4 && upper * 10 >= letters.len() * 8 {
+        clean_heading(title)
+    } else {
+        clean_heading(line)
+    }
+}
+
+/// Fußnotenzeichen und Füllpunkte am Ende einer Überschrift weg.
+fn clean_heading(s: &str) -> String {
+    s.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim_end_matches(['*', '†', ' ', '.', '…', '·', '_'])
+        .to_string()
+}
+
+/// Überschrift eines Inhaltsverzeichnisses („Inhalt“, „Contents“ …).
+fn is_toc_heading(line: &str) -> bool {
+    matches!(
+        title_norm(line).as_str(),
+        "inhalt"
+            | "inhaltsverzeichnis"
+            | "inhaltsübersicht"
+            | "verzeichnis"
+            | "contents"
+            | "table of contents"
+            | "sommaire"
+            | "table des matières"
+            | "indice"
+    )
+}
+
+/// Eintrag eines Inhaltsverzeichnisses: Aufzählungszeichen vorn sowie
+/// Füllpunkte und Seitenzahl hinten weg. `None` für Zeilen ohne Titel.
+fn toc_entry(line: &str) -> Option<String> {
+    let t = line
+        .trim()
+        .trim_start_matches(['•', '·', '-', '–', '—', '*', '▪', '◦', ' ']);
+    // Seitenzahl hinten nur weg, wenn davor Füllpunkte stehen oder noch
+    // mindestens zwei Wörter bleiben („Teil 1“ behält seine Nummer).
+    let stripped = t.trim_end_matches(|c: char| c.is_ascii_digit() || c.is_whitespace());
+    let leaders = stripped.ends_with(['.', '·', '…', '_'])
+        && stripped.trim_end_matches(['.', '·', '…', '_', ' ']).len() + 2 < stripped.len();
+    let t = if stripped.len() < t.len() && (leaders || stripped.split_whitespace().count() >= 2) {
+        stripped.trim_end_matches(['.', '·', '…', '_', ' ', '-', '–'])
+    } else {
+        t
+    };
+    let t = t.trim();
+    let letters = t.chars().filter(|c| c.is_alphabetic()).count();
+    let page_word = matches!(title_norm(t).as_str(), "seite" | "page" | "s" | "p");
+    (letters >= 2 && t.chars().count() <= 120 && !is_toc_heading(t) && !page_word)
+        .then(|| t.to_string())
+}
+
+/// Sieht die Zeile wie ein Verzeichniseintrag aus (Aufzählung vorn oder
+/// Seitenzahl hinten, nicht zu lang)?
+fn toc_like(line: &str) -> bool {
+    let t = line.trim();
+    t.chars().count() <= 100
+        && (t.starts_with(['•', '·', '▪', '◦'])
+            || t.chars().next_back().is_some_and(|c| c.is_ascii_digit())
+                && t.chars().any(char::is_alphabetic))
+}
+
+/// Inhaltsverzeichnis im ersten Drittel der Seiten: die Einträge und die
+/// Stelle (Seite, Zeile) direkt dahinter, ab der der Text beginnt. Das
+/// Verzeichnis reicht von der Seite mit der Überschrift (steht sie dort fast
+/// allein, auch über die nächste Seite) über alle weiteren, auf denen
+/// mindestens fünf Zeilen oder zwei Fünftel der Zeilen wie Einträge aussehen. Gibt es genug solche Zeilen,
+/// zählen nur sie (Erläuterungen im Verzeichnis sind keine Einträge); eine
+/// kurze Folgezeile ohne Zahl und Aufzählungszeichen setzt den Eintrag davor
+/// fort („KHM 4. Märchen von einem, der auszog das“ / „Fürchten zu lernen“).
+fn toc_entries(kept_pages: &[Vec<(&str, f32)>]) -> Option<(Vec<String>, (usize, usize))> {
+    let limit = (kept_pages.len() / 3).max(3).min(kept_pages.len());
+    let (p0, i0) = (0..limit).find_map(|p| {
+        kept_pages[p]
+            .iter()
+            .position(|(l, _)| is_toc_heading(l))
+            .map(|i| (p, i))
+    })?;
+    let mut region: Vec<&str> = Vec::new();
+    let mut end = (p0 + 1, 0);
+    for (p, page) in kept_pages.iter().enumerate().skip(p0) {
+        let from = if p == p0 { i0 + 1 } else { 0 };
+        let lines = &page[from.min(page.len())..];
+        let like = lines.iter().filter(|(l, _)| toc_like(l)).count();
+        // Die Seite nach der Überschrift gehört dazu, wenn die Überschrift
+        // fast allein auf ihrer Seite steht („INHALT“ als Zwischentitel).
+        let heading_alone = kept_pages[p0].len() <= i0 + 3;
+        let follows = p == p0 + 1 && heading_alone;
+        if p > p0 && !follows && (lines.is_empty() || (like < 5 && like * 5 < lines.len() * 2)) {
+            break;
+        }
+        region.extend(lines.iter().map(|(l, _)| *l));
+        end = (p + 1, 0);
+    }
+    if end.0 >= kept_pages.len() {
+        return None;
+    }
+    let only_like = region.iter().filter(|l| toc_like(l)).count() >= 5;
+    let mut entries: Vec<String> = Vec::new();
+    let mut prev_like = false;
+    for (k, line) in region.iter().enumerate() {
+        let like = toc_like(line);
+        if only_like && !like {
+            let next_like = region.get(k + 1).is_none_or(|n| toc_like(n));
+            let continues = prev_like
+                && next_like
+                && line.trim().chars().count() <= 60
+                && line.chars().any(char::is_alphabetic);
+            if continues {
+                if let Some(last) = entries.last_mut() {
+                    *last = format!("{} {}", last, line.trim());
+                }
+            }
+            prev_like = false;
+            continue;
+        }
+        prev_like = like;
+        if let Some(e) = toc_entry(line) {
+            entries.push(e);
+        }
+    }
+    // Doppelte Einträge (Verzeichnis über zwei Spalten, Kopf wiederholt) weg.
+    let mut seen = std::collections::HashSet::new();
+    entries.retain(|e| seen.insert(title_norm(e)));
+    (entries.len() >= 3).then_some((entries, end))
+}
+
+/// Überschriften nach Schriftgröße: Zeilen deutlich größer als der
+/// Fließtext (häufigste Größe, nach Zeichen gewichtet), kurz und mit
+/// Buchstaben. Aufeinanderfolgende gleich große Zeilen sind eine Überschrift.
+/// Die größte Stufe wird `#`, wenn sie höchstens zweimal und nur auf den
+/// ersten Seiten vorkommt (Buchtitel); sonst beginnen die Stufen bei `##`. Eine Stufe,
+/// die mehr als ein Fünftel aller Zeilen ausmacht, ist keine Überschrift.
+fn size_headings(
+    kept_pages: &[Vec<(&str, f32)>],
+    flags: &mut [Vec<Option<(u8, usize)>>],
+    group: &mut usize,
+    typical: usize,
+) {
+    use std::collections::HashMap;
+    let bucket = |s: f32| (s * 2.0).round() as i32;
+    let mut weight: HashMap<i32, usize> = HashMap::new();
+    let mut total_lines = 0usize;
+    for (l, s) in kept_pages.iter().flatten() {
+        if *s > 0.0 {
+            *weight.entry(bucket(*s)).or_default() += l.chars().count();
+            total_lines += 1;
+        }
+    }
+    let Some((&body, _)) = weight.iter().max_by_key(|(b, w)| (**w, -**b)) else {
+        return;
+    };
+    let body = body as f32 / 2.0;
+    let candidate = |line: &str, size: f32| {
+        let n = line.chars().count();
+        size >= body * 1.18
+            && size - body >= 1.0
+            && n <= 90
+            && line.split_whitespace().count() <= 14
+            && line.chars().filter(|c| c.is_alphabetic()).count() >= 3
+            && !line.trim_end().ends_with([',', ';'])
+            && !is_page_number(line)
+    };
+    // Gruppen: (Seite, erste Zeile, Zeilenzahl, Stufe). Mehr als drei
+    // gleich große Zeilen am Stück sind ein Textabschnitt, keine Überschrift.
+    let mut groups: Vec<(usize, usize, usize, i32)> = Vec::new();
+    for (p, kept) in kept_pages.iter().enumerate() {
+        let mut i = 0;
+        while i < kept.len() {
+            if flags[p][i].is_some() || !candidate(kept[i].0, kept[i].1) {
+                i += 1;
+                continue;
+            }
+            let tier = bucket(kept[i].1);
+            let mut n = 1;
+            while i + n < kept.len()
+                && flags[p][i + n].is_none()
+                && bucket(kept[i + n].1) == tier
+                && candidate(kept[i + n].0, kept[i + n].1)
+            {
+                n += 1;
+            }
+            if n <= 3 {
+                groups.push((p, i, n, tier));
+            }
+            i += n;
+        }
+    }
+    let mut tiers: Vec<i32> = groups.iter().map(|g| g.3).collect();
+    tiers.sort_unstable_by(|a, b| b.cmp(a));
+    tiers.dedup();
+    let lines_of = |t: i32| -> usize { groups.iter().filter(|g| g.3 == t).map(|g| g.2).sum() };
+    // Eine Stufe mit langen Zeilen (im Mittel über drei Viertel der üblichen
+    // Zeilenlänge) ist hervorgehobener Text, keine Überschrift.
+    let chars_of = |t: i32| -> usize {
+        groups
+            .iter()
+            .filter(|g| g.3 == t)
+            .flat_map(|g| &kept_pages[g.0][g.1..g.1 + g.2])
+            .map(|(l, _)| {
+                l.split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .chars()
+                    .count()
+            })
+            .sum()
+    };
+    tiers.retain(|&t| {
+        lines_of(t) * 5 <= total_lines
+            && (typical == 0 || chars_of(t) * 4 <= lines_of(t) * typical * 3)
+    });
+    if tiers.is_empty() {
+        return;
+    }
+    let count_of = |t: i32| groups.iter().filter(|g| g.3 == t).count();
+    // Die größte Stufe ist der Buchtitel, wenn sie höchstens zweimal vorkommt
+    // und es darunter Kapitel gibt oder sonst gar keine Überschrift.
+    // … und nur auf den ersten drei Seiten mit Text steht (Titelseite);
+    // weiter hinten wäre ein `#` ein Abschnitt, der alles Folgende umfasst.
+    let text_pages: Vec<usize> = (0..kept_pages.len())
+        .filter(|&p| !kept_pages[p].is_empty())
+        .take(3)
+        .collect();
+    let on_title_pages = groups
+        .iter()
+        .filter(|g| g.3 == tiers[0])
+        .all(|g| text_pages.contains(&g.0));
+    let first =
+        if count_of(tiers[0]) <= 2 && on_title_pages && (tiers.len() > 1 || groups.len() <= 2) {
+            1
+        } else {
+            2
+        };
+    for (p, i, n, tier) in groups {
+        let Some(rank) = tiers.iter().position(|&t| t == tier) else {
+            continue;
+        };
+        let level = (first + rank).min(3) as u8;
+        *group += 1;
+        for f in &mut flags[p][i..i + n] {
+            *f = Some((level, *group));
+        }
+    }
 }
 
 /// Erste Zahl einer Seitenzahl-Zeile („Seite 12 von 300“ → 12).
@@ -1628,5 +2445,301 @@ mod tests {
             out.contains("{{S. 1}}") && out.contains("{{S. 2}}"),
             "{out}"
         );
+    }
+
+    // ---- Buchimport: Kopfzeilen, Überschriften, Absätze (lva#149) ----
+
+    fn sized(pages: &[&[(&str, f32)]]) -> crate::pdf_text::PdfBook {
+        crate::pdf_text::PdfBook {
+            pages: pages
+                .iter()
+                .map(|p| {
+                    p.iter()
+                        .map(|(t, s)| crate::pdf_text::PdfLine {
+                            text: t.to_string(),
+                            size: *s,
+                            gap: false,
+                        })
+                        .collect()
+                })
+                .collect(),
+            outline: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn short_pdf_drops_header_with_running_page_number() {
+        // Wie die Kurzgeschichte im Screenshot: acht Seiten, Kopfzeile mit
+        // mitlaufender Seitenzahl, Titel direkt darunter.
+        let pages: Vec<String> = (1..=8)
+            .map(|n| {
+                let title = if n == 1 { "Der längste Dezember\n" } else { "" };
+                format!(
+                    "beispiel.example · kostenlose Geschichten zum Vorlesen · Seite {n}\n{title}\
+                     Mattea zählt die Tage bis zum Abend, an dem ihr Vater wieder nach Hause kommt.\n\
+                     Am Fenster liegt Schnee, und im Flur stehen schon die Stiefel bereit für morgen.\n"
+                )
+            })
+            .collect();
+        let out = pdf_pages_to_text(&pages);
+        assert!(!out.contains("kostenlose Geschichten"), "{out}");
+        assert!(out.contains("Der längste Dezember"), "{out}");
+    }
+
+    #[test]
+    fn numbered_line_inside_a_sentence_is_no_list() {
+        let out = reflow_plain_text(
+            "Es liegt daran, dass ihr Vater seit August in einer anderen Stadt arbeitet und erst am\n\
+             23. kommt. Die dreiundzwanzig Tage bis dahin bestehen aus Schule und Schnee.\n\
+             Folgendes ist zu tun:\n\
+             1. Koffer packen und den Zug am Morgen nehmen, bevor es dunkel wird.\n\
+             2. Anrufen.",
+        );
+        assert!(out.contains("und erst am 23. kommt."), "{out}");
+        assert!(out.contains("\n\n1. Koffer"), "{out}");
+        assert!(out.contains("\n\n2. Anrufen"), "{out}");
+    }
+
+    #[test]
+    fn letter_spaced_page_numbers_are_removed() {
+        assert_eq!(despace("S E I T E   12"), "SEITE 12");
+        assert_eq!(despace("K A P I T E L 3"), "KAPITEL 3");
+        assert_eq!(despace("Ein Satz mit a und b"), "Ein Satz mit a und b");
+        assert!(is_page_number("SEITE 12"));
+        let pages: Vec<String> = (1..=4)
+            .map(|n| {
+                format!(
+                    "Der Wind strich um den Turm, und Mara lauschte lange auf das Meer {n}.\n\
+                     Sie zählte die Wellen, bis der Morgen kam und das Licht über die Klippe fiel.\n\
+                     S E I T E   {n}\n"
+                )
+            })
+            .collect();
+        let out = pdf_pages_to_text(&pages);
+        assert!(!out.contains("SEITE"), "{out}");
+    }
+
+    #[test]
+    fn toc_entries_become_headings_in_order() {
+        let line = "Es war einmal ein König, der hatte eine Tochter, die war so schön, dass";
+        let mut pages: Vec<String> = vec![
+            "INHALT\n• KHM 1. Der Froschkönig oder der eiserne Heinrich\n\
+             • KHM 2. Katze und Maus in Gesellschaft\n• KHM 3. Marienkind\n\
+             • KHM 4. Märchen von einem, der auszog das\nFürchten zu lernen\n• KHM 5. Der Wolf"
+                .into(),
+        ];
+        for (n, head) in [
+            "KHM 1. DER FROSCHKÖNIG ODER DER EISERNE HEINRICH*",
+            "KHM 2. KATZE UND MAUS IN GESELLSCHAFT",
+            "KHM 3. MARIENKIND",
+            "KHM 4. MÄRCHEN VOM EINEM, DER AUSZOG",
+            "KHM 5. DER WOLF",
+        ]
+        .iter()
+        .enumerate()
+        {
+            pages.push(format!(
+                "{line}\n{head}\n{line} die Sonne sich wunderte, so oft sie schien.\n{line} {n}.\n"
+            ));
+        }
+        let out = pdf_pages_to_text(&pages);
+        for h in [
+            "## KHM 1. Der Froschkönig oder der eiserne Heinrich",
+            "## KHM 2. Katze und Maus in Gesellschaft",
+            "## KHM 3. Marienkind",
+            "## KHM 4. Märchen von einem, der auszog das Fürchten zu lernen",
+            "## KHM 5. Der Wolf",
+        ] {
+            assert!(out.contains(&format!("\n{h}\n")), "{h}: {out}");
+        }
+        // Im Verzeichnis selbst bleibt alles Text.
+        assert!(out.contains("• KHM 3. Marienkind"), "{out}");
+    }
+
+    #[test]
+    fn larger_font_lines_become_headings() {
+        let body = "Der Wind strich um den Turm, und Mara lauschte lange auf das Meer.";
+        let page1: Vec<(&str, f32)> = vec![
+            ("Der Leuchtturm", 24.0),
+            ("Eine Geschichte", 11.0),
+            ("Die Ankunft", 16.0),
+            (body, 11.0),
+            (body, 11.0),
+        ];
+        let page2: Vec<(&str, f32)> = vec![(body, 11.0), ("Der Sturm", 16.0), (body, 11.0)];
+        let page3: Vec<(&str, f32)> = vec![(body, 11.0), (body, 11.0), (body, 11.0)];
+        let out = pdf_book_to_text(&sized(&[&page1, &page2, &page3]));
+        assert!(out.starts_with("# Der Leuchtturm\n"), "{out}");
+        assert!(out.contains("\n## Die Ankunft\n"), "{out}");
+        assert!(out.contains("\n## Der Sturm\n"), "{out}");
+        assert!(!out.contains("# Eine Geschichte"), "{out}");
+    }
+
+    #[test]
+    fn many_large_lines_are_emphasis_not_headings() {
+        let long = "Dieser ganze Abschnitt ist in größerer Schrift gesetzt, weil er wichtig ist";
+        let page: Vec<(&str, f32)> = vec![
+            (long, 14.0),
+            (long, 14.0),
+            (long, 14.0),
+            (long, 14.0),
+            (
+                "Normaler Text der Seite, der weitergeht und weitergeht.",
+                11.0,
+            ),
+        ];
+        let body = "Der Wind strich um den Turm, und Mara lauschte lange auf das Meer.";
+        let rest: Vec<(&str, f32)> = vec![(body, 11.0); 30];
+        let out = pdf_book_to_text(&sized(&[&page, &rest]));
+        assert!(!out.contains('#'), "{out}");
+    }
+
+    #[test]
+    fn outline_entries_mark_headings_or_are_inserted() {
+        let body = "Der Wind strich um den Turm, und Mara lauschte lange auf das Meer.";
+        let mut book = sized(&[
+            &[("Erstes Kapitel", 11.0), (body, 11.0)],
+            &[(body, 11.0), (body, 11.0)],
+            &[(body, 11.0)],
+        ]);
+        book.outline = vec![
+            crate::pdf_text::OutlineEntry {
+                level: 0,
+                title: "Erstes Kapitel".into(),
+                page: 0,
+            },
+            crate::pdf_text::OutlineEntry {
+                level: 1,
+                title: "Ein Abschnitt ohne Zeile".into(),
+                page: 2,
+            },
+        ];
+        let out = pdf_book_to_text(&book);
+        assert!(out.starts_with("## Erstes Kapitel\n"), "{out}");
+        assert!(out.contains("\n### Ein Abschnitt ohne Zeile\n"), "{out}");
+    }
+
+    #[test]
+    fn paragraph_gaps_split_paragraphs_when_rare() {
+        let full = "Der Wind strich um den Turm, und Mara lauschte lange auf das Meer und";
+        let mut book = sized(&[&[
+            (full, 11.0),
+            (
+                "die Wellen bis zum Morgen, als das Licht kam und alles wieder gut war.",
+                11.0,
+            ),
+            (full, 11.0),
+            (
+                "die Wellen bis zum Morgen, als das Licht kam und alles wieder gut war.",
+                11.0,
+            ),
+            (full, 11.0),
+            (full, 11.0),
+        ]]);
+        book.pages[0][2].gap = true;
+        let out = pdf_book_to_text(&book);
+        assert_eq!(out.matches("\n\n").count(), 1, "{out}");
+    }
+
+    #[test]
+    fn epub_chapter_lines_become_headings() {
+        let md = "Effi Briest\n\nErstes Kapitel\n\nIn Front des Herrenhauses fiel heller Sonnenschein.\n\n\
+                  **Zweites Kapitel.**\n\nDer Brief\n\nEs war ein Sonntag.\n\nKapitel 3 zeigt, wie es weiterging.";
+        let out = promote_chapter_lines(md);
+        assert!(out.contains("\n\n## Erstes Kapitel\n\n"), "{out}");
+        assert!(
+            out.contains("\n\n## Zweites Kapitel: Der Brief\n\n"),
+            "{out}"
+        );
+        assert!(out.contains("Kapitel 3 zeigt"), "{out}");
+        assert!(out.starts_with("Effi Briest"), "{out}");
+    }
+
+    #[test]
+    fn epub_toc_from_nav_and_ncx() {
+        let nav = r#"<html><body><nav epub:type="toc"><ol>
+<li><a href="Text/k1.xhtml">Teil 1</a><ol><li><a href="Text/k1.xhtml#a2">Der Brief</a></li></ol></li>
+<li><a href="Text/k%202.xhtml">Teil <em>2</em></a></li></ol></nav>
+<nav epub:type="landmarks"><ol><li><a href="Text/k1.xhtml">Start</a></li></ol></nav></body></html>"#;
+        let toc = nav_toc(nav, "OEBPS");
+        assert_eq!(
+            toc.iter()
+                .map(|e| (
+                    e.depth,
+                    e.title.as_str(),
+                    e.path.as_str(),
+                    e.fragment.as_deref()
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, "Teil 1", "OEBPS/Text/k1.xhtml", None),
+                (1, "Der Brief", "OEBPS/Text/k1.xhtml", Some("a2")),
+                (0, "Teil 2", "OEBPS/Text/k 2.xhtml", None),
+            ]
+        );
+        let ncx = r#"<ncx><navMap><navPoint id="n1"><navLabel><text>Erstes Kapitel</text></navLabel>
+<content src="c1.xhtml"/><navPoint id="n2"><navLabel><text>Ein Abschnitt</text></navLabel>
+<content src="c1.xhtml#s"/></navPoint></navPoint></navMap></ncx>"#;
+        let toc = ncx_toc(ncx, "");
+        assert_eq!(toc.len(), 2);
+        assert_eq!((toc[1].depth, toc[1].title.as_str()), (1, "Ein Abschnitt"));
+    }
+
+    #[test]
+    fn epub_toc_titles_mark_paragraphs_as_headings() {
+        let e1 = TocEntry {
+            depth: 0,
+            title: "Der Brief".into(),
+            path: "x".into(),
+            fragment: Some("a".into()),
+        };
+        let e2 = TocEntry {
+            depth: 1,
+            title: "Am Bahnhof".into(),
+            path: "x".into(),
+            fragment: Some("b".into()),
+        };
+        let md = "Vorbemerkung zum Brief.\n\n**Der Brief**\n\nText.\n\nAm Bahnhof\n\nMehr Text.";
+        let out = apply_toc(md, &[&e1, &e2]);
+        assert_eq!(
+            out,
+            "Vorbemerkung zum Brief.\n\n## Der Brief\n\nText.\n\n### Am Bahnhof\n\nMehr Text."
+        );
+        // Ganze Datei ohne Überschrift: Titel davor.
+        let whole = TocEntry {
+            fragment: None,
+            ..e1.clone()
+        };
+        assert_eq!(
+            apply_toc("Text ohne Kopf.", &[&whole]),
+            "## Der Brief\n\nText ohne Kopf."
+        );
+        assert_eq!(apply_toc("# Kopf\n\nText.", &[&whole]), "# Kopf\n\nText.");
+    }
+
+    #[test]
+    fn epub_uses_ncx_for_chapter_headings() {
+        let opf = r#"<package version="2.0"><metadata><dc:title>Buch</dc:title></metadata>
+<manifest><item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest>
+<spine toc="ncx"><itemref idref="c1"/></spine></package>"#;
+        let ncx = r#"<ncx><navMap><navPoint><navLabel><text>Die Ankunft</text></navLabel><content src="c1.xhtml#k1"/></navPoint>
+<navPoint><navLabel><text>Der Sturm</text></navLabel><content src="c1.xhtml#k2"/></navPoint></navMap></ncx>"#;
+        let mut a = epub(&[
+            ("META-INF/container.xml", CONTAINER),
+            ("OEBPS/content.opf", opf),
+            ("OEBPS/toc.ncx", ncx),
+            (
+                "OEBPS/c1.xhtml",
+                r#"<html><body><p id="k1" class="chapter">Die Ankunft</p><p>Sie kam am Morgen.</p>
+<p id="k2" class="chapter">Der Sturm</p><p>In der Nacht wurde es laut.</p></body></html>"#,
+            ),
+        ]);
+        let out = epub_to_markdown(&mut a).unwrap();
+        assert!(
+            out.contains("## Die Ankunft\n\nSie kam am Morgen."),
+            "{out}"
+        );
+        assert!(out.contains("## Der Sturm\n\nIn der Nacht"), "{out}");
     }
 }
