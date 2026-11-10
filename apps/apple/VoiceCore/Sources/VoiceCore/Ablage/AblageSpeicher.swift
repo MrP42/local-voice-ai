@@ -60,8 +60,20 @@ public final class AblageSpeicher: @unchecked Sendable {
 
     public let wurzel: URL
     private let fm = FileManager.default
+    private let bestandSperre = NSLock()
 
     public init(wurzel: URL) { self.wurzel = wurzel }
+
+    /// Führt `body` aus, ohne dass ein anderer Aufrufer dieses Speichers gleichzeitig in einem `exklusiv`-Abschnitt ist. Der
+    /// Lauf entfernt die Dateien begrabener Dateien und schreibt danach den Zustand (zwei Schritte, auf der Platte noch nicht
+    /// zusammen sichtbar); ein gleichzeitiger Original-Download, der in dieser Lücke den Zustand liest, legte sonst ein
+    /// Original einer begrabenen Datei ab, das niemand mehr wegräumt. Beide Seiten halten die Sperre über ihren ganzen
+    /// Schritt. Nur kurze, synchrone Dateizugriffe darin, nie ein `await`; nicht wiedereintrittsfähig.
+    func exklusiv<T>(_ body: () throws -> T) rethrows -> T {
+        bestandSperre.lock()
+        defer { bestandSperre.unlock() }
+        return try body()
+    }
 
     // MARK: Dateisystem-Hilfen
 
