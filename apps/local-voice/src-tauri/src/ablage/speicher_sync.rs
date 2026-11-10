@@ -81,6 +81,7 @@ fn hex64(s: &str) -> bool {
 
 fn ordner_gueltig(o: &Ordner) -> bool {
     id_gueltig(PRAEFIX_ORDNER, &o.id)
+        && zf::ordner_zaehler_ok(o)
         && name_lesbar(&o.name.wert)
         && o.eltern
             .wert
@@ -88,9 +89,11 @@ fn ordner_gueltig(o: &Ordner) -> bool {
             .is_none_or(|p| id_gueltig(PRAEFIX_ORDNER, p) && p != o.id)
 }
 
-/// Prüft einen entfernten Datensatz `ablage_datei` wie einen geladenen Stand, dazu die Hex-Felder.
+/// Prüft einen entfernten Datensatz `ablage_datei` wie einen geladenen Stand, dazu die Hex-Felder und
+/// die Zählerobergrenze `ZAEHLER_MAX`.
 pub fn datei_gueltig(d: &Datei) -> bool {
     id_gueltig(PRAEFIX_DATEI, &d.id)
+        && zf::datei_zaehler_ok(d)
         && name_lesbar(&d.name.wert)
         && id_gueltig(PRAEFIX_ORDNER, &d.ordner.wert)
         && d.fassungen.iter().all(|f| {
@@ -210,7 +213,7 @@ impl Ablage {
                     // Eltern mit alter Kennung (Rückweg lokal → sync): der neuen folgen.
                     if let Some(n) = neu.eltern.wert.as_ref().map(|p| st.aufgeloest(p)) {
                         if neu.eltern.wert.as_deref() != Some(n.as_str()) {
-                            neu.eltern = Register::neu(Some(n), st.zaehler(), &st.geraet);
+                            neu.eltern = Register::neu(Some(n), st.zaehler()?, &st.geraet);
                         }
                     }
                     if st.ordner.get(&o.id) != Some(&neu) {
@@ -246,7 +249,7 @@ impl Ablage {
                     neu.blob_refs = zf::blob_refs_aus(&neu.fassungen);
                     let ziel = st.aufgeloest(&neu.ordner.wert);
                     if ziel != neu.ordner.wert {
-                        neu.ordner = Register::neu(ziel, st.zaehler(), &st.geraet);
+                        neu.ordner = Register::neu(ziel, st.zaehler()?, &st.geraet);
                     }
                     if let Some(a) = &alt {
                         let bleibt: BTreeSet<&str> =
@@ -594,7 +597,7 @@ impl Ablage {
         let Some(alt) = alt else {
             return Ok(false);
         };
-        let z = st.zaehler();
+        let z = st.zaehler()?;
         if !st.ordner.contains_key(ziel) {
             let mut o = st.ordner[&alt].clone();
             o.id = ziel.to_string();
@@ -621,7 +624,7 @@ impl Ablage {
         let _g = sperren();
         let mut st = self.laden()?;
         st.nicht_offen_geloescht(Some(dat), None)?;
-        let z = st.zaehler();
+        let z = st.zaehler()?;
         let geraet = st.geraet.clone();
         let d = st.dateien.get_mut(dat).ok_or_else(nicht_gefunden)?;
         if !d.fassungen.iter().any(|f| f.fas == fas) {

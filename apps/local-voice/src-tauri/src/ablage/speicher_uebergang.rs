@@ -135,8 +135,11 @@ fn uebergang_fehler() -> Fehler {
 }
 
 /// Stand umschreiben (rein, wiederholbar). `true`, wenn sich etwas geändert hat.
-fn stand_umziehen(st: &mut Stand, m: &BTreeMap<String, String>) -> bool {
-    let (z, g) = (st.zaehler(), st.geraet.clone());
+fn stand_umziehen(st: &mut Stand, m: &BTreeMap<String, String>) -> Res<bool> {
+    let g = st.geraet.clone();
+    // Der Zähler ändert sich hier nicht; ein Fehler (erschöpfte Kette) zählt erst beim ersten Treffer, die
+    // ein neues Register brauchen: ein Übergang ohne Schreibbedarf hängt nie daran.
+    let zaehler = st.zaehler();
     let mut geaendert = false;
     for (alt, neu) in m {
         if let Some(mut o) = st.ordner.remove(alt) {
@@ -159,7 +162,7 @@ fn stand_umziehen(st: &mut Stand, m: &BTreeMap<String, String>) -> bool {
             o.eltern = if neue.contains(&o.id) {
                 Register::neu(Some(n.clone()), o.eltern.zaehler, &o.eltern.geraet)
             } else {
-                Register::neu(Some(n.clone()), z, &g)
+                Register::neu(Some(n.clone()), zaehler.clone()?, &g)
             };
             geaendert = true;
         }
@@ -169,7 +172,7 @@ fn stand_umziehen(st: &mut Stand, m: &BTreeMap<String, String>) -> bool {
             d.ordner = if neue.contains(&d.id) {
                 Register::neu(n.clone(), d.ordner.zaehler, &d.ordner.geraet)
             } else {
-                Register::neu(n.clone(), z, &g)
+                Register::neu(n.clone(), zaehler.clone()?, &g)
             };
             geaendert = true;
         }
@@ -210,7 +213,7 @@ fn stand_umziehen(st: &mut Stand, m: &BTreeMap<String, String>) -> bool {
             geaendert = true;
         }
     }
-    geaendert
+    Ok(geaendert)
 }
 
 impl Stand {
@@ -308,7 +311,7 @@ impl Ablage {
             self.ordner_umziehen(TEXT, alt, neu)?;
         }
         st.vorher = None;
-        if stand_umziehen(st, &u.zuordnung) {
+        if stand_umziehen(st, &u.zuordnung)? {
             self.sichern(st)?;
         }
         u.schritt = Stufe::Umgezogen;
@@ -461,5 +464,43 @@ impl Ablage {
     /// Offene Übergangsjournale (Prüfungen).
     pub fn uebergaenge_offen(&self) -> usize {
         self.uebergaenge_lesen().len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ablage::zusammenfuehren::ZAEHLER_MAX;
+
+    /// #450: Der Zähler wird erst beim ersten Treffer gebraucht; eine erschöpfte Kette hält einen Umzug
+    /// ohne Schreibbedarf nicht auf, ein Treffer scheitert dagegen sichtbar (Stand bleibt wie er war).
+    #[test]
+    fn umziehen_braucht_den_zaehler_nur_bei_einem_treffer() {
+        let t = tempfile::tempdir().unwrap();
+        let a = Ablage::neu(t.path().join("ablage"));
+        assert_eq!(a.wartung(), None);
+        let mut st = a.laden().unwrap();
+        let (erster, mut o) = st
+            .ordner
+            .iter()
+            .next()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .unwrap();
+        st.ordner.get_mut(&erster).unwrap().name.zaehler = ZAEHLER_MAX;
+        assert!(st.zaehler().is_err());
+        // Ohne Verweis auf die alte Kennung: nur Umbenennen und Weiterleitung, kein Fehler.
+        let m = BTreeMap::from([(erster.clone(), "ord_NEU".to_string())]);
+        let mut ohne = st.clone();
+        assert_eq!(stand_umziehen(&mut ohne, &m), Ok(true));
+        assert!(ohne.ordner.contains_key("ord_NEU"));
+        // Ein Kind verweist auf die alte Kennung und braucht ein neues Register: Fehler, nichts geändert.
+        o.id = "ord_KIND".into();
+        o.eltern = Register::neu(Some(erster), 1, &st.geraet);
+        st.ordner.insert(o.id.clone(), o);
+        let vorher = serde_json::to_string(&st).unwrap();
+        let mut mit = st.clone();
+        let f = stand_umziehen(&mut mit, &m).unwrap_err();
+        assert_eq!(f.code, "ablage.zaehler_erschoepft");
+        assert!(serde_json::to_string(&st).unwrap() == vorher);
     }
 }

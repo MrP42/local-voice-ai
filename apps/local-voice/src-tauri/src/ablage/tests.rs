@@ -1601,3 +1601,152 @@ mod windows_import {
         assert!(e.sicht().dateien.is_empty(), "nichts übernommen");
     }
 }
+
+// --- Lamport-Zähler: Überlauf und Obergrenze (#450) ---------------------------------------------
+
+fn zaehler_setzen(e: &Env, ordner: &str, z: u64) {
+    let mut v = journal_json(e);
+    v["ordner"][ordner]["name"]["zaehler"] = serde_json::json!(z);
+    journal_schreiben(e, &v);
+}
+
+#[test]
+fn zaehler_ueberlauf_beim_schreiben_ist_ein_fehler_und_schreibt_nichts() {
+    use super::zusammenfuehren::naechster_zaehler;
+    let e = env();
+    let o = e.standard();
+    let dat = e.ablegen("a.txt", "a", &o);
+    let fas = e.a.fassungen(&dat).unwrap()[0].fas.clone();
+    zaehler_setzen(&e, &o, u64::MAX);
+    let b = e.a.sync_bestand().unwrap();
+    assert_eq!(naechster_zaehler(&b.ordner, &b.dateien), None);
+    let vorher = fs::read(e.wurzel.join(JOURNAL)).unwrap();
+    let dateien_vorher = e.dateien_in(&dat);
+    let code = |r: super::Res<()>| r.unwrap_err().code;
+    let erschoepft = "ablage.zaehler_erschoepft";
+    let neu = e.a.ordner_anlegen(Some(&o), "Neu").unwrap_err();
+    assert_eq!(neu.code, erschoepft);
+    assert!(!neu.message.contains("Neu") && !neu.message.contains("a.txt"));
+    assert_eq!(code(e.a.datei_umbenennen(&dat, "b.txt")), erschoepft);
+    assert_eq!(code(e.a.ordner_umbenennen(&o, "Anders")), erschoepft);
+    assert_eq!(code(e.a.in_papierkorb(AblageArt::Datei, &dat)), erschoepft);
+    assert_eq!(code(e.a.fassung_waehlen(&dat, &fas)), erschoepft);
+    // Import: nichts landet auf der Platte, die Zeile trägt den Fehlercode.
+    let q = e.quelle("zweite.txt", "zweite");
+    let z = e.a.importieren(&q, &o, None).unwrap();
+    assert_eq!(z[0].stand, AblageImportStand::Fehler);
+    assert_eq!(z[0].code.as_deref(), Some(erschoepft));
+    assert_eq!(fs::read(e.wurzel.join(JOURNAL)).unwrap(), vorher);
+    assert_eq!(e.dateien_in(&dat), dateien_vorher);
+    assert_eq!(
+        fs::read_dir(e.wurzel.join("dateien")).unwrap().count(),
+        1,
+        "kein neues Dateiverzeichnis"
+    );
+}
+
+#[test]
+fn lokal_wird_nie_ueber_zaehler_max_vergeben() {
+    use super::zusammenfuehren::{naechster_zaehler, ZAEHLER_MAX};
+    let e = env();
+    let o = e.standard();
+    zaehler_setzen(&e, &o, ZAEHLER_MAX - 2);
+    e.a.ordner_anlegen(Some(&o), "Eins").unwrap(); // MAX - 1
+    e.a.ordner_anlegen(Some(&o), "Zwei").unwrap(); // MAX
+    let b = e.a.sync_bestand().unwrap();
+    assert_eq!(
+        b.ordner.values().map(|o| o.name.zaehler).max(),
+        Some(ZAEHLER_MAX)
+    );
+    assert_eq!(naechster_zaehler(&b.ordner, &b.dateien), None);
+    let f = e.a.ordner_anlegen(Some(&o), "Drei").unwrap_err();
+    assert_eq!(f.code, "ablage.zaehler_erschoepft");
+    let namen: Vec<String> = e.sicht().ordner.iter().map(|o| o.name.clone()).collect();
+    assert!(namen.contains(&"Zwei".to_string()) && !namen.contains(&"Drei".to_string()));
+}
+
+#[test]
+fn wiederanlauf_haelt_den_journaleintrag_bei_erschoepftem_zaehler() {
+    let e = env();
+    let o = abbruch_import(&e, Schritt::NachJournal);
+    assert_eq!(journal_json(&e)["journal"].as_array().unwrap().len(), 1);
+    let dat = alle_dateien_unter_dirs(&e.wurzel.join("dateien"));
+    zaehler_setzen(&e, &o, u64::MAX);
+    // Wartung scheitert am Zähler: Eintrag bleibt im Journal, das Original bleibt liegen, kein Fund.
+    let s = e.sicht();
+    assert!(s.dateien.is_empty() && s.gefunden.is_empty());
+    assert_eq!(journal_json(&e)["journal"].as_array().unwrap().len(), 1);
+    assert_eq!(e.dateien_in(&dat).len(), 1);
+    let original = e
+        .wurzel
+        .join("dateien")
+        .join(&dat)
+        .join(&e.dateien_in(&dat)[0]);
+    assert_eq!(fs::read_to_string(&original).unwrap(), GEHEIM);
+    // Mit freiem Zähler trägt der nächste Lauf nach.
+    zaehler_setzen(&e, &o, 1);
+    let s = e.sicht();
+    assert_eq!(namen(&s), vec!["Angebot.pdf".to_string()]);
+    assert!(journal_json(&e)["journal"].as_array().unwrap().is_empty());
+    assert_eq!(fs::read_to_string(e.original(&dat)).unwrap(), GEHEIM);
+}
+
+#[test]
+fn sync_nimmt_zaehler_genau_an_der_obergrenze_an_und_verwirft_darueber() {
+    use super::speicher::Eingang;
+    use super::zusammenfuehren::ZAEHLER_MAX;
+    let e = env();
+    let o = e.standard();
+    let dat = e.ablegen("a.txt", "a", &o);
+    let b = e.a.sync_bestand().unwrap();
+    let ordner = |z: u64, name: &str| {
+        let mut x = b.ordner[&o].clone();
+        x.name.wert = name.into();
+        x.name.zaehler = z;
+        Eingang::Ordner(x)
+    };
+    let datei = |z: u64, name: &str| {
+        let mut x = b.dateien[&dat].clone();
+        x.name.wert = name.into();
+        x.name.zaehler = z;
+        Eingang::Datei(x)
+    };
+    // Über der Grenze: verworfen, nichts geändert, keine Panik.
+    let r =
+        e.a.sync_einspielen(&[
+            ordner(ZAEHLER_MAX + 1, "Zu hoch"),
+            datei(u64::MAX, "zu hoch.txt"),
+        ])
+        .unwrap();
+    assert_eq!(r.verworfen, vec![o.clone(), dat.clone()]);
+    assert!(r.geaendert.is_empty());
+    let s = e.sicht();
+    assert_ne!(s.ordner[0].name, "Zu hoch");
+    assert_eq!(namen(&s), vec!["a.txt".to_string()]);
+    // Genau auf der Grenze: gültig. Die Kette ist dann ausgeschöpft: lokal gibt es nie mehr als
+    // `ZAEHLER_MAX`, Schreibvorgänge scheitern sichtbar und ändern nichts.
+    let r =
+        e.a.sync_einspielen(&[
+            ordner(ZAEHLER_MAX, "An der Grenze"),
+            datei(ZAEHLER_MAX, "grenze.txt"),
+        ])
+        .unwrap();
+    assert!(r.verworfen.is_empty(), "{r:?}");
+    assert_eq!(r.geaendert, vec![o.clone(), dat.clone()]);
+    assert_eq!(e.sicht().ordner[0].name, "An der Grenze");
+    let vorher = fs::read(e.wurzel.join(JOURNAL)).unwrap();
+    let f = e.a.datei_umbenennen(&dat, "lokal.txt").unwrap_err();
+    assert_eq!(f.code, "ablage.zaehler_erschoepft");
+    assert_eq!(fs::read(e.wurzel.join(JOURNAL)).unwrap(), vorher);
+    assert_eq!(namen(&e.sicht()), vec!["grenze.txt".to_string()]);
+    let b = e.a.sync_bestand().unwrap();
+    assert_eq!(b.dateien[&dat].name.zaehler, ZAEHLER_MAX);
+    // Eine Wahl über der Grenze verwirft die Datei ebenfalls.
+    let mut x = b.dateien[&dat].clone();
+    x.wahlen.push(super::zusammenfuehren::Wahl {
+        zaehler: ZAEHLER_MAX + 1,
+        ..super::zusammenfuehren::neue_wahl(&x, "wahl_x", &x.fassungen[0].fas, 1, "g_t")
+    });
+    let r = e.a.sync_einspielen(&[Eingang::Datei(x)]).unwrap();
+    assert_eq!(r.verworfen, vec![dat]);
+}
