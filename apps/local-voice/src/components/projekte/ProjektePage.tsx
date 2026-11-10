@@ -133,6 +133,11 @@ export const ProjektePage: React.FC = () => {
   const istAktuell = (s: string) => aktuellRef.current === s;
   const warteschlangen = useRef(new Map<string, Promise<void>>());
   const offen = useRef(new Map<string, number>());
+  /**
+   * `stand` der zuletzt übernommenen Übersicht je Projekt: Das Schalten schickt ihn als Erwartung mit
+   * (`expectedStand`); hat sich die Auswahl seitdem von außen geändert, schaltet das Backend nicht.
+   */
+  const standVon = useRef(new Map<string, string>());
 
   useEffect(() => {
     aktuellRef.current = suiteId;
@@ -174,7 +179,10 @@ export const ProjektePage: React.FC = () => {
           try {
             const u = auspacken(await commands.projektKontextUebersicht(s));
             // Hat in diesem Projekt inzwischen ein Schalten begonnen oder geendet, gilt dessen Antwort.
-            if (gueltig() && g.schalt === sg) teilSetzen(s, { uebersicht: u });
+            if (gueltig() && g.schalt === sg) {
+              standVon.current.set(s, u.stand);
+              teilSetzen(s, { uebersicht: u });
+            }
           } catch (e) {
             merke(e);
           }
@@ -276,9 +284,10 @@ export const ProjektePage: React.FC = () => {
    * Alle Änderungen eines Projekts laufen nacheinander. Ein Form- oder Fassungswechsel liest den
    * Stand unmittelbar davor frisch vom Backend und übernimmt daraus `on`: ein ausgeschalteter
    * Eintrag bleibt aus, auch wenn die Anzeige hinterherhinkt.
-   * Bekannte Grenze: das Backend liefert keine Standkennung, die das Schalten gegen den gelesenen
-   * Stand prüft. Ändert zwischen frischem Lesen und Schalten etwas von außen denselben Eintrag,
-   * gilt der Wert aus dem Lesen (docs/plans/2026-11-08_projekte-p4.md, P4b).
+   * Das Schalten schickt den `stand` der Übersicht mit, auf die es sich bezieht (P4c-1): ein
+   * Schalterklick den zuletzt übernommenen, ein Form- oder Fassungswechsel den frisch gelesenen.
+   * Hat sich die Auswahl dazwischen von außen geändert, schaltet das Backend nicht
+   * (`projekte.stand_veraltet`); die Seite lädt dann neu und zeigt die Meldung.
    */
   const aendern = (
     e: EintragSicht,
@@ -298,16 +307,27 @@ export const ProjektePage: React.FC = () => {
         let on: boolean;
         let form: KontextForm | null = null;
         let fassung: string | null = null;
+        let erwartet: string | null = standVon.current.get(s) ?? null;
         if ("on" in wunsch) on = wunsch.on;
         else {
           const frisch = auspacken(await commands.projektKontextUebersicht(s));
           on = frisch.rows.find((z) => z.id === e.id)?.on ?? false;
           form = wunsch.form;
           fassung = wunsch.fassung;
+          erwartet = frisch.stand;
         }
         const neu = auspacken(
-          await commands.projektKontextSchalten(s, e.id, on, form, fassung),
+          await commands.projektKontextSchalten(
+            s,
+            e.id,
+            on,
+            form,
+            fassung,
+            erwartet,
+          ),
         );
+        // Die Antwort ist der neue Stand des Projekts, auch wenn es nicht mehr angezeigt wird.
+        standVon.current.set(s, neu.stand);
         // Wird das Projekt nicht mehr angezeigt, wird nichts übernommen (es lädt beim nächsten Öffnen).
         if (istAktuell(s)) {
           teilSetzen(s, { uebersicht: neu });

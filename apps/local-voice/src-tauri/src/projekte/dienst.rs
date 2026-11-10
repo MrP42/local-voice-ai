@@ -47,6 +47,15 @@ const MAX_TITEL: usize = 300;
 /// Projekt-KI erst nach P4c (Codex-Auflage 3): bis dahin liefert `kontext_fuer_ki` nichts.
 const PROJEKT_KI_FREIGEGEBEN: bool = false;
 
+/// Ist die Sperre der Projekt-KI aufgehoben? Das Versandtor (`tor.rs`) fragt vor allem anderen.
+pub(super) const fn ki_freigegeben() -> bool {
+    PROJEKT_KI_FREIGEGEBEN
+}
+
+/// Meldet, dass sich der Kontext eines Projekts geändert hat (`"*"` = aller Projekte): das Versandtor
+/// bricht dann laufende Antworten ab (P4c, Widerruf).
+pub type Widerruf = Arc<dyn Fn(&str) + Send + Sync>;
+
 impl From<ProjektFehler> for Fehler {
     fn from(e: ProjektFehler) -> Self {
         let (code, message) = match &e {
@@ -204,12 +213,14 @@ pub struct ProjektDienst {
     /// Dokumentenablage (`<Datenordner>/ablage`): Leserecht und Klasse der Verweisart `ablage`
     /// (Spec Ablage §11, D3-Vorbau).
     dokumentenablage: Option<PathBuf>,
+    /// Widerruf nach jeder Änderung, die den Kontext eines Projekts betrifft (P4c-1).
+    widerruf: Option<Widerruf>,
     /// Serialisiert Zuordnen und Abgleich: sonst koennte eine Momentaufnahme veralten, waehrend ein
     /// Eintrag fuer eine gerade angelegte Herkunft entsteht, und der Abgleich ihn faelschlich entfernen.
     sperre: tokio::sync::Mutex<()>,
 }
 
-fn proj_aus(p: &Projekt, anzahl: u32) -> SuiteProjekt {
+pub(super) fn proj_aus(p: &Projekt, anzahl: u32) -> SuiteProjekt {
     SuiteProjekt {
         id: p.id.clone(),
         title: p.title.clone(),
@@ -225,6 +236,14 @@ fn proj_aus(p: &Projekt, anzahl: u32) -> SuiteProjekt {
 
 fn quelle(e: String) -> Fehler {
     Fehler::neu("projekte.quelle", e)
+}
+
+/// Die angezeigte Auswahl ist nicht mehr die gespeicherte (Code für die Oberfläche: neu laden).
+fn stand_veraltet() -> Fehler {
+    Fehler::neu(
+        "projekte.stand_veraltet",
+        "Die Auswahl hat sich seit der Anzeige geändert. Bitte neu laden.",
+    )
 }
 
 impl ProjektDienst {
@@ -243,6 +262,7 @@ impl ProjektDienst {
             audit: None,
             ablage: None,
             dokumentenablage: None,
+            widerruf: None,
             sperre: tokio::sync::Mutex::new(()),
         })
     }
@@ -257,6 +277,23 @@ impl ProjektDienst {
     pub fn with_dokumentenablage(mut self, dir: impl Into<PathBuf>) -> Self {
         self.dokumentenablage = Some(dir.into());
         self
+    }
+
+    /// Widerruf für das Versandtor: wird nach jeder Änderung am Kontext eines Projekts gerufen
+    /// (Schalten, Form/Fassung, Entfernen, Lösen eines Ordners, Löschen, Abgleich, Web-Freigabe). Er
+    /// muss schnell und ohne Warten sein. Ein Quelltest (`tests_p4c`) hält fest, welche Pfade ihn rufen.
+    /// Eine Änderung der Klasse oder die Archivierung eines Projekts gibt es in der App noch nicht
+    /// (`wai-projekte` kennt sie, der Dienst bietet keinen Pfad dafür an); das Tor prüft beides beim
+    /// Abschluss ohnehin neu. Kommt ein solcher Pfad dazu, muss er hier widerrufen.
+    pub fn with_widerruf(mut self, f: Widerruf) -> Self {
+        self.widerruf = Some(f);
+        self
+    }
+
+    fn widerrufen(&self, projekt: &str) {
+        if let Some(f) = &self.widerruf {
+            f(projekt);
+        }
     }
 
     fn ablage(&self) -> Res<&Path> {
@@ -389,6 +426,8 @@ impl ProjektDienst {
                 },
             )
             .await?;
+        // Die Projektregeln haben sich geändert: laufende Läufe prüfen frisch.
+        self.widerrufen(id);
         self.protokoll(
             "web_freigabe",
             id,
@@ -529,6 +568,7 @@ impl ProjektDienst {
                 self.verz
                     .eintrag_entfernen(&self.principal, eintrag)
                     .await?;
+                self.widerrufen(suite_id);
                 b.entfernt += 1;
             }
         }
@@ -552,6 +592,9 @@ impl ProjektDienst {
         self.quellen
             .ordner_projekt_setzen(ordner_id, None)
             .map_err(quelle)?;
+        // Die Besprechungen des Ordners verlassen das Projekt; laufende Läufe werden sofort
+        // abgebrochen, der Abgleich widerruft für jeden entfernten Eintrag noch einmal.
+        self.widerrufen(&suite);
         self.protokoll("ordner_geloest", &suite, "ok", "geloest");
         // Existiert das Suite-Projekt nicht mehr, ist die Verknuepfung trotzdem geloest.
         if self
@@ -659,7 +702,18 @@ impl ProjektDienst {
         }
     }
 
+    /// Nimmt einen Verweis aus dem Projekt und widerruft laufende Läufe: sofort nach dem Entfernen und
+    /// auch, wenn die Entfernung scheitert (eine halb ausgeführte Änderung kann den Stand schon
+    /// verändert haben). Wurde nichts entfernt, ändert sich nichts und es wird nichts abgebrochen.
     async fn verweis_entfernen(&self, suite_id: &str, ref_: &str) -> Res<bool> {
+        let r = self.verweis_entfernen_roh(suite_id, ref_).await;
+        if r.is_err() {
+            self.widerrufen(suite_id);
+        }
+        r
+    }
+
+    async fn verweis_entfernen_roh(&self, suite_id: &str, ref_: &str) -> Res<bool> {
         let h = self.herkunft().await?;
         for e in self
             .verz
@@ -669,6 +723,9 @@ impl ProjektDienst {
             match e {
                 Eintragsansicht::Sichtbar(e) if e.ref_ == ref_ => {
                     self.verz.eintrag_entfernen(&self.principal, &e.id).await?;
+                    // Sofort nach dem Entfernen, vor allem anderen: laufende Antworten mit diesem
+                    // Inhalt brechen ab.
+                    self.widerrufen(suite_id);
                     self.ausgang_bestaetigen().await?;
                     if let Some(ablage) = &self.ablage {
                         let _ = kontext::vergessen(ablage, std::slice::from_ref(&e.id));
@@ -898,7 +955,11 @@ impl ProjektDienst {
         let _g = self.sperre.lock().await;
         Self::projekt_pruefen(suite_id)?;
         let ablage = self.ablage()?.to_path_buf();
-        dateien::entfernen_beginnen(&ablage, suite_id, datei_id).map_err(quelle)?;
+        let begonnen = dateien::entfernen_beginnen(&ablage, suite_id, datei_id).map_err(quelle);
+        // Die Datei ist ab hier (halb) entfernt, auch wenn das Beginnen scheitert: Laufende Läufe
+        // prüfen frisch, bevor die Mitgliedschaft fällt.
+        self.widerrufen(suite_id);
+        begonnen?;
         let weg = self
             .verweis_entfernen(suite_id, &projektdatei_link(suite_id, datei_id))
             .await?;
@@ -1039,6 +1100,12 @@ impl ProjektDienst {
                     sorte,
                     titel: e.title.clone().unwrap_or_default(),
                     lesbar: e.available && !link.is_empty(),
+                    // Fail-closed: eine fehlende oder unlesbare Klasse zählt als höchste.
+                    klasse: e
+                        .data_class
+                        .as_deref()
+                        .and_then(klasse_aus_text)
+                        .unwrap_or(Klasse::Restricted),
                     link,
                 }
             })
@@ -1050,10 +1117,10 @@ impl ProjektDienst {
         Ok(self.kontext_bauen(suite_id).await?.uebersicht)
     }
 
-    /// Einziger Zugang der KI-Wege zum Projektkontext (`projekt_kontext`, Spec §5.2). Bis P4c
-    /// (Widerruf, Versandrennen, Budget) gesperrt: liefert dann nichts, nur einen Fehler.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub async fn kontext_fuer_ki(&self, suite_id: &str) -> Res<Kontext> {
+    /// Einziger Zugang der KI-Wege zum Projektkontext (`projekt_kontext`, Spec §5.2). Nur das
+    /// Versandtor (`tor.rs`) ruft ihn; ein Quelltest in `tests_p4c` hält das fest. Bis P4c-4 gesperrt:
+    /// liefert dann nichts, nur einen Fehler.
+    pub(super) async fn kontext_fuer_ki(&self, suite_id: &str) -> Res<Kontext> {
         Self::projekt_pruefen(suite_id)?;
         if !PROJEKT_KI_FREIGEGEBEN {
             return Err(Fehler::neu(
@@ -1118,7 +1185,9 @@ impl ProjektDienst {
     }
 
     /// Schaltet „Als Kontext“ eines Eintrags und setzt optional Form und Fassung. Liefert die neue
-    /// Übersicht (mit neuem `stand`).
+    /// Übersicht (mit neuem `stand`). Ohne Erwartung an den Stand; die App ruft
+    /// [`Self::kontext_schalten_mit_stand`].
+    #[cfg_attr(not(test), allow(dead_code))]
     pub async fn kontext_schalten(
         &self,
         suite_id: &str,
@@ -1127,8 +1196,34 @@ impl ProjektDienst {
         form: Option<KontextForm>,
         fassung: Option<Option<String>>,
     ) -> Res<kontext::KontextUebersicht> {
+        self.kontext_schalten_mit_stand(suite_id, eintrag_id, an, form, fassung, None)
+            .await
+    }
+
+    /// Wie [`Self::kontext_schalten`]. Mit `erwartet` (der `stand` der angezeigten Übersicht) wird nur
+    /// geschaltet, wenn die Auswahl seitdem unverändert ist; sonst `projekte.stand_veraltet`, und es
+    /// ändert sich nichts. Die Prüfung gegen die Schalterdatei läuft unter derselben Sperre wie das
+    /// Schreiben, zwei Schaltvorgänge überschreiben einander also nicht.
+    pub async fn kontext_schalten_mit_stand(
+        &self,
+        suite_id: &str,
+        eintrag_id: &str,
+        an: bool,
+        form: Option<KontextForm>,
+        fassung: Option<Option<String>>,
+        erwartet: Option<&str>,
+    ) -> Res<kontext::KontextUebersicht> {
         Self::projekt_pruefen(suite_id)?;
         let ablage = self.ablage()?.to_path_buf();
+        // Version der Schalterdatei VOR dem Lesen des Stands: ändert jemand dazwischen, scheitert das
+        // Schreiben mit Konflikt.
+        let version = Schalter::laden(&ablage).version();
+        if let Some(erwartet) = erwartet {
+            let aktuell = self.kontext_uebersicht(suite_id).await?.stand;
+            if aktuell != erwartet {
+                return Err(stand_veraltet());
+            }
+        }
         let liste = self.eintraege(suite_id).await?;
         let m = Self::mitglieder(&liste)
             .into_iter()
@@ -1142,7 +1237,17 @@ impl ProjektDienst {
                 return Err(Fehler::ungueltig("Kennung der Fassung ungültig."));
             }
         }
-        kontext::setzen(&ablage, suite_id, &m, an, form, fassung).map_err(quelle)?;
+        let erwartete_version = erwartet.map(|_| &version);
+        kontext::setzen_wenn(&ablage, suite_id, &m, an, form, fassung, erwartete_version).map_err(
+            |e| {
+                if e == kontext::KONFLIKT {
+                    stand_veraltet()
+                } else {
+                    quelle(e)
+                }
+            },
+        )?;
+        self.widerrufen(suite_id);
         self.protokoll(
             "kontext_geschaltet",
             suite_id,
@@ -1163,6 +1268,10 @@ impl ProjektDienst {
 
     async fn abgleich_ohne_sperre(&self, h: &LvaHerkunft) -> Res<usize> {
         let b = self.verz.abgleich(&self.principal, h).await?;
+        if !b.waisen_entfernt.is_empty() {
+            // Der Bericht nennt kein Projekt: alle Läufe prüfen frisch (selten, nur bei verwaisten Einträgen).
+            self.widerrufen("*");
+        }
         self.ausgang_bestaetigen().await?;
         Ok(b.waisen_entfernt.len())
     }
@@ -1181,6 +1290,18 @@ impl ProjektDienst {
             .verz
             .projekt_loeschen(&self.principal, suite_id)
             .await?;
+        self.widerrufen(suite_id);
+        if let Some(ablage) = &self.ablage {
+            // Antwortregister des Tors: Merkmale dieses Projekts entfernen (Aufräumen; scheitert es,
+            // bleiben nur gesalzene Merkmale ohne Klartext liegen, die das Register begrenzt).
+            if suite_id_gueltig(suite_id)
+                && super::tor_herkunft::Register::neu(ablage)
+                    .projekt_vergessen(suite_id)
+                    .is_err()
+            {
+                self.protokoll("projekt_geloescht", suite_id, "fehler", "register");
+            }
+        }
         let ordner_geloest = self
             .quellen
             .ordner_projekt_loesen_alle(suite_id)

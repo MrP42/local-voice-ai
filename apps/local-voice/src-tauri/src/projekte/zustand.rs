@@ -9,18 +9,22 @@ use super::audit::RegisterAudit;
 use super::dienst::ProjektDienst;
 use super::quellen::{Inhalt, ProdQuellen, SeiteKurz};
 use super::recherche::{ModellQuelle, RechercheDienst, RechercheStore, RueckrufModell, SearxngWeb};
+use super::tor::{Abbruch, DateiAblage, ProjektTor, Ziel, ZielQuelle};
+use super::tor_ziel;
 use super::{lokaler_principal, Res};
 use crate::managers::meetings::store::MeetingStore;
-use std::sync::Arc;
+use async_trait::async_trait;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
 use tokio::sync::OnceCell;
 use wai_recherche::Modell;
 
-/// Beide Dienste, gemeinsam geoeffnet.
+/// Die Dienste, gemeinsam geoeffnet. `tor` ist das Versandtor der Projekt-KI (lva#365 P4c).
 pub struct Dienste {
     pub projekte: Arc<ProjektDienst>,
     pub recherche: Arc<RechercheDienst>,
+    pub tor: Arc<ProjektTor>,
 }
 
 pub struct ProjekteZustand {
@@ -86,6 +90,7 @@ impl ProjekteZustand {
             }),
         );
         let audit = Arc::new(RegisterAudit(store));
+        let tor_zelle: Arc<OnceLock<Arc<ProjektTor>>> = Arc::new(OnceLock::new());
         let rstore = RechercheStore::open(ordner.join("recherche.db"))
             .await
             .map_err(|e| e.message)?;
@@ -99,8 +104,27 @@ impl ProjekteZustand {
         .map_err(|e| e.message)?
         .with_audit(audit.clone())
         .with_ablage(ordner.clone())
-        .with_dokumentenablage(dokumentenablage);
+        .with_dokumentenablage(dokumentenablage.clone())
+        .with_widerruf({
+            // Das Tor entsteht erst nach dem Dienst (es liest ihn als Kontextquelle): bis dahin gibt
+            // es keinen Lauf, den ein Widerruf treffen koennte.
+            let (zelle, app) = (tor_zelle.clone(), self.app.clone());
+            Arc::new(move |projekt: &str| {
+                if let Some(tor) = zelle.get() {
+                    widerruf_melden(&app, &tor.widerrufen(projekt));
+                }
+            })
+        });
         let projekte = Arc::new(projekte);
+        let tor = Arc::new(ProjektTor::neu(
+            projekte.clone(),
+            Arc::new(AppZiel {
+                app: self.app.clone(),
+            }),
+            Arc::new(DateiAblage::neu(dokumentenablage)),
+            ordner.clone(),
+        ));
+        let _ = tor_zelle.set(tor.clone());
         let recherche = RechercheDienst::open(
             rstore,
             projekte.clone(),
@@ -116,7 +140,63 @@ impl ProjekteZustand {
         Ok(Arc::new(Dienste {
             projekte,
             recherche: Arc::new(recherche),
+            tor,
         }))
+    }
+
+    /// Bricht laufende Projektläufe mit Ablage-Inhalten ab (Freigaben, Klassen, Papierkorb oder
+    /// Ordner der Ablage haben sich geändert). Sind die Dienste noch nicht geöffnet, kann es keinen
+    /// Lauf geben.
+    pub fn widerrufen_ablage(&self) {
+        if let Some(d) = self.dienste.get() {
+            widerruf_melden(&self.app, &d.tor.widerrufen_ablage());
+        }
+    }
+}
+
+/// Meldet der Oberfläche abgebrochene Projektläufe (Ereignis `revoked`, stoppt auch die
+/// Sprachausgabe). Ohne abgebrochenen Lauf geschieht nichts: Eine Änderung am Projekt soll die
+/// Antworten mit App-Kontext nicht stören.
+fn widerruf_melden(app: &AppHandle, ids: &[String]) {
+    if !ids.is_empty() {
+        crate::voice_call::revoke_context_requests(app);
+    }
+}
+
+/// Nach einer Änderung an der Dokumentenablage (Befehle in `ablage/befehle.rs`): laufende Projektläufe
+/// mit Ablage-Inhalten abbrechen.
+pub fn ablage_geaendert(app: &AppHandle) {
+    if let Some(z) = app.try_state::<ProjekteZustand>() {
+        z.widerrufen_ablage();
+    }
+}
+
+/// Ziel des Versandtors: aus den Einstellungen bestimmt, nie aus der Oberflaeche. Ein lokales Ziel
+/// startet den Server vor dem Kontextlesen und bindet die Adresse (`pinned_local`).
+struct AppZiel {
+    app: AppHandle,
+}
+
+#[async_trait]
+impl ZielQuelle for AppZiel {
+    async fn ziel(&self, funktion: &str, modell: Option<&str>) -> Result<Ziel, Abbruch> {
+        let einstellungen = crate::settings::get_settings(&self.app);
+        let heute = crate::managers::compliance::today();
+        let ziel = tor_ziel::aus_einstellungen(&einstellungen, funktion, modell, &heute, None)?;
+        if !ziel.anbieter.lokal {
+            return Ok(ziel);
+        }
+        let unklar = Abbruch::ZielUnklar {
+            code: tor_ziel::CODE_ZIEL_LOKAL,
+        };
+        let adresse = crate::managers::llm::ensure_local(&ziel.modell)
+            .await
+            .map_err(|_| unklar.clone())?;
+        let kontext = crate::managers::llm::context_for_model(&ziel.modell).await;
+        let mut ziel =
+            tor_ziel::aus_einstellungen(&einstellungen, funktion, modell, &heute, Some(kontext))?;
+        ziel.pinned_local = Some(adresse);
+        Ok(ziel)
     }
 }
 
