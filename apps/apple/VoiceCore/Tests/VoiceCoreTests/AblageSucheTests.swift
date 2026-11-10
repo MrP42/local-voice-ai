@@ -293,7 +293,8 @@ final class AblageSucheTests: XCTestCase {
         XCTAssertEqual(AblageSuchtext.inhaltsWoerter("DER DIE DAS"), [])
         XCTAssertEqual(AblageSuchtext.inhaltsWoerter("fuer für"), [])
         XCTAssertEqual(AblageSuchtext.fts5Woerter("Über KÜNDIGUNG, Café"), ["uber", "kundigung", "cafe"])
-        XCTAssertEqual(AblageSuchtext.fts5Woerter("Straße"), ["straße"], "ß bleibt wie in FTS5")
+        XCTAssertEqual(AblageSuchtext.fts5Woerter("Straße"), ["straße"], "ß bleibt im Tokenizer wie in FTS5; die Faltung ist `ftsNormalisieren` davor")
+        XCTAssertEqual(AblageSuchtext.fts5Woerter(AblageSuchtext.ftsNormalisieren("Straße")), ["strasse"])
         // Schluss-Sigma wie Rust `to_lowercase`.
         XCTAssertEqual(AblageSuchtext.inhaltsWoerter("ΌΣΟΣ").map { Array($0.unicodeScalars.map(\.value)) }, [[0x3CC, 0x3C3, 0x3BF, 0x3C2]])
     }
@@ -305,7 +306,7 @@ final class AblageSucheTests: XCTestCase {
         XCTAssertEqual(ix.suche("kundigungsfrist").map(\.dat), ["dat_a"])
         XCTAssertEqual(ix.suche("KÜNDIGUNGSFRIST").first?.stellen.map(\.anker), ["zeile=1"])
         XCTAssertEqual(ix.suche("cafe").first?.stellen.map(\.anker), ["zeile=3"])
-        XCTAssertEqual(ix.suche("Strasse"), [], "ß wird nicht zu ss gefaltet (FTS5)")
+        XCTAssertEqual(ix.suche("Strasse").first?.stellen.map(\.anker), ["zeile=3"], "ß wird wie am Desktop zu ss gefaltet (lva#463)")
         XCTAssertEqual(ix.suche("der die das"), [])
         XCTAssertEqual(ix.suche(""), [])
     }
@@ -384,6 +385,206 @@ final class AblageSucheTests: XCTestCase {
             AblageIndex.vorbereiten(dat: "dat_b", abschnitte: [AblageAbschnitt(anker: "b", pfad: [], text: teile.reversed().joined(separator: " "))]),
         ])
         XCTAssertEqual(ix.suche(wort).map(\.dat), ["dat_a"], "nur die Folge in der Reihenfolge ist ein Treffer")
+    }
+
+    // MARK: Faltung ß → ss und weitere Zeichen (lva#463)
+
+    private func b(_ s: String) -> [UInt8] { Array(s.utf8) }
+
+    /// Index UND Anfrage falten; Anzeigetext und Stück bleiben das Original (ß, Æ, Ł wie abgelegt).
+    func testFaltungWirktBeiIndexUndAnfrageStueckBleibtOriginal() {
+        let text = "Die Straße der Pariser Kommune. Gäste aus Łódź und Ærø: Ørsted-Allee, Fuß-Ball."
+        let ix = AblageIndex([AblageIndex.vorbereiten(dat: "dat_a", abschnitte: [AblageAbschnitt(anker: "zeile=1", pfad: [], text: text)])])
+        for frage in ["Strasse", "STRASSE", "straße", "Straße", "StraSSe"] {
+            let t = ix.suche(frage)
+            XCTAssertEqual(t.map(\.dat), ["dat_a"], frage)
+            XCTAssertEqual(t.first?.stellen.map { b($0.auszug) }, [b(text)], "Auszug bleibt das Original (\(frage))")
+        }
+        for frage in ["Lodz", "lódź", "Aero", "Orsted", "Fuss", "Fuß", "Fuss Ball", "Ørsted"] { XCTAssertFalse(ix.suche(frage).isEmpty, frage) }
+        // Das Stück selbst trägt den Originaltext; die Länge zählt Wörter des gefalteten Texts (gleich: Faltung ändert keine Wortgrenze).
+        let st = ix.stuecke(dat: "dat_a")
+        XCTAssertEqual(st.map { b($0.text) }, [b(text)])
+        XCTAssertEqual(ix.laenge(dat: "dat_a", seite: 1), AblageSuchtext.fts5Woerter(AblageSuchtext.ftsNormalisieren(text)).count)
+        XCTAssertEqual(ix.laenge(dat: "dat_a", seite: 1), AblageSuchtext.fts5Woerter(text).count, "ß → ss, Æ → ae usw. ändern keine Wortgrenze")
+    }
+
+    /// Reihenfolge der Anfrage wie `rank`: `content_tokens` (klein, Stoppwörter), danach Faltung, danach Tokenizer. `anfrageWoerter` selbst faltet
+    /// nicht (die Wörter der Fixture bleiben „straße“); Großbuchstaben wie ẞ werden erst klein (ß), dann zu „ss“.
+    func testAnfrageFaltetNachKleinschreibungUndStoppwoertern() {
+        XCTAssertEqual(AblageIndex.anfrageWoerter("Straße Der GROẞE"), ["straße", "große"], "Wörter der Anfrage sind nicht gefaltet")
+        let ix = AblageIndex([AblageIndex.vorbereiten(dat: "dat_a", abschnitte: [AblageAbschnitt(anker: "a", pfad: [], text: "Grosse Strasse")])])
+        XCTAssertEqual(ix.suche("GROẞE").map(\.dat), ["dat_a"])
+        XCTAssertEqual(ix.suche("Große Straße").map(\.dat), ["dat_a"])
+        XCTAssertEqual(ix.suche("Große Straße").first?.stellen.count, 1)
+        // Zwei Wörter der Anfrage = zwei Phrasen: genau die doppelte Punktzahl eines Worts.
+        XCTAssertEqual(ix.rohzeilen("Strasse Strasse")[0].bm25, 2 * ix.rohzeilen("Straße")[0].bm25, accuracy: 1e-12)
+        // Stoppwörter fallen vor der Faltung heraus (wie `content_tokens` vor `fts_normalisieren`).
+        XCTAssertEqual(ix.suche("der die das"), [])
+    }
+
+    /// Codepunktgenau: kein NFC/NFD, keine Sonderbehandlung von Zeichenfolgen; nur die 21 Zeichen der Tabelle ändern sich.
+    func testFtsNormalisierenCodepunktgenauUndGrenzfaelle() {
+        XCTAssertEqual(AblageSuchtext.ftsNormalisieren(""), "")
+        XCTAssertEqual(b(AblageSuchtext.ftsNormalisieren("ASCII only 123, ÄÖÜ")), b("ASCII only 123, ÄÖÜ"))
+        // Zerlegt bleibt zerlegt, vorzusammengesetzt bleibt vorzusammengesetzt.
+        let zerlegt = "e\u{301} a\u{308}", fertig = "\u{E9} \u{E4}"
+        XCTAssertEqual(AblageSuchtext.ftsNormalisieren(zerlegt).unicodeScalars.map(\.value), zerlegt.unicodeScalars.map(\.value))
+        XCTAssertEqual(AblageSuchtext.ftsNormalisieren(fertig).unicodeScalars.map(\.value), fertig.unicodeScalars.map(\.value))
+        // ß mit angehängtem Diakritikum: nur das ß wird ersetzt, das Zeichen dahinter bleibt (der Tokenizer entfernt es).
+        XCTAssertEqual(AblageSuchtext.ftsNormalisieren("\u{DF}\u{308}").unicodeScalars.map(\.value), [0x73, 0x73, 0x308])
+        XCTAssertEqual(AblageSuchtext.fts5Woerter(AblageSuchtext.ftsNormalisieren("Stra\u{DF}\u{308}e")), ["strasse"])
+        // Nicht in der Tabelle: ſ, İ, ǅ, ﬁ, ŉ, ŋ, ŧ, ŀ, ĸ bleiben (FTS5 faltet sie selbst oder gar nicht).
+        for z in ["\u{17F}", "\u{130}", "\u{1C5}", "\u{FB01}", "\u{149}", "\u{14B}", "\u{167}", "\u{140}", "\u{138}"] {
+            XCTAssertEqual(AblageSuchtext.ftsNormalisieren(z).unicodeScalars.map(\.value), z.unicodeScalars.map(\.value), z)
+        }
+        // Alle 21 einzeln und in Folge.
+        var alle = "", soll = ""
+        for (von, nach) in AblageSuchtext.ftsFaltung {
+            XCTAssertEqual(AblageSuchtext.ftsNormalisieren(String(Character(von))), nach)
+            alle.unicodeScalars.append(von); soll += nach
+        }
+        XCTAssertEqual(b(AblageSuchtext.ftsNormalisieren(alle)), b(soll))
+        // Großbuchstaben ergeben einen kleinen Ersatz (wie `FTS_FALTUNG`: Æ → ae, Þ → th, Ĳ → ij).
+        XCTAssertEqual(AblageSuchtext.ftsNormalisieren("\u{C6}\u{DE}\u{132}\u{1E9E}"), "aethijss")
+    }
+
+    /// Große Eingabe (voller Speicher): das Ergebnis ist in UTF-8 nie länger als die Eingabe (ß → ss, þ → th gleich lang, ẞ → ss und ø → o
+    /// kürzer), höchstens zwei Skalare je Ersatz. Die Zeit wird nur großzügig begrenzt (20 s; gemessen etwa 0,3 s im Debug-Bau): der Test soll
+    /// ein überlineares Anhängen an eine `UnicodeScalarView` fangen (das brauchte hier 110 s), kein Tempo prüfen.
+    func testFtsNormalisierenGrosseEingabeNieLaenger() {
+        let n = 400_000
+        let gross = String(repeating: "\u{DF}\u{FE}x", count: n)
+        let t0 = ContinuousClock.now
+        let aus = AblageSuchtext.ftsNormalisieren(gross)
+        let dauer = ContinuousClock.now - t0
+        XCTAssertLessThan(dauer, .seconds(20), "1,2 Millionen Skalare dürfen nicht überlinear werden: \(dauer)")
+        XCTAssertEqual(aus.unicodeScalars.count, n * 5)
+        XCTAssertEqual(aus.utf8.count, n * 5)
+        XCTAssertLessThanOrEqual(aus.utf8.count, gross.utf8.count)
+        XCTAssertTrue(AblageSuchtext.ftsFaltung.allSatisfy { $0.nach.unicodeScalars.count <= 2 && !$0.nach.isEmpty && $0.nach.utf8.count <= String($0.von).utf8.count })
+        let kuerzer = AblageSuchtext.ftsNormalisieren(String(repeating: "\u{1E9E}\u{F8}", count: 1000))
+        XCTAssertEqual(kuerzer, String(repeating: "sso", count: 1000))
+    }
+
+    /// Nebenläufigkeit: reine Funktion über eine einmal aufgebaute Tabelle; viele Threads gleichzeitig liefern dasselbe.
+    func testFtsNormalisierenNebenlaeufigGleichesErgebnis() async {
+        let text = "Straße Ærø Łódź Þór Đorđe Ħal ıstanbul Ĳssel Œuvre ẞ"
+        let soll = b(AblageSuchtext.ftsNormalisieren(text))
+        XCTAssertEqual(String(decoding: soll, as: UTF8.self), "Strasse aero lódź thór dorde hal istanbul ijssel oeuvre ss")
+        let ergebnisse = await withTaskGroup(of: [UInt8].self) { gruppe -> [[UInt8]] in
+            for _ in 0..<64 {
+                gruppe.addTask {
+                    var letzte: [UInt8] = []
+                    for _ in 0..<200 { letzte = Array(AblageSuchtext.ftsNormalisieren(text).utf8) }
+                    return letzte
+                }
+            }
+            var aus: [[UInt8]] = []
+            for await e in gruppe { aus.append(e) }
+            return aus
+        }
+        XCTAssertEqual(ergebnisse.count, 64)
+        XCTAssertTrue(ergebnisse.allSatisfy { $0 == soll })
+    }
+
+    /// Ende zu Ende über den Suchdienst (Index-Tor, Zwischenspeicher): „Strasse“ findet „Straße“ und umgekehrt; der Auszug bleibt das Original.
+    func testDienstSucheFaltetSsFindetBeideSchreibweisen() async throws {
+        var a = Aufbau()
+        datei(&a, 1, name: "a.txt", fassungen: [fassung(1, text: "Die Straße ist lang.")])
+        datei(&a, 2, name: "b.txt", fassungen: [fassung(2, text: "Die Strasse ist kurz.")])
+        let (z, _) = try einspielen(a)
+        for frage in ["Strasse", "Straße", "STRASSE"] {
+            let (t, d) = await suche(z, frage)
+            XCTAssertEqual(Set(dats(t)), [W.datId(1), W.datId(2)], frage)
+            let eins = try XCTUnwrap(t.first { $0.dat == W.datId(1) })
+            XCTAssertEqual(eins.stellen.map { b($0.auszug) }, [b("Die Straße ist lang.")], "Auszug bleibt das Original")
+            // Zweiter Aufruf aus dem Zwischenspeicher (gleiche Vorbereitung): dasselbe Ergebnis.
+            await d.aktualisieren(zustand: z, speicher: speicher)
+            let wieder = await d.suche(frage)
+            XCTAssertEqual(wieder, t)
+        }
+    }
+
+    /// Migration (lva#463): Der iPhone-Index liegt nur im Speicher (D5a-4: Neuaufbau bei jedem Start aus den Textfassungen), es gibt keinen
+    /// persistierten FTS-Text und keinen Zwischenspeicher auf der Platte, also keine Umstellung wie `meta.fts_fmt` am Desktop. Dieser Test
+    /// hält das über die Typen fest: Index, Vorbereitung und Suchdienst (der Zwischenspeicher) sind weder `Encodable` noch `Decodable`. Wer
+    /// sie je auf die Platte legt (meist beginnt das mit `Codable`), stolpert hier und muss eine Fassungsmarke (Faltung v2) einführen und den
+    /// Altbestand atomar umstellen (erst schreiben, dann umbenennen), sonst findet ein alter Cache „Strasse“ nie. Grenze: Wer ohne
+    /// `Codable` von Hand schreibt, wird hier nicht erkannt; der Kommentar an `AblageSuchdienst` und `AblageIndex` nennt die Pflicht ebenfalls.
+    func testIndexUndVorbereitungSindNichtSerialisierbar() {
+        func codierbar<T>(_ typ: T.Type) -> Bool { typ is any Encodable.Type || typ is any Decodable.Type }
+        XCTAssertTrue(codierbar(String.self), "Kontrolle: die Prüfung erkennt Codable")
+        XCTAssertFalse(codierbar(AblageIndex.self), "AblageIndex ist codierbar: Index persistiert? Dann Fassungsmarke und Umstellung nötig (lva#463)")
+        XCTAssertFalse(codierbar(AblageIndex.Vorbereitet.self), "Vorbereitet ist codierbar: Zwischenspeicher persistiert? Dann Fassungsmarke und Umstellung nötig (lva#463)")
+        XCTAssertFalse(codierbar(AblageIndex.VorbereitetesStueck.self), "VorbereitetesStueck ist codierbar: Zwischenspeicher persistiert? Fassungsmarke nötig (lva#463)")
+        XCTAssertFalse(codierbar(AblageSuchdienst.self), "AblageSuchdienst ist codierbar: Zwischenspeicher persistiert? Fassungsmarke nötig (lva#463)")
+    }
+
+    /// Gemischter Bestand wie in der Fixture (`gesperrt`), durch den echten Index-Tor: die zwölf Korpusdateien leben, die drei Dateien des
+    /// Desktop-Papierkorbs liegen mit ihrem Text auf der Platte, sind aber als Papierkorb markiert. Der Tor lässt sie nie in den Index; N, n
+    /// und avgdl, damit jeder Rohrang, sind die des Korpus allein und gleich dem, was der Desktop für seinen Leser rechnet.
+    func testGesperrterBestandDurchDenTorGleichRohrangWieDesktop() async throws {
+        let data = try Data(contentsOf: AblageIndexParitaetTests.fixtureURL())
+        let root = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let korpus = try XCTUnwrap(root["korpus"] as? [[String: Any]])
+        let stat = try XCTUnwrap(root["statistik"] as? [String: Any])
+        let gesperrt = try XCTUnwrap(root["gesperrt"] as? [String: Any])
+        let gDateien = try XCTUnwrap(gesperrt["dateien"] as? [[String: Any]])
+        let gFragen = try XCTUnwrap(gesperrt["fragen"] as? [[String: Any]])
+        XCTAssertEqual(korpus.count, 12)
+        XCTAssertEqual(gDateien.count, 3)
+
+        var a = Aufbau()
+        var namen: [String: String] = [:]
+        // Nummern in der Reihenfolge der Dateinamen (Bytes), wie der Parität-Test: die Kennung entscheidet nur bei Gleichstand im Rang.
+        for (i, k) in korpus.sorted(by: { Array(($0["name"] as! String).utf8).lexicographicallyPrecedes(Array(($1["name"] as! String).utf8)) }).enumerated() {
+            let n = i + 1, name = k["name"] as! String
+            let ab = (k["abschnitte"] as! [[String: Any]]).map { (anker: $0["anker"] as! String, text: $0["text"] as! String) }
+            datei(&a, n, name: name, fassungen: [fassungMitAbschnitten(n, ab)])
+            namen[W.datId(n)] = name
+        }
+        for (i, g) in gDateien.enumerated() {
+            datei(&a, 20 + i, name: g["name"] as! String, fassungen: [fassungMitAbschnitten(20 + i, [("zeile=1", g["text"] as! String)])], korb: 5_000)
+        }
+        let (z, v) = try einspielen(a)
+        for i in gDateien.indices {   // Kontrolle: der Text der gesperrten Dateien liegt wirklich auf der Platte (Altlast), der Tor hält ihn fern.
+            let t = try XCTUnwrap(z.bestand.dateien[W.datId(20 + i)]?.fassungen[0].texte[0])
+            XCTAssertTrue(v.text(W.datId(20 + i), t.textrev), "Text von Gesperrt \(i) liegt auf der Platte")
+            XCTAssertFalse(AblageAnzeige.darfIndiziert(z, dat: W.datId(20 + i)), "Papierkorb: nie zugelassen")
+        }
+
+        let d = AblageSuchdienst()
+        let abdeckung = await d.aktualisieren(zustand: z, speicher: speicher)
+        let ix = await d.index
+        XCTAssertEqual(abdeckung.imBereich, korpus.count, "der Papierkorb ist nicht im Bereich")
+        XCTAssertEqual(abdeckung.durchsucht, korpus.count)
+        XCTAssertEqual(ix.anzahlDateien, korpus.count)
+        for i in gDateien.indices { XCTAssertEqual(ix.stuecke(dat: W.datId(20 + i)).count, 0, "gesperrte Datei \(i) ist nie ein Stück") }
+        // Dieselben Zahlen wie der Index des Desktops über den Korpus (N und Wörter, Grundlage von idf und avgdl).
+        XCTAssertEqual(ix.anzahlStuecke, stat["stuecke"] as? Int)
+        XCTAssertEqual(ix.anzahlWoerter, stat["tokens"] as? Int)
+
+        XCTAssertGreaterThanOrEqual(gFragen.count, 27)
+        for f in gFragen {
+            let frage = try XCTUnwrap(f["frage"] as? String)
+            let soll = try XCTUnwrap(f["bm25"] as? [[String: Any]])
+            let roh = ix.rohzeilen(frage)
+            XCTAssertEqual(roh.count, f["bm25_anzahl"] as? Int, "Zeilen \(frage)")
+            for (i, s) in soll.enumerated() where i < roh.count {
+                XCTAssertEqual(namen[roh[i].dat], s["name"] as? String, "Reihenfolge \(frage) #\(i)")
+                XCTAssertEqual(roh[i].seite, s["seite"] as? Int, "Seite \(frage) #\(i)")
+                let w = s["wert"] as! Double
+                XCTAssertLessThanOrEqual(abs(roh[i].bm25 - w), 1e-9 * max(abs(roh[i].bm25), abs(w), 1e-300), "bm25 \(frage) #\(i): \(roh[i].bm25) statt \(w)")
+            }
+        }
+    }
+
+    /// Eine Fassung mit mehreren Abschnitten (Anker wie in der Fixture), für den gemischten Bestand.
+    private func fassungMitAbschnitten(_ n: Int, _ abschnitte: [(anker: String, text: String)]) -> (AblageFassung, [UInt8]) {
+        var f = W.fassung(n, nil, inhalt: "Original \(n)", typ: "txt", zeit: 1_000)
+        let t = W.text(zu: f, abschnitte: abschnitte)
+        f.texte = [t.eintrag]
+        return (f, t.bytes)
     }
 }
 #endif
