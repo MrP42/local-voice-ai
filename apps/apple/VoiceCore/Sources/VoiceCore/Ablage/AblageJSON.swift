@@ -32,6 +32,22 @@ public enum AblageError: Error, Equatable, Sendable {
     case schluessel
     /// Versiegeln oder Öffnen scheiterte.
     case krypto
+    /// Der Lamport-Zähler hat `AblageZusammenfuehren.zaehlerMax` erreicht: keine Änderung mehr, nichts geschrieben.
+    case zaehlerErschoepft
+
+    /// Stabiler Fehlercode wie am Desktop (nur für `zaehlerErschoepft`; sonst der Name des Falls).
+    public var code: String {
+        switch self {
+        case .zaehlerErschoepft: return "ablage.zaehler_erschoepft"
+        case .ungueltigesJSON: return "ablage.ungueltiges_json"
+        case .zuTief: return "ablage.zu_tief"
+        case .zuGross: return "ablage.zu_gross"
+        case .feld: return "ablage.feld"
+        case .neueresSchema: return "ablage.neueres_schema"
+        case .schluessel: return "ablage.schluessel"
+        case .krypto: return "ablage.krypto"
+        }
+    }
 }
 
 extension AblageError: LocalizedError {
@@ -45,6 +61,7 @@ extension AblageError: LocalizedError {
         case .neueresSchema: return "Ablage-Objekt hat ein neueres Schema und wird von dieser App-Version nicht verstanden."
         case .schluessel: return "Ungültiger Schlüssel."
         case .krypto: return "Versiegeln oder Öffnen ist fehlgeschlagen."
+        case .zaehlerErschoepft: return "Die Ablage kann gerade keine Änderungen mehr aufnehmen."
         }
     }
 }

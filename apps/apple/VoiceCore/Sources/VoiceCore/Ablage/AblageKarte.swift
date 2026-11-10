@@ -58,19 +58,22 @@ extension AblageKarte: Equatable where Wert: Equatable {
 }
 
 /// Menge von Zeichenketten wie `BTreeSet<String>` (bytegenau, sortiert nach Bytes).
-struct AblageMenge: Sendable {
+public struct AblageMenge: Sendable, Equatable {
     private var bytes: Set<[UInt8]> = []
 
-    init() {}
-    init<S: Sequence>(_ xs: S) where S.Element == String { formUnion(xs) }
+    public init() {}
+    public init<S: Sequence>(_ xs: S) where S.Element == String { formUnion(xs) }
 
-    mutating func insert(_ x: String) { bytes.insert(Array(x.utf8)) }
-    mutating func formUnion<S: Sequence>(_ xs: S) where S.Element == String { for x in xs { insert(x) } }
-    func contains(_ x: String) -> Bool { bytes.contains(Array(x.utf8)) }
-    var count: Int { bytes.count }
+    public mutating func insert(_ x: String) { bytes.insert(Array(x.utf8)) }
+    public mutating func remove(_ x: String) { bytes.remove(Array(x.utf8)) }
+    public mutating func formUnion<S: Sequence>(_ xs: S) where S.Element == String { for x in xs { insert(x) } }
+    public func contains(_ x: String) -> Bool { bytes.contains(Array(x.utf8)) }
+    public var count: Int { bytes.count }
+    public var isEmpty: Bool { bytes.isEmpty }
+    public mutating func removeAll() { bytes.removeAll() }
 
     /// Aufsteigend nach Bytes, eindeutig.
-    var sortiert: [String] {
+    public var sortiert: [String] {
         bytes.sorted { $0.lexicographicallyPrecedes($1) }.map { String(decoding: $0, as: UTF8.self) }
     }
 }

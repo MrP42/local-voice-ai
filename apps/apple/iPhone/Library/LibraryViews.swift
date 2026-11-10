@@ -92,6 +92,8 @@ struct LibraryTab: View {
             .task {
                 // Diagnose-Startargumente für Simulator-Bilder, kein Produktpfad.
                 let args = ProcessInfo.processInfo.arguments
+                // Der Schlüsselbund des Simulators überlebt „Deinstallieren“: ein altes Test-Konto vorher abmelden.
+                if args.contains("--logout-first"), LibrarySync.shared.account != nil { await LibrarySync.shared.logout() }
                 if let i = args.firstIndex(of: "--pair-url"), i + 1 < args.count, let url = URL(string: args[i + 1]) { PairingFlow.shared.open(url) }
                 if args.contains("--library-mini"), let book = library.books.first {
                     playback.open(book, autoplay: true); playback.presented = false
@@ -115,6 +117,7 @@ struct LibraryTab: View {
                     await LibrarySync.shared.login(email: "test@example.com", password: "geheim", url: args[i + 1], deviceName: "Simulator")
                 }
                 if args.contains("--sync-test") { await LibrarySync.shared.run() }
+                if args.contains("--ablage-test") { await AblageSync.shared.debugLauf(arguments: args) }
                 guard var book = library.books.first else { return }
                 if args.contains("--library-listen") {
                     if !library.hasAudio(book) {

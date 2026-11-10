@@ -183,27 +183,52 @@ extension AblageZusammenfuehren {
         strengeKette(ordner, eltern, id).contains { g in ordner[g]?.nurGeraet.wert ?? false }
     }
 
+    /// Obergrenze für Zähler (`ZAEHLER_MAX`, lva#450/#452): Datensätze vom Hub mit einem Register-Zähler darüber gelten als
+    /// ungültig (sie ruhen wie unlesbare), und lokal wird nie mehr als diese Grenze vergeben. Ein einzelner beschädigter oder
+    /// manipulierter Datensatz kann die Kette so nicht erschöpfen. Genau `zaehlerMax` gilt noch.
+    public static let zaehlerMax: UInt64 = UInt64.max / 2
+
+    /// Größter Zähler in den Registern eines Ordners (`ordner_zaehler_max`): alle sechs.
+    public static func ordnerZaehlerMax(_ o: AblageOrdner) -> UInt64 {
+        max(o.eltern.zaehler, o.name.zaehler, o.datenklasse.zaehler, o.nurGeraet.zaehler, o.zielordnerKi.zaehler, o.papierkorb.zaehler)
+    }
+
+    /// Größter Zähler in den Registern einer Datei samt `wahlen[].zaehler` (`datei_zaehler_max`). Nicht gezählt:
+    /// `nur_geraet_min` (hat keinen Zähler) und die Zeit der Fassungen.
+    public static func dateiZaehlerMax(_ d: AblageDatei) -> UInt64 {
+        d.wahlen.reduce(max(d.ordner.zaehler, d.name.zaehler, d.klasseMin.zaehler, d.papierkorb.zaehler)) { max($0, $1.zaehler) }
+    }
+
+    /// Trägt kein Register des Ordners einen Zähler über `zaehlerMax` (`ordner_zaehler_ok`)?
+    public static func ordnerZaehlerOk(_ o: AblageOrdner) -> Bool { ordnerZaehlerMax(o) <= zaehlerMax }
+
+    /// Trägt kein Register der Datei (und keine Wahl) einen Zähler über `zaehlerMax` (`datei_zaehler_ok`)?
+    public static func dateiZaehlerOk(_ d: AblageDatei) -> Bool { dateiZaehlerMax(d) <= zaehlerMax }
+
     /// Größter bekannter Zähler über alle Register (`groesster_zaehler`): alle sechs Ordner-Register, `ordner`,
     /// `name`, `klasse_min` und `papierkorb` jeder Datei und `wahlen[].zaehler`. Nicht gezählt: `nur_geraet_min`
-    /// und die Zeit der Fassungen. Der nächste Schreibvorgang nimmt diesen Wert + 1; bei `UInt64.max` gibt es
-    /// keinen nächsten Zähler (der Aufrufer muss das prüfen, siehe `naechsterZaehler`).
+    /// und die Zeit der Fassungen. Der nächste Schreibvorgang nimmt diesen Wert + 1 (siehe `naechsterZaehler`).
     public static func groessterZaehler(_ ordner: AblageOrdnerbestand, _ dateien: AblageDateibestand) -> UInt64 {
         var m: UInt64 = 0
-        for o in ordner.values {
-            m = max(m, o.eltern.zaehler, o.name.zaehler, o.datenklasse.zaehler, o.nurGeraet.zaehler, o.zielordnerKi.zaehler, o.papierkorb.zaehler)
-        }
-        for d in dateien.values {
-            m = max(m, d.ordner.zaehler, d.name.zaehler, d.klasseMin.zaehler, d.papierkorb.zaehler)
-            for w in d.wahlen { m = max(m, w.zaehler) }
-        }
+        for o in ordner.values { m = max(m, ordnerZaehlerMax(o)) }
+        for d in dateien.values { m = max(m, dateiZaehlerMax(d)) }
         return m
     }
 
-    /// Nächster Lamport-Zähler (`zaehler`): größter bekannter Wert + 1; `nil`, wenn dafür `UInt64.max` überschritten
-    /// würde (Rust rechnet dort ungeprüft; ein Umlauf auf 0 ließe jeden späteren Stand verlieren).
+    /// Nächster Lamport-Zähler (`naechster_zaehler`): größter bekannter Wert + 1; `nil`, wenn das Ergebnis über `zaehlerMax`
+    /// läge (und damit erst recht bei Überlauf von `UInt64`, nie ein Umlauf auf 0). Lokal wird nie ein Zähler über
+    /// `zaehlerMax` vergeben: andere Geräte hielten solche Datensätze an. Jeder schreibende Aufrufer behandelt `nil` als
+    /// Fehler `ablage.zaehler_erschoepft` und schreibt nichts (siehe `naechsterZaehlerOderFehler`).
     public static func naechsterZaehler(_ ordner: AblageOrdnerbestand, _ dateien: AblageDateibestand) -> UInt64? {
         let g = groessterZaehler(ordner, dateien)
-        return g == UInt64.max ? nil : g + 1
+        return g < zaehlerMax ? g + 1 : nil
+    }
+
+    /// Wie `naechsterZaehler`, wirft aber `AblageError.zaehlerErschoepft` (Code `ablage.zaehler_erschoepft`), wenn die Kette
+    /// ausgeschöpft ist: für schreibende Pfade (D5b), die dann nichts schreiben dürfen.
+    public static func naechsterZaehlerOderFehler(_ ordner: AblageOrdnerbestand, _ dateien: AblageDateibestand) throws -> UInt64 {
+        guard let z = naechsterZaehler(ordner, dateien) else { throw AblageError.zaehlerErschoepft }
+        return z
     }
 
     // MARK: Papierkorb
