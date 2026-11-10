@@ -7488,6 +7488,43 @@
     }
   },
   "voiceCall": {
+    "projekt": {
+      "chip": "Projekt: {{name}}",
+      "chipOhneName": "Projekt",
+      "chipTitel": "Projekt öffnen",
+      "chipText": "Die Antworten stützen sich auf die Auswahl im Projekt.",
+      "schliessen": "Hinweis schließen",
+      "uebernehmen": "Auswahl übernehmen",
+      "titel": {
+        "stopp": "Nicht gesendet",
+        "info": "Hinweis",
+        "widerrufen": "Antwort entfernt",
+        "modell": "Keine Antwort"
+      },
+      "hinweis": {
+        "budget": "Zu viel Kontext für das Modell: Nötig sind {{benoetigt}} von {{fenster}} Token (Kontext {{kontext}}, Verlauf {{historie}}, Auszüge {{auszuege}}, Frage {{frage}}, Ausgabe {{ausgabe}}). Es wurde nichts gesendet und nichts gekürzt. Einträge im Projekt ausschalten oder ein Modell mit größerem Fenster wählen.",
+        "stand_veraltet": "Die Auswahl im Projekt hat sich seit der Anzeige geändert. Es wurde nichts gesendet. Die aktuelle Auswahl übernehmen und die Frage erneut stellen.",
+        "zurueckgesetzt": "Der bisherige Verlauf wurde nicht übernommen. Die Antwort beruht nur auf der letzten Frage und der aktuellen Auswahl im Projekt.",
+        "entzogen_one": "Eine frühere Antwort beruhte auf Inhalten, die nicht mehr freigegeben sind, und wurde ersetzt.",
+        "entzogen_other": "{{count}} frühere Antworten beruhten auf Inhalten, die nicht mehr freigegeben sind, und wurden ersetzt.",
+        "widerrufen": "Die Auswahl im Projekt hat sich geändert, während die Antwort entstand. Die Antwort wurde entfernt.",
+        "ki_gesperrt": "Die KI im Projekt ist noch nicht freigegeben. Es wurde nichts gesendet.",
+        "klasse_ziel": "Ein Projektinhalt ist für dieses Modell zu schutzbedürftig. Ein lokales Modell wählen oder den Eintrag ausschalten. Es wurde nichts gesendet.",
+        "ungueltig": "Das Projekt ist gerade nicht verfügbar. Es wurde nichts gesendet. Das Projekt öffnen und prüfen, ob es noch vorhanden ist.",
+        "anfrage": "Die Anfrage war unvollständig. Es wurde nichts gesendet. Die Frage bitte noch einmal stellen.",
+        "fremdkontext": "Im Projektgespräch sind nur Inhalte aus dem Projekt zulässig. Es wurde nichts gesendet.",
+        "register": "Das Antwortregister des Projekts lässt sich gerade nicht lesen oder schreiben. Solange das so bleibt, wird nichts gesendet und nichts übernommen. Später noch einmal versuchen.",
+        "ablage": "Die Dokumentenablage ist gerade nicht lesbar. Es wurde nichts gesendet. Später noch einmal versuchen.",
+        "bindung": "Dieses Gespräch lässt sich dem Projekt nicht mehr sicher zuordnen. Es wurde nichts gesendet. Ein neues Gespräch im Projekt beginnen.",
+        "werkzeuge_aus": "Im Projekt sind Werkzeuge ausgeschaltet. Es wurde nichts ausgeführt.",
+        "kein_modell": "Es ist kein zulässiges Modell gewählt. Es wurde nichts gesendet. Unter Einstellungen > KI-Modelle & Anbieter ein Modell wählen.",
+        "ziel_compliance": "Das gewählte Modell ist nach den Regeln der Organisation nicht zulässig. Es wurde nichts gesendet. Ein anderes Modell wählen.",
+        "ziel_fenster": "Für dieses Modell ist die Größe des Kontextfensters nicht bekannt. Es wurde nichts gesendet. Unter Einstellungen > KI-Modelle & Anbieter das Kontextlimit des Modells eintragen.",
+        "ziel_lokal": "Das lokale Modell ist gerade nicht bereit. Es wurde nichts gesendet. Einen Moment warten und noch einmal fragen oder ein anderes Modell wählen.",
+        "modell": "Das Modell hat nicht geantwortet. Es wurde keine Antwort übernommen. Die Frage noch einmal stellen oder ein anderes Modell wählen.",
+        "andere": "Im Projekt ist ein unerwarteter Fehler aufgetreten. Es wurde keine Antwort übernommen. Kennung: {{code}}."
+      }
+    },
     "tool": {
       "generic": "Nutze das Werkzeug „{{name}}“ …",
       "meetings_list": "Schaue in Besprechungen nach …",
@@ -8832,7 +8869,10 @@
     "ki": {
       "titel": "KI im Projekt",
       "text": "Chat und Sprachgespräch nutzen diese Auswahl, sobald sie für Projekte freigegeben sind.",
-      "gesperrt": "Gesperrt: KI-Aufrufe im Projekt folgen mit dem nächsten Schritt."
+      "gesperrt": "Gesperrt: KI-Aufrufe im Projekt folgen mit dem nächsten Schritt.",
+      "start": "Gespräch im Projekt beginnen",
+      "startGesperrt": "Gesperrt: KI-Aufrufe im Projekt folgen mit dem nächsten Schritt. Das Gespräch lässt sich erst danach beginnen.",
+      "startHinweis": "Öffnet ein neues Gespräch, das nur diese Auswahl als Kontext nutzt."
     },
     "banner": {
       "reset": "Die Kontextauswahl dieses Geräts war nicht lesbar. Zur Sicherheit sind alle Einträge ausgeschaltet. Schalte ein, was die KI nutzen soll.",

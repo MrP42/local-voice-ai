@@ -252,6 +252,10 @@ pub struct Freigabe {
     pub nachrichten: Vec<Nachricht>,
     pub ziel: Ziel,
     pub budget: Budgetbeleg,
+    /// Belege der Belegregel (`assistent::tor::Ausgabetor`): `(k, Text)` je Quelle `[Q<k>]`. Die
+    /// Projektinhalte sind `Q1` bis `Qn` (wie die Blöcke `<<<inhalt k>>>`), die Ablage-Auszüge folgen
+    /// ab `Q(n+1)`; die Nummern im Prompt sind dieselben.
+    pub quellen: Vec<(u32, String)>,
     /// Ersetzte Antworten, Blöcke und verworfene Zwischenstände.
     pub entzogen: u32,
     /// Der Verlauf wurde verworfen: nur die neue Frage ist im Prompt.
@@ -277,6 +281,7 @@ impl fmt::Debug for Freigabe {
             .field("nachrichten", &self.nachrichten.len())
             .field("ziel", &self.ziel)
             .field("budget", &self.budget)
+            .field("quellen", &self.quellen.len())
             .field("entzogen", &self.entzogen)
             .field("zurueckgesetzt", &self.zurueckgesetzt)
             .finish_non_exhaustive()
@@ -689,7 +694,7 @@ fn kennung_gueltig(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 128
         && s.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':'))
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':' | b'~'))
 }
 
 /// Wirksame Klasse eines Texts: Maximum aus Eintrags- und Projektklasse; mit Art.-9-Kennzeichen
@@ -946,10 +951,17 @@ impl ProjektTor {
                 kontext.ablage.clone(),
                 ziel.anbieter.clone(),
             );
-            let antwort = blockierend(move || q.auszuege(&f, &v, &z))
+            let mut antwort = blockierend(move || q.auszuege(&f, &v, &z))
                 .await?
                 .map_err(|_| Abbruch::Ablage { code: CODE_ABLAGE })?;
             wache.pruefen()?;
+            // Die Nummern der Auszüge folgen auf die der Projektinhalte: ein `[Q<k>]` gilt genau
+            // eine Quelle (Belegregel).
+            let versatz = u32::try_from(kontext.texte.len()).unwrap_or(u32::MAX);
+            for x in &mut antwort.auszuege {
+                x.q = x.q.saturating_add(versatz);
+                x.kennung = format!("[Q{}]", x.q);
+            }
             Some(antwort)
         };
 
@@ -1183,6 +1195,17 @@ impl ProjektTor {
                 klasse_ablage = klasse_ablage.max(Some(AblageKlasse::Unbekannt));
             }
         }
+        let quellen: Vec<(u32, String)> = kontext
+            .texte
+            .iter()
+            .zip(1u32..)
+            .map(|(t, k)| (k, t.text.clone()))
+            .chain(
+                auszuege
+                    .iter()
+                    .flat_map(|a| a.auszuege.iter().map(|x| (x.q, x.text.clone()))),
+            )
+            .collect();
         let mut nachrichten = Vec::with_capacity(bereinigte.len() + 2);
         nachrichten.push(Nachricht::neu(Rolle::System, system));
         nachrichten.extend(bereinigte);
@@ -1214,6 +1237,7 @@ impl ProjektTor {
             nachrichten,
             ziel,
             budget,
+            quellen,
             entzogen,
             zurueckgesetzt,
             abbruch: notify,

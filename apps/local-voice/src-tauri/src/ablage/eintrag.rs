@@ -15,9 +15,14 @@
 //! Cloud-Tags nur bei hydrierten Einträgen zugelassen.
 //!
 //! Fehlerfälle und Absicherung:
-//! * Datei wird zwischen Abtastung und Lesen (oder zwischen Prüfung und Öffnen) wieder online: Prüfung am
-//!   offenen Handle vor dem ersten Lesen ([`offen_urteil`]), Öffnen mit `FILE_FLAG_OPEN_NO_RECALL`; ein
-//!   solches Handle wird ohne zu lesen geschlossen.
+//! * Datei wird zwischen Abtastung und Lesen (oder zwischen Prüfung und Öffnen) wieder online: zweistufiges
+//!   Öffnen ([`oeffnen_ohne_abruf`]). Stufe 1 öffnet nur mit `FILE_READ_ATTRIBUTES` (das löst keinen Abruf
+//!   aus) und urteilt am Handle; nur bei „lesbar“ folgt Stufe 2 mit Lesezugriff, dort wird erneut am Handle
+//!   geurteilt und die Datei-Kennung mit Stufe 1 verglichen (kein Tausch dazwischen). Der Schutz kommt aus
+//!   dem Urteil VOR dem Lesezugriff; `FILE_FLAG_OPEN_NO_RECALL` allein verhindert den Abruf nicht (echte
+//!   OneDrive-Probe: Öffnen mit Lesezugriff lud die Datei herunter). Restrisiko: Eine Datei, die im Fenster
+//!   zwischen Stufe 1 und Stufe 2 (Millisekunden) ausgelagert wird, kann Stufe 2 noch erreichen; Stufe 2
+//!   prüft danach erneut, liest aber erst nach dem Urteil.
 //! * Attribute, Tag oder Handle nicht bestimmbar (Fehler der Windows-Aufrufe): als Umweg abgewiesen.
 //! * Auflisten bricht mittendrin ab (Laufwerk weg, Zugriff verweigert): der ganze Ordner gilt als nicht
 //!   lesbar, nie eine Teilliste (sonst fielen bekannte Dateien aus dem Bestand).
@@ -177,26 +182,110 @@ pub fn verzeichnis(p: &Path) -> io::Result<Vec<Eintrag>> {
     Ok(v)
 }
 
-/// Urteil über eine schon geöffnete Datei, vom Handle (`GetFileInformationByHandleEx` mit
-/// `FileAttributeTagInfo`), nicht vom Pfad. Nicht bestimmbar: Umweg (im Zweifel ablehnen). `p` ist nur für die
-/// Test-Naht.
-pub fn offen_urteil(f: &fs::File, p: &Path) -> Urteil {
+/// Attribute und Reparse-Tag einer schon geöffneten Datei, vom Handle (`GetFileInformationByHandleEx` mit
+/// `FileAttributeTagInfo`), nicht vom Pfad. `None`: nicht bestimmbar. `p` ist nur für die Test-Naht.
+pub fn offen_daten(f: &fs::File, p: &Path) -> Option<(u32, u32)> {
     let _ = p;
     #[cfg_attr(not(test), allow(unused_mut))]
-    let mut u = match system::offen(f) {
-        Ok((attribute, tag)) => reparse_urteil(tag, attribute),
-        Err(_) => Urteil::Umweg,
-    };
+    let mut d = system::offen(f).ok();
     #[cfg(test)]
-    if let Some((attribute, tag)) = naht::handle(p) {
-        u = reparse_urteil(tag, attribute);
+    if let Some(x) = naht::handle(p) {
+        d = Some(x);
     }
-    u
+    d
+}
+
+/// Urteil über eine schon geöffnete Datei, vom Handle (siehe [`offen_daten`]). Nicht bestimmbar: Umweg (im
+/// Zweifel ablehnen).
+pub fn offen_urteil(f: &fs::File, p: &Path) -> Urteil {
+    match offen_daten(f, p) {
+        Some((attribute, tag)) => reparse_urteil(tag, attribute),
+        None => Urteil::Umweg,
+    }
+}
+
+/// Kennung der geöffneten Datei: Windows (Volume-Seriennummer, Datei-Index), Unix (Gerät, Inode). `p` ist nur
+/// für die Test-Naht.
+pub fn datei_id(f: &fs::File, p: &Path) -> io::Result<(u64, u64)> {
+    let _ = p;
+    #[cfg(test)]
+    if let Some(x) = naht::id(p) {
+        return Ok(x);
+    }
+    system::id(f)
+}
+
+/// Wie [`oeffnen_ohne_abruf`] öffnet.
+#[derive(Debug, Clone, Copy)]
+pub struct OeffnenArt {
+    /// `false`: keiner Verknüpfung und keinem Reparse-Point folgen (Windows: `FILE_FLAG_OPEN_REPARSE_POINT`,
+    /// Unix: `O_NOFOLLOW`). `true`: normal öffnen (WOF und Dedup liefern dann den Inhalt).
+    pub folgen: bool,
+    /// Windows: Freigabe (`FILE_SHARE_*`) der Lesestufe; Stufe 1 gibt alles frei.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub teilen: u32,
+}
+
+/// Warum [`oeffnen_ohne_abruf`] nichts liefert.
+#[derive(Debug)]
+pub enum OeffnenFehler {
+    /// Das Urteil am Handle (Stufe 1 oder 2) war nicht „lesbar“; gelesen wurde nichts.
+    Urteil(Urteil),
+    /// Zwischen Stufe 1 und Stufe 2 wurde die Datei getauscht (andere Kennung); gelesen wurde nichts.
+    Getauscht,
+    /// Öffnen oder Abfrage scheiterte (z. B. Sharing-Verletzung, Datei fehlt).
+    Io(io::Error),
+}
+
+/// Urteil über Attribute und Tag, wie [`reparse_urteil`] (die Ablage) oder strenger/weicher (Aufrufer).
+pub type UrteilFn = fn(tag: u32, attribute: u32) -> Urteil;
+
+/// Zweistufiges Öffnen einer Datei zum Lesen, ohne dass das Öffnen selbst einen Abruf (OneDrive-Download)
+/// auslöst:
+///
+/// 1. Öffnen nur mit `FILE_READ_ATTRIBUTES` (Windows, ohne Lesezugriff; mit `FILE_FLAG_OPEN_REPARSE_POINT`
+///    und `FILE_FLAG_OPEN_NO_RECALL`), Urteil und Datei-Kennung am Handle. Nicht „lesbar“: Ende, Stufe 2
+///    wird nie aufgerufen.
+/// 2. Nur bei „lesbar“: Öffnen mit Lesezugriff nach `art`, erneut am Handle urteilen und die Kennung mit
+///    Stufe 1 vergleichen (Tausch dazwischen: [`OeffnenFehler::Getauscht`]).
+///
+/// Das Öffnen mit Lesezugriff ist nicht abrufsicher (`FILE_FLAG_OPEN_NO_RECALL` allein genügt nicht); der
+/// Schutz ist das Urteil davor. Restrisiko: Auslagern im Fenster zwischen Stufe 1 und 2 (Millisekunden).
+/// Auch ein Vorab-Urteil am Pfad ([`roh`]) ersetzt das nicht, es spart nur Öffnungen.
+pub fn oeffnen_ohne_abruf(
+    p: &Path,
+    art: OeffnenArt,
+    urteil: UrteilFn,
+) -> Result<fs::File, OeffnenFehler> {
+    let eins = system::stufe1(p, art).map_err(OeffnenFehler::Io)?;
+    let Some((attribute, tag)) = offen_daten(&eins, p) else {
+        return Err(OeffnenFehler::Urteil(Urteil::Umweg));
+    };
+    match urteil(tag, attribute) {
+        Urteil::Lesbar => {}
+        u => return Err(OeffnenFehler::Urteil(u)),
+    }
+    let id1 = datei_id(&eins, p).map_err(OeffnenFehler::Io)?;
+    #[cfg(test)]
+    naht::stufe2_gezaehlt(p);
+    let zwei = system::stufe2(p, art).map_err(OeffnenFehler::Io)?;
+    let Some((attribute, tag)) = offen_daten(&zwei, p) else {
+        return Err(OeffnenFehler::Urteil(Urteil::Umweg));
+    };
+    match urteil(tag, attribute) {
+        Urteil::Lesbar => {}
+        u => return Err(OeffnenFehler::Urteil(u)),
+    }
+    if datei_id(&zwei, p).map_err(OeffnenFehler::Io)? != id1 {
+        return Err(OeffnenFehler::Getauscht);
+    }
+    drop(eins);
+    Ok(zwei)
 }
 
 #[cfg(not(windows))]
 mod system {
-    use super::{Eintrag, Gattung, Roh};
+    use super::{Eintrag, Gattung, OeffnenArt, Roh};
     use std::fs;
     use std::io;
     use std::path::Path;
@@ -259,11 +348,47 @@ mod system {
     pub fn offen(_f: &fs::File) -> io::Result<(u32, u32)> {
         Ok((0, 0))
     }
+
+    fn oeffnen(p: &Path, art: OeffnenArt) -> io::Result<fs::File> {
+        let mut o = fs::OpenOptions::new();
+        o.read(true);
+        #[cfg(unix)]
+        if !art.folgen {
+            use std::os::unix::fs::OpenOptionsExt;
+            o.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        }
+        #[cfg(not(unix))]
+        let _ = art;
+        o.open(p)
+    }
+
+    /// Außerhalb von Windows gibt es keinen Abruf: beide Stufen öffnen gleich.
+    pub fn stufe1(p: &Path, art: OeffnenArt) -> io::Result<fs::File> {
+        oeffnen(p, art)
+    }
+
+    pub fn stufe2(p: &Path, art: OeffnenArt) -> io::Result<fs::File> {
+        oeffnen(p, art)
+    }
+
+    pub fn id(f: &fs::File) -> io::Result<(u64, u64)> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let m = f.metadata()?;
+            Ok((m.dev(), m.ino()))
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = f;
+            Ok((0, 0))
+        }
+    }
 }
 
 #[cfg(windows)]
 mod system {
-    use super::{Eintrag, Gattung, Roh, ATTR_REPARSE_POINT, ATTR_VERZEICHNIS};
+    use super::{Eintrag, Gattung, OeffnenArt, Roh, ATTR_REPARSE_POINT, ATTR_VERZEICHNIS};
     use std::ffi::{c_void, OsStr, OsString};
     use std::fs;
     use std::io;
@@ -274,8 +399,9 @@ mod system {
     use windows::Win32::Foundation::{ERROR_NO_MORE_FILES, HANDLE};
     use windows::Win32::Storage::FileSystem::{
         FileAttributeTagInfo, FindClose, FindExInfoBasic, FindExSearchNameMatch, FindFirstFileExW,
-        FindNextFileW, GetFileInformationByHandleEx, FILE_ATTRIBUTE_TAG_INFO,
-        FIND_FIRST_EX_LARGE_FETCH, WIN32_FIND_DATAW,
+        FindNextFileW, GetFileInformationByHandle, GetFileInformationByHandleEx,
+        BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_TAG_INFO, FIND_FIRST_EX_LARGE_FETCH,
+        WIN32_FIND_DATAW,
     };
 
     /// 100-ns-Schritte zwischen 1601-01-01 und 1970-01-01.
@@ -406,6 +532,48 @@ mod system {
         .map_err(io::Error::other)?;
         Ok((info.FileAttributes, info.ReparseTag))
     }
+
+    const FILE_READ_ATTRIBUTES: u32 = 0x80;
+    const FILE_SHARE_ALLES: u32 = 0x1 | 0x2 | 0x4;
+    const FILE_FLAG_OPEN_NO_RECALL: u32 = 0x0010_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
+    /// Stufe 1: nur `FILE_READ_ATTRIBUTES`, nichts lesen, alles freigeben; öffnet die Verknüpfung oder den
+    /// Platzhalter selbst (`FILE_FLAG_OPEN_REPARSE_POINT`).
+    pub fn stufe1(p: &Path, _art: OeffnenArt) -> io::Result<fs::File> {
+        use std::os::windows::fs::OpenOptionsExt;
+        fs::OpenOptions::new()
+            .access_mode(FILE_READ_ATTRIBUTES)
+            .share_mode(FILE_SHARE_ALLES)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_OPEN_NO_RECALL)
+            .open(p)
+    }
+
+    /// Stufe 2: Lesezugriff; mit `FILE_FLAG_OPEN_REPARSE_POINT` nur, wenn der Aufrufer nicht folgen will.
+    pub fn stufe2(p: &Path, art: OeffnenArt) -> io::Result<fs::File> {
+        use std::os::windows::fs::OpenOptionsExt;
+        let mut flags = FILE_FLAG_OPEN_NO_RECALL;
+        if !art.folgen {
+            flags |= FILE_FLAG_OPEN_REPARSE_POINT;
+        }
+        fs::OpenOptions::new()
+            .read(true)
+            .share_mode(art.teilen)
+            .custom_flags(flags)
+            .open(p)
+    }
+
+    /// Volume-Seriennummer und Datei-Index am Handle.
+    pub fn id(f: &fs::File) -> io::Result<(u64, u64)> {
+        let mut info = BY_HANDLE_FILE_INFORMATION::default();
+        // SAFETY: gültiges, offenes Handle; `info` ist ein beschreibbarer Puffer.
+        unsafe { GetFileInformationByHandle(HANDLE(f.as_raw_handle()), &mut info) }
+            .map_err(io::Error::other)?;
+        Ok((
+            u64::from(info.dwVolumeSerialNumber),
+            (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+        ))
+    }
 }
 
 /// Test-Naht: speist Attribute und Tags ein, wie Windows sie für OneDrive-Dateien liefert (die Art des
@@ -414,7 +582,7 @@ mod system {
 pub(crate) mod naht {
     use super::Roh;
     use std::cell::RefCell;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, VecDeque};
     use std::path::{Path, PathBuf};
 
     type Karte = RefCell<BTreeMap<PathBuf, (u32, u32)>>;
@@ -424,6 +592,41 @@ pub(crate) mod naht {
         static FIND: Karte = const { RefCell::new(BTreeMap::new()) };
         /// Pfad → (Attribute, Tag) am offenen Handle.
         static HANDLE: Karte = const { RefCell::new(BTreeMap::new()) };
+        /// Pfad → Handle-Antworten der Reihe nach (eine je Abfrage; danach gilt `HANDLE`).
+        static HANDLE_FOLGE: RefCell<BTreeMap<PathBuf, VecDeque<(u32, u32)>>> = const { RefCell::new(BTreeMap::new()) };
+        /// Pfad → Datei-Kennungen der Reihe nach (eine je Abfrage; danach die echte).
+        static ID_FOLGE: RefCell<BTreeMap<PathBuf, VecDeque<(u64, u64)>>> = const { RefCell::new(BTreeMap::new()) };
+        /// Pfad → wie oft Stufe 2 (Lesezugriff) aufgerufen wurde.
+        static STUFE2: RefCell<BTreeMap<PathBuf, usize>> = const { RefCell::new(BTreeMap::new()) };
+    }
+
+    /// Die Handle-Abfragen dieser Datei melden der Reihe nach (Attribute, Tag); danach gilt `handle_setzen`.
+    pub fn handle_folge(p: &Path, antworten: &[(u32, u32)]) {
+        HANDLE_FOLGE.with(|k| {
+            k.borrow_mut()
+                .insert(p.to_path_buf(), antworten.iter().copied().collect());
+        });
+    }
+
+    /// Die Kennungsabfragen dieser Datei melden der Reihe nach diese Werte.
+    pub fn id_folge(p: &Path, ids: &[(u64, u64)]) {
+        ID_FOLGE.with(|k| {
+            k.borrow_mut()
+                .insert(p.to_path_buf(), ids.iter().copied().collect());
+        });
+    }
+
+    /// Wie oft Stufe 2 (Lesezugriff) für diese Datei erreicht wurde.
+    pub fn stufe2_aufrufe(p: &Path) -> usize {
+        STUFE2.with(|k| k.borrow().get(p).copied().unwrap_or(0))
+    }
+
+    pub(super) fn stufe2_gezaehlt(p: &Path) {
+        STUFE2.with(|k| *k.borrow_mut().entry(p.to_path_buf()).or_insert(0) += 1);
+    }
+
+    pub(super) fn id(p: &Path) -> Option<(u64, u64)> {
+        ID_FOLGE.with(|k| k.borrow_mut().get_mut(p).and_then(VecDeque::pop_front))
     }
 
     /// Find-Daten dieses Pfades (Attribute, Tag) vortäuschen.
@@ -439,6 +642,9 @@ pub(crate) mod naht {
     pub fn leeren() {
         FIND.with(|k| k.borrow_mut().clear());
         HANDLE.with(|k| k.borrow_mut().clear());
+        HANDLE_FOLGE.with(|k| k.borrow_mut().clear());
+        ID_FOLGE.with(|k| k.borrow_mut().clear());
+        STUFE2.with(|k| k.borrow_mut().clear());
     }
 
     pub(super) fn anwenden(p: &Path, r: &mut Roh) {
@@ -449,6 +655,11 @@ pub(crate) mod naht {
     }
 
     pub(super) fn handle(p: &Path) -> Option<(u32, u32)> {
+        if let Some(x) =
+            HANDLE_FOLGE.with(|k| k.borrow_mut().get_mut(p).and_then(VecDeque::pop_front))
+        {
+            return Some(x);
+        }
         HANDLE.with(|k| k.borrow().get(p).copied())
     }
 }

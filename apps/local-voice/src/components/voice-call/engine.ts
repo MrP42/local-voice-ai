@@ -29,6 +29,13 @@ import {
   type PreparedContext,
 } from "./globalContext";
 import { useSettingsStore } from "@/stores/settingsStore";
+import {
+  hinweisAusEreignis,
+  hinweisAusFehler,
+  type ProjektBindung,
+  type ProjektBudget,
+  type ProjektHinweis,
+} from "./projekt";
 import type { StufeDto } from "@/bindings";
 import type { ChatSide } from "@/vendor/wai-voice/backend.ts";
 import {
@@ -115,6 +122,11 @@ interface VoiceCallEvent {
   index?: number;
   text?: string;
   usage?: CallUsageEvent;
+  /** `projekt`: Hinweis aus dem Projektweg (Code, Zähler, Budgetanteile; nie Inhalte). */
+  code?: string;
+  zurueckgesetzt?: boolean;
+  entzogen?: number;
+  budget?: ProjektBudget | null;
 }
 
 export interface CallCallbacks {
@@ -141,6 +153,19 @@ export interface CallCallbacks {
   ): void;
   /** Buch-Gespräch: per Sprache auf „allgemein“ oder „im Buch“ gewechselt. */
   onTalkMode?(mode: TalkMode): void;
+  /**
+   * Das Projekt des offenen Gespräches (aus dem gespeicherten Gespräch) und der Stand der Auswahl, den
+   * die Person gesehen hat; `null` in einem gewöhnlichen Gespräch. Im Projekt gibt es keinen
+   * App-Kontext, keine Werkzeuge und keinen Orchestrator; die Antwort kommt nur über das Versandtor.
+   */
+  projekt?(): ProjektBindung | null;
+  /** Hinweis aus dem Projektweg (Budgetstopp, Stand veraltet, Verlauf zurückgesetzt, …). */
+  onProjekt?(hinweis: ProjektHinweis): void;
+  /**
+   * Die laufende, noch nicht endgültige Antwortzeile entfernen (Widerruf im Projekt): Was das Tor nicht
+   * freigegeben hat, steht danach nirgends mehr, auch nicht als angefangene Antwort.
+   */
+  onVerwerfen?(): void;
 }
 
 interface ChatMessage {
@@ -185,6 +210,8 @@ interface Turn {
   heard: number;
   /** Vorlagenantwort („Ich wiederhole.“, feste Fehlermeldung): nie in den Verlauf. */
   noHistory?: boolean;
+  /** Im Projekt: der Text, den das Tor freigegeben hat (Rückgabe von `voice_call_chat`). */
+  projektText?: string;
   /** Wird einmal gerufen, wenn der Schritt zu Ende gesprochen ist (Messung E9: `fertig_ms`). */
   onEnde?: () => void;
   lastSpeechWall: number;
@@ -376,12 +403,24 @@ export class VoiceCallEngine {
     return null;
   }
 
+  /** Das Projekt des offenen Gespräches (`null`: gewöhnliches Gespräch). */
+  private projekt(): ProjektBindung | null {
+    return this.cb.projekt?.() ?? null;
+  }
+
+  /** Meldet einen Hinweis des Projektwegs (Ereignis `projekt` oder Code einer Ablehnung). */
+  private meldeProjekt(h: ProjektHinweis | null): void {
+    if (h) this.cb.onProjekt?.(h);
+  }
+
   /** Kontext für einen Schritt; `null`, wenn er nicht gilt (siehe `globalContext`). */
   private async contextFor(
     turnId: string,
     text: string,
     side: ChatSide | null | undefined,
   ): Promise<PreparedContext | null> {
+    // Im Projekt gilt nur der Kontext des Projekts, den das Tor in Rust selbst liest.
+    if (this.projekt()) return null;
     if (side || this.bookSide || !this.speakerLocal) return null;
     if (!this.globalContextOn()) return null;
     const conversationId = (await this.cb.conversationId?.()) ?? null;
@@ -820,6 +859,13 @@ export class VoiceCallEngine {
    */
   private async orchestrate(): Promise<Prepared> {
     await this.ensureListener();
+    // Im Projekt gibt es weder Denker noch Werkzeuge: der Sprecher antwortet allein, über das Tor.
+    if (this.projekt())
+      return {
+        side: null,
+        blocked: false,
+        systemPrompt: this.cfg.systemPrompt,
+      };
     if (this.bookSide)
       return {
         side: this.bookSide,
@@ -1009,7 +1055,8 @@ export class VoiceCallEngine {
         const kind: PieceKind = v.inhalt ? "inhalt" : "vorlage";
         for (const p of v.pieces) onPiece(p, kind);
         marken.fertig = performance.now();
-        if (kind === "inhalt") {
+        // Im Projekt kennt das Antwortregister die Antwort der App nicht: sie bleibt aus dem Verlauf.
+        if (kind === "inhalt" && !this.projekt()) {
           const tag = this.historyTag;
           this.history.push({
             role: "user",
@@ -1031,11 +1078,15 @@ export class VoiceCallEngine {
       const { side, blocked, systemPrompt } = await this.orchestrate();
       if (stale() || blocked) return;
       // Ab S1: Ansage sofort, danach das Modell.
-      if (plan.kind === "ansage") onPiece(plan.text, "ansage");
+      // Im Projekt ohne Ansage: Die angezeigte Antwort muss dem freigegebenen Text gleichen.
+      if (plan.kind === "ansage" && !this.projekt())
+        onPiece(plan.text, "ansage");
       const gctx = await this.contextFor(id, text, side);
       if (stale()) return;
       const frist = ersteFrist(TUNING.modelFristMs);
       let timedOut = false;
+      // Das Tor im Projekt hat die Anfrage mit einem Code abgelehnt: Die Hinweisleiste sagt den Grund.
+      let projektStopp = false;
       const onModel = (s: string) => {
         if (stale() || timedOut) return;
         // Nach einer Ansage keine zweite Überbrückung.
@@ -1063,11 +1114,18 @@ export class VoiceCallEngine {
         frist.stop();
         if (stale()) return;
       } else {
+        const projekt = this.projekt();
         this.sentenceHandlers.set(id, (e) => {
           if (stale()) return;
+          if (e.kind === "projekt") {
+            this.meldeProjekt(hinweisAusEreignis(e));
+            return;
+          }
           if (e.kind === "revoked") {
             // Freigabe entzogen: Antwort verwerfen (Codex Auflage 9).
+            if (projekt) this.meldeProjekt({ code: "projekt.widerrufen" });
             this.cancelText(false);
+            if (projekt) this.cb.onVerwerfen?.();
             return;
           }
           if (e.kind === "done" || e.kind === "failed") {
@@ -1077,10 +1135,13 @@ export class VoiceCallEngine {
           if (e.kind !== "sentence") return;
           onModel(e.text ?? "");
         });
-        const context = speakerContext(gctx);
+        // Im Projekt geht kein App-Kontext mit; die Kontextnachricht baut das Tor aus dem Projekt.
+        const context = projekt ? null : speakerContext(gctx);
         const messages = this.messagesFor(text, systemPrompt);
-        // Auch eine Antwort auf abgeleiteten Verlauf gilt als abgeleitet.
-        run.withContext = !!context || messages.some((m) => m.derived);
+        // Auch eine Antwort auf abgeleiteten Verlauf gilt als abgeleitet (nicht im Projekt: dort
+        // prüft das Antwortregister in Rust, was vom Verlauf gilt).
+        run.withContext =
+          !projekt && (!!context || messages.some((m) => m.derived));
         const conversationId = await this.konversation();
         if (stale()) return;
         this.ausgabeKey = { id: conversationId };
@@ -1090,10 +1151,14 @@ export class VoiceCallEngine {
           messages,
           context,
           conversationId,
+          expectedStand: projekt?.stand ?? null,
         }).then(
           (r) => (typeof r === "string" ? r : ""),
-          () => {
+          (e) => {
             abgelehnt = true;
+            const h = projekt ? hinweisAusFehler(e) : null;
+            projektStopp = h !== null;
+            this.meldeProjekt(h);
             return "";
           },
         );
@@ -1116,7 +1181,13 @@ export class VoiceCallEngine {
         ? modelPartial || rueckgabe
         : rueckgabe || modelPartial;
       if (!answer) {
-        // Kein Modellinhalt (Fehler, Frist, leer, vom Tor abgelehnt): feste Vorlage, nicht in den Verlauf.
+        // Im Projekt erklärt die Hinweisleiste, warum nichts gesendet wurde: keine zweite, unklare Zeile
+        // („Das kann ich gerade nicht sicher beantworten“) und kein Eintrag dazu im Gespräch.
+        if (projektStopp) {
+          if (run.partial) this.cb.onAssistant(run.partial, true, false);
+          return;
+        }
+        // Kein Modellinhalt (Fehler, Frist, leer): feste Vorlage, nicht in den Verlauf.
         onPiece(vorlage("fehler", sprache), "vorlage");
         this.cb.onAssistant(run.partial, true, false);
         return;
@@ -1129,7 +1200,9 @@ export class VoiceCallEngine {
       this.history.push({ role: "user", content: shown, turnId: id, ...tag });
       this.history.push({
         role: "assistant",
-        content: speakable(answer),
+        // Im Projekt genau der Text, den das Tor freigegeben hat: Das Antwortregister erkennt ihn
+        // am Fingerabdruck wieder, `speakable` würde die Marken entfernen.
+        content: this.projekt() ? answer : speakable(answer),
         ...tag,
         ...(run.withContext ? { ctx: true } : {}),
       });
@@ -1291,7 +1364,8 @@ export class VoiceCallEngine {
         this.dropTurn(turn);
         return;
       }
-      if (kind === "inhalt") {
+      // Im Projekt kennt das Antwortregister die Antwort der App nicht: sie bleibt aus dem Verlauf.
+      if (kind === "inhalt" && !this.projekt()) {
         const tag = this.historyTag;
         this.history.push({
           role: "user",
@@ -1315,7 +1389,9 @@ export class VoiceCallEngine {
     const { side, blocked, systemPrompt } = await this.orchestrate();
     if (dead()) return;
     // Ab S1: Ansage sofort (vor dem Abruf des Kontexts), danach das Modell.
-    if (plan.kind === "ansage" && !blocked) onPiece(plan.text, "ansage");
+    // Im Projekt ohne Ansage: Die angezeigte Antwort muss dem freigegebenen Text gleichen.
+    if (plan.kind === "ansage" && !blocked && !this.projekt())
+      onPiece(plan.text, "ansage");
     // Globaler Kontext: lokal geholt, schon beim spekulativen Start (Plan L1/M5).
     const gctx = blocked ? null : await this.contextFor(turn.id, text, side);
     turnCtx = gctx;
@@ -1330,6 +1406,8 @@ export class VoiceCallEngine {
     }
     const frist = ersteFrist(TUNING.modelFristMs);
     let timedOut = false;
+    // Das Tor im Projekt hat die Anfrage mit einem Code abgelehnt: Die Hinweisleiste sagt den Grund.
+    let projektStopp = false;
     const onModel = (s: string) => {
       if (dead() || timedOut) return;
       // Nach einer Ansage keine zweite Überbrückung (Orchestrator, Buch-Seite).
@@ -1358,7 +1436,8 @@ export class VoiceCallEngine {
       // Mit App-Kontext startet das Modell erst nach dem Commit, und der
       // Kontext wird davor erneut geprüft (Turn, Transkript, Stand; Codex
       // M5, Auflagen 6–8). Ohne Kontext bleibt der spekulative Start.
-      let context = speakerContext(gctx);
+      const projekt = this.projekt();
+      let context = projekt ? null : speakerContext(gctx);
       if (context) {
         await turn.committedP;
         if (dead()) {
@@ -1373,12 +1452,19 @@ export class VoiceCallEngine {
       const messages = this.messagesFor(text, systemPrompt);
       // Auch eine Antwort auf abgeleiteten Verlauf gilt als abgeleitet
       // (Widerruf, Route; Codex M5 Must-fix 1).
-      turn.withContext = !!context || messages.some((m) => m.derived);
+      turn.withContext =
+        !projekt && (!!context || messages.some((m) => m.derived));
       this.sentenceHandlers.set(turn.id, (e) => {
+        if (e.kind === "projekt") {
+          this.meldeProjekt(hinweisAusEreignis(e));
+          return;
+        }
         if (e.kind === "revoked") {
           // Freigabe entzogen: Antwort und Sprachausgabe sofort beenden.
+          if (projekt) this.meldeProjekt({ code: "projekt.widerrufen" });
           finishStream();
           if (this.turn === turn) this.cancelTurn(false);
+          if (projekt) this.cb.onVerwerfen?.();
           return;
         }
         if ((e.kind === "done" || e.kind === "failed") && e.usage)
@@ -1396,10 +1482,19 @@ export class VoiceCallEngine {
         messages,
         context,
         conversationId,
+        expectedStand: projekt?.stand ?? null,
       }).then(
-        () => "",
-        () => {
+        (r) => {
+          // Im Projekt ist die Rückgabe der Text, den das Tor freigegeben hat; nur er kommt in den
+          // Verlauf (leer: abgebrochen, widerrufen oder verspätet).
+          if (projekt && typeof r === "string") turn.projektText = r.trim();
+          return "";
+        },
+        (e) => {
           abgelehnt = true;
+          const h = projekt ? hinweisAusFehler(e) : null;
+          projektStopp = h !== null;
+          this.meldeProjekt(h);
           return "";
         },
       );
@@ -1419,8 +1514,16 @@ export class VoiceCallEngine {
     this.cb.onStatus?.(null);
     this.sentenceHandlers.delete(turn.id);
     if (dead()) return;
+    if (!modelText && projektStopp) {
+      // Im Projekt erklärt die Hinweisleiste, warum nichts gesendet wurde: nichts sprechen, keine zweite
+      // Zeile („Das kann ich gerade nicht sicher beantworten“), kein Eintrag im Gespräch.
+      turn.noHistory = true;
+      turn.done = true;
+      this.dropTurn(turn);
+      return;
+    }
     if (!modelText) {
-      // Kein Modellinhalt (Fehler, Frist, leer, vom Tor abgelehnt): feste Vorlage, nicht in den Verlauf.
+      // Kein Modellinhalt (Fehler, Frist, leer): feste Vorlage, nicht in den Verlauf.
       turn.noHistory = true;
       onPiece(vorlage("fehler", sprache), "vorlage");
       await chain;
@@ -1437,20 +1540,27 @@ export class VoiceCallEngine {
       return;
     }
     const tag = this.historyTag;
-    this.history.push({
-      role: "user",
-      content: turn.userText,
-      turnId: turn.id,
-      ...tag,
-    });
-    // Der Verlauf behält, was das Modell gesagt hat, nicht die Ansage.
-    this.history.push({
-      role: "assistant",
-      content: speakable(modelText),
-      ...tag,
-      ...(turn.withContext ? { ctx: true } : {}),
-    });
-    turn.historyPushed = true;
+    // Im Projekt zählt nur der freigegebene Text aus der Rückgabe; fehlt er, bleibt der Schritt aus
+    // dem Verlauf (das Register kennt dann keine Antwort, und sie wäre ohnehin ersetzt worden).
+    const verlaufText = this.projekt()
+      ? (turn.projektText ?? "")
+      : speakable(modelText);
+    if (verlaufText) {
+      this.history.push({
+        role: "user",
+        content: turn.userText,
+        turnId: turn.id,
+        ...tag,
+      });
+      // Der Verlauf behält, was das Modell gesagt hat, nicht die Ansage.
+      this.history.push({
+        role: "assistant",
+        content: verlaufText,
+        ...tag,
+        ...(turn.withContext ? { ctx: true } : {}),
+      });
+      turn.historyPushed = true;
+    }
     messenBeiEnde(stufe, true);
     this.cb.onAssistant(assistantText, true, false);
     // Die Belege prüfen nur, was das Modell gesagt hat, nicht die Ansage.

@@ -738,7 +738,11 @@ export const ProjektePage: React.FC = () => {
               aria-label={t("projektBereich.rechts")}
             >
               <div className="pb-colhead">{t("projektBereich.rechts")}</div>
-              <KontextInhalt uebersicht={uebersicht} fenster={fenster} />
+              <KontextInhalt
+                projektId={projekt?.id}
+                uebersicht={uebersicht}
+                fenster={fenster}
+              />
             </div>
           )}
         </div>
@@ -771,7 +775,11 @@ export const ProjektePage: React.FC = () => {
         }
       >
         <div className="pb-dlg" data-testid="kontext-details">
-          <KontextInhalt uebersicht={uebersicht} fenster={fenster} />
+          <KontextInhalt
+            projektId={projekt?.id}
+            uebersicht={uebersicht}
+            fenster={fenster}
+          />
         </div>
       </Dialog>
 
