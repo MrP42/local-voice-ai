@@ -45,7 +45,7 @@ mod tests;
 #[cfg(test)]
 mod tests_p4;
 #[cfg(test)]
-mod tests_p4c;
+pub(crate) mod tests_p4c;
 
 use std::fmt;
 use wai_security::{

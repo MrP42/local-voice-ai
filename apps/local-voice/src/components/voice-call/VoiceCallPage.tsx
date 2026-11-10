@@ -37,6 +37,7 @@ import { InfoLine } from "./InfoLine";
 import { LevelWave } from "./LevelWave";
 import { ModelPicker } from "./ModelPicker";
 import { PermissionChip } from "./PermissionChip";
+import { ProjektLeiste } from "./ProjektLeiste";
 import { SettingsPanel } from "./SettingsPanel";
 import { Transcript } from "./Transcript";
 import { SprachRecherche } from "../projekte/SprachRecherche";
@@ -97,6 +98,7 @@ export const VoiceCallPage: React.FC = () => {
   const textBusy = useVoiceCallStore((s) => s.textBusy);
   const toolStatus = useVoiceCallStore((s) => s.toolStatus);
   const notice = useVoiceCallStore((s) => s.notice);
+  const imProjekt = useVoiceCallStore((s) => s.projectId !== null);
   const settingsOpen = useVoiceCallStore((s) => s.settingsOpen);
   const conversations = useVoiceCallStore((s) => s.conversations);
   const conversationId = useVoiceCallStore((s) => s.conversationId);
@@ -547,16 +549,17 @@ export const VoiceCallPage: React.FC = () => {
               <>
                 {/* Codex lva#394 F2: Datenbereich bleibt ohne Öffnen sichtbar
                     (schmal in einer eigenen Zeile darunter, siehe unten). */}
-                {!narrow && <PermissionChip />}
+                {!narrow && !imProjekt && <PermissionChip />}
                 <ConversationOptions />
               </>
             }
           />
-          {narrow && (
+          {narrow && !imProjekt && (
             <div className="flex items-center px-2 border-b border-mid-gray/20 min-w-0">
               <PermissionChip />
             </div>
           )}
+          <ProjektLeiste />
           {alerts.map((a) => (
             <div
               key={`${a.kind}-${a.text}`}

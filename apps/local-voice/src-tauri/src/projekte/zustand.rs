@@ -154,13 +154,37 @@ impl ProjekteZustand {
     }
 }
 
-/// Meldet der Oberfläche abgebrochene Projektläufe (Ereignis `revoked`, stoppt auch die
-/// Sprachausgabe). Ohne abgebrochenen Lauf geschieht nichts: Eine Änderung am Projekt soll die
-/// Antworten mit App-Kontext nicht stören.
+/// Meldet der Oberfläche abgebrochene Projektläufe (Ereignis `revoked` je Anfrage, stoppt auch die
+/// Sprachausgabe dieser Anfrage). Es trifft genau die Anfragen, die das Tor nennt; ohne abgebrochenen
+/// Lauf geschieht nichts. Antworten mit App-Kontext, Notizbuch und anderer Projekte bleiben.
 fn widerruf_melden(app: &AppHandle, ids: &[String]) {
     if !ids.is_empty() {
-        crate::voice_call::revoke_context_requests(app);
+        crate::voice_call::revoke_requests(app, ids);
     }
+}
+
+/// Darf ein Gespräch an dieses Projekt gebunden werden? Die Kennung muss gültig sein, das Projekt muss
+/// es geben und darf nicht archiviert sein (lva#365 P4c-2). Der Fehlertext enthält keine Titel. Bei
+/// Erfolg: Datenklasse und Sonderkategorie des Projekts für das neue Gespräch.
+pub async fn projekt_fuer_gespraech(app: &AppHandle, id: &str) -> Result<(String, bool), String> {
+    if !super::herkunft::suite_id_gueltig(id) {
+        return Err("projekt.ungueltig: Das Projekt ist nicht verfügbar.".to_string());
+    }
+    let z = app
+        .try_state::<ProjekteZustand>()
+        .ok_or_else(|| "Die Projekte sind nicht verfügbar.".to_string())?;
+    let p = z
+        .dienste()
+        .await?
+        .projekte
+        .projekt(id)
+        .await
+        .map_err(|_| "projekt.ungueltig: Das Projekt ist nicht verfügbar.".to_string())?;
+    let sicht = super::dienst::proj_aus(&p, 0);
+    if sicht.archived {
+        return Err("projekt.ungueltig: Das Projekt ist nicht verfügbar.".to_string());
+    }
+    Ok((sicht.data_class, sicht.special_category))
 }
 
 /// Nach einer Änderung an der Dokumentenablage (Befehle in `ablage/befehle.rs`): laufende Projektläufe

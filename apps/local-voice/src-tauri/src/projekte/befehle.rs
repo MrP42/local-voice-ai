@@ -19,6 +19,22 @@ type Antwort<T> = Result<T, String>;
 
 const MODELL: &str = "app";
 
+/// Stand der Sperre der KI im Projekt (lva#365 P4c). Die Oberfläche richtet „Gespräch im Projekt
+/// beginnen“ danach aus. Es ist die feste Sperre aus `dienst.rs`, kein Laufzeitschalter.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjektKiStatus {
+    pub freigegeben: bool,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn projekt_ki_status() -> ProjektKiStatus {
+    ProjektKiStatus {
+        freigegeben: super::dienst::ki_freigegeben(),
+    }
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn projekte_liste(z: State<'_, ProjekteZustand>) -> Antwort<Vec<SuiteProjekt>> {

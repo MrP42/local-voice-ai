@@ -31,13 +31,13 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use wai_projekte::Klasse;
 
-const GEHEIM: &str = "KONTROLLTEXT-7f3a";
-const P: &str = "prj_01HZZZZZZZZZZZZZZZZZZZZZZZ";
+pub(crate) const GEHEIM: &str = "KONTROLLTEXT-7f3a";
+pub(crate) const P: &str = "prj_01HZZZZZZZZZZZZZZZZZZZZZZZ";
 const ANDERES_PROJEKT: &str = "prj_01JZZZZZZZZZZZZZZZZZZZZZZZ";
 
 // ---------------------------------------------------------------- Fakes
 
-fn ziel(lokal: bool) -> Ziel {
+pub(crate) fn ziel(lokal: bool) -> Ziel {
     Ziel {
         anbieter: ZielAnbieter {
             id: if lokal { "local" } else { "openai" }.into(),
@@ -65,7 +65,7 @@ fn ziel(lokal: bool) -> Ziel {
 }
 
 #[derive(Default)]
-struct FakeZiel {
+pub(crate) struct FakeZiel {
     ziel: Mutex<Option<Ziel>>,
     aufrufe: AtomicU32,
     fehler: Mutex<Option<Abbruch>>,
@@ -81,7 +81,7 @@ impl FakeZiel {
         })
     }
 
-    fn setzen(&self, z: Ziel) {
+    pub(crate) fn setzen(&self, z: Ziel) {
         *self.ziel.lock().unwrap() = Some(z);
     }
 }
@@ -363,14 +363,14 @@ fn bindung(g: &str) -> Bindung {
 
 // ---------------------------------------------------------------- echter Dienst
 
-struct Env {
+pub(crate) struct Env {
     _dir: tempfile::TempDir,
     _mdir: tempfile::TempDir,
-    ordner: PathBuf,
-    dienst: Arc<ProjektDienst>,
-    tor: Arc<ProjektTor>,
-    ziele: Arc<FakeZiel>,
-    widerrufe: Arc<Mutex<Vec<String>>>,
+    pub(crate) ordner: PathBuf,
+    pub(crate) dienst: Arc<ProjektDienst>,
+    pub(crate) tor: Arc<ProjektTor>,
+    pub(crate) ziele: Arc<FakeZiel>,
+    pub(crate) widerrufe: Arc<Mutex<Vec<String>>>,
     seiten: Arc<Mutex<Vec<SeiteKurz>>>,
     texte: Arc<Mutex<HashMap<String, String>>>,
 }
@@ -394,7 +394,7 @@ impl KontextQuelle for TestKontext {
     }
 }
 
-async fn env_mit(kontext_quelle: bool) -> Env {
+pub(crate) async fn env_mit(kontext_quelle: bool) -> Env {
     let dir = tempfile::tempdir().unwrap();
     let (mdir, store) = tmp_store();
     let store = Arc::new(store);
@@ -468,11 +468,11 @@ async fn env_mit(kontext_quelle: bool) -> Env {
     }
 }
 
-async fn env() -> Env {
+pub(crate) async fn env() -> Env {
     env_mit(true).await
 }
 
-fn seite(e: &Env, id: &str, text: &str) {
+pub(crate) fn seite(e: &Env, id: &str, text: &str) {
     e.seiten.lock().unwrap().push(SeiteKurz {
         id: id.into(),
         titel: format!("Text {id}"),
@@ -484,7 +484,7 @@ fn seite(e: &Env, id: &str, text: &str) {
         .insert(format!("wai://lva/seite/{id}"), text.into());
 }
 
-async fn projekt(e: &Env, klasse: Klasse) -> String {
+pub(crate) async fn projekt(e: &Env, klasse: Klasse) -> String {
     e.dienst
         .anlegen("Wärmeplanung", klasse, false)
         .await

@@ -58,6 +58,8 @@ export interface ConversationRecord {
   updated_at: string;
   pinned: boolean;
   archived: boolean;
+  /** Bereich des Gesprächs; `project_id` bindet es an ein Suite-Projekt (nur beim Anlegen gesetzt). */
+  scope?: { project_id?: string | null };
 }
 
 export interface ConversationDetail {

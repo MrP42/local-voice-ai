@@ -20,8 +20,12 @@
 //! Command-Schicht (specta) und ist für Gesprächslängen von Sekunden klein genug.
 //! Texte und Audio stehen nie im Log.
 
+pub mod projekt;
 pub mod sentences;
 pub mod turn;
+
+#[cfg(test)]
+mod projekt_quelltests;
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
@@ -374,6 +378,36 @@ pub fn revoke_context_requests(app: &AppHandle) {
     }
 }
 
+/// Widerruf einzelner Projektläufe: bricht **genau diese** Anfragen ab und meldet der Oberfläche je
+/// Anfrage `revoked` (sie nimmt den Text weg und stoppt die Sprachausgabe). Alle übrigen Antworten mit
+/// App-Kontext laufen weiter: Eine Änderung an einem Projekt betrifft nur dessen Läufe. `ids` nennt
+/// `ProjektTor::widerrufen`.
+pub fn revoke_requests(app: &AppHandle, ids: &[String]) {
+    let betroffen = revoke_only(ids);
+    for id in betroffen {
+        let _ = app.emit(
+            EVENT,
+            serde_json::json!({"kind": "revoked", "request_id": id}),
+        );
+    }
+}
+
+/// Bricht genau die genannten Anfragen ab und nimmt sie aus der Liste der Anfragen mit Kontext;
+/// andere bleiben unberührt. Liefert die Kennungen, sortiert und ohne Doppelte.
+fn revoke_only(ids: &[String]) -> Vec<String> {
+    let mut betroffen: Vec<String> = ids.to_vec();
+    betroffen.sort();
+    betroffen.dedup();
+    CONTEXT_REQUESTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|x| !betroffen.contains(x));
+    for id in &betroffen {
+        voice_call_cancel(id.clone());
+    }
+    betroffen
+}
+
 /// Lädt den Sprecher. Der eingebaute Server startet über `ensure_local` (mit
 /// Speicherschutz); Ollama lädt das Modell bei einem leeren Aufruf.
 async fn warm_speaker(target: WarmTarget) -> Result<(), String> {
@@ -420,6 +454,7 @@ pub async fn voice_call_chat(
     messages: Vec<VoiceCallMessage>,
     context: Option<crate::app_context::model::SpeakerContext>,
     conversation_id: Option<String>,
+    expected_stand: Option<String>,
 ) -> Result<String, String> {
     // Ein vorgezogener Abbruch wird zuerst eingelöst, damit er auch bei einem Fehler unten
     // nicht ewig liegen bleibt.
@@ -429,6 +464,21 @@ pub async fn voice_call_chat(
         .remove(&request_id)
     {
         return Ok(String::new());
+    }
+    // Projektgespräch (lva#365 P4c-2): ausschließlich über das Versandtor. Der Zweig steht VOR dem
+    // Notizbuchschutz und lässt ihn unberührt; ein mitgegebener App-Kontext wird nicht gelesen. Ist die
+    // Bindung des Gesprächs nicht sicher zu lesen, geht nichts hinaus.
+    if let Some(projekt) = projekt::bindung(&app, conversation_id.as_deref()).await? {
+        let gespraech = conversation_id.unwrap_or_default();
+        return projekt::chat(
+            &app,
+            request_id,
+            messages,
+            projekt,
+            gespraech,
+            expected_stand,
+        )
+        .await;
     }
     // ADR-0028 E4: Einstufung in Rust vor jedem Modellaufruf. S0, Fehler, leerer oder zu langer
     // Text: kein Netzaufruf, unabhängig vom Schalter der Oberfläche.
@@ -756,7 +806,7 @@ mod tests {
     /// Test die Kennung des anderen weg; Flake in lva#423).
     static GLOBALE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    fn globale() -> std::sync::MutexGuard<'static, ()> {
+    pub(super) fn globale() -> std::sync::MutexGuard<'static, ()> {
         GLOBALE.lock().unwrap_or_else(|e| e.into_inner())
     }
 
@@ -946,6 +996,42 @@ mod tests {
         // Ohne Abbruch: Kontext bleibt.
         let r = bind_then_check("bind-ok", async { Some("K".to_string()) }).await;
         assert_eq!(r, Ok(Some("K".to_string())));
+    }
+
+    #[test]
+    fn widerruf_von_projektlaeufen_trifft_nur_die_genannten_anfragen() {
+        let _g = globale();
+        // Zwei Anfragen mit Kontext: eine Projektlauf, eine mit Notizbuch (andere Herkunft).
+        let (projekt, fremd) = ("ctx-projekt-1", "ctx-notizbuch-1");
+        mark_context(projekt);
+        mark_context(fremd);
+        let flag = Arc::new(AtomicBool::new(false));
+        let flag_fremd = Arc::new(AtomicBool::new(false));
+        SYNTH_CANCELS
+            .lock()
+            .unwrap()
+            .entry(projekt.into())
+            .or_default()
+            .push(flag.clone());
+        SYNTH_CANCELS
+            .lock()
+            .unwrap()
+            .entry(fremd.into())
+            .or_default()
+            .push(flag_fremd.clone());
+        let ids = revoke_only(&[projekt.to_string(), projekt.to_string()]);
+        assert_eq!(ids, vec![projekt.to_string()], "ohne Doppelte");
+        assert!(flag.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(
+            !flag_fremd.load(std::sync::atomic::Ordering::SeqCst),
+            "die fremde Anfrage läuft weiter"
+        );
+        // Die fremde bleibt als Anfrage mit Kontext eingetragen und ist später noch widerrufbar.
+        let rest = revoke_ids();
+        assert!(rest.iter().any(|x| x == fremd));
+        assert!(!rest.iter().any(|x| x == projekt));
+        let _ = take_early_cancel(projekt);
+        let _ = take_early_cancel(fremd);
     }
 
     #[test]
