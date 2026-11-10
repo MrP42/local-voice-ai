@@ -4218,16 +4218,6 @@ export const TtsSettings = () => {
               : undefined
           }
           width={ws.pages.width}
-          activeSections={
-            <TabList
-              tabs={readerTabs}
-              value={tab}
-              onChange={setTab}
-              ariaLabel={t("tts.tabsLabel")}
-              vertical
-              className="lv-tablist--list"
-            />
-          }
           contents={tocRightVisible ? null : tocElement}
           visibleIds={readerFolders.visibleIds}
           langOf={readerFolders.langOf}
@@ -4320,19 +4310,14 @@ export const TtsSettings = () => {
               die Uebersetzung liegt daneben, nicht darin. Wer zurueckschaltet,
               findet seinen Text unveraendert vor. */}
               <div className="flex flex-wrap items-end gap-x-3 gap-y-1 border-b border-mid-gray/20">
-                {/* lva#365 E2: Bei offener Seitenliste stehen die Ansichten der
-                    Seite in der Liste unter ihrer Zeile; nur eingeklappt hier. */}
+                {/* lva#437: Die Ansichten der Seite stehen immer hier oben im
+                    Kopf des Readers, nie in der Seitenliste. */}
                 <TabList
                   tabs={readerTabs}
                   value={tab}
                   onChange={setTab}
                   ariaLabel={t("tts.tabsLabel")}
-                  className={`min-w-0 flex-auto ${
-                    pagesCollapsed !== "1" &&
-                    readerFolders.visibleIds.includes(activePage)
-                      ? "reader-tabs--header"
-                      : ""
-                  }`}
+                  className="min-w-0 flex-auto"
                 />
                 {/* Eigene Breite (flex-auto statt flex-1): reicht der Platz
                     nicht, bricht die Leiste um, statt über den Reitern zu liegen. */}

@@ -54,6 +54,8 @@ pub mod hinweis {
     pub const FEHLT: &str = "kontext.fehlt";
     pub const NICHT_LESBAR: &str = "kontext.nicht_lesbar";
     pub const FORM_UNGUELTIG: &str = "kontext.form";
+    /// Ablage-Eintrag (D3): keine festen Inhalte, je Frage Auszüge (`ablage::ki::auszuege`).
+    pub const AUSZUEGE: &str = "kontext.auszuege";
 
     pub fn text(code: &str) -> &'static str {
         match code {
@@ -63,6 +65,7 @@ pub mod hinweis {
             FORMAT => "Format nicht als Kontext lesbar",
             FEHLT => "Quelle fehlt",
             FORM_UNGUELTIG => "Form passt nicht zum Eintrag",
+            AUSZUEGE => "Auszüge je Frage aus der Ablage",
             _ => "Kein Leserecht",
         }
     }
@@ -82,6 +85,8 @@ pub enum KontextForm {
     Transkript,
     /// Text, Datei, Recherche: der Text selbst.
     Text,
+    /// Ablage-Eintrag (Datei oder Ordner, Spec Ablage §5.3): je Frage Top-k-Auszüge mit Abdeckung.
+    Auszuege,
 }
 
 impl KontextForm {
@@ -92,6 +97,7 @@ impl KontextForm {
             Self::Protokoll => "protokoll",
             Self::Transkript => "transkript",
             Self::Text => "text",
+            Self::Auszuege => "auszuege",
         }
     }
 }
@@ -102,6 +108,7 @@ pub fn formen(sorte: Sorte) -> &'static [KontextForm] {
         Sorte::Buch => &[KontextForm::Kurzbuch, KontextForm::Volltext],
         Sorte::Aufnahme => &[KontextForm::Protokoll, KontextForm::Transkript],
         Sorte::Sonst => &[KontextForm::Text],
+        Sorte::Ablage => &[KontextForm::Auszuege],
     }
 }
 
@@ -111,6 +118,8 @@ pub enum Sorte {
     Buch,
     Aufnahme,
     Sonst,
+    /// Verweis `wai://lva/ablage/<dat|ord>` (Spec Ablage §11, Verweisart `ablage`).
+    Ablage,
 }
 
 /// Was eine Quelle für einen Eintrag in der gewählten Form liefert.
@@ -119,6 +128,8 @@ pub enum Form {
     Text(String),
     /// Kein Text; `code` aus [`hinweis`].
     Fehlt(&'static str),
+    /// Ablage-Eintrag: keine festen Inhalte, Auszüge je Frage (P4c ruft `ablage::ki::auszuege`).
+    Auszuege,
 }
 
 /// Eine Mitgliedschaft, wie der Dienst sie sieht.
@@ -508,6 +519,9 @@ pub struct KontextText {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Kontext {
     pub texte: Vec<KontextText>,
+    /// Eingeschaltete, lesbare Ablage-Verweise (`wai://lva/ablage/<dat|ord>`), Form `auszuege`.
+    /// Anschluss P4c: je Frage `ablage::ki::auszuege(…, &KiBereich::Projekt(ablage), ziel)`.
+    pub ablage: Vec<String>,
     pub uebersicht: KontextUebersicht,
 }
 
@@ -526,6 +540,7 @@ pub fn bauen(
 ) -> Kontext {
     let mut rows = Vec::with_capacity(mitglieder.len());
     let mut texte = Vec::new();
+    let mut ablage = Vec::new();
     let mut summe: u64 = 0;
     let mut hash = Sha256::new();
     let feld = |h: &mut Sha256, s: &[u8]| {
@@ -577,6 +592,13 @@ pub fn bauen(
                 rows.push(zeile(Some(n), None));
             }
             Form::Text(_) => rows.push(zeile(None, Some(hinweis::KEIN_TEXT))),
+            Form::Auszuege => {
+                feld(&mut hash, hinweis::AUSZUEGE.as_bytes());
+                if w.an {
+                    ablage.push(m.link.clone());
+                }
+                rows.push(zeile(None, Some(hinweis::AUSZUEGE)));
+            }
             Form::Fehlt(code) => {
                 feld(&mut hash, code.as_bytes());
                 rows.push(zeile(None, Some(code)));
@@ -592,6 +614,7 @@ pub fn bauen(
             reset: schalter.lage == Lage::Defekt,
         },
         texte,
+        ablage,
     }
 }
 

@@ -432,3 +432,108 @@ fn arbeiter() {
         // über das Neuladen der Seite (`ablage_stand`) einen neuen leeren Lauf anstoßen.
     }
 }
+
+/// Feste Vektoren für den iOS-Port (D5). Eingaben und Ergebnisse sind in
+/// `docs/superpowers/plans/ablage-testvektoren.json` gespiegelt (Test `sync::ablage::vektoren`).
+#[cfg(test)]
+mod vektoren {
+    use super::super::extrakt::{textrev, Abschnitt, Textfassung};
+    use sha2::{Digest, Sha256};
+
+    const SHA_ORIG_1: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+    const SHA_ORIG_2: &str = "2222222222222222222222222222222222222222222222222222222222222222";
+
+    // BEGIN KONSTANTEN
+    /// (original_sha256, extraktor, extraktor_version, marken_version, erwartete textrev).
+    const TEXTREV: &[(&str, &str, &str, u32, &str)] = &[
+        (
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "lva-text",
+            "1",
+            1,
+            "22ce1b7c5b6b11423d01124bd33bb0e4a56b6178cc726f7bc050a8bed96fec92",
+        ),
+        (
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "lva-text",
+            "1",
+            2,
+            "7cd15f7db5bbe7a827de3f4b078d1b6b61f8865611e22ae82636c20d7e9c9436",
+        ),
+        (
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "pdf-extract",
+            "0.12.0+lva1",
+            1,
+            "c8c0037e6bac0002f2a3216831e06c414a63cb32738e87ca7ba4c51d24bab54c",
+        ),
+    ];
+    const TEXTFASSUNG_JSON: &str = r##"{"marken_version":1,"textrev":"22ce1b7c5b6b11423d01124bd33bb0e4a56b6178cc726f7bc050a8bed96fec92","original_sha256":"1111111111111111111111111111111111111111111111111111111111111111","extraktor":"lva-text","extraktor_version":"1","abschnitte":[{"anker":"zeile=1","text":"Die Miete beträgt 850 Euro."},{"anker":"absatz=2","pfad":["§ 4 Laufzeit"],"text":"Kündigung \"zum Quartal\" – ohne Frist."}]}"##;
+    const TEXTFASSUNG_SHA256: &str =
+        "c0b677fae8e4a2e4c3ba7ca24bbb96659d84457a573552771f819835437aa344";
+    // END KONSTANTEN
+
+    /// `textrev` = hex(SHA-256(original_sha256 als ASCII-Hex ‖ 0x00 ‖ extraktor ‖ 0x00 ‖ extraktor_version
+    /// ‖ 0x00 ‖ dezimal(marken_version))). Swift: dieselben Bytes zusammensetzen (Hex-TEXT des Hashes, keine
+    /// Rohbytes), SHA-256, kleingeschriebenes Hex. Extraktor und Version sind hier nur Eingaben.
+    #[test]
+    fn textrev_vektoren() {
+        for (sha, extraktor, version, marken, erwartet) in TEXTREV {
+            assert_eq!(textrev(sha, extraktor, version, *marken), *erwartet);
+        }
+        // Gegenprobe ohne die Funktion: Bytes von Hand zusammengesetzt.
+        let mut b = Vec::new();
+        b.extend_from_slice(SHA_ORIG_1.as_bytes());
+        b.push(0);
+        b.extend_from_slice(b"lva-text");
+        b.push(0);
+        b.extend_from_slice(b"1");
+        b.push(0);
+        b.extend_from_slice(b"1");
+        let h: String = Sha256::digest(&b)
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        assert_eq!(h, TEXTREV[0].4);
+        // Jedes Feld und die Marken-Version ändern die Kennung.
+        assert_ne!(TEXTREV[0].4, TEXTREV[1].4);
+        assert_ne!(TEXTREV[0].4, TEXTREV[2].4);
+    }
+
+    /// Feste Textfassung (Markenformat v1) als Datei-Bytes: `serde_json::to_vec` in Feldreihenfolge
+    /// `marken_version, textrev, original_sha256, extraktor, extraktor_version, abschnitte`; je Abschnitt
+    /// `anker`, `pfad` (fehlt, wenn leer), `text`. Nicht-ASCII bleibt Klartext, `"` wird `\"`.
+    /// `Text.blob` = SHA-256 dieser Bytes (`ablage-testvektoren.json`: `textfassung.sha256`).
+    #[test]
+    fn textfassung_json_vektor() {
+        let f = Textfassung {
+            marken_version: 1,
+            textrev: textrev(SHA_ORIG_1, "lva-text", "1", 1),
+            original_sha256: SHA_ORIG_1.to_string(),
+            extraktor: "lva-text".to_string(),
+            extraktor_version: "1".to_string(),
+            abschnitte: vec![
+                Abschnitt {
+                    anker: "zeile=1".to_string(),
+                    pfad: vec![],
+                    text: "Die Miete beträgt 850 Euro.".to_string(),
+                },
+                Abschnitt {
+                    anker: "absatz=2".to_string(),
+                    pfad: vec!["§ 4 Laufzeit".to_string()],
+                    text: "Kündigung \"zum Quartal\" – ohne Frist.".to_string(),
+                },
+            ],
+        };
+        let bytes = serde_json::to_vec(&f).unwrap();
+        assert_eq!(String::from_utf8(bytes.clone()).unwrap(), TEXTFASSUNG_JSON);
+        let h: String = Sha256::digest(&bytes)
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        assert_eq!(h, TEXTFASSUNG_SHA256);
+        let zurueck: Textfassung = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(zurueck, f);
+        let _ = SHA_ORIG_2;
+    }
+}

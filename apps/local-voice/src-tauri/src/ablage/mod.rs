@@ -1,8 +1,10 @@
-//! Dokumentenablage, Stufen D1, D2, D6 und D7 (Epic local-voice-ai#395, Issues #407/#408, wai-sdk ADR-0029).
+//! Dokumentenablage, Stufen D1, D2, D6, D7 und Vorbau D3 (Epic local-voice-ai#395, Issues #407/#408,
+//! wai-sdk ADR-0029).
 //!
 //! Lokale Ablage im Datenordner der App: Ordner, Dateien mit Fassungen, Papierkorb, sichere Ablage mit
 //! Journal und Wiederanlauf, gerätelokale KI-Freigaben (D1); Textfassungen im begrenzten Unterprozess,
-//! lokaler Index und Volltextsuche ohne KI (D2). Kein Sync (D4), keine KI (D3).
+//! lokaler Index und Volltextsuche ohne KI (D2). D3-Vorbau: Abruf, Widerrufsprüfung und Entwurfswerkzeug
+//! für die KI ([`ki`]); eingehängt in Assistent und Projekt-KI wird erst mit lva#365 P4c.
 //!
 //! * [`zusammenfuehren`]: reine Merge-Logik der synchronisierten Datensätze (keine I/O, keine Uhr).
 //! * [`aufbewahrung`]: welche Fassungen bleiben (reine Funktion).
@@ -12,6 +14,7 @@
 //! * [`textlauf`]: der Unterprozess `lva-extrakt` mit Zeit- und Speichergrenze.
 //! * [`textfassung`]: Warteschlange (ein Arbeiter, abbrechbar, Wiederanlauf aus dem Stand).
 //! * [`index`]: `index.db` über `wai-retrieval`, Abgleich und Suche.
+//! * [`ki`]: D3, Form `auszuege`, Herkunftsmarken, Widerrufsprüfung, `ablage_entwurf_anlegen`.
 //! * [`semantik`]: D6, lokale Vektoren (`multilingual-e5-small`, ONNX) für die hybride Suche (Opt-in).
 //! * [`verknuepft`]: D7, verknüpfte Ordner des Geräts (nur lesen, nie synchronisiert), Dateibeobachter.
 //! * [`ocr`]: D7, lokale Texterkennung für Bild-PDFs und Bilder (Windows.Media.Ocr; macOS noch nicht).
@@ -25,6 +28,7 @@ pub mod befehle;
 pub mod extrakt;
 pub mod freigabe;
 pub mod index;
+pub mod ki;
 pub mod ocr;
 pub mod semantik;
 pub mod speicher;
@@ -37,6 +41,8 @@ pub mod zusammenfuehren;
 mod tests;
 #[cfg(test)]
 mod tests_d2;
+#[cfg(test)]
+mod tests_d3;
 #[cfg(test)]
 mod tests_d7;
 

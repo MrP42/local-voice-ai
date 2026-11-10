@@ -68,6 +68,25 @@ pub fn ablage_link(id: &str) -> String {
     format!("{ABLAGE}{id}")
 }
 
+/// Kennung eines Ablage-Verweises (`dat_…` oder `ord_…`, streng geprüft).
+pub fn ablage_id(ref_: &str) -> Option<&str> {
+    use crate::ablage::{id_gueltig, PRAEFIX_DATEI, PRAEFIX_ORDNER};
+    ref_.strip_prefix(ABLAGE)
+        .filter(|id| id_gueltig(PRAEFIX_DATEI, id) || id_gueltig(PRAEFIX_ORDNER, id))
+}
+
+/// Klasse eines Ablage-Eintrags für `wai-projekte` (fail-closed): `confidential` und `personal` →
+/// `Personal`; unbekannt → `Restricted`.
+pub fn ablage_klasse(k: crate::ablage::zusammenfuehren::Klasse) -> Klasse {
+    use crate::ablage::zusammenfuehren::Klasse as A;
+    match k {
+        A::Public => Klasse::Public,
+        A::Internal => Klasse::Internal,
+        A::Confidential | A::Personal => Klasse::Personal,
+        A::Unbekannt => Klasse::Restricted,
+    }
+}
+
 pub fn seite_id(ref_: &str) -> Option<&str> {
     ref_.strip_prefix(SEITE).filter(|id| id_gueltig(id))
 }
