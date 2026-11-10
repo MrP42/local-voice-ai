@@ -104,6 +104,7 @@ fn resolve(
 /// Ein Durchgang eines Modells als roher Textstrom (Ereignisse `delta`, am Ende `usage`).
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub async fn voice_call_turn(
     app: AppHandle,
     request_id: String,

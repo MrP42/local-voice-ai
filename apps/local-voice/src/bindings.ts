@@ -1467,10 +1467,6 @@ async projektKontextUebersicht(suiteId: string) : Promise<Result<KontextUebersic
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * Stand der Sperre der KI im Projekt (lva#365 P4c). Die Oberfläche richtet „Gespräch im Projekt
- * beginnen“ danach aus. Es ist die feste Sperre aus `dienst.rs`, kein Laufzeitschalter.
- */
 async projektKiStatus() : Promise<ProjektKiStatus> {
     return await TAURI_INVOKE("projekt_ki_status");
 },
@@ -4345,9 +4341,9 @@ async voiceCallTranscribe(pcm16B64: string) : Promise<Result<string, string>> {
  * fertige Antwort ist der Rückgabewert. Bricht `voice_call_cancel` ab, endet
  * der Aufruf mit `Ok` und leerem Text.
  */
-async voiceCallChat(requestId: string, messages: VoiceCallMessage[], context: SpeakerContext | null, conversationId: string | null) : Promise<Result<string, string>> {
+async voiceCallChat(requestId: string, messages: VoiceCallMessage[], context: SpeakerContext | null, conversationId: string | null, expectedStand: string | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("voice_call_chat", { requestId, messages, context, conversationId }) };
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_chat", { requestId, messages, context, conversationId, expectedStand }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4356,9 +4352,9 @@ async voiceCallChat(requestId: string, messages: VoiceCallMessage[], context: Sp
 /**
  * Ein Durchgang eines Modells als roher Textstrom (Ereignisse `delta`, am Ende `usage`).
  */
-async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: string, stufe: string, forFunction: string | null, conversationId: string | null) : Promise<Result<string, string>> {
+async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: string, stufe: string, forFunction: string | null, conversationId: string | null, expectedStand: string | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("voice_call_turn", { requestId, messages, modelId, stufe, forFunction, conversationId }) };
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_turn", { requestId, messages, modelId, stufe, forFunction, conversationId, expectedStand }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4413,11 +4409,13 @@ async conversationGet(id: string) : Promise<Result<ConversationDetail, string>> 
 }
 },
 /**
- * Legt eine leere Unterhaltung an (`kind` = `voice`, Datenklasse INTERNAL).
+ * Legt eine leere Unterhaltung an (`kind` = `voice`, Datenklasse INTERNAL). Mit `project_id` gehört
+ * sie zu einem Suite-Projekt (`scope.project_id`, lva#365 P4c-2): Das Projekt muss es geben und darf
+ * nicht archiviert sein. Die Bindung wird nur hier gesetzt; kein Befehl ändert sie danach.
  */
-async conversationCreate(title: string | null) : Promise<Result<Conversation, string>> {
+async conversationCreate(title: string | null, projectId: string | null) : Promise<Result<Conversation, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("conversation_create", { title }) };
+    return { status: "ok", data: await TAURI_INVOKE("conversation_create", { title, projectId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4446,7 +4444,8 @@ async conversationSetPinned(id: string, pinned: boolean) : Promise<Result<Conver
 }
 },
 /**
- * Löscht die Unterhaltung samt aller Beiträge.
+ * Löscht die Unterhaltung samt aller Beiträge. Gehörte sie zu einem Projekt, vergisst das Versandtor
+ * ihre Antworten (`gespraech_vergessen`, lva#365 P4c-2) und merkt sich die Kennung als gelöscht.
  */
 async conversationDelete(id: string) : Promise<Result<null, string>> {
     try {
