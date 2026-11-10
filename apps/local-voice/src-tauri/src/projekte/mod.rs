@@ -7,7 +7,8 @@
 //! * [`audit`]: Protokoll ohne Inhalte.
 //! * [`tor`], [`tor_herkunft`], [`tor_ziel`]: Versandtor der Projekt-KI (lva#365 P4c-1): Ziel aus der
 //!   Konfiguration, frischer Kontext, Klassen, Bereinigung des Verlaufs, Budget, Widerruf und
-//!   Antwortregister. Noch kein Weg angeschlossen; die Sperre `PROJEKT_KI_FREIGEGEBEN` bleibt.
+//!   Antwortregister. Alle Wege laufen darüber; die Sperre `PROJEKT_KI_FREIGEGEBEN` ist seit P4c-4 aufgehoben
+//!   (ein Wert in `dienst.rs`, zugleich der Rückbau).
 //! * [`dokument`]: KI-Dokument im Projekt (lva#365 P4c-3): Einzellauf über das Tor, Entwurf in der Ablage
 //!   mit der Mindestklasse des Tors, Mitgliedschaft als Automation (aus).
 //! * [`befehle`]: die Tauri-Befehle.

@@ -1467,15 +1467,12 @@ async projektKontextUebersicht(suiteId: string) : Promise<Result<KontextUebersic
     else return { status: "error", error: e  as any };
 }
 },
-async projektKiStatus() : Promise<ProjektKiStatus> {
-    return await TAURI_INVOKE("projekt_ki_status");
-},
 /**
  * Die KI schreibt aus dem Kontext des Projekts ein Dokument und legt es als Entwurf in der Ablage ab
  * (Ablauf und Regeln: `dokument.rs`). Kontext, Klassen und Modell bestimmt das Versandtor; der Befehl
  * nimmt bewusst **keine** Mindestklasse und keine Quellen entgegen, die Oberflaeche kann die Klasse des
- * Entwurfs also nicht senken. Der Entwurf ist im Projekt ausgeschaltet. Bis zur Freischaltung (P4c-4)
- * antwortet das Tor mit `projekt.ki_gesperrt`.
+ * Entwurfs also nicht senken. Der Entwurf ist im Projekt ausgeschaltet. Ist die Sperre der KI im Projekt
+ * gesetzt (Rückbau, `dienst.rs`), antwortet das Tor mit `projekt.ki_gesperrt`.
  */
 async projektKiDokumentErstellen(suiteId: string, auftrag: string, ordner: string | null, name: string, expectedStand: string | null) : Promise<Result<DokumentErgebnis, string>> {
     try {
@@ -1560,8 +1557,8 @@ async rechercheAdresseSetzen(adresse: string | null) : Promise<Result<RechercheS
  * 
  * `mit_kontext` (lva#365 P4c-3): Die Recherche nimmt den Kontext des Projekts hinzu. Den liest das
  * Versandtor frisch, ebenso Klassen und Modell; die Oberflaeche bestimmt davon nichts. Der Lauf haelt
- * dann immer vor dem ersten Webzugriff an. Bis zur Freischaltung (P4c-4) antwortet das Tor mit
- * `projekt.ki_gesperrt`.
+ * dann immer vor dem ersten Webzugriff an. Ist die Sperre der KI im Projekt gesetzt (Rückbau,
+ * `dienst.rs`), antwortet das Tor mit `projekt.ki_gesperrt`.
  */
 async rechercheStarten(frage: string, suiteProjekt: string | null, besprechung: string | null, mitKontext: boolean | null) : Promise<Result<LaufAntwort, string>> {
     try {
@@ -12907,11 +12904,6 @@ unsupported_entries: number }
  */
 export type ProjectMinutesSummary = { id: string; folder_id: string; kind: ProjectKind; title: string; created_at: number; recordings: number; template_title: string; incomplete: boolean }
 export type ProjectSection = { id: string; title: string; kind: SectionKind; entries: ProjectEntry[] }
-/**
- * Stand der Sperre der KI im Projekt (lva#365 P4c). Die Oberfläche richtet „Gespräch im Projekt
- * beginnen“ danach aus. Es ist die feste Sperre aus `dienst.rs`, kein Laufzeitschalter.
- */
-export type ProjektKiStatus = { freigegeben: boolean }
 /**
  * Der Ablauf hinter einer Bitte um Einwilligung (B2).
  */

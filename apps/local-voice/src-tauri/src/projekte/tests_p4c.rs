@@ -3,7 +3,7 @@
 //! echtem `MeetingStore` in Temp-Ordnern. Nur synthetische Daten.
 
 use super::dienst::{proj_aus, ProjektDienst, SuiteProjekt};
-use super::kontext::{self, Form, Kontext, KontextText, KontextUebersicht};
+use super::kontext::{self, Form, Kontext, KontextForm, KontextText, KontextUebersicht};
 use super::lokaler_principal;
 use super::quellen::{Inhalt, ProdQuellen, SeiteKurz};
 use super::recherche::RechercheStore;
@@ -390,20 +390,26 @@ pub(crate) struct Env {
     pub(crate) ziele: Arc<FakeZiel>,
     pub(crate) widerrufe: Arc<Mutex<Vec<String>>>,
     seiten: Arc<Mutex<Vec<SeiteKurz>>>,
+    buecher: Arc<Mutex<Vec<Inhalt>>>,
     texte: Arc<Mutex<HashMap<String, String>>>,
 }
 
-/// Kontextquelle für Tests: der echte Dienst, aber am Sperrschalter vorbei (der ist bis P4c-4 aus).
-struct TestKontext(Arc<ProjektDienst>);
+/// Kontextquelle, die den Rückbau nachstellt (`PROJEKT_KI_FREIGEGEBEN = false`): Sie verhält sich wie
+/// der Dienst bei gesetzter Sperre, `kontext` liefert nur den Fehler `projekte.ki_gesperrt`. Alle anderen
+/// Tests laufen mit dem echten Dienst als Quelle, also ohne Umgehung der Freischaltung.
+struct GesperrteQuelle(Arc<ProjektDienst>);
 
 #[async_trait]
-impl KontextQuelle for TestKontext {
+impl KontextQuelle for GesperrteQuelle {
     fn freigegeben(&self) -> bool {
-        true
+        false
     }
 
-    async fn kontext(&self, projekt: &str) -> Res<Kontext> {
-        self.0.kontext_fuer_test(projekt).await
+    async fn kontext(&self, _projekt: &str) -> Res<Kontext> {
+        Err(super::Fehler::neu(
+            "projekte.ki_gesperrt",
+            "Die KI im Projekt ist ausgeschaltet.",
+        ))
     }
 
     async fn projekt(&self, projekt: &str) -> Res<SuiteProjekt> {
@@ -412,8 +418,10 @@ impl KontextQuelle for TestKontext {
     }
 }
 
-pub(crate) async fn env_mit(kontext_quelle: bool) -> Env {
-    env_baut(kontext_quelle, false).await
+/// `frei`: der echte Dienst als Kontextquelle (so läuft die App, die Sperre ist aufgehoben); sonst die
+/// nachgestellte Sperre (Rückbau).
+pub(crate) async fn env_mit(frei: bool) -> Env {
+    env_baut(frei, false).await
 }
 
 /// Wie `env`, mit angeschlossener Dokumentenablage: Der Dienst kennt ihre Dateien als Herkunft, das Tor
@@ -422,19 +430,31 @@ pub(crate) async fn env_mit_ablage() -> Env {
     env_baut(true, true).await
 }
 
-async fn env_baut(kontext_quelle: bool, mit_ablage: bool) -> Env {
+async fn env_baut(frei: bool, mit_ablage: bool) -> Env {
     let dir = tempfile::tempdir().unwrap();
     let (mdir, store) = tmp_store();
     let store = Arc::new(store);
     let seiten = Arc::new(Mutex::new(Vec::<SeiteKurz>::new()));
     let texte = Arc::new(Mutex::new(HashMap::<String, String>::new()));
-    let (s, t) = (seiten.clone(), texte.clone());
+    let buecher = Arc::new(Mutex::new(Vec::<Inhalt>::new()));
+    let (s, t, b) = (seiten.clone(), texte.clone(), buecher.clone());
     let quellen = Arc::new(
-        ProdQuellen::neu(store, || Ok(Vec::<Inhalt>::new()))
+        ProdQuellen::neu(store, move || Ok(b.lock().unwrap().clone()))
             .mit_seiten(move || Ok(s.lock().unwrap().clone()))
-            .mit_texten(move |link, _w| match t.lock().unwrap().get(link) {
-                Some(x) => Form::Text(x.clone()),
-                None => Form::Fehlt(kontext::hinweis::KEIN_TEXT),
+            .mit_texten(move |link, w| {
+                // Wie die App: Ein Text gilt je Form (`<link>#<Form>`, nur Bücher), sonst der Text des
+                // Verweises. Fehlt die gewählte Form des Buchs, gibt es nie einen Rückgriff auf eine andere.
+                let t = t.lock().unwrap();
+                match t
+                    .get(&format!("{link}#{:?}", w.form))
+                    .or_else(|| t.get(link))
+                {
+                    Some(x) => Form::Text(x.clone()),
+                    None if w.form == KontextForm::Kurzbuch => {
+                        Form::Fehlt(kontext::hinweis::KEIN_KURZBUCH)
+                    }
+                    None => Form::Fehlt(kontext::hinweis::KEIN_TEXT),
+                }
             }),
     );
     let ordner = dir.path().join("projekte");
@@ -470,10 +490,10 @@ async fn env_baut(kontext_quelle: bool, mit_ablage: bool) -> Env {
     }
     let dienst = Arc::new(d);
     let ziele = FakeZiel::neu(ziel(false));
-    let quelle: Arc<dyn KontextQuelle> = if kontext_quelle {
-        Arc::new(TestKontext(dienst.clone()))
-    } else {
+    let quelle: Arc<dyn KontextQuelle> = if frei {
         dienst.clone()
+    } else {
+        Arc::new(GesperrteQuelle(dienst.clone()))
     };
     let ablage: Arc<dyn AblageQuelle> = if mit_ablage {
         Arc::new(DateiAblage::neu(ablage_dir.clone()))
@@ -502,6 +522,7 @@ async fn env_baut(kontext_quelle: bool, mit_ablage: bool) -> Env {
         ziele,
         widerrufe,
         seiten,
+        buecher,
         texte,
     }
 }
@@ -532,6 +553,24 @@ pub(crate) fn seite(e: &Env, id: &str, text: &str) {
         .lock()
         .unwrap()
         .insert(format!("wai://lva/seite/{id}"), text.into());
+}
+
+/// Ein Buch im Bestand der Bibliothek (`wai://lva/buch/<id>`). `kurzbuch` ist der Text der Form Kurzbuch
+/// (`None`: es gibt keins), `volltext` der Rohtext des Buchs. Zugeordnet wird es mit `buch_zuordnen`.
+pub(crate) fn buch(e: &Env, id: &str, kurzbuch: Option<&str>, volltext: &str) {
+    e.buecher.lock().unwrap().push(Inhalt {
+        id: id.into(),
+        titel: format!("Buch {id}"),
+    });
+    let link = format!("wai://lva/buch/{id}");
+    let mut t = e.texte.lock().unwrap();
+    t.insert(
+        format!("{link}#{:?}", KontextForm::Volltext),
+        volltext.into(),
+    );
+    if let Some(k) = kurzbuch {
+        t.insert(format!("{link}#{:?}", KontextForm::Kurzbuch), k.into());
+    }
 }
 
 /// Ändert den Text einer schon bekannten Seite, ohne dass der Dienst etwas davon erfährt (wie eine
@@ -1051,7 +1090,7 @@ async fn projekt_archiviert_oder_klasse_unbekannt_gibt_nichts_frei() {
 }
 
 #[tokio::test]
-async fn sperre_gibt_nichts_frei_und_startet_kein_modell() {
+async fn gesetzte_sperre_gibt_nichts_frei_und_startet_kein_modell() {
     // Fake mit Sperre.
     let s = szene();
     s.kontext.frei.store(false, Ordering::SeqCst);
@@ -1059,7 +1098,7 @@ async fn sperre_gibt_nichts_frei_und_startet_kein_modell() {
     assert_eq!(r.err(), Some(Abbruch::Gesperrt));
     assert_eq!(s.ziele.aufrufe.load(Ordering::SeqCst), 0);
     assert_eq!(s.kontext.aufrufe.load(Ordering::SeqCst), 0);
-    // Produktion: der echte Dienst ist bis P4c-4 gesperrt (Quelle `kontext_fuer_ki`).
+    // Rückbau: Mit gesetzter Sperre gibt auch der echte Dienst nichts frei (Quelle `kontext_fuer_ki`).
     let e = env_mit(false).await;
     let p = projekt(&e, Klasse::Internal).await;
     seite(&e, "s1", GEHEIM);

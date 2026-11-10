@@ -13,8 +13,9 @@
 //! Quellen dieses Turns, denen aller behaltenen Texte und den berechtigten Marken aus den übrigen
 //! Texten; die Klassen sind das Maximum daraus. `abschliessen` prüft diese ganze Menge neu.
 //!
-//! P4c-1 schließt **keinen** Weg an: Die Sperre `PROJEKT_KI_FREIGEGEBEN` bleibt `false`. Das Tor ist mit
-//! Attrappen für Ziel, Kontext und Ablage getestet.
+//! Angeschlossen sind Chat und Sprache (`voice_call/projekt.rs`), Recherche (`recherche.rs`), KI-Dokument
+//! (`dokument.rs`) und die Einzelläufe des Stapels (`einzellauf`). Seit P4c-4 ist die Sperre
+//! `PROJEKT_KI_FREIGEGEBEN` aufgehoben; sie bleibt als Rückbau (ein Wert) bestehen.
 //!
 //! Sicherheitsregeln:
 //! - Fail-closed: Jeder Fehler, jede unlesbare Quelle und jede unklare Lage führt zu einem Abbruch oder
@@ -361,7 +362,7 @@ impl fmt::Debug for Versandschein {
 /// Warum das Tor nicht freigibt oder eine Antwort nicht übernimmt. Enthält nie Inhalte.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Abbruch {
-    /// Die Sperre der Projekt-KI ist nicht aufgehoben (bis P4c-4).
+    /// Die Sperre der Projekt-KI ist gesetzt (Rückbau, `PROJEKT_KI_FREIGEGEBEN` in `dienst.rs`).
     Gesperrt,
     /// Das Projekt gibt es nicht, ist archiviert oder die Kennung ist ungültig.
     ProjektUngueltig,
@@ -412,7 +413,9 @@ impl Abbruch {
     /// Verständlicher Text ohne Inhalte, Titel oder Namen.
     pub fn text(&self) -> String {
         match self {
-            Abbruch::Gesperrt => "Die KI im Projekt ist noch nicht freigegeben.".into(),
+            Abbruch::Gesperrt => {
+                "Die KI im Projekt ist ausgeschaltet. Es wurde nichts gesendet.".into()
+            }
             Abbruch::ProjektUngueltig => "Das Projekt ist nicht verfügbar.".into(),
             Abbruch::Anfrage => "Die Anfrage ist ungültig.".into(),
             Abbruch::StandVeraltet => {

@@ -19,7 +19,7 @@ export interface StartErgebnis {
  * ist die Besprechung, aus der gefragt wird; das Backend prüft, dass das Projekt zu ihr gehört.
  * Mit `mitKontext` nimmt das Backend den Kontext des Projekts hinzu (lva#365 P4c-3): Das Versandtor
  * liest ihn frisch, und der Lauf hält vor der Suche immer an. Ob das erlaubt ist, entscheidet das
- * Backend (feste Sperre bis P4c-4), nie die Oberfläche.
+ * Backend (Tor), nie die Oberfläche.
  */
 export function useRechercheStart() {
   const { t } = useTranslation();

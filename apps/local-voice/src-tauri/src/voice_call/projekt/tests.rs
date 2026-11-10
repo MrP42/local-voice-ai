@@ -1,7 +1,7 @@
 //! lva#365 P4c-2: Tests des Projektzweigs. Der Kern (`durchlauf`) läuft mit dem echten Versandtor
 //! (`ProjektDienst` und `ProjektTor` aus `projekte::tests_p4c`, echte Dateien in Temp-Ordnern) und einer
-//! Attrappe für Sendeweg und Meldungen. Die Sperre `PROJEKT_KI_FREIGEGEBEN` bleibt aus; die Tests öffnen
-//! sie nur über die Kontextquelle der Tests (`env`), nie über einen Schalter der Laufzeit. Nur
+//! Attrappe für Sendeweg und Meldungen. Der Dienst ist die echte Kontextquelle (die Sperre
+//! `PROJEKT_KI_FREIGEGEBEN` ist seit P4c-4 aufgehoben); den Rückbau stellt `env_mit(false)` nach. Nur
 //! synthetische Daten.
 //!
 //! Die Läufe teilen sich die Listen der Abbrüche (`CANCELS`, `CONTEXT_REQUESTS`) mit den übrigen Tests
@@ -9,7 +9,8 @@
 
 use super::*;
 use crate::conversations::store::{ConversationStore, ProjectBinding};
-use crate::projekte::tests_p4c::{env, env_mit, projekt, seite, ziel, Env, GEHEIM};
+use crate::projekte::kontext::KontextForm;
+use crate::projekte::tests_p4c::{buch, env, env_mit, projekt, seite, ziel, Env, GEHEIM};
 use crate::projekte::tor::{CODE_KLASSE, ENTZOGEN_ANTWORT_PROJEKT};
 use crate::projekte::tor_herkunft::{self, Register};
 use crate::voice_call::tests::globale;
@@ -1089,10 +1090,10 @@ fn defektes_register_setzt_den_verlauf_zurueck_und_meldet_es() {
 }
 
 #[test]
-fn sperre_der_projekt_ki_bleibt_ohne_freigabe() {
+fn gesetzte_sperre_der_projekt_ki_sendet_nichts_und_meldet_es() {
     lauf(async {
         for art in ARTEN {
-            // Ohne die Kontextquelle der Tests gilt die echte Sperre (`PROJEKT_KI_FREIGEGEBEN` aus).
+            // Rückbau: Bei gesetzter Sperre (`PROJEKT_KI_FREIGEGEBEN = false`) geht nichts hinaus.
             let e = env_mit(false).await;
             let p = projekt_mit(&e, Klasse::Internal, &[("s1", BELEG)]).await;
             let (weg, bote) = (FakeWeg::mit(&[ANTWORT]), FakeBote::default());
@@ -1652,4 +1653,69 @@ fn projekt_id_bleibt_nach_aenderungen_am_gespraech_unveraendert() {
             .as_deref(),
         Some(p)
     );
+}
+
+// ---------------------------------------------------------------- Abnahme Spec §9 „Kontext“ (P4c-4)
+//
+// Kontrolltext in einem ausgeschalteten Eintrag, auch nach dem Ausschalten mitten im Gespräch, steht in
+// keinem Prompt und in keiner Meldung: `kontrolltext_aus_steht_in_keinem_prompt_und_in_keiner_meldung` und
+// `ausschalten_mitten_im_gespraech_ersetzt_die_alte_antwort` (beide je Art: Chat und Sprache, W1 und W2).
+// Der Dienst ist dabei die echte Kontextquelle; die Sperre ist aufgehoben. Fehlendes Kurzbuch:
+
+/// Der Rohtext eines Buchs, das kein Kurzbuch hat.
+const ROHTEXT: &str = "ROHTEXT-BUCH-4d21";
+
+#[test]
+fn abnahme_9_fehlendes_kurzbuch_liefert_in_chat_und_sprache_keinen_rohtext() {
+    lauf(async {
+        for art in ARTEN {
+            let e = env().await;
+            let p = projekt_mit(&e, Klasse::Internal, &[("s1", BELEG)]).await;
+            buch(&e, "b1", None, ROHTEXT);
+            e.dienst.buch_zuordnen(&p, "b1").await.unwrap();
+            let g = format!("g-kb-{art:?}");
+            let (weg, bote) = (FakeWeg::mit(&[ANTWORT]), FakeBote::default());
+            durch(
+                &e,
+                &weg,
+                &bote,
+                anfrage(&p, &g, art, &format!("pt-kb1-{art:?}"), verlauf(FRAGE)),
+            )
+            .await
+            .unwrap();
+            assert_eq!(weg.prompt(0).matches(ROHTEXT).count(), 0, "{art:?}");
+            assert_eq!(bote.text().matches(ROHTEXT).count(), 0, "{art:?}");
+            assert!(
+                weg.prompt(0).contains(BELEG),
+                "der Rest des Kontexts ist da"
+            );
+            // Gegenprobe: Auf ausdrückliche Wahl des Volltexts steht der Rohtext im Prompt, der Test
+            // könnte ihn also sehen.
+            let eintrag = eintrag_zu_link(&e, &p, "wai://lva/buch/b1").await;
+            e.dienst
+                .kontext_schalten(&p, &eintrag, true, Some(KontextForm::Volltext), None)
+                .await
+                .unwrap();
+            durch(
+                &e,
+                &weg,
+                &FakeBote::default(),
+                anfrage(&p, &g, art, &format!("pt-kb2-{art:?}"), verlauf(FRAGE2)),
+            )
+            .await
+            .unwrap();
+            assert!(weg.prompt(1).contains(ROHTEXT), "{art:?}");
+        }
+    });
+}
+
+async fn eintrag_zu_link(e: &Env, p: &str, link: &str) -> String {
+    e.dienst
+        .eintraege(p)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|x| x.link.as_deref() == Some(link))
+        .expect("Eintrag im Projekt")
+        .id
 }
