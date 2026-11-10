@@ -154,6 +154,23 @@ public enum AblageAnzeige {
         return AblageBytes.sorted(aus, by: { $0 })
     }
 
+    /// Alle Dateien (Kennungen, nach Bytes sortiert), die der Index-Tor zulässt: lebend (kein Papierkorb), nicht begraben,
+    /// Teilnahme `sync`, Hub-Stand lesbar. Ohne Prüfung auf Text. Einmal berechnet statt je Datei (`darfIndiziert` baut den
+    /// Tor jedes Mal neu).
+    public static func zugelasseneDateien(_ z: AblageZustand) -> [String] {
+        let t = tor(z)
+        return AblageBytes.sorted(z.bestand.dateien.values.map(\.id).filter { offen(z, t, dat: $0) }, by: { $0 })
+    }
+
+    /// Alle lebenden Dateien (Kennungen, nach Bytes sortiert): nicht im Papierkorb (Datei oder Ordner), nicht begraben, auch
+    /// solche, die der Tor nicht zulässt (nur Gerät, angehalten, unbekannte Klasse). Das ist „im Bereich“ der Abdeckung.
+    public static func lebendeDateien(_ z: AblageZustand) -> [String] {
+        let eltern = AblageZusammenfuehren.wirksameEltern(z.bestand.ordner)
+        return AblageBytes.sorted(z.bestand.dateien.values.filter {
+            !z.ledger.begraben.contains($0.id) && AblageZusammenfuehren.dateiLebt(z.bestand.ordner, eltern, $0)
+        }.map(\.id), by: { $0 })
+    }
+
     // MARK: Übersicht
 
     /// Alles, was eine Liste braucht: Namen, Klassen, Zustand, Papierkorb, Köpfe. Nach Kennung (Bytes) sortiert.

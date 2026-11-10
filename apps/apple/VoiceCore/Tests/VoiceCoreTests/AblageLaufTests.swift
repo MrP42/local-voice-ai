@@ -107,6 +107,15 @@ func ablageWarteBis(_ bedingung: @Sendable () -> Bool, file: StaticString = #fil
     XCTFail("Bedingung nicht eingetreten", file: file, line: line)
 }
 
+/// Wie `ablageWarteBis` für eine Bedingung, die auf einen Akteur zugreift (höchstens 10 s).
+func ablageWarteBisAsync(_ bedingung: @Sendable () async -> Bool, file: StaticString = #filePath, line: UInt = #line) async {
+    for _ in 0..<1000 {
+        if await bedingung() { return }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    XCTFail("Bedingung nicht eingetreten", file: file, line: line)
+}
+
 /// Eine Datei mit Original und Textfassung samt Blobs am Hub.
 private struct Welt {
     var datei: AblageDatei
@@ -354,11 +363,15 @@ final class AblageLaufTests: XCTestCase {
     func testZweiLaeufeGleichzeitigNurEinerLaeuft() async throws {
         let hub = AblageHubNachbau()
         bestuecke(hub, [welt(1)])
-        hub.pullHook = { _, _ in try await Task.sleep(nanoseconds: 80_000_000) }
+        // Der erste Lauf bleibt an einem Tor stehen, bis der zweite zurück ist: kein Schlafen, kein Zeitfenster.
+        let tor = AblageTor(), drin = AblageZaehler()
+        hub.pullHook = { _, _ in if drin.erhoehe() == 1 { await tor.warten() } }
         let s = speicher!, k = konto
-        async let a = AblageLauf.ausfuehren(hub: hub, speicher: s, konto: k, optionen: AblageLaufOptionen())
-        async let b = AblageLauf.ausfuehren(hub: hub, speicher: s, konto: k, optionen: AblageLaufOptionen())
-        let (ra, rb) = try await (a, b)
+        let erster = Task { try await AblageLauf.ausfuehren(hub: hub, speicher: s, konto: k, optionen: AblageLaufOptionen()) }
+        await ablageWarteBis { drin.wert == 1 }
+        let rb = try await AblageLauf.ausfuehren(hub: hub, speicher: s, konto: k, optionen: AblageLaufOptionen())
+        tor.oeffnen()
+        let ra = try await erster.value
         XCTAssertEqual([ra, rb].filter(\.uebersprungen).count, 1, "genau ein Lauf wird übersprungen")
         XCTAssertEqual([ra, rb].filter { !$0.uebersprungen }.count, 1)
         XCTAssertEqual(hub.protokoll.filter { $0.hasPrefix("pull ablage_ordner") }.count, 1, "nur ein Pull der Ordner")
@@ -372,10 +385,12 @@ final class AblageLaufTests: XCTestCase {
     func testTaskAbbruchWirftUndLaesstZustandHeil() async throws {
         let hub = AblageHubNachbau()
         bestuecke(hub, [welt(1), welt(2), welt(3)])
-        hub.pullHook = { _, coll in if coll == "ablage_datei" { try await Task.sleep(nanoseconds: 5_000_000_000) } }
+        // Der Pull der Dateien meldet sich und wartet (abbrechbar); abgebrochen wird erst, wenn er wirklich dort steht.
+        let drin = AblageZaehler()
+        hub.pullHook = { _, coll in if coll == "ablage_datei" { drin.erhoehe(); try await Task.sleep(nanoseconds: 60_000_000_000) } }
         let s = speicher!, k = konto
         let task = Task { try await AblageLauf.ausfuehren(hub: hub, speicher: s, konto: k, optionen: AblageLaufOptionen()) }
-        try await Task.sleep(nanoseconds: 100_000_000)
+        await ablageWarteBis { drin.wert == 1 }
         task.cancel()
         do { _ = try await task.value; XCTFail() } catch is CancellationError {} catch { XCTFail("\(error)") }
         // Ordner sind gespeichert, Dateien fehlen; der Zustand ist lesbar, der nächste Lauf vollendet.
@@ -717,6 +732,8 @@ final class AblageLaufTests: XCTestCase {
         b = try await lauf(hub, AblageLaufOptionen(angefordert: [a1, a2]))
         XCTAssertEqual(b.originaleGeladen, 1)
         XCTAssertEqual(b.offeneAnforderungen, [])
+        XCTAssertEqual(b.fehlgeschlageneAnforderungen.count, 1, "stattdessen gezählt und gewarnt")
+        XCTAssertTrue(b.warnungen.contains(.originalNichtGeladen))
         hub.blobHook = nil
         // Keine Downloads erlaubt: nichts geladen, alle ladbaren Anforderungen offen.
         speicher.alleEntfernen()
@@ -731,6 +748,124 @@ final class AblageLaufTests: XCTestCase {
         b = try await lauf(hub, AblageLaufOptionen(angefordert: [a1, a1, a2]))
         XCTAssertTrue(b.uebersprungen)
         XCTAssertEqual(b.offeneAnforderungen, [a1, a2])
+    }
+
+    // MARK: Nachtrag D5a-4, S1: ein einzeln gescheitertes Original wird nicht still verschluckt
+
+    /// Fehlt der Blob eines angeforderten Originals am Hub oder passt er nicht, zählt der Lauf es in
+    /// `fehlgeschlageneAnforderungen`, warnt, und stellt es nicht wieder an (Entscheidung: kein Dauerschleifen-Versuch).
+    /// Ein anderes angefordertes Original im selben Lauf wird trotzdem geladen.
+    func testEinzeltGescheitertesOriginalWirdGezaehltUndGemeldetNichtWiederAngestellt() async throws {
+        let hub = AblageHubNachbau()
+        let ws = bestuecke(hub, [welt(1), welt(2), welt(3)])
+        _ = try await lauf(hub)
+        let a1 = AblageOriginalAnforderung(dat: ws[0].datei.id, fas: W.fasId(1)), a2 = AblageOriginalAnforderung(dat: ws[1].datei.id, fas: W.fasId(2))
+        let a3 = AblageOriginalAnforderung(dat: ws[2].datei.id, fas: W.fasId(3))
+        let id1 = AblageKrypto.hubBlobId(key: W.key, sha256Hex: ws[0].datei.fassungen[0].blob)!
+        let id2 = AblageKrypto.hubBlobId(key: W.key, sha256Hex: ws[1].datei.fassungen[0].blob)!
+        // a1: Blob fehlt (404). a2: gleiche Länge, anderer Inhalt (Hash passt nicht). a3: in Ordnung.
+        hub.blobHook = { id in if id == id1 { throw AblageHubFehler.http(404, "not_found") } }
+        var kaputt = ws[1].original
+        kaputt[0] ^= 0x01
+        hub.aendereBlob(id2, kaputt)
+        let b = try await lauf(hub, AblageLaufOptionen(angefordert: [a1, a2, a3, a1]))
+        XCTAssertEqual(b.originaleGeladen, 1, "a3 kam an")
+        XCTAssertEqual(b.fehlgeschlageneAnforderungen, [a1, a2], "in der Reihenfolge des Plans, ohne Doppelte")
+        XCTAssertTrue(b.warnungen.contains(.originalNichtGeladen))
+        XCTAssertEqual(b.offeneAnforderungen, [], "kein Dauerversuch: einzeln Gescheitertes wird nicht neu angestellt")
+        XCTAssertEqual(list("eingang"), [])
+        // Ohne Fehler bleibt die Liste leer.
+        let sauber = try await lauf(hub, AblageLaufOptionen(angefordert: [a3]))
+        XCTAssertEqual(sauber.fehlgeschlageneAnforderungen, [])
+        XCTAssertFalse(sauber.warnungen.contains(.originalNichtGeladen))
+    }
+
+    /// Netz weg ist kein Einzelfehler: die Datei bleibt offen (nächster Lauf), nicht „fehlgeschlagen“.
+    func testNetzFehlerIstKeinEinzelfehler() async throws {
+        let hub = AblageHubNachbau()
+        let ws = bestuecke(hub, [welt(1)])
+        _ = try await lauf(hub)
+        let a = AblageOriginalAnforderung(dat: ws[0].datei.id, fas: W.fasId(1))
+        hub.blobHook = { _ in throw AblageHubFehler.netz }
+        let b = try await lauf(hub, AblageLaufOptionen(angefordert: [a]))
+        XCTAssertEqual(b.fehlgeschlageneAnforderungen, [])
+        XCTAssertEqual(b.offeneAnforderungen, [a])
+        XCTAssertTrue(b.downloadsUnterbrochen)
+    }
+
+    // MARK: Nachtrag D5a-4, S2: Hash vor der Sperre
+
+    /// `originalEinlegen` rechnet die SHA-256 nicht noch einmal, wenn der Aufrufer sie vor der Sperre berechnet hat. Beweis:
+    /// mit einer (hier absichtlich falschen) Vorprüfsumme wird die Datei abgelehnt, mit der richtigen angenommen, ohne die
+    /// Datei zu lesen (derselbe Inhalt, anderer Hash als der der Fassung: abgelehnt allein wegen der Vorprüfsumme).
+    func testOriginalEinlegenNutztVorgepruefteSummeUndPruefstSonstSelbst() async throws {
+        let hub = AblageHubNachbau()
+        let ws = bestuecke(hub, [welt(1)])
+        _ = try await lauf(hub)
+        let z = zustand()
+        let dat = ws[0].datei.id
+        func zwischen(_ bytes: [UInt8]) throws -> URL {
+            let u = speicher.zwischenpfad()
+            try Data(bytes).write(to: u)
+            return u
+        }
+        // Inhalt stimmt nicht, Vorprüfsumme sagt „stimmt“: wird übernommen (der Aufrufer hat gerechnet, nicht dieser Weg).
+        let richtig = AblageOriginalPruefsumme(groesse: UInt64(ws[0].original.count), sha256Hex: ws[0].datei.fassungen[0].blob)
+        var anders = ws[0].original
+        anders[0] ^= 0x01
+        XCTAssertTrue(try speicher.originalEinlegen(bestand: z.bestand, dat: dat, fas: W.fasId(1), zwischen: try zwischen(anders), vorgeprueft: richtig))
+        XCTAssertNotNil(speicher.originalLiegt(dat: dat, fas: W.fasId(1), typ: "pdf"))
+        speicher.entfernen(dateien: [dat])
+        // Falsche Vorprüfsumme bei richtigem Inhalt: abgelehnt, nichts liegt da, keine Zwischendatei.
+        let falsch = AblageOriginalPruefsumme(groesse: richtig.groesse, sha256Hex: String(repeating: "0", count: 64))
+        XCTAssertThrowsError(try speicher.originalEinlegen(bestand: z.bestand, dat: dat, fas: W.fasId(1), zwischen: try zwischen(ws[0].original), vorgeprueft: falsch)) {
+            XCTAssertEqual($0 as? AblageSpeicherFehler, .passtNicht)
+        }
+        XCTAssertNil(speicher.originalLiegt(dat: dat, fas: W.fasId(1), typ: "pdf"))
+        XCTAssertEqual(list("eingang"), [])
+        // Ohne Vorprüfsumme rechnet `originalEinlegen` selbst: falscher Inhalt wird abgelehnt, richtiger angenommen.
+        XCTAssertThrowsError(try speicher.originalEinlegen(bestand: z.bestand, dat: dat, fas: W.fasId(1), zwischen: try zwischen(anders))) {
+            XCTAssertEqual($0 as? AblageSpeicherFehler, .passtNicht)
+        }
+        XCTAssertTrue(try speicher.originalEinlegen(bestand: z.bestand, dat: dat, fas: W.fasId(1), zwischen: try zwischen(ws[0].original)))
+        // Die Größe wird immer frisch von der Datei genommen, auch mit Vorprüfsumme.
+        speicher.entfernen(dateien: [dat])
+        XCTAssertThrowsError(try speicher.originalEinlegen(bestand: z.bestand, dat: dat, fas: W.fasId(1), zwischen: try zwischen(ws[0].original + [0]), vorgeprueft: richtig)) {
+            XCTAssertEqual($0 as? AblageSpeicherFehler, .passtNicht)
+        }
+    }
+
+    /// `pruefsumme` liefert Größe und Hash der Zwischendatei; eine fehlende Datei ist `passtNicht`.
+    func testPruefsummeDerZwischendatei() throws {
+        let u = speicher.zwischenpfad()
+        defer { speicher.zwischenEntfernen(u) }
+        try Data("Hallo".utf8).write(to: u)
+        let p = try speicher.pruefsumme(zwischen: u)
+        XCTAssertEqual(p.groesse, 5)
+        XCTAssertEqual(p.sha256Hex, AblageKrypto.sha256Hex(Array("Hallo".utf8)))
+        XCTAssertThrowsError(try speicher.pruefsumme(zwischen: u.appendingPathExtension("fehlt"))) {
+            XCTAssertEqual($0 as? AblageSpeicherFehler, .passtNicht)
+        }
+    }
+
+    /// Während ein anderer Aufrufer die Sperre des Speichers hält, ist der Download mit Laden UND Hash schon fertig und wartet
+    /// nur noch auf die Sperre; danach legt er ab (der Hash steht nicht unter der Sperre).
+    func testOriginalWartetMitFertigemHashAnDerSperreUndLegtDanachAb() async throws {
+        let hub = AblageHubNachbau()
+        let ws = bestuecke(hub, [welt(1)])
+        _ = try await lauf(hub)
+        let dat = ws[0].datei.id, s = speicher!
+        let drin = AblageZaehler(), frei = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async { s.exklusiv { drin.erhoehe(); frei.wait() } }
+        await ablageWarteBis { drin.wert == 1 }
+        let k = konto
+        let download = Task { try await AblageLauf.originalLaden(hub: hub, speicher: s, konto: k, dat: dat, fas: W.fasId(1), bulk: false) }
+        await ablageWarteBis { s.wartetAufExklusiv == 1 }
+        XCTAssertEqual(list("dateien"), [], "noch nichts abgelegt, solange die Sperre gehalten wird")
+        frei.signal()
+        let url = try await download.value
+        XCTAssertEqual(try Data(contentsOf: url), Data(ws[0].original))
+        XCTAssertEqual(list("eingang"), [])
     }
 
     // MARK: Fix-Runde zu PR #453
@@ -910,7 +1045,7 @@ final class AblageDienstTests: XCTestCase {
         await ablageWarteBis { drin.wert == 1 }
         XCTAssertEqual(zustand().bestand.ordner.count, 1, "der Zustand des Kontos liegt schon auf der Platte")
         let abmelden = Task { await d.verlassen(); fertig.erhoehe() }
-        try await Task.sleep(nanoseconds: 150_000_000)
+        await ablageWarteBisAsync { await d.verlassenAufrufe == 1 }
         XCTAssertEqual(fertig.wert, 0, "Abmelden wartet, bis der Lauf wirklich beendet ist")
         XCTAssertTrue(fm.fileExists(atPath: speicher.wurzel.path), "nichts gelöscht, solange der Lauf noch schreiben könnte")
         // Ein neuer Lauf während des Abmeldens wird abgewiesen.
@@ -940,7 +1075,7 @@ final class AblageDienstTests: XCTestCase {
         let download = Task { try await d.originalLaden(hub: hub, konto: k, dat: dat, fas: W.fasId(1), bulk: false) }
         await ablageWarteBis { drin.wert == 1 }
         let abmelden = Task { await d.verlassen() }
-        try await Task.sleep(nanoseconds: 100_000_000)
+        await ablageWarteBisAsync { await d.verlassenAufrufe == 1 }
         XCTAssertTrue(fm.fileExists(atPath: speicher.wurzel.path))
         tor.oeffnen()
         await abmelden.value
@@ -994,6 +1129,33 @@ final class AblageDienstTests: XCTestCase {
         let rest = await d.vorgemerkteOriginale
         XCTAssertEqual(rest, [])
         XCTAssertEqual(hub.protokoll.filter { $0.hasPrefix("pull ablage_ordner") }.count, 2, "genau ein Folgelauf")
+    }
+
+    /// Endet der aktive Lauf mit einem Fehler, entfällt der Folgelauf (so steht es im Kommentar des Dienstes), die Anforderung
+    /// des zweiten Aufrufs bleibt aber vorgemerkt und kommt mit dem nächsten Lauf.
+    func testFolgelaufEntfaelltBeiFehlerAnforderungBleibtVorgemerkt() async throws {
+        let hub = AblageHubNachbau()
+        let ws = bestuecke(hub, [welt(1), welt(2)])
+        let tor = AblageTor(), drin = AblageZaehler()
+        hub.pullHook = { _, coll in
+            if coll == "ablage_datei", drin.erhoehe() == 1 { await tor.warten(); throw AblageHubFehler.netz }
+        }
+        let d = dienst!, k = konto
+        let erster = Task { try await d.laufen(hub: hub, konto: k, optionen: AblageLaufOptionen()) }
+        await ablageWarteBis { drin.wert == 1 }
+        let anf = AblageOriginalAnforderung(dat: ws[1].datei.id, fas: W.fasId(2))
+        let zweiter = try await d.laufen(hub: hub, konto: k, optionen: AblageLaufOptionen(angefordert: [anf]))
+        XCTAssertTrue(zweiter.uebersprungen)
+        tor.oeffnen()
+        do { _ = try await erster.value; XCTFail("der aktive Lauf scheitert") } catch let e as AblageLaufFehler { XCTAssertEqual(e, .hub(.netz)) }
+        XCTAssertEqual(hub.protokoll.filter { $0.hasPrefix("pull ablage_ordner") }.count, 1, "kein Folgelauf nach einem Fehler")
+        let vorgemerkt = await d.vorgemerkteOriginale
+        XCTAssertEqual(vorgemerkt, [anf], "die Anforderung geht nicht verloren")
+        hub.pullHook = nil
+        let b = try await d.laufen(hub: hub, konto: k, optionen: AblageLaufOptionen())
+        XCTAssertEqual(b.originaleGeladen, 1, "der nächste Lauf holt sie nach")
+        let rest = await d.vorgemerkteOriginale
+        XCTAssertEqual(rest, [])
     }
 
     func testAnforderungBleibtNachFehlgeschlagenemLaufVorgemerkt() async throws {
@@ -1141,7 +1303,7 @@ final class AblageDienstTests: XCTestCase {
         let lauf = Task { try await d.laufen(hub: hub, konto: k, optionen: AblageLaufOptionen()) }
         await ablageWarteBis { drin.wert == 1 }
         let abmelden = Task { await d.verlassen() }
-        try await Task.sleep(nanoseconds: 100_000_000)
+        await ablageWarteBisAsync { await d.verlassenAufrufe == 1 }
         tor.oeffnen()
         await abmelden.value
         do { _ = try await lauf.value; XCTFail("kein Ergebnis des alten Kontos") }
@@ -1162,9 +1324,11 @@ final class AblageDienstTests: XCTestCase {
             // Der Lauf mit niedriger Priorität: seine Fortsetzung auf dem Akteur kommt nach der des Abmeldens (Fenster).
             let lauf = Task(priority: .background) { try await d.laufen(hub: hub, konto: k, optionen: AblageLaufOptionen()) }
             await ablageWarteBis { drin.wert == 1 }
+            // Beide Abmeldungen sind angemeldet, bevor das Tor aufgeht (sonst wäre die zweite eine neue Abmeldung nach der ersten).
             let a = Task(priority: .userInitiated) { await d.verlassen() }
             let b = Task(priority: .userInitiated) { await d.verlassen() }
-            try await Task.sleep(nanoseconds: 20_000_000)
+            // Je Runde drei Aufrufe (a, b und das Aufräumen am Ende): die Zählung läuft über alle Runden weiter.
+            await ablageWarteBisAsync { await d.verlassenAufrufe == 3 * runde + 2 }
             let waehrend = try await d.laufen(hub: hub, konto: k, optionen: AblageLaufOptionen())
             XCTAssertTrue(waehrend.uebersprungen, "Runde \(runde): beim Abmelden startet kein Lauf")
             XCTAssertTrue(fm.fileExists(atPath: speicher.wurzel.path), "Runde \(runde): erst löschen, wenn nichts mehr läuft")
@@ -1247,7 +1411,8 @@ final class AblageDienstTests: XCTestCase {
         let fertig = AblageZaehler()
         let d = dienst!, k = konto
         let download = Task { defer { fertig.erhoehe() }; return try await d.originalLaden(hub: hub, konto: k, dat: dat, fas: W.fasId(1), bulk: false) }
-        try await Task.sleep(nanoseconds: 300_000_000)
+        // Der Download hat geladen und geprüft und steht jetzt an der Sperre des Speichers (kein Schlafen).
+        await ablageWarteBis { s.wartetAufExklusiv == 1 }
         XCTAssertEqual(fertig.wert, 0, "der Download liest den Zustand nicht in der Lücke, er wartet an der Sperre")
         frei.signal()
         do { _ = try await download.value; XCTFail("begraben: nicht ladbar") } catch let e as AblageLaufFehler { XCTAssertEqual(e, .nichtLadbar) }
@@ -1274,7 +1439,7 @@ final class AblageDienstTests: XCTestCase {
         let lauf = Task { try await d.laufen(hub: hub, konto: k, optionen: AblageLaufOptionen(angefordert: [anf])) }
         await ablageWarteBis { drin.wert == 1 }
         let abmelden = Task { await d.verlassen() }
-        try await Task.sleep(nanoseconds: 100_000_000)
+        await ablageWarteBisAsync { await d.verlassenAufrufe == 1 }
         tor.oeffnen()
         await abmelden.value
         do { _ = try await lauf.value; XCTFail("kein Bericht des alten Kontos") }

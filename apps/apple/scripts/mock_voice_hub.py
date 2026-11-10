@@ -139,9 +139,11 @@ if __name__ == "__main__":
             import mock_library_seed
             fixture = sys.argv[sys.argv.index("--seed-book") + 1]
             print("Buch abgelegt:", mock_library_seed.seed(fixture, PAIRING[0].k, PAIRING[0].user_id, OBJECTS, BLOBS, SEQ), flush=True)
-        if "--seed-ablage" in sys.argv:  # synthetische Ablage (Ordner, Dateien, Konflikt, Papierkorb, Grabsteine, Fehlerfälle)
+        if "--seed-ablage" in sys.argv or "--seed-ablage-suche" in sys.argv:  # synthetische Ablage (Ordner, Dateien, Konflikt, Papierkorb, Grabsteine, Fehlerfälle)
             import mock_ablage_seed
             SEED_IDS[0] = mock_ablage_seed.seed(PAIRING[0].k, PAIRING[0].user_id, OBJECTS, BLOBS, SEQ)
+            if "--seed-ablage-suche" in sys.argv:  # D5a-4: zusätzliche Dateien mit mehreren Abschnitten für Suche und Sprung zum Anker
+                mock_ablage_seed.seed_suche(PAIRING[0].k, PAIRING[0].user_id, OBJECTS, BLOBS, SEQ, SEED_IDS[0])
             print("Ablage abgelegt:", json.dumps(SEED_IDS[0], sort_keys=True), flush=True)
     try: srv.serve_forever()
     finally:
@@ -161,5 +163,7 @@ if __name__ == "__main__":
 #   xcrun simctl launch <sim> de.localvoice.prototype --library-tab --pair-auto --pair-url '<Link>' --ablage-test [--ablage-test-original]
 #   (Bericht: <Container>/Documents/ablage-testbericht.json; Stand 2 mit gültigem und gefälschtem Grabstein:
 #    curl -X POST http://127.0.0.1:8765/_mock/ablage-phase2, dann erneut starten; 410: curl -X POST .../_mock/expire)
+#   D5a-4: --seed-ablage-suche legt zusätzlich Dateien mit mehreren Abschnitten, Überschriftenpfaden und Textoriginalen ab
+#   (Seite „Ablage“, Suche mit Sprung zum Anker; Start der App mit --ablage-tab).
 #   Selbsttest der Seed-Krypto gegen die Rust-Vektoren: python3 apps/apple/scripts/mock_ablage_seed.py docs/superpowers/plans/ablage-testvektoren.json
 # Passwort des Test-Kontos: geheim. Der Nachbau prüft weder Token noch Kontingent.

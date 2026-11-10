@@ -8,8 +8,10 @@ import Foundation
 // - Abmelden (`verlassen`) bricht einen laufenden Abgleich und laufende Original-Downloads ab und WARTET, bis sie beendet
 //   sind, bevor es den Speicherordner löscht. Sonst könnte ein Lauf nach dem Löschen noch den Zustand des alten Kontos
 //   (samt Namen) neu schreiben. Solange das läuft, starten keine neuen Läufe.
-// - Ein Aufruf von `laufen`, während schon ein Lauf aktiv ist, geht nicht verloren: seine angeforderten Originale werden
-//   vorgemerkt und in einem Folgelauf nachgeholt (auch nach einem fehlgeschlagenen Lauf bleiben sie vorgemerkt).
+// - Ein Aufruf von `laufen`, während schon ein Lauf aktiv ist, verliert seine angeforderten Originale nicht: sie werden
+//   vorgemerkt. Der Folgelauf (mit den Optionen des zweiten Aufrufs) kommt nur, wenn der aktive Lauf ERFOLGREICH endet. Scheitert
+//   er (Netz, Speicher, Abbruch), entfällt der Folgelauf; die Anforderungen bleiben vorgemerkt und der nächste Aufruf holt sie
+//   nach. Das ist gewollt: nach einem Fehler hilft ein sofortiger zweiter Lauf nicht, und der Fehler geht an den aktiven Aufrufer.
 // - Angeforderte Originale, die ein Lauf nicht erledigt (WLAN-Regel im Mobilfunk, Budget, Netz weg, kein Download erlaubt),
 //   meldet er im Bericht (`offeneAnforderungen`); der Dienst merkt sie für den nächsten Lauf vor. Beim Abmelden verfallen sie.
 // - Nach einem Abmelden kommt aus einem Lauf des alten Kontos nie ein Bericht oder Fehler an, nur `CancellationError`.
@@ -46,6 +48,8 @@ public actor AblageDienst {
     private var folge: Auftrag?
     /// Die laufende Abmeldung: weitere Aufrufe von `verlassen` warten auf sie, statt eine zweite zu beginnen.
     private var verlassenTask: Task<Void, Never>?
+    /// Zählt die Aufrufe von `verlassen` (für Tests, die auf den Beginn des Abmeldens warten, statt zu schlafen).
+    private(set) var verlassenAufrufe = 0
     /// Wartende `verlassen`, bis kein Lauf und kein Download mehr aktiv ist.
     private var ruheWartende: [CheckedContinuation<Void, Never>] = []
 
@@ -76,8 +80,9 @@ public actor AblageDienst {
     }
 
     /// Ein Abgleich (`AblageLauf.ausfuehren`). Läuft schon einer, kehrt der Aufruf sofort mit `uebersprungen` zurück; seine
-    /// `angefordert`en Originale und seine Optionen werden für einen Folgelauf vorgemerkt, den der aktive Aufruf nach seinem
-    /// Lauf noch macht. Beim Abmelden kehrt er ebenfalls sofort zurück. Wird während des Laufs abgemeldet, wirft er
+    /// `angefordert`en Originale werden vorgemerkt, und seine Optionen gelten für einen Folgelauf, den der aktive Aufruf nach
+    /// seinem Lauf noch macht, WENN dieser erfolgreich endet (endet er mit einem Fehler, entfällt der Folgelauf, die
+    /// Anforderungen bleiben vorgemerkt). Beim Abmelden kehrt er ebenfalls sofort zurück. Wird während des Laufs abgemeldet, wirft er
     /// `CancellationError` (nie einen Bericht oder Fehler des alten Kontos).
     public func laufen(hub: any AblageHub, konto: AblageKonto, optionen: AblageLaufOptionen) async throws -> AblageBericht {
         if verlassend { return uebersprungen() }
@@ -140,6 +145,7 @@ public actor AblageDienst {
     /// abgewiesen. Gleichzeitige Aufrufe teilen sich eine Abmeldung und kehren gemeinsam zurück: keiner setzt die Sperre zu
     /// früh zurück, keiner löscht, was ein neues Konto inzwischen geschrieben hat.
     public func verlassen() async {
+        verlassenAufrufe += 1
         if let laufende = verlassenTask {
             await laufende.value
             return
