@@ -7911,7 +7911,13 @@
       "global": {
         "title": "Globales Wissen (Vorschau)",
         "switch": "Alle freigegebenen Inhalte durchsuchen",
-        "hint": "Vor jeder Antwort sucht die App lokal in den freigegebenen Bereichen und gibt dem Modell die passenden Auszüge mit Belegen. Nur mit lokalem Sprachmodell; Bücher nur bis zu deiner Leseposition."
+        "hint": "Vor jeder Antwort sucht die App lokal in den freigegebenen Bereichen und gibt dem Modell die passenden Auszüge mit Belegen. Nur mit lokalem Sprachmodell; Bücher nur bis zu deiner Leseposition.",
+        "enableAll": "Zugriff auf alle App-Inhalte einschalten",
+        "enableAllHint": "Schaltet die Suche ein und gibt alle Bereiche frei: Besprechungen samt Transkripten, Diktate, frühere Gespräche, Termine, Vorlesen-Seiten, Bücher, Buchnotizen und KI-Dokumente. Notizbuch-Abschnitte bleiben eine eigene Freigabe.",
+        "allOn": "Alle Bereiche freigegeben",
+        "allOnHint": "Besprechungen samt Transkripten, Diktate, Gespräche, Termine, Vorlesen-Seiten, Bücher, Buchnotizen und KI-Dokumente. Einzelne Bereiche kannst du oben wieder abwählen.",
+        "enableAllError": "Der Zugriff konnte nicht vollständig eingeschaltet werden. Es gilt weiter die vorherige Freigabe.",
+        "localOnly": "Inhalte gehen derzeit nur an das eingebaute lokale Modell. Mit {{model}} antwortet der Assistent ohne Zugriff auf deine Inhalte."
       },
       "notebook": {
         "groupLabel": "Freigegebene Notizbuch-Abschnitte",

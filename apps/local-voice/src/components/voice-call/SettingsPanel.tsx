@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Radio, RadioGroup, Switch, useId } from "@fluentui/react-components";
-import { X } from "lucide-react";
+import { Check, X } from "lucide-react";
 import {
   useVoiceCallStore,
   type VoiceSettingsTab,
@@ -29,7 +29,9 @@ import {
 } from "./orchestration";
 import { useKnowledgeEditor } from "./useKnowledge";
 import { NotebookAccess } from "./NotebookAccess";
+import { alleFrei, schalteAllesEin, type Zugriff } from "./alleBereiche";
 import { useSettings } from "@/hooks/useSettings";
+import { useSettingsStore } from "@/stores/settingsStore";
 import { useComplianceStore } from "@/stores/complianceStore";
 import type { LlmConnection, LlmModelConfig } from "@/bindings";
 
@@ -237,6 +239,30 @@ const GlobalKnowledge: React.FC<{
   const { getSetting, updateSetting } = useSettings();
   const enabled = !!getSetting("voice_global_context_enabled" as never);
   const areas = (getSetting("voice_call_knowledge") ?? []) as string[];
+  const transcripts = !!getSetting("voice_call_read_transcripts");
+  const llm = useActiveLlm();
+  const knowledgeChanged = useVoiceCallStore((s) => s.knowledgeChanged);
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const allOn = alleFrei({ enabled, areas, transcripts });
+  // Inhalte gehen nur an das eingebaute lokale Modell (kein Ollama, kein Relay, kein Cloud-Modell).
+  const noContent = llm.label !== null && !llm.local;
+  const enableAll = async () => {
+    setBusy(true);
+    setFailed(false);
+    const store: Zugriff = {
+      lies: (key) =>
+        (
+          useSettingsStore.getState().settings as Record<string, unknown> | null
+        )?.[key] as string[] | boolean | undefined,
+      setze: (key, value) =>
+        useSettingsStore.getState().updateSetting(key as never, value as never),
+    };
+    const ok = await schalteAllesEin(store);
+    setBusy(false);
+    setFailed(!ok);
+    knowledgeChanged();
+  };
   return (
     <section
       aria-labelledby={`${ids}-global`}
@@ -245,6 +271,50 @@ const GlobalKnowledge: React.FC<{
       <h3 id={`${ids}-global`} className="m-0 text-[13px] font-semibold">
         {t("voiceCall.knowledge.global.title")}
       </h3>
+      {allOn ? (
+        <div role="status" className="flex items-start gap-2 text-[13px]">
+          <Check className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          <div className="flex flex-col">
+            <span className="font-semibold">
+              {t("voiceCall.knowledge.global.allOn")}
+            </span>
+            <span className="text-xs text-text-muted">
+              {t("voiceCall.knowledge.global.allOnHint")}
+            </span>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col items-start gap-1.5">
+          <Button
+            type="button"
+            variant="primary"
+            disabled={busy}
+            aria-describedby={`${ids}-enable-all-hint`}
+            onClick={() => void enableAll()}
+          >
+            {t("voiceCall.knowledge.global.enableAll")}
+          </Button>
+          <span
+            id={`${ids}-enable-all-hint`}
+            className="text-xs text-text-muted"
+          >
+            {t("voiceCall.knowledge.global.enableAllHint")}
+          </span>
+        </div>
+      )}
+      {failed && (
+        <p role="alert" className="m-0 text-xs text-red-600 dark:text-red-400">
+          {t("voiceCall.knowledge.global.enableAllError")}
+        </p>
+      )}
+      {noContent && (
+        <p
+          role="note"
+          className="m-0 rounded-lg border border-mid-gray/30 bg-mid-gray/10 px-3 py-2 text-xs"
+        >
+          {t("voiceCall.knowledge.global.localOnly", { model: llm.label })}
+        </p>
+      )}
       <KnowledgeRow
         id={`${ids}-global-switch`}
         label={t("voiceCall.knowledge.global.switch")}
