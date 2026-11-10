@@ -623,13 +623,11 @@ async fn durchlauf_kern(
         tokio::pin!(call);
         // Abbruch zuerst: Ein schon vorliegender Widerruf verhindert den Versand, statt mit ihm zu
         // wetteifern.
-        let r = loop {
-            tokio::select! {
-                biased;
-                _ = abbruch.notified() => break Ausgang::Widerrufen,
-                _ = cancel.notified() => break Ausgang::Abgebrochen,
-                r = &mut call => break Ausgang::Fertig(r),
-            }
+        let r = tokio::select! {
+            biased;
+            _ = abbruch.notified() => Ausgang::Widerrufen,
+            _ = cancel.notified() => Ausgang::Abgebrochen,
+            r = &mut call => Ausgang::Fertig(r),
         };
         (r, usage::captured_calls().0)
     })
