@@ -135,12 +135,12 @@ public enum BookText {
         for id in spine {
             guard let href = manifest[id] else { continue }
             let path = resolved(href)
-            guard var xhtml = try? zip.read(path) else { continue }
-            // Das EPUB-3-Inhaltsverzeichnis ist kein Lesetext; steht das nav-Dokument im Spine und hat
-            // auch Inhalt, bleibt dieser erhalten (nur die `<nav>`-Blöcke fallen weg).
-            if path == navPath { xhtml = Data(EpubToc.removingNav(String(decoding: xhtml, as: UTF8.self)).utf8) }
+            guard let xhtml = try? zip.read(path) else { continue }
             let entries = toc.filter { $0.path.lowercased() == path.lowercased() }
-            let chapter = XHTMLText.extract(xhtml)
+            // Das EPUB-3-Inhaltsverzeichnis ist kein Lesetext; steht das nav-Dokument im Spine und hat
+            // auch Inhalt, bleibt dieser erhalten (nur die `<nav>`-Blöcke fallen weg, gleiche Tokenisierung
+            // wie bei jedem anderen Kapitel).
+            let chapter = XHTMLText.extract(xhtml, skipNav: path == navPath)
             let text = EpubToc.promoteChapterLines(EpubToc.apply(chapter.text, entries: entries, anchors: chapter.anchors))
             if !text.isEmpty { parts.append(text) }
         }
@@ -252,6 +252,9 @@ enum XHTMLText {
 
     final class Walker: NSObject, XMLParserDelegate {
         var paragraphs: [String] = []; var buffer = ""; var heading = false; var skipDepth = 0
+        /// Inhalte innerhalb von `<nav>` überspringen (nur beim nav-Dokument); `navDepth` zählt Verschachtelung.
+        let skipNav: Bool; var navDepth = 0
+        init(skipNav: Bool) { self.skipNav = skipNav }
         /// `id` (und `<a name>`) → Index des Absatzes, in dem das Element liegt bzw. der danach folgt.
         var anchors: [String: Int] = [:]
         func local(_ n: String) -> String { (n.split(separator: ":").last.map(String.init) ?? n).lowercased() }
@@ -264,6 +267,9 @@ enum XHTMLText {
         func parser(_ p: XMLParser, didStartElement name: String, namespaceURI: String?, qualifiedName q: String?, attributes a: [String: String] = [:]) {
             let n = local(name)
             if XHTMLText.skip.contains(n) { skipDepth += 1; return }
+            if skipDepth > 0 { return }
+            if skipNav, n == "nav" { if navDepth == 0 { flush() }; navDepth += 1; return }
+            if navDepth > 0 { return }
             if XHTMLText.headings.contains(n) { flush(); heading = true }
             else if XHTMLText.blocks.contains(n) { flush() }
             else if n == "br" { buffer += " " }
@@ -273,36 +279,155 @@ enum XHTMLText {
         func parser(_ p: XMLParser, didEndElement name: String, namespaceURI: String?, qualifiedName q: String?) {
             let n = local(name)
             if XHTMLText.skip.contains(n) { skipDepth = max(0, skipDepth - 1); return }
+            if skipDepth > 0 { return }
+            if skipNav, n == "nav" { navDepth = max(0, navDepth - 1); return }
+            if navDepth > 0 { return }
             if XHTMLText.headings.contains(n) || XHTMLText.blocks.contains(n) { flush() }
         }
-        func parser(_ p: XMLParser, foundCharacters s: String) { if skipDepth == 0 { buffer += s } }
+        func parser(_ p: XMLParser, foundCDATA block: Data) { if skipDepth == 0, navDepth == 0 { buffer += String(decoding: block, as: UTF8.self) } }
+        func parser(_ p: XMLParser, foundCharacters s: String) { if skipDepth == 0, navDepth == 0 { buffer += s } }
     }
 
     static func paragraphs(_ data: Data) -> String { extract(data).text }
 
     /// Absätze des Kapitels und Sprungmarken auf Absatzindizes; `anchors` ist `nil`, wenn das Kapitel
     /// nur über die Tag-Entfernung gelesen werden konnte.
-    static func extract(_ data: Data) -> (text: String, anchors: [String: Int]?) {
+    static func extract(_ data: Data, skipNav: Bool = false) -> (text: String, anchors: [String: Int]?) {
         // XHTML kennt benannte HTML-Entitäten nicht; die häufigsten vorher ersetzen.
         var source = String(decoding: data, as: UTF8.self)
         // XHTML kennt nur die fünf XML-Entitäten; HTML-Namen in Zeichen wandeln,
         // unbekannte entfernen, damit der Parser das Kapitel nicht verwirft.
         source = replaceEntities(source, keepXML: true)
         source = source.replacingOccurrences(of: #"(?i)<(br|hr|img|meta|link|input|wbr)\b([^>]*?)\s*/?>"#, with: "<$1$2/>", options: .regularExpression)
-        let w = Walker(); let p = XMLParser(data: Data(source.utf8)); p.delegate = w
-        if p.parse() {
+        let w = Walker(skipNav: skipNav); let p = XMLParser(data: Data(source.utf8)); p.delegate = w
+        // Unter Linux liefert `parse()` auch bei Wohlgeformtheitsfehlern `true`; `parserError` entscheidet.
+        if p.parse(), p.parserError == nil {
             w.flush()
             let count = w.paragraphs.count
             return (w.paragraphs.joined(separator: "\n\n"), w.anchors.filter { $0.value < count })
         }
-        return (fallback(source), nil)
+        return (fallback(source, skipNav: skipNav), nil)
     }
 
-    static func fallback(_ source: String) -> String {
-        let stripped = source.replacingOccurrences(of: #"(?is)<(script|style|head)[^>]*>.*?</\1>"#, with: "", options: .regularExpression)
+    static let navTag = try! NSRegularExpression(pattern: #"(?i)</?(?:[\w.-]+:)?nav(?![\w:.-])[^>]*>"#)
+
+    /// Inhalt der äußersten `<nav>`-Blöcke entfernen (Tiefe gezählt, Präfix und Schreibweise egal).
+    static func removingNavBlocks(_ s: String) -> String {
+        let ns = s as NSString
+        var out = ""; var last = 0; var depth = 0
+        for m in navTag.matches(in: s, range: NSRange(location: 0, length: ns.length)) {
+            let tag = ns.substring(with: m.range)
+            if depth == 0 { out += ns.substring(with: NSRange(location: last, length: m.range.location - last)) }
+            if tag.hasPrefix("</") { depth = max(0, depth - 1) } else if !tag.hasSuffix("/>") { depth += 1 }
+            last = NSMaxRange(m.range)
+        }
+        return depth == 0 ? out + ns.substring(from: last) : out
+    }
+
+    static let rawOpen = try! NSRegularExpression(pattern: #"(?i)<(?:[\w.-]+:)?(script|style|head)(?![\w:.-])[^>]*>"#)
+    static let rawClose = ["script", "style", "head"].reduce(into: [String: NSRegularExpression]()) {
+        $0[$1] = try! NSRegularExpression(pattern: "(?i)</(?:[\\w.-]+:)?\($1)\\s*>")
+    }
+
+    /// script/style/head samt Inhalt entfernen, in einem Durchgang: Anfänge und Endtags werden je einmal
+    /// gesammelt, viele offene Anfänge oder Endtag-Kandidaten kosten keine quadratische Laufzeit.
+    static func removingRawText(_ s: String) -> String {
+        let ns = s as NSString
+        let all = NSRange(location: 0, length: ns.length)
+        let closes = rawClose.mapValues { $0.matches(in: s, range: all).map(\.range) }
+        var next = [String: Int]()
+        var out = ""; var last = 0
+        for m in rawOpen.matches(in: s, range: all) where m.range.location >= last {
+            let name = ns.substring(with: m.range(at: 1)).lowercased()
+            let list = closes[name] ?? []
+            var k = next[name] ?? 0
+            while k < list.count, list[k].location < NSMaxRange(m.range) { k += 1 }
+            next[name] = k
+            guard k < list.count else { continue }
+            out += ns.substring(with: NSRange(location: last, length: m.range.location - last))
+            last = NSMaxRange(list[k])
+        }
+        return out + ns.substring(from: last)
+    }
+
+    /// Kommentare, Verarbeitungsanweisungen und DOCTYPE entfernen, CDATA als maskierten Text behalten;
+    /// ein Durchgang, Unterminiertes verschluckt nur den Rest (der Text davor bleibt).
+    static func removingMarkupDeclarations(_ s: String) -> String {
+        let u = Array(s.utf16)
+        let n = u.count
+        var out: [UInt16] = []
+        out.reserveCapacity(n)
+        func has(_ lit: String, at p: Int, caseInsensitive: Bool = false) -> Bool {
+            var k = p
+            for w in lit.utf16 {
+                guard k < n else { return false }
+                var c = u[k]
+                if caseInsensitive, c >= 0x61, c <= 0x7A { c -= 32 }
+                if c != w { return false }
+                k += 1
+            }
+            return true
+        }
+        func find(_ lit: String, from p: Int) -> Int? {
+            var q = p
+            while q < n { if has(lit, at: q) { return q }; q += 1 }
+            return nil
+        }
+        var i = 0
+        while i < n {
+            guard u[i] == 0x3C else { out.append(u[i]); i += 1; continue }
+            if has("<!--", at: i) {
+                guard let e = find("-->", from: i + 4) else { break }
+                i = e + 3
+            } else if has("<?", at: i) {
+                guard let e = find("?>", from: i + 2) else { break }
+                i = e + 2
+            } else if has("<![CDATA[", at: i) {
+                let e = find("]]>", from: i + 9)
+                for c in u[(i + 9)..<(e ?? n)] {
+                    switch c {
+                    case 0x26: out.append(contentsOf: Array("&amp;".utf16))
+                    case 0x3C: out.append(contentsOf: Array("&lt;".utf16))
+                    case 0x3E: out.append(contentsOf: Array("&gt;".utf16))
+                    default: out.append(c)
+                    }
+                }
+                i = (e ?? n - 3) + 3
+            } else if has("<!DOCTYPE", at: i, caseInsensitive: true) {
+                var q = i + 9
+                var quote: UInt16?
+                var square = 0
+                var end: Int?
+                while q < n, end == nil {
+                    let c = u[q]
+                    if let open = quote { if c == open { quote = nil } }
+                    else if square > 0, has("<!--", at: q) { guard let e = find("-->", from: q + 4) else { q = n; break }; q = e + 2 }
+                    else if square > 0, has("<?", at: q) { guard let e = find("?>", from: q + 2) else { q = n; break }; q = e + 1 }
+                    else if c == 0x22 || c == 0x27 { quote = c }
+                    else if c == 0x5B { square += 1 }
+                    else if c == 0x5D, square > 0 { square -= 1 }
+                    else if c == 0x3E, square == 0 { end = q }
+                    q += 1
+                }
+                guard let e = end else { break }
+                i = e + 1
+            } else {
+                out.append(u[i]); i += 1
+            }
+        }
+        return String(decoding: out, as: UTF16.self)
+    }
+
+    /// Fallback für nicht wohlgeformtes XHTML: Tag-Entfernung mit derselben Behandlung von Kommentaren,
+    /// Verarbeitungsanweisungen, CDATA (als Text), DOCTYPE, script/style/head und – beim nav-Dokument – `<nav>`.
+    static func fallback(_ source: String, skipNav: Bool = false) -> String {
+        var stripped = removingMarkupDeclarations(source)
+        stripped = removingRawText(stripped)
+        if skipNav { stripped = removingNavBlocks(stripped) }
+        stripped = stripped
             .replacingOccurrences(of: #"(?i)<h[1-6][^>]*>"#, with: "\n\n# ", options: .regularExpression)
             .replacingOccurrences(of: #"(?i)</(p|div|h[1-6]|li|blockquote|section)>|<(p|div|li|blockquote|section)\b[^>]*>"#, with: "\n\n", options: .regularExpression)
-            .replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"</?[A-Za-z][^>]*>"#, with: "", options: .regularExpression)
         return replaceEntities(stripped, keepXML: false).components(separatedBy: "\n\n").map {
             $0.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
         }.filter { !$0.isEmpty && $0 != "#" }.joined(separator: "\n\n")
@@ -351,112 +476,6 @@ enum EpubToc {
     }
 
     static let navBlock = re(#"(?is)<nav\b[^>]*>.*?</nav\s*>"#)
-
-    /// XHTML ohne `<nav>`-Blöcke (Inhaltsverzeichnis, Landmarken, Seitenliste); der Rest bleibt.
-    /// Linearer Scanner statt Regex: Kommentare, Verarbeitungsanweisungen und DOCTYPE werden erkannt
-    /// und (außerhalb einer nav) ohne Textverlust entfernt, CDATA bleibt als maskierter Text; die
-    /// nav-Tiefe wird gezählt (auch mit Präfix wie `html:nav`), alles in der äußersten nav fällt weg.
-    static func removingNav(_ xhtml: String) -> String {
-        let b = Array(xhtml.utf8)
-        let n = b.count
-        var out: [UInt8] = []
-        out.reserveCapacity(n)
-        var i = 0
-        var depth = 0
-        func has(_ lit: String, at p: Int) -> Bool {
-            let u = Array(lit.utf8)
-            return p + u.count <= n && Array(b[p..<(p + u.count)]) == u
-        }
-        func find(_ lit: String, from p: Int) -> Int? {
-            var q = p
-            while q < n { if has(lit, at: q) { return q }; q += 1 }
-            return nil
-        }
-        /// Ende (`>`) eines Tags oder einer Markup-Deklaration; Anführungszeichen und `[...]` zählen nicht.
-        func tagEnd(from p: Int, brackets: Bool) -> Int? {
-            var q = p
-            var quote: UInt8?
-            var square = 0
-            while q < n {
-                let c = b[q]
-                if let open = quote { if c == open { quote = nil } }
-                else if brackets, square > 0, has("<!--", at: q) {
-                    guard let e = find("-->", from: q + 4) else { return nil }
-                    q = e + 2
-                } else if brackets, square > 0, has("<?", at: q) {
-                    guard let e = find("?>", from: q + 2) else { return nil }
-                    q = e + 1
-                }
-                else if c == 0x22 || c == 0x27 { quote = c }
-                else if brackets, c == 0x5B { square += 1 }
-                else if brackets, c == 0x5D, square > 0 { square -= 1 }
-                else if c == 0x3E, square == 0 { return q }
-                q += 1
-            }
-            return nil
-        }
-        while i < n {
-            guard b[i] == 0x3C else {
-                if depth == 0 { out.append(b[i]) }
-                i += 1
-                continue
-            }
-            if has("<!--", at: i) {
-                i = find("-->", from: i + 4).map { $0 + 3 } ?? n
-            } else if has("<![CDATA[", at: i) {
-                let end = find("]]>", from: i + 9)
-                if depth == 0 {
-                    for c in b[(i + 9)..<(end ?? n)] {
-                        switch c {
-                        case 0x26: out.append(contentsOf: Array("&amp;".utf8))
-                        case 0x3C: out.append(contentsOf: Array("&lt;".utf8))
-                        case 0x3E: out.append(contentsOf: Array("&gt;".utf8))
-                        default: out.append(c)
-                        }
-                    }
-                }
-                i = end.map { $0 + 3 } ?? n
-            } else if has("<?", at: i) {
-                i = find("?>", from: i + 2).map { $0 + 2 } ?? n
-            } else if has("<!", at: i) {
-                i = (tagEnd(from: i + 2, brackets: true) ?? (n - 1)) + 1
-            } else {
-                guard let end = tagEnd(from: i + 1, brackets: false) else {
-                    if depth == 0 { out.append(contentsOf: b[i...]) }
-                    break
-                }
-                let closing = i + 1 < n && b[i + 1] == 0x2F
-                var q = i + (closing ? 2 : 1)
-                let nameStart = q
-                while q < end, ![0x20, 0x09, 0x0A, 0x0D, 0x2F].contains(b[q]) { q += 1 }
-                let name = String(decoding: b[nameStart..<q], as: UTF8.self).lowercased()
-                let local = name.split(separator: ":").last.map(String.init) ?? name
-                let selfClosing = !closing && b[end - 1] == 0x2F
-                if !closing, !selfClosing, local == "script" || local == "style" {
-                    // Raw-Text bis zum passenden Endtag (Groß-/Kleinschreibung und Präfix egal). XHTMLText
-                    // überliest script/style ohnehin, sie fallen samt Inhalt weg; ohne Endtag der Rest davon.
-                    var r = end + 1
-                    var stop = n
-                    while let c = find("</", from: r) {
-                        var e = c + 2
-                        while e < n, ![0x20, 0x09, 0x0A, 0x0D, 0x2F, 0x3E].contains(b[e]) { e += 1 }
-                        let other = String(decoding: b[(c + 2)..<e], as: UTF8.self).lowercased()
-                        if (other.split(separator: ":").last.map(String.init) ?? other) == local, let close = find(">", from: e) { stop = close + 1; break }
-                        r = c + 2
-                    }
-                    i = stop
-                    continue
-                }
-                if local == "nav", !(closing && depth == 0) {
-                    if closing { depth -= 1 } else if !selfClosing { depth += 1 }
-                } else if depth == 0 {
-                    out.append(contentsOf: b[i...end])
-                }
-                i = end + 1
-            }
-        }
-        return String(decoding: out, as: UTF8.self)
-    }
 
     /// Klartext eines Verzeichnistitels: ohne Tags, Entitäten aufgelöst, Leerraum zusammengefasst.
     static func plainText(_ raw: String) -> String {
