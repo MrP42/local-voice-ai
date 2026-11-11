@@ -28,6 +28,7 @@ pub mod meeting_variants; // A3
 pub mod meeting_voiceprint; // Stimmprofile 2a: Vorschlaege aus Stimmabdruecken
 pub mod meetings;
 pub mod models;
+pub mod netzcheck; // lva#496: Netzwerkprüfung
 pub mod pages;
 pub mod pages_package;
 pub mod people; // M5-P5d
