@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 // Gesprächsmodus „Sprechen“ (Paket A): Inhalte für den Assistenten. Ein app-weiter `AssistantCorpus` (nur im Speicher,
 // einmal je App-Lauf aufgebaut, danach nur Änderungen über `version`) und die Ablage als eigene Quelle über die
@@ -35,18 +36,59 @@ final class AssistantSources: ObservableObject {
     @Published private(set) var skipped = 0
 
     private let indexer: AssistantIndexer
+    private let watch = AssistantContentWatch.shared
     private var running: Task<Void, Never>?
     private var rerun = false
+    /// Ein Gespräch ist offen: Änderungen der Quellen stoßen die Indexierung an (sonst erst das nächste Öffnen).
+    private var active = false
+    private var bag: Set<AnyCancellable> = []
 
     init() {
         let corpus = AssistantCorpus()
         self.corpus = corpus
         indexer = AssistantIndexer(corpus: corpus)
+        watch.setObserver { [weak self] in Task { @MainActor in self?.changeFinished() } }
+        observeStores()
     }
 
-    /// Stößt die Indexierung an (kehrt sofort zurück). Läuft schon eine, folgt danach genau ein weiterer Durchgang.
+    /// Das Gespräch öffnet: Der Bestand stammt aus einem früheren Lauf und gilt als nicht aktuell (eine Änderung zählt, die Quellen
+    /// haben sich vielleicht geändert), bis ein Durchgang nach diesem Moment endet. Die Meldung stößt ihn an.
+    func open() {
+        active = true
+        watch.around {}
+    }
+
+    /// Das Gespräch ist zu Ende: keine Durchgänge mehr von selbst.
+    func close() { active = false }
+
+    private func changeFinished() {
+        guard active else { return }
+        refresh()
+    }
+
+    /// Meldet jede Änderung der Speicher, aus denen der Bestand entsteht: Bücher und ihre Stände (`PhoneLibrary`), Sprachnotizen
+    /// (`VoiceModel`), Schutz und Auswahl der Ablage (`AblageSync`). `@Published` meldet VOR dem Setzen (`willSet`): Der Aufruf
+    /// kommt synchron auf dem Thread des Auslösers, die Änderung im Speicher folgt danach; ihr Ende melden wir im nächsten Zug des
+    /// Hauptthreads (dann ist sie gesetzt). Der erste Wert beim Abonnieren zählt nicht.
+    private func observeStores() {
+        let watch = self.watch
+        func announce<P: Publisher>(_ publisher: P) where P.Failure == Never {
+            publisher.dropFirst().sink { _ in
+                let ticket = watch.willChange()
+                DispatchQueue.main.async { watch.changed(ticket) }
+            }.store(in: &bag)
+        }
+        announce(PhoneLibrary.shared.$books)
+        announce(PhoneLibrary.shared.$progress)
+        announce(VoiceModel.shared.$entries)
+        announce(AblageSync.shared.$uebersicht)
+    }
+
+    /// Stößt die Indexierung an (kehrt sofort zurück). Läuft schon eine, folgt danach genau ein weiterer Durchgang. Die Marke der
+    /// Meldestelle wird VOR den Schnappschüssen genommen: Der Durchgang deckt nur Änderungen, die bis dahin beendet waren.
     func refresh() {
         guard running == nil else { rerun = true; return }
+        let mark = watch.mark
         let notes = Self.noteJobs()
         let books = Self.bookJobs()
         let root = MeetingDirectory.root
@@ -57,7 +99,7 @@ final class AssistantSources: ObservableObject {
                     Task { @MainActor in self?.setProgress(done, total) }
                 }
             }.value
-            self?.finish(report)
+            self?.finish(report, mark: mark)
         }
     }
 
@@ -73,11 +115,15 @@ final class AssistantSources: ObservableObject {
         progress = total > 0 && done < total ? Progress(done: done, total: total) : nil
     }
 
-    private func finish(_ report: AssistantIndexer.Report) {
+    private func finish(_ report: AssistantIndexer.Report, mark: Int) {
         running = nil
         progress = nil
         skipped = report.skipped
-        if !report.cancelled { version += 1 }
+        if !report.cancelled {
+            version += 1
+            // Der Bestand steht für alle Änderungen bis zur Marke; ein abgebrochener Durchgang meldet nichts (Bestand bleibt `stale`).
+            watch.passCompleted(mark: mark)
+        }
         if rerun {
             rerun = false
             refresh()

@@ -30,6 +30,8 @@ public actor AssistantCorpus {
         let locator: String?
         let text: String
         let length: Int32
+        /// Die Quellart lässt wörtliche Ausgabe zu.
+        let quotable: Bool
         var alive: Bool
     }
 
@@ -94,13 +96,22 @@ public actor AssistantCorpus {
             for t in tokens { tf[t, default: 0] += 1 }
             for (t, f) in tf { postings[t, default: []].append(Posting(chunk: id, tf: UInt16(min(f, Int(UInt16.max))))) }
             chunks.append(Chunk(doc: Int32(slot), area: UInt8(areaSlot), locator: block.locator, text: block.text,
-                                length: Int32(tokens.count), alive: true))
+                                length: Int32(tokens.count), quotable: block.quotable, alive: true))
             areaChunks[areaSlot] += 1
             areaLength[areaSlot] += tokens.count
         }
         docs.append(Doc(item: document.item, version: document.version, titleStems: Set(BookTalkTokens.tokenize(document.item.title)),
                         first: first, count: chunks.count - first, tooLong: tooLong, alive: true))
         slots[key] = slot
+    }
+
+    /// Ersetzt den Bestand durch genau diese Dokumente (Klasse B: der neue Bestand nach einer Änderung von Inhalten): Was nicht
+    /// mehr dabei ist, fällt weg, alles Übrige wird mit seiner Version aufgenommen.
+    public func install(_ documents: [AssistantDocument]) {
+        let keep = Set(documents.map { Key(area: $0.item.area, id: $0.item.id) })
+        for (key, slot) in slots where !keep.contains(key) { drop(slot) }
+        for document in documents { upsert(document) }
+        compactIfNeeded()
     }
 
     public func remove(id: String, area: AssistantArea) {
@@ -183,7 +194,7 @@ public actor AssistantCorpus {
             perItem[slot, default: 0] += 1
             let item = docs[slot].item
             out.append(AssistantPassage(area: item.area, itemId: item.id, title: item.title, locator: c.locator, text: c.text, score: score,
-                                        isBlock: true))
+                                        isBlock: true, quotable: c.quotable))
             if out.count >= limit { break }
         }
         return out
@@ -216,6 +227,7 @@ public actor AssistantCorpus {
     private struct Part {
         var locator: String?
         var text: String
+        var quotable: Bool
     }
 
     /// Die Quellblöcke eines Dokuments: je Abschnitt genau einer, unverändert (nur Leerraum an den Rändern fällt weg). Leere
@@ -223,7 +235,7 @@ public actor AssistantCorpus {
     private static func blocks(_ sections: [AssistantDocument.Section]) -> [Part] {
         sections.compactMap { section in
             let text = section.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return text.isEmpty ? nil : Part(locator: section.locator, text: text)
+            return text.isEmpty ? nil : Part(locator: section.locator, text: text, quotable: section.quotable)
         }
     }
 
@@ -257,7 +269,8 @@ public actor AssistantCorpus {
             for id in d.first..<(d.first + d.count) where chunks[id].alive {
                 map[id] = Int32(newChunks.count)
                 let c = chunks[id]
-                newChunks.append(Chunk(doc: Int32(slot), area: c.area, locator: c.locator, text: c.text, length: c.length, alive: true))
+                newChunks.append(Chunk(doc: Int32(slot), area: c.area, locator: c.locator, text: c.text, length: c.length,
+                                       quotable: c.quotable, alive: true))
             }
             nd.count = newChunks.count - nd.first
             newDocs.append(nd)

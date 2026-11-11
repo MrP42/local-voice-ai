@@ -181,11 +181,17 @@ public enum AssistantGrounding {
         return out
     }
 
-    /// Zitierbar: ein ganzer gespeicherter Block, nicht leer, höchstens `maxBlockChars` lang. Satzzeichen, Länge in Wörtern und
-    /// Anfangsbuchstabe spielen keine Rolle („Milch kaufen“ ist als Block zitierbar).
+    /// Zitierbar: ein ganzer gespeicherter Block einer zitierbaren Quellart, nicht leer, höchstens `maxBlockChars` lang. Satzzeichen,
+    /// Länge in Wörtern und Anfangsbuchstabe spielen keine Rolle („Milch kaufen“ ist als Block zitierbar). Erzeugter Text, Mails
+    /// und Kalendereinträge (`quotable == false`) sind es nie. Dieselbe Prüfung gilt bei der Auswahl (`Basis`) und unmittelbar vor
+    /// der Ausgabe (`RunEmitter.emitQuote`).
     static func isQuotable(_ p: AssistantPassage) -> Bool {
-        p.isBlock && !p.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && p.text.count <= maxBlockChars
+        p.isBlock && p.quotable && !p.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && p.text.count <= maxBlockChars
     }
+
+    /// Die Prüfung unmittelbar vor der Ausgabe eines Zitats (zweite, von der Auswahl unabhängige Stelle): ein ganzer Block einer
+    /// zitierbaren Quellart, zeichengleich mit dem gespeicherten Text des Auszugs.
+    static func mayOutput(_ q: SourceBlock) -> Bool { isQuotable(q.passage) && q.text == q.passage.text }
 
     // MARK: Einrasten
 

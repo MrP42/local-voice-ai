@@ -285,7 +285,8 @@ public actor MeetingArchive {
         try write(try JSONEncoder().encode(doc), at: staging.appendingPathComponent("meeting.json"))
         try commitSync(staging.appendingPathComponent("meeting.json"))
         try commitSync(staging)
-        try fm.moveItem(at: staging, to: folder(id))
+        // Assistent (Klasse B): Mit dem Verschieben wird die Besprechung für den Bestand sichtbar (neue Quelle, auch aus dem Import).
+        try AssistantContentWatch.shared.around { try fm.moveItem(at: staging, to: folder(id)) }
         try commitSync(root)
         return doc
     }
@@ -373,7 +374,11 @@ public actor MeetingArchive {
         try save(doc)
     }
     private func folder(_ id: UUID) -> URL { root.appendingPathComponent(id.uuidString) }
-    private func save(_ doc: MeetingDocument) throws { try write(JSONEncoder().encode(doc), at: folder(doc.id).appendingPathComponent("meeting.json")) }
+    /// Jede Änderung einer Besprechung (Segmente, Protokoll, Stand der KI-Auswertung) läuft hier durch. Assistent (Klasse B): Die
+    /// Meldung kommt VOR dem Schreiben; was der Assistent aus einer Besprechung ausgeben darf (`aiPermitted`, Protokoll), ändert sich hier.
+    private func save(_ doc: MeetingDocument) throws {
+        try AssistantContentWatch.shared.around { try write(try JSONEncoder().encode(doc), at: folder(doc.id).appendingPathComponent("meeting.json")) }
+    }
     private func write(_ data: Data, at url: URL) throws {
         guard data.count <= 32 * 1024 * 1024 else { throw VoiceError.full }
         try data.write(to: url, options: .atomic)

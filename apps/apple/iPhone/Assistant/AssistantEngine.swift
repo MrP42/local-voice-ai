@@ -52,19 +52,29 @@ enum AssistantModelChoice: Hashable, Identifiable {
 // MARK: - Bereiche
 
 /// Welche Bereiche der Assistent nutzen darf, getrennt für lokale und Cloud-Modelle (Standard: lokal alle, Cloud nur Bücher).
+/// Die Quelle des Stands ist die Zustandsdatei der Freigaben (`AssistantReleaseFiles`, Kern): Bereiche, Schalter und Zustimmung
+/// stehen dort, nicht mehr in UserDefaults. Die alten Schlüssel werden nur noch GELESEN, und nur einmalig beim allerersten Start
+/// (nie geschrieben, nie danach), und auch dann nur einschränkend (Schnittmenge mit dem Auslieferungsstand, nie eine Zustimmung).
 enum AssistantAreaSettings {
     static let localKey = "assistant_areas_local"
     static let cloudKey = "assistant_areas_cloud"
 
+    /// Der gespeicherte, bestätigte Stand der Bereiche (gesperrte Datei: keine).
+    @MainActor
     static func areas(cloud: Bool) -> Set<AssistantArea> {
-        guard let raw = UserDefaults.standard.stringArray(forKey: cloud ? cloudKey : localKey) else {
-            return cloud ? [.books] : Set(AssistantArea.allCases)
-        }
-        return Set(raw.compactMap(AssistantArea.init(rawValue:)))
+        AssistantReleaseFiles.store.record.areas(cloud: cloud)
     }
 
-    static func set(_ areas: Set<AssistantArea>, cloud: Bool) {
-        UserDefaults.standard.set(areas.map(\.rawValue).sorted(), forKey: cloud ? cloudKey : localKey)
+    /// Alte Einstellungen für die einmalige Übernahme beim allerersten Start; `nil`, wenn es keine gibt.
+    static func legacyRecord() -> AssistantReleaseRecord? {
+        let defaults = UserDefaults.standard
+        func read(_ key: String) -> Set<AssistantArea>? {
+            defaults.stringArray(forKey: key).map { Set($0.compactMap(AssistantArea.init(rawValue:))) }
+        }
+        let local = read(localKey)
+        let cloud = read(cloudKey)
+        guard local != nil || cloud != nil else { return nil }
+        return AssistantReleaseRecord(localAreas: local ?? Set(AssistantArea.allCases), cloudAreas: cloud ?? [.books])
     }
 
     /// Anzeigename im Menü und im Zustimmungstext.
@@ -105,27 +115,23 @@ enum AssistantCloudTarget: Equatable {
     }
 }
 
+/// Die Zustandsdatei der Freigaben dieses Prozesslaufs (`AssistantReleaseStore`): liegt neben dem Protokoll, wird beim ersten Zugriff
+/// geöffnet (gültig: geladen; fehlt bei vorhandenem Protokoll oder ungültig: gesperrt, „Freigaben prüfen“; allererster Start: der
+/// Auslieferungsstand, erst gesichert, dann nutzbar).
+@MainActor
+enum AssistantReleaseFiles {
+    static let store = AssistantReleaseStore(directory: AssistantAuditLog.standardDirectory(), adopt: AssistantAreaSettings.legacyRecord())
+}
+
 enum AssistantConsent {
-    /// Einträge „<Ziel>|<Bereiche>“: ändern sich die Cloud-Bereiche, wird neu gefragt.
-    static let key = "assistant_cloud_consent"
-
-    static func entry(_ target: AssistantCloudTarget, areas: Set<AssistantArea>) -> String {
-        target.id + "|" + areas.map(\.rawValue).sorted().joined(separator: ",")
-    }
-
-    /// Zustimmung gilt nur, wenn sie für dieses Ziel gegeben wurde, ihre Bereiche die jetzigen umfassen (weniger Bereiche
-    /// brauchen keine neue Frage, mehr schon) und der Speicher des Ziels sie (noch) kennt: ein Widerruf in den
-    /// Einstellungen macht sie ungültig.
+    /// Zustimmung gilt nur, wenn sie für dieses Ziel gegeben wurde (Zustandsdatei), ihre Bereiche die jetzigen umfassen (weniger
+    /// Bereiche brauchen keine neue Frage, mehr schon) und der Speicher des Ziels sie (noch) kennt: ein Widerruf in den
+    /// Einstellungen macht sie ungültig. Maßgeblich ist der BESTÄTIGTE Stand der Datei; eine Zustimmung, deren Sicherung scheiterte,
+    /// gilt nicht.
     @MainActor
     static func isGranted(_ target: AssistantCloudTarget, areas: Set<AssistantArea>) -> Bool {
         guard storeKnows(target) else { return false }
-        let prefix = target.id + "|"
-        let wanted = Set(areas.map(\.rawValue))
-        return (UserDefaults.standard.stringArray(forKey: key) ?? []).contains { entry in
-            guard entry.hasPrefix(prefix) else { return false }
-            let granted = Set(entry.dropFirst(prefix.count).split(separator: ",").map(String.init))
-            return granted.isSuperset(of: wanted)
-        }
+        return AssistantReleaseFiles.store.record.consentedAreas(target.id).isSuperset(of: areas)
     }
 
     @MainActor
@@ -136,16 +142,14 @@ enum AssistantConsent {
         }
     }
 
-    /// Merkt die Zustimmung und gibt das Ziel im jeweiligen Speicher frei (dort prüft das Modell sie selbst).
+    /// Gibt das Ziel im jeweiligen Speicher frei (dort prüft das Modell die Zustimmung selbst). Die Zustimmung selbst steht schon in
+    /// der Zustandsdatei (Kern, `AssistantSession.setCloudConsent`); diese Freigabe kommt erst danach.
     @MainActor
-    static func grant(_ target: AssistantCloudTarget, areas: Set<AssistantArea>) {
+    static func grant(_ target: AssistantCloudTarget) {
         switch target {
         case .relay(let info): BookTalkRelayStore.shared.grant(info)
         case .endpoint: AssistantEndpointStore.shared.grantConsent()
         }
-        var entries = (UserDefaults.standard.stringArray(forKey: key) ?? []).filter { !$0.hasPrefix(target.id + "|") }
-        entries.append(entry(target, areas: areas))
-        UserDefaults.standard.set(entries, forKey: key)
     }
 
     static func title(_ target: AssistantCloudTarget) -> String { "An \(target.recipient) senden?" }

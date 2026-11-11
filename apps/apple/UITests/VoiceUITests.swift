@@ -362,6 +362,33 @@ final class VoiceUITests: XCTestCase {
         keepScreenshot(app, name: "Gespraech-Marken-je-Satz")
         closeAssistant(app)
     }
+    /// Zustand „Freigaben prüfen“ (`--assistant-demo-locked`, nur Debug-Bau): Die Zustandsdatei der Freigaben fehlt oder ist ungültig,
+    /// der Assistent gibt nichts aus eigenen Inhalten aus. Geprüft wird nur, dass der Zustand sichtbar ist (und der andere nicht);
+    /// ohne Modell, Abruf, Speicher, Protokoll und Zustandsdatei.
+    func testAssistantDemoLockedShowsTheReleaseCheckState() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--no-handsfree", "--assistant-no-model", "--assistant-demo-locked"]
+        app.launch()
+        openAssistant(app)
+        XCTAssertTrue(app.staticTexts["Freigaben prüfen"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.descendants(matching: .any)["assistantReleaseNotice"].exists)
+        XCTAssertFalse(app.staticTexts["Protokoll nicht schreibbar"].exists)
+        keepScreenshot(app, name: "Gespraech-Freigaben-pruefen")
+        closeAssistant(app)
+    }
+    /// Zustand „Protokoll nicht schreibbar“ (`--assistant-demo-audit`, nur Debug-Bau): Ohne Protokoll gibt der Assistent nichts aus
+    /// eigenen Inhalten aus. Geprüft wird nur, dass der Zustand mit seinem Knopf sichtbar ist (und der andere nicht).
+    func testAssistantDemoAuditShowsTheAuditUnavailableState() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--no-handsfree", "--assistant-no-model", "--assistant-demo-audit"]
+        app.launch()
+        openAssistant(app)
+        XCTAssertTrue(app.staticTexts["Protokoll nicht schreibbar"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["assistantNoticeRetryAudit"].exists)
+        XCTAssertFalse(app.staticTexts["Freigaben prüfen"].exists)
+        keepScreenshot(app, name: "Gespraech-Protokoll-nicht-schreibbar")
+        closeAssistant(app)
+    }
     #if targetEnvironment(simulator)
     func testConversationRearmsAfterEmptyTranscription() throws {
         // Aufnahme-Unterhaltung: `--legacy-conversation` lässt den Hauptknopf auch mit Freisprechen aufnehmen.

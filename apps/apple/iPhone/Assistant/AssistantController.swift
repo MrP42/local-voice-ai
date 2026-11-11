@@ -17,7 +17,7 @@ import Combine
 enum AssistantPhase: Equatable { case idle, listening, hearing, thinking, speaking }
 
 struct AssistantNotice: Equatable {
-    enum Action: Equatable { case retrySend, resume, retryStart, retryAudit, chooseModel, openLocalModels }
+    enum Action: Equatable { case retrySend, resume, retryStart, retryAudit, retryRelease, chooseModel, openLocalModels }
     var text: String
     /// Zweite, kurze Zeile (nur wenn zutreffend, z. B. „Das Apple-Systemmodell wird noch geladen.“).
     var detail: String?
@@ -38,6 +38,9 @@ struct AssistantNotice: Equatable {
 struct AssistantConsentRequest {
     let target: AssistantCloudTarget
     let areas: Set<AssistantArea>
+    /// Die Sitzung, über die die Zustimmung läuft (Klasse A: Generation, Zeilen, Zustandsdatei). Beim Wechsel zu einem Cloud-Modell
+    /// ist es eine Sitzung für das neue Ziel, die noch nicht übernommen ist; ohne sie kann nicht zugestimmt werden.
+    let session: AssistantSession?
     var title: String { AssistantConsent.title(target) }
     var message: String { AssistantConsent.body(target, areas: areas, desktop: BookTalkRelayStore.shared.desktopName) }
 }
@@ -130,6 +133,9 @@ final class AssistantController: ObservableObject {
     /// (feste Antwort, Bestandsangabe); es gibt keine gesammelte Quellenliste mehr.
     @Published private(set) var liveParts: [AssistantTurnPart] = []
     @Published private(set) var notice: AssistantNotice?
+    /// Zustand der Freigaben, der bestehen bleibt, bis er behoben ist: „Freigaben prüfen“ (Zustandsdatei fehlt oder ungültig, nichts aus
+    /// eigenen Inhalten) oder „Freigaben nicht gesichert“ (eine Einschränkung ließ sich nicht dauerhaft sichern).
+    @Published private(set) var releaseAlert: AssistantNotice?
     @Published private(set) var modelLabel = "Kein Modell"
     @Published private(set) var isCloud = false
     @Published private(set) var selectedChoice: AssistantModelChoice?
@@ -159,8 +165,10 @@ final class AssistantController: ObservableObject {
     private let speaker = BookTalkSpeaker()
     private let store = AssistantHistoryStore(directory: AssistantHistoryStore.standardDirectory())
     private let audit = AssistantAuditLog(directory: AssistantAuditLog.standardDirectory())
+    /// Die Zustandsdatei der Freigaben (Kern): einzige Quelle des Stands beim Start.
+    private var releaseStore: AssistantReleaseStore { AssistantReleaseFiles.store }
     private var auditFailureShown = false
-    /// Änderungen der Freigabe (Bereiche, Zustimmung) laufen nacheinander: Zeile, dann Einstellung.
+    /// Änderungen der Freigabe (Bereiche, Zustimmung) laufen nacheinander (Controller; der Kern reiht seine Sicherungsfolgen zusätzlich selbst).
     private var areaChain: Task<Void, Never>?
     private var grantingConsent = false
     private let hub = AssistantSources.shared
@@ -222,22 +230,27 @@ final class AssistantController: ObservableObject {
     /// UI-Tests: `--assistant-demo-quote` öffnet das Gespräch mit einer eingebauten Beispielrunde aus synthetischem Inhalt (ein
     /// wörtlicher Auszug, ein ganzer Block, mit Quellzeile). `--assistant-demo-multi` öffnet stattdessen die Beispielrunde mit
     /// mehreren Blöcken (Marke je Block: drei Auszüge aus zwei Quellen, einer davon mehrzeilig, je mit eigener Quellzeile „Wörtlicher
-    /// Auszug aus … · S. 12“, dazu ein Satz mit Kennzeichnung). Kein Modell, kein Abruf, kein Speicher, kein Protokoll: `start`
-    /// kehrt sofort zurück, und Verlauf und Protokoll bleiben unberührt (`persist`, `deleteStoredHistory`, `revokeConsent`).
+    /// Auszug aus … · S. 12“, dazu ein Satz mit Kennzeichnung). `--assistant-demo-locked` zeigt den Zustand „Freigaben prüfen“
+    /// (Zustandsdatei fehlt oder ungültig), `--assistant-demo-audit` den Zustand „Protokoll nicht schreibbar“, je mit der
+    /// Beispielrunde darunter. Kein Modell, kein Abruf, kein Speicher, kein Protokoll, keine Zustandsdatei: `start` kehrt sofort
+    /// zurück, und Verlauf, Protokoll und Freigaben bleiben unberührt (`persist`, `deleteStoredHistory`, `revokeConsent`).
     static let demoMulti = ProcessInfo.processInfo.arguments.contains("--assistant-demo-multi")
-    static let demoQuote = demoMulti || ProcessInfo.processInfo.arguments.contains("--assistant-demo-quote")
+    static let demoLocked = ProcessInfo.processInfo.arguments.contains("--assistant-demo-locked")
+    static let demoAudit = ProcessInfo.processInfo.arguments.contains("--assistant-demo-audit")
+    static let demoQuote = demoMulti || demoLocked || demoAudit || ProcessInfo.processInfo.arguments.contains("--assistant-demo-quote")
 
     private func showDemo() {
         opened = true
         historyLoaded = true
-        notice = nil
+        notice = Self.demoAudit ? Self.auditUnavailableNotice() : nil
+        releaseAlert = Self.demoLocked ? Self.releaseLockedNotice : nil
         turns = Self.demoMulti ? Self.demoMultiTurns : Self.demoTurns
         modelLabel = "Beispiel"
     }
 
     /// Ein gespeicherter Block der Beispielrunde (`isBlock: true`: ganz, unverändert, zitierbar).
     private static func demoBlock(_ area: AssistantArea, _ id: String, _ title: String, _ locator: String, _ text: String) -> AssistantPassage {
-        AssistantPassage(area: area, itemId: id, title: title, locator: locator, text: text, score: 1, isBlock: true)
+        AssistantPassage(area: area, itemId: id, title: title, locator: locator, text: text, score: 1, isBlock: true, quotable: true)
     }
 
     /// Beispielrunde mit mehreren Blöcken (synthetisch): drei wörtliche Auszüge aus zwei Quellen, der zweite mehrzeilig, je Block
@@ -299,7 +312,7 @@ final class AssistantController: ObservableObject {
         if LibraryPlayback.shared.busy { LibraryPlayback.shared.pause() }
         VoiceModel.shared.yieldToAssistant()
         installGuards()
-        hub.refresh()
+        hub.open()   // Klasse B: der Bestand gilt als nicht aktuell, bis ein Durchgang nach diesem Moment endet; die Meldung stößt ihn an
         if !historyLoaded {
             historyLoaded = true
             // Beiträge aus Runden ohne Quelle sind bei abgeschaltetem freien Modus nie sichtbar und nie im Prompt; die Datei bleibt
@@ -311,7 +324,9 @@ final class AssistantController: ObservableObject {
         guard mine == generation else { built.llama?.release(); return }
         var declined = false
         if let target = built.target, !AssistantConsent.isGranted(target, areas: AssistantAreaSettings.areas(cloud: true)) {
-            let allowed = await askConsent(target, areas: AssistantAreaSettings.areas(cloud: true))
+            let via = await consentSession(for: built)
+            guard mine == generation else { built.llama?.release(); return }
+            let allowed = await askConsent(target, areas: AssistantAreaSettings.areas(cloud: true), via: via)
             guard mine == generation else { built.llama?.release(); return }
             if !allowed {
                 declined = true
@@ -396,6 +411,9 @@ final class AssistantController: ObservableObject {
     }
 
     private func shutdown(announceText: String) {
+        // Klasse B: Ohne Gespräch hängt keine Sitzung an der Meldestelle, und die Quellen stoßen keine Indexierung mehr an.
+        AssistantContentWatch.shared.attach(nil)
+        hub.close()
         if current != nil { cancelAnswer(merge: false) }
         discardSpeculation()
         speaker.stop()
@@ -459,7 +477,18 @@ final class AssistantController: ObservableObject {
         return gemma.hasModel ? gemma : apple
     }
 
-    /// Modell, Wissen und Sitzung übernehmen; der Verlauf bleibt.
+    /// Eine Sitzung für das neue Cloud-Ziel, über die die Zustimmung läuft, BEVOR das Modell übernommen ist (Klasse A: die Erteilung
+    /// geht durch den Kern: Zeile „beabsichtigt“, Zustandsdatei, erst dann wirksam, Zeile „wirksam“). Sie wird nicht übernommen; die
+    /// übernommene Sitzung liest die Zustimmung danach aus der Zustandsdatei. `nil` ohne Modell.
+    private func consentSession(for built: AssistantEngine) async -> AssistantSession? {
+        guard let model = built.model, let target = built.target else { return nil }
+        let kn = await hub.knowledge(cloud: true, areas: AssistantAreaSettings.areas(cloud: true))
+        return AssistantSession(model: model, knowledge: kn, config: built.config, audit: audit, cloudConsent: false,
+                                releaseStore: releaseStore, cloudTarget: target.id)
+    }
+
+    /// Modell, Wissen und Sitzung übernehmen; der Verlauf bleibt. Bereiche und Zustimmung kommen aus der Zustandsdatei (über die
+    /// Sitzung); ist sie gesperrt, sind beide leer.
     private func adopt(_ built: AssistantEngine) async {
         let previous = engine
         engine = built
@@ -476,20 +505,27 @@ final class AssistantController: ObservableObject {
         let history = clearRequested == clearDone ? stored : []
         session?.setReleaseObserver(nil)
         if let model = built.model {
-            // Zustimmung zum Cloud-Ziel aus dem gespeicherten Stand; für lokale Modelle ohne Belang. Der Kern lässt ein
+            // Die Zustimmung zum Cloud-Ziel kommt aus der Zustandsdatei (für lokale Modelle ohne Belang). Der Kern lässt ein
             // Cloud-Modell ohne Zustimmung gar nicht erst laufen (`consentRequired`).
-            let consented = built.target.map { AssistantConsent.isGranted($0, areas: active) } ?? false
             let next = AssistantSession(model: model, knowledge: kn, config: built.config, history: history, audit: audit,
-                                        cloudConsent: consented)
+                                        cloudConsent: false, releaseStore: releaseStore, cloudTarget: built.target?.id)
             observeRelease(of: next)
             speaker.gate = next.playbackGate
             session = next
+            areas = next.effectiveAreas
+            AssistantContentWatch.shared.attach(next)
+            // Der Speicher des Ziels kennt die Zustimmung nicht mehr (Widerruf in den Einstellungen): sie ist auch in der Datei weg.
+            if let target = built.target, next.effectiveCloudConsent, !AssistantConsent.isGranted(target, areas: next.effectiveAreas) {
+                revokeConsent(areas: next.effectiveAreas)
+            }
         } else {
             speaker.gate = nil
             session = nil
+            AssistantContentWatch.shared.attach(nil)
         }
         turns = history
         rebuildPolicy()
+        refreshReleaseAlert()
     }
 
     /// Rückruf des Kerns bei JEDER Erhöhung der Freigabe-Generation (Bereiche, Zustimmung; Opt-in und Fortsetzen des
@@ -549,7 +585,9 @@ final class AssistantController: ObservableObject {
         let built = await AssistantEngine.make(choice: choice)
         guard mine == generation else { built.llama?.release(); return }
         if let target = built.target, !AssistantConsent.isGranted(target, areas: AssistantAreaSettings.areas(cloud: true)) {
-            let allowed = await askConsent(target, areas: AssistantAreaSettings.areas(cloud: true))
+            let via = await consentSession(for: built)
+            guard mine == generation else { built.llama?.release(); return }
+            let allowed = await askConsent(target, areas: AssistantAreaSettings.areas(cloud: true), via: via)
             guard mine == generation else { built.llama?.release(); return }
             if !allowed {
                 notice = AssistantNotice(text: "Ohne Zustimmung bleibt \(engine.label) aktiv.", action: nil)
@@ -577,12 +615,16 @@ final class AssistantController: ObservableObject {
         applyAreas(next)
     }
 
-    /// Bereiche ändern, in fester Reihenfolge (Freigabe zuerst, Einstellung danach):
+    /// Bereiche ändern (Klasse A), in fester Reihenfolge:
     /// 1. Kern, SYNCHRON: EINE Erhöhung der Generation. Was einschränkt (Bereich weg, Zustimmung weg), gilt sofort; die laufende
-    ///    Antwort endet, die Zeile `release` ist eingereiht. Erweiterungen (Bereich dazu) gelten noch nicht.
-    /// 2. In der Kette: `settle` wartet auf die dauerhafte Zeile; erst danach wird eine Erweiterung wirksam. Misslingt das Schreiben,
-    ///    bleiben Einschränkungen in Kraft, Erweiterungen nicht, und der Fehler wird gemeldet.
-    /// 3. Erst dann die gespeicherte Einstellung, und zwar der WIRKSAME Stand (nicht der gewünschte).
+    ///    Antwort endet. Erweiterungen (Bereich dazu) gelten noch nicht.
+    /// 2. In der Kette: `settle` ersetzt die Zustandsdatei dauerhaft (Einschränkung: danach die Zeile `release`; Erweiterung: erst
+    ///    Zeile „beabsichtigt“, dann die Datei, dann wirksam). Misslingt das, bleiben Einschränkungen in Kraft, Erweiterungen nicht, und
+    ///    der Zustand wird gemeldet. Es gibt keine zweite Einstellung daneben: Die Datei ist die Quelle.
+    /// 3. Erst danach gilt die Anzeige der WIRKSAMEN Bereiche (nicht der gewünschten).
+    /// Ohne Sitzung (kein Modell) macht der Speicher im Kern (`AssistantReleaseStore.updateAreas`) dasselbe: Datei ersetzen und die
+    /// Zeilen des Protokolls schreiben (Einschränkung: Datei, dann `release`; Erweiterung: „beabsichtigt“, Datei, „wirksam“), nur ohne
+    /// Generation, denn ohne Sitzung gibt es keine. Eine gescheiterte Einschränkung merkt der Speicher als engeren Stand.
     /// Für ein Cloud-Ziel geht die Zustimmung für den neuen Stand mit in die Änderung ein: Reichen die Bereiche der Zustimmung
     /// nicht, gilt sie nicht mehr (sofort), bis der Nutzer zustimmt; gesendet wird in der Zwischenzeit nichts.
     private func applyAreas(_ next: Set<AssistantArea>) {
@@ -600,34 +642,52 @@ final class AssistantController: ObservableObject {
         }
         inAreaChain { [weak self] in
             guard let self else { return }
-            var effective = await self.settleAreas(pending, session: session, knowledge: knowledge, wanted: next)
-            AssistantAreaSettings.set(effective, cloud: cloud)
+            let effective = await self.settleAreas(pending, session: session, knowledge: knowledge, cloud: cloud, wanted: next)
             if self.session === session { self.areas = effective }
-            guard let target, !AssistantConsent.isGranted(target, areas: effective) else { return }
-            // Mehr Bereiche als zugestimmt: fragen, sonst zurück. Gesendet wird in der Zwischenzeit nichts (Guard beim Senden).
-            if await self.askConsent(target, areas: effective) { return }
-            let back = session?.applyAreas(previous, cloudConsent: AssistantConsent.isGranted(target, areas: previous))
-            effective = await self.settleAreas(back, session: session, knowledge: knowledge, wanted: previous)
-            AssistantAreaSettings.set(effective, cloud: cloud)
-            if self.session === session { self.areas = effective }
+            self.refreshReleaseAlert()
+            guard let target, session != nil, !AssistantConsent.isGranted(target, areas: effective) else { return }
+            // Mehr Bereiche als zugestimmt: fragen, sonst zurück. Die Frage wartet auf den Nutzer und gehört deshalb NICHT in die
+            // Kette (sie hielte spätere Änderungen auf, und die Zustimmung selbst wartet in der Sicherungsfolge des Kerns auf deren
+            // Reihe: ein Kreis). Gesendet wird in der Zwischenzeit nichts (Guard beim Senden).
+            self.askConsentOrRevert(target, wider: effective, previous: previous, session: session, knowledge: knowledge, cloud: cloud)
         }
     }
 
-    /// Wartet auf die Zeile der Änderung und gibt die WIRKSAMEN Bereiche zurück. Ein Schreibfehler wird gemeldet; dann gilt, was
-    /// einschränkt, und was erweitert, nicht.
-    private func settleAreas(_ pending: AssistantReleasePending?, session: AssistantSession?, knowledge: AssistantKnowledge?,
+    /// Fragt nach der Zustimmung für mehr Bereiche; lehnt der Nutzer ab, gehen die Bereiche auf den früheren Stand zurück (eine
+    /// weitere Änderung in der Kette, in der Reihenfolge des Anwendens).
+    private func askConsentOrRevert(_ target: AssistantCloudTarget, wider: Set<AssistantArea>, previous: Set<AssistantArea>,
+                                    session: AssistantSession?, knowledge: AssistantKnowledge?, cloud: Bool) {
+        Task { [weak self] in
+            guard let self else { return }
+            if await self.askConsent(target, areas: wider, via: session) { return }
+            let back = session?.applyAreas(previous, cloudConsent: AssistantConsent.isGranted(target, areas: previous))
+            if self.session === session { self.areas = session?.effectiveAreas ?? previous }
+            self.inAreaChain { [weak self] in
+                guard let self else { return }
+                let effective = await self.settleAreas(back, session: session, knowledge: knowledge, cloud: cloud, wanted: previous)
+                if self.session === session { self.areas = effective }
+                self.refreshReleaseAlert()
+            }
+        }
+    }
+
+    /// Wartet auf die Sicherung der Änderung und gibt die WIRKSAMEN Bereiche zurück. Ein Fehler wird gemeldet (Protokoll:
+    /// „Protokoll nicht schreibbar“; Zustandsdatei: „Freigaben nicht gesichert“); dann gilt, was einschränkt, und was erweitert, nicht.
+    private func settleAreas(_ pending: AssistantReleasePending?, session: AssistantSession?, knowledge: AssistantKnowledge?, cloud: Bool,
                              wanted: Set<AssistantArea>) async -> Set<AssistantArea> {
         guard let session, let pending else {
-            await knowledge?.setAreas(wanted)
-            return wanted
+            let change = await releaseStore.updateAreas(wanted, cloud: cloud, audit: audit)
+            if change.auditError != nil { auditResult(false) }
+            await knowledge?.setAreas(change.effective)
+            return change.effective
         }
         let result = await session.settle(pending)
-        if result.error != nil || !result.effective { auditResult(false, detail: Self.releaseNotSavedDetail) }
+        if result.error != nil { auditResult(false) }
         return session.effectiveAreas
     }
 
-    /// Änderungen der Freigabe laufen nacheinander: Eine spätere beginnt erst, wenn die frühere ihre Zeile und die Einstellung hinter
-    /// sich hat (sonst überholte eine ältere Einstellung die neuere).
+    /// Änderungen der Freigabe laufen nacheinander: Eine spätere beginnt erst, wenn die frühere gesichert ist und ihre Anzeige gesetzt hat
+    /// (sonst überholte eine ältere Anzeige die neuere).
     private func inAreaChain(_ work: @escaping @MainActor () async -> Void) {
         let previous = areaChain
         areaChain = Task {
@@ -659,8 +719,8 @@ final class AssistantController: ObservableObject {
     private static let revokedText = "Antwort angehalten: Die Freigabe hat sich geändert."
 
     /// Cloud-Zustimmung entzogen (z. B. die Bereiche reichen nicht mehr): sofort im Kern (Generation steigt, laufende Antworten
-    /// enden, die Zeile `release` ist eingereiht), das Schreiben der Zeile danach in der Kette. Ohne Sitzung (Modellstart, noch
-    /// keine Freigabe) gibt es keine Erhöhung: dann steht das Ereignis hier (Generation 0).
+    /// enden), danach in der Kette: Zustandsdatei ersetzen, dann die Zeile `release`. Ohne Sitzung (Modellstart, noch keine Freigabe)
+    /// gibt es keine Erhöhung: dann steht das Ereignis hier (Generation 0).
     private func revokeConsent(areas consented: Set<AssistantArea>) {
         #if DEBUG
         guard !Self.demoQuote else { return }
@@ -672,20 +732,21 @@ final class AssistantController: ObservableObject {
         let pending = session.applyCloudConsent(false)
         inAreaChain { [weak self] in
             let result = await session.settle(pending)
-            if result.error != nil { self?.auditResult(false, detail: Self.releaseNotSavedDetail) }
+            if result.error != nil { self?.auditResult(false) }
+            self?.refreshReleaseAlert()
         }
     }
 
-    /// Cloud-Zustimmung erteilt: erst im Kern (die Erteilung gilt erst mit der dauerhaften Zeile), danach die Einstellung.
-    /// `true`, wenn die Zustimmung gilt. Misslingt das Schreiben, gilt sie nicht (Widerrufbarkeit hat Vorrang vor Bequemlichkeit).
-    private func grantConsentInCore(areas consented: Set<AssistantArea>) async -> Bool {
+    /// Cloud-Zustimmung erteilt: über die Sitzung der Anfrage (Kern). `true`, wenn die Zustimmung gilt, also die Zustandsdatei sie
+    /// bestätigt hat. Misslingt das Sichern, gilt sie nicht (Widerrufbarkeit hat Vorrang vor Bequemlichkeit).
+    private func grantConsentInCore(_ request: AssistantConsentRequest) async -> Bool {
         #if DEBUG
         guard !Self.demoQuote else { return true }
         #endif
-        guard let session else { return await recordConsentEntry(.cloudGranted, areas: consented) }
+        guard let session = request.session else { return false }
         let result = await session.setCloudConsent(true)
-        if result.error != nil { auditResult(false, detail: Self.releaseNotSavedDetail) }
-        return result.effective
+        if result.error != nil { auditResult(false) }
+        return result.effective && result.storeError == nil
     }
 
     private func recordConsentEntry(_ kind: AssistantAuditEntry.Kind, areas consented: Set<AssistantArea>) async -> Bool {
@@ -697,18 +758,69 @@ final class AssistantController: ObservableObject {
     }
 
     /// Das Protokoll ließ sich nicht schreiben: ein Hinweis, nie still. Einmal je Störung (`retry` setzt ihn zurück).
-    private func auditResult(_ ok: Bool, detail: String? = nil) {
+    private func auditResult(_ ok: Bool) {
         guard !ok, !auditFailureShown else { return }
         auditFailureShown = true
-        notice = Self.auditUnavailableNotice(detail: detail)
+        notice = Self.auditUnavailableNotice()
     }
 
-    private static let releaseNotSavedDetail = "Die Änderung der Freigabe wurde nicht gesichert: Einschränkungen gelten, Erweiterungen nicht."
+    /// Zustand „Freigaben prüfen“: Die Zustandsdatei fehlt (bei vorhandenem Protokoll) oder ist ungültig. Es gibt keinen Bereich und
+    /// keine Cloud-Zustimmung, bis der Nutzer die Bereiche im Menü neu setzt und das gesichert ist. Ohne Aktion: das Menü ist der Weg.
+    private static let releaseLockedNotice = AssistantNotice(
+        text: "Freigaben prüfen",
+        detail: "Die gespeicherten Freigaben sind nicht lesbar. Bis du die Bereiche im Menü neu setzt, gibt der Assistent nichts aus deinen Inhalten aus.",
+        action: nil)
+
+    /// Eine Einschränkung ließ sich nicht dauerhaft sichern: Sie gilt, Erweiterungen nicht, und aus eigenen Inhalten kommt in diesem
+    /// Lauf nichts mehr. „Erneut sichern“ versucht es noch einmal.
+    private static let releaseUnsavedNotice = AssistantNotice(
+        text: "Freigaben nicht gesichert",
+        detail: "Einschränkungen gelten, Erweiterungen nicht. Aus deinen Inhalten kommt in diesem Lauf nichts mehr.",
+        action: .retryRelease)
+
+    /// Eine Einschränkung wurde nachträglich gesichert; die Sperre aus eigenen Inhalten bleibt bis zum nächsten Start der App.
+    private static let releaseBlockedNotice = AssistantNotice(
+        text: "Freigaben gesichert",
+        detail: "Der Assistent gibt in diesem Lauf nichts mehr aus deinen Inhalten aus. Starte die App neu, um wieder auf sie zuzugreifen.",
+        action: nil)
+
+    /// Setzt den bestehenden Hinweis zu den Freigaben nach dem Stand von Sitzung und Zustandsdatei.
+    private func refreshReleaseAlert() {
+        #if DEBUG
+        guard !Self.demoQuote else { return }
+        #endif
+        let store = releaseStore
+        let locked = session?.isReleaseLocked ?? store.isLocked
+        let blocked = session?.isContentBlocked ?? store.isBlocked
+        let unsaved = session?.needsSave ?? store.isDirty
+        let next: AssistantNotice?
+        if locked {
+            next = Self.releaseLockedNotice
+        } else if unsaved {
+            next = Self.releaseUnsavedNotice
+        } else if blocked {
+            next = Self.releaseBlockedNotice
+        } else {
+            next = nil
+        }
+        if releaseAlert != next { releaseAlert = next }
+    }
+
+    /// „Erneut sichern“: die Zustandsdatei noch einmal ersetzen (streng nacheinander mit den anderen Änderungen der Freigabe). Mit
+    /// Sitzung über die Sitzung, ohne sie über den Speicher (er sichert den gemerkten engeren Stand).
+    func retryRelease() {
+        let session = self.session
+        inAreaChain { [weak self] in
+            guard let self else { return }
+            if let session { _ = await session.retrySave() } else { _ = await self.releaseStore.retrySave() }
+            self.refreshReleaseAlert()
+        }
+    }
 
     /// Zustand „Protokoll nicht schreibbar“: Ohne Protokoll gibt der Assistent nichts aus deinen Inhalten aus.
-    private static func auditUnavailableNotice(detail: String? = nil) -> AssistantNotice {
+    private static func auditUnavailableNotice() -> AssistantNotice {
         AssistantNotice(text: "Protokoll nicht schreibbar",
-                        detail: detail ?? "Ohne Protokoll gibt der Assistent nichts aus deinen Inhalten aus. Prüfe den freien Speicher.",
+                        detail: "Ohne Protokoll gibt der Assistent nichts aus deinen Inhalten aus. Prüfe den freien Speicher.",
                         action: .retryAudit)
     }
 
@@ -1008,7 +1120,7 @@ final class AssistantController: ObservableObject {
             retryText = text
             let mine = generation
             Task {
-                if await askConsent(target, areas: areas) {
+                if await askConsent(target, areas: areas, via: session) {
                     send(text: text)
                 } else if mine == generation, consentRequest == nil {
                     // Abgelehnt (nicht: Gespräch beendet oder Dialog ersetzt): die Äußerung bleibt in `retryText`.
@@ -1334,24 +1446,26 @@ final class AssistantController: ObservableObject {
 
     // MARK: Zustimmung
 
-    private func askConsent(_ target: AssistantCloudTarget, areas: Set<AssistantArea>) async -> Bool {
+    private func askConsent(_ target: AssistantCloudTarget, areas: Set<AssistantArea>, via: AssistantSession?) async -> Bool {
         resolveConsent(false)
         return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
             consentContinuation = continuation
-            consentRequest = AssistantConsentRequest(target: target, areas: areas)
+            consentRequest = AssistantConsentRequest(target: target, areas: areas, session: via)
         }
     }
 
-    /// Die Zustimmung ändert die Freigabe: Der Kern zuerst (neue Generation, Zeile `release`; die Erteilung gilt erst mit der
-    /// dauerhaften Zeile), danach die gespeicherte Zustimmung. Gilt sie nicht (Protokoll nicht schreibbar), bleibt sie aus.
+    /// Die Zustimmung ändert die Freigabe: Der Kern zuerst (Zeile „beabsichtigt“, Zustandsdatei ersetzen, erst nach bestätigtem Austausch
+    /// wirksam mit neuer Generation, Zeile „wirksam“), danach die Freigabe im Speicher des Ziels. Gilt sie nicht (Zustandsdatei oder
+    /// Protokoll nicht schreibbar), bleibt sie aus.
     func grantConsent() {
         guard let request = consentRequest, !grantingConsent else { return }
         grantingConsent = true
         Task { [weak self] in
             guard let self else { return }
-            let effective = await self.grantConsentInCore(areas: request.areas)
-            if effective { AssistantConsent.grant(request.target, areas: request.areas) }
+            let effective = await self.grantConsentInCore(request)
+            if effective { AssistantConsent.grant(request.target) }
             self.grantingConsent = false
+            self.refreshReleaseAlert()
             self.finishConsent(effective)
         }
     }

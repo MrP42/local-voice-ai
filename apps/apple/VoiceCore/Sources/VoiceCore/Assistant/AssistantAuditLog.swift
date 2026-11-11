@@ -162,14 +162,51 @@ public struct AssistantTraceStep: Sendable, Equatable, Codable {
         self.commits = commits
     }
 
-    /// Die Einordnung steht, ein Ergebnis fehlt: Die Einheit konnte ausgegeben werden, ob sie es wurde, ist unbekannt (Prozessende
-    /// zwischen Einordnung und Ergebnis). Verworfene Kandidaten behaupten nichts und sind nie „unbekannt“.
-    public var resultUnknown: Bool {
+    /// Ergebnis eines Commits einer Einheit, wie das Protokoll es zeigt.
+    public enum UnitResult: String, Sendable, Equatable {
+        /// Die Handlung wurde ausgelöst (`+`).
+        case executed
+        /// Die Generation galt nicht mehr, nichts wurde gestartet (`-`).
+        case discarded
+        /// Die Handlung ließ sich nicht auslösen (`!`).
+        case failed
+        /// Die Einordnung steht, das Ergebnis DIESER Art fehlt: Ausgabe möglich, Ergebnis unbekannt (Prozessende zwischen Handlung
+        /// und dauerhaftem Schreiben der Zeile). Es wird nie nachgeholt und nie als ausgeführt geschrieben.
+        case unknown
+        /// Es gab nichts zu tun: ein verworfener Kandidat oder ein Commit, der nicht begann, weil ein früherer der Einheit verworfen
+        /// oder fehlgeschlagen war.
+        case notPlanned
+    }
+
+    /// Die Commits einer ausgegebenen Einheit in der Reihenfolge ihres Auftretens (der Verlauf gehört zur Anfrage, nicht zur Einheit).
+    public static let unitStages: [AssistantCommitStage] = [.emit, .display, .audio]
+
+    /// Ob die Einheit überhaupt ausgegeben werden sollte (verworfene Kandidaten behaupten nichts).
+    private var isOutput: Bool {
         switch verdict {
-        case .grounded, .inventory, .unsourced, .template, .announcement: commits.isEmpty
+        case .grounded, .inventory, .unsourced, .template, .announcement: true
         default: false
         }
     }
+
+    /// Schreibfolge (6), je Commit-Art EINZELN: Eine Art ohne Ergebniszeile ist „unbekannt“, auch wenn die Zeilen der anderen Arten
+    /// vorliegen. Eine Art nach einem verworfenen oder fehlgeschlagenen früheren Commit der Einheit begann nie („nicht geplant“).
+    public func result(for stage: AssistantCommitStage) -> UnitResult {
+        guard isOutput, let position = Self.unitStages.firstIndex(of: stage) else { return .notPlanned }
+        if let mark = commits.last(where: { $0.stage == stage }) {
+            return mark.failed ? .failed : (mark.ok ? .executed : .discarded)
+        }
+        for earlier in Self.unitStages[..<position] {
+            if let mark = commits.last(where: { $0.stage == earlier }), !mark.ok { return .notPlanned }
+        }
+        return .unknown
+    }
+
+    /// Die Arten, deren Ergebnis unbekannt ist.
+    public var unknownStages: [AssistantCommitStage] { Self.unitStages.filter { result(for: $0) == .unknown } }
+
+    /// Mindestens eine Art ist unbekannt (Ausgabe möglich, Ergebnis dieser Art unbekannt).
+    public var resultUnknown: Bool { !unknownStages.isEmpty }
 
     private enum CodingKeys: String, CodingKey {
         case n
@@ -192,6 +229,21 @@ public struct AssistantAuditEntry: Sendable, Equatable, Codable {
         /// `resumedFree`: der Nutzer hat mit „Ohne Quelle fortsetzen“ den Datenkontext aufgehoben. `release`: eine Erhöhung der
         /// Freigabe-Generation (vom Kern geschrieben; Grund in `cause`). `state`: Freigabezustand beim Öffnen des Protokolls.
         case answer, unsourcedOn, unsourcedOff, cloudGranted, cloudRevoked, resumedFree, release, state
+        /// „Erweiterung beabsichtigt“ (Einwilligung, Bereich an, Zustimmung erteilt): hält die Handlung des Nutzers fest, nicht die
+        /// Wirkung. Die Folgezeilen „wirksam“ und „in diesem Lauf nicht wirksam“ werden mit Lauf und Änderungsnummer zugeordnet
+        /// (`effect`); fehlt beides, ist die Wirkung unbekannt.
+        case intent
+    }
+
+    /// Wirkung einer beabsichtigten Erweiterung im Lauf, in dem sie angestoßen wurde.
+    public enum Effect: String, Sendable, Codable, Equatable {
+        /// Die Zeile „wirksam“ steht (mit der Generation in `effectiveGeneration`).
+        case effective
+        /// Die Zeile „Erweiterung in diesem Lauf nicht wirksam“ steht.
+        case notEffective
+        /// Weder noch: Die Wirkung ist UNBEKANNT (sie kann nach dem Austausch der Zustandsdatei eingetreten sein, bevor die Zeile
+        /// geschrieben war), nicht „nicht wirksam“.
+        case unknown
     }
 
     public enum Outcome: String, Sendable, Codable {
@@ -241,6 +293,20 @@ public struct AssistantAuditEntry: Sendable, Equatable, Codable {
     public var history: AssistantCommitMark?
     /// Zustimmung zum Cloud-Ziel (nur Zeilen `state`).
     public var cloudConsent: Bool?
+    /// Laufnummer des Prozesslaufs (Schreibfolge 7). Das Paar aus Lauf und Generation wird nie wiederverwendet. `nil`: Zeile aus
+    /// einer Fassung vor den Laufnummern.
+    public var run: Int?
+    /// Änderungsnummer je Lauf (Zeilen der Klasse A: `release`, `intent`).
+    public var change: Int?
+    /// Zeile `state`: Die Zustandsdatei war ungültig, der Lauf startete gesperrt („gesperrt“, Anzeige „Freigaben prüfen“).
+    public var locked: Bool?
+    /// Zeile `intent`: Wirkung der beabsichtigten Erweiterung.
+    public var effect: Effect?
+    /// Zeile `intent` mit Wirkung „wirksam“: die Generation, die im Schritt des Wirksamwerdens vergeben wurde.
+    public var effectiveGeneration: Int?
+    /// Zeile `state`: Der geltende Stand weicht vom zuletzt protokollierten ab (eine Zeile ging verloren, oder die Wirkung einer
+    /// Erweiterung war unbekannt). Die Standzeile rekonstruiert nichts, sie macht die Abweichung nur erkennbar.
+    public var deviatesFromLogged: Bool?
 
     public init(at: Date = Date(), kind: Kind, model: String = "", cloud: Bool = false, unsourcedMode: Bool = false,
                 consentVersion: Int = 0, counts: AssistantSentenceCounts = AssistantSentenceCounts(), areas: [AssistantArea] = [],
@@ -279,6 +345,7 @@ public struct AssistantAuditEntry: Sendable, Equatable, Codable {
     private enum CodingKeys: String, CodingKey {
         case at, kind, modelKind, cloud, unsourcedMode, consentVersion, round, level, generation, counts, areas, outcome, trace
         case traceOverflow, history, requestId, sessionId, contextMode, contextReason, cause, cloudConsent
+        case run, change, locked, effect, effectiveGeneration, deviatesFromLogged
         case model, grounded, unsourced, neutral, dropped
     }
 
@@ -317,6 +384,12 @@ public struct AssistantAuditEntry: Sendable, Equatable, Codable {
         contextReason = try c.decodeIfPresent(AssistantContext.Reason.self, forKey: .contextReason)
         cause = try c.decodeIfPresent(AssistantReleaseCause.self, forKey: .cause)
         cloudConsent = try c.decodeIfPresent(Bool.self, forKey: .cloudConsent)
+        run = try c.decodeIfPresent(Int.self, forKey: .run)
+        change = try c.decodeIfPresent(Int.self, forKey: .change)
+        locked = try c.decodeIfPresent(Bool.self, forKey: .locked)
+        effect = try c.decodeIfPresent(Effect.self, forKey: .effect)
+        effectiveGeneration = try c.decodeIfPresent(Int.self, forKey: .effectiveGeneration)
+        deviatesFromLogged = try c.decodeIfPresent(Bool.self, forKey: .deviatesFromLogged)
         let derived = AssistantAuditLevel.of(counts)
         let stored = try c.decodeIfPresent(AssistantAuditLevel.self, forKey: .level)
         level = kind == .answer ? max(stored ?? derived, derived) : stored
@@ -345,6 +418,12 @@ public struct AssistantAuditEntry: Sendable, Equatable, Codable {
         try c.encodeIfPresent(contextReason, forKey: .contextReason)
         try c.encodeIfPresent(cause, forKey: .cause)
         try c.encodeIfPresent(cloudConsent, forKey: .cloudConsent)
+        try c.encodeIfPresent(run, forKey: .run)
+        try c.encodeIfPresent(change, forKey: .change)
+        try c.encodeIfPresent(locked, forKey: .locked)
+        try c.encodeIfPresent(effect, forKey: .effect)
+        try c.encodeIfPresent(effectiveGeneration, forKey: .effectiveGeneration)
+        try c.encodeIfPresent(deviatesFromLogged, forKey: .deviatesFromLogged)
     }
 }
 
@@ -373,11 +452,16 @@ struct AssistantJournalLine: Codable, Equatable {
         case start, step, commit, end, event, round, areas
         /// `release`: Erhöhung der Freigabe-Generation (Kern, im Lock): `gen` neue Generation, `cause` Grund, `areas` bei
         /// Bereichen die neuen Namen, `unsourced`/`consent`/`model`/`cloud` Zustand danach. Additiv: ältere Fassungen kennen die
-        /// Art nicht und überspringen die Zeile (sie bleibt Byte für Byte erhalten).
+        /// Art nicht und überspringen die Zeile (sie bleibt Byte für Byte erhalten). Eine Einschränkung OHNE Sitzung (kein Modell)
+        /// trägt keine Generation (`gen` fehlt, es gibt keine), dafür `run` und `chg`; `model` fehlt dann auch.
         case release
-        /// `state`: Freigabezustand beim Öffnen des Protokolls (`unsourced`, `consent`, `areas`, `granted` = Cloud-Zustimmung, `model`,
-        /// `cloud`, `gen`). Additiv wie `release`.
+        /// `state`: Freigabezustand beim Öffnen des Protokolls (`run` = Laufnummer, `unsourced`, `consent`, `areas`, `granted` =
+        /// Cloud-Zustimmung, `locked`, `model`, `cloud`, `gen`). Additiv wie `release`.
         case state
+        /// Klasse A, Erweiterung (Schreibfolge 8): `intent` = „Erweiterung beabsichtigt“ (Lauf, Änderungsnummer, Ursache, KEINE
+        /// Generation), `effective` = „Erweiterung wirksam“ (Lauf, Änderungsnummer, die im Schritt des Wirksamwerdens vergebene
+        /// Generation), `ineffective` = „Erweiterung in diesem Lauf nicht wirksam“ (Lauf, Änderungsnummer). Additiv.
+        case intent, effective, ineffective
     }
 
     var t: Kind
@@ -406,8 +490,14 @@ struct AssistantJournalLine: Codable, Equatable {
     var kind: AssistantAuditEntry.Kind?
     /// Grund der Erhöhung (`release`).
     var cause: AssistantReleaseCause?
-    /// Zustimmung zum Cloud-Ziel (`state`).
+    /// Zustimmung zum Cloud-Ziel (`state`, `release`, `intent`, `effective`).
     var granted: Bool?
+    /// Laufnummer (Zeilen ohne Anfrage mit Generation: `state`, `release`, `intent`, `effective`, `ineffective`; dazu `start`).
+    var run: Int?
+    /// Änderungsnummer je Lauf (Klasse A).
+    var chg: Int?
+    /// Zustandsdatei ungültig, Lauf gesperrt (`state`).
+    var locked: Bool?
 
     init(_ t: Kind, req: String? = nil) {
         self.t = t
@@ -448,8 +538,38 @@ enum AssistantJournalFold {
         return c
     }
 
+    /// Der zuletzt protokollierte Stand der Klasse A (für die Standzeile): aus `state`, `release` und `effective`, nie aus `intent`.
+    private struct Logged: Equatable {
+        var optIn = false
+        var consent = 0
+        var areas: [String] = []
+        var granted = false
+    }
+
+    private static func logged(_ l: AssistantJournalLine, from old: Logged?) -> Logged {
+        var out = old ?? Logged()
+        if let u = l.unsourced { out.optIn = u }
+        if let c = l.consent { out.consent = c }
+        if let a = l.areas { out.areas = a.sorted() }
+        if let g = l.granted { out.granted = g }
+        return out
+    }
+
+    private static func entry(_ l: AssistantJournalLine, kind: AssistantAuditEntry.Kind, generation: Int = 0) -> AssistantAuditEntry {
+        var e = AssistantAuditEntry(at: l.at ?? .distantPast, kind: kind, cloud: l.cloud ?? false, unsourcedMode: l.unsourced ?? false,
+                                    consentVersion: l.consent ?? 0, generation: generation, cause: l.cause, cloudConsent: l.granted)
+        e.modelKind = l.model ?? .other
+        e.areas = l.areas ?? []
+        e.run = l.run
+        e.change = l.chg
+        return e
+    }
+
     static func fold(_ lines: [Data]) -> (entries: [AssistantAuditEntry], skipped: Int) {
         let plain = decoder()
+        var lastLogged: Logged?
+        /// Zeilen „beabsichtigt“ nach (Lauf, Änderungsnummer).
+        var intents: [String: Int] = [:]
         var entries: [AssistantAuditEntry] = []
         var byRequest: [String: Int] = [:]
         var endLevel: [Int: AssistantAuditLevel] = [:]
@@ -469,6 +589,7 @@ enum AssistantJournalFold {
                                             unsourcedMode: l.unsourced ?? false, consentVersion: l.consent ?? 0, round: l.round,
                                             generation: l.gen ?? 0)
                 e.modelKind = l.model ?? .other
+                e.run = l.run
                 e.requestId = req
                 e.sessionId = l.session
                 e.contextMode = l.ctx
@@ -501,20 +622,41 @@ enum AssistantJournalFold {
                 entries[i].areas = l.areas ?? (offered[i] ?? []).sorted()
                 if let level = l.level { endLevel[i] = level }
             case .release:
-                guard let g = l.gen, let cause = l.cause else { skipped += 1; continue }
-                var e = AssistantAuditEntry(at: l.at ?? .distantPast, kind: .release, cloud: l.cloud ?? false,
-                                            unsourcedMode: l.unsourced ?? false, consentVersion: l.consent ?? 0, generation: g,
-                                            cause: cause)
-                e.modelKind = l.model ?? .other
-                e.areas = l.areas ?? []
-                entries.append(e)
+                // Eine Zeile `release` ohne Generation gibt es nur für eine Änderung ohne Sitzung (es läuft kein Modell, also gibt es
+                // keine Generation): Sie trägt dann Lauf und Änderungsnummer. Ohne beides ist sie nicht lesbar.
+                guard l.cause != nil, l.gen != nil || (l.run != nil && l.chg != nil) else { skipped += 1; continue }
+                entries.append(entry(l, kind: .release, generation: l.gen ?? 0))
+                lastLogged = logged(l, from: lastLogged)
             case .state:
-                var e = AssistantAuditEntry(at: l.at ?? .distantPast, kind: .state, cloud: l.cloud ?? false,
-                                            unsourcedMode: l.unsourced ?? false, consentVersion: l.consent ?? 0, generation: l.gen ?? 0,
-                                            cloudConsent: l.granted)
-                e.modelKind = l.model ?? .other
-                e.areas = l.areas ?? []
+                var e = entry(l, kind: .state, generation: l.gen ?? 0)
+                e.locked = l.locked
+                let now = logged(l, from: nil)
+                if let before = lastLogged { e.deviatesFromLogged = before != now }
+                lastLogged = now
                 entries.append(e)
+            case .intent:
+                guard let run = l.run, let chg = l.chg else { skipped += 1; continue }
+                var e = entry(l, kind: .intent)
+                e.effect = .unknown
+                entries.append(e)
+                intents["\(run)/\(chg)"] = entries.count - 1
+            case .effective, .ineffective:
+                guard let run = l.run, let chg = l.chg else { skipped += 1; continue }
+                let key = "\(run)/\(chg)"
+                if intents[key] == nil {
+                    // „Erweiterung in diesem Lauf nicht wirksam“ ohne die Zeile „beabsichtigt“ (deren Schreiben scheiterte).
+                    guard l.t == .ineffective else { skipped += 1; continue }
+                    entries.append(entry(l, kind: .intent))
+                    intents[key] = entries.count - 1
+                }
+                guard let i = intents[key] else { continue }
+                if l.t == .effective {
+                    entries[i].effect = .effective
+                    entries[i].effectiveGeneration = l.gen
+                    lastLogged = logged(l, from: lastLogged)
+                } else if entries[i].effect != .effective {
+                    entries[i].effect = .notEffective
+                }
             case .event:
                 var e = AssistantAuditEntry(at: l.at ?? .distantPast, kind: l.kind ?? .unsourcedOn, cloud: l.cloud ?? false,
                                             unsourcedMode: l.unsourced ?? false, consentVersion: l.consent ?? 0, generation: l.gen ?? 0)
@@ -531,6 +673,31 @@ enum AssistantJournalFold {
             entries[i].level = max(AssistantAuditLevel.of(entries[i].counts), endLevel[i] ?? .s0)
         }
         return (entries, skipped)
+    }
+}
+
+/// Die Laufnummer eines Prozesslaufs (Schreibfolge 7). Sie wird beim ersten Schreiben einer Zeile dieses Laufs vergeben: höchste
+/// Laufnummer im Protokoll plus eins, nie dieselbe für zwei Läufe desselben Schreibers. Fehlschläge vergeben nichts Neues: Dieselbe
+/// Nummer gilt für den nächsten Versuch.
+final class AssistantRunToken: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Int?
+
+    /// Die Nummer, sobald vergeben.
+    var number: Int? {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    /// Vergibt die Nummer einmal (nur auf der Warteschlange des Schreibers).
+    fileprivate func resolve(_ make: () -> Int) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        if let value { return value }
+        let fresh = make()
+        value = fresh
+        return fresh
     }
 }
 
@@ -552,6 +719,8 @@ final class AssistantAuditWriter: @unchecked Sendable {
     private var openError: AssistantAuditError = .readFailed
     private var errors: [String: AssistantAuditError] = [:]
     private var errorOrder: [String] = []
+    /// Höchste Laufnummer in der Datei und unter den vergebenen (Schreibfolge 7).
+    private var maxRun = 0
     /// Schlüssel mit unabgeholtem Fehler, hinter einem eigenen Lock (lesbar ohne Warteschlange).
     private let failedLock = NSLock()
     private var failed = Set<String>()
@@ -637,13 +806,14 @@ final class AssistantAuditWriter: @unchecked Sendable {
     /// Hängt eine Zeile an (asynchron, in der Reihenfolge der Aufrufe). Kehrt sofort zurück; ein Fehler wird unter `key` gemerkt
     /// (Standard: die Anfrage der Zeile) und von `flush` gemeldet. Der Fehler bleibt stehen, bis er gemeldet wird: Er geht nie
     /// verloren, und `hasFailed` zeigt ihn ohne Warten (Controller: laufende Ausgabe stoppen).
-    func enqueue(_ line: AssistantJournalLine, key: String? = nil) {
+    /// `run`: die Zeile trägt die Laufnummer des Tokens, die beim ersten Schreiben vergeben wird (nach dem Öffnen der Datei).
+    func enqueue(_ line: AssistantJournalLine, key: String? = nil, run: AssistantRunToken? = nil) {
         let k = key ?? line.req ?? ""
-        guard let data = try? Self.encoder().encode(line) else {
+        guard run != nil || (try? Self.encoder().encode(line)) != nil else {
             queue.async { self.note(k, .encodeFailed) }
             return
         }
-        queue.async { self.write(data, req: k) }
+        queue.async { self.write(line, run: run, req: k) }
     }
 
     /// Wartet, bis alles bis hierher Eingereihte geschrieben ist. Gibt den Fehler zurück, der für `request` (oder ohne Anfrage:
@@ -692,8 +862,12 @@ final class AssistantAuditWriter: @unchecked Sendable {
         failedLock.unlock()
     }
 
-    private func write(_ line: Data, req: String) {
+    private func write(_ journal: AssistantJournalLine, run: AssistantRunToken?, req: String) {
         guard openIfNeeded() else { return note(req, openError) }
+        var journal = journal
+        if let run { journal.run = run.resolve { maxRun += 1; return maxRun } }
+        if let r = journal.run, r > maxRun { maxRun = r }
+        guard let line = try? Self.encoder().encode(journal) else { return note(req, .encodeFailed) }
         var data = Data()
         if torn { data.append(10) }
         data.append(line)
@@ -722,6 +896,8 @@ final class AssistantAuditWriter: @unchecked Sendable {
         }
         torn = data.last != UInt8(ascii: "\n")
         var lines = Self.splitLines(data)
+        let runs = lines.map { AssistantJournalFold.journal($0)?.run }
+        maxRun = max(maxRun, runs.compactMap { $0 }.max() ?? 0)
 
         var keys: [String] = []
         var started: [String] = []
@@ -750,7 +926,10 @@ final class AssistantAuditWriter: @unchecked Sendable {
         var order: [String] = []
         var seen = Set<String>()
         for k in keys where seen.insert(k).inserted { order.append(k) }
-        let drop = Set(order.prefix(max(0, order.count - Self.maxUnits)))
+        var drop = Set(order.prefix(max(0, order.count - Self.maxUnits)))
+        // Das Kürzen behält die höchste Laufnummer (Schreibfolge 7): Die Einheit der letzten Zeile mit ihr bleibt, damit die Zählung
+        // nie zurückfällt und das Paar aus Lauf und Generation nie wiederverwendet wird.
+        if let top = runs.compactMap({ $0 }).max(), let at = runs.lastIndex(where: { $0 == top }) { drop.remove(keys[at]) }
         let migrated = lines.map(Self.migrated)
         let changedFormat = zip(lines, migrated).contains { $0 != $1 }
         if !drop.isEmpty || changedFormat {
@@ -865,12 +1044,12 @@ public struct AssistantAuditLog: Sendable {
     // MARK: Journal (Kern)
 
     /// Reiht eine Zeile ein; kehrt sofort zurück. `key`: unter ihm wird ein Schreibfehler gemerkt (Standard: die Anfrage).
-    func enqueue(_ line: AssistantJournalLine, key: String? = nil) { writer.enqueue(line, key: key) }
+    func enqueue(_ line: AssistantJournalLine, key: String? = nil, run: AssistantRunToken? = nil) { writer.enqueue(line, key: key, run: run) }
 
     /// Schreibt die erste Zeile einer Anfrage und wartet, bis sie steht. `false` bei einem Fehler; der Fehler bleibt für den
     /// Abschluss der Anfrage (`flush`) gemerkt, damit er nie verloren geht.
-    func begin(_ line: AssistantJournalLine) async -> Bool {
-        writer.enqueue(line, key: nil)
+    func begin(_ line: AssistantJournalLine, run: AssistantRunToken? = nil) async -> Bool {
+        writer.enqueue(line, key: nil, run: run)
         return await writer.flush(request: line.req, consume: false) == nil
     }
 

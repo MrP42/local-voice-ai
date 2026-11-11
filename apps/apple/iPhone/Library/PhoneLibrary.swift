@@ -496,25 +496,32 @@ final class PhoneLibrary: ObservableObject {
 
     /// Buch aus dem Abgleich übernehmen (ohne eigenen Stand zu erhöhen).
     func storeRemote(_ book: LibraryBook, meta: SyncMeta) throws {
-        let local = rawBook(book.id)
-        let flat = BookEditions.senderPrimary(local: local, incoming: book)
-        if let local { adoptEditionFiles(from: local, to: book, oldFlat: flatEditionId(local), newFlat: flat) }
-        try write(book)
-        var merged = meta
-        merged.flatEdition = flat
-        merged.sentEditions = self.meta(book).sentEditions
-        merged.localAudio = self.meta(book).localAudio  // Lokale Angabe, kommt nicht aus dem Konto.
-        setMeta(book, merged)
+        // Assistent (Klasse B): Die Textdateien der Fassungen wechseln (`adoptEditionFiles`), bevor `books` das veröffentlicht, und
+        // `sync.json` (`flatEdition`) bestimmt, aus welcher Fassung der Text kommt.
+        try AssistantContentWatch.shared.around {
+            let local = rawBook(book.id)
+            let flat = BookEditions.senderPrimary(local: local, incoming: book)
+            if let local { adoptEditionFiles(from: local, to: book, oldFlat: flatEditionId(local), newFlat: flat) }
+            try write(book)
+            var merged = meta
+            merged.flatEdition = flat
+            merged.sentEditions = self.meta(book).sentEditions
+            merged.localAudio = self.meta(book).localAudio  // Lokale Angabe, kommt nicht aus dem Konto.
+            setMeta(book, merged)
+        }
     }
 
     func removeRemote(id: String) {
         guard let book = books.first(where: { $0.id == id }) else { return }
-        removeKurzbuchEntries(bookId: id)
-        try? FileManager.default.removeItem(at: dir(book))
-        BookTalkHistoryStore(directory: BookTalkHistoryStore.standardDirectory()).clear(bookId: book.id)
-        for key in allProgressKeys(book) { progress[Self.storageKey(key)] = nil }
-        writeProgress()
-        reload()
+        // Assistent (Klasse B): wie `delete`, die Dateien gehen vor der Veröffentlichung in `books`.
+        AssistantContentWatch.shared.around {
+            removeKurzbuchEntries(bookId: id)
+            try? FileManager.default.removeItem(at: dir(book))
+            BookTalkHistoryStore(directory: BookTalkHistoryStore.standardDirectory()).clear(bookId: book.id)
+            for key in allProgressKeys(book) { progress[Self.storageKey(key)] = nil }
+            writeProgress()
+            reload()
+        }
     }
 
     /// Fortschritt aus dem Abgleich: mit dem eigenen Stand zusammenführen.
@@ -638,12 +645,15 @@ final class PhoneLibrary: ObservableObject {
     }
 
     func delete(_ book: LibraryBook) {
-        removeKurzbuchEntries(bookId: book.id)
-        try? FileManager.default.removeItem(at: dir(book))
-        BookTalkHistoryStore(directory: BookTalkHistoryStore.standardDirectory()).clear(bookId: book.id)
-        for key in allProgressKeys(book) { progress[Self.storageKey(key)] = nil }
-        writeProgress()
-        reload()
+        // Assistent (Klasse B): Die Dateien verschwinden vor der Veröffentlichung in `books`; die Meldung kommt deshalb vorher.
+        AssistantContentWatch.shared.around {
+            removeKurzbuchEntries(bookId: book.id)
+            try? FileManager.default.removeItem(at: dir(book))
+            BookTalkHistoryStore(directory: BookTalkHistoryStore.standardDirectory()).clear(bookId: book.id)
+            for key in allProgressKeys(book) { progress[Self.storageKey(key)] = nil }
+            writeProgress()
+            reload()
+        }
     }
 
     // MARK: Import

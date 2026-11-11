@@ -33,6 +33,11 @@ public actor AssistantKnowledge {
         self.sources = sources
     }
 
+    /// Baut den Bestand neu (Klasse B): ersetzt den Index durch genau diese Dokumente.
+    public func install(_ documents: [AssistantDocument]) async {
+        await corpus.install(documents)
+    }
+
     public func setAreas(_ areas: Set<AssistantArea>) {
         enabled = areas
         box.current = areas

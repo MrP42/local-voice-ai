@@ -5,16 +5,28 @@ import XCTest
 // Gesprächsmodus „Sprechen“ (Paket K): Index über Bücher, Transkripte und Notizen.
 
 /// Testdokument: jeder Abschnitt ist ein gespeicherter Quellblock.
+/// `kind`: Quellart der Abschnitte; ohne Angabe die zitierbare Art des Bereichs (Buch, Transkript, importiertes Dokument, Notiz).
 func assistantDoc(_ id: String, _ title: String, area: AssistantArea = .books, version: String = "1", detail: String? = nil,
-                  updated: Date? = nil, sections: [(String?, String)]) -> AssistantDocument {
-    AssistantDocument(item: AssistantItem(area: area, id: id, title: title, detail: detail, updated: updated), version: version,
-                      sections: sections.map { .init(locator: $0.0, text: $0.1) })
+                  updated: Date? = nil, kind: AssistantSourceKind? = nil, sections: [(String?, String)]) -> AssistantDocument {
+    let sourceKind = kind ?? assistantDefaultKind(area)
+    return AssistantDocument(item: AssistantItem(area: area, id: id, title: title, detail: detail, updated: updated), version: version,
+                             sections: sections.map { .init(locator: $0.0, text: $0.1, kind: sourceKind) })
+}
+
+/// Die zitierbare Quellart eines Bereichs.
+func assistantDefaultKind(_ area: AssistantArea) -> AssistantSourceKind {
+    switch area {
+    case .books: .book
+    case .transcripts: .transcript
+    case .files: .importedDocument
+    case .notes: .typedNote
+    }
 }
 
 /// Passage als ganzer gespeicherter Block (`whole`) oder als Teil eines Blocks (`whole: false`: nicht zitierbar).
 func assistantPassage(_ area: AssistantArea = .books, itemId: String = "b1", title: String = "Buch", locator: String? = nil, text: String,
                       score: Double = 1, whole: Bool = true) -> AssistantPassage {
-    AssistantPassage(area: area, itemId: itemId, title: title, locator: locator, text: text, score: score, isBlock: whole)
+    AssistantPassage(area: area, itemId: itemId, title: title, locator: locator, text: text, score: score, isBlock: whole, quotable: whole)
 }
 
 final class AssistantCorpusTests: XCTestCase {

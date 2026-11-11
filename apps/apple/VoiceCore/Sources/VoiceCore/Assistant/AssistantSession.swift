@@ -145,14 +145,18 @@ final class AssistantStateLine: @unchecked Sendable {
 
     private let lock = NSLock()
     private let make: @Sendable () -> AssistantJournalLine
+    private let run: AssistantRunToken
     private var enqueued: Bool
     private var confirmed = false
     private var attempt: Task<Bool, Never>?
 
-    init(audit: AssistantAuditLog?, make: @escaping @Sendable () -> AssistantJournalLine) {
+    /// Die Zeile trägt die Laufnummer dieses Prozesslaufs (Schreibfolge 7): Sie wird beim ersten Schreiben vergeben und steht mit
+    /// dieser Zeile dauerhaft im Protokoll, bevor eine Anfrage angenommen wird; gelingt das nicht, nimmt die Sitzung keine an.
+    init(audit: AssistantAuditLog?, run: AssistantRunToken, make: @escaping @Sendable () -> AssistantJournalLine) {
         self.make = make
+        self.run = run
         self.enqueued = audit != nil
-        audit?.enqueue(make(), key: Self.key)
+        audit?.enqueue(make(), key: Self.key, run: run)
     }
 
     func ensure(_ audit: AssistantAuditLog) async -> Bool {
@@ -169,7 +173,7 @@ final class AssistantStateLine: @unchecked Sendable {
         if confirmed { return nil }
         if let attempt { return attempt }
         if !enqueued {
-            audit.enqueue(make(), key: Self.key)
+            audit.enqueue(make(), key: Self.key, run: run)
             enqueued = true
         }
         let task = Task { await audit.waitForLine(key: Self.key) == nil }
@@ -355,6 +359,9 @@ private final class RunEmitter {
     /// Einen ganzen Quellblock mit Vorspann „Wörtlicher Auszug aus ‚Titel‘:“ VOR JEDEM Block (nicht nur beim Quellenwechsel):
     /// Jeder Block ist für sich gekennzeichnet, hörbar und sichtbar. Der Block geht unverändert hinaus.
     func emitQuote(_ q: AssistantGrounding.SourceBlock) async -> Flow {
+        // Zweite, unabhängige Prüfung unmittelbar vor der Ausgabe (die erste ist die Auswahl in `Basis`): nur ein ganzer Block einer
+        // zitierbaren Quellart, zeichengleich mit dem gespeicherten Text. Erzeugter Text, Mails und Kalendereinträge gehen nie hinaus.
+        guard AssistantGrounding.mayOutput(q) else { drop(.notSnapped); return .next }
         let preface = AssistantGrounding.quotePreface(for: q.passage)
         let first = await emit(preface, speech: preface, status: .announcement)
         guard first == .delivered else { return flow(first) }
@@ -408,38 +415,56 @@ private final class RunEmitter {
     }
 }
 
-/// Ergebnis einer Änderung der Freigabe (Opt-in, Bereiche, Cloud-Zustimmung, „Ohne Quelle fortsetzen“), nachdem ihre Zeile `release`
-/// dauerhaft geschrieben wurde (oder das Schreiben misslang).
+/// Ergebnis einer Änderung der Freigabe (Opt-in, Bereiche, Cloud-Zustimmung, „Ohne Quelle fortsetzen“), nachdem ihre Sicherungsfolge
+/// (Zustandsdatei, Zeilen des Protokolls) abgeschlossen oder gescheitert ist.
 public struct AssistantReleaseResult: Sendable, Equatable {
-    /// Die Generation nach der Änderung (bei einer Änderung: die neue).
+    /// Die Generation nach der Änderung (bei einer Änderung: die neue; bei einer Erweiterung die, die im Schritt des Wirksamwerdens
+    /// vergeben wurde).
     public let generation: Int
-    /// Die Änderung wurde angewendet: Generation erhöht, Zeile fällig. `false`: Der Stand war schon so, nichts geschah.
+    /// Die Änderung wurde angewendet: eine Sicherungsfolge lief. `false`: Der Stand war schon so, nichts geschah.
     public let changed: Bool
-    /// Der gewünschte Stand gilt jetzt. Eine Einschränkung gilt immer (auch bei einem Schreibfehler); eine Erweiterung nur, wenn
-    /// ihre Zeile dauerhaft steht und die Generation seitdem nicht gestiegen ist.
+    /// Der gewünschte Stand gilt jetzt. Eine Einschränkung gilt immer (auch bei einem Schreibfehler); eine Erweiterung nur, wenn die
+    /// Zustandsdatei den weiteren Stand bestätigt hat und sie im Prozess wirksam wurde.
     public let effective: Bool
-    /// Fehler beim Schreiben der Zeile `release` (Speicher voll, Datei nicht lesbar); `nil`: die Zeile steht in der Datei.
+    /// Fehler beim Schreiben einer Zeile des Protokolls (Speicher voll, Datei nicht lesbar); `nil`: alle Zeilen stehen.
     public let error: AssistantAuditError?
+    /// Fehler beim Austausch der Zustandsdatei: der Ausgang ist OFFEN (die neue Fassung kann schon liegen, ohne bestätigt zu sein).
+    /// Eine Einschränkung gilt trotzdem und blockiert eigene Inhalte für den Rest des Laufs („Widerruf nicht gesichert“); eine
+    /// Erweiterung wird in diesem Lauf nicht wirksam. `nil`: der Austausch ist bestätigt.
+    public let storeError: AssistantStoreError?
 
-    public init(generation: Int, changed: Bool, effective: Bool, error: AssistantAuditError?) {
+    public init(generation: Int, changed: Bool, effective: Bool, error: AssistantAuditError?, storeError: AssistantStoreError? = nil) {
         self.generation = generation
         self.changed = changed
         self.effective = effective
         self.error = error
+        self.storeError = storeError
     }
+
+    /// Eine Einschränkung ließ sich nicht dauerhaft sichern („Widerruf nicht gesichert“).
+    public var revocationNotSaved: Bool { storeError != nil }
 }
 
 /// Eine angewendete, noch nicht abgeschlossene Änderung der Freigabe: Der einschränkende Teil gilt schon (Generation erhöht, Stand
-/// im Lock gesetzt), die Zeile steht ein; `AssistantSession.settle` wartet auf sie und macht Erweiterungen erst danach wirksam.
-/// Das erlaubt dem Controller, eine Einschränkung auf dem MainActor ohne Wartepunkt auszulösen und den Rest nachzuholen.
-public struct AssistantReleasePending: Sendable {
+/// im Lock gesetzt); `AssistantSession.settle` sichert die Zustandsdatei und schreibt die Zeilen und macht Erweiterungen erst
+/// danach wirksam. Das erlaubt dem Controller, eine Einschränkung auf dem MainActor ohne Wartepunkt auszulösen und den Rest nachzuholen.
+/// Wird ein Pending verworfen, ohne dass `settle` lief, geben seine Karten die Reihe frei (spätere Änderungen warten nicht ewig).
+public final class AssistantReleasePending: @unchecked Sendable {
     let applied: AssistantRelease.Applied
-    /// Opt-in wurde eingeschaltet (Erweiterung): der Datenkontext wird erst nach der dauerhaften Zeile umgestellt.
+    /// Opt-in wurde eingeschaltet (Erweiterung): der Datenkontext wird erst nach dem Wirksamwerden umgestellt.
     let optInExpansion: Bool
     /// „Ohne Quelle fortsetzen“: der Zustand `.data` wird erst nach der dauerhaften Zeile aufgehoben.
     let resume: Bool
 
-    /// Die Generation nach dem Anwenden.
+    init(applied: AssistantRelease.Applied, optInExpansion: Bool, resume: Bool) {
+        self.applied = applied
+        self.optInExpansion = optInExpansion
+        self.resume = resume
+    }
+
+    deinit { for step in applied.steps { step.ticket.complete() } }
+
+    /// Die Generation nach dem sofort wirkenden Teil (bei einer reinen Erweiterung die unveränderte).
     public var generation: Int { applied.generation }
     /// Eine Änderung wurde angewendet.
     public var changed: Bool { applied.changed }
@@ -465,6 +490,37 @@ public struct AssistantCommitResult: Sendable, Equatable {
     }
 }
 
+/// Änderungsnummern von Erweiterungen, die in diesem Lauf nicht wirksam wurden und deren Zeile „Erweiterung in diesem Lauf nicht
+/// wirksam“ noch nicht geschrieben werden konnte: Sie wird bei der nächsten Gelegenheit nachgeholt.
+final class AssistantPendingChanges: @unchecked Sendable {
+    struct Item: Sendable, Equatable {
+        let number: Int
+        let cause: AssistantReleaseCause
+        let state: AssistantReleaseState
+    }
+
+    private let lock = NSLock()
+    private var items: [Item] = []
+
+    func add(_ item: Item) {
+        lock.lock()
+        if !items.contains(where: { $0.number == item.number }) { items.append(item) }
+        lock.unlock()
+    }
+
+    func remove(_ number: Int) {
+        lock.lock()
+        items.removeAll { $0.number == number }
+        lock.unlock()
+    }
+
+    var all: [Item] {
+        lock.lock()
+        defer { lock.unlock() }
+        return items
+    }
+}
+
 public actor AssistantSession {
     public static let maxStoredTurns = 200
     /// Höchstens so viele Auszüge je Frage.
@@ -484,6 +540,20 @@ public actor AssistantSession {
         let state: RunState
     }
 
+    /// Wohin eine Änderung der Klasse A gesichert wird: die Zustandsdatei (mit der Art des Modells und dem Cloud-Ziel dieser Sitzung)
+    /// oder, ohne Speicher (Tests der Freigabe allein), nirgends.
+    private struct Persistence: Sendable {
+        let store: AssistantReleaseStore?
+        let cloud: Bool
+        let target: String?
+
+        /// `nil`: bestätigt (oder kein Speicher). Sonst der Fehler: Der Ausgang des Austauschs ist OFFEN.
+        func save(_ view: AssistantReleaseState, cause: AssistantReleaseCause) async -> AssistantStoreError? {
+            guard let store else { return nil }
+            return await store.persist(view, cloud: cloud, target: target, cause: cause)
+        }
+    }
+
     private let model: any BookTalkModel
     private let knowledge: AssistantKnowledge
     private let config: AssistantConfig
@@ -494,6 +564,9 @@ public actor AssistantSession {
     private let sessionId = UUID().uuidString
     private let audit: AssistantAuditLog?
     private let stateLine: AssistantStateLine
+    private let runToken: AssistantRunToken
+    private let persistence: Persistence
+    private let ineffective = AssistantPendingChanges()
     private var active: [String: ActiveRun] = [:]
     private var earlyCancel: Set<String> = []
     private var results: [String: RunState] = [:]
@@ -506,19 +579,39 @@ public actor AssistantSession {
     /// gespeicherte Einwilligung, Verlauf mit einer Runde ohne Quelle) erreicht den freien Zustand.
     /// `cloudConsent`: Zustimmung zum Cloud-Ziel. Ohne sie endet jede Anfrage an ein Cloud-Modell mit `.consentRequired`
     /// (Vorgabe: nein). Die Bereiche kommen aus `knowledge.currentAreas`.
+    /// `releaseStore`: die Zustandsdatei der Freigaben (Schreibfolge 8, Klasse A). Mit ihr kommen Bereiche, Opt-in und Cloud-Zustimmung
+    /// aus der gültigen Fassung der Datei (`cloudTarget`: Kennung des Cloud-Ziels, für das die Zustimmung gilt), und jede Änderung
+    /// wird dort gesichert; ohne sie gelten `knowledge.currentAreas` und `cloudConsent`, und nichts wird gesichert.
     public init(model: any BookTalkModel, knowledge: AssistantKnowledge, config: AssistantConfig, history: [AssistantTurn] = [],
-                audit: AssistantAuditLog? = nil, cloudConsent: Bool = false) {
+                audit: AssistantAuditLog? = nil, cloudConsent: Bool = false, releaseStore: AssistantReleaseStore? = nil,
+                cloudTarget: String? = nil) {
         self.init(model: model, knowledge: knowledge, config: config, history: history, audit: audit,
-                  released: AssistantUnsourcedConsent.isReleased, cloudConsent: cloudConsent)
+                  released: AssistantUnsourcedConsent.isReleased, cloudConsent: cloudConsent, releaseStore: releaseStore,
+                  cloudTarget: cloudTarget)
     }
 
     /// Nur für Tests (`@testable`): wählt die Freischaltung, um den freien Modus unabhängig von der Produktkonstante zu prüfen.
     /// Beiträge aus Runden ohne Quelle kommen bei `released == false` gar nicht erst in den Verlauf (`AssistantTurn.admitted`).
     init(model: any BookTalkModel, knowledge: AssistantKnowledge, config: AssistantConfig, history: [AssistantTurn] = [],
-         audit: AssistantAuditLog? = nil, released: Bool, cloudConsent: Bool = true) {
-        let optIn = config.allowUnsourced && released
-        let release = AssistantRelease(optIn: optIn, consentVersion: config.consentVersion, areas: knowledge.currentAreas,
-                                       cloudConsent: cloudConsent, onIncrease: Self.increaseWriter(audit: audit, config: config))
+         audit: AssistantAuditLog? = nil, released: Bool, cloudConsent: Bool = true, releaseStore: AssistantReleaseStore? = nil,
+         cloudTarget: String? = nil) {
+        let run = AssistantRunToken()
+        let initial: AssistantReleaseState
+        if let releaseStore {
+            var fromFile = releaseStore.record.state(cloud: config.isCloud, target: cloudTarget)
+            if !released { fromFile.optIn = false; fromFile.consentVersion = 0 }
+            initial = fromFile
+        } else {
+            initial = AssistantReleaseState(optIn: config.allowUnsourced && released, consentVersion: config.consentVersion,
+                                            areas: knowledge.currentAreas, cloudConsent: cloudConsent)
+        }
+        let optIn = initial.optIn
+        let release = AssistantRelease(optIn: optIn, consentVersion: initial.consentVersion, areas: initial.areas,
+                                       cloudConsent: initial.cloudConsent, locked: releaseStore?.isLocked ?? false,
+                                       blocked: releaseStore?.isBlocked ?? false,
+                                       onIncrease: Self.increaseWriter(audit: audit, config: config, run: run))
+        self.runToken = run
+        self.persistence = Persistence(store: releaseStore, cloud: config.isCloud, target: cloudTarget)
         self.model = model
         self.knowledge = knowledge
         self.config = config
@@ -530,29 +623,41 @@ public actor AssistantSession {
         self.audit = audit
         self.history = kept
         // Die Standzeile des Öffnens: Zustand vor jeder Anfrage; die erste Anfrage wartet auf sie.
-        self.stateLine = AssistantStateLine(audit: audit) { [config] in Self.stateLine(release.snapshot, config: config) }
+        self.stateLine = AssistantStateLine(audit: audit, run: run) { [config] in Self.stateLine(release.snapshot, config: config) }
     }
 
     // MARK: Freigabe
 
-    /// Die Zeile `release` zu einer Erhöhung: wird von der Freigabe IM Lock an der Stelle der Erhöhung gerufen (kurz, nur
-    /// Einreihen, kein I/O). Ohne Protokoll gibt es keine Zeile. Ihr Fehler steht unter `Increase.key` (`release:<Generation>`).
-    private static func increaseWriter(audit: AssistantAuditLog?, config: AssistantConfig) -> (@Sendable (AssistantRelease.Increase) -> Void)? {
+    /// Eine Zeile der Klasse A (`release`, `intent`, `effective`, `ineffective`): Lauf kommt vom Token beim Schreiben; Änderungsnummer,
+    /// Ursache und Stand (ohne Titel und Inhalte). Die Generation steht nur in Zeilen, in denen sie für genau diese Änderung vergeben
+    /// wurde (`release`, `effective`), nie in `intent` und `ineffective`.
+    private static func classALine(_ kind: AssistantJournalLine.Kind, change: Int?, generation: Int?, cause: AssistantReleaseCause,
+                                   state: AssistantReleaseState, config: AssistantConfig) -> AssistantJournalLine {
+        var line = AssistantJournalLine(kind)
+        line.at = Date()
+        line.gen = generation
+        line.chg = change
+        line.cause = cause
+        line.areas = AssistantRelease.names(state.areas)
+        line.unsourced = state.optIn
+        line.consent = state.consentVersion
+        line.granted = state.cloudConsent
+        line.model = AssistantModelKind.classify(label: config.modelLabel)
+        line.cloud = config.isCloud
+        return line
+    }
+
+    /// Die Zeile zu einer Erhöhung, die im Lock der Freigabe geschieht: „Erweiterung wirksam“, Änderung eines Inhalts (Ursache
+    /// „Inhalt“) und Blockade. Wird IM Lock an der Stelle der Erhöhung gerufen (kurz, nur Einreihen, kein I/O). Einschränkungen
+    /// schreiben ihre Zeile erst nach der Zustandsdatei (`settle`). Ohne Protokoll gibt es keine Zeile.
+    private static func increaseWriter(audit: AssistantAuditLog?, config: AssistantConfig, run: AssistantRunToken)
+        -> (@Sendable (AssistantRelease.Increase) -> Void)? {
         guard let audit else { return nil }
-        let kind = AssistantModelKind.classify(label: config.modelLabel)
-        let cloud = config.isCloud
         return { increase in
-            var line = AssistantJournalLine(.release)
-            line.at = Date()
-            line.gen = increase.generation
-            line.cause = increase.cause
-            line.areas = increase.areas
-            line.unsourced = increase.optIn
-            line.consent = increase.consentVersion
-            line.granted = increase.state.cloudConsent
-            line.model = kind
-            line.cloud = cloud
-            audit.enqueue(line, key: increase.key)
+            let kind: AssistantJournalLine.Kind = increase.kind == .effective ? .effective : .release
+            let line = classALine(kind, change: increase.change, generation: increase.generation, cause: increase.cause,
+                                  state: increase.state, config: config)
+            audit.enqueue(line, key: increase.key, run: run)
         }
     }
 
@@ -565,6 +670,7 @@ public actor AssistantSession {
         line.consent = snapshot.consentVersion
         line.areas = AssistantRelease.names(snapshot.areas)
         line.granted = snapshot.cloudConsent
+        line.locked = snapshot.locked ? true : nil
         line.model = AssistantModelKind.classify(label: config.modelLabel)
         line.cloud = config.isCloud
         return line
@@ -598,25 +704,32 @@ public actor AssistantSession {
     /// Controller stoppt dann die Wiedergabe und leert die Warteschlange, unabhängig von Quellen und vom Modellende.
     public nonisolated func setReleaseObserver(_ observer: (@Sendable (Int) -> Void)?) { release.setObserver(observer) }
 
-    // Änderungen der Freigabe. Jede läuft in zwei Schritten:
-    // 1. `apply…` (synchron, ohne Warten): EINE Erhöhung der Generation, der einschränkende Teil gilt SOFORT (Stand im selben
-    //    Lock), die Zeile `release` wird im selben Lock eingereiht. Laufende Antworten enden.
-    // 2. `settle` (wartet): kehrt erst zurück, wenn die Zeile in der Datei steht. Erst danach wird ein erweiternder Teil
-    //    wirksam (mehr Bereiche, Opt-in an, Cloud-Zustimmung erteilt, „Ohne Quelle fortsetzen“); bei einem Schreibfehler nie.
+    // Änderungen der Freigabe (Klasse A, ADR-0028 E4.2b Schreibfolge 8). Jede läuft in zwei Schritten:
+    // 1. `apply…` (synchron, ohne Warten): Der EINSCHRÄNKENDE Teil gilt SOFORT (eine Erhöhung der Generation, Stand im selben Lock,
+    //    laufende Antworten enden). Ein erweiternder Teil ändert hier nichts und erhält hier keine Generation.
+    // 2. `settle` (wartet, streng nacheinander mit den Sicherungsfolgen der anderen Änderungen):
+    //    - Einschränkung: Zustandsdatei dauerhaft ersetzen → Zeile `release` (Lauf, Änderungsnummer, Generation, Ursache) → Rückkehr.
+    //      Scheitert der Austausch: Ausgang offen, „Widerruf nicht gesichert“, für den Rest des Laufs nichts mehr aus eigenen Inhalten,
+    //      die Sicherung wird bei jeder Gelegenheit erneut versucht.
+    //    - Erweiterung: Zeile „beabsichtigt“ (ohne Generation) → Zustandsdatei ersetzen (das ist der Commit) → erst nach bestätigtem
+    //      Austausch im Prozess wirksam (Generation steigt dort, im unteilbaren Schritt) → Zeile „wirksam“ → Rückkehr. Scheitert ein
+    //      Schritt davor, wird sie in diesem Lauf nicht wirksam (Zeile „Erweiterung in diesem Lauf nicht wirksam“ sobald möglich).
+    //    - Gemischte Änderung: erst der einschränkende, dann der erweiternde Teil, je mit eigener Änderungsnummer.
     // Die Komfortmethoden (`setAllowUnsourced`, `setAreas`, …) machen beides hintereinander.
 
-    /// Schaltet „Antworten ohne Quelle“ um. Aus: wirkt sofort (Einschränkung). An: erst mit der dauerhaften Zeile; der Datenkontext
+    /// Schaltet „Antworten ohne Quelle“ um. Aus: wirkt sofort (Einschränkung). An: erst nach bestätigter Zustandsdatei; der Datenkontext
     /// wird dann auf `.free` gestellt, aber nur, wenn das Gespräch noch keine Datenrunde hatte. `consentVersion`: Fassung des
     /// Einwilligungstextes (sonst die der Konfiguration).
     public nonisolated func applyAllowUnsourced(_ on: Bool, consentVersion: Int? = nil) -> AssistantReleasePending {
         let effective = on && released
         let before = release.isOptedIn
         let applied = release.apply(AssistantReleaseChange(cause: .optIn, optIn: (effective, consentVersion ?? config.consentVersion)))
-        if applied.changed, before, !effective { context.optInChanged(false) }   // Einschränkung: sofort
-        return AssistantReleasePending(applied: applied, optInExpansion: applied.changed && !before && effective, resume: false)
+        if applied.steps.contains(where: { $0.kind == .restriction }), before, !effective { context.optInChanged(false) }   // sofort
+        let expansion = applied.steps.contains { $0.kind == .expansion && $0.delta.optIn }
+        return AssistantReleasePending(applied: applied, optInExpansion: expansion, resume: false)
     }
 
-    /// Ändert die Bereiche: EINE Erhöhung, EINE Zeile. Weniger Bereiche gelten sofort, mehr erst nach der dauerhaften Zeile.
+    /// Ändert die Bereiche. Weniger Bereiche gelten sofort, mehr erst nach bestätigter Zustandsdatei.
     /// `cloudConsent`: gilt die Zustimmung zum Cloud-Ziel für den NEUEN Stand der Bereiche? Sie wird in derselben Änderung
     /// gesetzt (nicht gesondert danach): Reichen die Bereiche der Zustimmung nicht, ist sie mit der Erhöhung sofort weg, nie
     /// gelten mehr Bereiche mit einer Zustimmung, die sie nicht deckt. `nil`: unverändert (lokale Modelle).
@@ -625,18 +738,18 @@ public actor AssistantSession {
         return AssistantReleasePending(applied: applied, optInExpansion: false, resume: false)
     }
 
-    /// Cloud-Zustimmung erteilt oder entzogen. Entzug gilt sofort, Erteilung erst nach der dauerhaften Zeile.
+    /// Cloud-Zustimmung erteilt oder entzogen. Entzug gilt sofort, Erteilung erst nach bestätigter Zustandsdatei.
     public nonisolated func applyCloudConsent(_ granted: Bool) -> AssistantReleasePending {
         let applied = release.apply(AssistantReleaseChange(cause: .consent, cloudConsent: granted))
         return AssistantReleasePending(applied: applied, optInExpansion: false, resume: false)
     }
 
     /// „Ohne Quelle fortsetzen“: ausdrückliche Nutzerhandlung, die den Zustand `.data` aufhebt, aber erst nach der dauerhaften
-    /// Zeile. Ohne Wirkung (`changed == false`), wenn nicht freigeschaltet, Opt-in aus oder schon `.free`.
+    /// Zeile. Ohne Wirkung (`changed == false`), wenn nicht freigeschaltet, Opt-in aus oder schon `.free`. Der Zustand gehört dem
+    /// Prozess (nicht der Zustandsdatei): Die Änderung hat ein Ereignis mit Generation und Zeile, aber keine Sicherungsfolge der Datei.
     public nonisolated func applyResumeFree() -> AssistantReleasePending {
         guard released, release.isOptedIn, context.mode == .data else {
-            return AssistantReleasePending(applied: AssistantRelease.Applied(generation: release.currentGeneration, changed: false,
-                                                                             target: nil, key: nil),
+            return AssistantReleasePending(applied: AssistantRelease.Applied(generation: release.currentGeneration, changed: false, steps: []),
                                            optInExpansion: false, resume: false)
         }
         let applied = release.apply(AssistantReleaseChange(cause: .resumeFree, force: true))
@@ -650,20 +763,159 @@ public actor AssistantSession {
         return AssistantReleasePending(applied: applied, optInExpansion: false, resume: false)
     }
 
-    /// Wartet auf die Zeile `release` der Änderung und macht dann einen erweiternden Teil wirksam. Gibt den Stand zurück; ein
-    /// Schreibfehler steht in `error`, die Einschränkung gilt trotzdem, die Erweiterung nicht.
+    /// Was `settle` über die Teile einer Änderung sammelt.
+    private struct SettleState: Sendable {
+        var error: AssistantAuditError?
+        var storeError: AssistantStoreError?
+        var effective = true
+        var generation = 0
+    }
+
+    /// Sichert die Teile der Änderung der Reihe nach (streng nacheinander mit den Folgen anderer Änderungen) und gibt den Stand
+    /// zurück. Jede Folge wartet auf ihre Reihe in der Reihenfolge des Anwendens (`apply…`): Wer mehrere Änderungen angewendet hat,
+    /// wickelt sie in dieser Reihenfolge ab (der Controller: eine Kette in der Reihenfolge des Anwendens) oder nebenläufig; ein
+    /// späteres `settle` vor dem früheren, das nie läuft, wartete ewig. Ein verworfenes `AssistantReleasePending` gibt seine Reihe frei. Ein Fehler steht in `error` (Zeile des Protokolls) oder `storeError` (Zustandsdatei, Ausgang offen); eine
+    /// Einschränkung gilt trotzdem, eine Erweiterung nur nach bestätigtem Austausch.
     public nonisolated func settle(_ pending: AssistantReleasePending) async -> AssistantReleaseResult {
         let applied = pending.applied
-        var error: AssistantAuditError?
-        if applied.changed, let audit, let key = applied.key { error = await audit.waitForLine(key: key) }
-        let expands = applied.target != nil || pending.optInExpansion || pending.resume
-        var done = error == nil
-        if done, applied.target != nil { done = release.completeExpansion(applied) }
+        var out = SettleState()
+        out.generation = applied.generation
+        for step in applied.steps {
+            await step.ticket.turn()
+            await settleStep(step, into: &out)
+            step.ticket.complete()
+        }
+        let expands = applied.expands || pending.optInExpansion || pending.resume
+        var done = out.effective
         if done, pending.optInExpansion { context.optInChanged(true) }
         if done, pending.resume { done = context.resumeFree(optIn: release.isOptedIn) }
         if applied.changed { await knowledge.setAreas(release.snapshot.areas) }   // Spiegel für Aufrufer ohne Sitzung
-        return AssistantReleaseResult(generation: applied.generation, changed: applied.changed, effective: !expands || done, error: error)
+        return AssistantReleaseResult(generation: out.generation, changed: applied.changed, effective: !expands || done, error: out.error,
+                                      storeError: out.storeError)
     }
+
+    private nonisolated func settleStep(_ step: AssistantRelease.Step, into out: inout SettleState) async {
+        await flushPendingIneffective()
+        switch step.kind {
+        case .event:
+            out.generation = step.generation
+            await writeLine(.release, step: step, generation: step.generation, state: step.delta, into: &out)
+        case .restriction:
+            out.generation = step.generation
+            if let error = await persistence.save(release.viewForSave(step), cause: step.cause) {
+                // Der Ausgang des Austauschs ist offen: Die Einschränkung gilt im Prozess, ist aber nicht als gesichert bestätigt.
+                out.storeError = error
+                release.block()
+                persistence.store?.markBlocked()
+            } else {
+                release.clearLocked()
+            }
+            await writeLine(.release, step: step, generation: step.generation, state: step.delta, into: &out)
+        case .expansion:
+            await settleExpansion(step, into: &out)
+        }
+    }
+
+    private nonisolated func settleExpansion(_ step: AssistantRelease.Step, into out: inout SettleState) async {
+        let intended = release.viewForSave(step)
+        // (1) „Erweiterung beabsichtigt“, ohne Generation, dauerhaft. Scheitert das, wird die Erweiterung nicht wirksam und nicht gesichert.
+        if release.isBlocked { return await notEffective(step, state: intended, into: &out) }
+        var wrote = true
+        await writeLine(.intent, step: step, generation: nil, state: intended, into: &out, ok: &wrote)
+        guard wrote else { return await notEffective(step, state: intended, into: &out) }
+        // (2) Zustandsdatei ersetzen: das ist der Commit der Erweiterung. Scheitert oder bricht er ab, ist der Ausgang offen.
+        if let error = await persistence.save(intended, cause: step.cause) {
+            out.storeError = error
+            return await notEffective(step, state: intended, into: &out)
+        }
+        // (3) Erst jetzt wirksam im Prozess: Stand, Generation und Zeile „wirksam“ in einem unteilbaren Schritt.
+        guard let generation = release.becomeEffective(step) else { return await notEffective(step, state: intended, into: &out) }
+        out.generation = generation
+        // (4) Die Zeile „wirksam“ steht dauerhaft; ihr Fehler wird gemeldet, die Erweiterung bleibt wirksam (sie ist gesichert).
+        if let error = await audit?.waitForLine(key: step.key) { out.error = out.error ?? error }
+    }
+
+    /// Die Erweiterung wird in diesem Lauf nicht wirksam: Zeile „Erweiterung in diesem Lauf nicht wirksam“, sobald geschrieben werden kann.
+    private nonisolated func notEffective(_ step: AssistantRelease.Step, state: AssistantReleaseState, into out: inout SettleState) async {
+        out.effective = false
+        release.abandon(step)
+        let item = AssistantPendingChanges.Item(number: step.number, cause: step.cause, state: state)
+        ineffective.add(item)
+        await flushPendingIneffective()
+    }
+
+    /// Holt Zeilen „in diesem Lauf nicht wirksam“ nach, die noch nicht geschrieben werden konnten.
+    private nonisolated func flushPendingIneffective() async {
+        guard let audit else { return }
+        for item in ineffective.all {
+            let line = Self.classALine(.ineffective, change: item.number, generation: nil, cause: item.cause, state: item.state, config: config)
+            audit.enqueue(line, key: "chg:\(item.number)", run: runToken)
+            if await audit.waitForLine(key: "chg:\(item.number)") == nil { ineffective.remove(item.number) }
+        }
+    }
+
+    private nonisolated func writeLine(_ kind: AssistantJournalLine.Kind, step: AssistantRelease.Step, generation: Int?,
+                                       state: AssistantReleaseState, into out: inout SettleState) async {
+        var ok = true
+        await writeLine(kind, step: step, generation: generation, state: state, into: &out, ok: &ok)
+    }
+
+    private nonisolated func writeLine(_ kind: AssistantJournalLine.Kind, step: AssistantRelease.Step, generation: Int?,
+                                       state: AssistantReleaseState, into out: inout SettleState, ok: inout Bool) async {
+        guard let audit else { return }
+        let line = Self.classALine(kind, change: step.number, generation: generation, cause: step.cause, state: state, config: config)
+        audit.enqueue(line, key: step.key, run: runToken)
+        if let error = await audit.waitForLine(key: step.key) {
+            out.error = out.error ?? error
+            ok = false
+        }
+    }
+
+    /// Versucht die Sicherung des jetzigen Stands erneut (nach einem gescheiterten Austausch der Zustandsdatei). Läuft streng
+    /// nacheinander mit den anderen Änderungen. Auch ohne Fehler schreibt es die Datei neu. Die Blockade für den Rest des Laufs
+    /// bleibt in jedem Fall bestehen.
+    @discardableResult
+    public nonisolated func retrySave() async -> AssistantStoreError? {
+        let ticket = release.enqueueTicket()
+        await ticket.turn()
+        defer { ticket.complete() }
+        let error = await persistence.save(release.snapshot.state, cause: .other)
+        if error == nil { release.clearLocked() }
+        return error
+    }
+
+    /// Eine Einschränkung ließ sich nicht sichern oder die Datei steht noch nicht fest: nicht bestätigt.
+    public nonisolated var needsSave: Bool { persistence.store?.isDirty ?? false }
+
+    /// Die Freigaben sind gesperrt (ungültige Zustandsdatei beim Start): kein Bereich, keine Zustimmung, Anzeige „Freigaben prüfen“.
+    public nonisolated var isReleaseLocked: Bool { release.snapshot.locked }
+
+    /// Eine Einschränkung ließ sich nicht sichern: für den Rest des Laufs nichts aus eigenen Inhalten („Widerruf nicht gesichert“).
+    public nonisolated var isContentBlocked: Bool { release.snapshot.blocked }
+
+    // MARK: Klasse B: Inhalte der Quellen
+
+    /// Ein Inhalt oder eine Schutzregel einer Quelle ändert sich (Lesegrenze, KI-Freigabe einer Besprechung, Schutz der Ablage, Quelle
+    /// geändert oder gelöscht, auch eingespielt von einem anderen Gerät). Synchron und VOR der Änderung im Speicher der Quelle
+    /// aufrufen: Die Generation steigt im selben Lock wie bei Klasse A (gemeinsame Ordnung), laufende Antworten enden, der Bestand
+    /// ist `stale`: aus eigenen Inhalten wird nichts ausgegeben, bis `contentInstalled` den neuen Bestand meldet. Die Zeile mit
+    /// Ursache „Inhalt“ (ohne Titel und Inhalt) wird nur eingereiht, nicht abgewartet. Gibt die Epoche zurück.
+    @discardableResult
+    public nonisolated func contentWillChange() -> Int { release.contentWillChange().epoch }
+
+    /// Der neue Bestand steht für die Änderung dieser Epoche. `false`: Eine neuere Änderung ist dazugekommen, der Bestand bleibt `stale`.
+    @discardableResult
+    public nonisolated func contentInstalled(epoch: Int) -> Bool { release.contentInstalled(epoch: epoch) }
+
+    /// Baut den Bestand neu und meldet ihn: ersetzt den Index durch genau diese Dokumente, dann `contentInstalled`.
+    @discardableResult
+    public func install(_ documents: [AssistantDocument], epoch: Int) async -> Bool {
+        await knowledge.install(documents)
+        return release.contentInstalled(epoch: epoch)
+    }
+
+    /// Der Bestand steht (nicht `stale`).
+    public nonisolated var isContentReady: Bool { release.snapshot.corpusReady }
 
     @discardableResult
     public nonisolated func setAllowUnsourced(_ on: Bool, consentVersion: Int? = nil) async -> AssistantReleaseResult {
@@ -705,6 +957,10 @@ public actor AssistantSession {
     @discardableResult
     public nonisolated func commitOutput(requestId: String, index: Int, generation: Int, stage: AssistantCommitStage,
                                          reportPass: Bool = true, _ body: () -> Void) -> AssistantCommitResult {
+        // Eine Anfrage, die dieser Prozesslauf nicht kennt (früherer Lauf), wird nie fortgesetzt: nichts wird ausgelöst.
+        guard stepIndex.knows(requestId) else {
+            return AssistantCommitResult(ok: false, generation: release.currentGeneration, auditFailed: false)
+        }
         let step = stepIndex.step(requestId, index: index)
         let check = release.ifCurrent(generation) {
             body()
@@ -720,6 +976,10 @@ public actor AssistantSession {
     /// (dann läuft `start` nicht). Dieselben Pflichten wie bei `commitOutput`: kurz, ohne I/O, kein Rückruf in die Sitzung.
     @discardableResult
     public nonisolated func commitStart(requestId: String, index: Int, generation: Int, _ start: () -> Bool) -> AssistantCommitResult {
+        // Kein Audiostart für eine Anfrage, die dieser Prozesslauf nicht kennt (Schreibfolge 6: nichts wird wiederholt).
+        guard stepIndex.knows(requestId) else {
+            return AssistantCommitResult(ok: false, failed: false, generation: release.currentGeneration, auditFailed: false)
+        }
         let step = stepIndex.step(requestId, index: index)
         let check = release.ifCurrentAttempt(generation) {
             let started = start()
@@ -731,6 +991,10 @@ public actor AssistantSession {
         return AssistantCommitResult(ok: check.ok, failed: check.failed, generation: check.generation,
                                      auditFailed: audit?.hasFailed(request: requestId) ?? false)
     }
+
+    /// Nur für Tests der Commits ohne Lauf: macht der Sitzung eine Anfrage bekannt, als hätte dieser Prozesslauf ein Ereignis
+    /// ausgegeben (sonst gelten Commits für unbekannte Anfragen nie).
+    nonisolated func admitForTesting(requestId: String) { stepIndex.append(requestId, step: 0) }
 
     /// Meldet das Ergebnis eines Ausgabe-Commits, das NICHT im Lock lief (der Controller hat gar nichts ausgelöst, z. B. weil
     /// die Stimme die Generation schon verworfen hatte): Die Zeile trägt die übergebene Generation. Ohne Warten. `failed`: die
@@ -856,7 +1120,7 @@ public actor AssistantSession {
         let said = spoken.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // `start` zuerst (war es nicht schon geschrieben): Die Zeilen der Anfrage stehen in der Reihenfolge start, …, h, end.
-        if let audit, !record.journaled { audit.enqueue(Self.startLine(requestId, session: sessionId, config: config, record: record)) }
+        if let audit, !record.journaled { audit.enqueue(Self.startLine(requestId, session: sessionId, config: config, record: record), run: runToken) }
 
         var historyRejected = false
         if !text.isEmpty, !said.isEmpty {
@@ -953,7 +1217,8 @@ public actor AssistantSession {
         // Bestand, Prüfung, Verlauf für die Cloud), stammt aus diesem Stand. Ändert sich die Freigabe danach, ist die Generation
         // veraltet und der Lauf wird beim Anmelden widerrufen. Vor der Abbruchprüfung, damit zwischen Prüfung und Eintrag in
         // `active` kein Wartepunkt liegt.
-        let snapshot = self.release.snapshot
+        // Bestand und Zugang gehören dazu: Gesperrt, blockiert oder `stale` (Klasse B) sind die Bereiche dieser Anfrage leer.
+        let snapshot = self.release.snapshot.forRequest
         let allowedAreas: Set<AssistantArea>? = self.config.isCloud ? snapshot.areas : nil
         if earlyCancel.remove(rid) != nil {
             out.yield(.failed(requestId: rid, .cancelled))
@@ -962,7 +1227,7 @@ public actor AssistantSession {
                 record.generation = snapshot.generation
                 record.optInAtStart = snapshot.optIn
                 record.consentVersion = snapshot.consentVersion
-                audit.enqueue(Self.startLine(rid, session: sessionId, config: config, record: record))
+                audit.enqueue(Self.startLine(rid, session: sessionId, config: config, record: record), run: runToken)
                 var end = AssistantJournalLine(.end, req: rid)
                 end.at = Date()
                 end.outcome = .interrupted
@@ -976,14 +1241,14 @@ public actor AssistantSession {
         var runConfig = self.config
         runConfig.allowUnsourced = snapshot.optIn
         let model = self.model, knowledge = self.knowledge, release = self.release, context = self.context
-        let audit = self.audit, index = self.stepIndex, canOptIn = self.released, stateLine = self.stateLine
+        let audit = self.audit, index = self.stepIndex, canOptIn = self.released, stateLine = self.stateLine, runToken = self.runToken
         let promptHistory = Self.promptHistory(history, areas: allowedAreas)
         let state = RunState(snapshot: snapshot)
         let output = AssistantRunOutput(release: release, generation: snapshot.generation, continuation: out)
         let work = Task<Outcome, Never> {
             await Self.generate(request, model: model, knowledge: knowledge, config: runConfig, snapshot: snapshot, release: release,
                                 context: context, history: promptHistory, state: state, output: output, audit: audit,
-                                index: index, session: self.sessionId, canOptIn: canOptIn, stateLine: stateLine)
+                                index: index, session: self.sessionId, canOptIn: canOptIn, stateLine: stateLine, run: runToken)
         }
         active[rid] = ActiveRun(stop: { work.cancel() }, state: state)
         let revoke: @Sendable () -> Void = { state.markRevoked(); work.cancel() }
@@ -1050,7 +1315,7 @@ public actor AssistantSession {
         _ request: AssistantRequest, model: any BookTalkModel, knowledge: AssistantKnowledge, config: AssistantConfig,
         snapshot: AssistantRelease.Snapshot, release: AssistantRelease, context: AssistantContext, history: [AssistantTurn],
         state: RunState, output: AssistantRunOutput, audit: AssistantAuditLog?, index: AssistantStepIndex, session: String,
-        canOptIn: Bool, stateLine: AssistantStateLine
+        canOptIn: Bool, stateLine: AssistantStateLine, run: AssistantRunToken
     ) async -> Outcome {
         let rid = request.requestId
         let budget = AssistantPrompt.budget(config: config)
@@ -1076,7 +1341,7 @@ public actor AssistantSession {
         if let audit {
             guard await stateLine.ensure(audit) else { return fail(.auditUnavailable) }
             if Task.isCancelled { return .cancelled }
-            let started = await audit.begin(startLine(rid, session: session, config: config, record: state.snapshot))
+            let started = await audit.begin(startLine(rid, session: session, config: config, record: state.snapshot), run: run)
             state.update { $0.journaled = started }
             guard started else { return fail(.auditUnavailable) }
             if Task.isCancelled { return .cancelled }

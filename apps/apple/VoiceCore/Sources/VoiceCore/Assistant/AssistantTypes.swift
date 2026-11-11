@@ -53,6 +53,33 @@ public enum AssistantArea: String, Sendable, Codable, CaseIterable {
     }
 }
 
+/// Art der Quelle eines Blocks (E4.2b, Klasse B und Quelltextauszüge). Nur vier Arten haben einen festgelegten Quellblock und
+/// sind zitierbar; für alles andere wird kein Quelltextauszug ausgegeben, bis ein Nachtrag die Einheit je Quellart festlegt.
+public enum AssistantSourceKind: String, Sendable, Codable, CaseIterable {
+    /// Buch: ein Absatz.
+    case book
+    /// Getippte Notiz (auch der gespeicherte Text einer Sprachnotiz): Text zwischen Leerzeilen.
+    case typedNote
+    /// Importiertes Dokument (Ablage): der Block, wie er beim Import gespeichert wurde.
+    case importedDocument
+    /// Transkript einer Besprechung: das Segment, wie es bei der Erkennung gespeichert wurde.
+    case transcript
+    /// Von der App erzeugter Text: Protokoll (Sprachnotiz, Besprechung), Antworten der App. Nie zitierbar.
+    case generated
+    /// Mail: kein Quellblock festgelegt, nie zitierbar.
+    case mail
+    /// Kalendereintrag: kein Quellblock festgelegt, nie zitierbar.
+    case calendar
+
+    /// Zitierbar: genau die vier Arten mit festgelegtem Quellblock.
+    public var isQuotable: Bool {
+        switch self {
+        case .book, .typedNote, .importedDocument, .transcript: true
+        case .generated, .mail, .calendar: false
+        }
+    }
+}
+
 public struct AssistantItem: Sendable, Equatable, Codable {
     public let area: AssistantArea
     public let id: String
@@ -80,9 +107,14 @@ public struct AssistantPassage: Sendable, Equatable, Codable {
     /// anderen zusammengezogen und höchstens `AssistantGrounding.maxBlockChars` lang. Nur ein solcher Auszug ist zitierbar. Ohne
     /// Nachweis (Standard, auch bei Suchfenstern der Ablage) wird er nie ausgegeben. Wird nicht gespeichert.
     public let isBlock: Bool
+    /// Die Quellart des Blocks lässt Quelltextauszüge zu (`AssistantSourceKind.isQuotable`: Buch, getippte Notiz, importiertes
+    /// Dokument, Transkript). Erzeugter Text (Protokoll einer Sprachnotiz oder Besprechung, Antworten der App), Mails und
+    /// Kalendereinträge sind nicht zitierbar. Fail-closed: Ohne ausdrückliche Angabe gilt der Auszug als nicht zitierbar. Wird
+    /// nicht gespeichert.
+    public let quotable: Bool
 
     public init(area: AssistantArea, itemId: String, title: String, locator: String? = nil, text: String, score: Double,
-                isBlock: Bool = false) {
+                isBlock: Bool = false, quotable: Bool = false) {
         self.area = area
         self.itemId = itemId
         self.title = title
@@ -90,6 +122,7 @@ public struct AssistantPassage: Sendable, Equatable, Codable {
         self.text = text
         self.score = score
         self.isBlock = isBlock
+        self.quotable = quotable
     }
 
     private enum CodingKeys: String, CodingKey { case area, itemId, title, locator, text, score }
@@ -114,7 +147,7 @@ public struct AssistantPassage: Sendable, Equatable, Codable {
     /// Dieselbe Stelle mit anderem Text und Punktwert. Ein veränderter (gekürzter) Text ist nie mehr ein ganzer Quellblock.
     func replacing(text newText: String, score newScore: Double? = nil) -> AssistantPassage {
         AssistantPassage(area: area, itemId: itemId, title: title, locator: locator, text: newText, score: newScore ?? score,
-                         isBlock: isBlock && newText == text)
+                         isBlock: isBlock && newText == text, quotable: quotable)
     }
 
     /// Auf höchstens `limit` Zeichen gekürzt (`BookTalkPrompt.clip`); ein gekürzter Text ist kein Block mehr.
@@ -163,9 +196,17 @@ public struct AssistantDocument: Sendable {
     public struct Section: Sendable {
         public let locator: String?
         public let text: String
-        public init(locator: String?, text: String) {
+        /// Art der Quelle dieses Blocks. Ohne Vorgabewert: Jede Quelle legt sie ausdrücklich fest, eine vergessene Art kann nie
+        /// stillschweigend zitierbar werden.
+        public let kind: AssistantSourceKind
+
+        /// Der Block darf wörtlich ausgegeben werden (nur Buch, getippte Notiz, importiertes Dokument, Transkript).
+        public var quotable: Bool { kind.isQuotable }
+
+        public init(locator: String?, text: String, kind: AssistantSourceKind) {
             self.locator = locator
             self.text = text
+            self.kind = kind
         }
     }
 

@@ -267,6 +267,7 @@ final class AssistantOutputTests: XCTestCase {
 
     func testCommitOutputRunsTheBodyOnlyForTheCurrentGeneration() async {
         let s = await session()
+        s.admitForTesting(requestId: "r1")
         let ran = Tally()
         let g = s.releaseGeneration
         XCTAssertTrue(s.commitOutput(requestId: "r1", index: 0, generation: g, stage: .display) { ran.ranOnce() }.ok)
@@ -281,6 +282,7 @@ final class AssistantOutputTests: XCTestCase {
     /// diesen Lock: Im Body darf nichts in Freigabe oder Sperre zurückrufen, es hinge; geprüft wird nach dem Body.)
     func testBodyRunsInsideTheLockOfTheReleaseAndABumpWaitsForIt() async {
         let s = await session()
+        s.admitForTesting(requestId: "r1")
         let gate = s.playbackGate
         let g = s.releaseGeneration
         let bumped = Tally()
@@ -307,6 +309,7 @@ final class AssistantOutputTests: XCTestCase {
     /// Stresstest: Der Body läuft nie nach der Rückkehr einer Erhöhung auf eine NEUERE Generation.
     func testBodyNeverRunsAfterABumpToANewerGenerationHasReturned() async {
         let s = await session()
+        for t in 0..<4 { s.admitForTesting(requestId: "r\(t)") }
         let tally = Tally()
         let stop = Tally()
         let group = DispatchGroup()

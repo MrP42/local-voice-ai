@@ -9,7 +9,8 @@ import Foundation
 //   `BookTalkIndex` aus dem gespeicherten Buchtext liest (ohne Sprecher- und Stilmarken, Leerraum gefaltet).
 // - Notiz (Sprachnotiz): ein Textblock zwischen Leerzeilen bzw. dem Rand der Notiz; Zeilenumbrüche darin bleiben Teil des Blocks.
 // - Besprechung (Transkript): ein Segment der Aufnahme (Zeile „Sprecher: Text“), wie der Rohling es führt.
-// - Protokoll einer Besprechung (erzeugt): ein Teil des Protokolls (Zusammenfassung, Beschlüsse, Aufgaben, …).
+// - Protokoll einer Besprechung und Antwort der App (erzeugt, Art `generated`): ein Teil des Protokolls (Zusammenfassung,
+//   Beschlüsse, Aufgaben, …). Nie zitierbar; Mails und Kalendereinträge ebenso nicht (kein Quellblock festgelegt).
 // - Ablage: heute NICHT zitierbar (die Suche liefert Fenster von 220 Zeichen aus einem Abschnitt, keinen ganzen Block).
 //
 // Restgrenze (bewusst, durch die Kennzeichnung „Wörtlicher Auszug“ gedeckt): Ein Block aus einem PDF-Import oder einem
@@ -27,13 +28,13 @@ struct AssistantSegment: Equatable {
 enum AssistantSections {
     /// Blöcke eines Textes (Notiz): Absätze zwischen Leerzeilen. Der Block bleibt unverändert, auch mit Zeilenumbrüchen darin; nur
     /// Leerraum an seinen Rändern fällt weg. Eine Zeile mit Abkürzung am Ende („Dr.“) trennt nichts.
-    static func blocks(of text: String, locator: String?) -> [AssistantDocument.Section] {
+    static func blocks(of text: String, locator: String?, kind: AssistantSourceKind = .typedNote) -> [AssistantDocument.Section] {
         var out: [AssistantDocument.Section] = []
         var lines: [Substring] = []
         func flush() {
             defer { lines.removeAll() }
             let block = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-            if !block.isEmpty { out.append(.init(locator: locator, text: block)) }
+            if !block.isEmpty { out.append(.init(locator: locator, text: block, kind: kind)) }
         }
         for line in text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline) {
             if line.trimmingCharacters(in: .whitespaces).isEmpty { flush() } else { lines.append(line) }
@@ -42,11 +43,12 @@ enum AssistantSections {
         return out
     }
 
-    /// Erzeugter Text (Protokoll): jeder Teil ein Block.
+    /// Erzeugter Text (Protokoll, Antworten der App): jeder Teil ein Block der Art `generated`, NIE zitierbar. Er steht im Index
+    /// (Abruf, Erkennung eigener Inhalte), wird aber nie wörtlich ausgegeben.
     static func generated(_ parts: [String], locator: String?) -> [AssistantDocument.Section] {
         parts.compactMap { part in
             let text = part.trimmingCharacters(in: .whitespacesAndNewlines)
-            return text.isEmpty ? nil : AssistantDocument.Section(locator: locator, text: text)
+            return text.isEmpty ? nil : AssistantDocument.Section(locator: locator, text: text, kind: .generated)
         }
     }
 
@@ -55,7 +57,7 @@ enum AssistantSections {
         segments.compactMap { segment in
             guard segment.usable else { return nil }
             let text = segment.line.trimmingCharacters(in: .whitespacesAndNewlines)
-            return text.isEmpty ? nil : AssistantDocument.Section(locator: locator(segment.start), text: text)
+            return text.isEmpty ? nil : AssistantDocument.Section(locator: locator(segment.start), text: text, kind: .transcript)
         }
     }
 
@@ -68,7 +70,7 @@ enum AssistantSections {
             guard !p.text.isEmpty else { continue }
             let title = p.chapterTitle.trimmingCharacters(in: .whitespacesAndNewlines)
             let locator = p.page.map { "S. \($0)" } ?? (title.isEmpty ? nil : title)
-            out.append(.init(locator: locator, text: p.text))
+            out.append(.init(locator: locator, text: p.text, kind: .book))
         }
         return out
     }

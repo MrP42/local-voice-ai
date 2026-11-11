@@ -298,7 +298,7 @@ final class AssistantReleaseTests: XCTestCase {
         let a = restrict(r, to: [.books])
         XCTAssertEqual(a.generation, 1)
         XCTAssertTrue(a.changed)
-        XCTAssertNil(a.target, "eine Einschränkung hat nichts offen")
+        XCTAssertEqual(a.steps.map(\.kind), [.restriction], "eine Einschränkung hat nur ihren sofort wirkenden Teil")
         let s = r.snapshot
         XCTAssertEqual(s.generation, 1)
         XCTAssertEqual(s.areas, [.books])
@@ -307,24 +307,42 @@ final class AssistantReleaseTests: XCTestCase {
         XCTAssertEqual(r.snapshot.generation, 1, "derselbe Stand: keine Erhöhung")
     }
 
-    /// I4: Eine Erweiterung erhöht die Generation sofort (laufende Antworten enden), die größeren Bereiche gelten aber erst mit
-    /// `completeExpansion`, ohne zweite Erhöhung. Dazwischen steht (g+1, die ALTEN KLEINEREN Bereiche): das ist sicher. Hat sich
-    /// die Generation inzwischen erhöht, bleibt es bei dem engeren Stand.
-    func testAnExpansionKeepsTheSmallerAreasUntilItsLineIsDurableAndAddsNoSecondIncrease() {
+    /// Schreibfolge 8, gemeinsame Ordnung: Eine Erweiterung ändert bei `apply` NICHTS und erhält dort KEINE Generation; Stand und
+    /// Generation ändern sich erst im unteilbaren Schritt des Wirksamwerdens (`completeExpansion`), mit genau einer Erhöhung. Hat sich
+    /// inzwischen eine Einschränkung dazwischen geschoben, schneidet sie die Erweiterung ab (der jüngste Stand hat Vorrang).
+    func testAnExpansionChangesNothingAndTakesNoGenerationUntilItBecomesEffective() {
         let r = AssistantRelease(optIn: false, areas: [.books])
         let a = restrict(r, to: [.books, .notes])
-        XCTAssertEqual(a.generation, 1)
-        XCTAssertEqual(r.snapshot.areas, [.books], "dazwischen: neue Generation, alte kleinere Bereiche")
-        XCTAssertNotNil(a.target)
+        XCTAssertEqual(a.generation, 0, "keine Erhöhung bei der Absicht")
+        XCTAssertEqual(a.steps.map(\.kind), [.expansion])
+        XCTAssertEqual(a.steps.first?.generation, 0, "keine geplante Generation")
+        XCTAssertEqual(r.snapshot.areas, [.books], "dazwischen: alte, kleinere Bereiche")
+        XCTAssertEqual(r.snapshot.generation, 0)
         XCTAssertTrue(r.completeExpansion(a))
-        XCTAssertEqual(r.snapshot.generation, 1, "keine zweite Erhöhung")
+        XCTAssertEqual(r.snapshot.generation, 1, "genau eine Erhöhung, im Schritt des Wirksamwerdens")
         XCTAssertEqual(r.snapshot.areas, [.books, .notes])
 
         let b = restrict(r, to: [.books, .notes, .files])
-        _ = restrict(r, to: [.notes])   // eine spätere Änderung hat Vorrang
-        XCTAssertFalse(r.completeExpansion(b), "nicht mehr maßgeblich")
-        XCTAssertEqual(r.snapshot.areas, [.notes])
+        XCTAssertEqual(r.snapshot.generation, 1)
+        _ = restrict(r, to: [.notes])   // eine spätere Einschränkung wirkt sofort und hat Vorrang
+        XCTAssertEqual(r.snapshot.generation, 2)
+        XCTAssertTrue(r.completeExpansion(b))
+        XCTAssertEqual(r.snapshot.areas, [.notes], "die Erweiterung um die Ablage wurde von der späteren Einschränkung abgeschnitten")
         XCTAssertEqual(r.snapshot.generation, 3)
+    }
+
+    /// Eine gemischte Änderung wird zerlegt: erst der einschränkende Teil (sofort, eigene Generation), dann der erweiternde (erst
+    /// im Schritt des Wirksamwerdens, eigene Erhöhung); jeder Teil hat seine Änderungsnummer.
+    func testAMixedChangeIsSplitRestrictionFirstThenExpansion() {
+        let r = AssistantRelease(optIn: false, areas: [.books, .notes])
+        let applied = restrict(r, to: [.books, .files])
+        XCTAssertEqual(applied.steps.map(\.kind), [.restriction, .expansion])
+        XCTAssertEqual(applied.steps.map(\.number), [1, 2])
+        XCTAssertEqual(applied.generation, 1)
+        XCTAssertEqual(r.snapshot.areas, [.books], "erst der einschränkende Teil")
+        XCTAssertTrue(r.completeExpansion(applied))
+        XCTAssertEqual(r.snapshot.areas, [.books, .files])
+        XCTAssertEqual(r.snapshot.generation, 2, "der erweiternde Teil erhält seine eigene Erhöhung")
     }
 
     // MARK: Schrittindex (Rückmeldungen des Controllers)

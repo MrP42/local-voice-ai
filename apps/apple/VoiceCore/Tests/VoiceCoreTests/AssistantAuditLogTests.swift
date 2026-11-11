@@ -778,14 +778,14 @@ final class AssistantAuditLogTests: XCTestCase {
         _ = await audit.flushReleaseLines()
 
         let keys: Set<String> = ["t", "req", "at", "session", "model", "cloud", "unsourced", "consent", "ctx", "reason", "round", "gen", "n",
-                                 "verdict", "mark", "outcome", "level", "areas", "kind", "cause", "granted"]
+                                 "verdict", "mark", "outcome", "level", "areas", "kind", "cause", "granted", "run", "chg", "locked"]
         let words: Set<String> = [
             "start", "step", "commit", "end", "event", "round", "areas", "r1", "apple", "gemma", "other", "data", "free", "general", "optedOut", "locked",
             "inventory", "ownData", "relevantPassage", "grounded", "unsourced", "template", "announcement", "droppedOwnData",
             "droppedNoMode", "droppedNotSnapped", "droppedDuplicate", "droppedTemplate", "droppedRevoked", "droppedFragment", "completed",
             "interrupted", "revoked", "failed", "incomplete", "limited", "s0", "s1", "books", "transcripts", "files", "notes",
             "answer", "unsourcedOn", "unsourcedOff", "cloudGranted", "cloudRevoked", "resumedFree",
-            "release", "state", "optIn", "consent", "resumeFree",
+            "release", "state", "optIn", "consent", "resumeFree", "intent", "effective", "ineffective",
         ]
         func walk(_ any: Any, _ strings: inout [String]) {
             if let s = any as? String { strings.append(s) }
@@ -928,10 +928,18 @@ final class AssistantAuditLogTests: XCTestCase {
         XCTAssertEqual(all.map(\.requestId), ["a", "b", "c", "d"])
         XCTAssertEqual(all.map(\.consentVersion), [1, 3, 0, 4])
         XCTAssertEqual(all.map(\.unsourcedMode), [true, true, false, true])
+        // Die Einschränkung (Opt-in aus, c) schreibt eine Zeile `release` mit der Generation, die Erweiterung (Opt-in an, d) die
+        // Zeilen `intent` (ohne Generation) und `effective` (mit der Generation des Wirksamwerdens).
         let releases = await audit.entries().filter { $0.kind == .release }
+        let intents = await audit.entries().filter { $0.kind == .intent }
         // Ein Wechsel der Einwilligungsversion bei unverändertem Opt-in (b) ist keine Erhöhung und schreibt keine Zeile.
-        XCTAssertEqual(releases.map(\.cause), [.optIn, .optIn])
-        XCTAssertEqual(releases.map(\.consentVersion), [0, 4])
+        XCTAssertEqual(releases.map(\.cause), [.optIn])
+        XCTAssertEqual(releases.map(\.consentVersion), [0])
+        XCTAssertEqual(intents.map(\.cause), [.optIn])
+        XCTAssertEqual(intents.map(\.consentVersion), [4])
+        XCTAssertEqual(intents.map(\.effect), [.effective])
+        XCTAssertEqual(intents.compactMap(\.effectiveGeneration).count, 1)
+        XCTAssertEqual(all.last?.generation, intents.first?.effectiveGeneration, "die Anfrage d startet auf der Generation der Erweiterung")
     }
 
     func testStartLineCarriesContextStateReasonAndRoundKind() async {
@@ -1294,8 +1302,20 @@ final class AssistantAuditLogTests: XCTestCase {
         lines(audit).filter { $0["t"] as? String == "release" }
     }
 
-    /// Pfad `setAllowUnsourced` (Opt-in; Sitzung mit `released: true`, Opt-in war an): eine Zeile je echte Änderung, Grund `optIn`;
-    /// ohne Änderung weder Erhöhung noch Zeile. Die Zeile steht schon in der Datei, wenn der Aufruf zurückkehrt (I2).
+    /// Zeilen der Klasse A einer Art aus der Datei, wie sie jetzt ist (`intent` = beabsichtigt, `effective` = wirksam).
+    private func rawLines(_ audit: AssistantAuditLog, _ kind: String) -> [[String: Any]] {
+        lines(audit).filter { $0["t"] as? String == kind }
+    }
+
+    /// Wendet alle Änderungen an und sichert sie danach in der Reihenfolge ihrer Änderungsnummern (die Reihe läuft streng nacheinander).
+    private func settleAll(_ session: AssistantSession, _ pendings: [AssistantReleasePending]) async {
+        let ordered = pendings.filter { $0.changed }.sorted { ($0.applied.steps.first?.number ?? 0) < ($1.applied.steps.first?.number ?? 0) }
+        for p in ordered { _ = await session.settle(p) }
+    }
+
+    /// Pfad `setAllowUnsourced` (Opt-in; Sitzung mit `released: true`, Opt-in war an): je echte Änderung eine Zeile (Einschränkung)
+    /// bzw. zwei (Erweiterung: beabsichtigt, wirksam), Grund `optIn`; ohne Änderung weder Erhöhung noch Zeile. Die Zeilen stehen
+    /// schon in der Datei, wenn der Aufruf zurückkehrt (I2).
     func testSetAllowUnsourcedWritesOneLineWithCauseOptInAndNoneWithoutAChange() async throws {
         let audit = AssistantAuditLog(directory: dir)
         let s = await releaseSession(audit)
@@ -1306,13 +1326,28 @@ final class AssistantAuditLogTests: XCTestCase {
         XCTAssertFalse(r1.changed)
         let on = await s.setAllowUnsourced(true, consentVersion: 2)
         XCTAssertTrue(on.effective)
+        // Die Einschränkung schreibt `release` (Generation beim Anwenden), die Erweiterung `intent` (ohne Generation) und danach
+        // `effective` (mit der Generation des Wirksamwerdens): jeweils genau eine Zeile je Änderung.
         let rel = rawReleaseLines(audit)
-        XCTAssertEqual(rel.count, 2, "genau zwei Erhöhungen, zwei Zeilen")
-        XCTAssertEqual(rel.compactMap { $0["gen"] as? Int }, [off.generation, on.generation])
-        XCTAssertEqual(rel.compactMap { $0["cause"] as? String }, ["optIn", "optIn"])
-        XCTAssertEqual(rel.compactMap { $0["unsourced"] as? Bool }, [false, true], "Opt-in-Zustand NACH der Erhöhung")
-        XCTAssertEqual(rel.compactMap { $0["consent"] as? Int }, [0, 2])
-        XCTAssertNil(rel[0]["areas"], "Bereichsnamen nur bei den Gründen `areas` und `consent`")
+        let intent = rawLines(audit, "intent")
+        let effective = rawLines(audit, "effective")
+        XCTAssertEqual(rel.count, 1, "eine Einschränkung, eine Zeile `release`")
+        XCTAssertEqual(intent.count, 1)
+        XCTAssertEqual(effective.count, 1)
+        XCTAssertEqual(rel.compactMap { $0["gen"] as? Int }, [off.generation])
+        XCTAssertNil(intent[0]["gen"], "die Zeile „beabsichtigt“ trägt keine Generation")
+        XCTAssertEqual(effective[0]["gen"] as? Int, on.generation)
+        XCTAssertEqual(intent[0]["chg"] as? Int, effective[0]["chg"] as? Int, "beide Zeilen gehören zu derselben Änderung")
+        XCTAssertNotNil(intent[0]["run"] as? Int)
+        XCTAssertEqual(intent[0]["run"] as? Int, effective[0]["run"] as? Int)
+        XCTAssertEqual(rel[0]["cause"] as? String, "optIn")
+        XCTAssertEqual(intent[0]["cause"] as? String, "optIn")
+        XCTAssertEqual(effective[0]["cause"] as? String, "optIn")
+        XCTAssertEqual(rel[0]["unsourced"] as? Bool, false, "Opt-in-Zustand NACH der Änderung")
+        XCTAssertEqual(effective[0]["unsourced"] as? Bool, true)
+        XCTAssertEqual(rel[0]["consent"] as? Int, 0)
+        XCTAssertEqual(effective[0]["consent"] as? Int, 2)
+        XCTAssertEqual(rel[0]["areas"] as? [String], ["books", "files", "notes", "transcripts"], "Klasse A: die Bereichsnamen des Stands (feste Kennungen)")
         XCTAssertEqual(rel[0]["model"] as? String, "other")
         XCTAssertEqual(rel[0]["cloud"] as? Bool, false)
         XCTAssertNil(rel[0]["req"], "eine Erhöhung gehört zu keiner Anfrage")
@@ -1360,11 +1395,18 @@ final class AssistantAuditLogTests: XCTestCase {
         XCTAssertTrue(d.effective)
         XCTAssertTrue(s.effectiveCloudConsent)
         let rel = rawReleaseLines(audit)
-        XCTAssertEqual(rel.compactMap { $0["gen"] as? Int }, [a, b, c.generation, d.generation])
-        XCTAssertEqual(rel.compactMap { $0["cause"] as? String }, ["other", "consent", "consent", "consent"])
-        XCTAssertEqual(rel.compactMap { $0["granted"] as? Bool }, [true, true, false, true])
-        XCTAssertNil(rel[0]["areas"])
-        XCTAssertEqual(rel[2]["areas"] as? [String], ["books", "files", "notes", "transcripts"])
+        XCTAssertEqual(rel.compactMap { $0["gen"] as? Int }, [a, b, c.generation])
+        XCTAssertEqual(rel.compactMap { $0["cause"] as? String }, ["other", "consent", "consent"])
+        XCTAssertEqual(rel.compactMap { $0["granted"] as? Bool }, [true, true, false])
+        XCTAssertEqual(rel[0]["areas"] as? [String], ["books", "files", "notes", "transcripts"])
+        // Die Erteilung ist eine Erweiterung: `intent` ohne Generation, dann `effective` mit der Generation des Wirksamwerdens.
+        let intent = rawLines(audit, "intent")
+        let effective = rawLines(audit, "effective")
+        XCTAssertEqual(intent.count, 1)
+        XCTAssertNil(intent.first?["gen"])
+        XCTAssertEqual(effective.compactMap { $0["gen"] as? Int }, [d.generation])
+        XCTAssertEqual(effective.first?["cause"] as? String, "consent")
+        XCTAssertEqual(effective.first?["granted"] as? Bool, true)
     }
 
     /// Pfad `resumeFree`: eine Zeile mit Grund `resumeFree`; ein zweiter Aufruf (nichts zu tun) erhöht nicht und schreibt nichts.
@@ -1385,35 +1427,48 @@ final class AssistantAuditLogTests: XCTestCase {
         XCTAssertEqual(rel.first?["unsourced"] as? Bool, true)
     }
 
-    /// Alle Pfade zugleich aus mehreren Threads: Die Zeilen stehen vollständig und in der Reihenfolge der Generationen
-    /// (1, 2, …, n), keine fehlt, keine doppelt; eingereiht im Lock, an der Stelle der Erhöhung.
+    /// Alle Pfade zugleich aus mehreren Threads: Jede Generation 1 … n steht in genau einer Zeile (`release` bei Einschränkung und
+    /// Ereignis, `effective` bei Erweiterung), keine fehlt, keine doppelt. Die Generation steigt im Lock (Einschränkung beim
+    /// Anwenden, Erweiterung beim Wirksamwerden); die Zeile wird erst beim Sichern geschrieben, streng nacheinander.
     func testEveryIncreaseLeavesExactlyOneLineInTheOrderOfTheGenerations() async throws {
         let audit = AssistantAuditLog(directory: dir)
         let s = await releaseSession(audit)
+        let collected = NSLock()
+        nonisolated(unsafe) var pendings: [AssistantReleasePending] = []
         let group = DispatchGroup()
         for t in 0..<4 {
             group.enter()
             DispatchQueue.global().async {
                 for i in 0..<60 {
+                    let p: AssistantReleasePending
                     switch (t + i) % 3 {
-                    case 0: _ = s.applyReleaseChange()
-                    case 1: _ = s.applyReleaseChange(.consent)
-                    default: _ = s.applyAllowUnsourced(i % 2 == 0)
+                    case 0: p = s.applyReleaseChange()
+                    case 1: p = s.applyReleaseChange(.consent)
+                    default: p = s.applyAllowUnsourced(i % 2 == 0)
                     }
+                    collected.lock()
+                    pendings.append(p)
+                    collected.unlock()
                 }
                 group.leave()
             }
         }
         XCTAssertEqual(group.wait(timeout: .now() + 20), .success)
+        let all = collected.withLock { pendings }
+        await settleAll(s, all)
         let n = s.releaseGeneration
         XCTAssertGreaterThan(n, 100)
-        let rel = await releaseLines(audit)
-        XCTAssertEqual(rel.count, n, "eine Zeile je Erhöhung")
-        XCTAssertEqual(rel.compactMap { $0["gen"] as? Int }, Array(1...n), "in der Reihenfolge der Generationen, ohne Lücke")
+        _ = await audit.flushReleaseLines()
+        let generations = lines(audit).filter { ["release", "effective"].contains($0["t"] as? String ?? "") }.compactMap { $0["gen"] as? Int }
+        XCTAssertEqual(generations.count, n, "eine Zeile je Erhöhung")
+        XCTAssertEqual(generations.sorted(), Array(1...n), "jede Generation genau einmal, ohne Lücke")
+        let opening = lines(audit).filter { ["release", "intent"].contains($0["t"] as? String ?? "") }.compactMap { $0["chg"] as? Int }
+        XCTAssertEqual(Set(opening).count, opening.count, "jede Änderungsnummer eröffnet genau eine Zeile (`release` oder `intent`)")
+        let closing = lines(audit).filter { $0["t"] as? String == "effective" }.compactMap { $0["chg"] as? Int }
+        XCTAssertTrue(Set(closing).isSubset(of: Set(opening)), "jede Zeile `effective` gehört zu einer Zeile `intent`")
     }
 
-    /// Das Einreihen der Zeile im Lock wartet nie auf die Platte (Schreiben auf der eigenen Warteschlange); gewartet wird erst
-    /// AUSSERHALB des Locks (`settle`).
+    /// Das Anwenden (Einreihen) wartet nie auf die Platte: die Zeilen entstehen erst beim Sichern AUSSERHALB des Locks.
     func testRaisingTheGenerationDoesNotWaitForTheDisk() async throws {
         let audit = freshLog(appender: { url, data in
             Thread.sleep(forTimeInterval: 0.2)
@@ -1421,8 +1476,11 @@ final class AssistantAuditLogTests: XCTestCase {
         })
         let s = await releaseSession(audit)
         let started = Date()
-        for _ in 0..<5 { _ = s.applyReleaseChange() }
+        var pendings: [AssistantReleasePending] = []
+        for _ in 0..<5 { pendings.append(s.applyReleaseChange()) }
         XCTAssertLessThan(Date().timeIntervalSince(started), 0.3, "fünf Erhöhungen, jede Zeile braucht 0,2 s auf der Platte: es wird nicht gewartet")
+        XCTAssertEqual(s.releaseGeneration, 5, "die Generation steht sofort")
+        await settleAll(s, pendings)
         let rel = await releaseLines(audit)
         XCTAssertEqual(rel.count, 5, "alle Zeilen kommen trotzdem in der Datei an")
     }
@@ -1556,6 +1614,49 @@ final class AssistantAuditLogTests: XCTestCase {
         XCTAssertEqual(read.entries.count, 1)
         XCTAssertEqual(read.entries.first?.cause, .consent)
         XCTAssertEqual(read.skippedLines, 1)
+    }
+
+    /// Eine Zeile `release` ohne Generation (Änderung ohne Sitzung) ist mit Lauf und Änderungsnummer lesbar; ohne beides ist sie es nicht.
+    /// „Beabsichtigt“ und „wirksam“ ohne Generation ordnet der Leser zu; ohne „wirksam“ bleibt die Wirkung unbekannt.
+    func testLinesWithoutAGenerationAreReadWhenTheyCarryRunAndChangeNumber() async throws {
+        var released = AssistantJournalLine(.release)
+        released.at = Date(timeIntervalSince1970: 1_760_000_000)
+        released.cause = .areas
+        released.areas = ["books"]
+        released.run = 3
+        released.chg = 1
+        var bare = AssistantJournalLine(.release)
+        bare.at = Date(timeIntervalSince1970: 1_760_000_001)
+        bare.cause = .areas
+        var intent = AssistantJournalLine(.intent)
+        intent.at = Date(timeIntervalSince1970: 1_760_000_002)
+        intent.cause = .areas
+        intent.run = 3
+        intent.chg = 2
+        var effective = AssistantJournalLine(.effective)
+        effective.at = Date(timeIntervalSince1970: 1_760_000_003)
+        effective.cause = .areas
+        effective.run = 3
+        effective.chg = 2
+        var lonely = intent
+        lonely.chg = 3
+        var raw = Data()
+        for l in [released, bare, intent, effective, lonely] {
+            raw.append(encoded(l))
+            raw.append(10)
+        }
+        try writeRaw(raw)
+        let read = await freshLog().read()
+        XCTAssertEqual(read.skippedLines, 1, "nur die Zeile ohne Generation, Lauf und Änderungsnummer")
+        let release = read.entries.filter { $0.kind == .release }
+        XCTAssertEqual(release.count, 1)
+        XCTAssertEqual(release.first?.generation, 0)
+        XCTAssertEqual(release.first?.run, 3)
+        XCTAssertEqual(release.first?.change, 1)
+        XCTAssertEqual(release.first?.areas, ["books"])
+        let intents = read.entries.filter { $0.kind == .intent }
+        XCTAssertEqual(intents.map(\.effect), [.effective, .unknown])
+        XCTAssertEqual(intents.map(\.effectiveGeneration), [nil, nil])
     }
 
     /// Zeilen `release` zählen beim Verdichten wie Ereignisse als eigene Einheiten (die letzten 500 bleiben).
@@ -1778,8 +1879,15 @@ final class AssistantAuditLogTests: XCTestCase {
         let audit = AssistantAuditLog(directory: dir)
         let view = await audit.read().entries.first { $0.requestId == "a" }
         XCTAssertEqual(view?.outcome, .incomplete)
-        XCTAssertEqual(view?.trace.map(\.resultUnknown), [false, true, false])
+        // Je Art des Ergebnisses (Schreibfolge 6): Die Einheit 1 hat nur das Ergebnis „Ereignis“; Anzeige und Audio sind UNBEKANNT,
+        // nicht „nicht ausgeführt“. Einheit 2 hat gar kein Ergebnis, Einheit 3 (verworfen) sieht keine Ausgabe vor.
+        XCTAssertEqual(view?.trace.map(\.resultUnknown), [true, true, false])
         XCTAssertEqual(view?.trace[0].commits, [AssistantCommitMark(stage: .emit, ok: true, generation: 1)])
+        XCTAssertEqual(view?.trace[0].result(for: .emit), .executed)
+        XCTAssertEqual(view?.trace[0].result(for: .display), .unknown)
+        XCTAssertEqual(view?.trace[0].result(for: .audio), .unknown)
+        XCTAssertEqual(view?.trace[0].unknownStages, [.display, .audio])
+        XCTAssertEqual(view?.trace[2].unknownStages, [])
     }
 
     /// Dasselbe aus einer echten Antwort: Das Prozessende liegt zwischen Einordnung und Ergebnis (der Schreiber ist langsam, die
@@ -1874,7 +1982,7 @@ final class AssistantAuditLogTests: XCTestCase {
         func search(_ question: String, limit: Int) async -> [AssistantPassage] {
             await gate.arrive()
             return [AssistantPassage(area: area, itemId: "f1", title: "Ablagedatei Zimtsterne", locator: nil,
-                                     text: "Quasselbert wandert mit dem Fahrrad nach Pappelhausen.", score: 1, isBlock: true)]
+                                     text: "Quasselbert wandert mit dem Fahrrad nach Pappelhausen.", score: 1, isBlock: true, quotable: true)]
         }
     }
 

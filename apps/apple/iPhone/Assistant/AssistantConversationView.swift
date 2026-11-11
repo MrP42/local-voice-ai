@@ -107,6 +107,7 @@ struct AssistantConversationView: View {
         case .retrySend: talk.retry()
         case .resume, .retryStart: talk.resume()
         case .retryAudit: talk.retry()
+        case .retryRelease: talk.retryRelease()
         case .chooseModel: showModelChoice = true
         case .openLocalModels: showLocalModels = true
         }
@@ -234,6 +235,7 @@ struct AssistantConversationView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     if let progress = talk.preparing { preparing(progress) }
+                    if let alert = talk.releaseAlert { noticeView(alert, identifier: "assistantReleaseNotice") }
                     if let notice = talk.notice { noticeView(notice) }
                     if talk.canSend { excerptNotice }
                     if hub.skipped > 0 {
@@ -277,7 +279,7 @@ struct AssistantConversationView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func noticeView(_ notice: AssistantNotice) -> some View {
+    private func noticeView(_ notice: AssistantNotice, identifier: String = "assistantNotice") -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Label(notice.text, systemImage: "info.circle")
                 .font(.footnote)
@@ -298,7 +300,7 @@ struct AssistantConversationView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(AssistantColors.card, in: RoundedRectangle(cornerRadius: 12))
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("assistantNotice")
+        .accessibilityIdentifier(identifier)
     }
 
     /// Die Mindesthöhe von 44 pt steht IM Label: Die ganze Fläche des Knopfes trifft, nicht nur der Text; ein `frame` um den
@@ -319,6 +321,7 @@ struct AssistantConversationView: View {
         case .retrySend: "Erneut senden"
         case .resume: "Weiter"
         case .retryStart, .retryAudit: "Erneut versuchen"
+        case .retryRelease: "Erneut sichern"
         case .chooseModel: "Modell auswählen"
         case .openLocalModels: "Lokale Modelle öffnen"
         }
@@ -330,6 +333,7 @@ struct AssistantConversationView: View {
         case .resume: "assistantNoticeResume"
         case .retryStart: "assistantNoticeRetryStart"
         case .retryAudit: "assistantNoticeRetryAudit"
+        case .retryRelease: "assistantNoticeRetryRelease"
         case .chooseModel: "assistantNoticeChooseModel"
         case .openLocalModels: "assistantNoticeLocalModels"
         }
