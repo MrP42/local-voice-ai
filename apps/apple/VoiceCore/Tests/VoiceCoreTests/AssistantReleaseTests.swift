@@ -163,17 +163,21 @@ final class AssistantReleaseTests: XCTestCase {
         let r = AssistantRelease(optIn: true)
         let sent = Counter()
         let group = DispatchGroup()
+        let running = DispatchSemaphore(value: 0)
         for _ in 0..<4 {
             group.enter()
             DispatchQueue.global().async {
                 let deadline = Date().addingTimeInterval(5)
+                var announced = false
                 while Date() < deadline {
                     if !r.ifCurrent(0, { sent.hit() }).ok { break }
+                    if !announced { announced = true; running.signal() }
                 }
                 group.leave()
             }
         }
-        Thread.sleep(forTimeInterval: 0.05)
+        // Bis ein Erzeuger geliefert hat (statt eine Zeit zu raten): Erst dann kommt der Widerruf.
+        XCTAssertEqual(running.wait(timeout: .now() + 10), .success, "ein Erzeuger lief")
         r.bump()
         let atBump = sent.value
         XCTAssertEqual(group.wait(timeout: .now() + 10), .success)
@@ -326,9 +330,9 @@ final class AssistantReleaseTests: XCTestCase {
         XCTAssertEqual(r.snapshot.generation, 1)
         _ = restrict(r, to: [.notes])   // eine spätere Einschränkung wirkt sofort und hat Vorrang
         XCTAssertEqual(r.snapshot.generation, 2)
-        XCTAssertTrue(r.completeExpansion(b))
+        XCTAssertFalse(r.completeExpansion(b), "nichts mehr übrig: die spätere Einschränkung hat den ganzen Teil gestrichen")
         XCTAssertEqual(r.snapshot.areas, [.notes], "die Erweiterung um die Ablage wurde von der späteren Einschränkung abgeschnitten")
-        XCTAssertEqual(r.snapshot.generation, 3)
+        XCTAssertEqual(r.snapshot.generation, 2, "keine dritte Erhöhung: eine überholte Erweiterung wird nicht wirksam")
     }
 
     /// Eine gemischte Änderung wird zerlegt: erst der einschränkende Teil (sofort, eigene Generation), dann der erweiternde (erst

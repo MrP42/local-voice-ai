@@ -107,6 +107,11 @@ public struct AssistantPassage: Sendable, Equatable, Codable {
     /// anderen zusammengezogen und höchstens `AssistantGrounding.maxBlockChars` lang. Nur ein solcher Auszug ist zitierbar. Ohne
     /// Nachweis (Standard, auch bei Suchfenstern der Ablage) wird er nie ausgegeben. Wird nicht gespeichert.
     public let isBlock: Bool
+    /// Der ROHE gespeicherte Block: genau der Teil des gespeicherten Quelltextes zwischen den Grenzen des Blocks, Zeichen für
+    /// Zeichen (Zeilentrenner, Leerraum, Unicode-Form unverändert; Bytefolge UTF-8 gleich). Nur DIESER Text wird bei einem Zitat
+    /// ausgegeben. `text` ist der aufbereitete Text für Suche, Abruf und Prompt und wird nie ausgegeben. `nil`: es gibt keinen
+    /// eindeutigen Rohtext (nie die aufbereitete Fassung als Ersatz): der Auszug ist nicht zitierbar. Wird nicht gespeichert.
+    public let raw: String?
     /// Die Quellart des Blocks lässt Quelltextauszüge zu (`AssistantSourceKind.isQuotable`: Buch, getippte Notiz, importiertes
     /// Dokument, Transkript). Erzeugter Text (Protokoll einer Sprachnotiz oder Besprechung, Antworten der App), Mails und
     /// Kalendereinträge sind nicht zitierbar. Fail-closed: Ohne ausdrückliche Angabe gilt der Auszug als nicht zitierbar. Wird
@@ -114,7 +119,7 @@ public struct AssistantPassage: Sendable, Equatable, Codable {
     public let quotable: Bool
 
     public init(area: AssistantArea, itemId: String, title: String, locator: String? = nil, text: String, score: Double,
-                isBlock: Bool = false, quotable: Bool = false) {
+                isBlock: Bool = false, quotable: Bool = false, raw: String? = nil) {
         self.area = area
         self.itemId = itemId
         self.title = title
@@ -123,6 +128,7 @@ public struct AssistantPassage: Sendable, Equatable, Codable {
         self.score = score
         self.isBlock = isBlock
         self.quotable = quotable
+        self.raw = raw
     }
 
     private enum CodingKeys: String, CodingKey { case area, itemId, title, locator, text, score }
@@ -144,10 +150,12 @@ public struct AssistantPassage: Sendable, Equatable, Codable {
         try c.encode(score, forKey: .score)
     }
 
-    /// Dieselbe Stelle mit anderem Text und Punktwert. Ein veränderter (gekürzter) Text ist nie mehr ein ganzer Quellblock.
+    /// Dieselbe Stelle mit anderem Text und Punktwert. Ein veränderter (gekürzter) Text ist nie mehr ein ganzer Quellblock und
+    /// verliert den Rohtext (Vergleich auf der Bytefolge, nicht auf kanonischer Gleichheit).
     func replacing(text newText: String, score newScore: Double? = nil) -> AssistantPassage {
-        AssistantPassage(area: area, itemId: itemId, title: title, locator: locator, text: newText, score: newScore ?? score,
-                         isBlock: isBlock && newText == text, quotable: quotable)
+        let same = newText.hasSameBytes(as: text)
+        return AssistantPassage(area: area, itemId: itemId, title: title, locator: locator, text: newText, score: newScore ?? score,
+                                isBlock: isBlock && same, quotable: quotable, raw: same ? raw : nil)
     }
 
     /// Auf höchstens `limit` Zeichen gekürzt (`BookTalkPrompt.clip`); ein gekürzter Text ist kein Block mehr.
@@ -195,18 +203,23 @@ public struct AssistantDocument: Sendable {
     /// wortgetreu. Die App erzeugt keine Grenze aus Satzzeichen. Zitiert wird nur ein ganzer Block, nie ein Teil davon.
     public struct Section: Sendable {
         public let locator: String?
+        /// Der aufbereitete Text (Suche, Abruf, Prompt, Erkennung eigener Inhalte). Wird nie als Zitat ausgegeben.
         public let text: String
         /// Art der Quelle dieses Blocks. Ohne Vorgabewert: Jede Quelle legt sie ausdrücklich fest, eine vergessene Art kann nie
         /// stillschweigend zitierbar werden.
         public let kind: AssistantSourceKind
+        /// Der rohe gespeicherte Block (siehe `AssistantPassage.raw`); `nil`, wo es keinen eindeutigen Rohtext gibt. Ohne ihn ist
+        /// der Block nicht zitierbar, auch nicht in der aufbereiteten Fassung.
+        public let raw: String?
 
-        /// Der Block darf wörtlich ausgegeben werden (nur Buch, getippte Notiz, importiertes Dokument, Transkript).
-        public var quotable: Bool { kind.isQuotable }
+        /// Der Block darf wörtlich ausgegeben werden: eine Quellart mit festgelegtem Quellblock UND ein eindeutiger Rohtext.
+        public var quotable: Bool { kind.isQuotable && raw != nil }
 
-        public init(locator: String?, text: String, kind: AssistantSourceKind) {
+        public init(locator: String?, text: String, kind: AssistantSourceKind, raw: String? = nil) {
             self.locator = locator
             self.text = text
             self.kind = kind
+            self.raw = raw
         }
     }
 
@@ -545,4 +558,10 @@ public enum AssistantEvent: Sendable, Equatable {
                   sources: [AssistantPassage], quote: Bool)
     case done(requestId: String, AssistantAnswer)
     case failed(requestId: String, AssistantFailure)
+}
+
+extension String {
+    /// Gleiche UTF-8-Bytefolge. `==` auf `String` gilt für kanonisch gleiche Zeichenfolgen (NFC = NFD) und ist für „zeichengleich
+    /// mit dem Gespeicherten“ zu schwach.
+    func hasSameBytes(as other: String) -> Bool { utf8.elementsEqual(other.utf8) }
 }

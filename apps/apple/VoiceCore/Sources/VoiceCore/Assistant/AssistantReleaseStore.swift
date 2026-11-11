@@ -384,7 +384,11 @@ public final class AssistantReleaseStore: @unchecked Sendable {
     public let directory: URL
     let fileSystem: any AssistantStoreFileSystem
     private let queue = DispatchQueue(label: "de.wolffappliedai.localvoice.assistant.freigaben")
-    private let lock = NSLock()
+    /// Die EINE Ordnung dieses Prozesslaufs (Lock, Generation, Lauf-Token, Standzeile, Änderungszähler, Reihe der Folgen, Register
+    /// der Anfragen): Der Speicher besitzt sie, jede Sitzung und jede Änderung ohne Sitzung benutzt sie.
+    let clock = AssistantReleaseClock()
+    /// Der Lock der Ordnung: derselbe für Generation, Wiedergabesperre, Anfragen und den Stand dieser Datei im Speicher.
+    private var lock: NSLock { clock.lock }
     // Hinter `lock`:
     private var confirmed: AssistantReleaseRecord
     private var revision = 0
@@ -396,14 +400,8 @@ public final class AssistantReleaseStore: @unchecked Sendable {
     private var overlapCount = 0
     /// Der engere, noch nicht gesicherte Stand (leer: es gibt keinen).
     private var ceiling = AssistantReleaseCeiling()
-    /// Änderungsnummer je Lauf für Änderungen ohne Sitzung.
-    private var changeCount = 0
     /// Zeilen „in diesem Lauf nicht wirksam“, die noch nicht geschrieben werden konnten.
     private var unwritten: [UnwrittenLine] = []
-    /// Das Ende der Reihe der Folgen ohne Sitzung.
-    private var tail: AssistantChangeTicket?
-    /// Das Lauf-Token der Zeilen ohne Sitzung (die Laufnummer wird wie sonst beim ersten Schreiben vergeben).
-    private let runToken = AssistantRunToken()
     public private(set) var opening: Opening
 
     private struct UnwrittenLine {
@@ -487,6 +485,30 @@ public final class AssistantReleaseStore: @unchecked Sendable {
         return !ceiling.isEmpty
     }
 
+    /// Es gibt etwas nachzuholen: eine nicht gesicherte Einschränkung (gemerkter engerer Stand, gescheiterter Austausch). Ein beim
+    /// Start gesperrter Speicher zählt nicht (er braucht die neue Wahl des Nutzers, nicht dieses Nachholen).
+    var needsCatchUp: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return (!ceiling.isEmpty || dirtyState) && !lockedState
+    }
+
+    /// Zeilen „in diesem Lauf nicht wirksam“ (Änderungen ohne Sitzung), die noch nicht geschrieben werden konnten.
+    var hasUnwrittenLines: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return !unwritten.isEmpty
+    }
+
+    /// Holt die noch ausstehenden Zeilen der Änderungen ohne Sitzung nach (bei jeder Gelegenheit: Anfrage, Änderung). Der Fehler der
+    /// ersten Zeile, die sich weiter nicht schreiben lässt, sonst `nil`.
+    @discardableResult
+    func flushUnwritten(_ audit: AssistantAuditLog?) async -> AssistantAuditError? {
+        var out = AssistantAreaChange(effective: [], storeError: nil, auditError: nil, applied: true)
+        await catchUpLines(audit, into: &out)
+        return out.auditError
+    }
+
     /// Änderungszähler der zuletzt bestätigten Fassung (0: keine).
     public var confirmedRevision: Int {
         lock.lock()
@@ -537,21 +559,9 @@ public final class AssistantReleaseStore: @unchecked Sendable {
         }
     }
 
-    /// Reiht eine Folge ohne Sitzung hinter die vorigen (streng nacheinander, in der Reihenfolge der Aufrufe).
-    private func nextTicket() -> AssistantChangeTicket {
-        lock.withLock {
-            let ticket = AssistantChangeTicket(previous: tail)
-            tail = ticket
-            return ticket
-        }
-    }
-
-    private func nextChangeNumber() -> Int {
-        lock.withLock {
-            changeCount += 1
-            return changeCount
-        }
-    }
+    /// Reiht eine Folge ohne Sitzung hinter die vorigen (streng nacheinander, in der Reihenfolge der Aufrufe): dieselbe Reihe wie
+    /// die Folgen der Sitzungen.
+    private func nextTicket() -> AssistantChangeTicket { clock.nextTicket() }
 
     /// Setzt den Stand einer Sitzung (Ansicht `state`) in den Gesamtstand und ersetzt die Datei absturzatomar. Läuft auf der
     /// eigenen Warteschlange; kehrt zurück, wenn der Austausch bestätigt ist oder gescheitert (`nil`: bestätigt). Gesperrt
@@ -567,10 +577,14 @@ public final class AssistantReleaseStore: @unchecked Sendable {
     /// Schreibt `wanted`, begrenzt auf den gemerkten engeren Stand (nur auf der Warteschlange). `nil`: bestätigt und unverändert
     /// geschrieben. `.restrictionPending`: bestätigt, aber `wanted` ging über die noch nicht gesicherte Einschränkung hinaus (die
     /// Erweiterung gilt nicht; die Einschränkung ist damit gesichert).
-    private func commitNow(_ wanted: AssistantReleaseRecord) -> AssistantStoreError? {
+    /// `onEffective`: läuft IM Lock im Schritt der Bestätigung (nur wenn `wanted` unbegrenzt geschrieben wurde) mit der dort vergebenen
+    /// Generation und der bestätigten Fassung: Die Erweiterung wird wirksam, die Generation steigt, die Zeile wird eingereiht.
+    private func commitNow(_ wanted: AssistantReleaseRecord,
+                           onEffective: ((Int, AssistantReleaseRecord) -> Void)? = nil) -> AssistantStoreError? {
         let limited = lock.withLock { ceiling }.apply(to: wanted)
-        if let error = replaceNow(limited) { return error }
-        return limited == wanted ? nil : .restrictionPending
+        let whole = limited == wanted
+        if let error = replaceNow(limited, onConfirmed: whole ? onEffective : nil) { return error }
+        return whole ? nil : .restrictionPending
     }
 
     /// Versucht, den gemerkten engeren Stand ohne Sitzung zu sichern („Erneut sichern“), streng nacheinander mit den anderen
@@ -594,8 +608,10 @@ public final class AssistantReleaseStore: @unchecked Sendable {
 
     /// Das Ergebnis des einschränkenden Teils.
     private struct Restriction: Sendable {
-        /// Die Änderungsnummer, wenn wirklich eingeschränkt wurde (dann folgt die Zeile `release`).
+        /// Die Änderungsnummer, wenn wirklich eingeschränkt wurde (dann folgt die Zeile `release`), und ihre Generation (im selben
+        /// Lock-Schritt vergeben, in dem der engere Stand gilt).
         var number: Int?
+        var generation: Int?
         var record: AssistantReleaseRecord
         var error: AssistantStoreError?
         /// Es kommen Bereiche dazu (ein erweiternder Teil folgt).
@@ -636,7 +652,8 @@ public final class AssistantReleaseStore: @unchecked Sendable {
         let restriction = await onQueue { self.restrictNow(areas, cloud: cloud) }
         out.storeError = restriction.error
         if let number = restriction.number {
-            let error = await writeLine(.release, number: number, record: restriction.record, cloud: cloud, audit: audit)
+            let error = await writeLine(.release, number: number, generation: restriction.generation, record: restriction.record,
+                                        cloud: cloud, audit: audit)
             out.auditError = out.auditError ?? error
         }
         if restriction.grows { await expand(areas, cloud: cloud, audit: audit, into: &out) }
@@ -655,41 +672,49 @@ public final class AssistantReleaseStore: @unchecked Sendable {
         let next = Self.setting(current.intersection(areas), cloud: cloud, covering: areas, in: base)
         let narrows = next != base
         let grows = !areas.isSubset(of: current)
-        guard narrows || pending else { return Restriction(number: nil, record: base, error: nil, grows: grows) }
+        guard narrows || pending else { return Restriction(number: nil, generation: nil, record: base, error: nil, grows: grows) }
         var number: Int?
+        var generation: Int?
         if narrows {
-            number = lock.withLock {
+            // Der engere Stand gilt, die Generation steigt und laufende Anfragen ALLER Sitzungen enden: ein Schritt im Lock.
+            let after: AssistantRaiseAftermath = lock.withLock {
                 ceiling = ceiling.merged(with: AssistantReleaseCeiling(narrowing: base, to: next))
-                changeCount += 1
-                return changeCount
+                number = clock.nextChangeLocked()
+                let g = clock.raiseLocked()
+                generation = g
+                return clock.drainLocked(g)
             }
+            after.finish()
         }
         let error = replaceNow(next)
         if error != nil, narrows { markBlocked() }
-        return Restriction(number: number, record: next, error: error, grows: grows)
+        return Restriction(number: number, generation: generation, record: next, error: error, grows: grows)
     }
 
     private func expand(_ areas: Set<AssistantArea>, cloud: Bool, audit: AssistantAuditLog?, into out: inout AssistantAreaChange) async {
-        let number = nextChangeNumber()
-        let (intended, blocked) = lock.withLock { () -> (AssistantReleaseRecord, Bool) in
-            (Self.setting(areas, cloud: cloud, covering: areas, in: ceiling.apply(to: confirmed)), blockedState)
+        let (number, intended, blocked) = lock.withLock { () -> (Int, AssistantReleaseRecord, Bool) in
+            (clock.nextChangeLocked(), Self.setting(areas, cloud: cloud, covering: areas, in: ceiling.apply(to: confirmed)), blockedState)
         }
         // Ein blockierter Speicher (eine Einschränkung ließ sich nicht sichern) nimmt keine Erweiterung an.
         if blocked { return await refuse(number, intended, cloud: cloud, audit: audit, into: &out) }
         // (1) „Erweiterung beabsichtigt“ dauerhaft; scheitert das, kein Austausch.
-        if let error = await writeLine(.intent, number: number, record: intended, cloud: cloud, audit: audit) {
+        if let error = await writeLine(.intent, number: number, generation: nil, record: intended, cloud: cloud, audit: audit) {
             out.auditError = out.auditError ?? error
             return await refuse(number, intended, cloud: cloud, audit: audit, into: &out)
         }
-        // (2) Datei ersetzen: der Commit der Erweiterung.
-        let error = await onQueue { self.commitNow(Self.setting(areas, cloud: cloud, covering: areas, in: self.record)) }
+        // (2) Datei ersetzen: der Commit der Erweiterung. Mit der Bestätigung wird sie wirksam, und im selben Lock-Schritt steigt die
+        // Generation (laufende Anfragen ALLER Sitzungen enden) und wird die Zeile „wirksam“ mit dieser Generation eingereiht.
+        let error = await onQueue {
+            self.commitNow(Self.setting(areas, cloud: cloud, covering: areas, in: self.record)) { generation, confirmed in
+                self.enqueueLine(.effective, number: number, generation: generation, record: confirmed, cloud: cloud, audit: audit)
+            }
+        }
         if let error {
             out.storeError = error
             return await refuse(number, intended, cloud: cloud, audit: audit, into: &out)
         }
-        // (3) Erst jetzt wirksam: die Zeile „wirksam“ (ohne Generation). Ihr Fehler wird gemeldet, die Erweiterung bleibt (gesichert).
-        let written = await writeLine(.effective, number: number, record: record, cloud: cloud, audit: audit)
-        out.auditError = out.auditError ?? written
+        // (3) Die Zeile „wirksam“ steht dauerhaft; ihr Fehler wird gemeldet, die Erweiterung bleibt (gesichert).
+        if audit != nil, let written = await audit?.waitForLine(key: clock.key("chg", number)) { out.auditError = out.auditError ?? written }
     }
 
     /// Die Erweiterung gilt in diesem Lauf nicht: Die Zeile „in diesem Lauf nicht wirksam“ wird geschrieben, sobald es geht.
@@ -705,7 +730,7 @@ public final class AssistantReleaseStore: @unchecked Sendable {
     private func catchUpLines(_ audit: AssistantAuditLog?, into out: inout AssistantAreaChange) async {
         guard audit != nil else { return }
         for item in lock.withLock({ unwritten }) {
-            if let error = await writeLine(.ineffective, number: item.number, record: item.record, cloud: item.cloud, audit: audit) {
+            if let error = await writeLine(.ineffective, number: item.number, generation: nil, record: item.record, cloud: item.cloud, audit: audit) {
                 out.auditError = out.auditError ?? error
                 continue
             }
@@ -713,27 +738,39 @@ public final class AssistantReleaseStore: @unchecked Sendable {
         }
     }
 
-    /// Eine Zeile der Klasse A ohne Sitzung (`release`, `intent`, `effective`, `ineffective`): Lauf vom Token beim Schreiben,
-    /// Änderungsnummer, Ursache `areas` und der Stand danach, ohne Generation, ohne Titel und Inhalte. Wartet, bis sie steht.
-    private func writeLine(_ kind: AssistantJournalLine.Kind, number: Int, record: AssistantReleaseRecord, cloud: Bool,
-                           audit: AssistantAuditLog?) async -> AssistantAuditError? {
-        guard let audit else { return nil }
+    /// Reiht eine Zeile der Klasse A ohne Sitzung ein (`release`, `intent`, `effective`, `ineffective`), ohne zu warten: Lauf vom
+    /// Token der Ordnung beim Schreiben, Änderungsnummer, Ursache `areas`, der Stand danach, ohne Titel und Inhalte. `generation`:
+    /// nur `release` und `effective` (die im Lock vergebene Generation dieser Änderung). Gibt den Fehlerschlüssel zurück (je Lauf und
+    /// Änderung eindeutig, derselbe Schlüsselraum wie in den Sitzungen). Darf im Lock der Ordnung aufgerufen werden (nur Einreihen).
+    @discardableResult
+    private func enqueueLine(_ kind: AssistantJournalLine.Kind, number: Int, generation: Int?, record: AssistantReleaseRecord, cloud: Bool,
+                             audit: AssistantAuditLog?) -> String {
+        let key = clock.key("chg", number)
+        guard let audit else { return key }
         var line = AssistantJournalLine(kind)
         line.at = Date()
         line.chg = number
+        line.gen = generation
         line.cause = .areas
         line.areas = AssistantReleaseRecord.names(record.areas(cloud: cloud))
         line.unsourced = record.optIn
         line.consent = record.consentVersion
         line.cloud = cloud
-        let key = "store:\(number)"
-        audit.enqueue(line, key: key, run: runToken)
+        audit.enqueue(line, key: key, run: clock.run)
+        return key
+    }
+
+    /// Wie `enqueueLine`, wartet aber, bis die Zeile (dauerhaft) steht.
+    private func writeLine(_ kind: AssistantJournalLine.Kind, number: Int, generation: Int?, record: AssistantReleaseRecord, cloud: Bool,
+                           audit: AssistantAuditLog?) async -> AssistantAuditError? {
+        guard let audit else { return nil }
+        let key = enqueueLine(kind, number: number, generation: generation, record: record, cloud: cloud, audit: audit)
         return await audit.waitForLine(key: key)
     }
 
     /// Der Austausch selbst (blockierend, nur auf der Warteschlange oder beim Öffnen). Gelingt er, ist `record` bestätigt und ein
     /// gemerkter engerer Stand erfüllt (er war Teil der Fassung). Scheitert er, merkt der Speicher, was an `record` einschränkt.
-    func replaceNow(_ record: AssistantReleaseRecord) -> AssistantStoreError? {
+    func replaceNow(_ record: AssistantReleaseRecord, onConfirmed: ((Int, AssistantReleaseRecord) -> Void)? = nil) -> AssistantStoreError? {
         lock.lock()
         if running {
             overlapCount += 1
@@ -747,17 +784,24 @@ public final class AssistantReleaseStore: @unchecked Sendable {
         let error = writeVersion(record, revision: number)
         lock.lock()
         running = false
+        var after: AssistantRaiseAftermath?
         if error == nil {
             confirmed = record
             revision = number
             lockedState = false
             dirtyState = false
             ceiling = AssistantReleaseCeiling()
+            if let onConfirmed {
+                let g = clock.raiseLocked()
+                onConfirmed(g, record)
+                after = clock.drainLocked(g)
+            }
         } else {
             dirtyState = true
             ceiling = ceiling.merged(with: AssistantReleaseCeiling(narrowing: confirmed, to: record))
         }
         lock.unlock()
+        after?.finish()
         return error
     }
 

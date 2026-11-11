@@ -408,9 +408,15 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
         #if os(iOS)
         if jobs?.currentId == id { jobs?.cancelCurrent() }
         #endif
-        try store.deleteEntry(id)
-        transport?.cancelDelivery(for: id)
-        refresh()
+        // Assistent (Klasse B): Die Notiz muss auch aus der Sicht (`entries`) verschwunden sein, bevor die Änderung als beendet gilt
+        // (der Durchgang der Indexierung liest `entries`). Schlägt das Lesen des Verlaufs in `refresh` fehl, nimmt der letzte Schritt
+        // sie heraus. Die Meldung des Speichers (`deleteEntry`) liegt in dieser Klammer.
+        try NoteChangeHook.shared.around {
+            try store.deleteEntry(id)
+            transport?.cancelDelivery(for: id)
+            refresh()
+            if entries.contains(where: { $0.id == id }) { entries.removeAll { $0.id == id } }
+        }
         status = "Sprachnotiz gelöscht"
     }
     func recordingURL(_ id: UUID) -> URL? {

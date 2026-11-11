@@ -114,4 +114,106 @@ final class AssistantSectionsTests: XCTestCase {
         XCTAssertEqual(sections.first?.locator, "S. 12")
         XCTAssertEqual(sections.first?.text, paragraph("A"))
     }
+
+    // MARK: Rohtext (B1, Runde 7): der gespeicherte Block, Zeichen für Zeichen
+
+    private func bytes(_ s: String?) -> [UInt8]? { s.map { Array($0.utf8) } }
+
+    /// Notiz: Der Rohtext ist der Teilstring des gespeicherten Textes zwischen den Trennern, ohne Ersetzen von Zeilentrennern,
+    /// Falten, Trimmen oder Normalisieren. Trenner (Zeilenende, Leerzeile) gehören nie zum Block, Zeilenenden darin schon.
+    func testNoteRawIsTheStoredSubstringForEveryKindOfLineEndAndWhitespace() {
+        let nfd = "Mu\u{0308}hlbach bru\u{0308}tet"
+        let cases: [(name: String, text: String, raw: [String])] = [
+            ("CR", "Alpha\rBeta", ["Alpha\rBeta"]),
+            ("CRLF", "Alpha\r\nBeta\r\n\r\nGamma", ["Alpha\r\nBeta", "Gamma"]),
+            ("LF", "Alpha\nBeta", ["Alpha\nBeta"]),
+            ("U+2028", "Alpha\u{2028}Beta", ["Alpha\u{2028}Beta"]),
+            ("U+0085", "Alpha\u{0085}Beta", ["Alpha\u{0085}Beta"]),
+            ("doppelte Leerzeichen", "Alpha  Beta   Gamma", ["Alpha  Beta   Gamma"]),
+            ("Tab", "Alpha\tBeta\t\tGamma", ["Alpha\tBeta\t\tGamma"]),
+            ("NFD", nfd, [nfd]),
+            ("Rand-Leerraum", "  Alpha \t\n\n\t Beta  \n", ["  Alpha \t", "\t Beta  "]),
+            ("gemischt", "A\r\n B  \rC\n\n  \n\nD", ["A\r\n B  \rC", "D"]),
+        ]
+        for c in cases {
+            let blocks = AssistantSections.blocks(of: c.text, locator: nil)
+            XCTAssertEqual(blocks.compactMap { bytes($0.raw) }, c.raw.map { Array($0.utf8) }, c.name)
+            XCTAssertTrue(blocks.allSatisfy { $0.quotable }, c.name)
+        }
+    }
+
+    /// Die aufbereitete Fassung (`text`) bleibt für die Suche, ist aber NICHT der Rohtext (Gegenprobe: sie ersetzt `\r` durch `\n`).
+    func testTheProcessedTextIsOnlyForSearchAndDiffersFromTheRawText() {
+        let block = AssistantSections.blocks(of: "Alpha\rBeta", locator: nil)[0]
+        XCTAssertEqual(block.text, "Alpha\nBeta")
+        XCTAssertEqual(bytes(block.raw), Array("Alpha\rBeta".utf8))
+        let nfd = AssistantSections.blocks(of: "Mu\u{0308}hl", locator: nil)[0]
+        XCTAssertEqual(nfd.raw, "Mühl", "kanonisch gleich ...")
+        XCTAssertNotEqual(bytes(nfd.raw), Array("Mühl".utf8), "... aber nicht dieselben Bytes: NFD bleibt NFD")
+    }
+
+    /// Transkript: Der Rohtext ist das gespeicherte Textfeld des Segments (ohne Sprecher, nicht getrimmt); ohne ihn ist das Segment
+    /// nicht zitierbar, nie ersatzweise die Zeile mit Sprecher.
+    func testMeetingRawIsTheStoredSegmentTextWithoutTheSpeakerAndWithoutRawItIsNotQuotable() {
+        let stored = "  Wir beginnen\r\nmit dem  Budget.\t"
+        let blocks = AssistantSections.meeting([
+            AssistantSegment(start: 0, line: "Anna: Wir beginnen mit dem Budget.", raw: stored, usable: true),
+            AssistantSegment(start: 5, line: "Berta: ohne Rohtext", usable: true),
+        ]) { "\(Int($0)) s" }
+        XCTAssertEqual(blocks.count, 2)
+        XCTAssertEqual(bytes(blocks[0].raw), Array(stored.utf8))
+        XCTAssertTrue(blocks[0].quotable)
+        XCTAssertNil(blocks[1].raw)
+        XCTAssertFalse(blocks[1].quotable)
+        XCTAssertEqual(blocks[0].text, "Anna: Wir beginnen mit dem Budget.", "die Zeile mit Sprecher dient nur der Suche")
+    }
+
+    /// Buch: Der Rohtext ist der Teilstring des gespeicherten Buchtextes (Zeilenenden und doppelte Leerzeichen darin bleiben).
+    func testBookRawIsTheStoredParagraphIncludingLineEndsAndDoubleSpaces() {
+        let one = "Quasselbert  wandert mit dem Fahrrad\r\nnach Pappelhausen."
+        let two = "Die Tante\tLavendula wartet dort."
+        let text = "# Kapitel Eins\r\n\r\n\(one)\r\n\r\n\(two)\r\n"
+        let sections = AssistantSections.book(BookTalkIndex.blocks(in: text), frontier: nil)
+        XCTAssertEqual(sections.compactMap { bytes($0.raw) }, [Array(one.utf8), Array(two.utf8)])
+        XCTAssertTrue(sections.allSatisfy(\.quotable))
+        XCTAssertEqual(sections.map(\.text), ["Quasselbert wandert mit dem Fahrrad nach Pappelhausen.", "Die Tante Lavendula wartet dort."],
+                       "aufbereitet nur für die Suche")
+    }
+
+    /// Buch: Enthält der Absatz Sprecher-, Stil- oder Seitenmarken, wäre der aufbereitete Text nicht der gespeicherte: kein
+    /// eindeutiger Rohtext, der Absatz ist nicht zitierbar (und die gesäuberte Fassung nie ein Ersatz).
+    func testABookParagraphWithMarksHasNoRawTextAndIsNotQuotable() {
+        let cases = [
+            "<Erzähler> Quasselbert wandert nach Pappelhausen.",
+            "Quasselbert [calm] wandert nach Pappelhausen.",
+            "Quasselbert wandert {{S. 4}} nach Pappelhausen.",
+        ]
+        for paragraph in cases {
+            let sections = AssistantSections.book(BookTalkIndex.blocks(in: "# Kapitel\n\n\(paragraph)"), frontier: nil)
+            XCTAssertEqual(sections.count, 1, paragraph)
+            XCTAssertNil(sections.first?.raw, paragraph)
+            XCTAssertEqual(sections.first?.quotable, false, paragraph)
+        }
+    }
+
+    /// Buch: Ein Absatz über der Höchstlänge hat keinen Rohtext (er wird nie ausgegeben, nie gekürzt).
+    func testABookParagraphLongerThanTheLimitHasNoRawText() {
+        let long = Array(repeating: "Wort", count: 200).joined(separator: " ")
+        XCTAssertGreaterThan(long.utf16.count, AssistantGrounding.maxBlockChars)
+        let sections = AssistantSections.book(BookTalkIndex.blocks(in: long), frontier: nil)
+        XCTAssertNil(sections.first?.raw)
+    }
+
+    /// Der Rohtext wird gegen die Höchstlänge gemessen, nicht der aufbereitete: 200 Zeilen „ab“ mit CRLF sind aufbereitet 599, roh 798.
+    func testTheLimitCountsTheRawBlockNotTheProcessedText() async {
+        let text = Array(repeating: "ab", count: 200).joined(separator: "\r\n")
+        let section = AssistantSections.blocks(of: text, locator: nil)[0]
+        XCTAssertLessThanOrEqual(section.text.count, AssistantGrounding.maxBlockChars)
+        XCTAssertGreaterThan(section.raw?.utf16.count ?? 0, AssistantGrounding.maxBlockChars)
+        let corpus = AssistantCorpus()
+        await corpus.upsert(AssistantDocument(item: AssistantItem(area: .notes, id: "n", title: "Notiz"), version: "1", sections: [section]))
+        let stats = await corpus.stats()
+        XCTAssertEqual(stats.tooLong, 1)
+        XCTAssertEqual(stats.blocks, 0)
+    }
 }

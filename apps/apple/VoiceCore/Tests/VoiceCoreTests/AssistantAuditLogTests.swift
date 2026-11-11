@@ -58,6 +58,18 @@ private struct ProbeModel: BookTalkModel {
 private struct DiskFull: Error {}
 
 /// Schalter „Platte kaputt“ (wechselbar zur Laufzeit).
+/// Wartet synchron auf ein Signal (in `async`-Tests darf ein Semaphor nicht direkt gewartet werden; hier geht es um echte Threads).
+private func awaited(_ semaphore: DispatchSemaphore, seconds: TimeInterval) -> Bool {
+    semaphore.wait(timeout: .now() + seconds) == .success
+}
+
+/// Wartet (begrenzt) auf einen Zustand, der von einem Rückruf gesetzt wird (z. B. das Ende eines Modellstroms), statt eine Zeit zu
+/// raten. Der Test prüft ihn danach selbst; erst nach `timeout` Sekunden gilt er als nicht eingetreten.
+private func eventually(timeout: TimeInterval = 5, _ condition: () -> Bool) async {
+    let deadline = Date().addingTimeInterval(timeout)
+    while !condition(), Date() < deadline { try? await Task.sleep(nanoseconds: 5_000_000) }
+}
+
 private final class FailSwitch: @unchecked Sendable {
     private let lock = NSLock()
     private var flag = false
@@ -164,7 +176,7 @@ final class AssistantAuditLogTests: XCTestCase {
 
     /// Eigener Schreiber (nicht aus der Registry) auf dem Testverzeichnis, mit echten Dateizugriffen und Austauschpunkten.
     private func freshLog(appender: @escaping @Sendable (URL, Data) throws -> Void = AssistantAuditWriter.appendFile,
-                          rewriter: @escaping @Sendable (URL, Data) throws -> Void = AssistantAuditWriter.rewriteFile) -> AssistantAuditLog {
+                          rewriter: (@Sendable (URL, Data) throws -> Void)? = nil) -> AssistantAuditLog {
         AssistantAuditLog(directory: dir, reader: AssistantAuditWriter.readFile, appender: appender, rewriter: rewriter)
     }
 
@@ -1047,8 +1059,11 @@ final class AssistantAuditLogTests: XCTestCase {
         XCTAssertEqual(e?.trace[1].commits, [
             AssistantCommitMark(stage: .emit, ok: true, generation: g), AssistantCommitMark(stage: .display, ok: true, generation: g),
             AssistantCommitMark(stage: .audio, ok: false, generation: g + 1),
+            AssistantCommitMark(stage: .history, ok: true, generation: g),
         ])
-        XCTAssertEqual(e?.trace[0].commits, [AssistantCommitMark(stage: .emit, ok: true, generation: g)])
+        XCTAssertEqual(e?.trace[0].commits, [AssistantCommitMark(stage: .emit, ok: true, generation: g),
+                                             AssistantCommitMark(stage: .history, ok: false, generation: g)],
+                       "die Ansage steht nicht im Beitrag: Verlauf `h-`")
     }
 
     /// Ein Absturz mitten in der Antwort hinterlässt `start` und die bis dahin angefallenen Schritte; das nächste Öffnen schließt
@@ -1886,7 +1901,7 @@ final class AssistantAuditLogTests: XCTestCase {
         XCTAssertEqual(view?.trace[0].result(for: .emit), .executed)
         XCTAssertEqual(view?.trace[0].result(for: .display), .unknown)
         XCTAssertEqual(view?.trace[0].result(for: .audio), .unknown)
-        XCTAssertEqual(view?.trace[0].unknownStages, [.display, .audio])
+        XCTAssertEqual(view?.trace[0].unknownStages, [.display, .audio, .history])
         XCTAssertEqual(view?.trace[2].unknownStages, [])
     }
 
@@ -1982,7 +1997,8 @@ final class AssistantAuditLogTests: XCTestCase {
         func search(_ question: String, limit: Int) async -> [AssistantPassage] {
             await gate.arrive()
             return [AssistantPassage(area: area, itemId: "f1", title: "Ablagedatei Zimtsterne", locator: nil,
-                                     text: "Quasselbert wandert mit dem Fahrrad nach Pappelhausen.", score: 1, isBlock: true, quotable: true)]
+                                     text: "Quasselbert wandert mit dem Fahrrad nach Pappelhausen.", score: 1, isBlock: true, quotable: true,
+                                     raw: "Quasselbert wandert mit dem Fahrrad nach Pappelhausen.")]
         }
     }
 
@@ -2102,22 +2118,34 @@ final class AssistantAuditLogTests: XCTestCase {
         let inside = Gate()
         let bodyDone = FailSwitch()
         let increaseSawStartDone = FailSwitch()
+        let returnedWhileTheStartRan = FailSwitch()
+        // Zwei Signale des Erhöhenden: „zurückgekehrt“ (der Start beobachtet es) und „Thread zu Ende“ (der Test wartet darauf, nicht
+        // auf einen Zustand, den der Thread unterwegs erreicht).
+        let increaseReturned = DispatchSemaphore(value: 0)
+        let increaserEnded = DispatchSemaphore(value: 0)
         let increaser = Thread {
             inside.waitUntilArrived()
             _ = session.applyReleaseChange()   // blockiert, bis der Start fertig ist
             increaseSawStartDone.on = bodyDone.on
+            increaseReturned.signal()
+            increaserEnded.signal()
         }
         increaser.start()
         let result = session.commitStart(requestId: "r1", index: 1, generation: g) {
             inside.signal()   // hier greift die andere Änderung an
-            Thread.sleep(forTimeInterval: 0.05)
+            // Haltepunkt statt Schlafen: Die Erhöhung läuft an und muss auf die Sperre warten. Dass sie in dieser Zeit NICHT
+            // zurückkehrt, ist die Beobachtung selbst (ein wartender Thread lässt sich nur so erkennen). Die Länge des Fensters
+            // macht aus Grün nie Rot, nur die Prüfung schwächer.
+            if awaited(increaseReturned, seconds: 0.3) { returnedWhileTheStartRan.on = true }
             bodyDone.on = true
             return true
         }
         XCTAssertTrue(result.ok)
         XCTAssertEqual(result.generation, g)
-        while session.releaseGeneration == g { try? await Task.sleep(nanoseconds: 5_000_000) }
+        XCTAssertTrue(awaited(increaserEnded, seconds: 10), "der Erhöhende ist zu Ende")
+        XCTAssertFalse(returnedWhileTheStartRan.on, "die Erhöhung kehrte nicht zurück, solange der Start lief")
         XCTAssertTrue(increaseSawStartDone.on, "die Erhöhung kehrte erst zurück, als der Start vollständig war")
+        XCTAssertEqual(session.releaseGeneration, g + 1)
         let m = await marks(audit, "r1")
         XCTAssertTrue(m.contains("a+\(g)"), "\(m)")
         await session.commit(requestId: "r1", user: "x", spoken: "", interrupted: true)
@@ -2188,17 +2216,25 @@ final class AssistantAuditLogTests: XCTestCase {
         let g = session.releaseGeneration
         _ = await collect(session, "r1", dataQuestion)
         let inside = Gate()
+        let increaseReturned = DispatchSemaphore(value: 0)
+        let increaserEnded = DispatchSemaphore(value: 0)
+        let returnedWhileTheCommitRan = FailSwitch()
         let increaser = Thread {
             inside.waitUntilArrived()
             _ = session.applyReleaseChange()
+            increaseReturned.signal()
+            increaserEnded.signal()
         }
         increaser.start()
         let result = session.commitOutput(requestId: "r1", index: 1, generation: g, stage: .display) {
             inside.signal()
-            Thread.sleep(forTimeInterval: 0.05)
+            // Haltepunkt statt Schlafen (siehe `testAnIncreaseCannotInterleaveWithARunningStart`).
+            if awaited(increaseReturned, seconds: 0.3) { returnedWhileTheCommitRan.on = true }
         }
         XCTAssertTrue(result.ok)
-        while session.releaseGeneration == g { try? await Task.sleep(nanoseconds: 5_000_000) }
+        XCTAssertTrue(awaited(increaserEnded, seconds: 10), "der Erhöhende ist zu Ende")
+        XCTAssertFalse(returnedWhileTheCommitRan.on, "die Erhöhung kehrte nicht zurück, solange der Commit lief")
+        XCTAssertEqual(session.releaseGeneration, g + 1)
         let m = await marks(audit, "r1")
         XCTAssertTrue(m.contains("d+\(g)"), "\(m)")
         XCTAssertFalse(m.contains("d+\(g + 1)"))

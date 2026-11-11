@@ -357,6 +357,8 @@ final class VoiceUITests: XCTestCase {
         XCTAssertTrue(multiline.waitForExistence(timeout: 5), "der mehrzeilige Block steht ganz in einem Auszug")
         XCTAssertTrue(label("Feste Antwort: Dazu finde ich in deinen Inhalten nichts.").exists,
                       "der feste Satz hat eine eigene, sichtbare Kennzeichnung statt einer Quelle")
+        XCTAssertTrue(label("Antworten sind wörtliche Auszüge aus deinen Inhalten. Ein Auszug kann unvollständig sein oder Zusammenhang auslassen.").exists,
+                      "der feste Hinweissatz steht, sobald ein Auszug sichtbar ist (auch ohne Modell)")
         XCTAssertFalse(element(NSPredicate(format: "label CONTAINS[c] %@", "ohne Quelle")).exists, "keine Kennzeichnung „ohne Quelle“")
         XCTAssertFalse(element(NSPredicate(format: "label BEGINSWITH %@", "Quelle: ")).exists, "keine gesammelte Quellenliste unter der Antwort")
         keepScreenshot(app, name: "Gespraech-Marken-je-Satz")

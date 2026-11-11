@@ -10,7 +10,7 @@ func assistantDoc(_ id: String, _ title: String, area: AssistantArea = .books, v
                   updated: Date? = nil, kind: AssistantSourceKind? = nil, sections: [(String?, String)]) -> AssistantDocument {
     let sourceKind = kind ?? assistantDefaultKind(area)
     return AssistantDocument(item: AssistantItem(area: area, id: id, title: title, detail: detail, updated: updated), version: version,
-                             sections: sections.map { .init(locator: $0.0, text: $0.1, kind: sourceKind) })
+                             sections: sections.map { .init(locator: $0.0, text: $0.1, kind: sourceKind, raw: sourceKind.isQuotable ? $0.1 : nil) })
 }
 
 /// Die zitierbare Quellart eines Bereichs.
@@ -23,10 +23,12 @@ func assistantDefaultKind(_ area: AssistantArea) -> AssistantSourceKind {
     }
 }
 
-/// Passage als ganzer gespeicherter Block (`whole`) oder als Teil eines Blocks (`whole: false`: nicht zitierbar).
+/// Passage als ganzer gespeicherter Block (`whole`, mit Rohtext gleich `text`) oder als Teil eines Blocks (`whole: false`: nicht
+/// zitierbar).
 func assistantPassage(_ area: AssistantArea = .books, itemId: String = "b1", title: String = "Buch", locator: String? = nil, text: String,
                       score: Double = 1, whole: Bool = true) -> AssistantPassage {
-    AssistantPassage(area: area, itemId: itemId, title: title, locator: locator, text: text, score: score, isBlock: whole, quotable: whole)
+    AssistantPassage(area: area, itemId: itemId, title: title, locator: locator, text: text, score: score, isBlock: whole, quotable: whole,
+                     raw: whole ? text : nil)
 }
 
 final class AssistantCorpusTests: XCTestCase {
@@ -289,5 +291,50 @@ final class AssistantCorpusTests: XCTestCase {
         let ms = start.duration(to: .now).components.attoseconds / 1_000_000_000_000_000 + start.duration(to: .now).components.seconds * 1000
         XCTAssertFalse(results.isEmpty)
         XCTAssertLessThan(Double(ms) / 10, 50, "eine Suche über 2 000 Stücke dauert \(Double(ms) / 10) ms")
+    }
+
+    // MARK: Obergrenze (Folgepunkt Runde 7)
+
+    /// Ein Dokument, das sich unter der Obergrenze nicht neu aufnehmen lässt, scheidet AUS dem Bestand aus (auch mit seinem alten
+    /// Stand): kein Zitat aus einem veralteten Inhalt, und erst danach darf „bereit“ gemeldet werden. Auf 5080d95 lag die Logik privat
+    /// im iPhone-Code (`put` behielt den alten Stand und der Durchgang meldete „bereit“); sie ist jetzt im Kern prüfbar.
+    func testADocumentThatCannotBeAdmittedUnderTheLimitDropsOutOfTheStockWithItsOldContent() async {
+        let corpus = AssistantCorpus()
+        let limit = 200
+        let first = assistantDoc("b1", "Buch Eins", version: "1", sections: [(nil, "Der Eisvogel brütet am Mühlbach nahe der Brücke.")])
+        let other = assistantDoc("b2", "Buch Zwei", sections: [(nil, "Die Tante Lavendula wohnt in Pappelhausen am Fluss.")])
+        let admittedFirst = await corpus.admit(first, maxChars: limit)
+        let admittedOther = await corpus.admit(other, maxChars: limit)
+        XCTAssertTrue(admittedFirst)
+        XCTAssertTrue(admittedOther)
+        let before = await corpus.search("Eisvogel Mühlbach", areas: all, limit: 3)
+        XCTAssertEqual(before.map(\.itemId), ["b1"])
+
+        let grown = assistantDoc("b1", "Buch Eins", version: "2",
+                                 sections: [(nil, String(repeating: "Der Eisvogel brütet am Mühlbach nahe der Brücke. ", count: 6))])
+        let admittedGrown = await corpus.admit(grown, maxChars: limit)
+        XCTAssertFalse(admittedGrown, "über der Obergrenze")
+        let version = await corpus.version(of: "b1", area: .books)
+        XCTAssertNil(version, "das Dokument ist nicht mehr im Bestand")
+        let after = await corpus.search("Eisvogel Mühlbach", areas: all, limit: 3)
+        XCTAssertTrue(after.isEmpty, "auch der alte Inhalt ist weg: \(after.map(\.text))")
+        let others = await corpus.search("Lavendula Pappelhausen", areas: all, limit: 3)
+        XCTAssertEqual(others.map(\.itemId), ["b2"], "die übrigen Dokumente bleiben")
+        let total = await corpus.totalChars()
+        XCTAssertEqual(total, other.sections.reduce(0) { $0 + $1.text.count }, "die Größe des ausgeschiedenen Dokuments zählt nicht mehr")
+
+        let admittedSmall = await corpus.admit(first, maxChars: limit)
+        XCTAssertTrue(admittedSmall, "mit kleinerem Inhalt wieder aufnehmbar")
+    }
+
+    func testAdmitCountsTheOwnOldSizeOnlyOnceWhenADocumentIsReplaced() async {
+        let corpus = AssistantCorpus()
+        let text = String(repeating: "Wort ", count: 30)
+        for version in ["1", "2", "3"] {
+            let admitted = await corpus.admit(assistantDoc("b1", "Buch", version: version, sections: [(nil, text)]), maxChars: text.count + 10)
+            XCTAssertTrue(admitted, "Version \(version): die alte Größe zählt nicht doppelt")
+        }
+        let total = await corpus.totalChars()
+        XCTAssertEqual(total, text.count)
     }
 }

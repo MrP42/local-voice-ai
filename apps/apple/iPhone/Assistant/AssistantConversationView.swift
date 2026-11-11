@@ -226,6 +226,13 @@ struct AssistantConversationView: View {
 
     // MARK: Verlauf
 
+    /// Mindestens ein wörtlicher Auszug ist sichtbar (ein Beitrag mit Zitat im Verlauf oder in der laufenden Antwort, auch in den
+    /// Beispielrunden): Nur dann steht der feste Hinweissatz. Er hängt nicht an der Sendefähigkeit (`canSend`): Ohne Sitzung
+    /// (`--assistant-no-model`) zeigt die Beispielrunde ihre Auszüge ebenfalls mit dem Satz.
+    private var showsExcerpt: Bool {
+        talk.turns.contains { $0.parts.contains(where: \.quote) } || talk.liveParts.contains(where: \.quote)
+    }
+
     private var showsIntro: Bool {
         talk.turns.isEmpty && talk.currentUser == nil && talk.liveUser.isEmpty && !talk.loading
     }
@@ -237,7 +244,7 @@ struct AssistantConversationView: View {
                     if let progress = talk.preparing { preparing(progress) }
                     if let alert = talk.releaseAlert { noticeView(alert, identifier: "assistantReleaseNotice") }
                     if let notice = talk.notice { noticeView(notice) }
-                    if talk.canSend { excerptNotice }
+                    if showsExcerpt { excerptNotice }
                     if hub.skipped > 0 {
                         Label("Wegen der Speichergrenze fehlen \(hub.skipped) Bücher oder Besprechungen im Gespräch.", systemImage: "exclamationmark.circle")
                             .font(.footnote).foregroundStyle(VoicePalette.secondaryText)

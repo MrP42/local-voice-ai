@@ -729,16 +729,20 @@ final class PhoneLibrary: ObservableObject {
         if book.authors.isEmpty { book.authors = extracted.authors }
         if book.language == nil { book.language = extracted.language }
         book.text = LibraryTextVersion(pageId: "ios_\(book.id)", origin: "document", sourceName: url.lastPathComponent)
-        // Cover aus dem EPUB wie am Desktop; ein vorhandenes echtes Cover bleibt.
-        var newCover = false
-        if let cover = extracted.cover, coverURL(book) == nil || book.coverSource == "generated" {
+        // Assistent (Klasse B): Ein gleichnamiges Buch bekommt hier einen neuen Text (`match`): Die Meldung kommt VOR dem ersten
+        // Schreiben (`buch.json`, Text, Angaben) und endet danach; `books` sieht der Durchgang der Indexierung erst nach dem Text.
+        try AssistantContentWatch.shared.around {
+            // Cover aus dem EPUB wie am Desktop; ein vorhandenes echtes Cover bleibt.
+            var newCover = false
+            if let cover = extracted.cover, coverURL(book) == nil || book.coverSource == "generated" {
+                try write(book)
+                storeCover(cover, for: book)
+                if coverURL(book) != nil { book.coverSource = "file"; newCover = true }
+            }
             try write(book)
-            storeCover(cover, for: book)
-            if coverURL(book) != nil { book.coverSource = "file"; newCover = true }
+            try extracted.text.write(to: textURL(book), atomically: true, encoding: .utf8)
+            var m = meta(book); m.files.text = nil; if newCover { m.files.cover = nil }; m.updated = Self.nowMs(); setMeta(book, m)
         }
-        try write(book)
-        try extracted.text.write(to: textURL(book), atomically: true, encoding: .utf8)
-        var m = meta(book); m.files.text = nil; if newCover { m.files.cover = nil }; m.updated = Self.nowMs(); setMeta(book, m)
     }
 
     private func importAudio(_ urls: [URL]) async throws {

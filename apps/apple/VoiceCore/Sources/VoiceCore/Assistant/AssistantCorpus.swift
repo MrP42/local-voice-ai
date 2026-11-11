@@ -21,6 +21,8 @@ public actor AssistantCorpus {
         var count: Int
         /// Blöcke über der Maximallänge, die nicht indexiert wurden.
         var tooLong: Int
+        /// Zeichen des aufbereiteten Textes aller Abschnitte (für die Obergrenze, `admit`).
+        var size: Int
         var alive: Bool
     }
 
@@ -30,7 +32,10 @@ public actor AssistantCorpus {
         let locator: String?
         let text: String
         let length: Int32
-        /// Die Quellart lässt wörtliche Ausgabe zu.
+        /// Der rohe gespeicherte Block (E4.2b): nur er wird als Zitat ausgegeben; `text` ist der aufbereitete Text für die Suche.
+        /// Ist beides bytegleich, teilen sich die Felder denselben Speicher.
+        let raw: String?
+        /// Die Quellart lässt wörtliche Ausgabe zu UND es gibt einen eindeutigen Rohtext.
         let quotable: Bool
         var alive: Bool
     }
@@ -56,6 +61,8 @@ public actor AssistantCorpus {
     private var postings: [String: [Posting]] = [:]
     private var slots: [Key: Int] = [:]
     private var deadChunks = 0
+    /// Summe der `size` der lebenden Dokumente.
+    private var totalSize = 0
     private var areaChunks = [Int](repeating: 0, count: AssistantArea.allCases.count)
     private var areaLength = [Int](repeating: 0, count: AssistantArea.allCases.count)
 
@@ -88,7 +95,10 @@ public actor AssistantCorpus {
         let areaSlot = document.item.area.order
         var tooLong = 0
         for block in Self.blocks(document.sections) {
-            guard block.text.count <= AssistantGrounding.maxBlockChars else { tooLong += 1; continue }
+            guard block.text.count <= AssistantGrounding.maxBlockChars, block.raw.map(AssistantGrounding.fits(raw:)) ?? true else {
+                tooLong += 1
+                continue
+            }
             let tokens = BookTalkTokens.tokenize(block.text)
             guard !tokens.isEmpty else { continue }
             let id = Int32(chunks.count)
@@ -96,14 +106,40 @@ public actor AssistantCorpus {
             for t in tokens { tf[t, default: 0] += 1 }
             for (t, f) in tf { postings[t, default: []].append(Posting(chunk: id, tf: UInt16(min(f, Int(UInt16.max))))) }
             chunks.append(Chunk(doc: Int32(slot), area: UInt8(areaSlot), locator: block.locator, text: block.text,
-                                length: Int32(tokens.count), quotable: block.quotable, alive: true))
+                                length: Int32(tokens.count), raw: block.raw, quotable: block.quotable, alive: true))
             areaChunks[areaSlot] += 1
             areaLength[areaSlot] += tokens.count
         }
+        let size = Self.size(of: document)
         docs.append(Doc(item: document.item, version: document.version, titleStems: Set(BookTalkTokens.tokenize(document.item.title)),
-                        first: first, count: chunks.count - first, tooLong: tooLong, alive: true))
+                        first: first, count: chunks.count - first, tooLong: tooLong, size: size, alive: true))
         slots[key] = slot
+        totalSize += size
     }
+
+    private static func size(of document: AssistantDocument) -> Int { document.sections.reduce(0) { $0 + $1.text.count } }
+
+    /// Nimmt ein Dokument unter einer Obergrenze für den Gesamttext (Zeichen) auf. `false`, wenn die Obergrenze überschritten würde:
+    /// Dann scheidet das Dokument AUS dem Bestand aus (auch ein älterer Stand), damit ein Dokument, das sich nicht neu aufnehmen
+    /// lässt, nie mit seinem alten Inhalt zitierbar bleibt (Löschung, geänderte Freigabe oder Lesegrenze wären sonst unwirksam).
+    /// Erst danach darf der Aufrufer „bereit“ melden.
+    @discardableResult
+    public func admit(_ document: AssistantDocument, maxChars: Int) -> Bool {
+        let key = Key(area: document.item.area, id: document.item.id)
+        let own = slots[key].map { docs[$0].size } ?? 0
+        guard totalSize - own + Self.size(of: document) <= maxChars else {
+            if let slot = slots[key] {
+                drop(slot)
+                compactIfNeeded()
+            }
+            return false
+        }
+        upsert(document)
+        return true
+    }
+
+    /// Gesamtgröße der Dokumente im Bestand (Zeichen des aufbereiteten Textes; Messung und Test).
+    public func totalChars() -> Int { totalSize }
 
     /// Ersetzt den Bestand durch genau diese Dokumente (Klasse B: der neue Bestand nach einer Änderung von Inhalten): Was nicht
     /// mehr dabei ist, fällt weg, alles Übrige wird mit seiner Version aufgenommen.
@@ -194,7 +230,7 @@ public actor AssistantCorpus {
             perItem[slot, default: 0] += 1
             let item = docs[slot].item
             out.append(AssistantPassage(area: item.area, itemId: item.id, title: item.title, locator: c.locator, text: c.text, score: score,
-                                        isBlock: true, quotable: c.quotable))
+                                        isBlock: true, quotable: c.quotable, raw: c.raw))
             if out.count >= limit { break }
         }
         return out
@@ -227,15 +263,23 @@ public actor AssistantCorpus {
     private struct Part {
         var locator: String?
         var text: String
+        var raw: String?
         var quotable: Bool
     }
 
-    /// Die Quellblöcke eines Dokuments: je Abschnitt genau einer, unverändert (nur Leerraum an den Rändern fällt weg). Leere
-    /// Abschnitte entfallen. Ein Block über der Maximallänge wird nicht indexiert.
+    /// Die Quellblöcke eines Dokuments: je Abschnitt genau einer. Der aufbereitete Text (Rand-Leerraum entfernt) ist nur die
+    /// Grundlage der Suche; der Rohtext des Abschnitts bleibt UNVERÄNDERT (auch Rand-Leerraum, nie getrimmt). Leere Abschnitte
+    /// entfallen; ein Rohtext nur aus Leerraum ist keiner. Ein Block über der Maximallänge (aufbereitet oder roh) wird nicht
+    /// indexiert.
     private static func blocks(_ sections: [AssistantDocument.Section]) -> [Part] {
         sections.compactMap { section in
             let text = section.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return text.isEmpty ? nil : Part(locator: section.locator, text: text, quotable: section.quotable)
+            guard !text.isEmpty else { return nil }
+            var raw = section.raw
+            if let r = raw, r.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { raw = nil }
+            if let r = raw, r.hasSameBytes(as: text) { raw = text }
+            let quotable = section.kind.isQuotable && raw != nil
+            return Part(locator: section.locator, text: text, raw: raw, quotable: quotable)
         }
     }
 
@@ -243,6 +287,7 @@ public actor AssistantCorpus {
         let d = docs[slot]
         guard d.alive else { return }
         docs[slot].alive = false
+        totalSize -= d.size
         slots[Key(area: d.item.area, id: d.item.id)] = nil
         for id in d.first..<(d.first + d.count) where chunks[id].alive {
             chunks[id].alive = false
@@ -270,7 +315,7 @@ public actor AssistantCorpus {
                 map[id] = Int32(newChunks.count)
                 let c = chunks[id]
                 newChunks.append(Chunk(doc: Int32(slot), area: c.area, locator: c.locator, text: c.text, length: c.length,
-                                       quotable: c.quotable, alive: true))
+                                       raw: c.raw, quotable: c.quotable, alive: true))
             }
             nd.count = newChunks.count - nd.first
             newDocs.append(nd)

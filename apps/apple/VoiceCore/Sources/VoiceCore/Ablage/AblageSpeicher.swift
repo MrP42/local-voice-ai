@@ -69,6 +69,11 @@ public final class AblageSpeicher: @unchecked Sendable {
     private let bestandSperre = NSLock()
     private let wartendeSperre = NSLock()
     private var wartende = 0
+    /// Assistent (Klasse B): der Zustand (ohne Cursor), den dieser Speicher zuletzt geschrieben hat; `nil`, wenn unbekannt (erster
+    /// Aufruf, nach einem Fehler, nach dem Entfernen). Nur `speichern` und die Entfernungen ändern ihn, nie ein Leser (`laden`),
+    /// damit er nie hinter dem zurückbleibt, was auf der Platte liegt. Nur die Meldung hängt daran, nie eine Entscheidung über Daten.
+    private let merkSperre = NSLock()
+    private var merk: AblageZustand?
 
     public init(wurzel: URL) { self.wurzel = wurzel }
 
@@ -142,8 +147,12 @@ public final class AblageSpeicher: @unchecked Sendable {
         if art(url) != nil { bytes = (try? Data(contentsOf: url)).map { [UInt8]($0) } ?? [] }
         let r = AblageZustand.laden(bytes: bytes, konto: konto)
         if r.verlust == .unlesbar || r.verlust == .neuereVersion {
-            try? fm.removeItem(at: defektURL)
-            try? fm.moveItem(at: url, to: defektURL)
+            // Assistent (Klasse B): Der gespeicherte Stand fällt weg, der Zustand gilt ab hier als leer: Meldung VOR dem Verschieben.
+            AssistantContentWatch.shared.around {
+                try? fm.removeItem(at: defektURL)
+                try? fm.moveItem(at: url, to: defektURL)
+            }
+            merkSperre.withLock { merk = nil }
         }
         return r
     }
@@ -155,13 +164,28 @@ public final class AblageSpeicher: @unchecked Sendable {
     public func defektEntfernen() { try? fm.removeItem(at: defektURL) }
 
     /// Schreibt den Zustand atomar (temporäre Datei, dann Umbenennen): bei Abbruch oder Fehler bleibt der alte Stand ganz.
+    ///
+    /// Assistent (Klasse B): Schutzklasse, Papierkorb, angehaltene und nur lokale Dateien stehen in diesem Zustand. Die Meldung
+    /// kommt VOR dem Schreiben, aber nur, wenn sich Bestand oder Stand der Objekte ändern; ein Lauf ohne Neues (nur der Cursor rückt
+    /// vor) meldet nichts. Ist unbekannt, was auf der Platte liegt (`merk == nil`), wird gemeldet.
     public func speichern(_ z: AblageZustand) throws {
+        let neu = Self.ohneCursor(z)
+        let unveraendert = merkSperre.withLock { merk == neu }
         do {
             try fm.createDirectory(at: wurzel, withIntermediateDirectories: true)
-            try Data(z.serialisieren()).write(to: zustandURL, options: .atomic)
+            let schreiben = { try Data(z.serialisieren()).write(to: self.zustandURL, options: .atomic) }
+            if unveraendert { try schreiben() } else { try AssistantContentWatch.shared.around(schreiben) }
+            merkSperre.withLock { merk = neu }
         } catch {
+            merkSperre.withLock { merk = nil }
             throw AblageSpeicherFehler.schreiben
         }
+    }
+
+    private static func ohneCursor(_ z: AblageZustand) -> AblageZustand {
+        var kopie = z
+        kopie.ledger.cursor = AblageKarte()
+        return kopie
     }
 
     // MARK: Vorhanden
@@ -305,8 +329,13 @@ public final class AblageSpeicher: @unchecked Sendable {
 
     /// Entfernt Originale und Texte der Dateien mit diesen Kennungen (begraben). Ungültige Kennungen werden ignoriert.
     public func entfernen(dateien ids: [String]) {
-        for id in ids where AblageId.idGueltig(id, prefix: AblageId.praefixDatei) {
-            for sub in [Self.dateienOrdner, Self.textOrdner] { try? fm.removeItem(at: unter(sub, id)) }
+        let gueltig = ids.filter { AblageId.idGueltig($0, prefix: AblageId.praefixDatei) }
+        guard !gueltig.isEmpty else { return }
+        // Assistent (Klasse B): Mit den Texten verschwinden Quellen, die der Assistent lesen könnte: Meldung VOR dem Entfernen.
+        AssistantContentWatch.shared.around {
+            for id in gueltig {
+                for sub in [Self.dateienOrdner, Self.textOrdner] { try? fm.removeItem(at: unter(sub, id)) }
+            }
         }
     }
 
@@ -342,13 +371,18 @@ public final class AblageSpeicher: @unchecked Sendable {
     /// Entfernt den ganzen Speicherordner dieses Kontos (Zustand, `.defekt`, Originale, Texte, Zwischendateien): Abmelden.
     /// Der Aufrufer sorgt dafür, dass kein Lauf mehr schreibt (siehe `AblageDienst.verlassen`).
     public func alleEntfernen() {
-        try? fm.removeItem(at: wurzel)
+        // Assistent (Klasse B): Abmelden nimmt alle Texte und den Zustand vom Gerät: Meldung VOR dem Entfernen.
+        AssistantContentWatch.shared.around { try? fm.removeItem(at: wurzel) }
+        merkSperre.withLock { merk = nil }
     }
 
     /// Entfernt alle Originale, Texte und Zwischendateien (Konto gewechselt); der Zustand bleibt.
     public func alleDateienEntfernen() {
-        for sub in [Self.dateienOrdner, Self.textOrdner, Self.eingangOrdner] {
-            try? fm.removeItem(at: wurzel.appendingPathComponent(sub, isDirectory: true))
+        // Assistent (Klasse B): Die Texte des alten Kontos verschwinden: Meldung VOR dem Entfernen.
+        AssistantContentWatch.shared.around {
+            for sub in [Self.dateienOrdner, Self.textOrdner, Self.eingangOrdner] {
+                try? fm.removeItem(at: wurzel.appendingPathComponent(sub, isDirectory: true))
+            }
         }
     }
 }

@@ -35,6 +35,8 @@ struct AssistantEmitted: Sendable, Equatable {
     let status: AssistantSentenceStatus
     let sources: [AssistantPassage]
     let quote: Bool
+    /// Schrittnummer der Einheit im Protokoll (0: unbekannt, nur Tests).
+    var step = 0
 }
 
 /// Was eine Anfrage hervorgebracht hat; `commit` macht daraus den Beitrag und die Schlusszeilen des Protokolls. Die Satzspur
@@ -57,6 +59,9 @@ struct AssistantRunRecord: Sendable {
     var journaled = false
     var used: [AssistantPassage] = []
     var sentences: [AssistantEmitted] = []
+    /// Schrittnummern ALLER ausgegebenen Einheiten (auch Ansagen) in der Reihenfolge der Ausgabe: Grundlage der Ergebniszeile des
+    /// Verlaufs je Einheit.
+    var outputSteps: [Int] = []
     var counts = AssistantSentenceCounts()
     /// Bereiche der Bestandsangaben (gehen mit ins Protokoll).
     var inventoryAreas: [AssistantArea] = []
@@ -121,8 +126,12 @@ final class AssistantRunOutput: @unchecked Sendable {
     /// Senden, mit `true`, wenn das Ereignis den Strom erreicht hat, und `false`, wenn der Strom schon beendet war (Leser weg:
     /// die Aktion ließ sich nicht auslösen, Ergebnis `failed`). Dort wird die Ergebniszeile des Protokolls eingereiht (kurz,
     /// ohne Wartezeit): Sie steht damit vor jeder Rückmeldung des Controllers und stimmt mit dem tatsächlichen Senden überein.
-    func send(_ event: AssistantEvent, onResult: ((Bool) -> Void)? = nil) -> AssistantCheck {
-        release.ifCurrentAttempt(generation) {
+    /// `onStale`: die Ablehnung wird IM Lock mit der vorgefundenen Generation gemeldet (Zeile „verworfen“ in der Reihenfolge der
+    /// Erhöhungen). `refuse`: hat das Protokoll der Anfrage schon einen Schreibfehler, geht nichts hinaus (Ergebnis `failed`).
+    func send(_ event: AssistantEvent, onResult: ((Bool) -> Void)? = nil, onStale: ((Int) -> Void)? = nil,
+              refuse: (() -> Bool)? = nil) -> AssistantCheck {
+        release.ifCurrentAttempt(generation, onStale: onStale) {
+            if refuse?() == true { return false }
             let delivered: Bool
             switch continuation.yield(event) {
             case .terminated: delivered = false
@@ -137,26 +146,35 @@ final class AssistantRunOutput: @unchecked Sendable {
     func sendUnchecked(_ event: AssistantEvent) { continuation.yield(event) }
 }
 
-/// Die Standzeile (`state`) der Sitzung: Sie wird beim Anlegen eingereiht; die erste Anfrage wird erst angenommen, wenn sie in
-/// der Datei steht. Misslingt das Schreiben, nimmt die Sitzung keine Anfrage an (`.auditUnavailable`); die nächste Anfrage
-/// versucht es mit dem dann gültigen Stand erneut. Mehrere gleichzeitige Anfragen teilen EINEN Versuch.
+/// Die Standzeile (`state`) dieses Prozesslaufs (EINE je Ordnung, `AssistantReleaseClock.stateLine`): Sie wird von der ersten
+/// Sitzung beim Anlegen eingereiht; die erste Anfrage wird erst angenommen, wenn sie in der Datei steht. Misslingt das Schreiben,
+/// nimmt keine Sitzung eine Anfrage an (`.auditUnavailable`); die nächste Anfrage versucht es mit dem dann gültigen Stand erneut.
+/// Mehrere gleichzeitige Anfragen (auch verschiedener Sitzungen) teilen EINEN Versuch. Der Lock ist ein Blatt: unter ihm wird nur
+/// `make` gerufen (liest den Stand im Lock der Ordnung, Reihenfolge StateLine → Ordnung) und eingereiht, nie gewartet.
 final class AssistantStateLine: @unchecked Sendable {
-    static let key = "state"
-
     private let lock = NSLock()
-    private let make: @Sendable () -> AssistantJournalLine
-    private let run: AssistantRunToken
-    private var enqueued: Bool
+    private var make: (@Sendable () -> AssistantJournalLine)?
+    private var run: AssistantRunToken?
+    private var key = "state"
+    private var enqueued = false
     private var confirmed = false
     private var attempt: Task<Bool, Never>?
 
+    init() {}
+
     /// Die Zeile trägt die Laufnummer dieses Prozesslaufs (Schreibfolge 7): Sie wird beim ersten Schreiben vergeben und steht mit
-    /// dieser Zeile dauerhaft im Protokoll, bevor eine Anfrage angenommen wird; gelingt das nicht, nimmt die Sitzung keine an.
-    init(audit: AssistantAuditLog?, run: AssistantRunToken, make: @escaping @Sendable () -> AssistantJournalLine) {
+    /// dieser Zeile dauerhaft im Protokoll, bevor eine Anfrage angenommen wird. Nur die erste Sitzung mit Protokoll reiht ein;
+    /// weitere Sitzungen desselben Laufs ändern nichts (eine Zeile je Prozesslauf, mit dem ganzen Stand der Klasse A).
+    func begin(audit: AssistantAuditLog?, run: AssistantRunToken, key: String, make: @escaping @Sendable () -> AssistantJournalLine) {
+        lock.lock()
+        defer { lock.unlock() }
+        if enqueued || confirmed { return }
         self.make = make
         self.run = run
-        self.enqueued = audit != nil
-        audit?.enqueue(make(), key: Self.key, run: run)
+        self.key = key
+        guard let audit else { return }
+        audit.enqueue(make(), key: key, run: run)
+        enqueued = true
     }
 
     func ensure(_ audit: AssistantAuditLog) async -> Bool {
@@ -166,17 +184,19 @@ final class AssistantStateLine: @unchecked Sendable {
         return ok
     }
 
-    /// `nil`: schon bestätigt. Sonst der (geteilte) Versuch; der erste reiht die Zeile bei Bedarf neu ein.
+    /// `nil`: schon bestätigt (oder nie begonnen). Sonst der (geteilte) Versuch; der erste reiht die Zeile bei Bedarf neu ein.
     private func startOrJoin(_ audit: AssistantAuditLog) -> Task<Bool, Never>? {
         lock.lock()
         defer { lock.unlock() }
+        guard let make, let run else { return nil }
         if confirmed { return nil }
         if let attempt { return attempt }
+        let key = self.key
         if !enqueued {
-            audit.enqueue(make(), key: Self.key, run: run)
+            audit.enqueue(make(), key: key, run: run)
             enqueued = true
         }
-        let task = Task { await audit.waitForLine(key: Self.key) == nil }
+        let task = Task { await audit.waitForLine(key: key) == nil }
         attempt = task
         return task
     }
@@ -286,19 +306,33 @@ private final class RunEmitter {
         let n = step(AssistantTraceVerdict(status: status))
         if let journal, await journal.waitUntilWritten(request: rid) != nil {
             // Nichts wurde ausgegeben: das Ergebnis ist „verworfen“, nicht „unbekannt“.
-            journal.enqueue(commitLine(n, AssistantCommitMark(stage: .emit, ok: false, generation: release.currentGeneration)))
+            release.inSection { found in
+                journal.enqueue(commitLine(n, AssistantCommitMark(stage: .emit, ok: false, generation: found)))
+            }
             if !announcement { state.update { $0.counts.drop(.revoked) } }
             return .failed
         }
         // Der Schritt steht im Index, BEVOR das Ereignis hinausgeht: Eine schnelle Rückmeldung des Controllers läuft nie ins Leere.
         index.append(rid, step: n)
         let gen = generation
+        var refusedByAudit = false
         let check = output.send(.sentence(requestId: rid, generation: gen, text: text, speech: speech, status: status,
-                                          sources: sources, quote: quote)) { delivered in
+                                          sources: sources, quote: quote), onResult: { delivered in
             self.journal?.enqueue(self.commitLine(n, AssistantCommitMark(stage: .emit, ok: delivered, generation: gen, failed: !delivered)))
-        }
+        }, onStale: { found in
+            self.journal?.enqueue(self.commitLine(n, AssistantCommitMark(stage: .emit, ok: false, generation: found)))
+        }, refuse: {
+            // Ein Schreibfehler zwischen dem Warten und dem Senden (klebrig): nichts geht hinaus.
+            guard let journal = self.journal, journal.hasFailed(request: self.rid) else { return false }
+            refusedByAudit = true
+            self.journal?.enqueue(self.commitLine(n, AssistantCommitMark(stage: .emit, ok: false, generation: gen, failed: true)))
+            return true
+        })
         if !check.ok { index.removeLast(rid) }
-        if check.stale { journal?.enqueue(commitLine(n, check.mark(.emit))) }
+        if refusedByAudit {
+            if !announcement { state.update { $0.counts.drop(.revoked) } }
+            return .failed
+        }
         let delivered = check.ok
         if delivered, firstMs == nil { firstMs = elapsedMs }
         state.update { r in
@@ -310,7 +344,8 @@ private final class RunEmitter {
                 case .neutral: r.counts.neutral += 1
                 case .announcement: break
                 }
-                if !announcement { r.sentences.append(AssistantEmitted(text: text, status: status, sources: sources, quote: quote)) }
+                r.outputSteps.append(n)
+                if !announcement { r.sentences.append(AssistantEmitted(text: text, status: status, sources: sources, quote: quote, step: n)) }
             } else if !announcement {
                 r.counts.drop(.revoked)
             }
@@ -565,6 +600,7 @@ public actor AssistantSession {
     private let audit: AssistantAuditLog?
     private let stateLine: AssistantStateLine
     private let runToken: AssistantRunToken
+    private nonisolated var clock: AssistantReleaseClock { release.clock }
     private let persistence: Persistence
     private let ineffective = AssistantPendingChanges()
     private var active: [String: ActiveRun] = [:]
@@ -595,7 +631,10 @@ public actor AssistantSession {
     init(model: any BookTalkModel, knowledge: AssistantKnowledge, config: AssistantConfig, history: [AssistantTurn] = [],
          audit: AssistantAuditLog? = nil, released: Bool, cloudConsent: Bool = true, releaseStore: AssistantReleaseStore? = nil,
          cloudTarget: String? = nil) {
-        let run = AssistantRunToken()
+        // Die eine Ordnung dieses Prozesslaufs: mit Speicher die seine (alle Sitzungen und Änderungen ohne Sitzung teilen Lock,
+        // Generation, Lauf-Token, Standzeile, Zähler und Reihe), ohne Speicher eine eigene.
+        let clock = releaseStore?.clock ?? AssistantReleaseClock()
+        let run = clock.run
         let initial: AssistantReleaseState
         if let releaseStore {
             var fromFile = releaseStore.record.state(cloud: config.isCloud, target: cloudTarget)
@@ -608,7 +647,7 @@ public actor AssistantSession {
         let optIn = initial.optIn
         let release = AssistantRelease(optIn: optIn, consentVersion: initial.consentVersion, areas: initial.areas,
                                        cloudConsent: initial.cloudConsent, locked: releaseStore?.isLocked ?? false,
-                                       blocked: releaseStore?.isBlocked ?? false,
+                                       blocked: releaseStore?.isBlocked ?? false, clock: clock,
                                        onIncrease: Self.increaseWriter(audit: audit, config: config, run: run))
         self.runToken = run
         self.persistence = Persistence(store: releaseStore, cloud: config.isCloud, target: cloudTarget)
@@ -622,8 +661,12 @@ public actor AssistantSession {
         self.context = AssistantContext(optIn: optIn, history: kept)
         self.audit = audit
         self.history = kept
-        // Die Standzeile des Öffnens: Zustand vor jeder Anfrage; die erste Anfrage wartet auf sie.
-        self.stateLine = AssistantStateLine(audit: audit, run: run) { [config] in Self.stateLine(release.snapshot, config: config) }
+        // Die Standzeile des Öffnens: EINE je Prozesslauf (die erste Sitzung reiht sie ein), Zustand vor jeder Anfrage; die erste
+        // Anfrage wartet auf sie.
+        self.stateLine = clock.stateLine
+        clock.stateLine.begin(audit: audit, run: run, key: clock.key("state", 0)) { [config] in
+            Self.stateLine(release.snapshot, config: config, store: releaseStore)
+        }
     }
 
     // MARK: Freigabe
@@ -662,7 +705,8 @@ public actor AssistantSession {
     }
 
     /// Die Standzeile: Freigabezustand beim Öffnen (Opt-in, Einwilligungsversion, Bereichsnamen, Cloud-Zustimmung).
-    private static func stateLine(_ snapshot: AssistantRelease.Snapshot, config: AssistantConfig) -> AssistantJournalLine {
+    private static func stateLine(_ snapshot: AssistantRelease.Snapshot, config: AssistantConfig,
+                                  store: AssistantReleaseStore?) -> AssistantJournalLine {
         var line = AssistantJournalLine(.state)
         line.at = Date()
         line.gen = snapshot.generation
@@ -673,6 +717,8 @@ public actor AssistantSession {
         line.locked = snapshot.locked ? true : nil
         line.model = AssistantModelKind.classify(label: config.modelLabel)
         line.cloud = config.isCloud
+        // Der ganze Stand der Klasse A: mit der Zustandsdatei auch die Bereiche des anderen Ziels (lokal/Cloud).
+        if let store { line.otherAreas = AssistantReleaseRecord.names(store.record.areas(cloud: !config.isCloud)) }
         return line
     }
 
@@ -795,7 +841,7 @@ public actor AssistantSession {
     }
 
     private nonisolated func settleStep(_ step: AssistantRelease.Step, into out: inout SettleState) async {
-        await flushPendingIneffective()
+        await catchUpInSequence()
         switch step.kind {
         case .event:
             out.generation = step.generation
@@ -819,7 +865,12 @@ public actor AssistantSession {
     private nonisolated func settleExpansion(_ step: AssistantRelease.Step, into out: inout SettleState) async {
         let intended = release.viewForSave(step)
         // (1) „Erweiterung beabsichtigt“, ohne Generation, dauerhaft. Scheitert das, wird die Erweiterung nicht wirksam und nicht gesichert.
-        if release.isBlocked { return await notEffective(step, state: intended, into: &out) }
+        // Eine blockierte Sitzung (Einschränkung nicht gesichert) lehnt nie ab, ohne die Sicherung neu zu versuchen: `catchUpInSequence`
+        // lief schon zu Beginn dieser Folge; hier noch einmal, falls inzwischen schreibbar.
+        if release.isBlocked {
+            await secureOutstandingRestriction()
+            return await notEffective(step, state: intended, into: &out)
+        }
         var wrote = true
         await writeLine(.intent, step: step, generation: nil, state: intended, into: &out, ok: &wrote)
         guard wrote else { return await notEffective(step, state: intended, into: &out) }
@@ -844,13 +895,47 @@ public actor AssistantSession {
         await flushPendingIneffective()
     }
 
+    /// Nachholen bei jeder Gelegenheit (ADR, Fehlerpfade der Einschränkung): Die nicht gesicherte Einschränkung wird erneut gesichert
+    /// und die Zeilen „in diesem Lauf nicht wirksam“, die noch fehlen, werden geschrieben. Gerufen am Anfang jeder Sicherungsfolge
+    /// und bei jeder Anfrage (nach der gesicherten `start`-Zeile). Nur innerhalb der Reihe der Folgen aufrufen (`catchUp()` nimmt eine
+    /// Karte).
+    private nonisolated func catchUpInSequence() async {
+        await secureOutstandingRestriction()
+        await flushPendingIneffective()
+        if let audit { await persistence.store?.flushUnwritten(audit) }
+    }
+
+    /// Sichert eine noch nicht gesicherte Einschränkung erneut (der gemerkte engere Stand begrenzt die Fassung). Die Blockade für
+    /// den Rest des Laufs bleibt in jedem Fall.
+    private nonisolated func secureOutstandingRestriction() async {
+        guard let store = persistence.store, store.needsCatchUp else { return }
+        if await persistence.save(release.snapshot.state, cause: .other) == nil { release.clearLocked() }
+    }
+
+    /// Es gibt etwas nachzuholen (billige Vorprüfung ohne Warten).
+    private nonisolated var needsCatchUp: Bool {
+        (persistence.store?.needsCatchUp ?? false) || (persistence.store?.hasUnwrittenLines ?? false) || !ineffective.all.isEmpty
+    }
+
+    /// Holt nach, was bei einer früheren Gelegenheit nicht ging: eine nicht gesicherte Einschränkung erneut sichern, fehlende Zeilen
+    /// „in diesem Lauf nicht wirksam“ schreiben. Läuft bei jeder Anfrage (nach ihrer gesicherten `start`-Zeile) und bei jeder
+    /// Änderung (`settle`); streng nacheinander mit den Folgen der Änderungen (eine Karte der Reihe), und nur, wenn etwas aussteht.
+    public nonisolated func catchUp() async {
+        guard needsCatchUp else { return }
+        let ticket = release.enqueueTicket()
+        await ticket.turn()
+        defer { ticket.complete() }
+        await catchUpInSequence()
+    }
+
     /// Holt Zeilen „in diesem Lauf nicht wirksam“ nach, die noch nicht geschrieben werden konnten.
     private nonisolated func flushPendingIneffective() async {
         guard let audit else { return }
         for item in ineffective.all {
             let line = Self.classALine(.ineffective, change: item.number, generation: nil, cause: item.cause, state: item.state, config: config)
-            audit.enqueue(line, key: "chg:\(item.number)", run: runToken)
-            if await audit.waitForLine(key: "chg:\(item.number)") == nil { ineffective.remove(item.number) }
+            let key = clock.key("chg", item.number)
+            audit.enqueue(line, key: key, run: runToken)
+            if await audit.waitForLine(key: key) == nil { ineffective.remove(item.number) }
         }
     }
 
@@ -962,12 +1047,23 @@ public actor AssistantSession {
             return AssistantCommitResult(ok: false, generation: release.currentGeneration, auditFailed: false)
         }
         let step = stepIndex.step(requestId, index: index)
-        let check = release.ifCurrent(generation) {
+        // Ein Schreibfehler des Protokolls dieser Anfrage ist klebrig und geht vor allem anderen: Nichts wird mehr ausgelöst. Die
+        // Prüfung steht IM Lock der Ordnung (vor `body`), nicht davor.
+        var blocked = false
+        let check = release.ifCurrent(generation, onStale: { found in
+            // Die Ablehnung wird im Lock eingereiht, mit der vorgefundenen Generation: nie hinter der Zeile einer späteren Änderung.
+            self.enqueueMark(requestId: requestId, step: step, mark: AssistantCommitMark(stage: stage, ok: false, generation: found))
+        }) {
+            if audit?.hasFailed(request: requestId) == true {
+                blocked = true
+                enqueueMark(requestId: requestId, step: step, mark: AssistantCommitMark(stage: stage, ok: false, generation: generation, failed: true))
+                return
+            }
             body()
             if reportPass { enqueueMark(requestId: requestId, step: step, mark: AssistantCommitMark(stage: stage, ok: true, generation: generation)) }
         }
-        if check.stale { enqueueMark(requestId: requestId, step: step, mark: check.mark(stage)) }
-        return AssistantCommitResult(ok: check.ok, generation: check.generation, auditFailed: audit?.hasFailed(request: requestId) ?? false)
+        return AssistantCommitResult(ok: check.ok && !blocked, generation: check.generation,
+                                     auditFailed: blocked || (audit?.hasFailed(request: requestId) ?? false))
     }
 
     /// Der Audiostart eines Satzes: Prüfung der Generation, der TATSÄCHLICHE Start (`start`: gibt zurück, ob er ausgelöst wurde)
@@ -981,15 +1077,23 @@ public actor AssistantSession {
             return AssistantCommitResult(ok: false, failed: false, generation: release.currentGeneration, auditFailed: false)
         }
         let step = stepIndex.step(requestId, index: index)
-        let check = release.ifCurrentAttempt(generation) {
+        var blocked = false
+        let check = release.ifCurrentAttempt(generation, onStale: { found in
+            self.enqueueMark(requestId: requestId, step: step, mark: AssistantCommitMark(stage: .audio, ok: false, generation: found))
+        }) {
+            // Schreibfehler dieser Anfrage: kein Start (klebrig, geht dem Widerruf voran).
+            if audit?.hasFailed(request: requestId) == true {
+                blocked = true
+                enqueueMark(requestId: requestId, step: step, mark: AssistantCommitMark(stage: .audio, ok: false, generation: generation, failed: true))
+                return false
+            }
             let started = start()
             enqueueMark(requestId: requestId, step: step,
                         mark: AssistantCommitMark(stage: .audio, ok: started, generation: generation, failed: !started))
             return started
         }
-        if check.stale { enqueueMark(requestId: requestId, step: step, mark: check.mark(.audio)) }
-        return AssistantCommitResult(ok: check.ok, failed: check.failed, generation: check.generation,
-                                     auditFailed: audit?.hasFailed(request: requestId) ?? false)
+        return AssistantCommitResult(ok: check.ok, failed: check.failed && !blocked, generation: check.generation,
+                                     auditFailed: blocked || (audit?.hasFailed(request: requestId) ?? false))
     }
 
     /// Nur für Tests der Commits ohne Lauf: macht der Sitzung eine Anfrage bekannt, als hätte dieser Prozesslauf ein Ereignis
@@ -1001,8 +1105,27 @@ public actor AssistantSession {
     /// Aktion ließ sich nicht auslösen, obwohl nichts widerrufen war (Marke „fehlgeschlagen“, nie „ausgeführt“).
     public nonisolated func noteCommit(requestId: String, index: Int, stage: AssistantCommitStage, ok: Bool, generation: Int,
                                        failed: Bool = false) {
-        enqueueMark(requestId: requestId, step: stepIndex.step(requestId, index: index),
-                    mark: AssistantCommitMark(stage: stage, ok: ok, generation: generation, failed: failed))
+        let step = stepIndex.step(requestId, index: index)
+        // Die Zeile wird im Lock der Ordnung eingereiht (Reihenfolge der Erhöhungen); eine Ablehnung trägt die dort vorgefundene
+        // Generation (nie die mitgebrachte, die inzwischen veraltet sein kann).
+        release.inSection { found in
+            let mark = ok || failed
+                ? AssistantCommitMark(stage: stage, ok: ok, generation: generation, failed: failed)
+                : AssistantCommitMark(stage: stage, ok: false, generation: max(generation, found))
+            enqueueMark(requestId: requestId, step: step, mark: mark)
+        }
+    }
+
+    /// Hat das Protokoll dieser Anfrage schon einen Schreibfehler gemeldet? Ohne Warten, aus jedem Thread (Controller: Ausgabe sofort
+    /// stoppen).
+    public nonisolated func hasAuditFailure(requestId: String) -> Bool { audit?.hasFailed(request: requestId) ?? false }
+
+    /// Die Marke des Verlaufs je ausgegebener Einheit (nur im Lock der Ordnung, zusammen mit dem Anhängen oder der Ablehnung).
+    private nonisolated func enqueueHistoryMarks(requestId: String, steps: [Int], included: Set<Int>, generation: Int) {
+        for step in steps {
+            enqueueMark(requestId: requestId, step: step,
+                        mark: AssistantCommitMark(stage: .history, ok: included.contains(step), generation: generation))
+        }
     }
 
     private nonisolated func enqueueMark(requestId: String, step: Int?, mark: AssistantCommitMark) {
@@ -1046,22 +1169,22 @@ public actor AssistantSession {
     /// nur angesprochen wurde (Unterbrechung), zählt mit seiner Einordnung. Gesprochenes ohne Entsprechung (kommt bei einem
     /// vollständigen Lauf nicht vor) wird nie als „ohne Quelle“ gewertet, sondern als Vorlage ohne Quelle.
     static func attribute(spoken: String, record: AssistantRunRecord?)
-        -> [(text: String, status: AssistantSentenceStatus, sources: [AssistantPassage], quote: Bool)] {
+        -> [(text: String, status: AssistantSentenceStatus, sources: [AssistantPassage], quote: Bool, step: Int?)] {
         var rest = Substring(spoken)
-        var out: [(text: String, status: AssistantSentenceStatus, sources: [AssistantPassage], quote: Bool)] = []
+        var out: [(text: String, status: AssistantSentenceStatus, sources: [AssistantPassage], quote: Bool, step: Int?)] = []
         for e in record?.sentences ?? [] where e.status != .announcement {
             rest = rest.drop(while: { $0.isWhitespace })
             if rest.isEmpty { break }
             if rest.hasPrefix(e.text) {
-                out.append((e.text, e.status, e.sources, e.quote))
+                out.append((e.text, e.status, e.sources, e.quote, e.step > 0 ? e.step : nil))
                 rest = rest.dropFirst(e.text.count)
             } else if e.text.hasPrefix(rest) {
-                out.append((String(rest), e.status, e.sources, e.quote))
+                out.append((String(rest), e.status, e.sources, e.quote, e.step > 0 ? e.step : nil))
                 rest = ""
             }
         }
         rest = rest.drop(while: { $0.isWhitespace })
-        if !rest.isEmpty { out.append((String(rest), .neutral, [], false)) }
+        if !rest.isEmpty { out.append((String(rest), .neutral, [], false, nil)) }
         return out
     }
 
@@ -1123,8 +1246,17 @@ public actor AssistantSession {
         if let audit, !record.journaled { audit.enqueue(Self.startLine(requestId, session: sessionId, config: config, record: record), run: runToken) }
 
         var historyRejected = false
+        // Ergebnis des Verlaufs JE EINHEIT (Runde 7, B4): Jede ausgegebene Einheit bekommt ihre Marke `h+g` (steht im Beitrag) oder `h-g`
+        // (nicht im Beitrag: nicht gesprochen, abgelehnt oder gar kein Beitrag), in demselben Lock-Schritt wie das Anhängen.
+        let outputSteps = record.outputSteps
+        if text.isEmpty || said.isEmpty {
+            release.inSection { found in
+                enqueueHistoryMarks(requestId: requestId, steps: outputSteps, included: [], generation: found)
+            }
+        }
         if !text.isEmpty, !said.isEmpty {
             let parts = Self.attribute(spoken: said, record: record)
+            let included = Set(parts.compactMap(\.step))
             let sources = Self.distinct(parts.filter { $0.status == .grounded }.flatMap(\.sources))
             let anyUnsourced = parts.contains { $0.status == .unsourced }
             // Abschnitte (Marke je Satz): sobald ein Zitat oder ein Satz mit Kennzeichnung (feste Antwort, Bestandsangabe) vorkommt
@@ -1142,21 +1274,24 @@ public actor AssistantSession {
                 round: record.decided ? record.round : nil)
             // Prüfung der Generation, Anhängen und Ergebniszeile im selben Lock wie die Erhöhung der Generation: Ein Widerruf
             // dazwischen ist ausgeschlossen, die Marke trägt genau die geprüfte Generation.
-            let foundGeneration: Int
             if !revoked, !record.revoked {
-                let check = release.ifCurrent(record.generation) {
+                let check = release.ifCurrent(record.generation, onStale: { found in
+                    self.enqueueMark(requestId: requestId, step: 0, mark: AssistantCommitMark(stage: .history, ok: false, generation: found))
+                    self.enqueueHistoryMarks(requestId: requestId, steps: outputSteps, included: [], generation: found)
+                }) {
                     history.append(turn)
                     if history.count > Self.maxStoredTurns { history.removeFirst(history.count - Self.maxStoredTurns) }
                     enqueueMark(requestId: requestId, step: 0, mark: AssistantCommitMark(stage: .history, ok: true, generation: record.generation))
+                    enqueueHistoryMarks(requestId: requestId, steps: outputSteps, included: included, generation: record.generation)
                 }
                 historyRejected = !check.ok
-                foundGeneration = check.generation
             } else {
                 historyRejected = true
-                foundGeneration = release.currentGeneration
-            }
-            if historyRejected {
-                enqueueMark(requestId: requestId, step: 0, mark: AssistantCommitMark(stage: .history, ok: false, generation: foundGeneration))
+                // Schon widerrufen: Die Ablehnung steht ebenfalls im Lock, mit der dort vorgefundenen Generation.
+                release.inSection { found in
+                    enqueueMark(requestId: requestId, step: 0, mark: AssistantCommitMark(stage: .history, ok: false, generation: found))
+                    enqueueHistoryMarks(requestId: requestId, steps: outputSteps, included: [], generation: found)
+                }
             }
         }
 
@@ -1164,10 +1299,10 @@ public actor AssistantSession {
         // Ein Schreibfehler irgendeiner Zeile dieser Anfrage (auch einer Ergebniszeile des Controllers) ist klebrig: Ausgang „Fehler“.
         let writeFailed = await audit.waitUntilWritten(request: requestId) != nil
         let outcome: AssistantAuditEntry.Outcome
-        if revoked || record.revoked || record.failure == .revoked || historyRejected {
+        if writeFailed || record.failure == .auditUnavailable {
+            outcome = .failed   // ein Schreibfehler geht dem Widerruf voran (Schreibfolge 7: nichts wird ausgegeben, Ausgang „Fehler“)
+        } else if revoked || record.revoked || record.failure == .revoked || historyRejected {
             outcome = .revoked   // auch ein fertiger Lauf, dessen Verlaufs-Commit die geänderte Freigabe verwirft
-        } else if writeFailed || record.failure == .auditUnavailable {
-            outcome = .failed
         } else if let failure = record.failure {
             outcome = failure == .cancelled ? .interrupted : .failed
         } else if record.limited {
@@ -1248,7 +1383,8 @@ public actor AssistantSession {
         let work = Task<Outcome, Never> {
             await Self.generate(request, model: model, knowledge: knowledge, config: runConfig, snapshot: snapshot, release: release,
                                 context: context, history: promptHistory, state: state, output: output, audit: audit,
-                                index: index, session: self.sessionId, canOptIn: canOptIn, stateLine: stateLine, run: runToken)
+                                index: index, session: self.sessionId, canOptIn: canOptIn, stateLine: stateLine, run: runToken,
+                                catchUp: { await self.catchUp() })
         }
         active[rid] = ActiveRun(stop: { work.cancel() }, state: state)
         let revoke: @Sendable () -> Void = { state.markRevoked(); work.cancel() }
@@ -1315,7 +1451,7 @@ public actor AssistantSession {
         _ request: AssistantRequest, model: any BookTalkModel, knowledge: AssistantKnowledge, config: AssistantConfig,
         snapshot: AssistantRelease.Snapshot, release: AssistantRelease, context: AssistantContext, history: [AssistantTurn],
         state: RunState, output: AssistantRunOutput, audit: AssistantAuditLog?, index: AssistantStepIndex, session: String,
-        canOptIn: Bool, stateLine: AssistantStateLine, run: AssistantRunToken
+        canOptIn: Bool, stateLine: AssistantStateLine, run: AssistantRunToken, catchUp: @Sendable () async -> Void
     ) async -> Outcome {
         let rid = request.requestId
         let budget = AssistantPrompt.budget(config: config)
@@ -1345,6 +1481,8 @@ public actor AssistantSession {
             state.update { $0.journaled = started }
             guard started else { return fail(.auditUnavailable) }
             if Task.isCancelled { return .cancelled }
+            // Nachholen bei jeder Gelegenheit: nicht gesicherte Einschränkung erneut sichern, fehlende Zeilen schreiben.
+            await catchUp()
         }
         // Cloud-Ziel ohne Zustimmung (aus dem Stand dieser Anfrage): kein Abruf, kein Modell.
         if config.isCloud, !snapshot.cloudConsent { return fail(.consentRequired) }

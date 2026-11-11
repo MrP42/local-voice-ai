@@ -220,6 +220,11 @@ final class AssistantController: ObservableObject {
         speaker.onSentenceStarted = { [weak self] text in self?.sentenceStarted(text) }
         speaker.onSentenceFinished = { [weak self] text in self?.sentenceFinished(text) }
         speaker.onIdle = { [weak self] in self?.speakerIdle() }
+        // Schreibfehler des Protokolls (E4.2b, Schreibfolge 7): Die Ausgabe stoppt SOFORT, auch mitten in der Wiedergabe und ohne
+        // dass eine weitere Einheit startet. Der Beobachter kommt von der Schreibwarteschlange; die Arbeit geschieht auf dem MainActor.
+        audit.setFailureObserver { [weak self] key in
+            Task { @MainActor in self?.auditWriteFailed(key: key) }
+        }
     }
 
     private var nowMs: Int { Int((ProcessInfo.processInfo.systemUptime - origin) * 1000) }
@@ -250,7 +255,7 @@ final class AssistantController: ObservableObject {
 
     /// Ein gespeicherter Block der Beispielrunde (`isBlock: true`: ganz, unverändert, zitierbar).
     private static func demoBlock(_ area: AssistantArea, _ id: String, _ title: String, _ locator: String, _ text: String) -> AssistantPassage {
-        AssistantPassage(area: area, itemId: id, title: title, locator: locator, text: text, score: 1, isBlock: true, quotable: true)
+        AssistantPassage(area: area, itemId: id, title: title, locator: locator, text: text, score: 1, isBlock: true, quotable: true, raw: text)
     }
 
     /// Beispielrunde mit mehreren Blöcken (synthetisch): drei wörtliche Auszüge aus zwei Quellen, der zweite mehrzeilig, je Block
@@ -1187,7 +1192,8 @@ final class AssistantController: ObservableObject {
         case done
         /// Die Generation war veraltet (oder keine Sitzung): der Body lief nicht.
         case revoked
-        /// Der Body lief, aber das Protokoll dieser Anfrage hat einen Schreibfehler: nichts Weiteres wird ausgegeben.
+        /// Das Protokoll dieser Anfrage hat einen Schreibfehler (der Body lief nicht oder lief noch): nichts Weiteres wird
+        /// ausgegeben. Ein Schreibfehler geht dem Widerruf voran.
         case auditFailed
     }
 
@@ -1204,8 +1210,9 @@ final class AssistantController: ObservableObject {
         guard let session else { return .revoked }
         let result = session.commitOutput(requestId: run.id, index: index, generation: run.sentences[index].generation, stage: stage,
                                           reportPass: reportPass, body)
-        if !result.ok { return .revoked }
-        return result.auditFailed ? .auditFailed : .done
+        // Ein Schreibfehler des Protokolls geht dem Widerruf voran (der Kern lässt in dem Fall nichts ausführen: `ok` ist dann falsch).
+        if result.auditFailed { return .auditFailed }
+        return result.ok ? .done : .revoked
     }
 
     /// Der Start eines Satzes in der Stimme: Prüfung der Generation, TATSÄCHLICHER Start und Ergebniszeile im selben Lock
@@ -1219,15 +1226,29 @@ final class AssistantController: ObservableObject {
         }
     }
 
-    /// Der Start ließ sich nicht auslösen, obwohl nichts widerrufen war (Audio steht, Strom abgebrochen): Marke „fehlgeschlagen“.
+    /// Der Start ließ sich nicht auslösen, obwohl nichts widerrufen war. Ein Schreibfehler des Protokolls dieser Anfrage geht
+    /// allem anderen vor (der Kern hat den Start verweigert und die Marke „fehlgeschlagen“ schon geschrieben): Die Ausgabe stoppt
+    /// SOFORT, Wartende werden verworfen, die Anfrage endet mit „Fehler“. Sonst (Audio steht, Strom abgebrochen): Marke
+    /// „fehlgeschlagen“, nie „ausgeführt“.
     private func audioStartFailed(_ run: AssistantRun, index: Int, generation: Int, session: AssistantSession?) {
+        if session?.hasAuditFailure(requestId: run.id) == true {
+            stopForAuditFailure(run)
+            return
+        }
         session?.noteCommit(requestId: run.id, index: index, stage: .audio, ok: false, generation: generation, failed: true)
+    }
+
+    /// Ein Schreibfehler einer Protokollzeile ist gemeldet (Beobachter am Protokoll): Gilt er der laufenden Antwort, stoppt die
+    /// Ausgabe jetzt, auch die gerade klingende Einheit und alle wartenden.
+    private func auditWriteFailed(key: String) {
+        guard let run = current, run.id == key, !run.completed else { return }
+        stopForAuditFailure(run)
     }
 
     /// Das Protokoll ist nicht schreibbar (Ergebnis- oder Pflichtzeile): nichts wird mehr angezeigt oder gesprochen; der Zustand
     /// „Protokoll nicht schreibbar“ mit „Erneut versuchen“.
     private func stopForAuditFailure(_ run: AssistantRun) {
-        guard current != nil else { return }
+        guard let active = current, active === run else { return }
         cancelAnswer(merge: false)
         interruptedPending = false
         phase = running ? .listening : .idle
@@ -1243,6 +1264,11 @@ final class AssistantController: ObservableObject {
     /// noch gesprochen, die Antwort hält an.
     private func deliver(_ run: AssistantRun) {
         guard !run.completed else { return }
+        // Schreibfehler des Protokolls vor allem anderen (auch vor dem Widerruf): nichts Weiteres wird angezeigt oder gesprochen.
+        if session?.hasAuditFailure(requestId: run.id) == true {
+            stopForAuditFailure(run)
+            return
+        }
         // Widerruf im Kern: Der Lauf ist beendet; Wartendes und der laufende Satz verstummen sofort, nichts Weiteres erscheint.
         if run.failure == .revoked {
             stopForRevocation(Self.revokedText, retry: run.text)

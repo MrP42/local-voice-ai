@@ -5,6 +5,13 @@ import XCTest
 // Gesprächsmodus „Sprechen“ (Paket K, E4.2a in Paket A): Ablauf einer Antwort mit künstlichen Modellen.
 // Datenrunde: Das Modell wählt, das System gibt ganze gespeicherte Blöcke aus. Allgemeinrunde: nur mit Opt-in, Prompt ohne Auszüge.
 
+/// Wartet (begrenzt) auf einen Zustand, den ein Rückruf setzt (Ende eines Modellstroms, gelieferte Stücke), statt eine Zeit zu raten.
+/// Der Test prüft den Zustand danach selbst; erst nach `timeout` Sekunden gilt er als nicht eingetreten.
+private func eventually(timeout: TimeInterval = 5, _ condition: () -> Bool) async {
+    let deadline = Date().addingTimeInterval(timeout)
+    while !condition(), Date() < deadline { try? await Task.sleep(nanoseconds: 5_000_000) }
+}
+
 private final class Log: @unchecked Sendable {
     private let lock = NSLock()
     private var calls: [(instructions: String, prompt: String, maxTokens: Int)] = []
@@ -454,7 +461,7 @@ final class AssistantSessionTests: XCTestCase {
         XCTAssertEqual(seen.statuses, [.announcement, .grounded, .announcement, .grounded, .announcement, .grounded])
         XCTAssertTrue(seen.hasDone)
         XCTAssertEqual(seen.answer?.counts, AssistantSentenceCounts(grounded: 3))
-        try? await Task.sleep(nanoseconds: 100_000_000)
+        await eventually { log.terminations >= 1 }
         XCTAssertGreaterThanOrEqual(log.terminations, 1, "Modellstrom wurde beendet")
     }
 
@@ -857,7 +864,7 @@ final class AssistantSessionTests: XCTestCase {
         XCTAssertEqual(events.last, .failed(requestId: "r1", .cancelled))
         let h = await s.history
         XCTAssertTrue(h.isEmpty)
-        try? await Task.sleep(nanoseconds: 100_000_000)
+        await eventually { log.terminations >= 1 }
         XCTAssertGreaterThanOrEqual(log.terminations, 1, "Modellstrom wurde beendet")
     }
 
@@ -887,10 +894,10 @@ final class AssistantSessionTests: XCTestCase {
             for await e in s.events(AssistantRequest(requestId: "r1", text: "Hallo")) { if case .sentence = e { n += 1 } }
             return n
         }
-        try? await Task.sleep(nanoseconds: 350_000_000)
+        await eventually { log.pieces >= 1 }   // der Lauf steht mitten im Strom
         task.cancel()
         _ = await task.value
-        try? await Task.sleep(nanoseconds: 300_000_000)
+        await eventually { log.terminations >= 1 }
         XCTAssertGreaterThanOrEqual(log.terminations, 1)
         let h = await s.history
         XCTAssertTrue(h.isEmpty)
@@ -977,11 +984,14 @@ final class AssistantSessionTests: XCTestCase {
     // MARK: Gleichzeitigkeit
 
     func testSeveralRequestsRunConcurrentlyAndOnlyCommitWritesHistory() async {
-        let model = ScriptModel(pieces: ["Erster Satz. ", "Zweiter Satz. ", "Dritter Satz."], pauseMs: 100)
+        // Der Abbruch kommt, sobald das erste Stück geliefert ist (nicht nach einer geratenen Zeit): Bis zum Ende fehlen dann noch zwei
+        // Pausen (je 200 ms), die Anfrage „spec“ ist sicher noch nicht fertig.
+        let log = Log()
+        let model = ScriptModel(pieces: ["Erster Satz. ", "Zweiter Satz. ", "Dritter Satz."], pauseMs: 200, log: log)
         let s = await session(model, config: open)
         async let a = collect(s, AssistantRequest(requestId: "spec", text: "Wie wird das Wetter"))
         async let b = collect(s, AssistantRequest(requestId: "final", text: "Wie wird das Wetter morgen"))
-        try? await Task.sleep(nanoseconds: 150_000_000)
+        await eventually { log.pieces >= 1 }
         await s.cancel(requestId: "spec")
         let (ea, eb) = await (a, b)
         XCTAssertEqual(ea.last, .failed(requestId: "spec", .cancelled))
@@ -1293,6 +1303,7 @@ final class AssistantSessionTests: XCTestCase {
             AssistantCommitMark(stage: .emit, ok: true, generation: g),
             AssistantCommitMark(stage: .display, ok: true, generation: g),
             AssistantCommitMark(stage: .audio, ok: false, generation: g + 1),
+            AssistantCommitMark(stage: .history, ok: true, generation: g),
         ])
         XCTAssertEqual(e.trace[0].commits, [], "verworfene Sätze haben keinen Ausgabe-Commit")
     }

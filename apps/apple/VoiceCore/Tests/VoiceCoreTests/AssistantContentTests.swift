@@ -123,7 +123,8 @@ final class AssistantContentTests: XCTestCase {
         let quotable = AssistantSourceKind.allCases.filter(\.isQuotable)
         XCTAssertEqual(Set(quotable), [.book, .typedNote, .importedDocument, .transcript])
         for kind in AssistantSourceKind.allCases {
-            XCTAssertEqual(AssistantDocument.Section(locator: nil, text: "Text", kind: kind).quotable, quotable.contains(kind), "\(kind)")
+            XCTAssertEqual(AssistantDocument.Section(locator: nil, text: "Text", kind: kind, raw: "Text").quotable, quotable.contains(kind), "\(kind)")
+            XCTAssertFalse(AssistantDocument.Section(locator: nil, text: "Text", kind: kind).quotable, "\(kind): ohne Rohtext nie zitierbar")
         }
         XCTAssertFalse(AssistantSourceKind.generated.isQuotable)
         XCTAssertFalse(AssistantSourceKind.mail.isQuotable)
@@ -135,7 +136,7 @@ final class AssistantContentTests: XCTestCase {
     func testTheBuildersOfTheSourcesSetTheKindOfEveryBlock() {
         XCTAssertEqual(AssistantSections.blocks(of: "Absatz eins.\n\nAbsatz zwei.", locator: nil).map(\.kind), [.typedNote, .typedNote])
         XCTAssertEqual(AssistantSections.generated(["Antwort der App: Hallo"], locator: nil).map(\.kind), [.generated])
-        XCTAssertEqual(AssistantSections.meeting([AssistantSegment(start: 1, line: "A: Hallo", usable: true)], locator: { "\($0)" }).map(\.kind), [.transcript])
+        XCTAssertEqual(AssistantSections.meeting([AssistantSegment(start: 1, line: "A: Hallo", raw: "Hallo", usable: true)], locator: { "\($0)" }).map(\.kind), [.transcript])
         XCTAssertEqual(AssistantSections.generated(["Zusammenfassung: x"], locator: "Protokoll").map(\.quotable), [false])
     }
 
@@ -169,7 +170,7 @@ final class AssistantContentTests: XCTestCase {
     /// Das Tor vor der Ausgabe ist unabhängig von der Auswahl: Es lässt nur ganze Blöcke zitierbarer Art zeichengleich durch.
     func testThePreOutputCheckAdmitsOnlyAWholeQuotableBlockWithTheStoredText() {
         func passage(text: String, isBlock: Bool = true, quotable: Bool = true) -> AssistantPassage {
-            AssistantPassage(area: .notes, itemId: "n", title: "Notiz", text: text, score: 1, isBlock: isBlock, quotable: quotable)
+            AssistantPassage(area: .notes, itemId: "n", title: "Notiz", text: text, score: 1, isBlock: isBlock, quotable: quotable, raw: text)
         }
         func check(_ q: AssistantPassage, text: String? = nil) -> Bool {
             AssistantGrounding.mayOutput(AssistantGrounding.SourceBlock(text: text ?? q.text, passage: q))
@@ -180,6 +181,23 @@ final class AssistantContentTests: XCTestCase {
         XCTAssertFalse(check(passage(text: block), text: "Der Eisvogel brütet am Mühlbach."), "nicht zeichengleich mit dem gespeicherten Text")
         XCTAssertFalse(check(passage(text: String(repeating: "Wort ", count: 200))), "über der Höchstlänge")
         XCTAssertFalse(check(passage(text: "   ")), "leer")
+        // B1: Die Prüfung vergleicht die Bytefolge mit dem ROHEN Block (nicht Zeichenfolgen kanonisch, nicht den aufbereiteten Text).
+        let nfc = "Der Eisvogel brütet am Mühlbach."
+        let nfd = "Der Eisvogel bru\u{0308}tet am Mu\u{0308}hlbach."
+        XCTAssertEqual(nfc, nfd, "kanonisch gleich ...")
+        let stored = AssistantPassage(area: .notes, itemId: "n", title: "Notiz", text: nfc, score: 1, isBlock: true, quotable: true, raw: nfd)
+        XCTAssertTrue(check(stored, text: nfd), "die Bytes des Gespeicherten")
+        XCTAssertFalse(check(stored, text: nfc), "... aber NFC statt der gespeicherten NFD-Bytes besteht nicht")
+        let cr = AssistantPassage(area: .notes, itemId: "n", title: "Notiz", text: "Alpha\nBeta", score: 1, isBlock: true, quotable: true, raw: "Alpha\rBeta")
+        XCTAssertTrue(check(cr, text: "Alpha\rBeta"))
+        XCTAssertFalse(check(cr, text: "Alpha\nBeta"), "der aufbereitete Text ist nie die Ausgabe")
+        XCTAssertFalse(check(AssistantPassage(area: .notes, itemId: "n", title: "T", text: block, score: 1, isBlock: true, quotable: true), text: block),
+                       "ohne Rohtext nie zitierbar, auch nicht in der aufbereiteten Fassung")
+        XCTAssertFalse(check(AssistantPassage(area: .notes, itemId: "n", title: "T", text: "x", score: 1, isBlock: true, quotable: true,
+                                              raw: " \r\n\t "), text: " \r\n\t "), "nur Leerraum")
+        XCTAssertFalse(check(AssistantPassage(area: .notes, itemId: "n", title: "T", text: "x", score: 1, isBlock: true, quotable: true,
+                                              raw: String(repeating: "ab\r\n", count: 151)), text: String(repeating: "ab\r\n", count: 151)),
+                       "über der Höchstlänge am Rohtext gemessen (604 Einheiten)")
         XCTAssertFalse(AssistantPassage(area: .notes, itemId: "n", title: "T", text: block, score: 1, isBlock: true).quotable, "ohne Angabe nie zitierbar")
         XCTAssertFalse(passage(text: block, quotable: true).clipped(to: 20).isBlock, "ein gekürzter Text ist kein Block mehr")
         XCTAssertTrue(passage(text: block, quotable: true).replacingScoreKeepsFlags)
@@ -188,7 +206,8 @@ final class AssistantContentTests: XCTestCase {
     /// Eine Quelle, die einen Auszug als Block ausgibt, aber nicht als zitierbar kennzeichnet, kommt nie wörtlich hinaus; mit der Kennzeichnung schon.
     func testASourcePassageClaimedAsBlockButNotQuotableIsNeverOutputAndTheControlIs() async {
         for quotable in [false, true] {
-            let passage = AssistantPassage(area: .files, itemId: "f1", title: "Ablagedatei Eisvogel", text: block, score: 1, isBlock: true, quotable: quotable)
+            let passage = AssistantPassage(area: .files, itemId: "f1", title: "Ablagedatei Eisvogel", text: block, score: 1, isBlock: true, quotable: quotable,
+                                           raw: block)
             let knowledge = AssistantKnowledge(corpus: AssistantCorpus(), sources: [FixedSource(area: .files, passages: [passage])])
             await knowledge.setAreas([.files])
             let out = await units(make(knowledge), "r\(quotable)")
@@ -406,6 +425,6 @@ private extension AssistantPassage {
     /// `replacing(score:)` behält Block und Zitierbarkeit, solange der Text derselbe bleibt.
     var replacingScoreKeepsFlags: Bool {
         let same = replacing(text: text, score: 2)
-        return same.isBlock == isBlock && same.quotable == quotable
+        return same.isBlock == isBlock && same.quotable == quotable && same.raw == raw
     }
 }

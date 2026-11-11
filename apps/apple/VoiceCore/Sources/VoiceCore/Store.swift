@@ -80,15 +80,18 @@ public final class DurableStore {
     /// Called only after explicit user confirmation. Rename commits the deletion;
     /// the empty tombstone prevents old transfers from resurrecting the session.
     public func deleteEntry(_ id: UUID) throws {
-        let source = root.appendingPathComponent(id.uuidString)
-        let tombstone = root.appendingPathComponent(".deleted-" + id.uuidString)
-        if !fm.fileExists(atPath: tombstone.path) {
-            guard fm.fileExists(atPath: source.path) else { throw VoiceError.missing }
-            try fm.moveItem(at: source, to: tombstone)
+        // Assistent (Klasse B): Mit dem Umbenennen verschwindet die Notiz; die Meldung kommt VOR dem Schreiben (`NoteChangeHook`).
+        try NoteChangeHook.shared.around {
+            let source = root.appendingPathComponent(id.uuidString)
+            let tombstone = root.appendingPathComponent(".deleted-" + id.uuidString)
+            if !fm.fileExists(atPath: tombstone.path) {
+                guard fm.fileExists(atPath: source.path) else { throw VoiceError.missing }
+                try fm.moveItem(at: source, to: tombstone)
+            }
+            invalidateInventory()
+            try syncDirectory(root)
+            try cleanupDeletedEntries()
         }
-        invalidateInventory()
-        try syncDirectory(root)
-        try cleanupDeletedEntries()
     }
     private func cleanupDeletedEntries() throws {
         for folder in try fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
@@ -217,7 +220,8 @@ public final class DurableStore {
         if entry.reply != nil, entry.state == .answered { entry.job?.phase = .completed }
         if let timing { entry.timings[timing.0] = timing.1 }
         if let event { entry.processingEvents = (entry.processingEvents ?? []) + [event] }
-        try save(entry)
+        // Assistent (Klasse B): Nur Text (Transkript, Antwort) betrifft den Bestand; Stand und Zeiten nicht.
+        if transcript != nil || reply != nil { try NoteChangeHook.shared.around { try save(entry) } } else { try save(entry) }
         if transcript != nil { try fault?(.transcriptCommitted) }
         if reply != nil { try fault?(.generatedReplyCommitted) }
     }
@@ -259,7 +263,8 @@ public final class DurableStore {
         entry.processingEvents = envelope.payload.processingEvents
         entry.reply = text; entry.transcript = envelope.transcript
         entry.replyMessageId = envelope.messageId; entry.replyReceipt = receipt; entry.state = .answered
-        try save(entry)
+        // Assistent (Klasse B): Transkript und Antwort der Notiz ändern sich hier; die Meldung kommt VOR dem Schreiben.
+        try NoteChangeHook.shared.around { try save(entry) }
         try fault?(.replyCommitted)
         return (receipt, isNew)
     }

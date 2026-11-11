@@ -156,7 +156,7 @@ final class AssistantRestartTests: XCTestCase {
     func testEachCommitKindOfAUnitIsReadOnItsOwn() async throws {
         try write([
             start("a"),
-            step("a", 1, .grounded), commit("a", 1, .emit), commit("a", 1, .display), commit("a", 1, .audio),                 // vollständig
+            step("a", 1, .grounded), commit("a", 1, .emit), commit("a", 1, .display), commit("a", 1, .audio), commit("a", 1, .history), // vollständig
             step("a", 2, .grounded), commit("a", 2, .emit), commit("a", 2, .display),                                           // Prozessende nach Anzeige
             step("a", 3, .announcement), commit("a", 3, .emit),                                                                 // nach Übergabe
             step("a", 4, .grounded), commit("a", 4, .emit), commit("a", 4, .display, ok: false), // verworfen: Audio begann nie
@@ -168,14 +168,15 @@ final class AssistantRestartTests: XCTestCase {
         let entry = try XCTUnwrap(read.first { $0.requestId == "a" })
         let trace = Dictionary(uniqueKeysWithValues: entry.trace.map { ($0.n, $0) })
         func results(_ n: Int) -> [AssistantTraceStep.UnitResult] { AssistantTraceStep.unitStages.map { trace[n]!.result(for: $0) } }
-        XCTAssertEqual(results(1), [.executed, .executed, .executed])
-        XCTAssertEqual(results(2), [.executed, .executed, .unknown], "Anzeige ausgeführt, Audio unbekannt")
-        XCTAssertEqual(results(3), [.executed, .unknown, .unknown])
-        XCTAssertEqual(results(4), [.executed, .discarded, .notPlanned], "nach einer verworfenen Anzeige begann kein Audiostart")
-        XCTAssertEqual(results(5), [.executed, .executed, .failed])
-        XCTAssertEqual(results(6), [.unknown, .unknown, .unknown])
-        XCTAssertEqual(results(7), [.notPlanned, .notPlanned, .notPlanned])
-        XCTAssertEqual(trace[2]?.unknownStages, [.audio])
+        XCTAssertEqual(AssistantTraceStep.unitStages, [.emit, .display, .audio, .history], "auch der Verlauf hat sein Ergebnis je Einheit")
+        XCTAssertEqual(results(1), [.executed, .executed, .executed, .executed])
+        XCTAssertEqual(results(2), [.executed, .executed, .unknown, .unknown], "Anzeige ausgeführt, Audio und Verlauf unbekannt")
+        XCTAssertEqual(results(3), [.executed, .unknown, .unknown, .unknown])
+        XCTAssertEqual(results(4), [.executed, .discarded, .notPlanned, .notPlanned], "nach einer verworfenen Anzeige begann kein Audiostart")
+        XCTAssertEqual(results(5), [.executed, .executed, .failed, .notPlanned])
+        XCTAssertEqual(results(6), [.unknown, .unknown, .unknown, .unknown])
+        XCTAssertEqual(results(7), [.notPlanned, .notPlanned, .notPlanned, .notPlanned])
+        XCTAssertEqual(trace[2]?.unknownStages, [.audio, .history])
         XCTAssertFalse(trace[1]!.resultUnknown)
         XCTAssertTrue(trace[2]!.resultUnknown)
         XCTAssertFalse(trace[7]!.resultUnknown)

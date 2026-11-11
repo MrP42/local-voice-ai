@@ -48,6 +48,12 @@ final class AssistantSources: ObservableObject {
         self.corpus = corpus
         indexer = AssistantIndexer(corpus: corpus)
         watch.setObserver { [weak self] in Task { @MainActor in self?.changeFinished() } }
+        // Der Speicher der Notizen (auch auf der Uhr im Einsatz) meldet über diese Weiche: VOR jeder Änderung an Text oder Bestand.
+        let meldestelle = watch
+        NoteChangeHook.shared.install {
+            let ticket = meldestelle.willChange()
+            return { meldestelle.changed(ticket) }
+        }
         observeStores()
     }
 
@@ -134,9 +140,11 @@ final class AssistantSources: ObservableObject {
 
     private static func noteJobs() -> [NoteJob] {
         VoiceModel.shared.entries.compactMap { entry in
-            let transcript = entry.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            // Der gespeicherte Text der Notiz bleibt UNVERÄNDERT (auch Rand-Leerraum): Der Kern schneidet den Rohtext der Blöcke
+            // daraus (E4.2b, Blocktreue). Getrimmt wird nur zur Prüfung, ob es etwas gibt.
+            let transcript = entry.transcript ?? ""
             let reply = entry.reply?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !transcript.isEmpty || !reply.isEmpty else { return nil }
+            guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !reply.isEmpty else { return nil }
             return NoteJob(id: entry.id.uuidString, date: entry.createdAt, transcript: transcript, reply: reply)
         }
     }
@@ -183,7 +191,7 @@ private struct BookJob: Sendable {
 
 // MARK: - Indexierung
 
-/// Baut und pflegt den Index abseits des Hauptthreads. Merkt sich die Größe je Dokument für die Obergrenze.
+/// Baut und pflegt den Index abseits des Hauptthreads. Die Obergrenze für den Gesamttext hält der Index selbst (`admit`).
 private actor AssistantIndexer {
     struct Report {
         var skipped = 0
@@ -194,7 +202,6 @@ private actor AssistantIndexer {
     static let maxChars = 30_000_000
 
     private let corpus: AssistantCorpus
-    private var sizes: [String: Int] = [:]
 
     init(corpus: AssistantCorpus) { self.corpus = corpus }
 
@@ -256,7 +263,6 @@ private actor AssistantIndexer {
         for area in [AssistantArea.notes, .transcripts, .books] {
             for item in await corpus.items(area: area) where keep[area]?.contains(item.id) != true {
                 await corpus.remove(id: item.id, area: area)
-                sizes["\(area.rawValue)/\(item.id)"] = nil
             }
         }
         return report
@@ -266,15 +272,11 @@ private actor AssistantIndexer {
         await corpus.version(of: id, area: area) == version
     }
 
-    /// `false`, wenn die Obergrenze überschritten würde (dann bleibt der alte Stand, falls vorhanden).
+    /// `false`, wenn die Obergrenze überschritten würde. Dann scheidet das Dokument AUS dem Bestand aus (auch ein älterer Stand,
+    /// `AssistantCorpus.admit`): Ein Dokument, das sich nicht neu aufnehmen lässt, bleibt nicht mit seinem alten Inhalt zitierbar.
+    /// Erst danach darf der Durchgang „bereit“ melden (`AssistantSources.finish`).
     private func put(_ doc: AssistantDocument) async -> Bool {
-        let key = "\(doc.item.area.rawValue)/\(doc.item.id)"
-        let size = doc.sections.reduce(0) { $0 + $1.text.count }
-        let others = sizes.values.reduce(0, +) - (sizes[key] ?? 0)
-        guard others + size <= Self.maxChars else { return false }
-        await corpus.upsert(doc)
-        sizes[key] = size
-        return true
+        await corpus.admit(doc, maxChars: Self.maxChars)
     }
 
     // MARK: Dateien
@@ -308,9 +310,11 @@ private actor AssistantIndexer {
 
     private static func meetingDocument(_ meeting: MeetingDocument, version: String) -> AssistantDocument? {
         // Ein Block je Segment der Aufnahme. Nicht erlaubte oder leere Segmente werden kein Block; der Kern bestimmt die Blöcke.
+        // `line` (mit Sprecher, getrimmt) dient nur der Suche; ausgegeben wird `raw`: das gespeicherte Textfeld des Segments,
+        // unverändert (E4.2b, Blocktreue).
         let segments = meeting.segments.sorted(by: { $0.start < $1.start }).map { segment -> AssistantSegment in
             let body = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return AssistantSegment(start: segment.start, line: segment.speaker.map { "\($0): \(body)" } ?? body,
+            return AssistantSegment(start: segment.start, line: segment.speaker.map { "\($0): \(body)" } ?? body, raw: segment.text,
                                     usable: meeting.aiPermitted(segment) && !body.isEmpty)
         }
         var sections = AssistantSections.meeting(segments, locator: clock)

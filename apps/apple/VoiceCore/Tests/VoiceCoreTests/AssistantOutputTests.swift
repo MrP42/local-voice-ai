@@ -27,6 +27,8 @@ private final class Tally: @unchecked Sendable {
 
 /// Warten in synchronem Kontext (in `async`-Tests ist `Thread.sleep` nicht erlaubt; hier geht es um echte Threads).
 private func pause(_ seconds: TimeInterval) { Thread.sleep(forTimeInterval: seconds) }
+/// Wartet auf ein Signal (aus `async`-Tests; Semaphore nicht direkt warten).
+private func waitSync(_ semaphore: DispatchSemaphore, seconds: TimeInterval) -> Bool { semaphore.wait(timeout: .now() + seconds) == .success }
 
 private struct IdleModel: BookTalkModel {
     var pieces: [String] = []
@@ -129,6 +131,7 @@ final class AssistantOutputTests: XCTestCase {
         let tally = Tally()
         let stop = Tally()
         let group = DispatchGroup()
+        let running = DispatchSemaphore(value: 0)
         for _ in 0..<4 {
             group.enter()
             DispatchQueue.global().async {
@@ -136,13 +139,15 @@ final class AssistantOutputTests: XCTestCase {
                     let started = gate.start(0) {
                         if tally.returnedGeneration > 0 { tally.violation("Start-Body der Generation 0 nach der Rückkehr von bump") }
                         tally.ranOnce()
+                        running.signal()
                     }
                     if !started { tally.refusedOnce(); break }
                 }
                 group.leave()
             }
         }
-        pause(0.05)
+        // Bis ein Starter einen Body ausgeführt hat (statt eine Zeit zu raten): Erst dann kommt der Widerruf.
+        XCTAssertTrue(waitSync(running, seconds: 10), "ein Starter lief")
         let g = await s.releaseDidChange().generation
         tally.returned(g)
         XCTAssertEqual(group.wait(timeout: .now() + 10), .success)
@@ -287,20 +292,24 @@ final class AssistantOutputTests: XCTestCase {
         let g = s.releaseGeneration
         let bumped = Tally()
         let entered = DispatchSemaphore(value: 0)
+        let bumpReturned = DispatchSemaphore(value: 0)
         let observed = Tally()
         let ok = s.commitOutput(requestId: "r1", index: 0, generation: g, stage: .display) {
             DispatchQueue.global().async {
                 entered.signal()
                 _ = s.applyReleaseChange()
                 bumped.ranOnce()
+                bumpReturned.signal()
             }
             entered.wait()
-            pause(0.1)   // der Auslöser steht jetzt vor dem Lock
-            if bumped.snapshot.ran != 0 { observed.violation("bump lief mitten im Body") }
+            // Haltepunkt: Der Auslöser läuft an und muss auf den Lock warten. Dass er in dieser Zeit NICHT zurückkehrt, ist die
+            // Beobachtung selbst; die Länge des Fensters macht aus Grün nie Rot.
+            if bumpReturned.wait(timeout: .now() + 0.2) == .success { observed.violation("bump lief mitten im Body") }
         }
         XCTAssertTrue(ok.ok)
-        let deadline = Date().addingTimeInterval(5)
-        while bumped.snapshot.ran == 0, Date() < deadline { pause(0.01) }
+        if observed.snapshot.violations.isEmpty {   // sonst hat der Haltepunkt das Signal schon verbraucht
+            XCTAssertTrue(waitSync(bumpReturned, seconds: 5), "der Widerruf kam nach dem Body")
+        }
         XCTAssertEqual(bumped.snapshot.ran, 1, "der Widerruf kam nach dem Body")
         XCTAssertEqual(observed.snapshot.violations, [])
         XCTAssertEqual(gate.discardedBelow, g + 1)
@@ -363,6 +372,7 @@ final class AssistantOutputTests: XCTestCase {
             AssistantCommitMark(stage: .emit, ok: true, generation: g),
             AssistantCommitMark(stage: .display, ok: true, generation: g),
             AssistantCommitMark(stage: .audio, ok: false, generation: g + 1),
+            AssistantCommitMark(stage: .history, ok: false, generation: g + 1),
         ])
     }
 }

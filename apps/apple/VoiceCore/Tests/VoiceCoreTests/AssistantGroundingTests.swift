@@ -10,11 +10,13 @@ final class AssistantGroundingTests: XCTestCase {
     private let book = AssistantPassage(
         area: .books, itemId: "b1", title: "Der Zauberberg", locator: "S. 12",
         text: "Hans Castorp fährt ins Sanatorium nach Davos und besucht dort seinen Vetter Joachim. Er bleibt drei Wochen.", score: 1,
-        isBlock: true, quotable: true)
+        isBlock: true, quotable: true,
+        raw: "Hans Castorp fährt ins Sanatorium nach Davos und besucht dort seinen Vetter Joachim. Er bleibt drei Wochen.")
     private let meeting = AssistantPassage(
         area: .transcripts, itemId: "t1", title: "Besprechung vom 12.10.2026", locator: "00:14:03",
         text: "Die Besprechung dauerte 48 Minuten. Anna übernimmt die Planung für das Projekt Nordlicht bis Freitag.", score: 0.8,
-        isBlock: true, quotable: true)
+        isBlock: true, quotable: true,
+        raw: "Die Besprechung dauerte 48 Minuten. Anna übernimmt die Planung für das Projekt Nordlicht bis Freitag.")
     private let titles = ["Der Zauberberg", "Besprechung vom 12.10.2026", "Quartalsplanung"]
     private let now = Date(timeIntervalSince1970: 1_794_384_300)   // Mittwoch, 11. November 2026, 08:05 Uhr (UTC)
     private var zone: TimeZone { TimeZone(identifier: "UTC")! }

@@ -799,8 +799,9 @@ final class AssistantReleaseStoreTests: XCTestCase {
         try XCTUnwrap(AssistantReleaseFile.encode(record, revision: revision)).write(to: stateFile)
     }
 
-    /// Einschränkung ohne Sitzung: erst die Datei, dann die Zeile `release` mit Lauf, Änderungsnummer, Ursache und Stand, OHNE Generation.
-    func testARestrictionWithoutASessionReplacesTheFileThenWritesTheLineWithoutAGeneration() async throws {
+    /// Einschränkung ohne Sitzung: erst die Datei, dann die Zeile `release` mit Lauf, Änderungsnummer, Ursache, Stand und der
+    /// Generation, die im Schritt des Wirksamwerdens (im Lock) vergeben wurde (Runde 7, B9: die eine Ordnung gilt auch ohne Sitzung).
+    func testARestrictionWithoutASessionReplacesTheFileThenWritesTheLineWithItsGeneration() async throws {
         let rec = Recorder()
         let fs = FaultFS()
         let store = openStore(fs)
@@ -815,7 +816,7 @@ final class AssistantReleaseStoreTests: XCTestCase {
         let released = lines("release")
         XCTAssertEqual(released.count, 1)
         let line = try XCTUnwrap(released.first)
-        XCTAssertNil(line["gen"], "ohne Sitzung gibt es keine Generation, und es wird keine erfunden")
+        XCTAssertEqual(line["gen"] as? Int, 1, "die Generation der Ordnung, im selben Lock-Schritt wie der engere Stand vergeben")
         XCTAssertEqual(line["run"] as? Int, 1)
         XCTAssertEqual(line["chg"] as? Int, 1)
         XCTAssertEqual(line["cause"] as? String, "areas")
@@ -826,7 +827,7 @@ final class AssistantReleaseStoreTests: XCTestCase {
         XCTAssertEqual(read.skippedLines, 0)
         let folded = read.entries.filter { $0.kind == .release }
         XCTAssertEqual(folded.count, 1)
-        XCTAssertEqual(folded.first?.generation, 0)
+        XCTAssertEqual(folded.first?.generation, 1)
         XCTAssertEqual(folded.first?.run, 1)
         XCTAssertEqual(folded.first?.change, 1)
         XCTAssertEqual(folded.first?.cause, .areas)
@@ -834,8 +835,8 @@ final class AssistantReleaseStoreTests: XCTestCase {
         XCTAssertEqual(fileRecord()?.record.localAreas, ["books"])
     }
 
-    /// Erweiterung ohne Sitzung: Zeile „beabsichtigt“ vor dem Austausch, Zeile „wirksam“ danach, beide ohne Generation; Lauf und
-    /// Änderungsnummern laufen fortlaufend über die Änderungen.
+    /// Erweiterung ohne Sitzung: Zeile „beabsichtigt“ (ohne Generation) vor dem Austausch, Zeile „wirksam“ danach, MIT der im Lock des
+    /// Wirksamwerdens vergebenen Generation; Lauf und Änderungsnummern laufen fortlaufend über die Änderungen.
     func testAnExpansionWithoutASessionWritesIntentThenReplacesTheFileThenWritesEffective() async throws {
         let rec = Recorder()
         let fs = FaultFS()
@@ -852,10 +853,10 @@ final class AssistantReleaseStoreTests: XCTestCase {
         XCTAssertEqual(lines().compactMap { $0["t"] as? String }, ["release", "intent", "effective"])
         XCTAssertEqual(lines().compactMap { $0["chg"] as? Int }, [1, 2, 2], "Änderungsnummern fortlaufend, beide Zeilen einer Erweiterung gleich")
         XCTAssertEqual(Set(lines().compactMap { $0["run"] as? Int }), [1], "ein Lauf")
-        XCTAssertTrue(lines().allSatisfy { $0["gen"] == nil }, "keine Zeile trägt eine Generation")
+        XCTAssertEqual(lines().map { $0["gen"] as? Int }, [1, nil, 2], "release 1; intent ohne; effective mit der Generation des Wirksamwerdens")
         let intents = await audit.entries().filter { $0.kind == .intent }
         XCTAssertEqual(intents.map(\.effect), [.effective])
-        XCTAssertNil(intents.first?.effectiveGeneration)
+        XCTAssertEqual(intents.first?.effectiveGeneration, 2)
         XCTAssertEqual(fileRecord()?.record.localAreas, ["books", "notes"])
     }
 
@@ -998,8 +999,8 @@ final class AssistantReleaseStoreTests: XCTestCase {
         XCTAssertEqual(fileRecord()?.record.localAreas, ["books"], "der gesicherte Stand bleibt")
     }
 
-    /// Ein Lauf-Token je Speicher: alle Zeilen ohne Sitzung tragen dieselbe Laufnummer, eine Sitzung danach eine andere.
-    func testTheLinesWithoutASessionShareOneRunAndASessionAfterwardsHasItsOwn() async throws {
+    /// EIN Lauf-Token je Prozesslauf (je Speicher): alle Zeilen ohne Sitzung UND die einer Sitzung danach tragen dieselbe Laufnummer.
+    func testTheLinesWithoutASessionAndOfASessionAfterwardsShareOneRun() async throws {
         let store = openStore()
         let audit = freshLog()
         _ = await store.updateAreas([.books], cloud: false, audit: audit)
@@ -1009,8 +1010,7 @@ final class AssistantReleaseStoreTests: XCTestCase {
         _ = await audit.flushReleaseLines()
         let runs = lines().filter { $0["t"] as? String != "state" }.compactMap { $0["run"] as? Int }
         XCTAssertEqual(runs.count, 4, "release; intent, effective; release der Sitzung")
-        XCTAssertEqual(Set(runs.prefix(3)), [1], "die Zeilen ohne Sitzung: ein Lauf")
-        XCTAssertEqual(runs.suffix(from: 3).map { $0 }, [2], "die Sitzung danach: der nächste Lauf")
+        XCTAssertEqual(Set(runs), [1], "ohne Sitzung und die Sitzung danach: derselbe Prozesslauf, dieselbe Laufnummer")
     }
 
     /// Ein Blockierter Speicher nimmt keine Erweiterung an; die noch nicht gesicherte Einschränkung wird bei dieser Gelegenheit
@@ -1130,22 +1130,41 @@ final class AssistantReleaseStoreTests: XCTestCase {
         XCTAssertEqual(fileRecord()?.record.cloudAreas, [])
     }
 
-    /// Eine Erweiterung, die über eine noch nicht gesicherte Einschränkung hinausgeht, zählt nie als wirksam; die Einschränkung ist
-    /// mit demselben Austausch gesichert.
-    func testAnExpansionBeyondAnUnsavedRestrictionNeverCountsAsEffective() async throws {
+    /// Eine noch nicht gesicherte Einschränkung wird bei der nächsten Gelegenheit (hier: der Anfang der nächsten Sicherungsfolge)
+    /// gesichert, BEVOR eine spätere Erweiterung ihren Austausch beginnt: erst die Einschränkung, dann die Erweiterung (Runde 7, B10).
+    func testAnUnsavedRestrictionIsSecuredBeforeALaterExpansionTakesEffect() async throws {
         try seed(AssistantReleaseRecord(localAreas: [.books], cloudAreas: [.books]))
         let fs = FaultFS()
+        let rec = Recorder()
         let store = openStore(fs)
         let s = session(store)
         fs.inject(.rename, times: 1)
         let failed = await store.updateAreas([], cloud: false)
         XCTAssertNotNil(failed.storeError)
+        fs.observe { rec.add($0) }
         let r = await s.setAreas([.books, .notes])
-        XCTAssertEqual(r.storeError, .restrictionPending)
+        XCTAssertNil(r.storeError, "die Einschränkung wurde zuerst gesichert, danach die Erweiterung")
+        XCTAssertEqual(rec.all.filter { $0 == "fs:rename" }.count, 2, "zwei Austausche: die Einschränkung, dann die Erweiterung")
+        XCTAssertEqual(s.effectiveAreas, [.books, .notes])
+        XCTAssertEqual(fileRecord()?.record.localAreas, ["books", "notes"])
+        XCTAssertFalse(store.hasPendingRestriction)
+    }
+
+    /// Lässt sich die Einschränkung weiter nicht sichern, gilt eine Erweiterung nie als wirksam.
+    func testAnExpansionNeverCountsAsEffectiveWhileTheRestrictionStaysUnsaved() async throws {
+        try seed(AssistantReleaseRecord(localAreas: [.books], cloudAreas: [.books]))
+        let fs = FaultFS()
+        let store = openStore(fs)
+        let s = session(store)
+        fs.inject(.rename, times: 3)   // die Einschränkung, das Nachholen am Anfang der Folge, der Austausch der Erweiterung
+        let failed = await store.updateAreas([], cloud: false)
+        XCTAssertNotNil(failed.storeError)
+        let r = await s.setAreas([.books, .notes])
+        XCTAssertNotNil(r.storeError)
         XCTAssertFalse(r.effective, "die Erweiterung gilt nicht")
         XCTAssertEqual(s.effectiveAreas, [.books])
-        XCTAssertEqual(fileRecord()?.record.localAreas, [], "die Einschränkung ist gesichert")
-        XCTAssertFalse(store.hasPendingRestriction)
+        XCTAssertEqual(fileRecord()?.record.localAreas, ["books"], "die Datei trägt weiter die alte Fassung")
+        XCTAssertTrue(store.hasPendingRestriction, "die Einschränkung bleibt gemerkt")
     }
 
     /// „Erneut sichern“ ohne Sitzung: sichert den gemerkten engeren Stand (gleiche Warteschlange); die Blockade bleibt.
@@ -1221,8 +1240,8 @@ final class AssistantReleaseStoreTests: XCTestCase {
     /// der Folgen ohne Sitzung vermischen sich nie: Änderungsnummern fortlaufend, die Zeilen einer Änderung nebeneinander und in Folge.
     func testChangesWithAndWithoutASessionNeverOverlapAndLoseNothing() async {
         let store = openStore()
-        let s = session(store)
         let audit = freshLog()
+        let s = session(store, audit: audit)
         await withTaskGroup(of: Void.self) { group in
             group.addTask {
                 for i in 0..<20 { _ = await store.updateAreas(i % 2 == 0 ? [.books] : [.books, .notes], cloud: true, audit: audit) }
@@ -1264,15 +1283,22 @@ final class AssistantReleaseStoreTests: XCTestCase {
     /// Die Zeilen ohne Sitzung: ein Lauf, Änderungsnummern 1...n ohne Lücke, die Zeilen einer Änderung nebeneinander, vor „wirksam“ steht
     /// „beabsichtigt“.
     private func assertLinesAreSequential(_ all: [[String: Any]], file: StaticString = #filePath, line: UInt = #line) {
-        let sessionless = all.filter { ["release", "intent", "effective", "ineffective"].contains($0["t"] as? String ?? "") }
-        XCTAssertEqual(Set(sessionless.compactMap { $0["run"] as? Int }).count, 1, "ein Lauf", file: file, line: line)
-        let numbers = sessionless.compactMap { $0["chg"] as? Int }
-        XCTAssertEqual(numbers.count, sessionless.count, file: file, line: line)
-        XCTAssertEqual(numbers, numbers.sorted(), "die Folgen vermischen sich nicht", file: file, line: line)
+        // Die eine Ordnung: Änderungen mit und ohne Sitzung teilen Lauf und Nummernraum; die Zeilen EINER Änderung stehen nebeneinander.
+        let changes = all.filter { ["release", "intent", "effective", "ineffective"].contains($0["t"] as? String ?? "") }
+        XCTAssertEqual(Set(changes.compactMap { $0["run"] as? Int }).count, 1, "ein Lauf", file: file, line: line)
+        let numbers = changes.compactMap { $0["chg"] as? Int }
+        XCTAssertEqual(numbers.count, changes.count, file: file, line: line)
         XCTAssertEqual(Set(numbers), Set(1...(numbers.max() ?? 0)), "fortlaufend, ohne Lücke", file: file, line: line)
+        var seen = Set<Int>()
+        var previous: Int?
+        for n in numbers {
+            if n != previous { XCTAssertTrue(seen.insert(n).inserted, "die Zeilen der Änderung \(n) stehen nebeneinander", file: file, line: line) }
+            previous = n
+        }
         for n in Set(numbers) {
-            let kinds = sessionless.filter { $0["chg"] as? Int == n }.compactMap { $0["t"] as? String }
-            XCTAssertTrue(kinds == ["release"] || kinds == ["intent", "effective"], "Änderung \(n): \(kinds)", file: file, line: line)
+            let kinds = changes.filter { $0["chg"] as? Int == n }.compactMap { $0["t"] as? String }
+            XCTAssertTrue(kinds == ["release"] || kinds == ["intent", "effective"] || kinds == ["intent", "ineffective"],
+                          "Änderung \(n): \(kinds)", file: file, line: line)
         }
     }
 }

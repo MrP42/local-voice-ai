@@ -12,6 +12,10 @@ import Foundation
 //   Segment. Innerhalb eines Blocks wird weder getrennt noch gekürzt, mehrere Blöcke werden nicht zusammengezogen, ein Block über
 //   `maxBlockChars` erscheint nie. Strukturelle Grenzen garantieren keine Satzgrenzen: der Auszug kann ein Fragment sein oder
 //   Zusammenhang auslassen; die Kennzeichnung „Wörtlicher Auszug“ deckt das. Satzzeichen sind kein Kriterium.
+// - Ausgegeben wird der ROHE gespeicherte Block (`AssistantPassage.raw`), Zeichen für Zeichen, nie der aufbereitete Text
+//   (`AssistantPassage.text`, nur für Suche und Prompt). Zeilentrenner (`\r`, `\r\n`, U+2028 …), doppelte Leerzeichen, Tabs,
+//   Rand-Leerraum und die Unicode-Form (NFD/NFC) bleiben, wie sie gespeichert sind; die Prüfung vor der Ausgabe vergleicht die
+//   UTF-8-Bytefolge (`mayOutput`). Gibt es keinen eindeutigen Rohtext, ist der Block nicht zitierbar.
 // - ALLGEMEINRUNDE (nur mit Opt-in, Prompt ohne Auszüge und ohne Bestand): Vorlage → neutral; Eigendatenbezug
 //   (`AssistantOwnData`) → verworfen; Ähnlichkeit mit eigenem Inhalt (`resemblesOwnContent`, Abruf mit dem Satz als Anfrage)
 //   → verworfen; sonst „ohne Quelle“. Nie grounded. Die Listen und die Ähnlichkeit können nur verbieten, nie erlauben.
@@ -117,19 +121,25 @@ public enum AssistantGrounding {
 
     // MARK: Quellblöcke
 
-    /// Ein ganzer Quellblock im Originalwortlaut, zeichengleich mit dem gespeicherten Block (Zeilenumbrüche bleiben).
+    /// Ein ganzer Quellblock im Originalwortlaut: `text` ist der ROHE gespeicherte Block (Bytefolge wie gespeichert), `words` und
+    /// `content` stammen aus dem aufbereiteten Text und dienen nur der Auswahl.
     public struct SourceBlock: Sendable, Equatable {
+        /// Der auszugebende Text. Bei einem Zitat der rohe gespeicherte Block.
         public let text: String
         public let passage: AssistantPassage
         let words: [String]
         let content: [String]
 
-        init(text: String, passage: AssistantPassage) {
+        /// `searchText`: der Text, aus dem Wörter und Inhaltswörter für die Auswahl stammen (aufbereitet); Standard: `text`.
+        init(text: String, passage: AssistantPassage, searchText: String? = nil) {
             self.text = text
             self.passage = passage
-            self.words = BookTalkTokens.foldedWords(text)
-            self.content = BookTalkTokens.contentWords(text).filter { !AssistantGrounding.ignoring.contains($0) }
+            let search = searchText ?? text
+            self.words = BookTalkTokens.foldedWords(search)
+            self.content = BookTalkTokens.contentWords(search).filter { !AssistantGrounding.ignoring.contains($0) }
         }
+
+        public static func == (a: SourceBlock, b: SourceBlock) -> Bool { a.text.hasSameBytes(as: b.text) && a.passage == b.passage }
 
         /// Schlüssel zum Erkennen doppelter Zitate.
         public var key: String { "\(passage.area.rawValue)/\(passage.itemId)/\(passage.locator ?? "")/\(text)" }
@@ -137,8 +147,12 @@ public enum AssistantGrounding {
         public var sourceKey: String { "\(passage.area.rawValue)/\(passage.itemId)" }
     }
 
-    /// Längster Block, der ausgegeben wird; ein längerer ist nicht zitierbar und wird nie gekürzt oder geteilt.
+    /// Längster Block, der ausgegeben wird; ein längerer ist nicht zitierbar und wird nie gekürzt oder geteilt. Gemessen am ROHEN
+    /// Block in UTF-16-Einheiten (die strengste der Zählungen: nie weniger als Zeichen oder Skalare; `\r\n` zählt zwei).
     public static let maxBlockChars = 600
+
+    /// Der rohe Block liegt innerhalb der Obergrenze.
+    static func fits(raw: String) -> Bool { raw.utf16.count <= maxBlockChars }
 
     /// Die zitierbaren Quellblöcke aller Auszüge in Auszug-Reihenfolge: genau die Auszüge, die ein ganzer gespeicherter Block sind
     /// (`AssistantPassage.isBlock`, nicht gekürzt) und nicht über `maxBlockChars` liegen. Es gibt keine Nähte, keine Satzprüfung
@@ -148,7 +162,8 @@ public enum AssistantGrounding {
 
         public init(passages: [AssistantPassage]) {
             blocks = passages.compactMap { p in
-                AssistantGrounding.isQuotable(p) ? SourceBlock(text: p.text, passage: p) : nil
+                guard AssistantGrounding.isQuotable(p), let raw = p.raw else { return nil }
+                return SourceBlock(text: raw, passage: p, searchText: p.text)
             }
         }
 
@@ -181,17 +196,23 @@ public enum AssistantGrounding {
         return out
     }
 
-    /// Zitierbar: ein ganzer gespeicherter Block einer zitierbaren Quellart, nicht leer, höchstens `maxBlockChars` lang. Satzzeichen,
-    /// Länge in Wörtern und Anfangsbuchstabe spielen keine Rolle („Milch kaufen“ ist als Block zitierbar). Erzeugter Text, Mails
-    /// und Kalendereinträge (`quotable == false`) sind es nie. Dieselbe Prüfung gilt bei der Auswahl (`Basis`) und unmittelbar vor
-    /// der Ausgabe (`RunEmitter.emitQuote`).
+    /// Zitierbar: ein ganzer gespeicherter Block einer zitierbaren Quellart MIT eindeutigem Rohtext, im Rohtext nicht nur Leerraum,
+    /// höchstens `maxBlockChars` lang (am Rohtext gemessen). Satzzeichen, Länge in Wörtern und Anfangsbuchstabe spielen keine
+    /// Rolle („Milch kaufen“ ist als Block zitierbar). Erzeugter Text, Mails und Kalendereinträge (`quotable == false`) sind es
+    /// nie, ebenso wenig ein Block ohne Rohtext (nie ersatzweise der aufbereitete Text). Dieselbe Prüfung gilt bei der Auswahl
+    /// (`Basis`) und unmittelbar vor der Ausgabe (`RunEmitter.emitQuote`).
     static func isQuotable(_ p: AssistantPassage) -> Bool {
-        p.isBlock && p.quotable && !p.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && p.text.count <= maxBlockChars
+        guard p.isBlock, p.quotable, let raw = p.raw else { return false }
+        return !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && fits(raw: raw)
     }
 
     /// Die Prüfung unmittelbar vor der Ausgabe eines Zitats (zweite, von der Auswahl unabhängige Stelle): ein ganzer Block einer
-    /// zitierbaren Quellart, zeichengleich mit dem gespeicherten Text des Auszugs.
-    static func mayOutput(_ q: SourceBlock) -> Bool { isQuotable(q.passage) && q.text == q.passage.text }
+    /// zitierbaren Quellart, dessen auszugebender Text BYTEGLEICH (UTF-8) mit dem rohen gespeicherten Block des Auszugs ist.
+    /// Kanonisch gleiche, aber anders kodierte Zeichenfolgen (NFD gegen NFC) bestehen nicht.
+    static func mayOutput(_ q: SourceBlock) -> Bool {
+        guard isQuotable(q.passage), let raw = q.passage.raw else { return false }
+        return q.text.hasSameBytes(as: raw)
+    }
 
     // MARK: Einrasten
 

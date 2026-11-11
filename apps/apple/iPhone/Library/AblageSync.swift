@@ -246,6 +246,11 @@ final class AblageSync: ObservableObject {
         let kennung = konto(acc).kennung
         let marke = standsfolge.beginnen(konto: kennung)
         let speicher = self.speicher, such = suchdienst
+        // Assistent (Klasse B): Index und Übersicht sind die Sicht, aus der der Assistent die Ablage liest (Schutzklasse, Papierkorb,
+        // angehalten, nur Gerät). Die Meldung kommt VOR dem Neuaufbau des Index, ihr Ende NACH dem Setzen der Übersicht (auch bei
+        // einem verworfenen Ergebnis oder einer Absage).
+        let meldung = AssistantContentWatch.shared.willChange()
+        defer { AssistantContentWatch.shared.changed(meldung) }
         let ansicht = await Task.detached(priority: .utility) {
             await such.ansichtAktualisieren(speicher: speicher, konto: kennung, nummer: marke.nummer)
         }.value
@@ -301,6 +306,9 @@ final class AblageSync: ObservableObject {
         // Sofort, vor jedem Warten: nichts, was bis jetzt zu aktualisieren begann, wird noch übernommen (auch nicht nach einer
         // Neuanmeldung mit demselben Konto); der Suchdienst weist alles unter der Schwelle ab.
         let schwelle = standsfolge.verwerfen()
+        // Assistent (Klasse B): Abmelden leert Texte, Index und Übersicht der Ablage; die Meldung kommt vor dem Entfernen.
+        let meldung = AssistantContentWatch.shared.willChange()
+        defer { AssistantContentWatch.shared.changed(meldung) }
         await dienst.verlassen()
         await suchdienst.leeren(nummer: schwelle)
         bericht = nil; uebersicht = nil; lastRun = nil; error = nil; fehlgeschlageneOriginale = []

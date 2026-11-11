@@ -191,15 +191,17 @@ extension AssistantReleaseState {
         return add.isEmpty ? nil : add
     }
 
-    /// `self` erweitert um `add`, soweit `bound` (das jüngste Ziel) es noch deckt: Eine spätere Einschränkung schneidet die
-    /// Erweiterung ab.
-    func expanded(by add: AssistantReleaseState, within bound: AssistantReleaseState) -> AssistantReleaseState {
-        let turnsOn = add.optIn && bound.optIn && !optIn
+    /// `self` erweitert um `add` (den noch verbliebenen Teil eines offenen Erweiterungsschritts; spätere Einschränkungen haben ihn
+    /// im Register der offenen Schritte schon gekürzt, `AssistantRelease.open`).
+    func expanded(by add: AssistantReleaseState) -> AssistantReleaseState {
+        let turnsOn = add.optIn && !optIn
         let on = optIn || turnsOn
-        return AssistantReleaseState(optIn: on, consentVersion: on ? (turnsOn ? bound.consentVersion : consentVersion) : 0,
-                                     areas: areas.union(add.areas.intersection(bound.areas)),
-                                     cloudConsent: cloudConsent || (add.cloudConsent && bound.cloudConsent))
+        return AssistantReleaseState(optIn: on, consentVersion: on ? (turnsOn ? add.consentVersion : consentVersion) : 0,
+                                     areas: areas.union(add.areas), cloudConsent: cloudConsent || add.cloudConsent)
     }
+
+    /// Der leere Stand (nichts ist eingeschaltet).
+    static let none = AssistantReleaseState(optIn: false, consentVersion: 0, areas: [], cloudConsent: false)
 }
 
 /// Eine Sicherungsfolge in der Reihe der Änderungen der Klasse A. Die Karten werden im Lock der Freigabe in der Reihenfolge der
@@ -312,8 +314,8 @@ final class AssistantRelease: @unchecked Sendable {
         let change: Int?
         let cause: AssistantReleaseCause
         let state: AssistantReleaseState
-        /// Fehlerschlüssel der Zeile im Schreiber.
-        var key: String { change.map { "chg:\($0)" } ?? "gen:\(generation)" }
+        /// Fehlerschlüssel der Zeile im Schreiber (mit der Kennung der Ordnung: je Lauf und Änderung eindeutig).
+        let key: String
         var optIn: Bool { state.optIn }
         var consentVersion: Int { state.consentVersion }
     }
@@ -333,7 +335,8 @@ final class AssistantRelease: @unchecked Sendable {
         /// Erweiterung: der hinzukommende Teil. Einschränkung und Ereignis: der wirksame Stand unmittelbar nach dem Anwenden.
         let delta: AssistantReleaseState
         let ticket: AssistantChangeTicket
-        var key: String { "chg:\(number)" }
+        /// Fehlerschlüssel der Zeilen dieser Änderung im Schreiber (je Lauf und Änderung eindeutig).
+        let key: String
     }
 
     /// Ergebnis von `apply`: die Generation nach dem sofort wirkenden Teil und die Teile, die noch zu sichern sind.
@@ -345,32 +348,34 @@ final class AssistantRelease: @unchecked Sendable {
         var expands: Bool { steps.contains { $0.kind == .expansion } }
     }
 
-    private let lock: NSLock
-    /// Wiedergabesperre: teilt diesen Lock und wird mit der Generation vorgerückt.
-    let playback: AssistantPlaybackGate
-    private var generation = 0
-    /// Der WIRKSAME Stand.
+    /// Die prozessweite Ordnung: Lock, Generation, Wiedergabesperre, Register der Anfragen, Beobachter, Zähler, Reihe, Lauf-Token.
+    let clock: AssistantReleaseClock
+    private var lock: NSLock { clock.lock }
+    /// Kennung dieser Sicht im Register der Anfragen und bei den Beobachtern.
+    private let owner = UUID().uuidString
+    /// Wiedergabesperre: teilt den Lock der Ordnung und wird mit der Generation vorgerückt.
+    var playback: AssistantPlaybackGate { clock.playback }
+    /// Der WIRKSAME Stand dieser Sicht.
     private var state: AssistantReleaseState
-    /// Der beabsichtigte Stand nach allen angewendeten Änderungen (auch denen, die noch auf ihre Sicherung warten).
+    /// Der beabsichtigte Stand: wirksamer Stand plus alle noch offenen Erweiterungen (immer aus beidem berechnet).
     private var target: AssistantReleaseState
-    private var changeCounter = 0
+    /// Register der offenen Erweiterungsschritte (Nummer → der noch verbliebene Teil). Eine Einschränkung streicht die entzogenen
+    /// Teile aus ALLEN offenen Schritten (im selben Lock); ein Schritt macht nur seinen verbliebenen Teil wirksam, unabhängig vom
+    /// späteren Ziel. Ein später beantragter Teil wirkt nur über die eigene Folge.
+    private var open: [Int: AssistantReleaseState] = [:]
     private var lockedState: Bool
     private var blockedState: Bool
     private var contentEpoch = 0
     private var corpusEpoch = 0
-    private var queueTail: AssistantChangeTicket?
-    private var runs: [String: @Sendable () -> Void] = [:]
-    private var observer: (@Sendable (Int) -> Void)?
     /// Wird bei Wirksamwerden einer Erweiterung, bei Änderungen von Inhalten und bei der Blockade genau einmal gerufen, IM Lock, an
     /// der Stelle der Erhöhung (die Zeile steht damit in derselben Reihenfolge wie die Commit-Zeilen). Kurz und ohne I/O (Zeile
     /// einreihen), ruft nie zurück.
     private let onIncrease: (@Sendable (Increase) -> Void)?
 
     init(optIn: Bool, consentVersion: Int = 0, areas: Set<AssistantArea> = Set(AssistantArea.allCases), cloudConsent: Bool = true,
-         locked: Bool = false, blocked: Bool = false, onIncrease: (@Sendable (Increase) -> Void)? = nil) {
-        let shared = NSLock()
-        self.lock = shared
-        self.playback = AssistantPlaybackGate(lock: shared)
+         locked: Bool = false, blocked: Bool = false, clock: AssistantReleaseClock = AssistantReleaseClock(),
+         onIncrease: (@Sendable (Increase) -> Void)? = nil) {
+        self.clock = clock
         let initial = AssistantReleaseState(optIn: optIn, consentVersion: optIn ? consentVersion : 0, areas: areas, cloudConsent: cloudConsent)
         self.state = initial
         self.target = initial
@@ -379,11 +384,21 @@ final class AssistantRelease: @unchecked Sendable {
         self.onIncrease = onIncrease
     }
 
+    /// Der beabsichtigte Stand aus dem wirksamen und den offenen Schritten (Aufrufer hält den Lock).
+    private func recomputeTargetLocked() {
+        open = open.filter { !$0.value.isEmpty }
+        var next = state
+        for number in open.keys.sorted() { next = next.expanded(by: open[number] ?? .none) }
+        target = next
+    }
+
+    private func runKey(_ id: String) -> String { "\(owner)/\(id)" }
+
     /// Generation, Stand und Zustand des Bestands zusammen, aus EINEM Lock: Eine Anfrage liest alles in einem Schritt.
     var snapshot: Snapshot {
         lock.lock()
         defer { lock.unlock() }
-        return Snapshot(generation: generation, state: state, locked: lockedState, blocked: blockedState,
+        return Snapshot(generation: clock.generationLocked, state: state, locked: lockedState, blocked: blockedState,
                         corpusReady: corpusEpoch == contentEpoch, contentEpoch: contentEpoch)
     }
 
@@ -394,41 +409,19 @@ final class AssistantRelease: @unchecked Sendable {
     var registeredCount: Int {
         lock.lock()
         defer { lock.unlock() }
-        return runs.count
+        return clock.registeredCountLocked(prefix: owner + "/")
     }
 
-    /// Der Beobachter wird nach JEDER Erhöhung der Generation gerufen (außerhalb des Locks, auf dem Thread des Auslösers).
+    /// Der Beobachter dieser Sicht wird nach JEDER Erhöhung der Generation der Ordnung gerufen (auch nach der einer anderen Sitzung;
+    /// außerhalb des Locks, auf dem Thread des Auslösers).
     func setObserver(_ observer: (@Sendable (Int) -> Void)?) {
         lock.lock()
-        self.observer = observer
+        clock.setObserverLocked(ObjectIdentifier(self), observer)
         lock.unlock()
     }
 
-    private func nextTicket() -> AssistantChangeTicket {
-        let ticket = AssistantChangeTicket(previous: queueTail)
-        queueTail = ticket
-        return ticket
-    }
-
     /// Eine Karte in der Reihe der Sicherungsfolgen, ohne Änderung (Wiederholung der Sicherung).
-    func enqueueTicket() -> AssistantChangeTicket {
-        lock.lock()
-        defer { lock.unlock() }
-        return nextTicket()
-    }
-
-    /// Hebt die Generation im Lock (Aufrufer hält ihn) und rückt die Wiedergabesperre vor.
-    private func raiseLocked() -> Int {
-        generation += 1
-        playback.discardLocked(below: generation)
-        return generation
-    }
-
-    /// Meldet eine Erhöhung: Läufe widerrufen und Beobachter rufen, beides außerhalb des Locks.
-    private func finishRaise(_ g: Int, revoke: [@Sendable () -> Void], notify: (@Sendable (Int) -> Void)?) {
-        for r in revoke { r() }
-        notify?(g)
-    }
+    func enqueueTicket() -> AssistantChangeTicket { clock.nextTicket() }
 
     /// Wendet eine Änderung der Klasse A an. Sie wird gegen den beabsichtigten Stand (`target`) verglichen und zerlegt:
     /// - Einschränkung (etwas fällt weg): wirkt sofort, im selben Lock steigt die Generation und wird der Stand gesetzt (eine
@@ -455,7 +448,7 @@ final class AssistantRelease: @unchecked Sendable {
         let removes = target.restricted(to: next) != target
         let adds = target.addition(to: next)
         if !removes, adds == nil, !change.force {
-            let g = generation
+            let g = clock.generationLocked
             lock.unlock()
             return Applied(generation: g, changed: false, steps: [])
         }
@@ -463,73 +456,71 @@ final class AssistantRelease: @unchecked Sendable {
         var raised = false
         if removes {
             state = state.restricted(to: next)
-            changeCounter += 1
-            let g = raiseLocked()
-            steps.append(Step(kind: .restriction, number: changeCounter, cause: change.cause, generation: g, delta: state,
-                              ticket: nextTicket()))
+            // Die Einschränkung streicht die entzogenen Teile aus allen früher ausgegebenen, noch nicht wirksamen Erweiterungen.
+            for (number, remaining) in open { open[number] = remaining.restricted(to: next) }
+            let number = clock.nextChangeLocked()
+            let g = clock.raiseLocked()
+            steps.append(Step(kind: .restriction, number: number, cause: change.cause, generation: g, delta: state,
+                              ticket: clock.nextTicketLocked(), key: clock.key("chg", number)))
             raised = true
         }
         if let adds {
-            changeCounter += 1
-            steps.append(Step(kind: .expansion, number: changeCounter, cause: change.cause, generation: 0, delta: adds,
-                              ticket: nextTicket()))
+            let number = clock.nextChangeLocked()
+            open[number] = adds
+            steps.append(Step(kind: .expansion, number: number, cause: change.cause, generation: 0, delta: adds,
+                              ticket: clock.nextTicketLocked(), key: clock.key("chg", number)))
         }
         if steps.isEmpty {
-            changeCounter += 1
-            let g = raiseLocked()
-            steps.append(Step(kind: .event, number: changeCounter, cause: change.cause, generation: g, delta: state, ticket: nextTicket()))
+            let number = clock.nextChangeLocked()
+            let g = clock.raiseLocked()
+            steps.append(Step(kind: .event, number: number, cause: change.cause, generation: g, delta: state,
+                              ticket: clock.nextTicketLocked(), key: clock.key("chg", number)))
             raised = true
         }
-        target = next
-        let g = generation
-        let revoke = raised ? Array(runs.values) : []
-        if raised { runs.removeAll() }
-        let notify = raised ? observer : nil
+        recomputeTargetLocked()
+        let g = clock.generationLocked
+        let after = raised ? clock.drainLocked(g) : nil
         lock.unlock()
-        finishRaise(g, revoke: revoke, notify: notify)
+        after?.finish()
         return Applied(generation: g, changed: true, steps: steps)
     }
 
-    /// Der Stand, den die Zustandsdatei für diesen Teil erhalten soll: bei einer Erweiterung der wirksame Stand mit dem Teil
-    /// (soweit das jüngste Ziel ihn deckt), sonst der wirksame Stand. Gelesen im Lock, damit eine zwischenzeitliche Einschränkung
-    /// in die Datei eingeht (und eine frühere, nicht gesicherte gleich mit).
+    /// Der Stand, den die Zustandsdatei für diesen Teil erhalten soll: bei einer Erweiterung der wirksame Stand mit dem noch
+    /// verbliebenen Teil DIESES Schritts (nie mit einem späteren Ziel), sonst der wirksame Stand. Gelesen im Lock, damit eine
+    /// zwischenzeitliche Einschränkung in die Datei eingeht (und eine frühere, nicht gesicherte gleich mit).
     func viewForSave(_ step: Step) -> AssistantReleaseState {
         lock.lock()
         defer { lock.unlock() }
-        return step.kind == .expansion ? state.expanded(by: step.delta, within: target) : state
+        return step.kind == .expansion ? state.expanded(by: open[step.number] ?? .none) : state
     }
 
     /// Eine Erweiterung wird wirksam, im unteilbaren Schritt: Stand setzen, Generation erhöhen, Wiedergabesperre vorrücken, Zeile
-    /// „wirksam“ einreihen, alles in EINEM Lock. Nur nach bestätigtem Austausch der Zustandsdatei aufrufen. `nil`: nicht
-    /// möglich (blockiert: für den Rest des Laufs nichts mehr aus eigenen Inhalten). Eine spätere Einschränkung schneidet den Teil ab.
+    /// „wirksam“ einreihen, alles in EINEM Lock. Nur nach bestätigtem Austausch der Zustandsdatei aufrufen. Gesetzt wird nur der
+    /// verbliebene Teil des eigenen Schritts. `nil`: nicht möglich (blockiert, oder eine Einschränkung hat den Teil entzogen).
     func becomeEffective(_ step: Step) -> Int? {
         lock.lock()
-        guard !blockedState else {
+        guard !blockedState, let remaining = open[step.number], !remaining.isEmpty else {
             lock.unlock()
             return nil
         }
-        state = state.expanded(by: step.delta, within: target)
+        open[step.number] = nil
+        state = state.expanded(by: remaining)
         lockedState = false
-        let g = raiseLocked()
-        onIncrease?(Increase(kind: .effective, generation: g, change: step.number, cause: step.cause, state: state))
-        let revoke = Array(runs.values)
-        let notify = observer
-        runs.removeAll()
+        recomputeTargetLocked()
+        let g = clock.raiseLocked()
+        onIncrease?(Increase(kind: .effective, generation: g, change: step.number, cause: step.cause, state: state, key: step.key))
+        let after = clock.drainLocked(g)
         lock.unlock()
-        finishRaise(g, revoke: revoke, notify: notify)
+        after.finish()
         return g
     }
 
-    /// Eine Erweiterung wird in diesem Lauf nicht wirksam: der beabsichtigte Stand verliert, was nicht wirksam ist (sonst ließe
-    /// sich dieselbe Erweiterung nicht noch einmal anstoßen).
+    /// Eine Erweiterung wird in diesem Lauf nicht wirksam: Ihr Schritt verlässt das Register, der beabsichtigte Stand verliert, was
+    /// nur sie wollte (andere offene Schritte bleiben), und dieselbe Erweiterung lässt sich noch einmal anstoßen.
     func abandon(_ step: Step) {
         lock.lock()
-        target.areas.subtract(step.delta.areas.subtracting(state.areas))
-        if step.delta.optIn, !state.optIn {
-            target.optIn = false
-            target.consentVersion = 0
-        }
-        if step.delta.cloudConsent, !state.cloudConsent { target.cloudConsent = false }
+        open[step.number] = nil
+        recomputeTargetLocked()
         lock.unlock()
     }
 
@@ -546,19 +537,17 @@ final class AssistantRelease: @unchecked Sendable {
     func block() -> Int {
         lock.lock()
         if blockedState {
-            let g = generation
+            let g = clock.generationLocked
             lock.unlock()
             return g
         }
         blockedState = true
-        changeCounter += 1
-        let g = raiseLocked()
-        onIncrease?(Increase(kind: .block, generation: g, change: changeCounter, cause: .other, state: state))
-        let revoke = Array(runs.values)
-        let notify = observer
-        runs.removeAll()
+        let number = clock.nextChangeLocked()
+        let g = clock.raiseLocked()
+        onIncrease?(Increase(kind: .block, generation: g, change: number, cause: .other, state: state, key: clock.key("chg", number)))
+        let after = clock.drainLocked(g)
         lock.unlock()
-        finishRaise(g, revoke: revoke, notify: notify)
+        after.finish()
         return g
     }
 
@@ -573,13 +562,11 @@ final class AssistantRelease: @unchecked Sendable {
         lock.lock()
         contentEpoch += 1
         let epoch = contentEpoch
-        let g = raiseLocked()
-        onIncrease?(Increase(kind: .content, generation: g, change: nil, cause: .content, state: state))
-        let revoke = Array(runs.values)
-        let notify = observer
-        runs.removeAll()
+        let g = clock.raiseLocked()
+        onIncrease?(Increase(kind: .content, generation: g, change: nil, cause: .content, state: state, key: clock.key("gen", g)))
+        let after = clock.drainLocked(g)
         lock.unlock()
-        finishRaise(g, revoke: revoke, notify: notify)
+        after.finish()
         return (g, epoch)
     }
 
@@ -630,15 +617,23 @@ final class AssistantRelease: @unchecked Sendable {
     func register(_ id: String, generation: Int, revoke: @escaping @Sendable () -> Void) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        guard self.generation == generation else { return false }
-        runs[id] = revoke
+        guard clock.generationLocked == generation else { return false }
+        clock.registerLocked(runKey(id), revoke: revoke)
         return true
     }
 
     func unregister(_ id: String) {
         lock.lock()
-        runs[id] = nil
+        clock.unregisterLocked(runKey(id))
         lock.unlock()
+    }
+
+    /// Führt `body` im Lock der Ordnung aus, mit der dort stehenden Generation (für Zeilen, die in der Reihenfolge der Erhöhungen
+    /// stehen müssen, auch wenn die Aktion außerhalb lief: gemeldete Ergebnisse des Controllers). Dieselben Pflichten wie bei `ifCurrent`.
+    func inSection<T>(_ body: (Int) -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body(clock.generationLocked)
     }
 
     /// Führt `body` nur aus, wenn `generation` die aktuelle ist, und zwar im selben Lock wie die Prüfung: Eine Änderung
@@ -646,22 +641,31 @@ final class AssistantRelease: @unchecked Sendable {
     /// kurz sein (Ereignis in den Strom legen, Beitrag anhängen, Anzeige und Übergabe an die Stimme, Zeile einreihen), ohne I/O
     /// und ohne Warten, und darf NICHT in diese Freigabe zurückrufen (`NSLock` ist nicht rekursiv: `snapshot`, `apply`,
     /// `register`, `ifCurrent` im `body` hängen für immer).
-    func ifCurrent(_ generation: Int, _ body: () -> Void) -> AssistantCheck {
+    func ifCurrent(_ generation: Int, onStale: ((Int) -> Void)? = nil, _ body: () -> Void) -> AssistantCheck {
         lock.lock()
         defer { lock.unlock() }
-        guard self.generation == generation else { return AssistantCheck(result: .stale, generation: self.generation) }
+        let found = clock.generationLocked
+        guard found == generation else {
+            onStale?(found)
+            return AssistantCheck(result: .stale, generation: found)
+        }
         body()
         return AssistantCheck(result: .done, generation: generation)
     }
 
     /// Wie `ifCurrent`, für Aktionen, die sich nicht auslösen lassen können: `attempt` gibt zurück, ob die Aktion ausgelöst wurde
-    /// (`false`: Ergebnis `failed`, die Generation galt, die Aktion nicht). Gilt die Generation nicht, läuft `attempt` nicht.
-    /// Dieselben Pflichten wie bei `ifCurrent` (kurz, ohne I/O, kein Rückruf in die Freigabe). Die Ergebniszeile des Protokolls
-    /// reiht `attempt` selbst im Lock ein, mit dem Ergebnis der Aktion.
-    func ifCurrentAttempt(_ generation: Int, _ attempt: () -> Bool) -> AssistantCheck {
+    /// (`false`: Ergebnis `failed`, die Generation galt, die Aktion nicht). Gilt die Generation nicht, läuft `attempt` nicht und
+    /// `onStale` (Ablehnungszeile, IM Lock mit der vorgefundenen Generation: eine Zeile „verworfen“ steht nie hinter der Zeile einer
+    /// späteren Änderung). Dieselben Pflichten wie bei `ifCurrent` (kurz, ohne I/O, kein Rückruf in die Freigabe). Die Ergebniszeile
+    /// des Protokolls reiht `attempt` selbst im Lock ein, mit dem Ergebnis der Aktion.
+    func ifCurrentAttempt(_ generation: Int, onStale: ((Int) -> Void)? = nil, _ attempt: () -> Bool) -> AssistantCheck {
         lock.lock()
         defer { lock.unlock() }
-        guard self.generation == generation else { return AssistantCheck(result: .stale, generation: self.generation) }
+        let found = clock.generationLocked
+        guard found == generation else {
+            onStale?(found)
+            return AssistantCheck(result: .stale, generation: found)
+        }
         return AssistantCheck(result: attempt() ? .done : .failed, generation: generation)
     }
 }

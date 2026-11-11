@@ -178,8 +178,9 @@ public struct AssistantTraceStep: Sendable, Equatable, Codable {
         case notPlanned
     }
 
-    /// Die Commits einer ausgegebenen Einheit in der Reihenfolge ihres Auftretens (der Verlauf gehört zur Anfrage, nicht zur Einheit).
-    public static let unitStages: [AssistantCommitStage] = [.emit, .display, .audio]
+    /// Die Commits einer ausgegebenen Einheit in der Reihenfolge ihres Auftretens. Auch der Verlauf hat sein Ergebnis JE EINHEIT
+    /// (`h+g`: steht im Beitrag, `h-g`: steht nicht darin); die Marke der Anfrage insgesamt (n = 0) bleibt zusätzlich.
+    public static let unitStages: [AssistantCommitStage] = [.emit, .display, .audio, .history]
 
     /// Ob die Einheit überhaupt ausgegeben werden sollte (verworfene Kandidaten behaupten nichts).
     private var isOutput: Bool {
@@ -498,6 +499,9 @@ struct AssistantJournalLine: Codable, Equatable {
     var chg: Int?
     /// Zustandsdatei ungültig, Lauf gesperrt (`state`).
     var locked: Bool?
+    /// Die Bereiche des anderen Ziels (lokal/Cloud), wenn die Zustandsdatei beide führt (`state`): die Zeile trägt den ganzen
+    /// Stand der Klasse A, auch wenn die erste Sitzung des Laufs nur ein Ziel nutzt.
+    var otherAreas: [String]?
 
     init(_ t: Kind, req: String? = nil) {
         self.t = t
@@ -709,8 +713,29 @@ final class AssistantAuditWriter: @unchecked Sendable {
 
     private let reader: @Sendable (URL) throws -> Data?
     private let appender: @Sendable (URL, Data) throws -> Void
-    private let rewriter: @Sendable (URL, Data) throws -> Void
+    /// Eigenes Neuschreiben (Tests); ohne: das dauerhafte Verdichten über `fileSystem` (Temp-Datei, fsync, rename, fsync Verzeichnis).
+    private let rewriter: (@Sendable (URL, Data) throws -> Void)?
+    /// Dauerhaftigkeit: fsync der Datei, fsync des Verzeichnisses beim Anlegen, Teilschritte des Verdichtens. Tests ersetzen es, um
+    /// jeden Schritt scheitern zu lassen (wie beim Speicher der Zustandsdatei).
+    private let fileSystem: any AssistantStoreFileSystem
     private let queue = DispatchQueue(label: "de.wolffappliedai.localvoice.assistant.journal")
+
+    /// Eingereihte, noch nicht geschriebene Zeilen (kurzer Lock, nie I/O darunter). Die Warteschlange schreibt alles, was bis zu
+    /// ihrem Lauf eingereiht ist, in einem Durchgang und sichert es mit EINEM fsync (Gruppen-Commit): `flush` und alle Wartepunkte
+    /// kehren erst zurück, wenn dieses fsync die Zeile gedeckt hat.
+    private struct Pending {
+        let line: AssistantJournalLine
+        let run: AssistantRunToken?
+        let key: String
+    }
+    private let pendingLock = NSLock()
+    private var pending: [Pending] = []
+    /// Nur auf `queue`: Die Datei wurde neu angelegt, das Verzeichnis ist noch nicht dauerhaft bestätigt.
+    private var directoryUnsynced = false
+    /// Zahl der fsync der Datei (Tests, Messung der Wartepunkte).
+    private let syncLock = NSLock()
+    private var syncCountValue = 0
+    var syncCount: Int { syncLock.withLock { syncCountValue } }
 
     // Nur auf `queue`:
     private var opened = false
@@ -724,6 +749,10 @@ final class AssistantAuditWriter: @unchecked Sendable {
     /// Schlüssel mit unabgeholtem Fehler, hinter einem eigenen Lock (lesbar ohne Warteschlange).
     private let failedLock = NSLock()
     private var failed = Set<String>()
+    /// Wird gerufen, sobald eine Zeile einen Schreibfehler unter einem Schlüssel meldet (hinter `failedLock`; der Aufruf selbst
+    /// geschieht außerhalb jedes Locks, auf der Schreibwarteschlange). Der Controller stoppt damit die Ausgabe SOFORT, auch mitten
+    /// in der Wiedergabe, statt erst beim nächsten Start einer Einheit.
+    private var failureObserver: (@Sendable (String) -> Void)?
     static let maxErrors = 256
 
     /// Anfragen, über die verdichtet wird (die letzten).
@@ -731,11 +760,46 @@ final class AssistantAuditWriter: @unchecked Sendable {
 
     init(directory: URL, reader: @escaping @Sendable (URL) throws -> Data? = AssistantAuditWriter.readFile,
          appender: @escaping @Sendable (URL, Data) throws -> Void = AssistantAuditWriter.appendFile,
-         rewriter: @escaping @Sendable (URL, Data) throws -> Void = AssistantAuditWriter.rewriteFile) {
+         rewriter: (@Sendable (URL, Data) throws -> Void)? = nil,
+         fileSystem: any AssistantStoreFileSystem = AssistantPosixStoreFileSystem()) {
         self.directory = directory
         self.reader = reader
         self.appender = appender
         self.rewriter = rewriter
+        self.fileSystem = fileSystem
+    }
+
+    static let compactName = "protokoll.neu"
+
+    /// Dauerhaftes Verdichten: die ganze neue Fassung in eine EIGENE Datei, fsync, atomar umbenennen, fsync des Verzeichnisses. Ein
+    /// Fehler in einem Schritt lässt die alte Datei unversehrt (nur nach dem Umbenennen liegt schon die neue Fassung).
+    private func compact(_ url: URL, _ data: Data) throws {
+        if let rewriter { return try rewriter(url, data) }
+        let temp = directory.appendingPathComponent(Self.compactName)
+        var renamed = false
+        do {
+            try fileSystem.createDirectory(directory)
+            try fileSystem.writeNew(temp, data)
+            try fileSystem.syncFile(temp)
+            try fileSystem.rename(temp, to: url)
+            renamed = true
+            try fileSystem.syncDirectory(directory)
+        } catch {
+            if !renamed { fileSystem.remove(temp) }
+            throw error
+        }
+        BookTalkHistoryStore.excludeFromBackup(url)
+    }
+
+    /// Sichert, was geschrieben wurde: fsync der Datei, bei neu angelegter Datei auch das Verzeichnis (und dessen Eltern).
+    private func makeDurable() throws {
+        syncLock.withLock { syncCountValue += 1 }
+        try fileSystem.syncFile(url)
+        if directoryUnsynced {
+            try fileSystem.syncDirectory(directory)
+            try fileSystem.syncDirectory(directory.deletingLastPathComponent())
+            directoryUnsynced = false
+        }
     }
 
     // MARK: Dateizugriff
@@ -766,18 +830,6 @@ final class AssistantAuditWriter: @unchecked Sendable {
         defer { try? handle.close() }
         try handle.seekToEnd()
         try handle.write(contentsOf: data)
-    }
-
-    /// Schreibt die ganze Datei neu: Temp-Datei, dann atomar umbenennen. Ein Abbruch oder ein voller Datenträger lässt die alte
-    /// Datei unversehrt.
-    static func rewriteFile(_ url: URL, _ data: Data) throws {
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        #if os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)
-        try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
-        #else
-        try data.write(to: url, options: .atomic)
-        #endif
-        BookTalkHistoryStore.excludeFromBackup(url)
     }
 
     private static func encoder() -> JSONEncoder {
@@ -813,7 +865,28 @@ final class AssistantAuditWriter: @unchecked Sendable {
             queue.async { self.note(k, .encodeFailed) }
             return
         }
-        queue.async { self.write(line, run: run, req: k) }
+        pendingLock.withLock { pending.append(Pending(line: line, run: run, key: k)) }
+        queue.async { self.drain() }
+    }
+
+    /// Schreibt alles Eingereihte in der Reihenfolge des Einreihens und sichert es mit EINEM fsync. Scheitert das fsync, gelten alle
+    /// Zeilen dieser Gruppe als nicht geschrieben (Fehler unter ihrem Schlüssel): Eine Pflichtzeile, die nicht dauerhaft steht, gibt es nicht.
+    private func drain() {
+        let batch = pendingLock.withLock { () -> [Pending] in
+            let all = pending
+            pending.removeAll()
+            return all
+        }
+        guard !batch.isEmpty else { return }
+        var written: [String] = []
+        for item in batch where write(item.line, run: item.run, req: item.key) { written.append(item.key) }
+        guard !written.isEmpty else { return }
+        do {
+            try makeDurable()
+        } catch {
+            torn = true   // das Ende der Datei ist unsicher: die nächste Zeile beginnt mit einem Zeilenumbruch
+            for key in Set(written) { note(key, .writeFailed) }
+        }
     }
 
     /// Wartet, bis alles bis hierher Eingereihte geschrieben ist. Gibt den Fehler zurück, der für `request` (oder ohne Anfrage:
@@ -859,15 +932,30 @@ final class AssistantAuditWriter: @unchecked Sendable {
         }
         failedLock.lock()
         failed.insert(req)
+        let observer = failureObserver
+        failedLock.unlock()
+        observer?(req)
+    }
+
+    func setFailureObserver(_ observer: (@Sendable (String) -> Void)?) {
+        failedLock.lock()
+        failureObserver = observer
         failedLock.unlock()
     }
 
-    private func write(_ journal: AssistantJournalLine, run: AssistantRunToken?, req: String) {
-        guard openIfNeeded() else { return note(req, openError) }
+    /// `true`: die Zeile wurde angehängt (noch nicht dauerhaft: das deckt das fsync der Gruppe).
+    private func write(_ journal: AssistantJournalLine, run: AssistantRunToken?, req: String) -> Bool {
+        guard openIfNeeded() else {
+            note(req, openError)
+            return false
+        }
         var journal = journal
         if let run { journal.run = run.resolve { maxRun += 1; return maxRun } }
         if let r = journal.run, r > maxRun { maxRun = r }
-        guard let line = try? Self.encoder().encode(journal) else { return note(req, .encodeFailed) }
+        guard let line = try? Self.encoder().encode(journal) else {
+            note(req, .encodeFailed)
+            return false
+        }
         var data = Data()
         if torn { data.append(10) }
         data.append(line)
@@ -875,9 +963,11 @@ final class AssistantAuditWriter: @unchecked Sendable {
         do {
             try appender(url, data)
             torn = false
+            return true
         } catch {
             torn = true
             note(req, .writeFailed)
+            return false
         }
     }
 
@@ -891,6 +981,8 @@ final class AssistantAuditWriter: @unchecked Sendable {
             return false
         }
         guard let data, !data.isEmpty else {
+            // Die Datei gibt es nicht (oder sie ist leer): wird sie angelegt, bestätigt der Schreiber auch das Verzeichnis.
+            if data == nil { directoryUnsynced = true }
             opened = true
             return true
         }
@@ -940,7 +1032,7 @@ final class AssistantAuditWriter: @unchecked Sendable {
                 out.append(10)
             }
             do {
-                try rewriter(url, out)
+                try compact(url, out)
                 torn = false
                 opened = true
                 return true
@@ -957,6 +1049,13 @@ final class AssistantAuditWriter: @unchecked Sendable {
                 try appender(url, bytes)
                 torn = false
             } catch {
+                torn = true
+                openError = .writeFailed
+                return false
+            }
+        }
+        if !closing.isEmpty {
+            do { try makeDurable() } catch {
                 torn = true
                 openError = .writeFailed
                 return false
@@ -1031,10 +1130,15 @@ public struct AssistantAuditLog: Sendable {
     /// Nur für Tests: eigener Schreiber (nicht in der Registry) mit austauschbarem Lesen und Schreiben.
     init(directory: URL, reader: @escaping @Sendable (URL) throws -> Data?,
          appender: @escaping @Sendable (URL, Data) throws -> Void = AssistantAuditWriter.appendFile,
-         rewriter: @escaping @Sendable (URL, Data) throws -> Void = AssistantAuditWriter.rewriteFile) {
+         rewriter: (@Sendable (URL, Data) throws -> Void)? = nil,
+         fileSystem: any AssistantStoreFileSystem = AssistantPosixStoreFileSystem()) {
         self.directory = directory
-        self.writer = AssistantAuditWriter(directory: directory, reader: reader, appender: appender, rewriter: rewriter)
+        self.writer = AssistantAuditWriter(directory: directory, reader: reader, appender: appender, rewriter: rewriter,
+                                           fileSystem: fileSystem)
     }
+
+    /// Zahl der fsync der Datei bisher (Tests, Messung der Wartepunkte vor dem ersten Ton).
+    var syncCount: Int { writer.syncCount }
 
     /// Standardort der App: neben dem Verlauf in `Application Support/Assistant`.
     public static func standardDirectory() -> URL { AssistantHistoryStore.standardDirectory() }
@@ -1060,6 +1164,11 @@ public struct AssistantAuditLog: Sendable {
 
     /// Hat eine Zeile dieser Anfrage schon einen Schreibfehler gemeldet? Ohne Warten, aus jedem Thread.
     public func hasFailed(request: String) -> Bool { writer.hasFailed(request) }
+
+    /// Meldet jeden Schreibfehler einer Zeile mit dem Schlüssel der Anfrage (bzw. der Zeile), sobald er geschieht. Der Aufruf kommt
+    /// von der Schreibwarteschlange: kurz, ohne Warten, ohne Rückruf in die Ordnung (Controller: auf den Hauptthread wechseln und die
+    /// Ausgabe stoppen). Ein Fehler vor dem Anmelden wird nicht nachgemeldet (`hasFailed` zeigt ihn).
+    public func setFailureObserver(_ observer: (@Sendable (String) -> Void)?) { writer.setFailureObserver(observer) }
 
     /// Wartet auf die Zeile mit diesem Schlüssel (`release:<Generation>`, `state`) und holt ihren Fehler ab.
     func waitForLine(key: String) async -> AssistantAuditError? { await writer.flush(request: key) }
