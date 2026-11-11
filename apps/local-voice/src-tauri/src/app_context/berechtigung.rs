@@ -623,49 +623,65 @@ mod tests {
     #[test]
     fn leser_parallel_zu_schreibern_sehen_nie_neue_version_mit_alten_einstellungen() {
         use std::sync::atomic::AtomicBool;
-        use std::sync::Arc;
-        const SCHREIBER: u32 = 4;
-        const RUNDEN: u32 = 400;
+        use std::sync::{Arc, Barrier};
+        use std::time::{Duration, Instant};
+        const SCHREIBER: usize = 4;
+        const LESER: usize = 4;
+        /// Jeder Leser muss so viele Lesungen gemacht haben, WÄHREND Schreiber liefen.
+        const MIN_LESUNGEN: u32 = 50;
+        const GRENZE: Duration = Duration::from_secs(20);
+
         let z = Arc::new(Zaehler::neu());
         let store = Arc::new(Mutex::new(zustand(1)));
+        let start = Arc::new(Barrier::new(SCHREIBER + LESER));
+        // Schreiber, die noch laufen, und Leser, die ihre Mindestzahl überlappender Lesungen erreicht haben.
+        let laufend = Arc::new(AtomicU32::new(SCHREIBER as u32));
+        let genug = Arc::new(AtomicU32::new(0));
         let fertig = Arc::new(AtomicBool::new(false));
+        let geschrieben = Arc::new(AtomicU32::new(0));
 
+        // Schreiber: laufen in Runden weiter, bis jeder Leser genug überlappende Lesungen hat. Wird die
+        // Grenze erreicht (ein Leser kommt nie zum Zug), schlägt der Test fehl.
         let schreiber: Vec<_> = (0..SCHREIBER)
             .map(|_| {
-                let (z, store) = (z.clone(), store.clone());
+                let (z, store, start) = (z.clone(), store.clone(), start.clone());
+                let (laufend, genug, geschrieben) =
+                    (laufend.clone(), genug.clone(), geschrieben.clone());
                 std::thread::spawn(move || {
-                    for _ in 0..RUNDEN {
+                    start.wait();
+                    let ende = Instant::now() + GRENZE;
+                    while genug.load(Ordering::SeqCst) < LESER as u32 {
+                        assert!(
+                            Instant::now() < ende,
+                            "die Leser kamen nicht zu {MIN_LESUNGEN} Lesungen während der Schreiber"
+                        );
                         naechster_zustand(&z, &store);
+                        geschrieben.fetch_add(1, Ordering::SeqCst);
                     }
+                    laufend.fetch_sub(1, Ordering::SeqCst);
                 })
             })
             .collect();
 
-        // Leser mit Schnappschuss (`lesen_mit`, wie Abruf und Tor): Version und Stand passen immer
-        // zusammen, also nie erweiterte Bereiche zu einer alten und nie alte zu einer neuen Version.
-        let mit_sperre: Vec<_> = (0..2)
-            .map(|_| {
-                let (z, store, fertig) = (z.clone(), store.clone(), fertig.clone());
-                std::thread::spawn(move || {
-                    let mut gelesen = 0u32;
-                    while !fertig.load(Ordering::SeqCst) {
+        // Ein Leser zählt eine Lesung nur, wenn vor UND nach ihr noch ein Schreiber lief.
+        let leser = |mit_sperre: bool| {
+            let (z, store, start) = (z.clone(), store.clone(), start.clone());
+            let (laufend, genug, fertig) = (laufend.clone(), genug.clone(), fertig.clone());
+            std::thread::spawn(move || {
+                start.wait();
+                let (mut ueberlappend, mut hoechste) = (0u32, 0u32);
+                while !fertig.load(Ordering::SeqCst) {
+                    let vorher = laufend.load(Ordering::SeqCst);
+                    let version = if mit_sperre {
+                        // Schnappschuss (`lesen_mit`, wie Abruf und Tor): Version und Stand passen
+                        // immer zusammen, also nie erweiterte Bereiche zu einer alten und nie alte
+                        // Einstellungen zu einer neuen Version.
                         let (v, s) = z.lesen_mit(|| store.lock().unwrap().clone());
                         assert_eq!(s, zustand(v), "Version {v} mit fremdem Stand");
-                        gelesen += 1;
-                    }
-                    gelesen
-                })
-            })
-            .collect();
-
-        // Leser ohne Sperre (die Endprüfungen): erst die Version, dann der Stand. Der Stand ist nie
-        // älter als die Version.
-        let ohne_sperre: Vec<_> = (0..2)
-            .map(|_| {
-                let (z, store, fertig) = (z.clone(), store.clone(), fertig.clone());
-                std::thread::spawn(move || {
-                    let mut gelesen = 0u32;
-                    while !fertig.load(Ordering::SeqCst) {
+                        v
+                    } else {
+                        // Ohne Sperre (die Endprüfungen): erst die Version, dann der Stand; der Stand
+                        // ist nie älter als die Version.
                         let v = z.version();
                         let s = store.lock().unwrap().clone();
                         assert!(
@@ -673,21 +689,40 @@ mod tests {
                             "neue Version {v} mit altem Stand {}",
                             nummer(&s)
                         );
-                        gelesen += 1;
+                        v
+                    };
+                    hoechste = hoechste.max(version);
+                    if vorher > 0 && laufend.load(Ordering::SeqCst) > 0 {
+                        ueberlappend += 1;
+                        if ueberlappend == MIN_LESUNGEN {
+                            genug.fetch_add(1, Ordering::SeqCst);
+                        }
                     }
-                    gelesen
-                })
+                }
+                (ueberlappend, hoechste)
             })
-            .collect();
+        };
+        let leser: Vec<_> = (0..LESER).map(|i| leser(i % 2 == 0)).collect();
 
-        for h in schreiber {
-            h.join().unwrap();
-        }
+        let schreiber_ergebnis: Vec<_> = schreiber.into_iter().map(|h| h.join()).collect();
         fertig.store(true, Ordering::SeqCst);
-        for h in mit_sperre.into_iter().chain(ohne_sperre) {
-            h.join().unwrap();
+        let lesungen: Vec<(u32, u32)> = leser.into_iter().map(|h| h.join().unwrap()).collect();
+        for r in schreiber_ergebnis {
+            r.unwrap();
         }
-        assert_eq!(z.version(), 1 + SCHREIBER * RUNDEN);
-        assert_eq!(*store.lock().unwrap(), zustand(1 + SCHREIBER * RUNDEN));
+
+        for (i, (ueberlappend, _)) in lesungen.iter().enumerate() {
+            assert!(
+                *ueberlappend >= MIN_LESUNGEN,
+                "Leser {i}: nur {ueberlappend} Lesungen während der Schreiber"
+            );
+        }
+        assert!(
+            lesungen.iter().any(|(_, hoechste)| *hoechste > 1),
+            "keine Lesung sah eine Version über der Startversion"
+        );
+        let endversion = 1 + geschrieben.load(Ordering::SeqCst);
+        assert_eq!(z.version(), endversion);
+        assert_eq!(*store.lock().unwrap(), zustand(endversion));
     }
 }
