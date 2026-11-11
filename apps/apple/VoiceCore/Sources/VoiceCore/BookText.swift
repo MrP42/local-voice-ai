@@ -135,11 +135,13 @@ public enum BookText {
         for id in spine {
             guard let href = manifest[id] else { continue }
             let path = resolved(href)
-            // Das EPUB-3-Inhaltsverzeichnis ist kein Lesetext.
-            if path == navPath { continue }
-            guard let xhtml = try? zip.read(path) else { continue }
+            guard var xhtml = try? zip.read(path) else { continue }
+            // Das EPUB-3-Inhaltsverzeichnis ist kein Lesetext; steht das nav-Dokument im Spine und hat
+            // auch Inhalt, bleibt dieser erhalten (nur die `<nav>`-Blöcke fallen weg).
+            if path == navPath { xhtml = Data(EpubToc.removingNav(String(decoding: xhtml, as: UTF8.self)).utf8) }
             let entries = toc.filter { $0.path.lowercased() == path.lowercased() }
-            let text = EpubToc.promoteChapterLines(EpubToc.apply(XHTMLText.paragraphs(xhtml), entries: entries))
+            let chapter = XHTMLText.extract(xhtml)
+            let text = EpubToc.promoteChapterLines(EpubToc.apply(chapter.text, entries: entries, anchors: chapter.anchors))
             if !text.isEmpty { parts.append(text) }
         }
         let text = parts.joined(separator: "\n\n")
@@ -250,6 +252,8 @@ enum XHTMLText {
 
     final class Walker: NSObject, XMLParserDelegate {
         var paragraphs: [String] = []; var buffer = ""; var heading = false; var skipDepth = 0
+        /// `id` (und `<a name>`) → Index des Absatzes, in dem das Element liegt bzw. der danach folgt.
+        var anchors: [String: Int] = [:]
         func local(_ n: String) -> String { (n.split(separator: ":").last.map(String.init) ?? n).lowercased() }
         func flush() {
             let t = buffer.replacingOccurrences(of: #"[\s\u00A0]+"#, with: " ", options: .regularExpression)
@@ -263,6 +267,8 @@ enum XHTMLText {
             if XHTMLText.headings.contains(n) { flush(); heading = true }
             else if XHTMLText.blocks.contains(n) { flush() }
             else if n == "br" { buffer += " " }
+            for key in ["id", "xml:id"] { if let id = a[key], !id.isEmpty, anchors[id] == nil { anchors[id] = paragraphs.count } }
+            if n == "a", let id = a["name"], !id.isEmpty, anchors[id] == nil { anchors[id] = paragraphs.count }
         }
         func parser(_ p: XMLParser, didEndElement name: String, namespaceURI: String?, qualifiedName q: String?) {
             let n = local(name)
@@ -272,7 +278,11 @@ enum XHTMLText {
         func parser(_ p: XMLParser, foundCharacters s: String) { if skipDepth == 0 { buffer += s } }
     }
 
-    static func paragraphs(_ data: Data) -> String {
+    static func paragraphs(_ data: Data) -> String { extract(data).text }
+
+    /// Absätze des Kapitels und Sprungmarken auf Absatzindizes; `anchors` ist `nil`, wenn das Kapitel
+    /// nur über die Tag-Entfernung gelesen werden konnte.
+    static func extract(_ data: Data) -> (text: String, anchors: [String: Int]?) {
         // XHTML kennt benannte HTML-Entitäten nicht; die häufigsten vorher ersetzen.
         var source = String(decoding: data, as: UTF8.self)
         // XHTML kennt nur die fünf XML-Entitäten; HTML-Namen in Zeichen wandeln,
@@ -280,7 +290,15 @@ enum XHTMLText {
         source = replaceEntities(source, keepXML: true)
         source = source.replacingOccurrences(of: #"(?i)<(br|hr|img|meta|link|input|wbr)\b([^>]*?)\s*/?>"#, with: "<$1$2/>", options: .regularExpression)
         let w = Walker(); let p = XMLParser(data: Data(source.utf8)); p.delegate = w
-        if p.parse() { w.flush(); return w.paragraphs.joined(separator: "\n\n") }
+        if p.parse() {
+            w.flush()
+            let count = w.paragraphs.count
+            return (w.paragraphs.joined(separator: "\n\n"), w.anchors.filter { $0.value < count })
+        }
+        return (fallback(source), nil)
+    }
+
+    static func fallback(_ source: String) -> String {
         let stripped = source.replacingOccurrences(of: #"(?is)<(script|style|head)[^>]*>.*?</\1>"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"(?i)<h[1-6][^>]*>"#, with: "\n\n# ", options: .regularExpression)
             .replacingOccurrences(of: #"(?i)</(p|div|h[1-6]|li|blockquote|section)>|<(p|div|li|blockquote|section)\b[^>]*>"#, with: "\n\n", options: .regularExpression)
@@ -325,9 +343,18 @@ enum EpubToc {
             let name = ns.substring(with: m.range(at: 1)).lowercased()
             let local = name.split(separator: ":").last.map(String.init) ?? name
             let value = m.range(at: 2).location != NSNotFound ? ns.substring(with: m.range(at: 2)) : ns.substring(with: m.range(at: 3))
-            out[local] = value
+            // Attributwerte tragen XML-Entitäten (`&amp;` in href/src): zuerst auflösen, erst danach
+            // Fragment trennen und Prozentkodierung entfernen.
+            out[local] = XHTMLText.replaceEntities(value, keepXML: false)
         }
         return out
+    }
+
+    static let navBlock = re(#"(?is)<nav\b[^>]*>.*?</nav\s*>"#)
+
+    /// XHTML ohne `<nav>`-Blöcke (Inhaltsverzeichnis, Landmarken, Seitenliste); der Rest bleibt.
+    static func removingNav(_ xhtml: String) -> String {
+        navBlock.stringByReplacingMatches(in: xhtml, range: NSRange(location: 0, length: (xhtml as NSString).length), withTemplate: "")
     }
 
     /// Klartext eines Verzeichnistitels: ohne Tags, Entitäten aufgelöst, Leerraum zusammengefasst.
@@ -408,26 +435,45 @@ enum EpubToc {
         return l == t || (l.hasPrefix(t) && l.utf8.count <= t.utf8.count + 3)
     }
 
-    /// Überschriften eines Kapitels nach dem Inhaltsverzeichnis setzen (`##`, darunter `###`), in
-    /// Reihenfolge der Einträge. Ein Eintrag ohne Sprungmarke für eine Datei, die ohne Überschrift
-    /// beginnt, kommt davor.
-    static func apply(_ md: String, entries: [Entry]) -> String {
+    /// Überschriften eines Kapitels nach dem Inhaltsverzeichnis setzen (`##`, darunter `###`).
+    /// Mit `anchors` (Sprungmarke → Absatzindex, aus `XHTMLText.extract`) wird ein Eintrag mit
+    /// Sprungmarke am Zielabsatz verankert: ist dieser (oder der Absatz davor) der Titel, wird er
+    /// Überschrift, sonst kommt die Überschrift vor den Zielabsatz; ein Ziel, das fehlt, wird
+    /// übersprungen. Ohne `anchors` (Kapitel nur per Tag-Entfernung gelesen) und für Einträge ohne
+    /// Sprungmarke wird der Titel in Reihenfolge der Einträge unter den Absätzen gesucht; ein Eintrag
+    /// ohne Sprungmarke für eine Datei, die ohne Überschrift beginnt, kommt davor.
+    static func apply(_ md: String, entries: [Entry], anchors: [String: Int]? = nil) -> String {
         guard !entries.isEmpty else { return md }
         var blocks = md.components(separatedBy: "\n\n")
         var cursor = 0
         var prepend: String?
+        var insertions: [Int: [String]] = [:]
+        func isHeading(_ i: Int) -> Bool { blocks[i].trimmingCharacters(in: .whitespaces).hasPrefix("#") }
         for e in entries {
             let level = String(repeating: "#", count: min(e.depth + 2, 3))
+            if let anchors, let fragment = e.fragment {
+                guard let target = anchors[fragment], blocks.indices.contains(target) else { continue }
+                let titled = [target, target - 1].first { blocks.indices.contains($0) && blocks[$0].count <= 200 && isTitle(blockPlain(blocks[$0]), e.title) }
+                if let t = titled {
+                    if !isHeading(t) { blocks[t] = "\(level) \(blockPlain(blocks[t]))" }
+                } else if !isHeading(target) {
+                    let line = "\(level) \(e.title)"
+                    if insertions[target]?.contains(line) != true { insertions[target, default: []].append(line) }
+                }
+                continue
+            }
             let found = blocks.indices.dropFirst(cursor).first { blocks[$0].count <= 200 && isTitle(blockPlain(blocks[$0]), e.title) }
             if let i = found {
-                if !blocks[i].trimmingCharacters(in: .whitespaces).hasPrefix("#") { blocks[i] = "\(level) \(blockPlain(blocks[i]))" }
+                if !isHeading(i) { blocks[i] = "\(level) \(blockPlain(blocks[i]))" }
                 cursor = i + 1
             } else if e.fragment == nil, cursor == 0, prepend == nil {
                 let first = blocks.first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                 if first?.trimmingCharacters(in: .whitespaces).hasPrefix("#") != true { prepend = "\(level) \(e.title)" }
             }
         }
-        let text = blocks.joined(separator: "\n\n")
+        var out: [String] = []
+        for (i, b) in blocks.enumerated() { out.append(contentsOf: insertions[i] ?? []); out.append(b) }
+        let text = out.joined(separator: "\n\n")
         return prepend.map { "\($0)\n\n\(text)" } ?? text
     }
 

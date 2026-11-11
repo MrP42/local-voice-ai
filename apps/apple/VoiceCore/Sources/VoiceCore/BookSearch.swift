@@ -39,8 +39,22 @@ public struct BookSearchIndex: Sendable {
     let parts: [Part]
 
     public init(paragraphs: [TextParagraph]) {
+        parts = Self.build(paragraphs, isCancelled: { false }) ?? []
+    }
+
+    /// Wie `init(paragraphs:)`, bricht aber ab (`nil`), sobald `isCancelled` wahr wird:
+    /// je Absatz einmal geprüft, damit ein abgebrochener Aufbau nicht weiterläuft.
+    public init?(paragraphs: [TextParagraph], isCancelled: @Sendable () -> Bool) {
+        guard let built = Self.build(paragraphs, isCancelled: isCancelled) else { return nil }
+        parts = built
+    }
+
+    private static func build(_ paragraphs: [TextParagraph], isCancelled: @Sendable () -> Bool) -> [Part]? {
         var cache: [Character: [UInt16]] = [:]
-        parts = paragraphs.map { p in
+        var out: [Part] = []
+        out.reserveCapacity(paragraphs.count)
+        for p in paragraphs {
+            if isCancelled() { return nil }
             var folded: [UInt16] = []
             var from: [Int32] = []
             var to: [Int32] = []
@@ -62,8 +76,9 @@ public struct BookSearchIndex: Sendable {
                 space = false
             }
             if folded.last == 32 { folded.removeLast(); from.removeLast(); to.removeLast() }
-            return Part(folded: folded, from: from, to: to, text: p.text)
+            out.append(Part(folded: folded, from: from, to: to, text: p.text))
         }
+        return out
     }
 }
 
@@ -110,11 +125,21 @@ public enum BookSearch {
     /// Zuerst die Anfrage als Wortfolge; findet die nichts und hat sie mehrere
     /// Wörter, zählt ein Absatz, in dem alle Wörter stehen (markiert wird das erste).
     public static func search(_ index: BookSearchIndex, query: String, limit: Int = 300) -> BookSearchResult {
+        run(index, query: query, limit: limit, isCancelled: { false }) ?? .empty
+    }
+
+    /// Wie `search`, bricht aber ab (`nil`), sobald `isCancelled` wahr wird (je 64 Absätze geprüft).
+    public static func search(_ index: BookSearchIndex, query: String, limit: Int, isCancelled: @Sendable () -> Bool) -> BookSearchResult? {
+        run(index, query: query, limit: limit, isCancelled: isCancelled)
+    }
+
+    private static func run(_ index: BookSearchIndex, query: String, limit: Int, isCancelled: @Sendable () -> Bool) -> BookSearchResult? {
         let needle = Array(fold(text: query).utf16)
         guard needle.count >= minQuery else { return .empty }
         var hits: [BookSearchHit] = []
         var total = 0
         for (pi, part) in index.parts.enumerated() {
+            if pi & 63 == 0, isCancelled() { return nil }
             var at = 0
             while let i = find(needle, in: part.folded, from: at) {
                 total += 1
@@ -128,6 +153,7 @@ public enum BookSearch {
         let words = needle.split(separator: 32).map(Array.init).filter { $0.count >= minQuery && seen.insert($0).inserted }
         guard words.count >= 2 else { return .empty }
         for (pi, part) in index.parts.enumerated() {
+            if pi & 63 == 0, isCancelled() { return nil }
             var first: (at: Int, len: Int)?
             var all = true
             for w in words {

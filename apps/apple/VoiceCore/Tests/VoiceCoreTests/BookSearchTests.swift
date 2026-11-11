@@ -57,6 +57,37 @@ final class BookSearchTests: XCTestCase {
         XCTAssertTrue(hit.after.hasSuffix("…"))
     }
 
+    func testDecomposedTextKeepsCombiningMarksInHitAndSnippet() throws {
+        // NFD: „a“ + U+0308; Treffer und Ausschnitt behalten das Kombinationszeichen (wie am Desktop).
+        let text = "Das Ma\u{0308}rchen vom Fro\u{0308}sch"
+        let p = paras([text])
+        let index = BookSearchIndex(paragraphs: p)
+        let r = BookSearch.search(index, query: "ma")
+        XCTAssertEqual(r.total, 1)
+        let hit = try XCTUnwrap(r.hits.first)
+        XCTAssertEqual(hit.match, "Ma\u{0308}")
+        XCTAssertEqual((p[0].text as NSString).substring(with: hit.range), "Ma\u{0308}")
+        XCTAssertEqual(hit.after, "rchen vom Fro\u{0308}sch")
+        let frosch = try XCTUnwrap(BookSearch.search(index, query: "frosch").hits.first)
+        XCTAssertEqual(frosch.match, "Fro\u{0308}sch")
+        XCTAssertEqual(try XCTUnwrap(BookSearch.search(index, query: "marchen vom").hits.first).match, "Ma\u{0308}rchen vom")
+        // Auch die Anfrage darf zerlegt sein.
+        XCTAssertEqual(BookSearch.search(index, query: "Ma\u{0308}rchen").total, 1)
+    }
+
+    func testCancelledBuildAndSearchReturnNil() {
+        let many = paras((0..<200).map { "Absatz \($0) mit etwas Text" })
+        XCTAssertNil(BookSearchIndex(paragraphs: many, isCancelled: { true }))
+        let index = BookSearchIndex(paragraphs: many, isCancelled: { false })
+        XCTAssertEqual(index?.parts.count, 200)
+        XCTAssertNil(BookSearch.search(index!, query: "etwas", limit: 300, isCancelled: { true }))
+        XCTAssertEqual(BookSearch.search(index!, query: "etwas", limit: 300, isCancelled: { false })?.total, 200)
+        // Abbruch mitten im Lauf: ab dem zweiten Prüfpunkt wahr.
+        final class Flip: @unchecked Sendable { var n = 0 }
+        let flip = Flip()
+        XCTAssertNil(BookSearch.search(index!, query: "etwas", limit: 300, isCancelled: { flip.n += 1; return flip.n > 1 }))
+    }
+
     func testContentsFromHeadings() {
         let c = BookContents.entries(grimm)
         XCTAssertEqual(c.map(\.title), ["Der Froschkönig", "Rotkäppchen"])
