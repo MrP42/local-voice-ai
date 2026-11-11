@@ -309,6 +309,19 @@ mod mac {
         fn getiopolicy_np(iotype: c_int, scope: c_int) -> c_int;
     }
 
+    /// Alle Einträge eines Ordners über das geprüfte Ordner-Handle (die Ablage listet nie über einen Pfad).
+    fn verzeichnis(p: &std::path::Path) -> std::io::Result<Vec<eintrag::Eintrag>> {
+        let o = eintrag::Ordner::wurzel(p, eintrag::reparse_urteil)
+            .map_err(|e| std::io::Error::other(format!("{e:?}")))?;
+        let mut v = Vec::new();
+        o.auflisten(|e| {
+            v.push(e);
+            std::ops::ControlFlow::Continue(())
+        })
+        .map_err(|e| std::io::Error::other(format!("{e:?}")))?;
+        Ok(v)
+    }
+
     /// `IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES`, `IOPOL_SCOPE_THREAD` (sys/resource.h).
     fn thread_richtlinie() -> c_int {
         // SAFETY: reiner Lesezugriff auf die E/A-Richtlinie des aufrufenden Threads.
@@ -473,14 +486,10 @@ mod mac {
             Err(OeffnenFehler::Io(_))
         ));
         assert_eq!(eintrag::naht::stufe2_aufrufe(&p), 0, "nichts geoeffnet");
-        assert!(eintrag::verzeichnis(&e.quelle).is_err());
-        let mut gelaufen = false;
-        assert!(eintrag::unter_abrufsperre(|| {
-            gelaufen = true;
-            Ok(())
-        })
-        .is_err());
-        assert!(!gelaufen, "der Zugriff laeuft nicht ohne Sperre");
+        assert!(
+            eintrag::Ordner::wurzel(&e.quelle, eintrag::reparse_urteil).is_err(),
+            "der Zugriff laeuft nicht ohne Sperre"
+        );
         assert_eq!(
             verknuepft::momentkopie(&e.a, &auf).unwrap_err(),
             "verknuepft.lesen"
@@ -521,10 +530,10 @@ mod mac {
         e.schreiben("Akte/a.txt", b"a");
         e.schreiben("Akte/b.txt", b"b");
         let dir = e.quelle.join("Akte");
-        assert_eq!(eintrag::verzeichnis(&dir).unwrap().len(), 2);
+        assert_eq!(verzeichnis(&dir).unwrap().len(), 2);
         // Wird der Ordner zwischen Urteil und Auflisten ausgelagert: Fehler für den ganzen Ordner.
         eintrag::naht::stat_flags_setzen(&dir, SF_DATALESS);
-        assert!(eintrag::verzeichnis(&dir).is_err());
+        assert!(verzeichnis(&dir).is_err());
         assert_eq!(thread_richtlinie(), STANDARD);
     }
 
@@ -537,7 +546,7 @@ mod mac {
         // Die Flags kommen aus `lstat` und werden pro Eintrag abgebildet; ein eingespeistes Flag erscheint
         // genau bei dem einen Eintrag.
         eintrag::naht::stat_flags_setzen(&p, SF_DATALESS);
-        let liste = eintrag::verzeichnis(&e.quelle).unwrap();
+        let liste = verzeichnis(&e.quelle).unwrap();
         let roh = liste[0].roh.unwrap();
         assert_eq!(roh.urteil(), Urteil::NurOnline);
         assert_eq!(roh.attribute, ATTR_OFFLINE);
@@ -559,7 +568,7 @@ mod mac {
             dir.to_string_lossy().contains("LVA-Testordner-472"),
             "nur der eigene Testordner"
         );
-        let vorher: Vec<(String, bool)> = eintrag::verzeichnis(&dir)
+        let vorher: Vec<(String, bool)> = verzeichnis(&dir)
             .unwrap()
             .into_iter()
             .map(|e| {

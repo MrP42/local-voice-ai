@@ -212,20 +212,6 @@ pub fn roh(p: &Path) -> io::Result<Roh> {
     Ok(r)
 }
 
-/// Einträge eines Verzeichnisses mit Rohdaten (ohne `.` und `..`). Ein Fehler mitten im Auflisten ist ein
-/// Fehler des ganzen Verzeichnisses.
-pub fn verzeichnis(p: &Path) -> io::Result<Vec<Eintrag>> {
-    #[cfg_attr(not(test), allow(unused_mut))]
-    let mut v = system::alle(p)?;
-    #[cfg(test)]
-    for e in &mut v {
-        if let Some(r) = e.roh.as_mut() {
-            naht::anwenden(&p.join(&e.name), r);
-        }
-    }
-    Ok(v)
-}
-
 /// Attribute und Reparse-Tag einer schon geöffneten Datei, vom Handle (`GetFileInformationByHandleEx` mit
 /// `FileAttributeTagInfo`), nicht vom Pfad. `None`: nicht bestimmbar. `p` ist nur für die Test-Naht.
 pub fn offen_daten(f: &fs::File, p: &Path) -> Option<(u32, u32)> {
@@ -430,17 +416,6 @@ pub fn abruf_sperren() -> AbrufSperre {
     }
 }
 
-/// Führt `f` (ein Zugriff, der einen Platzhalter laden könnte, z. B. `read_dir` auf einem Ordner) unter der
-/// [`abruf_sperren`] aus. Kann die Sperre unter macOS nicht gesetzt werden, läuft `f` nicht (fail-closed,
-/// Fehler `Other`); sonst und außerhalb von macOS läuft `f` immer.
-pub fn unter_abrufsperre<T>(f: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
-    let sperre = abruf_sperren();
-    if sperre.fehlt() {
-        return Err(io::Error::other("Abrufsperre nicht setzbar"));
-    }
-    f()
-}
-
 /// Siehe [`abruf_sperren`].
 #[derive(Debug)]
 #[must_use = "die Sperre gilt nur, solange der Wert lebt"]
@@ -556,7 +531,7 @@ mod mac_abruf {
 
 #[cfg(not(windows))]
 mod system {
-    use super::{Eintrag, Gattung, OeffnenArt, Roh};
+    use super::{Gattung, OeffnenArt, Roh};
     use std::fs;
     use std::io;
     use std::path::Path;
@@ -606,49 +581,6 @@ mod system {
 
     pub fn eins(p: &Path) -> io::Result<Roh> {
         fs::symlink_metadata(p).map(|m| aus_meta(&m))
-    }
-
-    pub fn alle(p: &Path) -> io::Result<Vec<Eintrag>> {
-        // macOS: ein Ordner, der nur online liegt, wird nie aufgelistet (`readdir` kann ihn materialisieren);
-        // der Aufrufer urteilt zwar schon vorher, doch der Ordner kann im Fenster davor ausgelagert worden
-        // sein. Dazu die Abrufsperre über das ganze Auflisten.
-        #[cfg(target_os = "macos")]
-        let _sperre = {
-            let sperre = super::abruf_sperren();
-            if sperre.fehlt() {
-                return Err(io::Error::other("Abrufsperre nicht setzbar"));
-            }
-            if super::online_urteil(super::attribute_aus_stat_flags(stat_flags_pfad(p)?)) {
-                return Err(io::Error::other("nur online"));
-            }
-            sperre
-        };
-        let mut aus = Vec::new();
-        for e in fs::read_dir(p)? {
-            let Ok(e) = e else {
-                aus.push(Eintrag {
-                    name: std::ffi::OsString::new(),
-                    roh: None,
-                });
-                continue;
-            };
-            let roh = fs::symlink_metadata(e.path()).ok().map(|m| aus_meta(&m));
-            aus.push(Eintrag {
-                name: e.file_name(),
-                roh,
-            });
-        }
-        Ok(aus)
-    }
-
-    /// macOS: `st_flags` eines Pfades (`lstat`, folgt keinem Symlink, öffnet nichts).
-    #[cfg(target_os = "macos")]
-    fn stat_flags_pfad(p: &Path) -> io::Result<u32> {
-        #[cfg(test)]
-        if let Some(f) = super::naht::stat_flags(p) {
-            return Ok(f);
-        }
-        Ok(flags_von(&fs::symlink_metadata(p)?))
     }
 
     /// Attribute am offenen Handle: macOS aus `fstat` (`SF_DATALESS`), sonst keine.
@@ -754,18 +686,18 @@ mod system {
 
 #[cfg(windows)]
 mod system {
-    use super::{Eintrag, Gattung, OeffnenArt, Roh, ATTR_REPARSE_POINT, ATTR_VERZEICHNIS};
-    use std::ffi::{c_void, OsStr, OsString};
+    use super::{Gattung, OeffnenArt, Roh, ATTR_REPARSE_POINT, ATTR_VERZEICHNIS};
+    use std::ffi::{c_void, OsStr};
     use std::fs;
     use std::io;
-    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use std::os::windows::ffi::OsStrExt;
     use std::os::windows::io::AsRawHandle;
     use std::path::Path;
     use windows::core::PCWSTR;
-    use windows::Win32::Foundation::{ERROR_NO_MORE_FILES, HANDLE};
+    use windows::Win32::Foundation::HANDLE;
     use windows::Win32::Storage::FileSystem::{
         FileAttributeTagInfo, FindClose, FindExInfoBasic, FindExSearchNameMatch, FindFirstFileExW,
-        FindNextFileW, GetFileInformationByHandle, GetFileInformationByHandleEx, ReOpenFile,
+        GetFileInformationByHandle, GetFileInformationByHandleEx, ReOpenFile,
         BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_TAG_INFO, FILE_FLAGS_AND_ATTRIBUTES,
         FILE_SHARE_MODE, FIND_FIRST_EX_LARGE_FETCH, WIN32_FIND_DATAW,
     };
@@ -817,15 +749,6 @@ mod system {
         }
     }
 
-    fn name_aus(d: &WIN32_FIND_DATAW) -> OsString {
-        let n = d
-            .cFileName
-            .iter()
-            .position(|&c| c == 0)
-            .unwrap_or(d.cFileName.len());
-        OsString::from_wide(&d.cFileName[..n])
-    }
-
     /// Ein Eintrag über `FindFirstFileExW`: öffnet die Datei nicht, folgt keiner Verknüpfung.
     pub fn eins(p: &Path) -> io::Result<Roh> {
         let w = breit(p.as_os_str())?;
@@ -845,42 +768,6 @@ mod system {
         .map_err(io::Error::other)?;
         let _suche = Suche(h);
         Ok(roh_aus(&d))
-    }
-
-    /// Alle Einträge eines Ordners über `FindFirstFileExW` und `FindNextFileW`.
-    pub fn alle(p: &Path) -> io::Result<Vec<Eintrag>> {
-        let w = breit(p.join("*").as_os_str())?;
-        let mut d = WIN32_FIND_DATAW::default();
-        // SAFETY: wie in `eins`.
-        let h = unsafe {
-            FindFirstFileExW(
-                PCWSTR(w.as_ptr()),
-                FindExInfoBasic,
-                std::ptr::addr_of_mut!(d).cast::<c_void>(),
-                FindExSearchNameMatch,
-                None,
-                FIND_FIRST_EX_LARGE_FETCH,
-            )
-        }
-        .map_err(io::Error::other)?;
-        let suche = Suche(h);
-        let mut aus = Vec::new();
-        loop {
-            let name = name_aus(&d);
-            if name != "." && name != ".." {
-                aus.push(Eintrag {
-                    name,
-                    roh: Some(roh_aus(&d)),
-                });
-            }
-            // SAFETY: gültiges Suchhandle, `d` ist ein beschreibbarer `WIN32_FIND_DATAW`.
-            match unsafe { FindNextFileW(suche.0, &mut d) } {
-                Ok(()) => {}
-                Err(e) if e.code() == ERROR_NO_MORE_FILES.to_hresult() => break,
-                Err(e) => return Err(io::Error::other(e)),
-            }
-        }
-        Ok(aus)
     }
 
     /// Attribute und Reparse-Tag am offenen Handle (`FileAttributeTagInfo`).
@@ -1009,9 +896,18 @@ pub(crate) mod naht {
         });
     }
 
-    /// Find-Daten dieses Pfades (Attribute, Tag), falls vorgetäuscht.
+    /// Find-Daten dieses Pfades (Attribute, Tag) samt vorgetäuschten `st_flags`, falls gesetzt.
     pub(super) fn find_daten(p: &Path) -> Option<(u32, u32)> {
-        FIND.with(|k| k.borrow().get(p).copied())
+        let f = FIND.with(|k| k.borrow().get(p).copied());
+        let s = STAT_FLAGS.with(|k| k.borrow().get(p).copied());
+        if f.is_none() && s.is_none() {
+            return None;
+        }
+        let (mut attribute, tag) = f.unwrap_or((0, 0));
+        if let Some(flags) = s {
+            attribute |= super::attribute_aus_stat_flags(flags);
+        }
+        Some((attribute, tag))
     }
 
     /// Die Handle-Abfragen dieser Datei melden der Reihe nach (Attribute, Tag); danach gilt `handle_setzen`.
@@ -1063,11 +959,6 @@ pub(crate) mod naht {
     /// `fstat` am offenen Handle dieser Datei meldet diese `st_flags`.
     pub fn handle_stat_flags_setzen(p: &Path, flags: u32) {
         HANDLE_STAT_FLAGS.with(|k| k.borrow_mut().insert(p.to_path_buf(), flags));
-    }
-
-    #[cfg(target_os = "macos")]
-    pub(super) fn stat_flags(p: &Path) -> Option<u32> {
-        STAT_FLAGS.with(|k| k.borrow().get(p).copied())
     }
 
     /// Öffnet wie Stufe 1 von [`super::oeffnen_ohne_abruf`] (Test: Öffnungsflags prüfen).
