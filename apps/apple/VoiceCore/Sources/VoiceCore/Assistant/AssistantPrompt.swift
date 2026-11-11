@@ -138,7 +138,7 @@ public enum AssistantPrompt {
             if text.count > room {
                 guard room >= AssistantKnowledge.minClipChars || used.isEmpty && room >= 80 else { break }
                 text = BookTalkPrompt.clip(text, to: room)
-                passage = AssistantPassage(area: p.area, itemId: p.itemId, title: p.title, locator: p.locator, text: text, score: p.score)
+                passage = p.replacing(text: text)
             }
             remaining -= head.count + text.count + 2
             lines.append(head + "\n" + text)

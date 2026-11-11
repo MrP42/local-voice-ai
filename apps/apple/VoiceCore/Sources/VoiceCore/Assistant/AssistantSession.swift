@@ -1,22 +1,23 @@
 import Foundation
 
 // Gesprächsmodus „Sprechen“ (Paket K, erweitert in Paket A um „Antworten ohne Quelle“, E4.2a): Ablauf einer Antwort.
-// Abruf → Rundenart (`AssistantTurnPolicy`, vor dem Modellaufruf) → Ereignis `sources` → Modellstrom → Satztrenner (nur ganze
-// Sätze) → Satzprüfung (`AssistantGrounding.judge`) → `sentence`-Ereignisse → `done`. Muster: `BookTalkSession` (Strom,
-// Abbruch, Wächter). Mehrere Anfragen dürfen gleichzeitig laufen (Vorarbeit und Abbruch); keine schreibt in den Verlauf, das
-// macht allein `commit`.
+// Abruf → Rundenart (`AssistantContext`, vor dem Modellaufruf) → Protokollzeile `start` → Ereignis `sources` → Modellstrom →
+// Satztrenner (nur ganze Sätze, Reste ohne Satzzeichen werden verworfen) → Satzprüfung (`AssistantGrounding.judge`) →
+// `sentence`-Ereignisse → `done`. Muster: `BookTalkSession` (Strom, Abbruch, Wächter). Mehrere Anfragen dürfen gleichzeitig
+// laufen (Vorarbeit und Abbruch); keine schreibt in den Verlauf, das macht allein `commit`.
 //
 // Zwei Kanäle je Runde:
 // - DATENRUNDE (Standard, mit und ohne Opt-in): Das Modell wählt, das System gibt aus. Je vollständigem Modellsatz rastet der
 //   beste Quellsatz der Auszüge ein und wird im Originalwortlaut ausgegeben (Vorspann „Aus deinen Inhalten, ‚Titel‘:“, höchstens
 //   drei Zitate, keine Doppelten, danach bricht das Modell ab). Rastet nichts ein, kommt ein deterministischer Rückfall gegen
 //   die Frage oder der feste Satz. Bestandsfragen beantwortet das System aus den Bestandsdaten, ohne Modell.
-// - ALLGEMEINRUNDE (nur mit Opt-in, Prompt ohne Auszüge und Bestand): Vorlage → neutral, Eigendatenbezug → verworfen, sonst
-//   „ohne Quelle“ mit Ansage.
+// - ALLGEMEINRUNDE (nur mit Opt-in und nur im Zustand `.free`, Prompt ohne Auszüge und Bestand): Vorlage → neutral,
+//   Eigendatenbezug oder Ähnlichkeit mit eigenem Inhalt → verworfen, sonst „ohne Quelle“ mit Ansage.
 //
-// Widerruf: Jede Änderung von Opt-in, Bereichen oder Cloud-Zustimmung erhöht die Freigabe-Generation und bricht alle
-// laufenden Antworten ab (Ausgang „widerrufen“). Jedes Ereignis trägt die Generation seines Laufs und wird unmittelbar vor
-// dem Senden gegen sie geprüft (`AssistantRelease`).
+// Widerruf: Jede Änderung von Opt-in, Bereichen, Cloud-Zustimmung oder des Zustands (`resumeFree`) erhöht die Freigabe-
+// Generation, bricht alle angemeldeten Läufe ab (Ausgang „widerrufen“) und ruft den Beobachter (Controller: Wiedergabe stoppen,
+// Warteschlange leeren). Ein Lauf bleibt bis `commit` angemeldet. Jedes Ereignis trägt die Generation seines Laufs und wird
+// unmittelbar vor dem Senden gegen sie geprüft; der Verlaufseintrag entsteht im selben Lock (`AssistantRelease`).
 
 /// Ein ausgegebener Satz (ohne Ansagen) mit Einordnung und Quellen, für `commit`.
 struct AssistantEmitted: Sendable, Equatable {
@@ -26,7 +27,8 @@ struct AssistantEmitted: Sendable, Equatable {
     let quote: Bool
 }
 
-/// Was eine Anfrage hervorgebracht hat; `commit` macht daraus den Beitrag und den Protokolleintrag.
+/// Was eine Anfrage hervorgebracht hat; `commit` macht daraus den Beitrag und die Schlusszeilen des Protokolls. Die Satzspur
+/// steht nicht hier, sondern Zeile für Zeile im Journal.
 struct AssistantRunRecord: Sendable {
     var round: AssistantRoundKind = .data
     /// Die Rundenart wurde festgelegt (sonst endete die Anfrage davor).
@@ -35,28 +37,32 @@ struct AssistantRunRecord: Sendable {
     var generation = 0
     /// „Ohne Quelle“ war bei Beginn der Anfrage erlaubt.
     var optInAtStart = false
+    /// Einwilligungsversion zum Start, aus der Freigabe gelesen.
+    var consentVersion = 0
+    /// Kontextzustand vor der Rundenwahl und Grund der Wahl.
+    var contextBefore: AssistantContext.Mode?
+    var contextReason: AssistantContext.Reason?
+    var startedAt = Date()
+    /// Die Journalzeile `start` ist geschrieben.
+    var journaled = false
     var used: [AssistantPassage] = []
     var sentences: [AssistantEmitted] = []
     var counts = AssistantSentenceCounts()
-    var trace: [AssistantTraceStep] = []
-    var traceOverflow = 0
-    /// Laufende Nummer der Einordnungen.
+    /// Bereiche der Bestandsangaben (gehen mit ins Protokoll).
+    var inventoryAreas: [AssistantArea] = []
+    /// Laufende Nummer der Einordnungen (Schritte).
     var steps = 0
-    /// Ereignis-Nr. (Reihenfolge der `sentence`-Ereignisse) → Index in `trace`; -1: nicht in der Spur.
-    var eventSteps: [Int] = []
+    /// Die Antwort hat die Schrittgrenze erreicht und endet.
+    var limited = false
     var revoked = false
     var cancelled = false
     var failure: AssistantFailure?
 
-    /// Trägt eine Einordnung in die Satzspur ein. Gibt den Index in `trace` zurück; `nil` über der Obergrenze (nur gezählt).
-    mutating func note(_ verdict: AssistantTraceVerdict, generation: Int) -> Int? {
+    /// Nächste Schrittnummer; ab `AssistantAuditLog.maxSteps` endet die Antwort.
+    mutating func nextStep() -> Int {
         steps += 1
-        guard trace.count < AssistantAuditEntry.maxTrace else {
-            traceOverflow += 1
-            return nil
-        }
-        trace.append(AssistantTraceStep(n: steps, verdict: verdict, generation: generation))
-        return trace.count - 1
+        if steps >= AssistantAuditLog.maxSteps { limited = true }
+        return steps
     }
 }
 
@@ -67,10 +73,11 @@ private final class RunState: @unchecked Sendable {
     private var timedOut = false
     private var record: AssistantRunRecord
 
-    init(generation: Int, optIn: Bool) {
+    init(snapshot: AssistantRelease.Snapshot) {
         record = AssistantRunRecord()
-        record.generation = generation
-        record.optInAtStart = optIn
+        record.generation = snapshot.generation
+        record.optInAtStart = snapshot.optIn
+        record.consentVersion = snapshot.consentVersion
     }
 
     func touch() { lock.lock(); lastProgress = Date(); lock.unlock() }
@@ -81,17 +88,7 @@ private final class RunState: @unchecked Sendable {
     var snapshot: AssistantRunRecord { lock.lock(); defer { lock.unlock() }; return record }
     func markRevoked() { update { $0.revoked = true } }
     func markCancelled() { update { $0.cancelled = true } }
-}
-
-/// Rundenart der zuletzt begonnenen Anfrage (für „keine Übernahme aus der Vorrunde“), auch wenn deren Beitrag noch nicht im
-/// Verlauf steht.
-private final class RoundMemory: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: AssistantRoundKind?
-
-    init(_ value: AssistantRoundKind?) { self.value = value }
-    var kind: AssistantRoundKind? { lock.lock(); defer { lock.unlock() }; return value }
-    func set(_ kind: AssistantRoundKind?) { lock.lock(); value = kind; lock.unlock() }
+    func nextStep() -> Int { lock.lock(); defer { lock.unlock() }; return record.nextStep() }
 }
 
 /// Ausgang eines Laufs. Jedes Ereignis geht durch `send`: Die Prüfung der Generation und das Senden geschehen im selben Lock,
@@ -107,24 +104,31 @@ final class AssistantRunOutput: @unchecked Sendable {
         self.continuation = continuation
     }
 
-    /// Sendet nur, wenn die Generation noch gilt. `false`: veraltet, nichts gesendet.
-    func send(_ event: AssistantEvent) -> Bool {
-        release.ifCurrent(generation) { continuation.yield(event) }
+    /// Sendet nur, wenn die Generation noch gilt. `false`: veraltet, nichts gesendet. `before` läuft im selben Lock unmittelbar
+    /// vor dem Senden (kurz, ohne Wartezeit): so steht die Protokollzeile des Kerns vor jeder Rückmeldung des Controllers.
+    func send(_ event: AssistantEvent, before: () -> Void = {}) -> Bool {
+        release.ifCurrent(generation) {
+            before()
+            continuation.yield(event)
+        }
     }
 
     /// Fehler und Abbruch tragen keine Inhalte und gehen immer hinaus.
     func sendUnchecked(_ event: AssistantEvent) { continuation.yield(event) }
 }
 
-/// Gibt die Sätze eines Laufs aus und führt Buch: Zähler, Satzspur, Zitate, Vorspann. Nur innerhalb des Laufs benutzt.
+/// Gibt die Sätze eines Laufs aus und führt Buch: Zähler, Zitate, Vorspann und die Protokollzeilen `step` und `commit`.
+/// Nur innerhalb des Laufs benutzt.
 private final class RunEmitter {
-    enum Flow { case next, enough, revoked }
+    enum Flow { case next, enough, revoked, limit }
 
     let rid: String
     let generation: Int
     let release: AssistantRelease
     let output: AssistantRunOutput
     let state: RunState
+    let journal: AssistantAuditLog?
+    let index: AssistantStepIndex
     let clock = ContinuousClock()
     let started: ContinuousClock.Instant
 
@@ -136,17 +140,21 @@ private final class RunEmitter {
     var dropped = 0
     var unsourcedEmitted = 0
     var announcedUnsourced = false
+    /// Die Schrittgrenze ist erreicht: die Antwort endet.
+    var reachedLimit = false
 
     /// Höchstens so viele Zitate je Antwort; danach wird das Modell abgebrochen.
     static let maxQuotes = 3
 
     init(rid: String, generation: Int, release: AssistantRelease, output: AssistantRunOutput, state: RunState,
-         started: ContinuousClock.Instant) {
+         journal: AssistantAuditLog?, index: AssistantStepIndex, started: ContinuousClock.Instant) {
         self.rid = rid
         self.generation = generation
         self.release = release
         self.output = output
         self.state = state
+        self.journal = journal
+        self.index = index
         self.started = started
     }
 
@@ -160,18 +168,45 @@ private final class RunEmitter {
         AssistantSpeech.render(text, lineStart: false)?.speech ?? text
     }
 
+    /// Nummeriert einen Schritt und schreibt seine Zeile.
+    private func step(_ verdict: AssistantTraceVerdict) -> Int {
+        let n = state.nextStep()
+        if n >= AssistantAuditLog.maxSteps { reachedLimit = true }
+        if let journal {
+            var l = AssistantJournalLine(.step, req: rid)
+            l.n = n
+            l.verdict = verdict
+            l.gen = generation
+            journal.enqueue(l)
+        }
+        return n
+    }
+
+    private func commitLine(_ n: Int, ok: Bool, generation g: Int) -> AssistantJournalLine {
+        var l = AssistantJournalLine(.commit, req: rid)
+        l.n = n
+        l.mark = AssistantCommitMark(stage: .emit, ok: ok, generation: g)
+        return l
+    }
+
     @discardableResult
     func emit(_ text: String, speech: String, status: AssistantSentenceStatus, sources: [AssistantPassage] = [], quote: Bool = false) -> Bool {
-        let delivered = output.send(.sentence(requestId: rid, generation: generation, text: text, speech: speech, status: status,
-                                              sources: sources, quote: quote))
-        let checked = delivered ? generation : release.currentGeneration
-        let gen = generation
         let announcement = status == .announcement
+        let n = step(AssistantTraceVerdict(status: status))
+        // Der Schritt steht im Index, BEVOR das Ereignis hinausgeht: Eine schnelle Rückmeldung des Controllers läuft nie ins Leere.
+        index.append(rid, step: n)
+        let gen = generation
+        let delivered = output.send(.sentence(requestId: rid, generation: gen, text: text, speech: speech, status: status,
+                                              sources: sources, quote: quote)) {
+            journal?.enqueue(commitLine(n, ok: true, generation: gen))
+        }
+        if !delivered {
+            index.removeLast(rid)
+            journal?.enqueue(commitLine(n, ok: false, generation: release.currentGeneration))
+        }
         if delivered, firstMs == nil { firstMs = elapsedMs }
         state.update { r in
-            let step = r.note(AssistantTraceVerdict(status: status), generation: gen)
             if delivered {
-                r.eventSteps.append(step ?? -1)
                 switch status {
                 case .grounded: r.counts.grounded += 1
                 case .inventory: r.counts.inventory += 1
@@ -183,7 +218,6 @@ private final class RunEmitter {
             } else if !announcement {
                 r.counts.drop(.revoked)
             }
-            if let i = step { r.trace[i].commits.append(AssistantCommitMark(stage: .emit, ok: delivered, generation: checked)) }
         }
         if delivered, !announcement { texts.append(text) }
         return delivered
@@ -191,11 +225,8 @@ private final class RunEmitter {
 
     func drop(_ reason: AssistantDropReason) {
         dropped += 1
-        let gen = generation
-        state.update { r in
-            r.counts.drop(reason)
-            _ = r.note(AssistantTraceVerdict(dropped: reason), generation: gen)
-        }
+        _ = step(AssistantTraceVerdict(dropped: reason))
+        state.update { $0.counts.drop(reason) }
     }
 
     /// Originalsatz mit Vorspann bei jedem Quellenwechsel (also vor dem ersten Zitat je Quelle und erneut, wenn nach einer
@@ -228,14 +259,18 @@ private final class RunEmitter {
         }
     }
 
-    /// Prüft einen vollständigen Modellsatz der Allgemeinrunde.
-    func handleGeneral(_ text: String, speech: String, titles: [String], clock: [String]) -> Flow {
+    /// Prüft einen vollständigen Modellsatz der Allgemeinrunde. Ein Satz ohne Quelle wird zusätzlich gegen die eigenen Inhalte
+    /// geprüft: Abruf mit dem Satz als Anfrage; rastet er an einem Quellsatz ein, wird er verworfen.
+    func handleGeneral(_ text: String, speech: String, raw: String, titles: [String], clock: [String],
+                       knowledge: AssistantKnowledge) async -> Flow {
         switch AssistantGrounding.judge(text, round: .general, basis: AssistantGrounding.Basis(passages: []), titles: titles,
-                                        clock: clock, optIn: release.isOptedIn) {
+                                        clock: clock, optIn: release.isOptedIn, raw: raw) {
         case .template(let t): return emit(t, speech: t, status: .neutral) ? .next : .revoked
         case .dropped(let reason): drop(reason); return .next
         case .quote: drop(.notSnapped); return .next
         case .unsourced:
+            let probed = await knowledge.probe(sentence: text)
+            if AssistantGrounding.resemblesOwnContent(text, passages: probed) { drop(.ownData); return .next }
             if !announcedUnsourced {
                 let a = AssistantGrounding.unsourcedAnnouncement
                 guard emit(a, speech: a, status: .announcement) else { return .revoked }
@@ -254,6 +289,8 @@ public actor AssistantSession {
     static let passageLimit = 8
     /// Wie lange `commit` auf den geordneten Abschluss eines Laufs wartet (hängendes Modell).
     static let commitWait: Duration = .seconds(2)
+    /// Wie viele Endstände unabgeschlossener Läufe gemerkt werden (danach wird der älteste abgemeldet).
+    static let maxRemembered = 16
 
     private enum Outcome: Sendable {
         case finished(text: String, firstMs: Int?, totalMs: Int, failure: AssistantFailure?)
@@ -269,29 +306,31 @@ public actor AssistantSession {
     private let knowledge: AssistantKnowledge
     private let config: AssistantConfig
     private let release: AssistantRelease
-    private let rounds: RoundMemory
-    private let ledger = AssistantOutputLedger()
+    private let context: AssistantContext
+    private let released: Bool
+    private let stepIndex = AssistantStepIndex()
+    private let sessionId = UUID().uuidString
     private let audit: AssistantAuditLog?
     private var active: [String: ActiveRun] = [:]
     private var earlyCancel: Set<String> = []
-    private var results: [String: AssistantRunRecord] = [:]
+    private var results: [String: RunState] = [:]
     private var resultOrder: [String] = []
     public private(set) var history: [AssistantTurn]
 
+    /// `released`: Freischaltung der Funktion „Antworten ohne Quelle“ (`AssistantUnsourcedConsent.isReleased`); bei `false`
+    /// verhält sich die Sitzung wie mit ausgeschaltetem Opt-in.
     public init(model: any BookTalkModel, knowledge: AssistantKnowledge, config: AssistantConfig, history: [AssistantTurn] = [],
-                audit: AssistantAuditLog? = nil) {
+                audit: AssistantAuditLog? = nil, released: Bool = AssistantUnsourcedConsent.isReleased) {
+        let optIn = config.allowUnsourced && released
         self.model = model
         self.knowledge = knowledge
         self.config = config
-        self.release = AssistantRelease(optIn: config.allowUnsourced)
+        self.released = released
+        self.release = AssistantRelease(optIn: optIn, consentVersion: config.consentVersion)
         let kept = history.count > Self.maxStoredTurns ? Array(history.suffix(Self.maxStoredTurns)) : history
-        self.rounds = RoundMemory(Self.lastRound(of: kept))
+        self.context = AssistantContext(optIn: optIn, history: kept)
         self.audit = audit
         self.history = kept
-    }
-
-    private static func lastRound(of turns: [AssistantTurn]) -> AssistantRoundKind? {
-        turns.last.map { $0.round ?? .data }
     }
 
     // MARK: Freigabe
@@ -299,13 +338,46 @@ public actor AssistantSession {
     /// Ob unbelegte Sätze (Allgemeinwissen) gesprochen werden dürfen. Ohne Aktor-Sprung lesbar (hinter einem Lock).
     public nonisolated var allowsUnsourced: Bool { release.isOptedIn }
 
+    /// Die Funktion „Antworten ohne Quelle“ ist freigeschaltet (sonst gibt es weder Schalter noch Knopf).
+    public nonisolated var isReleased: Bool { released }
+
     /// Aktuelle Freigabe-Generation (monoton). Ohne Aktor-Sprung lesbar; der Controller prüft sie vor Anzeige und Audiostart.
     public nonisolated var releaseGeneration: Int { release.currentGeneration }
 
+    /// Zustand des Datenkontexts: `.data` (jede Runde antwortet aus den Inhalten) oder `.free` (Runden ohne Quelle möglich).
+    public nonisolated var contextMode: AssistantContext.Mode { context.mode }
+
+    /// Der Knopf „Ohne Quelle fortsetzen“ ist sinnvoll: Opt-in an, freigeschaltet und der Zustand `.data`.
+    public nonisolated var canResumeFree: Bool { released && release.isOptedIn && context.mode == .data }
+
+    /// Zahl der angemeldeten Läufe (ein Lauf bleibt bis `commit` angemeldet; Tests).
+    nonisolated var registeredRunCount: Int { release.registeredCount }
+
+    /// Der Beobachter wird nach JEDER Erhöhung der Generation gerufen (auf dem Thread des Auslösers, ohne Aktor-Sprung): Der
+    /// Controller stoppt dann die Wiedergabe und leert die Warteschlange, unabhängig von Quellen und vom Modellende.
+    public nonisolated func setReleaseObserver(_ observer: (@Sendable (Int) -> Void)?) { release.setObserver(observer) }
+
     /// Schaltet „Antworten ohne Quelle“ um. Jede Änderung erhöht die Generation und bricht alle laufenden Antworten ab (Ausgang
-    /// „widerrufen“), ohne Aktor-Sprung und sofort. Gibt die Generation danach zurück (für den Protokolleintrag).
+    /// „widerrufen“), ohne Aktor-Sprung und sofort. Ein Einschalten setzt den Zustand auf `.free`, aber nur, wenn das Gespräch
+    /// noch keine Datenrunde hatte. `consentVersion`: Fassung des Einwilligungstextes (sonst die der Konfiguration); sie wird
+    /// bei jeder neuen Anfrage aus der Freigabe gelesen. Gibt die Generation danach zurück (für das Protokoll).
     @discardableResult
-    public nonisolated func setAllowUnsourced(_ on: Bool) -> Int { release.setOptIn(on) }
+    public nonisolated func setAllowUnsourced(_ on: Bool, consentVersion: Int? = nil) -> Int {
+        let effective = on && released
+        let before = release.isOptedIn
+        let generation = release.setOptIn(effective, consentVersion: consentVersion ?? config.consentVersion)
+        if before != effective { context.optInChanged(effective) }
+        return generation
+    }
+
+    /// „Ohne Quelle fortsetzen“: ausdrückliche Nutzerhandlung, die den Zustand `.data` aufhebt. Erhöht die Generation. `false`,
+    /// wenn nichts zu tun war (nicht freigeschaltet, Opt-in aus oder schon `.free`).
+    @discardableResult
+    public nonisolated func resumeFree() -> Bool {
+        guard released, context.resumeFree(optIn: release.isOptedIn) else { return false }
+        release.bump()
+        return true
+    }
 
     /// Eine Freigabe hat sich geändert (Cloud-Zustimmung, oder Bereiche außerhalb von `setAreas`): Generation hoch, laufende
     /// Antworten abbrechen. Gibt die neue Generation zurück.
@@ -323,21 +395,25 @@ public actor AssistantSession {
 
     /// Der Controller meldet einen Ausgabe-Commit (Anzeige, Audiostart) eines Ereignisses (`index` = Nummer in der Reihenfolge
     /// der empfangenen `sentence`-Ereignisse dieser Anfrage), mit der dabei geprüften Generation. `ok`: ausgeführt; sonst
-    /// verworfen. Die Meldung geht in die Satzspur des Protokolleintrags.
+    /// verworfen. Die Meldung geht als Zeile `commit` ins Journal, ohne Warten und ohne I/O im Aufrufer.
     public nonisolated func noteCommit(requestId: String, index: Int, stage: AssistantCommitStage, ok: Bool, generation: Int) {
-        ledger.add(requestId, .init(index: index, mark: AssistantCommitMark(stage: stage, ok: ok, generation: generation)))
+        guard let audit, let n = stepIndex.step(requestId, index: index) else { return }
+        var line = AssistantJournalLine(.commit, req: requestId)
+        line.n = n
+        line.mark = AssistantCommitMark(stage: stage, ok: ok, generation: generation)
+        audit.enqueue(line)
     }
 
     // MARK: Verlauf
 
     public func restore(history turns: [AssistantTurn]) {
         history = turns.count > Self.maxStoredTurns ? Array(turns.suffix(Self.maxStoredTurns)) : turns
-        rounds.set(Self.lastRound(of: history))
+        context.reset(optIn: release.isOptedIn, history: history)
     }
 
     public func clearHistory() {
         history.removeAll()
-        rounds.set(nil)
+        context.reset(optIn: release.isOptedIn, history: [])
     }
 
     /// Cloud-Schutz: Die Beiträge, die als VERLAUF ins Modell dürfen. Lokal alle; bei einem Cloud-Modell nur Beiträge ohne
@@ -378,82 +454,112 @@ public actor AssistantSession {
     }
 
     /// Wartet (begrenzt) auf den geordneten Abschluss des Laufs: erst Abbruch, dann Endstand.
-    private func settle(_ requestId: String) async -> AssistantRunRecord? {
-        guard let run = active[requestId] else { return results.removeValue(forKey: requestId) }
+    private func settle(_ requestId: String) async -> RunState? {
+        guard let run = active[requestId] else { return forget(requestId) }
         run.state.markCancelled()
         run.stop()
         let deadline = ContinuousClock.now.advanced(by: Self.commitWait)
         while active[requestId] != nil, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(10)) }
-        if active[requestId] != nil { return run.state.snapshot }   // hängendes Modell: Stand bis hierher
-        return results.removeValue(forKey: requestId)
+        if active[requestId] != nil { return run.state }   // hängendes Modell: Stand bis hierher
+        return forget(requestId)
+    }
+
+    private func forget(_ id: String) -> RunState? {
+        resultOrder.removeAll { $0 == id }
+        return results.removeValue(forKey: id)
+    }
+
+    /// Die Zeile `start` einer Anfrage (ohne Inhalte).
+    private static func startLine(_ rid: String, session: String, config: AssistantConfig, record r: AssistantRunRecord) -> AssistantJournalLine {
+        var l = AssistantJournalLine(.start, req: rid)
+        l.at = r.startedAt
+        l.session = session
+        l.model = AssistantModelKind.classify(label: config.modelLabel)
+        l.cloud = config.isCloud
+        l.unsourced = r.optInAtStart
+        l.consent = r.consentVersion
+        l.ctx = r.contextBefore
+        l.reason = r.contextReason
+        l.round = r.decided ? r.round : nil
+        l.gen = r.generation
+        return l
     }
 
     /// Nach `done` oder nach Barge-in (dann `spoken` = tatsächlich Gesprochenes, `interrupted` = true) trägt die Steuerung
-    /// den Beitrag ein. Für JEDE Anfrage entsteht genau ein Protokolleintrag, auch ohne gesprochenen Text (Fehler, Abbruch,
-    /// Widerruf); einen Beitrag im Verlauf gibt es nur mit Nutzertext, mit tatsächlich Gesprochenem, mit bekanntem Lauf und
-    /// bei noch gültiger Freigabe-Generation (der Verlaufs-Commit wird erneut geprüft). Läuft die Anfrage noch, bricht `commit`
-    /// sie ab und wartet auf ihren Endstand, bevor es schreibt: kein verspäteter Stand, keine falsche Zuordnung. Quellen
-    /// (nur die, die einen gesprochenen Satz decken) kommen aus der Prüfung dieser Anfrage. `false`, wenn nur das Protokoll
-    /// nicht geschrieben werden konnte (der Beitrag steht trotzdem im Verlauf).
+    /// den Beitrag ein. Für JEDE Anfrage entsteht ein abgeschlossenes Protokoll (`start` … `end`), auch ohne gesprochenen Text
+    /// (Fehler, Abbruch, Widerruf); einen Beitrag im Verlauf gibt es nur mit Nutzertext, mit tatsächlich Gesprochenem, mit
+    /// bekanntem Lauf und bei noch gültiger Freigabe-Generation: Die Prüfung und das Anhängen geschehen im selben Lock wie die
+    /// Erhöhung der Generation. Läuft die Anfrage noch, bricht `commit` sie ab und wartet auf ihren Endstand, bevor es
+    /// schreibt. Quellen (nur die, die einen gesprochenen Satz decken) kommen aus der Prüfung dieser Anfrage. Mit dem Commit
+    /// endet die Anmeldung des Laufs für den Widerruf. `false`, wenn nur das Protokoll nicht geschrieben werden konnte (der
+    /// Beitrag steht trotzdem im Verlauf).
     @discardableResult
     public func commit(requestId: String, user: String, spoken: String, interrupted: Bool, revoked: Bool = false) async -> Bool {
-        let record = await settle(requestId)
-        let notes = ledger.take(requestId)
-        guard var record else { return true }   // unbekannte oder schon abgeschlossene Anfrage
+        guard let state = await settle(requestId) else { return true }   // unbekannte oder schon abgeschlossene Anfrage
+        release.unregister(requestId)
+        let record = state.snapshot
         let text = user.trimmingCharacters(in: .whitespacesAndNewlines)
         let said = spoken.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let current = release.currentGeneration
         var historyMark: AssistantCommitMark?
-        var sources: [AssistantPassage] = []
         if !text.isEmpty, !said.isEmpty {
-            let valid = record.generation == current && !revoked && !record.revoked
-            historyMark = AssistantCommitMark(stage: .history, ok: valid, generation: current)
-            if valid {
-                let parts = Self.attribute(spoken: said, record: record)
-                sources = Self.distinct(parts.filter { $0.status == .grounded }.flatMap(\.sources))
-                let anyUnsourced = parts.contains { $0.status == .unsourced }
-                let anyQuote = parts.contains { $0.quote }
-                var turnParts: [AssistantTurnPart] = []
-                if anyQuote || (anyUnsourced && parts.contains { $0.status != .unsourced }) {
-                    for p in parts {
-                        let flag = p.status == .unsourced
-                        if !p.quote, let last = turnParts.last, !last.quote, last.unsourced == flag {
-                            turnParts[turnParts.count - 1].text += " " + p.text
-                        } else {
-                            turnParts.append(AssistantTurnPart(text: p.text, unsourced: flag, quote: p.quote,
-                                                               source: p.quote ? p.sources.first?.sourceLabel : nil))
-                        }
+            let parts = Self.attribute(spoken: said, record: record)
+            let sources = Self.distinct(parts.filter { $0.status == .grounded }.flatMap(\.sources))
+            let anyUnsourced = parts.contains { $0.status == .unsourced }
+            let anyQuote = parts.contains { $0.quote }
+            var turnParts: [AssistantTurnPart] = []
+            if anyQuote || (anyUnsourced && parts.contains { $0.status != .unsourced }) {
+                for p in parts {
+                    let flag = p.status == .unsourced
+                    if !p.quote, let last = turnParts.last, !last.quote, last.unsourced == flag {
+                        turnParts[turnParts.count - 1].text += " " + p.text
+                    } else {
+                        turnParts.append(AssistantTurnPart(text: p.text, unsourced: flag, quote: p.quote,
+                                                           source: p.quote ? p.sources.first?.sourceLabel : nil))
                     }
                 }
-                history.append(AssistantTurn(
-                    user: text, assistant: said, interrupted: interrupted, sources: sources, general: sources.isEmpty,
-                    unsourced: anyUnsourced, parts: turnParts, model: config.modelLabel, at: Date(),
-                    round: record.decided ? record.round : nil))
-                if history.count > Self.maxStoredTurns { history.removeFirst(history.count - Self.maxStoredTurns) }
             }
+            let turn = AssistantTurn(
+                user: text, assistant: said, interrupted: interrupted, sources: sources, general: sources.isEmpty,
+                unsourced: anyUnsourced, parts: turnParts, model: config.modelLabel, at: Date(),
+                round: record.decided ? record.round : nil)
+            // Prüfung der Generation und Anhängen im selben Lock wie `bump`: Ein Widerruf dazwischen ist ausgeschlossen.
+            var appended = false
+            if !revoked, !record.revoked {
+                appended = release.ifCurrent(record.generation) {
+                    history.append(turn)
+                    if history.count > Self.maxStoredTurns { history.removeFirst(history.count - Self.maxStoredTurns) }
+                }
+            }
+            historyMark = AssistantCommitMark(stage: .history, ok: appended, generation: release.currentGeneration)
         }
 
         guard let audit else { return true }
-        for n in notes where n.index >= 0 && n.index < record.eventSteps.count {
-            let step = record.eventSteps[n.index]
-            if step >= 0 { record.trace[step].commits.append(n.mark) }
+        if !record.journaled { audit.enqueue(Self.startLine(requestId, session: sessionId, config: config, record: record)) }
+        if let mark = historyMark {
+            var line = AssistantJournalLine(.commit, req: requestId)
+            line.n = 0
+            line.mark = mark
+            audit.enqueue(line)
         }
         let outcome: AssistantAuditEntry.Outcome
         if revoked || record.revoked || record.failure == .revoked || historyMark?.ok == false {
             outcome = .revoked   // auch ein fertiger Lauf, dessen Verlaufs-Commit die geänderte Freigabe verwirft
         } else if let failure = record.failure {
             outcome = failure == .cancelled ? .interrupted : .failed
+        } else if record.limited {
+            outcome = .limited
         } else {
             outcome = interrupted || record.cancelled ? .interrupted : .completed
         }
-        let areas = Self.distinct(record.sentences.filter { $0.status == .grounded }.flatMap(\.sources)).map(\.area)
-        let entry = AssistantAuditEntry(
-            kind: .answer, model: config.modelLabel, cloud: config.isCloud, unsourcedMode: record.optInAtStart,
-            consentVersion: config.consentVersion, counts: record.counts, areas: areas, outcome: outcome,
-            round: record.decided ? record.round : nil, generation: record.generation, trace: record.trace,
-            traceOverflow: record.traceOverflow, history: historyMark)
-        return await audit.record(entry)
+        var end = AssistantJournalLine(.end, req: requestId)
+        end.at = Date()
+        end.outcome = outcome
+        end.level = AssistantAuditLevel.of(record.counts)
+        let covering = Self.distinct(record.sentences.filter { $0.status == .grounded }.flatMap(\.sources)).map(\.area)
+        end.areas = Set((covering + record.inventoryAreas).map(\.rawValue)).sorted()
+        audit.enqueue(end)
+        return await audit.flush(request: requestId) == nil
     }
 
     // MARK: Abbruch
@@ -492,21 +598,32 @@ public actor AssistantSession {
         if earlyCancel.remove(rid) != nil {
             out.yield(.failed(requestId: rid, .cancelled))
             if let audit {
-                await audit.record(AssistantAuditEntry(
-                    kind: .answer, model: config.modelLabel, cloud: config.isCloud, unsourcedMode: snapshot.optIn,
-                    consentVersion: config.consentVersion, outcome: .interrupted, generation: snapshot.generation))
+                var record = AssistantRunRecord()
+                record.generation = snapshot.generation
+                record.optInAtStart = snapshot.optIn
+                record.consentVersion = snapshot.consentVersion
+                audit.enqueue(Self.startLine(rid, session: sessionId, config: config, record: record))
+                var end = AssistantJournalLine(.end, req: rid)
+                end.at = Date()
+                end.outcome = .interrupted
+                end.level = .s0
+                end.areas = []
+                audit.enqueue(end)
+                _ = await audit.flush(request: rid)
             }
             return
         }
         var runConfig = self.config
         runConfig.allowUnsourced = snapshot.optIn
-        let model = self.model, knowledge = self.knowledge, release = self.release, rounds = self.rounds
+        let model = self.model, knowledge = self.knowledge, release = self.release, context = self.context
+        let audit = self.audit, index = self.stepIndex
         let promptHistory = Self.promptHistory(history, areas: allowedAreas)
-        let state = RunState(generation: snapshot.generation, optIn: snapshot.optIn)
+        let state = RunState(snapshot: snapshot)
         let output = AssistantRunOutput(release: release, generation: snapshot.generation, continuation: out)
         let work = Task<Outcome, Never> {
             await Self.generate(request, model: model, knowledge: knowledge, config: runConfig, snapshot: snapshot, release: release,
-                                rounds: rounds, history: promptHistory, state: state, output: output)
+                                context: context, history: promptHistory, state: state, output: output, audit: audit,
+                                index: index, session: self.sessionId)
         }
         active[rid] = ActiveRun(stop: { work.cancel() }, state: state)
         let revoke: @Sendable () -> Void = { state.markRevoked(); work.cancel() }
@@ -527,7 +644,7 @@ public actor AssistantSession {
         }
         let outcome = await withTaskCancellationHandler { await work.value } onCancel: { work.cancel() }
         watchdog.cancel()
-        release.unregister(rid)
+        // Der Lauf bleibt angemeldet, bis `commit` ihn abschließt: Ein Widerruf nach dem Modellende erreicht ihn noch.
 
         var failure: AssistantFailure?
         switch outcome {
@@ -539,7 +656,7 @@ public actor AssistantSession {
         }
         state.update { $0.failure = failure }
         // Der Endstand steht fest, bevor das letzte Ereignis hinausgeht und bevor `commit` ihn liest.
-        remember(rid, state.snapshot)
+        remember(rid, state)
         active[rid] = nil
 
         if let failure {
@@ -553,28 +670,31 @@ public actor AssistantSession {
             if !output.send(.done(requestId: rid, done)) {
                 state.markRevoked()
                 state.update { $0.failure = .revoked }
-                remember(rid, state.snapshot)
                 output.sendUnchecked(.failed(requestId: rid, .revoked))
             }
         }
     }
 
-    private func remember(_ id: String, _ record: AssistantRunRecord) {
-        results[id] = record
+    private func remember(_ id: String, _ state: RunState) {
+        results[id] = state
         resultOrder.removeAll { $0 == id }
         resultOrder.append(id)
-        while resultOrder.count > 16 { results[resultOrder.removeFirst()] = nil }
+        while resultOrder.count > Self.maxRemembered {
+            let old = resultOrder.removeFirst()
+            results[old] = nil
+            release.unregister(old)
+        }
     }
 
     private static func generate(
         _ request: AssistantRequest, model: any BookTalkModel, knowledge: AssistantKnowledge, config: AssistantConfig,
-        snapshot: AssistantRelease.Snapshot, release: AssistantRelease, rounds: RoundMemory, history: [AssistantTurn],
-        state: RunState, output: AssistantRunOutput
+        snapshot: AssistantRelease.Snapshot, release: AssistantRelease, context: AssistantContext, history: [AssistantTurn],
+        state: RunState, output: AssistantRunOutput, audit: AssistantAuditLog?, index: AssistantStepIndex, session: String
     ) async -> Outcome {
         let rid = request.requestId
         let budget = AssistantPrompt.budget(config: config)
         let emitter = RunEmitter(rid: rid, generation: snapshot.generation, release: release, output: output, state: state,
-                                 started: ContinuousClock().now)
+                                 journal: audit, index: index, started: ContinuousClock().now)
         func finished(_ failure: AssistantFailure? = nil) -> Outcome {
             .finished(text: emitter.texts.joined(separator: " "), firstMs: emitter.firstMs, totalMs: emitter.elapsedMs, failure: failure)
         }
@@ -585,25 +705,38 @@ public actor AssistantSession {
         if Task.isCancelled { return .cancelled }
         state.touch()
 
-        // Rundenart, deterministisch vor dem Modellaufruf. Bestandsfragen sind immer Datenrunden.
+        // Rundenart über den Datenkontext, vor dem Modellaufruf. Bestandsfragen sind immer Datenrunden.
         let inventoryQuestion = AssistantKnowledge.isInventoryQuestion(request.text)
-        let kind: AssistantRoundKind = inventoryQuestion ? .data
-            : AssistantTurnPolicy.decide(question: request.text, allowUnsourced: snapshot.optIn, titles: titles, passages: passages,
-                                         previous: rounds.kind).kind
-        rounds.set(kind)
-        state.update { $0.round = kind; $0.decided = true }
+        let decision = context.decide(question: request.text, titles: titles, passages: passages, optIn: snapshot.optIn,
+                                      inventory: inventoryQuestion)
+        let kind = decision.kind
+        state.update {
+            $0.round = kind
+            $0.decided = true
+            $0.contextBefore = decision.before
+            $0.contextReason = decision.reason
+        }
+        // `start` steht in der Datei, bevor das Modell läuft und bevor etwas ausgegeben wird. Ein Fehler wird für den Abschluss
+        // der Anfrage gemerkt (`commit` meldet ihn), die Antwort läuft trotzdem.
+        if let audit {
+            _ = await audit.begin(startLine(rid, session: session, config: config, record: state.snapshot))
+            state.update { $0.journaled = true }
+            if Task.isCancelled { return .cancelled }
+        }
 
         let now = Date()
         let clockSentences = AssistantGrounding.clockSentences(now: now, timeZone: .current)
 
         if inventoryQuestion {
             guard output.send(.sources(requestId: rid, generation: snapshot.generation, [])) else { return .cancelled }
-            let statements = await knowledge.inventoryStatements(question: request.text)
+            let groups = await knowledge.inventoryGroups(question: request.text)
             if Task.isCancelled { return .cancelled }
+            let statements = groups.flatMap(\.statements)
             if statements.isEmpty {
                 if emitter.emitFixed(optIn: snapshot.optIn) == .revoked { return .cancelled }
                 return finished()
             }
+            state.update { $0.inventoryAreas = groups.map(\.area) }
             let preface = AssistantGrounding.inventoryAnnouncement
             guard emitter.emit(preface, speech: preface, status: .announcement) else { return .cancelled }
             for s in statements {
@@ -615,6 +748,8 @@ public actor AssistantSession {
         let instructions = kind == .data
             ? AssistantPrompt.dataInstructions(config: config, now: now, timeZone: .current)
             : AssistantPrompt.generalInstructions(config: config, now: now, timeZone: .current)
+        // Der Prompt einer Runde ohne Quelle sieht nur Beiträge aus Runden ohne Quelle seit dem letzten `resumeFree`.
+        let promptHistory = kind == .data ? history : context.freeHistory(history)
         var scale = 1.0
         var includeHistory = true
         var announcedSources = false
@@ -625,12 +760,12 @@ public actor AssistantSession {
             var used: [AssistantPassage] = []
             if kind == .data {
                 let built = AssistantPrompt.buildData(question: request.text, afterInterruption: request.afterInterruption, passages: passages,
-                                                      history: history, config: config, passageScale: scale, includeHistory: includeHistory)
+                                                      history: promptHistory, config: config, passageScale: scale, includeHistory: includeHistory)
                 prompt = built.prompt
                 used = built.used
             } else {
                 prompt = AssistantPrompt.buildGeneral(question: request.text, afterInterruption: request.afterInterruption,
-                                                      history: history, config: config, includeHistory: includeHistory)
+                                                      history: promptHistory, config: config, includeHistory: includeHistory)
             }
             if !announcedSources || used != state.snapshot.used {
                 state.update { $0.used = used }
@@ -644,13 +779,18 @@ public actor AssistantSession {
             var failure: AssistantFailure?
             var flow = RunEmitter.Flow.next
 
-            func check(_ sentences: [(text: String, speech: String)]) -> RunEmitter.Flow {
+            func check(_ sentences: [(text: String, speech: String, raw: String)]) async -> RunEmitter.Flow {
                 for s in sentences {
                     seen += 1
-                    let f = kind == .data
-                        ? emitter.handleData(s.text, basis: basis, titles: titles, clock: clockSentences)
-                        : emitter.handleGeneral(s.text, speech: s.speech, titles: titles, clock: clockSentences)
+                    let f: RunEmitter.Flow
+                    if kind == .data {
+                        f = emitter.handleData(s.text, basis: basis, titles: titles, clock: clockSentences)
+                    } else {
+                        f = await emitter.handleGeneral(s.text, speech: s.speech, raw: s.raw, titles: titles, clock: clockSentences,
+                                                        knowledge: knowledge)
+                    }
                     if f != .next { return f }
+                    if emitter.reachedLimit { return .limit }
                 }
                 return .next
             }
@@ -659,7 +799,7 @@ public actor AssistantSession {
                 for try await piece in model.stream(instructions: instructions, prompt: prompt, maxTokens: config.maxAnswerTokens) {
                     if Task.isCancelled { return .cancelled }
                     state.touch()
-                    flow = check(splitter.feed(piece))
+                    flow = await check(splitter.feed(piece))
                     if flow != .next { break }
                 }
             } catch is CancellationError {
@@ -685,13 +825,14 @@ public actor AssistantSession {
             if Task.isCancelled { return .cancelled }
             if flow == .revoked { return .cancelled }
             if failure == nil, flow == .next {
-                // Stromende: der Rest ist der letzte Satz.
-                flow = check(splitter.finish())
+                // Stromende: der Rest ist der letzte Satz, aber nur mit Satzzeichen; ein abgeschnittener Rest wird verworfen.
+                flow = await check(splitter.finish())
                 if flow == .revoked { return .cancelled }
                 for _ in 0..<splitter.overlong { emitter.drop(.template) }
-                if seen == 0, splitter.overlong == 0 { failure = .modelFailed }
+                for _ in 0..<splitter.fragments { emitter.drop(.fragment) }
+                if seen == 0, splitter.overlong == 0, splitter.fragments == 0 { failure = .modelFailed }
             }
-            if failure == nil, flow != .revoked, emitter.dropped > 0 {
+            if failure == nil, flow != .revoked, flow != .limit, emitter.dropped > 0 {
                 // Nichts Belegtes blieb übrig: Rückfall gegen die Frage, sonst der feste Satz.
                 if kind == .data, emitter.quotes == 0 {
                     let fallback = AssistantGrounding.fallback(question: request.text, basis: basis, taken: emitter.taken)

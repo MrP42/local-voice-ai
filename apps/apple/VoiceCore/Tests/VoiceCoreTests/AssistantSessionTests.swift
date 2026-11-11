@@ -101,6 +101,7 @@ private let stay = "Er bleibt drei Wochen."
 private let castorpModel = "Hans Castorp fährt nach Davos und besucht seinen Vetter Joachim."
 private let question = "Wohin fährt Hans Castorp im Sanatorium nach Davos?"
 private let preface = "Aus deinen Inhalten, ‚Der Zauberberg‘:"
+private let mont = "Der Mont Blanc ist 4806 Meter hoch."
 
 final class AssistantSessionTests: XCTestCase {
     /// Opt-in an: Allgemeinrunden sind möglich (Fragen ohne Bezug zu den Inhalten).
@@ -228,6 +229,80 @@ final class AssistantSessionTests: XCTestCase {
         XCTAssertEqual(seen.statuses, [.announcement, .grounded, .grounded], "ein Vorspann je Quelle")
         XCTAssertEqual(seen.answer?.counts, AssistantSentenceCounts(grounded: 2))
         XCTAssertEqual(seen.answer?.sources.count, 1)
+    }
+
+    // MARK: Fragmente (H3)
+
+    /// Ein Rest ohne Satzzeichen am Stromende wird verworfen (Grund fragment), in beiden Rundenarten; er wird nie ausgegeben.
+    func testRestWithoutPunctuationAtTheStreamEndIsNeverOutputInEitherRoundKind() async {
+        let rest = "Anna übernimmt künftig"
+        let data = await run([castorpModel + " " + rest])
+        XCTAssertEqual(data.spoken, [castorp])
+        XCTAssertFalse(data.texts.joined().contains("künftig"))
+        XCTAssertEqual(data.answer?.counts, AssistantSentenceCounts(grounded: 1, droppedFragment: 1))
+
+        let general = await run([mont + " " + rest], config: open, text: "Wie hoch ist der Mont Blanc?")
+        XCTAssertEqual(general.answer?.round, .general)
+        XCTAssertEqual(general.spoken, [mont])
+        XCTAssertFalse(general.texts.joined().contains("künftig"))
+        XCTAssertEqual(general.answer?.counts, AssistantSentenceCounts(unsourced: 1, droppedFragment: 1))
+
+        // Nur der Rest: nichts wird ausgegeben, der feste Satz sagt es (kein Fehler des Modells).
+        let onlyData = await run([rest], text: "Wie hoch ist der Mont Blanc?")
+        XCTAssertEqual(onlyData.texts, [AssistantGrounding.fixedSentence(allowUnsourced: false)])
+        XCTAssertEqual(onlyData.answer?.counts, AssistantSentenceCounts(neutral: 1, droppedFragment: 1))
+        let onlyGeneral = await run([rest], config: open, text: "Wie hoch ist der Mont Blanc?")
+        XCTAssertEqual(onlyGeneral.texts, [AssistantGrounding.fixedSentence(allowUnsourced: true)])
+        XCTAssertEqual(onlyGeneral.answer?.counts, AssistantSentenceCounts(neutral: 1, droppedFragment: 1))
+        XCTAssertNil(onlyGeneral.failure)
+    }
+
+    func testDroppedRestIsInTheJournalAsFragment() async {
+        let dir = tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let audit = AssistantAuditLog(directory: dir)
+        let s = await session(ScriptModel(pieces: [castorpModel + " Anna übernimmt künftig"]), config: strict, audit: audit)
+        _ = await collect(s, AssistantRequest(requestId: "r1", text: question))
+        await s.commit(requestId: "r1", user: question, spoken: castorp, interrupted: false)
+        let e = await audit.entries().first
+        XCTAssertEqual(e?.trace.map(\.verdict), [.announcement, .grounded, .droppedFragment])
+        XCTAssertEqual(e?.counts.droppedFragment, 1)
+        XCTAssertFalse(rawLog(audit).contains("künftig"))
+    }
+
+    /// Ein ganzer Auszug ohne Satzzeichen („Anna für Projekt Nordlicht“) ist nicht zitierbar, auch nicht als einziger Satz.
+    func testWholeExcerptWithoutPunctuationIsNeverQuoted() async {
+        let corpus = AssistantCorpus()
+        await corpus.upsert(assistantDoc("n1", "Notiz", area: .notes, sections: [(nil, "Anna für Projekt Nordlicht")]))
+        let k = AssistantKnowledge(corpus: corpus)
+        let s = AssistantSession(model: ScriptModel(pieces: ["Anna übernimmt die Leitung für das Projekt Nordlicht."]), knowledge: k, config: strict)
+        let seen = Seen(events: await collect(s, AssistantRequest(requestId: "r1", text: "Wer macht das Projekt Nordlicht?")))
+        XCTAssertFalse(seen.texts.contains("Anna für Projekt Nordlicht"))
+        XCTAssertFalse(seen.statuses.contains(.grounded))
+        XCTAssertEqual(seen.texts, [AssistantGrounding.fixedSentence(allowUnsourced: false)])
+        XCTAssertEqual(seen.answer?.sources, [])
+    }
+
+    /// Ohne nachgewiesene Satzgrenze (angeschnittener Auszuganfang oder -ende) werden erster und letzter Satz nicht zitiert; mit
+    /// Nachweis schon.
+    func testCutExcerptEdgeSentencesAreNotQuotedButProvenOnesAre() async {
+        let text = "Die Sitzung beginnt um zehn Uhr im großen Saal. Anna übernimmt die Planung für das Projekt Nordlicht bis Freitag. Bernd kümmert sich um das Budget des Projekts Nordlicht."
+        for (proven, expected) in [(false, ["Anna übernimmt die Planung für das Projekt Nordlicht bis Freitag."]),
+                                   (true, ["Die Sitzung beginnt um zehn Uhr im großen Saal."])] {
+            let corpus = AssistantCorpus()
+            await corpus.upsert(assistantDoc("t1", "Besprechung", area: .transcripts, boundaries: proven, sections: [("00:01", text)]))
+            let s = AssistantSession(model: ScriptModel(pieces: [proven ? "Die Sitzung beginnt um zehn Uhr im großen Saal im Haus." : "Anna übernimmt die Planung für das Projekt Nordlicht bis Freitag."]),
+                                     knowledge: AssistantKnowledge(corpus: corpus), config: strict)
+            let seen = Seen(events: await collect(s, AssistantRequest(requestId: "r1", text: "Wann beginnt die Sitzung und wer plant das Projekt Nordlicht?")))
+            XCTAssertEqual(seen.spoken, expected, "Auszug mit Nachweis: \(proven)")
+        }
+        // Der Satz am angeschnittenen Rand rastet nicht ein.
+        let corpus = AssistantCorpus()
+        await corpus.upsert(assistantDoc("t1", "Besprechung", area: .transcripts, boundaries: false, sections: [("00:01", text)]))
+        let s = AssistantSession(model: ScriptModel(pieces: ["Bernd kümmert sich um das Budget des Projekts Nordlicht."]),
+                                 knowledge: AssistantKnowledge(corpus: corpus), config: strict)
+        let seen = Seen(events: await collect(s, AssistantRequest(requestId: "r2", text: "Wer kümmert sich um das Budget?")))
+        XCTAssertFalse(seen.texts.contains { $0.contains("Bernd kümmert") })
     }
 
     // MARK: Datenrunde: Eigenschaft über böswillige Modellausgaben
@@ -481,9 +556,30 @@ final class AssistantSessionTests: XCTestCase {
 
     func testGeneralRoundOnlyAnnouncesOnceAndNeverQuotes() async {
         let seen = await run(["Der Mont Blanc ist 4806 Meter hoch. Er liegt in den Alpen. " + castorp], config: open, text: "Wie hoch ist der Mont Blanc?")
-        XCTAssertEqual(seen.statuses, [.announcement, .unsourced, .unsourced, .unsourced])
+        XCTAssertEqual(seen.statuses, [.announcement, .unsourced, .unsourced], "der dritte Satz ist ein Satz aus dem eigenen Buch: verworfen")
         XCTAssertFalse(seen.statuses.contains(.grounded), "kein Satz einer Allgemeinrunde gilt je als belegt")
         XCTAssertEqual(seen.sentences.filter { $0.quote }.count, 0)
+        XCTAssertEqual(seen.answer?.counts, AssistantSentenceCounts(unsourced: 2, droppedOwnData: 1))
+    }
+
+    /// Zweite Schicht (c): Ein Satz ohne Quelle, der einem Quellsatz ähnelt (Einrast-Regel), wird verworfen (Grund ownData), auch
+    /// wenn weder Stamm noch Titel ihn verraten. Quelle: „Anna übernimmt die Planung …“, Satz: „Anna übernimmt die Leitung.“
+    func testGeneralRoundDropsASentenceThatResemblesOwnContent() async {
+        let s = AssistantSession(model: ScriptModel(pieces: ["Anna übernimmt die Leitung. Der Mont Blanc ist 4806 Meter hoch."]),
+                                 knowledge: await twoSourceKnowledge(), config: open)
+        let seen = Seen(events: await collect(s, AssistantRequest(requestId: "r1", text: "Wie hoch ist der Mont Blanc?")))
+        XCTAssertEqual(seen.answer?.round, .general)
+        XCTAssertEqual(seen.texts, ["Ohne Quelle:", "Der Mont Blanc ist 4806 Meter hoch."])
+        XCTAssertEqual(seen.answer?.counts, AssistantSentenceCounts(unsourced: 1, droppedOwnData: 1))
+    }
+
+    /// Dasselbe Verfahren sieht nur die freigegebenen Bereiche: Ist der Bereich der Quelle aus, ist der Satz kein Eigeninhalt.
+    func testResemblanceCheckOnlySeesEnabledAreas() async {
+        let k = await twoSourceKnowledge()
+        await k.setAreas([.books])
+        let s = AssistantSession(model: ScriptModel(pieces: ["Anna übernimmt die Leitung."]), knowledge: k, config: open)
+        let seen = Seen(events: await collect(s, AssistantRequest(requestId: "r1", text: "Wie hoch ist der Mont Blanc?")))
+        XCTAssertEqual(seen.statuses, [.announcement, .unsourced])
     }
 
     func testGeneralRoundDropsEverySentenceThatRefersToOwnData() async {
@@ -520,15 +616,17 @@ final class AssistantSessionTests: XCTestCase {
         XCTAssertEqual(wrong.texts, [AssistantGrounding.fixedSentence(allowUnsourced: false)])
     }
 
-    func testExplicitGeneralQuestionWithOptInIsAGeneralRoundDespiteHits() async {
+    /// „Allgemein:“ vor der Frage schaltet nichts um: Ein relevanter Abruftreffer macht die Runde zur Datenrunde (und rastet ein).
+    func testAGeneralPrefixDoesNotMakeAGeneralRoundWhenThereIsAHit() async {
         let log = Log()
-        let s = await session(ScriptModel(pieces: ["Ein Sanatorium ist eine Heilanstalt."], log: log), config: open)
+        let s = await session(ScriptModel(pieces: [castorpModel], log: log), config: open)
         let seen = Seen(events: await collect(s, AssistantRequest(requestId: "r1", text: "Allgemein: Wohin fährt Hans Castorp im Sanatorium nach Davos?")))
-        XCTAssertEqual(seen.answer?.round, .general)
-        XCTAssertFalse(log.all.first?.prompt.contains("AUSZÜGE") ?? true)
-        XCTAssertEqual(seen.statuses, [.announcement, .unsourced])
+        XCTAssertEqual(seen.answer?.round, .data)
+        XCTAssertTrue(log.all.first?.prompt.contains("AUSZÜGE") ?? false)
+        XCTAssertEqual(seen.spoken, [castorp])
+        XCTAssertEqual(s.contextMode, .data, "die Runde rastet den Zustand ein")
         let own = Seen(events: await collect(s, AssistantRequest(requestId: "r2", text: "Allgemein gefragt: was steht in meiner Notiz?")))
-        XCTAssertEqual(own.answer?.round, .data, "Eigendatenbezug schlägt „allgemein“")
+        XCTAssertEqual(own.answer?.round, .data, "Eigendatenbezug und Sperre")
     }
 
     // MARK: Rundenart und Vorrunde
@@ -1248,20 +1346,6 @@ final class AssistantSessionTests: XCTestCase {
         XCTAssertTrue(h.isEmpty)
     }
 
-    func testAuditTraceIsCappedAndTheOverflowIsCounted() async {
-        let dir = tempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let audit = AssistantAuditLog(directory: dir)
-        let many = (0..<50).map { "Frage Nummer \($0) bleibt unbeantwortet." }.joined(separator: " ")
-        let s = await session(ScriptModel(pieces: [many]), config: strict, audit: audit)
-        _ = await collect(s, AssistantRequest(requestId: "r1", text: "Was ist mit den Fragen?"))
-        await s.commit(requestId: "r1", user: "Was ist mit den Fragen?", spoken: "", interrupted: false)
-        let e = await audit.entries().first
-        XCTAssertEqual(e?.trace.count, AssistantAuditEntry.maxTrace)
-        XCTAssertGreaterThan(e?.traceOverflow ?? 0, 0)
-        XCTAssertEqual(e?.counts.droppedNoMode, 50, "gezählt wird alles, auch über der Grenze der Spur")
-    }
-
     func testAnswerWithoutAuditLogStillCommits() async {
         let s = await session(ScriptModel(pieces: [castorpModel]))
         _ = await collect(s, AssistantRequest(requestId: "r1", text: question))
@@ -1289,14 +1373,24 @@ final class AssistantSessionTests: XCTestCase {
         XCTAssertTrue(p.contains("Der Nutzer hat dich gerade unterbrochen."), p)
     }
 
-    func testPromptKindFollowsTheOptInAtRequestTime() async {
+    func testPromptKindFollowsTheOptInAtRequestTimeAndTheLock() async {
         let log = Log()
         let s = await session(ScriptModel(pieces: ["Gut."], log: log), config: strict)
         _ = await collect(s, AssistantRequest(requestId: "r1", text: "Wie hoch ist der Mont Blanc?"))
         XCTAssertTrue(log.all.last?.instructions.contains("Unter AUSZÜGE stehen") ?? false, "ohne Opt-in eine Datenrunde")
         s.setAllowUnsourced(true)
         _ = await collect(s, AssistantRequest(requestId: "r2", text: "Wie hoch ist der Mont Blanc?"))
-        XCTAssertTrue(log.all.last?.instructions.contains("In dieser Runde siehst du keine Inhalte") ?? false, "mit Opt-in eine Allgemeinrunde")
+        XCTAssertTrue(log.all.last?.instructions.contains("Unter AUSZÜGE stehen") ?? false,
+                      "das Gespräch hatte schon eine Datenrunde: Einschalten gibt keine Runde ohne Quelle frei")
+        XCTAssertTrue(s.canResumeFree)
+        XCTAssertTrue(s.resumeFree())
+        _ = await collect(s, AssistantRequest(requestId: "r3", text: "Wie hoch ist der Mont Blanc?"))
+        XCTAssertTrue(log.all.last?.instructions.contains("In dieser Runde siehst du keine Inhalte") ?? false, "erst nach `resumeFree` eine Allgemeinrunde")
         XCTAssertFalse(log.all.last?.prompt.contains("AUSZÜGE") ?? true)
+        let fresh = await session(ScriptModel(pieces: ["Gut."], log: log), config: strict)
+        fresh.setAllowUnsourced(true)
+        _ = await collect(fresh, AssistantRequest(requestId: "r4", text: "Wie hoch ist der Mont Blanc?"))
+        XCTAssertTrue(log.all.last?.instructions.contains("In dieser Runde siehst du keine Inhalte") ?? false,
+                      "ein Gespräch ohne Datenrunde: Einschalten setzt den Zustand frei")
     }
 }

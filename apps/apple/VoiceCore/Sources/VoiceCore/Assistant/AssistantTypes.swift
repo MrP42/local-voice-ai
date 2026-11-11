@@ -76,15 +76,51 @@ public struct AssistantPassage: Sendable, Equatable, Codable {
     public let locator: String?     // „S. 12“, „00:14:03“, „Seite 2“
     public let text: String
     public let score: Double
+    /// Der Auszug beginnt nachweislich an einer Satzgrenze (Dokumentanfang, Absatz, vorausgehendes Satzzeichen). Ohne Nachweis
+    /// (Standard) wird sein erster Satz nie zitiert: er kann angeschnitten sein. Wird nicht gespeichert.
+    public let startsAtBoundary: Bool
+    /// Der Auszug endet nachweislich an einer Satzgrenze. Ohne Nachweis (Standard) wird sein letzter Satz nie zitiert.
+    public let endsAtBoundary: Bool
 
-    public init(area: AssistantArea, itemId: String, title: String, locator: String? = nil, text: String, score: Double) {
+    public init(area: AssistantArea, itemId: String, title: String, locator: String? = nil, text: String, score: Double,
+                startsAtBoundary: Bool = false, endsAtBoundary: Bool = false) {
         self.area = area
         self.itemId = itemId
         self.title = title
         self.locator = locator
         self.text = text
         self.score = score
+        self.startsAtBoundary = startsAtBoundary
+        self.endsAtBoundary = endsAtBoundary
     }
+
+    private enum CodingKeys: String, CodingKey { case area, itemId, title, locator, text, score }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(area: try c.decode(AssistantArea.self, forKey: .area), itemId: try c.decode(String.self, forKey: .itemId),
+                  title: try c.decode(String.self, forKey: .title), locator: try c.decodeIfPresent(String.self, forKey: .locator),
+                  text: try c.decode(String.self, forKey: .text), score: try c.decode(Double.self, forKey: .score))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(area, forKey: .area)
+        try c.encode(itemId, forKey: .itemId)
+        try c.encode(title, forKey: .title)
+        try c.encodeIfPresent(locator, forKey: .locator)
+        try c.encode(text, forKey: .text)
+        try c.encode(score, forKey: .score)
+    }
+
+    /// Dieselbe Stelle mit anderem Text und Punktwert. Ein gekürzter Text endet nie nachweislich an einer Satzgrenze.
+    func replacing(text newText: String, score newScore: Double? = nil) -> AssistantPassage {
+        AssistantPassage(area: area, itemId: itemId, title: title, locator: locator, text: newText, score: newScore ?? score,
+                         startsAtBoundary: startsAtBoundary, endsAtBoundary: endsAtBoundary && newText == text)
+    }
+
+    /// Auf höchstens `limit` Zeichen gekürzt (`BookTalkPrompt.clip`), Satzgrenze am Ende dann nicht mehr nachgewiesen.
+    func clipped(to limit: Int) -> AssistantPassage { replacing(text: BookTalkPrompt.clip(text, to: limit)) }
 
     /// Anzeigezeile der Quelle: „Buch · Titel · S. 12“, „Transkript · Titel · 00:14:03“, „Ablage · Titel“, „Notiz · Datum“.
     public var sourceLabel: String {
@@ -109,9 +145,16 @@ public struct AssistantDocument: Sendable {
     public struct Section: Sendable {
         public let locator: String?
         public let text: String
-        public init(locator: String?, text: String) {
+        /// Der Abschnitt beginnt nachweislich an einer Satzgrenze (Dokumentanfang, eigener Absatz, Satzzeichen davor). Ohne
+        /// Nachweis (Standard): sein erster Satz wird nicht zitiert.
+        public let startsAtBoundary: Bool
+        /// Der Abschnitt endet nachweislich an einer Satzgrenze. Ohne Nachweis (Standard): sein letzter Satz wird nicht zitiert.
+        public let endsAtBoundary: Bool
+        public init(locator: String?, text: String, startsAtBoundary: Bool = false, endsAtBoundary: Bool = false) {
             self.locator = locator
             self.text = text
+            self.startsAtBoundary = startsAtBoundary
+            self.endsAtBoundary = endsAtBoundary
         }
     }
 
@@ -142,7 +185,7 @@ public enum AssistantSentenceStatus: String, Sendable, Codable, Equatable {
     case announcement
 }
 
-/// Art einer Runde, vor dem Modellaufruf deterministisch festgelegt (`AssistantTurnPolicy`). Datenrunde ist der Standard:
+/// Art einer Runde, vor dem Modellaufruf festgelegt (`AssistantContext`). Datenrunde ist der Standard:
 /// Über eigene Daten gibt es nur Originalsätze und Bestandsangaben des Systems. Freier Modelltext kommt nur in der
 /// Allgemeinrunde vor (mit Opt-in, ohne Auszüge und ohne Bestand im Prompt) und ist dort stets „ohne Quelle“.
 public enum AssistantRoundKind: String, Sendable, Codable, Equatable {
@@ -163,6 +206,8 @@ public enum AssistantDropReason: String, Sendable, Codable, Equatable, CaseItera
     case template
     /// Durch Widerruf (Freigabe-Generation) veraltet.
     case revoked
+    /// Rest ohne Satzzeichen am Stromende (abgeschnittener Satz): wird nie ausgegeben.
+    case fragment
 }
 
 /// Abschnitt eines Beitrags mit gleicher Kennzeichnung (gespeichert, wenn der Beitrag Originalsätze enthält oder Sätze ohne
@@ -297,10 +342,12 @@ public struct AssistantSentenceCounts: Sendable, Equatable, Codable {
     public var droppedTemplate = 0
     /// Verworfen, weil die Freigabe-Generation veraltet war (Widerruf).
     public var revoked = 0
+    /// Verworfen: Rest ohne Satzzeichen am Stromende.
+    public var droppedFragment = 0
 
     public init(grounded: Int = 0, inventory: Int = 0, unsourced: Int = 0, neutral: Int = 0, droppedOwnData: Int = 0,
                 droppedNoMode: Int = 0, droppedNotSnapped: Int = 0, droppedDuplicate: Int = 0, droppedTemplate: Int = 0,
-                revoked: Int = 0) {
+                revoked: Int = 0, droppedFragment: Int = 0) {
         self.grounded = grounded
         self.inventory = inventory
         self.unsourced = unsourced
@@ -311,10 +358,12 @@ public struct AssistantSentenceCounts: Sendable, Equatable, Codable {
         self.droppedDuplicate = droppedDuplicate
         self.droppedTemplate = droppedTemplate
         self.revoked = revoked
+        self.droppedFragment = droppedFragment
     }
 
     private enum CodingKeys: String, CodingKey {
-        case grounded, inventory, unsourced, neutral, droppedOwnData, droppedNoMode, droppedNotSnapped, droppedDuplicate, droppedTemplate, revoked
+        case grounded, inventory, unsourced, neutral, droppedOwnData, droppedNoMode, droppedNotSnapped, droppedDuplicate, droppedTemplate
+        case revoked, droppedFragment
     }
 
     /// Fehlende Zähler gelten als 0: Zeilen älterer und neuerer Fassungen bleiben lesbar.
@@ -324,12 +373,13 @@ public struct AssistantSentenceCounts: Sendable, Equatable, Codable {
         self.init(grounded: try count(.grounded), inventory: try count(.inventory), unsourced: try count(.unsourced),
                   neutral: try count(.neutral), droppedOwnData: try count(.droppedOwnData), droppedNoMode: try count(.droppedNoMode),
                   droppedNotSnapped: try count(.droppedNotSnapped), droppedDuplicate: try count(.droppedDuplicate),
-                  droppedTemplate: try count(.droppedTemplate), revoked: try count(.revoked))
+                  droppedTemplate: try count(.droppedTemplate), revoked: try count(.revoked),
+                  droppedFragment: try count(.droppedFragment))
     }
 
     /// Alle verworfenen Sätze (nicht gesprochen, nicht angezeigt), unabhängig vom Grund.
     public var dropped: Int {
-        droppedOwnData + droppedNoMode + droppedNotSnapped + droppedDuplicate + droppedTemplate + revoked
+        droppedOwnData + droppedNoMode + droppedNotSnapped + droppedDuplicate + droppedTemplate + revoked + droppedFragment
     }
 
     public mutating func drop(_ reason: AssistantDropReason) {
@@ -340,6 +390,7 @@ public struct AssistantSentenceCounts: Sendable, Equatable, Codable {
         case .duplicate: droppedDuplicate += 1
         case .template: droppedTemplate += 1
         case .revoked: revoked += 1
+        case .fragment: droppedFragment += 1
         }
     }
 

@@ -4,10 +4,19 @@ import XCTest
 
 // Gesprächsmodus „Sprechen“ (Paket K): Index über Bücher, Transkripte und Notizen.
 
+/// Testdokument. `boundaries`: Die Abschnitte sind ganze Einheiten (Satzgrenzen an Anfang und Ende nachgewiesen); mit `false`
+/// fehlt der Nachweis, dann werden Randsätze nicht zitiert.
 func assistantDoc(_ id: String, _ title: String, area: AssistantArea = .books, version: String = "1", detail: String? = nil,
-                  updated: Date? = nil, sections: [(String?, String)]) -> AssistantDocument {
+                  updated: Date? = nil, boundaries: Bool = true, sections: [(String?, String)]) -> AssistantDocument {
     AssistantDocument(item: AssistantItem(area: area, id: id, title: title, detail: detail, updated: updated), version: version,
-                      sections: sections.map { .init(locator: $0.0, text: $0.1) })
+                      sections: sections.map { .init(locator: $0.0, text: $0.1, startsAtBoundary: boundaries, endsAtBoundary: boundaries) })
+}
+
+/// Passage mit nachgewiesenen Satzgrenzen an beiden Rändern (ein ganzer Auszug).
+func assistantPassage(_ area: AssistantArea = .books, itemId: String = "b1", title: String = "Buch", locator: String? = nil, text: String,
+                      score: Double = 1, whole: Bool = true) -> AssistantPassage {
+    AssistantPassage(area: area, itemId: itemId, title: title, locator: locator, text: text, score: score, startsAtBoundary: whole,
+                     endsAtBoundary: whole)
 }
 
 final class AssistantCorpusTests: XCTestCase {
@@ -22,20 +31,96 @@ final class AssistantCorpusTests: XCTestCase {
 
     // MARK: Chunker
 
+    private func split(_ text: String) -> [String] { AssistantChunker.split(text).map(\.text) }
+
     func testChunkerKeepsShortTextAsOne() {
-        XCTAssertEqual(AssistantChunker.split("Ein kurzer Text."), ["Ein kurzer Text."])
-        XCTAssertEqual(AssistantChunker.split("   \n  "), [])
+        XCTAssertEqual(split("Ein kurzer Text."), ["Ein kurzer Text."])
+        XCTAssertEqual(split("   \n  "), [])
+    }
+
+    /// Satzgrenzen-Nachweis: Anfang und Ende des Abschnitts tragen die Flags des Abschnitts, innere Kanten nur mit Nachweis.
+    func testChunkerFlagsBoundariesOnlyWithProof() {
+        let short = AssistantChunker.split("Ein kurzer Text.", startsAtBoundary: true, endsAtBoundary: false)
+        XCTAssertEqual(short, [.init(text: "Ein kurzer Text.", startsAtBoundary: true, endsAtBoundary: false)])
+        let sentence = "Dies ist ein Satz mit einigen Wörtern darin."
+        let text = Array(repeating: sentence, count: 60).joined(separator: " ")
+        let pieces = AssistantChunker.split(text, startsAtBoundary: true, endsAtBoundary: true)
+        XCTAssertGreaterThan(pieces.count, 3)
+        XCTAssertTrue(pieces.first!.startsAtBoundary)
+        XCTAssertTrue(pieces.last!.endsAtBoundary)
+        // Jede Kante, die als Satzgrenze gilt, ist wirklich eine: Anfang mit Großbuchstaben, Ende mit Punkt.
+        for p in pieces {
+            if p.startsAtBoundary { XCTAssertTrue(p.text.hasPrefix("Dies ist"), p.text) }
+            if p.endsAtBoundary { XCTAssertTrue(p.text.hasSuffix("darin."), p.text) }
+        }
+        // Mit Satzenden als Schnitt und Satzanfängen im Überlappungsfenster sind innere Kanten nachgewiesen.
+        for p in pieces.dropLast() { XCTAssertTrue(p.endsAtBoundary, "Schnitt an Satzende: \(p.text.suffix(30))") }
+        XCTAssertTrue(pieces.dropFirst().allSatisfy { $0.startsAtBoundary })
+        // Ohne Abschnittsnachweis bleiben Anfang und Ende offen.
+        let open = AssistantChunker.split(text)
+        XCTAssertFalse(open.first!.startsAtBoundary)
+        XCTAssertFalse(open.last!.endsAtBoundary)
+    }
+
+    /// Ein harter Schnitt mitten im Wort (Text ohne Satzzeichen) beweist nichts: keine der inneren Kanten gilt.
+    func testChunkerHardCutsProveNothing() {
+        let pieces = AssistantChunker.split(String(repeating: "wort ", count: 400), startsAtBoundary: true, endsAtBoundary: true)
+        XCTAssertGreaterThan(pieces.count, 2)
+        for p in pieces.dropFirst() { XCTAssertFalse(p.startsAtBoundary) }
+        for p in pieces.dropLast() { XCTAssertFalse(p.endsAtBoundary) }
+    }
+
+    /// Eine Abkürzung am Schnitt ist kein Satzende („z. B.“): kein Nachweis.
+    func testChunkerAbbreviationIsNoSentenceEnd() {
+        let filler = String(repeating: "Das ist ein ganz gewöhnlicher Satz ohne Besonderheit. ", count: 12)
+        let text = filler + "Das gilt etwa für Kosten, z. B. Miete und Strom und alles Weitere bis hier hin und weiter und weiter. " + filler
+        for p in AssistantChunker.split(text, startsAtBoundary: true, endsAtBoundary: true) where p.endsAtBoundary && !p.text.hasSuffix(".") {
+            XCTFail("Ende ohne Satzzeichen als Grenze gemeldet: \(p.text.suffix(30))")
+        }
+        for p in AssistantChunker.split(text) where p.endsAtBoundary { XCTAssertFalse(p.text.hasSuffix("z."), p.text) }
+    }
+
+    /// Absatzgrenzen (Leerzeile) zählen als Nachweis, ein einzelner Zeilenumbruch nicht.
+    func testChunkerParagraphBreakProvesBoundaryButSingleNewlineDoesNot() {
+        let para = String(repeating: "Wort ", count: 30).trimmingCharacters(in: .whitespaces)
+        let blank = AssistantChunker.split(Array(repeating: para, count: 12).joined(separator: "\n\n"))
+        XCTAssertGreaterThan(blank.count, 2)
+        XCTAssertTrue(blank.dropLast().allSatisfy { $0.endsAtBoundary }, "Schnitt an der Leerzeile")
+        XCTAssertTrue(blank.dropFirst().allSatisfy { $0.startsAtBoundary }, "Anfang am Absatzanfang im Überlappungsfenster")
+        let single = AssistantChunker.split(Array(repeating: para, count: 12).joined(separator: "\n"))
+        XCTAssertGreaterThan(single.count, 2)
+        XCTAssertFalse(single.dropLast().contains { $0.endsAtBoundary }, "ein einzelner Zeilenumbruch beweist nichts")
+        XCTAssertFalse(single.dropFirst().contains { $0.startsAtBoundary })
+    }
+
+    /// Kurze Abschnitte werden nur zusammengezogen, wenn die Naht nachweislich eine Satzgrenze ist.
+    func testShortSectionsMergeOnlyAcrossProvenBoundaries() async {
+        let proven = AssistantCorpus()
+        await proven.upsert(AssistantDocument(item: AssistantItem(area: .notes, id: "n", title: "Notiz"), version: "1", sections: [
+            .init(locator: "L", text: "Anna übernimmt die Planung des Projekts.", startsAtBoundary: true, endsAtBoundary: true),
+            .init(locator: "L", text: "Bernd kümmert sich um das Budget des Projekts.", startsAtBoundary: true, endsAtBoundary: true),
+        ]))
+        let merged = await proven.search("Planung Budget Projekt", areas: all, limit: 5)
+        XCTAssertEqual(merged.count, 1, "nachgewiesene Naht: ein Stück")
+        XCTAssertTrue(merged[0].startsAtBoundary && merged[0].endsAtBoundary)
+
+        let open = AssistantCorpus()
+        await open.upsert(AssistantDocument(item: AssistantItem(area: .notes, id: "n", title: "Notiz"), version: "1", sections: [
+            .init(locator: "L", text: "Anna übernimmt die Planung des Projekts", startsAtBoundary: true, endsAtBoundary: false),
+            .init(locator: "L", text: "Bernd kümmert sich um das Budget des Projekts.", startsAtBoundary: false, endsAtBoundary: true),
+        ]))
+        let separate = await open.search("Planung Budget Projekt", areas: all, limit: 5)
+        XCTAssertEqual(separate.count, 2, "keine nachgewiesene Naht: getrennte Stücke")
+        XCTAssertTrue(separate.allSatisfy { !($0.startsAtBoundary && $0.endsAtBoundary) })
     }
 
     func testChunkerSizesOverlapAndBoundaries() {
         let sentence = "Dies ist ein Satz mit einigen Wörtern darin."
         let text = Array(repeating: sentence, count: 60).joined(separator: " ")
-        let chunks = AssistantChunker.split(text)
+        let chunks = split(text)
         XCTAssertGreaterThan(chunks.count, 3)
-        for c in chunks {
-            XCTAssertLessThanOrEqual(c.utf16.count, 700)
-            XCTAssertGreaterThanOrEqual(c.utf16.count, 300, "nicht winzig außer dem letzten")
-        }
+        for c in chunks { XCTAssertLessThanOrEqual(c.utf16.count, 700) }
+        for c in chunks.dropLast() { XCTAssertGreaterThanOrEqual(c.utf16.count, 300, "nicht winzig außer dem letzten") }
         // An Satzgrenzen geschnitten: jedes Stück außer dem letzten endet mit Satzzeichen.
         for c in chunks.dropLast() { XCTAssertTrue(c.hasSuffix("."), c) }
         // Überlappung: der Anfang jedes Stücks kommt am Ende des vorigen vor.
@@ -51,21 +136,21 @@ final class AssistantCorpusTests: XCTestCase {
     func testChunkerPrefersNewlines() {
         let para = String(repeating: "Wort ", count: 100)
         let text = para + "\n" + para + "\n" + para
-        let chunks = AssistantChunker.split(text)
+        let chunks = split(text)
         XCTAssertLessThanOrEqual(chunks[0].utf16.count, 500, "schneidet am Zeilenende statt bei 700")
         XCTAssertTrue(chunks.dropLast().allSatisfy { $0.hasSuffix("Wort") })
     }
 
     func testChunkerHandlesTextWithoutSpaces() {
         let text = String(repeating: "a", count: 2_000)
-        let chunks = AssistantChunker.split(text)
+        let chunks = split(text)
         XCTAssertGreaterThan(chunks.count, 2)
         XCTAssertTrue(chunks.allSatisfy { $0.utf16.count <= 700 })
     }
 
     func testChunkerDoesNotSplitSurrogatePairs() {
         let text = String(repeating: "😀", count: 800)
-        for c in AssistantChunker.split(text) { XCTAssertTrue(c.unicodeScalars.allSatisfy { $0 == "😀" }) }
+        for c in split(text) { XCTAssertTrue(c.unicodeScalars.allSatisfy { $0 == "😀" }) }
     }
 
     // MARK: Index

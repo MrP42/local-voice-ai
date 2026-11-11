@@ -231,15 +231,18 @@ final class VoiceUITests: XCTestCase {
         expectation(for: NSPredicate(format: format, text), evaluatedWith: element)
         waitForExpectations(timeout: 8)
     }
-    /// Schließt die Modellwahl (`confirmationDialog`). Je nach iOS-Fassung ein Blatt mit „Abbrechen“ oder ein kleines zentriertes
-    /// Blatt nur mit den Modellknöpfen: dann schließt ein Tipp außerhalb. Prüft danach, dass der Dialog weg ist.
+    /// Schließt die Modellwahl (`confirmationDialog`), unabhängig davon, wie die iOS-Fassung einen Tipp daneben behandelt (iOS 26.3
+    /// schließt das kleine Blatt damit nicht): „Abbrechen“, wenn es das gibt; sonst der Knopf „Apple-Systemmodell · lokal“ selbst.
+    /// Mit `--assistant-no-model` bleibt der Zustand „Kein Modell“: der Controller baut dann nie ein Modell und merkt sich die
+    /// Wahl nicht (`AssistantEngine.make`, `AssistantController.selectModel`). Wartet, bis die Option verschwunden ist.
     private func dismissModelChoice(_ app: XCUIApplication) {
         let option = app.buttons["Apple-Systemmodell · lokal"]
         let cancel = app.buttons["Abbrechen"].firstMatch
         if cancel.waitForExistence(timeout: 2) {
             cancel.tap()
         } else {
-            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.06)).tap()
+            XCTAssertTrue(option.exists, "weder „Abbrechen“ noch die Option sind da")
+            option.tap()
         }
         expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: option)
         waitForExpectations(timeout: 5)
@@ -283,7 +286,7 @@ final class VoiceUITests: XCTestCase {
         openAssistant(app)
         let state = app.descendants(matching: .any)["assistantState"]
         XCTAssertTrue(state.waitForExistence(timeout: 10))
-        XCTAssertFalse(state.label.contains("Antworten ohne Quelle"), state.label)
+        XCTAssertFalse(state.label.contains("Antwortet"), "ohne Modell und ohne „Antworten ohne Quelle“ gibt es keine Zeile: \(state.label)")
         let toggle = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR label == %@", "assistantUnsourced", "Antworten ohne Quelle")).firstMatch
         let alert = app.alerts["Antworten ohne Quelle einschalten?"]
         func flip() {
@@ -298,22 +301,43 @@ final class VoiceUITests: XCTestCase {
         keepScreenshot(app, name: "Gespraech-Ohne-Quelle-Bestaetigung")
         alert.buttons["Abbrechen"].tap()
         XCTAssertTrue(alert.waitForNonExistence(timeout: 5))
-        XCTAssertFalse(state.label.contains("Antworten ohne Quelle"), "Abbrechen schaltet nichts ein")
+        XCTAssertFalse(state.label.contains("Antwortet"), "Abbrechen schaltet nichts ein")
 
         flip()
         XCTAssertTrue(alert.waitForExistence(timeout: 5))
         alert.buttons["Einschalten"].tap()
-        waitForLabel(state, "label CONTAINS %@", "Antworten ohne Quelle sind erlaubt")
+        waitForLabel(state, "label CONTAINS %@", "Antwortet ohne Quelle")   // frisches Gespräch: noch keine Datenrunde
 
         flip()
         XCTAssertFalse(alert.waitForExistence(timeout: 1), "Ausschalten braucht keine Bestätigung")
-        waitForLabel(state, "NOT (label CONTAINS %@)", "Antworten ohne Quelle")
+        waitForLabel(state, "NOT (label CONTAINS %@)", "Antwortet")
 
         flip()
         XCTAssertFalse(alert.waitForExistence(timeout: 1), "bestätigt ist bestätigt: kein zweites Mal fragen")
-        waitForLabel(state, "label CONTAINS %@", "Antworten ohne Quelle sind erlaubt")
+        waitForLabel(state, "label CONTAINS %@", "Antwortet ohne Quelle")
         flip()
-        waitForLabel(state, "NOT (label CONTAINS %@)", "Antworten ohne Quelle")
+        waitForLabel(state, "NOT (label CONTAINS %@)", "Antwortet")
+        closeAssistant(app)
+    }
+    /// Beispielrunde (`--assistant-demo-quote`, nur Debug-Bau): ein Zitat mit Quellzeile und eine Antwort mit Kennzeichnung „Ohne
+    /// Quelle“, ohne Modell, Abruf, Speicher und Protokoll. Die hörbaren Ansagen („Aus deinen Inhalten, ‚Beispielbuch‘:“,
+    /// „Ohne Quelle:“) erscheinen in der Ansicht nie; sichtbar sind das Zitat samt Quelle und die Kennzeichnung.
+    func testAssistantDemoQuoteShowsQuoteAndUnsourcedMark() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--no-handsfree", "--assistant-no-model", "--assistant-demo-quote", "--assistant-reset-unsourced"]
+        app.launch()
+        openAssistant(app)
+        func element(_ predicate: NSPredicate) -> XCUIElement { app.descendants(matching: .any).matching(predicate).firstMatch }
+        func label(_ text: String) -> XCUIElement { element(NSPredicate(format: "label == %@", text)) }
+        XCTAssertTrue(label("Du: Was steht im Beispielbuch über die Planung?").waitForExistence(timeout: 10))
+        let quote = element(NSPredicate(format: "label BEGINSWITH %@", "Zitat aus Buch · Beispielbuch · S. 12: Anna übernimmt die Planung"))
+        XCTAssertTrue(quote.waitForExistence(timeout: 5), "Zitat mit Quellzeile")
+        XCTAssertTrue(label("Du: Wie hoch ist der Mont Blanc?").exists)
+        let unsourced = element(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Ohne Quelle", "Mont Blanc"))
+        XCTAssertTrue(unsourced.waitForExistence(timeout: 5), "Satz mit der Kennzeichnung „Ohne Quelle“")
+        XCTAssertTrue(label("Hinweis: Allgemeinwissen · ohne Quelle").exists)
+        XCTAssertFalse(app.staticTexts["Kein Modell verfügbar."].exists, "die Beispielrunde startet kein Modell")
+        keepScreenshot(app, name: "Gespraech-Zitat")
         closeAssistant(app)
     }
     #if targetEnvironment(simulator)

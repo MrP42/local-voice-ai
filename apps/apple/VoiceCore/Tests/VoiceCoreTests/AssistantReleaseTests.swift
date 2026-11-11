@@ -21,14 +21,14 @@ private final class Flags: @unchecked Sendable {
 final class AssistantReleaseTests: XCTestCase {
     func testGenerationIsMonotoneAndOnlyRealChangesCount() {
         let r = AssistantRelease(optIn: false)
-        XCTAssertEqual(r.snapshot, .init(generation: 0, optIn: false))
+        XCTAssertEqual(r.snapshot, .init(generation: 0, optIn: false, consentVersion: 0))
         XCTAssertEqual(r.setOptIn(false), 0, "keine Änderung")
         XCTAssertEqual(r.setOptIn(true), 1)
         XCTAssertEqual(r.setOptIn(true), 1)
         XCTAssertEqual(r.bump(), 2)
         XCTAssertEqual(r.setOptIn(false), 3)
         XCTAssertEqual(r.setOptIn(true), 4, "Aus und wieder Ein: eine neue Generation, nie die alte")
-        XCTAssertEqual(r.snapshot, .init(generation: 4, optIn: true))
+        XCTAssertEqual(r.snapshot, .init(generation: 4, optIn: true, consentVersion: 0))
         XCTAssertEqual(r.currentGeneration, 4)
         XCTAssertTrue(r.isOptedIn)
     }
@@ -188,27 +188,79 @@ final class AssistantReleaseTests: XCTestCase {
         XCTAssertEqual(r.currentGeneration, 2_000)
     }
 
-    // MARK: Rückmeldungen des Controllers
+    // MARK: Beobachter, Einwilligungsversion
 
-    func testLedgerKeepsNotesInOrderPerRequestAndTakeEmptiesIt() {
-        let ledger = AssistantOutputLedger()
-        ledger.add("a", .init(index: 1, mark: AssistantCommitMark(stage: .display, ok: true, generation: 2)))
-        ledger.add("b", .init(index: 0, mark: AssistantCommitMark(stage: .audio, ok: false, generation: 3)))
-        ledger.add("a", .init(index: 1, mark: AssistantCommitMark(stage: .audio, ok: true, generation: 2)))
-        let a = ledger.take("a")
-        XCTAssertEqual(a.map(\.mark.stage), [.display, .audio])
-        XCTAssertEqual(ledger.take("a").count, 0)
-        XCTAssertEqual(ledger.take("b").count, 1)
-        XCTAssertEqual(ledger.take("unbekannt").count, 0)
+    func testObserverFiresOnEveryGenerationIncreaseAndOutsideTheLock() {
+        let r = AssistantRelease(optIn: false)
+        let seen = Flags()
+        r.setObserver { g in seen.add("\(g)@\(r.currentGeneration)") }   // würde der Lock gehalten, hinge das Lesen
+        r.bump()
+        r.setOptIn(true)
+        r.setOptIn(true)    // keine Änderung: kein Ruf
+        r.bump()
+        r.setOptIn(false)
+        XCTAssertEqual(seen.all, ["1@1", "2@2", "3@3", "4@4"])
+        r.setObserver(nil)
+        r.bump()
+        XCTAssertEqual(seen.all.count, 4, "ohne Beobachter kein Ruf")
     }
 
-    func testLedgerIsBounded() {
-        let ledger = AssistantOutputLedger()
-        let mark = AssistantCommitMark(stage: .display, ok: true, generation: 1)
-        for i in 0..<(AssistantOutputLedger.maxRequests + 10) { ledger.add("r\(i)", .init(index: 0, mark: mark)) }
-        XCTAssertEqual(ledger.take("r0").count, 0, "die ältesten Anfragen fallen weg")
-        XCTAssertEqual(ledger.take("r\(AssistantOutputLedger.maxRequests + 9)").count, 1)
-        for _ in 0..<(AssistantOutputLedger.maxNotes + 50) { ledger.add("viele", .init(index: 0, mark: mark)) }
-        XCTAssertEqual(ledger.take("viele").count, AssistantOutputLedger.maxNotes)
+    func testObserverFiresEvenWhenNoRunIsRegistered() {
+        let r = AssistantRelease(optIn: true)
+        let fired = Counter()
+        r.setObserver { _ in fired.hit() }
+        r.bump()
+        XCTAssertEqual(fired.value, 1, "auch ohne laufende Antwort (Wiedergabe nach Modellende)")
+    }
+
+    func testConsentVersionTravelsWithOptInAndIsReadFromTheSnapshot() {
+        let r = AssistantRelease(optIn: false, consentVersion: 7)
+        XCTAssertEqual(r.snapshot.consentVersion, 0, "aus: keine Einwilligung")
+        r.setOptIn(true, consentVersion: 2)
+        XCTAssertEqual(r.snapshot.consentVersion, 2)
+        let g = r.currentGeneration
+        r.setOptIn(true, consentVersion: 3)
+        XCTAssertEqual(r.snapshot.consentVersion, 3, "neue Fassung bei unverändertem Zustand wird nachgeführt")
+        XCTAssertEqual(r.currentGeneration, g, "ohne Erhöhung der Generation")
+        r.setOptIn(false)
+        XCTAssertEqual(r.snapshot.consentVersion, 0)
+    }
+
+    func testRegisteredRunsAreCountedAndStayUntilUnregistered() {
+        let r = AssistantRelease(optIn: true)
+        XCTAssertTrue(r.register("a", generation: 0) {})
+        XCTAssertTrue(r.register("b", generation: 0) {})
+        XCTAssertEqual(r.registeredCount, 2)
+        r.unregister("a")
+        XCTAssertEqual(r.registeredCount, 1)
+        r.bump()
+        XCTAssertEqual(r.registeredCount, 0)
+    }
+
+    // MARK: Schrittindex (Rückmeldungen des Controllers)
+
+    func testStepIndexMapsEventNumbersToSteps() {
+        let index = AssistantStepIndex()
+        index.append("a", step: 1)
+        index.append("a", step: 3)
+        index.append("b", step: 5)
+        XCTAssertEqual(index.step("a", index: 0), 1)
+        XCTAssertEqual(index.step("a", index: 1), 3)
+        XCTAssertNil(index.step("a", index: 2))
+        XCTAssertEqual(index.step("b", index: 0), 5)
+        XCTAssertNil(index.step("unbekannt", index: 0))
+        index.removeLast("a")
+        XCTAssertNil(index.step("a", index: 1), "ein nicht gesendetes Ereignis ist wieder ausgetragen")
+        XCTAssertEqual(index.step("a", index: 0), 1)
+    }
+
+    func testStepIndexIsBounded() {
+        let index = AssistantStepIndex()
+        for i in 0..<(AssistantStepIndex.maxRequests + 10) { index.append("r\(i)", step: 1) }
+        XCTAssertNil(index.step("r0", index: 0), "die ältesten Anfragen fallen weg")
+        XCTAssertEqual(index.step("r\(AssistantStepIndex.maxRequests + 9)", index: 0), 1)
+        for i in 0..<(AssistantStepIndex.maxSteps + 50) { index.append("viele", step: i) }
+        XCTAssertNotNil(index.step("viele", index: AssistantStepIndex.maxSteps - 1))
+        XCTAssertNil(index.step("viele", index: AssistantStepIndex.maxSteps))
     }
 }

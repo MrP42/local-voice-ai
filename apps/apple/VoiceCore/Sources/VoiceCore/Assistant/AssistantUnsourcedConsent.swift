@@ -6,6 +6,9 @@ import Foundation
 // Bestätigung (`currentVersion` hoch), gilt eine ältere Einwilligung nicht mehr und das Menü fragt neu.
 
 public struct AssistantUnsourcedConsent {
+    /// Freischaltung der ganzen Funktion „Antworten ohne Quelle“. Bei `false` gibt es weder Schalter noch Knopf „Ohne Quelle
+    /// fortsetzen“, und die Sitzung verhält sich wie bei ausgeschaltetem Opt-in (jede Runde ist eine Datenrunde).
+    public static let isReleased = true
     public static let currentVersion = 1
     public static let enabledKey = "assistant_unsourced_enabled"
     public static let versionKey = "assistant_unsourced_version"

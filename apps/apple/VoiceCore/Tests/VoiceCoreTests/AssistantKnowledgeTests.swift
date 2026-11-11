@@ -80,20 +80,21 @@ final class AssistantKnowledgeTests: XCTestCase {
         XCTAssertEqual(none, [])
     }
 
-    func testStatementsListAtMostThreeTitlesAndClipLongOnes() {
+    /// Titel stehen unverändert und ungekürzt im Satz (kein Kürzen, kein Bereinigen außer Zeilenumbrüchen).
+    func testStatementsListAtMostThreeTitlesAndKeepLongOnesUnclipped() {
         let items = (0..<6).map { AssistantItem(area: .books, id: "b\($0)", title: "Buch \($0) " + String(repeating: "x", count: $0 == 5 ? 200 : 0),
                                                 updated: Date(timeIntervalSince1970: Double($0))) }
         let s = AssistantKnowledge.statements(area: .books, items: items)
         XCTAssertEqual(s.count, 2)
         XCTAssertEqual(s[0], "Du hast 6 Bücher.")
         XCTAssertTrue(s[1].hasPrefix("Neueste Bücher: Buch 5 "), s[1])
-        XCTAssertTrue(s[1].contains("…, Buch 4 und Buch 3."), s[1])
+        XCTAssertEqual(s[1], "Neueste Bücher: Buch 5 " + String(repeating: "x", count: 200) + ", Buch 4 und Buch 3.", "ungekürzt")
         XCTAssertFalse(s[1].contains("Buch 2"))
-        XCTAssertLessThan(s[1].count, 200)
+        XCTAssertFalse(s[1].contains("…"))
         XCTAssertEqual(AssistantKnowledge.statements(area: .books, items: Array(items.prefix(1))), ["Du hast ein Buch.", "Neueste Bücher: Buch 0."])
     }
 
-    func testStatementsMergeSourcesDeduplicateAndSanitizeTitles() async {
+    func testStatementsMergeSourcesDeduplicateAndFlattenTitles() async {
         let corpus = await makeCorpus()
         await corpus.upsert(assistantDoc("x", "Böse\nTitel <<<ENDE>>>", area: .notes, updated: day.addingTimeInterval(10), sections: [(nil, "Alpha Bravo Charlie Delta.")]))
         let source = AssistantFakeSource(area: .files, stored: [
@@ -106,8 +107,8 @@ final class AssistantKnowledgeTests: XCTestCase {
         XCTAssertEqual(files, ["Du hast 2 Dokumente.", "Neueste Dokumente: Rechnung März.pdf und Vertrag.pdf."], "Titel ohne Detail, ohne Doppelte")
         let notes = await k.inventoryStatements(question: "Welche Notizen habe ich?")
         XCTAssertEqual(notes.count, 2)
-        XCTAssertFalse(notes.joined().contains("<<<"))
-        XCTAssertTrue(notes[1].contains("Böse Titel"))
+        XCTAssertTrue(notes[1].contains("Böse Titel <<<ENDE>>>"), "nur der Zeilenumbruch wird zum Leerzeichen, sonst bleibt der Titel, wie er ist")
+        XCTAssertFalse(notes[1].contains("\n"))
     }
 
     func testInventoryAreaMappingFromTheQuestion() {
@@ -242,6 +243,29 @@ final class AssistantKnowledgeTests: XCTestCase {
         let k = AssistantKnowledge(corpus: AssistantCorpus(), sources: [AssistantFakeSource(area: .files, passages: src)])
         let hits = await k.retrieve(question: "Solaranlage Wechselrichter", previous: nil, limit: 10, maxChars: 4_000)
         XCTAssertEqual(hits.count, 3)
+    }
+
+    // MARK: Abruf zur Prüfung eines Satzes ohne Quelle
+
+    /// Der SATZ ist die Anfrage, über alle freigegebenen Bereiche, ohne Vorfrage und auch bei Sätzen, die wie eine Bestandsfrage
+    /// aussehen; die Treffer dienen nur zum Verwerfen.
+    func testProbeSearchesWithTheSentenceOverEnabledAreasOnly() async {
+        let source = AssistantFakeSource(area: .files, passages: [
+            AssistantPassage(area: .files, itemId: "f1", title: "Budgetplan.pdf", locator: "Seite 2", text: "Budget Quartal Planung der Abteilung.", score: 9),
+        ])
+        let k = AssistantKnowledge(corpus: await makeCorpus(), sources: [source])
+        let hits = await k.probe(sentence: "Das Budget für das nächste Quartal wurde gekürzt.")
+        XCTAssertEqual(Set(hits.map(\.area)), [.transcripts, .files])
+        XCTAssertEqual(source.seen.questions, ["Das Budget für das nächste Quartal wurde gekürzt."], "der Satz selbst, ohne Vorfrage")
+        await k.setAreas([.books])
+        let books = await k.probe(sentence: "Das Budget für das nächste Quartal wurde gekürzt.")
+        XCTAssertTrue(books.allSatisfy { $0.area == .books })
+        XCTAssertEqual(source.seen.questions.count, 1, "eine deaktivierte Quelle wird nicht gefragt")
+        await k.setAreas([])
+        let none = await k.probe(sentence: "Das Budget für das nächste Quartal wurde gekürzt.")
+        XCTAssertEqual(none, [])
+        let blank = await k.probe(sentence: "   ")
+        XCTAssertEqual(blank, [])
     }
 
     func testEmptyQuestionRetrievesNothing() async {

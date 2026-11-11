@@ -8,7 +8,10 @@ import Foundation
 //   Inhaltswörter) wird im Originalwortlaut ausgegeben, Quelle = dieser Auszug. Sonst entfällt der Satz. Ausgegeben wird
 //   also nur ein Quellsatz, eine Vorlage der festen Liste oder ein Satz des Systems (Uhr, Bestand, feste Sätze).
 // - ALLGEMEINRUNDE (nur mit Opt-in, Prompt ohne Auszüge und ohne Bestand): Vorlage → neutral; Eigendatenbezug
-//   (`AssistantOwnData`) → verworfen; sonst „ohne Quelle“. Nie grounded.
+//   (`AssistantOwnData`) → verworfen; Ähnlichkeit mit eigenem Inhalt (`resemblesOwnContent`, Abruf mit dem Satz als Anfrage)
+//   → verworfen; sonst „ohne Quelle“. Nie grounded. Die Listen und die Ähnlichkeit können nur verbieten, nie erlauben.
+// - Zitierbar ist nur ein vollständiger Satz mit Satzzeichen am Ende. Erster und letzter Satz eines Auszugs zählen nur, wenn
+//   der Auszug nachweislich an einer Satzgrenze beginnt bzw. endet (`AssistantPassage.startsAtBoundary/endsAtBoundary`).
 //
 // Vorlagen sind ganze Sätze einer festen Liste; verglichen wird auf Gleichheit nach Normalisierung (klein, ohne
 // Satzzeichen). Keine Präfix-, Frage-, Angebots-, Füllwort- oder Könnens-Regeln. Fehl-Vorlagen („Dazu finde ich in deinen
@@ -127,9 +130,11 @@ public enum AssistantGrounding {
     /// Längster Quellsatz, der ausgegeben wird; längere werden nicht zitiert (ein gekürzter wäre ein Fragment).
     static let maxQuoteChars = 600
 
-    /// Die Quellsätze aller Auszüge in Auszug-Reihenfolge. Nur vollständige Sätze: Beginn mit Großbuchstaben, Ziffer oder
-    /// Anführungszeichen, Ende mit Satzzeichen (außer ein Auszug besteht nur aus diesem einen Satz), mindestens drei Wörter. Der letzte Satz eines gekürzten Auszugs (Ende „…“)
-    /// fehlt, weil er abgeschnitten sein kann. Zeilenumbrüche trennen Sätze.
+    /// Die zitierbaren Quellsätze aller Auszüge in Auszug-Reihenfolge. Nur vollständige Sätze: Beginn mit Großbuchstaben, Ziffer
+    /// oder Anführungszeichen, Ende mit Satzzeichen (keine Ausnahme, auch nicht für einen Auszug aus nur einem Satz),
+    /// mindestens drei Wörter. Der erste Satz eines Auszugs fehlt, wenn der Auszug nicht nachweislich an einer Satzgrenze
+    /// beginnt, der letzte, wenn er nicht nachweislich an einer endet oder gekürzt wurde (Ende „…“): beide können angeschnitten
+    /// sein. Zeilenumbrüche trennen Sätze.
     public struct Basis: Sendable {
         let sentences: [SourceSentence]
 
@@ -137,13 +142,18 @@ public enum AssistantGrounding {
             var out: [SourceSentence] = []
             for p in passages {
                 var units = AssistantGrounding.sourceTexts(of: p.text)
+                if !p.startsAtBoundary, !units.isEmpty { units.removeFirst() }
                 let clipped = p.text.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("…")
-                if clipped, !units.isEmpty { units.removeLast() }
-                // Ein Auszug, der nur aus einem Satz ohne Satzzeichen besteht (Notiz, Zeile), ist als Ganzes ein Satz.
-                let standalone = units.count == 1 && !clipped
-                out += units.filter { AssistantGrounding.isQuotable($0, standalone: standalone) }.map { SourceSentence(text: $0, passage: p) }
+                if !p.endsAtBoundary || clipped, !units.isEmpty { units.removeLast() }
+                out += units.filter { AssistantGrounding.isQuotable($0) }.map { SourceSentence(text: $0, passage: p) }
             }
             sentences = out
+        }
+
+        /// Erkennungsbasis (nicht zum Zitieren): ALLE Sätze der Auszüge, auch Randsätze und Sätze ohne Satzzeichen. Dient nur
+        /// dazu, einen Satz ohne Quelle zu verwerfen, der einem eigenen Inhalt ähnelt.
+        init(detecting passages: [AssistantPassage]) {
+            sentences = passages.flatMap { p in AssistantGrounding.sourceTexts(of: p.text).map { SourceSentence(text: $0, passage: p) } }
         }
 
         public var isEmpty: Bool { sentences.isEmpty }
@@ -170,10 +180,9 @@ public enum AssistantGrounding {
     private static let openers: Set<Character> = ["„", "“", "‚", "‘", "»", "«", "\"", "'", "(", "‹", "–", "—"]
     private static let closers: Set<Character> = ["“", "”", "‘", "’", "\"", "'", "»", "«", ")", "›", "]"]
 
-    static func isQuotable(_ s: String, standalone: Bool = false) -> Bool {
+    static func isQuotable(_ s: String) -> Bool {
         guard s.count >= 12, s.count <= maxQuoteChars, s.split(separator: " ").count >= 3, let first = s.first else { return false }
         guard first.isUppercase || first.isNumber || openers.contains(first) else { return false }
-        if standalone { return true }
         var tail = Substring(s)
         while let last = tail.last, closers.contains(last) { tail = tail.dropLast() }
         guard let end = tail.last else { return false }
@@ -244,6 +253,14 @@ public enum AssistantGrounding {
         return best?.0
     }
 
+    /// Ähnelt ein Satz ohne Quelle einem Satz aus den eigenen Inhalten? `passages` sind die Treffer eines Abrufs mit dem SATZ als
+    /// Anfrage über die freigegebenen Bereiche. Gilt die Einrast-Regel (Deckung ≥ 60 % und mindestens zwei Inhaltswörter) für
+    /// irgendeinen Quellsatz (auch Randsätze), wird der Satz verworfen. Kann nur verbieten.
+    public static func resemblesOwnContent(_ sentence: String, passages: [AssistantPassage]) -> Bool {
+        guard !passages.isEmpty else { return false }
+        return snap(sentence, basis: Basis(detecting: passages)) != nil
+    }
+
     // MARK: Urteil über einen Modellsatz
 
     public enum Verdict: Sendable, Equatable {
@@ -260,8 +277,9 @@ public enum AssistantGrounding {
     /// - `taken`: Schlüssel der in dieser Antwort schon ausgegebenen Zitate.
     /// - `titles`: Titel des Bestands (für den Eigendatenbezug).
     /// - `optIn`: Opt-in jetzt (nicht bei Beginn).
+    /// - `raw`: der Satz, wie er im Strom stand (für die Prüfung auf ungewöhnliche Leerzeichen); sonst `sentence`.
     public static func judge(_ sentence: String, round: AssistantRoundKind, basis: Basis, titles: [String], clock: [String],
-                             optIn: Bool, taken: Set<String> = []) -> Verdict {
+                             optIn: Bool, taken: Set<String> = [], raw: String? = nil) -> Verdict {
         if let t = template(matching: sentence) { return .template(t) }
         if let c = clockSentence(matching: sentence, expected: clock) { return .template(c) }
         if isSystemOnly(sentence) { return .dropped(.template) }
@@ -271,7 +289,7 @@ public enum AssistantGrounding {
             if AssistantOwnData.refers(sentence, mode: .sentence, titles: titles) { return .dropped(.ownData) }
             return .dropped(optIn ? .notSnapped : .noMode)
         case .general:
-            if AssistantOwnData.refers(sentence, mode: .sentence, titles: titles) { return .dropped(.ownData) }
+            if AssistantOwnData.refers(raw ?? sentence, mode: .sentence, titles: titles) { return .dropped(.ownData) }
             return optIn ? .unsourced : .dropped(.noMode)
         }
     }

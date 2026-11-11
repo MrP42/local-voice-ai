@@ -72,6 +72,8 @@ private final class AssistantRun {
     }
 
     let id = UUID().uuidString
+    /// Freigabe-Generation des Laufs (aus dem ersten Ereignis); unbekannt, solange noch kein Ereignis da ist.
+    var generation: Int?
     let text: String
     let afterInterruption: Bool
     var task: Task<Void, Never>?
@@ -135,9 +137,13 @@ final class AssistantController: ObservableObject {
     @Published private(set) var sources: [AssistantPassage] = []
     @Published private(set) var sourcesKnown = false
     /// „Antworten ohne Quelle“ ist an (eigene Einwilligung, Standard aus).
-    @Published private(set) var unsourcedAllowed = AssistantUnsourcedConsent().isEnabled
+    @Published private(set) var unsourcedAllowed = AssistantUnsourcedConsent.isReleased && AssistantUnsourcedConsent().isEnabled
     /// Die Bestätigung beim ersten Einschalten steht aus.
     @Published private(set) var unsourcedConfirmation = false
+    /// Zustand des Datenkontexts: `.data` (jede Runde antwortet aus den Inhalten) oder `.free` (Runden ohne Quelle möglich).
+    @Published private(set) var contextMode: AssistantContext.Mode = .data
+    /// „Ohne Quelle fortsetzen“ ist möglich: Opt-in an und Zustand `.data`.
+    @Published private(set) var canResumeFree = false
     @Published private(set) var notice: AssistantNotice?
     @Published private(set) var modelLabel = "Kein Modell"
     @Published private(set) var isCloud = false
@@ -161,6 +167,9 @@ final class AssistantController: ObservableObject {
 
     /// Ein Modell ist da: tippen und Senden gehen auch ohne Mikrofon.
     var canSend: Bool { session != nil }
+
+    /// Die Funktion „Antworten ohne Quelle“ ist freigeschaltet; sonst gibt es weder Schalter noch Knopf.
+    var unsourcedReleased: Bool { AssistantUnsourcedConsent.isReleased }
 
     // MARK: Intern
 
@@ -212,6 +221,7 @@ final class AssistantController: ObservableObject {
             unsourcedAllowed = false
         }
         #endif
+        syncContext()
         hub.$progress.receive(on: RunLoop.main).sink { [weak self] value in
             MainActor.assumeIsolated { self?.preparing = value }
         }.store(in: &bag)
@@ -231,12 +241,48 @@ final class AssistantController: ObservableObject {
 
     private var nowMs: Int { Int((ProcessInfo.processInfo.systemUptime - origin) * 1000) }
 
+    #if DEBUG
+    // MARK: Beispielrunde (nur DEBUG)
+
+    /// UI-Tests: `--assistant-demo-quote` öffnet das Gespräch mit einer eingebauten Beispielrunde aus synthetischem Inhalt (Zitat
+    /// mit Quelle, Antwort ohne Quelle). Kein Modell, kein Abruf, kein Speicher, kein Protokoll: `start` kehrt sofort zurück, und
+    /// Verlauf und Protokoll bleiben unberührt (`persist`, `deleteStoredHistory`, `logAudit`).
+    static let demoQuote = ProcessInfo.processInfo.arguments.contains("--assistant-demo-quote")
+
+    private func showDemo() {
+        opened = true
+        historyLoaded = true
+        notice = nil
+        turns = Self.demoTurns
+        syncContext()
+    }
+
+    /// So stehen die Beiträge nach einer echten Antwort im Verlauf: ein Originalsatz mit Quellzeile (Datenrunde) und ein Satz ohne
+    /// Quelle (Runde ohne Quelle). Die hörbaren Ansagen („Aus deinen Inhalten, ‚Beispielbuch‘:“, „Ohne Quelle:“) gehören nicht
+    /// zum Text und erscheinen in der Ansicht nie.
+    private static var demoTurns: [AssistantTurn] {
+        let quote = "Anna übernimmt die Planung und stimmt sich jede Woche mit dem Team ab."
+        let passage = AssistantPassage(area: .books, itemId: "demo-buch", title: "Beispielbuch", locator: "S. 12", text: quote, score: 1)
+        let general = "Der Mont Blanc ist etwa 4.800 Meter hoch."
+        return [
+            AssistantTurn(user: "Was steht im Beispielbuch über die Planung?", assistant: quote, sources: [passage],
+                          parts: [AssistantTurnPart(text: quote, unsourced: false, quote: true, source: passage.sourceLabel)],
+                          model: "Beispiel", round: .data),
+            AssistantTurn(user: "Wie hoch ist der Mont Blanc?", assistant: general, general: true, unsourced: true,
+                          model: "Beispiel", round: .general),
+        ]
+    }
+    #endif
+
     // MARK: Start und Ende
 
     /// Gespräch beginnen: Wiedergabe der Bibliothek und alte Sprachausgabe stoppen, Modell wählen (Zustimmung bei Cloud),
     /// Zuhören starten. Der Erstaufbau des Indexes läuft im Hintergrund weiter und hält nichts auf.
     func start(choice explicit: AssistantModelChoice? = nil) async {
         guard !running, !starting else { return }
+        #if DEBUG
+        if Self.demoQuote { showDemo(); return }
+        #endif
         opened = true
         starting = true
         loading = true
@@ -423,18 +469,58 @@ final class AssistantController: ObservableObject {
         let stored = await session?.history ?? turns
         // Nach dem letzten Wartepunkt: steht „Neues Gespräch“ noch aus, kommt der alte Verlauf nicht in die neue Sitzung.
         let history = clearRequested == clearDone ? stored : []
+        session?.setReleaseObserver(nil)
         if let model = built.model {
             let consent = AssistantUnsourcedConsent()
             var config = built.config
             config.allowUnsourced = consent.isEnabled
             config.consentVersion = consent.version
-            unsourcedAllowed = consent.isEnabled
-            session = AssistantSession(model: model, knowledge: kn, config: config, history: history, audit: audit)
+            unsourcedAllowed = unsourcedReleased && consent.isEnabled
+            let next = AssistantSession(model: model, knowledge: kn, config: config, history: history, audit: audit)
+            observeRelease(of: next)
+            session = next
         } else {
             session = nil
         }
         turns = history
         rebuildPolicy()
+        syncContext()
+    }
+
+    /// Rückruf des Kerns bei JEDER Erhöhung der Freigabe-Generation (Opt-in, Bereiche, Zustimmung, „Ohne Quelle fortsetzen“).
+    /// Er kommt auf beliebigem Thread und springt auf den MainActor; der Controller hält dann Stimme und Warteschlange an,
+    /// auch wenn kein Satz mehr unterwegs ist, den der Kern selbst noch widerrufen könnte.
+    private func observeRelease(of session: AssistantSession) {
+        let id = ObjectIdentifier(session)
+        session.setReleaseObserver { [weak self] generation in
+            Task { @MainActor in self?.releaseBumped(generation, of: id) }
+        }
+    }
+
+    /// Eine laufende Antwort, deren Generation älter ist als die neue, verstummt sofort: Wiedergabe stoppt, die Warteschlange
+    /// wird geleert. Ausdrückliche Widerrufe (`stopForRevocation` mit eigenem Text) haben `current` schon geleert und gewinnen.
+    /// Ein Lauf ohne Ereignis ist noch nicht hörbar; ihn widerruft der Kern (`failed(.revoked)`). Eine verspätete Meldung
+    /// einer früheren Sitzung oder für einen jüngeren Lauf bleibt wirkungslos.
+    private func releaseBumped(_ generation: Int, of observed: ObjectIdentifier) {
+        guard let session, ObjectIdentifier(session) == observed else { return }
+        syncContext()
+        guard let run = current, !run.completed, let started = run.generation, started < generation else { return }
+        stopForRevocation(Self.revokedText, retry: run.text)
+    }
+
+    /// Zustand des Datenkontexts für die Anzeige. Ohne Sitzung (kein Modell): was die nächste Runde nach der Anfangsregel wäre.
+    private func syncContext() {
+        let mode: AssistantContext.Mode
+        let resumable: Bool
+        if let session {
+            mode = session.contextMode
+            resumable = session.canResumeFree
+        } else {
+            mode = AssistantContext.initial(optIn: unsourcedReleased && unsourcedAllowed, history: turns)
+            resumable = false
+        }
+        if contextMode != mode { contextMode = mode }
+        if canResumeFree != resumable { canResumeFree = resumable }
     }
 
     private func rebuildPolicy() {
@@ -448,7 +534,12 @@ final class AssistantController: ObservableObject {
 
     func selectModel(_ choice: AssistantModelChoice) {
         guard opened, !loading else { return }
+        #if DEBUG
+        // UI-Tests ohne Modell: Die Wahl (z. B. beim Schließen der Modellwahl) bleibt folgenlos, auch für spätere Starts.
+        if !ProcessInfo.processInfo.arguments.contains("--assistant-no-model") { AssistantModelChoice.store(choice) }
+        #else
         AssistantModelChoice.store(choice)
+        #endif
         Task { await switchModel(choice) }
     }
 
@@ -532,7 +623,7 @@ final class AssistantController: ObservableObject {
 
     /// Schalter im Menü. Einschalten verlangt beim ersten Mal die Bestätigung; Ausschalten wirkt sofort.
     func requestUnsourced(_ on: Bool) {
-        guard on != unsourcedAllowed else { return }
+        guard unsourcedReleased, on != unsourcedAllowed else { return }
         if !on { applyUnsourced(false); return }
         if AssistantUnsourcedConsent().isAcknowledged { applyUnsourced(true) } else { unsourcedConfirmation = true }
     }
@@ -549,14 +640,25 @@ final class AssistantController: ObservableObject {
         if on { consent.grant() } else { consent.revoke() }
         unsourcedAllowed = on
         // Jede Änderung des Schalters ist eine neue Freigabe-Generation; laufende Antworten enden im Kern („widerrufen“).
-        let generation = session?.setAllowUnsourced(on) ?? 0
+        let generation = session?.setAllowUnsourced(on, consentVersion: consent.version) ?? 0
         logAudit(AssistantAuditEntry(kind: on ? .unsourcedOn : .unsourcedOff, model: engine.label, cloud: engine.isCloud,
                                      unsourcedMode: on, consentVersion: consent.version, generation: generation))
         // Bereits wartende unbelegte Sätze würden sonst noch gesprochen: die Antwort hält an.
         if !on, let run = current, run.hasUnspokenUnsourced {
             stopForRevocation("Antwort angehalten: Antworten ohne Quelle sind ausgeschaltet.")
         }
+        syncContext()
         announce(on ? "Antworten ohne Quelle ein." : "Antworten ohne Quelle aus.")
+    }
+
+    /// „Ohne Quelle fortsetzen“: ausdrückliche Handlung, die den Datenkontext aufhebt (nur bei Opt-in an und Zustand `.data`).
+    /// Der Kern erhöht die Generation, eine laufende Antwort endet über den Rückruf; im Protokoll steht ein Ereignis.
+    func resumeFree() {
+        guard unsourcedReleased, let session, session.resumeFree() else { return }
+        syncContext()
+        logAudit(AssistantAuditEntry(kind: .resumedFree, model: engine.label, cloud: engine.isCloud, unsourcedMode: true,
+                                     consentVersion: AssistantUnsourcedConsent().version, generation: session.releaseGeneration))
+        announce("Antwortet ohne Quelle.")
     }
 
     /// Entzug (Opt-in, Bereich, Cloud-Zustimmung) mitten in der Antwort: Sprache stoppt, das bisher Gesprochene steht als
@@ -576,6 +678,9 @@ final class AssistantController: ObservableObject {
 
     /// Protokoll schreiben (ohne Inhalte); ein Fehler erscheint einmal als Hinweis, nie still.
     private func logAudit(_ entry: AssistantAuditEntry) {
+        #if DEBUG
+        guard !Self.demoQuote else { return }
+        #endif
         let audit = self.audit
         Task { [weak self] in
             let ok = await audit.record(entry)
@@ -642,6 +747,7 @@ final class AssistantController: ObservableObject {
             guard let self else { return }
             self.clearDone += 1
             self.turns = []
+            self.syncContext()
             self.deleteStoredHistory()
         }
         announce("Neues Gespräch.")
@@ -916,9 +1022,11 @@ final class AssistantController: ObservableObject {
 
     private func receive(_ event: AssistantEvent, for run: AssistantRun) {
         switch event {
-        case .sources(_, _, let list):
+        case .sources(_, let generation, let list):
+            run.generation = run.generation ?? generation
             run.sources = list
         case .sentence(_, let generation, let text, let speech, let status, let covering, let quote):
+            run.generation = run.generation ?? generation
             run.sentences.append(.init(text: text, speech: speech, status: status, sources: covering, quote: quote, generation: generation))
         case .done(_, let answer):
             run.answer = answer
@@ -927,6 +1035,8 @@ final class AssistantController: ObservableObject {
             run.failure = failure
             run.finished = true
         }
+        // Die Rundenwahl (Datenkontext einrasten) fällt beim ersten Ereignis; die Anzeige folgt ihr.
+        syncContext()
         deliverIfCurrent(run)
     }
 
@@ -1112,6 +1222,7 @@ final class AssistantController: ObservableObject {
         // „Neues Gespräch“ steht in der Kette noch aus: der alte Verlauf käme sonst in Anzeige und Datei zurück.
         guard clearRequested == clearDone else { return }
         turns = history
+        syncContext()
         if currentRunID == run.id, !keepLive {
             currentUser = nil
             liveAnswer = ""
@@ -1125,6 +1236,9 @@ final class AssistantController: ObservableObject {
 
     /// Schreibt den Verlauf (atomar, im Kern). Fehler (Speicher voll) erscheinen als Hinweis, nie still.
     private func persist(_ history: [AssistantTurn]) {
+        #if DEBUG
+        guard !Self.demoQuote else { return }
+        #endif
         let store = self.store
         let previous = saveChain
         saveChain = Task { [weak self] in
@@ -1136,6 +1250,9 @@ final class AssistantController: ObservableObject {
 
     /// Löscht die Verlaufsdatei in der Reihenfolge des Speicherns: ein früher begonnenes Speichern legt sie danach nicht neu an.
     private func deleteStoredHistory() {
+        #if DEBUG
+        guard !Self.demoQuote else { return }
+        #endif
         let store = self.store
         let previous = saveChain
         saveChain = Task {

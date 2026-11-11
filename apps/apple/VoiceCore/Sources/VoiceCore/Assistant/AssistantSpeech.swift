@@ -17,6 +17,9 @@ public enum AssistantSpeech {
         /// Längster Satz im Modus „nur ganze Sätze“; länger: verworfen (gezählt in `overlong`), samt Rest bis zum Satzende.
         static let maxSentence = 2000
         public private(set) var overlong = 0
+        /// Im Modus „nur ganze Sätze“: Reste ohne Satzzeichen am Stromende (abgeschnittene Sätze). Sie werden nie geliefert,
+        /// sondern nur gezählt; der Aufrufer verwirft sie mit dem Grund `fragment`.
+        public private(set) var fragments = 0
 
         private var buffer: [UInt16] = []
         private var emitted = 0
@@ -25,12 +28,13 @@ public enum AssistantSpeech {
 
         public init(sentencesOnly: Bool = false) { self.sentencesOnly = sentencesOnly }
 
-        public mutating func feed(_ delta: String) -> [(text: String, speech: String)] {
+        /// `raw` ist der Satz, wie er im Strom stand (vor der Aufbereitung: Leerraum und Sonderzeichen unverändert).
+        public mutating func feed(_ delta: String) -> [(text: String, speech: String, raw: String)] {
             buffer.append(contentsOf: delta.utf16)
             return drain(final: false)
         }
 
-        public mutating func finish() -> [(text: String, speech: String)] {
+        public mutating func finish() -> [(text: String, speech: String, raw: String)] {
             let out = drain(final: true)
             buffer.removeAll()
             lineStart = true
@@ -44,8 +48,8 @@ public enum AssistantSpeech {
             let newline: Bool
         }
 
-        private mutating func drain(final: Bool) -> [(text: String, speech: String)] {
-            var out: [(text: String, speech: String)] = []
+        private mutating func drain(final: Bool) -> [(text: String, speech: String, raw: String)] {
+            var out: [(text: String, speech: String, raw: String)] = []
             while !buffer.isEmpty {
                 guard let cut = nextCut(final: final) else {
                     // Ein Satz ohne Ende über der Obergrenze: verwerfen und zählen, den Rest bis zum Satzende ebenfalls.
@@ -66,10 +70,14 @@ public enum AssistantSpeech {
                     overlong += 1
                     continue
                 }
+                if sentencesOnly, final, !Self.endsSentence(chunk) {
+                    if chunk.contains(where: { $0.isLetter || $0.isNumber }) { fragments += 1 }
+                    continue
+                }
                 let atLineStart = lineStart
                 lineStart = sentencesOnly ? true : (cut.newline || (lineStart && chunk.allSatisfy { $0.isWhitespace }))
                 if let r = AssistantSpeech.render(chunk, lineStart: atLineStart) {
-                    out.append(r)
+                    out.append((r.text, r.speech, chunk))
                     emitted += 1
                 }
             }
@@ -88,6 +96,16 @@ public enum AssistantSpeech {
         private static let months: Set<String> = [
             "januar", "februar", "märz", "april", "mai", "juni", "juli", "august", "september", "oktober", "november", "dezember",
         ]
+
+        /// Endet der Text (ohne Leerraum und schließende Zeichen) mit „.“, „!“, „?“ oder „…“?
+        static func endsSentence(_ text: String) -> Bool {
+            var u = Substring(text).utf16
+            while let last = u.last, last == 32 || last == 9 || last == 10 || last == 13 || last == 0xA0 || closers.contains(last) {
+                u = u.dropLast()
+            }
+            guard let end = u.last else { return false }
+            return end == 46 || end == 33 || end == 63 || end == 0x2026
+        }
 
         private func isSpace(_ c: UInt16) -> Bool { c == 32 || c == 9 || c == 0xA0 || c == 13 || (sentencesOnly && c == 10) }
         private static func isDigit(_ c: UInt16) -> Bool { c >= 48 && c <= 57 }

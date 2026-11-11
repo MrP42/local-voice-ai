@@ -11,6 +11,8 @@ import Foundation
 //   (nie dahinter); unbegonnene und fertige Bücher stehen ganz drin.
 // - Besprechungen: nur Segmente mit `aiPermitted`; das Protokoll nur, wenn es eines gibt (es entsteht nur aus erlaubten Segmenten).
 // - Ablage: dieselbe Suche und dieselben Schutzregeln wie die Seite „Ablage“; bei Cloud-Modellen nur Dokumente der Klasse „öffentlich“.
+// - Zitate: Abschnitte aus Notizen, Besprechungen und Büchern tragen den Nachweis ihrer Satzgrenzen (`AssistantSections`, Kern);
+//   ohne Nachweis (Ablage, Lücken, Nähte mitten im Satz) wird ein Randsatz nie als Originalsatz zitiert.
 
 @MainActor
 final class AssistantSources: ObservableObject {
@@ -250,8 +252,8 @@ private actor AssistantIndexer {
     private static func noteDocument(_ job: NoteJob, version: String) -> AssistantDocument? {
         let when = format(job.date, "dd.MM.yyyy, HH:mm")
         var sections: [AssistantDocument.Section] = []
-        if !job.transcript.isEmpty { sections.append(.init(locator: when, text: job.transcript)) }
-        if !job.reply.isEmpty { sections.append(.init(locator: when, text: "Antwort der App: " + job.reply)) }
+        if !job.transcript.isEmpty { sections.append(AssistantSections.whole(job.transcript, locator: when)) }
+        if !job.reply.isEmpty { sections.append(AssistantSections.whole("Antwort der App: " + job.reply, locator: when)) }
         guard !sections.isEmpty else { return nil }
         let item = AssistantItem(area: .notes, id: job.id, title: "Sprachnotiz vom \(when)", detail: format(job.date, "dd.MM.yyyy"), updated: job.date)
         return AssistantDocument(item: item, version: version, sections: sections)
@@ -260,33 +262,18 @@ private actor AssistantIndexer {
     // MARK: Besprechungen
 
     private static func meetingDocument(_ meeting: MeetingDocument, version: String) -> AssistantDocument? {
-        var sections: [AssistantDocument.Section] = []
-        var text = ""
-        var first: MeetingSegment?
-
-        func flush() {
-            if let first, !text.isEmpty { sections.append(.init(locator: clock(first.start), text: text)) }
-            text = ""
-            first = nil
-        }
-
-        for segment in meeting.segments.sorted(by: { $0.start < $1.start }) {
+        // Nicht erlaubte oder leere Segmente bleiben draußen und unterbrechen die Folge; die Abschnittsgrenzen und ihr Nachweis
+        // (Satzgrenzen an den Nähten) bestimmt der Kern.
+        let segments = meeting.segments.sorted(by: { $0.start < $1.start }).map { segment -> AssistantSegment in
             let body = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard meeting.aiPermitted(segment), !body.isEmpty else {
-                flush()                        // Lücke durch ein nicht erlaubtes oder leeres Segment: nie darüber hinweg verbinden
-                continue
-            }
-            let line = segment.speaker.map { "\($0): \(body)" } ?? body
-            let tooLong = first.map { segment.start - $0.start >= sectionSeconds } ?? false
-            if tooLong || text.count + line.count > sectionChars { flush() }
-            if first == nil { first = segment }
-            text += (text.isEmpty ? "" : "\n") + line
+            return AssistantSegment(start: segment.start, line: segment.speaker.map { "\($0): \(body)" } ?? body, body: body,
+                                    usable: meeting.aiPermitted(segment) && !body.isEmpty)
         }
-        flush()
+        var sections = AssistantSections.meeting(segments, seconds: sectionSeconds, chars: sectionChars, locator: clock)
 
         if let minutes = meeting.minutes {
             let summary = minutesText(minutes)
-            if !summary.isEmpty { sections.append(.init(locator: "Protokoll", text: summary)) }
+            if !summary.isEmpty { sections.append(AssistantSections.generated(summary, locator: "Protokoll")) }
         }
         guard !sections.isEmpty else { return nil }
 
@@ -361,16 +348,8 @@ private actor AssistantIndexer {
             // Ohne Lesegrenze (nur eine Schätzung vom Hörbuch ohne Abgleich): der geschätzte Anteil, nie mehr.
             limit = LibraryProgress.frontier(text: job.textRecord, audio: job.audioRecord, map: map) ?? whole((fraction * length).rounded(.down))
         }
-        let index = BookTalkIndex(title: job.title, text: text)
-        var sections: [AssistantDocument.Section] = []
-        for chunk in index.chunks {
-            let part: BookTalkChunk?
-            if let limit { part = chunk.truncated(atFrontier: limit) } else { part = chunk }
-            guard let part, !part.text.isEmpty else { continue }
-            let title = part.chapterTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-            let locator = part.page.map { "S. \($0)" } ?? (title.isEmpty ? nil : title)
-            sections.append(.init(locator: locator, text: part.text))
-        }
+        // Abschnitte samt Nachweis der Satzgrenzen (Kapitelanfang, Naht zum Nachbarstück) und Lesegrenze bestimmt der Kern.
+        let sections = AssistantSections.book(BookTalkIndex(title: job.title, text: text).chunks, frontier: limit)
         guard !sections.isEmpty else { return nil }
 
         var detail = job.authors.joined(separator: ", ")
@@ -410,6 +389,8 @@ struct AblageAssistantSource: AssistantSource {
     func search(_ question: String, limit: Int) async -> [AssistantPassage] {
         guard limit > 0 else { return [] }
         let found = await AblageSync.shared.suchen(question)
+        // Ablage-Auszüge sind Fenster aus der Dateisuche: ohne Nachweis der Satzgrenzen (Standard `false`) wird ihr erster und
+        // letzter Satz nie als Originalsatz zitiert.
         var out: [AssistantPassage] = []
         for (rank, result) in found.filter({ allowed($0.eintrag) }).enumerated() {
             let score = 1.0 / Double(1 + rank)

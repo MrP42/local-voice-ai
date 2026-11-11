@@ -5,9 +5,9 @@ import XCTest
 // Gesprächsmodus „Sprechen“ (Paket K): Satztrenner für die Stimme.
 
 final class AssistantSpeechTests: XCTestCase {
-    private func run(_ deltas: [String]) -> [(text: String, speech: String)] {
+    private func run(_ deltas: [String]) -> [(text: String, speech: String, raw: String)] {
         var s = AssistantSpeech.Splitter()
-        var out: [(text: String, speech: String)] = []
+        var out: [(text: String, speech: String, raw: String)] = []
         for d in deltas { out += s.feed(d) }
         out += s.finish()
         return out
@@ -172,12 +172,12 @@ final class AssistantSpeechTests: XCTestCase {
 
     // MARK: Nur ganze Sätze (Prüfung vor der Ausgabe, Paket A)
 
-    private func wholeSentences(_ deltas: [String]) -> (sentences: [String], overlong: Int) {
+    private func wholeSentences(_ deltas: [String]) -> (sentences: [String], overlong: Int, fragments: Int) {
         var s = AssistantSpeech.Splitter(sentencesOnly: true)
         var out: [String] = []
         for d in deltas { out += s.feed(d).map(\.text) }
         out += s.finish().map(\.text)
-        return (out, s.overlong)
+        return (out, s.overlong, s.fragments)
     }
 
     /// F: Die Prüfung sieht nur vollständige Sätze, nie Komma-Häppchen.
@@ -195,11 +195,13 @@ final class AssistantSpeechTests: XCTestCase {
         XCTAssertTrue(s.feed("aber nur in einer erfundenen ").isEmpty)
         XCTAssertTrue(s.feed("Traumsequenz.").isEmpty, "das Satzzeichen am Puffer-Ende wartet auf das Folgezeichen oder das Stromende")
         XCTAssertEqual(s.feed(" Danach").map(\.text), ["Hans Castorp fährt nach Davos, aber nur in einer erfundenen Traumsequenz."])
-        XCTAssertEqual(s.finish().map(\.text), ["Danach"])
+        XCTAssertTrue(s.finish().isEmpty, "„Danach“ hat kein Satzzeichen: abgeschnittener Rest, nie geliefert")
+        XCTAssertEqual(s.fragments, 1)
     }
 
     func testSentencesOnlyTreatsNewlinesAsWhitespace() {
-        XCTAssertEqual(wholeSentences(["Erste Zeile\nZweite Zeile\n\nDritte. Vierte"]).sentences, ["Erste Zeile Zweite Zeile Dritte.", "Vierte"])
+        XCTAssertEqual(wholeSentences(["Erste Zeile\nZweite Zeile\n\nDritte. Vierte"]).sentences, ["Erste Zeile Zweite Zeile Dritte."])
+        XCTAssertEqual(wholeSentences(["Erste Zeile\nZweite Zeile\n\nDritte. Vierte"]).fragments, 1)
         XCTAssertEqual(wholeSentences(["Ein Satz.\nNoch ein Satz.\n"]).sentences, ["Ein Satz.", "Noch ein Satz."])
     }
 
@@ -209,14 +211,37 @@ final class AssistantSpeechTests: XCTestCase {
                         "Dann ging er."])
     }
 
-    func testSentencesOnlyFinishFlushesTheRemainderOnceAndDropsNonText() {
+    /// H3: Ein Rest ohne Satzzeichen am Stromende ist ein abgeschnittener Satz: er wird nie geliefert, nur gezählt.
+    func testSentencesOnlyDropsAndCountsAnUnterminatedRemainderAtStreamEnd() {
         var s = AssistantSpeech.Splitter(sentencesOnly: true)
         XCTAssertTrue(s.feed("Noch ein Rest ohne Ende").isEmpty)
-        XCTAssertEqual(s.finish().map(\.text), ["Noch ein Rest ohne Ende"])
         XCTAssertTrue(s.finish().isEmpty)
-        XCTAssertEqual(wholeSentences(["---"]).sentences, [])
-        XCTAssertEqual(wholeSentences(["😀"]).sentences, [])
-        XCTAssertEqual(wholeSentences(["   \n"]).sentences, [])
+        XCTAssertEqual(s.fragments, 1)
+        XCTAssertTrue(s.finish().isEmpty)
+        XCTAssertEqual(s.fragments, 1, "ein zweites Finish zählt nichts doppelt")
+        let r = wholeSentences(["Anna übernimmt künftig"])
+        XCTAssertEqual(r.sentences, [])
+        XCTAssertEqual(r.fragments, 1)
+        // Satzzeichen mit schließenden Zeichen und Leerraum dahinter zählt als Ende.
+        XCTAssertEqual(wholeSentences(["Er sagte: „Das stimmt.“  "]).sentences, ["Er sagte: „Das stimmt.“"])
+        XCTAssertEqual(wholeSentences(["Das stimmt (wirklich!)"]).sentences, ["Das stimmt (wirklich!)"], "die Klammer schließt, das Satzzeichen steht davor: Ende")
+        XCTAssertEqual(wholeSentences(["Wirklich?"]).sentences, ["Wirklich?"])
+        XCTAssertEqual(wholeSentences(["Und dann…"]).sentences, ["Und dann…"])
+        // Nichts Lesbares ist kein Fragment.
+        for junk in ["---", "😀", "   \n"] {
+            let j = wholeSentences([junk])
+            XCTAssertEqual(j.sentences, [])
+            XCTAssertEqual(j.fragments, 0, junk)
+        }
+    }
+
+    /// Der Rohsatz kommt unverändert mit (für die Prüfung auf ungewöhnliche Leerzeichen); `text` ist aufbereitet.
+    func testSentencesOnlyKeepsTheRawSentence() {
+        var s = AssistantSpeech.Splitter(sentencesOnly: true)
+        let raw = "Das \u{2009}steht im Ka\u{2003}lender."
+        let got = s.feed(raw + " Danach.") + s.finish()
+        XCTAssertEqual(got.first?.raw, raw)
+        XCTAssertEqual(got.first?.text, "Das steht im Ka lender.", "aufbereitet: Leerraum zusammengezogen")
     }
 
     func testSentencesOnlyChunkInvariance() {
@@ -237,12 +262,14 @@ final class AssistantSpeechTests: XCTestCase {
         let r = wholeSentences([String(repeating: "wort ", count: 450), " und Rest. Danach ein neuer Satz."])
         XCTAssertEqual(r.sentences, ["Danach ein neuer Satz."])
         XCTAssertEqual(r.overlong, 1)
+        XCTAssertEqual(r.fragments, 0)
     }
 
     func testSentencesOnlyOverlongWithEndIsDroppedAndCounted() {
         let r = wholeSentences([String(repeating: "wort ", count: 450) + "Ende. Und noch einer"])
-        XCTAssertEqual(r.sentences, ["Und noch einer"])
+        XCTAssertEqual(r.sentences, [], "„Und noch einer“ endet ohne Satzzeichen")
         XCTAssertEqual(r.overlong, 1)
+        XCTAssertEqual(r.fragments, 1)
         XCTAssertLessThanOrEqual(AssistantSpeech.Splitter.maxSentence, 2_000)
     }
 

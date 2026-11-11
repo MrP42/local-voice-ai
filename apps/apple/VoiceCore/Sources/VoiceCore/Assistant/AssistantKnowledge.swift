@@ -58,17 +58,15 @@ public actor AssistantKnowledge {
             .trimmingCharacters(in: .whitespaces)
     }
 
-    private static func clip(_ s: String, to limit: Int) -> String {
-        guard s.count > limit else { return s }
-        return limit <= 1 ? String(s.prefix(max(limit, 0))) : String(s.prefix(limit - 1)) + "…"
+    /// Titel unverändert; nur Zeilenumbrüche und Tabulatoren werden zu Leerzeichen.
+    private static func flat(_ s: String) -> String {
+        s.split(whereSeparator: { $0.isNewline || $0 == "\t" }).joined(separator: " ").trimmingCharacters(in: .whitespaces)
     }
 
     // MARK: Bestandsangaben (vom System, nie vom Modell)
 
     /// Höchstens so viele Titel je Bereich in einer Bestandsangabe.
     static let statementTitles = 3
-    /// Längster Titel in einer Bestandsangabe (länger: gekürzt mit „…“).
-    static let statementTitleChars = 80
 
     /// Bereiche, nach denen eine Bestandsfrage fragt (Hauptwörter wie „Bücher“, „Transkripte“, „Notizen“, „Dokumente“);
     /// `nil`, wenn keiner genannt ist („Was habe ich gespeichert?“): dann alle freigegebenen.
@@ -86,7 +84,8 @@ public actor AssistantKnowledge {
     }
 
     /// „Du hast drei Bücher.“, „Du hast keine Notizen.“, dazu „Neueste Bücher: A, B und C.“ Zahl und Titel stehen unverändert
-    /// aus den Bestandsdaten im Satz, sonst nichts (keine Herleitung, keine Empfehlung).
+    /// und ungekürzt aus den Bestandsdaten im Satz (nur Zeilenumbrüche werden zu Leerzeichen, damit es ein Satz bleibt), sonst
+    /// nichts (keine Herleitung, keine Empfehlung).
     static func statements(area: AssistantArea, items: [AssistantItem]) -> [String] {
         var out = ["Du hast \(area.countPhrase(items.count))."]
         guard !items.isEmpty else { return out }
@@ -94,23 +93,41 @@ public actor AssistantKnowledge {
             let (x, y) = (a.updated ?? .distantPast, b.updated ?? .distantPast)
             return x != y ? x > y : a.title.localizedCompare(b.title) == .orderedAscending
         }
-        let titles = sorted.prefix(statementTitles).map { clip(oneLine($0.title), to: statementTitleChars) }.filter { !$0.isEmpty }
+        let titles = sorted.prefix(statementTitles).map { flat($0.title) }.filter { !$0.isEmpty }
         guard !titles.isEmpty else { return out }
         let list = titles.count == 1 ? titles[0] : titles.dropLast().joined(separator: ", ") + " und " + titles[titles.count - 1]
         out.append("Neueste \(area.inventoryLabel): \(list).")
         return out
     }
 
-    /// Bestandsangaben zu einer Bestandsfrage, nur aus den freigegebenen Bereichen. Leer, wenn kein genannter Bereich
-    /// freigegeben ist.
-    public func inventoryStatements(question: String) async -> [String] {
+    /// Bestandsangaben zu einer Bestandsfrage je Bereich, nur aus den freigegebenen Bereichen. Leer, wenn kein genannter Bereich
+    /// freigegeben ist. Die Bereiche gehen ins Protokoll.
+    public func inventoryGroups(question: String) async -> [(area: AssistantArea, statements: [String])] {
         let wanted = Self.inventoryAreas(for: question)
-        var out: [String] = []
+        var out: [(area: AssistantArea, statements: [String])] = []
         for area in AssistantArea.allCases where enabled.contains(area) && (wanted?.contains(area) ?? true) {
-            out += Self.statements(area: area, items: await items(in: area))
+            out.append((area, Self.statements(area: area, items: await items(in: area))))
         }
         return out
     }
+
+    public func inventoryStatements(question: String) async -> [String] {
+        await inventoryGroups(question: question).flatMap(\.statements)
+    }
+
+    /// Abruf für die Prüfung eines Satzes ohne Quelle: der SATZ ist die Anfrage, über alle freigegebenen Bereiche, ohne Vorfrage
+    /// und ohne die Sonderbehandlung von Bestandsfragen, mit großzügiger Obergrenze. Nur zum Verwerfen, nie zum Zitieren.
+    public func probe(sentence: String) async -> [AssistantPassage] {
+        let trimmed = sentence.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !enabled.isEmpty else { return [] }
+        var found = await corpus.search(trimmed, previous: nil, areas: enabled, limit: Self.probeLimit)
+        for source in sources where enabled.contains(source.area) {
+            found += (await source.search(trimmed, limit: Self.probeLimit)).filter { $0.area == source.area && enabled.contains($0.area) }
+        }
+        return found
+    }
+
+    static let probeLimit = 16
 
     // MARK: Abruf
 
@@ -139,7 +156,7 @@ public actor AssistantKnowledge {
         let normalized: [(order: Int, p: AssistantPassage)] = passages.enumerated().map { i, p in
             let t = top[p.area] ?? 0
             let score = t > 0 ? max(0, p.score) / t : 0.5
-            return (i, AssistantPassage(area: p.area, itemId: p.itemId, title: p.title, locator: p.locator, text: p.text, score: score))
+            return (i, p.replacing(text: p.text, score: score))
         }
         let ranked = normalized.sorted { a, b in
             if a.p.score != b.p.score { return a.p.score > b.p.score }
@@ -163,7 +180,7 @@ public actor AssistantKnowledge {
             seen.insert(dedupe)
             perItem[key, default: 0] += 1
             remaining -= text.count
-            out.append(AssistantPassage(area: p.area, itemId: p.itemId, title: p.title, locator: p.locator, text: text, score: p.score))
+            out.append(p.replacing(text: text))
         }
         return out
     }

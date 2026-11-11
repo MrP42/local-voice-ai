@@ -217,9 +217,11 @@ struct AssistantConversationView: View {
                            isOn: Binding(get: { talk.areas.contains(area) }, set: { _ in talk.toggleArea(area) }))
                 }
             }
-            Section("Antworten") {
-                Toggle("Antworten ohne Quelle", isOn: Binding(get: { talk.unsourcedAllowed }, set: { talk.requestUnsourced($0) }))
-                    .accessibilityIdentifier("assistantUnsourced")
+            if talk.unsourcedReleased {
+                Section("Antworten") {
+                    Toggle("Antworten ohne Quelle", isOn: Binding(get: { talk.unsourcedAllowed }, set: { talk.requestUnsourced($0) }))
+                        .accessibilityIdentifier("assistantUnsourced")
+                }
             }
             Toggle("Beim Antworten zuhören (Unterbrechen per Stimme)",
                    isOn: Binding(get: { talk.bargeIn }, set: { talk.setBargeIn($0) }))
@@ -228,7 +230,7 @@ struct AssistantConversationView: View {
             Image(systemName: "ellipsis.circle").font(.title3).frame(width: 44, height: 44)
         }
         .accessibilityLabel("Mehr")
-        .accessibilityHint("Bereiche, Antworten ohne Quelle, neues Gespräch")
+        .accessibilityHint(talk.unsourcedReleased ? "Bereiche, Antworten ohne Quelle, neues Gespräch" : "Bereiche, neues Gespräch")
         .accessibilityIdentifier("assistantMenu")
     }
 
@@ -555,6 +557,7 @@ struct AssistantConversationView: View {
     private var bottom: some View {
         VStack(spacing: 10) {
             stateBlock
+            if talk.canResumeFree { resumeFreeButton }
             if typing { composer }
             if noModel { noModelControls } else { controls }
         }
@@ -582,15 +585,17 @@ struct AssistantConversationView: View {
         return "\(talk.isCloud ? "Cloud" : "Lokal") · Quellen: \(list)"
     }
 
-    /// Eigene Zeile, solange „Antworten ohne Quelle“ an ist (Standard: aus).
-    private var unsourcedLine: String? {
-        talk.unsourcedAllowed ? "Antworten ohne Quelle sind erlaubt" : nil
+    /// Zustandszeile des Datenkontexts: woraus die nächste Antwort kommt. Ohne Modell und ohne „Antworten ohne Quelle“ gibt es
+    /// nichts zu sagen (auch nicht, solange das Modell noch lädt).
+    private var contextLine: String? {
+        guard talk.canSend || talk.unsourcedAllowed else { return nil }
+        return talk.contextMode == .free ? "Antwortet ohne Quelle" : "Antwortet aus deinen Inhalten"
     }
 
-    /// Zustand, Quellen und (falls an) „Antworten ohne Quelle“ als ein Satz für VoiceOver.
+    /// Zustand, Datenkontext und Quellen als ein Satz für VoiceOver.
     private var stateLabel: String {
         var parts = [stateText, sourcesLine]
-        if let unsourcedLine { parts.append(unsourcedLine) }
+        if let contextLine { parts.append(contextLine) }
         return parts.joined(separator: ". ")
     }
 
@@ -601,8 +606,8 @@ struct AssistantConversationView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(stateText).font(.headline)
                 Text(sourcesLine).font(.footnote).foregroundStyle(VoicePalette.secondaryText).lineLimit(2)
-                if let unsourcedLine {
-                    Text(unsourcedLine).font(.footnote).foregroundStyle(VoicePalette.secondaryText).lineLimit(2)
+                if let contextLine {
+                    Text(contextLine).font(.footnote).foregroundStyle(VoicePalette.secondaryText).lineLimit(2)
                 }
                 #if DEBUG
                 if let ms = talk.firstSoundMs {
@@ -616,6 +621,20 @@ struct AssistantConversationView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(stateLabel)
         .accessibilityIdentifier("assistantState")
+    }
+
+    /// „Ohne Quelle fortsetzen“: hebt die Bindung an die eigenen Inhalte auf, nur sichtbar bei „Antworten ohne Quelle“ an und
+    /// Zustand „Antwortet aus deinen Inhalten“.
+    private var resumeFreeButton: some View {
+        Button { talk.resumeFree() } label: {
+            Text("Ohne Quelle fortsetzen")
+                .font(.footnote.weight(.semibold))
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.bordered)
+        .accessibilityHint("Der Assistent darf dann wieder ohne Quelle antworten")
+        .accessibilityIdentifier("assistantResumeFree")
     }
 
     private var composer: some View {

@@ -5,51 +5,131 @@ import Foundation
 // Platte. Kompakt gebaut, damit auch ~30 MB Text passen: ein umgekehrter Index (Stamm → Fundstellen) statt einer
 // Häufigkeitstabelle je Stück, Stücke nur als Text plus wenige Zahlen.
 
-/// Zerlegt Text in Stücke an Absatz-/Satz-/Wortgrenzen.
+/// Zerlegt Text in Stücke an Absatz-/Satz-/Wortgrenzen und weist je Stück nach, ob Anfang und Ende an einer Satzgrenze liegen.
 enum AssistantChunker {
     static let target = 700
     static let overlap = 100
 
-    /// Teilt einen Abschnitt. Kurze Texte bleiben ein Stück; sonst endet jedes Stück möglichst an einem Zeilenumbruch,
-    /// einem Satzende oder einer Wortgrenze, und das nächste beginnt ~`overlap` Zeichen früher an einer Wortgrenze.
-    static func split(_ text: String, target: Int = AssistantChunker.target, overlap: Int = AssistantChunker.overlap) -> [String] {
+    /// Ein Stück mit Nachweis der Satzgrenzen. Ohne Nachweis wird sein erster bzw. letzter Satz nie zitiert (er kann
+    /// angeschnitten sein).
+    struct Piece: Equatable {
+        let text: String
+        let startsAtBoundary: Bool
+        let endsAtBoundary: Bool
+    }
+
+    /// Nachgewiesene Grenzen eines Textes: Satzanfänge und -enden (abgeschlossen von der Satzerkennung, die Abkürzungen kennt)
+    /// und Absatzgrenzen (Leerzeile). Ein Zeilenumbruch allein beweist nichts (harter Umbruch im Fließtext).
+    private struct Marks {
+        var starts: [Int] = []
+        var ends: [Int] = []
+        let startSet: Set<Int>
+        let endSet: Set<Int>
+
+        init(_ u: [UInt16], text: String) {
+            var starts = Set<Int>()
+            var ends = Set<Int>()
+            for s in BookTalkSentences.split(text) {
+                starts.insert(s.start)
+                ends.insert(s.end)
+            }
+            var i = 0
+            while i < u.count {
+                guard u[i] == 10 else { i += 1; continue }
+                var j = i + 1
+                var breaks = 1
+                while j < u.count, AssistantChunker.isSpace(u[j]) {
+                    if u[j] == 10 { breaks += 1 }
+                    j += 1
+                }
+                if breaks >= 2 {
+                    var t = i
+                    while t > 0, AssistantChunker.isSpace(u[t - 1]) { t -= 1 }
+                    if t > 0 { ends.insert(t) }
+                    if j < u.count { starts.insert(j) }
+                }
+                i = j
+            }
+            startSet = starts
+            endSet = ends
+            self.starts = starts.sorted()
+            self.ends = ends.sorted()
+        }
+
+        static func lastAtMost(_ a: [Int], _ x: Int) -> Int? {
+            var lo = 0, hi = a.count
+            while lo < hi {
+                let m = (lo + hi) / 2
+                if a[m] <= x { lo = m + 1 } else { hi = m }
+            }
+            return lo > 0 ? a[lo - 1] : nil
+        }
+
+        static func firstAtLeast(_ a: [Int], _ x: Int) -> Int? {
+            var lo = 0, hi = a.count
+            while lo < hi {
+                let m = (lo + hi) / 2
+                if a[m] < x { lo = m + 1 } else { hi = m }
+            }
+            return lo < a.count ? a[lo] : nil
+        }
+    }
+
+    /// Teilt einen Abschnitt. Kurze Texte bleiben ein Stück; sonst endet jedes Stück möglichst an einer nachgewiesenen Satz- oder
+    /// Absatzgrenze (dann ein Zeilenumbruch, dann eine Wortgrenze), und das nächste beginnt ~`overlap` Zeichen früher, wenn
+    /// möglich an einem nachgewiesenen Satzanfang, sonst an einer Wortgrenze. Anfang und Ende des Abschnitts tragen
+    /// `startsAtBoundary`/`endsAtBoundary` des Abschnitts, alle inneren Kanten gelten nur mit Nachweis.
+    static func split(_ text: String, startsAtBoundary: Bool = false, endsAtBoundary: Bool = false,
+                      target: Int = AssistantChunker.target, overlap: Int = AssistantChunker.overlap) -> [Piece] {
         let u = Array(text.utf16)
         let n = u.count
         guard n > 0 else { return [] }
-        if n <= target { return clean(u, 0, n).map { [$0] } ?? [] }
-        var out: [String] = []
+        var first = 0
+        while first < n, isSpace(u[first]) { first += 1 }
+        var last = n
+        while last > first, isSpace(u[last - 1]) { last -= 1 }
+        guard last > first else { return [] }
+        let marks = Marks(u, text: text)
+
+        func piece(_ s: Int, _ e: Int) -> Piece? {
+            var a = s
+            while a < e, isSpace(u[a]) { a += 1 }
+            var b = e
+            while b > a, isSpace(u[b - 1]) { b -= 1 }
+            guard b > a else { return nil }
+            return Piece(text: String(decoding: u[a..<b], as: UTF16.self),
+                         startsAtBoundary: a <= first ? startsAtBoundary : marks.startSet.contains(a),
+                         endsAtBoundary: b >= last ? endsAtBoundary : marks.endSet.contains(b))
+        }
+
+        if n <= target { return piece(0, n).map { [$0] } ?? [] }
+        var out: [Piece] = []
         var s = 0
         while s < n {
             var e = min(s + target, n)
-            if e < n { e = boundary(u, from: s, to: e, target: target) }
-            if let piece = clean(u, s, e) { out.append(piece) }
+            if e < n { e = boundary(u, marks: marks, from: s, to: e, target: target) }
+            if let p = piece(s, e) { out.append(p) }
             if e >= n { break }
             var next = max(e - overlap, s + 1)
-            while next < e, !isSpace(u[next]) { next += 1 }
-            while next < e, isSpace(u[next]) { next += 1 }
+            if let p = Marks.firstAtLeast(marks.starts, max(e - 2 * overlap, s + 1)), p < e {
+                next = p
+            } else {
+                while next < e, !isSpace(u[next]) { next += 1 }
+                while next < e, isSpace(u[next]) { next += 1 }
+            }
             s = next >= e ? e : next
         }
         return out
     }
 
-    private static func clean(_ u: [UInt16], _ s: Int, _ e: Int) -> String? {
-        let piece = String(decoding: u[s..<e], as: UTF16.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        return piece.isEmpty ? nil : piece
-    }
+    fileprivate static func isSpace(_ c: UInt16) -> Bool { c == 32 || c == 10 || c == 9 || c == 13 || c == 0xA0 }
 
-    private static func isSpace(_ c: UInt16) -> Bool { c == 32 || c == 10 || c == 9 || c == 13 || c == 0xA0 }
-
-    /// Bevorzugt Zeilenumbruch, dann Satzende, dann Wortgrenze; sonst harte Kante.
-    private static func boundary(_ u: [UInt16], from s: Int, to e: Int, target: Int) -> Int {
+    /// Bevorzugt eine nachgewiesene Satz- oder Absatzgrenze, dann einen Zeilenumbruch, dann eine Wortgrenze; sonst harte Kante.
+    private static func boundary(_ u: [UInt16], marks: Marks, from s: Int, to e: Int, target: Int) -> Int {
         let lower = s + target / 2
+        if let c = Marks.lastAtMost(marks.ends, e), c > lower { return c }
         var k = e
         while k > lower { if u[k - 1] == 10 { return k }; k -= 1 }
-        k = e
-        while k > lower {
-            let c = u[k - 1]
-            if (c == 46 || c == 33 || c == 63), k < u.count, isSpace(u[k]) { return k }
-            k -= 1
-        }
         k = e
         while k > lower { if isSpace(u[k - 1]) { return k }; k -= 1 }
         // Nicht mitten in ein Surrogatpaar schneiden.
@@ -79,6 +159,8 @@ public actor AssistantCorpus {
         let locator: String?
         let text: String
         let length: Int32
+        /// Bit 0: Anfang an einer Satzgrenze, Bit 1: Ende an einer Satzgrenze (nachgewiesen).
+        let flags: UInt8
         var alive: Bool
     }
 
@@ -131,7 +213,8 @@ public actor AssistantCorpus {
             for t in tokens { tf[t, default: 0] += 1 }
             for (t, f) in tf { postings[t, default: []].append(Posting(chunk: id, tf: UInt16(min(f, Int(UInt16.max))))) }
             chunks.append(Chunk(doc: Int32(slot), area: UInt8(areaSlot), locator: piece.locator, text: piece.text,
-                                length: Int32(tokens.count), alive: true))
+                                length: Int32(tokens.count), flags: (piece.startsAtBoundary ? 1 : 0) | (piece.endsAtBoundary ? 2 : 0),
+                                alive: true))
             areaChunks[areaSlot] += 1
             areaLength[areaSlot] += tokens.count
         }
@@ -219,7 +302,8 @@ public actor AssistantCorpus {
             if perItem[slot, default: 0] >= Self.perItemCap { continue }
             perItem[slot, default: 0] += 1
             let item = docs[slot].item
-            out.append(AssistantPassage(area: item.area, itemId: item.id, title: item.title, locator: c.locator, text: c.text, score: score))
+            out.append(AssistantPassage(area: item.area, itemId: item.id, title: item.title, locator: c.locator, text: c.text, score: score,
+                                        startsAtBoundary: c.flags & 1 != 0, endsAtBoundary: c.flags & 2 != 0))
             if out.count >= limit { break }
         }
         return out
@@ -249,9 +333,19 @@ public actor AssistantCorpus {
         }
     }
 
-    private static func pieces(_ sections: [AssistantDocument.Section]) -> [(locator: String?, text: String)] {
-        var out: [(locator: String?, text: String)] = []
-        var pending: (locator: String?, text: String)?
+    private struct Part {
+        var locator: String?
+        var text: String
+        var startsAtBoundary: Bool
+        var endsAtBoundary: Bool
+    }
+
+    /// Stücke aus den Abschnitten. Kurze Abschnitte werden nur zusammengezogen, wenn die Naht nachweislich eine Satzgrenze ist
+    /// (der vorige Abschnitt endet und der nächste beginnt an einer): sonst entstünde ein Satz, der in Wahrheit zwei
+    /// Bruchstücke verbindet. Abschnitte ohne Nachweis bleiben einzelne, kleine Stücke.
+    private static func pieces(_ sections: [AssistantDocument.Section]) -> [Part] {
+        var out: [Part] = []
+        var pending: Part?
         func flush() {
             if let p = pending { out.append(p) }
             pending = nil
@@ -261,12 +355,18 @@ public actor AssistantCorpus {
             guard !text.isEmpty else { continue }
             if text.utf16.count > AssistantChunker.target {
                 flush()
-                for piece in AssistantChunker.split(text) { out.append((section.locator, piece)) }
-            } else if let p = pending, p.locator == section.locator, p.text.utf16.count + 1 + text.utf16.count <= AssistantChunker.target {
-                pending = (p.locator, p.text + "\n" + text)
+                for piece in AssistantChunker.split(text, startsAtBoundary: section.startsAtBoundary, endsAtBoundary: section.endsAtBoundary) {
+                    out.append(Part(locator: section.locator, text: piece.text, startsAtBoundary: piece.startsAtBoundary,
+                                    endsAtBoundary: piece.endsAtBoundary))
+                }
+            } else if let p = pending, p.locator == section.locator, p.endsAtBoundary, section.startsAtBoundary,
+                      p.text.utf16.count + 1 + text.utf16.count <= AssistantChunker.target {
+                pending = Part(locator: p.locator, text: p.text + "\n" + text, startsAtBoundary: p.startsAtBoundary,
+                               endsAtBoundary: section.endsAtBoundary)
             } else {
                 flush()
-                pending = (section.locator, text)
+                pending = Part(locator: section.locator, text: text, startsAtBoundary: section.startsAtBoundary,
+                               endsAtBoundary: section.endsAtBoundary)
             }
         }
         flush()
@@ -303,7 +403,8 @@ public actor AssistantCorpus {
             for id in d.first..<(d.first + d.count) where chunks[id].alive {
                 map[id] = Int32(newChunks.count)
                 let c = chunks[id]
-                newChunks.append(Chunk(doc: Int32(slot), area: c.area, locator: c.locator, text: c.text, length: c.length, alive: true))
+                newChunks.append(Chunk(doc: Int32(slot), area: c.area, locator: c.locator, text: c.text, length: c.length, flags: c.flags,
+                                       alive: true))
             }
             nd.count = newChunks.count - nd.first
             newDocs.append(nd)
