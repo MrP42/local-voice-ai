@@ -9,6 +9,10 @@ struct BookPlayerScreen: View {
     @ObservedObject var look = ReaderAppearance.shared
     @State private var chaptersShown = false
     @State private var infoShown = false
+    /// Inhalt und Suche im Textbuch (lva#476); `found` ist die zuletzt aufgeschlagene Fundstelle.
+    @State private var findShown = false
+    @State private var found: BookFindTarget?
+    @State private var reveal: BookReveal?
 
     static let controlsCap = DynamicTypeSize.xxLarge
     private var hasText: Bool { !playback.paragraphs.isEmpty }
@@ -30,8 +34,8 @@ struct BookPlayerScreen: View {
             Group {
                 switch surface {
                 case .listen: PlayerCoverArea()
-                case .readListen: ReadAlongText(follow: true)
-                case .read: ReadAlongText(follow: false)
+                case .readListen: ReadAlongText(follow: true, found: found, reveal: reveal)
+                case .read: ReadAlongText(follow: false, found: found, reveal: reveal)
                 }
             }
             // Lesefenster behält auch bei großer Schrift mehrere Zeilen.
@@ -46,6 +50,9 @@ struct BookPlayerScreen: View {
         .background(VoicePalette.background)
         .sheet(isPresented: $chaptersShown) { AudiobookChapterSheet() }
         .sheet(isPresented: $infoShown) { AudiobookInfoSheet() }
+        .sheet(isPresented: $findShown) {
+            BookFindSheet(paragraphs: playback.paragraphs, current: playback.paragraphIndex) { go(to: $0) }
+        }
         .overlay(alignment: .bottom) { LanguageNoticeBar() }
         .animation(.easeInOut(duration: 0.2), value: playback.languageNotice?.id)
     }
@@ -66,6 +73,10 @@ struct BookPlayerScreen: View {
         HStack(spacing: 0) {
             LanguageButton()
             if hasText {
+                Button { findShown = true } label: { Image(systemName: "magnifyingglass").font(.title3).frame(width: 44, height: 44) }
+                    .accessibilityLabel("Inhalt und Suche")
+                    .accessibilityHint("Kapitel aufschlagen oder im ganzen Buch suchen")
+                    .accessibilityIdentifier("bookFind")
                 ReaderAppearanceButton()
                 BookTalkButton(compact: true)
             }
@@ -74,6 +85,17 @@ struct BookPlayerScreen: View {
                     .accessibilityLabel("Angaben zum Buch")
             }
         }
+    }
+
+    /// Fundstelle oder Kapitel aufschlagen: die Stelle springt dorthin (wie ein Beleg aus dem
+    /// Buch-Gespräch, ohne als gelesen zu zählen), der Text scrollt hin, ein Treffer bleibt markiert.
+    private func go(to target: BookFindTarget) {
+        guard playback.paragraphs.indices.contains(target.paragraph) else { return }
+        let p = playback.paragraphs[target.paragraph]
+        playback.jump(toOffset: p.textStart + (target.range?.location ?? 0), autoplay: false)
+        if surface == .listen { playback.show(.read) }
+        found = target.range == nil ? nil : target
+        reveal = BookReveal(token: (reveal?.token ?? 0) + 1, paragraph: target.paragraph)
     }
 
     @ViewBuilder private var controls: some View {
@@ -118,6 +140,10 @@ struct SurfaceSwitch: View {
 /// Text mit Markierung. Mitlesen: Satz hell, Wort kräftig, scrollt mit. Lesen: ruhiger Text, Antippen setzt die Stelle.
 struct ReadAlongText: View {
     let follow: Bool
+    /// Fundstelle der Suche im Buch: bleibt hinterlegt, bis eine neue aufgeschlagen wird.
+    var found: BookFindTarget? = nil
+    /// Scrollauftrag aus Inhalt und Suche, auch in der Ansicht „Lesen“.
+    var reveal: BookReveal? = nil
     @ObservedObject var playback = LibraryPlayback.shared
     @ObservedObject var look = ReaderAppearance.shared
 
@@ -126,9 +152,9 @@ struct ReadAlongText: View {
         // Im Hörbuch ist paragraphIndex der (alte) Cursor der Stimme: ohne Markierung nichts hervorheben.
         let current = mark?.paragraph ?? (playback.source == .voice ? playback.paragraphIndex : -1)
         VStack(spacing: 0) {
-            FollowText(paragraphs: playback.paragraphs, current: current, follow: follow) { i, p in
+            FollowText(paragraphs: playback.paragraphs, current: current, follow: follow, reveal: reveal) { i, p in
                 let here = i == current ? mark : nil
-                Text(styled(p, mark: here))
+                Text(styled(p, mark: here, found: found?.paragraph == i ? found?.range : nil))
                     .font(look.font(heading: p.heading))
                     .foregroundStyle(follow && i != current ? look.muted : look.text)
                     .lineSpacing(look.lineSpacing).fixedSize(horizontal: false, vertical: true)
@@ -148,8 +174,13 @@ struct ReadAlongText: View {
     }
 
     /// Satz und Wort nur als Hintergrund: Schriftschnitt bleibt, der Umbruch springt nicht.
-    private func styled(_ p: TextParagraph, mark: ReadingMark?) -> AttributedString {
+    private func styled(_ p: TextParagraph, mark: ReadingMark?, found: NSRange? = nil) -> AttributedString {
         var s = AttributedString(p.text)
+        if let found, let range = Range(found, in: p.text), let a = AttributedString.Index(range.lowerBound, within: s),
+           let b = AttributedString.Index(range.upperBound, within: s) {
+            s[a..<b].backgroundColor = VoicePalette.brand.opacity(0.35)
+            s[a..<b].underlineStyle = .single
+        }
         guard follow, let mark, mark.precise else { return s }
         if let r = mark.sentence, let range = Range(r, in: p.text), let a = AttributedString.Index(range.lowerBound, within: s),
            let b = AttributedString.Index(range.upperBound, within: s) {
