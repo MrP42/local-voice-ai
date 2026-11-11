@@ -2593,4 +2593,70 @@ final class AssistantCounterexampleTests: XCTestCase {
         XCTAssertEqual(rows(of: "r1").last?["lost"] as? Bool, true)
     }
 
+    // MARK: Runde 12, W1: Der Fehler der Standzeile hängt an der Anfrage, bevor der gescheiterte Versuch zurückgegeben wird
+
+    /// Der Ablauf von Codex: Die Standzeile scheitert EINMAL. `ensure` meldet es dem Erzeuger von R und gibt den Versuch frei; die
+    /// Fortsetzung von `run`, die den Fehler in den Stand des Laufs übernimmt, läuft noch nicht (der Erzeuger steht am Haltepunkt). Der
+    /// Abschluss verlässt die Frist (`commitWait` null), sein eigenes `ensure` ist ein neuer Versuch und gelingt, `start` gelingt, der
+    /// Stand des Laufs zeigt noch keinen Fehler: Der Abschluss schrieb „unterbrochen“ und lieferte `true`. Jetzt steht der Fehler am
+    /// Anspruch der Anfrage, bevor der Versuch freigegeben wird: Schlusszeile „Fehler“, `lost`, `commit` meldet `false`. Gegen 894ea911
+    /// ROT (mit dem Haltepunkt gemessen).
+    func testW1AStateLineFailureThatASuccessfulRetryFollowsStillDecidesTheOutcomeOfTheRequestThatSawIt() async throws {
+        let failures = FailFirst(1)
+        let audit = log(appender: { url, data in
+            if String(decoding: data, as: UTF8.self).contains("\"t\":\"state\""), failures.shouldFail() { throw Injected() }
+            try AssistantAuditWriter.appendFile(url, data)
+        })
+        let refused = ProducerHold()
+        let index = AssistantStepIndex()
+        index.setProbe { id, point in
+            guard id == "r1", point == .stateRefused else { return }
+            await refused.visit(holdAt: 1)
+        }
+        let model = CountingModel()
+        let s = session(nil, audit: audit, model: model, stepIndex: index, commitWait: .zero)
+        let events = Task { await drainEvents(s, AssistantRequest(requestId: "r1", text: "Hallo")) }
+        await refused.awaitReached()                // der Versuch ist gescheitert und freigegeben; `run` hat den Fehler noch nicht
+        XCTAssertTrue(audit.hasFailed(request: "r1"), "der Fehler hängt schon an der Anfrage")
+        let ok = await s.commit(requestId: "r1", user: "", spoken: .nothing, interrupted: true)
+        await audit.barrier()
+        XCTAssertFalse(ok, "der erkannte Protokollfehler bestimmt den Ausgang")
+        XCTAssertEqual(kinds(of: "r1"), ["start", "end"])
+        XCTAssertEqual(rows(of: "r1").last?["outcome"] as? String, "failed", "Schlusszeile „Fehler“")
+        XCTAssertEqual(rows(of: "r1").last?["lost"] as? Bool, true)
+        XCTAssertEqual(lines(["state"]).count, 1, "die Wiederholung des Abschlusses hat die Standzeile geschrieben")
+        refused.release()
+        let received = await events.value
+        await audit.barrier()
+        XCTAssertEqual(model.calls.value, 0, "kein Modell")
+        XCTAssertFalse(received.events.contains { if case .sentence = $0 { true } else { false } })
+        XCTAssertEqual(kinds(of: "r1"), ["start", "end"], "das späte Ende des Laufs schreibt nichts")
+        XCTAssertEqual(audit.claimCount, 0, "kein Anspruch bleibt liegen")
+    }
+
+    /// W1, Gegenprobe: Der Fehler hängt nur an den Anfragen, die den gescheiterten Versuch geteilt haben. Eine Anfrage danach, deren
+    /// Versuch gelingt, endet ohne Fehler; die erste endet mit „Fehler“, auch wenn sie erst nach der zweiten abgeschlossen wird.
+    func testW1ARequestAfterTheFailedAttemptIsNotMarkedAndTheFirstStaysFailed() async {
+        let failures = FailFirst(1)
+        let audit = log(appender: { url, data in
+            if String(decoding: data, as: UTF8.self).contains("\"t\":\"state\""), failures.shouldFail() { throw Injected() }
+            try AssistantAuditWriter.appendFile(url, data)
+        })
+        let s = session(nil, audit: audit)
+        let first = await drainEvents(s, AssistantRequest(requestId: "r1", text: "Hallo"))
+        XCTAssertEqual(first.failure, .auditUnavailable)
+        let second = await drainEvents(s, AssistantRequest(requestId: "r2", text: "Hallo"))
+        XCTAssertNil(second.failure, "der nächste Versuch gelingt")
+        XCTAssertFalse(audit.hasFailed(request: "r2"))
+        let secondOk = await s.commit(requestId: "r2", user: "Hallo", spoken: .nothing, interrupted: false)
+        let firstOk = await s.commit(requestId: "r1", user: "Hallo", spoken: .nothing, interrupted: false)
+        await audit.barrier()
+        XCTAssertTrue(secondOk)
+        XCTAssertFalse(firstOk)
+        XCTAssertEqual(rows(of: "r2").last?["outcome"] as? String, "completed")
+        XCTAssertNil(rows(of: "r2").last?["lost"])
+        XCTAssertEqual(rows(of: "r1").last?["outcome"] as? String, "failed")
+        XCTAssertEqual(audit.claimCount, 0)
+    }
+
 }

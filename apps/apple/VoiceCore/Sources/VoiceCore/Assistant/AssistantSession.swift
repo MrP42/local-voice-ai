@@ -225,6 +225,12 @@ final class AssistantRunOutput: @unchecked Sendable {
 /// nimmt keine Sitzung eine Anfrage an (`.auditUnavailable`); die nächste Anfrage versucht es mit dem dann gültigen Stand erneut.
 /// Mehrere gleichzeitige Anfragen (auch verschiedener Sitzungen) teilen EINEN Versuch. Der Lock ist ein Blatt: unter ihm wird nur
 /// `make` gerufen (liest den Stand im Lock der Ordnung, Reihenfolge StateLine → Ordnung) und eingereiht, nie gewartet.
+///
+/// Der Fehler eines Versuchs gehört den ANFRAGEN, die ihn geteilt haben (Runde 12, W1; E4.2a Punkt 8, Schreibfolge 1): Jede Anfrage
+/// meldet sich beim Beitritt an (`waiting`). Scheitert der Versuch, wird der Fehler am Anspruch jeder angemeldeten Anfrage vermerkt
+/// (`noteFailure`, klebrig bis zu ihrem Abschluss), im selben Lock-Schritt und BEVOR der Versuch freigegeben wird. Ein späterer,
+/// gelungener Versuch (einer anderen Anfrage oder des Abschlusses derselben) kann ihn also nicht verdecken: Wer den neuen Versuch
+/// beginnen kann, findet den Fehler des alten schon an der Anfrage. Der Vermerk hängt nicht an der Fortsetzung des Erzeugers.
 final class AssistantStateLine: @unchecked Sendable {
     private let lock = NSLock()
     private var make: (@Sendable () -> AssistantJournalLine)?
@@ -233,6 +239,8 @@ final class AssistantStateLine: @unchecked Sendable {
     private var enqueued = false
     private var confirmed = false
     private var attempt: Task<Bool, Never>?
+    /// Die Anfragen des laufenden Versuchs (mit dem Protokoll, an dessen Anspruch ihr Fehler vermerkt wird).
+    private var waiting: [(audit: AssistantAuditLog, request: String)] = []
 
     init() {}
 
@@ -251,19 +259,21 @@ final class AssistantStateLine: @unchecked Sendable {
         enqueued = true
     }
 
-    func ensure(_ audit: AssistantAuditLog) async -> Bool {
-        guard let task = startOrJoin(audit) else { return true }
+    /// `false`: Der Versuch, den diese Anfrage geteilt hat, ist gescheitert; der Fehler steht dann schon an ihrem Anspruch.
+    func ensure(_ audit: AssistantAuditLog, request: String) async -> Bool {
+        guard let task = startOrJoin(audit, request: request) else { return true }
         let ok = await task.value
         finish(task, ok: ok)
         return ok
     }
 
     /// `nil`: schon bestätigt (oder nie begonnen). Sonst der (geteilte) Versuch; der erste reiht die Zeile bei Bedarf neu ein.
-    private func startOrJoin(_ audit: AssistantAuditLog) -> Task<Bool, Never>? {
+    private func startOrJoin(_ audit: AssistantAuditLog, request: String) -> Task<Bool, Never>? {
         lock.lock()
         defer { lock.unlock() }
         guard let make, let run else { return nil }
         if confirmed { return nil }
+        waiting.append((audit: audit, request: request))
         if let attempt { return attempt }
         let key = self.key
         if !enqueued {
@@ -280,7 +290,12 @@ final class AssistantStateLine: @unchecked Sendable {
         defer { lock.unlock() }
         if ok {
             confirmed = true
+            waiting.removeAll()
         } else if attempt == task {
+            // Erst der Vermerk an jeder Anfrage dieses Versuchs, dann die Freigabe (derselbe Lock-Schritt): Der nächste Versuch beginnt
+            // erst danach. `noteFailure` nimmt nur den kurzen Lock der Ansprüche (ein Blatt) und wirkt nur auf einen bestehenden Anspruch.
+            for item in waiting { item.audit.noteFailure(request: item.request) }
+            waiting.removeAll()
             attempt = nil
             enqueued = false
         }
@@ -1263,7 +1278,9 @@ public actor AssistantSession {
     /// (falls der Lauf es nie bestätigt hat), die Marken des Verlaufs, die Schlusszeile; gibt den Anspruch auf den Fehler der Anfrage erst
     /// danach frei. Der Ausgang wird aus den Fehlerquellen selbst bestimmt, zum Zeitpunkt der Entscheidung (Runde 11, V2), nie aus einer
     /// früh gezogenen Kopie: (1) klebrige Schreibfehler der Anfrage (`waitUntilWritten`), (2) die Standzeile (`ensure`), (3) der Stand des
-    /// Laufs frisch gelesen. Die frühe Kopie `record` dient nur dem Inhalt (Einheiten, Marken, Bereiche), der nach dem Schließen feststeht:
+    /// Laufs frisch gelesen. Zu (1) zählt seit Runde 12 (W1) auch der Fehler eines Standzeilenversuchs, den die Anfrage geteilt hat: Er
+    /// steht an ihrem Anspruch, bevor der Versuch freigegeben wird, und bleibt es, auch wenn die Wiederholung hier unter (2) gelingt.
+    /// Die frühe Kopie `record` dient nur dem Inhalt (Einheiten, Marken, Bereiche), der nach dem Schließen feststeht:
     /// Gesendetes wird im Abschnitt der Ordnung gebucht, und danach geht nichts mehr hinaus.
     private func finishRequest(_ requestId: String, state: RunState, user: String, spoken: AssistantSpokenUnits, interrupted: Bool,
                                revoked: Bool) async -> Bool {
@@ -1281,7 +1298,7 @@ public actor AssistantSession {
         // Startzeile (Gruppe, kein `end` nach einem fehlgeschlagenen Anhängen des `start`). Ein `start`, das stehen blieb, kann ohne `end`
         // bleiben (dann „unvollständig“). Der Leser faltet doppelte Startzeilen zu EINEM Eintrag.
         if let audit {
-            let stateStands = await stateLine.ensure(audit)
+            let stateStands = await stateLine.ensure(audit, request: requestId)
             let startStands = await secureStart(audit, requestId, state: state, record: record)
             if !stateStands || !startStands {
                 var end = Self.endLine(requestId, record: record, outcome: .failed)
@@ -1601,7 +1618,10 @@ public actor AssistantSession {
         state.update { $0.contextBefore = context.mode }
         if let audit {
             await index.reach(rid, .beforeState)
-            guard await stateLine.ensure(audit) else { return fail(.auditUnavailable) }
+            guard await stateLine.ensure(audit, request: rid) else {
+                await index.reach(rid, .stateRefused)
+                return fail(.auditUnavailable)
+            }
             if Task.isCancelled { return .cancelled }
             // `start`: eingereiht nur, solange die Anfrage offen ist (L2), und abgewartet.
             let landing = await emitter.land(startLine(rid, session: session, config: config, record: state.snapshot), run: run)

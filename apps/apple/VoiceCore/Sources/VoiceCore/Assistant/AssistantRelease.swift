@@ -538,6 +538,8 @@ enum AssistantRequestPoint: Sendable {
     case beforeRound
     /// Runde 11: Der Erzeuger ist noch nicht in `stateLine.ensure` (die Standzeile ist ihm noch nicht bestätigt).
     case beforeState
+    /// Runde 12: `stateLine.ensure` hat dem Erzeuger den Fehler der Standzeile gemeldet; er hat ihn noch nicht in seinen Stand übernommen.
+    case stateRefused
     /// Runde 11: Der Abschluss hat den Inhalt der Anfrage gelesen (`state.snapshot`), aber noch nichts geschrieben und nichts entschieden.
     case closing
 }

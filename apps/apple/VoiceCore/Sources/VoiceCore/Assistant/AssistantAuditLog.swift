@@ -1039,6 +1039,16 @@ final class AssistantAuditWriter: @unchecked Sendable {
         return c
     }
 
+    /// Vermerkt einen Fehler am BESTEHENDEN Anspruch, ohne dass eine Zeile dieses Schlüssels gescheitert ist (Runde 12, W1: die
+    /// Standzeile, die der Anfrage vorausgehen muss). Klebrig wie jeder Fehler des Anspruchs; ohne Anspruch geschieht nichts (die Anfrage
+    /// ist abgeschlossen, es bleibt nichts liegen). Sofort wirksam (ein Lock, keine Warteschlange), ohne Rückruf an den Beobachter: Der
+    /// Aufrufer hält einen eigenen Lock, und der Erzeuger meldet der Steuerung das Ende selbst.
+    func record(_ error: AssistantAuditError, at key: String) {
+        failedLock.lock()
+        claims[key]?.record(error)
+        failedLock.unlock()
+    }
+
     /// Beendet den Anspruch (die Anfrage ist abgeschlossen, die Änderung gemeldet).
     func release(_ key: String) {
         failedLock.lock()
@@ -1334,6 +1344,9 @@ public struct AssistantAuditLog: Sendable {
 
     /// Beendet den Anspruch der Anfrage (abgeschlossen).
     func release(request: String) { writer.release(request) }
+
+    /// Ein Protokollfehler, der die Anfrage betrifft, ohne eine ihrer Zeilen zu sein (die Standzeile): am Anspruch vermerkt, klebrig.
+    func noteFailure(request: String) { writer.record(.writeFailed, at: request) }
 
     /// Anzahl der bestehenden Ansprüche (Tests).
     var claimCount: Int { writer.claimCount }
