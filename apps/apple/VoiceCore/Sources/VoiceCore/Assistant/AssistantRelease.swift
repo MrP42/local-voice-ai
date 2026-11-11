@@ -536,13 +536,22 @@ enum AssistantRequestPoint: Sendable {
     case beforeSend
     /// Die Zeile `round` ist noch nicht eingereiht.
     case beforeRound
+    /// Runde 11: Der Erzeuger ist noch nicht in `stateLine.ensure` (die Standzeile ist ihm noch nicht bestätigt).
+    case beforeState
+    /// Runde 11: Der Abschluss hat den Inhalt der Anfrage gelesen (`state.snapshot`), aber noch nichts geschrieben und nichts entschieden.
+    case closing
 }
 
 /// Der LEBENSLAUF einer Anfrage und die Zuordnung „n-tes gesendetes Satz-Ereignis → Nummer des Schritts im Protokoll“.
 ///
-/// Lebenslauf (Runde 10, EIN Mechanismus für Abschluss und Sendepfad): offen → geschlossen → abgeschlossen. Der Übergang
-/// „geschlossen“ geschieht IM Lock der Ordnung (`AssistantRelease.inSection`), der Besitz des Abschlusses wird im selben Schritt
-/// vergeben (`claimCompletion`).
+/// Lebenslauf (Runde 10, EIN Mechanismus für Abschluss und Sendepfad): offen → geschlossen → abgeschlossen. Der Besitz des Abschlusses
+/// wird im Abschnitt der Ordnung vergeben (`AssistantRelease.inSection`, `claimCompletion` schließt im selben Schritt); nur dieser
+/// Übergang legt fest, welche Zeilen der Anfrage vor ihrer Schlusszeile stehen. Das Schließen durch die Verdrängung geschieht an zwei
+/// Stellen: `closeForCommits` im Abschnitt, die Verdrängung in `append` unter dem Lock dieses Index allein, außerhalb der Ordnung. Das
+/// ist kein Gegenbeispiel: Jede Offen-Prüfung eines Abschnitts liest den Index-Lock (ein Blatt) und handelt im selben Abschnitt; ein
+/// Abschnitt, der vor dem Schließen „offen“ las, endet vor jedem späteren Abschnitt, also auch vor dem Besitz des Abschlusses (der
+/// Schlusszeile), und einer danach liest „geschlossen“. Die Verdrängung schreibt keine Schlusszeile, sie beendet nur die Ausgabe früher;
+/// der Abschluss folgt durch `commit`.
 /// - L1: Der Abschluss gehört genau EINEM Aufrufer (`claimCompletion` gibt für eine Kennung genau einmal `true`).
 /// - L2: Ab dem Schließen entsteht für die Anfrage keine Ausgabe und keine Protokollzeile mehr, außer den Zeilen des Abschlusses
 ///   selbst. Jeder Abschnitt, in dem der Erzeuger sendet oder eine Zeile der Anfrage einreiht, fragt `isOpen` IM Lock; Controller-

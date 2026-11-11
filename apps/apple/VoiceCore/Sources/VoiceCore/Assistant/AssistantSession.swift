@@ -29,11 +29,16 @@ import Foundation
 // (`AssistantRelease.apply`). Ein Lauf bleibt bis `commit` angemeldet. Jedes Ereignis trägt die Generation seines Laufs und wird
 // unmittelbar vor dem Senden gegen sie geprüft; der Verlaufseintrag entsteht im selben Lock (`AssistantRelease`).
 //
-// Lebenslauf einer Anfrage (Runde 10): offen → geschlossen → abgeschlossen (`AssistantStepIndex`, Übergänge im Lock der Ordnung). Der
-// Abschluss (`commit`) gehört genau EINEM Aufrufer (L1). Ab dem Schließen sendet der Erzeuger nichts mehr und reiht keine Zeile mehr ein,
-// jeder seiner Abschnitte fragt „offen?“ im Lock (L2: `AssistantRequestGate`, `RunEmitter.enqueue`); nur die Zeilen des Abschlusses selbst
-// kommen noch. Die Schlusszeile legt ihren Ausgang erst fest, wenn die Schreibergebnisse der Zeilen davor bekannt sind, und er ist der,
-// den die Steuerung erfährt (L3: `finishRequest`; auch der Abbruch vor dem Start läuft durch denselben Abschluss).
+// Lebenslauf einer Anfrage (Runde 10): offen → geschlossen → abgeschlossen (`AssistantStepIndex`). Der Besitz des Abschlusses wird im
+// Abschnitt der Ordnung vergeben und schließt zugleich; die Verdrängung schließt auch unter dem Lock des Index allein (kein
+// Gegenbeispiel, siehe dort: jede Offen-Prüfung liest den Index-Lock und handelt im selben Abschnitt). Der Abschluss (`commit`) gehört
+// genau EINEM Aufrufer (L1). Ab dem Schließen sendet der Erzeuger nichts mehr und reiht keine Zeile mehr ein, jeder seiner Abschnitte
+// fragt „offen?“ (L2: `AssistantRequestGate`, `RunEmitter.enqueue`); nur die Zeilen des Abschlusses selbst kommen noch. Die Schlusszeile
+// legt ihren Ausgang erst fest, wenn die Schreibergebnisse der Zeilen davor bekannt sind, und er ist der, den die Steuerung erfährt
+// (L3: `finishRequest`; auch der Abbruch vor dem Start läuft durch denselben Abschluss).
+// Runde 11: Der Abschluss bestimmt den Ausgang aus den Fehlerquellen selbst, zum Zeitpunkt der Entscheidung: Anspruch der Anfrage,
+// Standzeile (er sichert sie selbst, vor `start`), Stand des Laufs frisch gelesen. Eine Kennung hat im Protokoll genau EINEN Eintrag, auch
+// wenn ihre Startzeile mehrfach in der Datei steht (Doppel statt Verlust; der Leser faltet, das Öffnen schließt je Kennung einmal).
 
 /// Ein ausgegebener Satz (ohne Ansagen) mit Einordnung und Quellen, für `commit`.
 struct AssistantEmitted: Sendable, Equatable {
@@ -68,8 +73,12 @@ struct AssistantRunRecord: Sendable {
     var contextBefore: AssistantContext.Mode?
     var contextReason: AssistantContext.Reason?
     var startedAt = Date()
-    /// Die Journalzeile `start` ist geschrieben.
+    /// Die Journalzeile `start` ist geschrieben (vom Erzeuger bestätigt; nach dem Schließen der Anfrage bleibt es `false`, auch wenn die
+    /// Zeile noch landet: dann gilt `startQueued` und das Ergebnis des Schreibers).
     var journaled = false
+    /// Runde 11, V1: Der Erzeuger hat seine Zeile `start` eingereiht (im Abschnitt der Ordnung, vor dem Schließen). Der Abschluss
+    /// schreibt dann keine zweite, sondern wartet auf diese.
+    var startQueued = false
     var used: [AssistantPassage] = []
     var sentences: [AssistantEmitted] = []
     /// Schrittnummern ALLER ausgegebenen Einheiten (auch Ansagen) in der Reihenfolge der Ausgabe: Grundlage der Ergebniszeile des
@@ -350,6 +359,8 @@ private final class RunEmitter {
         return release.inSection { _ in
             guard index.isOpen(rid) else { return false }
             journal.enqueue(line, run: run)
+            // Im selben Abschnitt wie das Einreihen: Ein Abschluss, der danach den Besitz nimmt, liest es (Runde 11, V1).
+            if line.t == .start { state.update { $0.startQueued = true } }
             return true
         }
     }
@@ -1234,27 +1245,53 @@ public actor AssistantSession {
     private static func startKey(_ requestId: String) -> String { "\(requestId)#start" }
     private static func endKey(_ requestId: String) -> String { "\(requestId)#end" }
 
-    /// Der Abschluss selbst (Besitz und Schließen: `commit`). Schreibt, in dieser Reihenfolge: `start` (nur, wenn der Lauf es nie bestätigt
-    /// hat), die Marken des Verlaufs, die Schlusszeile; gibt den Anspruch auf den Fehler der Anfrage erst danach frei.
+    /// Runde 11, V1: `true`, wenn die Zeile `start` der Anfrage dauerhaft in der Datei steht. Gelesen wird der Stand des Laufs JETZT (nicht
+    /// eine frühe Kopie): Hat der Erzeuger seine Zeile eingereiht (`startQueued`), wartet der Abschluss auf DIESE Zeile, statt eine zweite
+    /// zu schreiben (`waitUntilWritten` deckt alles bis hierher Eingereihte der Anfrage; ein Fehler dort lässt den Abschluss die
+    /// Startzeile gemeinsam mit `end` wiederholen: Doppel statt Verlust, der Leser faltet sie). Hat er sie nie eingereiht (Abbruch vor dem
+    /// Start, Abschluss vor der Startzeile, Anfrage schon geschlossen), schreibt der Abschluss sie unter eigenem Schlüssel.
+    private func secureStart(_ audit: AssistantAuditLog, _ requestId: String, state: RunState, record: AssistantRunRecord) async -> Bool {
+        let now = state.snapshot
+        if now.journaled { return true }
+        if now.startQueued { return await audit.waitUntilWritten(request: requestId) == nil }
+        audit.enqueue(Self.startLine(requestId, session: sessionId, config: config, record: record),
+                      key: Self.startKey(requestId), run: runToken)
+        return await audit.waitForLine(key: Self.startKey(requestId)) == nil
+    }
+
+    /// Der Abschluss selbst (Besitz und Schließen: `commit`). Schreibt, in dieser Reihenfolge: Standzeile (falls nicht bestätigt) und `start`
+    /// (falls der Lauf es nie bestätigt hat), die Marken des Verlaufs, die Schlusszeile; gibt den Anspruch auf den Fehler der Anfrage erst
+    /// danach frei. Der Ausgang wird aus den Fehlerquellen selbst bestimmt, zum Zeitpunkt der Entscheidung (Runde 11, V2), nie aus einer
+    /// früh gezogenen Kopie: (1) klebrige Schreibfehler der Anfrage (`waitUntilWritten`), (2) die Standzeile (`ensure`), (3) der Stand des
+    /// Laufs frisch gelesen. Die frühe Kopie `record` dient nur dem Inhalt (Einheiten, Marken, Bereiche), der nach dem Schließen feststeht:
+    /// Gesendetes wird im Abschnitt der Ordnung gebucht, und danach geht nichts mehr hinaus.
     private func finishRequest(_ requestId: String, state: RunState, user: String, spoken: AssistantSpokenUnits, interrupted: Bool,
                                revoked: Bool) async -> Bool {
         release.unregister(requestId)
         let record = state.snapshot
         let text = user.trimmingCharacters(in: .whitespacesAndNewlines)
         let units = Self.units(of: record, spoken: spoken, stepIndex: stepIndex, requestId: requestId)
+        await stepIndex.reach(requestId, .closing)
 
-        // `start` zuerst (war es nicht schon bestätigt, etwa bei einem Abbruch vor dem Start) und abgewartet: Die Zeilen der Anfrage stehen in
-        // der Reihenfolge start, …, h, end. Ließ sich `start` nicht schreiben, hat die Anfrage keinen Anfang in der Datei: Dann gibt es nur
-        // noch `start` zusammen mit `end` (Ausgang „Fehler“, `lost`), BEIDE ODER KEINE (Runde 10, T3), kein Beitrag, keine Marken.
-        if let audit, !record.journaled {
-            audit.enqueue(Self.startLine(requestId, session: sessionId, config: config, record: record),
-                          key: Self.startKey(requestId), run: runToken)
-            if await audit.waitForLine(key: Self.startKey(requestId)) != nil {
+        // Standzeile und `start` zuerst, abgewartet: Die Zeilen der Anfrage stehen in der Reihenfolge state, start, …, h, end. Der Abschluss
+        // stellt die Standzeile SELBST sicher (`ensure`, Schreibfolge 1/9: ohne dauerhafte Standzeile kein gültiger Anfrageeintrag), bevor
+        // er `start` schreibt, und liest ihr Ergebnis hier, bei der Entscheidung (Runde 11, V2): Ihr Fehler hängt nicht am Anspruch der
+        // Anfrage, also sähe ihn weder `waitUntilWritten` noch eine frühe Kopie des Laufstandes. Steht sie nicht oder ließ sich `start` nicht
+        // schreiben, endet die Anfrage mit Ausgang „Fehler“ und `lost`, ohne Beitrag und ohne Marken; die Schlusszeile bekommt ihre
+        // Startzeile (Gruppe, kein `end` nach einem fehlgeschlagenen Anhängen des `start`). Ein `start`, das stehen blieb, kann ohne `end`
+        // bleiben (dann „unvollständig“). Der Leser faltet doppelte Startzeilen zu EINEM Eintrag.
+        if let audit {
+            let stateStands = await stateLine.ensure(audit)
+            let startStands = await secureStart(audit, requestId, state: state, record: record)
+            if !stateStands || !startStands {
                 var end = Self.endLine(requestId, record: record, outcome: .failed)
                 end.lost = true
-                let startAgain = Self.startLine(requestId, session: sessionId, config: config, record: record)
-                _ = await audit.writeGroup([(line: startAgain, key: Self.startKey(requestId)), (line: end, key: Self.endKey(requestId))],
-                                           run: runToken, dependent: true)
+                var group: [(line: AssistantJournalLine, key: String)] = [(line: end, key: Self.endKey(requestId))]
+                if !startStands {
+                    group.insert((line: Self.startLine(requestId, session: sessionId, config: config, record: record),
+                                  key: Self.startKey(requestId)), at: 0)
+                }
+                _ = await audit.writeGroup(group, run: runToken, dependent: true)
                 _ = await audit.flush(request: requestId)
                 audit.release(request: requestId)
                 return false
@@ -1322,17 +1359,20 @@ public actor AssistantSession {
         guard let audit else { return true }
         // Ein Schreibfehler irgendeiner Zeile dieser Anfrage (auch einer Ergebniszeile des Controllers) ist klebrig: Ausgang „Fehler“.
         let writeFailed = await audit.waitUntilWritten(request: requestId) != nil
+        // Der Stand des Laufs JETZT (Runde 11, V2): Ein Lauf, den die Frist zurückließ, kann seinen Fehler erst nach der frühen Kopie
+        // übernehmen (`run` setzt `failure` am Ende). Zwischen dieser Zeile und dem Einreihen der Schlusszeile liegt kein Wartepunkt.
+        let now = state.snapshot
         let outcome: AssistantAuditEntry.Outcome
-        if writeFailed || record.failure == .auditUnavailable {
+        if writeFailed || now.failure == .auditUnavailable {
             outcome = .failed   // ein Schreibfehler geht dem Widerruf voran (Schreibfolge 7: nichts wird ausgegeben, Ausgang „Fehler“)
-        } else if revoked || record.revoked || record.failure == .revoked || historyRejected {
+        } else if revoked || now.revoked || now.failure == .revoked || historyRejected {
             outcome = .revoked   // auch ein fertiger Lauf, dessen Verlaufs-Commit die geänderte Freigabe verwirft
-        } else if let failure = record.failure {
+        } else if let failure = now.failure {
             outcome = failure == .cancelled ? .interrupted : .failed
-        } else if record.limited {
+        } else if now.limited {
             outcome = .limited
         } else {
-            outcome = interrupted || record.cancelled ? .interrupted : .completed
+            outcome = interrupted || now.cancelled ? .interrupted : .completed
         }
         var end = Self.endLine(requestId, record: record, outcome: outcome)
         // Ließ sich eine Zeile der Anfrage nicht schreiben, steht das am Ende: Was dann in der Datei fehlt, ist „unbekannt“ (R7).
@@ -1342,7 +1382,7 @@ public actor AssistantSession {
         audit.release(request: requestId)
         // L3: Was die Schlusszeile als „Fehler“ ausweist, meldet auch der Rückgabewert (nicht nur ein Schreibfehler dieser Anfrage, auch
         // ein Lauf, der wegen des Protokolls endete, etwa weil die Standzeile nicht schrieb).
-        return !writeFailed && tail == nil && record.failure != .auditUnavailable
+        return !writeFailed && tail == nil && now.failure != .auditUnavailable
     }
 
     /// Die Schlusszeile einer Anfrage (ohne `lost`).
@@ -1560,6 +1600,7 @@ public actor AssistantSession {
         // nach `start` hinterlässt die Anfrage; das nächste Öffnen schließt sie als unvollständig.
         state.update { $0.contextBefore = context.mode }
         if let audit {
+            await index.reach(rid, .beforeState)
             guard await stateLine.ensure(audit) else { return fail(.auditUnavailable) }
             if Task.isCancelled { return .cancelled }
             // `start`: eingereiht nur, solange die Anfrage offen ist (L2), und abgewartet.

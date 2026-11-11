@@ -30,7 +30,10 @@ import Foundation
 // dahin angefallenen Schritte; beim Öffnen bekommt jede Anfrage ohne `end` eines mit Ausgang „unvollständig“. Beim Öffnen
 // wird außerdem auf die letzten 500 Anfragen verdichtet (Temp-Datei, dann atomar umbenennen: ein Abbruch oder ein voller
 // Datenträger lässt die alte Datei unversehrt) und das alte Zeilenformat (Freitext-Modell, flache Zähler) ins neue
-// übertragen. `read()` faltet die Zeilen zu `AssistantAuditEntry` (alte, schon gefaltete Zeilen bleiben lesbar).
+// übertragen. `read()` faltet die Zeilen zu `AssistantAuditEntry` (alte, schon gefaltete Zeilen bleiben lesbar). Eine Anfragekennung hat
+// dabei genau EINEN Eintrag, gleich wie oft ihre Startzeile in der Datei steht: Der Schreiber wiederholt `start` bewusst (Doppel statt
+// Verlust, siehe `AssistantSession.finishRequest`); jede weitere Startzeile, doppelte Schrittzeile und gleiche Marke gehört zum
+// vorhandenen Eintrag und wird nicht noch einmal gezählt; das Öffnen schließt eine Kennung ohne `end` genau einmal.
 // Ein Schreiber je Verzeichnis (Registry), eine serielle Warteschlange: Zeilen kommen in der Reihenfolge des Aufrufs, nie
 // gleichzeitig. Ein Lesefehler wird gemeldet und überschreibt nichts. Keine Fragen, Antworten, Titel oder Auszüge: die Typen
 // haben dafür gar kein Feld. Eigene Datei, damit „Neues Gespräch“ und „Verlauf löschen“ das Protokoll nicht mitlöschen. Dieses
@@ -606,6 +609,12 @@ enum AssistantJournalFold {
             switch l.t {
             case .start:
                 guard let req = l.req else { skipped += 1; continue }
+                // Runde 11, V1: Eine Kennung hat genau EINEN Eintrag, gleich wie oft ihre Startzeile in der Datei steht. Der Schreiber
+                // wiederholt `start` bewusst (Doppel statt Verlust: ein fsync, das nach dem Anhängen scheiterte, hat die Zeile
+                // trotzdem in die Datei gebracht; der Abschluss schreibt sie mit der Schlusszeile erneut, und der Erzeuger kann seine
+                // Zeile noch bestätigen lassen, nachdem der Abschluss eine eigene schrieb). Jede weitere Startzeile gehört zum vorhandenen
+                // Eintrag: Seine Felder bleiben, nichts wird doppelt gezählt, die Reihenfolge ändert sich nicht.
+                if byRequest[req] != nil { continue }
                 var e = AssistantAuditEntry(at: l.at ?? .distantPast, kind: .answer, cloud: l.cloud ?? false,
                                             unsourcedMode: l.unsourced ?? false, consentVersion: l.consent ?? 0, round: l.round,
                                             generation: l.gen ?? 0)
@@ -620,13 +629,17 @@ enum AssistantJournalFold {
                 journalEntries.append(entries.count - 1)
             case .step:
                 guard let req = l.req, let i = byRequest[req], let n = l.n, let v = l.verdict else { skipped += 1; continue }
+                // Jede Schrittnummer einmal (Runde 11, Suchlauf a): Eine doppelte Zeile `step` ist dieselbe Einordnung, nicht eine zweite.
+                if entries[i].trace.contains(where: { $0.n == n }) { continue }
                 entries[i].trace.append(AssistantTraceStep(n: n, verdict: v, generation: l.gen ?? 0))
             case .commit:
                 guard let req = l.req, let i = byRequest[req], let n = l.n, let mark = l.mark else { skipped += 1; continue }
                 if n == 0 {
                     entries[i].history = mark
                 } else if let k = entries[i].trace.firstIndex(where: { $0.n == n }) {
-                    entries[i].trace[k].commits.append(mark)
+                    // Dieselbe Marke zweimal ist eine Wiederholung (Runde 11, Suchlauf a); eine andere Marke der Art löst die frühere ab
+                    // (`result(for:)` liest die letzte).
+                    if entries[i].trace[k].commits.last(where: { $0.stage == mark.stage }) != mark { entries[i].trace[k].commits.append(mark) }
                 } else {
                     skipped += 1
                 }
@@ -766,7 +779,9 @@ final class AssistantAuditWriter: @unchecked Sendable {
         /// Zeilen zum Nachholen), nie in eine Tabelle, aus der er verdrängt werden kann.
         let onFailure: (@Sendable (AssistantAuditError) -> Void)?
         /// Runde 10, T3: Die Zeile wird nur geschrieben, wenn die Zeile DAVOR (dieselbe Gruppe, sie stehen hintereinander) angehängt
-        /// werden konnte: „beide oder keine“ (eine Schlusszeile ohne ihre Startzeile kann der Leser keiner Anfrage zuordnen).
+        /// werden konnte. Genau das ist zugesichert: kein `end` nach einem fehlgeschlagenen Anhängen des `start` (eine Schlusszeile
+        /// ohne ihre Startzeile kann der Leser keiner Anfrage zuordnen). NICHT zugesichert: Ein `start`, das angehängt wurde, kann ohne
+        /// sein `end` stehen bleiben (scheitert danach das Anhängen von `end`); der Leser zeigt die Anfrage dann „unvollständig“.
         var needsPrevious = false
     }
     private let pendingLock = NSLock()
@@ -929,7 +944,8 @@ final class AssistantAuditWriter: @unchecked Sendable {
     /// Reiht mehrere Zeilen als EINE Gruppe ein (unter einem Lock, ein Anstoß der Warteschlange): Sie stehen hintereinander in der
     /// Reihenfolge der Liste und werden mit einem fsync gesichert, nie mit einem je Zeile. Jeder Schlüssel hat danach seinen Anspruch
     /// (der Fehler dieser Zeile hängt an ihm und wird mit `settle(keys:)` abgeholt).
-    /// `dependent`: jede Zeile außer der ersten wird nur geschrieben, wenn die davor angehängt werden konnte (beide oder keine).
+    /// `dependent`: jede Zeile außer der ersten wird nur geschrieben, wenn die davor angehängt werden konnte (kein `end` nach einem
+    /// fehlgeschlagenen `start`; ein `start` kann ohne `end` stehen bleiben, dann gilt die Anfrage als „unvollständig“).
     func enqueue(group: [(line: AssistantJournalLine, key: String)], run: AssistantRunToken?, dependent: Bool = false) {
         guard !group.isEmpty else { return }
         for item in group { _ = claim(item.key) }
@@ -1128,6 +1144,9 @@ final class AssistantAuditWriter: @unchecked Sendable {
         let runs = lines.map { AssistantJournalFold.journal($0)?.run }
         maxRun = max(maxRun, runs.compactMap { $0 }.max() ?? 0)
 
+        // Dieselbe gefaltete Sicht wie der Leser (Runde 11, V1): Eine Kennung ist EINE Anfrage, gleich wie viele Startzeilen sie hat. Mit
+        // irgendeinem `end` ist sie abgeschlossen (kein Nachtrag „unvollständig“); ohne `end` bekommt sie genau einen. Auch die Einheit
+        // der Verdichtung (`keys`) ist die Kennung, nie die Zeile.
         var keys: [String] = []
         var started: [String] = []
         var ended = Set<String>()
@@ -1340,7 +1359,8 @@ public struct AssistantAuditLog: Sendable {
     public func setFailureObserver(_ observer: (@Sendable (String) -> Void)?) { writer.setFailureObserver(observer) }
 
     /// Schreibt Zeilen als EINE Gruppe (ein fsync) und wartet einmal. Gibt je Schlüssel den Fehler zurück; ein Schlüssel ohne Eintrag
-    /// steht dauerhaft in der Datei. `dependent`: beide oder keine (eine Zeile wird nur geschrieben, wenn die davor angehängt wurde).
+    /// steht dauerhaft in der Datei. `dependent`: eine Zeile wird nur geschrieben, wenn die davor angehängt wurde (kein `end` nach einem
+    /// fehlgeschlagenen `start`; ein `start` kann ohne `end` stehen bleiben).
     func writeGroup(_ group: [(line: AssistantJournalLine, key: String)], run: AssistantRunToken?,
                     dependent: Bool = false) async -> [String: AssistantAuditError] {
         writer.enqueue(group: group, run: run, dependent: dependent)
