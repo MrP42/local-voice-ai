@@ -419,6 +419,7 @@ export const OrdnerBaum: React.FC<{
           className="ablage-row ablage-mut"
           onClick={onVerknuepfen}
           aria-haspopup="dialog"
+          title={t("ablage.verknuepft.cloudGrenze")}
           data-testid="ablage-verknuepfen"
         >
           <LinkSymbol size={20} aria-hidden="true" />
@@ -462,7 +463,7 @@ const datum = (ms: number, sprache: string) =>
 /**
  * „Nur online“ (OneDrive-Platzhalter) als Knopf mit Hinweis: Hover und Tastaturfokus zeigen ihn, Escape
  * schließt ihn (WCAG 1.4.13), der Zeiger darf in den Hinweis wechseln. Ein Klick öffnet die Details der
- * Datei, dort steht, wie sie sich lesbar machen lässt. Die App lädt nie selbst herunter.
+ * Datei, dort steht, wie sie sich lesbar machen lässt. Local Voice überspringt erkannte Platzhalter; ein Abruf durch gleichzeitige Änderungen des Sync-Dienstes bleibt möglich.
  */
 export const NurOnlineChip: React.FC<{
   onOeffnen(ausloeser: HTMLElement): void;

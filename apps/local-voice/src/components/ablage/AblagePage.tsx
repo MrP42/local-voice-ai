@@ -994,6 +994,9 @@ export const AblagePage: React.FC = () => {
       {aktVerknuepft && (
         <Meldung testid="ablage-verknuepft-hinweis">
           <p>{t("ablage.verknuepft.hinweis")}</p>
+          <p data-testid="ablage-verknuepft-cloudgrenze">
+            {t("ablage.verknuepft.cloudGrenze")}
+          </p>
         </Meldung>
       )}
       {aktVerknuepft && !aktVerknuepft.erreichbar && (
@@ -1029,6 +1032,7 @@ export const AblagePage: React.FC = () => {
             })}
           </p>
           <p>{t("ablage.verknuepft.nurOnlineHinweis")}</p>
+          <p>{t("ablage.verknuepft.cloudGrenze")}</p>
         </Meldung>
       )}
       {aktVerknuepft &&

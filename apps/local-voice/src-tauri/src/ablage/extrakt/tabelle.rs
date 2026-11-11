@@ -184,12 +184,23 @@ impl Flaeche {
         let Some(min_z) = self.min_z else {
             return Ok(());
         };
-        let h = self.max_z - min_z + 1;
-        let b = self.max_s - self.min_s + 1;
-        if h.saturating_mul(b) > MAX_ZELLEN as u64 {
-            return Err(zu_gross());
+        // Mit `number-rows-repeated="18446744073709551615"` erreicht der Zeilenindex `u64::MAX`; jede
+        // Rechnung mit der Fläche ist geprüft, ein Überlauf gilt als zu groß (lva#508: im Release wäre
+        // `max - min + 1` auf 0 gelaufen und die Prüfung bestanden, im Debug eine Panik).
+        let h = self
+            .max_z
+            .checked_sub(min_z)
+            .and_then(|d| d.checked_add(1))
+            .ok_or_else(zu_gross)?;
+        let b = self
+            .max_s
+            .checked_sub(self.min_s)
+            .and_then(|d| d.checked_add(1))
+            .ok_or_else(zu_gross)?;
+        match h.checked_mul(b) {
+            Some(n) if n <= MAX_ZELLEN as u64 => Ok(()),
+            _ => Err(zu_gross()),
         }
-        Ok(())
     }
 }
 
@@ -207,7 +218,7 @@ fn xlsx_blatt_pruefen(xml: &[u8]) -> Result<(), ExtraktFehler> {
                 zeile = match attr(&a, "r").and_then(|v| v.parse::<u64>().ok()) {
                     Some(z) if z > 0 => z - 1,
                     _ if erste_zeile => 0,
-                    _ => zeile + 1,
+                    _ => zeile.saturating_add(1),
                 };
                 erste_zeile = false;
                 spalte = 0;
@@ -216,7 +227,14 @@ fn xlsx_blatt_pruefen(xml: &[u8]) -> Result<(), ExtraktFehler> {
             X::Start(n, a) if lokal(&n) == "c" => {
                 let pos = match attr(&a, "r").and_then(zellbezug) {
                     Some(p) => p,
-                    None => (zeile, if zelle.is_some() { spalte + 1 } else { spalte }),
+                    None => (
+                        zeile,
+                        if zelle.is_some() {
+                            spalte.saturating_add(1)
+                        } else {
+                            spalte
+                        },
+                    ),
                 };
                 spalte = pos.1;
                 zelle = Some(pos);
@@ -442,5 +460,89 @@ mod tests {
         assert_eq!(spaltenbuchstabe(25), "Z");
         assert_eq!(spaltenbuchstabe(26), "AA");
         assert_eq!(anker_name("Q1&Q2=50%"), "Q1%26Q2%3D50%25");
+    }
+
+    fn ods(content: &str) -> Vec<u8> {
+        let mut z = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let opt = zip::write::SimpleFileOptions::default();
+        z.start_file("content.xml", opt).unwrap();
+        z.write_all(content.as_bytes()).unwrap();
+        z.finish().unwrap().into_inner()
+    }
+
+    fn ods_inhalt(zeilen: &str) -> String {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+             <office:document-content xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" \
+             xmlns:table=\"urn:oasis:names:tc:opendocument:xmlns:table:1.0\" \
+             xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\">\
+             <office:body><office:spreadsheet><table:table table:name=\"T\">{zeilen}\
+             </table:table></office:spreadsheet></office:body></office:document-content>"
+        )
+    }
+
+    const ZELLE: &str =
+        "<table:table-cell office:value-type=\"string\"><text:p>x</text:p></table:table-cell>";
+
+    #[test]
+    fn flaeche_rechnet_ohne_ueberlauf() {
+        let mut f = Flaeche::default();
+        f.zelle(0, 0);
+        f.zelle(u64::MAX, 0);
+        assert_eq!(f.pruefen().unwrap_err().code, "zu_gross");
+        let mut f = Flaeche::default();
+        f.zelle(0, 0);
+        f.zelle(0, u64::MAX);
+        assert_eq!(f.pruefen().unwrap_err().code, "zu_gross");
+        // Beide Achsen groß: das Produkt läuft über.
+        let mut f = Flaeche::default();
+        f.zelle(0, 0);
+        f.zelle(u64::MAX - 1, u64::MAX - 1);
+        assert_eq!(f.pruefen().unwrap_err().code, "zu_gross");
+        // Gewöhnliche Fläche bleibt zulässig.
+        let mut f = Flaeche::default();
+        f.zelle(2, 1);
+        f.zelle(9, 4);
+        assert!(f.pruefen().is_ok());
+    }
+
+    /// lva#508: `number-rows-repeated` bis `u64::MAX` auf einer belegten Zeile nach der ersten sättigt den
+    /// Zeilenindex; `max - min + 1` lief über (Debug: Panik, Release: Prüfung bestanden).
+    #[test]
+    fn ods_wiederholung_u64_max_ist_zu_gross() {
+        let zeilen = format!(
+            "<table:table-row>{ZELLE}</table:table-row>\
+             <table:table-row table:number-rows-repeated=\"18446744073709551615\">{ZELLE}</table:table-row>"
+        );
+        let r = tabelle(&ods(&ods_inhalt(&zeilen)));
+        assert_eq!(r.unwrap_err().code, "zu_gross");
+        // Spalten: `number-columns-repeated` bis u64::MAX nach einer belegten Zelle.
+        let zeilen = format!(
+            "<table:table-row>{ZELLE}\
+             <table:table-cell table:number-columns-repeated=\"18446744073709551615\" \
+             office:value-type=\"string\"><text:p>y</text:p></table:table-cell></table:table-row>"
+        );
+        let r = tabelle(&ods(&ods_inhalt(&zeilen)));
+        assert_eq!(r.unwrap_err().code, "zu_gross");
+    }
+
+    #[test]
+    fn xlsx_zeilenbezug_u64_max_laeuft_nicht_ueber() {
+        let blatt = |zeilen: &str| {
+            format!(
+                "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">\
+                 <sheetData>{zeilen}</sheetData></worksheet>"
+            )
+        };
+        // Zeile 1 und Zeile u64::MAX (Index u64::MAX - 1), danach Zeilen ohne `r`: kein Überlauf, `zu_gross`.
+        let x = blatt(
+            "<row r=\"1\"><c r=\"A1\"><v>1</v></c></row>\
+             <row r=\"18446744073709551615\"><c r=\"A18446744073709551615\"><v>1</v></c></row>\
+             <row><c><v>1</v></c></row><row><c><v>1</v></c></row>",
+        );
+        assert_eq!(
+            xlsx_blatt_pruefen(x.as_bytes()).unwrap_err().code,
+            "zu_gross"
+        );
     }
 }

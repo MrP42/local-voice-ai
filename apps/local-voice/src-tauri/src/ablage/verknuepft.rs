@@ -626,19 +626,78 @@ impl Bestand {
     }
 }
 
-fn verzeichnis_lesen(p: &Path) -> std::io::Result<Vec<eintrag::Eintrag>> {
+/// Höchstzahl der Verzeichniseinträge, die EIN Abtastlauf insgesamt ansieht (auch ausgeschlossene, versteckte
+/// und ausgelassene). Greift schon beim Aufzählen (lva#507, Befund 4): ein Ordner mit Millionen Einträgen
+/// wird nie vollständig gelesen oder in den Speicher geholt. Über dem Limit gilt der Lauf als unvollständig
+/// (`zu_viele`, Befund 7).
+pub const MAX_EINTRAEGE: usize = 4 * MAX_DATEIEN;
+
+/// Liest einen geprüften Ordner einzeln aus, ohne ihn vollständig zu laden. Behalten werden nur Einträge, die
+/// der Aufrufer braucht; ausgeschlossene und versteckte verbrauchen nur Budget. `frei` ist das restliche
+/// Gesamtbudget. `Ok((liste, vollstaendig))`; ein Fehler mitten im Lesen ist ein Fehler des ganzen Ordners
+/// (nie eine Teilliste).
+fn verzeichnis_lesen(
+    o: &eintrag::Ordner,
+    frei: &mut usize,
+) -> Result<(Vec<eintrag::Eintrag>, bool), ()> {
     #[cfg(test)]
-    if tests_haken::DIR_FEHLER.with(|d| d.borrow().iter().any(|x| x == p)) {
-        return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+    if tests_haken::DIR_FEHLER.with(|d| d.borrow().iter().any(|x| x == o.pfad())) {
+        return Err(());
     }
-    eintrag::verzeichnis(p)
+    let mut v: Vec<eintrag::Eintrag> = Vec::new();
+    let fertig = o
+        .auflisten(|e| {
+            if *frei == 0 {
+                return std::ops::ControlFlow::Break(());
+            }
+            *frei -= 1;
+            let nutzlos = e.name.to_str().is_some_and(|n| {
+                e.roh.as_ref().is_some_and(|r| {
+                    r.urteil() != Urteil::Umweg
+                        && (ausgeschlossen(n, r.ist_ordner()) || r.versteckt())
+                })
+            });
+            if !nutzlos {
+                v.push(e);
+            }
+            std::ops::ControlFlow::Continue(())
+        })
+        .map_err(|_| ())?;
+    Ok((v, fertig))
 }
 
-/// Tastet den Baum unter `v.pfad` ab, ohne Verknüpfungen zu folgen und ohne eine Datei zu öffnen. Attribute,
-/// Größe und Zeit kommen aus [`eintrag`] (Windows: `FindFirstFileExW`). Dateien, die nur online liegen, werden
-/// mit Name, Pfad und Größe aufgenommen (`online`), Ordner, die nur online liegen, nicht betreten. Fehler:
-/// Ordner nicht (mehr) erreichbar oder durch eine Verknüpfung ersetzt.
+/// Öffnet den Ordner `rel` (mit `/` getrennt) unter `wurzel` als Kette geprüfter Handles: Wurzel, dann jedes
+/// Glied relativ zum gehaltenen Elternordner (lva#507, Befund 2). Das Ergebnis hält die ganze Kette: jedes
+/// Kind besitzt seinen Elternordner, Wurzel und Zwischenebenen bleiben also offen, solange es lebt.
+fn kette(
+    wurzel: &Path,
+    rel: &str,
+) -> Result<std::sync::Arc<eintrag::Ordner>, eintrag::OeffnenFehler> {
+    eintrag::Ordner::kette(
+        wurzel,
+        rel.split('/')
+            .filter(|t| !t.is_empty())
+            .map(std::ffi::OsStr::new),
+        eintrag::reparse_urteil,
+    )
+}
+
+/// Tastet den Baum unter `v.pfad` ab, ohne Verknüpfungen zu folgen und ohne eine Datei zu öffnen. Wurzel und
+/// jedes Zwischenverzeichnis werden über geprüfte Handles gehalten und relativ geöffnet und aufgelistet
+/// ([`eintrag::Ordner`]); ein Zwischenglied, das nach der Prüfung durch eine Junction ersetzt wird, wird nicht
+/// betreten. Attribute, Größe und Zeit kommen aus dem Auflisten am Handle. Dateien, die nur online liegen,
+/// werden mit Name, Pfad und Größe aufgenommen (`online`), Ordner, die nur online liegen, nicht betreten.
+/// Fehler: Ordner nicht (mehr) erreichbar oder durch eine Verknüpfung ersetzt.
+///
+/// Das Aufzählen ist iterativ und hat ein Gesamtbudget ([`MAX_EINTRAEGE`]) neben [`MAX_DATEIEN`] und
+/// [`MAX_ORDNER`]; wird eine Grenze erreicht, ist `zu_viele` gesetzt und die Abtastung unvollständig
+/// ([`uebernehmen`] löscht dann nichts aus bloßer Abwesenheit).
 pub fn abtasten_roh(v: &Verknuepfung) -> Res<Abtastung> {
+    abtasten_mit_budget(v, MAX_EINTRAEGE)
+}
+
+/// Wie [`abtasten_roh`] mit einem Gesamtbudget `budget` an Verzeichniseinträgen (Tests setzen es klein).
+pub(crate) fn abtasten_mit_budget(v: &Verknuepfung, budget: usize) -> Res<Abtastung> {
     let wurzel = PathBuf::from(&v.pfad);
     let k = wurzel_pruefen(&wurzel)?;
     if !gleich(&k, &wurzel) {
@@ -648,9 +707,13 @@ pub fn abtasten_roh(v: &Verknuepfung) -> Res<Abtastung> {
         ));
     }
     let mut ab = Abtastung::default();
-    let mut stapel: Vec<(PathBuf, String, usize)> = vec![(wurzel, String::new(), 0)];
-    while let Some((dir, rel, tiefe)) = stapel.pop() {
-        let Ok(inhalt) = verzeichnis_lesen(&dir) else {
+    let mut frei = budget;
+    let mut stapel: Vec<(String, usize)> = vec![(String::new(), 0)];
+    while let Some((rel, tiefe)) = stapel.pop() {
+        let gelesen = kette(&k, &rel)
+            .map_err(|_| ())
+            .and_then(|o| verzeichnis_lesen(&o, &mut frei));
+        let Ok((inhalt, fertig)) = gelesen else {
             if rel.is_empty() {
                 // Die Wurzel selbst ist nicht lesbar: nichts abtasten, der alte Bestand bleibt.
                 return Err(Fehler::neu(
@@ -662,6 +725,10 @@ pub fn abtasten_roh(v: &Verknuepfung) -> Res<Abtastung> {
             ab.unlesbar.push(rel);
             continue;
         };
+        if !fertig {
+            // Gesamtbudget erschöpft: was bis hierher gelesen wurde, wird noch gewertet, dann Schluss.
+            ab.zu_viele = true;
+        }
         for e in inhalt {
             let Some(name) = e.name.to_str().map(str::to_string) else {
                 ab.ausgelassen += 1;
@@ -716,7 +783,7 @@ pub fn abtasten_roh(v: &Verknuepfung) -> Res<Abtastung> {
                     return Ok(ab);
                 } else {
                     ab.ordner.insert(rel_neu.clone());
-                    stapel.push((dir.join(&e.name), rel_neu, tiefe + 1));
+                    stapel.push((rel_neu, tiefe + 1));
                 }
                 continue;
             }
@@ -730,6 +797,9 @@ pub fn abtasten_roh(v: &Verknuepfung) -> Res<Abtastung> {
             }
             ab.dateien
                 .insert(rel_neu, (r.groesse, r.zeit, typ_aus(&name)));
+        }
+        if ab.zu_viele {
+            return Ok(ab);
         }
     }
     Ok(ab)
@@ -869,6 +939,16 @@ pub fn uebernehmen(a: &Ablage, id: &str, ab: Option<&Abtastung>) -> Res<bool> {
         if liegt_unter(o, &ab.unlesbar) {
             neu.online_ordner.insert(o.clone());
         }
+    }
+    // Unvollständige Abtastung (Grenze erreicht, `zu_viele`): was nicht gesehen wurde, ist nicht gelöscht
+    // (lva#507, Befund 7). Bestandseinträge samt Textfassungen und die bekannten Ordner bleiben; nichts wird
+    // aus bloßer Abwesenheit abgeleitet. Gesehene Dateien tragen den frischen Zustand.
+    if ab.zu_viele {
+        for (rel, e) in &alt.dateien {
+            neu.dateien.entry(rel.clone()).or_insert_with(|| e.clone());
+        }
+        neu.ordner.extend(bekannte_ordner(&alt));
+        neu.online_ordner.extend(alt.online_ordner.iter().cloned());
     }
     let lebend: BTreeSet<&str> = neu.dateien.values().map(|e| e.dat.as_str()).collect();
     for e in alt.dateien.values() {
@@ -1052,24 +1132,26 @@ pub fn auftraege(a: &Ablage, ocr: Option<Kennung>) -> Res<Vec<Auftrag>> {
     Ok(aus)
 }
 
-/// Öffnet eine Datei ohne Folgen einer Verknüpfung (Unix `O_NOFOLLOW`, Windows `FILE_FLAG_OPEN_REPARSE_POINT`),
-/// Löschen und Umbenennen der Quelle bleiben möglich. Zweistufig ([`eintrag::oeffnen_ohne_abruf`]): erst
-/// ein Handle nur mit `FILE_READ_ATTRIBUTES` und das Urteil daran; nur bei „lesbar“ folgt das Öffnen mit
-/// Lesezugriff, dann wieder Urteil und Datei-Kennung. Das Öffnen mit Lesezugriff löst bei einem Platzhalter
-/// einen Abruf aus, der Schutz ist also das Urteil davor (Restrisiko: Auslagern im Fenster zwischen den
-/// Stufen, Millisekunden). Die Fehler tragen den Code, den der Aufrufer meldet.
-fn oeffnen_ohne_folgen(p: &Path) -> Result<fs::File, &'static str> {
+/// Öffnet die Datei `name` im geprüften Ordner ohne Folgen einer Verknüpfung (Unix `O_NOFOLLOW`, Windows
+/// `FILE_FLAG_OPEN_REPARSE_POINT`); Löschen und Umbenennen der Quelle bleiben möglich. Zweistufig
+/// ([`eintrag::Ordner::datei_oeffnen`]): erst ein Handle nur mit `FILE_READ_ATTRIBUTES` und das Urteil daran,
+/// dann erneut am selben Handle; nur bei „lesbar“ wird dieses Handle auf Lesezugriff hochgestuft (Windows
+/// `ReOpenFile`, kein zweiter Pfadzugriff), danach Urteil und Datei-Kennung am Ergebnis. Restrisiko (kein Code
+/// kann es schließen): der Anbieter lagert die Datei zwischen dem letzten Urteil und dem Hochstufen aus; das
+/// Öffnen löst dann einen Abruf aus. Die Fehler tragen den Code, den der Aufrufer meldet.
+fn oeffnen_in(o: &eintrag::Ordner, name: &std::ffi::OsStr) -> Result<fs::File, &'static str> {
     use eintrag::OeffnenFehler;
     let art = eintrag::OeffnenArt {
         folgen: false,
         teilen: 0x1 | 0x2 | 0x4,
     };
-    eintrag::oeffnen_ohne_abruf(p, art, eintrag::reparse_urteil).map_err(|e| match e {
-        OeffnenFehler::Urteil(Urteil::NurOnline) => "verknuepft.cloud",
-        OeffnenFehler::Urteil(_) => "ablage.verknuepfung",
-        OeffnenFehler::Getauscht => "verknuepft.geaendert",
-        OeffnenFehler::Io(_) => "verknuepft.lesen",
-    })
+    o.datei_oeffnen(name, art, eintrag::reparse_urteil)
+        .map_err(|e| match e {
+            OeffnenFehler::Urteil(Urteil::NurOnline) => "verknuepft.cloud",
+            OeffnenFehler::Urteil(_) => "ablage.verknuepfung",
+            OeffnenFehler::Getauscht => "verknuepft.geaendert",
+            OeffnenFehler::Io(_) => "verknuepft.lesen",
+        })
 }
 
 fn sha_datei(p: &Path) -> std::io::Result<String> {
@@ -1101,27 +1183,38 @@ fn quellpfad(wurzel: &Path, rel: &str) -> Option<PathBuf> {
     Some(p)
 }
 
-/// Prüft die Wurzel erneut und jedes Glied des relativen Pfades (auch die Zwischenverzeichnisse): keine
-/// Verknüpfung, nichts, was nur online liegt (`verknuepft.cloud`). Die Attribute kommen aus [`eintrag::roh`]
-/// (Windows: `FindFirstFileExW`, ohne zu öffnen). Liefert den Pfad der Quelle.
-fn quelle_pruefen(wurzel: &Path, rel: &str) -> Result<PathBuf, &'static str> {
+/// Prüft die Wurzel erneut und öffnet die Zwischenverzeichnisse des relativen Pfades als Kette geprüfter,
+/// GEHALTENER Handles (lva#507, Befund 2): keine Verknüpfung, nichts, was nur online liegt
+/// (`verknuepft.cloud`), kein Austausch eines Zwischenglieds zwischen Prüfung und Öffnen. Liefert den Ordner
+/// der Datei, deren Namen und den Pfad der Quelle (für Meldungen und Nachprüfungen).
+fn quelle_ordner(
+    wurzel: &Path,
+    rel: &str,
+) -> Result<(std::sync::Arc<eintrag::Ordner>, std::ffi::OsString, PathBuf), &'static str> {
+    use eintrag::OeffnenFehler;
     let ziel = quellpfad(wurzel, rel).ok_or("ablage.verknuepfung")?;
-    wurzel_pruefen(wurzel).map_err(|f| match f.code.as_str() {
+    // Geöffnet wird der kanonische Pfad `k` (nicht die gespeicherte Schreibweise): der Namensvergleich am
+    // Handle ist exakt, `k` trägt die Schreibweise des Dateisystems.
+    let k = wurzel_pruefen(wurzel).map_err(|f| match f.code.as_str() {
         "ablage.verknuepfung" => "ablage.verknuepfung",
         "ablage.nur_online" => "verknuepft.cloud",
         _ => "verknuepft.lesen",
     })?;
-    let mut p = wurzel.to_path_buf();
-    for t in rel.split('/') {
-        p.push(t);
-        let r = eintrag::roh(&p).map_err(|_| "verknuepft.lesen")?;
-        match r.urteil() {
-            Urteil::Umweg => return Err("ablage.verknuepfung"),
-            Urteil::NurOnline => return Err("verknuepft.cloud"),
-            Urteil::Lesbar => {}
-        }
-    }
-    Ok(ziel)
+    let code = |e: OeffnenFehler| match e {
+        OeffnenFehler::Urteil(Urteil::NurOnline) => "verknuepft.cloud",
+        OeffnenFehler::Urteil(_) => "ablage.verknuepfung",
+        OeffnenFehler::Getauscht => "verknuepft.geaendert",
+        OeffnenFehler::Io(_) => "verknuepft.lesen",
+    };
+    let teile: Vec<&str> = rel.split('/').collect();
+    let (name, eltern) = teile.split_last().ok_or("ablage.verknuepfung")?;
+    let o = eintrag::Ordner::kette(
+        &k,
+        eltern.iter().map(std::ffi::OsStr::new),
+        eintrag::reparse_urteil,
+    )
+    .map_err(code)?;
+    Ok((o, std::ffi::OsString::from(name), ziel))
 }
 
 /// Momentkopien, die gerade in Arbeit sind (nicht wegräumen); die Sperre schützt Anlegen und Räumen.
@@ -1156,8 +1249,8 @@ pub fn zwischen_raeumen(dir: &Path) {
     }
 }
 
-/// Geprüfte Momentkopie (Spec §8): Wurzel und alle Glieder des Pfades ohne Verknüpfung und nicht nur online
-/// (ohne zu öffnen), Quelle ohne Folgen von Verknüpfungen öffnen, am Handle erneut auf „nur online“
+/// Geprüfte Momentkopie (Spec §8): Wurzel und alle Zwischenverzeichnisse als gehaltene, geprüfte Handles (keine
+/// Verknüpfung, nicht nur online), Quelle relativ dazu ohne Folgen von Verknüpfungen öffnen, am Handle erneut auf „nur online“
 /// prüfen (dann schließen, ohne zu lesen), kein Hartlink, Größe und Änderungszeit am offenen Handle wie beim
 /// Abtasten;
 /// Kopie mit `create_new` unter `verknuepft/zwischen/`, beim Kopieren gehasht, Quelle danach unverändert,
@@ -1166,7 +1259,7 @@ pub fn momentkopie(a: &Ablage, auf: &Auftrag) -> Result<(PathBuf, String), &'sta
     // macOS: Wird die Quelle nach dem Urteil doch noch ausgelagert, scheitert der Lesezugriff (`EDEADLK`,
     // Code „cloud“), statt die Datei herunterzuladen. Die Sperre gilt für diesen Faden bis zum Ende.
     let _abrufsperre = eintrag::abruf_sperren();
-    let quelle = quelle_pruefen(&auf.wurzel, &auf.rel)?;
+    let (quell_ordner, quell_name, quelle) = quelle_ordner(&auf.wurzel, &auf.rel)?;
     // Vor dem Öffnen: Attribute der Quelle ohne zu öffnen (Windows: `FindFirstFileExW`).
     let vor = eintrag::roh(&quelle).map_err(|_| "verknuepft.lesen")?;
     match vor.urteil() {
@@ -1183,7 +1276,7 @@ pub fn momentkopie(a: &Ablage, auf: &Auftrag) -> Result<(PathBuf, String), &'sta
     if vor.groesse > extrakt::MAX_EINGABE {
         return Err("extrakt.zu_gross");
     }
-    let mut von = oeffnen_ohne_folgen(&quelle)?;
+    let mut von = oeffnen_in(&quell_ordner, &quell_name)?;
     // Ab hier zählt, was das Handle sagt (nicht mehr der Pfad): „nur online“ und Umwege hat das zweistufige
     // Öffnen schon vor dem Lesezugriff abgewiesen.
     let offen = von.metadata().map_err(|_| "verknuepft.lesen")?;
@@ -1357,7 +1450,7 @@ pub fn bearbeiten(
     let (kopie, sha) = match momentkopie(a, auf) {
         Ok(x) => x,
         Err("verknuepft.geaendert") => return Ok(Ausgang::Geaendert),
-        // Cloud-Platzhalter ohne Daten auf dem Gerät: nie ein Download, in diesem Prozess nicht erneut.
+        // Cloud-Platzhalter ohne Daten auf dem Gerät: übersprungen (kein Abruf nach bestem Bemühen, siehe `docs/ablage-abrufschutz.md`), in diesem Prozess nicht erneut.
         Err("verknuepft.speicher" | "verknuepft.cloud") => return Ok(Ausgang::Uebersprungen),
         Err(c @ ("ablage.hartlink" | "ablage.verknuepfung")) => {
             return eintragen(

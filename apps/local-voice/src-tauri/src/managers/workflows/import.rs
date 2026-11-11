@@ -207,7 +207,7 @@ pub struct Source {
 const MISSING_MESSAGE: &str = "Die Datei gibt es nicht (mehr) oder sie ist nicht lesbar.";
 const DETOUR_MESSAGE: &str =
     "Die Datei ist eine Verknüpfung oder ein unbekannter Sonderfall und wird nicht gelesen.";
-const CLOUD_ONLY_MESSAGE: &str = "Die Datei liegt nur in der Cloud (OneDrive) und wird nicht heruntergeladen: „Immer auf diesem Gerät behalten“ wählen und den Lauf wiederholen.";
+const CLOUD_ONLY_MESSAGE: &str = "Die Datei liegt nur in der Cloud (OneDrive) und wurde übersprungen: „Immer auf diesem Gerät behalten“ wählen und den Lauf wiederholen.";
 
 fn permanent(m: impl Into<String>) -> StepError {
     StepError::Permanent(m.into())

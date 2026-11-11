@@ -1199,7 +1199,11 @@ fn momentkopie_zweistufiges_oeffnen_ordnet_online_und_tausch_den_codes_zu() {
     // wieder nur online: nichts wird kopiert, Code „cloud“.
     eintrag::naht::handle_folge(
         &datei,
-        &[(0x420, 0x9000_001A), (NUR_ONLINE_DATEI, ONEDRIVE_TAG)],
+        &[
+            (0x420, 0x9000_001A),
+            (0x420, 0x9000_001A),
+            (NUR_ONLINE_DATEI, ONEDRIVE_TAG),
+        ],
     );
     assert_eq!(
         verknuepft::momentkopie(&e.a, &auf).unwrap_err(),
@@ -1861,4 +1865,102 @@ fn freigaben_neu_festlegen_schliesst_verknuepfte_ordner_ein_und_verwirft_ausnahm
         |_| true
     ));
     e.null_auszuege(KONTROLLE, &id, &dat);
+}
+
+// ---------------------------------------------------------------------------
+// lva#507: Abrufschutz, geprüfte Ordnerkette, Aufzählbudget, unvollständige Abtastung
+// ---------------------------------------------------------------------------
+
+#[test]
+fn unvollstaendige_abtastung_loescht_nichts_aus_abwesenheit() {
+    let _n = naht_sauber();
+    let e = env();
+    e.schreiben("a.txt", format!("alt {KONTROLLE}").as_bytes());
+    e.schreiben("b.txt", b"b");
+    let id = e.verknuepfen();
+    e.lauf(None, None);
+    assert_eq!(e.treffer(KONTROLLE).len(), 1);
+    let dat = e.rel_dat(&id, "a.txt");
+    // Eine abgeschnittene Abtastung (Grenze erreicht): `a.txt` fehlt im Ergebnis, ist aber nicht gelöscht.
+    let b0 = verknuepft::bestand(e.a.dir(), &id);
+    let mut ab = verknuepft::Abtastung::default();
+    ab.dateien.insert(
+        "b.txt".into(),
+        (
+            b0.dateien["b.txt"].groesse,
+            b0.dateien["b.txt"].zeit,
+            "txt".into(),
+        ),
+    );
+    ab.zu_viele = true;
+    verknuepft::uebernehmen(&e.a, &id, Some(&ab)).unwrap();
+    let b = verknuepft::bestand(e.a.dir(), &id);
+    assert_eq!(b.dateien["a.txt"].dat, dat, "Eintrag und Kennung bleiben");
+    assert_eq!(b.dateien["a.txt"].stand, "ok", "Textstand bleibt");
+    assert!(b.zu_viele, "die Unvollständigkeit wird gemeldet");
+    assert_eq!(e.treffer(KONTROLLE).len(), 1, "Text und Index bleiben");
+    // Eine vollständige Abtastung ohne `a.txt`: jetzt ist sie wirklich weg.
+    ab.zu_viele = false;
+    verknuepft::uebernehmen(&e.a, &id, Some(&ab)).unwrap();
+    let b = verknuepft::bestand(e.a.dir(), &id);
+    assert!(!b.dateien.contains_key("a.txt"));
+}
+
+#[test]
+fn die_aufzaehlung_bricht_im_gesamtbudget_ab_und_meldet_zu_viele() {
+    let _n = naht_sauber();
+    let e = env();
+    for i in 0..60 {
+        e.schreiben(&format!("d{i:02}.txt"), b"x");
+    }
+    verknuepft::verknuepfen(&e.a, &e.quelle).unwrap();
+    let v = verknuepft::liste(e.a.dir()).unwrap().remove(0);
+    let ab = verknuepft::abtasten_mit_budget(&v, 10).unwrap();
+    assert!(
+        ab.zu_viele,
+        "Budget erreicht: unvollständig, nicht verschwiegen"
+    );
+    assert!(ab.dateien.len() <= 10, "nie mehr als das Budget gelesen");
+    let voll = verknuepft::abtasten_roh(&v).unwrap();
+    assert!(!voll.zu_viele);
+    assert_eq!(voll.dateien.len(), 60);
+}
+
+#[cfg(unix)]
+#[test]
+fn momentkopie_liest_das_geprueft_geoeffnete_objekt_auch_wenn_ein_zwischenglied_danach_ersetzt_wird(
+) {
+    let _n = naht_sauber();
+    let e = env();
+    let original = e.schreiben("sub/brief.txt", b"original-inhalt");
+    e.verknuepfen();
+    let auf = verknuepft::auftraege(&e.a, None)
+        .unwrap()
+        .into_iter()
+        .find(|a| a.rel == "sub/brief.txt")
+        .unwrap();
+    // Draußen liegt eine gleich große Datei mit gleicher Änderungszeit anderen Inhalts.
+    let draussen = e.d.path().join("draussen");
+    fs::create_dir_all(&draussen).unwrap();
+    let fremd = draussen.join("brief.txt");
+    fs::write(&fremd, b"fremder-inhalt!").unwrap();
+    let zeit = fs::metadata(&original).unwrap().modified().unwrap();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&fremd)
+        .unwrap()
+        .set_modified(zeit)
+        .unwrap();
+    // Zwischen Urteil und Hochstufen wird `sub` durch eine Verknüpfung auf `draussen` ersetzt.
+    let quelle = e.quelle.clone();
+    eintrag::naht::vor_hochstufen_haken(Some(Box::new(move |_p: &Path| {
+        let _ = fs::rename(quelle.join("sub"), quelle.join("sub_alt"));
+        let _ = std::os::unix::fs::symlink(&draussen, quelle.join("sub"));
+    })));
+    let (kopie, _sha) = verknuepft::momentkopie(&e.a, &auf).unwrap();
+    assert_eq!(
+        fs::read(&kopie).unwrap(),
+        b"original-inhalt",
+        "gelesen wurde das geprüfte Objekt, nie das Ziel der Verknüpfung"
+    );
 }
