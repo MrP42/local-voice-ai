@@ -32,6 +32,7 @@ use serde_json::json;
 use specta::Type;
 use tauri::{AppHandle, Manager};
 
+use super::berechtigung::{self, Inhaltszugriff, Setzen};
 use super::index::AppIndex;
 use super::model::{ContextDoc, ContextHits, Jump, SourceKind};
 use super::progress;
@@ -649,11 +650,48 @@ pub fn change_voice_global_context_enabled_setting(
     app: AppHandle,
     enabled: bool,
 ) -> Result<(), String> {
-    let mut settings = crate::settings::get_settings(&app);
-    settings.voice_global_context_enabled = enabled;
-    crate::settings::write_settings(&app, settings);
+    crate::settings::update_settings_gesperrt(&app, |s| s.voice_global_context_enabled = enabled);
     on_settings_changed(&app);
     Ok(())
+}
+
+/// Der Inhaltszugriff samt Berechtigungsversion (lva#509): Hauptschalter, Bereiche, Transkripte.
+/// Version und Werte werden unter derselben Sperre gelesen, die jeder Schreiber hält.
+#[tauri::command]
+#[specta::specta]
+pub fn voice_call_inhaltszugriff_lesen(app: AppHandle) -> Inhaltszugriff {
+    let (version, settings) =
+        berechtigung::global().lesen_mit(|| crate::settings::get_settings(&app));
+    Inhaltszugriff::aus_einstellungen(version, &settings)
+}
+
+/// Gibt den Inhaltszugriff in EINEM Schritt frei oder zurück: nur wenn `erwartete_version` noch die
+/// aktuelle ist, werden Hauptschalter, Bereiche und Transkripte zusammen geschrieben und die Version
+/// erhöht; sonst wird nichts geschrieben (`konflikt`) und die Oberfläche liest neu. Ein Widerruf
+/// zwischen Lesen und Setzen gewinnt damit immer.
+#[tauri::command]
+#[specta::specta]
+pub fn voice_call_inhaltszugriff_setzen(
+    app: AppHandle,
+    erwartete_version: u32,
+    enabled: bool,
+    areas: Vec<String>,
+    read_transcripts: bool,
+) -> Result<Setzen, String> {
+    let ergebnis = berechtigung::setzen_mit(
+        berechtigung::global(),
+        erwartete_version,
+        enabled,
+        &areas,
+        read_transcripts,
+        || crate::settings::get_settings(&app),
+        |neu| crate::settings::write_settings_gesperrt(&app, neu),
+    );
+    if matches!(ergebnis, Setzen::Ok { .. }) {
+        on_settings_changed(&app);
+        crate::commands::voice_tools::schutz_nachpruefen(&app);
+    }
+    Ok(ergebnis)
 }
 
 /// Abruf für eine Frage. Lokal, ohne Modell. Jeder Abruf läuft durch das Tor
@@ -690,12 +728,16 @@ fn retrieve_blocking(app: &AppHandle, req: &AppContextRequest) -> Result<Context
         });
     };
     let started = Instant::now();
-    let settings = crate::settings::get_settings(app);
+    // Version und Einstellungen als ein Schnappschuss (unter der Sperre der Schreiber): jede Änderung
+    // danach macht das Ergebnis ungültig, und es gibt keine neue Version zu alten Einstellungen.
+    let (v_start, settings) =
+        berechtigung::global().lesen_mit(|| crate::settings::get_settings(app));
     apply_grants(&settings);
     let allowed = allowed_kinds(&settings);
     if allowed.is_empty() {
         return Ok(ContextHits {
             epoch: index_read().epoch(),
+            berechtigung: v_start,
             ..Default::default()
         });
     }
@@ -761,7 +803,7 @@ fn retrieve_blocking(app: &AppHandle, req: &AppContextRequest) -> Result<Context
     }
     hits.retrieve_ms = started.elapsed().as_millis() as u32;
     hits.question_hash = super::model::question_hash(&req.question);
-    Ok(hits)
+    Ok(hits.an_version_gebunden(v_start, berechtigung::version()))
 }
 
 /// Kontextnachricht für den Sprecher (gleiche Regeln wie im Kern, damit die
@@ -770,24 +812,31 @@ fn retrieve_blocking(app: &AppHandle, req: &AppContextRequest) -> Result<Context
 #[specta::specta]
 pub fn app_context_message(hits: ContextHits, german: bool) -> Option<String> {
     // Nur für den aktuellen Stand (Codex Auflage 11).
-    if index_read().epoch() != hits.epoch {
+    if index_read().epoch() != hits.epoch
+        || hits.berechtigung_geaendert
+        || hits.berechtigung != berechtigung::version()
+    {
         return None;
     }
     super::prompt::context_message(&hits.hits, german)
 }
 
 /// Darf dieser Abruf jetzt an einen Sprecher gehen? Rein, damit testbar:
-/// Schalter an, Empfänger lokal, gleicher Stand, jede Quelle freigegeben und
-/// unverändert. Sonst geht kein Kontext an das Modell.
+/// Schalter an, Empfänger lokal, gleiche Berechtigungsversion (kein Widerruf und keine Freigabe
+/// seit dem Abruf), gleicher Stand, jede Quelle freigegeben und unverändert. Sonst geht kein
+/// Kontext an das Modell.
 pub(crate) fn admissible(
     idx: &AppIndex,
     allowed: &HashSet<SourceKind>,
     enabled: bool,
     local: bool,
+    berechtigung: u32,
     hits: &ContextHits,
 ) -> bool {
     enabled
         && local
+        && hits.berechtigung == berechtigung
+        && !hits.berechtigung_geaendert
         && !hits.hits.is_empty()
         && idx.epoch() == hits.epoch
         && hits.hits.iter().all(|h| {
@@ -859,7 +908,8 @@ pub fn bind_for_speaker_quellen(
     if !bound_to(ctx, request_id, question) {
         return None;
     }
-    let settings = crate::settings::get_settings(app);
+    let (v_start, settings) =
+        berechtigung::global().lesen_mit(|| crate::settings::get_settings(app));
     apply_grants(&settings);
     let allowed = allowed_kinds(&settings);
     {
@@ -869,6 +919,7 @@ pub fn bind_for_speaker_quellen(
             &allowed,
             settings.voice_global_context_enabled,
             local,
+            v_start,
             &ctx.hits,
         ) {
             return None;
@@ -890,6 +941,11 @@ pub fn bind_for_speaker_quellen(
     });
     if !fresh {
         sync_in_background(app);
+        return None;
+    }
+    // Letzte Prüfung unmittelbar vor der Übergabe: hat sich der Inhaltszugriff währenddessen
+    // geändert, geht kein Auszug an das Modell (Widerruf gewinnt).
+    if berechtigung::version() != v_start {
         return None;
     }
     super::prompt::context_message(&ctx.hits.hits, ctx.german)
@@ -915,7 +971,10 @@ pub(crate) fn bound_to(
 #[specta::specta]
 pub fn app_context_verify(answer: String, hits: ContextHits) -> Vec<u32> {
     let idx = index_read();
-    if idx.epoch() != hits.epoch {
+    if idx.epoch() != hits.epoch
+        || hits.berechtigung_geaendert
+        || hits.berechtigung != berechtigung::version()
+    {
         return Vec::new();
     }
     super::prompt::cited(&answer, &hits.hits)

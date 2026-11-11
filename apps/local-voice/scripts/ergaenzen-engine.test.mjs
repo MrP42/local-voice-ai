@@ -660,6 +660,191 @@ test(
   }),
 );
 
+// Lva#509 Befund 3: nach der Frist gilt das späte Ergebnis nur, wenn es noch zur Lage gehört.
+test(
+  "Später Text einer alten Äußerung trifft eine laufende neue Antwort: keine Wirkung",
+  mitFrist(async () => {
+    const stt = deferred();
+    const t = neu({ voice_call_transcribe: () => stt.promise });
+    await t.start("Wie wird das Wetter morgen?");
+    t.barge();
+    t.fruehEnde();
+    await settle(60);
+    // Der Schritt ist zu Ende, eine neue Antwort läuft (neuer Schritt).
+    t.player.finish();
+    assert.equal(t.engine.turn, null);
+    const neuerSchritt = await t.start("Und übermorgen?");
+    assert.equal(t.engine.turn, neuerSchritt);
+    stt.resolve("und in Köln");
+    await settle(20);
+    assert.equal(
+      neuerSchritt.cancelled,
+      false,
+      "die neue Antwort läuft weiter",
+    );
+    assert.equal(t.engine.turn, neuerSchritt);
+    assert.equal(t.log.user.includes("und in Köln"), false);
+    assert.equal(t.aufrufe("voice_call_chat").length, 2, "kein dritter Aufruf");
+    assert.deepEqual(t.log.errors, []);
+  }),
+);
+
+test(
+  "Später Text einer alten Äußerung, nachdem die neue Antwort schon fertig ist: nichts wird gestartet",
+  mitFrist(async () => {
+    const stt = deferred();
+    const t = neu({ voice_call_transcribe: () => stt.promise });
+    await t.start("Wie wird das Wetter morgen?");
+    t.barge();
+    t.fruehEnde();
+    await settle(60);
+    t.player.finish();
+    await t.start("Und übermorgen?");
+    t.engine.finishTurn();
+    assert.equal(t.engine.turn, null);
+    stt.resolve("und in Köln");
+    await settle(20);
+    assert.equal(t.aufrufe("voice_call_chat").length, 2);
+    assert.equal(t.log.user.includes("und in Köln"), false);
+  }),
+);
+
+test(
+  "Später Text einer alten Äußerung, während der Nutzer schon wieder spricht: die laufende Antwort bleibt",
+  mitFrist(async () => {
+    const stt = deferred();
+    const t = neu({ voice_call_transcribe: () => stt.promise });
+    const alt = await t.start("Wie wird das Wetter morgen?");
+    t.barge();
+    t.fruehEnde();
+    await settle(60);
+    t.engine.onSpeechStart(4000, true);
+    stt.resolve("Stopp");
+    await settle(20);
+    assert.equal(alt.cancelled, false, "das alte „Stopp“ gilt nicht mehr");
+    assert.equal(t.engine.turn, alt);
+  }),
+);
+
+test(
+  "Später Fehler der Erkennung einer alten Äußerung meldet nichts mehr, wenn die Lage sich geändert hat",
+  mitFrist(async () => {
+    const stt = deferred();
+    const t = neu({ voice_call_transcribe: () => stt.promise });
+    await t.start("Wie wird das Wetter morgen?");
+    t.barge();
+    t.fruehEnde();
+    await settle(60);
+    t.engine.onSpeechStart(4000, true);
+    stt.promise.catch(() => undefined);
+    stt.resolve(Promise.reject(new Error("kaputt")));
+    await settle(20);
+    assert.deepEqual(t.log.errors, []);
+  }),
+);
+
+// Lva#509 Befund 5: gehört ist, was tatsächlich zu hören war, nicht was eingeplant wurde.
+test("Stopp zwischen Einplanen und Audiostart: nichts landet im Verlauf", async () => {
+  const stt = deferred();
+  const t = neu({ voice_call_transcribe: () => stt.promise });
+  t.player.deferStart = true;
+  const turn = await t.start("Wie wird das Wetter morgen?");
+  assert.equal(turn.audible, true, "eingeplant");
+  t.barge();
+  t.fruehEnde();
+  stt.resolve("Stopp");
+  await settle(20);
+  assert.equal(t.engine.turn, null);
+  assert.deepEqual(t.verlauf(), [], "kein Ton war zu hören: nichts gehört");
+  assert.equal(
+    t.log.assistant.some((a) => a.interrupted),
+    false,
+  );
+});
+
+test("Stopp, nachdem der Ton begonnen hat: das angespielte Häppchen steht im Verlauf", async () => {
+  const stt = deferred();
+  const t = neu({ voice_call_transcribe: () => stt.promise });
+  t.player.deferStart = true;
+  await t.start("Wie wird das Wetter morgen?");
+  t.player.audioStart();
+  t.barge();
+  t.fruehEnde();
+  stt.resolve("Stopp");
+  await settle(20);
+  assert.deepEqual(t.verlauf(), [
+    "user:Wie wird das Wetter morgen?",
+    `assistant:${S1} …`,
+  ]);
+});
+
+test("Zweites Häppchen eingeplant, aber noch nicht zu hören: es zählt nicht als gehört", async () => {
+  const stt = deferred();
+  const t = neu({ voice_call_transcribe: () => stt.promise });
+  await t.start("Wie wird das Wetter morgen?");
+  t.player.deferStart = true;
+  t.player.finishPiece(); // S1 ist zu Ende; S2 ist eingeplant, sein Ton hat nicht begonnen
+  t.barge();
+  t.fruehEnde();
+  stt.resolve("Stopp");
+  await settle(20);
+  assert.deepEqual(t.verlauf(), [
+    "user:Wie wird das Wetter morgen?",
+    `assistant:${S1} …`,
+  ]);
+});
+
+// Lva#509 Befund 4: das Ende des ersten Stücks ist nicht das Ende des ersten Satzes.
+test("Erstes Stück „Für morgen,“ ist kein Satzende: eine Ergänzung im Rest führt zusammen", async () => {
+  const stt = deferred();
+  const t = neu({
+    voice_call_transcribe: () => stt.promise,
+    voice_call_chat: chatSagt("Für morgen,", "sind es zwanzig Grad."),
+  });
+  const alt = await t.start("Wie wird das Wetter?");
+  t.player.finishPiece(); // „Für morgen,“ ist gesprochen
+  assert.equal(
+    t.log.assistant.some((a) => a.final),
+    false,
+    "der Satz ist noch nicht zu Ende: die Zeile bleibt ungespeichert",
+  );
+  t.barge();
+  t.fruehEnde();
+  t.engine.onEnd();
+  stt.resolve("in Hamburg");
+  await settle(20);
+  assert.equal(alt.cancelled, true, "still ersetzt");
+  assert.equal(
+    t.log.assistant.some((a) => a.interrupted),
+    false,
+  );
+  assert.equal(
+    t.letzterChat().messages.at(-1).content,
+    "Wie wird das Wetter? in Hamburg",
+  );
+});
+
+test("Erst das Stück mit dem Satzzeichen beendet den ersten Satz: danach gibt es keine Zusammenführung mehr", async () => {
+  const t = neu({
+    voice_call_chat: chatSagt("Für morgen,", "sind es zwanzig Grad.", S3),
+  });
+  const turn = await t.start("Wie wird das Wetter?");
+  t.player.finishPiece();
+  assert.equal(turn.firstContentEnded, undefined);
+  t.player.finishPiece();
+  assert.equal(turn.firstContentEnded, true);
+  const final = t.log.assistant.filter((a) => a.final);
+  assert.equal(final.length, 1, "jetzt geht die Zeile raus");
+});
+
+test("Antwort ohne Satzzeichen: der Satz endet mit dem letzten gesprochenen Stück", async () => {
+  const t = neu({ voice_call_chat: chatSagt("Ja gerne") });
+  const turn = await t.start("Kannst du mir helfen?");
+  assert.equal(turn.firstContentEnded, undefined);
+  t.player.finishPiece();
+  assert.equal(turn.firstContentEnded, true);
+});
+
 test("Fehlerweg nach dem Hörbarwerden: dropTurn räumt das Anhalten und die wartenden Häppchen weg", async () => {
   const t = neu({ voice_call_transcribe: () => new Promise(() => undefined) });
   const turn = await t.start("Wie wird das Wetter morgen?");

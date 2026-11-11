@@ -52,6 +52,10 @@ export interface ContextHits {
   retrieve_ms: number;
   epoch: number;
   question_hash?: string;
+  /** Berechtigungsversion beim Abruf; Rust gibt nur bei unveränderter Version Auszüge ans Modell. */
+  berechtigung?: number;
+  /** Der Inhaltszugriff hat sich während des Abrufs geändert: es gibt keine Auszüge. */
+  berechtigung_geaendert?: boolean;
 }
 
 export interface ChatMessage {
@@ -231,7 +235,9 @@ export function speakable(sentence: string): string {
 export function speakerContext(
   ctx: PreparedContext | null,
 ): { hits: ContextHits; german: boolean; turn_id: string } | null {
-  if (!ctx || ctx.hits.hits.length === 0) return null;
+  // Ohne Kontextnachricht (der Kern hat sie verweigert, etwa nach einem Widerruf) gehen auch die
+  // Treffer nicht weiter; verbindlich prüft der Kern vor dem Modellstart erneut.
+  if (!ctx || ctx.hits.hits.length === 0 || ctx.message === null) return null;
   return { hits: ctx.hits, german: ctx.german, turn_id: ctx.turnId };
 }
 

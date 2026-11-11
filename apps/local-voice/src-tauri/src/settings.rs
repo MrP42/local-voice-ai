@@ -2566,30 +2566,75 @@ fn tts_engine_for_platform(engine: &str, platform: &str) -> Option<String> {
         .then(|| "piper".to_string())
 }
 
+/// Generischer Schreibpfad. Fuer die vier Berechtigungsfelder des Inhaltszugriffs (Hauptschalter,
+/// Bereiche, Transkripte, Notizbuch-Abschnitte) darf er nur EINSCHRAENKEN, nie erweitern
+/// (`app_context::berechtigung::begrenze`): ein veralteter Lesen-Aendern-Schreiben-Zyklus eines
+/// anderen Befehls bringt so keine widerrufene Freigabe zurueck (lva#509). Erweitern geht nur ueber
+/// [`update_settings_gesperrt`] und `voice_call_inhaltszugriff_setzen`.
 pub fn write_settings(app: &AppHandle, settings: AppSettings) {
+    let zaehler = crate::app_context::berechtigung::global();
+    let _sperre = zaehler.sperren();
+    schreibe_unter_sperre(app, settings, false);
+}
+
+/// Schreibt die Einstellungen und darf die Berechtigungsfelder erweitern; der Aufrufer haelt die
+/// Sperre des Berechtigungszaehlers (`app_context::berechtigung`). Steigt oder sinkt dabei einer der
+/// vier Werte, erhoeht sich die Berechtigungsversion (lva#509).
+pub(crate) fn write_settings_gesperrt(app: &AppHandle, settings: AppSettings) {
+    schreibe_unter_sperre(app, settings, true);
+}
+
+fn schreibe_unter_sperre(app: &AppHandle, mut settings: AppSettings, erweitern: bool) {
     let store = app
         .store(crate::portable::store_path(SETTINGS_STORE_PATH))
         .expect("Failed to initialize store");
     crate::llm_keys::ensure_dir(app);
-    let (value, error) = to_store_value(&settings, store.get("settings").as_ref());
+    let alt = store.get("settings");
+    if !erweitern {
+        crate::app_context::berechtigung::begrenze(alt.as_ref(), &mut settings);
+    }
+    let (value, error) = to_store_value(&settings, alt.as_ref());
     if let Some(e) = error {
         log::error!("{e}");
     }
-    store.set("settings", value);
+    // Erst speichern, dann die Version veroeffentlichen (Sperre haelt der Aufrufer; Reihenfolge der
+    // Sperren: `app_context::berechtigung`).
+    crate::app_context::berechtigung::global().schreiben_mit(
+        &crate::app_context::berechtigung::Stand::aus_json(alt.as_ref()),
+        &crate::app_context::berechtigung::Stand::aus_einstellungen(&settings),
+        || store.set("settings", value),
+    );
+}
+
+/// Lesen, aendern, schreiben unter der Sperre des Berechtigungszaehlers: die Updater der vier Werte
+/// des Inhaltszugriffs fahren so nie zwischen Vergleich und Schreiben von
+/// `voice_call_inhaltszugriff_setzen` dazwischen (lva#509).
+pub fn update_settings_gesperrt(app: &AppHandle, f: impl FnOnce(&mut AppSettings)) {
+    let _sperre = crate::app_context::berechtigung::global().sperren();
+    let mut settings = get_settings(app);
+    f(&mut settings);
+    write_settings_gesperrt(app, settings);
 }
 
 /// Wie [`write_settings`], aber ein nicht verschluesselbarer API-Schluessel
 /// laesst das Speichern scheitern (nichts wird geschrieben) -- fuer die
 /// Befehle, die einen Schluessel setzen, damit die Oberflaeche es sieht.
-pub fn try_write_settings(app: &AppHandle, settings: AppSettings) -> Result<(), String> {
+pub fn try_write_settings(app: &AppHandle, mut settings: AppSettings) -> Result<(), String> {
     let store = app
         .store(crate::portable::store_path(SETTINGS_STORE_PATH))
         .map_err(|e| e.to_string())?;
     crate::llm_keys::ensure_dir(app);
-    match to_store_value(&settings, store.get("settings").as_ref()) {
+    let _sperre = crate::app_context::berechtigung::global().sperren();
+    let alt = store.get("settings");
+    crate::app_context::berechtigung::begrenze(alt.as_ref(), &mut settings);
+    match to_store_value(&settings, alt.as_ref()) {
         (_, Some(e)) => Err(e),
         (value, None) => {
-            store.set("settings", value);
+            crate::app_context::berechtigung::global().schreiben_mit(
+                &crate::app_context::berechtigung::Stand::aus_json(alt.as_ref()),
+                &crate::app_context::berechtigung::Stand::aus_einstellungen(&settings),
+                || store.set("settings", value),
+            );
             Ok(())
         }
     }

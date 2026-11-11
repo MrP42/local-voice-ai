@@ -134,3 +134,66 @@ test("stop hebt die Pause auf und verwirft alles; das Ende eines Häppchens meld
   assert.equal(ctx.sources.length, 1);
   assert.deepEqual(ende, []);
 });
+
+// Lva#509 Befund 5: „gehört“ heißt tatsächlich begonnen (Startzeit der Quelle gegen die Uhr), nicht eingeplant.
+test("Eingeplant ist noch nicht hörbar: erst wenn die Uhr die Startzeit der Quelle erreicht, gilt das Häppchen als begonnen", async () => {
+  const ctx = ctxMit([2, 2]);
+  const p = new SpeechPlayer(ctx);
+  const begonnen = [];
+  await p.enqueue(wav, undefined, () => begonnen.push(1));
+  await p.enqueue(wav, undefined, () => begonnen.push(2));
+  p.syncStarts();
+  assert.deepEqual(begonnen, [], "beide sind eingeplant, keines ist zu hören");
+  ctx.currentTime = 0.05;
+  p.syncStarts();
+  assert.deepEqual(
+    begonnen,
+    [1],
+    "das erste läuft, das zweite ist erst bei 2,02 s dran",
+  );
+  p.syncStarts();
+  assert.deepEqual(
+    begonnen,
+    [1],
+    "jedes Häppchen meldet seinen Beginn nur einmal",
+  );
+  ctx.currentTime = 2.5;
+  p.syncStarts();
+  assert.deepEqual(begonnen, [1, 2]);
+});
+
+test("Pause zwischen Einplanen und Audiostart: nichts gilt als begonnen", async () => {
+  const ctx = ctxMit([2]);
+  const p = new SpeechPlayer(ctx);
+  const begonnen = [];
+  await p.enqueue(wav, undefined, () => begonnen.push(1));
+  ctx.currentTime = 0.01;
+  assert.equal(p.pause(), true);
+  assert.deepEqual(begonnen, []);
+  p.syncStarts();
+  assert.deepEqual(begonnen, [], "angehalten läuft nichts an");
+});
+
+test("Pause mitten im ersten Häppchen: es gilt als begonnen, das nächste nicht", async () => {
+  const ctx = ctxMit([2, 2]);
+  const p = new SpeechPlayer(ctx);
+  const begonnen = [];
+  await p.enqueue(wav, undefined, () => begonnen.push(1));
+  await p.enqueue(wav, undefined, () => begonnen.push(2));
+  ctx.currentTime = 1;
+  p.pause();
+  assert.deepEqual(begonnen, [1]);
+});
+
+test("Läuft ein Häppchen zu Ende, ohne dass jemand nachgefragt hat, meldet es vorher seinen Beginn", async () => {
+  const ctx = ctxMit([2]);
+  const p = new SpeechPlayer(ctx);
+  const ereignisse = [];
+  await p.enqueue(
+    wav,
+    () => ereignisse.push("ende"),
+    () => ereignisse.push("start"),
+  );
+  ctx.sources[0].ende();
+  assert.deepEqual(ereignisse, ["start", "ende"]);
+});

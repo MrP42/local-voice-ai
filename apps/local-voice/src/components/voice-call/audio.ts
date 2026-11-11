@@ -128,6 +128,9 @@ interface Piece {
   src: AudioBufferSourceNode | null;
   startAt: number;
   onEnd?: () => void;
+  /** Wird einmal gerufen, sobald das Häppchen tatsächlich zu hören ist (nicht schon beim Einplanen). */
+  onStart?: () => void;
+  started: boolean;
 }
 
 /**
@@ -174,8 +177,16 @@ export class SpeechPlayer {
     return this.held;
   }
 
-  /** `onEnd`: wird gerufen, wenn dieses Häppchen zu Ende gespielt ist (nicht bei `stop()`). */
-  async enqueue(wavB64: string, onEnd?: () => void): Promise<void> {
+  /**
+   * `onEnd`: wird gerufen, wenn dieses Häppchen zu Ende gespielt ist (nicht bei `stop()`).
+   * `onStart`: wird gerufen, sobald es tatsächlich zu hören ist (Startzeit der Quelle erreicht,
+   * siehe [`syncStarts`]); ein bloß eingeplantes Häppchen zählt nicht (lva#509).
+   */
+  async enqueue(
+    wavB64: string,
+    onEnd?: () => void,
+    onStart?: () => void,
+  ): Promise<void> {
     const gen = this.gen;
     const buf = await this.ctx.decodeAudioData(base64ToArrayBuffer(wavB64));
     if (gen !== this.gen) return;
@@ -186,6 +197,8 @@ export class SpeechPlayer {
       src: null,
       startAt: 0,
       onEnd,
+      onStart,
+      started: false,
     };
     this.pieces.push(piece);
     if (!this.held) this.schedule(piece, gen);
@@ -210,10 +223,29 @@ export class SpeechPlayer {
     src.onended = () => {
       this.pieces = this.pieces.filter((p) => p !== piece);
       if (gen !== this.gen) return;
+      this.markStarted(piece);
       piece.onEnd?.();
       if (this.pieces.length === 0) this.onIdle?.();
     };
     src.start(start, piece.offset);
+  }
+
+  private markStarted(piece: Piece): void {
+    if (piece.started) return;
+    piece.started = true;
+    piece.onStart?.();
+  }
+
+  /**
+   * Meldet alle Häppchen als begonnen, deren Quelle läuft und deren Startzeit die Uhr des
+   * Audio-Kontexts erreicht hat. Angehalten läuft nichts an. Der Aufrufer fragt unmittelbar vor der
+   * Entscheidung nach, was zu hören war: Eingeplantes ohne Ton zählt nicht.
+   */
+  syncStarts(): void {
+    if (this.held) return;
+    const now = this.ctx.currentTime;
+    for (const p of [...this.pieces])
+      if (p.src && now >= p.startAt) this.markStarted(p);
   }
 
   /**
@@ -222,6 +254,8 @@ export class SpeechPlayer {
    */
   pause(): boolean {
     if (this.held) return false;
+    // Zuerst festhalten, was schon zu hören war; danach läuft nichts mehr an.
+    this.syncStarts();
     this.held = true;
     const now = this.ctx.currentTime;
     const done: Piece[] = [];

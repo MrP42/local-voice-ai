@@ -15,7 +15,7 @@
     "format:frontend": "prettier --write .",
     "format:backend": "cd src-tauri && cargo fmt",
     "test:ablage": "node --test scripts/ablage-logik.test.mjs",
-    "test:assistent": "node --test scripts/assistent-plan.test.mjs scripts/assistent-engine.test.mjs scripts/notizbuch-auswahl.test.mjs scripts/ergaenzen.test.mjs scripts/ergaenzen-engine.test.mjs scripts/ergaenzen-player.test.mjs scripts/alle-bereiche.test.mjs",
+    "test:assistent": "node --test scripts/assistent-plan.test.mjs scripts/assistent-engine.test.mjs scripts/notizbuch-auswahl.test.mjs scripts/ergaenzen.test.mjs scripts/ergaenzen-engine.test.mjs scripts/ergaenzen-player.test.mjs scripts/alle-bereiche.test.mjs scripts/global-context.test.mjs scripts/global-context-engine.test.mjs scripts/log-hygiene.test.mjs",
     "test:playwright": "playwright test",
     "test:playwright:ui": "playwright test --ui",
     "check:translations": "pnpm exec tsx scripts/check-translations.ts",

@@ -117,6 +117,14 @@ export function istFrage(satz: string): boolean {
   return /\?["'“”„»«)\]\s]*$/.test(satz.trim());
 }
 
+/**
+ * Schließt dieses Stück der Antwort einen Satz ab (`.`, `!`, `?`, `…`, auch mit Anführungszeichen oder
+ * Klammer dahinter)? Ein Stück ist nicht zwingend ein Satz: „Für morgen,“ schließt keinen (lva#509).
+ */
+export function schliesstSatz(stueck: string): boolean {
+  return /[.!?…]["'“”„»«)\]\s]*$/.test(stueck.trim());
+}
+
 /** Was die Engine vom laufenden Schritt weiß. */
 export interface TurnStand {
   /** Der Schritt entstand aus gesprochener Eingabe (nicht getippt). */
