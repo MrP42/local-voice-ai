@@ -667,13 +667,19 @@ fn verzeichnis_lesen(
 }
 
 /// Öffnet den Ordner `rel` (mit `/` getrennt) unter `wurzel` als Kette geprüfter Handles: Wurzel, dann jedes
-/// Glied relativ zum gehaltenen Elternordner (lva#507, Befund 2).
-fn kette(wurzel: &Path, rel: &str) -> Result<eintrag::Ordner, eintrag::OeffnenFehler> {
-    let mut o = eintrag::Ordner::wurzel(wurzel, eintrag::reparse_urteil)?;
-    for t in rel.split('/').filter(|t| !t.is_empty()) {
-        o = o.unter(std::ffi::OsStr::new(t))?;
-    }
-    Ok(o)
+/// Glied relativ zum gehaltenen Elternordner (lva#507, Befund 2). Das Ergebnis hält die ganze Kette: jedes
+/// Kind besitzt seinen Elternordner, Wurzel und Zwischenebenen bleiben also offen, solange es lebt.
+fn kette(
+    wurzel: &Path,
+    rel: &str,
+) -> Result<std::sync::Arc<eintrag::Ordner>, eintrag::OeffnenFehler> {
+    eintrag::Ordner::kette(
+        wurzel,
+        rel.split('/')
+            .filter(|t| !t.is_empty())
+            .map(std::ffi::OsStr::new),
+        eintrag::reparse_urteil,
+    )
 }
 
 /// Tastet den Baum unter `v.pfad` ab, ohne Verknüpfungen zu folgen und ohne eine Datei zu öffnen. Wurzel und
@@ -704,7 +710,7 @@ pub(crate) fn abtasten_mit_budget(v: &Verknuepfung, budget: usize) -> Res<Abtast
     let mut frei = budget;
     let mut stapel: Vec<(String, usize)> = vec![(String::new(), 0)];
     while let Some((rel, tiefe)) = stapel.pop() {
-        let gelesen = kette(&wurzel, &rel)
+        let gelesen = kette(&k, &rel)
             .map_err(|_| ())
             .and_then(|o| verzeichnis_lesen(&o, &mut frei));
         let Ok((inhalt, fertig)) = gelesen else {
@@ -1184,10 +1190,12 @@ fn quellpfad(wurzel: &Path, rel: &str) -> Option<PathBuf> {
 fn quelle_ordner(
     wurzel: &Path,
     rel: &str,
-) -> Result<(eintrag::Ordner, std::ffi::OsString, PathBuf), &'static str> {
+) -> Result<(std::sync::Arc<eintrag::Ordner>, std::ffi::OsString, PathBuf), &'static str> {
     use eintrag::OeffnenFehler;
     let ziel = quellpfad(wurzel, rel).ok_or("ablage.verknuepfung")?;
-    wurzel_pruefen(wurzel).map_err(|f| match f.code.as_str() {
+    // Geöffnet wird der kanonische Pfad `k` (nicht die gespeicherte Schreibweise): der Namensvergleich am
+    // Handle ist exakt, `k` trägt die Schreibweise des Dateisystems.
+    let k = wurzel_pruefen(wurzel).map_err(|f| match f.code.as_str() {
         "ablage.verknuepfung" => "ablage.verknuepfung",
         "ablage.nur_online" => "verknuepft.cloud",
         _ => "verknuepft.lesen",
@@ -1200,10 +1208,12 @@ fn quelle_ordner(
     };
     let teile: Vec<&str> = rel.split('/').collect();
     let (name, eltern) = teile.split_last().ok_or("ablage.verknuepfung")?;
-    let mut o = eintrag::Ordner::wurzel(wurzel, eintrag::reparse_urteil).map_err(code)?;
-    for t in eltern {
-        o = o.unter(std::ffi::OsStr::new(t)).map_err(code)?;
-    }
+    let o = eintrag::Ordner::kette(
+        &k,
+        eltern.iter().map(std::ffi::OsStr::new),
+        eintrag::reparse_urteil,
+    )
+    .map_err(code)?;
     Ok((o, std::ffi::OsString::from(name), ziel))
 }
 
@@ -1440,7 +1450,7 @@ pub fn bearbeiten(
     let (kopie, sha) = match momentkopie(a, auf) {
         Ok(x) => x,
         Err("verknuepft.geaendert") => return Ok(Ausgang::Geaendert),
-        // Cloud-Platzhalter ohne Daten auf dem Gerät: nie ein Download, in diesem Prozess nicht erneut.
+        // Cloud-Platzhalter ohne Daten auf dem Gerät: übersprungen (kein Abruf nach bestem Bemühen, siehe `docs/ablage-abrufschutz.md`), in diesem Prozess nicht erneut.
         Err("verknuepft.speicher" | "verknuepft.cloud") => return Ok(Ausgang::Uebersprungen),
         Err(c @ ("ablage.hartlink" | "ablage.verknuepfung")) => {
             return eintragen(

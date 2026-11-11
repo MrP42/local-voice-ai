@@ -24,6 +24,7 @@ use std::fs;
 use std::io;
 use std::ops::ControlFlow;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 #[cfg(windows)]
 use super::ATTR_VERZEICHNIS;
@@ -33,10 +34,19 @@ use super::{
 };
 
 /// Ein geprüftes, gehaltenes Verzeichnis (siehe Moduldoku).
+///
+/// **Ahnenbindung (lva#507, Befund 2):** jede Ebene hält ihren Elternordner (`eltern`) und damit die ganze
+/// Kette bis zur Wurzel, solange sie selbst lebt. Unter Windows bleiben dadurch alle Ahnen ohne
+/// `FILE_SHARE_DELETE` offen (kein Umbenennen, Löschen oder Ersetzen durch eine Junction), unter Unix bleiben
+/// ihre Deskriptoren gültig. Erst diese Haltegarantie macht die Öffnung einer Ebene über den vollständigen
+/// Pfad zulässig: alle Glieder davor sind dieselben, bereits geprüften Objekte, und die Ebene selbst wird
+/// anschließend am Handle beurteilt und gegen den gehaltenen Elternpfad geprüft.
 pub struct Ordner {
     pfad: PathBuf,
     urteil: UrteilFn,
     sys: sys::Dir,
+    /// Nur zum Halten: fällt als LETZTES (nach `sys`), damit der Elternordner das Kind überlebt.
+    eltern: Option<Arc<Ordner>>,
 }
 
 /// Ein einzelner, gewöhnlicher Name (nicht leer, kein `.`/`..`, kein Trenner, Laufwerk oder Präfix; unter
@@ -96,19 +106,52 @@ impl Ordner {
     /// Öffnet die Wurzel `p` (kanonisch, vom Aufrufer vorgeprüft) und urteilt am Handle. Nicht „lesbar“ oder
     /// nicht bestimmbar: Fehler, aufgelistet wird dann nie (fail-closed). Laufwerkswurzeln gehen denselben Weg:
     /// auch sie bekommen ein positives Urteil vom Handle.
-    pub fn wurzel(p: &Path, urteil: UrteilFn) -> Result<Ordner, OeffnenFehler> {
+    pub fn wurzel(p: &Path, urteil: UrteilFn) -> Result<Arc<Ordner>, OeffnenFehler> {
         let _sperre = sperre_pruefen()?;
         let sys = sys::wurzel(p)?;
         dir_urteil(sys.datei(), p, urteil)?;
-        Ok(Ordner {
+        Ok(Arc::new(Ordner {
             pfad: p.to_path_buf(),
             urteil,
             sys,
-        })
+            eltern: None,
+        }))
     }
 
-    /// Öffnet den Unterordner `name` relativ zu diesem Ordner und urteilt am neuen Handle.
-    pub fn unter(&self, name: &OsStr) -> Result<Ordner, OeffnenFehler> {
+    /// Öffnet `wurzel` und dann jedes Glied von `teile` als Unterordner: eine Kette gehaltener Handles
+    /// (Ahnenbindung, siehe Typdoku). Zurück kommt das letzte Glied; es hält alle davor.
+    pub fn kette<'a>(
+        wurzel: &Path,
+        teile: impl IntoIterator<Item = &'a OsStr>,
+        urteil: UrteilFn,
+    ) -> Result<Arc<Ordner>, OeffnenFehler> {
+        let mut o = Ordner::wurzel(wurzel, urteil)?;
+        for t in teile {
+            o = o.unter(t)?;
+        }
+        Ok(o)
+    }
+
+    /// Kennung (Windows: Volume und Datei-Index, Unix: Gerät und Inode) der Datei `name` in diesem Ordner,
+    /// am geöffneten Stufe-1-Handle (relativ zum gehaltenen Ordner; ohne Lesezugriff, ohne Abruf).
+    pub fn kennung(&self, name: &OsStr, art: OeffnenArt) -> Result<(u64, u64), OeffnenFehler> {
+        if !schlicht(name) {
+            return Err(umweg());
+        }
+        let _sperre = sperre_pruefen()?;
+        let pfad = self.pfad.join(name);
+        let f = sys::datei_stufe1(&self.sys, &pfad, name, art)?;
+        super::datei_id(&f, &pfad).map_err(OeffnenFehler::Io)
+    }
+
+    /// Anzahl der gehaltenen Ahnen (ohne diesen Ordner selbst).
+    pub fn ahnen(&self) -> usize {
+        std::iter::successors(self.eltern.as_deref(), |o| o.eltern.as_deref()).count()
+    }
+
+    /// Öffnet den Unterordner `name` relativ zu diesem Ordner und urteilt am neuen Handle. Das Kind hält
+    /// seinen Elternordner (und damit die ganze Kette).
+    pub fn unter(self: &Arc<Self>, name: &OsStr) -> Result<Arc<Ordner>, OeffnenFehler> {
         if !schlicht(name) {
             return Err(umweg());
         }
@@ -116,11 +159,12 @@ impl Ordner {
         let pfad = self.pfad.join(name);
         let sys = sys::unter(&self.sys, &pfad, name)?;
         dir_urteil(sys.datei(), &pfad, self.urteil)?;
-        Ok(Ordner {
+        Ok(Arc::new(Ordner {
             pfad,
             urteil: self.urteil,
             sys,
-        })
+            eltern: Some(Arc::clone(self)),
+        }))
     }
 
     pub fn pfad(&self) -> &Path {
@@ -412,7 +456,7 @@ mod sys {
     use std::fs;
     use std::io;
     use std::ops::ControlFlow;
-    use std::os::windows::ffi::OsStringExt;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
     use std::path::Path;
@@ -433,8 +477,9 @@ mod sys {
 
     pub struct Dir {
         f: fs::File,
-        /// Endgültiger Pfad des gehaltenen Handles, normalisiert ([`norm`]).
-        endgueltig: String,
+        /// Endgültiger Pfad des gehaltenen Handles, normalisiert ([`norm`]); UTF-16 unverändert, Groß- und
+        /// Kleinschreibung bleiben erhalten.
+        endgueltig: Vec<u16>,
     }
 
     impl Dir {
@@ -443,19 +488,40 @@ mod sys {
         }
     }
 
-    /// Ohne `\\?\`-Präfix (`\\?\UNC\` wird `\\`), klein, ohne abschließenden `\`.
-    fn norm(s: &str) -> String {
-        let t = if let Some(r) = s.strip_prefix(r"\\?\UNC\") {
-            format!(r"\\{r}")
-        } else if let Some(r) = s.strip_prefix(r"\\?\") {
-            r.to_string()
-        } else {
-            s.to_string()
-        };
-        t.to_lowercase().trim_end_matches('\\').to_string()
+    fn breit(s: &str) -> Vec<u16> {
+        s.encode_utf16().collect()
     }
 
-    fn endgueltig_von(f: &fs::File) -> io::Result<String> {
+    /// Ohne `\\?\`-Präfix (`\\?\UNC\` wird `\\`) und ohne abschließenden `\`. Rein auf UTF-16-Einheiten, keine
+    /// Umwandlung in Text und keine Kleinschreibung: Namen werden danach EXAKT verglichen (ein Pfad, der nur
+    /// bei Gleichsetzung von Groß und Klein passt, ist kein Beweis für dasselbe Objekt).
+    fn norm(w: &[u16]) -> Vec<u16> {
+        let unc = breit(r"\\?\UNC\");
+        let verbatim = breit(r"\\?\");
+        let mut t: Vec<u16> = if let Some(r) = w.strip_prefix(unc.as_slice()) {
+            let mut v = breit(r"\\");
+            v.extend_from_slice(r);
+            v
+        } else if let Some(r) = w.strip_prefix(verbatim.as_slice()) {
+            r.to_vec()
+        } else {
+            w.to_vec()
+        };
+        while t.last() == Some(&(b'\\' as u16)) {
+            t.pop();
+        }
+        t
+    }
+
+    /// Erwarteter endgültiger Pfad eines Kindes: Elternpfad, `\`, Name (exakt, UTF-16).
+    fn kind_pfad(eltern: &[u16], name: &OsStr) -> Vec<u16> {
+        let mut v = eltern.to_vec();
+        v.push(b'\\' as u16);
+        v.extend(name.encode_wide());
+        v
+    }
+
+    fn endgueltig_von(f: &fs::File) -> io::Result<Vec<u16>> {
         let mut puffer = vec![0u16; 1024];
         loop {
             // SAFETY: gültiges, offenes Handle; `puffer` ist ein beschreibbarer Puffer der angegebenen Länge.
@@ -474,7 +540,7 @@ mod sys {
                 puffer.resize(n + 1, 0);
                 continue;
             }
-            return Ok(norm(&String::from_utf16_lossy(&puffer[..n])));
+            return Ok(norm(&puffer[..n]));
         }
     }
 
@@ -496,7 +562,8 @@ mod sys {
     pub fn wurzel(p: &Path) -> Result<Dir, OeffnenFehler> {
         let f = dir_oeffnen(p).map_err(oeffnen_io)?;
         let endgueltig = endgueltig_von(&f).map_err(OeffnenFehler::Io)?;
-        if endgueltig != norm(&p.to_string_lossy()) {
+        let soll: Vec<u16> = p.as_os_str().encode_wide().collect();
+        if endgueltig != norm(&soll) {
             // Ein Glied des Pfades führt woandershin (Junction, Symlink, Umbenennung vor dem Halten).
             return Err(umweg());
         }
@@ -506,13 +573,7 @@ mod sys {
     pub fn unter(d: &Dir, pfad: &Path, name: &OsStr) -> Result<Dir, OeffnenFehler> {
         let f = dir_oeffnen(pfad).map_err(oeffnen_io)?;
         let endgueltig = endgueltig_von(&f).map_err(OeffnenFehler::Io)?;
-        if endgueltig
-            != format!(
-                r"{}\{}",
-                d.endgueltig,
-                name.to_string_lossy().to_lowercase()
-            )
-        {
+        if endgueltig != kind_pfad(&d.endgueltig, name) {
             return Err(umweg());
         }
         Ok(Dir { f, endgueltig })
@@ -617,13 +678,7 @@ mod sys {
             .open(pfad)
             .map_err(oeffnen_io)?;
         let endgueltig = endgueltig_von(&f).map_err(OeffnenFehler::Io)?;
-        if endgueltig
-            != format!(
-                r"{}\{}",
-                d.endgueltig,
-                name.to_string_lossy().to_lowercase()
-            )
-        {
+        if endgueltig != kind_pfad(&d.endgueltig, name) {
             return Err(umweg());
         }
         Ok(f)
@@ -855,5 +910,119 @@ mod tests {
         // Ein Name mit Trenner erreicht nie einen anderen Ordner.
         let name = OsString::from("../a.txt");
         assert!(root.datei_oeffnen(&name, art(), reparse_urteil).is_err());
+    }
+
+    #[test]
+    fn ein_kind_haelt_seine_ahnen_bis_zur_wurzel() {
+        let _n = sauber();
+        let (_d, w) = wurzel();
+        fs::create_dir_all(w.join("a/b")).unwrap();
+        fs::write(w.join("a/b/f.txt"), b"f").unwrap();
+        let root = Ordner::wurzel(&w, reparse_urteil).unwrap();
+        let a = root.unter(OsStr::new("a")).unwrap();
+        let b = a.unter(OsStr::new("b")).unwrap();
+        let (schwach_root, schwach_a, schwach_b) = (
+            Arc::downgrade(&root),
+            Arc::downgrade(&a),
+            Arc::downgrade(&b),
+        );
+        // Nur das Kind bleibt in der Hand des Aufrufers (wie in `verknuepft::kette` und im Trigger).
+        drop(root);
+        drop(a);
+        assert_eq!(b.ahnen(), 2);
+        let root = schwach_root
+            .upgrade()
+            .expect("Wurzel wird vom Kind gehalten");
+        let a = schwach_a
+            .upgrade()
+            .expect("Zwischenebene wird vom Kind gehalten");
+        // Die Elternhandles sind nicht nur da, sondern benutzbar (Deskriptor offen).
+        assert_eq!(namen(&a), ["b"]);
+        assert_eq!(namen(&root), ["a"]);
+        drop((root, a));
+        drop(b);
+        assert!(schwach_b.upgrade().is_none());
+        assert!(schwach_a.upgrade().is_none(), "ohne Kind keine Haltung");
+        assert!(schwach_root.upgrade().is_none());
+    }
+
+    #[test]
+    fn die_kette_liefert_das_letzte_glied_und_haelt_alles_davor() {
+        let _n = sauber();
+        let (_d, w) = wurzel();
+        fs::create_dir_all(w.join("a/b")).unwrap();
+        fs::write(w.join("a/b/f.txt"), b"f").unwrap();
+        let teile = [OsStr::new("a"), OsStr::new("b")];
+        let b = Ordner::kette(&w, teile, reparse_urteil).unwrap();
+        assert_eq!(b.ahnen(), 2);
+        assert_eq!(b.pfad(), w.join("a/b"));
+        assert_eq!(namen(&b), ["f.txt"]);
+        // Ohne Glieder ist es die Wurzel selbst.
+        let r = Ordner::kette(&w, std::iter::empty(), reparse_urteil).unwrap();
+        assert_eq!(r.ahnen(), 0);
+        // Ein Glied, das eine Verknüpfung ist, bricht die Kette ab.
+        symlink(w.join("a"), w.join("l")).unwrap();
+        assert!(Ordner::kette(&w, [OsStr::new("l")], reparse_urteil).is_err());
+    }
+
+    #[test]
+    fn die_kennung_einer_datei_ist_die_des_dateisystems() {
+        use std::os::unix::fs::MetadataExt;
+        let _n = sauber();
+        let (_d, w) = wurzel();
+        fs::write(w.join("k.txt"), b"k").unwrap();
+        let root = Ordner::wurzel(&w, reparse_urteil).unwrap();
+        let m = fs::metadata(w.join("k.txt")).unwrap();
+        assert_eq!(
+            root.kennung(OsStr::new("k.txt"), art()).unwrap(),
+            (m.dev(), m.ino())
+        );
+        assert!(root.kennung(OsStr::new("../k.txt"), art()).is_err());
+    }
+}
+
+/// Nur Windows (hier nur typgeprüft, läuft auf dem Windows-Tor): Haltegarantie und exakter Namensvergleich.
+#[cfg(all(test, windows))]
+mod tests_windows {
+    use super::*;
+    use crate::ablage::eintrag::reparse_urteil;
+
+    fn wurzel() -> (tempfile::TempDir, PathBuf) {
+        let d = tempfile::tempdir().unwrap();
+        let w = fs::canonicalize(d.path()).unwrap();
+        (d, w)
+    }
+
+    #[test]
+    fn solange_ein_kind_lebt_sind_die_ahnen_gegen_umbenennen_gesperrt() {
+        let (_d, w) = wurzel();
+        fs::create_dir_all(w.join("a").join("b")).unwrap();
+        let root = Ordner::wurzel(&w, reparse_urteil).unwrap();
+        let a = root.unter(OsStr::new("a")).unwrap();
+        let b = a.unter(OsStr::new("b")).unwrap();
+        drop(root);
+        drop(a);
+        assert!(
+            fs::rename(w.join("a"), w.join("a2")).is_err(),
+            "Zwischenebene ist gehalten"
+        );
+        assert!(
+            fs::rename(&w, w.with_file_name("andere_wurzel_p507")).is_err(),
+            "Wurzel ist gehalten"
+        );
+        drop(b);
+        fs::rename(w.join("a"), w.join("a2")).expect("ohne Kind ist die Ebene frei");
+    }
+
+    #[test]
+    fn der_name_wird_exakt_verglichen_nicht_ohne_gross_und_klein() {
+        let (_d, w) = wurzel();
+        fs::create_dir_all(w.join("Unter")).unwrap();
+        let root = Ordner::wurzel(&w, reparse_urteil).unwrap();
+        assert!(root.unter(OsStr::new("Unter")).is_ok());
+        assert!(
+            root.unter(OsStr::new("unter")).is_err(),
+            "andere Schreibweise ist kein Beweis für dasselbe Objekt"
+        );
     }
 }

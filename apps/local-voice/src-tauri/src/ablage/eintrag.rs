@@ -24,10 +24,13 @@
 //!   (echte OneDrive-Probe: Öffnen mit Lesezugriff lud die Datei herunter). Restrisiko, das nur eine
 //!   Windows-/Provider-Sperre schließen könnte: der Anbieter lagert die Datei zwischen dem letzten Urteil und
 //!   dem Hochstufen aus (ein Systemaufruf lang); das Hochstufen löst dann den Abruf aus, gelesen wird aber
-//!   erst nach dem Urteil am Ergebnis.
+//!   erst nach dem Urteil am Ergebnis. Zugesagt wird deshalb nur: Local Voice überspringt erkannte, nur
+//!   online gespeicherte Dateien; durch gleichzeitige Änderungen des Synchronisationsdienstes kann beim Lesen
+//!   dennoch ein Download ausgelöst werden (Restfenster, `docs/ablage-abrufschutz.md`).
 //! * Zwischenverzeichnisse ([`Ordner`], lva#507): Wurzel und jede Ebene werden einmal geöffnet, am Handle
 //!   beurteilt und gehalten; Auflisten und Dateiöffnen laufen relativ dazu. Ein Zwischenglied, das nach der
-//!   Prüfung durch eine Junction ersetzt wird, erreicht die Lesezugriffe nie.
+//!   Prüfung durch eine Junction ersetzt wird, erreicht die Lesezugriffe nie. Jede Ebene besitzt ihren
+//!   Elternordner (Ahnenbindung): solange ein Kind lebt, bleibt die ganze Kette offen.
 //! * Attribute, Tag oder Handle nicht bestimmbar (Fehler der Windows-Aufrufe): als Umweg abgewiesen.
 //! * Auflisten bricht mittendrin ab (Laufwerk weg, Zugriff verweigert): der ganze Ordner gilt als nicht
 //!   lesbar, nie eine Teilliste (sonst fielen bekannte Dateien aus dem Bestand).

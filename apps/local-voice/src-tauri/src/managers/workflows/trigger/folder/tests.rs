@@ -1274,7 +1274,7 @@ fn entries_that_are_not_candidates_do_not_use_up_the_window() {
     assert_eq!(all.started.len(), 1, "{all:?}");
 }
 
-fn hash_ordner(w: &World) -> (eintrag::Ordner, PathBuf) {
+fn hash_ordner(w: &World) -> (Arc<eintrag::Ordner>, PathBuf) {
     let root = fs::canonicalize(w.inbox.path()).unwrap();
     (
         eintrag::Ordner::wurzel(&root, eintrag::reparse_urteil).unwrap(),
@@ -1366,4 +1366,84 @@ fn a_scan_that_is_aborted_hashes_nothing_and_a_new_scan_does_not_start() {
     w.state.abbrechen();
     let all = w.ticks(4);
     assert!(all.started.is_empty(), "{all:?}");
+}
+
+/// Einreihen scheitert fuer die genannten Dateinamen dauerhaft; alle anderen laufen durch die Engine.
+struct NamenSink<'a> {
+    engine: &'a Engine,
+    schlecht: HashSet<String>,
+    eingereiht: Mutex<Vec<String>>,
+}
+
+impl RunSink for NamenSink<'_> {
+    fn workflows(&self) -> Result<Vec<store::WorkflowRow>, store::WorkflowError> {
+        self.engine.workflows()
+    }
+
+    fn enqueue(
+        &self,
+        req: &crate::managers::workflows::engine::EnqueueRequest,
+    ) -> Result<crate::managers::workflows::engine::Enqueued, store::WorkflowError> {
+        let name = req.trigger["name"].as_str().unwrap_or_default().to_string();
+        if self.schlecht.contains(&name) {
+            return Err(store::WorkflowError::Store(
+                "dauerhaft kaputt (simuliert)".to_string(),
+            ));
+        }
+        self.eingereiht.lock().unwrap().push(name);
+        self.engine.enqueue(req)
+    }
+}
+
+#[test]
+fn candidates_whose_enqueue_fails_for_good_do_not_starve_the_ones_behind_them() {
+    let mut w = world();
+    for n in ["a.wav", "b.wav", "c.wav"] {
+        w.put(n, format!("inhalt {n}").as_bytes());
+    }
+    // Aufzaehlungsreihenfolge des Dateisystems: die ersten beiden scheitern, der dritte nicht.
+    let (o, _) = hash_ordner(&w);
+    let mut reihe = Vec::new();
+    o.auflisten(|e| {
+        reihe.push(e.name.to_string_lossy().into_owned());
+        std::ops::ControlFlow::Continue(())
+    })
+    .unwrap();
+    assert_eq!(reihe.len(), 3);
+    w.tick(); // beobachten
+    let sink = NamenSink {
+        engine: &w.engine,
+        schlecht: reihe[..2].iter().cloned().collect(),
+        eingereiht: Mutex::new(Vec::new()),
+    };
+    for takt in 1..=4 {
+        w.now += TICK;
+        w.clock.set(w.now);
+        on_tick(&sink, &w.state, &w.fx.db_path, &w.probe, w.now);
+        if sink.eingereiht.lock().unwrap().contains(&reihe[2]) {
+            assert!(takt <= 2, "der dritte Kandidat kam erst im Takt {takt}");
+            return;
+        }
+    }
+    panic!("der dritte Kandidat wurde nie gehasht und eingereiht");
+}
+
+#[test]
+fn a_file_swapped_for_one_of_the_same_size_and_time_after_the_hash_is_not_taken() {
+    eintrag::naht::leeren();
+    let mut w = world();
+    let p = w.put("tausch.wav", b"inhalt");
+    let kanonisch = fs::canonicalize(w.inbox.path()).unwrap().join("tausch.wav");
+    let _ = p;
+    // Erster Takt: beobachten.
+    w.tick();
+    // Kennungsabfragen dieser Datei: zweistufiges Oeffnen (2), Hash-Handle (3), Pfad nach dem Hash (4,
+    // eine andere Datei).
+    eintrag::naht::id_folge(&kanonisch, &[(1, 1), (1, 1), (1, 1), (2, 2)]);
+    let r = w.tick();
+    assert!(r.started.is_empty(), "{r:?}");
+    assert_eq!(ledger::count(&w.fx.conn(), "").unwrap(), 0);
+    // Die Beobachtung beginnt neu; danach (echte Kennungen) wird die Datei genommen.
+    assert_eq!(w.ticks(4).started.len(), 1);
+    eintrag::naht::leeren();
 }

@@ -409,7 +409,7 @@ fn a_cloud_only_file_is_not_read_and_not_enqueued() {
     assert_eq!(run.state, RunState::Failed);
     assert!(
         last_error(&steps).contains("nur in der Cloud")
-            && last_error(&steps).contains("nicht heruntergeladen"),
+            && last_error(&steps).contains("übersprungen"),
         "{}",
         last_error(&steps)
     );

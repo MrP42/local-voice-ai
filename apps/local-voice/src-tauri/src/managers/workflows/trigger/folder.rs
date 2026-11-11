@@ -383,6 +383,10 @@ pub struct Hashed {
     pub hash: String,
     pub size: u64,
     pub mtime_ms: i64,
+    /// Kennung der gehashten Datei (Volume und Datei-Index bzw. Gerät und Inode), am Lese-Handle nach dem
+    /// Lesen. Wer danach prüft, dass der Pfad noch dieselbe Datei meint, vergleicht sie mit der Kennung des
+    /// Pfades (lva#507): gleiche Größe und gleiche Zeit allein beweisen das nicht.
+    pub id: (u64, u64),
 }
 
 /// Grenzen eines Hash-Laufs (lva#507 Befund 6): Bytebudget, Zeitlimit und eine Abbruchfrage, die vor jedem
@@ -400,7 +404,14 @@ fn grenze_erreicht(was: &'static str) -> std::io::Error {
 /// SHA-256 des Inhalts aus einem geprueft-geoeffneten Handle, in Bloecken (kein Laden der ganzen Datei).
 /// Bricht ab, wenn die Datei groesser als das Budget ist, beim Lesen ueber ihre Anfangsgroesse hinauswaechst
 /// (ein Schreiber haengt an), die Frist ablaeuft oder die Abbruchfrage `true` sagt.
-fn hash_aus(mut file: fs::File, g: &HashGrenzen<'_>) -> std::io::Result<Hashed> {
+///
+/// Grenze der Harte (lva#507 Befund 6): Frist und Abbruch werden ZWISCHEN den Bloecken geprueft. Ein einzelnes
+/// `read` ist ein synchroner Systemaufruf und laesst sich nicht unterbrechen (haengt z. B. ein Netzlaufwerk,
+/// blockiert es bis zur Rueckkehr des Systems). Deshalb ist der Block klein ([`HASH_BLOCK`], 1 MiB): ein
+/// gesunder Datentraeger kehrt in Millisekunden zurueck, Frist und Abbruch greifen dann spaetestens nach
+/// einem Block. Der Abbruch beim Beenden der App haengt an `WorkflowHub::shutdown` ([`State::abbrechen`]).
+/// `pfad` ist nur fuer die Test-Naht der Kennung.
+fn hash_aus(mut file: fs::File, g: &HashGrenzen<'_>, pfad: &Path) -> std::io::Result<Hashed> {
     let anfang = file.metadata()?.len();
     if anfang > g.max_bytes {
         return Err(grenze_erreicht("Datei zu groß zum Prüfen"));
@@ -433,6 +444,7 @@ fn hash_aus(mut file: fs::File, g: &HashGrenzen<'_>) -> std::io::Result<Hashed> 
         hasher.update(&buf[..n]);
     }
     let meta = file.metadata()?;
+    let id = eintrag::datei_id(&file, pfad)?;
     Ok(Hashed {
         hash: format!("{:x}", hasher.finalize()),
         size: meta.len(),
@@ -441,6 +453,7 @@ fn hash_aus(mut file: fs::File, g: &HashGrenzen<'_>) -> std::io::Result<Hashed> 
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map_or(0, |d| d.as_millis() as i64),
+        id,
     })
 }
 
@@ -457,7 +470,7 @@ pub fn hash_file(path: &Path) -> std::io::Result<Hashed> {
     // macOS: wird die Datei nach dem Urteil doch noch ausgelagert, scheitert das Lesen (`EDEADLK`), statt
     // sie herunterzuladen; die Sperre gilt fuer diesen Faden bis zum Ende des Hashens.
     let _abrufsperre = eintrag::abruf_sperren();
-    hash_aus(open_checked(path)?, &standard_grenzen())
+    hash_aus(open_checked(path)?, &standard_grenzen(), path)
 }
 
 /// Wie [`hash_file`], aber die Datei `name` im geprueften, gehaltenen Ordner (relativ geoeffnet, kein
@@ -471,7 +484,7 @@ pub fn hash_in(
     let file = ordner
         .datei_oeffnen(name, hash_art(), trigger_urteil)
         .map_err(open_fehler)?;
-    hash_aus(file, g)
+    hash_aus(file, g, &ordner.pfad().join(name))
 }
 
 /// SHA-256 des Inhalts als Kleinbuchstaben-Hex.
@@ -515,6 +528,10 @@ struct Inner {
     /// Fortsetzung je Ablauf in grossen Ordnern (lva#507 Befund 5): wo der naechste Takt weiterliest und
     /// welche Schluessel der laufende Umlauf schon gesehen hat.
     umlauf: HashMap<String, Umlauf>,
+    /// Reihum beim Hashen (lva#507 Befund 5): der Name des Kandidaten, an dem das Hash-Budget des letzten
+    /// Taktes endete; der naechste Takt beginnt dahinter. So verbraucht ein Kandidat, dessen Hashen oder
+    /// Einreihen dauerhaft scheitert, nicht jeden Takt wieder dasselbe Budget und haelt die dahinter nicht auf.
+    hash_cursor: HashMap<String, std::ffi::OsString>,
 }
 
 /// Stand eines Umlaufs durch einen Ordner, der mehr Kandidaten hat als ein Takt schafft.
@@ -627,6 +644,7 @@ impl State {
         g.cloud.retain(|_, f| live.contains(&f.workflow_id));
         g.problems.retain(|w, _| live.contains(w));
         g.umlauf.retain(|w, _| live.contains(w));
+        g.hash_cursor.retain(|w, _| live.contains(w));
     }
 
     /// Dateien, die nur in der Cloud liegen und deshalb nicht verarbeitet werden.
@@ -637,7 +655,6 @@ impl State {
     }
 
     /// Bricht laufende Scans ab und verhindert neue (lva#507 Befund 6): das Hashen prueft es vor jedem Block.
-    #[allow(dead_code)]
     pub fn abbrechen(&self) {
         self.abbruch.store(true, Ordering::Release);
     }
@@ -649,6 +666,16 @@ impl State {
     /// Der Stand des Umlaufs dieses Ablaufs: (Startindex, bisher gesehene Schluessel).
     fn umlauf_nehmen(&self, workflow_id: &str) -> Umlauf {
         self.lock().umlauf.remove(workflow_id).unwrap_or_default()
+    }
+
+    fn hash_cursor_nehmen(&self, workflow_id: &str) -> Option<std::ffi::OsString> {
+        self.lock().hash_cursor.get(workflow_id).cloned()
+    }
+
+    fn hash_cursor_setzen(&self, workflow_id: &str, name: std::ffi::OsString) {
+        self.lock()
+            .hash_cursor
+            .insert(workflow_id.to_string(), name);
     }
 
     fn umlauf_merken(&self, workflow_id: &str, u: Umlauf) {
@@ -848,8 +875,14 @@ fn scan_workflow(
     // fail-closed): Handle nicht oeffenbar oder Attribute nicht bestimmbar, Verknuepfung, nur online, Pfad
     // fuehrt woandershin = nicht auflisten. Das gilt auch fuer Laufwerkswurzeln (die Find-Abfrage per Pfad
     // scheitert dort, das Handle liefert trotzdem ein Urteil). Auflisten und Oeffnen laufen ueber dieses
-    // gehaltene Handle, nicht ueber den Pfad (Befund 2).
-    let ordner = match eintrag::Ordner::wurzel(&dir, eintrag::reparse_urteil) {
+    // gehaltene Handle, nicht ueber den Pfad (Befund 2). Gehalten wird die ganze Kette von der Wurzel der
+    // Integration bis zum Eingangsordner: der Eingangsordner besitzt seine Eltern, solange er lebt.
+    let Ok(rest) = dir.strip_prefix(sandbox.root()) else {
+        problem(state, report, a, FOLDER_UNSICHER);
+        return;
+    };
+    let ordner = match eintrag::Ordner::kette(sandbox.root(), rest.iter(), eintrag::reparse_urteil)
+    {
         Ok(o) => o,
         Err(OeffnenFehler::Urteil(Urteil::NurOnline)) => {
             problem(state, report, a, FOLDER_CLOUD_ONLY);
@@ -956,6 +989,15 @@ fn scan_workflow(
     let mut keep: HashSet<String> = HashSet::new();
     let mut hashed = 0usize;
     let mut wrote = false;
+    // Reihum (Befund 5): das Hash-Budget beginnt hinter dem Kandidaten, an dem es beim letzten Mal endete.
+    let mut kandidaten = kandidaten;
+    if let Some(cursor) = state.hash_cursor_nehmen(wf) {
+        if let Some(pos) = kandidaten.iter().position(|(n, _)| *n == cursor) {
+            let n = kandidaten.len();
+            kandidaten.rotate_left((pos + 1) % n);
+        }
+    }
+    let mut letzter_hash: Option<std::ffi::OsString> = None;
     for (entry_name, roh) in kandidaten {
         // Name, Endung und Art hat die Aufzaehlung schon geprueft (Roh kommt vom Ordner-Handle, nicht
         // vom Pfad; `fs::metadata` liefert fuer OneDrive-Platzhalter falsche Attribute). Vor allem anderen
@@ -989,13 +1031,13 @@ fn scan_workflow(
             );
             if first {
                 log::info!(
-                    "workflows: „{}“: eine Datei liegt nur in OneDrive und wird nicht heruntergeladen",
+                    "workflows: „{}“: eine Datei liegt nur in OneDrive und wurde übersprungen",
                     a.row.name
                 );
                 // Kein Dateiname: `skipped` geht ins Log; der Name erreicht die Oberflaeche nur ueber
                 // `State::cloud_only`.
                 report.skipped.push(format!(
-                    "{}: eine Datei liegt nur in der Cloud (OneDrive) und wird nicht heruntergeladen; \"Immer auf diesem Gerät behalten\" holt sie.",
+                    "{}: eine Datei liegt nur in der Cloud (OneDrive) und wurde übersprungen; \"Immer auf diesem Gerät behalten\" macht sie lesbar.",
                     a.row.name
                 ));
             }
@@ -1034,6 +1076,7 @@ fn scan_workflow(
             continue;
         }
         hashed += 1;
+        letzter_hash = Some(entry_name.clone());
         let grenzen = HashGrenzen {
             max_bytes: MAX_HASH_BYTES,
             frist: HASH_FRIST,
@@ -1054,11 +1097,15 @@ fn scan_workflow(
             state.reset(&key);
             continue;
         }
-        match eintrag::roh(&path) {
-            Ok(r)
+        // Dann noch einmal Pfad und Datei-Kennung: gleiche Groesse und Zeit allein beweisen nicht, dass unter dem
+        // Namen noch dieselbe Datei liegt (Austausch durch eine gleich grosse, gleich datierte Datei).
+        let kennung = ordner.kennung(&entry_name, hash_art());
+        match (eintrag::roh(&path), kennung) {
+            (Ok(r), Ok(id))
                 if entry_state(&r) == EntryState::Local
                     && r.groesse == size
-                    && r.zeit == modified => {}
+                    && r.zeit == modified
+                    && id == at_hash.id => {}
             _ => {
                 state.reset(&key);
                 continue;
@@ -1121,12 +1168,18 @@ fn scan_workflow(
     }
     // Aufraeumen erst am Ende eines ganzen Umlaufs: in grossen Ordnern sieht ein Takt nur einen Ausschnitt,
     // die Beobachtungen der anderen Ausschnitte duerfen nicht verloren gehen.
+    if let Some(n) = letzter_hash {
+        state.hash_cursor_setzen(wf, n);
+    }
     umlauf.gesehen.extend(keep);
     match weiter_ab {
         Some(ab) => {
             umlauf.ab = ab;
             state.umlauf_merken(wf, umlauf);
         }
+        // Teilscan (Obergrenze erreicht): was hinter der Grenze liegt, wurde nicht gesehen und darf nicht aus
+        // dem fluechtigen Zustand verschwinden (bekannte Cloud-Anzeigen, Beobachtungen).
+        None if zu_gross => {}
         None => {
             state.retain_keys(wf, &umlauf.gesehen);
             // `umlauf` bleibt weg: der naechste Takt beginnt vorn.
