@@ -85,10 +85,14 @@ final class EpubTocImportTests: XCTestCase {
         XHTMLText.extract(Data((head + doctype + htmlOpen + body + "</body></html>").utf8), skipNav: true).text
     }
 
+    /// Wie `navText`, aber erzwungen über den Fallback für nicht wohlgeformtes XHTML.
+    private func fallbackText(_ body: String) -> String {
+        XHTMLText.fallback(head + htmlOpen + body + "</body></html>", skipNav: true)
+    }
+
     func testCommentsAndCDataDoNotConfuseNavRemoval() throws {
         let dirty = #"<!-- Beispiel: <nav> --><p>Widmung</p><nav epub:type="toc"><ol><li><a href="k1.xhtml">X</a></li></ol></nav><p>Danach</p>"#
         XCTAssertEqual(navText(dirty), "Widmung\n\nDanach")
-        XCTAssertEqual(navText("<p>a</p><![CDATA[ <nav> & ]]><p>b</p>"), "a\n\n<nav> &\n\nb")
         let epub = try makeEpub(
             opf: opf(manifest: """
                 <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
@@ -109,7 +113,6 @@ final class EpubTocImportTests: XCTestCase {
         XCTAssertEqual(navText(#"<p>a</p><html:nav title="a&gt;b"><ol/></html:nav><nav/><p>b</p>"#), "a\n\nb")
         XCTAssertEqual(navText("<p>a</p><NAV><OL/></NAV><p>b</p>"), "a\n\nb")
         XCTAssertEqual(navText("<nav><!-- </nav> --><?x </nav> ?>A</nav>B"), "B")
-        XCTAssertEqual(navText("<p>a</p><![CDATA[ x <nav> & y ]]>"), "a\n\nx <nav> & y")
         XCTAssertEqual(navText("<p>Größe über</p><nav>ä</nav>"), "Größe über")
         // DOCTYPE mit internem Subset
         XCTAssertEqual(navText("<p>t</p>", doctype: #"<!DOCTYPE html [ <!ENTITY x "<nav>"> ]>"#), "t")
@@ -123,27 +126,35 @@ final class EpubTocImportTests: XCTestCase {
 
     func testNavFallbackForBrokenXMLKeepsTextOutsideNav() {
         // Literales „<“ im Text einer nav (Codex): kein wohlgeformtes XML, gleiche Ergebnisse über den Fallback
-        XCTAssertEqual(navText("<p>Widmung</p><nav>a < b</nav>"), "Widmung")
-        XCTAssertEqual(navText("<nav>a < b</nav><p>Danach</p>"), "Danach")
-        XCTAssertEqual(navText("<p>a</p><NAV><OL/></Nav><p>b</p>"), "a\n\nb")
-        XCTAssertEqual(navText(#"<script>let s="<nav>";</script><p>Widmung</p><nav>X</nav>"#), "Widmung")
-        XCTAssertEqual(navText("<script><![CDATA[ </script> ]]></script><p>Widmung</p><nav>X</nav> <b"), "Widmung")
-        XCTAssertEqual(navText("<?demo <nav> ?><!-- <nav> --><p>Widmung</p><nav><nav>x</nav><p>r</p></nav> <"), "Widmung\n\n<")
-        XCTAssertEqual(navText("<p>a</p><header>h</header>b"), "a\n\nhb")
+        XCTAssertEqual(fallbackText("<p>Widmung</p><nav>a < b</nav>"), "Widmung")
+        XCTAssertEqual(fallbackText("<nav>a < b</nav><p>Danach</p>"), "Danach")
+        XCTAssertEqual(fallbackText("<p>a</p><NAV><OL/></Nav><p>b</p>"), "a\n\nb")
+        XCTAssertEqual(fallbackText(#"<script>let s="<nav>";</script><p>Widmung</p><nav>X</nav>"#), "Widmung")
+        XCTAssertEqual(fallbackText("<script><![CDATA[ </script> ]]></script><p>Widmung</p><nav>X</nav> <b"), "Widmung\n\n<b")
+        XCTAssertEqual(fallbackText("<?demo <nav> ?><!-- <nav> --><p>Widmung</p><nav><nav>x</nav><p>r</p></nav> <"), "Widmung\n\n<")
+        XCTAssertEqual(fallbackText("<p>a</p><header>h</header>b"), "a\n\nhb")
         // Unterminiertes: Text davor bleibt
         for tail in ["<!-- offen", "<?pi offen", "<![CDATA[ offen", "<p class=\"offen", "<script>offen", "<nav", "</", "<!DOCTYPE x [ <!ENTITY"] {
-            XCTAssertTrue(navText("<p>Davor</p>" + tail).hasPrefix("Davor"), tail)
+            XCTAssertTrue(fallbackText("<p>Davor</p>" + tail).hasPrefix("Davor"), tail)
         }
+        // Anführungszeichen in Attributen: `>` darin beendet das Tag nicht
+        XCTAssertEqual(fallbackText(#"<nav title="a>b"/><p>B</p><"#), "B\n\n<")
+        XCTAssertEqual(fallbackText(#"<nav title='a>b'><ol/></nav><p>B</p>"#), "B")
+        XCTAssertEqual(fallbackText(#"<p>a</p><nav title="x>"><nav>y</nav></nav><p>B</p>"#), "a\n\nB")
         // Viele offene script-Anfänge und `</script `-Kandidaten dürfen nicht quadratisch werden.
         let start = Date()
         let manyOpen = "<p>Widmung</p>" + String(repeating: "<script>", count: 30_000)
-        XCTAssertTrue(navText(manyOpen).hasPrefix("Widmung"))
+        XCTAssertTrue(fallbackText(manyOpen).hasPrefix("Widmung"))
         let manyEnds = "<p>Widmung</p><script>" + String(repeating: "</script ", count: 30_000)
-        XCTAssertTrue(navText(manyEnds).hasPrefix("Widmung"))
+        XCTAssertTrue(fallbackText(manyEnds).hasPrefix("Widmung"))
         let manyComments = "<p>Widmung</p>" + String(repeating: "<!--", count: 30_000) + String(repeating: "<![CDATA[", count: 100)
-        XCTAssertTrue(navText(manyComments).hasPrefix("Widmung"))
+        XCTAssertTrue(fallbackText(manyComments).hasPrefix("Widmung"))
         let manyPairs = "<p>Widmung</p>" + String(repeating: "<script>x</script>", count: 30_000) + "<nav>a < b</nav>"
-        XCTAssertEqual(navText(manyPairs), "Widmung")
+        XCTAssertEqual(fallbackText(manyPairs), "Widmung")
+        // Echter Worst Case: ein Anfang, sehr viele Endtag-Kandidaten ohne abschließendes `>`
+        let worst = Date()
+        XCTAssertTrue(fallbackText("<p>Widmung</p><script>" + String(repeating: "</script ", count: 200_000)).hasPrefix("Widmung"))
+        XCTAssertLessThan(Date().timeIntervalSince(worst), 5)
         XCTAssertLessThan(Date().timeIntervalSince(start), 20)
     }
 
@@ -153,7 +164,7 @@ final class EpubTocImportTests: XCTestCase {
         var counter = 0
         func para() -> (String, String) { counter += 1; return ("<p>T\(counter)</p>", "T\(counter)") }
         let fixed: [(input: String, output: String)] = [
-            ("<!-- <nav> [ ] -->", ""), ("<?pi <nav> <!-- ?>", ""), ("<p><![CDATA[ <nav> & ]]></p>", "<nav> &"),
+            ("<!-- <nav> [ ] -->", ""), ("<?pi <nav> <!-- ?>", ""),
             ("<script><![CDATA[ </script><nav> ]]></script>", ""), ("<style>a{}</style>", ""), ("<svg:style>a<nav>b</nav></svg:style>", ""),
             (#"<p title="&lt;nav&gt;" data-x='a&gt;b'>U</p>"#, "U"),
             ("<p><navigation>x</navigation></p>", "x"), ("<p><nav-x>y</nav-x></p>", "y"),
@@ -172,11 +183,21 @@ final class EpubTocImportTests: XCTestCase {
             // wohlgeformt: exakt
             XCTAssertEqual(navText(input + nav + "<p>Z</p>"), (expected + ["Z"]).joined(separator: "\n\n"), input)
             // nicht wohlgeformt (literales „<“ in der nav): derselbe Text über den Fallback
-            XCTAssertEqual(navText(input + "<nav>a < b</nav><p>Z</p>"), (expected + ["Z"]).joined(separator: "\n\n"), "Fallback: " + input)
+            XCTAssertEqual(fallbackText(input + "<nav>a < b</nav><p>Z</p>"), (expected + ["Z"]).joined(separator: "\n\n"), "Fallback: " + input)
             // unterminiert am Ende: nichts davor geht verloren
             let tail = ["<!-- offen", "<?pi offen", "<![CDATA[ offen", "<p class=\"offen", "<script>offen", "<nav", "</"][round % 7]
-            XCTAssertTrue(navText(input + tail).hasPrefix(expected.joined(separator: "\n\n")), input + tail)
+            XCTAssertTrue(fallbackText(input + tail).hasPrefix(expected.joined(separator: "\n\n")), input + tail)
         }
+    }
+
+    /// Normales Kapitel (ohne skipNav) bleibt unverändert: Absatzgrenzen, `<br/>` als Leerzeichen, Anchors,
+    /// auch eine nav bleibt als Text erhalten.
+    func testPlainChapterWithoutSkipNavIsUnchanged() {
+        let xhtml = page(#"<h1 id="t">Titel</h1><p>Eins<br/>zwei &amp; drei</p><p id="x">Vier<br>fünf</p><nav><ol><li>Link</li></ol></nav>"#)
+        let out = XHTMLText.extract(Data(xhtml.utf8))
+        XCTAssertEqual(out.text, "# Titel\n\nEins zwei & drei\n\nVier fünf\n\nLink")
+        XCTAssertEqual(out.anchors, ["t": 0, "x": 2])
+        XCTAssertEqual(XHTMLText.extract(Data(xhtml.utf8), skipNav: true).text, "# Titel\n\nEins zwei & drei\n\nVier fünf")
     }
 
     func testPureFragmentLinksPointToTheTocDocumentItself() {

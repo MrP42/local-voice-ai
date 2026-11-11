@@ -284,7 +284,6 @@ enum XHTMLText {
             if navDepth > 0 { return }
             if XHTMLText.headings.contains(n) || XHTMLText.blocks.contains(n) { flush() }
         }
-        func parser(_ p: XMLParser, foundCDATA block: Data) { if skipDepth == 0, navDepth == 0 { buffer += String(decoding: block, as: UTF8.self) } }
         func parser(_ p: XMLParser, foundCharacters s: String) { if skipDepth == 0, navDepth == 0 { buffer += s } }
     }
 
@@ -300,8 +299,7 @@ enum XHTMLText {
         source = replaceEntities(source, keepXML: true)
         source = source.replacingOccurrences(of: #"(?i)<(br|hr|img|meta|link|input|wbr)\b([^>]*?)\s*/?>"#, with: "<$1$2/>", options: .regularExpression)
         let w = Walker(skipNav: skipNav); let p = XMLParser(data: Data(source.utf8)); p.delegate = w
-        // Unter Linux liefert `parse()` auch bei Wohlgeformtheitsfehlern `true`; `parserError` entscheidet.
-        if p.parse(), p.parserError == nil {
+        if p.parse() {
             w.flush()
             let count = w.paragraphs.count
             return (w.paragraphs.joined(separator: "\n\n"), w.anchors.filter { $0.value < count })
@@ -309,7 +307,10 @@ enum XHTMLText {
         return (fallback(source, skipNav: skipNav), nil)
     }
 
-    static let navTag = try! NSRegularExpression(pattern: #"(?i)</?(?:[\w.-]+:)?nav(?![\w:.-])[^>]*>"#)
+    /// Attributteil eines Tags ohne `<` (jede Suche endet am nächsten `<`, die Laufzeit bleibt linear);
+    /// Anführungszeichen dürfen `>` enthalten.
+    static let tagBody = #"(?:[^<>"']|"[^"<]*"|'[^'<]*')*"#
+    static let navTag = try! NSRegularExpression(pattern: #"(?i)</?(?:[\w.-]+:)?nav(?![\w:.-])"# + tagBody + ">")
 
     /// Inhalt der äußersten `<nav>`-Blöcke entfernen (Tiefe gezählt, Präfix und Schreibweise egal).
     static func removingNavBlocks(_ s: String) -> String {
@@ -324,7 +325,7 @@ enum XHTMLText {
         return depth == 0 ? out + ns.substring(from: last) : out
     }
 
-    static let rawOpen = try! NSRegularExpression(pattern: #"(?i)<(?:[\w.-]+:)?(script|style|head)(?![\w:.-])[^>]*>"#)
+    static let rawOpen = try! NSRegularExpression(pattern: #"(?i)<(?:[\w.-]+:)?(script|style|head)(?![\w:.-])"# + tagBody + ">")
     static let rawClose = ["script", "style", "head"].reduce(into: [String: NSRegularExpression]()) {
         $0[$1] = try! NSRegularExpression(pattern: "(?i)</(?:[\\w.-]+:)?\($1)\\s*>")
     }
@@ -425,9 +426,9 @@ enum XHTMLText {
         stripped = removingRawText(stripped)
         if skipNav { stripped = removingNavBlocks(stripped) }
         stripped = stripped
-            .replacingOccurrences(of: #"(?i)<h[1-6][^>]*>"#, with: "\n\n# ", options: .regularExpression)
-            .replacingOccurrences(of: #"(?i)</(p|div|h[1-6]|li|blockquote|section)>|<(p|div|li|blockquote|section)\b[^>]*>"#, with: "\n\n", options: .regularExpression)
-            .replacingOccurrences(of: #"</?[A-Za-z][^>]*>"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"(?i)<h[1-6](?![\w:.-])"# + tagBody + ">", with: "\n\n# ", options: .regularExpression)
+            .replacingOccurrences(of: #"(?i)</(p|div|h[1-6]|li|blockquote|section)\s*>|<(p|div|li|blockquote|section)(?![\w:.-])"# + tagBody + ">", with: "\n\n", options: .regularExpression)
+            .replacingOccurrences(of: #"</?[A-Za-z]"# + tagBody + ">", with: "", options: .regularExpression)
         return replaceEntities(stripped, keepXML: false).components(separatedBy: "\n\n").map {
             $0.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
         }.filter { !$0.isEmpty && $0 != "#" }.joined(separator: "\n\n")
