@@ -119,24 +119,48 @@ impl E5 {
                 .map_err(fehler)?
         };
         let (form, daten) = ausgaben[0].try_extract_tensor::<f32>().map_err(fehler)?;
-        if form.len() != 3 || form[0] as usize != b || form[1] as usize != n {
-            return Err("semantik.modell".into());
-        }
-        let dim = form[2] as usize;
-        Ok((0..b)
+        let dim = ausgabe_pruefen(form, daten.len(), b, n)?;
+        (0..b)
             .map(|z| {
                 mittel(
                     &daten[z * n * dim..(z + 1) * n * dim],
                     &maske[z * n..(z + 1) * n],
                     dim,
                 )
+                .ok_or_else(|| "semantik.modell".to_string())
             })
-            .collect())
+            .collect()
     }
 }
 
-/// Mittelwert über die maskierten Zeilen, L2-normiert.
-fn mittel(zustaende: &[f32], maske: &[i64], dim: usize) -> Vec<f32> {
+/// Prüft Form und Größe der Modellausgabe `[b, n, DIMENSION]` gegen die Eingabe und liefert die
+/// Dimension. Ein anderes Modell (andere Breite, abgeschnittene Daten, negative oder übergroße Maße)
+/// ergäbe sonst Vektoren falscher Länge im Index oder einen Indexfehler beim Schneiden.
+fn ausgabe_pruefen(form: &[i64], laenge: usize, b: usize, n: usize) -> Result<usize, String> {
+    let fehler = || "semantik.modell".to_string();
+    let [fb, fn_, fd] = form else {
+        return Err(fehler());
+    };
+    let (fb, fn_, fd) = (
+        usize::try_from(*fb).map_err(|_| fehler())?,
+        usize::try_from(*fn_).map_err(|_| fehler())?,
+        usize::try_from(*fd).map_err(|_| fehler())?,
+    );
+    if fb != b || fn_ != n || fd != super::DIMENSION {
+        return Err(fehler());
+    }
+    let erwartet = b
+        .checked_mul(n)
+        .and_then(|x| x.checked_mul(fd))
+        .ok_or_else(fehler)?;
+    if laenge != erwartet {
+        return Err(fehler());
+    }
+    Ok(fd)
+}
+
+/// Mittelwert über die maskierten Zeilen, L2-normiert. `None`, wenn das Ergebnis nicht endlich ist.
+fn mittel(zustaende: &[f32], maske: &[i64], dim: usize) -> Option<Vec<f32>> {
     let mut v = vec![0f32; dim];
     let mut zahl = 0f32;
     for (i, m) in maske.iter().enumerate() {
@@ -151,8 +175,7 @@ fn mittel(zustaende: &[f32], maske: &[i64], dim: usize) -> Vec<f32> {
     if zahl > 0.0 {
         v.iter_mut().for_each(|a| *a /= zahl);
     }
-    super::normieren(&mut v);
-    v
+    super::normieren(&mut v).then_some(v)
 }
 
 #[cfg(test)]
@@ -162,8 +185,32 @@ mod tests {
     #[test]
     fn mittel_beachtet_die_maske_und_normiert() {
         let z = [1.0, 0.0, 3.0, 0.0, 100.0, 100.0];
-        let v = mittel(&z, &[1, 1, 0], 2);
+        let v = mittel(&z, &[1, 1, 0], 2).unwrap();
         assert!((v[0] - 1.0).abs() < 1e-6 && v[1].abs() < 1e-6, "{v:?}");
+    }
+
+    #[test]
+    fn mittel_weist_nicht_endliche_werte_ab() {
+        assert!(mittel(&[f32::NAN, 1.0], &[1], 2).is_none());
+        assert!(mittel(&[f32::INFINITY, 1.0], &[1], 2).is_none());
+        // Zwei endliche Werte, deren Summe in f32 überläuft.
+        assert!(mittel(&[f32::MAX, 0.0, f32::MAX, 0.0], &[1, 1], 2).is_none());
+    }
+
+    #[test]
+    fn ausgabeform_muss_zu_eingabe_und_384_passen() {
+        let ok = |form: &[i64], len: usize| ausgabe_pruefen(form, len, 2, 5);
+        assert_eq!(ok(&[2, 5, 384], 2 * 5 * 384), Ok(384));
+        // Andere Dimension (anderes Modell).
+        assert!(ok(&[2, 5, 768], 2 * 5 * 768).is_err());
+        // Falsche Stapel- oder Längenangabe, Rang, Datenlänge.
+        assert!(ok(&[1, 5, 384], 5 * 384).is_err());
+        assert!(ok(&[2, 4, 384], 2 * 4 * 384).is_err());
+        assert!(ok(&[2, 5], 10).is_err());
+        assert!(ok(&[2, 5, 384], 2 * 5 * 384 - 1).is_err());
+        // Negative Maße wären als `usize` riesig.
+        assert!(ok(&[2, 5, -1], 0).is_err());
+        assert!(ok(&[-2, 5, 384], 0).is_err());
     }
 
     #[test]

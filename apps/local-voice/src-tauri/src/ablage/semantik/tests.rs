@@ -488,3 +488,39 @@ fn eval_tor_mit_echtem_modell() {
         "Eval-Tor und SEMANTIK_STANDARD widersprechen sich"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Normierung (lva#508): nicht endliche Werte dürfen nie in den Index
+// ---------------------------------------------------------------------------
+
+#[test]
+fn normieren_liefert_einheitsvektor_und_laesst_den_nullvektor() {
+    let mut v = vec![3.0f32, 4.0];
+    assert!(normieren(&mut v));
+    assert!(
+        (v[0] - 0.6).abs() < 1e-6 && (v[1] - 0.8).abs() < 1e-6,
+        "{v:?}"
+    );
+    let mut null = vec![0.0f32; 4];
+    assert!(normieren(&mut null));
+    assert_eq!(null, vec![0.0; 4]);
+    // Große endliche Werte: die Norm läuft in f64 und überläuft nicht.
+    let mut gross = vec![f32::MAX, f32::MAX];
+    assert!(normieren(&mut gross));
+    assert!(
+        (gross[0] - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-6,
+        "{gross:?}"
+    );
+}
+
+#[test]
+fn normieren_weist_nan_und_unendlich_ab_und_aendert_nichts() {
+    for schlecht in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        let mut v = vec![1.0f32, schlecht, 2.0];
+        let vorher = v.clone();
+        assert!(!normieren(&mut v));
+        // NaN != NaN: bitweise vergleichen.
+        let bits = |x: &[f32]| x.iter().map(|f| f.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits(&v), bits(&vorher));
+    }
+}
