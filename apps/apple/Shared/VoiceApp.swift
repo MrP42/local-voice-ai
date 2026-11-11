@@ -251,8 +251,8 @@ private struct VoiceHome: View {
                     VoiceBrandMark().frame(width: 36, height: 36).accessibilityHidden(true)
                 }
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(model.recording ? "Aufnahme läuft" : "Deine Sprachnotiz").font(.headline)
-                    Text(model.recording ? "Zum Beenden sichern · maximal 30 Sekunden" : "Lokal aufnehmen, verarbeiten und aufbewahren")
+                    Text(cardTitle).font(.headline)
+                    Text(cardSubtitle)
                         .font(.caption).foregroundStyle(VoicePalette.secondaryText)
                 }
             }
@@ -335,6 +335,21 @@ private struct VoiceHome: View {
         if model.assistantMode { return "Gespräch starten" }
         #endif
         return "Sprechen"
+    }
+    /// Überschrift der Karte: mit Freisprechen führt der Hauptknopf ins Gespräch, sonst zur Sprachnotiz.
+    private var cardTitle: String {
+        if model.recording { return "Aufnahme läuft" }
+        #if os(iOS)
+        if model.assistantMode { return "Dein Assistent" }
+        #endif
+        return "Deine Sprachnotiz"
+    }
+    private var cardSubtitle: String {
+        if model.recording { return "Zum Beenden sichern · maximal 30 Sekunden" }
+        #if os(iOS)
+        if model.assistantMode { return "Frag nach Büchern, Besprechungen, Notizen und Ablage" }
+        #endif
+        return "Lokal aufnehmen, verarbeiten und aufbewahren"
     }
     private var recordHint: String {
         if model.recording { return "Beendet die Aufnahme und speichert sie auf diesem Gerät." }
