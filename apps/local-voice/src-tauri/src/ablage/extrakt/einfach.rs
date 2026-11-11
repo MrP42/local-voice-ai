@@ -104,8 +104,22 @@ fn meta_tags(kopf: &str) -> Vec<&str> {
             })
         });
         if let Some(name) = roh_text {
+            // Endet nur an `</name` mit Namensgrenze (`</scriptx>` beendet keinen Skriptblock).
             let zu = format!("</{name}");
-            pos = rest.find(&zu).map_or(kopf.len(), |e| start + e + zu.len());
+            let mut such = 0;
+            pos = kopf.len();
+            while let Some(e) = rest[such..].find(&zu) {
+                let nach = such + e + zu.len();
+                if rest[nach..]
+                    .chars()
+                    .next()
+                    .is_none_or(|c| c.is_ascii_whitespace() || matches!(c, '>' | '/'))
+                {
+                    pos = start + nach;
+                    break;
+                }
+                such = nach;
+            }
             continue;
         }
         if let Some(r) = rest.strip_prefix("<meta") {
@@ -527,6 +541,7 @@ mod tests {
             "<script>var s = '<meta charset=windows-1252>';</script>",
             "<SCRIPT type=text/javascript>x='<meta charset=windows-1252>'</SCRIPT>",
             "<style>/* <meta charset=windows-1252> */</style>",
+            "<script>let s=\"</scriptx><meta charset=windows-1252>\";</script>",
         ] {
             let mut b = kopf.as_bytes().to_vec();
             b.extend_from_slice(b"<p>");
