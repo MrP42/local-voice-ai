@@ -808,7 +808,10 @@ mod system {
     /// Aufrufer nicht folgen will. Das Urteil davor und danach macht der Aufrufer.
     pub fn hochstufen(eins: &fs::File, _p: &Path, art: OeffnenArt) -> io::Result<fs::File> {
         use std::os::windows::io::FromRawHandle;
-        let mut flags = FILE_FLAG_OPEN_NO_RECALL;
+        // `ReOpenFile` weist `FILE_FLAG_OPEN_NO_RECALL` mit ERROR_INVALID_PARAMETER ab (auf Windows gemessen,
+        // jede Kombination). Der Abrufschutz liegt deshalb im Urteil am Stufe-1-Handle (ohne Lesezugriff, mit
+        // NO_RECALL geöffnet), das unmittelbar davor abgeschlossen ist: ein Platzhalter wird nie hochgestuft.
+        let mut flags = 0u32;
         if !art.folgen {
             flags |= FILE_FLAG_OPEN_REPARSE_POINT;
         }

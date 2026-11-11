@@ -527,13 +527,14 @@ mod sys {
         f: &mut dyn FnMut(Eintrag) -> ControlFlow<()>,
     ) -> Result<bool, OeffnenFehler> {
         // Hochstufen auf Listenrecht, dasselbe Objekt (kein Pfad); vorher hat der Aufrufer das Handle beurteilt.
+        // Ohne `FILE_FLAG_OPEN_NO_RECALL`: `ReOpenFile` weist es mit ERROR_INVALID_PARAMETER ab.
         // SAFETY: gültiges, offenes Handle (`d.f` lebt über den Aufruf); `ReOpenFile` liefert ein eigenes Handle.
         let h = unsafe {
             ReOpenFile(
                 HANDLE(d.f.as_raw_handle()),
                 FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES,
                 FILE_SHARE_MODE(TEILEN_OHNE_LOESCHEN),
-                FILE_FLAGS_AND_ATTRIBUTES(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_NO_RECALL),
+                FILE_FLAGS_AND_ATTRIBUTES(FILE_FLAG_BACKUP_SEMANTICS),
             )
         }
         .map_err(|e| OeffnenFehler::Io(io::Error::other(e)))?;
