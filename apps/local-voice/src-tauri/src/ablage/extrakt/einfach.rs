@@ -86,96 +86,107 @@ fn zeichensatz_aus(name: &str) -> Option<Zeichensatz> {
     })
 }
 
-/// Die `<meta …>`-Tags (ohne `>`) im Text, ohne Kommentare `<!-- -->` sowie `<script>`- und
-/// `<style>`-Inhalte. `kopf` besteht nur aus ASCII (Kleinschreibung), Bytegrenzen sind Zeichengrenzen.
-fn meta_tags(kopf: &str) -> Vec<&str> {
-    let mut tags = Vec::new();
-    let mut pos = 0;
-    while let Some(rel) = kopf[pos..].find('<') {
-        let start = pos + rel;
-        let rest = &kopf[start..];
-        if rest.starts_with("<!--") {
-            pos = rest.find("-->").map_or(kopf.len(), |e| start + e + 3);
+/// Ein Attribut eines Tags: Name und Wert ohne Anführungszeichen (der Kopf ist bereits klein geschrieben).
+type Attribut<'a> = (&'a str, &'a str);
+
+/// Attribute ab `s` (direkt hinter dem Tagnamen) bis zum schließenden `>`, wie im Vorabscan des
+/// HTML-Standards („get an attribute“): Werte in `"…"`/`'…'` dürfen `>` und `<` enthalten.
+/// Liefert die Attribute und den Index hinter dem `>` (ohne `>` das Textende).
+fn attribute(s: &str) -> (Vec<Attribut<'_>>, usize) {
+    let b = s.as_bytes();
+    let leer = |c: u8| c.is_ascii_whitespace();
+    let mut i = 0;
+    let mut attr = Vec::new();
+    loop {
+        while i < b.len() && (leer(b[i]) || b[i] == b'/') {
+            i += 1;
+        }
+        if i >= b.len() {
+            return (attr, b.len());
+        }
+        if b[i] == b'>' {
+            return (attr, i + 1);
+        }
+        // Der Name beginnt mit beliebigem Zeichen (auch `=`) und endet vor Leerraum, `/`, `>` oder `=`.
+        let n0 = i;
+        i += 1;
+        while i < b.len() && !leer(b[i]) && !matches!(b[i], b'/' | b'>' | b'=') {
+            i += 1;
+        }
+        let name = &s[n0..i];
+        while i < b.len() && leer(b[i]) {
+            i += 1;
+        }
+        if i >= b.len() || b[i] != b'=' {
+            attr.push((name, ""));
             continue;
         }
-        let roh_text = ["script", "style"].into_iter().find(|n| {
-            rest[1..].strip_prefix(n).is_some_and(|r| {
-                r.starts_with(|c: char| c.is_ascii_whitespace() || matches!(c, '>' | '/'))
-            })
-        });
-        if let Some(name) = roh_text {
-            // Endet nur an `</name` mit Namensgrenze (`</scriptx>` beendet keinen Skriptblock).
-            let zu = format!("</{name}");
-            let mut such = 0;
-            pos = kopf.len();
-            while let Some(e) = rest[such..].find(&zu) {
-                let nach = such + e + zu.len();
-                if rest[nach..]
-                    .chars()
-                    .next()
-                    .is_none_or(|c| c.is_ascii_whitespace() || matches!(c, '>' | '/'))
-                {
-                    pos = start + nach;
-                    break;
-                }
-                such = nach;
+        i += 1;
+        while i < b.len() && leer(b[i]) {
+            i += 1;
+        }
+        if i < b.len() && matches!(b[i], b'"' | b'\'') {
+            let q = b[i];
+            let v0 = i + 1;
+            i = v0;
+            while i < b.len() && b[i] != q {
+                i += 1;
             }
-            continue;
+            attr.push((name, &s[v0..i]));
+            i = (i + 1).min(b.len());
+        } else {
+            let v0 = i;
+            while i < b.len() && !leer(b[i]) && b[i] != b'>' {
+                i += 1;
+            }
+            attr.push((name, &s[v0..i]));
         }
-        if let Some(r) = rest.strip_prefix("<meta").filter(|r| {
-            // Nur das Tag `meta` selbst (`<metadata>` ist keins).
-            r.chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_whitespace() || matches!(c, '>' | '/'))
-        }) {
-            let ende = tag_ende(r);
-            tags.push(&r[..ende]);
-            pos = start + "<meta".len() + ende;
-            continue;
-        }
-        // Jedes andere Tag (`<name`, `</name`, `<!…`, `<?…`) wird samt zitierter Attributwerte übersprungen,
-        // wie im Vorabscan des HTML-Standards: ein `<meta` in einem Attributwert ist kein Tag.
-        let zweites = rest[1..].chars().next();
-        if zweites.is_some_and(|c| c.is_ascii_alphabetic() || matches!(c, '/' | '!' | '?')) {
-            pos = start + 1 + tag_ende(&rest[1..]);
-            continue;
-        }
-        pos = start + 1;
     }
-    tags
 }
 
-/// Index des schließenden `>` eines Tags (ohne das `<`), Attributwerte in `"…"` oder `'…'` nach einem `=`
-/// werden übersprungen; ohne `>` das Ende des Textes.
-fn tag_ende(s: &str) -> usize {
-    let b = s.as_bytes();
-    let mut i = 0;
-    while i < b.len() {
-        match b[i] {
-            b'>' => return i,
-            b'=' => {
-                i += 1;
-                while i < b.len() && b[i].is_ascii_whitespace() {
-                    i += 1;
-                }
-                if i < b.len() && (b[i] == b'"' || b[i] == b'\'') {
-                    let q = b[i];
-                    i += 1;
-                    while i < b.len() && b[i] != q {
-                        i += 1;
-                    }
-                    i += 1;
-                }
+/// `charset=…` aus dem Wert von `content` („extract a character encoding from a meta element“).
+fn charset_aus_content(content: &str) -> Option<&str> {
+    let mut pos = 0;
+    while let Some(i) = content[pos..].find("charset") {
+        let nach = pos + i + "charset".len();
+        let Some(wert) = content[nach..].trim_start().strip_prefix('=') else {
+            pos = nach;
+            continue;
+        };
+        let wert = wert.trim_start();
+        return match wert.chars().next() {
+            Some(q @ ('"' | '\'')) => wert[1..].find(q).map(|e| &wert[1..1 + e]),
+            Some(_) => {
+                let e = wert
+                    .find(|c: char| c.is_ascii_whitespace() || c == ';')
+                    .unwrap_or(wert.len());
+                Some(&wert[..e])
             }
-            _ => i += 1,
-        }
+            None => None,
+        };
     }
-    b.len()
+    None
+}
+
+/// Zeichensatz eines `<meta>` aus seinen Attributen: `charset` nur als Attributname, `content` nur
+/// zusammen mit `http-equiv=content-type`. Bei doppelten Attributen gilt das erste.
+fn meta_zeichensatz(attr: &[Attribut<'_>]) -> Option<Zeichensatz> {
+    let erstes = |n: &str| attr.iter().find(|(name, _)| *name == n).map(|&(_, w)| w);
+    if let Some(cs) = erstes("charset") {
+        return zeichensatz_aus(cs);
+    }
+    if erstes("http-equiv").map(str::trim) != Some("content-type") {
+        return None;
+    }
+    erstes("content")
+        .and_then(charset_aus_content)
+        .and_then(zeichensatz_aus)
 }
 
 /// Zeichensatz aus `<meta charset=…>` oder `<meta http-equiv=Content-Type content="…; charset=…">` in den
-/// ersten 1024 Bytes (wie der Vorabscan der Browser; Groß-/Kleinschreibung egal, Skripte bleiben
-/// unberücksichtigt, es wird nichts ausgeführt).
+/// ersten 1024 Bytes, nach dem Vorabscan des HTML-Standards (Groß-/Kleinschreibung egal, es wird nichts
+/// ausgeführt). Jedes Tag wird mit seinen Attributen gelesen; Kommentare sowie `<script>`- und
+/// `<style>`-Inhalte zählen nicht. Ein unbekannter Name (z. B. ein Mehrbytesatz) wird übergangen.
 fn html_zeichensatz(b: &[u8]) -> Option<Zeichensatz> {
     let kopf: String = b[..b.len().min(1024)]
         .iter()
@@ -187,24 +198,56 @@ fn html_zeichensatz(b: &[u8]) -> Option<Zeichensatz> {
             }
         })
         .collect();
-    // Nur innerhalb von `<meta …>`: Text oder Attribute anderer Elemente mit „charset“ zählen nicht,
-    // ebenso wenig Kommentare, `<script>` und `<style>`.
-    for meta in meta_tags(&kopf) {
-        let Some(i) = meta.find("charset") else {
+    let grenze = |c: char| c.is_ascii_whitespace() || matches!(c, '>' | '/');
+    let mut pos = 0;
+    while let Some(rel) = kopf[pos..].find('<') {
+        let start = pos + rel;
+        let rest = &kopf[start..];
+        if rest.starts_with("<!--") {
+            pos = rest.find("-->").map_or(kopf.len(), |e| start + e + 3);
             continue;
-        };
-        let Some(wert) = meta[i + "charset".len()..].trim_start().strip_prefix('=') else {
-            continue;
-        };
-        let wert = wert.trim_start();
-        let ende = if wert.starts_with(['"', '\'']) {
-            wert[1..].find(['"', '\'']).map_or(wert.len(), |e| e + 2)
+        }
+        let (end_tag, n0) = if rest.starts_with("</") {
+            (true, 2)
         } else {
-            wert.find(|c: char| c.is_ascii_whitespace() || matches!(c, ';' | '"' | '\'' | '/'))
-                .unwrap_or(wert.len())
+            (false, 1)
         };
-        // Unbekannter Name (z. B. ein Mehrbytesatz): wie ohne Angabe weiter, nicht raten.
-        return zeichensatz_aus(&wert[..ende]);
+        if !rest[n0..].starts_with(|c: char| c.is_ascii_alphabetic()) {
+            // `<!…`, `<?…` und `</` ohne Buchstaben enden am nächsten `>`; sonst ist `<` nur Text.
+            pos = if rest[1..].starts_with(['!', '?', '/']) {
+                rest.find('>').map_or(kopf.len(), |e| start + e + 1)
+            } else {
+                start + 1
+            };
+            continue;
+        }
+        let name_ende = rest[n0..].find(grenze).map_or(rest.len(), |e| n0 + e);
+        let name = &rest[n0..name_ende];
+        let (attr, ende) = attribute(&rest[name_ende..]);
+        pos = start + name_ende + ende;
+        if end_tag {
+            continue;
+        }
+        if name == "meta" {
+            if let Some(z) = meta_zeichensatz(&attr) {
+                return Some(z);
+            }
+            continue;
+        }
+        if matches!(name, "script" | "style") {
+            // Erst hinter dem vollständigen Starttag suchen; endet nur an `</name` mit Namensgrenze.
+            let zu = format!("</{name}");
+            let mut such = pos;
+            pos = kopf.len();
+            while let Some(e) = kopf[such..].find(&zu) {
+                let nach = such + e + zu.len();
+                if kopf[nach..].chars().next().is_none_or(grenze) {
+                    pos = nach;
+                    break;
+                }
+                such = nach;
+            }
+        }
     }
     None
 }
@@ -586,6 +629,15 @@ mod tests {
             "<metadata title=\"<meta charset=windows-1252>\"></metadata>",
             "<div data-x='<meta charset=windows-1252>'></div>",
             "</div title=\"<meta charset=windows-1252>\">",
+            // Codex Runde 4: Endtag-Suche erst hinter dem Starttag; `charset` nur als Attributname;
+            // `content` nur mit `http-equiv=content-type`.
+            "<script title=\"</script><meta charset=windows-1252>\"></script>",
+            "<style title='</style><meta charset=windows-1252>'></style>",
+            "<meta title=\"charset=windows-1252\">",
+            "<meta data-charset=windows-1252>",
+            "<meta content=\"text/html; charset=windows-1252\">",
+            "<meta http-equiv=refresh content=\"0; charset=windows-1252\">",
+            "<meta name=x content='charset=windows-1252'>",
         ] {
             let mut b = kopf.as_bytes().to_vec();
             b.extend_from_slice(b"<p>");
@@ -599,6 +651,18 @@ mod tests {
         // Zitiertes `>` vor einem echten `<meta>` beendet das vorige Tag nicht vorzeitig.
         let b = b"<div title=\"a>b\"></div><meta charset=windows-1252><p>5\x80</p>";
         assert_eq!(text_von(b), "5€");
+        // Echte Angaben mit weiteren Attributen gelten.
+        for kopf in [
+            "<meta name=x charset=windows-1252>",
+            "<meta content=\"text/html; charset=windows-1252\" http-equiv=Content-Type>",
+            "<meta http-equiv='content-type' content='text/html;charset=\"windows-1252\"'>",
+            "<script src=a></script><meta charset=windows-1252>",
+            "<meta charset=shift_jis><meta charset=windows-1252>",
+        ] {
+            let mut b = kopf.as_bytes().to_vec();
+            b.extend_from_slice(b"<p>5\x80</p>");
+            assert_eq!(text_von(&b), "5€", "{kopf}");
+        }
     }
 
     #[test]
