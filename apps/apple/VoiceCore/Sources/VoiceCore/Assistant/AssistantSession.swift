@@ -737,6 +737,13 @@ public actor AssistantSession {
     /// Die wirksame Cloud-Zustimmung dieser Sitzung.
     public nonisolated var effectiveCloudConsent: Bool { release.snapshot.cloudConsent }
 
+    /// Bereiche UND Cloud-Zustimmung aus EINEM Lesen: Wer beides zusammen braucht, liest nicht zweimal (dazwischen kann sich der Stand
+    /// durch eine Änderung ändern).
+    public nonisolated var effectiveState: (areas: Set<AssistantArea>, cloudConsent: Bool) {
+        let snapshot = release.snapshot
+        return (snapshot.areas, snapshot.cloudConsent)
+    }
+
     /// Zustand des Datenkontexts: `.data` (jede Runde antwortet aus den Inhalten) oder `.free` (Runden ohne Quelle möglich).
     public nonisolated var contextMode: AssistantContext.Mode { context.mode }
 

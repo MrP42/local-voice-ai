@@ -13,6 +13,11 @@ import Foundation
 //   Durchgang meldet nichts. Reißt eine Änderung ab, ohne `changed` zu melden, bleibt der Bestand `stale` (fail-closed); die
 //   Hilfe `around` meldet das Ende auch bei einem Fehler.
 // - Eine Sitzung, die sich anhängt, während der Bestand nicht dem Stand der Quellen entspricht, ist sofort `stale`.
+// - Wer meldet: Jede Schreibstelle der Quellen ruft `around` (Bücher: PhoneLibrary.importText und LibrarySync.place, Ablage:
+//   AblageSpeicher und AblageSync). Der Speicher der Notizen (`DurableStore`, auch auf der Uhr) kennt die Meldestelle nicht, sondern
+//   die Weiche `NoteChangeHook` (Löschen, Transkript, Antwort, eingehende Antwort); die Quelle der iPhone-Seite hängt die Meldestelle
+//   dort ein. Zusätzlich hören die Quellen der iPhone-Seite auf die @Published-Sichten (`willSet`, Netz zweiter Linie, siehe
+//   `AssistantSources.observeStores`); `VoiceModel.deleteNote` hält die äußere Klammer offen, bis auch die Sicht den neuen Stand trägt.
 //
 // Sperrordnung (außen nach innen): Meldestelle → Sperre der Freigabe → Zeilenschlange des Protokolls (Blatt). Die Freigabe ruft nie
 // hierher zurück, und unter der Sperre der Freigabe wird nie auf die Meldestelle gewartet.

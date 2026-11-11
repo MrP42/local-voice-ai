@@ -215,12 +215,15 @@ private actor AssistantIndexer {
 
         for job in notes {
             if Task.isCancelled { report.cancelled = true; return report }
-            keep[.notes, default: []].insert(job.id)
             let version = "\(job.transcript.utf8.count)|\(job.reply.utf8.count)|\(job.transcript.hashValue ^ job.reply.hashValue)"
             let same = await unchanged(.notes, job.id, version)
-            if !same, let doc = Self.noteDocument(job, version: version) {
+            if same {
+                keep[.notes, default: []].insert(job.id)
+            } else if let doc = Self.noteDocument(job, version: version) {
+                keep[.notes, default: []].insert(job.id)
                 if !(await put(doc)) { report.skipped += 1 }
             }
+            // Ließ sich die geänderte Notiz nicht mehr aufnehmen (kein Block), bleibt sie nicht mit dem alten Text im Bestand.
             done += 1
             progress(done, total)
         }

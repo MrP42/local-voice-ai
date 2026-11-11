@@ -517,11 +517,13 @@ final class AssistantController: ObservableObject {
             observeRelease(of: next)
             speaker.gate = next.playbackGate
             session = next
-            areas = next.effectiveAreas
+            // Ein Lesen für Bereiche und Zustimmung (nicht mehrere Lesungen, zwischen denen sich der Stand ändern kann).
+            let effective = next.effectiveState
+            areas = effective.areas
             AssistantContentWatch.shared.attach(next)
             // Der Speicher des Ziels kennt die Zustimmung nicht mehr (Widerruf in den Einstellungen): sie ist auch in der Datei weg.
-            if let target = built.target, next.effectiveCloudConsent, !AssistantConsent.isGranted(target, areas: next.effectiveAreas) {
-                revokeConsent(areas: next.effectiveAreas)
+            if let target = built.target, effective.cloudConsent, !AssistantConsent.isGranted(target, areas: effective.areas) {
+                revokeConsent(areas: effective.areas)
             }
         } else {
             speaker.gate = nil

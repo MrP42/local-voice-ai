@@ -190,8 +190,8 @@ final class AssistantCounterexampleTests: XCTestCase {
                           sections: AssistantSections.blocks(of: stored, locator: "11.11.2026, 14:03"))
     }
 
-    /// B1: Die Notiz ist „Alpha\rBeta“ (ein Zeilenende `\r`). Ausgegeben wird GENAU diese Bytefolge. Gegen 5080d95 rot: Der Kern
-    /// setzte die Zeilen mit `\n` zusammen und gab „Alpha\nBeta“ aus, also nicht den gespeicherten Text.
+    /// B1: Die Notiz ist „Alpha\rBeta“ (ein Zeilenende `\r`). Ausgegeben wird GENAU diese Bytefolge. Gegen 5080d95 ROT (gemessen): Der
+    /// Kern setzte die Zeilen mit `\n` zusammen und gab „Alpha\nBeta“ aus, also nicht den gespeicherten Text.
     func testB1ANoteStoredAsAlphaCarriageReturnBetaIsOutputWithTheCarriageReturn() async {
         let out = await quotes(of: [note("Alpha\rBeta")], question: "Alpha Beta?", answer: "Alpha Beta")
         XCTAssertEqual(out.count, 1, "das Zitat kommt: \(out)")
@@ -199,7 +199,7 @@ final class AssistantCounterexampleTests: XCTestCase {
     }
 
     /// B1: Zeilenenden (`\r\n`), doppelte Leerzeichen, Tabs, NFD-Umlaute und Rand-Leerraum bleiben, wie gespeichert; ein Trenner
-    /// (Leerzeile) gehört nie zum Block, ein Zeilenende darin schon.
+    /// (Leerzeile) gehört nie zum Block, ein Zeilenende darin schon. Gegen 5080d95 ROT (gemessen).
     func testB1WhitespaceAndUnicodeFormOfTheStoredNoteSurviveByteForByte() async {
         let cases: [(name: String, stored: String, expected: String)] = [
             ("CRLF", "Quasselbert wandert mit dem Fahrrad\r\nnach Pappelhausen.", "Quasselbert wandert mit dem Fahrrad\r\nnach Pappelhausen."),
@@ -218,7 +218,8 @@ final class AssistantCounterexampleTests: XCTestCase {
     }
 
     /// B1, Quellart Besprechung: Ausgegeben wird das gespeicherte Textfeld des Segments (ohne Sprecher, nicht getrimmt), nicht die
-    /// Suchzeile „Anna: …“; ohne Rohtext kommt das Segment nie.
+    /// Suchzeile „Anna: …“; ohne Rohtext kommt das Segment nie. Gegen 5080d95 NICHT AUSDRÜCKBAR (den Rohtext `raw` der Abschnitte gibt
+    /// es dort nicht; Beleg: der `\r`-Test oben ist rot).
     func testB1ATranscriptSegmentIsOutputAsItsStoredTextFieldAndNeverAsTheSearchLine() async {
         let stored = " Quasselbert wandert  mit dem Fahrrad\r\nnach Pappelhausen. "
         func meeting(raw: String?) -> AssistantDocument {
@@ -235,7 +236,8 @@ final class AssistantCounterexampleTests: XCTestCase {
     }
 
     /// B1, Quellart Buch: Der Absatz wird aus dem gespeicherten Buchtext geschnitten (Zeilenende und doppelte Leerzeichen bleiben);
-    /// enthält er Stil- oder Sprechermarken, gibt es keinen eindeutigen Rohtext: der Absatz kommt nie.
+    /// enthält er Stil- oder Sprechermarken, gibt es keinen eindeutigen Rohtext: der Absatz kommt nie. Gegen 5080d95 NICHT AUSDRÜCKBAR
+    /// (den Rohtext `raw` der Abschnitte gibt es dort nicht; Beleg: der `\r`-Test oben ist rot).
     func testB1ABookParagraphIsCutFromTheStoredBookTextAndOneWithMarksIsNeverQuoted() async {
         func book(_ paragraph: String) -> AssistantDocument {
             AssistantDocument(item: AssistantItem(area: .books, id: "b1", title: "Der Titel Flimmerkasten"), version: "1",
@@ -253,7 +255,8 @@ final class AssistantCounterexampleTests: XCTestCase {
         }
     }
 
-    /// B1: Erzeugter Text, Mail und Kalender kommen nie, auch wenn der Aufrufer einen Rohtext mitgibt.
+    /// B1: Erzeugter Text, Mail und Kalender kommen nie, auch wenn der Aufrufer einen Rohtext mitgibt. Gegen 5080d95 NICHT AUSDRÜCKBAR
+    /// (den Rohtext `raw` der Abschnitte gibt es dort nicht; Beleg: der `\r`-Test oben ist rot).
     func testB1GeneratedMailAndCalendarBlocksAreNeverQuotedEvenWithARawText() async {
         for kind in [AssistantSourceKind.generated, .mail, .calendar] {
             let text = "Quasselbert wandert mit dem Fahrrad nach Pappelhausen."
@@ -266,8 +269,10 @@ final class AssistantCounterexampleTests: XCTestCase {
 
     // MARK: B2: das Protokoll ist dauerhaft
 
-    /// B2: Die Zeile „beabsichtigt“ steht dauerhaft (fsync der Datei), BEVOR der Austausch der Zustandsdatei beginnt. Gegen 5080d95 rot:
-    /// Der Schreiber sicherte nie (kein fsync), die Zeile konnte nach einem Stromausfall fehlen, obwohl die Datei schon ersetzt war.
+    /// B2: Die Zeile „beabsichtigt“ steht dauerhaft (fsync der Datei), BEVOR der Austausch der Zustandsdatei beginnt. Der Schreiber von
+    /// 5080d95 sicherte nie (kein fsync): Die Zeile konnte nach einem Stromausfall fehlen, obwohl die Datei schon ersetzt war. Gegen
+    /// 5080d95 NICHT AUSDRÜCKBAR (das Dateisystem des Protokolls ist dort nicht einhängbar); statischer Beleg: in
+    /// AssistantAuditLog.swift von 5080d95 steht kein `synchronize`, `fsync` oder `syncFile` (Suche leer).
     func testB2TheIntentLineIsDurableBeforeTheStateFileReplaceBegins() async throws {
         try seed(AssistantReleaseRecord(localAreas: [.books], cloudAreas: [.books]))
         let rec = Recorder()
@@ -289,8 +294,10 @@ final class AssistantCounterexampleTests: XCTestCase {
     }
 
     /// B2: Scheitert das fsync der Pflichtzeile, gilt sie als nicht geschrieben: kein Modell, keine Ausgabe, Ausgang „Fehler“. Die
-    /// Laufnummer wird nicht doppelt vergeben: Der zweite Versuch trägt dieselbe, ein neuer Prozesslauf die nächste. Gegen 5080d95 rot:
-    /// ohne fsync gab es keinen Fehler, die Anfrage lief.
+    /// Laufnummer wird nicht doppelt vergeben: Der zweite Versuch trägt dieselbe, ein neuer Prozesslauf die nächste. Gegen 5080d95:
+    /// ohne fsync gab es keinen Fehler, die Anfrage lief. Gegen 5080d95 NICHT AUSDRÜCKBAR (das Dateisystem des Protokolls ist dort
+    /// nicht einhängbar); statischer Beleg: in AssistantAuditLog.swift von 5080d95 steht kein `synchronize`, `fsync` oder `syncFile`
+    /// (Suche leer).
     func testB2AFailingFsyncOfTheMandatoryLineMeansNoModelAndTheRunNumberIsNotDuplicatedAfterALostSave() async throws {
         let journalFS = CxFS("journal")
         let store = openStore()
@@ -314,7 +321,9 @@ final class AssistantCounterexampleTests: XCTestCase {
     }
 
     /// B2: Das Verdichten scheitert in jedem Teilschritt, ohne die alte Datei zu verlieren (eigene Datei, fsync, rename, fsync des
-    /// Verzeichnisses). Gegen 5080d95 rot: Das Verdichten ersetzte die Datei ohne eigene Sicherung der Teilschritte.
+    /// Verzeichnisses). Gegen 5080d95: Das Verdichten ersetzte die Datei ohne eigene Sicherung der Teilschritte. Gegen 5080d95 NICHT
+    /// AUSDRÜCKBAR (das Dateisystem des Protokolls ist dort nicht einhängbar); statischer Beleg: in AssistantAuditLog.swift von 5080d95
+    /// steht kein `synchronize`, `fsync` oder `syncFile` (Suche leer).
     func testB2CompactionFailsPerStepWithoutLosingTheOldFile() throws {
         let lineText = "{\"t\":\"event\",\"kind\":\"unsourcedOn\"}\n"
         let original = String(repeating: lineText, count: AssistantAuditWriter.maxUnits + 40)
@@ -358,8 +367,8 @@ final class AssistantCounterexampleTests: XCTestCase {
     // MARK: B3: ein Schreibfehler stoppt die Ausgabe sofort
 
     /// B3: Der Audiostart der Einheit 1 gelingt, seine Ergebniszeile `a+` lässt sich nicht schreiben (während der Wiedergabe). Danach
-    /// startet die Einheit 2 NICHT: kein Body, Ergebnis „Protokollfehler“ (nicht „widerrufen“). Gegen 5080d95 rot: Die Einheit 2 startete,
-    /// weil der Kern den klebrigen Fehler nur meldete, nachdem sie ausgelöst war.
+    /// startet die Einheit 2 NICHT: kein Body, Ergebnis „Protokollfehler“ (nicht „widerrufen“). Gegen 5080d95 ROT (gemessen): Die
+    /// Einheit 2 startete, weil der Kern den klebrigen Fehler nur meldete, nachdem sie ausgelöst war.
     func testB3AWriteErrorOfTheStartLineOfUnitOneStopsUnitTwo() async {
         let fail = Flag()
         let audit = log(appender: { url, data in
@@ -387,7 +396,8 @@ final class AssistantCounterexampleTests: XCTestCase {
         XCTAssertTrue(s.hasAuditFailure(requestId: "r1"))
     }
 
-    /// B3: Ein Schreibfehler geht dem Widerruf voran: Eine Anfrage mit Schreibfehler UND Widerruf endet mit „Fehler“.
+    /// B3: Ein Schreibfehler geht dem Widerruf voran: Eine Anfrage mit Schreibfehler UND Widerruf endet mit „Fehler“. Gegen 5080d95 ROT
+    /// (gemessen): Ausgang „widerrufen“.
     func testB3AWriteErrorPrecedesRevokedInTheOutcome() async {
         let fail = Flag()
         let audit = log(appender: { url, data in
@@ -405,9 +415,10 @@ final class AssistantCounterexampleTests: XCTestCase {
         XCTAssertEqual(outcome, .failed, "Fehler, nicht „widerrufen“")
     }
 
-    /// B3: Der Controller erfährt den Schreibfehler SOFORT (Beobachter am Protokoll), nicht erst beim Start der nächsten Einheit:
-    /// Er stoppt damit die laufende Wiedergabe und verwirft die Wartenden. Der Schlüssel ist die Anfrage; ein Fehler einer fremden
-    /// Zeile (ohne Anfrage) trägt einen anderen Schlüssel.
+    /// B3: Der Controller erfährt den Schreibfehler SOFORT (Beobachter am Protokoll), nicht erst beim Start der nächsten Einheit: Er
+    /// stoppt damit die laufende Wiedergabe und verwirft die Wartenden. Der Schlüssel ist die Anfrage; ein Fehler einer fremden Zeile
+    /// (ohne Anfrage) trägt einen anderen Schlüssel. Gegen 5080d95 NICHT AUSDRÜCKBAR (den Beobachter am Protokoll `setFailureObserver`
+    /// gibt es dort nicht; der Fehler wurde erst beim Start der nächsten Einheit gemeldet, siehe die Tests oben).
     func testB3TheObserverOfTheProtocolIsToldTheMomentAStartLineFailsDuringPlayback() async {
         let fail = Flag()
         let audit = log(appender: { url, data in
@@ -429,8 +440,9 @@ final class AssistantCounterexampleTests: XCTestCase {
     // MARK: B4: der Verlauf hat sein Ergebnis je Einheit
 
     /// B4: Zwei Blöcke, nur der erste steht im Verlauf (die Antwort wurde nach dem ersten unterbrochen). Der Leser meldet je Einheit
-    /// Anzeige, Audiostart UND Verlauf einzeln: Der erste Block „Verlauf ausgeführt“, der zweite „Verlauf nicht aufgenommen“, nie
-    /// beide gleich. Gegen 5080d95 rot: Der Verlauf stand nur als EINE Marke der ganzen Anfrage; je Einheit gab es kein Ergebnis.
+    /// Anzeige, Audiostart UND Verlauf einzeln: Der erste Block „Verlauf ausgeführt“, der zweite „Verlauf nicht aufgenommen“, nie beide
+    /// gleich. Gegen 5080d95 ROT (gemessen): Der Verlauf stand nur als EINE Marke der ganzen Anfrage; je Einheit gab es kein Ergebnis
+    /// („nicht geplant“).
     func testB4TwoBlocksOneInTheHistoryAreReadPerUnit() async throws {
         let corpus = AssistantCorpus()
         await corpus.upsert(assistantDoc("b1", "Der Titel Flimmerkasten", detail: "Autorin Zimtstern", sections: [
@@ -468,8 +480,8 @@ final class AssistantCounterexampleTests: XCTestCase {
 
     /// B5: A erweitert um Notizen, B schränkt (auf Bücher) ein, C erweitert um Dateien; gesichert wird in der Reihenfolge A, B, C. Die
     /// Einschränkung B streicht die Notizen aus A: Nach A gelten weiter nur Bücher, die Datei trägt keine Notizen, A wird nie wirksam
-    /// („nicht wirksam“); erst C wirkt, mit Büchern und Dateien. Gegen 5080d95 rot: A setzte nach B den Stand auf das gemeinsame Ziel
-    /// zurück und machte die Notizen wieder wirksam.
+    /// („nicht wirksam“); erst C wirkt, mit Büchern und Dateien. Gegen 5080d95 ROT (gemessen): A setzte nach B den Stand auf das
+    /// gemeinsame Ziel zurück und machte die Notizen wieder wirksam.
     func testB5OvertakenExpansionCannotOvertakeALaterRevocation() async throws {
         try seed(AssistantReleaseRecord(localAreas: [.books], cloudAreas: [.books]))
         let store = openStore()
@@ -507,8 +519,9 @@ final class AssistantCounterexampleTests: XCTestCase {
     // MARK: B6: Ablehnungszeilen im Lock mit der vorgefundenen Generation
 
     /// B6: Prüfung bei 7, Erhöhung auf 8, Ablehnungszeile: Die Zeile wird IM Lock eingereiht. Ein Haltepunkt in der Ablehnung hält den
-    /// Lock; die Erhöhung auf 9 kann erst danach geschehen, ihre Zeile steht hinter der Ablehnung „gefunden 8“. Gegen 5080d95 rot (nicht
-    /// ausdrückbar: die Ablehnung wurde erst NACH dem Lock eingereiht; dort bewies nur der Wettlauf unten die Verletzung).
+    /// Lock; die Erhöhung auf 9 kann erst danach geschehen, ihre Zeile steht hinter der Ablehnung „gefunden 8“. Gegen 5080d95 NICHT
+    /// AUSDRÜCKBAR (`ifCurrent(_:onStale:)` gibt es dort nicht: die Ablehnung wurde erst NACH dem Lock eingereiht); dort belegt der
+    /// Wettlauf unten die Verletzung.
     func testB6TheRejectionLineIsEnqueuedInsideTheLockWithTheFoundGeneration() {
         let order = Recorder()
         let release = AssistantRelease(optIn: false, areas: [.books], cloudConsent: false, onIncrease: { increase in
@@ -545,7 +558,7 @@ final class AssistantCounterexampleTests: XCTestCase {
     }
 
     /// B6 als Wettlauf auf der Sitzung: Ablehnungen (`a-g`) und Erhöhungen der Klasse B nebeneinander. In der Datei steht nie eine
-    /// Zeile einer späteren Generation vor einer Ablehnung mit kleinerer vorgefundener Generation.
+    /// Zeile einer späteren Generation vor einer Ablehnung mit kleinerer vorgefundener Generation. Gegen 5080d95 ROT (gemessen).
     func testB6RejectionsNeverStandBehindTheLineOfALaterIncrease() async {
         let audit = log()
         let s = session(nil, audit: audit)
@@ -577,10 +590,10 @@ final class AssistantCounterexampleTests: XCTestCase {
 
     // MARK: B7: Fehlerschlüssel je Lauf und Änderung
 
-    /// B7: Zwei Sitzungen (lokal und Cloud) im selben Lauf ändern gleichzeitig. Ein Schreibfehler der Zeile „beabsichtigt“ der Sitzung A
-    /// kann von B nicht abgeholt werden: A wird nicht wirksam, B bleibt unberührt. Gegen 5080d95: Beide hießen „chg:1“ (je Sitzung
-    /// gezählt, ohne Lauf), B konnte den Fehler von A abholen, und A galt als wirksam, obwohl ihre Zeile fehlte. Das ist ein Rennen
-    /// (B muss seine Abholung zwischen Einreihen und Warten von A einreihen): gegen 5080d95 ROT NUR GELEGENTLICH (gemessen 4 von 300
+    /// B7: Zwei Sitzungen (lokal und Cloud) im selben Lauf ändern gleichzeitig. Ein Schreibfehler der Zeile „beabsichtigt“ der Sitzung
+    /// A kann von B nicht abgeholt werden: A wird nicht wirksam, B bleibt unberührt. Gegen 5080d95: Beide hießen „chg:1“ (je Sitzung
+    /// gezählt, ohne Lauf), B konnte den Fehler von A abholen, und A galt als wirksam, obwohl ihre Zeile fehlte. Das ist ein Rennen (B
+    /// muss seine Abholung zwischen Einreihen und Warten von A einreihen): gegen 5080d95 ROT NUR GELEGENTLICH (gemessen 4 von 300
     /// Läufen); der deterministische Beleg für denselben Fehler ist der Test der Standzeile darunter. Jetzt: die Nummer zählt die
     /// Ordnung des Prozesslaufs (nie doppelt), der Schlüssel trägt ihre Kennung.
     func testB7TwoSessionsChangeNumberOneAndTheErrorOfOneIsNeverConsumedByTheOther() async throws {
@@ -608,8 +621,8 @@ final class AssistantCounterexampleTests: XCTestCase {
         XCTAssertEqual(b.effectiveAreas, [.books, .notes])
     }
 
-    /// B7 (Standzeile, deterministisch): Die Zeile `state` der Sitzung A scheitert beim Schreiben; die Sitzung B (Cloud) fragt zuerst an,
-    /// dann A. Gegen 5080d95 ROT: Beide Standzeilen hießen „state“; B holte den Fehler von A ab (B abgewiesen, obwohl ihre Zeile
+    /// B7 (Standzeile, deterministisch): Die Zeile `state` der Sitzung A scheitert beim Schreiben; die Sitzung B (Cloud) fragt zuerst
+    /// an, dann A. Gegen 5080d95 ROT: Beide Standzeilen hießen „state“; B holte den Fehler von A ab (B abgewiesen, obwohl ihre Zeile
     /// stand), und A nahm danach eine Anfrage an, obwohl ihre eigene Standzeile NIE in der Datei stand. Jetzt: EINE Standzeile je
     /// Prozesslauf mit dem Schlüssel der Ordnung; ihr Fehler gehört dem einen Versuch, und die Anfrage von A schreibt sie neu.
     func testB7TheErrorOfTheStateLineOfOneSessionIsNeverConsumedByTheRequestOfAnother() async throws {
@@ -690,9 +703,11 @@ final class AssistantCounterexampleTests: XCTestCase {
     /// B8: Der Text einer Quelle wird ersetzt (Buch neu importiert, Text per Abgleich ausgetauscht, Notiz geändert, Datei der Ablage
     /// geändert). Eine Anfrage steht mit dem alten Bestand im Abruf; die Änderung meldet sich über die Meldestelle VOR dem Schreiben.
     /// Folge: Der alte Block startet nicht mehr, auch nicht nach dem Ende der Änderung, solange kein Durchgang NACH ihr den Bestand neu
-    /// gebildet hat; danach kommt nur der neue Text. Gegen 5080d95 rot: Dort meldeten sich der Textabgleich eines Buchs, der Import
-    /// eines gleichnamigen Buchs, das Löschen einer Notiz (Sicht erst nach `refresh`), der Speicher der Ablage und die Ablage-Sicht
-    /// nicht oder erst nach der Änderung; der alte Block blieb bis zum nächsten Durchgang startbar.
+    /// gebildet hat; danach kommt nur der neue Text. Gegen 5080d95 GRÜN im Kern (gemessen): Der Kern der Meldestelle war nicht der
+    /// Fehler; die Meldung fehlte an den Schreibstellen der Quellen, und die sind nur auf dem Mac prüfbar (Tests der Speicher in
+    /// `AssistantNoteHookTests`, hinter `canImport(CryptoKit)`). Dort meldeten sich der Textabgleich eines Buchs, der Import eines
+    /// gleichnamigen Buchs, das Löschen einer Notiz (Sicht erst nach `refresh`), der Speicher der Ablage und die Ablage-Sicht nicht
+    /// oder erst nach der Änderung; der alte Block blieb bis zum nächsten Durchgang startbar.
     func testB8ASourceTextReplacedThroughTheWatchStopsTheWaitingOldBlockAndOnlyTheNewTextComesAfterThePass() async {
         let oldText = "Der Eisvogel brütet am Mühlbach in der Uferböschung unter dem Weidenbaum."
         let newText = "Der Eisvogel brütet jetzt im Steilufer am Weiher bei der Mühle."
@@ -741,7 +756,8 @@ final class AssistantCounterexampleTests: XCTestCase {
     // MARK: B9: eine Ordnung für den ganzen Prozesslauf
 
     /// B9: Bereich aus und wieder an OHNE Modell: zwei Erhöhungen, zwei Zeilen mit der Generation (die Einschränkung `release`, die
-    /// Erweiterung „wirksam“); dieselbe Laufnummer. Gegen 5080d95 rot: Ohne Sitzung gab es keine Generation und keine Erhöhung.
+    /// Erweiterung „wirksam“); dieselbe Laufnummer. Gegen 5080d95 NICHT AUSDRÜCKBAR (`store.clock` und `updateAreas` gibt es dort
+    /// nicht): Ohne Sitzung gab es keine Generation und keine Erhöhung; der Test der zwei Sitzungen unten ist rot.
     func testB9AreaOffAndOnWithoutAModelRaiseTwiceAndTheLinesCarryTheGeneration() async {
         let store = openStore()
         let audit = log()
@@ -758,7 +774,8 @@ final class AssistantCounterexampleTests: XCTestCase {
     }
 
     /// B9: Zwei Sitzungen teilen Generation und Lauf; die Erhöhung in A widerruft die laufende Anfrage in B. Eine neue Sitzung beginnt
-    /// bei der geltenden Generation. Gegen 5080d95 rot: Jede Sitzung hatte ihre eigene Generation, Lauf und Standzeile.
+    /// bei der geltenden Generation. Gegen 5080d95 ROT (gemessen, Zeitüberschreitung): Jede Sitzung hatte ihre eigene Generation, Lauf
+    /// und Standzeile.
     func testB9TwoSessionsShareGenerationAndRunAndARaiseInOneRevokesTheRequestInTheOther() async {
         let store = openStore()
         let audit = log()
@@ -784,9 +801,9 @@ final class AssistantCounterexampleTests: XCTestCase {
 
     // MARK: B10: Nachholen bei jeder Gelegenheit
 
-    /// B10: Der Speicher ist wieder schreibbar: Die nächste Anfrage sichert die Einschränkung (nach ihrer gesicherten `start`-Zeile) und
-    /// schreibt die fehlende Zeile „nicht wirksam“. Gegen 5080d95 rot: Nachgeholt wurde nur bei der nächsten Änderung, eine Anfrage
-    /// holte nichts nach, und eine blockierte Sitzung lehnte Erweiterungen ab, ohne die Sicherung neu zu versuchen.
+    /// B10: Der Speicher ist wieder schreibbar: Die nächste Anfrage sichert die Einschränkung (nach ihrer gesicherten `start`-Zeile)
+    /// und schreibt die fehlende Zeile „nicht wirksam“. Gegen 5080d95 ROT (gemessen): Nachgeholt wurde nur bei der nächsten Änderung,
+    /// eine Anfrage holte nichts nach, und eine blockierte Sitzung lehnte Erweiterungen ab, ohne die Sicherung neu zu versuchen.
     func testB10StoreWritableAgainTheNextRequestSecuresTheRestrictionAndWritesTheLine() async throws {
         try seed(AssistantReleaseRecord(localAreas: [.books, .notes], cloudAreas: [.books]))
         let storeFS = CxFS("store")
@@ -815,5 +832,41 @@ final class AssistantCounterexampleTests: XCTestCase {
         XCTAssertEqual(fileRecord()?.localAreas, ["books"])
         XCTAssertEqual(lines(["ineffective"]).count, 1, "und die Zeile „nicht wirksam“ steht")
         XCTAssertTrue(s.isContentBlocked, "die Blockade für den Rest des Laufs bleibt")
+    }
+
+    // MARK: Latenz: dauerhafte Wartepunkte vor dem ersten Ton
+
+    /// Messung (kein Befund): Zahl der fsync der Protokolldatei (`syncCount`; ein fsync deckt als Gruppen-Commit alles, was bis zu
+    /// seinem Lauf eingereiht ist) bis zum Eintreffen jeder Einheit beim Leser. Gemessen (Linux, tmp-Datei): erste Anfrage des
+    /// Prozesslaufs 5 fsync bis zur ersten Einheit (Standzeile, `start`, `round`, `areas`, Einordnung der Einheit), jede spätere
+    /// Anfrage 4; JEDE weitere Einheit +2 (die Ergebniszeile der vorigen Einheit wird als eigene Gruppe gesichert, danach die
+    /// Einordnung der nächsten; der Ausgeber wartet nur auf die zweite, sie steht aber hinter der ersten in der Reihe). Die Werte beim
+    /// Leser sind eine Obergrenze (der Ausgeber läuft schon weiter), darum prüft der Test nur lockere Schranken: höchstens 3 fsync je
+    /// Einheit und eine feste Zahl davor.
+    func testLatencyTheNumberOfDurableWaitPointsBeforeTheFirstUnitIsFixedAndEachFurtherUnitIsBounded() async {
+        let corpus = AssistantCorpus()
+        let blocks = ["Quasselbert wandert mit dem Fahrrad nach Pappelhausen.", "Quasselbert trifft in Pappelhausen die Tante Lavendula.",
+                      "Quasselbert isst in Pappelhausen mit der Tante Lavendula Kuchen."]
+        await corpus.upsert(assistantDoc("b1", "Der Titel Flimmerkasten", detail: "Autorin Zimtstern",
+                                         sections: blocks.enumerated().map { ("S. \($0.offset + 7)", $0.element) }))
+        let audit = log()
+        let s = session(nil, audit: audit, model: EchoModel(text: blocks.joined(separator: " ")), knowledge: AssistantKnowledge(corpus: corpus))
+        var measured: [[Int]] = []
+        for id in ["r1", "r2"] {
+            let before = audit.syncCount
+            var marks: [Int] = []
+            for await e in s.events(AssistantRequest(requestId: id, text: "Was macht Quasselbert in Pappelhausen mit der Tante Lavendula?")) {
+                if case .sentence = e { marks.append(audit.syncCount - before) }
+            }
+            measured.append(marks)
+        }
+        print("LATENZ fsync bis zur Einheit (Anfrage 1, Anfrage 2): \(measured)")
+        for marks in measured {
+            XCTAssertGreaterThanOrEqual(marks.count, 3, "der Vorspann und die Einheiten kamen: \(marks)")
+            XCTAssertLessThanOrEqual(marks.first ?? .max, 7, "vor der ersten Einheit eine feste, kleine Zahl: \(marks)")
+            for (before, after) in zip(marks, marks.dropFirst()) {
+                XCTAssertLessThanOrEqual(after - before, 3, "jede weitere Einheit kostet höchstens drei fsync: \(marks)")
+            }
+        }
     }
 }
