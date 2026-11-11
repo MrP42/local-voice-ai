@@ -84,6 +84,8 @@ export const installTauriMock = async (
     w.__decideError = null;
     // M5-P5e: Brief-Zuschnitt, den `people_brief_info` liefert (null = Fehler).
     w.__brief = null;
+    // G4 (#499): Vorbereitung, die `meeting_prep_get` liefert (null = nichts).
+    w.__prep = null;
     w.__addDelay = 0;
     // M5-P5f: Microsoft-Anmeldung. `__graphWait` haelt die Anmeldung offen, bis
     // "Abbrechen" `calendar_graph_cancel_sign_in` ruft; `__graphError` laesst sie scheitern.
@@ -291,6 +293,15 @@ export const installTauriMock = async (
               if (!w.__brief) throw "calendar_event_not_found";
               return w.__brief;
             case "people_brief_open":
+              return null;
+            // Terminvorbereitung (G4, #499)
+            case "meeting_prep_get":
+              return w.__prep;
+            case "change_meeting_prep_enabled_setting":
+              settings.meeting_prep_enabled = args.enabled;
+              return null;
+            case "change_meeting_prep_prefetch_setting":
+              settings.meeting_prep_prefetch = args.enabled;
               return null;
             // Hinweisfenster
             case "meeting_prompt_current":

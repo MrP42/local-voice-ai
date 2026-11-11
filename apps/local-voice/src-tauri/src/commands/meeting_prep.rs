@@ -189,10 +189,7 @@ pub async fn meeting_prep_get(
 /// Einstellung „Vorbereitung vor dem Termin“ (Standard an).
 #[tauri::command]
 #[specta::specta]
-pub fn change_meeting_prep_enabled_setting(
-    app: AppHandle,
-    enabled: bool,
-) -> Result<(), String> {
+pub fn change_meeting_prep_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.meeting_prep_enabled = enabled;
     settings::write_settings(&app, settings);
@@ -202,10 +199,7 @@ pub fn change_meeting_prep_enabled_setting(
 /// Einstellung „Vorab fuer die Termine des Tages erzeugen“ (Standard aus).
 #[tauri::command]
 #[specta::specta]
-pub fn change_meeting_prep_prefetch_setting(
-    app: AppHandle,
-    enabled: bool,
-) -> Result<(), String> {
+pub fn change_meeting_prep_prefetch_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.meeting_prep_prefetch = enabled;
     settings::write_settings(&app, settings);
@@ -244,8 +238,10 @@ pub async fn prefetch_today(app: AppHandle, store: Arc<MeetingStore>) {
     let events = {
         let store = Arc::clone(&store);
         let to = end_of_today_ms(now_ms);
-        tauri::async_runtime::spawn_blocking(move || store.calendar_events_between(now_ms, to, false))
-            .await
+        tauri::async_runtime::spawn_blocking(move || {
+            store.calendar_events_between(now_ms, to, false)
+        })
+        .await
     };
     let Ok(Ok(events)) = events else {
         log::warn!("Terminvorbereitung vorab: Termine nicht lesbar");

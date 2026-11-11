@@ -64,7 +64,11 @@ export const PrepCard: React.FC<PrepCardProps> = ({ eventKey }) => {
   if (!enabled || prep === null || prep.points.length === 0) return null;
 
   const dateOf = (seconds: number) =>
-    new Date(seconds * 1000).toLocaleDateString(i18n.language);
+    new Date(seconds * 1000).toLocaleDateString(i18n.language, {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    });
 
   return (
     <section

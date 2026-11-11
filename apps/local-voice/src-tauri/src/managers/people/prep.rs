@@ -283,7 +283,12 @@ fn contains_ci(haystack: &str, needle: &str) -> bool {
 /// Umformulieren.
 pub fn display_text(c: &Candidate) -> String {
     let mut text = c.text.clone();
-    if let Some(who) = c.assignee.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(who) = c
+        .assignee
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         if !contains_ci(&text, who) {
             text = format!("{who}: {text}");
         }
@@ -325,7 +330,8 @@ pub fn rank_open(materials: &[Material]) -> Vec<Ranked> {
                 continue;
             }
             let has_due = c.due.as_deref().is_some_and(|d| !d.trim().is_empty());
-            let score = c.kind.weight() + if m.meeting.series { 15 } else { 0 } + i32::from(has_due) * 5;
+            let score =
+                c.kind.weight() + if m.meeting.series { 15 } else { 0 } + i32::from(has_due) * 5;
             out.push(Ranked {
                 source: PrepSource {
                     meeting_id: m.meeting.id.clone(),
@@ -497,12 +503,23 @@ fn is_open_section(id: &str, title: &str) -> bool {
     t.contains("offene") || t.contains("ungeklärt") || t.contains("ungeklaert")
 }
 
-fn push(items: &mut Vec<Candidate>, kind: PrepKind, raw: &str, assignee: Option<&str>, due: Option<&str>, done: bool) {
+fn push(
+    items: &mut Vec<Candidate>,
+    kind: PrepKind,
+    raw: &str,
+    assignee: Option<&str>,
+    due: Option<&str>,
+    done: bool,
+) {
     let text = clip(&clean_text(raw), MAX_ITEM_CHARS);
     if text.chars().count() < 3 {
         return;
     }
-    let keep = |s: Option<&str>| s.map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let keep = |s: Option<&str>| {
+        s.map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
     items.push(Candidate {
         kind,
         text,
@@ -529,8 +546,19 @@ fn collect_items(store: &MeetingStore, meeting_id: &str) -> Vec<Candidate> {
         }
     }
     if let Ok(notes) = store.get_notes(meeting_id) {
-        for b in notes.blocks.iter().filter(|b| b.kind == NoteBlockKind::Todo) {
-            push(&mut items, classify_task(&b.text), &b.text, None, None, b.checked);
+        for b in notes
+            .blocks
+            .iter()
+            .filter(|b| b.kind == NoteBlockKind::Todo)
+        {
+            push(
+                &mut items,
+                classify_task(&b.text),
+                &b.text,
+                None,
+                None,
+                b.checked,
+            );
         }
     }
     if let Ok(docs) = store.get_documents(meeting_id) {
@@ -848,7 +876,7 @@ mod tests {
     use super::*;
     use crate::managers::calendar::model::Attendee;
     use crate::managers::meetings::notes::model::{
-        ActionItem, EnhancedEntry, EnhancedSection, EnhanceStats, EntryFlags, NoteBlock, Origin,
+        ActionItem, EnhanceStats, EnhancedEntry, EnhancedSection, EntryFlags, NoteBlock, Origin,
         SOURCE_AI,
     };
     use crate::managers::meetings::store::{MeetingSource, MeetingStatus};
@@ -893,7 +921,10 @@ mod tests {
             past("viele", NOW - 3 * DAY, false, 2),              // 2 von 4: genug
             past("serie", NOW - 10 * DAY, true, 0),              // doppelt
         ];
-        let got: Vec<String> = pick_meetings(all, NOW, 4).into_iter().map(|m| m.id).collect();
+        let got: Vec<String> = pick_meetings(all, NOW, 4)
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
         assert_eq!(got, vec!["viele".to_string(), "serie".to_string()]);
     }
 
@@ -947,7 +978,11 @@ mod tests {
                 "angebot  schreiben!"
             ]
             .into_iter()
-            .map(|t| if t.starts_with("angebot") { "angebot schreiben!" } else { t })
+            .map(|t| if t.starts_with("angebot") {
+                "angebot schreiben!"
+            } else {
+                t
+            })
             .collect::<Vec<_>>()
         );
     }
@@ -958,12 +993,13 @@ mod tests {
         let newer = past("neu", NOW - DAY, false, 1);
         let open_old = cand(PrepKind::Task, "Vertrag prüfen", false);
         let done_new = cand(PrepKind::Task, "Vertrag prüfen", true);
-        assert!(rank_open(&[mat(older.clone(), vec![open_old.clone()]), mat(newer.clone(), vec![done_new.clone()])]).is_empty());
+        assert!(rank_open(&[
+            mat(older.clone(), vec![open_old.clone()]),
+            mat(newer.clone(), vec![done_new.clone()])
+        ])
+        .is_empty());
         // Umgekehrt (erledigt in der aelteren, offen in der neueren): bleibt offen.
-        let reopened = rank_open(&[
-            mat(older, vec![done_new]),
-            mat(newer, vec![open_old]),
-        ]);
+        let reopened = rank_open(&[mat(older, vec![done_new]), mat(newer, vec![open_old])]);
         assert_eq!(reopened.len(), 1);
         assert_eq!(reopened[0].source.meeting_id, "neu");
     }
@@ -990,9 +1026,15 @@ mod tests {
 
     #[test]
     fn classify_marks_promises_as_deliveries() {
-        assert_eq!(classify_task("Angebot bis Freitag zusenden"), PrepKind::Delivery);
+        assert_eq!(
+            classify_task("Angebot bis Freitag zusenden"),
+            PrepKind::Delivery
+        );
         assert_eq!(classify_task("Muster nachreichen"), PrepKind::Delivery);
-        assert_eq!(classify_task("Termin mit dem Vorstand abstimmen"), PrepKind::Task);
+        assert_eq!(
+            classify_task("Termin mit dem Vorstand abstimmen"),
+            PrepKind::Task
+        );
     }
 
     #[test]
@@ -1042,8 +1084,14 @@ mod tests {
         let ranked = ranked_fixture();
         let cands = model_candidates(&ranked);
         let user = user_prompt("Jour fixe | Vertrieb\nGeheim", &cands);
-        assert!(user.contains("Appointment: Jour fixe Vertrieb Geheim"), "{user}");
-        assert!(user.contains("P1 | promised delivery | Besprechung m1, "), "{user}");
+        assert!(
+            user.contains("Appointment: Jour fixe Vertrieb Geheim"),
+            "{user}"
+        );
+        assert!(
+            user.contains("P1 | promised delivery | Besprechung m1, "),
+            "{user}"
+        );
         assert!(user.contains("P3 | open question |"), "{user}");
         assert!(user.contains("Preisliste an Meyer zusenden"));
         assert!(system_prompt().contains("JSON only"));
@@ -1054,7 +1102,8 @@ mod tests {
     fn a_good_reply_keeps_the_source_of_the_candidate() {
         let ranked = ranked_fixture();
         let cands = model_candidates(&ranked);
-        let reply = "```json\n{\"points\":[{\"ref\":\"P1\",\"text\":\"Preisliste an Meyer senden\"},\
+        let reply =
+            "```json\n{\"points\":[{\"ref\":\"P1\",\"text\":\"Preisliste an Meyer senden\"},\
                      {\"ref\":\"P3\",\"text\":\"Klären, wer die Schulung zahlt\"}]}\n```";
         let Reply::Points(points) = apply_reply(reply, &cands) else {
             panic!("erwartet: Punkte");
@@ -1089,9 +1138,16 @@ mod tests {
 
     #[test]
     fn at_most_three_points_come_back() {
-        let many: Vec<Ranked> = rank_open(&(0..5)
-            .map(|i| mat(past(&format!("m{i}"), NOW - (i + 1) * DAY, false, 1), vec![cand(PrepKind::Task, &format!("Aufgabe Nummer{i}"), false)]))
-            .collect::<Vec<_>>());
+        let many: Vec<Ranked> = rank_open(
+            &(0..5)
+                .map(|i| {
+                    mat(
+                        past(&format!("m{i}"), NOW - (i + 1) * DAY, false, 1),
+                        vec![cand(PrepKind::Task, &format!("Aufgabe Nummer{i}"), false)],
+                    )
+                })
+                .collect::<Vec<_>>(),
+        );
         let cands = model_candidates(&many);
         let reply = format!(
             "{{\"points\":[{}]}}",
@@ -1129,7 +1185,10 @@ mod tests {
         assert_eq!(prep.mode, PrepMode::Rules);
         assert_eq!(prep, rules_prep(&input));
         assert_eq!(model_prep(&input, None), rules_prep(&input));
-        let good = model_prep(&input, Some("{\"points\":[{\"ref\":\"P2\",\"text\":\"Rahmenvertrag prüfen\"}]}"));
+        let good = model_prep(
+            &input,
+            Some("{\"points\":[{\"ref\":\"P2\",\"text\":\"Rahmenvertrag prüfen\"}]}"),
+        );
         assert_eq!(good.mode, PrepMode::Model);
         assert_eq!(good.points.len(), 1);
     }
@@ -1170,13 +1229,22 @@ mod tests {
         use Trigger::{Open, Prefetch};
         // lokal, erlaubt: auf Wunsch und vorab
         assert_eq!(decide_mode(Open, choice(true, true, true, false)), Model);
-        assert_eq!(decide_mode(Prefetch, choice(true, true, true, false)), Model);
+        assert_eq!(
+            decide_mode(Prefetch, choice(true, true, true, false)),
+            Model
+        );
         // Cloud, vom Regelwerk erlaubt: nur auf Wunsch, nie vorab
         assert_eq!(decide_mode(Open, choice(true, false, true, false)), Model);
-        assert_eq!(decide_mode(Prefetch, choice(true, false, true, false)), Rules);
+        assert_eq!(
+            decide_mode(Prefetch, choice(true, false, true, false)),
+            Rules
+        );
         // gesperrt (z. B. „nur lokal“ mit Cloud-Anbieter): nie Modell
         assert_eq!(decide_mode(Open, choice(true, false, false, false)), Rules);
-        assert_eq!(decide_mode(Prefetch, choice(true, false, false, false)), Rules);
+        assert_eq!(
+            decide_mode(Prefetch, choice(true, false, false, false)),
+            Rules
+        );
         // kein Modell eingetragen / Rechner beschaeftigt
         assert_eq!(decide_mode(Open, choice(false, true, true, false)), Rules);
         assert_eq!(decide_mode(Open, choice(true, true, true, true)), Rules);
@@ -1190,15 +1258,30 @@ mod tests {
             meetings: 1,
         };
         cache_put("evt:a", "f1", &prep);
-        assert_eq!(cache_get("evt:a", "f1", PrepMode::Rules), Some(prep.clone()));
-        assert_eq!(cache_get("evt:a", "f2", PrepMode::Rules), None, "Notizen geaendert");
-        assert_eq!(cache_get("evt:a", "f1", PrepMode::Model), None, "andere Art");
+        assert_eq!(
+            cache_get("evt:a", "f1", PrepMode::Rules),
+            Some(prep.clone())
+        );
+        assert_eq!(
+            cache_get("evt:a", "f2", PrepMode::Rules),
+            None,
+            "Notizen geaendert"
+        );
+        assert_eq!(
+            cache_get("evt:a", "f1", PrepMode::Model),
+            None,
+            "andere Art"
+        );
         assert_eq!(cache_get("evt:b", "f1", PrepMode::Rules), None);
         for i in 0..40 {
             cache_put(&format!("evt:x{i}"), "f", &prep);
         }
         assert!(CACHE.lock().unwrap().len() <= CACHE_MAX);
-        assert_eq!(cache_get("evt:a", "f1", PrepMode::Rules), None, "aelteste verdraengt");
+        assert_eq!(
+            cache_get("evt:a", "f1", PrepMode::Rules),
+            None,
+            "aelteste verdraengt"
+        );
     }
 
     // -- mit echtem Store ---------------------------------------------------------
@@ -1238,7 +1321,9 @@ mod tests {
 
     /// Eine fertige Besprechung `days_ago` Tage vor `NOW` mit diesen Teilnehmenden.
     fn meeting(s: &MeetingStore, title: &str, days_ago: i64, who: Vec<Attendee>) -> String {
-        let m = s.create_meeting(title, MeetingSource::Live, Some(1)).unwrap();
+        let m = s
+            .create_meeting(title, MeetingSource::Live, Some(1))
+            .unwrap();
         s.get_connection()
             .unwrap()
             .execute(
@@ -1287,7 +1372,11 @@ mod tests {
                     id: "aufgaben".into(),
                     title: "Aufgaben".into(),
                     kind: SectionKind::Tasks,
-                    entries: tasks.iter().enumerate().map(|(i, t)| entry(10 + i, t)).collect(),
+                    entries: tasks
+                        .iter()
+                        .enumerate()
+                        .map(|(i, t)| entry(10 + i, t))
+                        .collect(),
                 },
             ],
             stats: EnhanceStats::default(),
@@ -1303,7 +1392,13 @@ mod tests {
         .unwrap();
     }
 
-    fn action(meeting_id: &str, doc: &str, text: &str, status: &str, who: Option<&str>) -> ActionItem {
+    fn action(
+        meeting_id: &str,
+        doc: &str,
+        text: &str,
+        status: &str,
+        who: Option<&str>,
+    ) -> ActionItem {
         ActionItem {
             id: String::new(),
             meeting_id: meeting_id.into(),
@@ -1318,7 +1413,12 @@ mod tests {
     }
 
     fn doc_id(s: &MeetingStore, meeting_id: &str) -> String {
-        s.get_documents(meeting_id).unwrap().last().unwrap().id.clone()
+        s.get_documents(meeting_id)
+            .unwrap()
+            .last()
+            .unwrap()
+            .id
+            .clone()
     }
 
     #[test]
@@ -1334,7 +1434,10 @@ mod tests {
         enhanced_doc(&s, &m, &[], &[]);
         let input = prepare_input(&s, &ev, &[], NOW).unwrap();
         assert_eq!(input.meetings, 1);
-        assert!(input.is_empty(), "Besprechung ja, offener Punkt nein: nichts anzeigen");
+        assert!(
+            input.is_empty(),
+            "Besprechung ja, offener Punkt nein: nichts anzeigen"
+        );
         // Besprechung mit anderer Person: zaehlt nicht.
         let other = meeting(&s, "Anderes", 2, vec![person("zed@x.example", "Zed")]);
         enhanced_doc(&s, &other, &["Frage von Zed?"], &[]);
@@ -1345,13 +1448,24 @@ mod tests {
     fn open_points_from_tasks_own_todos_and_open_questions_with_their_sources() {
         let (_d, s) = tmp_store();
         let m1 = meeting(&s, "Vertrieb Oktober", 14, anna());
-        enhanced_doc(&s, &m1, &["Wer zahlt die Schulung?"], &["Preisliste an Meyer zusenden"]);
+        enhanced_doc(
+            &s,
+            &m1,
+            &["Wer zahlt die Schulung?"],
+            &["Preisliste an Meyer zusenden"],
+        );
         let doc1 = doc_id(&s, &m1);
         s.replace_action_items(
             &m1,
             &doc1,
             &[
-                action(&m1, &doc1, "Preisliste an Meyer zusenden", "todo", Some("Anna")),
+                action(
+                    &m1,
+                    &doc1,
+                    "Preisliste an Meyer zusenden",
+                    "todo",
+                    Some("Anna"),
+                ),
                 action(&m1, &doc1, "Raum buchen", "done", None),
             ],
         )
@@ -1392,16 +1506,34 @@ mod tests {
         let got: Vec<(String, String, String)> = prep
             .points
             .iter()
-            .map(|p| (p.text.clone(), p.source.title.clone(), format!("{:?}", p.kind)))
+            .map(|p| {
+                (
+                    p.text.clone(),
+                    p.source.title.clone(),
+                    format!("{:?}", p.kind),
+                )
+            })
             .collect();
         // "Raum buchen" ist in der aelteren Besprechung erledigt, in der neueren
         // aber offen: bleibt offen (Quelle: die neuere).
         assert_eq!(
             got,
             vec![
-                ("Anna: Preisliste an Meyer zusenden".to_string(), "Vertrieb Oktober".to_string(), "Delivery".to_string()),
-                ("Rahmenvertrag prüfen".to_string(), "Vertrieb November".to_string(), "Task".to_string()),
-                ("Raum buchen".to_string(), "Vertrieb November".to_string(), "Task".to_string()),
+                (
+                    "Anna: Preisliste an Meyer zusenden".to_string(),
+                    "Vertrieb Oktober".to_string(),
+                    "Delivery".to_string()
+                ),
+                (
+                    "Rahmenvertrag prüfen".to_string(),
+                    "Vertrieb November".to_string(),
+                    "Task".to_string()
+                ),
+                (
+                    "Raum buchen".to_string(),
+                    "Vertrieb November".to_string(),
+                    "Task".to_string()
+                ),
             ]
         );
         assert_eq!(prep.points[0].source.meeting_id, m1);
@@ -1419,14 +1551,24 @@ mod tests {
             enhanced_doc(&s, &m1, &[], &[]);
             doc_id(&s, &m1)
         };
-        s.replace_action_items(&m1, &d1, &[action(&m1, &d1, "Vertrag unterschreiben", "todo", None)])
-            .unwrap();
+        s.replace_action_items(
+            &m1,
+            &d1,
+            &[action(&m1, &d1, "Vertrag unterschreiben", "todo", None)],
+        )
+        .unwrap();
         let m2 = meeting(&s, "Neu", 2, anna());
         enhanced_doc(&s, &m2, &[], &[]);
         let d2 = doc_id(&s, &m2);
-        s.replace_action_items(&m2, &d2, &[action(&m2, &d2, "Vertrag unterschreiben", "done", None)])
-            .unwrap();
-        assert!(prepare_input(&s, &upcoming(anna()), &[], NOW).unwrap().is_empty());
+        s.replace_action_items(
+            &m2,
+            &d2,
+            &[action(&m2, &d2, "Vertrag unterschreiben", "done", None)],
+        )
+        .unwrap();
+        assert!(prepare_input(&s, &upcoming(anna()), &[], NOW)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -1439,7 +1581,9 @@ mod tests {
         add(&s, &inside, "Frage im Fenster");
         let outside = meeting(&s, "Zu alt", WINDOW_DAYS + 5, anna());
         add(&s, &outside, "Frage zu alt");
-        let running = s.create_meeting("Läuft", MeetingSource::Live, Some(1)).unwrap();
+        let running = s
+            .create_meeting("Läuft", MeetingSource::Live, Some(1))
+            .unwrap();
         participants_from_event(&s, &running.id, &event("alt", 1, anna())).unwrap();
         add(&s, &running.id, "Frage laufend");
         let deleted = meeting(&s, "Gelöscht", 4, anna());
@@ -1454,12 +1598,20 @@ mod tests {
         add(&s, &series, "Frage Serie");
         let mut earlier = event("serie1", (NOW - 7 * DAY) * 1000, vec![]);
         earlier.key = "s:serie1:earlier".into();
-        s.link_meeting_event(&series, &earlier, "prompt", 1).unwrap();
+        s.link_meeting_event(&series, &earlier, "prompt", 1)
+            .unwrap();
 
         let input = prepare_input(&s, &ev, &[], NOW).unwrap();
-        let mut titles: Vec<String> = input.ranked.iter().map(|r| r.source.title.clone()).collect();
+        let mut titles: Vec<String> = input
+            .ranked
+            .iter()
+            .map(|r| r.source.title.clone())
+            .collect();
         titles.sort();
-        assert_eq!(titles, vec!["Im Fenster".to_string(), "Serie früher".to_string()]);
+        assert_eq!(
+            titles,
+            vec!["Im Fenster".to_string(), "Serie früher".to_string()]
+        );
         assert_eq!(input.meetings, 2);
         // Die Serie zaehlt vor den Teilnehmenden (gleiche Art, +15).
         assert_eq!(input.ranked[0].source.title, "Serie früher");
@@ -1481,7 +1633,8 @@ mod tests {
         let (_d, s) = tmp_store();
         let m = meeting(&s, "Beschädigt", 3, anna());
         // Kein gueltiges JSON als KI-Notiz: wird uebersprungen.
-        s.insert_document(&m, "enhanced_notes", "enhanced@1", "{kaputt", None, None).unwrap();
+        s.insert_document(&m, "enhanced_notes", "enhanced@1", "{kaputt", None, None)
+            .unwrap();
         s.get_connection()
             .unwrap()
             .execute(
