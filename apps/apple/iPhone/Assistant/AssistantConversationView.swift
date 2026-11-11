@@ -25,15 +25,29 @@ struct AssistantConversationView: View {
     @State private var showEndpoint = false
     @State private var endpointBefore: AssistantEndpoint?
     @State private var gemmaReady = false
+    @State private var showModelChoice = false
+    @State private var showLocalModels = false
     @FocusState private var fieldFocused: Bool
+
+    /// Kein Modell, und es startet auch keins gerade: statt Pause-Knopf der deaktivierte Mikrofon-Zustand und „Modell auswählen“.
+    private var noModel: Bool { !talk.canSend && !talk.loading && !talk.running }
 
     var body: some View {
         VStack(spacing: 0) {
             header
+                .alert("Antworten ohne Quelle einschalten?", isPresented: Binding(get: { talk.unsourcedConfirmation },
+                                                                                  set: { if !$0 { talk.cancelUnsourcedConfirmation() } })) {
+                    Button("Abbrechen", role: .cancel) { talk.cancelUnsourcedConfirmation() }
+                    Button("Einschalten") { talk.confirmUnsourced() }
+                } message: {
+                    Text(AssistantUnsourcedConsent.confirmationText)
+                }
             Divider()
             content
+                .sheet(isPresented: $showLocalModels, onDismiss: localModelsClosed) { ModelPanel(model: VoiceModel.shared) }
             Divider()
             bottom
+                .confirmationDialog("Modell auswählen", isPresented: $showModelChoice, titleVisibility: .visible) { modelChoiceButtons }
         }
         .background(VoicePalette.background)
         .task {
@@ -42,7 +56,9 @@ struct AssistantConversationView: View {
         }
         .task { await relays.refresh() }
         .onDisappear { talk.end() }
-        .onChange(of: scenePhase) { _, phase in if phase != .active { talk.sceneInactive(background: phase == .background) } }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { talk.sceneInactive(background: phase == .background) } else if noModel { talk.resume() }
+        }
         .accessibilityAction(.magicTap) { magicTap() }
         .accessibilityAction(.escape) { close() }
         .alert(talk.consentRequest?.title ?? "", isPresented: Binding(get: { talk.consentRequest != nil }, set: { if !$0 { talk.declineConsent() } }),
@@ -97,7 +113,32 @@ struct AssistantConversationView: View {
         switch action {
         case .retrySend: talk.retry()
         case .resume, .retryStart: talk.resume()
+        case .chooseModel: showModelChoice = true
+        case .openLocalModels: showLocalModels = true
         }
+    }
+
+    /// Nach den lokalen Modellen in den Einstellungen: ohne Modell neu prüfen (Download fertig, Systemmodell geladen).
+    private func localModelsClosed() {
+        gemmaReady = AssistantEngine.gemmaInstalled()
+        if noModel { talk.resume() }
+    }
+
+    /// Modellwahl als Auswahlblatt (Hauptknopf „Modell auswählen“); gleiche Auswahl wie das Menü im Kopf, die Art steht im Titel.
+    @ViewBuilder private var modelChoiceButtons: some View {
+        Button("Apple-Systemmodell · lokal") { talk.selectModel(.apple) }
+        if gemmaReady || talk.selectedChoice == .gemma { Button("Gemma 4 E2B · lokal") { talk.selectModel(.gemma) } }
+        ForEach(relays.models) { info in
+            Button("\(info.label) · Cloud") { talk.selectModel(.relay(info.id)) }
+        }
+        if let endpoint = endpoints.endpoint {
+            Button("\(endpoint.label) · \(endpoints.isCloud ? "Cloud" : "eigener Endpunkt")") { talk.selectModel(.endpoint) }
+        }
+        Button("Eigener Endpunkt …") {
+            endpointBefore = endpoints.endpoint
+            showEndpoint = true
+        }
+        Button("Abbrechen", role: .cancel) {}
     }
 
     // MARK: Kopf
@@ -108,7 +149,8 @@ struct AssistantConversationView: View {
                 Image(systemName: "xmark").font(.body.weight(.semibold)).frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
-            .accessibilityLabel("Gespräch beenden")
+            .accessibilityLabel("Schließen")
+            .accessibilityHint("Beendet das Gespräch")
             .accessibilityIdentifier("assistantClose")
             Spacer(minLength: 8)
             modelMenu
@@ -153,7 +195,9 @@ struct AssistantConversationView: View {
             .overlay(Capsule().stroke(VoicePalette.border, lineWidth: 1))
         }
         .disabled(talk.loading)
-        .accessibilityLabel("Modell: \(talk.modelLabel), \(talk.isCloud ? "Cloud" : "lokal"). Ändern")
+        .accessibilityLabel("Modellauswahl")
+        .accessibilityValue("\(talk.modelLabel), \(talk.isCloud ? "Cloud" : "lokal")")
+        .accessibilityHint("Öffnet die Liste der Modelle")
         .accessibilityIdentifier("assistantModel")
     }
 
@@ -173,13 +217,18 @@ struct AssistantConversationView: View {
                            isOn: Binding(get: { talk.areas.contains(area) }, set: { _ in talk.toggleArea(area) }))
                 }
             }
+            Section("Antworten") {
+                Toggle("Antworten ohne Quelle", isOn: Binding(get: { talk.unsourcedAllowed }, set: { talk.requestUnsourced($0) }))
+                    .accessibilityIdentifier("assistantUnsourced")
+            }
             Toggle("Beim Antworten zuhören (Unterbrechen per Stimme)",
                    isOn: Binding(get: { talk.bargeIn }, set: { talk.setBargeIn($0) }))
             Button("Neues Gespräch", systemImage: "arrow.counterclockwise", role: .destructive) { talk.newConversation() }
         } label: {
             Image(systemName: "ellipsis.circle").font(.title3).frame(width: 44, height: 44)
         }
-        .accessibilityLabel("Optionen")
+        .accessibilityLabel("Mehr")
+        .accessibilityHint("Bereiche, Antworten ohne Quelle, neues Gespräch")
         .accessibilityIdentifier("assistantMenu")
     }
 
@@ -237,14 +286,20 @@ struct AssistantConversationView: View {
     }
 
     private func noticeView(_ notice: AssistantNotice) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 6) {
             Label(notice.text, systemImage: "info.circle")
                 .font(.footnote)
                 .fixedSize(horizontal: false, vertical: true)
-            if let action = notice.action {
-                Button(actionTitle(action)) { perform(action) }
-                    .font(.footnote.weight(.semibold))
-                    .frame(minHeight: 44)
+            if let detail = notice.detail {
+                Text(detail)
+                    .font(.footnote).foregroundStyle(VoicePalette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if notice.action != nil || notice.secondary != nil {
+                AssistantFlowLayout(spacing: 8) {
+                    if let action = notice.action { noticeButton(action) }
+                    if let secondary = notice.secondary { noticeButton(secondary) }
+                }
             }
         }
         .padding(12)
@@ -254,11 +309,31 @@ struct AssistantConversationView: View {
         .accessibilityIdentifier("assistantNotice")
     }
 
+    private func noticeButton(_ action: AssistantNotice.Action) -> some View {
+        Button(actionTitle(action)) { perform(action) }
+            .font(.footnote.weight(.semibold))
+            .buttonStyle(.bordered)
+            .frame(minHeight: 44)
+            .accessibilityIdentifier(actionIdentifier(action))
+    }
+
     private func actionTitle(_ action: AssistantNotice.Action) -> String {
         switch action {
         case .retrySend: "Erneut senden"
         case .resume: "Weiter"
         case .retryStart: "Erneut versuchen"
+        case .chooseModel: "Modell auswählen"
+        case .openLocalModels: "Lokale Modelle öffnen"
+        }
+    }
+
+    private func actionIdentifier(_ action: AssistantNotice.Action) -> String {
+        switch action {
+        case .retrySend: "assistantNoticeRetrySend"
+        case .resume: "assistantNoticeResume"
+        case .retryStart: "assistantNoticeRetryStart"
+        case .chooseModel: "assistantNoticeChooseModel"
+        case .openLocalModels: "assistantNoticeLocalModels"
         }
     }
 
@@ -268,17 +343,31 @@ struct AssistantConversationView: View {
             Text("Ich antworte aus deinen Büchern, Besprechungen, Notizen und der Ablage, je nachdem, was du im Menü zulässt. "
                  + (talk.bargeIn ? "Du kannst mich jederzeit unterbrechen." : "Während ich antworte, höre ich nicht zu."))
                 .font(.subheadline).foregroundStyle(VoicePalette.secondaryText)
-            Text("Frag zum Beispiel").font(.footnote).foregroundStyle(VoicePalette.secondaryText).padding(.top, 4)
+            Text("Oder tippe auf einen Vorschlag").font(.footnote).foregroundStyle(VoicePalette.secondaryText).padding(.top, 4)
             ForEach(["Was wurde in der letzten Besprechung entschieden?", "Worum geht es in meinem aktuellen Buch?",
-                     "Was habe ich zuletzt in meinen Notizen festgehalten?"], id: \.self) { text in
-                Button { talk.send(text: text) } label: {
-                    Text(text).font(.subheadline).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).padding(.horizontal, 12)
-                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(VoicePalette.border, lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-                .disabled(!talk.canSend)
-            }
+                     "Was habe ich zuletzt in meinen Notizen festgehalten?"], id: \.self) { text in suggestion(text) }
         }
+    }
+
+    /// Vorschlag zum Antippen: Fläche, Pfeil und normaler Textkontrast (nicht ausgegraut, auch ohne Modell). Ohne Modell
+    /// führt das Antippen zur Modellwahl.
+    private func suggestion(_ text: String) -> some View {
+        Button {
+            if talk.canSend { talk.send(text: text) } else { showModelChoice = true }
+        } label: {
+            HStack(spacing: 10) {
+                Text(text).font(.subheadline).foregroundStyle(VoicePalette.text).multilineTextAlignment(.leading)
+                Spacer(minLength: 4)
+                Image(systemName: "arrow.up.right.circle").font(.body).foregroundStyle(VoicePalette.secondaryText).accessibilityHidden(true)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 6)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .background(AssistantColors.card, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(VoicePalette.border, lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint(talk.canSend ? "Stellt diese Frage" : "Kein Modell bereit. Öffnet die Modellauswahl")
     }
 
     // MARK: Blasen
@@ -286,9 +375,16 @@ struct AssistantConversationView: View {
     private func turnView(_ turn: AssistantTurn) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             userBubble(turn.user)
-            assistantBubble(text: turn.interrupted ? turn.assistant + " …" : turn.assistant, interrupted: turn.interrupted,
-                            chips: chipTexts(turn.sources))
+            assistantBubble(parts: parts(of: turn), interrupted: turn.interrupted, chips: chips(of: turn))
         }
+    }
+
+    /// Abschnitte des Beitrags: gemischte Antworten tragen ihre Abschnitte, sonst gilt `unsourced` für den ganzen Text
+    /// (ältere Beiträge: wie „Allgemeinwissen“).
+    private func parts(of turn: AssistantTurn) -> [AssistantTurnPart] {
+        var list = turn.parts.isEmpty ? [AssistantTurnPart(text: turn.assistant, unsourced: turn.unsourced)] : turn.parts
+        if turn.interrupted, let last = list.indices.last { list[last].text += " …" }
+        return list
     }
 
     private func userBubble(_ text: String) -> some View {
@@ -302,10 +398,10 @@ struct AssistantConversationView: View {
         }
     }
 
-    private func assistantBubble(text: String, interrupted: Bool, chips: [String]) -> some View {
+    private func assistantBubble(parts: [AssistantTurnPart], interrupted: Bool, chips: [SourceChip]) -> some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
-                VoiceMarkdown(text: text)
+                ForEach(Array(parts.enumerated()), id: \.offset) { _, part in partView(part) }
                 if !chips.isEmpty {
                     AssistantFlowLayout(spacing: 6) {
                         ForEach(chips, id: \.self) { chip($0) }
@@ -320,21 +416,65 @@ struct AssistantConversationView: View {
         }
     }
 
-    private func chip(_ text: String) -> some View {
-        Text(text)
+    @ViewBuilder private func partView(_ part: AssistantTurnPart) -> some View {
+        if part.unsourced { unsourcedBlock(part.text) } else { VoiceMarkdown(text: part.text) }
+    }
+
+    /// Abschnitt ohne Quelle: Kennzeichnung als Text („Ohne Quelle“, auch für VoiceOver) und Balken, nicht nur Farbe.
+    private func unsourcedBlock(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label("Ohne Quelle", systemImage: "questionmark.circle")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(VoicePalette.secondaryText)
+            VoiceMarkdown(text: text)
+        }
+        .padding(.leading, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 1.5).fill(VoicePalette.secondaryText).frame(width: 3)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Eine Quelle oder ein Hinweis unter der Antwort.
+    private struct SourceChip: Hashable {
+        let text: String
+        let isSource: Bool
+    }
+
+    private func chip(_ chip: SourceChip) -> some View {
+        Text(chip.text)
             .font(.footnote.weight(.medium))
             .foregroundStyle(VoicePalette.secondaryText)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 10).padding(.vertical, 5)
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(VoicePalette.border, lineWidth: 1))
-            .accessibilityLabel("Quelle: \(text)")
+            .accessibilityLabel(chip.isSource ? "Quelle: \(chip.text)" : "Hinweis: \(chip.text)")
     }
 
-    /// Eine Zeile je Quelle (ohne Doppelte); ohne Auszüge: „Allgemeinwissen · ohne Quelle“.
-    private func chipTexts(_ sources: [AssistantPassage]) -> [String] {
+    /// Nur die deckenden Quellen (ohne Doppelte); dazu der Hinweis, wenn Sätze ohne Quelle gesprochen wurden:
+    /// „Allgemeinwissen · ohne Quelle“ (ganz) oder „teils ohne Quelle“ (gemischt).
+    private func chips(sources: [AssistantPassage], unsourced: Bool, mixed: Bool) -> [SourceChip] {
         var seen = Set<String>()
-        let list = sources.map { AssistantController.chip($0) }.filter { seen.insert($0).inserted }
-        return list.isEmpty ? ["Allgemeinwissen · ohne Quelle"] : list
+        var list = sources.map { AssistantController.chip($0) }.filter { seen.insert($0).inserted }
+            .map { SourceChip(text: $0, isSource: true) }
+        if unsourced { list.append(SourceChip(text: mixed ? "teils ohne Quelle" : "Allgemeinwissen · ohne Quelle", isSource: false)) }
+        return list
+    }
+
+    private func chips(of turn: AssistantTurn) -> [SourceChip] {
+        chips(sources: turn.sources, unsourced: turn.unsourced, mixed: !turn.parts.isEmpty)
+    }
+
+    private var liveChips: [SourceChip] {
+        let unsourced = talk.liveParts.contains { $0.unsourced }
+        let mixed = unsourced && talk.liveParts.contains { !$0.unsourced }
+        return chips(sources: talk.sources, unsourced: unsourced, mixed: mixed)
+    }
+
+    /// Abschnitte der laufenden Antwort (ohne Angabe der Steuerung: ein Abschnitt mit Quelle).
+    private var liveAnswerParts: [AssistantTurnPart] {
+        talk.liveParts.isEmpty ? [AssistantTurnPart(text: talk.liveAnswer, unsourced: false)] : talk.liveParts
     }
 
     /// Die laufende Anfrage, deren Antwort noch nicht im Verlauf steht.
@@ -343,7 +483,7 @@ struct AssistantConversationView: View {
             VStack(alignment: .leading, spacing: 10) {
                 userBubble(user)
                 if !talk.liveAnswer.isEmpty {
-                    assistantBubble(text: talk.liveAnswer, interrupted: false, chips: talk.sourcesKnown ? chipTexts(talk.sources) : [])
+                    assistantBubble(parts: liveAnswerParts, interrupted: false, chips: liveChips)
                         .accessibilityAddTraits(.updatesFrequently)
                 } else if talk.phase == .thinking {
                     HStack(spacing: 0) {
@@ -387,7 +527,7 @@ struct AssistantConversationView: View {
         VStack(spacing: 10) {
             stateBlock
             if typing { composer }
-            controls
+            if noModel { noModelControls } else { controls }
         }
         .padding(.horizontal, 16).padding(.vertical, 10)
         .background(.bar)
@@ -407,18 +547,34 @@ struct AssistantConversationView: View {
     }
 
     private var sourcesLine: String {
+        if noModel { return "Wähle ein Modell, um zu sprechen." }
         let list = AssistantAreaSettings.list(talk.areas)
-        guard !list.isEmpty else { return "Keine Quellen aktiv, nur Allgemeinwissen" }
+        guard !list.isEmpty else { return "Keine Quellen aktiv" }
         return "\(talk.isCloud ? "Cloud" : "Lokal") · Quellen: \(list)"
+    }
+
+    /// Eigene Zeile, solange „Antworten ohne Quelle“ an ist (Standard: aus).
+    private var unsourcedLine: String? {
+        talk.unsourcedAllowed ? "Antworten ohne Quelle sind erlaubt" : nil
+    }
+
+    /// Zustand, Quellen und (falls an) „Antworten ohne Quelle“ als ein Satz für VoiceOver.
+    private var stateLabel: String {
+        var parts = [stateText, sourcesLine]
+        if let unsourcedLine { parts.append(unsourcedLine) }
+        return parts.joined(separator: ". ")
     }
 
     private var stateBlock: some View {
         HStack(spacing: 12) {
-            AssistantPulse(meter: talk.meter, phase: talk.phase, muted: talk.muted, loading: talk.loading,
+            AssistantPulse(meter: talk.meter, phase: talk.phase, muted: talk.muted, loading: talk.loading, unavailable: noModel,
                            reduceMotion: reduceMotion, size: pulseSize)
             VStack(alignment: .leading, spacing: 2) {
                 Text(stateText).font(.headline)
                 Text(sourcesLine).font(.footnote).foregroundStyle(VoicePalette.secondaryText).lineLimit(2)
+                if let unsourcedLine {
+                    Text(unsourcedLine).font(.footnote).foregroundStyle(VoicePalette.secondaryText).lineLimit(2)
+                }
                 #if DEBUG
                 if let ms = talk.firstSoundMs {
                     Text("Erster Ton nach \(ms) ms").font(.caption2).foregroundStyle(VoicePalette.secondaryText)
@@ -429,7 +585,7 @@ struct AssistantConversationView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(stateText). \(sourcesLine)")
+        .accessibilityLabel(stateLabel)
         .accessibilityIdentifier("assistantState")
     }
 
@@ -449,6 +605,33 @@ struct AssistantConversationView: View {
             .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !talk.canSend)
             .accessibilityLabel("Senden")
             .accessibilityIdentifier("assistantSend")
+        }
+    }
+
+    /// Ohne Modell: Hauptknopf „Modell auswählen“ statt Stumm und Tastatur (beides ginge ins Leere).
+    private var noModelControls: some View {
+        let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+        return layout {
+            Button { showModelChoice = true } label: {
+                Label("Modell auswählen", systemImage: "cpu")
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .padding(.horizontal, 6)
+                    .foregroundStyle(.white)
+                    .background(AssistantColors.fill, in: RoundedRectangle(cornerRadius: 14))
+                    .contentShape(RoundedRectangle(cornerRadius: 14))
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Öffnet die Liste der Modelle")
+            .accessibilityIdentifier("assistantChooseModel")
+
+            AssistantControl(title: "Beenden", symbol: "phone.down.fill", tint: VoicePalette.danger, active: false,
+                             stacked: !typeSize.isAccessibilitySize) {
+                close()
+            }
+            .accessibilityLabel("Gespräch beenden")
+            .accessibilityIdentifier("assistantEnd")
         }
     }
 
@@ -535,13 +718,17 @@ private struct AssistantPulse: View {
     let phase: AssistantPhase
     let muted: Bool
     let loading: Bool
+    /// Kein Modell: grauer, deaktivierter Mikrofon-Zustand statt des blauen Kreises.
+    let unavailable: Bool
     let reduceMotion: Bool
     let size: CGFloat
 
-    private var fill: Color { muted ? VoicePalette.danger : AssistantColors.fill }
+    private var fill: Color { unavailable ? VoicePalette.secondaryText : muted ? VoicePalette.danger : AssistantColors.fill }
+    private var iconColor: Color { unavailable ? VoicePalette.background : .white }
     private var level: Double { muted ? 0 : meter.level }
 
     private var symbol: String {
+        if unavailable { return "mic.slash.fill" }
         if loading { return "ellipsis" }
         if muted, phase == .listening || phase == .hearing { return "mic.slash.fill" }
         switch phase {
@@ -557,14 +744,14 @@ private struct AssistantPulse: View {
         ZStack {
             halo
             Circle().fill(fill).frame(width: size * 0.7, height: size * 0.7)
-            Image(systemName: symbol).font(.system(size: size * 0.28, weight: .semibold)).foregroundStyle(.white)
+            Image(systemName: symbol).font(.system(size: size * 0.28, weight: .semibold)).foregroundStyle(iconColor)
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
     }
 
     @ViewBuilder private var halo: some View {
-        if reduceMotion || loading || phase == .idle {
+        if reduceMotion || loading || unavailable || phase == .idle {
             Circle().stroke(fill.opacity(0.3), lineWidth: 2).frame(width: size * 0.9, height: size * 0.9)
         } else if phase == .thinking || phase == .speaking {
             TimelineView(.animation) { context in

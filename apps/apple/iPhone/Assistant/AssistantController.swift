@@ -17,9 +17,20 @@ import Combine
 enum AssistantPhase: Equatable { case idle, listening, hearing, thinking, speaking }
 
 struct AssistantNotice: Equatable {
-    enum Action: Equatable { case retrySend, resume, retryStart }
+    enum Action: Equatable { case retrySend, resume, retryStart, chooseModel, openLocalModels }
     var text: String
+    /// Zweite, kurze Zeile (nur wenn zutreffend, z. B. „Das Apple-Systemmodell wird noch geladen.“).
+    var detail: String?
     var action: Action?
+    /// Zweiter Knopf neben `action`.
+    var secondary: Action?
+
+    init(text: String, detail: String? = nil, action: Action?, secondary: Action? = nil) {
+        self.text = text
+        self.detail = detail
+        self.action = action
+        self.secondary = secondary
+    }
 }
 
 /// Zustimmung vor dem ersten Versand an ein Cloud-Ziel (Anbieter/Host und betroffene Bereiche).
@@ -51,6 +62,8 @@ private final class AssistantRun {
     struct Sentence {
         let text: String
         let speech: String
+        let status: AssistantSentenceStatus
+        let sources: [AssistantPassage]
     }
 
     let id = UUID().uuidString
@@ -82,8 +95,15 @@ private final class AssistantRun {
         self.afterInterruption = afterInterruption
     }
 
-    /// Nur die Sätze, die ganz gesprochen wurden.
-    var spokenText: String { finishedSpeaking.map { sentences[$0].text }.joined(separator: " ") }
+    /// Nur die Sätze, die ganz gesprochen wurden (Ansagen wie „Ohne Quelle:“ gehören nicht zum Text).
+    var spokenText: String {
+        finishedSpeaking.map { sentences[$0] }.filter { $0.status != .announcement }.map(\.text).joined(separator: " ")
+    }
+
+    /// Ein unbelegter Satz ist noch nicht ganz gesprochen (läuft oder wartet in der Sprecher-Warteschlange).
+    var hasUnspokenUnsourced: Bool {
+        sentences.indices.contains { sentences[$0].status == .unsourced && !finishedSpeaking.contains($0) }
+    }
 }
 
 @MainActor
@@ -104,8 +124,15 @@ final class AssistantController: ObservableObject {
     @Published private(set) var liveStable = ""
     @Published private(set) var liveVolatile = ""
     @Published private(set) var liveAnswer = ""
+    /// Die laufende Antwort in Abschnitten mit Kennzeichnung (unbelegt oder nicht), für die Anzeige.
+    @Published private(set) var liveParts: [AssistantTurnPart] = []
+    /// Nur die Quellen, die mindestens einen ausgegebenen Satz der laufenden Antwort decken.
     @Published private(set) var sources: [AssistantPassage] = []
     @Published private(set) var sourcesKnown = false
+    /// „Antworten ohne Quelle“ ist an (eigene Einwilligung, Standard aus).
+    @Published private(set) var unsourcedAllowed = AssistantUnsourcedConsent().isEnabled
+    /// Die Bestätigung beim ersten Einschalten steht aus.
+    @Published private(set) var unsourcedConfirmation = false
     @Published private(set) var notice: AssistantNotice?
     @Published private(set) var modelLabel = "Kein Modell"
     @Published private(set) var isCloud = false
@@ -135,6 +162,8 @@ final class AssistantController: ObservableObject {
     private let listener = AssistantListener()
     private let speaker = BookTalkSpeaker()
     private let store = AssistantHistoryStore(directory: AssistantHistoryStore.standardDirectory())
+    private let audit = AssistantAuditLog(directory: AssistantAuditLog.standardDirectory())
+    private var auditFailureShown = false
     private let hub = AssistantSources.shared
     private var engine = AssistantEngine.unavailable("")
     private var session: AssistantSession?
@@ -169,6 +198,15 @@ final class AssistantController: ObservableObject {
     private var overflowShown = false
 
     init() {
+        #if DEBUG
+        // UI-Tests: „Antworten ohne Quelle“ beginnt wie auf einem frischen Gerät (aus, nie bestätigt).
+        if ProcessInfo.processInfo.arguments.contains("--assistant-reset-unsourced") {
+            for key in [AssistantUnsourcedConsent.enabledKey, AssistantUnsourcedConsent.versionKey, AssistantUnsourcedConsent.dateKey] {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+            unsourcedAllowed = false
+        }
+        #endif
         hub.$progress.receive(on: RunLoop.main).sink { [weak self] value in
             MainActor.assumeIsolated { self?.preparing = value }
         }.store(in: &bag)
@@ -228,7 +266,7 @@ final class AssistantController: ObservableObject {
         guard mine == generation else { return }
         if declined { notice = AssistantNotice(text: "Ohne Zustimmung läuft kein Cloud-Modell\(engine.hasModel ? ". Es läuft \(engine.label)." : ".")", action: nil) }
         guard engine.hasModel else {
-            if notice == nil { notice = AssistantNotice(text: engine.note ?? "Es ist kein Modell verfügbar.", action: nil) }
+            notice = noModelNotice(declined: declined)
             finishStart(mine)
             return
         }
@@ -264,6 +302,14 @@ final class AssistantController: ObservableObject {
         phase = .listening
         finishStart(mine)
         announce("Gespräch gestartet. Ich höre zu.")
+    }
+
+    /// „Kein Modell verfügbar.“ kurz, mit zwei Wegen heraus. Eine Zeile Ursache nur, wenn sie zutrifft und hilft: das
+    /// Systemmodell lädt noch, oder das vom Nutzer gewählte Modell fehlt (dann dessen Grund, z. B. „Gemma … nicht geladen“).
+    private func noModelNotice(declined: Bool = false) -> AssistantNotice {
+        let reason = declined ? nil : engine.note.flatMap { $0.isEmpty || $0 == AssistantEngine.noModelText ? nil : $0 }
+        return AssistantNotice(text: declined ? "Ohne Zustimmung läuft kein Cloud-Modell, und es ist kein lokales Modell verfügbar." : AssistantEngine.noModelText,
+                               detail: reason ?? engine.detail, action: .chooseModel, secondary: .openLocalModels)
     }
 
     private func finishStart(_ mine: Int) {
@@ -373,7 +419,12 @@ final class AssistantController: ObservableObject {
         // Nach dem letzten Wartepunkt: steht „Neues Gespräch“ noch aus, kommt der alte Verlauf nicht in die neue Sitzung.
         let history = clearRequested == clearDone ? stored : []
         if let model = built.model {
-            session = AssistantSession(model: model, knowledge: kn, config: built.config, history: history)
+            let consent = AssistantUnsourcedConsent()
+            var config = built.config
+            config.allowUnsourced = consent.isEnabled
+            config.consentVersion = consent.version
+            unsourcedAllowed = consent.isEnabled
+            session = AssistantSession(model: model, knowledge: kn, config: config, history: history, audit: audit)
         } else {
             session = nil
         }
@@ -445,6 +496,11 @@ final class AssistantController: ObservableObject {
         let knowledge = self.knowledge
         areas = next
         AssistantAreaSettings.set(next, cloud: cloud)
+        // Ein Bereich, aus dem die laufende Antwort Auszüge hat, wird entzogen: wartende Sätze werden nicht mehr gesprochen.
+        let removed = previous.subtracting(next)
+        if let run = current, run.sources?.contains(where: { removed.contains($0.area) }) == true {
+            stopForRevocation("Antwort angehalten: Ein Bereich wurde abgeschaltet.")
+        }
         Task {
             await knowledge?.setAreas(next)
             guard let target, !AssistantConsent.isGranted(target, areas: next) else { return }
@@ -461,6 +517,62 @@ final class AssistantController: ObservableObject {
         bargeIn = on
         rebuildPolicy()
         if on { releaseAutoMute() } else if phase == .thinking || phase == .speaking { autoMuted = true; updateMute() }
+    }
+
+    // MARK: Antworten ohne Quelle
+
+    /// Schalter im Menü. Einschalten verlangt beim ersten Mal die Bestätigung; Ausschalten wirkt sofort.
+    func requestUnsourced(_ on: Bool) {
+        guard on != unsourcedAllowed else { return }
+        if !on { applyUnsourced(false); return }
+        if AssistantUnsourcedConsent().isAcknowledged { applyUnsourced(true) } else { unsourcedConfirmation = true }
+    }
+
+    func confirmUnsourced() {
+        unsourcedConfirmation = false
+        applyUnsourced(true)
+    }
+
+    func cancelUnsourcedConfirmation() { unsourcedConfirmation = false }
+
+    private func applyUnsourced(_ on: Bool) {
+        let consent = AssistantUnsourcedConsent()
+        if on { consent.grant() } else { consent.revoke() }
+        unsourcedAllowed = on
+        session?.setAllowUnsourced(on)
+        logAudit(AssistantAuditEntry(kind: on ? .unsourcedOn : .unsourcedOff, model: engine.label, cloud: engine.isCloud,
+                                     unsourcedMode: on, consentVersion: consent.version))
+        // Bereits wartende unbelegte Sätze würden sonst noch gesprochen: die Antwort hält an.
+        if !on, let run = current, run.hasUnspokenUnsourced {
+            stopForRevocation("Antwort angehalten: Antworten ohne Quelle sind ausgeschaltet.")
+        }
+        announce(on ? "Antworten ohne Quelle ein." : "Antworten ohne Quelle aus.")
+    }
+
+    /// Entzug (Opt-in, Bereich, Cloud-Zustimmung) mitten in der Antwort: Sprache stoppt, das bisher Gesprochene steht als
+    /// unterbrochen im Verlauf (und im Protokoll als widerrufen).
+    private func stopForRevocation(_ text: String) {
+        guard current != nil else { return }
+        cancelAnswer(merge: false, revoked: true)
+        interruptedPending = false
+        phase = running ? .listening : .idle
+        notice = AssistantNotice(text: text, action: nil)
+        announce(text)
+    }
+
+    /// Protokoll schreiben (ohne Inhalte); ein Fehler erscheint einmal als Hinweis, nie still.
+    private func logAudit(_ entry: AssistantAuditEntry) {
+        let audit = self.audit
+        Task { [weak self] in
+            let ok = await audit.record(entry)
+            self?.auditResult(ok)
+        }
+    }
+
+    private func auditResult(_ ok: Bool) {
+        guard !ok, !auditFailureShown else { return }
+        auditFailureShown = true
+        notice = AssistantNotice(text: "Das Protokoll konnte nicht gespeichert werden (Speicher voll?).", action: nil)
     }
 
     func toggleMute() {
@@ -502,6 +614,7 @@ final class AssistantController: ObservableObject {
         currentUser = nil
         currentRunID = nil
         liveAnswer = ""
+        liveParts = []
         sources = []
         sourcesKnown = false
         notice = nil
@@ -600,7 +713,7 @@ final class AssistantController: ObservableObject {
         } else {
             discardSpeculation()
             guard session != nil else {
-                notice = AssistantNotice(text: engine.note ?? "Es ist kein Modell verfügbar.", action: nil)
+                notice = noModelNotice()
                 policy.reset()
                 return
             }
@@ -625,7 +738,7 @@ final class AssistantController: ObservableObject {
 
     /// Abbrechen der laufenden Antwort. `merge`: die Äußerung wird fortgesetzt, nichts kommt in den Verlauf; sonst
     /// kommt das tatsächlich Gesprochene als „unterbrochen“ in den Verlauf.
-    private func cancelAnswer(merge: Bool) {
+    private func cancelAnswer(merge: Bool, revoked: Bool = false) {
         guard let run = current else { return }
         speaker.stop()
         current = nil
@@ -640,6 +753,7 @@ final class AssistantController: ObservableObject {
             mergePrefix = run.text
             currentUser = nil
             liveAnswer = ""
+            liveParts = []
             sources = []
             sourcesKnown = false
             watchMerge(run.text)
@@ -652,7 +766,10 @@ final class AssistantController: ObservableObject {
             _ = await LiveCapture.bounded(1.5) { _ = await task?.value }
             task?.cancel()
             // Nichts Gesprochenes: kein Beitrag (die Ansicht zeigt dann nichts Bleibendes für die abgebrochene Frage).
-            if !merge, !spoken.isEmpty { await session?.commit(requestId: run.id, user: run.text, spoken: spoken, interrupted: true) }
+            if !merge, !spoken.isEmpty {
+                let ok = await session?.commit(requestId: run.id, user: run.text, spoken: spoken, interrupted: true, revoked: revoked)
+                self?.auditResult(ok ?? true)
+            }
             await self?.refreshTurns(after: run, keepLive: merge)
         }
     }
@@ -691,7 +808,7 @@ final class AssistantController: ObservableObject {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         guard session != nil else {
-            notice = AssistantNotice(text: engine.note ?? "Es ist kein Modell verfügbar.", action: nil)
+            notice = noModelNotice()
             return
         }
         let cutOff = current.map { !$0.finishedSpeaking.isEmpty } ?? false
@@ -765,6 +882,7 @@ final class AssistantController: ObservableObject {
         currentRunID = run.id
         currentUser = run.text
         liveAnswer = ""
+        liveParts = []
         sources = []
         sourcesKnown = false
         firstSoundMs = nil
@@ -780,8 +898,8 @@ final class AssistantController: ObservableObject {
         switch event {
         case .sources(_, let list):
             run.sources = list
-        case .sentence(_, let text, let speech):
-            run.sentences.append(.init(text: text, speech: speech))
+        case .sentence(_, let text, let speech, let status, let covering):
+            run.sentences.append(.init(text: text, speech: speech, status: status, sources: covering))
         case .done(_, let answer):
             run.answer = answer
             run.finished = true
@@ -801,6 +919,13 @@ final class AssistantController: ObservableObject {
 
     private func deliverIfCurrent(_ run: AssistantRun) {
         guard run.committed, run === current else { return }
+        // Die Zustimmung für das Cloud-Ziel ist unterwegs entfallen: nichts Weiteres von dieser Antwort wird gesprochen.
+        if let target = engine.target, !AssistantConsent.isGranted(target, areas: areas) {
+            logAudit(AssistantAuditEntry(kind: .cloudRevoked, model: engine.label, cloud: true, unsourcedMode: unsourcedAllowed,
+                                         consentVersion: AssistantUnsourcedConsent().version, areas: AssistantArea.allCases.filter(areas.contains)))
+            stopForRevocation("Antwort angehalten: Die Zustimmung für das Cloud-Modell fehlt.")
+            return
+        }
         deliver(run)
     }
 
@@ -814,13 +939,9 @@ final class AssistantController: ObservableObject {
             speaker.voiceID = VoiceModel.shared.selectedVoiceID
             speaker.begin(language: .de)
         }
-        if let list = run.sources, list != sources || !sourcesKnown {
-            sources = list
-            sourcesKnown = true
-        }
         while run.delivered < run.sentences.count {
             let sentence = run.sentences[run.delivered]
-            liveAnswer += (liveAnswer.isEmpty ? "" : " ") + sentence.text
+            if sentence.status != .announcement { showLive(sentence) }
             if !sentence.speech.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 run.enqueued.append(run.delivered)
                 speaker.enqueue(sentence.speech)
@@ -831,6 +952,20 @@ final class AssistantController: ObservableObject {
         run.inputEnded = true
         // Alles gesprochen (oder nichts zu sprechen): `onIdle` kommt, auch sofort.
         speaker.endOfInput()
+    }
+
+    /// Satz in die Live-Anzeige: Text, Abschnitt mit Kennzeichnung, deckende Quellen. Verworfene Sätze und Ansagen kommen nie hierher.
+    private func showLive(_ sentence: AssistantRun.Sentence) {
+        liveAnswer += (liveAnswer.isEmpty ? "" : " ") + sentence.text
+        let unsourced = sentence.status == .unsourced
+        if let last = liveParts.last, last.unsourced == unsourced {
+            liveParts[liveParts.count - 1].text += " " + sentence.text
+        } else {
+            liveParts.append(AssistantTurnPart(text: sentence.text, unsourced: unsourced))
+        }
+        sourcesKnown = true
+        var seen = Set(sources.map { AssistantController.chip($0) })
+        for source in sentence.sources where seen.insert(AssistantController.chip(source)).inserted { sources.append(source) }
     }
 
     // MARK: Stimme (Speaker → Policy, Abschluss)
@@ -855,6 +990,8 @@ final class AssistantController: ObservableObject {
         let index = run.enqueued[last]
         guard run.finishedSpeaking.last != index else { return }
         run.finishedSpeaking.append(index)
+        // Eine Ansage („Ohne Quelle:“) ist kein fertiger Antwortsatz: sonst gälte ein Dazwischenreden schon als Unterbrechung.
+        guard run.sentences[index].status != .announcement else { return }
         perform(policy.feed(.sentenceSpoken(text: text, startedAtMs: run.startMs[last], endedAtMs: nowMs)))
     }
 
@@ -878,11 +1015,13 @@ final class AssistantController: ObservableObject {
         let keep = failure != nil && spoken.isEmpty
         if let failure { showFailure(failure, run: run) }
         enqueue { [weak self] in
+            var written: Bool?
             if failure == nil {
-                await session?.commit(requestId: run.id, user: run.text, spoken: whole, interrupted: false)
+                written = await session?.commit(requestId: run.id, user: run.text, spoken: whole, interrupted: false)
             } else if !spoken.isEmpty {
-                await session?.commit(requestId: run.id, user: run.text, spoken: spoken, interrupted: true)
+                written = await session?.commit(requestId: run.id, user: run.text, spoken: spoken, interrupted: true)
             }
+            self?.auditResult(written ?? true)
             await self?.refreshTurns(after: run, keepLive: keep)
         }
     }
@@ -892,7 +1031,7 @@ final class AssistantController: ObservableObject {
         switch failure {
         case .cancelled: text = "Die Antwort wurde abgebrochen."
         case .timeout: text = "Das Modell hat zu lange nicht geantwortet."
-        case .noModel: text = "Es ist kein Modell verfügbar."
+        case .noModel: text = AssistantEngine.noModelText
         case .modelFailed: text = "Die Antwort ist fehlgeschlagen."
         case .offline: text = engine.isCloud || engine.choice == .endpoint ? "Das Modell ist nicht erreichbar. Prüfe die Verbindung." : "Das Modell ist nicht erreichbar."
         case .consentRequired: text = "Für dieses Modell fehlt die Zustimmung."
@@ -915,6 +1054,7 @@ final class AssistantController: ObservableObject {
         if currentRunID == run.id, !keepLive {
             currentUser = nil
             liveAnswer = ""
+            liveParts = []
             sources = []
             sourcesKnown = false
             currentRunID = nil
@@ -964,6 +1104,8 @@ final class AssistantController: ObservableObject {
     func grantConsent() {
         guard let request = consentRequest else { return }
         AssistantConsent.grant(request.target, areas: request.areas)
+        logAudit(AssistantAuditEntry(kind: .cloudGranted, cloud: true, unsourcedMode: unsourcedAllowed,
+                                     consentVersion: AssistantUnsourcedConsent().version, areas: AssistantArea.allCases.filter(request.areas.contains)))
         finishConsent(true)
     }
 

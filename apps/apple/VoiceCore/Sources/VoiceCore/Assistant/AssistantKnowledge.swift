@@ -41,6 +41,24 @@ public actor AssistantKnowledge {
         return Self.clip(blocks.joined(separator: "\n"), to: maxChars)
     }
 
+    /// Höchstens so viele Titel für die Prüfung „nimmt ein Satz Bezug auf einen Titel aus dem Bestand“.
+    static let titleCap = 400
+
+    /// Titel aller Elemente der freigegebenen Bereiche (nicht nur der im Prompt gezeigten), ohne Doppelte.
+    public func inventoryTitles() async -> [String] {
+        var seen = Set<String>()
+        var out: [String] = []
+        for area in AssistantArea.allCases where enabled.contains(area) {
+            for item in await items(in: area) {
+                let title = Self.oneLine(item.title)
+                guard !title.isEmpty, seen.insert(title).inserted else { continue }
+                out.append(title)
+                if out.count >= Self.titleCap { return out }
+            }
+        }
+        return out
+    }
+
     private func items(in area: AssistantArea) async -> [AssistantItem] {
         var byId: [String: AssistantItem] = [:]
         for item in await corpus.items(area: area) { byId[item.id] = item }

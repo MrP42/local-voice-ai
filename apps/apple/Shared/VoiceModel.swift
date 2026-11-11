@@ -31,6 +31,8 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
     @Published var entries: [Entry] = []
     @Published var storageIssues: [StorageIssue] = []
     @Published var status = "Bereit"
+    /// Die Einrichtung (Speicher, Aufnahme, Übertragung) ist gescheitert: „Erneut versuchen“ baut die Teile neu auf.
+    @Published private(set) var setupFailed = false
     @Published var recording = false
     @Published var reachable = false
     @Published var availableVoices: [SpeechVoiceOption] = []
@@ -107,6 +109,11 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
         didSet { UserDefaults.standard.set(sttModel, forKey: "sttModel") }
     }
     #endif
+    /// „Erneut versuchen“ hat etwas zu tun: Einrichtung gescheitert, Wiederherstellung nötig oder eine Aufnahme wartet
+    /// unbeantwortet, ohne dass ihre Verarbeitung gerade läuft. Sonst zeigt die Karte den Knopf nicht (nichts zu wiederholen).
+    var canRetry: Bool {
+        setupFailed || !storageIssues.isEmpty || entries.contains { $0.state != .answered && $0.reply == nil && $0.job?.running != true }
+    }
     private var store: DurableStore?
     private var transport: VoiceTransport?
     private var capture: CaptureController?
@@ -210,7 +217,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
         }
         #endif
         do { try configureComponents(); try recoverStorageState() }
-        catch { status = "Speicherprüfung erforderlich – Wiederherstellung erneut versuchen"; refresh() }
+        catch { setupFailed = true; status = "Speicherprüfung erforderlich – Wiederherstellung erneut versuchen"; refresh() }
         interruptionObservation = AudioInterruptionObservation { [weak self] notification in
             guard let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
                   AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
@@ -560,9 +567,10 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
             #if os(iOS)
             backgroundRuntime?.setForeground(active)
             #endif
+            setupFailed = false
             retry()
         }
-        catch { status = "Wiederherstellung nicht abgeschlossen – Originale bleiben erhalten"; refresh() }
+        catch { setupFailed = true; status = "Wiederherstellung nicht abgeschlossen – Originale bleiben erhalten"; refresh() }
     }
     func retry(forceReload: Bool = false) {
         if forceReload && (capture == nil || transport == nil) { recoverStorage(); return }

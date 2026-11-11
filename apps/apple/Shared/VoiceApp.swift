@@ -167,8 +167,11 @@ private struct VoiceHome: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
-                        Button { showHistory = true } label: { Image(systemName: "clock.arrow.circlepath") }
-                            .accessibilityLabel("Verlauf").accessibilityIdentifier("historyButton")
+                        Button { showHistory = true } label: {
+                            Image(systemName: "clock.arrow.circlepath").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                        }
+                        .accessibilityLabel("Verlauf").accessibilityHint("Zeigt die gespeicherten Aufnahmen und Antworten")
+                        .accessibilityIdentifier("historyButton")
                     }
                     ToolbarItem(placement: .topBarTrailing) {
                         SettingsButton().accessibilityIdentifier("settings")
@@ -271,9 +274,12 @@ private struct VoiceHome: View {
             .background(VoicePalette.background, in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(VoicePalette.border, lineWidth: 1))
     }
-    private var recoveryButton: some View {
-        Button { model.retry(forceReload: true) } label: {
-            Text("Erneut versuchen").frame(minHeight: 44)
+    /// Nur wenn es etwas zu wiederholen gibt (Fehlerzustand, Wiederherstellung, wartende Aufnahme); sonst fehlt der Knopf.
+    @ViewBuilder private var recoveryButton: some View {
+        if model.canRetry {
+            Button { model.retry(forceReload: true) } label: {
+                Text("Erneut versuchen").frame(minHeight: 44)
+            }
         }
     }
     private var optionsMenu: some View {

@@ -109,6 +109,50 @@ final class AssistantHistoryStoreTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: store.url, encoding: .utf8), future, "neuere Fassung bleibt unangetastet")
     }
 
+    /// Verlaufsdatei aus der Zeit vor „Antworten ohne Quelle“: keine Felder `unsourced` und `parts`. Sie lädt, nichts geht
+    /// verloren; eine frühere Antwort ohne Auszug gilt als „ohne Quelle“, eine belegte nicht.
+    func testOldHistoryFileWithoutUnsourcedAndPartsStillLoads() throws {
+        let store = AssistantHistoryStore(directory: dir)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let old = #"""
+        {"version":1,"turns":[
+         {"user":"Wie hoch ist der Mont Blanc","assistant":"Der Mont Blanc ist 4806 Meter hoch.","interrupted":false,"sources":[],"general":true,"model":"Apple","at":782000000.5},
+         {"user":"Wohin fährt Castorp","assistant":"Nach Davos.","interrupted":true,"sources":[{"area":"books","itemId":"b1","title":"Der Zauberberg","locator":"S. 12","text":"","score":0}],"general":false,"model":"Gemma","at":782000100}
+        ]}
+        """#
+        try Data(old.utf8).write(to: store.url)
+        let loaded = store.load()
+        XCTAssertEqual(loaded.count, 2)
+        XCTAssertEqual(loaded[0].assistant, "Der Mont Blanc ist 4806 Meter hoch.")
+        XCTAssertTrue(loaded[0].general)
+        XCTAssertTrue(loaded[0].unsourced, "alte Antwort ohne Auszug: als ohne Quelle gekennzeichnet")
+        XCTAssertEqual(loaded[0].parts, [])
+        XCTAssertFalse(loaded[1].unsourced)
+        XCTAssertEqual(loaded[1].sources.first?.title, "Der Zauberberg")
+        XCTAssertTrue(loaded[1].interrupted)
+        XCTAssertEqual(loaded[1].model, "Gemma")
+        // Wird der Verlauf neu geschrieben, trägt er die neuen Felder und lädt unverändert.
+        try store.save(loaded)
+        XCTAssertEqual(store.load(), loaded.map(AssistantHistoryStore.minimized))
+    }
+
+    func testUnsourcedFlagAndPartsRoundTrip() throws {
+        let store = AssistantHistoryStore(directory: dir)
+        let mixed = AssistantTurn(
+            user: "Frage", assistant: "Castorp fährt nach Davos. Hunde schwitzen über die Pfoten.",
+            sources: [AssistantPassage(area: .books, itemId: "b1", title: "Der Zauberberg", locator: "S. 12", text: "GEHEIM", score: 1)],
+            general: false, unsourced: true,
+            parts: [AssistantTurnPart(text: "Castorp fährt nach Davos.", unsourced: false), AssistantTurnPart(text: "Hunde schwitzen über die Pfoten.", unsourced: true)],
+            model: "Apple", at: Date(timeIntervalSince1970: 1_760_000_000))
+        try store.save([mixed])
+        let loaded = store.load()
+        XCTAssertEqual(loaded, [AssistantHistoryStore.minimized(mixed)])
+        XCTAssertTrue(loaded[0].unsourced)
+        XCTAssertEqual(loaded[0].parts.map(\.unsourced), [false, true])
+        let raw = try String(contentsOf: store.url, encoding: .utf8)
+        XCTAssertFalse(raw.contains("GEHEIM"))
+    }
+
     func testStandardDirectoryIsSeparateFromBookTalk() {
         XCTAssertEqual(AssistantHistoryStore.standardDirectory().lastPathComponent, "Assistant")
         XCTAssertNotEqual(AssistantHistoryStore.standardDirectory(), BookTalkHistoryStore.standardDirectory())

@@ -11,6 +11,7 @@ final class AppSettings: ObservableObject {
 struct SettingsButton: View {
     var body: some View {
         Button("Einstellungen", systemImage: "slider.horizontal.3") { AppSettings.shared.shown = true }
+            .accessibilityLabel("Einstellungen")
     }
 }
 

@@ -212,6 +212,97 @@ final class VoiceUITests: XCTestCase {
         handsFree.tap()
         XCTAssertEqual(record.label, "Sprechen")
     }
+    /// Öffnet das Gespräch über „Gespräch“ › Freisprechen › Hauptknopf (Freisprechen wird danach mit `closeAssistant` zurückgesetzt).
+    private func openAssistant(_ app: XCUIApplication) {
+        app.buttons["Gespräch"].firstMatch.tap()
+        let handsFree = app.switches["handsFreeEnabled"]
+        XCTAssertTrue(handsFree.waitForExistence(timeout: 5))
+        if handsFree.value as? String != "1" { handsFree.tap() }
+        app.buttons["record"].tap()
+        XCTAssertTrue(app.buttons["assistantClose"].waitForExistence(timeout: 10))
+    }
+    private func closeAssistant(_ app: XCUIApplication) {
+        app.buttons["assistantClose"].tap()
+        let handsFree = app.switches["handsFreeEnabled"]
+        XCTAssertTrue(handsFree.waitForExistence(timeout: 10))
+        if handsFree.value as? String == "1" { handsFree.tap() }
+    }
+    private func waitForLabel(_ element: XCUIElement, _ format: String, _ text: String) {
+        expectation(for: NSPredicate(format: format, text), evaluatedWith: element)
+        waitForExpectations(timeout: 8)
+    }
+    /// Ohne Modell: kurzer Hinweis mit zwei Wegen heraus, Hauptknopf „Modell auswählen“, kein Stumm-Knopf.
+    func testAssistantWithoutModelOffersModelChoice() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--no-handsfree", "--assistant-no-model", "--assistant-reset-unsourced"]
+        app.launch()
+        openAssistant(app)
+        XCTAssertTrue(app.staticTexts["Kein Modell verfügbar."].waitForExistence(timeout: 10))
+        let choose = app.buttons["assistantChooseModel"]
+        XCTAssertTrue(choose.waitForExistence(timeout: 5))
+        XCTAssertEqual(choose.label, "Modell auswählen")
+        XCTAssertEqual(app.buttons["assistantNoticeChooseModel"].label, "Modell auswählen")
+        XCTAssertEqual(app.buttons["assistantNoticeLocalModels"].label, "Lokale Modelle öffnen")
+        XCTAssertFalse(app.buttons["assistantMute"].exists, "ohne Modell gibt es weder Stumm noch Pause")
+        XCTAssertFalse(app.buttons["assistantKeyboard"].exists)
+        keepScreenshot(app, name: "Gespraech-ohne-Modell")
+        choose.tap()
+        XCTAssertTrue(app.buttons["Apple-Systemmodell · lokal"].waitForExistence(timeout: 5))
+        app.buttons["Abbrechen"].firstMatch.tap()
+        // Die Vorschläge im Einstieg führen ohne Modell ebenfalls zur Modellwahl.
+        let suggestion = app.buttons["Worum geht es in meinem aktuellen Buch?"]
+        XCTAssertTrue(suggestion.waitForExistence(timeout: 5))
+        suggestion.tap()
+        XCTAssertTrue(app.buttons["Apple-Systemmodell · lokal"].waitForExistence(timeout: 5))
+        app.buttons["Abbrechen"].firstMatch.tap()
+        app.buttons["assistantNoticeLocalModels"].tap()
+        XCTAssertTrue(app.buttons["Fertig"].waitForExistence(timeout: 10))
+        app.buttons["Fertig"].tap()
+        XCTAssertTrue(app.buttons["assistantChooseModel"].waitForExistence(timeout: 10))
+        closeAssistant(app)
+    }
+    /// „Antworten ohne Quelle“: aus beim ersten Start, Einschalten verlangt die Bestätigung, Abbrechen ändert nichts, danach
+    /// schaltet das Menü ohne neue Frage um.
+    func testAssistantUnsourcedAnswersAreOffByDefaultAndNeedConfirmation() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--no-handsfree", "--assistant-no-model", "--assistant-reset-unsourced"]
+        app.launch()
+        openAssistant(app)
+        let state = app.descendants(matching: .any)["assistantState"]
+        XCTAssertTrue(state.waitForExistence(timeout: 10))
+        XCTAssertFalse(state.label.contains("Antworten ohne Quelle"), state.label)
+        let toggle = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR label == %@", "assistantUnsourced", "Antworten ohne Quelle")).firstMatch
+        let alert = app.alerts["Antworten ohne Quelle einschalten?"]
+        func flip() {
+            app.buttons["assistantMenu"].tap()
+            XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+            toggle.tap()
+        }
+
+        flip()
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        XCTAssertTrue(alert.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Der Assistent darf dann auch aus dem Wissen des Sprachmodells antworten.")).firstMatch.exists)
+        keepScreenshot(app, name: "Gespraech-Ohne-Quelle-Bestaetigung")
+        alert.buttons["Abbrechen"].tap()
+        XCTAssertTrue(alert.waitForNonExistence(timeout: 5))
+        XCTAssertFalse(state.label.contains("Antworten ohne Quelle"), "Abbrechen schaltet nichts ein")
+
+        flip()
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        alert.buttons["Einschalten"].tap()
+        waitForLabel(state, "label CONTAINS %@", "Antworten ohne Quelle sind erlaubt")
+
+        flip()
+        XCTAssertFalse(alert.waitForExistence(timeout: 1), "Ausschalten braucht keine Bestätigung")
+        waitForLabel(state, "NOT (label CONTAINS %@)", "Antworten ohne Quelle")
+
+        flip()
+        XCTAssertFalse(alert.waitForExistence(timeout: 1), "bestätigt ist bestätigt: kein zweites Mal fragen")
+        waitForLabel(state, "label CONTAINS %@", "Antworten ohne Quelle sind erlaubt")
+        flip()
+        waitForLabel(state, "NOT (label CONTAINS %@)", "Antworten ohne Quelle")
+        closeAssistant(app)
+    }
     #if targetEnvironment(simulator)
     func testConversationRearmsAfterEmptyTranscription() throws {
         // Aufnahme-Unterhaltung: `--legacy-conversation` lässt den Hauptknopf auch mit Freisprechen aufnehmen.

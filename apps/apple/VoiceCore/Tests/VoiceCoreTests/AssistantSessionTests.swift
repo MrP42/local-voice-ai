@@ -64,7 +64,13 @@ private func collect(_ s: AssistantSession, _ r: AssistantRequest) async -> [Ass
 }
 
 final class AssistantSessionTests: XCTestCase {
-    private let config = AssistantConfig(modelLabel: "Test", isCloud: false, contextTokens: 4_096, maxAnswerTokens: 400, userName: "Patrick", timeout: 5)
+    /// Ablauf-, Abbruch- und Fehlertests prüfen nicht die Belegtreue: Hier sind unbelegte Sätze erlaubt, damit jeder Satz
+    /// des künstlichen Modells ankommt. Die Satzprüfung testen `strict` und der Abschnitt „Antworten ohne Quelle“.
+    private let config = AssistantConfig(modelLabel: "Test", isCloud: false, contextTokens: 4_096, maxAnswerTokens: 400, userName: "Patrick", timeout: 5,
+                                         allowUnsourced: true, consentVersion: 1)
+    private var strict: AssistantConfig {
+        AssistantConfig(modelLabel: "Test", isCloud: false, contextTokens: 4_096, maxAnswerTokens: 400, userName: "Patrick", timeout: 5)
+    }
 
     private func knowledge() async -> AssistantKnowledge {
         let corpus = AssistantCorpus()
@@ -81,14 +87,16 @@ final class AssistantSessionTests: XCTestCase {
     // MARK: Ablauf
 
     func testNormalFlowSourcesSentencesDone() async {
-        let model = ScriptModel(pieces: ["Castorp fährt nach Davos", ", um seinen Vetter zu besuchen. Er bleibt", " dort länger als geplant."])
+        let model = ScriptModel(pieces: ["Castorp fährt nach Davos", ", um seinen Vetter zu besuchen. Joachim ist", " dort sein Vetter."])
         let s = await session(model)
         let events = await collect(s, AssistantRequest(requestId: "r1", text: "Wohin fährt Hans Castorp im Sanatorium nach Davos?"))
 
         guard case .sources("r1", let sources)? = events.first else { return XCTFail("sources zuerst: \(events)") }
         XCTAssertEqual(sources.first?.itemId, "b1")
-        let sentences = events.compactMap { e -> String? in if case .sentence(_, let t, _) = e { return t } else { return nil } }
-        XCTAssertEqual(sentences, ["Castorp fährt nach Davos, um seinen Vetter zu besuchen.", "Er bleibt dort länger als geplant."])
+        let sentences = events.compactMap { e -> String? in if case .sentence(_, let t, _, _, _) = e { return t } else { return nil } }
+        XCTAssertEqual(sentences, ["Castorp fährt nach Davos, um seinen Vetter zu besuchen.", "Joachim ist dort sein Vetter."])
+        let statuses = events.compactMap { e -> AssistantSentenceStatus? in if case .sentence(_, _, _, let st, _) = e { return st } else { return nil } }
+        XCTAssertEqual(statuses, [.grounded, .grounded], "rein belegt: keine Ansage")
         guard case .done("r1", let answer)? = events.last else { return XCTFail("done zuletzt: \(events)") }
         XCTAssertEqual(answer.text, sentences.joined(separator: " "))
         XCTAssertEqual(answer.sources, sources)
@@ -100,19 +108,24 @@ final class AssistantSessionTests: XCTestCase {
         XCTAssertEqual(events.firstIndex { if case .sources = $0 { true } else { false } }, 0)
     }
 
-    func testGeneralWhenNoPassagesUsed() async {
+    func testGeneralAnswerWithOptInIsAnnouncedAndMarkedUnsourced() async {
         let s = await session(ScriptModel(pieces: ["Der Mont Blanc ist 4806 Meter hoch."]))
         let events = await collect(s, AssistantRequest(requestId: "r1", text: "Wie hoch ist der Mont Blanc"))
         guard case .sources(_, let sources)? = events.first, case .done(_, let a)? = events.last else { return XCTFail("\(events)") }
         XCTAssertTrue(sources.isEmpty)
         XCTAssertTrue(a.general)
+        XCTAssertTrue(a.unsourced)
         XCTAssertTrue(a.sources.isEmpty)
+        XCTAssertEqual(a.counts, AssistantSentenceCounts(unsourced: 1))
+        XCTAssertEqual(a.text, "Der Mont Blanc ist 4806 Meter hoch.", "Ansagen gehören nicht zum Antworttext")
     }
 
     func testSpeechFieldIsSpeakable() async {
         let s = await session(ScriptModel(pieces: ["**Das** gilt z. B. für Hunde 😀. Siehe [Link](https://example.com)."]))
         let events = await collect(s, AssistantRequest(requestId: "r1", text: "Hallo"))
-        let pairs = events.compactMap { e -> (String, String)? in if case .sentence(_, let t, let sp) = e { return (t, sp) } else { return nil } }
+        let pairs = events.compactMap { e -> (String, String)? in
+            if case .sentence(_, let t, let sp, let st, _) = e, st != .announcement { return (t, sp) } else { return nil }
+        }
         XCTAssertEqual(pairs.map(\.0), ["Das gilt z. B. für Hunde.", "Siehe Link."])
         XCTAssertEqual(pairs.map(\.1), ["Das gilt zum Beispiel für Hunde.", "Siehe Link."])
     }
@@ -159,7 +172,9 @@ final class AssistantSessionTests: XCTestCase {
         let h = await s.history
         XCTAssertEqual(h.count, 2)
         XCTAssertTrue(h[0].general)
+        XCTAssertTrue(h[0].unsourced)
         XCTAssertTrue(h[1].general)
+        XCTAssertTrue(h[1].unsourced, "Gesprochenes ohne Entsprechung in der Prüfung gilt als unbelegt")
         XCTAssertTrue(h[1].interrupted)
     }
 
@@ -377,7 +392,7 @@ final class AssistantSessionTests: XCTestCase {
     func testErrorAfterSomeSentencesFailsInsteadOfDone() async {
         let s = await session(ScriptModel(pieces: ["Ein erster Satz. Und noch ein"], fail: BookTalkModelError.offline))
         let events = await collect(s, AssistantRequest(requestId: "r1", text: "Hallo"))
-        XCTAssertTrue(events.contains { if case .sentence(_, "Ein erster Satz.", _) = $0 { true } else { false } })
+        XCTAssertTrue(events.contains { if case .sentence(_, "Ein erster Satz.", _, _, _) = $0 { true } else { false } })
         XCTAssertEqual(events.last, .failed(requestId: "r1", .offline))
     }
 
@@ -398,6 +413,256 @@ final class AssistantSessionTests: XCTestCase {
         await s.commit(requestId: "final", user: "Wie wird das Wetter morgen", spoken: "Erster Satz. Zweiter Satz. Dritter Satz.", interrupted: false)
         h = await s.history
         XCTAssertEqual(h.count, 1)
+    }
+
+    // MARK: Antworten ohne Quelle (E4.2a)
+
+    private struct Seen {
+        let events: [AssistantEvent]
+        var statuses: [AssistantSentenceStatus] {
+            events.compactMap { if case .sentence(_, _, _, let st, _) = $0 { st } else { nil } }
+        }
+        var texts: [String] {
+            events.compactMap { if case .sentence(_, let t, _, _, _) = $0 { t } else { nil } }
+        }
+        var spoken: [String] {
+            events.compactMap { if case .sentence(_, let t, _, let st, _) = $0, st != .announcement { t } else { nil } }
+        }
+        var answer: AssistantAnswer? {
+            if case .done(_, let a)? = events.last { a } else { nil }
+        }
+    }
+
+    private func ask(_ pieces: [String], config c: AssistantConfig? = nil, text: String = "Wohin fährt Hans Castorp im Sanatorium nach Davos?",
+                     session custom: AssistantSession? = nil) async -> Seen {
+        let s: AssistantSession
+        if let custom { s = custom } else { s = await session(ScriptModel(pieces: pieces), config: c ?? strict) }
+        return Seen(events: await collect(s, AssistantRequest(requestId: "r1", text: text)))
+    }
+
+    func testPurelyGroundedAnswerHasNoAnnouncementAndCarriesTheCoveringSource() async {
+        let seen = await ask(["Castorp fährt nach Davos, um seinen Vetter zu besuchen."])
+        XCTAssertEqual(seen.statuses, [.grounded])
+        guard case .sentence(_, _, _, _, let sources)? = seen.events.first(where: { if case .sentence = $0 { true } else { false } }) else { return XCTFail() }
+        XCTAssertEqual(sources.first?.itemId, "b1")
+        XCTAssertEqual(seen.answer?.counts, AssistantSentenceCounts(grounded: 1))
+        XCTAssertEqual(seen.answer?.unsourced, false)
+        XCTAssertEqual(seen.answer?.sources.map(\.itemId), ["b1"])
+        XCTAssertEqual(seen.answer?.general, false)
+    }
+
+    func testMixedAnswerAnnouncesBothTransitions() async {
+        let seen = await ask(["Castorp fährt nach Davos. Hunde schwitzen vor allem über die Pfoten. Joachim ist dort sein Vetter."], config: config)
+        XCTAssertEqual(seen.statuses, [.grounded, .announcement, .unsourced, .announcement, .grounded])
+        XCTAssertEqual(seen.texts, ["Castorp fährt nach Davos.", "Ohne Quelle:", "Hunde schwitzen vor allem über die Pfoten.",
+                                    "Aus deinen Inhalten:", "Joachim ist dort sein Vetter."])
+        XCTAssertEqual(seen.answer?.counts, AssistantSentenceCounts(grounded: 2, unsourced: 1))
+        XCTAssertEqual(seen.answer?.unsourced, true)
+        XCTAssertEqual(seen.answer?.text, "Castorp fährt nach Davos. Hunde schwitzen vor allem über die Pfoten. Joachim ist dort sein Vetter.",
+                       "Ansagen gehören nicht zum Antworttext")
+    }
+
+    func testPurelyUnsourcedAnswerHasExactlyOneAnnouncementAtTheStart() async {
+        let seen = await ask(["Hunde schwitzen vor allem über die Pfoten. Katzen putzen sich mehrmals am Tag."], config: config)
+        XCTAssertEqual(seen.statuses, [.announcement, .unsourced, .unsourced])
+        XCTAssertEqual(seen.texts.first, "Ohne Quelle:")
+    }
+
+    func testNeutralSentenceDoesNotChangeTheSectionButFirstUnsourcedStillGetsItsAnnouncement() async {
+        let seen = await ask(["Gerne. Hunde schwitzen vor allem über die Pfoten. Soll ich mehr dazu sagen?"], config: config)
+        XCTAssertEqual(seen.statuses, [.neutral, .announcement, .unsourced, .neutral])
+    }
+
+    func testMadeUpSourceIsNeverSpokenEvenWithOptIn() async {
+        let seen = await ask(["Laut deiner Notiz Urlaubsplanung fährst du im Mai nach Italien. Hunde schwitzen vor allem über die Pfoten."], config: config)
+        XCTAssertEqual(seen.statuses, [.announcement, .unsourced])
+        XCTAssertFalse(seen.texts.joined().contains("Notiz"))
+        XCTAssertEqual(seen.answer?.counts, AssistantSentenceCounts(unsourced: 1, dropped: 1))
+    }
+
+    func testWrongAppClaimIsDroppedAndTheFixedSentenceFollowsWithoutOptIn() async {
+        let seen = await ask(["Hans Castorp fährt nach Venedig."])
+        XCTAssertEqual(seen.statuses, [.neutral])
+        XCTAssertEqual(seen.texts, ["Dazu finde ich in deinen Inhalten nichts. Antworten ohne Quelle kannst du im Menü einschalten."])
+        XCTAssertEqual(seen.answer?.counts, AssistantSentenceCounts(neutral: 1, dropped: 1))
+        XCTAssertEqual(seen.answer?.text, seen.texts.first)
+        XCTAssertEqual(seen.answer?.general, true)
+        XCTAssertEqual(seen.answer?.unsourced, false)
+    }
+
+    func testOptOutDropsEveryUnsourcedSentenceAndSaysTheFixedSentenceOnce() async {
+        let seen = await ask(["Der Mont Blanc ist 4806 Meter hoch. Er liegt in den Alpen. Hunde schwitzen über die Pfoten."], text: "Wie hoch ist der Mont Blanc?")
+        XCTAssertEqual(seen.spoken, [AssistantGrounding.fixedSentence(allowUnsourced: false)])
+        XCTAssertEqual(seen.statuses, [.neutral])
+        XCTAssertEqual(seen.answer?.counts, AssistantSentenceCounts(neutral: 1, dropped: 3))
+    }
+
+    func testOptInWithNothingGroundedSaysTheShorterFixedSentence() async {
+        let seen = await ask(["Hans Castorp fährt nach Venedig."], config: config)
+        XCTAssertEqual(seen.spoken, ["Dazu finde ich nichts Belegtes."])
+    }
+
+    func testOptInWithRemainingUnsourcedSentenceHasNoFixedSentence() async {
+        let seen = await ask(["Hans Castorp fährt nach Venedig. Hunde schwitzen über die Pfoten."], config: config)
+        XCTAssertEqual(seen.statuses, [.announcement, .unsourced])
+        XCTAssertEqual(seen.answer?.counts, AssistantSentenceCounts(unsourced: 1, dropped: 1))
+    }
+
+    func testNeutralOnlyAnswerPassesWithoutFixedSentence() async {
+        let seen = await ask(["Hallo! Wie kann ich dir helfen?"], text: "Hallo")
+        XCTAssertEqual(seen.statuses, [.neutral, .neutral])
+        XCTAssertEqual(seen.answer?.counts, AssistantSentenceCounts(neutral: 2))
+    }
+
+    func testModelsOwnNothingFoundTemplateCountsAsAnswerAndGetsNoSecondSentence() async {
+        let seen = await ask(["Dazu finde ich in deinen Inhalten nichts."], text: "Was steht in Kapitel 99?")
+        XCTAssertEqual(seen.texts, ["Dazu finde ich in deinen Inhalten nichts."])
+    }
+
+    func testInventoryAnswerIsGroundedWithoutPassageSources() async {
+        let seen = await ask(["Du hast 1 Buch."], text: "Welche Bücher habe ich?")
+        XCTAssertEqual(seen.statuses, [.grounded])
+        XCTAssertEqual(seen.answer?.sources, [])
+        XCTAssertEqual(seen.answer?.counts, AssistantSentenceCounts(grounded: 1))
+        let wrong = await ask(["Du hast 5 Bücher."], text: "Welche Bücher habe ich?")
+        XCTAssertEqual(wrong.statuses, [.neutral], "falsche Zahl: verworfen, fester Satz")
+    }
+
+    func testClockAnswerIsNeutralAndAllowedWithoutOptIn() async {
+        let date = AssistantPrompt.germanDate(Date(), timeZone: .current)
+        let day = String(date[..<date.lastIndex(of: ",")!])
+        let seen = await ask(["Heute ist \(day)."], text: "Welcher Tag ist heute?")
+        XCTAssertEqual(seen.statuses, [.neutral])
+        XCTAssertEqual(seen.answer?.counts, AssistantSentenceCounts(neutral: 1))
+    }
+
+    func testAnnouncementsAreNotPartOfSpeechHistoryText() async {
+        let s = await session(ScriptModel(pieces: ["Castorp fährt nach Davos. Hunde schwitzen vor allem über die Pfoten."]), config: config)
+        let seen = await ask([], session: s)
+        let spoken = seen.spoken.joined(separator: " ")
+        await s.commit(requestId: "r1", user: "Frage", spoken: spoken, interrupted: false)
+        let h = await s.history
+        XCTAssertEqual(h.count, 1)
+        XCTAssertFalse(h[0].assistant.contains("Ohne Quelle:"))
+        XCTAssertEqual(h[0].assistant, "Castorp fährt nach Davos. Hunde schwitzen vor allem über die Pfoten.")
+    }
+
+    // Widerruf
+
+    func testRevokingOptInMidStreamDropsFurtherUnsourcedSentences() async {
+        let model = ScriptModel(pieces: ["Hunde schwitzen vor allem über die Pfoten. ", "Katzen putzen sich mehrmals am Tag. ", "Pferde schlafen oft im Stehen."], pauseMs: 150)
+        let s = await session(model, config: config)
+        var events: [AssistantEvent] = []
+        for await e in s.events(AssistantRequest(requestId: "r1", text: "Erzähl etwas über Tiere")) {
+            events.append(e)
+            if case .sentence(_, _, _, .unsourced, _) = e { s.setAllowUnsourced(false) }
+        }
+        let seen = Seen(events: events)
+        XCTAssertEqual(seen.spoken, ["Hunde schwitzen vor allem über die Pfoten."])
+        XCTAssertEqual(seen.answer?.counts, AssistantSentenceCounts(unsourced: 1, dropped: 2, revoked: 2))
+        let allows = s.allowsUnsourced
+        XCTAssertFalse(allows)
+        // Eine spätere Frage mit widerrufenem Opt-in läuft strikt.
+        let next = await ask([], session: s)
+        XCTAssertFalse(next.statuses.contains(.unsourced))
+    }
+
+    func testRevokingAnAreaMidStreamDropsFurtherGroundedSentencesOfThatArea() async {
+        let k = await knowledge()
+        let model = ScriptModel(pieces: ["Castorp fährt nach Davos. ", "Joachim ist dort sein Vetter. "], pauseMs: 150)
+        let s = AssistantSession(model: model, knowledge: k, config: strict)
+        var events: [AssistantEvent] = []
+        for await e in s.events(AssistantRequest(requestId: "r1", text: "Wohin fährt Hans Castorp im Sanatorium nach Davos?")) {
+            events.append(e)
+            if case .sentence(_, _, _, .grounded, _) = e { await k.setAreas([.notes]) }
+        }
+        let seen = Seen(events: events)
+        XCTAssertEqual(seen.spoken, ["Castorp fährt nach Davos."])
+        XCTAssertEqual(seen.answer?.counts, AssistantSentenceCounts(grounded: 1, dropped: 1, revoked: 1))
+    }
+
+    func testRevokedOptInIsReportedAsRevokedInTheAuditLog() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("assistant-session-audit-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let audit = AssistantAuditLog(directory: dir)
+        let model = ScriptModel(pieces: ["Hunde schwitzen vor allem über die Pfoten. ", "Katzen putzen sich mehrmals am Tag."], pauseMs: 150)
+        let s = AssistantSession(model: model, knowledge: await knowledge(), config: config, audit: audit)
+        var spoken: [String] = []
+        for await e in s.events(AssistantRequest(requestId: "r1", text: "Erzähl etwas über Tiere")) {
+            if case .sentence(_, let t, _, let st, _) = e, st != .announcement { spoken.append(t) }
+            if case .sentence(_, _, _, .unsourced, _) = e { s.setAllowUnsourced(false) }
+        }
+        let wrote = await s.commit(requestId: "r1", user: "Erzähl etwas über Tiere", spoken: spoken.joined(separator: " "), interrupted: false)
+        XCTAssertTrue(wrote)
+        let entries = await audit.entries()
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries[0].outcome, .revoked)
+        XCTAssertEqual(entries[0].unsourced, 1)
+        XCTAssertEqual(entries[0].dropped, 1)
+        XCTAssertTrue(entries[0].unsourcedMode)
+    }
+
+    // Beitrag
+
+    private func twoSourceKnowledge() async -> AssistantKnowledge {
+        let corpus = AssistantCorpus()
+        await corpus.upsert(assistantDoc("b1", "Der Zauberberg", detail: "Thomas Mann", sections: [
+            ("S. 12", "Hans Castorp fährt ins Sanatorium nach Davos und besucht dort seinen Vetter Joachim."),
+        ]))
+        await corpus.upsert(assistantDoc("t1", "Besprechung", area: .transcripts, sections: [
+            ("00:14:03", "Anna übernimmt die Planung für das Projekt Nordlicht bis Freitag."),
+        ]))
+        return AssistantKnowledge(corpus: corpus)
+    }
+
+    func testCommitKeepsOnlySourcesThatCoverASpokenSentenceAndMarksMixedParts() async {
+        let s = AssistantSession(model: ScriptModel(pieces: ["Castorp fährt nach Davos. Hunde schwitzen vor allem über die Pfoten."]),
+                                 knowledge: await twoSourceKnowledge(), config: config)
+        let question = "Hans Castorp Davos Sanatorium Anna Planung Projekt Nordlicht"
+        let seen = await ask([], text: question, session: s)
+        guard case .sources(_, let retrieved)? = seen.events.first else { return XCTFail() }
+        XCTAssertEqual(Set(retrieved.map(\.itemId)), ["b1", "t1"], "beide wurden abgerufen")
+        await s.commit(requestId: "r1", user: question, spoken: seen.spoken.joined(separator: " "), interrupted: false)
+        let h = await s.history
+        XCTAssertEqual(h.last?.sources.map(\.itemId), ["b1"], "nur die deckende Quelle")
+        XCTAssertEqual(h.last?.unsourced, true)
+        XCTAssertEqual(h.last?.general, false)
+        XCTAssertEqual(h.last?.parts, [AssistantTurnPart(text: "Castorp fährt nach Davos.", unsourced: false),
+                                       AssistantTurnPart(text: "Hunde schwitzen vor allem über die Pfoten.", unsourced: true)])
+    }
+
+    func testInterruptedAfterTheGroundedSentenceIsNotMarkedUnsourced() async {
+        let s = AssistantSession(model: ScriptModel(pieces: ["Castorp fährt nach Davos. Hunde schwitzen vor allem über die Pfoten."]),
+                                 knowledge: await twoSourceKnowledge(), config: config)
+        _ = await ask([], text: "Hans Castorp Davos Sanatorium", session: s)
+        await s.commit(requestId: "r1", user: "Hans Castorp Davos Sanatorium", spoken: "Castorp fährt nach Davos.", interrupted: true)
+        let h = await s.history
+        XCTAssertEqual(h.last?.unsourced, false)
+        XCTAssertEqual(h.last?.parts, [])
+        XCTAssertEqual(h.last?.sources.map(\.itemId), ["b1"])
+        XCTAssertEqual(h.last?.interrupted, true)
+    }
+
+    func testPurelyUnsourcedTurnIsMarkedWithoutParts() async {
+        let s = await session(ScriptModel(pieces: ["Hunde schwitzen vor allem über die Pfoten."]), config: config)
+        let seen = await ask([], text: "Wie schwitzen Hunde?", session: s)
+        await s.commit(requestId: "r1", user: "Wie schwitzen Hunde?", spoken: seen.spoken.joined(separator: " "), interrupted: false)
+        let h = await s.history
+        XCTAssertEqual(h.last?.unsourced, true)
+        XCTAssertEqual(h.last?.general, true)
+        XCTAssertEqual(h.last?.parts, [])
+    }
+
+    // Prompt
+
+    func testPromptInstructionsFollowTheOptInAtRequestTime() async {
+        let log = Log()
+        let s = await session(ScriptModel(pieces: ["Gut."], log: log), config: strict)
+        _ = await collect(s, AssistantRequest(requestId: "r1", text: "Hallo"))
+        XCTAssertTrue(log.all.last?.instructions.contains("Antworte ausschließlich aus BESTAND und AUSZÜGEN") ?? false)
+        s.setAllowUnsourced(true)
+        _ = await collect(s, AssistantRequest(requestId: "r2", text: "Hallo"))
+        XCTAssertTrue(log.all.last?.instructions.contains("Sätze aus Allgemeinwissen stehen nie im selben Satz") ?? false)
     }
 
     func testBlankQuestionStillAnswers() async {

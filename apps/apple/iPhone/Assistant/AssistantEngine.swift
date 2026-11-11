@@ -179,23 +179,28 @@ struct AssistantEngine {
     let choice: AssistantModelChoice?
     /// Hinweis für die Anzeige: warum kein Modell läuft oder warum es nicht das gewählte ist; sonst nil.
     let note: String?
+    /// Kurzer Zusatz als eigene Zeile (z. B. „Das Apple-Systemmodell wird noch geladen.“), nur wenn er zutrifft; sonst nil.
+    let detail: String?
     /// Zum Freigeben beim Beenden und bei Speicherwarnung.
     let llama: LlamaBookTalkModel?
     /// Nur bei Cloud-Modellen.
     let target: AssistantCloudTarget?
 
+    /// Kurzer Haupttext, wenn kein Modell läuft; Ursachen stehen (falls zutreffend) in `detail` oder `note`.
+    static let noModelText = "Kein Modell verfügbar."
+
     var isCloud: Bool { config.isCloud }
     var hasModel: Bool { model != nil }
     var label: String { config.modelLabel }
 
-    static func unavailable(_ note: String) -> AssistantEngine {
+    static func unavailable(_ note: String, detail: String? = nil) -> AssistantEngine {
         AssistantEngine(model: nil, config: AssistantConfig(modelLabel: "Kein Modell", isCloud: false, contextTokens: 4_096, maxAnswerTokens: 400,
                                                             userName: nil, timeout: 45),
-                        choice: nil, note: note, llama: nil, target: nil)
+                        choice: nil, note: note, detail: detail, llama: nil, target: nil)
     }
 
     func withNote(_ text: String) -> AssistantEngine {
-        AssistantEngine(model: model, config: config, choice: choice, note: text, llama: llama, target: target)
+        AssistantEngine(model: model, config: config, choice: choice, note: text, detail: detail, llama: llama, target: target)
     }
 
     /// Baut das Modell. Ohne `explicit` gilt die gespeicherte Wahl, sonst die Reihenfolge Apple, Gemma, kein Modell; ist
@@ -203,6 +208,10 @@ struct AssistantEngine {
     /// Mit `explicit` (Auswahl im Menü) wird genau dieses Modell gebaut und bei Misserfolg ohne Modell gemeldet.
     @MainActor
     static func make(choice explicit: AssistantModelChoice? = nil) async -> AssistantEngine {
+        #if DEBUG
+        // UI-Tests des Zustands „Kein Modell“ (Simulatoren haben je nach Host ein Systemmodell).
+        if ProcessInfo.processInfo.arguments.contains("--assistant-no-model") { return .unavailable(noModelText) }
+        #endif
         if let explicit { return await build(explicit) }
         if let stored = AssistantModelChoice.stored {
             let built = await build(stored)
@@ -220,7 +229,7 @@ struct AssistantEngine {
         if apple.hasModel { return apple }
         let gemma = await build(.gemma)
         if gemma.hasModel { return gemma }
-        return unavailable("Es ist kein Modell verfügbar. \(apple.note ?? "") \(gemma.note ?? "") Du kannst im Menü ein anderes Modell oder einen eigenen Endpunkt wählen.")
+        return unavailable(noModelText, detail: apple.detail)
     }
 
     @MainActor
@@ -241,16 +250,19 @@ struct AssistantEngine {
             return AssistantEngine(model: FoundationBookTalkModel(),
                                    config: AssistantConfig(modelLabel: "Apple-Systemmodell", isCloud: false, contextTokens: BookTalkBudget.appleFM1.contextTokens,
                                                            maxAnswerTokens: 400, userName: nil, timeout: 45),
-                                   choice: .apple, note: nil, llama: nil, target: nil)
+                                   choice: .apple, note: nil, detail: nil, llama: nil, target: nil)
         case .unavailable(let reason):
             let note: String
+            var detail: String?
             switch reason {
             case .appleIntelligenceNotEnabled: note = "Apple Intelligence ist ausgeschaltet (iOS-Einstellungen)."
             case .deviceNotEligible: note = "Dieses iPhone unterstützt das Apple-Systemmodell nicht."
-            case .modelNotReady: note = "Das Apple-Systemmodell wird noch geladen. Bitte später erneut versuchen."
+            case .modelNotReady:
+                note = "Das Apple-Systemmodell wird noch geladen. Bitte später erneut versuchen."
+                detail = "Das Apple-Systemmodell wird noch geladen."
             @unknown default: note = "Das Apple-Systemmodell ist auf diesem iPhone nicht verfügbar."
             }
-            return .unavailable(note)
+            return .unavailable(note, detail: detail)
         @unknown default:
             return .unavailable("Das Apple-Systemmodell ist auf diesem iPhone nicht verfügbar.")
         }
@@ -296,7 +308,7 @@ struct AssistantEngine {
         return AssistantEngine(model: model,
                                config: AssistantConfig(modelLabel: "Gemma 4 E2B", isCloud: false, contextTokens: context, maxAnswerTokens: 600,
                                                        userName: nil, timeout: 60),
-                               choice: .gemma, note: nil, llama: model, target: nil)
+                               choice: .gemma, note: nil, detail: nil, llama: model, target: nil)
     }
 
     // MARK: Relay
@@ -311,7 +323,7 @@ struct AssistantEngine {
         return AssistantEngine(model: model,
                                config: AssistantConfig(modelLabel: info.label, isCloud: true, contextTokens: info.contextTokens, maxAnswerTokens: 700,
                                                        userName: nil, timeout: 75),
-                               choice: .relay(id), note: nil, llama: nil, target: .relay(info))
+                               choice: .relay(id), note: nil, detail: nil, llama: nil, target: .relay(info))
     }
 
     // MARK: Eigener Endpunkt
@@ -326,6 +338,6 @@ struct AssistantEngine {
         return AssistantEngine(model: model,
                                config: AssistantConfig(modelLabel: endpoint.label, isCloud: cloud, contextTokens: endpoint.contextTokens, maxAnswerTokens: 700,
                                                        userName: nil, timeout: 60),
-                               choice: .endpoint, note: nil, llama: nil, target: cloud ? .endpoint(endpoint) : nil)
+                               choice: .endpoint, note: nil, detail: nil, llama: nil, target: cloud ? .endpoint(endpoint) : nil)
     }
 }

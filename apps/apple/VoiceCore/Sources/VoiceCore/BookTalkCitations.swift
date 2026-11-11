@@ -136,7 +136,7 @@ public enum BookTalkCitations {
         "not", "no", "never", "without", "neither", "nothing", "nobody", "none",
     ]
 
-    private static let numberWords: [String: String] = [
+    static let numberWords: [String: String] = [
         "null": "0", "zwei": "2", "drei": "3", "vier": "4", "funf": "5", "sechs": "6", "sieben": "7", "acht": "8",
         "neun": "9", "zehn": "10", "elf": "11", "zwolf": "12", "dreizehn": "13", "vierzehn": "14", "funfzehn": "15",
         "sechzehn": "16", "siebzehn": "17", "achtzehn": "18", "neunzehn": "19", "zwanzig": "20", "dreissig": "30",
@@ -278,14 +278,28 @@ public enum BookTalkCitations {
     }
 
     static func supported(_ sentence: String, window: String, ctx: BookTalkGroundingContext) -> Bool {
+        supported(sentence, window: window, entities: ctx.entities)
+    }
+
+    /// Anteil der Inhaltswörter des Satzes, die das Fenster abdeckt (0 ohne Inhaltswörter). `ignoring`: gefaltete Wörter,
+    /// die der Aufrufer nicht zählt (Funktionswörter, Verweise auf die Quelle selbst).
+    static func coverage(_ sentence: String, window: String, ignoring: Set<String> = []) -> Double {
+        let content = BookTalkTokens.contentWords(sentence).filter { !ignoring.contains($0) }
+        guard !content.isEmpty else { return 0 }
+        let windowWords = BookTalkTokens.foldedWords(window)
+        return Double(content.filter { covered($0, by: windowWords) }.count) / Double(content.count)
+    }
+
+    /// Stützung durch ein Fenster: Wortdeckung, Polarität, Namen, Zahlen (Buch-Gespräch und Gesprächsmodus teilen sie).
+    static func supported(_ sentence: String, window: String, entities: [BookTalkEntity], ignoring: Set<String> = []) -> Bool {
         let answerWords = BookTalkTokens.foldedWords(sentence)
         let windowWords = BookTalkTokens.foldedWords(window)
-        let content = BookTalkTokens.contentWords(sentence)
+        let content = BookTalkTokens.contentWords(sentence).filter { !ignoring.contains($0) }
         guard !content.isEmpty else { return false }
         let hits = content.filter { covered($0, by: windowWords) }.count
         guard Double(hits) / Double(content.count) >= minCoverage else { return false }
         guard negationCount(answerWords) % 2 == clauseNegations(window: window, content: content) % 2 else { return false }
-        for e in ctx.entities where e.kind != .term {
+        for e in entities where e.kind != .term {
             let inAnswer = e.forms.contains { BookTalkText.contains(answerWords, form: $0) }
             if inAnswer, !e.forms.contains(where: { BookTalkText.contains(windowWords, form: $0) }) { return false }
         }
