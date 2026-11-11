@@ -98,14 +98,15 @@ pub fn endpoint_from_host(raw: &str) -> Option<Endpoint> {
 
 /// `(Host, Port)` einer Proxy-Angabe: beliebiges Schema (`http`, `socks5`, …)
 /// oder gar keines (`proxy.firma.example:8080`). Zugangsdaten fallen weg.
+///
+/// Ein Passwort darf `/`, `?` oder `#` enthalten (`http://anna:12345/x@proxy:3128`);
+/// eine reine URL-Zerlegung würde dann `anna` als Host lesen. Kommt ein `@`
+/// vor, zählt deshalb nur, was nach dem LETZTEN `@` steht.
 pub fn host_port_from_any(raw: &str) -> Option<(String, u16)> {
     let raw = raw.trim();
-    let with_scheme = if raw.contains("://") {
-        raw.to_string()
-    } else {
-        format!("http://{raw}")
-    };
-    let url = Url::parse(&with_scheme).ok()?;
+    let (scheme, rest) = raw.split_once("://").unwrap_or(("http", raw));
+    let host_part = rest.rsplit_once('@').map_or(rest, |(_, host)| host);
+    let url = Url::parse(&format!("{scheme}://{host_part}")).ok()?;
     let host = clean_host(url.host_str()?)?;
     let port = url.port().or_else(|| match url.scheme() {
         "http" => Some(80),
@@ -138,11 +139,66 @@ fn re(cell: &'static OnceLock<Regex>, pattern: &str) -> &'static Regex {
     cell.get_or_init(|| Regex::new(pattern).expect("Schwärzungsmuster"))
 }
 
+/// Steht der Treffer in einem Hostnamen (`proxy-zentral-rechenzentrum-nord.firma.example`
+/// oder `lang-lang-lang-lang-lang-name:3128`)? Dann ist er kein Schlüssel, sondern
+/// ein lesbares Namensstück, das die IT braucht. Streng gefasst, damit Schlüssel
+/// und Token nicht durchrutschen: Der ganze Namenslauf (Buchstaben, Ziffern,
+/// `-`, `.`) muss wie ein Hostname gebaut sein (Teile höchstens 63 Zeichen, nicht
+/// mit `-` beginnend oder endend, Endung 2 bis 24 Zeichen, mit Buchstaben
+/// beginnend), oder es folgt ein Port (`:3128`).
+fn is_hostname_token(s: &str, start: usize, end: usize) -> bool {
+    let in_run = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '.';
+    let run_start = s[..start]
+        .char_indices()
+        .rev()
+        .find(|(_, c)| !in_run(*c))
+        .map_or(0, |(i, c)| i + c.len_utf8());
+    let run_end = s[end..]
+        .char_indices()
+        .find(|(_, c)| !in_run(*c))
+        .map_or(s.len(), |(i, _)| end + i);
+    let run = s[run_start..run_end].trim_matches('.');
+    let token = &s[start..end];
+    if !token.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return false;
+    }
+    let label_ok =
+        |l: &str| !l.is_empty() && l.len() <= 63 && !l.starts_with('-') && !l.ends_with('-');
+    let labels: Vec<&str> = run.split('.').collect();
+    if labels.len() >= 2 && labels.iter().all(|l| label_ok(l)) {
+        let tld = labels[labels.len() - 1];
+        return (2..=24).contains(&tld.len()) && tld.starts_with(|c: char| c.is_ascii_alphabetic());
+    }
+    let after = &s[run_end..];
+    labels.len() == 1
+        && label_ok(run)
+        && after
+            .strip_prefix(':')
+            .is_some_and(|p| p.starts_with(|c: char| c.is_ascii_digit()))
+}
+
+/// Schlüsselartige Zeichenfolgen durch `[…]` ersetzen, Hostnamen ausgenommen.
+fn scrub_keys(key_re: &Regex, s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut last = 0;
+    for m in key_re.find_iter(s) {
+        out.push_str(&s[last..m.start()]);
+        if is_hostname_token(s, m.start(), m.end()) {
+            out.push_str(m.as_str());
+        } else {
+            out.push_str("[…]");
+        }
+        last = m.end();
+    }
+    out.push_str(&s[last..]);
+    out
+}
+
 /// Freitext bereinigen. Entfernt, in dieser Reihenfolge: Adressen mit Schema
 /// (werden auf `https://host` gekürzt, sonst `[Adresse]`), E-Mail-Adressen,
 /// Windows-, UNC- und typische Unix-Pfade, schlüsselartige Zeichenfolgen
-/// (24 oder mehr Zeichen aus `A–Z a–z 0–9 _ - + / =` ohne Leerzeichen) sowie
-/// Steuerzeichen. Mehrfache Leerzeichen werden zu einem; Länge höchstens 120.
+/// (24 oder mehr Zeichen aus `A–Z a–z 0–9 _ - + / =` ohne Leerzeichen; Teile von
+/// Hostnamen sind ausgenommen, siehe [`is_hostname_token`]) sowie Steuerzeichen. Mehrfache Leerzeichen werden zu einem; Länge höchstens 120.
 pub fn scrub_text(input: &str) -> String {
     static URL_RE: OnceLock<Regex> = OnceLock::new();
     static MAIL_RE: OnceLock<Regex> = OnceLock::new();
@@ -167,7 +223,7 @@ pub fn scrub_text(input: &str) -> String {
         r"/(?:home|Users|root|tmp|var|etc|opt|mnt|usr)(?:/[^\s]*)?",
     )
     .replace_all(&s, "[Pfad]");
-    let s = re(&KEY_RE, r"[A-Za-z0-9_\-+/=]{24,}").replace_all(&s, "[…]");
+    let s = scrub_keys(re(&KEY_RE, r"[A-Za-z0-9_\-+/=]{24,}"), &s);
     let collapsed = s.split_whitespace().collect::<Vec<_>>().join(" ");
     collapsed.chars().take(120).collect()
 }
@@ -302,6 +358,64 @@ mod tests {
         assert!(out.contains("[Pfad]"));
         assert!(out.contains("[…]"));
         assert!(out.ends_with("Ende"));
+    }
+
+    #[test]
+    fn proxy_mit_schraegstrich_im_passwort_liefert_den_echten_host() {
+        for raw in [
+            "http://anna:12345/x@proxy:3128",
+            "http://anna:12345/x@proxy:3128/",
+            "anna:12345/x@proxy:3128",
+            "http://anna:p@ss?w#rt/@proxy:3128",
+            "http://anna:pw@proxy:3128",
+        ] {
+            assert_eq!(
+                host_port_from_any(raw),
+                Some(("proxy".to_string(), 3128)),
+                "{raw}"
+            );
+        }
+        // Ohne `@` bleibt alles wie gehabt.
+        assert_eq!(
+            host_port_from_any("proxy.firma.example:8080/pac"),
+            Some(("proxy.firma.example".to_string(), 8080))
+        );
+        let shown = format!("{:?}", host_port_from_any("http://anna:12345/x@proxy:3128"));
+        assert!(!shown.contains("anna") && !shown.contains("12345"));
+    }
+
+    #[test]
+    fn hostnamen_werden_von_der_schluesselregel_nicht_zerstoert() {
+        for host in [
+            "proxy-zentral-rechenzentrum-nord.firma.example:3128",
+            "proxy-zentral-rechenzentrum-nord.firma.example",
+            "lang-lang-lang-lang-lang-name.example",
+            "proxy.lang-lang-lang-lang-lang-name.example:8080",
+            "proxy-zentral-rechenzentrum-nord:3128",
+        ] {
+            assert_eq!(scrub_text(host), host, "{host}");
+            assert_eq!(
+                scrub_text(&format!("Proxy {host} erkannt")),
+                format!("Proxy {host} erkannt")
+            );
+        }
+        assert_eq!(scrub_text("[fd00:abcd::1]:3128"), "[fd00:abcd::1]:3128");
+    }
+
+    #[test]
+    fn schluessel_bleiben_geschwaerzt_auch_mit_punkten_und_satzende() {
+        for (raw, gone) in [
+            ("Schluessel ABCDEFGHIJKLMNOPQRSTUVWXYZ123456.", "ABCDEFGH"),
+            ("Token eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk", "eyJhbGci"),
+            ("Key sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456 Ende", "ABCDEFGH"),
+            ("lang-lang-lang-lang-lang-name allein", "lang-lang"),
+            ("123e4567-e89b-12d3-a456-426614174000", "123e4567"),
+            ("ABCDEFGHIJKLMNOPQRSTUVWXYZ123456:abc", "ABCDEFGH"),
+        ] {
+            let out = scrub_text(raw);
+            assert!(!out.contains(gone), "{raw} -> {out}");
+            assert!(out.contains("[…]"), "{raw} -> {out}");
+        }
     }
 
     #[test]

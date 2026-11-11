@@ -35,25 +35,27 @@ export const NetworkCheck: React.FC = () => {
   const { t } = useTranslation();
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<NetzcheckResult | null>(null);
-  const [failed, setFailed] = useState(false);
+  const [failure, setFailure] = useState<"busy" | "error" | null>(null);
 
   const run = async () => {
     setRunning(true);
-    setFailed(false);
+    setFailure(null);
+    // Ein neuer Lauf räumt den alten Bericht weg: Bei einem Fehler oder einer
+    // abgewiesenen Anfrage darf kein veraltetes Ergebnis stehen bleiben.
+    setResult(null);
     try {
       const r = await commands.netzcheckRun();
       if (r.status === "ok") {
         setResult(r.data);
+      } else if (r.error === "busy") {
+        setFailure("busy");
+        toast.error(t("settings.app.networkCheck.busy"));
       } else {
-        setFailed(true);
-        toast.error(
-          r.error === "busy"
-            ? t("settings.app.networkCheck.busy")
-            : t("settings.app.networkCheck.error"),
-        );
+        setFailure("error");
+        toast.error(t("settings.app.networkCheck.error"));
       }
     } catch {
-      setFailed(true);
+      setFailure("error");
       toast.error(t("settings.app.networkCheck.error"));
     } finally {
       setRunning(false);
@@ -124,14 +126,17 @@ export const NetworkCheck: React.FC = () => {
         data-testid="network-check-status"
       >
         {running && t("settings.app.networkCheck.running")}
-        {!running && failed && t("settings.app.networkCheck.error")}
+        {!running && failure === "busy" && t("settings.app.networkCheck.busy")}
         {!running &&
-          !failed &&
+          failure === "error" &&
+          t("settings.app.networkCheck.error")}
+        {!running &&
+          !failure &&
           result &&
           result.rows.length === 0 &&
           t("settings.app.networkCheck.none")}
         {!running &&
-          !failed &&
+          !failure &&
           result &&
           result.rows.length > 0 &&
           t("settings.app.networkCheck.summary", counts(result.rows))}
@@ -189,6 +194,11 @@ export const NetworkCheck: React.FC = () => {
                       {t("settings.app.networkCheck.issuer", {
                         issuer: row.issuer,
                       })}
+                    </p>
+                  )}
+                  {!row.issuer && row.reason === "tls_certificate" && (
+                    <p className="mt-1 text-xs text-mid-gray">
+                      {t("settings.app.networkCheck.issuerUnknown")}
                     </p>
                   )}
                   <p className="mt-1 text-xs text-mid-gray">

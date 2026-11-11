@@ -144,9 +144,21 @@ fn windows_settings() -> (Option<String>, bool) {
     (None, false)
 }
 
+/// Umgebungsvariablen als Textpaare. Einträge, die nicht gültiges Unicode sind,
+/// fallen weg: `std::env::vars()` bricht bei ihnen mit einer Panik ab, und
+/// ein fremder Eintrag darf die Prüfung nicht abschießen.
+fn utf8_pairs<I>(vars: I) -> Vec<(String, String)>
+where
+    I: IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+{
+    vars.into_iter()
+        .filter_map(|(k, v)| Some((k.to_str()?.to_string(), v.to_str()?.to_string())))
+        .collect()
+}
+
 /// Liest Umgebung und (unter Windows) Internetoptionen.
 pub fn detect() -> ProxyInfo {
-    let vars: Vec<(String, String)> = std::env::vars().collect();
+    let vars = utf8_pairs(std::env::vars_os());
     let mut entries = parse_env(&vars);
     let (server, pac) = windows_settings();
     if let Some(server) = server {
@@ -182,6 +194,44 @@ mod tests {
         assert_eq!(e[0].endpoint, "proxy.firma.example:3128");
         let shown = format!("{e:?}");
         assert!(!shown.contains("anna") && !shown.contains("geheim"));
+    }
+
+    #[test]
+    fn nicht_unicode_variablen_fallen_weg_ohne_absturz() {
+        use std::ffi::OsString;
+        let mut raw = vec![
+            (
+                OsString::from("HTTPS_PROXY"),
+                OsString::from("proxy.example:3128"),
+            ),
+            (OsString::from("PATH"), OsString::from("/usr/bin")),
+        ];
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            raw.push((
+                OsString::from("KAPUTT"),
+                OsString::from_vec(vec![0x66, 0xff, 0xfe]),
+            ));
+            raw.push((OsString::from_vec(vec![0xc3, 0x28]), OsString::from("x")));
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStringExt;
+            raw.push((
+                OsString::from("KAPUTT"),
+                OsString::from_wide(&[0x66, 0xd800]),
+            ));
+        }
+        let pairs = utf8_pairs(raw);
+        assert_eq!(pairs.len(), 2, "{pairs:?}");
+        assert_eq!(parse_env(&pairs).len(), 1);
+    }
+
+    #[test]
+    fn detect_stuerzt_mit_kaputter_umgebung_nicht_ab() {
+        // `detect` liest die echte Umgebung; es darf nie eine Panik geben.
+        let _ = detect();
     }
 
     #[test]

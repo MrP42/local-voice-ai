@@ -5,9 +5,11 @@
 //! * Geräteabgleich: nur mit Konto (`sync.json` vorhanden).
 //! * Update-Quelle: nur mit eingeschalteter Update-Prüfung; die Adressen kommen
 //!   aus der Updater-Einstellung der App (also auch bei einer eigenen Quelle).
-//! * Sprachmodell-Anbieter: eingeschaltete Verbindungen mit Adresse `http(s)`;
-//!   Loopback (lokale Server) und Nicht-Netz-Anbieter (`cli://`,
-//!   `apple-intelligence://`) fallen weg.
+//! * Sprachmodell-Anbieter: eingeschaltete Verbindungen mit Adresse `http(s)`
+//!   UND mindestens einem freigegebenen Modell (eine Verbindung ohne
+//!   freigegebenes Modell nutzt die App nie); Loopback (lokale Server),
+//!   Link-Local und Nicht-Netz-Anbieter (`cli://`, `apple-intelligence://`)
+//!   fallen weg.
 //! * Online-Stimmen: nur Anbieter, die freigegeben sind UND bei denen der
 //!   Fernzugriff erlaubt ist; Loopback fällt weg.
 //! * Kalender: Microsoft 365 nur mit eingerichteter, eingeschalteter Quelle;
@@ -43,6 +45,15 @@ pub struct Service {
     pub allow_remote: bool,
 }
 
+/// Eine Sprachmodell-Verbindung mit der Zahl ihrer freigegebenen Modelle.
+#[derive(Debug, Clone, Default)]
+pub struct LlmService {
+    pub url: String,
+    pub enabled: bool,
+    /// Freigegebene Modelle (`LlmModelConfig.enabled`) dieser Verbindung.
+    pub enabled_models: usize,
+}
+
 /// Alles, was die Ableitung braucht, schon aus den Einstellungen gelesen.
 #[derive(Debug, Clone, Default)]
 pub struct Setup {
@@ -50,7 +61,7 @@ pub struct Setup {
     pub sync_hub_url: Option<String>,
     pub update_checks_enabled: bool,
     pub update_endpoints: Vec<String>,
-    pub llm_connections: Vec<Service>,
+    pub llm_connections: Vec<LlmService>,
     pub tts_services: Vec<Service>,
     /// Es gibt eine eingeschaltete Microsoft-365-Quelle.
     pub calendar_graph: bool,
@@ -75,9 +86,25 @@ pub fn is_loopback_host(host: &str) -> bool {
     false
 }
 
+/// Link-Local: `169.254.0.0/16` (auch die Metadaten-Adresse von Cloud-Rechnern)
+/// und `fe80::/10`. Dort steht kein Dienst, den ein Nutzer einrichtet; ein
+/// Treffer wäre nur Rauschen im Bericht. Private LAN-Bereiche (`10/8`,
+/// `172.16/12`, `192.168/16`, `fc00::/7`) bleiben ausdrücklich erlaubt.
+pub fn is_link_local_host(host: &str) -> bool {
+    let h = host.trim_matches(['[', ']']);
+    match h.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(v4)) => v4.is_link_local(),
+        Ok(std::net::IpAddr::V6(v6)) => {
+            (v6.segments()[0] & 0xffc0) == 0xfe80
+                || v6.to_ipv4_mapped().is_some_and(|v4| v4.is_link_local())
+        }
+        Err(_) => false,
+    }
+}
+
 fn push(out: &mut Vec<Target>, category: Category, endpoint: Option<Endpoint>) {
     let Some(endpoint) = endpoint else { return };
-    if is_loopback_host(&endpoint.host) {
+    if is_loopback_host(&endpoint.host) || is_link_local_host(&endpoint.host) {
         return;
     }
     let target = Target { category, endpoint };
@@ -98,7 +125,11 @@ pub fn derive_targets(setup: &Setup) -> Vec<Target> {
             push(&mut out, Category::Update, endpoint_from_url(url));
         }
     }
-    for conn in setup.llm_connections.iter().filter(|c| c.enabled) {
+    for conn in setup
+        .llm_connections
+        .iter()
+        .filter(|c| c.enabled && c.enabled_models > 0)
+    {
         push(&mut out, Category::Llm, endpoint_from_url(&conn.url));
     }
     for tts in setup
@@ -145,6 +176,14 @@ mod tests {
         }
     }
 
+    fn llm(url: &str, enabled: bool, enabled_models: usize) -> LlmService {
+        LlmService {
+            url: url.to_string(),
+            enabled,
+            enabled_models,
+        }
+    }
+
     fn hosts(targets: &[Target], category: Category) -> Vec<String> {
         targets
             .iter()
@@ -166,7 +205,7 @@ mod tests {
             update_endpoints: vec![
                 "https://github.com/x/y/releases/latest/download/latest.json".into(),
             ],
-            llm_connections: vec![svc("https://api.openai.com/v1", true, false)],
+            llm_connections: vec![llm("https://api.openai.com/v1", true, 2)],
             tts_services: vec![svc("https://tts.example.com/v1", true, true)],
             calendar_graph: true,
             calendar_ics_hosts: vec!["kalender.example.org".into()],
@@ -201,7 +240,7 @@ mod tests {
             sync_hub_url: None,
             update_checks_enabled: false,
             update_endpoints: vec!["https://github.com/a".into()],
-            llm_connections: vec![svc("https://api.mistral.ai/v1", false, false)],
+            llm_connections: vec![llm("https://api.mistral.ai/v1", false, 3)],
             tts_services: vec![
                 svc("https://frei.example.com", true, false),
                 svc("https://aus.example.com", false, true),
@@ -215,15 +254,78 @@ mod tests {
     }
 
     #[test]
+    fn verbindung_ohne_freigegebenes_modell_wird_nicht_geprueft() {
+        let setup = Setup {
+            llm_connections: vec![
+                llm("https://ohne-modell.example.com/v1", true, 0),
+                llm("https://mit-modell.example.com/v1", true, 1),
+                llm("https://aus.example.com/v1", false, 4),
+            ],
+            ..Setup::default()
+        };
+        let t = derive_targets(&setup);
+        assert_eq!(hosts(&t, Category::Llm), ["mit-modell.example.com:443"]);
+    }
+
+    #[test]
+    fn link_local_faellt_weg_private_netze_bleiben() {
+        let setup = Setup {
+            llm_connections: vec![
+                llm("http://169.254.169.254/v1", true, 1),
+                llm("http://169.254.0.7:8000/v1", true, 1),
+                llm("http://[fe80::1]:8000/v1", true, 1),
+                llm("http://[febf::1]:8000/v1", true, 1),
+                llm("http://10.0.0.5:8000/v1", true, 1),
+                llm("http://172.16.4.1:8000/v1", true, 1),
+                llm("http://192.168.178.20:8000/v1", true, 1),
+                llm("http://[fd00::1]:8000/v1", true, 1),
+                llm("http://169.255.0.1/v1", true, 1),
+            ],
+            ..Setup::default()
+        };
+        let t = derive_targets(&setup);
+        assert_eq!(
+            hosts(&t, Category::Llm),
+            [
+                "10.0.0.5:8000",
+                "172.16.4.1:8000",
+                "192.168.178.20:8000",
+                "[fd00::1]:8000",
+                "169.255.0.1:80"
+            ]
+        );
+        for h in [
+            "169.254.1.1",
+            "169.254.169.254",
+            "fe80::1",
+            "[fe80::abcd]",
+            "febf::1",
+            "::ffff:169.254.1.1",
+        ] {
+            assert!(is_link_local_host(h), "{h}");
+        }
+        for h in [
+            "169.253.1.1",
+            "169.255.1.1",
+            "fec0::1",
+            "fd00::1",
+            "example.com",
+            "192.168.1.1",
+        ] {
+            assert!(!is_link_local_host(h), "{h}");
+        }
+    }
+
+    #[test]
     fn lokale_server_und_cli_anbieter_fallen_weg() {
         let setup = Setup {
             llm_connections: vec![
-                svc("http://localhost:11434/v1", true, false),
-                svc("http://127.0.0.1:8000/v1", true, false),
-                svc("http://[::1]:8000/v1", true, false),
-                svc("cli://claude", true, false),
-                svc("apple-intelligence://local", true, false),
-                svc("http://192.168.1.20:11434/v1", true, false),
+                llm("http://localhost:11434/v1", true, 1),
+                llm("http://127.0.0.1:8000/v1", true, 1),
+                llm("http://[::1]:8000/v1", true, 1),
+                llm("cli://claude", true, 1),
+                llm("apple-intelligence://local", true, 1),
+                llm("http://192.168.1.20:11434/v1", true, 1),
             ],
             tts_services: vec![svc("http://127.0.0.1:8880/v1", true, true)],
             ..Setup::default()
@@ -237,8 +339,8 @@ mod tests {
     fn dubletten_innerhalb_eines_zwecks_entfallen_gleiche_hosts_anderer_zwecke_bleiben() {
         let setup = Setup {
             llm_connections: vec![
-                svc("https://api.openai.com/v1", true, false),
-                svc("https://api.openai.com/v1/chat", true, false),
+                llm("https://api.openai.com/v1", true, 1),
+                llm("https://api.openai.com/v1/chat", true, 1),
             ],
             tts_services: vec![svc("https://api.openai.com/v1", true, true)],
             ..Setup::default()
@@ -255,10 +357,10 @@ mod tests {
                 "https://anna:passwort@hub.example.com:8443/api?token=GEHEIM".into(),
             ),
             calendar_ics_hosts: vec!["kal.example.org/privat/GEHEIM.ics?key=1".into()],
-            llm_connections: vec![svc(
+            llm_connections: vec![llm(
                 "https://u:p@llm.example.com/v1?api_key=GEHEIM",
                 true,
-                false,
+                1,
             )],
             ..Setup::default()
         };
@@ -276,7 +378,7 @@ mod tests {
     fn nach_zweck_sortiert_und_begrenzt() {
         let setup = Setup {
             llm_connections: (0..100)
-                .map(|i| svc(&format!("https://h{i}.example.com"), true, false))
+                .map(|i| llm(&format!("https://h{i}.example.com"), true, 1))
                 .collect(),
             sync_hub_url: Some("https://hub.example.com".into()),
             ..Setup::default()

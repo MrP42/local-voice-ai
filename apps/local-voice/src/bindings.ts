@@ -12489,8 +12489,9 @@ export type NetzReason =
  */
 export type NetzRow = { category: NetzCategory; host: string; port: number; tls: boolean; state: NetzState; reason: NetzReason | null; dns_ms: number | null; tls_ms: number | null; http_status: number | null; total_ms: number; 
 /**
- * Aussteller des Zertifikats, nur gesetzt, wenn der Verdacht auf einen
- * TLS-aufbrechenden Proxy besteht.
+ * Aussteller des Zertifikats, nur gesetzt bei Verdacht auf einen
+ * TLS-aufbrechenden Proxy oder bei nicht vertrautem Zertifikat. Fehlt er
+ * bei Grund `tls_certificate`, war er nicht ermittelbar.
  */
 issuer: string | null }
 /**

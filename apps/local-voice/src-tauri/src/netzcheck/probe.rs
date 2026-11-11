@@ -17,6 +17,12 @@
 //!    Nutzer verlassen den Rechner. Jeder HTTP-Status, auch 401/404, zeigt,
 //!    dass die Gegenstelle antwortet.
 //!
+//! Scheitert der TLS-Aufbau am Zertifikat (z. B. weil ein TLS-aufbrechender Proxy
+//! ein eigenes, nicht vertrautes Stammzertifikat vorlegt), liest die Probe in
+//! einem zweiten Handshake NUR das vorgelegte Zertifikat, um den Aussteller zu
+//! nennen: sieh [`read_peer_issuer`] für die Begründung, warum das unbedenklich
+//! ist. Gelingt auch das nicht, steht der Aussteller als „nicht ermittelbar“ da.
+//!
 //! Der Aussteller des Zertifikats wird aus der DER-Kodierung gelesen
 //! ([`issuer_from_der`], minimal, ohne neue Abhängigkeit), geschwärzt und
 //! gekürzt; er dient nur dem Hinweis auf einen TLS-aufbrechenden Proxy.
@@ -63,9 +69,46 @@ impl SystemProbe {
 
 // ---- Fehlerarten -----------------------------------------------------------------
 
+/// Zertifikatsfehler als HRESULT (Windows/Schannel), wie sie im Debug-Text eines
+/// Fehlers stehen, wenn die Meldung selbst in einer anderen Sprache oder gar
+/// nicht lesbar ist: als vorzeichenbehaftete Zahl, als vorzeichenlose Zahl und
+/// als Hex (klein geschrieben, mit und ohne `0x`).
+///
+/// * `CERT_E_UNTRUSTEDROOT` 0x800B0109 (-2146762487)
+/// * `CERT_E_CHAINING` 0x800B010A (-2146762486)
+/// * `CERT_E_EXPIRED` 0x800B0101 (-2146762495)
+/// * `SEC_E_UNTRUSTED_ROOT` 0x80090325 (-2146893019)
+const CERT_CODES: [(i32, &str); 4] = [
+    (-2_146_762_487, "800b0109"),
+    (-2_146_762_486, "800b010a"),
+    (-2_146_762_495, "800b0101"),
+    (-2_146_893_019, "80090325"),
+];
+
+/// Kommt `needle` als eigene Zahl vor (nicht Teil einer längeren Ziffern-
+/// oder Buchstabenfolge)?
+fn contains_token(haystack: &str, needle: &str) -> bool {
+    haystack.match_indices(needle).any(|(i, _)| {
+        let before = haystack[..i].chars().next_back();
+        let after = haystack[i + needle.len()..].chars().next();
+        !before.is_some_and(|c| c.is_ascii_alphanumeric())
+            && !after.is_some_and(|c| c.is_ascii_alphanumeric())
+    })
+}
+
+fn has_certificate_code(lower: &str) -> bool {
+    CERT_CODES.iter().any(|(code, hex)| {
+        contains_token(lower, &code.to_string())
+            || contains_token(lower, &(*code as u32).to_string())
+            || contains_token(lower, hex)
+            || contains_token(lower, &format!("0x{hex}"))
+    })
+}
+
 /// Deutet der Text eines TLS-Fehlers auf ein nicht vertrautes Zertifikat?
 /// OpenSSL, Schannel (Windows) und Security.framework (macOS) formulieren
-/// verschieden; wir suchen die Wörter, nicht den Wortlaut.
+/// verschieden, und Windows liefert die Meldung in der Sprache des Systems;
+/// wir suchen deshalb Wörter UND die HRESULT-Codes ([`CERT_CODES`]).
 pub fn is_certificate_error(message: &str) -> bool {
     let m = message.to_lowercase();
     [
@@ -84,6 +127,7 @@ pub fn is_certificate_error(message: &str) -> bool {
     ]
     .iter()
     .any(|k| m.contains(k))
+        || has_certificate_code(&m)
 }
 
 fn io_failure(e: &io::Error) -> Failure {
@@ -207,33 +251,92 @@ struct TlsResult {
     issuer: Option<String>,
 }
 
+/// Wie der TLS-Aufbau gescheitert ist, samt Aussteller, soweit lesbar.
+struct TlsError {
+    failure: Failure,
+    issuer: Option<String>,
+}
+
+impl From<Failure> for TlsError {
+    fn from(failure: Failure) -> Self {
+        Self {
+            failure,
+            issuer: None,
+        }
+    }
+}
+
+/// Liest NUR das Zertifikat, das die Gegenstelle vorlegt, und schließt die
+/// Verbindung sofort wieder. Dafür wird die Prüfung des Zertifikats
+/// ausgeschaltet (`danger_accept_invalid_certs`); das ist hier unbedenklich,
+/// weil
+///
+/// * über diese Verbindung nie etwas gesendet wird: kein HTTP, keine
+///   Zugangsdaten, keine Daten der Nutzer, nur der Handshake;
+/// * das Ergebnis nicht weiterverwendet wird: gelesen wird allein der Name des
+///   Ausstellers für den Bericht, nie ein Schlüssel oder eine Entscheidung
+///   über Vertrauen (die Zeile bleibt „nicht erreichbar“);
+/// * die eigentliche, strenge Prüfung vorher schon stattgefunden hat und die
+///   App selbst nie über diese Verbindung spricht.
+///
+/// Im selben Zeitbudget wie der erste Handshake (`deadline`). Jeder Fehler
+/// ergibt `None`.
+fn read_peer_issuer(host: &str, addr: &SocketAddr, deadline: Instant) -> Option<String> {
+    let left = || deadline.saturating_duration_since(Instant::now());
+    if left().is_zero() {
+        return None;
+    }
+    let stream = TcpStream::connect_timeout(addr, left()).ok()?;
+    let remaining = left();
+    if remaining.is_zero() {
+        return None;
+    }
+    stream.set_read_timeout(Some(remaining)).ok()?;
+    stream.set_write_timeout(Some(remaining)).ok()?;
+    let connector = native_tls::TlsConnector::builder()
+        .danger_accept_invalid_certs(true)
+        .danger_accept_invalid_hostnames(true)
+        .build()
+        .ok()?;
+    let mut tls = connector.connect(host, stream).ok()?;
+    let issuer = tls
+        .peer_certificate()
+        .ok()
+        .flatten()
+        .and_then(|c| c.to_der().ok())
+        .and_then(|der| issuer_from_der(&der));
+    // Sofort schließen; es wurde nichts gesendet.
+    let _ = tls.shutdown();
+    issuer
+}
+
 /// TCP-Verbindung (erste erreichbare Adresse) und TLS-Handshake, blockierend,
 /// mit Frist. Läuft in `spawn_blocking`.
-fn connect_tls(host: &str, addrs: &[SocketAddr], budget: Duration) -> Result<TlsResult, Failure> {
+fn connect_tls(host: &str, addrs: &[SocketAddr], budget: Duration) -> Result<TlsResult, TlsError> {
     let deadline = Instant::now() + budget;
     let mut last = Failure::Connect;
-    let mut stream = None;
+    let mut connected = None;
     for addr in addrs.iter().take(4) {
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
-            return Err(Failure::Timeout(Stage::Connect));
+            return Err(Failure::Timeout(Stage::Connect).into());
         }
         match TcpStream::connect_timeout(addr, left) {
             Ok(s) => {
-                stream = Some(s);
+                connected = Some((s, addr));
                 break;
             }
             Err(e) => last = io_failure(&e),
         }
     }
-    let stream = stream.ok_or(last)?;
+    let (stream, addr) = connected.ok_or(TlsError::from(last))?;
     let left = deadline.saturating_duration_since(Instant::now());
     if left.is_zero() {
-        return Err(Failure::Timeout(Stage::Connect));
+        return Err(Failure::Timeout(Stage::Connect).into());
     }
     let _ = stream.set_read_timeout(Some(left));
     let _ = stream.set_write_timeout(Some(left));
-    let connector = native_tls::TlsConnector::new().map_err(|_| Failure::Tls)?;
+    let connector = native_tls::TlsConnector::new().map_err(|_| TlsError::from(Failure::Tls))?;
     match connector.connect(host, stream) {
         Ok(tls) => {
             let issuer = tls
@@ -247,16 +350,21 @@ fn connect_tls(host: &str, addrs: &[SocketAddr], budget: Duration) -> Result<Tls
         Err(native_tls::HandshakeError::Failure(e)) => {
             let text = format!("{e} {e:?}");
             if is_certificate_error(&text) {
-                Err(Failure::TlsCertificate)
+                Err(TlsError {
+                    failure: Failure::TlsCertificate,
+                    issuer: read_peer_issuer(host, addr, deadline),
+                })
             } else if text.to_lowercase().contains("timed out")
                 || text.to_lowercase().contains("wouldblock")
             {
-                Err(Failure::Timeout(Stage::Connect))
+                Err(Failure::Timeout(Stage::Connect).into())
             } else {
-                Err(Failure::Tls)
+                Err(Failure::Tls.into())
             }
         }
-        Err(native_tls::HandshakeError::WouldBlock(_)) => Err(Failure::Timeout(Stage::Connect)),
+        Err(native_tls::HandshakeError::WouldBlock(_)) => {
+            Err(Failure::Timeout(Stage::Connect).into())
+        }
     }
 }
 
@@ -265,6 +373,13 @@ fn connect_tls(host: &str, addrs: &[SocketAddr], budget: Duration) -> Result<Tls
 /// selbst nicht direkt verbindet. Bestmöglich: jeder Fehler (Anmeldung am
 /// Proxy, abgelehnt, Zeitlimit) ergibt `None`, die HTTP-Anfrage danach meldet
 /// den eigentlichen Befund. Es werden keine Zugangsdaten gesendet.
+///
+/// Der Handshake läuft hier ohne Zertifikatsprüfung, aus demselben Grund wie in
+/// [`read_peer_issuer`]: über den Tunnel geht nur der Handshake, danach wird
+/// er geschlossen, und gelesen wird allein der Aussteller. Gerade hinter einem
+/// TLS-aufbrechenden Proxy (nicht vertrautes Stammzertifikat) wäre ein strenger
+/// Handshake hier immer gescheitert und der Aussteller leer geblieben; die
+/// strenge Prüfung macht danach die HTTP-Anfrage.
 fn tunnel_issuer(proxy: &(String, u16), host: &str, port: u16, budget: Duration) -> Option<String> {
     let deadline = Instant::now() + budget;
     let left = || deadline.saturating_duration_since(Instant::now());
@@ -299,12 +414,17 @@ fn tunnel_issuer(proxy: &(String, u16), host: &str, port: u16, budget: Duration)
     if status_line.split_whitespace().nth(1) != Some("200") {
         return None;
     }
-    let tls = native_tls::TlsConnector::new()
+    let mut tls = native_tls::TlsConnector::builder()
+        .danger_accept_invalid_certs(true)
+        .danger_accept_invalid_hostnames(true)
+        .build()
         .ok()?
         .connect(host, stream)
         .ok()?;
     let der = tls.peer_certificate().ok().flatten()?.to_der().ok()?;
-    issuer_from_der(&der)
+    let issuer = issuer_from_der(&der);
+    let _ = tls.shutdown();
+    issuer
 }
 
 // ---- HTTP -------------------------------------------------------------------------
@@ -382,7 +502,10 @@ impl Probe for SystemProbe {
             match joined {
                 Err(_) => return finish(out, Some(Failure::Timeout(Stage::Connect))),
                 Ok(Err(_)) => return finish(out, Some(Failure::Tls)),
-                Ok(Ok(Err(failure))) => return finish(out, Some(failure)),
+                Ok(Ok(Err(error))) => {
+                    out.issuer = error.issuer;
+                    return finish(out, Some(error.failure));
+                }
                 Ok(Ok(Ok(tls))) => {
                     out.tls_ms = Some(ms(t.elapsed()));
                     out.issuer = tls.issuer;
@@ -513,6 +636,59 @@ mod tests {
         ] {
             assert!(!is_certificate_error(m), "{m}");
         }
+    }
+
+    #[test]
+    fn zertifikatsfehler_an_hresult_codes_erkannt_ohne_woerter() {
+        for m in [
+            "Error { code: -2146762487, message: \"Eine Zeichenfolge\" }",
+            "os error -2146893019",
+            "Fehler -2146762486 beim Aufbau",
+            "code: -2146762495",
+            "HRESULT 0x800B0109",
+            "hresult=0x800b010a",
+            "0x80090325",
+            "800B0101",
+            "code 2148204809",
+            "(os error 2148074277)",
+            "Error { code: -2146762487 }",
+        ] {
+            assert!(is_certificate_error(m), "{m}");
+        }
+        for m in [
+            "os error -2146893000",
+            "os error 10061",
+            "code: -21467624879",
+            "id 12-2146762487x",
+            "0x800b01099",
+            "a800b0109",
+            "os error 10054",
+            "Error { code: -2146893018 }",
+        ] {
+            assert!(!is_certificate_error(m), "{m}");
+        }
+    }
+
+    #[test]
+    fn zweiter_handshake_ohne_tls_gegenstelle_ergibt_nichts_und_haengt_nicht() {
+        // Gegenstelle, die kein TLS spricht (hier: schließt sofort).
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((s, _)) = listener.accept() {
+                drop(s);
+            }
+        });
+        let start = Instant::now();
+        let issuer = read_peer_issuer(
+            "localhost",
+            &addr,
+            Instant::now() + Duration::from_millis(1500),
+        );
+        assert_eq!(issuer, None);
+        assert!(start.elapsed() < Duration::from_secs(3));
+        // Frist schon abgelaufen: sofort None, keine Verbindung.
+        assert_eq!(read_peer_issuer("localhost", &addr, Instant::now()), None);
     }
 
     #[test]

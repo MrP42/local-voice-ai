@@ -2999,6 +2999,7 @@
           "none": "–"
         },
         "issuer": "Certificate issuer: {{issuer}}",
+        "issuerUnknown": "Certificate issuer: could not be determined",
         "proxy": {
           "detected": "System proxy detected: {{list}}.",
           "pac": "configuration script (PAC) set",

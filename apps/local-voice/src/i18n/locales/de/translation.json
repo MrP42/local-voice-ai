@@ -2999,6 +2999,7 @@
           "none": "–"
         },
         "issuer": "Aussteller des Zertifikats: {{issuer}}",
+        "issuerUnknown": "Aussteller des Zertifikats: nicht ermittelbar",
         "proxy": {
           "detected": "System-Proxy erkannt: {{list}}.",
           "pac": "Konfigurationsskript (PAC) eingetragen",

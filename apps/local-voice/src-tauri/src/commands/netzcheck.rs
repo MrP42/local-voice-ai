@@ -8,7 +8,7 @@
 //!
 //! [`MAX_TARGETS`]: crate::netzcheck::targets::MAX_TARGETS
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -17,7 +17,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::managers::calendar::model::CalendarKind;
 use crate::managers::meetings::store::MeetingStore;
-use crate::managers::model::ModelManager;
+use crate::managers::model::{ModelManager, ModelSource};
 use crate::managers::tts::providers::ollama_speech::OLLAMA_ID;
 use crate::managers::tts::providers::openai_speech::DEFAULT_ID as OPENAI_DEFAULT_ID;
 use crate::managers::tts::providers::phonon::PHONON_ID;
@@ -25,8 +25,8 @@ use crate::managers::tts::providers::policy::RESERVED_IDS;
 use crate::netzcheck::probe::SystemProbe;
 use crate::netzcheck::proxy::{self, ProxyInfo};
 use crate::netzcheck::report::{self, ReportMeta};
-use crate::netzcheck::targets::{derive_targets, Service, Setup};
-use crate::netzcheck::{run_check, Row, PROBE_TIMEOUT};
+use crate::netzcheck::targets::{derive_targets, LlmService, Service, Setup};
+use crate::netzcheck::{run_check, Row, RunGuard, PROBE_TIMEOUT};
 
 /// Ergebnis der Prüfung: Zeilen für die Oberfläche und der Bericht zum Kopieren.
 #[derive(Serialize, Debug, Clone, Type)]
@@ -38,25 +38,9 @@ pub struct NetzcheckResult {
     pub report: String,
 }
 
-/// Läuft schon eine Prüfung? Ein zweiter Klick wartet nicht, er wird abgewiesen.
+/// Läuft schon eine Prüfung? Ein zweiter Klick wartet nicht, er wird abgewiesen
+/// ([`RunGuard`] im Kern, dort getestet).
 static RUNNING: AtomicBool = AtomicBool::new(false);
-
-struct RunningGuard;
-
-impl RunningGuard {
-    fn acquire() -> Option<Self> {
-        RUNNING
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-            .then_some(Self)
-    }
-}
-
-impl Drop for RunningGuard {
-    fn drop(&mut self) {
-        RUNNING.store(false, Ordering::Release);
-    }
-}
 
 /// Adressen der Update-Quelle aus der Updater-Einstellung der App
 /// (`plugins.updater.endpoints`), also auch bei einer eigenen Quelle.
@@ -81,10 +65,14 @@ fn collect_setup(app: &AppHandle) -> Setup {
     let llm_connections = settings
         .llm_connections
         .iter()
-        .map(|c| Service {
+        .map(|c| LlmService {
             url: c.base_url.clone(),
             enabled: c.enabled,
-            allow_remote: false,
+            enabled_models: settings
+                .llm_models
+                .iter()
+                .filter(|m| m.enabled && m.connection_id == c.id)
+                .count(),
         })
         .collect();
 
@@ -130,7 +118,10 @@ fn collect_setup(app: &AppHandle) -> Setup {
         .map(|m| {
             m.get_available_models()
                 .into_iter()
-                .filter_map(|info| info.url)
+                .filter_map(|info| match info.source {
+                    ModelSource::Url { url, .. } => Some(url),
+                    ModelSource::HuggingFace { .. } | ModelSource::Local => None,
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -153,7 +144,7 @@ fn collect_setup(app: &AppHandle) -> Setup {
 #[tauri::command]
 #[specta::specta]
 pub async fn netzcheck_run(app: AppHandle) -> Result<NetzcheckResult, String> {
-    let _guard = RunningGuard::acquire().ok_or_else(|| "busy".to_string())?;
+    let _guard = RunGuard::acquire(&RUNNING).ok_or_else(|| "busy".to_string())?;
     let setup = collect_setup(&app);
     let targets = derive_targets(&setup);
     let proxy_info = proxy::detect();

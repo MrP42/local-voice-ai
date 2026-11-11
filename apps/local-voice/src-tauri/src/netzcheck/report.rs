@@ -9,7 +9,7 @@
 use super::judge::{category_name, impact_text, reason_text, state_text};
 use super::proxy::{ProxyInfo, ProxySource};
 use super::redact::{format_host_port, scrub_text};
-use super::{Row, State, PROBE_TIMEOUT};
+use super::{Reason, Row, State, PROBE_TIMEOUT};
 
 /// Angaben zum Rechner, vom Aufrufer eingesetzt.
 #[derive(Debug, Clone)]
@@ -93,6 +93,8 @@ pub fn build(rows: &[Row], proxy: &ProxyInfo, meta: &ReportMeta) -> String {
                     "   Aussteller des Zertifikats: {}\n",
                     scrub_text(issuer)
                 ));
+            } else if r.reason == Some(Reason::TlsCertificate) {
+                out.push_str("   Aussteller des Zertifikats: nicht ermittelbar\n");
             }
             let status = r
                 .http_status
@@ -140,7 +142,7 @@ pub fn build(rows: &[Row], proxy: &ProxyInfo, meta: &ReportMeta) -> String {
 mod tests {
     use super::super::proxy::ProxyEntry;
     use super::super::redact::endpoint_from_url;
-    use super::super::targets::{derive_targets, Service, Setup};
+    use super::super::targets::{derive_targets, LlmService, Setup};
     use super::super::{judge, Category, Reason, State};
     use super::*;
 
@@ -219,6 +221,54 @@ mod tests {
     }
 
     #[test]
+    fn langer_proxy_hostname_bleibt_im_bericht_lesbar() {
+        let proxy = ProxyInfo {
+            entries: vec![ProxyEntry {
+                source: ProxySource::Env,
+                scope: "all".into(),
+                endpoint: "proxy-zentral-rechenzentrum-nord.firma.example:3128".into(),
+            }],
+            pac: false,
+        };
+        let text = build(&[], &proxy, &meta());
+        assert!(
+            text.contains(
+                "alle Protokolle über proxy-zentral-rechenzentrum-nord.firma.example:3128 (Umgebungsvariable)"
+            ),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn zertifikatsfehler_nennt_aussteller_oder_sagt_nicht_ermittelbar() {
+        let mut with = row(
+            Category::Llm,
+            State::Unreachable,
+            Some(Reason::TlsCertificate),
+            "api.example.com",
+        );
+        with.issuer = Some("Zscaler Root CA".into());
+        let text = build(&[with], &ProxyInfo::default(), &meta());
+        assert!(text.contains("Aussteller des Zertifikats: Zscaler Root CA"));
+        let without = row(
+            Category::Llm,
+            State::Unreachable,
+            Some(Reason::TlsCertificate),
+            "api.example.com",
+        );
+        let text = build(&[without], &ProxyInfo::default(), &meta());
+        assert!(text.contains("Aussteller des Zertifikats: nicht ermittelbar"));
+        let dns = row(
+            Category::Llm,
+            State::Unreachable,
+            Some(Reason::DnsFailed),
+            "api.example.com",
+        );
+        let text = build(&[dns], &ProxyInfo::default(), &meta());
+        assert!(!text.contains("Aussteller"));
+    }
+
+    #[test]
     fn aussteller_nur_geschwaerzt() {
         let mut r = row(
             Category::Update,
@@ -244,10 +294,10 @@ mod tests {
             calendar_ics_hosts: vec![
                 "kal.firma.example/privat/GEHEIMER-SCHLUESSEL.ics?key=ZUGRIFF".into(),
             ],
-            llm_connections: vec![Service {
+            llm_connections: vec![LlmService {
                 url: "https://llm.firma.example/v1?api_key=sk-GEHEIMGEHEIMGEHEIMGEHEIM".into(),
                 enabled: true,
-                allow_remote: false,
+                enabled_models: 1,
             }],
             ..Setup::default()
         };

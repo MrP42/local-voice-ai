@@ -97,6 +97,7 @@ test.beforeEach(async ({ page }) => {
       __nzCalls?: string[];
       __nzResult?: unknown;
       __nzError?: string;
+      __nzDelay?: number;
     };
     w.__nzCalls = [];
     Object.assign(window, {
@@ -147,7 +148,7 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "netzcheck_run") {
             w.__nzCalls!.push(cmd);
             // Dauert einen Moment, damit der Zustand „Prüfung läuft“ sichtbar wird.
-            await new Promise((r) => setTimeout(r, 250));
+            await new Promise((r) => setTimeout(r, w.__nzDelay ?? 250));
             if (w.__nzError) throw w.__nzError;
             return w.__nzResult;
           }
@@ -311,7 +312,9 @@ test("Tastatur: Knopf per Fokus und Eingabetaste, Ergebnisliste benannt", async 
   await expect(page.getByTestId("network-check-report")).toBeFocused();
 });
 
-test("ein Fehler des Befehls zeigt eine Meldung", async ({ page }) => {
+test("läuft schon eine Prüfung, steht das in der Statuszeile und nicht „Fehler“", async ({
+  page,
+}) => {
   await page.addInitScript(() => {
     (window as unknown as { __nzError: string }).__nzError = "busy";
   });
@@ -320,5 +323,131 @@ test("ein Fehler des Befehls zeigt eine Meldung", async ({ page }) => {
   await expect(page.locator("[data-sonner-toast]")).toContainText(
     "läuft bereits eine Prüfung",
   );
+  const status = page.getByTestId("network-check-status");
+  await expect(status).toContainText("Es läuft bereits eine Prüfung.");
+  await expect(status).not.toContainText("konnte nicht durchgeführt werden");
   await expect(page.getByTestId("network-check-row")).toHaveCount(0);
+});
+
+test("ein anderer Fehler des Befehls zeigt die Fehlermeldung in der Statuszeile", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as unknown as { __nzError: string }).__nzError = "kaputt";
+  });
+  await openApp(page, withRows);
+  await page.getByTestId("network-check-run").click();
+  await expect(page.locator("[data-sonner-toast]")).toContainText(
+    "konnte nicht durchgeführt werden",
+  );
+  const status = page.getByTestId("network-check-status");
+  await expect(status).toContainText("konnte nicht durchgeführt werden");
+  await expect(status).not.toContainText("läuft bereits");
+  await expect(page.getByTestId("network-check-row")).toHaveCount(0);
+});
+
+test("ein neuer Lauf leert das alte Ergebnis, auch wenn er scheitert", async ({
+  page,
+}) => {
+  await openApp(page, withRows);
+  const w = () =>
+    page.evaluate(() => {
+      const x = window as unknown as { __nzDelay?: number };
+      x.__nzDelay = 1500;
+    });
+  const run = page.getByTestId("network-check-run");
+  await run.click();
+  await expect(page.getByTestId("network-check-row")).toHaveCount(3);
+  await expect(page.getByTestId("network-check-proxy")).toBeVisible();
+
+  // Zweiter Lauf: Das alte Ergebnis verschwindet sofort, nicht erst bei der Antwort.
+  await w();
+  await page.evaluate(() => {
+    (window as unknown as { __nzError: string }).__nzError = "kaputt";
+  });
+  await run.click();
+  await expect(page.getByTestId("network-check-status")).toContainText(
+    "Prüfung läuft",
+  );
+  await expect(page.getByTestId("network-check-row")).toHaveCount(0);
+  await expect(page.getByTestId("network-check-proxy")).toHaveCount(0);
+  await expect(page.getByTestId("network-check-copy")).toHaveCount(0);
+
+  // Der Lauf scheitert: es bleibt kein veralteter Bericht stehen.
+  await expect(page.getByTestId("network-check-status")).toContainText(
+    "konnte nicht durchgeführt werden",
+  );
+  await expect(page.getByTestId("network-check-row")).toHaveCount(0);
+  await expect(page.getByTestId("network-check-report")).toHaveCount(0);
+});
+
+test("Zertifikatsfehler nennt den Aussteller oder sagt „nicht ermittelbar“", async ({
+  page,
+}) => {
+  const base = {
+    category: "llm",
+    host: "api.firma.example",
+    port: 443,
+    tls: true,
+    state: "unreachable",
+    reason: "tls_certificate",
+    dns_ms: 8,
+    tls_ms: null,
+    http_status: null,
+    total_ms: 90,
+  };
+  await openApp(page, {
+    rows: [
+      { ...base, issuer: "Firma Inspektion Root CA (Firma GmbH)" },
+      { ...base, host: "tts.firma.example", issuer: null },
+      {
+        ...base,
+        host: "hub.firma.example",
+        reason: "dns_failed",
+        issuer: null,
+      },
+    ],
+    proxy: { entries: [], pac: false },
+    report: REPORT,
+  });
+  await page.getByTestId("network-check-run").click();
+  const rows = page.getByTestId("network-check-row");
+  await expect(rows).toHaveCount(3);
+  await expect(rows.nth(0)).toContainText(
+    "Aussteller des Zertifikats: Firma Inspektion Root CA (Firma GmbH)",
+  );
+  await expect(rows.nth(1)).toContainText(
+    "Aussteller des Zertifikats: nicht ermittelbar",
+  );
+  await expect(rows.nth(2)).not.toContainText("Aussteller");
+});
+
+test("HTTP-5xx zeigt den übersetzten Grund, nicht den Schlüssel", async ({
+  page,
+}) => {
+  await openApp(page, {
+    rows: [
+      {
+        category: "llm",
+        host: "api.firma.example",
+        port: 443,
+        tls: true,
+        state: "limited",
+        reason: "http_5xx",
+        dns_ms: 8,
+        tls_ms: 40,
+        http_status: 502,
+        total_ms: 90,
+        issuer: null,
+      },
+    ],
+    proxy: { entries: [], pac: false },
+    report: REPORT,
+  });
+  await page.getByTestId("network-check-run").click();
+  const row = page.getByTestId("network-check-row");
+  await expect(row).toContainText(
+    "Server oder Proxy meldet einen Fehler (HTTP 5xx)",
+  );
+  await expect(row).not.toContainText("http_5xx");
 });

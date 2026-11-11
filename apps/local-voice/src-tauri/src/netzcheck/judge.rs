@@ -76,8 +76,11 @@ pub fn judge(outcome: &ProbeOutcome) -> (State, Option<Reason>) {
 /// Ergebniszeile einer Gegenstelle.
 pub fn row(target: &Target, outcome: &ProbeOutcome) -> Row {
     let (state, reason) = judge(outcome);
-    // Der Aussteller steht nur da, wo er gebraucht wird; sonst bleibt der Bericht schlank.
-    let issuer = (reason == Some(Reason::TlsInspection))
+    // Der Aussteller steht nur da, wo er gebraucht wird (Verdacht auf einen
+    // TLS-aufbrechenden Proxy oder nicht vertrautes Zertifikat); sonst bleibt
+    // der Bericht schlank. Bei „Zertifikat nicht vertrauenswürdig“ ohne
+    // Aussteller zeigen Oberfläche und Bericht „nicht ermittelbar“.
+    let issuer = matches!(reason, Some(Reason::TlsInspection | Reason::TlsCertificate))
         .then(|| outcome.issuer.clone())
         .flatten();
     Row {
@@ -293,6 +296,32 @@ mod tests {
         assert_eq!(mitm.issuer.as_deref(), Some("Zscaler Root CA"));
         assert_eq!(mitm.state, State::Limited);
         assert_eq!((mitm.host.as_str(), mitm.port), ("api.example.com", 443));
+    }
+
+    #[test]
+    fn zertifikatsfehler_zeigt_den_aussteller_wenn_bekannt() {
+        let target = Target {
+            category: Category::Llm,
+            endpoint: Endpoint {
+                host: "api.example.com".into(),
+                port: 443,
+                tls: true,
+            },
+        };
+        let mut outcome = failed(Failure::TlsCertificate);
+        outcome.issuer = Some("Firma Root CA".into());
+        let r = row(&target, &outcome);
+        assert_eq!(r.state, State::Unreachable);
+        assert_eq!(r.reason, Some(Reason::TlsCertificate));
+        assert_eq!(r.issuer.as_deref(), Some("Firma Root CA"));
+        // Nicht ermittelbar: kein Aussteller, die Oberfläche sagt es.
+        let r = row(&target, &failed(Failure::TlsCertificate));
+        assert_eq!(r.reason, Some(Reason::TlsCertificate));
+        assert_eq!(r.issuer, None);
+        // Andere Fehler tragen nie einen Aussteller.
+        let mut other = failed(Failure::Connect);
+        other.issuer = Some("x".into());
+        assert_eq!(row(&target, &other).issuer, None);
     }
 
     #[test]

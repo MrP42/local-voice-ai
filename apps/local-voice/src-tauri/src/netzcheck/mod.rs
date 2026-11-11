@@ -30,6 +30,7 @@ pub mod report;
 pub mod targets;
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -88,6 +89,9 @@ pub enum Reason {
     /// Verbindung steht, HTTP scheitert.
     HttpFailed,
     /// 5xx vom Server oder vom Proxy.
+    // Serde schriebe `Http5xx` sonst als `http5xx`; Oberfläche, Bindings und
+    // Übersetzungen kennen `http_5xx`.
+    #[serde(rename = "http_5xx")]
     Http5xx,
     /// 407: Der Proxy verlangt eine Anmeldung.
     ProxyAuth,
@@ -160,9 +164,35 @@ pub struct Row {
     pub tls_ms: Option<u32>,
     pub http_status: Option<u16>,
     pub total_ms: u32,
-    /// Aussteller des Zertifikats, nur gesetzt, wenn der Verdacht auf einen
-    /// TLS-aufbrechenden Proxy besteht.
+    /// Aussteller des Zertifikats, nur gesetzt bei Verdacht auf einen
+    /// TLS-aufbrechenden Proxy oder bei nicht vertrautem Zertifikat. Fehlt er
+    /// bei Grund `tls_certificate`, war er nicht ermittelbar.
     pub issuer: Option<String>,
+}
+
+/// Sperre gegen einen zweiten gleichzeitigen Lauf. [`RunGuard::acquire`]
+/// liefert den Wächter nur, wenn die Sperre frei war; sein `Drop` gibt sie
+/// wieder frei. Ein abgewiesener Aufruf darf die Sperre des laufenden Laufs
+/// nie berühren (der Wächter wird dann gar nicht erst gebaut).
+#[derive(Debug)]
+pub struct RunGuard(&'static AtomicBool);
+
+impl RunGuard {
+    pub fn acquire(flag: &'static AtomicBool) -> Option<Self> {
+        if flag
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return None;
+        }
+        Some(Self(flag))
+    }
+}
+
+impl Drop for RunGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 fn ms(d: Duration) -> u32 {
@@ -210,7 +240,7 @@ pub async fn run_check<P: Probe + ?Sized>(
 mod tests {
     use super::*;
     use std::collections::HashMap;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::AtomicUsize;
 
     struct Fake {
         by_host: HashMap<String, ProbeOutcome>,
@@ -315,5 +345,60 @@ mod tests {
         };
         assert!(run_check(&[], &fake, PROBE_TIMEOUT).await.is_empty());
         assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn zweiter_lauf_wird_abgewiesen_und_gibt_die_sperre_nicht_frei() {
+        static FLAG: AtomicBool = AtomicBool::new(false);
+        let first = RunGuard::acquire(&FLAG).expect("erste Sperre frei");
+        assert!(RunGuard::acquire(&FLAG).is_none(), "zweiter Aufruf");
+        // Der abgewiesene Aufruf darf die Sperre nicht gelöst haben.
+        assert!(RunGuard::acquire(&FLAG).is_none(), "dritter Aufruf");
+        assert!(FLAG.load(Ordering::SeqCst));
+        drop(first);
+        assert!(!FLAG.load(Ordering::SeqCst));
+        let again = RunGuard::acquire(&FLAG);
+        assert!(again.is_some(), "nach dem Ende wieder frei");
+    }
+
+    /// Die Oberfläche (und `bindings.ts`) kennt diese Schlüssel; serde muss
+    /// sie genau so schreiben, sonst fehlt die Übersetzung im Browser.
+    #[test]
+    fn grund_schluessel_stimmen_mit_den_uebersetzungen_ueberein() {
+        const ALL: [Reason; 10] = [
+            Reason::DnsFailed,
+            Reason::Timeout,
+            Reason::ConnectFailed,
+            Reason::TlsCertificate,
+            Reason::TlsFailed,
+            Reason::HttpFailed,
+            Reason::Http5xx,
+            Reason::ProxyAuth,
+            Reason::TlsInspection,
+            Reason::Slow,
+        ];
+        let de: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../src/i18n/locales/de/translation.json"
+        ))
+        .unwrap();
+        let en: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../src/i18n/locales/en/translation.json"
+        ))
+        .unwrap();
+        for (lang, root) in [("de", &de), ("en", &en)] {
+            let reasons = root["settings"]["app"]["networkCheck"]["reason"]
+                .as_object()
+                .unwrap_or_else(|| panic!("{lang}: reason fehlt"));
+            for r in ALL {
+                let key = serde_json::to_value(r).unwrap();
+                let key = key.as_str().unwrap();
+                assert!(reasons.contains_key(key), "{lang}: {key} fehlt");
+            }
+            assert_eq!(reasons.len(), ALL.len(), "{lang}: überzählige Schlüssel");
+        }
+        assert_eq!(
+            serde_json::to_value(Reason::Http5xx).unwrap(),
+            serde_json::json!("http_5xx")
+        );
     }
 }
