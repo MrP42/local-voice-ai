@@ -1372,6 +1372,10 @@ fn a_scan_that_is_aborted_hashes_nothing_and_a_new_scan_does_not_start() {
 struct NamenSink<'a> {
     engine: &'a Engine,
     schlecht: HashSet<String>,
+    /// Alle Namen scheitern (Fenstertest).
+    alle: bool,
+    /// Jeder Name, fuer den das Einreihen versucht wurde (also gehasht war).
+    versucht: Mutex<HashSet<String>>,
     eingereiht: Mutex<Vec<String>>,
 }
 
@@ -1385,7 +1389,8 @@ impl RunSink for NamenSink<'_> {
         req: &crate::managers::workflows::engine::EnqueueRequest,
     ) -> Result<crate::managers::workflows::engine::Enqueued, store::WorkflowError> {
         let name = req.trigger["name"].as_str().unwrap_or_default().to_string();
-        if self.schlecht.contains(&name) {
+        self.versucht.lock().unwrap().insert(name.clone());
+        if self.alle || self.schlecht.contains(&name) {
             return Err(store::WorkflowError::Store(
                 "dauerhaft kaputt (simuliert)".to_string(),
             ));
@@ -1414,6 +1419,8 @@ fn candidates_whose_enqueue_fails_for_good_do_not_starve_the_ones_behind_them() 
     let sink = NamenSink {
         engine: &w.engine,
         schlecht: reihe[..2].iter().cloned().collect(),
+        alle: false,
+        versucht: Mutex::new(HashSet::new()),
         eingereiht: Mutex::new(Vec::new()),
     };
     for takt in 1..=4 {
@@ -1446,4 +1453,40 @@ fn a_file_swapped_for_one_of_the_same_size_and_time_after_the_hash_is_not_taken(
     // Die Beobachtung beginnt neu; danach (echte Kennungen) wird die Datei genommen.
     assert_eq!(w.ticks(4).started.len(), 1);
     eintrag::naht::leeren();
+}
+
+#[test]
+fn with_more_files_than_one_window_every_file_is_hashed_after_finitely_many_ticks() {
+    // 501 stabile Dateien (ein Fenster fasst 500), das Einreihen scheitert dauerhaft: das Hash-Budget (2 je
+    // Takt) wandert ueber beide Fenster hinweg, keine Datei verhungert.
+    let mut w = world();
+    let n = MAX_ENTRIES + 1;
+    for i in 0..n {
+        w.put(&format!("y{i:04}.wav"), format!("inhalt {i}").as_bytes());
+    }
+    w.tick(); // beobachten (Fenster A)
+    w.tick(); // beobachten (Fenster B)
+    let sink = NamenSink {
+        engine: &w.engine,
+        schlecht: HashSet::new(),
+        alle: true,
+        versucht: Mutex::new(HashSet::new()),
+        eingereiht: Mutex::new(Vec::new()),
+    };
+    // Hoechstens so viele Takte, wie bei fairer Reihenfolge noetig sind (zwei Fenster je Umlauf, zwei
+    // Dateien je Takt), mit Reserve.
+    let grenze = n + 20;
+    for takt in 1..=grenze {
+        w.now += TICK;
+        w.clock.set(w.now);
+        on_tick(&sink, &w.state, &w.fx.db_path, &w.probe, w.now);
+        if sink.versucht.lock().unwrap().len() == n {
+            assert!(takt <= grenze);
+            return;
+        }
+    }
+    panic!(
+        "nach {grenze} Takten war erst {} von {n} Dateien einmal gehasht",
+        sink.versucht.lock().unwrap().len()
+    );
 }

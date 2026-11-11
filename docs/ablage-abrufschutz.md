@@ -30,9 +30,12 @@ Abrufsperre des Fadens (`EDEADLK` statt Download). Offen bleibt:
   nicht rückgängig.
 * Das Fenster wird im Code nicht geschlossen. Das ginge nur mit einer Sperre des Providers oder des
   Betriebssystems, die es auf Windows für OneDrive-Platzhalter nicht gibt.
-* Ein einzelnes blockierendes `read` (z. B. Netzlaufwerk) lässt sich nicht unterbrechen; Frist und Abbruch
-  des Hashens greifen zwischen den 1-MiB-Blöcken. Der Abbruch beim Beenden der App hängt an
-  `WorkflowHub::shutdown`.
+* Ein einzelnes blockierendes `read` (z. B. Netzlaufwerk) lässt sich nicht unterbrechen und wird nicht hart
+  abgebrochen. Die Fristen (60 s je Datei, 150 s je Scan) werden nur zwischen den 1-MiB-Blöcken geprüft, sind
+  also keine harte Obergrenze. Der Abbruch beim Beenden der App (`WorkflowHub::shutdown`) wird zwischen den
+  Blöcken und zwischen den Verzeichniseinträgen der Aufzählung geprüft, nicht mitten im `read`.
+* Die Ordner-Kette wird im Ordner-Auslöser nur zum Auflisten und zum Öffnen einer Datei gehalten. Während des
+  Hashens und Einreihens hält nur das Datei-Handle; der Ordner bleibt dann umbenennbar.
 
 Entscheidung: Das Restfenster ist akzeptiert, solange die Oberfläche die Einschränkung nennt (siehe oben).
 

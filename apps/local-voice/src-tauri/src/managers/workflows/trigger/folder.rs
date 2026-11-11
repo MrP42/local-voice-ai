@@ -109,10 +109,12 @@ const HASH_BLOCK: usize = 1024 * 1024;
 pub const MAX_VERZEICHNIS: usize = 100_000;
 /// Hoechstens so viele Bytes liest das Hashen aus EINER Datei (lva#507 Befund 6).
 pub const MAX_HASH_BYTES: u64 = 2 * 1024 * 1024 * 1024;
-/// Hoechstens so lange liest das Hashen EINER Datei.
+/// Frist fuer das Hashen EINER Datei. Sie wird ZWISCHEN den Lesebloecken geprueft ([`HASH_BLOCK`]); ein einzelnes
+/// blockierendes `read` kehrt erst mit dem System zurueck und wird nicht hart abgebrochen.
 pub const HASH_FRIST: Duration = Duration::from_secs(60);
-/// Hoechstens so lange arbeitet ein ganzer Scan (alle Ablaeufe, alle Dateien) am Stueck; danach bricht das
-/// Hashen ab und der naechste Takt macht weiter.
+/// Frist fuer das Hashen innerhalb eines ganzen Scans (alle Ablaeufe, alle Dateien); sie wird zwischen den
+/// Lesebloecken geprueft, danach bricht das Hashen ab und der naechste Takt macht weiter. Keine harte
+/// Obergrenze der Scandauer (siehe [`HASH_FRIST`]).
 pub const SCAN_FRIST: Duration = Duration::from_secs(150);
 
 /// Endungen, wenn der Ausloeser keine nennt: alles, was der Import kennt.
@@ -487,6 +489,25 @@ pub fn hash_in(
     hash_aus(file, g, &ordner.pfad().join(name))
 }
 
+/// Wie [`hash_in`], aber die Ordner-Kette wird nur zum OEFFNEN gehalten: `kette` oeffnet sie frisch, die Datei
+/// wird relativ dazu geoeffnet, dann faellt die Kette weg und nur das Datei-Handle liest. Waehrend des
+/// Hashens bleibt der Ordner so umbenennbar (ein Datei-Handle haelt seinen Platz, die Kette sperrt nicht).
+fn hash_getrennt(
+    kette: &dyn Fn() -> Result<std::sync::Arc<eintrag::Ordner>, OeffnenFehler>,
+    name: &std::ffi::OsStr,
+    g: &HashGrenzen<'_>,
+    pfad: &Path,
+) -> std::io::Result<Hashed> {
+    let _abrufsperre = eintrag::abruf_sperren();
+    let file = {
+        let ordner = kette().map_err(open_fehler)?;
+        ordner
+            .datei_oeffnen(name, hash_art(), trigger_urteil)
+            .map_err(open_fehler)?
+    };
+    hash_aus(file, g, pfad)
+}
+
 /// SHA-256 des Inhalts als Kleinbuchstaben-Hex.
 pub fn sha256_file(path: &Path) -> std::io::Result<String> {
     hash_file(path).map(|h| h.hash)
@@ -528,10 +549,13 @@ struct Inner {
     /// Fortsetzung je Ablauf in grossen Ordnern (lva#507 Befund 5): wo der naechste Takt weiterliest und
     /// welche Schluessel der laufende Umlauf schon gesehen hat.
     umlauf: HashMap<String, Umlauf>,
-    /// Reihum beim Hashen (lva#507 Befund 5): der Name des Kandidaten, an dem das Hash-Budget des letzten
-    /// Taktes endete; der naechste Takt beginnt dahinter. So verbraucht ein Kandidat, dessen Hashen oder
-    /// Einreihen dauerhaft scheitert, nicht jeden Takt wieder dasselbe Budget und haelt die dahinter nicht auf.
-    hash_cursor: HashMap<String, std::ffi::OsString>,
+    /// Zuletzt versucht (lva#507 Befund 5): je Schluessel die laufende Nummer seines letzten Hashversuchs. Bei
+    /// knappem Hash-Budget kommt der am laengsten nicht Versuchte zuerst dran (nie Versuchte vor allen), und
+    /// zwar ueber Takte UND wechselnde Kandidatenfenster hinweg: ein Kandidat, dessen Hashen oder Einreihen
+    /// dauerhaft scheitert, rueckt nach hinten und haelt die anderen nicht auf.
+    versuche: HashMap<String, u64>,
+    /// Laufende Nummer der Hashversuche (Reihenfolge ueber Takte und Fenster hinweg).
+    versuch_zaehler: u64,
 }
 
 /// Stand eines Umlaufs durch einen Ordner, der mehr Kandidaten hat als ein Takt schafft.
@@ -634,6 +658,8 @@ impl State {
             .retain(|k, _| !k.starts_with(&prefix) || keep.contains(k));
         g.cloud
             .retain(|k, _| !k.starts_with(&prefix) || keep.contains(k));
+        g.versuche
+            .retain(|k, _| !k.starts_with(&prefix) || keep.contains(k));
     }
 
     /// Vergisst alles zu Ablaeufen, die nicht mehr eingeschaltet sind.
@@ -644,7 +670,8 @@ impl State {
         g.cloud.retain(|_, f| live.contains(&f.workflow_id));
         g.problems.retain(|w, _| live.contains(w));
         g.umlauf.retain(|w, _| live.contains(w));
-        g.hash_cursor.retain(|w, _| live.contains(w));
+        g.versuche
+            .retain(|k, _| k.split('|').next().is_some_and(|w| live.contains(w)));
     }
 
     /// Dateien, die nur in der Cloud liegen und deshalb nicht verarbeitet werden.
@@ -668,14 +695,16 @@ impl State {
         self.lock().umlauf.remove(workflow_id).unwrap_or_default()
     }
 
-    fn hash_cursor_nehmen(&self, workflow_id: &str) -> Option<std::ffi::OsString> {
-        self.lock().hash_cursor.get(workflow_id).cloned()
+    /// Nummer des letzten Hashversuchs dieses Schluessels (0: noch nie versucht).
+    fn versuch_von(&self, key: &str) -> u64 {
+        self.lock().versuche.get(key).copied().unwrap_or(0)
     }
 
-    fn hash_cursor_setzen(&self, workflow_id: &str, name: std::ffi::OsString) {
-        self.lock()
-            .hash_cursor
-            .insert(workflow_id.to_string(), name);
+    fn versuch_merken(&self, key: &str) {
+        let mut g = self.lock();
+        g.versuch_zaehler += 1;
+        let n = g.versuch_zaehler;
+        g.versuche.insert(key.to_string(), n);
     }
 
     fn umlauf_merken(&self, workflow_id: &str, u: Umlauf) {
@@ -876,7 +905,9 @@ fn scan_workflow(
     // fuehrt woandershin = nicht auflisten. Das gilt auch fuer Laufwerkswurzeln (die Find-Abfrage per Pfad
     // scheitert dort, das Handle liefert trotzdem ein Urteil). Auflisten und Oeffnen laufen ueber dieses
     // gehaltene Handle, nicht ueber den Pfad (Befund 2). Gehalten wird die ganze Kette von der Wurzel der
-    // Integration bis zum Eingangsordner: der Eingangsordner besitzt seine Eltern, solange er lebt.
+    // Integration bis zum Eingangsordner: der Eingangsordner besitzt seine Eltern, solange er lebt. Die Kette
+    // wird nur zum Auflisten und zum Oeffnen einer Datei gehalten; vor dem Hashen und Einreihen faellt sie weg
+    // (der Ordner bleibt dann umbenennbar), jedes Oeffnen und die Kennungspruefung nach dem Hash oeffnen sie neu.
     let Ok(rest) = dir.strip_prefix(sandbox.root()) else {
         problem(state, report, a, FOLDER_UNSICHER);
         return;
@@ -905,6 +936,8 @@ fn scan_workflow(
     // Iterativ aufzaehlen (Befund 4): kein Vec ueber den ganzen Ordner, Abbruch in der Aufzaehlung. Ein Takt
     // nimmt hoechstens `MAX_ENTRIES` Kandidaten (Dateien, die Name und Endung bestehen); die naechsten Takte
     // setzen dahinter fort (Befund 5, `Umlauf`), erst am Ende des Ordners beginnt ein neuer Umlauf.
+    let basis = ordner.pfad().to_path_buf();
+    let kette_neu = || eintrag::Ordner::kette(sandbox.root(), rest.iter(), eintrag::reparse_urteil);
     let mut umlauf = state.umlauf_nehmen(wf);
     let start = umlauf.ab;
     let mut index = 0usize;
@@ -913,7 +946,13 @@ fn scan_workflow(
     let mut kandidaten: Vec<(std::ffi::OsString, Roh)> = Vec::new();
     // Ein Fehler mitten im Auflisten, der „nur online“ heisst, gilt fuer den ganzen Ordner (nie eine
     // Teilliste), alles andere ebenso: nichts wird aus einer abgebrochenen Aufzaehlung gewertet.
+    let mut abgebrochen = false;
     let fertig = ordner.auflisten(|e| {
+        // Beenden der App: zwischen den Eintraegen abbrechen, nichts aus dem Teilstand werten.
+        if state.abgebrochen() {
+            abgebrochen = true;
+            return std::ops::ControlFlow::Break(());
+        }
         let i = index;
         index += 1;
         if i >= MAX_VERZEICHNIS {
@@ -946,6 +985,11 @@ fn scan_workflow(
         kandidaten.push((e.name, roh));
         std::ops::ControlFlow::Continue(())
     });
+    drop(ordner);
+    if abgebrochen {
+        state.umlauf_merken(wf, umlauf);
+        return;
+    }
     let fertig = match fertig {
         Ok(f) => f,
         Err(OeffnenFehler::Urteil(Urteil::NurOnline)) => {
@@ -989,21 +1033,20 @@ fn scan_workflow(
     let mut keep: HashSet<String> = HashSet::new();
     let mut hashed = 0usize;
     let mut wrote = false;
-    // Reihum (Befund 5): das Hash-Budget beginnt hinter dem Kandidaten, an dem es beim letzten Mal endete.
+    // Reihenfolge (Befund 5): wer am laengsten nicht versucht wurde, kommt zuerst an das knappe Hash-Budget
+    // (stabil: bei Gleichstand bleibt die Aufzaehlungsreihenfolge). Die Nummer gilt ueber Takte und Fenster.
     let mut kandidaten = kandidaten;
-    if let Some(cursor) = state.hash_cursor_nehmen(wf) {
-        if let Some(pos) = kandidaten.iter().position(|(n, _)| *n == cursor) {
-            let n = kandidaten.len();
-            kandidaten.rotate_left((pos + 1) % n);
-        }
-    }
-    let mut letzter_hash: Option<std::ffi::OsString> = None;
+    let schluessel_von = |n: &std::ffi::OsString| -> String {
+        let rel = sandbox.rel_of(&basis.join(n));
+        format!("{wf}|{}", rel.to_lowercase())
+    };
+    kandidaten.sort_by_cached_key(|(n, _)| state.versuch_von(&schluessel_von(n)));
     for (entry_name, roh) in kandidaten {
         // Name, Endung und Art hat die Aufzaehlung schon geprueft (Roh kommt vom Ordner-Handle, nicht
         // vom Pfad; `fs::metadata` liefert fuer OneDrive-Platzhalter falsche Attribute). Vor allem anderen
         // entscheiden: schon die Pfadaufloesung der Sandbox oeffnet die Datei.
         let name = entry_name.to_string_lossy().into_owned();
-        let path = ordner.pfad().join(&entry_name);
+        let path = basis.join(&entry_name);
         let extension = path
             .extension()
             .and_then(|e| e.to_str())
@@ -1076,13 +1119,13 @@ fn scan_workflow(
             continue;
         }
         hashed += 1;
-        letzter_hash = Some(entry_name.clone());
+        state.versuch_merken(&key);
         let grenzen = HashGrenzen {
             max_bytes: MAX_HASH_BYTES,
             frist: HASH_FRIST,
             abbruch: &|| state.abgebrochen() || beginn.elapsed() > SCAN_FRIST,
         };
-        let (hash, at_hash) = match hash_in(&ordner, &entry_name, &grenzen) {
+        let (hash, at_hash) = match hash_getrennt(&kette_neu, &entry_name, &grenzen, &path) {
             Ok(h) => (h.hash.clone(), h),
             Err(e) => {
                 // Gesperrt oder verschwunden: beim naechsten Takt erneut.
@@ -1099,7 +1142,7 @@ fn scan_workflow(
         }
         // Dann noch einmal Pfad und Datei-Kennung: gleiche Groesse und Zeit allein beweisen nicht, dass unter dem
         // Namen noch dieselbe Datei liegt (Austausch durch eine gleich grosse, gleich datierte Datei).
-        let kennung = ordner.kennung(&entry_name, hash_art());
+        let kennung = kette_neu().and_then(|o| o.kennung(&entry_name, hash_art()));
         match (eintrag::roh(&path), kennung) {
             (Ok(r), Ok(id))
                 if entry_state(&r) == EntryState::Local
@@ -1168,9 +1211,6 @@ fn scan_workflow(
     }
     // Aufraeumen erst am Ende eines ganzen Umlaufs: in grossen Ordnern sieht ein Takt nur einen Ausschnitt,
     // die Beobachtungen der anderen Ausschnitte duerfen nicht verloren gehen.
-    if let Some(n) = letzter_hash {
-        state.hash_cursor_setzen(wf, n);
-    }
     umlauf.gesehen.extend(keep);
     match weiter_ab {
         Some(ab) => {
