@@ -353,26 +353,87 @@ enum EpubToc {
     static let navBlock = re(#"(?is)<nav\b[^>]*>.*?</nav\s*>"#)
 
     /// XHTML ohne `<nav>`-Blöcke (Inhaltsverzeichnis, Landmarken, Seitenliste); der Rest bleibt.
+    /// Linearer Scanner statt Regex: Kommentare, Verarbeitungsanweisungen und DOCTYPE werden erkannt
+    /// und (außerhalb einer nav) ohne Textverlust entfernt, CDATA bleibt als maskierter Text; die
+    /// nav-Tiefe wird gezählt (auch mit Präfix wie `html:nav`), alles in der äußersten nav fällt weg.
     static func removingNav(_ xhtml: String) -> String {
-        let plain = hidingCommentsAndCData(xhtml)
-        return navBlock.stringByReplacingMatches(in: plain, range: NSRange(location: 0, length: (plain as NSString).length), withTemplate: "")
-    }
-
-    static let commentOrCData = re(#"(?s)<!--.*?-->|<!\[CDATA\[(.*?)\]\]>"#)
-
-    /// Kommentare entfallen, CDATA wird zu maskiertem Text: ein `<nav>` darin ist kein Element.
-    static func hidingCommentsAndCData(_ s: String) -> String {
-        let ns = s as NSString
-        var out = ""; var last = 0
-        for m in commentOrCData.matches(in: s, range: NSRange(location: 0, length: ns.length)) {
-            out += ns.substring(with: NSRange(location: last, length: m.range.location - last))
-            if m.range(at: 1).location != NSNotFound {
-                out += ns.substring(with: m.range(at: 1)).replacingOccurrences(of: "&", with: "&amp;")
-                    .replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
-            }
-            last = NSMaxRange(m.range)
+        let b = Array(xhtml.utf8)
+        let n = b.count
+        var out: [UInt8] = []
+        out.reserveCapacity(n)
+        var i = 0
+        var depth = 0
+        func has(_ lit: String, at p: Int) -> Bool {
+            let u = Array(lit.utf8)
+            return p + u.count <= n && Array(b[p..<(p + u.count)]) == u
         }
-        return out + ns.substring(from: last)
+        func find(_ lit: String, from p: Int) -> Int? {
+            var q = p
+            while q < n { if has(lit, at: q) { return q }; q += 1 }
+            return nil
+        }
+        /// Ende (`>`) eines Tags oder einer Markup-Deklaration; Anführungszeichen und `[...]` zählen nicht.
+        func tagEnd(from p: Int, brackets: Bool) -> Int? {
+            var q = p
+            var quote: UInt8?
+            var square = 0
+            while q < n {
+                let c = b[q]
+                if let open = quote { if c == open { quote = nil } }
+                else if c == 0x22 || c == 0x27 { quote = c }
+                else if brackets, c == 0x5B { square += 1 }
+                else if brackets, c == 0x5D, square > 0 { square -= 1 }
+                else if c == 0x3E, square == 0 { return q }
+                q += 1
+            }
+            return nil
+        }
+        while i < n {
+            guard b[i] == 0x3C else {
+                if depth == 0 { out.append(b[i]) }
+                i += 1
+                continue
+            }
+            if has("<!--", at: i) {
+                i = find("-->", from: i + 4).map { $0 + 3 } ?? n
+            } else if has("<![CDATA[", at: i) {
+                let end = find("]]>", from: i + 9)
+                if depth == 0 {
+                    for c in b[(i + 9)..<(end ?? n)] {
+                        switch c {
+                        case 0x26: out.append(contentsOf: Array("&amp;".utf8))
+                        case 0x3C: out.append(contentsOf: Array("&lt;".utf8))
+                        case 0x3E: out.append(contentsOf: Array("&gt;".utf8))
+                        default: out.append(c)
+                        }
+                    }
+                }
+                i = end.map { $0 + 3 } ?? n
+            } else if has("<?", at: i) {
+                i = find("?>", from: i + 2).map { $0 + 2 } ?? n
+            } else if has("<!", at: i) {
+                i = (tagEnd(from: i + 2, brackets: true) ?? (n - 1)) + 1
+            } else {
+                guard let end = tagEnd(from: i + 1, brackets: false) else {
+                    if depth == 0 { out.append(contentsOf: b[i...]) }
+                    break
+                }
+                let closing = i + 1 < n && b[i + 1] == 0x2F
+                var q = i + (closing ? 2 : 1)
+                let nameStart = q
+                while q < end, ![0x20, 0x09, 0x0A, 0x0D, 0x2F].contains(b[q]) { q += 1 }
+                let name = String(decoding: b[nameStart..<q], as: UTF8.self).lowercased()
+                let local = name.split(separator: ":").last.map(String.init) ?? name
+                let selfClosing = !closing && b[end - 1] == 0x2F
+                if local == "nav", !(closing && depth == 0) {
+                    if closing { depth -= 1 } else if !selfClosing { depth += 1 }
+                } else if depth == 0 {
+                    out.append(contentsOf: b[i...end])
+                }
+                i = end + 1
+            }
+        }
+        return String(decoding: out, as: UTF8.self)
     }
 
     /// Klartext eines Verzeichnistitels: ohne Tags, Entitäten aufgelöst, Leerraum zusammengefasst.

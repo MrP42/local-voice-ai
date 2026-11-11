@@ -96,6 +96,26 @@ final class EpubTocImportTests: XCTestCase {
         XCTAssertEqual(try BookText.epub(epub).text, "Widmung\n\nDanach\n\n# Erstes Kapitel\n\nText.")
     }
 
+    func testNavScannerHandlesPIsDoctypeNestingPrefixAndCDataAtEnd() {
+        // (a) PI mit <nav> darin
+        XCTAssertEqual(EpubToc.removingNav(#"<?demo <nav> ?><p>Widmung</p><nav epub:type="toc">X</nav>"#), "<p>Widmung</p>")
+        // (b) PI mit Kommentarbeginn
+        XCTAssertEqual(EpubToc.removingNav("<?demo <!-- ?><p>Widmung</p><!-- Ende --><nav>X</nav>"), "<p>Widmung</p>")
+        // (c) verschachtelt: nichts bleibt übrig, der Text danach auch
+        XCTAssertEqual(EpubToc.removingNav("<nav><nav>X</nav><p>Rest</p></nav><p>Danach</p>"), "<p>Danach</p>")
+        // Präfix und selbstschließend, Anführungszeichen mit > im Attribut
+        XCTAssertEqual(EpubToc.removingNav(#"<p>a</p><html:nav title="a>b"><ol/></html:nav><nav/><p>b</p>"#), "<p>a</p><p>b</p>")
+        // DOCTYPE mit internem Subset bleibt weg, Text bleibt
+        XCTAssertEqual(EpubToc.removingNav(#"<!DOCTYPE html [ <!ENTITY x "<nav>"> ]><p>t</p>"#), "<p>t</p>")
+        // Kommentar und PI innerhalb einer nav zählen nicht als Endtag
+        XCTAssertEqual(EpubToc.removingNav("<nav><!-- </nav> --><?x </nav> ?>A</nav>B"), "B")
+        // CDATA am Dokumentende bleibt als maskierter Text, auch unterminiert
+        XCTAssertEqual(EpubToc.removingNav("<p>a</p><![CDATA[ x <nav> & y ]]>"), "<p>a</p> x &lt;nav&gt; &amp; y ")
+        XCTAssertEqual(EpubToc.removingNav("<p>a</p><![CDATA[ <b>"), "<p>a</p> &lt;b&gt;")
+        // Umlaute (Mehrbyte) bleiben unverändert
+        XCTAssertEqual(EpubToc.removingNav("<p>Größe über</p><nav>ä</nav>"), "<p>Größe über</p>")
+    }
+
     func testPureFragmentLinksPointToTheTocDocumentItself() {
         let nav = ##"<nav epub:type="toc"><ol><li><a href="#start">Anfang</a></li><li><a href="k.xhtml#a">Eins</a></li></ol></nav>"##
         XCTAssertEqual(EpubToc.nav(nav, baseDir: "OEBPS", source: "OEBPS/nav.xhtml"), [
