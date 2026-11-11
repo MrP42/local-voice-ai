@@ -4822,6 +4822,10 @@
       "openSource": "Open the meeting “{{title}}” from {{date}}",
       "modeRules": "Taken from your notes as written.",
       "modeModel": "Picked and shortened from your notes by your chosen model.",
+      "summarize": "Summarize with AI",
+      "summarizing": "Summarizing …",
+      "summarizeHint": "Sends these points from your notes to your chosen cloud model.",
+      "summarizeUnavailable": "The summary is not available right now. The points are shown as written.",
       "settings": {
         "enabled": "Preparation before appointments",
         "enabledDescription": "Shows two or three open points from your own earlier notes with the same attendees or from the same series, each with its source. Without matching notes nothing is shown.",

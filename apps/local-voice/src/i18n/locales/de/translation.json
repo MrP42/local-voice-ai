@@ -4822,6 +4822,10 @@
       "openSource": "Besprechung „{{title}}“ vom {{date}} öffnen",
       "modeRules": "Aus deinen Notizen übernommen, wie sie dort stehen.",
       "modeModel": "Vom gewählten Modell aus deinen Notizen ausgewählt und gekürzt.",
+      "summarize": "Mit KI zusammenfassen",
+      "summarizing": "Wird zusammengefasst …",
+      "summarizeHint": "Sendet diese Punkte aus deinen Notizen an dein gewähltes Cloud-Modell.",
+      "summarizeUnavailable": "Die Zusammenfassung ist gerade nicht verfügbar. Die Punkte stehen so da, wie sie in deinen Notizen stehen.",
       "settings": {
         "enabled": "Vorbereitung vor dem Termin",
         "enabledDescription": "Zeigt zwei bis drei offene Punkte aus deinen früheren Notizen mit denselben Teilnehmenden oder aus derselben Terminserie, jeweils mit Quelle. Ohne passende Notizen erscheint nichts.",

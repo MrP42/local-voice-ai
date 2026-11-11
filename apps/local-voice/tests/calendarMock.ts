@@ -86,6 +86,10 @@ export const installTauriMock = async (
     w.__brief = null;
     // G4 (#499): Vorbereitung, die `meeting_prep_get` liefert (null = nichts).
     w.__prep = null;
+    // Antwort auf den Klick "Mit KI zusammenfassen" (Auslöser "click"; null = wie __prep)
+    // und Verzögerung der Antwort in ms.
+    w.__prepClick = null;
+    w.__prepDelay = 0;
     w.__addDelay = 0;
     // M5-P5f: Microsoft-Anmeldung. `__graphWait` haelt die Anmeldung offen, bis
     // "Abbrechen" `calendar_graph_cancel_sign_in` ruft; `__graphError` laesst sie scheitern.
@@ -295,8 +299,14 @@ export const installTauriMock = async (
             case "people_brief_open":
               return null;
             // Terminvorbereitung (G4, #499)
-            case "meeting_prep_get":
-              return w.__prep;
+            case "meeting_prep_get": {
+              if (w.__prepDelay) {
+                await new Promise((r) => setTimeout(r, w.__prepDelay));
+              }
+              return args.trigger === "click" && w.__prepClick
+                ? w.__prepClick
+                : w.__prep;
+            }
             case "change_meeting_prep_enabled_setting":
               settings.meeting_prep_enabled = args.enabled;
               return null;

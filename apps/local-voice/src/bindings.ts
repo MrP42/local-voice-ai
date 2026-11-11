@@ -5963,14 +5963,15 @@ async peopleBriefPending() : Promise<string | null> {
     return await TAURI_INVOKE("people_brief_pending");
 },
 /**
- * Die Vorbereitung zu einem Termin (Oeffnen des Termins bzw. der Aufnahme).
- * Leer (`points` leer), wenn die Funktion aus ist oder es keinen frueheren
- * Stoff gibt: die Oberflaeche zeigt dann nichts. `calendar_event_not_found` bei
- * unbekanntem Termin.
+ * Die Vorbereitung zu einem Termin. `view`: die Karte wird angezeigt (nur Regeln
+ * oder ein lokales Modell); `click`: der Nutzer hat „Mit KI zusammenfassen“
+ * gedrueckt (erst dann geht etwas an ein nicht-lokales Modell). Leer (`points`
+ * leer), wenn die Funktion aus ist oder es keinen frueheren Stoff gibt: die
+ * Oberflaeche zeigt dann nichts. `calendar_event_not_found` bei unbekanntem Termin.
  */
-async meetingPrepGet(eventKey: string) : Promise<Result<Prep, string>> {
+async meetingPrepGet(eventKey: string, trigger: PrepTrigger) : Promise<Result<Prep, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meeting_prep_get", { eventKey }) };
+    return { status: "ok", data: await TAURI_INVOKE("meeting_prep_get", { eventKey, trigger }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -12894,7 +12895,12 @@ export type Prep = { points: PrepPoint[]; mode: PrepMode;
 /**
  * Wie viele fruehere Besprechungen in die Auswahl kamen.
  */
-meetings: number }
+meetings: number; 
+/**
+ * Ein nicht-lokales Modell koennte zusammenfassen, wurde aber nicht gefragt:
+ * die Karte bietet „Mit KI zusammenfassen“ an, erst der Klick sendet.
+ */
+summarizable: boolean }
 /**
  * Art eines offenen Punktes.
  */
@@ -12932,6 +12938,20 @@ export type PrepSource = { meeting_id: string; title: string;
  * Zeitpunkt der Besprechung in Sekunden.
  */
 at: number }
+/**
+ * Was die Oberflaeche melden darf: nur Anzeigen oder Klick. Vorab gibt es von
+ * dort nicht, damit das Backend die Regel („nicht-lokal nur auf Klick“) selbst
+ * durchsetzt und nicht der Aufrufer.
+ */
+export type PrepTrigger = 
+/**
+ * Die Karte wird angezeigt.
+ */
+"view" | 
+/**
+ * Der Nutzer hat „Mit KI zusammenfassen“ gedrueckt.
+ */
+"click"
 /**
  * Das Tupel, an das die Freigabe gebunden ist. Aendert sich eines der Felder,
  * ist die Freigabe ungueltig und muss erneut bestaetigt werden.
