@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+</head>
+<body style="margin:0">
+<title>Besprechungsnotizen Local Voice</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: Lesespalte mit Befunden, dazwischen breite App-Rahmen als Entwurf. Fluent 2, Segoe UI, Microsoft-Palette. */
+:root{
+  --bg:#f5f5f5; --page:#fafafa; --surface:#ffffff; --surface2:#f0f0f0; --hover:#ebebeb;
+  --fg:#242424; --fg2:#424242; --muted:#616161; --faint:#8a8a8a; --line:#e0e0e0; --line2:#d1d1d1;
+  --accent:#0f6cbd; --accent-weak:#ebf3fc; --on-accent:#ffffff;
+  --run:#107c10; --run-weak:#e7f2e7; --warn:#bc4b09; --warn-weak:#fdf6f3;
+  --sp1:#ebf3fc; --sp1f:#0f548c; --sp2:#f1faf1; --sp2f:#0e700e; --sp3:#f7eefa; --sp3f:#6b2a86; --sp4:#fff9e6; --sp4f:#835b00;
+  --pill:#1f1f1f; --on-pill:#ffffff;
+  --shadow:0 2px 8px rgba(0,0,0,.10),0 0 2px rgba(0,0,0,.08);
+  --font:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
+  --display:"Segoe UI Variable Display","Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#141414; --page:#1a1a1a; --surface:#1f1f1f; --surface2:#292929; --hover:#333333;
+  --fg:#ffffff; --fg2:#d6d6d6; --muted:#adadad; --faint:#8a8a8a; --line:#333333; --line2:#424242;
+  --accent:#479ef5; --accent-weak:#082338; --on-accent:#0a0a0a;
+  --run:#54b054; --run-weak:#052505; --warn:#f2964a; --warn-weak:#2b1708;
+  --sp1:#082338; --sp1f:#96c6fa; --sp2:#052505; --sp2f:#9fd89f; --sp3:#2a1233; --sp3f:#d7a6ea; --sp4:#2e2400; --sp4f:#f2d06b;
+  --pill:#f5f5f5; --on-pill:#141414;
+  --shadow:0 2px 8px rgba(0,0,0,.5),0 0 2px rgba(0,0,0,.4); color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#141414; --page:#1a1a1a; --surface:#1f1f1f; --surface2:#292929; --hover:#333333;
+  --fg:#ffffff; --fg2:#d6d6d6; --muted:#adadad; --faint:#8a8a8a; --line:#333333; --line2:#424242;
+  --accent:#479ef5; --accent-weak:#082338; --on-accent:#0a0a0a;
+  --run:#54b054; --run-weak:#052505; --warn:#f2964a; --warn-weak:#2b1708;
+  --sp1:#082338; --sp1f:#96c6fa; --sp2:#052505; --sp2f:#9fd89f; --sp3:#2a1233; --sp3f:#d7a6ea; --sp4:#2e2400; --sp4f:#f2d06b;
+  --pill:#f5f5f5; --on-pill:#141414;
+  --shadow:0 2px 8px rgba(0,0,0,.5),0 0 2px rgba(0,0,0,.4); color-scheme:dark }
+
+body{background:var(--page);color:var(--fg);font-family:var(--font);font-size:14px;line-height:20px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:32px 64px}
+*{box-sizing:border-box}
+.col{max-width:1120px;margin:0 auto;display:flex;flex-direction:column;gap:40px}
+.read{max-width:68ch}
+h1{font-family:var(--display);font-size:28px;line-height:36px;font-weight:600;margin:0 0 8px;text-wrap:balance}
+h2{font-family:var(--display);font-size:20px;line-height:28px;font-weight:600;margin:0 0 4px;text-wrap:balance}
+h3{font-size:14px;line-height:20px;font-weight:600;margin:0}
+p{margin:0 0 8px;color:var(--fg2)}
+.lead{font-size:16px;line-height:22px;color:var(--fg2)}
+.meta{color:var(--muted);font-size:12px;line-height:16px}
+.kicker{font-size:12px;line-height:16px;font-weight:600;color:var(--accent);letter-spacing:.02em;margin-bottom:4px}
+section{display:flex;flex-direction:column;gap:16px}
+
+/* Befundliste */
+.find{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:0 32px;border-top:1px solid var(--line)}
+.find>div{padding:12px 0;border-bottom:1px solid var(--line);min-width:0}
+.find p{margin:2px 0 0;font-size:13px;line-height:18px}
+.find .to{color:var(--muted)}
+.find .to b{color:var(--fg);font-weight:600}
+
+/* App-Rahmen */
+.win{background:var(--bg);border:1px solid var(--line2);border-radius:8px;box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column}
+.bar{display:flex;align-items:center;gap:8px;height:36px;padding:0 12px;font-size:12px;color:var(--fg2)}
+.bar .logo{width:16px;height:16px;border-radius:4px;background:var(--pill);display:grid;place-items:center}
+.bar .logo i{display:block;width:8px;height:8px;background:linear-gradient(90deg,#f2c811 0 2px,transparent 2px 3px,#f2c811 3px 5px,transparent 5px 6px,#f2c811 6px 8px);clip-path:polygon(0 30%,25% 30%,25% 0,62% 0,62% 20%,100% 20%,100% 80%,62% 80%,62% 100%,25% 100%,25% 70%,0 70%)}
+.bar .sp{flex:1}
+.bar .wc{display:flex;gap:14px;color:var(--faint)}
+.body{display:flex;min-height:0}
+.nav{width:176px;flex:none;padding:4px;display:flex;flex-direction:column;gap:2px}
+.nav a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:4px;color:var(--fg2);font-size:13px;position:relative}
+.nav a.on{background:var(--hover);color:var(--fg);font-weight:600}
+.nav a.on::before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:2px;background:var(--accent)}
+.nav .grow{flex:1}
+.ico{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.main{flex:1;min-width:0;background:var(--surface);border-top-left-radius:8px;border-left:1px solid var(--line);border-top:1px solid var(--line);display:flex;flex-direction:column;position:relative}
+.pad{padding:24px 32px 96px;display:flex;flex-direction:column;gap:20px;max-width:760px;width:100%;margin:0 auto}
+.pt{font-family:var(--display);font-size:24px;line-height:32px;font-weight:600;margin:0}
+.grp{font-size:12px;line-height:16px;color:var(--muted);font-weight:600}
+
+/* Termine */
+.cal{border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+.day{display:grid;grid-template-columns:76px 1fr;gap:8px;padding:12px 16px}
+.day+.day{border-top:1px dashed var(--line)}
+.dn{font-family:var(--display);font-size:24px;line-height:28px;font-weight:600;font-variant-numeric:tabular-nums}
+.dn small{display:block;font-family:var(--font);font-size:11px;line-height:14px;font-weight:400;color:var(--muted)}
+.evs{display:flex;flex-direction:column;gap:10px;min-width:0}
+.ev{display:flex;align-items:center;gap:10px;min-width:0}
+.ev .rail{width:3px;align-self:stretch;border-radius:2px;background:var(--line2);flex:none}
+.ev.now .rail{background:var(--accent)}
+.ev .t{flex:1;min-width:0}
+.ev .t b{display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ev .t span{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.ev.now .t span{color:var(--accent)}
+.src{font-size:11px;line-height:16px;padding:0 6px;border-radius:8px;background:var(--surface2);color:var(--muted);flex:none}
+.btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:4px;border:1px solid var(--line2);background:var(--surface);color:var(--fg);font:600 13px/1 var(--font);white-space:nowrap}
+.btn.p{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.btn.s{height:24px;padding:0 8px;font-weight:400;font-size:12px}
+
+/* Notizliste */
+.rows{display:flex;flex-direction:column}
+.row{display:flex;align-items:center;gap:12px;padding:8px;border-radius:4px;min-width:0}
+.row:hover{background:var(--hover)}
+.av{width:28px;height:28px;border-radius:6px;display:grid;place-items:center;font-weight:600;font-size:12px;flex:none}
+.a1{background:var(--sp1);color:var(--sp1f)}.a2{background:var(--sp2);color:var(--sp2f)}.a3{background:var(--sp3);color:var(--sp3f)}.a4{background:var(--sp4);color:var(--sp4f)}
+.row .t{flex:1;min-width:0}
+.row .t b{display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .t span{font-size:12px;color:var(--muted);display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row time{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;flex:none}
+
+/* Leiste unten */
+.dock{position:absolute;left:0;right:0;bottom:0;padding:12px 32px 16px;display:flex;gap:8px;justify-content:center;background:linear-gradient(to top,var(--surface) 70%,transparent)}
+.dock>div{display:flex;gap:8px;max-width:696px;width:100%}
+.ask{flex:1;min-width:0;display:flex;align-items:center;gap:8px;height:44px;padding:0 6px 0 16px;border:1px solid var(--line2);border-radius:22px;background:var(--surface);box-shadow:var(--shadow);color:var(--faint)}
+.ask>span:first-child{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ask .chip{flex:none}
+@media (max-width:480px){.ask .chip{display:none}}
+.chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border:1px solid var(--line2);border-radius:14px;background:var(--surface);color:var(--fg2);font-size:12px;white-space:nowrap}
+.rec{display:flex;align-items:center;gap:10px;height:44px;padding:0 14px;border:1px solid var(--line2);border-radius:22px;background:var(--surface);box-shadow:var(--shadow);flex:none;font-size:12px;color:var(--fg2);font-variant-numeric:tabular-nums}
+.bars{display:flex;align-items:center;gap:2px;height:16px}
+.bars i{width:3px;border-radius:2px;background:var(--run);animation:b 1.1s ease-in-out infinite}
+.bars i:nth-child(1){height:8px}.bars i:nth-child(2){height:16px;animation-delay:.15s}.bars i:nth-child(3){height:10px;animation-delay:.3s}
+@keyframes b{50%{transform:scaleY(.45)}}
+@media (prefers-reduced-motion:reduce){.bars i{animation:none}}
+.stop{width:12px;height:12px;border-radius:2px;background:var(--fg2)}
+
+/* Notiz */
+.note{padding:28px 40px 104px;display:flex;flex-direction:column;gap:14px;max-width:760px;width:100%;margin:0 auto}
+.nt{font-family:var(--display);font-size:28px;line-height:36px;font-weight:600;margin:0;text-wrap:balance}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.ph{color:var(--faint);font-size:15px}
+.mine{font-size:15px;line-height:24px;color:var(--fg);margin:0;padding-left:18px}
+.seg{display:inline-flex;padding:2px;border-radius:14px;background:var(--surface2);gap:2px}
+.seg span{padding:0 12px;height:24px;display:inline-flex;align-items:center;border-radius:12px;font-size:12px;color:var(--muted)}
+.seg .on{background:var(--surface);color:var(--fg);font-weight:600;box-shadow:0 0 2px rgba(0,0,0,.2)}
+.ai{color:var(--fg2);font-size:15px;line-height:24px;margin:0;padding-left:18px}
+.ai li.own{color:var(--fg);font-weight:600}
+.ref{display:inline-block;font-size:10px;line-height:14px;padding:0 5px;margin-left:4px;border-radius:7px;background:var(--surface2);color:var(--muted);vertical-align:2px;font-weight:400;font-variant-numeric:tabular-nums}
+.sec{font-size:15px;font-weight:600;margin:6px 0 -6px}
+.split{display:grid;grid-template-columns:minmax(0,1fr) 300px}
+.tr{border-left:1px solid var(--line);padding:16px;display:flex;flex-direction:column;gap:12px;background:var(--bg);min-width:0}
+.sp{display:inline-flex;height:20px;align-items:center;padding:0 8px;border-radius:10px;font-size:12px;font-weight:600}
+.tr p{margin:4px 0 0;font-size:13px;line-height:18px}
+.tr .hl{background:var(--accent-weak);border-radius:4px;padding:4px 6px;margin:2px -6px 0}
+.brief{border:1px solid var(--line);border-radius:8px;padding:12px 16px;background:var(--bg)}
+.brief ul{margin:6px 0 0;padding-left:18px;color:var(--fg2)}
+
+/* Schwebendes */
+.float{display:flex;flex-wrap:wrap;gap:24px;align-items:center}
+.desk{flex:1 1 320px;min-width:0;border-radius:8px;border:1px solid var(--line2);background:var(--surface2);padding:20px;display:flex;flex-direction:column;gap:12px}
+.toast{background:var(--surface);border:1px solid var(--line2);border-radius:8px;box-shadow:var(--shadow);padding:12px 14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.toast .t{flex:1 1 180px;min-width:0}
+.toast .t span{display:block;font-size:12px;color:var(--muted)}
+.nub{width:44px;border-radius:22px;background:var(--pill);padding:12px 0;display:flex;flex-direction:column;align-items:center;gap:10px;box-shadow:var(--shadow);flex:none}
+.nub .lv{width:18px;height:18px;border-radius:50%;border:2px solid var(--on-pill);opacity:.9}
+.nubrow{display:flex;gap:16px;align-items:center}
+
+/* iPhone */
+.phones{display:flex;flex-wrap:wrap;gap:24px}
+.ph1{width:300px;max-width:100%;border:1px solid var(--line2);border-radius:32px;background:var(--surface);box-shadow:var(--shadow);padding:18px 16px 14px;display:flex;flex-direction:column;gap:12px;min-height:520px}
+.ph1 .top{display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+.ph1 h4{font-family:var(--display);font-size:26px;line-height:32px;margin:6px 0 0;font-weight:600}
+.card{border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:flex;gap:10px;align-items:center}
+.card .t{flex:1;min-width:0}
+.card .t b{display:block}
+.card .t span{font-size:12px;color:var(--muted)}
+.big{height:44px;border-radius:22px;background:var(--pill);color:var(--on-pill);display:flex;align-items:center;justify-content:center;gap:8px;font-weight:600}
+.fill{flex:1}
+.tab{display:flex;gap:8px;align-items:center}
+.fab{width:52px;height:44px;border-radius:22px;background:var(--pill);color:var(--on-pill);display:grid;place-items:center;flex:none}
+
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{text-align:left;padding:8px 12px 8px 0;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;color:var(--muted);font-weight:600}
+.scroll{overflow-x:auto}
+.cap{font-size:12px;color:var(--muted);margin-top:-8px}
+
+@media (max-width:760px){
+  .nav{display:none}.main{border-left:0;border-top-left-radius:0}
+  .pad{padding:16px 16px 92px}.note{padding:20px 16px 100px}.dock{padding:12px 16px 14px}
+  .split{grid-template-columns:1fr}.tr{border-left:0;border-top:1px solid var(--line)}
+  .day{grid-template-columns:56px 1fr}.src{display:none}.rec .tm{display:none}
+}
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<symbol id="i-home" viewBox="0 0 16 16"><path d="M2.5 7 8 2.5 13.5 7v6.5h-4v-4h-3v4h-4z"/></symbol>
+<symbol id="i-clock" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/></symbol>
+<symbol id="i-people" viewBox="0 0 16 16"><circle cx="6" cy="5.5" r="2.2"/><path d="M2 13c0-2.2 1.8-3.8 4-3.8s4 1.6 4 3.8M10.5 3.6a2.2 2.2 0 0 1 0 3.9M11.5 9.4c1.5.5 2.5 1.9 2.5 3.6"/></symbol>
+<symbol id="i-chat" viewBox="0 0 16 16"><path d="M2.5 3.5h11v7.5h-6l-3 2.5V11h-2z"/></symbol>
+<symbol id="i-book" viewBox="0 0 16 16"><path d="M3 2.5v11M6 2.5v11M9 3l3 10.5"/></symbol>
+<symbol id="i-speak" viewBox="0 0 16 16"><path d="M2.5 6v4h2.5l3 2.5v-9L5 6zM11 6a3 3 0 0 1 0 4"/></symbol>
+<symbol id="i-gear" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2"/><path d="M8 2v2M8 12v2M2 8h2M12 8h2M3.8 3.8l1.4 1.4M10.8 10.8l1.4 1.4M12.2 3.8l-1.4 1.4M5.2 10.8l-1.4 1.4"/></symbol>
+<symbol id="i-cal" viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="10" rx="1.5"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/></symbol>
+<symbol id="i-folder" viewBox="0 0 16 16"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z"/></symbol>
+<symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+<symbol id="i-up" viewBox="0 0 16 16"><path d="M8 12.5v-9M4.5 7 8 3.5 11.5 7"/></symbol>
+<symbol id="i-shield" viewBox="0 0 16 16"><path d="M8 2 13 4v4c0 3-2.2 5-5 6-2.8-1-5-3-5-6V4z"/></symbol>
+<symbol id="i-pen" viewBox="0 0 16 16"><path d="M3 13l.6-2.8L11 2.8l2.2 2.2-7.4 7.4z"/></symbol>
+</defs></svg>
+
+<div class="col">
+
+<header class="read">
+  <div class="kicker">Entwurf zur Abnahme · Baustein G8 · Stand 11.11.2026</div>
+  <h1>Besprechungsnotizen in Local Voice, ruhiger und schneller</h1>
+  <p class="lead">Granola gewinnt nicht über mehr Funktionen, sondern über weniger sichtbare Entscheidungen. Dieser Entwurf überträgt die sieben Muster, die dort tragen, auf Local Voice. Der Rahmen bleibt Fluent 2 mit Segoe UI und der Microsoft-Palette. Es entsteht keine zweite App und kein fremdes Aussehen.</p>
+  <p class="meta">Grundlage: öffentliche Produktseiten und Hilfeseiten von Granola mit Bildschirmfotos, dazu die Gestaltungswerte aus dem Mac-Paket 7.774.2. Der Rundgang durch die installierte PC-App steht noch aus, weil der PC gesperrt ist.</p>
+</header>
+
+<section>
+  <div class="read"><h2>Was Granola an der Oberfläche richtig macht</h2></div>
+  <div class="find">
+    <div><h3>1. Die Startseite zeigt den Tag, nicht die App</h3><p>Oben „Coming up“ mit den nächsten Terminen und einem einzigen dunklen Knopf am laufenden Termin. Darunter die Notizen nach Tagen.</p><p class="to"><b>Übernahme:</b> Start wird zu „Als Nächstes“. Die bisherigen Kacheln zu Diktat, Verlauf und Vorlesen wandern in die Leiste links, wo sie schon stehen.</p></div>
+    <div><h3>2. Eine Notiz ist ein leeres Blatt</h3><p>Großer Titel, drei kleine Chips (Datum, Personen, Ordner), darunter nur „Write notes“. Keine Reiter, keine Seitenleisten.</p><p class="to"><b>Übernahme:</b> Die Aufnahmeansicht öffnet einspaltig. Projektbaum und Bedienfeld klappen ein und bleiben über die Leiste erreichbar.</p></div>
+    <div><h3>3. Aufnahme und Frage sitzen unten in zwei Kapseln</h3><p>Links tanzende Balken mit Stopp, rechts „Ask anything“ mit einem Vorschlag. Das ist die ganze Bedienung während des Gesprächs.</p><p class="to"><b>Übernahme:</b> Eine feste Leiste unten ersetzt den Knopf „Aufnahme starten“ oben rechts und die Reiter Notizen, KI-Notizen, Fragen.</p></div>
+    <div><h3>4. Eigene Stichpunkte und KI-Text in einem Blatt</h3><p>Ein Umschalter am Titel wechselt zwischen eigener Notiz und ausgearbeiteter Fassung. Eigene Zeilen sind dunkel, ergänzte grau.</p><p class="to"><b>Übernahme:</b> Umschalter „Meine Notizen / Ausgearbeitet“. Jede ergänzte Zeile trägt die Zeitmarke ihrer Stelle im Transkript.</p></div>
+    <div><h3>5. Das Transkript ist Nebensache</h3><p>Es liegt hinter den Balken und klappt als schmale Spalte auf. Sprecher stehen als farbige Namenskapseln über ihren Absätzen.</p><p class="to"><b>Übernahme:</b> Transkript als einklappbare Spalte rechts, Sprecherkapseln in vier ruhigen Tönen, Klick auf eine Zeitmarke springt an die Stelle.</p></div>
+    <div><h3>6. Der Anzeiger außerhalb der App ist winzig</h3><p>Eine dunkle Kapsel am Bildschirmrand mit Logo und Balken. Mehr sieht man während einer Besprechung nicht.</p><p class="to"><b>Übernahme:</b> Der vorhandene Anzeiger wird auf diese Größe gebracht. Ein Klick öffnet die Notiz, ein zweites Feld stoppt.</p></div>
+    <div><h3>7. Wenig Linien, viel Rand, ein Akzent</h3><p>Haarlinien statt Schatten, 24 px Radius nur an der Terminkarte, Chips als Kapseln, Text 14 auf 18 px, ein einziger Akzentton.</p><p class="to"><b>Übernahme:</b> Gleiche Zurückhaltung mit Fluent-Werten: Radius 4 und 8 px, Kapseln nur für Chips und die untere Leiste, Markenblau als einziger Akzent, Grün nur für „läuft“.</p></div>
+  </div>
+</section>
+
+<section>
+  <div class="read"><div class="kicker">Ansicht 1</div><h2>Start: Als Nächstes</h2><p>Termine aus dem verbundenen Kalender, mit Teams und Webex als erkannte Quelle. Der laufende oder nächste Termin trägt den einzigen gefüllten Knopf. Ohne Kalender steht dort nur „Neue Notiz“.</p></div>
+  <div class="win">
+    <div class="bar"><span class="logo"><i></i></span><b>Local Voice</b><span class="sp"></span><span class="wc">&#8211; &#9633; &#10005;</span></div>
+    <div class="body">
+      <nav class="nav" aria-label="Beispiel Navigation">
+        <a class="on"><svg class="ico"><use href="#i-home"/></svg>Start</a>
+        <a><svg class="ico"><use href="#i-clock"/></svg>Verlauf</a>
+        <a><svg class="ico"><use href="#i-people"/></svg>Aufnahmen</a>
+        <a><svg class="ico"><use href="#i-chat"/></svg>Chat</a>
+        <a><svg class="ico"><use href="#i-speak"/></svg>Vorlesen</a>
+        <a><svg class="ico"><use href="#i-book"/></svg>Bibliothek</a>
+        <span class="grow"></span>
+        <a><svg class="ico"><use href="#i-gear"/></svg>Einstellungen</a>
+      </nav>
+      <div class="main">
+        <div class="pad">
+          <div style="display:flex;align-items:center;gap:8px"><h3 class="pt" style="flex:1">Als Nächstes</h3><span class="btn"><svg class="ico"><use href="#i-plus"/></svg>Neue Notiz</span></div>
+          <div class="cal">
+            <div class="day">
+              <div class="dn">11<small>Mi, November</small></div>
+              <div class="evs">
+                <div class="ev now"><span class="rail"></span><div class="t"><b>Jour fixe Digitalisierung</b><span>Jetzt · 09:00–09:45</span></div><span class="src">Teams</span><span class="btn p">Mitschreiben</span></div>
+                <div class="ev"><span class="rail"></span><div class="t"><b>Abstimmung Posteingang mit Fachbereich 32</b><span>10:30–11:15</span></div><span class="src">Webex</span></div>
+                <div class="ev"><span class="rail"></span><div class="t"><b>Personalrat: Dienstvereinbarung KI</b><span>14:00–15:00</span></div><span class="src">Vor Ort</span></div>
+              </div>
+            </div>
+            <div class="day">
+              <div class="dn">12<small>Do, November</small></div>
+              <div class="evs">
+                <div class="ev"><span class="rail"></span><div class="t"><b>Lenkungskreis E-Akte</b><span>08:30–10:00</span></div><span class="src">Webex</span></div>
+              </div>
+            </div>
+          </div>
+          <div>
+            <div class="grp">Gestern</div>
+            <div class="rows">
+              <div class="row"><span class="av a1">V</span><div class="t"><b>Vergabe Scanstraße, Bietergespräch</b><span>Frau Keller, Herr Aydin und 2 weitere</span></div><time>15:30</time></div>
+              <div class="row"><span class="av a2">I</span><div class="t"><b>IT-Runde der Dezernate</b><span>6 Personen · Protokoll fertig</span></div><time>11:00</time></div>
+              <div class="row"><span class="av a3">S</span><div class="t"><b>Schulung KI-Kompetenz, Vorbesprechung</b><span>Herr Brandt</span></div><time>09:00</time></div>
+            </div>
+          </div>
+        </div>
+        <div class="dock"><div><div class="ask"><span>Frag deine Besprechungen</span><span class="chip">/ Offene Aufgaben</span></div></div></div>
+      </div>
+    </div>
+  </div>
+  <p class="cap">Beispieldaten. Die schmale Leiste links bleibt beim Seitenwechsel eingeklappt, wenn sie eingeklappt war.</p>
+</section>
+
+<section>
+  <div class="read"><div class="kicker">Ansicht 2</div><h2>Während der Besprechung</h2><p>Ein Blatt, ein Titel, drei Chips. Der Chip „Hinweis gesendet“ ist der Nachweis aus Baustein G2 und zeigt, dass die Teilnehmenden informiert wurden. Die Vorbereitung aus früheren Notizen (G4) liegt als eine Karte unten und verschwindet, sobald man schreibt.</p></div>
+  <div class="win">
+    <div class="bar"><span class="logo"><i></i></span><b>Local Voice</b><span class="sp"></span><span class="wc">&#8211; &#9633; &#10005;</span></div>
+    <div class="body">
+      <nav class="nav" aria-label="Beispiel Navigation">
+        <a><svg class="ico"><use href="#i-home"/></svg>Start</a>
+        <a><svg class="ico"><use href="#i-clock"/></svg>Verlauf</a>
+        <a class="on"><svg class="ico"><use href="#i-people"/></svg>Aufnahmen</a>
+        <a><svg class="ico"><use href="#i-chat"/></svg>Chat</a>
+        <a><svg class="ico"><use href="#i-speak"/></svg>Vorlesen</a>
+        <a><svg class="ico"><use href="#i-book"/></svg>Bibliothek</a>
+      </nav>
+      <div class="main">
+        <div class="note">
+          <h3 class="nt">Jour fixe Digitalisierung</h3>
+          <div class="chips">
+            <span class="chip"><svg class="ico"><use href="#i-cal"/></svg>Heute 09:00</span>
+            <span class="chip"><svg class="ico"><use href="#i-people"/></svg>5 Personen</span>
+            <span class="chip"><svg class="ico"><use href="#i-folder"/></svg>Projekt E-Akte</span>
+            <span class="chip" style="color:var(--run);border-color:var(--run)"><svg class="ico"><use href="#i-shield"/></svg>Hinweis gesendet 09:01</span>
+          </div>
+          <ul class="mine">
+            <li>Scanstraße: Zuschlag bis KW 48</li>
+            <li>Schulung vor Weihnachten?</li>
+          </ul>
+          <div class="ph">Notizen schreiben …</div>
+          <div class="brief">
+            <h3>Vorbereitet aus deinen letzten drei Notizen</h3>
+            <ul>
+              <li>Offen seit 28.10.: Rückmeldung des Datenschutzes zur Aufbewahrung der Scans <span class="ref">IT-Runde 28.10.</span></li>
+              <li>Zugesagt von Herrn Aydin: Mengengerüst je Fachbereich bis heute <span class="ref">Jour fixe 04.11.</span></li>
+            </ul>
+          </div>
+        </div>
+        <div class="dock"><div>
+          <div class="rec"><span class="bars"><i></i><i></i><i></i></span><span class="tm">12:48</span><span class="stop" title="Aufnahme beenden"></span></div>
+          <div class="ask"><span>Frag etwas zum Gespräch</span><span class="chip">/ Was habe ich verpasst?</span></div>
+        </div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="read"><div class="kicker">Ansicht 3</div><h2>Nach der Besprechung</h2><p>Die ausgearbeitete Fassung behält die eigenen Stichpunkte fett und ergänzt darunter grau, jeweils mit Zeitmarke. Das Transkript klappt rechts auf. Die Namen kommen aus Teams oder Webex (G1), sonst aus dem Stimmabdruck oder von Hand.</p></div>
+  <div class="win">
+    <div class="bar"><span class="logo"><i></i></span><b>Local Voice</b><span class="sp"></span><span class="wc">&#8211; &#9633; &#10005;</span></div>
+    <div class="body">
+      <div class="main" style="border-left:0;border-top-left-radius:0">
+        <div class="split">
+          <div class="note" style="padding-bottom:32px">
+            <h3 class="nt">Jour fixe Digitalisierung</h3>
+            <div class="chips">
+              <span class="seg"><span>Meine Notizen</span><span class="on">Ausgearbeitet</span></span>
+              <span class="chip"><svg class="ico"><use href="#i-cal"/></svg>Heute 09:00</span>
+              <span class="chip"><svg class="ico"><use href="#i-people"/></svg>5 Personen</span>
+              <span class="chip">Vorlage: Jour fixe</span>
+            </div>
+            <div class="sec">Scanstraße</div>
+            <ul class="ai">
+              <li class="own">Zuschlag bis KW 48</li>
+              <li>Zwei wertbare Angebote, Wertung durch die Vergabestelle bis 20.11. <span class="ref">09:07</span></li>
+              <li>Aufbewahrung der Papieroriginale bleibt offen, Datenschutz meldet sich bis Freitag <span class="ref">09:11</span></li>
+            </ul>
+            <div class="sec">Schulung</div>
+            <ul class="ai">
+              <li class="own">Schulung vor Weihnachten?</li>
+              <li>Termin 09.12., zwei Durchgänge mit je 15 Personen, Raum 2.14 <span class="ref">09:26</span></li>
+            </ul>
+            <div class="sec">Aufgaben</div>
+            <ul class="ai">
+              <li>Herr Aydin: Mengengerüst je Fachbereich bis 14.11. <span class="ref">09:15</span></li>
+              <li>Frau Keller: Einladung zur Schulung bis 18.11. <span class="ref">09:28</span></li>
+            </ul>
+            <div class="chips" style="margin-top:8px"><span class="btn s">Folge-Mail entwerfen</span><span class="btn s">Als Word</span><span class="btn s">In die Ablage</span></div>
+          </div>
+          <aside class="tr">
+            <div class="grp">Transkript</div>
+            <div><span class="sp a1">Aylin Keller</span><p>Wir haben zwei Angebote, die wir werten können.</p></div>
+            <div><span class="sp a2">Deniz Aydin</span><p class="hl">Die Vergabestelle braucht dafür bis zum Zwanzigsten.</p></div>
+            <div><span class="sp a3">Du</span><p>Dann halten wir den Zuschlag für Kalenderwoche 48 fest.</p></div>
+            <div><span class="sp a4">Sprecher 4</span><p>Beim Datenschutz ist die Aufbewahrung noch nicht geklärt.</p><span class="btn s" style="margin-top:6px">Namen zuordnen</span></div>
+          </aside>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="read"><div class="kicker">Ansicht 4</div><h2>Außerhalb des Fensters</h2><p>Local Voice startet nie von selbst. Erkennt die App Teams oder Webex mit aktivem Mikrofon, fragt sie einmal. Während der Aufnahme bleibt nur die kleine Kapsel am Rand.</p></div>
+  <div class="float">
+    <div class="desk">
+      <div class="toast"><span class="av a1">W</span><div class="t"><b>Webex-Besprechung erkannt</b><span>Lenkungskreis E-Akte · 08:30</span></div><span class="btn p">Mitschreiben</span><span class="btn">Nicht jetzt</span></div>
+      <div class="toast"><svg class="ico" style="color:var(--run)"><use href="#i-shield"/></svg><div class="t"><b>Hinweis an Teilnehmende</b><span>Text liegt in der Zwischenablage. Einfügen in den Besprechungs-Chat sendet nichts von selbst.</span></div><span class="btn">In Chat einfügen</span></div>
+    </div>
+    <div class="nubrow">
+      <div class="nub" aria-label="Aufnahmeanzeiger"><span class="lv"></span><span class="bars"><i></i><i></i><i></i></span></div>
+      <div class="read" style="max-width:260px"><h3>Anzeiger am Bildschirmrand</h3><p style="font-size:13px;line-height:18px">44 px breit, verschiebbar. Klick öffnet die Notiz. Beim Überfahren erscheint Stopp. Bei Pause werden die Balken grau.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="read"><div class="kicker">Ansicht 5</div><h2>iPhone</h2><p>Gleiche Reihenfolge wie am PC: erst der Tag, dann die Notizen. Ein großer Knopf am nächsten Termin, unten Fragen und neue Notiz. Die Erkennung bleibt auf dem Gerät.</p></div>
+  <div class="phones">
+    <div class="ph1">
+      <div class="top"><span>09:41</span><span>Local Voice</span></div>
+      <h4>Meine Notizen</h4>
+      <div class="grp">Als Nächstes</div>
+      <div class="card"><div class="dn" style="font-size:20px">11<small>Nov</small></div><div class="t"><b>Abstimmung Posteingang</b><span>10:30 · 4 Personen</span></div></div>
+      <div class="big">Mitschreiben</div>
+      <div class="grp">Gestern</div>
+      <div class="card"><span class="av a1">V</span><div class="t"><b>Bietergespräch Scanstraße</b><span>15:30 · 4 Personen</span></div></div>
+      <div class="card"><span class="av a2">I</span><div class="t"><b>IT-Runde der Dezernate</b><span>11:00 · 6 Personen</span></div></div>
+      <span class="fill"></span>
+      <div class="tab"><div class="ask" style="box-shadow:none"><span>Fragen</span></div><span class="fab"><svg class="ico"><use href="#i-pen"/></svg></span></div>
+    </div>
+    <div class="ph1">
+      <div class="top"><span>10:42</span><span>Aufnahme läuft · auf dem Gerät</span></div>
+      <h4>Abstimmung Posteingang</h4>
+      <div class="chips"><span class="chip"><svg class="ico"><use href="#i-cal"/></svg>Heute 10:30</span><span class="chip"><svg class="ico"><use href="#i-people"/></svg>4</span></div>
+      <ul class="mine" style="margin-top:6px"><li>Fristen aus Altverfahren übernehmen</li></ul>
+      <div class="ph">Notizen schreiben …</div>
+      <span class="fill"></span>
+      <div class="tab"><div class="rec" style="box-shadow:none"><span class="bars"><i></i><i></i><i></i></span><span>12:04</span><span class="stop"></span></div><div class="ask" style="box-shadow:none"><span>Fragen</span></div></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="read"><h2>Was sich gegenüber heute ändert</h2></div>
+  <div class="scroll"><table>
+    <thead><tr><th>Stelle</th><th>Heute</th><th>Entwurf</th><th>Schalter</th></tr></thead>
+    <tbody>
+      <tr><td>Start</td><td>Kacheln „Was möchtest du tun?“</td><td>Termine des Tages und letzte Notizen</td><td>Startansicht wählbar: Als Nächstes oder klassisch</td></tr>
+      <tr><td>Aufnahmen</td><td>Drei Spalten: Projekte, Inhalt, Bedienung mit drei Reitern</td><td>Ein Blatt, Projekte und Transkript klappen auf</td><td>Dreispaltige Ansicht bleibt wählbar</td></tr>
+      <tr><td>Aufnahme starten</td><td>Knopf oben rechts im Bedienfeld</td><td>Kapsel unten links, dazu Knopf am Termin</td><td>fest</td></tr>
+      <tr><td>KI-Notizen</td><td>Eigener Reiter</td><td>Umschalter am Titel, Herkunft je Zeile</td><td>fest</td></tr>
+      <tr><td>Fragen</td><td>Eigener Reiter</td><td>Eingabe unten, auf Start über alle Besprechungen</td><td>fest</td></tr>
+      <tr><td>Sprechernamen</td><td>Von Hand oder Stimmabdruck</td><td>Zusätzlich aus Teams und Webex</td><td>je App, im Kundenprofil aus und sperrbar</td></tr>
+      <tr><td>Hinweis an Teilnehmende</td><td>Einwilligung nur intern</td><td>Text für den Chat, Nachweis als Chip</td><td>Pflicht im Kundenprofil einstellbar</td></tr>
+      <tr><td>Vorbereitung</td><td>Personenübersicht</td><td>Karte in der Notiz, nur eigene Quellen</td><td>ein/aus</td></tr>
+    </tbody>
+  </table></div>
+  <p class="read meta">Nicht übernommen: Serifenschrift und Olivgrün von Granola, Rangliste geteilter Prompts mit Nutzerzahlen, Personen- und Firmenlisten mit Anreicherung, Wasserzeichen im Kamerabild.</p>
+</section>
+
+</div>
+</body>
+</html>
