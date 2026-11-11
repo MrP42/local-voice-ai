@@ -265,6 +265,8 @@ impl WorkflowHub {
 
     /// Beendet die Arbeiter (siehe Moduldoku). Mehrfaches Rufen ist harmlos.
     pub fn shutdown(&self) {
+        // Ein laufender Ordner-Scan hasht nicht weiter: das Hashen fragt den Abbruch vor jedem Block.
+        self.folders.abbrechen();
         let handle = self.handle.lock().unwrap_or_else(|e| e.into_inner()).take();
         if let Some(handle) = handle {
             if handle.stop_within(SHUTDOWN_WAIT) {

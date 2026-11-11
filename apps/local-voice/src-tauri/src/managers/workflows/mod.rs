@@ -121,7 +121,7 @@
 //!   gedeckelt (20 000 Dateien, 50 000 Videos, aelteste zuerst).
 //! - **Fehlendes Geraet / OneDrive**: Ordner nicht eingehaengt oder Integration geloescht: ein
 //!   Hinweis je Aenderung statt alle 15 s (`a_missing_integration_or_folder_*`). Platzhalter
-//!   (nur in der Cloud) werden nie gelesen oder heruntergeladen, einmal gemeldet
+//!   (nur in der Cloud) werden erkannt, nicht gelesen und übersprungen (Restfenster: `docs/ablage-abrufschutz.md`), einmal gemeldet
 //!   (`a_cloud_only_placeholder_*`); als Import-Quelle ein dauerhafter Fehler mit Hinweis.
 //! - **Netz**: YouTube-Feed nicht erreichbar/404/429: Zaehler, nach 3 Fehlschlaegen in Folge
 //!   EIN Ausfallbericht plus Audit-Eintrag, Wiederholung nach 5 min mal Fehlerzahl (hoechstens
