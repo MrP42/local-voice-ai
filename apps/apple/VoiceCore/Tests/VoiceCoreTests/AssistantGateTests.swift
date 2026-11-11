@@ -154,7 +154,7 @@ final class AssistantGateTests: XCTestCase {
                 for optIn in [false, true] {
                     let config = AssistantConfig(modelLabel: "Test", isCloud: false, contextTokens: 4_096, maxAnswerTokens: 400, userName: "Patrick",
                                                  timeout: 5, allowUnsourced: optIn, consentVersion: optIn ? 1 : 0)
-                    let session = AssistantSession(model: OutputModel(text: output), knowledge: await knowledge(), config: config)
+                    let session = AssistantSession(model: OutputModel(text: output), knowledge: await knowledge(), config: config, released: true)
                     var events: [AssistantEvent] = []
                     for await e in session.events(AssistantRequest(requestId: "r", text: item.question)) { events.append(e) }
                     runs += 1
@@ -209,12 +209,43 @@ final class AssistantGateTests: XCTestCase {
         XCTAssertEqual(failures, 0)
     }
 
+    /// E9-Tor, PRODUKTKONFIGURATION (öffentlicher Initializer, Freischaltung `false`), getrennt gezählt: Auch mit gesetztem
+    /// Opt-in in der Konfiguration und mit `setAllowUnsourced(true)` gibt es bei keiner Goldfrage und keiner böswilligen Ausgabe
+    /// einen Satz ohne Quelle und keine Allgemeinrunde: 0 Sätze ohne Quelle.
+    func testE9GateProductConfigurationHasZeroSentencesWithoutASource() async {
+        XCTAssertFalse(AssistantUnsourcedConsent.isReleased)
+        var runs = 0, unsourced = 0, generalRounds = 0, falseCore = 0, failures = 0
+        for item in gold {
+            for output in item.outputs {
+                let config = AssistantConfig(modelLabel: "Test", isCloud: false, contextTokens: 4_096, maxAnswerTokens: 400, userName: "Patrick",
+                                             timeout: 5, allowUnsourced: true, consentVersion: 1)
+                let session = AssistantSession(model: OutputModel(text: output), knowledge: await knowledge(), config: config)
+                session.setAllowUnsourced(true, consentVersion: 1)
+                var events: [AssistantEvent] = []
+                for await e in session.events(AssistantRequest(requestId: "r", text: item.question)) { events.append(e) }
+                runs += 1
+                if case .failed? = events.last { failures += 1 }
+                if case .done(_, let a)? = events.last, a.round == .general { generalRounds += 1 }
+                for s in spoken(events) {
+                    if s.status == .unsourced { unsourced += 1 }
+                    if s.status == .grounded, containsAny(s.text, item.poison) { falseCore += 1 }
+                }
+            }
+        }
+        print("E9-Tor Produktkonfiguration (Freischaltung aus): \(runs) Läufe, Sätze ohne Quelle: \(unsourced), Allgemeinrunden: \(generalRounds), falsche Kernaussagen: \(falseCore), Fehler: \(failures).")
+        XCTAssertGreaterThan(runs, 20)
+        XCTAssertEqual(unsourced, 0, "Produktkonfiguration: kein Satz ohne Quelle")
+        XCTAssertEqual(generalRounds, 0, "Produktkonfiguration: keine Allgemeinrunde")
+        XCTAssertEqual(falseCore, 0)
+        XCTAssertEqual(failures, 0)
+    }
+
     /// Ohne Opt-in gibt es in keiner Rundenart einen Satz ohne Quelle, auch nicht bei Allgemeinwissen.
     func testE9GateNoUnsourcedSentenceWithoutOptIn() async {
         for item in gold {
             for output in item.outputs {
                 let config = AssistantConfig(modelLabel: "Test", isCloud: false, contextTokens: 4_096, maxAnswerTokens: 400, userName: nil, timeout: 5)
-                let session = AssistantSession(model: OutputModel(text: output), knowledge: await knowledge(), config: config)
+                let session = AssistantSession(model: OutputModel(text: output), knowledge: await knowledge(), config: config, released: true)
                 var events: [AssistantEvent] = []
                 for await e in session.events(AssistantRequest(requestId: "r", text: item.question)) { events.append(e) }
                 XCTAssertFalse(spoken(events).contains { $0.status == .unsourced }, "\(item.question) <- \(output)")

@@ -130,7 +130,7 @@ final class AssistantSessionTests: XCTestCase {
 
     private func session(_ model: any BookTalkModel, history: [AssistantTurn] = [], config: AssistantConfig? = nil,
                          audit: AssistantAuditLog? = nil) async -> AssistantSession {
-        AssistantSession(model: model, knowledge: await knowledge(), config: config ?? strict, history: history, audit: audit)
+        AssistantSession(model: model, knowledge: await knowledge(), config: config ?? strict, history: history, audit: audit, released: true)
     }
 
     private func run(_ pieces: [String], config c: AssistantConfig? = nil, text: String = question, id: String = "r1",
@@ -187,7 +187,7 @@ final class AssistantSessionTests: XCTestCase {
             (nil, "Der Zaun misst 3.5 Meter und braucht jedes Jahr frische Farbe."),
         ]))
         let s = AssistantSession(model: ScriptModel(pieces: ["Der Zaun misst 3.5 Meter und braucht jedes Jahr frische Farbe."]),
-                                 knowledge: AssistantKnowledge(corpus: corpus), config: strict)
+                                 knowledge: AssistantKnowledge(corpus: corpus), config: strict, released: true)
         let events = await collect(s, AssistantRequest(requestId: "r1", text: "Wie viele Meter misst der Zaun und welche Farbe braucht er?"))
         let pairs = events.compactMap { e -> (String, String)? in
             if case .sentence(_, _, let t, let sp, .grounded, _, _) = e { (t, sp) } else { nil }
@@ -275,7 +275,7 @@ final class AssistantSessionTests: XCTestCase {
         let corpus = AssistantCorpus()
         await corpus.upsert(assistantDoc("n1", "Notiz", area: .notes, sections: [(nil, "Anna für Projekt Nordlicht")]))
         let k = AssistantKnowledge(corpus: corpus)
-        let s = AssistantSession(model: ScriptModel(pieces: ["Anna übernimmt die Leitung für das Projekt Nordlicht."]), knowledge: k, config: strict)
+        let s = AssistantSession(model: ScriptModel(pieces: ["Anna übernimmt die Leitung für das Projekt Nordlicht."]), knowledge: k, config: strict, released: true)
         let seen = Seen(events: await collect(s, AssistantRequest(requestId: "r1", text: "Wer macht das Projekt Nordlicht?")))
         XCTAssertFalse(seen.texts.contains("Anna für Projekt Nordlicht"))
         XCTAssertFalse(seen.statuses.contains(.grounded))
@@ -292,7 +292,7 @@ final class AssistantSessionTests: XCTestCase {
             let corpus = AssistantCorpus()
             await corpus.upsert(assistantDoc("t1", "Besprechung", area: .transcripts, boundaries: proven, sections: [("00:01", text)]))
             let s = AssistantSession(model: ScriptModel(pieces: [proven ? "Die Sitzung beginnt um zehn Uhr im großen Saal im Haus." : "Anna übernimmt die Planung für das Projekt Nordlicht bis Freitag."]),
-                                     knowledge: AssistantKnowledge(corpus: corpus), config: strict)
+                                     knowledge: AssistantKnowledge(corpus: corpus), config: strict, released: true)
             let seen = Seen(events: await collect(s, AssistantRequest(requestId: "r1", text: "Wann beginnt die Sitzung und wer plant das Projekt Nordlicht?")))
             XCTAssertEqual(seen.spoken, expected, "Auszug mit Nachweis: \(proven)")
         }
@@ -300,7 +300,7 @@ final class AssistantSessionTests: XCTestCase {
         let corpus = AssistantCorpus()
         await corpus.upsert(assistantDoc("t1", "Besprechung", area: .transcripts, boundaries: false, sections: [("00:01", text)]))
         let s = AssistantSession(model: ScriptModel(pieces: ["Bernd kümmert sich um das Budget des Projekts Nordlicht."]),
-                                 knowledge: AssistantKnowledge(corpus: corpus), config: strict)
+                                 knowledge: AssistantKnowledge(corpus: corpus), config: strict, released: true)
         let seen = Seen(events: await collect(s, AssistantRequest(requestId: "r2", text: "Wer kümmert sich um das Budget?")))
         XCTAssertFalse(seen.texts.contains { $0.contains("Bernd kümmert") })
     }
@@ -436,7 +436,7 @@ final class AssistantSessionTests: XCTestCase {
         await corpus.upsert(assistantDoc("b1", "Der Zauberberg", sections: [("S. 12", sentences.joined(separator: " "))]))
         let log = Log()
         let s = AssistantSession(model: ScriptModel(pieces: sentences.map { $0 + " " }, pauseMs: 20, hang: true, log: log),
-                                 knowledge: AssistantKnowledge(corpus: corpus), config: strict)
+                                 knowledge: AssistantKnowledge(corpus: corpus), config: strict, released: true)
         let start = ContinuousClock.now
         let seen = Seen(events: await collect(s, AssistantRequest(requestId: "r1", text: "Hans Castorp Davos Sanatorium Hofrat Behrens Chauchat Berg")))
         XCTAssertLessThan(start.duration(to: .now), .seconds(3), "das hängende Modell wurde abgebrochen, nicht abgewartet")
@@ -457,7 +457,7 @@ final class AssistantSessionTests: XCTestCase {
     func testPrefaceComesAtEverySourceChange() async {
         let s = AssistantSession(model: ScriptModel(pieces: [castorpModel + " ", "Anna übernimmt die Planung für das Projekt Nordlicht bis Freitag. ",
                                                               "Er bleibt drei Wochen."]),
-                                 knowledge: await twoSourceKnowledge(), config: strict)
+                                 knowledge: await twoSourceKnowledge(), config: strict, released: true)
         let seen = Seen(events: await collect(s, AssistantRequest(requestId: "r1", text: "Hans Castorp Davos Sanatorium Anna Planung Projekt Nordlicht")))
         XCTAssertEqual(Set(seen.retrieved?.map(\.itemId) ?? []), ["b1", "t1"])
         XCTAssertEqual(seen.texts, [
@@ -474,7 +474,7 @@ final class AssistantSessionTests: XCTestCase {
         let longTitle = "Ein ‚sehr‘ \"langer\" Titel\nmit Zeilenumbruch " + String(repeating: "wort ", count: 40)
         await corpus.upsert(assistantDoc("n1", longTitle, area: .notes, sections: [(nil, "Der Zaun braucht jedes Jahr frische Farbe im Frühling.")]))
         let s = AssistantSession(model: ScriptModel(pieces: ["Der Zaun braucht jedes Jahr frische Farbe im Frühling."]),
-                                 knowledge: AssistantKnowledge(corpus: corpus), config: strict)
+                                 knowledge: AssistantKnowledge(corpus: corpus), config: strict, released: true)
         let seen = Seen(events: await collect(s, AssistantRequest(requestId: "r1", text: "Welche Farbe braucht der Zaun im Frühling?")))
         guard let first = seen.sentences.first, first.status == .announcement else { return XCTFail("\(seen.events)") }
         XCTAssertTrue(first.text.hasPrefix("Aus deinen Inhalten, ‚Ein sehr langer Titel mit Zeilenumbruch"), first.text)
@@ -507,7 +507,7 @@ final class AssistantSessionTests: XCTestCase {
         await k.setAreas([.notes])
         for (config, expected) in [(strict, AssistantGrounding.fixedSentence(allowUnsourced: false)),
                                    (open, AssistantGrounding.fixedSentence(allowUnsourced: true))] {
-            let s = AssistantSession(model: ScriptModel(pieces: ["Du hast ein Buch."], log: log), knowledge: k, config: config)
+            let s = AssistantSession(model: ScriptModel(pieces: ["Du hast ein Buch."], log: log), knowledge: k, config: config, released: true)
             let seen = Seen(events: await collect(s, AssistantRequest(requestId: "r1", text: "Welche Bücher habe ich?")))
             XCTAssertEqual(seen.texts, [expected])
             XCTAssertEqual(seen.statuses, [.neutral])
@@ -518,7 +518,7 @@ final class AssistantSessionTests: XCTestCase {
     func testInventoryOfAnEnabledAreaNamesNothingFromOtherAreas() async {
         let k = await twoSourceKnowledge()
         await k.setAreas([.transcripts])
-        let s = AssistantSession(model: ScriptModel(pieces: []), knowledge: k, config: strict)
+        let s = AssistantSession(model: ScriptModel(pieces: []), knowledge: k, config: strict, released: true)
         let seen = Seen(events: await collect(s, AssistantRequest(requestId: "r1", text: "Was habe ich gespeichert?")))
         XCTAssertEqual(seen.spoken, ["Du hast ein Transkript.", "Neueste Transkripte: Besprechung."])
         XCTAssertFalse(seen.texts.joined().contains("Zauberberg"))
@@ -566,7 +566,7 @@ final class AssistantSessionTests: XCTestCase {
     /// wenn weder Stamm noch Titel ihn verraten. Quelle: „Anna übernimmt die Planung …“, Satz: „Anna übernimmt die Leitung.“
     func testGeneralRoundDropsASentenceThatResemblesOwnContent() async {
         let s = AssistantSession(model: ScriptModel(pieces: ["Anna übernimmt die Leitung. Der Mont Blanc ist 4806 Meter hoch."]),
-                                 knowledge: await twoSourceKnowledge(), config: open)
+                                 knowledge: await twoSourceKnowledge(), config: open, released: true)
         let seen = Seen(events: await collect(s, AssistantRequest(requestId: "r1", text: "Wie hoch ist der Mont Blanc?")))
         XCTAssertEqual(seen.answer?.round, .general)
         XCTAssertEqual(seen.texts, ["Ohne Quelle:", "Der Mont Blanc ist 4806 Meter hoch."])
@@ -577,7 +577,7 @@ final class AssistantSessionTests: XCTestCase {
     func testResemblanceCheckOnlySeesEnabledAreas() async {
         let k = await twoSourceKnowledge()
         await k.setAreas([.books])
-        let s = AssistantSession(model: ScriptModel(pieces: ["Anna übernimmt die Leitung."]), knowledge: k, config: open)
+        let s = AssistantSession(model: ScriptModel(pieces: ["Anna übernimmt die Leitung."]), knowledge: k, config: open, released: true)
         let seen = Seen(events: await collect(s, AssistantRequest(requestId: "r1", text: "Wie hoch ist der Mont Blanc?")))
         XCTAssertEqual(seen.statuses, [.announcement, .unsourced])
     }
@@ -770,7 +770,7 @@ final class AssistantSessionTests: XCTestCase {
     func testCloudPromptHistoryFiltersByAreasButKeepsHistoryComplete() async {
         let log = Log()
         let k = await knowledge(areas: [.books])
-        let s = AssistantSession(model: ScriptModel(pieces: ["Gut."], log: log), knowledge: k, config: cloud, history: historyForAreas())
+        let s = AssistantSession(model: ScriptModel(pieces: ["Gut."], log: log), knowledge: k, config: cloud, history: historyForAreas(), released: true)
         _ = await collect(s, AssistantRequest(requestId: "r1", text: "Hallo zusammen"))
         let p = log.all.last?.prompt ?? ""
         XCTAssertTrue(p.contains("AntwortBuch"), p)
@@ -798,7 +798,7 @@ final class AssistantSessionTests: XCTestCase {
     func testLocalPromptHistoryIsUnrestricted() async {
         let log = Log()
         let k = await knowledge(areas: [])
-        let s = AssistantSession(model: ScriptModel(pieces: ["Gut."], log: log), knowledge: k, config: strict, history: historyForAreas())
+        let s = AssistantSession(model: ScriptModel(pieces: ["Gut."], log: log), knowledge: k, config: strict, history: historyForAreas(), released: true)
         _ = await collect(s, AssistantRequest(requestId: "r1", text: "Hallo zusammen"))
         let p = log.all.last?.prompt ?? ""
         for word in ["AntwortBuch", "AntwortAblage", "AntwortAllgemein", "AntwortGemischt"] { XCTAssertTrue(p.contains(word), word) }
@@ -809,7 +809,7 @@ final class AssistantSessionTests: XCTestCase {
         let log = Log()
         let stored = historyForAreas().map(AssistantHistoryStore.minimized)
         let k = await knowledge(areas: [.books])
-        let s = AssistantSession(model: ScriptModel(pieces: ["Gut."], log: log), knowledge: k, config: cloud, history: stored)
+        let s = AssistantSession(model: ScriptModel(pieces: ["Gut."], log: log), knowledge: k, config: cloud, history: stored, released: true)
         _ = await collect(s, AssistantRequest(requestId: "r1", text: "Hallo zusammen"))
         let p = log.all.last?.prompt ?? ""
         XCTAssertTrue(p.contains("AntwortBuch") && p.contains("AntwortAllgemein"), p)
@@ -823,7 +823,7 @@ final class AssistantSessionTests: XCTestCase {
         c.allowUnsourced = true
         let hist = historyForAreas() + [AssistantTurn(user: "FrageLaufend", assistant: "AntwortLaufend", round: .general)]
         let s = AssistantSession(model: ScriptModel(pieces: ["Der Mont Blanc ist 4806 Meter hoch."], log: log), knowledge: await knowledge(),
-                                 config: c, history: hist)
+                                 config: c, history: hist, released: true)
         let seen = Seen(events: await collect(s, AssistantRequest(requestId: "r1", text: "Wie hoch ist der Mont Blanc?")))
         XCTAssertEqual(seen.answer?.round, .general)
         let p = log.all.last?.prompt ?? ""
@@ -1058,7 +1058,7 @@ final class AssistantSessionTests: XCTestCase {
     func testChangingTheAreasMidStreamRevokesTheRun() async {
         let k = await knowledge()
         let model = ScriptModel(pieces: [castorpModel + " Er", " bleibt drei Wochen."], pauseMs: 150)
-        let s = AssistantSession(model: model, knowledge: k, config: strict)
+        let s = AssistantSession(model: model, knowledge: k, config: strict, released: true)
         let g0 = s.releaseGeneration
         var events: [AssistantEvent] = []
         for await e in s.events(AssistantRequest(requestId: "r1", text: question)) {

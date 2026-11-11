@@ -25,6 +25,28 @@ final class AssistantHistoryStoreTests: XCTestCase {
     /// So, wie `save` sie schreibt: Quellen ohne Auszugstext und ohne Wertung.
     private func stored(_ n: Int) -> AssistantTurn { AssistantHistoryStore.minimized(turn(n)) }
 
+    /// Harte Abschaltung des freien Modus: Gespeicherte Beiträge aus Runden ohne Quelle werden beim Laden herausgefiltert (die Datei
+    /// bleibt dabei unberührt) und beim nächsten Speichern nicht mehr geschrieben.
+    func testStoredTurnsWithoutASourceAreFilteredOnLoadAndGoneAfterTheNextSave() throws {
+        let store = AssistantHistoryStore(directory: dir)
+        let sourced = AssistantTurn(user: "Frage mit Quelle", assistant: "Antwort", sources: [AssistantPassage(area: .books, itemId: "b1", title: "Buch", locator: "S. 1", text: "Text", score: 1)],
+                                    model: "Apple", at: Date(timeIntervalSince1970: 1_760_000_001), round: .data)
+        let free = AssistantTurn(user: "Frage ohne Quelle", assistant: "Allgemeinwissen", general: true, unsourced: true, model: "Apple",
+                                 at: Date(timeIntervalSince1970: 1_760_000_002), round: .general)
+        try store.save([sourced, free])
+        let before = try Data(contentsOf: dir.appendingPathComponent(AssistantHistoryStore.fileName))
+
+        let shown = AssistantTurn.admitted(store.load(), released: AssistantUnsourcedConsent.isReleased)
+        XCTAssertEqual(shown.map(\.user), ["Frage mit Quelle"], "weder angezeigt noch im Prompt")
+        XCTAssertEqual(try Data(contentsOf: dir.appendingPathComponent(AssistantHistoryStore.fileName)), before,
+                       "Laden verändert die Datei nicht: vor dem nächsten Speichern geht nichts verloren")
+        XCTAssertEqual(store.load().count, 2)
+
+        try store.save(shown)   // der nächste Speichervorgang schreibt, was angezeigt wird
+        XCTAssertEqual(store.load().map(\.user), ["Frage mit Quelle"])
+        XCTAssertFalse(String(decoding: try Data(contentsOf: dir.appendingPathComponent(AssistantHistoryStore.fileName)), as: UTF8.self).contains("Allgemeinwissen"))
+    }
+
     func testRoundTrip() throws {
         let store = AssistantHistoryStore(directory: dir)
         XCTAssertEqual(store.load(), [])

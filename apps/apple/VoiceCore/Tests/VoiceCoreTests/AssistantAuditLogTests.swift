@@ -753,7 +753,7 @@ final class AssistantAuditLogTests: XCTestCase {
     func testJournalLinesHaveOnlyTheAgreedKeysAndOnlyControlledStrings() async throws {
         let audit = AssistantAuditLog(directory: dir)
         let session = AssistantSession(model: AuditModel(pieces: ["Quasselbert wandert nach Pappelhausen. Kieselsteine sind meistens rund."]),
-                                       knowledge: await geheimKnowledge(), config: config, audit: audit)
+                                       knowledge: await geheimKnowledge(), config: config, audit: audit, released: true)
         let question = "Wohin wandert Quasselbert mit dem Fahrrad nach Pappelhausen?"
         for await e in session.events(AssistantRequest(requestId: "r1", text: question)) { _ = e }
         session.noteCommit(requestId: "r1", index: 1, stage: .display, ok: true, generation: session.releaseGeneration)
@@ -763,7 +763,7 @@ final class AssistantAuditLogTests: XCTestCase {
         let keys: Set<String> = ["t", "req", "at", "session", "model", "cloud", "unsourced", "consent", "ctx", "reason", "round", "gen", "n",
                                  "verdict", "mark", "outcome", "level", "areas", "kind"]
         let words: Set<String> = [
-            "start", "step", "commit", "end", "event", "r1", "apple", "gemma", "other", "data", "free", "general", "optedOut", "locked",
+            "start", "step", "commit", "end", "event", "round", "areas", "r1", "apple", "gemma", "other", "data", "free", "general", "optedOut", "locked",
             "inventory", "ownData", "relevantPassage", "grounded", "unsourced", "template", "announcement", "droppedOwnData",
             "droppedNoMode", "droppedNotSnapped", "droppedDuplicate", "droppedTemplate", "droppedRevoked", "droppedFragment", "completed",
             "interrupted", "revoked", "failed", "incomplete", "limited", "s0", "s1", "books", "transcripts", "files", "notes",
@@ -795,7 +795,7 @@ final class AssistantAuditLogTests: XCTestCase {
     func testJournalOfARealAnswerContainsNoQuestionAnswerTitleOrExcerpt() async throws {
         let audit = AssistantAuditLog(directory: dir)
         let session = AssistantSession(model: AuditModel(pieces: ["Quasselbert wandert nach Pappelhausen. Kieselsteine sind meistens rund."]),
-                                       knowledge: await geheimKnowledge(), config: config, audit: audit)
+                                       knowledge: await geheimKnowledge(), config: config, audit: audit, released: true)
         let question = "Wohin wandert Quasselbert mit dem Fahrrad nach Pappelhausen?"
         var spoken: [String] = []
         for await e in session.events(AssistantRequest(requestId: "r1", text: question)) {
@@ -834,7 +834,7 @@ final class AssistantAuditLogTests: XCTestCase {
         let knowledge = AssistantKnowledge(corpus: corpus)
         await knowledge.setAreas([.books, .notes])
         let audit = AssistantAuditLog(directory: dir)
-        let session = AssistantSession(model: AuditModel(pieces: []), knowledge: knowledge, config: config, audit: audit)
+        let session = AssistantSession(model: AuditModel(pieces: []), knowledge: knowledge, config: config, audit: audit, released: true)
         var texts: [String] = []
         for await e in session.events(AssistantRequest(requestId: "r1", text: "Was habe ich gespeichert?")) {
             if case .sentence(_, _, let t, _, _, _, _) = e { texts.append(t) }
@@ -868,7 +868,7 @@ final class AssistantAuditLogTests: XCTestCase {
         let audit = AssistantAuditLog(directory: dir)
         let snapshots = Snapshots()
         let session = AssistantSession(model: ProbeModel(url: audit.url, snapshots: snapshots, pieces: ["Quasselbert wandert nach Pappelhausen."]),
-                                       knowledge: await geheimKnowledge(), config: config, audit: audit)
+                                       knowledge: await geheimKnowledge(), config: config, audit: audit, released: true)
         var atFirstEvent: [[String: Any]] = []
         var first = true
         for await _ in session.events(AssistantRequest(requestId: "r1", text: "Wohin wandert Quasselbert nach Pappelhausen?")) {
@@ -879,8 +879,13 @@ final class AssistantAuditLogTests: XCTestCase {
         }
         XCTAssertEqual(snapshots.all.count, 1)
         let atModel = snapshots.all.first ?? ""
-        XCTAssertEqual(atModel.split(separator: "\n").count, 1, "beim Modellaufruf steht nur `start` in der Datei: \(atModel)")
-        XCTAssertTrue(atModel.contains("\"t\":\"start\""))
+        // Beim Modellaufruf steht `start` an erster Stelle; dahinter höchstens `round` und `areas` (asynchron eingereiht), nichts
+        // von der Antwort selbst.
+        let kinds = atModel.split(separator: "\n").compactMap {
+            ((try? JSONSerialization.jsonObject(with: Data($0.utf8))) as? [String: Any])?["t"] as? String
+        }
+        XCTAssertEqual(kinds.first, "start", "beim Modellaufruf steht `start` in der Datei: \(atModel)")
+        XCTAssertTrue(Set(kinds).isSubset(of: ["start", "round", "areas"]), "nichts von der Antwort: \(kinds)")
         XCTAssertEqual(atFirstEvent.compactMap { $0["t"] as? String }.first, "start")
         XCTAssertFalse(atFirstEvent.isEmpty, "beim ersten Ereignis ist `start` geschrieben")
         await session.commit(requestId: "r1", user: "x", spoken: "", interrupted: true)
@@ -890,7 +895,7 @@ final class AssistantAuditLogTests: XCTestCase {
     func testStartLineCarriesTheConsentVersionOfTheReleaseNotOfTheConfig() async {
         let audit = AssistantAuditLog(directory: dir)
         let session = AssistantSession(model: AuditModel(pieces: ["Der Mont Blanc ist 4806 Meter hoch."]), knowledge: AssistantKnowledge(corpus: AssistantCorpus()),
-                                       config: config, audit: audit)
+                                       config: config, audit: audit, released: true)
         for await _ in session.events(AssistantRequest(requestId: "a", text: "Wie hoch ist der Mont Blanc?")) {}
         await session.commit(requestId: "a", user: "Wie hoch ist der Mont Blanc?", spoken: "Der Mont Blanc ist 4806 Meter hoch.", interrupted: false)
         session.setAllowUnsourced(true, consentVersion: 3)
@@ -911,7 +916,7 @@ final class AssistantAuditLogTests: XCTestCase {
     func testStartLineCarriesContextStateReasonAndRoundKind() async {
         let audit = AssistantAuditLog(directory: dir)
         let session = AssistantSession(model: AuditModel(pieces: ["Der Mont Blanc ist 4806 Meter hoch."]), knowledge: await geheimKnowledge(),
-                                       config: config, audit: audit)
+                                       config: config, audit: audit, released: true)
         for await _ in session.events(AssistantRequest(requestId: "a", text: "Wie hoch ist der Mont Blanc?")) {}
         for await _ in session.events(AssistantRequest(requestId: "b", text: "Wohin wandert Quasselbert nach Pappelhausen?")) {}
         for await _ in session.events(AssistantRequest(requestId: "c", text: "Wie hoch ist die Zugspitze?")) {}
@@ -927,7 +932,7 @@ final class AssistantAuditLogTests: XCTestCase {
         let audit = AssistantAuditLog(directory: dir)
         let many = (0..<250).map { "Satz Nummer \($0) handelt von etwas ganz anderem." }.joined(separator: " ")
         let strict = AssistantConfig(modelLabel: "Test", isCloud: false, contextTokens: 4_096, maxAnswerTokens: 400, userName: nil, timeout: 5)
-        let session = AssistantSession(model: AuditModel(pieces: [many]), knowledge: await geheimKnowledge(), config: strict, audit: audit)
+        let session = AssistantSession(model: AuditModel(pieces: [many]), knowledge: await geheimKnowledge(), config: strict, audit: audit, released: true)
         var events: [AssistantEvent] = []
         for await e in session.events(AssistantRequest(requestId: "r1", text: "Was ist mit den Sätzen?")) { events.append(e) }
         await session.commit(requestId: "r1", user: "Was ist mit den Sätzen?", spoken: "", interrupted: false)
@@ -947,12 +952,12 @@ final class AssistantAuditLogTests: XCTestCase {
         let cloud = AssistantConfig(modelLabel: "Cloud", isCloud: true, contextTokens: 16_000, maxAnswerTokens: 700, userName: nil, timeout: 5,
                                     allowUnsourced: true, consentVersion: 1)
         let session = AssistantSession(model: AuditModel(pieces: ["Kieselsteine sind meistens rund."]), knowledge: AssistantKnowledge(corpus: AssistantCorpus()),
-                                       config: cloud, audit: audit)
+                                       config: cloud, audit: audit, released: true)
         for await _ in session.events(AssistantRequest(requestId: "a", text: "Hallo")) {}
         await session.commit(requestId: "a", user: "Hallo", spoken: "Kieselsteine sind meistens rund.", interrupted: true)
         for await _ in session.events(AssistantRequest(requestId: "b", text: "Hallo")) {}
         await session.commit(requestId: "b", user: "Hallo", spoken: "Kieselsteine sind meistens rund.", interrupted: true, revoked: true)
-        let failing = AssistantSession(model: FailingModel(), knowledge: AssistantKnowledge(corpus: AssistantCorpus()), config: cloud, audit: audit)
+        let failing = AssistantSession(model: FailingModel(), knowledge: AssistantKnowledge(corpus: AssistantCorpus()), config: cloud, audit: audit, released: true)
         for await _ in failing.events(AssistantRequest(requestId: "c", text: "Hallo")) {}
         await failing.commit(requestId: "c", user: "Hallo", spoken: "", interrupted: false)
         let all = await audit.entries()
@@ -966,7 +971,7 @@ final class AssistantAuditLogTests: XCTestCase {
         let audit = AssistantAuditLog(directory: dir)
         let session = AssistantSession(model: AuditModel(pieces: ["Hallo."]), knowledge: AssistantKnowledge(corpus: AssistantCorpus()),
                                        config: AssistantConfig(modelLabel: "T", isCloud: false, contextTokens: 4_096, maxAnswerTokens: 400, userName: nil, timeout: 5),
-                                       audit: audit)
+                                       audit: audit, released: true)
         for await _ in session.events(AssistantRequest(requestId: "a", text: "Hallo")) {}
         await session.commit(requestId: "a", user: "Hallo", spoken: "", interrupted: true)
         let all = await audit.entries()
@@ -981,7 +986,7 @@ final class AssistantAuditLogTests: XCTestCase {
     func testCountsFoldedFromTheStepsEqualTheCountsOfTheRun() async {
         let audit = AssistantAuditLog(directory: dir)
         let session = AssistantSession(model: AuditModel(pieces: ["Deine Notiz ist falsch. Quasselbert wandert nach Pappelhausen. Kieselsteine sind rund."]),
-                                       knowledge: await geheimKnowledge(), config: config, audit: audit)
+                                       knowledge: await geheimKnowledge(), config: config, audit: audit, released: true)
         var done: AssistantAnswer?
         for await e in session.events(AssistantRequest(requestId: "r1", text: "Wohin wandert Quasselbert nach Pappelhausen?")) {
             if case .done(_, let a) = e { done = a }
@@ -998,7 +1003,7 @@ final class AssistantAuditLogTests: XCTestCase {
     func testControllerCommitMarksLandOnTheirStepsAndUnknownIndexesAreIgnored() async {
         let audit = AssistantAuditLog(directory: dir)
         let session = AssistantSession(model: AuditModel(pieces: ["Quasselbert wandert nach Pappelhausen."]), knowledge: await geheimKnowledge(),
-                                       config: config, audit: audit)
+                                       config: config, audit: audit, released: true)
         let g = session.releaseGeneration
         var spoken: [String] = []
         for await e in session.events(AssistantRequest(requestId: "r1", text: "Wohin wandert Quasselbert nach Pappelhausen?")) {
@@ -1022,7 +1027,7 @@ final class AssistantAuditLogTests: XCTestCase {
     func testACrashMidAnswerLeavesStartAndStepsAndTheNextOpenClosesItAsIncomplete() async throws {
         let audit = AssistantAuditLog(directory: dir)
         let session = AssistantSession(model: HangingModel(pieces: ["Quasselbert wandert nach Pappelhausen und trifft dort Tante Lavendula. Danach"]),
-                                       knowledge: await geheimKnowledge(), config: config, audit: audit)
+                                       knowledge: await geheimKnowledge(), config: config, audit: audit, released: true)
         let question = "Wohin wandert Quasselbert mit dem Fahrrad nach Pappelhausen?"
         let task = Task { () -> Int in
             var n = 0
@@ -1056,12 +1061,192 @@ final class AssistantAuditLogTests: XCTestCase {
         XCTAssertEqual(read.entries.first?.round, .data)
     }
 
+    // MARK: Runde 4: `start` vor dem Abruf, `round` und `areas` als eigene Zeilen
+
+    private func kinds(_ audit: AssistantAuditLog) -> [String] { lines(audit).compactMap { $0["t"] as? String } }
+
+    /// Kopie der Datei, wie sie bei einem Prozessende dagelegen hätte.
+    private func crashCopy(of audit: AssistantAuditLog) throws -> URL {
+        let crashed = FileManager.default.temporaryDirectory.appendingPathComponent("assistant-audit-crash-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: crashed, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: audit.url, to: crashed.appendingPathComponent(AssistantAuditLog.fileName))
+        return crashed
+    }
+
+    /// Das Prozessende mitten im Abruf (die Quelle hängt) hinterlässt `start` ohne Rundenart und Bereiche; das nächste Öffnen
+    /// schließt die Anfrage als unvollständig.
+    func testProcessEndDuringRetrieveLeavesStartAndTheNextOpenClosesItAsIncomplete() async throws {
+        let audit = AssistantAuditLog(directory: dir)
+        let knowledge = AssistantKnowledge(corpus: AssistantCorpus(), sources: [HangingSource(area: .notes)])
+        let session = AssistantSession(model: AuditModel(pieces: ["Hallo."]), knowledge: knowledge, config: config, audit: audit, released: true)
+        let task = Task { () -> Int in
+            var n = 0
+            for await _ in session.events(AssistantRequest(requestId: "r1", text: "Wohin wandert Quasselbert mit dem Fahrrad nach Pappelhausen?")) { n += 1 }
+            return n
+        }
+        var seen: [String] = []
+        for _ in 0..<200 {
+            _ = await audit.read()
+            seen = kinds(audit)
+            if !seen.isEmpty { break }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        try await Task.sleep(nanoseconds: 150_000_000)   // der Abruf hängt jetzt; es darf nichts nachkommen
+        let crashed = try crashCopy(of: audit)
+        defer { try? FileManager.default.removeItem(at: crashed) }
+        await session.cancel(requestId: "r1")
+        await session.commit(requestId: "r1", user: "x", spoken: "", interrupted: true)
+        _ = await task.value
+
+        XCTAssertEqual(seen, ["start"], "VOR dem Abruf steht `start` in der Datei, sonst nichts (keine Rundenart, keine Bereiche)")
+        let reopened = AssistantAuditLog(directory: crashed, reader: AssistantAuditWriter.readFile)
+        _ = await reopened.append(journalEvent(1))
+        let entry = await reopened.read().entries.first
+        XCTAssertEqual(entry?.requestId, "r1")
+        XCTAssertEqual(entry?.outcome, .incomplete)
+        XCTAssertNil(entry?.round, "die Rundenwahl war noch nicht gefallen")
+        XCTAssertEqual(entry?.contextMode, .free, "Kontextzustand vorher steht schon im `start`")
+        XCTAssertEqual(entry?.areas, [])
+        XCTAssertEqual(entry?.unsourcedMode, true)
+        XCTAssertEqual(entry?.consentVersion, 1)
+    }
+
+    /// Die Rundenart steht als eigene Zeile `round` hinter `start` (Art und Grund); im `start` selbst fehlt sie.
+    func testRoundDecisionIsItsOwnLineAfterStart() async throws {
+        let audit = AssistantAuditLog(directory: dir)
+        let session = AssistantSession(model: AuditModel(pieces: ["Quasselbert wandert nach Pappelhausen."]), knowledge: await geheimKnowledge(),
+                                       config: config, audit: audit, released: true)
+        var spoken: [String] = []
+        for await e in session.events(AssistantRequest(requestId: "r1", text: "Wohin wandert Quasselbert mit dem Fahrrad nach Pappelhausen?")) {
+            if case .sentence(_, _, let t, _, let st, _, _) = e, st != .announcement { spoken.append(t) }
+        }
+        await session.commit(requestId: "r1", user: "x", spoken: spoken.joined(separator: " "), interrupted: false)
+        let objs = try objects()
+        XCTAssertEqual(objs.first?["t"] as? String, "start")
+        XCTAssertNil(objs.first?["round"], "die Rundenart steht nicht im `start`")
+        XCTAssertNil(objs.first?["reason"])
+        XCTAssertEqual(objs.first?["ctx"] as? String, "free", "Kontextzustand vorher")
+        let round = try XCTUnwrap(objs.first { $0["t"] as? String == "round" })
+        XCTAssertEqual(round["round"] as? String, "data")
+        XCTAssertNotNil(round["reason"])
+        let order = objs.compactMap { $0["t"] as? String }
+        XCTAssertLessThan(try XCTUnwrap(order.firstIndex(of: "start")), try XCTUnwrap(order.firstIndex(of: "round")))
+        XCTAssertLessThan(try XCTUnwrap(order.firstIndex(of: "round")), try XCTUnwrap(order.firstIndex(of: "step")))
+        let entry = await audit.entries().first
+        XCTAssertEqual(entry?.round, .data)
+        XCTAssertNotNil(entry?.contextReason)
+        XCTAssertEqual(entry?.contextMode, .free)
+    }
+
+    /// Absturz vor `end`: Rundenart und Bereiche stehen in eigenen Zeilen und bleiben erhalten; ohne Öffnen faltet die Ansicht sie,
+    /// beim Öffnen trägt das Wiederherstellungs-Ende die Bereiche.
+    func testACrashBeforeEndKeepsRoundAndAreasAndTheRecoveryEndFoldsThem() async throws {
+        let audit = AssistantAuditLog(directory: dir)
+        let session = AssistantSession(model: HangingModel(pieces: ["Quasselbert wandert nach Pappelhausen und trifft dort Tante Lavendula. Danach"]),
+                                       knowledge: await geheimKnowledge(), config: config, audit: audit, released: true)
+        let question = "Wohin wandert Quasselbert mit dem Fahrrad nach Pappelhausen?"
+        let task = Task { () -> Int in
+            var n = 0
+            for await _ in session.events(AssistantRequest(requestId: "r1", text: question)) { n += 1 }
+            return n
+        }
+        var seen: [String] = []
+        for _ in 0..<200 {
+            _ = await audit.read()
+            seen = kinds(audit)
+            if seen.filter({ $0 == "step" }).count >= 2 { break }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        let crashed = try crashCopy(of: audit)
+        defer { try? FileManager.default.removeItem(at: crashed) }
+        await session.cancel(requestId: "r1")
+        await session.commit(requestId: "r1", user: question, spoken: "", interrupted: true)
+        _ = await task.value
+
+        XCTAssertFalse(seen.contains("end"), "beim Absturz gab es kein `end`")
+        XCTAssertEqual(seen.first, "start")
+        XCTAssertTrue(seen.contains("round") && seen.contains("areas"), "Rundenart und Bereiche stehen schon vor dem Ende: \(seen)")
+        // Nur lesen (kein Öffnen zum Schreiben): die Faltung nimmt Rundenart und Bereiche aus den Zeilen.
+        let viewOnly = await AssistantAuditLog(directory: crashed, reader: AssistantAuditWriter.readFile).read().entries.first
+        XCTAssertEqual(viewOnly?.outcome, .incomplete)
+        XCTAssertEqual(viewOnly?.round, .data)
+        XCTAssertEqual(viewOnly?.areas, ["books"])
+        // Öffnen zum Schreiben: das Wiederherstellungs-Ende faltet die Bereiche in seine eigene Zeile.
+        let reopened = AssistantAuditLog(directory: crashed, reader: AssistantAuditWriter.readFile)
+        _ = await reopened.append(journalEvent(1))
+        let ends = try objects(crashed.appendingPathComponent(AssistantAuditLog.fileName)).filter { $0["t"] as? String == "end" }
+        XCTAssertEqual(ends.count, 1)
+        XCTAssertEqual(ends.first?["areas"] as? [String], ["books"])
+        XCTAssertEqual(ends.first?["outcome"] as? String, "incomplete")
+        let entry = await reopened.read().entries.first
+        XCTAssertEqual(entry?.round, .data)
+        XCTAssertEqual(entry?.areas, ["books"])
+        XCTAssertEqual(entry?.outcome, .incomplete)
+    }
+
+    /// Bestandsangaben: Die Bereiche stehen als Zeile `areas`, bevor die erste Angabe hinausgeht.
+    func testInventoryAreasAreWrittenBeforeTheStatementsGoOut() async throws {
+        let audit = AssistantAuditLog(directory: dir)
+        let session = AssistantSession(model: AuditModel(pieces: []), knowledge: await geheimKnowledge(), config: config, audit: audit, released: true)
+        var firstSentenceSeen = false
+        var atFirstSentence: [String] = []
+        for await e in session.events(AssistantRequest(requestId: "r1", text: "Was habe ich gespeichert?")) {
+            if case .sentence = e, !firstSentenceSeen {
+                firstSentenceSeen = true
+                _ = await audit.read()   // läuft über die Schreibwarteschlange: alles Eingereihte steht danach in der Datei
+                atFirstSentence = kinds(audit)
+            }
+        }
+        await session.commit(requestId: "r1", user: "x", spoken: "", interrupted: true)
+        XCTAssertTrue(firstSentenceSeen)
+        let order = try objects().compactMap { $0["t"] as? String }
+        let areasIndex = try XCTUnwrap(order.firstIndex(of: "areas"))
+        let stepIndex = try XCTUnwrap(order.firstIndex(of: "step"))
+        XCTAssertLessThan(areasIndex, stepIndex, "die Bereiche stehen vor den Schritten, nicht erst im `end`")
+        XCTAssertTrue(atFirstSentence.contains("areas"), "schon beim ersten Satz steht die Zeile in der Datei: \(atFirstSentence)")
+        let entry = await audit.entries().first
+        XCTAssertTrue(Set(["books", "notes"]).isSubset(of: Set(entry?.areas ?? [])), "Bestandsbereiche: \(entry?.areas ?? [])")
+    }
+
+    /// Dateien im bisherigen Format (Rundenart und Kontext im `start`, Bereiche nur im `end`) laden unverändert.
+    func testLinesOfTheFormerFormatStillLoad() async throws {
+        let raw = [
+            #"{"at":"2026-01-01T10:00:00Z","cloud":false,"consent":1,"ctx":"free","gen":2,"model":"apple","reason":"ownData","req":"alt1","round":"data","session":"s0","t":"start","unsourced":true}"#,
+            #"{"gen":2,"n":1,"req":"alt1","t":"step","verdict":"announcement"}"#,
+            #"{"gen":2,"n":2,"req":"alt1","t":"step","verdict":"grounded"}"#,
+            #"{"mark":"e+2","n":2,"req":"alt1","t":"commit"}"#,
+            #"{"areas":["books"],"at":"2026-01-01T10:00:02Z","level":"s0","outcome":"completed","req":"alt1","t":"end"}"#,
+        ].joined(separator: "\n") + "\n"
+        try writeRaw(Data(raw.utf8))
+        let audit = AssistantAuditLog(directory: dir)
+        let read = await audit.read()
+        XCTAssertEqual(read.skippedLines, 0, "keine Zeile des alten Formats wird übersprungen")
+        let entry = try XCTUnwrap(read.entries.first)
+        XCTAssertEqual(entry.requestId, "alt1")
+        XCTAssertEqual(entry.round, .data)
+        XCTAssertEqual(entry.contextMode, .free)
+        XCTAssertEqual(entry.contextReason, .ownData)
+        XCTAssertEqual(entry.areas, ["books"])
+        XCTAssertEqual(entry.outcome, .completed)
+        XCTAssertEqual(entry.trace.map(\.verdict), [.announcement, .grounded])
+        // Neue Zeilen kommen hinter die alten, und die alte Anfrage bleibt, wie sie ist.
+        let session = AssistantSession(model: AuditModel(pieces: ["Quasselbert wandert nach Pappelhausen."]), knowledge: await geheimKnowledge(),
+                                       config: config, audit: audit, released: true)
+        for await _ in session.events(AssistantRequest(requestId: "neu1", text: "Wohin wandert Quasselbert mit dem Fahrrad nach Pappelhausen?")) {}
+        await session.commit(requestId: "neu1", user: "x", spoken: "", interrupted: true)
+        let all = await audit.entries()
+        XCTAssertEqual(all.map(\.requestId), ["alt1", "neu1"])
+        XCTAssertEqual(all.first?.areas, ["books"])
+        XCTAssertEqual(all.first?.outcome, .completed)
+        XCTAssertEqual(all.last?.round, .data)
+    }
+
     /// Ein Fehler im Protokoll während der Antwort (Datenträger voll) hält die Antwort nicht auf, und der Beitrag steht trotzdem im
     /// Verlauf; `commit` meldet den Fehler.
     func testAnAuditFailureDuringTheAnswerNeitherStopsItNorLosesTheHistoryTurn() async {
         let audit = AssistantAuditLog(directory: dir, reader: { _ in nil }, appender: { _, _ in throw DiskFull() })
         let session = AssistantSession(model: AuditModel(pieces: ["Quasselbert wandert nach Pappelhausen."]), knowledge: await geheimKnowledge(),
-                                       config: config, audit: audit)
+                                       config: config, audit: audit, released: true)
         var spoken: [String] = []
         var finished = false
         for await e in session.events(AssistantRequest(requestId: "r1", text: "Wohin wandert Quasselbert nach Pappelhausen?")) {
@@ -1082,7 +1267,7 @@ final class AssistantAuditLogTests: XCTestCase {
         try FileManager.default.createDirectory(at: blocked.appendingPathComponent(AssistantAuditLog.fileName), withIntermediateDirectories: true)
         let session = AssistantSession(model: AuditModel(pieces: ["Hallo zusammen."]), knowledge: AssistantKnowledge(corpus: AssistantCorpus()),
                                        config: AssistantConfig(modelLabel: "T", isCloud: false, contextTokens: 4_096, maxAnswerTokens: 400, userName: nil, timeout: 5),
-                                       audit: AssistantAuditLog(directory: blocked))
+                                       audit: AssistantAuditLog(directory: blocked), released: true)
         for await e in session.events(AssistantRequest(requestId: "a", text: "Hallo")) { _ = e }
         let wrote = await session.commit(requestId: "a", user: "Hallo", spoken: "Hallo zusammen.", interrupted: false)
         XCTAssertFalse(wrote)
@@ -1094,5 +1279,15 @@ final class AssistantAuditLogTests: XCTestCase {
 private struct FailingModel: BookTalkModel {
     func stream(instructions: String, prompt: String, maxTokens: Int) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { c in c.finish(throwing: BookTalkModelError.offline) }
+    }
+}
+
+/// Eine Quelle, deren Suche hängt (bis zum Abbruch): der Abruf steht still.
+private struct HangingSource: AssistantSource {
+    let area: AssistantArea
+    func items() async -> [AssistantItem] { [] }
+    func search(_ question: String, limit: Int) async -> [AssistantPassage] {
+        while !Task.isCancelled { try? await Task.sleep(nanoseconds: 10_000_000) }
+        return []
     }
 }

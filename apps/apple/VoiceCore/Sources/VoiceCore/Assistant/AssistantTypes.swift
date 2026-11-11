@@ -275,6 +275,17 @@ public struct AssistantTurn: Sendable, Equatable, Codable {
         case user, assistant, interrupted, sources, general, unsourced, parts, model, at, round
     }
 
+    /// Beitrag aus einer Runde ohne Quelle: Rundenart `.general`, ein Satz ohne Quelle oder ein Abschnitt ohne Quelle. Alte
+    /// Beiträge ohne das Feld `unsourced` gelten über `general` ebenso (vorsichtig: im Zweifel ohne Quelle).
+    public var isUnsourced: Bool { round == .general || unsourced || parts.contains { $0.unsourced } }
+
+    /// Die Beiträge, die ein Gespräch ANZEIGEN und in einen Prompt geben darf. Ist die Funktion „Antworten ohne Quelle“ nicht
+    /// freigeschaltet (`released == false`), fallen alle Beiträge aus Runden ohne Quelle heraus, bevor sie angezeigt werden oder
+    /// in einen Prompt gelangen. Reine Funktion; die Datei bleibt, bis der nächste Verlauf gespeichert wird, dann fehlen sie.
+    public static func admitted(_ turns: [AssistantTurn], released: Bool) -> [AssistantTurn] {
+        released ? turns : turns.filter { !$0.isUnsourced }
+    }
+
     /// Die synthetisierte Fassung ignoriert Standardwerte: Beiträge aus Verlaufsdateien vor dem Feld `unsourced` müssen laden.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)

@@ -1,7 +1,7 @@
 import Foundation
 
 // Gesprächsmodus „Sprechen“ (Paket K, erweitert in Paket A um „Antworten ohne Quelle“, E4.2a): Ablauf einer Antwort.
-// Abruf → Rundenart (`AssistantContext`, vor dem Modellaufruf) → Protokollzeile `start` → Ereignis `sources` → Modellstrom →
+// Protokollzeile `start` (vor dem Abruf) → Abruf → Rundenart (`AssistantContext`, Zeile `round`) → Zeile `areas`, Ereignis `sources` → Modellstrom →
 // Satztrenner (nur ganze Sätze, Reste ohne Satzzeichen werden verworfen) → Satzprüfung (`AssistantGrounding.judge`) →
 // `sentence`-Ereignisse → `done`. Muster: `BookTalkSession` (Strom, Abbruch, Wächter). Mehrere Anfragen dürfen gleichzeitig
 // laufen (Vorarbeit und Abbruch); keine schreibt in den Verlauf, das macht allein `commit`.
@@ -50,6 +50,8 @@ struct AssistantRunRecord: Sendable {
     var counts = AssistantSentenceCounts()
     /// Bereiche der Bestandsangaben (gehen mit ins Protokoll).
     var inventoryAreas: [AssistantArea] = []
+    /// Bereiche, die schon als Zeile `areas` im Journal stehen.
+    var areasWritten: Set<String> = []
     /// Laufende Nummer der Einordnungen (Schritte).
     var steps = 0
     /// Die Antwort hat die Schrittgrenze erreicht und endet.
@@ -223,6 +225,25 @@ private final class RunEmitter {
         return delivered
     }
 
+    /// Schreibt die Bereiche der Quellen, sobald sie feststehen (Zeile `areas`), nicht erst im `end`: Ein Prozessende danach
+    /// verliert sie nicht. Nur Neues wird geschrieben. `true`, wenn eine Zeile eingereiht wurde.
+    @discardableResult
+    func noteAreas(_ areas: [AssistantArea]) -> Bool {
+        let names = Set(areas.map(\.rawValue))
+        var fresh = false
+        state.update { r in
+            guard !names.subtracting(r.areasWritten).isEmpty else { return }
+            r.areasWritten.formUnion(names)
+            fresh = true
+        }
+        guard fresh, let journal else { return false }
+        var l = AssistantJournalLine(.areas, req: rid)
+        l.areas = names.sorted()
+        l.gen = generation
+        journal.enqueue(l)
+        return true
+    }
+
     func drop(_ reason: AssistantDropReason) {
         dropped += 1
         _ = step(AssistantTraceVerdict(dropped: reason))
@@ -317,17 +338,28 @@ public actor AssistantSession {
     private var resultOrder: [String] = []
     public private(set) var history: [AssistantTurn]
 
-    /// `released`: Freischaltung der Funktion „Antworten ohne Quelle“ (`AssistantUnsourcedConsent.isReleased`); bei `false`
-    /// verhält sich die Sitzung wie mit ausgeschaltetem Opt-in.
+    /// Öffentlicher Initializer: Die Freischaltung der Funktion „Antworten ohne Quelle“ ist die Konstante
+    /// `AssistantUnsourcedConsent.isReleased` und nicht wählbar. Solange sie `false` ist, verhält sich die Sitzung wie mit
+    /// ausgeschaltetem Opt-in: Keine öffentliche Einstellung (Konfiguration `allowUnsourced`, `setAllowUnsourced`, `resumeFree`,
+    /// gespeicherte Einwilligung, Verlauf mit einer Runde ohne Quelle) erreicht den freien Zustand.
     public init(model: any BookTalkModel, knowledge: AssistantKnowledge, config: AssistantConfig, history: [AssistantTurn] = [],
-                audit: AssistantAuditLog? = nil, released: Bool = AssistantUnsourcedConsent.isReleased) {
+                audit: AssistantAuditLog? = nil) {
+        self.init(model: model, knowledge: knowledge, config: config, history: history, audit: audit,
+                  released: AssistantUnsourcedConsent.isReleased)
+    }
+
+    /// Nur für Tests (`@testable`): wählt die Freischaltung, um den freien Modus unabhängig von der Produktkonstante zu prüfen.
+    /// Beiträge aus Runden ohne Quelle kommen bei `released == false` gar nicht erst in den Verlauf (`AssistantTurn.admitted`).
+    init(model: any BookTalkModel, knowledge: AssistantKnowledge, config: AssistantConfig, history: [AssistantTurn] = [],
+         audit: AssistantAuditLog? = nil, released: Bool) {
         let optIn = config.allowUnsourced && released
         self.model = model
         self.knowledge = knowledge
         self.config = config
         self.released = released
         self.release = AssistantRelease(optIn: optIn, consentVersion: config.consentVersion)
-        let kept = history.count > Self.maxStoredTurns ? Array(history.suffix(Self.maxStoredTurns)) : history
+        let admitted = AssistantTurn.admitted(history, released: released)
+        let kept = admitted.count > Self.maxStoredTurns ? Array(admitted.suffix(Self.maxStoredTurns)) : admitted
         self.context = AssistantContext(optIn: optIn, history: kept)
         self.audit = audit
         self.history = kept
@@ -393,6 +425,29 @@ public actor AssistantSession {
         return release.bump()
     }
 
+    /// Wiedergabesperre dieser Sitzung („verworfen ab Generation g“). Die Freigabe rückt sie im selben Lock vor, in dem die
+    /// Generation steigt; die Stimme fragt sie vor jedem Start eines Satzes (`permits`), ohne Aktor-Sprung und ohne Warten.
+    public nonisolated var playbackGate: AssistantPlaybackGate { release.playback }
+
+    /// Geordnete Ausgabegrenze: Führt einen Ausgabe-Commit (Anzeige, Übergabe an die Stimme, Audiostart-Meldung) eines
+    /// Ereignisses der Generation `generation` aus, und zwar IM selben Lock, in dem die Generation steigt (`bump`, `setOptIn`):
+    /// `body` läuft nie nach der Rückkehr einer Erhöhung auf eine neuere Generation. `false`: veraltet, `body` lief nicht.
+    /// Die Meldung `commit` (Satzspur im Protokoll, mit der geprüften Generation) geht danach, außerhalb des Locks.
+    ///
+    /// Pflichten von `body`: kurz und synchron, ohne I/O und ohne Warten; ruft NIE in die Sitzung oder Freigabe zurück
+    /// (`releaseGeneration`, `setAllowUnsourced`, `commitOutput`, … hängen, denn `NSLock` ist nicht rekursiv). Gedacht für
+    /// Zustandsänderungen der Anzeige und das Einreihen in die Stimme; schwere Folgearbeit gehört nach dem Aufruf.
+    /// `reportPass: false`: nur eine Ablehnung melden. `index` = Nummer in der Reihenfolge der empfangenen `sentence`-Ereignisse.
+    @discardableResult
+    public nonisolated func commitOutput(requestId: String, index: Int, generation: Int, stage: AssistantCommitStage,
+                                         reportPass: Bool = true, _ body: () -> Void) -> Bool {
+        let ok = release.ifCurrent(generation, body)
+        if reportPass || !ok {
+            noteCommit(requestId: requestId, index: index, stage: stage, ok: ok, generation: ok ? generation : release.currentGeneration)
+        }
+        return ok
+    }
+
     /// Der Controller meldet einen Ausgabe-Commit (Anzeige, Audiostart) eines Ereignisses (`index` = Nummer in der Reihenfolge
     /// der empfangenen `sentence`-Ereignisse dieser Anfrage), mit der dabei geprüften Generation. `ok`: ausgeführt; sonst
     /// verworfen. Die Meldung geht als Zeile `commit` ins Journal, ohne Warten und ohne I/O im Aufrufer.
@@ -406,7 +461,8 @@ public actor AssistantSession {
 
     // MARK: Verlauf
 
-    public func restore(history turns: [AssistantTurn]) {
+    public func restore(history stored: [AssistantTurn]) {
+        let turns = AssistantTurn.admitted(stored, released: released)
         history = turns.count > Self.maxStoredTurns ? Array(turns.suffix(Self.maxStoredTurns)) : turns
         context.reset(optIn: release.isOptedIn, history: history)
     }
@@ -699,6 +755,17 @@ public actor AssistantSession {
             .finished(text: emitter.texts.joined(separator: " "), firstMs: emitter.firstMs, totalMs: emitter.elapsedMs, failure: failure)
         }
 
+        // `start` steht in der Datei, BEVOR der Abruf und die Bestandstitel laufen (und vor dem Modell und jeder Ausgabe): Ein
+        // Prozessende währenddessen hinterlässt die Anfrage, das nächste Öffnen schließt sie als unvollständig. Die Rundenart
+        // folgt als eigene Zeile `round`, die Bereiche der Quellen als `areas`, sobald sie feststehen. Ein Fehler wird für den
+        // Abschluss der Anfrage gemerkt (`commit` meldet ihn), die Antwort läuft trotzdem.
+        state.update { $0.contextBefore = context.mode }
+        if let audit {
+            _ = await audit.begin(startLine(rid, session: session, config: config, record: state.snapshot))
+            state.update { $0.journaled = true }
+            if Task.isCancelled { return .cancelled }
+        }
+
         let passages = await knowledge.retrieve(question: request.text, previous: history.last?.user, limit: passageLimit, maxChars: budget.passages)
         if Task.isCancelled { return .cancelled }
         let titles = await knowledge.inventoryTitles()
@@ -716,12 +783,12 @@ public actor AssistantSession {
             $0.contextBefore = decision.before
             $0.contextReason = decision.reason
         }
-        // `start` steht in der Datei, bevor das Modell läuft und bevor etwas ausgegeben wird. Ein Fehler wird für den Abschluss
-        // der Anfrage gemerkt (`commit` meldet ihn), die Antwort läuft trotzdem.
         if let audit {
-            _ = await audit.begin(startLine(rid, session: session, config: config, record: state.snapshot))
-            state.update { $0.journaled = true }
-            if Task.isCancelled { return .cancelled }
+            var l = AssistantJournalLine(.round, req: rid)
+            l.round = kind
+            l.reason = decision.reason
+            l.gen = snapshot.generation
+            audit.enqueue(l)
         }
 
         let now = Date()
@@ -737,6 +804,7 @@ public actor AssistantSession {
                 return finished()
             }
             state.update { $0.inventoryAreas = groups.map(\.area) }
+            emitter.noteAreas(groups.map(\.area))
             let preface = AssistantGrounding.inventoryAnnouncement
             guard emitter.emit(preface, speech: preface, status: .announcement) else { return .cancelled }
             for s in statements {
@@ -769,6 +837,12 @@ public actor AssistantSession {
             }
             if !announcedSources || used != state.snapshot.used {
                 state.update { $0.used = used }
+                // Die Bereiche der Auszüge im Prompt stehen fest. Zu einem Cloud-Modell geht der Prompt erst, wenn die Zeile in der
+                // Datei steht; lokal genügt das Einreihen.
+                if emitter.noteAreas(used.map(\.area)), config.isCloud, let audit {
+                    await audit.waitUntilWritten(request: rid)
+                    if Task.isCancelled { return .cancelled }
+                }
                 guard output.send(.sources(requestId: rid, generation: snapshot.generation, used)) else { return .cancelled }
                 announcedSources = true
             }

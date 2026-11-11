@@ -10,11 +10,50 @@ import Foundation
 // älteren Generation mehr herauskommen. Auch der Verlaufseintrag wird in diesem Lock angehängt (`ifCurrent`). Aus und wieder
 // Ein macht alte Ergebnisse nicht wieder gültig (die Generation wird nie zurückgesetzt). Lock mit kurzer Haltezeit, kein I/O,
 // nur für Steuerung und Anzeige, nie im Audio-Callback.
+//
+// Geordnete Ausgabegrenze (Runde 4): Jeder Ausgabe-Commit (Anzeige, Übergabe an die Stimme, Audiostart-Meldung) läuft als `body`
+// von `ifCurrent` im selben Lock wie die Erhöhung (Sitzung: `commitOutput`). Der `body` ist kurz und synchron, ohne I/O, und
+// ruft NIE in die Freigabe zurück (`NSLock` ist nicht rekursiv: ein Zugriff auf `snapshot`, `bump`, `ifCurrent` im `body`
+// hinge für immer). Dazu gehört die Wiedergabesperre `AssistantPlaybackGate`: Sie wird im selben Lock wie die Erhöhung
+// vorgerückt, ist ohne Aktor und ohne Warten lesbar und sperrt jeden NEUEN Start eines Satzes älterer Generation.
 
 /// Prüfung, die der Controller vor Anzeige und Audiostart macht (und die Tests ohne Sitzung ausüben): Ein Ereignis gilt nur,
 /// wenn seine Generation die aktuelle ist. Ein Ereignis mit alter Generation nach einem neueren wird nie angenommen.
 public enum AssistantReleaseGate {
     public static func admits(eventGeneration: Int, current: Int) -> Bool { eventGeneration == current }
+}
+
+/// Sperre „verworfen ab Generation g“ für die Wiedergabe (Runde 4). Reiner Typ ohne Aktor: Die Freigabe rückt sie im selben
+/// Lock vor, in dem die Generation steigt; der Speaker (läuft auf dem MainActor, kann von anderen Threads nicht gestoppt
+/// werden) fragt sie unmittelbar vor jedem Start eines Satzes. Nach der Rückkehr von `bump` ist damit kein NEUER Start eines
+/// Satzes älterer Generation mehr möglich. Die Grenze: Ein Satz, dessen Klang schon begonnen hat, verstummt erst, wenn der
+/// MainActor `stop()` ausführt (Aufräumen im Controller, einige Millisekunden). Kurzer Lock, kein I/O, nie im Audio-Callback.
+public final class AssistantPlaybackGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var floor = 0
+
+    public init() {}
+
+    /// Alles unterhalb von `generation` ist verworfen. Monoton: ein kleinerer Wert ändert nichts.
+    func discard(below generation: Int) {
+        lock.lock()
+        if generation > floor { floor = generation }
+        lock.unlock()
+    }
+
+    /// Darf ein Satz dieser Generation noch starten? Ein Satz einer künftigen Generation ist nicht verworfen.
+    public func permits(_ generation: Int) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return generation >= floor
+    }
+
+    /// Erste Generation, die noch starten darf (Tests, Anzeige).
+    public var discardedBelow: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return floor
+    }
 }
 
 final class AssistantRelease: @unchecked Sendable {
@@ -26,6 +65,9 @@ final class AssistantRelease: @unchecked Sendable {
     }
 
     private let lock = NSLock()
+    /// Wiedergabesperre; wird in `finishBump` im selben Lock wie die Generation vorgerückt (Reihenfolge: erst `lock`, dann
+    /// ihr eigener Lock; sie ruft nie zurück).
+    let playback = AssistantPlaybackGate()
     private var generation = 0
     private var optIn: Bool
     private var consent: Int
@@ -89,6 +131,7 @@ final class AssistantRelease: @unchecked Sendable {
     private func finishBump() -> Int {
         generation += 1
         let g = generation
+        playback.discard(below: g)   // im selben Lock: Ab jetzt startet kein Satz älterer Generation mehr
         let revoke = Array(runs.values)
         let notify = observer
         runs.removeAll()
@@ -115,7 +158,9 @@ final class AssistantRelease: @unchecked Sendable {
     }
 
     /// Führt `body` nur aus, wenn `generation` die aktuelle ist, und zwar im selben Lock wie die Prüfung: Eine Änderung
-    /// dazwischen ist ausgeschlossen. `body` muss kurz sein (Ereignis in den Strom legen, Beitrag anhängen).
+    /// dazwischen ist ausgeschlossen. `body` muss kurz sein (Ereignis in den Strom legen, Beitrag anhängen, Anzeige und
+    /// Übergabe an die Stimme), ohne I/O und ohne Warten, und darf NICHT in diese Freigabe zurückrufen (`NSLock` ist nicht
+    /// rekursiv: `snapshot`, `bump`, `register`, `ifCurrent` im `body` hängen für immer).
     func ifCurrent(_ generation: Int, _ body: () -> Void) -> Bool {
         lock.lock()
         defer { lock.unlock() }

@@ -119,6 +119,58 @@ final class AssistantGroundingTests: XCTestCase {
         XCTAssertEqual(judge("Hans fährt nach Davos hinauf und bleibt dort.", passages: [noStart]), .dropped(.noMode))
     }
 
+    // MARK: Innere Nähte (Runde 4, H3): Zeilen werden nie zusammengezogen, kein Rest eines Satzes über einen Umbruch
+
+    private let nordlicht = assistantPassage(.notes, itemId: "n9", title: "Notiz",
+        text: "Anna übernimmt die Planung für\nProjekt Nordlicht bis Freitag.\nDanach folgt die Budgetprüfung.")
+
+    /// Gegenbeispiel einer ganzen Notiz: Der Rest „Projekt Nordlicht bis Freitag.“ ist angeschnitten (sein Anfang steht in der Zeile
+    /// davor ohne Satzzeichen) und nie zitierbar; nur der Satz nach einem Satzende ist es.
+    func testRestOfASentenceAcrossALineBreakIsNeverQuotable() {
+        let basis = AssistantGrounding.Basis(passages: [nordlicht])
+        XCTAssertEqual(basis.texts, ["Danach folgt die Budgetprüfung."])
+        XCTAssertNil(AssistantGrounding.snap("Projekt Nordlicht bis Freitag.", basis: basis), "snap findet den Rest nicht")
+        XCTAssertNil(AssistantGrounding.fallback(question: "Was gilt für Projekt Nordlicht bis Freitag?", basis: basis), "fallback auch nicht")
+        XCTAssertEqual(judge("Projekt Nordlicht bis Freitag.", passages: [nordlicht]), .dropped(.noMode), "in der Datenrunde verworfen")
+        XCTAssertNil(quoted("Anna übernimmt die Planung für Projekt Nordlicht bis Freitag.", passages: [nordlicht]),
+                     "auch der zusammengesetzte Satz wird nicht gebildet")
+        XCTAssertEqual(quoted("Danach folgt die Budgetprüfung.", passages: [nordlicht]), "Danach folgt die Budgetprüfung.")
+    }
+
+    /// Zum Verbieten zählt der Rest weiter: Ein Satz ohne Quelle, der ihm ähnelt, wird verworfen.
+    func testTheRestStillCountsForForbiddingAnUnsourcedSentence() {
+        XCTAssertTrue(AssistantGrounding.resemblesOwnContent("Projekt Nordlicht dauert bis Freitag.", passages: [nordlicht]))
+        XCTAssertEqual(AssistantGrounding.Basis(detecting: [nordlicht]).texts.count, 3, "die Erkennungsbasis behält jede Zeile")
+    }
+
+    func testHeadingWithoutPunctuationDoesNotProveTheStartOfTheNextLine() {
+        for text in ["Projektstatus für Freitag\nAnna übernimmt die Planung bis Freitag.\nDanach folgt die Budgetprüfung.",
+                     "Projektstatus für Freitag\n\nAnna übernimmt die Planung bis Freitag.\n\nDanach folgt die Budgetprüfung.",
+                     "# Projektstatus für Freitag\nAnna übernimmt die Planung bis Freitag.\nDanach folgt die Budgetprüfung."] {
+            let p = assistantPassage(.notes, itemId: "n", title: "Notiz", text: text)
+            XCTAssertEqual(AssistantGrounding.Basis(passages: [p]).texts, ["Danach folgt die Budgetprüfung."], "keine Ausnahme für Überschriften oder Leerzeilen: \(text)")
+        }
+    }
+
+    func testListWithAndWithoutPunctuation() {
+        let all = assistantPassage(.notes, itemId: "l1", title: "Liste",
+                                   text: "Erstens kommt die Planung.\nZweitens kommt die Prüfung.\nDrittens kommt der Abschluss.")
+        XCTAssertEqual(AssistantGrounding.Basis(passages: [all]).texts.count, 3, "jede Zeile endet mit Satzzeichen")
+        let gap = assistantPassage(.notes, itemId: "l2", title: "Liste",
+                                   text: "Erstens kommt die Planung.\nZweitens kommt die Prüfung\nDrittens kommt der Abschluss.")
+        XCTAssertEqual(AssistantGrounding.Basis(passages: [gap]).texts, ["Erstens kommt die Planung."],
+                       "die Zeile ohne Satzzeichen ist nicht zitierbar und beweist den Anfang der nächsten nicht")
+        let none = assistantPassage(.notes, itemId: "l3", title: "Liste", text: "Erstens kommt die Planung\nZweitens kommt die Prüfung\nDrittens kommt der Abschluss")
+        XCTAssertTrue(AssistantGrounding.Basis(passages: [none]).isEmpty)
+    }
+
+    /// Der Anfang des Auszugs trägt allein sein Nachweis; eine Zeile danach beweist nichts nach, was davor fehlt.
+    func testFirstLineNeedsTheProvenStartOfTheExcerpt() {
+        let text = "Anna übernimmt die Planung bis Freitag.\nDanach folgt die Budgetprüfung."
+        let cut = AssistantPassage(area: .notes, itemId: "n", title: "Notiz", text: text, score: 1, startsAtBoundary: false, endsAtBoundary: true)
+        XCTAssertEqual(AssistantGrounding.Basis(passages: [cut]).texts, ["Danach folgt die Budgetprüfung."])
+    }
+
     func testDetectionBasisKeepsEverySentenceEvenWithoutProofOrPunctuation() {
         let p = AssistantPassage(area: .notes, itemId: "n", title: "Notiz", text: "Anna übernimmt die Planung. Anna für Projekt Nordlicht", score: 1)
         XCTAssertTrue(AssistantGrounding.Basis(passages: [p]).isEmpty, "zum Zitieren ist nichts davon zugelassen")

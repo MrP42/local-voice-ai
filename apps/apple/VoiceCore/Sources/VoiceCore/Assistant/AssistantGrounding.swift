@@ -132,20 +132,25 @@ public enum AssistantGrounding {
 
     /// Die zitierbaren Quellsätze aller Auszüge in Auszug-Reihenfolge. Nur vollständige Sätze: Beginn mit Großbuchstaben, Ziffer
     /// oder Anführungszeichen, Ende mit Satzzeichen (keine Ausnahme, auch nicht für einen Auszug aus nur einem Satz),
-    /// mindestens drei Wörter. Der erste Satz eines Auszugs fehlt, wenn der Auszug nicht nachweislich an einer Satzgrenze
-    /// beginnt, der letzte, wenn er nicht nachweislich an einer endet oder gekürzt wurde (Ende „…“): beide können angeschnitten
-    /// sein. Zeilenumbrüche trennen Sätze.
+    /// mindestens drei Wörter. Strengste Lesart der inneren Nähte (keine Ausnahme für Leerzeilen oder Überschriften): Der Anfang
+    /// einer Einheit ist nur nachgewiesen (a) am nachgewiesenen Anfang des Auszugs oder (b) unmittelbar nach einer Einheit, die
+    /// mit Satzzeichen endet; das Ende nur durch das eigene Satzzeichen (die letzte Einheit zusätzlich nur, wenn der Auszug
+    /// nachweislich an einer Satzgrenze endet und nicht gekürzt wurde, Ende „…“). Zeilen werden nie zusammengezogen: ein Satz, der
+    /// über einen Zeilenumbruch läuft, hat keinen zitierbaren Rest. „Anna übernimmt die Planung für⏎Projekt Nordlicht bis
+    /// Freitag.⏎Danach folgt die Budgetprüfung.“ liefert nur den letzten Satz.
     public struct Basis: Sendable {
         let sentences: [SourceSentence]
 
         public init(passages: [AssistantPassage]) {
             var out: [SourceSentence] = []
             for p in passages {
-                var units = AssistantGrounding.sourceTexts(of: p.text)
-                if !p.startsAtBoundary, !units.isEmpty { units.removeFirst() }
+                let units = AssistantGrounding.sourceTexts(of: p.text)
                 let clipped = p.text.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("…")
-                if !p.endsAtBoundary || clipped, !units.isEmpty { units.removeLast() }
-                out += units.filter { AssistantGrounding.isQuotable($0) }.map { SourceSentence(text: $0, passage: p) }
+                for (i, unit) in units.enumerated() where AssistantGrounding.isQuotable(unit) {
+                    let startProven = i == 0 ? p.startsAtBoundary : AssistantGrounding.endsWithTerminal(units[i - 1])
+                    let endProven = i < units.count - 1 || (p.endsAtBoundary && !clipped)
+                    if startProven, endProven { out.append(SourceSentence(text: unit, passage: p)) }
+                }
             }
             sentences = out
         }
@@ -183,6 +188,11 @@ public enum AssistantGrounding {
     static func isQuotable(_ s: String) -> Bool {
         guard s.count >= 12, s.count <= maxQuoteChars, s.split(separator: " ").count >= 3, let first = s.first else { return false }
         guard first.isUppercase || first.isNumber || openers.contains(first) else { return false }
+        return endsWithTerminal(s)
+    }
+
+    /// Endet der Text (hinter schließenden Anführungszeichen und Klammern) mit einem Satzzeichen?
+    static func endsWithTerminal(_ s: String) -> Bool {
         var tail = Substring(s)
         while let last = tail.last, closers.contains(last) { tail = tail.dropLast() }
         guard let end = tail.last else { return false }

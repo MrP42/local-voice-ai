@@ -244,9 +244,9 @@ final class AssistantController: ObservableObject {
     #if DEBUG
     // MARK: Beispielrunde (nur DEBUG)
 
-    /// UI-Tests: `--assistant-demo-quote` öffnet das Gespräch mit einer eingebauten Beispielrunde aus synthetischem Inhalt (Zitat
-    /// mit Quelle, Antwort ohne Quelle). Kein Modell, kein Abruf, kein Speicher, kein Protokoll: `start` kehrt sofort zurück, und
-    /// Verlauf und Protokoll bleiben unberührt (`persist`, `deleteStoredHistory`, `logAudit`).
+    /// UI-Tests: `--assistant-demo-quote` öffnet das Gespräch mit einer eingebauten Beispielrunde aus synthetischem Inhalt (ein
+    /// Zitat mit Quellzeile). Kein Modell, kein Abruf, kein Speicher, kein Protokoll: `start` kehrt sofort zurück, und Verlauf und
+    /// Protokoll bleiben unberührt (`persist`, `deleteStoredHistory`, `logAudit`).
     static let demoQuote = ProcessInfo.processInfo.arguments.contains("--assistant-demo-quote")
 
     private func showDemo() {
@@ -257,19 +257,16 @@ final class AssistantController: ObservableObject {
         syncContext()
     }
 
-    /// So stehen die Beiträge nach einer echten Antwort im Verlauf: ein Originalsatz mit Quellzeile (Datenrunde) und ein Satz ohne
-    /// Quelle (Runde ohne Quelle). Die hörbaren Ansagen („Aus deinen Inhalten, ‚Beispielbuch‘:“, „Ohne Quelle:“) gehören nicht
-    /// zum Text und erscheinen in der Ansicht nie.
+    /// So steht der Beitrag nach einer echten Antwort im Verlauf: ein Originalsatz mit Quellzeile (Datenrunde). Die hörbare Ansage
+    /// („Aus deinen Inhalten, ‚Beispielbuch‘:“) gehört nicht zum Text und erscheint in der Ansicht nie. Eine Runde ohne Quelle gibt
+    /// es nicht (der freie Modus ist abgeschaltet), also auch keine Beispielrunde dazu.
     private static var demoTurns: [AssistantTurn] {
         let quote = "Anna übernimmt die Planung und stimmt sich jede Woche mit dem Team ab."
         let passage = AssistantPassage(area: .books, itemId: "demo-buch", title: "Beispielbuch", locator: "S. 12", text: quote, score: 1)
-        let general = "Der Mont Blanc ist etwa 4.800 Meter hoch."
         return [
             AssistantTurn(user: "Was steht im Beispielbuch über die Planung?", assistant: quote, sources: [passage],
                           parts: [AssistantTurnPart(text: quote, unsourced: false, quote: true, source: passage.sourceLabel)],
                           model: "Beispiel", round: .data),
-            AssistantTurn(user: "Wie hoch ist der Mont Blanc?", assistant: general, general: true, unsourced: true,
-                          model: "Beispiel", round: .general),
         ]
     }
     #endif
@@ -299,7 +296,9 @@ final class AssistantController: ObservableObject {
         hub.refresh()
         if !historyLoaded {
             historyLoaded = true
-            turns = store.load()
+            // Beiträge aus Runden ohne Quelle sind bei abgeschaltetem freien Modus nie sichtbar und nie im Prompt; die Datei bleibt
+            // bis zum nächsten Speichern unberührt, dann fehlen sie (`persist` schreibt, was angezeigt wird).
+            turns = AssistantTurn.admitted(store.load(), released: unsourcedReleased)
         }
 
         var built = await AssistantEngine.make(choice: explicit)
@@ -466,7 +465,7 @@ final class AssistantController: ObservableObject {
         areas = active
         let kn = await hub.knowledge(cloud: built.isCloud, areas: active)
         knowledge = kn
-        let stored = await session?.history ?? turns
+        let stored = AssistantTurn.admitted(await session?.history ?? turns, released: unsourcedReleased)
         // Nach dem letzten Wartepunkt: steht „Neues Gespräch“ noch aus, kommt der alte Verlauf nicht in die neue Sitzung.
         let history = clearRequested == clearDone ? stored : []
         session?.setReleaseObserver(nil)
@@ -478,8 +477,10 @@ final class AssistantController: ObservableObject {
             unsourcedAllowed = unsourcedReleased && consent.isEnabled
             let next = AssistantSession(model: model, knowledge: kn, config: config, history: history, audit: audit)
             observeRelease(of: next)
+            speaker.gate = next.playbackGate
             session = next
         } else {
+            speaker.gate = nil
             session = nil
         }
         turns = history
@@ -489,7 +490,10 @@ final class AssistantController: ObservableObject {
 
     /// Rückruf des Kerns bei JEDER Erhöhung der Freigabe-Generation (Opt-in, Bereiche, Zustimmung, „Ohne Quelle fortsetzen“).
     /// Er kommt auf beliebigem Thread und springt auf den MainActor; der Controller hält dann Stimme und Warteschlange an,
-    /// auch wenn kein Satz mehr unterwegs ist, den der Kern selbst noch widerrufen könnte.
+    /// auch wenn kein Satz mehr unterwegs ist, den der Kern selbst noch widerrufen könnte. Was SYNCHRON beim Auslöser wirkt,
+    /// liegt im Kern: Die Wiedergabesperre (`speaker.gate`) ist beim Rückkehren der Erhöhung schon vorgerückt, ein neuer Start
+    /// eines Satzes älterer Generation ist damit ausgeschlossen. Der Speaker selbst gehört dem MainActor und lässt sich nicht
+    /// von diesem Thread stoppen: Ein schon klingender Satz verstummt erst mit `stop()` hier (MainActor).
     private func observeRelease(of session: AssistantSession) {
         let id = ObjectIdentifier(session)
         session.setReleaseObserver { [weak self] generation in
@@ -1062,17 +1066,18 @@ final class AssistantController: ObservableObject {
         deliver(run)
     }
 
-    /// Prüft unmittelbar vor einem Ausgabe-Commit (Anzeige, Audiostart), ob die Generation des Satzes noch die aktuelle ist,
-    /// und meldet das Ergebnis mit der geprüften Generation an die Sitzung (Satzspur im Protokoll). `reportPass: false`: nur
-    /// eine Ablehnung melden (Übergabe an die Stimme; der Audiostart selbst wird vor dem Klang noch einmal geprüft und gemeldet).
-    private func admits(_ run: AssistantRun, _ index: Int, _ stage: AssistantCommitStage, reportPass: Bool = true) -> Bool {
+    /// Geordneter Ausgabe-Commit (Anzeige, Übergabe an die Stimme, Audiostart-Meldung): `body` läuft im Kern IM selben Lock, in
+    /// dem die Freigabe-Generation steigt (`AssistantSession.commitOutput`), und nur, wenn die Generation des Satzes noch die
+    /// aktuelle ist; nach der Rückkehr einer Erhöhung läuft kein `body` einer älteren Generation mehr. Das Ergebnis geht mit
+    /// der geprüften Generation in die Satzspur des Protokolls. `reportPass: false`: nur eine Ablehnung melden.
+    /// `body`: kurz und synchron, ohne I/O, und er ruft NIE in die Sitzung zurück (`releaseGeneration`, `setAllowUnsourced`,
+    /// `releaseDidChange`, `commitOutput` hängen dort, `NSLock` ist nicht rekursiv); nur Zustand der Anzeige und Einreihen in
+    /// die Stimme. Folgearbeit (Richtlinie, Meldungen) gehört nach den Aufruf.
+    private func commitOutput(_ run: AssistantRun, _ index: Int, _ stage: AssistantCommitStage, reportPass: Bool = true,
+                              _ body: () -> Void) -> Bool {
         guard let session else { return false }
-        let current = session.releaseGeneration
-        let ok = AssistantReleaseGate.admits(eventGeneration: run.sentences[index].generation, current: current)
-        if reportPass || !ok {
-            session.noteCommit(requestId: run.id, index: index, stage: stage, ok: ok, generation: current)
-        }
-        return ok
+        return session.commitOutput(requestId: run.id, index: index, generation: run.sentences[index].generation, stage: stage,
+                                    reportPass: reportPass, body)
     }
 
     /// Neue Quellen, Sätze und das Ende an Anzeige und Stimme weitergeben. Leere Sprechtexte (reine Adressen) werden
@@ -1096,19 +1101,21 @@ final class AssistantController: ObservableObject {
             let sentence = run.sentences[index]
             // Ansagen („Aus deinen Inhalten, …“, „Ohne Quelle:“) werden nur gesprochen, alles andere auch angezeigt.
             if sentence.status != .announcement {
-                guard admits(run, index, .display) else {
+                guard commitOutput(run, index, .display, { showLive(sentence) }) else {
                     stopForRevocation(Self.revokedText, retry: run.text)
                     return
                 }
-                showLive(sentence)
             }
             if !sentence.speech.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                guard admits(run, index, .audio, reportPass: false) else {
+                // Übergabe an die Stimme im Commit; der Audiostart selbst wird beim Start des Satzes noch einmal geprüft.
+                let handedOver = commitOutput(run, index, .audio, reportPass: false) {
+                    run.enqueued.append(index)
+                    speaker.enqueue(sentence.speech, generation: sentence.generation)
+                }
+                guard handedOver else {
                     stopForRevocation(Self.revokedText, retry: run.text)
                     return
                 }
-                run.enqueued.append(index)
-                speaker.enqueue(sentence.speech)
             }
             run.delivered += 1
         }
@@ -1144,14 +1151,14 @@ final class AssistantController: ObservableObject {
 
     private func sentenceStarted(_ text: String) {
         guard let run = current, run.startMs.count < run.enqueued.count else { return }
-        // Audiostart-Commit: Die Stimme meldet den Beginn, bevor sie spielt. Ist die Generation inzwischen veraltet, verstummt
-        // sie, ohne dass dieser Satz erklingt.
-        guard admits(run, run.enqueued[run.startMs.count], .audio) else {
+        // Audiostart-Commit: Die Stimme meldet den Beginn, bevor sie spielt (Wiedergabesperre und Generation hat sie zuvor schon
+        // geprüft und prüft sie vor dem Klang noch einmal). Ist die Generation inzwischen veraltet, verstummt sie, ohne dass
+        // dieser Satz erklingt; der Speaker beginnt nach dieser Meldung nur, wenn er nicht gestoppt wurde.
+        let at = nowMs
+        guard commitOutput(run, run.enqueued[run.startMs.count], .audio, { run.startMs.append(at) }) else {
             stopForRevocation(Self.revokedText, retry: run.text)
             return
         }
-        let at = nowMs
-        run.startMs.append(at)
         perform(policy.feed(.sentenceSpoken(text: text, startedAtMs: at, endedAtMs: nil)))
     }
 

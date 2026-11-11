@@ -22,9 +22,15 @@ final class BookTalkSpeaker {
     /// Ende erklang, nicht nach `stop()`, nicht bei hängendem Audio (`PhononAudioStalled`) und nicht bei abgebrochener Systemstimme.
     var onSentenceStarted: ((String) -> Void)?
     var onSentenceFinished: ((String) -> Void)?
+    /// Wiedergabesperre des Gesprächsmodus („verworfen ab Generation g“, atomar, vom Kern im Lock der Freigabe vorgerückt). Ein
+    /// Satz einer verworfenen Generation startet nie: Die Sperre wird vor der Übernahme aus der Warteschlange, nach der Meldung
+    /// `onSentenceStarted` und unmittelbar vor dem Start der Stimme gefragt. `nil` (Standard, Buch-Gespräch): keine Sperre.
+    /// Grenze: Dieser Speaker gehört dem MainActor und lässt sich von anderen Threads nicht stoppen; ein Satz, dessen Klang
+    /// schon begonnen hat, verstummt erst mit `stop()` (Controller, MainActor), nicht schon beim Auslöser.
+    var gate: AssistantPlaybackGate?
 
     private(set) var isActive = false
-    private var queue: [String] = []
+    private var queue: [(text: String, generation: Int)] = []
     private var generation = 0
     private var inputFinished = true
     private var task: Task<Void, Never>?
@@ -39,10 +45,11 @@ final class BookTalkSpeaker {
         inputFinished = false
     }
 
-    func enqueue(_ speech: String) {
+    /// `generation`: Freigabe-Generation des Satzes (nur mit `gate`; sonst ohne Bedeutung).
+    func enqueue(_ speech: String, generation: Int = 0) {
         let text = speech.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !inputFinished else { return }
-        queue.append(text)
+        queue.append((text, generation))
         pump()
     }
 
@@ -83,10 +90,16 @@ final class BookTalkSpeaker {
             if self?.conversationMode != true { Self.activatePlayback() }
             var announced = false
             while let self, g == self.generation, !self.queue.isEmpty {
-                let text = self.queue.removeFirst()
+                let item = self.queue.removeFirst()
+                let text = item.text
+                // Verworfene Generation: der Satz startet nicht (die Sperre steht, sobald die Erhöhung zurückgekehrt ist). Die Ausgabe
+                // endet still (kein `onIdle`): Der Beobachter des Controllers räumt auf und meldet den Widerruf.
+                guard self.permits(item.generation) else { self.stop(); break }
                 if !announced { announced = true; self.onAudible?() }
                 self.onSentenceStarted?(text)
-                let played = await self.speak(text, generation: g)
+                // Die Meldung kann die Ausgabe beendet haben (Widerruf): dann startet dieser Satz nicht.
+                guard g == self.generation else { break }
+                let played = await self.speak(text, sentenceGeneration: item.generation, generation: g)
                 if played, g == self.generation { self.onSentenceFinished?(text) }
             }
             guard let self, g == self.generation else { return }
@@ -102,6 +115,8 @@ final class BookTalkSpeaker {
         try? session.setCategory(.playback, mode: .spokenAudio)
         try? session.setActive(true)
     }
+
+    private func permits(_ sentenceGeneration: Int) -> Bool { gate?.permits(sentenceGeneration) ?? true }
 
     private func finishIfDrained() {
         guard queue.isEmpty, inputFinished else { return }
@@ -124,7 +139,9 @@ final class BookTalkSpeaker {
     }
 
     /// `true`, wenn der Satz wirklich bis zum Ende erklang; `false` bei Abbruch oder hängendem Audio (Satz zählt als nicht gesprochen).
-    private func speak(_ text: String, generation g: Int) async -> Bool {
+    private func speak(_ text: String, sentenceGeneration: Int, generation g: Int) async -> Bool {
+        // Letzte Prüfung unmittelbar vor dem Start der Stimme (nach der Meldung `onSentenceStarted`).
+        guard g == generation, permits(sentenceGeneration) else { return false }
         if let name = phononName(for: language) {
             do {
                 try await PhononEngine.shared.speak(text, voice: name, rate: 1)
@@ -138,7 +155,7 @@ final class BookTalkSpeaker {
                 phononFailed = true
             }
         }
-        guard g == generation else { return false }
+        guard g == generation, permits(sentenceGeneration) else { return false }
         return await system.speak(text, language: language, voiceID: voiceID)
     }
 }

@@ -269,13 +269,111 @@ final class AssistantContextTests: XCTestCase {
         XCTAssertFalse(prompts.all.first?.instructions.contains("In dieser Runde siehst du keine Inhalte") ?? true)
     }
 
-    func testReleasedIsTheDefaultAndMatchesTheConstant() async {
-        XCTAssertTrue(AssistantUnsourcedConsent.isReleased)
+    /// Harte Abschaltung: Die Produktkonstante ist `false`, und der ÖFFENTLICHE Initializer kennt kein `released`: Die Sitzung
+    /// übernimmt immer die Konstante.
+    func testTheFreeModeIsSwitchedOffByTheProductConstantAndThePublicInitializerCannotChooseIt() async {
+        XCTAssertFalse(AssistantUnsourcedConsent.isReleased)
         let s = AssistantSession(model: ReplyModel(pieces: []), knowledge: await castorpKnowledge(), config: open)
         XCTAssertEqual(s.isReleased, AssistantUnsourcedConsent.isReleased)
-        XCTAssertTrue(s.allowsUnsourced)
-        XCTAssertEqual(s.contextMode, .free)
-        XCTAssertFalse(s.canResumeFree, "frei: kein Knopf")
+        XCTAssertFalse(s.isReleased)
+        XCTAssertFalse(s.allowsUnsourced, "die Konfiguration mit Opt-in zählt nicht")
+        XCTAssertEqual(s.contextMode, .data)
+        XCTAssertFalse(s.canResumeFree)
+    }
+
+    /// Einstieg 1: `setAllowUnsourced(true)` der öffentlichen Sitzung ändert nichts (keine neue Generation, kein freier Zustand,
+    /// keine Runde ohne Quelle).
+    func testPublicSetAllowUnsourcedDoesNotReachTheFreeState() async {
+        let prompts = Prompts()
+        let s = AssistantSession(model: ReplyModel(pieces: [mont], prompts: prompts), knowledge: await castorpKnowledge(), config: strict)
+        let g = s.releaseGeneration
+        XCTAssertEqual(s.setAllowUnsourced(true, consentVersion: 1), g)
+        XCTAssertFalse(s.allowsUnsourced)
+        XCTAssertEqual(s.contextMode, .data)
+        let events = await collect(s, "r1", "Wie hoch ist der Mont Blanc?")
+        XCTAssertEqual(answer(events)?.round, .data)
+        XCTAssertFalse(statuses(events).contains(.unsourced))
+        XCTAssertFalse(prompts.all.first?.instructions.contains("In dieser Runde siehst du keine Inhalte") ?? true)
+    }
+
+    /// Einstieg 2: `resumeFree()` der öffentlichen Sitzung tut nichts (auch nicht nach einer Datenrunde).
+    func testPublicResumeFreeDoesNothing() async {
+        let s = AssistantSession(model: ReplyModel(pieces: []), knowledge: await castorpKnowledge(), config: open,
+                                 history: [turn(.data)])
+        let g = s.releaseGeneration
+        XCTAssertFalse(s.resumeFree())
+        XCTAssertFalse(s.canResumeFree)
+        XCTAssertEqual(s.releaseGeneration, g, "keine neue Generation")
+        XCTAssertEqual(s.contextMode, .data)
+    }
+
+    /// Einstieg 3: Die Konfiguration mit `allowUnsourced == true` öffnet nichts.
+    func testConfigurationAllowUnsourcedDoesNotReachTheFreeState() async {
+        let prompts = Prompts()
+        let s = AssistantSession(model: ReplyModel(pieces: [mont], prompts: prompts), knowledge: await castorpKnowledge(), config: open)
+        XCTAssertTrue(open.allowUnsourced)
+        XCTAssertFalse(s.allowsUnsourced)
+        XCTAssertEqual(s.contextMode, .data)
+        let events = await collect(s, "r1", "Wie hoch ist der Mont Blanc?")
+        XCTAssertEqual(answer(events)?.round, .data)
+        XCTAssertFalse(statuses(events).contains(.unsourced), "das Modell bietet Allgemeinwissen an, das System gibt es nicht aus")
+        XCTAssertEqual(answer(events)?.unsourced, false)
+    }
+
+    /// Einstieg 4: Eine gespeicherte Einwilligung `true` (so baut der Controller die Konfiguration) öffnet nichts.
+    func testStoredConsentTrueDoesNotReachTheFreeState() async {
+        let suite = "assistant-consent-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let consent = AssistantUnsourcedConsent(defaults: defaults)
+        consent.grant()
+        XCTAssertTrue(consent.isEnabled, "die Einwilligung ist gespeichert")
+        var config = strict
+        config.allowUnsourced = consent.isEnabled
+        config.consentVersion = consent.version
+        let s = AssistantSession(model: ReplyModel(pieces: [mont]), knowledge: await castorpKnowledge(), config: config)
+        XCTAssertFalse(s.allowsUnsourced)
+        XCTAssertEqual(s.contextMode, .data)
+        let events = await collect(s, "r1", "Wie hoch ist der Mont Blanc?")
+        XCTAssertFalse(statuses(events).contains(.unsourced))
+    }
+
+    /// Einstieg 5: Ein Verlauf, dessen letzte Runde ohne Quelle war, öffnet nichts, und ihr Beitrag gelangt weder in den Verlauf
+    /// der Sitzung noch in einen Prompt (auch nicht über `restore`).
+    func testHistoryWithAGeneralLastRoundDoesNotReachTheFreeStateAndItsTurnsNeverEnterAPrompt() async {
+        let prompts = Prompts()
+        let general = AssistantTurn(user: "Wie hoch ist der Mont Blanc?", assistant: "Der Zebrastreifenberg ist hoch.", general: true,
+                                    unsourced: true, model: "Test", round: .general)
+        let s = AssistantSession(model: ReplyModel(pieces: [castorpText], prompts: prompts), knowledge: await castorpKnowledge(), config: open,
+                                 history: [turn(.data, "Alte Frage"), general])
+        XCTAssertEqual(s.contextMode, .data)
+        var kept = await s.history
+        XCTAssertEqual(kept.map(\.user), ["Alte Frage"], "der Beitrag ohne Quelle ist nicht im Verlauf")
+        await s.restore(history: [general, turn(.data, "Noch eine Frage")])
+        kept = await s.history
+        XCTAssertEqual(kept.map(\.user), ["Noch eine Frage"])
+        _ = await collect(s, "r1", castorpQuestion)
+        let prompt = prompts.all.map { $0.prompt + $0.instructions }.joined()
+        XCTAssertFalse(prompt.contains("Zebrastreifenberg"), "Text aus einer Runde ohne Quelle gelangt nie in einen Prompt")
+    }
+
+    /// Die reine Filterfunktion: Rundenart `.general`, ein Satz oder Abschnitt ohne Quelle (auch alte Beiträge ohne das Feld, die
+    /// über `general` gelten) fallen bei `released == false` heraus; Beiträge mit Quelle und der feste Satz einer Datenrunde nicht.
+    func testAdmittedFiltersTurnsOfRoundsWithoutASourceOnlyWhenNotReleased() {
+        let sourced = AssistantTurn(user: "a", assistant: "A", sources: [castorp], model: "T", round: .data)
+        let fixed = AssistantTurn(user: "f", assistant: "Dazu finde ich nichts in deinen Inhalten.", general: true, model: "T", round: .data)
+        let general = AssistantTurn(user: "g", assistant: "G", general: true, unsourced: true, model: "T", round: .general)
+        let mixed = AssistantTurn(user: "m", assistant: "M", sources: [castorp], unsourced: false,
+                                  parts: [AssistantTurnPart(text: "Z", unsourced: false, quote: true), AssistantTurnPart(text: "F", unsourced: true)],
+                                  model: "T", round: .data)
+        let flagged = AssistantTurn(user: "u", assistant: "U", unsourced: true, model: "T", round: nil)
+        let all = [sourced, fixed, general, mixed, flagged]
+        XCTAssertEqual(AssistantTurn.admitted(all, released: false).map(\.user), ["a", "f"])
+        XCTAssertEqual(AssistantTurn.admitted(all, released: true).map(\.user), ["a", "f", "g", "m", "u"], "freigeschaltet: nichts fällt weg")
+        // Alte Datei ohne das Feld `unsourced`: gilt über `general`.
+        let legacy = Data(#"{"user":"alt","assistant":"Antwort","interrupted":false,"sources":[],"general":true,"model":"T","at":0}"#.utf8)
+        let decoded = try? JSONDecoder().decode(AssistantTurn.self, from: legacy)
+        XCTAssertEqual(decoded.map { AssistantTurn.admitted([$0], released: false).count }, 0)
     }
 
     /// „Allgemein: Wohin fährt Hans Castorp?“ mit Treffer bleibt Datenrunde; danach bleibt „Welche Person trägt künftig die
@@ -283,7 +381,7 @@ final class AssistantContextTests: XCTestCase {
     func testHitStaysADataRoundAndTheNextQuestionStaysLockedInTheSession() async {
         let prompts = Prompts()
         let s = AssistantSession(model: ReplyModel(pieces: [castorpText.replacingOccurrences(of: "ins Sanatorium ", with: "")], prompts: prompts),
-                                 knowledge: await castorpKnowledge(), config: open)
+                                 knowledge: await castorpKnowledge(), config: open, released: true)
         let first = await collect(s, "r1", "Allgemein: Wohin fährt Hans Castorp?")
         XCTAssertEqual(answer(first)?.round, .data)
         XCTAssertEqual(statuses(first), [.announcement, .grounded])
@@ -292,7 +390,7 @@ final class AssistantContextTests: XCTestCase {
 
         let kept = await s.history
         let talking = AssistantSession(model: ReplyModel(pieces: ["Die Verantwortung trägt künftig Anna. Sie ist die neue Leiterin."], prompts: prompts),
-                                       knowledge: await castorpKnowledge(), config: open, history: kept)
+                                       knowledge: await castorpKnowledge(), config: open, history: kept, released: true)
         let second = await collect(talking, "r2", "Welche Person trägt künftig die Verantwortung?")
         XCTAssertEqual(answer(second)?.round, .data, "nach einer Datenrunde bleibt es dabei")
         XCTAssertFalse(statuses(second).contains(.unsourced))
@@ -300,7 +398,7 @@ final class AssistantContextTests: XCTestCase {
     }
 
     func testStateAfterNewConversationFollowsTheInitialRule() async {
-        let s = AssistantSession(model: ReplyModel(pieces: [castorpText]), knowledge: await castorpKnowledge(), config: open)
+        let s = AssistantSession(model: ReplyModel(pieces: [castorpText]), knowledge: await castorpKnowledge(), config: open, released: true)
         _ = await collect(s, "r1", castorpQuestion)
         XCTAssertEqual(s.contextMode, .data)
         await s.clearHistory()
@@ -315,7 +413,7 @@ final class AssistantContextTests: XCTestCase {
     func testPromptAfterResumeFreeContainsNoEarlierDataTurnNorEarlierFreeTurn() async {
         let prompts = Prompts()
         let hist = [AssistantTurn(user: "Frage zum Buch", assistant: "Hans Castorp fährt nach Davos zu Joachim.", round: .data)]
-        let s = AssistantSession(model: ReplyModel(pieces: [mont], prompts: prompts), knowledge: await castorpKnowledge(), config: open, history: hist)
+        let s = AssistantSession(model: ReplyModel(pieces: [mont], prompts: prompts), knowledge: await castorpKnowledge(), config: open, history: hist, released: true)
         XCTAssertEqual(s.contextMode, .data)
         XCTAssertTrue(s.canResumeFree)
         let g = s.releaseGeneration
@@ -351,7 +449,7 @@ final class AssistantContextTests: XCTestCase {
     func testResumeFreeRaisesTheGenerationRevokesRunsAndNotifiesTheObserver() async {
         let seen = Generations()
         let s = AssistantSession(model: ReplyModel(pieces: [mont]), knowledge: await castorpKnowledge(), config: open,
-                                 history: [AssistantTurn(user: "F", assistant: "A", round: .data)])
+                                 history: [AssistantTurn(user: "F", assistant: "A", round: .data)], released: true)
         s.setReleaseObserver { seen.add($0) }
         let g = s.releaseGeneration
         XCTAssertTrue(s.resumeFree())
@@ -366,7 +464,7 @@ final class AssistantContextTests: XCTestCase {
     /// Der Beobachter hört jede Erhöhung, auch nach dem Modellende, bei Bestandsantworten und ohne angemeldeten Lauf.
     func testObserverFiresOnEveryIncreaseIncludingInventoryAnswersAfterTheModelEnded() async {
         let seen = Generations()
-        let s = AssistantSession(model: ReplyModel(pieces: []), knowledge: await castorpKnowledge(), config: strict)
+        let s = AssistantSession(model: ReplyModel(pieces: []), knowledge: await castorpKnowledge(), config: strict, released: true)
         s.setReleaseObserver { seen.add($0) }
         let g0 = s.releaseGeneration
         let events = await collect(s, "r1", "Welche Bücher habe ich?")
@@ -388,7 +486,7 @@ final class AssistantContextTests: XCTestCase {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("assistant-context-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let audit = AssistantAuditLog(directory: dir)
-        let s = AssistantSession(model: ReplyModel(pieces: [castorpText]), knowledge: await castorpKnowledge(), config: strict, audit: audit)
+        let s = AssistantSession(model: ReplyModel(pieces: [castorpText]), knowledge: await castorpKnowledge(), config: strict, audit: audit, released: true)
         let events = await collect(s, "r1", castorpQuestion)
         XCTAssertNotNil(answer(events), "das Modell ist fertig, die Antwort auch")
         XCTAssertEqual(s.registeredRunCount, 1)
@@ -422,7 +520,7 @@ final class AssistantContextTests: XCTestCase {
         var refused = 0
         for i in 0..<60 {
             let id = "r\(i)"
-            let s = AssistantSession(model: ReplyModel(pieces: [castorpText]), knowledge: await castorpKnowledge(), config: strict, audit: audit)
+            let s = AssistantSession(model: ReplyModel(pieces: [castorpText]), knowledge: await castorpKnowledge(), config: strict, audit: audit, released: true)
             _ = await collect(s, id, castorpQuestion)
             let results = await withTaskGroup(of: Int.self) { group -> [Int] in
                 group.addTask {

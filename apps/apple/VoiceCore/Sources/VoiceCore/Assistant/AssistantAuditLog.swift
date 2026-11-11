@@ -324,7 +324,11 @@ public struct AssistantAuditRead: Sendable, Equatable {
 /// Eine Zeile des Journals (`t` = Art). Felder, die nicht gelten, fehlen. Kein Textfeld.
 struct AssistantJournalLine: Codable, Equatable {
     enum Kind: String, Codable, Equatable {
-        case start, step, commit, end, event
+        /// `start`: erste Zeile einer Anfrage, steht in der Datei VOR dem Abruf (Zeit, Modell, lokal/Cloud, Modus, Fassung, Generation,
+        /// Sitzung, Kontextzustand vorher). `round`: Rundenart und Grund, sobald gewählt. `areas`: Bereiche der Quellen, sobald sie
+        /// feststehen (vor dem Modellaufruf bzw. bei Bestandsangaben), nicht erst im `end`. `round` und `areas` sind additiv:
+        /// ältere Dateien (Rundenart im `start`, Bereiche nur im `end`) laden unverändert.
+        case start, step, commit, end, event, round, areas
     }
 
     var t: Kind
@@ -396,6 +400,8 @@ enum AssistantJournalFold {
         var entries: [AssistantAuditEntry] = []
         var byRequest: [String: Int] = [:]
         var endLevel: [Int: AssistantAuditLevel] = [:]
+        /// Bereiche aus den Zeilen `areas` (je Eintrag; die Vereinigung gilt, solange kein `end` sie ablöst).
+        var offered: [Int: Set<String>] = [:]
         var journalEntries: [Int] = []
         var skipped = 0
         for data in lines {
@@ -429,10 +435,17 @@ enum AssistantJournalFold {
                 } else {
                     skipped += 1
                 }
+            case .round:
+                guard let req = l.req, let i = byRequest[req], let round = l.round else { skipped += 1; continue }
+                entries[i].round = round
+                if let reason = l.reason { entries[i].contextReason = reason }
+            case .areas:
+                guard let req = l.req, let i = byRequest[req], let areas = l.areas else { skipped += 1; continue }
+                offered[i, default: []].formUnion(areas)
             case .end:
                 guard let req = l.req, let i = byRequest[req] else { skipped += 1; continue }
                 entries[i].outcome = l.outcome
-                entries[i].areas = l.areas ?? []
+                entries[i].areas = l.areas ?? (offered[i] ?? []).sorted()
                 if let level = l.level { endLevel[i] = level }
             case .event:
                 var e = AssistantAuditEntry(at: l.at ?? .distantPast, kind: l.kind ?? .unsourcedOn, cloud: l.cloud ?? false,
@@ -443,7 +456,10 @@ enum AssistantJournalFold {
         }
         for i in journalEntries {
             entries[i].counts = counts(from: entries[i].trace)
-            if entries[i].outcome == nil { entries[i].outcome = .incomplete }
+            if entries[i].outcome == nil {
+                entries[i].outcome = .incomplete
+                entries[i].areas = (offered[i] ?? []).sorted()   // kein `end`: die Bereiche stammen aus den Zeilen `areas`
+            }
             entries[i].level = max(AssistantAuditLevel.of(entries[i].counts), endLevel[i] ?? .s0)
         }
         return (entries, skipped)
@@ -607,19 +623,24 @@ final class AssistantAuditWriter: @unchecked Sendable {
         var keys: [String] = []
         var started: [String] = []
         var ended = Set<String>()
+        var offered: [String: Set<String>] = [:]
         for (i, l) in lines.enumerated() {
             if let j = AssistantJournalFold.journal(l), let req = j.req, j.t != .event {
                 keys.append("r:" + req)
                 if j.t == .start, !started.contains(req) { started.append(req) }
                 if j.t == .end { ended.insert(req) }
+                if j.t == .areas, let a = j.areas { offered[req, default: []].formUnion(a) }
             } else {
                 keys.append("l:\(i)")
             }
         }
+        // Das Wiederherstellungs-Ende faltet die Bereiche aus den vorhandenen Zeilen `areas`; die Rundenart steht in ihrer Zeile
+        // `round` und braucht nichts. Was das Prozessende überlebt hat, geht so nicht verloren.
         let closing: [Data] = started.filter { !ended.contains($0) }.compactMap { req in
             var end = AssistantJournalLine(.end, req: req)
             end.at = Date()
             end.outcome = .incomplete
+            end.areas = (offered[req] ?? []).sorted()
             return try? Self.encoder().encode(end)
         }
 
@@ -749,6 +770,9 @@ public struct AssistantAuditLog: Sendable {
         writer.enqueue(line)
         return await writer.flush(request: line.req, consume: false) == nil
     }
+
+    /// Wartet, bis alles bis hierher Eingereihte geschrieben ist; ein Fehler der Anfrage bleibt für ihren Abschluss gemerkt.
+    func waitUntilWritten(request: String) async { _ = await writer.flush(request: request, consume: false) }
 
     /// Wartet, bis alle Zeilen der Anfrage geschrieben sind. Der Fehler dieser Anfrage, sonst `nil`.
     func flush(request: String) async -> AssistantAuditError? { await writer.flush(request: request) }
