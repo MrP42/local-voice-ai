@@ -187,6 +187,11 @@ fn meta_zeichensatz(attr: &[Attribut<'_>]) -> Option<Zeichensatz> {
 /// ersten 1024 Bytes, nach dem Vorabscan des HTML-Standards (Groß-/Kleinschreibung egal, es wird nichts
 /// ausgeführt). Jedes Tag wird mit seinen Attributen gelesen; Kommentare sowie `<script>`- und
 /// `<style>`-Inhalte zählen nicht. Ein unbekannter Name (z. B. ein Mehrbytesatz) wird übergangen.
+/// Elemente, deren Inhalt der HTML-Parser als Text liest; ein `<meta>` darin ist kein Element.
+const ROH_TEXT: [&str; 8] = [
+    "script", "style", "title", "textarea", "xmp", "iframe", "noembed", "noframes",
+];
+
 fn html_zeichensatz(b: &[u8]) -> Option<Zeichensatz> {
     let kopf: String = b[..b.len().min(1024)]
         .iter()
@@ -234,15 +239,21 @@ fn html_zeichensatz(b: &[u8]) -> Option<Zeichensatz> {
             }
             continue;
         }
-        if matches!(name, "script" | "style") {
-            // Erst hinter dem vollständigen Starttag suchen; endet nur an `</name` mit Namensgrenze.
+        if name == "plaintext" {
+            // Alles Folgende ist Text.
+            return None;
+        }
+        if ROH_TEXT.contains(&name) {
+            // Inhalt ist Text (RAWTEXT/RCDATA): erst hinter dem vollständigen Starttag suchen; endet nur an
+            // `</name` mit Namensgrenze.
             let zu = format!("</{name}");
             let mut such = pos;
             pos = kopf.len();
             while let Some(e) = kopf[such..].find(&zu) {
                 let nach = such + e + zu.len();
                 if kopf[nach..].chars().next().is_none_or(grenze) {
-                    pos = nach;
+                    // Das Endtag samt zitierter Attribute bis `>` überspringen.
+                    pos = nach + attribute(&kopf[nach..]).1;
                     break;
                 }
                 such = nach;
@@ -638,12 +649,23 @@ mod tests {
             "<meta content=\"text/html; charset=windows-1252\">",
             "<meta http-equiv=refresh content=\"0; charset=windows-1252\">",
             "<meta name=x content='charset=windows-1252'>",
+            "<script></script title=\"<meta charset=windows-1252>\">",
+            "<style></style title='<meta charset=windows-1252>'>",
+            "<title><meta charset=windows-1252></title>",
+            "<textarea><meta charset=windows-1252></textarea>",
+            "<xmp><meta charset=windows-1252></xmp>",
+            "<iframe><meta charset=windows-1252></iframe>",
+            "<noembed><meta charset=windows-1252></noembed>",
+            "<noframes><meta charset=windows-1252></noframes>",
+            "<plaintext></plaintext><meta charset=windows-1252>",
         ] {
             let mut b = kopf.as_bytes().to_vec();
             b.extend_from_slice(b"<p>");
             b.extend_from_slice(utf8);
             b.extend_from_slice(b"</p>");
-            assert_eq!(text_von(&b), "ä", "{kopf}");
+            // Rohtext-Inhalte (z. B. `<textarea>`) dürfen als Text erscheinen; entscheidend ist UTF-8.
+            let t = text_von(&b);
+            assert!(t.contains('ä') && !t.contains('Ã'), "{kopf}: {t}");
         }
         // Ein echtes `<meta>` hinter einem Kommentar gilt weiterhin.
         let b = b"<!-- x --><meta charset=windows-1252><p>5\x80</p>";
