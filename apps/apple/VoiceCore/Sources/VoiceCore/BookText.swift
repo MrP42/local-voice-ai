@@ -380,6 +380,13 @@ enum EpubToc {
             while q < n {
                 let c = b[q]
                 if let open = quote { if c == open { quote = nil } }
+                else if brackets, square > 0, has("<!--", at: q) {
+                    guard let e = find("-->", from: q + 4) else { return nil }
+                    q = e + 2
+                } else if brackets, square > 0, has("<?", at: q) {
+                    guard let e = find("?>", from: q + 2) else { return nil }
+                    q = e + 1
+                }
                 else if c == 0x22 || c == 0x27 { quote = c }
                 else if brackets, c == 0x5B { square += 1 }
                 else if brackets, c == 0x5D, square > 0 { square -= 1 }
@@ -425,6 +432,21 @@ enum EpubToc {
                 let name = String(decoding: b[nameStart..<q], as: UTF8.self).lowercased()
                 let local = name.split(separator: ":").last.map(String.init) ?? name
                 let selfClosing = !closing && b[end - 1] == 0x2F
+                if !closing, !selfClosing, local == "script" || local == "style" {
+                    // Raw-Text bis zum passenden Endtag (Groß-/Kleinschreibung und Präfix egal). XHTMLText
+                    // überliest script/style ohnehin, sie fallen samt Inhalt weg; ohne Endtag der Rest davon.
+                    var r = end + 1
+                    var stop = n
+                    while let c = find("</", from: r) {
+                        var e = c + 2
+                        while e < n, ![0x20, 0x09, 0x0A, 0x0D, 0x2F, 0x3E].contains(b[e]) { e += 1 }
+                        let other = String(decoding: b[(c + 2)..<e], as: UTF8.self).lowercased()
+                        if (other.split(separator: ":").last.map(String.init) ?? other) == local, let close = find(">", from: e) { stop = close + 1; break }
+                        r = c + 2
+                    }
+                    i = stop
+                    continue
+                }
                 if local == "nav", !(closing && depth == 0) {
                     if closing { depth -= 1 } else if !selfClosing { depth += 1 }
                 } else if depth == 0 {

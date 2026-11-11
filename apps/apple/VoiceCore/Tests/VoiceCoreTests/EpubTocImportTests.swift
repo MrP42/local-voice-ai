@@ -116,6 +116,64 @@ final class EpubTocImportTests: XCTestCase {
         XCTAssertEqual(EpubToc.removingNav("<p>Größe über</p><nav>ä</nav>"), "<p>Größe über</p>")
     }
 
+    func testNavScannerSubsetRawTextCaseAndUnterminatedMarkup() {
+        // DOCTYPE-Subset: Kommentar mit [ und ], PI und Anführungszeichen zählen nicht als Klammern
+        XCTAssertEqual(EpubToc.removingNav("<!DOCTYPE html [<!-- [ -->]><p>Widmung</p><nav>X</nav>"), "<p>Widmung</p>")
+        XCTAssertEqual(EpubToc.removingNav(#"<!DOCTYPE html [<?x ] ?><!ENTITY e "]">]><p>Widmung</p><nav>X</nav>"#), "<p>Widmung</p>")
+        // script/style: Raw-Text bis zum passenden Endtag, auch gemischt und mit Präfix
+        XCTAssertEqual(EpubToc.removingNav(#"<script>let s="<nav>";</script><p>Widmung</p><nav>X</nav>"#), "<p>Widmung</p>")
+        XCTAssertEqual(EpubToc.removingNav("<svg:STYLE>a<nav>b</nav></svg:Style><p>Widmung</p><nav>X</nav>"), "<p>Widmung</p>")
+        XCTAssertEqual(EpubToc.removingNav("<nav><script>x = '</nav>';</script>A</nav><p>B</p>"), "<p>B</p>")
+        XCTAssertEqual(EpubToc.removingNav("<p>a</p><script>nie zu"), "<p>a</p>")
+        // gemischte Großschreibung
+        XCTAssertEqual(EpubToc.removingNav("<p>a</p><NAV><OL/></Nav><p>b</p>"), "<p>a</p><p>b</p>")
+        // unterminiert: Text davor bleibt
+        XCTAssertEqual(EpubToc.removingNav("<p>a</p><!-- offen"), "<p>a</p>")
+        XCTAssertEqual(EpubToc.removingNav("<p>a</p><?pi offen"), "<p>a</p>")
+        XCTAssertEqual(EpubToc.removingNav("<p>a</p><p class=\"x"), "<p>a</p><p class=\"x")
+        XCTAssertEqual(EpubToc.removingNav("<p>a</p><!DOCTYPE x [ <!ENTITY"), "<p>a</p>")
+        XCTAssertEqual(EpubToc.removingNav("<p>a</p><!DOCTYPE html [<!-- offen"), "<p>a</p>")
+    }
+
+    /// Invariante: Text außerhalb der äußersten nav geht nie verloren. Zufällige Folgen aus Bausteinen
+    /// mit bekannter Ausgabe, danach eine echte nav und ein Nachsatz; unterminierte Konstrukte am Ende
+    /// dürfen nichts davor verlieren.
+    func testNavScannerNeverLosesTextOutsideTheOutermostNav() {
+        let items: [(input: String, output: String)] = [
+            ("<p>Text</p>", "<p>Text</p>"), ("Text &amp; mehr", "Text &amp; mehr"),
+            ("<!-- <nav> [ ] -->", ""), ("<!---->", ""), ("<?pi <nav> <!-- ?>", ""),
+            ("<![CDATA[ <nav> & ]]>", " &lt;nav&gt; &amp; "),
+            ("<!DOCTYPE html>", ""), (#"<!DOCTYPE html PUBLIC "-//W3C//DTD" "http://x/y.dtd">"#, ""),
+            (#"<!DOCTYPE html [<!ENTITY e "]"><!-- [ --><?x ] ?><!ENTITY f ']'>]>"#, ""),
+            ("<script>let s=\"<nav>\";</script>", ""), ("<SCRIPT type='x'>if (a<b) {}</Script >", ""),
+            ("<svg:style>a<nav>b</nav></svg:style>", ""), ("<script>a</scriptx>b</script>", ""),
+            ("<script/>", "<script/>"),
+            (#"<p title="<nav>" data-x='a>b'>T</p>"#, #"<p title="<nav>" data-x='a>b'>T</p>"#),
+            ("<navigation>x</navigation>", "<navigation>x</navigation>"), ("<nav-x>y</nav-x>", "<nav-x>y</nav-x>"),
+            ("<nav/>", ""), ("<NAV><OL><li>a</li></OL></nav>", ""), ("<nav><nav>x</nav><p>r</p></nav>", ""),
+            ("<html:nav><script>'</html:nav>'</script></html:nav>", ""),
+        ]
+        let unterminated = ["<!-- offen", "<?pi offen", "<![CDATA[ offen", "<!DOCTYPE x [ <!ENTITY e", "<!DOCTYPE x [<!-- o",
+                            "<p class=\"offen", "<script>offen", "<style>a</styl", "<nav", "</"]
+        var seed: UInt64 = 42
+        func next(_ n: Int) -> Int { seed = seed &* 6364136223846793005 &+ 1442695040888963407; return Int((seed >> 33) % UInt64(n)) }
+        for round in 0..<600 {
+            var input = "", output = ""
+            for _ in 0..<(1 + next(6)) {
+                let item = items[next(items.count)]
+                input += item.input; output += item.output
+            }
+            if round % 3 == 0 {
+                XCTAssertEqual(EpubToc.removingNav(input + "<nav>X<script></nav></script></nav><p>Z</p>"), output + "<p>Z</p>", input)
+            } else if round % 3 == 1 {
+                XCTAssertEqual(EpubToc.removingNav(input), output, input)
+            } else {
+                let tail = unterminated[next(unterminated.count)]
+                XCTAssertTrue(EpubToc.removingNav(input + tail).hasPrefix(output), input + tail)
+            }
+        }
+    }
+
     func testPureFragmentLinksPointToTheTocDocumentItself() {
         let nav = ##"<nav epub:type="toc"><ol><li><a href="#start">Anfang</a></li><li><a href="k.xhtml#a">Eins</a></li></ol></nav>"##
         XCTAssertEqual(EpubToc.nav(nav, baseDir: "OEBPS", source: "OEBPS/nav.xhtml"), [
