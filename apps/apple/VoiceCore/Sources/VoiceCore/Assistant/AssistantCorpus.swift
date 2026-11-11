@@ -1,142 +1,11 @@
 import Foundation
 
-// Gesprächsmodus „Sprechen“ (Paket K): Index im Arbeitsspeicher über Bücher, Transkripte und Notizen.
-// Stücke von ~700 Zeichen mit ~100 Zeichen Überlappung, BM25 über Wortstämme (BookTalkTokens). Nichts davon liegt auf
-// Platte. Kompakt gebaut, damit auch ~30 MB Text passen: ein umgekehrter Index (Stamm → Fundstellen) statt einer
-// Häufigkeitstabelle je Stück, Stücke nur als Text plus wenige Zahlen.
-
-/// Zerlegt Text in Stücke an Absatz-/Satz-/Wortgrenzen und weist je Stück nach, ob Anfang und Ende an einer Satzgrenze liegen.
-enum AssistantChunker {
-    static let target = 700
-    static let overlap = 100
-
-    /// Ein Stück mit Nachweis der Satzgrenzen. Ohne Nachweis wird sein erster bzw. letzter Satz nie zitiert (er kann
-    /// angeschnitten sein).
-    struct Piece: Equatable {
-        let text: String
-        let startsAtBoundary: Bool
-        let endsAtBoundary: Bool
-    }
-
-    /// Nachgewiesene Grenzen eines Textes: Satzanfänge und -enden (abgeschlossen von der Satzerkennung, die Abkürzungen kennt)
-    /// und Absatzgrenzen (Leerzeile). Ein Zeilenumbruch allein beweist nichts (harter Umbruch im Fließtext).
-    private struct Marks {
-        var starts: [Int] = []
-        var ends: [Int] = []
-        let startSet: Set<Int>
-        let endSet: Set<Int>
-
-        init(_ u: [UInt16], text: String) {
-            var starts = Set<Int>()
-            var ends = Set<Int>()
-            for s in BookTalkSentences.split(text) {
-                starts.insert(s.start)
-                ends.insert(s.end)
-            }
-            var i = 0
-            while i < u.count {
-                guard u[i] == 10 else { i += 1; continue }
-                var j = i + 1
-                var breaks = 1
-                while j < u.count, AssistantChunker.isSpace(u[j]) {
-                    if u[j] == 10 { breaks += 1 }
-                    j += 1
-                }
-                if breaks >= 2 {
-                    var t = i
-                    while t > 0, AssistantChunker.isSpace(u[t - 1]) { t -= 1 }
-                    if t > 0 { ends.insert(t) }
-                    if j < u.count { starts.insert(j) }
-                }
-                i = j
-            }
-            startSet = starts
-            endSet = ends
-            self.starts = starts.sorted()
-            self.ends = ends.sorted()
-        }
-
-        static func lastAtMost(_ a: [Int], _ x: Int) -> Int? {
-            var lo = 0, hi = a.count
-            while lo < hi {
-                let m = (lo + hi) / 2
-                if a[m] <= x { lo = m + 1 } else { hi = m }
-            }
-            return lo > 0 ? a[lo - 1] : nil
-        }
-
-        static func firstAtLeast(_ a: [Int], _ x: Int) -> Int? {
-            var lo = 0, hi = a.count
-            while lo < hi {
-                let m = (lo + hi) / 2
-                if a[m] < x { lo = m + 1 } else { hi = m }
-            }
-            return lo < a.count ? a[lo] : nil
-        }
-    }
-
-    /// Teilt einen Abschnitt. Kurze Texte bleiben ein Stück; sonst endet jedes Stück möglichst an einer nachgewiesenen Satz- oder
-    /// Absatzgrenze (dann ein Zeilenumbruch, dann eine Wortgrenze), und das nächste beginnt ~`overlap` Zeichen früher, wenn
-    /// möglich an einem nachgewiesenen Satzanfang, sonst an einer Wortgrenze. Anfang und Ende des Abschnitts tragen
-    /// `startsAtBoundary`/`endsAtBoundary` des Abschnitts, alle inneren Kanten gelten nur mit Nachweis.
-    static func split(_ text: String, startsAtBoundary: Bool = false, endsAtBoundary: Bool = false,
-                      target: Int = AssistantChunker.target, overlap: Int = AssistantChunker.overlap) -> [Piece] {
-        let u = Array(text.utf16)
-        let n = u.count
-        guard n > 0 else { return [] }
-        var first = 0
-        while first < n, isSpace(u[first]) { first += 1 }
-        var last = n
-        while last > first, isSpace(u[last - 1]) { last -= 1 }
-        guard last > first else { return [] }
-        let marks = Marks(u, text: text)
-
-        func piece(_ s: Int, _ e: Int) -> Piece? {
-            var a = s
-            while a < e, isSpace(u[a]) { a += 1 }
-            var b = e
-            while b > a, isSpace(u[b - 1]) { b -= 1 }
-            guard b > a else { return nil }
-            return Piece(text: String(decoding: u[a..<b], as: UTF16.self),
-                         startsAtBoundary: a <= first ? startsAtBoundary : marks.startSet.contains(a),
-                         endsAtBoundary: b >= last ? endsAtBoundary : marks.endSet.contains(b))
-        }
-
-        if n <= target { return piece(0, n).map { [$0] } ?? [] }
-        var out: [Piece] = []
-        var s = 0
-        while s < n {
-            var e = min(s + target, n)
-            if e < n { e = boundary(u, marks: marks, from: s, to: e, target: target) }
-            if let p = piece(s, e) { out.append(p) }
-            if e >= n { break }
-            var next = max(e - overlap, s + 1)
-            if let p = Marks.firstAtLeast(marks.starts, max(e - 2 * overlap, s + 1)), p < e {
-                next = p
-            } else {
-                while next < e, !isSpace(u[next]) { next += 1 }
-                while next < e, isSpace(u[next]) { next += 1 }
-            }
-            s = next >= e ? e : next
-        }
-        return out
-    }
-
-    fileprivate static func isSpace(_ c: UInt16) -> Bool { c == 32 || c == 10 || c == 9 || c == 13 || c == 0xA0 }
-
-    /// Bevorzugt eine nachgewiesene Satz- oder Absatzgrenze, dann einen Zeilenumbruch, dann eine Wortgrenze; sonst harte Kante.
-    private static func boundary(_ u: [UInt16], marks: Marks, from s: Int, to e: Int, target: Int) -> Int {
-        let lower = s + target / 2
-        if let c = Marks.lastAtMost(marks.ends, e), c > lower { return c }
-        var k = e
-        while k > lower { if u[k - 1] == 10 { return k }; k -= 1 }
-        k = e
-        while k > lower { if isSpace(u[k - 1]) { return k }; k -= 1 }
-        // Nicht mitten in ein Surrogatpaar schneiden.
-        if e < u.count, (0xD800...0xDBFF).contains(u[e - 1]) { return e - 1 }
-        return e
-    }
-}
+// Gesprächsmodus „Sprechen“ (Paket K, E4.2b): Index im Arbeitsspeicher über Bücher, Transkripte und Notizen.
+// Die Einheit des Index ist der QUELLBLOCK (`AssistantDocument.Section`: Absatz, Notizblock, Segment), ganz und unverändert:
+// kein Teilen in Stücke, keine Überlappung, kein Zusammenziehen kurzer Blöcke. Ein Block über `AssistantGrounding.maxBlockChars`
+// ist nicht zitierbar und wird nicht indexiert (nie gekürzt oder geteilt); er wird gezählt (`stats`). BM25 über Wortstämme
+// (BookTalkTokens). Nichts davon liegt auf Platte. Kompakt gebaut, damit auch ~30 MB Text passen: ein umgekehrter Index
+// (Stamm → Fundstellen) statt einer Häufigkeitstabelle je Block.
 
 public actor AssistantCorpus {
     private struct Key: Hashable {
@@ -150,6 +19,8 @@ public actor AssistantCorpus {
         var titleStems: Set<String>
         var first: Int
         var count: Int
+        /// Blöcke über der Maximallänge, die nicht indexiert wurden.
+        var tooLong: Int
         var alive: Bool
     }
 
@@ -159,8 +30,6 @@ public actor AssistantCorpus {
         let locator: String?
         let text: String
         let length: Int32
-        /// Bit 0: Anfang an einer Satzgrenze, Bit 1: Ende an einer Satzgrenze (nachgewiesen).
-        let flags: UInt8
         var alive: Bool
     }
 
@@ -190,6 +59,16 @@ public actor AssistantCorpus {
 
     public init() {}
 
+    /// Zahl der zitierbaren Blöcke und der Blöcke über der Maximallänge (nicht indexiert), je Bereich oder gesamt (Messung).
+    public func stats(area: AssistantArea? = nil) -> (blocks: Int, tooLong: Int) {
+        var blocks = 0, tooLong = 0
+        for d in docs where d.alive && (area == nil || d.item.area == area) {
+            blocks += (d.first..<(d.first + d.count)).filter { chunks[$0].alive }.count
+            tooLong += d.tooLong
+        }
+        return (blocks, tooLong)
+    }
+
     public func version(of id: String, area: AssistantArea) -> String? {
         slots[Key(area: area, id: id)].map { docs[$0].version }
     }
@@ -205,21 +84,22 @@ public actor AssistantCorpus {
         let slot = docs.count
         let first = chunks.count
         let areaSlot = document.item.area.order
-        for piece in Self.pieces(document.sections) {
-            let tokens = BookTalkTokens.tokenize(piece.text)
+        var tooLong = 0
+        for block in Self.blocks(document.sections) {
+            guard block.text.count <= AssistantGrounding.maxBlockChars else { tooLong += 1; continue }
+            let tokens = BookTalkTokens.tokenize(block.text)
             guard !tokens.isEmpty else { continue }
             let id = Int32(chunks.count)
             var tf: [String: Int] = [:]
             for t in tokens { tf[t, default: 0] += 1 }
             for (t, f) in tf { postings[t, default: []].append(Posting(chunk: id, tf: UInt16(min(f, Int(UInt16.max))))) }
-            chunks.append(Chunk(doc: Int32(slot), area: UInt8(areaSlot), locator: piece.locator, text: piece.text,
-                                length: Int32(tokens.count), flags: (piece.startsAtBoundary ? 1 : 0) | (piece.endsAtBoundary ? 2 : 0),
-                                alive: true))
+            chunks.append(Chunk(doc: Int32(slot), area: UInt8(areaSlot), locator: block.locator, text: block.text,
+                                length: Int32(tokens.count), alive: true))
             areaChunks[areaSlot] += 1
             areaLength[areaSlot] += tokens.count
         }
         docs.append(Doc(item: document.item, version: document.version, titleStems: Set(BookTalkTokens.tokenize(document.item.title)),
-                        first: first, count: chunks.count - first, alive: true))
+                        first: first, count: chunks.count - first, tooLong: tooLong, alive: true))
         slots[key] = slot
     }
 
@@ -303,7 +183,7 @@ public actor AssistantCorpus {
             perItem[slot, default: 0] += 1
             let item = docs[slot].item
             out.append(AssistantPassage(area: item.area, itemId: item.id, title: item.title, locator: c.locator, text: c.text, score: score,
-                                        startsAtBoundary: c.flags & 1 != 0, endsAtBoundary: c.flags & 2 != 0))
+                                        isBlock: true))
             if out.count >= limit { break }
         }
         return out
@@ -336,41 +216,15 @@ public actor AssistantCorpus {
     private struct Part {
         var locator: String?
         var text: String
-        var startsAtBoundary: Bool
-        var endsAtBoundary: Bool
     }
 
-    /// Stücke aus den Abschnitten. Kurze Abschnitte werden nur zusammengezogen, wenn die Naht nachweislich eine Satzgrenze ist
-    /// (der vorige Abschnitt endet und der nächste beginnt an einer): sonst entstünde ein Satz, der in Wahrheit zwei
-    /// Bruchstücke verbindet. Abschnitte ohne Nachweis bleiben einzelne, kleine Stücke.
-    private static func pieces(_ sections: [AssistantDocument.Section]) -> [Part] {
-        var out: [Part] = []
-        var pending: Part?
-        func flush() {
-            if let p = pending { out.append(p) }
-            pending = nil
-        }
-        for section in sections {
+    /// Die Quellblöcke eines Dokuments: je Abschnitt genau einer, unverändert (nur Leerraum an den Rändern fällt weg). Leere
+    /// Abschnitte entfallen. Ein Block über der Maximallänge wird nicht indexiert.
+    private static func blocks(_ sections: [AssistantDocument.Section]) -> [Part] {
+        sections.compactMap { section in
             let text = section.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { continue }
-            if text.utf16.count > AssistantChunker.target {
-                flush()
-                for piece in AssistantChunker.split(text, startsAtBoundary: section.startsAtBoundary, endsAtBoundary: section.endsAtBoundary) {
-                    out.append(Part(locator: section.locator, text: piece.text, startsAtBoundary: piece.startsAtBoundary,
-                                    endsAtBoundary: piece.endsAtBoundary))
-                }
-            } else if let p = pending, p.locator == section.locator, p.endsAtBoundary, section.startsAtBoundary,
-                      p.text.utf16.count + 1 + text.utf16.count <= AssistantChunker.target {
-                pending = Part(locator: p.locator, text: p.text + "\n" + text, startsAtBoundary: p.startsAtBoundary,
-                               endsAtBoundary: section.endsAtBoundary)
-            } else {
-                flush()
-                pending = Part(locator: section.locator, text: text, startsAtBoundary: section.startsAtBoundary,
-                               endsAtBoundary: section.endsAtBoundary)
-            }
+            return text.isEmpty ? nil : Part(locator: section.locator, text: text)
         }
-        flush()
-        return out
     }
 
     private func drop(_ slot: Int) {
@@ -403,8 +257,7 @@ public actor AssistantCorpus {
             for id in d.first..<(d.first + d.count) where chunks[id].alive {
                 map[id] = Int32(newChunks.count)
                 let c = chunks[id]
-                newChunks.append(Chunk(doc: Int32(slot), area: c.area, locator: c.locator, text: c.text, length: c.length, flags: c.flags,
-                                       alive: true))
+                newChunks.append(Chunk(doc: Int32(slot), area: c.area, locator: c.locator, text: c.text, length: c.length, alive: true))
             }
             nd.count = newChunks.count - nd.first
             newDocs.append(nd)

@@ -11,8 +11,20 @@ import Foundation
 //   Generation); ältere Dateien enthalten sie für alle Fälle;
 // - `release`: jede Erhöhung der Freigabe-Generation, vom Kern im Lock an der Stelle der Erhöhung geschrieben: neue Generation,
 //   Grund (`cause`: optIn, areas, consent, resumeFree, other), bei Bereichen die NEUEN Bereichsnamen, dazu Opt-in-Zustand,
-//   Einwilligungsversion, Modellart und lokal/Cloud. Eine Änderung der Bereiche erhöht zweimal (vor und nach dem Umschalten
-//   der Bereiche) und hinterlässt deshalb zwei Zeilen mit denselben Namen; der Controller kann davor noch eine dritte auslösen.
+//   Einwilligungsversion, Modellart und lokal/Cloud. Eine Änderung erhöht genau EINMAL und schreibt genau EINE Zeile; die
+//   Methode, die sie auslöst, kehrt erst zurück, wenn die Zeile in der Datei steht (Fehler werden gemeldet).
+// - `state`: der Freigabezustand beim Öffnen des Protokolls (Opt-in, Einwilligungsversion, Bereichsnamen, Cloud-Zustimmung
+//   ja/nein), vor der ersten Anfrage. Damit ist „freigegeben“ aus der Datei allein lesbar (Zustand + Zeilen `release`).
+//
+// Schreibfolge (ADR-0028 E4.2b): `start`, `round`, `areas` stehen dauerhaft in der Datei, bevor das Modell läuft oder etwas
+// ausgegeben wird (Fehler: kein Modell, keine Ausgabe, Ausgang „Fehler“). Die Zeile `step` (Einordnung) JEDER Einheit, auch jedes
+// verworfenen Kandidaten, steht dauerhaft in der Datei, bevor der erste Ausgabe-Commit der Einheit geprüft wird; sie behauptet
+// nichts. Das Ergebnis je Commit (`commit`: Kern, Anzeige, Audio, Verlauf) wird im selben Lock eingereiht wie die Prüfung der
+// Generation und die Aktion selbst: „ausgeführt“ (`+`) nur, wenn die Aktion ausgelöst wurde, „verworfen“ (`-`) bei veralteter
+// Generation, „fehlgeschlagen“ (`!`), wenn sie sich nicht auslösen ließ. Ein Prozessende zwischen `step` und Ergebnis hinterlässt
+// einen Schritt ohne Ergebnis: „Ausgabe möglich, Ergebnis unbekannt“ (`AssistantTraceStep.resultUnknown`); die Anfrage wird beim
+// Öffnen als „unvollständig“ geschlossen. Ein Schreibfehler einer Ergebniszeile stoppt die laufende Ausgabe (keine weitere
+// Einheit), Ausgang „Fehler“.
 // Eine Antwort hat damit höchstens so viele Zeilen wie Schritte (ein Lauf endet nach 200 Schritten, Ausgang „begrenzt“); die
 // Spur wird nicht gekappt und nicht im Speicher gesammelt. Ein Absturz mitten in der Antwort hinterlässt `start` und die bis
 // dahin angefallenen Schritte; beim Öffnen bekommt jede Anfrage ohne `end` eines mit Ausgang „unvollständig“. Beim Öffnen
@@ -74,34 +86,38 @@ public enum AssistantCommitStage: String, Sendable, Codable, Equatable {
 }
 
 /// Ergebnis eines Ausgabe-Commits mit der dabei geprüften Generation. Im Protokoll als kurze feste Kennung („d+7“ = Anzeige
-/// ausgeführt bei Generation 7, „a-8“ = Audiostart verworfen bei Generation 8).
+/// ausgeführt bei Generation 7, „a-8“ = Audiostart verworfen bei Generation 8, „a!8“ = Audiostart fehlgeschlagen: die
+/// Generation galt, die Aktion ließ sich aber nicht auslösen). `ok` heißt „Aktion ausgelöst“.
 public struct AssistantCommitMark: Sendable, Equatable, Codable {
     public let stage: AssistantCommitStage
     public let ok: Bool
     public let generation: Int
+    /// Die Generation galt, die Aktion konnte aber nicht ausgelöst werden (`ok` ist dann `false`).
+    public let failed: Bool
 
-    public init(stage: AssistantCommitStage, ok: Bool, generation: Int) {
+    public init(stage: AssistantCommitStage, ok: Bool, generation: Int, failed: Bool = false) {
         self.stage = stage
-        self.ok = ok
+        self.ok = ok && !failed
         self.generation = generation
+        self.failed = failed
     }
 
     public init(from decoder: Decoder) throws {
         let text = try decoder.singleValueContainer().decode(String.self)
         guard let first = text.first, let stage = AssistantCommitStage(code: first), text.count >= 3,
-              let sign = text.dropFirst().first, sign == "+" || sign == "-", let g = Int(text.dropFirst(2)) else {
+              let sign = text.dropFirst().first, sign == "+" || sign == "-" || sign == "!", let g = Int(text.dropFirst(2)) else {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Commit-Kennung"))
         }
-        self.init(stage: stage, ok: sign == "+", generation: g)
+        self.init(stage: stage, ok: sign == "+", generation: g, failed: sign == "!")
     }
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.singleValueContainer()
-        try c.encode("\(stage.code)\(ok ? "+" : "-")\(generation)")
+        try c.encode("\(stage.code)\(failed ? "!" : (ok ? "+" : "-"))\(generation)")
     }
 }
 
-/// Einordnung eines Satzes in der Satzspur: die fünf Klassen (Originalsatz, Bestandsangabe, Satz ohne Quelle, Vorlage,
+/// Einordnung eines Satzes in der Satzspur: die fünf Klassen (Zitat eines Quellblocks, Bestandsangabe, Satz ohne Quelle, Vorlage,
 /// verworfen mit Grund) und die Ansage.
 public enum AssistantTraceVerdict: String, Sendable, Codable, Equatable {
     case grounded, inventory, unsourced, template, announcement
@@ -146,6 +162,15 @@ public struct AssistantTraceStep: Sendable, Equatable, Codable {
         self.commits = commits
     }
 
+    /// Die Einordnung steht, ein Ergebnis fehlt: Die Einheit konnte ausgegeben werden, ob sie es wurde, ist unbekannt (Prozessende
+    /// zwischen Einordnung und Ergebnis). Verworfene Kandidaten behaupten nichts und sind nie „unbekannt“.
+    public var resultUnknown: Bool {
+        switch verdict {
+        case .grounded, .inventory, .unsourced, .template, .announcement: commits.isEmpty
+        default: false
+        }
+    }
+
     private enum CodingKeys: String, CodingKey {
         case n
         case verdict = "v"
@@ -165,8 +190,8 @@ public struct AssistantTraceStep: Sendable, Equatable, Codable {
 public struct AssistantAuditEntry: Sendable, Equatable, Codable {
     public enum Kind: String, Sendable, Codable {
         /// `resumedFree`: der Nutzer hat mit „Ohne Quelle fortsetzen“ den Datenkontext aufgehoben. `release`: eine Erhöhung der
-        /// Freigabe-Generation (vom Kern geschrieben; Grund in `cause`).
-        case answer, unsourcedOn, unsourcedOff, cloudGranted, cloudRevoked, resumedFree, release
+        /// Freigabe-Generation (vom Kern geschrieben; Grund in `cause`). `state`: Freigabezustand beim Öffnen des Protokolls.
+        case answer, unsourcedOn, unsourcedOff, cloudGranted, cloudRevoked, resumedFree, release, state
     }
 
     public enum Outcome: String, Sendable, Codable {
@@ -214,15 +239,18 @@ public struct AssistantAuditEntry: Sendable, Equatable, Codable {
     public var traceOverflow: Int
     /// Verlaufs-Commit der Antwort (nil: kein Beitrag vorgesehen).
     public var history: AssistantCommitMark?
+    /// Zustimmung zum Cloud-Ziel (nur Zeilen `state`).
+    public var cloudConsent: Bool?
 
     public init(at: Date = Date(), kind: Kind, model: String = "", cloud: Bool = false, unsourcedMode: Bool = false,
                 consentVersion: Int = 0, counts: AssistantSentenceCounts = AssistantSentenceCounts(), areas: [AssistantArea] = [],
                 outcome: Outcome? = nil, round: AssistantRoundKind? = nil, level: AssistantAuditLevel? = nil, generation: Int = 0,
                 trace: [AssistantTraceStep] = [], traceOverflow: Int = 0, history: AssistantCommitMark? = nil,
-                cause: AssistantReleaseCause? = nil) {
+                cause: AssistantReleaseCause? = nil, cloudConsent: Bool? = nil) {
         self.at = at
         self.kind = kind
         self.cause = cause
+        self.cloudConsent = cloudConsent
         self.modelKind = AssistantModelKind.classify(label: model)
         self.cloud = cloud
         self.unsourcedMode = unsourcedMode
@@ -250,7 +278,7 @@ public struct AssistantAuditEntry: Sendable, Equatable, Codable {
     /// `neutral`, `dropped`. Neue Felder fehlen dort und bekommen Vorgabewerte.
     private enum CodingKeys: String, CodingKey {
         case at, kind, modelKind, cloud, unsourcedMode, consentVersion, round, level, generation, counts, areas, outcome, trace
-        case traceOverflow, history, requestId, sessionId, contextMode, contextReason, cause
+        case traceOverflow, history, requestId, sessionId, contextMode, contextReason, cause, cloudConsent
         case model, grounded, unsourced, neutral, dropped
     }
 
@@ -288,6 +316,7 @@ public struct AssistantAuditEntry: Sendable, Equatable, Codable {
         contextMode = try c.decodeIfPresent(AssistantContext.Mode.self, forKey: .contextMode)
         contextReason = try c.decodeIfPresent(AssistantContext.Reason.self, forKey: .contextReason)
         cause = try c.decodeIfPresent(AssistantReleaseCause.self, forKey: .cause)
+        cloudConsent = try c.decodeIfPresent(Bool.self, forKey: .cloudConsent)
         let derived = AssistantAuditLevel.of(counts)
         let stored = try c.decodeIfPresent(AssistantAuditLevel.self, forKey: .level)
         level = kind == .answer ? max(stored ?? derived, derived) : stored
@@ -315,6 +344,7 @@ public struct AssistantAuditEntry: Sendable, Equatable, Codable {
         try c.encodeIfPresent(contextMode, forKey: .contextMode)
         try c.encodeIfPresent(contextReason, forKey: .contextReason)
         try c.encodeIfPresent(cause, forKey: .cause)
+        try c.encodeIfPresent(cloudConsent, forKey: .cloudConsent)
     }
 }
 
@@ -345,6 +375,9 @@ struct AssistantJournalLine: Codable, Equatable {
         /// Bereichen die neuen Namen, `unsourced`/`consent`/`model`/`cloud` Zustand danach. Additiv: ältere Fassungen kennen die
         /// Art nicht und überspringen die Zeile (sie bleibt Byte für Byte erhalten).
         case release
+        /// `state`: Freigabezustand beim Öffnen des Protokolls (`unsourced`, `consent`, `areas`, `granted` = Cloud-Zustimmung, `model`,
+        /// `cloud`, `gen`). Additiv wie `release`.
+        case state
     }
 
     var t: Kind
@@ -373,6 +406,8 @@ struct AssistantJournalLine: Codable, Equatable {
     var kind: AssistantAuditEntry.Kind?
     /// Grund der Erhöhung (`release`).
     var cause: AssistantReleaseCause?
+    /// Zustimmung zum Cloud-Ziel (`state`).
+    var granted: Bool?
 
     init(_ t: Kind, req: String? = nil) {
         self.t = t
@@ -473,6 +508,13 @@ enum AssistantJournalFold {
                 e.modelKind = l.model ?? .other
                 e.areas = l.areas ?? []
                 entries.append(e)
+            case .state:
+                var e = AssistantAuditEntry(at: l.at ?? .distantPast, kind: .state, cloud: l.cloud ?? false,
+                                            unsourcedMode: l.unsourced ?? false, consentVersion: l.consent ?? 0, generation: l.gen ?? 0,
+                                            cloudConsent: l.granted)
+                e.modelKind = l.model ?? .other
+                e.areas = l.areas ?? []
+                entries.append(e)
             case .event:
                 var e = AssistantAuditEntry(at: l.at ?? .distantPast, kind: l.kind ?? .unsourcedOn, cloud: l.cloud ?? false,
                                             unsourcedMode: l.unsourced ?? false, consentVersion: l.consent ?? 0, generation: l.gen ?? 0)
@@ -509,6 +551,11 @@ final class AssistantAuditWriter: @unchecked Sendable {
     private var torn = false
     private var openError: AssistantAuditError = .readFailed
     private var errors: [String: AssistantAuditError] = [:]
+    private var errorOrder: [String] = []
+    /// Schlüssel mit unabgeholtem Fehler, hinter einem eigenen Lock (lesbar ohne Warteschlange).
+    private let failedLock = NSLock()
+    private var failed = Set<String>()
+    static let maxErrors = 256
 
     /// Anfragen, über die verdichtet wird (die letzten).
     static let maxUnits = AssistantAuditLog.maxEntries
@@ -587,15 +634,16 @@ final class AssistantAuditWriter: @unchecked Sendable {
 
     // MARK: Schreiben
 
-    /// Hängt eine Zeile an (asynchron, in der Reihenfolge der Aufrufe). Kehrt sofort zurück; ein Fehler wird für die Anfrage
-    /// gemerkt und von `flush` gemeldet.
-    func enqueue(_ line: AssistantJournalLine) {
-        let req = line.req ?? ""
+    /// Hängt eine Zeile an (asynchron, in der Reihenfolge der Aufrufe). Kehrt sofort zurück; ein Fehler wird unter `key` gemerkt
+    /// (Standard: die Anfrage der Zeile) und von `flush` gemeldet. Der Fehler bleibt stehen, bis er gemeldet wird: Er geht nie
+    /// verloren, und `hasFailed` zeigt ihn ohne Warten (Controller: laufende Ausgabe stoppen).
+    func enqueue(_ line: AssistantJournalLine, key: String? = nil) {
+        let k = key ?? line.req ?? ""
         guard let data = try? Self.encoder().encode(line) else {
-            queue.async { self.note(req, .encodeFailed) }
+            queue.async { self.note(k, .encodeFailed) }
             return
         }
-        queue.async { self.write(data, req: req) }
+        queue.async { self.write(data, req: k) }
     }
 
     /// Wartet, bis alles bis hierher Eingereihte geschrieben ist. Gibt den Fehler zurück, der für `request` (oder ohne Anfrage:
@@ -605,14 +653,43 @@ final class AssistantAuditWriter: @unchecked Sendable {
         await withCheckedContinuation { c in
             queue.async {
                 let key = request ?? ""
-                c.resume(returning: consume ? self.errors.removeValue(forKey: key) : self.errors[key])
+                if consume {
+                    c.resume(returning: self.take(key))
+                } else {
+                    c.resume(returning: self.errors[key])
+                }
             }
         }
     }
 
+    /// Hat eine Zeile dieses Schlüssels einen Fehler gemeldet, der noch nicht abgeholt wurde? Ohne Warten und ohne Warteschlange
+    /// (ein Lock): auch aus dem MainActor aufrufbar. Zeigt nur schon geschehene Fehler; für den aktuellen Stand `flush`.
+    func hasFailed(_ key: String) -> Bool {
+        failedLock.lock()
+        defer { failedLock.unlock() }
+        return failed.contains(key)
+    }
+
+    // Nur auf `queue`:
+    private func take(_ key: String) -> AssistantAuditError? {
+        failedLock.lock()
+        failed.remove(key)
+        failedLock.unlock()
+        errorOrder.removeAll { $0 == key }
+        return errors.removeValue(forKey: key)
+    }
+
     private func note(_ req: String, _ error: AssistantAuditError) {
-        if errors.count > 64 { errors.removeAll() }
+        // Obergrenze: der älteste unabgeholte Fehler fällt zuerst heraus (nur bei unabgeholten Fehlern vieler Anfragen).
+        if errors[req] == nil { errorOrder.append(req) }
         errors[req] = error
+        while errorOrder.count > Self.maxErrors {
+            let old = errorOrder.removeFirst()
+            errors[old] = nil
+        }
+        failedLock.lock()
+        failed.insert(req)
+        failedLock.unlock()
     }
 
     private func write(_ line: Data, req: String) {
@@ -787,25 +864,32 @@ public struct AssistantAuditLog: Sendable {
 
     // MARK: Journal (Kern)
 
-    /// Reiht eine Zeile ein; kehrt sofort zurück.
-    func enqueue(_ line: AssistantJournalLine) { writer.enqueue(line) }
+    /// Reiht eine Zeile ein; kehrt sofort zurück. `key`: unter ihm wird ein Schreibfehler gemerkt (Standard: die Anfrage).
+    func enqueue(_ line: AssistantJournalLine, key: String? = nil) { writer.enqueue(line, key: key) }
 
     /// Schreibt die erste Zeile einer Anfrage und wartet, bis sie steht. `false` bei einem Fehler; der Fehler bleibt für den
     /// Abschluss der Anfrage (`flush`) gemerkt, damit er nie verloren geht.
     func begin(_ line: AssistantJournalLine) async -> Bool {
-        writer.enqueue(line)
+        writer.enqueue(line, key: nil)
         return await writer.flush(request: line.req, consume: false) == nil
     }
 
-    /// Wartet, bis alles bis hierher Eingereihte geschrieben ist; ein Fehler der Anfrage bleibt für ihren Abschluss gemerkt.
-    func waitUntilWritten(request: String) async { _ = await writer.flush(request: request, consume: false) }
+    /// Wartet, bis alles bis hierher Eingereihte geschrieben ist, und gibt den Fehler der Anfrage zurück (`nil`: alles steht in
+    /// der Datei). Der Fehler bleibt für den Abschluss der Anfrage gemerkt und ist klebrig: Er geht nie verloren.
+    @discardableResult
+    func waitUntilWritten(request: String) async -> AssistantAuditError? { await writer.flush(request: request, consume: false) }
 
-    /// Wartet, bis alle bisher eingereihten Zeilen ohne Anfrage (Zeilen `release`, Ereignisse) geschrieben sind. Der Fehler dabei
-    /// (Speicher voll, Datei nicht lesbar), sonst `nil`; er wird damit gemeldet und vergessen. Der Controller ruft das nach einer
-    /// Änderung der Freigabe, damit ein Schreibfehler nie still bleibt.
+    /// Hat eine Zeile dieser Anfrage schon einen Schreibfehler gemeldet? Ohne Warten, aus jedem Thread.
+    public func hasFailed(request: String) -> Bool { writer.hasFailed(request) }
+
+    /// Wartet auf die Zeile mit diesem Schlüssel (`release:<Generation>`, `state`) und holt ihren Fehler ab.
+    func waitForLine(key: String) async -> AssistantAuditError? { await writer.flush(request: key) }
+
+    /// Wartet, bis alle bisher eingereihten Zeilen ohne Anfrage (Ereignisse) geschrieben sind. Der Fehler dabei
+    /// (Speicher voll, Datei nicht lesbar), sonst `nil`; er wird damit gemeldet und vergessen.
     public func flushReleaseLines() async -> AssistantAuditError? { await writer.flush(request: nil) }
 
-    /// Wartet, bis alle Zeilen der Anfrage geschrieben sind. Der Fehler dieser Anfrage, sonst `nil`.
+    /// Wartet, bis alle Zeilen der Anfrage geschrieben sind. Der Fehler dieser Anfrage, sonst `nil`; er wird damit abgeholt.
     func flush(request: String) async -> AssistantAuditError? { await writer.flush(request: request) }
 
     // MARK: Ereignisse und Lesen

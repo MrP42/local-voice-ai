@@ -4,19 +4,17 @@ import XCTest
 
 // Gesprächsmodus „Sprechen“ (Paket K): Index über Bücher, Transkripte und Notizen.
 
-/// Testdokument. `boundaries`: Die Abschnitte sind ganze Einheiten (Satzgrenzen an Anfang und Ende nachgewiesen); mit `false`
-/// fehlt der Nachweis, dann werden Randsätze nicht zitiert.
+/// Testdokument: jeder Abschnitt ist ein gespeicherter Quellblock.
 func assistantDoc(_ id: String, _ title: String, area: AssistantArea = .books, version: String = "1", detail: String? = nil,
-                  updated: Date? = nil, boundaries: Bool = true, sections: [(String?, String)]) -> AssistantDocument {
+                  updated: Date? = nil, sections: [(String?, String)]) -> AssistantDocument {
     AssistantDocument(item: AssistantItem(area: area, id: id, title: title, detail: detail, updated: updated), version: version,
-                      sections: sections.map { .init(locator: $0.0, text: $0.1, startsAtBoundary: boundaries, endsAtBoundary: boundaries) })
+                      sections: sections.map { .init(locator: $0.0, text: $0.1) })
 }
 
-/// Passage mit nachgewiesenen Satzgrenzen an beiden Rändern (ein ganzer Auszug).
+/// Passage als ganzer gespeicherter Block (`whole`) oder als Teil eines Blocks (`whole: false`: nicht zitierbar).
 func assistantPassage(_ area: AssistantArea = .books, itemId: String = "b1", title: String = "Buch", locator: String? = nil, text: String,
                       score: Double = 1, whole: Bool = true) -> AssistantPassage {
-    AssistantPassage(area: area, itemId: itemId, title: title, locator: locator, text: text, score: score, startsAtBoundary: whole,
-                     endsAtBoundary: whole)
+    AssistantPassage(area: area, itemId: itemId, title: title, locator: locator, text: text, score: score, isBlock: whole)
 }
 
 final class AssistantCorpusTests: XCTestCase {
@@ -29,128 +27,41 @@ final class AssistantCorpusTests: XCTestCase {
         return (0..<sentences).map { i in i % 5 == 0 ? "Hier geht es um \(topic)." : fillers[(i + seed) % fillers.count] }.joined(separator: " ")
     }
 
-    // MARK: Chunker
+    // MARK: Blöcke (ein Abschnitt der Quelle = ein Block im Index, nie geteilt, nie zusammengezogen)
 
-    private func split(_ text: String) -> [String] { AssistantChunker.split(text).map(\.text) }
+    private func blockTexts(_ passages: [AssistantPassage]) -> [String] { passages.map(\.text) }
 
-    func testChunkerKeepsShortTextAsOne() {
-        XCTAssertEqual(split("Ein kurzer Text."), ["Ein kurzer Text."])
-        XCTAssertEqual(split("   \n  "), [])
+    /// Jeder Abschnitt wird EIN Block: Zeilenumbrüche darin bleiben, zwei Blöcke werden nie zusammengezogen.
+    func testEachSectionIsOneStoredBlockAndNeverMergedOrSplit() async {
+        let corpus = AssistantCorpus()
+        let multi = "Dr.\nMeyer hat das Projekt Nordlicht geplant."
+        let other = "Berta kümmert sich um das Budget des Projekts Nordlicht."
+        await corpus.upsert(assistantDoc("n", "Notiz", area: .notes, sections: [("A", multi), ("B", other)]))
+        let found = await corpus.search("Projekt Nordlicht", areas: all, limit: 5)
+        XCTAssertEqual(Set(blockTexts(found)), [multi, other], "zwei Blöcke, unverändert, mit Zeilenumbruch")
+        XCTAssertTrue(found.allSatisfy(\.isBlock))
+        XCTAssertEqual(found.first { $0.text == multi }?.locator, "A")
     }
 
-    /// Satzgrenzen-Nachweis: Anfang und Ende des Abschnitts tragen die Flags des Abschnitts, innere Kanten nur mit Nachweis.
-    func testChunkerFlagsBoundariesOnlyWithProof() {
-        let short = AssistantChunker.split("Ein kurzer Text.", startsAtBoundary: true, endsAtBoundary: false)
-        XCTAssertEqual(short, [.init(text: "Ein kurzer Text.", startsAtBoundary: true, endsAtBoundary: false)])
-        let sentence = "Dies ist ein Satz mit einigen Wörtern darin."
-        let text = Array(repeating: sentence, count: 60).joined(separator: " ")
-        let pieces = AssistantChunker.split(text, startsAtBoundary: true, endsAtBoundary: true)
-        XCTAssertGreaterThan(pieces.count, 3)
-        XCTAssertTrue(pieces.first!.startsAtBoundary)
-        XCTAssertTrue(pieces.last!.endsAtBoundary)
-        // Jede Kante, die als Satzgrenze gilt, ist wirklich eine: Anfang mit Großbuchstaben, Ende mit Punkt.
-        for p in pieces {
-            if p.startsAtBoundary { XCTAssertTrue(p.text.hasPrefix("Dies ist"), p.text) }
-            if p.endsAtBoundary { XCTAssertTrue(p.text.hasSuffix("darin."), p.text) }
-        }
-        // Mit Satzenden als Schnitt und Satzanfängen im Überlappungsfenster sind innere Kanten nachgewiesen.
-        for p in pieces.dropLast() { XCTAssertTrue(p.endsAtBoundary, "Schnitt an Satzende: \(p.text.suffix(30))") }
-        XCTAssertTrue(pieces.dropFirst().allSatisfy { $0.startsAtBoundary })
-        // Ohne Abschnittsnachweis bleiben Anfang und Ende offen.
-        let open = AssistantChunker.split(text)
-        XCTAssertFalse(open.first!.startsAtBoundary)
-        XCTAssertFalse(open.last!.endsAtBoundary)
+    /// Ein Block über `maxBlockChars` wird nicht aufgenommen (nie gekürzt, nie geteilt) und ist in der Statistik als zu lang gezählt.
+    func testOverlongBlockIsNeverIndexedShortenedOrSplit() async {
+        let corpus = AssistantCorpus()
+        let long = String(repeating: "Das Projekt Nordlicht wird weiter geplant. ", count: 20).trimmingCharacters(in: .whitespaces)
+        XCTAssertGreaterThan(long.count, AssistantGrounding.maxBlockChars)
+        let ok = "Das Projekt Nordlicht startet im Mai."
+        await corpus.upsert(assistantDoc("n", "Notiz", area: .notes, sections: [(nil, long), (nil, ok)]))
+        let found = await corpus.search("Projekt Nordlicht", areas: all, limit: 5)
+        XCTAssertEqual(blockTexts(found), [ok], "nur der kurze Block; kein Teil des langen")
+        let stats = await corpus.stats(area: .notes)
+        XCTAssertEqual(stats.blocks, 1)
+        XCTAssertEqual(stats.tooLong, 1)
     }
 
-    /// Ein harter Schnitt mitten im Wort (Text ohne Satzzeichen) beweist nichts: keine der inneren Kanten gilt.
-    func testChunkerHardCutsProveNothing() {
-        let pieces = AssistantChunker.split(String(repeating: "wort ", count: 400), startsAtBoundary: true, endsAtBoundary: true)
-        XCTAssertGreaterThan(pieces.count, 2)
-        for p in pieces.dropFirst() { XCTAssertFalse(p.startsAtBoundary) }
-        for p in pieces.dropLast() { XCTAssertFalse(p.endsAtBoundary) }
-    }
-
-    /// Eine Abkürzung am Schnitt ist kein Satzende („z. B.“): kein Nachweis.
-    func testChunkerAbbreviationIsNoSentenceEnd() {
-        let filler = String(repeating: "Das ist ein ganz gewöhnlicher Satz ohne Besonderheit. ", count: 12)
-        let text = filler + "Das gilt etwa für Kosten, z. B. Miete und Strom und alles Weitere bis hier hin und weiter und weiter. " + filler
-        for p in AssistantChunker.split(text, startsAtBoundary: true, endsAtBoundary: true) where p.endsAtBoundary && !p.text.hasSuffix(".") {
-            XCTFail("Ende ohne Satzzeichen als Grenze gemeldet: \(p.text.suffix(30))")
-        }
-        for p in AssistantChunker.split(text) where p.endsAtBoundary { XCTAssertFalse(p.text.hasSuffix("z."), p.text) }
-    }
-
-    /// Absatzgrenzen (Leerzeile) zählen als Nachweis, ein einzelner Zeilenumbruch nicht.
-    func testChunkerParagraphBreakProvesBoundaryButSingleNewlineDoesNot() {
-        let para = String(repeating: "Wort ", count: 30).trimmingCharacters(in: .whitespaces)
-        let blank = AssistantChunker.split(Array(repeating: para, count: 12).joined(separator: "\n\n"))
-        XCTAssertGreaterThan(blank.count, 2)
-        XCTAssertTrue(blank.dropLast().allSatisfy { $0.endsAtBoundary }, "Schnitt an der Leerzeile")
-        XCTAssertTrue(blank.dropFirst().allSatisfy { $0.startsAtBoundary }, "Anfang am Absatzanfang im Überlappungsfenster")
-        let single = AssistantChunker.split(Array(repeating: para, count: 12).joined(separator: "\n"))
-        XCTAssertGreaterThan(single.count, 2)
-        XCTAssertFalse(single.dropLast().contains { $0.endsAtBoundary }, "ein einzelner Zeilenumbruch beweist nichts")
-        XCTAssertFalse(single.dropFirst().contains { $0.startsAtBoundary })
-    }
-
-    /// Kurze Abschnitte werden nur zusammengezogen, wenn die Naht nachweislich eine Satzgrenze ist.
-    func testShortSectionsMergeOnlyAcrossProvenBoundaries() async {
-        let proven = AssistantCorpus()
-        await proven.upsert(AssistantDocument(item: AssistantItem(area: .notes, id: "n", title: "Notiz"), version: "1", sections: [
-            .init(locator: "L", text: "Anna übernimmt die Planung des Projekts.", startsAtBoundary: true, endsAtBoundary: true),
-            .init(locator: "L", text: "Bernd kümmert sich um das Budget des Projekts.", startsAtBoundary: true, endsAtBoundary: true),
-        ]))
-        let merged = await proven.search("Planung Budget Projekt", areas: all, limit: 5)
-        XCTAssertEqual(merged.count, 1, "nachgewiesene Naht: ein Stück")
-        XCTAssertTrue(merged[0].startsAtBoundary && merged[0].endsAtBoundary)
-
-        let open = AssistantCorpus()
-        await open.upsert(AssistantDocument(item: AssistantItem(area: .notes, id: "n", title: "Notiz"), version: "1", sections: [
-            .init(locator: "L", text: "Anna übernimmt die Planung des Projekts", startsAtBoundary: true, endsAtBoundary: false),
-            .init(locator: "L", text: "Bernd kümmert sich um das Budget des Projekts.", startsAtBoundary: false, endsAtBoundary: true),
-        ]))
-        let separate = await open.search("Planung Budget Projekt", areas: all, limit: 5)
-        XCTAssertEqual(separate.count, 2, "keine nachgewiesene Naht: getrennte Stücke")
-        XCTAssertTrue(separate.allSatisfy { !($0.startsAtBoundary && $0.endsAtBoundary) })
-    }
-
-    func testChunkerSizesOverlapAndBoundaries() {
-        let sentence = "Dies ist ein Satz mit einigen Wörtern darin."
-        let text = Array(repeating: sentence, count: 60).joined(separator: " ")
-        let chunks = split(text)
-        XCTAssertGreaterThan(chunks.count, 3)
-        for c in chunks { XCTAssertLessThanOrEqual(c.utf16.count, 700) }
-        for c in chunks.dropLast() { XCTAssertGreaterThanOrEqual(c.utf16.count, 300, "nicht winzig außer dem letzten") }
-        // An Satzgrenzen geschnitten: jedes Stück außer dem letzten endet mit Satzzeichen.
-        for c in chunks.dropLast() { XCTAssertTrue(c.hasSuffix("."), c) }
-        // Überlappung: der Anfang jedes Stücks kommt am Ende des vorigen vor.
-        for (a, b) in zip(chunks, chunks.dropFirst()) {
-            let head = String(b.prefix(40))
-            XCTAssertTrue(a.contains(head), "keine Überlappung zwischen \(a.suffix(60)) und \(head)")
-        }
-        // Nichts geht verloren: der Text ist aus den Stücken lückenlos rekonstruierbar.
-        XCTAssertTrue(chunks.first!.hasPrefix("Dies ist ein Satz"))
-        XCTAssertTrue(chunks.last!.hasSuffix("darin."))
-    }
-
-    func testChunkerPrefersNewlines() {
-        let para = String(repeating: "Wort ", count: 100)
-        let text = para + "\n" + para + "\n" + para
-        let chunks = split(text)
-        XCTAssertLessThanOrEqual(chunks[0].utf16.count, 500, "schneidet am Zeilenende statt bei 700")
-        XCTAssertTrue(chunks.dropLast().allSatisfy { $0.hasSuffix("Wort") })
-    }
-
-    func testChunkerHandlesTextWithoutSpaces() {
-        let text = String(repeating: "a", count: 2_000)
-        let chunks = split(text)
-        XCTAssertGreaterThan(chunks.count, 2)
-        XCTAssertTrue(chunks.allSatisfy { $0.utf16.count <= 700 })
-    }
-
-    func testChunkerDoesNotSplitSurrogatePairs() {
-        let text = String(repeating: "😀", count: 800)
-        for c in split(text) { XCTAssertTrue(c.unicodeScalars.allSatisfy { $0 == "😀" }) }
+    func testEmptySectionsAreSkippedAndEdgesTrimmedOnly() async {
+        let corpus = AssistantCorpus()
+        await corpus.upsert(assistantDoc("n", "Notiz", area: .notes, sections: [(nil, "  \n "), (nil, "  Ein Block über Beispielburg.  ")]))
+        let found = await corpus.search("Beispielburg", areas: all, limit: 5)
+        XCTAssertEqual(blockTexts(found), ["Ein Block über Beispielburg."])
     }
 
     // MARK: Index
@@ -236,12 +147,12 @@ final class AssistantCorpusTests: XCTestCase {
 
     func testAtMostThreePassagesPerItemSoSeveralSourcesAppear() async {
         let corpus = AssistantCorpus()
-        let long = (0..<30).map { i in
-            (i % 2 == 0 ? "Photosynthese wandelt Licht in Energie um, Abschnitt \(i). " : "Abschnitt \(i) handelt von etwas ganz anderem. ") + String(repeating: "Füllwort ", count: 60)
-        }.joined(separator: "\n")
-        await corpus.upsert(assistantDoc("big", "Biologie", sections: [(nil, long)]))
+        let long: [(String?, String)] = (0..<30).map { i in
+            (nil, (i % 2 == 0 ? "Photosynthese wandelt Licht in Energie um, Abschnitt \(i). " : "Abschnitt \(i) handelt von etwas ganz anderem. ") + String(repeating: "Füllwort ", count: 20))
+        }
+        await corpus.upsert(assistantDoc("big", "Biologie", sections: long))
         await corpus.upsert(assistantDoc("small", "Gartenbuch", sections: [(nil, "Photosynthese passiert in den Blättern deiner Tomaten.")]))
-        await corpus.upsert(assistantDoc("auto", "Autos", sections: [(nil, String(repeating: "Motor Getriebe Reifen Bremsen Lenkrad. ", count: 30))]))
+        await corpus.upsert(assistantDoc("auto", "Autos", sections: [(nil, String(repeating: "Motor Getriebe Reifen Bremsen Lenkrad. ", count: 10))]))
         let hits = await corpus.search("Photosynthese", areas: all, limit: 8)
         XCTAssertEqual(hits.filter { $0.itemId == "big" }.count, 3)
         XCTAssertTrue(hits.contains { $0.itemId == "small" })
@@ -289,14 +200,15 @@ final class AssistantCorpusTests: XCTestCase {
         XCTAssertEqual(Set(without.map(\.itemId)), ["a", "b"])
     }
 
-    func testShortSectionsWithSameLocatorAreMergedOthersAreNot() async {
+    /// Auch kurze Blöcke mit demselben Ort werden NIE zusammengezogen: jeder Abschnitt bleibt ein eigener Block.
+    func testShortSectionsWithSameLocatorStayDistinctBlocks() async {
         let corpus = AssistantCorpus()
         await corpus.upsert(assistantDoc("t", "Besprechung", area: .transcripts, sections: [
             ("00:01:00", "Budget Planung Quartal."), ("00:01:00", "Budget Freigabe Quartal."), ("00:02:00", "Budget Kürzung Quartal."),
         ]))
         let hits = await corpus.search("Budget Quartal", areas: all, limit: 10)
-        XCTAssertEqual(hits.count, 2)
-        XCTAssertEqual(Set(hits.compactMap(\.locator)), ["00:01:00", "00:02:00"])
+        XCTAssertEqual(hits.count, 3)
+        XCTAssertEqual(Set(blockTexts(hits)), ["Budget Planung Quartal.", "Budget Freigabe Quartal.", "Budget Kürzung Quartal."])
     }
 
     func testItemsAreSortedNewestFirst() async {
@@ -330,8 +242,8 @@ final class AssistantCorpusTests: XCTestCase {
         for round in 0..<12 {
             var docs: [AssistantDocument] = []
             for i in 0..<30 {
-                let text = (0..<8).map { "Runde\(round) Dokument\(i) Satz\($0) Wörtchen " + String(repeating: "füllung ", count: 80) }.joined(separator: "\n")
-                docs.append(assistantDoc("d\(i)", "Dokument \(i)", area: .notes, version: "r\(round)", sections: [(nil, text)]))
+                let blocks: [(String?, String)] = (0..<8).map { (nil, "Runde\(round) Dokument\(i) Satz\($0) Wörtchen " + String(repeating: "füllung ", count: 20)) }
+                docs.append(assistantDoc("d\(i)", "Dokument \(i)", area: .notes, version: "r\(round)", sections: blocks))
             }
             for d in docs { await corpus.upsert(d) }
         }
@@ -353,7 +265,7 @@ final class AssistantCorpusTests: XCTestCase {
             var sections: [(String?, String)] = []
             for p in 0..<50 {
                 let topic = topics[(b + p) % topics.count]
-                sections.append(("S. \(p)", "Hier geht es um \(topic) und ihre Folgen für Haus \(b) Seite \(p). " + String(repeating: "Dazu gibt es allerlei zu berichten, was kaum jemand wissen will. ", count: 10)))
+                sections.append(("S. \(p)", "Hier geht es um \(topic) und ihre Folgen für Haus \(b) Seite \(p). " + String(repeating: "Dazu gibt es allerlei zu berichten, was kaum jemand wissen will. ", count: 6)))
             }
             await corpus.upsert(assistantDoc("b\(b)", "Buch \(b)", sections: sections))
         }

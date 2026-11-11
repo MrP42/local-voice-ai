@@ -1,209 +1,117 @@
 import XCTest
 @testable import VoiceCore
 
-// Abschnitte mit Nachweis der Satzgrenzen (Paket A, lva#494, Befund H3): Nähte, Lücken, Kapitel, Lesegrenze.
-// Ohne Nachweis (`false`) wird der Randsatz eines Auszugs nie als Originalsatz zitiert.
+// Quellblöcke (Paket A, lva#494, E4.2b, Befund H3): Die Einheit des Zitierens ist der gespeicherte Block zwischen STRUKTURELLEN
+// Grenzen der Quelle, nie ein Satz. Die App erzeugt keine Grenze aus Satzzeichen, trennt nichts innerhalb eines Blocks und zieht
+// keine zwei Blöcke zusammen.
 
 final class AssistantSectionsTests: XCTestCase {
-    // MARK: Naht
+    // MARK: Notiz (Textblöcke zwischen Leerzeilen)
 
-    func testSeamIsProvenOnlyByARealSentenceBoundary() {
-        XCTAssertTrue(AssistantSeam.proven("Anna übernimmt die Planung.", "Danach folgt die Leitung."))
-        XCTAssertTrue(AssistantSeam.proven("Er sagte: „Niemals.“", "Dann ging er."), "schließende Anführungszeichen")
-        XCTAssertTrue(AssistantSeam.proven("  Das war gut.\n", "\nDann ging es weiter."), "Leerraum am Rand zählt nicht")
-        XCTAssertFalse(AssistantSeam.proven("Anna übernimmt", "künftig die Planung."), "kein Satzzeichen")
-        XCTAssertFalse(AssistantSeam.proven("Das war gut.", "dann ging es weiter."), "Kleinbuchstabe danach")
-        XCTAssertFalse(AssistantSeam.proven("Das gilt z. B.", "Dann gilt es."), "Abkürzung davor")
-        XCTAssertFalse(AssistantSeam.proven("", "Dann."), "leerer Text")
-        XCTAssertFalse(AssistantSeam.proven("   ", nil), "nur Leerraum")
+    func testNoteBlocksAreSeparatedOnlyByBlankLinesAndStayUnchangedInside() {
+        let text = "Erster Block mit zwei Zeilen.\nDie zweite Zeile gehört dazu.\n\nZweiter Block.\n   \nDritter Block ohne Satzzeichen"
+        let blocks = AssistantSections.blocks(of: text, locator: nil)
+        XCTAssertEqual(blocks.map(\.text), [
+            "Erster Block mit zwei Zeilen.\nDie zweite Zeile gehört dazu.", "Zweiter Block.", "Dritter Block ohne Satzzeichen",
+        ])
     }
 
-    /// EINE konservative Prüfung (fail-closed): Abkürzungen, Initialen, Ordnungszahlen, Auslassungspunkte, Kleinbuchstabe und
-    /// Ziffer danach beweisen nichts; ein ganzer Satz mit Satzzeichen und Großbuchstabe danach schon.
-    func testSeamRuleIsFailClosedForAbbreviationsInitialsOrdinalsEllipsesAndTheNextWord() {
-        for before in ["Anna spricht mit Dr.", "Anna spricht mit Prof.", "Anna nennt die Nr.", "Anna spricht mit Hr.", "Das gilt z. B.",
-                       "Das gilt z.B.", "Anna trifft Frau A.", "Anna kommt am 3.", "Am 12.05.2026.", "Sie wohnt in der Bahnhofstr.",
-                       "Sie wohnt in der Hauptstr.", "Anna überlegt lange…", "Anna überlegt lange...", "Anna sagt vgl.", "Anna kennt ca.",
-                       "Das war ein Test.", "Wir trafen Hrn. Meyer, Fr.", "Das ist Mecklenburg-Vorpommern."] {
-            XCTAssertFalse(AssistantSeam.proven(before, "Meyer über Projekt Nordlicht."), "\(before)")
+    /// Eine Abkürzung am Zeilenende trennt NICHTS: Der Block ist der Text zwischen Leerzeilen, auch mit „Dr.“ oder
+    /// „Regierungsdir.“ am Ende einer Zeile (negativ, Codex-Gegenbeispiele).
+    func testAnAbbreviationAtTheEndOfALineNeverSplitsTheBlock() {
+        for first in ["Dr.", "Regierungsdir.", "Prof.", "z. B.", "Nr.", "Das gilt für Dr."] {
+            let text = "\(first)\nMeyer hat das Protokoll gelesen."
+            let blocks = AssistantSections.blocks(of: text, locator: "Notiz")
+            XCTAssertEqual(blocks.count, 1, first)
+            XCTAssertEqual(blocks.first?.text, text, first)
         }
-        XCTAssertFalse(AssistantSeam.proven("Anna beendet die Planung.", "danach folgt das Budget."), "Kleinbuchstabe danach")
-        XCTAssertFalse(AssistantSeam.proven("Anna beendet die Planung.", "3 Teams folgen dem Projekt."), "Ziffer danach")
-        XCTAssertFalse(AssistantSeam.proven("Anna beendet die Planung.", "– Danach folgt das Budget."), "Gedankenstrich ist kein öffnendes Zeichen")
-        XCTAssertTrue(AssistantSeam.proven("Anna beendet die Planung.", "Danach folgt das Budget."))
-        XCTAssertTrue(AssistantSeam.proven("Bernd hilft mit.", "Danach folgt das Budget."), "„mit“ steht in der Liste der Kurzwörter")
-        XCTAssertTrue(AssistantSeam.proven("Das ist ein Plan, den wir erwarten?", "Danach folgt das Budget."))
-        XCTAssertTrue(AssistantSeam.proven("Wirklich!", "Danach folgt das Budget."))
-        XCTAssertTrue(AssistantSeam.proven("Er sagte: „Das stimmt.“", "„Danach“ ging er."), "Anführungszeichen werden abgezogen")
-        XCTAssertFalse(AssistantSeam.proven("Anna beendet die Planung (siehe oben.)", "Danach folgt das Budget."), "„oben“: vier Buchstaben, nicht gelistet")
-        XCTAssertTrue(AssistantSeam.proven("Anna beendet das hier.", "Danach folgt das Budget."), "„hier“ steht in der Liste")
     }
 
-    func testSeamWithoutSuccessorNeedsTheSentenceEndAtTheTextItself() {
-        XCTAssertTrue(AssistantSeam.proven("Das ist gut.", nil))
-        XCTAssertFalse(AssistantSeam.proven("Mal sehen…", nil), "Auslassungspunkte beweisen kein Satzende")
-        XCTAssertFalse(AssistantSeam.proven("Mal sehen...", nil))
-        XCTAssertTrue(AssistantSeam.proven("Geht das?", nil))
-        XCTAssertFalse(AssistantSeam.proven("Das ist gut", nil), "ohne Satzzeichen")
-        XCTAssertFalse(AssistantSeam.proven("Das ist z. B.", nil), "Abkürzung am Ende beweist kein Satzende")
-        XCTAssertFalse(AssistantSeam.proven("Anna für Projekt Nordlicht", nil))
-        XCTAssertTrue(AssistantSeam.proven("Das ist gut.", ""), "leerer Nachfolger zählt wie keiner")
+    func testTwoBlocksAreNeverMergedAndNeverShortened() {
+        let a = "Anna übernimmt die Planung."
+        let b = "Danach folgt die Leitung durch Berta."
+        let blocks = AssistantSections.blocks(of: "\(a)\n\n\(b)", locator: nil)
+        XCTAssertEqual(blocks.map(\.text), [a, b])
     }
 
-    // MARK: Ganze Einheiten, erzeugter Text
-
-    func testWholeUnitsCarryBothEdgesAndGeneratedTextNone() {
-        let whole = AssistantSections.whole("Notiz ohne Punkt", locator: "01.02.2026, 10:00")
-        XCTAssertTrue(whole.startsAtBoundary)
-        XCTAssertTrue(whole.endsAtBoundary)
-        XCTAssertEqual(whole.locator, "01.02.2026, 10:00")
-        let generated = AssistantSections.generated("Zusammenfassung: Alles gut.", locator: "Protokoll")
-        XCTAssertFalse(generated.startsAtBoundary)
-        XCTAssertFalse(generated.endsAtBoundary)
+    func testWhitespaceOnlyEdgesFallAwayButNothingElse() {
+        let blocks = AssistantSections.blocks(of: "\n\n  Ein Block mit  doppelten  Leerzeichen.  \n\n\n", locator: "L")
+        XCTAssertEqual(blocks.map(\.text), ["Ein Block mit  doppelten  Leerzeichen."])
+        XCTAssertEqual(blocks.first?.locator, "L")
+        XCTAssertTrue(AssistantSections.blocks(of: "  \n \n", locator: nil).isEmpty)
     }
 
-    // MARK: Transkript
+    // MARK: Protokoll (erzeugt)
 
-    private func seg(_ start: Double, _ body: String, usable: Bool = true) -> AssistantSegment {
-        AssistantSegment(start: start, line: body, body: body, usable: usable)
+    func testGeneratedMinutesPartsAreOneBlockEachAndEmptyPartsAreSkipped() {
+        let blocks = AssistantSections.generated(["Zusammenfassung: Es ging um Beispielburg.", "  ", "Beschlüsse: Keine."], locator: "Protokoll")
+        XCTAssertEqual(blocks.map(\.text), ["Zusammenfassung: Es ging um Beispielburg.", "Beschlüsse: Keine."])
+        XCTAssertEqual(Set(blocks.map(\.locator)), ["Protokoll"])
     }
 
-    private func meeting(_ segments: [AssistantSegment], seconds: Double = 60, chars: Int = 900) -> [AssistantDocument.Section] {
-        AssistantSections.meeting(segments, seconds: seconds, chars: chars) { "t\(Int($0))" }
+    // MARK: Besprechung (Segment der Aufnahme)
+
+    func testMeetingBlockIsOneUsableSegmentInTimeOrder() {
+        let segments = [
+            AssistantSegment(start: 0, line: "Anna: Wir beginnen mit dem Budget", usable: true),
+            AssistantSegment(start: 5, line: "Berta: nicht freigegeben", usable: false),
+            AssistantSegment(start: 9, line: "   ", usable: true),
+            AssistantSegment(start: 12, line: "Berta: Das Budget steht. Der Plan folgt.", usable: true),
+        ]
+        let blocks = AssistantSections.meeting(segments) { "\(Int($0)) s" }
+        XCTAssertEqual(blocks.map(\.text), ["Anna: Wir beginnen mit dem Budget", "Berta: Das Budget steht. Der Plan folgt."])
+        XCTAssertEqual(blocks.map(\.locator), ["0 s", "12 s"])
     }
 
-    func testMeetingStartAndEndOfTheRecordingAreProvenBySentences() {
-        let sections = meeting([seg(0, "Anna übernimmt die Planung."), seg(10, "Danach folgt die Leitung.")])
+    func testMeetingWithoutUsableSegmentsHasNoBlocks() {
+        XCTAssertTrue(AssistantSections.meeting([AssistantSegment(start: 0, line: "A: x", usable: false)]) { _ in "" }.isEmpty)
+        XCTAssertTrue(AssistantSections.meeting([]) { _ in "" }.isEmpty)
+    }
+
+    // MARK: Buch (Absatz)
+
+    private func paragraph(_ tag: String) -> String {
+        (1...4).map { "Satz \(tag) \($0) handelt von der Stadt Beispielburg am Fluss." }.joined(separator: " ")
+    }
+
+    private func bookBlocks(_ parts: [String]) -> [BookTalkBlock] {
+        BookTalkIndex.blocks(in: parts.joined(separator: "\n\n"))
+    }
+
+    func testBookBlockIsOneParagraphWithChapterTitleAsLocator() {
+        let paragraphs = bookBlocks(["# Kapitel Eins", paragraph("A"), paragraph("B"), "# Kapitel Zwei", paragraph("C")])
+        let sections = AssistantSections.book(paragraphs, frontier: nil)
+        XCTAssertEqual(sections.map(\.text), [paragraph("A"), paragraph("B"), paragraph("C")], "ganze Absätze, unverändert")
+        XCTAssertEqual(sections.map(\.locator), ["Kapitel Eins", "Kapitel Eins", "Kapitel Zwei"])
+    }
+
+    func testBookParagraphWithAnAbbreviationAtALineEndIsOneBlock() {
+        let text = "# Kapitel Eins\n\nRegierungsdir.\nMeyer hat das Protokoll gelesen und unterschrieben."
+        let sections = AssistantSections.book(BookTalkIndex.blocks(in: text), frontier: nil)
         XCTAssertEqual(sections.count, 1)
-        XCTAssertEqual(sections[0].text, "Anna übernimmt die Planung.\nDanach folgt die Leitung.")
-        XCTAssertEqual(sections[0].locator, "t0")
-        XCTAssertTrue(sections[0].startsAtBoundary, "Beginn der Aufnahme")
-        XCTAssertTrue(sections[0].endsAtBoundary)
+        XCTAssertTrue(sections.first?.text.hasPrefix("Regierungsdir.") ?? false)
+        XCTAssertTrue(sections.first?.text.hasSuffix("unterschrieben.") ?? false, "kein Schnitt nach der Abkürzung")
     }
 
-    func testMeetingEndWithoutSentencePunctuationIsNotProven() {
-        let sections = meeting([seg(0, "Anna übernimmt die Planung."), seg(10, "Danach folgt die Leitung")])
-        XCTAssertTrue(sections[0].startsAtBoundary)
-        XCTAssertFalse(sections[0].endsAtBoundary, "das Ende der Aufnahme ohne Satzzeichen")
+    /// Ein Absatz, der die Lesegrenze überragt, fällt GANZ weg (er wird nicht an der Grenze gekürzt).
+    func testBookParagraphCrossingTheFrontierIsDroppedWholeNotShortened() {
+        let paragraphs = bookBlocks(["# Kapitel Eins", paragraph("A"), paragraph("B"), paragraph("C")])
+        XCTAssertEqual(paragraphs.count, 3)
+        let inside = paragraphs[1].start + 40
+        let sections = AssistantSections.book(paragraphs, frontier: inside)
+        XCTAssertEqual(sections.map(\.text), [paragraph("A")], "B beginnt vor der Grenze, endet dahinter: ganz weg; C ebenso")
+        XCTAssertTrue(AssistantSections.book(paragraphs, frontier: paragraphs[1].end).map(\.text) == [paragraph("A"), paragraph("B")])
     }
 
-    func testMeetingAfterAGapNeverStartsProven() {
-        let sections = meeting([seg(0, "Erster Abschnitt."), seg(5, "geheim", usable: false), seg(10, "Dritter Abschnitt.")])
-        XCTAssertEqual(sections.map(\.text), ["Erster Abschnitt.", "Dritter Abschnitt."])
-        XCTAssertTrue(sections[0].startsAtBoundary)
-        XCTAssertTrue(sections[0].endsAtBoundary, "vor der Lücke endet der Satz am Satzzeichen")
-        XCTAssertFalse(sections[1].startsAtBoundary, "was vor der Lücke stand, ist unbekannt")
-        XCTAssertTrue(sections[1].endsAtBoundary)
+    func testBookFrontierBeforeEverythingGivesNoBlocks() {
+        XCTAssertTrue(AssistantSections.book(bookBlocks(["# Kapitel Eins", paragraph("A")]), frontier: 0).isEmpty)
     }
 
-    func testMeetingGapAfterAnUnfinishedSentenceDoesNotProveTheEnd() {
-        let sections = meeting([seg(0, "Anna übernimmt"), seg(5, "x", usable: false), seg(10, "Dritter Abschnitt.")])
-        XCTAssertFalse(sections[0].endsAtBoundary)
-        XCTAssertFalse(sections[1].startsAtBoundary)
-    }
-
-    func testMeetingFirstUsableSegmentAfterAnUnusableOneIsNotTheStart() {
-        let sections = meeting([seg(0, "Rauschen", usable: false), seg(5, "Anna übernimmt die Planung.")])
+    func testBookPageMarkBecomesTheLocator() {
+        let paragraphs = BookTalkIndex.blocks(in: "# Kapitel Eins\n\n{{S. 12}}\n\n\(paragraph("A"))")
+        let sections = AssistantSections.book(paragraphs, frontier: nil)
         XCTAssertEqual(sections.count, 1)
-        XCTAssertFalse(sections[0].startsAtBoundary, "davor lag ein nicht freigegebenes Segment")
-        XCTAssertTrue(sections[0].endsAtBoundary)
-    }
-
-    func testMeetingLengthSplitAtASentenceSeamProvesBothSides() {
-        let sections = meeting([seg(0, "Erster Abschnitt."), seg(70, "Zweiter Abschnitt.")], seconds: 60)
-        XCTAssertEqual(sections.count, 2)
-        XCTAssertTrue(sections[0].endsAtBoundary)
-        XCTAssertTrue(sections[1].startsAtBoundary, "dieselbe Naht beweist beide Seiten")
-    }
-
-    func testMeetingLengthSplitInsideASentenceProvesNeitherSide() {
-        let sections = meeting([seg(0, "Anna übernimmt"), seg(5, "künftig die Planung.")], chars: 30)
-        XCTAssertEqual(sections.count, 2)
-        XCTAssertFalse(sections[0].endsAtBoundary, "„Anna übernimmt“ ist kein ganzer Satz")
-        XCTAssertFalse(sections[1].startsAtBoundary, "„künftig die Planung.“ ist ein Rest")
-    }
-
-    func testMeetingSeamAtAnAbbreviationProvesNothing() {
-        let sections = meeting([seg(0, "Das gilt z. B."), seg(5, "Dann gilt es.")], chars: 20)
-        XCTAssertEqual(sections.count, 2)
-        XCTAssertFalse(sections[0].endsAtBoundary)
-        XCTAssertFalse(sections[1].startsAtBoundary)
-    }
-
-    func testMeetingWithoutUsableSegmentsHasNoSections() {
-        XCTAssertTrue(meeting([]).isEmpty)
-        XCTAssertTrue(meeting([seg(0, "a", usable: false)]).isEmpty)
-    }
-
-    // MARK: Buch
-
-    private func paragraph(_ tag: String, terminated: Bool = true) -> String {
-        let sentences = (1...12).map { "Satz \(tag) \($0) handelt von der Stadt Beispielburg am Fluss." }
-        let text = sentences.joined(separator: " ")
-        return terminated ? text : String(text.dropLast())
-    }
-
-    /// Ein Stück je Absatz (Absätze ~650 Zeichen).
-    private func index(_ blocks: [String]) -> BookTalkIndex {
-        BookTalkIndex(title: "Beispielbuch", text: blocks.joined(separator: "\n\n"))
-    }
-
-    func testBookChunksAreProvenAcrossParagraphsChaptersAndTheBookEnd() {
-        let idx = index(["# Kapitel Eins", paragraph("A"), paragraph("B"), "# Kapitel Zwei", paragraph("C"), paragraph("D", terminated: false)])
-        XCTAssertEqual(idx.chunks.count, 4)
-        let sections = AssistantSections.book(idx.chunks, frontier: nil)
-        XCTAssertEqual(sections.count, 4)
-        XCTAssertEqual(sections.map(\.startsAtBoundary), [true, true, true, true])
-        XCTAssertEqual(sections.map(\.endsAtBoundary), [true, true, true, false], "das Buch endet ohne Satzzeichen")
-        XCTAssertEqual(sections[0].locator, "Kapitel Eins")
-        XCTAssertEqual(sections[2].locator, "Kapitel Zwei")
-    }
-
-    func testBookParagraphWithoutPunctuationInsideAChapterProvesNeitherSide() {
-        let idx = index(["# Kapitel Eins", paragraph("A"), paragraph("B", terminated: false), paragraph("C")])
-        let sections = AssistantSections.book(idx.chunks, frontier: nil)
-        XCTAssertEqual(sections.count, 3)
-        XCTAssertTrue(sections[0].endsAtBoundary)
-        XCTAssertFalse(sections[1].endsAtBoundary, "Absatz ohne Satzzeichen mitten im Kapitel")
-        XCTAssertFalse(sections[2].startsAtBoundary, "der Vorgänger endet ohne Satzzeichen")
-        XCTAssertTrue(sections[2].endsAtBoundary)
-    }
-
-    func testBookChapterChangeProvesTheEdgeEvenWithoutPunctuation() {
-        let idx = index(["# Kapitel Eins", paragraph("A", terminated: false), "# Kapitel Zwei", paragraph("B")])
-        let sections = AssistantSections.book(idx.chunks, frontier: nil)
-        XCTAssertEqual(sections.count, 2)
-        XCTAssertTrue(sections[0].endsAtBoundary, "ein Kapitel endet mit seinem Absatz")
-        XCTAssertTrue(sections[1].startsAtBoundary)
-    }
-
-    func testBookFrontierInsideAChunkCutsAtASentenceAndProvesTheEnd() {
-        let idx = index(["# Kapitel Eins", paragraph("A"), paragraph("B"), paragraph("C")])
-        let frontier = idx.chunks[1].start + 300
-        let sections = AssistantSections.book(idx.chunks, frontier: frontier)
-        XCTAssertEqual(sections.count, 2, "nichts hinter der Lesegrenze")
-        XCTAssertTrue(sections[0].endsAtBoundary)
-        XCTAssertTrue(sections[1].startsAtBoundary)
-        XCTAssertTrue(sections[1].endsAtBoundary, "an der Satzgrenze vor der Lesegrenze gekürzt")
-        XCTAssertLessThan(sections[1].text.count, idx.chunks[1].text.count)
-        XCTAssertTrue(sections[1].text.hasSuffix("Fluss."))
-    }
-
-    func testBookSuccessorBehindTheFrontierIsNotConsultedForTheEdge() {
-        let idx = index(["# Kapitel Eins", paragraph("A", terminated: false), paragraph("B")])
-        // Lesegrenze genau am Beginn des zweiten Stücks: nur das erste ist sichtbar.
-        let sections = AssistantSections.book(idx.chunks, frontier: idx.chunks[1].start)
-        XCTAssertEqual(sections.count, 1)
-        XCTAssertTrue(sections[0].startsAtBoundary)
-        XCTAssertFalse(sections[0].endsAtBoundary, "das Stück entscheidet allein: kein Satzzeichen am Ende")
-        let terminated = index(["# Kapitel Eins", paragraph("A"), paragraph("B")])
-        let ok = AssistantSections.book(terminated.chunks, frontier: terminated.chunks[1].start)
-        XCTAssertEqual(ok.count, 1)
-        XCTAssertTrue(ok[0].endsAtBoundary)
-    }
-
-    func testBookFrontierBeforeEverythingGivesNoSections() {
-        let idx = index(["# Kapitel Eins", paragraph("A")])
-        XCTAssertTrue(AssistantSections.book(idx.chunks, frontier: 0).isEmpty)
+        XCTAssertEqual(sections.first?.locator, "S. 12")
+        XCTAssertEqual(sections.first?.text, paragraph("A"))
     }
 }

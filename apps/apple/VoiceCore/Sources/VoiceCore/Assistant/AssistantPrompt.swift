@@ -2,7 +2,7 @@ import Foundation
 
 // Gesprächsmodus „Sprechen“ (Paket K, E4.2a in Paket A): Anweisungstext und Prompt-Bau im Zeichenbudget.
 // Zwei Prompts je Rundenart. DATENRUNDE: Auszüge, Verlauf, Frage; kurz und im Wortlaut der Auszüge antworten (gesprochen
-// wird ohnehin nur der Quellsatz). Kein Bestand im Prompt: Bestandsangaben erzeugt das System. ALLGEMEINRUNDE: weder Auszüge
+// wird ohnehin nur ein ganzer Quellblock). Kein Bestand im Prompt: Bestandsangaben erzeugt das System. ALLGEMEINRUNDE: weder Auszüge
 // noch Bestand, Verlauf nur aus früheren Allgemeinrunden. Beide Prompts bitten nur; durchgesetzt wird in `AssistantGrounding`.
 // Zeichen statt Token, grob 3 Zeichen je Token (konservativ). Vom Kontext gehen die Antwortreserve und die Anweisung ab;
 // vom Rest: Auszüge ≤ 50 %, Verlauf ≤ 25 %, der Rest ist für Frage und Zwischenüberschriften (`inventory` bleibt 0).
@@ -56,7 +56,7 @@ public enum AssistantPrompt {
           "Antworte in der Sprache des Nutzers, im Zweifel Deutsch. Heute ist \(germanDate(now, timeZone: timeZone))."])
     }
 
-    /// Datenrunde: kurz und im Wortlaut der Auszüge antworten. Über die Inhalte der App kommt nur ein Originalsatz heraus, den
+    /// Datenrunde: kurz und im Wortlaut der Auszüge antworten. Über die Inhalte der App kommt nur ein ganzer Quellblock heraus, den
     /// das System aus den Auszügen wählt; eigene Formulierungen darüber werden verworfen.
     public static func dataInstructions(config: AssistantConfig, now: Date, timeZone: TimeZone) -> String {
         let (head, tail) = common(config: config, now: now, timeZone: timeZone)

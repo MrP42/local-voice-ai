@@ -76,22 +76,20 @@ public struct AssistantPassage: Sendable, Equatable, Codable {
     public let locator: String?     // „S. 12“, „00:14:03“, „Seite 2“
     public let text: String
     public let score: Double
-    /// Der Auszug beginnt nachweislich an einer Satzgrenze (Dokumentanfang, Absatz, vorausgehendes Satzzeichen). Ohne Nachweis
-    /// (Standard) wird sein erster Satz nie zitiert: er kann angeschnitten sein. Wird nicht gespeichert.
-    public let startsAtBoundary: Bool
-    /// Der Auszug endet nachweislich an einer Satzgrenze. Ohne Nachweis (Standard) wird sein letzter Satz nie zitiert.
-    public let endsAtBoundary: Bool
+    /// Der Text ist GENAU ein gespeicherter Quellblock (E4.2b): ganz, wortgetreu, nicht gekürzt, nicht geteilt, nicht mit einem
+    /// anderen zusammengezogen und höchstens `AssistantGrounding.maxBlockChars` lang. Nur ein solcher Auszug ist zitierbar. Ohne
+    /// Nachweis (Standard, auch bei Suchfenstern der Ablage) wird er nie ausgegeben. Wird nicht gespeichert.
+    public let isBlock: Bool
 
     public init(area: AssistantArea, itemId: String, title: String, locator: String? = nil, text: String, score: Double,
-                startsAtBoundary: Bool = false, endsAtBoundary: Bool = false) {
+                isBlock: Bool = false) {
         self.area = area
         self.itemId = itemId
         self.title = title
         self.locator = locator
         self.text = text
         self.score = score
-        self.startsAtBoundary = startsAtBoundary
-        self.endsAtBoundary = endsAtBoundary
+        self.isBlock = isBlock
     }
 
     private enum CodingKeys: String, CodingKey { case area, itemId, title, locator, text, score }
@@ -113,13 +111,13 @@ public struct AssistantPassage: Sendable, Equatable, Codable {
         try c.encode(score, forKey: .score)
     }
 
-    /// Dieselbe Stelle mit anderem Text und Punktwert. Ein gekürzter Text endet nie nachweislich an einer Satzgrenze.
+    /// Dieselbe Stelle mit anderem Text und Punktwert. Ein veränderter (gekürzter) Text ist nie mehr ein ganzer Quellblock.
     func replacing(text newText: String, score newScore: Double? = nil) -> AssistantPassage {
         AssistantPassage(area: area, itemId: itemId, title: title, locator: locator, text: newText, score: newScore ?? score,
-                         startsAtBoundary: startsAtBoundary, endsAtBoundary: endsAtBoundary && newText == text)
+                         isBlock: isBlock && newText == text)
     }
 
-    /// Auf höchstens `limit` Zeichen gekürzt (`BookTalkPrompt.clip`), Satzgrenze am Ende dann nicht mehr nachgewiesen.
+    /// Auf höchstens `limit` Zeichen gekürzt (`BookTalkPrompt.clip`); ein gekürzter Text ist kein Block mehr.
     func clipped(to limit: Int) -> AssistantPassage { replacing(text: BookTalkPrompt.clip(text, to: limit)) }
 
     /// Anzeigezeile der Quelle: „Buch · Titel · S. 12“, „Transkript · Titel · 00:14:03“, „Ablage · Titel“, „Notiz · Datum“.
@@ -131,6 +129,24 @@ public struct AssistantPassage: Sendable, Equatable, Codable {
         case .notes: return "Notiz · " + (locator ?? title)
         }
     }
+
+    /// Beginn der Quellzeile jedes Zitats und Wortlaut der hörbaren Ansage („Wörtlicher Auszug aus ‚Titel‘:“).
+    public static let excerptPrefix = "Wörtlicher Auszug aus "
+
+    /// Die Quelle ohne Bereichswort, wo der Titel sie trägt: „Beispielbuch · S. 12“, „Besprechung Nordlicht · 00:14:03“,
+    /// „Ablage · Name“, „Notiz · 11.11.2026, 14:03“.
+    public var excerptSource: String {
+        switch area {
+        case .books, .transcripts:
+            let parts = [title, locator ?? ""].filter { !$0.isEmpty }
+            return parts.isEmpty ? sourceLabel : parts.joined(separator: " · ")
+        case .files, .notes: return sourceLabel
+        }
+    }
+
+    /// Quellzeile unter einem Zitat: „Wörtlicher Auszug aus Beispielbuch · S. 12“. Ein Block kann ein Fragment sein oder Zusammenhang
+    /// auslassen; die Zeile sagt, dass es ein Auszug ist.
+    public var excerptLine: String { Self.excerptPrefix + excerptSource }
 }
 
 /// Quelle mit eigenem Index (Ablage). Paket A liefert die Umsetzung.
@@ -142,19 +158,14 @@ public protocol AssistantSource: Sendable {
 
 /// Dokument für den eingebauten Index (Bücher, Transkripte, Notizen).
 public struct AssistantDocument: Sendable {
+    /// Ein Quellblock: der gespeicherte Text zwischen strukturellen Grenzen der Quelle (Absatz, Notizblock, Segment), ganz und
+    /// wortgetreu. Die App erzeugt keine Grenze aus Satzzeichen. Zitiert wird nur ein ganzer Block, nie ein Teil davon.
     public struct Section: Sendable {
         public let locator: String?
         public let text: String
-        /// Der Abschnitt beginnt nachweislich an einer Satzgrenze (Dokumentanfang, eigener Absatz, Satzzeichen davor). Ohne
-        /// Nachweis (Standard): sein erster Satz wird nicht zitiert.
-        public let startsAtBoundary: Bool
-        /// Der Abschnitt endet nachweislich an einer Satzgrenze. Ohne Nachweis (Standard): sein letzter Satz wird nicht zitiert.
-        public let endsAtBoundary: Bool
-        public init(locator: String?, text: String, startsAtBoundary: Bool = false, endsAtBoundary: Bool = false) {
+        public init(locator: String?, text: String) {
             self.locator = locator
             self.text = text
-            self.startsAtBoundary = startsAtBoundary
-            self.endsAtBoundary = endsAtBoundary
         }
     }
 
@@ -170,10 +181,10 @@ public struct AssistantDocument: Sendable {
     }
 }
 
-/// Einordnung eines ausgegebenen Satzes (E4.2a): Originalsatz, Bestandsangabe, Satz ohne Quelle, Vorlage; verworfene Sätze
+/// Einordnung eines ausgegebenen Satzes (E4.2a): Zitat (ganzer Quellblock), Bestandsangabe, Satz ohne Quelle, Vorlage; verworfene Sätze
 /// kommen nie als Ereignis. Dazu die hörbare Ansage.
 public enum AssistantSentenceStatus: String, Sendable, Codable, Equatable {
-    /// Originalsatz aus einem freigegebenen Auszug, unverändert übernommen (Quelle = dieser Auszug).
+    /// Wörtlicher Auszug: ein ganzer gespeicherter Quellblock, unverändert übernommen (Quelle = dieser Block).
     case grounded
     /// Bestandsangabe: vom System unverändert aus den Bestandsdaten erzeugt (Zahl je Bereich, Titel), nie vom Modell.
     case inventory
@@ -181,12 +192,12 @@ public enum AssistantSentenceStatus: String, Sendable, Codable, Equatable {
     case unsourced
     /// Vorlage: Gruß, Dank, feste Rückfrage, fester Satz, Uhrzeit und Datum aus der Systemuhr. Sagt nichts über eigene Inhalte.
     case neutral
-    /// Hörbare Ansage („Ohne Quelle:“, „Aus deinen Inhalten, ‚Titel‘:“, „Aus deinen Inhalten:“). Gehört nicht zum Antworttext.
+    /// Hörbare Ansage („Ohne Quelle:“, „Wörtlicher Auszug aus ‚Titel‘:“, „Aus deinen Inhalten:“). Gehört nicht zum Antworttext.
     case announcement
 }
 
 /// Art einer Runde, vor dem Modellaufruf festgelegt (`AssistantContext`). Datenrunde ist der Standard:
-/// Über eigene Daten gibt es nur Originalsätze und Bestandsangaben des Systems. Freier Modelltext kommt nur in der
+/// Über eigene Daten gibt es nur wörtliche Auszüge (ganze Quellblöcke) und Bestandsangaben des Systems. Freier Modelltext kommt nur in der
 /// Allgemeinrunde vor (mit Opt-in, ohne Auszüge und ohne Bestand im Prompt) und ist dort stets „ohne Quelle“.
 public enum AssistantRoundKind: String, Sendable, Codable, Equatable {
     case data, general
@@ -198,7 +209,7 @@ public enum AssistantDropReason: String, Sendable, Codable, Equatable, CaseItera
     case ownData
     /// Satz ohne Quelle, aber der Modus ist (nicht mehr) an.
     case noMode
-    /// In der Datenrunde nicht auf einen Quellsatz eingerastet (freier Modelltext).
+    /// In der Datenrunde auf keinen Quellblock eingerastet (freier Modelltext).
     case notSnapped
     /// Dasselbe Zitat zum zweiten Mal.
     case duplicate
@@ -210,7 +221,7 @@ public enum AssistantDropReason: String, Sendable, Codable, Equatable, CaseItera
     case fragment
 }
 
-/// Abschnitt eines Beitrags mit gleicher Kennzeichnung (gespeichert, wenn der Beitrag Originalsätze oder Sätze mit
+/// Abschnitt eines Beitrags mit gleicher Kennzeichnung (gespeichert, wenn der Beitrag Zitate oder Sätze mit
 /// Kennzeichnung enthält oder Sätze ohne Quelle mit anderen gemischt sind).
 ///
 /// Marke je Satz: In der Datenrunde ist jeder angezeigte Satz entweder ein Zitat mit genau EINER Quellzeile (`quote`, `source`)
@@ -218,9 +229,9 @@ public enum AssistantDropReason: String, Sendable, Codable, Equatable, CaseItera
 public struct AssistantTurnPart: Sendable, Equatable, Codable {
     public var text: String
     public var unsourced: Bool
-    /// Originalsatz aus einer Quelle: wird mit Anführungszeichen angezeigt.
+    /// Wörtlicher Auszug (ganzer Quellblock): wird mit Anführungszeichen angezeigt.
     public var quote: Bool
-    /// Anzeigezeile der Quelle eines Originalsatzes (`AssistantPassage.sourceLabel`), unter dem Zitat angezeigt. Nur die Zeile,
+    /// Anzeigezeile der Quelle eines Zitats (`AssistantPassage.excerptLine`: „Wörtlicher Auszug aus … · S. 12“), unter dem Zitat angezeigt. Nur die Zeile,
     /// nicht der Auszug. Alte Beiträge und alles, was kein Zitat ist: `nil`.
     public var source: String?
     /// Kennzeichnung eines Satzes OHNE Quellzeile, der nicht aus einer Quelle stammt: `templateNote` (feste Antwort des Systems:
@@ -271,7 +282,7 @@ public struct AssistantTurnPart: Sendable, Equatable, Codable {
         if !quote, let last = list.last, !last.quote, last.unsourced == unsourced, last.note == note {
             list[list.count - 1].text += " " + text
         } else {
-            list.append(AssistantTurnPart(text: text, unsourced: unsourced, quote: quote, source: quote ? sources.first?.sourceLabel : nil,
+            list.append(AssistantTurnPart(text: text, unsourced: unsourced, quote: quote, source: quote ? sources.first?.excerptLine : nil,
                                           note: note))
         }
     }
@@ -377,7 +388,7 @@ public struct AssistantRequest: Sendable, Equatable {
     }
 }
 
-/// Zahl der Sätze je Einordnung in einer Antwort (für Protokoll und Anzeige; keine Inhalte). Fünf Klassen: Originalsatz
+/// Zahl der Sätze je Einordnung in einer Antwort (für Protokoll und Anzeige; keine Inhalte). Fünf Klassen: Zitat
 /// (`grounded`), Bestandsangabe (`inventory`), Satz ohne Quelle (`unsourced`), Vorlage (`neutral`), verworfen (je Grund).
 public struct AssistantSentenceCounts: Sendable, Equatable, Codable {
     public var grounded = 0
@@ -477,13 +488,17 @@ public struct AssistantAnswer: Sendable, Equatable {
     }
 }
 
-public enum AssistantFailure: String, Sendable, Equatable { case cancelled, timeout, noModel, modelFailed, offline, consentRequired, revoked }
+public enum AssistantFailure: String, Sendable, Equatable {
+    case cancelled, timeout, noModel, modelFailed, offline, consentRequired, revoked
+    /// Das Protokoll ließ sich nicht schreiben (Pflichtzeile `start`, `round` oder `areas`): kein Modellaufruf, keine Ausgabe.
+    case auditUnavailable
+}
 
 public enum AssistantEvent: Sendable, Equatable {
     /// Abgerufene Auszüge dieser Anfrage (Vorab-Anzeige; in einer Allgemeinrunde leer). Gedeckt wird erst je Satz.
     case sources(requestId: String, generation: Int, [AssistantPassage])
-    /// Ein Satz zur Ausgabe. `speech` = ohne Markdown, sprechbar. `sources`: bei einem Originalsatz sein Auszug, sonst leer.
-    /// `quote`: Originalsatz, mit Anführungszeichen anzeigen. `generation`: Freigabe-Generation des Laufs; wer sie nicht mehr
+    /// Ein Satz zur Ausgabe. `speech` = ohne Markdown, sprechbar. `sources`: bei einem Zitat sein Block, sonst leer.
+    /// `quote`: wörtlicher Auszug, mit Anführungszeichen anzeigen. `generation`: Freigabe-Generation des Laufs; wer sie nicht mehr
     /// kennt (Widerruf), zeigt und spricht nichts. Verworfene Sätze kommen nie.
     case sentence(requestId: String, generation: Int, text: String, speech: String, status: AssistantSentenceStatus,
                   sources: [AssistantPassage], quote: Bool)

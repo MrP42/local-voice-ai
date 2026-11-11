@@ -175,7 +175,7 @@ final class AssistantKnowledgeTests: XCTestCase {
         let corpus = AssistantCorpus()
         for i in 0..<6 {
             await corpus.upsert(assistantDoc("d\(i)", "Dokument \(i)", area: .notes, sections: [
-                (nil, "Wärmepumpe Wartung Termin \(i). " + String(repeating: "Dazu gibt es viel zu sagen über Heizung und Keller. ", count: 12)),
+                (nil, "Wärmepumpe Wartung Termin \(i). " + String(repeating: "Dazu gibt es viel zu sagen über Heizung und Keller. ", count: 8)),
             ]))
         }
         let k = AssistantKnowledge(corpus: corpus)

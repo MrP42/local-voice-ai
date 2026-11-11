@@ -20,6 +20,8 @@ final class BookTalkSpeaker {
     var voiceID: String?
     /// Satzbeginn und -ende der Wiedergabe (für Echo-Wächter und Verlauf); das Ende kommt nur, wenn der Satz wirklich zu
     /// Ende erklang, nicht nach `stop()`, nicht bei hängendem Audio (`PhononAudioStalled`) und nicht bei abgebrochener Systemstimme.
+    /// Der Beginn wird NACH dem tatsächlichen Start gemeldet (Messung, kein Commit): Wer eine Marke setzt, tut das im `start` des
+    /// Satzes (`enqueue(_:generation:start:)`), im selben Lock wie die Erhöhung der Generation.
     var onSentenceStarted: ((String) -> Void)?
     var onSentenceFinished: ((String) -> Void)?
     /// Wiedergabesperre des Gesprächsmodus („verworfen ab Generation g“, vom Kern im Lock der Freigabe vorgerückt). Ein Satz einer
@@ -33,7 +35,18 @@ final class BookTalkSpeaker {
     var gate: AssistantPlaybackGate?
 
     private(set) var isActive = false
-    private var queue: [(text: String, generation: Int)] = []
+    /// Ein Satz der Warteschlange. `start`: der Start dieses Satzes als atomarer Body (Gesprächsmodus: `commitStart` des Kerns,
+    /// Prüfung der Generation, tatsächlicher Start und Ergebniszeile im selben Lock); `nil`: die Wiedergabesperre `gate` (oder gar
+    /// keine Prüfung). `failed`: der Start ließ sich nicht auslösen, obwohl nichts widerrufen war (Marke „fehlgeschlagen“).
+    private struct Item {
+        let text: String
+        let generation: Int
+        let start: PhononStart?
+        let failed: (@MainActor () -> Void)?
+    }
+
+    private var queue: [Item] = []
+    private var announced = false
     private var generation = 0
     private var inputFinished = true
     private var task: Task<Void, Never>?
@@ -46,13 +59,15 @@ final class BookTalkSpeaker {
         stop()
         self.language = language
         inputFinished = false
+        announced = false
     }
 
-    /// `generation`: Freigabe-Generation des Satzes (nur mit `gate`; sonst ohne Bedeutung).
-    func enqueue(_ speech: String, generation: Int = 0) {
+    /// `generation`: Freigabe-Generation des Satzes (nur mit `gate`; sonst ohne Bedeutung). `start`: der atomare Start dieses
+    /// Satzes (siehe `Item`); `failed`: wird gerufen, wenn der Start sich nicht auslösen ließ, ohne dass die Freigabe widerrufen war.
+    func enqueue(_ speech: String, generation: Int = 0, start: PhononStart? = nil, failed: (@MainActor () -> Void)? = nil) {
         let text = speech.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !inputFinished else { return }
-        queue.append((text, generation))
+        queue.append(Item(text: text, generation: generation, start: start, failed: failed))
         pump()
     }
 
@@ -91,21 +106,20 @@ final class BookTalkSpeaker {
         isActive = true
         task = Task { [weak self] in
             if self?.conversationMode != true { Self.activatePlayback() }
-            var announced = false
             while let self, g == self.generation, !self.queue.isEmpty {
                 let item = self.queue.removeFirst()
                 let text = item.text
                 // Verworfene Generation: der Satz startet nicht (die Sperre steht, sobald die Erhöhung zurückgekehrt ist). Die Ausgabe
-                // endet still (kein `onIdle`): Der Beobachter des Controllers räumt auf und meldet den Widerruf.
-                guard self.permits(item.generation) else { self.stop(); break }
-                if !announced { announced = true; self.onAudible?() }
-                self.onSentenceStarted?(text)
-                // Die Meldung kann die Ausgabe beendet haben (Widerruf): dann startet dieser Satz nicht.
-                guard g == self.generation else { break }
-                let played = await self.speak(text, sentenceGeneration: item.generation, generation: g)
+                // endet still (kein `onIdle`): Der Beobachter des Controllers räumt auf und meldet den Widerruf. Der Kern schreibt die
+                // Marke „verworfen“ erst im `start`; hier wird nur früh ausgestiegen.
+                guard self.permits(item.generation) else { self.reject(item); self.stop(); break }
+                let begun = StartFlag()
+                let played = await self.speak(item, generation: g, begun: begun)
                 if played, g == self.generation { self.onSentenceFinished?(text) }
                 // Start abgewiesen (Widerruf): nichts begann, der Satz zählt als nicht gesprochen; die Ausgabe endet still.
                 if !played, g == self.generation, !self.permits(item.generation) { self.stop(); break }
+                // Kein Start, aber auch kein Widerruf (Audio steht, Strom abgebrochen): „fehlgeschlagen“, nie „ausgeführt“.
+                if !played, !begun.value, g == self.generation { item.failed?() }
             }
             guard let self, g == self.generation else { return }
             self.task = nil
@@ -124,8 +138,42 @@ final class BookTalkSpeaker {
     /// Vorprüfung ohne Start (billig, früh aussteigen). Entscheidend ist `start`.
     private func permits(_ sentenceGeneration: Int) -> Bool { gate?.permits(sentenceGeneration) ?? true }
 
-    /// Der tatsächliche Start als atomarer Body im Lock der Freigabe (`nil` ohne Sperre).
-    private func start(_ sentenceGeneration: Int) -> PhononStart? {
+    /// Der tatsächliche Start eines Satzes als atomarer Body: der Start des Satzes (Kern, mit Marke) oder die Wiedergabesperre
+    /// (ohne Marke) oder, ohne beides, einfach der Body. Nach einem Start wird der Beginn gemeldet (Messung auf dem MainActor,
+    /// nie im Lock) und gemerkt.
+    private func start(_ item: Item, generation g: Int, begun: StartFlag) -> PhononStart {
+        var base: PhononStart? = item.start
+        if base == nil, let gate {
+            let sentenceGeneration = item.generation
+            base = { body in gate.start(sentenceGeneration, body) }
+        }
+        let chosen = base
+        let text = item.text
+        return { [weak self] body in
+            var started = true
+            if let chosen { started = chosen(body) } else { body() }
+            guard started else { return false }
+            begun.set()
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.noteStarted(text, generation: g) } }
+            return true
+        }
+    }
+
+    /// Ein Satz einer verworfenen Generation startet nicht. Der Kern schreibt dazu die Marke „verworfen“ mit der vorgefundenen
+    /// Generation: Sein `start` läuft mit einem leeren Body, der nie gebraucht wird (die Generation ist veraltet, `permits` ist
+    /// monoton). Ohne eigenen Start des Satzes (Buch-Gespräch) geschieht nichts.
+    private func reject(_ item: Item) { _ = item.start?({}) }
+
+    /// Der erste hörbare Satz meldet „klingt“, jeder Satz seinen Beginn; eine Meldung nach `stop()` zählt nicht mehr.
+    private func noteStarted(_ text: String, generation g: Int) {
+        guard g == generation else { return }
+        if !announced { announced = true; onAudible?() }
+        onSentenceStarted?(text)
+    }
+
+    /// Folgetöne eines begonnenen Satzes (Synthese in Stücken, nur auf der Audioebene): jedes Stück geht durch dieselbe
+    /// Wiedergabesperre wie der Start, damit nach der Rückkehr einer Erhöhung kein Stück der alten Generation mehr eingereiht wird.
+    private func keep(_ sentenceGeneration: Int) -> PhononStart? {
         guard let gate else { return nil }
         return { body in gate.start(sentenceGeneration, body) }
     }
@@ -151,12 +199,16 @@ final class BookTalkSpeaker {
     }
 
     /// `true`, wenn der Satz wirklich bis zum Ende erklang; `false` bei Abbruch oder hängendem Audio (Satz zählt als nicht gesprochen).
-    private func speak(_ text: String, sentenceGeneration: Int, generation g: Int) async -> Bool {
-        // Letzte Prüfung unmittelbar vor dem Start der Stimme (nach der Meldung `onSentenceStarted`).
-        guard g == generation, permits(sentenceGeneration) else { return false }
+    private func speak(_ item: Item, generation g: Int, begun: StartFlag) async -> Bool {
+        let text = item.text
+        let sentenceGeneration = item.generation
+        // Letzte Prüfung unmittelbar vor dem Start der Stimme.
+        guard g == generation else { return false }
+        guard permits(sentenceGeneration) else { reject(item); return false }
         if let name = phononName(for: language) {
             do {
-                try await PhononEngine.shared.speak(text, voice: name, rate: 1, start: start(sentenceGeneration))
+                try await PhononEngine.shared.speak(text, voice: name, rate: 1, start: start(item, generation: g, begun: begun),
+                                                    keep: keep(sentenceGeneration))
                 return true
             } catch is CancellationError {
                 return false
@@ -169,9 +221,18 @@ final class BookTalkSpeaker {
                 phononFailed = true
             }
         }
-        guard g == generation, permits(sentenceGeneration) else { return false }
-        return await system.speak(text, language: language, voiceID: voiceID, start: start(sentenceGeneration))
+        guard g == generation else { return false }
+        guard permits(sentenceGeneration) else { reject(item); return false }
+        return await system.speak(text, language: language, voiceID: voiceID, start: start(item, generation: g, begun: begun))
     }
+}
+
+/// Merkt, ob der tatsächliche Start eines Satzes lief (gesetzt im Lock des Starts, gelesen auf dem MainActor).
+private final class StartFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var started = false
+    func set() { lock.lock(); started = true; lock.unlock() }
+    var value: Bool { lock.lock(); defer { lock.unlock() }; return started }
 }
 
 /// Systemstimme als Rückfall (kein Phonon-Modell, Simulator, Fehler). Beendet jede Äußerung genau einmal.

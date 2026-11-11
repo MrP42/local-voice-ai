@@ -258,9 +258,11 @@ final class AssistantContextTests: XCTestCase {
         XCTAssertFalse(s.canResumeFree)
         XCTAssertEqual(s.contextMode, .data)
         let g = s.releaseGeneration
-        XCTAssertEqual(s.setAllowUnsourced(true, consentVersion: 2), g, "Einschalten ändert nichts")
+        let r10 = await s.setAllowUnsourced(true, consentVersion: 2)
+        XCTAssertEqual(r10.generation, g, "Einschalten ändert nichts")
         XCTAssertFalse(s.allowsUnsourced)
-        XCTAssertFalse(s.resumeFree())
+        let r11 = await s.resumeFree()
+        XCTAssertFalse(r11.changed)
         XCTAssertEqual(s.releaseGeneration, g)
         let events = await collect(s, "r1", "Wie hoch ist der Mont Blanc?")
         XCTAssertEqual(answer(events)?.round, .data)
@@ -287,7 +289,8 @@ final class AssistantContextTests: XCTestCase {
         let prompts = Prompts()
         let s = AssistantSession(model: ReplyModel(pieces: [mont], prompts: prompts), knowledge: await castorpKnowledge(), config: strict)
         let g = s.releaseGeneration
-        XCTAssertEqual(s.setAllowUnsourced(true, consentVersion: 1), g)
+        let r12 = await s.setAllowUnsourced(true, consentVersion: 1)
+        XCTAssertEqual(r12.generation, g)
         XCTAssertFalse(s.allowsUnsourced)
         XCTAssertEqual(s.contextMode, .data)
         let events = await collect(s, "r1", "Wie hoch ist der Mont Blanc?")
@@ -301,7 +304,8 @@ final class AssistantContextTests: XCTestCase {
         let s = AssistantSession(model: ReplyModel(pieces: []), knowledge: await castorpKnowledge(), config: open,
                                  history: [turn(.data)])
         let g = s.releaseGeneration
-        XCTAssertFalse(s.resumeFree())
+        let r13 = await s.resumeFree()
+        XCTAssertFalse(r13.changed)
         XCTAssertFalse(s.canResumeFree)
         XCTAssertEqual(s.releaseGeneration, g, "keine neue Generation")
         XCTAssertEqual(s.contextMode, .data)
@@ -417,7 +421,8 @@ final class AssistantContextTests: XCTestCase {
         XCTAssertEqual(s.contextMode, .data)
         XCTAssertTrue(s.canResumeFree)
         let g = s.releaseGeneration
-        XCTAssertTrue(s.resumeFree())
+        let r14 = await s.resumeFree()
+        XCTAssertTrue(r14.changed)
         XCTAssertGreaterThan(s.releaseGeneration, g, "das Zurückschalten erhöht die Generation")
         XCTAssertEqual(s.contextMode, .free)
         XCTAssertFalse(s.canResumeFree)
@@ -438,7 +443,8 @@ final class AssistantContextTests: XCTestCase {
         let data = await collect(s, "r3", "Was steht in meiner Notiz?")
         XCTAssertEqual(answer(data)?.round, .data)
         XCTAssertEqual(s.contextMode, .data)
-        XCTAssertTrue(s.resumeFree())
+        let r15 = await s.resumeFree()
+        XCTAssertTrue(r15.changed)
         _ = await collect(s, "r4", "Wie tief ist der Marianengraben?")
         p = prompts.all.last?.prompt ?? ""
         XCTAssertFalse(p.contains("Mont Blanc"), "Beiträge vor dem letzten Zurückschalten sind weg\n\(p)")
@@ -452,9 +458,11 @@ final class AssistantContextTests: XCTestCase {
                                  history: [AssistantTurn(user: "F", assistant: "A", round: .data)], released: true)
         s.setReleaseObserver { seen.add($0) }
         let g = s.releaseGeneration
-        XCTAssertTrue(s.resumeFree())
+        let r16 = await s.resumeFree()
+        XCTAssertTrue(r16.changed)
         XCTAssertEqual(seen.all, [g + 1])
-        XCTAssertFalse(s.resumeFree(), "schon frei: keine Änderung, keine neue Generation")
+        let r17 = await s.resumeFree()
+        XCTAssertFalse(r17.changed, "schon frei: keine Änderung, keine neue Generation")
         XCTAssertEqual(seen.all, [g + 1])
         XCTAssertEqual(s.releaseGeneration, g + 1)
     }
@@ -470,14 +478,16 @@ final class AssistantContextTests: XCTestCase {
         let events = await collect(s, "r1", "Welche Bücher habe ich?")
         XCTAssertEqual(answer(events)?.counts.inventory, 2, "eine Bestandsantwort ohne Quellen und ohne Modell")
         XCTAssertEqual(s.registeredRunCount, 1, "der Lauf bleibt bis `commit` angemeldet")
-        XCTAssertEqual(s.releaseDidChange(), g0 + 1)
+        let r18 = await s.releaseDidChange()
+        XCTAssertEqual(r18.generation, g0 + 1)
         XCTAssertEqual(s.registeredRunCount, 0, "der Widerruf erreicht auch den fertigen Lauf")
         await s.setAreas([.books])
-        s.setAllowUnsourced(true)
-        s.setAllowUnsourced(true)   // keine Änderung
-        XCTAssertTrue(s.resumeFree())
-        XCTAssertEqual(seen.all, Array((g0 + 1)...(g0 + 5)), "genau eine Meldung je Erhöhung, in Reihenfolge")
-        XCTAssertEqual(s.releaseGeneration, g0 + 5)
+        await s.setAllowUnsourced(true)
+        await s.setAllowUnsourced(true)   // keine Änderung
+        let r19 = await s.resumeFree()
+        XCTAssertTrue(r19.changed)
+        XCTAssertEqual(seen.all, Array((g0 + 1)...(g0 + 4)), "genau eine Meldung je Erhöhung (auch eine Änderung der Bereiche erhöht nur einmal), in Reihenfolge")
+        XCTAssertEqual(s.releaseGeneration, g0 + 4)
     }
 
     /// Ein Lauf bleibt bis zum Abschluss seiner Ausgabe (Commit) angemeldet: Ein Widerruf nach dem Modellende erreicht ihn noch,
@@ -490,13 +500,13 @@ final class AssistantContextTests: XCTestCase {
         let events = await collect(s, "r1", castorpQuestion)
         XCTAssertNotNil(answer(events), "das Modell ist fertig, die Antwort auch")
         XCTAssertEqual(s.registeredRunCount, 1)
-        s.releaseDidChange()
+        await s.releaseDidChange()
         XCTAssertEqual(s.registeredRunCount, 0)
         let wrote = await s.commit(requestId: "r1", user: castorpQuestion, spoken: castorpText, interrupted: false)
         XCTAssertTrue(wrote)
         let history = await s.history
         XCTAssertEqual(history, [], "nach dem Widerruf kein Beitrag")
-        let entries = await audit.entries()
+        let entries = await audit.entries().filter { $0.kind == .answer }
         XCTAssertEqual(entries.first?.outcome, .revoked)
         XCTAssertEqual(entries.first?.history?.ok, false)
 
@@ -524,7 +534,7 @@ final class AssistantContextTests: XCTestCase {
             _ = await collect(s, id, castorpQuestion)
             let results = await withTaskGroup(of: Int.self) { group -> [Int] in
                 group.addTask {
-                    s.releaseDidChange()
+                    await s.releaseDidChange()
                     return await s.history.count   // nach der Rückkehr von `bump` gelesen
                 }
                 group.addTask {

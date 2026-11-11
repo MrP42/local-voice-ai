@@ -57,6 +57,16 @@ private struct ProbeModel: BookTalkModel {
 
 private struct DiskFull: Error {}
 
+/// Schalter „Platte kaputt“ (wechselbar zur Laufzeit).
+private final class FailSwitch: @unchecked Sendable {
+    private let lock = NSLock()
+    private var flag = false
+    var on: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return flag }
+        set { lock.lock(); flag = newValue; lock.unlock() }
+    }
+}
+
 /// Zähler für Fehler, die nur beim n-ten Aufruf auftreten.
 private final class Flaky: @unchecked Sendable {
     private let lock = NSLock()
@@ -760,22 +770,22 @@ final class AssistantAuditLogTests: XCTestCase {
         await session.commit(requestId: "r1", user: question, spoken: "Quasselbert wandert mit dem Fahrrad nach Pappelhausen und trifft dort Tante Lavendula.", interrupted: false)
         _ = await audit.record(AssistantAuditEntry(kind: .unsourcedOn, consentVersion: 1, generation: 3))
         // Jede Art der Erhöhung, damit auch die Zeilen `release` (Grund, neue Bereichsnamen) unter die Prüfung fallen.
-        session.setAllowUnsourced(false)
-        session.setAllowUnsourced(true, consentVersion: 1)
-        session.releaseDidChange(.consent)
-        session.releaseDidChange()
+        await session.setAllowUnsourced(false)
+        await session.setAllowUnsourced(true, consentVersion: 1)
+        await session.releaseDidChange(.consent)
+        await session.releaseDidChange()
         await session.setAreas([.books, .notes])
         _ = await audit.flushReleaseLines()
 
         let keys: Set<String> = ["t", "req", "at", "session", "model", "cloud", "unsourced", "consent", "ctx", "reason", "round", "gen", "n",
-                                 "verdict", "mark", "outcome", "level", "areas", "kind", "cause"]
+                                 "verdict", "mark", "outcome", "level", "areas", "kind", "cause", "granted"]
         let words: Set<String> = [
             "start", "step", "commit", "end", "event", "round", "areas", "r1", "apple", "gemma", "other", "data", "free", "general", "optedOut", "locked",
             "inventory", "ownData", "relevantPassage", "grounded", "unsourced", "template", "announcement", "droppedOwnData",
             "droppedNoMode", "droppedNotSnapped", "droppedDuplicate", "droppedTemplate", "droppedRevoked", "droppedFragment", "completed",
             "interrupted", "revoked", "failed", "incomplete", "limited", "s0", "s1", "books", "transcripts", "files", "notes",
             "answer", "unsourcedOn", "unsourcedOff", "cloudGranted", "cloudRevoked", "resumedFree",
-            "release", "optIn", "consent", "resumeFree",
+            "release", "state", "optIn", "consent", "resumeFree",
         ]
         func walk(_ any: Any, _ strings: inout [String]) {
             if let s = any as? String { strings.append(s) }
@@ -817,7 +827,7 @@ final class AssistantAuditLogTests: XCTestCase {
                      "Wohin", "Titel", "S. 7", "Kirschkern"] {
             XCTAssertFalse(raw.localizedCaseInsensitiveContains(word), "\(word) steht im Protokoll:\n\(raw)")
         }
-        let entries = await audit.entries()
+        let entries = await audit.entries().filter { $0.kind != .state }   // der Stand beim Öffnen steht davor
         XCTAssertEqual(entries.count, 2)
         XCTAssertEqual(entries[0].kind, .answer)
         XCTAssertEqual(entries[0].modelKind, .other)
@@ -853,7 +863,7 @@ final class AssistantAuditLogTests: XCTestCase {
         for word in ["Zitronenfalter", "Kirschkern", "Himbeerkuchen", "Buchtitel", "Weitwurf"] {
             XCTAssertFalse(raw.localizedCaseInsensitiveContains(word), word)
         }
-        let entries = await audit.entries()
+        let entries = await audit.entries().filter { $0.kind == .answer }
         XCTAssertEqual(entries.count, 1)
         XCTAssertEqual(entries[0].areas, ["books", "notes"], "Bereiche der Bestandsangaben, nicht die der freigegebenen Bereiche insgesamt")
         XCTAssertEqual(entries[0].counts.inventory, 4)
@@ -892,8 +902,8 @@ final class AssistantAuditLogTests: XCTestCase {
         let kinds = atModel.split(separator: "\n").compactMap {
             ((try? JSONSerialization.jsonObject(with: Data($0.utf8))) as? [String: Any])?["t"] as? String
         }
-        XCTAssertEqual(kinds, ["start", "round", "areas"], "beim Modellaufruf: \(atModel)")
-        XCTAssertEqual(atFirstEvent.compactMap { $0["t"] as? String }.first, "start")
+        XCTAssertEqual(kinds, ["state", "start", "round", "areas"], "beim Modellaufruf: \(atModel)")
+        XCTAssertEqual(atFirstEvent.compactMap { $0["t"] as? String }.prefix(2).map { $0 }, ["state", "start"])
         XCTAssertFalse(atFirstEvent.isEmpty, "beim ersten Ereignis ist `start` geschrieben")
         await session.commit(requestId: "r1", user: "x", spoken: "", interrupted: true)
     }
@@ -905,13 +915,13 @@ final class AssistantAuditLogTests: XCTestCase {
                                        config: config, audit: audit, released: true)
         for await _ in session.events(AssistantRequest(requestId: "a", text: "Wie hoch ist der Mont Blanc?")) {}
         await session.commit(requestId: "a", user: "Wie hoch ist der Mont Blanc?", spoken: "Der Mont Blanc ist 4806 Meter hoch.", interrupted: false)
-        session.setAllowUnsourced(true, consentVersion: 3)
+        await session.setAllowUnsourced(true, consentVersion: 3)
         for await _ in session.events(AssistantRequest(requestId: "b", text: "Wie hoch ist der Mont Blanc?")) {}
         await session.commit(requestId: "b", user: "Wie hoch ist der Mont Blanc?", spoken: "Der Mont Blanc ist 4806 Meter hoch.", interrupted: false)
-        session.setAllowUnsourced(false)
+        await session.setAllowUnsourced(false)
         for await _ in session.events(AssistantRequest(requestId: "c", text: "Hallo")) {}
         await session.commit(requestId: "c", user: "Hallo", spoken: "", interrupted: true)
-        session.setAllowUnsourced(true, consentVersion: 4)
+        await session.setAllowUnsourced(true, consentVersion: 4)
         for await _ in session.events(AssistantRequest(requestId: "d", text: "Hallo")) {}
         await session.commit(requestId: "d", user: "Hallo", spoken: "", interrupted: true)
         let all = await audit.entries().filter { $0.kind == .answer }   // die Erhöhungen stehen als Einträge `release` dazwischen
@@ -932,7 +942,7 @@ final class AssistantAuditLogTests: XCTestCase {
         for await _ in session.events(AssistantRequest(requestId: "b", text: "Wohin wandert Quasselbert nach Pappelhausen?")) {}
         for await _ in session.events(AssistantRequest(requestId: "c", text: "Wie hoch ist die Zugspitze?")) {}
         for id in ["a", "b", "c"] { await session.commit(requestId: id, user: "x", spoken: "", interrupted: true) }
-        let all = await audit.entries()
+        let all = await audit.entries().filter { $0.kind == .answer }
         XCTAssertEqual(all.map(\.contextMode), [.free, .free, .data], "Zustand vor der Rundenwahl")
         XCTAssertEqual(all.map(\.contextReason), [.free, .relevantPassage, .locked])
         XCTAssertEqual(all.map(\.round), [.general, .data, .data], "nach dem Einrasten bleibt jede Runde eine Datenrunde")
@@ -948,7 +958,7 @@ final class AssistantAuditLogTests: XCTestCase {
         for await e in session.events(AssistantRequest(requestId: "r1", text: "Was ist mit den Sätzen?")) { events.append(e) }
         await session.commit(requestId: "r1", user: "Was ist mit den Sätzen?", spoken: "", interrupted: false)
         XCTAssertEqual(AssistantAuditLog.maxSteps, 200)
-        let all = await audit.entries()
+        let all = await audit.entries().filter { $0.kind == .answer }
         XCTAssertEqual(all.count, 1)
         XCTAssertEqual(all[0].outcome, .limited)
         XCTAssertEqual(all[0].trace.count, AssistantAuditLog.maxSteps)
@@ -971,7 +981,7 @@ final class AssistantAuditLogTests: XCTestCase {
         let failing = AssistantSession(model: FailingModel(), knowledge: AssistantKnowledge(corpus: AssistantCorpus()), config: cloud, audit: audit, released: true)
         for await _ in failing.events(AssistantRequest(requestId: "c", text: "Hallo")) {}
         await failing.commit(requestId: "c", user: "Hallo", spoken: "", interrupted: false)
-        let all = await audit.entries()
+        let all = await audit.entries().filter { $0.kind == .answer }
         XCTAssertEqual(all.map(\.outcome), [.interrupted, .revoked, .failed])
         XCTAssertEqual(all.map(\.cloud), [true, true, true])
         XCTAssertEqual(all.map(\.round), [.general, .general, .general])
@@ -985,7 +995,7 @@ final class AssistantAuditLogTests: XCTestCase {
                                        audit: audit, released: true)
         for await _ in session.events(AssistantRequest(requestId: "a", text: "Hallo")) {}
         await session.commit(requestId: "a", user: "Hallo", spoken: "", interrupted: true)
-        let all = await audit.entries()
+        let all = await audit.entries().filter { $0.kind == .answer }
         XCTAssertEqual(all.count, 1)
         XCTAssertEqual(all[0].outcome, .interrupted)
         XCTAssertNil(all[0].history)
@@ -1003,7 +1013,7 @@ final class AssistantAuditLogTests: XCTestCase {
             if case .done(_, let a) = e { done = a }
         }
         await session.commit(requestId: "r1", user: "x", spoken: "", interrupted: false)
-        let entries = await audit.entries()
+        let entries = await audit.entries().filter { $0.kind == .answer }
         XCTAssertNotNil(done)
         XCTAssertEqual(entries.first?.counts, done?.counts)
         XCTAssertGreaterThan(entries.first?.counts.droppedOwnData ?? 0, 0)
@@ -1024,7 +1034,7 @@ final class AssistantAuditLogTests: XCTestCase {
         session.noteCommit(requestId: "r1", index: 1, stage: .audio, ok: false, generation: g + 1)
         session.noteCommit(requestId: "r1", index: 99, stage: .display, ok: true, generation: g)
         await session.commit(requestId: "r1", user: "x", spoken: spoken.joined(separator: " "), interrupted: false)
-        let e = await audit.entries().first
+        let e = await audit.entries().filter { $0.kind == .answer }.first
         XCTAssertEqual(e?.trace.map(\.verdict), [.announcement, .grounded])
         XCTAssertEqual(e?.trace[1].commits, [
             AssistantCommitMark(stage: .emit, ok: true, generation: g), AssistantCommitMark(stage: .display, ok: true, generation: g),
@@ -1060,15 +1070,15 @@ final class AssistantAuditLogTests: XCTestCase {
         await session.commit(requestId: "r1", user: question, spoken: "", interrupted: true)
         _ = await task.value
 
-        XCTAssertEqual(snapshot.compactMap { $0["t"] as? String }.first, "start")
+        XCTAssertEqual(Array(snapshot.compactMap { $0["t"] as? String }.prefix(2)), ["state", "start"], "zuerst der Stand beim Öffnen, dann `start`")
         XCTAssertFalse(snapshot.contains { $0["t"] as? String == "end" }, "beim Absturz gab es kein `end`")
         let reopened = AssistantAuditLog(directory: crashed, reader: AssistantAuditWriter.readFile)
         _ = await reopened.append(journalEvent(1))
         let read = await reopened.read()
-        XCTAssertEqual(read.entries.first?.requestId, "r1")
-        XCTAssertEqual(read.entries.first?.outcome, .incomplete)
-        XCTAssertGreaterThanOrEqual(read.entries.first?.trace.count ?? 0, 2)
-        XCTAssertEqual(read.entries.first?.round, .data)
+        XCTAssertEqual(read.entries.first(where: { $0.kind == .answer })?.requestId, "r1")
+        XCTAssertEqual(read.entries.first(where: { $0.kind == .answer })?.outcome, .incomplete)
+        XCTAssertGreaterThanOrEqual(read.entries.first(where: { $0.kind == .answer })?.trace.count ?? 0, 2)
+        XCTAssertEqual(read.entries.first(where: { $0.kind == .answer })?.round, .data)
     }
 
     // MARK: Runde 4: `start` vor dem Abruf, `round` und `areas` als eigene Zeilen
@@ -1107,10 +1117,10 @@ final class AssistantAuditLogTests: XCTestCase {
         await session.commit(requestId: "r1", user: "x", spoken: "", interrupted: true)
         _ = await task.value
 
-        XCTAssertEqual(seen, ["start"], "VOR dem Abruf steht `start` in der Datei, sonst nichts (keine Rundenart, keine Bereiche)")
+        XCTAssertEqual(seen, ["state", "start"], "VOR dem Abruf stehen der Stand beim Öffnen und `start` in der Datei, sonst nichts (keine Rundenart, keine Bereiche)")
         let reopened = AssistantAuditLog(directory: crashed, reader: AssistantAuditWriter.readFile)
         _ = await reopened.append(journalEvent(1))
-        let entry = await reopened.read().entries.first
+        let entry = await reopened.read().entries.first(where: { $0.kind == .answer })
         XCTAssertEqual(entry?.requestId, "r1")
         XCTAssertEqual(entry?.outcome, .incomplete)
         XCTAssertNil(entry?.round, "die Rundenwahl war noch nicht gefallen")
@@ -1131,17 +1141,18 @@ final class AssistantAuditLogTests: XCTestCase {
         }
         await session.commit(requestId: "r1", user: "x", spoken: spoken.joined(separator: " "), interrupted: false)
         let objs = try objects()
-        XCTAssertEqual(objs.first?["t"] as? String, "start")
-        XCTAssertNil(objs.first?["round"], "die Rundenart steht nicht im `start`")
-        XCTAssertNil(objs.first?["reason"])
-        XCTAssertEqual(objs.first?["ctx"] as? String, "free", "Kontextzustand vorher")
+        XCTAssertEqual(objs.first?["t"] as? String, "state", "der Stand beim Öffnen steht vor der ersten Anfrage")
+        let start = try XCTUnwrap(objs.first { $0["t"] as? String == "start" })
+        XCTAssertNil(start["round"], "die Rundenart steht nicht im `start`")
+        XCTAssertNil(start["reason"])
+        XCTAssertEqual(start["ctx"] as? String, "free", "Kontextzustand vorher")
         let round = try XCTUnwrap(objs.first { $0["t"] as? String == "round" })
         XCTAssertEqual(round["round"] as? String, "data")
         XCTAssertNotNil(round["reason"])
         let order = objs.compactMap { $0["t"] as? String }
         XCTAssertLessThan(try XCTUnwrap(order.firstIndex(of: "start")), try XCTUnwrap(order.firstIndex(of: "round")))
         XCTAssertLessThan(try XCTUnwrap(order.firstIndex(of: "round")), try XCTUnwrap(order.firstIndex(of: "step")))
-        let entry = await audit.entries().first
+        let entry = await audit.entries().filter { $0.kind == .answer }.first
         XCTAssertEqual(entry?.round, .data)
         XCTAssertNotNil(entry?.contextReason)
         XCTAssertEqual(entry?.contextMode, .free)
@@ -1172,10 +1183,10 @@ final class AssistantAuditLogTests: XCTestCase {
         _ = await task.value
 
         XCTAssertFalse(seen.contains("end"), "beim Absturz gab es kein `end`")
-        XCTAssertEqual(seen.first, "start")
+        XCTAssertEqual(Array(seen.prefix(2)), ["state", "start"])
         XCTAssertTrue(seen.contains("round") && seen.contains("areas"), "Rundenart und Bereiche stehen schon vor dem Ende: \(seen)")
         // Nur lesen (kein Öffnen zum Schreiben): die Faltung nimmt Rundenart und Bereiche aus den Zeilen.
-        let viewOnly = await AssistantAuditLog(directory: crashed, reader: AssistantAuditWriter.readFile).read().entries.first
+        let viewOnly = await AssistantAuditLog(directory: crashed, reader: AssistantAuditWriter.readFile).read().entries.first(where: { $0.kind == .answer })
         XCTAssertEqual(viewOnly?.outcome, .incomplete)
         XCTAssertEqual(viewOnly?.round, .data)
         XCTAssertEqual(viewOnly?.areas, ["books"])
@@ -1186,7 +1197,7 @@ final class AssistantAuditLogTests: XCTestCase {
         XCTAssertEqual(ends.count, 1)
         XCTAssertEqual(ends.first?["areas"] as? [String], ["books"])
         XCTAssertEqual(ends.first?["outcome"] as? String, "incomplete")
-        let entry = await reopened.read().entries.first
+        let entry = await reopened.read().entries.first(where: { $0.kind == .answer })
         XCTAssertEqual(entry?.round, .data)
         XCTAssertEqual(entry?.areas, ["books"])
         XCTAssertEqual(entry?.outcome, .incomplete)
@@ -1208,13 +1219,13 @@ final class AssistantAuditLogTests: XCTestCase {
         }
         await session.commit(requestId: "r1", user: "x", spoken: "", interrupted: true)
         XCTAssertTrue(firstSentenceSeen)
-        XCTAssertEqual(Array(atFirstSentence.prefix(3)), ["start", "round", "areas"],
-                       "schon beim ersten Satz stehen start, round und areas in der Datei: \(atFirstSentence)")
+        XCTAssertEqual(Array(atFirstSentence.prefix(4)), ["state", "start", "round", "areas"],
+                       "schon beim ersten Satz stehen state, start, round und areas in der Datei: \(atFirstSentence)")
         let order = try objects().compactMap { $0["t"] as? String }
         let areasIndex = try XCTUnwrap(order.firstIndex(of: "areas"))
         let stepIndex = try XCTUnwrap(order.firstIndex(of: "step"))
         XCTAssertLessThan(areasIndex, stepIndex, "die Bereiche stehen vor den Schritten, nicht erst im `end`")
-        let entry = await audit.entries().first
+        let entry = await audit.entries().filter { $0.kind == .answer }.first
         XCTAssertTrue(Set(["books", "notes"]).isSubset(of: Set(entry?.areas ?? [])), "Bestandsbereiche: \(entry?.areas ?? [])")
     }
 
@@ -1245,24 +1256,24 @@ final class AssistantAuditLogTests: XCTestCase {
         }
     }
 
-    /// Datenrunde, lokales Modell: beim Modellaufruf stehen genau `start`, `round` und `areas` in der Datei (nichts von der Antwort).
+    /// Datenrunde, lokales Modell: beim Modellaufruf stehen genau `state`, `start`, `round` und `areas` in der Datei (nichts von der Antwort).
     func testStartRoundAndAreasAreInTheFileBeforeALocalModelRuns() async {
         let kinds = await kindsAtModelCall(cloud: false, question: "Wohin wandert Quasselbert mit dem Fahrrad nach Pappelhausen?")
-        XCTAssertEqual(kinds, ["start", "round", "areas"])
+        XCTAssertEqual(kinds, ["state", "start", "round", "areas"])
     }
 
     /// Datenrunde, Cloud-Modell: ebenso.
     func testStartRoundAndAreasAreInTheFileBeforeACloudModelRuns() async {
         let kinds = await kindsAtModelCall(cloud: true, question: "Wohin wandert Quasselbert mit dem Fahrrad nach Pappelhausen?")
-        XCTAssertEqual(kinds, ["start", "round", "areas"])
+        XCTAssertEqual(kinds, ["state", "start", "round", "areas"])
     }
 
     /// Runde ohne Quelle (keine Bereiche): `start` und `round` stehen in der Datei, bevor das Modell läuft; es gibt keine Zeile `areas`.
     func testStartAndRoundAreInTheFileBeforeAModelRunsInAGeneralRound() async {
         let local = await kindsAtModelCall(cloud: false, question: "Wie hoch ist der Mont Blanc?")
-        XCTAssertEqual(local, ["start", "round"])
+        XCTAssertEqual(local, ["state", "start", "round"])
         let cloud = await kindsAtModelCall(cloud: true, question: "Wie hoch ist der Mont Blanc?")
-        XCTAssertEqual(cloud, ["start", "round"])
+        XCTAssertEqual(cloud, ["state", "start", "round"])
     }
 
     // MARK: Runde 5: jede Erhöhung der Generation genau eine Zeile `release`, vom Kern an der Stelle der Erhöhung
@@ -1278,64 +1289,82 @@ final class AssistantAuditLogTests: XCTestCase {
                          released: true)
     }
 
+    /// Die Datei, wie sie JETZT ist (ohne auf die Warteschlange zu warten): Was hier steht, ist dauerhaft geschrieben.
+    private func rawReleaseLines(_ audit: AssistantAuditLog) -> [[String: Any]] {
+        lines(audit).filter { $0["t"] as? String == "release" }
+    }
+
     /// Pfad `setAllowUnsourced` (Opt-in; Sitzung mit `released: true`, Opt-in war an): eine Zeile je echte Änderung, Grund `optIn`;
-    /// ohne Änderung weder Erhöhung noch Zeile.
+    /// ohne Änderung weder Erhöhung noch Zeile. Die Zeile steht schon in der Datei, wenn der Aufruf zurückkehrt (I2).
     func testSetAllowUnsourcedWritesOneLineWithCauseOptInAndNoneWithoutAChange() async throws {
         let audit = AssistantAuditLog(directory: dir)
         let s = await releaseSession(audit)
-        let off = s.setAllowUnsourced(false)
-        XCTAssertEqual(s.setAllowUnsourced(false), off, "keine Änderung: keine Erhöhung")
-        let on = s.setAllowUnsourced(true, consentVersion: 2)
-        let rel = await releaseLines(audit)
+        let off = await s.setAllowUnsourced(false)
+        XCTAssertEqual(rawReleaseLines(audit).compactMap { $0["gen"] as? Int }, [off.generation], "Zeile steht bei der Rückkehr in der Datei")
+        let r1 = await s.setAllowUnsourced(false)
+        XCTAssertEqual(r1.generation, off.generation, "keine Änderung: keine Erhöhung")
+        XCTAssertFalse(r1.changed)
+        let on = await s.setAllowUnsourced(true, consentVersion: 2)
+        XCTAssertTrue(on.effective)
+        let rel = rawReleaseLines(audit)
         XCTAssertEqual(rel.count, 2, "genau zwei Erhöhungen, zwei Zeilen")
-        XCTAssertEqual(rel.compactMap { $0["gen"] as? Int }, [off, on])
+        XCTAssertEqual(rel.compactMap { $0["gen"] as? Int }, [off.generation, on.generation])
         XCTAssertEqual(rel.compactMap { $0["cause"] as? String }, ["optIn", "optIn"])
         XCTAssertEqual(rel.compactMap { $0["unsourced"] as? Bool }, [false, true], "Opt-in-Zustand NACH der Erhöhung")
         XCTAssertEqual(rel.compactMap { $0["consent"] as? Int }, [0, 2])
-        XCTAssertNil(rel[0]["areas"], "Bereichsnamen nur beim Grund `areas`")
+        XCTAssertNil(rel[0]["areas"], "Bereichsnamen nur bei den Gründen `areas` und `consent`")
         XCTAssertEqual(rel[0]["model"] as? String, "other")
         XCTAssertEqual(rel[0]["cloud"] as? Bool, false)
         XCTAssertNil(rel[0]["req"], "eine Erhöhung gehört zu keiner Anfrage")
-        XCTAssertEqual(on, s.releaseGeneration)
+        XCTAssertEqual(on.generation, s.releaseGeneration)
+        XCTAssertTrue(s.allowsUnsourced)
     }
 
-    /// Pfad `setAreas`: zwei Erhöhungen (vor und nach dem Umschalten), zwei Zeilen, beide mit den NEUEN Bereichsnamen (sortiert).
-    func testSetAreasWritesTwoLinesBothWithTheNewAreaNames() async throws {
+    /// Pfad `setAreas`: EINE Erhöhung und EINE Zeile je Änderung, mit den NEUEN Bereichsnamen (sortiert); gleiche Bereiche: nichts.
+    func testSetAreasWritesExactlyOneLineWithTheNewAreaNames() async throws {
         let audit = AssistantAuditLog(directory: dir)
         let s = await releaseSession(audit)
         let before = s.releaseGeneration
-        let last = await s.setAreas([.notes, .books])
-        XCTAssertEqual(last, before + 2)
-        var rel = await releaseLines(audit)
-        XCTAssertEqual(rel.compactMap { $0["gen"] as? Int }, [before + 1, before + 2])
-        XCTAssertEqual(rel.compactMap { $0["cause"] as? String }, ["areas", "areas"])
-        XCTAssertEqual(rel.compactMap { $0["areas"] as? [String] }, [["books", "notes"], ["books", "notes"]])
+        let first = await s.setAreas([.notes, .books])
+        XCTAssertEqual(first.generation, before + 1, "genau eine Erhöhung")
+        XCTAssertTrue(first.effective)
+        XCTAssertEqual(s.effectiveAreas, [.books, .notes])
+        XCTAssertEqual(rawReleaseLines(audit).compactMap { $0["gen"] as? Int }, [before + 1])
+        let same = await s.setAreas([.books, .notes])
+        XCTAssertFalse(same.changed, "gleiche Bereiche: keine Erhöhung, keine Zeile")
         _ = await s.setAreas([])
-        rel = await releaseLines(audit)
-        XCTAssertEqual(rel.count, 4)
-        XCTAssertEqual(rel.suffix(2).compactMap { $0["areas"] as? [String] }, [[], []], "alle Bereiche aus: leere Liste, kein fehlender Schlüssel")
+        let rel = rawReleaseLines(audit)
+        XCTAssertEqual(rel.count, 2)
+        XCTAssertEqual(rel.compactMap { $0["cause"] as? String }, ["areas", "areas"])
+        XCTAssertEqual(rel.compactMap { $0["areas"] as? [String] }, [["books", "notes"], []], "alle aus: leere Liste, kein fehlender Schlüssel")
         // Die Ansicht faltet die Zeilen zu Einträgen der Art `release`.
         let entries = await audit.entries().filter { $0.kind == .release }
-        XCTAssertEqual(entries.count, 4)
-        XCTAssertEqual(entries.map(\.cause), [.areas, .areas, .areas, .areas])
-        XCTAssertEqual(entries.map(\.generation), [before + 1, before + 2, before + 3, before + 4])
+        XCTAssertEqual(entries.map(\.cause), [.areas, .areas])
+        XCTAssertEqual(entries.map(\.generation), [before + 1, before + 2])
         XCTAssertEqual(entries.first?.areas, ["books", "notes"])
         XCTAssertEqual(entries.last?.areas, [])
     }
 
-    /// Pfad `releaseDidChange` (Cloud-Zustimmung, Bereiche durch den Controller, alles Übrige): eine Zeile mit dem gegebenen Grund.
-    func testReleaseDidChangeWritesOneLineWithTheGivenCause() async throws {
+    /// Pfad `releaseDidChange` / Cloud-Zustimmung: eine Zeile mit dem gegebenen Grund; die Zustimmung steht als `granted` in der Zeile.
+    func testReleaseDidChangeAndCloudConsentWriteOneLineWithTheGivenCause() async throws {
         let audit = AssistantAuditLog(directory: dir)
         let s = await releaseSession(audit)
-        let a = s.releaseDidChange()
-        let b = s.releaseDidChange(.consent)
-        let c = s.releaseDidChange(.areas, areas: [.files, .books])
-        let rel = await releaseLines(audit)
-        XCTAssertEqual(rel.compactMap { $0["gen"] as? Int }, [a, b, c])
-        XCTAssertEqual(rel.compactMap { $0["cause"] as? String }, ["other", "consent", "areas"])
+        let a = await s.releaseDidChange().generation
+        let b = await s.releaseDidChange(.consent).generation
+        let c = await s.setCloudConsent(false)
+        XCTAssertTrue(c.changed)
+        XCTAssertFalse(s.effectiveCloudConsent, "Entzug wirkt sofort")
+        let again = await s.setCloudConsent(false)
+        XCTAssertFalse(again.changed, "keine Änderung: keine Zeile")
+        let d = await s.setCloudConsent(true)
+        XCTAssertTrue(d.effective)
+        XCTAssertTrue(s.effectiveCloudConsent)
+        let rel = rawReleaseLines(audit)
+        XCTAssertEqual(rel.compactMap { $0["gen"] as? Int }, [a, b, c.generation, d.generation])
+        XCTAssertEqual(rel.compactMap { $0["cause"] as? String }, ["other", "consent", "consent", "consent"])
+        XCTAssertEqual(rel.compactMap { $0["granted"] as? Bool }, [true, true, false, true])
         XCTAssertNil(rel[0]["areas"])
-        XCTAssertNil(rel[1]["areas"])
-        XCTAssertEqual(rel[2]["areas"] as? [String], ["books", "files"])
+        XCTAssertEqual(rel[2]["areas"] as? [String], ["books", "files", "notes", "transcripts"])
     }
 
     /// Pfad `resumeFree`: eine Zeile mit Grund `resumeFree`; ein zweiter Aufruf (nichts zu tun) erhöht nicht und schreibt nichts.
@@ -1343,9 +1372,13 @@ final class AssistantAuditLogTests: XCTestCase {
         let audit = AssistantAuditLog(directory: dir)
         let s = await releaseSession(audit, history: [AssistantTurn(user: "Frage", assistant: "Antwort", at: Date(), round: .data)])
         XCTAssertEqual(s.contextMode, .data)
-        XCTAssertTrue(s.resumeFree())
-        XCTAssertFalse(s.resumeFree())
-        let rel = await releaseLines(audit)
+        let r2 = await s.resumeFree()
+        XCTAssertTrue(r2.changed)
+        XCTAssertTrue(r2.effective)
+        XCTAssertEqual(s.contextMode, .free)
+        let r3 = await s.resumeFree()
+        XCTAssertFalse(r3.changed)
+        let rel = rawReleaseLines(audit)
         XCTAssertEqual(rel.count, 1)
         XCTAssertEqual(rel.first?["cause"] as? String, "resumeFree")
         XCTAssertEqual(rel.first?["gen"] as? Int, s.releaseGeneration)
@@ -1353,7 +1386,7 @@ final class AssistantAuditLogTests: XCTestCase {
     }
 
     /// Alle Pfade zugleich aus mehreren Threads: Die Zeilen stehen vollständig und in der Reihenfolge der Generationen
-    /// (1, 2, …, n), keine fehlt, keine doppelt; geschrieben im Lock, an der Stelle der Erhöhung.
+    /// (1, 2, …, n), keine fehlt, keine doppelt; eingereiht im Lock, an der Stelle der Erhöhung.
     func testEveryIncreaseLeavesExactlyOneLineInTheOrderOfTheGenerations() async throws {
         let audit = AssistantAuditLog(directory: dir)
         let s = await releaseSession(audit)
@@ -1363,9 +1396,9 @@ final class AssistantAuditLogTests: XCTestCase {
             DispatchQueue.global().async {
                 for i in 0..<60 {
                     switch (t + i) % 3 {
-                    case 0: s.releaseDidChange()
-                    case 1: s.releaseDidChange(.consent)
-                    default: s.setAllowUnsourced(i % 2 == 0)
+                    case 0: _ = s.applyReleaseChange()
+                    case 1: _ = s.applyReleaseChange(.consent)
+                    default: _ = s.applyAllowUnsourced(i % 2 == 0)
                     }
                 }
                 group.leave()
@@ -1379,7 +1412,8 @@ final class AssistantAuditLogTests: XCTestCase {
         XCTAssertEqual(rel.compactMap { $0["gen"] as? Int }, Array(1...n), "in der Reihenfolge der Generationen, ohne Lücke")
     }
 
-    /// Das Einreihen der Zeile im Lock wartet nie auf die Platte (Schreiben auf der eigenen Warteschlange).
+    /// Das Einreihen der Zeile im Lock wartet nie auf die Platte (Schreiben auf der eigenen Warteschlange); gewartet wird erst
+    /// AUSSERHALB des Locks (`settle`).
     func testRaisingTheGenerationDoesNotWaitForTheDisk() async throws {
         let audit = freshLog(appender: { url, data in
             Thread.sleep(forTimeInterval: 0.2)
@@ -1387,30 +1421,124 @@ final class AssistantAuditLogTests: XCTestCase {
         })
         let s = await releaseSession(audit)
         let started = Date()
-        for _ in 0..<5 { s.releaseDidChange() }
+        for _ in 0..<5 { _ = s.applyReleaseChange() }
         XCTAssertLessThan(Date().timeIntervalSince(started), 0.3, "fünf Erhöhungen, jede Zeile braucht 0,2 s auf der Platte: es wird nicht gewartet")
         let rel = await releaseLines(audit)
         XCTAssertEqual(rel.count, 5, "alle Zeilen kommen trotzdem in der Datei an")
     }
 
-    /// Ein Schreibfehler bei einer Zeile `release` bleibt nicht still: `flushReleaseLines` meldet ihn (der Controller zeigt ihn an).
-    func testAWriteFailureOfAReleaseLineIsReported() async throws {
-        let audit = freshLog(appender: { _, _ in throw DiskFull() })
+    /// I2, alte Reihenfolge rot: Nur Einreihen (`apply…`, so lief der Rückgabewert früher) lässt die Zeile bei der Rückkehr noch
+    /// aus der Datei fehlen; `setAllowUnsourced` (einreihen, dann AUSSERHALB des Locks warten) kehrt erst zurück, wenn sie steht.
+    func testTheReleaseLineIsInTheFileWhenTheMethodReturnsNotJustEnqueued() async throws {
+        let audit = freshLog(appender: { url, data in
+            Thread.sleep(forTimeInterval: 0.3)
+            try AssistantAuditWriter.appendFile(url, data)
+        })
         let s = await releaseSession(audit)
-        s.releaseDidChange()
-        let error = await audit.flushReleaseLines()
-        XCTAssertEqual(error, .writeFailed)
+        // Alte Reihenfolge (nur einreihen, sofort zurück): Die Zeile fehlt noch.
+        let pending = s.applyAllowUnsourced(false)
+        XCTAssertEqual(rawReleaseLines(audit).count, 0, "alte Reihenfolge: bei der Rückkehr steht die Zeile NICHT in der Datei")
+        // Neue Reihenfolge: erst nach der dauerhaften Zeile zurück.
+        let r = await s.settle(pending)
+        XCTAssertNil(r.error)
+        XCTAssertEqual(rawReleaseLines(audit).compactMap { $0["gen"] as? Int }, [pending.generation], "neu: die Zeile steht bei der Rückkehr")
+        let areas = await s.setAreas([.books])
+        XCTAssertEqual(rawReleaseLines(audit).compactMap { $0["gen"] as? Int }, [pending.generation, areas.generation])
+        let consent = await s.setCloudConsent(false)
+        XCTAssertEqual(rawReleaseLines(audit).last?["gen"] as? Int, consent.generation)
+        let other = await s.releaseDidChange()
+        XCTAssertEqual(rawReleaseLines(audit).last?["gen"] as? Int, other.generation)
+    }
+
+    /// Ein Schreibfehler bei einer Zeile `release` bleibt nicht still: Er kommt als `error` zurück. Eine Einschränkung gilt trotzdem
+    /// (Widerruf wirkt auch ohne Zeile), eine Erweiterung nicht (mehr Bereiche, Opt-in an, Zustimmung erteilt).
+    func testAWriteFailureOfAReleaseLineIsReportedRestrictionsHoldExpansionsDoNot() async throws {
+        let broken = FailSwitch()
+        let audit = freshLog(appender: { url, data in
+            if broken.on { throw DiskFull() }
+            try AssistantAuditWriter.appendFile(url, data)
+        })
+        let s = await releaseSession(audit)
+        // Ausgangslage mit gesunder Platte: nur Bücher, Opt-in aus, keine Cloud-Zustimmung.
+        _ = await s.setAreas([.books])
+        _ = await s.setAllowUnsourced(false)
+        _ = await s.setCloudConsent(false)
+        broken.on = true
+        // Erweiterungen scheitern: nicht wirksam, Fehler gemeldet.
+        let areas = await s.setAreas([.books, .notes])
+        XCTAssertEqual(areas.error, .writeFailed)
+        XCTAssertFalse(areas.effective)
+        XCTAssertEqual(s.effectiveAreas, [.books], "mehr Bereiche ohne dauerhafte Zeile: nicht wirksam")
+        let optIn = await s.setAllowUnsourced(true, consentVersion: 1)
+        XCTAssertEqual(optIn.error, .writeFailed)
+        XCTAssertFalse(optIn.effective)
+        XCTAssertFalse(s.allowsUnsourced, "Opt-in an ohne dauerhafte Zeile: nicht wirksam")
+        XCTAssertEqual(s.contextMode, .data, "auch der Kontext wird nicht umgestellt")
+        let consent = await s.setCloudConsent(true)
+        XCTAssertEqual(consent.error, .writeFailed)
+        XCTAssertFalse(consent.effective)
+        XCTAssertFalse(s.effectiveCloudConsent, "Zustimmung ohne dauerhafte Zeile: nicht wirksam")
+        // Einschränkungen gelten trotz Fehler.
+        broken.on = false
+        _ = await s.setAreas([.books, .notes])
+        _ = await s.setAllowUnsourced(true, consentVersion: 1)
+        _ = await s.setCloudConsent(true)
+        XCTAssertEqual(s.effectiveAreas, [.books, .notes])
+        XCTAssertTrue(s.allowsUnsourced)
+        XCTAssertTrue(s.effectiveCloudConsent)
+        broken.on = true
+        let less = await s.setAreas([.books])
+        XCTAssertEqual(less.error, .writeFailed)
+        XCTAssertTrue(less.effective, "Einschränkung wirkt auch, wenn die Zeile nicht geschrieben werden kann")
+        XCTAssertEqual(s.effectiveAreas, [.books])
+        let off = await s.setAllowUnsourced(false)
+        XCTAssertEqual(off.error, .writeFailed)
+        XCTAssertTrue(off.effective)
+        XCTAssertFalse(s.allowsUnsourced, "Widerruf wirkt auch ohne Zeile")
+        let revoked = await s.setCloudConsent(false)
+        XCTAssertEqual(revoked.error, .writeFailed)
+        XCTAssertFalse(s.effectiveCloudConsent)
+        // Der Fehler wurde mit der Rückgabe abgeholt: kein zweites Mal.
         let again = await audit.flushReleaseLines()
-        XCTAssertNil(again, "gemeldet und vergessen")
+        XCTAssertNil(again)
     }
 
     /// Ohne Protokoll gibt es keine Zeile und keinen Fehler.
     func testWithoutAnAuditLogRaisingTheGenerationStillWorks() async {
         let s = await releaseSession(nil)
-        XCTAssertEqual(s.releaseDidChange(.consent), 1)
-        XCTAssertEqual(s.setAllowUnsourced(false), 2)
+        let r4 = await s.releaseDidChange(.consent)
+        XCTAssertEqual(r4.generation, 1)
+        XCTAssertNil(r4.error)
+        let r5 = await s.setAllowUnsourced(false)
+        XCTAssertEqual(r5.generation, 2)
         let last = await s.setAreas([.books])
-        XCTAssertEqual(last, 4)
+        XCTAssertEqual(last.generation, 3)
+        XCTAssertTrue(last.effective)
+    }
+
+    /// Standzeile (E4.2b): Beim Öffnen des Protokolls steht der Freigabezustand vor der ersten Anfrage in der Datei.
+    func testTheStateLineIsWrittenAtOpeningBeforeTheFirstRequest() async throws {
+        let audit = AssistantAuditLog(directory: dir)
+        let s = AssistantSession(model: AuditModel(pieces: ["Quasselbert wandert nach Pappelhausen."]), knowledge: await geheimKnowledge(),
+                                 config: config, audit: audit, released: true, cloudConsent: false)
+        _ = await audit.flushReleaseLines()
+        let state = lines(audit).first { $0["t"] as? String == "state" }
+        XCTAssertNotNil(state, "die Standzeile steht beim Öffnen in der Datei, ohne dass eine Anfrage lief")
+        XCTAssertEqual(state?["unsourced"] as? Bool, true)
+        XCTAssertEqual(state?["consent"] as? Int, 1)
+        XCTAssertEqual(state?["areas"] as? [String], ["books", "files", "notes", "transcripts"])
+        XCTAssertEqual(state?["granted"] as? Bool, false, "Cloud-Zustimmung: nein")
+        XCTAssertEqual(state?["gen"] as? Int, 0)
+        for await _ in s.events(AssistantRequest(requestId: "r1", text: "Wohin wandert Quasselbert?")) {}
+        let all = lines(audit).compactMap { $0["t"] as? String }
+        XCTAssertEqual(all.first, "state")
+        XCTAssertLessThan(all.firstIndex(of: "state") ?? 99, all.firstIndex(of: "start") ?? -1, "state vor start")
+        XCTAssertEqual(all.filter { $0 == "state" }.count, 1, "genau eine Standzeile")
+        // Gefaltet: ein Eintrag der Art `state`.
+        let entries = await audit.entries().filter { $0.kind == .state }
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries.first?.cloudConsent, false)
+        XCTAssertEqual(entries.first?.areas, ["books", "files", "notes", "transcripts"])
     }
 
     /// Eine Zeile `release` mit unbekanntem Grund (neuere Fassung) wird übersprungen und gezählt, der Rest bleibt lesbar.
@@ -1482,45 +1610,491 @@ final class AssistantAuditLogTests: XCTestCase {
                                        config: config, audit: audit, released: true)
         for await _ in session.events(AssistantRequest(requestId: "neu1", text: "Wohin wandert Quasselbert mit dem Fahrrad nach Pappelhausen?")) {}
         await session.commit(requestId: "neu1", user: "x", spoken: "", interrupted: true)
-        let all = await audit.entries()
+        let all = await audit.entries().filter { $0.kind == .answer }
         XCTAssertEqual(all.map(\.requestId), ["alt1", "neu1"])
         XCTAssertEqual(all.first?.areas, ["books"])
         XCTAssertEqual(all.first?.outcome, .completed)
         XCTAssertEqual(all.last?.round, .data)
     }
 
-    /// Ein Fehler im Protokoll während der Antwort (Datenträger voll) hält die Antwort nicht auf, und der Beitrag steht trotzdem im
-    /// Verlauf; `commit` meldet den Fehler.
-    func testAnAuditFailureDuringTheAnswerNeitherStopsItNorLosesTheHistoryTurn() async {
-        let audit = AssistantAuditLog(directory: dir, reader: { _ in nil }, appender: { _, _ in throw DiskFull() })
-        let session = AssistantSession(model: AuditModel(pieces: ["Quasselbert wandert nach Pappelhausen."]), knowledge: await geheimKnowledge(),
-                                       config: config, audit: audit, released: true)
-        var spoken: [String] = []
-        var finished = false
-        for await e in session.events(AssistantRequest(requestId: "r1", text: "Wohin wandert Quasselbert nach Pappelhausen?")) {
-            if case .sentence(_, _, let t, _, let st, _, _) = e, st != .announcement { spoken.append(t) }
-            if case .done = e { finished = true }
+    // MARK: Schreibfolge (ADR-0028 E4.2b): fail-closed
+
+    /// Austauschpunkt „Platte“: Zeilen der Art `kind` scheitern, solange der Schalter an ist; alles andere wird wirklich geschrieben.
+    private func failing(_ kind: String, _ sw: FailSwitch) -> @Sendable (URL, Data) throws -> Void {
+        { url, data in
+            if sw.on, String(decoding: data, as: UTF8.self).contains("\"t\":\"\(kind)\"") { throw DiskFull() }
+            try AssistantAuditWriter.appendFile(url, data)
         }
-        XCTAssertTrue(finished)
-        XCTAssertEqual(spoken.count, 1)
-        let wrote = await session.commit(requestId: "r1", user: "Wohin wandert Quasselbert nach Pappelhausen?", spoken: spoken.joined(separator: " "), interrupted: false)
-        XCTAssertFalse(wrote, "das Protokoll konnte nicht geschrieben werden")
-        let history = await session.history
-        XCTAssertEqual(history.count, 1, "nur das Protokoll fehlt, der Beitrag steht trotzdem im Verlauf")
     }
 
-    func testAnAuditFailureOnTheBlockedFileDoesNotLoseTheHistoryTurn() async throws {
+    private func sentenceCount(_ events: [AssistantEvent]) -> Int {
+        events.filter { if case .sentence = $0 { true } else { false } }.count
+    }
+
+    private func lastFailure(_ events: [AssistantEvent]) -> AssistantFailure? {
+        if case .failed(_, let f)? = events.last { f } else { nil }
+    }
+
+    private func collect(_ session: AssistantSession, _ id: String, _ text: String) async -> [AssistantEvent] {
+        var events: [AssistantEvent] = []
+        for await e in session.events(AssistantRequest(requestId: id, text: text)) { events.append(e) }
+        return events
+    }
+
+    private let dataQuestion = "Wohin wandert Quasselbert mit dem Fahrrad nach Pappelhausen?"
+
+    /// I1: Misslingt das Schreiben einer Pflichtzeile (`state` beim Öffnen, `start`, `round`, `areas`), läuft kein Modell und geht
+    /// nichts hinaus; Ausgang „Fehler“ (`.auditUnavailable`), Beitrag gibt es keinen. Die alte Reihenfolge (Antwort läuft weiter, der
+    /// Fehler wird nur gemeldet) gäbe hier einen Modellaufruf und ein Satz-Ereignis. Danach geht die nächste Anfrage durch.
+    func testAMandatoryLineThatCannotBeWrittenMeansNoModelNoOutputAndOutcomeError() async {
+        for kind in ["state", "start", "round", "areas"] {
+            try? FileManager.default.removeItem(at: dir)
+            let sw = FailSwitch()
+            sw.on = true
+            let audit = freshLog(appender: failing(kind, sw))
+            let witness = Snapshots()
+            let session = AssistantSession(model: ProbeModel(url: audit.url, snapshots: witness, pieces: ["Quasselbert wandert nach Pappelhausen."]),
+                                           knowledge: await geheimKnowledge(), config: config, audit: audit, released: true)
+            let events = await collect(session, "r1", dataQuestion)
+            XCTAssertEqual(witness.all.count, 0, "\(kind): das Modell lief nicht")
+            XCTAssertEqual(sentenceCount(events), 0, "\(kind): nichts ging hinaus")
+            XCTAssertEqual(lastFailure(events), .auditUnavailable, kind)
+            let wrote = await session.commit(requestId: "r1", user: dataQuestion, spoken: "", interrupted: false)
+            // Fehlte nur die Standzeile, schreibt `commit` `start` und `end` ohne Fehler; sonst scheitert auch dieses Schreiben.
+            if kind != "state" { XCTAssertFalse(wrote, "\(kind): `commit` meldet den Fehler") }
+            let none = await session.history
+            XCTAssertEqual(none, [], "\(kind): kein Beitrag")
+            sw.on = false
+            let failed = await audit.entries().first { $0.requestId == "r1" }
+            // Ohne `start` in der Datei gibt es keine Anfrage darin (ein einzelnes `end` ist verwaist); sonst steht Ausgang „Fehler“.
+            if kind == "start" { XCTAssertNil(failed, "start: die Anfrage steht gar nicht in der Datei") } else { XCTAssertEqual(failed?.outcome, .failed, "\(kind): Ausgang „Fehler“") }
+            let again = await collect(session, "r2", dataQuestion)
+            XCTAssertEqual(witness.all.count, 1, "\(kind): erneuter Versuch läuft")
+            XCTAssertGreaterThan(sentenceCount(again), 0, kind)
+            if case .done? = again.last {} else { XCTFail("\(kind): die zweite Anfrage endet regulär: \(String(describing: again.last))") }
+            await session.commit(requestId: "r2", user: dataQuestion, spoken: "", interrupted: true)
+        }
+    }
+
+    /// I1, Rundenart ohne Quelle (keine Zeile `areas`): `start` oder `round` nicht schreibbar, kein Modell.
+    func testAGeneralRoundWithAnUnwritableStartOrRoundLineRunsNoModelEither() async {
+        for kind in ["start", "round"] {
+            try? FileManager.default.removeItem(at: dir)
+            let sw = FailSwitch()
+            sw.on = true
+            let audit = freshLog(appender: failing(kind, sw))
+            let witness = Snapshots()
+            let session = AssistantSession(model: ProbeModel(url: audit.url, snapshots: witness, pieces: ["Der Mont Blanc ist 4806 Meter hoch."]),
+                                           knowledge: await geheimKnowledge(), config: config, audit: audit, released: true)
+            let events = await collect(session, "r1", "Wie hoch ist der Mont Blanc?")
+            XCTAssertEqual(witness.all.count, 0, kind)
+            XCTAssertEqual(sentenceCount(events), 0, kind)
+            XCTAssertEqual(lastFailure(events), .auditUnavailable, kind)
+        }
+    }
+
+    /// Cloud-Ziel ohne Zustimmung: kein Abruf, kein Modell, `.consentRequired` (Zeilen `state` und `start` stehen trotzdem).
+    func testACloudTargetWithoutConsentRunsNoModelAndReportsConsentRequired() async {
+        let audit = AssistantAuditLog(directory: dir)
+        let witness = Snapshots()
+        let cloud = AssistantConfig(modelLabel: "Cloud", isCloud: true, contextTokens: 16_000, maxAnswerTokens: 700, userName: nil, timeout: 5)
+        let session = AssistantSession(model: ProbeModel(url: audit.url, snapshots: witness, pieces: ["Hallo."]), knowledge: await geheimKnowledge(),
+                                       config: cloud, audit: audit)
+        let events = await collect(session, "r1", dataQuestion)
+        XCTAssertEqual(witness.all.count, 0)
+        XCTAssertEqual(sentenceCount(events), 0)
+        XCTAssertEqual(lastFailure(events), .consentRequired)
+        await session.commit(requestId: "r1", user: dataQuestion, spoken: "", interrupted: false)
+        XCTAssertEqual(kinds(audit).prefix(2), ["state", "start"])
+    }
+
+    /// Schreibfolge (2): Die Einordnung (`step`) einer Einheit steht dauerhaft in der Datei, bevor das Ereignis hinausgeht (bevor
+    /// der erste Ausgabe-Commit geprüft wird). Der Schreiber ist langsam; die alte Reihenfolge (einreihen und senden) zeigte hier
+    /// weniger Schrittzeilen in der Datei als bereits empfangene Einheiten.
+    func testEveryUnitsStepLineIsInTheFileBeforeItsEventGoesOut() async {
+        let audit = slowLog()
+        let session = AssistantSession(model: AuditModel(pieces: ["Quasselbert wandert nach Pappelhausen."]), knowledge: await geheimKnowledge(),
+                                       config: config, audit: audit, released: true)
+        var received = 0
+        var stepsAtEvent: [Int] = []
+        for await e in session.events(AssistantRequest(requestId: "r1", text: dataQuestion)) {
+            guard case .sentence = e else { continue }
+            received += 1
+            stepsAtEvent.append(kinds(audit).filter { $0 == "step" }.count)
+        }
+        await session.commit(requestId: "r1", user: "x", spoken: "", interrupted: true)
+        XCTAssertEqual(received, 2, "Ansage und Block")
+        for (i, steps) in stepsAtEvent.enumerated() { XCTAssertGreaterThanOrEqual(steps, i + 1, "Einheit \(i + 1): Schrittzeile vor dem Ereignis") }
+    }
+
+    /// Schreibfolge (2), Fehler: Lässt sich die Einordnung nicht schreiben, wird die Einheit nicht ausgegeben (kein Satz-Ereignis),
+    /// das Modell lief (die Pflichtzeilen standen), Ausgang „Fehler“.
+    func testAUnitWhoseStepLineCannotBeWrittenIsNotOutput() async {
+        let sw = FailSwitch()
+        sw.on = true
+        let audit = freshLog(appender: failing("step", sw))
+        let witness = Snapshots()
+        let session = AssistantSession(model: ProbeModel(url: audit.url, snapshots: witness, pieces: ["Quasselbert wandert nach Pappelhausen."]),
+                                       knowledge: await geheimKnowledge(), config: config, audit: audit, released: true)
+        let events = await collect(session, "r1", dataQuestion)
+        XCTAssertEqual(witness.all.count, 1)
+        XCTAssertEqual(sentenceCount(events), 0, "weder Ansage noch Block")
+        XCTAssertEqual(lastFailure(events), .auditUnavailable)
+        let wrote = await session.commit(requestId: "r1", user: dataQuestion, spoken: "", interrupted: false)
+        XCTAssertFalse(wrote)
+        sw.on = false
+        let entry = await audit.entries().first { $0.kind == .answer }
+        XCTAssertEqual(entry?.outcome, .failed)
+    }
+
+    /// Schreibfolge (5): Misslingt eine Ergebniszeile (`commit`), geht keine weitere Einheit hinaus und es gibt kein `done`; die
+    /// erste Einheit (die Ansage) ging hinaus, ihr Ergebnis ließ sich nicht festhalten.
+    func testAResultLineThatCannotBeWrittenStopsTheOutputAndEndsWithAnError() async {
+        let sw = FailSwitch()
+        sw.on = true
+        let audit = freshLog(appender: failing("commit", sw))
+        let session = AssistantSession(model: AuditModel(pieces: ["Quasselbert wandert nach Pappelhausen."]), knowledge: await geheimKnowledge(),
+                                       config: config, audit: audit, released: true)
+        let events = await collect(session, "r1", dataQuestion)
+        let texts = events.compactMap { e -> String? in if case .sentence(_, _, let t, _, _, _, _) = e { t } else { nil } }
+        XCTAssertEqual(texts, ["Wörtlicher Auszug aus ‚Der Titel Flimmerkasten‘:"], "nur die erste Einheit; der Block kommt nicht mehr: \(texts)")
+        XCTAssertEqual(lastFailure(events), .auditUnavailable)
+        XCTAssertFalse(events.contains { if case .done = $0 { true } else { false } }, "kein `done`")
+        let wrote = await session.commit(requestId: "r1", user: dataQuestion, spoken: texts.joined(separator: " "), interrupted: false)
+        XCTAssertFalse(wrote)
+        sw.on = false
+        let entry = await audit.entries().first { $0.kind == .answer }
+        XCTAssertEqual(entry?.outcome, .failed, "Ausgang „Fehler“")
+    }
+
+    /// Schreibfolge (6): Ein Schritt ohne Ergebnis beim Prozessende heißt „Ausgabe möglich, Ergebnis unbekannt“, die Anfrage wird
+    /// beim Öffnen als „unvollständig“ geschlossen. Gelesen wird genau diese Datei: Schritt 1 mit Ergebnis, Schritt 2 ohne, Schritt 3
+    /// ein verworfener Kandidat (behauptet nichts, nie „unbekannt“).
+    func testAStepWithoutAResultAtProcessEndIsReadAsResultUnknownAndTheRequestAsIncomplete() async throws {
+        try writeLines([
+            journalStart("a"), journalStep("a", 1, .announcement), journalCommit("a", 1, AssistantCommitMark(stage: .emit, ok: true, generation: 1)),
+            journalStep("a", 2, .grounded), journalStep("a", 3, .droppedNotSnapped),
+        ])
+        let audit = AssistantAuditLog(directory: dir)
+        let view = await audit.read().entries.first { $0.requestId == "a" }
+        XCTAssertEqual(view?.outcome, .incomplete)
+        XCTAssertEqual(view?.trace.map(\.resultUnknown), [false, true, false])
+        XCTAssertEqual(view?.trace[0].commits, [AssistantCommitMark(stage: .emit, ok: true, generation: 1)])
+    }
+
+    /// Dasselbe aus einer echten Antwort: Das Prozessende liegt zwischen Einordnung und Ergebnis (der Schreiber ist langsam, die
+    /// Datei wird beim ersten Ereignis kopiert, die Ergebniszeile steht noch nicht darin).
+    func testProcessEndBetweenStepAndResultOfARealAnswerLeavesAnUnknownResult() async throws {
+        let audit = slowLog()
+        let session = AssistantSession(model: AuditModel(pieces: ["Quasselbert wandert nach Pappelhausen."]), knowledge: await geheimKnowledge(),
+                                       config: config, audit: audit, released: true)
+        var crashed: URL?
+        defer { if let crashed { try? FileManager.default.removeItem(at: crashed) } }
+        for await e in session.events(AssistantRequest(requestId: "r1", text: dataQuestion)) {
+            if case .sentence = e, crashed == nil { crashed = try crashCopy(of: audit) }
+        }
+        await session.commit(requestId: "r1", user: "x", spoken: "", interrupted: true)
+        let copy = try XCTUnwrap(crashed)
+        let reopened = AssistantAuditLog(directory: copy, reader: AssistantAuditWriter.readFile)
+        _ = await reopened.append(journalEvent(1))
+        let entry = await reopened.read().entries.first { $0.requestId == "r1" }
+        XCTAssertEqual(entry?.outcome, .incomplete)
+        XCTAssertEqual(entry?.trace.first?.verdict, .announcement)
+        XCTAssertEqual(entry?.trace.first?.resultUnknown, true, "Einordnung ohne Ergebnis: Ausgabe möglich, Ergebnis unbekannt")
+    }
+
+    /// Die Protokolldatei ist durch ein Verzeichnis blockiert (nie schreibbar): kein Modell, keine Ausgabe, Fehler.
+    func testABlockedLogFileMeansNoModelAndNoOutput() async throws {
         let blocked = FileManager.default.temporaryDirectory.appendingPathComponent("assistant-audit-blocked-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: blocked) }
         try FileManager.default.createDirectory(at: blocked.appendingPathComponent(AssistantAuditLog.fileName), withIntermediateDirectories: true)
-        let session = AssistantSession(model: AuditModel(pieces: ["Hallo zusammen."]), knowledge: AssistantKnowledge(corpus: AssistantCorpus()),
+        let witness = Snapshots()
+        let audit = AssistantAuditLog(directory: blocked)
+        let session = AssistantSession(model: ProbeModel(url: audit.url, snapshots: witness, pieces: ["Hallo zusammen."]),
+                                       knowledge: AssistantKnowledge(corpus: AssistantCorpus()),
                                        config: AssistantConfig(modelLabel: "T", isCloud: false, contextTokens: 4_096, maxAnswerTokens: 400, userName: nil, timeout: 5),
-                                       audit: AssistantAuditLog(directory: blocked), released: true)
-        for await e in session.events(AssistantRequest(requestId: "a", text: "Hallo")) { _ = e }
-        let wrote = await session.commit(requestId: "a", user: "Hallo", spoken: "Hallo zusammen.", interrupted: false)
+                                       audit: audit, released: true)
+        let events = await collect(session, "a", "Hallo")
+        XCTAssertEqual(witness.all.count, 0)
+        XCTAssertEqual(sentenceCount(events), 0)
+        XCTAssertEqual(lastFailure(events), .auditUnavailable)
+        let wrote = await session.commit(requestId: "a", user: "Hallo", spoken: "", interrupted: false)
         XCTAssertFalse(wrote)
         let history = await session.history
-        XCTAssertEqual(history.count, 1)
+        XCTAssertEqual(history, [])
+    }
+
+    // MARK: I3: Audiostart atomar mit der Prüfung der Generation
+
+    /// Hält einen Aufruf an einer Stelle fest, bis der Test ihn freigibt (deterministische Verschränkung ohne Schlaf).
+    private final class Gate: @unchecked Sendable {
+        private let entered = DispatchSemaphore(value: 0)
+        private let released = DispatchSemaphore(value: 0)
+        func arrive() { entered.signal(); released.wait() }
+        /// Meldet nur das Eintreffen, ohne zu warten.
+        func signal() { entered.signal() }
+        func waitUntilArrived() { entered.wait() }
+        func open() { released.signal() }
+    }
+
+    /// Wartepunkt für eine Quelle im Abruf: `arrive` meldet das Eintreffen und wartet, bis `open` ruft (ohne Thread zu blockieren).
+    private actor AsyncGate {
+        private var arrived = false
+        private var opened = false
+        private var arrivedWaiters: [CheckedContinuation<Void, Never>] = []
+        private var openWaiters: [CheckedContinuation<Void, Never>] = []
+        private(set) var calls = 0
+
+        func arrive() async {
+            calls += 1
+            arrived = true
+            for w in arrivedWaiters { w.resume() }
+            arrivedWaiters = []
+            if opened { return }
+            await withCheckedContinuation { openWaiters.append($0) }
+        }
+
+        func waitUntilArrived() async {
+            if arrived { return }
+            await withCheckedContinuation { arrivedWaiters.append($0) }
+        }
+
+        func open() {
+            opened = true
+            for w in openWaiters { w.resume() }
+            openWaiters = []
+        }
+    }
+
+    /// Quelle der Ablage, die im Abruf an einem Wartepunkt hängt.
+    private struct GatedSource: AssistantSource {
+        let area: AssistantArea
+        let gate: AsyncGate
+        func items() async -> [AssistantItem] { [] }
+        func search(_ question: String, limit: Int) async -> [AssistantPassage] {
+            await gate.arrive()
+            return [AssistantPassage(area: area, itemId: "f1", title: "Ablagedatei Zimtsterne", locator: nil,
+                                     text: "Quasselbert wandert mit dem Fahrrad nach Pappelhausen.", score: 1, isBlock: true)]
+        }
+    }
+
+    /// I4, Haltepunkt: Die Anfrage liest Generation und Bereiche in EINEM Schritt (`snapshot`) und gibt genau diese an Abruf,
+    /// Bestand und Abgleich. Wird mitten im Abruf (hier: im Abruf der Ablage) ein Bereich entzogen, ist die laufende Anfrage
+    /// widerrufen und gibt nichts aus; sie sah nie (g+1, die alten größeren Bereiche). Die nächste Anfrage trägt (g+1, engere
+    /// Bereiche) und ruft die entzogene Quelle gar nicht erst auf. Die alte Reihenfolge (Bereiche aus der Wissensbasis, Generation
+    /// gesondert gelesen) ließe die nächste Anfrage mit der neuen Generation und den alten Bereichen laufen.
+    func testARestrictionDuringTheRetrievalRevokesTheRunAndTheNextRunNeverSeesTheOldAreas() async throws {
+        let audit = AssistantAuditLog(directory: dir)
+        let gate = AsyncGate()
+        let corpus = AssistantCorpus()
+        await corpus.upsert(assistantDoc("b1", "Der Titel Flimmerkasten", sections: [
+            ("S. 7", "Quasselbert wandert mit dem Fahrrad nach Pappelhausen und trifft dort Tante Lavendula."),
+        ]))
+        let knowledge = AssistantKnowledge(corpus: corpus, sources: [GatedSource(area: .files, gate: gate)])
+        await knowledge.setAreas([.books, .files])
+        let session = AssistantSession(model: AuditModel(pieces: ["Quasselbert wandert nach Pappelhausen."]), knowledge: knowledge,
+                                       config: config, audit: audit, released: true)
+        let g = session.releaseGeneration
+        let question = dataQuestion
+        let first = Task { () -> [AssistantEvent] in
+            var out: [AssistantEvent] = []
+            for await e in session.events(AssistantRequest(requestId: "r1", text: question)) { out.append(e) }
+            return out
+        }
+        await gate.waitUntilArrived()   // die Anfrage hat (g, Bücher und Ablage) gelesen und steckt im Abruf der Ablage
+
+        let change = await session.setAreas([.books])
+        XCTAssertEqual(change.generation, g + 1)
+        XCTAssertEqual(session.effectiveAreas, [.books])
+        await gate.open()
+        let events = await first.value
+
+        XCTAssertFalse(events.contains { if case .sentence = $0 { true } else { false } }, "nach dem Entzug kommt nichts mehr hinaus")
+        for e in events {
+            if case .sources(_, let gen, _) = e { XCTAssertEqual(gen, g, "nie die neue Generation mit den alten Bereichen") }
+        }
+        let lastFailure: AssistantFailure? = { if case .failed(_, let f)? = events.last { f } else { nil } }()
+        XCTAssertTrue(lastFailure == .revoked || lastFailure == .cancelled, "\(String(describing: events.last))")
+        let callsAfterFirst = await gate.calls
+        XCTAssertEqual(callsAfterFirst, 1)
+
+        // Die nächste Anfrage: neue Generation, engere Bereiche, die Quelle der Ablage wird nicht aufgerufen.
+        let second = await collect(session, "r2", dataQuestion)
+        let secondGen = second.compactMap { e -> Int? in if case .sources(_, let gen, _) = e { gen } else { nil } }
+        XCTAssertEqual(secondGen, [g + 1])
+        let callsAfterSecond = await gate.calls
+        XCTAssertEqual(callsAfterSecond, 1, "die entzogene Quelle wird nicht mehr gefragt")
+        for e in second {
+            if case .sources(_, _, let passages) = e { XCTAssertFalse(passages.contains { $0.area == .files }) }
+        }
+        await session.commit(requestId: "r1", user: "x", spoken: "", interrupted: true)
+        await session.commit(requestId: "r2", user: "x", spoken: "", interrupted: true)
+
+        // Im Protokoll trägt keine Zeile der ersten Anfrage die neue Generation.
+        _ = await audit.waitUntilWritten(request: "r1")
+        for l in lines(audit) where l["req"] as? String == "r1" && ["start", "round", "areas"].contains(l["t"] as? String ?? "") {
+            XCTAssertEqual(l["gen"] as? Int, g, "\(l)")
+        }
+    }
+
+    private func marks(_ audit: AssistantAuditLog, _ rid: String) async -> [String] {
+        _ = await audit.waitUntilWritten(request: rid)
+        return lines(audit).filter { $0["t"] as? String == "commit" && $0["req"] as? String == rid }.compactMap { $0["mark"] as? String }
+    }
+
+    /// I3, Kernprüfung: Zwischen „Start gemeldet“ und tatsächlichem Start steigt die Generation. Der Start wird nicht ausgelöst, die
+    /// Marke lautet „verworfen“ mit der vorgefundenen Generation, nie „ausgeführt“.
+    func testAStartAfterAnIncreaseOfTheGenerationIsRejectedAndNeverMarkedAsExecuted() async {
+        let audit = AssistantAuditLog(directory: dir)
+        let session = AssistantSession(model: AuditModel(pieces: ["Quasselbert wandert nach Pappelhausen."]), knowledge: await geheimKnowledge(),
+                                       config: config, audit: audit, released: true)
+        let g = session.releaseGeneration
+        _ = await collect(session, "r1", dataQuestion)
+        await session.setAllowUnsourced(false)   // die Freigabe ändert sich, BEVOR die Stimme den Satz startet
+        var started = 0
+        let result = session.commitStart(requestId: "r1", index: 1, generation: g) { started += 1; return true }
+        XCTAssertFalse(result.ok)
+        XCTAssertEqual(started, 0, "der Start läuft nach der Erhöhung nicht mehr")
+        XCTAssertEqual(result.generation, g + 1, "die vorgefundene Generation")
+        let m = await marks(audit, "r1")
+        XCTAssertTrue(m.contains("a-\(g + 1)"), "\(m)")
+        XCTAssertFalse(m.contains { $0.hasPrefix("a+") }, "kein „ausgeführt“ ohne Start: \(m)")
+        await session.commit(requestId: "r1", user: "x", spoken: "", interrupted: true)
+    }
+
+    /// I3: Gilt die Generation, läuft der Start und die Marke „ausgeführt“ trägt genau die geprüfte Generation; lässt sich der Start
+    /// nicht auslösen (Stimme verweigert), steht „fehlgeschlagen“.
+    func testAStartThatRunsIsMarkedExecutedAndARefusedStartAsFailed() async {
+        let audit = AssistantAuditLog(directory: dir)
+        let session = AssistantSession(model: AuditModel(pieces: ["Quasselbert wandert nach Pappelhausen."]), knowledge: await geheimKnowledge(),
+                                       config: config, audit: audit, released: true)
+        let g = session.releaseGeneration
+        _ = await collect(session, "r1", dataQuestion)
+        var started = 0
+        let ok = session.commitStart(requestId: "r1", index: 0, generation: g) { started += 1; return true }
+        let refused = session.commitStart(requestId: "r1", index: 1, generation: g) { started += 1; return false }
+        XCTAssertTrue(ok.ok)
+        XCTAssertFalse(refused.ok)
+        XCTAssertTrue(refused.failed)
+        XCTAssertEqual(started, 2)
+        let m = await marks(audit, "r1")
+        XCTAssertTrue(m.contains("a+\(g)"), "\(m)")
+        XCTAssertTrue(m.contains("a!\(g)"), "\(m)")
+        await session.commit(requestId: "r1", user: "x", spoken: "", interrupted: true)
+    }
+
+    /// I3, Verschränkung mit Sperre: Während der Start läuft (er hält die Sperre der Freigabe), kann eine Erhöhung nicht
+    /// dazwischentreten; sie kehrt erst NACH dem Start zurück, und die Marke trägt die Generation vor ihr.
+    func testAnIncreaseCannotInterleaveWithARunningStart() async {
+        let audit = AssistantAuditLog(directory: dir)
+        let session = AssistantSession(model: AuditModel(pieces: ["Quasselbert wandert nach Pappelhausen."]), knowledge: await geheimKnowledge(),
+                                       config: config, audit: audit, released: true)
+        let g = session.releaseGeneration
+        _ = await collect(session, "r1", dataQuestion)
+        let inside = Gate()
+        let bodyDone = FailSwitch()
+        let increaseSawStartDone = FailSwitch()
+        let increaser = Thread {
+            inside.waitUntilArrived()
+            _ = session.applyReleaseChange()   // blockiert, bis der Start fertig ist
+            increaseSawStartDone.on = bodyDone.on
+        }
+        increaser.start()
+        let result = session.commitStart(requestId: "r1", index: 1, generation: g) {
+            inside.signal()   // hier greift die andere Änderung an
+            Thread.sleep(forTimeInterval: 0.05)
+            bodyDone.on = true
+            return true
+        }
+        XCTAssertTrue(result.ok)
+        XCTAssertEqual(result.generation, g)
+        while session.releaseGeneration == g { try? await Task.sleep(nanoseconds: 5_000_000) }
+        XCTAssertTrue(increaseSawStartDone.on, "die Erhöhung kehrte erst zurück, als der Start vollständig war")
+        let m = await marks(audit, "r1")
+        XCTAssertTrue(m.contains("a+\(g)"), "\(m)")
+        await session.commit(requestId: "r1", user: "x", spoken: "", interrupted: true)
+    }
+
+    /// I3, Beweis der Lücke der alten Reihenfolge (Meta-Test mit denselben Bausteinen): Wer die Generation prüft, die Sperre
+    /// loslässt und DANN startet, lässt die Erhöhung dazwischentreten; sie kehrt vor dem Start zurück. Das ist der Zustand, den
+    /// `commitStart` ausschließt (der Test davor ist die Gegenprobe und wäre mit der alten Reihenfolge rot).
+    func testTheOldOrderCheckThenStartLeavesAWindowThatTheAtomicStartClosed() async {
+        let release = AssistantRelease(optIn: true, consentVersion: 1, areas: Set(AssistantArea.allCases), cloudConsent: true, onIncrease: nil)
+        let g = release.currentGeneration
+        let between = Gate()
+        var startedAfterIncrease = false
+        let increaser = Thread {
+            between.waitUntilArrived()
+            _ = release.apply(AssistantReleaseChange(cause: .other, force: true))
+            between.open()
+        }
+        increaser.start()
+        // Alte Reihenfolge: prüfen (Lock kurz), Lock frei, dann starten.
+        let stillCurrent = release.ifCurrent(g) {}.ok
+        XCTAssertTrue(stillCurrent)
+        between.arrive()   // hier tritt die Erhöhung ein, vollständig
+        startedAfterIncrease = release.currentGeneration != g
+        XCTAssertTrue(startedAfterIncrease, "alte Reihenfolge: der Start liefe NACH der Erhöhung (veraltet) weiter")
+    }
+
+    // MARK: I5: geprüfte Generation wird durchgereicht
+
+    /// I5: Der Verlaufs-Commit trägt die geprüfte Generation. Ein Widerruf unmittelbar nach dem Anhängen ändert die Marke nicht.
+    func testARevocationRightAfterTheHistoryAppendDoesNotChangeTheCheckedGenerationInTheMark() async {
+        let audit = AssistantAuditLog(directory: dir)
+        let session = AssistantSession(model: AuditModel(pieces: ["Quasselbert wandert nach Pappelhausen."]), knowledge: await geheimKnowledge(),
+                                       config: config, audit: audit, released: true)
+        let g = session.releaseGeneration
+        var spoken: [String] = []
+        for await e in session.events(AssistantRequest(requestId: "r1", text: dataQuestion)) {
+            if case .sentence(_, _, let t, _, let st, _, _) = e, st != .announcement { spoken.append(t) }
+        }
+        await session.commit(requestId: "r1", user: "x", spoken: spoken.joined(separator: " "), interrupted: false)
+        let after = await session.setAllowUnsourced(false)   // Widerruf unmittelbar nach dem Anhängen
+        XCTAssertEqual(after.generation, g + 1)
+        let m = await marks(audit, "r1")
+        XCTAssertTrue(m.contains("h+\(g)"), "die Marke trägt die geprüfte Generation g, nicht g+1: \(m)")
+        XCTAssertFalse(m.contains("h+\(g + 1)"))
+    }
+
+    /// I5: Eine Ablehnung (Widerruf vor dem Anhängen) trägt die dabei VORGEFUNDENE Generation.
+    func testAHistoryRejectionCarriesTheFoundGeneration() async {
+        let audit = AssistantAuditLog(directory: dir)
+        let session = AssistantSession(model: AuditModel(pieces: ["Quasselbert wandert nach Pappelhausen."]), knowledge: await geheimKnowledge(),
+                                       config: config, audit: audit, released: true)
+        let g = session.releaseGeneration
+        _ = await collect(session, "r1", dataQuestion)
+        await session.setAllowUnsourced(false)
+        await session.commit(requestId: "r1", user: "x", spoken: "Quasselbert wandert mit dem Fahrrad nach Pappelhausen und trifft dort Tante Lavendula.", interrupted: false)
+        let m = await marks(audit, "r1")
+        XCTAssertTrue(m.contains("h-\(g + 1)"), "\(m)")
+        let history = await session.history
+        XCTAssertEqual(history, [])
+    }
+
+    /// I5: Die Anzeige trägt die geprüfte Generation, auch wenn eine Erhöhung während des Commits wartet.
+    func testTheDisplayMarkCarriesTheCheckedGenerationWhileAnIncreaseWaits() async {
+        let audit = AssistantAuditLog(directory: dir)
+        let session = AssistantSession(model: AuditModel(pieces: ["Quasselbert wandert nach Pappelhausen."]), knowledge: await geheimKnowledge(),
+                                       config: config, audit: audit, released: true)
+        let g = session.releaseGeneration
+        _ = await collect(session, "r1", dataQuestion)
+        let inside = Gate()
+        let increaser = Thread {
+            inside.waitUntilArrived()
+            _ = session.applyReleaseChange()
+        }
+        increaser.start()
+        let result = session.commitOutput(requestId: "r1", index: 1, generation: g, stage: .display) {
+            inside.signal()
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        XCTAssertTrue(result.ok)
+        while session.releaseGeneration == g { try? await Task.sleep(nanoseconds: 5_000_000) }
+        let m = await marks(audit, "r1")
+        XCTAssertTrue(m.contains("d+\(g)"), "\(m)")
+        XCTAssertFalse(m.contains("d+\(g + 1)"))
+        await session.commit(requestId: "r1", user: "x", spoken: "", interrupted: true)
     }
 }
 

@@ -38,6 +38,18 @@ public struct BookTalkChunk: Sendable, Equatable {
     }
 }
 
+/// Ein Absatz des Buchtextes als ganzer Block (`BookTalkIndex.blocks(in:)`).
+public struct BookTalkBlock: Sendable, Equatable {
+    public let chapterIndex: Int
+    public let chapterTitle: String
+    /// Letzte Seitenmarke `{{S. n}}` vor dem Absatz; nil, wenn noch keine kam.
+    public let page: Int?
+    public let start: Int
+    /// Originaloffset hinter dem Absatz (für die Lesegrenze).
+    public let end: Int
+    public let text: String
+}
+
 public struct BookTalkPageMark: Sendable, Equatable {
     public let offset: Int
     public let page: Int
@@ -63,6 +75,18 @@ public struct BookTalkIndex: Sendable {
         let marks = BookTalkIndex.scanMarks(units)
         self.pageMarks = marks
         self.chunks = BookTalkIndex.pack(BookTalkIndex.parse(units), marks: marks)
+    }
+
+    /// Die Absätze des Buchtextes als ganze Blöcke (Quellblöcke des Assistenten): Zeilen bis zur Leerzeile, Kapitelüberschrift
+    /// oder Seitenmarke, gesäubert (ohne Sprecher- und Stilmarken, Leerraum gefaltet), mit Seite, Kapitel und Originaloffsets. Kein
+    /// Absatz wird geteilt, gekürzt oder mit einem anderen zusammengezogen.
+    public static func blocks(in text: String) -> [BookTalkBlock] {
+        let units = Array(text.utf16)
+        let marks = scanMarks(units)
+        return parse(units).map { p in
+            BookTalkBlock(chapterIndex: max(p.chapterIndex - 1, 0), chapterTitle: p.chapterTitle, page: page(in: marks, at: p.start),
+                          start: p.start, end: p.end, text: p.text)
+        }
     }
 
     /// Seite an einem Originaloffset (letzte Marke bei oder vor `offset`).

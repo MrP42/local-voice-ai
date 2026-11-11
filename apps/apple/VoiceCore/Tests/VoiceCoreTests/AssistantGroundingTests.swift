@@ -2,18 +2,19 @@ import Foundation
 import XCTest
 @testable import VoiceCore
 
-// Gesprächsmodus „Sprechen“ (Paket A, E4.2a): Satzprüfung vor der Ausgabe, strukturell. Goldfälle auf Deutsch; nur
-// synthetische Inhalte. In Datenrunden ist jeder ausgegebene Satz zeichengleich mit einem Quellsatz oder einer Systemvorlage.
+// Gesprächsmodus „Sprechen“ (Paket A, E4.2a/E4.2b): Prüfung vor der Ausgabe, strukturell. Goldfälle auf Deutsch; nur synthetische
+// Inhalte. In Datenrunden ist jede ausgegebene Einheit zeichengleich mit einem GANZEN gespeicherten Quellblock oder einer
+// Systemvorlage; Teile, Kürzungen und Zusammenzüge eines Blocks gibt es nicht.
 
 final class AssistantGroundingTests: XCTestCase {
     private let book = AssistantPassage(
         area: .books, itemId: "b1", title: "Der Zauberberg", locator: "S. 12",
         text: "Hans Castorp fährt ins Sanatorium nach Davos und besucht dort seinen Vetter Joachim. Er bleibt drei Wochen.", score: 1,
-        startsAtBoundary: true, endsAtBoundary: true)
+        isBlock: true)
     private let meeting = AssistantPassage(
         area: .transcripts, itemId: "t1", title: "Besprechung vom 12.10.2026", locator: "00:14:03",
         text: "Die Besprechung dauerte 48 Minuten. Anna übernimmt die Planung für das Projekt Nordlicht bis Freitag.", score: 0.8,
-        startsAtBoundary: true, endsAtBoundary: true)
+        isBlock: true)
     private let titles = ["Der Zauberberg", "Besprechung vom 12.10.2026", "Quartalsplanung"]
     private let now = Date(timeIntervalSince1970: 1_794_384_300)   // Mittwoch, 11. November 2026, 08:05 Uhr (UTC)
     private var zone: TimeZone { TimeZone(identifier: "UTC")! }
@@ -30,40 +31,27 @@ final class AssistantGroundingTests: XCTestCase {
         return nil
     }
 
-    // MARK: Einrasten (Goldfälle der Entscheidung)
+    // MARK: Einrasten (Goldfälle der Entscheidung): Ausgegeben wird immer der GANZE Block
 
-    func testModelSentenceSnapsToTheSourceSentenceNeverItself() {
-        let single = assistantPassage(.notes, itemId: "n1", title: "Notiz", text: "Hans besucht Joachim.")
-        let model = "Joachim besucht seinen Vetter Hans in Davos."
-        XCTAssertEqual(quoted(model, passages: [single]), "Hans besucht Joachim.", "gesprochen wird nur der Quellsatz")
-        XCTAssertNotEqual(quoted(model, passages: [single]), model)
+    func testModelSentenceSnapsToTheWholeSourceBlockNeverItself() {
+        let model = "Hans Castorp fährt nach Davos zu seinem Vetter."
+        XCTAssertEqual(quoted(model), book.text, "gesprochen wird nur der ganze Quellblock, beide Sätze")
+        XCTAssertNotEqual(quoted(model), model)
     }
 
-    /// Die Ausnahme „ganzer Auszug ohne Satzzeichen“ gibt es nicht mehr: zitierbar ist nur, was mit Satzzeichen endet.
-    func testSourceWithoutFinalPunctuationIsNeverQuotableEvenAsTheWholePassage() {
-        let bare = assistantPassage(.notes, itemId: "n1", title: "Notiz", text: "Hans besucht Joachim")
-        XCTAssertNil(quoted("Joachim besucht seinen Vetter Hans in Davos.", passages: [bare]))
-        XCTAssertTrue(AssistantGrounding.Basis(passages: [bare]).isEmpty)
-        let fragment = assistantPassage(.notes, itemId: "n2", title: "Projekt", text: "Anna für Projekt Nordlicht")
-        XCTAssertTrue(AssistantGrounding.Basis(passages: [fragment]).isEmpty, "ein ganzer Auszug ohne Satzende ist nicht zitierbar")
-        XCTAssertNil(quoted("Anna übernimmt die Leitung für das Projekt Nordlicht.", passages: [fragment]))
-        XCTAssertNil(AssistantGrounding.fallback(question: "Wer macht das Projekt Nordlicht?", basis: .init(passages: [fragment])))
-    }
-
-    func testFalsifiedPlaceIsReplacedByTheOriginalSentence() {
+    func testFalsifiedPlaceIsReplacedByTheOriginalBlock() {
         let q = quoted("Hans Castorp fährt nach venedig.")
-        XCTAssertEqual(q, "Hans Castorp fährt ins Sanatorium nach Davos und besucht dort seinen Vetter Joachim.")
+        XCTAssertEqual(q, book.text)
         XCTAssertFalse(q?.lowercased().contains("venedig") ?? true)
     }
 
-    func testFalsifiedPersonAndDateIsReplacedByTheOriginalSentence() {
-        XCTAssertEqual(quoted("Eva übernimmt die Planung bis Freitag."),
-                       "Anna übernimmt die Planung für das Projekt Nordlicht bis Freitag.")
+    func testFalsifiedPersonAndDateIsReplacedByTheOriginalBlock() {
+        XCTAssertEqual(quoted("Eva übernimmt die Planung bis Freitag."), meeting.text)
     }
 
     func testInventedAdditionAfterAnOriginalPartDoesNotSurvive() {
         let q = quoted("In deinem Buch fährt Hans Castorp nach Davos, aber nur in einer erfundenen Traumsequenz.")
-        XCTAssertEqual(q, "Hans Castorp fährt ins Sanatorium nach Davos und besucht dort seinen Vetter Joachim.")
+        XCTAssertEqual(q, book.text)
         XCTAssertFalse(q?.contains("Traumsequenz") ?? true)
     }
 
@@ -73,9 +61,10 @@ final class AssistantGroundingTests: XCTestCase {
         XCTAssertNotNil(quoted("Hans Castorp besucht Joachim."))
     }
 
-    func testBestSourceSentenceWinsAndTiesPreferTheShorterOne() {
-        let p = assistantPassage(.notes, itemId: "n2", title: "Plan", text: "Anna plant das Projekt Nordlicht mit Berta und Chris am Dienstag. Anna plant das Projekt Nordlicht.")
-        XCTAssertEqual(quoted("Anna plant das Projekt Nordlicht.", passages: [p]), "Anna plant das Projekt Nordlicht.")
+    func testBestBlockWinsAndTiesPreferTheShorterOne() {
+        let long = assistantPassage(.notes, itemId: "n2", title: "Plan", text: "Anna plant das Projekt Nordlicht mit Berta und Chris am Dienstag.")
+        let short = assistantPassage(.notes, itemId: "n3", title: "Plan", text: "Anna plant das Projekt Nordlicht.")
+        XCTAssertEqual(quoted("Anna plant das Projekt Nordlicht.", passages: [long, short]), short.text)
     }
 
     func testDuplicateQuoteIsDropped() {
@@ -83,159 +72,64 @@ final class AssistantGroundingTests: XCTestCase {
         XCTAssertEqual(judge("Hans Castorp fährt nach Davos.", taken: [q.key]), .dropped(.duplicate))
     }
 
-    // MARK: Nicht zitierbare Quellsätze
+    // MARK: Quellblöcke: ganz oder gar nicht
 
-    func testFragmentsAreNotQuotable() {
-        let p = assistantPassage(.books, itemId: "b2", title: "Buch",
-                                 text: "und fährt dann nach Davos hinauf. Hans bleibt dort sehr lange. Dann fehlt das Ende")
-        XCTAssertEqual(AssistantGrounding.Basis(passages: [p]).texts, ["Hans bleibt dort sehr lange."], "Kleinanfang und Satz ohne Ende fallen weg")
+    /// Satzzeichen, Länge in Wörtern und Anfangsbuchstabe sind kein Kriterium: ein gespeicherter Block ohne Satzzeichen ist als
+    /// Ganzes zitierbar.
+    func testABlockWithoutPunctuationIsQuotableAsAWhole() {
+        let bare = assistantPassage(.notes, itemId: "n1", title: "Notiz", text: "Hans besucht Joachim im Sanatorium")
+        XCTAssertEqual(AssistantGrounding.Basis(passages: [bare]).texts, ["Hans besucht Joachim im Sanatorium"])
+        XCTAssertEqual(quoted("Joachim besucht seinen Vetter Hans im Sanatorium.", passages: [bare]), "Hans besucht Joachim im Sanatorium")
     }
 
-    func testLastSentenceOfAClippedPassageIsExcluded() {
-        let p = assistantPassage(.books, itemId: "b3", title: "Buch", text: "Hans bleibt dort sehr lange. Dann fährt er mit dem Zug nach Hau…")
-        XCTAssertEqual(AssistantGrounding.Basis(passages: [p]).texts, ["Hans bleibt dort sehr lange."])
+    /// Was nicht als ganzer gespeicherter Block vorliegt (gekürzter Auszug, Teil eines Blocks), ist nie zitierbar.
+    func testAnExcerptThatIsNotAWholeBlockIsNeverQuotable() {
+        let part = assistantPassage(.books, itemId: "b2", title: "Buch", text: "und fährt dann nach Davos hinauf. Hans bleibt dort sehr lange.", whole: false)
+        XCTAssertTrue(AssistantGrounding.Basis(passages: [part]).isEmpty)
+        XCTAssertNil(quoted("Hans bleibt dort sehr lange in Davos.", passages: [part]))
+        XCTAssertNil(AssistantGrounding.fallback(question: "Wo bleibt Hans lange in Davos?", basis: .init(passages: [part])))
+        XCTAssertEqual(judge("Hans bleibt dort sehr lange in Davos.", passages: [part]), .dropped(.noMode))
     }
 
-    /// Satzgrenzen aus der Aufbereitung: Ohne Nachweis am Anfang (angeschnittener Auszuganfang) fehlt der erste Satz, ohne Nachweis
-    /// am Ende der letzte. Beide können angeschnitten sein, auch wenn sie vollständig aussehen.
-    func testEdgeSentencesOfAnExcerptWithoutProvenBoundariesAreNotQuoted() {
-        let text = "Hans fährt nach Davos hinauf und bleibt dort. Er besucht seinen Vetter Joachim im Sanatorium. Dann kommt die Pflegerin zu Besuch."
-        let whole = assistantPassage(.books, itemId: "b", title: "Buch", text: text)
-        XCTAssertEqual(AssistantGrounding.Basis(passages: [whole]).texts.count, 3)
-        let noStart = AssistantPassage(area: .books, itemId: "b", title: "Buch", text: text, score: 1, startsAtBoundary: false, endsAtBoundary: true)
-        XCTAssertEqual(AssistantGrounding.Basis(passages: [noStart]).texts, [
-            "Er besucht seinen Vetter Joachim im Sanatorium.", "Dann kommt die Pflegerin zu Besuch.",
-        ], "angeschnittener Anfang: der erste Satz fehlt")
-        let noEnd = AssistantPassage(area: .books, itemId: "b", title: "Buch", text: text, score: 1, startsAtBoundary: true, endsAtBoundary: false)
-        XCTAssertEqual(AssistantGrounding.Basis(passages: [noEnd]).texts, [
-            "Hans fährt nach Davos hinauf und bleibt dort.", "Er besucht seinen Vetter Joachim im Sanatorium.",
-        ], "angeschnittenes Ende: der letzte Satz fehlt")
-        let neither = AssistantPassage(area: .books, itemId: "b", title: "Buch", text: text, score: 1)
-        XCTAssertEqual(AssistantGrounding.Basis(passages: [neither]).texts, ["Er besucht seinen Vetter Joachim im Sanatorium."])
-        // Ein Auszug aus nur einem Satz ohne beide Nachweise liefert gar nichts.
-        let single = AssistantPassage(area: .books, itemId: "b", title: "Buch", text: "Hans fährt nach Davos hinauf und bleibt dort.", score: 1)
-        XCTAssertTrue(AssistantGrounding.Basis(passages: [single]).isEmpty)
-        // Das Einrasten gegen einen angeschnittenen Randsatz findet nichts; der Modellsatz entfällt.
-        XCTAssertEqual(judge("Hans fährt nach Davos hinauf und bleibt dort.", passages: [noStart]), .dropped(.noMode))
+    /// Ein Block über `maxBlockChars` erscheint nie, auch nicht gekürzt oder in Teilen.
+    func testAnOverlongBlockNeverAppearsNotEvenShortened() {
+        let long = assistantPassage(.notes, itemId: "n9", title: "Notiz",
+                                    text: String(repeating: "Anna plant das Projekt Nordlicht mit Berta. ", count: 20))
+        XCTAssertGreaterThan(long.text.count, AssistantGrounding.maxBlockChars)
+        XCTAssertTrue(AssistantGrounding.Basis(passages: [long]).isEmpty)
+        XCTAssertNil(quoted("Anna plant das Projekt Nordlicht mit Berta.", passages: [long]))
+        XCTAssertNil(AssistantGrounding.fallback(question: "Wer plant das Projekt Nordlicht?", basis: .init(passages: [long])))
+        let exact = assistantPassage(.notes, itemId: "n8", title: "Notiz", text: String(repeating: "a", count: AssistantGrounding.maxBlockChars))
+        XCTAssertEqual(AssistantGrounding.Basis(passages: [exact]).texts.count, 1, "genau die Höchstlänge ist noch zitierbar")
     }
 
-    // MARK: Innere Nähte (Runde 4, H3): Zeilen werden nie zusammengezogen, kein Rest eines Satzes über einen Umbruch
-
-    private let nordlicht = assistantPassage(.notes, itemId: "n9", title: "Notiz",
-        text: "Anna übernimmt die Planung für\nProjekt Nordlicht bis Freitag.\nDanach folgt die Budgetprüfung.")
-
-    /// Gegenbeispiel einer ganzen Notiz: Der Rest „Projekt Nordlicht bis Freitag.“ ist angeschnitten (sein Anfang steht in der Zeile
-    /// davor ohne Satzzeichen) und nie zitierbar; nur der Satz nach einem Satzende ist es.
-    func testRestOfASentenceAcrossALineBreakIsNeverQuotable() {
-        let basis = AssistantGrounding.Basis(passages: [nordlicht])
-        XCTAssertEqual(basis.texts, ["Danach folgt die Budgetprüfung."])
-        XCTAssertNil(AssistantGrounding.snap("Projekt Nordlicht bis Freitag.", basis: basis), "snap findet den Rest nicht")
-        XCTAssertNil(AssistantGrounding.fallback(question: "Was gilt für Projekt Nordlicht bis Freitag?", basis: basis), "fallback auch nicht")
-        XCTAssertEqual(judge("Projekt Nordlicht bis Freitag.", passages: [nordlicht]), .dropped(.noMode), "in der Datenrunde verworfen")
-        XCTAssertNil(quoted("Anna übernimmt die Planung für Projekt Nordlicht bis Freitag.", passages: [nordlicht]),
-                     "auch der zusammengesetzte Satz wird nicht gebildet")
-        XCTAssertEqual(quoted("Danach folgt die Budgetprüfung.", passages: [nordlicht]), "Danach folgt die Budgetprüfung.")
-    }
-
-    /// Zum Verbieten zählt der Rest weiter: Ein Satz ohne Quelle, der ihm ähnelt, wird verworfen.
-    func testTheRestStillCountsForForbiddingAnUnsourcedSentence() {
-        XCTAssertTrue(AssistantGrounding.resemblesOwnContent("Projekt Nordlicht dauert bis Freitag.", passages: [nordlicht]))
-        XCTAssertEqual(AssistantGrounding.Basis(detecting: [nordlicht]).texts.count, 3, "die Erkennungsbasis behält jede Zeile")
-    }
-
-    /// Gegenbeispiele der unbewiesenen Naht: An einem Zeilenumbruch sind Ende der oberen und Anfang der unteren Einheit nicht
-    /// nachgewiesen, beide sind nirgends zitierbar (Basis, snap, fallback); Verbieten funktioniert weiter.
-    func testUnprovenSeamAtALineBreakMakesNeitherSideQuotable() {
-        let cases: [(upper: String, lower: String)] = [
-            ("Anna spricht mit Dr.", "Meyer über Projekt Nordlicht."),
-            ("Anna spricht mit Prof.", "Müller über Projekt Nordlicht."),
-            ("Anna nennt die Nr.", "Drei im Projekt Nordlicht."),
-            ("Anna spricht mit Hr.", "Meyer über Projekt Nordlicht."),
-            ("Das gilt für Anna z. B.", "Der Plan im Projekt Nordlicht."),
-            ("Anna trifft Frau A.", "Meyer im Projekt Nordlicht."),
-            ("Anna kommt am 3.", "Mai zum Projekt Nordlicht."),
-            ("Anna wohnt in der Bahnhofstr.", "Mitte im Projekt Nordlicht."),
-            ("Anna überlegt lange und sagt…", "Dann folgt das Projekt Nordlicht."),
-            ("Anna beendet die Planung für Nordlicht.", "danach folgt das Budget."),
-            ("Anna beendet die Planung für Nordlicht.", "3 Teams folgen dem Projekt Nordlicht."),
-        ]
-        for c in cases {
-            let p = assistantPassage(.notes, itemId: "n", title: "Notiz", text: c.upper + "\n" + c.lower)
-            let basis = AssistantGrounding.Basis(passages: [p])
-            XCTAssertTrue(basis.isEmpty, "weder „\(c.upper)“ noch „\(c.lower)“ ist zitierbar: \(basis.texts)")
-            for text in [c.upper, c.lower] {
-                XCTAssertNil(AssistantGrounding.snap(text, basis: basis), "snap: \(text)")
-                XCTAssertNil(AssistantGrounding.fallback(question: text, basis: basis), "fallback: \(text)")
-                XCTAssertTrue(AssistantGrounding.resemblesOwnContent(text, passages: [p]), "Verbieten bleibt: \(text)")
-            }
+    /// Eine Abkürzung am Zeilenende trennt keinen Block: Der Block ist EIN Block und wird zeichengleich mit Zeilenumbruch ausgegeben.
+    func testAMultiLineBlockWithAnAbbreviationIsOneBlockAndAppearsUnchanged() {
+        for first in ["Dr.", "Regierungsdir."] {
+            let text = "\(first)\nMeyer übernimmt die Planung für das Projekt Nordlicht."
+            let p = assistantPassage(.notes, itemId: "n7", title: "Notiz", text: text)
+            XCTAssertEqual(AssistantGrounding.Basis(passages: [p]).texts, [text], first)
+            XCTAssertEqual(quoted("Meyer übernimmt die Planung für das Projekt Nordlicht.", passages: [p]), text, "unverändert, mit Zeilenumbruch")
         }
     }
 
-    /// Derselbe Fall innerhalb einer Zeile: Die Einheit bleibt zusammen, es sind ganze Originalsätze.
-    func testUnprovenSplitInsideALineKeepsTheUnitTogether() {
-        for text in ["Anna spricht mit Hr. Meyer über Nordlicht.", "Anna spricht mit Dr. Meyer über Nordlicht.",
-                     "Anna fährt am 3. Mai nach Hamburg zum Nordlicht.", "Anna trifft Frau A. Meyer im Projekt Nordlicht.",
-                     "Das gilt z. B. für das Projekt Nordlicht.", "Anna wohnt in der Bahnhofstr. Mitte im Projekt Nordlicht.",
-                     "Das war ein Test. Danach ging es weiter mit Nordlicht."] {
-            let p = assistantPassage(.notes, itemId: "n", title: "Notiz", text: text)
-            let basis = AssistantGrounding.Basis(passages: [p])
-            XCTAssertEqual(basis.texts, [text], "EINE Einheit, nicht getrennt: \(text)")
-            XCTAssertNotNil(AssistantGrounding.snap(text, basis: basis))
-        }
-        // Eine bewiesene Naht trennt weiterhin.
-        let p = assistantPassage(.notes, itemId: "n", title: "Notiz", text: "Anna übernimmt die Planung. Danach folgt die Budgetprüfung.")
-        XCTAssertEqual(AssistantGrounding.Basis(passages: [p]).texts, ["Anna übernimmt die Planung.", "Danach folgt die Budgetprüfung."])
+    /// Zwei Blöcke werden nie zusammengezogen: Deckt ein Modellsatz Wörter aus beiden, wird genau EIN ganzer Block ausgegeben.
+    func testTwoBlocksAreNeverMerged() {
+        let a = assistantPassage(.notes, itemId: "n1", title: "Notiz", locator: "A", text: "Anna übernimmt die Planung für das Projekt Nordlicht.")
+        let b = assistantPassage(.notes, itemId: "n1", title: "Notiz", locator: "B", text: "Berta übernimmt das Budget für das Projekt Nordlicht.")
+        let q = quoted("Anna übernimmt die Planung und Berta das Budget für das Projekt Nordlicht.", passages: [a, b])
+        XCTAssertTrue(q == a.text || q == b.text, "genau ein ganzer Block: \(q ?? "nil")")
+        XCTAssertFalse((q ?? "").contains(a.text) && (q ?? "").contains(b.text))
     }
 
-    /// Positivtests der bewiesenen Naht an Zeilenumbrüchen.
-    func testProvenSeamAtALineBreakKeepsBothSidesQuotable() {
-        for (upper, lower) in [("Anna übernimmt die Planung für Nordlicht.", "Nordlicht beginnt im Mai nächsten Jahres."),
-                               ("Bernd hilft bei Nordlicht mit.", "Anna übernimmt die Planung für Nordlicht."),
-                               ("Wer übernimmt die Planung für Nordlicht?", "Anna übernimmt die Planung.")] {
-            let p = assistantPassage(.notes, itemId: "n", title: "Notiz", text: upper + "\n" + lower)
-            XCTAssertEqual(AssistantGrounding.Basis(passages: [p]).texts, [upper, lower])
-        }
-    }
-
-    func testHeadingWithoutPunctuationDoesNotProveTheStartOfTheNextLine() {
-        for text in ["Projektstatus für Freitag\nAnna übernimmt die Planung bis Freitag.\nDanach folgt die Budgetprüfung.",
-                     "Projektstatus für Freitag\n\nAnna übernimmt die Planung bis Freitag.\n\nDanach folgt die Budgetprüfung.",
-                     "# Projektstatus für Freitag\nAnna übernimmt die Planung bis Freitag.\nDanach folgt die Budgetprüfung."] {
-            let p = assistantPassage(.notes, itemId: "n", title: "Notiz", text: text)
-            XCTAssertEqual(AssistantGrounding.Basis(passages: [p]).texts, ["Danach folgt die Budgetprüfung."], "keine Ausnahme für Überschriften oder Leerzeilen: \(text)")
-        }
-    }
-
-    func testListWithAndWithoutPunctuation() {
-        let all = assistantPassage(.notes, itemId: "l1", title: "Liste",
-                                   text: "Erstens kommt die Planung.\nZweitens kommt die Prüfung.\nDrittens kommt der Abschluss.")
-        XCTAssertEqual(AssistantGrounding.Basis(passages: [all]).texts.count, 3, "jede Zeile endet mit Satzzeichen")
-        let gap = assistantPassage(.notes, itemId: "l2", title: "Liste",
-                                   text: "Erstens kommt die Planung.\nZweitens kommt die Prüfung\nDrittens kommt der Abschluss.")
-        XCTAssertEqual(AssistantGrounding.Basis(passages: [gap]).texts, ["Erstens kommt die Planung."],
-                       "die Zeile ohne Satzzeichen ist nicht zitierbar und beweist den Anfang der nächsten nicht")
-        let none = assistantPassage(.notes, itemId: "l3", title: "Liste", text: "Erstens kommt die Planung\nZweitens kommt die Prüfung\nDrittens kommt der Abschluss")
-        XCTAssertTrue(AssistantGrounding.Basis(passages: [none]).isEmpty)
-    }
-
-    /// Der Anfang des Auszugs trägt allein sein Nachweis; eine Zeile danach beweist nichts nach, was davor fehlt.
-    func testFirstLineNeedsTheProvenStartOfTheExcerpt() {
-        let text = "Anna übernimmt die Planung bis Freitag.\nDanach folgt die Budgetprüfung."
-        let cut = AssistantPassage(area: .notes, itemId: "n", title: "Notiz", text: text, score: 1, startsAtBoundary: false, endsAtBoundary: true)
-        XCTAssertEqual(AssistantGrounding.Basis(passages: [cut]).texts, ["Danach folgt die Budgetprüfung."])
-    }
-
-    func testDetectionBasisKeepsEverySentenceEvenWithoutProofOrPunctuation() {
+    func testDetectionBasisKeepsEverySentenceEvenWhenNotQuotable() {
         let p = AssistantPassage(area: .notes, itemId: "n", title: "Notiz", text: "Anna übernimmt die Planung. Anna für Projekt Nordlicht", score: 1)
         XCTAssertTrue(AssistantGrounding.Basis(passages: [p]).isEmpty, "zum Zitieren ist nichts davon zugelassen")
-        XCTAssertEqual(AssistantGrounding.Basis(detecting: [p]).texts, ["Anna übernimmt die Planung.", "Anna für Projekt Nordlicht"],
-                       "zum Erkennen eigener Inhalte zählt jeder Satz")
-    }
-
-    func testLinesSeparateSentencesAndTooLongOrTooShortOnesAreSkipped() {
-        let long = String(repeating: "Wort ", count: 200) + "Ende."
-        let p = assistantPassage(.notes, itemId: "n3", title: "Liste", text: "Milch kaufen.\nHans besucht Joachim im Sanatorium.\nJa.\n\(long)")
-        XCTAssertEqual(AssistantGrounding.Basis(passages: [p]).texts, ["Hans besucht Joachim im Sanatorium."])
+        let texts = AssistantGrounding.Basis(detecting: [p]).texts
+        XCTAssertTrue(texts.contains("Anna übernimmt die Planung."))
+        XCTAssertTrue(texts.contains("Anna für Projekt Nordlicht"))
+        XCTAssertTrue(AssistantGrounding.resemblesOwnContent("Anna übernimmt die Leitung für das Projekt Nordlicht.", passages: [p]),
+                      "zum Erkennen eigener Inhalte zählt jeder Teil")
     }
 
     // MARK: Vorlagen und Systemsätze
@@ -257,7 +151,7 @@ final class AssistantGroundingTests: XCTestCase {
     func testFixedSentencesAndForgedPrefaceFromTheModelAreDropped() {
         for s in [AssistantGrounding.nothingFoundSentence, AssistantGrounding.optInHint, AssistantGrounding.nothingGroundedSentence,
                   AssistantGrounding.fixedSentence(allowUnsourced: false), "Ohne Quelle:", "Aus deinen Inhalten:",
-                  "Aus deinen Inhalten, ‚Der Zauberberg‘: Hans Castorp fährt nach Davos."] {
+                  "Wörtlicher Auszug aus ‚Der Zauberberg‘: Hans Castorp fährt nach Davos."] {
             XCTAssertEqual(judge(s), .dropped(.template), s)
             XCTAssertEqual(judge(s, round: .general, optIn: true), .dropped(.template), s)
         }
@@ -317,7 +211,7 @@ final class AssistantGroundingTests: XCTestCase {
 
     func testGeneralRoundNeverQuotesEvenWithMatchingPassages() {
         if case .quote = judge("Hans Castorp fährt nach Davos.", round: .general, optIn: true) { XCTFail("kein grounded in der Allgemeinrunde") }
-        XCTAssertEqual(AssistantGrounding.Basis(passages: []).sentences.count, 0)
+        XCTAssertTrue(AssistantGrounding.Basis(passages: []).isEmpty)
     }
 
     // MARK: Ähnlichkeit mit eigenem Inhalt (zweite Schicht)
@@ -333,7 +227,7 @@ final class AssistantGroundingTests: XCTestCase {
     }
 
     /// Die Erkennung zählt auch angeschnittene Randsätze und Sätze ohne Satzzeichen (sie dürfen nicht zitiert, aber erkannt werden).
-    func testResemblanceAlsoCountsEdgeSentencesAndFragments() {
+    func testResemblanceAlsoCountsNonQuotableFragments() {
         let cut = AssistantPassage(area: .notes, itemId: "n", title: "Notiz", text: "Anna übernimmt die Planung für das Projekt Nordlicht", score: 1)
         XCTAssertTrue(AssistantGrounding.Basis(passages: [cut]).isEmpty, "zitieren darf man davon nichts")
         XCTAssertTrue(AssistantGrounding.resemblesOwnContent("Anna übernimmt die Leitung für das Projekt Nordlicht.", passages: [cut]))
@@ -341,12 +235,10 @@ final class AssistantGroundingTests: XCTestCase {
 
     // MARK: Rückfall gegen die Frage
 
-    func testFallbackPicksTheBestSourceSentenceForTheQuestion() {
+    func testFallbackPicksTheBestSourceBlockForTheQuestion() {
         let basis = AssistantGrounding.Basis(passages: [book, meeting])
-        XCTAssertEqual(AssistantGrounding.fallback(question: "Wohin fährt Hans Castorp?", basis: basis)?.text,
-                       "Hans Castorp fährt ins Sanatorium nach Davos und besucht dort seinen Vetter Joachim.")
-        XCTAssertEqual(AssistantGrounding.fallback(question: "Wie lange dauerte die Besprechung?", basis: basis)?.text,
-                       "Die Besprechung dauerte 48 Minuten.")
+        XCTAssertEqual(AssistantGrounding.fallback(question: "Wohin fährt Hans Castorp?", basis: basis)?.text, book.text)
+        XCTAssertEqual(AssistantGrounding.fallback(question: "Wie lange dauerte die Besprechung?", basis: basis)?.text, meeting.text)
         XCTAssertNil(AssistantGrounding.fallback(question: "Wie funktioniert eine Wärmepumpe?", basis: basis))
         XCTAssertNil(AssistantGrounding.fallback(question: "Hallo", basis: basis), "ohne Inhaltswort kein Rückfall")
     }
@@ -354,19 +246,18 @@ final class AssistantGroundingTests: XCTestCase {
     func testFallbackSkipsQuotesAlreadyGiven() {
         let basis = AssistantGrounding.Basis(passages: [book])
         guard let first = AssistantGrounding.fallback(question: "Wohin fährt Hans Castorp?", basis: basis) else { return XCTFail() }
-        XCTAssertNil(AssistantGrounding.fallback(question: "Wohin fährt Hans Castorp?", basis: basis, taken: [first.key]),
-                     "der andere Satz deckt kein Wort der Frage")
+        XCTAssertNil(AssistantGrounding.fallback(question: "Wohin fährt Hans Castorp?", basis: basis, taken: [first.key]), "der einzige Block ist vergeben")
     }
 
     // MARK: Vorspann
 
     func testQuotePrefaceIsOneWordingForAllAreas() {
-        XCTAssertEqual(AssistantGrounding.quotePreface(for: book), "Aus deinen Inhalten, ‚Der Zauberberg‘:")
-        XCTAssertEqual(AssistantGrounding.quotePreface(for: meeting), "Aus deinen Inhalten, ‚Besprechung vom 12.10.2026‘:")
+        XCTAssertEqual(AssistantGrounding.quotePreface(for: book), "Wörtlicher Auszug aus ‚Der Zauberberg‘:")
+        XCTAssertEqual(AssistantGrounding.quotePreface(for: meeting), "Wörtlicher Auszug aus ‚Besprechung vom 12.10.2026‘:")
         let odd = AssistantPassage(area: .notes, itemId: "n", title: "  Eva’s  „Plan“ \n heute ", text: "x", score: 1)
-        XCTAssertEqual(AssistantGrounding.quotePreface(for: odd), "Aus deinen Inhalten, ‚Evas Plan heute‘:")
+        XCTAssertEqual(AssistantGrounding.quotePreface(for: odd), "Wörtlicher Auszug aus ‚Evas Plan heute‘:")
         let empty = AssistantPassage(area: .notes, itemId: "n", title: " ", text: "x", score: 1)
-        XCTAssertEqual(AssistantGrounding.quotePreface(for: empty), "Aus deinen Inhalten, ‚Notiz‘:")
+        XCTAssertEqual(AssistantGrounding.quotePreface(for: empty), "Wörtlicher Auszug aus ‚Notiz‘:")
         let long = AssistantPassage(area: .books, itemId: "l", title: String(repeating: "Lang ", count: 40), text: "x", score: 1)
         XCTAssertLessThanOrEqual(AssistantGrounding.quotePreface(for: long).count, AssistantGrounding.maxPrefaceTitle + 30)
         XCTAssertTrue(AssistantGrounding.quotePreface(for: long).hasSuffix("…‘:"))
@@ -380,16 +271,16 @@ final class AssistantGroundingTests: XCTestCase {
 
     // MARK: Eigenschaft: böswillige Modellausgaben
 
-    /// Über eine Liste böswilliger Modellsätze ist in Datenrunden jede Ausgabe zeichengleich mit einem Quellsatz oder einer
+    /// Über eine Liste böswilliger Modellsätze ist in Datenrunden jede Ausgabe zeichengleich mit einem ganzen Quellblock oder einer
     /// Systemvorlage (Liste, Uhr). Alles andere wird verworfen.
-    func testPropertyDataRoundOutputIsAlwaysASourceSentenceOrSystemTemplate() {
+    func testPropertyDataRoundOutputIsAlwaysAWholeSourceBlockOrSystemTemplate() {
         let hostile = [
             "Joachim besucht seinen Vetter Hans in Davos.", "Hans Castorp fährt nach venedig.", "Eva übernimmt die Planung bis Freitag.",
             "Ihre Termine wurden abgesagt.", "Deine Kalendertermine wurden abgesagt.", "Deine Korrespondenz wurde gelöscht.",
             "Dein K\u{0430}lender wurde gelöscht.", "Er hat gekündigt.", "Wenn du magst, deine Notiz ist gefälscht.",
             "Deine Notiz ist falsch, ich bin mir nicht sicher.", "Warum ist deine Notiz gefälscht?", "Deine Mail wurde um 08:05 Uhr gelöscht.",
             "In deinem Buch fährt Hans Castorp nach Davos, aber nur in einer erfundenen Traumsequenz.",
-            "Aus deinen Inhalten, ‚Der Zauberberg‘: Hans Castorp stirbt.", "Ohne Quelle: Hans Castorp stirbt in Davos.",
+            "Wörtlicher Auszug aus ‚Der Zauberberg‘: Hans Castorp stirbt.", "Ohne Quelle: Hans Castorp stirbt in Davos.",
             "Dazu finde ich in deinen Inhalten nichts.", "Du hast 99 Bücher.", "Ich empfehle dir den Zauberberg zu lesen und dann Faust.",
             "Anna übernimmt die Planung nicht bis Freitag.", "Die Besprechung dauerte 480 Minuten und Anna war schuld.",
             "Hans Castorp besucht Joachim und Venedig und Rom.", "Es ist 08:05 Uhr.", "Hallo!", "Ja.", "Nein.", "😀", "---", "",
@@ -402,7 +293,7 @@ final class AssistantGroundingTests: XCTestCase {
             for s in hostile {
                 switch AssistantGrounding.judge(s, round: .data, basis: basis, titles: titles, clock: clock, optIn: optIn, taken: taken) {
                 case .quote(let q):
-                    XCTAssertTrue(allowed.contains(q.text), "kein Quellsatz: \(q.text)")
+                    XCTAssertTrue(allowed.contains(q.text), "kein Quellblock: \(q.text)")
                     taken.insert(q.key)
                 case .template(let t): XCTAssertTrue(allowed.contains(t), "keine Vorlage: \(t)")
                 case .dropped: break

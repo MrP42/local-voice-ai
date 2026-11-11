@@ -84,13 +84,13 @@ final class AssistantOutputTests: XCTestCase {
         let s = await session()
         XCTAssertEqual(s.playbackGate.discardedBelow, 0)
         let g0 = s.releaseGeneration
-        s.setAllowUnsourced(false)   // Opt-in war an: echte Änderung
+        await s.setAllowUnsourced(false)   // Opt-in war an: echte Änderung
         XCTAssertEqual(s.playbackGate.discardedBelow, s.releaseGeneration)
         XCTAssertFalse(s.playbackGate.permits(g0), "Satz der alten Generation startet nicht mehr")
-        s.releaseDidChange()
+        await s.releaseDidChange()
         XCTAssertEqual(s.playbackGate.discardedBelow, s.releaseGeneration)
-        s.setAllowUnsourced(true)
-        await s.setAreas(Set(AssistantArea.allCases))
+        await s.setAllowUnsourced(true)
+        await s.setAreas([.books])
         XCTAssertEqual(s.playbackGate.discardedBelow, s.releaseGeneration, "auch Bereiche")
         XCTAssertTrue(s.playbackGate.permits(s.releaseGeneration))
         XCTAssertFalse(s.playbackGate.permits(s.releaseGeneration - 1))
@@ -98,7 +98,8 @@ final class AssistantOutputTests: XCTestCase {
         let d = await session(history: [AssistantTurn(user: "Frage", assistant: "Antwort", at: Date(), round: .data)])
         XCTAssertEqual(d.contextMode, .data)
         let before = d.releaseGeneration
-        XCTAssertTrue(d.resumeFree())
+        let r9 = await d.resumeFree()
+        XCTAssertTrue(r9.changed)
         XCTAssertEqual(d.playbackGate.discardedBelow, before + 1)
         XCTAssertFalse(d.playbackGate.permits(before))
     }
@@ -112,8 +113,8 @@ final class AssistantOutputTests: XCTestCase {
             if !gate.permits(g) { seen.violation("neue Generation \(g) gesperrt") }
             seen.ranOnce()
         }
-        s.releaseDidChange()
-        s.setAllowUnsourced(false)
+        await s.releaseDidChange()
+        await s.setAllowUnsourced(false)
         let r = seen.snapshot
         XCTAssertEqual(r.ran, 2)
         XCTAssertEqual(r.violations, [])
@@ -142,7 +143,7 @@ final class AssistantOutputTests: XCTestCase {
             }
         }
         pause(0.05)
-        let g = s.releaseDidChange()
+        let g = await s.releaseDidChange().generation
         tally.returned(g)
         XCTAssertEqual(group.wait(timeout: .now() + 10), .success)
         stop.ranOnce()
@@ -175,7 +176,7 @@ final class AssistantOutputTests: XCTestCase {
             }
         }
         for _ in 0..<1_500 {
-            let g = s.releaseDidChange()
+            let g = await s.releaseDidChange().generation
             tally.returned(g)
             if g % 50 == 0 { pause(0.0005) }
         }
@@ -197,7 +198,7 @@ final class AssistantOutputTests: XCTestCase {
         XCTAssertTrue(gate.start(g + 3) { ran += 1 }, "künftig ist nicht verworfen")
         XCTAssertEqual(ran, 2)
         XCTAssertTrue(gate.permits(g), "die Vorprüfung sagt: darf")
-        s.releaseDidChange()
+        await s.releaseDidChange()
         XCTAssertFalse(gate.start(g) { ran += 1 }, "die Vorprüfung gilt nicht für den Start: nach der Erhöhung wird abgewiesen")
         XCTAssertEqual(ran, 2, "der Body lief nicht")
         XCTAssertTrue(gate.start(g + 1) { ran += 1 })
@@ -218,7 +219,7 @@ final class AssistantOutputTests: XCTestCase {
         DispatchQueue.global().async {
             atBarrier.wait()                // der Starter steht zwischen Prüfung und Start
             bumpMayProceed.signal()         // Hinweis an den Körper: jetzt wird erhöht
-            let newer = s.releaseDidChange()
+            let newer = s.applyReleaseChange().generation
             tally.returned(newer)
             if bodyDone.snapshot.ran > 0 { waited.ranOnce() }   // die Erhöhung kam erst nach dem Body zurück
             bumpDone.signal()
@@ -268,11 +269,11 @@ final class AssistantOutputTests: XCTestCase {
         let s = await session()
         let ran = Tally()
         let g = s.releaseGeneration
-        XCTAssertTrue(s.commitOutput(requestId: "r1", index: 0, generation: g, stage: .display) { ran.ranOnce() })
-        s.releaseDidChange()
-        XCTAssertFalse(s.commitOutput(requestId: "r1", index: 0, generation: g, stage: .display) { ran.ranOnce() }, "veraltet")
-        XCTAssertFalse(s.commitOutput(requestId: "r1", index: 0, generation: g + 5, stage: .audio) { ran.ranOnce() }, "künftig passt nicht")
-        XCTAssertTrue(s.commitOutput(requestId: "r1", index: 0, generation: g + 1, stage: .audio) { ran.ranOnce() })
+        XCTAssertTrue(s.commitOutput(requestId: "r1", index: 0, generation: g, stage: .display) { ran.ranOnce() }.ok)
+        await s.releaseDidChange()
+        XCTAssertFalse(s.commitOutput(requestId: "r1", index: 0, generation: g, stage: .display) { ran.ranOnce() }.ok, "veraltet")
+        XCTAssertFalse(s.commitOutput(requestId: "r1", index: 0, generation: g + 5, stage: .audio) { ran.ranOnce() }.ok, "künftig passt nicht")
+        XCTAssertTrue(s.commitOutput(requestId: "r1", index: 0, generation: g + 1, stage: .audio) { ran.ranOnce() }.ok)
         XCTAssertEqual(ran.snapshot.ran, 2)
     }
 
@@ -288,14 +289,14 @@ final class AssistantOutputTests: XCTestCase {
         let ok = s.commitOutput(requestId: "r1", index: 0, generation: g, stage: .display) {
             DispatchQueue.global().async {
                 entered.signal()
-                s.releaseDidChange()
+                _ = s.applyReleaseChange()
                 bumped.ranOnce()
             }
             entered.wait()
             pause(0.1)   // der Auslöser steht jetzt vor dem Lock
             if bumped.snapshot.ran != 0 { observed.violation("bump lief mitten im Body") }
         }
-        XCTAssertTrue(ok)
+        XCTAssertTrue(ok.ok)
         let deadline = Date().addingTimeInterval(5)
         while bumped.snapshot.ran == 0, Date() < deadline { pause(0.01) }
         XCTAssertEqual(bumped.snapshot.ran, 1, "der Widerruf kam nach dem Body")
@@ -319,13 +320,13 @@ final class AssistantOutputTests: XCTestCase {
                         if returned > g { tally.violation("Body der Generation \(g) nach Rückkehr von \(returned)") }
                         tally.ranOnce()
                     }
-                    if !ok { tally.refusedOnce() }
+                    if !ok.ok { tally.refusedOnce() }
                 }
                 group.leave()
             }
         }
         for _ in 0..<1_500 {
-            let g = s.releaseDidChange()
+            let g = await s.releaseDidChange().generation
             tally.returned(g)
             if g % 50 == 0 { pause(0.0005) }
         }
@@ -348,13 +349,13 @@ final class AssistantOutputTests: XCTestCase {
         for await e in s.events(AssistantRequest(requestId: "r1", text: "Wohin wandert Quasselbert mit dem Fahrrad nach Pappelhausen?")) {
             if case .sentence(_, _, let t, _, let st, _, _) = e, st != .announcement { spoken.append(t) }
         }
-        XCTAssertTrue(s.commitOutput(requestId: "r1", index: 1, generation: g, stage: .display) {})
-        XCTAssertTrue(s.commitOutput(requestId: "r1", index: 1, generation: g, stage: .audio, reportPass: false) {})
-        s.releaseDidChange()
-        XCTAssertFalse(s.commitOutput(requestId: "r1", index: 1, generation: g, stage: .audio, reportPass: false) {})
-        XCTAssertFalse(s.commitOutput(requestId: "r1", index: 99, generation: g, stage: .display) {}, "unbekannter Index: nur abgelehnt")
+        XCTAssertTrue(s.commitOutput(requestId: "r1", index: 1, generation: g, stage: .display) {}.ok)
+        XCTAssertTrue(s.commitOutput(requestId: "r1", index: 1, generation: g, stage: .audio, reportPass: false) {}.ok)
+        await s.releaseDidChange()
+        XCTAssertFalse(s.commitOutput(requestId: "r1", index: 1, generation: g, stage: .audio, reportPass: false) {}.ok)
+        XCTAssertFalse(s.commitOutput(requestId: "r1", index: 99, generation: g, stage: .display) {}.ok, "unbekannter Index: nur abgelehnt")
         await s.commit(requestId: "r1", user: "x", spoken: spoken.joined(separator: " "), interrupted: false, revoked: true)
-        let e = await audit.entries().first
+        let e = await audit.entries().filter { $0.kind == .answer }.first
         XCTAssertEqual(e?.trace[1].commits, [
             AssistantCommitMark(stage: .emit, ok: true, generation: g),
             AssistantCommitMark(stage: .display, ok: true, generation: g),

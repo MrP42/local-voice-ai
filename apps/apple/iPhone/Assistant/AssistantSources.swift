@@ -11,8 +11,10 @@ import Foundation
 //   (nie dahinter); unbegonnene und fertige Bücher stehen ganz drin.
 // - Besprechungen: nur Segmente mit `aiPermitted`; das Protokoll nur, wenn es eines gibt (es entsteht nur aus erlaubten Segmenten).
 // - Ablage: dieselbe Suche und dieselben Schutzregeln wie die Seite „Ablage“; bei Cloud-Modellen nur Dokumente der Klasse „öffentlich“.
-// - Zitate: Abschnitte aus Notizen, Besprechungen und Büchern tragen den Nachweis ihrer Satzgrenzen (`AssistantSections`, Kern);
-//   ohne Nachweis (Ablage, Lücken, Nähte mitten im Satz) wird ein Randsatz nie als Originalsatz zitiert.
+// - Zitate: Die Einheit ist der gespeicherte Block zwischen strukturellen Grenzen der Quelle (`AssistantSections`, Kern): ein
+//   Absatz im Buch, ein Textblock in der Notiz, ein Segment der Besprechung, ein Teil des Protokolls. Nichts wird geteilt, gekürzt
+//   oder zusammengezogen; zitiert wird nur ein ganzer Block. Die Ablage liefert Fenster aus der Dateisuche, keine Blöcke, und
+//   ist deshalb (noch) nicht zitierbar.
 
 @MainActor
 final class AssistantSources: ObservableObject {
@@ -144,9 +146,6 @@ private actor AssistantIndexer {
 
     /// Obergrenze für den Gesamttext im Speicher (Zeichen); Rest wird gemeldet, nicht still weggelassen.
     static let maxChars = 30_000_000
-    /// Besprechung: so lange (s) oder so viele Zeichen höchstens in einem Abschnitt.
-    static let sectionSeconds = 60.0
-    static let sectionChars = 900
 
     private let corpus: AssistantCorpus
     private var sizes: [String: Int] = [:]
@@ -252,8 +251,8 @@ private actor AssistantIndexer {
     private static func noteDocument(_ job: NoteJob, version: String) -> AssistantDocument? {
         let when = format(job.date, "dd.MM.yyyy, HH:mm")
         var sections: [AssistantDocument.Section] = []
-        if !job.transcript.isEmpty { sections.append(AssistantSections.whole(job.transcript, locator: when)) }
-        if !job.reply.isEmpty { sections.append(AssistantSections.whole("Antwort der App: " + job.reply, locator: when)) }
+        sections += AssistantSections.blocks(of: job.transcript, locator: when)
+        if !job.reply.isEmpty { sections += AssistantSections.generated(["Antwort der App: " + job.reply], locator: when) }
         guard !sections.isEmpty else { return nil }
         let item = AssistantItem(area: .notes, id: job.id, title: "Sprachnotiz vom \(when)", detail: format(job.date, "dd.MM.yyyy"), updated: job.date)
         return AssistantDocument(item: item, version: version, sections: sections)
@@ -262,19 +261,15 @@ private actor AssistantIndexer {
     // MARK: Besprechungen
 
     private static func meetingDocument(_ meeting: MeetingDocument, version: String) -> AssistantDocument? {
-        // Nicht erlaubte oder leere Segmente bleiben draußen und unterbrechen die Folge; die Abschnittsgrenzen und ihr Nachweis
-        // (Satzgrenzen an den Nähten) bestimmt der Kern.
+        // Ein Block je Segment der Aufnahme. Nicht erlaubte oder leere Segmente werden kein Block; der Kern bestimmt die Blöcke.
         let segments = meeting.segments.sorted(by: { $0.start < $1.start }).map { segment -> AssistantSegment in
             let body = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return AssistantSegment(start: segment.start, line: segment.speaker.map { "\($0): \(body)" } ?? body, body: body,
+            return AssistantSegment(start: segment.start, line: segment.speaker.map { "\($0): \(body)" } ?? body,
                                     usable: meeting.aiPermitted(segment) && !body.isEmpty)
         }
-        var sections = AssistantSections.meeting(segments, seconds: sectionSeconds, chars: sectionChars, locator: clock)
+        var sections = AssistantSections.meeting(segments, locator: clock)
 
-        if let minutes = meeting.minutes {
-            let summary = minutesText(minutes)
-            if !summary.isEmpty { sections.append(AssistantSections.generated(summary, locator: "Protokoll")) }
-        }
+        if let minutes = meeting.minutes { sections += AssistantSections.generated(minutesText(minutes), locator: "Protokoll") }
         guard !sections.isEmpty else { return nil }
 
         let name = URL(fileURLWithPath: meeting.originalName).deletingPathExtension().lastPathComponent
@@ -285,7 +280,8 @@ private actor AssistantIndexer {
         return AssistantDocument(item: item, version: version, sections: sections)
     }
 
-    private static func minutesText(_ minutes: MeetingMinutes) -> String {
+    /// Die Teile des Protokolls (Zusammenfassung, Beschlüsse, Aufgaben, …); jeder Teil ist ein Block.
+    private static func minutesText(_ minutes: MeetingMinutes) -> [String] {
         var parts: [String] = []
         let summary = minutes.summary.trimmingCharacters(in: .whitespacesAndNewlines)
         if !summary.isEmpty { parts.append("Zusammenfassung: " + summary) }
@@ -307,7 +303,7 @@ private actor AssistantIndexer {
         if !steps.isEmpty { parts.append("Nächste Schritte:\n" + steps.joined(separator: "\n")) }
         let questions = minutes.open_questions.map { "- " + $0.text }
         if !questions.isEmpty { parts.append("Offene Fragen:\n" + questions.joined(separator: "\n")) }
-        return parts.joined(separator: "\n")
+        return parts
     }
 
     /// „00:14:03“.
@@ -348,8 +344,8 @@ private actor AssistantIndexer {
             // Ohne Lesegrenze (nur eine Schätzung vom Hörbuch ohne Abgleich): der geschätzte Anteil, nie mehr.
             limit = LibraryProgress.frontier(text: job.textRecord, audio: job.audioRecord, map: map) ?? whole((fraction * length).rounded(.down))
         }
-        // Abschnitte samt Nachweis der Satzgrenzen (Kapitelanfang, Naht zum Nachbarstück) und Lesegrenze bestimmt der Kern.
-        let sections = AssistantSections.book(BookTalkIndex(title: job.title, text: text).chunks, frontier: limit)
+        // Ein Block je Absatz des Buchtextes; ein Absatz hinter der Lesegrenze fällt ganz weg (der Kern, nie gekürzt).
+        let sections = AssistantSections.book(BookTalkIndex.blocks(in: text), frontier: limit)
         guard !sections.isEmpty else { return nil }
 
         var detail = job.authors.joined(separator: ", ")
@@ -389,8 +385,8 @@ struct AblageAssistantSource: AssistantSource {
     func search(_ question: String, limit: Int) async -> [AssistantPassage] {
         guard limit > 0 else { return [] }
         let found = await AblageSync.shared.suchen(question)
-        // Ablage-Auszüge sind Fenster aus der Dateisuche: ohne Nachweis der Satzgrenzen (Standard `false`) wird ihr erster und
-        // letzter Satz nie als Originalsatz zitiert.
+        // Ablage-Auszüge sind Fenster aus der Dateisuche, keine gespeicherten Blöcke (Standard `isBlock: false`): Sie dienen dem
+        // Abruf und der Erkennung, werden aber nie wörtlich ausgegeben.
         var out: [AssistantPassage] = []
         for (rank, result) in found.filter({ allowed($0.eintrag) }).enumerated() {
             let score = 1.0 / Double(1 + rank)

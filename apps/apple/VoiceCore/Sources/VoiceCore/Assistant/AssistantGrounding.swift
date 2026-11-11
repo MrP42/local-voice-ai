@@ -1,17 +1,20 @@
 import Foundation
 
-// Gesprächsmodus „Sprechen“ (Paket A, E4.2a „Antworten ohne Quelle“): Satzprüfung VOR der Ausgabe, strukturell.
+// Gesprächsmodus „Sprechen“ (Paket A, E4.2a „Antworten ohne Quelle“, E4.2b Quellblöcke): Prüfung VOR der Ausgabe, strukturell.
 // Reine Funktionen, kein Modell, kein Zustand. Wortlisten und Heuristiken sind keine Sicherheitsgrenze mehr; die Grenze ist:
 //
 // - DATENRUNDE (Standard, mit und ohne Opt-in): Kein Satz des Modells wird je wörtlich ausgegeben. Jeder vollständige
-//   Modellsatz „rastet ein“: Der beste Quellsatz der Auszüge nach Wortdeckung (Deckung ≥ 60 % und mindestens zwei gedeckte
-//   Inhaltswörter) wird im Originalwortlaut ausgegeben, Quelle = dieser Auszug. Sonst entfällt der Satz. Ausgegeben wird
-//   also nur ein Quellsatz, eine Vorlage der festen Liste oder ein Satz des Systems (Uhr, Bestand, feste Sätze).
+//   Modellsatz „rastet ein“: Der beste QUELLBLOCK der Auszüge nach Wortdeckung (Deckung ≥ 60 % und mindestens zwei gedeckte
+//   Inhaltswörter) wird GANZ und unverändert ausgegeben, Quelle = dieser Auszug, davor die Ansage „Wörtlicher Auszug aus
+//   ‚Titel‘:“. Sonst entfällt der Satz. Ausgegeben wird also nur ein ganzer Quellblock, eine Vorlage der festen Liste oder ein
+//   Satz des Systems (Uhr, Bestand, feste Sätze).
+// - Quellblock = der gespeicherte Text zwischen strukturellen Grenzen der Quelle (`AssistantSections`): Absatz, Notizblock,
+//   Segment. Innerhalb eines Blocks wird weder getrennt noch gekürzt, mehrere Blöcke werden nicht zusammengezogen, ein Block über
+//   `maxBlockChars` erscheint nie. Strukturelle Grenzen garantieren keine Satzgrenzen: der Auszug kann ein Fragment sein oder
+//   Zusammenhang auslassen; die Kennzeichnung „Wörtlicher Auszug“ deckt das. Satzzeichen sind kein Kriterium.
 // - ALLGEMEINRUNDE (nur mit Opt-in, Prompt ohne Auszüge und ohne Bestand): Vorlage → neutral; Eigendatenbezug
 //   (`AssistantOwnData`) → verworfen; Ähnlichkeit mit eigenem Inhalt (`resemblesOwnContent`, Abruf mit dem Satz als Anfrage)
 //   → verworfen; sonst „ohne Quelle“. Nie grounded. Die Listen und die Ähnlichkeit können nur verbieten, nie erlauben.
-// - Zitierbar ist nur ein vollständiger Satz mit Satzzeichen am Ende. Erster und letzter Satz eines Auszugs zählen nur, wenn
-//   der Auszug nachweislich an einer Satzgrenze beginnt bzw. endet (`AssistantPassage.startsAtBoundary/endsAtBoundary`).
 //
 // Vorlagen sind ganze Sätze einer festen Liste; verglichen wird auf Gleichheit nach Normalisierung (klein, ohne
 // Satzzeichen). Keine Präfix-, Frage-, Angebots-, Füllwort- oder Könnens-Regeln. Fehl-Vorlagen („Dazu finde ich in deinen
@@ -38,13 +41,17 @@ public enum AssistantGrounding {
     /// Längster Titel im Vorspann (länger: gekürzt mit „…“).
     static let maxPrefaceTitle = 80
 
-    /// Vorspann vor dem Zitat einer Quelle: „Aus deinen Inhalten, ‚Der Zauberberg‘:“ (ein Wortlaut für alle Bereiche).
+    /// Feste Erklärung für die Anzeige (leerer Zustand und Hinweisbereich): Was in einer Antwort steht, ist wörtlich und kann ein
+    /// Ausschnitt sein.
+    public static let excerptNotice = "Antworten sind wörtliche Auszüge aus deinen Inhalten. Ein Auszug kann unvollständig sein oder Zusammenhang auslassen."
+
+    /// Vorspann VOR JEDEM Block: „Wörtlicher Auszug aus ‚Der Zauberberg‘:“ (ein Wortlaut für alle Bereiche).
     public static func quotePreface(for passage: AssistantPassage) -> String {
         var title = passage.title.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
         title = String(title.filter { !"‚‘’'“”„\"".contains($0) }).trimmingCharacters(in: .whitespaces)
         if title.isEmpty { title = passage.area.singularLabel }
         if title.count > maxPrefaceTitle { title = String(title.prefix(maxPrefaceTitle - 1)).trimmingCharacters(in: .whitespaces) + "…" }
-        return "Aus deinen Inhalten, ‚\(title)‘:"
+        return "\(AssistantPassage.excerptPrefix)‚\(title)‘:"
     }
 
     static func normalize(_ s: String) -> String { BookTalkNormalize.words(s).joined(separator: " ") }
@@ -84,6 +91,7 @@ public enum AssistantGrounding {
     public static func isSystemOnly(_ sentence: String) -> Bool {
         failIndex.contains(normalize(sentence)) || BookTalkCitations.isAbsentTemplate(sentence)
             || normalize(sentence).hasPrefix(normalize("Aus deinen Inhalten"))
+            || normalize(sentence).hasPrefix(normalize(AssistantPassage.excerptPrefix))
     }
 
     // MARK: Uhrzeit und Datum
@@ -107,10 +115,10 @@ public enum AssistantGrounding {
         return expected.first { normalize($0) == n }
     }
 
-    // MARK: Quellsätze
+    // MARK: Quellblöcke
 
-    /// Ein vollständiger Satz eines Auszugs im Originalwortlaut (Leerraum zusammengezogen).
-    public struct SourceSentence: Sendable, Equatable {
+    /// Ein ganzer Quellblock im Originalwortlaut, zeichengleich mit dem gespeicherten Block (Zeilenumbrüche bleiben).
+    public struct SourceBlock: Sendable, Equatable {
         public let text: String
         public let passage: AssistantPassage
         let words: [String]
@@ -125,52 +133,38 @@ public enum AssistantGrounding {
 
         /// Schlüssel zum Erkennen doppelter Zitate.
         public var key: String { "\(passage.area.rawValue)/\(passage.itemId)/\(passage.locator ?? "")/\(text)" }
-        /// Quelle (Bereich und Element), für den Vorspann.
+        /// Quelle (Bereich und Element).
         public var sourceKey: String { "\(passage.area.rawValue)/\(passage.itemId)" }
     }
 
-    /// Längster Quellsatz, der ausgegeben wird; längere werden nicht zitiert (ein gekürzter wäre ein Fragment).
-    static let maxQuoteChars = 600
+    /// Längster Block, der ausgegeben wird; ein längerer ist nicht zitierbar und wird nie gekürzt oder geteilt.
+    public static let maxBlockChars = 600
 
-    /// Die zitierbaren Quellsätze aller Auszüge in Auszug-Reihenfolge. Nur vollständige Sätze: Beginn mit Großbuchstaben, Ziffer
-    /// oder Anführungszeichen, Ende mit Satzzeichen, mindestens drei Wörter. Fail-closed über EINE Prüfung für jede Naht
-    /// (`AssistantSeam.proven`: Satzzeichen, Abkürzungen, Großbuchstabe danach): Der Anfang einer Einheit ist nur nachgewiesen (a)
-    /// am nachgewiesenen Anfang des Auszugs oder (b) an einer nachgewiesenen Naht zur vorigen Einheit; das Ende nur an einer
-    /// nachgewiesenen Naht zur nächsten Einheit (die letzte zusätzlich nur, wenn der Auszug nachweislich an einer Satzgrenze endet
-    /// und nicht gekürzt wurde, Ende „…“). Innerhalb einer Zeile wird nur an nachgewiesenen Nähten getrennt (sonst bleibt die
-    /// Einheit zusammen), Zeilen werden nie zusammengezogen: ein Satz, der über einen Zeilenumbruch läuft („Anna spricht mit
-    /// Dr.⏎Meyer über Projekt Nordlicht.“, „…für⏎Projekt Nordlicht bis Freitag.⏎Danach folgt die Budgetprüfung.“), hat keinen
-    /// zitierbaren Rest, an der unbewiesenen Naht sind beide Ränder nicht nachgewiesen.
+    /// Die zitierbaren Quellblöcke aller Auszüge in Auszug-Reihenfolge: genau die Auszüge, die ein ganzer gespeicherter Block sind
+    /// (`AssistantPassage.isBlock`, nicht gekürzt) und nicht über `maxBlockChars` liegen. Es gibt keine Nähte, keine Satzprüfung
+    /// und keine Randflags: der Block gilt ganz oder gar nicht.
     public struct Basis: Sendable {
-        let sentences: [SourceSentence]
+        let blocks: [SourceBlock]
 
         public init(passages: [AssistantPassage]) {
-            var out: [SourceSentence] = []
-            for p in passages {
-                let units = AssistantGrounding.sourceUnits(of: p.text)
-                let clipped = p.text.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("…")
-                for (i, unit) in units.enumerated() where AssistantGrounding.isQuotable(unit) {
-                    let startProven = i == 0 ? p.startsAtBoundary : AssistantSeam.proven(units[i - 1], unit)
-                    let endProven = i < units.count - 1 ? AssistantSeam.proven(unit, units[i + 1]) : (p.endsAtBoundary && !clipped)
-                    if startProven, endProven { out.append(SourceSentence(text: unit, passage: p)) }
-                }
+            blocks = passages.compactMap { p in
+                AssistantGrounding.isQuotable(p) ? SourceBlock(text: p.text, passage: p) : nil
             }
-            sentences = out
         }
 
-        /// Erkennungsbasis (nicht zum Zitieren): ALLE Sätze der Auszüge, auch Randsätze und Sätze ohne Satzzeichen. Dient nur
-        /// dazu, einen Satz ohne Quelle zu verwerfen, der einem eigenen Inhalt ähnelt.
+        /// Erkennungsbasis (nicht zum Zitieren): ALLE Sätze der Auszüge und die ganzen Texte. Dient nur dazu, einen Satz ohne
+        /// Quelle zu verwerfen, der einem eigenen Inhalt ähnelt.
         init(detecting passages: [AssistantPassage]) {
-            sentences = passages.flatMap { p in AssistantGrounding.detectionTexts(of: p.text).map { SourceSentence(text: $0, passage: p) } }
+            blocks = passages.flatMap { p in AssistantGrounding.detectionTexts(of: p.text).map { SourceBlock(text: $0, passage: p) } }
         }
 
-        public var isEmpty: Bool { sentences.isEmpty }
-        public var texts: [String] { sentences.map(\.text) }
+        public var isEmpty: Bool { blocks.isEmpty }
+        public var texts: [String] { blocks.map(\.text) }
     }
 
-    /// Alle Sätze eines Textes (Zeilen, dann Satzgrenzen) mit zusammengezogenem Leerraum, auch die nicht zitierbaren, damit der
-    /// letzte erkennbar bleibt.
-    static func sourceTexts(of text: String) -> [String] {
+    /// Alle Sätze eines Textes (Zeilen, dann Satzgrenzen) mit zusammengezogenem Leerraum, plus der ganze Text: nur zum
+    /// Verbieten (Erkennungsbasis), nie zum Zitieren.
+    static func detectionTexts(of text: String) -> [String] {
         var out: [String] = []
         for line in text.components(separatedBy: .newlines) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -182,58 +176,21 @@ public enum AssistantGrounding {
                 if !sentence.isEmpty { out.append(sentence) }
             }
         }
+        let whole = text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        if !whole.isEmpty, !out.contains(whole) { out.append(whole) }
         return out
     }
 
-    /// Einheiten für das Zitieren: Zeilen, innerhalb einer Zeile nur an NACHGEWIESENEN Nähten getrennt (`AssistantSeam.proven`);
-    /// ein unbewiesener Schnitt der Satzerkennung („Hr. Meyer“, „3. Mai“) lässt die Einheit zusammen. Zeilen werden nie
-    /// zusammengezogen.
-    static func sourceUnits(of text: String) -> [String] {
-        var out: [String] = []
-        for line in text.components(separatedBy: .newlines) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty else { continue }
-            let units = Array(trimmed.utf16)
-            var current: String?
-            for s in BookTalkSentences.split(trimmed) {
-                let raw = String(decoding: units[s.start..<s.end], as: UTF16.self)
-                let piece = raw.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
-                guard !piece.isEmpty else { continue }
-                guard let c = current else { current = piece; continue }
-                if AssistantSeam.proven(c, piece) { out.append(c); current = piece } else { current = c + " " + piece }
-            }
-            if let current { out.append(current) }
-        }
-        return out
-    }
-
-    /// Erkennungsbasis: alle Schnitte der Satzerkennung UND die zusammengehaltenen Einheiten (nur zum Verbieten, nie zum Zitieren).
-    static func detectionTexts(of text: String) -> [String] {
-        let pieces = sourceTexts(of: text)
-        return pieces + sourceUnits(of: text).filter { !pieces.contains($0) }
-    }
-
-    private static let openers: Set<Character> = ["„", "“", "‚", "‘", "»", "«", "\"", "'", "(", "‹", "–", "—"]
-    private static let closers: Set<Character> = ["“", "”", "‘", "’", "\"", "'", "»", "«", ")", "›", "]"]
-
-    static func isQuotable(_ s: String) -> Bool {
-        guard s.count >= 12, s.count <= maxQuoteChars, s.split(separator: " ").count >= 3, let first = s.first else { return false }
-        guard first.isUppercase || first.isNumber || openers.contains(first) else { return false }
-        return endsWithTerminal(s)
-    }
-
-    /// Endet der Text (hinter schließenden Anführungszeichen und Klammern) mit einem Satzzeichen?
-    static func endsWithTerminal(_ s: String) -> Bool {
-        var tail = Substring(s)
-        while let last = tail.last, closers.contains(last) { tail = tail.dropLast() }
-        guard let end = tail.last else { return false }
-        return ".!?…".contains(end)
+    /// Zitierbar: ein ganzer gespeicherter Block, nicht leer, höchstens `maxBlockChars` lang. Satzzeichen, Länge in Wörtern und
+    /// Anfangsbuchstabe spielen keine Rolle („Milch kaufen“ ist als Block zitierbar).
+    static func isQuotable(_ p: AssistantPassage) -> Bool {
+        p.isBlock && !p.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && p.text.count <= maxBlockChars
     }
 
     // MARK: Einrasten
 
     /// Wörter, die beim Einrasten nicht als Inhalt zählen: Verweise auf die Quelle und Funktionswörter. Sie beeinflussen nur
-    /// die Auswahl, nie die Sicherheit (ausgegeben wird immer der Quellsatz).
+    /// die Auswahl, nie die Sicherheit (ausgegeben wird immer der ganze Quellblock).
     static let ignoring: Set<String> = baseFunctionWords.union(appNouns)
 
     private static let baseFunctionWords: Set<String> = [
@@ -261,14 +218,14 @@ public enum AssistantGrounding {
         return a.precision > b.precision
     }
 
-    /// Der beste Quellsatz zu einem Modellsatz: Deckung der Inhaltswörter des Modellsatzes ≥ `BookTalkCitations.minCoverage` (60 %)
-    /// und mindestens zwei gedeckte Inhaltswörter. Gleichstand: mehr gedeckte Wörter, dann der kürzere Quellsatz (Präzision),
+    /// Der beste Quellblock zu einem Modellsatz: Deckung der Inhaltswörter des Modellsatzes ≥ `BookTalkCitations.minCoverage` (60 %)
+    /// und mindestens zwei gedeckte Inhaltswörter. Gleichstand: mehr gedeckte Wörter, dann der kürzere Quellblock (Präzision),
     /// dann die frühere Stelle. `nil`, wenn keiner einrastet.
-    public static func snap(_ sentence: String, basis: Basis) -> SourceSentence? {
+    public static func snap(_ sentence: String, basis: Basis) -> SourceBlock? {
         let content = Array(Set(BookTalkTokens.contentWords(sentence).filter { !ignoring.contains($0) }))
         guard content.count >= 2 else { return nil }
-        var best: (SourceSentence, (share: Double, covered: Int, precision: Double))?
-        for q in basis.sentences {
+        var best: (SourceBlock, (share: Double, covered: Int, precision: Double))?
+        for q in basis.blocks {
             let hits = covered(content, by: q.words)
             let share = Double(hits) / Double(content.count)
             guard hits >= 2, share >= BookTalkCitations.minCoverage else { continue }
@@ -278,13 +235,13 @@ public enum AssistantGrounding {
         return best?.0
     }
 
-    /// Rückfall, wenn nichts einrastet: der beste Quellsatz gegen die FRAGE (mindestens zwei gedeckte Inhaltswörter oder
+    /// Rückfall, wenn nichts einrastet: der beste Quellblock gegen die FRAGE (mindestens zwei gedeckte Inhaltswörter oder
     /// mindestens 50 % der Inhaltswörter der Frage). Sätze aus `taken` (schon ausgegeben) zählen nicht.
-    public static func fallback(question: String, basis: Basis, taken: Set<String> = []) -> SourceSentence? {
+    public static func fallback(question: String, basis: Basis, taken: Set<String> = []) -> SourceBlock? {
         let content = Array(Set(BookTalkTokens.contentWords(question).filter { !ignoring.contains($0) }))
         guard !content.isEmpty else { return nil }
-        var best: (SourceSentence, (share: Double, covered: Int, precision: Double))?
-        for q in basis.sentences where !taken.contains(q.key) {
+        var best: (SourceBlock, (share: Double, covered: Int, precision: Double))?
+        for q in basis.blocks where !taken.contains(q.key) {
             let hits = covered(content, by: q.words)
             let share = Double(hits) / Double(content.count)
             guard hits >= 1, hits >= 2 || share >= 0.5 else { continue }
@@ -296,7 +253,7 @@ public enum AssistantGrounding {
 
     /// Ähnelt ein Satz ohne Quelle einem Satz aus den eigenen Inhalten? `passages` sind die Treffer eines Abrufs mit dem SATZ als
     /// Anfrage über die freigegebenen Bereiche. Gilt die Einrast-Regel (Deckung ≥ 60 % und mindestens zwei Inhaltswörter) für
-    /// irgendeinen Quellsatz (auch Randsätze), wird der Satz verworfen. Kann nur verbieten.
+    /// irgendeinen Satz der Auszüge (auch Randsätze), wird der Satz verworfen. Kann nur verbieten.
     public static func resemblesOwnContent(_ sentence: String, passages: [AssistantPassage]) -> Bool {
         guard !passages.isEmpty else { return false }
         return snap(sentence, basis: Basis(detecting: passages)) != nil
@@ -305,8 +262,8 @@ public enum AssistantGrounding {
     // MARK: Urteil über einen Modellsatz
 
     public enum Verdict: Sendable, Equatable {
-        /// Datenrunde: der Quellsatz, der statt des Modellsatzes ausgegeben wird.
-        case quote(SourceSentence)
+        /// Datenrunde: der ganze Quellblock, der statt des Modellsatzes ausgegeben wird.
+        case quote(SourceBlock)
         /// Vorlage in ihrem festen Wortlaut (Liste oder Uhr).
         case template(String)
         /// Allgemeinrunde: Satz ohne Quelle.

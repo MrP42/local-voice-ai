@@ -308,8 +308,9 @@ final class VoiceUITests: XCTestCase {
                        "nirgends in der Ansicht steht „ohne Quelle“ (leerer Verlauf, kein alter Beitrag)")
         closeAssistant(app)
     }
-    /// Beispielrunde (`--assistant-demo-quote`, nur Debug-Bau): ein Zitat mit Quellzeile, ohne Modell, Abruf, Speicher und Protokoll.
-    /// Die hörbare Ansage („Aus deinen Inhalten, ‚Beispielbuch‘:“) erscheint in der Ansicht nie; sichtbar sind das Zitat samt Quelle.
+    /// Beispielrunde (`--assistant-demo-quote`, nur Debug-Bau): ein wörtlicher Auszug (ganzer Block) mit Quellzeile „Wörtlicher
+    /// Auszug aus … · S. 12“, ohne Modell, Abruf, Speicher und Protokoll, dazu der feste Satz im Hinweisbereich.
+    /// Die hörbare Ansage („Wörtlicher Auszug aus ‚Beispielbuch‘:“) erscheint in der Ansicht nie; sichtbar sind der Auszug samt Quelle.
     /// Es gibt keine Runde ohne Quelle (der freie Modus ist abgeschaltet): weder einen Satz ohne Quelle noch die Kennzeichnung.
     func testAssistantDemoQuoteShowsOnlyTheQuoteWithItsSourceLine() throws {
         let app = XCUIApplication()
@@ -319,8 +320,10 @@ final class VoiceUITests: XCTestCase {
         func element(_ predicate: NSPredicate) -> XCUIElement { app.descendants(matching: .any).matching(predicate).firstMatch }
         func label(_ text: String) -> XCUIElement { element(NSPredicate(format: "label == %@", text)) }
         XCTAssertTrue(label("Du: Was steht im Beispielbuch über die Planung?").waitForExistence(timeout: 10))
-        let quote = element(NSPredicate(format: "label BEGINSWITH %@", "Zitat aus Buch · Beispielbuch · S. 12: Anna übernimmt die Planung"))
-        XCTAssertTrue(quote.waitForExistence(timeout: 5), "Zitat mit Quellzeile")
+        let quote = element(NSPredicate(format: "label BEGINSWITH %@", "Wörtlicher Auszug aus Beispielbuch · S. 12: Anna übernimmt die Planung"))
+        XCTAssertTrue(quote.waitForExistence(timeout: 5), "Auszug mit Quellzeile")
+        XCTAssertTrue(label("Antworten sind wörtliche Auszüge aus deinen Inhalten. Ein Auszug kann unvollständig sein oder Zusammenhang auslassen.").exists,
+                      "der feste Satz zur Kennzeichnung steht im Hinweisbereich")
         XCTAssertFalse(label("Du: Wie hoch ist der Mont Blanc?").exists, "keine Runde ohne Quelle")
         XCTAssertFalse(element(NSPredicate(format: "label CONTAINS %@", "Mont Blanc")).exists)
         XCTAssertFalse(element(NSPredicate(format: "label CONTAINS %@", "Ohne Quelle")).exists, "keine Kennzeichnung „Ohne Quelle“")
@@ -329,10 +332,10 @@ final class VoiceUITests: XCTestCase {
         keepScreenshot(app, name: "Gespraech-Zitat")
         closeAssistant(app)
     }
-    /// Marke je Satz (`--assistant-demo-multi`, nur Debug-Bau): eine Antwort mit drei Zitaten aus zwei Quellen und einer festen
-    /// Antwort. Jeder Satz hat seine eigene Quellzeile (Zitat) oder seine Kennzeichnung (fester Satz); eine gesammelte Quellenliste
-    /// gibt es nicht, und nirgends steht „ohne Quelle“.
-    func testAssistantDemoMultiMarksEverySentence() throws {
+    /// Marke je Block (`--assistant-demo-multi`, nur Debug-Bau): eine Antwort mit drei wörtlichen Auszügen aus zwei Quellen (einer
+    /// davon mehrzeilig) und einer festen Antwort. Jeder Block hat seine eigene Quellzeile (Auszug) oder seine Kennzeichnung
+    /// (fester Satz); eine gesammelte Quellenliste gibt es nicht, und nirgends steht „ohne Quelle“.
+    func testAssistantDemoMultiMarksEveryBlock() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--no-handsfree", "--assistant-no-model", "--assistant-demo-multi"]
         app.launch()
@@ -340,14 +343,18 @@ final class VoiceUITests: XCTestCase {
         func element(_ predicate: NSPredicate) -> XCUIElement { app.descendants(matching: .any).matching(predicate).firstMatch }
         func label(_ text: String) -> XCUIElement { element(NSPredicate(format: "label == %@", text)) }
         XCTAssertTrue(label("Du: Wie steht es um die Planung und das Budget?").waitForExistence(timeout: 10))
-        let sentences = [
-            "Zitat aus Buch · Beispielbuch · S. 12: Anna übernimmt die Planung und stimmt sich jede Woche mit dem Team ab.",
-            "Zitat aus Buch · Beispielbuch · S. 14: Die Abnahme der ersten Stufe ist für das Frühjahr vorgesehen.",
-            "Zitat aus Transkript · Besprechung Nordlicht · 00:14:03: Das Budget für Projekt Nordlicht wurde auf zwei Etappen verteilt.",
+        let blocks = [
+            "Wörtlicher Auszug aus Beispielbuch · S. 12: Anna übernimmt die Planung und stimmt sich jede Woche mit dem Team ab.",
+            "Wörtlicher Auszug aus Besprechung Nordlicht · 00:14:03: Das Budget für Projekt Nordlicht wurde auf zwei Etappen verteilt.",
         ]
-        for sentence in sentences {
-            XCTAssertTrue(label(sentence).waitForExistence(timeout: 5), "jeder Satz trägt seine Quellzeile: \(sentence)")
+        for block in blocks {
+            XCTAssertTrue(label(block).waitForExistence(timeout: 5), "jeder Block trägt seine Quellzeile: \(block)")
         }
+        // Der mehrzeilige Block: beide Zeilen stehen im selben Auszug, unter einer Quellzeile.
+        let multiline = element(NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@",
+                                            "Wörtlicher Auszug aus Beispielbuch · S. 14: Die Abnahme der ersten Stufe ist für das Frühjahr vorgesehen.",
+                                            "Die zweite Stufe folgt im Herbst, sobald das Budget freigegeben ist."))
+        XCTAssertTrue(multiline.waitForExistence(timeout: 5), "der mehrzeilige Block steht ganz in einem Auszug")
         XCTAssertTrue(label("Feste Antwort: Dazu finde ich in deinen Inhalten nichts.").exists,
                       "der feste Satz hat eine eigene, sichtbare Kennzeichnung statt einer Quelle")
         XCTAssertFalse(element(NSPredicate(format: "label CONTAINS[c] %@", "ohne Quelle")).exists, "keine Kennzeichnung „ohne Quelle“")

@@ -106,6 +106,7 @@ struct AssistantConversationView: View {
         switch action {
         case .retrySend: talk.retry()
         case .resume, .retryStart: talk.resume()
+        case .retryAudit: talk.retry()
         case .chooseModel: showModelChoice = true
         case .openLocalModels: showLocalModels = true
         }
@@ -234,6 +235,7 @@ struct AssistantConversationView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     if let progress = talk.preparing { preparing(progress) }
                     if let notice = talk.notice { noticeView(notice) }
+                    if talk.canSend { excerptNotice }
                     if hub.skipped > 0 {
                         Label("Wegen der Speichergrenze fehlen \(hub.skipped) Bücher oder Besprechungen im Gespräch.", systemImage: "exclamationmark.circle")
                             .font(.footnote).foregroundStyle(VoicePalette.secondaryText)
@@ -316,7 +318,7 @@ struct AssistantConversationView: View {
         switch action {
         case .retrySend: "Erneut senden"
         case .resume: "Weiter"
-        case .retryStart: "Erneut versuchen"
+        case .retryStart, .retryAudit: "Erneut versuchen"
         case .chooseModel: "Modell auswählen"
         case .openLocalModels: "Lokale Modelle öffnen"
         }
@@ -327,6 +329,7 @@ struct AssistantConversationView: View {
         case .retrySend: "assistantNoticeRetrySend"
         case .resume: "assistantNoticeResume"
         case .retryStart: "assistantNoticeRetryStart"
+        case .retryAudit: "assistantNoticeRetryAudit"
         case .chooseModel: "assistantNoticeChooseModel"
         case .openLocalModels: "assistantNoticeLocalModels"
         }
@@ -435,13 +438,18 @@ struct AssistantConversationView: View {
         }
     }
 
-    /// Originalsatz aus einer Quelle: in Anführungszeichen, mit Balken und der Quelle darunter (Text, nicht nur Farbe). Die
+    /// Wörtlicher Auszug (ein ganzer gespeicherter Block): in Anführungszeichen, mit Balken und der Quellzeile darunter („Wörtlicher
+    /// Auszug aus Beispielbuch · S. 12“, Text, nicht nur Farbe). Der Block wird buchstabengleich gezeigt, Zeilenumbrüche
+    /// inklusive: kein Markdown (Sternchen, Unterstriche oder Zeilenumbrüche des Auszugs blieben sonst nicht erhalten). Die
     /// Quellzeile ist nicht optional: Der Kern gibt jedem Zitat genau eine mit; fehlt sie (älterer, vor der Zeile gespeicherter
-    /// Beitrag), steht das offen da, statt dass die Zeile still entfällt.
+    /// Beitrag), steht das offen da, statt dass die Zeile still entfällt. Eine ältere Quellzeile ohne den Beginn „Wörtlicher
+    /// Auszug aus“ bekommt ihn hier vorangestellt.
     private func quoteBlock(_ part: AssistantTurnPart) -> some View {
-        let source = part.source ?? "Quelle nicht gespeichert"
+        let source = part.source.map(Self.excerptLine) ?? "Quelle nicht gespeichert"
         return VStack(alignment: .leading, spacing: 4) {
-            VoiceMarkdown(text: "„" + part.text + "“")
+            Text(verbatim: "„" + part.text + "“")
+                .font(.body)
+                .fixedSize(horizontal: false, vertical: true)
             Text(source)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(VoicePalette.secondaryText)
@@ -453,7 +461,21 @@ struct AssistantConversationView: View {
             RoundedRectangle(cornerRadius: 1.5).fill(AssistantColors.fill).frame(width: 3)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(part.source.map { "Zitat aus \($0): \(part.text)" } ?? "Zitat, Quelle nicht gespeichert: \(part.text)")
+        .accessibilityLabel(part.source.map { "\(Self.excerptLine($0)): \(part.text)" } ?? "Zitat, Quelle nicht gespeichert: \(part.text)")
+    }
+
+    /// Quellzeile mit dem festen Beginn „Wörtlicher Auszug aus“ (ältere Beiträge speicherten nur „Buch · Titel · S. 12“).
+    private static func excerptLine(_ source: String) -> String {
+        source.hasPrefix(AssistantPassage.excerptPrefix) ? source : AssistantPassage.excerptPrefix + source
+    }
+
+    /// Feste Erklärung: Antworten sind wörtliche Auszüge und können unvollständig sein. Steht im Hinweisbereich über dem Verlauf.
+    private var excerptNotice: some View {
+        Text(AssistantGrounding.excerptNotice)
+            .font(.footnote)
+            .foregroundStyle(VoicePalette.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("assistantExcerptNotice")
     }
 
     /// Satz, der keine Aussage über deine Inhalte macht und deshalb keine Quellzeile hat (feste Antwort des Systems,

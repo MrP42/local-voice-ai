@@ -2,13 +2,26 @@ import Foundation
 
 // Gesprächsmodus „Sprechen“ (Paket K, E4.2a in Paket A): Abruf und Bestand über die freigegebenen Bereiche.
 // Deterministisch (BM25), keine Werkzeugaufrufe des Modells. Bereiche, die nicht in `areas` stehen, kommen weder im
-// Bestand noch im Abruf vor. Der Bestand kommt nicht mehr in den Prompt: Bestandsangaben (Zahl je Bereich, Titel) erzeugt das
+// Bestand noch im Abruf vor. Eine Anfrage der Sitzung übergibt ihre Bereiche aus dem Freigabezustand (`areas:`), gelesen mit der
+// Generation aus einem Lock; der veränderliche Zustand `enabled` dieses Objekts gilt nur für Aufrufer ohne Angabe (Anzeige, Tests). Der Bestand kommt nicht mehr in den Prompt: Bestandsangaben (Zahl je Bereich, Titel) erzeugt das
 // System aus diesen Daten (`inventoryStatements`), nie das Modell.
+
+/// Bereiche hinter einem Lock, damit die Sitzung beim Anlegen ohne Aktor-Sprung davon lesen kann.
+final class AssistantAreaBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Set<AssistantArea>
+    init(_ value: Set<AssistantArea>) { self.value = value }
+    var current: Set<AssistantArea> {
+        get { lock.lock(); defer { lock.unlock() }; return value }
+        set { lock.lock(); value = newValue; lock.unlock() }
+    }
+}
 
 public actor AssistantKnowledge {
     private let corpus: AssistantCorpus
     private let sources: [any AssistantSource]
     private var enabled: Set<AssistantArea> = Set(AssistantArea.allCases)
+    private nonisolated let box = AssistantAreaBox(Set(AssistantArea.allCases))
 
     /// Höchstens so viele Auszüge je Element im Gesamtergebnis (wie im Index).
     static let perItemCap = 3
@@ -20,9 +33,15 @@ public actor AssistantKnowledge {
         self.sources = sources
     }
 
-    public func setAreas(_ areas: Set<AssistantArea>) { enabled = areas }
+    public func setAreas(_ areas: Set<AssistantArea>) {
+        enabled = areas
+        box.current = areas
+    }
 
     public var areas: Set<AssistantArea> { enabled }
+
+    /// Die Bereiche zur Zeit, ohne Aktor-Sprung (Anfangswert der Sitzung).
+    public nonisolated var currentAreas: Set<AssistantArea> { box.current }
 
     // MARK: Bestand
 
@@ -30,10 +49,11 @@ public actor AssistantKnowledge {
     static let titleCap = 400
 
     /// Titel aller Elemente der freigegebenen Bereiche, ohne Doppelte (für die Eigendatenprüfung von Frage und Satz).
-    public func inventoryTitles() async -> [String] {
+    public func inventoryTitles(areas: Set<AssistantArea>? = nil) async -> [String] {
+        let active = areas ?? enabled
         var seen = Set<String>()
         var out: [String] = []
-        for area in AssistantArea.allCases where enabled.contains(area) {
+        for area in AssistantArea.allCases where active.contains(area) {
             for item in await items(in: area) {
                 let title = Self.oneLine(item.title)
                 guard !title.isEmpty, seen.insert(title).inserted else { continue }
@@ -102,10 +122,11 @@ public actor AssistantKnowledge {
 
     /// Bestandsangaben zu einer Bestandsfrage je Bereich, nur aus den freigegebenen Bereichen. Leer, wenn kein genannter Bereich
     /// freigegeben ist. Die Bereiche gehen ins Protokoll.
-    public func inventoryGroups(question: String) async -> [(area: AssistantArea, statements: [String])] {
+    public func inventoryGroups(question: String, areas: Set<AssistantArea>? = nil) async -> [(area: AssistantArea, statements: [String])] {
         let wanted = Self.inventoryAreas(for: question)
+        let active = areas ?? enabled
         var out: [(area: AssistantArea, statements: [String])] = []
-        for area in AssistantArea.allCases where enabled.contains(area) && (wanted?.contains(area) ?? true) {
+        for area in AssistantArea.allCases where active.contains(area) && (wanted?.contains(area) ?? true) {
             out.append((area, Self.statements(area: area, items: await items(in: area))))
         }
         return out
@@ -117,12 +138,13 @@ public actor AssistantKnowledge {
 
     /// Abruf für die Prüfung eines Satzes ohne Quelle: der SATZ ist die Anfrage, über alle freigegebenen Bereiche, ohne Vorfrage
     /// und ohne die Sonderbehandlung von Bestandsfragen, mit großzügiger Obergrenze. Nur zum Verwerfen, nie zum Zitieren.
-    public func probe(sentence: String) async -> [AssistantPassage] {
+    public func probe(sentence: String, areas: Set<AssistantArea>? = nil) async -> [AssistantPassage] {
+        let active = areas ?? enabled
         let trimmed = sentence.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !enabled.isEmpty else { return [] }
-        var found = await corpus.search(trimmed, previous: nil, areas: enabled, limit: Self.probeLimit)
-        for source in sources where enabled.contains(source.area) {
-            found += (await source.search(trimmed, limit: Self.probeLimit)).filter { $0.area == source.area && enabled.contains($0.area) }
+        guard !trimmed.isEmpty, !active.isEmpty else { return [] }
+        var found = await corpus.search(trimmed, previous: nil, areas: active, limit: Self.probeLimit)
+        for source in sources where active.contains(source.area) {
+            found += (await source.search(trimmed, limit: Self.probeLimit)).filter { $0.area == source.area && active.contains($0.area) }
         }
         return found
     }
@@ -133,17 +155,19 @@ public actor AssistantKnowledge {
 
     /// Abruf: aktuelle Frage, bei kurzen Anschlussfragen zusätzlich die vorige Nutzeräußerung (halbes Gewicht).
     /// Scores sind je Bereich auf 0…1 normiert (beste Stelle des Bereichs = 1), damit Bereiche vergleichbar werden.
-    public func retrieve(question: String, previous: String?, limit: Int, maxChars: Int) async -> [AssistantPassage] {
-        guard limit > 0, maxChars > 0, !enabled.isEmpty else { return [] }
+    public func retrieve(question: String, previous: String?, limit: Int, maxChars: Int,
+                         areas: Set<AssistantArea>? = nil) async -> [AssistantPassage] {
+        let active = areas ?? enabled
+        guard limit > 0, maxChars > 0, !active.isEmpty else { return [] }
         let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !Self.isInventoryQuestion(trimmed) else { return [] }
         let prev = Self.isFollowUp(trimmed) ? previous?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
         let blended = [trimmed, prev].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " ")
         let each = limit * 2
 
-        var found = await corpus.search(trimmed, previous: prev, areas: enabled, limit: each)
-        for source in sources where enabled.contains(source.area) {
-            found += (await source.search(blended, limit: each)).filter { $0.area == source.area && enabled.contains($0.area) }
+        var found = await corpus.search(trimmed, previous: prev, areas: active, limit: each)
+        for source in sources where active.contains(source.area) {
+            found += (await source.search(blended, limit: each)).filter { $0.area == source.area && active.contains($0.area) }
         }
         return Self.merge(found, limit: limit, maxChars: maxChars)
     }

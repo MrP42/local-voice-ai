@@ -288,7 +288,7 @@ final class AssistantHistoryStoreTests: XCTestCase {
         AssistantTurnPart.append(to: &list, text: "Bestand.", status: .inventory, quote: false, sources: [])
         XCTAssertEqual(list.map(\.text), ["Eins.", "Zwei.", "Drei.", "Vorlage eins. Vorlage zwei.", "Bestand."])
         XCTAssertEqual(list.map(\.quote), [true, true, true, false, false])
-        XCTAssertEqual(list.prefix(3).map(\.source), ["Buch · A · S. 1", "Buch · A · S. 1", "Buch · B · S. 2"])
+        XCTAssertEqual(list.prefix(3).map(\.source), ["Wörtlicher Auszug aus A · S. 1", "Wörtlicher Auszug aus A · S. 1", "Wörtlicher Auszug aus B · S. 2"])
         XCTAssertEqual(list.suffix(2).map(\.note), [AssistantTurnPart.templateNote, AssistantTurnPart.inventoryNote])
         XCTAssertEqual(list.suffix(2).map(\.source), [nil, nil])
     }

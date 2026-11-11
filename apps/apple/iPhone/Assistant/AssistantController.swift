@@ -17,7 +17,7 @@ import Combine
 enum AssistantPhase: Equatable { case idle, listening, hearing, thinking, speaking }
 
 struct AssistantNotice: Equatable {
-    enum Action: Equatable { case retrySend, resume, retryStart, chooseModel, openLocalModels }
+    enum Action: Equatable { case retrySend, resume, retryStart, retryAudit, chooseModel, openLocalModels }
     var text: String
     /// Zweite, kurze Zeile (nur wenn zutreffend, z. B. „Das Apple-Systemmodell wird noch geladen.“).
     var detail: String?
@@ -65,7 +65,7 @@ private final class AssistantRun {
         let speech: String
         let status: AssistantSentenceStatus
         let sources: [AssistantPassage]
-        /// Originalsatz (mit Anführungszeichen und Quelle anzeigen).
+        /// Wörtlicher Auszug (mit Anführungszeichen und Quellzeile anzeigen).
         let quote: Bool
         /// Freigabe-Generation des Ereignisses; vor Anzeige und Audiostart gegen die aktuelle geprüft.
         let generation: Int
@@ -102,7 +102,7 @@ private final class AssistantRun {
         self.afterInterruption = afterInterruption
     }
 
-    /// Nur die Sätze, die ganz gesprochen wurden (Ansagen wie „Aus deinen Inhalten, …“ gehören nicht zum Text).
+    /// Nur die Einheiten, die ganz gesprochen wurden (Ansagen wie „Wörtlicher Auszug aus …“ gehören nicht zum Text).
     var spokenText: String {
         finishedSpeaking.map { sentences[$0] }.filter { $0.status != .announcement }.map(\.text).joined(separator: " ")
     }
@@ -160,6 +160,9 @@ final class AssistantController: ObservableObject {
     private let store = AssistantHistoryStore(directory: AssistantHistoryStore.standardDirectory())
     private let audit = AssistantAuditLog(directory: AssistantAuditLog.standardDirectory())
     private var auditFailureShown = false
+    /// Änderungen der Freigabe (Bereiche, Zustimmung) laufen nacheinander: Zeile, dann Einstellung.
+    private var areaChain: Task<Void, Never>?
+    private var grantingConsent = false
     private let hub = AssistantSources.shared
     private var engine = AssistantEngine.unavailable("")
     private var session: AssistantSession?
@@ -217,10 +220,10 @@ final class AssistantController: ObservableObject {
     // MARK: Beispielrunde (nur DEBUG)
 
     /// UI-Tests: `--assistant-demo-quote` öffnet das Gespräch mit einer eingebauten Beispielrunde aus synthetischem Inhalt (ein
-    /// Zitat mit Quellzeile). `--assistant-demo-multi` öffnet stattdessen die mehrsätzige Beispielrunde (Marke je Satz: drei
-    /// Zitate aus zwei Quellen, je mit eigener Quellzeile, dazu ein Satz mit Kennzeichnung). Kein Modell, kein Abruf, kein
-    /// Speicher, kein Protokoll: `start` kehrt sofort zurück, und Verlauf und Protokoll bleiben unberührt (`persist`,
-    /// `deleteStoredHistory`, `checkReleaseLines`).
+    /// wörtlicher Auszug, ein ganzer Block, mit Quellzeile). `--assistant-demo-multi` öffnet stattdessen die Beispielrunde mit
+    /// mehreren Blöcken (Marke je Block: drei Auszüge aus zwei Quellen, einer davon mehrzeilig, je mit eigener Quellzeile „Wörtlicher
+    /// Auszug aus … · S. 12“, dazu ein Satz mit Kennzeichnung). Kein Modell, kein Abruf, kein Speicher, kein Protokoll: `start`
+    /// kehrt sofort zurück, und Verlauf und Protokoll bleiben unberührt (`persist`, `deleteStoredHistory`, `revokeConsent`).
     static let demoMulti = ProcessInfo.processInfo.arguments.contains("--assistant-demo-multi")
     static let demoQuote = demoMulti || ProcessInfo.processInfo.arguments.contains("--assistant-demo-quote")
 
@@ -232,16 +235,21 @@ final class AssistantController: ObservableObject {
         modelLabel = "Beispiel"
     }
 
-    /// Mehrsätzige Beispielrunde (synthetisch): drei Zitate aus zwei Quellen, je Satz seine Quellzeile, dazu eine feste Antwort mit
-    /// ihrer Kennzeichnung. Die Abschnitte entstehen mit derselben Zuordnung wie bei einer echten Antwort (`AssistantTurnPart.append`).
+    /// Ein gespeicherter Block der Beispielrunde (`isBlock: true`: ganz, unverändert, zitierbar).
+    private static func demoBlock(_ area: AssistantArea, _ id: String, _ title: String, _ locator: String, _ text: String) -> AssistantPassage {
+        AssistantPassage(area: area, itemId: id, title: title, locator: locator, text: text, score: 1, isBlock: true)
+    }
+
+    /// Beispielrunde mit mehreren Blöcken (synthetisch): drei wörtliche Auszüge aus zwei Quellen, der zweite mehrzeilig, je Block
+    /// seine Quellzeile, dazu eine feste Antwort mit ihrer Kennzeichnung. Die Abschnitte entstehen mit derselben Zuordnung wie bei
+    /// einer echten Antwort (`AssistantTurnPart.append`).
     private static var demoMultiTurns: [AssistantTurn] {
         let book = "Anna übernimmt die Planung und stimmt sich jede Woche mit dem Team ab."
-        let book2 = "Die Abnahme der ersten Stufe ist für das Frühjahr vorgesehen."
+        let book2 = "Die Abnahme der ersten Stufe ist für das Frühjahr vorgesehen.\nDie zweite Stufe folgt im Herbst, sobald das Budget freigegeben ist."
         let talk = "Das Budget für Projekt Nordlicht wurde auf zwei Etappen verteilt."
-        let p1 = AssistantPassage(area: .books, itemId: "demo-buch", title: "Beispielbuch", locator: "S. 12", text: book, score: 1)
-        let p2 = AssistantPassage(area: .books, itemId: "demo-buch", title: "Beispielbuch", locator: "S. 14", text: book2, score: 1)
-        let p3 = AssistantPassage(area: .transcripts, itemId: "demo-besprechung", title: "Besprechung Nordlicht", locator: "00:14:03",
-                                  text: talk, score: 1)
+        let p1 = demoBlock(.books, "demo-buch", "Beispielbuch", "S. 12", book)
+        let p2 = demoBlock(.books, "demo-buch", "Beispielbuch", "S. 14", book2)
+        let p3 = demoBlock(.transcripts, "demo-besprechung", "Besprechung Nordlicht", "00:14:03", talk)
         let fixed = AssistantGrounding.fixedSentence(allowUnsourced: false, hint: AssistantUnsourcedConsent.isReleased)
         var parts: [AssistantTurnPart] = []
         AssistantTurnPart.append(to: &parts, text: book, status: .grounded, quote: true, sources: [p1])
@@ -254,15 +262,16 @@ final class AssistantController: ObservableObject {
         ]
     }
 
-    /// So steht der Beitrag nach einer echten Antwort im Verlauf: ein Originalsatz mit Quellzeile (Datenrunde). Die hörbare Ansage
-    /// („Aus deinen Inhalten, ‚Beispielbuch‘:“) gehört nicht zum Text und erscheint in der Ansicht nie. Eine Runde ohne Quelle gibt
-    /// es nicht (der freie Modus ist abgeschaltet), also auch keine Beispielrunde dazu.
+    /// So steht der Beitrag nach einer echten Antwort im Verlauf: ein wörtlicher Auszug (ganzer Block) mit Quellzeile (Datenrunde).
+    /// Die hörbare Ansage („Wörtlicher Auszug aus ‚Beispielbuch‘:“) gehört nicht zum Text und erscheint in der Ansicht nie; sichtbar
+    /// ist die Quellzeile „Wörtlicher Auszug aus Beispielbuch · S. 12“. Eine Runde ohne Quelle gibt es nicht (der freie Modus ist
+    /// abgeschaltet), also auch keine Beispielrunde dazu.
     private static var demoTurns: [AssistantTurn] {
         let quote = "Anna übernimmt die Planung und stimmt sich jede Woche mit dem Team ab."
-        let passage = AssistantPassage(area: .books, itemId: "demo-buch", title: "Beispielbuch", locator: "S. 12", text: quote, score: 1)
+        let passage = demoBlock(.books, "demo-buch", "Beispielbuch", "S. 12", quote)
         return [
             AssistantTurn(user: "Was steht im Beispielbuch über die Planung?", assistant: quote, sources: [passage],
-                          parts: [AssistantTurnPart(text: quote, unsourced: false, quote: true, source: passage.sourceLabel)],
+                          parts: [AssistantTurnPart(text: quote, unsourced: false, quote: true, source: passage.excerptLine)],
                           model: "Beispiel", round: .data),
         ]
     }
@@ -467,7 +476,11 @@ final class AssistantController: ObservableObject {
         let history = clearRequested == clearDone ? stored : []
         session?.setReleaseObserver(nil)
         if let model = built.model {
-            let next = AssistantSession(model: model, knowledge: kn, config: built.config, history: history, audit: audit)
+            // Zustimmung zum Cloud-Ziel aus dem gespeicherten Stand; für lokale Modelle ohne Belang. Der Kern lässt ein
+            // Cloud-Modell ohne Zustimmung gar nicht erst laufen (`consentRequired`).
+            let consented = built.target.map { AssistantConsent.isGranted($0, areas: active) } ?? false
+            let next = AssistantSession(model: model, knowledge: kn, config: built.config, history: history, audit: audit,
+                                        cloudConsent: consented)
             observeRelease(of: next)
             speaker.gate = next.playbackGate
             session = next
@@ -564,6 +577,14 @@ final class AssistantController: ObservableObject {
         applyAreas(next)
     }
 
+    /// Bereiche ändern, in fester Reihenfolge (Freigabe zuerst, Einstellung danach):
+    /// 1. Kern, SYNCHRON: EINE Erhöhung der Generation. Was einschränkt (Bereich weg, Zustimmung weg), gilt sofort; die laufende
+    ///    Antwort endet, die Zeile `release` ist eingereiht. Erweiterungen (Bereich dazu) gelten noch nicht.
+    /// 2. In der Kette: `settle` wartet auf die dauerhafte Zeile; erst danach wird eine Erweiterung wirksam. Misslingt das Schreiben,
+    ///    bleiben Einschränkungen in Kraft, Erweiterungen nicht, und der Fehler wird gemeldet.
+    /// 3. Erst dann die gespeicherte Einstellung, und zwar der WIRKSAME Stand (nicht der gewünschte).
+    /// Für ein Cloud-Ziel geht die Zustimmung für den neuen Stand mit in die Änderung ein: Reichen die Bereiche der Zustimmung
+    /// nicht, gilt sie nicht mehr (sofort), bis der Nutzer zustimmt; gesendet wird in der Zwischenzeit nichts.
     private func applyAreas(_ next: Set<AssistantArea>) {
         let previous = areas
         let cloud = engine.isCloud
@@ -571,25 +592,47 @@ final class AssistantController: ObservableObject {
         let knowledge = self.knowledge
         let session = self.session
         areas = next
-        AssistantAreaSettings.set(next, cloud: cloud)
-        // Sofort eine neue Generation: laufende Antworten enden im Kern, veraltete Ereignisse werden nicht mehr gezeigt.
-        // `setAreas` der Sitzung erhöht sie vor und nach dem Umschalten der Bereiche noch zweimal. Jede Erhöhung schreibt der
-        // Kern selbst als Zeile `release` (Grund `areas`, neue Bereichsnamen) ins Protokoll; hier steht nichts davon.
-        session?.releaseDidChange(.areas, areas: next)
-        checkReleaseLines()
+        let pending = session?.applyAreas(next, cloudConsent: target.map { AssistantConsent.isGranted($0, areas: next) })
         // Ein Bereich, aus dem die laufende Antwort Auszüge hat, wird entzogen: wartende Sätze werden nicht mehr gesprochen.
         let removed = previous.subtracting(next)
         if let run = current, run.sources?.contains(where: { removed.contains($0.area) }) == true {
             stopForRevocation("Antwort angehalten: Ein Bereich wurde abgeschaltet.")
         }
-        Task {
-            if let session { await session.setAreas(next); checkReleaseLines() } else { await knowledge?.setAreas(next) }
-            guard let target, !AssistantConsent.isGranted(target, areas: next) else { return }
+        inAreaChain { [weak self] in
+            guard let self else { return }
+            var effective = await self.settleAreas(pending, session: session, knowledge: knowledge, wanted: next)
+            AssistantAreaSettings.set(effective, cloud: cloud)
+            if self.session === session { self.areas = effective }
+            guard let target, !AssistantConsent.isGranted(target, areas: effective) else { return }
             // Mehr Bereiche als zugestimmt: fragen, sonst zurück. Gesendet wird in der Zwischenzeit nichts (Guard beim Senden).
-            if await askConsent(target, areas: next) { return }
-            areas = previous
-            AssistantAreaSettings.set(previous, cloud: cloud)
-            if let session { await session.setAreas(previous); checkReleaseLines() } else { await knowledge?.setAreas(previous) }
+            if await self.askConsent(target, areas: effective) { return }
+            let back = session?.applyAreas(previous, cloudConsent: AssistantConsent.isGranted(target, areas: previous))
+            effective = await self.settleAreas(back, session: session, knowledge: knowledge, wanted: previous)
+            AssistantAreaSettings.set(effective, cloud: cloud)
+            if self.session === session { self.areas = effective }
+        }
+    }
+
+    /// Wartet auf die Zeile der Änderung und gibt die WIRKSAMEN Bereiche zurück. Ein Schreibfehler wird gemeldet; dann gilt, was
+    /// einschränkt, und was erweitert, nicht.
+    private func settleAreas(_ pending: AssistantReleasePending?, session: AssistantSession?, knowledge: AssistantKnowledge?,
+                             wanted: Set<AssistantArea>) async -> Set<AssistantArea> {
+        guard let session, let pending else {
+            await knowledge?.setAreas(wanted)
+            return wanted
+        }
+        let result = await session.settle(pending)
+        if result.error != nil || !result.effective { auditResult(false, detail: Self.releaseNotSavedDetail) }
+        return session.effectiveAreas
+    }
+
+    /// Änderungen der Freigabe laufen nacheinander: Eine spätere beginnt erst, wenn die frühere ihre Zeile und die Einstellung hinter
+    /// sich hat (sonst überholte eine ältere Einstellung die neuere).
+    private func inAreaChain(_ work: @escaping @MainActor () async -> Void) {
+        let previous = areaChain
+        areaChain = Task {
+            await previous?.value
+            await work()
         }
     }
 
@@ -615,45 +658,58 @@ final class AssistantController: ObservableObject {
     /// Text bei geänderter Freigabe (Generation veraltet oder Lauf im Kern widerrufen); „Erneut senden“ stellt die Frage neu.
     private static let revokedText = "Antwort angehalten: Die Freigabe hat sich geändert."
 
-    /// Jede Erhöhung der Freigabe-Generation (Bereiche, Zustimmung) schreibt der Kern selbst als Zeile `release`; hier wird nur
-    /// geprüft, ob das Schreiben gelang: Ein Fehler erscheint einmal als Hinweis, nie still.
-    private func checkReleaseLines() {
+    /// Cloud-Zustimmung entzogen (z. B. die Bereiche reichen nicht mehr): sofort im Kern (Generation steigt, laufende Antworten
+    /// enden, die Zeile `release` ist eingereiht), das Schreiben der Zeile danach in der Kette. Ohne Sitzung (Modellstart, noch
+    /// keine Freigabe) gibt es keine Erhöhung: dann steht das Ereignis hier (Generation 0).
+    private func revokeConsent(areas consented: Set<AssistantArea>) {
         #if DEBUG
         guard !Self.demoQuote else { return }
         #endif
-        let audit = self.audit
-        Task { [weak self] in
-            let error = await audit.flushReleaseLines()
-            self?.auditResult(error == nil)
-        }
-    }
-
-    /// Cloud-Zustimmung erteilt oder entzogen. Mit Sitzung erhöht `releaseDidChange` die Generation, und der Kern schreibt die
-    /// Zeile `release` (Grund `consent`, Bereiche der Zustimmung): hier kommt nichts dazu, sonst stünde die Änderung doppelt im
-    /// Protokoll. Ohne Sitzung (Modellstart, noch keine Freigabe, keine Generation) gibt es keine Erhöhung und also keine
-    /// Zeile des Kerns: dann steht das Ereignis hier (Generation 0), sonst fehlte die Zustimmung im Protokoll.
-    private func noteConsentChange(_ kind: AssistantAuditEntry.Kind, areas consented: Set<AssistantArea>) {
-        if let session {
-            session.releaseDidChange(.consent, areas: consented)
-            checkReleaseLines()
+        guard let session else {
+            Task { [weak self] in _ = await self?.recordConsentEntry(.cloudRevoked, areas: consented) }
             return
         }
-        #if DEBUG
-        guard !Self.demoQuote else { return }
-        #endif
-        let entry = AssistantAuditEntry(kind: kind, model: engine.label, cloud: true, consentVersion: 0,
-                                        areas: AssistantArea.allCases.filter(consented.contains), generation: 0)
-        let audit = self.audit
-        Task { [weak self] in
-            let ok = await audit.record(entry)
-            self?.auditResult(ok)
+        let pending = session.applyCloudConsent(false)
+        inAreaChain { [weak self] in
+            let result = await session.settle(pending)
+            if result.error != nil { self?.auditResult(false, detail: Self.releaseNotSavedDetail) }
         }
     }
 
-    private func auditResult(_ ok: Bool) {
+    /// Cloud-Zustimmung erteilt: erst im Kern (die Erteilung gilt erst mit der dauerhaften Zeile), danach die Einstellung.
+    /// `true`, wenn die Zustimmung gilt. Misslingt das Schreiben, gilt sie nicht (Widerrufbarkeit hat Vorrang vor Bequemlichkeit).
+    private func grantConsentInCore(areas consented: Set<AssistantArea>) async -> Bool {
+        #if DEBUG
+        guard !Self.demoQuote else { return true }
+        #endif
+        guard let session else { return await recordConsentEntry(.cloudGranted, areas: consented) }
+        let result = await session.setCloudConsent(true)
+        if result.error != nil { auditResult(false, detail: Self.releaseNotSavedDetail) }
+        return result.effective
+    }
+
+    private func recordConsentEntry(_ kind: AssistantAuditEntry.Kind, areas consented: Set<AssistantArea>) async -> Bool {
+        let entry = AssistantAuditEntry(kind: kind, model: engine.label, cloud: true, consentVersion: 0,
+                                        areas: AssistantArea.allCases.filter(consented.contains), generation: 0)
+        let ok = await audit.record(entry)
+        auditResult(ok)
+        return ok
+    }
+
+    /// Das Protokoll ließ sich nicht schreiben: ein Hinweis, nie still. Einmal je Störung (`retry` setzt ihn zurück).
+    private func auditResult(_ ok: Bool, detail: String? = nil) {
         guard !ok, !auditFailureShown else { return }
         auditFailureShown = true
-        notice = AssistantNotice(text: "Das Protokoll konnte nicht gespeichert werden (Speicher voll?).", action: nil)
+        notice = Self.auditUnavailableNotice(detail: detail)
+    }
+
+    private static let releaseNotSavedDetail = "Die Änderung der Freigabe wurde nicht gesichert: Einschränkungen gelten, Erweiterungen nicht."
+
+    /// Zustand „Protokoll nicht schreibbar“: Ohne Protokoll gibt der Assistent nichts aus deinen Inhalten aus.
+    private static func auditUnavailableNotice(detail: String? = nil) -> AssistantNotice {
+        AssistantNotice(text: "Protokoll nicht schreibbar",
+                        detail: detail ?? "Ohne Protokoll gibt der Assistent nichts aus deinen Inhalten aus. Prüfe den freien Speicher.",
+                        action: .retryAudit)
     }
 
     func toggleMute() {
@@ -905,6 +961,7 @@ final class AssistantController: ObservableObject {
     /// „Erneut senden“ im Hinweis nach einem Fehler.
     func retry() {
         guard let text = retryText else { return }
+        auditFailureShown = false   // eine neue Störung wird wieder gemeldet
         send(text: text)
     }
 
@@ -1005,25 +1062,68 @@ final class AssistantController: ObservableObject {
         // Die Zustimmung für das Cloud-Ziel ist unterwegs entfallen: nichts Weiteres von dieser Antwort wird gesprochen.
         if let target = engine.target, !AssistantConsent.isGranted(target, areas: areas) {
             // Die Zustimmung ist ein Teil der Freigabe: neue Generation (laufende Antworten enden im Kern), im Protokoll vermerkt.
-            noteConsentChange(.cloudRevoked, areas: areas)
+            revokeConsent(areas: areas)
             stopForRevocation("Antwort angehalten: Die Zustimmung für das Cloud-Modell fehlt.")
             return
         }
         deliver(run)
     }
 
-    /// Geordneter Ausgabe-Commit (Anzeige, Übergabe an die Stimme, Audiostart-Meldung): `body` läuft im Kern IM selben Lock, in
-    /// dem die Freigabe-Generation steigt (`AssistantSession.commitOutput`), und nur, wenn die Generation des Satzes noch die
+    /// Ergebnis eines geordneten Ausgabe-Commits.
+    private enum Commit {
+        /// Die Generation galt, der Body lief.
+        case done
+        /// Die Generation war veraltet (oder keine Sitzung): der Body lief nicht.
+        case revoked
+        /// Der Body lief, aber das Protokoll dieser Anfrage hat einen Schreibfehler: nichts Weiteres wird ausgegeben.
+        case auditFailed
+    }
+
+    /// Geordneter Ausgabe-Commit (Anzeige, Übergabe an die Stimme): `body` läuft im Kern IM selben Lock, in dem die
+    /// Freigabe-Generation steigt (`AssistantSession.commitOutput`), und nur, wenn die Generation des Satzes noch die
     /// aktuelle ist; nach der Rückkehr einer Erhöhung läuft kein `body` einer älteren Generation mehr. Das Ergebnis geht mit
     /// der geprüften Generation in die Satzspur des Protokolls. `reportPass: false`: nur eine Ablehnung melden.
     /// `body`: kurz und synchron, ohne I/O, und er ruft NIE in die Sitzung zurück (`releaseGeneration`, `setAllowUnsourced`,
     /// `releaseDidChange`, `commitOutput` hängen dort, `NSLock` ist nicht rekursiv); nur Zustand der Anzeige und Einreihen in
-    /// die Stimme. Folgearbeit (Richtlinie, Meldungen) gehört nach den Aufruf.
+    /// die Stimme. Folgearbeit (Richtlinie, Meldungen) gehört nach den Aufruf. Der Audiostart ist KEIN solcher Commit mehr: er
+    /// läuft als `start` des Satzes in der Stimme (`audioStart`), im selben Lock wie der tatsächliche Start.
     private func commitOutput(_ run: AssistantRun, _ index: Int, _ stage: AssistantCommitStage, reportPass: Bool = true,
-                              _ body: () -> Void) -> Bool {
-        guard let session else { return false }
-        return session.commitOutput(requestId: run.id, index: index, generation: run.sentences[index].generation, stage: stage,
-                                    reportPass: reportPass, body)
+                              _ body: () -> Void) -> Commit {
+        guard let session else { return .revoked }
+        let result = session.commitOutput(requestId: run.id, index: index, generation: run.sentences[index].generation, stage: stage,
+                                          reportPass: reportPass, body)
+        if !result.ok { return .revoked }
+        return result.auditFailed ? .auditFailed : .done
+    }
+
+    /// Der Start eines Satzes in der Stimme: Prüfung der Generation, TATSÄCHLICHER Start und Ergebniszeile im selben Lock
+    /// (`AssistantSession.commitStart`). Die Stimme ruft ihn mit dem Start als Body; er gibt zurück, ob gestartet wurde. Eine
+    /// veraltete Generation startet nie (Marke „verworfen“); `run.startMs` ist nur noch Messung (`sentenceStarted`).
+    private func audioStart(_ run: AssistantRun, index: Int, generation: Int) -> PhononStart? {
+        guard let session else { return nil }
+        let id = run.id
+        return { body in
+            session.commitStart(requestId: id, index: index, generation: generation) { body(); return true }.ok
+        }
+    }
+
+    /// Der Start ließ sich nicht auslösen, obwohl nichts widerrufen war (Audio steht, Strom abgebrochen): Marke „fehlgeschlagen“.
+    private func audioStartFailed(_ run: AssistantRun, index: Int, generation: Int, session: AssistantSession?) {
+        session?.noteCommit(requestId: run.id, index: index, stage: .audio, ok: false, generation: generation, failed: true)
+    }
+
+    /// Das Protokoll ist nicht schreibbar (Ergebnis- oder Pflichtzeile): nichts wird mehr angezeigt oder gesprochen; der Zustand
+    /// „Protokoll nicht schreibbar“ mit „Erneut versuchen“.
+    private func stopForAuditFailure(_ run: AssistantRun) {
+        guard current != nil else { return }
+        cancelAnswer(merge: false)
+        interruptedPending = false
+        phase = running ? .listening : .idle
+        retryText = run.text
+        auditFailureShown = true
+        let shown = Self.auditUnavailableNotice()
+        notice = shown
+        announce(shown.text)
     }
 
     /// Neue Quellen, Sätze und das Ende an Anzeige und Stimme weitergeben. Leere Sprechtexte (reine Adressen) werden
@@ -1045,21 +1145,37 @@ final class AssistantController: ObservableObject {
         while run.delivered < run.sentences.count {
             let index = run.delivered
             let sentence = run.sentences[index]
-            // Ansagen („Aus deinen Inhalten, …“) werden nur gesprochen, alles andere auch angezeigt.
+            // Ansagen („Wörtlicher Auszug aus …“) werden nur gesprochen, alles andere auch angezeigt.
             if sentence.status != .announcement {
-                guard commitOutput(run, index, .display, { showLive(sentence) }) else {
+                switch commitOutput(run, index, .display, { showLive(sentence) }) {
+                case .done: break
+                case .revoked:
                     stopForRevocation(Self.revokedText, retry: run.text)
+                    return
+                case .auditFailed:
+                    stopForAuditFailure(run)
                     return
                 }
             }
             if !sentence.speech.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                // Übergabe an die Stimme im Commit; der Audiostart selbst wird beim Start des Satzes noch einmal geprüft.
+                // Übergabe an die Stimme im Commit (nur eine Ablehnung wird gemeldet). Der Audiostart selbst ist der `start` des
+                // Satzes: Er läuft in der Stimme, im Lock der Freigabe, zusammen mit dem tatsächlichen Start und der Marke.
+                let start = audioStart(run, index: index, generation: sentence.generation)
+                let session = self.session
+                let failed: @MainActor () -> Void = { [weak self] in
+                    self?.audioStartFailed(run, index: index, generation: sentence.generation, session: session)
+                }
                 let handedOver = commitOutput(run, index, .audio, reportPass: false) {
                     run.enqueued.append(index)
-                    speaker.enqueue(sentence.speech, generation: sentence.generation)
+                    speaker.enqueue(sentence.speech, generation: sentence.generation, start: start, failed: failed)
                 }
-                guard handedOver else {
+                switch handedOver {
+                case .done: break
+                case .revoked:
                     stopForRevocation(Self.revokedText, retry: run.text)
+                    return
+                case .auditFailed:
+                    stopForAuditFailure(run)
                     return
                 }
             }
@@ -1071,7 +1187,7 @@ final class AssistantController: ObservableObject {
         speaker.endOfInput()
     }
 
-    /// Satz in die Live-Anzeige (Marke je Satz): Ein Originalsatz bekommt einen eigenen Abschnitt mit seiner Quellzeile
+    /// Einheit in die Live-Anzeige (Marke je Einheit): Ein wörtlicher Auszug bekommt einen eigenen Abschnitt mit seiner Quellzeile
     /// (Anführungszeichen setzt die Ansicht), ein Satz ohne Quelle (feste Antwort, Bestandsangabe) seine Kennzeichnung. Die
     /// Zuordnung steht im Kern (`AssistantTurnPart.append`), dieselbe wie beim Beitrag im Verlauf. Verworfene Sätze und Ansagen
     /// kommen nie hierher.
@@ -1088,16 +1204,12 @@ final class AssistantController: ObservableObject {
         if firstSoundMs == nil { firstSoundMs = max(0, nowMs - run.endedAtMs) }
     }
 
+    /// Die Stimme meldet den Beginn eines Satzes NACH dem tatsächlichen Start. Das ist nur noch Messung (Zeit für den Echo-Wächter
+    /// und die Richtlinie): Die Marke „ausgeführt“ hat der Kern schon im Lock des Starts geschrieben (`audioStart`), nie vorher.
     private func sentenceStarted(_ text: String) {
         guard let run = current, run.startMs.count < run.enqueued.count else { return }
-        // Audiostart-Commit: Die Stimme meldet den Beginn, bevor sie spielt (Wiedergabesperre und Generation hat sie zuvor schon
-        // geprüft und prüft sie vor dem Klang noch einmal). Ist die Generation inzwischen veraltet, verstummt sie, ohne dass
-        // dieser Satz erklingt; der Speaker beginnt nach dieser Meldung nur, wenn er nicht gestoppt wurde.
         let at = nowMs
-        guard commitOutput(run, run.enqueued[run.startMs.count], .audio, { run.startMs.append(at) }) else {
-            stopForRevocation(Self.revokedText, retry: run.text)
-            return
-        }
+        run.startMs.append(at)
         perform(policy.feed(.sentenceSpoken(text: text, startedAtMs: at, endedAtMs: nil)))
     }
 
@@ -1108,7 +1220,7 @@ final class AssistantController: ObservableObject {
         let index = run.enqueued[last]
         guard run.finishedSpeaking.last != index else { return }
         run.finishedSpeaking.append(index)
-        // Eine Ansage („Aus deinen Inhalten, …“) ist kein fertiger Antwortsatz: sonst gälte ein Dazwischenreden schon als Unterbrechung.
+        // Eine Ansage („Wörtlicher Auszug aus …“) ist kein fertiger Antwortsatz: sonst gälte ein Dazwischenreden schon als Unterbrechung.
         guard run.sentences[index].status != .announcement else { return }
         perform(policy.feed(.sentenceSpoken(text: text, startedAtMs: run.startMs[last], endedAtMs: nowMs)))
     }
@@ -1152,6 +1264,14 @@ final class AssistantController: ObservableObject {
         case .offline: text = engine.isCloud || engine.choice == .endpoint ? "Das Modell ist nicht erreichbar. Prüfe die Verbindung." : "Das Modell ist nicht erreichbar."
         case .consentRequired: text = "Für dieses Modell fehlt die Zustimmung."
         case .revoked: text = Self.revokedText
+        case .auditUnavailable:
+            // Pflichtzeile oder Ergebniszeile nicht schreibbar: Ohne Protokoll gibt es keine Ausgabe aus eigenen Inhalten.
+            retryText = run.text
+            auditFailureShown = true
+            let shown = Self.auditUnavailableNotice()
+            notice = shown
+            announce(shown.text)
+            return
         }
         retryText = run.text
         notice = AssistantNotice(text: text, action: .retrySend)
@@ -1222,12 +1342,18 @@ final class AssistantController: ObservableObject {
         }
     }
 
+    /// Die Zustimmung ändert die Freigabe: Der Kern zuerst (neue Generation, Zeile `release`; die Erteilung gilt erst mit der
+    /// dauerhaften Zeile), danach die gespeicherte Zustimmung. Gilt sie nicht (Protokoll nicht schreibbar), bleibt sie aus.
     func grantConsent() {
-        guard let request = consentRequest else { return }
-        AssistantConsent.grant(request.target, areas: request.areas)
-        // Die Zustimmung ändert die Freigabe: neue Generation, im Protokoll vermerkt (siehe `noteConsentChange`).
-        noteConsentChange(.cloudGranted, areas: request.areas)
-        finishConsent(true)
+        guard let request = consentRequest, !grantingConsent else { return }
+        grantingConsent = true
+        Task { [weak self] in
+            guard let self else { return }
+            let effective = await self.grantConsentInCore(areas: request.areas)
+            if effective { AssistantConsent.grant(request.target, areas: request.areas) }
+            self.grantingConsent = false
+            self.finishConsent(effective)
+        }
     }
 
     func declineConsent() { finishConsent(false) }

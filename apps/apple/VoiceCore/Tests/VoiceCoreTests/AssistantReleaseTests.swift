@@ -18,17 +18,24 @@ private final class Flags: @unchecked Sendable {
     var all: [String] { lock.lock(); defer { lock.unlock() }; return seen }
 }
 
+private func restrict(_ r: AssistantRelease, to areas: Set<AssistantArea>) -> AssistantRelease.Applied {
+    r.apply(AssistantReleaseChange(cause: .areas, areas: areas))
+}
+
 final class AssistantReleaseTests: XCTestCase {
     func testGenerationIsMonotoneAndOnlyRealChangesCount() {
         let r = AssistantRelease(optIn: false)
-        XCTAssertEqual(r.snapshot, .init(generation: 0, optIn: false, consentVersion: 0))
+        XCTAssertEqual(r.snapshot.generation, 0)
+        XCTAssertFalse(r.snapshot.optIn)
+        XCTAssertEqual(r.snapshot.consentVersion, 0)
         XCTAssertEqual(r.setOptIn(false), 0, "keine Änderung")
         XCTAssertEqual(r.setOptIn(true), 1)
         XCTAssertEqual(r.setOptIn(true), 1)
         XCTAssertEqual(r.bump(), 2)
         XCTAssertEqual(r.setOptIn(false), 3)
         XCTAssertEqual(r.setOptIn(true), 4, "Aus und wieder Ein: eine neue Generation, nie die alte")
-        XCTAssertEqual(r.snapshot, .init(generation: 4, optIn: true, consentVersion: 0))
+        XCTAssertEqual(r.snapshot.generation, 4)
+        XCTAssertTrue(r.snapshot.optIn)
         XCTAssertEqual(r.currentGeneration, 4)
         XCTAssertTrue(r.isOptedIn)
     }
@@ -83,11 +90,11 @@ final class AssistantReleaseTests: XCTestCase {
     func testIfCurrentRunsTheBodyOnlyForTheCurrentGeneration() {
         let r = AssistantRelease(optIn: true)
         let ran = Counter()
-        XCTAssertTrue(r.ifCurrent(0) { ran.hit() })
+        XCTAssertTrue(r.ifCurrent(0) { ran.hit() }.ok)
         r.bump()
-        XCTAssertFalse(r.ifCurrent(0) { ran.hit() })
-        XCTAssertFalse(r.ifCurrent(5) { ran.hit() }, "auch eine künftige Generation passt nicht")
-        XCTAssertTrue(r.ifCurrent(1) { ran.hit() })
+        XCTAssertFalse(r.ifCurrent(0) { ran.hit() }.ok)
+        XCTAssertFalse(r.ifCurrent(5) { ran.hit() }.ok, "auch eine künftige Generation passt nicht")
+        XCTAssertTrue(r.ifCurrent(1) { ran.hit() }.ok)
         XCTAssertEqual(ran.value, 2)
     }
 
@@ -118,9 +125,9 @@ final class AssistantReleaseTests: XCTestCase {
     func testNothingComesOutAfterBumpReturned() async {
         let r = AssistantRelease(optIn: true)
         let (out, stream) = makeOutput(r, generation: r.currentGeneration)
-        XCTAssertTrue(out.send(sentence("Erster.", generation: 0)))
+        XCTAssertTrue(out.send(sentence("Erster.", generation: 0)).ok)
         r.bump()
-        XCTAssertFalse(out.send(sentence("Zweiter.", generation: 0)), "geprüfter Satz, dann Widerruf, dann kein Ereignis")
+        XCTAssertFalse(out.send(sentence("Zweiter.", generation: 0)).ok, "geprüfter Satz, dann Widerruf, dann kein Ereignis")
         out.sendUnchecked(.failed(requestId: "r1", .revoked))
         out.sendUnchecked(.failed(requestId: "r1", .cancelled))
         var got: [AssistantEvent] = []
@@ -139,8 +146,8 @@ final class AssistantReleaseTests: XCTestCase {
         let (oldOut, oldStream) = makeOutput(r, generation: 0)
         r.setOptIn(false)
         let (newOut, newStream) = makeOutput(r, generation: r.currentGeneration)
-        XCTAssertTrue(newOut.send(sentence("Neu.", generation: 1)))
-        XCTAssertFalse(oldOut.send(sentence("Alt.", generation: 0)))
+        XCTAssertTrue(newOut.send(sentence("Neu.", generation: 1)).ok)
+        XCTAssertFalse(oldOut.send(sentence("Alt.", generation: 0)).ok)
         newOut.sendUnchecked(.failed(requestId: "r1", .cancelled))
         oldOut.sendUnchecked(.failed(requestId: "r1", .cancelled))
         var fromNew: [AssistantEvent] = []
@@ -161,7 +168,7 @@ final class AssistantReleaseTests: XCTestCase {
             DispatchQueue.global().async {
                 let deadline = Date().addingTimeInterval(5)
                 while Date() < deadline {
-                    if !r.ifCurrent(0, { sent.hit() }) { break }
+                    if !r.ifCurrent(0, { sent.hit() }).ok { break }
                 }
                 group.leave()
             }
@@ -235,6 +242,89 @@ final class AssistantReleaseTests: XCTestCase {
         XCTAssertEqual(r.registeredCount, 1)
         r.bump()
         XCTAssertEqual(r.registeredCount, 0)
+    }
+
+    // MARK: I4: Bereiche und Generation gehören zusammen
+
+    /// I4: Jede Einschränkung der Bereiche ist EINE Erhöhung und ändert die Bereiche im selben Lock. Ein Leser, der nebenläufig
+    /// `snapshot` liest, sieht Generation k nie mit den Bereichen eines anderen Standes (hier: k Bereiche weniger).
+    func testAReaderNeverSeesAGenerationPairedWithTheAreasOfAnotherState() {
+        let all = AssistantArea.allCases
+        let mismatches = Counter()
+        let reads = Counter()
+        for _ in 0..<400 {
+            let r = AssistantRelease(optIn: false, areas: Set(all))
+            DispatchQueue.concurrentPerform(iterations: 2) { role in
+                if role == 0 {
+                    for k in 1...all.count { _ = restrict(r, to: Set(all.dropFirst(k))) }
+                    return
+                }
+                while true {
+                    let s = r.snapshot
+                    reads.hit()
+                    if s.areas.count != all.count - s.generation { mismatches.hit() }
+                    if s.generation == all.count { return }
+                }
+            }
+        }
+        XCTAssertEqual(mismatches.value, 0, "keine neue Generation mit alten, größeren Bereichen")
+        XCTAssertGreaterThan(reads.value, 400)
+    }
+
+    /// I4, die alte Reihenfolge: Generation und Bereiche getrennt führen (erst die Generation erhöhen, dann die Bereiche setzen)
+    /// zeigt einem Leser dazwischen genau den verbotenen Stand (g+1, alte größere Bereiche). Der Prüfer erkennt ihn also; die
+    /// Freigabe selbst lässt diese Reihenfolge nicht zu (siehe den Test davor und `testTheRestrictionIsOneIncreaseWithItsAreas`).
+    func testTheOldOrderOfSeparateFieldsShowsTheForbiddenPairing() {
+        final class Naive: @unchecked Sendable {
+            private let lock = NSLock()
+            var generation = 0
+            var areas = Set(AssistantArea.allCases)
+            func read() -> (Int, Int) { lock.lock(); defer { lock.unlock() }; return (generation, areas.count) }
+            func bumpGeneration() { lock.lock(); generation += 1; lock.unlock() }
+            func setAreas(_ a: Set<AssistantArea>) { lock.lock(); areas = a; lock.unlock() }
+        }
+        let naive = Naive()
+        naive.bumpGeneration()
+        let between = naive.read()   // ein Leser genau jetzt
+        naive.setAreas([.books])
+        XCTAssertEqual(between.0, 1)
+        XCTAssertEqual(between.1, AssistantArea.allCases.count, "die neue Generation mit den alten Bereichen: der verbotene Stand")
+        XCTAssertNotEqual(between.1, 1)
+    }
+
+    /// I4: Eine Einschränkung ist genau eine Erhöhung; in derselben Sperre gelten die engeren Bereiche.
+    func testTheRestrictionIsOneIncreaseWithItsAreas() {
+        let r = AssistantRelease(optIn: false, areas: [.books, .notes, .files])
+        let a = restrict(r, to: [.books])
+        XCTAssertEqual(a.generation, 1)
+        XCTAssertTrue(a.changed)
+        XCTAssertNil(a.target, "eine Einschränkung hat nichts offen")
+        let s = r.snapshot
+        XCTAssertEqual(s.generation, 1)
+        XCTAssertEqual(s.areas, [.books])
+        let same = restrict(r, to: [.books])
+        XCTAssertFalse(same.changed)
+        XCTAssertEqual(r.snapshot.generation, 1, "derselbe Stand: keine Erhöhung")
+    }
+
+    /// I4: Eine Erweiterung erhöht die Generation sofort (laufende Antworten enden), die größeren Bereiche gelten aber erst mit
+    /// `completeExpansion`, ohne zweite Erhöhung. Dazwischen steht (g+1, die ALTEN KLEINEREN Bereiche): das ist sicher. Hat sich
+    /// die Generation inzwischen erhöht, bleibt es bei dem engeren Stand.
+    func testAnExpansionKeepsTheSmallerAreasUntilItsLineIsDurableAndAddsNoSecondIncrease() {
+        let r = AssistantRelease(optIn: false, areas: [.books])
+        let a = restrict(r, to: [.books, .notes])
+        XCTAssertEqual(a.generation, 1)
+        XCTAssertEqual(r.snapshot.areas, [.books], "dazwischen: neue Generation, alte kleinere Bereiche")
+        XCTAssertNotNil(a.target)
+        XCTAssertTrue(r.completeExpansion(a))
+        XCTAssertEqual(r.snapshot.generation, 1, "keine zweite Erhöhung")
+        XCTAssertEqual(r.snapshot.areas, [.books, .notes])
+
+        let b = restrict(r, to: [.books, .notes, .files])
+        _ = restrict(r, to: [.notes])   // eine spätere Änderung hat Vorrang
+        XCTAssertFalse(r.completeExpansion(b), "nicht mehr maßgeblich")
+        XCTAssertEqual(r.snapshot.areas, [.notes])
+        XCTAssertEqual(r.snapshot.generation, 3)
     }
 
     // MARK: Schrittindex (Rückmeldungen des Controllers)
