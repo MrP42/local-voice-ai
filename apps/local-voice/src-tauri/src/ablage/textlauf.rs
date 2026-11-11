@@ -27,6 +27,14 @@
 //! * Aufruf: zufälliges Kennzeichen in der Umgebung und als erste Zeile auf stdin, dazu der Ablageordner
 //!   ([`super::extrakt::zugelassen`]); ohne beides antwortet der Extraktor nicht.
 //! * Jeder Ausgang nach dem Start beendet und erntet das Kind (samt Prozessgruppe).
+//! * Prozessbaum vor dem Leser-Join (lva#508): Startet das Kind einen Enkel, der stdout erbt, und endet
+//!   selbst, bekäme der Leser nie EOF. Deshalb wird der ganze Baum beendet, bevor die Ausgabe eingesammelt
+//!   wird: Unix `SIGKILL` an die Prozessgruppe, solange der Anführer noch als Zombie die Gruppenkennung
+//!   hält (`waitid(WNOWAIT)`, erst danach Ernte; so trifft das Signal nie eine neu vergebene Kennung),
+//!   Windows Schließen des Job-Objekts (`KILL_ON_JOB_CLOSE`). Die Ausgabe wird dann mit Frist
+//!   ([`LESER_FRIST`]) eingesammelt; ein Prozess, der sich dem Baum entzieht (Unix `setsid`, Windows
+//!   Breakaway) und stdout weiter hält, lässt den Lauf nach der Frist mit `extrakt.programm` enden. Der
+//!   Leserthread bleibt dann abgehängt zurück (er endet mit dem letzten Halter von stdout).
 //!
 //! Programm: `lva-extrakt[.exe]` neben dem App-Programm, sonst das App-Programm selbst mit
 //! [`super::extrakt::SCHALTER`] (gebündelte App ohne eigenes Hilfsprogramm).
@@ -40,6 +48,23 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 pub const MAX_AUSGABE: u64 = 96 * 1024 * 1024;
+
+/// So lange wartet der Lauf nach dem Ende des Prozessbaums auf die restliche Ausgabe des Lesers.
+pub const LESER_FRIST: Duration = Duration::from_secs(5);
+
+#[cfg(test)]
+thread_local! {
+    /// Kürzere Frist für Tests (je Thread, damit parallele Tests sich nicht stören).
+    static LESER_FRIST_TEST: std::cell::Cell<Option<Duration>> = const { std::cell::Cell::new(None) };
+}
+
+fn leser_frist() -> Duration {
+    #[cfg(test)]
+    if let Some(f) = LESER_FRIST_TEST.with(|c| c.get()) {
+        return f;
+    }
+    LESER_FRIST
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Grenzen {
@@ -168,8 +193,9 @@ pub fn ausfuehren(
         }
     }
     let mut child = cmd.spawn().map_err(|_| "extrakt.start".to_string())?;
+    let mut baum = Baum::default();
     #[cfg(windows)]
-    let _job = {
+    {
         let job = crate::process_guard::ProcessGuard::attach(
             &child,
             Some(grenzen.speicher_mb),
@@ -184,11 +210,11 @@ pub fn ausfuehren(
             let _ = child.wait();
             return Err("extrakt.schutz".into());
         }
-        job
-    };
+        baum.job = job;
+    }
     // Ab hier beendet und erntet jeder Ausgang das Kind (auch ein früher Fehler).
     let (Some(mut stdin), Some(mut stdout)) = (child.stdin.take(), child.stdout.take()) else {
-        beenden(&mut child);
+        beenden(&mut child, &mut baum);
         return Err("extrakt.start".into());
     };
     // Kennzeichen als erste Zeile; danach stdin schließen (65 Bytes passen in jeden Pipe-Puffer).
@@ -197,36 +223,43 @@ pub fn ausfuehren(
         .and_then(|_| stdin.flush());
     drop(stdin);
     if geschrieben.is_err() {
-        beenden(&mut child);
+        beenden(&mut child, &mut baum);
         return Err("extrakt.start".into());
     }
     let zu_viel = std::sync::Arc::new(AtomicBool::new(false));
     let zu_viel_leser = zu_viel.clone();
+    let (sender, empfaenger) = std::sync::mpsc::channel::<(bool, Vec<u8>)>();
     let leser = std::thread::spawn(move || {
         let mut buf = Vec::new();
         let r = (&mut stdout).take(MAX_AUSGABE + 1).read_to_end(&mut buf);
-        if buf.len() as u64 > MAX_AUSGABE {
+        let ergebnis = if buf.len() as u64 > MAX_AUSGABE {
             // Sofort melden; stdout wird mit dem Ende des Threads geschlossen, das Kind nicht abgewartet.
             zu_viel_leser.store(true, Ordering::Relaxed);
-            return (false, Vec::new());
-        }
-        (r.is_ok(), buf)
+            (false, Vec::new())
+        } else {
+            (r.is_ok(), buf)
+        };
+        let _ = sender.send(ergebnis);
     });
     let ende = Instant::now() + grenzen.zeit;
     #[cfg(target_os = "macos")]
     let mut waechter = mac_waechter::Waechter::neu(grenzen.speicher_mb);
     let status = loop {
         if zu_viel.load(Ordering::Relaxed) {
-            beenden(&mut child);
-            let _ = leser.join();
+            beenden(&mut child, &mut baum);
+            let _ = ausgabe_einsammeln(&empfaenger, leser);
             return Err("extrakt.zu_gross".into());
         }
-        match child.try_wait() {
-            Ok(Some(s)) => break s,
+        match kind_pruefen(&mut child) {
+            Ok(Some(s)) => {
+                // Windows: Job schließen beendet den restlichen Baum (`KILL_ON_JOB_CLOSE`).
+                baum.nach_ernte();
+                break s;
+            }
             Ok(None) => {}
             Err(_) => {
-                beenden(&mut child);
-                let _ = leser.join();
+                beenden(&mut child, &mut baum);
+                let _ = ausgabe_einsammeln(&empfaenger, leser);
                 return Err("extrakt.programm".into());
             }
         }
@@ -236,8 +269,8 @@ pub fn ausfuehren(
         match waechter.pruefen(child.id()) {
             mac_waechter::Urteil::Ok => {}
             urteil => {
-                beenden(&mut child);
-                let _ = leser.join();
+                beenden(&mut child, &mut baum);
+                let _ = ausgabe_einsammeln(&empfaenger, leser);
                 return Err(match urteil {
                     mac_waechter::Urteil::Zuviel => "extrakt.abbruch".into(),
                     _ => "extrakt.schutz".into(),
@@ -246,8 +279,8 @@ pub fn ausfuehren(
         }
         let abgebrochen = abbrechen.load(Ordering::Relaxed);
         if abgebrochen || Instant::now() >= ende {
-            beenden(&mut child);
-            let _ = leser.join();
+            beenden(&mut child, &mut baum);
+            let _ = ausgabe_einsammeln(&empfaenger, leser);
             return Err(if abgebrochen {
                 "extrakt.abgebrochen".into()
             } else {
@@ -256,8 +289,12 @@ pub fn ausfuehren(
         }
         std::thread::sleep(Duration::from_millis(20));
     };
-    // Das Kind ist beendet und geerntet (kein Signal mehr an seine Kennung: sie kann neu vergeben sein).
-    let (ok, ausgabe) = leser.join().unwrap_or((false, Vec::new()));
+    // Das Kind ist beendet und geerntet, sein Prozessbaum beendet (kein Signal mehr an seine Kennung: sie
+    // kann neu vergeben sein). Die Ausgabe kommt mit Frist: hält ein dem Baum entkommener Prozess stdout,
+    // endet der Lauf, statt hier zu hängen.
+    let Some((ok, ausgabe)) = ausgabe_einsammeln(&empfaenger, leser) else {
+        return Err("extrakt.programm".into());
+    };
     if zu_viel.load(Ordering::Relaxed) || ausgabe.len() as u64 > MAX_AUSGABE {
         return Err("extrakt.zu_gross".into());
     }
@@ -272,6 +309,86 @@ pub fn ausfuehren(
         }
         _ => Err(unklarer_ausgang(&status).into()),
     }
+}
+
+/// Sammelt die Ausgabe des Lesers mit Frist ein. `None`: der Leser ist nach [`leser_frist`] nicht
+/// fertig (stdout hält noch ein Prozess); der Thread bleibt abgehängt zurück.
+fn ausgabe_einsammeln(
+    empfaenger: &std::sync::mpsc::Receiver<(bool, Vec<u8>)>,
+    leser: std::thread::JoinHandle<()>,
+) -> Option<(bool, Vec<u8>)> {
+    let r = empfaenger.recv_timeout(leser_frist()).ok()?;
+    // Der Leser hat gesendet und endet gleich; Join nur zum Aufräumen.
+    let _ = leser.join();
+    Some(r)
+}
+
+/// Prozessbaum des Kindes. Windows: das Job-Objekt (Schließen beendet alle Prozesse darin). Unix: die
+/// Prozessgruppe, deren Anführer das Kind ist (`process_group(0)`), braucht keinen Halter.
+#[derive(Default)]
+struct Baum {
+    #[cfg(windows)]
+    job: Option<crate::process_guard::ProcessGuard>,
+}
+
+impl Baum {
+    /// Nach der Ernte des Kindes: Windows beendet den restlichen Baum durch Schließen des Jobs. Unix
+    /// hat das Signal vor der Ernte gesendet.
+    fn nach_ernte(&mut self) {
+        #[cfg(windows)]
+        drop(self.job.take());
+    }
+}
+
+/// `SIGKILL` an die Prozessgruppe des Kindes. Nur aufrufen, solange der Anführer nicht geerntet ist
+/// (lebend oder Zombie): dann ist die Gruppenkennung nicht neu vergeben.
+#[cfg(unix)]
+fn gruppe_beenden(pid: u32) {
+    // SAFETY: kill mit negativer PID adressiert nur die eigene Gruppe des Kindes.
+    unsafe {
+        libc::kill(-(pid as libc::pid_t), libc::SIGKILL);
+    }
+}
+
+/// Ist das Kind beendet, aber noch nicht geerntet (`waitid` mit `WNOWAIT`, erntet nicht)?
+#[cfg(unix)]
+fn beendet_ungeerntet(pid: u32) -> std::io::Result<bool> {
+    // SAFETY: `info` ist nullinitialisiert und groß genug; `waitid` schreibt nur dorthin.
+    let (rc, beendet) = unsafe {
+        let mut info: libc::siginfo_t = std::mem::zeroed();
+        let rc = libc::waitid(
+            libc::P_PID,
+            pid as libc::id_t,
+            &mut info,
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        );
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let kennung = info.si_pid();
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        let kennung = info.si_pid;
+        (rc, kennung != 0)
+    };
+    if rc != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(beendet)
+}
+
+/// Prüft, ob das Kind beendet ist, und erntet es dann. Unix: Geerntet wird nie ohne vorherigen
+/// `SIGKILL` an die Gruppe. `waitid` mit `WNOWAIT` erntet nicht (die Gruppenkennung bleibt gehalten);
+/// meldet es „beendet“, geht das Signal an die ganze Gruppe (Enkel mit geerbtem stdout sterben), erst
+/// danach `try_wait`. Ein Kind, das zwischen zwei Prüfungen endet, wird so nie ohne Gruppen-Kill geerntet.
+fn kind_pruefen(
+    child: &mut std::process::Child,
+) -> std::io::Result<Option<std::process::ExitStatus>> {
+    #[cfg(unix)]
+    {
+        if !beendet_ungeerntet(child.id())? {
+            return Ok(None);
+        }
+        gruppe_beenden(child.id());
+    }
+    child.try_wait()
 }
 
 /// Fehlercode für ein Ende ohne gültige Antwort. Endgültig (`extrakt.abbruch`, Giftdatei) nur bei
@@ -326,8 +443,13 @@ fn antwort_lesen(b: &[u8]) -> Option<Antwort> {
     // Im Testlauf schreibt der Test-Harness des Kindes eine Kopfzeile vor das JSON.
     #[cfg(test)]
     let b = &b[b.iter().position(|&x| x == b'{')?..];
-    let mut it = serde_json::Deserializer::from_slice(b).into_iter::<Antwort>();
-    it.next()?.ok()
+    // Genau ein JSON-Dokument: angehängte Daten (zweites JSON, Müll) machen die Antwort ungültig
+    // (lva#508); nur Leerraum danach ist erlaubt.
+    use serde::Deserialize;
+    let mut de = serde_json::Deserializer::from_slice(b);
+    let antwort = Antwort::deserialize(&mut de).ok()?;
+    de.end().ok()?;
+    Some(antwort)
 }
 
 /// Speicherwächter für macOS (lva#462), siehe Kopf der Datei.
@@ -489,15 +611,208 @@ mod mac_waechter {
     }
 }
 
-fn beenden(child: &mut std::process::Child) {
+/// Beendet den ganzen Prozessbaum (noch vor der Ernte) und erntet das Kind.
+fn beenden(child: &mut std::process::Child, baum: &mut Baum) {
     #[cfg(unix)]
     {
-        // Ganze Prozessgruppe (das Kind ist deren Anführer, `process_group(0)`).
-        // SAFETY: kill mit negativer PID adressiert nur die eigene Gruppe des Kindes.
-        unsafe {
-            libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
-        }
+        let _ = &baum;
+        gruppe_beenden(child.id());
     }
+    // Windows: Job schließen, der Rest des Baums stirbt mit (`KILL_ON_JOB_CLOSE`).
+    baum.nach_ernte();
     let _ = child.kill();
     let _ = child.wait();
+}
+
+#[cfg(all(test, unix))]
+mod tests_508 {
+    use super::*;
+
+    /// `sh -c <skript>`: Ersatz für den Extraktor. Das Skript bekommt `PIDDATEI` in der Umgebung.
+    fn shell(skript: &str, piddatei: &Path) -> Programm {
+        Programm {
+            pfad: PathBuf::from("/bin/sh"),
+            vorweg: vec!["-c".into(), skript.into(), "sh".into()],
+            umgebung: vec![("PIDDATEI".into(), piddatei.into())],
+        }
+    }
+
+    fn lauf(prog: &Programm, wurzel: &Path) -> Result<Textfassung, String> {
+        ausfuehren(
+            prog,
+            wurzel,
+            &wurzel.join("x.txt"),
+            &"0".repeat(64),
+            "txt",
+            Grenzen {
+                zeit: Duration::from_secs(20),
+                speicher_mb: 1024,
+            },
+            &AtomicBool::new(false),
+        )
+    }
+
+    fn pid_lesen(datei: &Path) -> libc::pid_t {
+        // Das Skript schreibt die Kennung, bevor es endet.
+        std::fs::read_to_string(datei)
+            .expect("Skript hat seine Kennung nicht abgelegt")
+            .trim()
+            .parse()
+            .unwrap()
+    }
+
+    /// Lebt der Prozess (ein Zombie zählt nicht: er ist beendet, nur nicht geerntet)?
+    fn lebt(pid: libc::pid_t) -> bool {
+        match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+            Ok(s) => s
+                .rsplit(')')
+                .next()
+                .and_then(|r| r.trim().chars().next())
+                .is_some_and(|z| z != 'Z'),
+            // Kein /proc (macOS): `kill(pid, 0)`.
+            Err(_) => unsafe { libc::kill(pid, 0) == 0 },
+        }
+    }
+
+    /// Codex-Befund 1: Wird das Kind erst nach dem Ende gesehen, stirbt die Gruppe vor der Ernte
+    /// (kein Fenster zwischen „lebt“ und Ernte). Lebend: kein Signal, keine Ernte.
+    #[test]
+    fn kind_pruefen_beendet_die_gruppe_vor_der_ernte() {
+        let d = tempfile::tempdir().unwrap();
+        let pid = d.path().join("enkel.pid");
+        let prog = shell("sleep 30 & echo $! > \"$PIDDATEI\"; exit 0", &pid);
+        let mut cmd = std::process::Command::new(&prog.pfad);
+        cmd.args(&prog.vorweg)
+            .env("PIDDATEI", &pid)
+            .stdout(std::process::Stdio::null());
+        std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+        let mut kind = cmd.spawn().unwrap();
+        let ende = Instant::now() + Duration::from_secs(10);
+        let status = loop {
+            if let Some(s) = kind_pruefen(&mut kind).unwrap() {
+                break s;
+            }
+            assert!(Instant::now() < ende, "Kind endet nicht");
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        assert!(status.success());
+        let enkel = pid_lesen(&pid);
+        // Das Signal ging vor der Ernte raus; der Enkel braucht nur noch einen Augenblick zum Sterben.
+        let frist = Instant::now() + Duration::from_secs(5);
+        while lebt(enkel) && Instant::now() < frist {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let lebt_noch = lebt(enkel);
+        if lebt_noch {
+            unsafe { libc::kill(enkel, libc::SIGKILL) };
+        }
+        assert!(!lebt_noch, "Enkel {enkel} überlebt die Ernte");
+
+        let mut lang = std::process::Command::new("/bin/sh");
+        lang.args(["-c", "sleep 30"]);
+        std::os::unix::process::CommandExt::process_group(&mut lang, 0);
+        let mut lang = lang.spawn().unwrap();
+        assert!(kind_pruefen(&mut lang).unwrap().is_none());
+        assert!(
+            lebt(lang.id() as libc::pid_t),
+            "lebendes Kind darf nicht beendet werden"
+        );
+        gruppe_beenden(lang.id());
+        let _ = lang.wait();
+    }
+
+    /// lva#508: Das Kind startet einen Enkel mit geerbtem stdout und endet. Der Leser bekäme erst mit
+    /// dem Enkel (30 s) EOF; der Prozessbaum wird vor dem Leser-Join beendet.
+    #[test]
+    fn enkel_mit_geerbtem_stdout_haelt_den_lauf_nicht_auf() {
+        let d = tempfile::tempdir().unwrap();
+        let pid = d.path().join("enkel.pid");
+        let prog = shell("sleep 30 & echo $! > \"$PIDDATEI\"; exit 0", &pid);
+        let start = Instant::now();
+        let r = lauf(&prog, d.path());
+        let dauer = start.elapsed();
+        let enkel = pid_lesen(&pid);
+        if lebt(enkel) {
+            unsafe { libc::kill(enkel, libc::SIGKILL) };
+            panic!("Enkel {enkel} lebt noch");
+        }
+        // Keine gültige Antwort: vorübergehender Fehler, aber schnell.
+        assert_eq!(r.unwrap_err(), "extrakt.programm");
+        assert!(dauer < Duration::from_secs(10), "{dauer:?}");
+    }
+
+    /// Auch bei Zeitgrenze und Abbruch sterben Enkel mit (Prozessgruppe), der Leser wird fristgerecht
+    /// eingesammelt.
+    #[test]
+    fn zeitgrenze_beendet_auch_enkel_und_haengt_nicht() {
+        let d = tempfile::tempdir().unwrap();
+        let pid = d.path().join("enkel.pid");
+        let prog = shell("sleep 30 & echo $! > \"$PIDDATEI\"; sleep 30", &pid);
+        let start = Instant::now();
+        let r = ausfuehren(
+            &prog,
+            d.path(),
+            &d.path().join("x.txt"),
+            &"0".repeat(64),
+            "txt",
+            Grenzen {
+                zeit: Duration::from_secs(1),
+                speicher_mb: 1024,
+            },
+            &AtomicBool::new(false),
+        );
+        let dauer = start.elapsed();
+        let enkel = pid_lesen(&pid);
+        if lebt(enkel) {
+            unsafe { libc::kill(enkel, libc::SIGKILL) };
+            panic!("Enkel {enkel} lebt noch");
+        }
+        assert_eq!(r.unwrap_err(), "extrakt.zeit");
+        assert!(dauer < Duration::from_secs(10), "{dauer:?}");
+    }
+
+    /// Ein Prozess, der dem Baum entkommt (`setsid`) und stdout hält, lässt den Lauf nach der Frist
+    /// enden statt ewig zu warten.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn entkommener_halter_von_stdout_endet_mit_frist() {
+        let d = tempfile::tempdir().unwrap();
+        let pid = d.path().join("halter.pid");
+        let prog = shell("setsid sleep 30 & echo $! > \"$PIDDATEI\"; exit 0", &pid);
+        LESER_FRIST_TEST.with(|c| c.set(Some(Duration::from_millis(500))));
+        let start = Instant::now();
+        let r = lauf(&prog, d.path());
+        let dauer = start.elapsed();
+        LESER_FRIST_TEST.with(|c| c.set(None));
+        let halter = pid_lesen(&pid);
+        unsafe { libc::kill(halter, libc::SIGKILL) };
+        assert_eq!(r.unwrap_err(), "extrakt.programm");
+        assert!(dauer < Duration::from_secs(10), "{dauer:?}");
+    }
+
+    #[test]
+    fn antwort_mit_angehaengten_daten_ist_ungueltig() {
+        let ok = |b: &[u8]| matches!(antwort_lesen(b), Some(Antwort::Fehler { .. }));
+        assert!(ok(br#"{"fehler":"zeit"}"#));
+        assert!(ok(b"{\"fehler\":\"zeit\"}\n \t\r\n"));
+        assert!(!ok(br#"{"fehler":"zeit"}{"fehler":"x"}"#));
+        assert!(!ok(br#"{"fehler":"zeit"} muell"#));
+        assert!(!ok(br#"{"fehler":"zeit"}1"#));
+        assert!(!ok(br#"{"fehler":"zeit"#));
+    }
+
+    #[test]
+    fn stdout_mit_zweitem_json_wird_im_lauf_abgewiesen() {
+        let d = tempfile::tempdir().unwrap();
+        let pid = d.path().join("unbenutzt.pid");
+        let sauber = shell(r#"printf '{"fehler":"zeit"}'; exit 2"#, &pid);
+        assert_eq!(lauf(&sauber, d.path()).unwrap_err(), "extrakt.zeit");
+        let mit_anhang = shell(
+            r#"printf '{"fehler":"zeit"}{"fehler":"abbruch"}'; exit 2"#,
+            &pid,
+        );
+        assert_eq!(lauf(&mit_anhang, d.path()).unwrap_err(), "extrakt.programm");
+        let mit_muell = shell(r#"printf '{"fehler":"zeit"}garbage'; exit 2"#, &pid);
+        assert_eq!(lauf(&mit_muell, d.path()).unwrap_err(), "extrakt.programm");
+    }
 }
