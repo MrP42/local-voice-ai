@@ -1119,8 +1119,9 @@ pub fn error_code(error: &str) -> &'static str {
     }
 }
 
-/// Alle Codes, die [`error_code`] liefern kann.
-pub const ERROR_CODES: [&str; 8] = [
+/// Alle Codes, die [`error_code`] liefern kann (Pruefung in den Tests).
+#[cfg(test)]
+const ERROR_CODES: [&str; 8] = [
     "auth",
     "rate_limit",
     "server",
