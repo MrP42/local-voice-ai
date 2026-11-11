@@ -35,6 +35,15 @@ Entscheidungen:
 - **Spekulativer Start** bei früher Stille spart die Pausenlänge ab der Wartezeit; Spricht der Nutzer weiter, wird nichts abgespielt.
 - **Erstes Häppchen darf am Komma enden** (`sentences.rs`), damit die Stimme früher beginnt.
 - **Verlauf enthält nur, was gesprochen wurde**: bei Unterbrechung wird die Antwort dort abgeschnitten.
+- **Ergänzen und Korrigieren (lva#485)**: Spricht der Nutzer über die laufende Antwort hinweg, hält der Pegel-Barge-in die Wiedergabe nur an (`SpeechPlayer.pause()`, hörbar sofort still); die Erzeugung läuft weiter. Erst der erkannte Text entscheidet (`ergaenzen.ts`, Deutsch und Englisch):
+  - Rückmeldelaut („mhm“, „ja“, „okay“, „yeah“, „got it“ …) setzt die Wiedergabe fort. Das gilt nicht, wenn der gerade oder zuletzt gesprochene Satz eine Frage war: dann ist „ja“ die Antwort und ein Beitrag.
+  - Ein Stoppwort („stopp“, „halt“, „warte“, „moment“, „stop“, „wait“, „hold on“, auch mit „bitte“, „mal“, „okay“ …) beendet die Antwort ohne neuen Beitrag.
+  - Rede vor dem Ende des ersten Inhaltssatzes wird mit der vorherigen Äußerung zu einer („<alt> <neu>“, auch als Kette). Spricht der Nutzer danach weiter, bevor der neue Schritt hörbar wird, bleibt der Vortext erhalten (`Turn.prefix`/`carry`).
+  - Spätere Rede bleibt ein neuer Beitrag, und das Modell bekommt im nächsten Aufruf einen kurzen Systemhinweis, dass es unterbrochen wurde (nur auf dem direkten Weg und über den Orchestrator-Verlauf; ein Denker bekommt ihn nicht).
+  - Im Verlauf, in der Anzeige und beim Modell steht nach einer Unterbrechung nur, was zu Ende gespielt wurde, plus der angespielte Satz (`gehoert()`, über das Ende je Häppchen im Player), dann „ …“. Was während der Pause weiter erzeugt wurde, fehlt.
+  - Damit kein halber Beitrag im gespeicherten Gespräch bleibt, meldet die Engine die fertige Antwortzeile (und damit das Speichern von Äußerung und Antwort) erst, wenn der erste Satz zu Ende gesprochen ist; bis dahin ersetzt eine Ergänzung beide still, nimmt die Messung des ersetzten Schritts zurück und lässt „wiederholen“ dessen Antwort vergessen. Vorlagen, S0-Antworten und Bedienung („lauter“) werden nie zusammengeführt.
+  - Die Haltezeit zählt weder zu `firstSoundMs` noch zu `fertig_ms`.
+  - Fehler der Erkennung beim Anhalten: Wiedergabe läuft weiter, Meldung „Ich habe dich nicht verstanden.“. Dauert sie länger als `TUNING.holdSttMaxMs` (8 s), läuft die Wiedergabe ebenfalls weiter; kommt der Text danach, wird er wie ein spätes Unterbrechen behandelt (Rückmeldelaut: nichts, Stoppwort: anhalten, sonst neuer Beitrag), nach dem Ende des Schritts als gewöhnlicher Beitrag.
 - Modelle sind austauschbar, weil `voice_call_chat` den aktiven Anbieter aus **Modelle** nutzt (Ollama, OpenAI-kompatibel, Claude-Anbindungen, Abrechnung und Regelwerk wie überall).
 
 ## Bekannte Grenzen (MVP)

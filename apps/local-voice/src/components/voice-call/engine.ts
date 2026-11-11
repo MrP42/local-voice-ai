@@ -64,7 +64,16 @@ import {
   bedienen,
   type Stufen,
 } from "./bedienung";
+import i18n from "@/i18n";
 import { istUeberbrueckung } from "./ueberbrueckung";
+import {
+  darfZusammenfuehren,
+  entscheide,
+  fuegeZusammen,
+  systemMitHinweis,
+  unterbrechungsHinweis,
+  type TurnStand,
+} from "./ergaenzen";
 
 export const DEFAULT_SYSTEM_PROMPT = `Du bist ein Gesprächspartner am Telefon. Antworte so, wie man spricht: kurze, natürliche Sätze auf Deutsch, meist ein bis drei Sätze. Keine Listen, keine Aufzählungszeichen, keine Markdown-Zeichen, keine Emojis, keine Links. Zahlen und Abkürzungen so schreiben, wie man sie ausspricht. Stelle bei Unklarheit eine kurze Rückfrage, statt lange zu raten. Fasse dich kurz, der Gesprächspartner kann jederzeit nachfragen oder unterbrechen.`;
 
@@ -85,6 +94,8 @@ export const DEFAULT_CALL_CONFIG: CallConfig = {
 };
 
 export interface TurnMetrics {
+  /** Schritt, zu dem die Messung gehört (damit eine Zusammenführung sie zurücknehmen kann). */
+  turnId?: string;
   /** Spracherkennung (ms) */
   sttMs: number;
   /** Ende der Spracherkennung bis zum ersten Antwort-Häppchen (ms) */
@@ -136,6 +147,8 @@ export interface CallCallbacks {
   onUser(text: string, turnId: string): void;
   onAssistant(text: string, final: boolean, interrupted: boolean): void;
   onMetrics(m: TurnMetrics): void;
+  /** Der Schritt wurde durch eine Ergänzung ersetzt: seine Messung gilt nicht (lva#485). */
+  onMetricsVerwerfen?(turnId: string): void;
   onError(message: string): void;
   onUsage?(usage: CallUsageEvent): void;
   /** Werkzeug läuft / Hinweis des Orchestrators; `null` löscht die Werkzeugzeile. */
@@ -177,12 +190,22 @@ interface ChatMessage {
   general?: boolean;
   /** Antwort aus App-Kontext: nur an lokale Empfänger, fällt bei Widerruf weg. */
   ctx?: boolean;
+  /** Antwort, die der Nutzer mitten im Sprechen unterbrochen hat (der nächste Aufruf bekommt einen Hinweis). */
+  interrupted?: boolean;
 }
 
 interface Utterance {
   startFrame: number;
   aiWasSpeaking: boolean;
   barged: boolean;
+}
+
+/** Ein eingereihtes Häppchen: `ended` = zu Ende gespielt, `queued` = beim Player eingereiht. */
+interface PieceRec {
+  text: string;
+  kind: PieceKind;
+  ended: boolean;
+  queued: boolean;
 }
 
 interface Turn {
@@ -204,8 +227,11 @@ interface Turn {
   side?: ChatSide;
   /** Der Schritt antwortet mit App-Kontext (Widerruf beendet ihn). */
   withContext?: boolean;
-  /** Gesprochene Inhaltshäppchen (ohne Ansage und Vorlage): sie gehören in den Verlauf. */
-  spoken: string[];
+  /**
+   * Alle Häppchen in Einreihreihenfolge. Was der Nutzer gehört hat, wird daraus gelesen (`gehoert`):
+   * nur Inhaltshäppchen (ohne Ansage und Vorlage) gehören in den Verlauf.
+   */
+  pieces: PieceRec[];
   /** Alle Häppchen, die hörbar eingereiht wurden (auch Ansage und Vorlage). */
   heard: number;
   /** Vorlagenantwort („Ich wiederhole.“, feste Fehlermeldung): nie in den Verlauf. */
@@ -216,6 +242,27 @@ interface Turn {
   onEnde?: () => void;
   lastSpeechWall: number;
   startFrame: number;
+  /** Der Schritt entstand aus gesprochener Eingabe (nur dann gilt Ergänzen, lva#485). */
+  fromSpeech?: boolean;
+  /** Vorlage, S0-Antwort, Bedienung oder Wechsel: wirkt sofort, wird nie mit einer Ergänzung neu gestellt. */
+  noMerge?: boolean;
+  /** Der erste Inhaltssatz ist erzeugt und eingereiht (sein Ende wird gemeldet). */
+  contentSeen?: boolean;
+  /** Der erste Inhaltssatz ist zu Ende gesprochen: ab jetzt ist ein Unterbrechen ein neuer Beitrag. */
+  firstContentEnded?: boolean;
+  /** Die fertige Antwortzeile; sie wird erst gemeldet (und damit gespeichert), wenn sie nicht mehr ersetzt werden kann. */
+  finalText?: string;
+  finalSent?: boolean;
+  /** Der erste Ton dieses Schritts hat begonnen (vorher war nichts zu hören). */
+  soundStarted?: boolean;
+  /** Zeit, die die Wiedergabe dieses Schritts angehalten war (ms): gehört nicht in die Messung. */
+  heldMs?: number;
+  /** Beginn des laufenden Anhaltens (Wanduhr). */
+  heldSince?: number;
+  /** Text vor der Äußerung, die diesen Schritt auslöste (Ergänzung): geht beim Weitersprechen nicht verloren. */
+  prefix?: string;
+  /** Die Messung dieses Schritts wurde schon gemeldet. */
+  metricsSent?: boolean;
 }
 
 const PREROLL_FRAMES = 15;
@@ -230,6 +277,8 @@ export const TUNING = {
    * Jedes Lebenszeichen („laeuft“) verlängert die Frist; diese Obergrenze gilt trotzdem (ms, lva#459).
    */
   projektObergrenzeMs: 300_000,
+  /** So lange darf die Erkennung einer Äußerung dauern, während die Wiedergabe angehalten ist (ms). */
+  holdSttMaxMs: 8_000,
 };
 /** Was ein Häppchen ist: Inhalt (Modell, S0-Antwort), Ansage (Ab S1, Überbrückung) oder feste Vorlage. */
 type PieceKind = "inhalt" | "ansage" | "vorlage";
@@ -353,6 +402,22 @@ export class VoiceCallEngine {
     <T>(cmd: string, args?: Record<string, unknown>) => invoke<T>(cmd, args),
   );
   private speakerLocal = false;
+  /**
+   * Der Nutzer hat über die laufende Antwort hinweg zu sprechen begonnen (Pegel-Barge-in): die
+   * Wiedergabe steht, die Erzeugung läuft weiter. Erst der erkannte Text entscheidet (lva#485).
+   */
+  private held: Turn | null = null;
+  /** Erster Frame der Äußerung, die das Anhalten ausgelöst hat (Weitersprechen setzt dort fort). */
+  private holdFrom = 0;
+  /** Zählt Erkennungen im Anhalten: nur die jüngste darf entscheiden. */
+  private holdRun = 0;
+  /** Eine Erkennung im Anhalten läuft. */
+  private holdBusy = false;
+  /**
+   * Vortext einer Ergänzung: der Schritt dazu fiel, weil der Nutzer weitersprach; die nächste Erkennung
+   * deckt nur das Audio ab dem Anhalten ab und bekommt ihn vorangestellt.
+   */
+  private carry: string | undefined;
   /** Hat dieser Anruf schon eine Modellantwort geliefert (E9: `warm`)? */
   private warm = false;
   private unwatch: (() => void) | null = null;
@@ -509,6 +574,7 @@ export class VoiceCallEngine {
     this.session.invalidate();
     this.cancelText(false);
     this.cancelTurn(false);
+    this.carry = undefined;
     this.history = [];
     this.ausgabeVergessen();
   }
@@ -678,6 +744,10 @@ export class VoiceCallEngine {
     this.ctx = null;
     this.frames = [];
     this.utt = null;
+    this.held = null;
+    this.holdRun++;
+    this.holdBusy = false;
+    this.carry = undefined;
     this.taker.reset();
     this.setState("idle");
   }
@@ -705,7 +775,9 @@ export class VoiceCallEngine {
 
     const level = rms(frame);
     this.cb.onLevel(level);
-    const aiSpeaking = (this.player?.active ?? false) || !!this.turn?.audible;
+    // Angehaltene Wiedergabe (Ergänzen) zählt nicht als sprechende KI: der Nutzer hat das Wort.
+    const aiSpeaking =
+      !this.held && ((this.player?.active ?? false) || !!this.turn?.audible);
     const at = this.frameIndex * 20;
     for (const ev of this.taker.frame(at, level, aiSpeaking)) {
       switch (ev.kind) {
@@ -739,9 +811,15 @@ export class VoiceCallEngine {
       this.firstFrame,
       Math.round(at / 20) - PREROLL_FRAMES,
     );
-    if (this.turn && !this.turn.audible) {
+    if (this.held) {
+      // Weitersprechen bei angehaltener Antwort: eine frühere Erkennung ist überholt, die
+      // Äußerung beginnt wieder am Anfang des Anhaltens (nichts geht verloren).
+      this.holdRun++;
+      this.holdBusy = false;
+      startFrame = Math.min(startFrame, this.holdFrom);
+    } else if (this.turn && !this.turn.audible) {
       startFrame = Math.min(startFrame, this.turn.startFrame);
-      this.cancelTurn(false);
+      this.verwerfeBeimWeitersprechen();
     }
     this.utt = { startFrame, aiWasSpeaking: aiSpeaking, barged: false };
     if (!aiSpeaking) this.setState("hearing");
@@ -749,23 +827,49 @@ export class VoiceCallEngine {
 
   private onBargeIn(): void {
     if (this.utt) this.utt.barged = true;
+    if (this.held) return;
+    // Erst anhalten, dann entscheiden (lva#485): Rückmeldelaut („mhm“) oder Ergänzung brauchen den
+    // Text, und der liegt erst nach der Erkennung vor. Die Erzeugung läuft weiter.
+    const turn = this.turn;
+    if (turn?.audible && this.player?.pause()) {
+      this.held = turn;
+      turn.heldSince = performance.now();
+      this.holdFrom = this.utt?.startFrame ?? this.frameIndex;
+      this.holdBusy = false;
+      this.setState("hearing");
+      return;
+    }
     this.cancelTurn(true);
     this.setState("hearing");
   }
 
   private onResume(): void {
-    this.cancelTurn(false);
+    if (this.held) {
+      // Der Nutzer spricht noch: die laufende Erkennung ist überholt, die Antwort bleibt angehalten.
+      this.holdRun++;
+      this.holdBusy = false;
+      this.setState("hearing");
+      return;
+    }
+    this.verwerfeBeimWeitersprechen();
     this.setState("hearing");
   }
 
-  private onEarlyEnd(lastSpeechAt: number, speechMs: number): void {
-    const utt = this.utt;
-    if (!utt) return;
-    // Husten oder Nachhall, während die KI spricht: kein Unterbrechen, kein Turn.
-    const aiStillSpeaking =
-      (this.player?.active ?? false) || !!this.turn?.audible;
-    if (utt.aiWasSpeaking && !utt.barged && aiStillSpeaking) return;
-    if (speechMs < this.cfg.turn.minUtteranceMs) return;
+  /**
+   * Der Nutzer spricht weiter, bevor die KI zu hören war: der Schritt fällt. Trug er schon eine
+   * Ergänzung (`prefix`), bleibt deren Vortext für die nächste Erkennung erhalten.
+   */
+  private verwerfeBeimWeitersprechen(): void {
+    const turn = this.turn;
+    if (turn) this.carry = turn.prefix;
+    this.cancelTurn(false);
+  }
+
+  /** Die Äußerung als Samples (mit Vorlauf und Nachlauf); `null`, wenn nichts da ist. */
+  private sliceUtterance(
+    utt: Utterance,
+    lastSpeechAt: number,
+  ): { samples: Float32Array; startFrame: number } | null {
     const endFrame = Math.min(
       this.frameIndex,
       Math.round(lastSpeechAt / 20) + TRAILING_FRAMES,
@@ -778,22 +882,256 @@ export class VoiceCallEngine {
       startFrame - this.firstFrame,
       endFrame - this.firstFrame,
     );
-    if (slice.length === 0) return;
+    if (slice.length === 0) return null;
     const samples = new Float32Array(slice.length * FRAME_SAMPLES);
     slice.forEach((f, i) => samples.set(f, i * FRAME_SAMPLES));
+    return { samples, startFrame };
+  }
+
+  private onEarlyEnd(lastSpeechAt: number, speechMs: number): void {
+    const utt = this.utt;
+    if (!utt) return;
+    if (this.held) {
+      // Zu kurz zum Erkennen: das Anhalten endet mit dem sicheren Satzende (`onEnd`).
+      if (speechMs < this.cfg.turn.minUtteranceMs) return;
+      const cut = this.sliceUtterance(utt, lastSpeechAt);
+      if (cut)
+        void this.decideHeld(
+          cut.samples,
+          cut.startFrame,
+          this.wall(lastSpeechAt),
+          speechMs,
+        );
+      return;
+    }
+    // Husten oder Nachhall, während die KI spricht: kein Unterbrechen, kein Turn.
+    const aiStillSpeaking =
+      (this.player?.active ?? false) || !!this.turn?.audible;
+    if (utt.aiWasSpeaking && !utt.barged && aiStillSpeaking) return;
+    if (speechMs < this.cfg.turn.minUtteranceMs) return;
+    const cut = this.sliceUtterance(utt, lastSpeechAt);
+    if (!cut) return;
     this.setState("thinking");
-    void this.runTurn(samples, startFrame, this.wall(lastSpeechAt), speechMs);
+    void this.runTurn(
+      cut.samples,
+      cut.startFrame,
+      this.wall(lastSpeechAt),
+      speechMs,
+    );
   }
 
   private onEnd(): void {
     const turn = this.turn;
     this.utt = null;
+    // Angehalten, aber keine Erkennung gestartet (zu kurz, überholt): die Antwort läuft weiter.
+    if (this.held && !this.holdBusy) {
+      this.releaseHold();
+      return;
+    }
     if (!turn) {
       this.setState(this.player?.active ? "speaking" : "listening");
       return;
     }
     turn.committed = true;
     turn.commit();
+  }
+
+  // -- Ergänzen und Korrigieren während der Antwort (lva#485) ----------------------
+
+  /** Was die reine Entscheidungslogik vom Schritt wissen muss. */
+  private stand(turn: Turn): TurnStand {
+    return {
+      ausSprache: !!turn.fromSpeech,
+      vorlage: !!turn.noMerge,
+      ersterSatzFertig: !!turn.firstContentEnded,
+      schonGespeichert: !!turn.finalSent,
+    };
+  }
+
+  /** Die angehaltene Antwort läuft weiter (Rückmeldelaut, Rauschen, überholt). */
+  private releaseHold(): void {
+    const turn = this.held;
+    if (!turn) return;
+    this.held = null;
+    this.holdRun++;
+    this.holdBusy = false;
+    this.zaehleHaltezeit(turn);
+    this.player?.resume();
+    this.setState(this.player?.active ? "speaking" : "listening");
+  }
+
+  /** Bisherige Haltezeit des Schritts (ms), samt einem noch laufenden Anhalten. */
+  private haltezeit(turn: Turn): number {
+    const laufend =
+      turn.heldSince === undefined ? 0 : performance.now() - turn.heldSince;
+    return (turn.heldMs ?? 0) + laufend;
+  }
+
+  /** Das Anhalten ist vorbei: seine Dauer zur Haltezeit des Schritts addieren. */
+  private zaehleHaltezeit(turn: Turn): void {
+    if (turn.heldSince === undefined) return;
+    turn.heldMs = (turn.heldMs ?? 0) + (performance.now() - turn.heldSince);
+    turn.heldSince = undefined;
+  }
+
+  /** Was der Nutzer von diesem Schritt gehört hat: Fertiggespieltes plus das angespielte Häppchen. */
+  private gehoert(turn: Turn): PieceRec[] {
+    if (!turn.soundStarted) return [];
+    const out: PieceRec[] = [];
+    for (const p of turn.pieces) {
+      if (!p.queued) break;
+      out.push(p);
+      if (!p.ended) break;
+    }
+    return out;
+  }
+
+  /** Erkennt die Äußerung bei angehaltener Antwort und entscheidet: weiter, stopp, ergänzen, neu. */
+  private async decideHeld(
+    samples: Float32Array,
+    startFrame: number,
+    lastSpeechWall: number,
+    speechMs: number,
+  ): Promise<void> {
+    const turn = this.held;
+    if (!turn) return;
+    const run = ++this.holdRun;
+    this.holdBusy = true;
+    const t0 = performance.now();
+    type Erg = { text: string } | { fehler: unknown };
+    const ergebnis: Promise<Erg> = invoke<string>("voice_call_transcribe", {
+      pcm16B64: floatToPcm16Base64(samples),
+    }).then(
+      (r): Erg => ({ text: typeof r === "string" ? r.trim() : "" }),
+      (fehler): Erg => ({ fehler }),
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const frist = new Promise<"frist">((r) => {
+      timer = setTimeout(() => r("frist"), TUNING.holdSttMaxMs);
+    });
+    const erstes = await Promise.race([ergebnis, frist]);
+    clearTimeout(timer);
+    // Frist: die Wiedergabe läuft weiter, der Text wird trotzdem abgewartet und danach wie ein
+    // spätes Unterbrechen behandelt (er geht nicht verloren).
+    let spaet = false;
+    let erg: Erg;
+    if (erstes === "frist") {
+      if (run === this.holdRun && this.held === turn) {
+        this.holdBusy = false;
+        this.releaseHold();
+        spaet = true;
+      }
+      erg = await ergebnis;
+    } else erg = erstes;
+
+    if (!spaet) {
+      // Überholt (der Nutzer sprach weiter) oder abgebrochen: nichts davon gilt mehr. Nur ein vom
+      // Fehler beendeter Schritt (`dropTurn`) lässt die Äußerung als normalen Beitrag gelten.
+      if (run !== this.holdRun) return;
+      this.holdBusy = false;
+    }
+    if ("fehler" in erg) {
+      if (!spaet && this.held === turn) this.releaseHold();
+      this.cb.onError(i18n.t("voiceCall.error.notUnderstood"));
+      return;
+    }
+    const text = erg.text;
+    if (isPhantom(text, speechMs)) {
+      if (!spaet && this.held === turn) this.releaseHold();
+      return;
+    }
+    // Läuft der Schritt (noch), entscheidet die Logik. Ist er weg, ohne abgebrochen zu sein (Fehler,
+    // zu Ende gelaufen), ist die Äußerung ein gewöhnlicher neuer Beitrag; sonst gilt sie nicht mehr.
+    const laeuft = this.turn === turn && !turn.cancelled;
+    if (!laeuft && (turn.cancelled || this.turn !== null)) return;
+    const inhalt = (laeuft ? this.gehoert(turn) : []).filter(
+      (p) => p.kind === "inhalt",
+    );
+    const satz = inhalt.length > 0 ? inhalt[inhalt.length - 1].text : "";
+    // Nach der Frist ist die Antwort schon wieder zu hören: wie ein spätes Unterbrechen behandeln.
+    const stand: TurnStand | null = laeuft
+      ? {
+          ...this.stand(turn),
+          ersterSatzFertig: this.stand(turn).ersterSatzFertig || spaet,
+        }
+      : null;
+    const d = entscheide(text, stand, turn.userText, satz);
+    if (d.art === "weiter") {
+      if (!spaet) this.releaseHold();
+      return;
+    }
+    if (this.held === turn) {
+      this.held = null;
+      this.zaehleHaltezeit(turn);
+      // Auch ohne laufenden Schritt: angehaltene Häppchen dürfen nie mehr gespielt werden.
+      this.player?.stop();
+    }
+    if (d.art === "stopp") {
+      this.cancelTurn(true);
+      this.setState(this.utt ? "hearing" : "listening");
+      return;
+    }
+    // Ergänzung: der alte Schritt verschwindet still; sonst: unterbrochen wie bisher.
+    this.cancelTurn(
+      d.art === "neu" && d.abbrechen,
+      d.art === "zusammenfuehren",
+    );
+    const neuer = this.newTurn(startFrame, lastSpeechWall);
+    neuer.fromSpeech = true;
+    if (d.art === "zusammenfuehren") neuer.prefix = turn.userText;
+    this.turn = neuer;
+    // Das sichere Satzende kann schon vorbei sein: dann gibt es niemanden mehr, der freigibt.
+    if (!this.utt) {
+      neuer.committed = true;
+      neuer.commit();
+    }
+    this.setState("thinking");
+    await this.antworteSicher(neuer, d.text, performance.now() - t0);
+  }
+
+  private async antworteSicher(
+    turn: Turn,
+    text: string,
+    sttMs: number,
+  ): Promise<void> {
+    try {
+      await this.respond(turn, text, sttMs);
+    } catch (e) {
+      this.sentenceHandlers.delete(turn.id);
+      if (!turn.cancelled && this.turn === turn) {
+        this.cb.onError(String(e));
+        this.dropTurn(turn);
+      }
+    }
+  }
+
+  /**
+   * Meldet die fertige Antwortzeile. Solange der erste Satz noch läuft und der Schritt durch eine
+   * Ergänzung ersetzt werden kann, wartet sie: eine gemeldete Zeile wird gespeichert, und ein
+   * gespeicherter Beitrag lässt sich ohne Rust nicht mehr ersetzen.
+   */
+  private schliesseAntwort(turn: Turn, text: string): void {
+    turn.finalText = text;
+    if (darfZusammenfuehren(this.stand(turn))) return;
+    this.sendeAntwort(turn);
+  }
+
+  private sendeAntwort(turn: Turn): void {
+    if (turn.finalSent || turn.finalText === undefined || turn.cancelled)
+      return;
+    turn.finalSent = true;
+    this.cb.onAssistant(turn.finalText, true, false);
+  }
+
+  /** Der erste Inhaltssatz ist zu Ende gesprochen: eine wartende Antwortzeile geht jetzt raus. */
+  private ersterSatzFertig(turn: Turn): void {
+    turn.firstContentEnded = true;
+    this.sendeAntwort(turn);
+  }
+
+  /** Hat die letzte Antwort im Verlauf der Nutzer unterbrochen? */
+  private unterbrochen(): boolean {
+    return !!this.history[this.history.length - 1]?.interrupted;
   }
 
   // -- Ein Gesprächsschritt ---------------------------------------------------
@@ -811,7 +1149,7 @@ export class VoiceCallEngine {
       done: false,
       historyPushed: false,
       userText: "",
-      spoken: [],
+      pieces: [],
       heard: 0,
       lastSpeechWall,
       startFrame,
@@ -824,23 +1162,35 @@ export class VoiceCallEngine {
     lastSpeechWall: number,
     speechMs: number,
   ): Promise<void> {
+    // Ein Schritt mit Vortext, der hier ersetzt wird, gibt ihn weiter.
+    const alt = this.turn;
+    if (alt && alt.prefix !== undefined) this.carry = alt.prefix;
     this.cancelTurn(false);
+    const prefix = this.carry;
+    this.carry = undefined;
     const turn = this.newTurn(startFrame, lastSpeechWall);
+    turn.fromSpeech = true;
+    turn.prefix = prefix;
     this.turn = turn;
     const dead = () => turn.cancelled || this.turn !== turn;
 
     try {
       const t0 = performance.now();
-      const text = (
+      const erkannt = (
         await invoke<string>("voice_call_transcribe", {
           pcm16B64: floatToPcm16Base64(samples),
         })
       ).trim();
+      let text = prefix ? fuegeZusammen(prefix, erkannt) : erkannt;
       const sttMs = performance.now() - t0;
       if (dead()) return;
-      if (isPhantom(text, speechMs)) {
-        this.dropTurn(turn);
-        return;
+      if (isPhantom(erkannt, speechMs)) {
+        // Nur Rauschen nach der Ergänzung: die Äußerung davor gilt allein.
+        if (!prefix) {
+          this.dropTurn(turn);
+          return;
+        }
+        text = prefix;
       }
       await this.respond(turn, text, sttMs);
     } catch (e) {
@@ -865,6 +1215,7 @@ export class VoiceCallEngine {
       return;
     }
     this.cancelTurn(true);
+    this.carry = undefined;
     this.utt = null;
     this.taker.reset();
     this.setState("thinking");
@@ -912,7 +1263,15 @@ export class VoiceCallEngine {
   private historyFor(text: string): ChatMessage[] {
     // Seiten (Denker, Werkzeuge, Buch) können entfernt laufen: ohne
     // kontextabgeleitete Antworten (Codex M6).
-    return [...this.plainHistory(false), { role: "user", content: text }];
+    const hinweis = unterbrechungsHinweis(
+      this.unterbrochen(),
+      aktuelleSprache(),
+    );
+    return [
+      ...(hinweis ? [{ role: "system" as const, content: hinweis }] : []),
+      ...this.plainHistory(false),
+      { role: "user", content: text },
+    ];
   }
 
   /** Der Verlauf ohne die Kennungen: sie gehen nicht an das Modell. */
@@ -935,7 +1294,15 @@ export class VoiceCallEngine {
   ): (ChatMessage & { derived: boolean })[] {
     const book = !!this.bookSide;
     return [
-      { role: "system", content: systemPrompt, derived: false },
+      {
+        role: "system",
+        content: systemMitHinweis(
+          systemPrompt,
+          this.unterbrochen(),
+          aktuelleSprache(),
+        ),
+        derived: false,
+      },
       ...this.history
         .filter((m) => !(book && m.general))
         .slice(-this.historyLimit)
@@ -1303,11 +1670,16 @@ export class VoiceCallEngine {
     const emitMetrics = (at: number) => {
       if (metricsSent) return;
       metricsSent = true;
+      turn.metricsSent = true;
+      // Die Haltezeit (Barge-in vor dem ersten Ton) gehört nicht zur Zeit bis zum ersten Ton.
       this.cb.onMetrics({
+        turnId: turn.id,
         sttMs: Math.round(sttMs),
         llmFirstMs: Math.round(firstSentenceAt - tChat),
         ttsFirstMs: Math.round(firstAudioAt - firstSentenceAt),
-        firstSoundMs: Math.round(at - turn.lastSpeechWall),
+        firstSoundMs: Math.round(
+          at - turn.lastSpeechWall - this.haltezeit(turn),
+        ),
         ...(turnCtx
           ? {
               contextMs: turnCtx.promptMs,
@@ -1346,6 +1718,7 @@ export class VoiceCallEngine {
           turn.audible = true;
           this.player?.rearm();
           this.player!.onFirstSound = (at) => {
+            turn.soundStarted = true;
             this.setState("speaking");
             if (ansage) {
               // Die Metriken folgen mit dem ersten Satz danach.
@@ -1361,15 +1734,28 @@ export class VoiceCallEngine {
           emitMetrics(performance.now());
         }
         turn.heard++;
-        if (kind === "inhalt") turn.spoken.push(piece);
-        await this.player!.enqueue(wav);
+        const rec: PieceRec = {
+          text: piece,
+          kind,
+          ended: false,
+          queued: false,
+        };
+        turn.pieces.push(rec);
+        // Das Ende des ersten Inhaltssatzes entscheidet, ob eine Ergänzung noch zusammenführt.
+        const first = kind === "inhalt" && !turn.contentSeen;
+        if (first) turn.contentSeen = true;
+        await this.player!.enqueue(wav, () => {
+          rec.ended = true;
+          if (first) this.ersterSatzFertig(turn);
+        });
+        rec.queued = true;
       });
     };
     // E9: `fertig_ms` erst, wenn der Schritt zu Ende gesprochen ist (`finishTurn`).
     const messenBeiEnde = (stufe: StufeDto | null, modell: boolean) => {
       if (!stufe) return;
       turn.onEnde = () => {
-        marken.fertig = performance.now();
+        marken.fertig = performance.now() - this.haltezeit(turn);
         meldeMessung(baueMessung(turn.id, marken, stufe, this.messArt(modell)));
         if (modell) this.warm = true;
       };
@@ -1386,7 +1772,8 @@ export class VoiceCallEngine {
       if (dead()) return;
       this.setTalkMode(sw.mode);
       turn.done = true;
-      this.cb.onAssistant(assistantText, true, false);
+      turn.noMerge = true;
+      this.schliesseAntwort(turn, assistantText);
       if (!this.player?.active) this.finishTurn();
       return;
     }
@@ -1403,6 +1790,7 @@ export class VoiceCallEngine {
       if (!v || dead()) return;
       const kind: PieceKind = v.inhalt ? "inhalt" : "vorlage";
       turn.noHistory = kind === "vorlage";
+      turn.noMerge = true;
       for (const p of v.pieces) onPiece(p, kind);
       await chain;
       this.sentenceHandlers.delete(turn.id);
@@ -1429,7 +1817,7 @@ export class VoiceCallEngine {
         turn.historyPushed = true;
         messenBeiEnde(stufe, false);
       }
-      this.cb.onAssistant(assistantText, true, false);
+      this.schliesseAntwort(turn, assistantText);
       if (!this.player?.active) this.finishTurn();
       return;
     }
@@ -1591,6 +1979,7 @@ export class VoiceCallEngine {
     if (!modelText) {
       // Kein Modellinhalt (Fehler, Frist, leer): feste Vorlage, nicht in den Verlauf.
       turn.noHistory = true;
+      turn.noMerge = true;
       onPiece(vorlage("fehler", sprache), "vorlage");
       await chain;
       if (dead()) return;
@@ -1601,7 +1990,7 @@ export class VoiceCallEngine {
       return;
     }
     if (turn.noHistory) {
-      this.cb.onAssistant(assistantText, true, false);
+      this.schliesseAntwort(turn, assistantText);
       if (!this.player?.active) this.finishTurn();
       return;
     }
@@ -1628,7 +2017,7 @@ export class VoiceCallEngine {
       turn.historyPushed = true;
     }
     messenBeiEnde(stufe, true);
-    this.cb.onAssistant(assistantText, true, false);
+    this.schliesseAntwort(turn, assistantText);
     // Die Belege prüfen nur, was das Modell gesagt hat, nicht die Ansage.
     void this.reportCitations(turn.id, modelText, turnCtx);
     // Ende der Wiedergabe meldet player.onIdle -> finishTurn.
@@ -1637,24 +2026,43 @@ export class VoiceCallEngine {
 
   private dropTurn(turn: Turn): void {
     if (this.turn === turn) this.turn = null;
+    if (this.held === turn) {
+      // Der Schritt endet ohne Antwort, solange die Wiedergabe angehalten ist: die wartenden Häppchen
+      // dürfen nie mehr gespielt werden. Eine laufende Erkennung bleibt gültig (die Äußerung wird ein
+      // gewöhnlicher Beitrag, `decideHeld`).
+      this.held = null;
+      this.player?.stop();
+    }
     this.sentenceHandlers.delete(turn.id);
     if (!this.utt) this.setState("listening");
   }
 
   private finishTurn(): void {
-    const ende = this.turn?.onEnde;
+    // Eine angehaltene Antwort endet nicht von selbst: erst die Entscheidung (`decideHeld`).
+    if (this.held && this.held === this.turn) return;
+    const turn = this.turn;
+    const ende = turn?.onEnde;
     this.turn = null;
+    if (turn) this.sendeAntwort(turn);
     ende?.();
     if (!this.utt) this.setState("listening");
   }
 
-  /** Laufenden Schritt verwerfen; `interrupted`: der Nutzer hat die KI unterbrochen. */
-  private cancelTurn(interrupted: boolean): void {
+  /**
+   * Laufenden Schritt verwerfen; `interrupted`: der Nutzer hat die KI unterbrochen. `merge`: die
+   * Äußerung wird mit einer Ergänzung neu gestellt, der Schritt hinterlässt weder Verlauf noch Zeile.
+   */
+  private cancelTurn(interrupted: boolean, merge = false): void {
     const turn = this.turn;
     if (!turn) return;
     turn.cancelled = true;
     turn.finishStream?.();
     this.turn = null;
+    if (this.held === turn) {
+      this.held = null;
+      this.holdRun++;
+      this.holdBusy = false;
+    }
     this.globalContext.discard(turn.id);
     this.sentenceHandlers.delete(turn.id);
     void turn.side?.cancel?.(turn.id);
@@ -1663,10 +2071,24 @@ export class VoiceCallEngine {
     );
     this.cb.onStatus?.(null);
     turn.commit();
-    if (interrupted && turn.spoken.length > 0 && !turn.noHistory) {
-      // Nur das tatsächlich Gesprochene gehört in den Verlauf.
+    const said = this.gehoert(turn)
+      .filter((p) => p.kind === "inhalt")
+      .map((p) => p.text);
+    if (merge || (interrupted && said.length === 0 && turn.historyPushed)) {
+      // Nur der Verlauf der KI: Anzeige und Speicher ersetzt `onUser` der zusammengeführten Äußerung.
+      const i = this.history.findIndex(
+        (m) => m.role === "user" && m.turnId === turn.id,
+      );
+      if (i >= 0) this.history.splice(i, 2);
+    }
+    if (merge) {
+      // Die Messung eines ersetzten Schritts gilt nicht; „wiederholen“ kennt seine Antwort nicht mehr.
+      if (turn.metricsSent) this.cb.onMetricsVerwerfen?.(turn.id);
+      this.ausgabeVergessen();
+    } else if (interrupted && said.length > 0 && !turn.noHistory) {
+      // Nur das tatsächlich Gehörte gehört in den Verlauf: Fertiggespieltes plus das angespielte Häppchen.
       if (turn.historyPushed) this.history.splice(-2, 2);
-      const said = turn.spoken.join(" ");
+      const heard = said.join(" ");
       const tag = this.historyTag;
       this.history.push({
         role: "user",
@@ -1676,11 +2098,12 @@ export class VoiceCallEngine {
       });
       this.history.push({
         role: "assistant",
-        content: `${speakable(said)} …`,
+        content: `${speakable(heard)} …`,
         ...tag,
+        interrupted: true,
         ...(turn.withContext ? { ctx: true } : {}),
       });
-      this.cb.onAssistant(said, true, true);
+      this.cb.onAssistant(heard, true, true);
     }
     this.player?.stop();
   }

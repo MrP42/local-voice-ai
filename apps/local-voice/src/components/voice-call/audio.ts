@@ -120,12 +120,27 @@ export function base64ToArrayBuffer(b64: string): ArrayBuffer {
   return bytes.buffer;
 }
 
-/** Spielt Häppchen lückenlos hintereinander; `stop()` verwirft alles sofort. */
+/** Ein eingereihtes Häppchen: `offset` ist, wie viel davon schon gespielt wurde (nach einer Pause). */
+interface Piece {
+  buf: AudioBuffer;
+  rate: number;
+  offset: number;
+  src: AudioBufferSourceNode | null;
+  startAt: number;
+  onEnd?: () => void;
+}
+
+/**
+ * Spielt Häppchen lückenlos hintereinander; `stop()` verwirft alles sofort. `pause()` hält die
+ * Wiedergabe an und merkt sich, wie weit jedes Häppchen war; `resume()` setzt dort fort. Der
+ * Audio-Kontext selbst läuft weiter (das Mikrofon hängt daran).
+ */
 export class SpeechPlayer {
   private ctx: AudioContext;
   private nextAt = 0;
-  private sources = new Set<AudioBufferSourceNode>();
+  private pieces: Piece[] = [];
   private gen = 0;
+  private held = false;
   /** Wird mit dem ersten hörbaren Häppchen eines Laufs aufgerufen. */
   onFirstSound?: (at: number) => void;
   onIdle?: () => void;
@@ -149,21 +164,42 @@ export class SpeechPlayer {
     this.rate = rate;
   }
 
+  /** Ist noch etwas zu spielen (auch angehalten)? */
   get active(): boolean {
-    return this.sources.size > 0;
+    return this.pieces.length > 0;
   }
 
-  async enqueue(wavB64: string): Promise<void> {
+  /** Angehalten (`pause()`), bis `resume()` oder `stop()`. */
+  get paused(): boolean {
+    return this.held;
+  }
+
+  /** `onEnd`: wird gerufen, wenn dieses Häppchen zu Ende gespielt ist (nicht bei `stop()`). */
+  async enqueue(wavB64: string, onEnd?: () => void): Promise<void> {
     const gen = this.gen;
     const buf = await this.ctx.decodeAudioData(base64ToArrayBuffer(wavB64));
     if (gen !== this.gen) return;
+    const piece: Piece = {
+      buf,
+      rate: this.rate,
+      offset: 0,
+      src: null,
+      startAt: 0,
+      onEnd,
+    };
+    this.pieces.push(piece);
+    if (!this.held) this.schedule(piece, gen);
+  }
+
+  private schedule(piece: Piece, gen: number): void {
     const src = this.ctx.createBufferSource();
-    src.buffer = buf;
-    src.playbackRate.value = this.rate;
+    src.buffer = piece.buf;
+    src.playbackRate.value = piece.rate;
     src.connect(this.gain);
     const start = Math.max(this.ctx.currentTime + 0.02, this.nextAt);
-    this.nextAt = start + buf.duration / this.rate;
-    this.sources.add(src);
+    this.nextAt = start + (piece.buf.duration - piece.offset) / piece.rate;
+    piece.src = src;
+    piece.startAt = start;
     if (!this.firstFired) {
       this.firstFired = true;
       // Zeitpunkt, an dem der Ton tatsächlich beginnt (Wanduhr).
@@ -172,24 +208,69 @@ export class SpeechPlayer {
       this.onFirstSound?.(at);
     }
     src.onended = () => {
-      this.sources.delete(src);
-      if (gen === this.gen && this.sources.size === 0) this.onIdle?.();
+      this.pieces = this.pieces.filter((p) => p !== piece);
+      if (gen !== this.gen) return;
+      piece.onEnd?.();
+      if (this.pieces.length === 0) this.onIdle?.();
     };
-    src.start(start);
+    src.start(start, piece.offset);
+  }
+
+  /**
+   * Hält die Wiedergabe sofort an (hörbar still); Eingereihtes und später Eintreffendes wartet.
+   * Was schon zu Ende gespielt war, gilt als beendet. `false`, wenn sie schon angehalten war.
+   */
+  pause(): boolean {
+    if (this.held) return false;
+    this.held = true;
+    const now = this.ctx.currentTime;
+    const done: Piece[] = [];
+    for (const p of this.pieces) {
+      if (!p.src) continue;
+      p.src.onended = null;
+      try {
+        p.src.stop();
+      } catch {
+        /* schon beendet */
+      }
+      p.src = null;
+      const played = Math.max(0, now - p.startAt) * p.rate;
+      p.offset = Math.min(p.buf.duration, p.offset + played);
+      if (p.offset >= p.buf.duration - 0.01) done.push(p);
+    }
+    this.pieces = this.pieces.filter((p) => !done.includes(p));
+    this.nextAt = 0;
+    for (const p of done) p.onEnd?.();
+    return true;
+  }
+
+  /** Setzt eine angehaltene Wiedergabe dort fort, wo sie stand; ist nichts mehr da, meldet sie `onIdle`. */
+  resume(): void {
+    if (!this.held) return;
+    this.held = false;
+    this.nextAt = 0;
+    if (this.pieces.length === 0) {
+      this.onIdle?.();
+      return;
+    }
+    const gen = this.gen;
+    for (const p of [...this.pieces]) this.schedule(p, gen);
   }
 
   stop(): void {
     this.gen++;
     this.firstFired = false;
-    for (const s of this.sources) {
-      s.onended = null;
+    this.held = false;
+    for (const p of this.pieces) {
+      if (!p.src) continue;
+      p.src.onended = null;
       try {
-        s.stop();
+        p.src.stop();
       } catch {
         /* schon beendet */
       }
     }
-    this.sources.clear();
+    this.pieces = [];
     this.nextAt = 0;
   }
 
