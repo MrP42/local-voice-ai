@@ -23,6 +23,7 @@ import {
   noticeIsRequired,
   noticeSettingsOf,
   noticeTime,
+  pendingExpiryMs,
 } from "@/lib/meetingNotice";
 import { useSettings } from "../../../hooks/useSettings";
 import { Button } from "../../ui/Button";
@@ -34,6 +35,12 @@ import { MeetingChatNotice } from "./MeetingChatNotice";
 interface ParticipantNoticeProps {
   /** Besprechung, an der der Nachweis haftet; `null` = vor dem Start (Startdialog). */
   meetingId: string | null;
+  /**
+   * Vor dem Start: das Token des Startdialogs (`meetingNoticeDialogOpen`). Der
+   * Nachweis gehört zu genau diesem Dialog; ohne Token (noch nicht vergeben)
+   * bleiben die Knöpfe gesperrt.
+   */
+  dialogToken?: string | null;
   /** Präfix für `data-testid` ("consent", "recording"). */
   testId: string;
   /** Meldet, wie viele Nachweise vorliegen (der Startdialog sperrt damit bei Pflicht). */
@@ -53,6 +60,7 @@ type Message = { kind: "info" | "error"; text: string };
  */
 export const ParticipantNotice: React.FC<ParticipantNoticeProps> = ({
   meetingId,
+  dialogToken = null,
   testId,
   onRecordsChange,
 }) => {
@@ -62,6 +70,7 @@ export const ParticipantNotice: React.FC<ParticipantNoticeProps> = ({
   return (
     <NoticePanel
       meetingId={meetingId}
+      dialogToken={dialogToken}
       testId={testId}
       onRecordsChange={onRecordsChange}
     />
@@ -70,6 +79,7 @@ export const ParticipantNotice: React.FC<ParticipantNoticeProps> = ({
 
 const NoticePanel: React.FC<ParticipantNoticeProps> = ({
   meetingId,
+  dialogToken = null,
   testId,
   onRecordsChange,
 }) => {
@@ -86,46 +96,63 @@ const NoticePanel: React.FC<ParticipantNoticeProps> = ({
   const [countdown, setCountdown] = useState<number | null>(null);
   const onChangeRef = useRef(onRecordsChange);
   onChangeRef.current = onRecordsChange;
-  // Wirkt sich auf den Text aus: Vorlagen, Zweck, Aufbewahrung und der Anbieter
-  // der Notizen (lokal oder extern).
+  // Läuft gerade eine Frist des Einfügens? Schließt der Dialog dann, wird sie
+  // abgebrochen (sonst fügte die App später ein, ohne dass jemand es sieht).
+  const pastingRef = useRef(false);
+  // Vor dem Start gehört der Nachweis zu einem Startdialog: ohne dessen Token
+  // gibt es nichts zu tun.
+  const waitingForToken = meetingId === null && dialogToken === null;
+  // Wirkt sich auf den Text aus: Vorlagen, Zweck, Aufbewahrung und die Anbieter
+  // der Notizen (lokal oder extern; auch ein Modell je Funktion zählt).
   const textKey = JSON.stringify([
     cfg.templates,
     cfg.purpose,
     cfg.retention,
     getSetting("post_process_provider_id"),
+    getSetting("llm_active_model_id"),
+    getSetting("llm_connections"),
+    getSetting("function_models"),
   ]);
 
   const refresh = useCallback(async () => {
+    if (meetingId === null && dialogToken === null) return;
     try {
-      const r = await commands.meetingNoticeStatus(meetingId);
+      const r = await commands.meetingNoticeStatus(meetingId, dialogToken);
       if (r.status !== "ok" || !r.data) return;
       setRecords(r.data.records ?? []);
       setPasteAvailable(r.data.paste_available === true);
     } catch {
       // Ohne Antwort bleibt der Stand, wie er war.
     }
-  }, [meetingId]);
+  }, [meetingId, dialogToken]);
 
-  // Vor dem Start beginnt der Dialog von vorn: Nachweise eines früheren,
-  // abgebrochenen Dialogs gelten nicht für diese Aufnahme.
+  // Nachweise eines früheren, abgebrochenen Dialogs gelten nicht (das Backend
+  // gibt jedem Startdialog ein eigenes Token und beginnt leer).
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        if (meetingId === null) await commands.meetingNoticeResetPending();
-      } catch {
-        // egal: der Stand wird gleich neu gelesen
-      }
-      if (!cancelled) await refresh();
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [meetingId, refresh]);
+    void refresh();
+  }, [refresh]);
 
   useEffect(() => {
     onChangeRef.current?.(records.length);
   }, [records.length]);
+
+  // Ein Nachweis vor dem Start gilt nur fünf Minuten: danach neu lesen, damit
+  // der Start nicht mit einem verfallenen Nachweis freigegeben bleibt.
+  useEffect(() => {
+    if (meetingId !== null) return;
+    const ms = pendingExpiryMs(records, Date.now());
+    if (ms === null) return;
+    const timer = setTimeout(() => void refresh(), ms + 1000);
+    return () => clearTimeout(timer);
+  }, [meetingId, records, refresh]);
+
+  // Schließt der Dialog während der Frist des Einfügens, wird sie abgebrochen.
+  useEffect(
+    () => () => {
+      if (pastingRef.current) void commands.meetingNoticeCancelPaste();
+    },
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -178,20 +205,28 @@ const NoticePanel: React.FC<ParticipantNoticeProps> = ({
   };
 
   const copy = () =>
-    settle(() => commands.meetingNoticeCopy(meetingId, app, lang));
+    settle(() => commands.meetingNoticeCopy(meetingId, dialogToken, app, lang));
   const oral = () =>
-    settle(() => commands.meetingNoticeOral(meetingId, app, lang));
+    settle(() => commands.meetingNoticeOral(meetingId, dialogToken, app, lang));
   const paste = async () => {
     setCountdown(PASTE_COUNTDOWN_SECS);
+    pastingRef.current = true;
     const timer = setInterval(
       () => setCountdown((c) => (c !== null && c > 1 ? c - 1 : c)),
       1000,
     );
     try {
       await settle(() =>
-        commands.meetingNoticePaste(meetingId, app, lang, PASTE_COUNTDOWN_SECS),
+        commands.meetingNoticePaste(
+          meetingId,
+          dialogToken,
+          app,
+          lang,
+          PASTE_COUNTDOWN_SECS,
+        ),
       );
     } finally {
+      pastingRef.current = false;
       clearInterval(timer);
       setCountdown(null);
     }
@@ -199,12 +234,20 @@ const NoticePanel: React.FC<ParticipantNoticeProps> = ({
 
   const last = latestRecord(records);
   const appLabel = (a: NoticeApp) => t(`meetings.notice.apps.${a}`);
+  // Einfügen heißt "ausgelöst in <App>": ob der Text im Chatfeld ankam, sieht
+  // die App nicht. Ein älterer Nachweis ohne App-Namen sagt es ohne.
+  const statusKey = last
+    ? last.way === "paste" && !last.target
+      ? "meetings.notice.status.pasteNoTarget"
+      : `meetings.notice.status.${last.way}`
+    : "meetings.notice.status.none";
   const status = last
-    ? t(`meetings.notice.status.${last.way}`, {
+    ? t(statusKey, {
         time: noticeTime(last.at, i18n.language),
         app: appLabel(last.app),
+        target: last.target ?? "",
       })
-    : t("meetings.notice.status.none");
+    : t(statusKey);
   const required = noticeIsRequired(cfg);
   const waiting = countdown !== null;
 
@@ -261,7 +304,7 @@ const NoticePanel: React.FC<ParticipantNoticeProps> = ({
           type="button"
           size="sm"
           onClick={() => void copy()}
-          disabled={busy || text === ""}
+          disabled={busy || waitingForToken || text === ""}
           data-testid={`${testId}-notice-copy`}
         >
           <Copy width={14} height={14} aria-hidden="true" />
@@ -272,7 +315,7 @@ const NoticePanel: React.FC<ParticipantNoticeProps> = ({
             type="button"
             size="sm"
             onClick={() => void paste()}
-            disabled={busy || text === ""}
+            disabled={busy || waitingForToken || text === ""}
             data-testid={`${testId}-notice-paste`}
           >
             <ClipboardPaste width={14} height={14} aria-hidden="true" />
@@ -284,7 +327,7 @@ const NoticePanel: React.FC<ParticipantNoticeProps> = ({
           size="sm"
           variant="ghost"
           onClick={() => void oral()}
-          disabled={busy}
+          disabled={busy || waitingForToken}
           data-testid={`${testId}-notice-oral`}
         >
           <Check width={14} height={14} aria-hidden="true" />
@@ -371,11 +414,13 @@ export const ParticipantNoticeButton: React.FC<
   const [count, setCount] = useState(0);
 
   useEffect(() => {
+    // Eine andere Besprechung beginnt ohne den Stand der vorigen.
+    setCount(0);
     if (!cfg.enabled) return;
     let cancelled = false;
     void (async () => {
       try {
-        const r = await commands.meetingNoticeStatus(meetingId);
+        const r = await commands.meetingNoticeStatus(meetingId, null);
         if (!cancelled && r.status === "ok" && r.data) {
           setCount(r.data.records?.length ?? 0);
         }
@@ -393,7 +438,12 @@ export const ParticipantNoticeButton: React.FC<
     <>
       <IconAction
         icon={count > 0 ? UserCheck : Megaphone}
-        label={t("meetings.recorder.noticeOpen")}
+        // Der Zustand steht im Namen des Knopfs, nicht nur im Symbol und im Tooltip.
+        label={
+          count > 0
+            ? t("meetings.recorder.noticeOpenLabelDone")
+            : t("meetings.recorder.noticeOpenLabelNone")
+        }
         description={
           count > 0
             ? t("meetings.recorder.noticeOpenDone")

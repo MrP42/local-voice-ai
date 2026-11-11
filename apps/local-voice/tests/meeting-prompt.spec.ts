@@ -111,6 +111,8 @@ test("Mit Häkchen startet meetings_start_from_event mit consent_confirmed=true 
     title: null,
     linkMode: "prompt",
     targetMeetingId: null,
+    // Das Hinweisfenster hat keinen Startdialog und damit kein Token (G2).
+    noticeToken: null,
   });
   // Der Start geht nie an den alten Weg ohne Terminbezug.
   expect(await calls(page, "meetings_start")).toHaveLength(0);
@@ -221,6 +223,22 @@ test("Ein Startfehler bleibt im Fenster sichtbar", async ({ page }) => {
   await expect(page.getByTestId("prompt-error")).toHaveText(
     "Es läuft bereits eine Aufnahme.",
   );
+  await expect(page.getByTestId("prompt-confirm")).toBeEnabled();
+});
+
+test("Pflicht zum Hinweis an Teilnehmende: die Meldung verweist auf die Seite Aufnahmen", async ({
+  page,
+}) => {
+  await setup(page, payload(), () => {
+    (window as any).__startError = "notice_required";
+  });
+  await toConsent(page);
+  await page.getByTestId("prompt-consent").check();
+  await page.getByTestId("prompt-confirm").click();
+  const error = page.getByTestId("prompt-error");
+  await expect(error).toContainText("Hinweis an Teilnehmende ist Pflicht");
+  await expect(error).toContainText("Seite „Aufnahmen“");
+  await expect(error).not.toContainText("Stellen Sie zuerst");
   await expect(page.getByTestId("prompt-confirm")).toBeEnabled();
 });
 

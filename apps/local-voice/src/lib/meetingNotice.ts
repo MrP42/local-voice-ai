@@ -29,6 +29,9 @@ export const NOTICE_LANGS: NoticeLang[] = ["de", "en"];
 /** Frist in Sekunden, in der der Nutzer das Chatfeld anklickt (Backend: 5, höchstens 15). */
 export const PASTE_COUNTDOWN_SECS = 5;
 
+/** So lange (Sekunden) gilt ein Nachweis aus dem Startdialog für den Start (Backend: `PENDING_TTL_SECS`). */
+export const PENDING_NOTICE_TTL_SECS = 300;
+
 /** Einstellungen mit Vorgaben aufgefüllt (ältere settings.json kennt den Schlüssel nicht). */
 export const noticeSettingsOf = (
   raw: Partial<MeetingNoticeSettings> | null | undefined,
@@ -47,6 +50,21 @@ export const latestRecord = (
   records: readonly NoticeRecord[],
 ): NoticeRecord | null =>
   records.length > 0 ? records[records.length - 1] : null;
+
+/**
+ * Millisekunden, nach denen der älteste Nachweis des Startdialogs verfällt
+ * (`null`: keiner oder schon verfallen). Danach liest die Anzeige den Stand neu,
+ * damit "Aufnahme starten" nicht mit einem verfallenen Nachweis freigegeben bleibt.
+ */
+export const pendingExpiryMs = (
+  records: readonly NoticeRecord[],
+  nowMs: number,
+): number | null => {
+  if (records.length === 0) return null;
+  const first = Math.min(...records.map((r) => r.at));
+  const ms = (first + PENDING_NOTICE_TTL_SECS) * 1000 - nowMs;
+  return ms > 0 ? ms : null;
+};
 
 /** Uhrzeit eines Nachweises ("14:32") in der Ortszeit. */
 export const noticeTime = (at: number, locale?: string): string =>

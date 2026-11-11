@@ -157,8 +157,10 @@ impl RecordingControl for AppRecording {
         };
         let capture_system = crate::settings::get_settings(&self.app).meeting_capture_system;
         // Die Einwilligung hat der Nutzer im Hinweisfenster gegeben: der Baustein ruft
-        // dies nur ueber eine eingeloeste Freigabe (`RunCtx::approved`).
-        let meeting = recorder.start_into(plan.title.clone(), true, capture_system, None)?;
+        // dies nur ueber eine eingeloeste Freigabe (`RunCtx::approved`). Ohne Token fuer
+        // den Hinweis an Teilnehmende (G2, #497): ein Ablauf hat keinen Startdialog, bei
+        // Pflicht scheitert der Start mit `notice_required`.
+        let meeting = recorder.start_into(plan.title.clone(), true, capture_system, None, None)?;
         let now = chrono::Utc::now().timestamp_millis();
         for problem in finish_start(&store, &meeting.id, &plan, "auto", now) {
             log::warn!("workflows: Aufnahme gestartet, aber: {problem}");

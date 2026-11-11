@@ -571,6 +571,33 @@ async complianceSetTrainingOptOut(connectionId: string, optOut: boolean) : Promi
 }
 },
 /**
+ * Der Startdialog oeffnet: gibt ihm ein neues, zufaelliges Token. Nachweise vor
+ * dem Start tragen es, und nur der Start mit demselben Token (`meetings_start`,
+ * `meetings_start_from_event`) sieht sie. Ein frueherer Dialog und sein
+ * Nachweis verfallen.
+ */
+async meetingNoticeDialogOpen() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notice_dialog_open") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Der Startdialog schliesst (Abbrechen, Schliessen oder nach dem Start): der
+ * Nachweis dieses Dialogs wird verworfen. Ein spaeter geoeffneter Dialog
+ * bleibt unberuehrt.
+ */
+async meetingNoticeDialogClose(dialogToken: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notice_dialog_close", { dialogToken }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Der fertige Text fuer die Vorschau und zum Kopieren.
  */
 async meetingNoticePreview(noticeApp: NoticeApp, lang: NoticeLang) : Promise<Result<string, string>> {
@@ -594,22 +621,20 @@ async meetingNoticeTemplate(noticeApp: NoticeApp, lang: NoticeLang) : Promise<Re
 }
 },
 /**
- * Nachweise der Besprechung `meeting_id`, ohne sie die geltenden vor dem Start.
+ * Platzhalter in `text`, die es nicht gibt (so geschrieben, wie sie dastehen).
+ * Die Einstellungen zeigen sie beim Bearbeiten und Speichern des Bausteins an;
+ * beim Einsetzen bleiben sie unveraendert im Text stehen.
  */
-async meetingNoticeStatus(meetingId: string | null) : Promise<Result<NoticeStatus, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("meeting_notice_status", { meetingId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
+async meetingNoticeCheckTemplate(text: string) : Promise<string[]> {
+    return await TAURI_INVOKE("meeting_notice_check_template", { text });
 },
 /**
- * Verwirft die Nachweise vor dem Start (der Startdialog beginnt von vorn).
+ * Nachweise der Besprechung `meeting_id`, ohne sie die geltenden des
+ * Startdialogs mit dem Token `dialog_token`.
  */
-async meetingNoticeResetPending() : Promise<Result<null, string>> {
+async meetingNoticeStatus(meetingId: string | null, dialogToken: string | null) : Promise<Result<NoticeStatus, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meeting_notice_reset_pending") };
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notice_status", { meetingId, dialogToken }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -618,9 +643,9 @@ async meetingNoticeResetPending() : Promise<Result<null, string>> {
 /**
  * Legt den Hinweistext in die Zwischenablage und haelt das als Nachweis fest.
  */
-async meetingNoticeCopy(meetingId: string | null, noticeApp: NoticeApp, lang: NoticeLang) : Promise<Result<NoticeOutcome, string>> {
+async meetingNoticeCopy(meetingId: string | null, dialogToken: string | null, noticeApp: NoticeApp, lang: NoticeLang) : Promise<Result<NoticeOutcome, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meeting_notice_copy", { meetingId, noticeApp, lang }) };
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notice_copy", { meetingId, dialogToken, noticeApp, lang }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -629,31 +654,37 @@ async meetingNoticeCopy(meetingId: string | null, noticeApp: NoticeApp, lang: No
 /**
  * Der Nutzer bestaetigt, die Teilnehmenden muendlich informiert zu haben.
  */
-async meetingNoticeOral(meetingId: string | null, noticeApp: NoticeApp, lang: NoticeLang) : Promise<Result<NoticeOutcome, string>> {
+async meetingNoticeOral(meetingId: string | null, dialogToken: string | null, noticeApp: NoticeApp, lang: NoticeLang) : Promise<Result<NoticeOutcome, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meeting_notice_oral", { meetingId, noticeApp, lang }) };
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notice_oral", { meetingId, dialogToken, noticeApp, lang }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
 /**
- * Fuegt den Hinweistext nach einer Frist in das Chatfeld des Fensters ein, das
- * dann im Vordergrund steht (die Frist nutzt der Nutzer, um in das Chatfeld
- * der Besprechung zu klicken). Gesendet wird nie. Steht dann kein fremdes
- * Fenster im Vordergrund oder scheitert eine Sicherung, bleibt der Text in
- * der Zwischenablage (`fallback`), und der Nachweis lautet "kopiert".
+ * Loest nach einer Frist Ctrl+V (Cmd+V) in dem Fenster aus, das dann im
+ * Vordergrund steht (die Frist nutzt der Nutzer, um in das Chatfeld der
+ * Besprechung zu klicken). Gesendet wird nie, und ob der Text im Chatfeld
+ * ankam, kann die App nicht sehen: der Nachweis lautet "Einfuegen ausgeloest in
+ * <App>". Steht dann kein fremdes Fenster im Vordergrund, ist es keine
+ * Besprechungs-App und kein Browser, oder scheitert eine Sicherung, wird nichts
+ * eingefuegt; der Text bleibt in der Zwischenablage (`fallback`), und der
+ * Nachweis lautet "kopiert". Der Nachweis traegt den Text, der vor der Frist
+ * berechnet wurde, also den, der tatsaechlich eingefuegt wurde.
  */
-async meetingNoticePaste(meetingId: string | null, noticeApp: NoticeApp, lang: NoticeLang, countdownSecs: number) : Promise<Result<NoticeOutcome, string>> {
+async meetingNoticePaste(meetingId: string | null, dialogToken: string | null, noticeApp: NoticeApp, lang: NoticeLang, countdownSecs: number) : Promise<Result<NoticeOutcome, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meeting_notice_paste", { meetingId, noticeApp, lang, countdownSecs }) };
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notice_paste", { meetingId, dialogToken, noticeApp, lang, countdownSecs }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
 /**
- * Bricht die laufende Frist des Einfuegens ab.
+ * Bricht die laufende Frist des Einfuegens ab (die Oberflaeche ruft das auch,
+ * wenn der Dialog waehrend der Frist schliesst). Ohne laufende Frist ohne
+ * Wirkung: ein spaeter Abbruch trifft nicht das naechste Einfuegen.
  */
 async meetingNoticeCancelPaste() : Promise<Result<null, string>> {
     try {
@@ -2883,10 +2914,14 @@ async updateRecordingRetentionPeriod(period: string) : Promise<Result<null, stri
  * G1 (#70): mit `target_meeting_id` nimmt die Aufnahme in einem vorhandenen
  * LEEREN Eintrag auf (Notizen, Projekte und Id bleiben); ist das Ziel nicht
  * (mehr) leer, kommt `target_not_empty`. Die Einwilligung gilt in jedem Fall.
+ * 
+ * G2 (#497): `notice_token` ist das Token des Startdialogs (`meeting_notice_dialog_open`),
+ * in dem der Hinweis an Teilnehmende bereitgestellt wurde; ohne es gilt bei Pflicht
+ * `notice_required`.
  */
-async meetingsStart(title: string, consentConfirmed: boolean, captureSystem: boolean, targetMeetingId: string | null) : Promise<Result<Meeting, string>> {
+async meetingsStart(title: string, consentConfirmed: boolean, captureSystem: boolean, targetMeetingId: string | null, noticeToken: string | null) : Promise<Result<Meeting, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meetings_start", { title, consentConfirmed, captureSystem, targetMeetingId }) };
+    return { status: "ok", data: await TAURI_INVOKE("meetings_start", { title, consentConfirmed, captureSystem, targetMeetingId, noticeToken }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -5681,10 +5716,12 @@ async sprachdienstKopplungEntscheiden(id: string, bestaetigen: boolean) : Promis
  * (`consent_required` vom Recorder). Fehler NACH dem Start (Verknuepfung,
  * Vorlage) kippen die laufende Aufnahme nicht; sie stehen im Log. G1 (#70):
  * `target_meeting_id` wie bei `meetings_start` (Aufnahme in einen leeren Eintrag).
+ * G2 (#497): `notice_token` wie bei `meetings_start`; das Hinweisfenster hat keinen
+ * Startdialog und uebergibt keins.
  */
-async meetingsStartFromEvent(eventKey: string | null, appKey: string | null, consentConfirmed: boolean, captureSystem: boolean, title: string | null, linkMode: string | null, targetMeetingId: string | null) : Promise<Result<Meeting, string>> {
+async meetingsStartFromEvent(eventKey: string | null, appKey: string | null, consentConfirmed: boolean, captureSystem: boolean, title: string | null, linkMode: string | null, targetMeetingId: string | null, noticeToken: string | null) : Promise<Result<Meeting, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meetings_start_from_event", { eventKey, appKey, consentConfirmed, captureSystem, title, linkMode, targetMeetingId }) };
+    return { status: "ok", data: await TAURI_INVOKE("meetings_start_from_event", { eventKey, appKey, consentConfirmed, captureSystem, title, linkMode, targetMeetingId, noticeToken }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -12597,7 +12634,8 @@ export type NotebookOutlineSection = { id: string; name: string; group: string |
 export type NoticeApp = "teams" | "webex" | "neutral"
 /**
  * Warum aus dem Einfuegen nur ein Kopieren wurde. Der Text liegt dann
- * nachweislich in der Zwischenablage.
+ * ABSICHTLICH in der Zwischenablage (damit der Nutzer selbst einfuegen kann);
+ * die Meldung der Oberflaeche sagt das.
  */
 export type NoticeFallback =
 /**
@@ -12608,6 +12646,10 @@ export type NoticeFallback =
  * Im Vordergrund stand diese App selbst.
  */
 "own_window" |
+/**
+ * Im Vordergrund stand keine Besprechungs-App und kein Browser.
+ */
+"not_meeting_app" |
 /**
  * Der Fokus wechselte vor oder waehrend des Einfuegens.
  */
@@ -12649,13 +12691,19 @@ text: string;
  * Kommt die Zeile in den Protokollexport? Entschieden beim Anlegen
  * (Einstellung `export_line`).
  */
-in_export: boolean }
+in_export: boolean;
+/**
+ * Nur bei `paste`: die Besprechungs-App bzw. der Browser, in dem das
+ * Einfuegen ausgeloest wurde (Name aus dem Katalog, nie ein
+ * Fenstertitel: Titel koennen Personendaten enthalten).
+ */
+target: string | null }
 /**
  * Stand fuer die Oberflaeche.
  */
 export type NoticeStatus = {
 /**
- * Nachweise der Besprechung bzw. die geltenden vor dem Start (aelteste zuerst).
+ * Nachweise der Besprechung bzw. die geltenden des Startdialogs (aelteste zuerst).
  */
 records: NoticeRecord[];
 /**

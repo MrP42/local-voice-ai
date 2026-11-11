@@ -2001,10 +2001,12 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::compliance::compliance_set_profile,
             commands::compliance::compliance_set_training_opt_out,
             // G2 (#497): Hinweis an Teilnehmende
+            commands::meeting_notice::meeting_notice_dialog_open,
+            commands::meeting_notice::meeting_notice_dialog_close,
             commands::meeting_notice::meeting_notice_preview,
             commands::meeting_notice::meeting_notice_template,
+            commands::meeting_notice::meeting_notice_check_template,
             commands::meeting_notice::meeting_notice_status,
-            commands::meeting_notice::meeting_notice_reset_pending,
             commands::meeting_notice::meeting_notice_copy,
             commands::meeting_notice::meeting_notice_oral,
             commands::meeting_notice::meeting_notice_paste,

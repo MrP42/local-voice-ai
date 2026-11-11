@@ -5,14 +5,18 @@
 //! Die App sendet nie selbst: Kopieren legt nur Text in die Zwischenablage,
 //! Einfuegen drueckt nur Ctrl+V (Cmd+V) in das Fenster, das der Nutzer nach
 //! einer Frist im Vordergrund hat (`clipboard::paste_notice_guarded`), nie
-//! Enter und nie "Senden".
+//! Enter und nie "Senden". Eingefuegt wird nur in eine Besprechungs-App oder
+//! einen Browser (`nc::paste_target_decision`), nie in ein beliebiges Fenster.
 //!
-//! Ohne `meeting_id` entsteht der Nachweis vor dem Start (Startdialog) und wird
-//! vom Recorder nach erfolgreichem Start an die neue Besprechung gehaengt.
+//! Ohne `meeting_id` entsteht der Nachweis vor dem Start im Startdialog. Der
+//! Dialog bekommt beim Oeffnen ein Token (`meeting_notice_dialog_open`); der
+//! Nachweis gehoert zu diesem Token, und nur der Start mit demselben Token
+//! (`meetings_start*`) sieht ihn. Schliesst der Dialog, verfaellt er
+//! (`meeting_notice_dialog_close`).
 //!
 //! Fehlercodes (Konvention aus `commands::meetings`): `notice_disabled`,
-//! `notice_cancelled`, `notice_busy`, `clipboard_failed`, `store_failed`,
-//! `meetings_unavailable`.
+//! `notice_cancelled`, `notice_busy`, `notice_dialog_gone`, `clipboard_failed`,
+//! `store_failed`, `meetings_unavailable`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -26,7 +30,7 @@ use crate::clipboard::{self, GuardedPasteOutcome};
 use crate::commands::meetings::require_managed;
 use crate::managers::compliance::notice::{
     self as nc, MeetingNoticeSettings, NoticeApp, NoticeFallback, NoticeLang, NoticeRecord,
-    NoticeWay,
+    NoticeTarget, NoticeWay,
 };
 use crate::managers::meetings::notice as store_notice;
 use crate::managers::meetings::store::MeetingStore;
@@ -59,7 +63,7 @@ impl Drop for RunGuard {
 /// Stand fuer die Oberflaeche.
 #[derive(Serialize, Debug, Clone, Type)]
 pub struct NoticeStatus {
-    /// Nachweise der Besprechung bzw. die geltenden vor dem Start (aelteste zuerst).
+    /// Nachweise der Besprechung bzw. die geltenden des Startdialogs (aelteste zuerst).
     pub records: Vec<NoticeRecord>,
     /// Kann diese Plattform in ein fremdes Fenster einfuegen? (Nur Windows kann
     /// pruefen, dass der Fokus im Zielfenster blieb.)
@@ -87,15 +91,24 @@ fn enabled_settings(app: &AppHandle) -> Result<MeetingNoticeSettings, String> {
     }
 }
 
-/// Name des Anbieters, an den der Text der Notizen geht; `None`, wenn alles
-/// lokal bleibt (auch ohne aktiven Anbieter, wie in der Oberflaeche).
-fn external_provider(app: &AppHandle) -> Option<String> {
-    let s = settings::get_settings(app);
-    s.post_process_providers
-        .iter()
-        .find(|p| p.id == s.post_process_provider_id)
-        .filter(|p| !crate::managers::compliance::is_local(p))
-        .map(|p| p.label.clone())
+/// Namen der Anbieter, an die fuer die Besprechung Text geht und die nicht auf
+/// diesem Rechner laufen: der Standardanbieter (Chat, Folgeaufgaben, Einordnung)
+/// und der Anbieter der Notizen und Protokolle (Modell der Funktion
+/// `meeting_protocol`, falls eigens gewaehlt). Leer = alles bleibt lokal (auch
+/// ohne aktiven Anbieter, wie in der Oberflaeche).
+fn external_providers(app: &AppHandle) -> Vec<String> {
+    let all = settings::get_settings(app);
+    let for_notes = all.for_function(settings::FN_MEETING_PROTOCOL);
+    let used: Vec<(String, bool)> = [&all, &for_notes]
+        .into_iter()
+        .filter_map(|s| {
+            s.post_process_providers
+                .iter()
+                .find(|p| p.id == s.post_process_provider_id)
+        })
+        .map(|p| (p.label.clone(), crate::managers::compliance::is_local(p)))
+        .collect();
+    nc::external_names(used.iter().map(|(label, local)| (label.as_str(), *local)))
 }
 
 fn text_now(
@@ -104,28 +117,25 @@ fn text_now(
     lang: NoticeLang,
 ) -> Result<(MeetingNoticeSettings, String), String> {
     let s = enabled_settings(app)?;
-    let text = nc::text_for(&s, notice_app, lang, external_provider(app).as_deref());
+    let text = nc::text_for(&s, notice_app, lang, &external_providers(app));
     Ok((s, text))
 }
 
-/// Legt den Nachweis ab: an der Besprechung `meeting_id`, sonst vor dem Start.
+/// Legt den Nachweis ab: an der Besprechung oder im offenen Startdialog.
 fn store_record(
     app: &AppHandle,
-    meeting_id: Option<&str>,
+    target: NoticeTarget<'_>,
     record: &NoticeRecord,
 ) -> Result<(), String> {
-    match meeting_id {
-        Some(id) => {
+    match target {
+        NoticeTarget::Meeting(id) => {
             let store = require_managed(
                 app.try_state::<Arc<MeetingStore>>()
                     .map(|state| Arc::clone(&state)),
             )?;
             store_notice::record_on_meeting(&store, id, record)
         }
-        None => {
-            nc::PENDING.add(record.clone());
-            Ok(())
-        }
+        NoticeTarget::Dialog(token) => nc::PENDING.add(token, record.clone()),
     }
 }
 
@@ -140,6 +150,52 @@ fn map_fallback(reason: PasteFallback) -> Result<NoticeFallback, String> {
         PasteFallback::AccessibilityDenied => Ok(NoticeFallback::AccessibilityDenied),
         PasteFallback::ClipboardUnverified => Err("clipboard_failed".to_string()),
     }
+}
+
+/// Name der Programmdatei zu einem Prozess (`ms-teams.exe`), nie ein
+/// Fenstertitel (Titel koennen Personendaten enthalten). `None`, wenn der
+/// Prozess nicht lesbar ist; der Aufrufer behandelt das als unbekanntes Ziel.
+/// Laeuft im eigenen Prozess (kein Kindprozess) und liest nur diesen einen Eintrag.
+fn process_name(pid: u32) -> Option<String> {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    let pid = Pid::from_u32(pid);
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet),
+    );
+    let process = system.process(pid)?;
+    let name = process.name().to_string_lossy().trim().to_string();
+    if !name.is_empty() {
+        return Some(name);
+    }
+    process
+        .exe()
+        .and_then(|exe| exe.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+}
+
+/// Der Startdialog oeffnet: gibt ihm ein neues, zufaelliges Token. Nachweise vor
+/// dem Start tragen es, und nur der Start mit demselben Token (`meetings_start`,
+/// `meetings_start_from_event`) sieht sie. Ein frueherer Dialog und sein
+/// Nachweis verfallen.
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_notice_dialog_open() -> Result<String, String> {
+    let token = format!("{:032x}", rand::random::<u128>());
+    nc::PENDING.open(token.clone());
+    Ok(token)
+}
+
+/// Der Startdialog schliesst (Abbrechen, Schliessen oder nach dem Start): der
+/// Nachweis dieses Dialogs wird verworfen. Ein spaeter geoeffneter Dialog
+/// bleibt unberuehrt.
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_notice_dialog_close(dialog_token: String) -> Result<(), String> {
+    nc::PENDING.discard(&dialog_token);
+    Ok(())
 }
 
 /// Der fertige Text fuer die Vorschau und zum Kopieren.
@@ -169,12 +225,23 @@ pub async fn meeting_notice_template(
     ))
 }
 
-/// Nachweise der Besprechung `meeting_id`, ohne sie die geltenden vor dem Start.
+/// Platzhalter in `text`, die es nicht gibt (so geschrieben, wie sie dastehen).
+/// Die Einstellungen zeigen sie beim Bearbeiten und Speichern des Bausteins an;
+/// beim Einsetzen bleiben sie unveraendert im Text stehen.
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_notice_check_template(text: String) -> Vec<String> {
+    nc::unknown_placeholders(&text)
+}
+
+/// Nachweise der Besprechung `meeting_id`, ohne sie die geltenden des
+/// Startdialogs mit dem Token `dialog_token`.
 #[tauri::command]
 #[specta::specta]
 pub async fn meeting_notice_status(
     app: AppHandle,
     meeting_id: Option<String>,
+    dialog_token: Option<String>,
 ) -> Result<NoticeStatus, String> {
     let records = match meeting_id {
         Some(id) => {
@@ -184,20 +251,12 @@ pub async fn meeting_notice_status(
             )?;
             store_notice::records_of(&store, &id)
         }
-        None => nc::PENDING.fresh(now()),
+        None => nc::PENDING.fresh(dialog_token.as_deref(), now()),
     };
     Ok(NoticeStatus {
         records,
         paste_available: cfg!(target_os = "windows"),
     })
-}
-
-/// Verwirft die Nachweise vor dem Start (der Startdialog beginnt von vorn).
-#[tauri::command]
-#[specta::specta]
-pub async fn meeting_notice_reset_pending() -> Result<(), String> {
-    nc::PENDING.clear();
-    Ok(())
 }
 
 /// Legt den Hinweistext in die Zwischenablage und haelt das als Nachweis fest.
@@ -206,9 +265,11 @@ pub async fn meeting_notice_reset_pending() -> Result<(), String> {
 pub async fn meeting_notice_copy(
     app: AppHandle,
     meeting_id: Option<String>,
+    dialog_token: Option<String>,
     notice_app: NoticeApp,
     lang: NoticeLang,
 ) -> Result<NoticeOutcome, String> {
+    let target = nc::resolve_target(&nc::PENDING, meeting_id.as_deref(), dialog_token.as_deref())?;
     let (s, text) = text_now(&app, notice_app, lang)?;
     if !clipboard::copy_text_verified(&app, &text) {
         return Err("clipboard_failed".to_string());
@@ -220,8 +281,9 @@ pub async fn meeting_notice_copy(
         lang,
         text,
         in_export: s.export_line,
+        target: None,
     };
-    store_record(&app, meeting_id.as_deref(), &record)?;
+    store_record(&app, target, &record)?;
     Ok(NoticeOutcome {
         record,
         fallback: None,
@@ -234,9 +296,11 @@ pub async fn meeting_notice_copy(
 pub async fn meeting_notice_oral(
     app: AppHandle,
     meeting_id: Option<String>,
+    dialog_token: Option<String>,
     notice_app: NoticeApp,
     lang: NoticeLang,
 ) -> Result<NoticeOutcome, String> {
+    let target = nc::resolve_target(&nc::PENDING, meeting_id.as_deref(), dialog_token.as_deref())?;
     let s = enabled_settings(&app)?;
     let record = NoticeRecord {
         at: now(),
@@ -245,83 +309,143 @@ pub async fn meeting_notice_oral(
         lang,
         text: String::new(),
         in_export: s.export_line,
+        target: None,
     };
-    store_record(&app, meeting_id.as_deref(), &record)?;
+    store_record(&app, target, &record)?;
     Ok(NoticeOutcome {
         record,
         fallback: None,
     })
 }
 
-/// Fuegt den Hinweistext nach einer Frist in das Chatfeld des Fensters ein, das
-/// dann im Vordergrund steht (die Frist nutzt der Nutzer, um in das Chatfeld
-/// der Besprechung zu klicken). Gesendet wird nie. Steht dann kein fremdes
-/// Fenster im Vordergrund oder scheitert eine Sicherung, bleibt der Text in
-/// der Zwischenablage (`fallback`), und der Nachweis lautet "kopiert".
+/// Was nach Frist, Zielpruefung und Einfuegeversuch feststeht.
+struct PasteDone {
+    way: NoticeWay,
+    fallback: Option<NoticeFallback>,
+    /// Nur nach einem ausgeloesten Einfuegen: Name der App.
+    target: Option<String>,
+    /// `export_line` zum Zeitpunkt des Einfuegens (nicht des Befehlsaufrufs).
+    export_line: bool,
+}
+
+/// Der blockierende Teil von `meeting_notice_paste`: Frist, Zielpruefung, ein
+/// Einfuegeversuch.
+///
+/// Zwischenablage: ist das Ziel keine Besprechungs-App (oder fehlt es, oder
+/// scheitert eine Sicherung), bleibt der Hinweistext ABSICHTLICH in der
+/// Zwischenablage, damit der Nutzer selbst einfuegen kann; die Meldung der
+/// Oberflaeche sagt das ("Der Text liegt in der Zwischenablage."). Den alten
+/// Inhalt der Zwischenablage stellt nur ein gelungenes Einfuegen wieder her
+/// (`clipboard::paste_notice_guarded`).
+fn run_paste(app: &AppHandle, text: &str, secs: u32) -> Result<PasteDone, String> {
+    for _ in 0..secs {
+        for _ in 0..10 {
+            if CANCEL.load(Ordering::Acquire) {
+                return Err("notice_cancelled".to_string());
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+    if CANCEL.load(Ordering::Acquire) {
+        return Err("notice_cancelled".to_string());
+    }
+    // Waehrend der Frist kann die Funktion ausgeschaltet worden sein: dann wird
+    // nichts mehr eingefuegt.
+    let s = enabled_settings(app)?;
+    // EIN Fenster wird erfasst, geprueft (fremd, Besprechungs-App oder Browser) und
+    // kommt als Ziel in die Sicherung: `paste_notice_guarded` vergleicht es direkt
+    // vor dem Tastendruck erneut mit dem Vordergrund. Ein zweites Erfassen koennte ein
+    // anderes Fenster liefern als das gepruefte.
+    let foreground = paste_guard::capture_paste_target();
+    let app_name = match nc::paste_target_decision(
+        foreground.map(|t| t.pid),
+        std::process::id(),
+        process_name,
+    ) {
+        Ok(name) => name,
+        Err(reason) => {
+            if !clipboard::copy_text_verified(app, text) {
+                return Err("clipboard_failed".to_string());
+            }
+            return Ok(PasteDone {
+                way: NoticeWay::Clipboard,
+                fallback: Some(reason),
+                target: None,
+                export_line: s.export_line,
+            });
+        }
+    };
+    match clipboard::paste_notice_guarded(text, app.clone(), foreground) {
+        GuardedPasteOutcome::Pasted => Ok(PasteDone {
+            way: NoticeWay::Paste,
+            fallback: None,
+            target: Some(app_name),
+            export_line: s.export_line,
+        }),
+        GuardedPasteOutcome::NothingToDo => Err("notice_cancelled".to_string()),
+        GuardedPasteOutcome::Fallback(reason) => Ok(PasteDone {
+            way: NoticeWay::Clipboard,
+            fallback: Some(map_fallback(reason)?),
+            target: None,
+            export_line: s.export_line,
+        }),
+    }
+}
+
+/// Loest nach einer Frist Ctrl+V (Cmd+V) in dem Fenster aus, das dann im
+/// Vordergrund steht (die Frist nutzt der Nutzer, um in das Chatfeld der
+/// Besprechung zu klicken). Gesendet wird nie, und ob der Text im Chatfeld
+/// ankam, kann die App nicht sehen: der Nachweis lautet "Einfuegen ausgeloest in
+/// <App>". Steht dann kein fremdes Fenster im Vordergrund, ist es keine
+/// Besprechungs-App und kein Browser, oder scheitert eine Sicherung, wird nichts
+/// eingefuegt; der Text bleibt in der Zwischenablage (`fallback`), und der
+/// Nachweis lautet "kopiert". Der Nachweis traegt den Text, der vor der Frist
+/// berechnet wurde, also den, der tatsaechlich eingefuegt wurde.
 #[tauri::command]
 #[specta::specta]
 pub async fn meeting_notice_paste(
     app: AppHandle,
     meeting_id: Option<String>,
+    dialog_token: Option<String>,
     notice_app: NoticeApp,
     lang: NoticeLang,
     countdown_secs: u32,
 ) -> Result<NoticeOutcome, String> {
-    let (s, text) = text_now(&app, notice_app, lang)?;
+    let target = nc::resolve_target(&nc::PENDING, meeting_id.as_deref(), dialog_token.as_deref())?;
+    let (_, text) = text_now(&app, notice_app, lang)?;
     let _running = RunGuard::enter()?;
     CANCEL.store(false, Ordering::Release);
     let secs = nc::clamp_countdown(countdown_secs);
     let paste_app = app.clone();
-    let (way, fallback) = tauri::async_runtime::spawn_blocking(move || {
-        for _ in 0..secs {
-            for _ in 0..10 {
-                if CANCEL.load(Ordering::Acquire) {
-                    return Err("notice_cancelled".to_string());
-                }
-                std::thread::sleep(Duration::from_millis(100));
-            }
-        }
-        if CANCEL.load(Ordering::Acquire) {
-            return Err("notice_cancelled".to_string());
-        }
-        let target = paste_guard::capture_paste_target();
-        let outcome = match nc::paste_target_check(target.map(|t| t.pid), std::process::id()) {
-            Ok(_) => clipboard::paste_notice_guarded(&text, paste_app, target),
-            Err(reason) => {
-                if !clipboard::copy_text_verified(&paste_app, &text) {
-                    return Err("clipboard_failed".to_string());
-                }
-                return Ok((NoticeWay::Clipboard, Some(reason)));
-            }
-        };
-        match outcome {
-            GuardedPasteOutcome::Pasted => Ok((NoticeWay::Paste, None)),
-            GuardedPasteOutcome::NothingToDo => Err("notice_cancelled".to_string()),
-            GuardedPasteOutcome::Fallback(reason) => {
-                Ok((NoticeWay::Clipboard, Some(map_fallback(reason)?)))
-            }
-        }
-    })
-    .await
-    .map_err(|e| format!("meeting_notice_paste panicked: {e}"))??;
-    let text = nc::text_for(&s, notice_app, lang, external_provider(&app).as_deref());
+    let paste_text = text.clone();
+    let done = tauri::async_runtime::spawn_blocking(move || run_paste(&paste_app, &paste_text, secs))
+        .await
+        .map_err(|e| format!("meeting_notice_paste panicked: {e}"))??;
     let record = NoticeRecord {
         at: now(),
-        way,
+        way: done.way,
         app: notice_app,
         lang,
         text,
-        in_export: s.export_line,
+        in_export: done.export_line,
+        target: done.target,
     };
-    store_record(&app, meeting_id.as_deref(), &record)?;
-    Ok(NoticeOutcome { record, fallback })
+    store_record(&app, target, &record)?;
+    Ok(NoticeOutcome {
+        record,
+        fallback: done.fallback,
+    })
 }
 
-/// Bricht die laufende Frist des Einfuegens ab.
+/// Bricht die laufende Frist des Einfuegens ab (die Oberflaeche ruft das auch,
+/// wenn der Dialog waehrend der Frist schliesst). Ohne laufende Frist ohne
+/// Wirkung: ein spaeter Abbruch trifft nicht das naechste Einfuegen.
 #[tauri::command]
 #[specta::specta]
 pub async fn meeting_notice_cancel_paste() -> Result<(), String> {
-    CANCEL.store(true, Ordering::Release);
+    if RUNNING.load(Ordering::Acquire) {
+        CANCEL.store(true, Ordering::Release);
+    }
     Ok(())
 }
 
@@ -384,5 +508,23 @@ mod tests {
         assert!(!body.contains("send_return_key"));
         assert!(!body.contains("auto_submit"));
         assert!(body.contains("send_paste_ctrl_v"));
+    }
+
+    /// Befund 2: das Ziel wird VOR dem Tastendruck geprueft und als Ziel der
+    /// Sicherung weitergegeben (ein Fenster, nicht zwei Erfassungen).
+    #[test]
+    fn the_paste_checks_the_target_program_before_it_hands_over_to_the_guard() {
+        let source = include_str!("meeting_notice.rs").replace("\r\n", "\n");
+        let body = source
+            .split("fn run_paste(")
+            .nth(1)
+            .and_then(|rest| rest.split("/// Loest nach einer Frist").next())
+            .expect("run_paste gefunden");
+        let capture = body.find("capture_paste_target()").expect("Erfassen");
+        let decision = body.find("paste_target_decision(").expect("Pruefung");
+        let paste = body.find("paste_notice_guarded(").expect("Einfuegen");
+        assert!(capture < decision && decision < paste);
+        assert_eq!(body.matches("capture_paste_target()").count(), 1);
+        assert!(body.contains("foreground)"), "dasselbe Fenster als Ziel");
     }
 }

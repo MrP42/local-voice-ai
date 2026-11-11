@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/Button";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { MeetingChatNotice } from "@/components/settings/meetings/MeetingChatNotice";
 import { BriefButton } from "@/components/settings/meetings/people/BriefButton";
-import { translateMeetingError } from "@/components/settings/meetings/meetingErrors";
+import { translateStartError } from "@/components/settings/meetings/meetingErrors";
 
 type Step = "offer" | "consent";
 
@@ -128,7 +128,7 @@ const MeetingPrompt: React.FC = () => {
     );
     setBusy(false);
     if (result.status === "error") {
-      setError(translateMeetingError(result.error, t));
+      setError(translateStartError(result.error, t));
       // Nicht mehr offen (anderswo entschieden, abgelaufen): das Fenster hat nichts mehr zu tun.
       if (
         result.error.startsWith("consent_") &&
@@ -155,10 +155,13 @@ const MeetingPrompt: React.FC = () => {
       "prompt",
       // Das Hinweisfenster legt immer eine neue Besprechung an.
       null,
+      // G2 (#497): das Hinweisfenster hat keinen Startdialog und damit keinen
+      // Nachweis; bei Pflicht verweist die Meldung auf die Seite "Aufnahmen".
+      null,
     );
     setBusy(false);
     if (result.status === "error") {
-      setError(translateMeetingError(result.error, t));
+      setError(translateStartError(result.error, t));
       return;
     }
     setPayload(null);

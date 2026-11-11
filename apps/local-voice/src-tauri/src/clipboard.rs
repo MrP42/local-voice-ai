@@ -733,9 +733,14 @@ pub fn copy_text_verified(app_handle: &AppHandle, text: &str) -> bool {
 /// Immer Ctrl+V (Cmd+V auf dem Mac), unabhaengig von der Einfuegemethode des
 /// Diktats, und NIE Enter oder "Auto-Senden": gesendet wird nur, wenn der Nutzer
 /// es selbst tut. Sonst dieselben Sicherungen wie beim Diktat (`paste_guard`:
-/// Fokus, Rechte, Berechtigung): scheitert etwas, bleibt der Text nachweislich
-/// in der Zwischenablage und der Grund wird gemeldet. Nach einem
-/// gelungenen Einfuegen kommt der alte Inhalt der Zwischenablage zurueck.
+/// Fokus, Rechte, Berechtigung). Der Aufrufer hat `target` schon als
+/// Besprechungs-App oder Browser geprueft (`compliance::notice::paste_target_decision`).
+///
+/// Zwischenablage, Soll: scheitert eine Sicherung, bleibt der Hinweistext
+/// ABSICHTLICH in der Zwischenablage (und ersetzt deren frueheren Inhalt), damit
+/// der Nutzer ihn selbst einfuegen kann; der Grund wird gemeldet, und die
+/// Meldung der Oberflaeche sagt, dass der Text in der Zwischenablage liegt.
+/// Den frueheren Inhalt stellt NUR ein gelungenes Einfuegen wieder her.
 pub fn paste_notice_guarded(
     text: &str,
     app_handle: AppHandle,

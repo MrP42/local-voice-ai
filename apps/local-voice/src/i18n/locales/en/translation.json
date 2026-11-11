@@ -2105,6 +2105,7 @@
         "templateCustom": "Your own text",
         "templateBuiltin": "Built-in text",
         "placeholders": "Placeholders: {purpose}, {retention} and {processing} (whether the notes are processed locally or by a provider).",
+        "unknownPlaceholders": "Unknown placeholders: {{names}}. They stay in the text unchanged.",
         "save": "Save text",
         "restore": "Restore built-in text"
       }
@@ -3783,6 +3784,7 @@
     "errors": {
       "consentRequired": "Recording will not start without confirmed consent.",
       "noticeRequired": "Provide the notice to participants first, or confirm that everyone was informed verbally.",
+      "noticeRequiredElsewhere": "The notice to participants is required and can only be provided in the start dialog. Start the recording on the \"Recordings\" page.",
       "dictationActive": "A dictation is currently running — please stop it first.",
       "deltaStoreFailed": "The transcript could not be saved. The recording keeps running.",
       "chunkTranscriptionFailed": "A chunk could not be transcribed. The recording keeps running.",
@@ -4503,12 +4505,14 @@
       "status": {
         "none": "No notice provided yet.",
         "clipboard": "Notice copied to the clipboard at {{time}} ({{app}}).",
-        "paste": "Notice inserted into the chat at {{time}} ({{app}}). Sending it is up to you.",
+        "paste": "Insertion triggered at {{time}} in {{target}} (text: {{app}}). The app cannot check that the text reached the chat field. Sending it is up to you.",
+        "pasteNoTarget": "Insertion triggered at {{time}} (text: {{app}}). The app cannot check that the text reached the chat field. Sending it is up to you.",
         "oral": "Confirmed at {{time}}: participants were informed verbally."
       },
       "fallback": {
         "no_target": "Nothing was inserted: no other window was in front. The text is in the clipboard.",
         "own_window": "Nothing was inserted: you did not switch to the meeting window. The text is in the clipboard.",
+        "not_meeting_app": "Nothing was inserted: no meeting app or browser was in front. The text is in the clipboard.",
         "focus_changed": "Nothing was inserted: the focus changed. The text is in the clipboard.",
         "target_elevated": "Nothing was inserted: the target window runs with higher rights. The text is in the clipboard.",
         "injection_failed": "Inserting failed. The text is in the clipboard.",
@@ -4517,6 +4521,7 @@
       "errors": {
         "clipboard_failed": "The clipboard could not be written. Please select the text by hand.",
         "notice_cancelled": "Inserting was cancelled.",
+        "notice_dialog_gone": "The start dialog was closed or reopened. Please provide the notice again.",
         "notice_busy": "An insertion is already running.",
         "notice_disabled": "The notice to participants is switched off.",
         "meetings_unavailable": "Meetings are not available.",
@@ -4535,6 +4540,8 @@
       "noticeName": "Copy notice",
       "noticeCopied": "Notice copied",
       "noticeOpen": "Notice to participants",
+      "noticeOpenLabelNone": "Notice to participants, not provided yet",
+      "noticeOpenLabelDone": "Notice to participants, provided",
       "noticeOpenHint": "Copy or insert the notice into the meeting chat",
       "noticeOpenDone": "A notice was provided – open to see when",
       "startHint": "Opens the start dialog with title, project, template and consent"

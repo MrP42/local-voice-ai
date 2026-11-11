@@ -81,6 +81,7 @@ const TemplateEditor: React.FC<{
   const [lang, setLang] = useState<NoticeLang>(cfg.default_lang);
   const [stored, setStored] = useState("");
   const [draft, setDraft] = useState("");
+  const [unknown, setUnknown] = useState<string[]>([]);
   const custom = cfg.templates.some((x) => x.app === app && x.lang === lang);
   const templatesKey = JSON.stringify(cfg.templates);
 
@@ -100,6 +101,24 @@ const TemplateEditor: React.FC<{
       cancelled = true;
     };
   }, [app, lang, templatesKey]);
+
+  // Platzhalter, die es nicht gibt, zeigt die Zeile beim Bearbeiten und nach dem
+  // Speichern an; im Text bleiben sie unverändert stehen (kein Fehler, aber ein
+  // Tippfehler fiele sonst erst in der Besprechung auf).
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const names = await commands.meetingNoticeCheckTemplate(draft);
+        if (!cancelled) setUnknown(Array.isArray(names) ? names : []);
+      } catch {
+        if (!cancelled) setUnknown([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [draft]);
 
   return (
     <SettingContainer
@@ -153,6 +172,17 @@ const TemplateEditor: React.FC<{
         <p className="text-xs text-text/70">
           {t("settings.meetings.notice.placeholders")}
         </p>
+        {unknown.length > 0 && (
+          <p
+            role="status"
+            className="text-xs text-red-500"
+            data-testid="notice-template-unknown"
+          >
+            {t("settings.meetings.notice.unknownPlaceholders", {
+              names: unknown.join(", "),
+            })}
+          </p>
+        )}
         <div className="flex flex-wrap gap-2">
           <Button
             type="button"

@@ -613,15 +613,14 @@ pub fn build_bundle(store: &MeetingStore, meeting_id: &str) -> Result<ExportBund
                 .to_string()
         })
         .unwrap_or_default();
-    let participant_notice = super::notice::export_line_for(store, meeting_id, |at| {
-        chrono::DateTime::from_timestamp(at, 0)
-            .map(|d| {
-                d.with_timezone(&chrono::Local)
-                    .format("%Y-%m-%d %H:%M")
-                    .to_string()
-            })
-            .unwrap_or_default()
-    });
+    // G2 (#497): in der Sprache der Besprechung (Englisch nur bei einer englischen),
+    // mit Zeitzone.
+    let participant_notice = super::notice::export_line_for(
+        store,
+        meeting_id,
+        crate::managers::compliance::notice::NoticeLang::for_language(meeting.language.as_deref()),
+        super::notice::local_stamp,
+    );
     Ok(ExportBundle {
         meeting,
         date_label,
@@ -1858,8 +1857,7 @@ pub(crate) mod tests {
             .is_none());
 
         let mut mit = nordlicht_bundle();
-        let zeile =
-            "Hinweis an Teilnehmende: am 2026-09-28 14:31 in den Chat eingefügt (Teams, Deutsch).";
+        let zeile = "Hinweis an Teilnehmende: am 2026-09-28 14:31 (UTC+02:00) Einfügen ausgelöst in Microsoft Teams (Text: Teams, Deutsch).";
         mit.participant_notice = Some(zeile.to_string());
         let md = bundle_to_markdown(&mit, &ExportParts::all());
         assert_eq!(md.matches("Hinweis an Teilnehmende").count(), 1, "{md}");

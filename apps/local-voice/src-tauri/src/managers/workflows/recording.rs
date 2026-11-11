@@ -150,6 +150,9 @@ pub(crate) fn start_failure(code: &str) -> String {
     let text = match code {
         "already_recording" => "Es läuft schon eine Aufnahme.",
         "dictation_active" => "Ein Diktat läuft gerade; die Aufnahme konnte nicht starten.",
+        "notice_required" => {
+            "Der Hinweis an Teilnehmende ist Pflicht und lässt sich hier nicht bereitstellen. Starten Sie die Aufnahme über die Seite „Aufnahmen“."
+        }
         "meetings_unavailable" => {
             "Die Besprechungen sind nicht verfügbar (Speicher nicht geöffnet)."
         }

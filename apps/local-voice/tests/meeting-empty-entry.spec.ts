@@ -243,6 +243,7 @@ test("Aufnahme starten fuellt denselben Eintrag (Einwilligung bleibt Pflicht, Pr
     consentConfirmed: true,
     captureSystem: true,
     targetMeetingId: FIRST,
+    noticeToken: null,
   });
   // Derselbe Eintrag, jetzt eine laufende Aufnahme; keine zweite Besprechung.
   await expect(page.getByTestId("status-chip")).toHaveAttribute(

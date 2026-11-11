@@ -107,3 +107,13 @@ export const translateMeetingError = (code: string, t: TFunction): string => {
   const key = ERROR_KEY_MAP[normalized];
   return key ? t(key) : code;
 };
+
+/**
+ * Fehler eines Starts ohne Startdialog (Hinweisfenster, Ablauf, Agent): Dort gibt
+ * es keine Stelle für den Hinweis an Teilnehmende. Fehlt er bei Pflicht, führt die
+ * Meldung zur Seite "Aufnahmen" (G2, #497); alles andere übersetzt wie sonst.
+ */
+export const translateStartError = (code: string, t: TFunction): string =>
+  code.split(":")[0].trim() === "notice_required"
+    ? t("meetings.errors.noticeRequiredElsewhere")
+    : translateMeetingError(code, t);

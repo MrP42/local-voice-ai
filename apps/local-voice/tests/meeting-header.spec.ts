@@ -598,10 +598,10 @@ test.describe("Bedienung oben rechts", () => {
     await page.getByRole("button", { name: /Aufnahme starten/ }).click();
     const dialog = page.getByRole("dialog", { name: "Aufnahme starten" });
     await expect(dialog).toBeVisible();
-    // Einwilligung (§ 201 StGB) und Hinweis fuer den Meeting-Chat stehen im Dialog.
+    // Einwilligung (§ 201 StGB) und der Hinweis an Teilnehmende (G2) stehen im Dialog.
     await expect(dialog).toContainText("Einwilligung erforderlich");
     await expect(dialog).toContainText("201 StGB");
-    await expect(dialog.getByTestId("consent-chat-notice")).toBeVisible();
+    await expect(dialog.getByTestId("consent-notice")).toBeVisible();
     await expect(dialog.getByTestId("record-template")).toBeVisible();
     await expect(dialog.getByTestId("capture-system")).toBeChecked();
     await expect(dialog.getByTestId("diarize-mic")).not.toBeChecked();
@@ -640,6 +640,7 @@ test.describe("Bedienung oben rechts", () => {
       consentConfirmed: true,
       captureSystem: true,
       targetMeetingId: null,
+      noticeToken: null,
     });
     await expect
       .poll(async () => (await calls(page, "meetings_set_folders")).length)
@@ -717,9 +718,11 @@ test.describe("Bedienung oben rechts", () => {
       "aria-label",
       "Beenden",
     );
-    await expect(
-      live.getByTestId("recording-chat-notice-copy"),
-    ).toHaveAttribute("aria-label", "Hinweis kopieren");
+    // G2: der Hinweis an Teilnehmende; der Zustand steht im Namen des Knopfs.
+    await expect(live.getByTestId("recording-notice-open")).toHaveAttribute(
+      "aria-label",
+      "Hinweis an Teilnehmende, noch nicht bereitgestellt",
+    );
     // Kein zweiter Start waehrend der Aufnahme.
     await expect(page.getByTestId("rec-start")).toHaveCount(0);
 

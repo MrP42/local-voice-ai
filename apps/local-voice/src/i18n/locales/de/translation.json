@@ -2105,6 +2105,7 @@
         "templateCustom": "Eigener Text",
         "templateBuiltin": "Mitgelieferter Text",
         "placeholders": "Platzhalter: {purpose}, {retention} und {processing} (ob die Notizen lokal oder bei einem Anbieter verarbeitet werden).",
+        "unknownPlaceholders": "Unbekannte Platzhalter: {{names}}. Sie bleiben im Text unverändert stehen.",
         "save": "Text speichern",
         "restore": "Mitgelieferten Text wiederherstellen"
       }
@@ -3783,6 +3784,7 @@
     "errors": {
       "consentRequired": "Ohne bestätigte Einwilligung startet keine Aufnahme.",
       "noticeRequired": "Stellen Sie zuerst den Hinweis an Teilnehmende bereit oder bestätigen Sie, dass alle mündlich informiert wurden.",
+      "noticeRequiredElsewhere": "Der Hinweis an Teilnehmende ist Pflicht und lässt sich nur im Startdialog bereitstellen. Starten Sie die Aufnahme auf der Seite „Aufnahmen“.",
       "dictationActive": "Ein Diktat läuft gerade — bitte zuerst beenden.",
       "deltaStoreFailed": "Das Transkript konnte nicht gespeichert werden. Die Aufnahme läuft weiter.",
       "chunkTranscriptionFailed": "Ein Abschnitt konnte nicht transkribiert werden. Die Aufnahme läuft weiter.",
@@ -4503,12 +4505,14 @@
       "status": {
         "none": "Noch kein Hinweis bereitgestellt.",
         "clipboard": "Hinweis um {{time}} Uhr in die Zwischenablage kopiert ({{app}}).",
-        "paste": "Hinweis um {{time}} Uhr in den Chat eingefügt ({{app}}). Das Absenden bleibt Ihnen überlassen.",
+        "paste": "Einfügen um {{time}} Uhr in {{target}} ausgelöst (Text: {{app}}). Ob der Text im Chatfeld ankam, prüft die App nicht. Das Absenden bleibt Ihnen überlassen.",
+        "pasteNoTarget": "Einfügen um {{time}} Uhr ausgelöst (Text: {{app}}). Ob der Text im Chatfeld ankam, prüft die App nicht. Das Absenden bleibt Ihnen überlassen.",
         "oral": "Um {{time}} Uhr bestätigt: Teilnehmende wurden mündlich informiert."
       },
       "fallback": {
         "no_target": "Nichts eingefügt: Es stand kein anderes Fenster im Vordergrund. Der Text liegt in der Zwischenablage.",
         "own_window": "Nichts eingefügt: Sie sind nicht zum Besprechungsfenster gewechselt. Der Text liegt in der Zwischenablage.",
+        "not_meeting_app": "Nichts eingefügt: Im Vordergrund steht keine Besprechungs-App und kein Browser. Der Text liegt in der Zwischenablage.",
         "focus_changed": "Nichts eingefügt: Der Fokus hat gewechselt. Der Text liegt in der Zwischenablage.",
         "target_elevated": "Nichts eingefügt: Das Zielfenster läuft mit höheren Rechten. Der Text liegt in der Zwischenablage.",
         "injection_failed": "Das Einfügen ist fehlgeschlagen. Der Text liegt in der Zwischenablage.",
@@ -4517,6 +4521,7 @@
       "errors": {
         "clipboard_failed": "Die Zwischenablage ließ sich nicht beschreiben. Bitte markieren Sie den Text von Hand.",
         "notice_cancelled": "Das Einfügen wurde abgebrochen.",
+        "notice_dialog_gone": "Der Startdialog wurde geschlossen oder neu geöffnet. Bitte stellen Sie den Hinweis erneut bereit.",
         "notice_busy": "Es läuft bereits ein Einfügen.",
         "notice_disabled": "Der Hinweis an Teilnehmende ist ausgeschaltet.",
         "meetings_unavailable": "Besprechungen sind nicht verfügbar.",
@@ -4535,6 +4540,8 @@
       "noticeName": "Hinweis kopieren",
       "noticeCopied": "Hinweis kopiert",
       "noticeOpen": "Hinweis an Teilnehmende",
+      "noticeOpenLabelNone": "Hinweis an Teilnehmende, noch nicht bereitgestellt",
+      "noticeOpenLabelDone": "Hinweis an Teilnehmende, bereitgestellt",
       "noticeOpenHint": "Hinweis kopieren oder in den Besprechungs-Chat einfügen",
       "noticeOpenDone": "Ein Hinweis wurde bereitgestellt – öffnen, um den Zeitpunkt zu sehen",
       "startHint": "Öffnet den Startdialog mit Titel, Projekt, Vorlage und Einwilligung"
