@@ -1292,8 +1292,10 @@ public actor AssistantSession {
 
         // Standzeile und `start` zuerst, abgewartet: Die Zeilen der Anfrage stehen in der Reihenfolge state, start, …, h, end. Der Abschluss
         // stellt die Standzeile SELBST sicher (`ensure`, Schreibfolge 1/9: ohne dauerhafte Standzeile kein gültiger Anfrageeintrag), bevor
-        // er `start` schreibt, und liest ihr Ergebnis hier, bei der Entscheidung (Runde 11, V2): Ihr Fehler hängt nicht am Anspruch der
-        // Anfrage, also sähe ihn weder `waitUntilWritten` noch eine frühe Kopie des Laufstandes. Steht sie nicht oder ließ sich `start` nicht
+        // er `start` schreibt, und liest ihr Ergebnis hier, bei der Entscheidung (Runde 11, V2): Eine frühe Kopie des Laufstandes sähe den
+        // Fehler dieses Versuchs nicht. Der Fehler eines Versuchs, den die Anfrage geteilt hat, steht außerdem an ihrem Anspruch (Runde 12,
+        // W1) und wirkt weiter unten über `hasFailed` und `waitUntilWritten`, auch wenn die Wiederholung hier gelingt. Steht sie nicht oder
+        // ließ sich `start` nicht
         // schreiben, endet die Anfrage mit Ausgang „Fehler“ und `lost`, ohne Beitrag und ohne Marken; die Schlusszeile bekommt ihre
         // Startzeile (Gruppe, kein `end` nach einem fehlgeschlagenen Anhängen des `start`). Ein `start`, das stehen blieb, kann ohne `end`
         // bleiben (dann „unvollständig“). Der Leser faltet doppelte Startzeilen zu EINEM Eintrag.
