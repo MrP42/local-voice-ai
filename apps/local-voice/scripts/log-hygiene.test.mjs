@@ -1,13 +1,22 @@
 // Lva#509/#511: Auszüge und Äußerungen stehen nie im Log. Geprüft werden ALLE Log-Aufrufe in den Dateien
 // des Inhaltszugriffs (Rust: `app_context/`, `voice_call/`, `commands/voice_tools.rs`; Oberfläche:
 // `components/voice-call/`). Ein kleiner Scanner zerlegt den Quelltext in Bezeichner, Zeichenketten
-// (Rust: auch Raw-Strings und Zeichenliterale; TypeScript: auch Template-Literale), Kommentare und
-// Klammern. Ein Log-Aufruf ist eine Namensfolge (`log :: info !`, `console . log`) gefolgt von einer
-// öffnenden Klammer, über beliebigen Leerraum und Zeilenumbrüche. Er besteht nur, wenn seine Argumente
-// reine Textliterale ohne Platzhalter sind; alles andere fällt auf, auch ohne Inhaltsnamen. Ausnahmen
-// stehen in `ERLAUBT`, gebunden an Datei und genauen Aufruf, höchstens einmal je Eintrag.
-// Rust-Testcode (`#[cfg(test)]`, `#[test]`) wird per Klammertiefe blockweise übersprungen; Code danach
-// zählt wieder. Ist eine Blockgrenze nicht sicher bestimmbar, meldet die Prüfung einen Fehler.
+// (Rust: auch Raw-Strings und Zeichenliterale; TypeScript: auch Template-Literale samt ihrer `${…}`-
+// Ausdrücke, die als Code gelesen werden), Kommentare und Klammern. Ein Log-Aufruf ist eine Namensfolge
+// (`log :: info !`, `console . log`) gefolgt von einer öffnenden Klammer, über beliebigen Leerraum und
+// Zeilenumbrüche. Er besteht nur, wenn seine Argumente reine Textliterale ohne Platzhalter sind; alles
+// andere fällt auf, auch ohne Inhaltsnamen. Ausnahmen stehen in `ERLAUBT`, gebunden an Datei und den
+// vollständigen Aufruf samt Pfad, höchstens einmal je Eintrag.
+// Rust-Testcode wird nur bei exakt `#[cfg(test)]`, `#[test]` und `…::test` per Klammertiefe blockweise
+// übersprungen (ein inneres `#![cfg(test)]` höchstens den umschließenden Block); jedes andere Attribut
+// blendet nichts aus. Code danach zählt wieder.
+//
+// Grenzen, ehrlich: (1) Die Prüfung ist ein Stolperdraht gegen versehentliches Loggen von Inhalten in
+// den genannten Verzeichnissen und kein Beweis gegen absichtliche Umgehung. (2) Unbekannte oder nicht
+// sicher einordbare Konstrukte sind Fehler, kein Durchlass (offene Literale, unbestimmbare Blockgrenzen,
+// Umbenennung von Log-Makros per `use … as`, `macro_rules!` mit Log-Makro, `console` ohne Aufruf).
+// (3) Die strukturelle Durchsetzung über Lint-Regeln mit echten Parsern ist als eigene Aufgabe
+// vermerkt: lva#518.
 // Lauf: node --test scripts/log-hygiene.test.mjs (Node >= 22.6).
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
@@ -38,7 +47,7 @@ const TS = ordner("src/components/voice-call", /\.tsx?$/);
  */
 const ERLAUBT = new Map([
   [
-    'src-tauri/src/commands/voice_tools.rs|warn ! ( "voice_tools: {what} nicht lesbar: {e}" )',
+    'src-tauri/src/commands/voice_tools.rs|log :: warn ! ( "voice_tools: {what} nicht lesbar: {e}" )',
     "`what` ist ein fester Bereichsname, `e` ein Dateifehler des Systems",
   ],
   [
@@ -52,6 +61,7 @@ const INHALT =
   /\b(excerpt|excerpts|question|transcript|utterance|text|content|answer|hits?|prompt|message|messages|req|sentence|piece|userText|heard)\b/i;
 
 const RUST_LOGS = new Set([
+  "log",
   "trace",
   "debug",
   "info",
@@ -109,14 +119,16 @@ function tokenize(src, sprache) {
     return fehler("nicht abgeschlossene Zeichenkette");
   };
   /** Template-Literal ab `j` (hinter dem öffnenden Backtick); liefert Ende und `${`-Befund. */
-  const templateEnde = (j) => {
+  const templateEnde = (j, ausdruecke = []) => {
     let interp = false;
     for (; j < n; j++) {
       if (src[j] === "\\") j++;
       else if (src[j] === "`") return [j + 1, interp];
       else if (src[j] === "$" && src[j + 1] === "{") {
         interp = true;
-        j = ausdruckEnde(j + 2);
+        const ende = ausdruckEnde(j + 2);
+        ausdruecke.push([j + 2, ende]);
+        j = ende;
       }
     }
     i = j;
@@ -198,8 +210,15 @@ function tokenize(src, sprache) {
         continue;
       }
       if (c === "`") {
-        const [j, interp] = templateEnde(i + 1);
+        const ausdruecke = [];
+        const [j, interp] = templateEnde(i + 1, ausdruecke);
         out.push({ t: "str", v: src.slice(i, j), interp });
+        // Die Ausdrücke in `${ … }` sind Code: eigene Token, in geschweifte Klammern gefasst.
+        for (const [a, b] of ausdruecke)
+          out.push({ t: "p", v: "{" }, ...tokenize(src.slice(a, b), sprache), {
+            t: "p",
+            v: "}",
+          });
         i = j;
         continue;
       }
@@ -258,28 +277,47 @@ function schliessende(tok, von) {
   throw new Unsicher(`Klammer ab Token ${von} bleibt offen`);
 }
 
-/** Rust: Token-Bereiche `[von, bis)`, die zu einem Testattribut gehören. */
+/**
+ * Ist der Inhalt eines Attributs EXAKT eine Testmarke? Nur `test`, `cfg(test)` und Pfade, die auf
+ * `::test` enden (`tokio::test`). Alles andere, auch `cfg(any(test, unix))`, `cfg(all(…))`, `cfg_attr`,
+ * `cfg(not(test))`, ist keine Testmarke und blendet nichts aus.
+ */
+function istTestMarke(inhalt) {
+  const s = inhalt.map((t) => t.v).join(" ");
+  return (
+    s === "test" ||
+    s === "cfg ( test )" ||
+    /^(?:[\p{L}_][\p{L}\p{N}_]* : : )+test$/u.test(s)
+  );
+}
+
+/**
+ * Rust: Token-Bereiche `[von, bis)`, die zu einer Testmarke gehören. Ein äußeres Attribut blendet den
+ * zugehörigen Eintrag aus (`{ … }` per Klammertiefe oder bis `;`). Ein inneres `#![cfg(test)]` blendet
+ * höchstens den umschließenden `{ … }`-Block aus; steht es auf oberster Ebene, blendet es NICHTS aus
+ * (fail-closed: der Code wird als Produktionscode geprüft). Nicht bestimmbare Grenzen sind Fehler.
+ */
 function testBereiche(tok) {
   const bereiche = [];
+  const offene = [];
   for (let k = 0; k < tok.length; k++) {
+    if (tok[k].t === "p" && tok[k].v === "{") offene.push(k);
+    if (tok[k].t === "p" && tok[k].v === "}") offene.pop();
     if (tok[k].v !== "#" || tok[k].t !== "p") continue;
     let a = k + 1;
     const innen = tok[a]?.v === "!";
     if (innen) a++;
     if (tok[a]?.v !== "[") continue;
     const zu = schliessende(tok, a);
-    const inhalt = tok.slice(a + 1, zu);
-    const istTest =
-      inhalt.some((t) => t.t === "id" && t.v === "test") &&
-      !inhalt.some((t) => t.t === "id" && t.v === "not");
-    if (!istTest) {
+    if (!istTestMarke(tok.slice(a + 1, zu))) {
       k = zu;
       continue;
     }
     if (innen) {
-      // `#![cfg(test)]`: die ganze Datei ist Testcode.
-      bereiche.push([k, tok.length]);
-      break;
+      const auf = offene[offene.length - 1];
+      if (auf !== undefined) bereiche.push([auf, schliessende(tok, auf) + 1]);
+      k = zu;
+      continue;
     }
     // Der zugehörige Eintrag: weitere Attribute überspringen, dann bis `{ … }` oder `;`.
     let e = zu + 1;
@@ -314,7 +352,8 @@ const aufrufText = (tok, von, bis) =>
   tok
     .slice(von, bis + 1)
     .map((t) => t.v)
-    .join(" ");
+    .join(" ")
+    .replace(/: :/g, "::");
 
 /** Alle Argumente reine Textliterale (Rust: ohne `{}`; TypeScript: ohne `${}`)? */
 function nurFesterText(args, rust) {
@@ -332,9 +371,13 @@ function nurFesterText(args, rust) {
   return true;
 }
 
+/** Namen, die einen Import oder eine Makrodefinition als Log-Bezug ausweisen. */
+const LOG_BEZUG = new Set([...RUST_LOGS, "log", "tracing", "slog"]);
+
 /**
- * Prüft eine Quelle. Liefert `verstoesse` (Texte der Aufrufe, die weder fester Text noch erlaubt
- * sind), `genutzt` (Schlüssel der Erlaubnisliste, je Fundstelle einer) und `fehler`.
+ * Prüft eine Quelle. Liefert `verstoesse` (Aufrufe, die weder fester Text noch erlaubt sind),
+ * `genutzt` (Schlüssel der Erlaubnisliste, je Fundstelle einer) und `fehler` (nicht sicher
+ * einordbare Konstrukte: unbekannte Literale, Blockgrenzen, Umbenennungen und Makros von Log-Makros).
  */
 function pruefe(src, sprache, datei, erlaubt = ERLAUBT) {
   const rust = sprache === "rust";
@@ -358,18 +401,63 @@ function pruefe(src, sprache, datei, erlaubt = ERLAUBT) {
       ergebnis.genutzt.push(`${datei}|${text}`);
     else ergebnis.verstoesse.push(`${datei}: ${text.slice(0, 140)}`);
   };
+  /** Rust: Anfang des Aufrufpfads (`log :: warn !`): rückwärts über `name ::`. */
+  const pfadAnfang = (k) => {
+    while (
+      tok[k - 1]?.v === ":" &&
+      tok[k - 2]?.v === ":" &&
+      tok[k - 3]?.t === "id"
+    )
+      k -= 3;
+    return k;
+  };
   try {
     for (let k = 0; k < tok.length; k++) {
       const t = tok[k];
       if (t.t !== "id" || inTest(k)) continue;
       if (rust) {
-        // `name ! (`, auch `log :: info !` (nur der letzte Name zählt).
+        // Umbenennung eines Log-Makros per `use … as`: der Aufruf ließe sich nicht mehr erkennen.
+        if (t.v === "use" || (t.v === "extern" && tok[k + 1]?.v === "crate")) {
+          let e = k + 1;
+          for (; e < tok.length && tok[e].v !== ";"; e++)
+            if (tok[e].t === "p" && tok[e].v === "{") e = schliessende(tok, e);
+          const teil = tok.slice(k, e);
+          if (
+            teil.some((x) => x.t === "id" && x.v === "as") &&
+            teil.some((x) => x.t === "id" && LOG_BEZUG.has(x.v))
+          )
+            ergebnis.fehler.push(
+              `${datei}: nicht prüfbar, Umbenennung eines Log-Imports: ${aufrufText(tok, k, e)}`,
+            );
+          continue;
+        }
+        // Eigene Makros, deren Rumpf ein Log-Makro ruft, verstecken den Aufruf.
+        if (t.v === "macro_rules" && tok[k + 1]?.v === "!") {
+          const auf = tok.findIndex(
+            (x, i) => i > k + 1 && x.t === "p" && ZU[x.v],
+          );
+          if (auf < 0) throw new Unsicher("macro_rules ohne Rumpf");
+          const zu = schliessende(tok, auf);
+          for (let i = auf; i < zu; i++)
+            if (
+              tok[i].t === "id" &&
+              RUST_LOGS.has(tok[i].v) &&
+              tok[i + 1]?.v === "!"
+            ) {
+              ergebnis.fehler.push(
+                `${datei}: nicht prüfbar, macro_rules ruft ein Log-Makro: ${tok[k + 2]?.v}`,
+              );
+              break;
+            }
+          k = zu;
+          continue;
+        }
+        // `name ! (`; der Pfad davor (`log ::`) gehört zum Aufruf.
         if (!RUST_LOGS.has(t.v) || tok[k + 1]?.v !== "!") continue;
         const auf = tok[k + 2];
         if (auf?.t !== "p" || !ZU[auf.v]) continue;
         const zu = schliessende(tok, k + 2);
-        melde(k, zu, tok.slice(k + 3, zu));
-        k = zu;
+        melde(pfadAnfang(k), zu, tok.slice(k + 3, zu));
       } else {
         if (t.v !== "console") continue;
         let a = k + 1;
@@ -391,7 +479,6 @@ function pruefe(src, sprache, datei, erlaubt = ERLAUBT) {
         }
         const zu = schliessende(tok, a + 2);
         melde(k, zu, tok.slice(a + 3, zu));
-        k = zu;
       }
     }
   } catch (e) {
@@ -539,6 +626,81 @@ test("Selbsttest: unsichere Blockgrenzen und Literale werden als Fehler gemeldet
   assert.equal(rs('fn f() { let s = "offen; }').fehler.length, 1);
   assert.equal(ts('console.log("offen);').fehler.length, 1);
   assert.equal(rs("/* offen").fehler.length, 1);
+});
+
+test("Selbsttest: Template-Interpolation wird als Code geprüft", () => {
+  assert.equal(zahl(ts("const s = `${console.log(payload)}`;")), 1);
+  assert.equal(zahl(ts("const s = `a ${`b ${console.log(payload)}`} c`;")), 1);
+  assert.equal(zahl(ts('const s = `${"}"} ${console . warn (x)}`;')), 1);
+  assert.equal(zahl(ts("const s = `${console.log(`fest`)}`;")), 0);
+  assert.equal(zahl(ts("const s = `${a + b}`;")), 0);
+});
+
+test("Selbsttest: nur exakte Testmarken blenden aus", () => {
+  const prod = 'fn prod() { log::info!("{}", payload); }';
+  for (const attr of [
+    "#[cfg(any(test, unix))]",
+    "#[cfg(all(test, unix))]",
+    "#[cfg_attr(test, derive(Debug))]",
+    "#[cfg(not(test))]",
+    '#[cfg(feature = "test")]',
+  ])
+    assert.equal(zahl(rs(`${attr}\n${prod}`)), 1, attr);
+  for (const attr of [
+    "#[cfg(test)]",
+    "#[test]",
+    "#[tokio::test]",
+    "#[a::b::test]",
+  ])
+    assert.equal(zahl(rs(`${attr}\n${prod}`)), 0, attr);
+  // Inneres Attribut: höchstens der umschließende Block, Code danach wird geprüft.
+  assert.equal(zahl(rs(`mod tests { #![cfg(test)] }\n${prod}`)), 1);
+  assert.equal(
+    zahl(
+      rs(`mod tests { #![cfg(test)] fn g() { println!("{x}"); } }\n${prod}`),
+    ),
+    1,
+    "nur der Block ausgeblendet, `prod` danach geprüft",
+  );
+  assert.equal(
+    zahl(rs(`#![cfg(test)]\n${prod}`)),
+    1,
+    "oberste Ebene: nichts ausgeblendet",
+  );
+});
+
+test("Selbsttest: Makro-Alias und eigene Makros sind nicht prüfbar", () => {
+  const alias = rs(
+    'use log::info as audit; fn prod() { audit!("{}", payload); }',
+  );
+  assert.equal(alias.fehler.length, 1);
+  assert.equal(rs("use log::{warn as w, debug};").fehler.length, 1);
+  assert.equal(rs("use log as l; fn f() {}").fehler.length, 1);
+  assert.equal(rs("use tracing::error as fehler;").fehler.length, 1);
+  assert.equal(
+    rs('macro_rules! m { ($x:expr) => { log::info!("{}", $x) }; }').fehler
+      .length,
+    1,
+  );
+  // Gewöhnliche Umbenennungen bleiben möglich.
+  assert.equal(
+    rs("use base64::Engine as _; use a::b::{c as d};").fehler.length,
+    0,
+  );
+  assert.equal(rs("macro_rules! m { () => { 1 + 1 }; }").fehler.length, 0);
+});
+
+test("Selbsttest: der Aufrufpfad gehört zum Schlüssel der Erlaubnisliste", () => {
+  const text = '"voice_tools: {what} nicht lesbar: {e}"';
+  const erlaubt = new Map([[`a.rs|log :: warn ! ( ${text} )`, "Test"]]);
+  assert.equal(zahl(rs(`fn f() { log::warn!(${text}); }`, erlaubt)), 0);
+  assert.equal(
+    rs(`fn f() { log::warn!(${text}); }`, erlaubt).genutzt.length,
+    1,
+  );
+  assert.equal(zahl(rs(`fn f() { other::warn!(${text}); }`, erlaubt)), 1);
+  assert.equal(zahl(rs(`fn f() { warn!(${text}); }`, erlaubt)), 1);
+  assert.equal(zahl(rs(`fn f() { log::error!(${text}); }`, erlaubt)), 1);
 });
 
 test("Selbsttest: Ausnahmen gelten nur für Datei und Aufruf, höchstens einmal", () => {

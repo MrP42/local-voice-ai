@@ -620,8 +620,78 @@ mod tests {
         assert_eq!(z.version(), 1);
     }
 
+    /// BEWEIS der Reihenfolge: die Zwischenphase "gespeichert, Version noch nicht veröffentlicht" wird
+    /// erzwungen (der Schreiber wartet in `speichere` auf ein "weiter"), ohne Zeitglück.
     #[test]
-    fn leser_parallel_zu_schreibern_sehen_nie_neue_version_mit_alten_einstellungen() {
+    fn erzwungene_zwischenphase_speichern_fertig_version_noch_alt() {
+        use std::sync::{mpsc, Arc};
+        use std::time::Duration;
+        let z = Arc::new(Zaehler::neu());
+        let store = Arc::new(Mutex::new(zustand(1)));
+        let (zwischen_tx, zwischen_rx) = mpsc::channel::<()>();
+        let (weiter_tx, weiter_rx) = mpsc::channel::<()>();
+
+        let schreiber = {
+            let (z, store) = (z.clone(), store.clone());
+            std::thread::spawn(move || {
+                let _sperre = z.sperren();
+                let alt = store.lock().unwrap().clone();
+                let neu = zustand(2);
+                z.schreiben_mit(&alt, &neu, || {
+                    assert_eq!(z.version(), 1, "vor dem Speichern ist die Version alt");
+                    *store.lock().unwrap() = neu.clone();
+                    assert_eq!(
+                        z.version(),
+                        1,
+                        "nach dem Speichern, vor der Veröffentlichung, ist die Version noch alt"
+                    );
+                    zwischen_tx.send(()).unwrap();
+                    weiter_rx.recv().unwrap();
+                })
+            })
+        };
+
+        // Bei vertauschter Reihenfolge fällt der Schreiber in der Closure durch: der Sender verfällt.
+        zwischen_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("der Schreiber erreichte die Zwischenphase nicht");
+
+        // Zwischenphase: ohne Sperre ist die Version noch die alte, der Stand schon der neue (sichere
+        // Richtung).
+        assert_eq!(z.version(), 1);
+        assert_eq!(*store.lock().unwrap(), zustand(2));
+
+        // Ein Schnappschuss-Leser wartet auf die Sperre des Schreibers: kein Ergebnis in der Zwischenphase.
+        let (leser_tx, leser_rx) = mpsc::channel();
+        let leser = {
+            let (z, store) = (z.clone(), store.clone());
+            std::thread::spawn(move || {
+                leser_tx
+                    .send(z.lesen_mit(|| store.lock().unwrap().clone()))
+                    .unwrap();
+            })
+        };
+        assert_eq!(
+            leser_rx.recv_timeout(Duration::from_millis(200)),
+            Err(mpsc::RecvTimeoutError::Timeout),
+            "der Schnappschuss darf in der Zwischenphase nicht ankommen"
+        );
+
+        weiter_tx.send(()).unwrap();
+        assert!(schreiber.join().unwrap(), "die Version muss gestiegen sein");
+        let (version, stand) = leser_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("der Leser bekam nach dem Schreiben kein Ergebnis");
+        leser.join().unwrap();
+        assert_eq!((version, stand), (2, zustand(2)));
+        assert_eq!(z.version(), 2);
+    }
+
+    /// RAUCHTEST unter Last, kein Beweis der Reihenfolge (das leistet
+    /// `erzwungene_zwischenphase_speichern_fertig_version_noch_alt`): Leser und Schreiber laufen
+    /// gleichzeitig; ob ein Leser je in die Zwischenphase fällt, hängt von der Einplanung ab.
+    #[test]
+    fn rauchtest_unter_last_leser_und_schreiber_parallel_ohne_unstimmigen_stand() {
         use std::sync::atomic::AtomicBool;
         use std::sync::{Arc, Barrier};
         use std::time::{Duration, Instant};
