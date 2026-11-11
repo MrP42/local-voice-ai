@@ -12,9 +12,9 @@
 //!   endgültiger Pfad (`GetFinalPathNameByHandleW`) muss der des gehaltenen Elternhandles plus Name sein; ein
 //!   Pfadglied, das vor dem Halten ausgetauscht wurde, fällt dadurch auf. Statt `NtCreateFile` mit
 //!   `RootDirectory` (breite, undokumentierte Oberfläche) bleibt es bei dokumentierten Win32-Aufrufen; das
-//!   Ergebnis ist dasselbe, weil die Eltern gehalten und geprüft sind. Aufgelistet wird über ein auf
-//!   Listenrecht hochgestuftes Handle desselben Objekts (`ReOpenFile`, `FileIdBothDirectoryInfo`), nachdem das
-//!   Handle erneut beurteilt wurde; eine Find-Abfrage per Pfad gibt es nicht mehr.
+//!   Ergebnis ist dasselbe, weil die Eltern gehalten und geprüft sind. Ordner werden gleich mit Listenrecht
+//!   geöffnet (`ReOpenFile` auf Ordner-Handles scheitert mit ERROR_ACCESS_DENIED) und über dasselbe Handle
+//!   aufgelistet (`FileIdBothDirectoryInfo`), nachdem es beurteilt wurde; keine Find-Abfrage per Pfad.
 //!
 //! Aufzählen ist iterativ: der Aufrufer bekommt jeden Eintrag einzeln und bricht mit `ControlFlow::Break` ab
 //! (Budget); es gibt keine vollständige Liste im Speicher.
@@ -414,13 +414,12 @@ mod sys {
     use std::ops::ControlFlow;
     use std::os::windows::ffi::OsStringExt;
     use std::os::windows::fs::OpenOptionsExt;
-    use std::os::windows::io::{AsRawHandle, FromRawHandle};
+    use std::os::windows::io::AsRawHandle;
     use std::path::Path;
     use windows::Win32::Foundation::{ERROR_NO_MORE_FILES, HANDLE};
     use windows::Win32::Storage::FileSystem::{
         FileIdBothDirectoryInfo, FileIdBothDirectoryRestartInfo, GetFileInformationByHandleEx,
-        GetFinalPathNameByHandleW, ReOpenFile, FILE_FLAGS_AND_ATTRIBUTES, FILE_ID_BOTH_DIR_INFO,
-        FILE_NAME_NORMALIZED, FILE_SHARE_MODE,
+        GetFinalPathNameByHandleW, FILE_ID_BOTH_DIR_INFO, FILE_NAME_NORMALIZED,
     };
 
     const FILE_READ_ATTRIBUTES: u32 = 0x80;
@@ -479,9 +478,12 @@ mod sys {
         }
     }
 
+    /// Ordner gleich mit Listenrecht öffnen: `ReOpenFile` auf einem Ordner-Handle scheitert immer mit
+    /// ERROR_ACCESS_DENIED (auf Windows gemessen). Listenrecht liest keine Dateidaten, hydriert also nichts;
+    /// das Urteil am Handle fällt vor dem ersten Auflisten.
     fn dir_oeffnen(p: &Path) -> io::Result<fs::File> {
         fs::OpenOptions::new()
-            .access_mode(FILE_READ_ATTRIBUTES)
+            .access_mode(FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES)
             .share_mode(TEILEN_OHNE_LOESCHEN)
             .custom_flags(
                 FILE_FLAG_BACKUP_SEMANTICS
@@ -516,29 +518,14 @@ mod sys {
         Ok(Dir { f, endgueltig })
     }
 
-    fn neu_handle(h: HANDLE) -> fs::File {
-        // SAFETY: `h` ist ein frisches, gültiges Handle, das sonst niemand besitzt.
-        unsafe { fs::File::from_raw_handle(h.0) }
-    }
-
     pub fn auflisten(
         d: &Dir,
         _pfad: &Path,
         f: &mut dyn FnMut(Eintrag) -> ControlFlow<()>,
     ) -> Result<bool, OeffnenFehler> {
-        // Hochstufen auf Listenrecht, dasselbe Objekt (kein Pfad); vorher hat der Aufrufer das Handle beurteilt.
-        // Ohne `FILE_FLAG_OPEN_NO_RECALL`: `ReOpenFile` weist es mit ERROR_INVALID_PARAMETER ab.
-        // SAFETY: gültiges, offenes Handle (`d.f` lebt über den Aufruf); `ReOpenFile` liefert ein eigenes Handle.
-        let h = unsafe {
-            ReOpenFile(
-                HANDLE(d.f.as_raw_handle()),
-                FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES,
-                FILE_SHARE_MODE(TEILEN_OHNE_LOESCHEN),
-                FILE_FLAGS_AND_ATTRIBUTES(FILE_FLAG_BACKUP_SEMANTICS),
-            )
-        }
-        .map_err(|e| OeffnenFehler::Io(io::Error::other(e)))?;
-        let liste = neu_handle(h);
+        // Das gehaltene Handle trägt schon Listenrecht ([`dir_oeffnen`]); der Aufrufer hat es vorher beurteilt.
+        // Die Aufzählung beginnt mit `FileIdBothDirectoryRestartInfo` immer von vorn.
+        let liste = &d.f;
         // 8-Byte-ausgerichteter Puffer (64 KiB).
         let mut puffer = vec![0u64; 8192];
         let bytes = puffer.len() * 8;
