@@ -122,7 +122,12 @@ fn meta_tags(kopf: &str) -> Vec<&str> {
             }
             continue;
         }
-        if let Some(r) = rest.strip_prefix("<meta") {
+        if let Some(r) = rest.strip_prefix("<meta").filter(|r| {
+            // Nur das Tag `meta` selbst (`<metadata>` ist keins).
+            r.chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_whitespace() || matches!(c, '>' | '/'))
+        }) {
             let ende = r.find('>').unwrap_or(r.len());
             tags.push(&r[..ende]);
             pos = start + "<meta".len() + ende;
@@ -542,6 +547,7 @@ mod tests {
             "<SCRIPT type=text/javascript>x='<meta charset=windows-1252>'</SCRIPT>",
             "<style>/* <meta charset=windows-1252> */</style>",
             "<script>let s=\"</scriptx><meta charset=windows-1252>\";</script>",
+            "<metadata charset=windows-1252></metadata>",
         ] {
             let mut b = kopf.as_bytes().to_vec();
             b.extend_from_slice(b"<p>");
