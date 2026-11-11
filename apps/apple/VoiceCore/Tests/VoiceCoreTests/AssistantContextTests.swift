@@ -540,7 +540,7 @@ final class AssistantContextTests: XCTestCase {
             XCTAssertEqual(afterBump, final, "nach `bump` kommt nichts mehr hinzu (\(id))")
             if final == 1 { appended += 1 } else { refused += 1 }
         }
-        let entries = await audit.entries()
+        let entries = await audit.entries().filter { $0.kind == .answer }   // die Erhöhungen stehen als Einträge `release` dazwischen
         XCTAssertEqual(entries.count, 60)
         XCTAssertEqual(entries.filter { $0.history?.ok == true }.count, appended)
         XCTAssertEqual(entries.filter { $0.history?.ok == false }.count, refused)

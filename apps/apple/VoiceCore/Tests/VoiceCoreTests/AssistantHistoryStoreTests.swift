@@ -254,6 +254,45 @@ final class AssistantHistoryStoreTests: XCTestCase {
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir.path), [AssistantHistoryStore.fileName])
     }
 
+    // MARK: Marke je Satz (Abschnitte mit Quellzeile oder Kennzeichnung)
+
+    /// Ein Abschnitt trägt nach Speichern und Laden Quellzeile oder Kennzeichnung; Beiträge ohne das Feld `note` laden.
+    func testPartsKeepTheirSourceLineAndNoteAndOldPartsWithoutNoteLoad() throws {
+        let store = AssistantHistoryStore(directory: dir)
+        let parts = [
+            AssistantTurnPart(text: "Anna plant.", unsourced: false, quote: true, source: "Buch · Beispielbuch · S. 12"),
+            AssistantTurnPart(text: "Dazu finde ich nichts.", unsourced: false, note: AssistantTurnPart.templateNote),
+            AssistantTurnPart(text: "Du hast zwei Bücher.", unsourced: false, note: AssistantTurnPart.inventoryNote),
+        ]
+        try store.save([AssistantTurn(user: "Frage", assistant: "x", parts: parts, round: .data)])
+        XCTAssertEqual(store.load().first?.parts, parts)
+        let old = #"{"version":1,"turns":[{"user":"a","assistant":"b","interrupted":false,"sources":[],"general":false,"parts":[{"text":"t","unsourced":false,"quote":true,"source":"Notiz · Titel"}],"model":"","at":782000000}]}"#
+        try Data(old.utf8).write(to: store.url)
+        let loaded = store.load()
+        XCTAssertEqual(loaded.first?.parts.first?.note, nil)
+        XCTAssertEqual(loaded.first?.parts.first?.source, "Notiz · Titel")
+    }
+
+    /// Die gemeinsame Zuordnung (Anzeige der laufenden Antwort UND Beitrag): Zitate je ein Abschnitt mit genau einer Quellzeile, Sätze
+    /// gleicher Kennzeichnung zusammen, Vorlage und Bestandsangabe nie in einem Abschnitt.
+    func testAppendGivesEachQuoteItsOwnPartWithOneSourceLineAndMergesOnlyEqualMarks() {
+        func passage(_ title: String, _ locator: String) -> AssistantPassage {
+            AssistantPassage(area: .books, itemId: title, title: title, locator: locator, text: "x", score: 1)
+        }
+        var list: [AssistantTurnPart] = []
+        AssistantTurnPart.append(to: &list, text: "Eins.", status: .grounded, quote: true, sources: [passage("A", "S. 1")])
+        AssistantTurnPart.append(to: &list, text: "Zwei.", status: .grounded, quote: true, sources: [passage("A", "S. 1")])
+        AssistantTurnPart.append(to: &list, text: "Drei.", status: .grounded, quote: true, sources: [passage("B", "S. 2")])
+        AssistantTurnPart.append(to: &list, text: "Vorlage eins.", status: .neutral, quote: false, sources: [])
+        AssistantTurnPart.append(to: &list, text: "Vorlage zwei.", status: .neutral, quote: false, sources: [])
+        AssistantTurnPart.append(to: &list, text: "Bestand.", status: .inventory, quote: false, sources: [])
+        XCTAssertEqual(list.map(\.text), ["Eins.", "Zwei.", "Drei.", "Vorlage eins. Vorlage zwei.", "Bestand."])
+        XCTAssertEqual(list.map(\.quote), [true, true, true, false, false])
+        XCTAssertEqual(list.prefix(3).map(\.source), ["Buch · A · S. 1", "Buch · A · S. 1", "Buch · B · S. 2"])
+        XCTAssertEqual(list.suffix(2).map(\.note), [AssistantTurnPart.templateNote, AssistantTurnPart.inventoryNote])
+        XCTAssertEqual(list.suffix(2).map(\.source), [nil, nil])
+    }
+
     func testStandardDirectoryIsSeparateFromBookTalk() {
         XCTAssertEqual(AssistantHistoryStore.standardDirectory().lastPathComponent, "Assistant")
         XCTAssertNotEqual(AssistantHistoryStore.standardDirectory(), BookTalkHistoryStore.standardDirectory())

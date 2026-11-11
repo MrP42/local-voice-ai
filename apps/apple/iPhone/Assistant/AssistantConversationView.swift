@@ -35,13 +35,6 @@ struct AssistantConversationView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-                .alert("Antworten ohne Quelle einschalten?", isPresented: Binding(get: { talk.unsourcedConfirmation },
-                                                                                  set: { if !$0 { talk.cancelUnsourcedConfirmation() } })) {
-                    Button("Abbrechen", role: .cancel) { talk.cancelUnsourcedConfirmation() }
-                    Button("Einschalten") { talk.confirmUnsourced() }
-                } message: {
-                    Text(AssistantUnsourcedConsent.confirmationText)
-                }
             Divider()
             content
                 .sheet(isPresented: $showLocalModels, onDismiss: localModelsClosed) { ModelPanel(model: VoiceModel.shared) }
@@ -217,12 +210,6 @@ struct AssistantConversationView: View {
                            isOn: Binding(get: { talk.areas.contains(area) }, set: { _ in talk.toggleArea(area) }))
                 }
             }
-            if talk.unsourcedReleased {
-                Section("Antworten") {
-                    Toggle("Antworten ohne Quelle", isOn: Binding(get: { talk.unsourcedAllowed }, set: { talk.requestUnsourced($0) }))
-                        .accessibilityIdentifier("assistantUnsourced")
-                }
-            }
             // Kurz, damit das Menü den Text nicht abschneidet; die Erklärung steht im Hinweis für Bedienungshilfen.
             Toggle("Beim Antworten zuhören", isOn: Binding(get: { talk.bargeIn }, set: { talk.setBargeIn($0) }))
                 .accessibilityHint("Du kannst die Antwort mit deiner Stimme unterbrechen")
@@ -231,7 +218,7 @@ struct AssistantConversationView: View {
             Image(systemName: "ellipsis.circle").font(.title3).frame(width: 44, height: 44)
         }
         .accessibilityLabel("Mehr")
-        .accessibilityHint(talk.unsourcedReleased ? "Bereiche, Antworten ohne Quelle, neues Gespräch" : "Bereiche, neues Gespräch")
+        .accessibilityHint("Bereiche, neues Gespräch")
         .accessibilityIdentifier("assistantMenu")
     }
 
@@ -312,12 +299,17 @@ struct AssistantConversationView: View {
         .accessibilityIdentifier("assistantNotice")
     }
 
+    /// Die Mindesthöhe von 44 pt steht IM Label: Die ganze Fläche des Knopfes trifft, nicht nur der Text; ein `frame` um den
+    /// Knopf herum machte nur den Rand höher, nicht die Tippfläche.
     private func noticeButton(_ action: AssistantNotice.Action) -> some View {
-        Button(actionTitle(action)) { perform(action) }
-            .font(.footnote.weight(.semibold))
-            .buttonStyle(.bordered)
-            .frame(minHeight: 44)
-            .accessibilityIdentifier(actionIdentifier(action))
+        Button { perform(action) } label: {
+            Text(actionTitle(action))
+                .font(.footnote.weight(.semibold))
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.bordered)
+        .accessibilityIdentifier(actionIdentifier(action))
     }
 
     private func actionTitle(_ action: AssistantNotice.Action) -> String {
@@ -340,12 +332,20 @@ struct AssistantConversationView: View {
         }
     }
 
+    /// „Sprich einfach los“ nur mit geladenem Modell. Ohne Modell steht dort der Weg zur Modellwahl (Karte und Knopf „Modell
+    /// auswählen“), nicht eine Einladung, die ins Leere liefe.
     private var intro: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Sprich einfach los").font(.title3.weight(.semibold))
-            Text("Ich antworte aus deinen Büchern, Besprechungen, Notizen und der Ablage, je nachdem, was du im Menü zulässt. "
-                 + (talk.bargeIn ? "Du kannst mich jederzeit unterbrechen." : "Während ich antworte, höre ich nicht zu."))
-                .font(.subheadline).foregroundStyle(VoicePalette.secondaryText)
+            if talk.canSend {
+                Text("Sprich einfach los").font(.title3.weight(.semibold))
+                Text("Ich antworte aus deinen Büchern, Besprechungen, Notizen und der Ablage, je nachdem, was du im Menü zulässt. "
+                     + (talk.bargeIn ? "Du kannst mich jederzeit unterbrechen." : "Während ich antworte, höre ich nicht zu."))
+                    .font(.subheadline).foregroundStyle(VoicePalette.secondaryText)
+            } else {
+                Text("Zuerst ein Modell wählen").font(.title3.weight(.semibold))
+                Text("Ohne Modell kann ich nicht antworten. Wähle eines über die Karte oben oder den Knopf „Modell auswählen“.")
+                    .font(.subheadline).foregroundStyle(VoicePalette.secondaryText)
+            }
             Text("Oder tippe auf einen Vorschlag").font(.footnote).foregroundStyle(VoicePalette.secondaryText).padding(.top, 4)
             ForEach(["Was wurde in der letzten Besprechung entschieden?", "Worum geht es in meinem aktuellen Buch?",
                      "Was habe ich zuletzt in meinen Notizen festgehalten?"], id: \.self) { text in suggestion(text) }
@@ -378,7 +378,7 @@ struct AssistantConversationView: View {
     private func turnView(_ turn: AssistantTurn) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             userBubble(turn.user)
-            assistantBubble(parts: parts(of: turn), interrupted: turn.interrupted, chips: chips(of: turn))
+            assistantBubble(parts: parts(of: turn), interrupted: turn.interrupted, legacyChips: legacyChips(of: turn))
         }
     }
 
@@ -401,16 +401,15 @@ struct AssistantConversationView: View {
         }
     }
 
-    private func assistantBubble(parts: [AssistantTurnPart], interrupted: Bool, chips: [SourceChip]) -> some View {
-        // Eine Quelle, die schon unter ihrem Zitat steht, kommt nicht noch einmal als Chip.
-        let cited = Set(parts.compactMap { $0.quote ? $0.source : nil })
-        let rest = chips.filter { !($0.isSource && cited.contains($0.text)) }
-        return HStack(spacing: 0) {
+    /// Marke je Satz: Jeder Satz trägt seine Quellzeile (Zitat) oder seine Kennzeichnung (feste Antwort, Bestandsangabe); eine
+    /// gesammelte Quellenliste unter der Antwort gibt es nicht mehr. `legacyChips`: nur für ältere Beiträge ohne Marken je Satz.
+    private func assistantBubble(parts: [AssistantTurnPart], interrupted: Bool, legacyChips: [SourceChip] = []) -> some View {
+        HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(parts.enumerated()), id: \.offset) { _, part in partView(part) }
-                if !rest.isEmpty {
+                if !legacyChips.isEmpty {
                     AssistantFlowLayout(spacing: 6) {
-                        ForEach(rest, id: \.self) { chip($0) }
+                        ForEach(legacyChips, id: \.self) { chip($0) }
                     }
                 }
             }
@@ -422,9 +421,13 @@ struct AssistantConversationView: View {
         }
     }
 
+    /// Marke je Satz: ein Zitat (Quellzeile), ein Satz mit Kennzeichnung (feste Antwort, Bestandsangabe) oder, nur bei älteren
+    /// Beiträgen, Text ohne Marke.
     @ViewBuilder private func partView(_ part: AssistantTurnPart) -> some View {
         if part.quote {
             quoteBlock(part)
+        } else if let note = part.note {
+            markedBlock(part.text, note: note)
         } else if part.unsourced {
             unsourcedBlock(part.text)
         } else {
@@ -432,16 +435,17 @@ struct AssistantConversationView: View {
         }
     }
 
-    /// Originalsatz aus einer Quelle: in Anführungszeichen, mit Balken und der Quelle darunter (Text, nicht nur Farbe).
+    /// Originalsatz aus einer Quelle: in Anführungszeichen, mit Balken und der Quelle darunter (Text, nicht nur Farbe). Die
+    /// Quellzeile ist nicht optional: Der Kern gibt jedem Zitat genau eine mit; fehlt sie (älterer, vor der Zeile gespeicherter
+    /// Beitrag), steht das offen da, statt dass die Zeile still entfällt.
     private func quoteBlock(_ part: AssistantTurnPart) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let source = part.source ?? "Quelle nicht gespeichert"
+        return VStack(alignment: .leading, spacing: 4) {
             VoiceMarkdown(text: "„" + part.text + "“")
-            if let source = part.source {
-                Text(source)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(VoicePalette.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Text(source)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(VoicePalette.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.leading, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -449,10 +453,32 @@ struct AssistantConversationView: View {
             RoundedRectangle(cornerRadius: 1.5).fill(AssistantColors.fill).frame(width: 3)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(part.source.map { "Zitat aus \($0): \(part.text)" } ?? "Zitat: \(part.text)")
+        .accessibilityLabel(part.source.map { "Zitat aus \($0): \(part.text)" } ?? "Zitat, Quelle nicht gespeichert: \(part.text)")
     }
 
-    /// Abschnitt ohne Quelle: Kennzeichnung als Text („Ohne Quelle“, auch für VoiceOver) und Balken, nicht nur Farbe.
+    /// Satz, der keine Aussage über deine Inhalte macht und deshalb keine Quellzeile hat (feste Antwort des Systems,
+    /// Bestandsangabe): eigene, sichtbar andere Marke statt einer Quelle. Kein Zitat (keine Anführungszeichen), gedämpfter
+    /// Balken, die Kennzeichnung als Text (auch für VoiceOver).
+    private func markedBlock(_ text: String, note: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            VoiceMarkdown(text: text)
+            Label(note, systemImage: "info.circle")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(VoicePalette.secondaryText)
+        }
+        .padding(.leading, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 1.5).fill(VoicePalette.secondaryText).frame(width: 3)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(note): \(text)")
+    }
+
+    // MARK: Ältere Beiträge ohne Marke je Satz
+
+    /// Abschnitt ohne Quelle (nur ältere Beiträge; der Kern gibt heute keine mehr aus): Kennzeichnung als Text („Ohne Quelle“,
+    /// auch für VoiceOver) und Balken, nicht nur Farbe.
     private func unsourcedBlock(_ text: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Label("Ohne Quelle", systemImage: "questionmark.circle")
@@ -484,24 +510,16 @@ struct AssistantConversationView: View {
             .accessibilityLabel(chip.isSource ? "Quelle: \(chip.text)" : "Hinweis: \(chip.text)")
     }
 
-    /// Nur die deckenden Quellen (ohne Doppelte); dazu der Hinweis, wenn Sätze ohne Quelle gesprochen wurden:
-    /// „Allgemeinwissen · ohne Quelle“ (ganz) oder „teils ohne Quelle“ (gemischt).
-    private func chips(sources: [AssistantPassage], unsourced: Bool, mixed: Bool) -> [SourceChip] {
+    /// Nur ältere Beiträge (ohne Marke je Satz): die deckenden Quellen (ohne Doppelte) und, wenn Sätze ohne Quelle gesprochen
+    /// wurden, der Hinweis „Allgemeinwissen · ohne Quelle“ (ganz) oder „teils ohne Quelle“ (gemischt). Beiträge mit Marken je Satz
+    /// (Zitat mit Quellzeile, Kennzeichnung) haben keine gesammelte Liste.
+    private func legacyChips(of turn: AssistantTurn) -> [SourceChip] {
+        guard !turn.parts.contains(where: { $0.quote || $0.note != nil }) else { return [] }
         var seen = Set<String>()
-        var list = sources.map { AssistantController.chip($0) }.filter { seen.insert($0).inserted }
+        var list = turn.sources.map { AssistantController.chip($0) }.filter { seen.insert($0).inserted }
             .map { SourceChip(text: $0, isSource: true) }
-        if unsourced { list.append(SourceChip(text: mixed ? "teils ohne Quelle" : "Allgemeinwissen · ohne Quelle", isSource: false)) }
+        if turn.unsourced { list.append(SourceChip(text: !turn.parts.isEmpty ? "teils ohne Quelle" : "Allgemeinwissen · ohne Quelle", isSource: false)) }
         return list
-    }
-
-    private func chips(of turn: AssistantTurn) -> [SourceChip] {
-        chips(sources: turn.sources, unsourced: turn.unsourced, mixed: !turn.parts.isEmpty)
-    }
-
-    private var liveChips: [SourceChip] {
-        let unsourced = talk.liveParts.contains { $0.unsourced }
-        let mixed = unsourced && talk.liveParts.contains { !$0.unsourced }
-        return chips(sources: talk.sources, unsourced: unsourced, mixed: mixed)
     }
 
     /// Abschnitte der laufenden Antwort (ohne Angabe der Steuerung: ein Abschnitt mit Quelle).
@@ -515,7 +533,7 @@ struct AssistantConversationView: View {
             VStack(alignment: .leading, spacing: 10) {
                 userBubble(user)
                 if !talk.liveAnswer.isEmpty {
-                    assistantBubble(parts: liveAnswerParts, interrupted: false, chips: liveChips)
+                    assistantBubble(parts: liveAnswerParts, interrupted: false)
                         .accessibilityAddTraits(.updatesFrequently)
                 } else if talk.phase == .thinking {
                     HStack(spacing: 0) {
@@ -558,7 +576,6 @@ struct AssistantConversationView: View {
     private var bottom: some View {
         VStack(spacing: 10) {
             stateBlock
-            if talk.canResumeFree { resumeFreeButton }
             if typing { composer }
             if noModel { noModelControls } else { controls }
         }
@@ -589,11 +606,9 @@ struct AssistantConversationView: View {
         return "\(talk.isCloud ? "Cloud" : "Lokal") · Quellen: \(list)"
     }
 
-    /// Zustandszeile des Datenkontexts: woraus die nächste Antwort kommt. Ohne Modell und ohne „Antworten ohne Quelle“ gibt es
-    /// nichts zu sagen (auch nicht, solange das Modell noch lädt).
+    /// Zustandszeile: woraus die nächste Antwort kommt. Ohne Modell gibt es nichts zu sagen (auch nicht, solange es noch lädt).
     private var contextLine: String? {
-        guard talk.canSend || talk.unsourcedAllowed else { return nil }
-        return talk.contextMode == .free ? "Antwortet ohne Quelle" : "Antwortet aus deinen Inhalten"
+        talk.canSend ? "Antwortet aus deinen Inhalten" : nil
     }
 
     /// Zustand, Datenkontext und Quellen als ein Satz für VoiceOver.
@@ -625,20 +640,6 @@ struct AssistantConversationView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(stateLabel)
         .accessibilityIdentifier("assistantState")
-    }
-
-    /// „Ohne Quelle fortsetzen“: hebt die Bindung an die eigenen Inhalte auf, nur sichtbar bei „Antworten ohne Quelle“ an und
-    /// Zustand „Antwortet aus deinen Inhalten“.
-    private var resumeFreeButton: some View {
-        Button { talk.resumeFree() } label: {
-            Text("Ohne Quelle fortsetzen")
-                .font(.footnote.weight(.semibold))
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.bordered)
-        .accessibilityHint("Der Assistent darf dann wieder ohne Quelle antworten")
-        .accessibilityIdentifier("assistantResumeFree")
     }
 
     private var composer: some View {

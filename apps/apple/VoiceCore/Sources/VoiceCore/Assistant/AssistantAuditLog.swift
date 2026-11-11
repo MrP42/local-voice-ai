@@ -7,7 +7,12 @@ import Foundation
 // - `step`: Nummer, Einordnung oder Ablehnungsgrund, Generation (je Satz, je Ansage, je verworfenem Satz);
 // - `commit`: Schrittnummer, Stufe (Kern, Anzeige, Audio, Verlauf), Ergebnis, Generation;
 // - `end`: Ausgang, Stufe, Bereiche (auch die von Bestandsangaben);
-// - `event`: Einwilligung und Widerruf (Opt-in, Cloud).
+// - `event`: Einwilligung und Widerruf (Opt-in, Cloud), nur noch von Aufrufern ohne Sitzung (ohne Freigabe gibt es keine
+//   Generation); ältere Dateien enthalten sie für alle Fälle;
+// - `release`: jede Erhöhung der Freigabe-Generation, vom Kern im Lock an der Stelle der Erhöhung geschrieben: neue Generation,
+//   Grund (`cause`: optIn, areas, consent, resumeFree, other), bei Bereichen die NEUEN Bereichsnamen, dazu Opt-in-Zustand,
+//   Einwilligungsversion, Modellart und lokal/Cloud. Eine Änderung der Bereiche erhöht zweimal (vor und nach dem Umschalten
+//   der Bereiche) und hinterlässt deshalb zwei Zeilen mit denselben Namen; der Controller kann davor noch eine dritte auslösen.
 // Eine Antwort hat damit höchstens so viele Zeilen wie Schritte (ein Lauf endet nach 200 Schritten, Ausgang „begrenzt“); die
 // Spur wird nicht gekappt und nicht im Speicher gesammelt. Ein Absturz mitten in der Antwort hinterlässt `start` und die bis
 // dahin angefallenen Schritte; beim Öffnen bekommt jede Anfrage ohne `end` eines mit Ausgang „unvollständig“. Beim Öffnen
@@ -159,8 +164,9 @@ public struct AssistantTraceStep: Sendable, Equatable, Codable {
 
 public struct AssistantAuditEntry: Sendable, Equatable, Codable {
     public enum Kind: String, Sendable, Codable {
-        /// `resumedFree`: der Nutzer hat mit „Ohne Quelle fortsetzen“ den Datenkontext aufgehoben.
-        case answer, unsourcedOn, unsourcedOff, cloudGranted, cloudRevoked, resumedFree
+        /// `resumedFree`: der Nutzer hat mit „Ohne Quelle fortsetzen“ den Datenkontext aufgehoben. `release`: eine Erhöhung der
+        /// Freigabe-Generation (vom Kern geschrieben; Grund in `cause`).
+        case answer, unsourcedOn, unsourcedOff, cloudGranted, cloudRevoked, resumedFree, release
     }
 
     public enum Outcome: String, Sendable, Codable {
@@ -194,8 +200,10 @@ public struct AssistantAuditEntry: Sendable, Equatable, Codable {
     /// Kontextzustand vor der Rundenwahl und der Grund der Wahl.
     public var contextMode: AssistantContext.Mode?
     public var contextReason: AssistantContext.Reason?
-    /// Freigabe-Generation beim Start der Anfrage; bei Einwilligung und Widerruf die neue.
+    /// Freigabe-Generation beim Start der Anfrage; bei Einwilligung, Widerruf und `release` die neue.
     public var generation: Int
+    /// Grund der Erhöhung (nur `release`).
+    public var cause: AssistantReleaseCause?
     /// Zahl der Sätze je Einordnung und Ablehnungsgrund.
     public var counts: AssistantSentenceCounts
     /// Bereiche der Quellen (Rohwerte `books`, `transcripts`, `files`, `notes`), sortiert.
@@ -210,9 +218,11 @@ public struct AssistantAuditEntry: Sendable, Equatable, Codable {
     public init(at: Date = Date(), kind: Kind, model: String = "", cloud: Bool = false, unsourcedMode: Bool = false,
                 consentVersion: Int = 0, counts: AssistantSentenceCounts = AssistantSentenceCounts(), areas: [AssistantArea] = [],
                 outcome: Outcome? = nil, round: AssistantRoundKind? = nil, level: AssistantAuditLevel? = nil, generation: Int = 0,
-                trace: [AssistantTraceStep] = [], traceOverflow: Int = 0, history: AssistantCommitMark? = nil) {
+                trace: [AssistantTraceStep] = [], traceOverflow: Int = 0, history: AssistantCommitMark? = nil,
+                cause: AssistantReleaseCause? = nil) {
         self.at = at
         self.kind = kind
+        self.cause = cause
         self.modelKind = AssistantModelKind.classify(label: model)
         self.cloud = cloud
         self.unsourcedMode = unsourcedMode
@@ -240,7 +250,7 @@ public struct AssistantAuditEntry: Sendable, Equatable, Codable {
     /// `neutral`, `dropped`. Neue Felder fehlen dort und bekommen Vorgabewerte.
     private enum CodingKeys: String, CodingKey {
         case at, kind, modelKind, cloud, unsourcedMode, consentVersion, round, level, generation, counts, areas, outcome, trace
-        case traceOverflow, history, requestId, sessionId, contextMode, contextReason
+        case traceOverflow, history, requestId, sessionId, contextMode, contextReason, cause
         case model, grounded, unsourced, neutral, dropped
     }
 
@@ -277,6 +287,7 @@ public struct AssistantAuditEntry: Sendable, Equatable, Codable {
         sessionId = try c.decodeIfPresent(String.self, forKey: .sessionId)
         contextMode = try c.decodeIfPresent(AssistantContext.Mode.self, forKey: .contextMode)
         contextReason = try c.decodeIfPresent(AssistantContext.Reason.self, forKey: .contextReason)
+        cause = try c.decodeIfPresent(AssistantReleaseCause.self, forKey: .cause)
         let derived = AssistantAuditLevel.of(counts)
         let stored = try c.decodeIfPresent(AssistantAuditLevel.self, forKey: .level)
         level = kind == .answer ? max(stored ?? derived, derived) : stored
@@ -303,6 +314,7 @@ public struct AssistantAuditEntry: Sendable, Equatable, Codable {
         try c.encodeIfPresent(sessionId, forKey: .sessionId)
         try c.encodeIfPresent(contextMode, forKey: .contextMode)
         try c.encodeIfPresent(contextReason, forKey: .contextReason)
+        try c.encodeIfPresent(cause, forKey: .cause)
     }
 }
 
@@ -329,6 +341,10 @@ struct AssistantJournalLine: Codable, Equatable {
         /// feststehen (vor dem Modellaufruf bzw. bei Bestandsangaben), nicht erst im `end`. `round` und `areas` sind additiv:
         /// ältere Dateien (Rundenart im `start`, Bereiche nur im `end`) laden unverändert.
         case start, step, commit, end, event, round, areas
+        /// `release`: Erhöhung der Freigabe-Generation (Kern, im Lock): `gen` neue Generation, `cause` Grund, `areas` bei
+        /// Bereichen die neuen Namen, `unsourced`/`consent`/`model`/`cloud` Zustand danach. Additiv: ältere Fassungen kennen die
+        /// Art nicht und überspringen die Zeile (sie bleibt Byte für Byte erhalten).
+        case release
     }
 
     var t: Kind
@@ -355,6 +371,8 @@ struct AssistantJournalLine: Codable, Equatable {
     var areas: [String]?
     /// Art des Ereignisses (`event`).
     var kind: AssistantAuditEntry.Kind?
+    /// Grund der Erhöhung (`release`).
+    var cause: AssistantReleaseCause?
 
     init(_ t: Kind, req: String? = nil) {
         self.t = t
@@ -447,6 +465,14 @@ enum AssistantJournalFold {
                 entries[i].outcome = l.outcome
                 entries[i].areas = l.areas ?? (offered[i] ?? []).sorted()
                 if let level = l.level { endLevel[i] = level }
+            case .release:
+                guard let g = l.gen, let cause = l.cause else { skipped += 1; continue }
+                var e = AssistantAuditEntry(at: l.at ?? .distantPast, kind: .release, cloud: l.cloud ?? false,
+                                            unsourcedMode: l.unsourced ?? false, consentVersion: l.consent ?? 0, generation: g,
+                                            cause: cause)
+                e.modelKind = l.model ?? .other
+                e.areas = l.areas ?? []
+                entries.append(e)
             case .event:
                 var e = AssistantAuditEntry(at: l.at ?? .distantPast, kind: l.kind ?? .unsourcedOn, cloud: l.cloud ?? false,
                                             unsourcedMode: l.unsourced ?? false, consentVersion: l.consent ?? 0, generation: l.gen ?? 0)
@@ -773,6 +799,11 @@ public struct AssistantAuditLog: Sendable {
 
     /// Wartet, bis alles bis hierher Eingereihte geschrieben ist; ein Fehler der Anfrage bleibt für ihren Abschluss gemerkt.
     func waitUntilWritten(request: String) async { _ = await writer.flush(request: request, consume: false) }
+
+    /// Wartet, bis alle bisher eingereihten Zeilen ohne Anfrage (Zeilen `release`, Ereignisse) geschrieben sind. Der Fehler dabei
+    /// (Speicher voll, Datei nicht lesbar), sonst `nil`; er wird damit gemeldet und vergessen. Der Controller ruft das nach einer
+    /// Änderung der Freigabe, damit ein Schreibfehler nie still bleibt.
+    public func flushReleaseLines() async -> AssistantAuditError? { await writer.flush(request: nil) }
 
     /// Wartet, bis alle Zeilen der Anfrage geschrieben sind. Der Fehler dieser Anfrage, sonst `nil`.
     func flush(request: String) async -> AssistantAuditError? { await writer.flush(request: request) }

@@ -119,36 +119,147 @@ final class AssistantOutputTests: XCTestCase {
         XCTAssertEqual(r.violations, [])
     }
 
-    /// Nach der Rückkehr von `bump` erlaubt die Sperre nebenläufig keinen Start der alten Generation mehr. (Die Prüfung und der
-    /// Start danach sind nicht atomar: Das Flag „bump zurückgekehrt“ wird VOR der Frage an die Sperre gelesen; war es gesetzt,
-    /// muss die Antwort „nein“ lauten.)
-    func testNoOldStartIsPermittedAfterBumpReturnedUnderContention() async {
+    /// Atomarer Start (Runde 5, H4): Prüfung UND Start laufen als `start(generation, body)` in einem Lock. Nach der Rückkehr von
+    /// `bump` läuft nebenläufig KEIN Start-Body der alten Generation mehr. Der Body liest das Flag „bump zurückgekehrt“ selbst, im
+    /// Lock: War es gesetzt, hätte der Body nach der Erhöhung gestartet.
+    func testNoStartBodyRunsAfterABumpToANewerGenerationHasReturnedUnderContention() async {
         let s = await session()
         let gate = s.playbackGate
         let tally = Tally()
-        let bumpReturned = Tally()
+        let stop = Tally()
         let group = DispatchGroup()
         for _ in 0..<4 {
             group.enter()
             DispatchQueue.global().async {
-                let deadline = Date().addingTimeInterval(5)
-                while Date() < deadline {
-                    let after = bumpReturned.snapshot.ran > 0
-                    let permitted = gate.permits(0)
-                    if after, permitted { tally.violation("Start der alten Generation nach der Rückkehr von bump erlaubt") }
-                    if after { break }
-                    if permitted { tally.ranOnce() }
+                while stop.snapshot.ran == 0 {
+                    let started = gate.start(0) {
+                        if tally.returnedGeneration > 0 { tally.violation("Start-Body der Generation 0 nach der Rückkehr von bump") }
+                        tally.ranOnce()
+                    }
+                    if !started { tally.refusedOnce(); break }
                 }
                 group.leave()
             }
         }
         pause(0.05)
-        s.releaseDidChange()
-        bumpReturned.ranOnce()
+        let g = s.releaseDidChange()
+        tally.returned(g)
         XCTAssertEqual(group.wait(timeout: .now() + 10), .success)
+        stop.ranOnce()
         let r = tally.snapshot
         XCTAssertGreaterThan(r.ran, 0, "die Starter liefen vor dem Widerruf")
+        XCTAssertEqual(r.refused, 4, "jeder Starter wurde danach abgewiesen")
         XCTAssertEqual(r.violations, [], "nach der Rückkehr von bump startet nichts Altes mehr")
+    }
+
+    /// Dasselbe mit vielen Erhöhungen und Starts der jeweils aktuellen Generation (Stresstest).
+    func testNoStartBodyRunsAfterABumpToANewerGenerationHasReturnedStress() async {
+        let s = await session()
+        let gate = s.playbackGate
+        let tally = Tally()
+        let stop = Tally()
+        let group = DispatchGroup()
+        for _ in 0..<4 {
+            group.enter()
+            DispatchQueue.global().async {
+                while stop.snapshot.ran == 0 {
+                    let g = s.releaseGeneration
+                    let started = gate.start(g) {
+                        let returned = tally.returnedGeneration
+                        if returned > g { tally.violation("Start-Body der Generation \(g) nach Rückkehr von \(returned)") }
+                        tally.ranOnce()
+                    }
+                    if !started { tally.refusedOnce() }
+                }
+                group.leave()
+            }
+        }
+        for _ in 0..<1_500 {
+            let g = s.releaseDidChange()
+            tally.returned(g)
+            if g % 50 == 0 { pause(0.0005) }
+        }
+        stop.ranOnce()
+        XCTAssertEqual(group.wait(timeout: .now() + 20), .success)
+        let r = tally.snapshot
+        XCTAssertEqual(r.violations, [], "kein Start-Body nach der Rückkehr einer neueren Generation")
+        XCTAssertGreaterThan(r.ran, 0, "die Starter liefen")
+        XCTAssertGreaterThan(r.refused, 0, "und wurden zwischendurch abgewiesen")
+        XCTAssertEqual(s.releaseGeneration, 1_500)
+    }
+
+    func testStartRunsTheBodyOnlyWhileTheGenerationIsNotDiscardedAndAnEarlyPermitDoesNotCarryOver() async {
+        let s = await session()
+        let gate = s.playbackGate
+        let g = s.releaseGeneration
+        var ran = 0
+        XCTAssertTrue(gate.start(g) { ran += 1 })
+        XCTAssertTrue(gate.start(g + 3) { ran += 1 }, "künftig ist nicht verworfen")
+        XCTAssertEqual(ran, 2)
+        XCTAssertTrue(gate.permits(g), "die Vorprüfung sagt: darf")
+        s.releaseDidChange()
+        XCTAssertFalse(gate.start(g) { ran += 1 }, "die Vorprüfung gilt nicht für den Start: nach der Erhöhung wird abgewiesen")
+        XCTAssertEqual(ran, 2, "der Body lief nicht")
+        XCTAssertTrue(gate.start(g + 1) { ran += 1 })
+        XCTAssertEqual(ran, 3)
+    }
+
+    /// Haltepunkt ZWISCHEN Prüfung und Start. Gibt zurück, ob der Start-Body NACH der Rückkehr der Erhöhung lief.
+    /// `oldOrder`: die alte Reihenfolge (`permits`, danach Start außerhalb des Locks); sonst `start(generation, body)`.
+    private func startRanAfterTheBumpReturned(oldOrder: Bool, session s: AssistantSession) -> (late: Bool, bumpWaitedForTheBody: Bool) {
+        let gate = s.playbackGate
+        let g = s.releaseGeneration
+        let tally = Tally()
+        let bodyDone = Tally()
+        let atBarrier = DispatchSemaphore(value: 0)
+        let bumpMayProceed = DispatchSemaphore(value: 0)
+        let bumpDone = DispatchSemaphore(value: 0)
+        let waited = Tally()
+        DispatchQueue.global().async {
+            atBarrier.wait()                // der Starter steht zwischen Prüfung und Start
+            bumpMayProceed.signal()         // Hinweis an den Körper: jetzt wird erhöht
+            let newer = s.releaseDidChange()
+            tally.returned(newer)
+            if bodyDone.snapshot.ran > 0 { waited.ranOnce() }   // die Erhöhung kam erst nach dem Body zurück
+            bumpDone.signal()
+        }
+        let body = {
+            if tally.returnedGeneration > g { tally.violation("Start-Body nach der Rückkehr der Erhöhung") }
+            bodyDone.ranOnce()
+        }
+        if oldOrder {
+            if gate.permits(g) {            // Prüfung ...
+                atBarrier.signal()          // ... Haltepunkt: die Erhöhung läuft (kein Lock gehalten) und kehrt zurück ...
+                bumpDone.wait()
+                body()                      // ... erst dann der Start
+            }
+        } else {
+            _ = gate.start(g) {
+                atBarrier.signal()          // Haltepunkt im Start: die Erhöhung steht vor dem Lock und muss warten
+                _ = bumpMayProceed.wait(timeout: .now() + 0.2)
+                pause(0.1)
+                body()
+            }
+            bumpDone.wait()
+        }
+        return (!tally.snapshot.violations.isEmpty, waited.snapshot.ran > 0)
+    }
+
+    /// Mit der alten Reihenfolge ist der Haltepunkt sicher rot (der Start läuft nach der Rückkehr der Erhöhung) ...
+    func testBarrierBetweenCheckAndStartIsRedWithTheOldOrder() async {
+        let s = await session()
+        let r = startRanAfterTheBumpReturned(oldOrder: true, session: s)
+        XCTAssertTrue(r.late, "die alte Reihenfolge (permits, dann Start außerhalb des Locks) startet nach dem Widerruf")
+        XCTAssertFalse(r.bumpWaitedForTheBody)
+    }
+
+    /// ... und mit `start(generation, body)` grün: die Erhöhung wartet auf den Body, der Start liegt vor ihr.
+    func testBarrierBetweenCheckAndStartIsGreenWithStart() async {
+        let s = await session()
+        let r = startRanAfterTheBumpReturned(oldOrder: false, session: s)
+        XCTAssertFalse(r.late, "kein Start-Body nach der Rückkehr der Erhöhung")
+        XCTAssertTrue(r.bumpWaitedForTheBody, "die Erhöhung kehrte erst nach dem Body zurück")
+        XCTAssertEqual(s.playbackGate.discardedBelow, s.releaseGeneration)
     }
 
     // MARK: Ausgabe-Commit im Lock
@@ -165,8 +276,8 @@ final class AssistantOutputTests: XCTestCase {
         XCTAssertEqual(ran.snapshot.ran, 2)
     }
 
-    /// Der Body läuft im Lock der Freigabe: Dort ist die Sperre für die laufende Generation offen (sie liegt in einem eigenen
-    /// Lock, ein Zugriff darauf hängt nicht) und `bump` aus einem anderen Thread wartet, bis der Body fertig ist.
+    /// Der Body läuft im Lock der Freigabe: `bump` aus einem anderen Thread wartet, bis der Body fertig ist. (Die Sperre teilt
+    /// diesen Lock: Im Body darf nichts in Freigabe oder Sperre zurückrufen, es hinge; geprüft wird nach dem Body.)
     func testBodyRunsInsideTheLockOfTheReleaseAndABumpWaitsForIt() async {
         let s = await session()
         let gate = s.playbackGate
@@ -175,7 +286,6 @@ final class AssistantOutputTests: XCTestCase {
         let entered = DispatchSemaphore(value: 0)
         let observed = Tally()
         let ok = s.commitOutput(requestId: "r1", index: 0, generation: g, stage: .display) {
-            if !gate.permits(g) { observed.violation("Sperre im Body zu") }
             DispatchQueue.global().async {
                 entered.signal()
                 s.releaseDidChange()
@@ -184,7 +294,6 @@ final class AssistantOutputTests: XCTestCase {
             entered.wait()
             pause(0.1)   // der Auslöser steht jetzt vor dem Lock
             if bumped.snapshot.ran != 0 { observed.violation("bump lief mitten im Body") }
-            if gate.discardedBelow != g { observed.violation("Sperre schon vorgerückt") }
         }
         XCTAssertTrue(ok)
         let deadline = Date().addingTimeInterval(5)
@@ -194,11 +303,9 @@ final class AssistantOutputTests: XCTestCase {
         XCTAssertEqual(gate.discardedBelow, g + 1)
     }
 
-    /// Stresstest: Der Body läuft nie nach der Rückkehr einer Erhöhung auf eine NEUERE Generation, und im Body ist die Sperre
-    /// für seine Generation immer offen.
+    /// Stresstest: Der Body läuft nie nach der Rückkehr einer Erhöhung auf eine NEUERE Generation.
     func testBodyNeverRunsAfterABumpToANewerGenerationHasReturned() async {
         let s = await session()
-        let gate = s.playbackGate
         let tally = Tally()
         let stop = Tally()
         let group = DispatchGroup()
@@ -210,7 +317,6 @@ final class AssistantOutputTests: XCTestCase {
                     let ok = s.commitOutput(requestId: "r\(t)", index: 0, generation: g, stage: t % 2 == 0 ? .display : .audio) {
                         let returned = tally.returnedGeneration
                         if returned > g { tally.violation("Body der Generation \(g) nach Rückkehr von \(returned)") }
-                        if !gate.permits(g) { tally.violation("Sperre für \(g) im Body zu") }
                         tally.ranOnce()
                     }
                     if !ok { tally.refusedOnce() }

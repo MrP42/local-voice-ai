@@ -6,18 +6,81 @@ import Foundation
 // die Zerlegung des Indexes (`BookTalkSentences`, kennt Abkürzungen). Ohne Nachweis gilt `false`: der Randsatz wird nicht zitiert.
 // Reine Funktionen ohne Darwin-Abhängigkeit (Linux-Tests); die iPhone-Schicht liefert nur die Eingaben.
 
+/// EINE konservative Prüfung für jede Naht (außen an Abschnittsgrenzen, innen an Zeilenumbrüchen und für das Trennen innerhalb
+/// einer Zeile). Fail-closed: im Zweifel nicht nachgewiesen, keine Heuristik erlaubt etwas. Eine Naht zwischen `davor` und
+/// `danach` ist nur nachgewiesen, wenn
+/// (a) `davor` (schließende Anführungszeichen und Klammern abgezogen) auf `!` oder `?` endet oder auf genau EINEN Punkt (keine
+///     Auslassungspunkte), dessen letztes Wort T nur aus Buchstaben besteht (keine Ziffer: Ordnungszahlen und Daten wie „3.“
+///     gelten nie), mindestens zwei Buchstaben hat (keine Initiale), keinen inneren Punkt trägt, nicht in der Abkürzungsliste
+///     steht, nicht auf „str“ endet und entweder mindestens fünf Buchstaben hat oder kleingeschrieben in der geschlossenen Liste
+///     von Kurzwörtern steht, die nie Abkürzungen sind; und
+/// (b) `danach` (öffnende Anführungszeichen und Klammern abgezogen) mit einem GROSSBUCHSTABEN beginnt (nicht Ziffer, nicht klein).
+/// Am nachgewiesenen Abschnittsende (`danach == nil`) entfällt (b). Restgrenze: eine nicht gelistete Abkürzung mit fünf oder mehr
+/// Buchstaben vor einem Großbuchstaben gilt als Satzende.
 enum AssistantSeam {
     /// Wort, das in der Probe auf einen Text ohne Nachfolger folgt (Großbuchstabe: ein Satzanfang).
     private static let probe = "Ende"
 
-    /// Liegt zwischen `before` und `after` nachweislich eine Satzgrenze? `before` muss dort mit einem Satzzeichen (auch mit
-    /// schließenden Anführungszeichen) enden, und die Satzerkennung muss über die Naht an dieser Stelle schneiden: ein
-    /// Kleinbuchstabe danach oder eine Abkürzung davor („z. B.“) beweisen nichts. `after == nil`: nichts folgt (Ende der
-    /// Quelle oder Lücke); die Probe mit einem hypothetischen Satzanfang prüft dann dasselbe.
+    private static let closers: Set<Character> = ["“", "”", "‘", "’", "\"", "'", "»", "«", ")", "›", "]"]
+    private static let openers: Set<Character> = ["„", "“", "‚", "‘", "»", "«", "\"", "'", "(", "‹", "["]
+
+    /// Abkürzungen (klein): die der Satzerkennung plus weitere. Nur für Wörter ab fünf Buchstaben von Belang.
+    static let abbreviations: Set<String> = [
+        "z", "b", "d", "h", "u", "a", "o", "bzw", "usw", "ca", "dr", "nr", "s", "vgl", "etc", "evtl", "ggf", "inkl",
+        "prof", "str", "sog", "bspw", "e", "g", "i", "vs", "mr", "mrs", "ms", "st", "no", "p", "pp", "ff", "f",
+        "hr", "fr", "dipl", "ing", "jr", "sen", "abs", "abb", "tel", "fax", "zzgl", "ggfs", "evt", "allg", "bes", "bzgl",
+        "dgl", "engl", "frz", "ital", "max", "min", "mind", "rd", "zt", "zw", "urspr", "vorm", "nachm", "incl", "gem",
+        "insb", "insbes", "sogen", "stellv", "gesch", "bearb", "jahrh", "jahrg", "abtlg", "hrsg", "anm", "geb", "gest",
+        "verh", "mio", "mrd", "tsd", "univ", "fakult", "zeitschr", "vorzgl", "ergebn", "einw", "gebr", "lfg", "ztschr",
+    ]
+
+    /// Kurzwörter, die nie Abkürzungen sind (klein geschrieben): nur sie beweisen mit weniger als fünf Buchstaben ein Satzende.
+    static let shortWords: Set<String> = [
+        "an", "auf", "aus", "ein", "mit", "vor", "zu", "ab", "bei", "da", "es", "ist", "sind", "war", "hat", "gut", "neu", "nun",
+        "hier", "dort", "dann", "noch", "auch", "mehr", "wir", "ihr", "sie", "er", "ich", "du", "uns", "euch", "ihn", "ihm", "sich",
+        "mich", "dich", "mir", "dir", "nach", "fest", "frei", "los", "weg", "hin", "her", "um", "nie", "oft", "viel", "klar",
+        "statt", "teil", "nein", "ja",
+    ]
+
+    /// Teil (a): Schließt `text` nachweislich einen Satz ab?
+    static func endsSentence(_ text: String) -> Bool {
+        var tail = Substring(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        while let last = tail.last, closers.contains(last) { tail = tail.dropLast() }
+        guard let end = tail.last else { return false }
+        if end == "!" || end == "?" { return true }
+        guard end == "." else { return false }
+        let body = tail.dropLast()
+        guard let previous = body.last, !previous.isWhitespace, previous != ".", previous != "…" else { return false }
+        guard var word = body.split(whereSeparator: { $0.isWhitespace }).last else { return false }
+        while let first = word.first, openers.contains(first) { word = word.dropFirst() }
+        guard word.count >= 2, word.allSatisfy(\.isLetter) else { return false }
+        let lower = word.lowercased()
+        guard !abbreviations.contains(lower), !lower.hasSuffix("str") else { return false }
+        return word.count >= 5 || (String(word) == lower && shortWords.contains(lower))
+    }
+
+    /// Teil (b): Beginnt `text` (öffnende Anführungszeichen und Klammern abgezogen) mit einem Großbuchstaben?
+    static func startsSentence(_ text: String) -> Bool {
+        var head = Substring(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        while let first = head.first, openers.contains(first) { head = head.dropFirst() }
+        guard let first = head.first else { return false }
+        return first.isLetter && first.isUppercase
+    }
+
+    /// Liegt zwischen `before` und `after` nachweislich eine Satzgrenze? (a) und (b) müssen gelten, und die Satzerkennung muss
+    /// über die Naht an dieser Stelle schneiden. `after == nil`: nichts folgt (Ende der Quelle oder Lücke); dann zählt nur (a),
+    /// die Satzerkennung wird mit einem hypothetischen Satzanfang geprüft.
     static func proven(_ before: String, _ after: String?) -> Bool {
         let a = before.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !a.isEmpty else { return false }
-        let b = after.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 } ?? probe
+        guard !a.isEmpty, endsSentence(a) else { return false }
+        var b = probe
+        if let after {
+            let trimmed = after.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                guard startsSentence(trimmed) else { return false }
+                b = trimmed
+            }
+        }
         let cut = a.utf16.count
         return BookTalkSentences.split(a + " " + b).contains { $0.end == cut }
     }

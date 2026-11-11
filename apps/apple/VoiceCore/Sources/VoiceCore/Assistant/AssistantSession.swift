@@ -148,8 +148,12 @@ private final class RunEmitter {
     /// Höchstens so viele Zitate je Antwort; danach wird das Modell abgebrochen.
     static let maxQuotes = 3
 
+    /// Die feste Antwort darf auf den Schalter „Antworten ohne Quelle“ hinweisen (nur, wenn es ihn gibt: freigeschaltet).
+    let canOptIn: Bool
+
     init(rid: String, generation: Int, release: AssistantRelease, output: AssistantRunOutput, state: RunState,
-         journal: AssistantAuditLog?, index: AssistantStepIndex, started: ContinuousClock.Instant) {
+         journal: AssistantAuditLog?, index: AssistantStepIndex, started: ContinuousClock.Instant, canOptIn: Bool) {
+        self.canOptIn = canOptIn
         self.rid = rid
         self.generation = generation
         self.release = release
@@ -265,7 +269,7 @@ private final class RunEmitter {
     }
 
     func emitFixed(optIn: Bool) -> Flow {
-        let s = AssistantGrounding.fixedSentence(allowUnsourced: optIn)
+        let s = AssistantGrounding.fixedSentence(allowUnsourced: optIn, hint: canOptIn)
         return emit(s, speech: s, status: .neutral) ? .next : .revoked
     }
 
@@ -357,7 +361,8 @@ public actor AssistantSession {
         self.knowledge = knowledge
         self.config = config
         self.released = released
-        self.release = AssistantRelease(optIn: optIn, consentVersion: config.consentVersion)
+        self.release = AssistantRelease(optIn: optIn, consentVersion: config.consentVersion,
+                                        onIncrease: Self.increaseWriter(audit: audit, config: config))
         let admitted = AssistantTurn.admitted(history, released: released)
         let kept = admitted.count > Self.maxStoredTurns ? Array(admitted.suffix(Self.maxStoredTurns)) : admitted
         self.context = AssistantContext(optIn: optIn, history: kept)
@@ -366,6 +371,26 @@ public actor AssistantSession {
     }
 
     // MARK: Freigabe
+
+    /// Die Zeile `release` zu einer Erhöhung: wird von der Freigabe IM Lock an der Stelle der Erhöhung gerufen (kurz, nur
+    /// Einreihen, kein I/O). Ohne Protokoll gibt es keine Zeile.
+    private static func increaseWriter(audit: AssistantAuditLog?, config: AssistantConfig) -> (@Sendable (AssistantRelease.Increase) -> Void)? {
+        guard let audit else { return nil }
+        let kind = AssistantModelKind.classify(label: config.modelLabel)
+        let cloud = config.isCloud
+        return { increase in
+            var line = AssistantJournalLine(.release)
+            line.at = Date()
+            line.gen = increase.generation
+            line.cause = increase.cause
+            line.areas = increase.areas
+            line.unsourced = increase.optIn
+            line.consent = increase.consentVersion
+            line.model = kind
+            line.cloud = cloud
+            audit.enqueue(line)
+        }
+    }
 
     /// Ob unbelegte Sätze (Allgemeinwissen) gesprochen werden dürfen. Ohne Aktor-Sprung lesbar (hinter einem Lock).
     public nonisolated var allowsUnsourced: Bool { release.isOptedIn }
@@ -407,23 +432,30 @@ public actor AssistantSession {
     @discardableResult
     public nonisolated func resumeFree() -> Bool {
         guard released, context.resumeFree(optIn: release.isOptedIn) else { return false }
-        release.bump()
+        release.bump(.resumeFree)
         return true
     }
 
     /// Eine Freigabe hat sich geändert (Cloud-Zustimmung, oder Bereiche außerhalb von `setAreas`): Generation hoch, laufende
-    /// Antworten abbrechen. Gibt die neue Generation zurück.
+    /// Antworten abbrechen. `cause` kommt als Grund in die Zeile `release` (Standard `other`); `areas`: die neuen Bereiche bei
+    /// Grund `areas` (oder die Bereiche der Zustimmung bei `consent`). Gibt die neue Generation zurück.
     @discardableResult
-    public nonisolated func releaseDidChange() -> Int { release.bump() }
+    public nonisolated func releaseDidChange(_ cause: AssistantReleaseCause = .other, areas: Set<AssistantArea>? = nil) -> Int {
+        release.bump(cause, areas: areas.map(Self.names))
+    }
 
     /// Ändert die Bereiche und die Generation. Erst die Generation (laufende Antworten enden sofort), dann die Bereiche, dann
-    /// noch einmal die Generation: Eine Anfrage, die dazwischen mit alten Bereichen begann, wird ebenfalls widerrufen.
+    /// noch einmal die Generation: Eine Anfrage, die dazwischen mit alten Bereichen begann, wird ebenfalls widerrufen. Beide
+    /// Erhöhungen schreiben je eine Zeile `release` (Grund `areas`, beide mit den NEUEN Bereichsnamen).
     @discardableResult
     public func setAreas(_ areas: Set<AssistantArea>) async -> Int {
-        release.bump()
+        let names = Self.names(areas)
+        release.bump(.areas, areas: names)
         await knowledge.setAreas(areas)
-        return release.bump()
+        return release.bump(.areas, areas: names)
     }
+
+    private nonisolated static func names(_ areas: Set<AssistantArea>) -> [String] { areas.map(\.rawValue).sorted() }
 
     /// Wiedergabesperre dieser Sitzung („verworfen ab Generation g“). Die Freigabe rückt sie im selben Lock vor, in dem die
     /// Generation steigt; die Stimme fragt sie vor jedem Start eines Satzes (`permits`), ohne Aktor-Sprung und ohne Warten.
@@ -562,17 +594,13 @@ public actor AssistantSession {
             let parts = Self.attribute(spoken: said, record: record)
             let sources = Self.distinct(parts.filter { $0.status == .grounded }.flatMap(\.sources))
             let anyUnsourced = parts.contains { $0.status == .unsourced }
-            let anyQuote = parts.contains { $0.quote }
+            // Abschnitte (Marke je Satz): sobald ein Zitat oder ein Satz mit Kennzeichnung (feste Antwort, Bestandsangabe) vorkommt
+            // oder Sätze ohne Quelle mit anderen gemischt sind; ein rein unbelegter Beitrag bleibt ohne Abschnitte.
             var turnParts: [AssistantTurnPart] = []
-            if anyQuote || (anyUnsourced && parts.contains { $0.status != .unsourced }) {
+            let marked = parts.contains { $0.quote || AssistantTurnPart.note(for: $0.status, quote: $0.quote) != nil }
+            if marked || (anyUnsourced && parts.contains { $0.status != .unsourced }) {
                 for p in parts {
-                    let flag = p.status == .unsourced
-                    if !p.quote, let last = turnParts.last, !last.quote, last.unsourced == flag {
-                        turnParts[turnParts.count - 1].text += " " + p.text
-                    } else {
-                        turnParts.append(AssistantTurnPart(text: p.text, unsourced: flag, quote: p.quote,
-                                                           source: p.quote ? p.sources.first?.sourceLabel : nil))
-                    }
+                    AssistantTurnPart.append(to: &turnParts, text: p.text, status: p.status, quote: p.quote, sources: p.sources)
                 }
             }
             let turn = AssistantTurn(
@@ -672,14 +700,14 @@ public actor AssistantSession {
         var runConfig = self.config
         runConfig.allowUnsourced = snapshot.optIn
         let model = self.model, knowledge = self.knowledge, release = self.release, context = self.context
-        let audit = self.audit, index = self.stepIndex
+        let audit = self.audit, index = self.stepIndex, canOptIn = self.released
         let promptHistory = Self.promptHistory(history, areas: allowedAreas)
         let state = RunState(snapshot: snapshot)
         let output = AssistantRunOutput(release: release, generation: snapshot.generation, continuation: out)
         let work = Task<Outcome, Never> {
             await Self.generate(request, model: model, knowledge: knowledge, config: runConfig, snapshot: snapshot, release: release,
                                 context: context, history: promptHistory, state: state, output: output, audit: audit,
-                                index: index, session: self.sessionId)
+                                index: index, session: self.sessionId, canOptIn: canOptIn)
         }
         active[rid] = ActiveRun(stop: { work.cancel() }, state: state)
         let revoke: @Sendable () -> Void = { state.markRevoked(); work.cancel() }
@@ -745,20 +773,23 @@ public actor AssistantSession {
     private static func generate(
         _ request: AssistantRequest, model: any BookTalkModel, knowledge: AssistantKnowledge, config: AssistantConfig,
         snapshot: AssistantRelease.Snapshot, release: AssistantRelease, context: AssistantContext, history: [AssistantTurn],
-        state: RunState, output: AssistantRunOutput, audit: AssistantAuditLog?, index: AssistantStepIndex, session: String
+        state: RunState, output: AssistantRunOutput, audit: AssistantAuditLog?, index: AssistantStepIndex, session: String,
+        canOptIn: Bool
     ) async -> Outcome {
         let rid = request.requestId
         let budget = AssistantPrompt.budget(config: config)
         let emitter = RunEmitter(rid: rid, generation: snapshot.generation, release: release, output: output, state: state,
-                                 journal: audit, index: index, started: ContinuousClock().now)
+                                 journal: audit, index: index, started: ContinuousClock().now, canOptIn: canOptIn)
         func finished(_ failure: AssistantFailure? = nil) -> Outcome {
             .finished(text: emitter.texts.joined(separator: " "), firstMs: emitter.firstMs, totalMs: emitter.elapsedMs, failure: failure)
         }
 
         // `start` steht in der Datei, BEVOR der Abruf und die Bestandstitel laufen (und vor dem Modell und jeder Ausgabe): Ein
         // Prozessende währenddessen hinterlässt die Anfrage, das nächste Öffnen schließt sie als unvollständig. Die Rundenart
-        // folgt als eigene Zeile `round`, die Bereiche der Quellen als `areas`, sobald sie feststehen. Ein Fehler wird für den
-        // Abschluss der Anfrage gemerkt (`commit` meldet ihn), die Antwort läuft trotzdem.
+        // folgt als eigene Zeile `round`, die Bereiche der Quellen als `areas`, sobald sie feststehen; bei JEDEM Modell (lokal wie
+        // Cloud) steht jede dieser Zeilen in der Datei, bevor das Modell läuft bzw. die erste Bestandsangabe hinausgeht (`await`
+        // auf das Schreiben, nicht nur Einreihen). Ein Fehler wird für den Abschluss der Anfrage gemerkt (`commit` meldet ihn),
+        // die Antwort läuft trotzdem.
         state.update { $0.contextBefore = context.mode }
         if let audit {
             _ = await audit.begin(startLine(rid, session: session, config: config, record: state.snapshot))
@@ -789,6 +820,8 @@ public actor AssistantSession {
             l.reason = decision.reason
             l.gen = snapshot.generation
             audit.enqueue(l)
+            await audit.waitUntilWritten(request: rid)
+            if Task.isCancelled { return .cancelled }
         }
 
         let now = Date()
@@ -804,7 +837,11 @@ public actor AssistantSession {
                 return finished()
             }
             state.update { $0.inventoryAreas = groups.map(\.area) }
-            emitter.noteAreas(groups.map(\.area))
+            // Die Bereiche der Bestandsangaben stehen in der Datei, bevor die erste Angabe hinausgeht.
+            if emitter.noteAreas(groups.map(\.area)), let audit {
+                await audit.waitUntilWritten(request: rid)
+                if Task.isCancelled { return .cancelled }
+            }
             let preface = AssistantGrounding.inventoryAnnouncement
             guard emitter.emit(preface, speech: preface, status: .announcement) else { return .cancelled }
             for s in statements {
@@ -837,9 +874,9 @@ public actor AssistantSession {
             }
             if !announcedSources || used != state.snapshot.used {
                 state.update { $0.used = used }
-                // Die Bereiche der Auszüge im Prompt stehen fest. Zu einem Cloud-Modell geht der Prompt erst, wenn die Zeile in der
-                // Datei steht; lokal genügt das Einreihen.
-                if emitter.noteAreas(used.map(\.area)), config.isCloud, let audit {
+                // Die Bereiche der Auszüge im Prompt stehen fest. Zu JEDEM Modell (lokal wie Cloud) geht der Prompt erst, wenn die
+                // Zeile in der Datei steht.
+                if emitter.noteAreas(used.map(\.area)), let audit {
                     await audit.waitUntilWritten(request: rid)
                     if Task.isCancelled { return .cancelled }
                 }

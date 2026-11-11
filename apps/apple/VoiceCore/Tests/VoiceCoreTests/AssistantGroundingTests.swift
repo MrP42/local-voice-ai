@@ -143,6 +143,60 @@ final class AssistantGroundingTests: XCTestCase {
         XCTAssertEqual(AssistantGrounding.Basis(detecting: [nordlicht]).texts.count, 3, "die Erkennungsbasis behält jede Zeile")
     }
 
+    /// Gegenbeispiele der unbewiesenen Naht: An einem Zeilenumbruch sind Ende der oberen und Anfang der unteren Einheit nicht
+    /// nachgewiesen, beide sind nirgends zitierbar (Basis, snap, fallback); Verbieten funktioniert weiter.
+    func testUnprovenSeamAtALineBreakMakesNeitherSideQuotable() {
+        let cases: [(upper: String, lower: String)] = [
+            ("Anna spricht mit Dr.", "Meyer über Projekt Nordlicht."),
+            ("Anna spricht mit Prof.", "Müller über Projekt Nordlicht."),
+            ("Anna nennt die Nr.", "Drei im Projekt Nordlicht."),
+            ("Anna spricht mit Hr.", "Meyer über Projekt Nordlicht."),
+            ("Das gilt für Anna z. B.", "Der Plan im Projekt Nordlicht."),
+            ("Anna trifft Frau A.", "Meyer im Projekt Nordlicht."),
+            ("Anna kommt am 3.", "Mai zum Projekt Nordlicht."),
+            ("Anna wohnt in der Bahnhofstr.", "Mitte im Projekt Nordlicht."),
+            ("Anna überlegt lange und sagt…", "Dann folgt das Projekt Nordlicht."),
+            ("Anna beendet die Planung für Nordlicht.", "danach folgt das Budget."),
+            ("Anna beendet die Planung für Nordlicht.", "3 Teams folgen dem Projekt Nordlicht."),
+        ]
+        for c in cases {
+            let p = assistantPassage(.notes, itemId: "n", title: "Notiz", text: c.upper + "\n" + c.lower)
+            let basis = AssistantGrounding.Basis(passages: [p])
+            XCTAssertTrue(basis.isEmpty, "weder „\(c.upper)“ noch „\(c.lower)“ ist zitierbar: \(basis.texts)")
+            for text in [c.upper, c.lower] {
+                XCTAssertNil(AssistantGrounding.snap(text, basis: basis), "snap: \(text)")
+                XCTAssertNil(AssistantGrounding.fallback(question: text, basis: basis), "fallback: \(text)")
+                XCTAssertTrue(AssistantGrounding.resemblesOwnContent(text, passages: [p]), "Verbieten bleibt: \(text)")
+            }
+        }
+    }
+
+    /// Derselbe Fall innerhalb einer Zeile: Die Einheit bleibt zusammen, es sind ganze Originalsätze.
+    func testUnprovenSplitInsideALineKeepsTheUnitTogether() {
+        for text in ["Anna spricht mit Hr. Meyer über Nordlicht.", "Anna spricht mit Dr. Meyer über Nordlicht.",
+                     "Anna fährt am 3. Mai nach Hamburg zum Nordlicht.", "Anna trifft Frau A. Meyer im Projekt Nordlicht.",
+                     "Das gilt z. B. für das Projekt Nordlicht.", "Anna wohnt in der Bahnhofstr. Mitte im Projekt Nordlicht.",
+                     "Das war ein Test. Danach ging es weiter mit Nordlicht."] {
+            let p = assistantPassage(.notes, itemId: "n", title: "Notiz", text: text)
+            let basis = AssistantGrounding.Basis(passages: [p])
+            XCTAssertEqual(basis.texts, [text], "EINE Einheit, nicht getrennt: \(text)")
+            XCTAssertNotNil(AssistantGrounding.snap(text, basis: basis))
+        }
+        // Eine bewiesene Naht trennt weiterhin.
+        let p = assistantPassage(.notes, itemId: "n", title: "Notiz", text: "Anna übernimmt die Planung. Danach folgt die Budgetprüfung.")
+        XCTAssertEqual(AssistantGrounding.Basis(passages: [p]).texts, ["Anna übernimmt die Planung.", "Danach folgt die Budgetprüfung."])
+    }
+
+    /// Positivtests der bewiesenen Naht an Zeilenumbrüchen.
+    func testProvenSeamAtALineBreakKeepsBothSidesQuotable() {
+        for (upper, lower) in [("Anna übernimmt die Planung für Nordlicht.", "Nordlicht beginnt im Mai nächsten Jahres."),
+                               ("Bernd hilft bei Nordlicht mit.", "Anna übernimmt die Planung für Nordlicht."),
+                               ("Wer übernimmt die Planung für Nordlicht?", "Anna übernimmt die Planung.")] {
+            let p = assistantPassage(.notes, itemId: "n", title: "Notiz", text: upper + "\n" + lower)
+            XCTAssertEqual(AssistantGrounding.Basis(passages: [p]).texts, [upper, lower])
+        }
+    }
+
     func testHeadingWithoutPunctuationDoesNotProveTheStartOfTheNextLine() {
         for text in ["Projektstatus für Freitag\nAnna übernimmt die Planung bis Freitag.\nDanach folgt die Budgetprüfung.",
                      "Projektstatus für Freitag\n\nAnna übernimmt die Planung bis Freitag.\n\nDanach folgt die Budgetprüfung.",

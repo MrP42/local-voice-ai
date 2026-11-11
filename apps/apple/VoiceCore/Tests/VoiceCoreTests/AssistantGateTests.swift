@@ -240,6 +240,85 @@ final class AssistantGateTests: XCTestCase {
         XCTAssertEqual(failures, 0)
     }
 
+    /// Marke je Satz (Runde 5): In JEDER Datenrunde der Goldfragen (alle böswilligen Ausgaben, mit und ohne Opt-in) trägt jedes Zitat
+    /// genau EINE Quelle (Ereignis und Abschnitt im Beitrag), kein Satz ohne Quelle ist ein Zitat, und jeder Satz ohne Quelle
+    /// (Vorlage, Bestandsangabe) trägt im Beitrag seine eigene Kennzeichnung. Ein Originalsatz ohne Quelle gibt es nicht.
+    func testEveryQuoteOfADataRoundHasExactlyOneSourceAndEverySourcelessSentenceIsMarked() async {
+        var rounds = 0, quotes = 0, marked = 0
+        var violations: [String] = []
+        for item in gold {
+            for output in item.outputs {
+                for optIn in [false, true] {
+                    let config = AssistantConfig(modelLabel: "Test", isCloud: false, contextTokens: 4_096, maxAnswerTokens: 400, userName: "Patrick",
+                                                 timeout: 5, allowUnsourced: optIn, consentVersion: optIn ? 1 : 0)
+                    let session = AssistantSession(model: OutputModel(text: output), knowledge: await knowledge(), config: config, released: true)
+                    var events: [AssistantEvent] = []
+                    for await e in session.events(AssistantRequest(requestId: "r", text: item.question)) { events.append(e) }
+                    guard case .done(_, let answer)? = events.last, answer.round == .data else { continue }
+                    rounds += 1
+                    var shown: [(text: String, status: AssistantSentenceStatus, quote: Bool, sources: [AssistantPassage])] = []
+                    for case .sentence(_, _, let text, _, let status, let sources, let quote) in events where status != .announcement {
+                        shown.append((text, status, quote, sources))
+                        if quote {
+                            if sources.count != 1 { violations.append("Zitat mit \(sources.count) Quellen: \(text)") }
+                            if status != .grounded { violations.append("Zitat mit Einordnung \(status): \(text)") }
+                            quotes += 1
+                        } else if status == .grounded {
+                            violations.append("Satz mit Quelle, aber kein Zitat: \(text)")
+                        } else if status == .unsourced {
+                            violations.append("Satz ohne Quelle in der Datenrunde: \(text)")
+                        } else {
+                            if !sources.isEmpty { violations.append("Systemsatz mit Quelle: \(text)") }
+                            if AssistantTurnPart.note(for: status, quote: false) == nil { violations.append("Systemsatz ohne Kennzeichnung: \(text)") }
+                        }
+                    }
+                    await session.commit(requestId: "r", user: item.question, spoken: shown.map(\.text).joined(separator: " "), interrupted: false)
+                    guard let turn = await session.history.last else {
+                        if !shown.isEmpty { violations.append("kein Beitrag zu \(shown.count) Sätzen") }
+                        continue
+                    }
+                    let parts = turn.parts
+                    let quoteParts = parts.filter(\.quote)
+                    if quoteParts.count != shown.filter(\.quote).count { violations.append("Zitate: \(quoteParts.count) Abschnitte zu \(shown.filter(\.quote).count) Sätzen") }
+                    for (part, sentence) in zip(quoteParts, shown.filter(\.quote)) where part.source != sentence.sources.first?.sourceLabel || part.source == nil {
+                        violations.append("Quellzeile des Abschnitts passt nicht zum Satz: \(part.text)")
+                    }
+                    for part in parts where !part.quote {
+                        marked += 1
+                        if part.note == nil { violations.append("Abschnitt ohne Quellzeile und ohne Kennzeichnung: \(part.text)") }
+                        if part.source != nil { violations.append("Kennzeichnung mit Quellzeile: \(part.text)") }
+                    }
+                    if !shown.isEmpty, parts.isEmpty { violations.append("Beitrag ohne Abschnitte trotz \(shown.count) Sätzen") }
+                }
+            }
+        }
+        print("Marke je Satz: \(rounds) Datenrunden, \(quotes) Zitate mit genau einer Quelle, \(marked) Abschnitte mit Kennzeichnung, Verstöße: \(violations.count).")
+        XCTAssertEqual(violations, [])
+        XCTAssertGreaterThan(rounds, 20)
+        XCTAssertGreaterThan(quotes, 20, "das Tor prüft wirklich Zitate")
+        XCTAssertGreaterThan(marked, 0, "und Sätze mit Kennzeichnung (Vorlage)")
+    }
+
+    /// Die feste Antwort „Dazu finde ich in deinen Inhalten nichts.“ verweist in der Produktfassung nicht auf einen Schalter
+    /// „Antworten ohne Quelle“, den es dort nicht gibt; nur mit freigeschalteter Funktion (Testinitialisierer) steht der Hinweis da.
+    func testTheFixedAnswerPointsToNoSwitchThatDoesNotExist() async {
+        let config = AssistantConfig(modelLabel: "Test", isCloud: false, contextTokens: 4_096, maxAnswerTokens: 400, userName: nil, timeout: 5)
+        let output = "Der Mont Blanc ist 4806 Meter hoch."
+        func fixed(_ session: AssistantSession) async -> [String] {
+            var texts: [String] = []
+            for await e in session.events(AssistantRequest(requestId: "r", text: "Wie hoch ist der Mont Blanc?")) {
+                if case .sentence(_, _, let t, _, .neutral, _, _) = e { texts.append(t) }
+            }
+            return texts
+        }
+        let product = await fixed(AssistantSession(model: OutputModel(text: output), knowledge: await knowledge(), config: config))
+        XCTAssertEqual(product, [AssistantGrounding.nothingFoundSentence])
+        XCTAssertFalse(product.joined().contains("ohne Quelle"), "kein Verweis auf den abgeschalteten Schalter")
+        let released = await fixed(AssistantSession(model: OutputModel(text: output), knowledge: await knowledge(), config: config, released: true))
+        XCTAssertEqual(released, [AssistantGrounding.fixedSentence(allowUnsourced: false)])
+        XCTAssertTrue(released.joined().contains(AssistantGrounding.optInHint))
+    }
+
     /// Ohne Opt-in gibt es in keiner Rundenart einen Satz ohne Quelle, auch nicht bei Allgemeinwissen.
     func testE9GateNoUnsourcedSentenceWithoutOptIn() async {
         for item in gold {

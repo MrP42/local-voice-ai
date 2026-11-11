@@ -243,10 +243,11 @@ final class VoiceUITests: XCTestCase {
         expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: option)
         waitForExpectations(timeout: 5)
     }
-    /// Ohne Modell: kurzer Hinweis mit zwei Wegen heraus, Hauptknopf „Modell auswählen“, kein Stumm-Knopf.
+    /// Ohne Modell: kurzer Hinweis mit zwei Wegen heraus, Hauptknopf „Modell auswählen“, kein Stumm-Knopf. Der Einstieg lädt nicht
+    /// zum Sprechen ein („Sprich einfach los“ nur mit geladenem Modell), und die Knöpfe im Hinweis sind mindestens 44 pt hoch.
     func testAssistantWithoutModelOffersModelChoice() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--no-handsfree", "--assistant-no-model", "--assistant-reset-unsourced"]
+        app.launchArguments = ["--no-handsfree", "--assistant-no-model"]
         app.launch()
         openAssistant(app)
         XCTAssertTrue(app.staticTexts["Kein Modell verfügbar."].waitForExistence(timeout: 10))
@@ -255,6 +256,11 @@ final class VoiceUITests: XCTestCase {
         XCTAssertEqual(choose.label, "Modell auswählen")
         XCTAssertEqual(app.buttons["assistantNoticeChooseModel"].label, "Modell auswählen")
         XCTAssertEqual(app.buttons["assistantNoticeLocalModels"].label, "Lokale Modelle öffnen")
+        XCTAssertTrue(app.staticTexts["Zuerst ein Modell wählen"].exists, "ohne Modell steht der Weg zur Modellwahl im Einstieg")
+        XCTAssertFalse(app.staticTexts["Sprich einfach los"].exists, "keine Einladung zum Sprechen ohne geladenes Modell")
+        for id in ["assistantNoticeChooseModel", "assistantNoticeLocalModels"] {
+            XCTAssertGreaterThanOrEqual(app.buttons[id].frame.height, 44, "Tippfläche von \(id) mindestens 44 pt hoch")
+        }
         XCTAssertFalse(app.buttons["assistantMute"].exists, "ohne Modell gibt es weder Stumm noch Pause")
         XCTAssertFalse(app.buttons["assistantKeyboard"].exists)
         keepScreenshot(app, name: "Gespraech-ohne-Modell")
@@ -275,10 +281,11 @@ final class VoiceUITests: XCTestCase {
     }
     /// Der freie Modus ist hart abgeschaltet (`AssistantUnsourcedConsent.isReleased == false`, Entscheidung zu lva#494): Das Menü hat
     /// keinen Schalter „Antworten ohne Quelle“, es gibt keine Rückfrage, keinen Knopf „Ohne Quelle fortsetzen“ und keine Zustandszeile
-    /// „Antwortet ohne Quelle“. Auch ein früher gespeicherter Schalter (`--assistant-reset-unsourced` setzt ihn zurück) ändert nichts.
+    /// „Antwortet ohne Quelle“; auch der Weg dorthin („Weiter ohne Quelle“, Fortsetzen-Knopf) ist aus der Ansicht entfernt. Ein früher
+    /// gespeicherter Schalter ändert nichts: Die Ansicht liest ihn nicht mehr, der Kern bleibt auf `isReleased == false`.
     func testAssistantHasNoSwitchForUnsourcedAnswers() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--no-handsfree", "--assistant-no-model", "--assistant-reset-unsourced"]
+        app.launchArguments = ["--no-handsfree", "--assistant-no-model"]
         app.launch()
         openAssistant(app)
         let state = app.descendants(matching: .any)["assistantState"]
@@ -291,10 +298,14 @@ final class VoiceUITests: XCTestCase {
         XCTAssertFalse(toggle.exists, "der Schalter „Antworten ohne Quelle“ existiert nicht")
         XCTAssertFalse(app.alerts["Antworten ohne Quelle einschalten?"].exists)
         XCTAssertFalse(app.buttons["Ohne Quelle fortsetzen"].exists)
+        XCTAssertFalse(app.buttons["assistantResumeFree"].exists, "der Fortsetzen-Knopf des freien Modus existiert nicht mehr")
         keepScreenshot(app, name: "Gespraech-Menue-ohne-Schalter")
         app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap()   // Menü schließen
         XCTAssertTrue(newConversation.waitForNonExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Ohne Quelle fortsetzen"].exists)
+        XCTAssertFalse(app.buttons["assistantResumeFree"].exists)
+        XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS[c] %@", "ohne Quelle")).firstMatch.exists,
+                       "nirgends in der Ansicht steht „ohne Quelle“ (leerer Verlauf, kein alter Beitrag)")
         closeAssistant(app)
     }
     /// Beispielrunde (`--assistant-demo-quote`, nur Debug-Bau): ein Zitat mit Quellzeile, ohne Modell, Abruf, Speicher und Protokoll.
@@ -302,7 +313,7 @@ final class VoiceUITests: XCTestCase {
     /// Es gibt keine Runde ohne Quelle (der freie Modus ist abgeschaltet): weder einen Satz ohne Quelle noch die Kennzeichnung.
     func testAssistantDemoQuoteShowsOnlyTheQuoteWithItsSourceLine() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--no-handsfree", "--assistant-no-model", "--assistant-demo-quote", "--assistant-reset-unsourced"]
+        app.launchArguments = ["--no-handsfree", "--assistant-no-model", "--assistant-demo-quote"]
         app.launch()
         openAssistant(app)
         func element(_ predicate: NSPredicate) -> XCUIElement { app.descendants(matching: .any).matching(predicate).firstMatch }
@@ -316,6 +327,32 @@ final class VoiceUITests: XCTestCase {
         XCTAssertFalse(label("Hinweis: Allgemeinwissen · ohne Quelle").exists)
         XCTAssertFalse(app.staticTexts["Kein Modell verfügbar."].exists, "die Beispielrunde startet kein Modell")
         keepScreenshot(app, name: "Gespraech-Zitat")
+        closeAssistant(app)
+    }
+    /// Marke je Satz (`--assistant-demo-multi`, nur Debug-Bau): eine Antwort mit drei Zitaten aus zwei Quellen und einer festen
+    /// Antwort. Jeder Satz hat seine eigene Quellzeile (Zitat) oder seine Kennzeichnung (fester Satz); eine gesammelte Quellenliste
+    /// gibt es nicht, und nirgends steht „ohne Quelle“.
+    func testAssistantDemoMultiMarksEverySentence() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--no-handsfree", "--assistant-no-model", "--assistant-demo-multi"]
+        app.launch()
+        openAssistant(app)
+        func element(_ predicate: NSPredicate) -> XCUIElement { app.descendants(matching: .any).matching(predicate).firstMatch }
+        func label(_ text: String) -> XCUIElement { element(NSPredicate(format: "label == %@", text)) }
+        XCTAssertTrue(label("Du: Wie steht es um die Planung und das Budget?").waitForExistence(timeout: 10))
+        let sentences = [
+            "Zitat aus Buch · Beispielbuch · S. 12: Anna übernimmt die Planung und stimmt sich jede Woche mit dem Team ab.",
+            "Zitat aus Buch · Beispielbuch · S. 14: Die Abnahme der ersten Stufe ist für das Frühjahr vorgesehen.",
+            "Zitat aus Transkript · Besprechung Nordlicht · 00:14:03: Das Budget für Projekt Nordlicht wurde auf zwei Etappen verteilt.",
+        ]
+        for sentence in sentences {
+            XCTAssertTrue(label(sentence).waitForExistence(timeout: 5), "jeder Satz trägt seine Quellzeile: \(sentence)")
+        }
+        XCTAssertTrue(label("Feste Antwort: Dazu finde ich in deinen Inhalten nichts.").exists,
+                      "der feste Satz hat eine eigene, sichtbare Kennzeichnung statt einer Quelle")
+        XCTAssertFalse(element(NSPredicate(format: "label CONTAINS[c] %@", "ohne Quelle")).exists, "keine Kennzeichnung „ohne Quelle“")
+        XCTAssertFalse(element(NSPredicate(format: "label BEGINSWITH %@", "Quelle: ")).exists, "keine gesammelte Quellenliste unter der Antwort")
+        keepScreenshot(app, name: "Gespraech-Marken-je-Satz")
         closeAssistant(app)
     }
     #if targetEnvironment(simulator)

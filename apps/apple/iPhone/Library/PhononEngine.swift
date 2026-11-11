@@ -56,8 +56,13 @@ private final class PhononAudio: @unchecked Sendable {
     var isStopped: Bool { lock.withLock { stopped } }
     var isStalled: Bool { lock.withLock { stalled } }
 
-    func enqueue(_ samples: [Float]) {
-        if !isStopped, let buf = buffer(samples) { node.scheduleBuffer(buf) }
+    /// Reiht Ton ein. Mit `start` (Gesprächsmodus, Widerrufsgrenze) ist nur das Einreihen des ERSTEN hörbaren Tons, also der
+    /// tatsächliche Beginn der Wiedergabe, der Body von `start`; der Puffer entsteht vorher, damit der Body kurz bleibt. `false`:
+    /// `start` hat abgewiesen, nichts wurde eingereiht.
+    func enqueue(_ samples: [Float], start: PhononStart? = nil) -> Bool {
+        guard !isStopped, let buf = buffer(samples) else { return true }
+        guard let start else { node.scheduleBuffer(buf); return true }
+        return start { node.scheduleBuffer(buf) }
     }
 
     /// Satzende. Der Rückruf kommt, wenn alles davor wirklich gespielt ist.
@@ -171,6 +176,15 @@ struct PhononUnavailable: LocalizedError {
 
 /// Die Audio-Engine steht von außen still; die Lesung kann neu beginnen.
 struct PhononAudioStalled: Error {}
+
+/// Der tatsächliche Start einer Äußerung als Body einer atomaren Prüfung (Gesprächsmodus, `AssistantPlaybackGate.start`): ruft
+/// den Body genau dann auf, wenn der Satz noch starten darf, im selben Lock wie die Erhöhung der Freigabe-Generation, und
+/// meldet `false`, wenn nicht. Der Body ist kurz und synchron und ruft nie zurück.
+typealias PhononStart = @Sendable (() -> Void) -> Bool
+
+/// Der Start wurde abgewiesen (Freigabe widerrufen): Nichts wurde gestartet, der Satz zählt als nicht gesprochen. Kein Fehler
+/// der Stimme: Der Aufrufer fällt nicht auf eine andere Stimme zurück.
+struct PhononStartRefused: Error {}
 
 @MainActor
 final class PhononEngine: ObservableObject {
@@ -301,15 +315,18 @@ final class PhononEngine: ObservableObject {
     }
 
     /// Text sprechen und zurückkehren, wenn er zu Ende gespielt ist. Abbruch über die Task.
-    func speak(_ text: String, voice name: String, rate: Float = 1) async throws {
+    /// `start` (optional, Standard `nil`: Verhalten wie bisher): der tatsächliche Beginn der Wiedergabe (erster eingereihter
+    /// hörbarer Ton) läuft als Body von `start`; weist es ab, endet die Äußerung mit `PhononStartRefused`, ohne Ton.
+    func speak(_ text: String, voice name: String, rate: Float = 1, start: PhononStart? = nil) async throws {
         var rest: PhononSentence? = PhononSentence(text: text, paragraphEnd: false)
-        try await read(voice: name, rate: rate, next: { defer { rest = nil }; return rest }, audible: {}, played: {})
+        try await read(voice: name, rate: rate, next: { defer { rest = nil }; return rest }, audible: {}, played: {}, start: start)
     }
 
     /// Sätze ohne Lücke nacheinander sprechen. `next` liefert den nächsten Satz (erzeugt wird
     /// etwas im Voraus), `audible` meldet den ersten Ton, `played` das Ende jedes Satzes.
     func read(voice name: String, rate: Float, next: @escaping @MainActor () -> PhononSentence?,
-              audible: @escaping @MainActor () -> Void, played: @escaping @MainActor () -> Void) async throws {
+              audible: @escaping @MainActor () -> Void, played: @escaping @MainActor () -> Void,
+              start: PhononStart? = nil) async throws {
         guard let parts = Self.parts(name) else { throw PhononUnavailable() }
         prefetch?.cancel()
         requestedRate = rate
@@ -325,7 +342,7 @@ final class PhononEngine: ObservableObject {
         try Task.checkCancellation()
         player = audio
         try await Self.pump(tts, audio, voice: name, language: parts.language, rate: Double(requestedRate), flow: SpeechFlow.stored(),
-                            cache: cache, next: next, audible: audible)
+                            cache: cache, next: next, audible: audible, start: start)
     }
 
     /// Erzeugen und Einreihen abseits des Main Threads. Zum hörbaren Satz liegen drei weitere bereit.
@@ -334,7 +351,8 @@ final class PhononEngine: ObservableObject {
     /// neuer Sprachfluss gilt ab dem nächsten Lesen; `LibraryPlayback` setzt dafür am Satz neu an.
     nonisolated private static func pump(_ tts: Phonon, _ audio: PhononAudio, voice: String, language: String, rate: Double,
                                          flow: SpeechFlow, cache: SentenceAudioCache,
-                                         next: @MainActor () -> PhononSentence?, audible: @MainActor () -> Void) async throws {
+                                         next: @MainActor () -> PhononSentence?, audible: @MainActor () -> Void,
+                                         start: PhononStart?) async throws {
         var silent = true
         var shaper = flow.shaper(sampleRate: Phonon.sampleRate)
         var stretcher = SpeechStretcher(sampleRate: Phonon.sampleRate, speed: rate)
@@ -344,14 +362,14 @@ final class PhononEngine: ObservableObject {
             try check(audio)
             if let samples = cache.samples(voice, sentence) {
                 let shaped = stretcher.push(shaper.push(samples))
-                audio.enqueue(shaped)
+                try put(shaped, audio, first: silent, start: start)
                 if silent, !shaped.isEmpty { silent = false; await audible() }
             } else {
                 var samples: [Float] = []
                 for try await chunk in tts.stream(SpeechText.spoken(sentence, language: language)) {
                     try check(audio)
                     let shaped = stretcher.push(shaper.push(chunk))
-                    audio.enqueue(shaped)
+                    try put(shaped, audio, first: silent, start: start)
                     samples += chunk
                     // Erst melden, wenn wirklich Ton eingereiht ist (die Stille davor fällt weg).
                     if silent, !shaped.isEmpty { silent = false; await audible() }
@@ -362,12 +380,20 @@ final class PhononEngine: ObservableObject {
             }
             // Satzende: Strecker leeren, damit die Markierung genau am Satzende sitzt.
             let rest = stretcher.push(shaper.finish(paragraphEnd: item.paragraphEnd)) + stretcher.flush()
-            audio.enqueue(rest)
+            try put(rest, audio, first: silent, start: start)
             if silent, !rest.isEmpty { silent = false; await audible() }
             audio.mark()
         }
         await audio.wait(below: 1)
         try check(audio)
+    }
+
+    /// Reiht Ton ein. Der erste hörbare Ton (`first`, nicht leer) geht über `start`, falls vorhanden (Widerrufsgrenze, atomar mit
+    /// der Erhöhung der Freigabe-Generation); Folgetöne des begonnenen Satzes ohne Prüfung: Ein begonnener Satz verstummt über
+    /// `stop()` im MainActor. Weist `start` ab: `PhononStartRefused` (nichts eingereiht, kein Ton).
+    nonisolated private static func put(_ samples: [Float], _ audio: PhononAudio, first: Bool, start: PhononStart?) throws {
+        guard first, !samples.isEmpty else { _ = audio.enqueue(samples); return }
+        if !audio.enqueue(samples, start: start) { throw PhononStartRefused() }
     }
 
     /// Eine von außen beendete Wiedergabe beendet auch das Erzeugen.
@@ -385,9 +411,10 @@ final class PhononEngine: ObservableObject {
     var modelAvailable: Bool { false }
     func refresh() async {}
     func prepare(voice name: String, sentences: [String] = []) {}
-    func speak(_ text: String, voice name: String, rate: Float = 1) async throws { throw PhononUnavailable() }
+    func speak(_ text: String, voice name: String, rate: Float = 1, start: PhononStart? = nil) async throws { throw PhononUnavailable() }
     func read(voice name: String, rate: Float, next: @escaping @MainActor () -> PhononSentence?,
-              audible: @escaping @MainActor () -> Void, played: @escaping @MainActor () -> Void) async throws { throw PhononUnavailable() }
+              audible: @escaping @MainActor () -> Void, played: @escaping @MainActor () -> Void,
+              start: PhononStart? = nil) async throws { throw PhononUnavailable() }
     func pause() {}
     func resume() -> Bool { false }
     func setRate(_ rate: Float) {}

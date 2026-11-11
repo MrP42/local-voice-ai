@@ -286,12 +286,12 @@ final class AssistantSessionTests: XCTestCase {
     /// Ohne nachgewiesene Satzgrenze (angeschnittener Auszuganfang oder -ende) werden erster und letzter Satz nicht zitiert; mit
     /// Nachweis schon.
     func testCutExcerptEdgeSentencesAreNotQuotedButProvenOnesAre() async {
-        let text = "Die Sitzung beginnt um zehn Uhr im großen Saal. Anna übernimmt die Planung für das Projekt Nordlicht bis Freitag. Bernd kümmert sich um das Budget des Projekts Nordlicht."
+        let text = "Die Sitzung beginnt um zehn Uhr im großen Sitzungssaal. Anna übernimmt die Planung für das Projekt Nordlicht bis Freitag. Bernd kümmert sich um das Budget des Projekts Nordlicht."
         for (proven, expected) in [(false, ["Anna übernimmt die Planung für das Projekt Nordlicht bis Freitag."]),
-                                   (true, ["Die Sitzung beginnt um zehn Uhr im großen Saal."])] {
+                                   (true, ["Die Sitzung beginnt um zehn Uhr im großen Sitzungssaal."])] {
             let corpus = AssistantCorpus()
             await corpus.upsert(assistantDoc("t1", "Besprechung", area: .transcripts, boundaries: proven, sections: [("00:01", text)]))
-            let s = AssistantSession(model: ScriptModel(pieces: [proven ? "Die Sitzung beginnt um zehn Uhr im großen Saal im Haus." : "Anna übernimmt die Planung für das Projekt Nordlicht bis Freitag."]),
+            let s = AssistantSession(model: ScriptModel(pieces: [proven ? "Die Sitzung beginnt um zehn Uhr im großen Sitzungssaal im Haus." : "Anna übernimmt die Planung für das Projekt Nordlicht bis Freitag."]),
                                      knowledge: AssistantKnowledge(corpus: corpus), config: strict, released: true)
             let seen = Seen(events: await collect(s, AssistantRequest(requestId: "r1", text: "Wann beginnt die Sitzung und wer plant das Projekt Nordlicht?")))
             XCTAssertEqual(seen.spoken, expected, "Auszug mit Nachweis: \(proven)")
@@ -1109,7 +1109,7 @@ final class AssistantSessionTests: XCTestCase {
         XCTAssertTrue(wrote)
         let h = await s.history
         XCTAssertTrue(h.isEmpty)
-        let entries = await audit.entries()
+        let entries = await audit.entries().filter { $0.kind == .answer }
         XCTAssertEqual(entries.count, 1)
         XCTAssertEqual(entries[0].history, AssistantCommitMark(stage: .history, ok: false, generation: now))
         XCTAssertEqual(entries[0].outcome, .revoked)
@@ -1335,7 +1335,7 @@ final class AssistantSessionTests: XCTestCase {
         }
         let wrote = await s.commit(requestId: "r1", user: "Erzähl etwas über Tiere", spoken: spoken.joined(separator: " "), interrupted: false)
         XCTAssertTrue(wrote)
-        let entries = await audit.entries()
+        let entries = await audit.entries().filter { $0.kind == .answer }
         XCTAssertEqual(entries.count, 1)
         XCTAssertEqual(entries[0].outcome, .revoked)
         XCTAssertEqual(entries[0].counts.unsourced, 1)

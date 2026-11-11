@@ -210,8 +210,11 @@ public enum AssistantDropReason: String, Sendable, Codable, Equatable, CaseItera
     case fragment
 }
 
-/// Abschnitt eines Beitrags mit gleicher Kennzeichnung (gespeichert, wenn der Beitrag Originalsätze enthält oder Sätze ohne
-/// Quelle mit anderen gemischt sind).
+/// Abschnitt eines Beitrags mit gleicher Kennzeichnung (gespeichert, wenn der Beitrag Originalsätze oder Sätze mit
+/// Kennzeichnung enthält oder Sätze ohne Quelle mit anderen gemischt sind).
+///
+/// Marke je Satz: In der Datenrunde ist jeder angezeigte Satz entweder ein Zitat mit genau EINER Quellzeile (`quote`, `source`)
+/// oder trägt eine eigene Kennzeichnung (`note`: feste Antwort des Systems, Bestandsangabe), weil er strukturell keine Quelle hat.
 public struct AssistantTurnPart: Sendable, Equatable, Codable {
     public var text: String
     public var unsourced: Bool
@@ -220,15 +223,23 @@ public struct AssistantTurnPart: Sendable, Equatable, Codable {
     /// Anzeigezeile der Quelle eines Originalsatzes (`AssistantPassage.sourceLabel`), unter dem Zitat angezeigt. Nur die Zeile,
     /// nicht der Auszug. Alte Beiträge und alles, was kein Zitat ist: `nil`.
     public var source: String?
+    /// Kennzeichnung eines Satzes OHNE Quellzeile, der nicht aus einer Quelle stammt: `templateNote` (feste Antwort des Systems:
+    /// Gruß, feste Rückfrage, „dazu finde ich nichts“, Uhrzeit) oder `inventoryNote` (Bestandsangabe aus den Zahlen und Titeln
+    /// des Bestands). Nie bei Zitaten; alte Beiträge: `nil`.
+    public var note: String?
 
-    public init(text: String, unsourced: Bool, quote: Bool = false, source: String? = nil) {
+    public static let templateNote = "Feste Antwort"
+    public static let inventoryNote = "Aus deinem Bestand"
+
+    public init(text: String, unsourced: Bool, quote: Bool = false, source: String? = nil, note: String? = nil) {
         self.text = text
         self.unsourced = unsourced
         self.quote = quote
         self.source = source
+        self.note = note
     }
 
-    private enum CodingKeys: String, CodingKey { case text, unsourced, quote, source }
+    private enum CodingKeys: String, CodingKey { case text, unsourced, quote, source, note }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -236,6 +247,33 @@ public struct AssistantTurnPart: Sendable, Equatable, Codable {
         unsourced = try c.decode(Bool.self, forKey: .unsourced)
         quote = try c.decodeIfPresent(Bool.self, forKey: .quote) ?? false
         source = try c.decodeIfPresent(String.self, forKey: .source)
+        note = try c.decodeIfPresent(String.self, forKey: .note)
+    }
+
+    /// Kennzeichnung eines Satzes nach seiner Einordnung; `nil`, wenn er eine Quellzeile oder die Kennzeichnung „Ohne Quelle“
+    /// (ältere Beiträge) trägt.
+    public static func note(for status: AssistantSentenceStatus, quote: Bool) -> String? {
+        guard !quote else { return nil }
+        switch status {
+        case .neutral: return templateNote
+        case .inventory: return inventoryNote
+        case .grounded, .unsourced, .announcement: return nil
+        }
+    }
+
+    /// Hängt einen ausgegebenen Satz an die Abschnitte an (dieselbe Zuordnung für die Anzeige der laufenden Antwort und den
+    /// Beitrag im Verlauf): Ein Zitat bekommt einen eigenen Abschnitt mit seiner EINEN Quellzeile; Sätze gleicher Art und gleicher
+    /// Kennzeichnung (ohne Zitat) werden zu einem Abschnitt.
+    public static func append(to list: inout [AssistantTurnPart], text: String, status: AssistantSentenceStatus, quote: Bool,
+                              sources: [AssistantPassage]) {
+        let unsourced = status == .unsourced
+        let note = note(for: status, quote: quote)
+        if !quote, let last = list.last, !last.quote, last.unsourced == unsourced, last.note == note {
+            list[list.count - 1].text += " " + text
+        } else {
+            list.append(AssistantTurnPart(text: text, unsourced: unsourced, quote: quote, source: quote ? sources.first?.sourceLabel : nil,
+                                          note: note))
+        }
     }
 }
 

@@ -22,11 +22,14 @@ final class BookTalkSpeaker {
     /// Ende erklang, nicht nach `stop()`, nicht bei hängendem Audio (`PhononAudioStalled`) und nicht bei abgebrochener Systemstimme.
     var onSentenceStarted: ((String) -> Void)?
     var onSentenceFinished: ((String) -> Void)?
-    /// Wiedergabesperre des Gesprächsmodus („verworfen ab Generation g“, atomar, vom Kern im Lock der Freigabe vorgerückt). Ein
-    /// Satz einer verworfenen Generation startet nie: Die Sperre wird vor der Übernahme aus der Warteschlange, nach der Meldung
-    /// `onSentenceStarted` und unmittelbar vor dem Start der Stimme gefragt. `nil` (Standard, Buch-Gespräch): keine Sperre.
+    /// Wiedergabesperre des Gesprächsmodus („verworfen ab Generation g“, vom Kern im Lock der Freigabe vorgerückt). Ein Satz einer
+    /// verworfenen Generation startet nie: Der TATSÄCHLICHE Start (Systemstimme: `synth.speak`, Phonon: Einreihen des ersten
+    /// hörbaren Tons) läuft als Body von `gate.start(generation, body)`, also im selben Lock, in dem die Generation steigt; nach
+    /// der Rückkehr einer Erhöhung beginnt kein Satz der alten Generation mehr. Davor sind nur Vorprüfungen (`permits`: früh
+    /// aussteigen, ohne Start): vor der Übernahme aus der Warteschlange und unmittelbar vor der Stimme. `nil` (Standard,
+    /// Buch-Gespräch): keine Sperre, Verhalten wie bisher.
     /// Grenze: Dieser Speaker gehört dem MainActor und lässt sich von anderen Threads nicht stoppen; ein Satz, dessen Klang
-    /// schon begonnen hat, verstummt erst mit `stop()` (Controller, MainActor), nicht schon beim Auslöser.
+    /// schon begonnen hat, verstummt erst mit `stop()` (Controller, MainActor, einige Millisekunden), nicht schon beim Auslöser.
     var gate: AssistantPlaybackGate?
 
     private(set) var isActive = false
@@ -101,6 +104,8 @@ final class BookTalkSpeaker {
                 guard g == self.generation else { break }
                 let played = await self.speak(text, sentenceGeneration: item.generation, generation: g)
                 if played, g == self.generation { self.onSentenceFinished?(text) }
+                // Start abgewiesen (Widerruf): nichts begann, der Satz zählt als nicht gesprochen; die Ausgabe endet still.
+                if !played, g == self.generation, !self.permits(item.generation) { self.stop(); break }
             }
             guard let self, g == self.generation else { return }
             self.task = nil
@@ -116,7 +121,14 @@ final class BookTalkSpeaker {
         try? session.setActive(true)
     }
 
+    /// Vorprüfung ohne Start (billig, früh aussteigen). Entscheidend ist `start`.
     private func permits(_ sentenceGeneration: Int) -> Bool { gate?.permits(sentenceGeneration) ?? true }
+
+    /// Der tatsächliche Start als atomarer Body im Lock der Freigabe (`nil` ohne Sperre).
+    private func start(_ sentenceGeneration: Int) -> PhononStart? {
+        guard let gate else { return nil }
+        return { body in gate.start(sentenceGeneration, body) }
+    }
 
     private func finishIfDrained() {
         guard queue.isEmpty, inputFinished else { return }
@@ -144,10 +156,12 @@ final class BookTalkSpeaker {
         guard g == generation, permits(sentenceGeneration) else { return false }
         if let name = phononName(for: language) {
             do {
-                try await PhononEngine.shared.speak(text, voice: name, rate: 1)
+                try await PhononEngine.shared.speak(text, voice: name, rate: 1, start: start(sentenceGeneration))
                 return true
             } catch is CancellationError {
                 return false
+            } catch is PhononStartRefused {
+                return false   // widerrufen: kein Ton, kein Rückfall auf die Systemstimme
             } catch is PhononAudioStalled {
                 return false
             } catch {
@@ -156,7 +170,7 @@ final class BookTalkSpeaker {
             }
         }
         guard g == generation, permits(sentenceGeneration) else { return false }
-        return await system.speak(text, language: language, voiceID: voiceID)
+        return await system.speak(text, language: language, voiceID: voiceID, start: start(sentenceGeneration))
     }
 }
 
@@ -173,15 +187,21 @@ private final class SystemSpeech: NSObject, AVSpeechSynthesizerDelegate {
         synth.delegate = self
     }
 
-    /// `true` nur, wenn die Äußerung zu Ende gesprochen wurde (nicht bei `stop()`, Ersetzen oder `didCancel`).
-    func speak(_ text: String, language: BookTalkLanguage, voiceID: String? = nil) async -> Bool {
+    /// `true` nur, wenn die Äußerung zu Ende gesprochen wurde (nicht bei `stop()`, Ersetzen oder `didCancel`). `start` (optional):
+    /// der tatsächliche Start (Übernahme der Äußerung und `synth.speak`) läuft als Body der atomaren Prüfung; `false` von
+    /// `start` = nichts begann, Ergebnis `false`.
+    func speak(_ text: String, language: BookTalkLanguage, voiceID: String? = nil, start: PhononStart? = nil) async -> Bool {
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = Self.voice(language: language, id: voiceID)
         return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
-            waiting?.resume(returning: false)
-            waiting = continuation
-            current = ObjectIdentifier(utterance)
-            synth.speak(utterance)
+            let begin = {
+                self.waiting?.resume(returning: false)
+                self.waiting = continuation
+                self.current = ObjectIdentifier(utterance)
+                self.synth.speak(utterance)
+            }
+            guard let start else { begin(); return }
+            if !start(begin) { continuation.resume(returning: false) }
         }
     }
 

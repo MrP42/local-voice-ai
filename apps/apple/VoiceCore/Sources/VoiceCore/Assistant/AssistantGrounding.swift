@@ -29,8 +29,10 @@ public enum AssistantGrounding {
     /// Mit Opt-in, wenn nichts Belegtes (und nichts Unbelegtes) bleibt.
     public static let nothingGroundedSentence = "Dazu finde ich nichts Belegtes."
 
-    public static func fixedSentence(allowUnsourced: Bool) -> String {
-        allowUnsourced ? nothingGroundedSentence : nothingFoundSentence + " " + optInHint
+    /// `hint`: Der Hinweis auf den Schalter „Antworten ohne Quelle“ nur, wenn es ihn gibt (Funktion freigeschaltet); in der
+    /// Produktfassung (`AssistantUnsourcedConsent.isReleased == false`) verwiese er auf etwas, das es nicht gibt.
+    public static func fixedSentence(allowUnsourced: Bool, hint: Bool = true) -> String {
+        allowUnsourced ? nothingGroundedSentence : nothingFoundSentence + (hint ? " " + optInHint : "")
     }
 
     /// Längster Titel im Vorspann (länger: gekürzt mit „…“).
@@ -131,24 +133,25 @@ public enum AssistantGrounding {
     static let maxQuoteChars = 600
 
     /// Die zitierbaren Quellsätze aller Auszüge in Auszug-Reihenfolge. Nur vollständige Sätze: Beginn mit Großbuchstaben, Ziffer
-    /// oder Anführungszeichen, Ende mit Satzzeichen (keine Ausnahme, auch nicht für einen Auszug aus nur einem Satz),
-    /// mindestens drei Wörter. Strengste Lesart der inneren Nähte (keine Ausnahme für Leerzeilen oder Überschriften): Der Anfang
-    /// einer Einheit ist nur nachgewiesen (a) am nachgewiesenen Anfang des Auszugs oder (b) unmittelbar nach einer Einheit, die
-    /// mit Satzzeichen endet; das Ende nur durch das eigene Satzzeichen (die letzte Einheit zusätzlich nur, wenn der Auszug
-    /// nachweislich an einer Satzgrenze endet und nicht gekürzt wurde, Ende „…“). Zeilen werden nie zusammengezogen: ein Satz, der
-    /// über einen Zeilenumbruch läuft, hat keinen zitierbaren Rest. „Anna übernimmt die Planung für⏎Projekt Nordlicht bis
-    /// Freitag.⏎Danach folgt die Budgetprüfung.“ liefert nur den letzten Satz.
+    /// oder Anführungszeichen, Ende mit Satzzeichen, mindestens drei Wörter. Fail-closed über EINE Prüfung für jede Naht
+    /// (`AssistantSeam.proven`: Satzzeichen, Abkürzungen, Großbuchstabe danach): Der Anfang einer Einheit ist nur nachgewiesen (a)
+    /// am nachgewiesenen Anfang des Auszugs oder (b) an einer nachgewiesenen Naht zur vorigen Einheit; das Ende nur an einer
+    /// nachgewiesenen Naht zur nächsten Einheit (die letzte zusätzlich nur, wenn der Auszug nachweislich an einer Satzgrenze endet
+    /// und nicht gekürzt wurde, Ende „…“). Innerhalb einer Zeile wird nur an nachgewiesenen Nähten getrennt (sonst bleibt die
+    /// Einheit zusammen), Zeilen werden nie zusammengezogen: ein Satz, der über einen Zeilenumbruch läuft („Anna spricht mit
+    /// Dr.⏎Meyer über Projekt Nordlicht.“, „…für⏎Projekt Nordlicht bis Freitag.⏎Danach folgt die Budgetprüfung.“), hat keinen
+    /// zitierbaren Rest, an der unbewiesenen Naht sind beide Ränder nicht nachgewiesen.
     public struct Basis: Sendable {
         let sentences: [SourceSentence]
 
         public init(passages: [AssistantPassage]) {
             var out: [SourceSentence] = []
             for p in passages {
-                let units = AssistantGrounding.sourceTexts(of: p.text)
+                let units = AssistantGrounding.sourceUnits(of: p.text)
                 let clipped = p.text.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("…")
                 for (i, unit) in units.enumerated() where AssistantGrounding.isQuotable(unit) {
-                    let startProven = i == 0 ? p.startsAtBoundary : AssistantGrounding.endsWithTerminal(units[i - 1])
-                    let endProven = i < units.count - 1 || (p.endsAtBoundary && !clipped)
+                    let startProven = i == 0 ? p.startsAtBoundary : AssistantSeam.proven(units[i - 1], unit)
+                    let endProven = i < units.count - 1 ? AssistantSeam.proven(unit, units[i + 1]) : (p.endsAtBoundary && !clipped)
                     if startProven, endProven { out.append(SourceSentence(text: unit, passage: p)) }
                 }
             }
@@ -158,7 +161,7 @@ public enum AssistantGrounding {
         /// Erkennungsbasis (nicht zum Zitieren): ALLE Sätze der Auszüge, auch Randsätze und Sätze ohne Satzzeichen. Dient nur
         /// dazu, einen Satz ohne Quelle zu verwerfen, der einem eigenen Inhalt ähnelt.
         init(detecting passages: [AssistantPassage]) {
-            sentences = passages.flatMap { p in AssistantGrounding.sourceTexts(of: p.text).map { SourceSentence(text: $0, passage: p) } }
+            sentences = passages.flatMap { p in AssistantGrounding.detectionTexts(of: p.text).map { SourceSentence(text: $0, passage: p) } }
         }
 
         public var isEmpty: Bool { sentences.isEmpty }
@@ -180,6 +183,34 @@ public enum AssistantGrounding {
             }
         }
         return out
+    }
+
+    /// Einheiten für das Zitieren: Zeilen, innerhalb einer Zeile nur an NACHGEWIESENEN Nähten getrennt (`AssistantSeam.proven`);
+    /// ein unbewiesener Schnitt der Satzerkennung („Hr. Meyer“, „3. Mai“) lässt die Einheit zusammen. Zeilen werden nie
+    /// zusammengezogen.
+    static func sourceUnits(of text: String) -> [String] {
+        var out: [String] = []
+        for line in text.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { continue }
+            let units = Array(trimmed.utf16)
+            var current: String?
+            for s in BookTalkSentences.split(trimmed) {
+                let raw = String(decoding: units[s.start..<s.end], as: UTF16.self)
+                let piece = raw.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+                guard !piece.isEmpty else { continue }
+                guard let c = current else { current = piece; continue }
+                if AssistantSeam.proven(c, piece) { out.append(c); current = piece } else { current = c + " " + piece }
+            }
+            if let current { out.append(current) }
+        }
+        return out
+    }
+
+    /// Erkennungsbasis: alle Schnitte der Satzerkennung UND die zusammengehaltenen Einheiten (nur zum Verbieten, nie zum Zitieren).
+    static func detectionTexts(of text: String) -> [String] {
+        let pieces = sourceTexts(of: text)
+        return pieces + sourceUnits(of: text).filter { !pieces.contains($0) }
     }
 
     private static let openers: Set<Character> = ["„", "“", "‚", "‘", "»", "«", "\"", "'", "(", "‹", "–", "—"]

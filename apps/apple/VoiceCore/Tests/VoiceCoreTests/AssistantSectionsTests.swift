@@ -9,7 +9,7 @@ final class AssistantSectionsTests: XCTestCase {
 
     func testSeamIsProvenOnlyByARealSentenceBoundary() {
         XCTAssertTrue(AssistantSeam.proven("Anna übernimmt die Planung.", "Danach folgt die Leitung."))
-        XCTAssertTrue(AssistantSeam.proven("Er sagte: „Nein.“", "Dann ging er."), "schließende Anführungszeichen")
+        XCTAssertTrue(AssistantSeam.proven("Er sagte: „Niemals.“", "Dann ging er."), "schließende Anführungszeichen")
         XCTAssertTrue(AssistantSeam.proven("  Das war gut.\n", "\nDann ging es weiter."), "Leerraum am Rand zählt nicht")
         XCTAssertFalse(AssistantSeam.proven("Anna übernimmt", "künftig die Planung."), "kein Satzzeichen")
         XCTAssertFalse(AssistantSeam.proven("Das war gut.", "dann ging es weiter."), "Kleinbuchstabe danach")
@@ -18,9 +18,31 @@ final class AssistantSectionsTests: XCTestCase {
         XCTAssertFalse(AssistantSeam.proven("   ", nil), "nur Leerraum")
     }
 
+    /// EINE konservative Prüfung (fail-closed): Abkürzungen, Initialen, Ordnungszahlen, Auslassungspunkte, Kleinbuchstabe und
+    /// Ziffer danach beweisen nichts; ein ganzer Satz mit Satzzeichen und Großbuchstabe danach schon.
+    func testSeamRuleIsFailClosedForAbbreviationsInitialsOrdinalsEllipsesAndTheNextWord() {
+        for before in ["Anna spricht mit Dr.", "Anna spricht mit Prof.", "Anna nennt die Nr.", "Anna spricht mit Hr.", "Das gilt z. B.",
+                       "Das gilt z.B.", "Anna trifft Frau A.", "Anna kommt am 3.", "Am 12.05.2026.", "Sie wohnt in der Bahnhofstr.",
+                       "Sie wohnt in der Hauptstr.", "Anna überlegt lange…", "Anna überlegt lange...", "Anna sagt vgl.", "Anna kennt ca.",
+                       "Das war ein Test.", "Wir trafen Hrn. Meyer, Fr.", "Das ist Mecklenburg-Vorpommern."] {
+            XCTAssertFalse(AssistantSeam.proven(before, "Meyer über Projekt Nordlicht."), "\(before)")
+        }
+        XCTAssertFalse(AssistantSeam.proven("Anna beendet die Planung.", "danach folgt das Budget."), "Kleinbuchstabe danach")
+        XCTAssertFalse(AssistantSeam.proven("Anna beendet die Planung.", "3 Teams folgen dem Projekt."), "Ziffer danach")
+        XCTAssertFalse(AssistantSeam.proven("Anna beendet die Planung.", "– Danach folgt das Budget."), "Gedankenstrich ist kein öffnendes Zeichen")
+        XCTAssertTrue(AssistantSeam.proven("Anna beendet die Planung.", "Danach folgt das Budget."))
+        XCTAssertTrue(AssistantSeam.proven("Bernd hilft mit.", "Danach folgt das Budget."), "„mit“ steht in der Liste der Kurzwörter")
+        XCTAssertTrue(AssistantSeam.proven("Das ist ein Plan, den wir erwarten?", "Danach folgt das Budget."))
+        XCTAssertTrue(AssistantSeam.proven("Wirklich!", "Danach folgt das Budget."))
+        XCTAssertTrue(AssistantSeam.proven("Er sagte: „Das stimmt.“", "„Danach“ ging er."), "Anführungszeichen werden abgezogen")
+        XCTAssertFalse(AssistantSeam.proven("Anna beendet die Planung (siehe oben.)", "Danach folgt das Budget."), "„oben“: vier Buchstaben, nicht gelistet")
+        XCTAssertTrue(AssistantSeam.proven("Anna beendet das hier.", "Danach folgt das Budget."), "„hier“ steht in der Liste")
+    }
+
     func testSeamWithoutSuccessorNeedsTheSentenceEndAtTheTextItself() {
         XCTAssertTrue(AssistantSeam.proven("Das ist gut.", nil))
-        XCTAssertTrue(AssistantSeam.proven("Mal sehen…", nil))
+        XCTAssertFalse(AssistantSeam.proven("Mal sehen…", nil), "Auslassungspunkte beweisen kein Satzende")
+        XCTAssertFalse(AssistantSeam.proven("Mal sehen...", nil))
         XCTAssertTrue(AssistantSeam.proven("Geht das?", nil))
         XCTAssertFalse(AssistantSeam.proven("Das ist gut", nil), "ohne Satzzeichen")
         XCTAssertFalse(AssistantSeam.proven("Das ist z. B.", nil), "Abkürzung am Ende beweist kein Satzende")
@@ -66,8 +88,8 @@ final class AssistantSectionsTests: XCTestCase {
     }
 
     func testMeetingAfterAGapNeverStartsProven() {
-        let sections = meeting([seg(0, "Erster Satz."), seg(5, "geheim", usable: false), seg(10, "Dritter Satz.")])
-        XCTAssertEqual(sections.map(\.text), ["Erster Satz.", "Dritter Satz."])
+        let sections = meeting([seg(0, "Erster Abschnitt."), seg(5, "geheim", usable: false), seg(10, "Dritter Abschnitt.")])
+        XCTAssertEqual(sections.map(\.text), ["Erster Abschnitt.", "Dritter Abschnitt."])
         XCTAssertTrue(sections[0].startsAtBoundary)
         XCTAssertTrue(sections[0].endsAtBoundary, "vor der Lücke endet der Satz am Satzzeichen")
         XCTAssertFalse(sections[1].startsAtBoundary, "was vor der Lücke stand, ist unbekannt")
@@ -75,7 +97,7 @@ final class AssistantSectionsTests: XCTestCase {
     }
 
     func testMeetingGapAfterAnUnfinishedSentenceDoesNotProveTheEnd() {
-        let sections = meeting([seg(0, "Anna übernimmt"), seg(5, "x", usable: false), seg(10, "Dritter Satz.")])
+        let sections = meeting([seg(0, "Anna übernimmt"), seg(5, "x", usable: false), seg(10, "Dritter Abschnitt.")])
         XCTAssertFalse(sections[0].endsAtBoundary)
         XCTAssertFalse(sections[1].startsAtBoundary)
     }
@@ -88,7 +110,7 @@ final class AssistantSectionsTests: XCTestCase {
     }
 
     func testMeetingLengthSplitAtASentenceSeamProvesBothSides() {
-        let sections = meeting([seg(0, "Erster Satz."), seg(70, "Zweiter Satz.")], seconds: 60)
+        let sections = meeting([seg(0, "Erster Abschnitt."), seg(70, "Zweiter Abschnitt.")], seconds: 60)
         XCTAssertEqual(sections.count, 2)
         XCTAssertTrue(sections[0].endsAtBoundary)
         XCTAssertTrue(sections[1].startsAtBoundary, "dieselbe Naht beweist beide Seiten")

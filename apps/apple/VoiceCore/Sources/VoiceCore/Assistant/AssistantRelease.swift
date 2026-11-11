@@ -14,8 +14,27 @@ import Foundation
 // Geordnete Ausgabegrenze (Runde 4): Jeder Ausgabe-Commit (Anzeige, Übergabe an die Stimme, Audiostart-Meldung) läuft als `body`
 // von `ifCurrent` im selben Lock wie die Erhöhung (Sitzung: `commitOutput`). Der `body` ist kurz und synchron, ohne I/O, und
 // ruft NIE in die Freigabe zurück (`NSLock` ist nicht rekursiv: ein Zugriff auf `snapshot`, `bump`, `ifCurrent` im `body`
-// hinge für immer). Dazu gehört die Wiedergabesperre `AssistantPlaybackGate`: Sie wird im selben Lock wie die Erhöhung
-// vorgerückt, ist ohne Aktor und ohne Warten lesbar und sperrt jeden NEUEN Start eines Satzes älterer Generation.
+// hinge für immer). Dazu gehört die Wiedergabesperre `AssistantPlaybackGate`: Sie teilt den Lock der Freigabe; der tatsächliche
+// Start eines Satzes läuft als `start(generation, body)` in diesem Lock, nach einer Erhöhung beginnt kein Satz älterer Generation.
+//
+// Protokoll der Erhöhungen (Runde 5): Jede Erhöhung (`finishBump`, die einzige Stelle) reiht im selben Lock genau eine Zeile
+// `release` ein (`onIncrease`): neue Generation, Grund (`AssistantReleaseCause`), bei Bereichen die neuen Bereichsnamen. Kein
+// Pfad erhöht die Generation ohne diese Zeile, und keine Zeile steht ohne Erhöhung.
+
+/// Grund einer Erhöhung der Freigabe-Generation (feste Liste, kein Freitext). Jede Erhöhung schreibt der Kern als genau eine
+/// Zeile `release` ins Protokoll, mit diesem Grund und der neuen Generation.
+public enum AssistantReleaseCause: String, Sendable, Codable, Equatable, CaseIterable {
+    /// Opt-in „Antworten ohne Quelle“ an oder aus.
+    case optIn
+    /// Bereiche geändert (die Zeile trägt die NEUEN Bereichsnamen).
+    case areas
+    /// Cloud-Zustimmung erteilt oder entzogen.
+    case consent
+    /// „Ohne Quelle fortsetzen“ (Zustand `.data` aufgehoben).
+    case resumeFree
+    /// Jede andere Änderung der Freigabe.
+    case other
+}
 
 /// Prüfung, die der Controller vor Anzeige und Audiostart macht (und die Tests ohne Sitzung ausüben): Ein Ereignis gilt nur,
 /// wenn seine Generation die aktuelle ist. Ein Ereignis mit alter Generation nach einem neueren wird nie angenommen.
@@ -23,32 +42,55 @@ public enum AssistantReleaseGate {
     public static func admits(eventGeneration: Int, current: Int) -> Bool { eventGeneration == current }
 }
 
-/// Sperre „verworfen ab Generation g“ für die Wiedergabe (Runde 4). Reiner Typ ohne Aktor: Die Freigabe rückt sie im selben
-/// Lock vor, in dem die Generation steigt; der Speaker (läuft auf dem MainActor, kann von anderen Threads nicht gestoppt
-/// werden) fragt sie unmittelbar vor jedem Start eines Satzes. Nach der Rückkehr von `bump` ist damit kein NEUER Start eines
-/// Satzes älterer Generation mehr möglich. Die Grenze: Ein Satz, dessen Klang schon begonnen hat, verstummt erst, wenn der
-/// MainActor `stop()` ausführt (Aufräumen im Controller, einige Millisekunden). Kurzer Lock, kein I/O, nie im Audio-Callback.
+/// Sperre „verworfen ab Generation g“ für die Wiedergabe. Reiner Typ ohne Aktor. Sie teilt den LOCK der Freigabe: Die
+/// Generation steigt (`finishBump`) im selben Lock, in dem `start` prüft und seinen `body` ausführt. Der tatsächliche Start eines
+/// Satzes (Systemstimme: `synth.speak`; Phonon: Einreihen des ersten Tons) läuft als `body` von `start`: Nach der Rückkehr
+/// einer Erhöhung auf eine neuere Generation beginnt kein Satz älterer Generation mehr (kein Start-Body danach). `body`: kurz,
+/// synchron, ohne I/O und Warten, ruft NIE zurück (weder `start` noch `permits` noch die Freigabe: `NSLock` ist nicht rekursiv).
+/// `permits` ist nur eine VORPRÜFUNG (billig, früh aussteigen), kein Start. Die Grenze: Ein Satz, dessen Klang schon begonnen
+/// hat, verstummt erst, wenn der MainActor `stop()` ausführt (Aufräumen im Controller, einige Millisekunden); der Speaker
+/// gehört dem MainActor und ist von anderen Threads nicht zu stoppen.
 public final class AssistantPlaybackGate: @unchecked Sendable {
-    private let lock = NSLock()
+    private let lock: NSLock
     private var floor = 0
 
-    public init() {}
+    /// Eigener Lock (reine Verwendung ohne Freigabe, Tests).
+    public init() { lock = NSLock() }
 
-    /// Alles unterhalb von `generation` ist verworfen. Monoton: ein kleinerer Wert ändert nichts.
+    /// Der Lock der Freigabe (`AssistantRelease`).
+    init(lock: NSLock) { self.lock = lock }
+
+    /// Alles unterhalb von `generation` ist verworfen. Monoton. Der Aufrufer hält den Lock NICHT.
     func discard(below generation: Int) {
         lock.lock()
-        if generation > floor { floor = generation }
+        discardLocked(below: generation)
         lock.unlock()
     }
 
-    /// Darf ein Satz dieser Generation noch starten? Ein Satz einer künftigen Generation ist nicht verworfen.
+    /// Wie `discard`, der Aufrufer hält den Lock (die Freigabe in `finishBump`).
+    func discardLocked(below generation: Int) {
+        if generation > floor { floor = generation }
+    }
+
+    /// Vorprüfung: Darf ein Satz dieser Generation noch starten? Kein Start; zwischen dieser Antwort und dem Start kann die
+    /// Generation steigen, entscheidend ist nur `start`. Nie im `body` von `start` oder `commitOutput` aufrufen (Lock).
     public func permits(_ generation: Int) -> Bool {
         lock.lock()
         defer { lock.unlock() }
         return generation >= floor
     }
 
-    /// Erste Generation, die noch starten darf (Tests, Anzeige).
+    /// Der tatsächliche Start: führt `body` aus, wenn die Generation nicht verworfen ist, und zwar im selben Lock, in dem die
+    /// Generation steigt. `false`: verworfen, `body` lief nicht (nichts wurde gestartet; der Satz gilt als nicht gesprochen).
+    func start(_ generation: Int, _ body: () -> Void) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard generation >= floor else { return false }
+        body()
+        return true
+    }
+
+    /// Erste Generation, die noch starten darf (Tests, Anzeige). Nie im `body` aufrufen.
     public var discardedBelow: Int {
         lock.lock()
         defer { lock.unlock() }
@@ -64,19 +106,35 @@ final class AssistantRelease: @unchecked Sendable {
         let consentVersion: Int
     }
 
-    private let lock = NSLock()
-    /// Wiedergabesperre; wird in `finishBump` im selben Lock wie die Generation vorgerückt (Reihenfolge: erst `lock`, dann
-    /// ihr eigener Lock; sie ruft nie zurück).
-    let playback = AssistantPlaybackGate()
+    /// Was bei einer Erhöhung festgehalten wird (für die Zeile `release` im Protokoll).
+    struct Increase: Sendable, Equatable {
+        let generation: Int
+        let cause: AssistantReleaseCause
+        /// Nur bei Grund `areas` (und `consent` mit Bereichen): die NEUEN Bereichsnamen, sortiert.
+        let areas: [String]?
+        let optIn: Bool
+        let consentVersion: Int
+    }
+
+    private let lock: NSLock
+    /// Wiedergabesperre: teilt diesen Lock und wird in `finishBump` mit der Generation vorgerückt.
+    let playback: AssistantPlaybackGate
     private var generation = 0
     private var optIn: Bool
     private var consent: Int
     private var runs: [String: @Sendable () -> Void] = [:]
     private var observer: (@Sendable (Int) -> Void)?
+    /// Wird bei JEDER Erhöhung genau einmal gerufen, IM Lock, an der Stelle der Erhöhung (die Zeile steht damit in derselben
+    /// Reihenfolge wie die Commit-Zeilen, die in `ifCurrent` laufen). Kurz und ohne I/O (Zeile einreihen), ruft nie zurück.
+    private let onIncrease: (@Sendable (Increase) -> Void)?
 
-    init(optIn: Bool, consentVersion: Int = 0) {
+    init(optIn: Bool, consentVersion: Int = 0, onIncrease: (@Sendable (Increase) -> Void)? = nil) {
+        let shared = NSLock()
+        self.lock = shared
+        self.playback = AssistantPlaybackGate(lock: shared)
         self.optIn = optIn
         self.consent = optIn ? consentVersion : 0
+        self.onIncrease = onIncrease
     }
 
     /// Generation, Opt-in und Einwilligungsversion zusammen, aus einem Lock: Die Rundenart einer Anfrage und ihre Generation
@@ -117,21 +175,23 @@ final class AssistantRelease: @unchecked Sendable {
         }
         optIn = on
         consent = on ? consentVersion : 0
-        return finishBump()
+        return finishBump(.optIn, areas: nil)
     }
 
-    /// Bereiche, Cloud-Zustimmung oder Zustand haben sich geändert (oder jede andere Änderung der Freigabe).
+    /// Bereiche, Cloud-Zustimmung oder Zustand haben sich geändert (oder jede andere Änderung der Freigabe). `cause` kommt als
+    /// Grund ins Protokoll, `areas` (nur bei `areas`/`consent`) sind die neuen Bereichsnamen.
     @discardableResult
-    func bump() -> Int {
+    func bump(_ cause: AssistantReleaseCause = .other, areas: [String]? = nil) -> Int {
         lock.lock()
-        return finishBump()
+        return finishBump(cause, areas: areas)
     }
 
     /// Mit gehaltenem Lock aufrufen; gibt ihn frei. Die Widerrufe und der Beobachter laufen außerhalb des Locks.
-    private func finishBump() -> Int {
+    private func finishBump(_ cause: AssistantReleaseCause, areas: [String]?) -> Int {
         generation += 1
         let g = generation
-        playback.discard(below: g)   // im selben Lock: Ab jetzt startet kein Satz älterer Generation mehr
+        playback.discardLocked(below: g)   // im selben Lock: Ab jetzt startet kein Satz älterer Generation mehr
+        onIncrease?(Increase(generation: g, cause: cause, areas: areas, optIn: optIn, consentVersion: consent))
         let revoke = Array(runs.values)
         let notify = observer
         runs.removeAll()
