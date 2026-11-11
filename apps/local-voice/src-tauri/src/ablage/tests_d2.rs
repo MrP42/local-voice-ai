@@ -1095,7 +1095,8 @@ fn extraktorwechsel_ergibt_neue_textrev_alte_bleibt() {
 
     assert_eq!(e.lauf().ok, 1);
     assert_eq!(e.textstand(&dat).0.as_deref(), Some("ok"));
-    let neu_rev = extrakt::textrev(&sha(&bytes), "lva-text", "1", 1);
+    let (id, version) = extrakt::extraktor(extrakt::Format::Text);
+    let neu_rev = extrakt::textrev(&sha(&bytes), id, version, 1);
     assert!(e.a.text_pfad(&dat, &alt_rev).is_file());
     assert!(e.a.text_pfad(&dat, &neu_rev).is_file());
     let c = rusqlite::Connection::open(e.a.dir().join(index::INDEX)).unwrap();
@@ -1332,16 +1333,23 @@ fn zu_grosse_ausgabe_als_zu_gross() {
 #[test]
 fn eingabe_ohne_verknuepfung_und_mit_groessengrenze() {
     let d = datei("g.txt", b"Hallo");
-    assert_eq!(extrakt::datei_lesen(&d.pfad, 100).unwrap(), b"Hallo");
+    let wurzel = std::fs::canonicalize(d._d.path()).unwrap();
     assert_eq!(
-        extrakt::datei_lesen(&d.pfad, 3).unwrap_err().code,
+        extrakt::datei_lesen(&d.pfad, &wurzel, 100).unwrap(),
+        b"Hallo"
+    );
+    assert_eq!(
+        extrakt::datei_lesen(&d.pfad, &wurzel, 3).unwrap_err().code,
         "zu_gross"
     );
     #[cfg(unix)]
     {
         let link = d._d.path().join("l.txt");
         std::os::unix::fs::symlink(&d.pfad, &link).unwrap();
-        assert_eq!(extrakt::datei_lesen(&link, 100).unwrap_err().code, "lesen");
+        assert_eq!(
+            extrakt::datei_lesen(&link, &wurzel, 100).unwrap_err().code,
+            "lesen"
+        );
         // Auch über den Unterprozess.
         let r = textlauf::ausfuehren(
             &kind(None),
