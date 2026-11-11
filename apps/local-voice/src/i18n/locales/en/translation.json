@@ -4814,6 +4814,21 @@
         "error": "The brief could not be opened."
       }
     },
+    "prep": {
+      "title": "Prepared from your recent notes",
+      "collapse": "Collapse",
+      "expand": "Expand",
+      "source": "{{title}} · {{date}}",
+      "openSource": "Open the meeting “{{title}}” from {{date}}",
+      "modeRules": "Taken from your notes as written.",
+      "modeModel": "Picked and shortened from your notes by your chosen model.",
+      "settings": {
+        "enabled": "Preparation before appointments",
+        "enabledDescription": "Shows two or three open points from your own earlier notes with the same attendees or from the same series, each with its source. Without matching notes nothing is shown.",
+        "prefetch": "Prepare today’s appointments in advance",
+        "prefetchDescription": "Prepares the appointments of the day after the first calendar sync. Only a local model is used for this; without one, open tasks are taken from your notes as written."
+      }
+    },
     "followup": {
       "button": "Follow-up email",
       "buttonTitle": "Create an email draft from this meeting that you can review and edit",

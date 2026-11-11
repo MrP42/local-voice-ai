@@ -307,6 +307,11 @@ const settingUpdaters: {
     commands.changeMeetingReminderLeadSetting(value as number),
   meeting_reminder_all_events: (value) =>
     commands.changeMeetingReminderAllEventsSetting(value as boolean),
+  // G4 (#499)
+  meeting_prep_enabled: (value) =>
+    commands.changeMeetingPrepEnabledSetting(value as boolean),
+  meeting_prep_prefetch: (value) =>
+    commands.changeMeetingPrepPrefetchSetting(value as boolean),
   // M5-P5f
   calendar_graph_client_id: (value) =>
     commands.changeCalendarGraphClientIdSetting(

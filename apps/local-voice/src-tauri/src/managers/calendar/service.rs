@@ -361,6 +361,12 @@ impl CalendarService {
             tokio::time::sleep(FIRST_SYNC_DELAY).await;
             loop {
                 syncer.sync_now(None).await;
+                // G4 (#499): Terminvorbereitung vorab, einmal je Tag, ohne den
+                // naechsten Abruf aufzuhalten.
+                tauri::async_runtime::spawn(crate::commands::meeting_prep::prefetch_today(
+                    syncer.app.clone(),
+                    Arc::clone(&syncer.store),
+                ));
                 tokio::time::sleep(SYNC_INTERVAL).await;
             }
         });

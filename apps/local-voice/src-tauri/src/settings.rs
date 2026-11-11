@@ -1045,6 +1045,14 @@ pub struct AppSettings {
     /// erinnern. Standard aus: ein Einzeltermin ohne Gegenueber ist keine Besprechung.
     #[serde(default)]
     pub meeting_reminder_all_events: bool,
+    /// G4 (#499): vor einem Termin zwei bis drei offene Punkte aus den eigenen
+    /// frueheren Notizen zeigen („Vorbereitet aus deinen letzten Notizen“). Standard an.
+    #[serde(default = "default_true")]
+    pub meeting_prep_enabled: bool,
+    /// G4 (#499): die Vorbereitung vorab fuer die Termine des Tages erzeugen (nach dem
+    /// ersten Kalenderabruf des Tages), nur mit einem lokalen Modell. Standard aus.
+    #[serde(default)]
+    pub meeting_prep_prefetch: bool,
     /// M6-P6e (F21, E13): der lokale MCP-Server (`local-voice-ai.exe --mcp`)
     /// gibt Besprechungsinhalte an einen KI-Client weiter. Standard AUS; der
     /// Server liest diese Datei bei jedem Aufruf frisch (`mcp::read_settings`),
@@ -2018,6 +2026,8 @@ pub fn get_default_settings() -> AppSettings {
         document_letterhead_id: default_document_letterhead_id(),
         meeting_reminder_lead_s: default_meeting_reminder_lead_s(),
         meeting_reminder_all_events: false,
+        meeting_prep_enabled: true,
+        meeting_prep_prefetch: false,
         meeting_mcp_enabled: false,
         meeting_mcp_include_transcript: true,
         assistent_einstufung_aktiv: true,
@@ -3743,6 +3753,26 @@ mod tests {
         .unwrap();
         assert_eq!(chosen.meeting_reminder_lead_s, 0);
         assert!(chosen.meeting_reminder_all_events);
+    }
+
+    /// G4 (#499): die Terminvorbereitung ist ohne den Schluessel an, die Vorab-Erzeugung aus;
+    /// eine Wahl bleibt erhalten.
+    #[test]
+    fn meeting_prep_defaults_and_keeps_a_choice() {
+        let d = get_default_settings();
+        assert!(d.meeting_prep_enabled);
+        assert!(!d.meeting_prep_prefetch);
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert!(old.meeting_prep_enabled, "nicht false wie beim bool-Typ");
+        assert!(!old.meeting_prep_prefetch);
+        let chosen: AppSettings = serde_json::from_value(serde_json::json!({
+            "meeting_prep_enabled": false,
+            "meeting_prep_prefetch": true,
+        }))
+        .unwrap();
+        assert!(!chosen.meeting_prep_enabled);
+        assert!(chosen.meeting_prep_prefetch);
     }
 
     /// M6-P6e: der lokale MCP-Server ist ohne Zutun AUS (auch bei einer

@@ -66,6 +66,27 @@ export const MeetingCalendarSettings: React.FC = () => {
           grouped={true}
         />
       </div>
+      <div data-testid="meeting-prep-settings">
+        <ToggleSwitch
+          checked={getSetting("meeting_prep_enabled") ?? true}
+          onChange={(v) => void updateSetting("meeting_prep_enabled", v)}
+          isUpdating={isUpdating("meeting_prep_enabled")}
+          label={t("meetings.prep.settings.enabled")}
+          description={t("meetings.prep.settings.enabledDescription")}
+          descriptionMode="tooltip"
+          grouped={true}
+        />
+        <ToggleSwitch
+          checked={getSetting("meeting_prep_prefetch") ?? false}
+          onChange={(v) => void updateSetting("meeting_prep_prefetch", v)}
+          isUpdating={isUpdating("meeting_prep_prefetch")}
+          disabled={(getSetting("meeting_prep_enabled") ?? true) === false}
+          label={t("meetings.prep.settings.prefetch")}
+          description={t("meetings.prep.settings.prefetchDescription")}
+          descriptionMode="tooltip"
+          grouped={true}
+        />
+      </div>
     </>
   );
 };
