@@ -7,7 +7,8 @@ import Foundation
 // einen kleinen Schnappschuss und den Fortschritt.
 //
 // Schutz der Inhalte:
-// - Bücher: Ist ein Buch in Arbeit (2 % bis 95 %), steht nur der Text bis zur Lesegrenze im Index (nie dahinter).
+// - Bücher: Ist ein Buch begonnen und nicht fertig (Lese- oder Hörstand da), steht nur der Text bis zur Lesegrenze im Index
+//   (nie dahinter); unbegonnene und fertige Bücher stehen ganz drin.
 // - Besprechungen: nur Segmente mit `aiPermitted`; das Protokoll nur, wenn es eines gibt (es entsteht nur aus erlaubten Segmenten).
 // - Ablage: dieselbe Suche und dieselben Schutzregeln wie die Seite „Ablage“; bei Cloud-Modellen nur Dokumente der Klasse „öffentlich“.
 
@@ -141,9 +142,6 @@ private actor AssistantIndexer {
 
     /// Obergrenze für den Gesamttext im Speicher (Zeichen); Rest wird gemeldet, nicht still weggelassen.
     static let maxChars = 30_000_000
-    /// Ein Buch in Arbeit zählt zwischen diesen Anteilen als „in Arbeit“: der Text endet an der Lesegrenze.
-    static let startedFraction = 0.02
-    static let finishedFraction = 0.95
     /// Besprechung: so lange (s) oder so viele Zeichen höchstens in einem Abschnitt.
     static let sectionSeconds = 60.0
     static let sectionChars = 900
@@ -192,10 +190,12 @@ private actor AssistantIndexer {
             defer { progress(done, total) }
             guard let stamp = Self.fileStamp(job.url) else { continue }
             let fraction = Self.fraction(job)
-            let limited = Self.isLimited(job, fraction: fraction)
-            let textBucket = job.textRecord.map { Int(LibraryProgress.reach($0) / 2_000) } ?? -1
-            let audioBucket = job.audioRecord.map { Int(LibraryProgress.reach($0) / 15_000) } ?? -1
-            let version = "\(stamp)|\(textBucket)|\(audioBucket)|\(limited ? "limit" : "all")"
+            let limited = Self.isLimited(job)
+            // Bei begrenztem Text zählt der genaue Stand (nicht gerastert): geht er zurück (Fortschritt zurückgesetzt), wird
+            // neu indexiert, damit nie mehr Text im Index bleibt, als die Lesegrenze erlaubt.
+            let version = limited
+                ? "\(stamp)|limit|\(Self.whole(Self.reach(job.textRecord)))|\(Self.whole(Self.reach(job.audioRecord)))|\(job.sync.count)|\(Self.whole(job.totalMs ?? 0))"
+                : "\(stamp)|all"
             keep[.books, default: []].insert(job.id)
             if await unchanged(.books, job.id, version) { continue }
             guard let doc = Self.bookDocument(job, fraction: fraction, limited: limited, version: version) else {
@@ -337,8 +337,18 @@ private actor AssistantIndexer {
         return max(LibraryProgress.fraction(job.textRecord), LibraryProgress.fraction(job.audioRecord))
     }
 
-    private static func isLimited(_ job: BookJob, fraction: Double) -> Bool {
-        !job.finished && fraction >= startedFraction && fraction <= finishedFraction
+    /// Begonnen (Lese- oder Hörstand vorhanden) und nicht fertig: dann endet der Text an der Lesegrenze, unabhängig vom Anteil.
+    private static func isLimited(_ job: BookJob) -> Bool {
+        !job.finished && (reach(job.textRecord) > 0 || reach(job.audioRecord) > 0)
+    }
+
+    private static func reach(_ record: ProgressRecord?) -> Double {
+        record.map { LibraryProgress.reach($0) } ?? 0
+    }
+
+    /// Ganzzahl für Kennungen; nie ein Absturz bei NaN oder unendlich.
+    private static func whole(_ value: Double) -> Int {
+        value.isFinite ? Int(min(max(value, 0), 1e15)) : 0
     }
 
     private static func bookDocument(_ job: BookJob, fraction: Double, limited: Bool, version: String) -> AssistantDocument? {
@@ -349,7 +359,7 @@ private actor AssistantIndexer {
             var map: FollowMap?
             if let total = job.totalMs, total > 0, !job.sync.isEmpty { map = FollowMap(sync: job.sync, textLength: length, totalMs: total) }
             // Ohne Lesegrenze (nur eine Schätzung vom Hörbuch ohne Abgleich): der geschätzte Anteil, nie mehr.
-            limit = LibraryProgress.frontier(text: job.textRecord, audio: job.audioRecord, map: map) ?? Int((fraction * length).rounded(.down))
+            limit = LibraryProgress.frontier(text: job.textRecord, audio: job.audioRecord, map: map) ?? whole((fraction * length).rounded(.down))
         }
         let index = BookTalkIndex(title: job.title, text: text)
         var sections: [AssistantDocument.Section] = []

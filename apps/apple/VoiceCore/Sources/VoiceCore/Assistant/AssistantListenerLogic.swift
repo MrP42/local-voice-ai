@@ -2,7 +2,7 @@ import Foundation
 
 // Gesprächsmodus „Sprechen“ (Paket A): reine Logik hinter dem durchgehenden Zuhören. Nur Foundation, kein Audio, keine
 // Uhr: Zeiten kommen als Sekunden der Erkennungs-Zeitachse (Summe der an den Analyzer gegebenen Frames) bzw. als
-// Millisekunden je Puffer. Dadurch ohne Gerät testbar (`Tests/AssistantLogicTests.swift`).
+// Millisekunden je Puffer. Dadurch ohne Gerät testbar (`AssistantListenerLogicTests` im Kern, `swift test`).
 
 enum AssistantWords {
     /// Ein Wort zum Vergleichen: klein, Umlaute gefaltet, nur Buchstaben und Ziffern („Wetter?“ == „wetter“).

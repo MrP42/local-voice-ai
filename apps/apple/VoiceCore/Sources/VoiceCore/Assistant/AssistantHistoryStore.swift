@@ -42,9 +42,19 @@ public struct AssistantHistoryStore: Sendable {
         return Array(decoded.turns.suffix(Self.maxStoredTurns))
     }
 
-    /// Schreibt atomar die letzten 200 Beiträge. Ein leerer Verlauf löscht die Datei.
+    /// Quellen werden auf Titel, Fundstelle, Bereich und Kennung gekürzt: Auszugstexte aus Büchern, Transkripten, Ablage
+    /// und Notizen gehören nicht in die Verlaufsdatei (Anzeige und Prompt brauchen sie nicht, s. `AssistantPrompt`).
+    static func minimized(_ turn: AssistantTurn) -> AssistantTurn {
+        var out = turn
+        out.sources = turn.sources.map {
+            AssistantPassage(area: $0.area, itemId: $0.itemId, title: $0.title, locator: $0.locator, text: "", score: 0)
+        }
+        return out
+    }
+
+    /// Schreibt atomar die letzten 200 Beiträge (Quellen ohne Auszugstext). Ein leerer Verlauf löscht die Datei.
     public func save(_ turns: [AssistantTurn]) throws {
-        let kept = Array(turns.suffix(Self.maxStoredTurns))
+        let kept = turns.suffix(Self.maxStoredTurns).map(Self.minimized)
         guard !kept.isEmpty else { return clear() }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         BookTalkHistoryStore.excludeFromBackup(directory)

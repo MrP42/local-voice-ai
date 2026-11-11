@@ -18,8 +18,8 @@ final class BookTalkSpeaker {
     /// Gewählte Stimme (Kennung wie `VoiceModel.selectedVoiceID`): Phonon, sonst Systemstimme dieser Kennung; leer =
     /// Standardstimme des Systems. `nil` (Standard) = Anton wie bisher.
     var voiceID: String?
-    /// Satzbeginn und -ende der Wiedergabe (für Echo-Wächter und Verlauf); das Ende kommt nur, wenn der Satz zu Ende
-    /// gesprochen wurde, nicht nach `stop()`.
+    /// Satzbeginn und -ende der Wiedergabe (für Echo-Wächter und Verlauf); das Ende kommt nur, wenn der Satz wirklich zu
+    /// Ende erklang, nicht nach `stop()`, nicht bei hängendem Audio (`PhononAudioStalled`) und nicht bei abgebrochener Systemstimme.
     var onSentenceStarted: ((String) -> Void)?
     var onSentenceFinished: ((String) -> Void)?
 
@@ -86,8 +86,8 @@ final class BookTalkSpeaker {
                 let text = self.queue.removeFirst()
                 if !announced { announced = true; self.onAudible?() }
                 self.onSentenceStarted?(text)
-                await self.speak(text, generation: g)
-                if g == self.generation { self.onSentenceFinished?(text) }
+                let played = await self.speak(text, generation: g)
+                if played, g == self.generation { self.onSentenceFinished?(text) }
             }
             guard let self, g == self.generation else { return }
             self.task = nil
@@ -123,22 +123,23 @@ final class BookTalkSpeaker {
         return "en:\(voices[0])"
     }
 
-    private func speak(_ text: String, generation g: Int) async {
+    /// `true`, wenn der Satz wirklich bis zum Ende erklang; `false` bei Abbruch oder hängendem Audio (Satz zählt als nicht gesprochen).
+    private func speak(_ text: String, generation g: Int) async -> Bool {
         if let name = phononName(for: language) {
             do {
                 try await PhononEngine.shared.speak(text, voice: name, rate: 1)
-                return
+                return true
             } catch is CancellationError {
-                return
+                return false
             } catch is PhononAudioStalled {
-                return
+                return false
             } catch {
                 // Nicht verstummen: für diese Sitzung bei der Systemstimme bleiben.
                 phononFailed = true
             }
         }
-        guard g == generation else { return }
-        await system.speak(text, language: language, voiceID: voiceID)
+        guard g == generation else { return false }
+        return await system.speak(text, language: language, voiceID: voiceID)
     }
 }
 
@@ -146,7 +147,7 @@ final class BookTalkSpeaker {
 @MainActor
 private final class SystemSpeech: NSObject, AVSpeechSynthesizerDelegate {
     private let synth = AVSpeechSynthesizer()
-    private var waiting: CheckedContinuation<Void, Never>?
+    private var waiting: CheckedContinuation<Bool, Never>?
     /// Nur Rückmeldungen der laufenden Äußerung zählen (eine verspätete `didCancel` darf die nächste nicht beenden).
     private var current: ObjectIdentifier?
 
@@ -155,11 +156,12 @@ private final class SystemSpeech: NSObject, AVSpeechSynthesizerDelegate {
         synth.delegate = self
     }
 
-    func speak(_ text: String, language: BookTalkLanguage, voiceID: String? = nil) async {
+    /// `true` nur, wenn die Äußerung zu Ende gesprochen wurde (nicht bei `stop()`, Ersetzen oder `didCancel`).
+    func speak(_ text: String, language: BookTalkLanguage, voiceID: String? = nil) async -> Bool {
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = Self.voice(language: language, id: voiceID)
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            waiting?.resume()
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            waiting?.resume(returning: false)
             waiting = continuation
             current = ObjectIdentifier(utterance)
             synth.speak(utterance)
@@ -178,24 +180,24 @@ private final class SystemSpeech: NSObject, AVSpeechSynthesizerDelegate {
     func stop() {
         current = nil
         synth.stopSpeaking(at: .immediate)
-        waiting?.resume()
+        waiting?.resume(returning: false)
         waiting = nil
     }
 
-    private func finished(_ id: ObjectIdentifier) {
+    private func finished(_ id: ObjectIdentifier, completed: Bool) {
         guard current == id else { return }
         current = nil
-        waiting?.resume()
+        waiting?.resume(returning: completed)
         waiting = nil
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         let id = ObjectIdentifier(utterance)
-        Task { @MainActor in self.finished(id) }
+        Task { @MainActor in self.finished(id, completed: true) }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
         let id = ObjectIdentifier(utterance)
-        Task { @MainActor in self.finished(id) }
+        Task { @MainActor in self.finished(id, completed: false) }
     }
 }

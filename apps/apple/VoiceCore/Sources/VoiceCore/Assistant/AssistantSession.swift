@@ -54,15 +54,26 @@ public actor AssistantSession {
 
     public func clearHistory() { history.removeAll() }
 
+    /// Cloud-Schutz: Die Beiträge, die als VERLAUF ins Modell dürfen. Lokal alle; bei einem Cloud-Modell nur Beiträge ohne
+    /// Quellen oder mit Quellen ausschließlich aus den für die Cloud freigegebenen Bereichen (`knowledge.areas`, dieselben
+    /// wie beim Abruf): Gesprochenes aus einem gesperrten Bereich verlässt das Gerät nicht. `history` selbst (Anzeige,
+    /// Datei) bleibt vollständig; die Auswahl gilt je Anfrage und folgt damit jeder Änderung der Bereiche.
+    static func promptHistory(_ turns: [AssistantTurn], areas: Set<AssistantArea>?) -> [AssistantTurn] {
+        guard let areas else { return turns }
+        return turns.filter { turn in turn.sources.allSatisfy { areas.contains($0.area) } }
+    }
+
     /// Nach `done` oder nach Barge-in (dann `spoken` = tatsächlich Gesprochenes, `interrupted` = true) trägt die Steuerung
-    /// den Beitrag ein. Quellen und „Allgemeinwissen“ kommen aus dem Abruf dieser Anfrage.
+    /// den Beitrag ein. Quellen und „Allgemeinwissen“ kommen aus dem Abruf dieser Anfrage. Ohne Nutzertext oder ohne
+    /// tatsächlich Gesprochenes entsteht kein Beitrag (eine abgebrochene Frage ohne Antwort bleibt nicht stehen).
     public func commit(requestId: String, user: String, spoken: String, interrupted: Bool) {
-        let text = user.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
         let sources = results.removeValue(forKey: requestId) ?? []
         resultOrder.removeAll { $0 == requestId }
+        let text = user.trimmingCharacters(in: .whitespacesAndNewlines)
+        let said = spoken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !said.isEmpty else { return }
         history.append(AssistantTurn(
-            user: text, assistant: spoken.trimmingCharacters(in: .whitespacesAndNewlines), interrupted: interrupted,
+            user: text, assistant: said, interrupted: interrupted,
             sources: sources, general: sources.isEmpty, model: config.modelLabel, at: Date()))
         if history.count > Self.maxStoredTurns { history.removeFirst(history.count - Self.maxStoredTurns) }
     }
@@ -91,11 +102,15 @@ public actor AssistantSession {
     private func run(_ request: AssistantRequest, out: AsyncStream<AssistantEvent>.Continuation) async {
         defer { out.finish() }
         let rid = request.requestId
+        // Vor der Abbruchprüfung, damit zwischen Prüfung und Eintrag in `active` kein Wartepunkt liegt.
+        var allowedAreas: Set<AssistantArea>?
+        if self.config.isCloud { allowedAreas = await self.knowledge.areas }
         if earlyCancel.remove(rid) != nil {
             out.yield(.failed(requestId: rid, .cancelled))
             return
         }
-        let model = self.model, knowledge = self.knowledge, config = self.config, snapshot = history
+        let model = self.model, knowledge = self.knowledge, config = self.config
+        let snapshot = Self.promptHistory(history, areas: allowedAreas)
         let state = RunState()
         let work = Task<Outcome, Never> {
             await Self.generate(request, model: model, knowledge: knowledge, config: config, history: snapshot, state: state, out: out)

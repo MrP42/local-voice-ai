@@ -155,7 +155,7 @@ final class AssistantSessionTests: XCTestCase {
         _ = await collect(s, AssistantRequest(requestId: "r1", text: "Wie hoch ist der Mont Blanc"))
         await s.commit(requestId: "r1", user: "Wie hoch ist der Mont Blanc", spoken: "Der Mont Blanc ist 4806 Meter hoch.", interrupted: false)
         await s.commit(requestId: "r2", user: "   ", spoken: "egal", interrupted: false)
-        await s.commit(requestId: "unbekannt", user: "Noch etwas", spoken: "", interrupted: true)
+        await s.commit(requestId: "unbekannt", user: "Noch etwas", spoken: "Ein Satz", interrupted: true)
         let h = await s.history
         XCTAssertEqual(h.count, 2)
         XCTAssertTrue(h[0].general)
@@ -163,22 +163,93 @@ final class AssistantSessionTests: XCTestCase {
         XCTAssertTrue(h[1].interrupted)
     }
 
-    func testHistoryIsCappedAt200AndRestoreAndClear() async {
-        let turns = (0..<250).map { AssistantTurn(user: "Frage \($0)", assistant: "Antwort") }
-        let s = await session(ScriptModel(pieces: ["Ok."]), history: turns)
+    /// Eine abgebrochene Frage ohne ein einziges gesprochenes Wort darf nicht als leerer Beitrag im Verlauf stehen.
+    func testCommitRejectsEmptySpokenText() async {
+        let s = await session(ScriptModel(pieces: ["Castorp fährt nach Davos."]))
+        _ = await collect(s, AssistantRequest(requestId: "r1", text: "Wohin fährt Hans Castorp im Sanatorium nach Davos?"))
+        await s.commit(requestId: "r1", user: "Wohin fährt Hans Castorp im Sanatorium nach Davos?", spoken: "", interrupted: true)
+        await s.commit(requestId: "r1", user: "Wohin fährt Hans Castorp im Sanatorium nach Davos?", spoken: " \n ", interrupted: true)
         var h = await s.history
-        XCTAssertEqual(h.count, 200)
-        XCTAssertEqual(h.first?.user, "Frage 50")
-        await s.commit(requestId: "x", user: "Neu", spoken: "Ja", interrupted: false)
-        h = await s.history
-        XCTAssertEqual(h.count, 200)
-        XCTAssertEqual(h.last?.user, "Neu")
-        await s.restore(history: Array(turns.prefix(3)))
-        h = await s.history
-        XCTAssertEqual(h.count, 3)
-        await s.clearHistory()
-        h = await s.history
         XCTAssertTrue(h.isEmpty)
+        // Die Quellen der verworfenen Anfrage sind verbraucht; ein späterer Beitrag erbt sie nicht.
+        await s.commit(requestId: "r1", user: "Nochmal", spoken: "Ja", interrupted: false)
+        h = await s.history
+        XCTAssertEqual(h.count, 1)
+        XCTAssertTrue(h[0].sources.isEmpty)
+    }
+
+    // MARK: Cloud-Schutz für den Verlauf
+
+    private func historyForAreas() -> [AssistantTurn] {
+        func source(_ area: AssistantArea) -> [AssistantPassage] {
+            [AssistantPassage(area: area, itemId: "x-\(area.rawValue)", title: "Titel", text: "Text", score: 1)]
+        }
+        return [
+            AssistantTurn(user: "FrageBuch", assistant: "AntwortBuch", sources: source(.books), general: false),
+            AssistantTurn(user: "FrageAblage", assistant: "AntwortAblage", sources: source(.files), general: false),
+            AssistantTurn(user: "FrageAllgemein", assistant: "AntwortAllgemein", general: true),
+            AssistantTurn(user: "FrageGemischt", assistant: "AntwortGemischt", sources: source(.books) + source(.notes), general: false),
+        ]
+    }
+
+    private var cloud: AssistantConfig {
+        AssistantConfig(modelLabel: "Cloud", isCloud: true, contextTokens: 16_000, maxAnswerTokens: 700, userName: "Patrick", timeout: 5)
+    }
+
+    /// Wissen mit dem Buch aus `knowledge()`, aber nur den gegebenen Bereichen freigegeben.
+    private func knowledge(areas: Set<AssistantArea>) async -> AssistantKnowledge {
+        let k = await knowledge()
+        await k.setAreas(areas)
+        return k
+    }
+
+    func testCloudPromptHistoryFiltersByAreasButKeepsHistoryComplete() async {
+        let log = Log()
+        let k = await knowledge(areas: [.books])
+        let s = AssistantSession(model: ScriptModel(pieces: ["Gut."], log: log), knowledge: k, config: cloud, history: historyForAreas())
+        _ = await collect(s, AssistantRequest(requestId: "r1", text: "Hallo zusammen"))
+        let p = log.all.last?.prompt ?? ""
+        XCTAssertTrue(p.contains("AntwortBuch"), p)
+        XCTAssertTrue(p.contains("AntwortAllgemein"), "Beitrag ohne Quellen ist erlaubt")
+        XCTAssertFalse(p.contains("AntwortAblage"), "Ablage ist für die Cloud nicht freigegeben")
+        XCTAssertFalse(p.contains("AntwortGemischt"), "ein gesperrter Bereich genügt, der ganze Beitrag bleibt draußen")
+        var h = await s.history
+        XCTAssertEqual(h.count, 4, "Anzeige und Datei behalten alles")
+
+        // Die Bereiche ändern sich zwischen zwei Fragen: der Verlauf folgt sofort, ohne neue Sitzung.
+        await k.setAreas([.books, .files, .notes])
+        _ = await collect(s, AssistantRequest(requestId: "r2", text: "Hallo zusammen"))
+        let all = log.all.last?.prompt ?? ""
+        for word in ["AntwortBuch", "AntwortAblage", "AntwortAllgemein", "AntwortGemischt"] { XCTAssertTrue(all.contains(word), "\(word)\n\(all)") }
+        await k.setAreas([])
+        _ = await collect(s, AssistantRequest(requestId: "r3", text: "Hallo zusammen"))
+        let none = log.all.last?.prompt ?? ""
+        XCTAssertTrue(none.contains("AntwortAllgemein"))
+        for word in ["AntwortBuch", "AntwortAblage", "AntwortGemischt"] { XCTAssertFalse(none.contains(word), word) }
+        h = await s.history
+        XCTAssertEqual(h.count, 4)
+    }
+
+    /// Lokale Modelle bekommen den ganzen Verlauf, unabhängig von den freigegebenen Bereichen.
+    func testLocalPromptHistoryIsUnrestricted() async {
+        let log = Log()
+        let k = await knowledge(areas: [])
+        let s = AssistantSession(model: ScriptModel(pieces: ["Gut."], log: log), knowledge: k, config: config, history: historyForAreas())
+        _ = await collect(s, AssistantRequest(requestId: "r1", text: "Hallo zusammen"))
+        let p = log.all.last?.prompt ?? ""
+        for word in ["AntwortBuch", "AntwortAblage", "AntwortAllgemein", "AntwortGemischt"] { XCTAssertTrue(p.contains(word), word) }
+    }
+
+    /// Ein Verlauf aus der Datei (Quellen ohne Auszugstext) wird genauso nach Bereichen gefiltert.
+    func testCloudHistoryFromStoredTurnsIsFilteredToo() async {
+        let log = Log()
+        let stored = historyForAreas().map(AssistantHistoryStore.minimized)
+        let k = await knowledge(areas: [.books])
+        let s = AssistantSession(model: ScriptModel(pieces: ["Gut."], log: log), knowledge: k, config: cloud, history: stored)
+        _ = await collect(s, AssistantRequest(requestId: "r1", text: "Hallo zusammen"))
+        let p = log.all.last?.prompt ?? ""
+        XCTAssertTrue(p.contains("AntwortBuch") && p.contains("AntwortAllgemein"), p)
+        XCTAssertFalse(p.contains("AntwortAblage") || p.contains("AntwortGemischt"), p)
     }
 
     // MARK: Abbruch

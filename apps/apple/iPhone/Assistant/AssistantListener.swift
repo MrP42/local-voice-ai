@@ -26,13 +26,14 @@ final class AssistantListener {
     }
 
     enum ListenError: LocalizedError {
-        case microphone, speechAssets, format, engine
+        case microphone, speechAssets, format, engine, busy
         var errorDescription: String? {
             switch self {
             case .microphone: "Kein Zugriff auf das Mikrofon. Bitte in den Einstellungen erlauben."
             case .speechAssets: "Für das Gespräch werden die Apple-Sprachdateien gebraucht (Einstellungen)."
             case .format: "Das Mikrofonformat wird nicht unterstützt."
             case .engine: "Das Mikrofon konnte nicht gestartet werden."
+            case .busy: "Das Mikrofon wird noch freigegeben. Bitte gleich noch einmal versuchen."
             }
         }
     }
@@ -79,8 +80,9 @@ final class AssistantListener {
 
     // MARK: Start
 
+    /// Wirft `ListenError.busy`, solange Start, Zuhören oder Rückbau laufen: wer nicht zuhört, darf nicht „läuft“ melden.
     func start(languageCode: String?) async throws {
-        guard !isBusy else { return }
+        guard !isBusy else { throw ListenError.busy }
         token += 1
         let mine = token
         starting = true
@@ -112,7 +114,7 @@ final class AssistantListener {
         guard status == .installed else { throw ListenError.speechAssets }
 
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth, .defaultToSpeaker])
+        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP, .defaultToSpeaker])
         try session.setActive(true)
         // Echo-Unterdrückung und Rauschminderung; ohne sie hörte das Mikrofon die Antwort mit: lieber sauber scheitern.
         do { try engine.inputNode.setVoiceProcessingEnabled(true) } catch { throw ListenError.engine }

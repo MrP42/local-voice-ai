@@ -159,6 +159,11 @@ final class AssistantController: ObservableObject {
     private var autoMuted = false
     private var retryText: String?
     private var consentContinuation: CheckedContinuation<Bool, Never>?
+    /// „Neues Gespräch“: angefordert und in der Kette erledigt. Solange beides nicht gleich ist, schreiben ältere Aufträge
+    /// den alten Verlauf nicht zurück (Anzeige, Datei) und eine neue Sitzung startet leer.
+    private var clearRequested = 0
+    private var clearDone = 0
+    private var mergeWatch: Task<Void, Never>?
     private var bag: Set<AnyCancellable> = []
     private var memoryObserver: NSObjectProtocol?
     private var overflowShown = false
@@ -364,7 +369,9 @@ final class AssistantController: ObservableObject {
         areas = active
         let kn = await hub.knowledge(cloud: built.isCloud, areas: active)
         knowledge = kn
-        let history = await session?.history ?? turns
+        let stored = await session?.history ?? turns
+        // Nach dem letzten Wartepunkt: steht „Neues Gespräch“ noch aus, kommt der alte Verlauf nicht in die neue Sitzung.
+        let history = clearRequested == clearDone ? stored : []
         if let model = built.model {
             session = AssistantSession(model: model, knowledge: kn, config: built.config, history: history)
         } else {
@@ -400,7 +407,7 @@ final class AssistantController: ObservableObject {
         listener.consumeUtterance()
         clearLive()
         await chain?.value
-        var built = await AssistantEngine.make(choice: choice)
+        let built = await AssistantEngine.make(choice: choice)
         guard mine == generation else { built.llama?.release(); return }
         if let target = built.target, !AssistantConsent.isGranted(target, areas: AssistantAreaSettings.areas(cloud: true)) {
             let allowed = await askConsent(target, areas: AssistantAreaSettings.areas(cloud: true))
@@ -414,6 +421,12 @@ final class AssistantController: ObservableObject {
             notice = AssistantNotice(text: built.note ?? "Dieses Modell ist nicht verfügbar.", action: nil)
             return
         }
+        // Während der Wartepunkte kann eine Antwort mit der alten Sitzung begonnen haben: abbrechen, bevor die neue übernimmt,
+        // sonst schriebe ein Lauf der alten Sitzung in die neue. Die Kette wartet, bis der Beitrag der alten Sitzung steht.
+        if current != nil { cancelAnswer(merge: false) }
+        discardSpeculation()
+        await chain?.value
+        guard mine == generation else { built.llama?.release(); return }
         await adopt(built)
         notice = built.note.map { AssistantNotice(text: $0, action: nil) }
         announce("Modell: \(built.label)")
@@ -476,14 +489,18 @@ final class AssistantController: ObservableObject {
         }
     }
 
-    /// Neues Gespräch: Verlauf löschen (Sitzung und Datei).
+    /// Neues Gespräch: Verlauf löschen (Sitzung und Datei). In fester Reihenfolge in der Kette: laufende Antwort abbrechen,
+    /// Sitzung leeren, Anzeige leeren, Datei über `saveChain` löschen. Frühere Aufträge der Kette (Abbruch, Abschluss) sehen
+    /// `clearRequested != clearDone` und bringen den alten Verlauf nicht zurück.
     func newConversation() {
+        clearRequested += 1
         if current != nil { cancelAnswer(merge: true) }
         mergePrefix = ""
         discardSpeculation()
         listener.consumeUtterance()
         clearLive()
         currentUser = nil
+        currentRunID = nil
         liveAnswer = ""
         sources = []
         sourcesKnown = false
@@ -492,11 +509,13 @@ final class AssistantController: ObservableObject {
         interruptedPending = false
         policy.reset()
         turns = []
-        let session = self.session
-        let store = self.store
-        enqueue {
-            await session?.clearHistory()
-            store.clear()
+        enqueue { [weak self] in
+            // Die Sitzung erst jetzt nachschlagen: ein Modellwechsel dazwischen hat sie vielleicht ersetzt.
+            await self?.session?.clearHistory()
+            guard let self else { return }
+            self.clearDone += 1
+            self.turns = []
+            self.deleteStoredHistory()
         }
         announce("Neues Gespräch.")
     }
@@ -623,6 +642,7 @@ final class AssistantController: ObservableObject {
             liveAnswer = ""
             sources = []
             sourcesKnown = false
+            watchMerge(run.text)
         } else {
             interruptedPending = true
         }
@@ -631,8 +651,28 @@ final class AssistantController: ObservableObject {
             await session?.cancel(requestId: run.id)
             _ = await LiveCapture.bounded(1.5) { _ = await task?.value }
             task?.cancel()
-            if !merge { await session?.commit(requestId: run.id, user: run.text, spoken: spoken, interrupted: true) }
+            // Nichts Gesprochenes: kein Beitrag (die Ansicht zeigt dann nichts Bleibendes für die abgebrochene Frage).
+            if !merge, !spoken.isEmpty { await session?.commit(requestId: run.id, user: run.text, spoken: spoken, interrupted: true) }
             await self?.refreshTurns(after: run, keepLive: merge)
+        }
+    }
+
+    /// Sicherheitsnetz für „Ergänzen“: Folgt auf die verworfene Äußerung binnen etwa 4 s nichts Neues (Räuspern, der
+    /// Erkenner liefert nichts), wird die ursprüngliche Frage erneut gestellt, statt unbeantwortet zu bleiben. Wer
+    /// weiterspricht, schiebt die Prüfung hinaus (höchstens fünfmal); ein neuer Beitrag leert `mergePrefix` und beendet sie.
+    private func watchMerge(_ text: String) {
+        mergeWatch?.cancel()
+        let mine = generation
+        mergeWatch = Task { [weak self] in
+            for _ in 0..<5 {
+                try? await Task.sleep(for: .seconds(4))
+                guard !Task.isCancelled, let self, mine == self.generation, self.running, self.current == nil,
+                      self.mergePrefix == text else { return }
+                if self.liveStable.isEmpty, self.liveVolatile.isEmpty {
+                    self.send(text: text)
+                    return
+                }
+            }
         }
     }
 
@@ -706,9 +746,18 @@ final class AssistantController: ObservableObject {
             // Guard vor dem Senden: ohne Zustimmung geht nichts an die Cloud. Nach der Zustimmung wird die Äußerung gesendet.
             abandon(run)
             policy.reset()
+            phase = running ? .listening : .idle
             let text = run.text
             retryText = text
-            Task { if await askConsent(target, areas: areas) { send(text: text) } }
+            let mine = generation
+            Task {
+                if await askConsent(target, areas: areas) {
+                    send(text: text)
+                } else if mine == generation, consentRequest == nil {
+                    // Abgelehnt (nicht: Gespräch beendet oder Dialog ersetzt): die Äußerung bleibt in `retryText`.
+                    notice = AssistantNotice(text: "Ohne Zustimmung wurde nichts gesendet.", action: .retrySend)
+                }
+            }
             return
         }
         run.committed = true
@@ -799,11 +848,14 @@ final class AssistantController: ObservableObject {
         perform(policy.feed(.sentenceSpoken(text: text, startedAtMs: at, endedAtMs: nil)))
     }
 
+    /// Die Stimme meldet nur, was wirklich erklang; ein Satz bei hängendem Audio oder Abbruch fehlt. Das Ende gehört
+    /// deshalb immer zum zuletzt begonnenen Satz (die Stimme spricht nacheinander), nicht zum nächsten in der Zählung.
     private func sentenceFinished(_ text: String) {
-        guard let run = current, run.finishedSpeaking.count < run.startMs.count else { return }
-        let k = run.finishedSpeaking.count
-        run.finishedSpeaking.append(run.enqueued[k])
-        perform(policy.feed(.sentenceSpoken(text: text, startedAtMs: run.startMs[k], endedAtMs: nowMs)))
+        guard let run = current, let last = run.startMs.indices.last else { return }
+        let index = run.enqueued[last]
+        guard run.finishedSpeaking.last != index else { return }
+        run.finishedSpeaking.append(index)
+        perform(policy.feed(.sentenceSpoken(text: text, startedAtMs: run.startMs[last], endedAtMs: nowMs)))
     }
 
     private func speakerIdle() {
@@ -857,6 +909,8 @@ final class AssistantController: ObservableObject {
     private func refreshTurns(after run: AssistantRun, keepLive: Bool) async {
         guard let session else { return }
         let history = await session.history
+        // „Neues Gespräch“ steht in der Kette noch aus: der alte Verlauf käme sonst in Anzeige und Datei zurück.
+        guard clearRequested == clearDone else { return }
         turns = history
         if currentRunID == run.id, !keepLive {
             currentUser = nil
@@ -876,6 +930,16 @@ final class AssistantController: ObservableObject {
             await previous?.value
             let ok = await Task.detached(priority: .utility) { (try? store.save(history)) != nil }.value
             if !ok { self?.notice = AssistantNotice(text: "Verlauf konnte nicht gespeichert werden.", action: nil) }
+        }
+    }
+
+    /// Löscht die Verlaufsdatei in der Reihenfolge des Speicherns: ein früher begonnenes Speichern legt sie danach nicht neu an.
+    private func deleteStoredHistory() {
+        let store = self.store
+        let previous = saveChain
+        saveChain = Task {
+            await previous?.value
+            await Task.detached(priority: .utility) { store.clear() }.value
         }
     }
 
