@@ -250,13 +250,7 @@ pub fn ausfuehren(
             let _ = ausgabe_einsammeln(&empfaenger, leser);
             return Err("extrakt.zu_gross".into());
         }
-        // Unix: Ist das Kind schon beendet (noch ungeerntet, also hält es die Gruppenkennung), geht
-        // `SIGKILL` an die ganze Gruppe, bevor die Ernte sie freigibt: Enkel mit geerbtem stdout sterben.
-        #[cfg(unix)]
-        if let Ok(true) = beendet_ungeerntet(child.id()) {
-            gruppe_beenden(child.id());
-        }
-        match child.try_wait() {
+        match kind_pruefen(&mut child) {
             Ok(Some(s)) => {
                 // Windows: Job schließen beendet den restlichen Baum (`KILL_ON_JOB_CLOSE`).
                 baum.nach_ernte();
@@ -378,6 +372,23 @@ fn beendet_ungeerntet(pid: u32) -> std::io::Result<bool> {
         return Err(std::io::Error::last_os_error());
     }
     Ok(beendet)
+}
+
+/// Prüft, ob das Kind beendet ist, und erntet es dann. Unix: Geerntet wird nie ohne vorherigen
+/// `SIGKILL` an die Gruppe. `waitid` mit `WNOWAIT` erntet nicht (die Gruppenkennung bleibt gehalten);
+/// meldet es „beendet“, geht das Signal an die ganze Gruppe (Enkel mit geerbtem stdout sterben), erst
+/// danach `try_wait`. Ein Kind, das zwischen zwei Prüfungen endet, wird so nie ohne Gruppen-Kill geerntet.
+fn kind_pruefen(
+    child: &mut std::process::Child,
+) -> std::io::Result<Option<std::process::ExitStatus>> {
+    #[cfg(unix)]
+    {
+        if !beendet_ungeerntet(child.id())? {
+            return Ok(None);
+        }
+        gruppe_beenden(child.id());
+    }
+    child.try_wait()
 }
 
 /// Fehlercode für ein Ende ohne gültige Antwort. Endgültig (`extrakt.abbruch`, Giftdatei) nur bei
@@ -661,6 +672,53 @@ mod tests_508 {
             // Kein /proc (macOS): `kill(pid, 0)`.
             Err(_) => unsafe { libc::kill(pid, 0) == 0 },
         }
+    }
+
+    /// Codex-Befund 1: Wird das Kind erst nach dem Ende gesehen, stirbt die Gruppe vor der Ernte
+    /// (kein Fenster zwischen „lebt“ und Ernte). Lebend: kein Signal, keine Ernte.
+    #[test]
+    fn kind_pruefen_beendet_die_gruppe_vor_der_ernte() {
+        let d = tempfile::tempdir().unwrap();
+        let pid = d.path().join("enkel.pid");
+        let prog = shell("sleep 30 & echo $! > \"$PIDDATEI\"; exit 0", &pid);
+        let mut cmd = std::process::Command::new(&prog.pfad);
+        cmd.args(&prog.vorweg)
+            .env("PIDDATEI", &pid)
+            .stdout(std::process::Stdio::null());
+        std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+        let mut kind = cmd.spawn().unwrap();
+        let ende = Instant::now() + Duration::from_secs(10);
+        let status = loop {
+            if let Some(s) = kind_pruefen(&mut kind).unwrap() {
+                break s;
+            }
+            assert!(Instant::now() < ende, "Kind endet nicht");
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        assert!(status.success());
+        let enkel = pid_lesen(&pid);
+        // Das Signal ging vor der Ernte raus; der Enkel braucht nur noch einen Augenblick zum Sterben.
+        let frist = Instant::now() + Duration::from_secs(5);
+        while lebt(enkel) && Instant::now() < frist {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let lebt_noch = lebt(enkel);
+        if lebt_noch {
+            unsafe { libc::kill(enkel, libc::SIGKILL) };
+        }
+        assert!(!lebt_noch, "Enkel {enkel} überlebt die Ernte");
+
+        let mut lang = std::process::Command::new("/bin/sh");
+        lang.args(["-c", "sleep 30"]);
+        std::os::unix::process::CommandExt::process_group(&mut lang, 0);
+        let mut lang = lang.spawn().unwrap();
+        assert!(kind_pruefen(&mut lang).unwrap().is_none());
+        assert!(
+            lebt(lang.id() as libc::pid_t),
+            "lebendes Kind darf nicht beendet werden"
+        );
+        gruppe_beenden(lang.id());
+        let _ = lang.wait();
     }
 
     /// lva#508: Das Kind startet einen Enkel mit geerbtem stdout und endet. Der Leser bekäme erst mit

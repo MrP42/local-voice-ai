@@ -86,6 +86,39 @@ fn zeichensatz_aus(name: &str) -> Option<Zeichensatz> {
     })
 }
 
+/// Die `<meta …>`-Tags (ohne `>`) im Text, ohne Kommentare `<!-- -->` sowie `<script>`- und
+/// `<style>`-Inhalte. `kopf` besteht nur aus ASCII (Kleinschreibung), Bytegrenzen sind Zeichengrenzen.
+fn meta_tags(kopf: &str) -> Vec<&str> {
+    let mut tags = Vec::new();
+    let mut pos = 0;
+    while let Some(rel) = kopf[pos..].find('<') {
+        let start = pos + rel;
+        let rest = &kopf[start..];
+        if rest.starts_with("<!--") {
+            pos = rest.find("-->").map_or(kopf.len(), |e| start + e + 3);
+            continue;
+        }
+        let roh_text = ["script", "style"].into_iter().find(|n| {
+            rest[1..].strip_prefix(n).is_some_and(|r| {
+                r.starts_with(|c: char| c.is_ascii_whitespace() || matches!(c, '>' | '/'))
+            })
+        });
+        if let Some(name) = roh_text {
+            let zu = format!("</{name}");
+            pos = rest.find(&zu).map_or(kopf.len(), |e| start + e + zu.len());
+            continue;
+        }
+        if let Some(r) = rest.strip_prefix("<meta") {
+            let ende = r.find('>').unwrap_or(r.len());
+            tags.push(&r[..ende]);
+            pos = start + "<meta".len() + ende;
+            continue;
+        }
+        pos = start + 1;
+    }
+    tags
+}
+
 /// Zeichensatz aus `<meta charset=…>` oder `<meta http-equiv=Content-Type content="…; charset=…">` in den
 /// ersten 1024 Bytes (wie der Vorabscan der Browser; Groß-/Kleinschreibung egal, Skripte bleiben
 /// unberücksichtigt, es wird nichts ausgeführt).
@@ -100,9 +133,9 @@ fn html_zeichensatz(b: &[u8]) -> Option<Zeichensatz> {
             }
         })
         .collect();
-    // Nur innerhalb von `<meta …>`: Text oder Attribute anderer Elemente mit „charset“ zählen nicht.
-    for meta in kopf.split("<meta").skip(1) {
-        let meta = &meta[..meta.find('>').unwrap_or(meta.len())];
+    // Nur innerhalb von `<meta …>`: Text oder Attribute anderer Elemente mit „charset“ zählen nicht,
+    // ebenso wenig Kommentare, `<script>` und `<style>`.
+    for meta in meta_tags(&kopf) {
         let Some(i) = meta.find("charset") else {
             continue;
         };
@@ -476,6 +509,34 @@ mod tests {
         // UTF-16 mit BOM im HTML.
         let u = utf16_bytes("<html><body><p>Größe €</p></body></html>", true, true);
         assert_eq!(text_von(&u), "Größe €");
+    }
+
+    /// Codex-Befund 5: `<meta>` in Kommentaren, `<script>` und `<style>` zählt nicht.
+    #[test]
+    fn html_charset_ignoriert_kommentar_script_und_style() {
+        let text_von = |b: &[u8]| {
+            html(b)
+                .into_iter()
+                .map(|a| a.text)
+                .collect::<Vec<_>>()
+                .join("|")
+        };
+        let utf8 = "ä".as_bytes();
+        for kopf in [
+            "<!-- <meta charset=windows-1252> -->",
+            "<script>var s = '<meta charset=windows-1252>';</script>",
+            "<SCRIPT type=text/javascript>x='<meta charset=windows-1252>'</SCRIPT>",
+            "<style>/* <meta charset=windows-1252> */</style>",
+        ] {
+            let mut b = kopf.as_bytes().to_vec();
+            b.extend_from_slice(b"<p>");
+            b.extend_from_slice(utf8);
+            b.extend_from_slice(b"</p>");
+            assert_eq!(text_von(&b), "ä", "{kopf}");
+        }
+        // Ein echtes `<meta>` hinter einem Kommentar gilt weiterhin.
+        let b = b"<!-- x --><meta charset=windows-1252><p>5\x80</p>";
+        assert_eq!(text_von(b), "5€");
     }
 
     #[test]

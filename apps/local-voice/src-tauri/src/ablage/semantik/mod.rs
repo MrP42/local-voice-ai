@@ -358,12 +358,16 @@ pub fn ladefehler() -> bool {
 }
 
 /// Anstoß und Ende des Hintergrundlaufs laufen über genau einen Mutex: Wer entscheidet, dass der Worker
-/// endet (keine Runde offen), setzt `laeuft = false` unter derselben Sperre. Ein Anstoß sieht damit
-/// entweder `laeuft` (und seine Runde wird vom Worker noch gesehen) oder startet einen neuen Worker.
-/// Mit zwei getrennten Flags ging ein Anstoß zwischen letzter Prüfung und Ende verloren.
+/// endet (keine Runde offen), gibt unter derselben Sperre frei. Ein Anstoß sieht damit entweder einen
+/// laufenden Worker (und seine Runde wird von ihm noch gesehen) oder startet einen neuen Worker.
+/// Jeder Worker hat eine eigene Kennung (Eigentümerschaft): Das spätere `Drop` eines beendeten Workers
+/// gibt nur frei, solange er selbst noch Eigentümer ist, nie den Platz eines inzwischen gestarteten.
 #[derive(Debug, Default)]
 struct Anstoss {
-    laeuft: bool,
+    /// Kennung des laufenden Workers; `None`: keiner läuft.
+    besitzer: Option<u64>,
+    /// Kennung für den nächsten Worker.
+    naechste_id: u64,
     /// Zahl aller Anstöße und die davon schon begonnenen Runden (Zähler statt Flag: prüfbar).
     angestossen: u64,
     begonnen: u64,
@@ -372,32 +376,65 @@ struct Anstoss {
 impl Anstoss {
     const fn neu() -> Self {
         Self {
-            laeuft: false,
+            besitzer: None,
+            naechste_id: 0,
             angestossen: 0,
             begonnen: 0,
         }
     }
 
-    /// Ein Anstoß; `true`, wenn der Aufrufer einen Worker starten muss.
-    fn anstossen(&mut self) -> bool {
-        self.angestossen += 1;
-        !std::mem::replace(&mut self.laeuft, true)
+    fn laeuft(&self) -> bool {
+        self.besitzer.is_some()
     }
 
-    /// Der Worker fragt nach der nächsten Runde. `false`: nichts offen, der Worker endet (`laeuft` ist
-    /// dann bereits zurückgesetzt, in derselben Sperre).
-    fn naechste_runde(&mut self) -> bool {
+    /// Ein Anstoß; `Some(kennung)`, wenn der Aufrufer einen Worker mit dieser Kennung starten muss.
+    fn anstossen(&mut self) -> Option<u64> {
+        self.angestossen += 1;
+        if self.besitzer.is_some() {
+            return None;
+        }
+        self.naechste_id += 1;
+        self.besitzer = Some(self.naechste_id);
+        self.besitzer
+    }
+
+    /// Der Worker `id` fragt nach der nächsten Runde. `false`: nichts offen, der Worker endet (der
+    /// Platz ist dann bereits freigegeben, in derselben Sperre).
+    fn naechste_runde(&mut self, id: u64) -> bool {
         if self.begonnen == self.angestossen {
-            self.laeuft = false;
+            self.freigeben(id);
             return false;
         }
         self.begonnen = self.angestossen;
         true
     }
 
+    /// Gibt den Platz frei, aber nur für den Eigentümer; ein später Aufruf eines alten Workers ist
+    /// wirkungslos, sobald ein neuer Worker läuft.
+    fn freigeben(&mut self, id: u64) {
+        if self.besitzer == Some(id) {
+            self.besitzer = None;
+        }
+    }
+
     /// Weitere Runde nach einem Fehler (zählt wie ein Anstoß des Laufs selbst).
     fn wiederholen(&mut self) {
         self.angestossen += 1;
+    }
+}
+
+/// Gibt beim Verlassen des Worker-Threads (auch bei Panik) den Platz frei, sofern er noch gehört.
+struct Ende<'a> {
+    anstoss: &'a Mutex<Anstoss>,
+    id: u64,
+}
+
+impl Drop for Ende<'_> {
+    fn drop(&mut self) {
+        self.anstoss
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .freigeben(self.id);
     }
 }
 
@@ -411,7 +448,7 @@ fn anstoss() -> std::sync::MutexGuard<'static, Anstoss> {
 const NACHZIEHEN_VERSUCHE: u32 = 3;
 
 pub fn nachziehen_laeuft() -> bool {
-    anstoss().laeuft
+    anstoss().laeuft()
 }
 
 /// Bettet im Hintergrund fehlende Vektoren ein (Einschalten, Modellwechsel, Stücke aus der
@@ -422,23 +459,20 @@ pub fn nachziehen_anstossen(dir: PathBuf, fertig: Box<dyn Fn() + Send>) {
     if !zustand().an {
         return;
     }
-    if !anstoss().anstossen() {
+    let Some(id) = anstoss().anstossen() else {
         return;
-    }
+    };
     let gestartet = std::thread::Builder::new()
         .name("ablage-vektoren".into())
         .spawn(move || {
             // Auch bei einer Panik im Lauf freigeben (sonst startete nie wieder ein Worker).
-            struct Ende;
-            impl Drop for Ende {
-                fn drop(&mut self) {
-                    anstoss().laeuft = false;
-                }
-            }
-            let _ende = Ende;
+            let _ende = Ende {
+                anstoss: &ANSTOSS,
+                id,
+            };
             let a = super::speicher::Ablage::neu(dir);
             let mut fehlversuche = 0u32;
-            while anstoss().naechste_runde() {
+            while anstoss().naechste_runde(id) {
                 let emb = aktuell();
                 if !emb.ist_semantisch() {
                     continue;
@@ -464,29 +498,56 @@ pub fn nachziehen_anstossen(dir: PathBuf, fertig: Box<dyn Fn() + Send>) {
             fertig();
         });
     if gestartet.is_err() {
-        anstoss().laeuft = false;
+        anstoss().freigeben(id);
     }
 }
 
 #[cfg(test)]
 mod tests_anstoss {
-    use super::Anstoss;
+    use super::{Anstoss, Ende};
     use std::sync::{Arc, Mutex};
 
     #[test]
     fn zustandsmaschine_einzeln() {
         let mut s = Anstoss::neu();
-        assert!(s.anstossen(), "erster Anstoß startet den Worker");
-        assert!(!s.anstossen(), "zweiter sieht den laufenden Worker");
+        let a = s.anstossen().expect("erster Anstoß startet den Worker");
         assert!(
-            s.naechste_runde(),
+            s.anstossen().is_none(),
+            "zweiter sieht den laufenden Worker"
+        );
+        assert!(
+            s.naechste_runde(a),
             "beide Anstöße gelten als eine offene Runde"
         );
-        assert!(!s.naechste_runde());
-        assert!(!s.laeuft, "Ende setzt `laeuft` in derselben Sperre zurück");
+        assert!(!s.naechste_runde(a));
+        assert!(!s.laeuft(), "Ende gibt in derselben Sperre frei");
         assert!(
-            s.anstossen(),
+            s.anstossen().is_some(),
             "danach startet ein neuer Anstoß wieder einen Worker"
+        );
+    }
+
+    /// Codex-Befund 4: A endet regulär, B startet, danach läuft das `Drop` von A. Es darf B nicht
+    /// freigeben, sonst startet C einen zweiten Worker. Geprüft mit dem Produktions-`Drop` (`Ende`).
+    #[test]
+    fn drop_des_alten_workers_gibt_den_neuen_nicht_frei() {
+        let m = Mutex::new(Anstoss::neu());
+        let a = m.lock().unwrap().anstossen().expect("A startet");
+        let ende_a = Ende { anstoss: &m, id: a };
+        assert!(m.lock().unwrap().naechste_runde(a), "A holt seine Runde");
+        assert!(!m.lock().unwrap().naechste_runde(a), "A endet");
+        let b = m.lock().unwrap().anstossen().expect("B startet");
+        drop(ende_a);
+        assert!(m.lock().unwrap().laeuft(), "B läuft weiter");
+        assert!(
+            m.lock().unwrap().anstossen().is_none(),
+            "C darf keinen zweiten Worker starten"
+        );
+        let ende_b = Ende { anstoss: &m, id: b };
+        drop(ende_b);
+        assert!(
+            !m.lock().unwrap().laeuft(),
+            "Drop des Eigentümers gibt frei (Panikpfad)"
         );
     }
 
@@ -506,10 +567,9 @@ mod tests_anstoss {
                         (s.clone(), aktiv.clone(), spitze.clone(), worker.clone());
                     std::thread::spawn(move || {
                         for _ in 0..50 {
-                            let starten = s.lock().unwrap().anstossen();
-                            if !starten {
+                            let Some(id) = s.lock().unwrap().anstossen() else {
                                 continue;
-                            }
+                            };
                             let (s, aktiv, spitze) = (s.clone(), aktiv.clone(), spitze.clone());
                             let h = std::thread::spawn(move || {
                                 use std::sync::atomic::Ordering::SeqCst;
@@ -520,7 +580,7 @@ mod tests_anstoss {
                                 loop {
                                     let weiter = {
                                         let mut g = s.lock().unwrap();
-                                        let w = g.naechste_runde();
+                                        let w = g.naechste_runde(id);
                                         if !w {
                                             aktiv.fetch_sub(1, SeqCst);
                                         }
@@ -546,7 +606,7 @@ mod tests_anstoss {
             }
             let g = s.lock().unwrap();
             assert_eq!(g.begonnen, g.angestossen, "verlorener Anstoß");
-            assert!(!g.laeuft);
+            assert!(!g.laeuft());
             assert_eq!(
                 spitze.load(std::sync::atomic::Ordering::SeqCst),
                 1,
