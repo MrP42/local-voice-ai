@@ -1,31 +1,47 @@
-// Lva#509: Auszüge und Äußerungen stehen nie im Log. Grep-artige Prüfung der Log-Aufrufe im Pfad des
-// Inhaltszugriffs (Rust: Abrufindex, Tor, Einstellungsbefehle; Oberfläche: Kontext, Engine, Freigabe).
-// Das ersetzt keine Durchsicht, hält aber ein neues `info!("{text}")` im Pfad sofort auf.
+// Lva#509/#511: Auszüge und Äußerungen stehen nie im Log. Grep-artige Prüfung ALLER Log-Aufrufe in den
+// Dateien des Inhaltszugriffs (Rust: `app_context/`, `voice_call/`, `commands/voice_tools.rs`;
+// Oberfläche: `components/voice-call/`). Ein Log-Aufruf besteht nur, wenn er ein reines Textliteral
+// ohne Platzhalter und ohne weitere Argumente ist; alles andere (ein `console.log(payload)`, ein
+// `info!("{text}")`) fällt auf, auch ohne Inhaltsnamen, und muss einzeln in `ERLAUBT` stehen (geprüfter
+// Wortlaut, mit Grund). Das ersetzt keine Durchsicht, hält aber ein neues Log mit Inhalt sofort auf.
 // Lauf: node --test scripts/log-hygiene.test.mjs (Node >= 22.6).
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const wurzel = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+/** Dateien eines Ordners (nicht rekursiv) ohne reine Testdateien (`tests.rs`, `*.test.*`). */
+function ordner(rel, endung) {
+  return readdirSync(join(wurzel, rel))
+    .filter((f) => endung.test(f) && !/^tests\.rs$|\.test\./.test(f))
+    .map((f) => `${rel}/${f}`);
+}
 const RUST = [
-  "src-tauri/src/app_context/service.rs",
-  "src-tauri/src/app_context/retrieve.rs",
-  "src-tauri/src/app_context/index.rs",
-  "src-tauri/src/app_context/prompt.rs",
-  "src-tauri/src/app_context/berechtigung.rs",
-  "src-tauri/src/app_context/model.rs",
+  ...ordner("src-tauri/src/app_context", /\.rs$/),
+  ...ordner("src-tauri/src/voice_call", /\.rs$/),
   "src-tauri/src/commands/voice_tools.rs",
-  "src-tauri/src/voice_call/mod.rs",
 ];
-const TS = [
-  "src/components/voice-call/globalContext.ts",
-  "src/components/voice-call/engine.ts",
-  "src/components/voice-call/alleBereiche.ts",
-  "src/components/voice-call/SettingsPanel.tsx",
-];
-/** Namen, die Inhalt tragen: Auszug, Frage, Äußerung, Antwort, Treffer. */
+const TS = ordner("src/components/voice-call", /\.tsx?$/);
+
+/**
+ * Geprüfte Ausnahmen: genauer Wortlaut der Argumente (Leerraum zusammengefasst) und Grund. Neue
+ * Einträge brauchen eine Durchsicht, dass nie Auszug, Frage oder Antwort in die Platzhalter gelangt.
+ */
+const ERLAUBT = new Map([
+  [
+    '"voice_tools: {what} nicht lesbar: {e}"',
+    "`what` ist ein fester Bereichsname, `e` ein Dateifehler des Systems",
+  ],
+  [
+    '"story send failed", e',
+    "nur das Fehlerobjekt des Sendens, kein Gesprächstext",
+  ],
+]);
+
+/** Namen, die Inhalt tragen (nur noch für den Plausibilitätstest der Erlaubnisliste). */
 const INHALT =
   /\b(excerpt|excerpts|question|transcript|utterance|text|content|answer|hits?|prompt|message|messages|req|sentence|piece|userText|heard)\b/i;
 
@@ -51,43 +67,72 @@ function aufrufe(quelle, kopf) {
 
 /** Ohne `#[cfg(test)]`-Teil: Tests dürfen Inhalte ausgeben. */
 const ohneTests = (rs) => rs.split(/\n#\[cfg\(test\)\]/)[0];
+const knapp = (a) => a.replace(/\s+/g, " ").trim().replace(/,$/, "");
+
+/** Rust: genau ein Textliteral ohne `{}`-Platzhalter, keine weiteren Argumente. */
+const RUST_LITERAL = /^"(?:[^"\\{}]|\\.)*"$/;
+/** TypeScript: nur Textliterale (auch `...`) ohne `${}`, durch Kommas getrennt. */
+const TS_LITERAL =
+  /^(?:"[^"$]*"|'[^'$]*'|`[^`$]*`)(?:\s*,\s*(?:"[^"$]*"|'[^'$]*'|`[^`$]*`))*$/;
+
+const ruestLog =
+  /\b(?:log::)?(?:trace|debug|info|warn|error)!\(|\bprintln!\(|\beprintln!\(|\bdbg!\(/g;
+const tsLog = /\bconsole\.(?:log|info|warn|error|debug|trace)\(/g;
+
+const unbedenklich = (a, literal) =>
+  literal.test(knapp(a)) || ERLAUBT.has(knapp(a));
+
+test("Log-Hygiene: die Dateilisten sind nicht leer", () => {
+  assert.ok(RUST.length >= 8, `Rust-Dateien: ${RUST.length}`);
+  assert.ok(TS.length >= 10, `TypeScript-Dateien: ${TS.length}`);
+});
 
 for (const rel of RUST) {
-  test(`Log-Hygiene Rust: ${rel} loggt keinen Inhalt`, () => {
-    const q = ohneTests(lies(rel));
-    const logs = aufrufe(
-      q,
-      /\b(?:log::)?(?:trace|debug|info|warn|error)!\(|\bprintln!\(|\beprintln!\(|\bdbg!\(/g,
-    );
-    for (const a of logs)
+  test(`Log-Hygiene Rust: ${rel} loggt nur feste Texte`, () => {
+    for (const a of aufrufe(ohneTests(lies(rel)), ruestLog))
       assert.equal(
-        INHALT.test(a),
-        false,
-        `${rel}: Log-Aufruf mit Inhaltsbezug: ${a.trim().slice(0, 120)}`,
+        unbedenklich(a, RUST_LITERAL),
+        true,
+        `${rel}: Log-Aufruf mit Platzhalter oder Argument: ${knapp(a).slice(0, 120)}`,
       );
   });
 }
 
 for (const rel of TS) {
-  test(`Log-Hygiene TypeScript: ${rel} loggt keinen Inhalt`, () => {
-    const logs = aufrufe(
-      lies(rel),
-      /\bconsole\.(?:log|info|warn|error|debug)\(/g,
-    );
-    for (const a of logs)
+  test(`Log-Hygiene TypeScript: ${rel} loggt nur feste Texte`, () => {
+    for (const a of aufrufe(lies(rel), tsLog))
       assert.equal(
-        INHALT.test(a),
-        false,
-        `${rel}: console-Aufruf mit Inhaltsbezug: ${a.trim().slice(0, 120)}`,
+        unbedenklich(a, TS_LITERAL),
+        true,
+        `${rel}: console-Aufruf mit Argument: ${knapp(a).slice(0, 120)}`,
       );
   });
 }
 
-test("Log-Hygiene: die Prüfung erkennt einen Verstoß (Selbsttest)", () => {
-  const schlecht = ohneTests('fn f() { log::info!("Auszug: {}", excerpt); }');
-  const logs = aufrufe(schlecht, /\b(?:log::)?(?:info)!\(/g);
-  assert.equal(logs.length, 1);
-  assert.equal(INHALT.test(logs[0]), true);
-  const gut = aufrufe('log::info!("Abruf verworfen");', /\b(?:log::)?info!\(/g);
-  assert.equal(INHALT.test(gut[0]), false);
+test("Log-Hygiene: die Erlaubnisliste enthält nichts mit Inhaltsbezug", () => {
+  for (const wortlaut of ERLAUBT.keys())
+    assert.equal(INHALT.test(wortlaut), false, wortlaut);
+});
+
+test("Log-Hygiene: die Prüfung erkennt Verstöße auch ohne Inhaltsnamen (Selbsttest)", () => {
+  const rs = (q) =>
+    aufrufe(ohneTests(q), ruestLog).map((a) => unbedenklich(a, RUST_LITERAL));
+  const ts = (q) => aufrufe(q, tsLog).map((a) => unbedenklich(a, TS_LITERAL));
+  // Verstöße: Platzhalter, Argument, nicht-literales Argument, Objekt.
+  assert.deepEqual(rs('fn f() { log::info!("Auszug: {}", excerpt); }'), [
+    false,
+  ]);
+  assert.deepEqual(rs('fn f() { log::warn!("{text}"); }'), [false]);
+  assert.deepEqual(rs('fn f() { log::debug!("Abruf", payload); }'), [false]);
+  assert.deepEqual(ts("console.log(payload);"), [false]);
+  assert.deepEqual(ts('console.log("Treffer", hits);'), [false]);
+  assert.deepEqual(ts("console.warn(`Frage ${frage}`);"), [false]);
+  // Erlaubt: feste Texte; ein Log im Testteil zählt nicht.
+  assert.deepEqual(rs('log::info!("Abruf verworfen");'), [true]);
+  assert.deepEqual(
+    rs('fn f() {}\n#[cfg(test)]\nmod t { fn g() { println!("{x}"); } }'),
+    [],
+  );
+  assert.deepEqual(ts('console.error("Start fehlgeschlagen");'), [true]);
+  assert.deepEqual(ts('console.error("Start", "fehlgeschlagen");'), [true]);
 });

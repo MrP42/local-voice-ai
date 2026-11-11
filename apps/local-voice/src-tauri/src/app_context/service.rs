@@ -660,9 +660,9 @@ pub fn change_voice_global_context_enabled_setting(
 #[tauri::command]
 #[specta::specta]
 pub fn voice_call_inhaltszugriff_lesen(app: AppHandle) -> Inhaltszugriff {
-    let zaehler = berechtigung::global();
-    let _sperre = zaehler.sperren();
-    Inhaltszugriff::aus_einstellungen(zaehler.version(), &crate::settings::get_settings(&app))
+    let (version, settings) =
+        berechtigung::global().lesen_mit(|| crate::settings::get_settings(&app));
+    Inhaltszugriff::aus_einstellungen(version, &settings)
 }
 
 /// Gibt den Inhaltszugriff in EINEM Schritt frei oder zurück: nur wenn `erwartete_version` noch die
@@ -728,9 +728,10 @@ fn retrieve_blocking(app: &AppHandle, req: &AppContextRequest) -> Result<Context
         });
     };
     let started = Instant::now();
-    // Vor dem Lesen der Einstellungen merken: jede Änderung danach macht das Ergebnis ungültig.
-    let v_start = berechtigung::version();
-    let settings = crate::settings::get_settings(app);
+    // Version und Einstellungen als ein Schnappschuss (unter der Sperre der Schreiber): jede Änderung
+    // danach macht das Ergebnis ungültig, und es gibt keine neue Version zu alten Einstellungen.
+    let (v_start, settings) =
+        berechtigung::global().lesen_mit(|| crate::settings::get_settings(app));
     apply_grants(&settings);
     let allowed = allowed_kinds(&settings);
     if allowed.is_empty() {
@@ -907,8 +908,8 @@ pub fn bind_for_speaker_quellen(
     if !bound_to(ctx, request_id, question) {
         return None;
     }
-    let v_start = berechtigung::version();
-    let settings = crate::settings::get_settings(app);
+    let (v_start, settings) =
+        berechtigung::global().lesen_mit(|| crate::settings::get_settings(app));
     apply_grants(&settings);
     let allowed = allowed_kinds(&settings);
     {

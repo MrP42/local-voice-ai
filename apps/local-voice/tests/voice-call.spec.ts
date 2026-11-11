@@ -220,6 +220,45 @@ async function install(
             case "change_voice_call_read_transcripts_setting":
               settings.voice_call_read_transcripts = args.enabled;
               return null;
+            // lva#509: atomare Freigabe. `__inhaltKonflikt`: eine andere Ansicht gibt zwischen Lesen
+            // und Setzen alles frei (Kern: Konflikt, nichts geschrieben); `__inhaltFehler`: Fehler.
+            case "voice_call_inhaltszugriff_lesen":
+              return {
+                version: w.__inhaltVersion ?? 1,
+                enabled: !!settings.voice_global_context_enabled,
+                areas: settings.voice_call_knowledge ?? [],
+                read_transcripts: !!settings.voice_call_read_transcripts,
+              };
+            case "voice_call_inhaltszugriff_setzen": {
+              if (w.__inhaltFehler) throw "Speichern fehlgeschlagen";
+              const aktuell = w.__inhaltVersion ?? 1;
+              if (w.__inhaltKonflikt || args.erwarteteVersion !== aktuell) {
+                if (w.__inhaltKonflikt) {
+                  settings.voice_global_context_enabled = true;
+                  settings.voice_call_knowledge = [
+                    "meetings",
+                    "dictations",
+                    "conversations",
+                    "calendar",
+                    "tts",
+                    "books",
+                    "book_notes",
+                    "ki_docs",
+                  ];
+                  settings.voice_call_read_transcripts = true;
+                  w.__inhaltVersion = aktuell + 1;
+                }
+                return {
+                  status: "konflikt",
+                  version: w.__inhaltVersion ?? aktuell,
+                };
+              }
+              settings.voice_global_context_enabled = args.enabled;
+              settings.voice_call_knowledge = args.areas;
+              settings.voice_call_read_transcripts = args.readTranscripts;
+              w.__inhaltVersion = aktuell + 1;
+              return { status: "ok", version: aktuell + 1 };
+            }
             case "voice_tool_call":
               return new Promise((resolve, reject) => {
                 w.__tool = { args, resolve, reject };
@@ -3155,6 +3194,73 @@ const sectionCalls = async (page: Page) =>
 
 const notebookCard = (panel: ReturnType<Page["getByRole"]>, name: string) =>
   panel.getByRole("button", { name: new RegExp(`^${name}\\b`) });
+
+test.describe("Sprachgespraech Wissen: Alles freigeben, Fokus (lva#509)", () => {
+  const freigabeKnopf = (panel: ReturnType<Page["locator"]>) =>
+    panel.getByRole("button", {
+      name: "Bücher, Wissensbereiche und Transkripte freigeben",
+    });
+
+  test("Erfolg per Tastatur: der Fokus geht auf die Statuszeile", async ({
+    page,
+  }) => {
+    await install(page, "light", { settings: LOCAL_SPEAKER });
+    await openPage(page);
+    const panel = await openKnowledge(page);
+    const knopf = freigabeKnopf(panel);
+    await knopf.focus();
+    await page.keyboard.press("Enter");
+    const status = panel.getByRole("status").filter({
+      hasText: "Bücher, Wissensbereiche und Transkripte sind freigegeben",
+    });
+    await expect(status).toBeVisible();
+    await expect(status).toBeFocused();
+    await expect(knopf).toHaveCount(0);
+  });
+
+  test("Konflikt, und eine andere Ansicht hat schon alles freigegeben: der Knopf verschwindet, der Fokus bleibt auf der Statuszeile", async ({
+    page,
+  }) => {
+    await install(page, "light", { settings: LOCAL_SPEAKER });
+    await page.addInitScript(() => ((window as any).__inhaltKonflikt = true));
+    await openPage(page);
+    const panel = await openKnowledge(page);
+    const knopf = freigabeKnopf(panel);
+    await knopf.focus();
+    await page.keyboard.press("Enter");
+    await expect(
+      panel.getByText("Die Einstellung wurde inzwischen geändert", {
+        exact: false,
+      }),
+    ).toBeVisible();
+    await expect(knopf).toHaveCount(0);
+    const status = panel.getByRole("status").filter({
+      hasText: "Bücher, Wissensbereiche und Transkripte sind freigegeben",
+    });
+    await expect(status).toBeFocused();
+    expect(
+      await page.evaluate(() => document.activeElement === document.body),
+    ).toBe(false);
+  });
+
+  test("Fehler: die Taste bleibt und bekommt den Fokus zurück", async ({
+    page,
+  }) => {
+    await install(page, "light", { settings: LOCAL_SPEAKER });
+    await page.addInitScript(() => ((window as any).__inhaltFehler = true));
+    await openPage(page);
+    const panel = await openKnowledge(page);
+    const knopf = freigabeKnopf(panel);
+    await knopf.focus();
+    await page.keyboard.press("Enter");
+    await expect(
+      panel.getByText("Die Freigabe konnte nicht gespeichert werden", {
+        exact: false,
+      }),
+    ).toBeVisible();
+    await expect(knopf).toBeFocused();
+  });
+});
 
 test.describe("Sprachgespraech Wissen: Notizbuch-Freigabe", () => {
   test("Standard (Neuinstallation und Update ohne Eintrag): nichts frei, Einschalten gibt nichts frei", async ({

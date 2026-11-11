@@ -2597,11 +2597,13 @@ fn schreibe_unter_sperre(app: &AppHandle, mut settings: AppSettings, erweitern: 
     if let Some(e) = error {
         log::error!("{e}");
     }
-    crate::app_context::berechtigung::global().beim_schreiben(
+    // Erst speichern, dann die Version veroeffentlichen (Sperre haelt der Aufrufer; Reihenfolge der
+    // Sperren: `app_context::berechtigung`).
+    crate::app_context::berechtigung::global().schreiben_mit(
         &crate::app_context::berechtigung::Stand::aus_json(alt.as_ref()),
         &crate::app_context::berechtigung::Stand::aus_einstellungen(&settings),
+        || store.set("settings", value),
     );
-    store.set("settings", value);
 }
 
 /// Lesen, aendern, schreiben unter der Sperre des Berechtigungszaehlers: die Updater der vier Werte
@@ -2628,11 +2630,11 @@ pub fn try_write_settings(app: &AppHandle, mut settings: AppSettings) -> Result<
     match to_store_value(&settings, alt.as_ref()) {
         (_, Some(e)) => Err(e),
         (value, None) => {
-            crate::app_context::berechtigung::global().beim_schreiben(
+            crate::app_context::berechtigung::global().schreiben_mit(
                 &crate::app_context::berechtigung::Stand::aus_json(alt.as_ref()),
                 &crate::app_context::berechtigung::Stand::aus_einstellungen(&settings),
+                || store.set("settings", value),
             );
-            store.set("settings", value);
             Ok(())
         }
     }

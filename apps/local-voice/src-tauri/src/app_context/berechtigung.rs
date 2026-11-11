@@ -13,6 +13,23 @@
 //!    Abruf merkt sich die Version beim Start und gibt keinen Auszug aus, wenn sie sich bis zur Ausgabe
 //!    geändert hat; ebenso verlangt das Tor vor dem Modellstart die unveränderte Version.
 //!
+//! **Reihenfolge und Sperren (lva#511).** Alles, was Version und Einstellungen gemeinsam betrifft,
+//! läuft unter DERSELBEN Sperre [`Zaehler::sperren`]; sie ist die äußerste Sperre der Einstellungen.
+//! Darunter liegt nur noch der Store der Einstellungen (`store.get`/`store.set`, intern gesperrt, ruft
+//! nie zurück); unter ihr wird kein anderer Mutex genommen und kein Befehl gerufen. Die Reihenfolge der
+//! Sperren im ganzen Pfad ist deshalb: `RETRIEVING` (nur `try_lock`) -> Berechtigungssperre -> Store.
+//! Kein Pfad hält die Berechtigungssperre und fragt dann `RETRIEVING` oder wieder die Berechtigungssperre
+//! (der Mutex ist nicht wiedereintrittsfest) – Folgearbeiten wie `on_settings_changed` laufen erst nach
+//! dem Freigeben.
+//!
+//! - Schreiber ([`Zaehler::schreiben_mit`]): ERST speichern, DANN die Version veröffentlichen. Wer die
+//!   Version ohne Sperre liest (die Endprüfungen `version() != v_start`), sieht also nie eine neue
+//!   Version mit noch alten Einstellungen; eine alte Version mit neuen Einstellungen ist harmlos, denn
+//!   jedes Ergebnis ist an die Version gebunden und fällt bei der Endprüfung durch.
+//! - Leser, die Version UND Einstellungen brauchen ([`Zaehler::lesen_mit`]): ein Schnappschuss unter
+//!   der Sperre; er zeigt nie einen halb geschriebenen Stand, also auch nie erweiterte Bereiche zu
+//!   einer alten Version.
+//!
 //! Die Version ist ein `u32` (die Bindings kennen kein `u64`) und beginnt bei 1, damit ein fehlendes
 //! Feld (`0`) nie zufällig passt. Das Modul ist rein: keine App, keine Einstellungen lesen.
 
@@ -53,8 +70,23 @@ impl Zaehler {
         self.version.fetch_add(1, Ordering::SeqCst).wrapping_add(1)
     }
 
-    /// Beim Schreiben der Einstellungen: unterscheiden sich die vier Werte, steigt die Version.
-    /// Liefert `true`, wenn sie stieg.
+    /// Schreibt unter der Sperre des Aufrufers: ERST `speichere`, DANN steigt die Version (wenn sich
+    /// die vier Werte unterscheiden). Liefert `true`, wenn sie stieg. Die Reihenfolge ist Absicht:
+    /// ein Leser ohne Sperre, der die neue Version sieht, findet auch die neuen Einstellungen.
+    pub fn schreiben_mit(&self, alt: &Stand, neu: &Stand, speichere: impl FnOnce()) -> bool {
+        speichere();
+        self.beim_schreiben(alt, neu)
+    }
+
+    /// Version und Einstellungen als EIN Schnappschuss: `lies` läuft unter der Sperre, die auch jeder
+    /// Schreiber hält, und `lies` darf sie nicht noch einmal nehmen (kein Wiedereintritt).
+    pub fn lesen_mit<R>(&self, lies: impl FnOnce() -> R) -> (u32, R) {
+        let _sperre = self.sperren();
+        (self.version(), lies())
+    }
+
+    /// Erhöht die Version, wenn sich die vier Werte unterscheiden. Liefert `true`, wenn sie stieg.
+    /// Nur für Aufrufer, die schon gespeichert haben (sonst [`Self::schreiben_mit`]).
     pub fn beim_schreiben(&self, alt: &Stand, neu: &Stand) -> bool {
         if alt == neu {
             return false;
@@ -531,5 +563,131 @@ mod tests {
             &Stand::aus_json(Some(&gespeichert)),
             &Stand::aus_einstellungen(&e)
         ));
+    }
+
+    // ---- Reihenfolge Speichern -> Version veröffentlichen, Leser ohne und mit Sperre (lva#511) ----
+
+    /// Zustand Nummer `n` des Spiels: gerade = alles frei (Bereiche, Transkripte), ungerade = nichts.
+    /// Die Nummer steckt in `notebook_sections`, damit ein Leser erkennt, welcher Stand er sieht.
+    fn zustand(n: u32) -> Stand {
+        let frei = n % 2 == 0;
+        Stand {
+            enabled: frei,
+            areas: if frei { bereiche() } else { Vec::new() },
+            read_transcripts: frei,
+            notebook_sections: vec![n.to_string()],
+        }
+    }
+
+    fn nummer(s: &Stand) -> u32 {
+        s.notebook_sections[0].parse().unwrap()
+    }
+
+    /// Ein Schreiber wie in `settings::schreibe_unter_sperre`: Sperre, nächsten Zustand bilden, erst
+    /// speichern, dann die Version veröffentlichen.
+    fn naechster_zustand(z: &Zaehler, store: &Mutex<Stand>) {
+        let _sperre = z.sperren();
+        let neu = zustand(z.version() + 1);
+        let alt = store.lock().unwrap().clone();
+        assert!(z.schreiben_mit(&alt, &neu, || *store.lock().unwrap() = neu.clone()));
+    }
+
+    #[test]
+    fn die_version_steigt_erst_nach_dem_speichern() {
+        let z = Zaehler::neu();
+        let store = Mutex::new(zustand(1));
+        let alt = store.lock().unwrap().clone();
+        let neu = zustand(2);
+        let beim_speichern = RefCell::new(None);
+        let gestiegen = z.schreiben_mit(&alt, &neu, || {
+            // Während des Speicherns ist die neue Version noch nicht zu sehen.
+            *beim_speichern.borrow_mut() = Some(z.version());
+            *store.lock().unwrap() = neu.clone();
+        });
+        assert!(gestiegen);
+        assert_eq!(*beim_speichern.borrow(), Some(1));
+        assert_eq!(z.version(), 2);
+        assert_eq!(*store.lock().unwrap(), neu);
+    }
+
+    #[test]
+    fn unveraenderte_werte_speichern_ohne_neue_version() {
+        let z = Zaehler::neu();
+        let s = zustand(1);
+        let gespeichert = RefCell::new(false);
+        assert!(!z.schreiben_mit(&s, &s.clone(), || *gespeichert.borrow_mut() = true));
+        assert!(*gespeichert.borrow());
+        assert_eq!(z.version(), 1);
+    }
+
+    #[test]
+    fn leser_parallel_zu_schreibern_sehen_nie_neue_version_mit_alten_einstellungen() {
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+        const SCHREIBER: u32 = 4;
+        const RUNDEN: u32 = 400;
+        let z = Arc::new(Zaehler::neu());
+        let store = Arc::new(Mutex::new(zustand(1)));
+        let fertig = Arc::new(AtomicBool::new(false));
+
+        let schreiber: Vec<_> = (0..SCHREIBER)
+            .map(|_| {
+                let (z, store) = (z.clone(), store.clone());
+                std::thread::spawn(move || {
+                    for _ in 0..RUNDEN {
+                        naechster_zustand(&z, &store);
+                    }
+                })
+            })
+            .collect();
+
+        // Leser mit Schnappschuss (`lesen_mit`, wie Abruf und Tor): Version und Stand passen immer
+        // zusammen, also nie erweiterte Bereiche zu einer alten und nie alte zu einer neuen Version.
+        let mit_sperre: Vec<_> = (0..2)
+            .map(|_| {
+                let (z, store, fertig) = (z.clone(), store.clone(), fertig.clone());
+                std::thread::spawn(move || {
+                    let mut gelesen = 0u32;
+                    while !fertig.load(Ordering::SeqCst) {
+                        let (v, s) = z.lesen_mit(|| store.lock().unwrap().clone());
+                        assert_eq!(s, zustand(v), "Version {v} mit fremdem Stand");
+                        gelesen += 1;
+                    }
+                    gelesen
+                })
+            })
+            .collect();
+
+        // Leser ohne Sperre (die Endprüfungen): erst die Version, dann der Stand. Der Stand ist nie
+        // älter als die Version.
+        let ohne_sperre: Vec<_> = (0..2)
+            .map(|_| {
+                let (z, store, fertig) = (z.clone(), store.clone(), fertig.clone());
+                std::thread::spawn(move || {
+                    let mut gelesen = 0u32;
+                    while !fertig.load(Ordering::SeqCst) {
+                        let v = z.version();
+                        let s = store.lock().unwrap().clone();
+                        assert!(
+                            nummer(&s) >= v,
+                            "neue Version {v} mit altem Stand {}",
+                            nummer(&s)
+                        );
+                        gelesen += 1;
+                    }
+                    gelesen
+                })
+            })
+            .collect();
+
+        for h in schreiber {
+            h.join().unwrap();
+        }
+        fertig.store(true, Ordering::SeqCst);
+        for h in mit_sperre.into_iter().chain(ohne_sperre) {
+            h.join().unwrap();
+        }
+        assert_eq!(z.version(), 1 + SCHREIBER * RUNDEN);
+        assert_eq!(*store.lock().unwrap(), zustand(1 + SCHREIBER * RUNDEN));
     }
 }

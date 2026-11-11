@@ -258,11 +258,19 @@ const GlobalKnowledge: React.FC<{
   const noContent = llm.label !== null && !llm.local;
   // Die Taste wird beim Arbeiten nicht `disabled` (das nähme einer Tastatur den Fokus), nur
   // `aria-disabled`; ein zweiter Druck wird abgefangen.
+  // Der Fokusauftrag wird erst gelöscht, wenn wirklich ein Element den Fokus hat. Fehlt die Taste
+  // (eine andere Ansicht hat inzwischen alles freigegeben, der Konflikt-Refresh setzt `allOn`), geht
+  // der Fokus auf die Statuszeile derselben Gruppe (`role="status"`, `tabIndex=-1`): sie nennt den
+  // jetzt geltenden Zustand und wird so vorgelesen; die Meldung zum Konflikt steht in `role="alert"`.
   useEffect(() => {
-    if (fokus === "status" && allOn) statusRef.current?.focus();
-    else if (fokus === "taste") tasteRef.current?.focus();
-    else return;
-    setFokus(null);
+    if (!fokus) return;
+    const ziel =
+      fokus === "taste"
+        ? (tasteRef.current ?? statusRef.current)
+        : statusRef.current;
+    if (!ziel) return;
+    ziel.focus();
+    if (document.activeElement === ziel) setFokus(null);
   }, [fokus, allOn]);
   const enableAll = async () => {
     if (busy) return;
