@@ -884,17 +884,26 @@ struct LibraryPlayerScreen: View {
 
 /// Text mit markiertem Absatz. Scrollt der Nutzer selbst, folgt der Text nicht mehr, bis er
 /// „Zur aktuellen Stelle“ tippt (wie Audible): kein Zurückspringen mitten im Lesen.
+/// Scrollauftrag an `FollowText`: jeder neue `token` scrollt zum Absatz.
+struct BookReveal: Equatable {
+    var token: Int
+    var paragraph: Int
+}
+
 struct FollowText<Row: View>: View {
     let paragraphs: [TextParagraph]
     let current: Int
     /// Aus: kein Mitscrollen (Ansicht „Lesen“), die Stelle bleibt, wo der Nutzer liest.
     var follow = true
     let row: (Int, TextParagraph) -> Row
+    /// Scrollauftrag von außen (Inhalt und Suche, lva#476): gilt auch ohne Mitscrollen.
+    var reveal: BookReveal? = nil
     /// Nutzer hat selbst gescrollt: kein Mitscrollen, Knopf „Zur aktuellen Stelle“ sichtbar.
     @State private var detached = false
 
-    init(paragraphs: [TextParagraph], current: Int, follow: Bool = true, @ViewBuilder row: @escaping (Int, TextParagraph) -> Row) {
-        self.paragraphs = paragraphs; self.current = current; self.follow = follow; self.row = row
+    init(paragraphs: [TextParagraph], current: Int, follow: Bool = true, reveal: BookReveal? = nil,
+         @ViewBuilder row: @escaping (Int, TextParagraph) -> Row) {
+        self.paragraphs = paragraphs; self.current = current; self.follow = follow; self.reveal = reveal; self.row = row
     }
 
     var body: some View {
@@ -937,7 +946,12 @@ struct FollowText<Row: View>: View {
                     .padding(12)
                 }
             }
-            .onAppear { proxy.scrollTo(current, anchor: .center) }  // ohne Animation: sonst baut die Liste jede Zeile bis dorthin
+            .onAppear { proxy.scrollTo(reveal?.paragraph ?? current, anchor: .center) }  // ohne Animation: sonst baut die Liste jede Zeile bis dorthin
+            .onChange(of: reveal) { _, value in
+                guard let value else { return }
+                detached = false
+                proxy.scrollTo(value.paragraph, anchor: .top)
+            }
             .onChange(of: current) { old, value in
                 guard follow, !detached else { return }
                 if abs(value - old) > 3 { proxy.scrollTo(value, anchor: .center) }
