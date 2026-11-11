@@ -532,6 +532,7 @@ public final class AssistantReleaseStore: @unchecked Sendable {
         self.revision = loadedRevision
         self.attempts = loadedRevision
         self.opening = opening
+        clock.adopt(store: self)
         clock.seed(record: record, locked: isLocked)
         if case .firstStart = opening {
             let first = adopt.map { shipped in AssistantReleaseRecord.shipped.narrowed(localAreas: shipped.areas(cloud: false),
@@ -574,7 +575,7 @@ public final class AssistantReleaseStore: @unchecked Sendable {
     }
 
     /// Zeilen „in diesem Lauf nicht wirksam“, die noch nicht geschrieben werden konnten (Register der Ordnung).
-    var hasUnwrittenLines: Bool { !clock.pending.isEmpty }
+    var hasUnwrittenLines: Bool { clock.hasPending }
 
     /// Holt die noch ausstehenden Zeilen nach (bei jeder Gelegenheit: Anfrage, Änderung, auch ohne Sitzung). Der Fehler der ersten
     /// Zeile, die sich weiter nicht schreiben lässt, sonst `nil`.
@@ -713,6 +714,8 @@ public final class AssistantReleaseStore: @unchecked Sendable {
             ceiling = ceiling.merged(with: AssistantReleaseCeiling(narrowing: confirmed, to: record))
         }
         lock.unlock()
+        // S3: Eine Sicherung, die scheiterte, ist ein Auftrag für die nächste Gelegenheit (nicht unter dem Lock der Ordnung melden).
+        if error != nil { clock.noteObligation() }
         return error
     }
 

@@ -544,6 +544,12 @@ final class AssistantStepIndex: @unchecked Sendable {
     private var order: [String] = []
     private let limitSteps: Int
     private let limitRequests: Int
+    /// Runde 9, S1: Anfragen, die keine Commits mehr annehmen (der Abschluss hat begonnen oder die Anfrage wurde aus dem Gedächtnis der
+    /// Sitzung verdrängt und abgeschlossen). Die Zuordnung Ereignis → Schritt bleibt lesbar (`step`), nur `accepts` und `append` sagen
+    /// nein. Der Eintrag überlebt das Verdrängen aus `steps` (auch eine Anfrage ohne Ereignisse schließt) und wird NIE verdrängt: keine
+    /// Obergrenze, eine Kennung je abgeschlossener Anfrage für die Lebensdauer der Sitzung. Eine geschlossene Anfrage wird damit auf
+    /// keinem Weg wieder zulässig (auch nicht durch einen Läufer, der nach dem Abschluss weiter ausgibt).
+    private var closed: Set<String> = []
 
     init(maxSteps: Int = AssistantStepIndex.maxSteps, maxRequests: Int = AssistantStepIndex.maxRequests) {
         limitSteps = maxSteps
@@ -558,9 +564,16 @@ final class AssistantStepIndex: @unchecked Sendable {
     func append(_ id: String, step: Int) -> Bool {
         lock.lock()
         defer { lock.unlock() }
+        guard !closed.contains(id) else { return false }
         if steps[id] == nil {
             order.append(id)
-            while order.count > limitRequests { steps[order.removeFirst()] = nil }
+            // Eine verdrängte Anfrage ist danach geschlossen (Suchlauf a): Sie nimmt nichts mehr an, auch kein neues Ereignis (sonst
+            // finge ihre Zuordnung von vorn an und stimmte nicht mehr mit den Nummern der Ereignisse überein).
+            while order.count > limitRequests {
+                let old = order.removeFirst()
+                steps[old] = nil
+                closeLocked(old)
+            }
         }
         guard steps[id, default: []].count < limitSteps else { return false }
         steps[id, default: []].append(step)
@@ -579,6 +592,28 @@ final class AssistantStepIndex: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return steps[id] != nil
+    }
+
+    /// Diese Anfrage nimmt keine Commits (Anzeige, Audiostart) und keine neuen Ereignisse mehr an. Aufrufen IM Lock der Ordnung
+    /// (`AssistantRelease.inSection`), VOR der Schlusszeile und VOR dem Ende des Anspruchs auf ihren Fehler: Ein Commit, der danach den
+    /// Lock der Ordnung bekommt, sieht `accepts == false` und löst nichts aus; einer, der davor lief, hat seine Zeilen vor der
+    /// Schlusszeile eingereiht. Mehrfach gerufen: ohne weitere Wirkung.
+    func close(_ id: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        closeLocked(id)
+    }
+
+    private func closeLocked(_ id: String) {
+        closed.insert(id)
+    }
+
+    /// Die Anfrage ist bekannt UND nimmt noch Commits an (nur dann löst ein Commit etwas aus). Dieselbe Prüfung gilt im Lock der
+    /// Ordnung, unmittelbar vor der Aktion.
+    func accepts(_ id: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return steps[id] != nil && !closed.contains(id)
     }
 
     /// Schrittnummer des `index`-ten Ereignisses (ab 0).
@@ -750,20 +785,26 @@ struct AssistantReleaseSettler: Sendable {
         return error
     }
 
-    /// Schreibt die Zeilen des Registers der Ordnung, die noch fehlen. Eine Zeile verlässt das Register erst, wenn sie dauerhaft steht.
+    /// Schreibt die Zeilen des Registers der Ordnung, die noch fehlen, als EINE Gruppe (ein fsync, ein Warten) in der Reihenfolge des
+    /// Eintrags (Runde 9, S3). Eine Zeile verlässt das Register erst, wenn sie dauerhaft steht; eine, die weiter scheitert, bleibt und
+    /// ist ein Fehler im Ergebnis (der der ersten). Was ein anderer Ablauf gerade schreibt, nimmt dieser nicht noch einmal.
     @discardableResult
     func flushPending() async -> AssistantAuditError? {
         guard let audit else { return nil }
+        let batch = clock.claimPending()
+        guard !batch.isEmpty else { return nil }
+        let failed = await audit.writeGroup(batch.map { (line: $0.line, key: $0.key) }, run: clock.run)
         var first: AssistantAuditError?
-        for item in clock.pending {
-            audit.enqueue(item.line, key: item.key, run: clock.run)
-            if let error = await audit.waitForLine(key: item.key) { first = first ?? error } else { clock.removePendingLine(item.key) }
+        for item in batch {
+            let error = failed[item.key]
+            first = first ?? error
+            clock.finishPending(item, written: error == nil)
         }
         return first
     }
 
     /// Es gibt etwas nachzuholen (billige Vorprüfung ohne Warten).
-    var needsCatchUp: Bool { (store?.needsCatchUp ?? false) || !clock.pending.isEmpty }
+    var needsCatchUp: Bool { (store?.needsCatchUp ?? false) || clock.hasPending }
 
     /// Holt nach, was bei einer früheren Gelegenheit nicht ging: eine nicht gesicherte Einschränkung erneut sichern, fehlende Zeilen
     /// schreiben. Läuft bei jeder Anfrage (nach ihrer gesicherten `start`-Zeile) und bei jeder Änderung; streng nacheinander mit den

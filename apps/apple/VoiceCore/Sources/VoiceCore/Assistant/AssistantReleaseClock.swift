@@ -20,6 +20,9 @@ import Foundation
 // - Klasse B (Runde 8, R4): Die Meldestelle der Quellen ruft die Ordnung unmittelbar (`contentWillChange`), auch ohne Gespräch. Jede
 //   gemeldete Änderung erhöht für sich und schreibt ihre eigene Zeile „Inhalt“; dazu kennt die Ordnung das Protokoll (`attach`),
 //   das der Controller beim Prozessstart einhängt, ohne Modell.
+// - Pflichtzeilen, die sich nicht schreiben ließen, stehen im Register der Ordnung (Runde 9, S4: ohne Obergrenze, nichts wird je
+//   verdrängt) und werden bei JEDER Gelegenheit nachgeholt (S3): Gelegenheit ist jede dauerhaft gesicherte Zeilengruppe des
+//   Schreibers (`attach` meldet den Rückruf an), ohne Sitzung.
 
 /// Was eine Erhöhung nach dem Lock zu tun übrig lässt: Anfragen widerrufen und Beobachter rufen (nie unter dem Lock).
 struct AssistantRaiseAftermath: @unchecked Sendable {
@@ -62,6 +65,91 @@ struct AssistantPendingLine: Sendable, Equatable {
     let line: AssistantJournalLine
 }
 
+/// Eine Zeile im Register der Ordnung, wie sie ein Ablauf zum Schreiben bekommt: Nummer im Register (Reihenfolge des Eintrags), Schlüssel
+/// im Schreiber und die fertig gebaute Zeile.
+struct AssistantPendingClaim: Sendable {
+    let sequence: Int
+    let key: String
+    let line: AssistantJournalLine
+}
+
+/// Das Register der Pflichtzeilen, die noch fehlen (Runde 9, S4). Hinter dem Lock der Ordnung. KEINE Obergrenze und kein Verdrängen:
+/// Eine Pflichtzeile verlässt das Register nur, wenn sie dauerhaft steht. Die einzige Grenze ist das Prozessende (das Register lebt im
+/// Speicher; Schreibfolge 6 und 9: danach schließt das nächste Öffnen die Lücke nicht, sie bleibt als „unbekannt“ lesbar).
+/// Klein gehalten durch Schlüsselsuche über Wörterbücher (nie linear) und eine knappe Darstellung: Eine Zeile der Klasse B ist nur
+/// (Generation, Zeit) und wird erst beim Nachholen zur Zeile gebaut. Die Reihenfolge des Nachholens ist die Reihenfolge des Eintrags.
+struct AssistantPendingRegister {
+    private enum Item {
+        case built(AssistantPendingLine)
+        case content(generation: Int, at: Date)
+    }
+
+    private var items: [Int: Item] = [:]
+    private var next = 0
+    private var builtKeys: [String: Int] = [:]
+    private var contentKeys: [Int: Int] = [:]
+    /// Nummern, die ein Ablauf gerade schreibt (ein zweiter Ablauf nimmt sie nicht noch einmal).
+    private var inFlight: Set<Int> = []
+
+    var isEmpty: Bool { items.isEmpty }
+    var count: Int { items.count }
+
+    /// Trägt eine fertige Zeile ein (derselbe Schlüssel nur einmal).
+    mutating func add(_ line: AssistantPendingLine) {
+        guard builtKeys[line.key] == nil else { return }
+        builtKeys[line.key] = next
+        items[next] = .built(line)
+        next += 1
+    }
+
+    /// Trägt eine Zeile der Klasse B (Inhalt) knapp ein (dieselbe Generation nur einmal).
+    mutating func addContent(generation: Int, at: Date) {
+        guard contentKeys[generation] == nil else { return }
+        contentKeys[generation] = next
+        items[next] = .content(generation: generation, at: at)
+        next += 1
+    }
+
+    /// Nimmt alle Einträge, die kein Ablauf in Arbeit hat, in der Reihenfolge des Eintrags und markiert sie als in Arbeit.
+    /// `key` und `build` liefern Schlüssel und Zeile der Einträge der Klasse B.
+    mutating func claim(key: (Int) -> String, build: (Int, Date) -> AssistantJournalLine) -> [AssistantPendingClaim] {
+        var out: [AssistantPendingClaim] = []
+        for sequence in items.keys.sorted() where !inFlight.contains(sequence) {
+            guard let item = items[sequence] else { continue }
+            switch item {
+            case .built(let line): out.append(AssistantPendingClaim(sequence: sequence, key: line.key, line: line.line))
+            case .content(let generation, let at):
+                out.append(AssistantPendingClaim(sequence: sequence, key: key(generation), line: build(generation, at)))
+            }
+            inFlight.insert(sequence)
+        }
+        return out
+    }
+
+    /// Der Ablauf ist fertig: Steht die Zeile dauerhaft (`written`), verlässt sie das Register; sonst bleibt sie für den nächsten.
+    mutating func finish(_ sequence: Int, written: Bool) {
+        inFlight.remove(sequence)
+        guard written, let item = items.removeValue(forKey: sequence) else { return }
+        switch item {
+        case .built(let line): builtKeys[line.key] = nil
+        case .content(let generation, _): contentKeys[generation] = nil
+        }
+    }
+
+    /// Alle Einträge in der Reihenfolge des Eintrags als fertige Zeilen (Tests, Anzeige).
+    func lines(key: (Int) -> String, build: (Int, Date) -> AssistantJournalLine) -> [AssistantPendingLine] {
+        var out: [AssistantPendingLine] = []
+        for sequence in items.keys.sorted() {
+            guard let item = items[sequence] else { continue }
+            switch item {
+            case .built(let line): out.append(line)
+            case .content(let generation, let at): out.append(AssistantPendingLine(key: key(generation), line: build(generation, at)))
+            }
+        }
+        return out
+    }
+}
+
 final class AssistantReleaseClock: @unchecked Sendable {
     /// Der eine Lock dieser Dinge (die Wiedergabesperre und der Speicher teilen ihn).
     let lock: NSLock
@@ -89,11 +177,29 @@ final class AssistantReleaseClock: @unchecked Sendable {
     /// Klasse B: Zahl der Änderungen von Inhalten und die jüngste, für die der Bestand steht.
     private var contentEpoch = 0
     private var corpusEpoch = 0
-    /// R8: Zeilen „in diesem Lauf nicht wirksam“, die noch fehlen.
-    private var pendingLines: [AssistantPendingLine] = []
-    private var gapFlag = false
+    /// R8, S4: Pflichtzeilen, die noch fehlen (ohne Obergrenze, siehe `AssistantPendingRegister`).
+    private var register = AssistantPendingRegister()
     /// R4: das Protokoll der Ordnung (für die Zeilen der Klasse B).
     private var audit: AssistantAuditLog?
+    /// Der Speicher, dem diese Ordnung gehört (schwach; `nil`: Ordnung ohne Speicher). Das Nachholen einer nicht gesicherten
+    /// Einschränkung braucht ihn.
+    private weak var owner: AssistantReleaseStore?
+    /// S3: Zustand des Nachholens bei jeder Gelegenheit. Eigener, kurzer Lock (ein Blatt: nie wird darunter ein anderer genommen, nie
+    /// I/O oder Warten; er darf von der Schreibwarteschlange aus genommen werden).
+    private let runnerLock = NSLock()
+    private var runner = Runner()
+
+    private struct Runner {
+        /// Es kann etwas nachzuholen sein (Vorprüfung ohne Ordnungs-Lock): gesetzt, wenn etwas ins Register kommt oder eine Sicherung
+        /// scheitert, und am Ende eines Laufs, wenn noch etwas aussteht; gelöscht, bevor ein Lauf prüft.
+        var maybe = false
+        var running = false
+        /// Eine Gelegenheit kam, während ein Lauf lief: Er wird einmal wiederholt.
+        var again = false
+        /// Nur Tests (`setOpportunitiesPaused`): Gelegenheiten starten keinen Lauf.
+        var paused = false
+        var idle: [CheckedContinuation<Void, Never>] = []
+    }
     /// Nur Tests: wird gerufen, sobald eine Änderung den Lock der Ordnung anfordert (VOR dem Anfordern, ohne ihn zu halten). Hinter
     /// einem eigenen, kurzen Lock, der nie zusammen mit `lock` gehalten wird.
     private let probeLock = NSLock()
@@ -384,8 +490,21 @@ final class AssistantReleaseClock: @unchecked Sendable {
     /// Das Protokoll der Ordnung (R4): die Zeilen der Klasse B (`Inhalt`) entstehen hier, auch ohne Sitzung. Der Controller hängt es
     /// beim Prozessstart ein, eine Sitzung mit Protokoll ebenso.
     func attach(audit: AssistantAuditLog?) {
+        guard let audit else { return }
         lock.lock()
-        if let audit { self.audit = audit }
+        let old = self.audit
+        self.audit = audit
+        lock.unlock()
+        if let old, !old.sharesWriter(with: audit) { old.setDurableObserver(owner: id, nil) }
+        // S3: Jede dauerhaft gesicherte Zeilengruppe dieses Schreibers ist eine Gelegenheit zum Nachholen. Der Rückruf hält die
+        // Ordnung nur schwach (der Schreiber lebt je Verzeichnis für den ganzen Prozess).
+        audit.setDurableObserver(owner: id) { [weak self] in self?.writeOpportunity() }
+    }
+
+    /// Der Speicher, dem diese Ordnung gehört, hängt sich ein (einmal, beim Aufbau).
+    func adopt(store: AssistantReleaseStore) {
+        lock.lock()
+        owner = store
         lock.unlock()
     }
 
@@ -408,16 +527,12 @@ final class AssistantReleaseClock: @unchecked Sendable {
         let epoch = contentEpoch
         let g = raiseLocked()
         if let audit {
-            var line = AssistantJournalLine(.release)
-            line.at = Date()
-            line.gen = g
-            line.cause = .content
-            // Auf diese Zeile wartet niemand: Scheitert das Schreiben, geht die fertige Zeile ins Register zum Nachholen (R6, R8), statt
-            // dass ihr Fehler in einer Tabelle des Schreibers steht, aus der er verdrängt werden kann.
-            let lineKey = key("gen", g)
-            let issued = line
-            audit.enqueue(issued, key: lineKey, run: run, onFailure: { [weak self] _ in
-                self?.addPendingLine(AssistantPendingLine(key: lineKey, line: issued))
+            // Auf diese Zeile wartet niemand: Scheitert das Schreiben, geht sie ins Register zum Nachholen (R6, R8, S4: knapp als
+            // Generation und Zeit, gebaut wird sie beim Nachholen), statt dass ihr Fehler in einer Tabelle des Schreibers steht, aus der
+            // er verdrängt werden kann.
+            let at = Date()
+            audit.enqueue(Self.contentLine(generation: g, at: at), key: key("gen", g), run: run, onFailure: { [weak self] _ in
+                self?.addPendingContent(generation: g, at: at)
             })
         }
         let after = drainLocked(g)
@@ -443,37 +558,137 @@ final class AssistantReleaseClock: @unchecked Sendable {
         return corpusEpoch == contentEpoch
     }
 
-    // MARK: Zeilen, die nachzuholen sind (R8)
+    // MARK: Zeilen, die nachzuholen sind (R8, S3, S4)
 
-    /// Obergrenze des Registers. Erreicht es sie (so viele Zeilen konnten nicht geschrieben werden und wurden nie nachgeholt), wird keine
-    /// Zeile verdrängt: Das Protokoll hat dann eine bekannte Lücke (`auditGap`), und jede weitere Anfrage endet mit „Protokoll nicht
-    /// schreibbar“, bis der Prozess neu startet (fail-closed; die Lücke lässt sich nicht mehr schließen).
-    static let maxPendingLines = 1_024
+    /// Die Zeile „Inhalt“ einer Änderung der Klasse B (so entsteht sie beim Einreihen und beim Nachholen).
+    static func contentLine(generation: Int, at: Date) -> AssistantJournalLine {
+        var line = AssistantJournalLine(.release)
+        line.at = at
+        line.gen = generation
+        line.cause = .content
+        return line
+    }
 
+    /// Trägt eine fertige Zeile ein, die sich nicht schreiben ließ (derselbe Schlüssel nur einmal). Kein Verdrängen, keine Obergrenze.
     func addPendingLine(_ item: AssistantPendingLine) {
-        lock.lock()
-        if !pendingLines.contains(where: { $0.key == item.key }) {
-            if pendingLines.count < Self.maxPendingLines { pendingLines.append(item) } else { gapFlag = true }
+        lock.withLock { register.add(item) }
+        noteObligation()
+    }
+
+    /// Trägt eine Zeile der Klasse B knapp ein (Generation und Zeit).
+    func addPendingContent(generation: Int, at: Date) {
+        lock.withLock { register.addContent(generation: generation, at: at) }
+        noteObligation()
+    }
+
+    /// Nimmt die Einträge, die kein Ablauf in Arbeit hat, in der Reihenfolge des Eintrags (Eigentum des Ablaufs, bis `finishPending`).
+    func claimPending() -> [AssistantPendingClaim] {
+        lock.withLock {
+            register.claim(key: { key("gen", $0) }, build: { Self.contentLine(generation: $0, at: $1) })
         }
-        lock.unlock()
     }
 
-    func removePendingLine(_ key: String) {
-        lock.lock()
-        pendingLines.removeAll { $0.key == key }
-        lock.unlock()
+    /// Der Ablauf hat den Eintrag geschrieben (`written`: er steht dauerhaft und verlässt das Register) oder nicht (er bleibt).
+    func finishPending(_ item: AssistantPendingClaim, written: Bool) {
+        lock.withLock { register.finish(item.sequence, written: written) }
     }
 
-    /// Das Register war voll: Eine Zeile ging verloren (fail-closed, siehe `maxPendingLines`).
-    var auditGap: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return gapFlag
-    }
+    /// Es fehlt mindestens eine Pflichtzeile.
+    var hasPending: Bool { lock.withLock { !register.isEmpty } }
 
+    /// Zahl der fehlenden Pflichtzeilen.
+    var pendingCount: Int { lock.withLock { register.count } }
+
+    /// Die fehlenden Zeilen in der Reihenfolge des Eintrags (Tests, Anzeige).
     var pending: [AssistantPendingLine] {
-        lock.lock()
-        defer { lock.unlock() }
-        return pendingLines
+        lock.withLock {
+            register.lines(key: { key("gen", $0) }, build: { Self.contentLine(generation: $0, at: $1) })
+        }
+    }
+
+    // MARK: Nachholen bei jeder Gelegenheit (S3)
+
+    /// Es kann etwas nachzuholen sein: ein Eintrag im Register oder eine Sicherung, die scheiterte (der Speicher meldet sie). Nur die
+    /// Vorprüfung für `writeOpportunity`; entschieden wird beim Nachholen selbst.
+    func noteObligation() {
+        runnerLock.withLock { runner.maybe = true }
+    }
+
+    /// Eine Gelegenheit: Die Schreibwarteschlange meldet, dass eine Zeilengruppe dauerhaft steht (nach dem fsync, außerhalb ihrer
+    /// Locks). Steht etwas aus, startet EIN gemeinsamer Lauf (höchstens einer zugleich; kommt während des Laufs eine weitere Gelegenheit,
+    /// wird er einmal wiederholt). Der Lauf ist nicht an eine Sitzung gebunden.
+    /// Sperrordnung: Der Aufruf nimmt nur `runnerLock` (ein Blatt) und startet eine Aufgabe; er wartet nie, schreibt nie und nimmt nie
+    /// das Lock der Ordnung, das beim Einreihen der Zeilen gehalten wird (`contentWillChange` reiht darunter ein). Kein Kreis: Ein Lauf,
+    /// dessen Schreiben scheitert, meldet nichts und löst keinen weiteren aus; nur ein Erfolg ist eine Gelegenheit, und jeder Lauf
+    /// leert das Register um alles, was dauerhaft steht.
+    func writeOpportunity() {
+        let start = runnerLock.withLock { () -> Bool in
+            guard runner.maybe, !runner.paused else { return false }
+            if runner.running {
+                runner.again = true
+                return false
+            }
+            runner.running = true
+            return true
+        }
+        guard start else { return }
+        Task.detached(priority: .utility) { [self] in await self.runCatchUp() }
+    }
+
+    private func runCatchUp() async {
+        while true {
+            // Erst löschen, dann prüfen: Was danach hinzukommt, setzt die Vorprüfung neu.
+            runnerLock.withLock {
+                runner.maybe = false
+                runner.again = false
+            }
+            await catchUpAtOpportunity()
+            let stillNeeded = needsCatchUp
+            let waiters = runnerLock.withLock { () -> [CheckedContinuation<Void, Never>]? in
+                // Was nach diesem Lauf noch aussteht (ein Schreiben scheiterte), bleibt für die nächste Gelegenheit vorgemerkt, löst aber
+                // selbst keinen Lauf aus.
+                runner.maybe = runner.maybe || stillNeeded
+                if runner.again { return nil }
+                runner.running = false
+                let all = runner.idle
+                runner.idle = []
+                return all
+            }
+            guard let waiters else { continue }
+            for waiter in waiters { waiter.resume() }
+            return
+        }
+    }
+
+    /// Ein Lauf: Ablauf der Sicherungsfolge ohne Sitzung (Sicht „lokal“, keine Modellart), streng in der Reihe der Folgen.
+    private func catchUpAtOpportunity() async {
+        let (audit, store) = lock.withLock { (self.audit, self.owner) }
+        guard audit != nil || store != nil else { return }
+        let view = AssistantRelease(clock: self, view: .local, onIncrease: nil)
+        await AssistantReleaseSettler(release: view, store: store, audit: audit, model: nil).catchUp()
+    }
+
+    /// Etwas steht aus (billige Vorprüfung ohne Warten): Zeilen im Register oder eine nicht gesicherte Einschränkung.
+    var needsCatchUp: Bool { hasPending || (lock.withLock { owner }?.needsCatchUp ?? false) }
+
+    /// Nur Tests: hält das Nachholen bei Gelegenheiten an (Gelegenheiten, die währenddessen kommen, starten keinen Lauf), damit ein Test
+    /// Zwischenzustände einer Fehlerfolge (Temp-Datei, Datei vor der Bestätigung) beobachten kann, ohne dass der Lauf im Hintergrund sie
+    /// gleichzeitig abräumt. Die Produktion ruft das nie; ein bereits laufender Lauf wird nicht unterbrochen (`awaitCatchUp` wartet auf ihn).
+    func setOpportunitiesPaused(_ paused: Bool) {
+        runnerLock.withLock { runner.paused = paused }
+    }
+
+    /// Kehrt zurück, wenn kein Lauf des Nachholens mehr läuft (Tests, Beenden): Haltepunkt statt einer Zeitannahme.
+    func awaitCatchUp() async {
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            runnerLock.lock()
+            guard runner.running else {
+                runnerLock.unlock()
+                c.resume()
+                return
+            }
+            runner.idle.append(c)
+            runnerLock.unlock()
+        }
     }
 }

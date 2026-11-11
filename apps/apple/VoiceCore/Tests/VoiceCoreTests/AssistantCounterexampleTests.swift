@@ -1330,7 +1330,7 @@ final class AssistantCounterexampleTests: XCTestCase {
             AssistantCommitMark(stage: .display, ok: true, generation: g),
             AssistantCommitMark(stage: .display, ok: false, generation: found),
         ])
-        XCTAssertFalse(lines(["commit"]).contains { ($0["m"] as? String) == "a!\(g)" && ($0["g"] as? Int) == g + 1 }, "keine Mischung")
+        XCTAssertEqual(lines(["commit"]).filter { ($0["mark"] as? String) == "a!\(g)" }.count, 1, "keine Mischung: `a!g` steht genau einmal")
     }
 
     // MARK: Runde 8, R6: Fehler hängen an ihrem Anspruch
@@ -1577,22 +1577,383 @@ final class AssistantCounterexampleTests: XCTestCase {
         XCTAssertEqual(turns.count, 0, "keine Einheit der verdrängten Anfrage gilt als gesprochen")
     }
 
-    /// (c) Das Register der nachzuholenden Zeilen ist voll: Eine Zeile geht verloren, das Protokoll hat eine bekannte Lücke, und jede
-    /// weitere Anfrage endet fail-closed mit „Protokoll nicht schreibbar“, ohne Modell, bis der Prozess neu startet. Gegen 4d802f3
-    /// NICHT AUSDRÜCKBAR (das Register der nachzuholenden Zeilen gab es nicht: Ein Fehler stand in der verdrängbaren Tabelle).
-    func testTableCAFullRegisterOfLinesToCatchUpMeansAKnownGapAndNoFurtherRequestRuns() async {
-        let store = openStore()
-        let model = CountingModel()
-        let s = session(store, audit: log(), model: model)
-        for i in 0..<AssistantReleaseClock.maxPendingLines {
-            store.clock.addPendingLine(AssistantPendingLine(key: "luecke:\(i)", line: AssistantJournalLine(.event)))
+    // MARK: Runde 9, S1: der Anspruch auf den Fehler endet nur mit dem Abschluss der Anfrage
+
+    /// Eine Anfrage bis zum Ende lesen und die Zahl ihrer Ereignisse nennen.
+    private func runToEnd(_ s: AssistantSession, _ id: String) async -> Int {
+        var count = 0
+        for await e in s.events(AssistantRequest(requestId: id, text: "Wohin wandert Quasselbert mit dem Fahrrad nach Pappelhausen?")) {
+            if case .sentence = e { count += 1 }
         }
-        XCTAssertFalse(store.clock.auditGap, "voll, aber noch nichts verloren")
-        store.clock.addPendingLine(AssistantPendingLine(key: "luecke:ueber", line: AssistantJournalLine(.event)))
-        XCTAssertTrue(store.clock.auditGap, "die Zeile ging verloren: bekannte Lücke")
-        let result = await drainEvents(s, AssistantRequest(requestId: "r1", text: "Hallo"))
-        XCTAssertEqual(result.failure, .auditUnavailable)
-        XCTAssertEqual(model.calls.value, 0, "kein Modell")
+        return count
+    }
+
+    /// Ein Protokoll, dessen Audio-Ergebniszeilen (`a!`) sich nicht schreiben lassen, solange `failAudio` gesetzt ist.
+    private func logFailingAudioResults(_ failAudio: Flag) -> AssistantAuditLog {
+        log(appender: { url, data in
+            if failAudio.value, String(decoding: data, as: UTF8.self).contains("\"mark\":\"a!") { throw Injected() }
+            try AssistantAuditWriter.appendFile(url, data)
+        })
+    }
+
+    /// S1 (Rest von R6): Eine Anfrage R ist fertig, aber nicht abgeschlossen; ihre Audio-Ergebniszeile ließ sich nicht schreiben (der
+    /// Fehler ist klebrig); danach enden 16 andere Anfragen. Das Gedächtnis der Sitzung verdrängt R. Früher endete dabei ihr Anspruch
+    /// (der Fehler war weg), der Index der Schritte kannte R aber weiter: `commitStart(R)` löste den Ton aus, und R hatte nie eine
+    /// Schlusszeile. Jetzt wird R beim Verdrängen abgeschlossen (für Commits geschlossen → Schlusszeile → Anspruch beendet): Der Start
+    /// löst nichts aus, und R hat eine Schlusszeile mit Ausgang „Fehler“ und `lost`. Gegen a356460 ROT.
+    func testS1TheErrorClaimOfARequestEndsOnlyWithItsCompletionNeverByEviction() async throws {
+        let failAudio = Flag()
+        let audit = logFailingAudioResults(failAudio)
+        let s = session(nil, audit: audit, model: EchoModel(text: twoBlocks[0]), knowledge: await twoBlockKnowledge())
+        let g = s.releaseGeneration
+        let events = await runToEnd(s, "r0")
+        XCTAssertGreaterThan(events, 0, "R gibt Ereignisse aus (sonst kennt der Index R nicht)")
+        failAudio.value = true
+        s.noteCommit(requestId: "r0", index: 0, stage: .audio, ok: false, generation: g, failed: true)
+        await audit.barrier()
+        failAudio.value = false
+        XCTAssertTrue(audit.hasFailed(request: "r0"), "der Schreibfehler von R steht klebrig")
+        for i in 1...AssistantSession.maxRemembered { _ = await runToEnd(s, "r\(i)") }   // der 17. gemerkte Lauf verdrängt R
+        let started = Flag()
+        let result = s.commitStart(requestId: "r0", index: 0, generation: g) { started.value = true; return true }
+        XCTAssertFalse(started.value, "für die verdrängte Anfrage startet kein Ton")
+        XCTAssertFalse(result.ok)
+        XCTAssertFalse(result.failed, "eine geschlossene Anfrage meldet kein Scheitern des Starts, sie löst nur nichts aus")
+        await audit.barrier()
+        let ends = lines(["end"]).filter { $0["req"] as? String == "r0" }
+        XCTAssertEqual(ends.count, 1, "R hat genau eine Schlusszeile")
+        XCTAssertEqual(ends.first?["outcome"] as? String, "failed", "Ausgang „Fehler“")
+        XCTAssertEqual(ends.first?["lost"] as? Bool, true, "ihr Protokoll ist unvollständig")
+        XCTAssertFalse(lines(["commit"]).contains { $0["req"] as? String == "r0" && ($0["mark"] as? String)?.hasPrefix("h+") == true },
+                       "kein Beitrag der verdrängten Anfrage")
+        let history = await s.history
+        XCTAssertEqual(history.count, 0, "kein Beitrag")
+        XCTAssertEqual(audit.claimCount, AssistantSession.maxRemembered, "R hat ihren Anspruch abgegeben, die 16 anderen halten ihren")
+    }
+
+    /// S1: Nach dem regulären Abschluss löst weder der Audiostart noch die Anzeige etwas aus, und es entsteht keine Zeile mehr hinter
+    /// der Schlusszeile. Gegen a356460 ROT: Der Index kannte die Anfrage weiter, `commitStart` löste unter derselben Generation aus.
+    func testS1ACommitStartAndCommitOutputAfterTheRegularCompletionTriggerNothing() async {
+        let audit = log()
+        let s = session(nil, audit: audit, model: EchoModel(text: twoBlocks[0]), knowledge: await twoBlockKnowledge())
+        let g = s.releaseGeneration
+        _ = await runToEnd(s, "r1")
+        await s.commit(requestId: "r1", user: "Wohin?", spoken: .all, interrupted: false)
+        let started = Flag()
+        let shown = Flag()
+        let audio = s.commitStart(requestId: "r1", index: 0, generation: g) { started.value = true; return true }
+        let display = s.commitOutput(requestId: "r1", index: 0, generation: g, stage: .display) { shown.value = true }
+        XCTAssertFalse(started.value, "nach dem Abschluss startet kein Ton")
+        XCTAssertFalse(shown.value, "nach dem Abschluss erscheint nichts")
+        XCTAssertFalse(audio.ok)
+        XCTAssertFalse(display.ok)
+        s.noteCommit(requestId: "r1", index: 0, stage: .audio, ok: true, generation: g)   // auch eine späte Meldung schreibt nichts mehr
+        await audit.barrier()
+        let kinds = lines().filter { $0["req"] as? String == "r1" }.compactMap { $0["t"] as? String }
+        XCTAssertEqual(kinds.last, "end", "hinter der Schlusszeile steht nichts mehr: \(kinds)")
+    }
+
+    /// S1: Ein Commit, der VOR dem Abschluss im Lock der Ordnung läuft, hat seine Zeile vor der Schlusszeile eingereiht; der
+    /// Abschluss schließt die Anfrage im selben Lock und wartet daher, bis er fertig ist (Haltepunkt: Der Start steht im Lock, der
+    /// Abschluss beginnt, der Start wird freigegeben). Reihenfolge in der Datei: Audio-Marke, dann Schlusszeile.
+    func testS1ACommitRunningBeforeTheCompletionStandsBeforeTheClosingLine() async throws {
+        let audit = log()
+        let s = session(nil, audit: audit, model: EchoModel(text: twoBlocks[0]), knowledge: await twoBlockKnowledge())
+        let g = s.releaseGeneration
+        _ = await runToEnd(s, "r1")
+        let entered = DispatchSemaphore(value: 0)
+        let proceed = DispatchSemaphore(value: 0)
+        let done = DispatchSemaphore(value: 0)
+        let started = Flag()
+        let thread = Thread {
+            _ = s.commitStart(requestId: "r1", index: 0, generation: g) {
+                entered.signal()
+                proceed.wait()
+                started.value = true
+                return true
+            }
+            done.signal()
+        }
+        thread.start()
+        entered.wait()   // der Start steht im Lock der Ordnung
+        let completion = Task { await s.commit(requestId: "r1", user: "Wohin?", spoken: .all, interrupted: false) }
+        proceed.signal()
+        done.wait()
+        _ = await completion.value
+        XCTAssertTrue(started.value)
+        await audit.barrier()
+        let rows = lines().filter { $0["req"] as? String == "r1" }
+        let audioMark = rows.firstIndex { ($0["mark"] as? String)?.hasPrefix("a+") == true }
+        let closing = rows.firstIndex { $0["t"] as? String == "end" }
+        XCTAssertNotNil(audioMark, "die Marke des Starts steht")
+        XCTAssertNotNil(closing)
+        if let audioMark, let closing { XCTAssertLessThan(audioMark, closing, "erst die Marke, dann die Schlusszeile") }
+    }
+
+    // MARK: Runde 9, S2: der Verlauf prüft den Schreibfehler im Lock
+
+    /// S2: Die Audio-Ergebniszeile ließ sich nicht schreiben (klebriger Fehler); danach kommt `commit(spoken: .all)` unter derselben
+    /// Generation. Früher prüfte der Verlaufs-Commit nur die Generation: Der Beitrag entstand, `h+` stand in der Datei. Jetzt prüft er im
+    /// Lock auch den Fehler: kein Beitrag, `h!` für den Beitrag (Schritt 0) und `h-` je Einheit mit der geprüften Generation, Ausgang
+    /// „Fehler“. Gegen a356460 ROT.
+    func testS2AStickyWriteErrorStopsTheHistoryCommitNoTurnNoPlusMarkOutcomeFailed() async throws {
+        let failAudio = Flag()
+        let audit = logFailingAudioResults(failAudio)
+        let s = session(nil, audit: audit, model: EchoModel(text: twoBlocks[0]), knowledge: await twoBlockKnowledge())
+        let g = s.releaseGeneration
+        _ = await runToEnd(s, "r1")
+        failAudio.value = true
+        s.noteCommit(requestId: "r1", index: 0, stage: .audio, ok: false, generation: g, failed: true)
+        await audit.barrier()
+        failAudio.value = false
+        XCTAssertTrue(audit.hasFailed(request: "r1"))
+        let ok = await s.commit(requestId: "r1", user: "Wohin?", spoken: .all, interrupted: false)
+        XCTAssertFalse(ok, "das Protokoll ist nicht in Ordnung")
+        let history = await s.history
+        XCTAssertEqual(history.count, 0, "kein Beitrag")
+        let marks = lines(["commit"]).filter { $0["req"] as? String == "r1" }.compactMap { $0["mark"] as? String }
+        XCTAssertFalse(marks.contains { $0.hasPrefix("h+") }, "keine Marke „Verlauf ausgeführt“: \(marks)")
+        XCTAssertTrue(marks.contains("h!\(g)"), "der Beitrag (Schritt 0): fehlgeschlagen mit der geprüften Generation: \(marks)")
+        XCTAssertTrue(marks.contains("h-\(g)"), "jede Einheit: nicht im Verlauf: \(marks)")
+        let end = lines(["end"]).first { $0["req"] as? String == "r1" }
+        XCTAssertEqual(end?["outcome"] as? String, "failed")
+        XCTAssertEqual(end?["lost"] as? Bool, true)
+    }
+
+    // MARK: Runde 9, Suchlauf (b) und (c)
+
+    /// Suchlauf (b): Ereignisse mit Inhalt (`sources`, `done`) gehen bei einem klebrigen Schreibfehler IM Lock nicht hinaus. Der Sender
+    /// bekommt die Prüfung (`guarding:`), die Ereignisse des Stroms sind genau die ohne Fehler.
+    func testSearchBDoneAndSourcesAreHeldBackInTheLockByAStickyWriteError() async {
+        let failing = Flag()
+        let audit = log(appender: { url, data in
+            if failing.value { throw Injected() }
+            try AssistantAuditWriter.appendFile(url, data)
+        })
+        audit.claim(request: "r1")
+        let release = AssistantRelease(optIn: false)
+        var continuation: AsyncStream<AssistantEvent>.Continuation!
+        let stream = AsyncStream<AssistantEvent> { continuation = $0 }
+        let output = AssistantRunOutput(release: release, generation: release.currentGeneration, continuation: continuation)
+        let answer = AssistantAnswer(text: "Hallo.", sources: [], general: true, firstSentenceMs: nil, totalMs: 0, unsourced: false,
+                                     counts: AssistantSentenceCounts(), round: .general, generation: release.currentGeneration)
+        let before = output.send(.sources(requestId: "r1", generation: release.currentGeneration, []), guarding: audit, request: "r1")
+        XCTAssertTrue(before.check.ok)
+        XCTAssertFalse(before.refused, "ohne Fehler geht es hinaus")
+        failing.value = true
+        var own = AssistantJournalLine(.round, req: "r1")
+        own.at = Date()
+        audit.enqueue(own)
+        await audit.barrier()
+        XCTAssertTrue(audit.hasFailed(request: "r1"))
+        let sources = output.send(.sources(requestId: "r1", generation: release.currentGeneration, []), guarding: audit, request: "r1")
+        let done = output.send(.done(requestId: "r1", answer), guarding: audit, request: "r1")
+        XCTAssertTrue(sources.refused)
+        XCTAssertTrue(done.refused)
+        XCTAssertFalse(sources.check.ok)
+        XCTAssertFalse(done.check.ok)
+        continuation.finish()
+        var received: [AssistantEvent] = []
+        for await e in stream { received.append(e) }
+        XCTAssertEqual(received.count, 1, "nur das Ereignis vor dem Fehler ist hinausgegangen")
+    }
+
+    /// Suchlauf (c): Ein Abbruch vor dem Start schreibt `start` und `end`; der Anspruch endet erst, wenn der Fehler gemeldet ist. Mit
+    /// gesundem Protokoll: „abgebrochen“ und beide Zeilen stehen; mit nicht schreibbarem Protokoll: „Protokoll nicht schreibbar“
+    /// (früher: Der Fehler wurde verworfen, und „abgebrochen“ gab vor, es sei alles in Ordnung). Gegen a356460 ROT für den zweiten Teil.
+    func testSearchCAnEarlyCancelReportsTheErrorOfItsLinesAndEndsItsClaimOnlyAfterwards() async {
+        let healthy = log()
+        let a = session(nil, audit: healthy)
+        let healthyBase = healthy.claimCount   // der Anspruch der Standzeile, den erst die erste echte Anfrage abholt
+        await a.cancel(requestId: "r1")
+        let ok = await drainEvents(a, AssistantRequest(requestId: "r1", text: "Hallo"))
+        XCTAssertEqual(ok.failure, .cancelled)
+        XCTAssertEqual(lines(["start", "end"]).filter { $0["req"] as? String == "r1" }.count, 2, "start und end stehen")
+        XCTAssertEqual(healthy.claimCount, healthyBase, "der Anspruch der Anfrage ist beendet")
+        try? FileManager.default.removeItem(at: protocolFile)
+        let failing = log(appender: { _, _ in throw Injected() })
+        let b = session(nil, audit: failing)
+        let failingBase = failing.claimCount
+        await b.cancel(requestId: "r2")
+        let bad = await drainEvents(b, AssistantRequest(requestId: "r2", text: "Hallo"))
+        XCTAssertEqual(bad.failure, .auditUnavailable, "der Fehler der Zeilen ist der Ausgang")
+        XCTAssertEqual(failing.claimCount, failingBase, "der Anspruch ist danach beendet")
+    }
+
+    // MARK: Runde 9, S3: Nachholen bei JEDER Gelegenheit, ohne Sitzung
+
+    /// Aufbau für S3 und S4: Ein Speicher mit Protokoll ohne jede Sitzung, dessen Austausch der Datei (`storeFS`) scheitern kann und
+    /// dessen Protokoll jede Zeile ablehnt, die `rejects` (auf den Text der Zeile) bejaht.
+    private struct NoSession {
+        let store: AssistantReleaseStore
+        let storeFS: CxFS
+        let audit: AssistantAuditLog
+        let watch: AssistantContentWatch
+    }
+
+    private func noSession(rejects: @escaping @Sendable (String) -> Bool = { _ in false }) throws -> NoSession {
+        try seed(AssistantReleaseRecord(localAreas: [.books, .notes], cloudAreas: [.books]))
+        let storeFS = CxFS("store")
+        let store = openStore(storeFS)
+        let audit = log(appender: { url, data in
+            if rejects(String(decoding: data, as: UTF8.self)) { throw Injected() }
+            try AssistantAuditWriter.appendFile(url, data)
+        })
+        let watch = AssistantContentWatch()
+        store.bind(watch: watch, audit: audit)   // Prozessstart: Ordnung, Protokoll, Meldestelle; kein Modell, keine Sitzung
+        return NoSession(store: store, storeFS: storeFS, audit: audit, watch: watch)
+    }
+
+    /// S3: Eine Erweiterung hinterlässt die fehlende Zeile „in diesem Lauf nicht wirksam“; keine Sitzung ist offen, es kommt keine
+    /// Anfrage und keine Änderung der Bereiche; der Speicher ist wieder in Ordnung. Dann ändert sich NUR eine Quelle (Klasse B): Ihre
+    /// Zeile „Inhalt“ UND die ältere Pflichtzeile stehen danach dauerhaft in der Datei, das Register ist leer. Früher holten nur
+    /// Anfragen und Änderungen der Klasse A nach. Gegen a356460 ROT.
+    func testS3AClassBChangeWithoutASessionCatchesUpTheOlderMandatoryLine() async throws {
+        let failIneffective = Flag()
+        let t = try noSession(rejects: { failIneffective.value && $0.contains("\"t\":\"ineffective\"") })
+        t.storeFS.fail(.rename)
+        failIneffective.value = true
+        _ = await t.store.updateAreas([.books], cloud: false, audit: t.audit)   // Einschränkung ohne Sicherung: Blockade
+        let refused = await t.store.updateAreas([.books, .files], cloud: false, audit: t.audit)
+        XCTAssertFalse(refused.applied, "die Erweiterung gilt in diesem Lauf nicht")
+        XCTAssertTrue(lines(["ineffective"]).isEmpty, "die Zeile ließ sich nicht schreiben")
+        XCTAssertTrue(t.store.hasUnwrittenLines, "sie steht im Register")
+        await t.store.clock.awaitCatchUp()   // Haltepunkt: kein Lauf des Nachholens ist mehr unterwegs
+        t.storeFS.heal()
+        failIneffective.value = false
+        XCTAssertTrue(lines(["ineffective"]).isEmpty, "bis hierher hat nichts nachgeholt")
+        t.watch.around {}   // die EINE Änderung einer Quelle
+        await t.audit.barrier()
+        await t.store.clock.awaitCatchUp()
+        XCTAssertEqual(lines(["ineffective"]).count, 1, "die ältere Pflichtzeile steht dauerhaft")
+        XCTAssertEqual(lines(["release"]).filter { $0["cause"] as? String == "content" }.count, 1, "und die Zeile „Inhalt“ der Änderung")
+        XCTAssertFalse(t.store.hasUnwrittenLines, "das Register ist leer")
+    }
+
+    /// S3 (zusätzlich): Eine nicht gesicherte Einschränkung wird bei derselben Gelegenheit erneut gesichert (auch ohne Sitzung).
+    func testS3AnUnsecuredRestrictionIsSecuredAgainAtTheSameOpportunity() async throws {
+        let t = try noSession()
+        t.storeFS.fail(.rename)
+        _ = await t.store.updateAreas([.books], cloud: false, audit: t.audit)
+        XCTAssertTrue(t.store.isDirty, "die Einschränkung gilt im Prozess, die Datei ist nicht gesichert")
+        XCTAssertEqual(fileRecord()?.areas(cloud: false), [.books, .notes], "die Datei enthält noch die weitere Fassung")
+        await t.store.clock.awaitCatchUp()
+        t.storeFS.heal()
+        t.watch.around {}
+        await t.audit.barrier()
+        await t.store.clock.awaitCatchUp()
+        XCTAssertFalse(t.store.isDirty, "wieder gesichert")
+        XCTAssertEqual(fileRecord()?.areas(cloud: false), [.books], "die Datei trägt die Einschränkung")
+    }
+
+    // MARK: Runde 9, S4: das Register verliert nie eine Pflichtzeile
+
+    /// S4 (Einheit): Das Register hat keine Obergrenze, nimmt jeden Schlüssel nur einmal, gibt die Einträge in der Reihenfolge des
+    /// Eintrags heraus, gibt einen Eintrag nie zwei Abläufen zugleich und behält, was sich nicht schreiben ließ.
+    func testS4TheRegisterHasNoLimitKeepsEntryOrderAndHandsNothingOutTwice() {
+        var register = AssistantPendingRegister()
+        let key: (Int) -> String = { "k:\($0)" }
+        let build: (Int, Date) -> AssistantJournalLine = { g, at in
+            var line = AssistantJournalLine(.release)
+            line.gen = g
+            line.at = at
+            return line
+        }
+        let count = 20_000
+        for g in 0..<count { register.addContent(generation: g, at: Date(timeIntervalSince1970: 0)) }
+        register.add(AssistantPendingLine(key: "built", line: AssistantJournalLine(.event)))
+        register.addContent(generation: 7, at: Date())   // dieselbe Generation: kein zweiter Eintrag
+        register.add(AssistantPendingLine(key: "built", line: AssistantJournalLine(.event)))
+        XCTAssertEqual(register.count, count + 1, "nichts verdrängt, nichts doppelt")
+        let first = register.claim(key: key, build: build)
+        XCTAssertEqual(first.count, count + 1)
+        XCTAssertEqual(first.prefix(count).map(\.key), (0..<count).map(key), "Reihenfolge des Eintrags")
+        XCTAssertEqual(first.last?.key, "built", "die fertige Zeile steht hinter den früheren")
+        XCTAssertTrue(register.claim(key: key, build: build).isEmpty, "ein zweiter Ablauf bekommt nichts, was schon in Arbeit ist")
+        for item in first { register.finish(item.sequence, written: item.key != "k:5") }
+        XCTAssertEqual(register.count, 1, "nur die Zeile, die sich nicht schreiben ließ, bleibt")
+        XCTAssertEqual(register.claim(key: key, build: build).map(\.key), ["k:5"], "und ist wieder zu haben")
+    }
+
+    /// S4: 1500 Zeilen „Inhalt“ ließen sich nicht schreiben (Obergrenze früher 1024: danach ging die nächste verloren und es blieb nur
+    /// die Sperre aller Anfragen), dazu scheitert eine Zeile „in diesem Lauf nicht wirksam“. Der Speicher wird wieder schreibbar: Danach
+    /// stehen ALLE in der Datei, in der Reihenfolge des Eintrags, das Register ist leer; das Schreiben ist EINE Gruppe (ein fsync, nicht
+    /// 1501). Gegen a356460 ROT (die Lücke und der Verlust der Zeilen ab 1025).
+    func testS4MoreThanAThousandPendingLinesAreAllKeptAndAllStandInEntryOrderAfterTheStoreHeals() async throws {
+        // Eine Platte, die alles ablehnt, solange `failing` gilt: Zeilen „Inhalt“ UND die Zeile „nicht wirksam“.
+        let failing = Flag()
+        let t = try noSession(rejects: { _ in failing.value })
+        let audit = t.audit
+        failing.value = true
+        let changes = 1_500
+        for _ in 0..<changes { t.watch.around {} }
+        await audit.barrier()
+        XCTAssertEqual(t.store.clock.pendingCount, changes, "alle 1500 stehen im Register, keine ging verloren")
+        t.storeFS.fail(.rename)
+        _ = await t.store.updateAreas([.books], cloud: false, audit: audit)
+        let refused = await t.store.updateAreas([.books, .files], cloud: false, audit: audit)
+        XCTAssertFalse(refused.applied)
+        XCTAssertEqual(t.store.clock.pendingCount, changes + 2, "dazu die Zeile der Blockade und die Zeile „in diesem Lauf nicht wirksam“")
+        let expected = t.store.clock.pending
+        let expectedGenerations = expected.prefix(changes).compactMap { $0.line.gen }
+        XCTAssertEqual(expectedGenerations.count, changes)
+        XCTAssertEqual(expectedGenerations, expectedGenerations.sorted(), "Reihenfolge des Eintrags = Reihenfolge der Generationen")
+        await t.store.clock.awaitCatchUp()
+        t.storeFS.heal()
+        failing.value = false
+        let syncsBefore = audit.syncCount
+        t.watch.around {}
+        let trigger = t.store.clock.generation
+        await audit.barrier()
+        await t.store.clock.awaitCatchUp()
+        XCTAssertEqual(t.store.clock.pendingCount, 0, "das Register ist leer")
+        let rows = lines()
+        let content = rows.enumerated().filter { $0.element["t"] as? String == "release" && $0.element["cause"] as? String == "content" }
+        let standing = content.compactMap { $0.element["gen"] as? Int }.filter { $0 != trigger }
+        XCTAssertEqual(standing, expectedGenerations, "alle 1500 stehen, in der Reihenfolge des Eintrags")
+        XCTAssertTrue(content.contains { $0.element["gen"] as? Int == trigger }, "und die Zeile der letzten Änderung")
+        let ineffective = rows.enumerated().filter { $0.element["t"] as? String == "ineffective" }
+        XCTAssertEqual(ineffective.count, 1)
+        if let lastContent = content.filter({ $0.element["gen"] as? Int != trigger }).last?.offset, let at = ineffective.first?.offset {
+            XCTAssertGreaterThan(at, lastContent, "die Zeile „nicht wirksam“ kam nach den Zeilen „Inhalt“ in das Register")
+        }
+        XCTAssertLessThanOrEqual(audit.syncCount - syncsBefore, 3, "eine Gruppe, nicht ein fsync je Zeile (\(audit.syncCount - syncsBefore))")
+    }
+
+    /// Nebenläufigkeit (Fehlerfall „zwei Änderer zugleich“, Sperrordnung): Vier Threads melden zugleich Änderungen der Quellen
+    /// (jede reiht ihre Zeile UNTER dem Lock der Ordnung ein), während die Platte jede dritte Zeile ablehnt und die Rückrufe der
+    /// Schreibwarteschlange Läufe des Nachholens starten. Nichts hängt (der Test endet), keine Zeile geht verloren und keine steht
+    /// doppelt: nach dem letzten Erfolg stehen alle Generationen genau einmal in der Datei, das Register ist leer.
+    func testS3ConcurrentChangesWhileLinesFailNeverDeadlockLoseALineOrWriteOneTwice() async throws {
+        let writes = Counter()
+        let flaky = Flag()
+        flaky.value = true
+        let t = try noSession(rejects: { _ in
+            writes.bump()
+            return flaky.value && writes.value % 3 == 0
+        })
+        let audit = t.audit
+        let threads = 4, each = 60
+        let group = DispatchGroup()
+        for _ in 0..<threads {
+            group.enter()
+            Thread {
+                for _ in 0..<each { t.watch.around {} }
+                group.leave()
+            }.start()
+        }
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in group.notify(queue: .global()) { c.resume() } }
+        await audit.barrier()
+        await t.store.clock.awaitCatchUp()
+        flaky.value = false
+        t.watch.around {}
+        await audit.barrier()
+        await t.store.clock.awaitCatchUp()
+        let total = threads * each + 1
+        let generations = lines(["release"]).filter { $0["cause"] as? String == "content" }.compactMap { $0["gen"] as? Int }
+        XCTAssertEqual(generations.count, total, "jede Änderung hat ihre Zeile")
+        XCTAssertEqual(Set(generations).count, total, "keine steht doppelt")
+        XCTAssertEqual(t.store.clock.pendingCount, 0, "das Register ist leer")
     }
 
 }

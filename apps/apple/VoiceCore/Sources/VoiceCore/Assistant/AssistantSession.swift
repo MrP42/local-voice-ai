@@ -149,6 +149,18 @@ final class AssistantRunOutput: @unchecked Sendable {
         }
     }
 
+    /// Wie `send`, für Ereignisse mit Inhalt (`sources`, `done`): Hat das Protokoll der Anfrage schon einen Schreibfehler (klebrig),
+    /// geht das Ereignis IM Lock nicht hinaus (Runde 9, Suchlauf b). `refused`: genau deshalb nicht.
+    func send(_ event: AssistantEvent, guarding audit: AssistantAuditLog?, request: String) -> (check: AssistantCheck, refused: Bool) {
+        var refused = false
+        let check = send(event, refuse: {
+            guard let audit, audit.hasFailed(request: request) else { return false }
+            refused = true
+            return true
+        })
+        return (check, refused)
+    }
+
     /// Fehler und Abbruch tragen keine Inhalte und gehen immer hinaus.
     func sendUnchecked(_ event: AssistantEvent) { continuation.yield(event) }
 }
@@ -583,6 +595,8 @@ public actor AssistantSession {
     private var earlyCancel: Set<String> = []
     private var results: [String: RunState] = [:]
     private var resultOrder: [String] = []
+    /// Anfragen, die `commit` abgeschlossen hat, während ihr Lauf noch hing: Das späte Ende des Laufs merkt sie nicht noch einmal.
+    private var finishedWhileRunning: Set<String> = []
     public private(set) var history: [AssistantTurn]
 
     /// Öffentlicher Initializer: Die Freischaltung der Funktion „Antworten ohne Quelle“ ist die Konstante
@@ -865,12 +879,20 @@ public actor AssistantSession {
         }
         let step = stepIndex.step(requestId, index: index)
         // Ein Schreibfehler des Protokolls dieser Anfrage ist klebrig und geht vor allem anderen: Nichts wird mehr ausgelöst. Die
-        // Prüfung steht IM Lock der Ordnung (vor `body`), nicht davor.
+        // Prüfung steht IM Lock der Ordnung (vor `body`), nicht davor. Ebenso die Prüfung „nimmt noch Commits an“ (Runde 9, S1): Eine
+        // Anfrage, deren Abschluss begonnen hat, löst nichts mehr aus; sie wird im selben Lock geschlossen (`closeForCommits`), in dem
+        // diese Prüfung läuft.
         var blocked = false
+        var closed = false
         let check = release.ifCurrent(generation, onStale: { found in
             // Die Ablehnung wird im Lock eingereiht, mit der vorgefundenen Generation: nie hinter der Zeile einer späteren Änderung.
+            guard self.stepIndex.accepts(requestId) else { return }
             self.enqueueMark(requestId: requestId, step: step, mark: AssistantCommitMark(stage: stage, ok: false, generation: found))
         }) {
+            guard stepIndex.accepts(requestId) else {
+                closed = true
+                return
+            }
             if audit?.hasFailed(request: requestId) == true {
                 blocked = true
                 enqueueMark(requestId: requestId, step: step, mark: AssistantCommitMark(stage: stage, ok: false, generation: generation, failed: true))
@@ -879,8 +901,15 @@ public actor AssistantSession {
             body()
             if reportPass { enqueueMark(requestId: requestId, step: step, mark: AssistantCommitMark(stage: stage, ok: true, generation: generation)) }
         }
-        return AssistantCommitResult(ok: check.ok && !blocked, generation: check.generation,
+        return AssistantCommitResult(ok: check.ok && !blocked && !closed, generation: check.generation,
                                      auditFailed: blocked || (audit?.hasFailed(request: requestId) ?? false))
+    }
+
+    /// Schließt die Anfrage für Commits (Anzeige, Audiostart), im Lock der Ordnung (Runde 9, S1). Immer VOR der Schlusszeile und VOR dem
+    /// Ende des Anspruchs auf ihren Fehler: Ein Commit, der danach den Lock bekommt, löst nichts aus; einer, der davor lief, hat seine
+    /// Zeilen vor der Schlusszeile eingereiht. Die Zuordnung Ereignis → Schritt bleibt bis zum Ende des Abschlusses lesbar.
+    private nonisolated func closeForCommits(_ requestId: String) {
+        release.inSection { _ in stepIndex.close(requestId) }
     }
 
     /// Der Audiostart eines Satzes: Prüfung der Generation, der TATSÄCHLICHE Start (`start`: gibt zurück, ob er ausgelöst wurde)
@@ -895,9 +924,17 @@ public actor AssistantSession {
         }
         let step = stepIndex.step(requestId, index: index)
         var blocked = false
+        var closed = false
         let check = release.ifCurrentAttempt(generation, onStale: { found in
+            guard self.stepIndex.accepts(requestId) else { return }
             self.enqueueMark(requestId: requestId, step: step, mark: AssistantCommitMark(stage: .audio, ok: false, generation: found))
         }) {
+            // Eine Anfrage, deren Abschluss begonnen hat (oder die das Gedächtnis verdrängt hat), startet nichts mehr (Runde 9, S1): die
+            // Prüfung im Lock, nicht nur davor.
+            guard stepIndex.accepts(requestId) else {
+                closed = true
+                return false
+            }
             // Schreibfehler dieser Anfrage: kein Start (klebrig, geht dem Widerruf voran).
             if audit?.hasFailed(request: requestId) == true {
                 blocked = true
@@ -909,7 +946,7 @@ public actor AssistantSession {
                         mark: AssistantCommitMark(stage: .audio, ok: started, generation: generation, failed: !started))
             return started
         }
-        return AssistantCommitResult(ok: check.ok, failed: check.failed && !blocked, generation: check.generation,
+        return AssistantCommitResult(ok: check.ok, failed: check.failed && !blocked && !closed, generation: check.generation,
                                      auditFailed: blocked || (audit?.hasFailed(request: requestId) ?? false))
     }
 
@@ -928,6 +965,8 @@ public actor AssistantSession {
                                        failed: Bool = false) {
         let step = stepIndex.step(requestId, index: index)
         release.inSection { found in
+            // Eine geschlossene Anfrage (ihr Abschluss hat begonnen) bekommt nach ihrer Schlusszeile keine Zeile mehr (Runde 9, S1).
+            guard stepIndex.accepts(requestId) else { return }
             let mark = generation == found
                 ? AssistantCommitMark(stage: stage, ok: ok, generation: generation, failed: failed)
                 : AssistantCommitMark(stage: stage, ok: false, generation: found)
@@ -1050,11 +1089,25 @@ public actor AssistantSession {
     /// (`h+<Generation>`) geschehen im selben Lock wie die Erhöhung der Generation; eine Ablehnung trägt die dabei gefundene
     /// Generation. Läuft die Anfrage noch, bricht `commit` sie ab und wartet auf ihren Endstand, bevor es schreibt. Quellen (nur
     /// die, die einen gesprochenen Satz decken) kommen aus der Prüfung dieser Anfrage. Mit dem Commit endet die Anmeldung des
-    /// Laufs für den Widerruf. `false`, wenn nur das Protokoll nicht geschrieben werden konnte (der Beitrag steht trotzdem im
-    /// Verlauf); die Anfrage endet dann mit Ausgang „Fehler“.
+    /// Laufs für den Widerruf. Reihenfolge am Ende der Anfrage (Runde 9, S1): erst für Commits schließen (im Lock der Ordnung), dann die
+    /// Schlusszeile, dann der Anspruch auf ihren Fehler. `false`, wenn das Protokoll nicht geschrieben werden konnte; die Anfrage endet
+    /// dann mit Ausgang „Fehler“. Der Beitrag steht dann nur im Verlauf, wenn der Fehler erst nach seinem Anhängen entstand (S2: ein
+    /// Fehler, der schon feststeht, verhindert ihn).
     @discardableResult
     public func commit(requestId: String, user: String, spoken: AssistantSpokenUnits, interrupted: Bool, revoked: Bool = false) async -> Bool {
+        // Runde 9, S1: Vom Beginn des Abschlusses an nimmt die Anfrage keine Anzeige- und Audio-Commits mehr an (im Lock der Ordnung, vor
+        // dem Warten auf den Lauf, vor der Schlusszeile und vor dem Ende ihres Anspruchs). Die Zuordnung der Schritte bleibt lesbar.
+        // Ein laufender Lauf wird zuerst abgebrochen (damit eine Einheit, die der Index danach ablehnt, als Abbruch endet, nicht als
+        // Grenze), dann geschlossen.
+        if let run = active[requestId] {
+            run.state.markCancelled()
+            run.stop()
+        }
+        closeForCommits(requestId)
         guard let state = await settle(requestId) else { return true }   // unbekannte oder schon abgeschlossene Anfrage
+        // Ein hängender Lauf, den `settle` nicht abwarten konnte: Sein spätes Ende nimmt die Anfrage nicht noch einmal ins Gedächtnis
+        // (sie ist abgeschlossen, ihr Anspruch beendet; ein zweiter Abschluss schriebe eine zweite Schlusszeile).
+        if active[requestId] != nil { finishedWhileRunning.insert(requestId) }
         release.unregister(requestId)
         let record = state.snapshot
         let text = user.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1089,16 +1142,28 @@ public actor AssistantSession {
             // Prüfung der Generation, Anhängen und Ergebniszeile im selben Lock wie die Erhöhung der Generation: Ein Widerruf
             // dazwischen ist ausgeschlossen, die Marke trägt genau die geprüfte Generation.
             if !revoked, !record.revoked {
+                // Runde 9, S2: Ein Schreibfehler des Protokolls dieser Anfrage ist klebrig und geht vor allem anderen, auch vor dem
+                // Beitrag (wie bei Anzeige und Audiostart): Die Prüfung steht IM Lock, vor dem Anhängen. Dann entsteht kein Beitrag; die
+                // Marke des Beitrags (Schritt 0) sagt „fehlgeschlagen“ mit der geprüften Generation, jede Einheit „nicht im Verlauf“, und
+                // die Anfrage endet mit dem Ausgang „Fehler“.
+                var auditBlocked = false
                 let check = release.ifCurrent(record.generation, onStale: { found in
                     self.enqueueMark(requestId: requestId, step: 0, mark: AssistantCommitMark(stage: .history, ok: false, generation: found))
                     self.enqueueHistoryMarks(requestId: requestId, steps: outputSteps, included: [], generation: found)
                 }) {
+                    if audit?.hasFailed(request: requestId) == true {
+                        auditBlocked = true
+                        enqueueMark(requestId: requestId, step: 0,
+                                    mark: AssistantCommitMark(stage: .history, ok: false, generation: record.generation, failed: true))
+                        enqueueHistoryMarks(requestId: requestId, steps: outputSteps, included: [], generation: record.generation)
+                        return
+                    }
                     history.append(turn)
                     if history.count > Self.maxStoredTurns { history.removeFirst(history.count - Self.maxStoredTurns) }
                     enqueueMark(requestId: requestId, step: 0, mark: AssistantCommitMark(stage: .history, ok: true, generation: record.generation))
                     enqueueHistoryMarks(requestId: requestId, steps: outputSteps, included: included, generation: record.generation)
                 }
-                historyRejected = !check.ok
+                historyRejected = !check.ok || auditBlocked
             } else {
                 historyRejected = true
                 // Schon widerrufen: Die Ablehnung steht ebenfalls im Lock, mit der dort vorgefundenen Generation.
@@ -1147,7 +1212,9 @@ public actor AssistantSession {
             run.state.markCancelled()
             return run.stop()
         }
-        if earlyCancel.count > 64 { earlyCancel.removeAll() }
+        // Runde 9 (Suchlauf a): kein Verdrängen mehr (früher: ab 64 Einträgen alle vergessen, und eine abgebrochene Anfrage lief dann
+        // doch). Ein Eintrag ist eine kurze Kennung und wird vom Start seiner Anfrage verbraucht; ein Abbruch ohne spätere Anfrage bleibt
+        // bis zum Ende der Sitzung liegen (Bytes je Tippen auf „Stopp“).
         earlyCancel.insert(requestId)
     }
 
@@ -1175,7 +1242,10 @@ public actor AssistantSession {
         // Runde 8, R6: Der Fehler jeder Zeile dieser Anfrage hängt ab hier an ihrem Anspruch (nie verdrängt, bis `commit` ihn beendet).
         audit?.claim(request: rid)
         if earlyCancel.remove(rid) != nil {
-            out.yield(.failed(requestId: rid, .cancelled))
+            // Runde 9 (Suchlauf c): Der Anspruch endet erst, wenn sein Fehler gemeldet ist. Scheitert das Schreiben von `start` oder
+            // `end`, ist das der Ausgang der Anfrage („Protokoll nicht schreibbar“), nicht still verworfen: Die Zeilen werden vor dem
+            // einen Schlussereignis geschrieben.
+            var failure = AssistantFailure.cancelled
             if let audit {
                 var record = AssistantRunRecord()
                 record.generation = snapshot.generation
@@ -1188,9 +1258,10 @@ public actor AssistantSession {
                 end.level = .s0
                 end.areas = []
                 audit.enqueue(end)
-                _ = await audit.flush(request: rid)
+                if await audit.flush(request: rid) != nil { failure = .auditUnavailable }
                 audit.release(request: rid)
             }
+            out.yield(.failed(requestId: rid, failure))
             return
         }
         var runConfig = self.config
@@ -1237,7 +1308,7 @@ public actor AssistantSession {
         }
         state.update { $0.failure = failure }
         // Der Endstand steht fest, bevor das letzte Ereignis hinausgeht und bevor `commit` ihn liest.
-        remember(rid, state)
+        let evicted = remember(rid, state)
         active[rid] = nil
 
         if let failure {
@@ -1248,24 +1319,39 @@ public actor AssistantSession {
             let done = AssistantAnswer(
                 text: text, sources: covering, general: covering.isEmpty, firstSentenceMs: firstMs, totalMs: totalMs,
                 unsourced: record.counts.unsourced > 0, counts: record.counts, round: record.round, generation: record.generation)
-            if !output.send(.done(requestId: rid, done)).ok {
+            let sent = output.send(.done(requestId: rid, done), guarding: audit, request: rid)
+            if sent.refused {
+                // Ein Schreibfehler zwischen dem Warten und dem Senden (klebrig): Auch `done` trägt den Text und geht nicht hinaus.
+                state.update { $0.failure = .auditUnavailable }
+                output.sendUnchecked(.failed(requestId: rid, .auditUnavailable))
+            } else if !sent.check.ok {
                 state.markRevoked()
                 state.update { $0.failure = .revoked }
                 output.sendUnchecked(.failed(requestId: rid, .revoked))
             }
         }
+        // Runde 9, S1: Was das Gedächtnis verdrängt hat, ohne dass die Steuerung es abgeschlossen hat, wird JETZT abgeschlossen (nach den
+        // Ereignissen dieser Anfrage; der Strom endet erst danach): kein Beitrag, `h-` je Einheit, Schlusszeile mit dem dann geltenden
+        // Ausgang (bei einem Schreibfehler „Fehler“ und `lost`). Erst danach endet der Anspruch auf den Fehler der verdrängten Anfrage.
+        for old in evicted { _ = await commit(requestId: old, user: "", spoken: .nothing, interrupted: true) }
     }
 
-    private func remember(_ id: String, _ state: RunState) {
+    /// Nimmt den Endstand ins Gedächtnis. Gibt die Anfragen zurück, die dabei verdrängt wurden: Sie sind schon für Commits geschlossen
+    /// (im Lock der Ordnung) und stehen noch in `results`, bis ihr Abschluss sie holt; ihr Anspruch auf den Fehler endet NIE durch das
+    /// Verdrängen, nur mit ihrem Abschluss (`commit`: Schlusszeile, dann Anspruch).
+    private func remember(_ id: String, _ state: RunState) -> [String] {
+        // Der Abschluss war schon da (hängendes Modell): nichts mehr zu merken.
+        if finishedWhileRunning.remove(id) != nil { return [] }
         results[id] = state
         resultOrder.removeAll { $0 == id }
         resultOrder.append(id)
+        var evicted: [String] = []
         while resultOrder.count > Self.maxRemembered {
             let old = resultOrder.removeFirst()
-            results[old] = nil
-            release.unregister(old)
-            audit?.release(request: old)
+            closeForCommits(old)
+            evicted.append(old)
         }
+        return evicted
     }
 
     private static func generate(
@@ -1296,8 +1382,6 @@ public actor AssistantSession {
         // nach `start` hinterlässt die Anfrage; das nächste Öffnen schließt sie als unvollständig.
         state.update { $0.contextBefore = context.mode }
         if let audit {
-            // Eine bekannte Lücke im Protokoll (das Register der nachzuholenden Zeilen war voll): keine Ausgabe, bis der Prozess neu startet.
-            guard !release.clock.auditGap else { return fail(.auditUnavailable) }
             guard await stateLine.ensure(audit) else { return fail(.auditUnavailable) }
             if Task.isCancelled { return .cancelled }
             let started = await audit.begin(startLine(rid, session: session, config: config, record: state.snapshot), run: run)
@@ -1342,7 +1426,9 @@ public actor AssistantSession {
         let clockSentences = AssistantGrounding.clockSentences(now: now, timeZone: .current)
 
         if inventoryQuestion {
-            guard output.send(.sources(requestId: rid, generation: snapshot.generation, [])).ok else { return .cancelled }
+            let sent = output.send(.sources(requestId: rid, generation: snapshot.generation, []), guarding: audit, request: rid)
+            if sent.refused { return await finished(.auditUnavailable) }
+            guard sent.check.ok else { return .cancelled }
             let groups = await knowledge.inventoryGroups(question: request.text, areas: areas)
             if Task.isCancelled { return .cancelled }
             let statements = groups.flatMap(\.statements)
@@ -1403,7 +1489,9 @@ public actor AssistantSession {
                 // Zeile in der Datei steht.
                 guard await emitter.noteAreas(used.map(\.area)) else { return fail(.auditUnavailable) }
                 if Task.isCancelled { return .cancelled }
-                guard output.send(.sources(requestId: rid, generation: snapshot.generation, used)).ok else { return .cancelled }
+                let sent = output.send(.sources(requestId: rid, generation: snapshot.generation, used), guarding: audit, request: rid)
+                if sent.refused { return await finished(.auditUnavailable) }
+                guard sent.check.ok else { return .cancelled }
                 announcedSources = true
             }
             let basis = AssistantGrounding.Basis(passages: used)

@@ -923,6 +923,33 @@ final class AssistantAuditWriter: @unchecked Sendable {
         queue.async { self.drain() }
     }
 
+    /// Reiht mehrere Zeilen als EINE Gruppe ein (unter einem Lock, ein Anstoß der Warteschlange): Sie stehen hintereinander in der
+    /// Reihenfolge der Liste und werden mit einem fsync gesichert, nie mit einem je Zeile. Jeder Schlüssel hat danach seinen Anspruch
+    /// (der Fehler dieser Zeile hängt an ihm und wird mit `settle(keys:)` abgeholt).
+    func enqueue(group: [(line: AssistantJournalLine, key: String)], run: AssistantRunToken?) {
+        guard !group.isEmpty else { return }
+        for item in group { _ = claim(item.key) }
+        pendingLock.withLock {
+            for item in group { pending.append(Pending(line: item.line, run: run, key: item.key, onFailure: nil)) }
+        }
+        queue.async { self.drain() }
+    }
+
+    /// Wartet, bis alles bis hierher Eingereihte geschrieben ist, holt den Fehler jedes Schlüssels ab (`nil`: steht dauerhaft) und
+    /// beendet die Ansprüche: ein Warten für die ganze Gruppe.
+    func settle(keys: [String]) async -> [String: AssistantAuditError] {
+        await withCheckedContinuation { c in
+            queue.async {
+                var errors: [String: AssistantAuditError] = [:]
+                for key in keys {
+                    if let error = self.outcome(of: key, consume: true) { errors[key] = error }
+                    self.release(key)
+                }
+                c.resume(returning: errors)
+            }
+        }
+    }
+
     /// Schreibt alles Eingereihte in der Reihenfolge des Einreihens und sichert es mit EINEM fsync. Scheitert das fsync, gelten alle
     /// Zeilen dieser Gruppe als nicht geschrieben (Fehler unter ihrem Schlüssel): Eine Pflichtzeile, die nicht dauerhaft steht, gibt es nicht.
     private func drain() {
@@ -941,7 +968,9 @@ final class AssistantAuditWriter: @unchecked Sendable {
             torn = true   // das Ende der Datei ist unsicher: die nächste Zeile beginnt mit einem Zeilenumbruch
             for key in Set(written.map(\.key)) { note(key, .writeFailed) }
             for item in written { item.onFailure?(.writeFailed) }
+            return   // eine gescheiterte Gruppe ist keine Gelegenheit (kein Nachholen im Kreis)
         }
+        notifyDurable()
     }
 
     /// Wartet, bis alles bis hierher Eingereihte geschrieben ist. Gibt den Fehler zurück, der für `request` (oder ohne Anfrage:
@@ -1017,6 +1046,22 @@ final class AssistantAuditWriter: @unchecked Sendable {
         failedLock.lock()
         failureObserver = observer
         failedLock.unlock()
+    }
+
+    /// Hinter einem eigenen, kurzen Lock (nie zusammen mit einem anderen gehalten): Wer wissen will, dass wieder eine Zeilengruppe
+    /// DAUERHAFT steht (Runde 9, S3: jede solche Gruppe ist eine Gelegenheit, Fehlendes nachzuholen), je Besitzer ein Rückruf.
+    private let durableLock = NSLock()
+    private var durableObservers: [String: @Sendable () -> Void] = [:]
+
+    /// Meldet (`observer`) oder entfernt (`nil`) den Rückruf eines Besitzers. Der Rückruf kommt von der Schreibwarteschlange, NACH dem
+    /// fsync und außerhalb jedes Locks dieses Schreibers: kurz, ohne Warten, ohne I/O, nie in ein Lock, das beim Einreihen gehalten wird.
+    func setDurableObserver(owner: String, _ observer: (@Sendable () -> Void)?) {
+        durableLock.withLock { durableObservers[owner] = observer }
+    }
+
+    private func notifyDurable() {
+        let observers = durableLock.withLock { Array(durableObservers.values) }
+        for observer in observers { observer() }
     }
 
     /// `true`: die Zeile wurde angehängt (noch nicht dauerhaft: das deckt das fsync der Gruppe).
@@ -1276,6 +1321,19 @@ public struct AssistantAuditLog: Sendable {
     /// von der Schreibwarteschlange: kurz, ohne Warten, ohne Rückruf in die Ordnung (Controller: auf den Hauptthread wechseln und die
     /// Ausgabe stoppen). Ein Fehler vor dem Anmelden wird nicht nachgemeldet (`hasFailed` zeigt ihn).
     public func setFailureObserver(_ observer: (@Sendable (String) -> Void)?) { writer.setFailureObserver(observer) }
+
+    /// Schreibt Zeilen als EINE Gruppe (ein fsync) und wartet einmal. Gibt je Schlüssel den Fehler zurück; ein Schlüssel ohne Eintrag
+    /// steht dauerhaft in der Datei.
+    func writeGroup(_ group: [(line: AssistantJournalLine, key: String)], run: AssistantRunToken?) async -> [String: AssistantAuditError] {
+        writer.enqueue(group: group, run: run)
+        return await writer.settle(keys: group.map(\.key))
+    }
+
+    /// Meldet den Rückruf eines Besitzers für jede dauerhaft gesicherte Zeilengruppe (siehe `AssistantAuditWriter`).
+    func setDurableObserver(owner: String, _ observer: (@Sendable () -> Void)?) { writer.setDurableObserver(owner: owner, observer) }
+
+    /// Beide Handles schreiben über denselben Schreiber.
+    func sharesWriter(with other: AssistantAuditLog) -> Bool { writer === other.writer }
 
     /// Wartet auf die Zeile mit diesem Schlüssel (`release:<Generation>`, `state`) und holt ihren Fehler ab.
     func waitForLine(key: String) async -> AssistantAuditError? {

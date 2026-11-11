@@ -291,6 +291,7 @@ final class AssistantReleaseStoreTests: XCTestCase {
             try? FileManager.default.removeItem(at: dir)
             let fs = FaultFS()
             let store = openStore(fs)
+            store.clock.setOpportunitiesPaused(true)   // Zwischenzustände der Fehlerfolge beobachten, ohne dass der Hintergrundlauf sie abräumt
             let audit = freshLog()
             let s = session(store, audit: audit)
             let before = s.releaseGeneration
@@ -365,6 +366,7 @@ final class AssistantReleaseStoreTests: XCTestCase {
             try? FileManager.default.removeItem(at: dir)
             let fs = FaultFS()
             let store = openStore(fs)
+            store.clock.setOpportunitiesPaused(true)
             let audit = freshLog()
             let s = session(store, audit: audit)
             let before = s.releaseGeneration
