@@ -128,14 +128,49 @@ fn meta_tags(kopf: &str) -> Vec<&str> {
                 .next()
                 .is_some_and(|c| c.is_ascii_whitespace() || matches!(c, '>' | '/'))
         }) {
-            let ende = r.find('>').unwrap_or(r.len());
+            let ende = tag_ende(r);
             tags.push(&r[..ende]);
             pos = start + "<meta".len() + ende;
+            continue;
+        }
+        // Jedes andere Tag (`<name`, `</name`, `<!…`, `<?…`) wird samt zitierter Attributwerte übersprungen,
+        // wie im Vorabscan des HTML-Standards: ein `<meta` in einem Attributwert ist kein Tag.
+        let zweites = rest[1..].chars().next();
+        if zweites.is_some_and(|c| c.is_ascii_alphabetic() || matches!(c, '/' | '!' | '?')) {
+            pos = start + 1 + tag_ende(&rest[1..]);
             continue;
         }
         pos = start + 1;
     }
     tags
+}
+
+/// Index des schließenden `>` eines Tags (ohne das `<`), Attributwerte in `"…"` oder `'…'` nach einem `=`
+/// werden übersprungen; ohne `>` das Ende des Textes.
+fn tag_ende(s: &str) -> usize {
+    let b = s.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'>' => return i,
+            b'=' => {
+                i += 1;
+                while i < b.len() && b[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+                if i < b.len() && (b[i] == b'"' || b[i] == b'\'') {
+                    let q = b[i];
+                    i += 1;
+                    while i < b.len() && b[i] != q {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    b.len()
 }
 
 /// Zeichensatz aus `<meta charset=…>` oder `<meta http-equiv=Content-Type content="…; charset=…">` in den
@@ -548,6 +583,9 @@ mod tests {
             "<style>/* <meta charset=windows-1252> */</style>",
             "<script>let s=\"</scriptx><meta charset=windows-1252>\";</script>",
             "<metadata charset=windows-1252></metadata>",
+            "<metadata title=\"<meta charset=windows-1252>\"></metadata>",
+            "<div data-x='<meta charset=windows-1252>'></div>",
+            "</div title=\"<meta charset=windows-1252>\">",
         ] {
             let mut b = kopf.as_bytes().to_vec();
             b.extend_from_slice(b"<p>");
@@ -557,6 +595,9 @@ mod tests {
         }
         // Ein echtes `<meta>` hinter einem Kommentar gilt weiterhin.
         let b = b"<!-- x --><meta charset=windows-1252><p>5\x80</p>";
+        assert_eq!(text_von(b), "5€");
+        // Zitiertes `>` vor einem echten `<meta>` beendet das vorige Tag nicht vorzeitig.
+        let b = b"<div title=\"a>b\"></div><meta charset=windows-1252><p>5\x80</p>";
         assert_eq!(text_von(b), "5€");
     }
 
