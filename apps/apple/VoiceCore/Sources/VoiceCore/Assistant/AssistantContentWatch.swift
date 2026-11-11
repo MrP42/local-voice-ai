@@ -12,7 +12,8 @@ import Foundation
 //   meldet beim regulären Ende (`passCompleted`), dass der Bestand für alle Änderungen bis zur Marke steht. Ein abgebrochener
 //   Durchgang meldet nichts. Reißt eine Änderung ab, ohne `changed` zu melden, bleibt der Bestand `stale` (fail-closed); die
 //   Hilfe `around` meldet das Ende auch bei einem Fehler.
-// - Eine Sitzung, die sich anhängt, während der Bestand nicht dem Stand der Quellen entspricht, ist sofort `stale`.
+// - Binden sich die Ordnung und die Meldestelle erst, nachdem sich schon etwas geändert hat (es gab noch keine Ordnung, also lief auch
+//   keine Anfrage), ist der Bestand mit einer einzigen Erhöhung `stale`, bis ein Durchgang ihn meldet.
 // - Wer meldet: Jede Schreibstelle der Quellen ruft `around` (Bücher: PhoneLibrary.importText und LibrarySync.place, Ablage:
 //   AblageSpeicher und AblageSync). Der Speicher der Notizen (`DurableStore`, auch auf der Uhr) kennt die Meldestelle nicht, sondern
 //   die Weiche `NoteChangeHook` (Löschen, Transkript, Antwort, eingehende Antwort); die Quelle der iPhone-Seite hängt die Meldestelle
@@ -42,8 +43,9 @@ public final class AssistantContentWatch: @unchecked Sendable {
     private var contiguous = 0
     /// Höchste Marke, für die ein vollständiger Durchgang der Indexierung beendet ist.
     private var installedThrough = 0
-    private weak var session: AssistantSession?
-    /// Nummer → Epoche der angehängten Sitzung (nur Nummern oberhalb von `installedThrough`).
+    /// Die prozessweite Ordnung (R4): ruft jede Änderung unmittelbar, gleich ob ein Gespräch offen ist.
+    private var order: AssistantReleaseClock?
+    /// Nummer → Epoche in der Ordnung (nur Nummern oberhalb von `installedThrough`).
     private var epochs: [Int: Int] = [:]
     private var observer: (@Sendable () -> Void)?
 
@@ -73,7 +75,7 @@ public final class AssistantContentWatch: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         issued += 1
-        if let session { epochs[issued] = session.contentWillChange() }
+        if let order { epochs[issued] = order.contentWillChange().epoch }
         return Ticket(number: issued)
     }
 
@@ -104,8 +106,8 @@ public final class AssistantContentWatch: @unchecked Sendable {
         return try await change()
     }
 
-    /// Ein Durchgang der Indexierung, der bei `mark` begann, ist regulär zu Ende. `true`, wenn der Bestand der angehängten Sitzung
-    /// jetzt für alle gemeldeten Änderungen steht (oder keine Sitzung hängt); `false`, wenn eine neuere Änderung dazugekommen ist.
+    /// Ein Durchgang der Indexierung, der bei `mark` begann, ist regulär zu Ende. `true`, wenn der Bestand der Ordnung jetzt für alle
+    /// gemeldeten Änderungen steht (oder keine Ordnung gebunden ist); `false`, wenn eine neuere Änderung dazugekommen ist.
     @discardableResult
     public func passCompleted(mark: Int) -> Bool {
         lock.lock()
@@ -113,20 +115,28 @@ public final class AssistantContentWatch: @unchecked Sendable {
         installedThrough = max(installedThrough, min(mark, contiguous))
         let covered = epochs.filter { $0.key <= installedThrough }
         epochs = epochs.filter { $0.key > installedThrough }
-        guard let session else { return issued <= installedThrough }
-        guard let epoch = covered.max(by: { $0.key < $1.key })?.value else { return session.isContentReady }
-        return session.contentInstalled(epoch: epoch)
+        guard let order else { return issued <= installedThrough }
+        guard let epoch = covered.max(by: { $0.key < $1.key })?.value else { return order.isContentReady }
+        return order.contentInstalled(epoch: epoch)
     }
 
-    /// Hängt die Sitzung des Gesprächs an (`nil`: löst sie). Entspricht der Bestand nicht dem Stand der Quellen, ist die neue Sitzung
-    /// sofort `stale`, bis ein Durchgang ihn meldet.
-    public func attach(_ session: AssistantSession?) {
+    /// Bindet die Ordnung des Prozesses (einmal, beim Prozessstart; dieselbe Ordnung erneut zu binden ändert nichts). Entspricht der
+    /// Bestand nicht dem Stand der Quellen, ist er mit EINER Erhöhung `stale`, bis ein Durchgang ihn meldet.
+    func bind(_ clock: AssistantReleaseClock?) {
         lock.lock()
         defer { lock.unlock() }
-        self.session = session
+        guard order !== clock else { return }
+        order = clock
         epochs.removeAll()
-        guard let session, issued > installedThrough else { return }
-        epochs[issued] = session.contentWillChange()
+        guard let clock, issued > installedThrough else { return }
+        epochs[issued] = clock.contentWillChange().epoch
+    }
+
+    /// Bindet die Ordnung der Sitzung des Gesprächs (Abkürzung für Tests und alte Aufrufer). `nil` löst nichts: Die Ordnung des
+    /// Prozesses bleibt gebunden, auch wenn das Gespräch zu Ende ist (sonst blieben Änderungen ohne Gespräch ohne Wirkung).
+    public func attach(_ session: AssistantSession?) {
+        guard let session else { return }
+        bind(session.order)
     }
 
     /// Der Beobachter wird nach jeder beendeten Änderung gerufen (außerhalb der Sperre).

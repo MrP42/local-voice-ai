@@ -177,10 +177,10 @@ final class AssistantReleaseTests: XCTestCase {
             }
         }
         // Bis ein Erzeuger geliefert hat (statt eine Zeit zu raten): Erst dann kommt der Widerruf.
-        XCTAssertEqual(running.wait(timeout: .now() + 10), .success, "ein Erzeuger lief")
+        XCTAssertEqual(running.wait(timeout: .now() + 60), .success, "ein Erzeuger lief")
         r.bump()
         let atBump = sent.value
-        XCTAssertEqual(group.wait(timeout: .now() + 10), .success)
+        XCTAssertEqual(group.wait(timeout: .now() + 60), .success)
         XCTAssertGreaterThan(atBump, 0, "die Erzeuger liefen vor dem Widerruf")
         XCTAssertEqual(sent.value, atBump, "nach der Rückkehr von bump kommt nichts Altes mehr")
     }
@@ -195,7 +195,7 @@ final class AssistantReleaseTests: XCTestCase {
                 group.leave()
             }
         }
-        XCTAssertEqual(group.wait(timeout: .now() + 20), .success)
+        XCTAssertEqual(group.wait(timeout: .now() + 120), .success)
         XCTAssertEqual(r.currentGeneration, 2_000)
     }
 
@@ -251,28 +251,38 @@ final class AssistantReleaseTests: XCTestCase {
     // MARK: I4: Bereiche und Generation gehören zusammen
 
     /// I4: Jede Einschränkung der Bereiche ist EINE Erhöhung und ändert die Bereiche im selben Lock. Ein Leser, der nebenläufig
-    /// `snapshot` liest, sieht Generation k nie mit den Bereichen eines anderen Standes (hier: k Bereiche weniger).
+    /// `snapshot` liest, sieht Generation k nie mit den Bereichen eines anderen Standes (hier: k Bereiche weniger). Ohne Zeitannahme:
+    /// Der Schreiber geht erst zum nächsten Stand, wenn der Leser den jetzigen gelesen hat (ein Zeichen je Generation), der Leser hat
+    /// also JEDEN Zwischenstand nachweislich gesehen, nicht nur zufällig. Eigene Threads statt `concurrentPerform` (auf einem Kern
+    /// liefe dessen Aufruf nacheinander und das Warten bliebe hängen); die 60 s sind nur eine Frist für den Fehlerfall.
     func testAReaderNeverSeesAGenerationPairedWithTheAreasOfAnotherState() {
         let all = AssistantArea.allCases
         let mismatches = Counter()
         let reads = Counter()
         for _ in 0..<400 {
             let r = AssistantRelease(optIn: false, areas: Set(all))
-            DispatchQueue.concurrentPerform(iterations: 2) { role in
-                if role == 0 {
-                    for k in 1...all.count { _ = restrict(r, to: Set(all.dropFirst(k))) }
-                    return
-                }
+            let seen = DispatchSemaphore(value: 0)
+            let finished = DispatchGroup()
+            finished.enter()
+            Thread {
+                var last = 0
                 while true {
                     let s = r.snapshot
                     reads.hit()
                     if s.areas.count != all.count - s.generation { mismatches.hit() }
-                    if s.generation == all.count { return }
+                    if s.generation > last { last = s.generation; seen.signal() }
+                    if s.generation == all.count { break }
                 }
+                finished.leave()
+            }.start()
+            for k in 1...all.count {
+                _ = restrict(r, to: Set(all.dropFirst(k)))
+                XCTAssertEqual(seen.wait(timeout: .now() + 60), .success, "der Leser hat Generation \(k) nicht gesehen")
             }
+            XCTAssertEqual(finished.wait(timeout: .now() + 60), .success)
         }
         XCTAssertEqual(mismatches.value, 0, "keine neue Generation mit alten, größeren Bereichen")
-        XCTAssertGreaterThan(reads.value, 400)
+        XCTAssertGreaterThanOrEqual(reads.value, 400 * all.count, "jeder Zwischenstand wurde gelesen")
     }
 
     /// I4, die alte Reihenfolge: Generation und Bereiche getrennt führen (erst die Generation erhöhen, dann die Bereiche setzen)

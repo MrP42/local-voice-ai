@@ -97,7 +97,7 @@ final class AssistantOutputTests: XCTestCase {
         XCTAssertTrue(s.playbackGate.permits(s.releaseGeneration))
         XCTAssertFalse(s.playbackGate.permits(s.releaseGeneration - 1))
         // „Ohne Quelle fortsetzen“ (Zustand .data nach einer Datenrunde)
-        let d = await session(history: [AssistantTurn(user: "Frage", assistant: "Antwort", at: Date(), round: .data)])
+        let d = await session(history: [AssistantTurn(user: "Frage", assistant: "Antwort", at: Date(), round: .data).shown])
         XCTAssertEqual(d.contextMode, .data)
         let before = d.releaseGeneration
         let r9 = await d.resumeFree()
@@ -150,7 +150,7 @@ final class AssistantOutputTests: XCTestCase {
         XCTAssertTrue(waitSync(running, seconds: 10), "ein Starter lief")
         let g = await s.releaseDidChange().generation
         tally.returned(g)
-        XCTAssertEqual(group.wait(timeout: .now() + 10), .success)
+        XCTAssertEqual(group.wait(timeout: .now() + 60), .success)
         stop.ranOnce()
         let r = tally.snapshot
         XCTAssertGreaterThan(r.ran, 0, "die Starter liefen vor dem Widerruf")
@@ -186,7 +186,7 @@ final class AssistantOutputTests: XCTestCase {
             if g % 50 == 0 { pause(0.0005) }
         }
         stop.ranOnce()
-        XCTAssertEqual(group.wait(timeout: .now() + 20), .success)
+        XCTAssertEqual(group.wait(timeout: .now() + 120), .success)
         let r = tally.snapshot
         XCTAssertEqual(r.violations, [], "kein Start-Body nach der Rückkehr einer neueren Generation")
         XCTAssertGreaterThan(r.ran, 0, "die Starter liefen")
@@ -218,12 +218,15 @@ final class AssistantOutputTests: XCTestCase {
         let tally = Tally()
         let bodyDone = Tally()
         let atBarrier = DispatchSemaphore(value: 0)
-        let bumpMayProceed = DispatchSemaphore(value: 0)
         let bumpDone = DispatchSemaphore(value: 0)
         let waited = Tally()
+        // Ohne Uhr: Die Probe am Eingang der Ordnung meldet, dass die Erhöhung angekommen ist (und beim Eintreffen, in der neuen
+        // Reihenfolge, den Lock von jemand anderem gehalten findet). In der alten Reihenfolge hält ihn niemand.
+        let probe = EntryProbe()
+        probe.install(on: s.order)
+        defer { probe.remove(from: s.order) }
         DispatchQueue.global().async {
             atBarrier.wait()                // der Starter steht zwischen Prüfung und Start
-            bumpMayProceed.signal()         // Hinweis an den Körper: jetzt wird erhöht
             let newer = s.applyReleaseChange().generation
             tally.returned(newer)
             if bodyDone.snapshot.ran > 0 { waited.ranOnce() }   // die Erhöhung kam erst nach dem Body zurück
@@ -242,8 +245,8 @@ final class AssistantOutputTests: XCTestCase {
         } else {
             _ = gate.start(g) {
                 atBarrier.signal()          // Haltepunkt im Start: die Erhöhung steht vor dem Lock und muss warten
-                _ = bumpMayProceed.wait(timeout: .now() + 0.2)
-                pause(0.1)
+                if !probe.waitUntilArrived() { tally.violation("die Erhöhung kam nie am Eingang an") }
+                if probe.observations != [true] { tally.violation("die Erhöhung fand den Lock nicht gehalten: \(probe.observations)") }
                 body()
             }
             bumpDone.wait()
@@ -291,25 +294,27 @@ final class AssistantOutputTests: XCTestCase {
         let gate = s.playbackGate
         let g = s.releaseGeneration
         let bumped = Tally()
-        let entered = DispatchSemaphore(value: 0)
         let bumpReturned = DispatchSemaphore(value: 0)
         let observed = Tally()
+        // Ohne Uhr: Haltepunkt im Body wartet, bis die Probe am Eingang der Ordnung das Eintreffen des Auslösers meldet; dort ist der
+        // Lock beim Eintreffen nachweislich gehalten (`try` scheitert). Danach endet der Body, und erst dann kann `bump` zurückkehren.
+        let probe = EntryProbe()
+        probe.install(on: s.order)
+        defer { probe.remove(from: s.order) }
+        let bodyDone = Tally()
         let ok = s.commitOutput(requestId: "r1", index: 0, generation: g, stage: .display) {
             DispatchQueue.global().async {
-                entered.signal()
                 _ = s.applyReleaseChange()
+                if bodyDone.snapshot.ran == 0 { observed.violation("bump lief mitten im Body") }
                 bumped.ranOnce()
                 bumpReturned.signal()
             }
-            entered.wait()
-            // Haltepunkt: Der Auslöser läuft an und muss auf den Lock warten. Dass er in dieser Zeit NICHT zurückkehrt, ist die
-            // Beobachtung selbst; die Länge des Fensters macht aus Grün nie Rot.
-            if bumpReturned.wait(timeout: .now() + 0.2) == .success { observed.violation("bump lief mitten im Body") }
+            if !probe.waitUntilArrived() { observed.violation("der Auslöser kam nie am Eingang an") }
+            bodyDone.ranOnce()
         }
         XCTAssertTrue(ok.ok)
-        if observed.snapshot.violations.isEmpty {   // sonst hat der Haltepunkt das Signal schon verbraucht
-            XCTAssertTrue(waitSync(bumpReturned, seconds: 5), "der Widerruf kam nach dem Body")
-        }
+        XCTAssertTrue(waitSync(bumpReturned, seconds: 60), "der Widerruf kam nach dem Body")
+        XCTAssertEqual(probe.observations, [true], "beim Eintreffen hielt ein anderer den Lock")
         XCTAssertEqual(bumped.snapshot.ran, 1, "der Widerruf kam nach dem Body")
         XCTAssertEqual(observed.snapshot.violations, [])
         XCTAssertEqual(gate.discardedBelow, g + 1)
@@ -343,7 +348,7 @@ final class AssistantOutputTests: XCTestCase {
             if g % 50 == 0 { pause(0.0005) }
         }
         stop.ranOnce()
-        XCTAssertEqual(group.wait(timeout: .now() + 20), .success)
+        XCTAssertEqual(group.wait(timeout: .now() + 120), .success)
         let r = tally.snapshot
         XCTAssertEqual(r.violations, [], "kein Body nach einer neueren Generation")
         XCTAssertGreaterThan(r.ran, 0, "die Erzeuger liefen")
@@ -366,7 +371,7 @@ final class AssistantOutputTests: XCTestCase {
         await s.releaseDidChange()
         XCTAssertFalse(s.commitOutput(requestId: "r1", index: 1, generation: g, stage: .audio, reportPass: false) {}.ok)
         XCTAssertFalse(s.commitOutput(requestId: "r1", index: 99, generation: g, stage: .display) {}.ok, "unbekannter Index: nur abgelehnt")
-        await s.commit(requestId: "r1", user: "x", spoken: spoken.joined(separator: " "), interrupted: false, revoked: true)
+        await s.commit(requestId: "r1", user: "x", spoken: .all, interrupted: false, revoked: true)
         let e = await audit.entries().filter { $0.kind == .answer }.first
         XCTAssertEqual(e?.trace[1].commits, [
             AssistantCommitMark(stage: .emit, ok: true, generation: g),

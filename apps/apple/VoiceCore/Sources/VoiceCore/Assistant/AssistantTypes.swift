@@ -278,8 +278,9 @@ public enum AssistantDropReason: String, Sendable, Codable, Equatable, CaseItera
 /// Abschnitt eines Beitrags mit gleicher Kennzeichnung (gespeichert, wenn der Beitrag Zitate oder Sätze mit
 /// Kennzeichnung enthält oder Sätze ohne Quelle mit anderen gemischt sind).
 ///
-/// Marke je Satz: In der Datenrunde ist jeder angezeigte Satz entweder ein Zitat mit genau EINER Quellzeile (`quote`, `source`)
-/// oder trägt eine eigene Kennzeichnung (`note`: feste Antwort des Systems, Bestandsangabe), weil er strukturell keine Quelle hat.
+/// Marke je Ausgabeeinheit (ein ganzer Quellblock oder ein Satz des Systems): In der Datenrunde ist jede angezeigte Einheit entweder ein
+/// Zitat mit genau EINER Quellzeile (`quote`, `source`) oder trägt eine eigene Kennzeichnung (`note`: feste Antwort des Systems,
+/// Bestandsangabe), weil sie strukturell keine Quelle hat.
 public struct AssistantTurnPart: Sendable, Equatable, Codable {
     public var text: String
     public var unsourced: Bool
@@ -315,6 +316,18 @@ public struct AssistantTurnPart: Sendable, Equatable, Codable {
         note = try c.decodeIfPresent(String.self, forKey: .note)
     }
 
+    /// Der Abschnitt trägt seine Marke vollständig (Runde 8, R1/U2): ein Zitat nur mit der Quellzeile „Wörtlicher Auszug aus …“
+    /// (identifizierbare Quelle), sonst die Kennzeichnung eines Satzes ohne Quelle (`note`) oder „Ohne Quelle“ (`unsourced`). Ein
+    /// Abschnitt ohne Marke wird nie angezeigt, auch nicht als einfacher Text: Eine Ansicht zeigt nur, was `isMarked` ist.
+    public var isMarked: Bool {
+        if quote { return source.map { $0.hasPrefix(AssistantPassage.excerptPrefix) && $0.count > AssistantPassage.excerptPrefix.count } ?? false }
+        return note != nil || unsourced
+    }
+
+    /// Die Einheiten der laufenden Antwort, die die Ansicht zeigen darf (Runde 8, U2): nur die mit vollständiger Marke, jede ganz.
+    /// Eine Einheit ohne Marke erscheint nicht, auch nicht als einfacher Text.
+    public static func displayed(_ list: [AssistantTurnPart]) -> [AssistantTurnPart] { list.filter(\.isMarked) }
+
     /// Kennzeichnung eines Satzes nach seiner Einordnung; `nil`, wenn er eine Quellzeile oder die Kennzeichnung „Ohne Quelle“
     /// (ältere Beiträge) trägt.
     public static func note(for status: AssistantSentenceStatus, quote: Bool) -> String? {
@@ -340,6 +353,19 @@ public struct AssistantTurnPart: Sendable, Equatable, Codable {
                                           note: note))
         }
     }
+}
+
+/// Welche ausgegebenen Einheiten einer Anfrage in den Beitrag des Verlaufs kommen (Runde 8, R1): Die Steuerung übergibt Einheiten,
+/// keinen Text. Eine Einheit kommt ganz in den Verlauf (Art, Text unverändert, Quelle) oder gar nicht; ein Quellblock wird nie
+/// gekürzt, getrimmt oder neu zerlegt.
+public enum AssistantSpokenUnits: Sendable, Equatable {
+    /// Keine Einheit (nichts gesprochen, „Ergänzen“, Fehler vor der Ausgabe): kein Beitrag.
+    case nothing
+    /// Alle ausgegebenen Einheiten der Anfrage (der Lauf endete regulär).
+    case all
+    /// Nur diese Einheiten, ganz gesprochen: Nummern der Ereignisse der Anfrage (dieselben wie bei `noteCommit`, Ansagen eingeschlossen,
+    /// sie zählen nicht). Eine unbekannte Nummer zählt nicht; die Reihenfolge ist die der Ausgabe, nicht die der Liste.
+    case events([Int])
 }
 
 /// Ein Beitrag im Verlauf: Äußerung des Nutzers und (gesprochene) Antwort.
@@ -385,9 +411,22 @@ public struct AssistantTurn: Sendable, Equatable, Codable {
     /// Die Beiträge, die ein Gespräch ANZEIGEN und in einen Prompt geben darf. Ist die Funktion „Antworten ohne Quelle“ nicht
     /// freigeschaltet (`released == false`), fallen alle Beiträge aus Runden ohne Quelle heraus, bevor sie angezeigt werden oder
     /// in einen Prompt gelangen. Reine Funktion; die Datei bleibt, bis der nächste Verlauf gespeichert wird, dann fehlen sie.
+    ///
+    /// Ein Beitrag ohne gespeicherte Einheiten (`parts` leer) oder mit einem Abschnitt ohne vollständige Marke (`AssistantTurnPart.isMarked`:
+    /// ein Zitat ohne die Quellzeile „Wörtlicher Auszug aus …“, ein Satz ohne Kennzeichnung) wird nie angezeigt und nie in einen Prompt
+    /// gegeben (Runde 8, R1/U2): Aus dem bloßen Text einer Antwort lässt sich nicht mehr sagen, ob er ein Auszug war. Solche Beiträge
+    /// (nur aus der Zeit vor den gespeicherten Einheiten) fallen beim Laden heraus; die Datei bleibt, bis der nächste Verlauf gespeichert wird.
     public static func admitted(_ turns: [AssistantTurn], released: Bool) -> [AssistantTurn] {
-        released ? turns : turns.filter { !$0.isUnsourced }
+        turns.filter { $0.hasMarkedUnits && (released || !$0.isUnsourced) }
     }
+
+    /// Die Einheiten des Beitrags sind gespeichert und jede trägt ihre vollständige Marke.
+    public var hasMarkedUnits: Bool { !parts.isEmpty && parts.allSatisfy(\.isMarked) }
+
+    /// Was die Ansicht von einem Beitrag zeigen darf (Runde 8, U2): alle Einheiten, wenn jede ihre vollständige Marke trägt, sonst
+    /// nichts. Es gibt keinen Rückfall auf den bloßen Text (`assistant`) und keine Einheit ohne Marke als einfachen Text. Die
+    /// Ansicht ruft nur diese Eigenschaft auf; der Kern prüft sie (die Ansicht selbst ist nur auf dem Mac prüfbar).
+    public var displayedParts: [AssistantTurnPart] { hasMarkedUnits ? parts : [] }
 
     /// Die synthetisierte Fassung ignoriert Standardwerte: Beiträge aus Verlaufsdateien vor dem Feld `unsourced` müssen laden.
     public init(from decoder: Decoder) throws {

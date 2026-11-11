@@ -45,7 +45,7 @@ final class AssistantContextTests: XCTestCase {
     private let strict = AssistantConfig(modelLabel: "Test", isCloud: false, contextTokens: 4_096, maxAnswerTokens: 400, userName: nil, timeout: 5)
 
     private func turn(_ round: AssistantRoundKind?, _ user: String = "Frage", at: Double = 0) -> AssistantTurn {
-        AssistantTurn(user: user, assistant: "Antwort", at: Date(timeIntervalSince1970: 1_760_000_000 + at), round: round)
+        AssistantTurn(user: user, assistant: "Antwort", at: Date(timeIntervalSince1970: 1_760_000_000 + at), round: round).shown
     }
 
     private func decide(_ c: AssistantContext, _ q: String, passages: [AssistantPassage] = [], optIn: Bool = true, inventory: Bool = false) -> AssistantContext.Decision {
@@ -347,7 +347,7 @@ final class AssistantContextTests: XCTestCase {
     func testHistoryWithAGeneralLastRoundDoesNotReachTheFreeStateAndItsTurnsNeverEnterAPrompt() async {
         let prompts = Prompts()
         let general = AssistantTurn(user: "Wie hoch ist der Mont Blanc?", assistant: "Der Zebrastreifenberg ist hoch.", general: true,
-                                    unsourced: true, model: "Test", round: .general)
+                                    unsourced: true, model: "Test", round: .general).shown
         let s = AssistantSession(model: ReplyModel(pieces: [castorpText], prompts: prompts), knowledge: await castorpKnowledge(), config: open,
                                  history: [turn(.data, "Alte Frage"), general])
         XCTAssertEqual(s.contextMode, .data)
@@ -364,13 +364,13 @@ final class AssistantContextTests: XCTestCase {
     /// Die reine Filterfunktion: Rundenart `.general`, ein Satz oder Abschnitt ohne Quelle (auch alte Beiträge ohne das Feld, die
     /// über `general` gelten) fallen bei `released == false` heraus; Beiträge mit Quelle und der feste Satz einer Datenrunde nicht.
     func testAdmittedFiltersTurnsOfRoundsWithoutASourceOnlyWhenNotReleased() {
-        let sourced = AssistantTurn(user: "a", assistant: "A", sources: [castorp], model: "T", round: .data)
-        let fixed = AssistantTurn(user: "f", assistant: "Dazu finde ich nichts in deinen Inhalten.", general: true, model: "T", round: .data)
-        let general = AssistantTurn(user: "g", assistant: "G", general: true, unsourced: true, model: "T", round: .general)
+        let sourced = AssistantTurn(user: "a", assistant: "A", sources: [castorp], model: "T", round: .data).shown
+        let fixed = AssistantTurn(user: "f", assistant: "Dazu finde ich nichts in deinen Inhalten.", general: true, model: "T", round: .data).shown
+        let general = AssistantTurn(user: "g", assistant: "G", general: true, unsourced: true, model: "T", round: .general).shown
         let mixed = AssistantTurn(user: "m", assistant: "M", sources: [castorp], unsourced: false,
-                                  parts: [AssistantTurnPart(text: "Z", unsourced: false, quote: true), AssistantTurnPart(text: "F", unsourced: true)],
-                                  model: "T", round: .data)
-        let flagged = AssistantTurn(user: "u", assistant: "U", unsourced: true, model: "T", round: nil)
+                                  parts: [AssistantTurnPart(text: "Z", unsourced: false, quote: true, source: castorp.excerptLine), AssistantTurnPart(text: "F", unsourced: true)],
+                                  model: "T", round: .data).shown
+        let flagged = AssistantTurn(user: "u", assistant: "U", unsourced: true, model: "T", round: nil).shown
         let all = [sourced, fixed, general, mixed, flagged]
         XCTAssertEqual(AssistantTurn.admitted(all, released: false).map(\.user), ["a", "f"])
         XCTAssertEqual(AssistantTurn.admitted(all, released: true).map(\.user), ["a", "f", "g", "m", "u"], "freigeschaltet: nichts fällt weg")
@@ -390,7 +390,7 @@ final class AssistantContextTests: XCTestCase {
         XCTAssertEqual(answer(first)?.round, .data)
         XCTAssertEqual(statuses(first), [.announcement, .grounded])
         XCTAssertEqual(s.contextMode, .data)
-        await s.commit(requestId: "r1", user: "Allgemein: Wohin fährt Hans Castorp?", spoken: castorpText, interrupted: false)
+        await s.commit(requestId: "r1", user: "Allgemein: Wohin fährt Hans Castorp?", spoken: .all, interrupted: false)
 
         let kept = await s.history
         let talking = AssistantSession(model: ReplyModel(pieces: ["Die Verantwortung trägt künftig Anna. Sie ist die neue Leiterin."], prompts: prompts),
@@ -407,7 +407,7 @@ final class AssistantContextTests: XCTestCase {
         XCTAssertEqual(s.contextMode, .data)
         await s.clearHistory()
         XCTAssertEqual(s.contextMode, .free, "„Neues Gespräch“: Anfangsregel")
-        await s.restore(history: [AssistantTurn(user: "Frage", assistant: "Antwort", round: .data)])
+        await s.restore(history: [AssistantTurn(user: "Frage", assistant: "Antwort", round: .data).shown])
         XCTAssertEqual(s.contextMode, .data)
         XCTAssertTrue(s.canResumeFree)
     }
@@ -416,7 +416,7 @@ final class AssistantContextTests: XCTestCase {
     /// Datenrunde oder vor dem Zurückschalten.
     func testPromptAfterResumeFreeContainsNoEarlierDataTurnNorEarlierFreeTurn() async {
         let prompts = Prompts()
-        let hist = [AssistantTurn(user: "Frage zum Buch", assistant: "Hans Castorp fährt nach Davos zu Joachim.", round: .data)]
+        let hist = [AssistantTurn(user: "Frage zum Buch", assistant: "Hans Castorp fährt nach Davos zu Joachim.", round: .data).shown]
         let s = AssistantSession(model: ReplyModel(pieces: [mont], prompts: prompts), knowledge: await castorpKnowledge(), config: open, history: hist, released: true)
         XCTAssertEqual(s.contextMode, .data)
         XCTAssertTrue(s.canResumeFree)
@@ -430,13 +430,13 @@ final class AssistantContextTests: XCTestCase {
         XCTAssertEqual(answer(events)?.round, .general)
         var p = prompts.all.last?.prompt ?? ""
         for word in ["Castorp", "Joachim", "Davos", "Frage zum Buch"] { XCTAssertFalse(p.contains(word), "\(word)\n\(p)") }
-        await s.commit(requestId: "r1", user: "Wie hoch ist der Mont Blanc?", spoken: mont, interrupted: false)
+        await s.commit(requestId: "r1", user: "Wie hoch ist der Mont Blanc?", spoken: .all, interrupted: false)
 
         _ = await collect(s, "r2", "Und wie alt ist er?")
         p = prompts.all.last?.prompt ?? ""
         XCTAssertTrue(p.contains("Nutzer: Wie hoch ist der Mont Blanc?"), "Beiträge ohne Quelle seit dem Zurückschalten sind im Prompt\n\(p)")
         XCTAssertFalse(p.contains("Frage zum Buch"))
-        await s.commit(requestId: "r2", user: "Und wie alt ist er?", spoken: "Der Berg ist sehr alt.", interrupted: false)
+        await s.commit(requestId: "r2", user: "Und wie alt ist er?", spoken: .all, interrupted: false)
 
         // Eine Datenrunde (nicht gesprochen, also nicht im Verlauf) rastet ein; nach dem Zurückschalten sieht der Prompt auch die
         // früheren Beiträge ohne Quelle nicht mehr.
@@ -455,7 +455,7 @@ final class AssistantContextTests: XCTestCase {
     func testResumeFreeRaisesTheGenerationRevokesRunsAndNotifiesTheObserver() async {
         let seen = Generations()
         let s = AssistantSession(model: ReplyModel(pieces: [mont]), knowledge: await castorpKnowledge(), config: open,
-                                 history: [AssistantTurn(user: "F", assistant: "A", round: .data)], released: true)
+                                 history: [AssistantTurn(user: "F", assistant: "A", round: .data).shown], released: true)
         s.setReleaseObserver { seen.add($0) }
         let g = s.releaseGeneration
         let r16 = await s.resumeFree()
@@ -502,7 +502,7 @@ final class AssistantContextTests: XCTestCase {
         XCTAssertEqual(s.registeredRunCount, 1)
         await s.releaseDidChange()
         XCTAssertEqual(s.registeredRunCount, 0)
-        let wrote = await s.commit(requestId: "r1", user: castorpQuestion, spoken: castorpText, interrupted: false)
+        let wrote = await s.commit(requestId: "r1", user: castorpQuestion, spoken: .all, interrupted: false)
         XCTAssertTrue(wrote)
         let history = await s.history
         XCTAssertEqual(history, [], "nach dem Widerruf kein Beitrag")
@@ -514,7 +514,7 @@ final class AssistantContextTests: XCTestCase {
         let again = await collect(s, "r2", castorpQuestion)
         XCTAssertNotNil(answer(again))
         XCTAssertEqual(s.registeredRunCount, 1)
-        await s.commit(requestId: "r2", user: castorpQuestion, spoken: castorpText, interrupted: false)
+        await s.commit(requestId: "r2", user: castorpQuestion, spoken: .all, interrupted: false)
         XCTAssertEqual(s.registeredRunCount, 0)
         let kept = await s.history
         XCTAssertEqual(kept.count, 1)
@@ -538,7 +538,7 @@ final class AssistantContextTests: XCTestCase {
                     return await s.history.count   // nach der Rückkehr von `bump` gelesen
                 }
                 group.addTask {
-                    await s.commit(requestId: id, user: castorpQuestion, spoken: castorpText, interrupted: false)
+                    await s.commit(requestId: id, user: castorpQuestion, spoken: .all, interrupted: false)
                     return -1
                 }
                 var out: [Int] = []

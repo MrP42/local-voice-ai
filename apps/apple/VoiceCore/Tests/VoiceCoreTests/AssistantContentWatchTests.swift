@@ -132,14 +132,17 @@ final class AssistantContentWatchTests: XCTestCase {
         XCTAssertTrue(s.isContentReady, "der Bestand steht: die neue Sitzung ist bereit")
     }
 
-    func testDetachingStopsTheCallsIntoTheSession() {
+    /// Runde 8 (R4): Die Meldestelle ruft die Ordnung des Prozesses unmittelbar, gleich ob ein Gespräch offen ist. `attach(nil)` löst
+    /// nichts (das Ende eines Gesprächs lässt Änderungen nicht wirkungslos), und eine Änderung ohne Gespräch erhöht die Generation.
+    func testTheOrderStaysBoundWhenAConversationEnds() {
         let watch = AssistantContentWatch()
         let s = session()
         watch.attach(s)
         watch.attach(nil)
         let before = s.releaseGeneration
         watch.around {}
-        XCTAssertEqual(s.releaseGeneration, before)
+        XCTAssertEqual(s.releaseGeneration, before + 1, "die Ordnung bleibt gebunden: auch ohne Gespräch erhöht jede Änderung")
+        XCTAssertFalse(s.isContentReady, "und der Bestand ist stale, bis ein Durchgang ihn meldet")
     }
 
     /// Viele Änderungen von vielen Threads, ein Durchgang dazwischen und einer am Ende: am Ende steht der Bestand, und die

@@ -3,34 +3,26 @@ import Foundation
 // Gesprächsmodus „Sprechen“ (Paket K, E4.2a in Paket A): Abruf und Bestand über die freigegebenen Bereiche.
 // Deterministisch (BM25), keine Werkzeugaufrufe des Modells. Bereiche, die nicht in `areas` stehen, kommen weder im
 // Bestand noch im Abruf vor. Eine Anfrage der Sitzung übergibt ihre Bereiche aus dem Freigabezustand (`areas:`), gelesen mit der
-// Generation aus einem Lock; der veränderliche Zustand `enabled` dieses Objekts gilt nur für Aufrufer ohne Angabe (Anzeige, Tests). Der Bestand kommt nicht mehr in den Prompt: Bestandsangaben (Zahl je Bereich, Titel) erzeugt das
+// Generation aus einem Lock (Runde 8, R3: der eine Stand der Ordnung). Dieses Objekt hält KEINEN veränderlichen Stand der Bereiche:
+// `areas` ist der feste Anfangswert (Aufrufer ohne Angabe: Anzeige, Tests; Sitzung ohne Zustandsdatei: ihr Anfangsstand) und wird nach
+// dem Anlegen nie mehr gesetzt. Der Bestand kommt nicht mehr in den Prompt: Bestandsangaben (Zahl je Bereich, Titel) erzeugt das
 // System aus diesen Daten (`inventoryStatements`), nie das Modell.
-
-/// Bereiche hinter einem Lock, damit die Sitzung beim Anlegen ohne Aktor-Sprung davon lesen kann.
-final class AssistantAreaBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: Set<AssistantArea>
-    init(_ value: Set<AssistantArea>) { self.value = value }
-    var current: Set<AssistantArea> {
-        get { lock.lock(); defer { lock.unlock() }; return value }
-        set { lock.lock(); value = newValue; lock.unlock() }
-    }
-}
 
 public actor AssistantKnowledge {
     private let corpus: AssistantCorpus
     private let sources: [any AssistantSource]
-    private var enabled: Set<AssistantArea> = Set(AssistantArea.allCases)
-    private nonisolated let box = AssistantAreaBox(Set(AssistantArea.allCases))
+    /// Der feste Anfangswert der Bereiche (nie verändert; die Freigabe lebt in der Ordnung, nicht hier).
+    public nonisolated let areas: Set<AssistantArea>
 
     /// Höchstens so viele Auszüge je Element im Gesamtergebnis (wie im Index).
     static let perItemCap = 3
     /// Ein Auszug unter dieser Länge wird nicht mehr gekürzt aufgenommen, sondern weggelassen.
     static let minClipChars = 200
 
-    public init(corpus: AssistantCorpus, sources: [any AssistantSource] = []) {
+    public init(corpus: AssistantCorpus, sources: [any AssistantSource] = [], areas: Set<AssistantArea> = Set(AssistantArea.allCases)) {
         self.corpus = corpus
         self.sources = sources
+        self.areas = areas
     }
 
     /// Baut den Bestand neu (Klasse B): ersetzt den Index durch genau diese Dokumente.
@@ -38,15 +30,13 @@ public actor AssistantKnowledge {
         await corpus.install(documents)
     }
 
-    public func setAreas(_ areas: Set<AssistantArea>) {
-        enabled = areas
-        box.current = areas
+    /// Dasselbe Wissen (Index und Quellen) mit anderen Anfangsbereichen: ein neues Objekt, nie eine Änderung dieses.
+    public nonisolated func withAreas(_ areas: Set<AssistantArea>) -> AssistantKnowledge {
+        AssistantKnowledge(corpus: corpus, sources: sources, areas: areas)
     }
 
-    public var areas: Set<AssistantArea> { enabled }
-
-    /// Die Bereiche zur Zeit, ohne Aktor-Sprung (Anfangswert der Sitzung).
-    public nonisolated var currentAreas: Set<AssistantArea> { box.current }
+    /// Der Anfangswert der Bereiche, ohne Aktor-Sprung (Anfangsstand einer Sitzung ohne Zustandsdatei).
+    public nonisolated var currentAreas: Set<AssistantArea> { areas }
 
     // MARK: Bestand
 
@@ -55,7 +45,7 @@ public actor AssistantKnowledge {
 
     /// Titel aller Elemente der freigegebenen Bereiche, ohne Doppelte (für die Eigendatenprüfung von Frage und Satz).
     public func inventoryTitles(areas: Set<AssistantArea>? = nil) async -> [String] {
-        let active = areas ?? enabled
+        let active = areas ?? self.areas
         var seen = Set<String>()
         var out: [String] = []
         for area in AssistantArea.allCases where active.contains(area) {
@@ -129,7 +119,7 @@ public actor AssistantKnowledge {
     /// freigegeben ist. Die Bereiche gehen ins Protokoll.
     public func inventoryGroups(question: String, areas: Set<AssistantArea>? = nil) async -> [(area: AssistantArea, statements: [String])] {
         let wanted = Self.inventoryAreas(for: question)
-        let active = areas ?? enabled
+        let active = areas ?? self.areas
         var out: [(area: AssistantArea, statements: [String])] = []
         for area in AssistantArea.allCases where active.contains(area) && (wanted?.contains(area) ?? true) {
             out.append((area, Self.statements(area: area, items: await items(in: area))))
@@ -144,7 +134,7 @@ public actor AssistantKnowledge {
     /// Abruf für die Prüfung eines Satzes ohne Quelle: der SATZ ist die Anfrage, über alle freigegebenen Bereiche, ohne Vorfrage
     /// und ohne die Sonderbehandlung von Bestandsfragen, mit großzügiger Obergrenze. Nur zum Verwerfen, nie zum Zitieren.
     public func probe(sentence: String, areas: Set<AssistantArea>? = nil) async -> [AssistantPassage] {
-        let active = areas ?? enabled
+        let active = areas ?? self.areas
         let trimmed = sentence.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !active.isEmpty else { return [] }
         var found = await corpus.search(trimmed, previous: nil, areas: active, limit: Self.probeLimit)
@@ -162,7 +152,7 @@ public actor AssistantKnowledge {
     /// Scores sind je Bereich auf 0…1 normiert (beste Stelle des Bereichs = 1), damit Bereiche vergleichbar werden.
     public func retrieve(question: String, previous: String?, limit: Int, maxChars: Int,
                          areas: Set<AssistantArea>? = nil) async -> [AssistantPassage] {
-        let active = areas ?? enabled
+        let active = areas ?? self.areas
         guard limit > 0, maxChars > 0, !active.isEmpty else { return [] }
         let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !Self.isInventoryQuestion(trimmed) else { return [] }

@@ -154,12 +154,17 @@ public struct AssistantTraceStep: Sendable, Equatable, Codable {
     /// Freigabe-Generation bei der Einordnung.
     public var generation: Int
     public var commits: [AssistantCommitMark]
+    /// Die Anfrage dieser Einheit ist regulär beendet (Zeile `end` mit einem Ausgang, der kein „unvollständig“ ist, und ohne den Vermerk,
+    /// dass Zeilen der Anfrage nicht geschrieben werden konnten). Nur der Leser setzt es (aus dem Eintrag, nicht aus der Datei der
+    /// Einheit); Vorgabe: beendet. Bestimmt, was eine fehlende Ergebniszeile bedeutet (`result(for:)`).
+    public var requestClosed: Bool
 
-    public init(n: Int, verdict: AssistantTraceVerdict, generation: Int, commits: [AssistantCommitMark] = []) {
+    public init(n: Int, verdict: AssistantTraceVerdict, generation: Int, commits: [AssistantCommitMark] = [], requestClosed: Bool = true) {
         self.n = n
         self.verdict = verdict
         self.generation = generation
         self.commits = commits
+        self.requestClosed = requestClosed
     }
 
     /// Ergebnis eines Commits einer Einheit, wie das Protokoll es zeigt.
@@ -170,11 +175,12 @@ public struct AssistantTraceStep: Sendable, Equatable, Codable {
         case discarded
         /// Die Handlung ließ sich nicht auslösen (`!`).
         case failed
-        /// Die Einordnung steht, das Ergebnis DIESER Art fehlt: Ausgabe möglich, Ergebnis unbekannt (Prozessende zwischen Handlung
-        /// und dauerhaftem Schreiben der Zeile). Es wird nie nachgeholt und nie als ausgeführt geschrieben.
+        /// Die Einordnung steht, das Ergebnis DIESER Art fehlt in einer nicht regulär beendeten Anfrage: Ausgabe möglich, Ergebnis
+        /// unbekannt (Prozessende zwischen Handlung und dauerhaftem Schreiben der Zeile). Es wird nie nachgeholt und nie als
+        /// ausgeführt geschrieben.
         case unknown
-        /// Es gab nichts zu tun: ein verworfener Kandidat oder ein Commit, der nicht begann, weil ein früherer der Einheit verworfen
-        /// oder fehlgeschlagen war.
+        /// Nicht ausgeführt: ein verworfener Kandidat (nichts vorgesehen), oder die Art hat in einer regulär beendeten Anfrage keine
+        /// Ergebniszeile (der Schreiber schreibt für eine Handlung, die nicht begann, keine).
         case notPlanned
     }
 
@@ -190,17 +196,16 @@ public struct AssistantTraceStep: Sendable, Equatable, Codable {
         }
     }
 
-    /// Schreibfolge (6), je Commit-Art EINZELN: Eine Art ohne Ergebniszeile ist „unbekannt“, auch wenn die Zeilen der anderen Arten
-    /// vorliegen. Eine Art nach einem verworfenen oder fehlgeschlagenen früheren Commit der Einheit begann nie („nicht geplant“).
+    /// Schreibfolge (6), je Commit-Art EINZELN, und nie aus einer anderen Art abgeleitet (Runde 8, R7): Steht die Zeile dieser Art, gilt
+    /// ihr Ergebnis. Fehlt sie, entscheidet allein die Anfrage: In einer nicht regulär beendeten Anfrage ist das Ergebnis dieser Art
+    /// UNBEKANNT (auch nach einem verworfenen oder fehlgeschlagenen früheren Commit: Was nach ihm geschah, steht nicht in der Datei), in
+    /// einer regulär beendeten wurde die Handlung nicht ausgeführt.
     public func result(for stage: AssistantCommitStage) -> UnitResult {
-        guard isOutput, let position = Self.unitStages.firstIndex(of: stage) else { return .notPlanned }
+        guard isOutput, Self.unitStages.contains(stage) else { return .notPlanned }
         if let mark = commits.last(where: { $0.stage == stage }) {
             return mark.failed ? .failed : (mark.ok ? .executed : .discarded)
         }
-        for earlier in Self.unitStages[..<position] {
-            if let mark = commits.last(where: { $0.stage == earlier }), !mark.ok { return .notPlanned }
-        }
-        return .unknown
+        return requestClosed ? .notPlanned : .unknown
     }
 
     /// Die Arten, deren Ergebnis unbekannt ist.
@@ -222,6 +227,7 @@ public struct AssistantTraceStep: Sendable, Equatable, Codable {
         verdict = try c.decode(AssistantTraceVerdict.self, forKey: .verdict)
         generation = try c.decode(Int.self, forKey: .generation)
         commits = try c.decodeIfPresent([AssistantCommitMark].self, forKey: .commits) ?? []
+        requestClosed = true
     }
 }
 
@@ -502,6 +508,9 @@ struct AssistantJournalLine: Codable, Equatable {
     /// Die Bereiche des anderen Ziels (lokal/Cloud), wenn die Zustandsdatei beide führt (`state`): die Zeile trägt den ganzen
     /// Stand der Klasse A, auch wenn die erste Sitzung des Laufs nur ein Ziel nutzt.
     var otherAreas: [String]?
+    /// Zeile `end`: Zeilen dieser Anfrage ließen sich nicht schreiben (Schreibfehler). Was in der Datei fehlt, heißt dann nicht
+    /// „nicht ausgeführt“, sondern „unbekannt“ (Runde 8, R7): Der Leser leitet aus dem Fehlen nichts ab.
+    var lost: Bool?
 
     init(_ t: Kind, req: String? = nil) {
         self.t = t
@@ -520,6 +529,12 @@ enum AssistantJournalFold {
     static func journal(_ line: Data) -> AssistantJournalLine? { try? decoder().decode(AssistantJournalLine.self, from: line) }
 
     /// Zähler aus der Satzspur: ein Satz, dessen Ereignis nicht hinausging (`e-`), zählt als widerrufen.
+    ///
+    /// Runde 8, Suchlauf (e): Das ist die EINE Leserregel, die aus einer Abwesenheit etwas ableitet: Ohne Vermerk `e-` gilt der Satz
+    /// als ausgegeben (auch wenn die Zeile des Ausgabe-Commits ganz fehlt, etwa beim Prozessende nach dem Schritt oder in Dateien aus
+    /// der Zeit vor den Commit-Zeilen). Das ist die vorsichtige Richtung für eine Aussage „was aus eigenen Inhalten ausgegeben wurde“:
+    /// Im Zweifel zählt ein Satz als möglicherweise ausgegeben (Stufe, Zähler), nie als sicher nicht ausgegeben. Der Zustand der
+    /// einzelnen Art (`AssistantTraceStep.result(for:)`) sagt dazu „unbekannt“, wo die Zeile fehlt.
     static func counts(from trace: [AssistantTraceStep]) -> AssistantSentenceCounts {
         var c = AssistantSentenceCounts()
         for step in trace {
@@ -580,6 +595,8 @@ enum AssistantJournalFold {
         /// Bereiche aus den Zeilen `areas` (je Eintrag; die Vereinigung gilt, solange kein `end` sie ablöst).
         var offered: [Int: Set<String>] = [:]
         var journalEntries: [Int] = []
+        /// Anfragen, deren Ende vermerkt, dass Zeilen der Anfrage nicht geschrieben werden konnten (`lost`).
+        var lostLines = Set<Int>()
         var skipped = 0
         for data in lines {
             guard let l = journal(data) else {
@@ -625,6 +642,7 @@ enum AssistantJournalFold {
                 entries[i].outcome = l.outcome
                 entries[i].areas = l.areas ?? (offered[i] ?? []).sorted()
                 if let level = l.level { endLevel[i] = level }
+                if l.lost == true { lostLines.insert(i) }
             case .release:
                 // Eine Zeile `release` ohne Generation gibt es nur für eine Änderung ohne Sitzung (es läuft kein Modell, also gibt es
                 // keine Generation): Sie trägt dann Lauf und Änderungsnummer. Ohne beides ist sie nicht lesbar.
@@ -674,6 +692,10 @@ enum AssistantJournalFold {
                 entries[i].outcome = .incomplete
                 entries[i].areas = (offered[i] ?? []).sorted()   // kein `end`: die Bereiche stammen aus den Zeilen `areas`
             }
+            // Was eine fehlende Ergebniszeile bedeutet, entscheidet allein die Anfrage (`AssistantTraceStep.result(for:)`): beendet nur
+            // mit regulärem Ende ohne Vermerk verlorener Zeilen.
+            let closed = entries[i].outcome != .incomplete && !lostLines.contains(i)
+            for k in entries[i].trace.indices { entries[i].trace[k].requestClosed = closed }
             entries[i].level = max(AssistantAuditLevel.of(entries[i].counts), endLevel[i] ?? .s0)
         }
         return (entries, skipped)
@@ -705,6 +727,19 @@ final class AssistantRunToken: @unchecked Sendable {
     }
 }
 
+/// Der Anspruch auf den Ausgang der Zeilen unter einem Schlüssel (Runde 8, R6). Der Fehler einer Zeile hängt am Anspruch dessen, der auf
+/// sie wartet (die Anfrage, die Änderung), nicht an einer Tabelle des Schreibers mit Obergrenze: Er geht nie verloren, solange der
+/// Anspruch besteht, gleich wie viele andere Schlüssel in der Zwischenzeit scheitern. Alle Entscheidungen (Abschluss der Anfrage,
+/// Stopp der Ausgabe, Ergebnis einer Änderung) lesen diesen einen Ort.
+final class AssistantAuditClaim: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: AssistantAuditError?
+
+    func record(_ error: AssistantAuditError) { lock.withLock { value = error } }
+    var error: AssistantAuditError? { lock.withLock { value } }
+    func take() -> AssistantAuditError? { lock.withLock { defer { value = nil }; return value } }
+}
+
 /// Der eine Schreiber eines Verzeichnisses. Alle Handles auf dasselbe Verzeichnis teilen ihn. Alle Zugriffe auf die Datei laufen
 /// auf einer seriellen Warteschlange: `enqueue` kehrt sofort zurück, die Zeilen werden in dieser Reihenfolge angehängt.
 final class AssistantAuditWriter: @unchecked Sendable {
@@ -727,6 +762,9 @@ final class AssistantAuditWriter: @unchecked Sendable {
         let line: AssistantJournalLine
         let run: AssistantRunToken?
         let key: String
+        /// Zeilen, auf die niemand wartet (Klasse B, Blockade): Scheitert das Schreiben, geht der Fehler an diese Stelle (Register der
+        /// Zeilen zum Nachholen), nie in eine Tabelle, aus der er verdrängt werden kann.
+        let onFailure: (@Sendable (AssistantAuditError) -> Void)?
     }
     private let pendingLock = NSLock()
     private var pending: [Pending] = []
@@ -742,13 +780,15 @@ final class AssistantAuditWriter: @unchecked Sendable {
     /// Das Ende der Datei ist unsicher (letzter Schreibvorgang abgebrochen): die nächste Zeile beginnt mit einem Zeilenumbruch.
     private var torn = false
     private var openError: AssistantAuditError = .readFailed
-    private var errors: [String: AssistantAuditError] = [:]
-    private var errorOrder: [String] = []
     /// Höchste Laufnummer in der Datei und unter den vergebenen (Schreibfolge 7).
     private var maxRun = 0
-    /// Schlüssel mit unabgeholtem Fehler, hinter einem eigenen Lock (lesbar ohne Warteschlange).
+    /// Hinter einem eigenen Lock (lesbar ohne Warteschlange): die Ansprüche auf Schlüssel (der Fehler einer Anfrage, einer Änderung
+    /// hängt an seinem Anspruch, `AssistantAuditClaim`) und die Fehler unter Schlüsseln OHNE Anspruch (Waisen: niemand wartet auf sie,
+    /// keine Entscheidung liest sie; nur diese sind begrenzt und werden verdrängt, der älteste zuerst).
     private let failedLock = NSLock()
-    private var failed = Set<String>()
+    private var claims: [String: AssistantAuditClaim] = [:]
+    private var orphans: [String: AssistantAuditError] = [:]
+    private var orphanOrder: [String] = []
     /// Wird gerufen, sobald eine Zeile einen Schreibfehler unter einem Schlüssel meldet (hinter `failedLock`; der Aufruf selbst
     /// geschieht außerhalb jedes Locks, auf der Schreibwarteschlange). Der Controller stoppt damit die Ausgabe SOFORT, auch mitten
     /// in der Wiedergabe, statt erst beim nächsten Start einer Einheit.
@@ -785,8 +825,15 @@ final class AssistantAuditWriter: @unchecked Sendable {
             renamed = true
             try fileSystem.syncDirectory(directory)
         } catch {
-            if !renamed { fileSystem.remove(temp) }
-            throw error
+            guard renamed else {
+                fileSystem.remove(temp)
+                throw error
+            }
+            // Runde 8, R2: Die neue Fassung liegt schon unter dem Namen der Datei, der Verzeichniseintrag ist aber nicht bestätigt
+            // (nach einem Absturz könnte die alte Fassung wieder dastehen, und alles, was danach angehängt wird, fehlte). Das ist kein
+            // Erfolg und wird nicht verschluckt: Das Verzeichnis gilt als unbestätigt, bis ein fsync es bestätigt hat. Jeder Wartepunkt
+            // (`makeDurable`) versucht es zuerst erneut; solange es scheitert, ist jede Zeile ein Schreibfehler („nicht gesichert“).
+            directoryUnsynced = true
         }
         BookTalkHistoryStore.excludeFromBackup(url)
     }
@@ -856,16 +903,23 @@ final class AssistantAuditWriter: @unchecked Sendable {
     // MARK: Schreiben
 
     /// Hängt eine Zeile an (asynchron, in der Reihenfolge der Aufrufe). Kehrt sofort zurück; ein Fehler wird unter `key` gemerkt
-    /// (Standard: die Anfrage der Zeile) und von `flush` gemeldet. Der Fehler bleibt stehen, bis er gemeldet wird: Er geht nie
-    /// verloren, und `hasFailed` zeigt ihn ohne Warten (Controller: laufende Ausgabe stoppen).
+    /// (Standard: die Anfrage der Zeile) und von `flush` gemeldet. Der Fehler hängt am Anspruch auf den Schlüssel
+    /// (`claim`): Wer einen Schlüssel angibt, wartet auf ihn und hat damit den Anspruch (er endet mit `waitForLine`); die Anfrage
+    /// legt ihren Anspruch beim Start an (`claim`). Ein Fehler geht nie verloren, und `hasFailed` zeigt ihn ohne Warten (Controller:
+    /// laufende Ausgabe stoppen). `onFailure`: für Zeilen, auf die niemand wartet; ohne Anspruch, der Fehler geht nur an diese Stelle.
     /// `run`: die Zeile trägt die Laufnummer des Tokens, die beim ersten Schreiben vergeben wird (nach dem Öffnen der Datei).
-    func enqueue(_ line: AssistantJournalLine, key: String? = nil, run: AssistantRunToken? = nil) {
+    func enqueue(_ line: AssistantJournalLine, key: String? = nil, run: AssistantRunToken? = nil,
+                 onFailure: (@Sendable (AssistantAuditError) -> Void)? = nil) {
         let k = key ?? line.req ?? ""
+        if key != nil, onFailure == nil { _ = claim(k) }
         guard run != nil || (try? Self.encoder().encode(line)) != nil else {
-            queue.async { self.note(k, .encodeFailed) }
+            queue.async {
+                self.note(k, .encodeFailed)
+                onFailure?(.encodeFailed)
+            }
             return
         }
-        pendingLock.withLock { pending.append(Pending(line: line, run: run, key: k)) }
+        pendingLock.withLock { pending.append(Pending(line: line, run: run, key: k, onFailure: onFailure)) }
         queue.async { self.drain() }
     }
 
@@ -878,63 +932,85 @@ final class AssistantAuditWriter: @unchecked Sendable {
             return all
         }
         guard !batch.isEmpty else { return }
-        var written: [String] = []
-        for item in batch where write(item.line, run: item.run, req: item.key) { written.append(item.key) }
+        var written: [Pending] = []
+        for item in batch where write(item) { written.append(item) }
         guard !written.isEmpty else { return }
         do {
             try makeDurable()
         } catch {
             torn = true   // das Ende der Datei ist unsicher: die nächste Zeile beginnt mit einem Zeilenumbruch
-            for key in Set(written) { note(key, .writeFailed) }
+            for key in Set(written.map(\.key)) { note(key, .writeFailed) }
+            for item in written { item.onFailure?(.writeFailed) }
         }
     }
 
     /// Wartet, bis alles bis hierher Eingereihte geschrieben ist. Gibt den Fehler zurück, der für `request` (oder ohne Anfrage:
-    /// für Ereignisse) aufgetreten ist, und vergisst ihn.
-    /// `consume: false` lässt den Fehler stehen (er wird später beim Abschluss der Anfrage gemeldet).
+    /// für Ereignisse) aufgetreten ist. Ein Anspruch behält ihn (`consume: false`) oder gibt ihn ab (`consume: true`, dann ist er
+    /// gemeldet); ein Schlüssel ohne Anspruch vergisst ihn beim Abholen.
     func flush(request: String?, consume: Bool = true) async -> AssistantAuditError? {
         await withCheckedContinuation { c in
             queue.async {
-                let key = request ?? ""
-                if consume {
-                    c.resume(returning: self.take(key))
-                } else {
-                    c.resume(returning: self.errors[key])
-                }
+                c.resume(returning: self.outcome(of: request ?? "", consume: consume))
             }
         }
     }
 
     /// Hat eine Zeile dieses Schlüssels einen Fehler gemeldet, der noch nicht abgeholt wurde? Ohne Warten und ohne Warteschlange
-    /// (ein Lock): auch aus dem MainActor aufrufbar. Zeigt nur schon geschehene Fehler; für den aktuellen Stand `flush`.
+    /// (ein Lock): auch aus dem MainActor aufrufbar. Zeigt nur schon geschehene Fehler; für den aktuellen Stand `flush`. Dieselbe
+    /// Quelle wie `flush` (der Anspruch).
     func hasFailed(_ key: String) -> Bool {
         failedLock.lock()
         defer { failedLock.unlock() }
-        return failed.contains(key)
+        if let c = claims[key] { return c.error != nil }
+        return orphans[key] != nil
     }
+
+    /// Meldet den Anspruch auf einen Schlüssel an (Runde 8, R6; mehrfach gerufen: derselbe Anspruch). Von da an hängt der Fehler jeder
+    /// Zeile unter diesem Schlüssel an ihm, bis `release` ihn beendet; er wird nie verdrängt.
+    @discardableResult
+    func claim(_ key: String) -> AssistantAuditClaim {
+        failedLock.lock()
+        defer { failedLock.unlock() }
+        if let c = claims[key] { return c }
+        let c = AssistantAuditClaim()
+        claims[key] = c
+        return c
+    }
+
+    /// Beendet den Anspruch (die Anfrage ist abgeschlossen, die Änderung gemeldet).
+    func release(_ key: String) {
+        failedLock.lock()
+        claims[key] = nil
+        failedLock.unlock()
+    }
+
+    /// Zahl der bestehenden Ansprüche (Tests: Ansprüche werden beendet).
+    var claimCount: Int { failedLock.withLock { claims.count } }
 
     // Nur auf `queue`:
-    private func take(_ key: String) -> AssistantAuditError? {
+    private func outcome(of key: String, consume: Bool) -> AssistantAuditError? {
         failedLock.lock()
-        failed.remove(key)
-        failedLock.unlock()
-        errorOrder.removeAll { $0 == key }
-        return errors.removeValue(forKey: key)
+        defer { failedLock.unlock() }
+        if let c = claims[key] { return consume ? c.take() : c.error }
+        guard consume else { return orphans[key] }
+        orphanOrder.removeAll { $0 == key }
+        return orphans.removeValue(forKey: key)
     }
 
-    private func note(_ req: String, _ error: AssistantAuditError) {
-        // Obergrenze: der älteste unabgeholte Fehler fällt zuerst heraus (nur bei unabgeholten Fehlern vieler Anfragen).
-        if errors[req] == nil { errorOrder.append(req) }
-        errors[req] = error
-        while errorOrder.count > Self.maxErrors {
-            let old = errorOrder.removeFirst()
-            errors[old] = nil
-        }
+    private func note(_ key: String, _ error: AssistantAuditError) {
         failedLock.lock()
-        failed.insert(req)
+        if let c = claims[key] {
+            c.record(error)
+        } else {
+            // Ein Schlüssel ohne Anspruch: Niemand wartet auf ihn, keine Entscheidung liest ihn. Die Obergrenze verdrängt nur solche
+            // Fehler (der älteste zuerst); den Fehler einer Anfrage oder einer Änderung verdrängt sie nie.
+            if orphans[key] == nil { orphanOrder.append(key) }
+            orphans[key] = error
+            while orphanOrder.count > Self.maxErrors { orphans[orphanOrder.removeFirst()] = nil }
+        }
         let observer = failureObserver
         failedLock.unlock()
-        observer?(req)
+        observer?(key)
     }
 
     func setFailureObserver(_ observer: (@Sendable (String) -> Void)?) {
@@ -944,18 +1020,18 @@ final class AssistantAuditWriter: @unchecked Sendable {
     }
 
     /// `true`: die Zeile wurde angehängt (noch nicht dauerhaft: das deckt das fsync der Gruppe).
-    private func write(_ journal: AssistantJournalLine, run: AssistantRunToken?, req: String) -> Bool {
-        guard openIfNeeded() else {
-            note(req, openError)
+    private func write(_ item: Pending) -> Bool {
+        let req = item.key
+        func fail(_ error: AssistantAuditError) -> Bool {
+            note(req, error)
+            item.onFailure?(error)
             return false
         }
-        var journal = journal
-        if let run { journal.run = run.resolve { maxRun += 1; return maxRun } }
+        guard openIfNeeded() else { return fail(openError) }
+        var journal = item.line
+        if let run = item.run { journal.run = run.resolve { maxRun += 1; return maxRun } }
         if let r = journal.run, r > maxRun { maxRun = r }
-        guard let line = try? Self.encoder().encode(journal) else {
-            note(req, .encodeFailed)
-            return false
-        }
+        guard let line = try? Self.encoder().encode(journal) else { return fail(.encodeFailed) }
         var data = Data()
         if torn { data.append(10) }
         data.append(line)
@@ -966,8 +1042,7 @@ final class AssistantAuditWriter: @unchecked Sendable {
             return true
         } catch {
             torn = true
-            note(req, .writeFailed)
-            return false
+            return fail(.writeFailed)
         }
     }
 
@@ -1007,12 +1082,20 @@ final class AssistantAuditWriter: @unchecked Sendable {
         }
         // Das Wiederherstellungs-Ende faltet die Bereiche aus den vorhandenen Zeilen `areas`; die Rundenart steht in ihrer Zeile
         // `round` und braucht nichts. Was das Prozessende überlebt hat, geht so nicht verloren.
-        let closing: [Data] = started.filter { !ended.contains($0) }.compactMap { req in
+        var closing: [Data] = []
+        for req in started where !ended.contains(req) {
             var end = AssistantJournalLine(.end, req: req)
             end.at = Date()
             end.outcome = .incomplete
             end.areas = (offered[req] ?? []).sorted()
-            return try? Self.encoder().encode(end)
+            // Runde 8 (Suchlauf d): Ein Ende, das sich nicht kodieren lässt, wird nicht übergangen (die Anfrage bliebe offen, ohne dass
+            // jemand es erfährt), sondern ist ein Fehler beim Öffnen; beim nächsten Mal wird erneut versucht. Nicht einspielbar (der
+            // Aufbau der Zeile ist fest), darum ohne Test.
+            guard let bytes = try? Self.encoder().encode(end) else {
+                openError = .encodeFailed
+                return false
+            }
+            closing.append(bytes)
         }
 
         var order: [String] = []
@@ -1079,12 +1162,22 @@ final class AssistantAuditWriter: @unchecked Sendable {
         return AssistantAuditRead(entries: folded.entries, skippedLines: folded.skipped, error: nil)
     }
 
-    func clear() async {
+    /// Löscht die Protokolldatei (nur auf ausdrücklichen Wunsch). `false`, wenn sie sich nicht löschen ließ (die Datei bleibt dann, wie
+    /// sie ist: Nichts geht verloren, und das Protokoll gilt weiter). Eine danach neu angelegte Datei hat einen unbestätigten
+    /// Verzeichniseintrag: Der Schreiber öffnet sie wie beim ersten Mal neu (`opened = false`), das Verzeichnis gilt als unbestätigt.
+    @discardableResult
+    func clear() async -> Bool {
         await withCheckedContinuation { c in
             queue.async {
-                try? FileManager.default.removeItem(at: self.url)
+                do {
+                    if FileManager.default.fileExists(atPath: self.url.path) { try FileManager.default.removeItem(at: self.url) }
+                } catch {
+                    c.resume(returning: false)
+                    return
+                }
                 self.torn = false
-                c.resume()
+                self.opened = false
+                c.resume(returning: true)
             }
         }
     }
@@ -1148,7 +1241,21 @@ public struct AssistantAuditLog: Sendable {
     // MARK: Journal (Kern)
 
     /// Reiht eine Zeile ein; kehrt sofort zurück. `key`: unter ihm wird ein Schreibfehler gemerkt (Standard: die Anfrage).
-    func enqueue(_ line: AssistantJournalLine, key: String? = nil, run: AssistantRunToken? = nil) { writer.enqueue(line, key: key, run: run) }
+    func enqueue(_ line: AssistantJournalLine, key: String? = nil, run: AssistantRunToken? = nil,
+                 onFailure: (@Sendable (AssistantAuditError) -> Void)? = nil) {
+        writer.enqueue(line, key: key, run: run, onFailure: onFailure)
+    }
+
+    /// Der Anspruch der Anfrage (Runde 8, R6): ab hier hängt der Fehler jeder Zeile der Anfrage an ihrem Anspruch (nie verdrängt, auch
+    /// nicht von Fehlern anderer Schlüssel). Er endet mit `release`.
+    @discardableResult
+    func claim(request: String) -> AssistantAuditClaim { writer.claim(request) }
+
+    /// Beendet den Anspruch der Anfrage (abgeschlossen).
+    func release(request: String) { writer.release(request) }
+
+    /// Anzahl der bestehenden Ansprüche (Tests).
+    var claimCount: Int { writer.claimCount }
 
     /// Schreibt die erste Zeile einer Anfrage und wartet, bis sie steht. `false` bei einem Fehler; der Fehler bleibt für den
     /// Abschluss der Anfrage (`flush`) gemerkt, damit er nie verloren geht.
@@ -1171,7 +1278,11 @@ public struct AssistantAuditLog: Sendable {
     public func setFailureObserver(_ observer: (@Sendable (String) -> Void)?) { writer.setFailureObserver(observer) }
 
     /// Wartet auf die Zeile mit diesem Schlüssel (`release:<Generation>`, `state`) und holt ihren Fehler ab.
-    func waitForLine(key: String) async -> AssistantAuditError? { await writer.flush(request: key) }
+    func waitForLine(key: String) async -> AssistantAuditError? {
+        let error = await writer.flush(request: key)
+        writer.release(key)
+        return error
+    }
 
     /// Wartet, bis alle bisher eingereihten Zeilen ohne Anfrage (Ereignisse) geschrieben sind. Der Fehler dabei
     /// (Speicher voll, Datei nicht lesbar), sonst `nil`; er wird damit gemeldet und vergessen.
@@ -1179,6 +1290,9 @@ public struct AssistantAuditLog: Sendable {
 
     /// Wartet, bis alle Zeilen der Anfrage geschrieben sind. Der Fehler dieser Anfrage, sonst `nil`; er wird damit abgeholt.
     func flush(request: String) async -> AssistantAuditError? { await writer.flush(request: request) }
+
+    /// Wartet, bis alles Eingereihte steht (die Warteschlange ist leer), ohne einen Fehler abzuholen (Sperre vor einem Lesen).
+    func barrier() async { _ = await writer.flush(request: nil, consume: false) }
 
     // MARK: Ereignisse und Lesen
 
@@ -1195,8 +1309,11 @@ public struct AssistantAuditLog: Sendable {
         line.unsourced = entry.unsourcedMode
         line.consent = entry.consentVersion
         line.gen = entry.generation
-        writer.enqueue(line)
-        return await writer.flush(request: nil)
+        // Ein eigener Schlüssel je Ereignis (Anspruch): Der Fehler dieses Ereignisses hängt an seinem Anspruch, nicht an einem
+        // gemeinsamen Schlüssel, den die Fehler anderer Zeilen verdrängen könnten.
+        let key = "event:" + UUID().uuidString
+        writer.enqueue(line, key: key)
+        return await waitForLine(key: key)
     }
 
     /// Wie `append`, mit `false` bei einem Fehler.
@@ -1209,5 +1326,6 @@ public struct AssistantAuditLog: Sendable {
     public func entries() async -> [AssistantAuditEntry] { await writer.read().entries }
 
     /// Nur auf ausdrücklichen Wunsch (z. B. Prüfung); „Neues Gespräch“ löscht das Protokoll nicht.
-    public func clear() async { await writer.clear() }
+    @discardableResult
+    public func clear() async -> Bool { await writer.clear() }
 }

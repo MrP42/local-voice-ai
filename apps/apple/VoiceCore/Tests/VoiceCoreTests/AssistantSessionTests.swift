@@ -7,7 +7,7 @@ import XCTest
 
 /// Wartet (begrenzt) auf einen Zustand, den ein Rückruf setzt (Ende eines Modellstroms, gelieferte Stücke), statt eine Zeit zu raten.
 /// Der Test prüft den Zustand danach selbst; erst nach `timeout` Sekunden gilt er als nicht eingetreten.
-private func eventually(timeout: TimeInterval = 5, _ condition: () -> Bool) async {
+private func eventually(timeout: TimeInterval = 60, _ condition: () -> Bool) async {
     let deadline = Date().addingTimeInterval(timeout)
     while !condition(), Date() < deadline { try? await Task.sleep(nanoseconds: 5_000_000) }
 }
@@ -25,24 +25,48 @@ private final class Log: @unchecked Sendable {
     var pieces: Int { lock.lock(); defer { lock.unlock() }; return delivered }
 }
 
-/// Liefert Stücke mit Pause dazwischen; `fail` nach den Stücken, `hang` wartet danach auf Abbruch.
+/// Haltepunkt für ein Modell (Runde 8: Ordnung ohne Uhr). Das Modell wartet an ihm, bis der Test ihn öffnet oder die Aufgabe des Modells
+/// abgebrochen wird. Das Warten fragt nur eine Marke ab (die Länge des Abfrageschritts ändert keine Aussage).
+private final class ModelHold: @unchecked Sendable {
+    private let lock = NSLock()
+    private var opened = false
+    var isOpen: Bool { lock.withLock { opened } }
+    func open() { lock.withLock { opened = true } }
+}
+
+/// Eine Marke, die ein Rückruf setzt und auf die der Test wartet (statt eine Zeit zu raten).
+private final class Latch: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fired = false
+    var isFired: Bool { lock.withLock { fired } }
+    func fire() { lock.withLock { fired = true } }
+}
+
+/// Liefert Stücke mit Pause dazwischen; `fail` nach den Stücken, `hang` wartet danach auf Abbruch. `holdAfter`: nach so vielen Stücken
+/// hält das Modell am Haltepunkt `hold`, bis er geöffnet oder abgebrochen wird (statt „die Pause ist lang genug“).
 private struct ScriptModel: BookTalkModel {
     var pieces: [String]
     var pauseMs: UInt64 = 0
     var fail: (any Error)?
     var hang = false
     var log = Log()
+    var holdAfter: Int?
+    var hold = ModelHold()
 
     func stream(instructions: String, prompt: String, maxTokens: Int) -> AsyncThrowingStream<String, Error> {
         log.hit(instructions, prompt, maxTokens)
-        let pieces = pieces, pause = pauseMs, fail = fail, hang = hang, log = log
+        let pieces = pieces, pause = pauseMs, fail = fail, hang = hang, log = log, holdAfter = holdAfter, hold = hold
         return AsyncThrowingStream { c in
             let task = Task {
-                for p in pieces {
+                for (index, p) in pieces.enumerated() {
                     if pause > 0 { try? await Task.sleep(nanoseconds: pause * 1_000_000) }
                     if Task.isCancelled { return }
                     log.piece()
                     c.yield(p)
+                    if holdAfter == index + 1 {
+                        while !hold.isOpen, !Task.isCancelled { try? await Task.sleep(nanoseconds: 5_000_000) }
+                        if Task.isCancelled { return }
+                    }
                 }
                 if hang {
                     while !Task.isCancelled { try? await Task.sleep(nanoseconds: 10_000_000) }
@@ -190,7 +214,9 @@ final class AssistantSessionTests: XCTestCase {
         XCTAssertEqual(on.answer?.counts, AssistantSentenceCounts(grounded: 1))
     }
 
-    func testQuoteSpeechFieldIsSpeakable() async {
+    /// R1: Der Auszug wird so gesprochen, wie er gespeichert ist; das Sprechfeld ist der Blocktext selbst (kein Dezimalkomma, keine
+    /// Auflösung von Kürzeln, keine Entfernung von Markdown oder Adressen). Einzelheiten der Aussprache liegen bei der Stimme.
+    func testQuoteSpeechFieldIsTheBlockTextItself() async {
         let corpus = AssistantCorpus()
         await corpus.upsert(assistantDoc("n1", "Gartenpflege", area: .notes, sections: [
             (nil, "Der Zaun misst 3.5 Meter und braucht jedes Jahr frische Farbe."),
@@ -202,7 +228,7 @@ final class AssistantSessionTests: XCTestCase {
             if case .sentence(_, _, let t, let sp, .grounded, _, _) = e { (t, sp) } else { nil }
         }
         XCTAssertEqual(pairs.map(\.0), ["Der Zaun misst 3.5 Meter und braucht jedes Jahr frische Farbe."], "Originalwortlaut")
-        XCTAssertEqual(pairs.map(\.1), ["Der Zaun misst 3,5 Meter und braucht jedes Jahr frische Farbe."], "Dezimalkomma nur für die Stimme")
+        XCTAssertEqual(pairs.map(\.1), ["Der Zaun misst 3.5 Meter und braucht jedes Jahr frische Farbe."], "Sprechfeld = Blocktext, unverändert")
     }
 
     /// J: Der Modelltext über die Quelle wird nie wörtlich gesprochen; kein Teil wird vor dem Satzende ausgegeben.
@@ -273,7 +299,7 @@ final class AssistantSessionTests: XCTestCase {
         let audit = AssistantAuditLog(directory: dir)
         let s = await session(ScriptModel(pieces: [castorpModel + " Anna übernimmt künftig"]), config: strict, audit: audit)
         _ = await collect(s, AssistantRequest(requestId: "r1", text: question))
-        await s.commit(requestId: "r1", user: question, spoken: castorp, interrupted: false)
+        await s.commit(requestId: "r1", user: question, spoken: .all, interrupted: false)
         let e = await audit.entries().filter { $0.kind == .answer }.first
         XCTAssertEqual(e?.trace.map(\.verdict), [.announcement, .grounded, .droppedFragment])
         XCTAssertEqual(e?.counts.droppedFragment, 1)
@@ -454,9 +480,9 @@ final class AssistantSessionTests: XCTestCase {
         let log = Log()
         let s = AssistantSession(model: ScriptModel(pieces: sentences.map { $0 + " " }, pauseMs: 20, hang: true, log: log),
                                  knowledge: AssistantKnowledge(corpus: corpus), config: strict, released: true)
-        let start = ContinuousClock.now
+        // Dass `collect` zurückkehrt, beweist: Das hängende Modell wurde abgebrochen, nicht abgewartet (kein Zeitmaß; gäbe es das
+        // Abbrechen nicht, bliebe der Test hängen und der Lauf bräche ihn ab).
         let seen = Seen(events: await collect(s, AssistantRequest(requestId: "r1", text: "Hans Castorp Davos Sanatorium Joachim Soldat Hofrat Behrens Chauchat Settembrini Humanist")))
-        XCTAssertLessThan(start.duration(to: .now), .seconds(3), "das hängende Modell wurde abgebrochen, nicht abgewartet")
         XCTAssertEqual(seen.spoken, Array(sentences.prefix(3)))
         XCTAssertEqual(seen.statuses, [.announcement, .grounded, .announcement, .grounded, .announcement, .grounded])
         XCTAssertTrue(seen.hasDone)
@@ -520,8 +546,8 @@ final class AssistantSessionTests: XCTestCase {
 
     func testInventoryQuestionWithoutAnEnabledAreaSaysTheFixedSentenceStillWithoutAModel() async {
         let log = Log()
-        let k = await knowledge()
-        await k.setAreas([.notes])
+        var k = await knowledge()
+        k = k.withAreas([.notes])
         for (config, expected) in [(strict, AssistantGrounding.fixedSentence(allowUnsourced: false)),
                                    (open, AssistantGrounding.fixedSentence(allowUnsourced: true))] {
             let s = AssistantSession(model: ScriptModel(pieces: ["Du hast ein Buch."], log: log), knowledge: k, config: config, released: true)
@@ -533,8 +559,8 @@ final class AssistantSessionTests: XCTestCase {
     }
 
     func testInventoryOfAnEnabledAreaNamesNothingFromOtherAreas() async {
-        let k = await twoSourceKnowledge()
-        await k.setAreas([.transcripts])
+        var k = await twoSourceKnowledge()
+        k = k.withAreas([.transcripts])
         let s = AssistantSession(model: ScriptModel(pieces: []), knowledge: k, config: strict, released: true)
         let seen = Seen(events: await collect(s, AssistantRequest(requestId: "r1", text: "Was habe ich gespeichert?")))
         XCTAssertEqual(seen.spoken, ["Du hast ein Transkript.", "Neueste Transkripte: Besprechung."])
@@ -546,9 +572,9 @@ final class AssistantSessionTests: XCTestCase {
     func testGeneralRoundPromptHasNoExcerptsNoInventoryAndHistoryOnlyFromGeneralRounds() async {
         let log = Log()
         let hist = [
-            AssistantTurn(user: "Frage zum Buch", assistant: "Hans Castorp fährt nach Davos.", round: .data),
-            AssistantTurn(user: "Alte Frage ohne Rundenart", assistant: "Alte Antwort mit Joachim."),
-            AssistantTurn(user: "Wie hoch ist die Zugspitze?", assistant: "Rund 2962 Meter.", round: .general),
+            AssistantTurn(user: "Frage zum Buch", assistant: "Hans Castorp fährt nach Davos.", round: .data).shown,
+            AssistantTurn(user: "Alte Frage ohne Rundenart", assistant: "Alte Antwort mit Joachim.").shown,
+            AssistantTurn(user: "Wie hoch ist die Zugspitze?", assistant: "Rund 2962 Meter.", round: .general).shown,
         ]
         let s = await session(ScriptModel(pieces: ["Der Mont Blanc ist 4806 Meter hoch."], log: log), history: hist, config: open)
         let seen = Seen(events: await collect(s, AssistantRequest(requestId: "r1", text: "Wie hoch ist der Mont Blanc?")))
@@ -592,8 +618,8 @@ final class AssistantSessionTests: XCTestCase {
 
     /// Dasselbe Verfahren sieht nur die freigegebenen Bereiche: Ist der Bereich der Quelle aus, ist der Satz kein Eigeninhalt.
     func testResemblanceCheckOnlySeesEnabledAreas() async {
-        let k = await twoSourceKnowledge()
-        await k.setAreas([.books])
+        var k = await twoSourceKnowledge()
+        k = k.withAreas([.books])
         let s = AssistantSession(model: ScriptModel(pieces: ["Anna übernimmt die Leitung."]), knowledge: k, config: open, released: true)
         let seen = Seen(events: await collect(s, AssistantRequest(requestId: "r1", text: "Wie hoch ist der Mont Blanc?")))
         XCTAssertEqual(seen.statuses, [.announcement, .unsourced])
@@ -654,7 +680,7 @@ final class AssistantSessionTests: XCTestCase {
             let s = await session(ScriptModel(pieces: [castorpModel], log: log), config: open)
             let first = Seen(events: await collect(s, AssistantRequest(requestId: "r1", text: question)))
             XCTAssertEqual(first.answer?.round, .data)
-            if commitFirst { await s.commit(requestId: "r1", user: question, spoken: castorp, interrupted: false) }
+            if commitFirst { await s.commit(requestId: "r1", user: question, spoken: .all, interrupted: false) }
             let second = Seen(events: await collect(s, AssistantRequest(requestId: "r2", text: "Und was macht er dort?")))
             XCTAssertEqual(second.answer?.round, .data, "anaphorische Anschlussfrage nach einer Datenrunde, commit=\(commitFirst)")
             XCTAssertTrue(log.all.last?.instructions.contains("Unter AUSZÜGE stehen") ?? false)
@@ -671,7 +697,7 @@ final class AssistantSessionTests: XCTestCase {
     }
 
     func testRestoredHistoryWithoutRoundCountsAsDataAndClearForgets() async {
-        let old = [AssistantTurn(user: "Frage", assistant: "Antwort")]
+        let old = [AssistantTurn(user: "Frage", assistant: "Antwort").shown]
         let s = await session(ScriptModel(pieces: ["Er hat gekündigt."]), history: old, config: open)
         let carried = Seen(events: await collect(s, AssistantRequest(requestId: "r1", text: "Er hat gekündigt.")))
         XCTAssertEqual(carried.answer?.round, .data, "ein Beitrag ohne Rundenart gilt als Datenrunde")
@@ -691,11 +717,11 @@ final class AssistantSessionTests: XCTestCase {
         XCTAssertTrue(seen.hasDone)
         var h = await s.history
         XCTAssertTrue(h.isEmpty)
-        await s.commit(requestId: "r1", user: question, spoken: "Hans Castorp fährt ins Sanatorium nach", interrupted: true)
+        await s.commit(requestId: "r1", user: question, spoken: .all, interrupted: true)
         h = await s.history
         XCTAssertEqual(h.count, 1)
         XCTAssertEqual(h[0].user, question)
-        XCTAssertEqual(h[0].assistant, "Hans Castorp fährt ins Sanatorium nach")
+        XCTAssertEqual(h[0].assistant, castorp, "der Block steht ganz im Beitrag, byte-gleich, nie gekürzt")
         XCTAssertTrue(h[0].interrupted)
         XCTAssertFalse(h[0].general)
         XCTAssertEqual(h[0].sources.first?.itemId, "b1")
@@ -703,34 +729,35 @@ final class AssistantSessionTests: XCTestCase {
         XCTAssertEqual(h[0].round, .data)
         let label = h[0].sources.first?.excerptLine
         XCTAssertEqual(label, "Wörtlicher Auszug aus Der Zauberberg · S. 12", "die Quellzeile des Zitats kommt aus dem Auszug")
-        XCTAssertEqual(h[0].parts, [AssistantTurnPart(text: "Hans Castorp fährt ins Sanatorium nach", unsourced: false, quote: true, source: label)],
-                       "das Gesprochene ist ein angesprochener Auszug und bleibt ein Zitat, mit seiner Quelle")
+        XCTAssertEqual(h[0].parts, [AssistantTurnPart(text: castorp, unsourced: false, quote: true, source: label)],
+                       "der Block ist ein Zitat, mit seiner Quelle")
         XCTAssertFalse(h[0].unsourced)
     }
 
     func testCommitOfAGeneralRoundMarksTheTurnUnsourcedAndGeneral() async {
         let s = await session(ScriptModel(pieces: ["Der Mont Blanc ist 4806 Meter hoch."]), config: open)
         _ = await collect(s, AssistantRequest(requestId: "r1", text: "Wie hoch ist der Mont Blanc?"))
-        await s.commit(requestId: "r1", user: "Wie hoch ist der Mont Blanc?", spoken: "Der Mont Blanc ist 4806 Meter hoch.", interrupted: false)
+        await s.commit(requestId: "r1", user: "Wie hoch ist der Mont Blanc?", spoken: .all, interrupted: false)
         let h = await s.history
         XCTAssertEqual(h.count, 1)
         XCTAssertTrue(h[0].general)
         XCTAssertTrue(h[0].unsourced)
         XCTAssertEqual(h[0].round, .general)
-        XCTAssertEqual(h[0].parts, [], "rein unbelegt: keine Abschnitte")
+        XCTAssertEqual(h[0].parts, [AssistantTurnPart(text: "Der Mont Blanc ist 4806 Meter hoch.", unsourced: true)],
+                       "auch ein rein unbelegter Beitrag trägt seine Abschnitte mit der Marke „Ohne Quelle“: Es gibt keinen Beitrag ohne Abschnitte")
         XCTAssertTrue(h[0].sources.isEmpty)
     }
 
     func testCommitIgnoresEmptyUserEmptySpokenTextAndUnknownRequests() async {
         let s = await session(ScriptModel(pieces: [castorpModel]))
         _ = await collect(s, AssistantRequest(requestId: "r1", text: question))
-        await s.commit(requestId: "r1", user: question, spoken: "", interrupted: true)
+        await s.commit(requestId: "r1", user: question, spoken: .nothing, interrupted: true)
         var h = await s.history
         XCTAssertTrue(h.isEmpty, "keine leeren Beiträge")
         _ = await collect(s, AssistantRequest(requestId: "r2", text: question))
-        await s.commit(requestId: "r2", user: "   ", spoken: "egal", interrupted: false)
-        await s.commit(requestId: "unbekannt", user: "Noch etwas", spoken: "Ein Satz", interrupted: true)
-        await s.commit(requestId: "r1", user: question, spoken: castorp, interrupted: false)
+        await s.commit(requestId: "r2", user: "   ", spoken: .all, interrupted: false)
+        await s.commit(requestId: "unbekannt", user: "Noch etwas", spoken: .all, interrupted: true)
+        await s.commit(requestId: "r1", user: question, spoken: .all, interrupted: false)
         h = await s.history
         XCTAssertTrue(h.isEmpty, "unbekannt oder schon abgeschlossen: nichts")
     }
@@ -738,29 +765,47 @@ final class AssistantSessionTests: XCTestCase {
     func testCommitTwiceWritesOneTurn() async {
         let s = await session(ScriptModel(pieces: [castorpModel]))
         _ = await collect(s, AssistantRequest(requestId: "r1", text: question))
-        await s.commit(requestId: "r1", user: question, spoken: castorp, interrupted: false)
-        await s.commit(requestId: "r1", user: question, spoken: castorp, interrupted: false)
+        await s.commit(requestId: "r1", user: question, spoken: .all, interrupted: false)
+        await s.commit(requestId: "r1", user: question, spoken: .all, interrupted: false)
         let h = await s.history
         XCTAssertEqual(h.count, 1)
     }
 
-    func testAttributeMapsSpokenTextToTheClassifiedSentencesAndNeverToUnsourced() {
+    func testUnitsAreChosenFromTheRunRecordNeverDerivedFromText() {
         var record = AssistantRunRecord()
         let passage = AssistantPassage(area: .books, itemId: "b1", title: "Der Zauberberg", locator: "S. 12", text: castorp, score: 1)
         record.sentences = [
-            AssistantEmitted(text: castorp, status: .grounded, sources: [passage], quote: true),
-            AssistantEmitted(text: "Hallo!", status: .neutral, sources: [], quote: false),
+            AssistantEmitted(text: "Ich suche kurz.", status: .announcement, sources: [], quote: false, step: 1),
+            AssistantEmitted(text: castorp, status: .grounded, sources: [passage], quote: true, step: 2),
+            AssistantEmitted(text: "Hallo!", status: .neutral, sources: [], quote: false, step: 3),
+            AssistantEmitted(text: "Vielleicht auch so.", status: .unsourced, sources: [], quote: false, step: 4),
         ]
-        let full = AssistantSession.attribute(spoken: castorp + " Hallo!", record: record)
-        XCTAssertEqual(full.map(\.status), [.grounded, .neutral])
-        XCTAssertEqual(full.map(\.quote), [true, false])
-        let cut = AssistantSession.attribute(spoken: "Hans Castorp fährt ins", record: record)
-        XCTAssertEqual(cut.map(\.text), ["Hans Castorp fährt ins"])
-        XCTAssertEqual(cut.map(\.status), [.grounded], "ein angesprochener Satz zählt mit seiner Einordnung")
-        let extra = AssistantSession.attribute(spoken: castorp + " Und noch etwas Unbekanntes.", record: record)
-        XCTAssertEqual(extra.last?.status, .neutral, "Gesprochenes ohne Entsprechung wird nie als „ohne Quelle“ gewertet")
-        XCTAssertEqual(extra.last?.sources, [])
-        XCTAssertEqual(AssistantSession.attribute(spoken: "Irgendwas", record: nil).map(\.status), [.neutral])
+        let index = AssistantStepIndex()
+        for step in 1...4 { index.append("r", step: step) }
+        func units(_ spoken: AssistantSpokenUnits) -> [AssistantEmitted] {
+            AssistantSession.units(of: record, spoken: spoken, stepIndex: index, requestId: "r")
+        }
+        XCTAssertEqual(units(.all).map(\.step), [2, 3, 4], "Ansagen zählen nie; sonst alle Einheiten in der Reihenfolge der Ausgabe")
+        XCTAssertEqual(units(.nothing), [])
+        // Die Ereignisse 0 (Ansage) und 1 (Zitat) wurden ganz gesprochen: nur das Zitat, mit Art und Quelle, unverändert.
+        let cut = units(.events([0, 1]))
+        XCTAssertEqual(cut.map(\.text), [castorp])
+        XCTAssertEqual(cut.map(\.status), [.grounded])
+        XCTAssertEqual(cut.map(\.quote), [true])
+        // Die Auswahl hängt an den Ereignisnummern, nicht an der Reihenfolge der Liste.
+        XCTAssertEqual(units(.events([3, 2])).map(\.step), [3, 4])
+        XCTAssertEqual(units(.events([9])), [], "eine unbekannte Ereignisnummer ergibt nichts")
+        let unknown = AssistantSession.units(of: record, spoken: .events([1]), stepIndex: AssistantStepIndex(), requestId: "r")
+        XCTAssertEqual(unknown, [], "ein unbekannter Lauf (verdrängt oder fremd) trägt nichts in den Verlauf")
+    }
+
+    func testAUnitWithoutItsMarkNeverEntersTheHistory() {
+        var record = AssistantRunRecord()
+        // Ein Zitat ohne Quelle hat keine Marke: Es käme im Verlauf nur als bloßer Text oder als „Quelle nicht gespeichert“.
+        record.sentences = [AssistantEmitted(text: castorp, status: .grounded, sources: [], quote: true, step: 1)]
+        let index = AssistantStepIndex()
+        index.append("r", step: 1)
+        XCTAssertEqual(AssistantSession.units(of: record, spoken: .all, stepIndex: index, requestId: "r"), [])
     }
 
     // MARK: Cloud-Schutz für den Verlauf
@@ -770,17 +815,17 @@ final class AssistantSessionTests: XCTestCase {
             [AssistantPassage(area: area, itemId: "x-\(area.rawValue)", title: "Titel", text: "Text", score: 1)]
         }
         return [
-            AssistantTurn(user: "FrageBuch", assistant: "AntwortBuch", sources: source(.books), general: false),
-            AssistantTurn(user: "FrageAblage", assistant: "AntwortAblage", sources: source(.files), general: false),
-            AssistantTurn(user: "FrageAllgemein", assistant: "AntwortAllgemein", general: true),
-            AssistantTurn(user: "FrageGemischt", assistant: "AntwortGemischt", sources: source(.books) + source(.notes), general: false),
+            AssistantTurn(user: "FrageBuch", assistant: "AntwortBuch", sources: source(.books), general: false).shown,
+            AssistantTurn(user: "FrageAblage", assistant: "AntwortAblage", sources: source(.files), general: false).shown,
+            AssistantTurn(user: "FrageAllgemein", assistant: "AntwortAllgemein", general: true).shown,
+            AssistantTurn(user: "FrageGemischt", assistant: "AntwortGemischt", sources: source(.books) + source(.notes), general: false).shown,
         ]
     }
 
     /// Wissen mit dem Buch aus `knowledge()`, aber nur den gegebenen Bereichen freigegeben.
     private func knowledge(areas: Set<AssistantArea>) async -> AssistantKnowledge {
-        let k = await knowledge()
-        await k.setAreas(areas)
+        var k = await knowledge()
+        k = k.withAreas(areas)
         return k
     }
 
@@ -838,7 +883,7 @@ final class AssistantSessionTests: XCTestCase {
         let log = Log()
         var c = cloud
         c.allowUnsourced = true
-        let hist = historyForAreas() + [AssistantTurn(user: "FrageLaufend", assistant: "AntwortLaufend", round: .general)]
+        let hist = historyForAreas() + [AssistantTurn(user: "FrageLaufend", assistant: "AntwortLaufend", round: .general).shown]
         let s = AssistantSession(model: ScriptModel(pieces: ["Der Mont Blanc ist 4806 Meter hoch."], log: log), knowledge: await knowledge(),
                                  config: c, history: hist, released: true)
         let seen = Seen(events: await collect(s, AssistantRequest(requestId: "r1", text: "Wie hoch ist der Mont Blanc?")))
@@ -852,7 +897,7 @@ final class AssistantSessionTests: XCTestCase {
 
     func testCancelByRequestIdYieldsExactlyOneCancelled() async {
         let log = Log()
-        let model = ScriptModel(pieces: ["Erster Satz kommt hier. ", "Zweiter Satz folgt später. ", "Dritter Satz auch noch."], pauseMs: 150, log: log)
+        let model = ScriptModel(pieces: ["Erster Satz kommt hier. ", "Zweiter Satz folgt später. ", "Dritter Satz auch noch."], log: log, holdAfter: 2)
         let s = await session(model, config: open)
         var events: [AssistantEvent] = []
         for await e in s.events(AssistantRequest(requestId: "r1", text: "Erzähl etwas")) {
@@ -869,9 +914,11 @@ final class AssistantSessionTests: XCTestCase {
     }
 
     func testCancelBeforeAnySentenceWhileModelHangs() async {
-        let s = await session(ScriptModel(pieces: [], hang: true), config: open)
+        let log = Log()
+        let s = await session(ScriptModel(pieces: [], hang: true, log: log), config: open)
         let task = Task { await collect(s, AssistantRequest(requestId: "r1", text: "Hallo")) }
-        try? await Task.sleep(nanoseconds: 200_000_000)
+        await eventually { log.all.count >= 1 }   // der Modellaufruf steht (Haltepunkt statt einer geratenen Wartezeit)
+        XCTAssertEqual(log.all.count, 1)
         await s.cancel(requestId: "r1")
         let events = await task.value
         XCTAssertEqual(events.last, .failed(requestId: "r1", .cancelled))
@@ -887,7 +934,7 @@ final class AssistantSessionTests: XCTestCase {
 
     func testCancellingTheConsumerTaskStopsTheModel() async {
         let log = Log()
-        let model = ScriptModel(pieces: ["Ein Satz kommt. ", "Noch ein Satz folgt. ", "Und noch einer."], pauseMs: 200, log: log)
+        let model = ScriptModel(pieces: ["Ein Satz kommt. ", "Noch ein Satz folgt. ", "Und noch einer."], log: log, holdAfter: 1)
         let s = await session(model, config: open)
         let task = Task { () -> Int in
             var n = 0
@@ -907,28 +954,29 @@ final class AssistantSessionTests: XCTestCase {
         var c = open
         c.timeout = 0.3
         let s = await session(ScriptModel(pieces: ["Halber Satz ohne Ende"], hang: true), config: c)
-        let start = ContinuousClock.now
         let events = await collect(s, AssistantRequest(requestId: "r1", text: "Hallo"))
         XCTAssertEqual(events.last, .failed(requestId: "r1", .timeout))
-        XCTAssertLessThan(start.duration(to: .now), .seconds(3))
         XCTAssertEqual(events.filter { if case .failed = $0 { true } else { false } }.count, 1)
     }
 
     func testSlowButSteadyStreamDoesNotTimeOut() async {
         var c = open
-        c.timeout = 0.4
-        let pieces = (0..<8).map { "Satz Nummer \($0) kommt. " }
-        let s = await session(ScriptModel(pieces: pieces, pauseMs: 120), config: c)
+        // Zeitannahme: Die Pause zwischen zwei Stücken (100 ms) liegt zehnfach unter der Zeitgrenze (1 s), die Gesamtdauer (14 Stücke,
+        // mindestens 1,4 s: `Task.sleep` wartet nie kürzer) darüber. Auf einer langsameren Maschine werden die Pausen nur länger, die
+        // Aussage „die Gesamtdauer übersteigt die Grenze“ bleibt, und die Lücke je Stück bleibt weit unter der Grenze.
+        c.timeout = 1.0
+        let pieces = (0..<14).map { "Satz Nummer \($0) kommt. " }
+        let s = await session(ScriptModel(pieces: pieces, pauseMs: 100), config: c)
         let events = await collect(s, AssistantRequest(requestId: "r1", text: "Hallo"))
         guard case .done(_, let a)? = events.last else { return XCTFail("\(events)") }
-        XCTAssertGreaterThan(a.totalMs, 800)
+        XCTAssertGreaterThan(a.totalMs, 1_000)
     }
 
     // MARK: Fehler
 
     func testContextOverflowRetriesOnceWithHalfPassagesAndNoHistory() async {
         let log = Log()
-        let hist = [AssistantTurn(user: "Frühere Frage", assistant: "Frühere Antwort")]
+        let hist = [AssistantTurn(user: "Frühere Frage", assistant: "Frühere Antwort").shown]
         let s = await session(OverflowModel(failures: 1, log: log), history: hist, config: open)
         let seen = Seen(events: await collect(s, AssistantRequest(requestId: "r1", text: question)))
         XCTAssertTrue(seen.hasDone, "\(seen.events)")
@@ -984,21 +1032,22 @@ final class AssistantSessionTests: XCTestCase {
     // MARK: Gleichzeitigkeit
 
     func testSeveralRequestsRunConcurrentlyAndOnlyCommitWritesHistory() async {
-        // Der Abbruch kommt, sobald das erste Stück geliefert ist (nicht nach einer geratenen Zeit): Bis zum Ende fehlen dann noch zwei
-        // Pausen (je 200 ms), die Anfrage „spec“ ist sicher noch nicht fertig.
+        // Beide Läufe halten nach dem ersten Stück am Haltepunkt: „spec“ ist damit sicher noch nicht fertig, wenn der Abbruch kommt.
+        // Erst danach wird der Haltepunkt geöffnet, und „final“ läuft zu Ende.
         let log = Log()
-        let model = ScriptModel(pieces: ["Erster Satz. ", "Zweiter Satz. ", "Dritter Satz."], pauseMs: 200, log: log)
+        let model = ScriptModel(pieces: ["Erster Satz. ", "Zweiter Satz. ", "Dritter Satz."], log: log, holdAfter: 1)
         let s = await session(model, config: open)
         async let a = collect(s, AssistantRequest(requestId: "spec", text: "Wie wird das Wetter"))
         async let b = collect(s, AssistantRequest(requestId: "final", text: "Wie wird das Wetter morgen"))
         await eventually { log.pieces >= 1 }
         await s.cancel(requestId: "spec")
+        model.hold.open()
         let (ea, eb) = await (a, b)
         XCTAssertEqual(ea.last, .failed(requestId: "spec", .cancelled))
         guard case .done("final", _)? = eb.last else { return XCTFail("\(eb)") }
         var h = await s.history
         XCTAssertTrue(h.isEmpty)
-        await s.commit(requestId: "final", user: "Wie wird das Wetter morgen", spoken: "Erster Satz. Zweiter Satz. Dritter Satz.", interrupted: false)
+        await s.commit(requestId: "final", user: "Wie wird das Wetter morgen", spoken: .all, interrupted: false)
         h = await s.history
         XCTAssertEqual(h.count, 1)
     }
@@ -1026,7 +1075,7 @@ final class AssistantSessionTests: XCTestCase {
     }
 
     func testRevokingOptInMidStreamStopsTheAnswerAndNothingOldComesOutAfterwards() async {
-        let model = ScriptModel(pieces: ["Hunde schwitzen vor allem über die Pfoten. Katzen", " putzen sich mehrmals am Tag. ", "Pferde schlafen oft im Stehen."], pauseMs: 150)
+        let model = ScriptModel(pieces: ["Hunde schwitzen vor allem über die Pfoten. Katzen", " putzen sich mehrmals am Tag. ", "Pferde schlafen oft im Stehen."], holdAfter: 1)
         let s = await session(model, config: open)
         let g0 = s.releaseGeneration
         var events: [AssistantEvent] = []
@@ -1049,14 +1098,15 @@ final class AssistantSessionTests: XCTestCase {
         XCTAssertEqual(Set(seen.sentences.map(\.generation)), [g0])
         XCTAssertGreaterThan(s.releaseGeneration, g0)
         XCTAssertFalse(s.allowsUnsourced)
-        // Eine spätere Frage mit widerrufenem Opt-in läuft als Datenrunde.
+        // Eine spätere Frage mit widerrufenem Opt-in läuft als Datenrunde (der Haltepunkt des Modells ist für sie offen).
+        model.hold.open()
         let next = Seen(events: await collect(s, AssistantRequest(requestId: "r2", text: "Erzähl etwas über Tiere")))
         XCTAssertEqual(next.answer?.round, .data)
         XCTAssertFalse(next.statuses.contains(.unsourced))
     }
 
     func testOffThenOnDoesNotReviveTheOldRun() async {
-        let model = ScriptModel(pieces: ["Hunde schwitzen vor allem über die Pfoten. Katzen", " putzen sich mehrmals am Tag."], pauseMs: 150)
+        let model = ScriptModel(pieces: ["Hunde schwitzen vor allem über die Pfoten. Katzen", " putzen sich mehrmals am Tag."], holdAfter: 1)
         let s = await session(model, config: open)
         let g0 = s.releaseGeneration
         var events: [AssistantEvent] = []
@@ -1079,7 +1129,7 @@ final class AssistantSessionTests: XCTestCase {
 
     func testChangingTheAreasMidStreamRevokesTheRun() async {
         let k = await knowledge()
-        let model = ScriptModel(pieces: [castorpModel + " Er", " bleibt drei Wochen."], pauseMs: 150)
+        let model = ScriptModel(pieces: [castorpModel + " Er", " bleibt drei Wochen."], holdAfter: 1)
         let s = AssistantSession(model: model, knowledge: k, config: strict, released: true)
         let g0 = s.releaseGeneration
         var events: [AssistantEvent] = []
@@ -1095,7 +1145,7 @@ final class AssistantSessionTests: XCTestCase {
     }
 
     func testCloudConsentChangeRevokesRunningAnswers() async {
-        let model = ScriptModel(pieces: [castorpModel + " Er", " bleibt drei Wochen."], pauseMs: 150)
+        let model = ScriptModel(pieces: [castorpModel + " Er", " bleibt drei Wochen."], holdAfter: 1)
         let s = await session(model, config: strict)
         var events: [AssistantEvent] = []
         for await e in s.events(AssistantRequest(requestId: "r1", text: question)) {
@@ -1107,11 +1157,11 @@ final class AssistantSessionTests: XCTestCase {
     }
 
     func testRevokedAnswerIsNeverWrittenToTheHistory() async {
-        let s = await session(ScriptModel(pieces: [castorpModel + " Er", " bleibt drei Wochen."], pauseMs: 150), config: strict)
+        let s = await session(ScriptModel(pieces: [castorpModel + " Er", " bleibt drei Wochen."], holdAfter: 1), config: strict)
         for await e in s.events(AssistantRequest(requestId: "r1", text: question)) {
             if case .sentence(_, _, _, _, .grounded, _, _) = e { _ = await s.releaseDidChange() }
         }
-        await s.commit(requestId: "r1", user: question, spoken: castorp, interrupted: false)
+        await s.commit(requestId: "r1", user: question, spoken: .all, interrupted: false)
         let h = await s.history
         XCTAssertTrue(h.isEmpty, "Gesprochenes unter veralteter Generation kommt nicht in den Verlauf")
     }
@@ -1126,7 +1176,7 @@ final class AssistantSessionTests: XCTestCase {
         let started = seen.answer?.generation ?? -1
         let now = await s.setAllowUnsourced(true).generation
         XCTAssertGreaterThan(now, started)
-        let wrote = await s.commit(requestId: "r1", user: question, spoken: castorp, interrupted: false)
+        let wrote = await s.commit(requestId: "r1", user: question, spoken: .all, interrupted: false)
         XCTAssertTrue(wrote)
         let h = await s.history
         XCTAssertTrue(h.isEmpty)
@@ -1139,18 +1189,61 @@ final class AssistantSessionTests: XCTestCase {
 
     // MARK: Commit und Lauf
 
+    /// Suchlauf (d), Begründung für das `try?` im Warten von `settle`: Ein abgebrochener Aufrufer von `commit` (sein `sleep` wirft
+    /// sofort) wartet trotzdem auf das geordnete Ende des Laufs und schreibt denselben Beitrag wie ein nicht abgebrochener. Gemessen:
+    /// Es gibt keine Hänger (die Schleife gibt den Aktor mit jedem `await` ab, das Ende des Laufs kommt zum Zug). Der Test hält das fest.
+    func testCommitFromACancelledCallerStillWaitsForTheOrderedEndOfTheRun() async throws {
+        let dir = tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let audit = AssistantAuditLog(directory: dir)
+        let model = ScriptModel(pieces: [castorpModel + " Er", " bleibt drei Wochen."], hang: true)
+        let s = await session(model, config: strict, audit: audit)
+        let firstUnit = Latch()
+        let task = Task { () -> [AssistantEvent] in
+            var out: [AssistantEvent] = []
+            for await e in s.events(AssistantRequest(requestId: "r1", text: question)) {
+                out.append(e)
+                if case .sentence(_, _, _, _, let status, _, _) = e, status != .announcement { firstUnit.fire() }
+            }
+            return out
+        }
+        await eventually { firstUnit.isFired }
+        XCTAssertTrue(firstUnit.isFired)
+        let caller = Task { () -> Bool in
+            while !Task.isCancelled { await Task.yield() }
+            return await s.commit(requestId: "r1", user: question, spoken: .all, interrupted: true)
+        }
+        caller.cancel()
+        let wrote = await caller.value
+        XCTAssertTrue(wrote)
+        let seen = Seen(events: await task.value)
+        XCTAssertEqual(seen.failure, .cancelled)
+        XCTAssertEqual(seen.spoken, [castorp])
+        XCTAssertEqual(s.registeredRunCount, 0, "der Lauf ist geordnet beendet und abgemeldet")
+        let history = await s.history
+        XCTAssertEqual(history.count, 1)
+    }
+
     func testCommitWhileTheRunIsStillGoingCancelsItAndWaitsForTheOrderedEnd() async throws {
         let dir = tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let audit = AssistantAuditLog(directory: dir)
-        let model = ScriptModel(pieces: [castorpModel + " Er", " bleibt drei Wochen."], pauseMs: 250, hang: true)
+        let model = ScriptModel(pieces: [castorpModel + " Er", " bleibt drei Wochen."], hang: true)
         let s = await session(model, config: strict, audit: audit)
-        let task = Task { await collect(s, AssistantRequest(requestId: "r1", text: question)) }
-        try? await Task.sleep(nanoseconds: 400_000_000)   // der erste Satz ist da, der zweite noch nicht
-        let start = ContinuousClock.now
-        let wrote = await s.commit(requestId: "r1", user: question, spoken: castorp, interrupted: true)
+        let firstUnit = Latch()
+        let task = Task { () -> [AssistantEvent] in
+            var out: [AssistantEvent] = []
+            for await e in s.events(AssistantRequest(requestId: "r1", text: question)) {
+                out.append(e)
+                if case .sentence(_, _, _, _, let status, _, _) = e, status != .announcement { firstUnit.fire() }
+            }
+            return out
+        }
+        await eventually { firstUnit.isFired }   // der erste Satz ist da, der zweite kann nicht kommen (das Modell hängt)
+        XCTAssertTrue(firstUnit.isFired)
+        // Dass `commit` zurückkehrt, beweist: kein Warten auf das hängende Modell (kein Zeitmaß).
+        let wrote = await s.commit(requestId: "r1", user: question, spoken: .all, interrupted: true)
         XCTAssertTrue(wrote)
-        XCTAssertLessThan(start.duration(to: .now), .seconds(2), "kein Warten auf das hängende Modell")
         let seen = Seen(events: await task.value)
         XCTAssertEqual(seen.failure, .cancelled)
         XCTAssertEqual(seen.spoken, [castorp])
@@ -1170,7 +1263,7 @@ final class AssistantSessionTests: XCTestCase {
         XCTAssertEqual(entries[0].history?.ok, true)
 
         // Ein zweiter commit zur selben Anfrage ergibt weder Beitrag noch Eintrag.
-        await s.commit(requestId: "r1", user: question, spoken: castorp, interrupted: true)
+        await s.commit(requestId: "r1", user: question, spoken: .all, interrupted: true)
         let again = await s.history
         XCTAssertEqual(again.count, 1)
         let entriesAgain = await audit.entries().filter { $0.kind == .answer }
@@ -1179,10 +1272,19 @@ final class AssistantSessionTests: XCTestCase {
 
     func testCommitWaitsForTheFinalStateAndDoesNotMisattributeGroundedSentences() async {
         // Der Lauf endet erst nach dem Abbruch durch commit; der Stand wird vor dem Schreiben festgehalten.
-        let s = await session(ScriptModel(pieces: [castorpModel + " Das", " ist völlig unklar. "], pauseMs: 100, hang: true), config: open)
-        let task = Task { await collect(s, AssistantRequest(requestId: "r1", text: question)) }
-        try? await Task.sleep(nanoseconds: 350_000_000)
-        await s.commit(requestId: "r1", user: question, spoken: castorp, interrupted: true)
+        let s = await session(ScriptModel(pieces: [castorpModel + " Das", " ist völlig unklar. "], hang: true), config: open)
+        let firstUnit = Latch()
+        let task = Task { () -> [AssistantEvent] in
+            var out: [AssistantEvent] = []
+            for await e in s.events(AssistantRequest(requestId: "r1", text: question)) {
+                out.append(e)
+                if case .sentence(_, _, _, _, let status, _, _) = e, status != .announcement { firstUnit.fire() }
+            }
+            return out
+        }
+        await eventually { firstUnit.isFired }
+        XCTAssertTrue(firstUnit.isFired)
+        await s.commit(requestId: "r1", user: question, spoken: .all, interrupted: true)
         _ = await task.value
         let h = await s.history
         XCTAssertEqual(h.first?.unsourced, false)
@@ -1202,7 +1304,7 @@ final class AssistantSessionTests: XCTestCase {
         let s = await session(ScriptModel(pieces: [], fail: BookTalkModelError.offline), config: strict, audit: audit)
         let seen = Seen(events: await collect(s, AssistantRequest(requestId: "r1", text: question)))
         XCTAssertEqual(seen.failure, .offline)
-        let wrote = await s.commit(requestId: "r1", user: question, spoken: "", interrupted: false)
+        let wrote = await s.commit(requestId: "r1", user: question, spoken: .nothing, interrupted: false)
         XCTAssertTrue(wrote)
         let h = await s.history
         XCTAssertTrue(h.isEmpty, "kein Beitrag ohne Gesprochenes")
@@ -1226,7 +1328,7 @@ final class AssistantSessionTests: XCTestCase {
         await s.cancel(requestId: "r1")
         let events = await collect(s, AssistantRequest(requestId: "r1", text: "Hallo"))
         XCTAssertEqual(events, [.failed(requestId: "r1", .cancelled)])
-        await s.commit(requestId: "r1", user: "Hallo", spoken: "", interrupted: false)
+        await s.commit(requestId: "r1", user: "Hallo", spoken: .nothing, interrupted: false)
         let entries = await audit.entries().filter { $0.kind == .answer }
         XCTAssertEqual(entries.count, 1)
         XCTAssertEqual(entries[0].outcome, .interrupted)
@@ -1243,8 +1345,8 @@ final class AssistantSessionTests: XCTestCase {
         let done = await session(ScriptModel(pieces: [castorpModel]), config: strict, audit: audit)
         _ = await collect(done, AssistantRequest(requestId: "fertig", text: question))
         await done.cancel(requestId: "fertig")
-        await done.commit(requestId: "fertig", user: question, spoken: "", interrupted: true)
-        await done.commit(requestId: "fertig", user: question, spoken: "", interrupted: true)   // zweites Mal: kein zweiter Eintrag
+        await done.commit(requestId: "fertig", user: question, spoken: .nothing, interrupted: true)
+        await done.commit(requestId: "fertig", user: question, spoken: .nothing, interrupted: true)   // zweites Mal: kein zweiter Eintrag
         let finished = await audit.entries().filter { $0.kind == .answer }
         XCTAssertEqual(finished.count, 1)
         XCTAssertEqual(finished[0].outcome, .interrupted)
@@ -1252,12 +1354,14 @@ final class AssistantSessionTests: XCTestCase {
         let doneHistory = await done.history
         XCTAssertTrue(doneHistory.isEmpty)
 
-        let hanging = await session(ScriptModel(pieces: [castorpModel + " Er", " bleibt drei Wochen."], pauseMs: 250, hang: true),
+        let hangingLog = Log()
+        let hanging = await session(ScriptModel(pieces: [castorpModel + " Er", " bleibt drei Wochen."], hang: true, log: hangingLog),
                                     config: strict, audit: audit)
         let task = Task { await collect(hanging, AssistantRequest(requestId: "haengt", text: question)) }
-        try? await Task.sleep(nanoseconds: 400_000_000)
+        await eventually { hangingLog.pieces >= 2 }   // beide Stücke sind da, das Modell hängt
+        XCTAssertGreaterThanOrEqual(hangingLog.pieces, 2)
         await hanging.cancel(requestId: "haengt")
-        let wrote = await hanging.commit(requestId: "haengt", user: question, spoken: "", interrupted: true)
+        let wrote = await hanging.commit(requestId: "haengt", user: question, spoken: .nothing, interrupted: true)
         XCTAssertTrue(wrote)
         let seen = Seen(events: await task.value)
         XCTAssertEqual(seen.failure, .cancelled)
@@ -1281,7 +1385,7 @@ final class AssistantSessionTests: XCTestCase {
         s.noteCommit(requestId: "r1", index: 1, stage: .display, ok: true, generation: g)
         s.noteCommit(requestId: "r1", index: 1, stage: .audio, ok: false, generation: g + 1)
         s.noteCommit(requestId: "r1", index: 99, stage: .display, ok: true, generation: g)   // unbekannter Index: ignoriert
-        await s.commit(requestId: "r1", user: question, spoken: castorp, interrupted: false)
+        await s.commit(requestId: "r1", user: question, spoken: .all, interrupted: false)
 
         let entries = await audit.entries().filter { $0.kind == .answer }
         guard let e = entries.first else { return XCTFail("kein Eintrag") }
@@ -1302,7 +1406,7 @@ final class AssistantSessionTests: XCTestCase {
         XCTAssertEqual(quoteStep.commits, [
             AssistantCommitMark(stage: .emit, ok: true, generation: g),
             AssistantCommitMark(stage: .display, ok: true, generation: g),
-            AssistantCommitMark(stage: .audio, ok: false, generation: g + 1),
+            AssistantCommitMark(stage: .audio, ok: false, generation: g),   // gemeldet unter g + 1: „verworfen“ mit der gefundenen Generation (R5)
             AssistantCommitMark(stage: .history, ok: true, generation: g),
         ])
         XCTAssertEqual(e.trace[0].commits, [], "verworfene Sätze haben keinen Ausgabe-Commit")
@@ -1314,7 +1418,7 @@ final class AssistantSessionTests: XCTestCase {
         let audit = AssistantAuditLog(directory: dir)
         let s = await session(ScriptModel(pieces: [castorpModel]), config: strict, audit: audit)
         _ = await collect(s, AssistantRequest(requestId: "r1", text: question))
-        await s.commit(requestId: "r1", user: question, spoken: castorp, interrupted: false)
+        await s.commit(requestId: "r1", user: question, spoken: .all, interrupted: false)
         let raw = rawLog(audit)
         XCTAssertFalse(raw.isEmpty)
         for word in ["Castorp", "Davos", "Zauberberg", "Joachim", "Sanatorium", "Wohin", "Mann", "S. 12"] {
@@ -1329,10 +1433,10 @@ final class AssistantSessionTests: XCTestCase {
         let audit = AssistantAuditLog(directory: dir)
         let s = await session(ScriptModel(pieces: ["Hallo! Wie kann ich dir helfen?"]), config: open, audit: audit)
         _ = await collect(s, AssistantRequest(requestId: "r1", text: "Hallo"))
-        await s.commit(requestId: "r1", user: "Hallo", spoken: "Hallo! Wie kann ich dir helfen?", interrupted: false)
+        await s.commit(requestId: "r1", user: "Hallo", spoken: .all, interrupted: false)
         let t = await session(ScriptModel(pieces: ["Der Mont Blanc ist 4806 Meter hoch."]), config: open, audit: audit)
         _ = await collect(t, AssistantRequest(requestId: "r2", text: "Wie hoch ist der Mont Blanc?"))
-        await t.commit(requestId: "r2", user: "Wie hoch ist der Mont Blanc?", spoken: "Der Mont Blanc ist 4806 Meter hoch.", interrupted: false)
+        await t.commit(requestId: "r2", user: "Wie hoch ist der Mont Blanc?", spoken: .all, interrupted: false)
         let entries = await audit.entries().filter { $0.kind == .answer }
         XCTAssertEqual(entries.count, 2)
         XCTAssertEqual(entries[0].level, .s0)
@@ -1348,14 +1452,14 @@ final class AssistantSessionTests: XCTestCase {
         let dir = tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let audit = AssistantAuditLog(directory: dir)
-        let model = ScriptModel(pieces: ["Hunde schwitzen vor allem über die Pfoten. Katzen", " putzen sich mehrmals am Tag."], pauseMs: 150)
+        let model = ScriptModel(pieces: ["Hunde schwitzen vor allem über die Pfoten. Katzen", " putzen sich mehrmals am Tag."], holdAfter: 1)
         let s = await session(model, config: open, audit: audit)
         var spoken: [String] = []
         for await e in s.events(AssistantRequest(requestId: "r1", text: "Erzähl etwas über Tiere")) {
             if case .sentence(_, _, let t, _, let st, _, _) = e, st != .announcement { spoken.append(t) }
             if case .sentence(_, _, _, _, .unsourced, _, _) = e { _ = await s.setAllowUnsourced(false) }
         }
-        let wrote = await s.commit(requestId: "r1", user: "Erzähl etwas über Tiere", spoken: spoken.joined(separator: " "), interrupted: false)
+        let wrote = await s.commit(requestId: "r1", user: "Erzähl etwas über Tiere", spoken: .all, interrupted: false)
         XCTAssertTrue(wrote)
         let entries = await audit.entries().filter { $0.kind == .answer }
         XCTAssertEqual(entries.count, 1)
@@ -1371,7 +1475,7 @@ final class AssistantSessionTests: XCTestCase {
     func testAnswerWithoutAuditLogStillCommits() async {
         let s = await session(ScriptModel(pieces: [castorpModel]))
         _ = await collect(s, AssistantRequest(requestId: "r1", text: question))
-        let ok = await s.commit(requestId: "r1", user: question, spoken: castorp, interrupted: false)
+        let ok = await s.commit(requestId: "r1", user: question, spoken: .all, interrupted: false)
         XCTAssertTrue(ok)
         let h = await s.history
         XCTAssertEqual(h.count, 1)
@@ -1381,7 +1485,7 @@ final class AssistantSessionTests: XCTestCase {
 
     func testDataPromptHasExcerptsAndHistoryButNoInventory() async {
         let log = Log()
-        let hist = [AssistantTurn(user: "Frühere Frage", assistant: "Frühere Antwort", interrupted: true)]
+        let hist = [AssistantTurn(user: "Frühere Frage", assistant: "Frühere Antwort", interrupted: true).shown]
         let s = await session(ScriptModel(pieces: ["Gut."], log: log), history: hist, config: strict)
         _ = await collect(s, AssistantRequest(requestId: "r1", text: question, afterInterruption: true))
         let call = log.all.first

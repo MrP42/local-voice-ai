@@ -135,6 +135,8 @@ public struct AssistantPosixStoreFileSystem: AssistantStoreFileSystem {
             }
         }
         #if os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)
+        // Runde 8 (Suchlauf d): Die Schutzklasse ist Härtung (Zugriff vor der ersten Entsperrung), nicht Teil dessen, was gesichert
+        // heißt: Inhalt und Dauerhaftigkeit (fsync, Umbenennen) hängen nicht daran, darum bewusst ohne Fehlerweitergabe.
         try? FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
                                                ofItemAtPath: url.path)
         #endif
@@ -217,13 +219,92 @@ public struct AssistantReleaseRecord: Codable, Equatable, Sendable {
     /// Die Zustimmung zu `target` gilt für genau diese Bereiche (leer: keine).
     public func consentedAreas(_ target: String) -> Set<AssistantArea> { Self.areaSet(consents[target] ?? []) }
 
+    /// Das Ziel einer Sicht ohne Zielkennung (Tests, Sitzung ohne Speicher): Die Zustimmung braucht dort einen ausdrücklichen Eintrag.
+    static let anonymousTarget = ""
+
     /// Die Ansicht einer Sitzung: Bereiche ihrer Art des Modells; Cloud-Zustimmung nur für ein Cloud-Ziel, dessen Zustimmung die
-    /// jetzigen Bereiche umfasst.
+    /// jetzigen Bereiche umfasst. Ohne Zielkennung gilt sie nur mit ausdrücklichem Eintrag (`anonymousTarget`).
     func state(cloud: Bool, target: String?) -> AssistantReleaseState {
         let areas = self.areas(cloud: cloud)
         var consent = false
-        if cloud, let target { consent = consentedAreas(target).isSuperset(of: areas) }
+        if cloud {
+            if let target { consent = consentedAreas(target).isSuperset(of: areas) }
+            else if let entry = consents[Self.anonymousTarget] { consent = Self.areaSet(entry).isSuperset(of: areas) }
+        }
         return AssistantReleaseState(optIn: optIn, consentVersion: optIn ? consentVersion : 0, areas: areas, cloudConsent: consent)
+    }
+
+    // MARK: Algebra des Stands (Runde 8: ein Stand in der Ordnung, Ansichten daraus)
+
+    /// Ein Stand aus den Angaben einer Sicht (Tests der Freigabe allein, Sitzung ohne Speicher): beide Arten des Modells mit denselben
+    /// Bereichen, die Zustimmung für das Ziel (ohne Kennung: der ausdrückliche anonyme Eintrag).
+    static func seeded(optIn: Bool, consentVersion: Int, areas: Set<AssistantArea>, cloudConsent: Bool, target: String?) -> AssistantReleaseRecord {
+        AssistantReleaseRecord(optIn: optIn, consentVersion: consentVersion, localAreas: areas, cloudAreas: areas,
+                               consents: cloudConsent ? [target ?? anonymousTarget: areas] : [:])
+    }
+
+    /// Nichts ist eingeschaltet: auch der Gegenstand eines Erweiterungsschritts, der nichts mehr enthält.
+    static let nothing = AssistantReleaseRecord(localAreas: [], cloudAreas: [])
+
+    var isNothing: Bool { !optIn && localAreas.isEmpty && cloudAreas.isEmpty && consents.values.allSatisfy(\.isEmpty) }
+
+    /// Ohne leere Einträge der Zustimmung (ein leerer Eintrag deckt nichts) und ohne Fassung eines ausgeschalteten Schalters.
+    var normalized: AssistantReleaseRecord {
+        var out = self
+        out.consentVersion = optIn ? consentVersion : 0
+        out.consents = consents.filter { !$0.value.isEmpty }
+        return out
+    }
+
+    /// Der engere von zwei Ständen, je Feld: Einschränkungen gelten sofort, Erweiterungen erst, wenn ihre Zeile dauerhaft steht.
+    func restricted(to next: AssistantReleaseRecord) -> AssistantReleaseRecord {
+        let on = optIn && next.optIn
+        var out = AssistantReleaseRecord(optIn: on, consentVersion: on ? next.consentVersion : 0,
+                                         localAreas: Self.areaSet(localAreas).intersection(Self.areaSet(next.localAreas)),
+                                         cloudAreas: Self.areaSet(cloudAreas).intersection(Self.areaSet(next.cloudAreas)))
+        for (target, names) in consents {
+            let kept = Self.areaSet(names).intersection(next.consentedAreas(target))
+            if !kept.isEmpty { out.consents[target] = Self.names(kept) }
+        }
+        return out
+    }
+
+    /// Wie `restricted`, für den noch nicht wirksamen Teil eines offenen Erweiterungsschritts: Eine Zustimmung, die über die Cloud-Bereiche
+    /// des engeren Stands hinausgeht, wird nicht wirksam (sie wäre sonst ein Vorrat, den eine spätere Erweiterung der Bereiche ohne
+    /// neue Frage nutzte).
+    func restrictedPending(to next: AssistantReleaseRecord) -> AssistantReleaseRecord {
+        var out = restricted(to: next)
+        let within = Self.areaSet(next.cloudAreas)
+        for (target, names) in out.consents {
+            let kept = Self.areaSet(names).intersection(within)
+            out.consents[target] = kept.isEmpty ? nil : Self.names(kept)
+        }
+        return out
+    }
+
+    /// Der Teil, den `next` gegenüber `self` HINZUFÜGT (nil: nichts). Er ist der Gegenstand eines Erweiterungsschritts.
+    func addition(to next: AssistantReleaseRecord) -> AssistantReleaseRecord? {
+        let turnsOn = next.optIn && !optIn
+        var add = AssistantReleaseRecord(optIn: turnsOn, consentVersion: turnsOn ? next.consentVersion : 0,
+                                         localAreas: Self.areaSet(next.localAreas).subtracting(Self.areaSet(localAreas)),
+                                         cloudAreas: Self.areaSet(next.cloudAreas).subtracting(Self.areaSet(cloudAreas)))
+        for (target, names) in next.consents {
+            let more = Self.areaSet(names).subtracting(consentedAreas(target))
+            if !more.isEmpty { add.consents[target] = Self.names(more) }
+        }
+        return add.isNothing ? nil : add
+    }
+
+    /// `self` erweitert um `add` (den noch verbliebenen Teil eines offenen Erweiterungsschritts).
+    func expanded(by add: AssistantReleaseRecord) -> AssistantReleaseRecord {
+        let turnsOn = add.optIn && !optIn
+        let on = optIn || turnsOn
+        var out = AssistantReleaseRecord(optIn: on, consentVersion: on ? (turnsOn ? add.consentVersion : consentVersion) : 0,
+                                         localAreas: Self.areaSet(localAreas).union(Self.areaSet(add.localAreas)),
+                                         cloudAreas: Self.areaSet(cloudAreas).union(Self.areaSet(add.cloudAreas)))
+        out.consents = consents
+        for (target, names) in add.consents { out.consents[target] = Self.names(consentedAreas(target).union(Self.areaSet(names))) }
+        return out
     }
 
     /// Setzt die Ansicht einer Sitzung zurück in den Gesamtstand. Eine ausdrückliche Zustimmung (`consent`) ersetzt den Eintrag
@@ -234,17 +315,20 @@ public struct AssistantReleaseRecord: Codable, Equatable, Sendable {
         next.optIn = state.optIn
         next.consentVersion = state.optIn ? state.consentVersion : 0
         if cloud { next.cloudAreas = Self.names(state.areas) } else { next.localAreas = Self.names(state.areas) }
-        guard cloud, let target else { return next }
-        let covered = consentedAreas(target).isSuperset(of: state.areas)
+        guard cloud else { return next }
+        let key = target ?? Self.anonymousTarget
+        let covered = consentedAreas(key).isSuperset(of: state.areas)
         if cause == .consent {
-            next.consents[target] = state.cloudConsent ? Self.names(state.areas) : nil
+            next.consents[key] = state.cloudConsent ? Self.names(state.areas) : nil
         } else if state.cloudConsent, !covered {
-            next.consents[target] = Self.names(state.areas)
+            next.consents[key] = Self.names(state.areas)
         } else if !state.cloudConsent, !covered {
             // Mehr Bereiche, als die Zustimmung deckt: Der Eintrag fällt weg. Er darf nicht später wieder aufleben, wenn die
             // Bereiche schrumpfen (Zustimmung gilt nur für den Stand, für den sie erteilt wurde, strengere Lesart).
-            next.consents[target] = nil
+            next.consents[key] = nil
         }
+        // Die Zustimmungen der ANDEREN Ziele gelten ebenso nur für den Stand, für den sie erteilt wurden.
+        for (other, names) in next.consents where other != key && !Self.areaSet(names).isSuperset(of: state.areas) { next.consents[other] = nil }
         return next
     }
 
@@ -366,7 +450,9 @@ enum AssistantReleaseFile {
 }
 
 /// Der Speicher der Zustandsdatei. Ein Objekt je Verzeichnis und Prozess (der Controller hält es). Alle Austausche laufen auf
-/// einer eigenen seriellen Warteschlange, nie im Lock der Freigabe und nie auf einem Aktor.
+/// einer eigenen seriellen Warteschlange, nie im Lock der Freigabe und nie auf einem Aktor. Der Stand im Prozess (wirksamer Stand,
+/// gesperrt, blockiert) liegt NICHT hier, sondern in der Ordnung (`clock`): Der Speicher hält die Datei (`confirmed`) und was an ihr
+/// noch nicht gesichert ist.
 public final class AssistantReleaseStore: @unchecked Sendable {
     /// Wie der Speicher beim Öffnen gestartet ist.
     public enum Opening: Sendable, Equatable {
@@ -384,8 +470,9 @@ public final class AssistantReleaseStore: @unchecked Sendable {
     public let directory: URL
     let fileSystem: any AssistantStoreFileSystem
     private let queue = DispatchQueue(label: "de.wolffappliedai.localvoice.assistant.freigaben")
-    /// Die EINE Ordnung dieses Prozesslaufs (Lock, Generation, Lauf-Token, Standzeile, Änderungszähler, Reihe der Folgen, Register
-    /// der Anfragen): Der Speicher besitzt sie, jede Sitzung und jede Änderung ohne Sitzung benutzt sie.
+    /// Die EINE Ordnung dieses Prozesslaufs (Lock, Generation, Stand der Klasse A, Epochen, Lauf-Token, Standzeile, Änderungszähler,
+    /// Reihe der Folgen, Register der Anfragen und der nachzuholenden Zeilen): Der Speicher besitzt sie, jede Sitzung und jede Änderung
+    /// ohne Sitzung benutzt sie.
     let clock = AssistantReleaseClock()
     /// Der Lock der Ordnung: derselbe für Generation, Wiedergabesperre, Anfragen und den Stand dieser Datei im Speicher.
     private var lock: NSLock { clock.lock }
@@ -393,22 +480,13 @@ public final class AssistantReleaseStore: @unchecked Sendable {
     private var confirmed: AssistantReleaseRecord
     private var revision = 0
     private var attempts = 0
-    private var lockedState: Bool
-    private var blockedState = false
     private var dirtyState = false
     private var running = false
     private var overlapCount = 0
-    /// Der engere, noch nicht gesicherte Stand (leer: es gibt keinen).
+    /// Der engere, noch nicht gesicherte Stand: was die Datei über den Stand im Prozess hinaus noch enthält, weil ein Austausch
+    /// scheiterte. Er begrenzt jede spätere Fassung (Schutz beim Schreiben der Datei); entschieden wird nach dem Stand der Ordnung.
     private var ceiling = AssistantReleaseCeiling()
-    /// Zeilen „in diesem Lauf nicht wirksam“, die noch nicht geschrieben werden konnten.
-    private var unwritten: [UnwrittenLine] = []
     public private(set) var opening: Opening
-
-    private struct UnwrittenLine {
-        let number: Int
-        let record: AssistantReleaseRecord
-        let cloud: Bool
-    }
 
     var url: URL { directory.appendingPathComponent(Self.fileName) }
     var tempURL: URL { directory.appendingPathComponent(Self.tempName) }
@@ -453,8 +531,8 @@ public final class AssistantReleaseStore: @unchecked Sendable {
         self.confirmed = record
         self.revision = loadedRevision
         self.attempts = loadedRevision
-        self.lockedState = isLocked
         self.opening = opening
+        clock.seed(record: record, locked: isLocked)
         if case .firstStart = opening {
             let first = adopt.map { shipped in AssistantReleaseRecord.shipped.narrowed(localAreas: shipped.areas(cloud: false),
                                                                                          cloudAreas: shipped.areas(cloud: true)) }
@@ -462,51 +540,47 @@ public final class AssistantReleaseStore: @unchecked Sendable {
             if let error = self.replaceNow(first) {
                 self.opening = .locked(error)   // nicht gesichert: kein Stand, nichts wird angenommen
             } else {
-                self.lockedState = false
+                clock.seed(record: first, locked: false)
             }
         }
     }
 
-    // MARK: Zustand
-
-    /// Der Stand, der gilt: der letzte BESTÄTIGTE (beim gesperrten Start der leere), begrenzt auf einen engeren, noch nicht gesicherten
-    /// Stand einer gescheiterten Einschränkung. Eine Sitzung dieses Laufs und die Anzeige starten daher nie weiter als das, was der
-    /// Nutzer eingeschränkt hat.
-    public var record: AssistantReleaseRecord {
-        lock.lock()
-        defer { lock.unlock() }
-        return ceiling.apply(to: confirmed)
+    /// Hängt die Ordnung dieses Speichers beim Prozessstart ein (R4): Protokoll für die Zeilen der Klasse B und die Meldestelle der
+    /// Quellen. Ohne Modell, ohne Sitzung.
+    public func bind(watch: AssistantContentWatch, audit: AssistantAuditLog?) {
+        clock.attach(audit: audit)
+        watch.bind(clock)
     }
 
-    /// Eine Einschränkung ist nicht gesichert: Der gemerkte engere Stand begrenzt jede spätere Fassung.
+    // MARK: Zustand
+
+    /// Der Stand, der gilt: der WIRKSAME Stand der Ordnung (beim gesperrten Start der leere). Eine Einschränkung gilt darin sofort, auch
+    /// wenn ihre Sicherung scheiterte; eine Erweiterung erst nach bestätigtem Austausch. Eine Sitzung dieses Laufs und die Anzeige
+    /// lesen daher nie weiter als das, was der Nutzer eingeschränkt hat.
+    public var record: AssistantReleaseRecord { clock.record }
+
+    /// Eine Einschränkung ist nicht gesichert: Die Datei enthält noch mehr als der Stand im Prozess.
     var hasPendingRestriction: Bool {
         lock.lock()
         defer { lock.unlock() }
         return !ceiling.isEmpty
     }
 
-    /// Es gibt etwas nachzuholen: eine nicht gesicherte Einschränkung (gemerkter engerer Stand, gescheiterter Austausch). Ein beim
-    /// Start gesperrter Speicher zählt nicht (er braucht die neue Wahl des Nutzers, nicht dieses Nachholen).
+    /// Es gibt etwas nachzuholen: eine nicht gesicherte Einschränkung (gescheiterter Austausch). Ein beim Start gesperrter Speicher
+    /// zählt nicht (er braucht die neue Wahl des Nutzers, nicht dieses Nachholen).
     var needsCatchUp: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return (!ceiling.isEmpty || dirtyState) && !lockedState
+        let pending = lock.withLock { !ceiling.isEmpty || dirtyState }
+        return pending && !clock.isLocked
     }
 
-    /// Zeilen „in diesem Lauf nicht wirksam“ (Änderungen ohne Sitzung), die noch nicht geschrieben werden konnten.
-    var hasUnwrittenLines: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return !unwritten.isEmpty
-    }
+    /// Zeilen „in diesem Lauf nicht wirksam“, die noch nicht geschrieben werden konnten (Register der Ordnung).
+    var hasUnwrittenLines: Bool { !clock.pending.isEmpty }
 
-    /// Holt die noch ausstehenden Zeilen der Änderungen ohne Sitzung nach (bei jeder Gelegenheit: Anfrage, Änderung). Der Fehler der
-    /// ersten Zeile, die sich weiter nicht schreiben lässt, sonst `nil`.
+    /// Holt die noch ausstehenden Zeilen nach (bei jeder Gelegenheit: Anfrage, Änderung, auch ohne Sitzung). Der Fehler der ersten
+    /// Zeile, die sich weiter nicht schreiben lässt, sonst `nil`.
     @discardableResult
     func flushUnwritten(_ audit: AssistantAuditLog?) async -> AssistantAuditError? {
-        var out = AssistantAreaChange(effective: [], storeError: nil, auditError: nil, applied: true)
-        await catchUpLines(audit, into: &out)
-        return out.auditError
+        await settler(cloud: false, audit: audit).flushPending()
     }
 
     /// Änderungszähler der zuletzt bestätigten Fassung (0: keine).
@@ -518,18 +592,10 @@ public final class AssistantReleaseStore: @unchecked Sendable {
 
     /// Die Datei war beim Start ungültig oder fehlte; es gilt kein Bereich und keine Zustimmung, bis der Nutzer neu setzt und das
     /// gesichert ist.
-    public var isLocked: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return lockedState
-    }
+    public var isLocked: Bool { clock.isLocked }
 
     /// Eine Einschränkung ließ sich nicht sichern: für den Rest des Prozesslaufs nichts aus eigenen Inhalten.
-    public var isBlocked: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return blockedState
-    }
+    public var isBlocked: Bool { clock.isBlocked }
 
     /// Der Stand im Prozess ist enger oder anders als die Datei (ein Austausch steht aus oder ist gescheitert).
     public var isDirty: Bool {
@@ -545,12 +611,6 @@ public final class AssistantReleaseStore: @unchecked Sendable {
         return overlapCount
     }
 
-    func markBlocked() {
-        lock.lock()
-        blockedState = true
-        lock.unlock()
-    }
-
     // MARK: Austausch
 
     private func onQueue<T: Sendable>(_ body: @escaping @Sendable () -> T) async -> T {
@@ -563,27 +623,28 @@ public final class AssistantReleaseStore: @unchecked Sendable {
     /// die Folgen der Sitzungen.
     private func nextTicket() -> AssistantChangeTicket { clock.nextTicket() }
 
-    /// Setzt den Stand einer Sitzung (Ansicht `state`) in den Gesamtstand und ersetzt die Datei absturzatomar. Läuft auf der
-    /// eigenen Warteschlange; kehrt zurück, wenn der Austausch bestätigt ist oder gescheitert (`nil`: bestätigt). Gesperrt
-    /// startend: Grundlage ist der leere Stand; nach bestätigtem Austausch ist der Speicher entsperrt. Die Fassung wird auf einen
-    /// engeren, noch nicht gesicherten Stand begrenzt (`commitNow`).
-    func persist(_ state: AssistantReleaseState, cloud: Bool, target: String?, cause: AssistantReleaseCause) async -> AssistantStoreError? {
-        await onQueue {
-            let wanted = self.record.applying(state, cloud: cloud, target: target, cause: cause)
-            return self.commitNow(wanted)
-        }
+    /// Die Sicherungsfolge dieses Speichers ohne Sitzung (keine Modellart in den Zeilen).
+    private func settler(cloud: Bool, audit: AssistantAuditLog?) -> AssistantReleaseSettler {
+        let view = AssistantRelease(clock: clock, view: AssistantReleaseView(cloud: cloud, target: nil),
+                                    onIncrease: AssistantReleaseSettler.increaseWriter(audit: audit, clock: clock, cloud: cloud, model: nil))
+        return AssistantReleaseSettler(release: view, store: self, audit: audit, model: nil)
+    }
+
+    /// Ersetzt die Datei absturzatomar durch `wanted` (Läuft auf der eigenen Warteschlange; kehrt zurück, wenn der Austausch
+    /// bestätigt ist oder gescheitert: `nil`: bestätigt). `wanted` kommt aus dem Stand der Ordnung (`recordForSave`). Gesperrt
+    /// startend: nach bestätigtem Austausch ist der Speicher entsperrt. Die Fassung wird auf einen engeren, noch nicht gesicherten
+    /// Stand begrenzt (`commitNow`).
+    func persist(_ wanted: AssistantReleaseRecord) async -> AssistantStoreError? {
+        await onQueue { self.commitNow(wanted) }
     }
 
     /// Schreibt `wanted`, begrenzt auf den gemerkten engeren Stand (nur auf der Warteschlange). `nil`: bestätigt und unverändert
     /// geschrieben. `.restrictionPending`: bestätigt, aber `wanted` ging über die noch nicht gesicherte Einschränkung hinaus (die
     /// Erweiterung gilt nicht; die Einschränkung ist damit gesichert).
-    /// `onEffective`: läuft IM Lock im Schritt der Bestätigung (nur wenn `wanted` unbegrenzt geschrieben wurde) mit der dort vergebenen
-    /// Generation und der bestätigten Fassung: Die Erweiterung wird wirksam, die Generation steigt, die Zeile wird eingereiht.
-    private func commitNow(_ wanted: AssistantReleaseRecord,
-                           onEffective: ((Int, AssistantReleaseRecord) -> Void)? = nil) -> AssistantStoreError? {
+    private func commitNow(_ wanted: AssistantReleaseRecord) -> AssistantStoreError? {
         let limited = lock.withLock { ceiling }.apply(to: wanted)
         let whole = limited == wanted
-        if let error = replaceNow(limited, onConfirmed: whole ? onEffective : nil) { return error }
+        if let error = replaceNow(limited) { return error }
         return whole ? nil : .restrictionPending
     }
 
@@ -595,182 +656,39 @@ public final class AssistantReleaseStore: @unchecked Sendable {
         let ticket = nextTicket()
         await ticket.turn()
         defer { ticket.complete() }
-        return await onQueue {
-            if self.isLocked {
-                if case .locked(let reason) = self.opening { return reason }
-                return .invalid
-            }
-            return self.replaceNow(self.record)
+        if isLocked {
+            if case .locked(let reason) = opening { return reason }
+            return .invalid
         }
+        let wanted = clock.record
+        return await onQueue { self.replaceNow(wanted) }
     }
 
     // MARK: Änderung ohne Sitzung
 
-    /// Das Ergebnis des einschränkenden Teils.
-    private struct Restriction: Sendable {
-        /// Die Änderungsnummer, wenn wirklich eingeschränkt wurde (dann folgt die Zeile `release`), und ihre Generation (im selben
-        /// Lock-Schritt vergeben, in dem der engere Stand gilt).
-        var number: Int?
-        var generation: Int?
-        var record: AssistantReleaseRecord
-        var error: AssistantStoreError?
-        /// Es kommen Bereiche dazu (ein erweiternder Teil folgt).
-        var grows: Bool
-    }
-
-    private static func setting(_ areas: Set<AssistantArea>, cloud: Bool, covering coverage: Set<AssistantArea>,
-                                in record: AssistantReleaseRecord) -> AssistantReleaseRecord {
-        var next = record
-        if cloud {
-            next.cloudAreas = AssistantReleaseRecord.names(areas)
-            next.consents = next.consents.filter { AssistantReleaseRecord.areaSet($0.value).isSuperset(of: coverage) }
-        } else {
-            next.localAreas = AssistantReleaseRecord.names(areas)
-        }
-        return next
-    }
-
-    /// Ändert die Bereiche OHNE Sitzung (es läuft kein Modell): Die Datei ist die einzige Quelle des Stands. Derselbe Ablauf und
-    /// dieselben Zeilen wie in der Sitzung (Schreibfolge 8), nur ohne Generation, denn ohne Sitzung gibt es keine:
-    /// - Einschränkung (Bereich weg, Zustimmung, die die neuen Bereiche nicht deckt, weg): gilt sofort (der Stand `record` ist enger,
-    ///   bevor die Datei ersetzt ist), dann Datei ersetzen, dann Zeile `release` (Lauf, Änderungsnummer, Ursache, neuer Stand).
-    ///   Scheitert der Austausch, ist der Speicher blockiert (nichts aus eigenen Inhalten in diesem Lauf), der engere Stand wird
-    ///   gemerkt und bei jeder weiteren Gelegenheit erneut gesichert; die Zeile steht trotzdem.
+    /// Ändert die Bereiche OHNE Sitzung (es läuft kein Modell): Die Datei ist die einzige Quelle des Stands. Derselbe Ablauf, dieselbe
+    /// Ordnung und dieselben Zeilen wie in der Sitzung (Schreibfolge 8, `AssistantReleaseSettler`); die Generation ist die EINE des
+    /// Prozesses (laufende Anfragen ALLER Sitzungen enden).
+    /// - Einschränkung (Bereich weg, Zustimmung, die die neuen Bereiche nicht deckt, weg): gilt sofort, dann Datei ersetzen, dann Zeile
+    ///   `release`. Scheitert der Austausch, ist die Ordnung blockiert (nichts aus eigenen Inhalten in diesem Lauf); die Sicherung wird
+    ///   bei jeder weiteren Gelegenheit erneut versucht; die Zeile steht trotzdem.
     /// - Erweiterung (Bereich dazu): Zeile „beabsichtigt“ dauerhaft, dann Datei ersetzen (der Commit), dann Zeile „wirksam“. Scheitert
     ///   die Zeile „beabsichtigt“ oder der Austausch, gilt die Erweiterung in diesem Lauf nicht; die Zeile „in diesem Lauf nicht
-    ///   wirksam“ steht, sobald schreibbar. Ein blockierter Speicher nimmt keine Erweiterung an (wie die Sitzung).
+    ///   wirksam“ steht, sobald schreibbar (Register der Ordnung, jede Sitzung und jede Änderung holt sie nach). Eine blockierte
+    ///   Ordnung nimmt keine Erweiterung an.
     /// - Gemischt: erst der einschränkende, dann der erweiternde Teil (zwei Austausche, zwei Änderungsnummern).
-    /// Ein Fehler einer Zeile steht in `auditError`; der gesicherte Stand bleibt. Die Folgen laufen streng nacheinander und auf
-    /// derselben Warteschlange wie die Austausche der Sitzungen. `audit`: das Protokoll (`nil`: keine Zeilen).
+    /// Ein Fehler einer Zeile steht in `auditError`; der gesicherte Stand bleibt. `audit`: das Protokoll (`nil`: keine Zeilen).
     public func updateAreas(_ areas: Set<AssistantArea>, cloud: Bool, audit: AssistantAuditLog? = nil) async -> AssistantAreaChange {
-        let ticket = nextTicket()
-        await ticket.turn()
-        defer { ticket.complete() }
-        var out = AssistantAreaChange(effective: [], storeError: nil, auditError: nil, applied: true)
-        await catchUpLines(audit, into: &out)
-
-        let restriction = await onQueue { self.restrictNow(areas, cloud: cloud) }
-        out.storeError = restriction.error
-        if let number = restriction.number {
-            let error = await writeLine(.release, number: number, generation: restriction.generation, record: restriction.record,
-                                        cloud: cloud, audit: audit)
-            out.auditError = out.auditError ?? error
-        }
-        if restriction.grows { await expand(areas, cloud: cloud, audit: audit, into: &out) }
-
+        let settler = settler(cloud: cloud, audit: audit)
+        let applied = settler.release.apply(AssistantReleaseChange(cause: .areas, areas: areas))
+        let out = await settler.settle(applied)
         let effective = record.areas(cloud: cloud)
-        out.effective = effective
-        out.applied = effective == areas
-        return out
-    }
-
-    /// Der einschränkende Teil (nur auf der Warteschlange): der engere Stand gilt sofort, dann die Datei. Auch ohne neue
-    /// Einschränkung wird ein noch nicht gesicherter engerer Stand erneut gesichert.
-    private func restrictNow(_ areas: Set<AssistantArea>, cloud: Bool) -> Restriction {
-        let (base, pending) = lock.withLock { (ceiling.apply(to: confirmed), !ceiling.isEmpty) }
-        let current = base.areas(cloud: cloud)
-        let next = Self.setting(current.intersection(areas), cloud: cloud, covering: areas, in: base)
-        let narrows = next != base
-        let grows = !areas.isSubset(of: current)
-        guard narrows || pending else { return Restriction(number: nil, generation: nil, record: base, error: nil, grows: grows) }
-        var number: Int?
-        var generation: Int?
-        if narrows {
-            // Der engere Stand gilt, die Generation steigt und laufende Anfragen ALLER Sitzungen enden: ein Schritt im Lock.
-            let after: AssistantRaiseAftermath = lock.withLock {
-                ceiling = ceiling.merged(with: AssistantReleaseCeiling(narrowing: base, to: next))
-                number = clock.nextChangeLocked()
-                let g = clock.raiseLocked()
-                generation = g
-                return clock.drainLocked(g)
-            }
-            after.finish()
-        }
-        let error = replaceNow(next)
-        if error != nil, narrows { markBlocked() }
-        return Restriction(number: number, generation: generation, record: next, error: error, grows: grows)
-    }
-
-    private func expand(_ areas: Set<AssistantArea>, cloud: Bool, audit: AssistantAuditLog?, into out: inout AssistantAreaChange) async {
-        let (number, intended, blocked) = lock.withLock { () -> (Int, AssistantReleaseRecord, Bool) in
-            (clock.nextChangeLocked(), Self.setting(areas, cloud: cloud, covering: areas, in: ceiling.apply(to: confirmed)), blockedState)
-        }
-        // Ein blockierter Speicher (eine Einschränkung ließ sich nicht sichern) nimmt keine Erweiterung an.
-        if blocked { return await refuse(number, intended, cloud: cloud, audit: audit, into: &out) }
-        // (1) „Erweiterung beabsichtigt“ dauerhaft; scheitert das, kein Austausch.
-        if let error = await writeLine(.intent, number: number, generation: nil, record: intended, cloud: cloud, audit: audit) {
-            out.auditError = out.auditError ?? error
-            return await refuse(number, intended, cloud: cloud, audit: audit, into: &out)
-        }
-        // (2) Datei ersetzen: der Commit der Erweiterung. Mit der Bestätigung wird sie wirksam, und im selben Lock-Schritt steigt die
-        // Generation (laufende Anfragen ALLER Sitzungen enden) und wird die Zeile „wirksam“ mit dieser Generation eingereiht.
-        let error = await onQueue {
-            self.commitNow(Self.setting(areas, cloud: cloud, covering: areas, in: self.record)) { generation, confirmed in
-                self.enqueueLine(.effective, number: number, generation: generation, record: confirmed, cloud: cloud, audit: audit)
-            }
-        }
-        if let error {
-            out.storeError = error
-            return await refuse(number, intended, cloud: cloud, audit: audit, into: &out)
-        }
-        // (3) Die Zeile „wirksam“ steht dauerhaft; ihr Fehler wird gemeldet, die Erweiterung bleibt (gesichert).
-        if audit != nil, let written = await audit?.waitForLine(key: clock.key("chg", number)) { out.auditError = out.auditError ?? written }
-    }
-
-    /// Die Erweiterung gilt in diesem Lauf nicht: Die Zeile „in diesem Lauf nicht wirksam“ wird geschrieben, sobald es geht.
-    private func refuse(_ number: Int, _ intended: AssistantReleaseRecord, cloud: Bool, audit: AssistantAuditLog?,
-                        into out: inout AssistantAreaChange) async {
-        lock.withLock {
-            if !unwritten.contains(where: { $0.number == number }) { unwritten.append(UnwrittenLine(number: number, record: intended, cloud: cloud)) }
-        }
-        await catchUpLines(audit, into: &out)
-    }
-
-    /// Holt Zeilen „in diesem Lauf nicht wirksam“ nach, die noch nicht geschrieben werden konnten.
-    private func catchUpLines(_ audit: AssistantAuditLog?, into out: inout AssistantAreaChange) async {
-        guard audit != nil else { return }
-        for item in lock.withLock({ unwritten }) {
-            if let error = await writeLine(.ineffective, number: item.number, generation: nil, record: item.record, cloud: item.cloud, audit: audit) {
-                out.auditError = out.auditError ?? error
-                continue
-            }
-            lock.withLock { unwritten.removeAll { $0.number == item.number } }
-        }
-    }
-
-    /// Reiht eine Zeile der Klasse A ohne Sitzung ein (`release`, `intent`, `effective`, `ineffective`), ohne zu warten: Lauf vom
-    /// Token der Ordnung beim Schreiben, Änderungsnummer, Ursache `areas`, der Stand danach, ohne Titel und Inhalte. `generation`:
-    /// nur `release` und `effective` (die im Lock vergebene Generation dieser Änderung). Gibt den Fehlerschlüssel zurück (je Lauf und
-    /// Änderung eindeutig, derselbe Schlüsselraum wie in den Sitzungen). Darf im Lock der Ordnung aufgerufen werden (nur Einreihen).
-    @discardableResult
-    private func enqueueLine(_ kind: AssistantJournalLine.Kind, number: Int, generation: Int?, record: AssistantReleaseRecord, cloud: Bool,
-                             audit: AssistantAuditLog?) -> String {
-        let key = clock.key("chg", number)
-        guard let audit else { return key }
-        var line = AssistantJournalLine(kind)
-        line.at = Date()
-        line.chg = number
-        line.gen = generation
-        line.cause = .areas
-        line.areas = AssistantReleaseRecord.names(record.areas(cloud: cloud))
-        line.unsourced = record.optIn
-        line.consent = record.consentVersion
-        line.cloud = cloud
-        audit.enqueue(line, key: key, run: clock.run)
-        return key
-    }
-
-    /// Wie `enqueueLine`, wartet aber, bis die Zeile (dauerhaft) steht.
-    private func writeLine(_ kind: AssistantJournalLine.Kind, number: Int, generation: Int?, record: AssistantReleaseRecord, cloud: Bool,
-                           audit: AssistantAuditLog?) async -> AssistantAuditError? {
-        guard let audit else { return nil }
-        let key = enqueueLine(kind, number: number, generation: generation, record: record, cloud: cloud, audit: audit)
-        return await audit.waitForLine(key: key)
+        return AssistantAreaChange(effective: effective, storeError: out.storeError, auditError: out.error, applied: effective == areas)
     }
 
     /// Der Austausch selbst (blockierend, nur auf der Warteschlange oder beim Öffnen). Gelingt er, ist `record` bestätigt und ein
     /// gemerkter engerer Stand erfüllt (er war Teil der Fassung). Scheitert er, merkt der Speicher, was an `record` einschränkt.
-    func replaceNow(_ record: AssistantReleaseRecord, onConfirmed: ((Int, AssistantReleaseRecord) -> Void)? = nil) -> AssistantStoreError? {
+    func replaceNow(_ record: AssistantReleaseRecord) -> AssistantStoreError? {
         lock.lock()
         if running {
             overlapCount += 1
@@ -784,24 +702,17 @@ public final class AssistantReleaseStore: @unchecked Sendable {
         let error = writeVersion(record, revision: number)
         lock.lock()
         running = false
-        var after: AssistantRaiseAftermath?
         if error == nil {
             confirmed = record
             revision = number
-            lockedState = false
+            clock.clearLockedLocked()
             dirtyState = false
             ceiling = AssistantReleaseCeiling()
-            if let onConfirmed {
-                let g = clock.raiseLocked()
-                onConfirmed(g, record)
-                after = clock.drainLocked(g)
-            }
         } else {
             dirtyState = true
             ceiling = ceiling.merged(with: AssistantReleaseCeiling(narrowing: confirmed, to: record))
         }
         lock.unlock()
-        after?.finish()
         return error
     }
 

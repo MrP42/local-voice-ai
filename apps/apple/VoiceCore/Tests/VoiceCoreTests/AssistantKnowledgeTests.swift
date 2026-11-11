@@ -58,24 +58,24 @@ final class AssistantKnowledgeTests: XCTestCase {
     }
 
     func testStatementsWithoutANamedAreaCoverAllEnabledAreasInOrder() async {
-        let k = AssistantKnowledge(corpus: await makeCorpus())
+        var k = AssistantKnowledge(corpus: await makeCorpus())
         let all = await k.inventoryStatements(question: "Was habe ich gespeichert?")
         XCTAssertEqual(all, ["Du hast 2 Bücher.", "Neueste Bücher: Der Zauberberg und Faust.", "Du hast ein Transkript.",
                              "Neueste Transkripte: Besprechung Budget.", "Du hast keine Dokumente.", "Du hast eine Notiz.", "Neueste Notizen: Einkauf."])
-        await k.setAreas([.books, .notes])
+        k = k.withAreas([.books, .notes])
         let some = await k.inventoryStatements(question: "Was habe ich gespeichert?")
         XCTAssertEqual(some.count, 4)
         XCTAssertFalse(some.joined().contains("Transkript"))
     }
 
     func testStatementsOnlyForEnabledAreasAndEmptyWhenTheNamedAreaIsOff() async {
-        let k = AssistantKnowledge(corpus: await makeCorpus())
-        await k.setAreas([.books])
+        var k = AssistantKnowledge(corpus: await makeCorpus())
+        k = k.withAreas([.books])
         let inBooks = await k.inventoryStatements(question: "Welche Bücher habe ich?")
         XCTAssertFalse(inBooks.isEmpty)
         let other = await k.inventoryStatements(question: "Welche Transkripte habe ich?")
         XCTAssertEqual(other, [], "genannter Bereich nicht freigegeben: nichts, auch keine Zahl")
-        await k.setAreas([])
+        k = k.withAreas([])
         let none = await k.inventoryStatements(question: "Was habe ich gespeichert?")
         XCTAssertEqual(none, [])
     }
@@ -123,10 +123,10 @@ final class AssistantKnowledgeTests: XCTestCase {
 
     /// Das Modell bekommt keinen Bestand mehr: der Prompt-Bau kennt keinen, und `AssistantKnowledge` liefert keinen Block.
     func testTitlesForTheOwnDataCheckCoverAllEnabledAreas() async {
-        let k = AssistantKnowledge(corpus: await makeCorpus())
+        var k = AssistantKnowledge(corpus: await makeCorpus())
         let titles = await k.inventoryTitles()
         XCTAssertEqual(Set(titles), ["Der Zauberberg", "Faust", "Besprechung Budget", "Einkauf"])
-        await k.setAreas([.notes])
+        k = k.withAreas([.notes])
         let notes = await k.inventoryTitles()
         XCTAssertEqual(notes, ["Einkauf"])
     }
@@ -145,8 +145,8 @@ final class AssistantKnowledgeTests: XCTestCase {
         let source = AssistantFakeSource(area: .files, passages: [
             AssistantPassage(area: .files, itemId: "f1", title: "Budgetplan.pdf", locator: "Seite 2", text: "Budget Quartal Planung der Abteilung.", score: 9),
         ])
-        let k = AssistantKnowledge(corpus: await makeCorpus(), sources: [source])
-        await k.setAreas([.books])
+        var k = AssistantKnowledge(corpus: await makeCorpus(), sources: [source])
+        k = k.withAreas([.books])
         let hits = await k.retrieve(question: "Budget Quartal Kürzung Marketing Planung", previous: nil, limit: 5, maxChars: 4_000)
         XCTAssertTrue(hits.allSatisfy { $0.area == .books }, "\(hits.map(\.area))")
         XCTAssertTrue(source.seen.questions.isEmpty, "deaktivierte Quelle wird nicht einmal gefragt")
@@ -253,15 +253,15 @@ final class AssistantKnowledgeTests: XCTestCase {
         let source = AssistantFakeSource(area: .files, passages: [
             AssistantPassage(area: .files, itemId: "f1", title: "Budgetplan.pdf", locator: "Seite 2", text: "Budget Quartal Planung der Abteilung.", score: 9),
         ])
-        let k = AssistantKnowledge(corpus: await makeCorpus(), sources: [source])
+        var k = AssistantKnowledge(corpus: await makeCorpus(), sources: [source])
         let hits = await k.probe(sentence: "Das Budget für das nächste Quartal wurde gekürzt.")
         XCTAssertEqual(Set(hits.map(\.area)), [.transcripts, .files])
         XCTAssertEqual(source.seen.questions, ["Das Budget für das nächste Quartal wurde gekürzt."], "der Satz selbst, ohne Vorfrage")
-        await k.setAreas([.books])
+        k = k.withAreas([.books])
         let books = await k.probe(sentence: "Das Budget für das nächste Quartal wurde gekürzt.")
         XCTAssertTrue(books.allSatisfy { $0.area == .books })
         XCTAssertEqual(source.seen.questions.count, 1, "eine deaktivierte Quelle wird nicht gefragt")
-        await k.setAreas([])
+        k = k.withAreas([])
         let none = await k.probe(sentence: "Das Budget für das nächste Quartal wurde gekürzt.")
         XCTAssertEqual(none, [])
         let blank = await k.probe(sentence: "   ")

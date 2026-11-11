@@ -348,59 +348,40 @@ final class AssistantRelease: @unchecked Sendable {
         var expands: Bool { steps.contains { $0.kind == .expansion } }
     }
 
-    /// Die prozessweite Ordnung: Lock, Generation, Wiedergabesperre, Register der Anfragen, Beobachter, Zähler, Reihe, Lauf-Token.
+    /// Die prozessweite Ordnung: Lock, Generation, Stand der Klasse A, Epochen, Wiedergabesperre, Register der Anfragen, Beobachter,
+    /// Zähler, Reihe, Lauf-Token. DIESE Klasse hält davon nichts: Sie ist die Sicht einer Sitzung (lokal oder Cloud, Ziel) auf den
+    /// einen Stand der Ordnung und liest ihn im selben Lesen wie die Generation (Runde 8, R3).
     let clock: AssistantReleaseClock
+    let view: AssistantReleaseView
     private var lock: NSLock { clock.lock }
     /// Kennung dieser Sicht im Register der Anfragen und bei den Beobachtern.
     private let owner = UUID().uuidString
     /// Wiedergabesperre: teilt den Lock der Ordnung und wird mit der Generation vorgerückt.
     var playback: AssistantPlaybackGate { clock.playback }
-    /// Der WIRKSAME Stand dieser Sicht.
-    private var state: AssistantReleaseState
-    /// Der beabsichtigte Stand: wirksamer Stand plus alle noch offenen Erweiterungen (immer aus beidem berechnet).
-    private var target: AssistantReleaseState
-    /// Register der offenen Erweiterungsschritte (Nummer → der noch verbliebene Teil). Eine Einschränkung streicht die entzogenen
-    /// Teile aus ALLEN offenen Schritten (im selben Lock); ein Schritt macht nur seinen verbliebenen Teil wirksam, unabhängig vom
-    /// späteren Ziel. Ein später beantragter Teil wirkt nur über die eigene Folge.
-    private var open: [Int: AssistantReleaseState] = [:]
-    private var lockedState: Bool
-    private var blockedState: Bool
-    private var contentEpoch = 0
-    private var corpusEpoch = 0
-    /// Wird bei Wirksamwerden einer Erweiterung, bei Änderungen von Inhalten und bei der Blockade genau einmal gerufen, IM Lock, an
-    /// der Stelle der Erhöhung (die Zeile steht damit in derselben Reihenfolge wie die Commit-Zeilen). Kurz und ohne I/O (Zeile
-    /// einreihen), ruft nie zurück.
+    /// Wird bei Wirksamwerden einer Erweiterung und bei der Blockade genau einmal gerufen, IM Lock, an der Stelle der Erhöhung (die
+    /// Zeile steht damit in derselben Reihenfolge wie die Commit-Zeilen). Kurz und ohne I/O (Zeile einreihen), ruft nie zurück.
     private let onIncrease: (@Sendable (Increase) -> Void)?
 
-    init(optIn: Bool, consentVersion: Int = 0, areas: Set<AssistantArea> = Set(AssistantArea.allCases), cloudConsent: Bool = true,
-         locked: Bool = false, blocked: Bool = false, clock: AssistantReleaseClock = AssistantReleaseClock(),
-         onIncrease: (@Sendable (Increase) -> Void)? = nil) {
+    /// Eine Sicht auf den Stand einer Ordnung.
+    init(clock: AssistantReleaseClock, view: AssistantReleaseView, onIncrease: (@Sendable (Increase) -> Void)? = nil) {
         self.clock = clock
-        let initial = AssistantReleaseState(optIn: optIn, consentVersion: optIn ? consentVersion : 0, areas: areas, cloudConsent: cloudConsent)
-        self.state = initial
-        self.target = initial
-        self.lockedState = locked
-        self.blockedState = blocked
+        self.view = view
         self.onIncrease = onIncrease
     }
 
-    /// Der beabsichtigte Stand aus dem wirksamen und den offenen Schritten (Aufrufer hält den Lock).
-    private func recomputeTargetLocked() {
-        open = open.filter { !$0.value.isEmpty }
-        var next = state
-        for number in open.keys.sorted() { next = next.expanded(by: open[number] ?? .none) }
-        target = next
+    /// Eine Ordnung für sich mit einem Anfangsstand (Tests der Freigabe allein, Sitzung ohne Speicher): setzt den Stand der Ordnung.
+    /// Die Sicht ist die eines Cloud-Ziels ohne Kennung (die Zustimmung braucht den ausdrücklichen Eintrag).
+    convenience init(optIn: Bool, consentVersion: Int = 0, areas: Set<AssistantArea> = Set(AssistantArea.allCases), cloudConsent: Bool = true,
+                     locked: Bool = false, blocked: Bool = false, clock: AssistantReleaseClock = AssistantReleaseClock(),
+                     onIncrease: (@Sendable (Increase) -> Void)? = nil) {
+        self.init(clock: clock, view: AssistantReleaseView(cloud: true, target: nil), onIncrease: onIncrease)
+        clock.seed(record: AssistantReleaseRecord.seeded(optIn: optIn, consentVersion: consentVersion, areas: areas,
+                                                         cloudConsent: cloudConsent, target: nil), locked: locked)
+        if blocked { clock.markBlocked() }
     }
 
-    private func runKey(_ id: String) -> String { "\(owner)/\(id)" }
-
-    /// Generation, Stand und Zustand des Bestands zusammen, aus EINEM Lock: Eine Anfrage liest alles in einem Schritt.
-    var snapshot: Snapshot {
-        lock.lock()
-        defer { lock.unlock() }
-        return Snapshot(generation: clock.generationLocked, state: state, locked: lockedState, blocked: blockedState,
-                        corpusReady: corpusEpoch == contentEpoch, contentEpoch: contentEpoch)
-    }
+    /// Generation, Stand der Sicht und Zustand des Bestands zusammen, aus EINEM Lock: Eine Anfrage liest alles in einem Schritt.
+    var snapshot: Snapshot { clock.snapshot(view: view) }
 
     var currentGeneration: Int { snapshot.generation }
     var isOptedIn: Bool { snapshot.optIn }
@@ -423,162 +404,39 @@ final class AssistantRelease: @unchecked Sendable {
     /// Eine Karte in der Reihe der Sicherungsfolgen, ohne Änderung (Wiederholung der Sicherung).
     func enqueueTicket() -> AssistantChangeTicket { clock.nextTicket() }
 
-    /// Wendet eine Änderung der Klasse A an. Sie wird gegen den beabsichtigten Stand (`target`) verglichen und zerlegt:
-    /// - Einschränkung (etwas fällt weg): wirkt sofort, im selben Lock steigt die Generation und wird der Stand gesetzt (eine
-    ///   Änderung, ein Stand). Laufende Antworten enden.
-    /// - Erweiterung (etwas kommt dazu): ändert hier NICHTS und erhält hier KEINE Generation. Sie wird erst mit `becomeEffective`
-    ///   wirksam, nachdem die Zustandsdatei bestätigt ist; dort steigt die Generation im unteilbaren Schritt.
-    /// - Eine gemischte Änderung ergibt zwei Teile, erst den einschränkenden, dann den erweiternden.
-    /// - Ohne Änderung des Stands und ohne `force` geschieht nichts (höchstens die Einwilligungsversion wird nachgeführt).
-    /// Die Teile tragen Karten der Reihe: Ihre Sicherungsfolgen laufen streng nacheinander (`AssistantChangeTicket`).
-    func apply(_ change: AssistantReleaseChange) -> Applied {
-        lock.lock()
-        var next = target
-        if let optIn = change.optIn {
-            next.optIn = optIn.on
-            next.consentVersion = optIn.on ? optIn.consentVersion : 0
-        }
-        if let areas = change.areas { next.areas = areas }
-        if let granted = change.cloudConsent { next.cloudConsent = granted }
-        // Bei unverändertem Opt-in wird nur die Einwilligungsversion nachgeführt; sie allein ändert die Freigabe nicht.
-        if next.optIn == target.optIn, next.optIn {
-            target.consentVersion = next.consentVersion
-            if state.optIn { state.consentVersion = next.consentVersion }
-        }
-        let removes = target.restricted(to: next) != target
-        let adds = target.addition(to: next)
-        if !removes, adds == nil, !change.force {
-            let g = clock.generationLocked
-            lock.unlock()
-            return Applied(generation: g, changed: false, steps: [])
-        }
-        var steps: [Step] = []
-        var raised = false
-        if removes {
-            state = state.restricted(to: next)
-            // Die Einschränkung streicht die entzogenen Teile aus allen früher ausgegebenen, noch nicht wirksamen Erweiterungen.
-            for (number, remaining) in open { open[number] = remaining.restricted(to: next) }
-            let number = clock.nextChangeLocked()
-            let g = clock.raiseLocked()
-            steps.append(Step(kind: .restriction, number: number, cause: change.cause, generation: g, delta: state,
-                              ticket: clock.nextTicketLocked(), key: clock.key("chg", number)))
-            raised = true
-        }
-        if let adds {
-            let number = clock.nextChangeLocked()
-            open[number] = adds
-            steps.append(Step(kind: .expansion, number: number, cause: change.cause, generation: 0, delta: adds,
-                              ticket: clock.nextTicketLocked(), key: clock.key("chg", number)))
-        }
-        if steps.isEmpty {
-            let number = clock.nextChangeLocked()
-            let g = clock.raiseLocked()
-            steps.append(Step(kind: .event, number: number, cause: change.cause, generation: g, delta: state,
-                              ticket: clock.nextTicketLocked(), key: clock.key("chg", number)))
-            raised = true
-        }
-        recomputeTargetLocked()
-        let g = clock.generationLocked
-        let after = raised ? clock.drainLocked(g) : nil
-        lock.unlock()
-        after?.finish()
-        return Applied(generation: g, changed: true, steps: steps)
-    }
+    /// Wendet eine Änderung der Klasse A an (siehe `AssistantReleaseClock.apply`): Einschränkung sofort mit eigener Generation für
+    /// ALLE Sitzungen, Erweiterung erst mit `becomeEffective`.
+    func apply(_ change: AssistantReleaseChange) -> Applied { clock.apply(change, view: view) }
 
-    /// Der Stand, den die Zustandsdatei für diesen Teil erhalten soll: bei einer Erweiterung der wirksame Stand mit dem noch
-    /// verbliebenen Teil DIESES Schritts (nie mit einem späteren Ziel), sonst der wirksame Stand. Gelesen im Lock, damit eine
-    /// zwischenzeitliche Einschränkung in die Datei eingeht (und eine frühere, nicht gesicherte gleich mit).
-    func viewForSave(_ step: Step) -> AssistantReleaseState {
-        lock.lock()
-        defer { lock.unlock() }
-        return step.kind == .expansion ? state.expanded(by: open[step.number] ?? .none) : state
-    }
+    /// Der Stand, den die Zustandsdatei für diesen Teil erhalten soll (siehe `AssistantReleaseClock.recordForSave`).
+    func recordForSave(_ step: Step) -> AssistantReleaseRecord { clock.recordForSave(step) }
 
-    /// Eine Erweiterung wird wirksam, im unteilbaren Schritt: Stand setzen, Generation erhöhen, Wiedergabesperre vorrücken, Zeile
-    /// „wirksam“ einreihen, alles in EINEM Lock. Nur nach bestätigtem Austausch der Zustandsdatei aufrufen. Gesetzt wird nur der
-    /// verbliebene Teil des eigenen Schritts. `nil`: nicht möglich (blockiert, oder eine Einschränkung hat den Teil entzogen).
-    func becomeEffective(_ step: Step) -> Int? {
-        lock.lock()
-        guard !blockedState, let remaining = open[step.number], !remaining.isEmpty else {
-            lock.unlock()
-            return nil
-        }
-        open[step.number] = nil
-        state = state.expanded(by: remaining)
-        lockedState = false
-        recomputeTargetLocked()
-        let g = clock.raiseLocked()
-        onIncrease?(Increase(kind: .effective, generation: g, change: step.number, cause: step.cause, state: state, key: step.key))
-        let after = clock.drainLocked(g)
-        lock.unlock()
-        after.finish()
-        return g
-    }
+    /// Die Sicht auf einen Gesamtstand.
+    func state(of record: AssistantReleaseRecord) -> AssistantReleaseState { view.state(of: record) }
 
-    /// Eine Erweiterung wird in diesem Lauf nicht wirksam: Ihr Schritt verlässt das Register, der beabsichtigte Stand verliert, was
-    /// nur sie wollte (andere offene Schritte bleiben), und dieselbe Erweiterung lässt sich noch einmal anstoßen.
-    func abandon(_ step: Step) {
-        lock.lock()
-        open[step.number] = nil
-        recomputeTargetLocked()
-        lock.unlock()
-    }
+    /// Eine Erweiterung wird wirksam, im unteilbaren Schritt (Stand setzen, Generation erhöhen, Zeile „wirksam“ einreihen). Nur nach
+    /// bestätigtem Austausch der Zustandsdatei aufrufen. `nil`: nicht möglich (blockiert, oder eine Einschränkung hat den Teil entzogen).
+    func becomeEffective(_ step: Step) -> Int? { clock.becomeEffective(step, view: view, onIncrease: onIncrease) }
+
+    /// Eine Erweiterung wird in diesem Lauf nicht wirksam: Ihr Schritt verlässt das Register.
+    func abandon(_ step: Step) { clock.abandon(step) }
 
     /// Die Zustandsdatei ist (neu) gesichert: eine gesperrte Freigabe ist damit wieder gültig.
-    func clearLocked() {
-        lock.lock()
-        lockedState = false
-        lock.unlock()
-    }
+    func clearLocked() { clock.clearLocked() }
 
     /// Eine Einschränkung ließ sich nicht sichern: Blockade für den Rest des Laufs, im selben unteilbaren Schritt mit eigener
-    /// Generation (der Bestand an Blöcken, der freigegeben ist, ändert sich). Gibt die Generation zurück.
+    /// Generation. Gibt die Generation zurück.
     @discardableResult
-    func block() -> Int {
-        lock.lock()
-        if blockedState {
-            let g = clock.generationLocked
-            lock.unlock()
-            return g
-        }
-        blockedState = true
-        let number = clock.nextChangeLocked()
-        let g = clock.raiseLocked()
-        onIncrease?(Increase(kind: .block, generation: g, change: number, cause: .other, state: state, key: clock.key("chg", number)))
-        let after = clock.drainLocked(g)
-        lock.unlock()
-        after.finish()
-        return g
-    }
+    func block() -> Int { clock.block(view: view, onIncrease: onIncrease) }
 
-    var isBlocked: Bool { snapshot.blocked }
+    var isBlocked: Bool { clock.isBlocked }
 
-    /// Klasse B: Ein Inhalt oder eine Schutzregel ändert sich (Lesegrenze, KI-Freigabe, Schutz der Ablage, Quelle geändert oder
-    /// gelöscht). Synchron und VOR der Änderung im Speicher: Die Generation steigt im selben Lock wie bei Klasse A (gemeinsame
-    /// Ordnung), der Bestand wird `stale` (keine Ausgabe aus eigenen Inhalten, bis der neue Bestand steht), die Zeile mit Ursache
-    /// „Inhalt“ wird nur eingereiht. Gibt Generation und Epoche zurück; `contentInstalled(epoch:)` meldet den neuen Bestand.
+    /// Klasse B: siehe `AssistantReleaseClock.contentWillChange` (die Ordnung selbst, nicht diese Sicht, erhöht und schreibt die Zeile).
     @discardableResult
-    func contentWillChange() -> (generation: Int, epoch: Int) {
-        lock.lock()
-        contentEpoch += 1
-        let epoch = contentEpoch
-        let g = clock.raiseLocked()
-        onIncrease?(Increase(kind: .content, generation: g, change: nil, cause: .content, state: state, key: clock.key("gen", g)))
-        let after = clock.drainLocked(g)
-        lock.unlock()
-        after.finish()
-        return (g, epoch)
-    }
+    func contentWillChange() -> (generation: Int, epoch: Int) { clock.contentWillChange() }
 
-    /// Der Bestand steht für die Änderung dieser Epoche (und alle früheren). Keine zweite Erhöhung: Die Änderung selbst hat die
-    /// Generation schon erhöht. `false`: eine neuere Änderung ist inzwischen dazugekommen, der Bestand bleibt `stale`.
     @discardableResult
-    func contentInstalled(epoch: Int) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        corpusEpoch = max(corpusEpoch, min(epoch, contentEpoch))
-        return corpusEpoch == contentEpoch
-    }
+    func contentInstalled(epoch: Int) -> Bool { clock.contentInstalled(epoch: epoch) }
 
     static func names(_ areas: Set<AssistantArea>) -> [String] { areas.map(\.rawValue).sorted() }
 
@@ -628,6 +486,8 @@ final class AssistantRelease: @unchecked Sendable {
         lock.unlock()
     }
 
+    private func runKey(_ id: String) -> String { "\(owner)/\(id)" }
+
     /// Führt `body` im Lock der Ordnung aus, mit der dort stehenden Generation (für Zeilen, die in der Reihenfolge der Erhöhungen
     /// stehen müssen, auch wenn die Aktion außerhalb lief: gemeldete Ergebnisse des Controllers). Dieselben Pflichten wie bei `ifCurrent`.
     func inSection<T>(_ body: (Int) -> T) -> T {
@@ -675,22 +535,36 @@ final class AssistantRelease: @unchecked Sendable {
 /// Senden ein, damit eine schnelle Meldung des Controllers nie ins Leere läuft. Begrenzt; ein Eintrag je Anfrage.
 final class AssistantStepIndex: @unchecked Sendable {
     static let maxRequests = 32
+    /// Mehr als die Schritte einer Antwort (`AssistantAuditLog.maxSteps`, jede Einheit ist ein Schritt): Bei den festen Grenzen läuft
+    /// der Index nie voll. Läuft er trotzdem voll, ist die Antwort zu Ende (`append` gibt `false`, die Einheit geht NICHT hinaus).
     static let maxSteps = 512
 
     private let lock = NSLock()
     private var steps: [String: [Int]] = [:]
     private var order: [String] = []
+    private let limitSteps: Int
+    private let limitRequests: Int
 
-    /// Trägt den Schritt des nächsten Ereignisses ein.
-    func append(_ id: String, step: Int) {
+    init(maxSteps: Int = AssistantStepIndex.maxSteps, maxRequests: Int = AssistantStepIndex.maxRequests) {
+        limitSteps = maxSteps
+        limitRequests = maxRequests
+    }
+
+    /// Trägt den Schritt des nächsten Ereignisses ein. `false`, wenn der Index für diese Anfrage voll ist (fail-closed: Der Aufrufer gibt
+    /// die Einheit dann nicht aus; ein Ereignis, dessen Commits der Controller nie zuordnen könnte, gibt es nicht). Eine ältere Anfrage,
+    /// die wegen der Zahl der Anfragen verdrängt wurde, ist danach unbekannt (`knows` ist `false`): Ihre Commits gelten nicht, und
+    /// ihre Einheiten kommen nicht in einen Beitrag (`step` liefert `nil`).
+    @discardableResult
+    func append(_ id: String, step: Int) -> Bool {
         lock.lock()
         defer { lock.unlock() }
         if steps[id] == nil {
             order.append(id)
-            while order.count > Self.maxRequests { steps[order.removeFirst()] = nil }
+            while order.count > limitRequests { steps[order.removeFirst()] = nil }
         }
-        guard steps[id, default: []].count < Self.maxSteps else { return }
+        guard steps[id, default: []].count < limitSteps else { return false }
         steps[id, default: []].append(step)
+        return true
     }
 
     /// Nimmt den zuletzt eingetragenen Schritt zurück (das Ereignis wurde nicht gesendet).
@@ -713,5 +587,224 @@ final class AssistantStepIndex: @unchecked Sendable {
         defer { lock.unlock() }
         guard let list = steps[id], list.indices.contains(index) else { return nil }
         return list[index]
+    }
+}
+
+/// Die Sicherungsfolge einer Änderung der Klasse A (Schreibfolge 8): EIN Ablauf für die Sitzungen und für Änderungen ohne Sitzung
+/// (Runde 8, R3/R8). Er liest und ändert nur den einen Stand der Ordnung (über die Sicht `release`), die Zustandsdatei (`store`) und
+/// das Protokoll (`audit`); die Zeilen „in diesem Lauf nicht wirksam“, die noch fehlen, stehen im Register der Ordnung und werden von
+/// jedem Ablauf nachgeholt, gleich welcher Sitzung sie entstammen.
+/// - Einschränkung: Zustandsdatei dauerhaft ersetzen → Zeile `release` → Rückkehr. Scheitert der Austausch: Ausgang offen, Blockade
+///   für den Rest des Laufs (eigene Generation), Sicherung wird bei jeder Gelegenheit erneut versucht.
+/// - Erweiterung: Zeile „beabsichtigt“ → Zustandsdatei ersetzen (der Commit) → erst danach im Prozess wirksam (Generation steigt im
+///   unteilbaren Schritt) → Zeile „wirksam“. Scheitert ein Schritt davor, wird sie in diesem Lauf nicht wirksam.
+struct AssistantReleaseSettler: Sendable {
+    struct Outcome: Sendable {
+        var error: AssistantAuditError?
+        var storeError: AssistantStoreError?
+        var effective = true
+        var generation = 0
+    }
+
+    let release: AssistantRelease
+    let store: AssistantReleaseStore?
+    let audit: AssistantAuditLog?
+    /// Art des Modells, wie die Zeilen sie tragen (ohne Sitzung: keine).
+    let model: AssistantModelKind?
+
+    var clock: AssistantReleaseClock { release.clock }
+
+    /// Eine Zeile der Klasse A (`release`, `intent`, `effective`, `ineffective`): Lauf kommt vom Token beim Schreiben; Änderungsnummer,
+    /// Ursache und Stand (ohne Titel und Inhalte). Die Generation steht nur in Zeilen, in denen sie für genau diese Änderung vergeben
+    /// wurde (`release`, `effective`), nie in `intent` und `ineffective`.
+    static func line(_ kind: AssistantJournalLine.Kind, change: Int?, generation: Int?, cause: AssistantReleaseCause,
+                     state: AssistantReleaseState, cloud: Bool, model: AssistantModelKind?) -> AssistantJournalLine {
+        var line = AssistantJournalLine(kind)
+        line.at = Date()
+        line.gen = generation
+        line.chg = change
+        line.cause = cause
+        line.areas = AssistantRelease.names(state.areas)
+        line.unsourced = state.optIn
+        line.consent = state.consentVersion
+        line.granted = state.cloudConsent
+        line.model = model
+        line.cloud = cloud
+        return line
+    }
+
+    /// Die Zeile zu einer Erhöhung, die im Lock der Ordnung geschieht (Erweiterung wirksam, Blockade): wird IM Lock an der Stelle der
+    /// Erhöhung gerufen (kurz, nur Einreihen, kein I/O). Einschränkungen schreiben ihre Zeile erst nach der Zustandsdatei. Ohne
+    /// Protokoll gibt es keine Zeile.
+    static func increaseWriter(audit: AssistantAuditLog?, clock: AssistantReleaseClock, cloud: Bool, model: AssistantModelKind?)
+        -> (@Sendable (AssistantRelease.Increase) -> Void)? {
+        guard let audit else { return nil }
+        let run = clock.run
+        return { [weak clock] increase in
+            let kind: AssistantJournalLine.Kind = increase.kind == .effective ? .effective : .release
+            let line = Self.line(kind, change: increase.change, generation: increase.generation, cause: increase.cause,
+                                 state: increase.state, cloud: cloud, model: model)
+            // Die Zeile „wirksam“ erwartet der Ablauf der Erweiterung (er wartet unter diesem Schlüssel: Anspruch). Auf die Zeile einer
+            // Blockade oder eines Inhalts wartet niemand: Scheitert sie, geht sie ins Register zum Nachholen (R6, R8).
+            if increase.kind == .effective {
+                audit.enqueue(line, key: increase.key, run: run)
+            } else {
+                audit.enqueue(line, key: increase.key, run: run, onFailure: { [weak clock] _ in
+                    clock?.addPendingLine(AssistantPendingLine(key: increase.key, line: line))
+                })
+            }
+        }
+    }
+
+    private func line(_ kind: AssistantJournalLine.Kind, step: AssistantRelease.Step, generation: Int?, state: AssistantReleaseState)
+        -> AssistantJournalLine {
+        Self.line(kind, change: step.number, generation: generation, cause: step.cause, state: state, cloud: release.view.cloud, model: model)
+    }
+
+    /// Sichert die Teile der Änderung der Reihe nach (streng nacheinander mit den Folgen anderer Änderungen, gleich welcher Sitzung)
+    /// und gibt den Stand zurück. Jede Folge wartet auf ihre Reihe in der Reihenfolge des Anwendens. Auch eine Änderung ohne Teile
+    /// (derselbe Stand) ist eine Gelegenheit: Was früher nicht ging, wird nachgeholt.
+    func settle(_ applied: AssistantRelease.Applied) async -> Outcome {
+        var out = Outcome()
+        out.generation = applied.generation
+        if applied.steps.isEmpty { return await catchUp(from: out) }
+        for step in applied.steps {
+            await step.ticket.turn()
+            await settleStep(step, into: &out)
+            step.ticket.complete()
+        }
+        return out
+    }
+
+    private func save(_ record: AssistantReleaseRecord) async -> AssistantStoreError? {
+        guard let store else { return nil }
+        return await store.persist(record)
+    }
+
+    private func settleStep(_ step: AssistantRelease.Step, into out: inout Outcome) async {
+        await catchUpInSequence(into: &out)
+        switch step.kind {
+        case .event:
+            out.generation = step.generation
+            await writeLine(.release, step: step, generation: step.generation, state: step.delta, into: &out)
+        case .restriction:
+            out.generation = step.generation
+            if let error = await save(release.recordForSave(step)) {
+                // Der Ausgang des Austauschs ist offen: Die Einschränkung gilt im Prozess, ist aber nicht als gesichert bestätigt.
+                out.storeError = error
+                release.block()
+            } else {
+                release.clearLocked()
+            }
+            await writeLine(.release, step: step, generation: step.generation, state: step.delta, into: &out)
+        case .expansion:
+            await settleExpansion(step, into: &out)
+        }
+    }
+
+    private func settleExpansion(_ step: AssistantRelease.Step, into out: inout Outcome) async {
+        let intended = release.recordForSave(step)
+        let view = release.state(of: intended)
+        // (1) „Erweiterung beabsichtigt“, ohne Generation, dauerhaft. Scheitert das, wird die Erweiterung nicht wirksam und nicht gesichert.
+        // Eine blockierte Ordnung (Einschränkung nicht gesichert) nimmt keine Erweiterung an; die Sicherung hat `catchUpInSequence` zu
+        // Beginn dieser Folge schon erneut versucht (ihr Fehler steht in `out`).
+        if release.isBlocked { return await notEffective(step, state: view, into: &out) }
+        var wrote = true
+        await writeLine(.intent, step: step, generation: nil, state: view, into: &out, ok: &wrote)
+        guard wrote else { return await notEffective(step, state: view, into: &out) }
+        // (2) Zustandsdatei ersetzen: das ist der Commit der Erweiterung. Scheitert oder bricht er ab, ist der Ausgang offen.
+        if let error = await save(intended) {
+            out.storeError = error
+            return await notEffective(step, state: view, into: &out)
+        }
+        // (3) Erst jetzt wirksam im Prozess: Stand, Generation und Zeile „wirksam“ in einem unteilbaren Schritt.
+        guard let generation = release.becomeEffective(step) else { return await notEffective(step, state: view, into: &out) }
+        out.generation = generation
+        // (4) Die Zeile „wirksam“ steht dauerhaft; ihr Fehler wird gemeldet, die Erweiterung bleibt wirksam (sie ist gesichert).
+        if let error = await audit?.waitForLine(key: step.key) { out.error = out.error ?? error }
+    }
+
+    /// Die Erweiterung wird in diesem Lauf nicht wirksam: Die Zeile „in diesem Lauf nicht wirksam“ kommt in das Register der Ordnung
+    /// (jeder Ablauf holt sie nach) und wird sofort geschrieben, wenn es geht.
+    private func notEffective(_ step: AssistantRelease.Step, state: AssistantReleaseState, into out: inout Outcome) async {
+        out.effective = false
+        release.abandon(step)
+        clock.addPendingLine(AssistantPendingLine(key: step.key, line: line(.ineffective, step: step, generation: nil, state: state)))
+        if let error = await flushPending() { out.error = out.error ?? error }
+    }
+
+    /// Nachholen bei jeder Gelegenheit: Die nicht gesicherte Einschränkung wird erneut gesichert und die Zeilen „in diesem Lauf nicht
+    /// wirksam“, die noch fehlen (aus dem Register der Ordnung), werden geschrieben. Die Fehler stehen im Ergebnis. Nur innerhalb der
+    /// Reihe der Folgen aufrufen.
+    func catchUpInSequence(into out: inout Outcome) async {
+        if let error = await secureOutstandingRestriction() { out.storeError = out.storeError ?? error }
+        if let error = await flushPending() { out.error = out.error ?? error }
+    }
+
+    /// Sichert eine noch nicht gesicherte Einschränkung erneut. Die Blockade für den Rest des Laufs bleibt in jedem Fall. Gibt den
+    /// Fehler des Austauschs zurück.
+    private func secureOutstandingRestriction() async -> AssistantStoreError? {
+        guard let store, store.needsCatchUp else { return nil }
+        let error = await store.persist(clock.record)
+        if error == nil { release.clearLocked() }
+        return error
+    }
+
+    /// Schreibt die Zeilen des Registers der Ordnung, die noch fehlen. Eine Zeile verlässt das Register erst, wenn sie dauerhaft steht.
+    @discardableResult
+    func flushPending() async -> AssistantAuditError? {
+        guard let audit else { return nil }
+        var first: AssistantAuditError?
+        for item in clock.pending {
+            audit.enqueue(item.line, key: item.key, run: clock.run)
+            if let error = await audit.waitForLine(key: item.key) { first = first ?? error } else { clock.removePendingLine(item.key) }
+        }
+        return first
+    }
+
+    /// Es gibt etwas nachzuholen (billige Vorprüfung ohne Warten).
+    var needsCatchUp: Bool { (store?.needsCatchUp ?? false) || !clock.pending.isEmpty }
+
+    /// Holt nach, was bei einer früheren Gelegenheit nicht ging: eine nicht gesicherte Einschränkung erneut sichern, fehlende Zeilen
+    /// schreiben. Läuft bei jeder Anfrage (nach ihrer gesicherten `start`-Zeile) und bei jeder Änderung; streng nacheinander mit den
+    /// Folgen der Änderungen (eine Karte der Reihe), und nur, wenn etwas aussteht.
+    @discardableResult
+    func catchUp(from start: Outcome = Outcome()) async -> Outcome {
+        var out = start
+        guard needsCatchUp else { return out }
+        let ticket = clock.nextTicket()
+        await ticket.turn()
+        defer { ticket.complete() }
+        await catchUpInSequence(into: &out)
+        return out
+    }
+
+    private func writeLine(_ kind: AssistantJournalLine.Kind, step: AssistantRelease.Step, generation: Int?, state: AssistantReleaseState,
+                           into out: inout Outcome) async {
+        var ok = true
+        await writeLine(kind, step: step, generation: generation, state: state, into: &out, ok: &ok)
+    }
+
+    private func writeLine(_ kind: AssistantJournalLine.Kind, step: AssistantRelease.Step, generation: Int?, state: AssistantReleaseState,
+                           into out: inout Outcome, ok: inout Bool) async {
+        guard let audit else { return }
+        audit.enqueue(line(kind, step: step, generation: generation, state: state), key: step.key, run: clock.run)
+        if let error = await audit.waitForLine(key: step.key) {
+            out.error = out.error ?? error
+            ok = false
+        }
+    }
+
+    /// Versucht die Sicherung des jetzigen Stands erneut (nach einem gescheiterten Austausch der Zustandsdatei). Läuft streng
+    /// nacheinander mit den anderen Änderungen. Auch ohne Fehler schreibt es die Datei neu. Die Blockade für den Rest des Laufs
+    /// bleibt in jedem Fall bestehen.
+    @discardableResult
+    func retrySave() async -> AssistantStoreError? {
+        let ticket = clock.nextTicket()
+        await ticket.turn()
+        defer { ticket.complete() }
+        let error = await save(clock.record)
+        if error == nil { release.clearLocked() }
+        return error
     }
 }

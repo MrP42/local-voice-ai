@@ -30,9 +30,9 @@ final class AssistantHistoryStoreTests: XCTestCase {
     func testStoredTurnsWithoutASourceAreFilteredOnLoadAndGoneAfterTheNextSave() throws {
         let store = AssistantHistoryStore(directory: dir)
         let sourced = AssistantTurn(user: "Frage mit Quelle", assistant: "Antwort", sources: [AssistantPassage(area: .books, itemId: "b1", title: "Buch", locator: "S. 1", text: "Text", score: 1)],
-                                    model: "Apple", at: Date(timeIntervalSince1970: 1_760_000_001), round: .data)
+                                    model: "Apple", at: Date(timeIntervalSince1970: 1_760_000_001), round: .data).shown
         let free = AssistantTurn(user: "Frage ohne Quelle", assistant: "Allgemeinwissen", general: true, unsourced: true, model: "Apple",
-                                 at: Date(timeIntervalSince1970: 1_760_000_002), round: .general)
+                                 at: Date(timeIntervalSince1970: 1_760_000_002), round: .general).shown
         try store.save([sourced, free])
         let before = try Data(contentsOf: dir.appendingPathComponent(AssistantHistoryStore.fileName))
 
@@ -114,6 +114,25 @@ final class AssistantHistoryStoreTests: XCTestCase {
         try store.save([turn(1)])
         store.clear()
         XCTAssertEqual(store.load(), [])
+        XCTAssertFalse(store.hasAny)
+    }
+
+    /// Suchlauf (d): „Verlauf löschen“ meldet, wenn die Datei bleibt (vorher `try?` ohne Rückmeldung: der Nutzer hielt den Verlauf für
+    /// gelöscht, und er war beim nächsten Start wieder da). Ein leerer Verlauf, der sich nicht löschen lässt, ist beim Speichern ein
+    /// Fehler. Gegen 4d802f3 NICHT AUSDRÜCKBAR (`clear()` gab nichts zurück, es gab keine Einspeisung).
+    func testClearReportsWhenTheFileStaysAndAnEmptySaveThenFails() throws {
+        struct Refused: Error {}
+        let store = AssistantHistoryStore(directory: dir, remover: { _ in throw Refused() })
+        try store.save([turn(1)])
+        XCTAssertFalse(store.clear(), "die Datei bleibt: nicht gelöscht")
+        XCTAssertTrue(store.hasAny)
+        XCTAssertThrowsError(try store.save([])) { XCTAssertEqual($0 as? AssistantHistoryStore.StoreError, .deleteFailed) }
+        XCTAssertEqual(store.load().count, 1, "nichts ging verloren")
+        // Gibt es keine Datei, gilt sie als gelöscht, auch wenn das Löschen nicht ginge.
+        let empty = AssistantHistoryStore(directory: dir.appendingPathComponent("leer", isDirectory: true), remover: { _ in throw Refused() })
+        XCTAssertTrue(empty.clear())
+        // Mit funktionierendem Löschen: true.
+        XCTAssertTrue(AssistantHistoryStore(directory: dir).clear())
         XCTAssertFalse(store.hasAny)
     }
 
@@ -254,7 +273,7 @@ final class AssistantHistoryStoreTests: XCTestCase {
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir.path), [AssistantHistoryStore.fileName])
     }
 
-    // MARK: Marke je Satz (Abschnitte mit Quellzeile oder Kennzeichnung)
+    // MARK: Marke je Ausgabeeinheit (Abschnitte mit Quellzeile oder Kennzeichnung)
 
     /// Ein Abschnitt trägt nach Speichern und Laden Quellzeile oder Kennzeichnung; Beiträge ohne das Feld `note` laden.
     func testPartsKeepTheirSourceLineAndNoteAndOldPartsWithoutNoteLoad() throws {

@@ -172,8 +172,10 @@ final class AssistantRestartTests: XCTestCase {
         XCTAssertEqual(results(1), [.executed, .executed, .executed, .executed])
         XCTAssertEqual(results(2), [.executed, .executed, .unknown, .unknown], "Anzeige ausgeführt, Audio und Verlauf unbekannt")
         XCTAssertEqual(results(3), [.executed, .unknown, .unknown, .unknown])
-        XCTAssertEqual(results(4), [.executed, .discarded, .notPlanned, .notPlanned], "nach einer verworfenen Anzeige begann kein Audiostart")
-        XCTAssertEqual(results(5), [.executed, .executed, .failed, .notPlanned])
+        // Der Leser schließt nie über die Art hinweg (Runde 8, R7): Eine fehlende Zeile in einer nicht regulär beendeten Anfrage ist
+        // „unbekannt“, auch hinter einer verworfenen Anzeige oder einem gescheiterten Audiostart (der Prozess kann dazwischen geendet sein).
+        XCTAssertEqual(results(4), [.executed, .discarded, .unknown, .unknown], "keine Zeile zu Audio und Verlauf: unbekannt, nicht geschlossen")
+        XCTAssertEqual(results(5), [.executed, .executed, .failed, .unknown])
         XCTAssertEqual(results(6), [.unknown, .unknown, .unknown, .unknown])
         XCTAssertEqual(results(7), [.notPlanned, .notPlanned, .notPlanned, .notPlanned])
         XCTAssertEqual(trace[2]?.unknownStages, [.audio, .history])
@@ -200,14 +202,14 @@ final class AssistantRestartTests: XCTestCase {
             _ = await audit.flush(request: "r1")   // die Ergebniszeile der Anzeige steht dauerhaft
             copy = try crashCopy()
         }
-        _ = await s.commit(requestId: "r1", user: "x", spoken: "", interrupted: true)
+        _ = await s.commit(requestId: "r1", user: "x", spoken: .nothing, interrupted: true)
         let before = raw(try XCTUnwrap(copy)).filter { $0["req"] as? String == "r1" }
 
         // Neuer Prozess auf der Kopie: öffnet, schließt die Anfrage, läuft weiter.
         let reopened = process(in: copy)
         let s2 = await session(reopened)
         for await _ in s2.events(AssistantRequest(requestId: "r2", text: "Wie hoch ist die Zugspitze?")) {}
-        _ = await s2.commit(requestId: "r2", user: "x", spoken: "", interrupted: true)
+        _ = await s2.commit(requestId: "r2", user: "x", spoken: .nothing, interrupted: true)
         let after = raw(copy).filter { $0["req"] as? String == "r1" }
         let added = Array(after.dropFirst(before.count))
         XCTAssertEqual(added.compactMap { $0["t"] as? String }, ["end"], "nur das Schließen: keine Ergebniszeile, keine Einordnung, keine Verlaufszeile")
@@ -236,7 +238,7 @@ final class AssistantRestartTests: XCTestCase {
         let display = s.commitOutput(requestId: "alt", index: 1, generation: g, stage: .display) { displayRan = true }
         let audioStart = s.commitStart(requestId: "alt", index: 1, generation: g) { audioRan = true; return true }
         s.noteCommit(requestId: "alt", index: 1, stage: .audio, ok: true, generation: g)
-        let wrote = await s.commit(requestId: "alt", user: "Frage", spoken: "Antwort", interrupted: false)
+        let wrote = await s.commit(requestId: "alt", user: "Frage", spoken: .all, interrupted: false)
         XCTAssertFalse(display.ok)
         XCTAssertFalse(audioStart.ok)
         XCTAssertFalse(displayRan, "kein Auslösen der Anzeige für eine Anfrage eines früheren Laufs")
@@ -289,7 +291,7 @@ final class AssistantRestartTests: XCTestCase {
                 seen.value = kinds.contains("state") && kinds.contains("start")
             }
         }
-        _ = await s.commit(requestId: "n1", user: "x", spoken: "", interrupted: true)
+        _ = await s.commit(requestId: "n1", user: "x", spoken: .nothing, interrupted: true)
         XCTAssertTrue(seen.value, "Standzeile und `start` stehen dauerhaft, bevor das erste Ereignis hinausgeht")
         let mine = raw().filter { ($0["t"] as? String == "state") || ($0["t"] as? String == "start" && $0["req"] as? String == "n1") }
         XCTAssertEqual(mine.compactMap { $0["run"] as? Int }, [6, 6], "höchste Nummer plus eins, auf Standzeile und `start`")
@@ -314,10 +316,10 @@ final class AssistantRestartTests: XCTestCase {
         }
         XCTAssertEqual(failure, .auditUnavailable)
         XCTAssertEqual(sentences, 0, "keine Ausgabe ohne dauerhafte Laufnummer")
-        _ = await s.commit(requestId: "x1", user: "x", spoken: "", interrupted: true)
+        _ = await s.commit(requestId: "x1", user: "x", spoken: .nothing, interrupted: true)
         broken.value = false
         for await _ in s.events(AssistantRequest(requestId: "x2", text: question)) {}
-        _ = await s.commit(requestId: "x2", user: "x", spoken: "", interrupted: true)
+        _ = await s.commit(requestId: "x2", user: "x", spoken: .nothing, interrupted: true)
         let runs = raw().compactMap { $0["run"] as? Int }
         XCTAssertEqual(runs.max(), 5, "die Nummer nach dem Fehlschlag ist die, die vergeben wurde: höchste plus eins, kein Sprung")
         XCTAssertEqual(Set(runs.filter { $0 > 4 }), [5])
@@ -391,7 +393,7 @@ final class AssistantRestartTests: XCTestCase {
         let first = process()
         let s1 = await session(first, store: store)
         for await _ in s1.events(AssistantRequest(requestId: "a", text: question)) {}
-        _ = await s1.commit(requestId: "a", user: "x", spoken: "", interrupted: true)
+        _ = await s1.commit(requestId: "a", user: "x", spoken: .nothing, interrupted: true)
         _ = await s1.setAreas([.books])   // Zeile `release`: der zuletzt protokollierte Stand
         _ = await first.flushReleaseLines()
 
@@ -399,7 +401,7 @@ final class AssistantRestartTests: XCTestCase {
         let second = process()
         let s2 = await session(second, store: AssistantReleaseStore(directory: dir, protocolURL: protocolURL))
         for await _ in s2.events(AssistantRequest(requestId: "b", text: question)) {}
-        _ = await s2.commit(requestId: "b", user: "x", spoken: "", interrupted: true)
+        _ = await s2.commit(requestId: "b", user: "x", spoken: .nothing, interrupted: true)
 
         // Lauf 3: Eine Einschränkung kam in der Datei an, ihre Zeile ging verloren (voller Datenträger): Abweichung erkennbar.
         let broken = Flag()
@@ -409,7 +411,7 @@ final class AssistantRestartTests: XCTestCase {
         })
         let s3 = await session(third, store: AssistantReleaseStore(directory: dir, protocolURL: protocolURL))
         for await _ in s3.events(AssistantRequest(requestId: "c", text: question)) {}
-        _ = await s3.commit(requestId: "c", user: "x", spoken: "", interrupted: true)
+        _ = await s3.commit(requestId: "c", user: "x", spoken: .nothing, interrupted: true)
         broken.value = true
         let lost = await s3.setAreas([])   // reine Einschränkung: Datei und Prozess gelten, die Zeile `release` scheitert
         XCTAssertNotNil(lost.error, "die Zeile ging verloren")
@@ -419,7 +421,7 @@ final class AssistantRestartTests: XCTestCase {
         let fourth = process()
         let s4 = await session(fourth, store: AssistantReleaseStore(directory: dir, protocolURL: protocolURL))
         for await _ in s4.events(AssistantRequest(requestId: "d", text: question)) {}
-        _ = await s4.commit(requestId: "d", user: "x", spoken: "", interrupted: true)
+        _ = await s4.commit(requestId: "d", user: "x", spoken: .nothing, interrupted: true)
 
         let states = await process().entries().filter { $0.kind == .state }
         XCTAssertEqual(states.map(\.run), [1, 2, 3, 4], "jede Standzeile trägt die Laufnummer")
@@ -436,7 +438,7 @@ final class AssistantRestartTests: XCTestCase {
         let audit = process()
         let s = await session(audit, store: AssistantReleaseStore(directory: dir, protocolURL: protocolURL))
         for await _ in s.events(AssistantRequest(requestId: "a", text: question)) {}
-        _ = await s.commit(requestId: "a", user: "x", spoken: "", interrupted: true)
+        _ = await s.commit(requestId: "a", user: "x", spoken: .nothing, interrupted: true)
         let all = await process().entries()
         let state = try XCTUnwrap(all.first { $0.kind == .state })
         XCTAssertEqual(state.locked, true)

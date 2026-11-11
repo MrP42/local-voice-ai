@@ -27,10 +27,15 @@ struct AssistantConversationView: View {
     @State private var gemmaReady = false
     @State private var showModelChoice = false
     @State private var showLocalModels = false
+    @State private var showAreas = false
     @FocusState private var fieldFocused: Bool
 
     /// Kein Modell, und es startet auch keins gerade: statt Pause-Knopf der deaktivierte Mikrofon-Zustand und „Modell auswählen“.
     private var noModel: Bool { !talk.canSend && !talk.loading && !talk.running }
+
+    /// Größte Schrifteinstellungen (Bedienungshilfen): Fest bleiben nur die Bedienknöpfe. Zustandszeile, Modellwahl, Hinweise und
+    /// Vorschläge stehen im Inhalt, der scrollt; der Verlauf behält so mehr als die Hälfte des Bildschirms. Nichts wird abgeschnitten.
+    private var accessible: Bool { typeSize.isAccessibilitySize }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -38,6 +43,7 @@ struct AssistantConversationView: View {
             Divider()
             content
                 .sheet(isPresented: $showLocalModels, onDismiss: localModelsClosed) { ModelPanel(model: VoiceModel.shared) }
+                .sheet(isPresented: $showAreas) { areasSheet }
             Divider()
             bottom
                 .confirmationDialog("Modell auswählen", isPresented: $showModelChoice, titleVisibility: .visible) { modelChoiceButtons }
@@ -110,7 +116,32 @@ struct AssistantConversationView: View {
         case .retryRelease: talk.retryRelease()
         case .chooseModel: showModelChoice = true
         case .openLocalModels: showLocalModels = true
+        case .openAreas: showAreas = true
         }
+    }
+
+    /// Die Bereiche als eigenes Blatt (dieselben Schalter wie im Menü „Mehr“): Der Hinweis „Freigaben prüfen“ öffnet es direkt.
+    private var areasSheet: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(AssistantArea.allCases, id: \.self) { area in
+                        Toggle(AssistantAreaSettings.title(area),
+                               isOn: Binding(get: { talk.areas.contains(area) }, set: { _ in talk.toggleArea(area) }))
+                    }
+                } header: {
+                    Text(areaTitle)
+                } footer: {
+                    Text("Der Assistent antwortet nur aus den Bereichen, die hier eingeschaltet sind.")
+                }
+            }
+            .navigationTitle("Bereiche")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("Fertig") { showAreas = false }.accessibilityIdentifier("assistantAreasDone") }
+            }
+        }
+        .accessibilityIdentifier("assistantAreasSheet")
     }
 
     /// Nach den lokalen Modellen in den Einstellungen: ohne Modell neu prüfen (Download fertig, Systemmodell geladen).
@@ -138,6 +169,7 @@ struct AssistantConversationView: View {
 
     // MARK: Kopf
 
+    /// Schließen und Menü bleiben fest; der Modellchip nur bei normaler Schrift (bei sehr großer steht er im Inhalt).
     private var header: some View {
         HStack(spacing: 4) {
             Button(action: close) {
@@ -148,7 +180,7 @@ struct AssistantConversationView: View {
             .accessibilityHint("Beendet das Gespräch")
             .accessibilityIdentifier("assistantClose")
             Spacer(minLength: 8)
-            modelMenu
+            if !accessible { modelMenu }
             optionsMenu
         }
         .padding(.horizontal, 8).padding(.top, 4)
@@ -180,14 +212,20 @@ struct AssistantConversationView: View {
                 Image(systemName: talk.isCloud ? "cloud" : "cpu").font(.body)
                 VStack(alignment: .leading, spacing: 0) {
                     Text(talk.isCloud ? "Cloud" : "Lokal").font(.caption2.weight(.semibold))
-                    Text(talk.modelLabel).font(.footnote).lineLimit(1)
+                    // Bei sehr großer Schrift bricht der Name um, statt abgeschnitten zu werden.
+                    Text(talk.modelLabel).font(.footnote)
+                        .lineLimit(accessible ? nil : 1)
+                        .fixedSize(horizontal: false, vertical: accessible)
+                        .multilineTextAlignment(.leading)
                 }
+                if accessible { Spacer(minLength: 0) }
                 Image(systemName: "chevron.down").font(.caption2)
             }
             .foregroundStyle(VoicePalette.text)
-            .padding(.horizontal, 10)
-            .frame(minHeight: 44)
-            .overlay(Capsule().stroke(VoicePalette.border, lineWidth: 1))
+            .padding(.horizontal, 10).padding(.vertical, accessible ? 8 : 0)
+            .frame(maxWidth: accessible ? .infinity : nil, minHeight: 44, alignment: .leading)
+            .overlay(RoundedRectangle(cornerRadius: 22).stroke(VoicePalette.border, lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: 22))
         }
         .disabled(talk.loading)
         .accessibilityLabel("Modellauswahl")
@@ -230,8 +268,12 @@ struct AssistantConversationView: View {
     /// Beispielrunden): Nur dann steht der feste Hinweissatz. Er hängt nicht an der Sendefähigkeit (`canSend`): Ohne Sitzung
     /// (`--assistant-no-model`) zeigt die Beispielrunde ihre Auszüge ebenfalls mit dem Satz.
     private var showsExcerpt: Bool {
-        talk.turns.contains { $0.parts.contains(where: \.quote) } || talk.liveParts.contains(where: \.quote)
+        talk.turns.contains { $0.parts.contains { $0.quote && $0.isMarked } } || talk.liveParts.contains { $0.quote && $0.isMarked }
     }
+
+    private static let currentID = "aktuell"
+    private static let liveLineID = "live"
+    private static func turnID(_ index: Int) -> String { "beitrag-\(index)" }
 
     private var showsIntro: Bool {
         talk.turns.isEmpty && talk.currentUser == nil && talk.liveUser.isEmpty && !talk.loading
@@ -241,6 +283,10 @@ struct AssistantConversationView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
+                    if accessible {
+                        modelMenu
+                        stateBlock
+                    }
                     if let progress = talk.preparing { preparing(progress) }
                     if let alert = talk.releaseAlert { noticeView(alert, identifier: "assistantReleaseNotice") }
                     if let notice = talk.notice { noticeView(notice) }
@@ -251,27 +297,39 @@ struct AssistantConversationView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if showsIntro { intro }
-                    ForEach(Array(talk.turns.enumerated()), id: \.offset) { _, turn in turnView(turn) }
-                    currentExchange
-                    liveUserLine
-                    Color.clear.frame(height: 1).id("ende")
+                    ForEach(Array(talk.turns.enumerated()), id: \.offset) { index, turn in turnView(turn).id(Self.turnID(index)) }
+                    currentExchange.id(Self.currentID)
+                    liveUserLine.id(Self.liveLineID)
                 }
                 .padding(16)
             }
             .scrollDismissesKeyboard(.interactively)
-            .onChange(of: talk.turns.count) { _, _ in scroll(proxy, animated: true) }
-            .onChange(of: talk.liveAnswer) { _, _ in scroll(proxy, animated: true) }
-            .onChange(of: talk.liveUser) { _, _ in scroll(proxy, animated: false) }
-            .onChange(of: talk.phase) { _, _ in scroll(proxy, animated: true) }
-            .onChange(of: typing) { _, _ in scroll(proxy, animated: false) }
+            // Der ANFANG des letzten Austauschs liegt oben im sichtbaren Bereich (beim Öffnen, bei einer neuen Frage, wenn eine Antwort
+            // in den Verlauf kommt), nie ihr Ende. Beim Wachsen der Antwort, beim Wechsel des Zustands und beim Einblenden der Tastatur
+            // wird nicht gescrollt: Wer gerade liest, wird nicht zurückgeworfen.
+            .onAppear { scrollToLastExchange(proxy, animated: false) }
+            .onChange(of: talk.turns.count) { _, _ in scrollToLastExchange(proxy, animated: true) }
+            .onChange(of: talk.currentUser) { _, _ in scrollToLastExchange(proxy, animated: true) }
+            .onChange(of: talk.liveUser.isEmpty) { _, empty in
+                if !empty { jump(proxy, to: Self.liveLineID, anchor: .bottom, animated: false) }
+            }
         }
     }
 
-    private func scroll(_ proxy: ScrollViewProxy, animated: Bool) {
+    /// Die laufende Frage, sonst der letzte Beitrag des Verlaufs, mit seinem Anfang oben.
+    private func scrollToLastExchange(_ proxy: ScrollViewProxy, animated: Bool) {
+        if talk.currentUser != nil {
+            jump(proxy, to: Self.currentID, anchor: .top, animated: animated)
+        } else if let last = talk.turns.indices.last {
+            jump(proxy, to: Self.turnID(last), anchor: .top, animated: animated)
+        }
+    }
+
+    private func jump(_ proxy: ScrollViewProxy, to id: String, anchor: UnitPoint, animated: Bool) {
         if animated, !reduceMotion {
-            withAnimation { proxy.scrollTo("ende", anchor: .bottom) }
+            withAnimation { proxy.scrollTo(id, anchor: anchor) }
         } else {
-            proxy.scrollTo("ende", anchor: .bottom)
+            proxy.scrollTo(id, anchor: anchor)
         }
     }
 
@@ -316,6 +374,8 @@ struct AssistantConversationView: View {
         Button { perform(action) } label: {
             Text(actionTitle(action))
                 .font(.footnote.weight(.semibold))
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(minHeight: 44)
                 .contentShape(Rectangle())
         }
@@ -331,6 +391,7 @@ struct AssistantConversationView: View {
         case .retryRelease: "Erneut sichern"
         case .chooseModel: "Modell auswählen"
         case .openLocalModels: "Lokale Modelle öffnen"
+        case .openAreas: "Bereiche öffnen"
         }
     }
 
@@ -343,6 +404,7 @@ struct AssistantConversationView: View {
         case .retryRelease: "assistantNoticeRetryRelease"
         case .chooseModel: "assistantNoticeChooseModel"
         case .openLocalModels: "assistantNoticeLocalModels"
+        case .openAreas: "assistantNoticeOpenAreas"
         }
     }
 
@@ -360,7 +422,10 @@ struct AssistantConversationView: View {
                 Text("Ohne Modell kann ich nicht antworten. Wähle eines über die Karte oben oder den Knopf „Modell auswählen“.")
                     .font(.subheadline).foregroundStyle(VoicePalette.secondaryText)
             }
-            Text("Oder tippe auf einen Vorschlag").font(.footnote).foregroundStyle(VoicePalette.secondaryText).padding(.top, 4)
+            // Ohne Modell führt ein Vorschlag nicht zur Antwort, sondern zuerst zur Modellwahl: Das steht hier, nicht erst im Hinweis des Knopfes.
+            Text(talk.canSend ? "Oder tippe auf einen Vorschlag" : "Ein Vorschlag öffnet zuerst die Modellauswahl")
+                .font(.footnote).foregroundStyle(VoicePalette.secondaryText)
+                .fixedSize(horizontal: false, vertical: true).padding(.top, 4)
             ForEach(["Was wurde in der letzten Besprechung entschieden?", "Worum geht es in meinem aktuellen Buch?",
                      "Was habe ich zuletzt in meinen Notizen festgehalten?"], id: \.self) { text in suggestion(text) }
         }
@@ -389,19 +454,16 @@ struct AssistantConversationView: View {
 
     // MARK: Blasen
 
-    private func turnView(_ turn: AssistantTurn) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            userBubble(turn.user)
-            assistantBubble(parts: parts(of: turn), interrupted: turn.interrupted, legacyChips: legacyChips(of: turn))
+    /// Ein beendeter Beitrag: nur, was der Kern zeigen lässt (`displayedParts`: jede Einheit mit vollständiger Marke, sonst nichts,
+    /// kein Rückfall auf den bloßen Text). Eine Unterbrechung steht als eigene Zeile unter dem Beitrag, nie im Text der Einheiten.
+    @ViewBuilder private func turnView(_ turn: AssistantTurn) -> some View {
+        let parts = turn.displayedParts
+        if !parts.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                userBubble(turn.user)
+                assistantBubble(parts: parts, interrupted: turn.interrupted)
+            }
         }
-    }
-
-    /// Abschnitte des Beitrags: gemischte Antworten tragen ihre Abschnitte, sonst gilt `unsourced` für den ganzen Text
-    /// (ältere Beiträge: wie „Allgemeinwissen“).
-    private func parts(of turn: AssistantTurn) -> [AssistantTurnPart] {
-        var list = turn.parts.isEmpty ? [AssistantTurnPart(text: turn.assistant, unsourced: turn.unsourced)] : turn.parts
-        if turn.interrupted, let last = list.indices.last { list[last].text += " …" }
-        return list
     }
 
     private func userBubble(_ text: String) -> some View {
@@ -415,17 +477,14 @@ struct AssistantConversationView: View {
         }
     }
 
-    /// Marke je Satz: Jeder Satz trägt seine Quellzeile (Zitat) oder seine Kennzeichnung (feste Antwort, Bestandsangabe); eine
-    /// gesammelte Quellenliste unter der Antwort gibt es nicht mehr. `legacyChips`: nur für ältere Beiträge ohne Marken je Satz.
-    private func assistantBubble(parts: [AssistantTurnPart], interrupted: Bool, legacyChips: [SourceChip] = []) -> some View {
+    /// Marke je Ausgabeeinheit: Jede Einheit trägt ihre Quellzeile (Zitat, ein ganzer Quellblock) oder ihre Kennzeichnung (feste Antwort,
+    /// Bestandsangabe); eine gesammelte Quellenliste unter der Antwort gibt es nicht. Ist die Antwort unterbrochen, steht das
+    /// als eigene Zeile unter den Einheiten (Text und VoiceOver), nicht als „ …“ im Text der letzten Einheit.
+    private func assistantBubble(parts: [AssistantTurnPart], interrupted: Bool) -> some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(parts.enumerated()), id: \.offset) { _, part in partView(part) }
-                if !legacyChips.isEmpty {
-                    AssistantFlowLayout(spacing: 6) {
-                        ForEach(legacyChips, id: \.self) { chip($0) }
-                    }
-                }
+                if interrupted { interruptedMark }
             }
             .padding(12)
             .background(AssistantColors.card, in: RoundedRectangle(cornerRadius: 16))
@@ -435,29 +494,38 @@ struct AssistantConversationView: View {
         }
     }
 
-    /// Marke je Satz: ein Zitat (Quellzeile), ein Satz mit Kennzeichnung (feste Antwort, Bestandsangabe) oder, nur bei älteren
-    /// Beiträgen, Text ohne Marke.
+    /// Die Unterbrechung als eigene Zeile unter dem Beitrag: Symbol und Text („unterbrochen“, nicht nur Farbe), umbrechend. Der
+    /// Auszug darüber bleibt unverändert; was nicht ganz gesprochen wurde, steht nicht im Beitrag.
+    private var interruptedMark: some View {
+        Label("Antwort unterbrochen", systemImage: "pause.circle")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(VoicePalette.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityLabel("Antwort unterbrochen")
+            .accessibilityIdentifier("assistantInterruptedMark")
+    }
+
+    /// Eine Ausgabeeinheit mit ihrer Marke: ein Zitat (Quellzeile) oder ein Satz mit Kennzeichnung (feste Antwort, Bestandsangabe,
+    /// „Ohne Quelle“). Eine Einheit ohne vollständige Marke (`isMarked`) zeigt die Ansicht nie, auch nicht als einfachen Text.
     @ViewBuilder private func partView(_ part: AssistantTurnPart) -> some View {
-        if part.quote {
-            quoteBlock(part)
+        if !part.isMarked {
+            EmptyView()
+        } else if part.quote, let source = part.source {
+            quoteBlock(part, source: source)
         } else if let note = part.note {
             markedBlock(part.text, note: note)
         } else if part.unsourced {
             unsourcedBlock(part.text)
-        } else {
-            VoiceMarkdown(text: part.text)
         }
     }
 
     /// Wörtlicher Auszug (ein ganzer gespeicherter Block): in Anführungszeichen, mit Balken und der Quellzeile darunter („Wörtlicher
     /// Auszug aus Beispielbuch · S. 12“, Text, nicht nur Farbe). Der Block wird buchstabengleich gezeigt, Zeilenumbrüche
     /// inklusive: kein Markdown (Sternchen, Unterstriche oder Zeilenumbrüche des Auszugs blieben sonst nicht erhalten). Die
-    /// Quellzeile ist nicht optional: Der Kern gibt jedem Zitat genau eine mit; fehlt sie (älterer, vor der Zeile gespeicherter
-    /// Beitrag), steht das offen da, statt dass die Zeile still entfällt. Eine ältere Quellzeile ohne den Beginn „Wörtlicher
-    /// Auszug aus“ bekommt ihn hier vorangestellt.
-    private func quoteBlock(_ part: AssistantTurnPart) -> some View {
-        let source = part.source.map(Self.excerptLine) ?? "Quelle nicht gespeichert"
-        return VStack(alignment: .leading, spacing: 4) {
+    /// Quellzeile ist nicht optional: Ein Zitat ohne gespeicherte Quellzeile (älterer Beitrag) wird nicht gezeigt, siehe
+    /// `partView`, und nie mit einer erfundenen Quelle ergänzt.
+    private func quoteBlock(_ part: AssistantTurnPart, source: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
             Text(verbatim: "„" + part.text + "“")
                 .font(.body)
                 .fixedSize(horizontal: false, vertical: true)
@@ -472,12 +540,7 @@ struct AssistantConversationView: View {
             RoundedRectangle(cornerRadius: 1.5).fill(AssistantColors.fill).frame(width: 3)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(part.source.map { "\(Self.excerptLine($0)): \(part.text)" } ?? "Zitat, Quelle nicht gespeichert: \(part.text)")
-    }
-
-    /// Quellzeile mit dem festen Beginn „Wörtlicher Auszug aus“ (ältere Beiträge speicherten nur „Buch · Titel · S. 12“).
-    private static func excerptLine(_ source: String) -> String {
-        source.hasPrefix(AssistantPassage.excerptPrefix) ? source : AssistantPassage.excerptPrefix + source
+        .accessibilityLabel("\(source): \(part.text)")
     }
 
     /// Feste Erklärung: Antworten sind wörtliche Auszüge und können unvollständig sein. Steht im Hinweisbereich über dem Verlauf.
@@ -508,10 +571,8 @@ struct AssistantConversationView: View {
         .accessibilityLabel("\(note): \(text)")
     }
 
-    // MARK: Ältere Beiträge ohne Marke je Satz
-
-    /// Abschnitt ohne Quelle (nur ältere Beiträge; der Kern gibt heute keine mehr aus): Kennzeichnung als Text („Ohne Quelle“,
-    /// auch für VoiceOver) und Balken, nicht nur Farbe.
+    /// Abschnitt mit der Kennzeichnung „Ohne Quelle“ (nur bei freigeschalteter Funktion; der Kern filtert sonst schon beim Laden):
+    /// Kennzeichnung als Text (auch für VoiceOver) und Balken, nicht nur Farbe.
     private func unsourcedBlock(_ text: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Label("Ohne Quelle", systemImage: "questionmark.circle")
@@ -527,46 +588,15 @@ struct AssistantConversationView: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// Eine Quelle oder ein Hinweis unter der Antwort.
-    private struct SourceChip: Hashable {
-        let text: String
-        let isSource: Bool
-    }
-
-    private func chip(_ chip: SourceChip) -> some View {
-        Text(chip.text)
-            .font(.footnote.weight(.medium))
-            .foregroundStyle(VoicePalette.secondaryText)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 10).padding(.vertical, 5)
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(VoicePalette.border, lineWidth: 1))
-            .accessibilityLabel(chip.isSource ? "Quelle: \(chip.text)" : "Hinweis: \(chip.text)")
-    }
-
-    /// Nur ältere Beiträge (ohne Marke je Satz): die deckenden Quellen (ohne Doppelte) und, wenn Sätze ohne Quelle gesprochen
-    /// wurden, der Hinweis „Allgemeinwissen · ohne Quelle“ (ganz) oder „teils ohne Quelle“ (gemischt). Beiträge mit Marken je Satz
-    /// (Zitat mit Quellzeile, Kennzeichnung) haben keine gesammelte Liste.
-    private func legacyChips(of turn: AssistantTurn) -> [SourceChip] {
-        guard !turn.parts.contains(where: { $0.quote || $0.note != nil }) else { return [] }
-        var seen = Set<String>()
-        var list = turn.sources.map { AssistantController.chip($0) }.filter { seen.insert($0).inserted }
-            .map { SourceChip(text: $0, isSource: true) }
-        if turn.unsourced { list.append(SourceChip(text: !turn.parts.isEmpty ? "teils ohne Quelle" : "Allgemeinwissen · ohne Quelle", isSource: false)) }
-        return list
-    }
-
-    /// Abschnitte der laufenden Antwort (ohne Angabe der Steuerung: ein Abschnitt mit Quelle).
-    private var liveAnswerParts: [AssistantTurnPart] {
-        talk.liveParts.isEmpty ? [AssistantTurnPart(text: talk.liveAnswer, unsourced: false)] : talk.liveParts
-    }
-
-    /// Die laufende Anfrage, deren Antwort noch nicht im Verlauf steht.
+    /// Die laufende Anfrage, deren Antwort noch nicht im Verlauf steht. Die laufende Antwort zeigt nur Einheiten mit vollständiger
+    /// Marke (`AssistantTurnPart.displayed`); ohne eine solche steht noch keine Antwort da (kein Rückfall auf rohen Text).
     @ViewBuilder private var currentExchange: some View {
         if let user = talk.currentUser {
+            let live = AssistantTurnPart.displayed(talk.liveParts)
             VStack(alignment: .leading, spacing: 10) {
                 userBubble(user)
-                if !talk.liveAnswer.isEmpty {
-                    assistantBubble(parts: liveAnswerParts, interrupted: false)
+                if !live.isEmpty {
+                    assistantBubble(parts: live, interrupted: false)
                         .accessibilityAddTraits(.updatesFrequently)
                 } else if talk.phase == .thinking {
                     HStack(spacing: 0) {
@@ -608,7 +638,7 @@ struct AssistantConversationView: View {
 
     private var bottom: some View {
         VStack(spacing: 10) {
-            stateBlock
+            if !accessible { stateBlock }
             if typing { composer }
             if noModel { noModelControls } else { controls }
         }
@@ -651,15 +681,20 @@ struct AssistantConversationView: View {
         return parts.joined(separator: ". ")
     }
 
+    /// Zustandszeile: Text bricht um, nichts wird abgeschnitten (kein `lineLimit`). Bei sehr großer Schrift steht der Zustandskreis
+    /// über dem Text statt daneben, damit der Text die ganze Breite hat; der Block steht dann im scrollenden Inhalt.
     private var stateBlock: some View {
-        HStack(spacing: 12) {
+        let layout = accessible ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 12))
+        return layout {
             AssistantPulse(meter: talk.meter, phase: talk.phase, muted: talk.muted, loading: talk.loading, unavailable: noModel,
                            reduceMotion: reduceMotion, size: pulseSize)
             VStack(alignment: .leading, spacing: 2) {
-                Text(stateText).font(.headline)
-                Text(sourcesLine).font(.footnote).foregroundStyle(VoicePalette.secondaryText).lineLimit(2)
+                Text(stateText).font(.headline).fixedSize(horizontal: false, vertical: true)
+                Text(sourcesLine).font(.footnote).foregroundStyle(VoicePalette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
                 if let contextLine {
-                    Text(contextLine).font(.footnote).foregroundStyle(VoicePalette.secondaryText).lineLimit(2)
+                    Text(contextLine).font(.footnote).foregroundStyle(VoicePalette.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 #if DEBUG
                 if let ms = talk.firstSoundMs {
@@ -667,7 +702,7 @@ struct AssistantConversationView: View {
                 }
                 #endif
             }
-            Spacer(minLength: 0)
+            if !accessible { Spacer(minLength: 0) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
@@ -696,12 +731,13 @@ struct AssistantConversationView: View {
 
     /// Ohne Modell: Hauptknopf „Modell auswählen“ statt Stumm und Tastatur (beides ginge ins Leere).
     private var noModelControls: some View {
-        let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+        let layout = accessible ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
         return layout {
             Button { showModelChoice = true } label: {
                 Label("Modell auswählen", systemImage: "cpu")
                     .font(.headline)
                     .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, minHeight: 56)
                     .padding(.horizontal, 6)
                     .foregroundStyle(.white)
@@ -713,7 +749,7 @@ struct AssistantConversationView: View {
             .accessibilityIdentifier("assistantChooseModel")
 
             AssistantControl(title: "Beenden", symbol: "phone.down.fill", tint: VoicePalette.danger, active: false,
-                             stacked: !typeSize.isAccessibilitySize) {
+                             stacked: !accessible, fillsRow: false) {
                 close()
             }
             .accessibilityLabel("Gespräch beenden")
@@ -721,12 +757,15 @@ struct AssistantConversationView: View {
         }
     }
 
+    /// Die Bedienknöpfe: normal in einer Reihe, bei sehr großer Schrift in zwei Spalten (Symbol über dem Text, der Text bricht um),
+    /// damit die feste Leiste unten nicht die halbe Höhe braucht und der Verlauf mehr als die Hälfte des Bildschirms behält.
     private var controls: some View {
-        let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
-        let stacked = !typeSize.isAccessibilitySize
+        let layout = accessible ? AnyLayout(AssistantGridLayout(columns: 2, spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+        let stacked = true
+        let fills = accessible
         return layout {
             AssistantControl(title: "Stumm", symbol: talk.muted ? "mic.slash.fill" : "mic.fill",
-                             tint: talk.muted ? VoicePalette.danger : VoicePalette.text, active: talk.muted, stacked: stacked) {
+                             tint: talk.muted ? VoicePalette.danger : VoicePalette.text, active: talk.muted, stacked: stacked, fillsRow: fills) {
                 talk.toggleMute()
             }
             .disabled(!talk.running)
@@ -737,7 +776,7 @@ struct AssistantConversationView: View {
             .accessibilityIdentifier("assistantMute")
 
             if talk.phase == .thinking || talk.phase == .speaking {
-                AssistantControl(title: "Antwort anhalten", symbol: "stop.fill", tint: VoicePalette.text, active: false, stacked: stacked) {
+                AssistantControl(title: "Antwort anhalten", symbol: "stop.fill", tint: VoicePalette.text, active: false, stacked: stacked, fillsRow: fills) {
                     talk.stopAnswer()
                 }
                 .accessibilityLabel("Antwort anhalten")
@@ -745,14 +784,14 @@ struct AssistantConversationView: View {
             }
 
             AssistantControl(title: "Tastatur", symbol: typing ? "keyboard.chevron.compact.down" : "keyboard",
-                             tint: VoicePalette.text, active: typing, stacked: stacked) {
+                             tint: VoicePalette.text, active: typing, stacked: stacked, fillsRow: fills) {
                 typing.toggle()
                 fieldFocused = typing
             }
             .accessibilityLabel(typing ? "Tastatur ausblenden" : "Tastatur einblenden")
             .accessibilityIdentifier("assistantKeyboard")
 
-            AssistantControl(title: "Beenden", symbol: "phone.down.fill", tint: VoicePalette.danger, active: false, stacked: stacked) {
+            AssistantControl(title: "Beenden", symbol: "phone.down.fill", tint: VoicePalette.danger, active: false, stacked: stacked, fillsRow: fills) {
                 close()
             }
             .accessibilityLabel("Gespräch beenden")
@@ -770,6 +809,8 @@ private struct AssistantControl: View {
     let tint: Color
     let active: Bool
     let stacked: Bool
+    /// Füllt die Höhe der Zeile im Raster (gleich hohe Knöpfe nebeneinander); in der einzeiligen Leiste nicht.
+    let fillsRow: Bool
     let action: () -> Void
 
     var body: some View {
@@ -781,7 +822,7 @@ private struct AssistantControl: View {
                     HStack(spacing: 10) { icon; label }
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: 56)
+            .frame(maxWidth: .infinity, minHeight: 56, maxHeight: fillsRow ? .infinity : nil)
             .padding(.horizontal, 6)
             .foregroundStyle(tint)
             .background(active ? tint.opacity(0.14) : AssistantColors.card, in: RoundedRectangle(cornerRadius: 14))
@@ -793,7 +834,7 @@ private struct AssistantControl: View {
     private var icon: some View { Image(systemName: symbol).font(.title3) }
 
     private var label: some View {
-        Text(title).font(.caption.weight(.semibold)).lineLimit(2).multilineTextAlignment(.center)
+        Text(title).font(.caption.weight(.semibold)).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -856,7 +897,48 @@ private struct AssistantPulse: View {
     }
 }
 
-/// Quellen-Chips in Zeilen, die umbrechen (auch bei großer Schrift); zu lange Chips werden auf die Breite begrenzt.
+/// Raster mit gleich breiten Spalten; jede Zeile ist so hoch wie ihr höchster Knopf (Text bricht um, nichts wird abgeschnitten).
+private struct AssistantGridLayout: Layout {
+    var columns: Int
+    var spacing: CGFloat = 8
+
+    private func columnWidth(_ width: CGFloat) -> CGFloat {
+        (width - spacing * CGFloat(columns - 1)) / CGFloat(columns)
+    }
+
+    private func rowHeights(width: CGFloat, subviews: Subviews) -> [CGFloat] {
+        let cell = columnWidth(width)
+        var heights: [CGFloat] = []
+        for (index, view) in subviews.enumerated() {
+            let height = view.sizeThatFits(ProposedViewSize(width: cell, height: nil)).height
+            if index % columns == 0 { heights.append(height) } else { heights[heights.count - 1] = max(heights[heights.count - 1], height) }
+        }
+        return heights
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 320
+        let heights = rowHeights(width: width, subviews: subviews)
+        return CGSize(width: width, height: heights.reduce(0, +) + spacing * CGFloat(max(heights.count - 1, 0)))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let cell = columnWidth(bounds.width)
+        let heights = rowHeights(width: bounds.width, subviews: subviews)
+        var y = bounds.minY
+        for (row, height) in heights.enumerated() {
+            for column in 0..<columns {
+                let index = row * columns + column
+                guard index < subviews.count else { break }
+                subviews[index].place(at: CGPoint(x: bounds.minX + CGFloat(column) * (cell + spacing), y: y),
+                                      proposal: ProposedViewSize(width: cell, height: height))
+            }
+            y += height + spacing
+        }
+    }
+}
+
+/// Knöpfe in Zeilen, die umbrechen (auch bei großer Schrift); zu breite Knöpfe werden auf die Breite begrenzt.
 private struct AssistantFlowLayout: Layout {
     var spacing: CGFloat = 6
 

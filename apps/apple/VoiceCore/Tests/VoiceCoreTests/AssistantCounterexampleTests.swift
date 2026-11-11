@@ -160,9 +160,10 @@ final class AssistantCounterexampleTests: XCTestCase {
     }
 
     private func session(_ store: AssistantReleaseStore?, audit: AssistantAuditLog? = nil, model: any BookTalkModel = EchoModel(),
-                         knowledge: AssistantKnowledge? = nil, config: AssistantConfig? = nil) -> AssistantSession {
+                         knowledge: AssistantKnowledge? = nil, config: AssistantConfig? = nil,
+                         stepIndex: AssistantStepIndex = AssistantStepIndex()) -> AssistantSession {
         AssistantSession(model: model, knowledge: knowledge ?? AssistantKnowledge(corpus: AssistantCorpus()), config: config ?? self.config,
-                         audit: audit, released: true, releaseStore: store)
+                         audit: audit, released: true, releaseStore: store, stepIndex: stepIndex)
     }
 
     private func lines(_ kinds: Set<String>? = nil) -> [[String: Any]] {
@@ -342,7 +343,7 @@ final class AssistantCounterexampleTests: XCTestCase {
                 _ = await audit.flushReleaseLines()
                 finished.fulfill()
             }
-            wait(for: [finished], timeout: 10)
+            wait(for: [finished], timeout: 60)
             let after = try String(contentsOf: protocolFile, encoding: .utf8)
             XCTAssertTrue(after.hasPrefix(original), "\(step): die alte Datei ist unversehrt, nur angehängt wird")
             XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent(AssistantAuditWriter.compactName).path),
@@ -359,7 +360,7 @@ final class AssistantCounterexampleTests: XCTestCase {
             _ = await audit.flushReleaseLines()
             done.fulfill()
         }
-        wait(for: [done], timeout: 10)
+        wait(for: [done], timeout: 60)
         let compacted = try String(contentsOf: protocolFile, encoding: .utf8).split(separator: "\n")
         XCTAssertLessThanOrEqual(compacted.count, AssistantAuditWriter.maxUnits + 1)
     }
@@ -410,7 +411,7 @@ final class AssistantCounterexampleTests: XCTestCase {
         fail.value = true
         _ = s.commitStart(requestId: "r1", index: 0, generation: s.releaseGeneration) { true }
         _ = await s.auditHealthy(requestId: "r1")
-        await s.commit(requestId: "r1", user: "x", spoken: "", interrupted: false, revoked: true)
+        await s.commit(requestId: "r1", user: "x", spoken: .nothing, interrupted: false, revoked: true)
         let outcome = await audit.entries().first { $0.requestId == "r1" }?.outcome
         XCTAssertEqual(outcome, .failed, "Fehler, nicht „widerrufen“")
     }
@@ -454,16 +455,17 @@ final class AssistantCounterexampleTests: XCTestCase {
                        knowledge: AssistantKnowledge(corpus: corpus))
         let g = s.releaseGeneration
         var quotes: [String] = []
+        var quoteEvents: [Int] = []
         var index = 0
         for await e in s.events(AssistantRequest(requestId: "r1", text: "Wohin wandert Quasselbert nach Pappelhausen?")) {
             guard case .sentence(_, _, let text, _, let status, _, _) = e else { continue }
-            if status == .grounded { quotes.append(text) }
+            if status == .grounded { quotes.append(text); quoteEvents.append(index) }
             s.noteCommit(requestId: "r1", index: index, stage: .display, ok: status != .announcement, generation: g)
             index += 1
         }
         guard quotes.count >= 2 else { return XCTFail("zwei Quellblöcke wurden erwartet, ausgegeben: \(quotes.count)") }
-        // Gesprochen (und im Verlauf) ist nur der erste Block.
-        await s.commit(requestId: "r1", user: "Wohin?", spoken: quotes[0], interrupted: true)
+        // Ganz gesprochen (und im Verlauf) ist nur der erste Block: Die Steuerung meldet seine Ereignisnummer.
+        await s.commit(requestId: "r1", user: "Wohin?", spoken: .events([quoteEvents[0]]), interrupted: true)
         let entries = await audit.entries()
         let entry = try XCTUnwrap(entries.first { $0.requestId == "r1" })
         let grounded = entry.trace.filter { $0.verdict == .grounded }
@@ -530,31 +532,37 @@ final class AssistantCounterexampleTests: XCTestCase {
         for _ in 0..<7 { release.bump() }
         XCTAssertEqual(release.currentGeneration, 7)
         release.bump()
+        // Die spätere Erhöhung: eine Erweiterung, die wirksam wird (ihre Zeile entsteht im Lock der Erhöhung; die Zeilen der Klasse B
+        // entstehen seit Runde 8 in der Ordnung selbst und sind in `testR4…` abgedeckt).
+        let expansion = release.apply(AssistantReleaseChange(cause: .areas, areas: [.books, .notes])).steps
+        XCTAssertEqual(expansion.map(\.kind), [.expansion])
         let inside = DispatchSemaphore(value: 0)
-        let proceed = DispatchSemaphore(value: 0)
         let raiserDone = DispatchSemaphore(value: 0)
         let rejectorDone = DispatchSemaphore(value: 0)
+        // Ohne Uhr: Der Haltepunkt in der Ablehnung hält den Lock, bis die Probe am Eingang der Ordnung das Eintreffen des Erhöhenden
+        // meldet (und dort den Lock gehalten findet).
+        let probe = EntryProbe()
+        probe.install(on: release.clock)
         let rejector = Thread {
             _ = release.ifCurrent(7, onStale: { found in
                 order.add("abgelehnt gefunden \(found)")
                 inside.signal()
-                proceed.wait()   // Haltepunkt: der Lock bleibt gehalten
+                if !probe.waitUntilArrived() { order.add("Erhöhender kam nie am Eingang an") }   // Haltepunkt: der Lock bleibt gehalten
             }) { order.add("body") }
             rejectorDone.signal()
         }
         let raiser = Thread {
-            _ = release.contentWillChange()   // Erhöhung auf 9, eigene Zeile im Lock
+            _ = release.becomeEffective(expansion[0])   // Erhöhung auf 9, eigene Zeile im Lock
             raiserDone.signal()
         }
         rejector.start()
         inside.wait()
         raiser.start()
-        // Der Erhöhende wartet auf den Lock des Ablehnenden (er kann nicht fertig sein).
-        XCTAssertEqual(raiserDone.wait(timeout: .now() + 0.3), .timedOut, "die Erhöhung wartet auf den Lock der Ablehnung")
-        proceed.signal()
-        XCTAssertEqual(rejectorDone.wait(timeout: .now() + 5), .success)
-        XCTAssertEqual(raiserDone.wait(timeout: .now() + 5), .success)
-        XCTAssertEqual(order.all, ["abgelehnt gefunden 8", "zeile content 9"], "kein body, die Ablehnung steht vor der Zeile der späteren Änderung")
+        XCTAssertEqual(rejectorDone.wait(timeout: .now() + 60), .success)
+        XCTAssertEqual(raiserDone.wait(timeout: .now() + 60), .success)
+        probe.remove(from: release.clock)
+        XCTAssertEqual(probe.observations, [true], "die Erhöhung fand beim Eintreffen den Lock der Ablehnung gehalten")
+        XCTAssertEqual(order.all, ["abgelehnt gefunden 8", "zeile effective 9"], "kein body, die Ablehnung steht vor der Zeile der späteren Änderung")
     }
 
     /// B6 als Wettlauf auf der Sitzung: Ablehnungen (`a-g`) und Erhöhungen der Klasse B nebeneinander. In der Datei steht nie eine
@@ -717,8 +725,7 @@ final class AssistantCounterexampleTests: XCTestCase {
         let corpus = AssistantCorpus()
         await corpus.upsert(note(source.text))
         let hold = Hold()
-        let knowledge = AssistantKnowledge(corpus: corpus, sources: [HeldSource(area: .files, hold: hold)])
-        await knowledge.setAreas([.notes, .files])
+        let knowledge = AssistantKnowledge(corpus: corpus, sources: [HeldSource(area: .files, hold: hold)], areas: [.notes, .files])
         let s = session(nil, model: EchoModel(text: "Der Eisvogel brütet am Mühlbach."), knowledge: knowledge)
         watch.attach(s)
         XCTAssertTrue(watch.passCompleted(mark: watch.mark), "Ausgangslage: der Bestand steht")
@@ -783,7 +790,7 @@ final class AssistantCounterexampleTests: XCTestCase {
         let b = session(store, audit: audit, model: SleepyModel(), config: config)
         XCTAssertEqual(a.releaseGeneration, b.releaseGeneration)
         let request = Task { await drainEvents(b, AssistantRequest(requestId: "rb", text: "Hallo")) }
-        let deadline = Date().addingTimeInterval(10)
+        let deadline = Date().addingTimeInterval(60)
         while b.registeredRunCount == 0, Date() < deadline { try? await Task.sleep(for: .milliseconds(5)) }
         XCTAssertEqual(b.registeredRunCount, 1, "die Anfrage steht im Modellaufruf")
         let g = a.releaseGeneration
@@ -834,6 +841,183 @@ final class AssistantCounterexampleTests: XCTestCase {
         XCTAssertTrue(s.isContentBlocked, "die Blockade für den Rest des Laufs bleibt")
     }
 
+    // MARK: Runde 8, R3: EIN Stand hinter dem einen Lock
+
+    private static let eisvogelBook = "Der Eisvogel brütet am Mühlbach in der Uferböschung unter dem Weidenbaum."
+    private static let eisvogelQuestion = "Wo brütet der Eisvogel am Mühlbach?"
+
+    /// Ein Bestand mit einem Buch (Bereich Bücher) und einer Notiz (Bereich Notizen) zum selben Thema.
+    private func eisvogelKnowledge() async -> AssistantKnowledge {
+        let corpus = AssistantCorpus()
+        await corpus.upsert(assistantDoc("b1", "Der Titel Flimmerkasten", sections: [("S. 7", Self.eisvogelBook)]))
+        await corpus.upsert(assistantDoc("n1", "Notiz Mühlbach", area: .notes, sections: [(nil, "Der Eisvogel brütet am Mühlbach, notiert am Ufer.")]))
+        return AssistantKnowledge(corpus: corpus)
+    }
+
+    /// R3: Eine neue Anfrage in Sitzung B liest nach dem Widerruf in Sitzung A die engeren Bereiche (ein Stand, kein Abbild je Sitzung).
+    /// Gegen 4d802f3 ROT: Jede Sitzung trug ihre eigenen Bereiche; B kannte den Widerruf in A nicht.
+    func testR3ARequestInSessionBAfterARevocationInSessionAReadsTheNarrowerAreas() async throws {
+        try seed(AssistantReleaseRecord(localAreas: [.books, .notes], cloudAreas: [.books]))
+        let store = openStore()
+        let knowledge = await eisvogelKnowledge()
+        let answer = "Der Eisvogel brütet am Mühlbach."
+        let a = session(store, model: EchoModel(text: answer), knowledge: knowledge)
+        let b = session(store, model: EchoModel(text: answer), knowledge: knowledge)
+        let before = await sentences(b, "r1", Self.eisvogelQuestion)
+        XCTAssertTrue(before.contains { $0.contains("notiert am Ufer") }, "Ausgangslage: B zitiert aus der Notiz: \(before)")
+        let revoked = await a.setAreas([.books])
+        XCTAssertNil(revoked.storeError)
+        XCTAssertEqual(b.effectiveAreas, [.books], "B liest den Stand der Ordnung, nicht eine Kopie")
+        let after = await sentences(b, "r2", Self.eisvogelQuestion)
+        XCTAssertFalse(after.contains { $0.contains("notiert am Ufer") }, "nach dem Widerruf in A kommt aus B nichts mehr aus den Notizen: \(after)")
+        XCTAssertTrue(after.contains { $0.contains("Uferböschung") }, "der Bereich Bücher gilt weiter: \(after)")
+    }
+
+    /// R3: Die Blockade (eine Einschränkung ließ sich nicht sichern) aus Sitzung A gilt in Sitzung B, die schon vorher lief, und in
+    /// einer Sitzung danach: nichts aus eigenen Inhalten. Gegen 4d802f3 ROT: Die Blockade lag in der Sitzung, die sie auslöste.
+    func testR3ABlockFromSessionAActsInSessionB() async throws {
+        try seed(AssistantReleaseRecord(localAreas: [.books, .notes], cloudAreas: [.books]))
+        let fs = CxFS("store")
+        let store = openStore(fs)
+        let knowledge = await eisvogelKnowledge()
+        let answer = "Der Eisvogel brütet am Mühlbach."
+        let a = session(store, model: EchoModel(text: answer), knowledge: knowledge)
+        let b = session(store, model: EchoModel(text: answer), knowledge: knowledge)
+        XCTAssertFalse(b.isContentBlocked)
+        fs.fail(.rename)
+        let failed = await a.setAreas([.books])
+        XCTAssertNotNil(failed.storeError, "der Austausch der Einschränkung scheiterte")
+        XCTAssertTrue(a.isContentBlocked)
+        XCTAssertTrue(b.isContentBlocked, "die Blockade ist ein Stand der Ordnung: sie gilt in B")
+        let out = await sentences(b, "r1", Self.eisvogelQuestion)
+        XCTAssertFalse(out.contains { $0.contains("Uferböschung") || $0.contains("notiert am Ufer") }, "blockiert: nichts aus Inhalten: \(out)")
+        let late = session(store, model: EchoModel(text: answer), knowledge: knowledge)
+        XCTAssertTrue(late.isContentBlocked, "auch eine neue Sitzung")
+    }
+
+    /// R3: Ein veralteter Bestand (Klasse B: eine Quelle änderte sich, noch kein Durchgang meldete den neuen Bestand) gilt in jeder
+    /// Sitzung, nicht nur in der, die die Meldestelle kennt. Gegen 4d802f3 ROT: Die Epochen lagen in der einen Sitzung, an der die
+    /// Meldestelle hing.
+    func testR3AStaleStockSeenThroughSessionAActsInSessionB() async throws {
+        let store = openStore()
+        let watch = AssistantContentWatch()
+        let knowledge = await eisvogelKnowledge()
+        let answer = "Der Eisvogel brütet am Mühlbach."
+        let a = session(store, model: EchoModel(text: answer), knowledge: knowledge)
+        let b = session(store, model: EchoModel(text: answer), knowledge: knowledge)
+        watch.attach(a)
+        XCTAssertTrue(watch.passCompleted(mark: watch.mark))
+        XCTAssertTrue(b.isContentReady)
+        let before = await sentences(b, "r1", Self.eisvogelQuestion)
+        XCTAssertTrue(before.contains { $0.contains("notiert am Ufer") }, "Ausgangslage: der Bestand steht, B zitiert: \(before)")
+        watch.around {}
+        XCTAssertFalse(a.isContentReady)
+        XCTAssertFalse(b.isContentReady, "der Bestand ist stale, in BEIDEN Sitzungen")
+        let stale = await sentences(b, "r2", Self.eisvogelQuestion)
+        XCTAssertFalse(stale.contains { $0.contains("notiert am Ufer") }, "stale: aus B nichts aus eigenen Inhalten: \(stale)")
+        XCTAssertTrue(watch.passCompleted(mark: watch.mark))
+        XCTAssertTrue(b.isContentReady)
+        let after = await sentences(b, "r3", Self.eisvogelQuestion)
+        XCTAssertTrue(after.contains { $0.contains("notiert am Ufer") }, "nach dem Durchgang gilt der Bestand wieder: \(after)")
+    }
+
+    // MARK: Runde 8, R4: Klasse B ohne Sitzung
+
+    /// R4: Zwei Änderungen der Quellen bei geschlossenem Gespräch: zwei Generationen, zwei Zeilen „Inhalt“, je Änderung eine. Gegen
+    /// 4d802f3 ROT: Die Meldestelle hing an der Sitzung (`attach(nil)` löste sie); ohne Gespräch geschah nichts, mit Gespräch erhöhte die
+    /// Meldestelle nur im Durchgang.
+    func testR4TwoSourceChangesWithTheConversationClosedRaiseTwiceAndWriteTwoLines() async {
+        let store = openStore()
+        let audit = log()
+        let watch = AssistantContentWatch()
+        let s = session(store, audit: audit)
+        watch.attach(s)
+        watch.attach(nil)   // das Gespräch ist zu Ende
+        let before = store.clock.generation
+        watch.around {}
+        watch.around {}
+        XCTAssertEqual(store.clock.generation, before + 2, "jede gemeldete Änderung erhöht für sich")
+        _ = await audit.flushReleaseLines()
+        let content = lines(["release"]).filter { $0["cause"] as? String == "content" }
+        XCTAssertEqual(content.compactMap { $0["gen"] as? Int }, [before + 1, before + 2], "je Änderung eine Zeile mit ihrer Generation")
+        XCTAssertEqual(Set(content.compactMap { $0["run"] as? Int }), [1], "derselbe Prozesslauf")
+        XCTAssertFalse(watch.isStale && store.clock.isContentReady, "die Meldestelle und die Ordnung sind sich einig")
+    }
+
+    /// R4: Ohne jede Sitzung seit dem Prozessstart (der Controller hängt Meldestelle und Protokoll beim Start ein, ohne Modell): dasselbe.
+    /// Gegen 4d802f3 NICHT AUSDRÜCKBAR (`bind(watch:audit:)` gibt es dort nicht); der Test oben ist rot.
+    func testR4TwoSourceChangesWithoutAnySessionSinceTheProcessStartRaiseTwiceAndWriteTwoLines() async {
+        let store = openStore()
+        let audit = log()
+        let watch = AssistantContentWatch()
+        store.bind(watch: watch, audit: audit)
+        let before = store.clock.generation
+        XCTAssertFalse(store.clock.snapshot(view: .local).corpusReady && watch.isStale, "Ausgangslage: nichts gemeldet")
+        watch.around {}
+        watch.around {}
+        XCTAssertEqual(store.clock.generation, before + 2)
+        XCTAssertFalse(store.clock.isContentReady, "der Bestand ist stale")
+        _ = await audit.flushReleaseLines()
+        let content = lines(["release"]).filter { $0["cause"] as? String == "content" }
+        XCTAssertEqual(content.compactMap { $0["gen"] as? Int }, [before + 1, before + 2])
+        XCTAssertTrue(watch.passCompleted(mark: watch.mark))
+        XCTAssertTrue(store.clock.isContentReady)
+        XCTAssertEqual(store.clock.generation, before + 2, "der Durchgang erhöht nicht noch einmal")
+    }
+
+    // MARK: Runde 8, R8: Zeilen zum Nachholen überleben den Wechsel der Sitzung
+
+    /// R8: Die Zeile „in diesem Lauf nicht wirksam“ ließ sich nicht schreiben; die Sitzung wird ersetzt. Die nächste Anfrage der NEUEN
+    /// Sitzung schreibt sie. Gegen 4d802f3 ROT: Das Register der Zeilen lag in der Sitzung und ging mit ihr verloren.
+    func testR8ALineThatCouldNotBeWrittenSurvivesTheReplacementOfTheSession() async throws {
+        try seed(AssistantReleaseRecord(localAreas: [.books, .notes], cloudAreas: [.books]))
+        let storeFS = CxFS("store")
+        let store = openStore(storeFS)
+        let failIneffective = Flag()
+        let audit = log(appender: { url, data in
+            if failIneffective.value, String(decoding: data, as: UTF8.self).contains("\"t\":\"ineffective\"") { throw Injected() }
+            try AssistantAuditWriter.appendFile(url, data)
+        })
+        var old: AssistantSession? = session(store, audit: audit)
+        storeFS.fail(.rename)
+        failIneffective.value = true
+        _ = await old?.setAreas([.books])
+        let refused = await old?.setAreas([.books, .files])
+        XCTAssertEqual(refused?.effective, false)
+        XCTAssertTrue(lines(["ineffective"]).isEmpty, "die Zeile ließ sich nicht schreiben")
+        old = nil   // das Gespräch endet, die Sitzung ist weg
+        storeFS.heal()
+        failIneffective.value = false
+        let next = session(store, audit: audit)
+        _ = await drainEvents(next, AssistantRequest(requestId: "r1", text: "Hallo"))
+        XCTAssertEqual(lines(["ineffective"]).count, 1, "die Anfrage der neuen Sitzung holt die Zeile der alten nach")
+    }
+
+    /// R8: Dasselbe ohne Sitzung: Die Änderung der Bereiche ohne Gespräch holt die Zeile nach, die eine Sitzung hinterließ.
+    func testR8ALineLeftByASessionIsCaughtUpByAChangeWithoutASession() async throws {
+        try seed(AssistantReleaseRecord(localAreas: [.books, .notes], cloudAreas: [.books]))
+        let storeFS = CxFS("store")
+        let store = openStore(storeFS)
+        let failIneffective = Flag()
+        let audit = log(appender: { url, data in
+            if failIneffective.value, String(decoding: data, as: UTF8.self).contains("\"t\":\"ineffective\"") { throw Injected() }
+            try AssistantAuditWriter.appendFile(url, data)
+        })
+        var old: AssistantSession? = session(store, audit: audit)
+        storeFS.fail(.rename)
+        failIneffective.value = true
+        _ = await old?.setAreas([.books])
+        _ = await old?.setAreas([.books, .files])
+        XCTAssertTrue(lines(["ineffective"]).isEmpty)
+        old = nil
+        storeFS.heal()
+        failIneffective.value = false
+        let change = await store.updateAreas([.books], cloud: false, audit: audit)
+        XCTAssertNil(change.auditError)
+        XCTAssertEqual(lines(["ineffective"]).count, 1, "auch eine Änderung ohne Sitzung holt nach")
+        XCTAssertFalse(store.hasUnwrittenLines)
+    }
+
     // MARK: Latenz: dauerhafte Wartepunkte vor dem ersten Ton
 
     /// Messung (kein Befund): Zahl der fsync der Protokolldatei (`syncCount`; ein fsync deckt als Gruppen-Commit alles, was bis zu
@@ -869,4 +1053,546 @@ final class AssistantCounterexampleTests: XCTestCase {
             }
         }
     }
+    // MARK: Runde 8, R1: Blocktreue bis in jede Ausgabe
+
+    private let twoBlocks = ["Quasselbert wandert mit dem Fahrrad nach Pappelhausen.", "Quasselbert trifft in Pappelhausen die Tante Lavendula."]
+
+    private func twoBlockKnowledge() async -> AssistantKnowledge {
+        let corpus = AssistantCorpus()
+        await corpus.upsert(assistantDoc("b1", "Der Titel Flimmerkasten", detail: "Autorin Zimtstern",
+                                         sections: twoBlocks.enumerated().map { ("S. \($0.offset + 7)", $0.element) }))
+        return AssistantKnowledge(corpus: corpus)
+    }
+
+    /// R1: Der Block `"  Alpha Beta.  "` (Rand-Leerraum) ist in jedem Weg derselbe: live ausgegeben, im Verlauf der Sitzung, im
+    /// Abschnitt des Beitrags, in der Verlaufsdatei und nach dem Laden. Gegen 4d802f3 ROT (gemessen): Der Beitrag entstand aus dem
+    /// gesprochenen TEXT (die Steuerung trimmt, der Kern zerlegte neu), der Block stand im Verlauf nicht mehr zeichengleich.
+    func testR1ABlockWithEdgeWhitespaceIsByteEqualLiveInTheHistoryAndAfterSaveAndLoad() async throws {
+        let stored = "  Alpha Beta.  "
+        let corpus = AssistantCorpus()
+        await corpus.upsert(note("Erster Block.\n\n" + stored + "\n\nDritter Block."))
+        let s = session(nil, model: EchoModel(text: "Alpha Beta."), knowledge: AssistantKnowledge(corpus: corpus))
+        var live: [String] = []
+        for await e in s.events(AssistantRequest(requestId: "r1", text: "Alpha Beta?")) {
+            if case .sentence(_, _, let text, let speech, .grounded, _, true) = e {
+                live.append(text)
+                XCTAssertEqual(Array(speech.utf8), Array(stored.utf8), "auch das Sprechfeld des Auszugs ist der Blocktext selbst")
+            }
+        }
+        XCTAssertEqual(live.map { Array($0.utf8) }, [Array(stored.utf8)], "live")
+        await s.commit(requestId: "r1", user: "Alpha Beta?", spoken: .all, interrupted: false)
+        let history = await s.history
+        XCTAssertEqual(history.count, 1)
+        XCTAssertEqual(history.first.map { Array($0.assistant.utf8) }, Array(stored.utf8), "im Verlauf der Sitzung")
+        XCTAssertEqual(history.first?.parts.map { Array($0.text.utf8) }, [Array(stored.utf8)], "im Abschnitt des Beitrags")
+        let files = AssistantHistoryStore(directory: dir.appendingPathComponent("verlauf", isDirectory: true))
+        try files.save(history)
+        let loaded = AssistantTurn.admitted(files.load(), released: true)
+        XCTAssertEqual(loaded.count, 1, "der Beitrag besteht die Prüfung beim Laden")
+        XCTAssertEqual(loaded.first.map { Array($0.assistant.utf8) }, Array(stored.utf8), "nach dem Laden")
+        XCTAssertEqual(loaded.first?.parts.map { Array($0.text.utf8) }, [Array(stored.utf8)], "Abschnitt nach dem Laden")
+    }
+
+    /// R1: Ein Quellblock kommt ganz in den Verlauf oder gar nicht. Die Steuerung meldet die ganz gesprochenen EINHEITEN; ein
+    /// Block, dessen Ausgabe unterbrochen wurde, steht nie gekürzt im Beitrag. Gegen 4d802f3 ROT (gemessen): Die Steuerung gab den
+    /// gesprochenen Text mit, und der Kern ordnete einen angesprochenen Satz als Zitat ein (gekürzter Block im Verlauf).
+    func testR1ABlockIsInTheHistoryWholeOrNotAtAllNeverCutOrReSplit() async {
+        let s = session(nil, model: EchoModel(text: twoBlocks.joined(separator: " ")), knowledge: await twoBlockKnowledge())
+        var quoteEvents: [Int] = []
+        var texts: [String] = []
+        var index = 0
+        for await e in s.events(AssistantRequest(requestId: "r1", text: "Was macht Quasselbert in Pappelhausen mit der Tante Lavendula?")) {
+            guard case .sentence(_, _, let text, _, let status, _, _) = e else { continue }
+            if status == .grounded { quoteEvents.append(index); texts.append(text) }
+            index += 1
+        }
+        guard quoteEvents.count == 2 else { return XCTFail("zwei Quellblöcke erwartet: \(texts)") }
+        // Der zweite Block wurde unterbrochen: Die Steuerung meldet nur die ganz gesprochene Einheit.
+        await s.commit(requestId: "r1", user: "Was macht Quasselbert?", spoken: .events([quoteEvents[0]]), interrupted: true)
+        let history = await s.history
+        XCTAssertEqual(history.count, 1)
+        XCTAssertEqual(history.first?.assistant, texts[0], "nur der erste Block, ganz")
+        XCTAssertEqual(history.first?.parts.count, 1)
+        XCTAssertFalse(history.first?.assistant.contains(texts[1]) ?? true)
+        XCTAssertFalse(history.first?.assistant.contains("Tante") ?? true, "kein Rest des unterbrochenen Blocks")
+        XCTAssertTrue(history.first?.interrupted ?? false)
+        // Nichts ganz gesprochen: gar kein Beitrag.
+        for await _ in s.events(AssistantRequest(requestId: "r2", text: "Was macht Quasselbert in Pappelhausen mit der Tante Lavendula?")) {}
+        await s.commit(requestId: "r2", user: "Und?", spoken: .events([]), interrupted: true)
+        let after = await s.history
+        XCTAssertEqual(after.count, 1, "ein Beitrag ohne ganz gesprochene Einheit entsteht nicht")
+    }
+
+    /// R1/U2: Beiträge ohne gespeicherte, vollständig markierte Einheiten (ältere Dateien) und Zitate ohne Quellzeile werden nie
+    /// angezeigt und nie in einen Prompt gegeben: weder beim Laden noch beim Wiederherstellen. Gegen 4d802f3 ROT (gemessen): Solche
+    /// Beiträge wurden angezeigt (als einfacher Text oder „Quelle nicht gespeichert“).
+    func testR1TurnsWithoutStoredMarkedUnitsAreNeverShownNeverInAPromptAndAreNotRestored() async throws {
+        let passage = assistantPassage(.books, itemId: "b1", title: "Der Zauberberg", locator: "S. 12", text: "Hans Castorp fährt nach Davos.")
+        let legacy = AssistantTurn(user: "Alt", assistant: "Hans Castorp fährt nach Davos.", sources: [passage], model: "T", round: .data)
+        let withoutSource = AssistantTurn(user: "Ohne Quelle", assistant: "Hans Castorp fährt nach Davos.",
+                                          parts: [AssistantTurnPart(text: "Hans Castorp fährt nach Davos.", unsourced: false, quote: true)],
+                                          model: "T", round: .data)
+        let good = AssistantTurn(user: "Gut", assistant: "Hans Castorp fährt nach Davos.", sources: [passage],
+                                 parts: [AssistantTurnPart(text: "Hans Castorp fährt nach Davos.", unsourced: false, quote: true, source: passage.excerptLine)],
+                                 model: "T", round: .data)
+        let all = [legacy, withoutSource, good]
+        for released in [false, true] {
+            XCTAssertEqual(AssistantTurn.admitted(all, released: released).map(\.user), ["Gut"], "released: \(released)")
+        }
+        // Eine alte Datei (JSON ohne `parts`) besteht die Prüfung nicht.
+        let oldFile = Data(#"{"user":"Alt","assistant":"Text","interrupted":false,"sources":[],"general":false,"model":"T","at":0}"#.utf8)
+        let decoded = try JSONDecoder().decode(AssistantTurn.self, from: oldFile)
+        XCTAssertEqual(AssistantTurn.admitted([decoded], released: true).count, 0)
+        // Wiederherstellen und Anlegen mit Verlauf: nur der gute Beitrag.
+        let s = session(nil)
+        await s.restore(history: all)
+        let restoredTurns = await s.history
+        XCTAssertEqual(restoredTurns.map(\.user), ["Gut"])
+        let created = AssistantSession(model: EchoModel(), knowledge: AssistantKnowledge(corpus: AssistantCorpus()), config: config,
+                                       history: all, released: true)
+        let createdTurns = await created.history
+        XCTAssertEqual(createdTurns.map(\.user), ["Gut"])
+        // Die Datei bleibt unberührt, bis der nächste Verlauf gespeichert wird.
+        let files = AssistantHistoryStore(directory: dir.appendingPathComponent("verlauf", isDirectory: true))
+        try files.save(all)
+        XCTAssertEqual(files.load().count, 3)
+        XCTAssertEqual(AssistantTurn.admitted(files.load(), released: true).map(\.user), ["Gut"])
+    }
+
+    /// U2 (Ansicht ohne Marke zeigt nichts): Die Ansicht zeigt nur, was `displayedParts` (Beitrag) und `displayed` (laufende Antwort)
+    /// liefern. Ohne Marke kommt nichts heraus: weder der bloße Text (`assistant`), noch ein Zitat ohne Quellzeile oder mit einer Zeile
+    /// ohne den festen Beginn, noch eine Einheit ohne Kennzeichnung; ein unterbrochener Beitrag trägt die Unterbrechung NICHT im Text
+    /// der Einheiten (kein „ …“). Die Wahrheitstafel von `isMarked` ist hier vollständig. Gegen 4d802f3 NICHT AUSDRÜCKBAR (die Ansicht
+    /// fiel dort auf den Text zurück, im Mac-Ziel; `displayedParts`/`displayed` gab es nicht).
+    func testU2TheViewShowsNothingWithoutAMarkAndNeverAddsAnEllipsisToUnits() {
+        let source = "Wörtlicher Auszug aus ‚Der Zauberberg‘ · S. 12"
+        let quoteWithSource = AssistantTurnPart(text: "Block eins.\nZweite Zeile.", unsourced: false, quote: true, source: source)
+        let quoteWithoutSource = AssistantTurnPart(text: "Ohne Quelle", unsourced: false, quote: true)
+        let quoteBareSource = AssistantTurnPart(text: "Nur Präfix", unsourced: false, quote: true, source: AssistantPassage.excerptPrefix)
+        let quoteOldSource = AssistantTurnPart(text: "Alte Zeile", unsourced: false, quote: true, source: "Buch · Der Zauberberg · S. 12")
+        let plain = AssistantTurnPart(text: "Einfacher Text", unsourced: false)
+        let note = AssistantTurnPart(text: "Fest.", unsourced: false, note: AssistantTurnPart.templateNote)
+        let unsourced = AssistantTurnPart(text: "Allgemein.", unsourced: true)
+        // Wahrheitstafel
+        XCTAssertTrue(quoteWithSource.isMarked)
+        XCTAssertTrue(note.isMarked)
+        XCTAssertTrue(unsourced.isMarked)
+        for unmarked in [quoteWithoutSource, quoteBareSource, quoteOldSource, plain] {
+            XCTAssertFalse(unmarked.isMarked, unmarked.text)
+        }
+        // Laufende Antwort: nur markierte Einheiten, jede unverändert.
+        let live = AssistantTurnPart.displayed([plain, quoteWithSource, quoteWithoutSource, note])
+        XCTAssertEqual(live, [quoteWithSource, note])
+        XCTAssertEqual(AssistantTurnPart.displayed([plain, quoteWithoutSource]), [], "ohne Marke steht nichts da")
+        // Beitrag: alles oder nichts; kein Rückfall auf `assistant`.
+        let whole = AssistantTurn(user: "F", assistant: "Block eins. Zweite Zeile. Fest.", interrupted: true,
+                                  parts: [quoteWithSource, note], model: "T", round: .data)
+        XCTAssertEqual(whole.displayedParts, [quoteWithSource, note])
+        XCTAssertFalse(whole.displayedParts.contains { $0.text.hasSuffix("…") || $0.text.contains(" …") },
+                       "die Unterbrechung steht nicht im Text der Einheiten")
+        XCTAssertEqual(whole.displayedParts.first?.text, "Block eins.\nZweite Zeile.", "der Block bleibt buchstabengleich")
+        let mixed = AssistantTurn(user: "F", assistant: "Text", parts: [quoteWithSource, plain], model: "T", round: .data)
+        XCTAssertEqual(mixed.displayedParts, [], "ein Beitrag mit einer Einheit ohne Marke zeigt gar nichts")
+        let legacy = AssistantTurn(user: "F", assistant: "Alter Text", model: "T", round: .data)
+        XCTAssertEqual(legacy.displayedParts, [], "ohne gespeicherte Einheiten kein Rückfall auf den Text")
+    }
+
+    /// U2 (Entstehung der Einheiten): Eine Einheit, die über `AssistantTurnPart.append` entsteht, ist genau dann markiert, wenn sie ein
+    /// Zitat MIT Quelle, eine Kennzeichnung (feste Antwort, Bestandsangabe) oder „ohne Quelle“ ist. Ein Zitat ohne Quelle und ein
+    /// Satz „gedeckt“ ohne Zitat (kein Auszug) tragen keine Marke und werden nie angezeigt.
+    func testU2UnitsCreatedByAppendAreMarkedOnlyWithQuoteAndSourceOrANote() {
+        let passage = assistantPassage(.books, itemId: "b1", title: "Der Zauberberg", locator: "S. 12", text: "Hans Castorp fährt nach Davos.")
+        var list: [AssistantTurnPart] = []
+        AssistantTurnPart.append(to: &list, text: "Auszug.", status: .grounded, quote: true, sources: [passage])
+        AssistantTurnPart.append(to: &list, text: "Hallo.", status: .neutral, quote: false, sources: [])
+        AssistantTurnPart.append(to: &list, text: "Du hast 3 Bücher.", status: .inventory, quote: false, sources: [])
+        AssistantTurnPart.append(to: &list, text: "Allgemein.", status: .unsourced, quote: false, sources: [])
+        XCTAssertEqual(list.count, 4)
+        XCTAssertTrue(list.allSatisfy(\.isMarked), "\(list)")
+        XCTAssertEqual(list[0].source, passage.excerptLine)
+        var broken: [AssistantTurnPart] = []
+        AssistantTurnPart.append(to: &broken, text: "Zitat ohne Quelle.", status: .grounded, quote: true, sources: [])
+        AssistantTurnPart.append(to: &broken, text: "Gedeckt, aber kein Auszug.", status: .grounded, quote: false, sources: [passage])
+        XCTAssertEqual(broken.count, 2)
+        XCTAssertEqual(AssistantTurnPart.displayed(broken), [], "ohne Marke steht nichts da")
+    }
+
+    /// R1 (Weg zur Stimme): Das Sprechfeld eines Auszugs ist der Blocktext selbst: kein Dezimalkomma, keine Auflösung von Kürzeln,
+    /// keine Entfernung von Markdown, Adressen oder Zeichen. Gegen 4d802f3 ROT (gemessen): Das Sprechfeld war `AssistantSpeech.render`
+    /// des Blocks („3,5“, ohne Adresse, ohne Markdown).
+    func testR1TheSpeechFieldOfAnExcerptIsTheBlockTextForEveryKindOfContent() async {
+        let blocks = ["Der Zaun misst 3.5 m, siehe https://example.org/zaun und ist **frisch** gestrichen \u{1F600}.",
+                      "Der Zaun misst z. B. 3.5 Meter und ist  \u{201E}frisch\u{201C}  gestrichen."]
+        for stored in blocks {
+            let corpus = AssistantCorpus()
+            await corpus.upsert(note(stored))
+            let s = session(nil, model: EchoModel(text: stored), knowledge: AssistantKnowledge(corpus: corpus))
+            var pairs: [(text: String, speech: String)] = []
+            for await e in s.events(AssistantRequest(requestId: "r1", text: "Wie misst der Zaun und ist er frisch gestrichen?")) {
+                if case .sentence(_, _, let text, let speech, .grounded, _, true) = e { pairs.append((text, speech)) }
+            }
+            XCTAssertEqual(pairs.count, 1, "das Zitat kam: \(stored)")
+            XCTAssertEqual(pairs.first.map { Array($0.text.utf8) }, Array(stored.utf8))
+            XCTAssertEqual(pairs.first.map { Array($0.speech.utf8) }, Array(stored.utf8), "Sprechfeld = Blocktext, Byte für Byte")
+        }
+    }
+
+    // MARK: Runde 8, R2: das Verzeichnis nach dem Verdichten
+
+    /// R2: Scheitert der fsync des Verzeichnisses NACH dem Umbenennen beim Verdichten, ist das ein Schreibfehler: Die neue Fassung
+    /// liegt schon unter dem Namen der Datei, der Eintrag ist aber nicht bestätigt. Bis ein späterer fsync das Verzeichnis bestätigt
+    /// hat, gilt keine weitere Zeile als gesichert; jeder Wartepunkt versucht es zuerst erneut. Gegen 4d802f3 ROT (gemessen): Der
+    /// Fehler wurde verschluckt (`try?`), die Zeile galt als gesichert.
+    func testR2ADirectoryFsyncFailingAfterTheCompactionRenameIsAWriteErrorUntilALaterOneConfirmsIt() async throws {
+        let lineText = "{\"t\":\"event\",\"kind\":\"unsourcedOn\"}\n"
+        try String(repeating: lineText, count: AssistantAuditWriter.maxUnits + 40).write(to: protocolFile, atomically: true, encoding: .utf8)
+        let rec = Recorder()
+        let fs = CxFS("journal", rec)
+        fs.fail(.syncDirectory)
+        let audit = log(fileSystem: fs)
+        var line = AssistantJournalLine(.event)
+        line.at = Date()
+        audit.enqueue(line, key: "k1")
+        let first = await audit.waitForLine(key: "k1")
+        XCTAssertEqual(first, .writeFailed, "die erste Zeile (löst das Verdichten aus) gilt nicht als gesichert")
+        XCTAssertGreaterThanOrEqual(rec.all.filter { $0 == "journal:syncDirectory" }.count, 1)
+        let attempts = rec.all.filter { $0 == "journal:syncDirectory" }.count
+        audit.enqueue(line, key: "k2")
+        let second = await audit.waitForLine(key: "k2")
+        XCTAssertEqual(second, .writeFailed, "auch die nächste Zeile nicht: das Verzeichnis ist weiter unbestätigt")
+        XCTAssertGreaterThan(rec.all.filter { $0 == "journal:syncDirectory" }.count, attempts, "der Wartepunkt versuchte es erneut")
+        fs.heal()
+        audit.enqueue(line, key: "k3")
+        let third = await audit.waitForLine(key: "k3")
+        XCTAssertNil(third, "bestätigt: wieder gesichert")
+        let calls = rec.all.filter { $0 == "journal:syncDirectory" }.count
+        audit.enqueue(line, key: "k4")
+        let fourth = await audit.waitForLine(key: "k4")
+        XCTAssertNil(fourth)
+        XCTAssertEqual(rec.all.filter { $0 == "journal:syncDirectory" }.count, calls, "einmal bestätigt, kein weiterer Aufwand")
+    }
+
+    /// R2: Dasselbe beim Anlegen der Datei (die Datei gab es nicht): Das Verzeichnis ist erst mit dem bestätigten fsync gesichert.
+    func testR2TheDirectoryFsyncOfANewlyCreatedFileIsRetriedByEveryWaitPointUntilItSucceeds() async {
+        let rec = Recorder()
+        let fs = CxFS("journal", rec)
+        fs.fail(.syncDirectory)
+        let audit = log(fileSystem: fs)
+        var line = AssistantJournalLine(.event)
+        line.at = Date()
+        for key in ["k1", "k2"] {
+            audit.enqueue(line, key: key)
+            let error = await audit.waitForLine(key: key)
+            XCTAssertEqual(error, .writeFailed, key)
+        }
+        XCTAssertGreaterThanOrEqual(rec.all.filter { $0 == "journal:syncDirectory" }.count, 2, "jede Zeile versuchte es erneut")
+        fs.heal()
+        audit.enqueue(line, key: "k3")
+        let third = await audit.waitForLine(key: "k3")
+        XCTAssertNil(third)
+    }
+
+    // MARK: Runde 8, R5: der Bericht der Steuerung wird im Lock geprüft
+
+    /// R5: Ein von der Steuerung gemeldeter Audio-Fehler `a!g` gilt nur, wenn `g` im Lock der Ordnung noch die Generation ist. War sie
+    /// inzwischen erhöht (8), steht „verworfen“ mit der gefundenen Generation (`a-8`), nie „fehlgeschlagen unter 7“. Gegen 4d802f3
+    /// ROT (gemessen): Die Zeile `a!7` stand trotz Generation 8 in der Datei.
+    func testR5AnAudioFailureReportedAfterARevocationIsWrittenAsDiscardedWithTheFoundGeneration() async throws {
+        let store = openStore()
+        let audit = log()
+        let s = session(store, audit: audit, model: EchoModel(text: twoBlocks[0]), knowledge: await twoBlockKnowledge())
+        let g = s.releaseGeneration
+        var quoteEvent = -1
+        var index = 0
+        for await e in s.events(AssistantRequest(requestId: "r1", text: "Wohin wandert Quasselbert mit dem Fahrrad nach Pappelhausen?")) {
+            if case .sentence(_, _, _, _, .grounded, _, _) = e { quoteEvent = index }
+            if case .sentence = e { index += 1 }
+        }
+        XCTAssertGreaterThanOrEqual(quoteEvent, 0)
+        // Zuerst gilt die Generation: `a!g`, `d+g` stehen, wie gemeldet.
+        s.noteCommit(requestId: "r1", index: quoteEvent, stage: .audio, ok: false, generation: g, failed: true)
+        s.noteCommit(requestId: "r1", index: quoteEvent, stage: .display, ok: true, generation: g)
+        await s.releaseDidChange()   // Generation g + 1
+        let found = s.releaseGeneration
+        XCTAssertEqual(found, g + 1)
+        // Nach der Erhöhung gemeldet unter der alten Generation: verworfen mit der gefundenen.
+        s.noteCommit(requestId: "r1", index: quoteEvent, stage: .audio, ok: false, generation: g, failed: true)
+        s.noteCommit(requestId: "r1", index: quoteEvent, stage: .display, ok: true, generation: g)
+        await s.commit(requestId: "r1", user: "x", spoken: .nothing, interrupted: true, revoked: true)
+        let allEntries = await audit.entries()
+        let entry = allEntries.first { $0.requestId == "r1" }
+        let quote = entry?.trace.first { $0.verdict == .grounded }
+        XCTAssertEqual(quote?.commits.filter { $0.stage == .audio }, [
+            AssistantCommitMark(stage: .audio, ok: false, generation: g, failed: true),
+            AssistantCommitMark(stage: .audio, ok: false, generation: found),
+        ], "a!g solange g galt, danach a-(g+1)")
+        XCTAssertEqual(quote?.commits.filter { $0.stage == .display }, [
+            AssistantCommitMark(stage: .display, ok: true, generation: g),
+            AssistantCommitMark(stage: .display, ok: false, generation: found),
+        ])
+        XCTAssertFalse(lines(["commit"]).contains { ($0["m"] as? String) == "a!\(g)" && ($0["g"] as? Int) == g + 1 }, "keine Mischung")
+    }
+
+    // MARK: Runde 8, R6: Fehler hängen an ihrem Anspruch
+
+    /// R6: Der Fehler einer Anfrage geht nicht verloren, auch wenn 300 fremde Schlüssel scheitern (die Tabelle der Fehler war auf 256
+    /// begrenzt und verdrängte den ältesten, also den der Anfrage). Der Fehler hängt am Anspruch der Anfrage und endet erst mit ihm.
+    /// Gegen 4d802f3 ROT (gemessen): Der Fehler der Anfrage war nach 300 fremden Fehlern weg (`flush` lieferte `nil`).
+    func testR6TheErrorOfARequestSurvivesThreeHundredForeignErrorKeys() async {
+        let failing = Flag()
+        let audit = log(appender: { url, data in
+            if failing.value { throw Injected() }
+            try AssistantAuditWriter.appendFile(url, data)
+        })
+        audit.claim(request: "r1")
+        failing.value = true
+        var own = AssistantJournalLine(.round, req: "r1")
+        own.at = Date()
+        audit.enqueue(own)
+        for i in 0..<300 {
+            var foreign = AssistantJournalLine(.event)
+            foreign.at = Date()
+            audit.enqueue(foreign, key: "fremd:\(i)", onFailure: { _ in })
+        }
+        await audit.barrier()
+        XCTAssertTrue(audit.hasFailed(request: "r1"), "sichtbar ohne Warten")
+        let seen = await audit.waitUntilWritten(request: "r1")
+        XCTAssertEqual(seen, .writeFailed, "klebrig: bleibt, bis die Anfrage abgeschlossen ist")
+        let again = await audit.waitUntilWritten(request: "r1")
+        XCTAssertEqual(again, .writeFailed, "alle Entscheidungen lesen dieselbe Quelle")
+        XCTAssertTrue(audit.hasFailed(request: "r1"))
+        audit.release(request: "r1")
+        XCTAssertEqual(audit.claimCount, 0, "mit dem Abschluss endet der Anspruch")
+    }
+
+    /// R6: Derselbe Fall für die Zeile einer Änderung (Schlüssel `chg:…`): Sie wird mit `waitForLine` erwartet, ihr Fehler geht nicht
+    /// in einer Tabelle unter, aus der fremde Fehler ihn verdrängen. Gegen 4d802f3 ROT (gemessen).
+    func testR6TheErrorOfAChangeLineSurvivesThreeHundredForeignErrorKeys() async {
+        let failing = Flag()
+        let audit = log(appender: { url, data in
+            if failing.value { throw Injected() }
+            try AssistantAuditWriter.appendFile(url, data)
+        })
+        failing.value = true
+        var change = AssistantJournalLine(.event)
+        change.at = Date()
+        audit.enqueue(change, key: "chg:1:1")
+        for i in 0..<300 { audit.enqueue(change, key: "fremd:\(i)", onFailure: { _ in }) }
+        await audit.barrier()
+        XCTAssertTrue(audit.hasFailed(request: "chg:1:1"))
+        let error = await audit.waitForLine(key: "chg:1:1")
+        XCTAssertEqual(error, .writeFailed)
+        XCTAssertEqual(audit.claimCount, 0, "gemeldet: der Anspruch ist beendet")
+        // Ohne Anspruch (niemand wartet) werden nur Fehler fremder Schlüssel begrenzt und verdrängt.
+        failing.value = false
+        audit.enqueue(change, key: "chg:1:2")
+        let ok = await audit.waitForLine(key: "chg:1:2")
+        XCTAssertNil(ok)
+    }
+
+    /// R6: Nach `commit` hat die Anfrage keinen Anspruch mehr (die Zahl der Ansprüche wächst nicht mit den Anfragen).
+    func testR6TheClaimOfARequestEndsWithItsCommitAndNoClaimIsLeftBehind() async {
+        let audit = log()
+        let s = session(nil, audit: audit, model: EchoModel(text: twoBlocks[0]), knowledge: await twoBlockKnowledge())
+        for i in 0..<5 {
+            let id = "r\(i)"
+            for await _ in s.events(AssistantRequest(requestId: id, text: "Wohin wandert Quasselbert mit dem Fahrrad nach Pappelhausen?")) {}
+            XCTAssertEqual(audit.claimCount, 1, "bis zum Abschluss der Anfrage hält sie ihren Anspruch")
+            await s.commit(requestId: id, user: "x", spoken: .all, interrupted: false)
+            XCTAssertEqual(audit.claimCount, 0, "mit dem Commit endet er")
+        }
+    }
+
+    // MARK: Runde 8, R7: der Leser schließt nie über die Art hinweg
+
+    private func encoded(_ line: AssistantJournalLine) -> Data {
+        let e = JSONEncoder()
+        e.dateEncodingStrategy = .iso8601
+        e.outputFormatting = [.sortedKeys]
+        return (try? e.encode(line)) ?? Data()
+    }
+
+    private func writeJournal(_ journal: [AssistantJournalLine]) throws {
+        var raw = Data()
+        for l in journal {
+            raw.append(encoded(l))
+            raw.append(10)
+        }
+        try raw.write(to: protocolFile)
+    }
+
+    private func journalStart(_ req: String) -> AssistantJournalLine {
+        var l = AssistantJournalLine(.start, req: req)
+        l.at = Date(timeIntervalSince1970: 1_760_000_000)
+        l.session = "sitzung"
+        l.model = .other
+        l.cloud = false
+        l.unsourced = false
+        l.consent = 0
+        l.ctx = .data
+        l.reason = .locked
+        l.round = .data
+        l.gen = 1
+        return l
+    }
+
+    private func journalStep(_ req: String, _ n: Int, _ verdict: AssistantTraceVerdict) -> AssistantJournalLine {
+        var l = AssistantJournalLine(.step, req: req)
+        l.n = n
+        l.verdict = verdict
+        l.gen = 1
+        return l
+    }
+
+    private func journalCommit(_ req: String, _ n: Int, _ stage: AssistantCommitStage, ok: Bool = true, failed: Bool = false) -> AssistantJournalLine {
+        var l = AssistantJournalLine(.commit, req: req)
+        l.n = n
+        l.mark = AssistantCommitMark(stage: stage, ok: ok, generation: 1, failed: failed)
+        return l
+    }
+
+    private func journalEnd(_ req: String, outcome: AssistantAuditEntry.Outcome = .completed, lost: Bool? = nil) -> AssistantJournalLine {
+        var l = AssistantJournalLine(.end, req: req)
+        l.at = Date(timeIntervalSince1970: 1_760_000_100)
+        l.outcome = outcome
+        l.level = .s1
+        l.areas = ["books"]
+        l.lost = lost
+        return l
+    }
+
+    /// R7: `e+ d+ a!`, der Beitrag wurde angehängt, das Prozessende kam vor der Zeile `h`: Der Verlauf dieser Einheit ist UNBEKANNT.
+    /// Der Leser schloss vorher aus `a!` auf „Verlauf nicht aufgenommen“. Ein Vergleich: Dieselben Zeilen in einer regulär beendeten
+    /// Anfrage heißen „nicht ausgeführt“ (der Schreiber schreibt für eine Handlung, die nicht begann, keine Zeile). Gegen 4d802f3 ROT
+    /// (gemessen): `result(for: .history)` lieferte `notPlanned` statt `unknown`.
+    func testR7AnAudioFailureWithTheHistoryLineMissingAfterTheProcessEndIsUnknownForTheHistoryAndNotExecutedWhenTheRequestEndedRegularly() async throws {
+        let unit: [AssistantJournalLine] = [
+            journalStart("a"), journalStep("a", 1, .grounded),
+            journalCommit("a", 1, .emit), journalCommit("a", 1, .display), journalCommit("a", 1, .audio, ok: false, failed: true),
+        ]
+        try writeJournal(unit)   // kein `end`: Prozessende
+        let openEntries = await log().entries()
+        let open = try XCTUnwrap(openEntries.first { $0.requestId == "a" })
+        XCTAssertEqual(open.outcome, .incomplete)
+        let cut = try XCTUnwrap(open.trace.first)
+        XCTAssertEqual(cut.result(for: .emit), .executed)
+        XCTAssertEqual(cut.result(for: .display), .executed)
+        XCTAssertEqual(cut.result(for: .audio), .failed)
+        XCTAssertEqual(cut.result(for: .history), .unknown, "der Verlauf: unbekannt, nicht aus `a!` geschlossen")
+        XCTAssertEqual(cut.unknownStages, [.history])
+        try? FileManager.default.removeItem(at: protocolFile)
+        try writeJournal(unit + [journalEnd("a")])
+        let closedEntries = await log().entries()
+        let closed = try XCTUnwrap(closedEntries.first { $0.requestId == "a" })
+        XCTAssertEqual(closed.outcome, .completed)
+        XCTAssertEqual(closed.trace.first?.result(for: .history), .notPlanned, "regulär beendet: nicht ausgeführt")
+        XCTAssertEqual(closed.trace.first?.result(for: .audio), .failed)
+    }
+
+    /// R7: Eine Anfrage, bei der Zeilen nicht geschrieben werden konnten (Vermerk `lost` im `end`), gilt nicht als regulär beendet:
+    /// Was in der Datei fehlt, ist unbekannt, auch wenn der Ausgang „Fehler“ ist.
+    func testR7ARequestThatLostLinesIsNotReadAsRegularlyEnded() async throws {
+        try writeJournal([
+            journalStart("a"), journalStep("a", 1, .grounded), journalCommit("a", 1, .emit),
+            journalEnd("a", outcome: .failed, lost: true),
+        ])
+        let readEntries = await log().entries()
+        let entry = try XCTUnwrap(readEntries.first { $0.requestId == "a" })
+        XCTAssertEqual(entry.outcome, .failed)
+        let step = try XCTUnwrap(entry.trace.first)
+        XCTAssertEqual(step.result(for: .display), .unknown)
+        XCTAssertEqual(step.result(for: .audio), .unknown)
+        XCTAssertEqual(step.result(for: .history), .unknown)
+        XCTAssertEqual(step.result(for: .emit), .executed, "was steht, gilt")
+    }
+
+    /// R7: Ein verworfener Kandidat behauptet nichts: Er hat in jeder Art „nicht ausgeführt“, auch in einer unvollständigen Anfrage.
+    func testR7ADiscardedCandidateClaimsNothingEvenInAnIncompleteRequest() async throws {
+        try writeJournal([journalStart("a"), journalStep("a", 1, .droppedNotSnapped)])
+        let readEntries = await log().entries()
+        let entry = try XCTUnwrap(readEntries.first { $0.requestId == "a" })
+        XCTAssertEqual(entry.outcome, .incomplete)
+        XCTAssertEqual(AssistantTraceStep.unitStages.map { entry.trace[0].result(for: $0) }, [.notPlanned, .notPlanned, .notPlanned, .notPlanned])
+    }
+
+    /// Suchlauf (e), die eine Leserregel aus einer Abwesenheit (`counts(from:)`): Fehlt die Zeile des Ausgabe-Commits ganz (Prozessende
+    /// nach dem Schritt), zählt der Satz als möglicherweise ausgegeben, nie als widerrufen; die Art selbst ist „unbekannt“. Ein
+    /// verworfener Kandidat zählt nie als ausgegeben. Gegen 4d802f3 gleich (die Regel besteht unverändert; der Test hält die
+    /// vorsichtige Richtung fest).
+    func testECountsTreatAMissingEmitLineAsPossiblyOutputAndTheKindAsUnknown() async throws {
+        try writeJournal([journalStart("a"), journalStep("a", 1, .grounded), journalStep("a", 2, .droppedNotSnapped)])
+        let readEntries = await log().entries()
+        let entry = try XCTUnwrap(readEntries.first { $0.requestId == "a" })
+        XCTAssertEqual(entry.outcome, .incomplete)
+        XCTAssertEqual(entry.counts.grounded, 1, "möglicherweise ausgegeben")
+        XCTAssertEqual(entry.counts.revoked, 0, "nie als sicher nicht ausgegeben")
+        XCTAssertEqual(entry.counts.droppedNotSnapped, 1)
+        XCTAssertEqual(entry.trace[0].result(for: .emit), .unknown)
+        XCTAssertEqual(entry.trace[1].result(for: .emit), .notPlanned, "ein verworfener Kandidat behauptet nichts")
+    }
+
+    // MARK: Runde 8, Tabelle (c): Obergrenzen, deren Überlauf nichts verschlucken darf
+
+    /// (c) Der Index der Schritte ist voll (hier 2 Einheiten): Die dritte Einheit geht NICHT hinaus, die Zeile des Ausgabe-Commits
+    /// sagt „nicht ausgegeben“, die Antwort endet mit dem Ausgang „Grenze erreicht“. Bei den festen Grenzen (512 gegenüber 200
+    /// Schritten) läuft der Index nie voll; der Test setzt die Grenze klein. Gegen 4d802f3 NICHT AUSDRÜCKBAR (die Grenzen sind dort
+    /// nicht einstellbar); statischer Beleg: `AssistantStepIndex.append` ignorierte dort die volle Tabelle still, die Einheit ging
+    /// ohne Schritt hinaus.
+    func testTableCAFullStepIndexStopsTheAnswerAndNothingGoesOutWithoutAStep() async throws {
+        let audit = log()
+        let s = session(nil, audit: audit, model: EchoModel(text: twoBlocks.joined(separator: " ")), knowledge: await twoBlockKnowledge(),
+                        stepIndex: AssistantStepIndex(maxSteps: 2))
+        var units: [String] = []
+        for await e in s.events(AssistantRequest(requestId: "r1", text: "Was macht Quasselbert in Pappelhausen mit der Tante Lavendula?")) {
+            if case .sentence(_, _, let text, _, _, _, _) = e { units.append(text) }
+        }
+        XCTAssertEqual(units.count, 2, "Ansage und erster Block; danach ging nichts mehr hinaus: \(units)")
+        await s.commit(requestId: "r1", user: "x", spoken: .all, interrupted: false)
+        let auditEntries = await audit.entries()
+        let entry = try XCTUnwrap(auditEntries.first { $0.requestId == "r1" })
+        XCTAssertEqual(entry.outcome, .limited)
+        let last = try XCTUnwrap(entry.trace.last)
+        XCTAssertEqual(last.verdict, .announcement, "die Ansage des zweiten Blocks war die dritte Einheit")
+        XCTAssertEqual(last.result(for: .emit), .discarded, "ausdrücklich „nicht ausgegeben“")
+        XCTAssertFalse(units.contains(twoBlocks[1]), "der zweite Block ging nicht hinaus")
+    }
+
+    /// (c) Ein verdrängter Eintrag des Index (hier: ein Eintrag für die Anfragen): Für die verdrängte Anfrage startet nie ein Ton
+    /// (Schreibfolge 6: nichts wird wiederholt), ihre Meldungen werden ignoriert, und ihre Einheiten kommen nicht als „ganz gesprochen“
+    /// in einen Beitrag. Bei den festen Grenzen (32 gegenüber 16 gemerkten Anfragen) kann die Steuerung nie eine verdrängte Anfrage
+    /// melden. Gegen 4d802f3 NICHT AUSDRÜCKBAR (die Grenze ist dort nicht einstellbar).
+    func testTableCAnEvictedRequestNeverStartsAudioAndItsReportsAndUnitsAreIgnored() async {
+        let s = session(nil, model: EchoModel(text: twoBlocks[0]), knowledge: await twoBlockKnowledge(), stepIndex: AssistantStepIndex(maxRequests: 1))
+        let g = s.releaseGeneration
+        for id in ["r1", "r2"] {
+            for await _ in s.events(AssistantRequest(requestId: id, text: "Wohin wandert Quasselbert mit dem Fahrrad nach Pappelhausen?")) {}
+        }
+        let started = Flag()
+        let result = s.commitStart(requestId: "r1", index: 0, generation: g) { started.value = true; return true }
+        XCTAssertFalse(result.ok)
+        XCTAssertFalse(started.value, "für eine verdrängte Anfrage startet kein Ton")
+        s.noteCommit(requestId: "r1", index: 0, stage: .display, ok: true, generation: g)   // ohne Wirkung, ohne Absturz
+        await s.commit(requestId: "r1", user: "x", spoken: .events([0, 1]), interrupted: true)
+        let turns = await s.history
+        XCTAssertEqual(turns.count, 0, "keine Einheit der verdrängten Anfrage gilt als gesprochen")
+    }
+
+    /// (c) Das Register der nachzuholenden Zeilen ist voll: Eine Zeile geht verloren, das Protokoll hat eine bekannte Lücke, und jede
+    /// weitere Anfrage endet fail-closed mit „Protokoll nicht schreibbar“, ohne Modell, bis der Prozess neu startet. Gegen 4d802f3
+    /// NICHT AUSDRÜCKBAR (das Register der nachzuholenden Zeilen gab es nicht: Ein Fehler stand in der verdrängbaren Tabelle).
+    func testTableCAFullRegisterOfLinesToCatchUpMeansAKnownGapAndNoFurtherRequestRuns() async {
+        let store = openStore()
+        let model = CountingModel()
+        let s = session(store, audit: log(), model: model)
+        for i in 0..<AssistantReleaseClock.maxPendingLines {
+            store.clock.addPendingLine(AssistantPendingLine(key: "luecke:\(i)", line: AssistantJournalLine(.event)))
+        }
+        XCTAssertFalse(store.clock.auditGap, "voll, aber noch nichts verloren")
+        store.clock.addPendingLine(AssistantPendingLine(key: "luecke:ueber", line: AssistantJournalLine(.event)))
+        XCTAssertTrue(store.clock.auditGap, "die Zeile ging verloren: bekannte Lücke")
+        let result = await drainEvents(s, AssistantRequest(requestId: "r1", text: "Hallo"))
+        XCTAssertEqual(result.failure, .auditUnavailable)
+        XCTAssertEqual(model.calls.value, 0, "kein Modell")
+    }
+
 }

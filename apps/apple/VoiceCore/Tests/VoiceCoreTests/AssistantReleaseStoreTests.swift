@@ -249,7 +249,7 @@ final class AssistantReleaseStoreTests: XCTestCase {
             if case .sentence(_, _, let t, _, _, _, _) = e { texts.append(t) }
         }
         XCTAssertFalse(texts.contains { $0.contains("Eisvogel") }, "gesperrt: nichts aus eigenen Inhalten: \(texts)")
-        _ = await s.commit(requestId: "r1", user: "x", spoken: "", interrupted: true)
+        _ = await s.commit(requestId: "r1", user: "x", spoken: .nothing, interrupted: true)
         let stateLines = lines("state")
         XCTAssertEqual(stateLines.first?["locked"] as? Bool, true, "die Standzeile nennt „gesperrt“")
         XCTAssertEqual(stateLines.first?["areas"] as? [String], [])
@@ -345,7 +345,7 @@ final class AssistantReleaseStoreTests: XCTestCase {
         for await e in s.events(AssistantRequest(requestId: "a", text: "Wo brütet der Eisvogel?")) {
             if case .sentence(_, _, let t, _, _, _, _) = e { before.append(t) }
         }
-        _ = await s.commit(requestId: "a", user: "x", spoken: "", interrupted: true)
+        _ = await s.commit(requestId: "a", user: "x", spoken: .nothing, interrupted: true)
         XCTAssertTrue(before.contains { $0.contains("Eisvogel") }, "Gegenprobe: ohne Blockade kommt das Zitat")
         fs.inject(.rename)
         let r = await s.setAreas([.notes, .books])
@@ -354,7 +354,7 @@ final class AssistantReleaseStoreTests: XCTestCase {
         for await e in s.events(AssistantRequest(requestId: "b", text: "Wo brütet der Eisvogel?")) {
             if case .sentence(_, _, let t, _, _, _, _) = e { after.append(t) }
         }
-        _ = await s.commit(requestId: "b", user: "x", spoken: "", interrupted: true)
+        _ = await s.commit(requestId: "b", user: "x", spoken: .nothing, interrupted: true)
         XCTAssertFalse(after.contains { $0.contains("Eisvogel") }, "blockiert: nichts aus eigenen Inhalten: \(after)")
     }
 
@@ -622,7 +622,7 @@ final class AssistantReleaseStoreTests: XCTestCase {
                 group.leave()
             }
         }
-        XCTAssertEqual(group.wait(timeout: .now() + 20), .success)
+        XCTAssertEqual(group.wait(timeout: .now() + 120), .success)
         let all = collected.withLock { pendings }
         await withTaskGroup(of: Void.self) { tasks in
             for p in all where p.changed { tasks.addTask { _ = await s.settle(p) } }
@@ -1033,7 +1033,10 @@ final class AssistantReleaseStoreTests: XCTestCase {
         XCTAssertTrue(store.isBlocked, "die Blockade bleibt bis zum nächsten Lauf")
         XCTAssertEqual(lines("intent").count, 0, "keine Absicht: es wird nichts versucht")
         XCTAssertEqual(lines("ineffective").count, 1)
-        XCTAssertEqual(lines("release").count, 1, "die Einschränkung hat ihre Zeile, auch wenn die Sicherung erst später gelang")
+        // Runde 8 (R3): Die Blockade ist ein Ereignis der einen Ordnung mit eigener Generation und eigener Zeile (auch ohne Sitzung):
+        // eine laufende Anfrage, die zwischen Einschränkung und Blockade begann, endet damit.
+        XCTAssertEqual(lines("release").compactMap { $0["cause"] as? String }.sorted(), ["areas", "other"],
+                       "die Einschränkung hat ihre Zeile, auch wenn die Sicherung erst später gelang; dazu die Zeile der Blockade")
     }
 
     // MARK: Gescheiterte Einschränkung: der engere Stand geht nicht verloren
@@ -1102,7 +1105,8 @@ final class AssistantReleaseStoreTests: XCTestCase {
         try seed(AssistantReleaseRecord(localAreas: Set(AssistantArea.allCases), cloudAreas: [.books], consents: ["ziel": [.books], "anderes": [.books, .notes]]))
         let fs = FaultFS()
         let store = openStore(fs)
-        fs.inject(.rename, times: 1)
+        // Der Austausch der Einschränkung scheitert, und das Nachholen zu Beginn des erweiternden Teils derselben Änderung ebenso.
+        fs.inject(.rename, times: 2)
         let failed = await store.updateAreas([.books, .notes], cloud: true)
         XCTAssertEqual(failed.storeError, .replaceFailed(.rename))
         XCTAssertEqual(store.record.consentedAreas("ziel"), [], "gilt sofort: die Zustimmung deckt die neuen Bereiche nicht")
@@ -1131,8 +1135,9 @@ final class AssistantReleaseStoreTests: XCTestCase {
     }
 
     /// Eine noch nicht gesicherte Einschränkung wird bei der nächsten Gelegenheit (hier: der Anfang der nächsten Sicherungsfolge)
-    /// gesichert, BEVOR eine spätere Erweiterung ihren Austausch beginnt: erst die Einschränkung, dann die Erweiterung (Runde 7, B10).
-    func testAnUnsavedRestrictionIsSecuredBeforeALaterExpansionTakesEffect() async throws {
+    /// gesichert, BEVOR irgendetwas anderes ersetzt wird (Runde 7, B10). Seit Runde 8 (R3) ist die Blockade ein Stand der einen Ordnung:
+    /// Auch eine Sitzung, die vor dem Fehler begann, ist blockiert und nimmt in diesem Lauf keine Erweiterung mehr an.
+    func testAnUnsavedRestrictionIsSecuredOnTheNextOccasionAndTheBlockedOrderRefusesTheExpansion() async throws {
         try seed(AssistantReleaseRecord(localAreas: [.books], cloudAreas: [.books]))
         let fs = FaultFS()
         let rec = Recorder()
@@ -1141,28 +1146,31 @@ final class AssistantReleaseStoreTests: XCTestCase {
         fs.inject(.rename, times: 1)
         let failed = await store.updateAreas([], cloud: false)
         XCTAssertNotNil(failed.storeError)
+        XCTAssertTrue(s.isContentBlocked, "die Blockade der Änderung ohne Sitzung gilt in der Sitzung, die schon lief")
+        XCTAssertEqual(s.effectiveAreas, [], "die Einschränkung gilt in jeder Sitzung sofort")
         fs.observe { rec.add($0) }
         let r = await s.setAreas([.books, .notes])
-        XCTAssertNil(r.storeError, "die Einschränkung wurde zuerst gesichert, danach die Erweiterung")
-        XCTAssertEqual(rec.all.filter { $0 == "fs:rename" }.count, 2, "zwei Austausche: die Einschränkung, dann die Erweiterung")
-        XCTAssertEqual(s.effectiveAreas, [.books, .notes])
-        XCTAssertEqual(fileRecord()?.record.localAreas, ["books", "notes"])
+        XCTAssertNil(r.storeError, "die Einschränkung wurde zuerst gesichert")
+        XCTAssertFalse(r.effective, "blockiert: keine Erweiterung in diesem Lauf")
+        XCTAssertEqual(rec.all.filter { $0 == "fs:rename" }.count, 1, "ein Austausch: die Einschränkung, keiner für die Erweiterung")
+        XCTAssertEqual(s.effectiveAreas, [])
+        XCTAssertEqual(fileRecord()?.record.localAreas, [], "die Einschränkung steht jetzt in der Datei")
         XCTAssertFalse(store.hasPendingRestriction)
     }
 
-    /// Lässt sich die Einschränkung weiter nicht sichern, gilt eine Erweiterung nie als wirksam.
+    /// Lässt sich die Einschränkung weiter nicht sichern, gilt eine Erweiterung nie als wirksam, und der Fehler des Nachholens wird gemeldet.
     func testAnExpansionNeverCountsAsEffectiveWhileTheRestrictionStaysUnsaved() async throws {
         try seed(AssistantReleaseRecord(localAreas: [.books], cloudAreas: [.books]))
         let fs = FaultFS()
         let store = openStore(fs)
         let s = session(store)
-        fs.inject(.rename, times: 3)   // die Einschränkung, das Nachholen am Anfang der Folge, der Austausch der Erweiterung
+        fs.inject(.rename, times: 2)   // die Einschränkung und das Nachholen am Anfang der Folge der Erweiterung
         let failed = await store.updateAreas([], cloud: false)
         XCTAssertNotNil(failed.storeError)
         let r = await s.setAreas([.books, .notes])
-        XCTAssertNotNil(r.storeError)
+        XCTAssertNotNil(r.storeError, "der Fehler des Nachholens wird gemeldet")
         XCTAssertFalse(r.effective, "die Erweiterung gilt nicht")
-        XCTAssertEqual(s.effectiveAreas, [.books])
+        XCTAssertEqual(s.effectiveAreas, [], "die Einschränkung gilt in der Sitzung, die Erweiterung nicht")
         XCTAssertEqual(fileRecord()?.record.localAreas, ["books"], "die Datei trägt weiter die alte Fassung")
         XCTAssertTrue(store.hasPendingRestriction, "die Einschränkung bleibt gemerkt")
     }

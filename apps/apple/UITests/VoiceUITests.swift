@@ -258,6 +258,8 @@ final class VoiceUITests: XCTestCase {
         XCTAssertEqual(app.buttons["assistantNoticeLocalModels"].label, "Lokale Modelle öffnen")
         XCTAssertTrue(app.staticTexts["Zuerst ein Modell wählen"].exists, "ohne Modell steht der Weg zur Modellwahl im Einstieg")
         XCTAssertFalse(app.staticTexts["Sprich einfach los"].exists, "keine Einladung zum Sprechen ohne geladenes Modell")
+        XCTAssertTrue(app.staticTexts["Ein Vorschlag öffnet zuerst die Modellauswahl"].exists, "der Hinweis unter den Vorschlägen sagt, wohin ein Tipp führt")
+        XCTAssertFalse(app.staticTexts["Oder tippe auf einen Vorschlag"].exists, "ohne Modell führt der Vorschlag nicht zur Antwort")
         for id in ["assistantNoticeChooseModel", "assistantNoticeLocalModels"] {
             XCTAssertGreaterThanOrEqual(app.buttons[id].frame.height, 44, "Tippfläche von \(id) mindestens 44 pt hoch")
         }
@@ -376,7 +378,106 @@ final class VoiceUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["assistantReleaseNotice"].exists)
         XCTAssertFalse(app.staticTexts["Protokoll nicht schreibbar"].exists)
         keepScreenshot(app, name: "Gespraech-Freigaben-pruefen")
+        // Der Hinweis hat einen Knopf, der die Bereiche direkt öffnet (dieselben Schalter wie im Menü „Mehr“), mindestens 44 pt hoch.
+        let openAreas = app.buttons["assistantNoticeOpenAreas"]
+        XCTAssertTrue(openAreas.waitForExistence(timeout: 5), "„Freigaben prüfen“ führt zu den Bereichen")
+        XCTAssertGreaterThanOrEqual(openAreas.frame.height, 44)
+        openAreas.tap()
+        XCTAssertTrue(app.navigationBars["Bereiche"].waitForExistence(timeout: 10), "das Blatt „Bereiche“ ist offen")
+        XCTAssertTrue(app.switches.firstMatch.waitForExistence(timeout: 5), "die Bereiche sind als Schalter da")
+        keepScreenshot(app, name: "Gespraech-Freigaben-Bereiche")
+        let done = app.buttons["assistantAreasDone"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        done.tap()
+        XCTAssertTrue(app.navigationBars["Bereiche"].waitForNonExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["assistantClose"].waitForExistence(timeout: 5), "zurück im Gespräch")
         closeAssistant(app)
+    }
+    /// Unterbrochene Antwort (`--assistant-demo-interrupted`, nur Debug-Bau): Der ganz gesprochene Auszug steht unverändert mit seiner
+    /// Quellzeile da, ohne „ …“ am Ende; die Unterbrechung ist eine eigene Zeile UNTER dem Auszug (`assistantInterruptedMark`) mit
+    /// dem Text „unterbrochen“ für Auge und VoiceOver, nie Teil des Auszugstextes.
+    func testAssistantDemoInterruptedShowsTheMarkOutsideTheExcerpt() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--no-handsfree", "--assistant-no-model", "--assistant-demo-interrupted"]
+        app.launch()
+        openAssistant(app)
+        func element(_ predicate: NSPredicate) -> XCUIElement { app.descendants(matching: .any).matching(predicate).firstMatch }
+        func label(_ text: String) -> XCUIElement { element(NSPredicate(format: "label == %@", text)) }
+        XCTAssertTrue(label("Du: Wer übernimmt die Planung und wie geht es weiter?").waitForExistence(timeout: 10))
+        let excerpt = label("Wörtlicher Auszug aus Beispielbuch · S. 12: Anna übernimmt die Planung und stimmt sich jede Woche mit dem Team ab.")
+        XCTAssertTrue(excerpt.waitForExistence(timeout: 5), "der Auszug steht genau so da: ohne „ …“, ohne „unterbrochen“ im Text")
+        XCTAssertFalse(element(NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@", "Wörtlicher Auszug", "…")).exists)
+        let mark = app.descendants(matching: .any)["assistantInterruptedMark"]
+        XCTAssertTrue(mark.waitForExistence(timeout: 5), "die Unterbrechung hat eine eigene Zeile")
+        XCTAssertTrue(mark.label.contains("unterbrochen"), "Text für Auge und VoiceOver: \(mark.label)")
+        XCTAssertGreaterThanOrEqual(mark.frame.minY, excerpt.frame.maxY - 1, "die Zeile steht unter dem Auszug, nicht darin")
+        XCTAssertTrue(app.descendants(matching: .any)["assistantExcerptNotice"].exists, "der feste Hinweissatz steht auch hier")
+        keepScreenshot(app, name: "Gespraech-unterbrochen")
+        closeAssistant(app)
+    }
+    /// Ältere Beiträge (`--assistant-demo-legacy`, nur Debug-Bau): Ein Beitrag ohne gespeicherte Einheiten (nur Text) und ein Zitat
+    /// ohne gespeicherte Quellzeile fallen beim Laden heraus und erscheinen nirgends: weder als Text noch als „Quelle nicht
+    /// gespeichert“, auch nicht ihre Fragen. Gezeigt wird nur der Beitrag mit vollständiger Marke.
+    func testAssistantDemoLegacyShowsNoTurnWithoutStoredMarks() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--no-handsfree", "--assistant-no-model", "--assistant-demo-legacy"]
+        app.launch()
+        openAssistant(app)
+        func element(_ predicate: NSPredicate) -> XCUIElement { app.descendants(matching: .any).matching(predicate).firstMatch }
+        func label(_ text: String) -> XCUIElement { element(NSPredicate(format: "label == %@", text)) }
+        XCTAssertTrue(label("Du: Was steht im Beispielbuch über die Planung?").waitForExistence(timeout: 10), "der gültige Beitrag steht da")
+        XCTAssertTrue(label("Wörtlicher Auszug aus Beispielbuch · S. 12: Anna übernimmt die Planung und stimmt sich jede Woche mit dem Team ab.").exists)
+        for text in ["Ältere Frage", "darf nie erscheinen", "Quelle nicht gespeichert", "Zitat, Quelle"] {
+            XCTAssertFalse(element(NSPredicate(format: "label CONTAINS %@", text)).exists, "„\(text)“ darf nirgends stehen")
+        }
+        keepScreenshot(app, name: "Gespraech-aeltere-Beitraege")
+        closeAssistant(app)
+    }
+    /// Größte Schrift der Bedienungshilfen (`AccessibilityXXXL`): Fest bleiben nur die Bedienknöpfe (Schließen, Menü, Mikrofon/Stumm
+    /// oder „Modell auswählen“, Beenden); Zustandszeile und Modellwahl stehen im scrollenden Inhalt, der Verlauf behält mindestens
+    /// die Hälfte des Bildschirms. Alle Knöpfe sind mindestens 44 pt hoch und breit. Beim Öffnen steht der ANFANG der letzten
+    /// Frage oben im Verlauf, nicht das Ende der Antwort. Ob Text abgeschnitten wird, zeigen nur die Bilder (die Barrierefreiheit
+    /// meldet den vollen Text immer): die Aufnahmen `Gespraech-XXXL-*` ansehen.
+    func testAssistantAtLargestTextSizeKeepsOnlyTheControlsFixed() throws {
+        let demos: [(arg: String, question: String)] = [
+            ("--assistant-demo-quote", "Du: Was steht im Beispielbuch über die Planung?"),
+            ("--assistant-demo-multi", "Du: Wie steht es um die Planung und das Budget?"),
+            ("--assistant-demo-locked", "Du: Was steht im Beispielbuch über die Planung?"),
+            ("--assistant-demo-audit", "Du: Was steht im Beispielbuch über die Planung?"),
+            ("--assistant-demo-interrupted", "Du: Wer übernimmt die Planung und wie geht es weiter?"),
+        ]
+        for demo in demos {
+            let app = XCUIApplication()
+            app.launchArguments = ["--no-handsfree", "--assistant-no-model", demo.arg,
+                                   "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+            app.launch()
+            openAssistant(app)
+            let name = String(demo.arg.dropFirst(2))
+            let window = app.windows.firstMatch.frame
+            let scroll = app.scrollViews.containing(.any, identifier: "assistantState").firstMatch
+            XCTAssertTrue(scroll.waitForExistence(timeout: 10), "\(name): die Zustandszeile steht im scrollenden Inhalt, nicht in der festen Leiste")
+            XCTAssertTrue(scroll.descendants(matching: .any)["assistantModel"].exists, "\(name): die Modellwahl steht im Inhalt")
+            XCTAssertGreaterThanOrEqual(scroll.frame.height, window.height * 0.5, "\(name): der Verlauf hat mindestens den halben Bildschirm")
+            // Immer da (ohne Modell: „Modell auswählen“ statt Stumm); die Hinweisknöpfe nur im jeweiligen Zustand.
+            let always = ["assistantClose", "assistantMenu", "assistantModel", "assistantChooseModel", "assistantEnd"]
+            let sometimes = ["assistantNoticeOpenAreas", "assistantNoticeRetryAudit"]
+            for id in always {
+                XCTAssertTrue(app.buttons[id].waitForExistence(timeout: 5), "\(name): \(id) fehlt")
+            }
+            for id in always + sometimes where app.buttons[id].exists {
+                let button = app.buttons[id]
+                XCTAssertGreaterThanOrEqual(button.frame.height, 44, "\(name): \(id) mindestens 44 pt hoch")
+                XCTAssertGreaterThanOrEqual(button.frame.width, 44, "\(name): \(id) mindestens 44 pt breit")
+            }
+            let question = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", demo.question)).firstMatch
+            XCTAssertTrue(question.waitForExistence(timeout: 5), "\(name): die Frage ist da")
+            XCTAssertTrue(question.isHittable, "\(name): die Frage ist sichtbar")
+            XCTAssertLessThan(question.frame.minY, scroll.frame.minY + scroll.frame.height * 0.5,
+                              "\(name): der Anfang der letzten Frage steht in der oberen Hälfte des Verlaufs")
+            keepScreenshot(app, name: "Gespraech-XXXL-\(name)")
+            closeAssistant(app)
+            app.terminate()
+        }
     }
     /// Zustand „Protokoll nicht schreibbar“ (`--assistant-demo-audit`, nur Debug-Bau): Ohne Protokoll gibt der Assistent nichts aus
     /// eigenen Inhalten aus. Geprüft wird nur, dass der Zustand mit seinem Knopf sichtbar ist (und der andere nicht).

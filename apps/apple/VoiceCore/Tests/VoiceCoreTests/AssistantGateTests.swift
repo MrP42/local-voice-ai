@@ -76,9 +76,7 @@ private func gateKnowledge(areas: Set<AssistantArea>? = nil) async -> AssistantK
     for spec in corpusSpecs {
         await corpus.upsert(assistantDoc(spec.id, spec.title, area: spec.area, sections: spec.sections))
     }
-    let knowledge = AssistantKnowledge(corpus: corpus)
-    if let areas { await knowledge.setAreas(areas) }
-    return knowledge
+    return AssistantKnowledge(corpus: corpus, areas: areas ?? Set(AssistantArea.allCases))
 }
 
 /// Die Bestandsangaben, unabhängig vom Kern von Hand aus dem Bestand oben erzeugt (Zahl und Titel je Bereich).
@@ -465,7 +463,7 @@ final class AssistantGateTests: XCTestCase {
         print("E9-Tor: \(runs.count) Läufe (\(goldCases.count) Goldfragen, \(templateCases.count) Vorlagenfragen, \(expectedInventory.count) Bestandsfragen, je mit und ohne Opt-in).")
     }
 
-    // MARK: Produktkonfiguration und Marke je Satz
+    // MARK: Produktkonfiguration und Marke je Ausgabeeinheit
 
     /// E9-Tor, PRODUKTKONFIGURATION (öffentlicher Initializer, Freischaltung `false`), getrennt gezählt: Auch mit gesetztem
     /// Opt-in in der Konfiguration und mit `setAllowUnsourced(true)` gibt es bei keiner Goldfrage und keiner böswilligen Ausgabe
@@ -498,7 +496,7 @@ final class AssistantGateTests: XCTestCase {
         XCTAssertEqual(failures, 0)
     }
 
-    /// Marke je Satz: In JEDER Datenrunde der Goldfragen trägt jedes Zitat genau EINE Quelle (Ereignis und Abschnitt im Beitrag,
+    /// Marke je Ausgabeeinheit/Quellblock: In JEDER Datenrunde der Goldfragen trägt jedes Zitat genau EINE Quelle (Ereignis und Abschnitt im Beitrag,
     /// Quellzeile „Wörtlicher Auszug aus …“), kein Satz ohne Quelle ist ein Zitat, und jeder Satz ohne Quelle (Vorlage, Bestandsangabe)
     /// trägt im Beitrag seine eigene Kennzeichnung. Ein Originalsatz ohne Quelle gibt es nicht.
     func testEveryQuoteOfADataRoundHasExactlyOneSourceAndEverySourcelessSentenceIsMarked() async {
@@ -530,7 +528,7 @@ final class AssistantGateTests: XCTestCase {
                             if AssistantTurnPart.note(for: status, quote: false) == nil { violations.append("Systemsatz ohne Kennzeichnung: \(text)") }
                         }
                     }
-                    await session.commit(requestId: "r", user: item.question, spoken: shown.map(\.text).joined(separator: " "), interrupted: false)
+                    await session.commit(requestId: "r", user: item.question, spoken: .all, interrupted: false)
                     guard let turn = await session.history.last else {
                         if !shown.isEmpty { violations.append("kein Beitrag zu \(shown.count) Einheiten") }
                         continue

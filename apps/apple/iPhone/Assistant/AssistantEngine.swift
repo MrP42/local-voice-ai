@@ -118,9 +118,21 @@ enum AssistantCloudTarget: Equatable {
 /// Die Zustandsdatei der Freigaben dieses Prozesslaufs (`AssistantReleaseStore`): liegt neben dem Protokoll, wird beim ersten Zugriff
 /// geöffnet (gültig: geladen; fehlt bei vorhandenem Protokoll oder ungültig: gesperrt, „Freigaben prüfen“; allererster Start: der
 /// Auslieferungsstand, erst gesichert, dann nutzbar).
+/// Beim Anlegen werden Protokoll und Meldestelle der Quellen an die EINE Ordnung des Prozesses gehängt (Runde 8, R4): Auch ohne
+/// Gespräch und ohne Modell erhöht jede gemeldete Änderung der Quellen die Generation und schreibt ihre Zeile „Inhalt“.
 @MainActor
 enum AssistantReleaseFiles {
-    static let store = AssistantReleaseStore(directory: AssistantAuditLog.standardDirectory(), adopt: AssistantAreaSettings.legacyRecord())
+    /// Das Protokoll dieses Prozesslaufs: EIN Objekt (ein Schreiber je Datei) für Controller, Zustandsdatei und Meldestelle.
+    static let audit = AssistantAuditLog(directory: AssistantAuditLog.standardDirectory())
+
+    static let store: AssistantReleaseStore = {
+        let store = AssistantReleaseStore(directory: AssistantAuditLog.standardDirectory(), adopt: AssistantAreaSettings.legacyRecord())
+        store.bind(watch: AssistantContentWatch.shared, audit: audit)
+        return store
+    }()
+
+    /// Beim Prozessstart gerufen (Delegat der App) und beim Anlegen der Quellen: öffnet die Zustandsdatei und hängt die Ordnung ein.
+    static func start() { _ = store }
 }
 
 enum AssistantConsent {

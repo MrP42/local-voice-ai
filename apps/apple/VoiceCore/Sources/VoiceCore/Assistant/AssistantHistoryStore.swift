@@ -15,8 +15,16 @@ public struct AssistantHistoryStore: Sendable {
     public static let fileName = "verlauf.json"
 
     public let directory: URL
+    private let remover: @Sendable (URL) throws -> Void
 
-    public init(directory: URL) { self.directory = directory }
+    /// `remover` löscht eine Datei; Tests setzen einen, der scheitert (Standard: `FileManager`).
+    public init(directory: URL, remover: @escaping @Sendable (URL) throws -> Void = { try FileManager.default.removeItem(at: $0) }) {
+        self.directory = directory
+        self.remover = remover
+    }
+
+    /// Die Verlaufsdatei ließ sich nicht löschen (`save` mit leerem Verlauf).
+    public enum StoreError: Error, Sendable { case deleteFailed }
 
     /// Standardort der App: `Application Support/Assistant`.
     public static func standardDirectory() -> URL {
@@ -55,7 +63,10 @@ public struct AssistantHistoryStore: Sendable {
     /// Schreibt atomar die letzten 200 Beiträge (Quellen ohne Auszugstext). Ein leerer Verlauf löscht die Datei.
     public func save(_ turns: [AssistantTurn]) throws {
         let kept = turns.suffix(Self.maxStoredTurns).map(Self.minimized)
-        guard !kept.isEmpty else { return clear() }
+        guard !kept.isEmpty else {
+            if !clear() { throw StoreError.deleteFailed }
+            return
+        }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         BookTalkHistoryStore.excludeFromBackup(directory)
         let data = try Self.encoder().encode(AssistantHistoryFile(version: Self.fileVersion, turns: kept))
@@ -67,10 +78,15 @@ public struct AssistantHistoryStore: Sendable {
         BookTalkHistoryStore.excludeFromBackup(url)
     }
 
-    /// „Verlauf löschen“.
-    public func clear() {
-        try? FileManager.default.removeItem(at: url)
-        try? FileManager.default.removeItem(at: url.appendingPathExtension("defekt"))
+    /// „Verlauf löschen“. `false`, wenn eine Datei bleibt, die es nicht geben sollte (Runde 8, Suchlauf d: Wer „gelöscht“ sagt, ohne
+    /// dass es stimmt, täuscht den Nutzer; der Aufrufer meldet es). Eine Datei, die es nicht gibt, ist gelöscht.
+    @discardableResult
+    public func clear() -> Bool {
+        var deleted = true
+        for target in [url, url.appendingPathExtension("defekt")] where FileManager.default.fileExists(atPath: target.path) {
+            do { try remover(target) } catch { deleted = false }
+        }
+        return deleted
     }
 
     /// Ob überhaupt ein Verlauf auf dem Gerät liegt (für die Einstellungen).

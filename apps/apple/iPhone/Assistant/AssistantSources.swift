@@ -44,6 +44,7 @@ final class AssistantSources: ObservableObject {
     private var bag: Set<AnyCancellable> = []
 
     init() {
+        AssistantReleaseFiles.start()   // die Ordnung des Prozesses an Protokoll und Meldestelle hängen (idempotent)
         let corpus = AssistantCorpus()
         self.corpus = corpus
         indexer = AssistantIndexer(corpus: corpus)
@@ -111,9 +112,7 @@ final class AssistantSources: ObservableObject {
 
     /// Wissen für ein Modell: gleicher Index, die Ablage je nach Cloud-Modell mit eigenen Regeln.
     func knowledge(cloud: Bool, areas: Set<AssistantArea>) async -> AssistantKnowledge {
-        let knowledge = AssistantKnowledge(corpus: corpus, sources: [AblageAssistantSource(cloud: cloud)])
-        await knowledge.setAreas(areas)
-        return knowledge
+        AssistantKnowledge(corpus: corpus, sources: [AblageAssistantSource(cloud: cloud)], areas: areas)
     }
 
     private func setProgress(_ done: Int, _ total: Int) {

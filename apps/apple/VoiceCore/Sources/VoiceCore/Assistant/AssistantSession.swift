@@ -37,6 +37,13 @@ struct AssistantEmitted: Sendable, Equatable {
     let quote: Bool
     /// Schrittnummer der Einheit im Protokoll (0: unbekannt, nur Tests).
     var step = 0
+
+    /// Die Einheit trägt im Verlauf ihre vollständige Marke: ein Zitat mit seiner Quelle, sonst Kennzeichnung oder „ohne Quelle“.
+    var isRepresentable: Bool {
+        AssistantTurnPart(text: text, unsourced: status == .unsourced, quote: quote,
+                          source: quote ? sources.first?.excerptLine : nil,
+                          note: AssistantTurnPart.note(for: status, quote: quote)).isMarked
+    }
 }
 
 /// Was eine Anfrage hervorgebracht hat; `commit` macht daraus den Beitrag und die Schlusszeilen des Protokolls. Die Satzspur
@@ -219,7 +226,7 @@ private final class RunEmitter {
     enum Flow { case next, enough, revoked, limit, failed }
     /// Ausgang einer Ausgabe: gesendet, veraltet oder abgelehnt (`revoked`: Generation veraltet oder Leser weg), oder die
     /// Einordnung ließ sich nicht dauerhaft schreiben (`failed`: nichts wurde ausgegeben).
-    enum Delivery { case delivered, revoked, failed }
+    enum Delivery { case delivered, revoked, failed, limit }
 
     let rid: String
     let generation: Int
@@ -312,8 +319,17 @@ private final class RunEmitter {
             if !announcement { state.update { $0.counts.drop(.revoked) } }
             return .failed
         }
-        // Der Schritt steht im Index, BEVOR das Ereignis hinausgeht: Eine schnelle Rückmeldung des Controllers läuft nie ins Leere.
-        index.append(rid, step: n)
+        // Der Schritt steht im Index, BEVOR das Ereignis hinausgeht: Eine schnelle Rückmeldung des Controllers läuft nie ins Leere. Ist
+        // der Index voll (bei den festen Grenzen nicht möglich, siehe `AssistantStepIndex.maxSteps`), geht die Einheit NICHT hinaus: Die
+        // Antwort endet an der Grenze, die Zeile des Ausgabe-Commits sagt „nicht ausgegeben“.
+        guard index.append(rid, step: n) else {
+            release.inSection { found in
+                journal?.enqueue(commitLine(n, AssistantCommitMark(stage: .emit, ok: false, generation: found)))
+            }
+            reachedLimit = true
+            state.update { $0.limited = true }
+            return .limit
+        }
         let gen = generation
         var refusedByAudit = false
         let check = output.send(.sentence(requestId: rid, generation: gen, text: text, speech: speech, status: status,
@@ -359,6 +375,7 @@ private final class RunEmitter {
         case .delivered: .next
         case .revoked: .revoked
         case .failed: .failed
+        case .limit: .limit
         }
     }
 
@@ -400,7 +417,9 @@ private final class RunEmitter {
         let preface = AssistantGrounding.quotePreface(for: q.passage)
         let first = await emit(preface, speech: preface, status: .announcement)
         guard first == .delivered else { return flow(first) }
-        let second = await emit(q.text, speech: speech(q.text), status: .grounded, sources: [q.passage], quote: true)
+        // Die Stimme spricht den Block, wie er gespeichert ist (Runde 8, R1): kein `AssistantSpeech.render` (Markdown, Adressen, Emojis,
+        // Abkürzungen, Dezimalpunkt) für einen wörtlichen Auszug. Was gesprochen wird, ist der Text, der angezeigt und gespeichert wird.
+        let second = await emit(q.text, speech: q.text, status: .grounded, sources: [q.passage], quote: true)
         guard second == .delivered else { return flow(second) }
         taken.insert(q.key)
         quotes += 1
@@ -525,37 +544,6 @@ public struct AssistantCommitResult: Sendable, Equatable {
     }
 }
 
-/// Änderungsnummern von Erweiterungen, die in diesem Lauf nicht wirksam wurden und deren Zeile „Erweiterung in diesem Lauf nicht
-/// wirksam“ noch nicht geschrieben werden konnte: Sie wird bei der nächsten Gelegenheit nachgeholt.
-final class AssistantPendingChanges: @unchecked Sendable {
-    struct Item: Sendable, Equatable {
-        let number: Int
-        let cause: AssistantReleaseCause
-        let state: AssistantReleaseState
-    }
-
-    private let lock = NSLock()
-    private var items: [Item] = []
-
-    func add(_ item: Item) {
-        lock.lock()
-        if !items.contains(where: { $0.number == item.number }) { items.append(item) }
-        lock.unlock()
-    }
-
-    func remove(_ number: Int) {
-        lock.lock()
-        items.removeAll { $0.number == number }
-        lock.unlock()
-    }
-
-    var all: [Item] {
-        lock.lock()
-        defer { lock.unlock() }
-        return items
-    }
-}
-
 public actor AssistantSession {
     public static let maxStoredTurns = 200
     /// Höchstens so viele Auszüge je Frage.
@@ -575,34 +563,22 @@ public actor AssistantSession {
         let state: RunState
     }
 
-    /// Wohin eine Änderung der Klasse A gesichert wird: die Zustandsdatei (mit der Art des Modells und dem Cloud-Ziel dieser Sitzung)
-    /// oder, ohne Speicher (Tests der Freigabe allein), nirgends.
-    private struct Persistence: Sendable {
-        let store: AssistantReleaseStore?
-        let cloud: Bool
-        let target: String?
-
-        /// `nil`: bestätigt (oder kein Speicher). Sonst der Fehler: Der Ausgang des Austauschs ist OFFEN.
-        func save(_ view: AssistantReleaseState, cause: AssistantReleaseCause) async -> AssistantStoreError? {
-            guard let store else { return nil }
-            return await store.persist(view, cloud: cloud, target: target, cause: cause)
-        }
-    }
-
     private let model: any BookTalkModel
     private let knowledge: AssistantKnowledge
     private let config: AssistantConfig
     private let release: AssistantRelease
     private let context: AssistantContext
     private let released: Bool
-    private let stepIndex = AssistantStepIndex()
+    private let stepIndex: AssistantStepIndex
     private let sessionId = UUID().uuidString
     private let audit: AssistantAuditLog?
     private let stateLine: AssistantStateLine
     private let runToken: AssistantRunToken
     private nonisolated var clock: AssistantReleaseClock { release.clock }
-    private let persistence: Persistence
-    private let ineffective = AssistantPendingChanges()
+    /// Die Ordnung dieses Prozesslaufs (für die Meldestelle der Quellen und Tests).
+    nonisolated var order: AssistantReleaseClock { release.clock }
+    /// Die Sicherungsfolge der Änderungen der Klasse A (Zustandsdatei, Zeilen, Register der Ordnung): derselbe Ablauf wie ohne Sitzung.
+    private let settler: AssistantReleaseSettler
     private var active: [String: ActiveRun] = [:]
     private var earlyCancel: Set<String> = []
     private var results: [String: RunState] = [:]
@@ -630,27 +606,25 @@ public actor AssistantSession {
     /// Beiträge aus Runden ohne Quelle kommen bei `released == false` gar nicht erst in den Verlauf (`AssistantTurn.admitted`).
     init(model: any BookTalkModel, knowledge: AssistantKnowledge, config: AssistantConfig, history: [AssistantTurn] = [],
          audit: AssistantAuditLog? = nil, released: Bool, cloudConsent: Bool = true, releaseStore: AssistantReleaseStore? = nil,
-         cloudTarget: String? = nil) {
+         cloudTarget: String? = nil, stepIndex: AssistantStepIndex = AssistantStepIndex()) {
+        self.stepIndex = stepIndex
         // Die eine Ordnung dieses Prozesslaufs: mit Speicher die seine (alle Sitzungen und Änderungen ohne Sitzung teilen Lock,
-        // Generation, Lauf-Token, Standzeile, Zähler und Reihe), ohne Speicher eine eigene.
+        // Generation, Stand der Klasse A, Epochen, Lauf-Token, Standzeile, Zähler und Reihe), ohne Speicher eine eigene, mit dem Stand
+        // aus den Angaben. Die Sitzung hält davon nichts als Kopie: Sie liest ihre Sicht im selben Lesen wie die Generation.
         let clock = releaseStore?.clock ?? AssistantReleaseClock()
         let run = clock.run
-        let initial: AssistantReleaseState
-        if let releaseStore {
-            var fromFile = releaseStore.record.state(cloud: config.isCloud, target: cloudTarget)
-            if !released { fromFile.optIn = false; fromFile.consentVersion = 0 }
-            initial = fromFile
-        } else {
-            initial = AssistantReleaseState(optIn: config.allowUnsourced && released, consentVersion: config.consentVersion,
-                                            areas: knowledge.currentAreas, cloudConsent: cloudConsent)
+        if releaseStore == nil {
+            clock.seed(record: AssistantReleaseRecord.seeded(optIn: config.allowUnsourced && released, consentVersion: config.consentVersion,
+                                                             areas: knowledge.currentAreas, cloudConsent: cloudConsent, target: cloudTarget),
+                       locked: false)
         }
-        let optIn = initial.optIn
-        let release = AssistantRelease(optIn: optIn, consentVersion: initial.consentVersion, areas: initial.areas,
-                                       cloudConsent: initial.cloudConsent, locked: releaseStore?.isLocked ?? false,
-                                       blocked: releaseStore?.isBlocked ?? false, clock: clock,
-                                       onIncrease: Self.increaseWriter(audit: audit, config: config, run: run))
+        if let audit { clock.attach(audit: audit) }
+        let kind = AssistantModelKind.classify(label: config.modelLabel)
+        let release = AssistantRelease(clock: clock, view: AssistantReleaseView(cloud: config.isCloud, target: cloudTarget, released: released),
+                                       onIncrease: AssistantReleaseSettler.increaseWriter(audit: audit, clock: clock, cloud: config.isCloud, model: kind))
+        let optIn = release.snapshot.optIn
         self.runToken = run
-        self.persistence = Persistence(store: releaseStore, cloud: config.isCloud, target: cloudTarget)
+        self.settler = AssistantReleaseSettler(release: release, store: releaseStore, audit: audit, model: kind)
         self.model = model
         self.knowledge = knowledge
         self.config = config
@@ -670,39 +644,6 @@ public actor AssistantSession {
     }
 
     // MARK: Freigabe
-
-    /// Eine Zeile der Klasse A (`release`, `intent`, `effective`, `ineffective`): Lauf kommt vom Token beim Schreiben; Änderungsnummer,
-    /// Ursache und Stand (ohne Titel und Inhalte). Die Generation steht nur in Zeilen, in denen sie für genau diese Änderung vergeben
-    /// wurde (`release`, `effective`), nie in `intent` und `ineffective`.
-    private static func classALine(_ kind: AssistantJournalLine.Kind, change: Int?, generation: Int?, cause: AssistantReleaseCause,
-                                   state: AssistantReleaseState, config: AssistantConfig) -> AssistantJournalLine {
-        var line = AssistantJournalLine(kind)
-        line.at = Date()
-        line.gen = generation
-        line.chg = change
-        line.cause = cause
-        line.areas = AssistantRelease.names(state.areas)
-        line.unsourced = state.optIn
-        line.consent = state.consentVersion
-        line.granted = state.cloudConsent
-        line.model = AssistantModelKind.classify(label: config.modelLabel)
-        line.cloud = config.isCloud
-        return line
-    }
-
-    /// Die Zeile zu einer Erhöhung, die im Lock der Freigabe geschieht: „Erweiterung wirksam“, Änderung eines Inhalts (Ursache
-    /// „Inhalt“) und Blockade. Wird IM Lock an der Stelle der Erhöhung gerufen (kurz, nur Einreihen, kein I/O). Einschränkungen
-    /// schreiben ihre Zeile erst nach der Zustandsdatei (`settle`). Ohne Protokoll gibt es keine Zeile.
-    private static func increaseWriter(audit: AssistantAuditLog?, config: AssistantConfig, run: AssistantRunToken)
-        -> (@Sendable (AssistantRelease.Increase) -> Void)? {
-        guard let audit else { return nil }
-        return { increase in
-            let kind: AssistantJournalLine.Kind = increase.kind == .effective ? .effective : .release
-            let line = classALine(kind, change: increase.change, generation: increase.generation, cause: increase.cause,
-                                  state: increase.state, config: config)
-            audit.enqueue(line, key: increase.key, run: run)
-        }
-    }
 
     /// Die Standzeile: Freigabezustand beim Öffnen (Opt-in, Einwilligungsversion, Bereichsnamen, Cloud-Zustimmung).
     private static func stateLine(_ snapshot: AssistantRelease.Snapshot, config: AssistantConfig,
@@ -816,168 +757,37 @@ public actor AssistantSession {
         return AssistantReleasePending(applied: applied, optInExpansion: false, resume: false)
     }
 
-    /// Was `settle` über die Teile einer Änderung sammelt.
-    private struct SettleState: Sendable {
-        var error: AssistantAuditError?
-        var storeError: AssistantStoreError?
-        var effective = true
-        var generation = 0
-    }
-
-    /// Sichert die Teile der Änderung der Reihe nach (streng nacheinander mit den Folgen anderer Änderungen) und gibt den Stand
-    /// zurück. Jede Folge wartet auf ihre Reihe in der Reihenfolge des Anwendens (`apply…`): Wer mehrere Änderungen angewendet hat,
-    /// wickelt sie in dieser Reihenfolge ab (der Controller: eine Kette in der Reihenfolge des Anwendens) oder nebenläufig; ein
-    /// späteres `settle` vor dem früheren, das nie läuft, wartete ewig. Ein verworfenes `AssistantReleasePending` gibt seine Reihe frei. Ein Fehler steht in `error` (Zeile des Protokolls) oder `storeError` (Zustandsdatei, Ausgang offen); eine
-    /// Einschränkung gilt trotzdem, eine Erweiterung nur nach bestätigtem Austausch.
+    /// Sichert die Teile der Änderung der Reihe nach (streng nacheinander mit den Folgen anderer Änderungen, gleich welcher Sitzung,
+    /// `AssistantReleaseSettler`) und gibt den Stand zurück. Jede Folge wartet auf ihre Reihe in der Reihenfolge des Anwendens: Wer mehrere
+    /// Änderungen angewendet hat, wickelt sie in dieser Reihenfolge ab (der Controller: eine Kette in der Reihenfolge des Anwendens)
+    /// oder nebenläufig; ein späteres `settle` vor dem früheren, das nie läuft, wartete ewig. Ein verworfenes
+    /// `AssistantReleasePending` gibt seine Reihe frei. Ein Fehler steht in `error` (Zeile des Protokolls) oder `storeError`
+    /// (Zustandsdatei, Ausgang offen); eine Einschränkung gilt trotzdem, eine Erweiterung nur nach bestätigtem Austausch.
     public nonisolated func settle(_ pending: AssistantReleasePending) async -> AssistantReleaseResult {
         let applied = pending.applied
-        var out = SettleState()
-        out.generation = applied.generation
-        for step in applied.steps {
-            await step.ticket.turn()
-            await settleStep(step, into: &out)
-            step.ticket.complete()
-        }
+        let out = await settler.settle(applied)
         let expands = applied.expands || pending.optInExpansion || pending.resume
         var done = out.effective
         if done, pending.optInExpansion { context.optInChanged(true) }
         if done, pending.resume { done = context.resumeFree(optIn: release.isOptedIn) }
-        if applied.changed { await knowledge.setAreas(release.snapshot.areas) }   // Spiegel für Aufrufer ohne Sitzung
         return AssistantReleaseResult(generation: out.generation, changed: applied.changed, effective: !expands || done, error: out.error,
                                       storeError: out.storeError)
     }
 
-    private nonisolated func settleStep(_ step: AssistantRelease.Step, into out: inout SettleState) async {
-        await catchUpInSequence()
-        switch step.kind {
-        case .event:
-            out.generation = step.generation
-            await writeLine(.release, step: step, generation: step.generation, state: step.delta, into: &out)
-        case .restriction:
-            out.generation = step.generation
-            if let error = await persistence.save(release.viewForSave(step), cause: step.cause) {
-                // Der Ausgang des Austauschs ist offen: Die Einschränkung gilt im Prozess, ist aber nicht als gesichert bestätigt.
-                out.storeError = error
-                release.block()
-                persistence.store?.markBlocked()
-            } else {
-                release.clearLocked()
-            }
-            await writeLine(.release, step: step, generation: step.generation, state: step.delta, into: &out)
-        case .expansion:
-            await settleExpansion(step, into: &out)
-        }
-    }
-
-    private nonisolated func settleExpansion(_ step: AssistantRelease.Step, into out: inout SettleState) async {
-        let intended = release.viewForSave(step)
-        // (1) „Erweiterung beabsichtigt“, ohne Generation, dauerhaft. Scheitert das, wird die Erweiterung nicht wirksam und nicht gesichert.
-        // Eine blockierte Sitzung (Einschränkung nicht gesichert) lehnt nie ab, ohne die Sicherung neu zu versuchen: `catchUpInSequence`
-        // lief schon zu Beginn dieser Folge; hier noch einmal, falls inzwischen schreibbar.
-        if release.isBlocked {
-            await secureOutstandingRestriction()
-            return await notEffective(step, state: intended, into: &out)
-        }
-        var wrote = true
-        await writeLine(.intent, step: step, generation: nil, state: intended, into: &out, ok: &wrote)
-        guard wrote else { return await notEffective(step, state: intended, into: &out) }
-        // (2) Zustandsdatei ersetzen: das ist der Commit der Erweiterung. Scheitert oder bricht er ab, ist der Ausgang offen.
-        if let error = await persistence.save(intended, cause: step.cause) {
-            out.storeError = error
-            return await notEffective(step, state: intended, into: &out)
-        }
-        // (3) Erst jetzt wirksam im Prozess: Stand, Generation und Zeile „wirksam“ in einem unteilbaren Schritt.
-        guard let generation = release.becomeEffective(step) else { return await notEffective(step, state: intended, into: &out) }
-        out.generation = generation
-        // (4) Die Zeile „wirksam“ steht dauerhaft; ihr Fehler wird gemeldet, die Erweiterung bleibt wirksam (sie ist gesichert).
-        if let error = await audit?.waitForLine(key: step.key) { out.error = out.error ?? error }
-    }
-
-    /// Die Erweiterung wird in diesem Lauf nicht wirksam: Zeile „Erweiterung in diesem Lauf nicht wirksam“, sobald geschrieben werden kann.
-    private nonisolated func notEffective(_ step: AssistantRelease.Step, state: AssistantReleaseState, into out: inout SettleState) async {
-        out.effective = false
-        release.abandon(step)
-        let item = AssistantPendingChanges.Item(number: step.number, cause: step.cause, state: state)
-        ineffective.add(item)
-        await flushPendingIneffective()
-    }
-
-    /// Nachholen bei jeder Gelegenheit (ADR, Fehlerpfade der Einschränkung): Die nicht gesicherte Einschränkung wird erneut gesichert
-    /// und die Zeilen „in diesem Lauf nicht wirksam“, die noch fehlen, werden geschrieben. Gerufen am Anfang jeder Sicherungsfolge
-    /// und bei jeder Anfrage (nach der gesicherten `start`-Zeile). Nur innerhalb der Reihe der Folgen aufrufen (`catchUp()` nimmt eine
-    /// Karte).
-    private nonisolated func catchUpInSequence() async {
-        await secureOutstandingRestriction()
-        await flushPendingIneffective()
-        if let audit { await persistence.store?.flushUnwritten(audit) }
-    }
-
-    /// Sichert eine noch nicht gesicherte Einschränkung erneut (der gemerkte engere Stand begrenzt die Fassung). Die Blockade für
-    /// den Rest des Laufs bleibt in jedem Fall.
-    private nonisolated func secureOutstandingRestriction() async {
-        guard let store = persistence.store, store.needsCatchUp else { return }
-        if await persistence.save(release.snapshot.state, cause: .other) == nil { release.clearLocked() }
-    }
-
-    /// Es gibt etwas nachzuholen (billige Vorprüfung ohne Warten).
-    private nonisolated var needsCatchUp: Bool {
-        (persistence.store?.needsCatchUp ?? false) || (persistence.store?.hasUnwrittenLines ?? false) || !ineffective.all.isEmpty
-    }
-
-    /// Holt nach, was bei einer früheren Gelegenheit nicht ging: eine nicht gesicherte Einschränkung erneut sichern, fehlende Zeilen
-    /// „in diesem Lauf nicht wirksam“ schreiben. Läuft bei jeder Anfrage (nach ihrer gesicherten `start`-Zeile) und bei jeder
-    /// Änderung (`settle`); streng nacheinander mit den Folgen der Änderungen (eine Karte der Reihe), und nur, wenn etwas aussteht.
-    public nonisolated func catchUp() async {
-        guard needsCatchUp else { return }
-        let ticket = release.enqueueTicket()
-        await ticket.turn()
-        defer { ticket.complete() }
-        await catchUpInSequence()
-    }
-
-    /// Holt Zeilen „in diesem Lauf nicht wirksam“ nach, die noch nicht geschrieben werden konnten.
-    private nonisolated func flushPendingIneffective() async {
-        guard let audit else { return }
-        for item in ineffective.all {
-            let line = Self.classALine(.ineffective, change: item.number, generation: nil, cause: item.cause, state: item.state, config: config)
-            let key = clock.key("chg", item.number)
-            audit.enqueue(line, key: key, run: runToken)
-            if await audit.waitForLine(key: key) == nil { ineffective.remove(item.number) }
-        }
-    }
-
-    private nonisolated func writeLine(_ kind: AssistantJournalLine.Kind, step: AssistantRelease.Step, generation: Int?,
-                                       state: AssistantReleaseState, into out: inout SettleState) async {
-        var ok = true
-        await writeLine(kind, step: step, generation: generation, state: state, into: &out, ok: &ok)
-    }
-
-    private nonisolated func writeLine(_ kind: AssistantJournalLine.Kind, step: AssistantRelease.Step, generation: Int?,
-                                       state: AssistantReleaseState, into out: inout SettleState, ok: inout Bool) async {
-        guard let audit else { return }
-        let line = Self.classALine(kind, change: step.number, generation: generation, cause: step.cause, state: state, config: config)
-        audit.enqueue(line, key: step.key, run: runToken)
-        if let error = await audit.waitForLine(key: step.key) {
-            out.error = out.error ?? error
-            ok = false
-        }
-    }
+    /// Holt nach, was bei einer früheren Gelegenheit nicht ging (siehe `AssistantReleaseSettler.catchUp`): eine nicht gesicherte
+    /// Einschränkung erneut sichern, fehlende Zeilen „in diesem Lauf nicht wirksam“ schreiben, auch solche, die eine ANDERE Sitzung oder
+    /// eine Änderung ohne Sitzung hinterlassen hat (Register der Ordnung). Läuft bei jeder Anfrage (nach ihrer gesicherten
+    /// `start`-Zeile) und bei jeder Änderung.
+    public nonisolated func catchUp() async { await settler.catchUp() }
 
     /// Versucht die Sicherung des jetzigen Stands erneut (nach einem gescheiterten Austausch der Zustandsdatei). Läuft streng
     /// nacheinander mit den anderen Änderungen. Auch ohne Fehler schreibt es die Datei neu. Die Blockade für den Rest des Laufs
     /// bleibt in jedem Fall bestehen.
     @discardableResult
-    public nonisolated func retrySave() async -> AssistantStoreError? {
-        let ticket = release.enqueueTicket()
-        await ticket.turn()
-        defer { ticket.complete() }
-        let error = await persistence.save(release.snapshot.state, cause: .other)
-        if error == nil { release.clearLocked() }
-        return error
-    }
+    public nonisolated func retrySave() async -> AssistantStoreError? { await settler.retrySave() }
 
     /// Eine Einschränkung ließ sich nicht sichern oder die Datei steht noch nicht fest: nicht bestätigt.
-    public nonisolated var needsSave: Bool { persistence.store?.isDirty ?? false }
+    public nonisolated var needsSave: Bool { settler.store?.isDirty ?? false }
 
     /// Die Freigaben sind gesperrt (ungültige Zustandsdatei beim Start): kein Bereich, keine Zustimmung, Anzeige „Freigaben prüfen“.
     public nonisolated var isReleaseLocked: Bool { release.snapshot.locked }
@@ -1108,17 +918,19 @@ public actor AssistantSession {
     nonisolated func admitForTesting(requestId: String) { stepIndex.append(requestId, step: 0) }
 
     /// Meldet das Ergebnis eines Ausgabe-Commits, das NICHT im Lock lief (der Controller hat gar nichts ausgelöst, z. B. weil
-    /// die Stimme die Generation schon verworfen hatte): Die Zeile trägt die übergebene Generation. Ohne Warten. `failed`: die
-    /// Aktion ließ sich nicht auslösen, obwohl nichts widerrufen war (Marke „fehlgeschlagen“, nie „ausgeführt“).
+    /// die Stimme die Generation schon verworfen hatte, oder ein Audiostart ließ sich nicht auslösen). Ohne Warten. Die Prüfung
+    /// geschieht im Lock der Ordnung (Runde 8, R5): Gilt die mitgebrachte Generation dort noch, trägt die Zeile genau sie
+    /// (`failed`: die Aktion ließ sich nicht auslösen, obwohl nichts widerrufen war: „fehlgeschlagen“, nie „ausgeführt“). Ist sie
+    /// inzwischen veraltet, steht NICHT „fehlgeschlagen unter der alten Generation“ (das behauptete, die Generation habe beim
+    /// Scheitern noch gegolten), sondern „verworfen“ mit der dort vorgefundenen Generation: Ein später gemeldetes Ergebnis wird
+    /// nie älter als der Stand, in dem es gemeldet wurde.
     public nonisolated func noteCommit(requestId: String, index: Int, stage: AssistantCommitStage, ok: Bool, generation: Int,
                                        failed: Bool = false) {
         let step = stepIndex.step(requestId, index: index)
-        // Die Zeile wird im Lock der Ordnung eingereiht (Reihenfolge der Erhöhungen); eine Ablehnung trägt die dort vorgefundene
-        // Generation (nie die mitgebrachte, die inzwischen veraltet sein kann).
         release.inSection { found in
-            let mark = ok || failed
+            let mark = generation == found
                 ? AssistantCommitMark(stage: stage, ok: ok, generation: generation, failed: failed)
-                : AssistantCommitMark(stage: stage, ok: false, generation: max(generation, found))
+                : AssistantCommitMark(stage: stage, ok: false, generation: found)
             enqueueMark(requestId: requestId, step: step, mark: mark)
         }
     }
@@ -1172,27 +984,21 @@ public actor AssistantSession {
         return turns.filter { turn in turn.sources.allSatisfy { areas.contains($0.area) } }
     }
 
-    /// Zuordnung des tatsächlich Gesprochenen zu den ausgegebenen Sätzen (der Reihe nach, Ansagen zählen nicht). Ein Satz, der
-    /// nur angesprochen wurde (Unterbrechung), zählt mit seiner Einordnung. Gesprochenes ohne Entsprechung (kommt bei einem
-    /// vollständigen Lauf nicht vor) wird nie als „ohne Quelle“ gewertet, sondern als Vorlage ohne Quelle.
-    static func attribute(spoken: String, record: AssistantRunRecord?)
-        -> [(text: String, status: AssistantSentenceStatus, sources: [AssistantPassage], quote: Bool, step: Int?)] {
-        var rest = Substring(spoken)
-        var out: [(text: String, status: AssistantSentenceStatus, sources: [AssistantPassage], quote: Bool, step: Int?)] = []
-        for e in record?.sentences ?? [] where e.status != .announcement {
-            rest = rest.drop(while: { $0.isWhitespace })
-            if rest.isEmpty { break }
-            if rest.hasPrefix(e.text) {
-                out.append((e.text, e.status, e.sources, e.quote, e.step > 0 ? e.step : nil))
-                rest = rest.dropFirst(e.text.count)
-            } else if e.text.hasPrefix(rest) {
-                out.append((String(rest), e.status, e.sources, e.quote, e.step > 0 ? e.step : nil))
-                rest = ""
-            }
+    /// Die Einheiten, die in den Beitrag kommen (Runde 8, R1): Aus dem Stand der Anfrage ausgewählt, nie aus Text abgeleitet. Ansagen
+    /// zählen nicht. Reihenfolge der Ausgabe. Eine Einheit ohne vollständige Marke (ein Zitat ohne Quelle, ein Satz ohne Kennzeichnung)
+    /// kommt nicht in den Verlauf: Sie bekäme dort nie eine Ansicht als Auszug oder als Aussage ohne Marke.
+    static func units(of record: AssistantRunRecord, spoken: AssistantSpokenUnits, stepIndex: AssistantStepIndex, requestId: String)
+        -> [AssistantEmitted] {
+        let candidates = record.sentences.filter { $0.status != .announcement && $0.isRepresentable }
+        switch spoken {
+        case .nothing:
+            return []
+        case .all:
+            return candidates
+        case .events(let indices):
+            let wanted = Set(indices.compactMap { stepIndex.step(requestId, index: $0) })
+            return candidates.filter { wanted.contains($0.step) }
         }
-        rest = rest.drop(while: { $0.isWhitespace })
-        if !rest.isEmpty { out.append((String(rest), .neutral, [], false, nil)) }
-        return out
     }
 
     private static func distinct(_ passages: [AssistantPassage]) -> [AssistantPassage] {
@@ -1206,6 +1012,9 @@ public actor AssistantSession {
         run.state.markCancelled()
         run.stop()
         let deadline = ContinuousClock.now.advanced(by: Self.commitWait)
+        // Runde 8 (Suchlauf d): `try?` ist hier begründet. Der Schlaf ist nur eine Pause zwischen zwei Prüfungen; ist der Aufrufer
+        // abgebrochen, wirft er sofort, setzt aber trotzdem aus und gibt den Aktor ab (gemessen mit
+        // `testCommitFromACancelledCallerStillWaitsForTheOrderedEndOfTheRun`), und die Frist begrenzt die Schleife in jedem Fall.
         while active[requestId] != nil, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(10)) }
         if active[requestId] != nil { return run.state }   // hängendes Modell: Stand bis hierher
         return forget(requestId)
@@ -1232,8 +1041,10 @@ public actor AssistantSession {
         return l
     }
 
-    /// Nach `done` oder nach Barge-in (dann `spoken` = tatsächlich Gesprochenes, `interrupted` = true) trägt die Steuerung
-    /// den Beitrag ein. Für JEDE Anfrage entsteht ein abgeschlossenes Protokoll (`start` … `end`), auch ohne gesprochenen Text
+    /// Nach `done` oder nach Barge-in (dann `spoken` = die Einheiten, die ganz gesprochen wurden, `interrupted` = true) trägt die Steuerung
+    /// den Beitrag ein. Sie übergibt EINHEITEN (`AssistantSpokenUnits`), keinen Text: Der Beitrag besteht aus den ausgegebenen Einheiten
+    /// selbst (Art, Text unverändert, Quelle), ganz oder gar nicht; nichts wird getrimmt, gekürzt oder neu zerlegt (Runde 8, R1).
+    /// Für JEDE Anfrage entsteht ein abgeschlossenes Protokoll (`start` … `end`), auch ohne gesprochenen Text
     /// (Fehler, Abbruch, Widerruf); einen Beitrag im Verlauf gibt es nur mit Nutzertext, mit tatsächlich Gesprochenem, mit
     /// bekanntem Lauf und bei noch gültiger Freigabe-Generation: Die Prüfung, das Anhängen UND die Ergebniszeile
     /// (`h+<Generation>`) geschehen im selben Lock wie die Erhöhung der Generation; eine Ablehnung trägt die dabei gefundene
@@ -1242,12 +1053,12 @@ public actor AssistantSession {
     /// Laufs für den Widerruf. `false`, wenn nur das Protokoll nicht geschrieben werden konnte (der Beitrag steht trotzdem im
     /// Verlauf); die Anfrage endet dann mit Ausgang „Fehler“.
     @discardableResult
-    public func commit(requestId: String, user: String, spoken: String, interrupted: Bool, revoked: Bool = false) async -> Bool {
+    public func commit(requestId: String, user: String, spoken: AssistantSpokenUnits, interrupted: Bool, revoked: Bool = false) async -> Bool {
         guard let state = await settle(requestId) else { return true }   // unbekannte oder schon abgeschlossene Anfrage
         release.unregister(requestId)
         let record = state.snapshot
         let text = user.trimmingCharacters(in: .whitespacesAndNewlines)
-        let said = spoken.trimmingCharacters(in: .whitespacesAndNewlines)
+        let units = Self.units(of: record, spoken: spoken, stepIndex: stepIndex, requestId: requestId)
 
         // `start` zuerst (war es nicht schon geschrieben): Die Zeilen der Anfrage stehen in der Reihenfolge start, …, h, end.
         if let audit, !record.journaled { audit.enqueue(Self.startLine(requestId, session: sessionId, config: config, record: record), run: runToken) }
@@ -1256,28 +1067,24 @@ public actor AssistantSession {
         // Ergebnis des Verlaufs JE EINHEIT (Runde 7, B4): Jede ausgegebene Einheit bekommt ihre Marke `h+g` (steht im Beitrag) oder `h-g`
         // (nicht im Beitrag: nicht gesprochen, abgelehnt oder gar kein Beitrag), in demselben Lock-Schritt wie das Anhängen.
         let outputSteps = record.outputSteps
-        if text.isEmpty || said.isEmpty {
+        if text.isEmpty || units.isEmpty {
             release.inSection { found in
                 enqueueHistoryMarks(requestId: requestId, steps: outputSteps, included: [], generation: found)
             }
         }
-        if !text.isEmpty, !said.isEmpty {
-            let parts = Self.attribute(spoken: said, record: record)
-            let included = Set(parts.compactMap(\.step))
-            let sources = Self.distinct(parts.filter { $0.status == .grounded }.flatMap(\.sources))
-            let anyUnsourced = parts.contains { $0.status == .unsourced }
-            // Abschnitte (Marke je Satz): sobald ein Zitat oder ein Satz mit Kennzeichnung (feste Antwort, Bestandsangabe) vorkommt
-            // oder Sätze ohne Quelle mit anderen gemischt sind; ein rein unbelegter Beitrag bleibt ohne Abschnitte.
+        if !text.isEmpty, !units.isEmpty {
+            let included = Set(units.compactMap { $0.step > 0 ? $0.step : nil })
+            let sources = Self.distinct(units.filter { $0.status == .grounded }.flatMap(\.sources))
+            let anyUnsourced = units.contains { $0.status == .unsourced }
+            // Abschnitte: IMMER (Runde 8, R1): Jede Einheit trägt ihre Marke (Zitat mit Quellzeile, Kennzeichnung, „Ohne Quelle“), auch ein
+            // Beitrag nur aus Sätzen ohne Quelle. Ein Beitrag ohne Abschnitte gibt es nicht; die Ansicht zeigt nie bloßen Text.
             var turnParts: [AssistantTurnPart] = []
-            let marked = parts.contains { $0.quote || AssistantTurnPart.note(for: $0.status, quote: $0.quote) != nil }
-            if marked || (anyUnsourced && parts.contains { $0.status != .unsourced }) {
-                for p in parts {
-                    AssistantTurnPart.append(to: &turnParts, text: p.text, status: p.status, quote: p.quote, sources: p.sources)
-                }
+            for u in units {
+                AssistantTurnPart.append(to: &turnParts, text: u.text, status: u.status, quote: u.quote, sources: u.sources)
             }
             let turn = AssistantTurn(
-                user: text, assistant: said, interrupted: interrupted, sources: sources, general: sources.isEmpty,
-                unsourced: anyUnsourced, parts: turnParts, model: config.modelLabel, at: Date(),
+                user: text, assistant: units.map(\.text).joined(separator: " "), interrupted: interrupted, sources: sources,
+                general: sources.isEmpty, unsourced: anyUnsourced, parts: turnParts, model: config.modelLabel, at: Date(),
                 round: record.decided ? record.round : nil)
             // Prüfung der Generation, Anhängen und Ergebniszeile im selben Lock wie die Erhöhung der Generation: Ein Widerruf
             // dazwischen ist ausgeschlossen, die Marke trägt genau die geprüfte Generation.
@@ -1323,8 +1130,11 @@ public actor AssistantSession {
         end.level = AssistantAuditLevel.of(record.counts)
         let covering = Self.distinct(record.sentences.filter { $0.status == .grounded }.flatMap(\.sources)).map(\.area)
         end.areas = Set((covering + record.inventoryAreas).map(\.rawValue)).sorted()
+        // Ließ sich eine Zeile der Anfrage nicht schreiben, steht das am Ende: Was dann in der Datei fehlt, ist „unbekannt“ (R7).
+        if writeFailed { end.lost = true }
         audit.enqueue(end)
         let tail = await audit.flush(request: requestId)
+        audit.release(request: requestId)
         return !writeFailed && tail == nil
     }
 
@@ -1362,6 +1172,8 @@ public actor AssistantSession {
         // Bestand und Zugang gehören dazu: Gesperrt, blockiert oder `stale` (Klasse B) sind die Bereiche dieser Anfrage leer.
         let snapshot = self.release.snapshot.forRequest
         let allowedAreas: Set<AssistantArea>? = self.config.isCloud ? snapshot.areas : nil
+        // Runde 8, R6: Der Fehler jeder Zeile dieser Anfrage hängt ab hier an ihrem Anspruch (nie verdrängt, bis `commit` ihn beendet).
+        audit?.claim(request: rid)
         if earlyCancel.remove(rid) != nil {
             out.yield(.failed(requestId: rid, .cancelled))
             if let audit {
@@ -1377,6 +1189,7 @@ public actor AssistantSession {
                 end.areas = []
                 audit.enqueue(end)
                 _ = await audit.flush(request: rid)
+                audit.release(request: rid)
             }
             return
         }
@@ -1451,6 +1264,7 @@ public actor AssistantSession {
             let old = resultOrder.removeFirst()
             results[old] = nil
             release.unregister(old)
+            audit?.release(request: old)
         }
     }
 
@@ -1482,6 +1296,8 @@ public actor AssistantSession {
         // nach `start` hinterlässt die Anfrage; das nächste Öffnen schließt sie als unvollständig.
         state.update { $0.contextBefore = context.mode }
         if let audit {
+            // Eine bekannte Lücke im Protokoll (das Register der nachzuholenden Zeilen war voll): keine Ausgabe, bis der Prozess neu startet.
+            guard !release.clock.auditGap else { return fail(.auditUnavailable) }
             guard await stateLine.ensure(audit) else { return fail(.auditUnavailable) }
             if Task.isCancelled { return .cancelled }
             let started = await audit.begin(startLine(rid, session: session, config: config, record: state.snapshot), run: run)
@@ -1545,12 +1361,14 @@ public actor AssistantSession {
             switch await emitter.emit(preface, speech: preface, status: .announcement) {
             case .revoked: return .cancelled
             case .failed: return await finished(.auditUnavailable)
+            case .limit: return await finished()
             case .delivered: break
             }
             for s in statements {
                 switch await emitter.emit(s, speech: emitter.speech(s), status: .inventory) {
                 case .revoked: return .cancelled
                 case .failed: return await finished(.auditUnavailable)
+                case .limit: return await finished()
                 case .delivered: break
                 }
             }
