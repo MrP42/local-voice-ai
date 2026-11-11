@@ -765,7 +765,7 @@ mod system {
                 FIND_FIRST_EX_LARGE_FETCH,
             )
         }
-        .map_err(io::Error::other)?;
+        .map_err(win_io)?;
         let _suche = Suche(h);
         Ok(roh_aus(&d))
     }
@@ -782,8 +782,19 @@ mod system {
                 std::mem::size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32,
             )
         }
-        .map_err(io::Error::other)?;
+        .map_err(win_io)?;
         Ok((info.FileAttributes, info.ReparseTag))
+    }
+
+    /// Win32-Fehler als `io::Error` mit erhaltenem Code (HRESULT_FROM_WIN32 → Win32-Code), damit
+    /// `raw_os_error()` z. B. ERROR_SHARING_VIOLATION (32) erkennt; andere HRESULTs bleiben `other`.
+    pub fn win_io(e: windows::core::Error) -> io::Error {
+        let hr = e.code().0 as u32;
+        if hr & 0xFFFF_0000 == 0x8007_0000 {
+            io::Error::from_raw_os_error((hr & 0xFFFF) as i32)
+        } else {
+            io::Error::other(e)
+        }
     }
 
     const GENERIC_READ: u32 = 0x8000_0000;
@@ -825,7 +836,7 @@ mod system {
                 FILE_FLAGS_AND_ATTRIBUTES(flags),
             )
         }
-        .map_err(io::Error::other)?;
+        .map_err(win_io)?;
         // SAFETY: `h` ist ein frisches, gültiges Handle, das sonst niemand besitzt.
         Ok(unsafe { fs::File::from_raw_handle(h.0) })
     }
@@ -835,7 +846,7 @@ mod system {
         let mut info = BY_HANDLE_FILE_INFORMATION::default();
         // SAFETY: gültiges, offenes Handle; `info` ist ein beschreibbarer Puffer.
         unsafe { GetFileInformationByHandle(HANDLE(f.as_raw_handle()), &mut info) }
-            .map_err(io::Error::other)?;
+            .map_err(win_io)?;
         Ok((
             u64::from(info.dwVolumeSerialNumber),
             (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),

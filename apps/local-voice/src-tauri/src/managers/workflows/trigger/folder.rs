@@ -333,26 +333,11 @@ impl FileProbe for SystemProbe {
             folgen: true,
             teilen: 1,
         };
-        // ERROR_SHARING_VIOLATION (32), ERROR_LOCK_VIOLATION (33)
-        let gesperrt = |e: &std::io::Error| matches!(e.raw_os_error(), Some(32) | Some(33));
         match eintrag::oeffnen_ohne_abruf(path, art, trigger_urteil) {
-            // `ReOpenFile` erzwingt den Freigabekonflikt mit einem fremden Schreiber nicht (Windows-Tor
-            // s-512c). Erst nach dem Urteil „lesbar“ (kein Platzhalter) prüft deshalb ein echtes Öffnen per
-            // Pfad mit `FILE_SHARE_READ` und `FILE_FLAG_OPEN_NO_RECALL`, ob jemand schreibt; gelesen wird nichts.
-            Ok(_) => {
-                use std::os::windows::fs::OpenOptionsExt;
-                const FILE_FLAG_OPEN_NO_RECALL: u32 = 0x0010_0000;
-                match std::fs::OpenOptions::new()
-                    .read(true)
-                    .share_mode(1)
-                    .custom_flags(FILE_FLAG_OPEN_NO_RECALL)
-                    .open(path)
-                {
-                    Ok(_) => false,
-                    Err(e) => gesperrt(&e),
-                }
-            }
-            Err(eintrag::OeffnenFehler::Io(e)) => gesperrt(&e),
+            Ok(_) => false,
+            // ERROR_SHARING_VIOLATION (32), ERROR_LOCK_VIOLATION (33); der Win32-Code bleibt beim
+            // Hochstufen erhalten (`system::win_io`).
+            Err(eintrag::OeffnenFehler::Io(e)) => matches!(e.raw_os_error(), Some(32) | Some(33)),
             Err(_) => false,
         }
     }

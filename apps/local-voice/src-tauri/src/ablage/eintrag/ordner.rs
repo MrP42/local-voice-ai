@@ -545,7 +545,7 @@ mod sys {
                 if e.code() == ERROR_NO_MORE_FILES.to_hresult() {
                     return Ok(true);
                 }
-                return Err(OeffnenFehler::Io(io::Error::other(e)));
+                return Err(OeffnenFehler::Io(crate::ablage::eintrag::system::win_io(e)));
             }
             let basis = puffer.as_ptr().cast::<u8>();
             let name_ab = std::mem::offset_of!(FILE_ID_BOTH_DIR_INFO, FileName);
