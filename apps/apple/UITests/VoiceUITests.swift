@@ -407,7 +407,8 @@ final class VoiceUITests: XCTestCase {
         let excerpt = label("Wörtlicher Auszug aus Beispielbuch · S. 12: Anna übernimmt die Planung und stimmt sich jede Woche mit dem Team ab.")
         XCTAssertTrue(excerpt.waitForExistence(timeout: 5), "der Auszug steht genau so da: ohne „ …“, ohne „unterbrochen“ im Text")
         XCTAssertFalse(element(NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@", "Wörtlicher Auszug", "…")).exists)
-        let mark = app.descendants(matching: .any)["assistantInterruptedMark"]
+        // Die Kennung sitzt auf Bild und Text der Zeile: gefragt ist der Text (ein Treffer, nicht „mehrere passende Elemente“).
+        let mark = app.staticTexts.matching(identifier: "assistantInterruptedMark").firstMatch
         XCTAssertTrue(mark.waitForExistence(timeout: 5), "die Unterbrechung hat eine eigene Zeile")
         XCTAssertTrue(mark.label.contains("unterbrochen"), "Text für Auge und VoiceOver: \(mark.label)")
         XCTAssertGreaterThanOrEqual(mark.frame.minY, excerpt.frame.maxY - 1, "die Zeile steht unter dem Auszug, nicht darin")

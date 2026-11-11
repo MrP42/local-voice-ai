@@ -102,6 +102,16 @@ private struct SleepyModel: BookTalkModel {
     }
 }
 
+/// Wartet auf ein Semaphor, ohne den aufrufenden asynchronen Test zu blockieren (`wait` ist aus asynchronem Code nicht erlaubt).
+private func awaitSignal(_ semaphore: DispatchSemaphore) async {
+    await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+        DispatchQueue.global().async {
+            semaphore.wait()
+            c.resume()
+        }
+    }
+}
+
 /// Liest eine Anfrage bis zum Ende; gibt die Ereignisse und den Grund eines Fehlers zurück.
 private func drainEvents(_ session: AssistantSession, _ request: AssistantRequest) async -> (events: [AssistantEvent], failure: AssistantFailure?) {
     var events: [AssistantEvent] = []
@@ -119,6 +129,72 @@ private func sentences(_ s: AssistantSession, _ id: String, _ text: String) asyn
         if case .sentence(_, _, let sentence, _, _, _, _) = e { out.append(sentence) }
     }
     return out
+}
+
+/// Schlägt die ersten `times` Schreibaufrufe fehl, die `matches` bejaht (zählt atomar).
+private final class FailFirst: @unchecked Sendable {
+    private let lock = NSLock()
+    private var left: Int
+    init(_ times: Int) { left = times }
+    func shouldFail() -> Bool {
+        lock.withLock {
+            guard left > 0 else { return false }
+            left -= 1
+            return true
+        }
+    }
+}
+
+/// Ein Haltepunkt für den Erzeuger einer Anfrage (Runde 10, `ProducerHold`): Der `holdAt`-te Besuch suspendiert (er blockiert keinen Thread; der
+/// Abbruch der Aufgabe wirkt nicht, der Lauf hängt wirklich) bis `release()`; der Test wartet mit `awaitReached()`, bis der Erzeuger da ist.
+/// Haltepunkte statt Zeitannahmen.
+private final class ProducerHold: @unchecked Sendable {
+    private let lock = NSLock()
+    private var visits = 0
+    private var reached = false
+    private var released = false
+    private var producer: CheckedContinuation<Void, Never>?
+    private var testers: [CheckedContinuation<Void, Never>] = []
+
+    func visit(holdAt n: Int) async {
+        guard lock.withLock({ () -> Bool in
+            visits += 1
+            return visits == n
+        }) else { return }
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            let (waiting, resumeNow) = lock.withLock { () -> ([CheckedContinuation<Void, Never>], Bool) in
+                reached = true
+                let waiting = testers
+                testers = []
+                if released { return (waiting, true) }
+                producer = c
+                return (waiting, false)
+            }
+            for t in waiting { t.resume() }
+            if resumeNow { c.resume() }
+        }
+    }
+
+    func awaitReached() async {
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            let now = lock.withLock { () -> Bool in
+                if reached { return true }
+                testers.append(c)
+                return false
+            }
+            if now { c.resume() }
+        }
+    }
+
+    func release() {
+        let parked = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+            released = true
+            let p = producer
+            producer = nil
+            return p
+        }
+        parked?.resume()
+    }
 }
 
 final class AssistantCounterexampleTests: XCTestCase {
@@ -161,9 +237,10 @@ final class AssistantCounterexampleTests: XCTestCase {
 
     private func session(_ store: AssistantReleaseStore?, audit: AssistantAuditLog? = nil, model: any BookTalkModel = EchoModel(),
                          knowledge: AssistantKnowledge? = nil, config: AssistantConfig? = nil,
-                         stepIndex: AssistantStepIndex = AssistantStepIndex()) -> AssistantSession {
+                         stepIndex: AssistantStepIndex = AssistantStepIndex(),
+                         commitWait: Duration = AssistantSession.defaultCommitWait) -> AssistantSession {
         AssistantSession(model: model, knowledge: knowledge ?? AssistantKnowledge(corpus: AssistantCorpus()), config: config ?? self.config,
-                         audit: audit, released: true, releaseStore: store, stepIndex: stepIndex)
+                         audit: audit, released: true, releaseStore: store, stepIndex: stepIndex, commitWait: commitWait)
     }
 
     private func lines(_ kinds: Set<String>? = nil) -> [[String: Any]] {
@@ -1675,10 +1752,10 @@ final class AssistantCounterexampleTests: XCTestCase {
             done.signal()
         }
         thread.start()
-        entered.wait()   // der Start steht im Lock der Ordnung
+        await awaitSignal(entered)   // der Start steht im Lock der Ordnung
         let completion = Task { await s.commit(requestId: "r1", user: "Wohin?", spoken: .all, interrupted: false) }
         proceed.signal()
-        done.wait()
+        await awaitSignal(done)
         _ = await completion.value
         XCTAssertTrue(started.value)
         await audit.barrier()
@@ -1723,7 +1800,7 @@ final class AssistantCounterexampleTests: XCTestCase {
     // MARK: Runde 9, Suchlauf (b) und (c)
 
     /// Suchlauf (b): Ereignisse mit Inhalt (`sources`, `done`) gehen bei einem klebrigen Schreibfehler IM Lock nicht hinaus. Der Sender
-    /// bekommt die Prüfung (`guarding:`), die Ereignisse des Stroms sind genau die ohne Fehler.
+    /// bekommt den Grund (`refusal`), die Ereignisse des Stroms sind genau die ohne Fehler.
     func testSearchBDoneAndSourcesAreHeldBackInTheLockByAStickyWriteError() async {
         let failing = Flag()
         let audit = log(appender: { url, data in
@@ -1734,22 +1811,23 @@ final class AssistantCounterexampleTests: XCTestCase {
         let release = AssistantRelease(optIn: false)
         var continuation: AsyncStream<AssistantEvent>.Continuation!
         let stream = AsyncStream<AssistantEvent> { continuation = $0 }
-        let output = AssistantRunOutput(release: release, generation: release.currentGeneration, continuation: continuation)
+        let output = AssistantRunOutput(release: release, generation: release.currentGeneration, continuation: continuation,
+                                        gate: AssistantRequestGate(request: "r1", index: AssistantStepIndex(), audit: audit))
         let answer = AssistantAnswer(text: "Hallo.", sources: [], general: true, firstSentenceMs: nil, totalMs: 0, unsourced: false,
                                      counts: AssistantSentenceCounts(), round: .general, generation: release.currentGeneration)
-        let before = output.send(.sources(requestId: "r1", generation: release.currentGeneration, []), guarding: audit, request: "r1")
+        let before = output.deliver(.sources(requestId: "r1", generation: release.currentGeneration, []))
         XCTAssertTrue(before.check.ok)
-        XCTAssertFalse(before.refused, "ohne Fehler geht es hinaus")
+        XCTAssertNil(before.refusal, "ohne Fehler geht es hinaus")
         failing.value = true
         var own = AssistantJournalLine(.round, req: "r1")
         own.at = Date()
         audit.enqueue(own)
         await audit.barrier()
         XCTAssertTrue(audit.hasFailed(request: "r1"))
-        let sources = output.send(.sources(requestId: "r1", generation: release.currentGeneration, []), guarding: audit, request: "r1")
-        let done = output.send(.done(requestId: "r1", answer), guarding: audit, request: "r1")
-        XCTAssertTrue(sources.refused)
-        XCTAssertTrue(done.refused)
+        let sources = output.deliver(.sources(requestId: "r1", generation: release.currentGeneration, []))
+        let done = output.deliver(.done(requestId: "r1", answer))
+        XCTAssertEqual(sources.refusal, .auditFailed)
+        XCTAssertEqual(done.refusal, .auditFailed)
         XCTAssertFalse(sources.check.ok)
         XCTAssertFalse(done.check.ok)
         continuation.finish()
@@ -1954,6 +2032,308 @@ final class AssistantCounterexampleTests: XCTestCase {
         XCTAssertEqual(generations.count, total, "jede Änderung hat ihre Zeile")
         XCTAssertEqual(Set(generations).count, total, "keine steht doppelt")
         XCTAssertEqual(t.store.clock.pendingCount, 0, "das Register ist leer")
+    }
+
+
+    // MARK: Runde 10: ein Lebenslauf der Anfrage (offen → geschlossen → abgeschlossen)
+
+    /// Aufbau für T1 und T2: Eine Anfrage `r1` mit zwei Zitaten (vier Einheiten); der Erzeuger hängt bei der dritten Einheit zwischen dem
+    /// Eintrag im Index und dem Senden (Haltepunkt `ProducerHold`, der Abbruch des Laufs wirkt nicht). Die Frist des Abschlusses ist null: Der
+    /// Abschluss lässt den hängenden Lauf sofort zurück.
+    private struct HeldRun {
+        let session: AssistantSession
+        let audit: AssistantAuditLog
+        let hold: ProducerHold
+        let failAudio: Flag
+        let generation: Int
+        let events: Task<[AssistantEvent], Never>
+    }
+
+    private func heldRun(holdAt visit: Int = 3, point: AssistantRequestPoint = .beforeSend) async -> HeldRun {
+        let failAudio = Flag()
+        let audit = logFailingAudioResults(failAudio)
+        let hold = ProducerHold()
+        let index = AssistantStepIndex()
+        index.setProbe { id, reached in
+            guard id == "r1", reached == point else { return }
+            await hold.visit(holdAt: visit)
+        }
+        let s = session(nil, audit: audit, model: EchoModel(text: twoBlocks.joined(separator: " ")), knowledge: await twoBlockKnowledge(),
+                        stepIndex: index, commitWait: .zero)
+        let g = s.releaseGeneration
+        let events = Task { () -> [AssistantEvent] in
+            var out: [AssistantEvent] = []
+            for await e in s.events(AssistantRequest(requestId: "r1", text: "Was macht Quasselbert in Pappelhausen mit der Tante Lavendula?")) {
+                out.append(e)
+            }
+            return out
+        }
+        return HeldRun(session: s, audit: audit, hold: hold, failAudio: failAudio, generation: g, events: events)
+    }
+
+    /// Macht die Audio-Ergebniszeile der ersten Einheit zu einem klebrigen Schreibfehler der Anfrage `r1`.
+    private func breakAudioResult(_ run: HeldRun) async {
+        run.failAudio.value = true
+        run.session.noteCommit(requestId: "r1", index: 0, stage: .audio, ok: false, generation: run.generation, failed: true)
+        await run.audit.barrier()
+        run.failAudio.value = false
+    }
+
+    private func rows(of request: String) -> [[String: Any]] { lines().filter { $0["req"] as? String == request } }
+
+    /// T1 (Codex 1): Der Lauf hängt, `commit(R)` wird zweimal nacheinander gerufen. Der erste läuft in die Frist und schreibt den
+    /// Fehlerabschluss (der Anspruch ist danach frei); der zweite fand R noch in `active` und fragte `hasFailed` ohne Anspruch: Er
+    /// schrieb Beitrag, `h+` und eine zweite Schlusszeile. Jetzt gehört der Abschluss dem ersten Aufrufer (L1): der zweite kehrt sofort
+    /// zurück und schreibt nichts. Das späte Ende des Laufs nach dem Abschluss schreibt nichts und sendet nichts mit Inhalt. Gegen
+    /// aec52bde ROT (nur mit der Test-Naht gemessen).
+    func testT1ASecondCommitOfAHangingRunWritesNothingTheCompletionBelongsToTheFirstCaller() async throws {
+        let run = await heldRun()
+        await run.hold.awaitReached()
+        await breakAudioResult(run)
+        XCTAssertTrue(run.audit.hasFailed(request: "r1"), "der klebrige Fehler steht")
+        let first = await run.session.commit(requestId: "r1", user: "Wohin?", spoken: .all, interrupted: false)
+        XCTAssertFalse(first, "das Protokoll ist nicht in Ordnung")
+        XCTAssertEqual(run.audit.claimCount, 0, "der Anspruch ist nach dem Abschluss frei")
+        let second = await run.session.commit(requestId: "r1", user: "Wohin?", spoken: .all, interrupted: false)
+        XCTAssertTrue(second, "der zweite Aufruf hat nichts zu schreiben")
+        await run.audit.barrier()
+        let afterSecond = rows(of: "r1")
+        XCTAssertEqual(afterSecond.filter { $0["t"] as? String == "end" }.count, 1, "genau eine Schlusszeile")
+        XCTAssertEqual(afterSecond.first { $0["t"] as? String == "end" }?["outcome"] as? String, "failed", "Ausgang „Fehler“")
+        let marks = afterSecond.compactMap { $0["mark"] as? String }
+        XCTAssertFalse(marks.contains { $0.hasPrefix("h+") }, "kein Beitrag, keine Marke „Verlauf ausgeführt“: \(marks)")
+        let historyAfter = await run.session.history
+        XCTAssertEqual(historyAfter.count, 0, "kein Beitrag")
+        // Das späte Ende des Laufs (`finishedWhileRunning`): keine Zeile, kein Ereignis mit Inhalt.
+        run.hold.release()
+        let events = await run.events.value
+        await run.audit.barrier()
+        XCTAssertEqual(events.filter { if case .sentence = $0 { true } else { false } }.count, 2, "nur die Einheiten vor dem Abschluss")
+        XCTAssertFalse(events.contains { if case .done = $0 { true } else { false } }, "kein `done` nach dem Abschluss")
+        let third = await run.session.commit(requestId: "r1", user: "Wohin?", spoken: .all, interrupted: false)
+        XCTAssertTrue(third)
+        await run.audit.barrier()
+        let kinds = rows(of: "r1").compactMap { $0["t"] as? String }
+        XCTAssertEqual(kinds.filter { $0 == "end" }.count, 1, "auch nach dem Ende des Laufs bleibt es bei einer Schlusszeile: \(kinds)")
+        XCTAssertEqual(kinds.last, "end", "hinter der Schlusszeile steht nichts: \(kinds)")
+    }
+
+    /// T1 (Rahmen): Zwei Aufrufe zugleich, der Abschluss gehört genau einem; und der Eintrag im Lebenslauf (`claimCompletion`) vergibt
+    /// den Besitz für eine Kennung genau einmal, auch unter Last mehrerer Threads.
+    func testT1ClaimingTheCompletionSucceedsExactlyOnceEvenWhenCalledConcurrently() async {
+        let index = AssistantStepIndex()
+        let winners = await withTaskGroup(of: Bool.self) { group -> Int in
+            for _ in 0..<64 { group.addTask { index.claimCompletion("r1") } }
+            var n = 0
+            for await won in group where won { n += 1 }
+            return n
+        }
+        XCTAssertEqual(winners, 1, "genau ein Aufrufer bekommt den Abschluss")
+        XCTAssertFalse(index.isOpen("r1"), "mit dem Besitz ist die Anfrage geschlossen")
+        XCTAssertFalse(index.claimCompletion("r1"), "später bekommt ihn niemand mehr")
+        XCTAssertTrue(index.isOpen("r2"), "andere Kennungen bleiben offen")
+        let audit = log()
+        let s = session(nil, audit: audit, model: EchoModel(text: twoBlocks[0]), knowledge: await twoBlockKnowledge())
+        _ = await runToEnd(s, "r3")
+        async let a = s.commit(requestId: "r3", user: "Wohin?", spoken: .all, interrupted: false)
+        async let b = s.commit(requestId: "r3", user: "Wohin?", spoken: .all, interrupted: false)
+        _ = await (a, b)
+        await audit.barrier()
+        XCTAssertEqual(rows(of: "r3").filter { $0["t"] as? String == "end" }.count, 1, "zwei Aufrufe zugleich: eine Schlusszeile")
+    }
+
+    /// Eine geschlossene Kennung läuft nie wieder: kein Anspruch, keine Zeile, kein Ereignis mit Inhalt (ein Lauf mit derselben Kennung nach
+    /// dem Abschluss hätte sonst einen Anspruch angelegt, den niemand mehr beendet).
+    func testAnIdThatIsAlreadyClosedNeverRunsAgainNoClaimNoLineNoContent() async {
+        let audit = log()
+        let s = session(nil, audit: audit, model: EchoModel(text: twoBlocks[0]), knowledge: await twoBlockKnowledge())
+        _ = await runToEnd(s, "r1")
+        await s.commit(requestId: "r1", user: "Wohin?", spoken: .all, interrupted: false)
+        await audit.barrier()
+        let before = rows(of: "r1").count
+        let claims = audit.claimCount
+        let again = await drainEvents(s, AssistantRequest(requestId: "r1", text: "Wohin wandert Quasselbert mit dem Fahrrad nach Pappelhausen?"))
+        XCTAssertEqual(again.failure, .cancelled)
+        XCTAssertEqual(again.events.count, 1, "nur das Ende des Stroms: \(again.events)")
+        await audit.barrier()
+        XCTAssertEqual(rows(of: "r1").count, before, "keine Zeile")
+        XCTAssertEqual(audit.claimCount, claims, "kein neuer Anspruch")
+    }
+
+    /// T2 (Codex 2): Der Erzeuger hat den Index passiert und hält vor dem Senden; die Audio-Ergebniszeile scheitert; `commit` schließt,
+    /// schreibt den Fehlerabschluss und gibt den Anspruch frei; der Erzeuger lief danach weiter, sendete eine weitere `sentence` und reihte
+    /// `e+` HINTER der Schlusszeile ein. Jetzt prüft das Senden die Anfrage IM Lock („offen?“): nichts geht hinaus, keine Zeile entsteht.
+    /// Gegen aec52bde ROT (nur mit der Test-Naht gemessen).
+    func testT2AProducerHeldBeforeSendingSendsNothingAndEnqueuesNothingBehindTheClosingLine() async throws {
+        let run = await heldRun()
+        await run.hold.awaitReached()
+        await breakAudioResult(run)
+        let ok = await run.session.commit(requestId: "r1", user: "Wohin?", spoken: .all, interrupted: false)
+        XCTAssertFalse(ok)
+        await run.audit.barrier()
+        let atClose = rows(of: "r1")
+        XCTAssertEqual(atClose.last?["t"] as? String, "end", "die Schlusszeile ist die letzte")
+        run.hold.release()
+        let events = await run.events.value
+        await run.audit.barrier()
+        let sentences = events.compactMap { e -> String? in if case .sentence(_, _, let text, _, _, _, _) = e { text } else { nil } }
+        XCTAssertEqual(sentences.count, 2, "keine weitere Einheit nach dem Abschluss: \(sentences)")
+        let after = rows(of: "r1")
+        XCTAssertEqual(after.count, atClose.count, "keine Zeile der Anfrage entstand nach der Schlusszeile")
+        XCTAssertEqual(after.last?["t"] as? String, "end")
+        let emitMarks = after.filter { $0["t"] as? String == "commit" && ($0["mark"] as? String)?.hasPrefix("e") == true }
+        XCTAssertEqual(emitMarks.count, 2, "nur die Marken der beiden gesendeten Einheiten, keine für die dritte")
+    }
+
+    /// T2, Zusatz: Der Erzeuger hängt VOR der Zeile `round`; der Abschluss läuft durch; der Erzeuger läuft weiter. Es entsteht keine Zeile
+    /// hinter der Schlusszeile und kein Modellaufruf (der Lauf endet, ohne die Rundenzeile einzureihen). Gegen aec52bde ROT (die Zeile
+    /// `round` stand hinter `end`; nur mit der Test-Naht gemessen).
+    func testT2AProducerHeldBeforeTheRoundLineNeitherWritesItNorCallsTheModelAfterTheCompletion() async throws {
+        let failAudio = Flag()
+        let audit = logFailingAudioResults(failAudio)
+        let hold = ProducerHold()
+        let index = AssistantStepIndex()
+        index.setProbe { id, point in
+            guard id == "r1", point == .beforeRound else { return }
+            await hold.visit(holdAt: 1)
+        }
+        let model = CountingModel()
+        let s = session(nil, audit: audit, model: model, knowledge: await twoBlockKnowledge(), stepIndex: index, commitWait: .zero)
+        let events = Task { () -> [AssistantEvent] in
+            var out: [AssistantEvent] = []
+            for await e in s.events(AssistantRequest(requestId: "r1", text: "Wohin wandert Quasselbert mit dem Fahrrad nach Pappelhausen?")) {
+                out.append(e)
+            }
+            return out
+        }
+        await hold.awaitReached()
+        let ok = await s.commit(requestId: "r1", user: "", spoken: .nothing, interrupted: true)
+        XCTAssertTrue(ok, "ein Abschluss ohne Fehler")
+        await audit.barrier()
+        let atClose = rows(of: "r1")
+        XCTAssertEqual(atClose.compactMap { $0["t"] as? String }, ["start", "end"], "der Lauf war bei `start` stehen geblieben")
+        hold.release()
+        let received = await events.value
+        await audit.barrier()
+        let after = rows(of: "r1")
+        XCTAssertEqual(after.compactMap { $0["t"] as? String }, ["start", "end"], "nach der Schlusszeile entsteht nichts: \(after)")
+        XCTAssertEqual(model.calls.value, 0, "kein Modellaufruf")
+        XCTAssertFalse(received.contains { if case .sentence = $0 { true } else { false } })
+        XCTAssertFalse(received.contains { if case .done = $0 { true } else { false } })
+    }
+
+    /// T3 (Codex 3): Ein früher Abbruch legte `end.outcome = interrupted` fest, bevor die Schreibfehler abgeholt waren: Scheiterte nur
+    /// `start` und gelang `end`, meldete die Steuerung `.auditUnavailable`, das Journal aber „interrupted“, und die Schlusszeile hatte
+    /// keine Startzeile (der Leser kann sie keiner Anfrage zuordnen). Jetzt läuft der Abbruch durch denselben Abschlusscode (L3): `start`
+    /// zuerst und abgewartet; scheitert sie, `start` und `end` (Ausgang Fehler, `lost`) als Gruppe, beide oder keine. Journal und Steuerung
+    /// stimmen überein. Gegen aec52bde ROT.
+    func testT3AnEarlyCancelWhoseFirstStartLineFailsEndsWithOutcomeFailedAndLostAndTheControlAgrees() async {
+        let failures = FailFirst(1)
+        let audit = log(appender: { url, data in
+            if String(decoding: data, as: UTF8.self).contains("\"t\":\"start\""), failures.shouldFail() { throw Injected() }
+            try AssistantAuditWriter.appendFile(url, data)
+        })
+        let s = session(nil, audit: audit)
+        let base = audit.claimCount
+        await s.cancel(requestId: "r1")
+        let result = await drainEvents(s, AssistantRequest(requestId: "r1", text: "Hallo"))
+        XCTAssertEqual(result.failure, .auditUnavailable, "die Steuerung erfährt: Protokoll nicht schreibbar")
+        await audit.barrier()
+        let mine = rows(of: "r1")
+        XCTAssertEqual(mine.compactMap { $0["t"] as? String }, ["start", "end"], "Anfang und Ende, in dieser Reihenfolge")
+        let end = mine.last
+        XCTAssertEqual(end?["outcome"] as? String, "failed", "derselbe Ausgang wie bei der Steuerung")
+        XCTAssertEqual(end?["lost"] as? Bool, true, "die erste Startzeile fehlt: unbekannt")
+        XCTAssertFalse(lines().contains { $0["outcome"] as? String == "interrupted" }, "nie „abgebrochen“ im Journal bei `.auditUnavailable` an der Steuerung")
+        XCTAssertEqual(audit.claimCount, base, "der Anspruch endet erst danach und ist dann frei")
+    }
+
+    /// T3, Zusatz: Scheitern beide Versuche der Startzeile, bleibt auch die Schlusszeile aus (beide oder keine): keine verwaiste `end` ohne
+    /// `start`. Die Platte lehnt genau die ersten beiden Startzeilen ab und nimmt danach alles an; ohne die Abhängigkeit stünde die
+    /// Schlusszeile allein in der Datei. Gegen aec52bde ROT.
+    func testT3WhenBothStartAttemptsFailThereIsNoOrphanEndWithoutItsStart() async {
+        let failures = FailFirst(2)
+        let audit = log(appender: { url, data in
+            if String(decoding: data, as: UTF8.self).contains("\"t\":\"start\""), failures.shouldFail() { throw Injected() }
+            try AssistantAuditWriter.appendFile(url, data)
+        })
+        let s = session(nil, audit: audit)
+        let base = audit.claimCount
+        await s.cancel(requestId: "r1")
+        let result = await drainEvents(s, AssistantRequest(requestId: "r1", text: "Hallo"))
+        XCTAssertEqual(result.failure, .auditUnavailable)
+        await audit.barrier()
+        XCTAssertTrue(rows(of: "r1").isEmpty, "weder Start noch Ende: \(rows(of: "r1"))")
+        XCTAssertEqual(audit.claimCount, base, "kein Anspruch bleibt liegen")
+    }
+
+    /// T3, Rahmen: Ein gesunder früher Abbruch endet unverändert mit `start`, `end` (abgebrochen) und der Meldung „abgebrochen“.
+    func testT3AHealthyEarlyCancelStillWritesStartThenEndInterruptedAndReportsCancelled() async {
+        let audit = log()
+        let s = session(nil, audit: audit)
+        let base = audit.claimCount
+        await s.cancel(requestId: "r1")
+        let result = await drainEvents(s, AssistantRequest(requestId: "r1", text: "Hallo"))
+        XCTAssertEqual(result.failure, .cancelled)
+        await audit.barrier()
+        let mine = rows(of: "r1")
+        XCTAssertEqual(mine.compactMap { $0["t"] as? String }, ["start", "end"])
+        XCTAssertEqual(mine.last?["outcome"] as? String, "interrupted")
+        XCTAssertNil(mine.last?["lost"])
+        XCTAssertEqual(audit.claimCount, base)
+    }
+
+
+    /// Suchlauf (d): Der Abschluss überholt den Lauf (die Steuerung ruft `commit`, bevor die Anfrage in der Sitzung angekommen ist). Er
+    /// schreibt nichts und schließt nichts; der Lauf, der danach ankommt, endet als Abbruch vor dem Start und bekommt genau einen Eintrag
+    /// (`start`, `end` mit „abgebrochen“), ohne Modell. Ohne das hätte die Anfrage keinen Protokolleintrag.
+    func testACommitThatOvertakesItsRunWritesNothingAndTheLateRunGetsItsOneEntryWithoutAModel() async {
+        let audit = log()
+        let model = CountingModel()
+        let s = session(nil, audit: audit, model: model)
+        let base = audit.claimCount
+        let ok = await s.commit(requestId: "r1", user: "Hallo", spoken: .nothing, interrupted: true)
+        XCTAssertTrue(ok)
+        await audit.barrier()
+        XCTAssertEqual(rows(of: "r1").count, 0, "der Abschluss einer unbekannten Anfrage schreibt nichts")
+        let result = await drainEvents(s, AssistantRequest(requestId: "r1", text: "Hallo"))
+        XCTAssertEqual(result.failure, .cancelled)
+        XCTAssertEqual(model.calls.value, 0, "kein Modell")
+        await audit.barrier()
+        let mine = rows(of: "r1")
+        XCTAssertEqual(mine.compactMap { $0["t"] as? String }, ["start", "end"], "genau ein Eintrag")
+        XCTAssertEqual(mine.last?["outcome"] as? String, "interrupted")
+        XCTAssertEqual(audit.claimCount, base)
+        // Ein weiterer Lauf derselben Kennung wird abgewiesen: keine Zeile mehr.
+        let again = await drainEvents(s, AssistantRequest(requestId: "r1", text: "Hallo"))
+        XCTAssertEqual(again.failure, .cancelled)
+        await audit.barrier()
+        XCTAssertEqual(rows(of: "r1").count, 2)
+        XCTAssertEqual(model.calls.value, 0)
+    }
+
+
+    /// T3, Rückgabewert (Suchlauf b): Endete der Lauf, weil das Protokoll nicht schrieb (die Standzeile scheiterte, es gibt keinen Fehler der
+    /// Anfrage selbst), steht in der Schlusszeile „Fehler“, und `commit` meldet es auch (früher: `true`, obwohl das Journal „Fehler“
+    /// sagte). Gegen aec52bde ROT.
+    func testT3CommitReportsFailureWhenTheRunEndedBecauseTheProtocolWasNotWritable() async {
+        let failures = FailFirst(1)
+        let audit = log(appender: { url, data in
+            if String(decoding: data, as: UTF8.self).contains("\"t\":\"state\""), failures.shouldFail() { throw Injected() }
+            try AssistantAuditWriter.appendFile(url, data)
+        })
+        let model = CountingModel()
+        let s = session(nil, audit: audit, model: model)
+        let result = await drainEvents(s, AssistantRequest(requestId: "r1", text: "Hallo"))
+        XCTAssertEqual(result.failure, .auditUnavailable, "die Steuerung erfährt: Protokoll nicht schreibbar")
+        XCTAssertEqual(model.calls.value, 0, "kein Modell")
+        let ok = await s.commit(requestId: "r1", user: "Hallo", spoken: .nothing, interrupted: false)
+        XCTAssertFalse(ok, "derselbe Ausgang wie in der Schlusszeile")
+        await audit.barrier()
+        let mine = rows(of: "r1")
+        XCTAssertEqual(mine.last?["t"] as? String, "end")
+        XCTAssertEqual(mine.last?["outcome"] as? String, "failed")
+        XCTAssertEqual(mine.first?["t"] as? String, "start", "die Schlusszeile hat ihren Anfang")
     }
 
 }

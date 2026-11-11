@@ -765,6 +765,9 @@ final class AssistantAuditWriter: @unchecked Sendable {
         /// Zeilen, auf die niemand wartet (Klasse B, Blockade): Scheitert das Schreiben, geht der Fehler an diese Stelle (Register der
         /// Zeilen zum Nachholen), nie in eine Tabelle, aus der er verdrängt werden kann.
         let onFailure: (@Sendable (AssistantAuditError) -> Void)?
+        /// Runde 10, T3: Die Zeile wird nur geschrieben, wenn die Zeile DAVOR (dieselbe Gruppe, sie stehen hintereinander) angehängt
+        /// werden konnte: „beide oder keine“ (eine Schlusszeile ohne ihre Startzeile kann der Leser keiner Anfrage zuordnen).
+        var needsPrevious = false
     }
     private let pendingLock = NSLock()
     private var pending: [Pending] = []
@@ -926,11 +929,14 @@ final class AssistantAuditWriter: @unchecked Sendable {
     /// Reiht mehrere Zeilen als EINE Gruppe ein (unter einem Lock, ein Anstoß der Warteschlange): Sie stehen hintereinander in der
     /// Reihenfolge der Liste und werden mit einem fsync gesichert, nie mit einem je Zeile. Jeder Schlüssel hat danach seinen Anspruch
     /// (der Fehler dieser Zeile hängt an ihm und wird mit `settle(keys:)` abgeholt).
-    func enqueue(group: [(line: AssistantJournalLine, key: String)], run: AssistantRunToken?) {
+    /// `dependent`: jede Zeile außer der ersten wird nur geschrieben, wenn die davor angehängt werden konnte (beide oder keine).
+    func enqueue(group: [(line: AssistantJournalLine, key: String)], run: AssistantRunToken?, dependent: Bool = false) {
         guard !group.isEmpty else { return }
         for item in group { _ = claim(item.key) }
         pendingLock.withLock {
-            for item in group { pending.append(Pending(line: item.line, run: run, key: item.key, onFailure: nil)) }
+            for (offset, item) in group.enumerated() {
+                pending.append(Pending(line: item.line, run: run, key: item.key, onFailure: nil, needsPrevious: dependent && offset > 0))
+            }
         }
         queue.async { self.drain() }
     }
@@ -960,7 +966,18 @@ final class AssistantAuditWriter: @unchecked Sendable {
         }
         guard !batch.isEmpty else { return }
         var written: [Pending] = []
-        for item in batch where write(item) { written.append(item) }
+        // Die Zeilen einer Gruppe stehen im Stapel hintereinander (sie werden unter EINEM Lock angehängt): Die Zeile davor ist die
+        // Vorgängerin in der Gruppe.
+        var previousStands = true
+        for item in batch {
+            if item.needsPrevious, !previousStands {
+                note(item.key, .writeFailed)
+                item.onFailure?(.writeFailed)
+                continue
+            }
+            previousStands = write(item)
+            if previousStands { written.append(item) }
+        }
         guard !written.isEmpty else { return }
         do {
             try makeDurable()
@@ -1323,9 +1340,10 @@ public struct AssistantAuditLog: Sendable {
     public func setFailureObserver(_ observer: (@Sendable (String) -> Void)?) { writer.setFailureObserver(observer) }
 
     /// Schreibt Zeilen als EINE Gruppe (ein fsync) und wartet einmal. Gibt je Schlüssel den Fehler zurück; ein Schlüssel ohne Eintrag
-    /// steht dauerhaft in der Datei.
-    func writeGroup(_ group: [(line: AssistantJournalLine, key: String)], run: AssistantRunToken?) async -> [String: AssistantAuditError] {
-        writer.enqueue(group: group, run: run)
+    /// steht dauerhaft in der Datei. `dependent`: beide oder keine (eine Zeile wird nur geschrieben, wenn die davor angehängt wurde).
+    func writeGroup(_ group: [(line: AssistantJournalLine, key: String)], run: AssistantRunToken?,
+                    dependent: Bool = false) async -> [String: AssistantAuditError] {
+        writer.enqueue(group: group, run: run, dependent: dependent)
         return await writer.settle(keys: group.map(\.key))
     }
 

@@ -681,14 +681,12 @@ final class AssistantReleaseClock: @unchecked Sendable {
     /// Kehrt zurück, wenn kein Lauf des Nachholens mehr läuft (Tests, Beenden): Haltepunkt statt einer Zeitannahme.
     func awaitCatchUp() async {
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-            runnerLock.lock()
-            guard runner.running else {
-                runnerLock.unlock()
-                c.resume()
-                return
+            let idle = runnerLock.withLock { () -> Bool in
+                guard runner.running else { return true }
+                runner.idle.append(c)
+                return false
             }
-            runner.idle.append(c)
-            runnerLock.unlock()
+            if idle { c.resume() }
         }
     }
 }

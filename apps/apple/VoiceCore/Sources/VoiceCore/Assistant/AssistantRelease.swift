@@ -530,9 +530,28 @@ final class AssistantRelease: @unchecked Sendable {
     }
 }
 
-/// Zuordnung „n-tes gesendetes Satz-Ereignis einer Anfrage → Nummer des Schritts im Protokoll“. Der Controller meldet Anzeige
-/// und Audiostart mit der Ereignisnummer (`noteCommit`); das Protokoll braucht die Schrittnummer. Der Kern trägt sie VOR dem
-/// Senden ein, damit eine schnelle Meldung des Controllers nie ins Leere läuft. Begrenzt; ein Eintrag je Anfrage.
+/// Haltepunkte des Erzeugers einer Anfrage (nur Tests, siehe `AssistantStepIndex.setProbe`).
+enum AssistantRequestPoint: Sendable {
+    /// Der Schritt steht im Index, das Ereignis ist noch nicht gesendet.
+    case beforeSend
+    /// Die Zeile `round` ist noch nicht eingereiht.
+    case beforeRound
+}
+
+/// Der LEBENSLAUF einer Anfrage und die Zuordnung „n-tes gesendetes Satz-Ereignis → Nummer des Schritts im Protokoll“.
+///
+/// Lebenslauf (Runde 10, EIN Mechanismus für Abschluss und Sendepfad): offen → geschlossen → abgeschlossen. Der Übergang
+/// „geschlossen“ geschieht IM Lock der Ordnung (`AssistantRelease.inSection`), der Besitz des Abschlusses wird im selben Schritt
+/// vergeben (`claimCompletion`).
+/// - L1: Der Abschluss gehört genau EINEM Aufrufer (`claimCompletion` gibt für eine Kennung genau einmal `true`).
+/// - L2: Ab dem Schließen entsteht für die Anfrage keine Ausgabe und keine Protokollzeile mehr, außer den Zeilen des Abschlusses
+///   selbst. Jeder Abschnitt, in dem der Erzeuger sendet oder eine Zeile der Anfrage einreiht, fragt `isOpen` IM Lock; Controller-
+///   Commits fragen `accepts`.
+/// - L3: Der Ausgang der Schlusszeile wird erst festgelegt, wenn die Schreibergebnisse der Zeilen davor bekannt sind (der Abschluss in
+///   `AssistantSession.finishRequest`); weil nach dem Schließen keine weitere Zeile entsteht, kann danach kein Fehler mehr dazukommen.
+///
+/// Der Controller meldet Anzeige und Audiostart mit der Ereignisnummer (`noteCommit`); das Protokoll braucht die Schrittnummer. Der
+/// Kern trägt sie VOR dem Senden ein, damit eine schnelle Meldung des Controllers nie ins Leere läuft. Begrenzt; ein Eintrag je Anfrage.
 final class AssistantStepIndex: @unchecked Sendable {
     static let maxRequests = 32
     /// Mehr als die Schritte einer Antwort (`AssistantAuditLog.maxSteps`, jede Einheit ist ein Schritt): Bei den festen Grenzen läuft
@@ -550,6 +569,10 @@ final class AssistantStepIndex: @unchecked Sendable {
     /// Obergrenze, eine Kennung je abgeschlossener Anfrage für die Lebensdauer der Sitzung. Eine geschlossene Anfrage wird damit auf
     /// keinem Weg wieder zulässig (auch nicht durch einen Läufer, der nach dem Abschluss weiter ausgibt).
     private var closed: Set<String> = []
+    /// Runde 10, L1: Kennungen, deren Abschluss schon einem Aufrufer gehört. Wie `closed` ohne Obergrenze, nie geleert.
+    private var claimed: Set<String> = []
+    /// Nur Tests: Haltepunkt des Erzeugers (hinter einem eigenen Lock; der Rückruf läuft ohne ihn).
+    private var probe: (@Sendable (String, AssistantRequestPoint) async -> Void)?
 
     init(maxSteps: Int = AssistantStepIndex.maxSteps, maxRequests: Int = AssistantStepIndex.maxRequests) {
         limitSteps = maxSteps
@@ -606,6 +629,35 @@ final class AssistantStepIndex: @unchecked Sendable {
 
     private func closeLocked(_ id: String) {
         closed.insert(id)
+    }
+
+    /// Die Anfrage ist noch offen (nicht geschlossen, nicht abgeschlossen). Die Prüfung, die jeder Abschnitt des Erzeugers IM Lock der
+    /// Ordnung braucht (L2); im Gegensatz zu `accepts` verlangt sie keine Schritte (`sources` kommt vor dem ersten Schritt).
+    func isOpen(_ id: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return !closed.contains(id)
+    }
+
+    /// L1: Übernimmt den Abschluss der Anfrage und schließt sie (im selben Schritt). Gibt für eine Kennung genau einmal `true`; jeder
+    /// weitere Aufruf (auch nach einem hängenden Lauf, auch ein Abschluss durch Verdrängung) bekommt `false` und schreibt nichts.
+    /// Aufrufen IM Lock der Ordnung.
+    func claimCompletion(_ id: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        closeLocked(id)
+        return claimed.insert(id).inserted
+    }
+
+    /// Nur Tests: Der Erzeuger hält an diesem Punkt an, bis der Rückruf zurückkehrt (er suspendiert nur, blockiert keinen Thread).
+    func setProbe(_ probe: (@Sendable (String, AssistantRequestPoint) async -> Void)?) {
+        lock.withLock { self.probe = probe }
+    }
+
+    /// Haltepunkt des Erzeugers (ohne Rückruf: kein Warten, keine Wirkung).
+    func reach(_ id: String, _ point: AssistantRequestPoint) async {
+        guard let hook = lock.withLock({ probe }) else { return }
+        await hook(id, point)
     }
 
     /// Die Anfrage ist bekannt UND nimmt noch Commits an (nur dann löst ein Commit etwas aus). Dieselbe Prüfung gilt im Lock der

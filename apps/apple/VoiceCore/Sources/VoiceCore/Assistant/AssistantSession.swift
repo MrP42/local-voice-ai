@@ -28,6 +28,12 @@ import Foundation
 // Wiedergabe stoppen, Warteschlange leeren). Der wirksame Stand (Bereiche, Opt-in, Cloud-Zustimmung) wird im selben Lock gesetzt
 // (`AssistantRelease.apply`). Ein Lauf bleibt bis `commit` angemeldet. Jedes Ereignis trägt die Generation seines Laufs und wird
 // unmittelbar vor dem Senden gegen sie geprüft; der Verlaufseintrag entsteht im selben Lock (`AssistantRelease`).
+//
+// Lebenslauf einer Anfrage (Runde 10): offen → geschlossen → abgeschlossen (`AssistantStepIndex`, Übergänge im Lock der Ordnung). Der
+// Abschluss (`commit`) gehört genau EINEM Aufrufer (L1). Ab dem Schließen sendet der Erzeuger nichts mehr und reiht keine Zeile mehr ein,
+// jeder seiner Abschnitte fragt „offen?“ im Lock (L2: `AssistantRequestGate`, `RunEmitter.enqueue`); nur die Zeilen des Abschlusses selbst
+// kommen noch. Die Schlusszeile legt ihren Ausgang erst fest, wenn die Schreibergebnisse der Zeilen davor bekannt sind, und er ist der,
+// den die Steuerung erfährt (L3: `finishRequest`; auch der Abbruch vor dem Start läuft durch denselben Abschluss).
 
 /// Ein ausgegebener Satz (ohne Ansagen) mit Einordnung und Quellen, für `commit`.
 struct AssistantEmitted: Sendable, Equatable {
@@ -116,29 +122,75 @@ private final class RunState: @unchecked Sendable {
 }
 
 
-/// Ausgang eines Laufs. Jedes Ereignis geht durch `send`: Die Prüfung der Generation und das Senden geschehen im selben Lock,
-/// nach einem Widerruf kommt also nichts Altes mehr heraus.
+/// Warum eine Anfrage nichts mehr sendet oder einreiht (Runde 10, L2).
+enum AssistantRefusal: Sendable, Equatable {
+    /// Ihr Abschluss hat begonnen (oder sie wurde verdrängt und wird abgeschlossen): Nach dem Schließen entsteht nichts mehr außer den
+    /// Zeilen des Abschlusses selbst.
+    case closed
+    /// Das Protokoll der Anfrage hat einen klebrigen Schreibfehler.
+    case auditFailed
+}
+
+/// Die Schranke einer Anfrage an jedem Abschnitt, in dem ihr Erzeuger sendet oder eine Zeile einreiht (Runde 10, L2): EINE Prüfung,
+/// IM Lock der Ordnung (nicht an einer Vorprüfung davor). Geschlossen geht vor dem Schreibfehler.
+struct AssistantRequestGate: Sendable {
+    let request: String
+    let index: AssistantStepIndex
+    let audit: AssistantAuditLog?
+
+    /// Nur im Lock der Ordnung aufrufen (`AssistantRelease.inSection` und die Abschnitte von `AssistantRunOutput`).
+    func refusal() -> AssistantRefusal? {
+        guard index.isOpen(request) else { return .closed }
+        if audit?.hasFailed(request: request) == true { return .auditFailed }
+        return nil
+    }
+}
+
+/// Ausgang eines Sendens: die Prüfung der Generation und, falls die Anfrage sie verweigerte, der Grund.
+struct AssistantDelivery {
+    let check: AssistantCheck
+    let refusal: AssistantRefusal?
+}
+
+/// Ausgang eines Laufs. Jedes Ereignis geht durch `send` bzw. `deliver`: Die Prüfung der Generation, der Lebenslauf der Anfrage
+/// (offen?) und das Senden geschehen im selben Lock, nach einem Widerruf oder nach dem Schließen kommt also nichts mehr heraus.
 final class AssistantRunOutput: @unchecked Sendable {
     let release: AssistantRelease
     let generation: Int
     private let continuation: AsyncStream<AssistantEvent>.Continuation
+    private let gate: AssistantRequestGate?
 
-    init(release: AssistantRelease, generation: Int, continuation: AsyncStream<AssistantEvent>.Continuation) {
+    init(release: AssistantRelease, generation: Int, continuation: AsyncStream<AssistantEvent>.Continuation,
+         gate: AssistantRequestGate? = nil) {
         self.release = release
         self.generation = generation
         self.continuation = continuation
+        self.gate = gate
     }
 
-    /// Sendet nur, wenn die Generation noch gilt (`stale`: nichts gesendet). `onResult` läuft im selben Lock unmittelbar nach dem
-    /// Senden, mit `true`, wenn das Ereignis den Strom erreicht hat, und `false`, wenn der Strom schon beendet war (Leser weg:
-    /// die Aktion ließ sich nicht auslösen, Ergebnis `failed`). Dort wird die Ergebniszeile des Protokolls eingereiht (kurz,
-    /// ohne Wartezeit): Sie steht damit vor jeder Rückmeldung des Controllers und stimmt mit dem tatsächlichen Senden überein.
-    /// `onStale`: die Ablehnung wird IM Lock mit der vorgefundenen Generation gemeldet (Zeile „verworfen“ in der Reihenfolge der
-    /// Erhöhungen). `refuse`: hat das Protokoll der Anfrage schon einen Schreibfehler, geht nichts hinaus (Ergebnis `failed`).
-    func send(_ event: AssistantEvent, onResult: ((Bool) -> Void)? = nil, onStale: ((Int) -> Void)? = nil,
-              refuse: (() -> Bool)? = nil) -> AssistantCheck {
-        release.ifCurrentAttempt(generation, onStale: onStale) {
-            if refuse?() == true { return false }
+    /// Sendet nur, wenn die Generation noch gilt (`stale`: nichts gesendet) und die Anfrage offen ist und kein Schreibfehler vorliegt.
+    /// `onResult` läuft im selben Lock unmittelbar nach dem Senden, mit `true`, wenn das Ereignis den Strom erreicht hat, und `false`,
+    /// wenn der Strom schon beendet war (Leser weg: die Aktion ließ sich nicht auslösen, Ergebnis `failed`). Dort wird die Ergebniszeile
+    /// des Protokolls eingereiht (kurz, ohne Wartezeit): Sie steht damit vor jeder Rückmeldung des Controllers und stimmt mit dem
+    /// tatsächlichen Senden überein. `onStale`: die Ablehnung wird IM Lock mit der vorgefundenen Generation gemeldet (Zeile
+    /// „verworfen“ in der Reihenfolge der Erhöhungen) und nur, solange die Anfrage offen ist. `onRefused`: die Anfrage verweigert das
+    /// Senden (geschlossen: keine Zeile mehr; Schreibfehler: Ergebniszeile „fehlgeschlagen“), ebenfalls im Lock.
+    func deliver(_ event: AssistantEvent, onResult: ((Bool) -> Void)? = nil, onStale: ((Int) -> Void)? = nil,
+                 onRefused: ((AssistantRefusal) -> Void)? = nil) -> AssistantDelivery {
+        var refusal: AssistantRefusal?
+        let gate = self.gate
+        let check = release.ifCurrentAttempt(generation, onStale: { found in
+            if let gate, !gate.index.isOpen(gate.request) {
+                refusal = .closed
+                return
+            }
+            onStale?(found)
+        }) {
+            if let why = gate?.refusal() {
+                refusal = why
+                onRefused?(why)
+                return false
+            }
             let delivered: Bool
             switch continuation.yield(event) {
             case .terminated: delivered = false
@@ -147,18 +199,12 @@ final class AssistantRunOutput: @unchecked Sendable {
             onResult?(delivered)
             return delivered
         }
+        return AssistantDelivery(check: check, refusal: refusal)
     }
 
-    /// Wie `send`, für Ereignisse mit Inhalt (`sources`, `done`): Hat das Protokoll der Anfrage schon einen Schreibfehler (klebrig),
-    /// geht das Ereignis IM Lock nicht hinaus (Runde 9, Suchlauf b). `refused`: genau deshalb nicht.
-    func send(_ event: AssistantEvent, guarding audit: AssistantAuditLog?, request: String) -> (check: AssistantCheck, refused: Bool) {
-        var refused = false
-        let check = send(event, refuse: {
-            guard let audit, audit.hasFailed(request: request) else { return false }
-            refused = true
-            return true
-        })
-        return (check, refused)
+    /// Wie `deliver`, ohne Auskunft über den Grund (Tests und Aufrufer, die ihn nicht brauchen).
+    func send(_ event: AssistantEvent, onResult: ((Bool) -> Void)? = nil, onStale: ((Int) -> Void)? = nil) -> AssistantCheck {
+        deliver(event, onResult: onResult, onStale: onStale).check
     }
 
     /// Fehler und Abbruch tragen keine Inhalte und gehen immer hinaus.
@@ -295,18 +341,54 @@ private final class RunEmitter {
         AssistantSpeech.render(text, lineStart: false)?.speech ?? text
     }
 
-    /// Nummeriert einen Schritt und reiht seine Zeile ein (nur Einreihen; das Warten macht der Aufrufer).
-    private func step(_ verdict: AssistantTraceVerdict) -> Int {
-        let n = state.nextStep()
-        if n >= AssistantAuditLog.maxSteps { reachedLimit = true }
-        if let journal {
-            var l = AssistantJournalLine(.step, req: rid)
-            l.n = n
-            l.verdict = verdict
-            l.gen = generation
-            journal.enqueue(l)
+    /// Reiht eine Zeile der Anfrage ein, solange sie OFFEN ist (Runde 10, L2): die Prüfung und das Einreihen in EINEM Abschnitt der
+    /// Ordnung, nicht an einer Vorprüfung davor. `false`: geschlossen, nichts wurde eingereiht (keine Zeile hinter der Schlusszeile).
+    /// Ohne Protokoll gibt es nichts einzureihen (`true`).
+    @discardableResult
+    private func enqueue(_ line: AssistantJournalLine, run: AssistantRunToken? = nil) -> Bool {
+        guard let journal else { return true }
+        return release.inSection { _ in
+            guard index.isOpen(rid) else { return false }
+            journal.enqueue(line, run: run)
+            return true
         }
-        return n
+    }
+
+    /// Ergebnis einer Pflichtzeile der Anfrage (`start`, `round`, `areas`), auf die der Erzeuger wartet.
+    enum Landing {
+        /// Die Zeile steht dauerhaft in der Datei (und die Anfrage ist noch offen).
+        case stands
+        /// Die Zeile ließ sich nicht schreiben (oder ein früherer Fehler der Anfrage liegt vor): kein Modell, keine Ausgabe, Ausgang „Fehler“.
+        case failed
+        /// Die Anfrage wurde inzwischen geschlossen: Die Zeile wurde nicht eingereiht, der Erzeuger endet als abgebrochen.
+        case closed
+    }
+
+    /// Reiht eine Pflichtzeile ein (nur, solange die Anfrage offen ist; `nil`: nichts Neues) und wartet, bis alles bis hierher
+    /// Eingereichte der Anfrage steht.
+    func land(_ line: AssistantJournalLine?, run: AssistantRunToken? = nil) async -> Landing {
+        guard let journal else { return .stands }
+        if let line, !enqueue(line, run: run) { return .closed }
+        if await journal.waitUntilWritten(request: rid) != nil { return .failed }
+        return index.isOpen(rid) ? .stands : .closed
+    }
+
+    /// Nummeriert einen Schritt und reiht seine Zeile ein (nur Einreihen; das Warten macht der Aufrufer). `nil`: Die Anfrage ist
+    /// geschlossen; es gibt keinen Schritt und keine Zeile mehr (L2). Nummer und Zeile entstehen im selben Abschnitt.
+    private func step(_ verdict: AssistantTraceVerdict) -> Int? {
+        release.inSection { _ in
+            guard index.isOpen(rid) else { return nil }
+            let n = state.nextStep()
+            if n >= AssistantAuditLog.maxSteps { reachedLimit = true }
+            if let journal {
+                var l = AssistantJournalLine(.step, req: rid)
+                l.n = n
+                l.verdict = verdict
+                l.gen = generation
+                journal.enqueue(l)
+            }
+            return n
+        }
     }
 
     private func commitLine(_ n: Int, _ mark: AssistantCommitMark) -> AssistantJournalLine {
@@ -316,55 +398,51 @@ private final class RunEmitter {
         return l
     }
 
+    /// Die Ergebniszeile einer Einheit, die nicht hinausging („nicht ausgegeben“), im Abschnitt der Ordnung mit der dort gefundenen
+    /// Generation, solange die Anfrage offen ist. Eine geschlossene Anfrage bekommt sie nicht mehr; ohne Ergebniszeile liest die Ansicht
+    /// die Einheit einer abgeschlossenen Anfrage als „nicht vorgesehen“.
+    private func enqueueNotEmitted(_ n: Int) {
+        guard let journal else { return }
+        release.inSection { found in
+            guard index.isOpen(rid) else { return }
+            journal.enqueue(commitLine(n, AssistantCommitMark(stage: .emit, ok: false, generation: found)))
+        }
+    }
+
     /// Gibt eine Einheit aus. Reihenfolge (Schreibfolge E4.2b): Einordnung (`step`) einreihen, dauerhaft schreiben lassen (das
     /// deckt auch die Ergebniszeilen der vorigen Einheiten und jeden früheren Fehler der Anfrage), erst dann den Ausgabe-Commit
-    /// prüfen und senden. Misslingt das Schreiben, wird die Einheit NICHT ausgegeben.
+    /// prüfen und senden. Misslingt das Schreiben, wird die Einheit NICHT ausgegeben. Ist die Anfrage geschlossen (ihr Abschluss hat
+    /// begonnen), geht nichts hinaus und es entsteht keine Zeile mehr (Runde 10, L2): `.revoked`.
     func emit(_ text: String, speech: String, status: AssistantSentenceStatus, sources: [AssistantPassage] = [],
               quote: Bool = false) async -> Delivery {
         let announcement = status == .announcement
-        let n = step(AssistantTraceVerdict(status: status))
+        guard let n = step(AssistantTraceVerdict(status: status)) else { return .revoked }
         if let journal, await journal.waitUntilWritten(request: rid) != nil {
             // Nichts wurde ausgegeben: das Ergebnis ist „verworfen“, nicht „unbekannt“.
-            release.inSection { found in
-                journal.enqueue(commitLine(n, AssistantCommitMark(stage: .emit, ok: false, generation: found)))
-            }
+            enqueueNotEmitted(n)
             if !announcement { state.update { $0.counts.drop(.revoked) } }
             return .failed
         }
         // Der Schritt steht im Index, BEVOR das Ereignis hinausgeht: Eine schnelle Rückmeldung des Controllers läuft nie ins Leere. Ist
         // der Index voll (bei den festen Grenzen nicht möglich, siehe `AssistantStepIndex.maxSteps`), geht die Einheit NICHT hinaus: Die
-        // Antwort endet an der Grenze, die Zeile des Ausgabe-Commits sagt „nicht ausgegeben“.
+        // Antwort endet an der Grenze, die Zeile des Ausgabe-Commits sagt „nicht ausgegeben“. Ein geschlossener Index ist keine Grenze:
+        // Die Anfrage ist abgeschlossen, die Einheit geht nicht hinaus und es entsteht keine Zeile.
         guard index.append(rid, step: n) else {
-            release.inSection { found in
-                journal?.enqueue(commitLine(n, AssistantCommitMark(stage: .emit, ok: false, generation: found)))
-            }
+            guard index.isOpen(rid) else { return .revoked }
+            enqueueNotEmitted(n)
             reachedLimit = true
             state.update { $0.limited = true }
             return .limit
         }
+        await index.reach(rid, .beforeSend)
         let gen = generation
-        var refusedByAudit = false
-        let check = output.send(.sentence(requestId: rid, generation: gen, text: text, speech: speech, status: status,
-                                          sources: sources, quote: quote), onResult: { delivered in
+        // Das Senden prüft IM Lock die Generation, den Lebenslauf (offen?) und den Schreibfehler; Zeile und Buchführung der gesendeten
+        // Einheit entstehen im selben Lock: Eine gesendete Einheit steht damit immer vor der Schlusszeile und im Stand des Abschlusses.
+        let sent = output.deliver(.sentence(requestId: rid, generation: gen, text: text, speech: speech, status: status,
+                                            sources: sources, quote: quote), onResult: { delivered in
             self.journal?.enqueue(self.commitLine(n, AssistantCommitMark(stage: .emit, ok: delivered, generation: gen, failed: !delivered)))
-        }, onStale: { found in
-            self.journal?.enqueue(self.commitLine(n, AssistantCommitMark(stage: .emit, ok: false, generation: found)))
-        }, refuse: {
-            // Ein Schreibfehler zwischen dem Warten und dem Senden (klebrig): nichts geht hinaus.
-            guard let journal = self.journal, journal.hasFailed(request: self.rid) else { return false }
-            refusedByAudit = true
-            self.journal?.enqueue(self.commitLine(n, AssistantCommitMark(stage: .emit, ok: false, generation: gen, failed: true)))
-            return true
-        })
-        if !check.ok { index.removeLast(rid) }
-        if refusedByAudit {
-            if !announcement { state.update { $0.counts.drop(.revoked) } }
-            return .failed
-        }
-        let delivered = check.ok
-        if delivered, firstMs == nil { firstMs = elapsedMs }
-        state.update { r in
-            if delivered {
+            guard delivered else { return }
+            self.state.update { r in
                 switch status {
                 case .grounded: r.counts.grounded += 1
                 case .inventory: r.counts.inventory += 1
@@ -374,10 +452,25 @@ private final class RunEmitter {
                 }
                 r.outputSteps.append(n)
                 if !announcement { r.sentences.append(AssistantEmitted(text: text, status: status, sources: sources, quote: quote, step: n)) }
-            } else if !announcement {
-                r.counts.drop(.revoked)
             }
+        }, onStale: { found in
+            self.journal?.enqueue(self.commitLine(n, AssistantCommitMark(stage: .emit, ok: false, generation: found)))
+        }, onRefused: { why in
+            // Ein Schreibfehler zwischen dem Warten und dem Senden (klebrig): nichts geht hinaus. Für eine geschlossene Anfrage keine Zeile.
+            guard why == .auditFailed else { return }
+            self.journal?.enqueue(self.commitLine(n, AssistantCommitMark(stage: .emit, ok: false, generation: gen, failed: true)))
+        })
+        let delivered = sent.check.ok
+        if !delivered {
+            index.removeLast(rid)
+            if !announcement { state.update { $0.counts.drop(.revoked) } }
         }
+        switch sent.refusal {
+        case .auditFailed?: return .failed
+        case .closed?: return .revoked
+        case nil: break
+        }
+        if delivered, firstMs == nil { firstMs = elapsedMs }
         if delivered, !announcement { texts.append(text) }
         return delivered ? .delivered : .revoked
     }
@@ -392,9 +485,10 @@ private final class RunEmitter {
     }
 
     /// Schreibt die Bereiche der Quellen, sobald sie feststehen (Zeile `areas`), nicht erst im `end`: Ein Prozessende danach
-    /// verliert sie nicht. Nur Neues wird geschrieben, und die Zeile steht dauerhaft in der Datei, wenn die Methode zurückkehrt.
-    /// `false`: die Pflichtzeile ließ sich nicht schreiben (kein Modell, keine Ausgabe).
-    func noteAreas(_ areas: [AssistantArea]) async -> Bool {
+    /// verliert sie nicht. Nur Neues wird geschrieben, und die Zeile steht dauerhaft in der Datei, wenn die Methode mit `.stands`
+    /// zurückkehrt. `.failed`: die Pflichtzeile ließ sich nicht schreiben (kein Modell, keine Ausgabe); `.closed`: die Anfrage wurde
+    /// inzwischen geschlossen (nichts eingereiht).
+    func noteAreas(_ areas: [AssistantArea]) async -> Landing {
         let names = Set(areas.map(\.rawValue))
         var fresh = false
         state.update { r in
@@ -402,14 +496,14 @@ private final class RunEmitter {
             r.areasWritten.formUnion(names)
             fresh = true
         }
-        guard let journal else { return true }
+        var line: AssistantJournalLine?
         if fresh {
             var l = AssistantJournalLine(.areas, req: rid)
             l.areas = names.sorted()
             l.gen = generation
-            journal.enqueue(l)
+            line = l
         }
-        return await journal.waitUntilWritten(request: rid) == nil
+        return await land(line)
     }
 
     /// Ein verworfener Kandidat: Auch seine Einordnung (Grund und Generation) wird eingereiht; sie behauptet nichts. Ihr Fehler
@@ -560,8 +654,8 @@ public actor AssistantSession {
     public static let maxStoredTurns = 200
     /// Höchstens so viele Auszüge je Frage.
     static let passageLimit = 8
-    /// Wie lange `commit` auf den geordneten Abschluss eines Laufs wartet (hängendes Modell).
-    static let commitWait: Duration = .seconds(2)
+    /// Wie lange `commit` auf den geordneten Abschluss eines Laufs wartet (hängendes Modell). Je Sitzung einstellbar (Tests).
+    static let defaultCommitWait: Duration = .seconds(2)
     /// Wie viele Endstände unabgeschlossener Läufe gemerkt werden (danach wird der älteste abgemeldet).
     static let maxRemembered = 16
 
@@ -582,6 +676,7 @@ public actor AssistantSession {
     private let context: AssistantContext
     private let released: Bool
     private let stepIndex: AssistantStepIndex
+    private let commitWait: Duration
     private let sessionId = UUID().uuidString
     private let audit: AssistantAuditLog?
     private let stateLine: AssistantStateLine
@@ -620,8 +715,10 @@ public actor AssistantSession {
     /// Beiträge aus Runden ohne Quelle kommen bei `released == false` gar nicht erst in den Verlauf (`AssistantTurn.admitted`).
     init(model: any BookTalkModel, knowledge: AssistantKnowledge, config: AssistantConfig, history: [AssistantTurn] = [],
          audit: AssistantAuditLog? = nil, released: Bool, cloudConsent: Bool = true, releaseStore: AssistantReleaseStore? = nil,
-         cloudTarget: String? = nil, stepIndex: AssistantStepIndex = AssistantStepIndex()) {
+         cloudTarget: String? = nil, stepIndex: AssistantStepIndex = AssistantStepIndex(),
+         commitWait: Duration = AssistantSession.defaultCommitWait) {
         self.stepIndex = stepIndex
+        self.commitWait = commitWait
         // Die eine Ordnung dieses Prozesslaufs: mit Speicher die seine (alle Sitzungen und Änderungen ohne Sitzung teilen Lock,
         // Generation, Stand der Klasse A, Epochen, Lauf-Token, Standzeile, Zähler und Reihe), ohne Speicher eine eigene, mit dem Stand
         // aus den Angaben. Die Sitzung hält davon nichts als Kopie: Sie liest ihre Sicht im selben Lesen wie die Generation.
@@ -905,11 +1002,20 @@ public actor AssistantSession {
                                      auditFailed: blocked || (audit?.hasFailed(request: requestId) ?? false))
     }
 
-    /// Schließt die Anfrage für Commits (Anzeige, Audiostart), im Lock der Ordnung (Runde 9, S1). Immer VOR der Schlusszeile und VOR dem
-    /// Ende des Anspruchs auf ihren Fehler: Ein Commit, der danach den Lock bekommt, löst nichts aus; einer, der davor lief, hat seine
-    /// Zeilen vor der Schlusszeile eingereiht. Die Zuordnung Ereignis → Schritt bleibt bis zum Ende des Abschlusses lesbar.
+    /// Schließt die Anfrage (Anzeige, Audiostart, Senden und Einreihen des Erzeugers), im Lock der Ordnung (Runde 9, S1). Immer VOR der
+    /// Schlusszeile und VOR dem Ende des Anspruchs auf ihren Fehler: Ein Commit oder Erzeuger-Abschnitt, der danach den Lock bekommt, löst
+    /// nichts aus und reiht nichts ein; einer, der davor lief, hat seine Zeilen vor der Schlusszeile eingereiht. Die Zuordnung
+    /// Ereignis → Schritt bleibt bis zum Ende des Abschlusses lesbar. Ohne Besitz des Abschlusses: für das Verdrängen aus dem Gedächtnis
+    /// (der Abschluss folgt dann durch `commit`).
     private nonisolated func closeForCommits(_ requestId: String) {
         release.inSection { _ in stepIndex.close(requestId) }
+    }
+
+    /// Runde 10, L1: Übernimmt den Abschluss der Anfrage und schließt sie, in EINEM Schritt im Lock der Ordnung. `true` genau für den
+    /// ersten Aufrufer pro Kennung; jeder weitere (auch nach einem hängenden Lauf, auch die Verdrängung) kehrt sofort zurück und schreibt
+    /// nichts. Wird im Aktor VOR dem ersten Wartepunkt gerufen: Zwischen Prüfung und Wirkung liegt kein `await`.
+    private func claimCompletion(_ requestId: String) -> Bool {
+        release.inSection { _ in stepIndex.claimCompletion(requestId) }
     }
 
     /// Der Audiostart eines Satzes: Prüfung der Generation, der TATSÄCHLICHE Start (`start`: gibt zurück, ob er ausgelöst wurde)
@@ -1050,7 +1156,7 @@ public actor AssistantSession {
         guard let run = active[requestId] else { return forget(requestId) }
         run.state.markCancelled()
         run.stop()
-        let deadline = ContinuousClock.now.advanced(by: Self.commitWait)
+        let deadline = ContinuousClock.now.advanced(by: commitWait)
         // Runde 8 (Suchlauf d): `try?` ist hier begründet. Der Schlaf ist nur eine Pause zwischen zwei Prüfungen; ist der Aufrufer
         // abgebrochen, wirft er sofort, setzt aber trotzdem aus und gibt den Aktor ab (gemessen mit
         // `testCommitFromACancelledCallerStillWaitsForTheOrderedEndOfTheRun`), und die Frist begrenzt die Schleife in jedem Fall.
@@ -1089,32 +1195,71 @@ public actor AssistantSession {
     /// (`h+<Generation>`) geschehen im selben Lock wie die Erhöhung der Generation; eine Ablehnung trägt die dabei gefundene
     /// Generation. Läuft die Anfrage noch, bricht `commit` sie ab und wartet auf ihren Endstand, bevor es schreibt. Quellen (nur
     /// die, die einen gesprochenen Satz decken) kommen aus der Prüfung dieser Anfrage. Mit dem Commit endet die Anmeldung des
-    /// Laufs für den Widerruf. Reihenfolge am Ende der Anfrage (Runde 9, S1): erst für Commits schließen (im Lock der Ordnung), dann die
-    /// Schlusszeile, dann der Anspruch auf ihren Fehler. `false`, wenn das Protokoll nicht geschrieben werden konnte; die Anfrage endet
-    /// dann mit Ausgang „Fehler“. Der Beitrag steht dann nur im Verlauf, wenn der Fehler erst nach seinem Anhängen entstand (S2: ein
-    /// Fehler, der schon feststeht, verhindert ihn).
+    /// Laufs für den Widerruf.
+    ///
+    /// Lebenslauf (Runde 10): offen → geschlossen → abgeschlossen, EIN Mechanismus (`AssistantStepIndex`). Der Abschluss gehört genau
+    /// EINEM Aufrufer (L1): Wer ihn nicht bekommt (zweiter `commit`, Abschluss durch Verdrängung nach dem der Steuerung, Aufruf nach einem
+    /// hängenden Lauf), kehrt sofort mit `true` zurück und schreibt nichts. Mit dem Besitz ist die Anfrage geschlossen (L2): Erzeuger und
+    /// Controller reihen nichts mehr ein und senden nichts mehr; nur die Zeilen des Abschlusses selbst (`start` falls nie bestätigt,
+    /// `h`-Marken, `end`) kommen noch. Der Ausgang der Schlusszeile wird erst festgelegt, wenn die Schreibergebnisse der Zeilen davor
+    /// bekannt sind (L3), und ist derselbe, den dieser Rückgabewert der Steuerung meldet. Reihenfolge am Ende der Anfrage: erst
+    /// schließen (im Lock der Ordnung), dann die Schlusszeile, dann der Anspruch auf ihren Fehler. `false`, wenn das Protokoll nicht
+    /// geschrieben werden konnte; die Anfrage endet dann mit Ausgang „Fehler“. Der Beitrag steht dann nur im Verlauf, wenn der Fehler
+    /// erst nach seinem Anhängen entstand (S2: ein Fehler, der schon feststeht, verhindert ihn).
     @discardableResult
     public func commit(requestId: String, user: String, spoken: AssistantSpokenUnits, interrupted: Bool, revoked: Bool = false) async -> Bool {
-        // Runde 9, S1: Vom Beginn des Abschlusses an nimmt die Anfrage keine Anzeige- und Audio-Commits mehr an (im Lock der Ordnung, vor
-        // dem Warten auf den Lauf, vor der Schlusszeile und vor dem Ende ihres Anspruchs). Die Zuordnung der Schritte bleibt lesbar.
-        // Ein laufender Lauf wird zuerst abgebrochen (damit eine Einheit, die der Index danach ablehnt, als Abbruch endet, nicht als
-        // Grenze), dann geschlossen.
+        // Eine Anfrage, die diese Sitzung (noch) nicht kennt (ihr Lauf ist nie angekommen): Es gibt nichts abzuschließen und nichts zu
+        // schreiben. Kommt ihr Lauf doch noch, endet er als Abbruch vor dem Start und bekommt dort seinen Eintrag (`start`, `end`); so hat
+        // jede Anfrage genau einen Protokolleintrag, auch wenn ihr Abschluss den Lauf überholt. Eine schon abgeschlossene Kennung bleibt
+        // geschlossen (ihr Lauf wird abgewiesen). Zwischen dieser Prüfung und dem Besitz liegt kein Wartepunkt.
+        guard active[requestId] != nil || results[requestId] != nil else {
+            if stepIndex.isOpen(requestId) { earlyCancel.insert(requestId) }
+            return true
+        }
+        guard claimCompletion(requestId) else { return true }
+        // Ein laufender Lauf wird abgebrochen und, wenn er nicht mehr endet, nach der Frist zurückgelassen.
         if let run = active[requestId] {
             run.state.markCancelled()
             run.stop()
         }
-        closeForCommits(requestId)
-        guard let state = await settle(requestId) else { return true }   // unbekannte oder schon abgeschlossene Anfrage
+        guard let state = await settle(requestId) else { return true }   // unbekannte Anfrage (nichts gelaufen, nichts zu schreiben)
         // Ein hängender Lauf, den `settle` nicht abwarten konnte: Sein spätes Ende nimmt die Anfrage nicht noch einmal ins Gedächtnis
-        // (sie ist abgeschlossen, ihr Anspruch beendet; ein zweiter Abschluss schriebe eine zweite Schlusszeile).
+        // (sie ist abgeschlossen, ihr Anspruch beendet).
         if active[requestId] != nil { finishedWhileRunning.insert(requestId) }
+        return await finishRequest(requestId, state: state, user: user, spoken: spoken, interrupted: interrupted, revoked: revoked)
+    }
+
+    /// Der Anspruch der Schreibfehler der Zeile `start` (und `end`), die der Abschluss selbst schreibt: eigene Schlüssel, damit der
+    /// Fehler genau dieser Zeile erkennbar ist (der der Anfrage hängt am Anspruch der Anfrage).
+    private static func startKey(_ requestId: String) -> String { "\(requestId)#start" }
+    private static func endKey(_ requestId: String) -> String { "\(requestId)#end" }
+
+    /// Der Abschluss selbst (Besitz und Schließen: `commit`). Schreibt, in dieser Reihenfolge: `start` (nur, wenn der Lauf es nie bestätigt
+    /// hat), die Marken des Verlaufs, die Schlusszeile; gibt den Anspruch auf den Fehler der Anfrage erst danach frei.
+    private func finishRequest(_ requestId: String, state: RunState, user: String, spoken: AssistantSpokenUnits, interrupted: Bool,
+                               revoked: Bool) async -> Bool {
         release.unregister(requestId)
         let record = state.snapshot
         let text = user.trimmingCharacters(in: .whitespacesAndNewlines)
         let units = Self.units(of: record, spoken: spoken, stepIndex: stepIndex, requestId: requestId)
 
-        // `start` zuerst (war es nicht schon geschrieben): Die Zeilen der Anfrage stehen in der Reihenfolge start, …, h, end.
-        if let audit, !record.journaled { audit.enqueue(Self.startLine(requestId, session: sessionId, config: config, record: record), run: runToken) }
+        // `start` zuerst (war es nicht schon bestätigt, etwa bei einem Abbruch vor dem Start) und abgewartet: Die Zeilen der Anfrage stehen in
+        // der Reihenfolge start, …, h, end. Ließ sich `start` nicht schreiben, hat die Anfrage keinen Anfang in der Datei: Dann gibt es nur
+        // noch `start` zusammen mit `end` (Ausgang „Fehler“, `lost`), BEIDE ODER KEINE (Runde 10, T3), kein Beitrag, keine Marken.
+        if let audit, !record.journaled {
+            audit.enqueue(Self.startLine(requestId, session: sessionId, config: config, record: record),
+                          key: Self.startKey(requestId), run: runToken)
+            if await audit.waitForLine(key: Self.startKey(requestId)) != nil {
+                var end = Self.endLine(requestId, record: record, outcome: .failed)
+                end.lost = true
+                let startAgain = Self.startLine(requestId, session: sessionId, config: config, record: record)
+                _ = await audit.writeGroup([(line: startAgain, key: Self.startKey(requestId)), (line: end, key: Self.endKey(requestId))],
+                                           run: runToken, dependent: true)
+                _ = await audit.flush(request: requestId)
+                audit.release(request: requestId)
+                return false
+            }
+        }
 
         var historyRejected = false
         // Ergebnis des Verlaufs JE EINHEIT (Runde 7, B4): Jede ausgegebene Einheit bekommt ihre Marke `h+g` (steht im Beitrag) oder `h-g`
@@ -1189,18 +1334,26 @@ public actor AssistantSession {
         } else {
             outcome = interrupted || record.cancelled ? .interrupted : .completed
         }
-        var end = AssistantJournalLine(.end, req: requestId)
-        end.at = Date()
-        end.outcome = outcome
-        end.level = AssistantAuditLevel.of(record.counts)
-        let covering = Self.distinct(record.sentences.filter { $0.status == .grounded }.flatMap(\.sources)).map(\.area)
-        end.areas = Set((covering + record.inventoryAreas).map(\.rawValue)).sorted()
+        var end = Self.endLine(requestId, record: record, outcome: outcome)
         // Ließ sich eine Zeile der Anfrage nicht schreiben, steht das am Ende: Was dann in der Datei fehlt, ist „unbekannt“ (R7).
         if writeFailed { end.lost = true }
         audit.enqueue(end)
         let tail = await audit.flush(request: requestId)
         audit.release(request: requestId)
-        return !writeFailed && tail == nil
+        // L3: Was die Schlusszeile als „Fehler“ ausweist, meldet auch der Rückgabewert (nicht nur ein Schreibfehler dieser Anfrage, auch
+        // ein Lauf, der wegen des Protokolls endete, etwa weil die Standzeile nicht schrieb).
+        return !writeFailed && tail == nil && record.failure != .auditUnavailable
+    }
+
+    /// Die Schlusszeile einer Anfrage (ohne `lost`).
+    private static func endLine(_ requestId: String, record: AssistantRunRecord, outcome: AssistantAuditEntry.Outcome) -> AssistantJournalLine {
+        var end = AssistantJournalLine(.end, req: requestId)
+        end.at = Date()
+        end.outcome = outcome
+        end.level = AssistantAuditLevel.of(record.counts)
+        let covering = distinct(record.sentences.filter { $0.status == .grounded }.flatMap(\.sources)).map(\.area)
+        end.areas = Set((covering + record.inventoryAreas).map(\.rawValue)).sorted()
+        return end
     }
 
     // MARK: Abbruch
@@ -1239,29 +1392,30 @@ public actor AssistantSession {
         // Bestand und Zugang gehören dazu: Gesperrt, blockiert oder `stale` (Klasse B) sind die Bereiche dieser Anfrage leer.
         let snapshot = self.release.snapshot.forRequest
         let allowedAreas: Set<AssistantArea>? = self.config.isCloud ? snapshot.areas : nil
+        // Runde 10: Eine Kennung, die schon geschlossen ist (abgeschlossen, verdrängt, früher unbekannt abgeschlossen), läuft nicht mehr:
+        // kein Anspruch, keine Zeile, kein Ereignis mit Inhalt. (Zwischen dieser Prüfung und der Anmeldung in `active` liegt kein Wartepunkt.)
+        guard stepIndex.isOpen(rid) else {
+            out.yield(.failed(requestId: rid, .cancelled))
+            return
+        }
         // Runde 8, R6: Der Fehler jeder Zeile dieser Anfrage hängt ab hier an ihrem Anspruch (nie verdrängt, bis `commit` ihn beendet).
         audit?.claim(request: rid)
         if earlyCancel.remove(rid) != nil {
-            // Runde 9 (Suchlauf c): Der Anspruch endet erst, wenn sein Fehler gemeldet ist. Scheitert das Schreiben von `start` oder
-            // `end`, ist das der Ausgang der Anfrage („Protokoll nicht schreibbar“), nicht still verworfen: Die Zeilen werden vor dem
-            // einen Schlussereignis geschrieben.
-            var failure = AssistantFailure.cancelled
-            if let audit {
-                var record = AssistantRunRecord()
-                record.generation = snapshot.generation
-                record.optInAtStart = snapshot.optIn
-                record.consentVersion = snapshot.consentVersion
-                audit.enqueue(Self.startLine(rid, session: sessionId, config: config, record: record), run: runToken)
-                var end = AssistantJournalLine(.end, req: rid)
-                end.at = Date()
-                end.outcome = .interrupted
-                end.level = .s0
-                end.areas = []
-                audit.enqueue(end)
-                if await audit.flush(request: rid) != nil { failure = .auditUnavailable }
-                audit.release(request: rid)
+            // Ein Abbruch vor dem Start ist ein Abschluss wie jeder andere (Runde 10, T3): derselbe Code (`finishRequest`: `start` schreiben und
+            // abwarten, bei einem Fehler `start` und `end` als Gruppe, sonst `end` mit dem Ausgang „abgebrochen“), nicht ein zweiter Pfad. Das
+            // Ereignis an die Steuerung ist der Ausgang der Schlusszeile: „abgebrochen“, wenn alles dauerhaft steht, sonst „Protokoll nicht
+            // schreibbar“. Der Anspruch endet erst danach.
+            let state = RunState(snapshot: snapshot)
+            state.update {
+                $0.cancelled = true
+                $0.failure = .cancelled
             }
-            out.yield(.failed(requestId: rid, failure))
+            guard claimCompletion(rid) else {
+                out.yield(.failed(requestId: rid, .cancelled))
+                return
+            }
+            let stands = await finishRequest(rid, state: state, user: "", spoken: .nothing, interrupted: true, revoked: false)
+            out.yield(.failed(requestId: rid, stands ? .cancelled : .auditUnavailable))
             return
         }
         var runConfig = self.config
@@ -1270,7 +1424,8 @@ public actor AssistantSession {
         let audit = self.audit, index = self.stepIndex, canOptIn = self.released, stateLine = self.stateLine, runToken = self.runToken
         let promptHistory = Self.promptHistory(history, areas: allowedAreas)
         let state = RunState(snapshot: snapshot)
-        let output = AssistantRunOutput(release: release, generation: snapshot.generation, continuation: out)
+        let output = AssistantRunOutput(release: release, generation: snapshot.generation, continuation: out,
+                                        gate: AssistantRequestGate(request: rid, index: index, audit: audit))
         let work = Task<Outcome, Never> {
             await Self.generate(request, model: model, knowledge: knowledge, config: runConfig, snapshot: snapshot, release: release,
                                 context: context, history: promptHistory, state: state, output: output, audit: audit,
@@ -1319,15 +1474,22 @@ public actor AssistantSession {
             let done = AssistantAnswer(
                 text: text, sources: covering, general: covering.isEmpty, firstSentenceMs: firstMs, totalMs: totalMs,
                 unsourced: record.counts.unsourced > 0, counts: record.counts, round: record.round, generation: record.generation)
-            let sent = output.send(.done(requestId: rid, done), guarding: audit, request: rid)
-            if sent.refused {
+            // Das Senden prüft IM Lock auch den Lebenslauf: Ein später Lauf, dessen Anfrage schon abgeschlossen ist, sendet `done` nicht mehr.
+            let sent = output.deliver(.done(requestId: rid, done))
+            switch sent.refusal {
+            case .auditFailed?:
                 // Ein Schreibfehler zwischen dem Warten und dem Senden (klebrig): Auch `done` trägt den Text und geht nicht hinaus.
                 state.update { $0.failure = .auditUnavailable }
                 output.sendUnchecked(.failed(requestId: rid, .auditUnavailable))
-            } else if !sent.check.ok {
-                state.markRevoked()
-                state.update { $0.failure = .revoked }
-                output.sendUnchecked(.failed(requestId: rid, .revoked))
+            case .closed?:
+                // Die Anfrage ist abgeschlossen (ihr Ausgang steht in der Schlusszeile): nur noch das Ende des Stroms, ohne Inhalt.
+                output.sendUnchecked(.failed(requestId: rid, .cancelled))
+            case nil:
+                if !sent.check.ok {
+                    state.markRevoked()
+                    state.update { $0.failure = .revoked }
+                    output.sendUnchecked(.failed(requestId: rid, .revoked))
+                }
             }
         }
         // Runde 9, S1: Was das Gedächtnis verdrängt hat, ohne dass die Steuerung es abgeschlossen hat, wird JETZT abgeschlossen (nach den
@@ -1375,6 +1537,22 @@ public actor AssistantSession {
             if let audit, await audit.waitUntilWritten(request: rid) != nil { f = .auditUnavailable }
             return .finished(text: emitter.texts.joined(separator: " "), firstMs: emitter.firstMs, totalMs: emitter.elapsedMs, failure: f)
         }
+        /// Ergebnis einer Pflichtzeile: `nil`, wenn sie steht; sonst das Ende des Laufs (geschlossen: abgebrochen, Schreibfehler: Fehler).
+        func ended(_ landing: RunEmitter.Landing) -> Outcome? {
+            switch landing {
+            case .stands: nil
+            case .closed: .cancelled
+            case .failed: fail(.auditUnavailable)
+            }
+        }
+        /// Ergebnis des Sendens von `sources`: `nil`, wenn es hinausging; sonst das Ende des Laufs.
+        func ended(_ sent: AssistantDelivery) async -> Outcome? {
+            switch sent.refusal {
+            case .auditFailed?: return await finished(.auditUnavailable)
+            case .closed?: return .cancelled
+            case nil: return sent.check.ok ? nil : .cancelled
+            }
+        }
 
         // Pflichtzeilen, fail-closed: Die Standzeile des Öffnens, `start` (vor Abruf und Bestandstiteln) und später `round` und
         // `areas` stehen DAUERHAFT in der Datei, bevor das Modell läuft oder etwas ausgegeben wird (`await` auf das Schreiben,
@@ -1384,9 +1562,10 @@ public actor AssistantSession {
         if let audit {
             guard await stateLine.ensure(audit) else { return fail(.auditUnavailable) }
             if Task.isCancelled { return .cancelled }
-            let started = await audit.begin(startLine(rid, session: session, config: config, record: state.snapshot), run: run)
-            state.update { $0.journaled = started }
-            guard started else { return fail(.auditUnavailable) }
+            // `start`: eingereiht nur, solange die Anfrage offen ist (L2), und abgewartet.
+            let landing = await emitter.land(startLine(rid, session: session, config: config, record: state.snapshot), run: run)
+            state.update { $0.journaled = landing == .stands }
+            if let end = ended(landing) { return end }
             if Task.isCancelled { return .cancelled }
             // Nachholen bei jeder Gelegenheit: nicht gesicherte Einschränkung erneut sichern, fehlende Zeilen schreiben.
             await catchUp()
@@ -1412,13 +1591,13 @@ public actor AssistantSession {
             $0.contextBefore = decision.before
             $0.contextReason = decision.reason
         }
-        if let audit {
+        if audit != nil {
             var l = AssistantJournalLine(.round, req: rid)
             l.round = kind
             l.reason = decision.reason
             l.gen = snapshot.generation
-            audit.enqueue(l)
-            if await audit.waitUntilWritten(request: rid) != nil { return fail(.auditUnavailable) }
+            await index.reach(rid, .beforeRound)
+            if let end = ended(await emitter.land(l)) { return end }
             if Task.isCancelled { return .cancelled }
         }
 
@@ -1426,9 +1605,7 @@ public actor AssistantSession {
         let clockSentences = AssistantGrounding.clockSentences(now: now, timeZone: .current)
 
         if inventoryQuestion {
-            let sent = output.send(.sources(requestId: rid, generation: snapshot.generation, []), guarding: audit, request: rid)
-            if sent.refused { return await finished(.auditUnavailable) }
-            guard sent.check.ok else { return .cancelled }
+            if let end = await ended(output.deliver(.sources(requestId: rid, generation: snapshot.generation, []))) { return end }
             let groups = await knowledge.inventoryGroups(question: request.text, areas: areas)
             if Task.isCancelled { return .cancelled }
             let statements = groups.flatMap(\.statements)
@@ -1441,7 +1618,7 @@ public actor AssistantSession {
             }
             state.update { $0.inventoryAreas = groups.map(\.area) }
             // Die Bereiche der Bestandsangaben stehen in der Datei, bevor die erste Angabe hinausgeht.
-            guard await emitter.noteAreas(groups.map(\.area)) else { return fail(.auditUnavailable) }
+            if let end = ended(await emitter.noteAreas(groups.map(\.area))) { return end }
             if Task.isCancelled { return .cancelled }
             let preface = AssistantGrounding.inventoryAnnouncement
             switch await emitter.emit(preface, speech: preface, status: .announcement) {
@@ -1487,11 +1664,9 @@ public actor AssistantSession {
                 state.update { $0.used = used }
                 // Die Bereiche der Auszüge im Prompt stehen fest. Zu JEDEM Modell (lokal wie Cloud) geht der Prompt erst, wenn die
                 // Zeile in der Datei steht.
-                guard await emitter.noteAreas(used.map(\.area)) else { return fail(.auditUnavailable) }
+                if let end = ended(await emitter.noteAreas(used.map(\.area))) { return end }
                 if Task.isCancelled { return .cancelled }
-                let sent = output.send(.sources(requestId: rid, generation: snapshot.generation, used), guarding: audit, request: rid)
-                if sent.refused { return await finished(.auditUnavailable) }
-                guard sent.check.ok else { return .cancelled }
+                if let end = await ended(output.deliver(.sources(requestId: rid, generation: snapshot.generation, used))) { return end }
                 announcedSources = true
             }
             let basis = AssistantGrounding.Basis(passages: used)
