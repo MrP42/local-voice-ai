@@ -823,10 +823,21 @@ mod tests {
                 fs::rename(&fremd, &ziel).unwrap();
             }
         })));
-        let mut f = eintrag::oeffnen_ohne_abruf(&p, art(), reparse_urteil).unwrap();
-        let mut s = String::new();
-        std::io::Read::read_to_string(&mut f, &mut s).unwrap();
-        assert_eq!(s, "original", "das hochgestufte Handle ist dasselbe Objekt");
+        let r = eintrag::oeffnen_ohne_abruf(&p, art(), reparse_urteil);
+        // macOS: Stufe 1 ist nur `O_EVTONLY`; Stufe 2 öffnet per `openat` im geprüften Elternordner und
+        // gleicht die Kennung ab. Ein Tausch im selben Ordner wird dort sicher abgelehnt statt gelesen.
+        #[cfg(target_os = "macos")]
+        assert!(
+            matches!(r, Err(eintrag::OeffnenFehler::Getauscht)),
+            "der getauschte Eintrag wird abgelehnt"
+        );
+        #[cfg(not(target_os = "macos"))]
+        {
+            let mut f = r.unwrap();
+            let mut s = String::new();
+            std::io::Read::read_to_string(&mut f, &mut s).unwrap();
+            assert_eq!(s, "original", "das hochgestufte Handle ist dasselbe Objekt");
+        }
         assert_eq!(
             fs::read_to_string(&p).unwrap(),
             "fremd",
