@@ -22,7 +22,6 @@ mod tests;
 use crate::catalog::{Purpose, TtsCatalogEntry};
 use modell::{Art, E5};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use wai_retrieval::{Embedder, FakeEmbedder, RetrievalError};
 
@@ -39,12 +38,31 @@ pub const KANDIDAT_COS: f32 = 0.83;
 /// semantische Suche ist ein Opt-in.
 pub const SEMANTIK_STANDARD: bool = false;
 
-/// L2-Normierung an Ort und Stelle (Nullvektor bleibt).
-pub fn normieren(v: &mut [f32]) {
-    let n = v.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if n > 0.0 {
-        v.iter_mut().for_each(|x| *x /= n);
+/// Ausgabedimension von `multilingual-e5-small`.
+pub const DIMENSION: usize = 384;
+
+/// L2-Normierung an Ort und Stelle (Nullvektor bleibt). `false` und unverändert, wenn ein Wert nicht
+/// endlich ist (NaN, ±∞) oder die Norm überläuft: solche Vektoren dürfen nie in den Index (sie
+/// vergifteten das Skalarprodukt aller Suchen). Die Norm läuft in `f64`, damit große endliche Werte nicht
+/// in `f32` überlaufen.
+pub fn normieren(v: &mut [f32]) -> bool {
+    if v.iter().any(|x| !x.is_finite()) {
+        return false;
     }
+    let n = v
+        .iter()
+        .map(|&x| f64::from(x) * f64::from(x))
+        .sum::<f64>()
+        .sqrt();
+    if n == 0.0 {
+        return true;
+    }
+    let ergebnis: Vec<f32> = v.iter().map(|&x| (f64::from(x) / n) as f32).collect();
+    if !ergebnis.iter().all(|x| x.is_finite()) {
+        return false;
+    }
+    v.copy_from_slice(&ergebnis);
+    true
 }
 
 /// Katalogeintrag des Modells (zwei Dateien mit Größe und SHA-256).
@@ -339,14 +357,61 @@ pub fn ladefehler() -> bool {
     zustand().ladefehler
 }
 
-static NACHZIEHEN: AtomicBool = AtomicBool::new(false);
-/// Während eines Laufs angestoßen: danach noch einmal prüfen.
-static NOCHMAL: AtomicBool = AtomicBool::new(false);
+/// Anstoß und Ende des Hintergrundlaufs laufen über genau einen Mutex: Wer entscheidet, dass der Worker
+/// endet (keine Runde offen), setzt `laeuft = false` unter derselben Sperre. Ein Anstoß sieht damit
+/// entweder `laeuft` (und seine Runde wird vom Worker noch gesehen) oder startet einen neuen Worker.
+/// Mit zwei getrennten Flags ging ein Anstoß zwischen letzter Prüfung und Ende verloren.
+#[derive(Debug, Default)]
+struct Anstoss {
+    laeuft: bool,
+    /// Zahl aller Anstöße und die davon schon begonnenen Runden (Zähler statt Flag: prüfbar).
+    angestossen: u64,
+    begonnen: u64,
+}
+
+impl Anstoss {
+    const fn neu() -> Self {
+        Self {
+            laeuft: false,
+            angestossen: 0,
+            begonnen: 0,
+        }
+    }
+
+    /// Ein Anstoß; `true`, wenn der Aufrufer einen Worker starten muss.
+    fn anstossen(&mut self) -> bool {
+        self.angestossen += 1;
+        !std::mem::replace(&mut self.laeuft, true)
+    }
+
+    /// Der Worker fragt nach der nächsten Runde. `false`: nichts offen, der Worker endet (`laeuft` ist
+    /// dann bereits zurückgesetzt, in derselben Sperre).
+    fn naechste_runde(&mut self) -> bool {
+        if self.begonnen == self.angestossen {
+            self.laeuft = false;
+            return false;
+        }
+        self.begonnen = self.angestossen;
+        true
+    }
+
+    /// Weitere Runde nach einem Fehler (zählt wie ein Anstoß des Laufs selbst).
+    fn wiederholen(&mut self) {
+        self.angestossen += 1;
+    }
+}
+
+static ANSTOSS: Mutex<Anstoss> = Mutex::new(Anstoss::neu());
+
+fn anstoss() -> std::sync::MutexGuard<'static, Anstoss> {
+    ANSTOSS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Weitere Versuche nach einem Fehler (mit wachsender Pause), solange Vektoren fehlen.
 const NACHZIEHEN_VERSUCHE: u32 = 3;
 
 pub fn nachziehen_laeuft() -> bool {
-    NACHZIEHEN.load(Ordering::Relaxed)
+    anstoss().laeuft
 }
 
 /// Bettet im Hintergrund fehlende Vektoren ein (Einschalten, Modellwechsel, Stücke aus der
@@ -357,26 +422,26 @@ pub fn nachziehen_anstossen(dir: PathBuf, fertig: Box<dyn Fn() + Send>) {
     if !zustand().an {
         return;
     }
-    NOCHMAL.store(true, Ordering::SeqCst);
-    if NACHZIEHEN.swap(true, Ordering::SeqCst) {
+    if !anstoss().anstossen() {
         return;
     }
     let gestartet = std::thread::Builder::new()
         .name("ablage-vektoren".into())
         .spawn(move || {
+            // Auch bei einer Panik im Lauf freigeben (sonst startete nie wieder ein Worker).
             struct Ende;
             impl Drop for Ende {
                 fn drop(&mut self) {
-                    NACHZIEHEN.store(false, Ordering::SeqCst);
+                    anstoss().laeuft = false;
                 }
             }
             let _ende = Ende;
             let a = super::speicher::Ablage::neu(dir);
             let mut fehlversuche = 0u32;
-            while NOCHMAL.swap(false, Ordering::SeqCst) {
+            while anstoss().naechste_runde() {
                 let emb = aktuell();
                 if !emb.ist_semantisch() {
-                    break;
+                    continue;
                 }
                 match super::index::vektoren_nachziehen(&a, &emb) {
                     Ok(_) => fehlversuche = 0,
@@ -390,7 +455,7 @@ pub fn nachziehen_anstossen(dir: PathBuf, fertig: Box<dyn Fn() + Send>) {
                             std::thread::sleep(std::time::Duration::from_secs(
                                 2u64 << fehlversuche,
                             ));
-                            NOCHMAL.store(true, Ordering::SeqCst);
+                            anstoss().wiederholen();
                         }
                     }
                 }
@@ -399,6 +464,94 @@ pub fn nachziehen_anstossen(dir: PathBuf, fertig: Box<dyn Fn() + Send>) {
             fertig();
         });
     if gestartet.is_err() {
-        NACHZIEHEN.store(false, Ordering::SeqCst);
+        anstoss().laeuft = false;
+    }
+}
+
+#[cfg(test)]
+mod tests_anstoss {
+    use super::Anstoss;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn zustandsmaschine_einzeln() {
+        let mut s = Anstoss::neu();
+        assert!(s.anstossen(), "erster Anstoß startet den Worker");
+        assert!(!s.anstossen(), "zweiter sieht den laufenden Worker");
+        assert!(
+            s.naechste_runde(),
+            "beide Anstöße gelten als eine offene Runde"
+        );
+        assert!(!s.naechste_runde());
+        assert!(!s.laeuft, "Ende setzt `laeuft` in derselben Sperre zurück");
+        assert!(
+            s.anstossen(),
+            "danach startet ein neuer Anstoß wieder einen Worker"
+        );
+    }
+
+    /// Nebenläufigkeit: viele Anstoßgeber gegen einen Worker, der Runden holt und nach jeder Runde
+    /// kurz arbeitet. Unverlierbar: Sobald der letzte Worker beendet ist und alle Anstöße geschehen
+    /// sind, ist keine Runde offen (`begonnen == angestossen`), und es lief nie mehr als ein Worker.
+    #[test]
+    fn kein_anstoss_geht_verloren_und_nie_zwei_worker() {
+        for _ in 0..200 {
+            let s = Arc::new(Mutex::new(Anstoss::neu()));
+            let aktiv = Arc::new(std::sync::atomic::AtomicI32::new(0));
+            let spitze = Arc::new(std::sync::atomic::AtomicI32::new(0));
+            let worker = Arc::new(Mutex::new(Vec::<std::thread::JoinHandle<()>>::new()));
+            let geber: Vec<_> = (0..4)
+                .map(|_| {
+                    let (s, aktiv, spitze, worker) =
+                        (s.clone(), aktiv.clone(), spitze.clone(), worker.clone());
+                    std::thread::spawn(move || {
+                        for _ in 0..50 {
+                            let starten = s.lock().unwrap().anstossen();
+                            if !starten {
+                                continue;
+                            }
+                            let (s, aktiv, spitze) = (s.clone(), aktiv.clone(), spitze.clone());
+                            let h = std::thread::spawn(move || {
+                                use std::sync::atomic::Ordering::SeqCst;
+                                let jetzt = aktiv.fetch_add(1, SeqCst) + 1;
+                                spitze.fetch_max(jetzt, SeqCst);
+                                // Zwischen `naechste_runde` und dem Ende liegt Arbeit; gleich danach wird
+                                // abgemeldet, noch vor dem Ende-Entscheid durch den nächsten Aufruf.
+                                loop {
+                                    let weiter = {
+                                        let mut g = s.lock().unwrap();
+                                        let w = g.naechste_runde();
+                                        if !w {
+                                            aktiv.fetch_sub(1, SeqCst);
+                                        }
+                                        w
+                                    };
+                                    if !weiter {
+                                        break;
+                                    }
+                                    std::thread::yield_now();
+                                }
+                            });
+                            worker.lock().unwrap().push(h);
+                        }
+                    })
+                })
+                .collect();
+            for g in geber {
+                g.join().unwrap();
+            }
+            let handles: Vec<_> = worker.lock().unwrap().drain(..).collect();
+            for h in handles {
+                h.join().unwrap();
+            }
+            let g = s.lock().unwrap();
+            assert_eq!(g.begonnen, g.angestossen, "verlorener Anstoß");
+            assert!(!g.laeuft);
+            assert_eq!(
+                spitze.load(std::sync::atomic::Ordering::SeqCst),
+                1,
+                "zwei Worker"
+            );
+        }
     }
 }
