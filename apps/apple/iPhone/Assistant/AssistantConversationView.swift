@@ -223,8 +223,9 @@ struct AssistantConversationView: View {
                         .accessibilityIdentifier("assistantUnsourced")
                 }
             }
-            Toggle("Beim Antworten zuhören (Unterbrechen per Stimme)",
-                   isOn: Binding(get: { talk.bargeIn }, set: { talk.setBargeIn($0) }))
+            // Kurz, damit das Menü den Text nicht abschneidet; die Erklärung steht im Hinweis für Bedienungshilfen.
+            Toggle("Beim Antworten zuhören", isOn: Binding(get: { talk.bargeIn }, set: { talk.setBargeIn($0) }))
+                .accessibilityHint("Du kannst die Antwort mit deiner Stimme unterbrechen")
             Button("Neues Gespräch", systemImage: "arrow.counterclockwise", role: .destructive) { talk.newConversation() }
         } label: {
             Image(systemName: "ellipsis.circle").font(.title3).frame(width: 44, height: 44)
@@ -566,6 +567,9 @@ struct AssistantConversationView: View {
     }
 
     private var stateText: String {
+        #if DEBUG
+        if AssistantController.demoQuote { return "Beispielansicht" }
+        #endif
         if talk.loading { return "Wird gestartet …" }
         guard talk.running else { return talk.canSend ? "Angehalten" : "Kein Modell bereit" }
         if talk.muted, talk.phase == .listening || talk.phase == .hearing { return "Stumm, ich höre nicht zu" }

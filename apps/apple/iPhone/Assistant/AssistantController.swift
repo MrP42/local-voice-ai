@@ -254,6 +254,7 @@ final class AssistantController: ObservableObject {
         historyLoaded = true
         notice = nil
         turns = Self.demoTurns
+        modelLabel = "Beispiel"
         syncContext()
     }
 
