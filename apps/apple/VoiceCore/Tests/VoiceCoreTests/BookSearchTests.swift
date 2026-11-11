@@ -75,6 +75,12 @@ final class BookSearchTests: XCTestCase {
         XCTAssertEqual(BookSearch.search(index, query: "Ma\u{0308}rchen").total, 1)
     }
 
+    private final class Counter: @unchecked Sendable {
+        var n = 0
+        func next() -> Bool { n += 1; return n > 1 }
+    }
+    private static let flipAfterFirst = Counter()
+
     func testCancelledBuildAndSearchReturnNil() {
         let many = paras((0..<200).map { "Absatz \($0) mit etwas Text" })
         XCTAssertNil(BookSearchIndex(paragraphs: many, isCancelled: { true }))
@@ -82,6 +88,9 @@ final class BookSearchTests: XCTestCase {
         XCTAssertEqual(index?.parts.count, 200)
         XCTAssertNil(BookSearch.search(index!, query: "etwas", limit: 300, isCancelled: { true }))
         XCTAssertEqual(BookSearch.search(index!, query: "etwas", limit: 300, isCancelled: { false })?.total, 200)
+        // Auch ein einzelner großer Absatz wird mitten im Aufbau abgebrochen.
+        let big = paras([String(repeating: "wort ", count: 5_000)])
+        XCTAssertNil(BookSearchIndex(paragraphs: big, isCancelled: { Task.isCancelled || Self.flipAfterFirst.next() }))
         // Abbruch mitten im Lauf: ab dem zweiten Prüfpunkt wahr.
         final class Flip: @unchecked Sendable { var n = 0 }
         let flip = Flip()

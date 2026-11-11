@@ -61,7 +61,11 @@ public struct BookSearchIndex: Sendable {
             folded.reserveCapacity(p.text.utf16.count)
             var offset = 0
             var space = true
+            var seen = 0
             for c in p.text {
+                // Auch innerhalb großer Absätze regelmäßig auf Abbruch prüfen.
+                seen += 1
+                if seen & 4095 == 0, isCancelled() { return nil }
                 let n = c.utf16.count
                 defer { offset += n }
                 if c.isWhitespace {

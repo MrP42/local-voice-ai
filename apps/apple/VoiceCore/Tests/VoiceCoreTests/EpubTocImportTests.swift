@@ -77,6 +77,44 @@ final class EpubTocImportTests: XCTestCase {
         XCTAssertEqual(try BookText.epub(epub).text, "# Erstes Kapitel\n\nNur dieser Text.")
     }
 
+    func testCommentsAndCDataDoNotConfuseNavRemoval() throws {
+        let dirty = #"<!-- Beispiel: <nav> --><p>Widmung</p><nav epub:type="toc"><ol><li><a href="k1.xhtml">X</a></li></ol></nav><p>Danach</p>"#
+        let out = EpubToc.removingNav(dirty)
+        XCTAssertTrue(out.contains("<p>Widmung</p>") && out.contains("<p>Danach</p>"), out)
+        XCTAssertFalse(out.contains("<!--") || out.contains("<nav"), out)
+        XCTAssertEqual(XHTMLText.paragraphs(Data(page(out).utf8)), "Widmung\n\nDanach")
+        XCTAssertEqual(EpubToc.removingNav("<p>a</p><![CDATA[ <nav> & ]]><p>b</p>"), "<p>a</p> &lt;nav&gt; &amp; <p>b</p>")
+        let epub = try makeEpub(
+            opf: opf(manifest: """
+                <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+                <item id="c1" href="k1.xhtml" media-type="application/xhtml+xml"/>
+                """, spine: #"<itemref idref="nav"/><itemref idref="c1"/>"#),
+            files: [
+                "nav.xhtml": page(dirty.replacingOccurrences(of: "<li><a href=\"k1.xhtml\">X</a></li>", with: #"<li><a href="k1.xhtml">Erstes Kapitel</a></li>"#)),
+                "k1.xhtml": page("<h1>Erstes Kapitel</h1><p>Text.</p>"),
+            ])
+        XCTAssertEqual(try BookText.epub(epub).text, "Widmung\n\nDanach\n\n# Erstes Kapitel\n\nText.")
+    }
+
+    func testPureFragmentLinksPointToTheTocDocumentItself() {
+        let nav = ##"<nav epub:type="toc"><ol><li><a href="#start">Anfang</a></li><li><a href="k.xhtml#a">Eins</a></li></ol></nav>"##
+        XCTAssertEqual(EpubToc.nav(nav, baseDir: "OEBPS", source: "OEBPS/nav.xhtml"), [
+            .init(depth: 0, title: "Anfang", path: "OEBPS/nav.xhtml", fragment: "start"),
+            .init(depth: 0, title: "Eins", path: "OEBPS/k.xhtml", fragment: "a"),
+        ])
+        let ncx = ##"<ncx><navMap><navPoint><navLabel><text>Eins</text></navLabel><content src="#f"/></navPoint></navMap></ncx>"##
+        XCTAssertEqual(EpubToc.ncx(ncx, baseDir: "OEBPS", source: "OEBPS/toc.ncx"), [.init(depth: 0, title: "Eins", path: "OEBPS/toc.ncx", fragment: "f")])
+        // Ohne Quelldatei wird der Eintrag verworfen, statt auf das Verzeichnis zu zeigen.
+        XCTAssertEqual(EpubToc.nav(nav, baseDir: "OEBPS").map(\.title), ["Eins"])
+    }
+
+    func testExtractReadsXmlId() {
+        let xhtml = page(#"<p>Eins</p><p xml:id="x1">Zwei</p><section xml:id="s"><p>Drei</p></section>"#)
+        let out = XHTMLText.extract(Data(xhtml.utf8))
+        XCTAssertEqual(out.text, "Eins\n\nZwei\n\nDrei")
+        XCTAssertEqual(out.anchors, ["x1": 1, "s": 2])
+    }
+
     // MARK: Befund 3: Ziele mit Sprungmarke
 
     func testFragmentAnchorsTheTargetParagraph() throws {

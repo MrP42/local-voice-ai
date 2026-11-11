@@ -125,11 +125,11 @@ public enum BookText {
         let navPath = items.first { ($0["properties"] ?? "").split(separator: " ").contains("nav") }?["href"].map(resolved)
         var toc: [EpubToc.Entry] = []
         if let navPath, let data = try? zip.read(navPath) {
-            toc = EpubToc.nav(String(decoding: data, as: UTF8.self), baseDir: folder(navPath))
+            toc = EpubToc.nav(String(decoding: data, as: UTF8.self), baseDir: folder(navPath), source: navPath)
         }
         if toc.isEmpty, let ncxId = XMLScan.attributes(in: opf, element: "spine").first?["toc"],
            let href = manifest[ncxId], let data = try? zip.read(resolved(href)) {
-            toc = EpubToc.ncx(String(decoding: data, as: UTF8.self), baseDir: folder(resolved(href)))
+            toc = EpubToc.ncx(String(decoding: data, as: UTF8.self), baseDir: folder(resolved(href)), source: resolved(href))
         }
         var parts: [String] = []
         for id in spine {
@@ -354,7 +354,25 @@ enum EpubToc {
 
     /// XHTML ohne `<nav>`-Blöcke (Inhaltsverzeichnis, Landmarken, Seitenliste); der Rest bleibt.
     static func removingNav(_ xhtml: String) -> String {
-        navBlock.stringByReplacingMatches(in: xhtml, range: NSRange(location: 0, length: (xhtml as NSString).length), withTemplate: "")
+        let plain = hidingCommentsAndCData(xhtml)
+        return navBlock.stringByReplacingMatches(in: plain, range: NSRange(location: 0, length: (plain as NSString).length), withTemplate: "")
+    }
+
+    static let commentOrCData = re(#"(?s)<!--.*?-->|<!\[CDATA\[(.*?)\]\]>"#)
+
+    /// Kommentare entfallen, CDATA wird zu maskiertem Text: ein `<nav>` darin ist kein Element.
+    static func hidingCommentsAndCData(_ s: String) -> String {
+        let ns = s as NSString
+        var out = ""; var last = 0
+        for m in commentOrCData.matches(in: s, range: NSRange(location: 0, length: ns.length)) {
+            out += ns.substring(with: NSRange(location: last, length: m.range.location - last))
+            if m.range(at: 1).location != NSNotFound {
+                out += ns.substring(with: m.range(at: 1)).replacingOccurrences(of: "&", with: "&amp;")
+                    .replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
+            }
+            last = NSMaxRange(m.range)
+        }
+        return out + ns.substring(from: last)
     }
 
     /// Klartext eines Verzeichnistitels: ohne Tags, Entitäten aufgelöst, Leerraum zusammengefasst.
@@ -363,17 +381,24 @@ enum EpubToc {
         return XHTMLText.replaceEntities(noTags, keepXML: false).split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
-    static func push(_ out: inout [Entry], depth: Int, title: String, href: String, baseDir: String) {
+    /// `source`: Pfad des Verzeichnisdokuments selbst; ein reiner Fragmentlink (`#start`) zeigt auf diese Datei.
+    static func push(_ out: inout [Entry], depth: Int, title: String, href: String, baseDir: String, source: String?) {
         guard !title.isEmpty, !href.isEmpty, !href.contains("://") else { return }
         let parts = href.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
         let file = parts[0].removingPercentEncoding ?? parts[0]
         let fragment = parts.count > 1 ? (parts[1].removingPercentEncoding ?? parts[1]) : nil
-        let path = BookText.normalize(baseDir.isEmpty ? file : baseDir + "/" + file)
+        let path: String
+        if file.isEmpty {
+            guard let source else { return }
+            path = source
+        } else {
+            path = BookText.normalize(baseDir.isEmpty ? file : baseDir + "/" + file)
+        }
         out.append(Entry(depth: depth, title: title, path: path, fragment: fragment?.isEmpty == false ? fragment : nil))
     }
 
     /// Inhaltsverzeichnis aus `<nav epub:type="toc">`: Tiefe über `<ol>`, Einträge sind die Links.
-    static func nav(_ xhtml: String, baseDir: String) -> [Entry] {
+    static func nav(_ xhtml: String, baseDir: String, source: String? = nil) -> [Entry] {
         let ns = xhtml as NSString
         guard let start = navStart.firstMatch(in: xhtml, range: NSRange(location: 0, length: ns.length)) else { return [] }
         var body = ns.substring(from: NSMaxRange(start.range))
@@ -389,14 +414,14 @@ enum EpubToc {
             else if let l = navLink.firstMatch(in: piece, range: NSRange(location: 0, length: (piece as NSString).length)) {
                 let p = piece as NSString
                 let href = attributes(p.substring(with: l.range(at: 1)))["href"] ?? ""
-                push(&out, depth: max(0, depth - 1), title: plainText(p.substring(with: l.range(at: 2))), href: href, baseDir: baseDir)
+                push(&out, depth: max(0, depth - 1), title: plainText(p.substring(with: l.range(at: 2))), href: href, baseDir: baseDir, source: source)
             }
         }
         return out
     }
 
     /// Inhaltsverzeichnis aus einer NCX (`navPoint`, verschachtelt).
-    static func ncx(_ ncx: String, baseDir: String) -> [Entry] {
+    static func ncx(_ ncx: String, baseDir: String, source: String? = nil) -> [Entry] {
         let ns = ncx as NSString
         var depth = 0
         var title: String?
@@ -408,7 +433,7 @@ enum EpubToc {
             else if lower.hasPrefix("</navpoint") { depth = max(0, depth - 1) }
             else if lower.hasPrefix("<text") { if title == nil { title = plainText(piece) } }
             else if lower.hasPrefix("<content"), let t = title {
-                push(&out, depth: max(0, depth - 1), title: t, href: attributes(piece)["src"] ?? "", baseDir: baseDir)
+                push(&out, depth: max(0, depth - 1), title: t, href: attributes(piece)["src"] ?? "", baseDir: baseDir, source: source)
                 title = nil
             }
         }
