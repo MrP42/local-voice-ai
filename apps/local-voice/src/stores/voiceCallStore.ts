@@ -556,6 +556,11 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
             }
             return { lines, metrics: [...s.metrics.slice(-19), m] };
           }),
+        // Ein durch eine Ergänzung ersetzter Schritt hinterlässt keine Messung (lva#485).
+        onMetricsVerwerfen: (turnId) =>
+          set((s) => ({
+            metrics: s.metrics.filter((m) => m.turnId !== turnId),
+          })),
         onCitations: (turnId, hits) =>
           set((s) => {
             if (hits.length === 0) return {};

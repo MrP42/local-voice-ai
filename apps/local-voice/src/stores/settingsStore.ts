@@ -320,10 +320,18 @@ const settingUpdaters: {
   meeting_mcp_include_transcript: (value) =>
     commands.changeMeetingMcpIncludeTranscriptSetting(value as boolean),
   // Sprachgespräch Stufe 2
-  voice_call_read_transcripts: (value) =>
-    commands.changeVoiceCallReadTranscriptsSetting(value as boolean),
-  voice_call_knowledge: (value) =>
-    commands.changeVoiceCallKnowledgeSetting(value as string[]),
+  // lva#485: Ein Fehler des Kerns muss werfen, sonst bliebe der nicht gespeicherte Wert sichtbar
+  // (und „Zugriff auf alle Inhalte“ meldete Erfolg).
+  voice_call_read_transcripts: async (value) => {
+    const r = await commands.changeVoiceCallReadTranscriptsSetting(
+      value as boolean,
+    );
+    if (r.status === "error") throw new Error(r.error);
+  },
+  voice_call_knowledge: async (value) => {
+    const r = await commands.changeVoiceCallKnowledgeSetting(value as string[]);
+    if (r.status === "error") throw new Error(r.error);
+  },
   // lva#396 N2: freigegebene Notizbuch-Abschnitte
   // Ein Fehler des Kerns muss werfen, sonst bliebe die nicht gespeicherte Auswahl sichtbar.
   voice_call_notebook_sections: async (value) => {
@@ -336,8 +344,12 @@ const settingUpdaters: {
   assistent_einstufung_aktiv: (value) =>
     commands.changeAssistentEinstufungAktivSetting(value as boolean),
   // lva#325: globaler Sprachassistent
-  voice_global_context_enabled: (value) =>
-    commands.changeVoiceGlobalContextEnabledSetting(value as boolean),
+  voice_global_context_enabled: async (value) => {
+    const r = await commands.changeVoiceGlobalContextEnabledSetting(
+      value as boolean,
+    );
+    if (r.status === "error") throw new Error(r.error);
+  },
   // Sprachgespräch Stufe 3
   speech_learning_enabled: (value) =>
     commands.changeSpeechLearningEnabledSetting(value as boolean),

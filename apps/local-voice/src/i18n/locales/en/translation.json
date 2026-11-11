@@ -7861,6 +7861,9 @@
         "tts_page": "Read-aloud page"
       }
     },
+    "error": {
+      "notUnderstood": "I didn't understand you."
+    },
     "knowledge": {
       "intro": "What the model may look up during the conversation. Every access is logged.",
       "toolsOff": "The tools are switched off under “Models”. While they are off, the model looks nothing up.",
@@ -7911,7 +7914,14 @@
       "global": {
         "title": "Global knowledge (preview)",
         "switch": "Search all shared content",
-        "hint": "Before each answer the app searches the shared areas locally and gives the model matching excerpts with sources. Local language model only; books only up to your reading position."
+        "hint": "Before each answer the app searches the shared areas locally and gives the model matching excerpts with sources. Local language model only; books only up to your reading position.",
+        "enableAll": "Turn on access to all app content",
+        "enableAllHint": "Turns the search on and shares every area: meetings with transcripts, dictations, earlier conversations, appointments, read-aloud pages, books, book notes and AI documents. Notebook sections remain a separate permission.",
+        "allOn": "All areas shared",
+        "allOnHint": "Meetings with transcripts, dictations, conversations, appointments, read-aloud pages, books, book notes and AI documents. You share notebook sections separately. You can switch off single areas above.",
+        "enableAllError": "Access could not be turned on completely. The previous permission still applies.",
+        "enableAllPartial": "Access could not be turned on and could not be fully reset. Please check the switches.",
+        "localOnly": "Content currently goes only to the built-in local model. With {{model}}, the assistant answers without access to your content."
       },
       "notebook": {
         "groupLabel": "Shared notebook sections",

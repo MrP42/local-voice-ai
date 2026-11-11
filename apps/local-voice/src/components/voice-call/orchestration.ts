@@ -7,6 +7,7 @@ import {
 } from "@/bindings";
 import { modelLabel } from "@/lib/modelNames";
 import { ANNOUNCE } from "./ueberbrueckung";
+import { KNOWLEDGE_AREAS, NOTEBOOK_AREA, type KnowledgeArea } from "./bereiche";
 import type { ChatMessage, ChatSide } from "@/vendor/wai-voice/backend.ts";
 import {
   modelAllowed,
@@ -211,35 +212,13 @@ function toVoiceModelShape(m: ModelDescription): VoiceModel {
   };
 }
 
-/** Wissensbereiche des Gesprächs (Schlüssel der Einstellung `voice_call_knowledge`). */
-export const KNOWLEDGE_AREAS = [
-  "meetings",
-  "dictations",
-  "conversations",
-  "calendar",
-  "tts",
-] as const;
-export type KnowledgeArea = (typeof KNOWLEDGE_AREAS)[number];
-
-/**
- * Bereiche nur des globalen Abrufindex (lva#325): keine Werkzeuge, nur mit dem
- * Schalter `voice_global_context_enabled`. Sie stehen in derselben Einstellung
- * `voice_call_knowledge` und bleiben beim Umschalten der Werkzeugbereiche erhalten.
- */
-export const GLOBAL_AREAS = ["books", "book_notes", "ki_docs"] as const;
-export type GlobalArea = (typeof GLOBAL_AREAS)[number];
-/**
- * Bereich „Notizbuch“ (lva#396 N2): eigener Schalter mit Abschnittsauswahl
- * (`voice_call_notebook_sections`); ohne Abschnitt ist trotz Bereich nichts sichtbar.
- */
-export const NOTEBOOK_AREA = "notebook" as const;
-export type NotebookArea = typeof NOTEBOOK_AREA;
-/** Alle Schlüssel in fester Reihenfolge (wie `Area::ALL` im Kern). */
-export const ALL_AREAS = [
-  ...KNOWLEDGE_AREAS,
-  ...GLOBAL_AREAS,
+export {
+  ALL_AREAS,
+  GLOBAL_AREAS,
+  KNOWLEDGE_AREAS,
   NOTEBOOK_AREA,
-] as const;
+} from "./bereiche";
+export type { GlobalArea, KnowledgeArea, NotebookArea } from "./bereiche";
 
 /** Deutsche Namen der Bereiche für den Hinweis an das Modell (Transkripte hängen an den Besprechungen). */
 const AREA_LABEL: Record<KnowledgeArea | "transcripts", string> = {
