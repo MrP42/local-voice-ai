@@ -17,12 +17,20 @@
 //! Fehlerfälle und Absicherung:
 //! * Datei wird zwischen Abtastung und Lesen (oder zwischen Prüfung und Öffnen) wieder online: zweistufiges
 //!   Öffnen ([`oeffnen_ohne_abruf`]). Stufe 1 öffnet nur mit `FILE_READ_ATTRIBUTES` (das löst keinen Abruf
-//!   aus) und urteilt am Handle; nur bei „lesbar“ folgt Stufe 2 mit Lesezugriff, dort wird erneut am Handle
-//!   geurteilt und die Datei-Kennung mit Stufe 1 verglichen (kein Tausch dazwischen). Der Schutz kommt aus
-//!   dem Urteil VOR dem Lesezugriff; `FILE_FLAG_OPEN_NO_RECALL` allein verhindert den Abruf nicht (echte
-//!   OneDrive-Probe: Öffnen mit Lesezugriff lud die Datei herunter). Restrisiko: Eine Datei, die im Fenster
-//!   zwischen Stufe 1 und Stufe 2 (Millisekunden) ausgelagert wird, kann Stufe 2 noch erreichen; Stufe 2
-//!   prüft danach erneut, liest aber erst nach dem Urteil.
+//!   aus) und urteilt am Handle, noch einmal unmittelbar vor dem Hochstufen am selben Handle; nur bei
+//!   „lesbar“ wird DIESES Handle auf Lesezugriff hochgestuft (`ReOpenFile`, dasselbe Objekt, kein zweiter
+//!   Pfadzugriff; lva#507), dort erneut am Handle geurteilt und die Datei-Kennung verglichen. Der Schutz
+//!   kommt aus dem Urteil VOR dem Lesezugriff; `FILE_FLAG_OPEN_NO_RECALL` allein verhindert den Abruf nicht
+//!   (echte OneDrive-Probe: Öffnen mit Lesezugriff lud die Datei herunter). Restrisiko, das nur eine
+//!   Windows-/Provider-Sperre schließen könnte: der Anbieter lagert die Datei zwischen dem letzten Urteil und
+//!   dem Hochstufen aus (ein Systemaufruf lang); das Hochstufen löst dann den Abruf aus, gelesen wird aber
+//!   erst nach dem Urteil am Ergebnis. Zugesagt wird deshalb nur: Local Voice überspringt erkannte, nur
+//!   online gespeicherte Dateien; durch gleichzeitige Änderungen des Synchronisationsdienstes kann beim Lesen
+//!   dennoch ein Download ausgelöst werden (Restfenster, `docs/ablage-abrufschutz.md`).
+//! * Zwischenverzeichnisse ([`Ordner`], lva#507): Wurzel und jede Ebene werden einmal geöffnet, am Handle
+//!   beurteilt und gehalten; Auflisten und Dateiöffnen laufen relativ dazu. Ein Zwischenglied, das nach der
+//!   Prüfung durch eine Junction ersetzt wird, erreicht die Lesezugriffe nie. Jede Ebene besitzt ihren
+//!   Elternordner (Ahnenbindung): solange ein Kind lebt, bleibt die ganze Kette offen.
 //! * Attribute, Tag oder Handle nicht bestimmbar (Fehler der Windows-Aufrufe): als Umweg abgewiesen.
 //! * Auflisten bricht mittendrin ab (Laufwerk weg, Zugriff verweigert): der ganze Ordner gilt als nicht
 //!   lesbar, nie eine Teilliste (sonst fielen bekannte Dateien aus dem Bestand).
@@ -54,6 +62,9 @@ use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::path::Path;
+
+mod ordner;
+pub use ordner::Ordner;
 
 /// Verzeichnis (nur Windows liefert Attribute).
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -204,24 +215,14 @@ pub fn roh(p: &Path) -> io::Result<Roh> {
     Ok(r)
 }
 
-/// Einträge eines Verzeichnisses mit Rohdaten (ohne `.` und `..`). Ein Fehler mitten im Auflisten ist ein
-/// Fehler des ganzen Verzeichnisses.
-pub fn verzeichnis(p: &Path) -> io::Result<Vec<Eintrag>> {
-    #[cfg_attr(not(test), allow(unused_mut))]
-    let mut v = system::alle(p)?;
-    #[cfg(test)]
-    for e in &mut v {
-        if let Some(r) = e.roh.as_mut() {
-            naht::anwenden(&p.join(&e.name), r);
-        }
-    }
-    Ok(v)
-}
-
 /// Attribute und Reparse-Tag einer schon geöffneten Datei, vom Handle (`GetFileInformationByHandleEx` mit
 /// `FileAttributeTagInfo`), nicht vom Pfad. `None`: nicht bestimmbar. `p` ist nur für die Test-Naht.
 pub fn offen_daten(f: &fs::File, p: &Path) -> Option<(u32, u32)> {
     let _ = p;
+    #[cfg(test)]
+    if naht::handle_ausfall(p) {
+        return None;
+    }
     #[cfg_attr(not(test), allow(unused_mut))]
     let mut d = system::offen(f).ok();
     #[cfg(test)]
@@ -283,12 +284,15 @@ pub type UrteilFn = fn(tag: u32, attribute: u32) -> Urteil;
 /// 1. Öffnen nur mit `FILE_READ_ATTRIBUTES` (Windows, ohne Lesezugriff; mit `FILE_FLAG_OPEN_REPARSE_POINT`
 ///    und `FILE_FLAG_OPEN_NO_RECALL`; macOS: `O_EVTONLY`, ohne Lesezugriff und ohne Abruf), Urteil und
 ///    Datei-Kennung am Handle (macOS: `fstat`). Nicht „lesbar“: Ende, Stufe 2 wird nie aufgerufen.
-/// 2. Nur bei „lesbar“: Öffnen mit Lesezugriff nach `art`, erneut am Handle urteilen und die Kennung mit
-///    Stufe 1 vergleichen (Tausch dazwischen: [`OeffnenFehler::Getauscht`]).
+/// 2. Nur bei „lesbar“ (und nach einem erneuten Urteil am selben Handle): das Stufe-1-Handle wird auf
+///    Lesezugriff nach `art` hochgestuft, OHNE den Pfad noch einmal zu öffnen (Windows `ReOpenFile` auf
+///    dasselbe Objekt; Unix: Duplikat des Handles; macOS, dessen Stufe 1 nur `O_EVTONLY` ist: `openat` im
+///    geprüften Ordner, sonst Pfad). Erneut am Handle urteilen, Kennung mit Stufe 1 vergleichen (Tausch:
+///    [`OeffnenFehler::Getauscht`]).
 ///
 /// Das Öffnen mit Lesezugriff ist nicht abrufsicher (`FILE_FLAG_OPEN_NO_RECALL` allein genügt nicht); der
-/// Schutz ist das Urteil davor. Restrisiko: Auslagern im Fenster zwischen Stufe 1 und 2 (Millisekunden);
-/// unter macOS fängt es die Abrufsperre ([`abruf_sperren`], hier für beide Stufen gesetzt) ab: Fehler statt
+/// Schutz ist das Urteil davor. Restrisiko: Auslagern im Fenster zwischen dem letzten Urteil und dem
+/// Hochstufen (ein Systemaufruf, siehe [`zweistufig`]); unter macOS fängt es die Abrufsperre ([`abruf_sperren`], hier für beide Stufen gesetzt) ab: Fehler statt
 /// Download. Auch ein Vorab-Urteil am Pfad ([`roh`]) ersetzt das nicht, es spart nur Öffnungen.
 ///
 /// **Aufrufer MÜSSEN [`abruf_sperren`] über das Lesen halten** und [`ist_abruf_gesperrt`] als „nur online“
@@ -309,24 +313,42 @@ pub fn oeffnen_ohne_abruf(
         )));
     }
     let eins = system::stufe1(p, art).map_err(oeffnen_io)?;
-    let Some((attribute, tag)) = offen_daten(&eins, p) else {
-        return Err(OeffnenFehler::Urteil(Urteil::Umweg));
+    zweistufig(eins, p, urteil, &|e| system::hochstufen(e, p, art))
+}
+
+/// Urteil und Kennung am Stufe-1-Handle, erneutes Urteil unmittelbar vor dem Hochstufen (am selben Handle),
+/// Hochstufen auf Lesezugriff über `hoch` (darf den Pfad NICHT noch einmal öffnen: Windows `ReOpenFile`,
+/// Unix Duplikat bzw. `openat` im geprüften Ordner), Urteil und Kennung am Lese-Handle.
+///
+/// Restrisiko, das KEIN Code schließt (nur eine Provider-/Windows-Sperre): Der Cloud-Anbieter kann die Datei
+/// zwischen dem letzten Urteil am Stufe-1-Handle und dem Öffnen mit Lesezugriff auslagern; das Öffnen löst
+/// dann den Abruf aus. Das Fenster ist ein Systemaufruf lang (`ReOpenFile` ohne Pfadauflösung); das Urteil
+/// VOR dem Hochstufen und am Ergebnis halten es klein, die Lesezugriffe folgen erst nach dem Urteil.
+pub(super) fn zweistufig(
+    eins: fs::File,
+    p: &Path,
+    urteil: UrteilFn,
+    hoch: &dyn Fn(&fs::File) -> io::Result<fs::File>,
+) -> Result<fs::File, OeffnenFehler> {
+    let beurteilen = |f: &fs::File| -> Result<(), OeffnenFehler> {
+        let Some((attribute, tag)) = offen_daten(f, p) else {
+            return Err(OeffnenFehler::Urteil(Urteil::Umweg));
+        };
+        match urteil(tag, attribute) {
+            Urteil::Lesbar => Ok(()),
+            u => Err(OeffnenFehler::Urteil(u)),
+        }
     };
-    match urteil(tag, attribute) {
-        Urteil::Lesbar => {}
-        u => return Err(OeffnenFehler::Urteil(u)),
-    }
+    beurteilen(&eins)?;
     let id1 = datei_id(&eins, p).map_err(OeffnenFehler::Io)?;
+    // Noch einmal, unmittelbar vor dem Hochstufen: der Zustand kann sich seit dem ersten Urteil geändert haben.
+    beurteilen(&eins)?;
     #[cfg(test)]
     naht::stufe2_gezaehlt(p);
-    let zwei = system::stufe2(p, art).map_err(oeffnen_io)?;
-    let Some((attribute, tag)) = offen_daten(&zwei, p) else {
-        return Err(OeffnenFehler::Urteil(Urteil::Umweg));
-    };
-    match urteil(tag, attribute) {
-        Urteil::Lesbar => {}
-        u => return Err(OeffnenFehler::Urteil(u)),
-    }
+    #[cfg(test)]
+    naht::vor_hochstufen(p);
+    let zwei = hoch(&eins).map_err(oeffnen_io)?;
+    beurteilen(&zwei)?;
     if datei_id(&zwei, p).map_err(OeffnenFehler::Io)? != id1 {
         return Err(OeffnenFehler::Getauscht);
     }
@@ -395,17 +417,6 @@ pub fn abruf_sperren() -> AbrufSperre {
             _faden: std::marker::PhantomData,
         }
     }
-}
-
-/// Führt `f` (ein Zugriff, der einen Platzhalter laden könnte, z. B. `read_dir` auf einem Ordner) unter der
-/// [`abruf_sperren`] aus. Kann die Sperre unter macOS nicht gesetzt werden, läuft `f` nicht (fail-closed,
-/// Fehler `Other`); sonst und außerhalb von macOS läuft `f` immer.
-pub fn unter_abrufsperre<T>(f: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
-    let sperre = abruf_sperren();
-    if sperre.fehlt() {
-        return Err(io::Error::other("Abrufsperre nicht setzbar"));
-    }
-    f()
 }
 
 /// Siehe [`abruf_sperren`].
@@ -523,7 +534,7 @@ mod mac_abruf {
 
 #[cfg(not(windows))]
 mod system {
-    use super::{Eintrag, Gattung, OeffnenArt, Roh};
+    use super::{Gattung, OeffnenArt, Roh};
     use std::fs;
     use std::io;
     use std::path::Path;
@@ -573,49 +584,6 @@ mod system {
 
     pub fn eins(p: &Path) -> io::Result<Roh> {
         fs::symlink_metadata(p).map(|m| aus_meta(&m))
-    }
-
-    pub fn alle(p: &Path) -> io::Result<Vec<Eintrag>> {
-        // macOS: ein Ordner, der nur online liegt, wird nie aufgelistet (`readdir` kann ihn materialisieren);
-        // der Aufrufer urteilt zwar schon vorher, doch der Ordner kann im Fenster davor ausgelagert worden
-        // sein. Dazu die Abrufsperre über das ganze Auflisten.
-        #[cfg(target_os = "macos")]
-        let _sperre = {
-            let sperre = super::abruf_sperren();
-            if sperre.fehlt() {
-                return Err(io::Error::other("Abrufsperre nicht setzbar"));
-            }
-            if super::online_urteil(super::attribute_aus_stat_flags(stat_flags_pfad(p)?)) {
-                return Err(io::Error::other("nur online"));
-            }
-            sperre
-        };
-        let mut aus = Vec::new();
-        for e in fs::read_dir(p)? {
-            let Ok(e) = e else {
-                aus.push(Eintrag {
-                    name: std::ffi::OsString::new(),
-                    roh: None,
-                });
-                continue;
-            };
-            let roh = fs::symlink_metadata(e.path()).ok().map(|m| aus_meta(&m));
-            aus.push(Eintrag {
-                name: e.file_name(),
-                roh,
-            });
-        }
-        Ok(aus)
-    }
-
-    /// macOS: `st_flags` eines Pfades (`lstat`, folgt keinem Symlink, öffnet nichts).
-    #[cfg(target_os = "macos")]
-    fn stat_flags_pfad(p: &Path) -> io::Result<u32> {
-        #[cfg(test)]
-        if let Some(f) = super::naht::stat_flags(p) {
-            return Ok(f);
-        }
-        Ok(flags_von(&fs::symlink_metadata(p)?))
     }
 
     /// Attribute am offenen Handle: macOS aus `fstat` (`SF_DATALESS`), sonst keine.
@@ -688,8 +656,20 @@ mod system {
         oeffnen(p, art, true)
     }
 
-    pub fn stufe2(p: &Path, art: OeffnenArt) -> io::Result<fs::File> {
-        oeffnen(p, art, false)
+    /// Hochstufen auf Lesezugriff ohne zweite Pfadöffnung: Stufe 1 ist hier schon lesbar (Duplikat desselben
+    /// Handles). macOS: Stufe 1 hat nur `O_EVTONLY`, dort öffnet der Pfad noch einmal (die Abrufsperre und
+    /// `O_NOFOLLOW_ANY` sichern das; im geprüften Ordner läuft es über `openat`, siehe `Ordner`).
+    pub fn hochstufen(eins: &fs::File, p: &Path, art: OeffnenArt) -> io::Result<fs::File> {
+        #[cfg(target_os = "macos")]
+        {
+            let _ = eins;
+            oeffnen(p, art, false)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (p, art);
+            eins.try_clone()
+        }
     }
 
     pub fn id(f: &fs::File) -> io::Result<(u64, u64)> {
@@ -709,20 +689,20 @@ mod system {
 
 #[cfg(windows)]
 mod system {
-    use super::{Eintrag, Gattung, OeffnenArt, Roh, ATTR_REPARSE_POINT, ATTR_VERZEICHNIS};
-    use std::ffi::{c_void, OsStr, OsString};
+    use super::{Gattung, OeffnenArt, Roh, ATTR_REPARSE_POINT, ATTR_VERZEICHNIS};
+    use std::ffi::{c_void, OsStr};
     use std::fs;
     use std::io;
-    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use std::os::windows::ffi::OsStrExt;
     use std::os::windows::io::AsRawHandle;
     use std::path::Path;
     use windows::core::PCWSTR;
-    use windows::Win32::Foundation::{ERROR_NO_MORE_FILES, HANDLE};
+    use windows::Win32::Foundation::HANDLE;
     use windows::Win32::Storage::FileSystem::{
         FileAttributeTagInfo, FindClose, FindExInfoBasic, FindExSearchNameMatch, FindFirstFileExW,
-        FindNextFileW, GetFileInformationByHandle, GetFileInformationByHandleEx,
-        BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_TAG_INFO, FIND_FIRST_EX_LARGE_FETCH,
-        WIN32_FIND_DATAW,
+        GetFileInformationByHandle, GetFileInformationByHandleEx, ReOpenFile,
+        BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_TAG_INFO, FILE_FLAGS_AND_ATTRIBUTES,
+        FILE_SHARE_MODE, FIND_FIRST_EX_LARGE_FETCH, WIN32_FIND_DATAW,
     };
 
     /// 100-ns-Schritte zwischen 1601-01-01 und 1970-01-01.
@@ -772,15 +752,6 @@ mod system {
         }
     }
 
-    fn name_aus(d: &WIN32_FIND_DATAW) -> OsString {
-        let n = d
-            .cFileName
-            .iter()
-            .position(|&c| c == 0)
-            .unwrap_or(d.cFileName.len());
-        OsString::from_wide(&d.cFileName[..n])
-    }
-
     /// Ein Eintrag über `FindFirstFileExW`: öffnet die Datei nicht, folgt keiner Verknüpfung.
     pub fn eins(p: &Path) -> io::Result<Roh> {
         let w = breit(p.as_os_str())?;
@@ -797,45 +768,9 @@ mod system {
                 FIND_FIRST_EX_LARGE_FETCH,
             )
         }
-        .map_err(io::Error::other)?;
+        .map_err(win_io)?;
         let _suche = Suche(h);
         Ok(roh_aus(&d))
-    }
-
-    /// Alle Einträge eines Ordners über `FindFirstFileExW` und `FindNextFileW`.
-    pub fn alle(p: &Path) -> io::Result<Vec<Eintrag>> {
-        let w = breit(p.join("*").as_os_str())?;
-        let mut d = WIN32_FIND_DATAW::default();
-        // SAFETY: wie in `eins`.
-        let h = unsafe {
-            FindFirstFileExW(
-                PCWSTR(w.as_ptr()),
-                FindExInfoBasic,
-                std::ptr::addr_of_mut!(d).cast::<c_void>(),
-                FindExSearchNameMatch,
-                None,
-                FIND_FIRST_EX_LARGE_FETCH,
-            )
-        }
-        .map_err(io::Error::other)?;
-        let suche = Suche(h);
-        let mut aus = Vec::new();
-        loop {
-            let name = name_aus(&d);
-            if name != "." && name != ".." {
-                aus.push(Eintrag {
-                    name,
-                    roh: Some(roh_aus(&d)),
-                });
-            }
-            // SAFETY: gültiges Suchhandle, `d` ist ein beschreibbarer `WIN32_FIND_DATAW`.
-            match unsafe { FindNextFileW(suche.0, &mut d) } {
-                Ok(()) => {}
-                Err(e) if e.code() == ERROR_NO_MORE_FILES.to_hresult() => break,
-                Err(e) => return Err(io::Error::other(e)),
-            }
-        }
-        Ok(aus)
     }
 
     /// Attribute und Reparse-Tag am offenen Handle (`FileAttributeTagInfo`).
@@ -850,14 +785,26 @@ mod system {
                 std::mem::size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32,
             )
         }
-        .map_err(io::Error::other)?;
+        .map_err(win_io)?;
         Ok((info.FileAttributes, info.ReparseTag))
     }
 
+    /// Win32-Fehler als `io::Error` mit erhaltenem Code (HRESULT_FROM_WIN32 → Win32-Code), damit
+    /// `raw_os_error()` z. B. ERROR_SHARING_VIOLATION (32) erkennt; andere HRESULTs bleiben `other`.
+    pub fn win_io(e: windows::core::Error) -> io::Error {
+        let hr = e.code().0 as u32;
+        if hr & 0xFFFF_0000 == 0x8007_0000 {
+            io::Error::from_raw_os_error((hr & 0xFFFF) as i32)
+        } else {
+            io::Error::other(e)
+        }
+    }
+
+    const GENERIC_READ: u32 = 0x8000_0000;
     const FILE_READ_ATTRIBUTES: u32 = 0x80;
     const FILE_SHARE_ALLES: u32 = 0x1 | 0x2 | 0x4;
-    const FILE_FLAG_OPEN_NO_RECALL: u32 = 0x0010_0000;
-    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    pub const FILE_FLAG_OPEN_NO_RECALL: u32 = 0x0010_0000;
+    pub const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 
     /// Stufe 1: nur `FILE_READ_ATTRIBUTES`, nichts lesen, alles freigeben; öffnet die Verknüpfung oder den
     /// Platzhalter selbst (`FILE_FLAG_OPEN_REPARSE_POINT`).
@@ -870,18 +817,31 @@ mod system {
             .open(p)
     }
 
-    /// Stufe 2: Lesezugriff; mit `FILE_FLAG_OPEN_REPARSE_POINT` nur, wenn der Aufrufer nicht folgen will.
-    pub fn stufe2(p: &Path, art: OeffnenArt) -> io::Result<fs::File> {
-        use std::os::windows::fs::OpenOptionsExt;
-        let mut flags = FILE_FLAG_OPEN_NO_RECALL;
+    /// Hochstufen: `ReOpenFile` auf dasselbe Objekt wie Stufe 1 (kein zweiter Pfadzugriff, also kein Tausch
+    /// eines Pfadgliedes und keine neue Auflösung). Lesezugriff; `FILE_FLAG_OPEN_REPARSE_POINT` nur, wenn der
+    /// Aufrufer nicht folgen will. Das Urteil davor und danach macht der Aufrufer.
+    pub fn hochstufen(eins: &fs::File, _p: &Path, art: OeffnenArt) -> io::Result<fs::File> {
+        use std::os::windows::io::FromRawHandle;
+        // `ReOpenFile` weist `FILE_FLAG_OPEN_NO_RECALL` mit ERROR_INVALID_PARAMETER ab (auf Windows gemessen,
+        // jede Kombination). Der Abrufschutz liegt deshalb im Urteil am Stufe-1-Handle (ohne Lesezugriff, mit
+        // NO_RECALL geöffnet), das unmittelbar davor abgeschlossen ist: ein Platzhalter wird nie hochgestuft.
+        let mut flags = 0u32;
         if !art.folgen {
             flags |= FILE_FLAG_OPEN_REPARSE_POINT;
         }
-        fs::OpenOptions::new()
-            .read(true)
-            .share_mode(art.teilen)
-            .custom_flags(flags)
-            .open(p)
+        // SAFETY: gültiges, offenes Handle (`eins` lebt über den Aufruf); `ReOpenFile` liefert ein neues,
+        // eigenes Handle, das die `File` besitzt.
+        let h = unsafe {
+            ReOpenFile(
+                HANDLE(eins.as_raw_handle()),
+                GENERIC_READ,
+                FILE_SHARE_MODE(art.teilen),
+                FILE_FLAGS_AND_ATTRIBUTES(flags),
+            )
+        }
+        .map_err(win_io)?;
+        // SAFETY: `h` ist ein frisches, gültiges Handle, das sonst niemand besitzt.
+        Ok(unsafe { fs::File::from_raw_handle(h.0) })
     }
 
     /// Volume-Seriennummer und Datei-Index am Handle.
@@ -889,7 +849,7 @@ mod system {
         let mut info = BY_HANDLE_FILE_INFORMATION::default();
         // SAFETY: gültiges, offenes Handle; `info` ist ein beschreibbarer Puffer.
         unsafe { GetFileInformationByHandle(HANDLE(f.as_raw_handle()), &mut info) }
-            .map_err(io::Error::other)?;
+            .map_err(win_io)?;
         Ok((
             u64::from(info.dwVolumeSerialNumber),
             (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
@@ -903,7 +863,7 @@ mod system {
 pub(crate) mod naht {
     use super::Roh;
     use std::cell::RefCell;
-    use std::collections::{BTreeMap, VecDeque};
+    use std::collections::{BTreeMap, BTreeSet, VecDeque};
     use std::path::{Path, PathBuf};
 
     type Karte = RefCell<BTreeMap<PathBuf, (u32, u32)>>;
@@ -925,6 +885,46 @@ pub(crate) mod naht {
         static ID_FOLGE: RefCell<BTreeMap<PathBuf, VecDeque<(u64, u64)>>> = const { RefCell::new(BTreeMap::new()) };
         /// Pfad → wie oft Stufe 2 (Lesezugriff) aufgerufen wurde.
         static STUFE2: RefCell<BTreeMap<PathBuf, usize>> = const { RefCell::new(BTreeMap::new()) };
+        /// Pfade, deren Handle-Abfrage scheitert (Attribute nicht bestimmbar).
+        static HANDLE_AUSFALL: RefCell<BTreeSet<PathBuf>> = const { RefCell::new(BTreeSet::new()) };
+        /// Haken unmittelbar vor dem Hochstufen auf Lesezugriff (Test: Pfad dazwischen austauschen).
+        static VOR_HOCHSTUFEN: RefCell<Option<Box<dyn Fn(&Path)>>> = const { RefCell::new(None) };
+    }
+
+    /// Die Handle-Abfrage dieses Pfades scheitert (wie ein Fehler von `GetFileInformationByHandleEx`).
+    pub fn handle_ausfall_setzen(p: &Path) {
+        HANDLE_AUSFALL.with(|k| k.borrow_mut().insert(p.to_path_buf()));
+    }
+
+    pub(super) fn handle_ausfall(p: &Path) -> bool {
+        HANDLE_AUSFALL.with(|k| k.borrow().contains(p))
+    }
+
+    /// Ein Haken, der unmittelbar vor dem Hochstufen auf Lesezugriff läuft (nur dieser Faden).
+    pub fn vor_hochstufen_haken(f: Option<Box<dyn Fn(&Path)>>) {
+        VOR_HOCHSTUFEN.with(|k| *k.borrow_mut() = f);
+    }
+
+    pub(super) fn vor_hochstufen(p: &Path) {
+        VOR_HOCHSTUFEN.with(|k| {
+            if let Some(f) = k.borrow().as_ref() {
+                f(p);
+            }
+        });
+    }
+
+    /// Find-Daten dieses Pfades (Attribute, Tag) samt vorgetäuschten `st_flags`, falls gesetzt.
+    pub(super) fn find_daten(p: &Path) -> Option<(u32, u32)> {
+        let f = FIND.with(|k| k.borrow().get(p).copied());
+        let s = STAT_FLAGS.with(|k| k.borrow().get(p).copied());
+        if f.is_none() && s.is_none() {
+            return None;
+        }
+        let (mut attribute, tag) = f.unwrap_or((0, 0));
+        if let Some(flags) = s {
+            attribute |= super::attribute_aus_stat_flags(flags);
+        }
+        Some((attribute, tag))
     }
 
     /// Die Handle-Abfragen dieser Datei melden der Reihe nach (Attribute, Tag); danach gilt `handle_setzen`.
@@ -978,11 +978,6 @@ pub(crate) mod naht {
         HANDLE_STAT_FLAGS.with(|k| k.borrow_mut().insert(p.to_path_buf(), flags));
     }
 
-    #[cfg(target_os = "macos")]
-    pub(super) fn stat_flags(p: &Path) -> Option<u32> {
-        STAT_FLAGS.with(|k| k.borrow().get(p).copied())
-    }
-
     /// Öffnet wie Stufe 1 von [`super::oeffnen_ohne_abruf`] (Test: Öffnungsflags prüfen).
     pub fn stufe1_fuer_test(p: &Path, art: super::OeffnenArt) -> std::io::Result<std::fs::File> {
         super::system::stufe1(p, art)
@@ -1007,6 +1002,8 @@ pub(crate) mod naht {
         HANDLE_FOLGE.with(|k| k.borrow_mut().clear());
         ID_FOLGE.with(|k| k.borrow_mut().clear());
         STUFE2.with(|k| k.borrow_mut().clear());
+        HANDLE_AUSFALL.with(|k| k.borrow_mut().clear());
+        VOR_HOCHSTUFEN.with(|k| *k.borrow_mut() = None);
     }
 
     pub(super) fn anwenden(p: &Path, r: &mut Roh) {
