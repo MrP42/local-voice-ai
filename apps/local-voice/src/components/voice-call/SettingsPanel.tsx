@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Radio, RadioGroup, Switch, useId } from "@fluentui/react-components";
 import { Check, X } from "lucide-react";
@@ -31,6 +31,7 @@ import { useKnowledgeEditor } from "./useKnowledge";
 import { NotebookAccess } from "./NotebookAccess";
 import {
   alleFrei,
+  fokusNachFreigabe,
   schalteAllesEin,
   type Ergebnis,
   type Zugriff,
@@ -38,7 +39,7 @@ import {
 import { useSettings } from "@/hooks/useSettings";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useComplianceStore } from "@/stores/complianceStore";
-import type { LlmConnection, LlmModelConfig } from "@/bindings";
+import { commands, type LlmConnection, type LlmModelConfig } from "@/bindings";
 
 /** Auswahlwert für „kein Denker“ (die Auswahl kennt keinen leeren Wert). */
 const DENKER_OFF = "off";
@@ -249,29 +250,54 @@ const GlobalKnowledge: React.FC<{
   const knowledgeChanged = useVoiceCallStore((s) => s.knowledgeChanged);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<Ergebnis | null>(null);
+  const [fokus, setFokus] = useState<"status" | "taste" | null>(null);
+  const tasteRef = useRef<HTMLButtonElement>(null);
+  const statusRef = useRef<HTMLDivElement>(null);
   const allOn = alleFrei({ enabled, areas, transcripts });
   // Inhalte gehen nur an das eingebaute lokale Modell (kein Ollama, kein Relay, kein Cloud-Modell).
   const noContent = llm.label !== null && !llm.local;
+  // Die Taste wird beim Arbeiten nicht `disabled` (das nähme einer Tastatur den Fokus), nur
+  // `aria-disabled`; ein zweiter Druck wird abgefangen.
+  // Der Fokusauftrag wird erst gelöscht, wenn wirklich ein Element den Fokus hat. Fehlt die Taste
+  // (eine andere Ansicht hat inzwischen alles freigegeben, der Konflikt-Refresh setzt `allOn`), geht
+  // der Fokus auf die Statuszeile derselben Gruppe (`role="status"`, `tabIndex=-1`): sie nennt den
+  // jetzt geltenden Zustand und wird so vorgelesen; die Meldung zum Konflikt steht in `role="alert"`.
+  useEffect(() => {
+    if (!fokus) return;
+    const ziel =
+      fokus === "taste"
+        ? (tasteRef.current ?? statusRef.current)
+        : statusRef.current;
+    if (!ziel) return;
+    ziel.focus();
+    if (document.activeElement === ziel) setFokus(null);
+  }, [fokus, allOn]);
   const enableAll = async () => {
+    if (busy) return;
+    const tasteHatteFokus =
+      !!tasteRef.current && document.activeElement === tasteRef.current;
     setBusy(true);
     setFailed(null);
-    const store: Zugriff = {
-      lies: (key) =>
-        (
-          useSettingsStore.getState().settings as Record<string, unknown> | null
-        )?.[key] as string[] | boolean | undefined,
-      setze: (key, value) =>
-        useSettingsStore.getState().updateSetting(key as never, value as never),
+    const io: Zugriff = {
+      lies: () => commands.voiceCallInhaltszugriffLesen(),
+      setze: async (erwartet, enabledNew, areasNew, readTranscripts) => {
+        const r = await commands.voiceCallInhaltszugriffSetzen(
+          erwartet,
+          enabledNew,
+          areasNew,
+          readTranscripts,
+        );
+        if (r.status === "error") throw new Error(r.error);
+        return r.data;
+      },
+      uebernehmen: () => useSettingsStore.getState().refreshSettings(),
     };
-    try {
-      const result = await schalteAllesEin(store);
-      setFailed(result === "ein" ? null : result);
-    } catch {
-      setFailed("teilweise");
-    } finally {
-      setBusy(false);
-      knowledgeChanged();
-    }
+    const result = await schalteAllesEin(io);
+    setFailed(result === "ein" ? null : result);
+    setBusy(false);
+    knowledgeChanged();
+    const ziel = fokusNachFreigabe(result, tasteHatteFokus);
+    if (ziel !== "keiner") setFokus(ziel);
   };
   return (
     <section
@@ -282,7 +308,12 @@ const GlobalKnowledge: React.FC<{
         {t("voiceCall.knowledge.global.title")}
       </h3>
       {allOn ? (
-        <div role="status" className="flex items-start gap-2 text-[13px]">
+        <div
+          ref={statusRef}
+          role="status"
+          tabIndex={-1}
+          className="flex items-start gap-2 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-logo-primary"
+        >
           <Check className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
           <div className="flex flex-col">
             <span className="font-semibold">
@@ -296,9 +327,10 @@ const GlobalKnowledge: React.FC<{
       ) : (
         <div className="flex flex-col items-start gap-1.5">
           <Button
+            ref={tasteRef}
             type="button"
             variant="primary"
-            disabled={busy}
+            aria-disabled={busy}
             aria-describedby={`${ids}-enable-all-hint`}
             onClick={() => void enableAll()}
           >
@@ -315,8 +347,8 @@ const GlobalKnowledge: React.FC<{
       {failed && (
         <p role="alert" className="m-0 text-xs text-red-600 dark:text-red-400">
           {t(
-            failed === "teilweise"
-              ? "voiceCall.knowledge.global.enableAllPartial"
+            failed === "konflikt"
+              ? "voiceCall.knowledge.global.enableAllConflict"
               : "voiceCall.knowledge.global.enableAllError",
           )}
         </p>

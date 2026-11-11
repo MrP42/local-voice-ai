@@ -7915,12 +7915,12 @@
         "title": "Globales Wissen (Vorschau)",
         "switch": "Alle freigegebenen Inhalte durchsuchen",
         "hint": "Vor jeder Antwort sucht die App lokal in den freigegebenen Bereichen und gibt dem Modell die passenden Auszüge mit Belegen. Nur mit lokalem Sprachmodell; Bücher nur bis zu deiner Leseposition.",
-        "enableAll": "Zugriff auf alle App-Inhalte einschalten",
-        "enableAllHint": "Schaltet die Suche ein und gibt alle Bereiche frei: Besprechungen samt Transkripten, Diktate, frühere Gespräche, Termine, Vorlesen-Seiten, Bücher, Buchnotizen und KI-Dokumente. Notizbuch-Abschnitte bleiben eine eigene Freigabe.",
-        "allOn": "Alle Bereiche freigegeben",
-        "allOnHint": "Besprechungen samt Transkripten, Diktate, Gespräche, Termine, Vorlesen-Seiten, Bücher, Buchnotizen und KI-Dokumente. Notizbuch-Abschnitte gibst du eigens frei. Einzelne Bereiche kannst du oben wieder abwählen.",
-        "enableAllError": "Der Zugriff konnte nicht vollständig eingeschaltet werden. Es gilt weiter die vorherige Freigabe.",
-        "enableAllPartial": "Der Zugriff konnte nicht eingeschaltet und nicht vollständig zurückgesetzt werden. Bitte prüfe die Schalter.",
+        "enableAll": "Bücher, Wissensbereiche und Transkripte freigeben",
+        "enableAllHint": "Schaltet die Suche ein und gibt diese Bereiche frei: Besprechungen samt Transkripten, Diktate, frühere Gespräche, Termine, Vorlesen-Seiten, Bücher, Buchnotizen und KI-Dokumente. Nicht dabei: Notizbuch-Abschnitte (eigene Freigabe unten) und die Ablage (im Sprachgespräch noch nicht angebunden). Die Inhalte gehen nur an das eingebaute lokale Modell.",
+        "allOn": "Bücher, Wissensbereiche und Transkripte sind freigegeben",
+        "allOnHint": "Besprechungen samt Transkripten, Diktate, Gespräche, Termine, Vorlesen-Seiten, Bücher, Buchnotizen und KI-Dokumente. Notizbuch-Abschnitte gibst du eigens frei; die Ablage ist im Sprachgespräch noch nicht angebunden. Die Inhalte gehen nur an das eingebaute lokale Modell. Einzelne Bereiche kannst du oben wieder abwählen.",
+        "enableAllError": "Die Freigabe konnte nicht gespeichert werden. Es gilt weiter die vorherige Einstellung.",
+        "enableAllConflict": "Die Einstellung wurde inzwischen geändert. Es wurde nichts überschrieben; die Schalter zeigen den aktuellen Stand.",
         "localOnly": "Inhalte gehen derzeit nur an das eingebaute lokale Modell. Mit {{model}} antwortet der Assistent ohne Zugriff auf deine Inhalte."
       },
       "notebook": {

@@ -555,18 +555,24 @@ fn kontext_an_den_sprecher_nur_wenn_alles_stimmt() {
     use super::service::admissible;
     let mut idx = sample_index();
     let ctx = Ctx::new();
-    let hits = retrieve(
+    let mut hits = retrieve(
         &idx,
         &ctx.q("Wer übernimmt die Ausschreibung der Poststelle?"),
     );
     assert!(!hits.hits.is_empty());
+    hits.berechtigung = 7;
     let all = all_kinds();
-    assert!(admissible(&idx, &all, true, true, &hits));
+    assert!(admissible(&idx, &all, true, true, 7, &hits));
     // Schalter aus, Cloud-Empfänger, Bereich entzogen: kein Kontext.
-    assert!(!admissible(&idx, &all, false, true, &hits));
-    assert!(!admissible(&idx, &all, true, false, &hits));
+    assert!(!admissible(&idx, &all, false, true, 7, &hits));
+    assert!(!admissible(&idx, &all, true, false, 7, &hits));
     let none: HashSet<SourceKind> = HashSet::new();
-    assert!(!admissible(&idx, &none, true, true, &hits));
+    assert!(!admissible(&idx, &none, true, true, 7, &hits));
+    // Berechtigung geändert (Widerruf oder neue Freigabe) seit dem Abruf: kein Kontext.
+    assert!(!admissible(&idx, &all, true, true, 8, &hits));
+    let mut markiert = hits.clone();
+    markiert.berechtigung_geaendert = true;
+    assert!(!admissible(&idx, &all, true, true, 7, &markiert));
     // Quelle geändert: Version passt nicht mehr.
     let mut changed = doc(
         SourceKind::Meeting,
@@ -576,13 +582,35 @@ fn kontext_an_den_sprecher_nur_wenn_alles_stimmt() {
     );
     changed.at_ms = NOW;
     idx.upsert(&changed);
-    assert!(!admissible(&idx, &all, true, true, &hits));
+    assert!(!admissible(&idx, &all, true, true, 7, &hits));
     // Widerruf erhöht den Stand: auch ein frischer Abruf von davor gilt nicht.
-    let fresh = retrieve(
+    let mut fresh = retrieve(
         &idx,
         &ctx.q("Wer übernimmt die Ausschreibung der Poststelle?"),
     );
-    assert!(admissible(&idx, &all, true, true, &fresh));
+    fresh.berechtigung = 7;
+    assert!(admissible(&idx, &all, true, true, 7, &fresh));
     idx.revoke(Some(SourceKind::Dictation));
-    assert!(!admissible(&idx, &all, true, true, &fresh));
+    assert!(!admissible(&idx, &all, true, true, 7, &fresh));
+}
+
+#[test]
+fn widerruf_waehrend_des_abrufs_gibt_keine_auszuege_aus() {
+    let idx = sample_index();
+    let ctx = Ctx::new();
+    let hits = retrieve(
+        &idx,
+        &ctx.q("Wer übernimmt die Ausschreibung der Poststelle?"),
+    );
+    assert!(!hits.hits.is_empty());
+    // Version unverändert: die Auszüge bleiben, gebunden an die Startversion.
+    let gleich = hits.clone().an_version_gebunden(3, 3);
+    assert_eq!(gleich.hits.len(), hits.hits.len());
+    assert_eq!(gleich.berechtigung, 3);
+    assert!(!gleich.berechtigung_geaendert);
+    // Version beim Ausgeben eine andere: kein Auszug, nur der Marker.
+    let widerrufen = hits.an_version_gebunden(3, 4);
+    assert!(widerrufen.hits.is_empty());
+    assert!(widerrufen.berechtigung_geaendert);
+    assert!(widerrufen.searched.is_empty());
 }

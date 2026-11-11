@@ -6445,6 +6445,27 @@ async changeVoiceGlobalContextEnabledSetting(enabled: boolean) : Promise<Result<
 }
 },
 /**
+ * Der Inhaltszugriff samt Berechtigungsversion (lva#509): Hauptschalter, Bereiche, Transkripte.
+ * Version und Werte werden unter derselben Sperre gelesen, die jeder Schreiber hält.
+ */
+async voiceCallInhaltszugriffLesen() : Promise<Inhaltszugriff> {
+    return await TAURI_INVOKE("voice_call_inhaltszugriff_lesen");
+},
+/**
+ * Gibt den Inhaltszugriff in EINEM Schritt frei oder zurück: nur wenn `erwartete_version` noch die
+ * aktuelle ist, werden Hauptschalter, Bereiche und Transkripte zusammen geschrieben und die Version
+ * erhöht; sonst wird nichts geschrieben (`konflikt`) und die Oberfläche liest neu. Ein Widerruf
+ * zwischen Lesen und Setzen gewinnt damit immer.
+ */
+async voiceCallInhaltszugriffSetzen(erwarteteVersion: number, enabled: boolean, areas: string[], readTranscripts: boolean) : Promise<Result<Setzen, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_inhaltszugriff_setzen", { erwarteteVersion, enabled, areas, readTranscripts }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Eine Textfassung exportieren. Das Format ergibt sich aus der Endung
  * (`epub`, `pdf`, `docx`, `md`, `txt`). Rückgabe: der geschriebene Pfad.
  */
@@ -10530,7 +10551,17 @@ epoch: number;
  * Fingerabdruck der Frage, zu der abgerufen wurde: das Backend gibt den
  * Kontext nur zu genau dieser Frage weiter (Codex M5 Must-fix 6).
  */
-question_hash?: string }
+question_hash?: string; 
+/**
+ * Berechtigungsversion beim Start des Abrufs (`berechtigung`): ändert sich der Inhaltszugriff,
+ * bevor die Auszüge ins Modell gehen, ist das Ergebnis ungültig (lva#509). `0` heißt unbekannt
+ * und passt nie.
+ */
+berechtigung?: number; 
+/**
+ * Marker: der Inhaltszugriff hat sich während des Abrufs geändert; deshalb gibt es keine Auszüge.
+ */
+berechtigung_geaendert?: boolean }
 /**
  * Verknüpfte Quelle (Vertrag `ContextSource`).
  */
@@ -11201,6 +11232,10 @@ server_running: boolean;
  * Code des letzten Fehlers der Vektorstufe (`memory_low`, `no_model`, ...).
  */
 last_error: string | null }
+/**
+ * Der gelesene Stand für die Oberfläche (`voice_call_inhaltszugriff_lesen`).
+ */
+export type Inhaltszugriff = { version: number; enabled: boolean; areas: string[]; read_transcripts: boolean }
 /**
  * Eine Integration, wie Oberflaeche und Dump sie sehen. Enthaelt kein Geheimnis.
  */
@@ -13390,6 +13425,18 @@ matched_percent: number; pairs: LearnedPair[] }
  * Der Vorlesetext, einmal als Sätze (zum Anzeigen) und einmal am Stück (zum Vergleichen).
  */
 export type SetupText = { sentences: string[]; text: string }
+/**
+ * Antwort von `voice_call_inhaltszugriff_setzen`.
+ */
+export type Setzen = 
+/**
+ * Geschrieben; `version` ist die neue Version.
+ */
+{ status: "ok"; version: number } | 
+/**
+ * Nichts geschrieben: die erwartete Version war nicht mehr die aktuelle.
+ */
+{ status: "konflikt"; version: number }
 /**
  * Ein Pruefpunkt der Schild-Erklaerung. `id` wird in der Oberflaeche
  * uebersetzt, `detail` traegt Namen und Zahlen.

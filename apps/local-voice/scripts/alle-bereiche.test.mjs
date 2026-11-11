@@ -1,4 +1,4 @@
-// Lva#485: „Zugriff auf alle App-Inhalte einschalten“ (Einstellungen des Sprachgesprächs), reine Logik.
+// Lva#485/#509: „Bücher, Wissensbereiche und Transkripte freigeben“ (Einstellungen des Sprachgesprächs), reine Logik.
 // Lauf: node --test scripts/alle-bereiche.test.mjs (Node >= 22.6).
 import assert from "node:assert/strict";
 import { register } from "node:module";
@@ -6,32 +6,54 @@ import test from "node:test";
 
 register("./test-stubs/hooks.mjs", import.meta.url);
 
-const { alleBereiche, alleFrei, schalteAllesEin, ZUGRIFF_SCHLUESSEL } =
+const { alleBereiche, alleFrei, schalteAllesEin, fokusNachFreigabe } =
   await import("../src/components/voice-call/alleBereiche.ts");
 const { ALL_AREAS, GLOBAL_AREAS, KNOWLEDGE_AREAS, NOTEBOOK_AREA } =
   await import("../src/components/voice-call/bereiche.ts");
 
 const OHNE_NOTIZBUCH = [...KNOWLEDGE_AREAS, ...GLOBAL_AREAS];
 
-/** Einstellungen als Attrappe; `scheitert`: Schlüssel, deren Speichern der Store zurückrollt. */
-function store(start = {}, scheitert = []) {
-  const werte = {
-    voice_call_knowledge: [],
-    voice_call_read_transcripts: false,
-    voice_global_context_enabled: false,
-    ...start,
-  };
-  const log = [];
-  return {
-    werte,
-    log,
-    lies: (k) => werte[k],
-    setze: async (k, v) => {
-      log.push([k, v]);
-      // Wie `updateSetting`: wirft nie, rollt bei Fehler den Schlüssel zurück.
-      if (!scheitert.includes(k)) werte[k] = v;
+/**
+ * Der Kern als Attrappe, mit denselben Regeln wie `app_context::berechtigung` in Rust: eine Version,
+ * EIN Setzen mit Vergleich der erwarteten Version (sonst Konflikt, nichts geschrieben), jede Änderung
+ * erhöht die Version. `beimLesen` läuft nach dem Lesen: dort greift der Test mit einem verschachtelten
+ * Schreibvorgang ein.
+ */
+function kern(start = {}) {
+  const k = {
+    version: 1,
+    werte: {
+      enabled: false,
+      areas: [],
+      read_transcripts: false,
+      ...start,
+    },
+    setzenAufrufe: 0,
+    uebernommen: 0,
+    beimLesen: null,
+    /** Ein anderer Weg widerruft (etwa der Hauptschalter in einem anderen Fenster). */
+    widerrufen() {
+      k.werte = { enabled: false, areas: [], read_transcripts: false };
+      k.version += 1;
+    },
+    lies: async () => {
+      const stand = { version: k.version, ...structuredClone(k.werte) };
+      await k.beimLesen?.();
+      return stand;
+    },
+    setze: async (erwartet, enabled, areas, readTranscripts) => {
+      k.setzenAufrufe += 1;
+      if (erwartet !== k.version)
+        return { status: "konflikt", version: k.version };
+      k.werte = { enabled, areas, read_transcripts: readTranscripts };
+      k.version += 1;
+      return { status: "ok", version: k.version };
+    },
+    uebernehmen: async () => {
+      k.uebernommen += 1;
     },
   };
+  return k;
 }
 
 test("alleBereiche: alle vorhandenen Bereiche aus den Listen, ohne Notizbuch", () => {
@@ -70,96 +92,108 @@ test("alleFrei: nur mit Hauptschalter, allen Bereichen und Transkripten", () => 
   );
 });
 
-test("schalteAllesEin: setzt Hauptschalter, alle Bereiche und Transkripte", async () => {
-  const s = store();
-  assert.equal(await schalteAllesEin(s), "ein");
-  assert.equal(s.werte.voice_global_context_enabled, true);
-  assert.equal(s.werte.voice_call_read_transcripts, true);
-  assert.deepEqual(s.werte.voice_call_knowledge, OHNE_NOTIZBUCH);
-  // Der Hauptschalter kommt zuletzt: bricht etwas ab, wirkt nichts.
-  assert.equal(s.log.at(-1)[0], "voice_global_context_enabled");
-});
-
-test("schalteAllesEin: schreibt nur, was sich ändert", async () => {
-  const s = store({
-    voice_call_knowledge: OHNE_NOTIZBUCH,
-    voice_call_read_transcripts: true,
+test("schalteAllesEin: gibt Hauptschalter, alle Bereiche und Transkripte in EINEM Aufruf frei", async () => {
+  const k = kern();
+  assert.equal(await schalteAllesEin(k), "ein");
+  assert.equal(k.setzenAufrufe, 1, "genau ein Schreibvorgang statt drei");
+  assert.deepEqual(k.werte, {
+    enabled: true,
+    areas: OHNE_NOTIZBUCH,
+    read_transcripts: true,
   });
-  assert.equal(await schalteAllesEin(s), "ein");
-  assert.deepEqual(s.log, [["voice_global_context_enabled", true]]);
+  assert.equal(k.uebernommen, 1, "der Stand der Oberfläche wird neu gelesen");
 });
 
-test("schalteAllesEin: das schon freigegebene Notizbuch bleibt erhalten, Abschnitte bleiben unberührt", async () => {
-  const s = store({ voice_call_knowledge: ["notebook"] });
-  await schalteAllesEin(s);
-  assert.equal(s.werte.voice_call_knowledge.includes("notebook"), true);
-  assert.equal(
-    s.log.some(([k]) => k === "voice_call_notebook_sections"),
-    false,
-  );
+test("schalteAllesEin: das schon freigegebene Notizbuch bleibt erhalten", async () => {
+  const k = kern({ areas: ["notebook"] });
+  await schalteAllesEin(k);
+  assert.equal(k.werte.areas.includes("notebook"), true);
 });
 
-for (const kaputt of ZUGRIFF_SCHLUESSEL) {
-  test(`schalteAllesEin: scheitert ${kaputt}, ist alles auf dem alten Stand und das Ergebnis meldet „zurückgerollt“`, async () => {
-    const start = {
-      voice_call_knowledge: ["meetings"],
-      voice_call_read_transcripts: false,
-      voice_global_context_enabled: false,
-    };
-    const s = store(start, [kaputt]);
-    assert.equal(await schalteAllesEin(s), "zurueck");
-    assert.deepEqual(s.werte, start);
-  });
-}
-
-test("schalteAllesEin: ein Schlüssel, der schon im Zielzustand war, wird beim Rückrollen nicht angefasst", async () => {
-  const s = store({ voice_call_read_transcripts: true }, [
-    "voice_global_context_enabled",
-  ]);
-  assert.equal(await schalteAllesEin(s), "zurueck");
-  assert.equal(s.werte.voice_call_read_transcripts, true);
-  assert.deepEqual(s.werte.voice_call_knowledge, []);
-  assert.equal(s.werte.voice_global_context_enabled, false);
-});
-
-test("schalteAllesEin: scheitert auch das Rückrollen, meldet es „teilweise“ und versucht trotzdem alle Schlüssel", async () => {
-  const werte = {
-    voice_call_knowledge: ["meetings"],
-    voice_call_read_transcripts: false,
-    voice_global_context_enabled: false,
+test("schalteAllesEin: ein Widerruf zwischen Lesen und Setzen gewinnt, nichts wird geschrieben", async () => {
+  const k = kern({ enabled: true, areas: ["meetings"] });
+  k.beimLesen = async () => {
+    k.beimLesen = null;
+    k.widerrufen();
   };
-  const start = structuredClone(werte);
-  const versuche = [];
-  const io = {
-    lies: (k) => werte[k],
-    setze: async (k, v) => {
-      versuche.push([k, v]);
-      // Der Hauptschalter scheitert; das Rückrollen der Bereiche ebenfalls, das der Transkripte gelingt.
-      if (k === "voice_global_context_enabled") return;
-      if (k === "voice_call_knowledge" && v.length === 1) return;
-      werte[k] = v;
-    },
-  };
-  assert.equal(await schalteAllesEin(io), "teilweise");
-  assert.equal(
-    werte.voice_call_read_transcripts,
-    start.voice_call_read_transcripts,
+  assert.equal(await schalteAllesEin(k), "konflikt");
+  assert.deepEqual(
+    k.werte,
+    { enabled: false, areas: [], read_transcripts: false },
+    "der Widerruf steht, die Freigabe hat ihn nicht überschrieben",
   );
-  assert.equal(
-    versuche.filter(([k]) => k === "voice_call_read_transcripts").length,
-    2,
-    "der Transkript-Schalter wurde nach dem Fehlschlag der Bereiche trotzdem zurückgesetzt",
-  );
+  assert.equal(k.uebernommen, 1, "nach dem Konflikt wird neu gelesen");
 });
 
-test("schalteAllesEin: wirft der Speicher, gilt das wie ein Fehlschlag und der Stand wird zurückgerollt", async () => {
-  const s = store();
-  const echt = s.setze;
-  s.setze = async (k, v) => {
-    if (k === "voice_global_context_enabled") throw new Error("kaputt");
-    return echt(k, v);
+test("schalteAllesEin: ein Widerruf, während das Setzen läuft, gewinnt ebenfalls (Version erhöht)", async () => {
+  const k = kern();
+  const echt = k.setze;
+  k.setze = async (...args) => {
+    // Der Widerruf kommt zuerst beim Kern an, die Freigabe danach mit der alten Version.
+    k.widerrufen();
+    return echt(...args);
   };
-  assert.equal(await schalteAllesEin(s), "zurueck");
-  assert.deepEqual(s.werte.voice_call_knowledge, []);
-  assert.equal(s.werte.voice_call_read_transcripts, false);
+  assert.equal(await schalteAllesEin(k), "konflikt");
+  assert.equal(k.werte.enabled, false);
+  assert.deepEqual(k.werte.areas, []);
+});
+
+test("Kern: ein zweiter Aufruf mit der alten Version scheitert", async () => {
+  const k = kern();
+  const alt = (await k.lies()).version;
+  assert.equal((await k.setze(alt, true, [], true)).status, "ok");
+  const zweiter = await k.setze(alt, false, [], false);
+  assert.equal(zweiter.status, "konflikt");
+  assert.equal(k.werte.enabled, true, "der Konflikt überschreibt nichts");
+});
+
+test("schalteAllesEin: zwei gleichzeitige Freigaben, genau eine gelingt, die andere meldet den Konflikt", async () => {
+  const k = kern();
+  const r = await Promise.all([schalteAllesEin(k), schalteAllesEin(k)]);
+  assert.deepEqual([...r].sort(), ["ein", "konflikt"]);
+});
+
+test("schalteAllesEin: ein halber Erfolg ist unmöglich, scheitert das Setzen, bleibt der Stand unverändert", async () => {
+  const k = kern({ areas: ["meetings"] });
+  const vorher = structuredClone(k.werte);
+  k.setze = async () => {
+    throw new Error("kaputt");
+  };
+  assert.equal(await schalteAllesEin(k), "fehler");
+  assert.deepEqual(k.werte, vorher);
+  assert.equal(k.uebernommen, 1);
+});
+
+test("schalteAllesEin: scheitert schon das Lesen, wird nichts gesetzt", async () => {
+  const k = kern();
+  k.lies = async () => {
+    throw new Error("kaputt");
+  };
+  assert.equal(await schalteAllesEin(k), "fehler");
+  assert.equal(k.setzenAufrufe, 0);
+});
+
+test("schalteAllesEin: scheitert das Neulesen der Oberfläche, bleibt das Ergebnis erhalten", async () => {
+  const k = kern();
+  k.uebernehmen = async () => {
+    throw new Error("kaputt");
+  };
+  assert.equal(await schalteAllesEin(k), "ein");
+});
+
+// Lva#509 Befund 6: die Taste verschwindet nach Erfolg; wer sie per Tastatur ausgelöst hat, darf den
+// Fokus nicht verlieren. Es gibt keine Komponententest-Umgebung, deshalb steckt die Entscheidung in
+// einer reinen Funktion, die die Oberfläche nur noch ausführt.
+test("fokusNachFreigabe: Erfolg per Tastatur, der Fokus geht auf die Statusanzeige", () => {
+  assert.equal(fokusNachFreigabe("ein", true), "status");
+});
+
+test("fokusNachFreigabe: Konflikt oder Fehler, die Taste bleibt und bekommt den Fokus zurück", () => {
+  assert.equal(fokusNachFreigabe("konflikt", true), "taste");
+  assert.equal(fokusNachFreigabe("fehler", true), "taste");
+});
+
+test("fokusNachFreigabe: hatte die Taste den Fokus nicht (Maus, Tastatur woanders), wird nichts bewegt", () => {
+  for (const e of ["ein", "konflikt", "fehler"])
+    assert.equal(fokusNachFreigabe(e, false), "keiner");
 });
