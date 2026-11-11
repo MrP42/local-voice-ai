@@ -251,9 +251,10 @@ fn dataless_am_handle_wird_vor_dem_lesezugriff_abgewiesen() {
     eintrag::naht::leeren();
     // Wird sie erst zwischen Stufe 1 und Stufe 2 ausgelagert, urteilt Stufe 2 am neuen Handle: nichts
     // wird kopiert.
+    // (Handle-Abfragen: Stufe 1, erneut vor dem Hochstufen, am hochgestuften Handle.)
     eintrag::naht::handle_folge(
         &datei,
-        &[(0, 0), (attribute_aus_stat_flags(SF_DATALESS), 0)],
+        &[(0, 0), (0, 0), (attribute_aus_stat_flags(SF_DATALESS), 0)],
     );
     assert_eq!(
         verknuepft::momentkopie(&e.a, &auf).unwrap_err(),

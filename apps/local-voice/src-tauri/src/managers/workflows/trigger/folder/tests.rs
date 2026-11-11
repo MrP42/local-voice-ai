@@ -680,8 +680,9 @@ fn a_file_that_goes_online_between_the_stages_is_judged_again_after_the_read_ope
     let dir = tempfile::tempdir().unwrap();
     let p = dir.path().join("w.wav");
     fs::write(&p, b"inhalt").unwrap();
-    // Erste Abfrage (Stufe 1): lokal; zweite (Stufe 2): nur online: es wird nichts geliefert.
-    eintrag::naht::handle_folge(&p, &[(ATTR_ARCHIV, 0), (0x50_0020, 0)]);
+    // Erste Abfrage (Stufe 1) und zweite (am selben Handle unmittelbar vor dem Hochstufen): lokal; dritte (am
+    // hochgestuften Lese-Handle): nur online: es wird nichts geliefert.
+    eintrag::naht::handle_folge(&p, &[(ATTR_ARCHIV, 0), (ATTR_ARCHIV, 0), (0x50_0020, 0)]);
     assert!(matches!(
         oeffnen_ohne_abruf(&p, art(), trigger_urteil),
         Err(OeffnenFehler::Urteil(Urteil::NurOnline))
@@ -1193,4 +1194,176 @@ fn the_hash_is_the_sha256_of_the_content_regardless_of_name() {
     let big = dir.path().join("big.bin");
     fs::write(&big, vec![7u8; HASH_BLOCK * 2 + 5]).unwrap();
     assert_eq!(sha256_file(&big).unwrap().len(), 64);
+}
+
+// ---------------------------------------------------------------------------
+// lva#507: Abrufschutz, geprueftes Ordner-Handle, Aufzaehlung, Hash-Grenzen
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_folder_without_a_positive_current_verdict_is_never_listed() {
+    let mut w = world();
+    let root = fs::canonicalize(w.inbox.path()).unwrap();
+    w.put("a.wav", b"inhalt");
+    // Attribute am Ordner-Handle nicht bestimmbar (z. B. eine fluechtig scheiternde Abfrage): fail-closed.
+    eintrag::naht::handle_ausfall_setzen(&root);
+    let mut all = TickReport::default();
+    for _ in 0..4 {
+        all.absorb(w.tick_with(&SystemProbe));
+    }
+    assert!(all.started.is_empty(), "{all:?}");
+    assert_eq!(all.skipped.len(), 1, "einmal gemeldet: {all:?}");
+    assert!(!all.skipped[0].contains("a.wav"), "kein Dateiname: {all:?}");
+    assert_eq!(w.state.waiting(), 0, "nichts wurde aufgelistet");
+    // Wieder bestimmbar: die Datei wird aufgenommen.
+    eintrag::naht::leeren();
+    let mut all = TickReport::default();
+    for _ in 0..3 {
+        all.absorb(w.tick_with(&SystemProbe));
+    }
+    assert_eq!(all.started.len(), 1, "{all:?}");
+    eintrag::naht::leeren();
+}
+
+#[test]
+fn a_folder_that_is_a_detour_at_the_handle_is_not_listed() {
+    let mut w = world();
+    let root = fs::canonicalize(w.inbox.path()).unwrap();
+    w.put("a.wav", b"inhalt");
+    // Das Handle meldet einen Symlink-Reparse-Point (Junction/Symlink auf den Ordner).
+    eintrag::naht::handle_setzen(
+        &root,
+        eintrag::ATTR_REPARSE_POINT | 0x10,
+        eintrag::REPARSE_TAG_SYMLINK,
+    );
+    let mut all = TickReport::default();
+    for _ in 0..4 {
+        all.absorb(w.tick_with(&SystemProbe));
+    }
+    assert!(all.started.is_empty(), "{all:?}");
+    assert_eq!(w.state.waiting(), 0, "nichts wurde aufgelistet");
+    eintrag::naht::leeren();
+}
+
+#[test]
+fn a_folder_with_more_candidates_than_one_tick_takes_is_continued_not_starved() {
+    let mut w = world();
+    let n = MAX_ENTRIES + 5;
+    for i in 0..n {
+        w.put(&format!("x{i:04}.wav"), format!("inhalt {i}").as_bytes());
+    }
+    // Zwei Takte: der erste sieht 500 Kandidaten, der zweite setzt dahinter fort (kein Haengenbleiben
+    // an den ersten 500).
+    w.ticks(2);
+    assert_eq!(w.state.waiting(), n, "alle {n} Dateien wurden beobachtet");
+    // Der Umlauf ist zu Ende: weitere Takte verlieren keine Beobachtung.
+    w.ticks(2);
+    assert_eq!(w.state.waiting(), n);
+}
+
+#[test]
+fn entries_that_are_not_candidates_do_not_use_up_the_window() {
+    let mut w = world();
+    // Viele Unterordner und Fremdendungen vor einer einzigen echten Datei.
+    for i in 0..(MAX_ENTRIES + 20) {
+        fs::create_dir(w.inbox.path().join(format!("ordner{i:04}"))).unwrap();
+        w.put(&format!("fremd{i:04}.xyz"), b"x");
+    }
+    w.put("echt.wav", b"inhalt");
+    let all = w.ticks(4);
+    assert_eq!(all.started.len(), 1, "{all:?}");
+}
+
+fn hash_ordner(w: &World) -> (eintrag::Ordner, PathBuf) {
+    let root = fs::canonicalize(w.inbox.path()).unwrap();
+    (
+        eintrag::Ordner::wurzel(&root, eintrag::reparse_urteil).unwrap(),
+        root,
+    )
+}
+
+#[test]
+fn the_hash_handle_denies_writers() {
+    let a = hash_art();
+    assert_ne!(a.teilen & 1, 0, "lesen bleibt erlaubt");
+    assert_eq!(a.teilen & 2, 0, "kein FILE_SHARE_WRITE");
+}
+
+#[test]
+fn the_hash_respects_byte_budget_time_limit_and_abort() {
+    let w = world();
+    w.put("gross.wav", &vec![7u8; 4096]);
+    let (o, _root) = hash_ordner(&w);
+    let nie = || false;
+    let name = std::ffi::OsStr::new("gross.wav");
+    // Bytebudget kleiner als die Datei: gar nicht erst gelesen.
+    let g = HashGrenzen {
+        max_bytes: 100,
+        frist: HASH_FRIST,
+        abbruch: &nie,
+    };
+    assert!(hash_in(&o, name, &g).is_err());
+    // Zeitlimit abgelaufen.
+    let g = HashGrenzen {
+        max_bytes: MAX_HASH_BYTES,
+        frist: Duration::ZERO,
+        abbruch: &nie,
+    };
+    assert!(hash_in(&o, name, &g).is_err());
+    // Abbruch.
+    let ja = || true;
+    let g = HashGrenzen {
+        max_bytes: MAX_HASH_BYTES,
+        frist: HASH_FRIST,
+        abbruch: &ja,
+    };
+    assert!(hash_in(&o, name, &g).is_err());
+    // Innerhalb der Grenzen: derselbe Hash wie ueber den Pfad.
+    let g = HashGrenzen {
+        max_bytes: MAX_HASH_BYTES,
+        frist: HASH_FRIST,
+        abbruch: &nie,
+    };
+    let h = hash_in(&o, name, &g).unwrap();
+    assert_eq!(
+        h.hash,
+        sha256_file(&w.inbox.path().join("gross.wav")).unwrap()
+    );
+    assert_eq!(h.size, 4096);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_file_that_grows_while_it_is_read_aborts_the_hash() {
+    let w = world();
+    // Mehr als zwei Bloecke, damit nach dem ersten Block noch gelesen wird.
+    let p = w.put("waechst.wav", &vec![1u8; HASH_BLOCK * 2 + 123]);
+    let (o, _root) = hash_ordner(&w);
+    let aufrufe = std::cell::Cell::new(0usize);
+    let abbruch = || {
+        aufrufe.set(aufrufe.get() + 1);
+        if aufrufe.get() == 2 {
+            // Ein Schreiber haengt an, waehrend der Hash laeuft.
+            let mut f = fs::OpenOptions::new().append(true).open(&p).unwrap();
+            f.write_all(&vec![2u8; HASH_BLOCK]).unwrap();
+        }
+        false
+    };
+    let g = HashGrenzen {
+        max_bytes: MAX_HASH_BYTES,
+        frist: HASH_FRIST,
+        abbruch: &abbruch,
+    };
+    let e = hash_in(&o, std::ffi::OsStr::new("waechst.wav"), &g).unwrap_err();
+    assert!(e.to_string().contains("wächst"), "{e}");
+}
+
+#[test]
+fn a_scan_that_is_aborted_hashes_nothing_and_a_new_scan_does_not_start() {
+    let mut w = world();
+    w.put("a.wav", b"inhalt");
+    w.ticks(2);
+    w.state.abbrechen();
+    let all = w.ticks(4);
+    assert!(all.started.is_empty(), "{all:?}");
 }
