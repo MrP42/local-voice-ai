@@ -399,12 +399,15 @@ struct AssistantConversationView: View {
     }
 
     private func assistantBubble(parts: [AssistantTurnPart], interrupted: Bool, chips: [SourceChip]) -> some View {
-        HStack(spacing: 0) {
+        // Eine Quelle, die schon unter ihrem Zitat steht, kommt nicht noch einmal als Chip.
+        let cited = Set(parts.compactMap { $0.quote ? $0.source : nil })
+        let rest = chips.filter { !($0.isSource && cited.contains($0.text)) }
+        return HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(parts.enumerated()), id: \.offset) { _, part in partView(part) }
-                if !chips.isEmpty {
+                if !rest.isEmpty {
                     AssistantFlowLayout(spacing: 6) {
-                        ForEach(chips, id: \.self) { chip($0) }
+                        ForEach(rest, id: \.self) { chip($0) }
                     }
                 }
             }
@@ -417,7 +420,33 @@ struct AssistantConversationView: View {
     }
 
     @ViewBuilder private func partView(_ part: AssistantTurnPart) -> some View {
-        if part.unsourced { unsourcedBlock(part.text) } else { VoiceMarkdown(text: part.text) }
+        if part.quote {
+            quoteBlock(part)
+        } else if part.unsourced {
+            unsourcedBlock(part.text)
+        } else {
+            VoiceMarkdown(text: part.text)
+        }
+    }
+
+    /// Originalsatz aus einer Quelle: in Anführungszeichen, mit Balken und der Quelle darunter (Text, nicht nur Farbe).
+    private func quoteBlock(_ part: AssistantTurnPart) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            VoiceMarkdown(text: "„" + part.text + "“")
+            if let source = part.source {
+                Text(source)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(VoicePalette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.leading, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 1.5).fill(AssistantColors.fill).frame(width: 3)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(part.source.map { "Zitat aus \($0): \(part.text)" } ?? "Zitat: \(part.text)")
     }
 
     /// Abschnitt ohne Quelle: Kennzeichnung als Text („Ohne Quelle“, auch für VoiceOver) und Balken, nicht nur Farbe.

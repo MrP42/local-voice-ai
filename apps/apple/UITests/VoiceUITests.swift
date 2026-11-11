@@ -231,6 +231,19 @@ final class VoiceUITests: XCTestCase {
         expectation(for: NSPredicate(format: format, text), evaluatedWith: element)
         waitForExpectations(timeout: 8)
     }
+    /// Schließt die Modellwahl (`confirmationDialog`). Je nach iOS-Fassung ein Blatt mit „Abbrechen“ oder ein kleines zentriertes
+    /// Blatt nur mit den Modellknöpfen: dann schließt ein Tipp außerhalb. Prüft danach, dass der Dialog weg ist.
+    private func dismissModelChoice(_ app: XCUIApplication) {
+        let option = app.buttons["Apple-Systemmodell · lokal"]
+        let cancel = app.buttons["Abbrechen"].firstMatch
+        if cancel.waitForExistence(timeout: 2) {
+            cancel.tap()
+        } else {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.06)).tap()
+        }
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: option)
+        waitForExpectations(timeout: 5)
+    }
     /// Ohne Modell: kurzer Hinweis mit zwei Wegen heraus, Hauptknopf „Modell auswählen“, kein Stumm-Knopf.
     func testAssistantWithoutModelOffersModelChoice() throws {
         let app = XCUIApplication()
@@ -248,13 +261,13 @@ final class VoiceUITests: XCTestCase {
         keepScreenshot(app, name: "Gespraech-ohne-Modell")
         choose.tap()
         XCTAssertTrue(app.buttons["Apple-Systemmodell · lokal"].waitForExistence(timeout: 5))
-        app.buttons["Abbrechen"].firstMatch.tap()
+        dismissModelChoice(app)
         // Die Vorschläge im Einstieg führen ohne Modell ebenfalls zur Modellwahl.
         let suggestion = app.buttons["Worum geht es in meinem aktuellen Buch?"]
         XCTAssertTrue(suggestion.waitForExistence(timeout: 5))
         suggestion.tap()
         XCTAssertTrue(app.buttons["Apple-Systemmodell · lokal"].waitForExistence(timeout: 5))
-        app.buttons["Abbrechen"].firstMatch.tap()
+        dismissModelChoice(app)
         app.buttons["assistantNoticeLocalModels"].tap()
         XCTAssertTrue(app.buttons["Fertig"].waitForExistence(timeout: 10))
         app.buttons["Fertig"].tap()

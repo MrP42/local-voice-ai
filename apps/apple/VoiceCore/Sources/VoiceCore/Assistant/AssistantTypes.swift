@@ -27,6 +27,21 @@ public enum AssistantArea: String, Sendable, Codable, CaseIterable {
         }
     }
 
+    /// „keine Bücher“, „ein Buch“, „3 Bücher“ (für Bestandsangaben des Systems).
+    func countPhrase(_ n: Int) -> String {
+        switch (self, n) {
+        case (.books, 0): "keine Bücher"
+        case (.books, 1): "ein Buch"
+        case (.transcripts, 0): "keine Transkripte"
+        case (.transcripts, 1): "ein Transkript"
+        case (.files, 0): "keine Dokumente"
+        case (.files, 1): "ein Dokument"
+        case (.notes, 0): "keine Notizen"
+        case (.notes, 1): "eine Notiz"
+        default: "\(n) \(inventoryLabel)"
+        }
+    }
+
     /// Kennzeichnung eines Auszugs im Prompt (Einzahl).
     public var singularLabel: String {
         switch self {
@@ -70,6 +85,16 @@ public struct AssistantPassage: Sendable, Equatable, Codable {
         self.text = text
         self.score = score
     }
+
+    /// Anzeigezeile der Quelle: „Buch · Titel · S. 12“, „Transkript · Titel · 00:14:03“, „Ablage · Titel“, „Notiz · Datum“.
+    public var sourceLabel: String {
+        switch area {
+        case .books: return ["Buch", title, locator ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
+        case .transcripts: return ["Transkript", title, locator ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
+        case .files: return "Ablage · " + title
+        case .notes: return "Notiz · " + (locator ?? title)
+        }
+    }
 }
 
 /// Quelle mit eigenem Index (Ablage). Paket A liefert die Umsetzung.
@@ -102,26 +127,70 @@ public struct AssistantDocument: Sendable {
     }
 }
 
-/// Wertung eines Satzes vor der Ausgabe (Antworten ohne Quelle, E4.2a).
+/// Einordnung eines ausgegebenen Satzes (E4.2a): Originalsatz, Bestandsangabe, Satz ohne Quelle, Vorlage; verworfene Sätze
+/// kommen nie als Ereignis. Dazu die hörbare Ansage.
 public enum AssistantSentenceStatus: String, Sendable, Codable, Equatable {
-    /// Durch einen Auszug (oder den Bestand) gedeckt.
+    /// Originalsatz aus einem freigegebenen Auszug, unverändert übernommen (Quelle = dieser Auszug).
     case grounded
-    /// Allgemeinwissen ohne Quelle; nur nach eigenem Opt-in.
+    /// Bestandsangabe: vom System unverändert aus den Bestandsdaten erzeugt (Zahl je Bereich, Titel), nie vom Modell.
+    case inventory
+    /// Allgemeinwissen ohne Quelle; nur in einer Allgemeinrunde und nur mit Opt-in.
     case unsourced
-    /// Rückfrage, Gruß, feste Vorlage, Angabe zur Uhrzeit: weder belegt noch unbelegt.
+    /// Vorlage: Gruß, Dank, feste Rückfrage, fester Satz, Uhrzeit und Datum aus der Systemuhr. Sagt nichts über eigene Inhalte.
     case neutral
-    /// Hörbare Ansage „Ohne Quelle:“ bzw. „Aus deinen Inhalten:“. Gehört nicht zum Antworttext.
+    /// Hörbare Ansage („Ohne Quelle:“, „Aus deinen Inhalten, ‚Titel‘:“, „Aus deinen Inhalten:“). Gehört nicht zum Antworttext.
     case announcement
 }
 
-/// Abschnitt eines Beitrags mit gleicher Kennzeichnung (nur gespeichert, wenn belegte und unbelegte Sätze gemischt sind).
+/// Art einer Runde, vor dem Modellaufruf deterministisch festgelegt (`AssistantTurnPolicy`). Datenrunde ist der Standard:
+/// Über eigene Daten gibt es nur Originalsätze und Bestandsangaben des Systems. Freier Modelltext kommt nur in der
+/// Allgemeinrunde vor (mit Opt-in, ohne Auszüge und ohne Bestand im Prompt) und ist dort stets „ohne Quelle“.
+public enum AssistantRoundKind: String, Sendable, Codable, Equatable {
+    case data, general
+}
+
+/// Grund, aus dem ein Satz nicht ausgegeben wurde (Zähler im Protokoll, keine Inhalte).
+public enum AssistantDropReason: String, Sendable, Codable, Equatable, CaseIterable {
+    /// Behauptung über eigene Daten (Eigendatenbezug) ohne Deckung.
+    case ownData
+    /// Satz ohne Quelle, aber der Modus ist (nicht mehr) an.
+    case noMode
+    /// In der Datenrunde nicht auf einen Quellsatz eingerastet (freier Modelltext).
+    case notSnapped
+    /// Dasselbe Zitat zum zweiten Mal.
+    case duplicate
+    /// Modelltext mit dem Wortlaut einer Fehl-Vorlage (die spricht nur das System) oder eine Satzfolge ohne Ende.
+    case template
+    /// Durch Widerruf (Freigabe-Generation) veraltet.
+    case revoked
+}
+
+/// Abschnitt eines Beitrags mit gleicher Kennzeichnung (gespeichert, wenn der Beitrag Originalsätze enthält oder Sätze ohne
+/// Quelle mit anderen gemischt sind).
 public struct AssistantTurnPart: Sendable, Equatable, Codable {
     public var text: String
     public var unsourced: Bool
+    /// Originalsatz aus einer Quelle: wird mit Anführungszeichen angezeigt.
+    public var quote: Bool
+    /// Anzeigezeile der Quelle eines Originalsatzes (`AssistantPassage.sourceLabel`), unter dem Zitat angezeigt. Nur die Zeile,
+    /// nicht der Auszug. Alte Beiträge und alles, was kein Zitat ist: `nil`.
+    public var source: String?
 
-    public init(text: String, unsourced: Bool) {
+    public init(text: String, unsourced: Bool, quote: Bool = false, source: String? = nil) {
         self.text = text
         self.unsourced = unsourced
+        self.quote = quote
+        self.source = source
+    }
+
+    private enum CodingKeys: String, CodingKey { case text, unsourced, quote, source }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        text = try c.decode(String.self, forKey: .text)
+        unsourced = try c.decode(Bool.self, forKey: .unsourced)
+        quote = try c.decodeIfPresent(Bool.self, forKey: .quote) ?? false
+        source = try c.decodeIfPresent(String.self, forKey: .source)
     }
 }
 
@@ -139,9 +208,12 @@ public struct AssistantTurn: Sendable, Equatable, Codable {
     public var parts: [AssistantTurnPart]
     public var model: String
     public var at: Date
+    /// Rundenart des Beitrags. Alte Beiträge ohne das Feld: `nil` (gelten für die Prompt-Auswahl als Datenrunde).
+    public var round: AssistantRoundKind?
 
     public init(user: String, assistant: String, interrupted: Bool = false, sources: [AssistantPassage] = [],
-                general: Bool = false, unsourced: Bool = false, parts: [AssistantTurnPart] = [], model: String = "", at: Date = Date()) {
+                general: Bool = false, unsourced: Bool = false, parts: [AssistantTurnPart] = [], model: String = "", at: Date = Date(),
+                round: AssistantRoundKind? = nil) {
         self.user = user
         self.assistant = assistant
         self.interrupted = interrupted
@@ -151,10 +223,11 @@ public struct AssistantTurn: Sendable, Equatable, Codable {
         self.parts = parts
         self.model = model
         self.at = at
+        self.round = round
     }
 
     private enum CodingKeys: String, CodingKey {
-        case user, assistant, interrupted, sources, general, unsourced, parts, model, at
+        case user, assistant, interrupted, sources, general, unsourced, parts, model, at, round
     }
 
     /// Die synthetisierte Fassung ignoriert Standardwerte: Beiträge aus Verlaufsdateien vor dem Feld `unsourced` müssen laden.
@@ -169,6 +242,7 @@ public struct AssistantTurn: Sendable, Equatable, Codable {
         parts = try c.decodeIfPresent([AssistantTurnPart].self, forKey: .parts) ?? []
         model = try c.decode(String.self, forKey: .model)
         at = try c.decode(Date.self, forKey: .at)
+        round = try c.decodeIfPresent(AssistantRoundKind.self, forKey: .round)
     }
 }
 
@@ -209,23 +283,68 @@ public struct AssistantRequest: Sendable, Equatable {
     }
 }
 
-/// Zahl der Sätze je Wertung in einer Antwort (für Protokoll und Anzeige; keine Inhalte).
+/// Zahl der Sätze je Einordnung in einer Antwort (für Protokoll und Anzeige; keine Inhalte). Fünf Klassen: Originalsatz
+/// (`grounded`), Bestandsangabe (`inventory`), Satz ohne Quelle (`unsourced`), Vorlage (`neutral`), verworfen (je Grund).
 public struct AssistantSentenceCounts: Sendable, Equatable, Codable {
     public var grounded = 0
+    public var inventory = 0
     public var unsourced = 0
     public var neutral = 0
-    /// Verworfen (nicht gesprochen, nicht angezeigt), einschließlich `revoked`.
-    public var dropped = 0
-    /// Davon: wegen entzogenem Opt-in oder entzogenem Bereich während der Antwort.
+    public var droppedOwnData = 0
+    public var droppedNoMode = 0
+    public var droppedNotSnapped = 0
+    public var droppedDuplicate = 0
+    public var droppedTemplate = 0
+    /// Verworfen, weil die Freigabe-Generation veraltet war (Widerruf).
     public var revoked = 0
 
-    public init(grounded: Int = 0, unsourced: Int = 0, neutral: Int = 0, dropped: Int = 0, revoked: Int = 0) {
+    public init(grounded: Int = 0, inventory: Int = 0, unsourced: Int = 0, neutral: Int = 0, droppedOwnData: Int = 0,
+                droppedNoMode: Int = 0, droppedNotSnapped: Int = 0, droppedDuplicate: Int = 0, droppedTemplate: Int = 0,
+                revoked: Int = 0) {
         self.grounded = grounded
+        self.inventory = inventory
         self.unsourced = unsourced
         self.neutral = neutral
-        self.dropped = dropped
+        self.droppedOwnData = droppedOwnData
+        self.droppedNoMode = droppedNoMode
+        self.droppedNotSnapped = droppedNotSnapped
+        self.droppedDuplicate = droppedDuplicate
+        self.droppedTemplate = droppedTemplate
         self.revoked = revoked
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case grounded, inventory, unsourced, neutral, droppedOwnData, droppedNoMode, droppedNotSnapped, droppedDuplicate, droppedTemplate, revoked
+    }
+
+    /// Fehlende Zähler gelten als 0: Zeilen älterer und neuerer Fassungen bleiben lesbar.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func count(_ key: CodingKeys) throws -> Int { try c.decodeIfPresent(Int.self, forKey: key) ?? 0 }
+        self.init(grounded: try count(.grounded), inventory: try count(.inventory), unsourced: try count(.unsourced),
+                  neutral: try count(.neutral), droppedOwnData: try count(.droppedOwnData), droppedNoMode: try count(.droppedNoMode),
+                  droppedNotSnapped: try count(.droppedNotSnapped), droppedDuplicate: try count(.droppedDuplicate),
+                  droppedTemplate: try count(.droppedTemplate), revoked: try count(.revoked))
+    }
+
+    /// Alle verworfenen Sätze (nicht gesprochen, nicht angezeigt), unabhängig vom Grund.
+    public var dropped: Int {
+        droppedOwnData + droppedNoMode + droppedNotSnapped + droppedDuplicate + droppedTemplate + revoked
+    }
+
+    public mutating func drop(_ reason: AssistantDropReason) {
+        switch reason {
+        case .ownData: droppedOwnData += 1
+        case .noMode: droppedNoMode += 1
+        case .notSnapped: droppedNotSnapped += 1
+        case .duplicate: droppedDuplicate += 1
+        case .template: droppedTemplate += 1
+        case .revoked: revoked += 1
+        }
+    }
+
+    /// Ausgegebene Sätze (ohne Ansagen).
+    public var emitted: Int { grounded + inventory + unsourced + neutral }
 }
 
 public struct AssistantAnswer: Sendable, Equatable {
@@ -236,12 +355,16 @@ public struct AssistantAnswer: Sendable, Equatable {
     public let general: Bool
     public let firstSentenceMs: Int?
     public let totalMs: Int
-    /// Mindestens ein unbelegter Satz wurde ausgegeben.
+    /// Mindestens ein Satz ohne Quelle wurde ausgegeben.
     public let unsourced: Bool
     public let counts: AssistantSentenceCounts
+    public let round: AssistantRoundKind
+    /// Freigabe-Generation, unter der die Antwort lief.
+    public let generation: Int
 
     public init(text: String, sources: [AssistantPassage], general: Bool, firstSentenceMs: Int?, totalMs: Int,
-                unsourced: Bool = false, counts: AssistantSentenceCounts = AssistantSentenceCounts()) {
+                unsourced: Bool = false, counts: AssistantSentenceCounts = AssistantSentenceCounts(),
+                round: AssistantRoundKind = .data, generation: Int = 0) {
         self.text = text
         self.sources = sources
         self.general = general
@@ -249,17 +372,21 @@ public struct AssistantAnswer: Sendable, Equatable {
         self.totalMs = totalMs
         self.unsourced = unsourced
         self.counts = counts
+        self.round = round
+        self.generation = generation
     }
 }
 
-public enum AssistantFailure: String, Sendable, Equatable { case cancelled, timeout, noModel, modelFailed, offline, consentRequired }
+public enum AssistantFailure: String, Sendable, Equatable { case cancelled, timeout, noModel, modelFailed, offline, consentRequired, revoked }
 
 public enum AssistantEvent: Sendable, Equatable {
-    /// Abgerufene Auszüge dieser Anfrage (Vorab-Anzeige). Gedeckt wird erst je Satz, siehe `sentence`.
-    case sources(requestId: String, [AssistantPassage])
-    /// Ein Satz zur Ausgabe. `speech` = ohne Markdown, sprechbar. `sources` nur bei `grounded`: die deckenden Auszüge
-    /// (bei Bestandsangaben leer). Verworfene Sätze kommen nie.
-    case sentence(requestId: String, text: String, speech: String, status: AssistantSentenceStatus, sources: [AssistantPassage])
+    /// Abgerufene Auszüge dieser Anfrage (Vorab-Anzeige; in einer Allgemeinrunde leer). Gedeckt wird erst je Satz.
+    case sources(requestId: String, generation: Int, [AssistantPassage])
+    /// Ein Satz zur Ausgabe. `speech` = ohne Markdown, sprechbar. `sources`: bei einem Originalsatz sein Auszug, sonst leer.
+    /// `quote`: Originalsatz, mit Anführungszeichen anzeigen. `generation`: Freigabe-Generation des Laufs; wer sie nicht mehr
+    /// kennt (Widerruf), zeigt und spricht nichts. Verworfene Sätze kommen nie.
+    case sentence(requestId: String, generation: Int, text: String, speech: String, status: AssistantSentenceStatus,
+                  sources: [AssistantPassage], quote: Bool)
     case done(requestId: String, AssistantAnswer)
     case failed(requestId: String, AssistantFailure)
 }

@@ -2,7 +2,8 @@ import Foundation
 import XCTest
 @testable import VoiceCore
 
-// Gesprächsmodus „Sprechen“ (Paket A, E4.2a): Satzprüfung vor der Ausgabe. Goldfälle auf Deutsch; nur synthetische Inhalte.
+// Gesprächsmodus „Sprechen“ (Paket A, E4.2a): Satzprüfung vor der Ausgabe, strukturell. Goldfälle auf Deutsch; nur
+// synthetische Inhalte. In Datenrunden ist jeder ausgegebene Satz zeichengleich mit einem Quellsatz oder einer Systemvorlage.
 
 final class AssistantGroundingTests: XCTestCase {
     private let book = AssistantPassage(
@@ -12,176 +13,230 @@ final class AssistantGroundingTests: XCTestCase {
         area: .transcripts, itemId: "t1", title: "Besprechung vom 12.10.2026", locator: "00:14:03",
         text: "Die Besprechung dauerte 48 Minuten. Anna übernimmt die Planung für das Projekt Nordlicht bis Freitag.", score: 0.8)
     private let titles = ["Der Zauberberg", "Besprechung vom 12.10.2026", "Quartalsplanung"]
-    private let inventory = "Bücher: 3 insgesamt\n- Der Zauberberg (Thomas Mann)\nTranskripte: 1 insgesamt\n- Besprechung vom 12.10.2026 (48 min)"
-    private let clock = "Mittwoch, der 11. November 2026, 08:05 Uhr"
+    private let now = Date(timeIntervalSince1970: 1_794_384_300)   // Mittwoch, 11. November 2026, 08:05 Uhr (UTC)
+    private var zone: TimeZone { TimeZone(identifier: "UTC")! }
+    private var clock: [String] { AssistantGrounding.clockSentences(now: now, timeZone: zone) }
 
-    private func classify(_ sentence: String, passages: [AssistantPassage]? = nil) -> AssistantGroundingVerdict {
-        AssistantGrounding.classify(sentence: sentence, passages: passages ?? [book, meeting], inventoryTitles: titles,
-                                    inventory: inventory, clock: clock)
+    private func judge(_ s: String, round: AssistantRoundKind = .data, passages: [AssistantPassage]? = nil, optIn: Bool = false,
+                       taken: Set<String> = []) -> AssistantGrounding.Verdict {
+        AssistantGrounding.judge(s, round: round, basis: .init(passages: passages ?? [book, meeting]), titles: titles, clock: clock,
+                                 optIn: optIn, taken: taken)
     }
 
-    private func assertGrounded(_ sentence: String, by expected: [AssistantPassage], file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertEqual(classify(sentence), .grounded(expected), sentence, file: file, line: line)
+    private func quoted(_ s: String, passages: [AssistantPassage]? = nil, optIn: Bool = false) -> String? {
+        if case .quote(let q) = judge(s, passages: passages, optIn: optIn) { return q.text }
+        return nil
     }
 
-    // MARK: Belegt
+    // MARK: Einrasten (Goldfälle der Entscheidung)
 
-    func testSentenceSupportedByPassageIsGroundedWithThatPassage() {
-        assertGrounded("Hans Castorp fährt nach Davos, um seinen Vetter Joachim zu besuchen.", by: [book])
-        assertGrounded("Die Besprechung dauerte 48 Minuten.", by: [meeting])
-        assertGrounded("Anna übernimmt die Planung bis Freitag.", by: [meeting])
+    func testModelSentenceSnapsToTheSourceSentenceNeverItself() {
+        let single = AssistantPassage(area: .notes, itemId: "n1", title: "Notiz", text: "Hans besucht Joachim.", score: 1)
+        let model = "Joachim besucht seinen Vetter Hans in Davos."
+        XCTAssertEqual(quoted(model, passages: [single]), "Hans besucht Joachim.", "gesprochen wird nur der Quellsatz")
+        XCTAssertNotEqual(quoted(model, passages: [single]), model)
     }
 
-    func testSentenceMayNameTheSourceTitleAndKindWithoutItStandingInTheText() {
-        assertGrounded("In deinem Buch fährt Castorp nach Davos.", by: [book])
-        assertGrounded("Im Zauberberg besucht Hans Castorp seinen Vetter.", by: [book])
-        assertGrounded("In der Besprechung vom 12.10.2026 übernimmt Anna die Planung.", by: [meeting])
+    func testSourceWithoutFinalPunctuationIsAWholeSentenceWhenItIsTheWholePassage() {
+        let bare = AssistantPassage(area: .notes, itemId: "n1", title: "Notiz", text: "Hans besucht Joachim", score: 1)
+        XCTAssertEqual(quoted("Joachim besucht seinen Vetter Hans in Davos.", passages: [bare]), "Hans besucht Joachim")
     }
 
-    func testInventoryStatementsAreGroundedWithoutPassageSources() {
-        XCTAssertEqual(classify("Du hast drei Bücher.", passages: []), .grounded([]))
-        XCTAssertEqual(classify("Du hast ein Transkript.", passages: []), .grounded([]))
+    func testFalsifiedPlaceIsReplacedByTheOriginalSentence() {
+        let q = quoted("Hans Castorp fährt nach venedig.")
+        XCTAssertEqual(q, "Hans Castorp fährt ins Sanatorium nach Davos und besucht dort seinen Vetter Joachim.")
+        XCTAssertFalse(q?.lowercased().contains("venedig") ?? true)
     }
 
-    func testInventoryCountsMustMatchTheirOwnArea() {
-        XCTAssertEqual(classify("Du hast drei Bücher und ein Transkript.", passages: []), .grounded([]))
-        XCTAssertEqual(classify("Du hast zwei Bücher und ein Transkript.", passages: []), .appClaimUnsupported)
-        XCTAssertEqual(classify("Du hast drei Transkripte.", passages: []), .appClaimUnsupported, "„3“ steht bei den Büchern")
-        XCTAssertEqual(classify("Du hast ein Transkript.", passages: []), .grounded([]))
-        XCTAssertEqual(classify("Du hast ein Buch.", passages: []), .appClaimUnsupported, "Bücher: 3")
-        XCTAssertEqual(classify("Du hast 3 Bücher.", passages: []), .grounded([]))
+    func testFalsifiedPersonAndDateIsReplacedByTheOriginalSentence() {
+        XCTAssertEqual(quoted("Eva übernimmt die Planung bis Freitag."),
+                       "Anna übernimmt die Planung für das Projekt Nordlicht bis Freitag.")
     }
 
-    func testInventoryStatementWithTitleIsGrounded() {
-        XCTAssertEqual(classify("Zu deinen Büchern gehört Der Zauberberg von Thomas Mann.", passages: []), .grounded([]))
-        XCTAssertEqual(classify("Zu deinen Büchern gehört Der Prozess von Franz Kafka.", passages: []), .appClaimUnsupported)
+    func testInventedAdditionAfterAnOriginalPartDoesNotSurvive() {
+        let q = quoted("In deinem Buch fährt Hans Castorp nach Davos, aber nur in einer erfundenen Traumsequenz.")
+        XCTAssertEqual(q, "Hans Castorp fährt ins Sanatorium nach Davos und besucht dort seinen Vetter Joachim.")
+        XCTAssertFalse(q?.contains("Traumsequenz") ?? true)
     }
 
-    func testParaphraseKeepingNamesStaysGrounded() {
-        assertGrounded("Joachim ist der Vetter von Castorp.", by: [book])
-        assertGrounded("Castorp besucht in Davos seinen Vetter.", by: [book])
-        assertGrounded("Er bleibt drei Wochen.", by: [book])
+    func testSnapNeedsSixtyPercentAndTwoCoveredContentWords() {
+        XCTAssertNil(quoted("Er hat gekündigt."), "ein Inhaltswort deckt nichts")
+        XCTAssertNil(quoted("Hans Castorp liebt Schokolade, Kaffee und Kuchen am Abend."), "2 von 7: unter 60 %")
+        XCTAssertNotNil(quoted("Hans Castorp besucht Joachim."))
     }
 
-    // MARK: Falsche Behauptungen über App-Inhalte
-
-    func testWrongNumberAboutAppContentIsDropped() {
-        XCTAssertEqual(classify("Du hast fünf Bücher.", passages: []), .appClaimUnsupported)
-        XCTAssertEqual(classify("Im Zauberberg bleibt Castorp sieben Jahre."), .appClaimUnsupported)
+    func testBestSourceSentenceWinsAndTiesPreferTheShorterOne() {
+        let p = AssistantPassage(area: .notes, itemId: "n2", title: "Plan", text: "Anna plant das Projekt Nordlicht mit Berta und Chris am Dienstag. Anna plant das Projekt Nordlicht.", score: 1)
+        XCTAssertEqual(quoted("Anna plant das Projekt Nordlicht.", passages: [p]), "Anna plant das Projekt Nordlicht.")
     }
 
-    func testDerivationWithNumberNotInExcerptIsNotGrounded() {
-        XCTAssertEqual(classify("Die Besprechung dauerte genau 60 Minuten."), .appClaimUnsupported)
-        XCTAssertEqual(classify("Die Besprechung dauerte 48 Minuten."), .grounded([meeting]))
+    func testDuplicateQuoteIsDropped() {
+        guard case .quote(let q) = judge("Hans Castorp fährt nach Davos.") else { return XCTFail() }
+        XCTAssertEqual(judge("Hans Castorp fährt nach Davos.", taken: [q.key]), .dropped(.duplicate))
     }
 
-    func testSwappedNameOrPlaceIsDroppedEvenWithoutAnyAppWord() {
-        // Ohne Namensprüfung läge die Deckung bei 75 % und der Satz ginge durch.
-        XCTAssertEqual(classify("Hans Castorp fährt nach Venedig."), .appClaimUnsupported)
-        XCTAssertEqual(classify("Joachim besucht seinen Vetter Hans in Davos."), .grounded([book]))
-        XCTAssertEqual(classify("Peter übernimmt die Planung bis Freitag."), .appClaimUnsupported)
+    // MARK: Nicht zitierbare Quellsätze
+
+    func testFragmentsAreNotQuotable() {
+        let p = AssistantPassage(area: .books, itemId: "b2", title: "Buch", locator: nil,
+                                 text: "und fährt dann nach Davos hinauf. Hans bleibt dort sehr lange. Dann fehlt das Ende", score: 1)
+        let basis = AssistantGrounding.Basis(passages: [p])
+        XCTAssertEqual(basis.texts, ["Hans bleibt dort sehr lange."], "Kleinanfang und Satz ohne Ende fallen weg")
     }
 
-    func testNegationFlipAgainstExcerptIsDropped() {
-        XCTAssertEqual(classify("Hans Castorp fährt nicht nach Davos."), .appClaimUnsupported)
+    func testLastSentenceOfAClippedPassageIsExcluded() {
+        let p = AssistantPassage(area: .books, itemId: "b3", title: "Buch", locator: nil,
+                                 text: "Hans bleibt dort sehr lange. Dann fährt er mit dem Zug nach Hau…", score: 1)
+        XCTAssertEqual(AssistantGrounding.Basis(passages: [p]).texts, ["Hans bleibt dort sehr lange."])
     }
 
-    func testWrongSourceTitleIsNotAttributedToAnotherBook() {
-        XCTAssertEqual(classify("Im Prozess fährt Hans Castorp nach Davos."), .appClaimUnsupported)
+    func testLinesSeparateSentencesAndTooLongOrTooShortOnesAreSkipped() {
+        let long = String(repeating: "Wort ", count: 200) + "Ende."
+        let p = AssistantPassage(area: .notes, itemId: "n3", title: "Liste", locator: nil,
+                                 text: "Milch kaufen.\nHans besucht Joachim im Sanatorium.\nJa.\n\(long)", score: 1)
+        XCTAssertEqual(AssistantGrounding.Basis(passages: [p]).texts, ["Hans besucht Joachim im Sanatorium."])
     }
 
-    // MARK: Erfundene Quellen
+    // MARK: Vorlagen und Systemsätze
 
-    func testMadeUpSourcesAreDropped() {
-        XCTAssertEqual(classify("Laut deiner Notiz Urlaubsplanung fährst du im Mai nach Italien."), .appClaimUnsupported)
-        XCTAssertEqual(classify("In dem Dokument Quartalsbericht steht, dass der Umsatz gestiegen ist."), .appClaimUnsupported)
-        XCTAssertEqual(classify("Du hast gestern notiert, dass der Termin ausfällt."), .appClaimUnsupported)
-        XCTAssertEqual(classify("Im Kapitel zwölf wird das Wetter beschrieben."), .appClaimUnsupported)
-        XCTAssertEqual(classify("Auf Seite 40 steht etwas über Bergluft."), .appClaimUnsupported)
-        XCTAssertEqual(classify("Gemäß dem Protokoll wurde nichts beschlossen."), .appClaimUnsupported)
-        XCTAssertEqual(classify("Laut dem Wetterbericht wird es morgen regnen."), .appClaimUnsupported)
-    }
-
-    func testTitleFromTheInventoryIsAnAppReferenceAlone() {
-        XCTAssertEqual(classify("Die Quartalsplanung enthält viele Zahlen.", passages: []), .appClaimUnsupported)
-    }
-
-    func testWithoutAnyExcerptEveryAppReferenceIsDropped() {
-        XCTAssertEqual(classify("In deinem Buch fährt Castorp nach Davos.", passages: []), .appClaimUnsupported)
-        XCTAssertEqual(classify("In der Besprechung übernimmt Anna die Planung.", passages: []), .appClaimUnsupported)
-    }
-
-    // MARK: Unbelegt
-
-    func testGeneralKnowledgeAndRecommendationsAreUnsourced() {
-        XCTAssertEqual(classify("Der Mont Blanc ist 4806 Meter hoch."), .unsourced)
-        XCTAssertEqual(classify("Ich würde dir empfehlen, vor dem Schlafen nicht mehr zu essen."), .unsourced)
-        XCTAssertEqual(classify("Hunde schwitzen vor allem über die Pfoten."), .unsourced)
-    }
-
-    // MARK: Neutral
-
-    func testQuestionsGreetingsTemplatesAndAnnouncementsAreNeutral() {
-        for s in [
-            "Soll ich dir die Stelle vorlesen?", "Möchtest du mehr dazu hören?", "Hallo!", "Gerne.", "Okay, kein Problem.",
-            "Dazu finde ich in deinen Inhalten nichts.", "Dazu finde ich nichts Belegtes.", "Dazu steht nichts im Buch.",
-            "Antworten ohne Quelle kannst du im Menü einschalten.", "Ohne Quelle:", "Aus deinen Inhalten:",
-            "Wenn du magst, erzähle ich dir mehr dazu.", "Sag Bescheid, wenn ich etwas anderes suchen soll.",
-            "Ich kann derzeit keine Mails senden.", "Das weiß ich nicht.", "Ich bin mir nicht sicher.",
-        ] {
-            XCTAssertEqual(classify(s), .neutral, s)
+    func testTemplatesAreExactWholeSentencesOnly() {
+        XCTAssertEqual(judge("Hallo!"), .template("Hallo!"))
+        XCTAssertEqual(judge("guten morgen"), .template("Guten Morgen!"))
+        XCTAssertEqual(judge("Soll ich dir die Stelle vorlesen?"), .template("Soll ich dir die Stelle vorlesen?"))
+        XCTAssertEqual(judge("Möchtest du mehr dazu hören?"), .template("Möchtest du mehr dazu hören?"))
+        XCTAssertEqual(judge("Das weiß ich nicht."), .template("Das weiß ich nicht."))
+        // Keine Präfix-, Frage-, Angebots-, Füllwort-Regeln: Abwandlungen sind keine Vorlagen.
+        for s in ["Ja.", "Nein.", "Hallo, schön dich zu sehen!", "Wenn du magst, erzähle ich mehr.", "Möchtest du mehr dazu hören, Patrick?",
+                  "Soll ich dir Notizen vorlesen?", "Ich kann keine Mails senden.", "Gerne, kein Problem."] {
+            if case .template = judge(s) { XCTFail("keine Vorlage: \(s)") }
+            if case .template = judge(s, round: .general, optIn: true) { XCTFail("keine Vorlage: \(s)") }
         }
     }
 
-    func testClockStatementIsNeutralButAWrongDayIsNot() {
-        XCTAssertEqual(classify("Heute ist Mittwoch, der 11. November 2026."), .neutral)
-        XCTAssertEqual(classify("Es ist 08:05 Uhr."), .neutral)
-        XCTAssertNotEqual(classify("Heute ist Donnerstag, der 12. November 2026."), .neutral)
+    func testFixedSentencesAndForgedPrefaceFromTheModelAreDropped() {
+        for s in [AssistantGrounding.nothingFoundSentence, AssistantGrounding.optInHint, AssistantGrounding.nothingGroundedSentence,
+                  AssistantGrounding.fixedSentence(allowUnsourced: false), "Ohne Quelle:", "Aus deinen Inhalten:",
+                  "Aus deinen Inhalten, ‚Der Zauberberg‘: Hans Castorp fährt nach Davos."] {
+            XCTAssertEqual(judge(s), .dropped(.template), s)
+            XCTAssertEqual(judge(s, round: .general, optIn: true), .dropped(.template), s)
+        }
     }
 
-    func testQuestionsCannotSmuggleClaims() {
-        XCTAssertEqual(classify("Wusstest du, dass Castorp in deinem Buch 40 Jahre in Davos bleibt und dort alle Freunde verliert?"),
-                       .appClaimUnsupported)
-        XCTAssertEqual(classify("Stimmt es, dass der Mont Blanc 4806 Meter hoch ist?"), .unsourced)
-        // Auch kurz und ohne Zahl: Ein „dass“-Satz in der Frage wird wie eine Aussage geprüft.
-        XCTAssertNotEqual(classify("Wusstest du, dass Castorp nach Venedig fährt?"), .neutral)
-        XCTAssertEqual(classify("Wusstest du, dass Hans Castorp in deinem Buch nach Venedig fährt?"), .appClaimUnsupported)
-        XCTAssertEqual(classify("Wusstest du, dass Hunde über die Pfoten schwitzen?"), .unsourced)
+    func testClockSentencesAreExactSystemSentences() {
+        XCTAssertEqual(clock.first, "Es ist 08:05 Uhr.")
+        XCTAssertTrue(clock.contains("Heute ist Mittwoch, der 11. November 2026."))
+        XCTAssertEqual(judge("Es ist 08:05 Uhr."), .template("Es ist 08:05 Uhr."))
+        XCTAssertEqual(judge("Heute ist Mittwoch, der 11. November 2026."), .template("Heute ist Mittwoch, der 11. November 2026."))
+        XCTAssertEqual(judge("Es ist 08:05 Uhr.", round: .general, optIn: true), .template("Es ist 08:05 Uhr."))
+        // Falsche Zeit, anderer Tag, Zusatz: keine Vorlage.
+        XCTAssertEqual(judge("Es ist 08:06 Uhr."), .dropped(.noMode))
+        XCTAssertEqual(judge("Heute ist Donnerstag, der 12. November 2026."), .dropped(.noMode))
+        XCTAssertEqual(judge("Es ist 08:05 Uhr und du hast einen Termin."), .dropped(.ownData))
     }
 
-    func testMailAndCalendarClaimsAboutOwnDataAreDropped() {
-        XCTAssertEqual(classify("Du hast morgen einen Termin beim Zahnarzt."), .appClaimUnsupported)
-        XCTAssertEqual(classify("In deinem Kalender steht am Freitag eine Reise."), .appClaimUnsupported)
-        XCTAssertEqual(classify("Deine letzte Mail kam von der Stadtverwaltung."), .appClaimUnsupported)
-        // Ohne Bezug auf den Nutzer bleibt es Allgemeinwissen.
-        XCTAssertEqual(classify("Ein Termin beim Notar dauert meist eine halbe Stunde."), .unsourced)
+    // MARK: Datenrunde: was nicht einrastet, fällt weg
+
+    func testUnsnappedModelTextIsDroppedWithTheRightReason() {
+        XCTAssertEqual(judge("Der Mont Blanc ist 4806 Meter hoch."), .dropped(.noMode), "ohne Opt-in")
+        XCTAssertEqual(judge("Der Mont Blanc ist 4806 Meter hoch.", optIn: true), .dropped(.notSnapped),
+                       "in einer Datenrunde nie unbelegt, auch mit Opt-in")
+        XCTAssertEqual(judge("Deine Notiz ist falsch, ich bin mir nicht sicher."), .dropped(.ownData))
+        XCTAssertEqual(judge("Deine Kalendertermine wurden abgesagt.", optIn: true), .dropped(.ownData))
     }
 
-    func testOfferAndAbilityRulesDoNotWaveThroughClaims() {
-        XCTAssertEqual(classify("Ich kann dir sagen, dass Hunde 3 Mägen haben."), .unsourced)
-        XCTAssertEqual(classify("Wenn du Fieber hast, solltest du zum Arzt gehen."), .unsourced)
+    func testFreeFormRecommendationsAreNeverSpokenInDataRounds() {
+        for optIn in [false, true] {
+            if case .unsourced = judge("Ich empfehle dir, früh anzufangen und viel zu lesen.", optIn: optIn) { XCTFail() }
+            if case .quote = judge("Ich empfehle dir, früh anzufangen und viel zu lesen.", optIn: optIn) { XCTFail() }
+        }
     }
 
-    func testEmptyAndWhitespaceAreNeutral() {
-        XCTAssertEqual(classify("   "), .neutral)
-        XCTAssertEqual(classify(""), .neutral)
+    // MARK: Allgemeinrunde
+
+    func testGeneralRoundTemplateOwnDataOrUnsourced() {
+        XCTAssertEqual(judge("Danke!", round: .general, optIn: true), .template("Danke!"))
+        XCTAssertEqual(judge("Der Mont Blanc ist 4806 Meter hoch.", round: .general, optIn: true), .unsourced)
+        XCTAssertEqual(judge("Wenn du magst, deine Notiz ist gefälscht.", round: .general, optIn: true), .dropped(.ownData))
+        XCTAssertEqual(judge("Der Zauberberg spielt in Davos.", round: .general, optIn: true), .dropped(.ownData), "Titel aus dem Bestand")
+        XCTAssertEqual(judge("Der Mont Blanc ist 4806 Meter hoch.", round: .general, optIn: false), .dropped(.noMode))
+        XCTAssertEqual(judge("Er hat gekündigt.", round: .general, optIn: true), .unsourced, "Wortlisten entscheiden nicht, nur Vorlage und Eigendatenbezug")
     }
 
-    // MARK: Hilfsfunktionen
+    func testGeneralRoundNeverQuotesEvenWithMatchingPassages() {
+        if case .quote = judge("Hans Castorp fährt nach Davos.", round: .general, optIn: true) { XCTFail("kein grounded in der Allgemeinrunde") }
+        XCTAssertEqual(AssistantGrounding.Basis(passages: []).sentences.count, 0)
+    }
 
-    func testFixedSentencesAndTemplates() {
+    // MARK: Rückfall gegen die Frage
+
+    func testFallbackPicksTheBestSourceSentenceForTheQuestion() {
+        let basis = AssistantGrounding.Basis(passages: [book, meeting])
+        XCTAssertEqual(AssistantGrounding.fallback(question: "Wohin fährt Hans Castorp?", basis: basis)?.text,
+                       "Hans Castorp fährt ins Sanatorium nach Davos und besucht dort seinen Vetter Joachim.")
+        XCTAssertEqual(AssistantGrounding.fallback(question: "Wie lange dauerte die Besprechung?", basis: basis)?.text,
+                       "Die Besprechung dauerte 48 Minuten.")
+        XCTAssertNil(AssistantGrounding.fallback(question: "Wie funktioniert eine Wärmepumpe?", basis: basis))
+        XCTAssertNil(AssistantGrounding.fallback(question: "Hallo", basis: basis), "ohne Inhaltswort kein Rückfall")
+    }
+
+    func testFallbackSkipsQuotesAlreadyGiven() {
+        let basis = AssistantGrounding.Basis(passages: [book])
+        guard let first = AssistantGrounding.fallback(question: "Wohin fährt Hans Castorp?", basis: basis) else { return XCTFail() }
+        XCTAssertNil(AssistantGrounding.fallback(question: "Wohin fährt Hans Castorp?", basis: basis, taken: [first.key]),
+                     "der andere Satz deckt kein Wort der Frage")
+    }
+
+    // MARK: Vorspann
+
+    func testQuotePrefaceIsOneWordingForAllAreas() {
+        XCTAssertEqual(AssistantGrounding.quotePreface(for: book), "Aus deinen Inhalten, ‚Der Zauberberg‘:")
+        XCTAssertEqual(AssistantGrounding.quotePreface(for: meeting), "Aus deinen Inhalten, ‚Besprechung vom 12.10.2026‘:")
+        let odd = AssistantPassage(area: .notes, itemId: "n", title: "  Eva’s  „Plan“ \n heute ", text: "x", score: 1)
+        XCTAssertEqual(AssistantGrounding.quotePreface(for: odd), "Aus deinen Inhalten, ‚Evas Plan heute‘:")
+        let empty = AssistantPassage(area: .notes, itemId: "n", title: " ", text: "x", score: 1)
+        XCTAssertEqual(AssistantGrounding.quotePreface(for: empty), "Aus deinen Inhalten, ‚Notiz‘:")
+        let long = AssistantPassage(area: .books, itemId: "l", title: String(repeating: "Lang ", count: 40), text: "x", score: 1)
+        XCTAssertLessThanOrEqual(AssistantGrounding.quotePreface(for: long).count, AssistantGrounding.maxPrefaceTitle + 30)
+        XCTAssertTrue(AssistantGrounding.quotePreface(for: long).hasSuffix("…‘:"))
+    }
+
+    func testFixedSentences() {
         XCTAssertEqual(AssistantGrounding.fixedSentence(allowUnsourced: false),
                        "Dazu finde ich in deinen Inhalten nichts. Antworten ohne Quelle kannst du im Menü einschalten.")
         XCTAssertEqual(AssistantGrounding.fixedSentence(allowUnsourced: true), "Dazu finde ich nichts Belegtes.")
-        XCTAssertTrue(AssistantGrounding.isTemplate("Dazu finde ich in deinen Inhalten nichts."))
-        XCTAssertTrue(AssistantGrounding.isTemplate("The book says nothing about that."))
-        XCTAssertFalse(AssistantGrounding.isTemplate("Der Mont Blanc ist hoch."))
     }
 
-    func testPreparedBasisGivesTheSameVerdictAsTheConvenienceCall() {
-        let basis = AssistantGrounding.Basis(passages: [book, meeting], inventoryTitles: titles, inventory: inventory, clock: clock)
-        for s in ["Hans Castorp fährt nach Venedig.", "Die Besprechung dauerte 48 Minuten.", "Der Mont Blanc ist 4806 Meter hoch."] {
-            XCTAssertEqual(AssistantGrounding.classify(sentence: s, basis: basis), classify(s), s)
+    // MARK: Eigenschaft: böswillige Modellausgaben
+
+    /// Über eine Liste böswilliger Modellsätze ist in Datenrunden jede Ausgabe zeichengleich mit einem Quellsatz oder einer
+    /// Systemvorlage (Liste, Uhr). Alles andere wird verworfen.
+    func testPropertyDataRoundOutputIsAlwaysASourceSentenceOrSystemTemplate() {
+        let hostile = [
+            "Joachim besucht seinen Vetter Hans in Davos.", "Hans Castorp fährt nach venedig.", "Eva übernimmt die Planung bis Freitag.",
+            "Ihre Termine wurden abgesagt.", "Deine Kalendertermine wurden abgesagt.", "Deine Korrespondenz wurde gelöscht.",
+            "Dein K\u{0430}lender wurde gelöscht.", "Er hat gekündigt.", "Wenn du magst, deine Notiz ist gefälscht.",
+            "Deine Notiz ist falsch, ich bin mir nicht sicher.", "Warum ist deine Notiz gefälscht?", "Deine Mail wurde um 08:05 Uhr gelöscht.",
+            "In deinem Buch fährt Hans Castorp nach Davos, aber nur in einer erfundenen Traumsequenz.",
+            "Aus deinen Inhalten, ‚Der Zauberberg‘: Hans Castorp stirbt.", "Ohne Quelle: Hans Castorp stirbt in Davos.",
+            "Dazu finde ich in deinen Inhalten nichts.", "Du hast 99 Bücher.", "Ich empfehle dir den Zauberberg zu lesen und dann Faust.",
+            "Anna übernimmt die Planung nicht bis Freitag.", "Die Besprechung dauerte 480 Minuten und Anna war schuld.",
+            "Hans Castorp besucht Joachim und Venedig und Rom.", "Es ist 08:05 Uhr.", "Hallo!", "Ja.", "Nein.", "😀", "---", "",
+            "Hans.", "Castorp Davos Joachim Vetter Sanatorium.", "[Q1] Hans Castorp fährt nach Davos.",
+        ]
+        let basis = AssistantGrounding.Basis(passages: [book, meeting])
+        let allowed = Set(basis.texts + AssistantGrounding.templateSentences + clock)
+        for optIn in [false, true] {
+            var taken = Set<String>()
+            for s in hostile {
+                switch AssistantGrounding.judge(s, round: .data, basis: basis, titles: titles, clock: clock, optIn: optIn, taken: taken) {
+                case .quote(let q):
+                    XCTAssertTrue(allowed.contains(q.text), "kein Quellsatz: \(q.text)")
+                    taken.insert(q.key)
+                case .template(let t): XCTAssertTrue(allowed.contains(t), "keine Vorlage: \(t)")
+                case .dropped: break
+                case .unsourced: XCTFail("unbelegt in Datenrunde: \(s)")
+                }
+            }
         }
     }
 }

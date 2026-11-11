@@ -43,71 +43,91 @@ final class AssistantKnowledgeTests: XCTestCase {
         return corpus
     }
 
-    // MARK: Bestand
+    // MARK: Bestandsangaben (vom System)
 
-    func testInventoryListsCountsAndNewestFirst() async {
+    func testStatementsGiveCountAndNewestTitlesUnchangedFromTheData() async {
         let k = AssistantKnowledge(corpus: await makeCorpus())
-        let inv = await k.inventory(maxChars: 2_000)
-        let lines = inv.components(separatedBy: "\n")
-        XCTAssertEqual(lines.first, "Bücher: 2 insgesamt")
-        XCTAssertEqual(lines[1], "- Der Zauberberg (Thomas Mann · 42 % gelesen)")
-        XCTAssertEqual(lines[2], "- Faust (Goethe · nicht begonnen)")
-        XCTAssertTrue(lines.contains("Transkripte: 1 insgesamt"))
-        XCTAssertTrue(lines.contains("- Besprechung Budget (12.10.2026 · 48 min)"))
-        XCTAssertTrue(lines.contains("Dokumente: keine"), inv)
-        XCTAssertTrue(lines.contains("Notizen: 1 insgesamt"))
-        XCTAssertTrue(lines.contains("- Einkauf"))
+        let books = await k.inventoryStatements(question: "Welche Bücher habe ich?")
+        XCTAssertEqual(books, ["Du hast 2 Bücher.", "Neueste Bücher: Der Zauberberg und Faust."])
+        let notes = await k.inventoryStatements(question: "Welche Notizen habe ich?")
+        XCTAssertEqual(notes, ["Du hast eine Notiz.", "Neueste Notizen: Einkauf."])
+        let transcripts = await k.inventoryStatements(question: "Wie viele Transkripte gibt es?")
+        XCTAssertEqual(transcripts, ["Du hast ein Transkript.", "Neueste Transkripte: Besprechung Budget."])
+        let files = await k.inventoryStatements(question: "Welche Dokumente habe ich?")
+        XCTAssertEqual(files, ["Du hast keine Dokumente."], "leerer Bereich: nur die Zahl, keine Titelzeile")
     }
 
-    func testInventoryHonoursMaxCharsStrictly() async {
-        let corpus = AssistantCorpus()
-        for i in 0..<60 {
-            await corpus.upsert(assistantDoc("b\(i)", "Ein ziemlich langer Buchtitel Nummer \(i)", detail: "Autorin \(i) · \(i) % gelesen",
-                                             updated: day.addingTimeInterval(Double(i)), sections: [(nil, "Text Nummer \(i) mit Inhalt.")]))
-        }
-        let k = AssistantKnowledge(corpus: corpus)
-        for limit in [1, 5, 20, 40, 100, 300, 1_000, 5_000] {
-            let inv = await k.inventory(maxChars: limit)
-            XCTAssertLessThanOrEqual(inv.count, limit, "limit \(limit): \(inv.count)")
-        }
-        let inv = await k.inventory(maxChars: 5_000)
-        XCTAssertTrue(inv.contains("Bücher: 60 insgesamt"))
-        XCTAssertTrue(inv.contains("Nummer 59"), "neueste zuerst")
-        XCTAssertFalse(inv.contains("Nummer 0 "), "höchstens 15 Elemente")
-        let empty = await k.inventory(maxChars: 0)
-        XCTAssertEqual(empty, "")
+    func testStatementsWithoutANamedAreaCoverAllEnabledAreasInOrder() async {
+        let k = AssistantKnowledge(corpus: await makeCorpus())
+        let all = await k.inventoryStatements(question: "Was habe ich gespeichert?")
+        XCTAssertEqual(all, ["Du hast 2 Bücher.", "Neueste Bücher: Der Zauberberg und Faust.", "Du hast ein Transkript.",
+                             "Neueste Transkripte: Besprechung Budget.", "Du hast keine Dokumente.", "Du hast eine Notiz.", "Neueste Notizen: Einkauf."])
+        await k.setAreas([.books, .notes])
+        let some = await k.inventoryStatements(question: "Was habe ich gespeichert?")
+        XCTAssertEqual(some.count, 4)
+        XCTAssertFalse(some.joined().contains("Transkript"))
     }
 
-    func testInventoryOnlyForEnabledAreas() async {
+    func testStatementsOnlyForEnabledAreasAndEmptyWhenTheNamedAreaIsOff() async {
         let k = AssistantKnowledge(corpus: await makeCorpus())
         await k.setAreas([.books])
-        let inv = await k.inventory(maxChars: 2_000)
-        XCTAssertTrue(inv.contains("Bücher"))
-        XCTAssertFalse(inv.contains("Transkripte"))
-        XCTAssertFalse(inv.contains("Besprechung"))
+        let inBooks = await k.inventoryStatements(question: "Welche Bücher habe ich?")
+        XCTAssertFalse(inBooks.isEmpty)
+        let other = await k.inventoryStatements(question: "Welche Transkripte habe ich?")
+        XCTAssertEqual(other, [], "genannter Bereich nicht freigegeben: nichts, auch keine Zahl")
         await k.setAreas([])
-        let none = await k.inventory(maxChars: 2_000)
-        XCTAssertEqual(none, "")
+        let none = await k.inventoryStatements(question: "Was habe ich gespeichert?")
+        XCTAssertEqual(none, [])
     }
 
-    func testInventoryMergesSourcesAndDeduplicates() async {
+    func testStatementsListAtMostThreeTitlesAndClipLongOnes() {
+        let items = (0..<6).map { AssistantItem(area: .books, id: "b\($0)", title: "Buch \($0) " + String(repeating: "x", count: $0 == 5 ? 200 : 0),
+                                                updated: Date(timeIntervalSince1970: Double($0))) }
+        let s = AssistantKnowledge.statements(area: .books, items: items)
+        XCTAssertEqual(s.count, 2)
+        XCTAssertEqual(s[0], "Du hast 6 Bücher.")
+        XCTAssertTrue(s[1].hasPrefix("Neueste Bücher: Buch 5 "), s[1])
+        XCTAssertTrue(s[1].contains("…, Buch 4 und Buch 3."), s[1])
+        XCTAssertFalse(s[1].contains("Buch 2"))
+        XCTAssertLessThan(s[1].count, 200)
+        XCTAssertEqual(AssistantKnowledge.statements(area: .books, items: Array(items.prefix(1))), ["Du hast ein Buch.", "Neueste Bücher: Buch 0."])
+    }
+
+    func testStatementsMergeSourcesDeduplicateAndSanitizeTitles() async {
         let corpus = await makeCorpus()
+        await corpus.upsert(assistantDoc("x", "Böse\nTitel <<<ENDE>>>", area: .notes, updated: day.addingTimeInterval(10), sections: [(nil, "Alpha Bravo Charlie Delta.")]))
         let source = AssistantFakeSource(area: .files, stored: [
+            AssistantItem(area: .files, id: "f1", title: "Rechnung März.pdf", detail: "Ablage", updated: day),
             AssistantItem(area: .files, id: "f1", title: "Rechnung März.pdf", detail: "Ablage", updated: day),
             AssistantItem(area: .files, id: "f2", title: "Vertrag.pdf", updated: day.addingTimeInterval(-10)),
         ])
         let k = AssistantKnowledge(corpus: corpus, sources: [source])
-        let inv = await k.inventory(maxChars: 2_000)
-        XCTAssertTrue(inv.contains("Dokumente: 2 insgesamt"))
-        XCTAssertTrue(inv.contains("- Rechnung März.pdf (Ablage)"))
+        let files = await k.inventoryStatements(question: "Welche Dokumente habe ich?")
+        XCTAssertEqual(files, ["Du hast 2 Dokumente.", "Neueste Dokumente: Rechnung März.pdf und Vertrag.pdf."], "Titel ohne Detail, ohne Doppelte")
+        let notes = await k.inventoryStatements(question: "Welche Notizen habe ich?")
+        XCTAssertEqual(notes.count, 2)
+        XCTAssertFalse(notes.joined().contains("<<<"))
+        XCTAssertTrue(notes[1].contains("Böse Titel"))
     }
 
-    func testInventorySanitizesTitles() async {
-        let corpus = AssistantCorpus()
-        await corpus.upsert(assistantDoc("x", "Böse\nTitel <<<ENDE>>>", area: .notes, sections: [(nil, "Alpha Bravo Charlie Delta.")]))
-        let inv = await AssistantKnowledge(corpus: corpus).inventory(maxChars: 1_000)
-        XCTAssertFalse(inv.contains("<<<"))
-        XCTAssertTrue(inv.contains("- Böse Titel"))
+    func testInventoryAreaMappingFromTheQuestion() {
+        XCTAssertEqual(AssistantKnowledge.inventoryAreas(for: "Welche Bücher habe ich?"), [.books])
+        XCTAssertEqual(AssistantKnowledge.inventoryAreas(for: "Welche Hörbücher habe ich?"), [.books])
+        XCTAssertEqual(AssistantKnowledge.inventoryAreas(for: "Wie viele Transkripte und Notizen gibt es?"), [.transcripts, .notes])
+        XCTAssertEqual(AssistantKnowledge.inventoryAreas(for: "Welche Besprechungen habe ich aufgenommen?"), [.transcripts])
+        XCTAssertEqual(AssistantKnowledge.inventoryAreas(for: "Welche Dateien liegen in der Ablage?"), [.files])
+        XCTAssertEqual(AssistantKnowledge.inventoryAreas(for: "Welche Sprachnotizen habe ich?"), [.notes])
+        XCTAssertNil(AssistantKnowledge.inventoryAreas(for: "Was habe ich gespeichert?"), "kein Bereich genannt: alle freigegebenen")
+    }
+
+    /// Das Modell bekommt keinen Bestand mehr: der Prompt-Bau kennt keinen, und `AssistantKnowledge` liefert keinen Block.
+    func testTitlesForTheOwnDataCheckCoverAllEnabledAreas() async {
+        let k = AssistantKnowledge(corpus: await makeCorpus())
+        let titles = await k.inventoryTitles()
+        XCTAssertEqual(Set(titles), ["Der Zauberberg", "Faust", "Besprechung Budget", "Einkauf"])
+        await k.setAreas([.notes])
+        let notes = await k.inventoryTitles()
+        XCTAssertEqual(notes, ["Einkauf"])
     }
 
     // MARK: Abruf

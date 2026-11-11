@@ -68,8 +68,8 @@ final class AssistantHistoryStoreTests: XCTestCase {
         let loaded = store.load()
         let chips = loaded.flatMap(\.sources).map { "\($0.area.rawValue)|\($0.title)|\($0.locator ?? "")" }
         XCTAssertEqual(chips, ["books|Buch|S. 0", "books|Buch|S. 3"])
-        let built = AssistantPrompt.build(question: "Weiter?", afterInterruption: false, inventory: "", passages: [], history: loaded,
-                                          config: AssistantConfig(modelLabel: "T", isCloud: false, contextTokens: 4_096, maxAnswerTokens: 400, userName: nil, timeout: 5))
+        let built = AssistantPrompt.buildData(question: "Weiter?", afterInterruption: false, passages: [], history: loaded,
+                                              config: AssistantConfig(modelLabel: "T", isCloud: false, contextTokens: 4_096, maxAnswerTokens: 400, userName: nil, timeout: 5))
         XCTAssertTrue(built.prompt.contains("Antwort 4"), built.prompt)
         XCTAssertTrue(built.used.isEmpty)
     }
@@ -151,6 +151,85 @@ final class AssistantHistoryStoreTests: XCTestCase {
         XCTAssertEqual(loaded[0].parts.map(\.unsourced), [false, true])
         let raw = try String(contentsOf: store.url, encoding: .utf8)
         XCTAssertFalse(raw.contains("GEHEIM"))
+    }
+
+    /// Verlaufsdatei aus der Zeit vor der Rundenart und den Zitaten: kein `round`, in `parts` kein `quote`. Sie lädt, die
+    /// Beiträge gelten als Datenrunde (nie im Prompt einer Allgemeinrunde), und neu geschrieben bleibt alles lesbar.
+    func testOldHistoryFileWithoutRoundAndQuoteLoadsAndCountsAsDataRound() throws {
+        let store = AssistantHistoryStore(directory: dir)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let old = #"""
+        {"version":1,"turns":[
+         {"user":"Frage alt","assistant":"Castorp fährt nach Davos. Hunde schwitzen über die Pfoten.","interrupted":false,
+          "sources":[{"area":"books","itemId":"b1","title":"Der Zauberberg","locator":"S. 12","text":"","score":0}],"general":false,"unsourced":true,
+          "parts":[{"text":"Castorp fährt nach Davos.","unsourced":false},{"text":"Hunde schwitzen über die Pfoten.","unsourced":true}],
+          "model":"Apple","at":782000000}
+        ]}
+        """#
+        try Data(old.utf8).write(to: store.url)
+        let before = try Data(contentsOf: store.url)
+        let loaded = store.load()
+        XCTAssertEqual(loaded.count, 1)
+        XCTAssertNil(loaded[0].round)
+        XCTAssertEqual(loaded[0].parts.map(\.quote), [false, false])
+        XCTAssertEqual(loaded[0].parts.map(\.source), [nil, nil], "alte Abschnitte kennen keine Quellzeile")
+        XCTAssertEqual(loaded[0].parts.map(\.unsourced), [false, true])
+        XCTAssertEqual(try Data(contentsOf: store.url), before, "Laden verändert die Datei nicht")
+
+        let config = AssistantConfig(modelLabel: "T", isCloud: false, contextTokens: 4_096, maxAnswerTokens: 400, userName: nil, timeout: 5)
+        XCTAssertTrue(AssistantPrompt.buildData(question: "Weiter?", afterInterruption: false, passages: [], history: loaded, config: config)
+            .prompt.contains("Frage alt"))
+        XCTAssertFalse(AssistantPrompt.buildGeneral(question: "Weiter?", afterInterruption: false, history: loaded, config: config)
+            .contains("Frage alt"), "ein Beitrag ohne Rundenart gilt als Datenrunde")
+
+        try store.save(loaded)
+        XCTAssertEqual(store.load(), loaded.map(AssistantHistoryStore.minimized))
+        XCTAssertNil(store.load()[0].round)
+    }
+
+    func testRoundAndQuotePartsRoundTrip() throws {
+        let store = AssistantHistoryStore(directory: dir)
+        let quote = "Hans Castorp fährt ins Sanatorium nach Davos und besucht dort seinen Vetter Joachim."
+        let turn = AssistantTurn(
+            user: "Frage", assistant: quote,
+            sources: [AssistantPassage(area: .books, itemId: "b1", title: "Der Zauberberg", locator: "S. 12", text: "GEHEIM", score: 1)],
+            general: false, parts: [AssistantTurnPart(text: quote, unsourced: false, quote: true, source: "Buch · Der Zauberberg · S. 12")],
+            model: "Apple", at: Date(timeIntervalSince1970: 1_760_000_000), round: .data)
+        let general = AssistantTurn(user: "Wie hoch?", assistant: "Der Mont Blanc ist 4806 Meter hoch.", general: true, unsourced: true,
+                                    model: "Apple", at: Date(timeIntervalSince1970: 1_760_000_100), round: .general)
+        try store.save([turn, general])
+        let loaded = store.load()
+        XCTAssertEqual(loaded, [AssistantHistoryStore.minimized(turn), general])
+        XCTAssertEqual(loaded.map(\.round), [.data, .general])
+        XCTAssertEqual(loaded[0].parts, [AssistantTurnPart(text: quote, unsourced: false, quote: true, source: "Buch · Der Zauberberg · S. 12")])
+        let raw = try String(contentsOf: store.url, encoding: .utf8)
+        XCTAssertFalse(raw.contains("GEHEIM"), "von der Quelle bleibt nur die Anzeigezeile, nie der Auszug")
+    }
+
+    func testSourceLabelPerAreaMatchesTheChipFormat() {
+        func passage(_ area: AssistantArea, locator: String?) -> AssistantPassage {
+            AssistantPassage(area: area, itemId: "i", title: "Titel", locator: locator, text: "x", score: 1)
+        }
+        XCTAssertEqual(passage(.books, locator: "S. 12").sourceLabel, "Buch · Titel · S. 12")
+        XCTAssertEqual(passage(.books, locator: nil).sourceLabel, "Buch · Titel")
+        XCTAssertEqual(passage(.transcripts, locator: "00:14:03").sourceLabel, "Transkript · Titel · 00:14:03")
+        XCTAssertEqual(passage(.files, locator: "Seite 2").sourceLabel, "Ablage · Titel")
+        XCTAssertEqual(passage(.notes, locator: "12.03.2026").sourceLabel, "Notiz · 12.03.2026")
+        XCTAssertEqual(passage(.notes, locator: nil).sourceLabel, "Notiz · Titel")
+    }
+
+    /// Ein Abbruch mitten im Schreiben lässt die alte Datei ganz: geschrieben wird atomar (temporäre Datei, dann Umbenennen).
+    func testSaveLeavesNoTemporaryFilesAndKeepsTheOldFileWhenTheNewOneCannotBeWritten() throws {
+        let store = AssistantHistoryStore(directory: dir)
+        try store.save([turn(1)])
+        let before = try Data(contentsOf: store.url)
+        // Der Ordner wird zur Datei: Schreiben scheitert, die alte Datei (im echten Ordner) bleibt, nichts Halbes liegt herum.
+        let blocker = FileManager.default.temporaryDirectory.appendingPathComponent("assistant-history-file-\(UUID().uuidString)")
+        try Data("x".utf8).write(to: blocker)
+        defer { try? FileManager.default.removeItem(at: blocker) }
+        XCTAssertThrowsError(try AssistantHistoryStore(directory: blocker.appendingPathComponent("unter")).save([turn(2)]))
+        XCTAssertEqual(try Data(contentsOf: store.url), before)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir.path), [AssistantHistoryStore.fileName])
     }
 
     func testStandardDirectoryIsSeparateFromBookTalk() {

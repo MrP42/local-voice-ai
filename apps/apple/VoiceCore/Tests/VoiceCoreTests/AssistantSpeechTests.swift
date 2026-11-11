@@ -170,6 +170,82 @@ final class AssistantSpeechTests: XCTestCase {
         assertChunkInvariant("Das Wetter in Berlin ist heute ziemlich sonnig und warm, aber am Abend wird es kühler. 😀 Tschüss.")
     }
 
+    // MARK: Nur ganze Sätze (Prüfung vor der Ausgabe, Paket A)
+
+    private func wholeSentences(_ deltas: [String]) -> (sentences: [String], overlong: Int) {
+        var s = AssistantSpeech.Splitter(sentencesOnly: true)
+        var out: [String] = []
+        for d in deltas { out += s.feed(d).map(\.text) }
+        out += s.finish().map(\.text)
+        return (out, s.overlong)
+    }
+
+    /// F: Die Prüfung sieht nur vollständige Sätze, nie Komma-Häppchen.
+    func testSentencesOnlyNeverCutsAtCommasOrAfterTheFirstChars() {
+        let long = "In deinem Buch fährt Hans Castorp nach Davos, um dort seinen Vetter zu besuchen; er bleibt drei Wochen, aber nur in einer erfundenen Traumsequenz."
+        XCTAssertEqual(wholeSentences([long]).sentences, [long])
+        // Der klassische Modus würde bei einem langen ersten Satz am Komma teilen, dieser nicht.
+        XCTAssertGreaterThan(run([long]).count, 1)
+        XCTAssertEqual(wholeSentences(long.map { String($0) }).sentences, [long])
+    }
+
+    func testSentencesOnlyReleasesNothingBeforeTheSentenceEnd() {
+        var s = AssistantSpeech.Splitter(sentencesOnly: true)
+        XCTAssertTrue(s.feed("Hans Castorp fährt nach Davos, ").isEmpty)
+        XCTAssertTrue(s.feed("aber nur in einer erfundenen ").isEmpty)
+        XCTAssertTrue(s.feed("Traumsequenz.").isEmpty, "das Satzzeichen am Puffer-Ende wartet auf das Folgezeichen oder das Stromende")
+        XCTAssertEqual(s.feed(" Danach").map(\.text), ["Hans Castorp fährt nach Davos, aber nur in einer erfundenen Traumsequenz."])
+        XCTAssertEqual(s.finish().map(\.text), ["Danach"])
+    }
+
+    func testSentencesOnlyTreatsNewlinesAsWhitespace() {
+        XCTAssertEqual(wholeSentences(["Erste Zeile\nZweite Zeile\n\nDritte. Vierte"]).sentences, ["Erste Zeile Zweite Zeile Dritte.", "Vierte"])
+        XCTAssertEqual(wholeSentences(["Ein Satz.\nNoch ein Satz.\n"]).sentences, ["Ein Satz.", "Noch ein Satz."])
+    }
+
+    func testSentencesOnlyKeepsAbbreviationsDatesAndDecimalsInOneSentence() {
+        XCTAssertEqual(wholeSentences(["Dr. Müller kam am 11. November 2026 um 3.5 Uhr, z. B. nach Davos. Dann ging er."]).sentences,
+                       ["Doktor Müller kam am 11. November 2026 um 3.5 Uhr, z. B. nach Davos.".replacingOccurrences(of: "Doktor", with: "Dr."),
+                        "Dann ging er."])
+    }
+
+    func testSentencesOnlyFinishFlushesTheRemainderOnceAndDropsNonText() {
+        var s = AssistantSpeech.Splitter(sentencesOnly: true)
+        XCTAssertTrue(s.feed("Noch ein Rest ohne Ende").isEmpty)
+        XCTAssertEqual(s.finish().map(\.text), ["Noch ein Rest ohne Ende"])
+        XCTAssertTrue(s.finish().isEmpty)
+        XCTAssertEqual(wholeSentences(["---"]).sentences, [])
+        XCTAssertEqual(wholeSentences(["😀"]).sentences, [])
+        XCTAssertEqual(wholeSentences(["   \n"]).sentences, [])
+    }
+
+    func testSentencesOnlyChunkInvariance() {
+        let input = "Das gilt z. B. für Hunde. Dr. Müller sagt: Am 11. November 2026 ist es 3.5 Grad, das ist wenig. Siehe [Link](https://example.com). Ende… Wirklich?\nUnd weiter."
+        let whole = wholeSentences([input]).sentences
+        XCTAssertEqual(wholeSentences(input.map { String($0) }).sentences, whole)
+        for size in [2, 3, 5, 7, 11] {
+            var parts: [String] = []
+            var rest = Substring(input)
+            while !rest.isEmpty { parts.append(String(rest.prefix(size))); rest = rest.dropFirst(size) }
+            XCTAssertEqual(wholeSentences(parts).sentences, whole, "Größe \(size)")
+        }
+        XCTAssertEqual(whole.count, 5, "\(whole)")
+    }
+
+    /// Ein Satz ohne Ende über der Obergrenze wird verworfen und gezählt, samt Rest bis zum Satzende; danach geht es normal weiter.
+    func testSentencesOnlyOverlongWithoutEndIsDroppedCountedAndSkippedToTheSentenceEnd() {
+        let r = wholeSentences([String(repeating: "wort ", count: 450), " und Rest. Danach ein neuer Satz."])
+        XCTAssertEqual(r.sentences, ["Danach ein neuer Satz."])
+        XCTAssertEqual(r.overlong, 1)
+    }
+
+    func testSentencesOnlyOverlongWithEndIsDroppedAndCounted() {
+        let r = wholeSentences([String(repeating: "wort ", count: 450) + "Ende. Und noch einer"])
+        XCTAssertEqual(r.sentences, ["Und noch einer"])
+        XCTAssertEqual(r.overlong, 1)
+        XCTAssertLessThanOrEqual(AssistantSpeech.Splitter.maxSentence, 2_000)
+    }
+
     func testUmlautsAndSharpSStayIntact() {
         XCTAssertEqual(texts("Größe, Übung und Straße sind schön. Äpfel auch."), ["Größe, Übung und Straße sind schön.", "Äpfel auch."])
     }

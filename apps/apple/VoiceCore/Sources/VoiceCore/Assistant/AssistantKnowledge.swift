@@ -1,8 +1,9 @@
 import Foundation
 
-// Gesprächsmodus „Sprechen“ (Paket K): Abruf und Bestand über die freigegebenen Bereiche.
+// Gesprächsmodus „Sprechen“ (Paket K, E4.2a in Paket A): Abruf und Bestand über die freigegebenen Bereiche.
 // Deterministisch (BM25), keine Werkzeugaufrufe des Modells. Bereiche, die nicht in `areas` stehen, kommen weder im
-// Bestand noch im Abruf vor.
+// Bestand noch im Abruf vor. Der Bestand kommt nicht mehr in den Prompt: Bestandsangaben (Zahl je Bereich, Titel) erzeugt das
+// System aus diesen Daten (`inventoryStatements`), nie das Modell.
 
 public actor AssistantKnowledge {
     private let corpus: AssistantCorpus
@@ -13,8 +14,6 @@ public actor AssistantKnowledge {
     static let perItemCap = 3
     /// Ein Auszug unter dieser Länge wird nicht mehr gekürzt aufgenommen, sondern weggelassen.
     static let minClipChars = 200
-    /// Höchstens so viele Elemente je Bereich im Bestand.
-    static let inventoryItemCap = 15
 
     public init(corpus: AssistantCorpus, sources: [any AssistantSource] = []) {
         self.corpus = corpus
@@ -27,24 +26,10 @@ public actor AssistantKnowledge {
 
     // MARK: Bestand
 
-    /// Kompakter Bestand für den Prompt, auf `maxChars` begrenzt: je Bereich eine Kopfzeile mit Gesamtzahl, darunter die
-    /// neuesten Elemente als „Titel (detail)“. Leere Bereiche: „keine“.
-    public func inventory(maxChars: Int) async -> String {
-        guard maxChars > 0 else { return "" }
-        let active = AssistantArea.allCases.filter { enabled.contains($0) }
-        guard !active.isEmpty else { return "" }
-        let share = max(maxChars / active.count, 1)
-        var blocks: [String] = []
-        for area in active {
-            blocks.append(Self.block(area: area, items: await items(in: area), maxChars: share))
-        }
-        return Self.clip(blocks.joined(separator: "\n"), to: maxChars)
-    }
-
     /// Höchstens so viele Titel für die Prüfung „nimmt ein Satz Bezug auf einen Titel aus dem Bestand“.
     static let titleCap = 400
 
-    /// Titel aller Elemente der freigegebenen Bereiche (nicht nur der im Prompt gezeigten), ohne Doppelte.
+    /// Titel aller Elemente der freigegebenen Bereiche, ohne Doppelte (für die Eigendatenprüfung von Frage und Satz).
     public func inventoryTitles() async -> [String] {
         var seen = Set<String>()
         var out: [String] = []
@@ -68,24 +53,6 @@ public actor AssistantKnowledge {
         return Array(byId.values)
     }
 
-    static func block(area: AssistantArea, items: [AssistantItem], maxChars: Int) -> String {
-        guard !items.isEmpty else { return clip("\(area.inventoryLabel): keine", to: maxChars) }
-        let sorted = items.sorted { a, b in
-            let (x, y) = (a.updated ?? .distantPast, b.updated ?? .distantPast)
-            return x != y ? x > y : a.title.localizedCompare(b.title) == .orderedAscending
-        }
-        var out = clip("\(area.inventoryLabel): \(items.count) insgesamt", to: maxChars)
-        var used = out.count
-        for item in sorted.prefix(inventoryItemCap) {
-            var line = "- " + oneLine(item.title)
-            if let d = item.detail, !oneLine(d).isEmpty { line += " (\(oneLine(d)))" }
-            guard used + 1 + line.count <= maxChars else { break }
-            out += "\n" + line
-            used += 1 + line.count
-        }
-        return out
-    }
-
     private static func oneLine(_ s: String) -> String {
         BookTalkPrompt.neutralize(s).split(whereSeparator: { $0.isNewline || $0 == "\t" }).joined(separator: " ")
             .trimmingCharacters(in: .whitespaces)
@@ -94,6 +61,55 @@ public actor AssistantKnowledge {
     private static func clip(_ s: String, to limit: Int) -> String {
         guard s.count > limit else { return s }
         return limit <= 1 ? String(s.prefix(max(limit, 0))) : String(s.prefix(limit - 1)) + "…"
+    }
+
+    // MARK: Bestandsangaben (vom System, nie vom Modell)
+
+    /// Höchstens so viele Titel je Bereich in einer Bestandsangabe.
+    static let statementTitles = 3
+    /// Längster Titel in einer Bestandsangabe (länger: gekürzt mit „…“).
+    static let statementTitleChars = 80
+
+    /// Bereiche, nach denen eine Bestandsfrage fragt (Hauptwörter wie „Bücher“, „Transkripte“, „Notizen“, „Dokumente“);
+    /// `nil`, wenn keiner genannt ist („Was habe ich gespeichert?“): dann alle freigegebenen.
+    static func inventoryAreas(for question: String) -> Set<AssistantArea>? {
+        var found = Set<AssistantArea>()
+        for w in BookTalkTokens.foldedWords(question) {
+            if ["buch", "buches", "bucher", "buchern", "horbuch", "horbucher", "bibliothek"].contains(w) { found.insert(.books) }
+            if ["transkript", "besprechung", "meeting", "aufnahme", "aufgenommen", "protokoll", "mitschrift"].contains(where: { w.hasPrefix($0) }) {
+                found.insert(.transcripts)
+            }
+            if ["dokument", "datei", "ablage"].contains(where: { w.hasPrefix($0) }) { found.insert(.files) }
+            if ["notiz", "sprachnotiz"].contains(where: { w.hasPrefix($0) }) { found.insert(.notes) }
+        }
+        return found.isEmpty ? nil : found
+    }
+
+    /// „Du hast drei Bücher.“, „Du hast keine Notizen.“, dazu „Neueste Bücher: A, B und C.“ Zahl und Titel stehen unverändert
+    /// aus den Bestandsdaten im Satz, sonst nichts (keine Herleitung, keine Empfehlung).
+    static func statements(area: AssistantArea, items: [AssistantItem]) -> [String] {
+        var out = ["Du hast \(area.countPhrase(items.count))."]
+        guard !items.isEmpty else { return out }
+        let sorted = items.sorted { a, b in
+            let (x, y) = (a.updated ?? .distantPast, b.updated ?? .distantPast)
+            return x != y ? x > y : a.title.localizedCompare(b.title) == .orderedAscending
+        }
+        let titles = sorted.prefix(statementTitles).map { clip(oneLine($0.title), to: statementTitleChars) }.filter { !$0.isEmpty }
+        guard !titles.isEmpty else { return out }
+        let list = titles.count == 1 ? titles[0] : titles.dropLast().joined(separator: ", ") + " und " + titles[titles.count - 1]
+        out.append("Neueste \(area.inventoryLabel): \(list).")
+        return out
+    }
+
+    /// Bestandsangaben zu einer Bestandsfrage, nur aus den freigegebenen Bereichen. Leer, wenn kein genannter Bereich
+    /// freigegeben ist.
+    public func inventoryStatements(question: String) async -> [String] {
+        let wanted = Self.inventoryAreas(for: question)
+        var out: [String] = []
+        for area in AssistantArea.allCases where enabled.contains(area) && (wanted?.contains(area) ?? true) {
+            out += Self.statements(area: area, items: await items(in: area))
+        }
+        return out
     }
 
     // MARK: Abruf

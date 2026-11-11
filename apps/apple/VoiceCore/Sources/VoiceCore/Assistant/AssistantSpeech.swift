@@ -11,11 +11,19 @@ public enum AssistantSpeech {
         /// Länger ohne Satzende: an Komma oder Leerzeichen trennen.
         static let maxChunk = 320
 
+        /// Nur ganze Sätze (für die Prüfung vor der Ausgabe): keine Trennung am Komma, Zeilenumbruch ist Leerraum, ein Satz
+        /// ohne Ende bleibt im Puffer bis zum Stromende. Teilen für die Stimme geschieht erst NACH der Prüfung.
+        let sentencesOnly: Bool
+        /// Längster Satz im Modus „nur ganze Sätze“; länger: verworfen (gezählt in `overlong`), samt Rest bis zum Satzende.
+        static let maxSentence = 2000
+        public private(set) var overlong = 0
+
         private var buffer: [UInt16] = []
         private var emitted = 0
         private var lineStart = true
+        private var skipping = false
 
-        public init() {}
+        public init(sentencesOnly: Bool = false) { self.sentencesOnly = sentencesOnly }
 
         public mutating func feed(_ delta: String) -> [(text: String, speech: String)] {
             buffer.append(contentsOf: delta.utf16)
@@ -26,6 +34,7 @@ public enum AssistantSpeech {
             let out = drain(final: true)
             buffer.removeAll()
             lineStart = true
+            skipping = false
             return out
         }
 
@@ -37,11 +46,28 @@ public enum AssistantSpeech {
 
         private mutating func drain(final: Bool) -> [(text: String, speech: String)] {
             var out: [(text: String, speech: String)] = []
-            while !buffer.isEmpty, let cut = nextCut(final: final) {
+            while !buffer.isEmpty {
+                guard let cut = nextCut(final: final) else {
+                    // Ein Satz ohne Ende über der Obergrenze: verwerfen und zählen, den Rest bis zum Satzende ebenfalls.
+                    if sentencesOnly, buffer.count > Self.maxSentence {
+                        overlong += 1
+                        buffer.removeAll()
+                        skipping = true
+                    }
+                    break
+                }
                 let chunk = String(decoding: buffer[0..<cut.end], as: UTF16.self)
                 buffer.removeFirst(min(max(cut.next, 1), buffer.count))
+                if skipping {
+                    skipping = false
+                    continue
+                }
+                if sentencesOnly, cut.end > Self.maxSentence {
+                    overlong += 1
+                    continue
+                }
                 let atLineStart = lineStart
-                lineStart = cut.newline || (lineStart && chunk.allSatisfy { $0.isWhitespace })
+                lineStart = sentencesOnly ? true : (cut.newline || (lineStart && chunk.allSatisfy { $0.isWhitespace }))
                 if let r = AssistantSpeech.render(chunk, lineStart: atLineStart) {
                     out.append(r)
                     emitted += 1
@@ -63,7 +89,7 @@ public enum AssistantSpeech {
             "januar", "februar", "märz", "april", "mai", "juni", "juli", "august", "september", "oktober", "november", "dezember",
         ]
 
-        private static func isSpace(_ c: UInt16) -> Bool { c == 32 || c == 9 || c == 0xA0 || c == 13 }
+        private func isSpace(_ c: UInt16) -> Bool { c == 32 || c == 9 || c == 0xA0 || c == 13 || (sentencesOnly && c == 10) }
         private static func isDigit(_ c: UInt16) -> Bool { c >= 48 && c <= 57 }
         private static func isLetter(_ c: UInt16) -> Bool { Unicode.Scalar(c)?.properties.isAlphabetic ?? false }
         private static func isUpper(_ c: UInt16) -> Bool { Unicode.Scalar(c)?.properties.isUppercase ?? false }
@@ -75,7 +101,7 @@ public enum AssistantSpeech {
             var bracket = 0
             while i < n {
                 let c = u[i]
-                if c == 10 { return Cut(end: i, next: i + 1, newline: true) }
+                if c == 10, !sentencesOnly { return Cut(end: i, next: i + 1, newline: true) }
                 if c == 91 { bracket += 1 }
                 if c == 93 {
                     bracket = max(0, bracket - 1)
@@ -96,9 +122,9 @@ public enum AssistantSpeech {
                     let terminators = j - i
                     while j < n, Self.closers.contains(u[j]) { j += 1 }
                     if j >= n { return final ? Cut(end: n, next: n, newline: false) : nil }
-                    guard Self.isSpace(u[j]) else { i = max(j, i + 1); continue }
+                    guard isSpace(u[j]) else { i = max(j, i + 1); continue }
                     var k = j
-                    while k < n, Self.isSpace(u[k]) { k += 1 }
+                    while k < n, isSpace(u[k]) { k += 1 }
                     if k >= n { return final ? Cut(end: j, next: n, newline: false) : nil }
                     if u[k] == 10 { i = k; continue }
                     if c == 46, i > 0, Self.isDigit(u[i - 1]), !final {
@@ -112,19 +138,20 @@ public enum AssistantSpeech {
                     continue
                 }
 
-                if emitted == 0, c == 44 || c == 59 || c == 58 {
+                if emitted == 0, !sentencesOnly, c == 44 || c == 59 || c == 58 {
                     if i + 1 >= n, !final { return nil }
-                    if i + 1 < n, Self.isSpace(u[i + 1]) {
+                    if i + 1 < n, isSpace(u[i + 1]) {
                         let prefix = String(decoding: u[0..<i + 1], as: UTF16.self)
                         if (AssistantSpeech.render(prefix, lineStart: lineStart)?.text.count ?? 0) >= Self.firstCommaChars {
                             var k = i + 1
-                            while k < n, Self.isSpace(u[k]) { k += 1 }
+                            while k < n, isSpace(u[k]) { k += 1 }
                             return Cut(end: i + 1, next: k, newline: false)
                         }
                     }
                 }
                 i += 1
             }
+            if sentencesOnly { return final ? Cut(end: n, next: n, newline: false) : nil }
             guard n > Self.maxChunk else { return final ? Cut(end: n, next: n, newline: false) : nil }
             return capped(u)
         }
@@ -133,9 +160,9 @@ public enum AssistantSpeech {
         private func capped(_ u: [UInt16]) -> Cut {
             let lower = Self.maxChunk / 2
             var k = Self.maxChunk
-            while k > lower { if u[k - 1] == 44, Self.isSpace(u[k]) { return Cut(end: k, next: k + 1, newline: false) }; k -= 1 }
+            while k > lower { if u[k - 1] == 44, isSpace(u[k]) { return Cut(end: k, next: k + 1, newline: false) }; k -= 1 }
             k = Self.maxChunk
-            while k > lower { if Self.isSpace(u[k]) { return Cut(end: k, next: k + 1, newline: false) }; k -= 1 }
+            while k > lower { if isSpace(u[k]) { return Cut(end: k, next: k + 1, newline: false) }; k -= 1 }
             let end = (0xD800...0xDBFF).contains(u[Self.maxChunk - 1]) ? Self.maxChunk - 1 : Self.maxChunk
             return Cut(end: end, next: end, newline: false)
         }

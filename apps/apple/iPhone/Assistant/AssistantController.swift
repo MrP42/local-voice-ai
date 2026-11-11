@@ -59,11 +59,16 @@ final class AssistantLevelMeter: ObservableObject {
 
 /// Eine Anfrage an das Modell samt gepuffertem Strom (Vorarbeit liefert, bevor sie gilt).
 private final class AssistantRun {
+    /// Ein empfangenes `sentence`-Ereignis; seine Stelle in `sentences` ist die Nummer für die Satzspur im Protokoll.
     struct Sentence {
         let text: String
         let speech: String
         let status: AssistantSentenceStatus
         let sources: [AssistantPassage]
+        /// Originalsatz (mit Anführungszeichen und Quelle anzeigen).
+        let quote: Bool
+        /// Freigabe-Generation des Ereignisses; vor Anzeige und Audiostart gegen die aktuelle geprüft.
+        let generation: Int
     }
 
     let id = UUID().uuidString
@@ -494,21 +499,25 @@ final class AssistantController: ObservableObject {
         let cloud = engine.isCloud
         let target = engine.target
         let knowledge = self.knowledge
+        let session = self.session
         areas = next
         AssistantAreaSettings.set(next, cloud: cloud)
+        // Sofort eine neue Generation: laufende Antworten enden im Kern, veraltete Ereignisse werden nicht mehr gezeigt.
+        // `setAreas` der Sitzung erhöht sie vor und nach dem Umschalten der Bereiche noch zweimal.
+        session?.releaseDidChange()
         // Ein Bereich, aus dem die laufende Antwort Auszüge hat, wird entzogen: wartende Sätze werden nicht mehr gesprochen.
         let removed = previous.subtracting(next)
         if let run = current, run.sources?.contains(where: { removed.contains($0.area) }) == true {
             stopForRevocation("Antwort angehalten: Ein Bereich wurde abgeschaltet.")
         }
         Task {
-            await knowledge?.setAreas(next)
+            if let session { await session.setAreas(next) } else { await knowledge?.setAreas(next) }
             guard let target, !AssistantConsent.isGranted(target, areas: next) else { return }
             // Mehr Bereiche als zugestimmt: fragen, sonst zurück. Gesendet wird in der Zwischenzeit nichts (Guard beim Senden).
             if await askConsent(target, areas: next) { return }
             areas = previous
             AssistantAreaSettings.set(previous, cloud: cloud)
-            await knowledge?.setAreas(previous)
+            if let session { await session.setAreas(previous) } else { await knowledge?.setAreas(previous) }
         }
     }
 
@@ -539,9 +548,10 @@ final class AssistantController: ObservableObject {
         let consent = AssistantUnsourcedConsent()
         if on { consent.grant() } else { consent.revoke() }
         unsourcedAllowed = on
-        session?.setAllowUnsourced(on)
+        // Jede Änderung des Schalters ist eine neue Freigabe-Generation; laufende Antworten enden im Kern („widerrufen“).
+        let generation = session?.setAllowUnsourced(on) ?? 0
         logAudit(AssistantAuditEntry(kind: on ? .unsourcedOn : .unsourcedOff, model: engine.label, cloud: engine.isCloud,
-                                     unsourcedMode: on, consentVersion: consent.version))
+                                     unsourcedMode: on, consentVersion: consent.version, generation: generation))
         // Bereits wartende unbelegte Sätze würden sonst noch gesprochen: die Antwort hält an.
         if !on, let run = current, run.hasUnspokenUnsourced {
             stopForRevocation("Antwort angehalten: Antworten ohne Quelle sind ausgeschaltet.")
@@ -551,14 +561,18 @@ final class AssistantController: ObservableObject {
 
     /// Entzug (Opt-in, Bereich, Cloud-Zustimmung) mitten in der Antwort: Sprache stoppt, das bisher Gesprochene steht als
     /// unterbrochen im Verlauf (und im Protokoll als widerrufen).
-    private func stopForRevocation(_ text: String) {
+    private func stopForRevocation(_ text: String, retry: String? = nil) {
         guard current != nil else { return }
         cancelAnswer(merge: false, revoked: true)
         interruptedPending = false
         phase = running ? .listening : .idle
-        notice = AssistantNotice(text: text, action: nil)
+        if let retry { retryText = retry }
+        notice = AssistantNotice(text: text, action: retry == nil ? nil : AssistantNotice.Action.retrySend)
         announce(text)
     }
+
+    /// Text bei geänderter Freigabe (Generation veraltet oder Lauf im Kern widerrufen); „Erneut senden“ stellt die Frage neu.
+    private static let revokedText = "Antwort angehalten: Die Freigabe hat sich geändert."
 
     /// Protokoll schreiben (ohne Inhalte); ein Fehler erscheint einmal als Hinweis, nie still.
     private func logAudit(_ entry: AssistantAuditEntry) {
@@ -765,11 +779,10 @@ final class AssistantController: ObservableObject {
             await session?.cancel(requestId: run.id)
             _ = await LiveCapture.bounded(1.5) { _ = await task?.value }
             task?.cancel()
-            // Nichts Gesprochenes: kein Beitrag (die Ansicht zeigt dann nichts Bleibendes für die abgebrochene Frage).
-            if !merge, !spoken.isEmpty {
-                let ok = await session?.commit(requestId: run.id, user: run.text, spoken: spoken, interrupted: true, revoked: revoked)
-                self?.auditResult(ok ?? true)
-            }
+            // Jede Anfrage bekommt ihren Protokolleintrag, auch bei „Ergänzen“ und ohne Gesprochenes. Einen Beitrag im Verlauf
+            // gibt es nur für tatsächlich Gesprochenes (nie bei „Ergänzen“; die Ansicht zeigt sonst nichts Bleibendes).
+            let ok = await session?.commit(requestId: run.id, user: run.text, spoken: merge ? "" : spoken, interrupted: true, revoked: revoked)
+            self?.auditResult(ok ?? true)
             await self?.refreshTurns(after: run, keepLive: merge)
         }
     }
@@ -854,7 +867,14 @@ final class AssistantController: ObservableObject {
         run.task?.cancel()
         let session = self.session
         let id = run.id
-        Task { await session?.cancel(requestId: id) }
+        let text = run.text
+        Task { [weak self] in
+            await session?.cancel(requestId: id)
+            // Auch Vorarbeit, die verworfen wird, war eine Anfrage an das Modell: ein Protokolleintrag, nie ein Beitrag.
+            // Hat der Kern die Anfrage nie gesehen (vor dem Start verworfen), gibt es keinen Eintrag.
+            let ok = await session?.commit(requestId: id, user: text, spoken: "", interrupted: true)
+            self?.auditResult(ok ?? true)
+        }
     }
 
     /// Die Äußerung gilt: ab jetzt wird die Antwort angezeigt und gesprochen.
@@ -896,10 +916,10 @@ final class AssistantController: ObservableObject {
 
     private func receive(_ event: AssistantEvent, for run: AssistantRun) {
         switch event {
-        case .sources(_, let list):
+        case .sources(_, _, let list):
             run.sources = list
-        case .sentence(_, let text, let speech, let status, let covering):
-            run.sentences.append(.init(text: text, speech: speech, status: status, sources: covering))
+        case .sentence(_, let generation, let text, let speech, let status, let covering, let quote):
+            run.sentences.append(.init(text: text, speech: speech, status: status, sources: covering, quote: quote, generation: generation))
         case .done(_, let answer):
             run.answer = answer
             run.finished = true
@@ -921,18 +941,40 @@ final class AssistantController: ObservableObject {
         guard run.committed, run === current else { return }
         // Die Zustimmung für das Cloud-Ziel ist unterwegs entfallen: nichts Weiteres von dieser Antwort wird gesprochen.
         if let target = engine.target, !AssistantConsent.isGranted(target, areas: areas) {
+            // Die Zustimmung ist ein Teil der Freigabe: neue Generation (laufende Antworten enden im Kern), im Protokoll vermerkt.
+            let generation = session?.releaseDidChange() ?? 0
             logAudit(AssistantAuditEntry(kind: .cloudRevoked, model: engine.label, cloud: true, unsourcedMode: unsourcedAllowed,
-                                         consentVersion: AssistantUnsourcedConsent().version, areas: AssistantArea.allCases.filter(areas.contains)))
+                                         consentVersion: AssistantUnsourcedConsent().version, areas: AssistantArea.allCases.filter(areas.contains),
+                                         generation: generation))
             stopForRevocation("Antwort angehalten: Die Zustimmung für das Cloud-Modell fehlt.")
             return
         }
         deliver(run)
     }
 
+    /// Prüft unmittelbar vor einem Ausgabe-Commit (Anzeige, Audiostart), ob die Generation des Satzes noch die aktuelle ist,
+    /// und meldet das Ergebnis mit der geprüften Generation an die Sitzung (Satzspur im Protokoll). `reportPass: false`: nur
+    /// eine Ablehnung melden (Übergabe an die Stimme; der Audiostart selbst wird vor dem Klang noch einmal geprüft und gemeldet).
+    private func admits(_ run: AssistantRun, _ index: Int, _ stage: AssistantCommitStage, reportPass: Bool = true) -> Bool {
+        guard let session else { return false }
+        let current = session.releaseGeneration
+        let ok = AssistantReleaseGate.admits(eventGeneration: run.sentences[index].generation, current: current)
+        if reportPass || !ok {
+            session.noteCommit(requestId: run.id, index: index, stage: stage, ok: ok, generation: current)
+        }
+        return ok
+    }
+
     /// Neue Quellen, Sätze und das Ende an Anzeige und Stimme weitergeben. Leere Sprechtexte (reine Adressen) werden
-    /// angezeigt, aber nicht gesprochen.
+    /// angezeigt, aber nicht gesprochen. Vor jedem Commit gilt die Generation: ein veraltetes Ereignis wird weder angezeigt
+    /// noch gesprochen, die Antwort hält an.
     private func deliver(_ run: AssistantRun) {
         guard !run.completed else { return }
+        // Widerruf im Kern: Der Lauf ist beendet; Wartendes und der laufende Satz verstummen sofort, nichts Weiteres erscheint.
+        if run.failure == .revoked {
+            stopForRevocation(Self.revokedText, retry: run.text)
+            return
+        }
         if !run.begun {
             run.begun = true
             speaker.conversationMode = running
@@ -940,10 +982,22 @@ final class AssistantController: ObservableObject {
             speaker.begin(language: .de)
         }
         while run.delivered < run.sentences.count {
-            let sentence = run.sentences[run.delivered]
-            if sentence.status != .announcement { showLive(sentence) }
+            let index = run.delivered
+            let sentence = run.sentences[index]
+            // Ansagen („Aus deinen Inhalten, …“, „Ohne Quelle:“) werden nur gesprochen, alles andere auch angezeigt.
+            if sentence.status != .announcement {
+                guard admits(run, index, .display) else {
+                    stopForRevocation(Self.revokedText, retry: run.text)
+                    return
+                }
+                showLive(sentence)
+            }
             if !sentence.speech.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                run.enqueued.append(run.delivered)
+                guard admits(run, index, .audio, reportPass: false) else {
+                    stopForRevocation(Self.revokedText, retry: run.text)
+                    return
+                }
+                run.enqueued.append(index)
                 speaker.enqueue(sentence.speech)
             }
             run.delivered += 1
@@ -954,14 +1008,16 @@ final class AssistantController: ObservableObject {
         speaker.endOfInput()
     }
 
-    /// Satz in die Live-Anzeige: Text, Abschnitt mit Kennzeichnung, deckende Quellen. Verworfene Sätze und Ansagen kommen nie hierher.
+    /// Satz in die Live-Anzeige: Text, Abschnitt mit Kennzeichnung, deckende Quellen. Ein Originalsatz bekommt einen eigenen
+    /// Abschnitt mit seiner Quellzeile (Anführungszeichen setzt die Ansicht). Verworfene Sätze und Ansagen kommen nie hierher.
     private func showLive(_ sentence: AssistantRun.Sentence) {
         liveAnswer += (liveAnswer.isEmpty ? "" : " ") + sentence.text
         let unsourced = sentence.status == .unsourced
-        if let last = liveParts.last, last.unsourced == unsourced {
+        if !sentence.quote, let last = liveParts.last, !last.quote, last.unsourced == unsourced {
             liveParts[liveParts.count - 1].text += " " + sentence.text
         } else {
-            liveParts.append(AssistantTurnPart(text: sentence.text, unsourced: unsourced))
+            liveParts.append(AssistantTurnPart(text: sentence.text, unsourced: unsourced, quote: sentence.quote,
+                                               source: sentence.quote ? sentence.sources.first?.sourceLabel : nil))
         }
         sourcesKnown = true
         var seen = Set(sources.map { AssistantController.chip($0) })
@@ -978,6 +1034,12 @@ final class AssistantController: ObservableObject {
 
     private func sentenceStarted(_ text: String) {
         guard let run = current, run.startMs.count < run.enqueued.count else { return }
+        // Audiostart-Commit: Die Stimme meldet den Beginn, bevor sie spielt. Ist die Generation inzwischen veraltet, verstummt
+        // sie, ohne dass dieser Satz erklingt.
+        guard admits(run, run.enqueued[run.startMs.count], .audio) else {
+            stopForRevocation(Self.revokedText, retry: run.text)
+            return
+        }
         let at = nowMs
         run.startMs.append(at)
         perform(policy.feed(.sentenceSpoken(text: text, startedAtMs: at, endedAtMs: nil)))
@@ -1015,12 +1077,10 @@ final class AssistantController: ObservableObject {
         let keep = failure != nil && spoken.isEmpty
         if let failure { showFailure(failure, run: run) }
         enqueue { [weak self] in
-            var written: Bool?
-            if failure == nil {
-                written = await session?.commit(requestId: run.id, user: run.text, spoken: whole, interrupted: false)
-            } else if !spoken.isEmpty {
-                written = await session?.commit(requestId: run.id, user: run.text, spoken: spoken, interrupted: true)
-            }
+            // Für JEDE Anfrage entsteht ein Protokolleintrag, auch bei Fehler ohne Gesprochenes; einen Beitrag im Verlauf
+            // schreibt der Kern nur für tatsächlich Gesprochenes und nur bei noch gültiger Generation.
+            let written = await session?.commit(requestId: run.id, user: run.text, spoken: failure == nil ? whole : spoken,
+                                                interrupted: failure != nil, revoked: failure == .revoked)
             self?.auditResult(written ?? true)
             await self?.refreshTurns(after: run, keepLive: keep)
         }
@@ -1035,6 +1095,7 @@ final class AssistantController: ObservableObject {
         case .modelFailed: text = "Die Antwort ist fehlgeschlagen."
         case .offline: text = engine.isCloud || engine.choice == .endpoint ? "Das Modell ist nicht erreichbar. Prüfe die Verbindung." : "Das Modell ist nicht erreichbar."
         case .consentRequired: text = "Für dieses Modell fehlt die Zustimmung."
+        case .revoked: text = Self.revokedText
         }
         retryText = run.text
         notice = AssistantNotice(text: text, action: .retrySend)
@@ -1104,8 +1165,11 @@ final class AssistantController: ObservableObject {
     func grantConsent() {
         guard let request = consentRequest else { return }
         AssistantConsent.grant(request.target, areas: request.areas)
+        // Die Zustimmung ändert die Freigabe: neue Generation, im Protokoll vermerkt.
+        let generation = session?.releaseDidChange() ?? 0
         logAudit(AssistantAuditEntry(kind: .cloudGranted, cloud: true, unsourcedMode: unsourcedAllowed,
-                                     consentVersion: AssistantUnsourcedConsent().version, areas: AssistantArea.allCases.filter(request.areas.contains)))
+                                     consentVersion: AssistantUnsourcedConsent().version, areas: AssistantArea.allCases.filter(request.areas.contains),
+                                     generation: generation))
         finishConsent(true)
     }
 
@@ -1130,12 +1194,5 @@ final class AssistantController: ObservableObject {
     }
 
     /// Zeile der Quellen-Chips: „Buch · Titel · S. 12“, „Transkript · Titel · 00:14:03“, „Ablage · Titel“, „Notiz · Datum“.
-    static func chip(_ passage: AssistantPassage) -> String {
-        switch passage.area {
-        case .books: return ["Buch", passage.title, passage.locator ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
-        case .transcripts: return ["Transkript", passage.title, passage.locator ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
-        case .files: return "Ablage · " + passage.title
-        case .notes: return "Notiz · " + (passage.locator ?? passage.title)
-        }
-    }
+    static func chip(_ passage: AssistantPassage) -> String { passage.sourceLabel }
 }
