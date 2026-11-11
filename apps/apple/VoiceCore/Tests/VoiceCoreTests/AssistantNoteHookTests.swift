@@ -152,7 +152,7 @@ final class AssistantNoteHookTests: XCTestCase {
         _ = try store.accept(capture)
         let events = Events()
         let entryFile = root.appendingPathComponent(capture.sessionId.uuidString).appendingPathComponent("entry.json")
-        func stored() -> Bool { ((try? String(contentsOf: entryFile, encoding: .utf8)) ?? "").contains("Eine Antwort.") }
+        @Sendable func stored() -> Bool { ((try? String(contentsOf: entryFile, encoding: .utf8)) ?? "").contains("Eine Antwort.") }
         NoteChangeHook.shared.install {
             events.add("begin, Antwort gespeichert: \(stored())")
             return { events.add("finish, Antwort gespeichert: \(stored())") }
