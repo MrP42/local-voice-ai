@@ -10,6 +10,7 @@ const {
   fuegeZusammen,
   istRueckmeldung,
   istStoppwort,
+  schliesstSatz,
   systemMitHinweis,
   unterbrechungsHinweis,
 } = await import("../src/components/voice-call/ergaenzen.ts");
@@ -299,4 +300,28 @@ test("„ja, aber …“ und „warte mal kurz, ich meine …“ bleiben weder R
     assert.equal(istRueckmeldung(w), false, w);
     assert.equal(istStoppwort(w), false, w);
   }
+});
+
+// Lva#509 Befund 4: Stückende ist nicht Satzende.
+test("schliesstSatz: Satzzeichen am Stückende schließen den Satz, ein Komma oder Wort nicht", () => {
+  for (const ja of [
+    "Es ist sonnig.",
+    "Wirklich?",
+    "Achtung!",
+    "Und dann…",
+    "Er sagte „ja.“",
+    "(siehe oben.)",
+    "Ende.  ",
+  ])
+    assert.equal(schliesstSatz(ja), true, ja);
+  for (const nein of [
+    "Für morgen,",
+    "Für morgen",
+    "also;",
+    "Wetter:",
+    "Dr. Müller und",
+    "",
+    "  ",
+  ])
+    assert.equal(schliesstSatz(nein), false, nein);
 });

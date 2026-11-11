@@ -51,9 +51,7 @@ pub fn change_voice_call_read_transcripts_setting(
     app: AppHandle,
     enabled: bool,
 ) -> Result<(), String> {
-    let mut settings = crate::settings::get_settings(&app);
-    settings.voice_call_read_transcripts = enabled;
-    crate::settings::write_settings(&app, settings);
+    crate::settings::update_settings_gesperrt(&app, |s| s.voice_call_read_transcripts = enabled);
     crate::app_context::service::on_settings_changed(&app);
     Ok(())
 }
@@ -66,9 +64,9 @@ pub fn change_voice_call_knowledge_setting(
     app: AppHandle,
     areas: Vec<String>,
 ) -> Result<(), String> {
-    let mut settings = crate::settings::get_settings(&app);
-    settings.voice_call_knowledge = areas::normalize_keys(&areas);
-    crate::settings::write_settings(&app, settings);
+    crate::settings::update_settings_gesperrt(&app, |s| {
+        s.voice_call_knowledge = areas::normalize_keys(&areas)
+    });
     crate::app_context::service::on_settings_changed(&app);
     schutz_nachpruefen(&app);
     Ok(())
@@ -82,9 +80,9 @@ pub fn change_voice_notebook_sections_setting(
     app: AppHandle,
     sections: Vec<String>,
 ) -> Result<(), String> {
-    let mut settings = crate::settings::get_settings(&app);
-    settings.voice_call_notebook_sections = notizbuch::eintraege_normalisieren(&sections);
-    crate::settings::write_settings(&app, settings);
+    crate::settings::update_settings_gesperrt(&app, |s| {
+        s.voice_call_notebook_sections = notizbuch::eintraege_normalisieren(&sections)
+    });
     crate::app_context::service::on_settings_changed(&app);
     // Widerruf sofort: was nicht mehr freigegeben ist, verschwindet aus Belegen und Ausgaben.
     schutz_nachpruefen(&app);

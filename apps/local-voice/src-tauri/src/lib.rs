@@ -2590,6 +2590,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             app_context::service::app_context_message,
             app_context::service::app_context_verify,
             app_context::service::change_voice_global_context_enabled_setting,
+            app_context::service::voice_call_inhaltszugriff_lesen,
+            app_context::service::voice_call_inhaltszugriff_setzen,
             library_export::library_export_text,
             library_export::library_ffmpeg_available,
             library_export::library_export_audio,

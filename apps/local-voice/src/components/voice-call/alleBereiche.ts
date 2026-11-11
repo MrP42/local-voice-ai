@@ -6,24 +6,41 @@ import {
 } from "./bereiche";
 
 /**
- * „Zugriff auf alle App-Inhalte einschalten“ (lva#485): ein Schritt statt vier Schalter. Reine Logik
- * ohne Oberfläche; die Einstellungen kommen über `Zugriff` herein, damit sie prüfbar bleibt.
+ * „Bücher, Wissensbereiche und Transkripte freigeben“ (lva#485, atomar seit lva#509): ein Schritt
+ * statt vier Schalter. Reine Logik ohne Oberfläche; der Kern kommt über `Zugriff` herein, damit sie
+ * prüfbar bleibt.
+ *
+ * Freigeben ist EIN Aufruf an den Kern, der unter einer Sperre die erwartete Berechtigungsversion
+ * vergleicht und Hauptschalter, Bereiche und Transkripte zusammen schreibt. Hat sich der Zugriff
+ * inzwischen geändert (etwa ein Widerruf), schreibt der Kern nichts und meldet den Konflikt; ein
+ * Zurückrollen gibt es nicht mehr, ein Widerruf kann also nie überschrieben werden.
  */
 
-/** Die drei Einstellungen, die den Zugriff bestimmen (Hauptschalter zuletzt). */
-export const ZUGRIFF_SCHLUESSEL = [
-  "voice_call_knowledge",
-  "voice_call_read_transcripts",
-  "voice_global_context_enabled",
-] as const;
-export type ZugriffSchluessel = (typeof ZUGRIFF_SCHLUESSEL)[number];
+/** Stand des Inhaltszugriffs samt Berechtigungsversion (`voice_call_inhaltszugriff_lesen`). */
+export interface Inhaltsstand {
+  version: number;
+  enabled: boolean;
+  areas: string[];
+  read_transcripts: boolean;
+}
 
-type ZugriffWert = string[] | boolean;
+/** Antwort von `voice_call_inhaltszugriff_setzen`. */
+export interface SetzenAntwort {
+  status: "ok" | "konflikt";
+  version: number;
+}
 
 export interface Zugriff {
-  lies(key: ZugriffSchluessel): ZugriffWert | null | undefined;
-  /** Speichert eine Einstellung. Wirft nicht: scheitert es, rollt der Speicher den Wert zurück. */
-  setze(key: ZugriffSchluessel, value: ZugriffWert): Promise<void>;
+  lies(): Promise<Inhaltsstand>;
+  /** Wirft, wenn der Kern einen Fehler meldet; ein Konflikt ist eine Antwort, kein Fehler. */
+  setze(
+    erwarteteVersion: number,
+    enabled: boolean,
+    areas: string[],
+    readTranscripts: boolean,
+  ): Promise<SetzenAntwort>;
+  /** Liest den Stand der Oberfläche neu ein (nach Erfolg, Konflikt und Fehler). */
+  uebernehmen(): Promise<void>;
 }
 
 /**
@@ -55,58 +72,47 @@ export function alleFrei(stand: {
   );
 }
 
-function gleich(a: unknown, b: ZugriffWert): boolean {
-  if (typeof b === "boolean") return a === b;
-  return (
-    Array.isArray(a) && a.length === b.length && a.every((x, i) => x === b[i])
-  );
-}
-
-/** `ein`: alles eingeschaltet · `zurueck`: nichts geändert (Fehlschlag, sauber zurückgerollt) · `teilweise`: Fehlschlag, und das Zurückrollen gelang nicht ganz. */
-export type Ergebnis = "ein" | "zurueck" | "teilweise";
+/**
+ * `ein`: alles freigegeben · `konflikt`: der Zugriff wurde inzwischen geändert, nichts geschrieben ·
+ * `fehler`: Lesen oder Setzen schlug fehl, nichts geschrieben.
+ */
+export type Ergebnis = "ein" | "konflikt" | "fehler";
 
 /**
- * Schaltet den Zugriff ein: erst die Bereiche und die Transkripte, zuletzt der Hauptschalter (bricht
- * etwas ab, wirkt der Zugriff nie halb). Der Speicher wirft bei einem Fehler nicht, er rollt den
- * Schlüssel zurück; deshalb zählt nach jedem Schritt der gelesene Wert (ein Werfen gilt ebenso als
- * Fehlschlag). Scheitert ein Schritt, gehen die schon geschriebenen Schlüssel auf ihren alten Wert
- * zurück, alle, auch wenn einer davon scheitert; das Ergebnis meldet, ob das ganz gelang.
+ * Gibt den Zugriff frei: Version lesen, dann EIN Setzen mit dieser Version. Danach wird der Stand der
+ * Oberfläche in jedem Fall neu gelesen (auch nach Konflikt oder Fehler), damit sie zeigt, was gilt.
  */
 export async function schalteAllesEin(io: Zugriff): Promise<Ergebnis> {
-  const alt = io.lies("voice_call_knowledge");
-  const ziel: Record<ZugriffSchluessel, ZugriffWert> = {
-    voice_call_knowledge: alleBereiche(Array.isArray(alt) ? alt : []),
-    voice_call_read_transcripts: true,
-    voice_global_context_enabled: true,
-  };
-  const vorher = new Map(ZUGRIFF_SCHLUESSEL.map((k) => [k, io.lies(k)]));
-  const frueher = (key: ZugriffSchluessel): ZugriffWert => {
-    const v = vorher.get(key);
-    if (key === "voice_call_knowledge") return Array.isArray(v) ? v : [];
-    return v === true;
-  };
-  const geschrieben: ZugriffSchluessel[] = [];
-  for (const key of ZUGRIFF_SCHLUESSEL) {
-    if (gleich(vorher.get(key), ziel[key])) continue;
+  try {
+    const stand = await io.lies();
+    const antwort = await io.setze(
+      stand.version,
+      true,
+      alleBereiche(stand.areas),
+      true,
+    );
+    return antwort.status === "ok" ? "ein" : "konflikt";
+  } catch {
+    return "fehler";
+  } finally {
     try {
-      await io.setze(key, ziel[key]);
+      await io.uebernehmen();
     } catch {
-      /* zählt als Fehlschlag: der gelesene Wert entscheidet */
+      /* die Anzeige bleibt, wie sie war; der Kern hat den Stand */
     }
-    if (gleich(io.lies(key), ziel[key])) {
-      geschrieben.push(key);
-      continue;
-    }
-    let sauber = true;
-    for (const done of [...geschrieben].reverse()) {
-      try {
-        await io.setze(done, frueher(done));
-      } catch {
-        /* weiter mit dem nächsten Schlüssel */
-      }
-      if (!gleich(io.lies(done), frueher(done))) sauber = false;
-    }
-    return sauber ? "zurueck" : "teilweise";
   }
-  return "ein";
+}
+
+/**
+ * Wohin der Fokus nach der Freigabe geht. Die Taste verschwindet bei Erfolg (an ihrer Stelle steht
+ * die Statusanzeige): wer sie per Tastatur ausgelöst hat, bekommt den Fokus auf die Statusanzeige
+ * (`tabIndex=-1`), damit er nicht auf `body` fällt und die Meldung vorgelesen wird. Bei Konflikt oder
+ * Fehler bleibt die Taste; sie bekommt den Fokus zurück. Lag der Fokus nicht auf der Taste, bleibt er.
+ */
+export function fokusNachFreigabe(
+  ergebnis: Ergebnis,
+  tasteHatteFokus: boolean,
+): "status" | "taste" | "keiner" {
+  if (!tasteHatteFokus) return "keiner";
+  return ergebnis === "ein" ? "status" : "taste";
 }

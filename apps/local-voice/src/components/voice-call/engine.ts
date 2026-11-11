@@ -70,6 +70,7 @@ import {
   darfZusammenfuehren,
   entscheide,
   fuegeZusammen,
+  schliesstSatz,
   systemMitHinweis,
   unterbrechungsHinweis,
   type TurnStand,
@@ -206,6 +207,8 @@ interface PieceRec {
   kind: PieceKind;
   ended: boolean;
   queued: boolean;
+  /** Der Ton dieses Häppchens hat tatsächlich begonnen (nicht bloß eingeplant, lva#509). */
+  started: boolean;
 }
 
 interface Turn {
@@ -246,15 +249,11 @@ interface Turn {
   fromSpeech?: boolean;
   /** Vorlage, S0-Antwort, Bedienung oder Wechsel: wirkt sofort, wird nie mit einer Ergänzung neu gestellt. */
   noMerge?: boolean;
-  /** Der erste Inhaltssatz ist erzeugt und eingereiht (sein Ende wird gemeldet). */
-  contentSeen?: boolean;
   /** Der erste Inhaltssatz ist zu Ende gesprochen: ab jetzt ist ein Unterbrechen ein neuer Beitrag. */
   firstContentEnded?: boolean;
   /** Die fertige Antwortzeile; sie wird erst gemeldet (und damit gespeichert), wenn sie nicht mehr ersetzt werden kann. */
   finalText?: string;
   finalSent?: boolean;
-  /** Der erste Ton dieses Schritts hat begonnen (vorher war nichts zu hören). */
-  soundStarted?: boolean;
   /** Zeit, die die Wiedergabe dieses Schritts angehalten war (ms): gehört nicht in die Messung. */
   heldMs?: number;
   /** Beginn des laufenden Anhaltens (Wanduhr). */
@@ -411,6 +410,12 @@ export class VoiceCallEngine {
   private holdFrom = 0;
   /** Zählt Erkennungen im Anhalten: nur die jüngste darf entscheiden. */
   private holdRun = 0;
+  /**
+   * Zählt jede neue Lage: eine neue Äußerung (`onSpeechStart`), einen neuen Schritt (`newTurn`) und
+   * jede Erkennung bei angehaltener Antwort (`decideHeld`). Ein spätes Erkennungsergebnis nach der
+   * Frist gilt nur, wenn der Zähler seit dem Start seiner Erkennung gleich geblieben ist (lva#509).
+   */
+  private lage = 0;
   /** Eine Erkennung im Anhalten läuft. */
   private holdBusy = false;
   /**
@@ -807,6 +812,7 @@ export class VoiceCallEngine {
   private onSpeechStart(at: number, aiSpeaking: boolean): void {
     // Spricht der Nutzer weiter, bevor die KI zu hören ist: Vorarbeit verwerfen,
     // die Äußerung beginnt wieder am alten Anfang (nichts geht verloren).
+    this.lage++;
     let startFrame = Math.max(
       this.firstFrame,
       Math.round(at / 20) - PREROLL_FRAMES,
@@ -974,12 +980,16 @@ export class VoiceCallEngine {
     turn.heldSince = undefined;
   }
 
-  /** Was der Nutzer von diesem Schritt gehört hat: Fertiggespieltes plus das angespielte Häppchen. */
+  /**
+   * Was der Nutzer von diesem Schritt gehört hat: Fertiggespieltes plus das angespielte Häppchen.
+   * Maßgeblich ist der tatsächliche Fortschritt der Wiedergabe (Startzeit der Quelle gegen die Uhr
+   * des Audio-Kontexts), nicht das Einplanen: ein eingeplantes, noch stummes Häppchen zählt nicht.
+   */
   private gehoert(turn: Turn): PieceRec[] {
-    if (!turn.soundStarted) return [];
+    this.player?.syncStarts();
     const out: PieceRec[] = [];
     for (const p of turn.pieces) {
-      if (!p.queued) break;
+      if (!p.started) break;
       out.push(p);
       if (!p.ended) break;
     }
@@ -996,6 +1006,7 @@ export class VoiceCallEngine {
     const turn = this.held;
     if (!turn) return;
     const run = ++this.holdRun;
+    const meineLage = ++this.lage;
     this.holdBusy = true;
     const t0 = performance.now();
     type Erg = { text: string } | { fehler: unknown };
@@ -1022,6 +1033,9 @@ export class VoiceCallEngine {
         spaet = true;
       }
       erg = await ergebnis;
+      // Das späte Ergebnis gehört zur Lage von damals: hat sich seither etwas getan (neue Äußerung,
+      // neuer Schritt, neue Erkennung), wird es verworfen und bricht nichts ab.
+      if (this.lage !== meineLage) return;
     } else erg = erstes;
 
     if (!spaet) {
@@ -1129,6 +1143,17 @@ export class VoiceCallEngine {
     this.sendeAntwort(turn);
   }
 
+  /**
+   * Ohne Satzzeichen schließt das letzte Stück der Antwort den Satz: ist die Antwort fertig erzeugt
+   * und jedes Inhaltsstück gesprochen, ist der erste Satz zu Ende.
+   */
+  private pruefeSatzende(turn: Turn): void {
+    if (turn.firstContentEnded || !turn.done) return;
+    const inhalt = turn.pieces.filter((p) => p.kind === "inhalt");
+    if (inhalt.length > 0 && inhalt.every((p) => p.ended))
+      this.ersterSatzFertig(turn);
+  }
+
   /** Hat die letzte Antwort im Verlauf der Nutzer unterbrochen? */
   private unterbrochen(): boolean {
     return !!this.history[this.history.length - 1]?.interrupted;
@@ -1139,6 +1164,7 @@ export class VoiceCallEngine {
   private newTurn(startFrame: number, lastSpeechWall: number): Turn {
     let commit!: () => void;
     const committedP = new Promise<void>((r) => (commit = r));
+    this.lage++;
     return {
       id: newId(),
       cancelled: false,
@@ -1718,7 +1744,6 @@ export class VoiceCallEngine {
           turn.audible = true;
           this.player?.rearm();
           this.player!.onFirstSound = (at) => {
-            turn.soundStarted = true;
             this.setState("speaking");
             if (ansage) {
               // Die Metriken folgen mit dem ersten Satz danach.
@@ -1739,15 +1764,23 @@ export class VoiceCallEngine {
           kind,
           ended: false,
           queued: false,
+          started: false,
         };
         turn.pieces.push(rec);
-        // Das Ende des ersten Inhaltssatzes entscheidet, ob eine Ergänzung noch zusammenführt.
-        const first = kind === "inhalt" && !turn.contentSeen;
-        if (first) turn.contentSeen = true;
-        await this.player!.enqueue(wav, () => {
-          rec.ended = true;
-          if (first) this.ersterSatzFertig(turn);
-        });
+        // Das Ende des Stücks, das den ersten Inhaltssatz schließt, entscheidet, ob eine Ergänzung
+        // noch zusammenführt. Ein Stück ist nicht unbedingt ein Satz („Für morgen,“).
+        await this.player!.enqueue(
+          wav,
+          () => {
+            rec.ended = true;
+            if (kind === "inhalt" && schliesstSatz(piece))
+              this.ersterSatzFertig(turn);
+            else this.pruefeSatzende(turn);
+          },
+          () => {
+            rec.started = true;
+          },
+        );
         rec.queued = true;
       });
     };
@@ -1796,6 +1829,7 @@ export class VoiceCallEngine {
       this.sentenceHandlers.delete(turn.id);
       if (dead()) return;
       turn.done = true;
+      this.pruefeSatzende(turn);
       if (turn.heard === 0) {
         this.dropTurn(turn);
         return;
@@ -1985,6 +2019,7 @@ export class VoiceCallEngine {
       if (dead()) return;
     }
     turn.done = true;
+    this.pruefeSatzende(turn);
     if (turn.heard === 0) {
       this.dropTurn(turn);
       return;
