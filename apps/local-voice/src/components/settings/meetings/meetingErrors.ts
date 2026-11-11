@@ -20,6 +20,8 @@ import { SLIDE_ERROR_KEYS } from "@/lib/meetingSlides";
  */
 const ERROR_KEY_MAP: Record<string, string> = {
   consent_required: "meetings.errors.consentRequired",
+  // G2 (#497)
+  notice_required: "meetings.errors.noticeRequired",
   dictation_active: "meetings.errors.dictationActive",
   delta_store_failed: "meetings.errors.deltaStoreFailed",
   chunk_transcription_failed: "meetings.errors.chunkTranscriptionFailed",

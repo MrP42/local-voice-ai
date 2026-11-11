@@ -1,11 +1,13 @@
 import React, { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import type { ComplianceProfile } from "@/bindings";
+import { noticeSettingsOf } from "@/lib/meetingNotice";
 import { useSettings } from "../../../hooks/useSettings";
 import { useComplianceStore } from "@/stores/complianceStore";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { Select } from "../../ui/Select";
+import { ToggleSwitch } from "../../ui/ToggleSwitch";
 
 const PROFILES: ComplianceProfile[] = ["eu", "local_only", "none"];
 
@@ -17,10 +19,14 @@ const PROFILES: ComplianceProfile[] = ["eu", "local_only", "none"];
  */
 export const ComplianceSettings: React.FC = () => {
   const { t } = useTranslation();
-  const { getSetting, refreshSettings } = useSettings();
+  const { getSetting, refreshSettings, updateSetting, isUpdating } =
+    useSettings();
   const { setProfile, refresh } = useComplianceStore();
   const profile = (getSetting("compliance_profile") ??
     "eu") as ComplianceProfile;
+
+  // G2 (#497): Pflicht zum Hinweis an Teilnehmende vor Aufnahmebeginn.
+  const notice = noticeSettingsOf(getSetting("meeting_notice"));
 
   useEffect(() => {
     void refresh();
@@ -52,6 +58,23 @@ export const ComplianceSettings: React.FC = () => {
           />
         </div>
       </SettingContainer>
+      <ToggleSwitch
+        checked={notice.required}
+        onChange={(v) =>
+          void updateSetting("meeting_notice", { ...notice, required: v })
+        }
+        isUpdating={isUpdating("meeting_notice")}
+        disabled={!notice.enabled}
+        label={t("settings.compliance.noticeRequired")}
+        description={
+          notice.enabled
+            ? t("settings.compliance.noticeRequiredDescription")
+            : t("settings.compliance.noticeRequiredNeedsFeature")
+        }
+        descriptionMode="inline"
+        grouped={true}
+        testId="notice-required"
+      />
       <p className="px-4 pb-3 text-xs text-text/50">
         {t("settings.compliance.disclaimer")}
       </p>

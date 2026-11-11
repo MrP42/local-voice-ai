@@ -2012,6 +2012,9 @@
             "description": "All models can be used; cloud models are only marked."
           }
         },
+        "noticeRequired": "Notice to participants is required before recording",
+        "noticeRequiredDescription": "Recording starts only after the notice was copied or inserted, or you confirmed “informed verbally”.",
+        "noticeRequiredNeedsFeature": "Switch on “Notice to participants” under Input › Meetings first.",
         "disclaimer": "The classification is based on the providers' documented information (as of 2026-10-06) and is not legal advice."
     },
     "meetings": {
@@ -2081,7 +2084,30 @@
       "voiceSuggestionsModelDescription": "CAM++ (3D-Speaker, Apache-2.0) runs locally. It is only downloaded on request.",
       "selfName": "My name",
       "selfNameDescription": "Your own name in the transcript: your microphone (\"Me\") and, if the microphone is split into several people, the speaker with the largest share always carry this name, even if nobody addresses you. In People you are marked as \"me\". Leave empty to keep \"Me\".",
-      "selfNamePlaceholder": "e.g. Patrick Wolff"
+      "selfNamePlaceholder": "e.g. Patrick Wolff",
+      "notice": {
+        "enabled": "Notice to participants",
+        "enabledDescription": "Offers a ready-made text for the meeting chat (Teams, Webex or neutral) and records when it was provided. Local Voice never sends it by itself.",
+        "exportLine": "Note it in the protocol export",
+        "exportLineDescription": "One line under the header of the export says when and how the participants were informed. The text itself is not exported.",
+        "defaultApp": "Meeting app for the notice",
+        "defaultAppDescription": "Which wording is preselected. You can change it for each meeting.",
+        "defaultLang": "Language of the notice",
+        "defaultLangDescription": "Which language is preselected.",
+        "purpose": "Purpose",
+        "purposeDescription": "Fills the placeholder {purpose} in the text. Empty: “to create notes and minutes”.",
+        "purposePlaceholder": "to create notes and minutes",
+        "retention": "Retention",
+        "retentionDescription": "Fills the placeholder {retention}, for example how long the recording is kept. Empty: the sentence is left out.",
+        "retentionPlaceholder": "e.g. The recording is deleted after 30 days.",
+        "template": "Text of the notice",
+        "templateDescription": "Choose the app and language, then adjust the wording. Without a change the built-in text applies.",
+        "templateCustom": "Your own text",
+        "templateBuiltin": "Built-in text",
+        "placeholders": "Placeholders: {purpose}, {retention} and {processing} (whether the notes are processed locally or by a provider).",
+        "save": "Save text",
+        "restore": "Restore built-in text"
+      }
     },
     "modelSettings": {
       "title": "{{model}} Settings"
@@ -3756,6 +3782,7 @@
     },
     "errors": {
       "consentRequired": "Recording will not start without confirmed consent.",
+      "noticeRequired": "Provide the notice to participants first, or confirm that everyone was informed verbally.",
       "dictationActive": "A dictation is currently running — please stop it first.",
       "deltaStoreFailed": "The transcript could not be saved. The recording keeps running.",
       "chunkTranscriptionFailed": "A chunk could not be transcribed. The recording keeps running.",
@@ -4452,6 +4479,50 @@
       "linkName": "Paste link",
       "linkHint": "Add a YouTube link as a source, or paste the link with Ctrl+V"
     },
+    "notice": {
+      "title": "Notice to participants",
+      "description": "Tell the other participants that this meeting is being transcribed. Local Voice never sends the text itself.",
+      "close": "Close",
+      "app": "Meeting app",
+      "lang": "Language of the notice",
+      "apps": {
+        "teams": "Microsoft Teams",
+        "webex": "Webex",
+        "neutral": "Neutral"
+      },
+      "langs": {
+        "de": "German",
+        "en": "English"
+      },
+      "copy": "Copy notice",
+      "paste": "Insert into chat",
+      "oral": "Informed verbally",
+      "cancel": "Cancel",
+      "waiting": "Click into the chat field of the meeting now. The notice is inserted shortly. Nothing is sent.",
+      "required": "Required: recording starts only after a notice was provided or you confirmed that everyone was informed verbally.",
+      "status": {
+        "none": "No notice provided yet.",
+        "clipboard": "Notice copied to the clipboard at {{time}} ({{app}}).",
+        "paste": "Notice inserted into the chat at {{time}} ({{app}}). Sending it is up to you.",
+        "oral": "Confirmed at {{time}}: participants were informed verbally."
+      },
+      "fallback": {
+        "no_target": "Nothing was inserted: no other window was in front. The text is in the clipboard.",
+        "own_window": "Nothing was inserted: you did not switch to the meeting window. The text is in the clipboard.",
+        "focus_changed": "Nothing was inserted: the focus changed. The text is in the clipboard.",
+        "target_elevated": "Nothing was inserted: the target window runs with higher rights. The text is in the clipboard.",
+        "injection_failed": "Inserting failed. The text is in the clipboard.",
+        "accessibility_denied": "Inserting is blocked: the Accessibility permission is missing. The text is in the clipboard."
+      },
+      "errors": {
+        "clipboard_failed": "The clipboard could not be written. Please select the text by hand.",
+        "notice_cancelled": "Inserting was cancelled.",
+        "notice_busy": "An insertion is already running.",
+        "notice_disabled": "The notice to participants is switched off.",
+        "meetings_unavailable": "Meetings are not available.",
+        "store_failed": "The proof could not be saved."
+      }
+    },
     "recorder": {
       "running": "Recording",
       "paused": "Paused",
@@ -4463,6 +4534,9 @@
       "stopHint": "End the recording – AI notes and minutes follow",
       "noticeName": "Copy notice",
       "noticeCopied": "Notice copied",
+      "noticeOpen": "Notice to participants",
+      "noticeOpenHint": "Copy or insert the notice into the meeting chat",
+      "noticeOpenDone": "A notice was provided – open to see when",
       "startHint": "Opens the start dialog with title, project, template and consent"
     },
     "startDialog": {

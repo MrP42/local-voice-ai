@@ -722,6 +722,103 @@ pub fn park_in_clipboard(
     }
 }
 
+/// G2 (#497): legt `text` in die Zwischenablage und prueft es per Rueckles.
+pub fn copy_text_verified(app_handle: &AppHandle, text: &str) -> bool {
+    write_clipboard_verified(app_handle, text)
+}
+
+/// G2 (#497): fuegt einen Hinweistext auf ausdruecklichen Knopfdruck in das
+/// fokussierte Chatfeld des Fensters `target` ein.
+///
+/// Immer Ctrl+V (Cmd+V auf dem Mac), unabhaengig von der Einfuegemethode des
+/// Diktats, und NIE Enter oder "Auto-Senden": gesendet wird nur, wenn der Nutzer
+/// es selbst tut. Sonst dieselben Sicherungen wie beim Diktat (`paste_guard`:
+/// Fokus, Rechte, Berechtigung): scheitert etwas, bleibt der Text nachweislich
+/// in der Zwischenablage und der Grund wird gemeldet. Nach einem
+/// gelungenen Einfuegen kommt der alte Inhalt der Zwischenablage zurueck.
+pub fn paste_notice_guarded(
+    text: &str,
+    app_handle: AppHandle,
+    target: Option<PasteTarget>,
+) -> GuardedPasteOutcome {
+    let park = |reason: PasteFallback| -> GuardedPasteOutcome {
+        if write_clipboard_verified(&app_handle, text) {
+            GuardedPasteOutcome::Fallback(reason)
+        } else {
+            GuardedPasteOutcome::Fallback(PasteFallback::ClipboardUnverified)
+        }
+    };
+
+    #[cfg(target_os = "macos")]
+    if !macos_accessibility_trusted() {
+        warn!("notice paste: macOS Accessibility permission missing");
+        return park(PasteFallback::AccessibilityDenied);
+    }
+
+    // Ob das Ziel unveraendert im Vordergrund steht, sieht nur Windows.
+    if cfg!(target_os = "windows") {
+        let foreground = paste_guard::current_foreground();
+        let self_is_elevated = paste_guard::self_elevated();
+        let target_is_elevated = target.and_then(|t| paste_guard::process_elevated(t.pid));
+        if let Err(reason) =
+            paste_guard::preflight(target, foreground, |_| target_is_elevated, self_is_elevated)
+        {
+            return park(reason);
+        }
+    }
+
+    let settings = get_settings(&app_handle);
+    wait_before_keystrokes(PasteMethod::CtrlV);
+
+    let clipboard = app_handle.clipboard();
+    let saved_text = clipboard.read_text().ok().filter(|t| !t.is_empty());
+    let saved_image = if saved_text.is_none() {
+        clipboard.read_image().ok().map(|image| image.to_owned())
+    } else {
+        None
+    };
+
+    if !write_clipboard_verified(&app_handle, text) {
+        return GuardedPasteOutcome::Fallback(PasteFallback::ClipboardUnverified);
+    }
+
+    let Some(enigo_state) = app_handle.try_state::<EnigoState>() else {
+        warn!("notice paste: Enigo state not initialized");
+        return GuardedPasteOutcome::Fallback(PasteFallback::InjectionFailed);
+    };
+    let mut enigo = match enigo_state.0.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+
+    std::thread::sleep(Duration::from_millis(settings.paste_delay_ms));
+
+    // Genau ein Versuch, und nur der Einfuege-Tastendruck.
+    if let Err(error) = input::send_paste_ctrl_v(&mut enigo) {
+        warn!("notice paste: injection failed: {error}");
+        return GuardedPasteOutcome::Fallback(PasteFallback::InjectionFailed);
+    }
+    drop(enigo);
+
+    // Dem Ziel Zeit lassen, bevor die Zwischenablage sich wieder aendert.
+    std::thread::sleep(Duration::from_millis(
+        settings.paste_delay_after_ms.max(150),
+    ));
+
+    if cfg!(target_os = "windows") && paste_guard::current_foreground() != target.map(|t| t.hwnd) {
+        return GuardedPasteOutcome::Fallback(PasteFallback::FocusChangedDuringPaste);
+    }
+
+    if let Some(previous) = saved_text {
+        let _ = clipboard.write_text(&previous);
+    } else if let Some(image) = saved_image {
+        let _ = clipboard.write_image(&image);
+    } else {
+        let _ = clipboard.clear();
+    }
+    GuardedPasteOutcome::Pasted
+}
+
 /// Paste a finished dictation with fail-closed guards (Windows).
 ///
 /// The contract behind it: a successfully finished dictation either lands in

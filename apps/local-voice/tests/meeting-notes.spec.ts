@@ -77,6 +77,12 @@ test.beforeEach(async ({ page }) => {
     w.__staleOnce = null;
     w.__enhanceError = null;
     w.__freshBody = null;
+    w.__pending = [];
+    w.__records = {};
+    w.__noticeSeq = 0;
+    w.__startError = null;
+    const NOTICE_TEXT_MOCK =
+      "Hinweis: Diese Besprechung wird mit Local Voice lokal auf meinem Rechner mitgeschrieben, um Notizen und ein Protokoll zu erstellen. Es werden keine Daten an Dritte übertragen.";
     w.__templates = [
       {
         id: "builtin:allgemein",
@@ -175,7 +181,67 @@ test.beforeEach(async ({ page }) => {
             case "get_selected_model":
               return "";
             case "meetings_start":
+              if (w.__startError) throw w.__startError;
               return { ...w.__meetings[0], id: "m-neu", status: "recording" };
+            // G2: Hinweis an Teilnehmende
+            case "meeting_notice_preview":
+              return w.__noticeText ?? NOTICE_TEXT_MOCK;
+            case "meeting_notice_template":
+              return "Hinweis: Diese Besprechung wird mit Local Voice lokal auf meinem Rechner mitgeschrieben, {purpose}. {retention}";
+            case "meeting_notice_status":
+              return {
+                records:
+                  args.meetingId === null
+                    ? w.__pending
+                    : (w.__records[args.meetingId as string] ?? []),
+                paste_available: !!w.__pasteAvailable,
+              };
+            case "meeting_notice_reset_pending":
+              w.__pending = [];
+              return null;
+            case "meeting_notice_copy":
+            case "meeting_notice_oral":
+            case "meeting_notice_paste": {
+              const way =
+                cmd === "meeting_notice_copy"
+                  ? "clipboard"
+                  : cmd === "meeting_notice_oral"
+                    ? "oral"
+                    : "paste";
+              if (cmd === "meeting_notice_paste") {
+                w.__pasteCancel = false;
+                const until = Date.now() + (w.__pasteDelay ?? 0);
+                while (Date.now() < until) {
+                  if (w.__pasteCancel) throw "notice_cancelled";
+                  await new Promise((r) => setTimeout(r, 25));
+                }
+              }
+              const fallback =
+                cmd === "meeting_notice_paste"
+                  ? (w.__pasteFallback ?? null)
+                  : null;
+              const record = {
+                at: 1790000000 + w.__noticeSeq++ * 60,
+                way: fallback ? "clipboard" : way,
+                app: args.noticeApp,
+                lang: args.lang,
+                text:
+                  way === "oral" ? "" : (w.__noticeText ?? NOTICE_TEXT_MOCK),
+                in_export: true,
+              };
+              const list =
+                args.meetingId === null
+                  ? w.__pending
+                  : (w.__records[args.meetingId as string] ??= []);
+              list.push(record);
+              return { record, fallback };
+            }
+            case "meeting_notice_cancel_paste":
+              w.__pasteCancel = true;
+              return null;
+            case "change_meeting_notice_setting":
+              w.__settings.meeting_notice = args.value;
+              return null;
             case "meetings_stop":
               return "m-neu";
             case "meetings_is_recording":
@@ -1049,11 +1115,6 @@ test("Vorlagen: ungueltige Eingabe wird vor dem Speichern abgefangen", async ({
 // M1-P1f: Hinweistext, Systemton-Vorgabe, Vorlage vor dem Start, Auto-Lauf
 // ---------------------------------------------------------------------------
 
-const LOCAL_NOTICE =
-  "Hinweis: Ich transkribiere diese Besprechung lokal auf meinem Rechner mit Local Voice AI, um Notizen zu erstellen. Es werden keine Daten an Dritte übertragen.";
-const REMOTE_NOTICE =
-  "Hinweis: Ich transkribiere diese Besprechung lokal auf meinem Rechner mit Local Voice AI, um Notizen zu erstellen. Für die Notizen wird der Text an OpenAI übermittelt.";
-
 /** Aktiver Anbieter im Einstellungsstand der Attrappe (`local` oder ein entfernter). */
 const useProvider = async (page: Page, kind: "local" | "remote") => {
   await page.addInitScript((k) => {
@@ -1093,75 +1154,413 @@ const grantClipboard = async (page: Page, baseURL?: string) => {
 const readClipboard = (page: Page) =>
   page.evaluate(() => navigator.clipboard.readText());
 
-test.describe("Hinweis Meeting-Chat", () => {
-  test("Hinweis kopieren: lokaler Anbieter, waehrend der Aufnahme", async ({
+/** Einstellungsstand der Attrappe für den Hinweis an Teilnehmende. */
+const withNotice = async (
+  page: Page,
+  notice: Record<string, unknown>,
+  mock: Record<string, unknown> = {},
+) => {
+  await page.addInitScript(
+    ([n, m]) => {
+      const w = window as any;
+      w.__settings.meeting_notice = {
+        enabled: true,
+        required: false,
+        export_line: true,
+        default_app: "neutral",
+        default_lang: "de",
+        purpose: "",
+        retention: "",
+        templates: [],
+        ...(n as object),
+      };
+      Object.assign(w, m);
+    },
+    [notice, mock] as const,
+  );
+};
+
+const NOTICE_TEXT =
+  "Hinweis: Diese Besprechung wird mit Local Voice lokal auf meinem Rechner mitgeschrieben, um Notizen und ein Protokoll zu erstellen. Es werden keine Daten an Dritte übertragen.";
+
+/** Öffnet den Hinweis während der Aufnahme (Dialog über den Symbolknopf). */
+const openRecordingNotice = async (page: Page) => {
+  await startRecording(page);
+  await openRecordings(page);
+  await page.getByTestId("recording-notice-open").click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByTestId("recording-notice")).toBeVisible();
+  return dialog;
+};
+
+test.describe("Hinweis an Teilnehmende", () => {
+  test("Aufnahme: Text, Kopieren und Nachweis mit Zeit, Weg und App", async ({
+    page,
+  }) => {
+    const dialog = await openRecordingNotice(page);
+    await expect(dialog.getByTestId("recording-notice-text")).toHaveText(
+      NOTICE_TEXT,
+    );
+    await expect(dialog.getByTestId("recording-notice-status")).toHaveText(
+      "Noch kein Hinweis bereitgestellt.",
+    );
+    await dialog.getByTestId("recording-notice-copy").click();
+    await expect(dialog.getByTestId("recording-notice-status")).toHaveAttribute(
+      "data-state",
+      "clipboard",
+    );
+    await expect(dialog.getByTestId("recording-notice-status")).toContainText(
+      /Hinweis um \d{2}:\d{2} Uhr in die Zwischenablage kopiert \(Neutral\)\./,
+    );
+    const sent = await calls(page, "meeting_notice_copy");
+    expect(sent).toHaveLength(1);
+    expect(sent[0].args).toEqual({
+      meetingId: "m1",
+      noticeApp: "neutral",
+      lang: "de",
+    });
+    // Nie ein selbsttätiges Einfügen.
+    expect(await calls(page, "meeting_notice_paste")).toHaveLength(0);
+  });
+
+  test("App und Sprache wählen: Vorschau und Aufruf folgen der Wahl", async ({
+    page,
+  }) => {
+    const dialog = await openRecordingNotice(page);
+    await dialog.getByRole("combobox", { name: "Besprechungs-App" }).click();
+    await page.getByRole("option", { name: "Webex" }).click();
+    await dialog
+      .getByRole("combobox", { name: "Sprache des Hinweises" })
+      .click();
+    await page.getByRole("option", { name: "Englisch" }).click();
+    await expect
+      .poll(async () => {
+        const all = await calls(page, "meeting_notice_preview");
+        return all[all.length - 1]?.args;
+      })
+      .toEqual({ noticeApp: "webex", lang: "en" });
+    await dialog.getByTestId("recording-notice-copy").click();
+    await expect
+      .poll(async () => (await calls(page, "meeting_notice_copy")).length)
+      .toBe(1);
+    expect((await calls(page, "meeting_notice_copy"))[0].args).toEqual({
+      meetingId: "m1",
+      noticeApp: "webex",
+      lang: "en",
+    });
+  });
+
+  test("Vorgaben der Einstellung: App und Sprache sind vorgewählt", async ({
+    page,
+  }) => {
+    await withNotice(page, { default_app: "teams", default_lang: "en" });
+    const dialog = await openRecordingNotice(page);
+    await expect(
+      dialog.getByRole("combobox", { name: "Besprechungs-App" }),
+    ).toHaveText("Microsoft Teams");
+    await expect(
+      dialog.getByRole("combobox", { name: "Sprache des Hinweises" }),
+    ).toHaveText("Englisch");
+  });
+
+  test("Einfügen: Frist mit Abbrechen sichtbar, danach der Nachweis „eingefügt“", async ({
+    page,
+  }) => {
+    await withNotice(page, {}, { __pasteAvailable: true, __pasteDelay: 600 });
+    const dialog = await openRecordingNotice(page);
+    await dialog.getByTestId("recording-notice-paste").click();
+    await expect(dialog.getByTestId("recording-notice-wait")).toBeVisible();
+    await expect(dialog.getByTestId("recording-notice-wait")).toContainText(
+      "Es wird nichts gesendet.",
+    );
+    await expect(dialog.getByTestId("recording-notice-cancel")).toBeVisible();
+    await expect(dialog.getByTestId("recording-notice-status")).toHaveAttribute(
+      "data-state",
+      "paste",
+    );
+    await expect(dialog.getByTestId("recording-notice-wait")).toHaveCount(0);
+    await expect(dialog.getByTestId("recording-notice-status")).toContainText(
+      "in den Chat eingefügt",
+    );
+    await expect(dialog.getByTestId("recording-notice-message")).toBeEmpty();
+    const sent = await calls(page, "meeting_notice_paste");
+    expect(sent).toHaveLength(1);
+    expect(sent[0].args).toMatchObject({
+      meetingId: "m1",
+      noticeApp: "neutral",
+      lang: "de",
+      countdownSecs: 5,
+    });
+  });
+
+  test("Einfügen abbrechen: kein Nachweis, ruhige Meldung", async ({
+    page,
+  }) => {
+    await withNotice(
+      page,
+      {},
+      { __pasteAvailable: true, __pasteDelay: 60_000 },
+    );
+    const dialog = await openRecordingNotice(page);
+    await dialog.getByTestId("recording-notice-paste").click();
+    await dialog.getByTestId("recording-notice-cancel").click();
+    await expect(dialog.getByTestId("recording-notice-message")).toHaveText(
+      "Das Einfügen wurde abgebrochen.",
+    );
+    await expect(dialog.getByTestId("recording-notice-status")).toHaveAttribute(
+      "data-state",
+      "none",
+    );
+    expect(await calls(page, "meeting_notice_cancel_paste")).toHaveLength(1);
+  });
+
+  test("Einfügen scheitert: der Text liegt in der Zwischenablage, Nachweis „kopiert“", async ({
+    page,
+  }) => {
+    await withNotice(
+      page,
+      {},
+      { __pasteAvailable: true, __pasteFallback: "own_window" },
+    );
+    const dialog = await openRecordingNotice(page);
+    await dialog.getByTestId("recording-notice-paste").click();
+    await expect(dialog.getByTestId("recording-notice-message")).toContainText(
+      "Der Text liegt in der Zwischenablage.",
+    );
+    await expect(dialog.getByTestId("recording-notice-status")).toHaveAttribute(
+      "data-state",
+      "clipboard",
+    );
+  });
+
+  test("Ohne Einfügen-Möglichkeit (Plattform) fehlt der Knopf, Kopieren bleibt", async ({
+    page,
+  }) => {
+    const dialog = await openRecordingNotice(page);
+    await expect(dialog.getByTestId("recording-notice-paste")).toHaveCount(0);
+    await expect(dialog.getByTestId("recording-notice-copy")).toBeVisible();
+  });
+
+  test("Mündlich informiert hält den Nachweis ohne Text fest", async ({
+    page,
+  }) => {
+    const dialog = await openRecordingNotice(page);
+    await dialog.getByTestId("recording-notice-oral").click();
+    await expect(dialog.getByTestId("recording-notice-status")).toHaveAttribute(
+      "data-state",
+      "oral",
+    );
+    await expect(dialog.getByTestId("recording-notice-status")).toContainText(
+      "Teilnehmende wurden mündlich informiert",
+    );
+    expect(await calls(page, "meeting_notice_oral")).toHaveLength(1);
+    expect(await calls(page, "meeting_notice_copy")).toHaveLength(0);
+  });
+
+  test("Startdialog ohne Pflicht: Start ohne Hinweis ist möglich", async ({
+    page,
+  }) => {
+    await openRecordings(page);
+    await page.getByRole("button", { name: "Aufnahme starten" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByTestId("consent-notice")).toBeVisible();
+    await expect(dialog.getByTestId("consent-notice-required")).toHaveCount(0);
+    await expect(dialog.getByTestId("start-confirm")).toBeEnabled();
+    // Der Dialog beginnt von vorn: Nachweise eines früheren Dialogs gelten nicht.
+    expect(
+      (await calls(page, "meeting_notice_reset_pending")).length,
+    ).toBeGreaterThan(0);
+    await dialog.getByTestId("start-confirm").click();
+    await expect
+      .poll(async () => (await calls(page, "meetings_start")).length)
+      .toBe(1);
+  });
+
+  test("Startdialog mit Pflicht: gesperrt bis ein Nachweis vorliegt", async ({
+    page,
+  }) => {
+    await withNotice(page, { required: true });
+    await openRecordings(page);
+    await page.getByRole("button", { name: "Aufnahme starten" }).click();
+    const dialog = page.getByRole("dialog");
+    const confirm = dialog.getByTestId("start-confirm");
+    await expect(dialog.getByTestId("consent-notice-required")).toContainText(
+      "Pflicht: Die Aufnahme startet erst",
+    );
+    await expect(confirm).toBeDisabled();
+    await expect(confirm).toHaveAttribute(
+      "aria-describedby",
+      "consent-notice-required-text",
+    );
+    // Vor dem Start gibt es noch keine Besprechung: der Nachweis hängt an null.
+    await dialog.getByTestId("consent-notice-oral").click();
+    await expect(confirm).toBeEnabled();
+    expect((await calls(page, "meeting_notice_oral"))[0].args).toMatchObject({
+      meetingId: null,
+    });
+    await confirm.click();
+    await expect
+      .poll(async () => (await calls(page, "meetings_start")).length)
+      .toBe(1);
+  });
+
+  test("Startdialog mit Pflicht: Kopieren genügt als Nachweis", async ({
+    page,
+  }) => {
+    await withNotice(page, { required: true });
+    await openRecordings(page);
+    await page.getByRole("button", { name: "Aufnahme starten" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByTestId("start-confirm")).toBeDisabled();
+    await dialog.getByTestId("consent-notice-copy").click();
+    await expect(dialog.getByTestId("start-confirm")).toBeEnabled();
+  });
+
+  test("Pflicht ohne eingeschaltete Funktion sperrt nichts", async ({
+    page,
+  }) => {
+    await withNotice(page, { required: true, enabled: false });
+    await openRecordings(page);
+    await page.getByRole("button", { name: "Aufnahme starten" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByTestId("consent-notice")).toHaveCount(0);
+    await expect(dialog.getByTestId("start-confirm")).toBeEnabled();
+  });
+
+  test("Das Backend verweigert den Start ohne Nachweis: Meldung statt Aufnahme", async ({
+    page,
+  }) => {
+    // Stand der Oberfläche und des Kerns weichen ab (z. B. zweites Fenster).
+    await withNotice(page, {}, { __startError: "notice_required" });
+    await openRecordings(page);
+    await page.getByRole("button", { name: "Aufnahme starten" }).click();
+    await page.getByTestId("start-confirm").click();
+    await expect(
+      page.getByText(
+        "Stellen Sie zuerst den Hinweis an Teilnehmende bereit oder bestätigen Sie, dass alle mündlich informiert wurden.",
+      ),
+    ).toBeVisible();
+  });
+
+  test("Funktion aus: es bleibt die einfache Kopierzeile während der Aufnahme", async ({
     page,
     baseURL,
   }) => {
     await grantClipboard(page, baseURL);
     await useProvider(page, "local");
+    await withNotice(page, { enabled: false });
     await startRecording(page);
     await openRecordings(page);
-    const notice = page.getByTestId("recording-chat-notice");
-    await expect(notice).toBeVisible();
+    await expect(page.getByTestId("recording-notice-open")).toHaveCount(0);
     await expect(page.getByTestId("recording-chat-notice-text")).toHaveText(
-      LOCAL_NOTICE,
+      "Hinweis: Ich transkribiere diese Besprechung lokal auf meinem Rechner mit Local Voice AI, um Notizen zu erstellen. Es werden keine Daten an Dritte übertragen.",
     );
     await page.getByTestId("recording-chat-notice-copy").click();
-    // Der Symbolknopf hat keinen Text: die Rueckmeldung steht im Namen.
     await expect(
       page.getByTestId("recording-chat-notice-copy"),
     ).toHaveAttribute("aria-label", "Hinweis kopiert");
-    expect(await readClipboard(page)).toBe(LOCAL_NOTICE);
+    expect(await readClipboard(page)).toContain("keine Daten an Dritte");
   });
 
-  test("Hinweis kopieren: externer Anbieter nennt den Empfaenger", async ({
+  test("Funktion aus: auch im Startdialog nur die einfache Kopierzeile", async ({
     page,
-    baseURL,
   }) => {
-    await grantClipboard(page, baseURL);
     await useProvider(page, "remote");
-    await startRecording(page);
+    await withNotice(page, { enabled: false });
     await openRecordings(page);
-    await expect(page.getByTestId("recording-chat-notice-text")).toHaveText(
-      REMOTE_NOTICE,
-    );
-    await expect(
-      page.getByTestId("recording-chat-notice-text"),
-    ).not.toContainText("keine Daten an Dritte");
-    await page.getByTestId("recording-chat-notice-copy").click();
-    expect(await readClipboard(page)).toBe(REMOTE_NOTICE);
-  });
-
-  test("Hinweis kopieren: auch im Einwilligungsdialog", async ({
-    page,
-    baseURL,
-  }) => {
-    await grantClipboard(page, baseURL);
-    await useProvider(page, "remote");
-    await openRecordings(page);
-    // Vor dem Start gibt es die Zeile nicht, nur im Dialog.
-    await expect(page.getByTestId("recording-chat-notice")).toHaveCount(0);
     await page.getByRole("button", { name: "Aufnahme starten" }).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByTestId("consent-chat-notice-text")).toHaveText(
-      REMOTE_NOTICE,
+      "Hinweis: Ich transkribiere diese Besprechung lokal auf meinem Rechner mit Local Voice AI, um Notizen zu erstellen. Für die Notizen wird der Text an OpenAI übermittelt.",
     );
-    await dialog.getByTestId("consent-chat-notice-copy").click();
-    await expect(dialog.getByTestId("consent-chat-notice-copy")).toHaveText(
-      "Kopiert",
-    );
-    expect(await readClipboard(page)).toBe(REMOTE_NOTICE);
+    await expect(dialog.getByTestId("consent-notice")).toHaveCount(0);
   });
+});
 
-  test("Hinweis: ohne eingerichteten Anbieter gilt die lokale Fassung", async ({
+test.describe("Hinweis an Teilnehmende: Einstellungen", () => {
+  test("Eingabe › Besprechungen: Schalter, Vorgaben und Textbaustein", async ({
     page,
   }) => {
-    await startRecording(page);
-    await openRecordings(page);
-    await expect(page.getByTestId("recording-chat-notice-text")).toHaveText(
-      LOCAL_NOTICE,
+    await withNotice(page, {});
+    await page.setViewportSize({ width: 1280, height: 1000 });
+    await page.goto("/");
+    await geheZu(page, "Einstellungen");
+    const enabled = page.getByTestId("notice-enabled");
+    await expect(enabled).toBeChecked();
+    // Standard des persönlichen Profils: an, Zeile im Export an, keine Pflicht.
+    await expect(page.getByTestId("notice-export-line")).toBeChecked();
+
+    await page.getByTestId("notice-export-line").click();
+    await expect
+      .poll(
+        async () => (await calls(page, "change_meeting_notice_setting")).length,
+      )
+      .toBe(1);
+    expect(
+      (await calls(page, "change_meeting_notice_setting"))[0].args,
+    ).toMatchObject({ value: { enabled: true, export_line: false } });
+
+    // Zweck und Aufbewahrung füllen die Platzhalter.
+    const purpose = page.getByTestId("notice-purpose");
+    await purpose.fill("für das Protokoll des Projekts Nordlicht");
+    await purpose.press("Enter");
+    await expect
+      .poll(
+        async () => (await calls(page, "change_meeting_notice_setting")).length,
+      )
+      .toBe(2);
+    expect(
+      (await calls(page, "change_meeting_notice_setting"))[1].args,
+    ).toMatchObject({
+      value: { purpose: "für das Protokoll des Projekts Nordlicht" },
+    });
+
+    // Der mitgelieferte Baustein steht mit seinen Platzhaltern zur Anpassung bereit.
+    const text = page.getByTestId("notice-template-text");
+    await expect(text).toHaveValue(/\{purpose\}/);
+    await expect(page.getByTestId("notice-template-state")).toHaveText(
+      "Mitgelieferter Text",
     );
+    await text.fill("Eigener Hinweis: {purpose}");
+    await page.getByTestId("notice-template-save").click();
+    await expect
+      .poll(
+        async () => (await calls(page, "change_meeting_notice_setting")).length,
+      )
+      .toBe(3);
+    expect(
+      (await calls(page, "change_meeting_notice_setting"))[2].args,
+    ).toMatchObject({
+      value: {
+        templates: [
+          { app: "neutral", lang: "de", text: "Eigener Hinweis: {purpose}" },
+        ],
+      },
+    });
+    await expect(page.getByTestId("notice-template-state")).toHaveText(
+      "Eigener Text",
+    );
+    await page.getByTestId("notice-template-reset").click();
+    await expect
+      .poll(
+        async () => (await calls(page, "change_meeting_notice_setting")).length,
+      )
+      .toBe(4);
+    expect(
+      (await calls(page, "change_meeting_notice_setting"))[3].args,
+    ).toMatchObject({ value: { templates: [] } });
+  });
+
+  test("Ausschalten blendet die Vorgaben aus; die Pflicht steht bei den Regeln", async ({
+    page,
+  }) => {
+    await withNotice(page, { enabled: false });
+    await page.setViewportSize({ width: 1280, height: 1000 });
+    await page.goto("/");
+    await geheZu(page, "Einstellungen");
+    await expect(page.getByTestId("notice-enabled")).not.toBeChecked();
+    await expect(page.getByTestId("notice-purpose")).toHaveCount(0);
+    await expect(page.getByTestId("notice-template-editor")).toHaveCount(0);
   });
 });
 
@@ -1481,7 +1880,12 @@ test.describe("KI-Notizen", () => {
 
   /** Besprechung m1 mit 15 Segmenten (Nr. 12 bei 03:15) und einer KI-Notizen-Version. */
   const setup = async (page: Page, opts: Setup = {}) => {
-    const { audio = false, epoch = 1, withDocument = true, failedChunks } = opts;
+    const {
+      audio = false,
+      epoch = 1,
+      withDocument = true,
+      failedChunks,
+    } = opts;
     const notes = notesBody();
     if (failedChunks) {
       notes.stats.single_pass = false;
@@ -1634,7 +2038,9 @@ test.describe("KI-Notizen", () => {
   }) => {
     await setup(page);
     await openAiNotes(page);
-    await expect(page.getByText("konnten nicht ausgewertet werden")).toHaveCount(0);
+    await expect(
+      page.getByText("konnten nicht ausgewertet werden"),
+    ).toHaveCount(0);
   });
 
   test("KI-Notizen: Quell-Klick markiert Segment 12 im Transkript und spielt ab 195 s", async ({
@@ -1882,7 +2288,10 @@ test.describe("KI-Notizen", () => {
   });
 
   test("KI-Notizen: Ansicht (Screenshot)", async ({ page }) => {
-    test.skip(!process.env.LVA_SCREENSHOTS, "Abnahme-Bild nur mit LVA_SCREENSHOTS=1");
+    test.skip(
+      !process.env.LVA_SCREENSHOTS,
+      "Abnahme-Bild nur mit LVA_SCREENSHOTS=1",
+    );
     await setup(page, { audio: true });
     await openAiNotes(page);
     await expect(entryOf(page, "E4")).toBeVisible();

@@ -2012,6 +2012,9 @@
             "description": "Alle Modelle sind nutzbar; Cloud-Modelle werden nur gekennzeichnet."
           }
         },
+        "noticeRequired": "Hinweis an Teilnehmende ist Pflicht vor der Aufnahme",
+        "noticeRequiredDescription": "Die Aufnahme startet erst, wenn der Hinweis kopiert oder eingefügt wurde oder Sie „mündlich informiert“ bestätigt haben.",
+        "noticeRequiredNeedsFeature": "Schalten Sie zuerst „Hinweis an Teilnehmende“ unter Eingabe › Besprechungen ein.",
         "disclaimer": "Die Einstufung beruht auf den dokumentierten Angaben der Anbieter (Stand 06.10.2026) und ist keine Rechtsberatung."
     },
     "meetings": {
@@ -2081,7 +2084,30 @@
       "voiceSuggestionsModelDescription": "CAM++ (3D-Speaker, Apache-2.0) läuft lokal. Es wird nur auf Knopfdruck geladen.",
       "selfName": "Mein Name",
       "selfNameDescription": "Ihr eigener Name im Transkript: Ihr Mikrofon („Ich“) und, wenn das Mikrofon mehrere Personen trennt, der Sprecher mit dem größten Redeanteil tragen immer diesen Namen, auch wenn niemand Sie anspricht. In den Personen sind Sie als „ich“ markiert. Leer lassen: Es bleibt bei „Ich“.",
-      "selfNamePlaceholder": "z. B. Patrick Wolff"
+      "selfNamePlaceholder": "z. B. Patrick Wolff",
+      "notice": {
+        "enabled": "Hinweis an Teilnehmende",
+        "enabledDescription": "Bietet einen fertigen Text für den Besprechungs-Chat (Teams, Webex oder neutral) an und hält fest, wann er bereitgestellt wurde. Local Voice sendet ihn nie selbst.",
+        "exportLine": "Im Protokollexport vermerken",
+        "exportLineDescription": "Eine Zeile unter dem Kopf des Exports nennt, wann und wie die Teilnehmenden informiert wurden. Der Text selbst wird nicht exportiert.",
+        "defaultApp": "Besprechungs-App für den Hinweis",
+        "defaultAppDescription": "Welche Formulierung vorgewählt ist. Je Besprechung lässt sie sich ändern.",
+        "defaultLang": "Sprache des Hinweises",
+        "defaultLangDescription": "Welche Sprache vorgewählt ist.",
+        "purpose": "Zweck",
+        "purposeDescription": "Füllt den Platzhalter {purpose} im Text. Leer: „um Notizen und ein Protokoll zu erstellen“.",
+        "purposePlaceholder": "um Notizen und ein Protokoll zu erstellen",
+        "retention": "Aufbewahrung",
+        "retentionDescription": "Füllt den Platzhalter {retention}, etwa wie lange die Aufnahme aufbewahrt wird. Leer: Der Satz entfällt.",
+        "retentionPlaceholder": "z. B. Die Aufnahme wird nach 30 Tagen gelöscht.",
+        "template": "Text des Hinweises",
+        "templateDescription": "App und Sprache wählen, dann die Formulierung anpassen. Ohne Änderung gilt der mitgelieferte Text.",
+        "templateCustom": "Eigener Text",
+        "templateBuiltin": "Mitgelieferter Text",
+        "placeholders": "Platzhalter: {purpose}, {retention} und {processing} (ob die Notizen lokal oder bei einem Anbieter verarbeitet werden).",
+        "save": "Text speichern",
+        "restore": "Mitgelieferten Text wiederherstellen"
+      }
     },
     "modelSettings": {
       "title": "{{model}}-Einstellungen"
@@ -3756,6 +3782,7 @@
     },
     "errors": {
       "consentRequired": "Ohne bestätigte Einwilligung startet keine Aufnahme.",
+      "noticeRequired": "Stellen Sie zuerst den Hinweis an Teilnehmende bereit oder bestätigen Sie, dass alle mündlich informiert wurden.",
       "dictationActive": "Ein Diktat läuft gerade — bitte zuerst beenden.",
       "deltaStoreFailed": "Das Transkript konnte nicht gespeichert werden. Die Aufnahme läuft weiter.",
       "chunkTranscriptionFailed": "Ein Abschnitt konnte nicht transkribiert werden. Die Aufnahme läuft weiter.",
@@ -4452,6 +4479,50 @@
       "linkName": "Link einfügen",
       "linkHint": "YouTube-Link als Quelle anlegen, oder den Link mit Strg+V einfügen"
     },
+    "notice": {
+      "title": "Hinweis an Teilnehmende",
+      "description": "Informieren Sie die anderen Teilnehmenden, dass die Besprechung mitgeschrieben wird. Local Voice sendet den Text nie selbst.",
+      "close": "Schließen",
+      "app": "Besprechungs-App",
+      "lang": "Sprache des Hinweises",
+      "apps": {
+        "teams": "Microsoft Teams",
+        "webex": "Webex",
+        "neutral": "Neutral"
+      },
+      "langs": {
+        "de": "Deutsch",
+        "en": "Englisch"
+      },
+      "copy": "Hinweis kopieren",
+      "paste": "In den Chat einfügen",
+      "oral": "Mündlich informiert",
+      "cancel": "Abbrechen",
+      "waiting": "Klicken Sie jetzt in das Chatfeld der Besprechung. Der Hinweis wird gleich eingefügt. Es wird nichts gesendet.",
+      "required": "Pflicht: Die Aufnahme startet erst, wenn ein Hinweis bereitgestellt oder „mündlich informiert“ bestätigt wurde.",
+      "status": {
+        "none": "Noch kein Hinweis bereitgestellt.",
+        "clipboard": "Hinweis um {{time}} Uhr in die Zwischenablage kopiert ({{app}}).",
+        "paste": "Hinweis um {{time}} Uhr in den Chat eingefügt ({{app}}). Das Absenden bleibt Ihnen überlassen.",
+        "oral": "Um {{time}} Uhr bestätigt: Teilnehmende wurden mündlich informiert."
+      },
+      "fallback": {
+        "no_target": "Nichts eingefügt: Es stand kein anderes Fenster im Vordergrund. Der Text liegt in der Zwischenablage.",
+        "own_window": "Nichts eingefügt: Sie sind nicht zum Besprechungsfenster gewechselt. Der Text liegt in der Zwischenablage.",
+        "focus_changed": "Nichts eingefügt: Der Fokus hat gewechselt. Der Text liegt in der Zwischenablage.",
+        "target_elevated": "Nichts eingefügt: Das Zielfenster läuft mit höheren Rechten. Der Text liegt in der Zwischenablage.",
+        "injection_failed": "Das Einfügen ist fehlgeschlagen. Der Text liegt in der Zwischenablage.",
+        "accessibility_denied": "Das Einfügen ist gesperrt: Die Berechtigung „Bedienungshilfen“ fehlt. Der Text liegt in der Zwischenablage."
+      },
+      "errors": {
+        "clipboard_failed": "Die Zwischenablage ließ sich nicht beschreiben. Bitte markieren Sie den Text von Hand.",
+        "notice_cancelled": "Das Einfügen wurde abgebrochen.",
+        "notice_busy": "Es läuft bereits ein Einfügen.",
+        "notice_disabled": "Der Hinweis an Teilnehmende ist ausgeschaltet.",
+        "meetings_unavailable": "Besprechungen sind nicht verfügbar.",
+        "store_failed": "Der Nachweis ließ sich nicht speichern."
+      }
+    },
     "recorder": {
       "running": "Aufnahme läuft",
       "paused": "Pausiert",
@@ -4463,6 +4534,9 @@
       "stopHint": "Aufnahme beenden – danach entstehen KI-Notizen und Protokoll",
       "noticeName": "Hinweis kopieren",
       "noticeCopied": "Hinweis kopiert",
+      "noticeOpen": "Hinweis an Teilnehmende",
+      "noticeOpenHint": "Hinweis kopieren oder in den Besprechungs-Chat einfügen",
+      "noticeOpenDone": "Ein Hinweis wurde bereitgestellt – öffnen, um den Zeitpunkt zu sehen",
       "startHint": "Öffnet den Startdialog mit Titel, Projekt, Vorlage und Einwilligung"
     },
     "startDialog": {

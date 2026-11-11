@@ -12,6 +12,7 @@ import type {
   DetectMode,
   MeetingEchoCancellation,
   DictationAudio,
+  MeetingNoticeSettings,
 } from "@/bindings";
 import { commands } from "@/bindings";
 
@@ -314,6 +315,14 @@ const settingUpdaters: {
     ),
   calendar_graph_tenant: (value) =>
     commands.changeCalendarGraphTenantSetting((value as string | null) ?? null),
+  // G2 (#497): Hinweis an Teilnehmende. Ein Fehler des Kerns muss werfen, sonst
+  // bliebe der nicht gespeicherte Wert sichtbar.
+  meeting_notice: async (value) => {
+    const r = await commands.changeMeetingNoticeSetting(
+      value as MeetingNoticeSettings,
+    );
+    if (r.status === "error") throw new Error(r.error);
+  },
   // M6-P6e
   meeting_mcp_enabled: (value) =>
     commands.changeMeetingMcpEnabledSetting(value as boolean),

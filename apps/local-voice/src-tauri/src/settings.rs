@@ -642,6 +642,11 @@ pub struct AppSettings {
     /// bekommen keine Anfrage.
     #[serde(default)]
     pub compliance_profile: crate::managers::compliance::ComplianceProfile,
+    /// G2 (#497): Hinweis an Teilnehmende einer Besprechung (Textbausteine
+    /// fuer Teams, Webex und neutral, Nachweis, Pflicht vor Aufnahmebeginn).
+    /// Standard: an, nicht Pflicht.
+    #[serde(default)]
+    pub meeting_notice: crate::managers::compliance::notice::MeetingNoticeSettings,
     /// Effort fuer Abo-Modelle ueber die CLI, wenn das Modell keinen eigenen
     /// hat (`low` … `max`). Vorgabe `medium`.
     #[serde(default = "default_llm_effort")]
@@ -1924,6 +1929,7 @@ pub fn get_default_settings() -> AppSettings {
         function_models: BTreeMap::new(),
         llm_model_dirs: Vec::new(),
         compliance_profile: Default::default(),
+        meeting_notice: Default::default(),
         llm_default_effort: default_llm_effort(),
         llm_auto_update_models: default_llm_auto_update(),
         cli_auto_update: true,
@@ -3913,6 +3919,24 @@ mod tests {
             serde_json::from_value(serde_json::json!({ "meeting_self_name": "Patrick Wolff" }))
                 .unwrap();
         assert_eq!(set.meeting_self_name.as_deref(), Some("Patrick Wolff"));
+    }
+
+    #[test]
+    fn meeting_notice_defaults_on_not_required_and_keeps_a_choice() {
+        let d = get_default_settings().meeting_notice;
+        assert!(d.enabled && !d.required && d.export_line);
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert_eq!(old.meeting_notice, d, "aeltere settings.json: Standard");
+        let set: AppSettings = serde_json::from_value(serde_json::json!({
+            "meeting_notice": { "required": true, "default_app": "webex" }
+        }))
+        .unwrap();
+        assert!(set.meeting_notice.required && set.meeting_notice.enabled);
+        assert_eq!(
+            set.meeting_notice.default_app,
+            crate::managers::compliance::notice::NoticeApp::Webex
+        );
     }
 
     #[test]

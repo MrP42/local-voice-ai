@@ -78,6 +78,21 @@ pub fn consent_gate(consent_confirmed: bool) -> Result<(), String> {
     }
 }
 
+/// G2 (#497): die Pflicht zum Hinweis an Teilnehmende. Ohne Pflicht (Standard)
+/// nie ein Hindernis; mit Pflicht braucht der Start einen geltenden Nachweis
+/// (`notice_required`). Die Einwilligung (`consent_gate`) gilt davon unabhaengig.
+pub fn notice_gate(
+    settings: &crate::managers::compliance::notice::MeetingNoticeSettings,
+    now: i64,
+) -> Result<(), String> {
+    crate::managers::compliance::notice::start_gate(
+        settings,
+        crate::managers::compliance::notice::PENDING
+            .fresh(now)
+            .len(),
+    )
+}
+
 /// Only one meeting records at a time (one WAV pair, one worker, one indicator).
 pub fn may_start(state: &MeetingRunState) -> bool {
     matches!(state, MeetingRunState::Idle)
@@ -706,6 +721,12 @@ impl MeetingRecorderManager {
         target_meeting_id: Option<&str>,
     ) -> Result<Meeting, String> {
         consent_gate(consent_confirmed)?;
+        // G2 (#497): gilt die Pflicht zum Hinweis an Teilnehmende, braucht der
+        // Start einen Nachweis (Zwischenablage, Einfuegen, "muendlich informiert").
+        notice_gate(
+            &crate::settings::get_settings(&self.app).meeting_notice,
+            chrono::Utc::now().timestamp(),
+        )?;
         // `Mutex<()>` traegt keine Daten: eine Vergiftung hiesse sonst, dass nie
         // wieder eine Aufnahme startet.
         let _start_guard = lock_recovering(&self.start_guard);
@@ -761,6 +782,10 @@ impl MeetingRecorderManager {
                     }
                 },
             }
+        }
+        // G2 (#497): der Nachweis aus dem Startdialog gehoert jetzt zur Besprechung.
+        if let Ok(started) = &started {
+            super::notice::attach_pending(&self.store, &started.id, chrono::Utc::now().timestamp());
         }
         started
     }
@@ -1571,6 +1596,22 @@ mod tests {
     fn start_without_consent_is_refused() {
         assert_eq!(consent_gate(false), Err("consent_required".to_string()));
         assert!(consent_gate(true).is_ok());
+    }
+
+    /// G2 (#497): die persoenliche Voreinstellung (an, nicht Pflicht) haelt nie auf;
+    /// ohne die Funktion gilt auch eine eingestellte Pflicht nicht. Die Pflicht
+    /// selbst ist in `compliance::notice` geprueft (der Nachweis-Satz ist
+    /// prozessweit geteilt, hier darf kein Test ihn voraussetzen).
+    #[test]
+    fn notice_gate_never_blocks_without_the_obligation() {
+        use crate::managers::compliance::notice::MeetingNoticeSettings;
+        assert!(notice_gate(&MeetingNoticeSettings::default(), 1_000).is_ok());
+        let off = MeetingNoticeSettings {
+            enabled: false,
+            required: true,
+            ..Default::default()
+        };
+        assert!(notice_gate(&off, 1_000).is_ok());
     }
 
     #[test]

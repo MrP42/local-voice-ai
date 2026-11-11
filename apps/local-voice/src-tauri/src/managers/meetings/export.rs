@@ -521,6 +521,9 @@ pub struct ExportBundle {
     /// Namen und Labels der Sprecher (M3-P3c): je (Kanal, Sprecher) der vom
     /// Nutzer vergebene Name, sonst "Gegenseite 2" / "Raum 1" / "Person 1".
     pub speakers: SpeakerDirectory,
+    /// G2 (#497): die eine Zeile "Hinweis an Teilnehmende: ..." (`None`: kein
+    /// Nachweis oder im Nachweis ausgeblendet). Nie der Hinweistext selbst.
+    pub participant_notice: Option<String>,
 }
 
 impl ExportBundle {
@@ -610,9 +613,19 @@ pub fn build_bundle(store: &MeetingStore, meeting_id: &str) -> Result<ExportBund
                 .to_string()
         })
         .unwrap_or_default();
+    let participant_notice = super::notice::export_line_for(store, meeting_id, |at| {
+        chrono::DateTime::from_timestamp(at, 0)
+            .map(|d| {
+                d.with_timezone(&chrono::Local)
+                    .format("%Y-%m-%d %H:%M")
+                    .to_string()
+            })
+            .unwrap_or_default()
+    });
     Ok(ExportBundle {
         meeting,
         date_label,
+        participant_notice,
         participants: Vec::new(),
         notes,
         enhanced,
@@ -697,6 +710,9 @@ pub fn bundle_to_markdown(b: &ExportBundle, p: &ExportParts) -> String {
     if !head.is_empty() {
         md.push_str(&head.join(" · "));
         md.push('\n');
+    }
+    if let Some(line) = &b.participant_notice {
+        md.push_str(&format!("\n{line}\n"));
     }
 
     let people: Vec<String> = b
@@ -791,6 +807,12 @@ pub fn render_meeting_html(b: &ExportBundle, p: &ExportParts) -> String {
     }
     if !meta.is_empty() {
         body.push_str(&format!("<p class=\"meta\">{}</p>\n", meta.join(" · ")));
+    }
+    if let Some(line) = &b.participant_notice {
+        body.push_str(&format!(
+            "<p class=\"meta participant-notice\">{}</p>\n",
+            html_escape(line)
+        ));
     }
 
     let people: Vec<String> = b
@@ -1078,7 +1100,7 @@ pub fn export_json(b: &ExportBundle, p: &ExportParts) -> serde_json::Value {
         Value::Null
     };
 
-    json!({
+    let mut out = json!({
         "format": JSON_FORMAT,
         "meeting": {
             "id": m.id,
@@ -1104,7 +1126,12 @@ pub fn export_json(b: &ExportBundle, p: &ExportParts) -> serde_json::Value {
         "minutes_markdown": minutes_markdown,
         "action_items": action_items,
         "transcript": transcript,
-    })
+    });
+    // G2 (#497): nur mit Nachweis, damit Exporte ohne ihn unveraendert bleiben.
+    if let Some(line) = &b.participant_notice {
+        out["participant_notice"] = json!(line);
+    }
+    out
 }
 
 /// Die formatierte Zwischenablage: (HTML, Klartext).
@@ -1510,6 +1537,7 @@ pub(crate) mod tests {
                 deleted_at: None,
             },
             date_label: "2026-09-28 14:30".to_string(),
+            participant_notice: None,
             participants: vec![
                 ExportParticipant {
                     name: Some("Anna Berg".to_string()),
@@ -1816,6 +1844,34 @@ pub(crate) mod tests {
             "manuelle Aufgabe fehlt:\n{md}"
         );
         assert!(!md.contains("## Risiken"), "leerer Abschnitt ausgegeben");
+    }
+
+    /// G2 (#497): der Nachweis ueber den Hinweis an Teilnehmende steht als EINE
+    /// Zeile unter dem Kopf, in Markdown, HTML und JSON; ohne Nachweis aendert
+    /// sich nichts (die Golden-Files bleiben).
+    #[test]
+    fn der_hinweis_an_teilnehmende_steht_als_eine_zeile_im_export() {
+        let ohne = nordlicht_bundle();
+        assert!(!bundle_to_markdown(&ohne, &ExportParts::all()).contains("Hinweis an"));
+        assert!(export_json(&ohne, &ExportParts::all())
+            .get("participant_notice")
+            .is_none());
+
+        let mut mit = nordlicht_bundle();
+        let zeile =
+            "Hinweis an Teilnehmende: am 2026-09-28 14:31 in den Chat eingefügt (Teams, Deutsch).";
+        mit.participant_notice = Some(zeile.to_string());
+        let md = bundle_to_markdown(&mit, &ExportParts::all());
+        assert_eq!(md.matches("Hinweis an Teilnehmende").count(), 1, "{md}");
+        let kopf = md.find("**Datum:**").expect("Kopfzeile");
+        let hinweis = md.find(zeile).expect("Hinweiszeile");
+        let erster_abschnitt = md.find("## ").expect("Abschnitt");
+        assert!(kopf < hinweis && hinweis < erster_abschnitt, "{md}");
+        let html = render_meeting_html(&mit, &ExportParts::all());
+        assert_eq!(html.matches("Hinweis an Teilnehmende").count(), 1);
+        assert!(html.contains("participant-notice"));
+        let json = export_json(&mit, &ExportParts::all());
+        assert_eq!(json["participant_notice"], zeile);
     }
 
     #[test]

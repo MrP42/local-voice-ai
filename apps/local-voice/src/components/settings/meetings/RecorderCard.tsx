@@ -16,7 +16,7 @@ import { Button } from "../../ui/Button";
 import { IconAction } from "../../ui/IconAction";
 import { Alert } from "../../ui/Alert";
 import { translateMeetingError } from "./meetingErrors";
-import { MeetingChatNotice } from "./MeetingChatNotice";
+import { ParticipantNoticeButton } from "./ParticipantNotice";
 import { MeetingImportAction } from "./MeetingImportAction";
 import { YoutubeLinkAction } from "./youtube/YoutubeLinkAction";
 import { NO_PROJECT, StartRecordingDialog } from "./StartRecordingDialog";
@@ -621,7 +621,9 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
                 onClick={() => void stop()}
                 disabled={busy}
               />
-              <MeetingChatNotice testId="recording" compact />
+              {recordingIdRef.current && (
+                <ParticipantNoticeButton meetingId={recordingIdRef.current} />
+              )}
             </div>
           </div>
         )}

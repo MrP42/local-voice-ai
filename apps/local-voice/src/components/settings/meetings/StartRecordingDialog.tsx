@@ -1,14 +1,16 @@
-import React from "react";
+import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { X } from "lucide-react";
 import type { CalEvent, Folder } from "@/bindings";
 import { distinctAttendees } from "@/lib/meetingCalendar";
+import { noticeIsRequired, noticeSettingsOf } from "@/lib/meetingNotice";
+import { useSettings } from "../../../hooks/useSettings";
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
 import { Input } from "../../ui/Input";
 import { Select } from "../../ui/Select";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
-import { MeetingChatNotice } from "./MeetingChatNotice";
+import { ParticipantNotice } from "./ParticipantNotice";
 import { TemplatePicker } from "./notes/TemplatePicker";
 
 /** Auswahlwert für "Kein Projekt". */
@@ -67,6 +69,13 @@ export const StartRecordingDialog: React.FC<StartRecordingDialogProps> = ({
   onDiarizeMicChange,
 }) => {
   const { t } = useTranslation();
+  const { getSetting } = useSettings();
+  // G2 (#497): gilt die Pflicht zum Hinweis an Teilnehmende, startet die
+  // Aufnahme erst mit einem Nachweis (das Backend prüft es ebenfalls).
+  const [noticeCount, setNoticeCount] = useState(0);
+  const noticeBlocks =
+    noticeIsRequired(noticeSettingsOf(getSetting("meeting_notice"))) &&
+    noticeCount === 0;
   const projectOptions = [
     { value: NO_PROJECT, label: t("meetings.startDialog.projectNone") },
     ...folders.map((f) => ({ value: f.id, label: f.name })),
@@ -90,7 +99,14 @@ export const StartRecordingDialog: React.FC<StartRecordingDialogProps> = ({
           >
             {t("meetings.consent.cancel")}
           </Button>
-          <Button onClick={onConfirm} disabled={busy}>
+          <Button
+            onClick={onConfirm}
+            disabled={busy || noticeBlocks}
+            aria-describedby={
+              noticeBlocks ? "consent-notice-required-text" : undefined
+            }
+            data-testid="start-confirm"
+          >
             {t("meetings.consent.confirm")}
           </Button>
         </>
@@ -206,7 +222,11 @@ export const StartRecordingDialog: React.FC<StartRecordingDialogProps> = ({
             {t("meetings.consent.body")}
           </p>
         </div>
-        <MeetingChatNotice testId="consent" />
+        <ParticipantNotice
+          meetingId={null}
+          testId="consent"
+          onRecordsChange={setNoticeCount}
+        />
       </div>
     </Dialog>
   );

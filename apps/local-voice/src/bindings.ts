@@ -571,6 +571,110 @@ async complianceSetTrainingOptOut(connectionId: string, optOut: boolean) : Promi
 }
 },
 /**
+ * Der fertige Text fuer die Vorschau und zum Kopieren.
+ */
+async meetingNoticePreview(noticeApp: NoticeApp, lang: NoticeLang) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notice_preview", { noticeApp, lang }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Der Textbaustein mit seinen Platzhaltern (die Anpassung des Nutzers, sonst der
+ * mitgelieferte), zum Bearbeiten in den Einstellungen.
+ */
+async meetingNoticeTemplate(noticeApp: NoticeApp, lang: NoticeLang) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notice_template", { noticeApp, lang }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Nachweise der Besprechung `meeting_id`, ohne sie die geltenden vor dem Start.
+ */
+async meetingNoticeStatus(meetingId: string | null) : Promise<Result<NoticeStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notice_status", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Verwirft die Nachweise vor dem Start (der Startdialog beginnt von vorn).
+ */
+async meetingNoticeResetPending() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notice_reset_pending") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Legt den Hinweistext in die Zwischenablage und haelt das als Nachweis fest.
+ */
+async meetingNoticeCopy(meetingId: string | null, noticeApp: NoticeApp, lang: NoticeLang) : Promise<Result<NoticeOutcome, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notice_copy", { meetingId, noticeApp, lang }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Der Nutzer bestaetigt, die Teilnehmenden muendlich informiert zu haben.
+ */
+async meetingNoticeOral(meetingId: string | null, noticeApp: NoticeApp, lang: NoticeLang) : Promise<Result<NoticeOutcome, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notice_oral", { meetingId, noticeApp, lang }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Fuegt den Hinweistext nach einer Frist in das Chatfeld des Fensters ein, das
+ * dann im Vordergrund steht (die Frist nutzt der Nutzer, um in das Chatfeld
+ * der Besprechung zu klicken). Gesendet wird nie. Steht dann kein fremdes
+ * Fenster im Vordergrund oder scheitert eine Sicherung, bleibt der Text in
+ * der Zwischenablage (`fallback`), und der Nachweis lautet "kopiert".
+ */
+async meetingNoticePaste(meetingId: string | null, noticeApp: NoticeApp, lang: NoticeLang, countdownSecs: number) : Promise<Result<NoticeOutcome, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notice_paste", { meetingId, noticeApp, lang, countdownSecs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bricht die laufende Frist des Einfuegens ab.
+ */
+async meetingNoticeCancelPaste() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notice_cancel_paste") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellungen des Hinweises speichern (Texte werden begrenzt und bereinigt).
+ */
+async changeMeetingNoticeSetting(value: MeetingNoticeSettings) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_notice_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * RAM und GPU-Speicherbudget fuer die Fussleiste, dazu der Anteil der App
  * (samt Kindprozessen). Auf einem Blocking-Thread: DXGI und die
  * Prozessliste sind schnell, aber nicht async; die App-Messung ist auf eine
@@ -9038,6 +9142,12 @@ llm_model_dirs?: string[];
  */
 compliance_profile?: ComplianceProfile; 
 /**
+ * G2 (#497): Hinweis an Teilnehmende einer Besprechung (Textbausteine
+ * fuer Teams, Webex und neutral, Nachweis, Pflicht vor Aufnahmebeginn).
+ * Standard: an, nicht Pflicht.
+ */
+meeting_notice?: MeetingNoticeSettings;
+/**
  * Effort fuer Abo-Modelle ueber die CLI, wenn das Modell keinen eigenen
  * hat (`low` … `max`). Vorgabe `medium`.
  */
@@ -12082,6 +12192,35 @@ export type MeetingNotes = { meeting_id: string; blocks: NoteBlock[]; revision: 
  */
 export type MeetingNotesEvent = { kind: "progress"; meeting_id: string; step: number; total: number } | { kind: "done"; meeting_id: string; document_id: string } | { kind: "failed"; meeting_id: string; code: string }
 /**
+ * Einstellungen des Hinweises (`AppSettings::meeting_notice`).
+ *
+ * Standard des persoenlichen Profils: an, nicht Pflicht. Die Pflicht gehoert
+ * zum Regelwerk (Einstellungen > Regeln) und wirkt nur bei eingeschalteter
+ * Funktion.
+ */
+export type MeetingNoticeSettings = { enabled: boolean;
+/**
+ * Die Aufnahme startet erst nach einem bereitgestellten Hinweis oder der
+ * Bestaetigung "muendlich informiert".
+ */
+required: boolean;
+/**
+ * Eine Zeile im Protokollexport.
+ */
+export_line: boolean; default_app: NoticeApp; default_lang: NoticeLang;
+/**
+ * Wert fuer `{purpose}`; leer = Standard der Sprache.
+ */
+purpose: string;
+/**
+ * Wert fuer `{retention}`; leer = der Satz entfaellt.
+ */
+retention: string;
+/**
+ * Angepasste Textbausteine (je App und Sprache hoechstens einer).
+ */
+templates: NoticeTemplate[] }
+/**
  * Ein Teil einer Besprechung (Anzeige).
  */
 export type MeetingPart = { part_index: number; title: string; source_path: string | null; 
@@ -12452,6 +12591,99 @@ export type NotebookOutline = { id: string; name: string; sections: NotebookOutl
  * Ein Abschnitt in der Freigabe-Einstellung.
  */
 export type NotebookOutlineSection = { id: string; name: string; group: string | null; pages: number }
+/**
+ * Fuer welche Besprechungs-App der Text formuliert ist.
+ */
+export type NoticeApp = "teams" | "webex" | "neutral"
+/**
+ * Warum aus dem Einfuegen nur ein Kopieren wurde. Der Text liegt dann
+ * nachweislich in der Zwischenablage.
+ */
+export type NoticeFallback =
+/**
+ * Kein anderes Fenster im Vordergrund gefunden.
+ */
+"no_target" |
+/**
+ * Im Vordergrund stand diese App selbst.
+ */
+"own_window" |
+/**
+ * Der Fokus wechselte vor oder waehrend des Einfuegens.
+ */
+"focus_changed" |
+/**
+ * Das Zielfenster laeuft mit hoeheren Rechten.
+ */
+"target_elevated" |
+/**
+ * Der Tastendruck selbst scheiterte.
+ */
+"injection_failed" |
+/**
+ * macOS: keine Berechtigung fuer Tastendruecke.
+ */
+"accessibility_denied"
+export type NoticeLang = "de" | "en"
+/**
+ * Ergebnis von Kopieren, Einfuegen und "muendlich informiert".
+ */
+export type NoticeOutcome = { record: NoticeRecord;
+/**
+ * Gesetzt, wenn aus dem Einfuegen nur ein Kopieren wurde.
+ */
+fallback: NoticeFallback | null }
+/**
+ * Ein Nachweis: wann, welcher Text, auf welchem Weg.
+ */
+export type NoticeRecord = {
+/**
+ * Unix-Sekunden.
+ */
+at: number; way: NoticeWay; app: NoticeApp; lang: NoticeLang;
+/**
+ * Der verwendete Text (bei `oral` leer).
+ */
+text: string;
+/**
+ * Kommt die Zeile in den Protokollexport? Entschieden beim Anlegen
+ * (Einstellung `export_line`).
+ */
+in_export: boolean }
+/**
+ * Stand fuer die Oberflaeche.
+ */
+export type NoticeStatus = {
+/**
+ * Nachweise der Besprechung bzw. die geltenden vor dem Start (aelteste zuerst).
+ */
+records: NoticeRecord[];
+/**
+ * Kann diese Plattform in ein fremdes Fenster einfuegen? (Nur Windows kann
+ * pruefen, dass der Fokus im Zielfenster blieb.)
+ */
+paste_available: boolean }
+/**
+ * Ein vom Nutzer angepasster Textbaustein (ersetzt den mitgelieferten).
+ */
+export type NoticeTemplate = { app: NoticeApp; lang: NoticeLang; text: string }
+/**
+ * Auf welchem Weg der Hinweis die Teilnehmenden erreichen soll (oder
+ * erreicht hat).
+ */
+export type NoticeWay =
+/**
+ * Text in die Zwischenablage gelegt; Einfuegen und Senden macht der Nutzer.
+ */
+"clipboard" |
+/**
+ * Text auf Knopfdruck in das fokussierte Chatfeld eingefuegt (nie gesendet).
+ */
+"paste" |
+/**
+ * Der Nutzer bestaetigt, die Teilnehmenden muendlich informiert zu haben.
+ */
+"oral"
 /**
  * Einstellungen des Ollama-Sprachanbieters.
  */
