@@ -733,14 +733,19 @@ mod tests {
             })
             .collect();
 
-        // Ein Leser zählt eine Lesung nur, wenn vor UND nach ihr noch ein Schreiber lief.
+        // Ein Leser zählt eine Lesung nur, wenn VOR ihr schon mindestens ein Schreibvorgang fertig war
+        // (erster Schreibfortschritt; sonst könnten die Leser ihre Mindestzahl erreichen, bevor ein
+        // Schreiber überhaupt lief) und wenn vor UND nach ihr noch ein Schreiber lief. Eine gezählte
+        // Lesung sieht deshalb immer eine Version über der Startversion.
         let leser = |mit_sperre: bool| {
             let (z, store, start) = (z.clone(), store.clone(), start.clone());
             let (laufend, genug, fertig) = (laufend.clone(), genug.clone(), fertig.clone());
+            let geschrieben = geschrieben.clone();
             std::thread::spawn(move || {
                 start.wait();
                 let (mut ueberlappend, mut hoechste) = (0u32, 0u32);
                 while !fertig.load(Ordering::SeqCst) {
+                    let schon_geschrieben = geschrieben.load(Ordering::SeqCst) > 0;
                     let vorher = laufend.load(Ordering::SeqCst);
                     let version = if mit_sperre {
                         // Schnappschuss (`lesen_mit`, wie Abruf und Tor): Version und Stand passen
@@ -762,7 +767,8 @@ mod tests {
                         v
                     };
                     hoechste = hoechste.max(version);
-                    if vorher > 0 && laufend.load(Ordering::SeqCst) > 0 {
+                    if schon_geschrieben && vorher > 0 && laufend.load(Ordering::SeqCst) > 0 {
+                        assert!(version > 1, "gezählte Lesung mit der Startversion");
                         ueberlappend += 1;
                         if ueberlappend == MIN_LESUNGEN {
                             genug.fetch_add(1, Ordering::SeqCst);
@@ -788,8 +794,8 @@ mod tests {
             );
         }
         assert!(
-            lesungen.iter().any(|(_, hoechste)| *hoechste > 1),
-            "keine Lesung sah eine Version über der Startversion"
+            lesungen.iter().all(|(_, hoechste)| *hoechste > 1),
+            "ein Leser sah nie eine Version über der Startversion"
         );
         let endversion = 1 + geschrieben.load(Ordering::SeqCst);
         assert_eq!(z.version(), endversion);
