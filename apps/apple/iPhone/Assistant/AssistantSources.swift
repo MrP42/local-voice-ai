@@ -1,0 +1,418 @@
+import Foundation
+
+// Gesprächsmodus „Sprechen“ (Paket A): Inhalte für den Assistenten. Ein app-weiter `AssistantCorpus` (nur im Speicher,
+// einmal je App-Lauf aufgebaut, danach nur Änderungen über `version`) und die Ablage als eigene Quelle über die
+// vorhandene Suche. Bücher, Besprechungen und Sprachnotizen kommen aus den bestehenden Speichern.
+// Alles Rechnen (Lesen, Zerlegen, Indexieren) läuft abseits des Hauptthreads, Buch für Buch; der Hauptthread sieht nur
+// einen kleinen Schnappschuss und den Fortschritt.
+//
+// Schutz der Inhalte:
+// - Bücher: Ist ein Buch in Arbeit (2 % bis 95 %), steht nur der Text bis zur Lesegrenze im Index (nie dahinter).
+// - Besprechungen: nur Segmente mit `aiPermitted`; das Protokoll nur, wenn es eines gibt (es entsteht nur aus erlaubten Segmenten).
+// - Ablage: dieselbe Suche und dieselben Schutzregeln wie die Seite „Ablage“; bei Cloud-Modellen nur Dokumente der Klasse „öffentlich“.
+
+@MainActor
+final class AssistantSources: ObservableObject {
+    struct Progress: Equatable {
+        var done: Int
+        var total: Int
+    }
+
+    static let shared = AssistantSources()
+
+    /// Gemeinsamer Index aller Gespräche dieses App-Laufs.
+    let corpus: AssistantCorpus
+    /// Läuft die Indexierung, wie weit (Hinweis „Inhalte werden vorbereitet (n von m)“).
+    @Published private(set) var progress: Progress?
+    /// Zählt jede abgeschlossene Indexierung.
+    @Published private(set) var version = 0
+    /// Bücher und Besprechungen, die wegen der Obergrenze fehlen.
+    @Published private(set) var skipped = 0
+
+    private let indexer: AssistantIndexer
+    private var running: Task<Void, Never>?
+    private var rerun = false
+
+    init() {
+        let corpus = AssistantCorpus()
+        self.corpus = corpus
+        indexer = AssistantIndexer(corpus: corpus)
+    }
+
+    /// Stößt die Indexierung an (kehrt sofort zurück). Läuft schon eine, folgt danach genau ein weiterer Durchgang.
+    func refresh() {
+        guard running == nil else { rerun = true; return }
+        let notes = Self.noteJobs()
+        let books = Self.bookJobs()
+        let root = MeetingDirectory.root
+        let indexer = self.indexer
+        running = Task { [weak self] in
+            let report = await Task.detached(priority: .utility) {
+                await indexer.run(notes: notes, books: books, meetingsRoot: root) { done, total in
+                    Task { @MainActor in self?.setProgress(done, total) }
+                }
+            }.value
+            self?.finish(report)
+        }
+    }
+
+    /// Wissen für ein Modell: gleicher Index, die Ablage je nach Cloud-Modell mit eigenen Regeln.
+    func knowledge(cloud: Bool, areas: Set<AssistantArea>) async -> AssistantKnowledge {
+        let knowledge = AssistantKnowledge(corpus: corpus, sources: [AblageAssistantSource(cloud: cloud)])
+        await knowledge.setAreas(areas)
+        return knowledge
+    }
+
+    private func setProgress(_ done: Int, _ total: Int) {
+        guard running != nil else { return }
+        progress = total > 0 && done < total ? Progress(done: done, total: total) : nil
+    }
+
+    private func finish(_ report: AssistantIndexer.Report) {
+        running = nil
+        progress = nil
+        skipped = report.skipped
+        if !report.cancelled { version += 1 }
+        if rerun {
+            rerun = false
+            refresh()
+        }
+    }
+
+    // MARK: Schnappschüsse (Hauptthread, nur Werte)
+
+    private static func noteJobs() -> [NoteJob] {
+        VoiceModel.shared.entries.compactMap { entry in
+            let transcript = entry.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let reply = entry.reply?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !transcript.isEmpty || !reply.isEmpty else { return nil }
+            return NoteJob(id: entry.id.uuidString, date: entry.createdAt, transcript: transcript, reply: reply)
+        }
+    }
+
+    private static func bookJobs() -> [BookJob] {
+        let library = PhoneLibrary.shared
+        return library.books.map { book in
+            let audio = book.audio
+            return BookJob(id: book.id, title: book.title, authors: book.authors, url: library.textURL(book),
+                           textRecord: library.record(library.textKey(book)), audioRecord: library.record(library.audioKey(book)),
+                           sync: audio?.sync ?? [], totalMs: audio?.totalDurationMs, finished: book.finished,
+                           added: Date(timeIntervalSince1970: book.addedMs / 1000))
+        }
+    }
+}
+
+private enum MeetingDirectory {
+    static var root: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Meetings")
+    }
+}
+
+// MARK: - Aufträge (Werte, Sendable)
+
+private struct NoteJob: Sendable {
+    let id: String
+    let date: Date
+    let transcript: String
+    let reply: String
+}
+
+private struct BookJob: Sendable {
+    let id: String
+    let title: String
+    let authors: [String]
+    let url: URL
+    let textRecord: ProgressRecord?
+    let audioRecord: ProgressRecord?
+    let sync: [LibrarySyncPoint]
+    let totalMs: Double?
+    let finished: Bool
+    let added: Date
+}
+
+// MARK: - Indexierung
+
+/// Baut und pflegt den Index abseits des Hauptthreads. Merkt sich die Größe je Dokument für die Obergrenze.
+private actor AssistantIndexer {
+    struct Report {
+        var skipped = 0
+        var cancelled = false
+    }
+
+    /// Obergrenze für den Gesamttext im Speicher (Zeichen); Rest wird gemeldet, nicht still weggelassen.
+    static let maxChars = 30_000_000
+    /// Ein Buch in Arbeit zählt zwischen diesen Anteilen als „in Arbeit“: der Text endet an der Lesegrenze.
+    static let startedFraction = 0.02
+    static let finishedFraction = 0.95
+    /// Besprechung: so lange (s) oder so viele Zeichen höchstens in einem Abschnitt.
+    static let sectionSeconds = 60.0
+    static let sectionChars = 900
+
+    private let corpus: AssistantCorpus
+    private var sizes: [String: Int] = [:]
+
+    init(corpus: AssistantCorpus) { self.corpus = corpus }
+
+    func run(notes: [NoteJob], books: [BookJob], meetingsRoot: URL, progress: @escaping @Sendable (Int, Int) -> Void) async -> Report {
+        var report = Report()
+        var keep: [AssistantArea: Set<String>] = [:]
+        let meetings = Self.meetingFolders(meetingsRoot)
+        let total = notes.count + meetings.count + books.count
+        var done = 0
+        progress(0, total)
+
+        for job in notes {
+            if Task.isCancelled { report.cancelled = true; return report }
+            keep[.notes, default: []].insert(job.id)
+            let version = "\(job.transcript.utf8.count)|\(job.reply.utf8.count)|\(job.transcript.hashValue ^ job.reply.hashValue)"
+            let same = await unchanged(.notes, job.id, version)
+            if !same, let doc = Self.noteDocument(job, version: version) {
+                if !(await put(doc)) { report.skipped += 1 }
+            }
+            done += 1
+            progress(done, total)
+        }
+
+        let archive = try? MeetingArchive(root: meetingsRoot)
+        for (id, folder) in meetings {
+            if Task.isCancelled { report.cancelled = true; return report }
+            done += 1
+            defer { progress(done, total) }
+            guard let version = Self.fileStamp(folder.appendingPathComponent("meeting.json")), let archive else { continue }
+            let key = id.uuidString
+            if await unchanged(.transcripts, key, version) { keep[.transcripts, default: []].insert(key); continue }
+            guard let meeting = try? await archive.load(id), let doc = Self.meetingDocument(meeting, version: version) else { continue }
+            keep[.transcripts, default: []].insert(key)
+            if !(await put(doc)) { report.skipped += 1 }
+        }
+
+        for job in books {
+            if Task.isCancelled { report.cancelled = true; return report }
+            done += 1
+            defer { progress(done, total) }
+            guard let stamp = Self.fileStamp(job.url) else { continue }
+            let fraction = Self.fraction(job)
+            let limited = Self.isLimited(job, fraction: fraction)
+            let textBucket = job.textRecord.map { Int(LibraryProgress.reach($0) / 2_000) } ?? -1
+            let audioBucket = job.audioRecord.map { Int(LibraryProgress.reach($0) / 15_000) } ?? -1
+            let version = "\(stamp)|\(textBucket)|\(audioBucket)|\(limited ? "limit" : "all")"
+            keep[.books, default: []].insert(job.id)
+            if await unchanged(.books, job.id, version) { continue }
+            guard let doc = Self.bookDocument(job, fraction: fraction, limited: limited, version: version) else {
+                keep[.books]?.remove(job.id)
+                continue
+            }
+            if !(await put(doc)) { report.skipped += 1 }
+        }
+
+        // Aufräumen erst nach vollständigem Durchgang: ein abgebrochener Lauf löscht nichts.
+        for area in [AssistantArea.notes, .transcripts, .books] {
+            for item in await corpus.items(area: area) where keep[area]?.contains(item.id) != true {
+                await corpus.remove(id: item.id, area: area)
+                sizes["\(area.rawValue)/\(item.id)"] = nil
+            }
+        }
+        return report
+    }
+
+    private func unchanged(_ area: AssistantArea, _ id: String, _ version: String) async -> Bool {
+        await corpus.version(of: id, area: area) == version
+    }
+
+    /// `false`, wenn die Obergrenze überschritten würde (dann bleibt der alte Stand, falls vorhanden).
+    private func put(_ doc: AssistantDocument) async -> Bool {
+        let key = "\(doc.item.area.rawValue)/\(doc.item.id)"
+        let size = doc.sections.reduce(0) { $0 + $1.text.count }
+        let others = sizes.values.reduce(0, +) - (sizes[key] ?? 0)
+        guard others + size <= Self.maxChars else { return false }
+        await corpus.upsert(doc)
+        sizes[key] = size
+        return true
+    }
+
+    // MARK: Dateien
+
+    /// „Größe|Änderungszeit“; nil, wenn es die Datei nicht gibt.
+    private static func fileStamp(_ url: URL) -> String? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path) else { return nil }
+        let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
+        let time = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        return "\(size)|\(time)"
+    }
+
+    private static func meetingFolders(_ root: URL) -> [(UUID, URL)] {
+        let urls = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
+        return urls.compactMap { url in UUID(uuidString: url.lastPathComponent).map { ($0, url) } }
+    }
+
+    // MARK: Sprachnotizen
+
+    private static func noteDocument(_ job: NoteJob, version: String) -> AssistantDocument? {
+        let when = format(job.date, "dd.MM.yyyy, HH:mm")
+        var sections: [AssistantDocument.Section] = []
+        if !job.transcript.isEmpty { sections.append(.init(locator: when, text: job.transcript)) }
+        if !job.reply.isEmpty { sections.append(.init(locator: when, text: "Antwort der App: " + job.reply)) }
+        guard !sections.isEmpty else { return nil }
+        let item = AssistantItem(area: .notes, id: job.id, title: "Sprachnotiz vom \(when)", detail: format(job.date, "dd.MM.yyyy"), updated: job.date)
+        return AssistantDocument(item: item, version: version, sections: sections)
+    }
+
+    // MARK: Besprechungen
+
+    private static func meetingDocument(_ meeting: MeetingDocument, version: String) -> AssistantDocument? {
+        var sections: [AssistantDocument.Section] = []
+        var text = ""
+        var first: MeetingSegment?
+
+        func flush() {
+            if let first, !text.isEmpty { sections.append(.init(locator: clock(first.start), text: text)) }
+            text = ""
+            first = nil
+        }
+
+        for segment in meeting.segments.sorted(by: { $0.start < $1.start }) {
+            let body = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard meeting.aiPermitted(segment), !body.isEmpty else {
+                flush()                        // Lücke durch ein nicht erlaubtes oder leeres Segment: nie darüber hinweg verbinden
+                continue
+            }
+            let line = segment.speaker.map { "\($0): \(body)" } ?? body
+            let tooLong = first.map { segment.start - $0.start >= sectionSeconds } ?? false
+            if tooLong || text.count + line.count > sectionChars { flush() }
+            if first == nil { first = segment }
+            text += (text.isEmpty ? "" : "\n") + line
+        }
+        flush()
+
+        if let minutes = meeting.minutes {
+            let summary = minutesText(minutes)
+            if !summary.isEmpty { sections.append(.init(locator: "Protokoll", text: summary)) }
+        }
+        guard !sections.isEmpty else { return nil }
+
+        let name = URL(fileURLWithPath: meeting.originalName).deletingPathExtension().lastPathComponent
+        let date = format(meeting.createdAt, "dd.MM.yyyy")
+        let title = name.isEmpty ? "Besprechung vom \(date)" : name
+        let minutesLong = max(1, Int((meeting.duration / 60).rounded()))
+        let item = AssistantItem(area: .transcripts, id: meeting.id.uuidString, title: title, detail: "\(date) · \(minutesLong) min", updated: meeting.createdAt)
+        return AssistantDocument(item: item, version: version, sections: sections)
+    }
+
+    private static func minutesText(_ minutes: MeetingMinutes) -> String {
+        var parts: [String] = []
+        let summary = minutes.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !summary.isEmpty { parts.append("Zusammenfassung: " + summary) }
+        let decisions = minutes.decisions.map { entry -> String in
+            let context = entry.context.trimmingCharacters(in: .whitespacesAndNewlines)
+            return "- " + entry.text + (context.isEmpty ? "" : " (\(context))")
+        }
+        if !decisions.isEmpty { parts.append("Beschlüsse:\n" + decisions.joined(separator: "\n")) }
+        let tasks = minutes.tasks.map { task -> String in
+            var extra: [String] = []
+            if let who = task.assignee, !who.isEmpty { extra.append("zuständig: " + who) }
+            if let due = task.due, !due.isEmpty { extra.append("bis " + due) }
+            return "- " + task.text + (extra.isEmpty ? "" : " (\(extra.joined(separator: ", ")))")
+        }
+        if !tasks.isEmpty { parts.append("Aufgaben:\n" + tasks.joined(separator: "\n")) }
+        let steps = minutes.next_steps.map { step -> String in
+            "- " + step.text + ((step.owner ?? "").isEmpty ? "" : " (\(step.owner ?? ""))")
+        }
+        if !steps.isEmpty { parts.append("Nächste Schritte:\n" + steps.joined(separator: "\n")) }
+        let questions = minutes.open_questions.map { "- " + $0.text }
+        if !questions.isEmpty { parts.append("Offene Fragen:\n" + questions.joined(separator: "\n")) }
+        return parts.joined(separator: "\n")
+    }
+
+    /// „00:14:03“.
+    private static func clock(_ seconds: Double) -> String {
+        let total = max(0, Int(seconds.isFinite ? seconds : 0))
+        return String(format: "%02d:%02d:%02d", total / 3600, (total % 3600) / 60, total % 60)
+    }
+
+    // MARK: Bücher
+
+    /// Anteil 0…1 aus Lesen und Hören; „fertig“ zählt als 1.
+    private static func fraction(_ job: BookJob) -> Double {
+        if job.finished { return 1 }
+        return max(LibraryProgress.fraction(job.textRecord), LibraryProgress.fraction(job.audioRecord))
+    }
+
+    private static func isLimited(_ job: BookJob, fraction: Double) -> Bool {
+        !job.finished && fraction >= startedFraction && fraction <= finishedFraction
+    }
+
+    private static func bookDocument(_ job: BookJob, fraction: Double, limited: Bool, version: String) -> AssistantDocument? {
+        guard let text = try? String(contentsOf: job.url, encoding: .utf8), !text.isEmpty else { return nil }
+        var limit: Int?
+        if limited {
+            let length = Double(text.utf16.count)
+            var map: FollowMap?
+            if let total = job.totalMs, total > 0, !job.sync.isEmpty { map = FollowMap(sync: job.sync, textLength: length, totalMs: total) }
+            // Ohne Lesegrenze (nur eine Schätzung vom Hörbuch ohne Abgleich): der geschätzte Anteil, nie mehr.
+            limit = LibraryProgress.frontier(text: job.textRecord, audio: job.audioRecord, map: map) ?? Int((fraction * length).rounded(.down))
+        }
+        let index = BookTalkIndex(title: job.title, text: text)
+        var sections: [AssistantDocument.Section] = []
+        for chunk in index.chunks {
+            let part: BookTalkChunk?
+            if let limit { part = chunk.truncated(atFrontier: limit) } else { part = chunk }
+            guard let part, !part.text.isEmpty else { continue }
+            let title = part.chapterTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            let locator = part.page.map { "S. \($0)" } ?? (title.isEmpty ? nil : title)
+            sections.append(.init(locator: locator, text: part.text))
+        }
+        guard !sections.isEmpty else { return nil }
+
+        var detail = job.authors.joined(separator: ", ")
+        if fraction > 0 {
+            let percent = "\(Int((fraction * 100).rounded(.down))) % gelesen"
+            detail = detail.isEmpty ? percent : detail + " · " + percent
+        }
+        let item = AssistantItem(area: .books, id: job.id, title: job.title, detail: detail.isEmpty ? nil : detail, updated: job.added)
+        return AssistantDocument(item: item, version: version, sections: sections)
+    }
+
+    private static func format(_ date: Date, _ pattern: String) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "de_DE")
+        formatter.dateFormat = pattern
+        return formatter.string(from: date)
+    }
+}
+
+// MARK: - Ablage
+
+/// Die Ablage als Quelle: dieselbe Suche und dieselben Schutzregeln wie die Seite „Ablage“ (Index-Tor, Papierkorb,
+/// angehaltene und nur lokale Dateien bleiben draußen). Ein Cloud-Modell bekommt nur Dokumente der Klasse „öffentlich“:
+/// das iPhone kennt die Cloud-Freigabe der Ablage nicht (sie liegt nur am PC), also gilt die strengste Lesart.
+struct AblageAssistantSource: AssistantSource {
+    let cloud: Bool
+
+    var area: AssistantArea { .files }
+
+    func items() async -> [AssistantItem] {
+        let files = await MainActor.run { AblageSync.shared.uebersicht?.dateien ?? [] }
+        return files.filter { allowed($0) && $0.textBereit }.map { file in
+            AssistantItem(area: .files, id: file.id, title: file.name, detail: file.typ?.uppercased(), updated: nil)
+        }
+    }
+
+    func search(_ question: String, limit: Int) async -> [AssistantPassage] {
+        guard limit > 0 else { return [] }
+        let found = await AblageSync.shared.suchen(question)
+        var out: [AssistantPassage] = []
+        for (rank, result) in found.filter({ allowed($0.eintrag) }).enumerated() {
+            let score = 1.0 / Double(1 + rank)
+            for place in result.stellen {
+                out.append(AssistantPassage(area: .files, itemId: result.eintrag.id, title: result.eintrag.name,
+                                            locator: AblageAnker.beschreibung(place.anker), text: place.auszug, score: score))
+            }
+        }
+        return Array(out.prefix(limit))
+    }
+
+    private func allowed(_ file: AblageDateiEintrag) -> Bool {
+        guard !file.imKorb, file.zustand != .angehalten, file.zustand != .nurGeraet else { return false }
+        return cloud ? file.klasse == .public : true
+    }
+}

@@ -77,6 +77,10 @@ private struct VoiceHome: View {
     @ObservedObject private var settings = AppSettings.shared
     @State private var query = ""
     @State private var selectedHistoryNote: Entry?
+    /// Verlauf (früher Tab): öffnet oben links auf „Sprechen“ als Unterseite.
+    @State private var showHistory = false
+    /// Gesprächsmodus „Sprechen“ (Paket A) als Vollbild.
+    @State private var showAssistant = false
     @FocusState private var searchFocused: Bool
     #if DEBUG
     @State private var tab = ProcessInfo.processInfo.arguments.contains("--meeting-import-probe") ? 2
@@ -148,7 +152,7 @@ private struct VoiceHome: View {
                             HStack {
                                 Text("ZULETZT GESPEICHERT").font(.caption.weight(.medium)).tracking(0.8).foregroundStyle(VoicePalette.secondaryText)
                                 Spacer()
-                                Button("Alle anzeigen") { tab = 1 }.font(.subheadline).accessibilityIdentifier("allHistory")
+                                Button("Alle anzeigen") { showHistory = true }.font(.subheadline).accessibilityIdentifier("allHistory")
                             }
                             if model.entries.isEmpty { emptyHistory }
                             ForEach(Array(model.entries.prefix(5))) { entry in
@@ -162,67 +166,77 @@ private struct VoiceHome: View {
                 .navigationTitle("Local Voice")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button { showHistory = true } label: { Image(systemName: "clock.arrow.circlepath") }
+                            .accessibilityLabel("Verlauf").accessibilityIdentifier("historyButton")
+                    }
                     ToolbarItem(placement: .topBarTrailing) {
                         SettingsButton().accessibilityIdentifier("settings")
                     }
                 }
+                .navigationDestination(isPresented: $showHistory) { historyScreen }
             }
             .tabItem { Label("Sprechen", systemImage: "waveform") }.tag(0)
             MeetingLibraryView().tabItem { Label("Transkripte", systemImage: "doc.text") }.tag(2)
-            NavigationStack {
-                List {
-                    Group {
-                        HStack(spacing: 10) {
-                            Image(systemName: "magnifyingglass").foregroundStyle(VoicePalette.secondaryText)
-                            TextField("Aufnahmen und Antworten suchen", text: $query)
-                                .focused($searchFocused).submitLabel(.search)
-                                .onSubmit { searchFocused = false }
-                                .accessibilityIdentifier("historySearch")
-                            if !query.isEmpty {
-                                Button("Suche leeren", systemImage: "xmark.circle.fill") { query = "" }
-                                    .labelStyle(.iconOnly).foregroundStyle(VoicePalette.secondaryText)
-                            }
-                            if searchFocused {
-                                Button("Fertig") { searchFocused = false }.accessibilityIdentifier("closeSearch")
-                            }
-                        }.padding(14)
-                            .background(VoicePalette.background, in: RoundedRectangle(cornerRadius: 8))
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(VoicePalette.border, lineWidth: 1))
-                        if !model.storageIssues.isEmpty { recovery }
-                        if model.entries.isEmpty { emptyHistory }
-                        else if filteredEntries.isEmpty {
-                            ContentUnavailableView("Keine passende Aufnahme", systemImage: "magnifyingglass", description: Text("Versuche einen anderen Suchbegriff."))
-                        }
-                        ForEach(filteredEntries) { entry in
-                            Button { selectedHistoryNote = entry } label: { VoiceEntryRow(entry: entry).voiceCard() }
-                                .buttonStyle(.plain).accessibilityIdentifier("historyEntry")
-                                .modifier(NoteDeletion(model: model, entry: entry))
-                        }
-                    }.listRowBackground(VoicePalette.background)
-                }
-                .scrollContentBackground(.hidden)
-                .background(VoicePalette.background)
-                .navigationDestination(isPresented: Binding(get: { selectedHistoryNote != nil }, set: { if !$0 { selectedHistoryNote = nil } })) {
-                    if let entry = selectedHistoryNote { VoiceEntryDetail(model: model, original: entry) }
-                }
-                .navigationTitle("Verlauf")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .topBarTrailing) { SettingsButton() } }
-
-            }.tabItem { Label("Verlauf", systemImage: "clock.arrow.circlepath") }.tag(1)
             LibraryTab().tabItem { Label("Bibliothek", systemImage: "books.vertical") }.tag(3)
             AblageTab().tabItem { Label("Ablage", systemImage: "folder") }.tag(4)
         }
         .sheet(isPresented: $settings.shown) { ModelPanel(model: model) }
+        .fullScreenCover(isPresented: $showAssistant) {
+            AssistantConversationView().tint(VoicePalette.accent).foregroundStyle(VoicePalette.text)
+        }
         .task { await PhononEngine.shared.refresh() }
         // „Öffnen in“ Local Voice: Datei vormerken, zu den Transkripten wechseln; dort folgt die Bestätigung.
+        // Ein offenes Gespräch schließt dafür (es liegt über allem und würde die Bestätigung verdecken).
         .onOpenURL { url in
+            showAssistant = false
             if url.isFileURL { IncomingFiles.shared.add(url); tab = 2 } else { PairingFlow.shared.open(url) }
         }
         #endif
     }
 
     #if os(iOS)
+    /// Der frühere Tab „Verlauf“: Suche, Wiederherstellung, Liste der Aufnahmen und Antworten.
+    private var historyScreen: some View {
+        List {
+            Group {
+                HStack(spacing: 10) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(VoicePalette.secondaryText)
+                    TextField("Aufnahmen und Antworten suchen", text: $query)
+                        .focused($searchFocused).submitLabel(.search)
+                        .onSubmit { searchFocused = false }
+                        .accessibilityIdentifier("historySearch")
+                    if !query.isEmpty {
+                        Button("Suche leeren", systemImage: "xmark.circle.fill") { query = "" }
+                            .labelStyle(.iconOnly).foregroundStyle(VoicePalette.secondaryText)
+                    }
+                    if searchFocused {
+                        Button("Fertig") { searchFocused = false }.accessibilityIdentifier("closeSearch")
+                    }
+                }.padding(14)
+                    .background(VoicePalette.background, in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(VoicePalette.border, lineWidth: 1))
+                if !model.storageIssues.isEmpty { recovery }
+                if model.entries.isEmpty { emptyHistory }
+                else if filteredEntries.isEmpty {
+                    ContentUnavailableView("Keine passende Aufnahme", systemImage: "magnifyingglass", description: Text("Versuche einen anderen Suchbegriff."))
+                }
+                ForEach(filteredEntries) { entry in
+                    Button { selectedHistoryNote = entry } label: { VoiceEntryRow(entry: entry).voiceCard() }
+                        .buttonStyle(.plain).accessibilityIdentifier("historyEntry")
+                        .modifier(NoteDeletion(model: model, entry: entry))
+                }
+            }.listRowBackground(VoicePalette.background)
+        }
+        .scrollContentBackground(.hidden)
+        .background(VoicePalette.background)
+        .navigationDestination(isPresented: Binding(get: { selectedHistoryNote != nil }, set: { if !$0 { selectedHistoryNote = nil } })) {
+            if let entry = selectedHistoryNote { VoiceEntryDetail(model: model, original: entry) }
+        }
+        .navigationTitle("Verlauf")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .topBarTrailing) { SettingsButton() } }
+    }
     private var filteredEntries: [Entry] {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
         return text.isEmpty ? model.entries : model.entries.filter {
@@ -292,24 +306,62 @@ private struct VoiceHome: View {
             }.accessibilityIdentifier("voiceSettings")
             MicrophoneSettings(model: model)
             if model.handsFreeEnabled {
-                Text("Nach einer Sprechpause antworten. Danach wieder zuhören. Beim Vorlesen pausiert das Mikrofon.").font(.caption2).foregroundStyle(VoicePalette.secondaryText)
-                Text("Beim Verlassen dieser App pausiert das Freisprechen. Kontext: bis zu 6 vorherige Wortwechsel dieses Gesprächs, lokal gespeichert.").font(.caption2).foregroundStyle(VoicePalette.secondaryText)
-                Button("Neues Gespräch", systemImage: "plus.bubble") { model.newConversation() }
-                if model.conversationRunning { Text(model.recording ? "Mikrofon aktiv" : "Warte auf Antwort").font(.caption).foregroundStyle(VoicePalette.accent) }
+                #if os(iOS)
+                if model.assistantMode { assistantNotes } else { handsFreeNotes }
+                #else
+                handsFreeNotes
+                #endif
             }
         }
     }
+    @ViewBuilder private var handsFreeNotes: some View {
+        Text("Nach einer Sprechpause antworten. Danach wieder zuhören. Beim Vorlesen pausiert das Mikrofon.").font(.caption2).foregroundStyle(VoicePalette.secondaryText)
+        Text("Beim Verlassen dieser App pausiert das Freisprechen. Kontext: bis zu 6 vorherige Wortwechsel dieses Gesprächs, lokal gespeichert.").font(.caption2).foregroundStyle(VoicePalette.secondaryText)
+        Button("Neues Gespräch", systemImage: "plus.bubble") { model.newConversation() }
+        if model.conversationRunning { Text(model.recording ? "Mikrofon aktiv" : "Warte auf Antwort").font(.caption).foregroundStyle(VoicePalette.accent) }
+    }
+    #if os(iOS)
+    /// Mit Freisprechen öffnet der Hauptknopf das Gespräch (Vollbild, durchgehendes Zuhören, Unterbrechen per Stimme).
+    @ViewBuilder private var assistantNotes: some View {
+        Text("Der Hauptknopf öffnet ein Gespräch: Ich höre durchgehend zu, antworte aus Büchern, Besprechungen, Notizen und Ablage, und du kannst mich beim Sprechen unterbrechen.").font(.caption2).foregroundStyle(VoicePalette.secondaryText)
+        Text("Beim Verlassen der App endet das Gespräch. Der Verlauf bleibt lokal gespeichert; „Neues Gespräch“ im Menü des Gesprächs löscht ihn.").font(.caption2).foregroundStyle(VoicePalette.secondaryText)
+    }
+    #endif
+    /// Beschriftung des Hauptknopfs. Mit Freisprechen öffnet er auf dem iPhone das Gespräch („Gespräch starten“).
+    private var recordTitle: String {
+        if model.conversationRunning { return "Gespräch beenden" }
+        if model.recording { return "Aufnahme sichern" }
+        #if os(iOS)
+        if model.assistantMode { return "Gespräch starten" }
+        #endif
+        return "Sprechen"
+    }
+    private var recordHint: String {
+        if model.recording { return "Beendet die Aufnahme und speichert sie auf diesem Gerät." }
+        #if os(iOS)
+        if model.assistantMode { return "Öffnet das Gespräch. Ich höre zu und antworte aus deinen Büchern, Besprechungen, Notizen und der Ablage." }
+        #endif
+        return "Startet eine Aufnahme von höchstens 30 Sekunden."
+    }
+    private func recordTapped() {
+        if model.conversationRunning { model.stopConversation(); return }
+        if model.recording { model.stop(); return }
+        #if os(iOS)
+        if model.assistantMode { showAssistant = true; return }
+        #endif
+        model.start()
+    }
     private var recordButton: some View {
-        Button { if model.conversationRunning { model.stopConversation() } else { model.recording ? model.stop() : model.start() } } label: {
-            Label(model.conversationRunning ? "Gespräch beenden" : model.recording ? "Aufnahme sichern" : "Sprechen", systemImage: model.recording || model.conversationRunning ? "stop.fill" : "mic.fill")
+        Button { recordTapped() } label: {
+            Label(recordTitle, systemImage: model.recording || model.conversationRunning ? "stop.fill" : "mic.fill")
                 .font(.headline)
                 .foregroundStyle(model.recording || model.conversationRunning ? Color.white : VoicePalette.ink)
                 .frame(maxWidth: .infinity, minHeight: 44)
         }
         .buttonStyle(VoicePrimaryButtonStyle(recording: model.recording || model.conversationRunning))
         .accessibilityIdentifier("record")
-        .accessibilityLabel(model.conversationRunning ? "Gespräch beenden" : model.recording ? "Aufnahme sichern" : "Sprechen")
-        .accessibilityHint(model.recording ? "Beendet die Aufnahme und speichert sie auf diesem Gerät." : "Startet eine Aufnahme von höchstens 30 Sekunden.")
+        .accessibilityLabel(recordTitle)
+        .accessibilityHint(recordHint)
     }
 
     private var recovery: some View {

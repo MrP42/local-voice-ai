@@ -84,7 +84,9 @@ final class VoiceUITests: XCTestCase {
         app.buttons["voice-system"].tap()
     }
     func testStartStopAndReturnFromHome() throws {
+        // Einzelaufnahme: ohne Freisprechen (mit Freisprechen öffnet der Hauptknopf das Gespräch).
         let app = XCUIApplication()
+        app.launchArguments = ["--no-handsfree"]
         app.launch()
         let record = app.buttons["record"]
         XCTAssertTrue(record.waitForExistence(timeout: 15))
@@ -175,34 +177,49 @@ final class VoiceUITests: XCTestCase {
     }
     #endif
     func testConversationOptionsDoNotRecordUntilStartedAndCanStop() throws {
-        let app = XCUIApplication(); app.launch()
+        let app = XCUIApplication(); app.launchArguments = ["--no-handsfree"]; app.launch()
         app.buttons["Gespräch"].firstMatch.tap()
         let handsFree = app.switches["handsFreeEnabled"]
         XCTAssertTrue(handsFree.waitForExistence(timeout: 5))
-        let original = handsFree.value as? String
-        if original != "1" { handsFree.tap() }
+        XCTAssertEqual(handsFree.value as? String, "0")
         let record = app.buttons["record"]
         XCTAssertEqual(record.label, "Sprechen")
+        handsFree.tap()
+        // Mit Freisprechen öffnet der Hauptknopf das Gespräch; es beginnt erst nach dem Tippen.
+        XCTAssertEqual(record.label, "Gespräch starten")
         XCTAssertTrue(app.switches["autoPlayReplies"].exists)
+        XCTAssertFalse(app.staticTexts["Mikrofon aktiv"].exists)
         keepScreenshot(app, name: "Gespraech-Optionen")
         record.tap()
-        XCTAssertTrue(app.buttons["Gespräch beenden"].waitForExistence(timeout: 5))
-        app.buttons["record"].tap()
-        XCTAssertEqual(record.label, "Sprechen")
-        // Delivery/processing may replace the status immediately. The recording intent must stay stopped.
-        let settled = expectation(description: "Stopped conversation must not restart the microphone")
+        let permission = app.alerts.firstMatch
+        if permission.waitForExistence(timeout: 3) {
+            let allow = permission.buttons.matching(NSPredicate(format: "label IN %@", ["Erlauben", "Allow", "OK"])).firstMatch
+            if allow.exists { allow.tap() }
+        }
+        let close = app.buttons["assistantClose"]
+        XCTAssertTrue(close.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.descendants(matching: .any)["assistantState"].waitForExistence(timeout: 5))
+        keepScreenshot(app, name: "Gespraech-Vollbild")
+        close.tap()
+        XCTAssertTrue(record.waitForExistence(timeout: 10))
+        XCTAssertEqual(record.label, "Gespräch starten")
+        // Nach dem Schließen darf kein Mikrofon laufen: der Hauptknopf zeigt weder Aufnahme noch laufendes Gespräch.
+        let settled = expectation(description: "Closed conversation must not restart the microphone")
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { settled.fulfill() }
         wait(for: [settled], timeout: 4)
+        XCTAssertEqual(record.label, "Gespräch starten")
+        XCTAssertFalse(app.buttons["assistantClose"].exists)
+        handsFree.tap()
         XCTAssertEqual(record.label, "Sprechen")
-        XCTAssertFalse(app.staticTexts["Mikrofon aktiv"].exists)
-        if original != "1" { handsFree.tap() }
     }
     #if targetEnvironment(simulator)
     func testConversationRearmsAfterEmptyTranscription() throws {
-        let app = XCUIApplication(); app.launchArguments = ["--conversation-no-speech-probe"]; app.launch()
+        // Aufnahme-Unterhaltung: `--legacy-conversation` lässt den Hauptknopf auch mit Freisprechen aufnehmen.
+        let app = XCUIApplication(); app.launchArguments = ["--conversation-no-speech-probe", "--legacy-conversation"]; app.launch()
         app.buttons["Gespräch"].firstMatch.tap()
         let handsFree = app.switches["handsFreeEnabled"]
-        if handsFree.value as? String != "1" { handsFree.tap() }
+        let originalHandsFree = handsFree.value as? String
+        if originalHandsFree != "1" { handsFree.tap() }
         app.buttons["record"].tap()
         XCTAssertTrue(app.staticTexts["Keine Sprache erkannt · Du kannst weitersprechen"].firstMatch.waitForExistence(timeout: 15))
         XCTAssertTrue(app.staticTexts["Mikrofon aktiv"].waitForExistence(timeout: 10))
@@ -210,10 +227,10 @@ final class VoiceUITests: XCTestCase {
         keepScreenshot(app, name: "Gespraech-nach-leerer-Transkription")
         app.buttons["record"].tap()
         XCTAssertEqual(app.buttons["record"].label, "Sprechen")
-        handsFree.tap()
+        if originalHandsFree != "1" { handsFree.tap() }
     }
     func testConversationRearmsAfterReplyAndPausesWhenLeavingApp() throws {
-        let app = XCUIApplication(); app.launchArguments = ["--conversation-cycle-probe"]; app.launch()
+        let app = XCUIApplication(); app.launchArguments = ["--conversation-cycle-probe", "--legacy-conversation"]; app.launch()
         app.buttons["Gespräch"].firstMatch.tap()
         let handsFree = app.switches["handsFreeEnabled"], playback = app.switches["autoPlayReplies"]
         let originalHandsFree = handsFree.value as? String, originalPlayback = playback.value as? String
@@ -234,7 +251,7 @@ final class VoiceUITests: XCTestCase {
     #if os(iOS)
     func testSwipeDeleteWaitsForConfirmation() throws {
         let app = XCUIApplication(); app.launchArguments = ["--original-playback-probe"]; app.launch()
-        app.tabBars.buttons["Verlauf"].tap()
+        app.buttons["historyButton"].tap()
         let note = app.buttons["historyEntry"].firstMatch
         XCTAssertTrue(note.waitForExistence(timeout: 10)); note.swipeLeft()
         app.buttons["swipeDeleteNote"].tap()
@@ -346,7 +363,7 @@ final class VoiceUITests: XCTestCase {
         keepScreenshot(app, name: "Aufzeichnung-Export")
     }
     func testRetryReconstructsComponentsAfterSetupFailure() throws {
-        let app = XCUIApplication(); app.launchArguments = ["--setup-failure-probe"]; app.launch()
+        let app = XCUIApplication(); app.launchArguments = ["--setup-failure-probe", "--no-handsfree"]; app.launch()
         let status = app.staticTexts["status"]
         XCTAssertTrue(status.waitForExistence(timeout: 15))
         XCTAssertTrue(status.label.contains("Speicherprüfung"))
@@ -363,7 +380,9 @@ final class VoiceUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Fertig"].waitForExistence(timeout: 10))
         app.buttons["Fertig"].tap()
         XCTAssertTrue(app.buttons["record"].waitForExistence(timeout: 10))
-        app.tabBars.buttons["Verlauf"].tap()
+        // Der Verlauf ist kein Tab mehr: oben links auf „Sprechen“ öffnet er als Unterseite.
+        XCTAssertFalse(app.tabBars.buttons["Verlauf"].exists)
+        app.buttons["historyButton"].tap()
         XCTAssertTrue(app.navigationBars["Verlauf"].waitForExistence(timeout: 10))
         let entry = app.buttons.matching(identifier: "historyEntry").firstMatch
         XCTAssertTrue(entry.waitForExistence(timeout: 10)); entry.tap()
@@ -379,8 +398,9 @@ final class VoiceUITests: XCTestCase {
         keepScreenshot(app, name: "Verlauf-Suche")
         let cancelSearch = app.buttons["closeSearch"]
         XCTAssertTrue(cancelSearch.waitForExistence(timeout: 5)); cancelSearch.tap()
-        app.tabBars.buttons["Sprechen"].tap()
+        app.navigationBars["Verlauf"].buttons.firstMatch.tap()
         XCTAssertTrue(app.buttons["record"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["historyButton"].exists)
     }
     func testModelPanelShowsLocalModelChoices() throws {
         let app = XCUIApplication(); app.launch()

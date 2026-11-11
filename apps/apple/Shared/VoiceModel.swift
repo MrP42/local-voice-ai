@@ -55,7 +55,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
     @Published var autoPlayReplies = UserDefaults.standard.object(forKey: "autoPlayReplies") as? Bool ?? true {
         didSet { UserDefaults.standard.set(autoPlayReplies, forKey: "autoPlayReplies") }
     }
-    @Published var handsFreeEnabled = UserDefaults.standard.bool(forKey: "handsFreeEnabled") {
+    @Published var handsFreeEnabled = VoiceModel.storedHandsFree() {
         didSet { UserDefaults.standard.set(handsFreeEnabled, forKey: "handsFreeEnabled"); if !handsFreeEnabled { endConversation() } }
     }
     @Published var microphoneSensitivity = MicrophoneSensitivity(rawValue: UserDefaults.standard.string(forKey: "microphoneSensitivity") ?? "") ?? .balanced {
@@ -68,6 +68,23 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
     @Published private(set) var conversationId = UserDefaults.standard.string(forKey: "conversationId").flatMap(UUID.init(uuidString:))
     private var awaitingConversationReply: UUID?
     private var resumeConversationTask: Task<Void, Never>?
+
+    /// Freisprechen ist mit dem Gesprächsmodus (Paket A) auf dem iPhone Standard: einmal für Bestandsgeräte nachziehen
+    /// (Merker `assistant_handsfree_migrated`, Logik und Tests in `AssistantHandsFreeMigration`), danach gilt die Wahl im
+    /// Menü. Auf der Watch bleibt es beim alten Wert.
+    nonisolated static func storedHandsFree() -> Bool {
+        #if os(iOS)
+        #if DEBUG
+        // UI-Tests der Einzelaufnahme starten ohne Freisprechen (jedes Mal, unabhängig vom Merker).
+        let forceOff = ProcessInfo.processInfo.arguments.contains("--no-handsfree")
+        #else
+        let forceOff = false
+        #endif
+        return AssistantHandsFreeMigration.resolve(.standard, forceOff: forceOff)
+        #else
+        return UserDefaults.standard.bool(forKey: "handsFreeEnabled")
+        #endif
+    }
 
     @Published var fixedAnswer = UserDefaults.standard.object(forKey: "fixedAnswer") as? Bool ?? false {
         didSet {
@@ -493,6 +510,26 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
         stopAllSpeech()
         status = "Gespräch beendet · Verlauf gespeichert"
     }
+    #if os(iOS)
+    /// Hauptknopf öffnet das neue Gespräch (Vollbild) statt der Aufnahme-Unterhaltung. Nur mit Freisprechen; die alten
+    /// UI-Tests der Aufnahme-Unterhaltung starten mit `--legacy-conversation`.
+    var assistantMode: Bool {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--legacy-conversation") { return false }
+        #endif
+        return handsFreeEnabled
+    }
+
+    /// Gesprächsmodus „Sprechen“ (Paket A): das Zuhören gehört jetzt dem Assistenten. Aufnahme-Unterhaltung, Originalwiedergabe,
+    /// Hörprobe und alte Sprachausgabe enden still (ohne Statusmeldung), damit nichts unter dem Gespräch weiterläuft.
+    func yieldToAssistant() {
+        endConversation()
+        stopOriginalPlayback()
+        previewingVoiceID = nil
+        currentUtterance = nil; speakingId = nil
+        stopAllSpeech()
+    }
+    #endif
     private func handleAnswer(_ text: String, id: UUID) {
         guard originalPlayer == nil else { return }
         if let entry = entries.first(where: { $0.id == id }), ConversationOutcome.isNoSpeech(entry) {

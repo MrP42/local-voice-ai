@@ -12,6 +12,16 @@ final class BookTalkSpeaker {
     var onIdle: (() -> Void)?
     /// Erster Satz klingt (Zustand „Anton spricht“).
     var onAudible: (() -> Void)?
+    /// Gesprächsmodus (Paket A, „Sprechen“): die Sitzung gehört dem durchgehenden Zuhören (`.playAndRecord`/`.voiceChat`),
+    /// deshalb wird sie vor der Antwort nicht auf Wiedergabe umgestellt. Standard aus = Verhalten des Buch-Gesprächs.
+    var conversationMode = false
+    /// Gewählte Stimme (Kennung wie `VoiceModel.selectedVoiceID`): Phonon, sonst Systemstimme dieser Kennung; leer =
+    /// Standardstimme des Systems. `nil` (Standard) = Anton wie bisher.
+    var voiceID: String?
+    /// Satzbeginn und -ende der Wiedergabe (für Echo-Wächter und Verlauf); das Ende kommt nur, wenn der Satz zu Ende
+    /// gesprochen wurde, nicht nach `stop()`.
+    var onSentenceStarted: ((String) -> Void)?
+    var onSentenceFinished: ((String) -> Void)?
 
     private(set) var isActive = false
     private var queue: [String] = []
@@ -70,12 +80,14 @@ final class BookTalkSpeaker {
         let g = generation
         isActive = true
         task = Task { [weak self] in
-            Self.activatePlayback()
+            if self?.conversationMode != true { Self.activatePlayback() }
             var announced = false
             while let self, g == self.generation, !self.queue.isEmpty {
                 let text = self.queue.removeFirst()
                 if !announced { announced = true; self.onAudible?() }
+                self.onSentenceStarted?(text)
                 await self.speak(text, generation: g)
+                if g == self.generation { self.onSentenceFinished?(text) }
             }
             guard let self, g == self.generation else { return }
             self.task = nil
@@ -101,6 +113,12 @@ final class BookTalkSpeaker {
         guard !phononFailed else { return nil }
         let code = language == .de ? "de" : "en"
         guard let voices = PhononEngine.shared.voices[code], !voices.isEmpty else { return nil }
+        if let voiceID {
+            // Gewählte Stimme: Phonon nur, wenn sie zur Antwortsprache passt und vorhanden ist; eine Systemstimme (oder
+            // keine Wahl) bleibt bei der Systemstimme. Eine Phonon-Stimme der anderen Sprache fällt auf die Vorgabe zurück.
+            guard let name = PhononEngine.voiceName(voiceID) else { return nil }
+            if let parts = PhononEngine.parts(name), parts.language == code, voices.contains(parts.voice) { return name }
+        }
         if language == .de { return voices.contains(Self.voiceName) ? "de:\(Self.voiceName)" : nil }
         return "en:\(voices[0])"
     }
@@ -120,7 +138,7 @@ final class BookTalkSpeaker {
             }
         }
         guard g == generation else { return }
-        await system.speak(text, language: language)
+        await system.speak(text, language: language, voiceID: voiceID)
     }
 }
 
@@ -137,15 +155,24 @@ private final class SystemSpeech: NSObject, AVSpeechSynthesizerDelegate {
         synth.delegate = self
     }
 
-    func speak(_ text: String, language: BookTalkLanguage) async {
+    func speak(_ text: String, language: BookTalkLanguage, voiceID: String? = nil) async {
         let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = language == .de ? LibraryPlayback.defaultVoice() : AVSpeechSynthesisVoice(language: "en-US")
+        utterance.voice = Self.voice(language: language, id: voiceID)
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             waiting?.resume()
             waiting = continuation
             current = ObjectIdentifier(utterance)
             synth.speak(utterance)
         }
+    }
+
+    /// Gewählte Systemstimme, wenn sie zur Sprache passt; sonst die Vorgabe wie bisher.
+    private static func voice(language: BookTalkLanguage, id: String?) -> AVSpeechSynthesisVoice? {
+        if let id, !id.isEmpty, PhononEngine.voiceName(id) == nil, let chosen = AVSpeechSynthesisVoice(identifier: id),
+           chosen.language.lowercased().hasPrefix(language == .de ? "de" : "en") {
+            return chosen
+        }
+        return language == .de ? LibraryPlayback.defaultVoice() : AVSpeechSynthesisVoice(language: "en-US")
     }
 
     func stop() {

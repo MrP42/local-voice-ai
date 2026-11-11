@@ -1,0 +1,618 @@
+import SwiftUI
+
+// Gesprächsmodus „Sprechen“ (Paket A): Vollbildansicht. Gestaltung wie das Buch-Gespräch (`BookTalkSheet`): ruhige
+// Flächen, Ziele von mindestens 44 pt, Farben aus `VoicePalette`. Jeder Zustand steht als Text da; die Bewegung ist nur
+// Beiwerk und entfällt bei „Bewegung reduzieren“.
+
+private enum AssistantColors {
+    /// Weiß darauf ≥ 4,5:1 (wie im Buch-Gespräch).
+    static let fill = Color(red: 0, green: 0.4, blue: 0.8)
+    static var card: Color { VoicePalette.text.opacity(0.06) }
+}
+
+struct AssistantConversationView: View {
+    @ObservedObject private var talk = AssistantController.shared
+    @ObservedObject private var relays = BookTalkRelayStore.shared
+    @ObservedObject private var endpoints = AssistantEndpointStore.shared
+    @ObservedObject private var hub = AssistantSources.shared
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @ScaledMetric(relativeTo: .title) private var pulseSize: CGFloat = 56
+    @State private var typing = false
+    @State private var draft = ""
+    @State private var showEndpoint = false
+    @State private var endpointBefore: AssistantEndpoint?
+    @State private var gemmaReady = false
+    @FocusState private var fieldFocused: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            content
+            Divider()
+            bottom
+        }
+        .background(VoicePalette.background)
+        .task {
+            gemmaReady = AssistantEngine.gemmaInstalled()
+            await talk.start()
+        }
+        .task { await relays.refresh() }
+        .onDisappear { talk.end() }
+        .onChange(of: scenePhase) { _, phase in if phase != .active { talk.sceneInactive(background: phase == .background) } }
+        .accessibilityAction(.magicTap) { magicTap() }
+        .accessibilityAction(.escape) { close() }
+        .alert(talk.consentRequest?.title ?? "", isPresented: Binding(get: { talk.consentRequest != nil }, set: { if !$0 { talk.declineConsent() } }),
+               presenting: talk.consentRequest) { _ in
+            Button("Abbrechen", role: .cancel) { talk.declineConsent() }
+            Button("Freigeben") { talk.grantConsent() }
+        } message: { request in
+            Text(request.message)
+        }
+        .sheet(isPresented: $showEndpoint, onDismiss: endpointClosed) {
+            NavigationStack {
+                AssistantEndpointSettingsView()
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) { Button("Fertig") { showEndpoint = false } }
+                    }
+            }
+        }
+    }
+
+    // MARK: Aktionen
+
+    private func close() {
+        talk.end()
+        dismiss()
+    }
+
+    /// Zwei-Finger-Doppeltipp (VoiceOver): läuft eine Antwort, anhalten; sonst Stumm umschalten.
+    private func magicTap() {
+        if talk.phase == .thinking || talk.phase == .speaking { talk.stopAnswer() } else if talk.running { talk.toggleMute() }
+    }
+
+    private func sendDraft() {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        talk.send(text: text)
+        draft = ""
+    }
+
+    /// Nach den Einstellungen des Endpunkts: Neuer oder geänderter Endpunkt wird gewählt; ein entfernter, der gerade
+    /// gewählt war, fällt auf das Apple-Modell zurück (sonst liefe das Gespräch weiter an die alte Adresse).
+    private func endpointClosed() {
+        let now = endpoints.endpoint
+        guard now != endpointBefore else { return }
+        if now == nil {
+            if talk.selectedChoice == .endpoint { talk.selectModel(.apple) }
+        } else {
+            talk.selectModel(.endpoint)
+        }
+    }
+
+    private func perform(_ action: AssistantNotice.Action) {
+        switch action {
+        case .retrySend: talk.retry()
+        case .resume, .retryStart: talk.resume()
+        }
+    }
+
+    // MARK: Kopf
+
+    private var header: some View {
+        HStack(spacing: 4) {
+            Button(action: close) {
+                Image(systemName: "xmark").font(.body.weight(.semibold)).frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Gespräch beenden")
+            .accessibilityIdentifier("assistantClose")
+            Spacer(minLength: 8)
+            modelMenu
+            optionsMenu
+        }
+        .padding(.horizontal, 8).padding(.top, 4)
+    }
+
+    /// Modellchip: „Lokal“ oder „Cloud“ und der Name des Modells; das Menü wählt das Modell.
+    private var modelMenu: some View {
+        Menu {
+            Section("Lokal") {
+                choice("Apple-Systemmodell", .apple, icon: "cpu")
+                if gemmaReady || talk.selectedChoice == .gemma { choice("Gemma 4 E2B", .gemma, icon: "cpu") }
+            }
+            if !relays.models.isEmpty {
+                Section("Cloud · über deinen PC ‚\(relays.desktopName)‘") {
+                    ForEach(relays.models) { info in choice(info.label, .relay(info.id), icon: "cloud") }
+                }
+            }
+            Section("Eigener Endpunkt") {
+                if let endpoint = endpoints.endpoint {
+                    choice(endpoint.label, .endpoint, icon: endpoints.isCloud ? "cloud" : "network")
+                }
+                Button("Eigener Endpunkt …", systemImage: "slider.horizontal.3") {
+                    endpointBefore = endpoints.endpoint
+                    showEndpoint = true
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: talk.isCloud ? "cloud" : "cpu").font(.body)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(talk.isCloud ? "Cloud" : "Lokal").font(.caption2.weight(.semibold))
+                    Text(talk.modelLabel).font(.footnote).lineLimit(1)
+                }
+                Image(systemName: "chevron.down").font(.caption2)
+            }
+            .foregroundStyle(VoicePalette.text)
+            .padding(.horizontal, 10)
+            .frame(minHeight: 44)
+            .overlay(Capsule().stroke(VoicePalette.border, lineWidth: 1))
+        }
+        .disabled(talk.loading)
+        .accessibilityLabel("Modell: \(talk.modelLabel), \(talk.isCloud ? "Cloud" : "lokal"). Ändern")
+        .accessibilityIdentifier("assistantModel")
+    }
+
+    private func choice(_ title: String, _ value: AssistantModelChoice, icon: String) -> some View {
+        Button { talk.selectModel(value) } label: {
+            Label(title, systemImage: talk.selectedChoice == value ? "checkmark" : icon)
+        }
+    }
+
+    private var areaTitle: String { talk.isCloud ? "Bereiche für Cloud-Modelle" : "Bereiche für lokale Modelle" }
+
+    private var optionsMenu: some View {
+        Menu {
+            Section(areaTitle) {
+                ForEach(AssistantArea.allCases, id: \.self) { area in
+                    Toggle(AssistantAreaSettings.title(area),
+                           isOn: Binding(get: { talk.areas.contains(area) }, set: { _ in talk.toggleArea(area) }))
+                }
+            }
+            Toggle("Beim Antworten zuhören (Unterbrechen per Stimme)",
+                   isOn: Binding(get: { talk.bargeIn }, set: { talk.setBargeIn($0) }))
+            Button("Neues Gespräch", systemImage: "arrow.counterclockwise", role: .destructive) { talk.newConversation() }
+        } label: {
+            Image(systemName: "ellipsis.circle").font(.title3).frame(width: 44, height: 44)
+        }
+        .accessibilityLabel("Optionen")
+        .accessibilityIdentifier("assistantMenu")
+    }
+
+    // MARK: Verlauf
+
+    private var showsIntro: Bool {
+        talk.turns.isEmpty && talk.currentUser == nil && talk.liveUser.isEmpty && !talk.loading
+    }
+
+    private var content: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    if let progress = talk.preparing { preparing(progress) }
+                    if let notice = talk.notice { noticeView(notice) }
+                    if hub.skipped > 0 {
+                        Label("Wegen der Speichergrenze fehlen \(hub.skipped) Bücher oder Besprechungen im Gespräch.", systemImage: "exclamationmark.circle")
+                            .font(.footnote).foregroundStyle(VoicePalette.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if showsIntro { intro }
+                    ForEach(Array(talk.turns.enumerated()), id: \.offset) { _, turn in turnView(turn) }
+                    currentExchange
+                    liveUserLine
+                    Color.clear.frame(height: 1).id("ende")
+                }
+                .padding(16)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .onChange(of: talk.turns.count) { _, _ in scroll(proxy, animated: true) }
+            .onChange(of: talk.liveAnswer) { _, _ in scroll(proxy, animated: true) }
+            .onChange(of: talk.liveUser) { _, _ in scroll(proxy, animated: false) }
+            .onChange(of: talk.phase) { _, _ in scroll(proxy, animated: true) }
+            .onChange(of: typing) { _, _ in scroll(proxy, animated: false) }
+        }
+    }
+
+    private func scroll(_ proxy: ScrollViewProxy, animated: Bool) {
+        if animated, !reduceMotion {
+            withAnimation { proxy.scrollTo("ende", anchor: .bottom) }
+        } else {
+            proxy.scrollTo("ende", anchor: .bottom)
+        }
+    }
+
+    private func preparing(_ progress: AssistantSources.Progress) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Inhalte werden vorbereitet (\(progress.done) von \(progress.total))").font(.footnote)
+            ProgressView(value: Double(min(progress.done, progress.total)), total: Double(max(progress.total, 1)))
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AssistantColors.card, in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityElement(children: .combine)
+    }
+
+    private func noticeView(_ notice: AssistantNotice) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Label(notice.text, systemImage: "info.circle")
+                .font(.footnote)
+                .fixedSize(horizontal: false, vertical: true)
+            if let action = notice.action {
+                Button(actionTitle(action)) { perform(action) }
+                    .font(.footnote.weight(.semibold))
+                    .frame(minHeight: 44)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AssistantColors.card, in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("assistantNotice")
+    }
+
+    private func actionTitle(_ action: AssistantNotice.Action) -> String {
+        switch action {
+        case .retrySend: "Erneut senden"
+        case .resume: "Weiter"
+        case .retryStart: "Erneut versuchen"
+        }
+    }
+
+    private var intro: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Sprich einfach los").font(.title3.weight(.semibold))
+            Text("Ich antworte aus deinen Büchern, Besprechungen, Notizen und der Ablage, je nachdem, was du im Menü zulässt. "
+                 + (talk.bargeIn ? "Du kannst mich jederzeit unterbrechen." : "Während ich antworte, höre ich nicht zu."))
+                .font(.subheadline).foregroundStyle(VoicePalette.secondaryText)
+            Text("Frag zum Beispiel").font(.footnote).foregroundStyle(VoicePalette.secondaryText).padding(.top, 4)
+            ForEach(["Was wurde in der letzten Besprechung entschieden?", "Worum geht es in meinem aktuellen Buch?",
+                     "Was habe ich zuletzt in meinen Notizen festgehalten?"], id: \.self) { text in
+                Button { talk.send(text: text) } label: {
+                    Text(text).font(.subheadline).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).padding(.horizontal, 12)
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(VoicePalette.border, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .disabled(!talk.canSend)
+            }
+        }
+    }
+
+    // MARK: Blasen
+
+    private func turnView(_ turn: AssistantTurn) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            userBubble(turn.user)
+            assistantBubble(text: turn.interrupted ? turn.assistant + " …" : turn.assistant, interrupted: turn.interrupted,
+                            chips: chipTexts(turn.sources))
+        }
+    }
+
+    private func userBubble(_ text: String) -> some View {
+        HStack(spacing: 0) {
+            Spacer(minLength: 48)
+            Text(text)
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .background(AssistantColors.fill, in: RoundedRectangle(cornerRadius: 16))
+                .foregroundStyle(.white)
+                .accessibilityLabel("Du: \(text)")
+        }
+    }
+
+    private func assistantBubble(text: String, interrupted: Bool, chips: [String]) -> some View {
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                VoiceMarkdown(text: text)
+                if !chips.isEmpty {
+                    AssistantFlowLayout(spacing: 6) {
+                        ForEach(chips, id: \.self) { chip($0) }
+                    }
+                }
+            }
+            .padding(12)
+            .background(AssistantColors.card, in: RoundedRectangle(cornerRadius: 16))
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(interrupted ? "Antwort, unterbrochen" : "Antwort")
+            Spacer(minLength: 24)
+        }
+    }
+
+    private func chip(_ text: String) -> some View {
+        Text(text)
+            .font(.footnote.weight(.medium))
+            .foregroundStyle(VoicePalette.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(VoicePalette.border, lineWidth: 1))
+            .accessibilityLabel("Quelle: \(text)")
+    }
+
+    /// Eine Zeile je Quelle (ohne Doppelte); ohne Auszüge: „Allgemeinwissen · ohne Quelle“.
+    private func chipTexts(_ sources: [AssistantPassage]) -> [String] {
+        var seen = Set<String>()
+        let list = sources.map { AssistantController.chip($0) }.filter { seen.insert($0).inserted }
+        return list.isEmpty ? ["Allgemeinwissen · ohne Quelle"] : list
+    }
+
+    /// Die laufende Anfrage, deren Antwort noch nicht im Verlauf steht.
+    @ViewBuilder private var currentExchange: some View {
+        if let user = talk.currentUser {
+            VStack(alignment: .leading, spacing: 10) {
+                userBubble(user)
+                if !talk.liveAnswer.isEmpty {
+                    assistantBubble(text: talk.liveAnswer, interrupted: false, chips: talk.sourcesKnown ? chipTexts(talk.sources) : [])
+                        .accessibilityAddTraits(.updatesFrequently)
+                } else if talk.phase == .thinking {
+                    HStack(spacing: 0) {
+                        ProgressView()
+                            .padding(12)
+                            .background(AssistantColors.card, in: RoundedRectangle(cornerRadius: 16))
+                            .accessibilityLabel("Antwort wird erstellt")
+                        Spacer(minLength: 24)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Erkannter Text der laufenden Äußerung (vorläufiger Teil gedämpft; bei „Ergänzen“ mit dem Anfang davor).
+    @ViewBuilder private var liveUserLine: some View {
+        if !talk.liveUser.isEmpty {
+            let stable = [talk.mergePrefix, talk.liveStable].filter { !$0.isEmpty }.joined(separator: " ")
+            HStack(spacing: 0) {
+                Spacer(minLength: 48)
+                Text(Self.live(stable: stable, volatile: talk.liveVolatile))
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .overlay(RoundedRectangle(cornerRadius: 16).stroke(AssistantColors.fill, lineWidth: 1.5))
+                    .accessibilityLabel("Erkannter Text: \(talk.liveUser)")
+                    .accessibilityAddTraits(.updatesFrequently)
+            }
+        }
+    }
+
+    private static func live(stable: String, volatile: String) -> AttributedString {
+        var a = AttributedString(stable)
+        var b = AttributedString((stable.isEmpty || volatile.isEmpty ? "" : " ") + volatile)
+        b.foregroundColor = VoicePalette.secondaryText
+        a.append(b)
+        return a
+    }
+
+    // MARK: Unten
+
+    private var bottom: some View {
+        VStack(spacing: 10) {
+            stateBlock
+            if typing { composer }
+            controls
+        }
+        .padding(.horizontal, 16).padding(.vertical, 10)
+        .background(.bar)
+    }
+
+    private var stateText: String {
+        if talk.loading { return "Wird gestartet …" }
+        guard talk.running else { return talk.canSend ? "Angehalten" : "Kein Modell bereit" }
+        if talk.muted, talk.phase == .listening || talk.phase == .hearing { return "Stumm, ich höre nicht zu" }
+        switch talk.phase {
+        case .idle: return "Angehalten"
+        case .listening: return "Ich höre zu"
+        case .hearing: return "Du sprichst"
+        case .thinking: return "Ich denke nach"
+        case .speaking: return "Ich spreche"
+        }
+    }
+
+    private var sourcesLine: String {
+        let list = AssistantAreaSettings.list(talk.areas)
+        guard !list.isEmpty else { return "Keine Quellen aktiv, nur Allgemeinwissen" }
+        return "\(talk.isCloud ? "Cloud" : "Lokal") · Quellen: \(list)"
+    }
+
+    private var stateBlock: some View {
+        HStack(spacing: 12) {
+            AssistantPulse(meter: talk.meter, phase: talk.phase, muted: talk.muted, loading: talk.loading,
+                           reduceMotion: reduceMotion, size: pulseSize)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(stateText).font(.headline)
+                Text(sourcesLine).font(.footnote).foregroundStyle(VoicePalette.secondaryText).lineLimit(2)
+                #if DEBUG
+                if let ms = talk.firstSoundMs {
+                    Text("Erster Ton nach \(ms) ms").font(.caption2).foregroundStyle(VoicePalette.secondaryText)
+                }
+                #endif
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(stateText). \(sourcesLine)")
+        .accessibilityIdentifier("assistantState")
+    }
+
+    private var composer: some View {
+        HStack(spacing: 8) {
+            TextField("Nachricht eingeben", text: $draft, axis: .vertical)
+                .lineLimit(1...4)
+                .textFieldStyle(.roundedBorder)
+                .focused($fieldFocused)
+                .submitLabel(.send)
+                .onSubmit { sendDraft() }
+                .frame(minHeight: 44)
+                .accessibilityIdentifier("assistantField")
+            Button { sendDraft() } label: {
+                Image(systemName: "arrow.up.circle.fill").font(.title).frame(width: 44, height: 44)
+            }
+            .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !talk.canSend)
+            .accessibilityLabel("Senden")
+            .accessibilityIdentifier("assistantSend")
+        }
+    }
+
+    private var controls: some View {
+        let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+        let stacked = !typeSize.isAccessibilitySize
+        return layout {
+            AssistantControl(title: "Stumm", symbol: talk.muted ? "mic.slash.fill" : "mic.fill",
+                             tint: talk.muted ? VoicePalette.danger : VoicePalette.text, active: talk.muted, stacked: stacked) {
+                talk.toggleMute()
+            }
+            .disabled(!talk.running)
+            .accessibilityLabel("Stumm")
+            .accessibilityValue(talk.muted ? "Ein" : "Aus")
+            .accessibilityHint("Schaltet das Zuhören aus oder an")
+            .accessibilityAddTraits(.isToggle)
+            .accessibilityIdentifier("assistantMute")
+
+            if talk.phase == .thinking || talk.phase == .speaking {
+                AssistantControl(title: "Antwort anhalten", symbol: "stop.fill", tint: VoicePalette.text, active: false, stacked: stacked) {
+                    talk.stopAnswer()
+                }
+                .accessibilityLabel("Antwort anhalten")
+                .accessibilityIdentifier("assistantStop")
+            }
+
+            AssistantControl(title: "Tastatur", symbol: typing ? "keyboard.chevron.compact.down" : "keyboard",
+                             tint: VoicePalette.text, active: typing, stacked: stacked) {
+                typing.toggle()
+                fieldFocused = typing
+            }
+            .accessibilityLabel(typing ? "Tastatur ausblenden" : "Tastatur einblenden")
+            .accessibilityIdentifier("assistantKeyboard")
+
+            AssistantControl(title: "Beenden", symbol: "phone.down.fill", tint: VoicePalette.danger, active: false, stacked: stacked) {
+                close()
+            }
+            .accessibilityLabel("Gespräch beenden")
+            .accessibilityIdentifier("assistantEnd")
+        }
+    }
+}
+
+// MARK: - Bausteine
+
+/// Knopf der Steuerleiste: Symbol über dem Text (bei sehr großer Schrift daneben), mindestens 56 pt hoch.
+private struct AssistantControl: View {
+    let title: String
+    let symbol: String
+    let tint: Color
+    let active: Bool
+    let stacked: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Group {
+                if stacked {
+                    VStack(spacing: 4) { icon; label }
+                } else {
+                    HStack(spacing: 10) { icon; label }
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 56)
+            .padding(.horizontal, 6)
+            .foregroundStyle(tint)
+            .background(active ? tint.opacity(0.14) : AssistantColors.card, in: RoundedRectangle(cornerRadius: 14))
+            .contentShape(RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var icon: some View { Image(systemName: symbol).font(.title3) }
+
+    private var label: some View {
+        Text(title).font(.caption.weight(.semibold)).lineLimit(2).multilineTextAlignment(.center)
+    }
+}
+
+/// Ruhige Zustandsanzeige: Pegel beim Zuhören, langsames Atmen beim Denken, schnelleres beim Sprechen. Ohne Bewegung
+/// (Bewegung reduzieren) bleibt ein stehender Ring.
+private struct AssistantPulse: View {
+    @ObservedObject var meter: AssistantLevelMeter
+    let phase: AssistantPhase
+    let muted: Bool
+    let loading: Bool
+    let reduceMotion: Bool
+    let size: CGFloat
+
+    private var fill: Color { muted ? VoicePalette.danger : AssistantColors.fill }
+    private var level: Double { muted ? 0 : meter.level }
+
+    private var symbol: String {
+        if loading { return "ellipsis" }
+        if muted, phase == .listening || phase == .hearing { return "mic.slash.fill" }
+        switch phase {
+        case .idle: return "pause.fill"
+        case .listening: return "mic.fill"
+        case .hearing: return "waveform"
+        case .thinking: return "ellipsis"
+        case .speaking: return "speaker.wave.2.fill"
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            halo
+            Circle().fill(fill).frame(width: size * 0.7, height: size * 0.7)
+            Image(systemName: symbol).font(.system(size: size * 0.28, weight: .semibold)).foregroundStyle(.white)
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder private var halo: some View {
+        if reduceMotion || loading || phase == .idle {
+            Circle().stroke(fill.opacity(0.3), lineWidth: 2).frame(width: size * 0.9, height: size * 0.9)
+        } else if phase == .thinking || phase == .speaking {
+            TimelineView(.animation) { context in
+                Circle().fill(fill.opacity(0.2)).scaleEffect(wave(at: context.date))
+            }
+        } else {
+            Circle().fill(fill.opacity(0.2))
+                .scaleEffect(0.72 + 0.28 * level)
+                .animation(.easeOut(duration: 0.12), value: level)
+        }
+    }
+
+    private func wave(at date: Date) -> Double {
+        let speed = phase == .speaking ? 5.0 : 2.2
+        return 0.78 + 0.22 * (sin(date.timeIntervalSinceReferenceDate * speed) + 1) / 2
+    }
+}
+
+/// Quellen-Chips in Zeilen, die umbrechen (auch bei großer Schrift); zu lange Chips werden auf die Breite begrenzt.
+private struct AssistantFlowLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let result = arrange(width: proposal.width, subviews: subviews)
+        return CGSize(width: result.width, height: result.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let result = arrange(width: bounds.width, subviews: subviews)
+        for (i, frame) in result.frames.enumerated() {
+            subviews[i].place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY),
+                              proposal: ProposedViewSize(width: frame.width, height: frame.height))
+        }
+    }
+
+    private func arrange(width: CGFloat?, subviews: Subviews) -> (frames: [CGRect], width: CGFloat, height: CGFloat) {
+        let limit = width ?? .infinity
+        var frames: [CGRect] = []
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, maxX: CGFloat = 0
+        for view in subviews {
+            var size = view.sizeThatFits(ProposedViewSize(width: width, height: nil))
+            if size.width > limit { size.width = limit }
+            if x > 0, x + size.width > limit { x = 0; y += rowHeight + spacing; rowHeight = 0 }
+            frames.append(CGRect(origin: CGPoint(x: x, y: y), size: size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+            maxX = max(maxX, x - spacing)
+        }
+        return (frames, maxX, y + rowHeight)
+    }
+}
