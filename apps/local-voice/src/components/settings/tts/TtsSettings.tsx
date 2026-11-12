@@ -618,13 +618,12 @@ export const TtsSettings = () => {
     () =>
       bindPageStateLive(
         {
-          isActive: (page) => activePageForEvents.current === page,
           isLive: (page) =>
             activePageForEvents.current === page && pageLoaded.current,
-          build: (entries) => pageStateJsonRef.current([...entries]),
+          build: () => pageStateJsonRef.current(),
         },
-        (page, log) => {
-          if (activePageForEvents.current === page) publishLog(log.entries);
+        (page, entries) => {
+          if (activePageForEvents.current === page) publishLog(entries);
         },
       ),
     [],
@@ -1130,8 +1129,12 @@ export const TtsSettings = () => {
     if (!activePage) return;
     pageLoaded.current = false;
     setLangCheckedFor(null);
-    // Protokolle verlassener Seiten ohne wartenden Schreibvorgang verwerfen.
-    store.release();
+    // Marke der Anzeige vor dem Lesen: hat danach ein Protokollschreiben die
+    // Anzeige neu gesetzt, zeigt diese Antwort einen älteren Stand.
+    const logMark = store.mark(activePage);
+    const showFileLog = (entries: PasteLogEntry[]) => {
+      if (!store.changedSince(activePage, logMark)) publishLog(entries);
+    };
     // Ein überholter Ladevorgang (Seitenwechsel) setzt nichts mehr.
     let stale = false;
     void commands.pageStateLoad(activePage).then((result) => {
@@ -1154,11 +1157,9 @@ export const TtsSettings = () => {
           setTranslatedLangs(
             Array.isArray(state.translatedLangs) ? state.translatedLangs : [],
           );
-          // Das Laden ergänzt das gesicherte Protokoll nur; liegt schon eines
-          // vor (Schreibvorgang für diese Seite im Gang), bleibt es maßgeblich.
-          publishLog(
-            store.seed(activePage, parsePasteLog(state.einfuegungen)).entries,
-          );
+          // Die Anzeige kommt aus dem gelesenen Dateistand, außer ein
+          // Protokollschreiben war inzwischen schneller (neuerer Stand).
+          showFileLog(parsePasteLog(state.einfuegungen));
           setText(state.text ?? "");
           openModeRef.current?.(state.tab === "summary" ? "" : (state.text ?? ""));
           setAutoTagOptions(state.autoTag ?? null);
@@ -1203,7 +1204,7 @@ export const TtsSettings = () => {
         } catch {
           setText(result.data);
           openModeRef.current?.(result.data);
-          publishLog(store.seed(activePage, []).entries);
+          showFileLog([]);
         }
       } else {
         // Einmalige Uebernahme der Werte aus der Zeit vor den Seiten — und
@@ -1233,7 +1234,7 @@ export const TtsSettings = () => {
         setVoicesChosen({});
         setPageLang(null);
         setTranslatedLangs([]);
-        publishLog(store.seed(activePage, []).entries);
+        showFileLog([]);
         setTab("original");
       }
       setTranslation(null);
@@ -1256,9 +1257,7 @@ export const TtsSettings = () => {
   }, [reloadPages]);
 
   /** Arbeitsstand der Seite, wie er in state.json steht. */
-  const pageStateJson = (
-    pastes: PasteLogEntry[] = store.entries(activePage ?? ""),
-  ) =>
+  const pageStateJson = () =>
     JSON.stringify({
       text,
       // Bis zur Übernahme als KI-Dokument bleibt der alte Text stehen.
@@ -1271,7 +1270,7 @@ export const TtsSettings = () => {
       lang: pageLang ?? undefined,
       translatedLangs,
       autoTag: autoTagOptions ?? undefined,
-      einfuegungen: pastes.length > 0 ? pastes : undefined,
+      // `einfuegungen` setzt der Store beim Schreiben aus der Datei ein.
     });
 
   /** Immer die Funktion des letzten Renders: ein wartender Schreibvorgang

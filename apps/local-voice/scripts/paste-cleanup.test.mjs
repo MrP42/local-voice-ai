@@ -2142,17 +2142,16 @@ function harness(files = {}) {
   h.store = createPageStateStore({
     io,
     live: {
+      // `isActive` kennt nur der alte Store (Gegenprobe); der neue ignoriert es.
       isActive: (page) => h.active === page,
       isLive: (page) => h.active === page && h.loaded,
-      build: (entries) =>
-        JSON.stringify({
-          text: h.uiText,
-          einfuegungen: entries.length > 0 ? entries : undefined,
-        }),
+      build: () => JSON.stringify({ text: h.uiText }),
     },
-    onCommit: (page, log) => h.committedEvents.push([page, log.version]),
+    onCommit: (page, entries) =>
+      h.committedEvents.push([page, entries?.map?.((e) => e.roh)]),
   });
   h.fileState = (page) => JSON.parse(h.files.get(page));
+  h.rohs = (page) => (h.fileState(page).einfuegungen ?? []).map((e) => e.roh);
   return h;
 }
 
@@ -2160,67 +2159,42 @@ const E0 = eintrag(iso(0), "null");
 const E1 = eintrag(iso(1), "eins");
 const E2 = eintrag(iso(2), "zwei");
 const stateWith = (extra) => JSON.stringify({ text: "alt", ...extra });
+const add = (entry) => (log) => parsePasteLog([...log, entry]);
+const drop = (entry) => (log) => removePasteEntry(log, pasteEntryKey(entry));
 
-test("pageState: Seite verlassen, Schreiben angehalten, Seite erneut geöffnet: Laden und Autosave erhalten den Eintrag", async () => {
+test("pageState: Seite verlassen, Schreiben angehalten, Seite erneut geöffnet: der Autosave erhält den Eintrag", async () => {
   const h = harness({ A: stateWith({}) });
   const held = gate();
   h.holdSave = () => held.promise;
-  // Seite A ist verlassen: das Protokollschreiben läuft im inaktiven Zweig und hängt.
-  const commit = h.store.commitLog("A", (log) => parsePasteLog([...log, E1]));
+  const commit = h.store.commitLog("A", add(E1));
   await tick();
-  // A wird erneut geöffnet; der Ladevorgang liest den alten Stand und ergänzt nur.
   h.active = "A";
   h.loaded = true;
-  h.store.release();
-  const loaded = h.store.seed(
-    "A",
-    parsePasteLog(h.fileState("A").einfuegungen),
-  );
-  assert.equal(
-    loaded.entries.length,
-    0,
-    "Lesen ergänzt, solange nichts gesichert ist",
-  );
-  // Der Autosave der offenen Seite reiht sich hinter dem Schreiben ein.
   const autosave = h.store.save("A", stateWith({}));
   held.release();
   assert.equal(await commit, true);
   await autosave;
-  const file = h.fileState("A");
-  assert.deepEqual(
-    file.einfuegungen.map((e) => e.roh),
-    ["eins"],
-    "Rohfassung nach dem Autosave erhalten",
-  );
-  assert.equal(file.text, "neu", "offene Seite: der Text der Oberfläche");
-  // Erneutes Laden ersetzt das gesicherte Protokoll nicht durch ältere Stände.
-  h.store.seed("A", []);
-  assert.deepEqual(
-    h.store.entries("A").map((e) => e.roh),
-    ["eins"],
+  assert.deepEqual(h.rohs("A"), ["eins"]);
+  assert.equal(
+    h.fileState("A").text,
+    "neu",
+    "offene Seite: Text der Oberfläche",
   );
 });
 
-test("pageState: Ladeantwort trifft verspätet ein, nachdem das Schreiben fertig ist: Protokoll bleibt", async () => {
+test("pageState: Marke der Anzeige: ein Protokollschreiben nach dem Lesen macht die Ladeantwort veraltet", async () => {
   const h = harness({ A: stateWith({}) });
-  h.active = "A";
-  h.loaded = false;
-  // Der Ladevorgang liest den alten Stand, antwortet aber erst später.
-  const staleRead = parsePasteLog(h.fileState("A").einfuegungen);
-  const commit = h.store.commitLog("A", (log) => parsePasteLog([...log, E1]));
-  assert.equal(await commit, true);
-  const late = h.store.seed("A", staleRead);
-  assert.deepEqual(
-    late.entries.map((e) => e.roh),
-    ["eins"],
-  );
-  h.loaded = true;
-  await h.store.save("A", stateWith({}));
-  assert.deepEqual(
-    h.fileState("A").einfuegungen.map((e) => e.roh),
-    ["eins"],
-  );
-  assert.equal(h.store.committed("A").version, 1);
+  const mark = h.store.mark("A");
+  assert.equal(h.store.changedSince("A", mark), false);
+  assert.equal(await h.store.commitLog("A", add(E1)), true);
+  assert.equal(h.store.changedSince("A", mark), true);
+  const fresh = h.store.mark("A");
+  assert.equal(h.store.changedSince("A", fresh), false);
+  // Ein gescheitertes Schreiben ändert die Marke nicht.
+  h.failNextSave = true;
+  assert.equal(await h.store.commitLog("A", add(E2)), false);
+  assert.equal(h.store.changedSince("A", fresh), false);
+  assert.deepEqual(h.committedEvents, [["A", ["eins"]]]);
 });
 
 test("pageState: ein hinter dem Protokollschreiben wartender Autosave einer verlassenen Seite überschreibt es nicht", async () => {
@@ -2229,17 +2203,13 @@ test("pageState: ein hinter dem Protokollschreiben wartender Autosave einer verl
   h.loaded = true;
   const held = gate();
   h.holdSave = () => held.promise;
-  const commit = h.store.commitLog("A", (log) => parsePasteLog([...log, E1]));
+  const commit = h.store.commitLog("A", add(E1));
   await tick();
   const autosave = h.store.save("A", stateWith({ text: "letzter Text" }));
   held.release();
   await Promise.all([commit, autosave]);
-  const file = h.fileState("A");
-  assert.deepEqual(
-    file.einfuegungen.map((e) => e.roh),
-    ["eins"],
-  );
-  assert.equal(file.text, "letzter Text");
+  assert.deepEqual(h.rohs("A"), ["eins"]);
+  assert.equal(h.fileState("A").text, "letzter Text");
 });
 
 test("pageState: Migration nach dem Lesen angehalten, Protokoll sichern und löschen: beide Änderungen bestehen", async () => {
@@ -2247,21 +2217,16 @@ test("pageState: Migration nach dem Lesen angehalten, Protokoll sichern und lös
     A: stateWith({ summary: "Alter Text", einfuegungen: [E0] }),
   });
   h.active = "B";
-  h.loaded = true;
   const held = gate();
   h.holdLoad = () => held.promise;
-  // Die Migration liest und hängt (mit dem alten Stand in der Hand) ...
   const migration = h.store.mutate("A", (state) => {
     if (state.summary !== "Alter Text") return false;
     state.summary = "";
     return true;
   });
   await tick();
-  // ... währenddessen: ein Eintrag wird gesichert und ein anderer gelöscht.
-  const added = h.store.commitLog("A", (log) => parsePasteLog([...log, E1]));
-  const removed = h.store.commitLog("A", (log) =>
-    removePasteEntry(log, pasteEntryKey(E0)),
-  );
+  const added = h.store.commitLog("A", add(E1));
+  const removed = h.store.commitLog("A", drop(E0));
   h.holdLoad = null;
   held.release();
   assert.deepEqual(await Promise.all([migration, added, removed]), [
@@ -2269,20 +2234,16 @@ test("pageState: Migration nach dem Lesen angehalten, Protokoll sichern und lös
     true,
     true,
   ]);
-  const file = h.fileState("A");
-  assert.equal(file.summary, "");
-  assert.deepEqual(
-    file.einfuegungen.map((e) => e.roh),
-    ["eins"],
-  );
+  assert.equal(h.fileState("A").summary, "");
+  assert.deepEqual(h.rohs("A"), ["eins"]);
 });
 
 test("pageState: Migration läuft nach einem laufenden Protokollschreiben und liest frisch", async () => {
   const h = harness({ A: stateWith({ summary: "Alter Text" }) });
   h.active = "B";
   const held = gate();
-  h.holdSave = (page) => (h.writes.length === 0 ? held.promise : undefined);
-  const commit = h.store.commitLog("A", (log) => parsePasteLog([...log, E1]));
+  h.holdSave = () => (h.writes.length === 0 ? held.promise : undefined);
+  const commit = h.store.commitLog("A", add(E1));
   await tick();
   const migration = h.store.mutate("A", (state) => {
     state.summary = "";
@@ -2290,15 +2251,11 @@ test("pageState: Migration läuft nach einem laufenden Protokollschreiben und li
   });
   held.release();
   await Promise.all([commit, migration]);
-  const file = h.fileState("A");
-  assert.equal(file.summary, "");
-  assert.deepEqual(
-    file.einfuegungen.map((e) => e.roh),
-    ["eins"],
-  );
+  assert.equal(h.fileState("A").summary, "");
+  assert.deepEqual(h.rohs("A"), ["eins"]);
 });
 
-test("pageState: Migration schreibt nicht auf eine inzwischen offene Seite", async () => {
+test("pageState: Migration mit refuseOpen schreibt nicht auf eine inzwischen offene Seite", async () => {
   const h = harness({ A: stateWith({ summary: "Alter Text" }) });
   h.active = "A";
   h.loaded = true;
@@ -2316,137 +2273,147 @@ test("pageState: Migration schreibt nicht auf eine inzwischen offene Seite", asy
   assert.equal(h.writes.length, 0);
 });
 
-test("pageState: ohne bekanntes Protokoll wird in der Kette frisch gelesen; bestehende Einträge bleiben", async () => {
+test("pageState: Protokollschreiben liest frisch; bestehende Einträge bleiben", async () => {
   const h = harness({ A: stateWith({ einfuegungen: [E0] }) });
-  h.active = "B";
-  assert.equal(
-    await h.store.commitLog("A", (log) => parsePasteLog([...log, E1])),
-    true,
-  );
-  assert.deepEqual(
-    h.fileState("A").einfuegungen.map((e) => e.roh),
-    ["null", "eins"],
-  );
-  // Verlassene Seite ohne wartenden Auftrag: nichts bleibt im Speicher, die Datei hat alles.
-  assert.equal(h.store.committed("A"), undefined);
-  assert.deepEqual(
-    h.store.seed("A", logFromFile(h, "A")).entries.map((e) => e.roh),
-    ["null", "eins"],
-  );
-});
-const logFromFile = (h, page) => parsePasteLog(h.fileState(page).einfuegungen);
-
-test("pageState: Protokoll offene Seite: Version steigt je gesichertem Schreiben, ein Fehler ändert nichts", async () => {
-  const h = harness({ A: stateWith({}) });
-  h.active = "A";
-  h.loaded = true;
-  h.store.seed("A", []);
-  assert.equal(
-    await h.store.commitLog("A", (l) => parsePasteLog([...l, E1])),
-    true,
-  );
-  assert.equal(h.store.committed("A").version, 1);
-  h.failNextSave = true;
-  assert.equal(
-    await h.store.commitLog("A", (l) => parsePasteLog([...l, E2])),
-    false,
-  );
-  assert.equal(h.store.committed("A").version, 1);
-  assert.deepEqual(
-    h.store.entries("A").map((e) => e.roh),
-    ["eins"],
-  );
-  // Die Kette läuft weiter.
-  assert.equal(
-    await h.store.commitLog("A", (l) => parsePasteLog([...l, E2])),
-    true,
-  );
-  assert.equal(h.store.committed("A").version, 2);
-  assert.deepEqual(h.committedEvents, [
-    ["A", 1],
-    ["A", 2],
-  ]);
+  assert.equal(await h.store.commitLog("A", add(E1)), true);
+  assert.deepEqual(h.rohs("A"), ["null", "eins"]);
 });
 
-test("pageState: save wirft bei Schreibfehler, der Folgeauftrag gelingt", async () => {
-  const h = harness({ A: stateWith({}) });
+test("pageState: Protokollschreiben ändert nur das Feld einfuegungen (Text und alles andere bleiben der Dateistand)", async () => {
+  const h = harness({
+    A: stateWith({ text: "T1", voices: { a: "b" }, einfuegungen: [E0] }),
+  });
   h.active = "A";
   h.loaded = true;
-  h.store.seed("A", []);
+  h.uiText = "T0";
+  assert.equal(await h.store.commitLog("A", drop(E0)), true);
+  const file = h.fileState("A");
+  assert.equal(file.text, "T1", "nicht der ältere Text der Oberfläche");
+  assert.deepEqual(file.voices, { a: "b" });
+  assert.equal(
+    file.einfuegungen,
+    undefined,
+    "leeres Protokoll lässt das Feld weg",
+  );
+  assert.deepEqual(h.committedEvents, [["A", []]]);
+});
+
+test("pageState: save wirft bei Schreib- und Lesefehler, der Folgeauftrag gelingt", async () => {
+  const h = harness({ A: stateWith({}) });
   h.failNextSave = true;
   await assert.rejects(h.store.save("A", stateWith({})));
-  await h.store.save("A", stateWith({}));
-  assert.equal(h.fileState("A").text, "neu");
+  await h.store.save("A", stateWith({ text: "zweiter" }));
+  assert.equal(h.fileState("A").text, "zweiter");
+  const saved = h.writes.length;
+  // Lesefehler: die Datei wird nicht ohne ihr Protokoll überschrieben.
+  const failing = createPageStateStore({
+    io: {
+      load: async () => null,
+      save: async () => {
+        h.writes.push(["x", ""]);
+        return true;
+      },
+    },
+    live: { isLive: () => false, build: () => "{}" },
+  });
+  await assert.rejects(failing.save("A", stateWith({})));
+  assert.equal(await failing.commitLog("A", add(E1)), false);
+  assert.equal(await failing.mutate("A", () => true), false);
+  assert.equal(h.writes.length, saved);
 });
 
-test("pageState: verlassene Seite ohne Protokoll im Speicher schreibt den vorab gebauten Stand unverändert", async () => {
+test("pageState: verlassene Seite ohne Protokoll in der Datei: save schreibt den vorab gebauten Stand unverändert", async () => {
   const h = harness({ A: stateWith({}) });
   h.active = "B";
   await h.store.save("A", stateWith({ text: "Stand" }));
-  assert.equal(h.fileState("A").text, "Stand");
+  assert.deepEqual(h.fileState("A"), { text: "Stand" });
 });
 
-// ---------------------------------------------------------------------------
-// Fixrunde 5, Nachtrag: fremde Schreiber (Bibliothek, Fassungen, Sprecher ersetzen)
-// ---------------------------------------------------------------------------
+test("pageState: die Datei ist die einzige Quelle: extern geändertes Protokoll bleibt bei mutate, save und Protokollschreiben erhalten", async () => {
+  for (const live of [false, true]) {
+    for (const writer of ["mutate", "save", "commit"]) {
+      const h = harness({ A: stateWith({ einfuegungen: [E0] }) });
+      h.active = live ? "A" : "B";
+      h.loaded = true;
+      // Ein erstes Schreiben, das ein Zwischenspeicher sich merken würde ...
+      assert.equal(await h.store.commitLog("A", add(E0)), true);
+      // ... dann ersetzt der Sync die Datei durch [E0, E1].
+      h.files.set("A", stateWith({ einfuegungen: [E0, E1] }));
+      if (writer === "mutate")
+        await h.store.mutate("A", (state) => {
+          state.translatedLangs = ["English"];
+          return true;
+        });
+      else if (writer === "save") await h.store.save("A", stateWith({}));
+      else await h.store.commitLog("A", add(E2));
+      const expected =
+        writer === "commit" ? ["null", "eins", "zwei"] : ["null", "eins"];
+      assert.deepEqual(h.rohs("A"), expected, `${writer} live=${live}`);
+    }
+  }
+});
 
-test("pageState: mutate auf Seite mit gesichertem Protokoll: einfuegungen kommt aus dem gesicherten Stand, nicht aus der (älteren) Datei", async () => {
-  const h = harness({ A: stateWith({}) });
-  h.active = "B";
-  // Ein Eintrag ist gesichert; ein Schreibvorgang ist noch im Gang, damit der Stand im Speicher bleibt.
+test("pageState: eine extern gelöschte Rohfassung steht nach mutate, save und Protokollschreiben nicht wieder auf", async () => {
+  for (const writer of ["mutate", "save", "commit"]) {
+    const h = harness({ A: stateWith({ einfuegungen: [E0, E1] }) });
+    h.active = "A";
+    h.loaded = true;
+    assert.equal(await h.store.commitLog("A", add(E2)), true);
+    // Der Sync (oder ein anderes Gerät) hat E0 und E2 gelöscht.
+    h.files.set("A", stateWith({ einfuegungen: [E1] }));
+    if (writer === "mutate")
+      await h.store.mutate("A", (state) => {
+        state.summary = "x";
+        return true;
+      });
+    else if (writer === "save") await h.store.save("A", stateWith({}));
+    else await h.store.commitLog("A", drop(E1));
+    assert.deepEqual(h.rohs("A"), writer === "commit" ? [] : ["eins"], writer);
+  }
+});
+
+test("pageState: Text per mutate gespeichert, danach Rohfassung gelöscht: der Text bleibt, der Eintrag ist weg (offene Seite)", async () => {
+  const h = harness({ A: stateWith({ text: "T0", einfuegungen: [E0, E1] }) });
+  h.active = "A";
+  h.loaded = true;
+  h.uiText = "T0";
   assert.equal(
-    await h.store.commitLog("A", (log) => parsePasteLog([...log, E1])),
+    await h.store.mutate("A", (state) => {
+      state.text = "T1";
+      return true;
+    }),
     true,
   );
-  h.store.seed("A", [E1]);
-  // Die Datei hinkt hinterher (ein älterer Schreiber hat sie ohne Protokoll hinterlassen).
-  h.files.set("A", stateWith({ voices: { x: "y" } }));
-  const pending = gate();
-  h.holdSave = () => pending.promise;
-  const other = h.store.commitLog("A", (log) => parsePasteLog([...log, E2]));
-  await tick();
-  const foreign = h.store.mutate("A", (state) => {
-    state.summary = "Fremd";
-    return true;
-  });
-  h.holdSave = null;
-  pending.release();
-  assert.deepEqual(await Promise.all([other, foreign]), [true, true]);
+  assert.equal(await h.store.commitLog("A", drop(E0)), true);
   const file = h.fileState("A");
-  assert.equal(file.summary, "Fremd");
-  assert.deepEqual(file.voices, { x: "y" });
-  assert.deepEqual(
-    file.einfuegungen.map((e) => e.roh),
-    ["eins", "zwei"],
-  );
+  assert.equal(file.text, "T1");
+  assert.deepEqual(h.rohs("A"), ["eins"]);
+  assert.equal(await h.store.commitLog("A", () => []), true);
+  assert.equal(h.fileState("A").text, "T1");
+  assert.equal(h.fileState("A").einfuegungen, undefined);
 });
 
-test("pageState: mutate liest in der Kette frisch: Protokollschreiben und Fremdschreiber nacheinander, beide bleiben", async () => {
-  const h = harness({ A: stateWith({ voices: {} }) });
-  h.active = "B";
-  const held = gate();
-  h.holdSave = () => (h.writes.length === 0 ? held.promise : undefined);
-  const commit = h.store.commitLog("A", (log) => parsePasteLog([...log, E1]));
-  await tick();
-  const foreign = h.store.mutate("A", (state) => {
-    state.voices = { a: "b" };
+test("pageState: mutate lässt einfuegungen auch dann unverändert, wenn change den Zustand ersetzt; change bekommt den Rohtext", async () => {
+  const h = harness({ A: stateWith({ einfuegungen: [E0] }), B: "" });
+  await h.store.mutate("A", (state) => {
+    for (const key of Object.keys(state)) delete state[key];
+    state.text = "ersetzt";
     return true;
   });
-  held.release();
-  assert.deepEqual(await Promise.all([commit, foreign]), [true, true]);
-  const file = h.fileState("A");
-  assert.deepEqual(file.voices, { a: "b" });
-  assert.deepEqual(
-    file.einfuegungen.map((e) => e.roh),
-    ["eins"],
-  );
+  assert.equal(h.fileState("A").text, "ersetzt");
+  assert.deepEqual(h.rohs("A"), ["null"]);
+  let seen = null;
+  await h.store.mutate("B", (state, raw) => {
+    seen = raw;
+    return false;
+  });
+  assert.equal(seen, "");
 });
 
-test("pageState: mutate auf offener Seite schreibt wie ein Direktschreiben in die Datei (Oberfläche gilt nicht), Protokoll aus dem gesicherten Stand", async () => {
+test("pageState: mutate auf offener Seite schreibt wie ein Direktschreiben in die Datei (Oberfläche gilt nicht)", async () => {
   const h = harness({ A: stateWith({ einfuegungen: [E0] }) });
   h.active = "A";
   h.loaded = true;
-  h.store.seed("A", [E0, E1]);
   h.uiText = "ungesichert getippt";
   assert.equal(
     await h.store.mutate("A", (state) => {
@@ -2455,40 +2422,13 @@ test("pageState: mutate auf offener Seite schreibt wie ein Direktschreiben in di
     }),
     true,
   );
-  const file = h.fileState("A");
-  // Text wie auf main: aus der Datei, nicht aus der Oberfläche.
-  assert.equal(file.text, "alt!");
-  assert.deepEqual(
-    file.einfuegungen.map((e) => e.roh),
-    ["null", "eins"],
-  );
-});
-
-test("pageState: mutate mit refuseOpen schreibt nicht auf eine offene Seite; false von change und Lesefehler schreiben nichts", async () => {
-  const h = harness({ A: stateWith({}) });
-  h.active = "A";
-  h.loaded = true;
-  assert.equal(
-    await h.store.mutate("A", () => true, { refuseOpen: true }),
-    false,
-  );
+  assert.equal(h.fileState("A").text, "alt!");
+  assert.deepEqual(h.rohs("A"), ["null"]);
   assert.equal(await h.store.mutate("A", () => false), false);
-  assert.equal(h.writes.length, 0);
-  // Offene Seite, aber ohne refuseOpen: wird geschrieben.
-  assert.equal(
-    await h.store.mutate("A", (state) => {
-      state.translatedLangs = ["English"];
-      return true;
-    }),
-    true,
-  );
-  assert.deepEqual(h.fileState("A").translatedLangs, ["English"]);
 });
 
-test("pageState: mutate mit unreadable ersetzt eine unlesbare Datei durch den Grundzustand und setzt das gesicherte Protokoll ein", async () => {
+test("pageState: mutate mit unreadable ersetzt eine unlesbare Datei durch den Grundzustand; ohne unreadable schreibt es nicht", async () => {
   const h = harness({ A: "kein json" });
-  h.active = "A";
-  h.store.seed("A", [E1]);
   assert.equal(await h.store.mutate("A", () => true), false);
   assert.equal(h.files.get("A"), "kein json");
   assert.equal(
@@ -2502,23 +2442,16 @@ test("pageState: mutate mit unreadable ersetzt eine unlesbare Datei durch den Gr
     ),
     true,
   );
-  const file = h.fileState("A");
-  assert.equal(file.text, "neu");
-  assert.equal(file.tab, "original");
-  assert.deepEqual(
-    file.einfuegungen.map((e) => e.roh),
-    ["eins"],
-  );
+  assert.deepEqual(h.fileState("A"), { tab: "original", text: "neu" });
 });
 
-test("pageState: mutate auf offener Seite, Protokollschreiben und Fremdschreiber in der Kette: beide Änderungen bestehen", async () => {
+test("pageState: Protokollschreiben und Fremdschreiber in der Kette: beide Änderungen bestehen", async () => {
   const h = harness({ A: stateWith({}) });
   h.active = "A";
   h.loaded = true;
-  h.store.seed("A", []);
   const held = gate();
   h.holdSave = () => (h.writes.length === 0 ? held.promise : undefined);
-  const commit = h.store.commitLog("A", (log) => parsePasteLog([...log, E1]));
+  const commit = h.store.commitLog("A", add(E1));
   await tick();
   const foreign = h.store.mutate("A", (state) => {
     state.summary = "Fremd";
@@ -2526,29 +2459,6 @@ test("pageState: mutate auf offener Seite, Protokollschreiben und Fremdschreiber
   });
   held.release();
   assert.deepEqual(await Promise.all([commit, foreign]), [true, true]);
-  const file = h.fileState("A");
-  assert.equal(file.summary, "Fremd");
-  assert.deepEqual(
-    file.einfuegungen.map((e) => e.roh),
-    ["eins"],
-  );
-});
-
-test("pageState: release gibt das Protokoll einer verlassenen Seite frei, wartende Aufträge halten es", async () => {
-  const h = harness({ A: stateWith({}) });
-  h.active = "A";
-  h.loaded = true;
-  h.store.seed("A", [E1]);
-  h.store.release();
-  assert.notEqual(h.store.committed("A"), undefined);
-  h.active = null;
-  const held = gate();
-  h.holdSave = () => held.promise;
-  const pending = h.store.mutate("A", () => true);
-  await tick();
-  h.store.release();
-  assert.notEqual(h.store.committed("A"), undefined);
-  held.release();
-  await pending;
-  assert.equal(h.store.committed("A"), undefined);
+  assert.equal(h.fileState("A").summary, "Fremd");
+  assert.deepEqual(h.rohs("A"), ["eins"]);
 });

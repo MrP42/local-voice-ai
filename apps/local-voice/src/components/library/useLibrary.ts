@@ -294,20 +294,27 @@ export function useLibrary() {
             grown: ReturnType<typeof textWithSync> | null;
             empty: boolean;
           } = { grown: null, empty: false };
-          const written = await getPageStateStore().mutate(pageId, (state) => {
-            // Wie zuvor: ein leerer oder unlesbarer Stand ist ein Fehler.
-            if (Object.keys(state).length === 0) return false;
-            const old = String(state.text ?? "").replace(/\s+$/, "");
-            const next = textWithSync(paragraphs, `${old}\n\n`);
-            if (!next.sync.length) {
-              outcome.empty = true;
-              return false;
-            }
-            outcome.grown = next;
-            restore = { pageId, json: JSON.stringify(state) };
-            state.text = next.text;
-            return true;
-          });
+          const written = await getPageStateStore().mutate(
+            pageId,
+            (state, raw) => {
+              // Wie zuvor: eine leere Datei ist ein Fehler (dort scheiterte
+              // JSON.parse), ebenso ein Text, der keine Zeichenkette ist.
+              if (raw.trim() === "") return false;
+              const old = ((state.text as string | undefined) ?? "").replace(
+                /\s+$/,
+                "",
+              );
+              const next = textWithSync(paragraphs, `${old}\n\n`);
+              if (!next.sync.length) {
+                outcome.empty = true;
+                return false;
+              }
+              outcome.grown = next;
+              restore = { pageId, json: JSON.stringify(state) };
+              state.text = next.text;
+              return true;
+            },
+          );
           const done = outcome.grown;
           if (!written || !done)
             throw new Error(
@@ -404,16 +411,12 @@ export function useLibrary() {
       } catch (e) {
         if (created) await commands.pagesDelete(created);
         if (restore) {
-          // Wie bisher der Stand von vor dem Anhängen, nur ohne die gesicherten
-          // Rohfassungen zurückzudrehen: sie bleiben, wie sie jetzt sind.
+          // Wie bisher der Stand von vor dem Anhängen; die Rohfassungen
+          // (`einfuegungen`) lässt `mutate` dabei, wie sie jetzt in der Datei stehen.
           const back = restore;
           await getPageStateStore().mutate(back.pageId, (state) => {
-            const protocol = state.einfuegungen;
-            const before = JSON.parse(back.json) as Record<string, unknown>;
             for (const key of Object.keys(state)) delete state[key];
-            Object.assign(state, before);
-            if (protocol === undefined) delete state.einfuegungen;
-            else state.einfuegungen = protocol;
+            Object.assign(state, JSON.parse(back.json));
             return true;
           });
         }

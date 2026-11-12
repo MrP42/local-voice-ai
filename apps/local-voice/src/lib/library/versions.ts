@@ -224,8 +224,8 @@ export async function markTranslated(pageId: string, target: string) {
   // Eine Seite ohne Stand (oder im Altformat) bleibt unberührt: Vorlesen findet
   // die Übersetzung über den Zwischenspeicher.
   await getPageStateStore()
-    .mutate(pageId, (state) => {
-      if (Object.keys(state).length === 0) return false;
+    .mutate(pageId, (state, raw) => {
+      if (raw.trim() === "") return false;
       const langs = Array.isArray(state.translatedLangs)
         ? (state.translatedLangs as unknown[]).filter(
             (x): x is string => typeof x === "string",

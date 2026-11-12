@@ -12,13 +12,12 @@
 import { commands } from "@/bindings";
 import {
   createPageStateStore,
-  type CommittedLog,
   type PageStateLive,
   type PageStateStore,
 } from "./pageState";
+import type { PasteLogEntry } from "./pasteLog";
 
 const NO_VIEW: PageStateLive = {
-  isActive: () => false,
   isLive: () => false,
   build: () => {
     throw new Error("keine offene Seite");
@@ -26,7 +25,8 @@ const NO_VIEW: PageStateLive = {
 };
 
 let view: PageStateLive = NO_VIEW;
-let commitListener: ((page: string, log: CommittedLog) => void) | null = null;
+let commitListener: ((page: string, entries: PasteLogEntry[]) => void) | null =
+  null;
 let store: PageStateStore | null = null;
 
 /** Der Store des Programms; wird beim ersten Zugriff angelegt. */
@@ -35,7 +35,7 @@ export function getPageStateStore(): PageStateStore {
     io: {
       load: async (page) => {
         const loaded = await commands.pageStateLoad(page).catch(() => null);
-        return loaded && loaded.status === "ok" ? loaded.data : null;
+        return loaded && loaded.status === "ok" ? (loaded.data ?? "") : null;
       },
       save: async (page, json) => {
         const saved = await commands
@@ -45,11 +45,10 @@ export function getPageStateStore(): PageStateStore {
       },
     },
     live: {
-      isActive: (page) => view.isActive(page),
       isLive: (page) => view.isLive(page),
-      build: (entries) => view.build(entries),
+      build: () => view.build(),
     },
-    onCommit: (page, log) => commitListener?.(page, log),
+    onCommit: (page, entries) => commitListener?.(page, entries),
   });
   return store;
 }
@@ -60,7 +59,7 @@ export function getPageStateStore(): PageStateStore {
  */
 export function bindPageStateLive(
   next: PageStateLive,
-  onCommit: (page: string, log: CommittedLog) => void,
+  onCommit: (page: string, entries: PasteLogEntry[]) => void,
 ): () => void {
   view = next;
   commitListener = onCommit;
@@ -68,8 +67,5 @@ export function bindPageStateLive(
     if (view !== next) return;
     view = NO_VIEW;
     commitListener = null;
-    // Die bisher offene Seite ist verlassen: ihr Protokoll im Speicher
-    // freigeben, sofern kein Auftrag wartet (sonst räumt der letzte ab).
-    store?.release();
   };
 }

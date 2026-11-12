@@ -1733,10 +1733,61 @@ test("replace speaker on a left page while its raw-text write is still pending k
 });
 
 /**
+ * Die Rohfassungen haben nur eine Quelle, die Datei (Codex Runde 7): Ein
+ * Fremdschreiber (Bibliothek hängt ein Transkript an) speichert einen neuen Text
+ * über die Kette, danach löscht der Nutzer im Dialog eine Rohfassung. Eine reine
+ * Protokolländerung schreibt nur ihr Feld: der Text in der Datei bleibt der
+ * neue, der Eintrag ist weg.
+ */
+test("deleting a raw text after a foreign text write keeps the new text in the file", async ({
+  page,
+}) => {
+  await openSeeded(page, {
+    text: "T0 ",
+    tab: "original",
+    einfuegungen: [entryFor(1), entryFor(2)],
+  });
+  // Der erste Autosave nach dem Laden ist durch (er schriebe sonst T0 zurück,
+  // das ist der vorbestehende Text-Konflikt, nicht Gegenstand dieses Tests).
+  await page.waitForTimeout(1500);
+  const written = await page.evaluate(async () => {
+    const mod = await import("/src/lib/reader/pageStore.ts");
+    return mod.getPageStateStore().mutate("p1", (state) => {
+      state.text = "T1 angehängt.";
+      return true;
+    });
+  });
+  expect(written).toBe(true);
+  await openLog(page);
+  const rows = page.getByTestId("paste-log-entry");
+  await expect(rows).toHaveCount(2);
+  await rows.first().getByTestId("paste-log-delete").click();
+  await expect(rows).toHaveCount(1);
+  await expect
+    .poll(async () => {
+      const state = (await savedState(page)) as {
+        text: string;
+        einfuegungen?: { roh: string }[];
+      };
+      return JSON.stringify([
+        state.text,
+        state.einfuegungen?.map((e) => e.roh),
+      ]);
+    })
+    .toBe(JSON.stringify(["T1 angehängt.", [entryFor(1).roh]]));
+  // Und es bleibt so: kein später landender Schreiber dreht den Text zurück.
+  await page.waitForTimeout(1500);
+  expect(((await savedState(page)) as { text: string }).text).toBe(
+    "T1 angehängt.",
+  );
+});
+
+/**
  * Vorbestehend, nicht Teil von lva#530 (Codex Runde 6, Fall 1): Eine Seite lädt
  * noch (die Antwort kommt verspätet und bringt den Stand von VOR dem Warten), ein
- * Fremdschreiber ändert den Text in der Datei, danach schreibt der Autosave den
- * geladenen alten Text zurück. Der Test beschreibt das gewünschte Verhalten (die
+ * Fremdschreiber ändert den Text in der Datei (hier über die Kette des
+ * Programms, `mutate`), danach schreibt der Autosave den geladenen alten Text
+ * zurück. Der Test beschreibt das gewünschte Verhalten (die
  * Änderung bleibt) und ist deshalb als erwarteter Fehlschlag markiert; auf
  * origin/main schlägt er genauso fehl. Siehe lva#546.
  */
@@ -1761,21 +1812,16 @@ test("a foreign text change during a page load survives the autosave of the load
     .getByRole("button", { name: "Vorlesen", exact: true })
     .click();
   await page.waitForTimeout(500);
-  // Fremdschreiber (wie Bibliothek, Zusammenführen, Sprecher ersetzen): direkt in die Datei.
-  await page.evaluate(async () => {
-    const internals = (
-      window as unknown as {
-        __TAURI_INTERNALS__: {
-          invoke: (cmd: string, args: unknown) => Promise<unknown>;
-        };
-      }
-    ).__TAURI_INTERNALS__;
-    await internals.invoke("page_state_save", {
-      id: "p1",
-      state: JSON.stringify({ text: "Fremd geändert. ", tab: "original" }),
+  // Fremdschreiber (wie Bibliothek, Zusammenführen, Sprecher ersetzen) über
+  // die Kette des Programms (derselbe Store wie im Vorlesen, per Vite-Import).
+  void page.evaluate(async () => {
+    const mod = await import("/src/lib/reader/pageStore.ts");
+    return mod.getPageStateStore().mutate("p1", (state) => {
+      state.text = "Fremd geändert. ";
+      return true;
     });
   });
-  await page.waitForTimeout(5000);
+  await page.waitForTimeout(9000);
   expect(((await savedState(page)) as { text: string }).text).toBe(
     "Fremd geändert. ",
   );

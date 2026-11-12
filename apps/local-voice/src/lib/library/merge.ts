@@ -354,8 +354,8 @@ async function storeJoined(
     const base = () => ({ summary: "", sourceUrl: "", tab: "original" });
     const written = await getPageStateStore().mutate(
       pageId,
-      (state) => {
-        if (Object.keys(state).length === 0) Object.assign(state, base());
+      (state, raw) => {
+        if (raw.trim() === "") Object.assign(state, base());
         state.text = joined.text;
         return true;
       },
