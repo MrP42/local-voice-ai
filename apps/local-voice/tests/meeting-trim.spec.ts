@@ -12,8 +12,8 @@ import {
 // lva#522: Bereich einer Aufnahme.
 //  A) „Neu transkribieren“ mit „Nur einen Bereich“ (Von/Bis und Zweifach-Regler) ruft
 //     `meetings_retranscribe` mit `range`.
-//  B) „Aufnahme zuschneiden …“ (endgültig) ruft `meetings_trim_audio` erst nach dem Klick
-//     auf den Gefahrenknopf.
+//  B) „Aufnahme zuschneiden …“ ruft `meetings_trim_audio` erst nach dem Klick auf den
+//     Gefahrenknopf; der Warnhinweis sagt, dass die Originaldateien als Sicherung bleiben.
 // Die Logik (Schneiden, Zeitversatz, Transaktion) prüfen die Rust-Tests in `trim/tests.rs`.
 // Vorschau für die Abnahme: ZUSCHNEIDEN_SHOTS=1 schreibt je Dialog Bilder bei 390 und
 // 1440 px, hell und dunkel nach docs/vorschau/zuschneiden/ (LV_SHOT_DIR überschreibt).
@@ -30,9 +30,8 @@ const DURATION_M2 = 3_540_000;
 type Theme = "light" | "dark";
 
 /**
- * `meetings_trim_audio` antwortet mit der neuen Dauer (1 800 000 ms) und `__leftover`
- * gesperrten alten Dateien (`__uncertain`: Aufräumen unsicher, `__kept`: alte Dateien außerhalb des
- * Besprechungsordners, nie gelöscht), bei `__trimError` mit diesem Fehlercode; `meetings_get` liefert
+ * `meetings_trim_audio` antwortet mit der neuen Dauer (1 800 000 ms), bei `__trimError` mit
+ * diesem Fehlercode (der Zuschnitt löscht keine alten Dateien: es gibt nur die Dauer); `meetings_get` liefert
  * den einen Datensatz (`__getFail` = "error" | "null" lässt ihn scheitern). Beim Aufruf von `meetings_trim_audio` wird gemerkt, wie viele
  * `<audio src>` noch an der Seite hängen (`__audioAtTrim`): die Player müssen die Dateien
  * vorher losgelassen haben. Die Attrappe der Aufnahmen kennt die Befehle nicht.
@@ -43,9 +42,6 @@ const installTrimMock = async (page: Page, theme: Theme = "light") => {
     const w = window as any;
     w.__settings.theme = themeName;
     w.__trimError = null;
-    w.__leftover = 0;
-    w.__uncertain = false;
-    w.__kept = 0;
     w.__audioAtTrim = null;
     w.__getFail = null;
     const internals = w.__TAURI_INTERNALS__;
@@ -61,12 +57,7 @@ const installTrimMock = async (page: Page, theme: Theme = "light") => {
       w.__calls.push({ cmd, args });
       w.__audioAtTrim = document.querySelectorAll("audio[src]").length;
       if (w.__trimError) throw w.__trimError;
-      return {
-        duration_ms: 1_800_000,
-        leftover_files: w.__leftover,
-        cleanup_uncertain: w.__uncertain,
-        kept_files: w.__kept,
-      };
+      return { duration_ms: 1_800_000 };
     };
   }, theme);
 };
@@ -237,9 +228,13 @@ test.describe("Aufnahme zuschneiden", () => {
     await chooseMenu(page, "menu-trim");
     const dialog = page.getByTestId("trim-dialog");
     await expect(dialog).toBeVisible();
-    // Der Verlusthinweis steht da und ist nicht ausgeblendet.
+    // Der Hinweis steht da und ist nicht ausgeblendet: das Audio verschwindet aus der
+    // Aufnahme, die Originaldateien bleiben vorerst als Sicherung liegen.
     await expect(dialog.getByTestId("trim-warning")).toContainText(
-      "Das Audio außerhalb des Bereichs wird endgültig gelöscht.",
+      "Das Audio außerhalb des Bereichs wird aus der Aufnahme entfernt.",
+    );
+    await expect(dialog.getByTestId("trim-warning")).toContainText(
+      "Die Originaldateien bleiben vorerst als Sicherung im Besprechungsordner; der Speicher wird erst mit einem späteren Update freigegeben.",
     );
     await expect(dialog.getByTestId("trim-warning")).toContainText(
       "die Zeitstempel beginnen danach bei 0:00",
@@ -430,70 +425,6 @@ test.describe("Aufnahme zuschneiden", () => {
     await page.getByTestId("trim-start").click();
     await expect(page.getByTestId("trim-dialog")).toHaveCount(0);
     expect(await page.evaluate(() => (window as any).__audioAtTrim)).toBe(0);
-  });
-
-  test("gesperrte alte Dateien: Hinweis, dass sie beim nächsten Start gelöscht werden", async ({
-    page,
-  }) => {
-    await openM2(page);
-    await page.evaluate(() => ((window as any).__leftover = 2));
-    await chooseMenu(page, "menu-trim");
-    await setTime(page, "trim-range-start", "5:00");
-    await page.getByTestId("trim-start").click();
-    await expect(
-      page.locator("[data-sonner-toast]", {
-        hasText:
-          "2 alte Audiodateien sind gerade gesperrt und werden beim nächsten Start der App gelöscht.",
-      }),
-    ).toHaveCount(1);
-  });
-
-  test("alte Dateien außerhalb des Besprechungsordners: Hinweis, dass sie nicht gelöscht wurden", async ({
-    page,
-  }) => {
-    await openM2(page);
-    await page.evaluate(() => ((window as any).__kept = 2));
-    await chooseMenu(page, "menu-trim");
-    await setTime(page, "trim-range-start", "5:00");
-    await page.getByTestId("trim-start").click();
-    await expect(
-      page.locator("[data-sonner-toast]", {
-        hasText:
-          "2 alte Audiodateien liegen außerhalb des Besprechungsordners und wurden nicht gelöscht.",
-      }),
-    ).toHaveCount(1);
-  });
-
-  test("eine alte Datei außerhalb des Besprechungsordners: Einzahl", async ({
-    page,
-  }) => {
-    await openM2(page);
-    await page.evaluate(() => ((window as any).__kept = 1));
-    await chooseMenu(page, "menu-trim");
-    await setTime(page, "trim-range-start", "5:00");
-    await page.getByTestId("trim-start").click();
-    await expect(
-      page.locator("[data-sonner-toast]", {
-        hasText:
-          "Eine alte Audiodatei liegt außerhalb des Besprechungsordners und wurde nicht gelöscht.",
-      }),
-    ).toHaveCount(1);
-  });
-
-  test("unsicheres Aufräumen: vorsichtiger Hinweis, nie stillschweigend", async ({
-    page,
-  }) => {
-    await openM2(page);
-    await page.evaluate(() => ((window as any).__uncertain = true));
-    await chooseMenu(page, "menu-trim");
-    await setTime(page, "trim-range-start", "5:00");
-    await page.getByTestId("trim-start").click();
-    await expect(
-      page.locator("[data-sonner-toast]", {
-        hasText:
-          "Alte Audiodateien konnten nicht sicher entfernt werden; Nachholen beim nächsten Start.",
-      }),
-    ).toHaveCount(1);
   });
 
   for (const [code, text] of [

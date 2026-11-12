@@ -33,10 +33,12 @@ interface TrimAudioDialogProps {
 
 /**
  * Aufnahme zuschneiden (lva#522): behält nur den gewählten Bereich der Audiodateien.
- * ENDGÜLTIG: das Audio außerhalb wird gelöscht, Transkriptabschnitte außerhalb entfallen
- * (auch in älteren Fassungen), die Zeitstempel beginnen danach bei 0:00. Deshalb ein
- * Warnhinweis, der nie ausgeblendet wird (`contentFades={false}`), und ein Gefahrenknopf;
- * erst dessen Klick ruft `meetings_trim_audio`.
+ * Das Audio außerhalb wird aus der Aufnahme entfernt, Transkriptabschnitte außerhalb
+ * entfallen (auch in älteren Fassungen), die Zeitstempel beginnen danach bei 0:00. Die
+ * Originaldateien löscht die App NICHT: sie bleiben vorerst als Sicherung im
+ * Besprechungsordner (das Freigeben des Speichers kommt mit einem späteren Update).
+ * Deshalb ein Warnhinweis, der nie ausgeblendet wird (`contentFades={false}`), und ein
+ * Gefahrenknopf; erst dessen Klick ruft `meetings_trim_audio`.
  *
  * Nur sinnvoll mit Audio auf der Platte; das Menü bietet den Eintrag sonst nicht an.
  */
@@ -91,23 +93,6 @@ export const TrimAudioDialog: React.FC<TrimAudioDialogProps> = ({
           length: formatRangeTime(result.data.duration_ms),
         }),
       );
-      // Alte Dateien, die noch gesperrt sind: die App löscht sie beim nächsten Start.
-      if (result.data.leftover_files > 0) {
-        toast.info(
-          t("meetings.trim.leftovers", { count: result.data.leftover_files }),
-        );
-      }
-      // Alte Dateien außerhalb des Besprechungsordners (oder mit unzulässigem Namen):
-      // die App löscht sie nie, der Zuschnitt hält sie in der Besprechung fest.
-      if (result.data.kept_files > 0) {
-        toast.warning(
-          t("meetings.trim.kept", { count: result.data.kept_files }),
-        );
-      }
-      // Aufräumen gescheitert oder unsicher: vorsichtig melden, nie als „nichts“.
-      if (result.data.cleanup_uncertain) {
-        toast.warning(t("meetings.trim.uncertain"));
-      }
       onOpenChange(false);
       await onTrimmed();
     } catch (error) {

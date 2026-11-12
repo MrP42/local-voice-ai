@@ -186,9 +186,10 @@ krilla = "0.8"
 ttf-parser = "0.25"
 tempfile = "3"
 ulid = "1"
-# lva#522: Loeschen der alten Audiodateien nach dem Zuschneiden RELATIV zu Verzeichnis-Handles
-# (Besprechungsordner einmal geoeffnet; Austausch eines Vorfahren gegen einen Verweis trifft sie
-# nicht). Schon transitiv im Lock (4.0.3, ueber vendor/wai-storage), Lizenz
+# lva#522: Anlegen der neuen Dateien beim Zuschneiden (und Aufraeumen nach einem Fehler) RELATIV
+# zu Verzeichnis-Handles (Besprechungsordner und neuer trim-Ordner einmal geoeffnet; Austausch
+# eines Vorfahren oder des Ordners gegen einen Verweis trifft sie nicht). Der Zuschnitt loescht
+# keine alten Dateien. Schon transitiv im Lock (4.0.3, ueber vendor/wai-storage), Lizenz
 # Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT.
 cap-std = "4.0.3"
 # lva#365 P2a: Dateinamen nach Unicode-NFC vergleichen (Buch-Ordner, Spec 4.4).

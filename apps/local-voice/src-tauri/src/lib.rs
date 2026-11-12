@@ -453,16 +453,6 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         {
             log::warn!("meetings: startup retention purge failed: {e}");
         }
-        // lva#522: Reste vom Zuschneiden (gesperrte alte Dateien, verwaiste trim-Ordner).
-        // Pro Besprechung unter ihrem Auftrag; die Datenwurzel ist der Ordner der Datenbank.
-        let swept = managers::meetings::trim::sweep_leftovers(&store);
-        if swept.orphan_dirs_removed > 0 || swept.remaining > 0 {
-            log::info!(
-                "meetings: trim leftovers - {} orphaned folder(s) removed, {} still pending",
-                swept.orphan_dirs_removed,
-                swept.remaining
-            );
-        }
         let index_store = store.clone(); // M4-P4b
         let calendar_store = store.clone(); // M5-P5b
         let workflow_store = store.clone(); // B2

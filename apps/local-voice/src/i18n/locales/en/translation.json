@@ -4365,7 +4365,7 @@
     "trim": {
       "title": "Trim recording",
       "intro": "Choose the part of the recording to keep.",
-      "warning": "The audio outside the range is deleted for good. Transcript passages outside are dropped, and the timestamps start at 0:00 afterwards. Older versions are trimmed as well. This cannot be undone.",
+      "warning": "The audio outside the range is removed from the recording. The original files stay in the meeting folder as a backup for now; the storage is only freed with a later update. Transcript passages outside are dropped, and the timestamps start at 0:00 afterwards. Older versions are trimmed as well. This cannot be undone in the app.",
       "newLength": "New length: {{length}} of {{total}}",
       "nothing": "The range is the whole recording: there is nothing to trim.",
       "submit": "Trim",
@@ -4373,12 +4373,7 @@
       "close": "Close",
       "done": "Recording trimmed. New length: {{length}}.",
       "reloadFailed": "The recording was trimmed, but the new state could not be loaded. Playback stays off until it is loaded.",
-      "reload": "Reload",
-      "leftovers_one": "One old audio file is locked at the moment and will be deleted the next time the app starts.",
-      "leftovers_other": "{{count}} old audio files are locked at the moment and will be deleted the next time the app starts.",
-      "kept_one": "One old audio file lies outside the meeting folder and was not deleted.",
-      "kept_other": "{{count}} old audio files lie outside the meeting folder and were not deleted.",
-      "uncertain": "Old audio files could not be removed safely; the app will retry at the next start."
+      "reload": "Reload"
     },
     "retranscribeDialog": {
       "title": "Re-transcribe",
