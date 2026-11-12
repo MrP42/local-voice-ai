@@ -328,6 +328,8 @@ fn link(plan_id: &str) -> PlanLink {
         last_seen_at: None,
         last_change_at: None,
         sync_state: SyncState::Ok,
+        verschiebung_offen: false,
+        block_konflikt: false,
     }
 }
 
@@ -628,4 +630,162 @@ fn einwilligung_startmodus() {
             abgelehnt: vec!["c@example.org".into()],
         }
     );
+}
+
+// ---------- Fixrunde Review ----------
+
+#[test]
+fn marke_in_url_wird_nicht_als_marke_gelesen() {
+    let mut p = eingabe();
+    p.materials[0].url = Some("https://x.example.org/lva-plan:abc".into());
+    let e = einladung_aus("P1", &p, &Gestaltung::default());
+    assert_eq!(finde_marke(&e.text).as_deref(), Some("P1"));
+    assert_eq!(finde_marke(&e.html).as_deref(), Some("P1"));
+    assert!(!e
+        .html
+        .contains("href=\"https://x.example.org/lva-plan:abc\""));
+    // Auch eine fremde URL im Outlook-Teil des Termins zaehlt nicht.
+    assert_eq!(
+        finde_marke("siehe https://x/lva-plan:abc\nlva-plan:P1").as_deref(),
+        Some("P1")
+    );
+}
+
+#[test]
+fn konflikt_ereignis_nur_einmal_auch_bei_absage() {
+    let c = db();
+    let p = plan_anlegen(&c, "P1", &eingabe(), 1).unwrap();
+    let e = einladung(&p, &Gestaltung::default());
+    let mut l = link("P1");
+    l.body_hash = Some(e.block_hash.clone());
+    let mut b = beob(10_000, Some(e.text.replace("Optionen", "Varianten")));
+    b.cancelled = true;
+    let a1 = abgleichen(PlanStatus::Verknuepft, &l, Some(&b), 1);
+    assert_eq!(a1.link.sync_state, SyncState::Abgesagt);
+    assert!(a1.ereignisse.contains(&Ereignis::Konflikt));
+    let a2 = abgleichen(PlanStatus::Abgesagt, &a1.link, Some(&b), 2);
+    assert!(a2.ereignisse.is_empty(), "{:?}", a2.ereignisse);
+}
+
+#[test]
+fn verschiebung_ueberlebt_konflikt() {
+    let c = db();
+    let p = plan_anlegen(&c, "P1", &eingabe(), 1).unwrap();
+    let e = einladung(&p, &Gestaltung::default());
+    let mut l = link("P1");
+    l.body_hash = Some(e.block_hash.clone());
+    // Verschoben und Block geaendert zugleich.
+    let geaendert = e.text.replace("Optionen", "Varianten");
+    let a = abgleichen(
+        PlanStatus::Verknuepft,
+        &l,
+        Some(&beob(50_000, Some(geaendert))),
+        1,
+    );
+    assert_eq!(a.link.sync_state, SyncState::Konflikt);
+    assert!(a.link.verschiebung_offen);
+    assert_eq!(a.plan_status, Some(PlanStatus::Verschoben));
+    // Konflikt aufgeloest -> Verschiebung weiter sichtbar.
+    let b = abgleichen(
+        PlanStatus::Verschoben,
+        &a.link,
+        Some(&beob(50_000, Some(e.text.clone()))),
+        2,
+    );
+    assert_eq!(b.link.sync_state, SyncState::Verschoben);
+    assert!(b.ereignisse.contains(&Ereignis::KonfliktAufgeloest));
+}
+
+#[test]
+fn rueckkehr_aus_verwaist_wird_gemeldet() {
+    let v = abgleichen(PlanStatus::Verknuepft, &link("P1"), None, 1);
+    let w = abgleichen(
+        PlanStatus::Verknuepft,
+        &v.link,
+        Some(&beob(10_000, None)),
+        2,
+    );
+    assert!(w.ereignisse.contains(&Ereignis::Wiederverknuepft));
+    assert_eq!(w.link.sync_state, SyncState::Ok);
+}
+
+#[test]
+fn regeln_ueberlauf_ohne_panik() {
+    let mut p = eingabe();
+    p.duration_min = u32::MAX;
+    p.agenda[0].minutes = u32::MAX;
+    p.agenda[1].minutes = u32::MAX;
+    let h = pruefen(
+        &p,
+        Some(LokaleZeit {
+            stunde: 10,
+            minute: 0,
+        }),
+        &Regeln::default(),
+    );
+    assert!(codes(&h).contains(&"dauer_zu_lang"));
+    let mut q = eingabe();
+    q.agenda[0].minutes = u32::MAX;
+    q.agenda[1].minutes = u32::MAX;
+    assert!(codes(&pruefen(&q, None, &Regeln::default())).contains(&"agenda_zu_lang"));
+}
+
+#[test]
+fn store_erzwingt_regeln_und_status() {
+    let c = db();
+    let mut leer = eingabe();
+    leer.title = " ".into();
+    assert_eq!(plan_anlegen(&c, "P1", &leer, 1).unwrap_err(), "titel_leer");
+    plan_anlegen(&c, "P1", &eingabe(), 1).unwrap();
+    let mut null = eingabe();
+    null.duration_min = 0;
+    assert_eq!(plan_aendern(&c, "P1", &null, 2).unwrap_err(), "dauer_null");
+
+    plan_status_setzen(&c, "P1", PlanStatus::Durchgefuehrt, 3).unwrap();
+    assert_eq!(
+        plan_aendern(&c, "P1", &eingabe(), 4).unwrap_err(),
+        "plan_abgeschlossen"
+    );
+    assert_eq!(
+        plan_status_setzen(&c, "P1", PlanStatus::Entwurf, 5).unwrap_err(),
+        "status_uebergang_ungueltig"
+    );
+    plan_status_setzen(&c, "P1", PlanStatus::Protokolliert, 6).unwrap();
+    plan_status_setzen(&c, "P1", PlanStatus::Versendet, 7).unwrap();
+    assert!(plan_status_setzen(&c, "P1", PlanStatus::Protokolliert, 8).is_err());
+}
+
+#[test]
+fn store_prueft_planung_und_normalisiert_person() {
+    let c = db();
+    plan_anlegen(&c, "P1", &eingabe(), 1).unwrap();
+    plan_anlegen(&c, "P2", &eingabe(), 1).unwrap();
+    let e = Consent {
+        plan_id: "P1".into(),
+        person: "Anna Beispiel <Anna@Example.org>".into(),
+        state: ConsentState::Zugestimmt,
+        channel: None,
+        recorded_at: Some(1),
+    };
+    einwilligung_setzen(&c, &e).unwrap();
+    let alle = einwilligungen(&c, "P1").unwrap();
+    assert_eq!(alle[0].person, "anna@example.org");
+    assert_eq!(
+        start_modus(true, &["ANNA@example.org".into()], &alle),
+        StartModus::MitTranskription
+    );
+    let mut fehlt = e.clone();
+    fehlt.plan_id = "FEHLT".into();
+    assert_eq!(
+        einwilligung_setzen(&c, &fehlt).unwrap_err(),
+        "plan_nicht_gefunden"
+    );
+
+    // Ein Termin gehoert hoechstens einer Planung.
+    let mut l1 = link("P1");
+    l1.remote_id = Some("R1".into());
+    link_speichern(&c, &l1).unwrap();
+    let mut l2 = link("P2");
+    l2.remote_id = Some("R1".into());
+    assert!(link_speichern(&c, &l2).is_err());
 }

@@ -296,7 +296,15 @@ pub struct PlanLink {
     pub body_hash: Option<String>,
     pub last_seen_at: Option<i64>,
     pub last_change_at: Option<i64>,
+    /// Verdichteter Zustand fuer Liste und Status (Vorrang siehe `sync`).
     pub sync_state: SyncState,
+    /// Eine Verschiebung ist noch nicht bestaetigt. Getrennt vom `sync_state`
+    /// gefuehrt, damit sie unter Konflikt oder Absage nicht verloren geht.
+    #[serde(default)]
+    pub verschiebung_offen: bool,
+    /// Der App-Block weicht von der zuletzt geschriebenen Fassung ab.
+    #[serde(default)]
+    pub block_konflikt: bool,
 }
 
 /// Einwilligung einer Person zur Transkription, je Planung.

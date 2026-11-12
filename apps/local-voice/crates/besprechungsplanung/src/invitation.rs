@@ -188,9 +188,20 @@ fn zeilen(plan_id: &str, plan: &PlanInput, g: &Gestaltung) -> Vec<Zeile> {
             if let Some(d) = nicht_leer(m.due_date.as_deref()) {
                 label = format!("{label} (bitte lesen bis {})", einzeilig(d));
             }
-            match m.url.as_deref().filter(|u| sicherer_link(u)) {
+            // Eine URL mit Markenpraefix wuerde eine fremde Marke einschleusen:
+            // dann nur als Text (einzeilig entschaerft sie).
+            match m
+                .url
+                .as_deref()
+                .filter(|u| sicherer_link(u) && !u.contains(MARKE_PRAEFIX))
+            {
                 Some(u) => z.push(Zeile::Link(label, u.trim().to_string())),
-                None => z.push(Zeile::Punkt(label)),
+                None => match m.url.as_deref().filter(|u| sicherer_link(u)) {
+                    // Sicherer Link mit Markenpraefix: als entschaerfter Text.
+                    Some(u) => z.push(Zeile::Punkt(format!("{label}: {}", einzeilig(u)))),
+                    // Unsicherer Link (z. B. javascript:): weglassen.
+                    None => z.push(Zeile::Punkt(label)),
+                },
             }
         }
     }
@@ -333,20 +344,33 @@ pub fn block_hash(block_text: &str) -> String {
     format!("{h:016x}")
 }
 
-/// Findet die Plan-Id in einem Termintext (Text oder HTML). Die erste Marke gilt.
+/// Findet die Plan-Id in einem Termintext (Text oder HTML). Gilt nur eine Marke,
+/// die allein steht: davor Textanfang, Zeilenumbruch, Leerraum oder `>`, danach
+/// Textende, Leerraum oder `<`. So zaehlt `https://x/lva-plan:abc` nicht. Die erste
+/// solche Marke gilt.
 pub fn finde_marke(beschreibung: &str) -> Option<String> {
-    let pos = beschreibung.find(MARKE_PRAEFIX)?;
-    let rest = &beschreibung[pos + MARKE_PRAEFIX.len()..];
-    let id: String = rest
-        .chars()
-        .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
-        .take(64)
-        .collect();
-    if id.is_empty() {
-        None
-    } else {
-        Some(id)
+    let mut ab = 0;
+    while let Some(rel) = beschreibung[ab..].find(MARKE_PRAEFIX) {
+        let pos = ab + rel;
+        ab = pos + MARKE_PRAEFIX.len();
+        let davor_ok = beschreibung[..pos]
+            .chars()
+            .next_back()
+            .is_none_or(|c| c.is_whitespace() || c == '>');
+        let rest = &beschreibung[ab..];
+        let id: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+            .collect();
+        let danach_ok = rest[id.len()..]
+            .chars()
+            .next()
+            .is_none_or(|c| c.is_whitespace() || c == '<');
+        if davor_ok && danach_ok && !id.is_empty() && id.len() <= 64 {
+            return Some(id);
+        }
     }
+    None
 }
 
 /// Schneidet den App-Block aus einem Termintext (Text). `None`, wenn Kopf oder

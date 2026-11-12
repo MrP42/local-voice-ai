@@ -49,6 +49,8 @@ pub enum Ereignis {
     Konflikt,
     KonfliktAufgeloest,
     Verwaist,
+    /// Ein verwaister Termin ist wieder auffindbar.
+    Wiederverknuepft,
 }
 
 /// Ergebnis eines Abgleichs.
@@ -67,6 +69,9 @@ pub struct Abgleich {
 
 /// Gleicht eine Verknuepfung mit der Beobachtung ab. `beobachtung = None` heisst:
 /// der Adapter findet den Termin nicht mehr (geloescht).
+///
+/// Ereignisse entstehen nur bei Aenderungen (Konflikt, Absage usw. je einmal),
+/// damit wiederholte Abgleiche keine doppelten Meldungen oder Audit-Zeilen erzeugen.
 pub fn abgleichen(
     status: PlanStatus,
     link: &PlanLink,
@@ -77,19 +82,24 @@ pub fn abgleichen(
     let mut ereignisse = Vec::new();
     let alt_state = link.sync_state;
 
-    let Some(b) = beobachtung else {
+    let verwaist = |mut neu: PlanLink, teilnehmende: Vec<String>| {
+        let mut ereignisse = Vec::new();
         neu.sync_state = SyncState::Verwaist;
         if alt_state != SyncState::Verwaist {
             neu.last_change_at = Some(jetzt);
             ereignisse.push(Ereignis::Verwaist);
         }
-        return Abgleich {
+        Abgleich {
             link: neu,
             plan_status: None,
             ereignisse,
             schreiben_erlaubt: false,
-            teilnehmende: Vec::new(),
-        };
+            teilnehmende,
+        }
+    };
+
+    let Some(b) = beobachtung else {
+        return verwaist(neu, Vec::new());
     };
 
     neu.last_seen_at = Some(jetzt);
@@ -106,29 +116,25 @@ pub fn abgleichen(
     // Marke weg -> verwaist (der Termin gehoert nicht mehr zu dieser Planung).
     if let Some(d) = &b.description {
         if finde_marke(d).as_deref() != Some(link.plan_id.as_str()) {
-            neu.sync_state = SyncState::Verwaist;
-            if alt_state != SyncState::Verwaist {
-                neu.last_change_at = Some(jetzt);
-                ereignisse.push(Ereignis::Verwaist);
-            }
-            return Abgleich {
-                link: neu,
-                plan_status: None,
-                ereignisse,
-                schreiben_erlaubt: false,
-                teilnehmende: b.attendees.clone(),
-            };
+            return verwaist(neu, b.attendees.clone());
         }
+    }
+
+    let schon_bekannt = link.starts_at.is_some();
+    if !schon_bekannt {
+        ereignisse.push(Ereignis::Verknuepft);
+    } else if alt_state == SyncState::Verwaist {
+        ereignisse.push(Ereignis::Wiederverknuepft);
     }
 
     // Outlook-gefuehrte Felder uebernehmen.
     let zeit_neu = link.starts_at != Some(b.starts_at) || link.ends_at != Some(b.ends_at);
-    let schon_bekannt = link.starts_at.is_some();
     if zeit_neu && schon_bekannt {
         ereignisse.push(Ereignis::Verschoben {
             alt_beginn: link.starts_at,
             neu_beginn: b.starts_at,
         });
+        neu.verschiebung_offen = true;
     }
     let ort_neu = link.location != b.location || link.join_url != b.join_url;
     if ort_neu && schon_bekannt {
@@ -139,56 +145,53 @@ pub fn abgleichen(
     neu.location = b.location.clone();
     neu.join_url = b.join_url.clone();
 
-    // Block der App pruefen.
-    let konflikt = match (&b.description, &link.body_hash) {
+    // Block der App pruefen. Ohne Text bleibt der bekannte Stand.
+    neu.block_konflikt = match (&b.description, &link.body_hash) {
         (Some(d), Some(h)) => match finde_block(d, &link.plan_id) {
             Some(block) => &block_hash(&block) != h,
             None => true,
         },
-        _ => false,
+        (Some(_), None) => false,
+        (None, _) => link.block_konflikt,
     };
+    if neu.block_konflikt && !link.block_konflikt {
+        ereignisse.push(Ereignis::Konflikt);
+    }
+    if !neu.block_konflikt && link.block_konflikt {
+        ereignisse.push(Ereignis::KonfliktAufgeloest);
+    }
+
+    let war_abgesagt = alt_state == SyncState::Abgesagt;
+    if b.cancelled && !war_abgesagt {
+        ereignisse.push(Ereignis::Abgesagt);
+    }
+    if war_abgesagt && !b.cancelled {
+        ereignisse.push(Ereignis::Wiederhergestellt);
+    }
 
     let state = if b.cancelled {
         SyncState::Abgesagt
-    } else if konflikt {
+    } else if neu.block_konflikt {
         SyncState::Konflikt
-    } else if zeit_neu && schon_bekannt {
-        SyncState::Verschoben
-    } else if alt_state == SyncState::Verschoben {
-        // Verschiebung bleibt sichtbar, bis jemand sie bestaetigt.
+    } else if neu.verschiebung_offen {
         SyncState::Verschoben
     } else {
         SyncState::Ok
     };
-
-    if state == SyncState::Abgesagt && alt_state != SyncState::Abgesagt {
-        ereignisse.push(Ereignis::Abgesagt);
-    }
-    if alt_state == SyncState::Abgesagt && !b.cancelled {
-        ereignisse.push(Ereignis::Wiederhergestellt);
-    }
-    if konflikt && alt_state != SyncState::Konflikt {
-        ereignisse.push(Ereignis::Konflikt);
-    }
-    if !konflikt && alt_state == SyncState::Konflikt && !b.cancelled {
-        ereignisse.push(Ereignis::KonfliktAufgeloest);
-    }
-    if !schon_bekannt {
-        ereignisse.push(Ereignis::Verknuepft);
-    }
-
     neu.sync_state = state;
-    if state != alt_state || zeit_neu || ort_neu {
+    if state != alt_state || zeit_neu || ort_neu || neu.block_konflikt != link.block_konflikt {
         neu.last_change_at = Some(jetzt);
     }
 
     let plan_status = if status.ist_abgeschlossen() {
         None
     } else {
-        let ziel = match state {
-            SyncState::Abgesagt => PlanStatus::Abgesagt,
-            SyncState::Verschoben => PlanStatus::Verschoben,
-            _ => PlanStatus::Verknuepft,
+        let ziel = if b.cancelled {
+            PlanStatus::Abgesagt
+        } else if neu.verschiebung_offen {
+            PlanStatus::Verschoben
+        } else {
+            PlanStatus::Verknuepft
         };
         (ziel != status).then_some(ziel)
     };
@@ -205,6 +208,7 @@ pub fn abgleichen(
 /// Die Nutzerin bzw. der Nutzer hat die Verschiebung zur Kenntnis genommen.
 pub fn verschiebung_bestaetigen(link: &PlanLink) -> PlanLink {
     let mut neu = link.clone();
+    neu.verschiebung_offen = false;
     if neu.sync_state == SyncState::Verschoben {
         neu.sync_state = SyncState::Ok;
     }

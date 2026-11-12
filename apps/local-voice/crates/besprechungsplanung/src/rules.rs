@@ -167,8 +167,8 @@ pub fn pruefen(plan: &PlanInput, beginn: Option<LokaleZeit>, regeln: &Regeln) ->
                 "Ein Agendapunkt hat keine Zeitbox.".into(),
             );
         }
-        let summe: u32 = plan.agenda.iter().map(|a| a.minutes).sum();
-        if summe > plan.duration_min && plan.duration_min > 0 {
+        let summe: u64 = plan.agenda.iter().map(|a| u64::from(a.minutes)).sum();
+        if summe > u64::from(plan.duration_min) && plan.duration_min > 0 {
             add(
                 "agenda_zu_lang",
                 Stufe::Warnung,
@@ -188,7 +188,8 @@ pub fn pruefen(plan: &PlanInput, beginn: Option<LokaleZeit>, regeln: &Regeln) ->
         );
     }
 
-    if let Some(b) = beginn {
+    let dauer_ok = plan.duration_min > 0 && plan.duration_min <= regeln.max_dauer_min;
+    if let Some(b) = beginn.filter(|_| dauer_ok) {
         if b.minute != 0 && b.minute != 30 {
             add(
                 "beginn_krumm",
@@ -197,7 +198,7 @@ pub fn pruefen(plan: &PlanInput, beginn: Option<LokaleZeit>, regeln: &Regeln) ->
             );
         }
         let start = b.minuten();
-        let ende = start + plan.duration_min;
+        let ende = start.saturating_add(plan.duration_min);
         let von = u32::from(regeln.rahmen_von_stunde) * 60;
         let bis = u32::from(regeln.rahmen_bis_stunde) * 60;
         if start < von || ende > bis {

@@ -9,9 +9,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{Consent, ConsentState};
 
-/// Normalisiert eine Person: E-Mail klein, ohne `mailto:`, ohne Leerraum.
+/// Normalisiert eine Person: E-Mail klein, ohne `mailto:`, ohne Leerraum; aus
+/// `Name <adresse>` zaehlt die Adresse.
 pub fn person_schluessel(s: &str) -> String {
     let t = s.trim();
+    let t = match (t.rfind('<'), t.rfind('>')) {
+        (Some(a), Some(b)) if a < b => &t[a + 1..b],
+        _ => t,
+    };
+    let t = t.trim();
     let t = t
         .strip_prefix("mailto:")
         .or_else(|| t.strip_prefix("MAILTO:"))

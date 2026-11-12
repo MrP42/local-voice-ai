@@ -6,10 +6,14 @@
 //! arbeiten auf einer geliehenen Verbindung; Transaktionen steuert die App.
 //!
 //! Fehlercodes (Text des Fehlers): `plan_id_ungueltig`, `plan_nicht_gefunden`,
-//! `plan_abgeschlossen`, `daten_ungueltig`.
+//! `plan_abgeschlossen`, `daten_ungueltig`, `status_uebergang_ungueltig`, sowie die
+//! Codes der Regelpruefung mit Stufe `Fehler` (z. B. `titel_leer`, `dauer_null`).
 
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
+use crate::rules;
+
+use crate::consent::person_schluessel;
 use crate::model::{
     AdapterKind, Consent, ConsentChannel, ConsentState, GoalType, Plan, PlanInput, PlanLink,
     PlanStatus, SyncState,
@@ -51,9 +55,12 @@ pub const MIGRATIONS: &[&str] = &["CREATE TABLE IF NOT EXISTS meeting_plans (
         body_hash TEXT,
         last_seen_at INTEGER,
         last_change_at INTEGER,
-        sync_state TEXT NOT NULL
+        sync_state TEXT NOT NULL,
+        move_pending INTEGER NOT NULL DEFAULT 0,
+        block_conflict INTEGER NOT NULL DEFAULT 0
     );
-    CREATE INDEX IF NOT EXISTS idx_meeting_plan_links_remote ON meeting_plan_links(remote_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_plan_links_remote
+        ON meeting_plan_links(adapter, remote_id) WHERE remote_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_meeting_plan_links_uid ON meeting_plan_links(ical_uid);
     CREATE TABLE IF NOT EXISTS meeting_plan_consents (
         plan_id TEXT NOT NULL REFERENCES meeting_plans(id) ON DELETE CASCADE,
@@ -65,6 +72,11 @@ pub const MIGRATIONS: &[&str] = &["CREATE TABLE IF NOT EXISTS meeting_plans (
     );"];
 
 /// Wendet [`MIGRATIONS`] direkt an (Tests, eigenstaendige Nutzung).
+///
+/// Die Verbindung braucht `PRAGMA foreign_keys = ON`, sonst greift das
+/// `ON DELETE CASCADE` nicht und Einwilligungen (Personendaten) blieben beim
+/// endgueltigen Loeschen einer Planung liegen. Die Zugriffe hier pruefen die
+/// Planung zusaetzlich selbst.
 pub fn migrieren(conn: &Connection) -> rusqlite::Result<()> {
     for m in MIGRATIONS {
         conn.execute_batch(m)?;
@@ -91,11 +103,22 @@ fn json<T: serde::Serialize>(v: &T) -> Res<String> {
     serde_json::to_string(v).map_err(|_| "daten_ungueltig".to_string())
 }
 
+/// Harte Regeln auch im Speicher: was die Regelpruefung als Fehler meldet,
+/// wird nicht gespeichert (unabhaengig davon, ob die App vorher prueft).
+fn eingabe_pruefen(input: &PlanInput) -> Res<()> {
+    let hinweise = rules::pruefen(input, None, &rules::Regeln::default());
+    match hinweise.iter().find(|h| h.stufe == rules::Stufe::Fehler) {
+        Some(h) => Err(h.code.clone()),
+        None => Ok(()),
+    }
+}
+
 /// Legt eine Planung im Status `entwurf` an.
 pub fn plan_anlegen(conn: &Connection, id: &str, input: &PlanInput, jetzt: i64) -> Res<Plan> {
     if !gueltige_id(id) {
         return Err("plan_id_ungueltig".into());
     }
+    eingabe_pruefen(input)?;
     conn.execute(
         "INSERT INTO meeting_plans (id, meeting_id, title, goal_type, goal_text, expected_result,
             duration_min, classification, agenda_json, roles_json, materials_json, hints_json,
@@ -123,12 +146,14 @@ pub fn plan_anlegen(conn: &Connection, id: &str, input: &PlanInput, jetzt: i64) 
     plan_laden(conn, id)?.ok_or_else(|| "plan_nicht_gefunden".into())
 }
 
-/// Aendert die Inhalte einer Planung. Nach dem Versand des Protokolls nicht mehr.
+/// Aendert die Inhalte einer Planung. Nach der Durchfuehrung nicht mehr (das
+/// Protokoll bezieht sich auf die Fassung, die galt).
 pub fn plan_aendern(conn: &Connection, id: &str, input: &PlanInput, jetzt: i64) -> Res<Plan> {
     let alt = plan_laden(conn, id)?.ok_or("plan_nicht_gefunden")?;
-    if alt.status == PlanStatus::Versendet {
+    if alt.status.ist_abgeschlossen() {
         return Err("plan_abgeschlossen".into());
     }
+    eingabe_pruefen(input)?;
     conn.execute(
         "UPDATE meeting_plans SET title = ?2, goal_type = ?3, goal_text = ?4, expected_result = ?5,
             duration_min = ?6, classification = ?7, agenda_json = ?8, roles_json = ?9,
@@ -156,8 +181,28 @@ pub fn plan_aendern(conn: &Connection, id: &str, input: &PlanInput, jetzt: i64) 
     plan_laden(conn, id)?.ok_or_else(|| "plan_nicht_gefunden".into())
 }
 
-/// Setzt den Status.
+/// Ist der Uebergang erlaubt? Ein abgeschlossener Status (durchgefuehrt,
+/// protokolliert, versendet) geht nur vorwaerts, nie zurueck in die Planung.
+pub fn uebergang_erlaubt(von: PlanStatus, nach: PlanStatus) -> bool {
+    use PlanStatus::*;
+    if !von.ist_abgeschlossen() {
+        return true;
+    }
+    let rang = |s: PlanStatus| match s {
+        Durchgefuehrt => 1,
+        Protokolliert => 2,
+        Versendet => 3,
+        _ => 0,
+    };
+    rang(nach) >= rang(von)
+}
+
+/// Setzt den Status (nur erlaubte Uebergaenge, siehe [`uebergang_erlaubt`]).
 pub fn plan_status_setzen(conn: &Connection, id: &str, status: PlanStatus, jetzt: i64) -> Res<()> {
+    let alt = plan_laden(conn, id)?.ok_or("plan_nicht_gefunden")?;
+    if !uebergang_erlaubt(alt.status, status) {
+        return Err("status_uebergang_ungueltig".into());
+    }
     let n = conn
         .execute(
             "UPDATE meeting_plans SET status = ?2, updated_at = ?3 WHERE id = ?1 AND deleted_at IS NULL",
@@ -258,20 +303,23 @@ pub fn plan_liste(conn: &Connection) -> Res<Vec<Plan>> {
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(sql)
 }
 
-/// Speichert eine Verknuepfung (ersetzt die bisherige der Planung).
+/// Speichert eine Verknuepfung (ersetzt die bisherige der Planung). Die Planung
+/// muss existieren; ein Termin (`adapter`, `remote_id`) gehoert hoechstens einer Planung.
 pub fn link_speichern(conn: &Connection, l: &PlanLink) -> Res<()> {
+    plan_laden(conn, &l.plan_id)?.ok_or("plan_nicht_gefunden")?;
     conn.execute(
         "INSERT INTO meeting_plan_links (plan_id, adapter, source_id, remote_id, ical_uid,
             change_key, starts_at, ends_at, location, join_url, body_hash, last_seen_at,
-            last_change_at, sync_state)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+            last_change_at, sync_state, move_pending, block_conflict)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
          ON CONFLICT(plan_id) DO UPDATE SET adapter = excluded.adapter,
             source_id = excluded.source_id, remote_id = excluded.remote_id,
             ical_uid = excluded.ical_uid, change_key = excluded.change_key,
             starts_at = excluded.starts_at, ends_at = excluded.ends_at,
             location = excluded.location, join_url = excluded.join_url,
             body_hash = excluded.body_hash, last_seen_at = excluded.last_seen_at,
-            last_change_at = excluded.last_change_at, sync_state = excluded.sync_state",
+            last_change_at = excluded.last_change_at, sync_state = excluded.sync_state,
+            move_pending = excluded.move_pending, block_conflict = excluded.block_conflict",
         params![
             l.plan_id,
             l.adapter.as_str(),
@@ -287,6 +335,8 @@ pub fn link_speichern(conn: &Connection, l: &PlanLink) -> Res<()> {
             l.last_seen_at,
             l.last_change_at,
             l.sync_state.as_str(),
+            l.verschiebung_offen,
+            l.block_konflikt,
         ],
     )
     .map_err(sql)?;
@@ -311,11 +361,14 @@ fn link_aus_zeile(r: &Row) -> rusqlite::Result<PlanLink> {
         last_seen_at: r.get(11)?,
         last_change_at: r.get(12)?,
         sync_state: SyncState::parse(&state).unwrap_or(SyncState::Verwaist),
+        verschiebung_offen: r.get(14)?,
+        block_konflikt: r.get(15)?,
     })
 }
 
 const LINK_SPALTEN: &str = "plan_id, adapter, source_id, remote_id, ical_uid, change_key,
-    starts_at, ends_at, location, join_url, body_hash, last_seen_at, last_change_at, sync_state";
+    starts_at, ends_at, location, join_url, body_hash, last_seen_at, last_change_at, sync_state,
+    move_pending, block_conflict";
 
 /// Laedt die Verknuepfung einer Planung.
 pub fn link_laden(conn: &Connection, plan_id: &str) -> Res<Option<PlanLink>> {
@@ -348,8 +401,14 @@ pub fn links_offen(conn: &Connection) -> Res<Vec<PlanLink>> {
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(sql)
 }
 
-/// Setzt eine Einwilligung (legt sie an oder ersetzt sie).
+/// Setzt eine Einwilligung (legt sie an oder ersetzt sie). Die Person wird hier
+/// normalisiert ([`person_schluessel`]), damit Abgleich und Start-Tor sie finden.
 pub fn einwilligung_setzen(conn: &Connection, c: &Consent) -> Res<()> {
+    plan_laden(conn, &c.plan_id)?.ok_or("plan_nicht_gefunden")?;
+    let person = person_schluessel(&c.person);
+    if person.is_empty() {
+        return Err("daten_ungueltig".into());
+    }
     conn.execute(
         "INSERT INTO meeting_plan_consents (plan_id, person, state, channel, recorded_at)
          VALUES (?1, ?2, ?3, ?4, ?5)
@@ -357,7 +416,7 @@ pub fn einwilligung_setzen(conn: &Connection, c: &Consent) -> Res<()> {
             channel = excluded.channel, recorded_at = excluded.recorded_at",
         params![
             c.plan_id,
-            c.person,
+            person,
             c.state.as_str(),
             c.channel.map(|k| k.as_str()),
             c.recorded_at,
