@@ -10,6 +10,7 @@
 import { commands, type KiDocument, type LibraryBook } from "@/bindings";
 import { TTS_TARGET_LANGS } from "@/lib/constants/languages";
 import { KURZBUCH_TEMPLATE_ID } from "@/lib/kurzbuch/kurzbuch";
+import { getPageStateStore } from "@/lib/reader/pageStore";
 import { tracksOf } from "./names";
 
 export type VersionKind =
@@ -218,21 +219,27 @@ export async function markTranslated(pageId: string, target: string) {
         detail: { page: pageId, lang: target },
       }),
     );
-  const result = await commands.pageStateLoad(pageId);
-  if (result.status !== "ok" || !result.data) return notify();
-  try {
-    const state = JSON.parse(result.data) as Record<string, unknown>;
-    const langs = Array.isArray(state.translatedLangs)
-      ? (state.translatedLangs as unknown[]).filter(
-          (x) => typeof x === "string",
-        )
-      : [];
-    if (!langs.includes(target)) {
-      state.translatedLangs = [...langs, target];
-      await commands.pageStateSave(pageId, JSON.stringify(state));
-    }
-  } catch {
-    /* Seite im Altformat: Vorlesen findet die Übersetzung über den Zwischenspeicher */
-  }
+  // Über den einen Schreibpfad (Kette, frisch gelesen): Rohfassungen und alle
+  // anderen Felder bleiben. Ist die Seite offen, gilt der Stand der Oberfläche
+  // als Grundlage (`keep`); sie kennt die Sprache nach `notify` ohnehin.
+  // Eine Seite ohne Stand (oder im Altformat) bleibt unberührt: Vorlesen findet
+  // die Übersetzung über den Zwischenspeicher.
+  await getPageStateStore()
+    .mutate(
+      pageId,
+      (state) => {
+        if (Object.keys(state).length === 0) return false;
+        const langs = Array.isArray(state.translatedLangs)
+          ? (state.translatedLangs as unknown[]).filter(
+              (x): x is string => typeof x === "string",
+            )
+          : [];
+        if (langs.includes(target)) return false;
+        state.translatedLangs = [...langs, target];
+        return true;
+      },
+      "keep",
+    )
+    .catch(() => false);
   notify();
 }

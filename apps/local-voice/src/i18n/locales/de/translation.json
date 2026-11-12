@@ -8554,6 +8554,7 @@
       "missing": "Transkription nicht gefunden",
       "missingParts": "Teile ohne Transkriptions-Auftrag: das Hörbuch lässt sich nicht vollständig transkribieren.",
       "emptyTranscript": "Das Transkript ist leer.",
+      "pageNotWritten": "Die Seite des Buchs ließ sich nicht schreiben.",
       "unknownDuration": "Die Dauer eines früheren Teils ist unbekannt; der Text lässt sich nicht anfügen."
     },
     "back": "Bibliothek",

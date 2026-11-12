@@ -1,4 +1,5 @@
 import { commands, type LibraryBook } from "@/bindings";
+import { getPageStateStore } from "@/lib/reader/pageStore";
 import type { SplitGroup } from "./audioGroups";
 import { assetUrl, pendingJobs, totalDuration, tracksOf } from "./books";
 import {
@@ -347,24 +348,35 @@ async function storeJoined(
   plan: MergePlan,
 ): Promise<LibraryBook> {
   let pageId = book.text?.origin === "transcript" ? book.text.page_id : null;
-  let state: Record<string, unknown> = {
-    summary: "",
-    sourceUrl: "",
-    tab: "original",
-  };
   if (pageId) {
-    const loaded = await loadText(pageId);
-    if (loaded) state = loaded.state;
+    // Bestehende Seite über den einen Schreibpfad (Kette, frisch gelesen): nur
+    // der Text wird ersetzt, Rohfassungen und alle anderen Felder bleiben. Ist
+    // die Seite im Vorlesen offen, lädt es sie danach neu.
+    const written = await getPageStateStore().mutate(
+      pageId,
+      (state) => {
+        state.text = joined.text;
+        return true;
+      },
+      "adopt",
+    );
+    if (!written) throw new ImportError(i18n.t("library.job.pageNotWritten"));
   } else {
+    // Neue Seite: die Kennung entsteht gerade erst, kein anderer Schreiber kennt sie.
     const page = await commands.pagesCreate(plan.title);
     if (page.status !== "ok") throw new ImportError(page.error);
     pageId = page.data.id;
+    const stored = await commands.pageStateSave(
+      pageId,
+      JSON.stringify({
+        summary: "",
+        sourceUrl: "",
+        tab: "original",
+        text: joined.text,
+      }),
+    );
+    if (stored.status !== "ok") throw new ImportError(stored.error);
   }
-  const stored = await commands.pageStateSave(
-    pageId,
-    JSON.stringify({ ...state, text: joined.text }),
-  );
-  if (stored.status !== "ok") throw new ImportError(stored.error);
   const saved = await commands.librarySave({
     ...book,
     text: {

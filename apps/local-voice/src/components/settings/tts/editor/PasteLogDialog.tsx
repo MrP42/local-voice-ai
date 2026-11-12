@@ -224,7 +224,14 @@ export const PasteLogDialog: React.FC<PasteLogDialogProps> = ({
                           variant="secondary"
                           disabledFocusable={checking}
                           aria-describedby={
-                            checking ? `${whyId} ${timeId}` : timeId
+                            // Der Hinweis zur Prüfung gilt auch fürs Kopieren
+                            // (der Inhalt kann fehlerhaft sein); Gründe, die nur
+                            // das Wiederherstellen betreffen, nicht.
+                            why === "checking" ||
+                            why === "damaged" ||
+                            why === "unverifiable"
+                              ? `${whyId} ${timeId}`
+                              : timeId
                           }
                           data-testid="paste-log-copy"
                           onClick={() => copy(entry)}

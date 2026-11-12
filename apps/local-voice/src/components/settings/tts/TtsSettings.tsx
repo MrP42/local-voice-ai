@@ -222,6 +222,7 @@ import {
   type PasteLogEntry,
 } from "@/lib/reader/pasteLog";
 import type { IsbnBook, LibraryBook, TranslateJob } from "@/bindings";
+import { bindPageStateLive, getPageStateStore } from "@/lib/reader/pageStore";
 import {
   READER_FONTS,
   READER_THEMES,
@@ -581,15 +582,16 @@ export const TtsSettings = () => {
   const [translatedLangs, setTranslatedLangs] = useState<string[]>([]);
   const addTranslatedLang = (lang: string) =>
     setTranslatedLangs((cur) => (cur.includes(lang) ? cur : [...cur, lang]));
-  /** Gesicherte Rohfassungen eingefügter Texte der Seite (state.json
-   *  `einfuegungen`, älteste zuerst); die Ref ist immer der aktuelle Stand. */
+  /** Gezeigte Rohfassungen eingefügter Texte der offenen Seite. NUR Anzeige,
+   *  aus dem gesicherten Protokoll des Stores abgeleitet und nie Quelle für ein
+   *  Schreiben (state.json `einfuegungen`, älteste zuerst). */
   const [pasteLog, setPasteLogState] = useState<PasteLogEntry[]>([]);
-  const pasteLogRef = useRef<PasteLogEntry[]>([]);
+  const shownLogRef = useRef<PasteLogEntry[]>([]);
   /** Die Prüfsummen des gezeigten Protokolls sind noch nicht gegen die
    *  Rohfassungen gehalten: Wiederherstellen und Kopieren bleiben gesperrt. */
   const [pasteChecking, setPasteChecking] = useState(false);
-  const setPasteLog = (next: PasteLogEntry[]) => {
-    pasteLogRef.current = next;
+  const publishLog = (next: PasteLogEntry[]) => {
+    shownLogRef.current = next;
     setPasteLogState(next);
     setPasteChecking(next.some((e) => e.roh !== undefined));
     // Prüfsummen gegen die Rohfassung: Beschädigtes wird nur angezeigt, nicht gespeichert.
@@ -599,7 +601,7 @@ export const TtsSettings = () => {
     void verifyPasteLog(next)
       .catch(() => markUnverifiable(next))
       .then((checked) => {
-        if (pasteLogRef.current !== next) return;
+        if (shownLogRef.current !== next) return;
         setPasteLogState(checked);
         setPasteChecking(false);
       });
@@ -608,6 +610,33 @@ export const TtsSettings = () => {
   // überschriebe ein offenes Vorlesen die Sprachliste beim nächsten Speichern.
   const activePageForEvents = useRef<string>("");
   activePageForEvents.current = activePage ?? "";
+  /** Der eine Schreibpfad für state.json (siehe lib/reader/pageState.ts): das
+   *  Programm hat genau einen Store, auch Bibliothek, Fassungen und „Sprecher
+   *  ersetzen“ schreiben darüber. Hier hängt sich die offene Seite ein. */
+  const store = getPageStateStore();
+  useLayoutEffect(
+    () =>
+      bindPageStateLive(
+        {
+          isActive: (page) => activePageForEvents.current === page,
+          isLive: (page) =>
+            activePageForEvents.current === page && pageLoaded.current,
+          build: (entries) => pageStateJsonRef.current([...entries]),
+          reload: (page) => {
+            if (activePageForEvents.current !== page) return;
+            // Bis der neu geladene Stand da ist, speichert die Oberfläche nichts.
+            pageLoaded.current = false;
+            setPageReloadTick((n) => n + 1);
+          },
+        },
+        (page, log) => {
+          if (activePageForEvents.current === page) publishLog(log.entries);
+        },
+      ),
+    [],
+  );
+  /** Zählt Neuladen der offenen Seite nach einer Änderung von außen. */
+  const [pageReloadTick, setPageReloadTick] = useState(0);
   useEffect(() => {
     const on = (e: Event) => {
       const d = (e as CustomEvent<{ page: string; lang: string }>).detail;
@@ -1087,10 +1116,14 @@ export const TtsSettings = () => {
     async (title: string, text: string): Promise<string | null> => {
       const created = await commands.pagesCreate(title);
       if (created.status !== "ok") return null;
-      await commands.pageStateSave(
-        created.data.id,
-        JSON.stringify({ text, summary: "", sourceUrl: "", tab: "original" }),
-      );
+      try {
+        await store.save(
+          created.data.id,
+          JSON.stringify({ text, summary: "", sourceUrl: "", tab: "original" }),
+        );
+      } catch {
+        return null;
+      }
       await reloadPages();
       setActivePage(created.data.id);
       return created.data.id;
@@ -1106,9 +1139,7 @@ export const TtsSettings = () => {
     pageLoaded.current = false;
     setLangCheckedFor(null);
     // Protokolle verlassener Seiten ohne wartenden Schreibvorgang verwerfen.
-    for (const key of [...pasteCache.current.keys()])
-      if (key !== activePage && !pendingSaves.current.has(key))
-        pasteCache.current.delete(key);
+    store.release();
     // Ein überholter Ladevorgang (Seitenwechsel) setzt nichts mehr.
     let stale = false;
     void commands.pageStateLoad(activePage).then((result) => {
@@ -1131,9 +1162,11 @@ export const TtsSettings = () => {
           setTranslatedLangs(
             Array.isArray(state.translatedLangs) ? state.translatedLangs : [],
           );
-          const loadedLog = parsePasteLog(state.einfuegungen);
-          pasteCache.current.set(activePage, loadedLog);
-          setPasteLog(loadedLog);
+          // Das Laden ergänzt das gesicherte Protokoll nur; liegt schon eines
+          // vor (Schreibvorgang für diese Seite im Gang), bleibt es maßgeblich.
+          publishLog(
+            store.seed(activePage, parsePasteLog(state.einfuegungen)).entries,
+          );
           setText(state.text ?? "");
           openModeRef.current?.(state.tab === "summary" ? "" : (state.text ?? ""));
           setAutoTagOptions(state.autoTag ?? null);
@@ -1178,8 +1211,7 @@ export const TtsSettings = () => {
         } catch {
           setText(result.data);
           openModeRef.current?.(result.data);
-          pasteCache.current.set(activePage, []);
-          setPasteLog([]);
+          publishLog(store.seed(activePage, []).entries);
         }
       } else {
         // Einmalige Uebernahme der Werte aus der Zeit vor den Seiten — und
@@ -1209,8 +1241,7 @@ export const TtsSettings = () => {
         setVoicesChosen({});
         setPageLang(null);
         setTranslatedLangs([]);
-        pasteCache.current.set(activePage, []);
-        setPasteLog([]);
+        publishLog(store.seed(activePage, []).entries);
         setTab("original");
       }
       setTranslation(null);
@@ -1220,7 +1251,7 @@ export const TtsSettings = () => {
     return () => {
       stale = true;
     };
-  }, [activePage]);
+  }, [activePage, pageReloadTick]);
 
   // Ein anderes Geraet hat Seiten geschickt: Liste neu laden.
   useEffect(() => {
@@ -1233,7 +1264,9 @@ export const TtsSettings = () => {
   }, [reloadPages]);
 
   /** Arbeitsstand der Seite, wie er in state.json steht. */
-  const pageStateJson = (pastes: PasteLogEntry[] = pasteLogRef.current) =>
+  const pageStateJson = (
+    pastes: PasteLogEntry[] = store.entries(activePage ?? ""),
+  ) =>
     JSON.stringify({
       text,
       // Bis zur Übernahme als KI-Dokument bleibt der alte Text stehen.
@@ -1249,114 +1282,20 @@ export const TtsSettings = () => {
       einfuegungen: pastes.length > 0 ? pastes : undefined,
     });
 
-  /** ALLE Schreibvorgänge von state.json laufen nacheinander durch diese eine
-   *  Kette: der Autosave, „Exportieren“, „KI-Dokument anlegen“ und das Sichern
-   *  der Rohfassungen. So überschreibt ein Autosave, der mit altem Protokoll
-   *  gebaut wurde, keinen Eintrag, der gerade gesichert wird, und jeder Schritt
-   *  baut auf dem zuletzt gesicherten Stand auf (nie auf dem von vor einem await). */
-  const pasteQueue = useRef<Promise<unknown>>(Promise.resolve());
-  /** Zuletzt gesichertes Protokoll je Seite (von Laden und Protokoll-Schreiben
-   *  gepflegt): ein Autosave, der erst nach dem Wechsel zu einer anderen Seite
-   *  an die Reihe kommt, setzt zur Schreibzeit DIESES Protokoll ein und
-   *  überschreibt so keine gesicherte Rohfassung. Verlassene Seiten bleiben
-   *  nur, solange Schreibvorgänge auf sie warten ({@link pendingSaves}). */
-  const pasteCache = useRef(new Map<string, PasteLogEntry[]>());
-  const pendingSaves = useRef(new Map<string, number>());
-  /** Ein Schreibvorgang für `page` in die Kette stellen. Ein Fehler bricht
-   *  nur diesen Vorgang ab (er geht an den Aufrufer), die Kette läuft weiter. */
-  const queueSave = <T,>(page: string, job: () => Promise<T>): Promise<T> => {
-    pendingSaves.current.set(page, (pendingSaves.current.get(page) ?? 0) + 1);
-    const run = pasteQueue.current.then(job, job);
-    pasteQueue.current = run.catch(() => undefined);
-    const done = () => {
-      const left = (pendingSaves.current.get(page) ?? 1) - 1;
-      if (left > 0) {
-        pendingSaves.current.set(page, left);
-        return;
-      }
-      pendingSaves.current.delete(page);
-      if (activePageForEvents.current !== page) pasteCache.current.delete(page);
-    };
-    void run.then(done, done);
-    return run;
-  };
   /** Immer die Funktion des letzten Renders: ein wartender Schreibvorgang
    *  sichert so den aktuellen Text, nicht den vom Einfügen. */
   const pageStateJsonRef = useRef(pageStateJson);
   pageStateJsonRef.current = pageStateJson;
 
-  /**
-   * `einfuegungen` der Seite `page` ändern und sichern; `true`, wenn gesichert.
-   * Auf der geöffneten Seite wird der ganze Zustand geschrieben (er enthält
-   * das Protokoll), auf einer inzwischen verlassenen nur ihr Feld in ihrer
-   * Zustandsdatei ersetzt.
-   */
+  /** Rohfassungen der Seite `page` ändern und sichern (`true`, wenn gesichert). */
   const writePasteLog = (
     page: string,
     change: (log: PasteLogEntry[]) => PasteLogEntry[],
-  ): Promise<boolean> => {
-    const job = async (): Promise<boolean> => {
-      if (activePageForEvents.current === page && pageLoaded.current) {
-        const next = change(pasteLogRef.current);
-        const saved = await commands
-          .pageStateSave(page, pageStateJsonRef.current(next))
-          .catch(() => null);
-        if (!saved || saved.status !== "ok") return false;
-        pasteCache.current.set(page, next);
-        if (activePageForEvents.current === page) setPasteLog(next);
-        return true;
-      }
-      const loaded = await commands.pageStateLoad(page).catch(() => null);
-      if (!loaded || loaded.status !== "ok") return false;
-      try {
-        const state = loaded.data
-          ? (JSON.parse(loaded.data) as Record<string, unknown>)
-          : {};
-        const next = change(parsePasteLog(state.einfuegungen));
-        state.einfuegungen = next.length > 0 ? next : undefined;
-        const saved = await commands
-          .pageStateSave(page, JSON.stringify(state))
-          .catch(() => null);
-        if (!saved || saved.status !== "ok") return false;
-        pasteCache.current.set(page, next);
-        return true;
-      } catch {
-        return false;
-      }
-    };
-    return queueSave(page, job);
-  };
+  ): Promise<boolean> => store.commitLog(page, change);
 
-  /**
-   * Den Seitenstand `page` sichern, in der Kette von {@link queueSave}. Gebaut
-   * wird er erst, wenn er an der Reihe ist (neuestes Protokoll, neuester Text).
-   * Ist die Seite dann schon verlassen, gilt der vorab gebaute Stand `json`,
-   * aber mit dem zuletzt gesicherten Protokoll der Seite: ein Autosave
-   * überschreibt nie eine gesicherte Rohfassung. Schreibfehler gehen an den
-   * Aufrufer (abhängige Aktionen brechen ab); die Kette läuft weiter.
-   */
+  /** Seitenstand sichern; Fehler gehen an den Aufrufer (abhängige Aktionen brechen ab). */
   const savePageState = (page: string, json: string): Promise<void> =>
-    queueSave(page, async () => {
-      const live = activePageForEvents.current === page && pageLoaded.current;
-      const saved = await commands.pageStateSave(
-        page,
-        live ? pageStateJsonRef.current() : withPasteLog(json, page),
-      );
-      if (saved.status !== "ok") throw new Error(saved.error);
-    });
-
-  /** `json` mit dem zuletzt gesicherten Protokoll der Seite `page`. */
-  const withPasteLog = (json: string, page: string): string => {
-    const log = pasteCache.current.get(page);
-    if (!log) return json;
-    try {
-      const state = JSON.parse(json) as Record<string, unknown>;
-      state.einfuegungen = log.length > 0 ? log : undefined;
-      return JSON.stringify(state);
-    } catch {
-      return json;
-    }
-  };
+    store.save(page, json);
 
   /**
    * Rohfassung einer Einfügung in state.json sichern, bevor der Editor den Text
@@ -1377,6 +1316,12 @@ export const TtsSettings = () => {
     if (!activePage || !pageLoaded.current) return;
     savePending.current = true;
     const handle = window.setTimeout(() => {
+      // Wird die Seite gerade neu geladen (Änderung von außen), schreibt die
+      // Oberfläche nichts: der geladene Stand ist schon gesichert.
+      if (!pageLoaded.current) {
+        savePending.current = false;
+        return;
+      }
       void savePageState(activePage, pageStateJson())
         .finally(() => {
           savePending.current = false;
@@ -3117,19 +3062,15 @@ export const TtsSettings = () => {
             setOpenDocId(r.data.id);
           return;
         }
-        // Inzwischen auf einer anderen Seite: dort den alten Text direkt
-        // austragen. Ein zweiter Import bliebe ohnehin folgenlos (der Kern
-        // erkennt denselben Text wieder).
-        const loaded = await commands.pageStateLoad(legacy.page);
-        if (loaded.status !== "ok" || !loaded.data) return;
-        try {
-          const state = JSON.parse(loaded.data) as Record<string, unknown>;
-          if (state.summary !== legacy.text) return;
+        // Inzwischen auf einer anderen Seite: dort den alten Text austragen,
+        // in der Kette (frisch lesen, Feld ändern, schreiben): Rohfassungen
+        // bleiben, wie sie gesichert sind. Ein zweiter Import bliebe ohnehin
+        // folgenlos (der Kern erkennt denselben Text wieder).
+        await store.mutate(legacy.page, (state) => {
+          if (state.summary !== legacy.text) return false;
           state.summary = "";
-          await commands.pageStateSave(legacy.page, JSON.stringify(state));
-        } catch {
-          /* roh gespeicherte Seite: hat keine Zusammenfassung */
-        }
+          return true;
+        });
       });
   }, [activePage, legacySummary, pageLoadTick]);
 

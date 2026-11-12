@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { commands, type LibraryBook } from "@/bindings";
+import { getPageStateStore } from "@/lib/reader/pageStore";
 import { CHANGED_EVENT, HYDRATED_EVENT } from "@/lib/library/progress";
 import {
   assetUrl,
@@ -224,7 +225,7 @@ export function useLibrary() {
       inFlight.current.add(guard);
       let done = false;
       let created: string | null = null;
-      let restore: { pageId: string; json: string } | null = null;
+      let restore: { pageId: string; text: string | undefined } | null = null;
       try {
         const book = start;
         const tracks = startTracks;
@@ -286,21 +287,46 @@ export function useLibrary() {
         let sync: { chars: number; ms: number }[];
         let pageId: string;
         if (appendTo) {
-          const loaded = await commands.pageStateLoad(appendTo.page_id);
-          if (loaded.status !== "ok") throw new Error(loaded.error);
-          const state = JSON.parse(loaded.data) as { text?: string };
-          const old = (state.text ?? "").replace(/\s+$/, "");
-          const grown = textWithSync(paragraphs, `${old}\n\n`);
-          text = grown.text;
-          sync = [...(book.audio?.sync ?? []), ...grown.sync];
           pageId = appendTo.page_id;
-          if (!grown.sync.length) throw new Error(i18n.t("library.job.emptyTranscript"));
-          restore = { pageId, json: loaded.data };
-          const stored = await commands.pageStateSave(
+          // Über den einen Schreibpfad (Kette, frisch gelesen): ein gerade
+          // gesichertes Protokoll der Seite (Rohfassungen) und alle anderen
+          // Felder bleiben, nur der Text wächst. Ist die Seite im Vorlesen
+          // offen, lädt es sie danach neu.
+          const outcome: {
+            grown: ReturnType<typeof textWithSync> | null;
+            empty: boolean;
+          } = { grown: null, empty: false };
+          const written = await getPageStateStore().mutate(
             pageId,
-            JSON.stringify({ ...state, text }),
+            (state) => {
+              const previous =
+                typeof state.text === "string" ? state.text : undefined;
+              const next = textWithSync(
+                paragraphs,
+                `${(previous ?? "").replace(/\s+$/, "")}\n\n`,
+              );
+              if (!next.sync.length) {
+                outcome.empty = true;
+                return false;
+              }
+              outcome.grown = next;
+              restore = { pageId, text: previous };
+              state.text = next.text;
+              return true;
+            },
+            "adopt",
           );
-          if (stored.status !== "ok") throw new Error(stored.error);
+          const done = outcome.grown;
+          if (!written || !done)
+            throw new Error(
+              i18n.t(
+                outcome.empty
+                  ? "library.job.emptyTranscript"
+                  : "library.job.pageNotWritten",
+              ),
+            );
+          text = done.text;
+          sync = [...(book.audio?.sync ?? []), ...done.sync];
         } else {
           const author = book.authors.length ? `\n\nvon ${book.authors.join(", ")}` : "";
           ({ text, sync } = textWithSync(paragraphs, `# ${book.title}${author}\n\n`));
@@ -385,7 +411,18 @@ export function useLibrary() {
         await reload();
       } catch (e) {
         if (created) await commands.pagesDelete(created);
-        if (restore) await commands.pageStateSave(restore.pageId, restore.json);
+        if (restore) {
+          const back = restore;
+          await getPageStateStore().mutate(
+            back.pageId,
+            (state) => {
+              if (back.text === undefined) delete state.text;
+              else state.text = back.text;
+              return true;
+            },
+            "adopt",
+          );
+        }
         if (e instanceof Superseded) {
           await reload();
         } else {

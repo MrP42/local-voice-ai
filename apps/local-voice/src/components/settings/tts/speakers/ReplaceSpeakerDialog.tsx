@@ -7,10 +7,12 @@ import { Dialog } from "../../../ui/Dialog";
 import { foldSpeakerName, type SpeakerRef } from "@/lib/voices/speakerMarkers";
 import {
   fieldsOfState,
+  fieldsOfStateObject,
   replaceSpeakerInFields,
   speakerUsage,
   type SpeakerFields,
 } from "@/lib/voices/replaceSpeaker";
+import { getPageStateStore } from "@/lib/reader/pageStore";
 import { providerVoiceValue } from "../providers/providerModel";
 
 interface Props {
@@ -204,35 +206,33 @@ export const ReplaceSpeakerDialog: React.FC<Props> = ({
       // Jede Seite direkt vor dem Schreiben frisch laden: der Stand der Vorschau
       // kann inzwischen veraltet sein (Autosave, Sync).
       for (const page of pages.filter((p) => p.id !== activePageId)) {
-        const result = await commands.pageStateLoad(page.id).catch(() => null);
-        const parsed = fieldsOfState(
-          result && result.status === "ok" ? result.data : null,
-        );
-        if (!parsed) continue;
-        const r = replaceSpeakerInFields(
-          parsed.fields,
-          from,
-          to,
-          speakers,
-          fromValue,
-          toValue,
-        );
-        if (r.markers + r.voices === 0) continue;
-        const saved = await commands
-          .pageStateSave(
-            page.id,
-            JSON.stringify({
-              ...parsed.state,
-              text: r.fields.text,
-              summary: r.fields.summary,
-              voices: r.fields.voices,
-            }),
-          )
-          .catch(() => null);
-        if (saved && saved.status === "ok") {
-          markers += r.markers;
+        // Über den einen Schreibpfad: frisch gelesen in der Kette, nur die
+        // eigenen Felder ändern, Rohfassungen (`einfuegungen`) bleiben. Die
+        // aktive Seite ist ausgenommen (sie geht über die Oberfläche, unten);
+        // wird eine Seite inzwischen geöffnet, schreibt `mutate` nicht.
+        let found: number | null = null;
+        const saved = await getPageStateStore()
+          .mutate(page.id, (state) => {
+            const r = replaceSpeakerInFields(
+              fieldsOfStateObject(state),
+              from,
+              to,
+              speakers,
+              fromValue,
+              toValue,
+            );
+            if (r.markers + r.voices === 0) return false;
+            found = r.markers;
+            state.text = r.fields.text;
+            state.summary = r.fields.summary;
+            state.voices = r.fields.voices;
+            return true;
+          })
+          .catch(() => false);
+        if (saved) {
+          markers += found ?? 0;
           pagesChanged += 1;
-        } else {
+        } else if (found !== null) {
           failed += 1;
         }
       }

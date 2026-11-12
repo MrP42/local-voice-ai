@@ -37,7 +37,8 @@ test.beforeEach(async ({ page }) => {
       post_process_api_keys: {},
       push_to_talk: true,
       tts_voice: null,
-      tts_engine: "piper",
+      tts_engine:
+        (window as unknown as { __engine?: string }).__engine ?? "piper",
       tts_piper_voice: null,
       tts_script_check: true,
     };
@@ -89,9 +90,51 @@ test.beforeEach(async ({ page }) => {
             const delay = (
               window as unknown as { __loadDelay?: Record<string, number> }
             ).__loadDelay?.[String(args?.id)];
+            // Wie der Kern: erst lesen, dann (später) antworten, also ein
+            // verspäteter Ladevorgang bringt den Stand von VOR dem Warten.
+            const stored = sessionStorage.getItem(`__ps_${args?.id}`);
             if (delay) await new Promise((r) => setTimeout(r, delay));
-            return sessionStorage.getItem(`__ps_${args?.id}`);
+            return stored;
           }
+          if (cmd === "book_ai_document_import") {
+            const delay = (window as unknown as { __importDelay?: number })
+              .__importDelay;
+            if (delay) await new Promise((r) => setTimeout(r, delay));
+            return { id: "d1", title: "Alte Zusammenfassung" };
+          }
+          if (cmd === "book_ai_document_text") return "Kurz gesagt: alles gut.";
+          if (cmd === "book_ai_summarize")
+            return { id: "d9", title: "Eine Seite" };
+          if (cmd.startsWith("book_ai_term") || cmd === "book_ai_documents")
+            return [];
+          if (cmd === "book_ai_templates")
+            return [
+              {
+                id: "builtin:eine_seite",
+                title: "Eine Seite",
+                category: "ueberblick",
+                description: "Das Buch auf einer Seite.",
+                context: "",
+                sections: [],
+                target_words: 450,
+                form: "Prose",
+                audience: "allgemein",
+                builtin: true,
+              },
+            ];
+          if (cmd === "book_ai_estimate")
+            return {
+              figures: {
+                input_tokens: 100,
+                output_tokens: 50,
+                calls: 1,
+                cost_micro: 0,
+              },
+              local: true,
+              measured: false,
+              cached_steps: 0,
+              model: "qwen3-8b",
+            };
           if (cmd === "get_app_settings" || cmd === "get_default_settings")
             return settings;
           if (cmd === "plugin:os|locale") return "de-DE";
@@ -121,8 +164,12 @@ test.beforeEach(async ({ page }) => {
             return (
               (window as unknown as { __voices?: string[] }).__voices ?? []
             );
+          if (cmd === "tts_list_voice_infos")
+            return (
+              (window as unknown as { __voiceInfos?: unknown[] })
+                .__voiceInfos ?? []
+            );
           if (
-            cmd === "tts_list_voice_infos" ||
             cmd === "llm_ps" ||
             cmd === "tts_reading_list" ||
             cmd.includes("history") ||
@@ -1210,6 +1257,10 @@ test("without WebCrypto a stored hash is not verifiable: restore locked with rea
     "aria-disabled",
     "true",
   );
+  // Der Hinweis hängt auch am Kopierknopf (der Inhalt ist ungeprüft).
+  expect(
+    await page.getByTestId("paste-log-copy").getAttribute("aria-describedby"),
+  ).toContain("paste-log-why-0");
 });
 
 test("a rejected digest() ends the check as not verifiable instead of hanging", async ({
@@ -1293,4 +1344,414 @@ test("a failed state write stops a dependent action with a notice; the chain kee
     .toBe(JSON.stringify([DIRTY]));
   await openExport();
   await expect(page.getByRole("dialog")).toBeVisible();
+});
+
+/**
+ * Seite 1 verlassen, während das Sichern einer Rohfassung dort angehalten ist,
+ * und wieder öffnen. Zeitplan (ms): Autosave „X“ belegt die Kette von 500 bis
+ * 2000; das Einfügen reiht sich dahinter ein, die Seite wird gewechselt, das
+ * Sichern läuft ab 2000 im Zweig der verlassenen Seite (landet bei 3500). Bei
+ * 2300 wird Seite 1 wieder geöffnet. `loadDelay`: wie spät der Ladevorgang
+ * antwortet (er liest den Stand von 2300, vor dem Sichern).
+ */
+async function leaveAndReopen(page: Page, loadDelay: number) {
+  await page.addInitScript(() => {
+    (window as unknown as { __pagesList: unknown }).__pagesList = [
+      { id: "p1", title: "Der Sturm" },
+      { id: "p2", title: "Das Wintermärchen" },
+    ];
+  });
+  const editor = await openEditor(page);
+  await expect
+    .poll(async () => ((await savedState(page)) as { text: string })?.text)
+    .toBe("Vorher. ");
+  await page.evaluate(() => {
+    (window as unknown as { __saveDelay: number }).__saveDelay = 1500;
+  });
+  await editor.press("End");
+  await editor.press("X");
+  await page.waitForTimeout(700);
+  expect(await paste(editor, DIRTY)).toBe(true);
+  await page.waitForTimeout(100);
+  await page.getByText("Das Wintermärchen", { exact: true }).click();
+  await page.waitForTimeout(1400);
+  await page.evaluate((delay) => {
+    (window as unknown as { __loadDelay: unknown }).__loadDelay = { p1: delay };
+  }, loadDelay);
+  await page.getByText("Der Sturm", { exact: true }).click();
+}
+
+/** Nach dem Wiedereröffnen im Editor tippen: das löst den Autosave der offenen Seite aus. */
+async function typeAfterReopen(page: Page, mark: string) {
+  const edit = page.getByRole("button", { name: "Bearbeiten", exact: true });
+  if (await edit.count()) await edit.click();
+  const editor = page.locator("textarea").first();
+  await expect(editor).toBeVisible();
+  await editor.press("End");
+  await editor.press(mark);
+}
+
+test("a raw-text write stalled on the left page survives reopening it (fast load, then autosave)", async ({
+  page,
+}) => {
+  await leaveAndReopen(page, 0);
+  await page.waitForTimeout(2500);
+  await typeAfterReopen(page, "Y");
+  await expect
+    .poll(
+      async () => {
+        const state = (await savedState(page)) as {
+          text: string;
+          einfuegungen?: { roh: string }[];
+        };
+        return JSON.stringify([
+          state.text.endsWith("Y"),
+          state.einfuegungen?.map((e) => e.roh),
+        ]);
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(JSON.stringify([true, [DIRTY]]));
+});
+
+test("a late load answer after the raw-text write is done does not roll the log back", async ({
+  page,
+}) => {
+  await leaveAndReopen(page, 2500);
+  // Die Ladeantwort kommt bei ~4800 und bringt den Stand von vor dem Sichern.
+  await page.waitForTimeout(3200);
+  await typeAfterReopen(page, "Y");
+  await expect
+    .poll(
+      async () => {
+        const state = (await savedState(page)) as {
+          text: string;
+          einfuegungen?: { roh: string }[];
+        };
+        return JSON.stringify([
+          state.text.endsWith("Y"),
+          state.einfuegungen?.map((e) => e.roh),
+        ]);
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(JSON.stringify([true, [DIRTY]]));
+});
+
+test("the legacy summary migration of a left page goes through the same chain as the raw-text write", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, unknown>;
+    w.__pagesList = [
+      { id: "p1", title: "Der Sturm" },
+      { id: "p2", title: "Das Wintermärchen" },
+    ];
+    w.__importDelay = 1500;
+    sessionStorage.setItem(
+      "__ps_p1",
+      JSON.stringify({
+        text: "Vorher. ",
+        summary: "Alter Text",
+        tab: "original",
+      }),
+    );
+  });
+  await page.goto("/");
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Bearbeiten", exact: true }).click();
+  const editor = page.locator("textarea").first();
+  await expect(editor).toHaveValue("Vorher. ");
+  await page.evaluate(() => {
+    (window as unknown as { __saveDelay: number }).__saveDelay = 1200;
+  });
+  // Die Kette ist von 600 bis 1800 belegt, das Sichern der Rohfassung wartet
+  // dahinter; die Migration (Import fertig bei ~1500) trifft auf die Seite 2.
+  await editor.press("End");
+  await editor.press("X");
+  await page.waitForTimeout(700);
+  expect(await paste(editor, DIRTY)).toBe(true);
+  await page.waitForTimeout(100);
+  await page.getByText("Das Wintermärchen", { exact: true }).click();
+  await expect
+    .poll(
+      async () => {
+        const state = (await savedState(page)) as {
+          summary?: string;
+          einfuegungen?: { roh: string }[];
+        };
+        return JSON.stringify([
+          state.summary ?? "",
+          state.einfuegungen?.map((e) => e.roh),
+        ]);
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(JSON.stringify(["", [DIRTY]]));
+});
+
+test("if the checksum cannot be computed, the pasted text goes in unchanged with a notice (keyboard)", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(String(error)));
+  await page.addInitScript(() => {
+    crypto.subtle.digest = () => Promise.reject(new Error("digest kaputt"));
+  });
+  const editor = await openEditor(page);
+  expect(await paste(editor, DIRTY)).toBe(true);
+  await expect(editor).toHaveValue(`Vorher. ${DIRTY}`);
+  await expect(toast(page).last()).toContainText("Rohfassung ließ sich nicht");
+  expect(errors).toEqual([]);
+});
+
+test("if the checksum cannot be computed, the context menu paste goes in unchanged with a notice", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(String(error)));
+  await page.addInitScript(() => {
+    crypto.subtle.digest = () => Promise.reject(new Error("digest kaputt"));
+  });
+  const editor = await openEditor(page);
+  await page.evaluate((text) => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { readText: async () => text, writeText: async () => undefined },
+    });
+  }, DIRTY);
+  await editor.click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Einfügen", exact: true })
+    .evaluate((el: HTMLElement) => el.click());
+  await expect(editor).toHaveValue(`Vorher. ${DIRTY}`);
+  await expect(toast(page).last()).toContainText("Rohfassung ließ sich nicht");
+  expect(errors).toEqual([]);
+});
+
+test("copying a damaged original really copies it (clipboard stub) and carries the reason", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const copied: string[] = [];
+    (window as unknown as { __copied: string[] }).__copied = copied;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          copied.push(text);
+        },
+        readText: async () => "",
+      },
+    });
+  });
+  await openSeeded(page, {
+    text: "Roh 1",
+    tab: "original",
+    einfuegungen: [entryFor(1, { sha256: "f".repeat(64) })],
+  });
+  await openLog(page);
+  await expect(page.getByTestId("paste-log-restore")).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  const copy = page.getByTestId("paste-log-copy");
+  expect(await copy.getAttribute("aria-describedby")).toContain(
+    "paste-log-why-0",
+  );
+  await expect(page.locator("#paste-log-why-0")).toContainText("Beschädigt");
+  await copy.click();
+  await expect(toast(page).last()).toContainText("Rohfassung kopiert");
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { __copied: string[] }).__copied,
+    ),
+  ).toEqual([entryFor(1).roh]);
+});
+
+test("a failed state write aborts creating a KI document: nothing is started, a notice appears", async ({
+  page,
+}) => {
+  await openEditor(page);
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  // Der Autosave nach dem Reiterwechsel ist durch, dann fällt das Schreiben aus.
+  await expect
+    .poll(async () => ((await savedState(page)) as { tab?: string })?.tab)
+    .toBe("summary");
+  await page.evaluate(() => {
+    (window as unknown as { __failSave: boolean }).__failSave = true;
+  });
+  await page.getByTestId("tts-action-summarize").click();
+  await page.getByTestId("kidoc-tpl-builtin:eine_seite").click();
+  await page.getByTestId("kidoc-create").click();
+  await expect(
+    toast(page).filter({ hasText: "nicht gespeichert werden" }).first(),
+  ).toBeVisible();
+  await page.waitForTimeout(500);
+  const calls = await page.evaluate(
+    () => (window as unknown as { __calls: string[] }).__calls,
+  );
+  expect(calls).not.toContain("book_ai_summarize");
+  // Gegenprobe: ohne Schreibfehler startet dieselbe Aktion.
+  await page.evaluate(() => {
+    (window as unknown as { __failSave: boolean }).__failSave = false;
+  });
+  await page.getByTestId("tts-action-summarize").click();
+  await page.getByTestId("kidoc-tpl-builtin:eine_seite").click();
+  await page.getByTestId("kidoc-create").click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as unknown as { __calls: string[] }).__calls.includes(
+          "book_ai_summarize",
+        ),
+      ),
+    )
+    .toBe(true);
+});
+
+/**
+ * Fremder Schreiber auf einer verlassenen Seite (lva#530 I1, Codex Runde 5):
+ * „Sprecher ersetzen“ schreibt die Seite, während das Sichern einer Rohfassung
+ * dort noch aussteht. Beides muss bestehen bleiben: der ersetzte Sprecher UND
+ * die Rohfassung. Ohne gemeinsame Kette überschriebe der später landende
+ * Schreiber den anderen.
+ */
+test("replace speaker on a left page while its raw-text write is still pending keeps both changes", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(String(error)));
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, unknown>;
+    w.__pagesList = [
+      { id: "p1", title: "Der Sturm" },
+      { id: "p2", title: "Das Wintermärchen" },
+    ];
+    const voice = (id: string, name: string) => ({
+      id,
+      meta: { display_name: name, color: "teal", language: "de-DE", tags: [] },
+      origin: "recorded",
+      avatar_path: null,
+    });
+    w.__voiceInfos = [voice("erzaehlerin", "Erzählerin"), voice("leo", "Leo")];
+    w.__voices = ["erzaehlerin", "leo"];
+  });
+  const editor = await openEditor(page, "<Erzählerin> Hallo. ");
+  await expect
+    .poll(async () => ((await savedState(page)) as { text: string })?.text)
+    .toBe("<Erzählerin> Hallo. ");
+  await page.evaluate(() => {
+    (window as unknown as { __saveDelay: number }).__saveDelay = 4000;
+  });
+  expect(await paste(editor, DIRTY)).toBe(true);
+  // Seite verlassen: das Sichern der Rohfassung hängt noch (4 s).
+  await page.getByText("Das Wintermärchen", { exact: true }).click();
+  await page.getByTestId("voice-select").click({ button: "right" });
+  await page.getByTestId("voice-menu-replace").click();
+  await page
+    .getByTestId("replace-speaker-from")
+    .selectOption({ label: "Erzählerin" });
+  await page.getByTestId("replace-speaker-to").selectOption({ label: "Leo" });
+  await expect(page.getByTestId("replace-speaker-preview")).toContainText(
+    "1 Marker",
+  );
+  await page.getByTestId("replace-speaker-apply").click();
+  await expect(page.getByTestId("replace-speaker-preview")).toContainText(
+    "Fertig",
+    { timeout: 20_000 },
+  );
+  await expect
+    .poll(
+      async () => {
+        const state = (await savedState(page)) as {
+          text: string;
+          einfuegungen?: { roh: string }[];
+        };
+        return JSON.stringify([
+          state.text.startsWith("<Leo> Hallo."),
+          state.einfuegungen?.map((e) => e.roh),
+        ]);
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(JSON.stringify([true, [DIRTY]]));
+  // Und es bleibt so (kein später landender Schreiber dreht es zurück).
+  await page.waitForTimeout(5000);
+  const state = (await savedState(page)) as {
+    text: string;
+    einfuegungen?: { roh: string }[];
+  };
+  expect(state.text.startsWith("<Leo> Hallo.")).toBe(true);
+  expect(state.einfuegungen?.map((e) => e.roh)).toEqual([DIRTY]);
+  expect(errors).toEqual([]);
+});
+
+/**
+ * Fremder Schreiber auf der OFFENEN Seite (Bibliothek hängt ein Transkript an,
+ * Zusammenführen): die Seite lädt neu, ungesicherte Eingaben und die gesicherte
+ * Rohfassung bleiben, danach gilt weiter der Autosave.
+ */
+test("a foreign write on the open page is adopted by the editor and keeps unsaved typing and the raw text", async ({
+  page,
+}) => {
+  const editor = await openEditor(page, "Vorher. ");
+  await expect
+    .poll(async () => ((await savedState(page)) as { text: string })?.text)
+    .toBe("Vorher. ");
+  expect(await paste(editor, DIRTY)).toBe(true);
+  await expect
+    .poll(
+      async () =>
+        ((await savedState(page)) as { einfuegungen?: unknown[] })?.einfuegungen
+          ?.length,
+    )
+    .toBe(1);
+  // Ungesichert getippt (der Autosave läuft erst nach 500 ms) ...
+  await editor.press("End");
+  await editor.press("X");
+  // ... und gleich danach schreibt die Bibliothek über den einen Schreibpfad.
+  const written = await page.evaluate(async () => {
+    const mod = await import("/src/lib/reader/pageStore.ts");
+    return mod.getPageStateStore().mutate(
+      "p1",
+      (state) => {
+        state.text = `${String(state.text)} Angehängt.`;
+        return true;
+      },
+      "adopt",
+    );
+  });
+  expect(written).toBe(true);
+  await expect
+    .poll(async () => (await savedState(page)) as { text: string })
+    .toMatchObject({ text: `Vorher. ${CLEAN}X Angehängt.` });
+  const readerOrEditor = page
+    .locator("textarea, [data-testid='reader-flow']")
+    .first();
+  await expect(readerOrEditor).toContainText("Angehängt.");
+  // Danach speichert die Oberfläche weiter, nichts geht verloren.
+  const again = page.locator("textarea").first();
+  if (await again.count()) {
+    await again.press("End");
+    await again.press("Y");
+  }
+  await expect
+    .poll(
+      async () => {
+        const state = (await savedState(page)) as {
+          text: string;
+          einfuegungen?: { roh: string }[];
+        };
+        return JSON.stringify([
+          state.text.includes("Angehängt."),
+          state.einfuegungen?.map((e) => e.roh),
+        ]);
+      },
+      { timeout: 10_000 },
+    )
+    .toBe(JSON.stringify([true, [DIRTY]]));
 });

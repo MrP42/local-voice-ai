@@ -586,17 +586,26 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
       const doc = docKeyRef.current;
       const original = raw.replace(/\r\n?/g, "\n");
       const cleaned = result.text;
-      let entry = await makePasteEntry(original, cleaned, result.items);
-      const tooLarge = !fitsEntry(entry);
-      if (tooLarge) entry = await makeOversizedEntry(original);
-      // Ohne Prüfsumme (kein WebCrypto) ließe sich die Rohfassung später nicht
-      // prüfen, also nicht gesichert: der Rohtext bleibt dann unverändert.
-      const saved =
-        entry.sha256 === ""
-          ? false
-          : onPasteRecord
-            ? await onPasteRecord(entry)
-            : true;
+      // Scheitert irgendein Schritt der Sicherung (Prüfsumme, Schreiben), gilt die
+      // Rohfassung als nicht gesichert: das Einfügen ist schon abgefangen, also
+      // kommt der Rohtext unverändert hinein, mit Hinweis (nie stilles Nichts).
+      let tooLarge = false;
+      let saved = false;
+      try {
+        let entry = await makePasteEntry(original, cleaned, result.items);
+        tooLarge = !fitsEntry(entry);
+        if (tooLarge) entry = await makeOversizedEntry(original);
+        // Ohne Prüfsumme (kein WebCrypto) ließe sich die Rohfassung später nicht
+        // prüfen, also nicht gesichert.
+        saved =
+          entry.sha256 === ""
+            ? false
+            : onPasteRecord
+              ? await onPasteRecord(entry)
+              : true;
+      } catch {
+        saved = false;
+      }
       if (taRef.current !== ta || docKeyRef.current !== doc) {
         toast(t("tts.editorMenu.pasteAbortedPage"));
         return;
@@ -643,7 +652,11 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
   const noteOversized = useCallback(
     async (raw: string) => {
       toast(t("tts.editorMenu.pasteTooLarge"));
-      await onPasteRecord?.(await makeOversizedEntry(raw));
+      try {
+        await onPasteRecord?.(await makeOversizedEntry(raw));
+      } catch {
+        /* Prüfsumme oder Schreiben gescheitert: der Text ist schon unverändert eingefügt */
+      }
     },
     [onPasteRecord, t],
   );
