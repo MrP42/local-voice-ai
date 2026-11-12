@@ -507,8 +507,7 @@ export const TtsSettings = () => {
     if (!page) return;
     // Gebündeltes Sichern abwarten nicht nötig: jetzt sichern, damit der
     // Export den Stand von eben sieht (Text, Übersetzungen).
-    if (pageLoaded.current)
-      await commands.pageStateSave(page, pageStateJson()).catch(() => null);
+    if (pageLoaded.current) await savePageState(page, pageStateJson());
     const list = await commands.libraryList().catch(() => null);
     const books = list && list.status === "ok" ? list.data : [];
     const book = books.find((b) => b.text?.page_id === page);
@@ -577,12 +576,19 @@ export const TtsSettings = () => {
    *  `einfuegungen`, älteste zuerst); die Ref ist immer der aktuelle Stand. */
   const [pasteLog, setPasteLogState] = useState<PasteLogEntry[]>([]);
   const pasteLogRef = useRef<PasteLogEntry[]>([]);
+  /** Die Prüfsummen des gezeigten Protokolls sind noch nicht gegen die
+   *  Rohfassungen gehalten: Wiederherstellen und Kopieren bleiben gesperrt. */
+  const [pasteChecking, setPasteChecking] = useState(false);
   const setPasteLog = (next: PasteLogEntry[]) => {
     pasteLogRef.current = next;
     setPasteLogState(next);
+    setPasteChecking(next.some((e) => e.roh !== undefined));
     // Prüfsummen gegen die Rohfassung: Beschädigtes wird nur angezeigt, nicht gespeichert.
+    // Ein überholtes Ergebnis (neuer Stand, andere Seite) setzt nichts.
     void verifyPasteLog(next).then((checked) => {
-      if (pasteLogRef.current === next) setPasteLogState(checked);
+      if (pasteLogRef.current !== next) return;
+      setPasteLogState(checked);
+      setPasteChecking(false);
     });
   };
   // lva#236: eine Übersetzung aus der Bibliothek ist fertig. Ohne das
@@ -1086,8 +1092,10 @@ export const TtsSettings = () => {
     if (!activePage) return;
     pageLoaded.current = false;
     setLangCheckedFor(null);
+    // Ein überholter Ladevorgang (Seitenwechsel) setzt nichts mehr.
+    let stale = false;
     void commands.pageStateLoad(activePage).then((result) => {
-      if (result.status !== "ok") return;
+      if (stale || result.status !== "ok") return;
       if (result.data) {
         try {
           const state = JSON.parse(result.data) as {
@@ -1188,6 +1196,9 @@ export const TtsSettings = () => {
       pageLoaded.current = true;
       setPageLoadTick((n) => n + 1);
     });
+    return () => {
+      stale = true;
+    };
   }, [activePage]);
 
   // Ein anderes Geraet hat Seiten geschickt: Liste neu laden.
@@ -1217,9 +1228,17 @@ export const TtsSettings = () => {
       einfuegungen: pastes.length > 0 ? pastes : undefined,
     });
 
-  /** Schreibvorgänge an `einfuegungen` laufen nacheinander (je Aufruf wird der
-   *  zuletzt gesicherte Stand fortgeschrieben, nie der von vor einem await). */
+  /** ALLE Schreibvorgänge von state.json laufen nacheinander durch diese eine
+   *  Kette: der Autosave, „Exportieren“, „KI-Dokument anlegen“ und das Sichern
+   *  der Rohfassungen. So überschreibt ein Autosave, der mit altem Protokoll
+   *  gebaut wurde, keinen Eintrag, der gerade gesichert wird, und jeder Schritt
+   *  baut auf dem zuletzt gesicherten Stand auf (nie auf dem von vor einem await). */
   const pasteQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const queueSave = <T,>(job: () => Promise<T>): Promise<T> => {
+    const run = pasteQueue.current.then(job, job);
+    pasteQueue.current = run.catch(() => undefined);
+    return run;
+  };
   /** Immer die Funktion des letzten Renders: ein wartender Schreibvorgang
    *  sichert so den aktuellen Text, nicht den vom Einfügen. */
   const pageStateJsonRef = useRef(pageStateJson);
@@ -1261,10 +1280,25 @@ export const TtsSettings = () => {
         return false;
       }
     };
-    const run = pasteQueue.current.then(job, job);
-    pasteQueue.current = run.catch(() => undefined);
-    return run;
+    return queueSave(job);
   };
+
+  /**
+   * Den Seitenstand `page` sichern, in der Kette von {@link queueSave}. Gebaut
+   * wird er erst, wenn er an der Reihe ist (neuestes Protokoll, neuester Text);
+   * ist die Seite dann schon verlassen, gilt der vorab gebaute Stand `json`.
+   */
+  const savePageState = (page: string, json: string) =>
+    queueSave(() =>
+      commands
+        .pageStateSave(
+          page,
+          activePageForEvents.current === page && pageLoaded.current
+            ? pageStateJsonRef.current()
+            : json,
+        )
+        .catch(() => null),
+    );
 
   /**
    * Rohfassung einer Einfügung in state.json sichern, bevor der Editor den Text
@@ -1285,8 +1319,7 @@ export const TtsSettings = () => {
     if (!activePage || !pageLoaded.current) return;
     savePending.current = true;
     const handle = window.setTimeout(() => {
-      void commands
-        .pageStateSave(activePage, pageStateJson())
+      void savePageState(activePage, pageStateJson())
         .finally(() => {
           savePending.current = false;
         })
@@ -3056,8 +3089,7 @@ export const TtsSettings = () => {
     // Der Kern liest den Buchtext aus state.json; die Sicherung dort läuft
     // gebündelt. Vorher den aktuellen Stand schreiben, damit Bereichsgrenzen
     // zum Text passen.
-    void commands
-      .pageStateSave(page, pageStateJson())
+    void savePageState(page, pageStateJson())
       .then(() => kiDocs.create(source, label, template, targetLang))
       .then((r) => {
       if ("error" in r) {
@@ -4732,6 +4764,7 @@ export const TtsSettings = () => {
                 onSpellCheck={(on) => setSpellStored(on ? "1" : "0")}
                 pasteCleanup={pasteStored === "1"}
                 pasteLog={pasteLog}
+                pasteChecking={pasteChecking}
                 onPasteLogChange={(change) =>
                   activePage
                     ? writePasteLog(activePage, change)

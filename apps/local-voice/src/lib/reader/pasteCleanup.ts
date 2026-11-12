@@ -63,6 +63,8 @@ export interface PasteCleanResult {
 export interface PasteCleanOptions {
   /** Nur diese Regeln anwenden (Standard: alle, in fester Reihenfolge). */
   rules?: readonly PasteRule[];
+  /** Obergrenze der Durchläufe (Standard {@link MAX_PASSES}); nur für Tests. */
+  maxPasses?: number;
 }
 
 /** Ab so vielen Zeichen gilt ein Text als lang genug für Kopf-/Fußzeilen. */
@@ -75,8 +77,9 @@ const REPEATED_MIN_GAP = 8;
 const REPEATED_PAGE_SHARE = 0.6;
 /** Zulässige Abweichung vom mittleren Abstand bei gleichmäßigem Rhythmus. */
 const REPEATED_RHYTHM_TOLERANCE = 0.3;
-/** Mehr Durchläufe braucht keine Vorlage; schützt vor Endlosschleifen. */
-const MAX_PASSES = 6;
+/** Harte Obergrenze der Durchläufe; schützt vor Endlosschleifen. Jeder Durchlauf
+ *  entfernt oder verbindet etwas, echte Vorlagen brauchen zwei bis vier. */
+const MAX_PASSES = 16;
 
 // ---------------------------------------------------------------------------
 // Zeilenarten: Code und Struktur
@@ -209,6 +212,8 @@ function stripControlRun(text: string): PasteRuleResult {
   let changes = 0;
   let out = text;
   for (const [re, replacement] of [
+    // Formfeed ist Seitenwechsel, kein Inhalt (hier nur außerhalb von Code).
+    [/\f/g, "\n"],
     [CONTROL_CHARS, ""],
     // `Mit-­` am Zeilenende vor Kleinbuchstaben: Wort wächst zusammen.
     [SOFT_HYPHEN_BREAK, ""],
@@ -223,17 +228,16 @@ function stripControlRun(text: string): PasteRuleResult {
 }
 
 /**
- * Zeilenenden vereinheitlichen und Formfeed zu Umbruch (Seitenwechsel, nicht
- * Inhalt; die Zeilenenden zählen nicht: die Textarea tut es ohnehin), BOM am
- * Textanfang weg. Danach, nur außerhalb von Code: Steuerzeichen, weiches
- * Trennzeichen und Nullbreiten (außer Verbindern) entfernen, geschütztes
- * Leerzeichen zu Leerzeichen. In Code bleibt jedes Zeichen unverändert.
+ * Zeilenenden vereinheitlichen (zählen nicht: die Textarea tut es ohnehin),
+ * BOM am Textanfang weg. Danach, nur außerhalb von Code: Formfeed zu Umbruch
+ * (Seitenwechsel, nicht Inhalt), Steuerzeichen, weiches Trennzeichen und
+ * Nullbreiten (außer Verbindern) entfernen, geschütztes Leerzeichen zu
+ * Leerzeichen. Erst klassifizieren, dann ersetzen: in Code bleibt jedes
+ * Zeichen, auch ein Formfeed, unverändert.
  */
 export function stripControl(text: string): PasteRuleResult {
   let out = text.replace(/\r\n?/g, "\n");
-  const feeds = replaceCounting(out, /\f/g, "\n");
-  out = feeds.text;
-  let changes = feeds.changes;
+  let changes = 0;
   if (out.charCodeAt(0) === 0xfeff) {
     out = out.slice(1);
     changes += 1;
@@ -394,7 +398,8 @@ function pageLayout(
     const line = lines[i];
     let feeds = 0;
     let leading = 0;
-    if (line.includes("\f")) {
+    // Ein Formfeed in Code ist Inhalt, keine Seitengrenze.
+    if (kinds[i] !== "code" && line.includes("\f")) {
       for (
         let at = line.indexOf("\f");
         at >= 0;
@@ -679,8 +684,8 @@ const isShortLine = (text: string) => {
 
 /**
  * Eingefügten Text nach festen Regeln bereinigen. Die Regeln laufen so oft,
- * bis sich nichts mehr ändert (Fixpunkt, höchstens {@link MAX_PASSES}
- * Durchläufe als Schutz): was eine Regel freilegt (Bedienrest nach dem
+ * bis sich nichts mehr ändert (Fixpunkt, harte Obergrenze {@link MAX_PASSES};
+ * wird sie ohne Ruhe erreicht, bleibt der Text unverändert): was eine Regel freilegt (Bedienrest nach dem
  * Verbinden, Lücke nach einer entfernten Seitenzahl), erledigt der nächste
  * Durchlauf. Ein zweiter Aufruf auf dem Ergebnis ändert deshalb nichts mehr.
  * Kopf- und Fußzeilen werden in jedem Durchlauf gesucht, brauchen aber
@@ -695,18 +700,28 @@ export function cleanPasted(
   const wanted = opts.rules ?? PASTE_RULES;
   const totals = new Map<PasteRule, number>();
   let current = text.replace(/\r\n?/g, "\n");
-  for (let pass = 0; pass < MAX_PASSES; pass += 1) {
+  let stable = false;
+  for (let pass = 0; pass < (opts.maxPasses ?? MAX_PASSES); pass += 1) {
     let passChanges = 0;
     for (const rule of PASTE_RULES) {
       if (!wanted.includes(rule)) continue;
       const result = RULE_FNS[rule](current);
+      // Eine Regel, die den Text nicht verändert, hat nichts getan (auch wenn
+      // sie Änderungen meldet): sonst käme der Fixpunkt nie zur Ruhe.
+      const unchanged = result.text === current;
       current = result.text;
-      if (result.changes === 0) continue;
+      if (result.changes === 0 || unchanged) continue;
       passChanges += result.changes;
       totals.set(rule, (totals.get(rule) ?? 0) + result.changes);
     }
-    if (passChanges === 0) break;
+    if (passChanges === 0) {
+      stable = true;
+      break;
+    }
   }
+  // Nicht zur Ruhe gekommen: ein Ergebnis, das ein zweiter Aufruf noch
+  // ändern würde, gibt es nicht. Dann bleibt der Text, wie er eingefügt wurde.
+  if (!stable) return { text, changes: 0, items: [] };
   const items: PasteItem[] = [];
   for (const rule of PASTE_RULES) {
     const count = totals.get(rule);

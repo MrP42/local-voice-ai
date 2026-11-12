@@ -15,12 +15,16 @@ import {
   stripWebNoise,
 } from "../src/lib/reader/pasteCleanup.ts";
 
+import { joinFragments } from "../src/lib/reader/textCleanup.ts";
+
 import {
   PASTE_ENTRY_MAX_BYTES,
   PASTE_LOG_MAX_BYTES,
   PASTE_LOG_MAX_ENTRIES,
   appendPasteEntry,
   entryBytes,
+  isIsoTime,
+  isSha256,
   makeOversizedEntry,
   makePasteEntry,
   parsePasteLog,
@@ -1358,9 +1362,12 @@ test("pasteLog: höchstens 20 Einträge, die ältesten fallen zuerst", async () 
   assert.equal(log[19].zeit, "24");
 });
 
+/** Gültiger Zeitstempel für den n-ten Eintrag. */
+const iso = (n) => new Date(Date.UTC(2026, 10, 12, 8, 0, n)).toISOString();
+const SHA = "ab".repeat(32);
 const eintrag = (zeit, roh, bereinigt = roh) => ({
   zeit,
-  sha256: "x",
+  sha256: SHA,
   roh,
   bereinigt,
   regeln: [{ rule: "spaces", count: 1 }],
@@ -1406,17 +1413,17 @@ test("pasteLog: zu großer Text wird nur als Prüfsumme und Größe vermerkt", a
 
 test("pasteLog: beim Laden verlieren übergroße Einträge Roh- und bereinigte Fassung", () => {
   const gross = {
-    zeit: "t1",
-    sha256: "abc",
+    zeit: iso(1),
+    sha256: SHA,
     roh: "ä".repeat(1_100_000),
     bereinigt: "x",
     regeln: [{ rule: "spaces", count: 3 }],
   };
-  const klein = eintrag("t2", "kurz");
+  const klein = eintrag(iso(2), "kurz");
   const [a, b] = parsePasteLog([gross, klein]);
   assert.equal(a.zuGross, true);
   assert.equal(a.roh, undefined);
-  assert.equal(a.sha256, "abc");
+  assert.equal(a.sha256, SHA);
   assert.equal(a.zeichen, 1_100_000);
   assert.equal(a.bytes, 2_200_000);
   assert.deepEqual(a.regeln, []);
@@ -1426,19 +1433,23 @@ test("pasteLog: beim Laden verlieren übergroße Einträge Roh- und bereinigte F
 test("pasteLog: beim Laden gilt danach die Gesamtgrenze, die ältesten fallen", () => {
   const roh = "x".repeat(900_000);
   const geladen = parsePasteLog(
-    Array.from({ length: 20 }, (_, i) => eintrag(`z${i}`, roh)),
+    Array.from({ length: 20 }, (_, i) => eintrag(iso(i), roh)),
   );
   const total = geladen.reduce((sum, e) => sum + entryBytes(e), 0);
   assert.ok(total <= PASTE_LOG_MAX_BYTES);
   assert.ok(geladen.length < 20);
-  assert.equal(geladen[geladen.length - 1].zeit, "z19");
+  assert.equal(geladen[geladen.length - 1].zeit, iso(19));
 });
 
 test("pasteLog: Prüfsumme passt nicht zur Rohfassung: beschädigt, Wiederherstellen gesperrt", async () => {
   const gut = await entryFor(
     "Drucken\nTeilen\nText mit Inhalt, der bleibt, in einer ganz normalen Zeile.",
   );
-  const kaputt = { ...gut, roh: `${gut.roh}!`, zeit: "andere" };
+  const kaputt = {
+    ...gut,
+    roh: `${gut.roh}!`,
+    zeit: "2026-11-12T11:00:00.000Z",
+  };
   const [a, b] = await verifyPasteLog([gut, kaputt]);
   assert.equal(a.beschaedigt, undefined);
   assert.equal(b.beschaedigt, true);
@@ -1476,8 +1487,8 @@ test("pasteLog: Speichern und Neuladen (JSON) übersteht alte Zustände und Mül
       null,
       { zeit: 1 },
       {
-        zeit: "t",
-        sha256: "s",
+        zeit: iso(5),
+        sha256: SHA,
         regeln: [
           { rule: "nope", count: 1 },
           { rule: "spaces", count: 2 },
@@ -1531,4 +1542,348 @@ test("pasteLog: Wiederherstellen nur bei genau einem unveränderten Vorkommen", 
 test("pasteLog: überlappendes Vorkommen gilt als mehrfach", () => {
   const e = { zeit: "t", sha256: "s", roh: "R", bereinigt: "aa", regeln: [] };
   assert.deepEqual(restoreRaw("aaa", e), { ok: false, reason: "ambiguous" });
+});
+
+// ---------------------------------------------------------------------------
+// Fixrunde 3: joinFragments linear, Formfeed in Code, Fixpunkt, Protokoll-Parser
+// ---------------------------------------------------------------------------
+
+/** Die bisherige Fassung von joinFragments (quadratisch), als Referenz der Semantik. */
+const OLD = (() => {
+  const TIMESTAMP =
+    /^[ \t]*[[(]\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?[\])][ \t]*(?::[ \t]*)?/;
+  const LONE_COLON = /^[ \t]*:[ \t]+(?=\S)/;
+  const BLOCK_START =
+    /^\s*(?:#{1,3}\s|>\s?|[-*]\s|-{3,}\s*$|\*{3,}\s*$|_{3,}\s*$|⁂)/;
+  const SPEAKER_START = /^\s*<[^<>\n]{1,40}>/;
+  const SENTENCE_END = /[.!?…:;]["'»«“”‘’)\]]*\s*$/;
+  const INITIALS = /^(?:\p{Lu}\.\s*){1,3}$/u;
+  const HYPHEN_END = /\p{Ll}-$/u;
+  const STARTS_LOWER = /^\p{Ll}/u;
+  const SUSPENDED = /^(?:und|oder|bzw\.|sowie|als auch|noch)\s/;
+  const isPlain = (line) =>
+    line.trim().length > 0 &&
+    !BLOCK_START.test(line) &&
+    !SPEAKER_START.test(line) &&
+    !/^\s*\{\{S\./.test(line);
+  return function joinOld(text) {
+    const out = [];
+    let changes = 0;
+    for (const raw of text.split("\n")) {
+      const prev = out.length > 0 ? out[out.length - 1] : null;
+      if (prev !== null && isPlain(prev) && isPlain(raw)) {
+        const body = raw.replace(TIMESTAMP, "").replace(LONE_COLON, "").trim();
+        const prevBody = prev
+          .replace(TIMESTAMP, "")
+          .replace(LONE_COLON, "")
+          .trim();
+        if (body.length > 0) {
+          if (HYPHEN_END.test(prev.trimEnd()) && STARTS_LOWER.test(body)) {
+            out[out.length - 1] = SUSPENDED.test(body)
+              ? `${prev.trimEnd()} ${body}`
+              : prev.trimEnd().slice(0, -1) + body;
+            changes += 1;
+            continue;
+          }
+          if (
+            INITIALS.test(prevBody) ||
+            (!SENTENCE_END.test(prev) && STARTS_LOWER.test(body))
+          ) {
+            out[out.length - 1] = `${prev.trimEnd()} ${body}`;
+            changes += 1;
+            continue;
+          }
+        }
+      }
+      out.push(raw);
+    }
+    return { text: out.join("\n"), changes };
+  };
+})();
+
+test("joinFragments: 200 000 verbundene Kleinbuchstabenzeilen in linearer Zeit", () => {
+  const raw = ["Der Anfang eines Satzes", ...Array(200_000).fill("wort")].join(
+    "\n",
+  );
+  const start = performance.now();
+  const r = joinFragments(raw);
+  const ms = performance.now() - start;
+  assert.equal(r.changes, 200_000);
+  assert.equal(r.text.length, "Der Anfang eines Satzes".length + 5 * 200_000);
+  assert.ok(r.text.endsWith(" wort wort"));
+  assert.ok(ms < 1500, `${Math.round(ms)} ms`);
+});
+
+test("joinFragments: ebenso bei langen Satzenden-Prüfungen (Zeilen mit Anführungszeichen und Leerzeichen)", () => {
+  const raw = [
+    "Beginn",
+    ...Array.from({ length: 60_000 }, () => "teil »x«   "),
+  ].join("\n");
+  const start = performance.now();
+  const r = joinFragments(raw);
+  const ms = performance.now() - start;
+  assert.equal(r.changes, 60_000);
+  assert.ok(ms < 1500, `${Math.round(ms)} ms`);
+});
+
+test("cleanPasted: 200 000 abgerissene Zeilen unter 3 s, Ergebnis wie erwartet", () => {
+  const raw = [
+    "Ein langer Satz beginnt hier",
+    ...Array(200_000).fill("wort"),
+  ].join("\n");
+  const start = performance.now();
+  const r = cleanPasted(raw);
+  const ms = performance.now() - start;
+  assert.equal(r.text.split("\n").length, 1);
+  assert.ok(ms < 3000, `${Math.round(ms)} ms`);
+});
+
+test("joinFragments: gleiche Ergebnisse wie die bisherige Fassung (Zufallsvorlagen, kleine Fälle)", () => {
+  const pool = [
+    "J.",
+    "L.",
+    "M.",
+    "Collins hat",
+    "wort",
+    "Ge-",
+    "danken",
+    "und Sozialpolitik",
+    "Wirtschafts-",
+    "[0:01] ",
+    "[0:02] sagte er",
+    "(00:12) dann",
+    ": Rest",
+    "# Titel",
+    "> Zitat",
+    "<Anna> hallo",
+    "",
+    "   ",
+    "Ende.",
+    "ende!)",
+    "etwas:",
+    "- Liste",
+    "-",
+    "x -",
+    "ä-",
+    "  eingerückt klein",
+    "Zeile mit Leerzeichen   ",
+    "{{S. 3}}",
+    "»zitat«",
+    "Satz.«  ",
+    "noch eine",
+    "Dr.",
+    "A. B. C. D.",
+    "abc;",
+    "---",
+    "Wort-",
+    "oder so",
+    "-- ",
+    "\t",
+    "ÖPNV",
+    "klein",
+  ];
+  let seed = 12345;
+  const rnd = (n) => {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    return seed % n;
+  };
+  for (let k = 0; k < 4000; k += 1) {
+    const count = 1 + rnd(12);
+    const text = Array.from(
+      { length: count },
+      () => pool[rnd(pool.length)],
+    ).join("\n");
+    const got = joinFragments(text);
+    const want = OLD(text);
+    assert.deepEqual(got, want, JSON.stringify(text));
+  }
+});
+
+test("control: Formfeed in umzäuntem Code bleibt byte-gleich", () => {
+  const code = "```text\nA\fB\n```";
+  const r = stripControl(code);
+  assert.equal(r.text, code);
+  assert.equal(r.changes, 0);
+});
+
+test("control: Formfeed in eingerücktem Code bleibt, außerhalb wird er zum Umbruch", () => {
+  const raw = lines(
+    "Vor dem Block.\fNach dem Umbruch.",
+    "",
+    "    a\fb",
+    "    c",
+  );
+  const r = stripControl(raw);
+  assert.equal(
+    r.text,
+    lines("Vor dem Block.", "Nach dem Umbruch.", "", "    a\fb", "    c"),
+  );
+  assert.equal(r.changes, 1);
+});
+
+test("repeated: Formfeeds in Code sind keine Seitengrenzen", () => {
+  const code = lines("```", "\f", "\f", "\f", "```");
+  const kopf = "Rundschreiben Musterkreis – Seite";
+  const raw = lines(
+    code,
+    ...Array.from({ length: 4 }, (_, i) =>
+      lines(kopf, ...Array.from({ length: 9 }, (_, j) => absatz(i * 9 + j))),
+    ),
+  );
+  assert.ok(raw.length > 1500);
+  // Ohne echte Seitengrenzen bleibt jede Zeile stehen.
+  assert.equal(stripRepeated(raw).changes, 0);
+  const all = cleanPasted(raw);
+  assert.ok(all.text.startsWith(code), "Codeblock bleibt unverändert");
+});
+
+test("Fixpunkt: nicht zur Ruhe gekommen heißt unverändert, sonst gilt cleanPasted(cleanPasted(x)) == cleanPasted(x)", () => {
+  const raw = lines(
+    "Text mit einem Satz, der lang genug ist, damit er nicht als kurze Zeile gilt, hier.",
+    "Zurück",
+    "9",
+    "Teilen",
+    "E-Mail",
+  );
+  assert.equal(cleanPasted(raw, { maxPasses: 1 }).changes, 0);
+  assert.equal(cleanPasted(raw, { maxPasses: 1 }).text, raw);
+  const full = cleanPasted(raw);
+  assert.ok(full.changes > 0);
+  const again = cleanPasted(full.text);
+  assert.equal(again.text, full.text);
+  assert.equal(again.changes, 0);
+});
+
+test("Fixpunkt: Zufallsvorlagen sind nach einem Aufruf stabil", () => {
+  const pool = [
+    "Drucken",
+    "Teilen",
+    "Zurück",
+    "9",
+    "E-Mail",
+    "Seite 3 von 9",
+    "12",
+    "Ein ganz normaler Satz, der lang genug ist, um zu bleiben.",
+    "",
+    "",
+    "wort",
+    "Ge-",
+    "danken",
+    "J.",
+    "L.",
+    "```",
+    "code­",
+    "    eingerückt ",
+    "\f",
+    "# Titel",
+    "<Anna> hallo",
+    "[0:05] sagte",
+    "Skip to content",
+    "Nach oben",
+    "Zeile  mit   Leerzeichen",
+    "Kopf Zeile",
+    "Fußzeile – Seite 1",
+    "​",
+    "- Liste",
+    "klein weiter",
+    "A.",
+    "x",
+    "https://example.org/x",
+    "|a|b|",
+  ];
+  let seed = 4242;
+  const rnd = (n) => {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    return seed % n;
+  };
+  for (let k = 0; k < 600; k += 1) {
+    const text = Array.from(
+      { length: 2 + rnd(40) },
+      () => pool[rnd(pool.length)],
+    ).join("\n");
+    const first = cleanPasted(text);
+    const second = cleanPasted(first.text);
+    assert.equal(second.text, first.text, JSON.stringify(text));
+    assert.equal(second.changes, 0, JSON.stringify(text));
+  }
+});
+
+test("pasteLog: Zeitstempel nur als ISO-Zeit bis 40 Zeichen, sha256 nur 64 Hex", () => {
+  assert.ok(isIsoTime("2026-11-12T10:00:00.000Z"));
+  assert.ok(isIsoTime("2026-11-12T10:00:00+01:00"));
+  assert.ok(!isIsoTime("morgen"));
+  assert.ok(!isIsoTime("2026-13-45T99:00:00Z"));
+  assert.ok(!isIsoTime(`2026-11-12T10:00:00.${"0".repeat(60)}Z`));
+  assert.ok(isSha256("ab".repeat(32)));
+  assert.ok(isSha256(""));
+  assert.ok(!isSha256("abc"));
+  assert.ok(!isSha256("zz".repeat(32)));
+  assert.ok(!isSha256("ab".repeat(33)));
+});
+
+test("pasteLog: Laden verwirft Einträge mit 17-MiB-Zeitstempel oder ungültiger Prüfsumme", () => {
+  const gut = eintrag(iso(1), "gut");
+  const geladen = parsePasteLog([
+    { ...gut, zeit: "z".repeat(17 * 1024 * 1024) },
+    { ...gut, sha256: "nicht-hex" },
+    { ...gut, sha256: "a".repeat(10_000_000) },
+    { ...gut, zeit: "gestern" },
+    gut,
+  ]);
+  assert.equal(geladen.length, 1);
+  assert.equal(geladen[0].roh, "gut");
+  assert.ok(entryBytes(geladen[0]) < 1000);
+});
+
+test("pasteLog: regeln begrenzt (je Regel einmal, ganze Zahlen, nicht negativ)", () => {
+  const viele = Array.from({ length: 5000 }, () => ({
+    rule: "spaces",
+    count: 1,
+  }));
+  const [e] = parsePasteLog([
+    {
+      ...eintrag(iso(1), "x"),
+      regeln: [
+        { rule: "spaces", count: 1 },
+        { rule: "control", count: 2.5 },
+        { rule: "webNoise", count: -1 },
+        { rule: "fragments", count: 3 },
+        ...viele,
+      ],
+    },
+  ]);
+  assert.deepEqual(e.regeln, [
+    { rule: "spaces", count: 1 },
+    { rule: "fragments", count: 3 },
+  ]);
+  const [g] = parsePasteLog([{ ...eintrag(iso(2), "x"), regeln: viele }]);
+  assert.ok(g.regeln.length <= 1);
+});
+
+test("pasteLog: Gesamtgrenze gilt nach dem Kürzen; Metadaten zählen mit, nichts bleibt darüber", () => {
+  const gross = (n) => ({
+    ...eintrag(iso(n), "ä".repeat(1_100_000)),
+    bereinigt: "x",
+  });
+  const mittel = (n) => eintrag(iso(n), "x".repeat(1_900_000));
+  const log = parsePasteLog([
+    ...Array.from({ length: 6 }, (_, i) => gross(i)),
+    ...Array.from({ length: 14 }, (_, i) => mittel(10 + i)),
+  ]);
+  const total = log.reduce((sum, e) => sum + entryBytes(e), 0);
+  assert.ok(total <= PASTE_LOG_MAX_BYTES, `${total}`);
+  assert.ok(log.every((e) => entryBytes(e) <= PASTE_ENTRY_MAX_BYTES));
+  assert.ok(log.length >= 1);
+  assert.equal(log[log.length - 1].zeit, iso(23));
+});
+
+test("pasteLog: ein einzelner Eintrag, der auch gekürzt über der Grenze liegt, wird verworfen", () => {
+  const unmoeglich = {
+    ...eintrag(iso(1), "x"),
+    // Nur von Hand möglich: die Metadaten allein sprengen die Einzelgrenze.
+    zeit: "z".repeat(PASTE_ENTRY_MAX_BYTES),
+  };
+  const log = appendPasteEntry([eintrag(iso(0), "alt")], unmoeglich);
+  assert.equal(log.length, 1);
+  assert.equal(log[0].roh, "alt");
 });

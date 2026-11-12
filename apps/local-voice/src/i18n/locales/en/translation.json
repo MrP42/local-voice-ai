@@ -95,6 +95,7 @@
         "changes_other": "{{count}} changes",
         "tooLarge": "Too large to clean up ({{size}} MB): pasted unchanged, no original saved.",
         "reason": {
+          "checking": "Checking the checksum … restoring and copying are disabled until it is done.",
           "damaged": "Damaged: the checksum does not match the saved original. Restoring is disabled.",
           "empty": "The cleaned text was empty. The place cannot be found; please copy the original.",
           "missing": "The cleaned text is no longer in the text unchanged.",

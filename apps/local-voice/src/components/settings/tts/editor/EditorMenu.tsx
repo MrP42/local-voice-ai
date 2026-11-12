@@ -85,6 +85,8 @@ interface EditorMenuProps {
   /** Gesicherte Rohfassungen eingefügter Texte der Seite (älteste zuerst);
    *  Menüeintrag „Letzte Einfügungen …“. */
   pasteLog?: readonly PasteLogEntry[];
+  /** Prüfsummen des Protokolls werden noch geprüft (Wiederherstellen gesperrt). */
+  pasteChecking?: boolean;
   /** Protokoll ändern (löschen); gesichert und mit anderen Schreibvorgängen
    *  der Seite nacheinander. `true`, wenn es gesichert wurde. */
   onPasteLogChange?(
@@ -141,6 +143,7 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
   pasteCleanup = true,
   onPasteCleanup,
   pasteLog = [],
+  pasteChecking = false,
   onPasteLogChange,
   onTidy,
   tidying = false,
@@ -530,6 +533,7 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
           open={pasteLogOpen}
           onOpenChange={setPasteLogOpen}
           entries={pasteLog}
+          checking={pasteChecking}
           text={value}
           onRestore={onChange}
           onChange={onPasteLogChange ?? (async () => false)}

@@ -95,6 +95,7 @@
         "changes_other": "{{count}} Änderungen",
         "tooLarge": "Zu groß für die Bereinigung ({{size}} MB): unverändert eingefügt, keine Rohfassung gespeichert.",
         "reason": {
+          "checking": "Prüfsumme wird geprüft … Wiederherstellen und Kopieren sind bis dahin gesperrt.",
           "damaged": "Beschädigt: Die Prüfsumme passt nicht zur gespeicherten Rohfassung. Wiederherstellen ist gesperrt.",
           "empty": "Der bereinigte Text war leer. Die Stelle lässt sich nicht finden; bitte die Rohfassung kopieren.",
           "missing": "Der bereinigte Text steht nicht mehr unverändert im Text.",

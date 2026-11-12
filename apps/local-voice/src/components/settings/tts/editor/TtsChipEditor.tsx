@@ -20,6 +20,7 @@ import {
   fitsEntry,
   makeOversizedEntry,
   makePasteEntry,
+  utf8Bytes,
   type PasteLogEntry,
 } from "@/lib/reader/pasteLog";
 import { useTagLanguage } from "../tags/tagLanguage";
@@ -654,8 +655,14 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
     raw: string,
   ): boolean => {
     if (!cleanPaste || !raw) return false;
-    // Zeichen sind nie mehr als Bytes: darüber passt auch kein Eintrag.
-    if (raw.length > PASTE_ENTRY_MAX_BYTES) {
+    // Grenzen zählen UTF-8-Bytes. Einheiten sind nie mehr als Bytes (darüber
+    // passt sicher nichts); darunter genügt die Obergrenze 3 Byte je Einheit,
+    // erst sonst wird exakt gezählt.
+    if (
+      raw.length > PASTE_ENTRY_MAX_BYTES ||
+      (raw.length * 3 > PASTE_ENTRY_MAX_BYTES &&
+        utf8Bytes(raw) > PASTE_ENTRY_MAX_BYTES)
+    ) {
       void noteOversized(raw);
       return false;
     }
@@ -1216,13 +1223,26 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
     if (!menu) return;
     const { selStart, selEnd } = menu;
     closeMenu();
+    // Ziel VOR dem Warten festhalten: die Zwischenablage kann langsam sein, der
+    // Nutzer in der Zeit die Seite wechseln. Die Offsets gelten nur für den
+    // Text von jetzt.
+    const target = taRef.current;
+    const doc = docKeyRef.current;
+    const base = valueRef.current;
     void navigator.clipboard
       ?.readText()
       .then((clipText) => {
-        const ta = taRef.current;
-        if (!clipText || !ta) return;
-        if (takePaste(ta, selStart, selEnd, clipText)) return;
-        execInsert(ta, selStart, selEnd, clipText);
+        if (!clipText) return;
+        if (taRef.current !== target || docKeyRef.current !== doc || !target) {
+          toast(t("tts.editorMenu.pasteAbortedPage"));
+          return;
+        }
+        if (valueRef.current !== base) {
+          toast(t("tts.editorMenu.pasteAbortedChanged"));
+          return;
+        }
+        if (takePaste(target, selStart, selEnd, clipText)) return;
+        execInsert(target, selStart, selEnd, clipText);
       })
       .catch(() => undefined);
   };

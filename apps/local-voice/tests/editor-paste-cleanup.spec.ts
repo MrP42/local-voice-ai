@@ -85,8 +85,13 @@ test.beforeEach(async ({ page }) => {
             sessionStorage.setItem(`__ps_${args?.id}`, String(args?.state));
             return null;
           }
-          if (cmd === "page_state_load")
+          if (cmd === "page_state_load") {
+            const delay = (
+              window as unknown as { __loadDelay?: Record<string, number> }
+            ).__loadDelay?.[String(args?.id)];
+            if (delay) await new Promise((r) => setTimeout(r, delay));
             return sessionStorage.getItem(`__ps_${args?.id}`);
+          }
           if (cmd === "get_app_settings" || cmd === "get_default_settings")
             return settings;
           if (cmd === "plugin:os|locale") return "de-DE";
@@ -944,5 +949,178 @@ test("dialog with 20 entries: scrolls inside, traps focus, returns focus to the 
   }
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
+  await expect(page.getByTestId("editor-menu-cleanup")).toBeFocused();
+});
+
+test("a delayed clipboard read does not paste into another page after a page switch", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as unknown as { __pagesList: unknown }).__pagesList = [
+      { id: "p1", title: "Der Sturm" },
+      { id: "p2", title: "Das Wintermärchen" },
+    ];
+  });
+  const editor = await openEditor(page);
+  await expect
+    .poll(async () => ((await savedState(page)) as { text: string })?.text)
+    .toBe("Vorher. ");
+  await page.evaluate((text) => {
+    const w = window as unknown as { __releaseClip?: () => void };
+    const gate = new Promise<void>((r) => {
+      w.__releaseClip = r;
+    });
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        readText: async () => {
+          await gate;
+          return text;
+        },
+        writeText: async () => undefined,
+      },
+    });
+  }, DIRTY);
+  await editor.click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Einfügen", exact: true })
+    .evaluate((el: HTMLElement) => el.click());
+  await page.getByText("Das Wintermärchen", { exact: true }).click();
+  await page.evaluate(() =>
+    (window as unknown as { __releaseClip: () => void }).__releaseClip(),
+  );
+  await expect(toast(page).last()).toContainText(
+    "Einfügen abgebrochen: Seite gewechselt.",
+  );
+  // Weder Seite 2 noch Seite 1 haben den Text bekommen.
+  const p2 = await page.evaluate(() => sessionStorage.getItem("__ps_p2"));
+  expect(p2 === null || !p2.includes("Telefonanlage")).toBe(true);
+  const p1 = (await savedState(page)) as { text: string };
+  expect(p1.text).toBe("Vorher. ");
+});
+
+test("the checksum check is pending: restore and copy are locked until it is done", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as {
+      __digestRelease?: () => void;
+    };
+    const gate = new Promise<void>((r) => {
+      w.__digestRelease = r;
+    });
+    const subtle = crypto.subtle;
+    const original = subtle.digest.bind(subtle);
+    subtle.digest = async (...args: Parameters<SubtleCrypto["digest"]>) => {
+      await gate;
+      return original(...args);
+    };
+  });
+  const editor = await openSeeded(page, {
+    text: "Roh 1",
+    tab: "original",
+    einfuegungen: [entryFor(1)],
+  });
+  await openLog(page);
+  const restore = page.getByTestId("paste-log-restore");
+  const copy = page.getByTestId("paste-log-copy");
+  await expect(restore).toHaveAttribute("aria-disabled", "true");
+  await expect(copy).toHaveAttribute("aria-disabled", "true");
+  await expect(page.locator("#paste-log-why-0")).toContainText(
+    "Prüfsumme wird geprüft",
+  );
+  expect(await restore.getAttribute("aria-describedby")).toContain(
+    "paste-log-why-0",
+  );
+  // aria-disabled sperrt die Wirkung, nicht den Klick: er tut nichts.
+  await restore.click({ force: true });
+  await expect(editor).toHaveValue("Roh 1");
+  await expect(
+    page.getByRole("dialog", { name: "Letzte Einfügungen" }),
+  ).toBeVisible();
+  await page.evaluate(() =>
+    (window as unknown as { __digestRelease: () => void }).__digestRelease(),
+  );
+  await expect(restore).not.toHaveAttribute("aria-disabled", "true");
+  await expect(copy).not.toHaveAttribute("aria-disabled", "true");
+  await restore.click();
+  await expect(editor).toHaveValue(entryFor(1).roh);
+});
+
+test("a slow load of the page left meanwhile sets neither text nor raw log", async ({
+  page,
+}) => {
+  await page.addInitScript(
+    ([first, second]) => {
+      const w = window as unknown as Record<string, unknown>;
+      w.__pagesList = [
+        { id: "p1", title: "Der Sturm" },
+        { id: "p2", title: "Das Wintermärchen" },
+      ];
+      w.__loadDelay = { p1: 2500 };
+      sessionStorage.setItem("__ps_p1", first);
+      sessionStorage.setItem("__ps_p2", second);
+    },
+    [
+      JSON.stringify({
+        text: "Text von Seite eins",
+        tab: "original",
+        einfuegungen: [entryFor(1)],
+      }),
+      JSON.stringify({ text: "Text von Seite zwei", tab: "original" }),
+    ],
+  );
+  await page.goto("/");
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  await page.getByText("Das Wintermärchen", { exact: true }).click();
+  await page.waitForTimeout(3500);
+  await page.getByRole("button", { name: "Bearbeiten", exact: true }).click();
+  const editor = page.locator("textarea").first();
+  await expect(editor).toHaveValue("Text von Seite zwei");
+  await openLog(page);
+  await expect(page.getByTestId("paste-log-empty")).toBeVisible();
+});
+
+test("two dialogs: focus stays in the confirm dialog on top, then returns step by step", async ({
+  page,
+}) => {
+  await openSeeded(page, {
+    text: "Roh 1 Roh 2",
+    tab: "original",
+    einfuegungen: [entryFor(1), entryFor(2)],
+  });
+  await openLog(page);
+  const log = page.getByRole("dialog", { name: "Letzte Einfügungen" });
+  const confirm = page.getByRole("dialog", {
+    name: "Alle Rohfassungen löschen?",
+  });
+  const inside = (title: string) =>
+    page.evaluate(
+      (t) =>
+        !!document.activeElement
+          ?.closest('[role="dialog"]')
+          ?.textContent?.includes(t),
+      title,
+    );
+  await page.getByTestId("paste-log-delete-all").click();
+  await expect(confirm).toBeVisible();
+  expect(await inside("Alle Rohfassungen löschen?")).toBe(true);
+  for (let i = 0; i < 12; i += 1) {
+    await page.keyboard.press(i % 3 === 2 ? "Shift+Tab" : "Tab");
+    expect(await inside("Alle Rohfassungen löschen?")).toBe(true);
+  }
+  await page.keyboard.press("Escape");
+  await expect(confirm).toBeHidden();
+  await expect(log).toBeVisible();
+  await expect(page.getByTestId("paste-log-delete-all")).toBeFocused();
+  for (let i = 0; i < 12; i += 1) {
+    await page.keyboard.press("Tab");
+    expect(await inside("Letzte Einfügungen")).toBe(true);
+  }
+  await page.keyboard.press("Escape");
+  await expect(log).toBeHidden();
   await expect(page.getByTestId("editor-menu-cleanup")).toBeFocused();
 });

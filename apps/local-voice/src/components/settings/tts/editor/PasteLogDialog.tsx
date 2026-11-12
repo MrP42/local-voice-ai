@@ -16,6 +16,9 @@ interface PasteLogDialogProps {
   onOpenChange: (open: boolean) => void;
   /** Einfügungen der Seite, älteste zuerst. */
   entries: readonly PasteLogEntry[];
+  /** Prüfsummen werden noch gegen die Rohfassungen gehalten: Wiederherstellen
+   *  und Kopieren sind bis dahin gesperrt. */
+  checking?: boolean;
   /** Aktueller Text des Editors (Grundlage für „wiederherstellen“). */
   text: string;
   /** Ganzen Text setzen (ein Schritt in der Seiten-Historie). */
@@ -40,6 +43,7 @@ export const PasteLogDialog: React.FC<PasteLogDialogProps> = ({
   open,
   onOpenChange,
   entries,
+  checking = false,
   text,
   onRestore,
   onChange,
@@ -52,7 +56,7 @@ export const PasteLogDialog: React.FC<PasteLogDialogProps> = ({
   const newestFirst = open ? [...entries].reverse() : [];
 
   const copy = (entry: PasteLogEntry) => {
-    if (entry.roh === undefined) return;
+    if (entry.roh === undefined || checking) return;
     void navigator.clipboard
       ?.writeText(entry.roh)
       .then(() => toast(t("tts.editorMenu.pasteLog.copied")))
@@ -61,7 +65,7 @@ export const PasteLogDialog: React.FC<PasteLogDialogProps> = ({
 
   const restore = (entry: PasteLogEntry) => {
     const result = restoreRaw(text, entry);
-    if (!result.ok) return;
+    if (checking || !result.ok) return;
     onRestore(result.text);
     toast(t("tts.editorMenu.pasteLog.restored"));
     onOpenChange(false);
@@ -155,10 +159,13 @@ export const PasteLogDialog: React.FC<PasteLogDialogProps> = ({
               const canCopy = entry.roh !== undefined;
               const timeId = `paste-log-time-${index}`;
               const whyId = `paste-log-why-${index}`;
-              const why =
-                canCopy && !result.ok && result.reason !== "noRaw"
-                  ? result.reason
-                  : null;
+              const why = !canCopy
+                ? null
+                : checking
+                  ? "checking"
+                  : !result.ok && result.reason !== "noRaw"
+                    ? result.reason
+                    : null;
               return (
                 <li
                   key={pasteEntryKey(entry) + index}
@@ -204,10 +211,8 @@ export const PasteLogDialog: React.FC<PasteLogDialogProps> = ({
                           type="button"
                           size="sm"
                           variant="secondary"
-                          disabledFocusable={!result.ok}
-                          aria-describedby={
-                            result.ok ? timeId : `${whyId} ${timeId}`
-                          }
+                          disabledFocusable={checking || !result.ok}
+                          aria-describedby={why ? `${whyId} ${timeId}` : timeId}
                           data-testid="paste-log-restore"
                           onClick={() => restore(entry)}
                         >
@@ -217,7 +222,10 @@ export const PasteLogDialog: React.FC<PasteLogDialogProps> = ({
                           type="button"
                           size="sm"
                           variant="secondary"
-                          aria-describedby={timeId}
+                          disabledFocusable={checking}
+                          aria-describedby={
+                            checking ? `${whyId} ${timeId}` : timeId
+                          }
                           data-testid="paste-log-copy"
                           onClick={() => copy(entry)}
                         >

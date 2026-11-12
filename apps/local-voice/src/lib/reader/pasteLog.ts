@@ -128,18 +128,26 @@ function shrink(entry: PasteLogEntry): PasteLogEntry {
   return small;
 }
 
-/** Eintrag auf die Einzelgrenze bringen. */
-const limitEntry = (entry: PasteLogEntry): PasteLogEntry =>
-  fitsEntry(entry) ? entry : shrink(entry);
+/**
+ * Eintrag auf die Einzelgrenze bringen: zu groß verliert Roh- und bereinigte
+ * Fassung. Passt auch das Gekürzte nicht (Metadaten allein zu groß), fällt der
+ * Eintrag ganz weg (`null`), statt die Grenze zu reißen.
+ */
+function limitEntry(entry: PasteLogEntry): PasteLogEntry | null {
+  if (fitsEntry(entry)) return entry;
+  const small = shrink(entry);
+  return fitsEntry(small) ? small : null;
+}
 
-/** Anzahl und Gesamtumfang begrenzen: die ältesten Einträge fallen zuerst,
- *  der neueste bleibt immer. */
+/** Anzahl und Gesamtumfang begrenzen (Metadaten zählen mit): die ältesten
+ *  Einträge fallen zuerst. Jeder Eintrag ist schon höchstens
+ *  {@link PASTE_ENTRY_MAX_BYTES} groß, so bleibt immer der neueste stehen. */
 function limitLog(entries: PasteLogEntry[]): PasteLogEntry[] {
   const next = entries.slice(-PASTE_LOG_MAX_ENTRIES);
   const sizes = next.map(entryBytes);
   let total = sizes.reduce((sum, n) => sum + n, 0);
   let from = 0;
-  while (next.length - from > 1 && total > PASTE_LOG_MAX_BYTES) {
+  while (from < next.length && total > PASTE_LOG_MAX_BYTES) {
     total -= sizes[from];
     from += 1;
   }
@@ -151,7 +159,8 @@ export function appendPasteEntry(
   log: readonly PasteLogEntry[],
   entry: PasteLogEntry,
 ): PasteLogEntry[] {
-  return limitLog([...log, limitEntry(entry)]);
+  const fitted = limitEntry(entry);
+  return limitLog(fitted ? [...log, fitted] : [...log]);
 }
 
 /** Schlüssel zum Löschen eines Eintrags. */
@@ -167,20 +176,45 @@ export function removePasteEntry(
   return at < 0 ? [...log] : [...log.slice(0, at), ...log.slice(at + 1)];
 }
 
+/** Zeitstempel eines Eintrags: ISO 8601, höchstens 40 Zeichen, ein echtes Datum. */
+const ISO_TIME =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
+export const isIsoTime = (value: string): boolean =>
+  value.length <= 40 &&
+  ISO_TIME.test(value) &&
+  !Number.isNaN(Date.parse(value));
+/** SHA-256 als 64 Hex-Zeichen; leer nur, wenn die Umgebung keine Prüfsumme kann. */
+export const isSha256 = (value: string): boolean =>
+  value === "" || /^[0-9a-f]{64}$/i.test(value);
+
 const isRule = (value: unknown): value is PasteRule =>
   typeof value === "string" && (RULES as readonly string[]).includes(value);
+
+const isCount = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
 /** Eintrag aus gespeichertem JSON prüfen; Unbrauchbares verwerfen. */
 function parseEntry(value: unknown): PasteLogEntry | null {
   if (typeof value !== "object" || value === null) return null;
   const e = value as Record<string, unknown>;
-  if (typeof e.zeit !== "string" || typeof e.sha256 !== "string") return null;
+  if (typeof e.zeit !== "string" || !isIsoTime(e.zeit)) return null;
+  if (typeof e.sha256 !== "string" || !isSha256(e.sha256)) return null;
+  // Höchstens eine Angabe je Regel, nur die ersten RULES.length Elemente lesen.
+  const seen = new Set<PasteRule>();
   const regeln: PasteLogRule[] = Array.isArray(e.regeln)
-    ? e.regeln.flatMap((r: unknown) => {
+    ? e.regeln.slice(0, RULES.length * 2).flatMap((r: unknown) => {
         const item = r as Record<string, unknown> | null;
-        return item && isRule(item.rule) && typeof item.count === "number"
-          ? [{ rule: item.rule, count: item.count }]
-          : [];
+        if (
+          !item ||
+          !isRule(item.rule) ||
+          seen.has(item.rule) ||
+          typeof item.count !== "number" ||
+          !Number.isSafeInteger(item.count) ||
+          item.count < 0
+        )
+          return [];
+        seen.add(item.rule);
+        return [{ rule: item.rule, count: item.count }];
       })
     : [];
   const entry: PasteLogEntry = { zeit: e.zeit, sha256: e.sha256, regeln };
@@ -188,8 +222,8 @@ function parseEntry(value: unknown): PasteLogEntry | null {
   if (typeof e.bereinigt === "string") entry.bereinigt = e.bereinigt;
   if (e.zuGross === true) {
     entry.zuGross = true;
-    if (typeof e.zeichen === "number") entry.zeichen = e.zeichen;
-    if (typeof e.bytes === "number") entry.bytes = e.bytes;
+    if (isCount(e.zeichen)) entry.zeichen = e.zeichen;
+    if (isCount(e.bytes)) entry.bytes = e.bytes;
   }
   return entry;
 }
@@ -206,7 +240,8 @@ export function parsePasteLog(value: unknown): PasteLogEntry[] {
   const entries: PasteLogEntry[] = [];
   for (const item of value) {
     const entry = parseEntry(item);
-    if (entry) entries.push(limitEntry(entry));
+    const fitted = entry ? limitEntry(entry) : null;
+    if (fitted) entries.push(fitted);
   }
   return limitLog(entries);
 }
