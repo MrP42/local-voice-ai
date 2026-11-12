@@ -1228,14 +1228,17 @@ impl MeetingRecorderManager {
                     warn!("meetings: orphan status not stored: {e}");
                     continue;
                 }
-                let plan = if meeting.source == "live" {
+                let partial = self.partial_rerun_model(&meeting.id);
+                let plan = if partial.is_some() {
+                    FinalPlan::Keep(KeepReason::PartialRerun)
+                } else if meeting.source == "live" {
                     final_pass::plan_for_app(&self.app, &choice)
                 } else {
                     FinalPlan::Keep(KeepReason::NotLive)
                 };
                 jobs.push(JobSpec {
                     meeting_id: meeting.id.clone(),
-                    catch_up_model: Some(catch_up_model.clone()),
+                    catch_up_model: Some(partial.unwrap_or_else(|| catch_up_model.clone())),
                     plan,
                     live_model: None,
                 });
@@ -1274,11 +1277,18 @@ impl MeetingRecorderManager {
             &|p| std::path::Path::new(p).exists(),
         )?;
         let settings = crate::settings::get_settings(&self.app);
-        let catch_up_model = self.transcription.meeting_model_target(&settings);
+        // lva#523: ein gestoppter Neu-Lauf wird mit SEINEM Modell ergaenzt, ohne
+        // Enddurchlauf (der wuerde die ganze Aufnahme noch einmal rechnen).
+        let partial = self.partial_rerun_model(meeting_id);
+        let catch_up_model = partial
+            .clone()
+            .unwrap_or_else(|| self.transcription.meeting_model_target(&settings));
         // WAV-Header pruefen, echte Dauer, Status `processing`.
         final_pass::prepare_orphan(&self.store, &meeting)
             .map_err(|e| format!("status_processing_failed: {e}"))?;
-        let plan = if meeting.source == "live" {
+        let plan = if partial.is_some() {
+            FinalPlan::Keep(KeepReason::PartialRerun)
+        } else if meeting.source == "live" {
             final_pass::plan_for_app(
                 &self.app,
                 &FinalChoice::parse(&settings.meeting_final_model),
@@ -1295,6 +1305,12 @@ impl MeetingRecorderManager {
             live_model: None,
         }]);
         Ok(())
+    }
+
+    /// lva#523: Modell eines gestoppten Neu-Laufs, dessen Teilergebnis noch offen ist.
+    fn partial_rerun_model(&self, meeting_id: &str) -> Option<String> {
+        let meta = self.store.metadata_json(meeting_id).ok().flatten();
+        super::retranscribe::partial_rerun_model(meta.as_ref())
     }
 
     /// Spec A1: while a meeting records, the machine must show it — tray icon

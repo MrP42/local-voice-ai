@@ -849,6 +849,41 @@ pub fn abort_rerun(conn: &mut Connection, meeting_id: &str) -> Result<bool, Vari
     Ok(restored)
 }
 
+/// lva#523: der Nutzer hat eine Neu-Transkription gestoppt. Gibt es schon neue
+/// Abschnitte, werden sie eine eigene, aktive Fassung (`kind`, `model`); die alte
+/// bleibt vollstaendig als Fassung erhalten. Ohne neue Abschnitte ist alles wie
+/// vor dem Lauf (`abort_rerun`). `Some(id)`: das Teilergebnis wurde behalten.
+pub fn keep_partial_rerun(
+    conn: &mut Connection,
+    meeting_id: &str,
+    kind: &'static str,
+    model: Option<&str>,
+) -> Result<Option<String>, VariantError> {
+    let has_new = {
+        let current = transcript_row(conn, meeting_id)?;
+        current.is_some_and(|t| count_segments(&t.segments_json) > 0)
+    };
+    if !has_new {
+        abort_rerun(conn, meeting_id)?;
+        return Ok(None);
+    }
+    if let Some(model) = model {
+        // Die Arbeitskopie traegt sonst noch das Modell der alten Fassung.
+        conn.execute(
+            "UPDATE transcripts SET model = ?1 WHERE meeting_id = ?2 AND deleted_at IS NULL",
+            params![model, meeting_id],
+        )?;
+    }
+    match finish_rerun(conn, meeting_id, kind, None) {
+        Ok(id) => Ok(Some(id)),
+        Err(VariantError::Empty) => {
+            abort_rerun(conn, meeting_id)?;
+            Ok(None)
+        }
+        Err(e) => Err(e),
+    }
+}
+
 /// Eine nicht abgeschlossene Neu-Transkription (Absturz) zuruecknehmen. Darf nur
 /// laufen, wenn kein Auftrag fuer die Besprechung aktiv ist (Aufrufer prueft).
 pub fn recover_interrupted(conn: &mut Connection, meeting_id: &str) -> Result<bool, VariantError> {

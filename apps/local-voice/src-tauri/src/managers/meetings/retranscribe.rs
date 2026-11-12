@@ -22,6 +22,14 @@
 //! Stopp mitten im Lauf). Dieselbe Pipeline traegt die eigene Transkription eines
 //! YouTube-Videos (`RerunSource::Youtube`): Audio per selbst installiertem yt-dlp
 //! in einen Temp-Ordner, dekodiert, transkribiert, Temp-Datei geloescht.
+//!
+//! lva#523: ein STOPP durch den Nutzer wirft das neu Transkribierte nicht mehr weg.
+//! Gibt es schon neue Abschnitte, werden sie eine eigene aktive Fassung
+//! (`variants::keep_partial_rerun`), die alte bleibt als Fassung erhalten, und die
+//! Besprechung endet als `cancelled`. „Fortsetzen“ (`meetings_continue`) holt den
+//! Rest ab dem letzten Abschnitt je Kanal nach, mit dem Modell dieses Laufs und ohne
+//! Enddurchlauf (`partial_rerun_model`). Nur ein Fehler stellt weiter die alte
+//! Fassung her.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -37,6 +45,22 @@ use super::store::{MeetingStatus, MeetingStore};
 use super::variants;
 use crate::managers::transcription::TranscriptionManager;
 use crate::managers::youtube::fetch as yt_fetch;
+
+/// lva#523: Schluessel in `metadata_json`: ein gestoppter Neu-Lauf hat ein
+/// Teilergebnis hinterlassen; Wert `{ "model": "<modell>" }`.
+pub const PARTIAL_RERUN_KEY: &str = "partial_rerun";
+
+/// lva#523: das Modell, mit dem „Fortsetzen“ ein gestopptes Teilergebnis einer
+/// Neu-Transkription ergaenzt (`None`: kein solches Teilergebnis).
+pub fn partial_rerun_model(metadata: Option<&serde_json::Value>) -> Option<String> {
+    metadata?
+        .get(PARTIAL_RERUN_KEY)?
+        .get("model")?
+        .as_str()
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .map(str::to_string)
+}
 
 /// `StoredSegment::channel` values, mirroring `store.rs`.
 const CHANNEL_MIC: u8 = 0;
@@ -205,6 +229,8 @@ pub async fn rerun_meeting(
         }
     };
     let previous_status = restored_status(&meeting.status);
+    // lva#523: ein neuer Lauf ersetzt ein frueheres Teilergebnis.
+    let _ = store.set_metadata_key(&meeting_id, PARTIAL_RERUN_KEY, serde_json::Value::Null);
     store
         .set_status(&meeting_id, MeetingStatus::Processing)
         .map_err(|e| format!("status_processing_failed: {e}"))?;
@@ -245,16 +271,25 @@ pub async fn rerun_meeting(
         }
         Ok(RetranscribeEnd::Stopped {
             transcript_replaced,
+            model,
+            kind,
         }) => {
-            // B17: auch nach einem Stopp mitten im Lauf ist alles wie vor dem
-            // Start: die alte Fassung ist wieder das Transkript, der vorherige
-            // Status kommt zurueck. `cancelled` mit Teilergebnis gibt es hier nicht mehr.
-            if transcript_replaced {
-                restore_old_transcript(app, &store, &meeting_id);
-            }
+            // lva#523: das neu Transkribierte bleibt als aktive Fassung, die alte
+            // als Fassung daneben; die Besprechung ist `cancelled` und laesst sich
+            // fortsetzen. Ohne neue Abschnitte ist alles wie vor dem Start (B17).
+            let kept = if transcript_replaced {
+                keep_partial_transcript(app, &store, &meeting_id, kind, &model)
+            } else {
+                false
+            };
+            let end_status = if kept {
+                MeetingStatus::Cancelled
+            } else {
+                previous_status
+            };
             let stored = store
-                .set_status(&meeting_id, previous_status)
-                .map(|()| previous_status)
+                .set_status(&meeting_id, end_status)
+                .map(|()| end_status)
                 .map_err(|e| format!("status_restore_failed: {e}"));
             match stored {
                 Ok(status) => {
@@ -290,9 +325,12 @@ pub async fn rerun_meeting(
 enum RetranscribeEnd {
     Completed,
     /// Der Nutzer hat gestoppt; `transcript_replaced`: das alte Transkript war
-    /// schon durch (Teile des) neuen ersetzt.
+    /// schon durch (Teile des) neuen ersetzt. `model`/`kind`: Modell und Art der
+    /// neuen Fassung (lva#523: das Teilergebnis bleibt).
     Stopped {
         transcript_replaced: bool,
+        model: String,
+        kind: &'static str,
     },
 }
 
@@ -367,6 +405,8 @@ fn run_retranscribe(
                 restore_dictation_model(app, tm);
                 return Ok(RetranscribeEnd::Stopped {
                     transcript_replaced: false,
+                    model: String::new(),
+                    kind: variants::KIND_RETRANSCRIBED,
                 });
             }
             Err(e) => {
@@ -381,6 +421,8 @@ fn run_retranscribe(
                 restore_dictation_model(app, tm);
                 return Ok(RetranscribeEnd::Stopped {
                     transcript_replaced: false,
+                    model: String::new(),
+                    kind: variants::KIND_RETRANSCRIBED,
                 });
             }
             Err(e) => Err(e),
@@ -412,6 +454,8 @@ fn run_retranscribe(
         restore_dictation_model(app, tm);
         return Ok(RetranscribeEnd::Stopped {
             transcript_replaced: false,
+            model: String::new(),
+            kind: variants::KIND_RETRANSCRIBED,
         });
     }
     let total_ms: u64 = tracks.iter().map(|(s, _)| s.len() as u64 / 16).sum();
@@ -433,9 +477,17 @@ fn run_retranscribe(
         restore_dictation_model(app, tm);
         return Ok(RetranscribeEnd::Stopped {
             transcript_replaced: false,
+            model: String::new(),
+            kind: variants::KIND_RETRANSCRIBED,
         });
     }
 
+    // A3: eigene Transkription eines Videos oder Neu-Transkription.
+    let kind = if youtube_ref.is_some() {
+        variants::KIND_OWN
+    } else {
+        variants::KIND_RETRANSCRIBED
+    };
     let result = (move || -> Result<RetranscribeEnd, String> {
         // B17: das alte Transkript als Fassung sichern, bevor der Lauf in
         // `transcripts` schreibt.
@@ -473,6 +525,8 @@ fn run_retranscribe(
             if run.stopped {
                 return Ok(RetranscribeEnd::Stopped {
                     transcript_replaced: true,
+                    model: target.to_string(),
+                    kind,
                 });
             }
             next_index = run.next_index;
@@ -520,11 +574,6 @@ fn run_retranscribe(
         };
         crate::managers::provenance::generation::record_stt(store, run());
         // B17: das Ergebnis wird erst JETZT die neue aktive Fassung.
-        let kind = if youtube_ref.is_some() {
-            variants::KIND_OWN
-        } else {
-            variants::KIND_RETRANSCRIBED
-        };
         let variant_id = {
             let mut conn = store
                 .get_connection()
@@ -567,6 +616,56 @@ fn restore_old_transcript(app: &tauri::AppHandle, store: &Arc<MeetingStore>, mee
     }
 }
 
+/// lva#523: Stopp nach dem ersten neuen Abschnitt: das Teilergebnis wird eine
+/// Fassung und bleibt das Transkript, die alte Fassung bleibt erhalten. `true`:
+/// behalten (und fuer „Fortsetzen“ vorgemerkt). `false`: es gab nichts Neues oder
+/// das Sichern scheiterte; dann ist die alte Fassung wiederhergestellt.
+fn keep_partial_transcript(
+    app: &tauri::AppHandle,
+    store: &Arc<MeetingStore>,
+    meeting_id: &str,
+    kind: &'static str,
+    model: &str,
+) -> bool {
+    let model = Some(model.trim()).filter(|m| !m.is_empty());
+    let kept = store
+        .get_connection()
+        .map_err(|e| e.to_string())
+        .and_then(|mut conn| {
+            variants::keep_partial_rerun(&mut conn, meeting_id, kind, model)
+                .map_err(|e| e.to_string())
+        });
+    match kept {
+        Ok(Some(_)) => {
+            if let Some(model) = model {
+                let _ = store.set_metadata_key(
+                    meeting_id,
+                    PARTIAL_RERUN_KEY,
+                    serde_json::json!({ "model": model }),
+                );
+            }
+            let _ = (MeetingEvent::Reset {
+                meeting_id: meeting_id.to_string(),
+            })
+            .emit(app);
+            info!("meetings: retranscribe stopped, partial result kept ({meeting_id})");
+            true
+        }
+        Ok(None) => {
+            let _ = (MeetingEvent::Reset {
+                meeting_id: meeting_id.to_string(),
+            })
+            .emit(app);
+            false
+        }
+        Err(e) => {
+            error!("meetings: partial result not kept ({meeting_id}): {e}");
+            restore_old_transcript(app, store, meeting_id);
+            false
+        }
+    }
+}
+
 fn restore_dictation_model(app: &tauri::AppHandle, tm: &Arc<TranscriptionManager>) {
     let dictation_model = crate::settings::get_settings(app).selected_model;
     tm.initiate_model_load_target(&dictation_model);
@@ -601,6 +700,23 @@ mod tests {
         // Nie `processing` oder `recording`: ein haengender Zustand waere der Fehler.
         assert_eq!(restored_status("processing"), MeetingStatus::Ready);
         assert_eq!(restored_status("recording"), MeetingStatus::Ready);
+    }
+
+    #[test]
+    fn continuing_uses_the_model_of_a_stopped_rerun_only_when_one_is_noted() {
+        let noted = serde_json::json!({ "partial_rerun": { "model": "parakeet-v3" }, "x": 1 });
+        assert_eq!(
+            partial_rerun_model(Some(&noted)).as_deref(),
+            Some("parakeet-v3")
+        );
+        for none in [
+            serde_json::json!({}),
+            serde_json::json!({ "partial_rerun": null }),
+            serde_json::json!({ "partial_rerun": { "model": "  " } }),
+        ] {
+            assert_eq!(partial_rerun_model(Some(&none)), None);
+        }
+        assert_eq!(partial_rerun_model(None), None);
     }
 
     #[test]
