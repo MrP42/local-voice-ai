@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inhalte I0</title>
+<style>
+:root{
+  --bg:#f5f5f5;--pane:#fff;--pane2:#fafafa;--line:#e0e0e0;--text:#242424;--muted:#616161;
+  --accent:#0f6cbd;--accent-soft:#ebf3fc;--sel:#e6eef8;--ok:#0e700e;--ok-soft:#e9f5e9;--warn:#a33f06;--warn-soft:#fdf3ec;
+  --chip:#f0f0f0;--on-accent:#fff;--focus:#0f6cbd;--mark:#fff4ce;
+}
+:root[data-theme="dark"]{
+  --bg:#1f1f1f;--pane:#292929;--pane2:#2e2e2e;--line:#3d3d3d;--text:#fff;--muted:#c7c7c7;
+  --accent:#479ef5;--accent-soft:#1a2c40;--sel:#243447;--ok:#6ccb6c;--ok-soft:#1d3320;--warn:#f1a35c;--warn-soft:#3a2a1c;
+  --chip:#383838;--on-accent:#0b1a2a;--focus:#8cc4ff;--mark:#4a3f12;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overflow:hidden}
+body{font:14px/1.45 "Segoe UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text)}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--focus);outline-offset:-2px;border-radius:6px}
+svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.app{display:grid;grid-template-rows:44px 1fr 32px;height:100%}
+.top{display:flex;align-items:center;gap:12px;padding:0 12px;border-bottom:1px solid var(--line);background:var(--pane);min-width:0}
+.top h1{font-size:15px;font-weight:600;margin:0;white-space:nowrap}
+.top .be{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.main{display:grid;grid-template-columns:60px 1fr;min-height:0}
+.nav{display:flex;flex-direction:column;gap:4px;padding:8px;border-right:1px solid var(--line);background:var(--pane)}
+.nav span{display:grid;place-items:center;width:44px;height:44px;border-radius:6px;color:var(--muted)}
+.nav span.on{background:var(--sel);color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}
+.status{display:flex;align-items:center;gap:16px;padding:0 12px;font-size:12px;color:var(--muted);border-top:1px solid var(--line);background:var(--pane);white-space:nowrap;overflow:hidden}
+.work{display:grid;grid-template-columns:280px minmax(0,1fr) 300px;gap:12px;padding:12px;min-height:0}
+.col{background:var(--pane);border:1px solid var(--line);border-radius:8px;min-height:0;overflow:auto;display:flex;flex-direction:column}
+.col>*{flex:none}
+.colhead{display:flex;align-items:center;gap:6px;padding:2px 4px 2px 12px;border-bottom:1px solid var(--line);min-height:48px}
+.colhead h2{font-size:14px;margin:0;font-weight:600;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ib{flex:none;display:grid;place-items:center;width:44px;height:44px;border-radius:6px;color:var(--muted);border:0;background:none;cursor:pointer}
+.btn{flex:none;display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:0 12px;border-radius:6px;border:1px solid var(--line);background:var(--pane);cursor:pointer;white-space:nowrap}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.search{display:flex;align-items:center;gap:8px;height:36px;margin:8px 10px;border:1px solid var(--line);border-radius:6px;padding:0 10px;background:var(--pane2);color:var(--muted)}
+.seg{display:flex;margin:0 10px 6px;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg button{flex:1;min-height:32px;border:0;background:var(--pane2);cursor:pointer;font-size:13px}
+.seg button[aria-pressed="true"]{background:var(--sel);color:var(--accent);font-weight:600}
+[role=tree]{list-style:none;margin:0;padding:4px 6px 12px}
+[role=tree] ul{list-style:none;margin:0;padding:0}
+.ti{display:flex;align-items:center;gap:6px;min-height:36px;padding:0 8px;border-radius:6px;cursor:default;white-space:nowrap}
+.ti .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.ti .ct{font-size:12px;color:var(--muted)}
+.ti .tw{width:16px;height:16px;color:var(--muted)}
+.ti svg.k{width:18px;height:18px;color:var(--muted)}
+.ti.on{background:var(--sel)}
+.ti.on .nm{font-weight:600}
+.ti.neu .nm{font-weight:600}
+.ti.neu::after{content:"";width:8px;height:8px;border-radius:50%;background:var(--accent);flex:none}
+.l1{padding-left:24px}.l2{padding-left:44px}.l3{padding-left:64px}
+.grp{padding:10px 14px 2px;font-size:12px;font-weight:600;color:var(--muted)}
+.badge{display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:10px;background:var(--accent);color:var(--on-accent);font-size:11px;font-weight:600}
+.tabs{display:flex;gap:2px;padding:0 8px;border-bottom:1px solid var(--line);overflow-x:auto}
+.tabs button{min-height:44px;display:flex;align-items:center;gap:6px;padding:0 10px;color:var(--muted);border:0;border-bottom:2px solid transparent;background:none;cursor:pointer;white-space:nowrap}
+.tabs button[aria-selected="true"]{color:var(--text);border-color:var(--accent);font-weight:600}
+.tabs .sp{flex:1}
+.doc{padding:20px 28px 40px;max-width:76ch;width:100%}
+.doc h3{font-size:20px;margin:0 0 4px;line-height:1.3}
+.meta{display:flex;flex-wrap:wrap;gap:6px;align-items:center;color:var(--muted);font-size:12px;margin-bottom:16px}
+.chip{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 8px;border-radius:12px;background:var(--chip);font-size:12px;color:var(--muted);white-space:nowrap}
+.chip.hoch{background:var(--ok-soft);color:var(--ok);font-weight:600}
+.chip.ki{background:var(--accent-soft);color:var(--accent)}
+.lead{font-size:16px;line-height:1.5;margin:0 0 18px;padding:12px 14px;border-left:3px solid var(--accent);background:var(--accent-soft);border-radius:0 6px 6px 0}
+.card{border:1px solid var(--line);border-radius:8px;margin:0 0 14px;background:var(--pane)}
+.card h4{margin:0;padding:10px 14px;font-size:13px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line)}
+.card ul{margin:0;padding:8px 14px 10px 32px}
+.card li{margin:4px 0}
+.bel{display:inline-grid;place-items:center;min-width:22px;height:18px;padding:0 4px;margin-left:4px;border-radius:4px;background:var(--chip);color:var(--accent);font-size:11px;font-weight:600;vertical-align:1px;cursor:pointer}
+.todo{display:grid;grid-template-columns:auto 1fr auto;gap:8px 10px;padding:8px 14px 12px;align-items:center}
+.todo .art{font-size:11px;font-weight:600;padding:2px 6px;border-radius:4px;background:var(--warn-soft);color:var(--warn)}
+.todo .dt{font-size:12px;color:var(--muted);white-space:nowrap}
+.nums{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;padding:10px 14px 12px}
+.num b{display:block;font-size:20px}
+.num span{font-size:12px;color:var(--muted)}
+.src{display:flex;align-items:center;gap:10px;padding:10px 14px;font-size:13px}
+.src a{color:var(--accent)}
+.orig h4{font-size:16px;margin:18px 0 6px}
+.orig p{margin:0 0 10px;line-height:1.6}
+.orig .hl{background:var(--mark);border-radius:3px;box-shadow:0 0 0 3px var(--mark)}
+.orig table{border-collapse:collapse;margin:8px 0 14px;font-size:13px}
+.orig td,.orig th{border:1px solid var(--line);padding:6px 10px;text-align:left}
+.side .sec{padding:12px 14px;border-bottom:1px solid var(--line)}
+.side h3{font-size:13px;margin:0 0 8px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:13px}
+.kv span:nth-child(odd){color:var(--muted)}
+.kv a{color:var(--accent);word-break:break-all}
+.player{display:flex;align-items:center;gap:8px;padding:6px 10px;border-top:1px solid var(--line);margin-top:auto;position:sticky;bottom:0;background:var(--pane)}
+.player .bar{flex:1;height:4px;border-radius:2px;background:var(--chip)}
+.player .bar i{display:block;height:100%;width:22%;background:var(--accent);border-radius:2px}
+.toast{position:fixed;left:50%;bottom:48px;transform:translateX(-50%);display:flex;align-items:center;gap:12px;padding:10px 12px 10px 16px;border-radius:8px;background:var(--text);color:var(--pane);box-shadow:0 8px 24px rgba(0,0,0,.25);max-width:calc(100% - 32px);font-size:13px}
+.toast[hidden]{display:none}
+.tw-wrap{overflow-x:auto;margin:8px 0 14px}
+.toast button{background:none;border:0;color:inherit;font-weight:600;text-decoration:underline;min-height:36px;cursor:pointer}
+.clean{margin:0 0 14px;border:1px solid var(--line);border-radius:8px}
+.clean h4{margin:0;padding:10px 14px;font-size:13px;border-bottom:1px solid var(--line)}
+.clean ul{margin:0;padding:8px 14px 10px 32px;font-size:13px}
+.clean del{color:var(--warn)}
+.wf{padding:14px;display:flex;flex-direction:column;gap:10px;max-width:760px}
+.step{border:1px solid var(--line);border-radius:8px;padding:10px 14px;display:grid;grid-template-columns:28px 1fr;gap:4px 10px;background:var(--pane)}
+.step .n{grid-row:span 2;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent);font-weight:600}
+.step b{font-size:13px}
+.step span{font-size:13px;color:var(--muted)}
+.arrow{margin-left:13px;width:2px;height:12px;background:var(--line)}
+.note{padding:10px 12px;border-radius:6px;background:var(--warn-soft);font-size:12px}
+.screen{display:none}.screen.on{display:contents}
+.back{display:none}
+@media (max-width:1279px){.work{grid-template-columns:240px minmax(0,1fr)}.side{display:none}}
+@media (max-width:767px){
+  .main{grid-template-columns:1fr}.nav{display:none}.work{grid-template-columns:1fr;padding:0;gap:0}
+  .col{border-radius:0;border-left:0;border-right:0}
+  .tree-col{display:none}.mobile-tree .tree-col{display:flex}.mobile-tree .doc-col{display:none}
+  .back{display:grid}.doc{padding:16px}.top .be{display:none}
+}
+</style>
+</head>
+<body>
+<svg style="display:none" aria-hidden="true">
+  <symbol id="i-doc" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></symbol>
+  <symbol id="i-dir" viewBox="0 0 24 24"><path d="M3 7h6l2 2h10v10H3z"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M3 13h5l2 3h4l2-3h5"/><path d="M5 5h14l2 8v6H3v-6z"/></symbol>
+  <symbol id="i-flow" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="18" r="2"/><path d="M8 6h6a4 4 0 0 1 0 8h-4a4 4 0 0 0 0 8"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 6 0l3-3a4 4 0 0 0-6-6l-1 1"/><path d="M14 10a4 4 0 0 0-6 0l-3 3a4 4 0 0 0 6 6l1-1"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5l11 7-11 7z"/></symbol>
+  <symbol id="i-left" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4-4"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+</svg>
+<div class="app" id="app">
+  <header class="top"><h1>Inhalte</h1><span class="be">Dokumente, Aufnahmen und KI-Auswertungen deiner Projekte</span></header>
+  <div class="main">
+    <nav class="nav" aria-label="Hauptnavigation">
+      <span><svg><use href="#i-mic"/></svg></span><span><svg><use href="#i-book"/></svg></span>
+      <span class="on"><svg><use href="#i-doc"/></svg></span><span><svg><use href="#i-dir"/></svg></span><span><svg><use href="#i-flow"/></svg></span>
+    </nav>
+    <div class="work">
+      <section class="col tree-col" aria-label="Inhalte">
+        <div class="colhead"><h2>Inhalte</h2>
+          <button class="ib" aria-label="Neu: Seite, Einfügen, Datei, Adresse"><svg><use href="#i-plus"/></svg></button>
+          <button class="ib" aria-label="Weitere Aktionen"><svg><use href="#i-more"/></svg></button></div>
+        <div class="search"><svg><use href="#i-search"/></svg><span>In Inhalten suchen</span></div>
+        <div class="seg" role="group" aria-label="Darstellung"><button aria-pressed="true">Baum</button><button aria-pressed="false">Liste</button></div>
+        <ul role="tree" aria-label="Inhalte">
+          <li role="treeitem" aria-expanded="true"><div class="ti"><svg class="tw"><use href="#i-down"/></svg><svg class="k"><use href="#i-inbox"/></svg><span class="nm">Neu für dich</span><span class="badge">2</span></div>
+            <ul role="group">
+              <li role="treeitem" aria-selected="true"><div class="ti l1 on neu"><svg class="k"><use href="#i-spark"/></svg><span class="nm">KI-Leitlinie für Mitarbeitende veröffentlicht</span></div></li>
+              <li role="treeitem"><div class="ti l1 neu"><svg class="k"><use href="#i-spark"/></svg><span class="nm">Newsletter Digitalisierung 11/2026</span></div></li>
+            </ul></li>
+          <li role="treeitem" aria-expanded="true"><div class="ti"><svg class="tw"><use href="#i-down"/></svg><svg class="k"><use href="#i-dir"/></svg><span class="nm">KI-Strategie</span><span class="ct">14</span></div>
+            <ul role="group">
+              <li role="treeitem" aria-expanded="true"><div class="ti l1"><svg class="tw"><use href="#i-down"/></svg><span class="nm">Seiten</span><span class="ct">6</span></div>
+                <ul role="group">
+                  <li role="treeitem"><div class="ti l2"><svg class="k"><use href="#i-doc"/></svg><span class="nm">Intranet: KI-Leitlinie</span></div></li>
+                  <li role="treeitem"><div class="ti l2"><svg class="k"><use href="#i-doc"/></svg><span class="nm">Vermerk Pilot Posteingang</span></div></li>
+                </ul></li>
+              <li role="treeitem" aria-expanded="false"><div class="ti l1"><svg class="tw"><use href="#i-chev"/></svg><span class="nm">Aufnahmen</span><span class="ct">3</span></div></li>
+              <li role="treeitem" aria-expanded="false"><div class="ti l1"><svg class="tw"><use href="#i-chev"/></svg><span class="nm">Dateien (Ablage)</span><span class="ct">4</span></div></li>
+              <li role="treeitem" aria-expanded="false"><div class="ti l1"><svg class="tw"><use href="#i-chev"/></svg><span class="nm">KI-Dokumente</span><span class="ct">1</span></div></li>
+            </ul></li>
+          <li role="treeitem" aria-expanded="false"><div class="ti"><svg class="tw"><use href="#i-chev"/></svg><svg class="k"><use href="#i-dir"/></svg><span class="nm">E-Akte Einführung</span><span class="ct">22</span></div></li>
+          <li role="treeitem" aria-expanded="false"><div class="ti"><svg class="tw"><use href="#i-chev"/></svg><svg class="k"><use href="#i-dir"/></svg><span class="nm">Ohne Projekt</span><span class="ct">31</span></div></li>
+          <li role="treeitem" aria-expanded="true"><div class="ti"><svg class="tw"><use href="#i-down"/></svg><svg class="k"><use href="#i-flow"/></svg><span class="nm">Routinen</span><span class="ct">2</span></div>
+            <ul role="group">
+              <li role="treeitem"><div class="ti l1"><svg class="k"><use href="#i-flow"/></svg><span class="nm">Intranet KI – täglich 6:00</span></div></li>
+              <li role="treeitem"><div class="ti l1"><svg class="k"><use href="#i-flow"/></svg><span class="nm">Newsletter Digitalisierung</span></div></li>
+            </ul></li>
+        </ul>
+      </section>
+
+      <section class="col doc-col" aria-label="Dokument">
+        <div class="colhead"><button class="ib back" aria-label="Zurück zum Baum" onclick="document.body.classList.add('mobile-tree')"><svg><use href="#i-left"/></svg></button>
+          <h2>KI-Leitlinie für Mitarbeitende veröffentlicht</h2>
+          <button class="btn"><svg><use href="#i-spark"/></svg>KI</button>
+          <button class="ib" aria-label="Weitere Aktionen"><svg><use href="#i-more"/></svg></button></div>
+        <div class="tabs" role="tablist" aria-label="Ansicht">
+          <button role="tab" id="t-k" aria-selected="true" onclick="zeige('k')">Kurzfassung</button>
+          <button role="tab" id="t-o" aria-selected="false" onclick="zeige('o')">Original</button>
+          <button role="tab" aria-selected="false">Übersetzung</button>
+          <button role="tab" aria-selected="false">KI-Dokumente</button>
+          <span class="sp"></span>
+          <button role="tab" id="t-r" aria-selected="false" onclick="zeige('r')">Routine</button>
+        </div>
+
+        <div class="screen" id="s-k"><article class="doc">
+          <h3>KI-Leitlinie für Mitarbeitende veröffentlicht</h3>
+          <div class="meta"><span class="chip hoch">Relevanz hoch · KI, Governance</span><span class="chip">Intranet · 12.11.2026, 06:00</span><span class="chip ki">Lokales Modell</span></div>
+          <p class="lead">Ab 1. Dezember gilt eine verbindliche KI-Leitlinie; Fachbereiche benennen bis 28. November je eine KI-Ansprechperson.<span class="bel" title="Beleg anzeigen">b2</span></p>
+          <div class="card"><h4>Für dich</h4>
+            <div class="todo">
+              <span class="art">Frist</span><span>KI-Ansprechperson für Digitalisierung &amp; IT benennen</span><span class="dt">28.11.2026</span>
+              <span class="art">Termin</span><span>Info-Veranstaltung für Führungskräfte (Teams)</span><span class="dt">20.11., 10:00</span>
+              <span class="art">Aufgabe</span><span>Bestehende Pilotanwendungen bis Jahresende im KI-Register melden</span><span class="dt">31.12.2026</span>
+            </div></div>
+          <div class="card"><h4>Kernaussagen</h4><ul>
+            <li>Erlaubt sind nur freigegebene KI-Dienste; Liste im Intranet unter „KI-Werkzeuge“.<span class="bel">b4</span></li>
+            <li>Personenbezogene Daten dürfen nur in lokal betriebene Modelle eingegeben werden.<span class="bel">b5</span></li>
+            <li>Ergebnisse von KI sind vor Verwendung fachlich zu prüfen; Kennzeichnung bei Außenwirkung.<span class="bel">b6</span></li>
+            <li>Schulung zur KI-Kompetenz (Art. 4 KI-VO) wird für alle Pflicht, Start im Januar.<span class="bel">b8</span></li>
+          </ul></div>
+          <div class="card"><h4>Zahlen</h4><div class="nums">
+            <div class="num"><b>3</b><span>freigegebene Dienste</span></div><div class="num"><b>90 Min.</b><span>Pflichtschulung je Person</span></div><div class="num"><b>12</b><span>gemeldete Piloten bisher</span></div>
+          </div></div>
+          <div class="card"><div class="src"><svg><use href="#i-link"/></svg><span>Quelle: <a href="#">intranet.example.org/aktuelles/ki-leitlinie</a> · abgerufen 12.11.2026, 06:00</span></div></div>
+        </article></div>
+
+        <div class="screen" id="s-o"><article class="doc orig">
+          <h3>KI-Leitlinie für Mitarbeitende veröffentlicht</h3>
+          <div class="meta"><span class="chip">Original, formatiert</span><span class="chip">7 Bereinigungen</span></div>
+          <div class="clean"><h4>Beim Einfügen bereinigt</h4><ul>
+            <li><del>Zum Inhalt springen · Drucken · Teilen</del> (Navigation)</li>
+            <li><del>Seite 1 von 3</del>, <del>Seite 2 von 3</del> (Seitenzahlen)</li>
+            <li>„Verwal-tung“ → „Verwaltung“ (Silbentrennung, 3×)</li>
+          </ul></div>
+          <h4>Worum es geht</h4>
+          <p>Der Landkreis hat eine verbindliche Leitlinie zum Einsatz künstlicher Intelligenz beschlossen. <span class="hl">Sie gilt ab dem 1. Dezember 2026 für alle Beschäftigten.</span></p>
+          <h4>Was erlaubt ist</h4>
+          <p>Zulässig sind ausschließlich freigegebene Dienste. Die Liste wird laufend ergänzt.</p>
+          <div class="tw-wrap" tabindex="0" role="region" aria-label="Tabelle"><table style="margin:0"><thead><tr><th>Dienst</th><th>Einsatz</th><th>Daten</th></tr></thead>
+            <tbody><tr><td>Lokales Sprachmodell</td><td>Texte, Zusammenfassungen</td><td>auch personenbezogen</td></tr>
+            <tr><td>Übersetzung (EU)</td><td>Fremdsprachige Schreiben</td><td>ohne Personenbezug</td></tr></tbody></table></div>
+        </article></div>
+
+        <div class="screen" id="s-r"><div class="wf">
+          <div class="note">Trockenlauf: Die Routine plant nur und legt nichts an, bis du sie scharf schaltest.</div>
+          <div class="step"><span class="n">1</span><b>Täglich um 6:00</b><span>Zeitplan, auch nach dem Start nachholen</span></div><div class="arrow"></div>
+          <div class="step"><span class="n">2</span><b>Neue Beiträge auf intranet.example.org/aktuelles</b><span>Feed oder Listenseite · erster Abruf merkt nur vor</span></div><div class="arrow"></div>
+          <div class="step"><span class="n">3</span><b>Relevanz prüfen: Thema „KI“, mindestens mittel</b><span>Relevanzprofil + Stichworte; darf nicht enthalten: Kantine</span></div><div class="arrow"></div>
+          <div class="step"><span class="n">4</span><b>Seite im Projekt „KI-Strategie“ anlegen</b><span>Formatiert, bereinigt, mit Quelle · erscheint unter „Neu für dich“</span></div><div class="arrow"></div>
+          <div class="step"><span class="n">5</span><b>Kurzfassung „Das Wichtigste für mich“</b><span>Lokales Modell · Belege auf das Original</span></div><div class="arrow"></div>
+          <div class="step"><span class="n">6</span><b>Benachrichtigen</b><span>Hinweis am Rechner, ohne Inhalt in der Meldung</span></div>
+        </div></div>
+
+        <div class="player"><button class="ib" aria-label="Vorlesen"><svg><use href="#i-play"/></svg></button><span class="bar"><i></i></span><span class="chip">Anton · 1,0×</span></div>
+      </section>
+
+      <aside class="col side" aria-label="Quelle und Herkunft">
+        <div class="colhead"><h2>Quelle</h2></div>
+        <div class="sec"><div class="kv">
+          <span>Adresse</span><a href="#">intranet.example.org/aktuelles/ki-leitlinie</a>
+          <span>Abgerufen</span><span>12.11.2026, 06:00</span>
+          <span>Veröffentlicht</span><span>11.11.2026</span>
+          <span>Über</span><span>Routine „Intranet KI – täglich 6:00“</span>
+          <span>Original</span><span>gesichert (HTML, 84 KB)</span>
+        </div></div>
+        <div class="sec"><h3>Projekt</h3><div class="kv"><span>Projekt</span><span>KI-Strategie</span><span>Datenklasse</span><span>Intern · nur lokale KI</span></div></div>
+        <div class="sec"><h3>Weiter mit KI</h3><div style="display:flex;flex-wrap:wrap;gap:6px">
+          <button class="btn">Vermerk</button><button class="btn">E-Mail-Entwurf</button><button class="btn">Aufgaben</button><button class="btn">Präsentation</button></div></div>
+      </aside>
+    </div>
+  </div>
+  <footer class="status"><span>Lokales Modell bereit</span><span>Routinen: 2 aktiv, nächster Lauf 13.11. 06:00</span></footer>
+</div>
+<div class="toast" id="toast" hidden role="status">Eingefügt und bereinigt: 7 Änderungen <button onclick="zeige('o')">Anzeigen</button><button>Rückgängig</button></div>
+<script>
+const p=new URLSearchParams(location.search);
+if(p.get("t")==="dunkel")document.documentElement.dataset.theme="dark";
+function zeige(s){for(const k of ["k","o","r"]){document.getElementById("s-"+k).classList.toggle("on",k===s);document.getElementById("t-"+k).setAttribute("aria-selected",String(k===s));}}
+zeige(p.get("s")||"k");
+if(p.get("toast"))document.getElementById("toast").hidden=false;
+if(p.get("baum"))document.body.classList.add("mobile-tree");
+</script>
+</body>
+</html>
