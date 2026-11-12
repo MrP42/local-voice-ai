@@ -2879,10 +2879,29 @@ async meetingsRename(meetingId: string, title: string) : Promise<Result<null, st
  * Re-runs the transcription of a finished meeting from its stored audio,
  * optionally with a different model and language (G5; `auto`/`None`: detect). The old
  * transcript stays as a version — see `retranscribe_meeting`.
+ * 
+ * lva#522: `range` (ms) transcribes only that part of the recording; the segments keep the
+ * absolute times of the recording. An invalid range is `invalid_range`.
  */
-async meetingsRetranscribe(meetingId: string, modelId: string | null, language: string | null) : Promise<Result<null, string>> {
+async meetingsRetranscribe(meetingId: string, modelId: string | null, language: string | null, range: TimeRange | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meetings_retranscribe", { meetingId, modelId, language }) };
+    return { status: "ok", data: await TAURI_INVOKE("meetings_retranscribe", { meetingId, modelId, language, range }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * lva#522: cuts the recording of a meeting down to `[start_ms, end_ms)` — destructive:
+ * the audio outside is deleted for good, transcripts (all versions), speaker turns, notes
+ * and parts move with it, the time axis starts at 0:00 afterwards. Returns the new
+ * duration in ms. Error codes: `meeting_busy`, `no_audio`, `audio_missing`,
+ * `invalid_range`, `nothing_to_trim`, `trim_changed`, `store_failed`, `wav_*` — see
+ * `managers::meetings::trim`.
+ */
+async meetingsTrimAudio(meetingId: string, startMs: number, endMs: number) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_trim_audio", { meetingId, startMs, endMs }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -14007,6 +14026,10 @@ source_name: string | null }
  * and `Dark` force one of the two palettes Handy already ships.
  */
 export type Theme = "system" | "light" | "dark"
+/**
+ * Ein Bereich der Aufnahme in Millisekunden, `[start_ms, end_ms)`.
+ */
+export type TimeRange = { start_ms: number; end_ms: number }
 /**
  * Token-Zahlen eines Laufs, geschätzt oder gemessen.
  */

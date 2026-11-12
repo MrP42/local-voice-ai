@@ -1,13 +1,21 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Radio, RadioGroup } from "@fluentui/react-components";
 import { RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { commands, type Meeting, type ModelSuggestion } from "@/bindings";
+import {
+  coversAll,
+  fullRange,
+  recordingDurationMs,
+  type MsRange,
+} from "@/lib/meetingRange";
 import { useModelStore } from "@/stores/modelStore";
 import { Alert } from "../../ui/Alert";
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
 import { Select } from "../../ui/Select";
+import { AudioRangePicker } from "./AudioRangePicker";
 import { baseLanguage, languageOptions } from "./language/languages";
 import { translateMeetingError } from "./meetingErrors";
 
@@ -15,6 +23,8 @@ import { translateMeetingError } from "./meetingErrors";
 const CONFIGURED = "__configured__";
 /** Auswahlwert für "Sprache automatisch erkennen". */
 const AUTO = "auto";
+/** lva#522: ganze Aufnahme oder nur ein Bereich. */
+type Scope = "all" | "range";
 
 interface RetranscribeDialogProps {
   open: boolean;
@@ -41,6 +51,10 @@ interface RetranscribeDialogProps {
  * Modell vor (installiert: vorbelegt; sonst ein Hinweis). Ein von Hand gewähltes Modell hat
  * immer Vorrang.
  *
+ * lva#522: "Nur einen Bereich" transkribiert nur diesen Abschnitt der Aufnahme (Von/Bis und
+ * Zweifach-Regler); die Zeitstempel bleiben die der ganzen Aufnahme, das bisherige
+ * Transkript bleibt als Fassung. Gedacht für lange Aufnahmen, von denen nur ein Teil zählt.
+ *
  * Nur sinnvoll mit Audio auf der Platte; das Menü bietet den Eintrag sonst nicht an.
  */
 export const RetranscribeDialog: React.FC<RetranscribeDialogProps> = ({
@@ -55,6 +69,10 @@ export const RetranscribeDialog: React.FC<RetranscribeDialogProps> = ({
   const [modelId, setModelId] = useState(CONFIGURED);
   const [language, setLanguage] = useState<string>(AUTO);
   const [suggestion, setSuggestion] = useState<ModelSuggestion | null>(null);
+  // lva#522: Bereich. Ohne bekannte Dauer gibt es keine Auswahl (ganze Aufnahme).
+  const durationMs = recordingDurationMs(meeting.duration_ms);
+  const [scope, setScope] = useState<Scope>("all");
+  const [range, setRange] = useState<MsRange>(fullRange(durationMs ?? 0));
   // Hat der Nutzer das Modell selbst gewählt? Dann überschreibt kein Vorschlag es mehr.
   const modelTouched = useRef(false);
 
@@ -69,7 +87,9 @@ export const RetranscribeDialog: React.FC<RetranscribeDialogProps> = ({
     setLanguage(initial?.language ?? AUTO);
     setModelId(initial?.modelId ?? CONFIGURED);
     setSuggestion(null);
-  }, [open, initial?.language, initial?.modelId]);
+    setScope("all");
+    setRange(fullRange(durationMs ?? 0));
+  }, [open, initial?.language, initial?.modelId, durationMs]);
 
   // Das passende Modell der gewählten Sprache (Eignung, Katalog, installiert ja/nein).
   useEffect(() => {
@@ -113,11 +133,16 @@ export const RetranscribeDialog: React.FC<RetranscribeDialogProps> = ({
   const start = () => {
     const chosen = modelId === CONFIGURED ? null : modelId;
     const fixed = baseLanguage(language);
+    // Ein Bereich, der die ganze Aufnahme deckt, ist keiner.
+    const chosenRange =
+      scope === "range" && durationMs !== null && !coversAll(range, durationMs)
+        ? range
+        : null;
     onOpenChange(false);
     // Der Fortschritt steht danach in der Bedienspalte (P8a); ein Fehler
     // meldet sich als Hinweis.
     void commands
-      .meetingsRetranscribe(meeting.id, chosen, fixed)
+      .meetingsRetranscribe(meeting.id, chosen, fixed, chosenRange)
       .then((result) => {
         if (result.status === "error") {
           toast.error(translateMeetingError(result.error, t));
@@ -136,10 +161,18 @@ export const RetranscribeDialog: React.FC<RetranscribeDialogProps> = ({
       closeLabel={t("meetings.retranscribeDialog.close")}
       footer={
         <>
-          <Button variant="secondary" onClick={() => onOpenChange(false)}>
+          <Button
+            variant="secondary"
+            className="max-sm:min-h-[44px]"
+            onClick={() => onOpenChange(false)}
+          >
             {t("meetings.retranscribeDialog.cancel")}
           </Button>
-          <Button onClick={start} data-testid="retranscribe-start">
+          <Button
+            className="max-sm:min-h-[44px]"
+            onClick={start}
+            data-testid="retranscribe-start"
+          >
             <RefreshCw width={14} height={14} aria-hidden="true" />
             {t("meetings.retranscribe.start")}
           </Button>
@@ -184,6 +217,47 @@ export const RetranscribeDialog: React.FC<RetranscribeDialogProps> = ({
             />
           </div>
         </div>
+        {durationMs !== null && (
+          <div className="space-y-2" data-testid="retranscribe-scope">
+            <span className="text-xs font-medium text-text/60">
+              {t("meetings.retranscribe.rangeLabel")}
+            </span>
+            <RadioGroup
+              value={scope}
+              onChange={(_, data) => setScope(data.value as Scope)}
+              aria-label={t("meetings.retranscribe.rangeLabel")}
+            >
+              <Radio
+                className="max-sm:min-h-[44px] pointer-coarse:min-h-[44px]"
+                value="all"
+                label={t("meetings.retranscribe.rangeAll")}
+                data-testid="retranscribe-scope-all"
+              />
+              <Radio
+                className="max-sm:min-h-[44px] pointer-coarse:min-h-[44px]"
+                value="range"
+                label={t("meetings.retranscribe.rangeOnly")}
+                data-testid="retranscribe-scope-range"
+              />
+            </RadioGroup>
+            {scope === "range" && (
+              <>
+                <AudioRangePicker
+                  durationMs={durationMs}
+                  value={range}
+                  onChange={setRange}
+                  testId="retranscribe-range"
+                />
+                <p
+                  className="text-sm text-text/80"
+                  data-testid="retranscribe-range-hint"
+                >
+                  {t("meetings.retranscribe.rangeHint")}
+                </p>
+              </>
+            )}
+          </div>
+        )}
         {suggestion && (
           <Alert variant="info">
             <span data-testid="retranscribe-suggestion">

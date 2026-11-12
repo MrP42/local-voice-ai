@@ -74,6 +74,13 @@ const ERROR_KEY_MAP: Record<string, string> = {
   parts_failed: "meetings.parts.errors.failed",
   parts_subtitle: "meetings.parts.errors.subtitle",
   parts_target_invalid: "meetings.parts.errors.targetInvalid",
+  // lva#522: Bereich transkribieren und Aufnahme zuschneiden
+  invalid_range: "meetings.errors.invalidRange",
+  nothing_to_trim: "meetings.errors.nothingToTrim",
+  trim_changed: "meetings.errors.trimChanged",
+  trim_failed: "meetings.errors.trimFailed",
+  wav_unreadable: "meetings.errors.wavUnreadable",
+  wav_write_failed: "meetings.errors.wavWriteFailed",
   // D4: Folienerkennung (recording_active, meeting_not_finished, slides_*)
   ...SLIDE_ERROR_KEYS,
 };

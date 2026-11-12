@@ -2255,6 +2255,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::meetings::meetings_update_segment,
             commands::meetings::meetings_rename,
             commands::meetings::meetings_retranscribe,
+            commands::meetings::meetings_trim_audio,
             commands::meeting_jobs::meetings_progress_list, // P8a
             commands::meeting_jobs::meetings_job_pause,
             commands::meeting_jobs::meetings_job_resume,

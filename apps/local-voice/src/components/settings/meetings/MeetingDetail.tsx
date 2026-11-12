@@ -44,6 +44,7 @@ import { MeetingHeader } from "./MeetingHeader";
 import { EmptyStartCard } from "./EmptyStartCard";
 import { isEmptyEntry } from "./emptyEntry";
 import { RetranscribeDialog } from "./RetranscribeDialog";
+import { TrimAudioDialog } from "./TrimAudioDialog";
 import { SpeakerPopover } from "./SpeakerPopover";
 import { SpeakerNamesDialog } from "./SpeakerNamesDialog";
 import { SpeakerSharesTable } from "./SpeakerSharesTable";
@@ -214,6 +215,8 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   // Dialoge und Anfragen aus Menue und Kopf.
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [retranscribeOpen, setRetranscribeOpen] = useState(false);
+  // lva#522: Aufnahme zuschneiden.
+  const [trimOpen, setTrimOpen] = useState(false);
   // G5: Vorbelegung des Neu-Transkribierens (aus dem Sprach-Chip) und die Uebersetzung.
   const [retranscribeInitial, setRetranscribeInitial] = useState<{
     language: string;
@@ -639,6 +642,16 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   // dazwischen entsteht, geht so weder beim Laden noch beim Zuhoeren verloren.
   const onMeetingChangeRef = useRef(onMeetingChange);
   onMeetingChangeRef.current = onMeetingChange;
+  // lva#522: nach dem Zuschneiden stehen Audiopfade, Dauer und Transkript neu in der
+  // Datenbank: Segmente laden und den Datensatz (Player, Dauer) frisch aus der Liste holen.
+  const onTrimmed = useCallback(() => {
+    void loadSegmentsRef.current();
+    void commands.meetingsList(0, 200).then((r) => {
+      if (r.status !== "ok") return;
+      const fresh = r.data.find((m) => m.id === meetingId);
+      if (fresh) onMeetingChangeRef.current(fresh);
+    });
+  }, [meetingId]);
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | null = null;
@@ -1053,6 +1066,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         setRetranscribeInitial(null);
         setRetranscribeOpen(true);
       }}
+      onTrim={() => setTrimOpen(true)}
       onTranslate={() => setTranslateOpen(true)}
       onRegenNotes={() => regenerateNotes()}
       onRegenMinutes={() => void regenerateMinutes()}
@@ -1727,6 +1741,12 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         meeting={meeting}
         onFinished={loadSegments}
         initial={retranscribeInitial}
+      />
+      <TrimAudioDialog
+        open={trimOpen}
+        onOpenChange={setTrimOpen}
+        meeting={meeting}
+        onTrimmed={onTrimmed}
       />
       <TranslateDialog
         open={translateOpen}

@@ -195,6 +195,7 @@ test.describe("Sprach-Chip", () => {
       meetingId: "m2",
       modelId: "qwen3-asr-1.7b",
       language: "fr",
+      range: null,
     });
   });
 
