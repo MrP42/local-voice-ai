@@ -69,6 +69,9 @@ extension AblageLaufFehler: LocalizedError {
         case .abgemeldet: return "Die Anmeldung ist abgelaufen oder wurde widerrufen."
         case .hub(.cursorAbgelaufen): return "Ablage: Abgleichsstand des Servers abgelaufen."
         case .hub(.netz): return "Ablage: Server nicht erreichbar."
+        // Hub vor wai-portal#21 kennt die Sammlungen der Ablage nicht (`invalid_collection`): Server-Update nötig.
+        case .hub(.http(422, "invalid_collection")):
+            return "Ablage: Der Server kennt die Ablage noch nicht. Ein Update des Servers ist nötig."
         case .hub(.http(let code, _)): return "Ablage: Der Server antwortet mit Fehler \(code)."
         case .hub: return "Ablage: Antwort des Servers unlesbar."
         case .speicher: return "Ablage: Abgleichsstand nicht speicherbar."
