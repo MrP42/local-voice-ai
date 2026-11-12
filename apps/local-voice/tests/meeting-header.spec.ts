@@ -361,10 +361,11 @@ test.describe("Symbolzeile und Menue", () => {
     await openM2(page);
     await page.getByTestId("meeting-menu").click();
     const items = page.getByRole("menuitem");
-    await expect(items).toHaveCount(15);
+    await expect(items).toHaveCount(16);
     const labels = (await items.allTextContents()).map((t) => t.trim());
     expect(labels).toEqual([
       "Neu transkribieren …",
+      "Aufnahme zuschneiden …",
       "Audiodatei anhängen …",
       "Übersetzen nach …",
       "KI-Notizen neu erzeugen",
@@ -521,6 +522,7 @@ test.describe("Neu transkribieren", () => {
       modelId: null,
       // G5: Sprache automatisch erkennen
       language: null,
+      range: null,
     });
   });
 
