@@ -119,7 +119,7 @@ pub fn check_ram_for_start(need_mb: u64) -> Result<u64, String> {
     let reserve = ram_reserve_mb();
     if free < need_mb + reserve {
         return Err(format!(
-            "Zu wenig freier Arbeitsspeicher: {:.1} GB frei, gebraucht werden etwa {:.1} GB plus {:.0} GB Reserve fuer das System. Andere Programme schliessen und erneut starten.",
+            "Zu wenig freier Arbeitsspeicher: {:.1} GB frei, gebraucht werden etwa {:.1} GB plus {:.0} GB Reserve für das System.",
             free as f64 / 1024.0,
             need_mb as f64 / 1024.0,
             reserve as f64 / 1024.0

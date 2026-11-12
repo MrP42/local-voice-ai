@@ -2040,12 +2040,99 @@ impl Default for AppSettings {
     }
 }
 
+/// Laeuft eine Verbindung auf diesem Rechner? Abo-Verbindungen (Claude Code,
+/// Codex) brauchen ihre installierte CLI; alle anderen gelten als nutzbar
+/// (Erreichbarkeit pruefen erst die Aufrufe).
+pub fn connection_usable(connection: &LlmConnection) -> bool {
+    use crate::managers::llm::cli::Cli;
+    match Cli::from_base_url(&connection.base_url).or_else(|| Cli::from_kind(&connection.kind)) {
+        Some(cli) => cli_installed(cli),
+        None => true,
+    }
+}
+
+#[cfg(not(test))]
+fn cli_installed(cli: crate::managers::llm::cli::Cli) -> bool {
+    crate::managers::llm::cli::installed_cached(cli)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: "keine CLI installiert" nachstellen (Standard: installiert).
+    pub static TEST_CLI_MISSING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+fn cli_installed(_cli: crate::managers::llm::cli::Cli) -> bool {
+    !TEST_CLI_MISSING.with(|c| c.get())
+}
+
 impl AppSettings {
     /// Das aktive Sprachmodell samt seiner Verbindung -- oder nichts, wenn
     /// keines gewaehlt, das gewaehlte nicht mehr freigegeben oder seine
     /// Verbindung abgeschaltet ist. Ein Verweis auf etwas Verschwundenes
     /// zaehlt als "nichts", nicht als Fehler.
+    ///
+    /// Laeuft das gewaehlte Modell auf diesem Rechner nicht (Abo-Verbindung
+    /// ohne installierte CLI), gilt ein Ersatz ([`Self::fallback_llm_model`]):
+    /// die App bleibt ohne fremde Installation lauffaehig. Die Wahl des Nutzers
+    /// (`llm_active_model_id`) bleibt unveraendert und gilt wieder, sobald die
+    /// CLI da ist.
     pub fn active_llm_model(&self) -> Option<(&LlmConnection, &LlmModelConfig)> {
+        let chosen = self.chosen_llm_model()?;
+        if connection_usable(chosen.0) {
+            return Some(chosen);
+        }
+        Some(self.fallback_llm_model().unwrap_or(chosen))
+    }
+
+    /// Ein freigegebenes Modell einer eingeschalteten, auf diesem Rechner
+    /// nutzbaren und unter dem Regelwerk erlaubten Verbindung; das lokale
+    /// In-App-Modell zuerst. `None`, wenn es keines gibt. Das Regelwerk prueft
+    /// jeden Aufruf weiterhin ([`crate::managers::compliance::check_call`]).
+    pub fn fallback_llm_model(&self) -> Option<(&LlmConnection, &LlmModelConfig)> {
+        let usable = self
+            .llm_models
+            .iter()
+            .filter(|m| m.enabled)
+            .filter_map(|m| {
+                self.llm_connections
+                    .iter()
+                    .find(|c| c.id == m.connection_id && c.enabled && connection_usable(c))
+                    .map(|c| (c, m))
+            })
+            .filter(|(c, _)| self.connection_allowed(c));
+        let mut first = None;
+        for (c, m) in usable {
+            if c.kind == crate::managers::llm::LOCAL_PROVIDER_ID {
+                return Some((c, m));
+            }
+            first.get_or_insert((c, m));
+        }
+        first
+    }
+
+    /// Laesst das eingestellte Regelwerk die Verbindung zu? Dieselbe Bewertung
+    /// wie vor jedem Aufruf; eine unbekannte Vorlage gilt als gesperrt.
+    fn connection_allowed(&self, connection: &LlmConnection) -> bool {
+        use crate::managers::compliance::{assess, today, Verdict};
+        let Some(template) = self.llm_template(connection) else {
+            return false;
+        };
+        let mut provider = template.clone();
+        provider.base_url = connection.base_url.clone();
+        assess(
+            self.compliance_profile,
+            &provider,
+            connection.training_opt_out,
+            &today(),
+        )
+        .verdict
+            != Verdict::Blocked
+    }
+
+    /// Die Wahl des Nutzers ohne Pruefung, ob sie auf diesem Rechner laeuft.
+    pub fn chosen_llm_model(&self) -> Option<(&LlmConnection, &LlmModelConfig)> {
         let id = self.llm_active_model_id.as_deref()?;
         let model = self.llm_models.iter().find(|m| m.id == id && m.enabled)?;
         let connection = self
@@ -2130,7 +2217,20 @@ impl AppSettings {
     pub fn function_model(&self, function: &str) -> Option<&FunctionModel> {
         self.function_models
             .get(function)
-            .filter(|f| !f.model_id.trim().is_empty() && self.llm_model_selectable(&f.model_id))
+            .filter(|f| !f.model_id.trim().is_empty() && self.llm_model_usable(&f.model_id))
+    }
+
+    /// Waehlbar ([`Self::llm_model_selectable`]) und auf diesem Rechner
+    /// nutzbar (eine Abo-Verbindung braucht ihre installierte CLI).
+    pub fn llm_model_usable(&self, id: &str) -> bool {
+        self.llm_models.iter().any(|m| {
+            m.id == id
+                && m.enabled
+                && self
+                    .llm_connections
+                    .iter()
+                    .any(|c| c.id == m.connection_id && c.enabled && connection_usable(c))
+        })
     }
 
     /// Die Einstellungen, wie eine Funktion sie sieht: ihr Modell (und ihr Effort)
@@ -2140,6 +2240,12 @@ impl AppSettings {
     pub fn for_function(&self, function: &str) -> AppSettings {
         let mut s = self.clone();
         let Some(chosen) = self.function_model(function).cloned() else {
+            // Das Standardmodell, wie es auf diesem Rechner laeuft: ohne CLI
+            // der Ersatz, damit alle Verbraucher dasselbe Modell sehen.
+            if let Some(id) = s.active_llm_model().map(|(_, m)| m.id.clone()) {
+                s.llm_active_model_id = Some(id);
+                s.sync_legacy_from_llm();
+            }
             return s;
         };
         s.llm_active_model_id = Some(chosen.model_id.clone());
@@ -2275,6 +2381,10 @@ pub fn get_settings(app: &AppHandle) -> AppSettings {
         }
         store.set("settings", value);
     }
+    // Die aelteren Felder folgen dem Modell, das auf diesem Rechner laeuft
+    // (ohne installierte CLI: der Ersatz). Abgeleitet, wird nie gebraucht,
+    // um die Wahl des Nutzers zu rekonstruieren.
+    settings.sync_legacy_from_llm();
 
     settings
 }
@@ -3349,6 +3459,130 @@ mod tests {
             model(&settings)
         );
         assert_eq!(model(&settings).as_deref(), Some("opus@medium"));
+    }
+
+    /// Ohne installierte CLI laeuft die App autark weiter: Standard- und
+    /// Funktionsmodell weichen auf das lokale In-App-Modell aus, die Wahl des
+    /// Nutzers bleibt erhalten und gilt wieder, sobald die CLI da ist.
+    #[test]
+    fn missing_cli_falls_back_to_the_local_model() {
+        let mut settings = get_default_settings();
+        let connection = |id: &str, kind: &str, url: &str| LlmConnection {
+            id: id.into(),
+            kind: kind.into(),
+            label: id.into(),
+            base_url: url.into(),
+            enabled: true,
+            monthly_budget_usd: None,
+            budget_enforced: false,
+            training_opt_out: false,
+        };
+        settings.llm_connections.extend([
+            connection("claude_cli", "claude_cli", "cli://claude"),
+            connection("local", "local", "http://127.0.0.1:0/v1"),
+        ]);
+        settings.llm_models.extend([
+            llm_model("claude:opus", "claude_cli", "opus", true),
+            llm_model("claude:haiku", "claude_cli", "haiku", true),
+            llm_model("local:qwen", "local", "qwen-4b", true),
+        ]);
+        settings.llm_active_model_id = Some("claude:opus".into());
+        settings.function_models.insert(
+            FN_READ_ALOUD.into(),
+            FunctionModel {
+                model_id: "claude:haiku".into(),
+                effort: None,
+            },
+        );
+
+        TEST_CLI_MISSING.with(|c| c.set(true));
+        let (conn, model) = settings.active_llm_model().expect("Ersatz");
+        assert_eq!(
+            (conn.id.as_str(), model.id.as_str()),
+            ("local", "local:qwen")
+        );
+        assert!(!settings.llm_model_usable("claude:haiku"));
+        for function in [FN_READ_ALOUD, FN_MEETING_PROTOCOL, FN_DICTATION_REFINE] {
+            let s = settings.for_function(function);
+            assert_eq!(
+                s.llm_active_model_id.as_deref(),
+                Some("local:qwen"),
+                "{function}"
+            );
+            assert_eq!(s.post_process_provider_id, "local", "{function}");
+        }
+        assert_eq!(settings.llm_active_model_id.as_deref(), Some("claude:opus"));
+        assert_eq!(
+            settings.function_models[FN_READ_ALOUD].model_id,
+            "claude:haiku"
+        );
+
+        // Ohne Ersatz bleibt die Wahl (der Aufruf meldet dann `cli_missing`).
+        let mut only_cli = settings.clone();
+        only_cli.llm_models.retain(|m| m.connection_id != "local");
+        assert_eq!(
+            only_cli.active_llm_model().map(|(_, m)| m.id.as_str()),
+            Some("claude:opus")
+        );
+
+        TEST_CLI_MISSING.with(|c| c.set(false));
+        let s = settings.for_function(FN_READ_ALOUD);
+        assert_eq!(s.llm_active_model_id.as_deref(), Some("claude:haiku"));
+        assert_eq!(
+            settings.active_llm_model().map(|(_, m)| m.id.as_str()),
+            Some("claude:opus")
+        );
+    }
+
+    /// Ohne lokales Modell nimmt der Ersatz kein unter dem Regelwerk gesperrtes
+    /// Modell, sondern das erste erlaubte (hier Mistral unter "EU").
+    #[test]
+    fn fallback_skips_models_the_rules_block() {
+        use crate::managers::compliance::ComplianceProfile;
+        let mut settings = get_default_settings();
+        settings.compliance_profile = ComplianceProfile::Eu;
+        let connection = |id: &str, kind: &str, url: &str| LlmConnection {
+            id: id.into(),
+            kind: kind.into(),
+            label: id.into(),
+            base_url: url.into(),
+            enabled: true,
+            monthly_budget_usd: None,
+            budget_enforced: false,
+            training_opt_out: false,
+        };
+        settings.llm_connections.extend([
+            connection("claude_cli", "claude_cli", "cli://claude"),
+            connection("openai", "openai", "https://api.openai.com/v1"),
+            LlmConnection {
+                training_opt_out: true,
+                ..connection("mistral", "mistral", "https://api.mistral.ai/v1")
+            },
+        ]);
+        settings.llm_models.extend([
+            llm_model("claude:opus", "claude_cli", "opus", true),
+            llm_model("openai:gpt", "openai", "gpt", true),
+            llm_model("mistral:large", "mistral", "mistral-large", true),
+        ]);
+        settings.llm_active_model_id = Some("claude:opus".into());
+
+        TEST_CLI_MISSING.with(|c| c.set(true));
+        assert_eq!(
+            settings.fallback_llm_model().map(|(_, m)| m.id.as_str()),
+            Some("mistral:large")
+        );
+        assert_eq!(
+            settings
+                .for_function(FN_READ_ALOUD)
+                .post_process_provider_id,
+            "mistral"
+        );
+
+        // Nur lokal erlaubt: kein Cloud-Ersatz, die Wahl bleibt (Aufruf meldet
+        // dann `cli_missing` bzw. die Sperre).
+        settings.compliance_profile = ComplianceProfile::LocalOnly;
+        assert!(settings.fallback_llm_model().is_none());
+        TEST_CLI_MISSING.with(|c| c.set(false));
     }
 
     /// Entfernte Modelle verlieren ihre Funktionswahl, Nachfolger erben sie.

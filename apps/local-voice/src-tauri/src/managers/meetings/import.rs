@@ -351,6 +351,7 @@ pub(super) fn run_import(
             0,
             job,
             0,
+            0,
             &mut || tm.initiate_meeting_model_load(&crate::settings::get_settings(app)),
         )?;
         // Der Puffer (i16) wird nicht mehr gebraucht; die Sprechertrennung liest
@@ -741,11 +742,42 @@ pub(super) struct TranscribeRun {
 /// Tauri, Modell und Speicher: Transkription, Ablage und "nach der Pause"
 /// stehen als Closures, damit Pause, Stopp und Fortschritt direkt testbar
 /// sind. Ein Block, der schon laeuft, wird fertig und gespeichert.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn drive_chunks(
     chunks: Vec<Chunk>,
     job: &JobHandle,
     base_ms: u64,
+    channel: u8,
+    first_index: u32,
+    transcribe: &mut dyn FnMut(&Chunk) -> Vec<TimedSegment>,
+    store_batch: &mut dyn FnMut(Vec<StoredSegment>) -> Result<(), String>,
+    on_resume: &mut dyn FnMut(),
+) -> Result<TranscribeRun, String> {
+    drive_chunks_at(
+        chunks,
+        job,
+        base_ms,
+        0,
+        channel,
+        first_index,
+        transcribe,
+        store_batch,
+        on_resume,
+    )
+}
+
+/// Wie [`drive_chunks`], mit einem Zeitversatz (lva#522): `time_offset_ms` ist der
+/// Beginn der Spur auf der Achse der Aufnahme (Neu-Transkription eines Bereichs: die
+/// Spur ist ab `start_ms` geschnitten, ihre Segmente sollen aber die absoluten Zeiten
+/// der Aufnahme tragen). Er wird auf Segmente UND Woerter addiert. `base_ms` ist
+/// dagegen nur der Fortschritt auf der Achse des Auftrags - nicht zu verwechseln.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn drive_chunks_at(
+    chunks: Vec<Chunk>,
+    job: &JobHandle,
+    base_ms: u64,
+    time_offset_ms: u64,
     channel: u8,
     first_index: u32,
     transcribe: &mut dyn FnMut(&Chunk) -> Vec<TimedSegment>,
@@ -773,7 +805,7 @@ pub(super) fn drive_chunks(
         let offset_ms = chunk.offset_ms;
         let chunk_ms = chunk.samples.len() as u64 / 16;
         let timed = transcribe(&chunk);
-        let appended = stored_segments(timed, offset_ms, channel, &mut next_index);
+        let appended = stored_segments(timed, time_offset_ms + offset_ms, channel, &mut next_index);
         if !appended.is_empty() {
             store_batch(appended)?;
         }
@@ -788,7 +820,8 @@ pub(super) fn drive_chunks(
 /// Transcribes and stores each chunk in turn, same as the live worker in
 /// `recorder.rs` — chunking itself happens incrementally in `chunk_all`.
 /// `base_ms`: Beginn dieser Spur auf der Achse des Auftrags (mehrere Spuren
-/// zaehlen in einen Fortschritt); `on_resume`: Modell nach einer Pause wieder
+/// zaehlen in einen Fortschritt); `time_offset_ms`: Beginn der Spur auf der Achse
+/// der Aufnahme (lva#522, Bereich); `on_resume`: Modell nach einer Pause wieder
 /// anfordern.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn transcribe_and_store(
@@ -801,15 +834,28 @@ pub(super) fn transcribe_and_store(
     first_index: u32,
     job: &JobHandle,
     base_ms: u64,
+    time_offset_ms: u64,
     on_resume: &mut dyn FnMut(),
 ) -> Result<TranscribeRun, String> {
-    drive_chunks(
+    drive_chunks_at(
         chunk_all(samples, IMPORT_CHUNK_TARGET_MS),
         job,
         base_ms,
+        time_offset_ms,
         channel,
         first_index,
-        &mut |chunk| transcribe_chunk_resilient(app, tm, chunk),
+        &mut |chunk| {
+            if time_offset_ms == 0 {
+                return transcribe_chunk_resilient(app, tm, chunk);
+            }
+            // Der Luecken-Platzhalter nennt den Zeitraum im Text: auf der Achse der
+            // Aufnahme, nicht des Ausschnitts.
+            let shifted = Chunk {
+                samples: chunk.samples.clone(),
+                offset_ms: chunk.offset_ms + time_offset_ms,
+            };
+            transcribe_chunk_resilient(app, tm, &shifted)
+        },
         &mut |appended| {
             store
                 .append_delta(
@@ -1513,6 +1559,60 @@ Guten Tag.
         )
         .unwrap();
         assert_eq!(b.next_index, 2);
+        assert_eq!(job.snapshot().done, 120_000);
+    }
+
+    #[test]
+    fn a_time_offset_moves_segments_and_words_but_not_the_progress() {
+        // lva#522: eine ab 1:00:00 geschnittene Spur traegt weiter die Zeiten der Aufnahme.
+        let (job, _events) = job_with_events();
+        job.begin_phase(JobPhase::Transcription, 120_000);
+        let offset = 3_600_000;
+        let mut stored: Vec<StoredSegment> = Vec::new();
+        let run = drive_chunks_at(
+            vec![block(0, 60_000), block(60_000, 60_000)],
+            &job,
+            0, // Fortschritt: beginnt bei 0 auf der Achse des Auftrags
+            offset,
+            0,
+            0,
+            &mut |chunk| {
+                vec![TimedSegment {
+                    text: "Wort".into(),
+                    start_ms: 500,
+                    end_ms: 1_500,
+                    words: Some(vec![crate::managers::transcription::WordTime {
+                        text: "Wort".into(),
+                        start_ms: 600,
+                        end_ms: 900,
+                    }]),
+                }]
+                .into_iter()
+                .map(|s| TimedSegment {
+                    text: format!("{}@{}", s.text, chunk.offset_ms),
+                    ..s
+                })
+                .collect()
+            },
+            &mut |appended| {
+                stored.extend(appended);
+                Ok(())
+            },
+            &mut || {},
+        )
+        .unwrap();
+        assert_eq!(run.next_index, 2);
+        assert_eq!(stored[0].start_ms, offset + 500);
+        assert_eq!(stored[0].end_ms, offset + 1_500);
+        let word = &stored[0].words.as_ref().unwrap()[0];
+        assert_eq!((word.start_ms, word.end_ms), (offset + 600, offset + 900));
+        // Der zweite Block: Versatz der Spur UND Beginn des Blocks.
+        assert_eq!(stored[1].start_ms, offset + 60_000 + 500);
+        assert_eq!(
+            stored[1].words.as_ref().unwrap()[0].start_ms,
+            offset + 60_000 + 600
+        );
+        // Der Fortschritt kennt den Versatz nicht.
         assert_eq!(job.snapshot().done, 120_000);
     }
 

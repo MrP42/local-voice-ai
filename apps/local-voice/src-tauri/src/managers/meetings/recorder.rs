@@ -1176,6 +1176,7 @@ impl MeetingRecorderManager {
             catch_up_model: None,
             plan,
             live_model,
+            recover_from: None,
         };
         // M3-P3b: die Sprechertrennung kann Minuten dauern (CPU: ~2 min je Stunde
         // Audio), also nie im Aufruf von `stop()`: mit ihr laeuft der Auftrag
@@ -1223,11 +1224,8 @@ impl MeetingRecorderManager {
                 if !is_orphan_status(&meeting.status) {
                     continue;
                 }
-                // WAV-Header reparieren, echte Dauer, Status `processing`.
-                if let Err(e) = final_pass::prepare_orphan(&self.store, &meeting) {
-                    warn!("meetings: orphan status not stored: {e}");
-                    continue;
-                }
+                // lva#523: WAV-Header, Dauer und `processing` erst unter dem Auftrag
+                // (`run_job`, `recover_from`): eine Ablehnung aendert nichts.
                 let plan = if meeting.source == "live" {
                     final_pass::plan_for_app(&self.app, &choice)
                 } else {
@@ -1238,6 +1236,7 @@ impl MeetingRecorderManager {
                     catch_up_model: Some(catch_up_model.clone()),
                     plan,
                     live_model: None,
+                    recover_from: Some(meeting.status.clone()),
                 });
                 recovered.push(meeting.id);
             }
@@ -1275,9 +1274,6 @@ impl MeetingRecorderManager {
         )?;
         let settings = crate::settings::get_settings(&self.app);
         let catch_up_model = self.transcription.meeting_model_target(&settings);
-        // WAV-Header pruefen, echte Dauer, Status `processing`.
-        final_pass::prepare_orphan(&self.store, &meeting)
-            .map_err(|e| format!("status_processing_failed: {e}"))?;
         let plan = if meeting.source == "live" {
             final_pass::plan_for_app(
                 &self.app,
@@ -1286,13 +1282,15 @@ impl MeetingRecorderManager {
         } else {
             FinalPlan::Keep(KeepReason::NotLive)
         };
-        self.emit_state(meeting_id, "processing", false);
+        // lva#523: WAV-Header, Dauer und `processing` (samt Anzeige) erst unter dem
+        // Auftrag (`run_job`, `recover_from`); eine Ablehnung aendert nichts.
         info!("meetings: continuing a stopped meeting ({meeting_id})");
         self.spawn_final_jobs(vec![JobSpec {
             meeting_id: meeting_id.to_string(),
             catch_up_model: Some(catch_up_model),
             plan,
             live_model: None,
+            recover_from: Some(meeting.status.clone()),
         }]);
         Ok(())
     }

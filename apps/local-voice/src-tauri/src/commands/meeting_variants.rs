@@ -29,12 +29,29 @@ pub async fn transcript_variants(
     store: State<'_, Arc<MeetingStore>>,
     meeting_id: String,
 ) -> Result<Vec<TranscriptVariant>, String> {
-    let mut conn = store.get_connection().map_err(|e| e.to_string())?;
-    if !job::global().is_running(&meeting_id) {
-        // Nur wenn der Status nicht mehr `processing` ist: dann gehoert die Arbeitskopie
-        // in `transcripts` keinem Lauf mehr.
-        let _ = variants::recover_interrupted(&mut conn, &meeting_id);
+    // lva#523: offenen Neu-Lauf nur unter einer eigenen Reservierung abschliessen
+    // (laeuft ein Auftrag, gehoert die Arbeitskopie ihm). Still: kein `JobEnded` an
+    // die Ansicht, die diese Liste gerade laedt.
+    let silent: job::EmitFn = Arc::new(|_| {});
+    if let Ok(_guard) = job::global().try_start(&meeting_id, silent) {
+        let idle = store
+            .get_meeting(&meeting_id)
+            .ok()
+            .flatten()
+            .is_some_and(|m| !matches!(m.status.as_str(), "recording" | "processing" | "queued"));
+        if idle {
+            let settled = crate::managers::meetings::rerun_state::settle(
+                &store,
+                &meeting_id,
+                false,
+                crate::managers::meetings::rerun_state::Ends::QUIET,
+            );
+            if let Err(e) = settled {
+                log::warn!("meetings: rerun not settled ({meeting_id}): {e}");
+            }
+        }
     }
+    let mut conn = store.get_connection().map_err(|e| e.to_string())?;
     variants::list(&mut conn, &meeting_id).map_err(variant_error)
 }
 

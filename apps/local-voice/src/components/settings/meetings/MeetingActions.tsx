@@ -17,6 +17,7 @@ import {
   Pencil,
   Presentation,
   RefreshCw,
+  Scissors,
   Sparkles,
   Trash2,
   UserPen,
@@ -35,6 +36,8 @@ export interface MeetingActionHandlers {
   onPeople: () => void;
   onChatToggle: () => void;
   onRetranscribe: () => void;
+  /** lva#522: "Aufnahme zuschneiden ..." (Dialog; schneidet das Audio endgültig). */
+  onTrim: () => void;
   /** G5: "Übersetzen nach ..." (neue Fassung, das Original bleibt). */
   onTranslate: () => void;
   onRegenNotes: () => void;
@@ -105,6 +108,7 @@ export const MeetingActions: React.FC<MeetingActionsProps> = ({
   onPeople,
   onChatToggle,
   onRetranscribe,
+  onTrim,
   onTranslate,
   onRegenNotes,
   onRegenMinutes,
@@ -138,6 +142,19 @@ export const MeetingActions: React.FC<MeetingActionsProps> = ({
       disabled: !hasAudio || busy,
       title: retranscribeTitle,
       testId: "menu-retranscribe",
+    },
+    {
+      id: "trim",
+      label: t("meetings.actions.trim"),
+      icon: Scissors,
+      onSelect: onTrim,
+      disabled: !hasAudio || busy,
+      title: !hasAudio
+        ? t("meetings.actions.trimNoAudio")
+        : busy
+          ? t("meetings.actions.trimBusy")
+          : t("meetings.actions.trimHint"),
+      testId: "menu-trim",
     },
     ...(canAppendAudio && onAppendAudio
       ? [

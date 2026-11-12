@@ -464,3 +464,73 @@ fn finishing_without_a_begun_rerun_or_with_nothing_written_is_refused() {
     assert!(abort_rerun(&mut c, &f.meeting).unwrap());
     assert_eq!(live_text(&f), vec!["alt eins", "alt zwei"]);
 }
+
+#[test]
+fn a_stopped_rerun_keeps_the_partial_result_as_active_variant_and_the_old_one_lva523() {
+    let f = fixture(true);
+    let mut c = conn(&f);
+    begin_rerun(&mut c, &f.meeting).unwrap();
+    run_writes(&f, &["neu eins", "neu zwei"]);
+    let id = keep_partial_rerun(&mut c, &f.meeting, KIND_RETRANSCRIBED, Some("parakeet"))
+        .unwrap()
+        .expect("das Teilergebnis bleibt");
+    assert_eq!(live_text(&f), vec!["neu eins", "neu zwei"]);
+    let variants = list(&mut c, &f.meeting).unwrap();
+    assert_eq!(variants.len(), 2);
+    assert!(!variants[0].active);
+    assert_eq!(variants[1].id, id);
+    assert!(variants[1].active);
+    assert_eq!(variants[1].model.as_deref(), Some("parakeet"));
+    let (_v, old) = get_segments(&c, &variants[0].id).unwrap();
+    assert_eq!(
+        old.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(),
+        vec!["alt eins", "alt zwei"],
+        "die alte Fassung bleibt vollstaendig"
+    );
+    // Keine Marke mehr: ein spaeteres recover nimmt das Teilergebnis nicht zurueck.
+    assert!(!recover_interrupted(&mut c, &f.meeting).unwrap());
+    assert_eq!(live_text(&f), vec!["neu eins", "neu zwei"]);
+    // Fortsetzen haengt an die aktive Fassung an; die alte bleibt umschaltbar.
+    f.store
+        .append_delta(
+            &f.meeting,
+            &TranscriptDelta {
+                new_segments: vec![seg(2, "neu drei")],
+            },
+        )
+        .unwrap();
+    activate(&mut c, &variants[0].id).unwrap();
+    assert_eq!(live_text(&f), vec!["alt eins", "alt zwei"]);
+    activate(&mut c, &id).unwrap();
+    assert_eq!(live_text(&f), vec!["neu eins", "neu zwei", "neu drei"]);
+}
+
+#[test]
+fn a_rerun_stopped_before_the_first_new_section_restores_the_old_one_lva523() {
+    let f = fixture(true);
+    let mut c = conn(&f);
+    begin_rerun(&mut c, &f.meeting).unwrap();
+    f.store.clear_segments(&f.meeting).unwrap();
+    assert_eq!(
+        keep_partial_rerun(&mut c, &f.meeting, KIND_RETRANSCRIBED, None).unwrap(),
+        None
+    );
+    assert_eq!(live_text(&f), vec!["alt eins", "alt zwei"]);
+    let variants = list(&mut c, &f.meeting).unwrap();
+    assert_eq!(variants.len(), 1);
+    assert!(variants[0].active);
+}
+
+#[test]
+fn keeping_a_partial_result_without_a_begun_rerun_changes_nothing_lva523() {
+    let f = fixture(true);
+    let mut c = conn(&f);
+    assert!(!rerun_pending(&c, &f.meeting).unwrap());
+    assert_eq!(
+        keep_partial_rerun(&mut c, &f.meeting, KIND_RETRANSCRIBED, Some("m")).unwrap(),
+        None
+    );
+    assert_eq!(live_text(&f), vec!["alt eins", "alt zwei"]);
+    begin_rerun(&mut c, &f.meeting).unwrap();
+    assert!(rerun_pending(&c, &f.meeting).unwrap());
+}
