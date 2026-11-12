@@ -105,7 +105,14 @@ const NACHSEHEN =
  * den Satz zur Sachaussage.
  */
 const WORAUF =
-  "( nach| (das|dies|es|die|der|den|dem|deine|deinen|deinem|deiner|meine|meinen|meinem|meiner|ihre|ihren|unsere|unseren|in|im|bei|ob)( .*)?)";
+  "( nach| (das|dies|es|die|der|den|dem|deine|deinen|deinem|deiner|meine|meinen|meinem|meiner|ihre|ihren|unsere|unseren|in|im|bei)( [^ ]+){0,3}( nach)?| ob( [^ ]+){1,8})";
+
+/**
+ * Wörter, die einen zweiten Satzteil anschließen („… und gehe dann schlafen“). Ein Teil mit einem davon
+ * ist nie ein reiner Wartesatz.
+ */
+const ANSCHLUSS =
+  /\b(und|oder|aber|dann|danach|weil|denn|sondern|sowie|damit|bevor|nachdem|and|or|but|then|because)\b/;
 
 /**
  * Teile eines Wartesatzes (Vergleichsform, ohne Satzzeichen). Ein Text ist nur dann eine Floskel,
@@ -150,11 +157,16 @@ export function istFloskel(text: string): boolean {
     saetze.every((satz) => {
       if (BEKANNT_SCHLUESSEL.has(satz)) return true;
       const teile = satz
+        // „Ich prüfe kurz, ob …“: der ob-Satz gehört zur Ankündigung, kein eigener Teil.
+        .replace(/, ob /g, " ob ")
         .split(/[,;:]+/)
         .map((x) => x.trim())
         .filter(Boolean);
       return (
-        teile.length > 0 && teile.every((x) => WARTETEIL.some((r) => r.test(x)))
+        teile.length > 0 &&
+        teile.every(
+          (x) => !ANSCHLUSS.test(x) && WARTETEIL.some((r) => r.test(x)),
+        )
       );
     })
   );
