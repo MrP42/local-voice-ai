@@ -356,23 +356,36 @@ pub fn settle(
     })
 }
 
+/// Status, den ein zurueckgenommener Lauf wiederherstellt: `failed`/`cancelled`
+/// bleiben, alles andere wird `ready`.
+pub fn restorable_status(name: &str) -> MeetingStatus {
+    match name {
+        "failed" => MeetingStatus::Failed,
+        "cancelled" => MeetingStatus::Cancelled,
+        _ => MeetingStatus::Ready,
+    }
+}
+
 /// Laufbeginn (unter dem Auftrag, VOR `begin_rerun`): offenen Vorlauf abschliessen,
-/// dann Marke `start` mit dem Stand davor.
-pub fn mark_start(store: &MeetingStore, meeting_id: &str, prev_status: &str) -> Result<(), String> {
+/// dann Marke `start` mit dem Stand davor. Der Vorstatus kommt aus dem Zustand NACH
+/// diesem Abschluss (nie aus einem vorher gelesenen Wert) und wird zurueckgegeben.
+pub fn mark_start(store: &MeetingStore, meeting_id: &str) -> Result<MeetingStatus, String> {
     settle(store, meeting_id, false, Ends::QUIET)?;
     in_tx(store, |tx| {
+        let prev_status = restorable_status(&status_tx(tx, meeting_id)?);
         let prev = read_raw_tx(tx, meeting_id)?;
         write_tx(
             tx,
             meeting_id,
             Marker {
                 phase: PHASE_START.to_string(),
-                prev_status: Some(prev_status.to_string()),
+                prev_status: Some(prev_status.as_str().to_string()),
                 prev,
                 ..Default::default()
             }
             .to_value(),
-        )
+        )?;
+        Ok(prev_status)
     })
 }
 
@@ -423,20 +436,32 @@ pub enum Resume {
 /// „Fortsetzen“ und Wiederherstellung (unter dem Auftrag): offenen Lauf abschliessen
 /// und die gestoppte Fassung wieder aktiv machen (der Nutzer kann umgeschaltet haben).
 /// Eine nicht zuordenbare Marke wird abgewiesen, nie still die aktive Fassung ergaenzt.
-pub fn prepare_resume(store: &MeetingStore, meeting_id: &str) -> Result<Resume, String> {
+pub fn prepare_resume(
+    store: &MeetingStore,
+    meeting_id: &str,
+    has_track: bool,
+) -> Result<Resume, String> {
+    // Ohne gespeicherte Spur (YouTube) gibt es nichts nachzuholen: das Teilergebnis
+    // endet ausdruecklich ohne Fortsetzbarkeit, nie als „nachgeholt“.
     let settled = settle(
         store,
         meeting_id,
         false,
         Ends {
-            kept: None,
-            resumable: true,
+            kept: (!has_track).then_some(MeetingStatus::Ready),
+            resumable: has_track,
             fallback: Some(MeetingStatus::Ready),
         },
     )?;
     match settled {
         Settled::Nothing => Ok(Resume::Normal),
         Settled::RolledBack(status) => Ok(Resume::Done(status)),
+        // Ohne Spur: Marke weg, `ready` (beim offenen Lauf schon geschehen, sonst hier).
+        Settled::Kept(None) if !has_track => in_tx(store, |tx| {
+            write_tx(tx, meeting_id, Value::Null)?;
+            set_status_tx(tx, meeting_id, MeetingStatus::Ready)?;
+            Ok(Resume::Done(Some(MeetingStatus::Ready)))
+        }),
         Settled::Kept(None) => Err("partial_rerun_unassigned".to_string()),
         Settled::Kept(Some(r)) => in_tx(store, |tx| {
             let active = variants::active_id(tx, meeting_id).map_err(|e| e.code().to_string())?;
@@ -444,7 +469,13 @@ pub fn prepare_resume(store: &MeetingStore, meeting_id: &str) -> Result<Resume, 
                 variants::activate_for_resume_in_tx(tx, &r.variant_id)
                     .map_err(|e| format!("partial_variant_missing: {}", e.code()))?;
             }
-            Ok(Resume::Partial(r.model))
+            if has_track {
+                return Ok(Resume::Partial(r.model));
+            }
+            // Behaltene Marke ohne Spur: als Teilergebnis abschliessen.
+            write_tx(tx, meeting_id, Value::Null)?;
+            set_status_tx(tx, meeting_id, MeetingStatus::Ready)?;
+            Ok(Resume::Done(Some(MeetingStatus::Ready)))
         }),
     }
 }

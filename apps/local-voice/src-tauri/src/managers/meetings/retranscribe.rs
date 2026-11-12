@@ -207,22 +207,24 @@ pub async fn rerun_meeting(
             return Err(e.to_string());
         }
     };
-    let previous_status = restored_status(&meeting.status);
     let has_stored_audio = meeting.mic_audio_path.is_some() || meeting.system_audio_path.is_some();
     // lva#523 / A3: ein offener frueherer Lauf (Absturz, gescheiterter Abschluss) wird
     // unter DIESEM Auftrag abgeschlossen, bevor etwas Neues beginnt; dann die Marke
-    // `start` mit dem Stand davor (fuer das Zuruecknehmen).
-    let prepared = rerun_state::mark_start(&store, &meeting_id, status_name(previous_status));
-    if let Err(e) = prepared {
-        if let Input::Youtube { guard, .. } = input {
-            yt_fetch::end(
-                &store,
-                guard,
-                &Err(crate::managers::youtube::YoutubeError::Cancelled),
-            );
+    // `start` mit dem Stand davor (fuer das Zuruecknehmen). Der Vorstatus kommt aus dem
+    // Zustand NACH diesem Abschluss, unter dem Auftrag gelesen.
+    let previous_status = match rerun_state::mark_start(&store, &meeting_id) {
+        Ok(status) => status,
+        Err(e) => {
+            if let Input::Youtube { guard, .. } = input {
+                yt_fetch::end(
+                    &store,
+                    guard,
+                    &Err(crate::managers::youtube::YoutubeError::Cancelled),
+                );
+            }
+            return Err(e);
         }
-        return Err(e);
-    }
+    };
     store
         .set_status(&meeting_id, MeetingStatus::Processing)
         .map_err(|e| format!("status_processing_failed: {e}"))?;
@@ -322,6 +324,11 @@ fn finish_run(
         }
         Err(e) => {
             error!("meetings: retranscribe failed ({meeting_id}): {e}");
+            // lva#523: die Absicht ZUERST dauerhaft festhalten (eigene Transaktion): bricht
+            // das Zuruecknehmen danach ab, nimmt jeder spaetere Abschluss zurueck, nie behalten.
+            if let Err(m) = rerun_state::mark_rollback(store, meeting_id) {
+                error!("meetings: rollback intent not stored ({meeting_id}): {m}");
+            }
             // B17: ein Fehler mitten im Lauf nimmt dem Nutzer das alte Transkript nicht.
             let ends = Ends {
                 kept: None,
@@ -338,9 +345,6 @@ fn finish_run(
                 // davon allein laesst den naechsten Abschluss zuruecknehmen, nie behalten).
                 Err(err) => {
                     error!("meetings: rollback not finished ({meeting_id}): {err}");
-                    if let Err(m) = rerun_state::mark_rollback(store, meeting_id) {
-                        error!("meetings: rollback intent not stored ({meeting_id}): {m}");
-                    }
                     let _ = store.set_status(meeting_id, MeetingStatus::Failed);
                     MeetingStatus::Failed
                 }
@@ -364,14 +368,6 @@ enum RetranscribeEnd {
 
 /// Der Status, den eine gestoppte Neu-Transkription ohne Aenderung
 /// zuruecklaesst: der vorherige Endzustand (nie `processing`).
-fn restored_status(previous: &str) -> MeetingStatus {
-    match previous {
-        "failed" => MeetingStatus::Failed,
-        "cancelled" => MeetingStatus::Cancelled,
-        _ => MeetingStatus::Ready,
-    }
-}
-
 fn status_name(status: MeetingStatus) -> &'static str {
     match status {
         MeetingStatus::Recording => "recording",
@@ -635,12 +631,27 @@ mod tests {
 
     #[test]
     fn a_stop_without_any_change_restores_the_previous_final_status() {
-        assert_eq!(restored_status("ready"), MeetingStatus::Ready);
-        assert_eq!(restored_status("failed"), MeetingStatus::Failed);
-        assert_eq!(restored_status("cancelled"), MeetingStatus::Cancelled);
+        assert_eq!(
+            rerun_state::restorable_status("ready"),
+            MeetingStatus::Ready
+        );
+        assert_eq!(
+            rerun_state::restorable_status("failed"),
+            MeetingStatus::Failed
+        );
+        assert_eq!(
+            rerun_state::restorable_status("cancelled"),
+            MeetingStatus::Cancelled
+        );
         // Nie `processing` oder `recording`: ein haengender Zustand waere der Fehler.
-        assert_eq!(restored_status("processing"), MeetingStatus::Ready);
-        assert_eq!(restored_status("recording"), MeetingStatus::Ready);
+        assert_eq!(
+            rerun_state::restorable_status("processing"),
+            MeetingStatus::Ready
+        );
+        assert_eq!(
+            rerun_state::restorable_status("recording"),
+            MeetingStatus::Ready
+        );
     }
 
     #[test]
