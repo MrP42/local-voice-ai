@@ -116,8 +116,8 @@ Outlooks HTML→Text-Wandlung keinen falschen Konflikt erzeugt (Regel siehe unte
 | Planung schon durchgeführt | – | Kalender ändert den Status nicht mehr |
 
 Der Block beginnt beim Kopf und endet an der ersten danach folgenden Markenzeile (Marke allein
-auf ihrer Zeile, nur Leerraum daneben, Id vollständig)
-; gehört sie zu einer anderen Planung, gilt der Block als entfernt. Eine Marke außerhalb
+auf ihrer Zeile, nur Leerraum daneben, Id vollständig);
+gehört sie zu einer anderen Planung, gilt der Block als entfernt. Eine Marke außerhalb
 eines Blocks zählt nicht. Marke und Block werden nach derselben Begrenzung gesucht.
 Bei Adapter C schreibt die App den Block nach dem Einfügen nie wieder; dort zählt nur die Marke.
 Schreibende Adapter (A, B) dürfen nur bei nachweislich geprüftem Stand schreiben: Termintext liegt
