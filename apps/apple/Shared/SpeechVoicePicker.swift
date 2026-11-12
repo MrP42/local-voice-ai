@@ -99,14 +99,31 @@ struct MicrophoneSettings: View {
     @ObservedObject var model: VoiceModel
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            #if os(watchOS)
             Text("Mikrofonempfindlichkeit").font(.subheadline)
-            Picker("Mikrofonempfindlichkeit", selection: $model.microphoneSensitivity) {
-                ForEach(MicrophoneSensitivity.allCases, id: \.self) { Text($0.label).tag($0) }
-            }.labelsHidden().accessibilityIdentifier("microphoneSensitivity")
-            Toggle("Umgebungsgeräusche berücksichtigen", isOn: $model.automaticNoiseFloor)
-                .accessibilityIdentifier("automaticNoiseFloor")
+            sensitivityPicker
+            #else
+            // Beschriftung und Auswahl in einer Zeile, wenn beides nebeneinander passt; sonst untereinander (große Schrift).
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    Text("Mikrofonempfindlichkeit").fixedSize()
+                    Spacer(minLength: 8)
+                    sensitivityPicker.fixedSize()
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Mikrofonempfindlichkeit")
+                    sensitivityPicker
+                }
+            }
+            #endif
+            VoiceToggleRow(title: "Umgebungsgeräusche berücksichtigen", isOn: $model.automaticNoiseFloor, identifier: "automaticNoiseFloor")
             Text("Steuert, wann Freisprechen Sprache vermutet. Unempfindlich hilft bei Lärm, Empfindlich bei leiser Stimme. Automatisch wird der Umgebungspegel zu Beginn kurz eingemessen. Keine Änderung der Aufnahmelautstärke.")
                 .font(.caption2).foregroundStyle(VoicePalette.secondaryText)
         }
+    }
+    private var sensitivityPicker: some View {
+        Picker("Mikrofonempfindlichkeit", selection: $model.microphoneSensitivity) {
+            ForEach(MicrophoneSensitivity.allCases, id: \.self) { Text($0.label).tag($0) }
+        }.labelsHidden().accessibilityIdentifier("microphoneSensitivity")
     }
 }
