@@ -73,12 +73,15 @@ final class AssistantNaturalMailbox: @unchecked Sendable {
         case failed(stage: Int, any Error)
         /// Ein Zeitgeber ist abgelaufen: Der Verbraucher prüft, was fällig ist.
         case wake
+        /// Die Frist einer Stufe ist abgelaufen (`AssistantNaturalMailbox.deadline`): Der Verbraucher beendet die Stufe, wenn sie noch läuft.
+        case deadline(stage: Int)
     }
 
     let stream: AsyncStream<Event>
     private let continuation: AsyncStream<Event>.Continuation
     private let lock = NSLock()
     private var pumps: [Int: Task<Void, Never>] = [:]
+    private var timers: [Int: Task<Void, Never>] = [:]
     private var stage = 0
     private var closed = false
 
@@ -117,18 +120,41 @@ final class AssistantNaturalMailbox: @unchecked Sendable {
         return number
     }
 
-    /// Bricht den Modellstrom einer Stufe ab (Suche erkannt, Grenze erreicht).
-    func cancel(stage number: Int) {
-        let task: Task<Void, Never>? = lock.withLock { pumps.removeValue(forKey: number) }
-        task?.cancel()
+    /// Setzt eine Frist für eine Stufe: Nach `ms` Millisekunden kommt `.deadline(stage:)` in den Strom, außer die Stufe wurde vorher mit
+    /// `cancel(stage:)` beendet oder die Anfrage ist zu Ende. Negativ: keine Frist. Der Zeitgeber setzt nur das Ereignis; was daraus
+    /// folgt, entscheidet der Verbraucher.
+    func deadline(stage number: Int, ms: Int) {
+        guard ms >= 0 else { return }
+        let continuation = self.continuation
+        let task = Task {
+            do {
+                try await Task.sleep(nanoseconds: UInt64(ms) * 1_000_000)
+            } catch {
+                return
+            }
+            continuation.yield(.deadline(stage: number))
+        }
+        let late: Bool = lock.withLock {
+            if closed { return true }
+            timers[number] = task
+            return false
+        }
+        if late { task.cancel() }
     }
 
-    /// Ende der Anfrage: alle Modellströme abbrechen, den Strom beenden.
+    /// Bricht den Modellstrom einer Stufe und ihre Frist ab (Suche erkannt, Grenze erreicht, Stufe beendet).
+    func cancel(stage number: Int) {
+        let tasks: [Task<Void, Never>] = lock.withLock { [pumps.removeValue(forKey: number), timers.removeValue(forKey: number)].compactMap { $0 } }
+        for task in tasks { task.cancel() }
+    }
+
+    /// Ende der Anfrage: alle Modellströme und Fristen abbrechen, den Strom beenden.
     func close() {
         let tasks: [Task<Void, Never>] = lock.withLock {
             closed = true
-            let all = Array(pumps.values)
+            let all = Array(pumps.values) + Array(timers.values)
             pumps.removeAll()
+            timers.removeAll()
             return all
         }
         for task in tasks { task.cancel() }

@@ -511,11 +511,15 @@ public struct AssistantConfig: Sendable {
     public var fillers: Bool
     public var fillerFirstMs: Int
     public var fillerSecondMs: Int
+    /// Stil `natural`, erzwungene Suche bei direktem Inhaltsbezug: So lange (ab Start des Sprecher-Aufrufs) wartet der Kern auf den einen
+    /// Zwischensatz des Sprechers; danach beginnt die Daten-Phase ohne Satz. Negativ: keine Frist (Ende des Sprecher-Stroms).
+    public var forcedSpeakerMs: Int
 
     public init(modelLabel: String, isCloud: Bool, contextTokens: Int, maxAnswerTokens: Int, userName: String?, timeout: TimeInterval,
                 allowUnsourced: Bool = false, consentVersion: Int = 0, style: AssistantStyle = .verbatim, bridge: Bool = false,
                 naturalPassageLimit: Int = 4, naturalPassageChars: Int = 2400, naturalMaxSentences: Int = 4,
-                fillers: Bool = false, fillerFirstMs: Int = 1_200, fillerSecondMs: Int = 8_000) {
+                fillers: Bool = false, fillerFirstMs: Int = 1_200, fillerSecondMs: Int = 8_000, forcedSpeakerMs: Int = 2_500) {
+        self.forcedSpeakerMs = forcedSpeakerMs
         self.fillers = fillers
         self.fillerFirstMs = fillerFirstMs
         self.fillerSecondMs = fillerSecondMs
@@ -535,15 +539,36 @@ public struct AssistantConfig: Sendable {
     }
 }
 
+/// Ein offener Suchauftrag, den die Steuerung im Hintergrund weiterlaufen lässt, während der Nutzer weiterspricht (nur Stil `natural`).
+/// Er steht NUR im Prompt des Sprechers der neuen Anfrage (und in der Frage ihres Denkers, wenn sie selbst eine Suche verlangt): nie im
+/// Protokoll, nie im Verlauf, nie im Fortschritt außer als Fragetext der Suche.
+public struct AssistantPendingSearch: Sendable, Equatable {
+    /// Frage des offenen Suchauftrags.
+    public var question: String
+    /// Seine Suchwörter.
+    public var query: String
+    /// Das Ergebnis liegt schon vor und wird gleich nachgereicht.
+    public var ready: Bool
+
+    public init(question: String, query: String, ready: Bool = false) {
+        self.question = question
+        self.query = query
+        self.ready = ready
+    }
+}
+
 public struct AssistantRequest: Sendable, Equatable {
     public let requestId: String
     public let text: String
     public let afterInterruption: Bool
+    /// Stil `natural`: ein offener Suchauftrag, der im Hintergrund läuft (Standard: keiner). Der Stil `verbatim` ignoriert ihn.
+    public var pending: AssistantPendingSearch?
 
-    public init(requestId: String, text: String, afterInterruption: Bool = false) {
+    public init(requestId: String, text: String, afterInterruption: Bool = false, pending: AssistantPendingSearch? = nil) {
         self.requestId = requestId
         self.text = text
         self.afterInterruption = afterInterruption
+        self.pending = pending
     }
 }
 
@@ -681,7 +706,8 @@ public enum AssistantFailure: String, Sendable, Equatable {
 /// und Suchwörter sind Inhalte), und gesprochen und veröffentlicht wird weiter ausschließlich über `AssistantEvent.sentence`.
 /// Reihenfolge je Anfrage: `speaker`, dann nur bei einer Suche `searching`, `found`, `composing` und `draft` (mehrfach). Eine Runde
 /// ohne Suche hat nur `speaker`; bei direktem Inhaltsbezug (der Sprecher läuft nicht) beginnt die Folge mit `searching`, eine
-/// Bestandsfrage hat keinen Fortschritt (kein Modell).
+/// Bestandsfrage hat keinen Fortschritt (kein Modell). Mit einem offenen Suchauftrag (`AssistantRequest.pending`) kann nach `speaker`
+/// einmal `abandon` kommen (dann folgt keine Suche dieser Anfrage).
 public enum AssistantProgress: Sendable, Equatable {
     /// Der Sprecher-Aufruf läuft.
     case speaker
@@ -694,6 +720,9 @@ public enum AssistantProgress: Sendable, Equatable {
     case composing
     /// Der Rohtext des Denkers bisher (kumulativ), höchstens etwa alle 150 ms und am Ende einmal vollständig.
     case draft(String)
+    /// Steuerzeile `ABBRUCH` des Sprechers: Der Nutzer will den offenen Suchauftrag (`AssistantRequest.pending`) nicht mehr. Höchstens
+    /// einmal je Anfrage, nur mit `pending`; ein Satz davor ist eine normale direkte Antwort. Nach `abandon` folgt keine Suche dieser Anfrage.
+    case abandon
 }
 
 public enum AssistantEvent: Sendable, Equatable {

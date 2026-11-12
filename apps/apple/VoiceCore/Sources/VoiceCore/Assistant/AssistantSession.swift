@@ -1871,7 +1871,8 @@ public actor AssistantSession {
     /// (Generation, Bereiche, Cloud-Zustimmung aus EINEM Lesen), mit denselben Regeln für Widerruf, Abbruch und Schreibfehler; nach einem
     /// Absturz wird nichts fortgesetzt.
     /// - Bestandsfrage: nur Datenphase (Grund `inventory`), das System antwortet aus den Bestandsdaten, kein Modell.
-    /// - Direkter Inhaltsbezug (`AssistantOwnData.refers`): nur Datenphase (Grund `naturalSearch`), kein Sprecher.
+    /// - Direkter Inhaltsbezug (`AssistantOwnData.refers`): ERZWUNGENE Suche. Der Sprecher (Protokoll wie sonst, Zusatz im Prompt) sagt
+    ///   höchstens EINEN kurzen Satz (Filter `isFillerInterim`), dann läuft die Datenphase in jedem Fall (`forcedSpeakerPhase`).
     /// - Sonst SPRECHER (Rundenzeile `.general`/`naturalTalk`, Bereichszeile der Verlaufsbeiträge im Prompt, leer möglich): antwortet
     ///   direkt (`.conversational`) oder verlangt in einer Zeile `SUCHE: …` eine Suche, mit oder ohne EINEN kurzen Zwischensatz davor
     ///   (der Satz geht sofort als `.conversational` hinaus, die Steuerzeile nie); dann Datenphase.
@@ -1883,6 +1884,10 @@ public actor AssistantSession {
     /// langsame Antwort (`AssistantConfig.fillers`) und der Überbrückungssatz (`bridge`) sind standardmäßig aus.
     /// Daneben gehen Fortschrittsereignisse (`AssistantProgress`) an die Denk-Anzeige: nur Anzeige, nie ins Protokoll und nie in den
     /// Verlauf; sie nehmen denselben Weg wie `sources` (Generation, offene Anfrage), nach Abbruch und Widerruf kommt keines mehr.
+    /// Offener Suchauftrag (`AssistantRequest.pending`, die Steuerung lässt eine Anfrage in der Datenphase im Hintergrund weiterlaufen und
+    /// startet für neue Äußerungen weitere, nebenläufige Anfragen): Er steht NUR im Prompt des Sprechers (`AssistantPrompt.pendingBlock`, nie
+    /// bei einem Cloud-Modell) und in der Frage der Datenphase („<Frage des Auftrags> <neue Äußerung>“, `AssistantNatural.dataQuestion`);
+    /// nie im Protokoll und nie im Verlauf. Die Steuerzeile `ABBRUCH` des Sprechers wird zu `AssistantProgress.abandon` (nur mit Auftrag).
     private static func generateNatural(
         _ request: AssistantRequest, model: any BookTalkModel, knowledge: AssistantKnowledge, config: AssistantConfig,
         snapshot: AssistantRelease.Snapshot, release: AssistantRelease, context: AssistantContext, history: [AssistantTurn],
@@ -1895,6 +1900,11 @@ public actor AssistantSession {
                                  journal: audit, index: index, started: ContinuousClock().now, canOptIn: false)
         let areas = snapshot.areas
         let now = Date()
+        // Die Frage der Datenphase: mit einem offenen Suchauftrag (`request.pending`) „<seine Frage> <neue Äußerung>“, sonst die Äußerung.
+        // Der Auftrag selbst steht nur im Prompt des Sprechers und hier, nie im Protokoll und nie im Verlauf.
+        let question = AssistantNatural.dataQuestion(text: request.text, pending: request.pending)
+        // Der Sprecher hat den Auftrag abgebrochen (`ABBRUCH`): einmal je Anfrage, auch über eine Wiederholung nach einem Überlauf hinweg.
+        var abandoned = false
 
         // Der eine Ereignisstrom und die Zeitgeber der Ansagen. Der Hinweis „Äußerung gilt“ kann vor, während oder nach dem Start des
         // Laufs eintreffen (`AssistantCommitNotes`: genau einmal gemeldet). Alles endet mit dem Lauf (Abbruch, Widerruf, Ende).
@@ -1976,7 +1986,7 @@ public actor AssistantSession {
         }
 
         enum Handling { case next, stage, abort(Outcome) }
-        enum Consumed { case streamEnd, stopped, failed(any Error), abort(Outcome) }
+        enum Consumed { case streamEnd, stopped, timedOut, failed(any Error), abort(Outcome) }
 
         /// Verarbeitet die Ereignisse einer Stufe der Reihe nach, bis sie endet. `handle` bekommt jedes Stück; `.stage` beendet die
         /// Stufe vorzeitig (ihr Modellstrom wird abgebrochen). Wecker lösen fällige Ansagen aus. Ereignisse älterer Stufen werden
@@ -2002,6 +2012,11 @@ public actor AssistantSession {
                     if s == stage { return .streamEnd }
                 case .failed(let s, let error):
                     if s == stage { return .failed(error) }
+                case .deadline(let s):
+                    // Die Frist einer Stufe (nur der erzwungene Sprecher setzt eine): Ihr Modellstrom wird abgebrochen.
+                    guard s == stage else { continue }
+                    mailbox.cancel(stage: stage)
+                    return .timedOut
                 }
             }
             return .abort(.cancelled)
@@ -2062,16 +2077,20 @@ public actor AssistantSession {
                 tail = String((tail + text).suffix(8))
                 return await sentences(splitter.feed(text))
             }
-            /// Die Steuerzeile ist erkannt: Was vor ihr steht, wird jetzt ausgegeben (der Zwischensatz), nicht erst am Zeilenende. Ein
-            /// offener Satz (ohne Satzzeichen vor dem Zeilenumbruch) gilt als vollständig. Höchstens EIN Satz steht vor der Steuerzeile:
-            /// weitere, die noch im Satztrenner standen, werden verworfen (was schon als direkte Antwort hinausging, bleibt).
-            func flushBeforeSearch() async -> Handling {
+            /// Eine Steuerzeile ist erkannt: Was vor ihr steht, wird jetzt ausgegeben, nicht erst am Zeilenende. Ein offener Satz (ohne
+            /// Satzzeichen vor dem Zeilenumbruch) gilt als vollständig.
+            /// - `interim` (vor `SUCHE:`): Höchstens EIN Satz steht vor der Steuerzeile, der Zwischensatz; er geht durch den Filter
+            ///   (`isFillerInterim`). Weitere, die noch im Satztrenner standen, werden verworfen (was schon als direkte Antwort hinausging,
+            ///   bleibt). Der Zwischensatz zählt nicht gegen das Satzlimit.
+            /// - sonst (vor `ABBRUCH`): normale direkte Antwort, ungefiltert, mit dem Satzlimit.
+            func flushOpenSentence(interim: Bool) async -> Handling {
                 var list: [(text: String, speech: String, raw: String)] = []
                 let open = !tail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !AssistantSpeech.Splitter.endsSentence(tail)
                 if open { list += splitter.feed(".") }
                 list += splitter.finish()
                 for _ in 0..<splitter.overlong { emitter.drop(.template) }
                 for _ in 0..<splitter.fragments { emitter.drop(.fragment) }
+                guard interim else { return await sentences(list) }
                 let first = seen == 0 ? Array(list.prefix(1)) : []
                 let keep = first.filter { !AssistantNatural.isFillerInterim($0.text) }
                 for _ in 0..<(list.count - keep.count) {
@@ -2079,6 +2098,18 @@ public actor AssistantSession {
                     emitter.drop(.template)
                 }
                 return await sentences(keep, ignoreLimit: true)
+            }
+            /// `ABBRUCH`: Fortschritt `abandon`, einmal je Anfrage und nur mit offenem Suchauftrag; sonst wird die Zeile still verworfen
+            /// (als verworfene Vorlage gezählt, damit eine Antwort nur aus dieser Zeile nicht als Erfolg ohne Inhalt endet).
+            func sendAbandon() async -> Outcome? {
+                guard !abandoned else { return nil }
+                guard request.pending != nil else {
+                    abandoned = true
+                    emitter.drop(.template)
+                    return nil
+                }
+                abandoned = true
+                return await progress(.abandon)
             }
             func sendDraft(force: Bool) async -> Outcome? {
                 guard draft, rawText != draftSent else { return nil }
@@ -2095,15 +2126,23 @@ public actor AssistantSession {
                 }
                 guard gated else { return await sentences(splitter.feed(text)) }
                 let step = gate.feed(text)
+                if step.abandon, let end = await sendAbandon() { return .abort(end) }
                 if !step.speech.isEmpty {
                     switch await feedSplitter(step.speech) {
                     case .next: break
                     case let other: return other
                     }
                 }
+                if step.abandon {
+                    // Nach `ABBRUCH` kommt nichts mehr: Der Satz davor ist eine normale Antwort, der Strom endet hier.
+                    switch await flushOpenSentence(interim: false) {
+                    case .next: return .stage
+                    case let other: return other
+                    }
+                }
                 guard let search = step.search else { return .next }
                 if searchRaw == nil {
-                    switch await flushBeforeSearch() {
+                    switch await flushOpenSentence(interim: true) {
                     case .next: break
                     case let other: return other
                     }
@@ -2117,7 +2156,7 @@ public actor AssistantSession {
                 return .abort(o)
             case .failed(let e):
                 return .failed(e, seen: seen)
-            case .stopped:
+            case .stopped, .timedOut:
                 if let end = await sendDraft(force: true) { return .abort(end) }
                 if let raw = searchRaw { return .search(words: AssistantNatural.searchWords(raw)) }
                 return .done(seen: seen, emitted: emitted)
@@ -2125,6 +2164,7 @@ public actor AssistantSession {
                 if let end = await sendDraft(force: true) { return .abort(end) }
                 if gated {
                     let step = gate.finish()
+                    if step.abandon, let end = await sendAbandon() { return .abort(end) }
                     if let search = step.search {
                         return .search(words: AssistantNatural.searchWords(search.words))
                     }
@@ -2144,14 +2184,14 @@ public actor AssistantSession {
 
         /// Phase Sprecher. Vor dem Modell stehen dauerhaft: Rundenzeile `.general`/`naturalTalk` und die Bereichszeile der Quellen der
         /// Verlaufsbeiträge, die im Prompt stehen (leer möglich; in der Cloud sind es schon nur freigegebene Bereiche).
-        func speakerPhase() async -> SpeakerEnd {
+        /// Die Pflichtzeilen vor dem Sprecher (Rundenzeile `.general`/`naturalTalk`, Bereichszeile der Verlaufsbeiträge im Prompt) und
+        /// die leere Vorab-Anzeige der Quellen. `nil`: sie stehen, der Sprecher darf laufen; sonst das Ende des Laufs.
+        func landSpeakerRound(_ built: (prompt: String, history: [AssistantTurn])) async -> Outcome? {
             state.update {
                 $0.round = .general
                 $0.decided = true
                 $0.contextReason = .naturalTalk
             }
-            var built = AssistantPrompt.buildSpeaker(question: request.text, afterInterruption: request.afterInterruption,
-                                                     history: history, config: config)
             var round = AssistantJournalLine(.round, req: rid)
             round.round = .general
             round.reason = .naturalTalk
@@ -2159,10 +2199,17 @@ public actor AssistantSession {
             var lines = [round]
             if let areasLine = emitter.areasLine(built.history.flatMap { $0.sources.map(\.area) }, force: true) { lines.append(areasLine) }
             if audit != nil { await index.reach(rid, .beforeRound) }
-            if let end = ended(await emitter.land(all: lines)) { return .end(end) }
-            if Task.isCancelled { return .end(.cancelled) }
-            if let end = await ended(output.deliver(.sources(requestId: rid, generation: snapshot.generation, []))) { return .end(end) }
+            if let end = ended(await emitter.land(all: lines)) { return end }
+            if Task.isCancelled { return .cancelled }
+            if let end = await ended(output.deliver(.sources(requestId: rid, generation: snapshot.generation, []))) { return end }
             state.touch()
+            return nil
+        }
+
+        func speakerPhase() async -> SpeakerEnd {
+            var built = AssistantPrompt.buildSpeaker(question: request.text, afterInterruption: request.afterInterruption,
+                                                     history: history, config: config, pending: request.pending)
+            if let end = await landSpeakerRound(built) { return .end(end) }
 
             let instructions = AssistantPrompt.speakerInstructions(config: config, now: now, timeZone: .current)
             if let end = await progress(.speaker) { return .end(end) }
@@ -2176,7 +2223,8 @@ public actor AssistantSession {
                     return .search(words)
                 case .done(_, let emitted):
                     if Task.isCancelled { return .end(.cancelled) }
-                    if emitted == 0 {
+                    // Ein abgebrochener Auftrag darf ohne Satz enden: Der Nutzer wollte nichts mehr hören.
+                    if emitted == 0, !(abandoned && request.pending != nil) {
                         // Nichts Verwertbares: gar nichts (Fehler des Modells) oder nur Verworfenes (fester Satz).
                         if emitter.dropped == 0 { return .end(await finished(.modelFailed)) }
                         let s = AssistantNatural.notUnderstoodSentence
@@ -2188,12 +2236,131 @@ public actor AssistantSession {
                     if isOverflow(e), !retried, seen == 0 {
                         retried = true
                         built = AssistantPrompt.buildSpeaker(question: request.text, afterInterruption: request.afterInterruption,
-                                                             history: history, config: config, includeHistory: false)
+                                                             history: history, config: config, includeHistory: false,
+                                                             pending: request.pending)
                         continue
                     }
                     return .end(await finished(failure(of: e)))
                 }
             }
+        }
+
+        /// Phase Sprecher bei ERZWUNGENER Suche (direkter Inhaltsbezug, keine Bestandsfrage): Der Nutzer hört nicht stumm auf den Denker. Das
+        /// Protokoll ist das von „Sprecher dann Daten“ (Rundenzeile `.general`/`naturalTalk` und Bereichszeile vor dem Sprecher, danach die
+        /// Datenphase). Der Sprecher bekommt den Zusatz `AssistantPrompt.forcedBlock` (die Suche läuft schon, nur ein kurzer, konkreter
+        /// Satz) und liefert höchstens EINEN Satz: Er geht als Zwischensatz durch denselben Filter wie sonst (`isFillerInterim`) hinaus, alles
+        /// Weitere wird verworfen. Der Sprecher-Strom endet, sobald der erste Satz vollständig ist (oder an der Zeile `SUCHE:`, am
+        /// Stromende, an `ABBRUCH`, das hier keine Wirkung hat, oder nach `forcedSpeakerMs`); die Datenphase beginnt in jedem Fall. Ein
+        /// Fehler, ein leerer oder ein verworfener Satz des Sprechers ist kein Fehler der Anfrage: dann gibt es nur keinen Satz.
+        func forcedSpeakerPhase() async -> SpeakerEnd {
+            let built = AssistantPrompt.buildSpeaker(question: request.text, afterInterruption: request.afterInterruption,
+                                                     history: history, config: config, pending: request.pending, forced: true)
+            if let end = await landSpeakerRound(built) { return .end(end) }
+            let instructions = AssistantPrompt.speakerInstructions(config: config, now: now, timeZone: .current)
+            if let end = await progress(.speaker) { return .end(end) }
+            // Ein kurzer Satz: Der Strom wird ohnehin nach dem ersten Satz abgebrochen, die Obergrenze begrenzt nur den Fall ohne Satzende.
+            let stage = mailbox.pump(model, instructions: instructions, prompt: built.prompt, maxTokens: min(config.maxAnswerTokens, 120))
+            mailbox.deadline(stage: stage, ms: config.forcedSpeakerMs)
+            let result = await forcedSpeaker(stage)
+            mailbox.cancel(stage: stage)
+            switch result {
+            case .abort(let outcome): return .end(outcome)
+            case .search(let words): return .search(words)
+            }
+        }
+
+        enum ForcedEnd { case search(String), abort(Outcome) }
+
+        /// Liest den Strom des erzwungenen Sprechers (siehe `forcedSpeakerPhase`) und gibt die Suchwörter einer vollständigen Zeile `SUCHE:`
+        /// zurück (sonst leer: dann gilt der Fragetext).
+        func forcedSpeaker(_ stage: Int) async -> ForcedEnd {
+            var gate = AssistantNatural.SpeakerGate()
+            var splitter = AssistantSpeech.Splitter(sentencesOnly: true)
+            var tail = ""            // die letzten Zeichen, die in den Satztrenner gingen (offener Satz vor der Steuerzeile?)
+            var decided = false      // der erste Satz des Sprechers ist entschieden (ausgegeben oder verworfen)
+            var searchRaw: String?   // Rest der Zeile `SUCHE:` bisher
+            var searchComplete = false
+
+            /// Der erste Satz geht durch den Filter und hinaus; jeder weitere wird verworfen.
+            func adopt(_ list: [(text: String, speech: String, raw: String)]) async -> Outcome? {
+                for sentence in list {
+                    guard !decided else {
+                        emitter.drop(.template)
+                        continue
+                    }
+                    decided = true
+                    if AssistantNatural.isSystemOnly(sentence.text) || AssistantNatural.isProtocolLine(sentence.text)
+                        || AssistantNatural.isFillerInterim(sentence.text) {
+                        emitter.drop(.template)
+                        continue
+                    }
+                    if let end = await ended(await emitter.emit(sentence.text, speech: sentence.speech, status: .conversational, sources: [])) {
+                        return end
+                    }
+                    if emitter.reachedLimit { return await finished() }
+                }
+                return nil
+            }
+            /// Vor einer Steuerzeile gilt ein offener Satz (ohne Satzzeichen vor dem Zeilenumbruch) als vollständig.
+            func flushBeforeControlLine() async -> Outcome? {
+                guard !decided else { return nil }
+                var list: [(text: String, speech: String, raw: String)] = []
+                if !tail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !AssistantSpeech.Splitter.endsSentence(tail) {
+                    list += splitter.feed(".")
+                }
+                return await adopt(list + splitter.finish())
+            }
+            func piece(_ text: String) async -> Handling {
+                let step = gate.feed(text)
+                if !step.speech.isEmpty {
+                    tail = String((tail + step.speech).suffix(8))
+                    if let end = await adopt(splitter.feed(step.speech)) { return .abort(end) }
+                }
+                if step.abandon {
+                    // `ABBRUCH` hat in diesem Modus keine Wirkung (kein Ereignis); es beendet nur den Text des Sprechers.
+                    if let end = await flushBeforeControlLine() { return .abort(end) }
+                    return .stage
+                }
+                if let search = step.search {
+                    if let end = await flushBeforeControlLine() { return .abort(end) }
+                    searchRaw = search.words
+                    searchComplete = search.complete
+                    return search.complete ? .stage : .next
+                }
+                return decided ? .stage : .next
+            }
+
+            switch await consume(stage, piece) {
+            case .abort(let outcome):
+                return .abort(outcome)
+            case .failed(let error):
+                // Ein Fehler des Sprechers ist kein Fehler der Anfrage; nur ein Abbruch des Laufs endet sie.
+                if Task.isCancelled || error is CancellationError { return .abort(.cancelled) }
+            case .stopped:
+                break
+            case .timedOut:
+                // Nach der Frist gilt nur ein vollständiger Satz (ohne Satzzeichen am Ende wäre es ein halber Satz).
+                if !decided, let end = await adopt(splitter.finish()) { return .abort(end) }
+            case .streamEnd:
+                let step = gate.finish()
+                if let search = step.search {
+                    searchRaw = search.words
+                    searchComplete = true
+                }
+                if !step.speech.isEmpty {
+                    tail = String((tail + step.speech).suffix(8))
+                    if let end = await adopt(splitter.feed(step.speech)) { return .abort(end) }
+                }
+                if searchComplete {
+                    if let end = await flushBeforeControlLine() { return .abort(end) }
+                } else if !decided, let end = await adopt(splitter.finish()) {
+                    return .abort(end)
+                }
+            }
+            for _ in 0..<splitter.overlong { emitter.drop(.template) }
+            for _ in 0..<splitter.fragments { emitter.drop(.fragment) }
+            if Task.isCancelled { return .abort(.cancelled) }
+            return .search(searchComplete ? AssistantNatural.searchWords(searchRaw ?? "") : "")
         }
 
         /// Keine Auszüge: Fortschritt `found` mit leerer Liste, dann der feste Satz; kein Denker.
@@ -2226,12 +2393,12 @@ public actor AssistantSession {
             if audit != nil { await index.reach(rid, .beforeRound) }
             if let end = ended(await emitter.land(all: [round])) { return end }
             if Task.isCancelled { return .cancelled }
-            if let end = await progress(.searching(query: words.isEmpty ? request.text : words)) { return end }
+            if let end = await progress(.searching(query: words.isEmpty ? question : words)) { return end }
             if config.bridge {
                 let text = bridges.take()
                 if let end = await ended(await emitter.emit(text, speech: text, status: .announcement)) { return end }
             }
-            let passages = await knowledge.retrieve(question: AssistantNatural.searchText(words: words, question: request.text),
+            let passages = await knowledge.retrieve(question: AssistantNatural.searchText(words: words, question: question),
                                                     previous: history.last?.user, limit: config.naturalPassageLimit,
                                                     maxChars: AssistantPrompt.naturalPassageBudget(config: config), areas: areas)
             if Task.isCancelled { return .cancelled }
@@ -2246,7 +2413,7 @@ public actor AssistantSession {
             var retried = false
             var composing = false
             while true {
-                let built = AssistantPrompt.buildThinker(question: request.text, afterInterruption: request.afterInterruption,
+                let built = AssistantPrompt.buildThinker(question: question, afterInterruption: request.afterInterruption,
                                                          passages: passages, history: history, config: config, passageScale: scale,
                                                          includeHistory: includeHistory)
                 if built.used.isEmpty { return await foundNothing() }
@@ -2355,7 +2522,13 @@ public actor AssistantSession {
         state.touch()
 
         if AssistantKnowledge.isInventoryQuestion(request.text) { return await inventoryPhase() }
-        if AssistantOwnData.refers(request.text, mode: .question, titles: titles) { return await dataPhase(words: "") }
+        if AssistantOwnData.refers(request.text, mode: .question, titles: titles) {
+            // Erzwungene Suche: Der Sprecher sagt höchstens einen kurzen Satz, die Datenphase läuft in jedem Fall.
+            switch await forcedSpeakerPhase() {
+            case .end(let outcome): return outcome
+            case .search(let words): return await dataPhase(words: words)
+            }
+        }
         switch await speakerPhase() {
         case .end(let outcome): return outcome
         case .search(let words): return await dataPhase(words: words)

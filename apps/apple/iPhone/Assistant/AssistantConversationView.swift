@@ -160,6 +160,7 @@ struct AssistantConversationView: View {
                         Text("Wörtlich").tag(AssistantStyle.verbatim)
                     }
                     .pickerStyle(.inline)
+                    .labelsHidden()   // die Abschnittsüberschrift trägt die Beschriftung; sonst steht sie als eigene Zeile doppelt
                     .accessibilityIdentifier("assistantStylePicker")
                 } header: {
                     Text("Antwortstil")
@@ -172,6 +173,7 @@ struct AssistantConversationView: View {
                         ForEach(AssistantPauseSetting.allCases) { setting in Text(setting.title).tag(setting) }
                     }
                     .pickerStyle(.inline)
+                    .labelsHidden()   // die Abschnittsüberschrift trägt die Beschriftung; sonst steht sie als eigene Zeile doppelt
                     .accessibilityIdentifier("assistantPausePicker")
                 } header: {
                     Text("Sprechpause")
@@ -398,6 +400,7 @@ struct AssistantConversationView: View {
     private static let currentID = "aktuell"
     private static let liveLineID = "live"
     private static let thinkingID = "denken"
+    private static let backgroundID = "hintergrund"
     private static func turnID(_ index: Int) -> String { "beitrag-\(index)" }
 
     private var showsIntro: Bool {
@@ -423,6 +426,7 @@ struct AssistantConversationView: View {
                     }
                     if showsIntro { intro }
                     ForEach(Array(talk.turns.enumerated()), id: \.offset) { index, turn in turnView(turn).id(Self.turnID(index)) }
+                    backgroundExchange.id(Self.backgroundID)
                     currentExchange.id(Self.currentID)
                     thinkingRow.id(Self.thinkingID)
                     liveUserLine.id(Self.liveLineID)
@@ -439,6 +443,7 @@ struct AssistantConversationView: View {
                 if user != nil { thinkingOpen = false }
                 scrollToLastExchange(proxy, animated: true)
             }
+            .onChange(of: talk.backgroundTurn) { _, _ in scrollToLastExchange(proxy, animated: true) }
             .onChange(of: talk.thinking) { _, _ in
                 if thinkingOpen { jump(proxy, to: Self.thinkingID, anchor: .bottom, animated: false) }
             }
@@ -751,6 +756,18 @@ struct AssistantConversationView: View {
             RoundedRectangle(cornerRadius: 1.5).fill(VoicePalette.secondaryText).frame(width: 3)
         }
         .accessibilityElement(children: .combine)
+    }
+
+    /// Die Frage, deren Suche im Hintergrund läuft: wie ein abgeschlossener Beitrag (Nutzerblase, KI-Blase nur mit gesprochenem
+    /// Zwischensatz). Steht nach den fertigen Beiträgen und vor der laufenden Runde, weil sie zuerst gestellt wurde.
+    @ViewBuilder private var backgroundExchange: some View {
+        if let background = talk.backgroundTurn {
+            let parts = AssistantTurnPart.displayed(background.parts)
+            VStack(alignment: .leading, spacing: 10) {
+                userBubble(background.user)
+                if !parts.isEmpty { assistantBubble(parts: parts, interrupted: false) }
+            }
+        }
     }
 
     /// Die laufende Anfrage, deren Antwort noch nicht im Verlauf steht. Die laufende Antwort zeigt nur Einheiten mit vollständiger

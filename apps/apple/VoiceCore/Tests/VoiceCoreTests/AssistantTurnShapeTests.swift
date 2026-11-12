@@ -1064,4 +1064,88 @@ final class AssistantTurnShapeTests: XCTestCase {
         _ = p.feed(.silence(sinceMs: defaults.endCompleteMs, atMs: 4_000))
         XCTAssertEqual(p.feed(.partial(text: "Berlin", atMs: 6_000)), [.cancelAnswer(merge: true)], "neue Äußerung beginnt vorn")
     }
+
+    // MARK: Nachgereichte Antwort (detached): antwortet nicht auf die letzte Äußerung
+
+    /// Die Frage ist beantwortet und abgeschlossen; später kommt ein Suchergebnis als eigene Antwort (`detached`).
+    private func policyWithDetachedAnswer() -> DuplexTurnPolicy {
+        var p = policyWithRunningAnswer()
+        _ = feed(&p, .answerFinished(requestId: "r1"), .answerStarted(requestId: "d1", detached: true))
+        return p
+    }
+
+    func testDetachedWordBeforeFirstSoundCancelsWithoutMergeAndCommitsOnlyNewWords() {
+        var p = policyWithDetachedAnswer()
+        _ = p.feed(.speechStarted(atMs: 5_000))
+        XCTAssertEqual(p.feed(.partial(text: "Berlin", atMs: 5_200)), [.cancelAnswer(merge: false)], "nie ein Zusammenführen mit der alten Frage")
+        let end = p.feed(.silence(sinceMs: defaults.endOpenMs, atMs: 7_200))
+        XCTAssertEqual(end, [.commit(text: "Berlin", merged: false, afterInterruption: false)],
+                       "nur die neuen Wörter; nichts hat geklungen, also keine Unterbrechung")
+    }
+
+    func testDetachedTwoWordsWhileFirstUnitSoundsCancelsWithoutMergeAsInterruption() {
+        var p = policyWithDetachedAnswer()
+        _ = feed(&p, .unitStarted(atMs: 5_000), .sentenceSpoken(text: "Ich habe das Ergebnis der Suche gefunden.", startedAtMs: 5_000, endedAtMs: nil))
+        _ = p.feed(.speechStarted(atMs: 5_300))
+        XCTAssertEqual(p.feed(.partial(text: "Berlin heute", atMs: 5_700)), [.cancelAnswer(merge: false)],
+                       "schon vor dem ersten fertigen Satz kein Zusammenführen")
+        let end = p.feed(.silence(sinceMs: defaults.endOpenMs, atMs: 7_700))
+        XCTAssertEqual(end, [.commit(text: "Berlin heute", merged: false, afterInterruption: true)], "ein Teil wurde gehört")
+    }
+
+    func testDetachedSingleWordWhileUnitSoundsWaitsForUnitEndThenCancelsWithoutMerge() {
+        var p = policyWithDetachedAnswer()
+        _ = feed(&p, .unitStarted(atMs: 5_000), .sentenceSpoken(text: "Ich habe das Ergebnis der Suche gefunden.", startedAtMs: 5_000, endedAtMs: nil))
+        _ = feed(&p, .speechStarted(atMs: 5_300))
+        XCTAssertEqual(p.feed(.partial(text: "Berlin", atMs: 5_500)), [], "ein Wort bei klingender Einheit bleibt stehen")
+        XCTAssertEqual(p.feed(.unitEnded(atMs: 6_000)), [.cancelAnswer(merge: false)])
+        XCTAssertEqual(p.feed(.silence(sinceMs: defaults.endOpenMs, atMs: 7_700)),
+                       [.commit(text: "Berlin", merged: false, afterInterruption: true)])
+    }
+
+    func testDetachedWordInGapAfterHeardUnitCancelsWithoutMergeAsInterruption() {
+        var p = policyWithDetachedAnswer()
+        _ = feed(&p, .unitStarted(atMs: 5_000), .sentenceSpoken(text: "Einen Moment.", startedAtMs: 5_000, endedAtMs: nil), .unitEnded(atMs: 5_800))
+        _ = p.feed(.speechStarted(atMs: 6_000))
+        XCTAssertEqual(p.feed(.partial(text: "Berlin", atMs: 6_200)), [.cancelAnswer(merge: false)])
+        XCTAssertEqual(p.feed(.silence(sinceMs: defaults.endOpenMs, atMs: 8_200)),
+                       [.commit(text: "Berlin", merged: false, afterInterruption: true)])
+    }
+
+    func testDetachedStopWorksAsUsual() {
+        var p = policyWithDetachedAnswer()
+        _ = p.feed(.speechStarted(atMs: 5_000))
+        XCTAssertTrue(isStop(p.feed(.partial(text: "Stopp", atMs: 5_200))))
+        var q = policyWithDetachedAnswer()
+        _ = feed(&q, .unitStarted(atMs: 5_000), .sentenceSpoken(text: "Ich habe das Ergebnis der Suche gefunden.", startedAtMs: 5_000, endedAtMs: nil))
+        _ = q.feed(.speechStarted(atMs: 5_300))
+        XCTAssertTrue(isStop(q.feed(.partial(text: "Stopp", atMs: 5_500))))
+    }
+
+    func testDetachedHoldsAsUsualWhileUserSpeaksWithoutWords() {
+        var p = policyWithDetachedAnswer()
+        XCTAssertEqual(p.feed(.speechStarted(atMs: 5_000)), [.holdAnswer], "Zeile 1: Antwort wartet, solange der Nutzer spricht")
+        XCTAssertEqual(p.feed(.recognition(caughtUp: true, atMs: 5_100)), [])
+        XCTAssertEqual(p.feed(.silence(sinceMs: defaults.holdQuietMs, atMs: 5_800)), [.releaseAnswer])
+    }
+
+    func testDetachedFlagEndsWithTheAnswerAndNextNormalAnswerMergesAgain() {
+        var p = policyWithDetachedAnswer()
+        _ = p.feed(.answerFinished(requestId: "d1"))
+        _ = feed(&p, .speechStarted(atMs: 6_000), .partial(text: "Wie wird das Wetter übermorgen?", atMs: 6_300),
+                 .silence(sinceMs: defaults.endCompleteMs, atMs: 7_200), .answerStarted(requestId: "r2"))
+        _ = p.feed(.speechStarted(atMs: 7_400))
+        XCTAssertEqual(p.feed(.partial(text: "Berlin", atMs: 7_600)), [.cancelAnswer(merge: true)], "normale Antwort: Zusammenführen wie gehabt")
+    }
+
+    func testDetachedDisplacedBeforeFirstSoundDoesNotCarryInterruptionIntoNextAnswer() {
+        var p = policyWithDetachedAnswer()
+        _ = feed(&p, .speechStarted(atMs: 5_000), .partial(text: "Berlin", atMs: 5_200))
+        _ = p.feed(.silence(sinceMs: defaults.endOpenMs, atMs: 7_200))
+        _ = p.feed(.answerStarted(requestId: "r3"))
+        _ = feed(&p, .speechStarted(atMs: 8_000), .partial(text: "Hamburg", atMs: 8_200))
+        XCTAssertEqual(p.feed(.silence(sinceMs: defaults.endOpenMs, atMs: 10_200)),
+                       [.commit(text: "Berlin Hamburg", merged: true, afterInterruption: false)],
+                       "normale Antwort der Frage „Berlin“: Zusammenführen, kein Rest der nachgereichten Antwort")
+    }
 }

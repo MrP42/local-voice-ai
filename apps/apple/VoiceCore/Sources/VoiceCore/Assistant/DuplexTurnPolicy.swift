@@ -38,6 +38,10 @@ import Foundation
 //     Ergebnissen ist verworfen, Text „alte Frage + Fortsetzung“), danach `cancelAnswer(merge: false)` (Gesprochenes bleibt als
 //     „unterbrochen“, neue Äußerung mit Unterbrechungshinweis). Die Wörter werden genau einmal übernommen; weitere `partial` derselben
 //     Äußerung vervollständigen nur die neue Äußerung. Neue Ausgabe erst nach dem Äußerungsende (`commit`).
+//   · NACHGEREICHTE ANTWORT (`answerStarted(…, detached: true)`): wie jede Antwort (Zurückhalten, Stopp, Echo, Handbedienung, Matrix), aber
+//     jede FORTSETZUNG ist `cancelAnswer(merge: false)`, auch vor dem ersten fertigen Satz; das spätere `commit` enthält nur die neuen
+//     Wörter (`merged: false`), `afterInterruption` nur, wenn mindestens eine Einheit dieser Antwort geklungen hat (vor dem ersten Ton
+//     verdrängt: false). Mit `answerFinished` (oder Abbruch) endet das; die nächste `answerStarted` ohne `detached` gilt wie bisher.
 //   Matrix (jede Zeile hat einen Ausgang):
 //   1. Keine Einheit klingt (vor der ersten und in jeder Lücke), 0 relevante Wörter: `speechStarted` liefert `holdAnswer`, außer nach
 //      `manualRelease` (Zeile 7). `holdAnswer` heißt für die Steuerung: nichts Neues starten UND übergebenes, noch nicht klingendes
@@ -93,7 +97,9 @@ public struct DuplexTurnPolicy: Sendable {
         /// des erkannten Bereichs; nil, wenn die Erkennung keine liefert.
         case partial(text: String, atMs: Int, audioMs: Int? = nil)
         case silence(sinceMs: Int, atMs: Int)        // Dauer der aktuellen Stille
-        case answerStarted(requestId: String)        // Modell läuft
+        /// Modell läuft. `detached`: nachgereichte Antwort, die nicht auf die letzte festgeschriebene Äußerung antwortet (z. B. ein fertiges
+        /// Suchergebnis): Nutzersprache wird nie mit der letzten Äußerung zusammengeführt (siehe Kopfkommentar).
+        case answerStarted(requestId: String, detached: Bool = false)
         case sentenceSpoken(text: String, startedAtMs: Int, endedAtMs: Int?)
         case unitStarted(atMs: Int)                  // eine Einheit der Antwort (auch Ansage/Überbrückung) klingt jetzt
         case unitEnded(atMs: Int)                    // sie klingt nicht mehr (fertig oder abgebrochen)
@@ -154,6 +160,8 @@ public struct DuplexTurnPolicy: Sendable {
     private var continuing = false           // die Äußerung setzt eine verworfene Antwort fort: kein Echo-Aussortieren mehr
     private var speculated: String?          // gefaltete Wörter der Vorarbeit
     private var answerActive = false
+    private var detached = false             // nachgereichte Antwort: nie mit der letzten Äußerung zusammenführen
+    private var unitHeard = false            // mindestens eine Einheit dieser Antwort hat geklungen
     private var awaitingNewAnswer = false    // die Antwort ist beendet; Meldungen zu ihr wirken nicht mehr, bis `answerStarted` kommt
     private var answerUser = ""
     private var requestId: String?
@@ -184,6 +192,8 @@ public struct DuplexTurnPolicy: Sendable {
         continuing = false
         speculated = nil
         answerActive = false
+        detached = false
+        unitHeard = false
         awaitingNewAnswer = false
         answerUser = ""
         requestId = nil
@@ -219,10 +229,12 @@ public struct DuplexTurnPolicy: Sendable {
         case .silence(let since, let atMs):
             noteSilence(since: since, atMs: atMs)
             return silence(since: since, atMs: atMs) + holdExpiry(atMs: atMs)
-        case .answerStarted(let id):
+        case .answerStarted(let id, let isDetached):
             requestId = id
             firstSentenceDone = false
             awaitingNewAnswer = false
+            detached = isDetached
+            unitHeard = false
             if speculated == nil { answerActive = true }
             return []
         case .sentenceSpoken(let text, let start, let end):
@@ -231,6 +243,7 @@ public struct DuplexTurnPolicy: Sendable {
         case .unitStarted:
             guard answerActive, !awaitingNewAnswer else { return [] }
             unitSounding = true
+            unitHeard = true
             return holdEndedBySound()
         case .unitEnded(let atMs):
             guard answerActive, !awaitingNewAnswer else { return [] }
@@ -254,6 +267,8 @@ public struct DuplexTurnPolicy: Sendable {
             if id == requestId {
                 requestId = nil
                 answerActive = false
+                detached = false
+                unitHeard = false
                 awaitingNewAnswer = true
                 unitSounding = false
                 holding = false
@@ -427,8 +442,15 @@ public struct DuplexTurnPolicy: Sendable {
     /// Nutzerrede unterbricht die Antwort: vor dem ersten fertig gesprochenen Satz wird die Äußerung ergänzt (Antwort
     /// verworfen, beide Äußerungen werden eine), danach ist es eine Unterbrechung.
     private mutating func takeOverFromAnswer() -> Action {
+        let wasDetached = detached
+        let heard = unitHeard
         stopAnswer()
         continuing = true
+        if wasDetached {
+            // Nachgereichte Antwort: nie zusammenführen; Unterbrechung nur, wenn schon etwas geklungen hat.
+            interrupted = heard
+            return .cancelAnswer(merge: false)
+        }
         if firstSentenceDone {
             interrupted = true
             return .cancelAnswer(merge: false)
@@ -440,6 +462,8 @@ public struct DuplexTurnPolicy: Sendable {
     /// Die Antwort ist beendet (Stopp, Verwerfen, Fortsetzung): Meldungen zu ihr wirken nicht mehr, bis `answerStarted` kommt.
     private mutating func stopAnswer() {
         answerActive = false
+        detached = false
+        unitHeard = false
         awaitingNewAnswer = true
         requestId = nil
         unitSounding = false
@@ -489,6 +513,8 @@ public struct DuplexTurnPolicy: Sendable {
         speculated = nil
         pendingMerge = nil
         interrupted = false
+        detached = false
+        unitHeard = false
         answerActive = true
         answerUser = text
         firstSentenceDone = false

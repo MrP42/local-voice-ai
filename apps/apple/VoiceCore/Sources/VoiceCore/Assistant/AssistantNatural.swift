@@ -11,6 +11,8 @@ import Foundation
 public enum AssistantNatural {
     /// Beginn der einen Zeile, mit der der Sprecher eine Suche verlangt.
     public static let searchMarker = "SUCHE:"
+    /// Die eine Zeile, mit der der Sprecher einen offenen Suchauftrag (`AssistantRequest.pending`) abbricht. Ohne Doppelpunkt, als ganze Zeile.
+    public static let abandonMarker = "ABBRUCH"
 
     /// Überbrückungssätze, reihum. Nur gesprochen (`.announcement`): nicht im Antworttext, nicht im Verlauf. Kein Ansage- oder
     /// Überbrückungstext enthält ein Stoppwort (`stoppWords`): Das Mikrofon könnte die eigene Ausgabe sonst als Stoppbefehl hören.
@@ -57,6 +59,9 @@ public enum AssistantNatural {
     /// Stromanfang steht (dann ist sie keine Suche, sondern ein Satz des Modells, den niemand hören soll).
     static func isProtocolLine(_ sentence: String) -> Bool {
         let edge = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"'„“”‚‘’»«›‹*_`"))
+        // Ein Satz nur aus dem Wort ABBRUCH (Großbuchstaben, ohne oder mit Punkt) ist die Steuerzeile an einer Stelle, an der sie nicht
+        // gilt (nicht am Zeilenende): nie sprechen.
+        if sentence.trimmingCharacters(in: edge.union(CharacterSet(charactersIn: ".!"))) == abandonMarker { return true }
         let trimmed = sentence.trimmingCharacters(in: edge).lowercased()
         guard trimmed.hasPrefix("suche") else { return false }
         let rest = trimmed.dropFirst(5).drop(while: { $0 == " " || $0 == "\t" || $0 == "\u{00A0}" })
@@ -70,6 +75,14 @@ public enum AssistantNatural {
             let title = p.title.trimmingCharacters(in: .whitespacesAndNewlines)
             return !title.isEmpty && seen.insert(title).inserted ? title : nil
         }
+    }
+
+    /// Die Frage der Datenphase (für Abruf und Denker). Ohne offenen Suchauftrag die Äußerung selbst; mit ihm „<Frage des Auftrags>
+    /// <Äußerung>“, beide in dieser Reihenfolge (die Frage des Auftrags einzeilig und gekürzt, die Äußerung ganz).
+    static func dataQuestion(text: String, pending: AssistantPendingSearch?) -> String {
+        guard let pending else { return text }
+        let earlier = AssistantPrompt.oneLine(pending.question, limit: AssistantPrompt.maxPendingQuestionChars)
+        return earlier.isEmpty ? text : earlier + " " + text
     }
 
     /// Suchtext des Abrufs: Suchwörter des Sprechers + Leerzeichen + Frage (ohne Suchwörter: die Frage).
@@ -93,15 +106,21 @@ public enum AssistantNatural {
     /// - nur mit Text: direkte Antwort;
     /// - mit einem kurzen Zwischensatz und DANACH `SUCHE: <Suchwörter>`: der Satz geht sofort hinaus (nach der Prüfung
     ///   `isFillerInterim`), danach läuft die Suche;
-    /// - nur mit `SUCHE: <Suchwörter>`: Suche ohne Satz.
+    /// - nur mit `SUCHE: <Suchwörter>`: Suche ohne Satz;
+    /// - (mit offenem Suchauftrag) mit Text und DANACH der Zeile `ABBRUCH`: der Text ist eine normale direkte Antwort, der Auftrag ist
+    ///   abgebrochen (`Step.abandon`).
     /// Die Steuerzeile beginnt (1) am Stromanfang oder nach einem Zeilenumbruch: führende Leerzeichen, Zeilenumbrüche, Anführungszeichen
-    /// und Markdown-Zeichen werden übersprungen, Groß- und Kleinschreibung egal, auch „Suche :“; oder (2) im Zeileninneren NACH einem
-    /// Satzende (. ! ? …) und Leerraum, dort NUR in Großbuchstaben („SUCHE:“), damit ein normales „suche:“ im Text keine Suche auslöst.
-    /// Der Satz davor ist der Zwischensatz. „SUCHE:“ mitten im Satz ohne vorangehendes Satzende bleibt Text (der Satz mit diesem Anfang
-    /// wird später als Protokollzeile verworfen, `AssistantNatural.isProtocolLine`). Ob ein Anfang eine Steuerzeile ist, steht erst nach
-    /// einigen Zeichen fest; bis dahin werden diese wenigen Zeichen zurückgehalten (nur an solchen Stellen, und nur solange sie noch ein
-    /// Anfang von „SUCHE:“ sein könnten). Ist es keine Steuerzeile, geht der Text unverändert hinaus (auch das Übersprungene). Die
-    /// Steuerzeile selbst geht NIE als Text hinaus: Ihr Rest bis zum Zeilenende (oder einer Obergrenze) sind die Suchwörter.
+    /// und Markdown-Zeichen werden übersprungen, Groß- und Kleinschreibung egal, bei `SUCHE:` auch „Suche :“; oder (2) im Zeileninneren
+    /// NACH einem Satzende (. ! ? …) und Leerraum, dort NUR in Großbuchstaben („SUCHE:“, „ABBRUCH“), damit ein normales „suche:“ im Text
+    /// keine Suche auslöst. Der Satz davor ist der Zwischensatz bzw. die direkte Antwort. „SUCHE:“ mitten im Satz ohne vorangehendes
+    /// Satzende bleibt Text (der Satz mit diesem Anfang wird später als Protokollzeile verworfen, `AssistantNatural.isProtocolLine`).
+    /// `ABBRUCH` gilt nur als GANZE Zeile bzw. als letztes Wort der Zeile (danach höchstens Leerraum, Punkt, Ausrufezeichen und
+    /// Markdown-Zeichen, dann Zeilenende oder Stromende), ohne Doppelpunkt; es steht erst am Zeilenende fest. Ob ein Anfang eine
+    /// Steuerzeile ist, steht erst nach einigen Zeichen fest; bis dahin werden diese Zeichen zurückgehalten (nur an solchen Stellen, und
+    /// nur solange sie noch ein Anfang einer Steuerzeile sein könnten). Ist es keine Steuerzeile, geht der Text unverändert hinaus
+    /// (auch das Übersprungene). Die Steuerzeile selbst geht NIE als Text hinaus: Bei `SUCHE:` sind ihr Rest bis zum Zeilenende (oder
+    /// einer Obergrenze) die Suchwörter. Die erste erkannte Steuerzeile gilt: Nach `ABBRUCH` wird alles weitere ignoriert (auch ein
+    /// späteres `SUCHE:`), und nach `SUCHE:` zählt keine spätere Zeile.
     struct SpeakerGate: Sendable {
         struct Search: Equatable {
             /// Der Rest der Steuerzeile bisher (roh, noch nicht bereinigt: `AssistantNatural.searchWords`).
@@ -115,24 +134,31 @@ public enum AssistantNatural {
             var speech = ""
             /// Gesetzt, sobald eine Steuerzeile erkannt ist; danach bei jedem Aufruf mit dem Stand der Suchwörter.
             var search: Search?
+            /// Die Zeile `ABBRUCH` ist vollständig erkannt (in genau einem Aufruf; danach ist das Tor still).
+            var abandon = false
         }
 
-        private enum Probe { case maybe, no, yes(rest: String) }
+        private enum Probe { case maybe, no, search(rest: String), abandon }
+        private enum Match { case partial, mismatch, full(end: Int) }
 
         private var probing = true       // an einer Stelle, an der die Steuerzeile beginnen könnte (Zeilenanfang oder nach einem Satzende)
         private var strict = false        // im Zeileninneren: nur Großbuchstaben
         private var afterEnd = false      // das letzte Zeichen des Textes war ein Satzende
         private var afterEndSpace = false // und danach kam Leerraum (kein Zeilenumbruch)
         private var searching = false
+        private var abandoned = false
         private var held = ""
         private var words = ""
 
         /// Zeichen, die vor dem Wort „SUCHE“ stehen dürfen (zusätzlich zu Leerraum und Zeilenumbrüchen).
         private static let leading: Set<Character> = ["\"", "'", "„", "“", "”", "‚", "‘", "’", "»", "«", "›", "‹", "*", "_", "`"]
+        /// Zeichen, die hinter „ABBRUCH“ stehen dürfen (zusätzlich zu Leerraum).
+        private static let trailing: Set<Character> = leading.union([".", "!"])
         private static let terminators: Set<Character> = [".", "!", "?", "…"]
 
         mutating func feed(_ piece: String) -> Step {
             var step = Step()
+            if abandoned { return step }
             for ch in piece {
                 if searching {
                     words.append(ch)
@@ -172,22 +198,35 @@ public enum AssistantNatural {
                     strict = false
                     afterEnd = Self.terminators.contains(ch)
                     afterEndSpace = false
-                case .yes(let rest):
+                case .search(let rest):
                     searching = true
                     words = rest
                     held = ""
                     probing = false
+                case .abandon:
+                    abandoned = true
+                    held = ""
+                    step.abandon = true
+                    return step
                 }
             }
             if searching { step.search = current() }
             return step
         }
 
-        /// Stromende. Was noch zurückgehalten wird, war keine Steuerzeile (auch ein bloßes „Suche“ am Ende) und geht als Text hinaus.
+        /// Stromende. Was noch zurückgehalten wird, war keine Steuerzeile (auch ein bloßes „Suche“ am Ende) und geht als Text hinaus;
+        /// ein zurückgehaltenes „ABBRUCH“ ohne Zeilenumbruch am Stromende ist die Zeile (das Stromende ist das Zeilenende).
         mutating func finish() -> Step {
             var step = Step()
+            if abandoned { return step }
             if searching {
                 step.search = Search(words: words, complete: true)
+                return step
+            }
+            if !held.isEmpty, case .abandon = Self.probe(held + "\n", strict: strict) {
+                abandoned = true
+                held = ""
+                step.abandon = true
                 return step
             }
             step.speech = held
@@ -199,21 +238,53 @@ public enum AssistantNatural {
             Search(words: words, complete: words.contains(where: \.isNewline) || words.count > 2 * AssistantNatural.maxSearchChars)
         }
 
+        /// Stimmt `chars` ab `i` Zeichen für Zeichen mit `word` überein? (`strict`: genau, sonst ohne Rücksicht auf Groß-/Kleinschreibung.)
+        private static func match(_ word: String, _ chars: [Character], from i: Int, strict: Bool) -> Match {
+            var n = 0
+            for expected in word {
+                guard i + n < chars.count else { return .partial }
+                let actual = chars[i + n]
+                let same = strict ? actual == expected : actual.lowercased() == expected.lowercased()
+                if !same { return .mismatch }
+                n += 1
+            }
+            return .full(end: i + n)
+        }
+
         private static func probe(_ text: String, strict: Bool) -> Probe {
             let chars = Array(text)
             var i = 0
             while i < chars.count, leading.contains(chars[i]) || chars[i].isWhitespace { i += 1 }
-            let marker: [String] = (strict ? "SUCHE" : "suche").map { String($0) }
-            for (offset, expected) in marker.enumerated() {
-                guard i + offset < chars.count else { return .maybe }
-                let actual = strict ? String(chars[i + offset]) : chars[i + offset].lowercased()
-                if actual != expected { return .no }
-            }
-            var k = i + 5
+            guard i < chars.count else { return .maybe }
+            let search = match("SUCHE", chars, from: i, strict: strict)
+            let abandon = match("ABBRUCH", chars, from: i, strict: strict)
+            if case .full(let end) = search { return probeSearch(chars, from: end) }
+            if case .full(let end) = abandon { return probeAbandon(chars, from: end) }
+            if case .partial = search { return .maybe }
+            if case .partial = abandon { return .maybe }
+            return .no
+        }
+
+        /// „SUCHE“ ist vollständig: optional Leerzeichen, dann der Doppelpunkt.
+        private static func probeSearch(_ chars: [Character], from start: Int) -> Probe {
+            var k = start
             while k < chars.count, chars[k] == " " || chars[k] == "\t" || chars[k] == "\u{00A0}" { k += 1 }
             guard k < chars.count else { return .maybe }
             guard chars[k] == ":" || chars[k] == "\u{FF1A}" else { return .no }
-            return .yes(rest: String(chars[(k + 1)...]))
+            return .search(rest: String(chars[(k + 1)...]))
+        }
+
+        /// „ABBRUCH“ ist vollständig: danach nur Leerraum und Schlusszeichen bis zum Zeilenende. Das Zeilenende steht erst mit dem
+        /// Zeilenumbruch fest (oder mit dem Stromende, `finish`).
+        private static func probeAbandon(_ chars: [Character], from start: Int) -> Probe {
+            var k = start
+            while k < chars.count {
+                let c = chars[k]
+                if c.isNewline { return .abandon }
+                guard c.isWhitespace || trailing.contains(c) else { return .no }
+                k += 1
+            }
+            return .maybe
         }
     }
 
@@ -289,7 +360,9 @@ final class AssistantBridgeRotation: @unchecked Sendable {
 /// - Sprecher dann Daten: wie oben (die Einheit des Sprechers ist hier der Zwischensatz vor der Steuerzeile, höchstens einer), danach
 ///   `round` (`.data`, `naturalSearch`) mit den zulässigen Abrufbereichen in der Zeile selbst, der Überbrückungssatz (nur hier, nur mit
 ///   `bridge`, danach der Abruf), die Bereichszeile der verwendeten Auszüge, dann `summarized` (oder ein fester Satz);
-/// - nur Daten (direkter Inhaltsbezug): nur die zweite Phase. Eine Bestandsfrage ist eine Datenphase mit Grund `inventory`.
+/// - nur Daten (ohne Sprecher): nur die zweite Phase. Das gilt für eine Bestandsfrage (Datenphase mit Grund `inventory`); bei direktem
+///   Inhaltsbezug läuft heute der Sprecher der erzwungenen Suche vor der Datenphase (ein Satz höchstens, die Zeilenfolge ist die von
+///   „Sprecher dann Daten“).
 /// Ansagen für eine langsame Antwort (`fillerFirstSentence`, `fillerSecondSentence`, nur mit `fillers`) können in jeder Phase vor der
 /// ersten Antworteinheit dieser Phase stehen. Eine Anfrage, die vor der Rundenwahl endet, hat keine Rundenzeile und keine Einheit.
 enum AssistantProtocolOrder {
