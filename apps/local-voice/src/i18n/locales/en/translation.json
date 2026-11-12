@@ -2998,6 +2998,13 @@
       }
     },
     "llm": {
+        "unavailable": {
+          "short": "not installed",
+          "activeBadge": "chosen · not available here",
+          "activeHint": "This subscription's CLI is not installed on this PC. The app uses another released model until the CLI is available.",
+          "fallback": "Not available on this PC (CLI not installed). The app uses {{model}} instead.",
+          "noFallback": "Not available on this PC (CLI not installed). Release a local model so the app works without installing anything."
+        },
         "cliStatus": {
           "loggedIn": "Signed in.",
           "loggedOut": "Not signed in. Signing in opens a window and then your browser.",

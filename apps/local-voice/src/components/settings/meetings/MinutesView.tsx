@@ -230,11 +230,20 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   }, [meetingId, loadLatest]);
 
   const errorText = useCallback(
-    (raw: string) =>
-      t(`meetings.minutes.errors.${minutesErrorCode(raw)}`, {
-        error: minutesErrorDetail(raw),
+    (raw: string) => {
+      const code = minutesErrorCode(raw);
+      const detail = minutesErrorDetail(raw);
+      const text = t(`meetings.minutes.errors.${code}`, {
+        error: detail,
         defaultValue: raw,
-      }),
+      });
+      // Speichermangel: die gemessenen Zahlen (frei, gebraucht, Reserve)
+      // gehören dazu, sonst ist die Ursache auf fremden Rechnern nicht
+      // nachvollziehbar.
+      return code === "memory_low" && detail !== raw && /\d/.test(detail)
+        ? `${text} (${detail})`
+        : text;
+    },
     [t],
   );
 
