@@ -72,7 +72,7 @@ const install = (page: Page, theme: "light" | "dark") =>
     w.__meetings = [
       {
         id: "m1",
-        title: "Komm.ONE",
+        title: "Projektrunde",
         status: "ready",
         source: "import",
         started_at: 1793743020,
@@ -123,7 +123,7 @@ const install = (page: Page, theme: "light" | "dark") =>
     const minutesBody = () => {
       // Wie das Backend beim Lesen: alte Bezeichnungen -> aktuelle Namen.
       let body =
-        "# Protokoll: Komm.ONE\n\n**Datum:** 2026-11-03 · **Dauer:** 1:30 · **Vorlage:** Allgemein\n\n## Zusammenfassung\n\nPerson 2 stellte die laufenden Projekte vor.\n\n## Sprecher & Redeanteile\n\n| Sprecher | Redezeit | Anteil |\n|---|---|---|\n| Person 1 | 00:10 | 11,1 % |\n| Aufnahme | 00:04 | 4,4 % |\n| Person 2 | 01:16 | 84,4 % |\n\n## Offene Fragen\n\n- Wer übernimmt die Kosten?\n";
+        "# Protokoll: Projektrunde\n\n**Datum:** 2026-11-03 · **Dauer:** 1:30 · **Vorlage:** Allgemein\n\n## Zusammenfassung\n\nPerson 2 stellte die laufenden Projekte vor.\n\n## Sprecher & Redeanteile\n\n| Sprecher | Redezeit | Anteil |\n|---|---|---|\n| Person 1 | 00:10 | 11,1 % |\n| Aufnahme | 00:04 | 4,4 % |\n| Person 2 | 01:16 | 84,4 % |\n\n## Offene Fragen\n\n- Wer übernimmt die Kosten?\n";
       for (const [key, name] of Object.entries(w.__names)) {
         const index = Number(key.split(":")[1]);
         const old = defaultLabel(index);
@@ -331,7 +331,7 @@ const open = async (
   await page.getByRole("button", { name: "Aufnahmen", exact: true }).click();
   if (width < 600)
     await page.getByRole("button", { name: "Projekte öffnen" }).click();
-  await page.getByText("Komm.ONE", { exact: true }).first().click();
+  await page.getByText("Projektrunde", { exact: true }).first().click();
   await page.getByRole("tab", { name: "Protokoll", exact: true }).click();
   await expect(page.getByTestId("minutes-speaker-section")).toBeVisible();
 };
