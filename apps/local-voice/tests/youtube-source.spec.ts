@@ -720,9 +720,11 @@ test.describe("Beim Abspielen mitschreiben", () => {
     await pickMeeting(page, YT_MEETING_ID);
     await startCapture(page);
     await expect.poll(async () => (await calls(page, START)).length).toBe(1);
+    // Mit einer Vorgangs-Id (lva#538): ueber sie meint ein Abbruch genau diesen Start.
     expect((await calls(page, START))[0].args).toEqual({
       meetingId: YT_MEETING_ID,
       consentConfirmed: true,
+      opId: expect.stringMatching(/^.{8,}$/),
     });
     // Der Dialog geht zu, der Knopf weicht dem Hinweis "es wird mitgeschrieben".
     await expect(captureDialog(page)).toHaveCount(0);
@@ -886,11 +888,21 @@ test.describe("Beim Abspielen mitschreiben", () => {
       return dialog;
     };
 
-    /** Der Abbruch ist wirksam: ein Stopp, Dialog zu, keine Fehlermeldung, wie vorher. */
+    /**
+     * Der Abbruch ist wirksam: genau ein `meetings_cancel_start` mit der Vorgangs-Id des
+     * Starts (kein bloßer Stopp, der den Start verfehlen koennte), Dialog zu, keine
+     * Fehlermeldung, der Eintrag wie vorher.
+     */
     const expectCancelled = async (page: Page) => {
       await expect
-        .poll(async () => (await calls(page, "meetings_stop")).length)
+        .poll(async () => (await calls(page, "meetings_cancel_start")).length)
         .toBe(1);
+      const start = (await calls(page, START))[0];
+      const cancel = (await calls(page, "meetings_cancel_start"))[0];
+      expect(typeof start.args.opId).toBe("string");
+      expect((start.args.opId as string).length).toBeGreaterThan(0);
+      expect(cancel.args.opId).toBe(start.args.opId);
+      expect(await calls(page, "meetings_stop")).toHaveLength(0);
       await expect(captureDialog(page)).toHaveCount(0);
       await expect(page.getByTestId("yt-message")).toHaveCount(0);
       await expect(page.getByTestId("yt-capture-running")).toHaveCount(0);
@@ -902,7 +914,7 @@ test.describe("Beim Abspielen mitschreiben", () => {
       ).toBeVisible();
     };
 
-    test("„Start abbrechen“ bricht den Start ab (ein Stopp)", async ({
+    test("„Start abbrechen“ bricht genau diesen Start ab (über seine Vorgangs-Id)", async ({
       page,
     }) => {
       const dialog = await hangingStart(page);
@@ -933,12 +945,37 @@ test.describe("Beim Abspielen mitschreiben", () => {
       await expectCancelled(page);
     });
 
-    test("mehrfaches Abbrechen schickt nur einen Stopp", async ({ page }) => {
+    test("mehrfaches Abbrechen schickt nur einen Abbruch", async ({ page }) => {
       const dialog = await hangingStart(page);
       await dialog.getByTestId("yt-capture-cancel").click();
       await page.keyboard.press("Escape");
       await expectCancelled(page);
-      expect(await calls(page, "meetings_stop")).toHaveLength(1);
+      expect(await calls(page, "meetings_cancel_start")).toHaveLength(1);
+    });
+
+    // Der Start haengt noch im Treiber, der Abbruch kommt mit `start_busy` zurueck: die
+    // Oberflaeche sagt es, bleibt offen und laesst einen neuen Versuch zu (kein stiller
+    // Erfolg, kein haengendes „Wird abgebrochen“).
+    test("ein Abbruch, der nicht durchkommt, wird gemeldet und kann wiederholt werden", async ({
+      page,
+    }) => {
+      await setup(page, {
+        empty: true,
+        startHold: true,
+        cancelErrorOnce: "start_busy",
+      });
+      await pickMeeting(page, YT_MEETING_ID);
+      await startCapture(page);
+      await expect.poll(async () => (await calls(page, START)).length).toBe(1);
+      const dialog = captureDialog(page);
+      await dialog.getByTestId("yt-capture-cancel").click();
+      await expect(page.getByTestId("yt-message")).toHaveText(
+        "Der Start der Aufnahme läuft noch. Bitte gleich noch einmal versuchen.",
+      );
+      await expect(dialog).toBeVisible();
+      await dialog.getByTestId("yt-capture-cancel").click();
+      await expect(captureDialog(page)).toHaveCount(0);
+      expect(await calls(page, "meetings_cancel_start")).toHaveLength(2);
     });
   });
 

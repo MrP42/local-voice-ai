@@ -46,6 +46,10 @@
 //! Markers), wenn die Aufnahme eines Kanals kuerzer ist als dessen Live-Transkript
 //! (`audio_shorter_than_transcript`): "nicht leer" allein belegt keine vollstaendige
 //! Abdeckung. Gemeinsamer Pfad: Live-Aufnahmen und Mitschnitt profitieren gleich.
+//! Fail-closed: auch ein Kanal mit Live-Saetzen, dessen Spur fehlt oder nicht lesbar ist,
+//! und ein Lesefehler der Metadaten (Marker unbekannt) lassen das Live-Transkript stehen.
+//! Ein Schreibfehler, den der Recorder im selben Lauf kennt, sperrt den Ersatz unabhaengig vom
+//! gespeicherten Marker (`Keep(AudioIncomplete)` im Plan, `recorder.rs`).
 //!
 //! Alles, was Tauri, das Modell oder die Hardware braucht, steckt hinter
 //! [`FinalEnv`]; die Ablaeufe selbst sind ohne Geraet und ohne Modell testbar.
@@ -962,21 +966,34 @@ fn catch_up(
     CatchUp::Finished
 }
 
-/// lva#538: ist die Aufnahme eines Kanals deutlich kuerzer als dessen Live-Transkript? Dann
-/// fehlt ihr ein Teil (WAV-Schreibfehler), und ein Enddurchlauf ueber sie verkuerzte das
-/// Transkript. Ein Kanal ohne lesbare Aufnahme zaehlt hier nicht (das ist `NoAudio`).
+/// lva#538: belegt die Aufnahme, dass sie das Live-Transkript VOLLSTAENDIG abdeckt? Nur dann darf
+/// der Enddurchlauf es aus ihr ersetzen. Fail-closed, je Kanal mit Live-Saetzen:
+/// - Der Kanal hat keine Spur (die Datei fehlt): der Ersatz aus der anderen Spur liesse seine
+///   Saetze verschwinden. Unvollstaendig.
+/// - Die Spur ist nicht lesbar (kaputter Kopf): nichts belegt ihre Laenge. Unvollstaendig.
+/// - Die Spur ist kuerzer als das Transkript des Kanals (mehr als [`COVERAGE_SLACK_MS`], Zeitachse
+///   der Kanaele, Rundung des WAV-Kopfes): ein Schreibfehler hat ihr einen Teil genommen.
+///
+/// Ein Kanal ohne Live-Saetze zaehlt nicht (nichts, was ein Ersatz kuerzen koennte).
 fn audio_shorter_than_transcript(tracks: &[Track], segments: &[StoredSegment]) -> bool {
-    tracks.iter().any(|track| {
-        let Some(audio_ms) = wav_duration_ms(&track.path) else {
-            return false;
+    let mut said: Vec<(u8, u64)> = Vec::new();
+    for segment in segments {
+        match said
+            .iter_mut()
+            .find(|(channel, _)| *channel == segment.channel)
+        {
+            Some((_, end)) => *end = (*end).max(segment.end_ms),
+            None => said.push((segment.channel, segment.end_ms)),
+        }
+    }
+    said.into_iter().any(|(channel, said_ms)| {
+        let Some(track) = tracks.iter().find(|t| t.channel == channel) else {
+            return true;
         };
-        let said_ms = segments
-            .iter()
-            .filter(|s| s.channel == track.channel)
-            .map(|s| s.end_ms)
-            .max()
-            .unwrap_or(0);
-        said_ms > audio_ms.saturating_add(COVERAGE_SLACK_MS)
+        match wav_duration_ms(&track.path) {
+            None => true,
+            Some(audio_ms) => said_ms > audio_ms.saturating_add(COVERAGE_SLACK_MS),
+        }
     })
 }
 
@@ -991,7 +1008,18 @@ fn final_pass(
     report: &mut FinalReport,
     turns: Option<&TurnSet>,
 ) -> Result<u32, KeepReason> {
-    let metadata = store.metadata_json(&meeting.id).ok().flatten();
+    // lva#538, fail-closed: ein Lesefehler der Metadaten belegt nicht, dass kein Marker
+    // `audio_incomplete` steht. Ohne ihn zu kennen, ersetzt der Enddurchlauf nichts.
+    let metadata = match store.metadata_json(&meeting.id) {
+        Ok(metadata) => metadata,
+        Err(e) => {
+            warn!(
+                "meetings: metadata of {} not readable ({e}) - live transcript kept",
+                meeting.id
+            );
+            return Err(KeepReason::StoreFailed);
+        }
+    };
     let tracks = final_tracks(meeting, metadata.as_ref());
     let dir = meeting_dir(meeting).ok_or(KeepReason::NoAudio)?;
     if tracks.is_empty() {
@@ -3382,6 +3410,59 @@ mod tests {
         assert_live_untouched(&f, &env, &out, &["s0", "s1", "s2"]);
     }
 
+    /// lva#538 Befund 6: fehlt die Spur eines ganzen Kanals (die Datei ist weg), haben dessen
+    /// Live-Saetze keine Abdeckung: der Ersatz aus der anderen Spur liesse sie verschwinden.
+    #[test]
+    fn a_missing_channel_file_keeps_the_live_transcript() {
+        let f = fixture(true, MeetingStatus::Processing);
+        std::fs::remove_file(f.meeting_dir.join("system.wav")).unwrap();
+        let mut env = FakeEnv::new();
+        let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        assert_live_untouched(&f, &env, &out, &["s0", "s1"]);
+    }
+
+    /// lva#538 Befund 6: ein Lesefehler der Metadaten belegt nicht, dass es keinen Marker gibt.
+    /// Der Enddurchlauf weiss dann nicht, ob die Aufnahme vollstaendig ist, und ersetzt nichts.
+    #[test]
+    fn unreadable_metadata_never_proves_a_complete_recording() {
+        let f = fixture(true, MeetingStatus::Processing);
+        f.store
+            .get_connection()
+            .unwrap()
+            .execute(
+                "UPDATE meetings SET metadata_json = '{kaputt' WHERE id = ?1",
+                rusqlite::params![f.id],
+            )
+            .unwrap();
+        // Der Enddurchlauf selbst: ohne den Marker zu kennen, ersetzt er nichts.
+        let meeting = f.store.get_meeting(&f.id).unwrap().unwrap();
+        let mut env = FakeEnv::new();
+        let mut report = FinalReport::default();
+        let result = final_pass(
+            &f.store,
+            &meeting,
+            LARGE,
+            25_000,
+            &mut env,
+            &mut report,
+            None,
+        );
+        assert_eq!(result, Err(KeepReason::StoreFailed));
+        assert_eq!(env.calls, 0, "nichts wurde transkribiert");
+        assert!(env.loads.is_empty(), "auch kein Modell geladen");
+
+        // Und der ganze Auftrag (auch vor dem Enddurchlauf, bei der Pruefung einer offenen
+        // Neu-Transkription, scheitert das Lesen): das Live-Transkript bleibt, nichts ersetzt.
+        let mut env = FakeEnv::new();
+        let _ = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        let snap = f.store.transcript_snapshot(&f.id).unwrap();
+        assert_eq!(snap.epoch, 0, "keine neue Epoche");
+        let live: Vec<&str> = snap.segments.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(live, ["s0", "s1"], "Live-Transkript unveraendert");
+        assert_eq!(env.calls, 0, "nichts wurde transkribiert");
+        assert!(!env.kinds().contains(&"reset"), "nichts ersetzt");
+    }
+
     /// Die Pruefung ist je Kanal: ein kurzer Systemton mit langem Mikrofon-Transkript
     /// (der Systemton lief laenger als seine WAV) haelt das Live-Transkript genauso.
     #[test]
@@ -3423,28 +3504,60 @@ mod tests {
         assert_eq!(f.store.transcript_snapshot(&f.id).unwrap().epoch, 1);
     }
 
-    /// Die Pruefung ist rein: Aufnahmen ohne Transkript und fehlende Dateien zaehlen nicht.
+    /// Die Pruefung ist rein und fail-closed (lva#538 Befund 6): ohne Live-Saetze gibt es nichts
+    /// zu kuerzen; ein Kanal MIT Saetzen braucht eine lesbare, lange genug Spur.
     #[test]
-    fn coverage_ignores_unreadable_tracks_and_empty_transcripts() {
+    fn coverage_needs_a_readable_long_enough_track_for_every_channel_with_sentences() {
         let dir = tempfile::tempdir().unwrap();
         let wav = dir.path().join("a.wav");
         write_wav(&wav, &speech());
         let track = |path: PathBuf, channel| Track { path, channel };
+        // Kein Transkript: nichts zu kuerzen.
         assert!(!audio_shorter_than_transcript(
             &[track(wav.clone(), 0)],
             &[]
         ));
-        assert!(!audio_shorter_than_transcript(
-            &[track(dir.path().join("weg.wav"), 0)],
-            &[seg(0, 0, 0, 90_000)]
-        ));
+        // Die Spur ist 6 s lang; 5 s Toleranz.
         assert!(audio_shorter_than_transcript(
             &[track(wav.clone(), 0)],
             &[seg(0, 0, 0, 11_001)]
         ));
         assert!(!audio_shorter_than_transcript(
-            &[track(wav, 0)],
+            &[track(wav.clone(), 0)],
             &[seg(0, 0, 0, 11_000)]
+        ));
+        // Befund 6: der Kanal hat Saetze, aber keine Spur (die Datei fehlt): der Ersatz aus der
+        // anderen Spur liesse sie verschwinden.
+        assert!(audio_shorter_than_transcript(
+            &[track(wav.clone(), 0)],
+            &[seg(0, 0, 0, 1_000), seg(1, 1, 0, 1_000)]
+        ));
+        assert!(audio_shorter_than_transcript(&[], &[seg(0, 1, 0, 1_000)]));
+        // Eine Spur, die nicht zu lesen ist (Pfad fehlt, kaputter Kopf), belegt keine Laenge.
+        assert!(audio_shorter_than_transcript(
+            &[track(dir.path().join("weg.wav"), 0)],
+            &[seg(0, 0, 0, 1_000)]
+        ));
+        let junk = dir.path().join("junk.wav");
+        std::fs::write(&junk, b"kein wav").unwrap();
+        assert!(audio_shorter_than_transcript(
+            &[track(junk, 0)],
+            &[seg(0, 0, 0, 1_000)]
+        ));
+        // Ein Kanal ohne Saetze zaehlt nicht, auch wenn seine Spur fehlt.
+        assert!(!audio_shorter_than_transcript(
+            &[track(wav.clone(), 0)],
+            &[seg(0, 0, 0, 5_000)]
+        ));
+        // Beide Kanaele, beide gedeckt; der zweite zu lang: unvollstaendig.
+        let two = [track(wav.clone(), 0), track(wav, 1)];
+        assert!(!audio_shorter_than_transcript(
+            &two,
+            &[seg(0, 0, 0, 5_000), seg(1, 1, 0, 6_000)]
+        ));
+        assert!(audio_shorter_than_transcript(
+            &two,
+            &[seg(0, 0, 0, 5_000), seg(1, 1, 0, 12_000)]
         ));
     }
 

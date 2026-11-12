@@ -97,21 +97,50 @@ const HAS_SEGMENTS: &str = "(EXISTS (SELECT 1 FROM transcripts
 
 /// Recovery: hat dieser Mitschnitt nie etwas aufgenommen? Nur eine YouTube-Zeile mit
 /// dem Merker des Vorzustands (`has_prior`) und ohne Ton auf der Platte: jede
-/// Tonspur fehlt oder ist hoechstens der WAV-Kopf. Mit Ton (auch ohne erkannte
-/// Sprache) geht es den normalen Weg; ob es Saetze gibt, prueft
+/// Tonspur fehlt (NACHGEWIESEN: `NotFound`) oder ist hoechstens der WAV-Kopf. Mit Ton
+/// (auch ohne erkannte Sprache) geht es den normalen Weg; ob es Saetze gibt, prueft
 /// `restore_playback_target` selbst in der Transaktion.
+///
+/// lva#538, fail-closed: ein Dateizustand, der sich NICHT lesen laesst (Zugriff verweigert,
+/// E/A-Fehler, Pfad kaputt), ist nicht "leer". Vorher machte `unwrap_or(true)` aus jedem
+/// Fehler eine leere Spur, und die Wiederherstellung setzte eine Aufnahme zurueck und
+/// loeschte ihr Audio, die sie nur nicht lesen konnte. Im Zweifel bleibt die Aufnahme.
 pub fn never_recorded(meeting: &Meeting, has_prior: bool) -> bool {
-    if meeting.source != SOURCE_YOUTUBE || !has_prior {
-        return false;
-    }
-    [&meeting.mic_audio_path, &meeting.system_audio_path]
+    meeting.source == SOURCE_YOUTUBE && has_prior && audio_state(meeting) == AudioState::Empty
+}
+
+/// Was die Dateien einer Aufnahme hergeben (lva#538, Befund 7).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AudioState {
+    /// Jede Tonspur fehlt nachweislich (`NotFound`) oder ist hoechstens der WAV-Kopf.
+    Empty,
+    /// Mindestens eine Spur hat Ton.
+    Present,
+    /// Mindestens eine Spur laesst sich nicht lesen (und keine hat nachweislich Ton): im Zweifel
+    /// bleibt alles, wie es ist.
+    Unknown,
+}
+
+/// Der Zustand der Tonspuren einer Besprechung. Ton auf einer Spur gewinnt vor einem Fehler auf
+/// einer anderen; ein Fehler (nicht `NotFound`) macht eine sonst leere Aufnahme `Unknown`.
+pub fn audio_state(meeting: &Meeting) -> AudioState {
+    let mut unknown = false;
+    for path in [&meeting.mic_audio_path, &meeting.system_audio_path]
         .into_iter()
         .flatten()
-        .all(|path| {
-            std::fs::metadata(path)
-                .map(|m| m.len() <= HEADER_LEN)
-                .unwrap_or(true)
-        })
+    {
+        match std::fs::metadata(path) {
+            Ok(m) if m.len() > HEADER_LEN => return AudioState::Present,
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => unknown = true,
+        }
+    }
+    if unknown {
+        AudioState::Unknown
+    } else {
+        AudioState::Empty
+    }
 }
 
 impl MeetingStore {
@@ -194,6 +223,22 @@ impl MeetingStore {
     /// YouTube-Zeile im Zustand `recording`/`processing`/`failed` ohne Transkript-
     /// Saetze ist; sonst `false` und alles bleibt, wie es ist.
     pub fn restore_playback_target(&self, id: &str) -> Result<bool> {
+        self.restore_playback_target_with(id, false)
+    }
+
+    /// lva#538: das Zuruecksetzen eines Starts, der NIE veroeffentlicht wurde (Abbruch,
+    /// Fehler). Die Pipeline kann vor dem Abbruch schon Saetze gespeichert haben; sie
+    /// gehoeren zu diesem Start (der Eintrag hatte vorher keine, `begin_playback_capture`
+    /// prueft das) und werden in DERSELBEN Transaktion verworfen wie das Zuruecksetzen:
+    /// entweder beides oder nichts. Ohne das verweigerte `restore_playback_target` (Saetze
+    /// vorhanden) das Zuruecksetzen, nachdem der Aufrufer die Dateien schon geloescht hatte.
+    /// Gesicherte Fassungen (`transcript_variants`) fasst es nie an: gibt es dort Saetze,
+    /// bleibt alles, wie es ist (`false`).
+    pub fn rollback_playback_capture(&self, id: &str) -> Result<bool> {
+        self.restore_playback_target_with(id, true)
+    }
+
+    fn restore_playback_target_with(&self, id: &str, purge_live_segments: bool) -> Result<bool> {
         let now = Utc::now().timestamp();
         let mut conn = self.get_connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -209,6 +254,23 @@ impl MeetingStore {
         else {
             return Ok(false);
         };
+        if purge_live_segments {
+            // Nur die aktive Fassung dieses Starts. Greift die Zeile unten nicht (Status,
+            // gesicherte Fassung mit Saetzen), faellt die Transaktion zurueck: nichts wurde
+            // verworfen.
+            tx.execute(
+                "DELETE FROM transcript_deltas
+                  WHERE transcript_id IN (SELECT id FROM transcripts WHERE meeting_id = ?1)",
+                params![id],
+            )?;
+            tx.execute(
+                "UPDATE transcripts
+                    SET segments_json = '[]', content_revision = content_revision + 1,
+                        updated_at = ?2
+                  WHERE meeting_id = ?1 AND segments_json != '[]'",
+                params![id, now],
+            )?;
+        }
         let changed = tx.execute(
             &format!(
                 "UPDATE meetings
@@ -719,6 +781,111 @@ mod tests {
         let after = store.get_meeting(&id).unwrap().unwrap();
         assert_eq!(after.status, "recording", "nichts wurde zurueckgedreht");
         assert_eq!(store.get_segments(&id).unwrap().len(), 1);
+    }
+
+    /// lva#538 Befund 3: das Zuruecksetzen eines NIE veroeffentlichten Starts verwirft die Saetze,
+    /// die die Pipeline vor dem Abbruch schon gespeichert hat, in DERSELBEN Transaktion wie das
+    /// Zuruecksetzen. Das einfache `restore_playback_target` verweigert hier (Saetze da); der
+    /// Aufrufer loeschte die Dateien vorher und blieb mit einer Zeile ohne Ton zurueck.
+    #[test]
+    fn a_rollback_discards_the_segments_of_the_aborted_start_and_restores_in_one_step() {
+        let (_dir, store) = store();
+        let (id, _) = youtube_entry(&store);
+        store.begin_playback_capture(&id, 1).unwrap();
+        store
+            .append_delta(&id, &delta("Aus dem abgebrochenen Start"))
+            .unwrap();
+        assert!(
+            !store.restore_playback_target(&id).unwrap(),
+            "Voraussetzung: das einfache Zuruecksetzen verweigert"
+        );
+
+        assert!(store.rollback_playback_capture(&id).unwrap());
+
+        let after = store.get_meeting(&id).unwrap().unwrap();
+        assert_eq!(after.status, "ready");
+        assert_eq!(after.system_audio_path, None);
+        assert!(store.get_segments(&id).unwrap().is_empty());
+        assert_eq!(store.playback_prior(&id).unwrap(), None);
+        assert!(
+            store.begin_playback_capture(&id, 2).is_ok(),
+            "der Eintrag ist wieder startbar"
+        );
+    }
+
+    /// Fail-closed: hat die Besprechung Saetze in einer gesicherten Fassung, aendert das
+    /// Zuruecksetzen NICHTS (auch die Saetze der aktiven Fassung bleiben): die Transaktion
+    /// faellt zurueck, entweder beides oder nichts.
+    #[test]
+    fn a_rollback_changes_nothing_when_a_saved_version_has_segments() {
+        let (_dir, store) = store();
+        let (id, _) = youtube_entry(&store);
+        store.begin_playback_capture(&id, 1).unwrap();
+        store.append_delta(&id, &delta("Live")).unwrap();
+        store
+            .get_connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO transcript_variants
+                    (id, meeting_id, kind, segments_json, number, created_at, active)
+                 VALUES ('v-alt', ?1, 'stt', '[{\"x\":1}]', 1, 1, 0)",
+                params![id],
+            )
+            .unwrap();
+
+        assert!(!store.rollback_playback_capture(&id).unwrap());
+
+        assert_eq!(
+            store.get_meeting(&id).unwrap().unwrap().status,
+            "recording",
+            "nichts wurde zurueckgedreht"
+        );
+        assert_eq!(
+            store.get_segments(&id).unwrap().len(),
+            1,
+            "nichts verworfen"
+        );
+        assert!(store.playback_prior(&id).unwrap().is_some());
+    }
+
+    #[test]
+    fn a_rollback_without_the_marker_or_for_unknown_rows_changes_nothing() {
+        let (_dir, store) = store();
+        let live = store
+            .create_meeting("Live", MeetingSource::Live, Some(1))
+            .unwrap();
+        store.append_delta(&live.id, &delta("Bleibt")).unwrap();
+        assert!(!store.rollback_playback_capture(&live.id).unwrap());
+        assert_eq!(store.get_segments(&live.id).unwrap().len(), 1);
+        assert!(!store.rollback_playback_capture("gibt-es-nicht").unwrap());
+    }
+
+    /// lva#538 Befund 7: ein Dateizustand, der sich nicht lesen laesst, ist NICHT "nie
+    /// aufgenommen". Nur `NotFound` oder hoechstens der WAV-Kopf zaehlt als leer; jeder andere
+    /// Fehler laesst die Aufnahme stehen (die Wiederherstellung loescht sonst Audio, das sie nur
+    /// nicht lesen konnte).
+    #[test]
+    fn an_unreadable_audio_state_is_not_an_empty_recording() {
+        let (dir, store) = store();
+        let system = dir.path().join("system.wav");
+        drop(crate::audio_toolkit::audio::StreamingWavWriter::create(&system, 16_000).unwrap());
+        let (_id, meeting) = orphan_with_paths(&store, Some(&system));
+        assert!(
+            never_recorded(&meeting, true),
+            "Voraussetzung: nachweislich leer"
+        );
+
+        // Ein Pfad, dessen Zustand sich nicht lesen laesst (kein NotFound).
+        let mut unreadable = meeting.clone();
+        unreadable.system_audio_path = Some("C:/m/sys\0tem.wav".to_string());
+        assert!(!never_recorded(&unreadable, true));
+        // Eine nachweislich leere Spur macht eine unlesbare nicht leer.
+        unreadable.mic_audio_path = Some(system.to_string_lossy().into_owned());
+        assert!(!never_recorded(&unreadable, true));
+        // Fehlt die Datei nachweislich, ist es weiterhin leer.
+        let mut gone = meeting.clone();
+        gone.system_audio_path = Some(dir.path().join("weg.wav").to_string_lossy().into_owned());
+        assert!(never_recorded(&gone, true));
     }
 
     #[test]

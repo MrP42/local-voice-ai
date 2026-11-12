@@ -51,7 +51,7 @@ import { SpeakerSharesTable } from "./SpeakerSharesTable";
 import { SpeakerSuggestionHints } from "./SpeakerSuggestionHints";
 import { useNameSuggestions } from "./useNameSuggestions";
 import { useSettings } from "@/hooks/useSettings";
-import { translateMeetingError } from "./meetingErrors";
+import { deleteErrorText, translateMeetingError } from "./meetingErrors";
 import { enhanceErrorText, SOURCE_HIGHLIGHT_MS } from "@/lib/meetingNotes";
 import { minutesErrorCode, minutesErrorDetail } from "@/lib/meetingMinutes";
 import { notifyMeetingsChanged } from "@/lib/meetingsBus";
@@ -873,7 +873,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     setDeleteOpen(false);
     const result = await commands.meetingsDelete(meetingId);
     if (result.status === "error") {
-      toast.error(t("meetings.errors.deleteFailed"));
+      toast.error(deleteErrorText(result.error, t));
       return;
     }
     notifyMeetingsChanged();

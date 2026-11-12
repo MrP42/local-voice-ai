@@ -113,8 +113,27 @@ const FRAME_DURATION: std::time::Duration = std::time::Duration::from_millis(30)
 /// Stille wird in Häppchen dieser Größe in den Resampler geschoben.
 const SILENCE_CHUNK_FRAMES: usize = 4096;
 /// Ab so langer Stille (Wanduhr bzw. QPC) ohne Paket wird aufgefüllt. Darunter sind es
-/// Schwankungen der Paketankunft (Planung des Threads, Pufferlatenz), kein Schweigen.
+/// Schwankungen der Paketankunft (Planung des Threads, Pufferlatenz), kein Schweigen. Eine
+/// Lücke unter dieser Schwelle geht NICHT verloren: sie bleibt als Rest auf der Zeitachse
+/// stehen und wird mit der nächsten aufgefüllt (siehe `LoopbackFeeder::axis`).
 pub const QUIET_GAP_MIN: std::time::Duration = std::time::Duration::from_millis(250);
+/// lva#538: so weit darf ein QPC-Stempel hinter der Zeitachse liegen (Gerätetakt gegen QPC),
+/// bevor er als ungültig gilt (zurückspringender Stempel).
+pub const STAMP_BACK_TOLERANCE: std::time::Duration = QUIET_GAP_MIN;
+/// lva#538: so lange (in Audiozeit) dürfen Stempel in Folge unplausibel sein, bevor der
+/// jetzige als neue Referenz gilt (echte Uhrenverstellung, Takt-Drift). Ein einzelner
+/// Ausreisser bleibt so ohne Wirkung, eine bleibende Verschiebung wird übernommen.
+pub const STAMP_REANCHOR: std::time::Duration = std::time::Duration::from_secs(1);
+/// lva#538: Obergrenze EINER Lücke. Was darüber liegt (Stunden Stille nach dem Start, Standby),
+/// wird nicht mehr als Nullen in die WAV geschrieben (Platte: 115 MB je Stunde), sondern
+/// gezählt (`summary`); die Zeitachse ist danach um den Rest kürzer.
+pub const MAX_GAP: std::time::Duration = std::time::Duration::from_secs(2 * 3_600);
+/// lva#538: so viele Frames (Gerätetakt) verarbeitet ein Schritt von `pump` höchstens, bevor
+/// der Capture-Thread wieder das Stop-Flag prüft und das Gerät liest.
+pub const PUMP_STEP_FRAMES: u64 = 16_384;
+/// So viele Pakete holt ein Lesedurchgang höchstens (sonst fände ein Gerät, das nie leer
+/// wird, nie den Weg zum Stop-Flag).
+const MAX_PACKETS_PER_READ: usize = 256;
 
 /// Ein Geräte-Paket, wie der Capture-Thread es liest (#537).
 #[derive(Clone, Copy, Debug)]
@@ -130,6 +149,54 @@ pub struct DevicePacket<'a> {
     pub since_start: std::time::Duration,
 }
 
+/// Ein gelesenes Paket mit eigenem Speicher (der Capture-Thread reicht es weiter).
+#[derive(Clone, Debug)]
+pub struct OwnedPacket {
+    pub interleaved: Vec<f32>,
+    pub device_position: u64,
+    pub qpc: Option<u64>,
+    pub since_start: std::time::Duration,
+}
+
+impl OwnedPacket {
+    pub fn as_packet(&self) -> DevicePacket<'_> {
+        DevicePacket {
+            interleaved: &self.interleaved,
+            device_position: self.device_position,
+            qpc: self.qpc,
+            since_start: self.since_start,
+        }
+    }
+}
+
+/// Die Quelle der Pakete (das Gerät; im Test eine Nachbildung). `Ok(None)`: gerade ist
+/// nichts bereit.
+pub trait PacketSource {
+    fn next_packet(&mut self) -> anyhow::Result<Option<OwnedPacket>>;
+}
+
+impl<F> PacketSource for F
+where
+    F: FnMut() -> anyhow::Result<Option<OwnedPacket>>,
+{
+    fn next_packet(&mut self) -> anyhow::Result<Option<OwnedPacket>> {
+        self()
+    }
+}
+
+/// Ein Auftrag der Arbeitsschlange des Feeders: erst `pad_left` Frames Stille, dann die Daten.
+struct Job {
+    /// Das Paket als Mono beim Gerätetakt.
+    mono: Vec<f32>,
+    /// Der Stempel des ersten Frames (`None`: keiner, oder unplausibel).
+    qpc: Option<u64>,
+    /// So viele Frames Stille gehen VOR dem Paket in den Resampler (ganze Lücke).
+    pad_total: u64,
+    pad_left: u64,
+    /// Der Stempler kennt den Anker dieses Pakets (gesetzt mit dem ersten Schritt).
+    marked: bool,
+}
+
 /// Der plattformunabhängige Kern des Capture-Threads: Pakete rein, zeitachsen-
 /// korrekte 16-kHz-Mono-Blöcke samt QPC-Stempel raus.
 ///
@@ -138,8 +205,25 @@ pub struct DevicePacket<'a> {
 /// nicht an den Paketen hängen: Stille VOR dem ersten Paket und Pausen zwischen zwei
 /// Paketen werden mit Nullen aufgefüllt, und zwar nach der größeren von zwei
 /// Angaben: Lücke der Geräteposition (wo der Treiber sie mitzählt) und Lücke der
-/// QPC-Stempel bzw. der Wanduhr (wo er es nicht tut). Ohne das verrutschen alle
-/// Offsets des Transkripts um die Stille, die nie ankam.
+/// QPC-Stempel (wo er es nicht tut). Ohne das verrutschen alle Offsets des Transkripts um
+/// die Stille, die nie ankam.
+///
+/// lva#538, getrennte Behandlung von Gerätezeit, Ankunftslatenz und ungültigen Stempeln:
+/// - **Zeitachse (`axis`)**: die QPC-Zeit des nächsten Frames, FORTGESCHRIEBEN aus dem, was
+///   ausgegeben wurde (Daten und Stille), nicht aus dem Stempel des letzten Pakets. Der Stempel
+///   eines Pakets wird an ihr gemessen: eine Lücke unter [`QUIET_GAP_MIN`] bleibt als Rest
+///   stehen und zählt bei der nächsten mit (100 Pausen zu 200 ms ergeben 20 s Stille, nicht 0).
+/// - **Ungültige Stempel**: ein Stempel, der mehr als [`STAMP_BACK_TOLERANCE`] hinter der
+///   Zeitachse liegt oder weiter voraus als die Wanduhr erlaubt, füllt nichts auf und ersetzt
+///   die Zeitachse nicht (ein einzelner Ausreisser verschiebt nichts, seine Rückkehr zum
+///   normalen Wert erzeugt keine Stille). Dauert er über [`STAMP_REANCHOR`] an, gilt er als neue
+///   Referenz.
+/// - **Ankunftslatenz**: der Verzug des Capture-Threads beim ersten Lesen ist keine Stille:
+///   die Anfangsstille ist die Wanduhr bis zum ENDE des ersten Lesedurchgangs minus ALLE Frames,
+///   die er mitbrachte (`on_burst`), nicht minus die des ersten Pakets.
+/// - **Große Lücken** sind Arbeit, kein Aufruf: `on_burst` reiht nur ein, `pump` arbeitet sie in
+///   Schritten von [`PUMP_STEP_FRAMES`] ab (Stop-Flag und Gerät dazwischen, siehe `run_cycle`);
+///   eine Lücke ist auf [`MAX_GAP`] begrenzt.
 pub struct LoopbackFeeder {
     rate: usize,
     channels: usize,
@@ -148,11 +232,21 @@ pub struct LoopbackFeeder {
     timeline: crate::audio_toolkit::audio::LoopbackTimeline,
     silence: Vec<f32>,
     first: bool,
+    /// Anfangsstille aus dem ersten Lesedurchgang (`on_burst`), bis das erste Paket sie braucht.
+    first_gap: Option<u64>,
     last_since_start: std::time::Duration,
-    /// QPC, bei dem das nächste Paket ohne Lücke beginnen müsste.
-    next_qpc: Option<u64>,
+    /// QPC (100 ns), bei dem der nächste ausgegebene Frame liegt (Fortschreibung).
+    axis: Option<i128>,
+    /// Frames in Folge, deren Stempel unplausibel waren.
+    bad_stamp_frames: u64,
+    queue: std::collections::VecDeque<Job>,
+    /// Obergrenze EINER Luecke ([`MAX_GAP`]; der Test setzt eine kleinere).
+    max_gap: std::time::Duration,
     padded_frames: u64,
     dropped_buffers: u64,
+    capped_gaps: u64,
+    skipped_frames: u64,
+    bad_stamps: u64,
 }
 
 #[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
@@ -170,54 +264,89 @@ impl LoopbackFeeder {
             timeline: crate::audio_toolkit::audio::LoopbackTimeline::new(),
             silence: vec![0.0f32; SILENCE_CHUNK_FRAMES],
             first: true,
+            first_gap: None,
             last_since_start: std::time::Duration::ZERO,
-            next_qpc: None,
+            axis: None,
+            bad_stamp_frames: 0,
+            queue: std::collections::VecDeque::new(),
+            max_gap: MAX_GAP,
             padded_frames: 0,
             dropped_buffers: 0,
+            capped_gaps: 0,
+            skipped_frames: 0,
+            bad_stamps: 0,
         }
     }
 
-    /// Die Stille (in Frames beim Gerätetakt), die VOR diesem Paket nie ankam und
-    /// über die Geräteposition nicht zu erkennen ist: vor dem ersten Paket die
-    /// Wanduhr seit dem Start, danach die Lücke der QPC-Stempel. Unter
-    /// [`QUIET_GAP_MIN`] ist es keine Stille; über `max_pad` kein Schweigen mehr,
-    /// sondern ein kaputter Wert.
-    fn clock_gap(
-        &self,
-        frames: u64,
-        qpc: Option<u64>,
-        since_start: std::time::Duration,
-        max_pad: u64,
-    ) -> u64 {
-        let rate = self.rate as u64;
-        let gap = if self.first {
-            let wall = since_start.as_nanos().saturating_mul(rate as u128) / 1_000_000_000;
-            u64::try_from(wall)
-                .unwrap_or(u64::MAX)
-                .saturating_sub(frames)
-        } else {
-            match (qpc, self.next_qpc) {
-                (Some(q), Some(expected)) if q > expected => {
-                    (q - expected).saturating_mul(rate) / QPC_UNITS_PER_SEC as u64
-                }
-                _ => 0,
-            }
-        };
-        let min = (QUIET_GAP_MIN.as_millis() as u64).saturating_mul(rate) / 1_000;
-        if gap >= min {
-            gap.min(max_pad)
+    /// Test: eine kleinere Obergrenze fuer eine Luecke.
+    #[cfg(test)]
+    fn with_max_gap(mut self, max_gap: std::time::Duration) -> Self {
+        self.max_gap = max_gap;
+        self
+    }
+
+    /// Frames (Gerätetakt) einer Dauer.
+    fn frames_of(&self, duration: std::time::Duration) -> u64 {
+        let frames = duration.as_nanos().saturating_mul(self.rate as u128) / 1_000_000_000;
+        u64::try_from(frames).unwrap_or(u64::MAX)
+    }
+
+    /// Die Schwelle, ab der eine Stille aufgefüllt wird.
+    fn min_gap_frames(&self) -> u64 {
+        self.frames_of(QUIET_GAP_MIN)
+    }
+
+    /// 100-ns-Einheiten der QPC-Uhr, die `frames` Gerätetakt-Frames dauern.
+    fn qpc_units(&self, frames: u64) -> i128 {
+        frames as i128 * QPC_UNITS_PER_SEC / self.rate as i128
+    }
+
+    /// Frames (Gerätetakt) einer QPC-Differenz (negativ: rückwärts).
+    fn frames_of_units(&self, units: i128) -> i128 {
+        units * self.rate as i128 / QPC_UNITS_PER_SEC
+    }
+
+    /// Die Anfangsstille, in Frames: die Wanduhr beim Ende des ersten Lesedurchgangs minus
+    /// alle Frames, die er brachte (das Gerät lieferte sie, solange der Thread noch nicht
+    /// las). Unter [`QUIET_GAP_MIN`] ist es Anlauf, keine Stille.
+    fn initial_gap(&self, read_end: std::time::Duration, burst_frames: u64) -> u64 {
+        let gap = self.frames_of(read_end).saturating_sub(burst_frames);
+        if gap >= self.min_gap_frames() {
+            gap
         } else {
             0
         }
     }
 
-    /// Ein Paket verarbeiten; `sink` bekommt die fertigen 16-kHz-Blöcke mit QPC-Stempel
-    /// (der Block, der das erste Sample enthält, mit dessen Zeitpunkt).
+    /// Reiht einen Lesedurchgang des Geräts ein (nur einreihen, kein Ausgeben: `pump` arbeitet).
+    /// `read_end` ist die Wanduhr seit dem Stream-Start NACH dem Lesen des Durchgangs; vor dem
+    /// ersten Paket bestimmt sie zusammen mit der Summe der Frames die Anfangsstille.
+    pub fn on_burst(&mut self, packets: &[DevicePacket<'_>], read_end: std::time::Duration) {
+        if self.first {
+            let burst_frames: u64 = packets
+                .iter()
+                .map(|p| (p.interleaved.len() / self.channels) as u64)
+                .sum();
+            self.first_gap = Some(self.initial_gap(read_end, burst_frames));
+        }
+        for packet in packets {
+            self.enqueue(packet);
+        }
+    }
+
+    /// Ein Paket einreihen und sofort vollständig abarbeiten (ein Durchgang aus einem Paket).
+    /// Für Aufrufer ohne Stop-Flag und für Tests; der Capture-Thread nimmt `run_cycle`.
     pub fn on_packet(
         &mut self,
         packet: DevicePacket<'_>,
         sink: &mut impl FnMut(&[i16], Option<u64>),
     ) {
+        self.on_burst(&[packet], packet.since_start);
+        self.pump(u64::MAX, sink);
+    }
+
+    /// Entscheidet für EIN Paket, was davor an Stille steht, und reiht es mit seinem Stempel ein.
+    fn enqueue(&mut self, packet: &DevicePacket<'_>) {
         let frames = (packet.interleaved.len() / self.channels) as u64;
         if frames == 0 {
             return;
@@ -254,53 +383,181 @@ impl LoopbackFeeder {
                 );
             }
         }
-        let clock_pad = self.clock_gap(frames, packet.qpc, packet.since_start, max_pad);
-        let pad_frames = position_pad.max(clock_pad);
-        self.next_qpc = packet.qpc.map(|q| {
-            q.saturating_add(frames.saturating_mul(QPC_UNITS_PER_SEC as u64) / self.rate as u64)
-        });
-        self.first = false;
-
-        // M2-P2c2: QPC des ersten Frames DIESES Pakets (hinter der Stille); die
-        // eingeschobene Stille bekommt davon zurückgerechnete Stempel.
-        self.stamper.mark(packet.qpc, pad_frames);
-        if pad_frames > 0 {
-            self.padded_frames += pad_frames;
-            log::debug!(
-                "loopback: gap of {pad_frames} frames padded with silence (total {})",
-                self.padded_frames
+        let (clock_pad, stamp) = self.clock_pad(packet, frames, max_pad);
+        let mut pad_frames = position_pad.max(clock_pad);
+        // Obergrenze EINER Luecke (Platte, Arbeit): der Rest wird gezaehlt, nicht geschrieben.
+        let cap = self.frames_of(self.max_gap);
+        if pad_frames > cap {
+            self.capped_gaps += 1;
+            self.skipped_frames = self.skipped_frames.saturating_add(pad_frames - cap);
+            log::warn!(
+                "loopback: gap of {pad_frames} frames capped at {cap} ({} frames not padded)",
+                pad_frames - cap
             );
-            let mut remaining = pad_frames;
-            while remaining > 0 {
-                let take = remaining.min(SILENCE_CHUNK_FRAMES as u64) as usize;
-                self.stamper.advance_input(take as u64);
-                let Self {
-                    resampler,
-                    stamper,
-                    silence,
-                    ..
-                } = self;
+            pad_frames = cap;
+        }
+        self.first = false;
+        self.advance_axis(stamp, frames, pad_frames);
+        self.queue.push_back(Job {
+            mono: downmix_to_mono(packet.interleaved, self.channels),
+            qpc: stamp,
+            pad_total: pad_frames,
+            pad_left: pad_frames,
+            marked: false,
+        });
+    }
+
+    /// Die Stille, die die Uhr (nicht die Geräteposition) vor diesem Paket sieht, und der
+    /// Stempel, der gelten darf (`None`: keiner oder unplausibel).
+    fn clock_pad(
+        &mut self,
+        packet: &DevicePacket<'_>,
+        frames: u64,
+        max_pad: u64,
+    ) -> (u64, Option<u64>) {
+        let stamp = packet.qpc.filter(|q| *q > 0);
+        if self.first {
+            // Ankunftslatenz: die Anfangsstille kommt aus dem Lesedurchgang, nicht aus dem
+            // Stempel (davor gibt es keine Zeitachse, an der er sich messen liesse).
+            let pad = self
+                .first_gap
+                .take()
+                .unwrap_or_else(|| self.initial_gap(packet.since_start, frames));
+            return (pad, stamp);
+        }
+        let (Some(q), Some(axis)) = (stamp, self.axis) else {
+            return (0, stamp);
+        };
+        let gap_units = q as i128 - axis;
+        let gap_frames = self.frames_of_units(gap_units);
+        let back = self.frames_of(STAMP_BACK_TOLERANCE) as i128;
+        let plausible = gap_frames >= -back && gap_frames <= max_pad as i128;
+        if !plausible {
+            self.bad_stamps += 1;
+            if self.bad_stamps % 100 == 1 {
+                log::warn!(
+                    "loopback: implausible QPC stamp ignored ({gap_frames} frames off the time axis, {} so far)",
+                    self.bad_stamps
+                );
+            }
+            self.bad_stamp_frames = self.bad_stamp_frames.saturating_add(frames);
+            if self.bad_stamp_frames >= self.frames_of(STAMP_REANCHOR) {
+                // Bleibt er, ist es kein Ausreisser mehr: neue Referenz, ohne Stille.
+                self.bad_stamp_frames = 0;
+                self.axis = Some(q as i128);
+                return (0, stamp);
+            }
+            return (0, None);
+        }
+        self.bad_stamp_frames = 0;
+        let min = self.min_gap_frames() as i128;
+        if gap_frames >= min {
+            (gap_frames as u64, stamp)
+        } else {
+            // Unter der Schwelle: Rest, nicht Verlust (er bleibt in `axis`).
+            (0, stamp)
+        }
+    }
+
+    /// Schreibt die Zeitachse fort: um die Stille und die Daten dieses Pakets. Hat die Stille die
+    /// gemessene Lücke gedeckt (oder gab es keine Zeitachse), setzt der Stempel sie neu; blieb ein
+    /// Rest unter der Schwelle, bleibt er stehen.
+    fn advance_axis(&mut self, stamp: Option<u64>, frames: u64, pad_frames: u64) {
+        let data_units = self.qpc_units(frames);
+        let pad_units = self.qpc_units(pad_frames);
+        let Some(axis) = self.axis else {
+            self.axis = stamp.map(|q| q as i128 + data_units);
+            return;
+        };
+        let Some(q) = stamp else {
+            self.axis = Some(axis + pad_units + data_units);
+            return;
+        };
+        let gap_units = q as i128 - axis;
+        self.axis = Some(if pad_units >= gap_units {
+            q as i128 + data_units
+        } else {
+            axis + pad_units + data_units
+        });
+    }
+
+    /// Arbeitet die Schlange ab, hoechstens `budget` Frames (Gerätetakt) Stille und Daten, und
+    /// meldet, ob noch Arbeit bleibt. Aufrufer mit Stop-Flag rufen es in Schritten
+    /// ([`PUMP_STEP_FRAMES`]) und lesen dazwischen das Gerät (`run_cycle`).
+    pub fn pump(&mut self, budget: u64, sink: &mut impl FnMut(&[i16], Option<u64>)) -> bool {
+        let mut left = budget;
+        let Self {
+            queue,
+            stamper,
+            resampler,
+            silence,
+            padded_frames,
+            ..
+        } = self;
+        while left > 0 {
+            let Some(job) = queue.front_mut() else {
+                break;
+            };
+            if !job.marked {
+                // M2-P2c2: QPC des ersten Frames DIESES Pakets (hinter der Stille); die
+                // eingeschobene Stille bekommt davon zurückgerechnete Stempel.
+                stamper.mark(job.qpc, job.pad_total);
+                job.marked = true;
+                if job.pad_total > 0 {
+                    log::debug!(
+                        "loopback: gap of {} frames is padded with silence",
+                        job.pad_total
+                    );
+                }
+            }
+            if job.pad_left > 0 {
+                let take = job.pad_left.min(SILENCE_CHUNK_FRAMES as u64).min(left) as usize;
+                stamper.advance_input(take as u64);
                 resampler.push(&silence[..take], |frame| {
                     let stamp = stamper.next_block(frame.len());
                     sink(&f32_to_i16(frame), stamp)
                 });
-                remaining -= take as u64;
+                job.pad_left -= take as u64;
+                *padded_frames += take as u64;
+                left -= take as u64;
+                continue;
             }
+            let Some(job) = queue.pop_front() else {
+                break;
+            };
+            stamper.advance_input(job.mono.len() as u64);
+            resampler.push(&job.mono, |frame| {
+                let stamp = stamper.next_block(frame.len());
+                sink(&f32_to_i16(frame), stamp)
+            });
+            left = left.saturating_sub(job.mono.len() as u64);
         }
-
-        let mono = downmix_to_mono(packet.interleaved, self.channels);
-        self.stamper.advance_input(mono.len() as u64);
-        let Self {
-            resampler, stamper, ..
-        } = self;
-        resampler.push(&mono, |frame| {
-            let stamp = stamper.next_block(frame.len());
-            sink(&f32_to_i16(frame), stamp)
-        });
+        !queue.is_empty()
     }
 
-    /// Ende des Streams: der Rest im Resampler geht noch hinaus.
+    /// Gibt es noch Arbeit in der Schlange?
+    pub fn has_work(&self) -> bool {
+        !self.queue.is_empty()
+    }
+
+    /// Ende des Streams: die Daten in der Schlange gehen noch hinaus (Audio geht nie
+    /// verloren), eine angefangene Stille nicht mehr (sie wird gezaehlt, der Stempler
+    /// setzt seinen Anker auf den Stempel des Pakets zurueck), dann der Rest im Resampler.
     pub fn finish(&mut self, sink: &mut impl FnMut(&[i16], Option<u64>)) {
+        let mut dropped = 0u64;
+        for job in self.queue.iter_mut() {
+            if job.pad_left > 0 {
+                dropped += job.pad_left;
+                job.pad_left = 0;
+                job.pad_total = 0;
+                job.marked = false;
+            }
+        }
+        if dropped > 0 {
+            self.skipped_frames = self.skipped_frames.saturating_add(dropped);
+            log::warn!("loopback: stopped inside a gap, {dropped} frames of silence not written");
+        }
+        self.pump(u64::MAX, sink);
         let Self {
             resampler, stamper, ..
         } = self;
@@ -316,15 +573,64 @@ impl LoopbackFeeder {
         (
             self.padded_frames,
             self.dropped_buffers,
-            self.timeline.capped_gaps(),
-            self.timeline.skipped_frames(),
+            self.timeline.capped_gaps() + self.capped_gaps,
+            self.timeline
+                .skipped_frames()
+                .saturating_add(self.skipped_frames),
         )
     }
+
+    /// Wie oft ein Stempel als unplausibel ignoriert wurde.
+    pub fn bad_stamps(&self) -> u64 {
+        self.bad_stamps
+    }
+}
+
+/// Ein Durchgang des Capture-Threads (lva#538): alles lesen, was das Gerät bereit hat, dann die
+/// Schlange des Feeders in begrenzten Schritten abarbeiten ([`PUMP_STEP_FRAMES`]) und DAZWISCHEN
+/// das Gerät erneut lesen: ein Gerät, das waehrend einer langen Stille weiterliefert, laeuft
+/// nicht ueber (kein Paket geht verloren), und das Stop-Flag wirkt nach jedem Schritt, nicht erst
+/// nach Stunden Nullen. Endet, wenn die Schlange leer ist oder `stop` gesetzt wurde.
+#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
+pub fn run_cycle(
+    source: &mut impl PacketSource,
+    feeder: &mut LoopbackFeeder,
+    stop: &std::sync::atomic::AtomicBool,
+    now: &dyn Fn() -> std::time::Duration,
+    sink: &mut impl FnMut(&[i16], Option<u64>),
+) -> anyhow::Result<()> {
+    read_ready(source, feeder, now)?;
+    while feeder.has_work() && !stop.load(std::sync::atomic::Ordering::Relaxed) {
+        feeder.pump(PUMP_STEP_FRAMES, sink);
+        read_ready(source, feeder, now)?;
+    }
+    Ok(())
+}
+
+/// Liest, was bereitsteht, als einen Durchgang (`on_burst`).
+fn read_ready(
+    source: &mut impl PacketSource,
+    feeder: &mut LoopbackFeeder,
+    now: &dyn Fn() -> std::time::Duration,
+) -> anyhow::Result<()> {
+    let mut burst: Vec<OwnedPacket> = Vec::new();
+    while burst.len() < MAX_PACKETS_PER_READ {
+        match source.next_packet()? {
+            Some(packet) => burst.push(packet),
+            None => break,
+        }
+    }
+    if burst.is_empty() {
+        return Ok(());
+    }
+    let refs: Vec<DevicePacket<'_>> = burst.iter().map(OwnedPacket::as_packet).collect();
+    feeder.on_burst(&refs, now());
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
 mod windows_impl {
-    use super::{DevicePacket, LoopbackFeeder};
+    use super::{run_cycle, LoopbackFeeder, OwnedPacket};
     use anyhow::{anyhow, Result};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc;
@@ -462,49 +768,54 @@ mod windows_impl {
         // (WASAPI-Loopback liefert bei Stille gar keine Pakete).
         let started_at = std::time::Instant::now();
 
-        while !stop.load(Ordering::Relaxed) {
-            // Alle bereitstehenden Pakete abholen, dann aufs nächste Event warten.
-            loop {
-                let next_frames = capture_client.get_next_packet_size()?.unwrap_or(0) as usize;
-                if next_frames == 0 {
-                    break;
-                }
-                let needed = next_frames * block_align;
-                if byte_buf.len() < needed {
-                    byte_buf.resize(needed, 0);
-                }
-                let (frames_read, info) =
-                    capture_client.read_from_device(&mut byte_buf[..needed])?;
-                if frames_read == 0 {
-                    break;
-                }
-                let valid = frames_read as usize * block_align;
-                if info.flags.silent {
-                    // SILENT: Inhalt ist bedeutungslos -> Nullen. Die Position
-                    // zählt trotzdem normal weiter, also NICHT überspringen.
-                    byte_buf[..valid].fill(0);
-                }
-
-                // SPEC C1: Die Zeitachse kommt aus der Device-Position und den
-                // QPC-Stempeln des Geraets (`LoopbackFeeder`), nie aus gezaehlten
-                // Buffern; die Wanduhr dient nur der Stille ohne Paket und als
-                // Plausibilitaetsgrenze.
-                let interleaved: Vec<f32> = byte_buf[..valid]
-                    .chunks_exact(4)
-                    .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-                    .collect();
-                let qpc =
-                    (!info.flags.timestamp_error && info.timestamp > 0).then_some(info.timestamp);
-                feeder.on_packet(
-                    DevicePacket {
-                        interleaved: &interleaved,
-                        device_position: info.index,
-                        qpc,
-                        since_start: started_at.elapsed(),
-                    },
-                    &mut on_samples,
-                );
+        // Das Lesen EINES Pakets (ohne das Weiterreichen): `run_cycle` ruft es, bis nichts mehr
+        // bereitsteht, und zwischen den begrenzten Arbeitsschritten des Feeders erneut.
+        let mut read_packet = || -> Result<Option<OwnedPacket>> {
+            let next_frames = capture_client.get_next_packet_size()?.unwrap_or(0) as usize;
+            if next_frames == 0 {
+                return Ok(None);
             }
+            let needed = next_frames * block_align;
+            if byte_buf.len() < needed {
+                byte_buf.resize(needed, 0);
+            }
+            let (frames_read, info) = capture_client.read_from_device(&mut byte_buf[..needed])?;
+            if frames_read == 0 {
+                return Ok(None);
+            }
+            let valid = frames_read as usize * block_align;
+            if info.flags.silent {
+                // SILENT: Inhalt ist bedeutungslos -> Nullen. Die Position
+                // zählt trotzdem normal weiter, also NICHT überspringen.
+                byte_buf[..valid].fill(0);
+            }
+            // SPEC C1: Die Zeitachse kommt aus der Device-Position und den
+            // QPC-Stempeln des Geraets (`LoopbackFeeder`), nie aus gezaehlten
+            // Buffern; die Wanduhr dient nur der Stille ohne Paket und als
+            // Plausibilitaetsgrenze.
+            let interleaved: Vec<f32> = byte_buf[..valid]
+                .chunks_exact(4)
+                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                .collect();
+            let qpc = (!info.flags.timestamp_error && info.timestamp > 0).then_some(info.timestamp);
+            Ok(Some(OwnedPacket {
+                interleaved,
+                device_position: info.index,
+                qpc,
+                since_start: started_at.elapsed(),
+            }))
+        };
+
+        while !stop.load(Ordering::Relaxed) {
+            // lva#538: alles lesen, die Schlange des Feeders in begrenzten Schritten abarbeiten
+            // (Stop-Flag und Geraet dazwischen), dann aufs naechste Event warten.
+            run_cycle(
+                &mut read_packet,
+                &mut feeder,
+                &stop,
+                &|| started_at.elapsed(),
+                &mut on_samples,
+            )?;
 
             // Timeout ist normal (kein Ton) — dann nur das Stop-Flag prüfen.
             let _ = h_event.wait_for_event(EVENT_TIMEOUT_MS);
@@ -859,5 +1170,331 @@ mod tests {
         let (out, _) = feed(16_000, 1, &pkts);
         // Hoechstens Wanduhr (0,1 s) + 2 s Toleranz Stille dazwischen, nie Stunden.
         assert!(out.len() < 16_000 * 3, "{} Samples", out.len());
+    }
+
+    // ---- lva#538 Befund 8: Zeitachse bei kurzen Luecken, QPC-Ruecksprung, Thread-Verzug ----
+
+    /// Ein Paket-Strom aus `blocks` Bloecken zu je `n` 10-ms-Paketen, zwischen den Bloecken eine
+    /// Pause von `pause_ms` OHNE Paket. Die Geraeteposition zaehlt nur gelieferte Pakete (wie
+    /// WASAPI-Loopback), der QPC-Stempel und die Wanduhr die Pause mit.
+    fn paused_stream(blocks: u64, n: u64, pause_ms: u64) -> Vec<Pkt> {
+        let mut pkts = Vec::new();
+        let mut wall = 0u64;
+        let mut qpc = Q0;
+        let mut pos = 0u64;
+        for _ in 0..blocks {
+            for _ in 0..n {
+                pkts.push(Pkt {
+                    wall_ms: wall,
+                    frames: 160,
+                    pos,
+                    qpc: Some(qpc),
+                    level: 0.5,
+                });
+                wall += 10;
+                qpc += 100_000;
+                pos += 160;
+            }
+            wall += pause_ms;
+            qpc += pause_ms * 10_000;
+        }
+        pkts
+    }
+
+    /// Gegenbeispiel 1: 100 Pausen zu je 200 ms (jede unter `QUIET_GAP_MIN`). Vorher ging jede
+    /// einzeln verloren, die Zeitachse war um 20 s zu kurz; jetzt bleibt der Rest stehen und
+    /// zaehlt bei der naechsten Pause mit (Fehler hoechstens eine Schwelle).
+    #[test]
+    fn repeated_short_pauses_keep_the_time_axis() {
+        let (out, _) = feed(16_000, 1, &paused_stream(100, 10, 200));
+        // 100 x 100 ms Ton + 99 x 200 ms Pause = 29,8 s.
+        let expected = 29_800 * 16;
+        let missing = expected as i64 - out.len() as i64;
+        assert!(
+            (0..=(QUIET_GAP_MIN.as_millis() as i64 * 16 + 480)).contains(&missing),
+            "{} Samples statt ~{expected} (fehlen {missing}); vorher fehlten 20 s",
+            out.len()
+        );
+        // Alle Toene sind da; die Stille liegt nach jeder zweiten Pause (der Rest einer Pause
+        // unter der Schwelle wird mit der naechsten aufgefuellt), nicht nach jeder.
+        let loud_samples = out.iter().filter(|x| x.unsigned_abs() > 8_000).count();
+        assert_eq!(loud_samples, 100 * 1_600, "alle Toene sind da");
+        assert!(
+            onsets(&out).len() >= 40,
+            "die Pausen sind nicht alle verloren"
+        );
+    }
+
+    /// Eine einzelne kurze Pause (unter der Schwelle) bleibt Rest und wird nicht geraten.
+    #[test]
+    fn a_single_short_pause_is_not_padded() {
+        let (out, _) = feed(16_000, 1, &paused_stream(2, 10, 200));
+        assert!(
+            out.len().abs_diff(2 * 1_600) <= 480,
+            "{} Samples",
+            out.len()
+        );
+    }
+
+    /// Gegenbeispiel 2: ein Paket mit rueckwaerts springendem QPC (Geraeteposition laeuft
+    /// durch). Der Stempel wird nicht uebernommen, und seine Rueckkehr zum normalen Wert erzeugt
+    /// keine kuenstliche Stille.
+    #[test]
+    fn a_backwards_qpc_jump_is_ignored_and_its_return_adds_no_silence() {
+        let mut pkts = run_of(30, 0, 0, Some(Q0));
+        // 5 Pakete mit einem Stempel 10 s in der Vergangenheit (Position/Wanduhr laufen durch).
+        pkts.extend(run_of(
+            5,
+            300,
+            30 * 160,
+            Some(Q0 - 100_000_000 + 30 * 100_000),
+        ));
+        // Zurueck zum normalen Wert.
+        pkts.extend(run_of(30, 350, 35 * 160, Some(Q0 + 35 * 100_000)));
+        let (out, stamps) = feed(16_000, 1, &pkts);
+        assert!(out.len().abs_diff(65 * 160) <= 480, "{} Samples", out.len());
+        // Kein Stempel stammt aus der Vergangenheit.
+        assert!(
+            stamps
+                .iter()
+                .filter_map(|(_, s)| *s)
+                .all(|s| (Q0..=Q0 + 65 * 100_000 + 1_000_000).contains(&s)),
+            "ein zurueckgesprungener Stempel wurde uebernommen: {stamps:?}"
+        );
+        let mut feeder = LoopbackFeeder::new(16_000, 1);
+        let mut sink = |_: &[i16], _: Option<u64>| {};
+        for p in &pkts {
+            let data = vec![p.level; p.frames];
+            feeder.on_packet(
+                DevicePacket {
+                    interleaved: &data,
+                    device_position: p.pos,
+                    qpc: p.qpc,
+                    since_start: std::time::Duration::from_millis(p.wall_ms),
+                },
+                &mut sink,
+            );
+        }
+        assert_eq!(feeder.bad_stamps(), 5);
+    }
+
+    /// Ein Stempel, der NICHT zurueckkehrt (echte Verschiebung der Uhr), gilt nach
+    /// `STAMP_REANCHOR` als neue Referenz: ohne Stille, und die Stempel folgen ihm wieder.
+    #[test]
+    fn a_stamp_that_stays_off_becomes_the_new_reference() {
+        let shifted = Q0 - 50_000_000; // 5 s zurueck, bleibt so
+        let mut pkts = run_of(30, 0, 0, Some(Q0));
+        pkts.extend(run_of(300, 300, 30 * 160, Some(shifted + 30 * 100_000)));
+        let (out, stamps) = feed(16_000, 1, &pkts);
+        assert!(
+            out.len().abs_diff(330 * 160) <= 480,
+            "{} Samples",
+            out.len()
+        );
+        let last = stamps.iter().rev().find_map(|(_, s)| *s).unwrap();
+        let expected = shifted + 330 * 100_000;
+        assert!(
+            last.abs_diff(expected) <= 1_000_000,
+            "der letzte Stempel {last} folgt der neuen Referenz {expected} nicht"
+        );
+    }
+
+    /// Gegenbeispiel 3: der Capture-Thread liest erst nach 600 ms zum ersten Mal und findet
+    /// fuenf Pakete (50 ms) bereit. Die Anfangsstille ist 600 ms minus ALLE fuenf, nicht minus
+    /// das erste: sonst stuende der Ton 40 ms zu spaet (und das Ende hinter der Wanduhr).
+    #[test]
+    fn the_first_burst_decides_the_leading_silence_not_its_first_packet() {
+        let mut feeder = LoopbackFeeder::new(16_000, 1);
+        let data = vec![0.5f32; 160];
+        let packets: Vec<DevicePacket<'_>> = (0..5u64)
+            .map(|k| DevicePacket {
+                interleaved: &data,
+                device_position: 160 * k,
+                qpc: Some(Q0 + 100_000 * k),
+                since_start: std::time::Duration::from_millis(600),
+            })
+            .collect();
+        let mut out: Vec<i16> = Vec::new();
+        let mut sink = |block: &[i16], _: Option<u64>| out.extend_from_slice(block);
+        feeder.on_burst(&packets, std::time::Duration::from_millis(600));
+        feeder.pump(u64::MAX, &mut sink);
+        feeder.finish(&mut sink);
+        let on = onsets(&out);
+        assert_eq!(on.len(), 1, "{on:?}");
+        // 600 ms - 50 ms = 550 ms = 8 800 Samples Stille.
+        assert!(
+            on[0].abs_diff(8_800) <= 480,
+            "Ton bei {} statt ~8 800",
+            on[0]
+        );
+        // Das Ende liegt bei der Wanduhr (600 ms), nicht dahinter.
+        assert!(out.len().abs_diff(9_600) <= 480, "{} Samples", out.len());
+    }
+
+    // ---- lva#538 Befund 9: grosse Luecken sind begrenzt, unterbrechbar, ohne Paketverlust ----
+
+    /// Eine Nachbildung des Geraets: gibt die Pakete der Reihe nach heraus, jedes erst, wenn
+    /// der Feeder schon `release_after` Mal abgefragt wurde (so "trifft" ein Paket ein, WAEHREND
+    /// der Feeder eine lange Stille abarbeitet).
+    struct ScriptedSource {
+        packets: std::collections::VecDeque<(usize, OwnedPacket)>,
+        polls: usize,
+    }
+
+    impl PacketSource for ScriptedSource {
+        fn next_packet(&mut self) -> anyhow::Result<Option<OwnedPacket>> {
+            self.polls += 1;
+            if let Some((after, _)) = self.packets.front() {
+                if self.polls > *after {
+                    return Ok(self.packets.pop_front().map(|(_, p)| p));
+                }
+            }
+            Ok(None)
+        }
+    }
+
+    fn owned(wall: std::time::Duration, pos: u64, qpc: u64, level: f32) -> OwnedPacket {
+        OwnedPacket {
+            interleaved: vec![level; 160],
+            device_position: pos,
+            qpc: Some(qpc),
+            since_start: wall,
+        }
+    }
+
+    /// Das erste Audio kommt nach 1,5 Stunden. Der Capture-Thread schreibt nicht Stunden
+    /// Nullen am Stueck: er arbeitet in Schritten, liest dazwischen das Geraet (das Paket, das
+    /// WAEHREND der Stille eintrifft, geht nicht verloren) und beachtet das Stop-Flag nach
+    /// jedem Schritt.
+    #[test]
+    fn a_huge_gap_is_worked_in_steps_stoppable_and_loses_no_packet() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let wall = std::time::Duration::from_secs(5_400);
+        let mut source = ScriptedSource {
+            packets: std::collections::VecDeque::from(vec![
+                // Das erste Paket nach 1,5 h ...
+                (0, owned(wall, 0, Q0, 0.5)),
+                // ... und eines, das eintrifft, waehrend die Stille laeuft (nach 3 Abfragen).
+                (
+                    3,
+                    owned(
+                        wall + std::time::Duration::from_millis(10),
+                        160,
+                        Q0 + 100_000,
+                        0.5,
+                    ),
+                ),
+            ]),
+            polls: 0,
+        };
+        let mut feeder = LoopbackFeeder::new(16_000, 1);
+        let stop = AtomicBool::new(false);
+        let mut samples: Vec<i16> = Vec::new();
+        {
+            let mut sink = |block: &[i16], _: Option<u64>| {
+                samples.extend_from_slice(block);
+                // Der Nutzer stoppt, nachdem etwas Stille da ist.
+                if samples.len() >= 2 * PUMP_STEP_FRAMES as usize {
+                    stop.store(true, Ordering::Relaxed);
+                }
+            };
+            let started = std::time::Instant::now();
+            run_cycle(&mut source, &mut feeder, &stop, &|| wall, &mut sink).unwrap();
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(5),
+                "der Durchgang haengt an der Stille"
+            );
+        }
+        assert!(stop.load(Ordering::Relaxed));
+        assert!(
+            feeder.has_work(),
+            "die Stunden Stille wurden nicht abgearbeitet"
+        );
+        assert!(
+            samples.len() < 4 * PUMP_STEP_FRAMES as usize + 480,
+            "{} Samples: die Arbeit je Schritt ist nicht begrenzt",
+            samples.len()
+        );
+        assert!(
+            source.polls >= 3,
+            "das Geraet wurde zwischen den Schritten gelesen"
+        );
+        // Stopp: das Paket, das waehrend der Stille eintraf, geht noch hinaus, die Stille nicht.
+        let mut tail: Vec<i16> = Vec::new();
+        let mut sink = |block: &[i16], _: Option<u64>| tail.extend_from_slice(block);
+        feeder.finish(&mut sink);
+        assert!(!feeder.has_work());
+        assert!(
+            tail.iter().any(|&x| x.unsigned_abs() > 8_000),
+            "das Paket, das waehrend der Stille eintraf, ging verloren"
+        );
+        assert!(
+            tail.len() < 4 * PUMP_STEP_FRAMES as usize,
+            "{} Samples im Rest",
+            tail.len()
+        );
+        let (_, _, capped, skipped) = feeder.summary();
+        assert_eq!(capped, 0);
+        assert!(skipped > 0, "die nicht geschriebene Stille wird gezaehlt");
+    }
+
+    /// Eine Luecke ist auf `max_gap` begrenzt; der Rest wird gezaehlt, nicht geschrieben.
+    #[test]
+    fn one_gap_is_bounded_and_the_rest_is_counted() {
+        use std::time::Duration;
+        let mut feeder = LoopbackFeeder::new(16_000, 1).with_max_gap(Duration::from_secs(10));
+        let data = vec![0.5f32; 160];
+        // Erstes Paket nach 1 h: 3 590 s Stille waeren faellig.
+        feeder.on_packet(
+            DevicePacket {
+                interleaved: &data,
+                device_position: 0,
+                qpc: Some(Q0),
+                since_start: Duration::from_secs(3_600),
+            },
+            &mut |_: &[i16], _: Option<u64>| {},
+        );
+        let (padded, _, capped, skipped) = feeder.summary();
+        assert_eq!(padded, 10 * 16_000, "hoechstens max_gap geschrieben");
+        assert_eq!(capped, 1);
+        assert!(
+            skipped >= 3_589 * 16_000,
+            "{skipped} nicht geschriebene Frames"
+        );
+    }
+
+    /// Ein Gerät, das nie leer wird, haelt `run_cycle` nicht ewig im Lesen: ein Durchgang
+    /// holt hoechstens `MAX_PACKETS_PER_READ` Pakete.
+    #[test]
+    fn a_device_that_never_runs_dry_does_not_hold_the_cycle_in_reading() {
+        struct Endless(u64);
+        impl PacketSource for Endless {
+            fn next_packet(&mut self) -> anyhow::Result<Option<OwnedPacket>> {
+                self.0 += 1;
+                let k = self.0;
+                Ok(Some(owned(
+                    std::time::Duration::from_millis(10 * k),
+                    160 * k,
+                    Q0 + 100_000 * k,
+                    0.5,
+                )))
+            }
+        }
+        let mut source = Endless(0);
+        let mut feeder = LoopbackFeeder::new(16_000, 1);
+        let stop = std::sync::atomic::AtomicBool::new(true);
+        run_cycle(
+            &mut source,
+            &mut feeder,
+            &stop,
+            &|| std::time::Duration::from_secs(1),
+            &mut |_: &[i16], _: Option<u64>| {},
+        )
+        .unwrap();
+        assert!(
+            source.0 <= MAX_PACKETS_PER_READ as u64 + 1,
+            "{} Pakete gelesen",
+            source.0
+        );
     }
 }

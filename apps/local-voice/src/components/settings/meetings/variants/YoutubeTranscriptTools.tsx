@@ -27,6 +27,11 @@ interface YoutubeTranscriptToolsProps {
   onCaptureStarted: (meeting: Meeting) => boolean;
 }
 
+/** Eine neue Vorgangs-Id für einen Start (lva#538). */
+const newOperationId = (): string =>
+  globalThis.crypto?.randomUUID?.() ??
+  `op-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+
 /** Zustaende des Systemton-Waechters, bei denen kein Ton ankommt. */
 const QUIET_STATES = ["no_data", "digital_zero", "silent"];
 
@@ -58,6 +63,9 @@ export const YoutubeTranscriptTools: React.FC<YoutubeTranscriptToolsProps> = ({
   // Escape, X und Hintergrund können im selben Takt mehrfach ankommen, bevor der
   // Zustand neu gezeichnet ist: der Stopp wird trotzdem nur einmal abgeschickt.
   const abortSent = useRef(false);
+  // Die Vorgangs-Id des laufenden Starts (lva#538): „Abbrechen“ meint genau diesen Start,
+  // auch wenn der Befehl dem Start-Befehl vorauseilt (das Backend merkt ihn sich).
+  const startOp = useRef<string | null>(null);
   // Der Player konnte das Video nicht selbst starten: der Nutzer drueckt "Abspielen".
   const [playHint, setPlayHint] = useState(false);
   // Der Systemton liefert seit einiger Zeit nichts (Waechter, Kanal 1).
@@ -175,11 +183,19 @@ export const YoutubeTranscriptTools: React.FC<YoutubeTranscriptToolsProps> = ({
   };
 
   const startCapture = async () => {
+    const op = newOperationId();
+    startOp.current = op;
     setStarting(true);
     setAborting(false);
     abortSent.current = false;
     setMessage(null);
-    const result = await commands.meetingsStartPlaybackCapture(meetingId, true);
+    const result = await commands.meetingsStartPlaybackCapture(
+      meetingId,
+      true,
+      op,
+    );
+    const abortRequested = abortSent.current;
+    startOp.current = null;
     setStarting(false);
     setAborting(false);
     setConsentOpen(false);
@@ -197,20 +213,29 @@ export const YoutubeTranscriptTools: React.FC<YoutubeTranscriptToolsProps> = ({
       });
       return;
     }
+    // Der Abbruch kam erst nach der Veröffentlichung an: das Backend beendet genau diese
+    // Aufnahme (Stopp mit derselben Vorgangs-Id), die Oberfläche zeigt keine laufende an.
+    if (abortRequested) return;
     setPlayHint(!onCaptureStarted(result.data));
   };
 
-  // Der laufende Start wird mit demselben Stopp abgebrochen wie eine Aufnahme:
-  // das Backend setzt den Abbruchmerker, der Start räumt auf und meldet sich mit
-  // `start_cancelled` zurück (siehe `startCapture`).
+  // Der laufende Start wird über seine Vorgangs-Id abgebrochen: das Backend merkt sich den
+  // Abbruch auch dann, wenn er dem Start vorauseilt; der Start räumt auf und meldet sich mit
+  // `start_cancelled` zurück (siehe `startCapture`). Hängt er noch in einem Treiber, kommt
+  // `start_busy`: der Nutzer kann es erneut versuchen.
   const abortStart = async () => {
-    if (abortSent.current) return;
+    const op = startOp.current;
+    if (abortSent.current || op === null) return;
     abortSent.current = true;
     setAborting(true);
-    const result = await commands.meetingsStop();
+    const result = await commands.meetingsCancelStart(op);
     if (result.status !== "ok") {
       abortSent.current = false;
       setAborting(false);
+      setMessage({
+        kind: "error",
+        text: translateMeetingError(result.error, t),
+      });
     }
   };
 

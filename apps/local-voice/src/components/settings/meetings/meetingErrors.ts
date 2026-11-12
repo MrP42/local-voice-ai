@@ -34,6 +34,10 @@ const ERROR_KEY_MAP: Record<string, string> = {
   // lva#538: Abbruch des Starts, Schreibfehler der WAV (Live-Aufnahmen auch)
   start_cancelled: "meetings.errors.startCancelled",
   start_busy: "meetings.errors.startBusy",
+  // lva#538: Loeschen waehrend einer Aufnahme (nichts wurde geloescht) und fehlende Vorgangs-Id
+  recording_busy: "meetings.errors.recordingBusy",
+  delete_in_progress: "meetings.errors.deleteInProgress",
+  invalid_operation: "meetings.errors.invalidOperation",
   audio_write_failed: "meetings.errors.audioWriteFailed",
   audio_paths_failed: "meetings.errors.storeFailed",
   mic_stream_error: "meetings.errors.micStreamError",
@@ -124,4 +128,16 @@ export const translateMeetingError = (code: string, t: TFunction): string => {
   const normalized = code.split(":")[0].trim();
   const key = ERROR_KEY_MAP[normalized];
   return key ? t(key) : code;
+};
+
+/**
+ * Text zu einem gescheiterten Loeschen (lva#538): Die beiden Codes, bei denen NICHTS geloescht
+ * wurde und ein neuer Versuch sinnvoll ist (die Aufnahme wird noch beendet, es laeuft schon ein
+ * Loeschen), bekommen ihre eigene Meldung; alles andere bleibt der allgemeine Text.
+ */
+export const deleteErrorText = (raw: string, t: TFunction): string => {
+  const code = raw.split(":")[0].trim();
+  return code === "recording_busy" || code === "delete_in_progress"
+    ? translateMeetingError(raw, t)
+    : t("meetings.errors.deleteFailed");
 };

@@ -16,6 +16,7 @@ pub mod job; // P8a
 pub mod job_harness; // P8a: Pruefhaken fuer den Headless-Lauf
 pub mod language; // G5: Sprache erkennen, Modell waehlen
 pub mod language_run; // G5: Anbindung an Import, Neu-Transkription, Enddurchlauf
+pub mod lifecycle; // lva#538: Lebenszyklus einer Aufnahme unter einer Sperre
 pub mod llm_call;
 pub mod mail; // M6-P6c
 pub mod merge; // A3: KI-Zusammenfuehrung von Fassungen
