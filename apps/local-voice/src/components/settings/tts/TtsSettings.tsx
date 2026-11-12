@@ -217,6 +217,7 @@ import { applyBookTitle, findIsbn } from "@/lib/reader/isbn";
 import {
   appendPasteEntry,
   parsePasteLog,
+  verifyPasteLog,
   type PasteLogEntry,
 } from "@/lib/reader/pasteLog";
 import type { IsbnBook, LibraryBook, TranslateJob } from "@/bindings";
@@ -579,6 +580,10 @@ export const TtsSettings = () => {
   const setPasteLog = (next: PasteLogEntry[]) => {
     pasteLogRef.current = next;
     setPasteLogState(next);
+    // Prüfsummen gegen die Rohfassung: Beschädigtes wird nur angezeigt, nicht gespeichert.
+    void verifyPasteLog(next).then((checked) => {
+      if (pasteLogRef.current === next) setPasteLogState(checked);
+    });
   };
   // lva#236: eine Übersetzung aus der Bibliothek ist fertig. Ohne das
   // überschriebe ein offenes Vorlesen die Sprachliste beim nächsten Speichern.
@@ -1212,23 +1217,65 @@ export const TtsSettings = () => {
       einfuegungen: pastes.length > 0 ? pastes : undefined,
     });
 
+  /** Schreibvorgänge an `einfuegungen` laufen nacheinander (je Aufruf wird der
+   *  zuletzt gesicherte Stand fortgeschrieben, nie der von vor einem await). */
+  const pasteQueue = useRef<Promise<unknown>>(Promise.resolve());
+  /** Immer die Funktion des letzten Renders: ein wartender Schreibvorgang
+   *  sichert so den aktuellen Text, nicht den vom Einfügen. */
+  const pageStateJsonRef = useRef(pageStateJson);
+  pageStateJsonRef.current = pageStateJson;
+
+  /**
+   * `einfuegungen` der Seite `page` ändern und sichern; `true`, wenn gesichert.
+   * Auf der geöffneten Seite wird der ganze Zustand geschrieben (er enthält
+   * das Protokoll), auf einer inzwischen verlassenen nur ihr Feld in ihrer
+   * Zustandsdatei ersetzt.
+   */
+  const writePasteLog = (
+    page: string,
+    change: (log: PasteLogEntry[]) => PasteLogEntry[],
+  ): Promise<boolean> => {
+    const job = async (): Promise<boolean> => {
+      if (activePageForEvents.current === page && pageLoaded.current) {
+        const next = change(pasteLogRef.current);
+        const saved = await commands
+          .pageStateSave(page, pageStateJsonRef.current(next))
+          .catch(() => null);
+        if (!saved || saved.status !== "ok") return false;
+        if (activePageForEvents.current === page) setPasteLog(next);
+        return true;
+      }
+      const loaded = await commands.pageStateLoad(page).catch(() => null);
+      if (!loaded || loaded.status !== "ok") return false;
+      try {
+        const state = loaded.data
+          ? (JSON.parse(loaded.data) as Record<string, unknown>)
+          : {};
+        const next = change(parsePasteLog(state.einfuegungen));
+        state.einfuegungen = next.length > 0 ? next : undefined;
+        const saved = await commands
+          .pageStateSave(page, JSON.stringify(state))
+          .catch(() => null);
+        return !!saved && saved.status === "ok";
+      } catch {
+        return false;
+      }
+    };
+    const run = pasteQueue.current.then(job, job);
+    pasteQueue.current = run.catch(() => undefined);
+    return run;
+  };
+
   /**
    * Rohfassung einer Einfügung in state.json sichern, bevor der Editor den Text
-   * bereinigt. `false`, wenn das Schreiben scheitert oder die Seite inzwischen
-   * gewechselt wurde: der Editor fügt dann den Rohtext unverändert ein.
+   * bereinigt. `false`, wenn das Schreiben scheitert: der Editor fügt dann den
+   * Rohtext unverändert ein. Wird mit der Seite des Einfügens aufgerufen, auch
+   * wenn die Ansicht währenddessen wechselt.
    */
-  const recordPaste = async (entry: PasteLogEntry): Promise<boolean> => {
-    const page = activePage;
-    if (!page || !pageLoaded.current) return false;
-    const next = appendPasteEntry(pasteLogRef.current, entry);
-    const saved = await commands
-      .pageStateSave(page, pageStateJson(next))
-      .catch(() => null);
-    if (!saved || saved.status !== "ok") return false;
-    if (activePageForEvents.current !== page) return false;
-    setPasteLog(next);
-    return true;
-  };
+  const recordPaste = (entry: PasteLogEntry): Promise<boolean> =>
+    activePage
+      ? writePasteLog(activePage, (log) => appendPasteEntry(log, entry))
+      : Promise.resolve(false);
 
   /** Ein Sichern des Seitenstands steht noch aus (siehe unten). */
   const savePending = useRef(false);
@@ -4685,6 +4732,11 @@ export const TtsSettings = () => {
                 onSpellCheck={(on) => setSpellStored(on ? "1" : "0")}
                 pasteCleanup={pasteStored === "1"}
                 pasteLog={pasteLog}
+                onPasteLogChange={(change) =>
+                  activePage
+                    ? writePasteLog(activePage, change)
+                    : Promise.resolve(false)
+                }
                 onPasteCleanup={
                   tab === "original"
                     ? (on) => setPasteStored(on ? "1" : "0")
@@ -4705,6 +4757,7 @@ export const TtsSettings = () => {
                     spellCheck={spellStored === "1"}
                     cleanPaste={pasteStored === "1"}
                     onPasteRecord={recordPaste}
+                    docKey={activePage}
                     placeholder={t("tts.inputPlaceholder")}
                     className="w-full"
                     suggestions={tagSuggestions}

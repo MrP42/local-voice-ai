@@ -16,16 +16,21 @@ import {
 } from "../src/lib/reader/pasteCleanup.ts";
 
 import {
+  PASTE_ENTRY_MAX_BYTES,
+  PASTE_LOG_MAX_BYTES,
   PASTE_LOG_MAX_ENTRIES,
-  PASTE_LOG_MAX_TOTAL_CHARS,
-  PASTE_RAW_MAX_CHARS,
   appendPasteEntry,
+  entryBytes,
   makeOversizedEntry,
   makePasteEntry,
   parsePasteLog,
   pasteEntryChanges,
+  pasteEntryKey,
+  removePasteEntry,
   restoreRaw,
   sha256Hex,
+  utf8Bytes,
+  verifyPasteLog,
 } from "../src/lib/reader/pasteLog.ts";
 
 const lines = (...l) => l.join("\n");
@@ -229,11 +234,11 @@ test("repeated: Ziffern werden nur bei Seitenzahl-Muster gleichgesetzt", () => {
   const raw = [
     "Rundschreiben Musterkreis – Seite 1 von 4",
     ...filler(0),
-    "Rundschreiben Musterkreis – Seite 2 von 4",
+    "\fRundschreiben Musterkreis – Seite 2 von 4",
     ...filler(10),
-    "Rundschreiben Musterkreis – Seite 3 von 4",
+    "\fRundschreiben Musterkreis – Seite 3 von 4",
     ...filler(20),
-    "Rundschreiben Musterkreis – Seite 4 von 4",
+    "\fRundschreiben Musterkreis – Seite 4 von 4",
     ...filler(30),
   ].join("\n");
   const r = stripRepeated(raw);
@@ -1019,7 +1024,11 @@ test("repeated: echte Kopfzeile auf jeder Seite geht (Seitenzahlzeilen)", () => 
 });
 
 test("repeated: echte Kopfzeile mit Seitenzahl im Kopf geht", () => {
-  const raw = seiten(4, (i) => `Amt Musterkreis – Seite ${i + 1} von 4`, false);
+  const raw = seiten(
+    4,
+    (i) => `${i > 0 ? "\f" : ""}Amt Musterkreis – Seite ${i + 1} von 4`,
+    false,
+  );
   assert.equal(stripRepeated(raw).changes, 4);
 });
 
@@ -1033,9 +1042,74 @@ test("repeated: Formfeeds zählen als Seiten", () => {
   assert.equal(r.changes, 4);
 });
 
-test("repeated: ≥ 4 Vorkommen in gleichmäßigem Abstand gehen auch ohne Seitenzahlen", () => {
-  const raw = seiten(5, () => "Intern – Vertraulich", false);
-  assert.equal(stripRepeated(raw).changes, 5);
+/** Seiten gleicher Länge (11 Zeilen); die Kopfzeile steht auf Seite i an Rang `rank`, wenn `mark(i)`. */
+const seitenMit = (n, mark, rank = 0) =>
+  Array.from({ length: n }, (_, i) => {
+    const rows = Array.from({ length: 10 }, (_, j) => absatz(i * 10 + j));
+    if (mark(i)) rows.splice(rank, 0, "Intern – Vertraulich");
+    else rows.push(absatz(900 + i));
+    return [...rows, `Seite ${i + 1} von ${n}`].join("\n");
+  }).join("\n");
+
+test("repeated: regelmäßiger Refrain ohne Seitengrenzen bleibt", () => {
+  const out = [];
+  for (let i = 0; i < 6; i += 1) {
+    out.push("Intern – Vertraulich");
+    for (let j = 0; j < 9; j += 1) out.push(absatz(i * 9 + j));
+  }
+  const raw = out.join("\n");
+  assert.ok(raw.length >= 1500);
+  assert.equal(stripRepeated(raw).changes, 0);
+  assert.ok(cleanPasted(raw).text.includes("Intern – Vertraulich"));
+});
+
+test("repeated: ≥ 4× im Rhythmus am Seitenrand geht, auch unter 60 % der Seiten", () => {
+  const raw = seitenMit(7, (i) => i % 2 === 0);
+  const r = stripRepeated(raw);
+  assert.equal(r.changes, 4);
+  assert.ok(!r.text.includes("Intern – Vertraulich"));
+});
+
+test("repeated: ≥ 4× im Rhythmus mitten auf der Seite bleibt", () => {
+  const raw = seitenMit(7, (i) => i % 2 === 0, 5);
+  assert.equal(stripRepeated(raw).changes, 0);
+});
+
+test("repeated: drei Wiederholungen auf derselben Seite eines fünfseitigen Texts reichen nicht", () => {
+  const filler = (from, k) =>
+    Array.from({ length: k }, (_, i) => absatz(from + i));
+  const hinweis = "Hinweis zum Datenschutz";
+  const raw = [
+    ...filler(0, 9),
+    "Seite 1 von 5",
+    hinweis,
+    ...filler(10, 9),
+    hinweis,
+    ...filler(20, 9),
+    hinweis,
+    ...filler(30, 3),
+    "Seite 2 von 5",
+    ...filler(40, 9),
+    "Seite 3 von 5",
+    ...filler(50, 9),
+    "Seite 4 von 5",
+    ...filler(60, 9),
+    "Seite 5 von 5",
+  ].join("\n");
+  assert.ok(raw.length >= 1500);
+  assert.equal(stripRepeated(raw).changes, 0);
+  assert.ok(cleanPasted(raw).text.includes(hinweis));
+});
+
+test("repeated: der Formfeed einer entfernten Kopfzeile bleibt Seitenwechsel", () => {
+  const raw = seiten(
+    4,
+    (i) => `${i > 0 ? "\f" : ""}Landratsamt Musterkreis – Mitarbeiterinfo`,
+    false,
+  );
+  const r = stripRepeated(raw);
+  assert.equal(r.changes, 4);
+  assert.equal(r.text.split("\f").length - 1, 3);
 });
 
 test("repeated: Refrain mit unregelmäßigem Abstand bleibt", () => {
@@ -1139,6 +1213,109 @@ test("webNoise: Zeile aus mindestens zwei Bedienwörtern mit Trennzeichen geht a
 });
 
 // ---------------------------------------------------------------------------
+// Fixrunde 2: Zeichenregel in Code, Fixpunkt, Seitengrenzen
+// ---------------------------------------------------------------------------
+
+test("control: umzäunter Codeblock behält weiches Trennzeichen, NBSP und Nullbreite", () => {
+  const code = lines("```", "a\u00AD", "b", "x\u00A0y\u200Bz", "```");
+  const r = stripControl(code);
+  assert.equal(r.text, code);
+  assert.equal(r.changes, 0);
+});
+
+test("control: eingerückter Codeblock bleibt, der Text drumherum wird bereinigt", () => {
+  const block = lines("    a\u00AD", "    b\u00A0c", "    d\u200Be");
+  const raw = lines(
+    "Vor\u00A0dem Block\u200B steht Text.",
+    "",
+    block,
+    "",
+    "Nach\u00A0dem Block\u00AD steht Text.",
+  );
+  const r = stripControl(raw);
+  assert.equal(
+    r.text,
+    lines(
+      "Vor dem Block steht Text.",
+      "",
+      block,
+      "",
+      "Nach dem Block steht Text.",
+    ),
+  );
+  assert.equal(r.changes, 4);
+});
+
+test("control: weiches Trennzeichen am Zeilenende verbindet nicht in einen Codeblock hinein", () => {
+  const raw = lines("Wort\u00AD", "```", "abc", "```");
+  assert.equal(stripControl(raw).text, lines("Wort", "```", "abc", "```"));
+  const code = lines("```", "a\u00AD", "bc", "```");
+  assert.equal(stripControl(code).text, code);
+});
+
+test("control: Codeblock übersteht die ganze Bereinigung Zeichen für Zeichen", () => {
+  const code = lines("```", "a\u00AD", "b", "x\u00A0y\u200Bz", "```");
+  const raw = lines(
+    "Text vor dem Block mit einem Satz, der lang genug ist, um verarbeitet zu werden.",
+    code,
+    "Drucken",
+    "Teilen",
+  );
+  const r = cleanPasted(raw);
+  assert.ok(r.text.includes(code));
+  assert.ok(!r.text.includes("Drucken"));
+});
+
+const kopfMitLeerzeichen = `Kopf${" ".repeat(601)}Zeile`;
+const ueberschriften = (n) =>
+  Array.from({ length: 9 }, (_, i) =>
+    `## ${"Überschrift ".repeat(i + 1 + n)}`.trimEnd(),
+  );
+
+test("Idempotenz (Codex): rhythmische Kopfzeile mit 601 Leerzeichen, ohne Seitengrenzen", () => {
+  const raw = [0, 1, 2, 3]
+    .flatMap((n) => [kopfMitLeerzeichen, ...ueberschriften(n)])
+    .join("\n");
+  assert.ok(raw.length > 1500);
+  const first = cleanPasted(raw);
+  const second = cleanPasted(first.text);
+  assert.equal(second.changes, 0, JSON.stringify(second.items));
+  assert.equal(second.text, first.text);
+  assert.equal(first.text.split("Kopf Zeile").length - 1, 4);
+});
+
+test("Idempotenz (Codex): dieselbe Kopfzeile mit Seitengrenzen geht schon im ersten Aufruf", () => {
+  const raw = [0, 1, 2, 3]
+    .flatMap((n) => [
+      kopfMitLeerzeichen,
+      ...ueberschriften(n),
+      `Seite ${n + 1} von 4`,
+    ])
+    .join("\n");
+  const first = cleanPasted(raw);
+  assert.ok(!first.text.includes("Zeile"));
+  assert.ok(rule(first, "repeated") === 4);
+  const second = cleanPasted(first.text);
+  assert.equal(second.changes, 0);
+  assert.equal(second.text, first.text);
+});
+
+test("Bedienreste, die erst nach dem Entfernen einer Seitenzahl nebeneinander stehen, gehen", () => {
+  const raw = lines(
+    "Text mit einem Satz, der lang genug ist, damit er nicht als kurze Zeile gilt, hier.",
+    "Zurück",
+    "9",
+    "Teilen",
+    "E-Mail",
+  );
+  const r = cleanPasted(raw);
+  assert.equal(
+    r.text,
+    "Text mit einem Satz, der lang genug ist, damit er nicht als kurze Zeile gilt, hier.",
+  );
+});
+
+// ---------------------------------------------------------------------------
 // Rohfassung (pasteLog.ts, Konzept §4.1)
 // ---------------------------------------------------------------------------
 
@@ -1181,30 +1358,107 @@ test("pasteLog: höchstens 20 Einträge, die ältesten fallen zuerst", async () 
   assert.equal(log[19].zeit, "24");
 });
 
-test("pasteLog: Gesamtumfang begrenzt, der neueste Eintrag bleibt immer", () => {
-  const big = "x".repeat(PASTE_RAW_MAX_CHARS);
+const eintrag = (zeit, roh, bereinigt = roh) => ({
+  zeit,
+  sha256: "x",
+  roh,
+  bereinigt,
+  regeln: [{ rule: "spaces", count: 1 }],
+});
+
+test("pasteLog: Gesamtumfang in Bytes begrenzt, der neueste Eintrag bleibt immer", () => {
+  const big = "x".repeat(900_000);
   let log = [];
   for (let i = 0; i < 12; i += 1) {
-    log = appendPasteEntry(log, {
-      zeit: String(i),
-      sha256: "x",
-      roh: big,
-      bereinigt: big,
-      regeln: [],
-    });
+    log = appendPasteEntry(log, eintrag(String(i), big));
   }
-  const total = log.reduce((s, e) => s + e.roh.length + e.bereinigt.length, 0);
-  assert.ok(total <= PASTE_LOG_MAX_TOTAL_CHARS);
+  const total = log.reduce((sum, e) => sum + entryBytes(e), 0);
+  assert.ok(total <= PASTE_LOG_MAX_BYTES, `${total}`);
+  assert.ok(log.length < 12);
   assert.equal(log[log.length - 1].zeit, "11");
 });
 
-test("pasteLog: zu großer Text wird nur als Prüfsumme vermerkt", async () => {
-  const e = await makeOversizedEntry("y".repeat(PASTE_RAW_MAX_CHARS + 1));
+test("pasteLog: Einzelgrenze zählt Bytes, nicht Zeichen („ä“ hat zwei)", () => {
+  const ae = "ä".repeat(600_000);
+  assert.ok(ae.length * 2 < PASTE_ENTRY_MAX_BYTES);
+  const [viele] = appendPasteEntry([], eintrag("a", ae));
+  assert.equal(viele.zuGross, true);
+  assert.equal(viele.roh, undefined);
+  assert.equal(viele.bereinigt, undefined);
+  assert.equal(viele.zeichen, 600_000);
+  assert.equal(viele.bytes, 1_200_000);
+  const ascii = "a".repeat(600_000);
+  const [klein] = appendPasteEntry([], eintrag("b", ascii));
+  assert.equal(klein.zuGross, undefined);
+  assert.equal(klein.roh, ascii);
+});
+
+test("pasteLog: zu großer Text wird nur als Prüfsumme und Größe vermerkt", async () => {
+  const roh = "ä".repeat(PASTE_ENTRY_MAX_BYTES / 2 + 1);
+  const e = await makeOversizedEntry(roh);
   assert.equal(e.zuGross, true);
   assert.equal(e.roh, undefined);
   assert.equal(e.bereinigt, undefined);
-  assert.equal(e.zeichen, PASTE_RAW_MAX_CHARS + 1);
+  assert.equal(e.zeichen, roh.length);
+  assert.equal(e.bytes, utf8Bytes(roh));
   assert.equal(e.sha256.length, 64);
+});
+
+test("pasteLog: beim Laden verlieren übergroße Einträge Roh- und bereinigte Fassung", () => {
+  const gross = {
+    zeit: "t1",
+    sha256: "abc",
+    roh: "ä".repeat(1_100_000),
+    bereinigt: "x",
+    regeln: [{ rule: "spaces", count: 3 }],
+  };
+  const klein = eintrag("t2", "kurz");
+  const [a, b] = parsePasteLog([gross, klein]);
+  assert.equal(a.zuGross, true);
+  assert.equal(a.roh, undefined);
+  assert.equal(a.sha256, "abc");
+  assert.equal(a.zeichen, 1_100_000);
+  assert.equal(a.bytes, 2_200_000);
+  assert.deepEqual(a.regeln, []);
+  assert.equal(b.roh, "kurz");
+});
+
+test("pasteLog: beim Laden gilt danach die Gesamtgrenze, die ältesten fallen", () => {
+  const roh = "x".repeat(900_000);
+  const geladen = parsePasteLog(
+    Array.from({ length: 20 }, (_, i) => eintrag(`z${i}`, roh)),
+  );
+  const total = geladen.reduce((sum, e) => sum + entryBytes(e), 0);
+  assert.ok(total <= PASTE_LOG_MAX_BYTES);
+  assert.ok(geladen.length < 20);
+  assert.equal(geladen[geladen.length - 1].zeit, "z19");
+});
+
+test("pasteLog: Prüfsumme passt nicht zur Rohfassung: beschädigt, Wiederherstellen gesperrt", async () => {
+  const gut = await entryFor(
+    "Drucken\nTeilen\nText mit Inhalt, der bleibt, in einer ganz normalen Zeile.",
+  );
+  const kaputt = { ...gut, roh: `${gut.roh}!`, zeit: "andere" };
+  const [a, b] = await verifyPasteLog([gut, kaputt]);
+  assert.equal(a.beschaedigt, undefined);
+  assert.equal(b.beschaedigt, true);
+  assert.deepEqual(restoreRaw(`${b.bereinigt}`, b), {
+    ok: false,
+    reason: "damaged",
+  });
+  assert.equal(restoreRaw(`${a.bereinigt}`, a).ok, true);
+  // Das Merkmal wird nicht gespeichert gelesen: Neuladen prüft neu.
+  assert.equal(parsePasteLog([b])[0].beschaedigt, undefined);
+});
+
+test("pasteLog: Eintrag löschen über seinen Schlüssel", () => {
+  const log = [eintrag("a", "1"), eintrag("b", "2"), eintrag("c", "3")];
+  const next = removePasteEntry(log, pasteEntryKey(log[1]));
+  assert.deepEqual(
+    next.map((e) => e.zeit),
+    ["a", "c"],
+  );
+  assert.equal(removePasteEntry(log, "gibt|es nicht").length, 3);
 });
 
 test("pasteLog: Speichern und Neuladen (JSON) übersteht alte Zustände und Müll", async () => {

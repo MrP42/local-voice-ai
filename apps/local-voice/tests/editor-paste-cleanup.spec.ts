@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { test, expect, type Page } from "@playwright/test";
 // Einfügen im Editor einer Vorlesen-Seite (lva#530 I1): verschmutzter Text wird
 // bereinigt, ein Hinweis bietet „Rückgängig“ an, der Schalter im Bereinigen-Menü
@@ -74,8 +75,13 @@ test.beforeEach(async ({ page }) => {
           // Seitenzustand: bleibt im sessionStorage und übersteht damit ein Neuladen
           // (Neustart der App); `__failSave` lässt das Schreiben scheitern.
           if (cmd === "page_state_save") {
-            if ((window as unknown as { __failSave?: boolean }).__failSave)
-              throw "disk full";
+            const w = window as unknown as {
+              __failSave?: boolean;
+              __saveDelay?: number;
+            };
+            if (w.__saveDelay)
+              await new Promise((r) => setTimeout(r, w.__saveDelay));
+            if (w.__failSave) throw "disk full";
             sessionStorage.setItem(`__ps_${args?.id}`, String(args?.state));
             return null;
           }
@@ -91,7 +97,12 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "meetings_is_recording") return false;
           if (cmd === "tts_server_status")
             return { phase: "stopped", message: null };
-          if (cmd === "pages_list") return [{ id: "p1", title: "Der Sturm" }];
+          if (cmd === "pages_list")
+            return (
+              (window as unknown as { __pagesList?: unknown }).__pagesList ?? [
+                { id: "p1", title: "Der Sturm" },
+              ]
+            );
           if (cmd === "books_list") return [];
           if (cmd === "books_templates") return [];
           if (cmd === "books_memory_read") return [];
@@ -550,19 +561,388 @@ test("if the raw text cannot be saved it is pasted unchanged", async ({
   await expect(toast(page)).toContainText("ließ sich nicht sichern");
 });
 
-test("the notice can be reached and used with the keyboard", async ({
+test("the notice can be reached and used with the real keyboard only", async ({
   page,
 }) => {
   const editor = await openEditor(page);
   await paste(editor, DIRTY);
   await expect(toast(page)).toContainText("Beim Einfügen bereinigt:");
-  // Sonner: Alt+T springt in die Meldungen, die Aktion ist ein echter Knopf.
+  // Sonner: Alt+T springt in die Meldungen, dann Tab bis zur Aktion, Enter.
   await page.keyboard.press("Alt+KeyT");
-  const live = page.locator("section[aria-live]");
-  await expect(live).toHaveAttribute("aria-live", "polite");
-  const button = undoNotice(page);
-  await button.focus();
-  await expect(button).toBeFocused();
+  await expect(page.locator("section[aria-live]")).toHaveAttribute(
+    "aria-live",
+    "polite",
+  );
+  const focusedText = () =>
+    page.evaluate(() => document.activeElement?.textContent ?? "");
+  for (let i = 0; i < 8 && (await focusedText()) !== "Rückgängig"; i += 1)
+    await page.keyboard.press("Tab");
+  expect(await focusedText()).toBe("Rückgängig");
   await page.keyboard.press("Enter");
   await expect(editor).toHaveValue(`Vorher. ${DIRTY}`);
+});
+
+const SECOND = [
+  "Skip to content",
+  "",
+  "Zweiter Absatz mit Text, der lang genug ist, um bleiben zu dürfen.",
+  "Seite 2 von 9",
+].join("\n");
+
+test("a pending paste does not touch another page after a page switch", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as unknown as { __pagesList: unknown }).__pagesList = [
+      { id: "p1", title: "Der Sturm" },
+      { id: "p2", title: "Das Wintermärchen" },
+    ];
+  });
+  const editor = await openEditor(page);
+  await expect
+    .poll(async () => ((await savedState(page)) as { text: string })?.text)
+    .toBe("Vorher. ");
+  await page.evaluate(() => {
+    (window as unknown as { __saveDelay: number }).__saveDelay = 1500;
+  });
+  expect(await paste(editor, DIRTY)).toBe(true);
+  await page.getByText("Das Wintermärchen", { exact: true }).click();
+  await expect(toast(page).last()).toContainText(
+    "Einfügen abgebrochen: Seite gewechselt.",
+    { timeout: 15_000 },
+  );
+  // Nichts wurde eingefügt: p2 hat keinen Text und kein Protokoll.
+  const p2 = await page.evaluate(() => sessionStorage.getItem("__ps_p2"));
+  expect(p2 === null || !p2.includes("Telefonanlage")).toBe(true);
+  // Die Rohfassung blieb bei der Seite des Einfügens gesichert, der Text dort unverändert.
+  await expect
+    .poll(async () => {
+      const state = (await savedState(page)) as {
+        text: string;
+        einfuegungen?: { roh: string }[];
+      };
+      return JSON.stringify([
+        state.text,
+        state.einfuegungen?.map((e) => e.roh),
+      ]);
+    })
+    .toBe(JSON.stringify(["Vorher. ", [DIRTY]]));
+});
+
+test("two simultaneous pastes keep both raw entries; only the first is inserted", async ({
+  page,
+}) => {
+  const editor = await openEditor(page, "");
+  await page.evaluate(() => {
+    (window as unknown as { __saveDelay: number }).__saveDelay = 300;
+  });
+  await editor.focus();
+  await editor.evaluate(
+    (el: HTMLTextAreaElement, values: string[]) => {
+      el.setSelectionRange(el.value.length, el.value.length);
+      for (const value of values) {
+        const data = new DataTransfer();
+        data.setData("text/plain", value);
+        el.dispatchEvent(
+          new ClipboardEvent("paste", {
+            clipboardData: data,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      }
+    },
+    [DIRTY, SECOND],
+  );
+  await expect
+    .poll(async () => {
+      const state = (await savedState(page)) as {
+        einfuegungen?: { roh: string }[];
+      };
+      return JSON.stringify(state?.einfuegungen?.map((e) => e.roh));
+    })
+    .toBe(JSON.stringify([DIRTY, SECOND]));
+  await expect(editor).toHaveValue(CLEAN);
+  await expect(
+    toast(page).filter({ hasText: "Einfügen abgebrochen" }),
+  ).toHaveCount(1);
+});
+
+test("limits count bytes: ä text is too large as an entry although short in characters", async ({
+  page,
+}) => {
+  const editor = await openEditor(page, "");
+  // 600 000 „ä“ = 1,2 MB je Fassung: Roh plus bereinigt über 2 MiB als JSON.
+  const raw = `Drucken\nTeilen\n${"ä".repeat(600_000)}`;
+  expect(await paste(editor, raw)).toBe(true);
+  await expect(toast(page).last()).toContainText("zu groß für die Bereinigung");
+  await expect(toast(page).last()).toContainText("2 MB");
+  await expect
+    .poll(async () => (await editor.inputValue()).length)
+    .toBe(raw.length);
+  const state = (await savedState(page)) as {
+    einfuegungen: Record<string, unknown>[];
+  };
+  const [entry] = state.einfuegungen;
+  expect(entry.zuGross).toBe(true);
+  expect(entry.roh).toBeUndefined();
+  expect(entry.bytes).toBe(2 * 600_000 + 15);
+});
+
+// -- Rohfassungen: Dialog, Löschen, Aufbewahrung ---------------------------------
+
+/** Sha-256 wie die App (Rohtext, Zeilenenden vereinheitlicht). */
+const sha256Of = (text: string) =>
+  createHash("sha256").update(text, "utf8").digest("hex");
+
+const entryFor = (i: number, extra: Record<string, unknown> = {}) => ({
+  zeit: new Date(Date.UTC(2026, 10, 12, 8, i, 0)).toISOString(),
+  sha256: sha256Of(`Roh ${i}\nDrucken\nTeilen`),
+  roh: `Roh ${i}\nDrucken\nTeilen`,
+  bereinigt: `Roh ${i}`,
+  regeln: [{ rule: "webNoise", count: 2 }],
+  ...extra,
+});
+
+/** Seite mit gespeichertem Zustand (Text und Rohfassungen) öffnen, Bearbeiten-Ansicht. */
+async function openSeeded(
+  page: Page,
+  state: Record<string, unknown>,
+): Promise<ReturnType<Page["locator"]>> {
+  await page.addInitScript((json) => {
+    sessionStorage.setItem("__ps_p1", json);
+  }, JSON.stringify(state));
+  await page.goto("/");
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Bearbeiten", exact: true }).click();
+  const editor = page.locator("textarea").first();
+  await expect(editor).toBeVisible();
+  return editor;
+}
+
+async function openLog(page: Page) {
+  await page.getByTestId("editor-menu-cleanup").click();
+  await page
+    .getByTestId("editor-cleanup-pastelog")
+    .evaluate((el) => el.click());
+  await expect(
+    page.getByRole("dialog", { name: "Letzte Einfügungen" }),
+  ).toBeVisible();
+}
+
+test("the dialog tells how long raw texts are kept; the switch item says it too", async ({
+  page,
+}) => {
+  await openSeeded(page, {
+    text: "Roh 1",
+    tab: "original",
+    einfuegungen: [entryFor(1)],
+  });
+  const sentence =
+    "Rohfassungen der letzten 20 Einfügungen werden mit der Seite auf diesem Gerät gespeichert, bis du sie löschst.";
+  await page.getByTestId("editor-menu-cleanup").click();
+  await expect(page.getByTestId("editor-cleanup-paste")).toContainText(
+    sentence,
+  );
+  await page
+    .getByTestId("editor-cleanup-pastelog")
+    .evaluate((el) => el.click());
+  await expect(
+    page.getByRole("dialog", { name: "Letzte Einfügungen" }),
+  ).toContainText(sentence);
+});
+
+test("a single raw text can be deleted, the others stay", async ({ page }) => {
+  await openSeeded(page, {
+    text: "Roh 1 Roh 2",
+    tab: "original",
+    einfuegungen: [entryFor(1), entryFor(2)],
+  });
+  await openLog(page);
+  const rows = page.getByTestId("paste-log-entry");
+  await expect(rows).toHaveCount(2);
+  // Neueste zuerst: die erste Zeile ist Eintrag 2.
+  await rows.first().getByTestId("paste-log-delete").click();
+  await expect(rows).toHaveCount(1);
+  await expect
+    .poll(async () => {
+      const state = (await savedState(page)) as {
+        einfuegungen?: { roh: string }[];
+      };
+      return JSON.stringify(state.einfuegungen?.map((e) => e.roh));
+    })
+    .toBe(JSON.stringify([entryFor(1).roh]));
+});
+
+test("delete all asks first; cancel keeps everything, confirm removes it", async ({
+  page,
+}) => {
+  const editor = await openSeeded(page, {
+    text: "Roh 1 Roh 2",
+    tab: "original",
+    einfuegungen: [entryFor(1), entryFor(2)],
+  });
+  await openLog(page);
+  await page.getByTestId("paste-log-delete-all").click();
+  const confirm = page.getByRole("dialog", {
+    name: "Alle Rohfassungen löschen?",
+  });
+  await expect(confirm).toBeVisible();
+  await confirm.locator("button.lv-btn", { hasText: "Abbrechen" }).click();
+  await expect(page.getByTestId("paste-log-entry")).toHaveCount(2);
+  await page.getByTestId("paste-log-delete-all").click();
+  await page.getByTestId("paste-log-delete-all-yes").click();
+  await expect(page.getByTestId("paste-log-empty")).toBeVisible();
+  await expect
+    .poll(
+      async () =>
+        ((await savedState(page)) as { einfuegungen?: unknown }).einfuegungen,
+    )
+    .toBeUndefined();
+  await expect(editor).toHaveValue("Roh 1 Roh 2");
+});
+
+test("switching paste cleanup off saves nothing more and keeps existing entries", async ({
+  page,
+}) => {
+  const editor = await openSeeded(page, {
+    text: "Roh 1",
+    tab: "original",
+    einfuegungen: [entryFor(1)],
+  });
+  await page.getByTestId("editor-menu-cleanup").click();
+  await page.getByTestId("editor-cleanup-paste").click();
+  expect(await paste(editor, DIRTY)).toBe(false);
+  await expect(toast(page)).toHaveCount(0);
+  const state = (await savedState(page)) as { einfuegungen: { roh: string }[] };
+  expect(state.einfuegungen.map((e) => e.roh)).toEqual([entryFor(1).roh]);
+  await openLog(page);
+  await expect(page.getByTestId("paste-log-entry")).toHaveCount(1);
+});
+
+test("a disabled restore button is reachable by Tab and names its reason", async ({
+  page,
+}) => {
+  await openSeeded(page, {
+    text: "Ganz anderer Text",
+    tab: "original",
+    einfuegungen: [entryFor(1)],
+  });
+  await openLog(page);
+  const restore = page.getByTestId("paste-log-restore");
+  await expect(restore).toHaveAttribute("aria-disabled", "true");
+  await expect(restore).not.toHaveAttribute("disabled", "");
+  const why = await restore.getAttribute("aria-describedby");
+  expect(why).toContain("paste-log-why-0");
+  await expect(page.locator("#paste-log-why-0")).toContainText(
+    "nicht mehr unverändert",
+  );
+  // Per Tab erreichbar.
+  await page.keyboard.press("Tab");
+  for (let i = 0; i < 6; i += 1) {
+    const on = await page.evaluate(() =>
+      document.activeElement?.getAttribute("data-testid"),
+    );
+    if (on === "paste-log-restore") break;
+    await page.keyboard.press("Tab");
+  }
+  await expect(restore).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("paste-log-entry")).toHaveCount(1);
+  await expect(
+    page.getByRole("dialog", { name: "Letzte Einfügungen" }),
+  ).toBeVisible();
+});
+
+test("a damaged entry (checksum does not match) cannot be restored", async ({
+  page,
+}) => {
+  const gut = entryFor(1);
+  await openSeeded(page, {
+    text: "Roh 1",
+    tab: "original",
+    einfuegungen: [
+      gut,
+      {
+        ...entryFor(2),
+        sha256: "f".repeat(64),
+        zeit: "2026-11-12T09:00:00.000Z",
+      },
+    ],
+  });
+  await openLog(page);
+  const rows = page.getByTestId("paste-log-entry");
+  // Neueste zuerst: Eintrag 2 (beschädigt), dann Eintrag 1 (intakt, Text steht im Editor).
+  await expect(rows.nth(0).getByTestId("paste-log-restore")).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  await expect(rows.nth(0).getByTestId("paste-log-reason")).toContainText(
+    "Beschädigt",
+  );
+  await expect(
+    rows.nth(1).getByTestId("paste-log-restore"),
+  ).not.toHaveAttribute("aria-disabled", "true");
+});
+
+test("a loaded oversized entry loses its raw text and shows only the size", async ({
+  page,
+}) => {
+  const big = { ...entryFor(1), roh: "ä".repeat(1_100_000), bereinigt: "x" };
+  await openSeeded(page, {
+    text: "x",
+    tab: "original",
+    einfuegungen: [big, entryFor(2)],
+  });
+  await openLog(page);
+  const rows = page.getByTestId("paste-log-entry");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(1)).toContainText(
+    "Zu groß für die Bereinigung (2,2 MB)",
+  );
+  await expect(rows.nth(1).getByTestId("paste-log-restore")).toHaveCount(0);
+});
+
+test("dialog with 20 entries: scrolls inside, traps focus, returns focus to the menu button", async ({
+  page,
+}) => {
+  const many = Array.from({ length: 20 }, (_, i) => entryFor(i + 1));
+  await openSeeded(page, {
+    text: many.map((e) => e.bereinigt).join(" "),
+    tab: "original",
+    einfuegungen: many,
+  });
+  await openLog(page);
+  const dialog = page.getByRole("dialog", { name: "Letzte Einfügungen" });
+  await expect(page.getByTestId("paste-log-entry")).toHaveCount(20);
+  // Der Dialog bleibt im Fenster, der Inhalt scrollt darin.
+  const box = await dialog.boundingBox();
+  const viewport = page.viewportSize();
+  expect(
+    box && viewport && box.y >= 0 && box.y + box.height <= viewport.height,
+  ).toBe(true);
+  const scroll = await page.getByTestId("paste-log-list").evaluate((el) => {
+    const content = el.closest(".lv-dialog__content") as HTMLElement;
+    const before = content.scrollTop;
+    content.scrollTop = content.scrollHeight;
+    return {
+      scrollable: content.scrollHeight > content.clientHeight,
+      moved: content.scrollTop > before,
+    };
+  });
+  expect(scroll).toEqual({ scrollable: true, moved: true });
+  // Fokusfalle: 60 Tabs, der Fokus verlässt den Dialog nie.
+  for (let i = 0; i < 60; i += 1) {
+    await page.keyboard.press("Tab");
+    const inside = await page.evaluate(
+      () => !!document.activeElement?.closest('[role="dialog"]'),
+    );
+    expect(inside).toBe(true);
+  }
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(page.getByTestId("editor-menu-cleanup")).toBeFocused();
 });

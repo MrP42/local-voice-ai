@@ -6,16 +6,19 @@
  * Neustart verfügbar und lässt sich zurückholen, auch wenn Strg+Z längst
  * nichts mehr weiß. Alte Zustände ohne das Feld bleiben gültig. Reine Logik,
  * kein Zugriff auf Dateien; Inhalte gehen nie ins Log.
+ *
+ * Grenzen gelten in Bytes (UTF-8 des als JSON gespeicherten Eintrags), nicht
+ * in Zeichen: „ä“ oder Emoji belegen mehr als ein Byte.
  */
 import type { PasteRule } from "./pasteCleanup.ts";
 
 /** Höchstens so viele Einfügungen je Seite (die ältesten fallen zuerst). */
 export const PASTE_LOG_MAX_ENTRIES = 20;
-/** Größter Rohtext (UTF-16-Einheiten), der gesichert und bereinigt wird. */
-export const PASTE_RAW_MAX_CHARS = 2 * 1024 * 1024;
-/** Obergrenze für Roh- plus bereinigte Fassungen aller Einträge zusammen
- *  (state.json wird bei jeder Änderung ganz geschrieben und synchronisiert). */
-export const PASTE_LOG_MAX_TOTAL_CHARS = 16 * 1024 * 1024;
+/** Größter Eintrag (UTF-8-Bytes des JSON): Roh- plus bereinigte Fassung. */
+export const PASTE_ENTRY_MAX_BYTES = 2 * 1024 * 1024;
+/** Obergrenze für alle Einträge zusammen (state.json wird bei jeder Änderung
+ *  ganz geschrieben und synchronisiert). */
+export const PASTE_LOG_MAX_BYTES = 16 * 1024 * 1024;
 
 export interface PasteLogRule {
   rule: PasteRule;
@@ -27,41 +30,52 @@ export interface PasteLogEntry {
   zeit: string;
   /** SHA-256 (hex) des Rohtexts mit vereinheitlichten Zeilenenden. */
   sha256: string;
-  /** Rohtext; fehlt, wenn er zu groß war. */
+  /** Rohtext; fehlt, wenn der Eintrag zu groß war. */
   roh?: string;
   /** Bereinigter Text, wie er eingefügt wurde; fehlt, wenn zu groß. */
   bereinigt?: string;
   /** Änderungen je Regel. */
   regeln: PasteLogRule[];
-  /** Zu groß für Sicherung und Bereinigung: unverändert eingefügt. */
+  /** Zu groß für Sicherung und Bereinigung: nur Prüfsumme und Größe bleiben. */
   zuGross?: true;
-  /** Länge des Rohtexts (nur bei `zuGross`). */
+  /** Länge des Rohtexts in Zeichen (nur bei `zuGross`). */
   zeichen?: number;
+  /** Größe des Rohtexts in UTF-8-Bytes (nur bei `zuGross`). */
+  bytes?: number;
+  /** Nur zur Laufzeit: die Prüfsumme passt nicht zur gespeicherten Rohfassung. */
+  beschaedigt?: true;
 }
 
 const RULES: readonly PasteRule[] = [
+  "repeated",
   "control",
   "pageNumbers",
-  "repeated",
   "webNoise",
   "fragments",
   "spaces",
   "blankLines",
 ];
 
+const encoder = new TextEncoder();
 const normalizeNewlines = (text: string) => text.replace(/\r\n?/g, "\n");
+/** UTF-8-Länge eines Textes in Bytes. */
+export const utf8Bytes = (text: string): number => encoder.encode(text).length;
+
+/** Größe eines Eintrags: UTF-8-Länge seines JSON. */
+export const entryBytes = (entry: PasteLogEntry): number =>
+  utf8Bytes(JSON.stringify(entry));
 
 /** SHA-256 als Hex-Text; leer, wenn die Umgebung kein WebCrypto bietet. */
 export async function sha256Hex(text: string): Promise<string> {
   const subtle = globalThis.crypto?.subtle;
   if (!subtle) return "";
-  const digest = await subtle.digest("SHA-256", new TextEncoder().encode(text));
+  const digest = await subtle.digest("SHA-256", encoder.encode(text));
   return Array.from(new Uint8Array(digest), (b) =>
     b.toString(16).padStart(2, "0"),
   ).join("");
 }
 
-/** Eintrag für eine bereinigte Einfügung. */
+/** Eintrag für eine bereinigte Einfügung (kann größer als erlaubt sein, siehe {@link fitsEntry}). */
 export async function makePasteEntry(
   raw: string,
   cleaned: string,
@@ -78,35 +92,79 @@ export async function makePasteEntry(
   };
 }
 
-/** Eintrag für einen zu großen Text: nur Prüfsumme und Länge, keine Rohfassung. */
+/** Eintrag für einen zu großen Text: nur Prüfsumme und Größe, keine Rohfassung. */
 export async function makeOversizedEntry(
   raw: string,
   now: Date = new Date(),
 ): Promise<PasteLogEntry> {
+  const roh = normalizeNewlines(raw);
   return {
     zeit: now.toISOString(),
-    sha256: await sha256Hex(normalizeNewlines(raw)),
+    sha256: await sha256Hex(roh),
     regeln: [],
     zuGross: true,
-    zeichen: raw.length,
+    zeichen: roh.length,
+    bytes: utf8Bytes(roh),
   };
 }
 
-const sizeOf = (entry: PasteLogEntry) =>
-  (entry.roh?.length ?? 0) + (entry.bereinigt?.length ?? 0);
+/** Passt der Eintrag in die Größengrenze für einen einzelnen Eintrag? */
+export const fitsEntry = (entry: PasteLogEntry): boolean =>
+  entryBytes(entry) <= PASTE_ENTRY_MAX_BYTES;
+
+/** Übergroßer Eintrag verliert Roh- und bereinigte Fassung; sha und Größe bleiben. */
+function shrink(entry: PasteLogEntry): PasteLogEntry {
+  const small: PasteLogEntry = {
+    zeit: entry.zeit,
+    sha256: entry.sha256,
+    regeln: [],
+    zuGross: true,
+  };
+  const zeichen = entry.zeichen ?? entry.roh?.length;
+  const bytes =
+    entry.bytes ?? (entry.roh === undefined ? undefined : utf8Bytes(entry.roh));
+  if (zeichen !== undefined) small.zeichen = zeichen;
+  if (bytes !== undefined) small.bytes = bytes;
+  return small;
+}
+
+/** Eintrag auf die Einzelgrenze bringen. */
+const limitEntry = (entry: PasteLogEntry): PasteLogEntry =>
+  fitsEntry(entry) ? entry : shrink(entry);
+
+/** Anzahl und Gesamtumfang begrenzen: die ältesten Einträge fallen zuerst,
+ *  der neueste bleibt immer. */
+function limitLog(entries: PasteLogEntry[]): PasteLogEntry[] {
+  const next = entries.slice(-PASTE_LOG_MAX_ENTRIES);
+  const sizes = next.map(entryBytes);
+  let total = sizes.reduce((sum, n) => sum + n, 0);
+  let from = 0;
+  while (next.length - from > 1 && total > PASTE_LOG_MAX_BYTES) {
+    total -= sizes[from];
+    from += 1;
+  }
+  return next.slice(from);
+}
 
 /** Neuen Eintrag anhängen (neueste zuletzt); Grenzen für Anzahl und Umfang einhalten. */
 export function appendPasteEntry(
   log: readonly PasteLogEntry[],
   entry: PasteLogEntry,
 ): PasteLogEntry[] {
-  const next = [...log, entry].slice(-PASTE_LOG_MAX_ENTRIES);
-  let total = next.reduce((sum, e) => sum + sizeOf(e), 0);
-  while (next.length > 1 && total > PASTE_LOG_MAX_TOTAL_CHARS) {
-    total -= sizeOf(next[0]);
-    next.shift();
-  }
-  return next;
+  return limitLog([...log, limitEntry(entry)]);
+}
+
+/** Schlüssel zum Löschen eines Eintrags. */
+export const pasteEntryKey = (entry: PasteLogEntry): string =>
+  `${entry.zeit}|${entry.sha256}`;
+
+/** Einen Eintrag aus dem Protokoll nehmen (der erste mit diesem Schlüssel). */
+export function removePasteEntry(
+  log: readonly PasteLogEntry[],
+  key: string,
+): PasteLogEntry[] {
+  const at = log.findIndex((e) => pasteEntryKey(e) === key);
+  return at < 0 ? [...log] : [...log.slice(0, at), ...log.slice(at + 1)];
 }
 
 const isRule = (value: unknown): value is PasteRule =>
@@ -131,19 +189,44 @@ function parseEntry(value: unknown): PasteLogEntry | null {
   if (e.zuGross === true) {
     entry.zuGross = true;
     if (typeof e.zeichen === "number") entry.zeichen = e.zeichen;
+    if (typeof e.bytes === "number") entry.bytes = e.bytes;
   }
   return entry;
 }
 
-/** `einfuegungen` aus dem Seitenzustand lesen; fehlt das Feld, ist das Protokoll leer. */
+/**
+ * `einfuegungen` aus dem Seitenzustand lesen; fehlt das Feld, ist das
+ * Protokoll leer. Die Grenzen gelten auch hier (ein anderes Gerät oder eine
+ * ältere Fassung kann mehr gespeichert haben): übergroße Einträge verlieren
+ * Roh- und bereinigte Fassung, danach fallen die ältesten Einträge, bis der
+ * Gesamtumfang passt.
+ */
 export function parsePasteLog(value: unknown): PasteLogEntry[] {
   if (!Array.isArray(value)) return [];
   const entries: PasteLogEntry[] = [];
   for (const item of value) {
     const entry = parseEntry(item);
-    if (entry) entries.push(entry);
+    if (entry) entries.push(limitEntry(entry));
   }
-  return entries.slice(-PASTE_LOG_MAX_ENTRIES);
+  return limitLog(entries);
+}
+
+/**
+ * Prüfsummen gegen die gespeicherte Rohfassung prüfen: passt sie nicht, ist
+ * der Eintrag beschädigt (nur zur Laufzeit markiert, Wiederherstellen gesperrt).
+ */
+export async function verifyPasteLog(
+  entries: readonly PasteLogEntry[],
+): Promise<PasteLogEntry[]> {
+  return Promise.all(
+    entries.map(async (entry) => {
+      if (entry.roh === undefined || entry.sha256 === "") return entry;
+      const actual = await sha256Hex(entry.roh);
+      return actual === "" || actual === entry.sha256
+        ? entry
+        : { ...entry, beschaedigt: true as const };
+    }),
+  );
 }
 
 /** Anzahl der Änderungen eines Eintrags. */
@@ -152,12 +235,16 @@ export const pasteEntryChanges = (entry: PasteLogEntry): number =>
 
 export type PasteRestore =
   | { ok: true; text: string }
-  | { ok: false; reason: "noRaw" | "empty" | "missing" | "ambiguous" };
+  | {
+      ok: false;
+      reason: "noRaw" | "damaged" | "empty" | "missing" | "ambiguous";
+    };
 
 /**
  * Rohfassung an die Stelle der bereinigten setzen. Das geht nur, wenn der
- * bereinigte Text genau einmal unverändert im aktuellen Text steht; war er
- * leer (alles entfernt), ist die Stelle nicht eindeutig.
+ * Eintrag unbeschädigt ist und der bereinigte Text genau einmal unverändert
+ * im aktuellen Text steht; war er leer (alles entfernt), ist die Stelle nicht
+ * eindeutig.
  */
 export function restoreRaw(
   current: string,
@@ -166,6 +253,7 @@ export function restoreRaw(
   const { roh, bereinigt } = entry;
   if (roh === undefined || bereinigt === undefined)
     return { ok: false, reason: "noRaw" };
+  if (entry.beschaedigt) return { ok: false, reason: "damaged" };
   if (bereinigt === "") return { ok: false, reason: "empty" };
   const first = current.indexOf(bereinigt);
   if (first < 0) return { ok: false, reason: "missing" };

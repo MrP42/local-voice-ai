@@ -16,7 +16,8 @@ import type { TagDef } from "@/lib/tags/types";
 import { tagInsertFor } from "@/lib/tags/registry";
 import { cleanPasted, type PasteCleanResult } from "@/lib/reader/pasteCleanup";
 import {
-  PASTE_RAW_MAX_CHARS,
+  PASTE_ENTRY_MAX_BYTES,
+  fitsEntry,
   makeOversizedEntry,
   makePasteEntry,
   type PasteLogEntry,
@@ -182,6 +183,9 @@ interface TtsChipEditorProps {
   /** Rohfassung einer Einfügung sichern, BEVOR bereinigt wird (Seitenzustand).
    *  `false`: Sichern gescheitert, der Text wird dann unverändert eingefügt. */
   onPasteRecord?: (entry: PasteLogEntry) => Promise<boolean>;
+  /** Kennung des Dokuments (Seiten-ID): eine ausstehende Einfügung ändert
+   *  nur das Dokument, in dem sie begonnen hat. */
+  docKey?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -405,6 +409,7 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
   spellCheck = true,
   cleanPaste = false,
   onPasteRecord,
+  docKey,
 }) => {
   const { t } = useTranslation();
   const tagLang = useTagLanguage();
@@ -417,6 +422,8 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
   }, [value]);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const docKeyRef = useRef(docKey);
+  docKeyRef.current = docKey;
 
   const [composing, setComposing] = useState(false);
   const composingRef = useRef(false);
@@ -559,11 +566,13 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
    * Eingefügten Text bereinigen: sichert vorher die Rohfassung (Seitenzustand,
    * `onPasteRecord`), ersetzt dann `[start, end)` durch die bereinigte Fassung
    * (über `execInsert`, Strg+Z bleibt ein Schritt) und meldet die Anzahl der
-   * Änderungen mit „Rückgängig“. Der Hinweis gilt nur für diese Einfügung und
-   * nur, solange der Editor GENAU den Text von direkt nach dem Einfügen enthält:
-   * jede spätere Änderung (auch Strg+Z, auch bei leerem Ergebnis) macht ihn
-   * ungültig. Konnte die Rohfassung nicht gesichert werden oder wurde währenddessen
-   * getippt, wird der Rohtext unverändert eingefügt.
+   * Änderungen mit „Rückgängig“. Eine ausstehende Einfügung verändert nur ihr
+   * ursprüngliches Dokument: nach dem Sichern müssen Dokument (`docKey`),
+   * Editor und Textstand noch dieselben sein, sonst wird nichts eingefügt
+   * (Hinweis; die Rohfassung bleibt gesichert). Der Rückgängig-Hinweis gilt nur
+   * für diese Einfügung und nur, solange der Editor GENAU den Text von direkt
+   * nach dem Einfügen enthält. Ist der Eintrag zu groß oder lässt sich die
+   * Rohfassung nicht sichern, wird der Rohtext unverändert eingefügt.
    */
   const insertCleaned = useCallback(
     async (
@@ -574,17 +583,25 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
       result: PasteCleanResult,
     ) => {
       const base = valueRef.current;
+      const doc = docKeyRef.current;
       const original = raw.replace(/\r\n?/g, "\n");
       const cleaned = result.text;
-      const entry = await makePasteEntry(original, cleaned, result.items);
+      let entry = await makePasteEntry(original, cleaned, result.items);
+      const tooLarge = !fitsEntry(entry);
+      if (tooLarge) entry = await makeOversizedEntry(original);
       const saved = onPasteRecord ? await onPasteRecord(entry) : true;
-      if (taRef.current !== ta || valueRef.current !== base) {
-        execInsert(ta, ta.selectionStart, ta.selectionEnd, original);
+      if (taRef.current !== ta || docKeyRef.current !== doc) {
+        toast(t("tts.editorMenu.pasteAbortedPage"));
         return;
       }
-      if (!saved) {
+      if (valueRef.current !== base) {
+        toast(t("tts.editorMenu.pasteAbortedChanged"));
+        return;
+      }
+      if (tooLarge || !saved) {
         execInsert(ta, start, end, original);
-        toast.error(t("tts.editorMenu.pasteNotSaved"));
+        if (tooLarge) toast(t("tts.editorMenu.pasteTooLarge"));
+        else toast.error(t("tts.editorMenu.pasteNotSaved"));
         return;
       }
       execInsert(ta, start, end, cleaned);
@@ -599,7 +616,11 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
           label: t("tts.editorMenu.pasteUndo"),
           onClick: () => {
             const current = taRef.current;
-            if (!current || valueRef.current !== after) {
+            if (
+              !current ||
+              docKeyRef.current !== doc ||
+              valueRef.current !== after
+            ) {
               toast(t("tts.editorMenu.pasteUndoStale"));
               return;
             }
@@ -633,7 +654,8 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
     raw: string,
   ): boolean => {
     if (!cleanPaste || !raw) return false;
-    if (raw.length > PASTE_RAW_MAX_CHARS) {
+    // Zeichen sind nie mehr als Bytes: darüber passt auch kein Eintrag.
+    if (raw.length > PASTE_ENTRY_MAX_BYTES) {
       void noteOversized(raw);
       return false;
     }

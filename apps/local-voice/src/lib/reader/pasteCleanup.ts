@@ -5,8 +5,10 @@
  * Vorlesen stören: Seitenzahlen, wiederkehrende Kopf- und Fußzeilen,
  * Bedienelemente von Webseiten („Drucken", „Teilen"), unsichtbare Zeichen,
  * Silbentrennung am Zeilenende. Alles hier läuft nach festen Regeln und
- * kostet kein Token. Jede Regel arbeitet in linearer Zeit (Zeilen werden
- * gesplittet, nicht mit rückverfolgenden Mustern durchsucht).
+ * kostet kein Token. Keine Regel durchsucht ganze Zeilen mit rückverfolgenden
+ * Mustern (Zeilen werden gesplittet, Zeichenklassen-Muster haben feste Länge);
+ * der Aufwand wächst mit O(n log n) (Sortierung der Zeilenabstände einer
+ * Kopfzeile), die Durchläufe sind auf wenige begrenzt.
  *
  * Bewusst NICHT dabei: Zeitstempel (Agenden wie „(10:30) Begrüßung" bleiben)
  * und das Verbinden einzelner Satzzeilen zu Absätzen.
@@ -15,7 +17,8 @@
  * (umzäunte Blöcke mit ``` oder ~~~ bis zum Ende, eingerückte Blöcke) und
  * Markdown-Blockzeilen (Überschriften, Zitate, Listen, Tabellenzeilen),
  * Sprecher `<Name>`, Tags `[…]` und Seitenmarken `{{S. n}}`. In Code laufen
- * zusätzlich die Leerzeichen- und die Leerzeilenregel nicht.
+ * zusätzlich die Zeichen-, die Leerzeichen- und die Leerzeilenregel nicht:
+ * ein Codeblock bleibt Zeichen für Zeichen, wie er eingefügt wurde.
  */
 import { joinFragments, tidySpaces } from "./textCleanup.ts";
 
@@ -28,12 +31,13 @@ export type PasteRule =
   | "spaces"
   | "blankLines";
 
-/** Reihenfolge der Regeln: erst Zeichen, dann Zeilen entfernen, dann
- *  zusammenfügen, zuletzt Leerzeilen. */
+/** Reihenfolge der Regeln: Kopf-/Fußzeilen zuerst (sie brauchen die Seitengrenzen,
+ *  also Seitenzahlzeilen und Formfeeds, die die späteren Regeln entfernen),
+ *  dann Zeichen, Zeilen entfernen, zusammenfügen, zuletzt Leerzeilen. */
 export const PASTE_RULES: readonly PasteRule[] = [
+  "repeated",
   "control",
   "pageNumbers",
-  "repeated",
   "webNoise",
   "fragments",
   "spaces",
@@ -72,7 +76,7 @@ const REPEATED_PAGE_SHARE = 0.6;
 /** Zulässige Abweichung vom mittleren Abstand bei gleichmäßigem Rhythmus. */
 const REPEATED_RHYTHM_TOLERANCE = 0.3;
 /** Mehr Durchläufe braucht keine Vorlage; schützt vor Endlosschleifen. */
-const MAX_PASSES = 4;
+const MAX_PASSES = 6;
 
 // ---------------------------------------------------------------------------
 // Zeilenarten: Code und Struktur
@@ -179,12 +183,12 @@ function classifyLines(lines: readonly string[]): Kind[] {
 
 /** Steuerzeichen außer Tab, Zeilenumbruch und Formfeed (der wird zum Umbruch). */
 const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000E-\u001F\u007F-\u009F]/g;
-const SOFT_HYPHEN_BREAK = /­[ \t]*\n(?=\p{Ll})/gu;
+const SOFT_HYPHEN_BREAK = /\u00AD[ \t]*\n(?=\p{Ll})/gu;
 /** Weiches Trennzeichen, Nullbreiten-Leerzeichen, BOM / unsichtbares Leerzeichen
  *  (U+00AD, U+200B, U+FEFF). Nullbreiten-(Nicht-)Verbinder U+200C/U+200D bleiben:
  *  sie halten Emoji-Folgen („Frau + Laptop") und persische Wörter zusammen. */
-const INVISIBLE = /[­​﻿]/g;
-const NBSP = / /g;
+const INVISIBLE = /[\u00AD\u200B\uFEFF]/g;
+const NBSP = /\u00A0/g;
 
 /** Ersetzt alle Treffer und liefert die Anzahl in einem Durchlauf. */
 function replaceCounting(
@@ -200,16 +204,11 @@ function replaceCounting(
   return { text: out, changes };
 }
 
-/**
- * Zeilenenden vereinheitlichen (zählt nicht: die Textarea tut es ohnehin),
- * Formfeed zu Umbruch, Steuerzeichen, weiches Trennzeichen und Nullbreiten
- * (außer Verbindern) entfernen, geschütztes Leerzeichen zu Leerzeichen.
- */
-export function stripControl(text: string): PasteRuleResult {
+/** Zeichenregeln auf einen zusammenhängenden Lauf ungeschützter Zeilen. */
+function stripControlRun(text: string): PasteRuleResult {
   let changes = 0;
-  let out = text.replace(/\r\n?/g, "\n");
+  let out = text;
   for (const [re, replacement] of [
-    [/\f/g, "\n"],
     [CONTROL_CHARS, ""],
     // `Mit-­` am Zeilenende vor Kleinbuchstaben: Wort wächst zusammen.
     [SOFT_HYPHEN_BREAK, ""],
@@ -221,6 +220,26 @@ export function stripControl(text: string): PasteRuleResult {
     changes += step.changes;
   }
   return { text: out, changes };
+}
+
+/**
+ * Zeilenenden vereinheitlichen und Formfeed zu Umbruch (Seitenwechsel, nicht
+ * Inhalt; die Zeilenenden zählen nicht: die Textarea tut es ohnehin), BOM am
+ * Textanfang weg. Danach, nur außerhalb von Code: Steuerzeichen, weiches
+ * Trennzeichen und Nullbreiten (außer Verbindern) entfernen, geschütztes
+ * Leerzeichen zu Leerzeichen. In Code bleibt jedes Zeichen unverändert.
+ */
+export function stripControl(text: string): PasteRuleResult {
+  let out = text.replace(/\r\n?/g, "\n");
+  const feeds = replaceCounting(out, /\f/g, "\n");
+  out = feeds.text;
+  let changes = feeds.changes;
+  if (out.charCodeAt(0) === 0xfeff) {
+    out = out.slice(1);
+    changes += 1;
+  }
+  const body = mapRuns(out, (kind) => kind === "code", stripControlRun);
+  return { text: body.text, changes: changes + body.changes };
 }
 
 // ---------------------------------------------------------------------------
@@ -237,6 +256,8 @@ function dropLines(
   lines: readonly string[],
   kinds: readonly Kind[],
   drop: (index: number) => boolean,
+  /** Ersatz für eine entfernte Zeile (z. B. ihr Formfeed), sonst nichts. */
+  leave?: (index: number) => string | null,
 ): PasteRuleResult {
   const out: string[] = [];
   let changes = 0;
@@ -253,6 +274,11 @@ function dropLines(
       continue;
     }
     changes += 1;
+    const left = leave?.(index) ?? null;
+    if (left !== null) {
+      out.push(left);
+      continue;
+    }
     const prevBlank = out.length === 0 || out[out.length - 1].trim() === "";
     skipBlank = prevBlank && kinds[index + 1] === "blank";
   }
@@ -300,16 +326,30 @@ const PAGE_IN_LINE =
 /** Überschrift oder Kapitelzeile: Ziffern unterscheiden Zeilen, nie gleichsetzen. */
 const HEADING_LIKE =
   /^(?:(?:Kapitel|Teil|Abschnitt|Artikel|Anlage|Anhang|Chapter|Part|Section|Lektion|Folie|Tag)\s+\d|§\s*\d|(?!\d{1,3}\s*(?:von|of)\s*\d)\d+(?:\.\d+)*[.)]?\s+\p{L})/iu;
+/** Längere Zeilen sind nie Kopf- oder Fußzeile (vor dem Zusammenfassen der Leerzeichen). */
+const REPEAT_RAW_MAX_CHARS = 5000;
+const REPEAT_KEY_MAX_CHARS = 120;
+/** So viele Zeilen am Anfang und Ende einer Seite gelten als Seitenrand. */
+const PAGE_EDGE_LINES = 2;
+/** Zeichen, die die Zeichenregel später ändert: im Schlüssel schon gleichgesetzt. */
+const KEY_INVISIBLE = /[\u00AD\u200B\uFEFF\u000C]/g;
+const KEY_NBSP = /\u00A0/g;
 
 /**
- * Schlüssel einer Kopf-/Fußzeilen-Kandidatin. Ziffern werden nur gleichgesetzt,
- * wenn die Zeile selbst eine Seitenzahl trägt („Amt – Seite 3 von 30") und
- * keine Überschrift ist; sonst muss die Zeile exakt wiederkehren.
+ * Schlüssel einer Kopf-/Fußzeilen-Kandidatin. Leerzeichen sind zusammengefasst
+ * und unsichtbare Zeichen entfernt (so, wie die späteren Regeln sie ohnehin
+ * behandeln). Ziffern werden nur gleichgesetzt, wenn die Zeile selbst eine
+ * Seitenzahl trägt („Amt – Seite 3 von 30") und keine Überschrift ist; sonst
+ * muss die Zeile exakt wiederkehren.
  */
 const repeatKey = (line: string): string | null => {
-  if (line.length > 600) return null;
-  const s = line.trim().replace(/\s+/g, " ");
-  if (s.length < 3 || s.length > 120) return null;
+  if (line.length > REPEAT_RAW_MAX_CHARS) return null;
+  const s = line
+    .replace(KEY_INVISIBLE, "")
+    .replace(KEY_NBSP, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+  if (s.length < 3 || s.length > REPEAT_KEY_MAX_CHARS) return null;
   if (isStructural(s) || isPageNumberLine(s)) return null;
   // Ein Satz mit Punkt ist Inhalt (Kehrreim, „Vielen Dank."), keine Kopfzeile.
   if (SENTENCE_END.test(s)) return null;
@@ -321,19 +361,66 @@ const repeatKey = (line: string): string | null => {
   return s;
 };
 
+interface PageLayout {
+  /** Seite (Abschnitt zwischen zwei Seitengrenzen) jeder Zeile. */
+  page: number[];
+  /** Steht die Zeile unter den ersten oder letzten Zeilen ihrer Seite? */
+  edge: boolean[];
+  /** Anzahl der Seiten mit Inhalt. */
+  pages: number;
+}
+
+const LEADING_FEEDS = /^[ \t]*(\f+)/;
+
 /**
- * Geschätzte Seitenzahl des Textes: Zeilen, die nur eine Seitenzahl sind,
- * oder Formfeeds (Seitenwechsel beim Kopieren aus PDF) plus eins.
+ * Seitengrenzen: Zeilen, die nur eine Seitenzahl sind (außerhalb von Code),
+ * und Formfeeds (am Zeilenanfang: neue Seite beginnt hier, sonst danach).
+ * Eine Seitenzahlzeile gehört nicht zum Inhalt; die ersten und letzten
+ * {@link PAGE_EDGE_LINES} nicht leeren Zeilen jeder Seite sind der Seitenrand,
+ * egal ob die Seitenzahl oben oder unten steht.
  */
-export function estimatePages(text: string): number {
-  let numbers = 0;
-  let feeds = 0;
-  for (const line of text.split(/\n|\r\n?|\f/)) {
-    if (line.trim() !== "" && isPageNumberLine(line)) numbers += 1;
+function pageLayout(
+  lines: readonly string[],
+  kinds: readonly Kind[],
+): PageLayout {
+  const page: number[] = new Array(lines.length);
+  const content: number[][] = [[]];
+  let current = 0;
+  const open = (to: number) => {
+    current = to;
+    while (content.length <= current) content.push([]);
+  };
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    let feeds = 0;
+    let leading = 0;
+    if (line.includes("\f")) {
+      for (
+        let at = line.indexOf("\f");
+        at >= 0;
+        at = line.indexOf("\f", at + 1)
+      )
+        feeds += 1;
+      leading = LEADING_FEEDS.exec(line)?.[1].length ?? 0;
+    }
+    if (leading > 0) open(current + leading);
+    page[i] = current;
+    const bare = feeds > 0 ? line.replace(/\f/g, "") : line;
+    if (kinds[i] !== "code" && isPageNumberLine(bare)) open(current + 1);
+    else if (bare.trim() !== "") content[current].push(i);
+    if (feeds > leading) open(current + feeds - leading);
   }
-  for (let at = text.indexOf("\f"); at >= 0; at = text.indexOf("\f", at + 1))
-    feeds += 1;
-  return Math.max(numbers, feeds > 0 ? feeds + 1 : 0);
+  const edge: boolean[] = new Array(lines.length).fill(false);
+  let pages = 0;
+  for (const rows of content) {
+    if (rows.length === 0) continue;
+    pages += 1;
+    rows.forEach((row, rank) => {
+      edge[row] =
+        rank < PAGE_EDGE_LINES || rank >= rows.length - PAGE_EDGE_LINES;
+    });
+  }
+  return { page, edge, pages };
 }
 
 /** Abstände (Zeilen) gleichmäßig: jede Lücke höchstens 30 % neben der mittleren. */
@@ -349,18 +436,19 @@ function evenlySpaced(at: readonly number[]): boolean {
 /**
  * Wiederkehrende Kopf- und Fußzeilen: dieselbe Zeile mindestens dreimal in
  * einem langen Text, jeweils mindestens acht Zeilen auseinander, und zwar
- * entweder auf mindestens 60 % der Seiten (gezählt an Seitenzahlzeilen und
- * Formfeeds) oder mindestens viermal in gleichmäßigem Abstand (±30 %).
- * Kürzere Texte, dichte Wiederholungen und Kehrreime mit unregelmäßigem
- * Abstand bleiben.
+ * entweder auf mindestens 60 % der Seiten (gezählt werden die verschiedenen
+ * Seiten, auf denen die Zeile steht, nicht ihre Vorkommen) oder mindestens
+ * viermal in gleichmäßigem Abstand (±30 %), jedes Mal am Seitenrand. Seiten
+ * kennt die Regel nur an Seitenzahlzeilen und Formfeeds; ohne erkennbare
+ * Seitengrenzen (mindestens zwei Seiten) bleibt jede Zeile stehen. Kürzere
+ * Texte, dichte Wiederholungen und Kehrreime bleiben ebenfalls.
  */
-export function stripRepeated(
-  text: string,
-  pages: number = estimatePages(text),
-): PasteRuleResult {
+export function stripRepeated(text: string): PasteRuleResult {
   if (text.length < REPEATED_MIN_CHARS) return { text, changes: 0 };
   const lines = text.split("\n");
   const kinds = classifyLines(lines);
+  const layout = pageLayout(lines, kinds);
+  if (layout.pages < 2) return { text, changes: 0 };
   const seen = new Map<string, number[]>();
   lines.forEach((line, index) => {
     if (kinds[index] !== "text") return;
@@ -378,12 +466,20 @@ export function stripRepeated(
     );
     if (!spaced) continue;
     const onPages =
-      pages >= 2 && at.length >= Math.ceil(pages * REPEATED_PAGE_SHARE);
-    const rhythmic = at.length >= 4 && evenlySpaced(at);
+      new Set(at.map((i) => layout.page[i])).size >=
+      Math.ceil(layout.pages * REPEATED_PAGE_SHARE);
+    const rhythmic =
+      at.length >= 4 && at.every((i) => layout.edge[i]) && evenlySpaced(at);
     if (onPages || rhythmic) at.forEach((pos) => dropped.add(pos));
   }
   if (dropped.size === 0) return { text, changes: 0 };
-  return dropLines(lines, kinds, (i) => dropped.has(i));
+  // Ein Formfeed der entfernten Zeile bleibt als Seitenwechsel stehen.
+  return dropLines(
+    lines,
+    kinds,
+    (i) => dropped.has(i),
+    (i) => (lines[i].includes("\f") ? "\f" : null),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -565,18 +661,10 @@ export function collapseBlankLines(text: string): PasteRuleResult {
 // Gesamt
 // ---------------------------------------------------------------------------
 
-interface PasteContext {
-  /** Geschätzte Seitenzahl des Rohtextes (siehe {@link estimatePages}). */
-  pages: number;
-}
-
-const RULE_FNS: Record<
-  PasteRule,
-  (text: string, ctx: PasteContext) => PasteRuleResult
-> = {
+const RULE_FNS: Record<PasteRule, (text: string) => PasteRuleResult> = {
+  repeated: stripRepeated,
   control: stripControl,
   pageNumbers: stripPageNumbers,
-  repeated: (text, ctx) => stripRepeated(text, ctx.pages),
   webNoise: stripWebNoise,
   fragments: stripFragments,
   spaces: stripSpaces,
@@ -591,11 +679,13 @@ const isShortLine = (text: string) => {
 
 /**
  * Eingefügten Text nach festen Regeln bereinigen. Die Regeln laufen so oft,
- * bis nichts mehr zu tun ist (höchstens {@link MAX_PASSES} Durchläufe): was
- * eine Regel freilegt (Bedienrest nach dem Verbinden, Lücke nach einer
- * entfernten Seitenzahl), erledigt der nächste Durchlauf. Ein zweiter Aufruf
- * auf dem Ergebnis ändert deshalb nichts mehr. Kopf- und Fußzeilen werden nur
- * im ersten Durchlauf gesucht (Seitenzahlen sind danach weg).
+ * bis sich nichts mehr ändert (Fixpunkt, höchstens {@link MAX_PASSES}
+ * Durchläufe als Schutz): was eine Regel freilegt (Bedienrest nach dem
+ * Verbinden, Lücke nach einer entfernten Seitenzahl), erledigt der nächste
+ * Durchlauf. Ein zweiter Aufruf auf dem Ergebnis ändert deshalb nichts mehr.
+ * Kopf- und Fußzeilen werden in jedem Durchlauf gesucht, brauchen aber
+ * Seitengrenzen; nach dem ersten Durchlauf sind Seitenzahlzeilen und
+ * Formfeeds weg, spätere Durchläufe finden dann keine mehr.
  */
 export function cleanPasted(
   text: string,
@@ -603,15 +693,13 @@ export function cleanPasted(
 ): PasteCleanResult {
   if (isShortLine(text)) return { text, changes: 0, items: [] };
   const wanted = opts.rules ?? PASTE_RULES;
-  const ctx: PasteContext = { pages: estimatePages(text) };
   const totals = new Map<PasteRule, number>();
-  let current = text;
+  let current = text.replace(/\r\n?/g, "\n");
   for (let pass = 0; pass < MAX_PASSES; pass += 1) {
     let passChanges = 0;
     for (const rule of PASTE_RULES) {
       if (!wanted.includes(rule)) continue;
-      if (rule === "repeated" && pass > 0) continue;
-      const result = RULE_FNS[rule](current, ctx);
+      const result = RULE_FNS[rule](current);
       current = result.text;
       if (result.changes === 0) continue;
       passChanges += result.changes;

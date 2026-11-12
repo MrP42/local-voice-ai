@@ -85,6 +85,11 @@ interface EditorMenuProps {
   /** Gesicherte Rohfassungen eingefügter Texte der Seite (älteste zuerst);
    *  Menüeintrag „Letzte Einfügungen …“. */
   pasteLog?: readonly PasteLogEntry[];
+  /** Protokoll ändern (löschen); gesichert und mit anderen Schreibvorgängen
+   *  der Seite nacheinander. `true`, wenn es gesichert wurde. */
+  onPasteLogChange?(
+    change: (log: PasteLogEntry[]) => PasteLogEntry[],
+  ): Promise<boolean>;
   /** Bestehendes „Text aufbereiten" (ganzer Text über das LLM). */
   onTidy?: () => void;
   tidying?: boolean;
@@ -136,6 +141,7 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
   pasteCleanup = true,
   onPasteCleanup,
   pasteLog = [],
+  onPasteLogChange,
   onTidy,
   tidying = false,
   labeled = false,
@@ -415,6 +421,7 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
                     id: "paste",
                     label: t("tts.editorMenu.pasteCleanup"),
                     title: t("tts.editorMenu.pasteCleanupHint"),
+                    description: t("tts.editorMenu.pasteKeep"),
                     icon: ClipboardCheck,
                     testId: "editor-cleanup-paste",
                     checked: pasteCleanup,
@@ -525,6 +532,7 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
           entries={pasteLog}
           text={value}
           onRestore={onChange}
+          onChange={onPasteLogChange ?? (async () => false)}
         />
       )}
     </div>
