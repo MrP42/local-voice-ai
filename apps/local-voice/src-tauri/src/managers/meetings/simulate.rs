@@ -556,6 +556,7 @@ pub fn final_pass_with_app(
         catch_up_model: None,
         plan: plan.clone(),
         live_model: tm.get_current_model(),
+        recover_from: None,
     };
     let mut env = final_pass::AppEnv::new(app, Arc::clone(&tm), Arc::new(AtomicBool::new(false)));
     let outcome = final_pass::run_job(&store, &job, &mut env);
