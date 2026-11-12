@@ -5,11 +5,17 @@
  * Vorlesen stören: Seitenzahlen, wiederkehrende Kopf- und Fußzeilen,
  * Bedienelemente von Webseiten („Drucken", „Teilen"), unsichtbare Zeichen,
  * Silbentrennung am Zeilenende. Alles hier läuft nach festen Regeln und
- * kostet kein Token.
+ * kostet kein Token. Jede Regel arbeitet in linearer Zeit (Zeilen werden
+ * gesplittet, nicht mit rückverfolgenden Mustern durchsucht).
  *
  * Bewusst NICHT dabei: Zeitstempel (Agenden wie „(10:30) Begrüßung" bleiben)
- * und das Verbinden einzelner Satzzeilen zu Absätzen. Sprecher `<Name>`,
- * Tags `[…]`, Seitenmarken `{{S. n}}` und Markdown-Blöcke bleiben unberührt.
+ * und das Verbinden einzelner Satzzeilen zu Absätzen.
+ *
+ * Geschützt vor allen Regeln, die Zeilen entfernen oder verbinden: Code
+ * (umzäunte Blöcke mit ``` oder ~~~ bis zum Ende, eingerückte Blöcke) und
+ * Markdown-Blockzeilen (Überschriften, Zitate, Listen, Tabellenzeilen),
+ * Sprecher `<Name>`, Tags `[…]` und Seitenmarken `{{S. n}}`. In Code laufen
+ * zusätzlich die Leerzeichen- und die Leerzeilenregel nicht.
  */
 import { joinFragments, tidySpaces } from "./textCleanup.ts";
 
@@ -61,20 +67,111 @@ export const REPEATED_MIN_CHARS = 1500;
 const SHORT_CHARS = 80;
 /** Mindestabstand (Zeilen) zwischen zwei Vorkommen einer Kopf-/Fußzeile. */
 const REPEATED_MIN_GAP = 8;
+/** Anteil der Seiten, auf denen eine Kopf-/Fußzeile stehen muss. */
+const REPEATED_PAGE_SHARE = 0.6;
+/** Zulässige Abweichung vom mittleren Abstand bei gleichmäßigem Rhythmus. */
+const REPEATED_RHYTHM_TOLERANCE = 0.3;
+/** Mehr Durchläufe braucht keine Vorlage; schützt vor Endlosschleifen. */
+const MAX_PASSES = 4;
 
-/** Markdown-Block der Buchansicht (siehe `readerDoc.ts`). */
+// ---------------------------------------------------------------------------
+// Zeilenarten: Code und Struktur
+// ---------------------------------------------------------------------------
+
+/** Markdown-Block der Buchansicht (siehe `readerDoc.ts`) samt Listen. */
 const BLOCK_START =
-  /^\s*(?:#{1,3}\s|>\s?|[-*]\s|-{3,}\s*$|\*{3,}\s*$|_{3,}\s*$|⁂)/;
+  /^\s*(?:#{1,6}\s|>\s?|[-*+]\s|-{3,}\s*$|\*{3,}\s*$|_{3,}\s*$|⁂|\d{1,3}[.)]\s)/;
 const SPEAKER_START = /^\s*<[^<>\n]{1,40}>/;
 const TAG_START = /^\s*\[[^\]\n]*\]/;
 const PAGE_MARK = /^\s*\{\{S\./;
+const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+const INDENTED = /^(?: {4}|\t)/;
 
-/** Zeile gehört zur Struktur des Dokuments und wird nie entfernt. */
+/** Tabellenzeile: beginnt oder endet mit einem senkrechten Strich. */
+const isTableRow = (line: string) => {
+  const s = line.trim();
+  return s.startsWith("|") || s.endsWith("|");
+};
+
+/** Zeile gehört zur Struktur des Dokuments und wird nie entfernt oder verbunden. */
 const isStructural = (line: string) =>
   BLOCK_START.test(line) ||
   SPEAKER_START.test(line) ||
   TAG_START.test(line) ||
-  PAGE_MARK.test(line);
+  PAGE_MARK.test(line) ||
+  isTableRow(line);
+
+/**
+ * code: umzäunter oder eingerückter Block, bleibt unberührt;
+ * block: Markdown-Blockzeile, Sprecher, Tag, Seitenmarke;
+ * blank: Leerzeile außerhalb von Code; text: Fließtext.
+ */
+type Kind = "code" | "block" | "text" | "blank";
+
+/**
+ * Zustandsautomat über die Zeilen. Ein umzäunter Block beginnt mit ``` oder
+ * ~~~ (bis drei Leerzeichen Einrückung) und endet mit einem Zaun derselben Art
+ * und mindestens derselben Länge, sonst am Textende. Ein eingerückter Block
+ * (vier Leerzeichen oder Tab) beginnt nach einer Leerzeile oder am Textanfang
+ * und läuft über Leerzeilen hinweg weiter, solange danach wieder eingerückt
+ * wird. Eine eingerückte reine Seitenzahl („      12") eröffnet keinen Block.
+ */
+function classifyLines(lines: readonly string[]): Kind[] {
+  const kinds: Kind[] = new Array(lines.length);
+  let fence: { char: string; length: number } | null = null;
+  let prevIndented = false;
+  let blankStart = -1;
+  let blanksAfterIndented = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (fence) {
+      kinds[i] = "code";
+      const close = FENCE.exec(line);
+      if (
+        close &&
+        close[1][0] === fence.char &&
+        close[1].length >= fence.length &&
+        close[2].trim() === ""
+      )
+        fence = null;
+      continue;
+    }
+    if (line.trim() === "") {
+      if (blankStart < 0) {
+        blankStart = i;
+        blanksAfterIndented = prevIndented;
+      }
+      kinds[i] = "blank";
+      prevIndented = false;
+      continue;
+    }
+    const startsBlock = blankStart >= 0 || i === 0;
+    const open = FENCE.exec(line);
+    if (open && !(open[1][0] === "`" && open[2].includes("`"))) {
+      fence = { char: open[1][0], length: open[1].length };
+      kinds[i] = "code";
+      blankStart = -1;
+      prevIndented = false;
+      continue;
+    }
+    if (
+      INDENTED.test(line) &&
+      (prevIndented || (startsBlock && !isPageNumberLine(line)))
+    ) {
+      if (blankStart >= 0 && blanksAfterIndented) {
+        for (let j = blankStart; j < i; j += 1) kinds[j] = "code";
+      }
+      kinds[i] = "code";
+      prevIndented = true;
+      blankStart = -1;
+      continue;
+    }
+    kinds[i] = isStructural(line) ? "block" : "text";
+    prevIndented = false;
+    blankStart = -1;
+  }
+  return kinds;
+}
 
 // ---------------------------------------------------------------------------
 // control
@@ -83,31 +180,46 @@ const isStructural = (line: string) =>
 /** Steuerzeichen außer Tab, Zeilenumbruch und Formfeed (der wird zum Umbruch). */
 const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000E-\u001F\u007F-\u009F]/g;
 const SOFT_HYPHEN_BREAK = /­[ \t]*\n(?=\p{Ll})/gu;
-const INVISIBLE = /[­​-‍﻿]/g;
+/** Weiches Trennzeichen, Nullbreiten-Leerzeichen, BOM / unsichtbares Leerzeichen
+ *  (U+00AD, U+200B, U+FEFF). Nullbreiten-(Nicht-)Verbinder U+200C/U+200D bleiben:
+ *  sie halten Emoji-Folgen („Frau + Laptop") und persische Wörter zusammen. */
+const INVISIBLE = /[­​﻿]/g;
 const NBSP = / /g;
 
-const countMatches = (text: string, re: RegExp) =>
-  (text.match(re) ?? []).length;
+/** Ersetzt alle Treffer und liefert die Anzahl in einem Durchlauf. */
+function replaceCounting(
+  text: string,
+  re: RegExp,
+  replacement: string,
+): PasteRuleResult {
+  let changes = 0;
+  const out = text.replace(re, () => {
+    changes += 1;
+    return replacement;
+  });
+  return { text: out, changes };
+}
 
 /**
  * Zeilenenden vereinheitlichen (zählt nicht: die Textarea tut es ohnehin),
  * Formfeed zu Umbruch, Steuerzeichen, weiches Trennzeichen und Nullbreiten
- * entfernen, geschütztes Leerzeichen zu Leerzeichen.
+ * (außer Verbindern) entfernen, geschütztes Leerzeichen zu Leerzeichen.
  */
 export function stripControl(text: string): PasteRuleResult {
   let changes = 0;
   let out = text.replace(/\r\n?/g, "\n");
-  changes += countMatches(out, /\f/g);
-  out = out.replace(/\f/g, "\n");
-  changes += countMatches(out, CONTROL_CHARS);
-  out = out.replace(CONTROL_CHARS, "");
-  // `Mit-­` am Zeilenende vor Kleinbuchstaben: Wort wächst zusammen.
-  changes += countMatches(out, SOFT_HYPHEN_BREAK);
-  out = out.replace(SOFT_HYPHEN_BREAK, "");
-  changes += countMatches(out, INVISIBLE);
-  out = out.replace(INVISIBLE, "");
-  changes += countMatches(out, NBSP);
-  out = out.replace(NBSP, " ");
+  for (const [re, replacement] of [
+    [/\f/g, "\n"],
+    [CONTROL_CHARS, ""],
+    // `Mit-­` am Zeilenende vor Kleinbuchstaben: Wort wächst zusammen.
+    [SOFT_HYPHEN_BREAK, ""],
+    [INVISIBLE, ""],
+    [NBSP, " "],
+  ] as const) {
+    const step = replaceCounting(out, re, replacement);
+    out = step.text;
+    changes += step.changes;
+  }
   return { text: out, changes };
 }
 
@@ -118,30 +230,32 @@ export function stripControl(text: string): PasteRuleResult {
 /**
  * Zeilen entfernen, für die `drop(index)` gilt. Steht die entfernte Zeile
  * zwischen zwei Leerzeilen (oder am Textanfang vor einer), fällt eine davon
- * mit weg: sonst bliebe an der Stelle eine doppelte Lücke.
+ * mit weg: sonst bliebe an der Stelle eine doppelte Lücke. Code wird nie
+ * angefasst.
  */
 function dropLines(
   lines: readonly string[],
+  kinds: readonly Kind[],
   drop: (index: number) => boolean,
 ): PasteRuleResult {
   const out: string[] = [];
   let changes = 0;
   let skipBlank = false;
-  lines.forEach((line, index) => {
-    if (skipBlank && line.trim() === "") {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (skipBlank && kinds[index] === "blank") {
       skipBlank = false;
-      return;
+      continue;
     }
     skipBlank = false;
-    if (!drop(index)) {
+    if (kinds[index] === "code" || !drop(index)) {
       out.push(line);
-      return;
+      continue;
     }
     changes += 1;
     const prevBlank = out.length === 0 || out[out.length - 1].trim() === "";
-    const next = lines[index + 1];
-    skipBlank = prevBlank && next !== undefined && next.trim() === "";
-  });
+    skipBlank = prevBlank && kinds[index + 1] === "blank";
+  }
   return { text: out.join("\n"), changes };
 }
 
@@ -158,6 +272,7 @@ const SLASH_PAGE = /^(\d{1,3})\s*\/\s*(\d{1,3})$/;
 /** Besteht die Zeile nur aus einer Seitenzahl? */
 export function isPageNumberLine(line: string): boolean {
   const s = line.trim();
+  if (s.length > 40) return false;
   if (BARE_NUMBER.test(s) || DASHED_NUMBER.test(s)) return true;
   const word = WORD_PAGE.exec(s);
   if (word) {
@@ -170,7 +285,8 @@ export function isPageNumberLine(line: string): boolean {
 /** Zeilen, die nur eine Seitenzahl sind („12", „- 12 -", „Seite 3 von 30"). */
 export function stripPageNumbers(text: string): PasteRuleResult {
   const lines = text.split("\n");
-  return dropLines(lines, (i) => isPageNumberLine(lines[i]));
+  const kinds = classifyLines(lines);
+  return dropLines(lines, kinds, (i) => isPageNumberLine(lines[i]));
 }
 
 // ---------------------------------------------------------------------------
@@ -178,28 +294,76 @@ export function stripPageNumbers(text: string): PasteRuleResult {
 // ---------------------------------------------------------------------------
 
 const SENTENCE_END = /[.!?…]["'»«“”‘’)\]]*$/;
+/** Seitenzahl-Muster innerhalb einer Zeile: „Seite 3", „S. 3", „3 von 30", „3 / 30". */
+const PAGE_IN_LINE =
+  /(?<![\p{L}\d])(?:(?:Seite|S\.|Page|p\.)\s*\d{1,3}(?!\d)|\d{1,3}\s*(?:von|of|\/)\s*\d{1,3}(?!\d))/iu;
+/** Überschrift oder Kapitelzeile: Ziffern unterscheiden Zeilen, nie gleichsetzen. */
+const HEADING_LIKE =
+  /^(?:(?:Kapitel|Teil|Abschnitt|Artikel|Anlage|Anhang|Chapter|Part|Section|Lektion|Folie|Tag)\s+\d|§\s*\d|(?!\d{1,3}\s*(?:von|of)\s*\d)\d+(?:\.\d+)*[.)]?\s+\p{L})/iu;
 
+/**
+ * Schlüssel einer Kopf-/Fußzeilen-Kandidatin. Ziffern werden nur gleichgesetzt,
+ * wenn die Zeile selbst eine Seitenzahl trägt („Amt – Seite 3 von 30") und
+ * keine Überschrift ist; sonst muss die Zeile exakt wiederkehren.
+ */
 const repeatKey = (line: string): string | null => {
+  if (line.length > 600) return null;
   const s = line.trim().replace(/\s+/g, " ");
   if (s.length < 3 || s.length > 120) return null;
-  if (isStructural(s)) return null;
+  if (isStructural(s) || isPageNumberLine(s)) return null;
   // Ein Satz mit Punkt ist Inhalt (Kehrreim, „Vielen Dank."), keine Kopfzeile.
   if (SENTENCE_END.test(s)) return null;
   // Zeile endet mit Silbentrennung: gehört zur nächsten Zeile.
   if (/\p{L}-$/u.test(s)) return null;
-  return s.replace(/\d+/g, "#");
+  if (PAGE_IN_LINE.test(s) && !HEADING_LIKE.test(s)) {
+    return s.replace(/\d+/g, "#");
+  }
+  return s;
 };
 
 /**
- * Wiederkehrende Kopf- und Fußzeilen: dieselbe Zeile (Ziffern gleichgesetzt)
- * mindestens dreimal in einem langen Text, jeweils mindestens acht Zeilen
- * auseinander. Kürzere Texte und dichte Wiederholungen (Kehrreim) bleiben.
+ * Geschätzte Seitenzahl des Textes: Zeilen, die nur eine Seitenzahl sind,
+ * oder Formfeeds (Seitenwechsel beim Kopieren aus PDF) plus eins.
  */
-export function stripRepeated(text: string): PasteRuleResult {
+export function estimatePages(text: string): number {
+  let numbers = 0;
+  let feeds = 0;
+  for (const line of text.split(/\n|\r\n?|\f/)) {
+    if (line.trim() !== "" && isPageNumberLine(line)) numbers += 1;
+  }
+  for (let at = text.indexOf("\f"); at >= 0; at = text.indexOf("\f", at + 1))
+    feeds += 1;
+  return Math.max(numbers, feeds > 0 ? feeds + 1 : 0);
+}
+
+/** Abstände (Zeilen) gleichmäßig: jede Lücke höchstens 30 % neben der mittleren. */
+function evenlySpaced(at: readonly number[]): boolean {
+  const gaps = at.slice(1).map((pos, i) => pos - at[i]);
+  const sorted = [...gaps].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  return gaps.every(
+    (gap) => Math.abs(gap - median) <= median * REPEATED_RHYTHM_TOLERANCE,
+  );
+}
+
+/**
+ * Wiederkehrende Kopf- und Fußzeilen: dieselbe Zeile mindestens dreimal in
+ * einem langen Text, jeweils mindestens acht Zeilen auseinander, und zwar
+ * entweder auf mindestens 60 % der Seiten (gezählt an Seitenzahlzeilen und
+ * Formfeeds) oder mindestens viermal in gleichmäßigem Abstand (±30 %).
+ * Kürzere Texte, dichte Wiederholungen und Kehrreime mit unregelmäßigem
+ * Abstand bleiben.
+ */
+export function stripRepeated(
+  text: string,
+  pages: number = estimatePages(text),
+): PasteRuleResult {
   if (text.length < REPEATED_MIN_CHARS) return { text, changes: 0 };
   const lines = text.split("\n");
+  const kinds = classifyLines(lines);
   const seen = new Map<string, number[]>();
   lines.forEach((line, index) => {
+    if (kinds[index] !== "text") return;
     const key = repeatKey(line);
     if (key === null) return;
     const at = seen.get(key);
@@ -212,63 +376,146 @@ export function stripRepeated(text: string): PasteRuleResult {
     const spaced = at.every(
       (pos, i) => i === 0 || pos - at[i - 1] >= REPEATED_MIN_GAP,
     );
-    if (spaced) at.forEach((pos) => dropped.add(pos));
+    if (!spaced) continue;
+    const onPages =
+      pages >= 2 && at.length >= Math.ceil(pages * REPEATED_PAGE_SHARE);
+    const rhythmic = at.length >= 4 && evenlySpaced(at);
+    if (onPages || rhythmic) at.forEach((pos) => dropped.add(pos));
   }
   if (dropped.size === 0) return { text, changes: 0 };
-  return dropLines(lines, (i) => dropped.has(i));
+  return dropLines(lines, kinds, (i) => dropped.has(i));
 }
 
 // ---------------------------------------------------------------------------
 // webNoise
 // ---------------------------------------------------------------------------
 
-const WEB_NOISE = new Set(
-  [
-    "Zum Inhalt springen",
-    "Zur Navigation springen",
-    "Drucken",
-    "Seite drucken",
-    "Druckversion",
-    "Teilen",
-    "Artikel teilen",
-    "Link kopieren",
-    "Nach oben",
-    "Zurück",
-    "Zurück zur Übersicht",
-    "Mehr lesen",
-    "Weiterlesen",
-    "Cookie-Einstellungen",
-    "Alle akzeptieren",
-    "Skip to content",
-    "Back to top",
-    "Print",
-    "Share",
-    "Facebook",
-    "LinkedIn",
-    "Twitter",
-    "X",
-    "Xing",
-    "WhatsApp",
-    "E-Mail",
-  ].map((s) => s.toLowerCase()),
-);
+const lowered = (words: readonly string[]) =>
+  new Set(words.map((s) => s.toLowerCase()));
 
-const NOISE_SEPARATOR = /\s*[·|/–•]\s*/;
+/** Eindeutige Navigationsphrasen: auch allein in einer Zeile ein Bedienrest. */
+const NOISE_PHRASES = lowered([
+  "Zum Inhalt springen",
+  "Zur Navigation springen",
+  "Skip to content",
+  "Nach oben",
+  "Back to top",
+  "Seite drucken",
+  "Druckversion",
+  "Artikel teilen",
+  "Link kopieren",
+  "Cookie-Einstellungen",
+  "Alle akzeptieren",
+  "Zurück zur Übersicht",
+]);
+
+/** Einzelne Bedienwörter: nur im Kontext (Block oder Trennzeichen) ein Rest. */
+const NOISE_WORDS = lowered([
+  "Drucken",
+  "Teilen",
+  "Zurück",
+  "Mehr lesen",
+  "Weiterlesen",
+  "Print",
+  "Share",
+  "Facebook",
+  "LinkedIn",
+  "Twitter",
+  "X",
+  "Xing",
+  "WhatsApp",
+  "E-Mail",
+]);
+
+/** Ein einzelnes Zeichen: kein rückverfolgendes Muster, die Zeile wird gesplittet. */
+const NOISE_SEPARATOR = /[·|/–•]/;
+const NOISE_MAX_CHARS = 200;
+
+export type WebNoiseKind = "phrase" | "multi" | "word";
+
+/**
+ * Art des Bedienrests einer Zeile: `phrase` (eindeutige Phrase), `multi`
+ * (mindestens zwei Bedienwörter mit · | / – getrennt), `word` (ein einzelnes
+ * Bedienwort) oder `null` (kein Bedienrest, ganze Zeile muss passen).
+ */
+export function webNoiseKind(line: string): WebNoiseKind | null {
+  const s = line.trim();
+  if (s === "" || s.length > NOISE_MAX_CHARS) return null;
+  const keys = s
+    .split(NOISE_SEPARATOR)
+    .map((part) => part.trim().toLowerCase())
+    .filter((part) => part !== "");
+  if (keys.length === 0) return null;
+  if (!keys.every((k) => NOISE_PHRASES.has(k) || NOISE_WORDS.has(k)))
+    return null;
+  if (keys.length >= 2) return "multi";
+  return NOISE_PHRASES.has(keys[0]) ? "phrase" : "word";
+}
 
 /** Besteht die Zeile nur aus Bedienresten (einzeln oder mit · | / – getrennt)? */
-export function isWebNoiseLine(line: string): boolean {
-  const s = line.trim();
-  if (s === "") return false;
-  const parts = s.split(NOISE_SEPARATOR).filter((p) => p.trim() !== "");
-  if (parts.length === 0) return false;
-  return parts.every((p) => WEB_NOISE.has(p.trim().toLowerCase()));
-}
+export const isWebNoiseLine = (line: string): boolean =>
+  webNoiseKind(line) !== null;
 
-/** Zeilen aus Bedienelementen von Webseiten entfernen. */
+/**
+ * Zeilen aus Bedienelementen von Webseiten entfernen, nur ganze Zeilen und nur
+ * im Kontext: eindeutige Phrasen und Zeilen aus mindestens zwei Bedienwörtern
+ * immer, ein einzelnes Bedienwort („E-Mail", „Zurück") nur, wenn direkt davor
+ * oder danach ebenfalls ein Bedienrest steht. Eine Überschrift „E-Mail" vor
+ * Text bleibt.
+ */
 export function stripWebNoise(text: string): PasteRuleResult {
   const lines = text.split("\n");
-  return dropLines(lines, (i) => isWebNoiseLine(lines[i]));
+  const kinds = classifyLines(lines);
+  const noise = lines.map((line, i) =>
+    kinds[i] === "text" ? webNoiseKind(line) : null,
+  );
+  return dropLines(lines, kinds, (i) => {
+    const kind = noise[i];
+    if (kind === null) return false;
+    if (kind !== "word") return true;
+    return (i > 0 && noise[i - 1] !== null) || noise[i + 1] != null;
+  });
 }
+
+// ---------------------------------------------------------------------------
+// fragments, spaces (Regeln aus textCleanup, nur außerhalb geschützter Zeilen)
+// ---------------------------------------------------------------------------
+
+/** Regel auf zusammenhängende Läufe ungeschützter Zeilen anwenden. */
+function mapRuns(
+  text: string,
+  skip: (kind: Kind) => boolean,
+  rule: (run: string) => PasteRuleResult,
+): PasteRuleResult {
+  const lines = text.split("\n");
+  const kinds = classifyLines(lines);
+  const out: string[] = [];
+  let changes = 0;
+  let run: string[] = [];
+  const flush = () => {
+    if (run.length === 0) return;
+    const result = rule(run.join("\n"));
+    changes += result.changes;
+    for (const line of result.text.split("\n")) out.push(line);
+    run = [];
+  };
+  for (let i = 0; i < lines.length; i += 1) {
+    if (skip(kinds[i])) {
+      flush();
+      out.push(lines[i]);
+    } else run.push(lines[i]);
+  }
+  flush();
+  return { text: out.join("\n"), changes };
+}
+
+/** Abgerissene Zeilen verbinden; Code und Blockzeilen trennen immer. */
+const stripFragments = (text: string) =>
+  mapRuns(text, (kind) => kind === "code" || kind === "block", joinFragments);
+
+/** Leerzeichen bereinigen, nie in Code. */
+const stripSpaces = (text: string) =>
+  mapRuns(text, (kind) => kind === "code", tidySpaces);
 
 // ---------------------------------------------------------------------------
 // blankLines
@@ -276,15 +523,18 @@ export function stripWebNoise(text: string): PasteRuleResult {
 
 /**
  * Drei und mehr Leerzeilen in Folge zu einer, Leerzeilen am Anfang und Ende
- * weg. Ein einzelner Zeilenumbruch am Ende zählt nicht als Änderung.
+ * weg. Ein einzelner Zeilenumbruch am Ende zählt nicht als Änderung. In Code
+ * bleiben Leerzeilen, wie sie sind.
  */
 export function collapseBlankLines(text: string): PasteRuleResult {
-  const lines = text.split("\n").map((l) => (l.trim() === "" ? "" : l));
+  const source = text.split("\n");
+  const kinds = classifyLines(source);
+  const lines = source.map((l, i) => (kinds[i] === "blank" ? "" : l));
   let changes = 0;
   let start = 0;
-  while (start < lines.length && lines[start] === "") start += 1;
+  while (start < lines.length && kinds[start] === "blank") start += 1;
   let end = lines.length;
-  while (end > start && lines[end - 1] === "") end -= 1;
+  while (end > start && kinds[end - 1] === "blank") end -= 1;
   if (start > 0) changes += 1;
   // Ein abschließender Umbruch ergibt genau eine leere letzte Zeile.
   if (lines.length - end > 1) changes += 1;
@@ -301,7 +551,7 @@ export function collapseBlankLines(text: string): PasteRuleResult {
     run = 0;
   };
   for (let i = start; i < end; i += 1) {
-    if (lines[i] === "") {
+    if (kinds[i] === "blank") {
       run += 1;
       continue;
     }
@@ -315,13 +565,21 @@ export function collapseBlankLines(text: string): PasteRuleResult {
 // Gesamt
 // ---------------------------------------------------------------------------
 
-const RULE_FNS: Record<PasteRule, (text: string) => PasteRuleResult> = {
+interface PasteContext {
+  /** Geschätzte Seitenzahl des Rohtextes (siehe {@link estimatePages}). */
+  pages: number;
+}
+
+const RULE_FNS: Record<
+  PasteRule,
+  (text: string, ctx: PasteContext) => PasteRuleResult
+> = {
   control: stripControl,
   pageNumbers: stripPageNumbers,
-  repeated: stripRepeated,
+  repeated: (text, ctx) => stripRepeated(text, ctx.pages),
   webNoise: stripWebNoise,
-  fragments: joinFragments,
-  spaces: tidySpaces,
+  fragments: stripFragments,
+  spaces: stripSpaces,
   blankLines: collapseBlankLines,
 };
 
@@ -331,20 +589,40 @@ const isShortLine = (text: string) => {
   return !/[\r\n\f]/.test(t) && t.length < SHORT_CHARS;
 };
 
-/** Eingefügten Text nach festen Regeln bereinigen. */
+/**
+ * Eingefügten Text nach festen Regeln bereinigen. Die Regeln laufen so oft,
+ * bis nichts mehr zu tun ist (höchstens {@link MAX_PASSES} Durchläufe): was
+ * eine Regel freilegt (Bedienrest nach dem Verbinden, Lücke nach einer
+ * entfernten Seitenzahl), erledigt der nächste Durchlauf. Ein zweiter Aufruf
+ * auf dem Ergebnis ändert deshalb nichts mehr. Kopf- und Fußzeilen werden nur
+ * im ersten Durchlauf gesucht (Seitenzahlen sind danach weg).
+ */
 export function cleanPasted(
   text: string,
   opts: PasteCleanOptions = {},
 ): PasteCleanResult {
   if (isShortLine(text)) return { text, changes: 0, items: [] };
   const wanted = opts.rules ?? PASTE_RULES;
+  const ctx: PasteContext = { pages: estimatePages(text) };
+  const totals = new Map<PasteRule, number>();
   let current = text;
+  for (let pass = 0; pass < MAX_PASSES; pass += 1) {
+    let passChanges = 0;
+    for (const rule of PASTE_RULES) {
+      if (!wanted.includes(rule)) continue;
+      if (rule === "repeated" && pass > 0) continue;
+      const result = RULE_FNS[rule](current, ctx);
+      current = result.text;
+      if (result.changes === 0) continue;
+      passChanges += result.changes;
+      totals.set(rule, (totals.get(rule) ?? 0) + result.changes);
+    }
+    if (passChanges === 0) break;
+  }
   const items: PasteItem[] = [];
   for (const rule of PASTE_RULES) {
-    if (!wanted.includes(rule)) continue;
-    const result = RULE_FNS[rule](current);
-    current = result.text;
-    if (result.changes > 0) items.push({ rule, count: result.changes });
+    const count = totals.get(rule);
+    if (count) items.push({ rule, count });
   }
   const changes = items.reduce((sum, item) => sum + item.count, 0);
   return { text: current, changes, items };

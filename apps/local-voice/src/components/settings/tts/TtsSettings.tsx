@@ -214,6 +214,11 @@ import {
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { IsbnDialog } from "./reader/IsbnDialog";
 import { applyBookTitle, findIsbn } from "@/lib/reader/isbn";
+import {
+  appendPasteEntry,
+  parsePasteLog,
+  type PasteLogEntry,
+} from "@/lib/reader/pasteLog";
 import type { IsbnBook, LibraryBook, TranslateJob } from "@/bindings";
 import {
   READER_FONTS,
@@ -567,6 +572,14 @@ export const TtsSettings = () => {
   const [translatedLangs, setTranslatedLangs] = useState<string[]>([]);
   const addTranslatedLang = (lang: string) =>
     setTranslatedLangs((cur) => (cur.includes(lang) ? cur : [...cur, lang]));
+  /** Gesicherte Rohfassungen eingefügter Texte der Seite (state.json
+   *  `einfuegungen`, älteste zuerst); die Ref ist immer der aktuelle Stand. */
+  const [pasteLog, setPasteLogState] = useState<PasteLogEntry[]>([]);
+  const pasteLogRef = useRef<PasteLogEntry[]>([]);
+  const setPasteLog = (next: PasteLogEntry[]) => {
+    pasteLogRef.current = next;
+    setPasteLogState(next);
+  };
   // lva#236: eine Übersetzung aus der Bibliothek ist fertig. Ohne das
   // überschriebe ein offenes Vorlesen die Sprachliste beim nächsten Speichern.
   const activePageForEvents = useRef<string>("");
@@ -1083,10 +1096,12 @@ export const TtsSettings = () => {
             lang?: string;
             translatedLangs?: string[];
             autoTag?: AutoTagOptions;
+            einfuegungen?: unknown;
           };
           setTranslatedLangs(
             Array.isArray(state.translatedLangs) ? state.translatedLangs : [],
           );
+          setPasteLog(parsePasteLog(state.einfuegungen));
           setText(state.text ?? "");
           openModeRef.current?.(state.tab === "summary" ? "" : (state.text ?? ""));
           setAutoTagOptions(state.autoTag ?? null);
@@ -1131,6 +1146,7 @@ export const TtsSettings = () => {
         } catch {
           setText(result.data);
           openModeRef.current?.(result.data);
+          setPasteLog([]);
         }
       } else {
         // Einmalige Uebernahme der Werte aus der Zeit vor den Seiten — und
@@ -1160,6 +1176,7 @@ export const TtsSettings = () => {
         setVoicesChosen({});
         setPageLang(null);
         setTranslatedLangs([]);
+        setPasteLog([]);
         setTab("original");
       }
       setTranslation(null);
@@ -1179,7 +1196,7 @@ export const TtsSettings = () => {
   }, [reloadPages]);
 
   /** Arbeitsstand der Seite, wie er in state.json steht. */
-  const pageStateJson = () =>
+  const pageStateJson = (pastes: PasteLogEntry[] = pasteLogRef.current) =>
     JSON.stringify({
       text,
       // Bis zur Übernahme als KI-Dokument bleibt der alte Text stehen.
@@ -1192,7 +1209,26 @@ export const TtsSettings = () => {
       lang: pageLang ?? undefined,
       translatedLangs,
       autoTag: autoTagOptions ?? undefined,
+      einfuegungen: pastes.length > 0 ? pastes : undefined,
     });
+
+  /**
+   * Rohfassung einer Einfügung in state.json sichern, bevor der Editor den Text
+   * bereinigt. `false`, wenn das Schreiben scheitert oder die Seite inzwischen
+   * gewechselt wurde: der Editor fügt dann den Rohtext unverändert ein.
+   */
+  const recordPaste = async (entry: PasteLogEntry): Promise<boolean> => {
+    const page = activePage;
+    if (!page || !pageLoaded.current) return false;
+    const next = appendPasteEntry(pasteLogRef.current, entry);
+    const saved = await commands
+      .pageStateSave(page, pageStateJson(next))
+      .catch(() => null);
+    if (!saved || saved.status !== "ok") return false;
+    if (activePageForEvents.current !== page) return false;
+    setPasteLog(next);
+    return true;
+  };
 
   /** Ein Sichern des Seitenstands steht noch aus (siehe unten). */
   const savePending = useRef(false);
@@ -4648,6 +4684,7 @@ export const TtsSettings = () => {
                 spellCheck={spellStored === "1"}
                 onSpellCheck={(on) => setSpellStored(on ? "1" : "0")}
                 pasteCleanup={pasteStored === "1"}
+                pasteLog={pasteLog}
                 onPasteCleanup={
                   tab === "original"
                     ? (on) => setPasteStored(on ? "1" : "0")
@@ -4667,6 +4704,7 @@ export const TtsSettings = () => {
                     engineLabel={engineCaps.providerLabel ?? undefined}
                     spellCheck={spellStored === "1"}
                     cleanPaste={pasteStored === "1"}
+                    onPasteRecord={recordPaste}
                     placeholder={t("tts.inputPlaceholder")}
                     className="w-full"
                     suggestions={tagSuggestions}

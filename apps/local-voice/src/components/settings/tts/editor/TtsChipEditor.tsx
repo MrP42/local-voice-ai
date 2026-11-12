@@ -14,7 +14,13 @@ import { Check, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { TagDef } from "@/lib/tags/types";
 import { tagInsertFor } from "@/lib/tags/registry";
-import { cleanPasted } from "@/lib/reader/pasteCleanup";
+import { cleanPasted, type PasteCleanResult } from "@/lib/reader/pasteCleanup";
+import {
+  PASTE_RAW_MAX_CHARS,
+  makeOversizedEntry,
+  makePasteEntry,
+  type PasteLogEntry,
+} from "@/lib/reader/pasteLog";
 import { useTagLanguage } from "../tags/tagLanguage";
 import {
   TagAutocomplete,
@@ -173,6 +179,9 @@ interface TtsChipEditorProps {
    *  Web-Reste, unsichtbare Zeichen). Hinweis mit „Rückgängig“; nur der
    *  Original-Editor einer Vorlesen-Seite setzt das. */
   cleanPaste?: boolean;
+  /** Rohfassung einer Einfügung sichern, BEVOR bereinigt wird (Seitenzustand).
+   *  `false`: Sichern gescheitert, der Text wird dann unverändert eingefügt. */
+  onPasteRecord?: (entry: PasteLogEntry) => Promise<boolean>;
 }
 
 // ---------------------------------------------------------------------------
@@ -395,6 +404,7 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
   engineLabel,
   spellCheck = true,
   cleanPaste = false,
+  onPasteRecord,
 }) => {
   const { t } = useTranslation();
   const tagLang = useTagLanguage();
@@ -546,28 +556,50 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
   );
 
   /**
-   * Eingefügten Text bereinigen: ersetzt `[start, end)` durch die bereinigte
-   * Fassung (über `execInsert`, Strg+Z bleibt ein Schritt) und meldet die
-   * Anzahl der Änderungen mit „Rückgängig“. Das ersetzt den Bereich nur, solange
-   * er noch genau den bereinigten Text enthält. Ohne Änderung: `false`, der
-   * Aufrufer fügt dann unverändert ein.
+   * Eingefügten Text bereinigen: sichert vorher die Rohfassung (Seitenzustand,
+   * `onPasteRecord`), ersetzt dann `[start, end)` durch die bereinigte Fassung
+   * (über `execInsert`, Strg+Z bleibt ein Schritt) und meldet die Anzahl der
+   * Änderungen mit „Rückgängig“. Der Hinweis gilt nur für diese Einfügung und
+   * nur, solange der Editor GENAU den Text von direkt nach dem Einfügen enthält:
+   * jede spätere Änderung (auch Strg+Z, auch bei leerem Ergebnis) macht ihn
+   * ungültig. Konnte die Rohfassung nicht gesichert werden oder wurde währenddessen
+   * getippt, wird der Rohtext unverändert eingefügt.
    */
   const insertCleaned = useCallback(
-    (ta: HTMLTextAreaElement, start: number, end: number, raw: string) => {
-      const result = cleanPasted(raw);
-      if (result.changes === 0) return false;
+    async (
+      ta: HTMLTextAreaElement,
+      start: number,
+      end: number,
+      raw: string,
+      result: PasteCleanResult,
+    ) => {
+      const base = valueRef.current;
       const original = raw.replace(/\r\n?/g, "\n");
       const cleaned = result.text;
-      const to = start + cleaned.length;
+      const entry = await makePasteEntry(original, cleaned, result.items);
+      const saved = onPasteRecord ? await onPasteRecord(entry) : true;
+      if (taRef.current !== ta || valueRef.current !== base) {
+        execInsert(ta, ta.selectionStart, ta.selectionEnd, original);
+        return;
+      }
+      if (!saved) {
+        execInsert(ta, start, end, original);
+        toast.error(t("tts.editorMenu.pasteNotSaved"));
+        return;
+      }
       execInsert(ta, start, end, cleaned);
+      // Stand direkt nach dem Einfügen (valueRef folgt dem input-Ereignis sofort).
+      const after = valueRef.current;
+      const to = start + cleaned.length;
       toast(t("tts.editorMenu.pasteCleaned", { count: result.changes }), {
+        // Ein Hinweis je Editor: eine neue Einfügung ersetzt den alten.
+        id: "paste-cleanup",
         duration: 10000,
         action: {
           label: t("tts.editorMenu.pasteUndo"),
           onClick: () => {
             const current = taRef.current;
-            if (!current) return;
-            if (valueRef.current.slice(start, to) !== cleaned) {
+            if (!current || valueRef.current !== after) {
               toast(t("tts.editorMenu.pasteUndoStale"));
               return;
             }
@@ -575,18 +607,47 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
           },
         },
       });
-      return true;
     },
-    [execInsert, t],
+    [execInsert, onPasteRecord, t],
   );
 
+  /** Zu großen Text nicht bereinigen: unverändert einfügen, Prüfsumme vermerken. */
+  const noteOversized = useCallback(
+    async (raw: string) => {
+      toast(t("tts.editorMenu.pasteTooLarge"));
+      await onPasteRecord?.(await makeOversizedEntry(raw));
+    },
+    [onPasteRecord, t],
+  );
+
+  /**
+   * Einfügen übernehmen: `true`, wenn der Editor es selbst erledigt (bereinigt,
+   * asynchron nach dem Sichern der Rohfassung), `false`, wenn der Aufrufer den
+   * Text unverändert einfügen soll (nichts zu bereinigen, Schalter aus, zu groß).
+   * Bereinigt wird genau einmal je Einfügung.
+   */
+  const takePaste = (
+    ta: HTMLTextAreaElement,
+    start: number,
+    end: number,
+    raw: string,
+  ): boolean => {
+    if (!cleanPaste || !raw) return false;
+    if (raw.length > PASTE_RAW_MAX_CHARS) {
+      void noteOversized(raw);
+      return false;
+    }
+    const result = cleanPasted(raw);
+    if (result.changes === 0) return false;
+    void insertCleaned(ta, start, end, raw, result);
+    return true;
+  };
+
   const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    if (!cleanPaste) return;
-    const raw = event.clipboardData.getData("text/plain");
-    if (!raw || cleanPasted(raw).changes === 0) return;
-    event.preventDefault();
     const ta = event.currentTarget;
-    insertCleaned(ta, ta.selectionStart, ta.selectionEnd, raw);
+    const raw = event.clipboardData.getData("text/plain");
+    if (takePaste(ta, ta.selectionStart, ta.selectionEnd, raw))
+      event.preventDefault();
   };
 
   // ---- Punkt → Offset (Palette-Drag) -------------------------------------
@@ -1138,7 +1199,7 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
       .then((clipText) => {
         const ta = taRef.current;
         if (!clipText || !ta) return;
-        if (cleanPaste && insertCleaned(ta, selStart, selEnd, clipText)) return;
+        if (takePaste(ta, selStart, selEnd, clipText)) return;
         execInsert(ta, selStart, selEnd, clipText);
       })
       .catch(() => undefined);

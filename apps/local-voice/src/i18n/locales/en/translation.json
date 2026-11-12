@@ -66,7 +66,39 @@
       "pasteCleaned_one": "Cleaned up while pasting: {{count}} change",
       "pasteCleaned_other": "Cleaned up while pasting: {{count}} changes",
       "pasteUndo": "Undo",
-      "pasteUndoStale": "The text has changed since. Please undo with Ctrl+Z.",
+      "pasteUndoStale": "Undo is no longer possible: the text has changed since.",
+      "pasteTooLarge": "Text too large to clean up (over 2 MiB): pasted unchanged.",
+      "pasteNotSaved": "The original could not be saved: text pasted unchanged.",
+      "pasteLogItem": "Recent pastes …",
+      "pasteLogItemHint": "View, restore or copy the original of earlier pastes",
+      "pasteLog": {
+        "title": "Recent pastes",
+        "description": "The original stays saved with the page, also after a restart (up to 20 pastes).",
+        "empty": "No paste has been cleaned up yet.",
+        "restore": "Restore original",
+        "copy": "Copy original",
+        "copied": "Original copied.",
+        "restored": "Original restored.",
+        "close": "Close",
+        "list": "Pastes, newest first",
+        "changes_one": "{{count}} change",
+        "changes_other": "{{count}} changes",
+        "tooLarge": "Too large to clean up ({{count}} characters): pasted unchanged, no original saved.",
+        "reason": {
+          "empty": "The cleaned text was empty. The place cannot be found; please copy the original.",
+          "missing": "The cleaned text is no longer in the text unchanged.",
+          "ambiguous": "The cleaned text occurs more than once in the text."
+        },
+        "rules": {
+          "control": "Invisible characters",
+          "pageNumbers": "Page numbers",
+          "repeated": "Headers and footers",
+          "webNoise": "Web page controls",
+          "fragments": "Line breaks",
+          "spaces": "Spaces",
+          "blankLines": "Blank lines"
+        }
+      },
       "rules": {
         "all": "All rules",
         "allHint": "Timestamps, broken lines, spaces and paragraphs in one step",

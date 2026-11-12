@@ -66,7 +66,39 @@
       "pasteCleaned_one": "Beim Einfügen bereinigt: {{count}} Änderung",
       "pasteCleaned_other": "Beim Einfügen bereinigt: {{count}} Änderungen",
       "pasteUndo": "Rückgängig",
-      "pasteUndoStale": "Der Text wurde inzwischen geändert. Bitte mit Strg+Z zurücknehmen.",
+      "pasteUndoStale": "Rückgängig nicht mehr möglich: Der Text wurde inzwischen geändert.",
+      "pasteTooLarge": "Text zu groß für die Bereinigung (über 2 MiB): unverändert eingefügt.",
+      "pasteNotSaved": "Die Rohfassung ließ sich nicht sichern: Text unverändert eingefügt.",
+      "pasteLogItem": "Letzte Einfügungen …",
+      "pasteLogItemHint": "Rohfassung früherer Einfügungen ansehen, zurückholen oder kopieren",
+      "pasteLog": {
+        "title": "Letzte Einfügungen",
+        "description": "Die Rohfassung bleibt bei der Seite gespeichert, auch nach einem Neustart (höchstens 20 Einfügungen).",
+        "empty": "Noch keine Einfügung bereinigt.",
+        "restore": "Rohfassung wiederherstellen",
+        "copy": "Rohfassung kopieren",
+        "copied": "Rohfassung kopiert.",
+        "restored": "Rohfassung wiederhergestellt.",
+        "close": "Schließen",
+        "list": "Einfügungen, neueste zuerst",
+        "changes_one": "{{count}} Änderung",
+        "changes_other": "{{count}} Änderungen",
+        "tooLarge": "Zu groß für die Bereinigung ({{count}} Zeichen): unverändert eingefügt, keine Rohfassung gespeichert.",
+        "reason": {
+          "empty": "Der bereinigte Text war leer. Die Stelle lässt sich nicht finden; bitte die Rohfassung kopieren.",
+          "missing": "Der bereinigte Text steht nicht mehr unverändert im Text.",
+          "ambiguous": "Der bereinigte Text kommt mehrfach im Text vor."
+        },
+        "rules": {
+          "control": "Unsichtbare Zeichen",
+          "pageNumbers": "Seitenzahlen",
+          "repeated": "Kopf- und Fußzeilen",
+          "webNoise": "Bedienreste",
+          "fragments": "Zeilenumbrüche",
+          "spaces": "Leerzeichen",
+          "blankLines": "Leerzeilen"
+        }
+      },
       "rules": {
         "all": "Alle Regeln",
         "allHint": "Zeitstempel, abgerissene Zeilen, Leerzeichen und Absätze in einem Schritt",
