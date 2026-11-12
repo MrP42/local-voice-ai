@@ -85,8 +85,8 @@ svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
 .orig .hl{background:var(--mark);border-radius:3px;box-shadow:0 0 0 3px var(--mark)}
 .orig table{border-collapse:collapse;margin:8px 0 14px;font-size:13px}
 .orig td,.orig th{border:1px solid var(--line);padding:6px 10px;text-align:left}
-.side .sec{padding:12px 14px;border-bottom:1px solid var(--line)}
-.side h3{font-size:13px;margin:0 0 8px}
+.side .sec,.sheet .sec{padding:12px 14px;border-bottom:1px solid var(--line)}
+.side h3,.sheet h3{font-size:13px;margin:0 0 8px}
 .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:13px}
 .kv span:nth-child(odd){color:var(--muted)}
 .kv a{color:var(--accent);word-break:break-all}
@@ -117,6 +117,44 @@ svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
   .tree-col{display:none}.mobile-tree .tree-col{display:flex}.mobile-tree .doc-col{display:none}
   .back{display:grid}.doc{padding:16px}.top .be{display:none}
 }
+.bel{border:0;font:inherit;font-size:11px}
+.bel:disabled{color:var(--muted);text-decoration:line-through;cursor:default}
+.blk{position:relative;border-radius:4px}
+.blk .bid{position:absolute;left:-26px;top:2px;font-size:10px;color:var(--muted)}
+.orig li .bid{left:-46px}
+.orig p,.orig li{line-height:1.6}
+.orig ul{margin:0 0 10px;padding-left:20px}
+.orig .flash{background:var(--mark);box-shadow:0 0 0 4px var(--mark)}
+.banner{display:flex;align-items:flex-start;gap:10px;margin:0 0 12px;padding:10px 12px;border-radius:6px;background:var(--accent-soft);font-size:13px;flex-wrap:wrap}
+.banner.w{background:var(--warn-soft)}
+.banner .t{flex:1 1 220px;min-width:0}
+.banner b{display:block}
+.banner .act{display:flex;gap:6px;flex-wrap:wrap}
+.zgrid{display:grid;gap:4px}
+.zgrid h4{margin:14px 0 6px;font-size:12px;color:var(--muted);font-weight:600}
+.switch{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;flex:none}
+.switch button{min-height:36px;padding:0 10px;border:0;background:var(--pane2);cursor:pointer;font-size:13px}
+.switch button[aria-pressed="true"]{background:var(--sel);color:var(--accent);font-weight:600}
+.plan{width:100%;border-collapse:collapse;font-size:13px;background:var(--pane);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.plan th{font-size:12px;color:var(--muted);text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);font-weight:600;white-space:nowrap}
+.plan td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+.plan td.n{color:var(--accent);font-weight:600;width:28px}
+.plan code{font-size:12px;background:var(--chip);padding:1px 4px;border-radius:3px;word-break:break-word}
+.recht{font-size:11px;font-weight:600;padding:2px 6px;border-radius:4px;background:var(--chip);white-space:nowrap}
+.recht.ok{background:var(--ok-soft);color:var(--ok)}
+.recht.frag{background:var(--warn-soft);color:var(--warn)}
+.planwrap{overflow-x:auto}
+.toastbar{margin:8px 12px 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 8px 6px 12px;border-radius:8px;background:var(--text);color:var(--pane);font-size:13px;box-shadow:0 4px 16px rgba(0,0,0,.2)}
+.toastbar[hidden]{display:none}
+.toastbar span{flex:1 1 160px}
+.toastbar button{background:none;border:0;color:inherit;font-weight:600;text-decoration:underline;min-height:36px;padding:0 6px;cursor:pointer}
+.sheet{display:none}
+.sheet.on{display:block;position:fixed;inset:0;z-index:6;background:rgba(0,0,0,.35)}
+.sheet .box{position:absolute;left:0;right:0;bottom:0;max-height:80%;overflow:auto;background:var(--pane);border-radius:12px 12px 0 0;box-shadow:0 -8px 24px rgba(0,0,0,.25)}
+.ib.info{display:none}
+.tsep{color:var(--muted);font-size:12px;padding:0 4px}
+@media (max-width:1279px){.ib.info{display:grid}}
+@media (max-width:767px){.sheet .box{max-height:100%;top:0;border-radius:0}.blk .bid{display:none}.hide-s{display:none}}
 </style>
 </head>
 <body>
@@ -137,6 +175,7 @@ svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
   <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4-4"/></symbol>
   <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
 </svg>
+
 <div class="app" id="app">
   <header class="top"><h1>Inhalte</h1><span class="be">Dokumente, Aufnahmen und KI-Auswertungen deiner Projekte</span></header>
   <div class="main">
@@ -154,121 +193,183 @@ svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
         <ul role="tree" aria-label="Inhalte">
           <li role="treeitem" aria-expanded="true"><div class="ti"><svg class="tw"><use href="#i-down"/></svg><svg class="k"><use href="#i-inbox"/></svg><span class="nm">Neu für dich</span><span class="badge">2</span></div>
             <ul role="group">
-              <li role="treeitem" aria-selected="true"><div class="ti l1 on neu"><svg class="k"><use href="#i-spark"/></svg><span class="nm">KI-Leitlinie für Mitarbeitende veröffentlicht</span></div></li>
-              <li role="treeitem"><div class="ti l1 neu"><svg class="k"><use href="#i-spark"/></svg><span class="nm">Newsletter Digitalisierung 11/2026</span></div></li>
+              <li role="treeitem" aria-selected="true"><div class="ti l1 on neu"><svg class="k"><use href="#i-doc"/></svg><span class="nm">KI-Leitlinie für Beschäftigte beschlossen</span></div></li>
+              <li role="treeitem"><div class="ti l1 neu"><svg class="k"><use href="#i-doc"/></svg><span class="nm">Newsletter Digitalisierung 11/2026</span></div></li>
             </ul></li>
           <li role="treeitem" aria-expanded="true"><div class="ti"><svg class="tw"><use href="#i-down"/></svg><svg class="k"><use href="#i-dir"/></svg><span class="nm">KI-Strategie</span><span class="ct">14</span></div>
             <ul role="group">
               <li role="treeitem" aria-expanded="true"><div class="ti l1"><svg class="tw"><use href="#i-down"/></svg><span class="nm">Seiten</span><span class="ct">6</span></div>
                 <ul role="group">
-                  <li role="treeitem"><div class="ti l2"><svg class="k"><use href="#i-doc"/></svg><span class="nm">Intranet: KI-Leitlinie</span></div></li>
                   <li role="treeitem"><div class="ti l2"><svg class="k"><use href="#i-doc"/></svg><span class="nm">Vermerk Pilot Posteingang</span></div></li>
                 </ul></li>
-              <li role="treeitem" aria-expanded="false"><div class="ti l1"><svg class="tw"><use href="#i-chev"/></svg><span class="nm">Aufnahmen</span><span class="ct">3</span></div></li>
+              <li role="treeitem" aria-expanded="true"><div class="ti l1"><svg class="tw"><use href="#i-down"/></svg><span class="nm">Aufnahmen</span><span class="ct">3</span></div>
+                <ul role="group">
+                  <li role="treeitem"><div class="ti l2"><svg class="k"><use href="#i-mic"/></svg><span class="nm">Lenkungskreis 05.11.</span></div></li>
+                  <li role="treeitem"><div class="ti l3"><svg class="k"><use href="#i-doc"/></svg><span class="nm">Protokoll</span></div></li>
+                </ul></li>
               <li role="treeitem" aria-expanded="false"><div class="ti l1"><svg class="tw"><use href="#i-chev"/></svg><span class="nm">Dateien (Ablage)</span><span class="ct">4</span></div></li>
               <li role="treeitem" aria-expanded="false"><div class="ti l1"><svg class="tw"><use href="#i-chev"/></svg><span class="nm">KI-Dokumente</span><span class="ct">1</span></div></li>
             </ul></li>
-          <li role="treeitem" aria-expanded="false"><div class="ti"><svg class="tw"><use href="#i-chev"/></svg><svg class="k"><use href="#i-dir"/></svg><span class="nm">E-Akte Einführung</span><span class="ct">22</span></div></li>
           <li role="treeitem" aria-expanded="false"><div class="ti"><svg class="tw"><use href="#i-chev"/></svg><svg class="k"><use href="#i-dir"/></svg><span class="nm">Ohne Projekt</span><span class="ct">31</span></div></li>
           <li role="treeitem" aria-expanded="true"><div class="ti"><svg class="tw"><use href="#i-down"/></svg><svg class="k"><use href="#i-flow"/></svg><span class="nm">Routinen</span><span class="ct">2</span></div>
             <ul role="group">
-              <li role="treeitem"><div class="ti l1"><svg class="k"><use href="#i-flow"/></svg><span class="nm">Intranet KI – täglich 6:00</span></div></li>
-              <li role="treeitem"><div class="ti l1"><svg class="k"><use href="#i-flow"/></svg><span class="nm">Newsletter Digitalisierung</span></div></li>
+              <li role="treeitem"><div class="ti l1"><svg class="k"><use href="#i-flow"/></svg><span class="nm">Intranet KI – täglich 6:00</span><span class="ct">Trockenlauf</span></div></li>
+              <li role="treeitem"><div class="ti l1"><svg class="k"><use href="#i-flow"/></svg><span class="nm">Newsletter Digitalisierung</span><span class="ct">scharf</span></div></li>
+              <li role="treeitem"><div class="ti l1"><svg class="k"><use href="#i-dir"/></svg><span class="nm">Aussortiert</span><span class="ct">5</span></div></li>
             </ul></li>
         </ul>
       </section>
 
       <section class="col doc-col" aria-label="Dokument">
         <div class="colhead"><button class="ib back" aria-label="Zurück zum Baum" onclick="document.body.classList.add('mobile-tree')"><svg><use href="#i-left"/></svg></button>
-          <h2>KI-Leitlinie für Mitarbeitende veröffentlicht</h2>
-          <button class="btn"><svg><use href="#i-spark"/></svg>KI</button>
+          <h2 id="dtitel">KI-Leitlinie für Beschäftigte beschlossen</h2>
+          <div class="switch hide-s" role="group" aria-label="Modus"><button aria-pressed="true">Lesen</button><button aria-pressed="false">Bearbeiten</button></div>
+          <button class="ib info" aria-label="Quelle und Datenschutz" onclick="blatt(true)"><svg><use href="#i-link"/></svg></button>
           <button class="ib" aria-label="Weitere Aktionen"><svg><use href="#i-more"/></svg></button></div>
         <div class="tabs" role="tablist" aria-label="Ansicht">
-          <button role="tab" id="t-k" aria-selected="true" onclick="zeige('k')">Kurzfassung</button>
-          <button role="tab" id="t-o" aria-selected="false" onclick="zeige('o')">Original</button>
-          <button role="tab" aria-selected="false">Übersetzung</button>
-          <button role="tab" aria-selected="false">KI-Dokumente</button>
+          <button role="tab" id="t-k" aria-controls="s-k" aria-selected="true" onclick="zeige('k')">Kurzfassung</button>
+          <button role="tab" id="t-o" aria-controls="s-o" aria-selected="false" tabindex="-1" onclick="zeige('o')">Lesefassung</button>
+          <button role="tab" aria-selected="false" tabindex="-1">Übersetzung</button>
+          <button role="tab" aria-selected="false" tabindex="-1">KI-Dokumente</button>
           <span class="sp"></span>
-          <button role="tab" id="t-r" aria-selected="false" onclick="zeige('r')">Routine</button>
+          <button role="tab" id="t-r" aria-controls="s-r" aria-selected="false" tabindex="-1" onclick="zeige('r')">Routine</button>
+          <button role="tab" id="t-z" aria-controls="s-z" aria-selected="false" tabindex="-1" onclick="zeige('z')">Zustände</button>
         </div>
 
-        <div class="screen" id="s-k"><article class="doc">
-          <h3>KI-Leitlinie für Mitarbeitende veröffentlicht</h3>
-          <div class="meta"><span class="chip hoch">Relevanz hoch · KI, Governance</span><span class="chip">Intranet · 12.11.2026, 06:00</span><span class="chip ki">Lokales Modell</span></div>
-          <p class="lead">Ab 1. Dezember gilt eine verbindliche KI-Leitlinie; Fachbereiche benennen bis 28. November je eine KI-Ansprechperson.<span class="bel" title="Beleg anzeigen">b2</span></p>
+        <div class="toastbar" id="toast" role="status" hidden><span>Beim Einfügen bereinigt: 7 Änderungen</span><button onclick="zeige('o')">Anzeigen</button><button>Rückgängig</button></div>
+        <div class="screen" id="s-k" role="tabpanel" aria-labelledby="t-k"><article class="doc">
+          <h3>KI-Leitlinie für Beschäftigte beschlossen</h3>
+          <div class="meta"><span class="chip hoch">Relevanz hoch · KI</span><span class="chip">intranet.example.org · abgerufen 12.11.2026, 06:00</span><span class="chip ki">Lokales Modell · zu Fassung 1</span></div>
+          <p class="lead">Ab 1. Dezember 2026 gilt eine verbindliche KI-Leitlinie; jeder Fachbereich benennt bis 28. November eine KI-Ansprechperson.<button class="bel" onclick="beleg('b1')" aria-label="Beleg: Abschnitt 1 anzeigen">¶1</button><button class="bel" onclick="beleg('b4')" aria-label="Beleg: Abschnitt 4 anzeigen">¶4</button></p>
+          <div class="card"><h4>Warum relevant</h4><ul><li>Betrifft KI-Einsatz und Pilotanwendungen im Fachbereich Digitalisierung &amp; IT.<button class="bel" onclick="beleg('b5')" aria-label="Beleg: Abschnitt 5 anzeigen">¶5</button></li></ul></div>
           <div class="card"><h4>Für dich</h4>
             <div class="todo">
-              <span class="art">Frist</span><span>KI-Ansprechperson für Digitalisierung &amp; IT benennen</span><span class="dt">28.11.2026</span>
-              <span class="art">Termin</span><span>Info-Veranstaltung für Führungskräfte (Teams)</span><span class="dt">20.11., 10:00</span>
-              <span class="art">Aufgabe</span><span>Bestehende Pilotanwendungen bis Jahresende im KI-Register melden</span><span class="dt">31.12.2026</span>
+              <span class="art">Frist</span><span>KI-Ansprechperson benennen<button class="bel" onclick="beleg('b4')" aria-label="Beleg: Abschnitt 4 anzeigen">¶4</button></span><span class="dt">28.11.2026</span>
+              <span class="art">Termin</span><span>Infoveranstaltung für Führungskräfte<button class="bel" onclick="beleg('b6')" aria-label="Beleg: Abschnitt 6 anzeigen">¶6</button></span><span class="dt">20.11.2026, 10:00</span>
+              <span class="art">Aufgabe</span><span>Laufende Pilotanwendungen im KI-Register melden<button class="bel" onclick="beleg('b5')" aria-label="Beleg: Abschnitt 5 anzeigen">¶5</button></span><span class="dt">31.12.2026</span>
             </div></div>
           <div class="card"><h4>Kernaussagen</h4><ul>
-            <li>Erlaubt sind nur freigegebene KI-Dienste; Liste im Intranet unter „KI-Werkzeuge“.<span class="bel">b4</span></li>
-            <li>Personenbezogene Daten dürfen nur in lokal betriebene Modelle eingegeben werden.<span class="bel">b5</span></li>
-            <li>Ergebnisse von KI sind vor Verwendung fachlich zu prüfen; Kennzeichnung bei Außenwirkung.<span class="bel">b6</span></li>
-            <li>Schulung zur KI-Kompetenz (Art. 4 KI-VO) wird für alle Pflicht, Start im Januar.<span class="bel">b8</span></li>
+            <li>Zulässig sind nur die drei freigegebenen KI-Dienste.<button class="bel" onclick="beleg('b2')" aria-label="Beleg: Abschnitt 2 anzeigen">¶2</button></li>
+            <li>Personenbezogene Daten nur im lokalen Sprachmodell.<button class="bel" onclick="beleg('b3')" aria-label="Beleg: Abschnitt 3 anzeigen">¶3</button></li>
+            <li>KI-Ergebnisse vor Verwendung fachlich prüfen.<button class="bel" onclick="beleg('b2')" aria-label="Beleg: Abschnitt 2 anzeigen">¶2</button></li>
+            <li>Pflichtschulung zur KI-Kompetenz ab Januar.<button class="bel" onclick="beleg('b7')" aria-label="Beleg: Abschnitt 7 anzeigen">¶7</button></li>
           </ul></div>
           <div class="card"><h4>Zahlen</h4><div class="nums">
-            <div class="num"><b>3</b><span>freigegebene Dienste</span></div><div class="num"><b>90 Min.</b><span>Pflichtschulung je Person</span></div><div class="num"><b>12</b><span>gemeldete Piloten bisher</span></div>
+            <div class="num"><b>3</b><span>freigegebene Dienste <button class="bel" onclick="beleg('b2')" aria-label="Beleg: Abschnitt 2 anzeigen">¶2</button></span></div>
+            <div class="num"><b>90 Min.</b><span>Pflichtschulung je Person <button class="bel" onclick="beleg('b7')" aria-label="Beleg: Abschnitt 7 anzeigen">¶7</button></span></div>
+            <div class="num"><b>12</b><span>gemeldete Piloten bisher <button class="bel" onclick="beleg('b5')" aria-label="Beleg: Abschnitt 5 anzeigen">¶5</button></span></div>
           </div></div>
-          <div class="card"><div class="src"><svg><use href="#i-link"/></svg><span>Quelle: <a href="#">intranet.example.org/aktuelles/ki-leitlinie</a> · abgerufen 12.11.2026, 06:00</span></div></div>
+          <div class="card"><h4>Betroffen</h4><ul><li>Alle Beschäftigten; Führungskräfte zusätzlich durch die Benennung.<button class="bel" onclick="beleg('b1')" aria-label="Beleg: Abschnitt 1 anzeigen">¶1</button><button class="bel" onclick="beleg('b4')" aria-label="Beleg: Abschnitt 4 anzeigen">¶4</button></li></ul></div>
+          <p class="meta">1 Aussage ohne Beleg ausgeblendet. Quelle: <a href="#" style="color:var(--accent)">intranet.example.org/aktuelles/ki-leitlinie</a> (Angabe aus dem Abruf, nicht vom Modell).</p>
         </article></div>
 
-        <div class="screen" id="s-o"><article class="doc orig">
-          <h3>KI-Leitlinie für Mitarbeitende veröffentlicht</h3>
-          <div class="meta"><span class="chip">Original, formatiert</span><span class="chip">7 Bereinigungen</span></div>
-          <div class="clean"><h4>Beim Einfügen bereinigt</h4><ul>
-            <li><del>Zum Inhalt springen · Drucken · Teilen</del> (Navigation)</li>
-            <li><del>Seite 1 von 3</del>, <del>Seite 2 von 3</del> (Seitenzahlen)</li>
+        <div class="screen" id="s-o" role="tabpanel" aria-labelledby="t-o"><article class="doc orig">
+          <h3>KI-Leitlinie für Beschäftigte beschlossen</h3>
+          <div class="meta"><span class="chip">Lesefassung · Fassung 1 von 1</span><span class="chip">Rohquelle gesichert</span><span class="chip">7 Bereinigungen beim Einfügen</span></div>
+          <div class="clean"><h4>Beim Einfügen bereinigt (Rohfassung gespeichert)</h4><ul>
+            <li><del>Zum Inhalt springen</del>, <del>Drucken · Teilen</del> (ganze Zeilen aus Bedienresten)</li>
+            <li><del>Seite 1 von 2</del>, <del>Seite 2 von 2</del> (Seitenzahlen)</li>
             <li>„Verwal-tung“ → „Verwaltung“ (Silbentrennung, 3×)</li>
-          </ul></div>
+          </ul><div style="padding:0 14px 10px;display:flex;gap:6px;flex-wrap:wrap"><button class="btn">Rohfassung wiederherstellen</button><button class="btn">Rohfassung kopieren</button></div></div>
           <h4>Worum es geht</h4>
-          <p>Der Landkreis hat eine verbindliche Leitlinie zum Einsatz künstlicher Intelligenz beschlossen. <span class="hl">Sie gilt ab dem 1. Dezember 2026 für alle Beschäftigten.</span></p>
+          <p class="blk" id="b1"><span class="bid">¶1</span>Der Kreistag hat eine verbindliche Leitlinie zum Einsatz künstlicher Intelligenz beschlossen. Sie gilt ab dem 1. Dezember 2026 für alle Beschäftigten.</p>
           <h4>Was erlaubt ist</h4>
-          <p>Zulässig sind ausschließlich freigegebene Dienste. Die Liste wird laufend ergänzt.</p>
-          <div class="tw-wrap" tabindex="0" role="region" aria-label="Tabelle"><table style="margin:0"><thead><tr><th>Dienst</th><th>Einsatz</th><th>Daten</th></tr></thead>
+          <p class="blk" id="b2"><span class="bid">¶2</span>Zulässig sind ausschließlich die drei freigegebenen Dienste aus der Tabelle. Ergebnisse einer KI sind vor ihrer Verwendung fachlich zu prüfen.</p>
+          <div class="tw-wrap" tabindex="0" role="region" aria-label="Tabelle: freigegebene Dienste"><table style="margin:0"><thead><tr><th>Dienst</th><th>Einsatz</th><th>Daten</th></tr></thead>
             <tbody><tr><td>Lokales Sprachmodell</td><td>Texte, Zusammenfassungen</td><td>auch personenbezogen</td></tr>
-            <tr><td>Übersetzung (EU)</td><td>Fremdsprachige Schreiben</td><td>ohne Personenbezug</td></tr></tbody></table></div>
+            <tr><td>Übersetzung (EU)</td><td>fremdsprachige Schreiben</td><td>ohne Personenbezug</td></tr>
+            <tr><td>Bildbeschreibung</td><td>Barrierefreiheit</td><td>ohne Personenbezug</td></tr></tbody></table></div>
+          <p class="blk" id="b3"><span class="bid">¶3</span>Personenbezogene Daten dürfen nur in das lokal betriebene Sprachmodell eingegeben werden.</p>
+          <h4>Was jetzt zu tun ist</h4>
+          <ul><li class="blk" id="b4"><span class="bid">¶4</span>Jeder Fachbereich benennt bis zum 28.11.2026 eine KI-Ansprechperson; zuständig sind die Führungskräfte.</li>
+          <li class="blk" id="b5"><span class="bid">¶5</span>Laufende Pilotanwendungen sind bis 31.12.2026 im KI-Register zu melden; bisher sind 12 Piloten gemeldet, die meisten im Fachbereich Digitalisierung &amp; IT.</li>
+          <li class="blk" id="b6"><span class="bid">¶6</span>Infoveranstaltung für Führungskräfte am 20.11.2026 um 10:00 Uhr in Teams.</li>
+          <li class="blk" id="b7"><span class="bid">¶7</span>Ab Januar wird eine Schulung zur KI-Kompetenz (90 Minuten) für alle Pflicht.</li></ul>
         </article></div>
 
-        <div class="screen" id="s-r"><div class="wf">
-          <div class="note">Trockenlauf: Die Routine plant nur und legt nichts an, bis du sie scharf schaltest.</div>
-          <div class="step"><span class="n">1</span><b>Täglich um 6:00</b><span>Zeitplan, auch nach dem Start nachholen</span></div><div class="arrow"></div>
-          <div class="step"><span class="n">2</span><b>Neue Beiträge auf intranet.example.org/aktuelles</b><span>Feed oder Listenseite · erster Abruf merkt nur vor</span></div><div class="arrow"></div>
-          <div class="step"><span class="n">3</span><b>Relevanz prüfen: Thema „KI“, mindestens mittel</b><span>Relevanzprofil + Stichworte; darf nicht enthalten: Kantine</span></div><div class="arrow"></div>
-          <div class="step"><span class="n">4</span><b>Seite im Projekt „KI-Strategie“ anlegen</b><span>Formatiert, bereinigt, mit Quelle · erscheint unter „Neu für dich“</span></div><div class="arrow"></div>
-          <div class="step"><span class="n">5</span><b>Kurzfassung „Das Wichtigste für mich“</b><span>Lokales Modell · Belege auf das Original</span></div><div class="arrow"></div>
-          <div class="step"><span class="n">6</span><b>Benachrichtigen</b><span>Hinweis am Rechner, ohne Inhalt in der Meldung</span></div>
+        <div class="screen" id="s-r" role="tabpanel" aria-labelledby="t-r"><div class="wf">
+          <div class="banner w"><div class="t"><b>Trockenlauf – Plan mit Beispieldaten</b>Es wird nichts abgerufen, angelegt, gesendet oder an ein Modell gegeben. Scharf schalten erst nach Prüfung des Plans.</div><div class="act"><button class="btn">Trockenlauf anzeigen</button><button class="btn pri">Scharf schalten</button></div></div>
+          <div class="planwrap"><table class="plan" aria-label="Plan der Routine Intranet KI">
+            <thead><tr><th>#</th><th>Schritt und Parameter</th><th>Recht</th><th>Bedingung</th></tr></thead>
+            <tbody>
+              <tr><td class="n">A</td><td><b>Auslöser: neuer Feedeintrag</b><br><code>feed.new_item</code> · <code>url: https://intranet.example.org/aktuelles/feed</code> · <code>at: 06:00</code> (Karenz 15 min) · <code>backfill: 0</code></td><td><span class="recht ok">Erlaubt</span></td><td>Host freigegeben</td></tr>
+              <tr><td class="n">1</td><td><b>Vorfilter Titel/Teaser</b><br>muss enthalten: <code>KI, künstliche Intelligenz</code> · darf nicht: <code>Kantine</code></td><td>–</td><td>ohne Modell</td></tr>
+              <tr><td class="n">2</td><td><b>Beitrag abrufen und als Seite anlegen</b><br><code>content.import_url</code> · Ziel: Projekt „KI-Strategie“ (Intern) · Marke: in Prüfung</td><td><span class="recht ok">Erlaubt</span></td><td>wenn 1 zutrifft</td></tr>
+              <tr><td class="n">3</td><td><b>Relevanz prüfen</b><br><code>content.relevance</code> · Profil „Was ist für mich relevant“ · mindestens: mittel</td><td><span class="recht ok">Erlaubt</span></td><td>KI-Freigabe Projekt</td></tr>
+              <tr><td class="n">4</td><td><b>Kurzfassung erstellen</b><br><code>content.brief</code> · Lokales Modell</td><td><span class="recht frag">Fragen</span></td><td>wenn 3 ≥ mittel, sonst → Aussortiert</td></tr>
+              <tr><td class="n">5</td><td><b>Hinweis am Rechner</b><br><code>notify.local</code> · Text ohne Inhalt: „Neuer Beitrag in Inhalte“</td><td><span class="recht ok">Erlaubt</span></td><td>wenn 4 fertig</td></tr>
+            </tbody></table></div>
+          <p class="meta">Versuche je Schritt: 2, Wartezeit 10 min, bei Fehler „Lauf beenden“. Dieselbe Adresse mit neuem Inhalt ergibt eine neue Quellfassung derselben Seite, keine zweite Seite.</p>
         </div></div>
 
-        <div class="player"><button class="ib" aria-label="Vorlesen"><svg><use href="#i-play"/></svg></button><span class="bar"><i></i></span><span class="chip">Anton · 1,0×</span></div>
+        <div class="screen" id="s-z" role="tabpanel" aria-labelledby="t-z"><div class="doc zgrid">
+          <h4>Kurzfassung</h4>
+          <div class="banner w"><div class="t"><b>Veraltet: Text wurde nach der Kurzfassung geändert.</b>Belege auf entfernte Abschnitte sind nicht mehr anklickbar.</div><div class="act"><button class="btn">Neu erstellen</button></div></div>
+          <div class="banner"><div class="t"><b>Noch keine Kurzfassung.</b></div><div class="act"><button class="btn pri">Kurzfassung erstellen</button></div></div>
+          <div class="banner w"><div class="t"><b>Keine Aussage ließ sich im Text belegen.</b>Es wird nichts angezeigt.</div><div class="act"><button class="btn">Lesefassung öffnen</button></div></div>
+          <h4>Modell und Freigabe</h4>
+          <div class="banner w"><div class="t"><b>Kein lokales Modell eingerichtet.</b>Lesen, Vorlesen und Import gehen weiter. Es wird kein Cloud-Dienst ersatzweise genutzt.</div><div class="act"><button class="btn">Modell einrichten</button></div></div>
+          <div class="banner"><div class="t"><b>Wartet auf freien Arbeitsspeicher.</b></div><div class="act"><button class="btn">Abbrechen</button></div></div>
+          <div class="banner w"><div class="t"><b>Für KI nicht freigegeben.</b>Ordner „Personal“ in der Ablage: KI-Freigabe aus.</div><div class="act"><button class="btn">Freigabe ansehen</button></div></div>
+          <div class="banner w"><div class="t"><b>Der Text enthält Aufforderungen an eine KI. Sie wurden nicht befolgt.</b></div><div class="act"><button class="btn">Stellen anzeigen</button></div></div>
+          <h4>Quelle und Import</h4>
+          <div class="banner"><div class="t"><b>Die Quelle hat sich geändert (neue Fassung vom 13.11.2026).</b></div><div class="act"><button class="btn">Unterschiede ansehen</button><button class="btn">Übernehmen</button></div></div>
+          <div class="banner w"><div class="t"><b>Anmeldung bei intranet.example.org abgelaufen.</b>Die Routine wartet.</div><div class="act"><button class="btn">Neu anmelden</button></div></div>
+          <div class="banner"><div class="t"><b>Keine Verbindung. Abruf beim nächsten Lauf.</b></div></div>
+          <div class="banner w"><div class="t"><b>3 von 4 Dateien importiert.</b>„bericht.pdf“: kein Text gefunden.</div><div class="act"><button class="btn">Details</button><button class="btn">Erneut versuchen</button></div></div>
+          <div class="banner w"><div class="t"><b>Routine wartet auf deine Freigabe.</b>Schritt „Kurzfassung erstellen“.</div><div class="act"><button class="btn">Ansehen</button><button class="btn pri">Freigeben</button><button class="btn">Ablehnen</button></div></div>
+          <h4>Einträge anderer Module</h4>
+          <div class="banner"><div class="t"><b>Gehört zu Aufnahmen – hier nur lesen.</b></div><div class="act"><button class="btn">In Aufnahmen öffnen</button></div></div>
+          <div class="banner w"><div class="t"><b>Original nicht mehr vorhanden.</b></div><div class="act"><button class="btn">Aus Projekt entfernen</button></div></div>
+          <div class="banner"><div class="t"><b>Noch keine Inhalte.</b>Text einfügen, Datei ablegen oder Adresse importieren.</div><div class="act"><button class="btn pri">Neu</button></div></div>
+        </div></div>
+
+                <div class="player"><button class="ib" aria-label="Vorlesen"><svg><use href="#i-play"/></svg></button><span class="bar"><i></i></span><span class="chip">Anton · 1,0×</span></div>
       </section>
 
-      <aside class="col side" aria-label="Quelle und Herkunft">
-        <div class="colhead"><h2>Quelle</h2></div>
-        <div class="sec"><div class="kv">
+      <aside class="col side" aria-label="Quelle und Datenschutz">
+        <div class="colhead"><h2>Quelle und Datenschutz</h2></div>
+        <div class="sec"><h3>Herkunft</h3><div class="kv">
           <span>Adresse</span><a href="#">intranet.example.org/aktuelles/ki-leitlinie</a>
           <span>Abgerufen</span><span>12.11.2026, 06:00</span>
           <span>Veröffentlicht</span><span>11.11.2026</span>
           <span>Über</span><span>Routine „Intranet KI – täglich 6:00“</span>
-          <span>Original</span><span>gesichert (HTML, 84 KB)</span>
-        </div></div>
-        <div class="sec"><h3>Projekt</h3><div class="kv"><span>Projekt</span><span>KI-Strategie</span><span>Datenklasse</span><span>Intern · nur lokale KI</span></div></div>
+          <span>Quellfassungen</span><span>1 (HTML, 84 KB, SHA-256 9f2c…)</span>
+        </div><div style="margin-top:8px"><button class="btn">Rohquelle ansehen (als Text)</button></div></div>
+        <div class="sec"><h3>Datenschutz</h3><div class="kv"><span>Projekt</span><span>KI-Strategie</span><span>Datenklasse</span><span>Intern (vom Projekt geerbt)</span><span>KI-Freigabe</span><span>Projekt: an · Cloud: keine</span><span>Kurzfassung</span><span>lokales Modell, zu Fassung 1</span><span>Speicherort</span><span>nur auf diesem Gerät</span></div></div>
         <div class="sec"><h3>Weiter mit KI</h3><div style="display:flex;flex-wrap:wrap;gap:6px">
-          <button class="btn">Vermerk</button><button class="btn">E-Mail-Entwurf</button><button class="btn">Aufgaben</button><button class="btn">Präsentation</button></div></div>
+          <button class="btn">Vermerk</button><button class="btn">E-Mail-Entwurf</button><button class="btn">Aufgaben</button></div></div>
       </aside>
     </div>
   </div>
-  <footer class="status"><span>Lokales Modell bereit</span><span>Routinen: 2 aktiv, nächster Lauf 13.11. 06:00</span></footer>
+  <footer class="status"><span>Lokales Modell bereit</span><span>Routinen: 1 scharf, 1 im Trockenlauf · nächster Abruf 13.11. 06:00</span></footer>
 </div>
-<div class="toast" id="toast" hidden role="status">Eingefügt und bereinigt: 7 Änderungen <button onclick="zeige('o')">Anzeigen</button><button>Rückgängig</button></div>
+<div class="sheet" id="blatt" role="dialog" aria-modal="true" aria-labelledby="bl-h"><div class="box">
+  <div class="colhead"><h2 id="bl-h">Quelle und Datenschutz</h2><button class="ib" aria-label="Schließen" onclick="blatt(false)"><svg><use href="#i-left"/></svg></button></div>
+  <div class="sec"><h3>Herkunft</h3><div class="kv">
+          <span>Adresse</span><a href="#">intranet.example.org/aktuelles/ki-leitlinie</a>
+          <span>Abgerufen</span><span>12.11.2026, 06:00</span>
+          <span>Veröffentlicht</span><span>11.11.2026</span>
+          <span>Über</span><span>Routine „Intranet KI – täglich 6:00“</span>
+          <span>Quellfassungen</span><span>1 (HTML, 84 KB, SHA-256 9f2c…)</span>
+        </div><div style="margin-top:8px"><button class="btn">Rohquelle ansehen (als Text)</button></div></div>
+        <div class="sec"><h3>Datenschutz</h3><div class="kv"><span>Projekt</span><span>KI-Strategie</span><span>Datenklasse</span><span>Intern (vom Projekt geerbt)</span><span>KI-Freigabe</span><span>Projekt: an · Cloud: keine</span><span>Kurzfassung</span><span>lokales Modell, zu Fassung 1</span><span>Speicherort</span><span>nur auf diesem Gerät</span></div></div>
+        <div class="sec"><h3>Weiter mit KI</h3><div style="display:flex;flex-wrap:wrap;gap:6px">
+          <button class="btn">Vermerk</button><button class="btn">E-Mail-Entwurf</button><button class="btn">Aufgaben</button></div></div>
+</div></div>
 <script>
 const p=new URLSearchParams(location.search);
 if(p.get("t")==="dunkel")document.documentElement.dataset.theme="dark";
-function zeige(s){for(const k of ["k","o","r"]){document.getElementById("s-"+k).classList.toggle("on",k===s);document.getElementById("t-"+k).setAttribute("aria-selected",String(k===s));}}
+const TABS=["k","o","r","z"];
+function zeige(s){for(const k of TABS){document.getElementById("s-"+k).classList.toggle("on",k===s);const t=document.getElementById("t-"+k);t.setAttribute("aria-selected",String(k===s));t.tabIndex=k===s?0:-1;}}
+document.querySelector("[role=tablist]").addEventListener("keydown",e=>{const i=TABS.findIndex(k=>document.getElementById("t-"+k).getAttribute("aria-selected")==="true");let n=i;if(e.key==="ArrowRight")n=(i+1)%TABS.length;else if(e.key==="ArrowLeft")n=(i+TABS.length-1)%TABS.length;else return;zeige(TABS[n]);document.getElementById("t-"+TABS[n]).focus();});
+function beleg(id){zeige("o");const b=document.getElementById(id);b.classList.add("flash");b.scrollIntoView({block:"center"});setTimeout(()=>b.classList.remove("flash"),1600);}
+function blatt(on){document.getElementById("blatt").classList.toggle("on",on);}
 zeige(p.get("s")||"k");
 if(p.get("toast"))document.getElementById("toast").hidden=false;
 if(p.get("baum"))document.body.classList.add("mobile-tree");
+if(p.get("blatt"))blatt(true);
+if(p.get("beleg"))beleg(p.get("beleg"));
 </script>
 </body>
 </html>
