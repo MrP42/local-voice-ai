@@ -69,8 +69,9 @@ export function liesSofort(roh: string): SofortEntscheid {
   if (!m) return { art: "nichts" };
   const text = zeile
     .slice(m[0].length)
-    // Eine zweite Marke (das Modell hat beide Fälle geschrieben) schneidet ab.
-    .split(/\b(?:ANTWORT|WEITER)\s*[:：]/i)[0]
+    // Eine zweite Marke (das Modell hat beide Fälle geschrieben) schneidet ab: nur in Großbuchstaben
+    // und am Satzanfang, damit „Es heißt Weiter: …“ im Inhalt ganz bleibt.
+    .split(/(?:^|(?<=[.!?…])\s+)(?:ANTWORT|WEITER)\s*[:：]/)[0]
     .trim();
   if (text.length > SOFORT_MAX_ZEICHEN) return { art: "nichts" };
   // Feste Floskeln („Ich denke kurz nach.“) sind nie eine Reaktion: lieber Stille.

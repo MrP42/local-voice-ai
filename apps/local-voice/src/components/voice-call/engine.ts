@@ -1891,13 +1891,9 @@ export class VoiceCallEngine {
         role: "assistant",
         // Im Projekt genau der Text, den das Tor freigegeben hat: Das Antwortregister erkennt ihn
         // am Fingerabdruck wieder, `speakable` würde die Marken entfernen.
-        // Nach einer gefilterten Überbrückung nur das Angezeigte: das Register erkennt es dann
-        // nicht wieder und nimmt es aus dem nächsten Kontext (sicher), statt die Überbrückung zu führen.
-        content: this.projekt()
-          ? ueberbrueckt
-            ? answer
-            : rueckgabe || answer
-          : speakable(answer),
+        // Unbelegte Sätze wie eine Überbrückung gibt das Belegtor im Projekt gar nicht frei; die
+        // Rückgabe ist also schon bereinigt (Test `ueberbrueckung_faellt_vor_dem_register_weg…`).
+        content: this.projekt() ? rueckgabe || answer : speakable(answer),
         ...tag,
         ...(run.withContext ? { ctx: true } : {}),
       });
@@ -2155,7 +2151,6 @@ export class VoiceCallEngine {
     fristStop = () => frist.stop();
     if (sofortLauf.zustand() === "sprecher") frist.stop();
     let timedOut = false;
-    let ueberbrueckt = false;
     let denkerGeliefert = false;
     // Das Tor im Projekt hat die Anfrage mit einem Code abgelehnt: Die Hinweisleiste sagt den Grund.
     let projektStopp = false;
@@ -2166,7 +2161,6 @@ export class VoiceCallEngine {
       // Überbrückungen (Orchestrator, Werkzeug, Buch-Seite, oder ein Modell, das eine sagt) auf
       // jedem Weg nur in der Denk-Anzeige, nie Chat oder Stimme. Die Frist läuft weiter, länger.
       if (istUeberbrueckung(s)) {
-        ueberbrueckt = true;
         frist.verlaengern(TUNING.denkerFristMs);
         this.cb.onDenken?.({ art: "schritt", text: s.trim() });
         return;
@@ -2349,9 +2343,7 @@ export class VoiceCallEngine {
     // Im Projekt zählt nur der freigegebene Text aus der Rückgabe; fehlt er, bleibt der Schritt aus
     // dem Verlauf (das Register kennt dann keine Antwort, und sie wäre ohnehin ersetzt worden).
     const verlaufText = this.projekt()
-      ? ueberbrueckt
-        ? modelText
-        : (turn.projektText ?? "")
+      ? (turn.projektText ?? "")
       : speakable([sofortText, modelText].filter(Boolean).join(" "));
     if (verlaufText) {
       this.history.push({

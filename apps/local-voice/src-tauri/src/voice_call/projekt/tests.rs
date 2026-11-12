@@ -1769,3 +1769,53 @@ async fn eintrag_zu_link(e: &Env, p: &str, link: &str) -> String {
         .expect("Eintrag im Projekt")
         .id
 }
+
+// ---------------------------------------------------------------- Überbrückungen (Codex lva#542 R3)
+
+/// Eine Überbrückung ohne Beleg gibt das Belegtor im Projekt nicht frei: Rückgabe und Register enthalten
+/// nur die Antwort, und die Oberfläche führt genau diese Rückgabe im Verlauf (engine.ts).
+#[test]
+fn ueberbrueckung_faellt_vor_dem_register_weg_und_die_anschlussfrage_behaelt_die_antwort() {
+    lauf(async {
+        let e = env().await;
+        let g = "g-bruecke";
+        let p = projekt_mit(&e, Klasse::Internal, &[("s1", BELEG)]).await;
+        let weg = FakeWeg::mit(&["Moment, ich schaue kurz nach. ", ANTWORT]);
+        let bote = FakeBote::default();
+        let r1 = durch(
+            &e,
+            &weg,
+            &bote,
+            anfrage(&p, g, Art::Chat, "pt-b1", verlauf(FRAGE)),
+        )
+        .await
+        .unwrap();
+        // Rückgabe und Register kennen nur die Antwort, nie die Überbrückung.
+        assert_eq!(r1, FREIGEGEBEN);
+        assert!(!bote.text().contains("Moment"), "{}", bote.text());
+        assert!(im_register(&e, g, &r1));
+
+        // Zweiter Turn: die Oberfläche führt genau die Rückgabe im Verlauf; das Register erkennt sie,
+        // die Anschlussfrage sieht die Antwort.
+        weg.setze(&[ANTWORT]);
+        let nachrichten = vec![
+            nm("system", SYSTEM),
+            nm("user", FRAGE),
+            nm("assistant", &r1),
+            nm("user", FRAGE2),
+        ];
+        let bote2 = FakeBote::default();
+        durch(
+            &e,
+            &weg,
+            &bote2,
+            anfrage(&p, g, Art::Chat, "pt-b2", nachrichten),
+        )
+        .await
+        .unwrap();
+        let prompt = weg.prompt(1);
+        assert!(prompt.contains("15. März 2027"), "{prompt}");
+        assert!(!prompt.contains(ENTZOGEN_ANTWORT_PROJEKT), "{prompt}");
+        assert!(bote2.hinweis("projekt.entzogen").is_none());
+    });
+}

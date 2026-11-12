@@ -49,22 +49,56 @@ export function istUeberbrueckung(text: string): boolean {
   return BEKANNT.has(normal(text));
 }
 
-/**
- * Entfernt bekannte Überbrückungen aus einem längeren Text (z. B. der in Rust gemerkten Ausgabe für
- * „Wiederholen“ oder der Rückgabe des Tors): nur der Inhalt bleibt.
- */
-export function ohneUeberbrueckungen(text: string): string {
-  let rest = normal(text);
-  for (const b of BEKANNT) rest = rest.split(b).join(" ");
-  return normal(rest);
+/** Zerlegt einen Text in Sätze; ein Satz endet mit `.`, `!`, `?` oder `…` vor Leerraum oder Textende. */
+function saetze(text: string): string[] {
+  return normal(text)
+    .split(/(?<=[.!?…])\s+/)
+    .filter(Boolean);
 }
 
-/** Feste Floskeln des Wartens, auch frei formuliert („Ich denke kurz nach.“, „Let me check.“). */
-const FLOSKEL =
-  /^(moment|einen moment|augenblick|sekunde|ich (denke|überlege|schaue|sehe|prüfe|suche|gucke)\b[^.!?]*\b(nach|kurz|darüber)\b|lass mich|one moment|just a (moment|second|sec)|hold on|let me (think|check|see|look)|i('m| am) (thinking|checking|looking))/i;
+/**
+ * Entfernt bekannte Überbrückungen aus einem längeren Text (z. B. der in Rust gemerkten Ausgabe für
+ * „Wiederholen“): nur eigenständige Sätze, die genau einer Überbrückung entsprechen. Eine zitierte
+ * Überbrückung mitten in einer Antwort bleibt Inhalt.
+ */
+export function ohneUeberbrueckungen(text: string): string {
+  return saetze(text)
+    .filter((s) => !BEKANNT.has(s))
+    .join(" ");
+}
+
+/**
+ * Teile eines Wartesatzes. Ein Text ist nur dann eine Floskel, wenn JEDER seiner Teile (getrennt an
+ * Satzzeichen und Kommas) einer davon ist; ein Sachteil („Momentan ist alles gut.“, „Moment, das stimmt
+ * so nicht.“) macht ihn zur Antwort.
+ */
+const WARTETEIL: readonly RegExp[] = [
+  /^(einen )?moment( (bitte|mal|noch))?$/,
+  /^(einen )?augenblick( bitte)?$/,
+  /^(eine )?sekunde( bitte)?$/,
+  /^(ähm|äh|hm+)$/,
+  /^ich (denke|überlege|schaue|sehe|prüfe|suche|gucke|lese|checke) .*\b(nach|kurz|darüber|mal)$/,
+  /^ich (denke|überlege) (kurz|mal|nach)$/,
+  /^(lass|lasst) (mich|uns) (kurz |mal )?(nachdenken|überlegen|nachsehen|nachschauen|schauen|sehen|prüfen|nachprüfen)$/,
+  /^(one|just a|wait a|give me a) (moment|second|sec|minute)( please)?$/,
+  /^(hold on|hang on|wait)( a (moment|second|sec))?$/,
+  /^let me (think|check|see|look)( (it up|that up|into it|into that|quickly))?$/,
+  /^(i'm|i am) (thinking|checking|looking)( (it up|into it|into that|quickly|about it))?$/,
+  /^(um+|uh+)$/,
+];
 
 /** Ist der Satz eine Überbrückung oder eine feste Warte-Floskel (nie sprechen, nie anzeigen)? */
 export function istFloskel(text: string): boolean {
   const t = normal(text);
-  return istUeberbrueckung(t) || FLOSKEL.test(t);
+  if (!t) return false;
+  if (istUeberbrueckung(t)) return true;
+  const teile = t
+    .toLowerCase()
+    .replace(/[’`´]/g, "'")
+    .split(/[.,;:!?…]+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  return (
+    teile.length > 0 && teile.every((x) => WARTETEIL.some((r) => r.test(x)))
+  );
 }

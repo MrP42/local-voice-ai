@@ -85,6 +85,35 @@ test("liesSofort: Warte-Floskeln sind nie eine Reaktion (ANTWORT wie WEITER)", (
     assert.deepEqual(liesSofort(`ANTWORT: ${f}`), { art: "nichts" }, f);
     assert.deepEqual(liesSofort(`WEITER: ${f}`), { art: "nichts" }, f);
   }
+  assert.deepEqual(liesSofort("ANTWORT: I’m thinking."), { art: "nichts" });
+  assert.deepEqual(liesSofort("WEITER: Hold on, let me check."), {
+    art: "nichts",
+  });
+  assert.deepEqual(
+    liesSofort("ANTWORT: Einen Moment bitte, ich prüfe das kurz."),
+    {
+      art: "nichts",
+    },
+  );
+  // Echte Antworten mit ähnlichen Wörtern bleiben vollständig (Codex lva#542 R3).
+  for (const echt of [
+    "Momentan ist alles gut.",
+    "Sekunden sind Zeiteinheiten.",
+    "Moment, das stimmt so nicht.",
+    "Augenblicklich läuft nichts.",
+    "Es heißt Weiter: zum nächsten Schritt.",
+    "Momentum matters here.",
+    "I'm looking forward to it.",
+    "Let me know if you need more.",
+    "Hold-out data is used for testing.",
+    "Gut.",
+  ]) {
+    assert.deepEqual(
+      liesSofort(`ANTWORT: ${echt}`),
+      { art: "antwort", text: echt },
+      echt,
+    );
+  }
   // Sachsätze mit ähnlichen Wörtern bleiben erhalten.
   assert.deepEqual(liesSofort("ANTWORT: Ich denke, das passt."), {
     art: "antwort",

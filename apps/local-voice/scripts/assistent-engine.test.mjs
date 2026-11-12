@@ -406,23 +406,30 @@ test("Tor-Weg im Textmodus: die Rückgabe mit Überbrückung zählt nicht, nur d
   ]);
 });
 
-test("Projekt: nach einer Überbrückung führt der Verlauf nur die Antwort (Sprache und Text)", async () => {
-  const t = neu({ voice_call_chat: chatSagt(BRUECKE, ANTWORT) });
+test("Projekt: der Verlauf führt genau die registrierte Rückgabe des Tors (Sprache und Text)", async () => {
+  // Überbrückungen gibt das Belegtor in Rust gar nicht frei; die Oberfläche führt die Rückgabe
+  // unverändert (mit Marken), damit das Register sie beim nächsten Turn wiedererkennt.
+  const RUECKGABE = `${ANTWORT} [Q1]`;
+  const tor = ({ requestId }) => {
+    emit({ kind: "sentence", request_id: requestId, text: RUECKGABE });
+    emit({ kind: "done", request_id: requestId });
+    return RUECKGABE;
+  };
+  const t = neu({ voice_call_chat: tor });
   t.engine.cb.projekt = () => ({ id: "p1", stand: null });
   await t.start("Was steht im Kalender?").done;
-  assert.deepEqual(t.player.enqueued, [`wav:${ANTWORT}`]);
   assert.deepEqual(verlauf(t), [
     "user:Was steht im Kalender?",
-    `assistant:${ANTWORT}`,
+    `assistant:${RUECKGABE}`,
   ]);
 
-  const t2 = neu({ voice_call_chat: chatSagt(BRUECKE, ANTWORT) });
+  const t2 = neu({ voice_call_chat: tor });
   t2.engine.cb.projekt = () => ({ id: "p1", stand: null });
   t2.engine.state = "idle";
   await t2.engine.sendText("Was steht im Kalender?");
   assert.deepEqual(verlauf(t2), [
     "user:Was steht im Kalender?",
-    `assistant:${ANTWORT}`,
+    `assistant:${RUECKGABE}`,
   ]);
 });
 
@@ -540,6 +547,19 @@ test("Wiederholen spricht eine gemerkte Überbrückung nicht noch einmal", async
     "wav:Ich wiederhole.",
     "wav:Das ist die Antwort.",
   ]);
+});
+
+test("Wiederholen behält eine zitierte Überbrückung innerhalb der Antwort", async () => {
+  const zitat =
+    "Die Ansage lautet: „Moment, ich schaue in den Besprechungen nach.“";
+  const t = neu({
+    assistent_einstufen: () => s0E("wiederholen", "Ich wiederhole."),
+    assistent_letzte_ausgabe: () => zitat,
+    voice_call_chat: chatSagt(ANTWORT),
+  });
+  t.engine.ausgabeKey = { id: "c1" };
+  await t.start("Wiederhole das bitte").done;
+  assert.deepEqual(t.player.enqueued, ["wav:Ich wiederhole.", `wav:${zitat}`]);
 });
 
 test("Wiederholen ohne Ausgabe: feste Vorlage, nichts ans Modell", async () => {
