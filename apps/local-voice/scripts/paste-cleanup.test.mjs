@@ -2139,7 +2139,6 @@ function harness(files = {}) {
     },
   };
   h.committedEvents = [];
-  h.reloads = [];
   h.store = createPageStateStore({
     io,
     live: {
@@ -2150,7 +2149,6 @@ function harness(files = {}) {
           text: h.uiText,
           einfuegungen: entries.length > 0 ? entries : undefined,
         }),
-      reload: (page) => h.reloads.push(page),
     },
     onCommit: (page, log) => h.committedEvents.push([page, log.version]),
   });
@@ -2305,10 +2303,14 @@ test("pageState: Migration schreibt nicht auf eine inzwischen offene Seite", asy
   h.active = "A";
   h.loaded = true;
   assert.equal(
-    await h.store.mutate("A", (state) => {
-      state.summary = "";
-      return true;
-    }),
+    await h.store.mutate(
+      "A",
+      (state) => {
+        state.summary = "";
+        return true;
+      },
+      { refuseOpen: true },
+    ),
     false,
   );
   assert.equal(h.writes.length, 0);
@@ -2440,57 +2442,76 @@ test("pageState: mutate liest in der Kette frisch: Protokollschreiben und Fremds
   );
 });
 
-test("pageState: mutate auf offener Seite (adopt): Grundlage ist der Stand der Oberfläche, Protokoll gesichert, Oberfläche lädt neu", async () => {
+test("pageState: mutate auf offener Seite schreibt wie ein Direktschreiben in die Datei (Oberfläche gilt nicht), Protokoll aus dem gesicherten Stand", async () => {
   const h = harness({ A: stateWith({ einfuegungen: [E0] }) });
   h.active = "A";
   h.loaded = true;
-  h.store.seed("A", [E0]);
+  h.store.seed("A", [E0, E1]);
   h.uiText = "ungesichert getippt";
   assert.equal(
-    await h.store.mutate(
-      "A",
-      (state) => {
-        state.text = `${state.text}!`;
-        return true;
-      },
-      "adopt",
-    ),
+    await h.store.mutate("A", (state) => {
+      state.text = `${state.text}!`;
+      return true;
+    }),
     true,
   );
   const file = h.fileState("A");
-  assert.equal(file.text, "ungesichert getippt!");
+  // Text wie auf main: aus der Datei, nicht aus der Oberfläche.
+  assert.equal(file.text, "alt!");
   assert.deepEqual(
     file.einfuegungen.map((e) => e.roh),
-    ["null"],
+    ["null", "eins"],
   );
-  assert.deepEqual(h.reloads, ["A"]);
 });
 
-test("pageState: mutate auf offener Seite (keep): schreibt ohne Neuladen; refuse und ein false von change schreiben nichts", async () => {
+test("pageState: mutate mit refuseOpen schreibt nicht auf eine offene Seite; false von change und Lesefehler schreiben nichts", async () => {
   const h = harness({ A: stateWith({}) });
   h.active = "A";
   h.loaded = true;
   assert.equal(
-    await h.store.mutate(
-      "A",
-      (state) => {
-        state.translatedLangs = ["English"];
-        return true;
-      },
-      "keep",
-    ),
+    await h.store.mutate("A", () => true, { refuseOpen: true }),
+    false,
+  );
+  assert.equal(await h.store.mutate("A", () => false), false);
+  assert.equal(h.writes.length, 0);
+  // Offene Seite, aber ohne refuseOpen: wird geschrieben.
+  assert.equal(
+    await h.store.mutate("A", (state) => {
+      state.translatedLangs = ["English"];
+      return true;
+    }),
     true,
   );
   assert.deepEqual(h.fileState("A").translatedLangs, ["English"]);
-  assert.deepEqual(h.reloads, []);
-  const writes = h.writes.length;
-  assert.equal(await h.store.mutate("A", () => true, "refuse"), false);
-  assert.equal(await h.store.mutate("A", () => false, "adopt"), false);
-  assert.equal(h.writes.length, writes);
-  assert.deepEqual(h.reloads, []);
 });
 
-test("pageState: mutate auf offener Seite, Protokollschreiben und adopt in der Kette: beide Änderungen bestehen", async () => {
+test("pageState: mutate mit unreadable ersetzt eine unlesbare Datei durch den Grundzustand und setzt das gesicherte Protokoll ein", async () => {
+  const h = harness({ A: "kein json" });
+  h.active = "A";
+  h.store.seed("A", [E1]);
+  assert.equal(await h.store.mutate("A", () => true), false);
+  assert.equal(h.files.get("A"), "kein json");
+  assert.equal(
+    await h.store.mutate(
+      "A",
+      (state) => {
+        state.text = "neu";
+        return true;
+      },
+      { unreadable: () => ({ tab: "original" }) },
+    ),
+    true,
+  );
+  const file = h.fileState("A");
+  assert.equal(file.text, "neu");
+  assert.equal(file.tab, "original");
+  assert.deepEqual(
+    file.einfuegungen.map((e) => e.roh),
+    ["eins"],
+  );
+});
+
+test("pageState: mutate auf offener Seite, Protokollschreiben und Fremdschreiber in der Kette: beide Änderungen bestehen", async () => {
   const h = harness({ A: stateWith({}) });
   h.active = "A";
   h.loaded = true;
@@ -2499,14 +2520,10 @@ test("pageState: mutate auf offener Seite, Protokollschreiben und adopt in der K
   h.holdSave = () => (h.writes.length === 0 ? held.promise : undefined);
   const commit = h.store.commitLog("A", (log) => parsePasteLog([...log, E1]));
   await tick();
-  const foreign = h.store.mutate(
-    "A",
-    (state) => {
-      state.summary = "Fremd";
-      return true;
-    },
-    "adopt",
-  );
+  const foreign = h.store.mutate("A", (state) => {
+    state.summary = "Fremd";
+    return true;
+  });
   held.release();
   assert.deepEqual(await Promise.all([commit, foreign]), [true, true]);
   const file = h.fileState("A");
@@ -2515,4 +2532,23 @@ test("pageState: mutate auf offener Seite, Protokollschreiben und adopt in der K
     file.einfuegungen.map((e) => e.roh),
     ["eins"],
   );
+});
+
+test("pageState: release gibt das Protokoll einer verlassenen Seite frei, wartende Aufträge halten es", async () => {
+  const h = harness({ A: stateWith({}) });
+  h.active = "A";
+  h.loaded = true;
+  h.store.seed("A", [E1]);
+  h.store.release();
+  assert.notEqual(h.store.committed("A"), undefined);
+  h.active = null;
+  const held = gate();
+  h.holdSave = () => held.promise;
+  const pending = h.store.mutate("A", () => true);
+  await tick();
+  h.store.release();
+  assert.notEqual(h.store.committed("A"), undefined);
+  held.release();
+  await pending;
+  assert.equal(h.store.committed("A"), undefined);
 });

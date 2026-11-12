@@ -206,10 +206,9 @@ export const ReplaceSpeakerDialog: React.FC<Props> = ({
       // Jede Seite direkt vor dem Schreiben frisch laden: der Stand der Vorschau
       // kann inzwischen veraltet sein (Autosave, Sync).
       for (const page of pages.filter((p) => p.id !== activePageId)) {
-        // Über den einen Schreibpfad: frisch gelesen in der Kette, nur die
-        // eigenen Felder ändern, Rohfassungen (`einfuegungen`) bleiben. Die
-        // aktive Seite ist ausgenommen (sie geht über die Oberfläche, unten);
-        // wird eine Seite inzwischen geöffnet, schreibt `mutate` nicht.
+        // Wie bisher in die Datei, nur über den einen Schreibpfad (Kette,
+        // frisch gelesen): Rohfassungen (`einfuegungen`) bleiben erhalten. Die
+        // aktive Seite ist ausgenommen (sie geht über die Oberfläche, unten).
         let found: number | null = null;
         const saved = await getPageStateStore()
           .mutate(page.id, (state) => {

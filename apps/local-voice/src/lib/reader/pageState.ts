@@ -33,20 +33,7 @@ export interface PageStateLive {
   isLive(page: string): boolean;
   /** Ganzer Seitenzustand der geöffneten Seite mit genau diesem Protokoll. */
   build(entries: readonly PasteLogEntry[]): string;
-  /** Die Datei der offenen Seite wurde von außen geändert: Oberfläche neu
-   *  laden (sperrt bis dahin das Speichern der Oberfläche). */
-  reload?(page: string): void;
 }
-
-/**
- * Was `mutate` mit einer gerade offenen Seite tut:
- * - `refuse`: nichts schreiben (`false`); für Aufrufer, die die offene Seite
- *   selbst über die Oberfläche ändern.
- * - `keep`: auf dem Zustand der Oberfläche schreiben; die Oberfläche kennt die
- *   Änderung schon oder wird vom Aufrufer benachrichtigt.
- * - `adopt`: wie `keep`, danach lädt die Oberfläche die Seite neu.
- */
-export type OpenPageMode = "refuse" | "keep" | "adopt";
 
 export interface CommittedLog {
   /** Steigt mit jedem erfolgreich gesicherten Protokollschreiben. */
@@ -188,34 +175,38 @@ export function createPageStateStore(options: PageStateStoreOptions) {
   }
 
   /**
-   * Felder einer Seite ändern, ohne das Protokoll anzufassen (Migration der
-   * alten Zusammenfassung, Sprecher ersetzen, Fassungen, Bibliothek): in der
-   * Kette frisch lesen, `change` ändert das Objekt (`false` = nichts tun),
-   * zurückschreiben. `einfuegungen` kommt aus dem gesicherten Stand, sonst aus
-   * der frisch gelesenen Datei, nie aus einem älteren Lesen des Aufrufers.
-   * Ist die Seite offen, entscheidet `open` (siehe `OpenPageMode`); bei `keep`
-   * und `adopt` ist der Zustand der Oberfläche die Grundlage (ungesicherte
-   * Eingaben gehen nicht verloren).
+   * Felder einer Seite in der Datei ändern, ohne das Protokoll anzufassen
+   * (Migration der alten Zusammenfassung, Sprecher ersetzen, Fassungen,
+   * Bibliothek): in der Kette frisch lesen, `change` ändert das Objekt
+   * (`false` = nichts tun), zurückschreiben. `einfuegungen` kommt aus dem
+   * gesicherten Stand, sonst bleibt der frisch gelesene Dateiwert, nie ein
+   * älteres Lesen des Aufrufers. Der Zustand einer offenen Seite spielt keine
+   * Rolle: wie ein Direktschreiben in die Datei, nur eingereiht. Nur die
+   * Migration der Oberfläche selbst setzt `refuseOpen`: dort gilt die
+   * Oberfläche, eine inzwischen offene Seite wird nicht geschrieben (`false`).
+   * `unreadable` liefert den Grundzustand, wenn die Datei kein Objekt enthält
+   * (Altformat): die Datei wird dann damit überschrieben, wie es der Aufrufer
+   * vorher selbst getan hätte. Ein Lesefehler (`null`) schreibt nie.
    */
   function mutate(
     page: string,
     change: (state: StateObject) => boolean,
-    open: OpenPageMode = "refuse",
+    options: {
+      refuseOpen?: boolean;
+      unreadable?: () => StateObject;
+    } = {},
   ): Promise<boolean> {
+    const refused = () => options.refuseOpen === true && live.isLive(page);
     return enqueue(page, async () => {
-      if (open === "refuse" && live.isLive(page)) return false;
+      if (refused()) return false;
       const text = await io.load(page);
-      if (text === null) return false;
-      const isOpen = live.isLive(page);
-      if (isOpen && open === "refuse") return false;
-      const log = committed.get(page);
-      const entries = log ? log.entries : logOfState(text);
-      const state = parseState(isOpen ? live.build(entries) : text);
+      if (text === null || refused()) return false;
+      const state = parseState(text) ?? options.unreadable?.() ?? null;
       if (!state || !change(state)) return false;
-      if (log) state.einfuegungen = entries.length > 0 ? entries : undefined;
-      if (!(await io.save(page, JSON.stringify(state)))) return false;
-      if (isOpen && open === "adopt") live.reload?.(page);
-      return true;
+      const log = committed.get(page);
+      if (log)
+        state.einfuegungen = log.entries.length > 0 ? log.entries : undefined;
+      return io.save(page, JSON.stringify(state));
     });
   }
 

@@ -219,27 +219,22 @@ export async function markTranslated(pageId: string, target: string) {
         detail: { page: pageId, lang: target },
       }),
     );
-  // Über den einen Schreibpfad (Kette, frisch gelesen): Rohfassungen und alle
-  // anderen Felder bleiben. Ist die Seite offen, gilt der Stand der Oberfläche
-  // als Grundlage (`keep`); sie kennt die Sprache nach `notify` ohnehin.
+  // Wie bisher in die Datei, nur über den einen Schreibpfad (Kette, frisch
+  // gelesen), damit eine gesicherte Rohfassung der Seite erhalten bleibt.
   // Eine Seite ohne Stand (oder im Altformat) bleibt unberührt: Vorlesen findet
   // die Übersetzung über den Zwischenspeicher.
   await getPageStateStore()
-    .mutate(
-      pageId,
-      (state) => {
-        if (Object.keys(state).length === 0) return false;
-        const langs = Array.isArray(state.translatedLangs)
-          ? (state.translatedLangs as unknown[]).filter(
-              (x): x is string => typeof x === "string",
-            )
-          : [];
-        if (langs.includes(target)) return false;
-        state.translatedLangs = [...langs, target];
-        return true;
-      },
-      "keep",
-    )
+    .mutate(pageId, (state) => {
+      if (Object.keys(state).length === 0) return false;
+      const langs = Array.isArray(state.translatedLangs)
+        ? (state.translatedLangs as unknown[]).filter(
+            (x): x is string => typeof x === "string",
+          )
+        : [];
+      if (langs.includes(target)) return false;
+      state.translatedLangs = [...langs, target];
+      return true;
+    })
     .catch(() => false);
   notify();
 }

@@ -48,7 +48,6 @@ export function getPageStateStore(): PageStateStore {
       isActive: (page) => view.isActive(page),
       isLive: (page) => view.isLive(page),
       build: (entries) => view.build(entries),
-      reload: (page) => view.reload?.(page),
     },
     onCommit: (page, log) => commitListener?.(page, log),
   });
@@ -69,5 +68,8 @@ export function bindPageStateLive(
     if (view !== next) return;
     view = NO_VIEW;
     commitListener = null;
+    // Die bisher offene Seite ist verlassen: ihr Protokoll im Speicher
+    // freigeben, sofern kein Auftrag wartet (sonst räumt der letzte ab).
+    store?.release();
   };
 }

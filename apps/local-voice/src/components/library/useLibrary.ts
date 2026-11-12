@@ -225,7 +225,7 @@ export function useLibrary() {
       inFlight.current.add(guard);
       let done = false;
       let created: string | null = null;
-      let restore: { pageId: string; text: string | undefined } | null = null;
+      let restore: { pageId: string; json: string } | null = null;
       try {
         const book = start;
         const tracks = startTracks;
@@ -288,34 +288,26 @@ export function useLibrary() {
         let pageId: string;
         if (appendTo) {
           pageId = appendTo.page_id;
-          // Über den einen Schreibpfad (Kette, frisch gelesen): ein gerade
-          // gesichertes Protokoll der Seite (Rohfassungen) und alle anderen
-          // Felder bleiben, nur der Text wächst. Ist die Seite im Vorlesen
-          // offen, lädt es sie danach neu.
+          // Wie bisher in die Datei, nur über den einen Schreibpfad (Kette,
+          // frisch gelesen): eine gesicherte Rohfassung der Seite bleibt erhalten.
           const outcome: {
             grown: ReturnType<typeof textWithSync> | null;
             empty: boolean;
           } = { grown: null, empty: false };
-          const written = await getPageStateStore().mutate(
-            pageId,
-            (state) => {
-              const previous =
-                typeof state.text === "string" ? state.text : undefined;
-              const next = textWithSync(
-                paragraphs,
-                `${(previous ?? "").replace(/\s+$/, "")}\n\n`,
-              );
-              if (!next.sync.length) {
-                outcome.empty = true;
-                return false;
-              }
-              outcome.grown = next;
-              restore = { pageId, text: previous };
-              state.text = next.text;
-              return true;
-            },
-            "adopt",
-          );
+          const written = await getPageStateStore().mutate(pageId, (state) => {
+            // Wie zuvor: ein leerer oder unlesbarer Stand ist ein Fehler.
+            if (Object.keys(state).length === 0) return false;
+            const old = String(state.text ?? "").replace(/\s+$/, "");
+            const next = textWithSync(paragraphs, `${old}\n\n`);
+            if (!next.sync.length) {
+              outcome.empty = true;
+              return false;
+            }
+            outcome.grown = next;
+            restore = { pageId, json: JSON.stringify(state) };
+            state.text = next.text;
+            return true;
+          });
           const done = outcome.grown;
           if (!written || !done)
             throw new Error(
@@ -412,16 +404,18 @@ export function useLibrary() {
       } catch (e) {
         if (created) await commands.pagesDelete(created);
         if (restore) {
+          // Wie bisher der Stand von vor dem Anhängen, nur ohne die gesicherten
+          // Rohfassungen zurückzudrehen: sie bleiben, wie sie jetzt sind.
           const back = restore;
-          await getPageStateStore().mutate(
-            back.pageId,
-            (state) => {
-              if (back.text === undefined) delete state.text;
-              else state.text = back.text;
-              return true;
-            },
-            "adopt",
-          );
+          await getPageStateStore().mutate(back.pageId, (state) => {
+            const protocol = state.einfuegungen;
+            const before = JSON.parse(back.json) as Record<string, unknown>;
+            for (const key of Object.keys(state)) delete state[key];
+            Object.assign(state, before);
+            if (protocol === undefined) delete state.einfuegungen;
+            else state.einfuegungen = protocol;
+            return true;
+          });
         }
         if (e instanceof Superseded) {
           await reload();

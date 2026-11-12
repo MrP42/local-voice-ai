@@ -622,12 +622,6 @@ export const TtsSettings = () => {
           isLive: (page) =>
             activePageForEvents.current === page && pageLoaded.current,
           build: (entries) => pageStateJsonRef.current([...entries]),
-          reload: (page) => {
-            if (activePageForEvents.current !== page) return;
-            // Bis der neu geladene Stand da ist, speichert die Oberfläche nichts.
-            pageLoaded.current = false;
-            setPageReloadTick((n) => n + 1);
-          },
         },
         (page, log) => {
           if (activePageForEvents.current === page) publishLog(log.entries);
@@ -635,8 +629,6 @@ export const TtsSettings = () => {
       ),
     [],
   );
-  /** Zählt Neuladen der offenen Seite nach einer Änderung von außen. */
-  const [pageReloadTick, setPageReloadTick] = useState(0);
   useEffect(() => {
     const on = (e: Event) => {
       const d = (e as CustomEvent<{ page: string; lang: string }>).detail;
@@ -1251,7 +1243,7 @@ export const TtsSettings = () => {
     return () => {
       stale = true;
     };
-  }, [activePage, pageReloadTick]);
+  }, [activePage]);
 
   // Ein anderes Geraet hat Seiten geschickt: Liste neu laden.
   useEffect(() => {
@@ -1316,12 +1308,6 @@ export const TtsSettings = () => {
     if (!activePage || !pageLoaded.current) return;
     savePending.current = true;
     const handle = window.setTimeout(() => {
-      // Wird die Seite gerade neu geladen (Änderung von außen), schreibt die
-      // Oberfläche nichts: der geladene Stand ist schon gesichert.
-      if (!pageLoaded.current) {
-        savePending.current = false;
-        return;
-      }
       void savePageState(activePage, pageStateJson())
         .finally(() => {
           savePending.current = false;
@@ -3066,11 +3052,15 @@ export const TtsSettings = () => {
         // in der Kette (frisch lesen, Feld ändern, schreiben): Rohfassungen
         // bleiben, wie sie gesichert sind. Ein zweiter Import bliebe ohnehin
         // folgenlos (der Kern erkennt denselben Text wieder).
-        await store.mutate(legacy.page, (state) => {
-          if (state.summary !== legacy.text) return false;
-          state.summary = "";
-          return true;
-        });
+        await store.mutate(
+          legacy.page,
+          (state) => {
+            if (state.summary !== legacy.text) return false;
+            state.summary = "";
+            return true;
+          },
+          { refuseOpen: true },
+        );
       });
   }, [activePage, legacySummary, pageLoadTick]);
 

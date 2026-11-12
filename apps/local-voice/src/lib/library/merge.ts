@@ -349,16 +349,17 @@ async function storeJoined(
 ): Promise<LibraryBook> {
   let pageId = book.text?.origin === "transcript" ? book.text.page_id : null;
   if (pageId) {
-    // Bestehende Seite über den einen Schreibpfad (Kette, frisch gelesen): nur
-    // der Text wird ersetzt, Rohfassungen und alle anderen Felder bleiben. Ist
-    // die Seite im Vorlesen offen, lädt es sie danach neu.
+    // Bestehende Seite wie bisher in die Datei, nur über den einen
+    // Schreibpfad (Kette, frisch gelesen): Rohfassungen bleiben erhalten.
+    const base = () => ({ summary: "", sourceUrl: "", tab: "original" });
     const written = await getPageStateStore().mutate(
       pageId,
       (state) => {
+        if (Object.keys(state).length === 0) Object.assign(state, base());
         state.text = joined.text;
         return true;
       },
-      "adopt",
+      { unreadable: base },
     );
     if (!written) throw new ImportError(i18n.t("library.job.pageNotWritten"));
   } else {

@@ -1572,6 +1572,48 @@ test("copying a damaged original really copies it (clipboard stub) and carries t
   ).toEqual([entryFor(1).roh]);
 });
 
+test("copying an unverifiable original really copies it (clipboard stub) and carries the reason", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const copied: string[] = [];
+    (window as unknown as { __copied: string[] }).__copied = copied;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          copied.push(text);
+        },
+        readText: async () => "",
+      },
+    });
+    // Die Prüfsumme lässt sich nicht berechnen: der Eintrag gilt als nicht prüfbar.
+    crypto.subtle.digest = () => Promise.reject(new Error("digest kaputt"));
+  });
+  await openSeeded(page, {
+    text: "Roh 1",
+    tab: "original",
+    einfuegungen: [entryFor(1)],
+  });
+  await openLog(page);
+  await expect(page.locator("#paste-log-why-0")).toContainText("Nicht prüfbar");
+  await expect(page.getByTestId("paste-log-restore")).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  const copy = page.getByTestId("paste-log-copy");
+  expect(await copy.getAttribute("aria-describedby")).toContain(
+    "paste-log-why-0",
+  );
+  await copy.click();
+  await expect(toast(page).last()).toContainText("Rohfassung kopiert");
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { __copied: string[] }).__copied,
+    ),
+  ).toEqual([entryFor(1).roh]);
+});
+
 test("a failed state write aborts creating a KI document: nothing is started, a notice appears", async ({
   page,
 }) => {
@@ -1691,67 +1733,50 @@ test("replace speaker on a left page while its raw-text write is still pending k
 });
 
 /**
- * Fremder Schreiber auf der OFFENEN Seite (Bibliothek hängt ein Transkript an,
- * Zusammenführen): die Seite lädt neu, ungesicherte Eingaben und die gesicherte
- * Rohfassung bleiben, danach gilt weiter der Autosave.
+ * Vorbestehend, nicht Teil von lva#530 (Codex Runde 6, Fall 1): Eine Seite lädt
+ * noch (die Antwort kommt verspätet und bringt den Stand von VOR dem Warten), ein
+ * Fremdschreiber ändert den Text in der Datei, danach schreibt der Autosave den
+ * geladenen alten Text zurück. Der Test beschreibt das gewünschte Verhalten (die
+ * Änderung bleibt) und ist deshalb als erwarteter Fehlschlag markiert; auf
+ * origin/main schlägt er genauso fehl. Eigenes lva#546.
  */
-test("a foreign write on the open page is adopted by the editor and keeps unsaved typing and the raw text", async ({
+test("a foreign text change during a page load survives the autosave of the loaded page", async ({
   page,
 }) => {
-  const editor = await openEditor(page, "Vorher. ");
-  await expect
-    .poll(async () => ((await savedState(page)) as { text: string })?.text)
-    .toBe("Vorher. ");
-  expect(await paste(editor, DIRTY)).toBe(true);
-  await expect
-    .poll(
-      async () =>
-        ((await savedState(page)) as { einfuegungen?: unknown[] })?.einfuegungen
-          ?.length,
-    )
-    .toBe(1);
-  // Ungesichert getippt (der Autosave läuft erst nach 500 ms) ...
-  await editor.press("End");
-  await editor.press("X");
-  // ... und gleich danach schreibt die Bibliothek über den einen Schreibpfad.
-  const written = await page.evaluate(async () => {
-    const mod = await import("/src/lib/reader/pageStore.ts");
-    return mod.getPageStateStore().mutate(
-      "p1",
-      (state) => {
-        state.text = `${String(state.text)} Angehängt.`;
-        return true;
-      },
-      "adopt",
+  test.fail(
+    true,
+    "vorbestehend auf main (Text bei fremden Schreibern), lva#546",
+  );
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, unknown>;
+    w.__loadDelay = { p1: 2500 };
+    sessionStorage.setItem(
+      "__ps_p1",
+      JSON.stringify({ text: "Vorher. ", tab: "original" }),
     );
   });
-  expect(written).toBe(true);
-  await expect
-    .poll(async () => (await savedState(page)) as { text: string })
-    .toMatchObject({ text: `Vorher. ${CLEAN}X Angehängt.` });
-  const readerOrEditor = page
-    .locator("textarea, [data-testid='reader-flow']")
-    .first();
-  await expect(readerOrEditor).toContainText("Angehängt.");
-  // Danach speichert die Oberfläche weiter, nichts geht verloren.
-  const again = page.locator("textarea").first();
-  if (await again.count()) {
-    await again.press("End");
-    await again.press("Y");
-  }
-  await expect
-    .poll(
-      async () => {
-        const state = (await savedState(page)) as {
-          text: string;
-          einfuegungen?: { roh: string }[];
+  await page.goto("/");
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  await page.waitForTimeout(500);
+  // Fremdschreiber (wie Bibliothek, Zusammenführen, Sprecher ersetzen): direkt in die Datei.
+  await page.evaluate(async () => {
+    const internals = (
+      window as unknown as {
+        __TAURI_INTERNALS__: {
+          invoke: (cmd: string, args: unknown) => Promise<unknown>;
         };
-        return JSON.stringify([
-          state.text.includes("Angehängt."),
-          state.einfuegungen?.map((e) => e.roh),
-        ]);
-      },
-      { timeout: 10_000 },
-    )
-    .toBe(JSON.stringify([true, [DIRTY]]));
+      }
+    ).__TAURI_INTERNALS__;
+    await internals.invoke("page_state_save", {
+      id: "p1",
+      state: JSON.stringify({ text: "Fremd geändert. ", tab: "original" }),
+    });
+  });
+  await page.waitForTimeout(5000);
+  expect(((await savedState(page)) as { text: string }).text).toBe(
+    "Fremd geändert. ",
+  );
 });
