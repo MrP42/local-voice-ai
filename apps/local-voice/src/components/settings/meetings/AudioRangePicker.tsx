@@ -5,6 +5,7 @@ import {
   formatRangeTime,
   normalizeRange,
   parseRangeTime,
+  type RangeRounding,
   rangeLength,
   type MsRange,
 } from "@/lib/meetingRange";
@@ -29,6 +30,8 @@ interface TimeFieldProps {
   onCommit: (ms: number) => number;
   testId: string;
   disabled?: boolean;
+  /** Nachkommastellen: „Von“ rundet ab, „Bis“ auf (wie `parseRangeTime`). */
+  rounding: RangeRounding;
 }
 
 /**
@@ -42,6 +45,7 @@ const TimeField: React.FC<TimeFieldProps> = ({
   onCommit,
   testId,
   disabled,
+  rounding,
 }) => {
   const { t } = useTranslation();
   const errorId = useId();
@@ -55,7 +59,13 @@ const TimeField: React.FC<TimeFieldProps> = ({
   }, [valueMs]);
 
   const commit = () => {
-    const parsed = parseRangeTime(draft);
+    // Unverändert (nur das Feld verlassen): der Wert bleibt, auch wenn er
+    // Bruchteile einer Sekunde hat, die die Anzeige abschneidet.
+    if (draft === formatRangeTime(valueMs)) {
+      setInvalid(false);
+      return;
+    }
+    const parsed = parseRangeTime(draft, rounding);
     if (parsed === null) {
       setInvalid(true);
       setDraft(formatRangeTime(valueMs));
@@ -141,6 +151,7 @@ export const AudioRangePicker: React.FC<AudioRangePickerProps> = ({
           valueMs={value.start_ms}
           disabled={disabled}
           testId={`${testId}-start`}
+          rounding="floor"
           onCommit={(ms) => set({ ...value, start_ms: ms }, "start").start_ms}
         />
         <TimeField
@@ -148,6 +159,7 @@ export const AudioRangePicker: React.FC<AudioRangePickerProps> = ({
           valueMs={value.end_ms}
           disabled={disabled}
           testId={`${testId}-end`}
+          rounding="ceil"
           onCommit={(ms) => set({ ...value, end_ms: ms }, "end").end_ms}
         />
       </div>

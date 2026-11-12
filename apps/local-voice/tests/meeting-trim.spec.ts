@@ -30,8 +30,11 @@ const DURATION_M2 = 3_540_000;
 type Theme = "light" | "dark";
 
 /**
- * `meetings_trim_audio` antwortet mit der neuen Dauer (1 800 000 ms), bei `__trimError` mit
- * diesem Fehlercode; die Attrappe der Aufnahmen kennt den Befehl nicht.
+ * `meetings_trim_audio` antwortet mit der neuen Dauer (1 800 000 ms) und `__leftover`
+ * gesperrten alten Dateien, bei `__trimError` mit diesem Fehlercode; `meetings_get` liefert
+ * den einen Datensatz. Beim Aufruf von `meetings_trim_audio` wird gemerkt, wie viele
+ * `<audio src>` noch an der Seite hängen (`__audioAtTrim`): die Player müssen die Dateien
+ * vorher losgelassen haben. Die Attrappe der Aufnahmen kennt die Befehle nicht.
  */
 const installTrimMock = async (page: Page, theme: Theme = "light") => {
   await installRecMock(page);
@@ -39,13 +42,20 @@ const installTrimMock = async (page: Page, theme: Theme = "light") => {
     const w = window as any;
     w.__settings.theme = themeName;
     w.__trimError = null;
+    w.__leftover = 0;
+    w.__audioAtTrim = null;
     const internals = w.__TAURI_INTERNALS__;
     const original = internals.invoke;
     internals.invoke = async (cmd: string, args: Record<string, unknown>) => {
+      if (cmd === "meetings_get") {
+        w.__calls.push({ cmd, args });
+        return w.__meetings.find((m: any) => m.id === args.meetingId) ?? null;
+      }
       if (cmd !== "meetings_trim_audio") return original(cmd, args);
       w.__calls.push({ cmd, args });
+      w.__audioAtTrim = document.querySelectorAll("audio[src]").length;
       if (w.__trimError) throw w.__trimError;
-      return 1_800_000;
+      return { duration_ms: 1_800_000, leftover_files: w.__leftover };
     };
   }, theme);
 };
@@ -95,7 +105,7 @@ test.describe("Neu transkribieren: Bereich", () => {
     await expect(field(page, "retranscribe-range-start")).toHaveValue("0:00");
     await expect(field(page, "retranscribe-range-end")).toHaveValue("59:00");
     await expect(dialog.getByTestId("retranscribe-range-hint")).toHaveText(
-      "Nur der gewählte Bereich wird transkribiert; die Zeitstempel bleiben an der Aufnahme ausgerichtet.",
+      "Nur der gewählte Bereich wird transkribiert; die Zeitstempel bleiben an der Aufnahme ausgerichtet. Der Rest bleibt in der vorherigen Fassung erhalten.",
     );
   });
 
@@ -212,6 +222,7 @@ test.describe("Aufnahme zuschneiden", () => {
     expect(await calls(page, "meetings_trim_audio")).toHaveLength(0);
 
     const segmentCalls = (await calls(page, "meetings_get_segments")).length;
+    const listCalls = (await calls(page, "meetings_list")).length;
     await page.getByTestId("trim-start").click();
     await expect(page.getByTestId("trim-dialog")).toHaveCount(0);
     const trim = await calls(page, "meetings_trim_audio");
@@ -224,10 +235,74 @@ test.describe("Aufnahme zuschneiden", () => {
     await expect(page.locator("[data-sonner-toast]").first()).toContainText(
       "Aufnahme zugeschnitten. Neue Länge: 30:00.",
     );
-    // Segmente und Datensatz werden neu geladen.
+    // Segmente und genau dieser Datensatz werden neu geladen (nicht die ganze Liste).
     await expect
       .poll(async () => (await calls(page, "meetings_get_segments")).length)
       .toBeGreaterThan(segmentCalls);
+    await expect
+      .poll(async () => (await calls(page, "meetings_get")).length)
+      .toBe(1);
+    expect((await calls(page, "meetings_get"))[0].args).toEqual({
+      meetingId: "m2",
+    });
+    expect(await calls(page, "meetings_list")).toHaveLength(listCalls);
+    // Die Player sind danach wieder da.
+    await expect(page.getByTestId("rec-player")).toBeVisible();
+  });
+
+  test("Nachkommastellen: Von rundet ab, Bis rundet auf", async ({ page }) => {
+    await openM2(page);
+    await chooseMenu(page, "menu-trim");
+    await setTime(page, "trim-range-start", "5:00,5");
+    await setTime(page, "trim-range-end", "35:00,5");
+    await expect(field(page, "trim-range-start")).toHaveValue("5:00");
+    await expect(field(page, "trim-range-end")).toHaveValue("35:01");
+    await page.getByTestId("trim-start").click();
+    await expect(page.getByTestId("trim-dialog")).toHaveCount(0);
+    const trim = await calls(page, "meetings_trim_audio");
+    expect(trim[0].args).toEqual({
+      meetingId: "m2",
+      startMs: 300_000,
+      endMs: 2_101_000,
+    });
+  });
+
+  test("die Player lassen die Dateien los, bevor der Befehl läuft", async ({
+    page,
+  }) => {
+    await openM2(page);
+    await expect(page.locator("audio[src]")).not.toHaveCount(0);
+    await chooseMenu(page, "menu-trim");
+    await setTime(page, "trim-range-start", "5:00");
+    await page.getByTestId("trim-start").click();
+    await expect(page.getByTestId("trim-dialog")).toHaveCount(0);
+    expect(await page.evaluate(() => (window as any).__audioAtTrim)).toBe(0);
+  });
+
+  test("gesperrte alte Dateien: Hinweis, dass sie beim nächsten Start gelöscht werden", async ({
+    page,
+  }) => {
+    await openM2(page);
+    await page.evaluate(() => ((window as any).__leftover = 2));
+    await chooseMenu(page, "menu-trim");
+    await setTime(page, "trim-range-start", "5:00");
+    await page.getByTestId("trim-start").click();
+    await expect(
+      page.locator("[data-sonner-toast]", {
+        hasText:
+          "2 alte Audiodateien sind gerade gesperrt und werden beim nächsten Start der App gelöscht.",
+      }),
+    ).toHaveCount(1);
+  });
+
+  test("bei einem Fehler kommen die Player zurück", async ({ page }) => {
+    await openM2(page);
+    await page.evaluate(() => ((window as any).__trimError = "trim_changed"));
+    await chooseMenu(page, "menu-trim");
+    await setTime(page, "trim-range-start", "1:00");
+    await page.getByTestId("trim-start").click();
+    await expect(page.getByTestId("trim-dialog")).toBeVisible();
+    await expect(page.getByTestId("rec-player")).toBeVisible();
   });
 
   test("Abbrechen und Schließen schneiden nichts", async ({ page }) => {

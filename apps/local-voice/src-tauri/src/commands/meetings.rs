@@ -18,7 +18,7 @@ use crate::managers::meetings::retention::{delete_audio_files, remove_meeting_di
 use crate::managers::meetings::retranscribe::retranscribe_meeting;
 use crate::managers::meetings::search::indexer::{self, IndexJob};
 use crate::managers::meetings::store::{Meeting, MeetingDocument, MeetingStore, StoredSegment};
-use crate::managers::meetings::trim::{trim_now, TimeRange};
+use crate::managers::meetings::trim::{trim_now, TimeRange, TrimResult};
 use crate::managers::transcription::TranscriptionManager;
 
 /// Fehlercode, wenn die Besprechungen nicht zur Verfuegung stehen, weil der Store
@@ -166,6 +166,18 @@ pub async fn meetings_list(
     store.list_meetings(offset, limit).map_err(store_err)
 }
 
+/// One meeting by id (`None` when it does not exist or is deleted) — for views that
+/// only need to refresh the single record (lva#522: after a trim) instead of paging the list.
+#[tauri::command]
+#[specta::specta]
+pub async fn meetings_get(
+    app: tauri::AppHandle,
+    meeting_id: String,
+) -> Result<Option<Meeting>, String> {
+    let store = store_of(&app)?;
+    store.get_meeting(&meeting_id).map_err(store_err)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_get_segments(
@@ -240,7 +252,8 @@ pub async fn meetings_retranscribe(
 /// lva#522: cuts the recording of a meeting down to `[start_ms, end_ms)` — destructive:
 /// the audio outside is deleted for good, transcripts (all versions), speaker turns, notes
 /// and parts move with it, the time axis starts at 0:00 afterwards. Returns the new
-/// duration in ms. Error codes: `meeting_busy`, `no_audio`, `audio_missing`,
+/// duration in ms and the number of old files that could not be deleted yet (locked; the
+/// app retries at start). Error codes: `meeting_busy`, `no_audio`, `audio_missing`,
 /// `invalid_range`, `nothing_to_trim`, `trim_changed`, `store_failed`, `wav_*` — see
 /// `managers::meetings::trim`.
 #[tauri::command]
@@ -250,7 +263,7 @@ pub async fn meetings_trim_audio(
     meeting_id: String,
     start_ms: u64,
     end_ms: u64,
-) -> Result<u64, String> {
+) -> Result<TrimResult, String> {
     let store = store_of(&app)?;
     let range = TimeRange { start_ms, end_ms };
     tauri::async_runtime::spawn_blocking(move || trim_now(&app, &store, &meeting_id, range))

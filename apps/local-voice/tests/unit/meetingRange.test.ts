@@ -27,9 +27,24 @@ test("Eingaben werden tolerant gelesen", () => {
   assert.equal(parseRangeTime("0:01:05"), 65_000);
   assert.equal(parseRangeTime("90"), 90_000);
   assert.equal(parseRangeTime("90:00"), 5_400_000);
-  assert.equal(parseRangeTime("1:02,5"), 63_000);
-  assert.equal(parseRangeTime("1:02.4"), 62_000);
   assert.equal(parseRangeTime("0"), 0);
+});
+
+test("Nachkommastellen: Von rundet ab (wie die Anzeige), Bis rundet auf", () => {
+  // Standard ist ab (das Feld „Von“); die Anzeige schneidet ebenfalls ab.
+  assert.equal(parseRangeTime("1:02,5"), 62_000);
+  assert.equal(parseRangeTime("1:02.4", "floor"), 62_000);
+  assert.equal(parseRangeTime("1:02.4", "ceil"), 63_000);
+  assert.equal(parseRangeTime("1:02,5", "ceil"), 63_000);
+  assert.equal(parseRangeTime("1:02.9", "floor"), 62_000);
+  assert.equal(parseRangeTime("0.2", "ceil"), 1_000);
+  assert.equal(parseRangeTime("0.2", "floor"), 0);
+  // Ganze Sekunden bleiben, wie sie sind.
+  assert.equal(parseRangeTime("1:02", "ceil"), 62_000);
+  assert.equal(parseRangeTime("62.0", "ceil"), 62_000);
+  // Was angezeigt wird, ist der abgerundete Wert: der Bereich enthält ihn.
+  assert.equal(formatRangeTime(parseRangeTime("1:02.9", "floor") ?? 0), "1:02");
+  assert.equal(formatRangeTime(parseRangeTime("1:02.9", "ceil") ?? 0), "1:03");
 });
 
 test("Unlesbares ergibt null", () => {

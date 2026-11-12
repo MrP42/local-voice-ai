@@ -2847,6 +2847,18 @@ async meetingsList(offset: number, limit: number) : Promise<Result<Meeting[], st
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * One meeting by id (`None` when it does not exist or is deleted) — for views that
+ * only need to refresh the single record (lva#522: after a trim) instead of paging the list.
+ */
+async meetingsGet(meetingId: string) : Promise<Result<Meeting | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_get", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async meetingsGetSegments(meetingId: string) : Promise<Result<StoredSegment[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meetings_get_segments", { meetingId }) };
@@ -2895,11 +2907,12 @@ async meetingsRetranscribe(meetingId: string, modelId: string | null, language: 
  * lva#522: cuts the recording of a meeting down to `[start_ms, end_ms)` — destructive:
  * the audio outside is deleted for good, transcripts (all versions), speaker turns, notes
  * and parts move with it, the time axis starts at 0:00 afterwards. Returns the new
- * duration in ms. Error codes: `meeting_busy`, `no_audio`, `audio_missing`,
+ * duration in ms and the number of old files that could not be deleted yet (locked; the
+ * app retries at start). Error codes: `meeting_busy`, `no_audio`, `audio_missing`,
  * `invalid_range`, `nothing_to_trim`, `trim_changed`, `store_failed`, `wav_*` — see
  * `managers::meetings::trim`.
  */
-async meetingsTrimAudio(meetingId: string, startMs: number, endMs: number) : Promise<Result<number, string>> {
+async meetingsTrimAudio(meetingId: string, startMs: number, endMs: number) : Promise<Result<TrimResult, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meetings_trim_audio", { meetingId, startMs, endMs }) };
 } catch (e) {
@@ -14183,6 +14196,19 @@ removed_ms: number;
  * Belegter Platz des Buchordners (Bytes).
  */
 bytes: number }
+/**
+ * Ergebnis von [`trim_meeting`].
+ */
+export type TrimResult = { 
+/**
+ * Neue Dauer der Aufnahme in ms.
+ */
+duration_ms: number; 
+/**
+ * So viele alte Dateien liessen sich nicht loeschen (gesperrt) und stehen in
+ * der Aufraeumliste der Besprechung; die App versucht es beim Start wieder.
+ */
+leftover_files: number }
 export type TtsDownloadInfo = { id: string; kind: TtsDownloadKind; name: string; description: string; 
 /**
  * Primary language of a voice ("de", "en", …); `None` for the runtime.

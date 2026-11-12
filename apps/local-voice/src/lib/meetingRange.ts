@@ -29,10 +29,16 @@ export const formatRangeTime = (ms: number): string => {
  * Tolerant lesen: `h:mm:ss`, `m:ss`, reine Sekunden (`90`), Komma oder Punkt als
  * Dezimaltrenner bei den Sekunden (`1:02,5`), Leerraum drumherum. Minuten und
  * Sekunden über 59 werden nicht abgelehnt (`90:00` sind 90 Minuten). Ergebnis in
- * ganzen Sekunden (ms). `null` bei allem anderen (leer, Buchstaben, negativ, mehr
- * als drei Teile).
+ * ganzen Sekunden (ms); Nachkommastellen werden so gerundet, dass der Bereich
+ * nichts Gewähltes verliert: „Von“ rundet ab (`floor`, wie die Anzeige), „Bis“ auf
+ * (`ceil`). `null` bei allem anderen (leer, Buchstaben, negativ, mehr als drei Teile).
  */
-export const parseRangeTime = (text: string): number | null => {
+export type RangeRounding = "floor" | "ceil";
+
+export const parseRangeTime = (
+  text: string,
+  rounding: RangeRounding = "floor",
+): number | null => {
   const value = text.trim().replace(",", ".");
   if (!value) return null;
   const parts = value.split(":");
@@ -48,7 +54,9 @@ export const parseRangeTime = (text: string): number | null => {
   let seconds = 0;
   for (const n of numbers) seconds = seconds * 60 + n;
   if (!Number.isFinite(seconds)) return null;
-  return Math.round(seconds) * 1000;
+  return (
+    (rounding === "ceil" ? Math.ceil(seconds) : Math.floor(seconds)) * 1000
+  );
 };
 
 /** Auf `[0, durationMs]` klemmen. */

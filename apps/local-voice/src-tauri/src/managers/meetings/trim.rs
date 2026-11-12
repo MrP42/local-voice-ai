@@ -8,11 +8,17 @@
 //!   werden auf den Bereich gekuerzt, und alles, was Zeiten der Aufnahme traegt,
 //!   wandert mit (Zeitachse beginnt danach bei 0:00).
 //!
-//! Ablauf von B nach dem Muster von `parts.rs`: die neuen WAVs entstehen unter
-//! eigenem Namen im selben Ordner; DANN schreibt EINE Transaktion alles um
+//! Ablauf von B nach dem Muster von `parts.rs`: die neuen WAVs entstehen in einem
+//! frischen Unterordner `trim-<ulid>/` des Besprechungsordners, mit denselben
+//! Dateinamen wie vorher (`mic.wav`, `system.wav`, dazu die geschnittene
+//! `mic_aec.wav`: `final_pass` und `derived_audio_paths` finden sie ueber den Namen
+//! neben der `mic.wav`); DANN schreibt EINE Transaktion alles um
 //! ([`MeetingStore::apply_trim`]); die alten Dateien werden erst nach dem Commit
-//! geloescht. Scheitert etwas vor dem Commit, verschwinden die neuen Dateien und
-//! alles bleibt, wie es war.
+//! geloescht. Scheitert etwas vor dem Commit, verschwindet der neue Ordner und
+//! alles bleibt, wie es war. Laesst sich eine alte Datei nicht loeschen (unter
+//! Windows sperrt sie der Player oder ein Virenscanner), steht sie in
+//! `trim-cleanup.json` im Besprechungsordner; [`sweep_leftovers`] versucht es beim
+//! Start wieder und entfernt verwaiste `trim-*`-Ordner.
 //!
 //! Bestandsaufnahme: was in der Datenbank Zeiten der Aufnahme (ms) traegt und wie
 //! B damit umgeht:
@@ -28,7 +34,8 @@
 //! | `meeting_slides.occurrences_json` (ms im Video) | verschoben/geklemmt; eine Folie ohne Auftreten im Bereich wird weich geloescht |
 //! | `meeting_chunks`, `meeting_index_state` (Suche) | geloescht, der Indexer baut neu |
 //! | `meetings.duration_ms`, `mic/system_audio_path` | neu |
-//! | `meetings.metadata_json.aec.file` | entfernt (`mic_aec.wav` geht mit der alten `mic.wav`) |
+//! | `meetings.metadata_json.aec.file` | bleibt (die `mic_aec.wav` ist mit demselben Bereich mitgeschnitten); scheitert deren Schnitt, entfaellt der Verweis |
+//! | `meetings.metadata_json.speaker_merges` (gelten nur fuer ihre Epoche) | auf die neue Epoche umgeschrieben: Segmente ueber die neuen Nummern, Turns ueber die neuen Positionen, ausserhalb Entfallenes entfaellt, ein Eintrag ohne Rest entfaellt |
 //! | `transcripts.segment_epoch` / `content_revision` | +1: Belege aus KI-Notizen, Protokollen und Aufgaben (`source_segment_ids`) gelten damit als veraltet (derselbe Weg wie nach dem Zusammenfuehren) |
 //!
 //! Bewusst NICHT angepasst: Protokolle und andere Dokumente (`meeting_documents`,
@@ -135,8 +142,8 @@ pub fn read_track_range(path: &Path, range: TimeRange) -> Result<Vec<i16>, Strin
     }
     let mut reader = reader;
     let total = u64::from(reader.duration());
-    let end = (range.end_ms * SAMPLES_PER_MS).min(total);
-    let start = (range.start_ms * SAMPLES_PER_MS).min(end);
+    let end = range.end_ms.saturating_mul(SAMPLES_PER_MS).min(total);
+    let start = range.start_ms.saturating_mul(SAMPLES_PER_MS).min(end);
     if start == end {
         return Ok(Vec::new());
     }
@@ -215,36 +222,53 @@ pub fn trim_segments(
 /// filtern, klemmen und verschieben; alles andere im Objekt bleibt. Kaputte
 /// Turns entfallen (wie beim Lesen); ein unlesbares Ganzes bleibt unberuehrt.
 pub fn trim_hints(hints: &str, range: TimeRange) -> String {
+    trim_hints_mapped(hints, range).0
+}
+
+/// Wie [`trim_hints`], dazu je Kanal (Schluessel wie in `channels`), welche alte
+/// Position eines Turns welche neue wurde (fuer die Zusammenfuehrungen).
+pub fn trim_hints_mapped(hints: &str, range: TimeRange) -> (String, TurnMap) {
+    let mut positions = TurnMap::new();
     let Ok(mut root) = serde_json::from_str::<Value>(hints) else {
-        return hints.to_string();
+        return (hints.to_string(), positions);
     };
     let Some(channels) = root.get_mut("channels").and_then(Value::as_object_mut) else {
-        return hints.to_string();
+        return (hints.to_string(), positions);
     };
-    for list in channels.values_mut() {
+    for (channel, list) in channels.iter_mut() {
         let Some(turns) = list.as_array() else {
             continue;
         };
-        let kept: Vec<Value> = turns
-            .iter()
-            .filter_map(|turn| {
-                let turn = turn.as_array()?;
-                let start = turn.first()?.as_u64()?;
-                let end = turn.get(1)?.as_u64()?;
-                if !overlaps(start, end, range) {
-                    return None;
-                }
-                let (s, e) = shifted(start, end, range);
-                let mut out = turn.clone();
-                out[0] = Value::from(s);
-                out[1] = Value::from(e);
-                Some(Value::Array(out))
-            })
-            .collect();
+        let mut map = HashMap::new();
+        let mut kept: Vec<Value> = Vec::new();
+        for (at, turn) in turns.iter().enumerate() {
+            let Some(turn) = turn.as_array() else {
+                continue;
+            };
+            let (Some(start), Some(end)) = (
+                turn.first().and_then(Value::as_u64),
+                turn.get(1).and_then(Value::as_u64),
+            ) else {
+                continue;
+            };
+            if !overlaps(start, end, range) {
+                continue;
+            }
+            let (s, e) = shifted(start, end, range);
+            let mut out = turn.clone();
+            out[0] = Value::from(s);
+            out[1] = Value::from(e);
+            map.insert(at, kept.len());
+            kept.push(Value::Array(out));
+        }
         *list = Value::Array(kept);
+        positions.insert(channel.clone(), map);
     }
-    root.to_string()
+    (root.to_string(), positions)
 }
+
+/// Je Kanal: alte Position eines Turns -> neue Position.
+pub type TurnMap = HashMap<String, HashMap<usize, usize>>;
 
 /// Notizen: eine Position im Bereich wandert mit, eine ausserhalb wird `None`
 /// ("Position unbekannt"); die Notiz selbst bleibt immer.
@@ -318,14 +342,86 @@ pub fn remap_flagged(meta: &str, index_map: &HashMap<u32, u32>) -> String {
     root.to_string()
 }
 
-/// `metadata_json`: der Verweis auf `mic_aec.wav` entfaellt (die Datei geht mit der
-/// alten `mic.wav`). `None`, wenn nichts zu aendern ist.
-fn without_aec_file(metadata: &str) -> Option<String> {
-    let mut root = serde_json::from_str::<Value>(metadata).ok()?;
-    let aec = root.get_mut("aec")?.as_object_mut()?;
-    aec.remove("file")?;
+/// `metadata_json`: der Verweis auf `mic_aec.wav` entfaellt (die Spur wurde nicht
+/// mitgeschnitten). `true`, wenn etwas geaendert wurde.
+fn drop_aec_file(root: &mut Value) -> bool {
+    let Some(aec) = root.get_mut("aec").and_then(Value::as_object_mut) else {
+        return false;
+    };
+    if aec.remove("file").is_none() {
+        return false;
+    }
     aec.insert("wav_kept".into(), Value::Bool(false));
-    Some(root.to_string())
+    true
+}
+
+/// Was die Zusammenfuehrungen von Sprechern (`speaker_merges`) fuer den Umzug
+/// brauchen: ihre Epoche vor dem Zuschnitt, wohin Segmente (Nummern) und Turns
+/// (Positionen je Kanal) des Transkripts wanderten.
+pub struct MergeRemap {
+    pub old_epoch: u32,
+    pub segments: HashMap<u32, u32>,
+    pub turns: TurnMap,
+}
+
+/// Zusammenfuehrungen der alten Epoche auf die neue Epoche umschreiben: Segmente
+/// und Turns folgen ihren neuen Nummern und Positionen, was ausserhalb des
+/// Bereichs lag, entfaellt; blieb von einem Eintrag, der etwas hatte, nichts
+/// uebrig, entfaellt er (es gibt nichts mehr zu trennen). Eintraege anderer
+/// Epochen und unlesbare bleiben unberuehrt (sie gelten ohnehin nicht).
+/// `true`, wenn etwas geaendert wurde.
+fn remap_merges(root: &mut Value, ctx: &MergeRemap) -> bool {
+    use super::speaker_merges::{MergeRecord, MERGES_KEY};
+    let Some(list) = root.get_mut(MERGES_KEY).and_then(Value::as_array_mut) else {
+        return false;
+    };
+    let mut changed = false;
+    let old = std::mem::take(list);
+    *list = old
+        .into_iter()
+        .filter_map(|value| {
+            let Ok(mut rec) = serde_json::from_value::<MergeRecord>(value.clone()) else {
+                return Some(value);
+            };
+            if rec.epoch != ctx.old_epoch {
+                return Some(value);
+            }
+            changed = true;
+            let had = !rec.segments.is_empty() || !rec.turns.is_empty();
+            rec.segments = rec
+                .segments
+                .iter()
+                .filter_map(|s| ctx.segments.get(s).copied())
+                .collect();
+            let turns = ctx.turns.get(&rec.channel.to_string());
+            rec.turns = rec
+                .turns
+                .iter()
+                .filter_map(|at| turns.and_then(|m| m.get(at)).copied())
+                .collect();
+            if had && rec.segments.is_empty() && rec.turns.is_empty() {
+                return None;
+            }
+            rec.epoch = ctx.old_epoch.saturating_add(1);
+            serde_json::to_value(&rec).ok()
+        })
+        .collect();
+    changed
+}
+
+/// `metadata_json` nach dem Zuschnitt: der Verweis auf `mic_aec.wav` entfaellt,
+/// wenn die Spur nicht mitgeschnitten wurde (`aec_kept` false), und die
+/// Zusammenfuehrungen ziehen auf die neue Epoche um. `None`: nichts zu aendern.
+fn trimmed_metadata(metadata: &str, aec_kept: bool, merges: Option<&MergeRemap>) -> Option<String> {
+    let mut root = serde_json::from_str::<Value>(metadata).ok()?;
+    let mut changed = false;
+    if !aec_kept {
+        changed |= drop_aec_file(&mut root);
+    }
+    if let Some(ctx) = merges {
+        changed |= remap_merges(&mut root, ctx);
+    }
+    changed.then(|| root.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -411,6 +507,9 @@ pub struct TrimWrite<'a> {
     pub duration_ms: u64,
     /// Der wirksame Bereich (auf die Laenge der Aufnahme geklemmt).
     pub range: TimeRange,
+    /// `mic_aec.wav` wurde mitgeschnitten und liegt neben der neuen `mic.wav`
+    /// (sonst entfaellt der Verweis in `metadata.aec`).
+    pub aec_kept: bool,
 }
 
 /// Status, Mikrofon- und Systempfad, `metadata_json` einer Besprechung.
@@ -458,29 +557,35 @@ impl MeetingStore {
             params![w.new_mic, w.new_system, w.duration_ms as i64, now, id],
         )
         .map_err(|e| io(&e))?;
-        if let Some(changed) = metadata.as_deref().and_then(without_aec_file) {
-            tx.execute(
-                "UPDATE meetings SET metadata_json = ?1 WHERE id = ?2",
-                params![changed, id],
-            )
-            .map_err(|e| io(&e))?;
-        }
+        let mut merges: Option<MergeRemap> = None;
 
         // Transkript: Segmente und Turns; Deltas weg; Epoche und Revision + 1.
-        let transcript: Option<(String, String, Option<String>)> = tx
+        let transcript: Option<(String, String, Option<String>, i64)> = tx
             .query_row(
-                "SELECT id, segments_json, speaker_hints_json FROM transcripts WHERE meeting_id = ?1",
+                "SELECT id, segments_json, speaker_hints_json, segment_epoch FROM transcripts
+                 WHERE meeting_id = ?1",
                 params![id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
             .optional()
             .map_err(|e| io(&e))?;
-        if let Some((tid, segments_json, hints)) = transcript {
+        if let Some((tid, segments_json, hints, epoch)) = transcript {
             let segments: Vec<StoredSegment> =
                 serde_json::from_str(&segments_json).map_err(|e| io(&e))?;
-            let (segments, _) = trim_segments(segments, range);
+            let (segments, segment_map) = trim_segments(segments, range);
             let json = serde_json::to_string(&segments).map_err(|e| io(&e))?;
-            let hints = hints.map(|h| trim_hints(&h, range));
+            let (hints, turn_map) = match hints {
+                Some(h) => {
+                    let (text, map) = trim_hints_mapped(&h, range);
+                    (Some(text), map)
+                }
+                None => (None, TurnMap::new()),
+            };
+            merges = Some(MergeRemap {
+                old_epoch: u32::try_from(epoch.max(0)).unwrap_or(u32::MAX),
+                segments: segment_map,
+                turns: turn_map,
+            });
             tx.execute(
                 "DELETE FROM transcript_deltas WHERE transcript_id = ?1",
                 params![tid],
@@ -492,6 +597,17 @@ impl MeetingStore {
                      segment_epoch = segment_epoch + 1, updated_at = ?3
                  WHERE id = ?4",
                 params![json, hints, now, tid],
+            )
+            .map_err(|e| io(&e))?;
+        }
+
+        if let Some(changed) = metadata
+            .as_deref()
+            .and_then(|m| trimmed_metadata(m, w.aec_kept, merges.as_ref()))
+        {
+            tx.execute(
+                "UPDATE meetings SET metadata_json = ?1 WHERE id = ?2",
+                params![changed, id],
             )
             .map_err(|e| io(&e))?;
         }
@@ -645,21 +761,216 @@ impl MeetingStore {
 // Ablauf
 // ---------------------------------------------------------------------------
 
-/// Eine Spur zum Zuschneiden: ihr Pfad und ihre Laenge.
+/// Ergebnis von [`trim_meeting`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct TrimResult {
+    /// Neue Dauer der Aufnahme in ms.
+    pub duration_ms: u64,
+    /// So viele alte Dateien liessen sich nicht loeschen (gesperrt) und stehen in
+    /// der Aufraeumliste der Besprechung; die App versucht es beim Start wieder.
+    pub leftover_files: u32,
+}
+
+/// Vorsilbe der Ordner mit zugeschnittenen Aufnahmen (`trim-<ulid>/`).
+const TRIM_DIR_PREFIX: &str = "trim-";
+/// Aufraeumliste im Besprechungsordner: Pfade alter Dateien, die nicht
+/// geloescht werden konnten (JSON-Liste von Texten).
+const CLEANUP_FILE: &str = "trim-cleanup.json";
+
+/// Eine Spur zum Zuschneiden: ihr Pfad, ihre Laenge, ihr Dateiname und (nur
+/// Mikrofon, wenn vorhanden) die entechote Kopie daneben.
 struct TrackPlan {
     path: PathBuf,
     len_ms: u64,
+    name: String,
+    aec: Option<PathBuf>,
 }
 
-fn new_path(old: &Path, stem: &str, kind: &str) -> PathBuf {
-    let dir = old.parent().map(Path::to_path_buf).unwrap_or_default();
-    dir.join(format!("{stem}-{kind}.wav"))
+fn is_trim_dir(dir: &Path) -> bool {
+    dir.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.starts_with(TRIM_DIR_PREFIX))
+}
+
+/// Der Besprechungsordner zu einer Audiodatei: ihr Ordner, bei einem frueheren
+/// Zuschnitt (`trim-<ulid>`) dessen Elternordner, damit die Ordner nicht ineinander wachsen.
+fn meeting_folder(audio: &Path) -> PathBuf {
+    let dir = audio.parent().map(Path::to_path_buf).unwrap_or_default();
+    if is_trim_dir(&dir) {
+        return dir.parent().map(Path::to_path_buf).unwrap_or(dir);
+    }
+    dir
+}
+
+fn file_name_of(path: &Path, fallback: &str) -> String {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .map_or_else(|| fallback.to_string(), str::to_string)
+}
+
+/// Loescht Dateien; `NotFound` zaehlt als geloescht. Gibt die zurueck, die bleiben.
+fn remove_files(paths: &[String]) -> Vec<String> {
+    paths
+        .iter()
+        .filter(|p| match std::fs::remove_file(p) {
+            Ok(()) => false,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+            Err(e) => {
+                warn!("meetings: old audio file not deleted ({p}): {e}");
+                true
+            }
+        })
+        .cloned()
+        .collect()
+}
+
+fn read_cleanup(folder: &Path) -> Vec<String> {
+    std::fs::read_to_string(folder.join(CLEANUP_FILE))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+fn write_cleanup(folder: &Path, list: &[String]) {
+    let file = folder.join(CLEANUP_FILE);
+    if list.is_empty() {
+        let _ = std::fs::remove_file(&file);
+        return;
+    }
+    let text = serde_json::to_string(list).unwrap_or_default();
+    if let Err(e) = std::fs::write(&file, text) {
+        warn!("meetings: cleanup list not written: {e}");
+    }
+}
+
+/// Haengt `paths` an die Aufraeumliste im Besprechungsordner an (ohne Doppelte)
+/// und gibt die Zahl der offenen Eintraege zurueck.
+fn queue_cleanup(folder: &Path, paths: &[String]) -> u32 {
+    let mut list = read_cleanup(folder);
+    let before = list.len();
+    for p in paths {
+        if !list.contains(p) {
+            list.push(p.clone());
+        }
+    }
+    if list.len() != before {
+        write_cleanup(folder, &list);
+    }
+    u32::try_from(list.len()).unwrap_or(u32::MAX)
+}
+
+/// Liegt `path` unter `folder`, ohne `..`? Die Liste ist eine Datei auf der Platte:
+/// geloescht wird nur, was im Ordner der Besprechung steht.
+fn inside(folder: &Path, path: &Path) -> bool {
+    path.starts_with(folder)
+        && !path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+}
+
+/// Versucht die Aufraeumliste eines Besprechungsordners noch einmal. Gibt die
+/// Zahl der Dateien zurueck, die bleiben.
+fn retry_cleanup(folder: &Path) -> u32 {
+    let list = read_cleanup(folder);
+    if list.is_empty() {
+        return 0;
+    }
+    let (safe, foreign): (Vec<String>, Vec<String>) =
+        list.into_iter().partition(|p| inside(folder, Path::new(p)));
+    if !foreign.is_empty() {
+        warn!(
+            "meetings: {} cleanup entries outside the meeting folder ignored",
+            foreign.len()
+        );
+    }
+    let remaining = remove_files(&safe);
+    write_cleanup(folder, &remaining);
+    u32::try_from(remaining.len()).unwrap_or(u32::MAX)
+}
+
+/// Was der Aufraeumlauf beim Start geschafft hat.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SweepReport {
+    /// Verwaiste `trim-*`-Ordner (von keiner Besprechung mehr genutzt), die weg sind.
+    pub orphan_dirs_removed: u32,
+    /// Dateien und Ordner, die sich weiter nicht loeschen lassen.
+    pub remaining: u32,
+}
+
+/// Beim Start: die Aufraeumlisten aller Besprechungen noch einmal versuchen und
+/// verwaiste `trim-*`-Ordner entfernen (Abbruch zwischen Schneiden und Commit, oder
+/// ein Ordner, dessen alte Dateien gesperrt waren). Ein Ordner gilt als verwaist,
+/// wenn weder `mic_audio_path` noch `system_audio_path` einer Besprechung in ihm
+/// liegt; ist die Datenbank nicht lesbar, wird nichts als verwaist geloescht.
+pub fn sweep_leftovers(store: &MeetingStore, meetings_dir: &Path) -> SweepReport {
+    let mut report = SweepReport::default();
+    let Ok(entries) = std::fs::read_dir(meetings_dir) else {
+        return report;
+    };
+    let referenced = referenced_audio_dirs(store);
+    for folder in entries.flatten().map(|e| e.path()).filter(|p| p.is_dir()) {
+        report.remaining += retry_cleanup(&folder);
+        let Some(referenced) = referenced.as_ref() else {
+            continue;
+        };
+        let Ok(children) = std::fs::read_dir(&folder) else {
+            continue;
+        };
+        for dir in children
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_dir() && is_trim_dir(p))
+        {
+            if referenced.contains(&dir) {
+                continue;
+            }
+            match std::fs::remove_dir_all(&dir) {
+                Ok(()) => report.orphan_dirs_removed += 1,
+                Err(e) => {
+                    warn!("meetings: orphaned trim folder not removed: {e}");
+                    report.remaining += 1;
+                }
+            }
+        }
+    }
+    report
+}
+
+/// Die Ordner der Audiodateien aller Besprechungen (auch geloeschter). `None`,
+/// wenn die Datenbank nicht lesbar ist.
+fn referenced_audio_dirs(store: &MeetingStore) -> Option<std::collections::HashSet<PathBuf>> {
+    let conn = store.get_connection().ok()?;
+    let mut stmt = conn
+        .prepare("SELECT mic_audio_path, system_audio_path FROM meetings")
+        .ok()?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, Option<String>>(0)?,
+                r.get::<_, Option<String>>(1)?,
+            ))
+        })
+        .ok()?;
+    let mut dirs = std::collections::HashSet::new();
+    for row in rows {
+        let (mic, system) = row.ok()?;
+        dirs.extend(
+            [mic, system]
+                .into_iter()
+                .flatten()
+                .filter_map(|p| Path::new(&p).parent().map(Path::to_path_buf)),
+        );
+    }
+    Some(dirs)
 }
 
 /// Schneidet die Aufnahme der Besprechung auf `range` zu (B, siehe Modulkopf).
-/// Prueft, schreibt die neuen WAVs, dann EINE Transaktion, dann loescht sie die
-/// alten Dateien. Gibt die neue Dauer (ms) zurueck. Ohne App und Auftrag: den
-/// Auftrag (Sperre gegen andere Verarbeitungen) haelt der Aufrufer.
+/// Prueft, schreibt die neuen WAVs in einen frischen Ordner
+/// `<Besprechungsordner>/trim-<ulid>/` (Dateinamen wie vorher, `mic_aec.wav`
+/// mit demselben Bereich geschnitten, damit `final_pass` sie wieder neben der
+/// `mic.wav` findet), dann EINE Transaktion, dann loescht sie die alten Dateien;
+/// was sich nicht loeschen laesst, kommt in die Aufraeumliste. Ohne App und
+/// Auftrag: den Auftrag (Sperre gegen andere Verarbeitungen) haelt der Aufrufer.
 ///
 /// Fehlercodes: `meeting_not_found`, `meeting_busy`, `no_audio`, `audio_missing`,
 /// `invalid_range`, `nothing_to_trim`, `trim_changed`, `wav_unreadable`,
@@ -668,7 +979,7 @@ pub fn trim_meeting(
     store: &MeetingStore,
     meeting_id: &str,
     range: TimeRange,
-) -> Result<u64, String> {
+) -> Result<TrimResult, String> {
     let range = range.validate()?;
     let meeting = store
         .get_meeting(meeting_id)
@@ -689,7 +1000,7 @@ pub fn trim_meeting(
         return Err("no_audio".into());
     }
     let mut plans: Vec<Option<TrackPlan>> = Vec::with_capacity(2);
-    for path in &tracks {
+    for (path, fallback) in tracks.iter().zip(["mic.wav", "system.wav"]) {
         let Some(path) = path else {
             plans.push(None);
             continue;
@@ -699,7 +1010,21 @@ pub fn trim_meeting(
             return Err("audio_missing".into());
         }
         let len_ms = wav_len_ms(&path)?;
-        plans.push(Some(TrackPlan { path, len_ms }));
+        let aec = (fallback == "mic.wav")
+            .then(|| {
+                super::derived_audio_paths(&path.to_string_lossy())
+                    .into_iter()
+                    .map(PathBuf::from)
+                    .find(|p| p.is_file())
+            })
+            .flatten();
+        let name = file_name_of(&path, fallback);
+        plans.push(Some(TrackPlan {
+            path,
+            len_ms,
+            name,
+            aec,
+        }));
     }
     let longest = plans.iter().flatten().map(|p| p.len_ms).max().unwrap_or(0);
     if range.start_ms >= longest {
@@ -713,18 +1038,41 @@ pub fn trim_meeting(
         return Err("nothing_to_trim".into());
     }
 
-    let stem = format!("zugeschnitten-{}", Ulid::new().to_string().to_lowercase());
-    let mut created: Vec<PathBuf> = Vec::new();
+    let first = plans
+        .iter()
+        .flatten()
+        .map(|p| p.path.as_path())
+        .next()
+        .ok_or_else(|| "no_audio".to_string())?;
+    let folder = meeting_folder(first);
+    let old_dirs: Vec<PathBuf> = plans
+        .iter()
+        .flatten()
+        .filter_map(|p| p.path.parent().map(Path::to_path_buf))
+        .filter(|d| is_trim_dir(d))
+        .collect();
+    let new_dir = folder.join(format!(
+        "{TRIM_DIR_PREFIX}{}",
+        Ulid::new().to_string().to_lowercase()
+    ));
     let mut new_paths: Vec<Option<PathBuf>> = Vec::with_capacity(2);
+    let mut aec_kept = false;
     let mut new_len_ms = 0u64;
     let result: Result<(), String> = (|| {
-        for (plan, kind) in plans.iter().zip(["mic", "system"]) {
+        std::fs::create_dir_all(&new_dir).map_err(|e| format!("wav_write_failed: {e}"))?;
+        let mut used: Vec<String> = Vec::new();
+        for plan in &plans {
             let Some(plan) = plan else {
                 new_paths.push(None);
                 continue;
             };
-            let dst = new_path(&plan.path, &stem, kind);
-            created.push(dst.clone());
+            let name = if used.contains(&plan.name) {
+                format!("system-{}", plan.name)
+            } else {
+                plan.name.clone()
+            };
+            used.push(name.clone());
+            let dst = new_dir.join(&name);
             let frames = cut_wav(&plan.path, &dst, range)?;
             let rate = u64::from(
                 hound::WavReader::open(&dst)
@@ -735,16 +1083,17 @@ pub fn trim_meeting(
             );
             new_len_ms = new_len_ms.max(frames * 1_000 / rate);
             new_paths.push(Some(dst));
+            if let Some(aec) = &plan.aec {
+                match cut_wav(aec, &new_dir.join(super::MIC_AEC_FILE), range) {
+                    Ok(_) => aec_kept = true,
+                    Err(e) => warn!("meetings: mic_aec.wav not cut ({e}); the copy is dropped"),
+                }
+            }
         }
         Ok(())
     })();
-    let remove_new = |created: &[PathBuf]| {
-        for p in created {
-            let _ = std::fs::remove_file(p);
-        }
-    };
     if let Err(e) = result {
-        remove_new(&created);
+        let _ = std::fs::remove_dir_all(&new_dir);
         return Err(e);
     }
 
@@ -758,18 +1107,30 @@ pub fn trim_meeting(
         new_system: new_system.as_deref(),
         duration_ms: new_len_ms,
         range,
+        aec_kept,
     });
     match applied {
         Ok(old_paths) => {
-            super::retention::delete_audio_files(&old_paths);
+            let all: Vec<String> = old_paths
+                .iter()
+                .flat_map(|p| std::iter::once(p.clone()).chain(super::derived_audio_paths(p)))
+                .collect();
+            let stuck = remove_files(&all);
+            for dir in old_dirs {
+                let _ = std::fs::remove_dir(dir);
+            }
+            let leftover_files = queue_cleanup(&folder, &stuck);
             info!(
-                "meetings: {meeting_id} trimmed to {}..{} ms ({new_len_ms} ms left)",
+                "meetings: {meeting_id} trimmed to {}..{} ms ({new_len_ms} ms left, {leftover_files} old file(s) pending)",
                 range.start_ms, range.end_ms
             );
-            Ok(new_len_ms)
+            Ok(TrimResult {
+                duration_ms: new_len_ms,
+                leftover_files,
+            })
         }
         Err(e) => {
-            remove_new(&created);
+            let _ = std::fs::remove_dir_all(&new_dir);
             Err(e)
         }
     }
@@ -782,7 +1143,7 @@ pub fn trim_now(
     store: &Arc<MeetingStore>,
     meeting_id: &str,
     range: TimeRange,
-) -> Result<u64, String> {
+) -> Result<TrimResult, String> {
     use super::job::{self, JobPhase};
     use tauri_specta::Event;
 
@@ -795,7 +1156,7 @@ pub fn trim_now(
     guard.handle().begin_phase(JobPhase::Prepare, 0);
     let trimmed = trim_meeting(store, meeting_id, range);
     drop(guard);
-    let duration_ms = trimmed?;
+    let result = trimmed?;
     super::search::indexer::submit(
         app,
         super::search::indexer::IndexJob::Meeting(meeting_id.to_string()),
@@ -816,5 +1177,5 @@ pub fn trim_now(
         Ok(None) => {}
         Err(e) => warn!("meetings: state after trim not read ({meeting_id}): {e}"),
     }
-    Ok(duration_ms)
+    Ok(result)
 }

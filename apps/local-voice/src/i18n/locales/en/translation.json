@@ -4361,7 +4361,9 @@
       "submit": "Trim",
       "cancel": "Cancel",
       "close": "Close",
-      "done": "Recording trimmed. New length: {{length}}."
+      "done": "Recording trimmed. New length: {{length}}.",
+      "leftovers_one": "One old audio file is locked at the moment and will be deleted the next time the app starts.",
+      "leftovers_other": "{{count}} old audio files are locked at the moment and will be deleted the next time the app starts."
     },
     "retranscribeDialog": {
       "title": "Re-transcribe",
@@ -4512,7 +4514,7 @@
       "rangeLabel": "Range",
       "rangeAll": "Whole recording",
       "rangeOnly": "Only a range",
-      "rangeHint": "Only the selected range is transcribed; timestamps stay aligned with the recording.",
+      "rangeHint": "Only the selected range is transcribed; timestamps stay aligned with the recording. The rest stays in the previous version.",
       "start": "Re-transcribe",
       "running": "Transcribing…",
       "runningHint": "The existing transcript is kept as a version. While the run progresses the view shows the new text; only at the end does it become the active version. If you stop early, the existing transcript stays active. This can take a while for long recordings."

@@ -4361,7 +4361,9 @@
       "submit": "Zuschneiden",
       "cancel": "Abbrechen",
       "close": "Schließen",
-      "done": "Aufnahme zugeschnitten. Neue Länge: {{length}}."
+      "done": "Aufnahme zugeschnitten. Neue Länge: {{length}}.",
+      "leftovers_one": "Eine alte Audiodatei ist gerade gesperrt und wird beim nächsten Start der App gelöscht.",
+      "leftovers_other": "{{count}} alte Audiodateien sind gerade gesperrt und werden beim nächsten Start der App gelöscht."
     },
     "retranscribeDialog": {
       "title": "Neu transkribieren",
@@ -4512,7 +4514,7 @@
       "rangeLabel": "Bereich",
       "rangeAll": "Ganze Aufnahme",
       "rangeOnly": "Nur einen Bereich",
-      "rangeHint": "Nur der gewählte Bereich wird transkribiert; die Zeitstempel bleiben an der Aufnahme ausgerichtet.",
+      "rangeHint": "Nur der gewählte Bereich wird transkribiert; die Zeitstempel bleiben an der Aufnahme ausgerichtet. Der Rest bleibt in der vorherigen Fassung erhalten.",
       "start": "Neu transkribieren",
       "running": "Transkribiere…",
       "runningHint": "Das bisherige Transkript bleibt als Fassung erhalten. Während der Lauf fortschreitet, zeigt die Ansicht den neuen Text; erst am Ende wird er die aktive Fassung. Stoppst du vorher, bleibt das bisherige Transkript aktiv. Bei langen Aufzeichnungen dauert das eine Weile."

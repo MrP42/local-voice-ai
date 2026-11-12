@@ -453,6 +453,20 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         {
             log::warn!("meetings: startup retention purge failed: {e}");
         }
+        // lva#522: Reste vom Zuschneiden (gesperrte alte Dateien, verwaiste trim-Ordner).
+        match managers::meetings::meetings_data_dir(app_handle) {
+            Ok(dir) => {
+                let swept = managers::meetings::trim::sweep_leftovers(&store, &dir);
+                if swept.orphan_dirs_removed > 0 || swept.remaining > 0 {
+                    log::info!(
+                        "meetings: trim leftovers - {} orphaned folder(s) removed, {} still pending",
+                        swept.orphan_dirs_removed,
+                        swept.remaining
+                    );
+                }
+            }
+            Err(e) => log::warn!("meetings: trim leftovers not swept: {e}"),
+        }
         let index_store = store.clone(); // M4-P4b
         let calendar_store = store.clone(); // M5-P5b
         let workflow_store = store.clone(); // B2
@@ -2251,6 +2265,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::meetings::meetings_stop,
             commands::meetings::meetings_is_recording,
             commands::meetings::meetings_list,
+            commands::meetings::meetings_get,
             commands::meetings::meetings_get_segments,
             commands::meetings::meetings_update_segment,
             commands::meetings::meetings_rename,

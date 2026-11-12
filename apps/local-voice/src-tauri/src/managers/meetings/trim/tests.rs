@@ -616,7 +616,9 @@ fn trimming_moves_audio_transcript_versions_notes_parts_and_slides_in_one_go() {
     let epoch_before = f.store.segment_epoch(&f.id).unwrap();
     let revision_before = f.store.transcript_snapshot(&f.id).unwrap().revision;
 
-    let new_len = trim_meeting(&f.store, &f.id, range(2_000, 6_000)).unwrap();
+    let new_len = trim_meeting(&f.store, &f.id, range(2_000, 6_000))
+        .unwrap()
+        .duration_ms;
     // Mikrofon 4 s (2..6); der Systemton ist nur 6 s lang: auch 4 s.
     assert_eq!(new_len, 4_000);
 
@@ -626,15 +628,27 @@ fn trimming_moves_audio_transcript_versions_notes_parts_and_slides_in_one_go() {
         PathBuf::from(m.mic_audio_path.unwrap()),
         PathBuf::from(m.system_audio_path.unwrap()),
     );
-    // Neue Dateien, im selben Ordner, die alten samt mic_aec.wav sind weg.
-    assert_eq!(mic.parent().unwrap(), f.dir);
-    assert!(mic
+    // Neue Dateien in `trim-<ulid>/` mit den alten Namen, die alten samt alter
+    // mic_aec.wav sind weg; die geschnittene mic_aec.wav liegt neben der neuen mic.wav.
+    let new_dir = mic.parent().unwrap().to_path_buf();
+    assert_eq!(new_dir.parent().unwrap(), f.dir);
+    assert!(new_dir
         .file_name()
         .unwrap()
         .to_string_lossy()
-        .starts_with("zugeschnitten-"));
+        .starts_with("trim-"));
+    assert_eq!(mic.file_name().unwrap(), "mic.wav");
+    assert_eq!(system, new_dir.join("system.wav"));
     assert!(!f.mic.exists() && !f.system.exists());
     assert!(!f.dir.join("mic_aec.wav").exists());
+    let aec_samples = read_i16(&new_dir.join("mic_aec.wav"));
+    assert_eq!(aec_samples.len(), 4_000 * 16);
+    assert_eq!(aec_samples[0], 2_000);
+    assert_eq!(
+        crate::managers::meetings::derived_audio_paths(&mic.to_string_lossy()),
+        vec![new_dir.join("mic_aec.wav").to_string_lossy().to_string()]
+    );
+    assert!(!f.dir.join(CLEANUP_FILE).exists());
     let mic_samples = read_i16(&mic);
     assert_eq!(mic_samples.len(), 4_000 * 16);
     assert_eq!(mic_samples[0], 2_000);
@@ -710,10 +724,10 @@ fn trimming_moves_audio_transcript_versions_notes_parts_and_slides_in_one_go() {
         2
     );
 
-    // Metadaten: der Verweis auf mic_aec.wav entfaellt, die Zeitachse bleibt.
+    // Metadaten: mic_aec.wav ist mitgeschnitten, der Verweis bleibt, die Zeitachse auch.
     let metadata = f.store.metadata_json(&f.id).unwrap().unwrap();
-    assert!(metadata["aec"].get("file").is_none());
-    assert_eq!(metadata["aec"]["wav_kept"], false);
+    assert_eq!(metadata["aec"]["file"], "mic_aec.wav");
+    assert_eq!(metadata["aec"]["wav_kept"], true);
     assert_eq!(metadata["timeline"]["basis"], "qpc");
 
     // Notizen: Text bleibt, Positionen ausserhalb entfallen.
@@ -754,7 +768,9 @@ fn trimming_moves_audio_transcript_versions_notes_parts_and_slides_in_one_go() {
 fn a_track_that_ends_before_the_start_is_kept_as_an_empty_wav() {
     let f = fixture();
     // Systemton: 6 s. Bereich ab 7 s: nur das Mikrofon hat noch etwas.
-    let new_len = trim_meeting(&f.store, &f.id, range(7_000, 10_000)).unwrap();
+    let new_len = trim_meeting(&f.store, &f.id, range(7_000, 10_000))
+        .unwrap()
+        .duration_ms;
     assert_eq!(new_len, 3_000);
     let m = f.store.get_meeting(&f.id).unwrap().unwrap();
     let system = PathBuf::from(m.system_audio_path.unwrap());
@@ -768,7 +784,9 @@ fn a_track_that_ends_before_the_start_is_kept_as_an_empty_wav() {
 #[test]
 fn an_end_behind_the_recording_is_clamped() {
     let f = fixture();
-    let new_len = trim_meeting(&f.store, &f.id, range(4_000, 999_000)).unwrap();
+    let new_len = trim_meeting(&f.store, &f.id, range(4_000, 999_000))
+        .unwrap()
+        .duration_ms;
     assert_eq!(new_len, 6_000);
 }
 
@@ -802,7 +820,7 @@ fn a_failure_before_the_commit_changes_nothing_and_removes_the_new_files() {
     let leftovers: Vec<String> = std::fs::read_dir(&f.dir)
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
-        .filter(|n| n.starts_with("zugeschnitten-"))
+        .filter(|n| n.starts_with("trim-"))
         .collect();
     assert!(leftovers.is_empty(), "{leftovers:?}");
 }
@@ -868,8 +886,218 @@ fn a_change_of_the_audio_paths_between_cutting_and_committing_is_refused() {
             new_system: None,
             duration_ms: 1,
             range: range(1_000, 2_000),
+            aec_kept: false,
         })
         .unwrap_err();
     assert_eq!(err, "trim_changed");
     assert_eq!(f.store.segment_epoch(&f.id).unwrap(), 0);
+}
+
+fn set_metadata(f: &Fixture, json: &str) {
+    f.store
+        .get_connection()
+        .unwrap()
+        .execute(
+            "UPDATE meetings SET metadata_json = ?1 WHERE id = ?2",
+            params![json, f.id],
+        )
+        .unwrap();
+}
+
+fn current_mic(f: &Fixture) -> PathBuf {
+    PathBuf::from(
+        f.store
+            .get_meeting(&f.id)
+            .unwrap()
+            .unwrap()
+            .mic_audio_path
+            .unwrap(),
+    )
+}
+
+fn trim_dirs(dir: &Path) -> Vec<PathBuf> {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.is_dir() && is_trim_dir(p))
+        .collect()
+}
+
+#[test]
+fn trimming_twice_keeps_one_flat_folder_and_removes_the_previous_one() {
+    let f = fixture();
+    trim_meeting(&f.store, &f.id, range(1_000, 9_000)).unwrap();
+    let first = current_mic(&f).parent().unwrap().to_path_buf();
+    assert_eq!(trim_dirs(&f.dir), vec![first.clone()]);
+
+    let result = trim_meeting(&f.store, &f.id, range(1_000, 5_000)).unwrap();
+    assert_eq!(result.duration_ms, 4_000);
+    assert_eq!(result.leftover_files, 0);
+    let second = current_mic(&f).parent().unwrap().to_path_buf();
+    assert_ne!(first, second);
+    assert_eq!(second.parent().unwrap(), f.dir, "nicht ineinander");
+    assert_eq!(trim_dirs(&f.dir), vec![second.clone()]);
+    assert!(!first.exists());
+    // Die entechote Kopie ist wieder neben der mic.wav und gleich lang.
+    assert_eq!(read_i16(&second.join("mic_aec.wav")).len(), 4_000 * 16);
+    assert_eq!(read_i16(&second.join("mic.wav"))[0], 2_000);
+}
+
+#[test]
+fn without_an_aec_file_next_to_the_mic_the_reference_in_the_metadata_goes() {
+    let f = fixture();
+    std::fs::remove_file(f.dir.join("mic_aec.wav")).unwrap();
+    trim_meeting(&f.store, &f.id, range(2_000, 6_000)).unwrap();
+    let new_dir = current_mic(&f).parent().unwrap().to_path_buf();
+    assert!(!new_dir.join("mic_aec.wav").exists());
+    let metadata = f.store.metadata_json(&f.id).unwrap().unwrap();
+    assert!(metadata["aec"].get("file").is_none());
+    assert_eq!(metadata["aec"]["wav_kept"], false);
+    assert_eq!(metadata["timeline"]["basis"], "qpc");
+}
+
+#[test]
+fn speaker_merges_follow_their_segments_and_turns_to_the_new_epoch() {
+    use crate::managers::meetings::speaker_merges::{MergeRecord, MERGES_KEY};
+    let f = fixture();
+    let rec = |id: &str, epoch: u32, segments: Vec<u32>, turns: Vec<usize>| MergeRecord {
+        id: id.into(),
+        channel: 0,
+        from: 2,
+        into: 1,
+        epoch,
+        segments,
+        turns,
+        ..Default::default()
+    };
+    // Segmente 0..3 liegen bei 0, 2200, 4000, 8000 ms; Turns bei 0 und 4000 ms.
+    let records = vec![
+        rec("teils", 0, vec![0, 2, 3], vec![0, 1]),
+        rec("ausserhalb", 0, vec![0, 3], vec![0]),
+        rec("fremd", 5, vec![3], vec![0]),
+    ];
+    set_metadata(
+        &f,
+        &serde_json::json!({ MERGES_KEY: records, "timeline": {"basis": "qpc"} }).to_string(),
+    );
+    trim_meeting(&f.store, &f.id, range(2_000, 6_000)).unwrap();
+
+    let epoch = f.store.segment_epoch(&f.id).unwrap();
+    assert_eq!(epoch, 1);
+    let metadata = f.store.metadata_json(&f.id).unwrap().unwrap();
+    let list: Vec<MergeRecord> = serde_json::from_value(metadata[MERGES_KEY].clone()).unwrap();
+    let ids: Vec<&str> = list.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(ids, ["teils", "fremd"], "ohne Rest entfaellt der Eintrag");
+    // Segment 2 (4000 ms) ist jetzt Nummer 1, Turn 1 (4000 ms) jetzt Position 0.
+    assert_eq!(list[0].segments, vec![1]);
+    assert_eq!(list[0].turns, vec![0]);
+    assert_eq!(list[0].epoch, epoch);
+    // Ein Eintrag einer anderen Epoche bleibt, wie er war.
+    assert_eq!(list[1].epoch, 5);
+    assert_eq!(list[1].segments, vec![3]);
+    assert_eq!(metadata["timeline"]["basis"], "qpc");
+    // Er gilt auf der neuen Epoche noch.
+    assert_eq!(
+        crate::managers::meetings::speaker_merges::live(list, epoch).len(),
+        1
+    );
+}
+
+#[test]
+fn a_locked_old_file_goes_on_the_cleanup_list_and_is_reported() {
+    let f = fixture();
+    // Ein Eintrag aus einem frueheren Zuschnitt, der noch offen ist (ein Ordner
+    // laesst sich mit remove_file nicht loeschen, wie eine gesperrte Datei).
+    let stuck = f.dir.join("alt-gesperrt.wav");
+    std::fs::create_dir_all(&stuck).unwrap();
+    write_cleanup(&f.dir, &[stuck.to_string_lossy().to_string()]);
+
+    let result = trim_meeting(&f.store, &f.id, range(2_000, 6_000)).unwrap();
+    assert_eq!(result.leftover_files, 1);
+    assert_eq!(read_cleanup(&f.dir).len(), 1);
+
+    // Der Ordner ist weg (Sperre geloest): der naechste Versuch raeumt die Liste ab.
+    std::fs::remove_dir_all(&stuck).unwrap();
+    assert_eq!(retry_cleanup(&f.dir), 0);
+    assert!(!f.dir.join(CLEANUP_FILE).exists());
+}
+
+#[test]
+fn remove_files_reports_what_stays_and_treats_a_missing_file_as_gone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("a.wav");
+    write_wav(&file, 10);
+    let dir = tmp.path().join("gesperrt.wav");
+    std::fs::create_dir(&dir).unwrap();
+    let missing = tmp.path().join("weg.wav");
+    let paths: Vec<String> = [&file, &dir, &missing]
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+    assert_eq!(remove_files(&paths), vec![paths[1].clone()]);
+    assert!(!file.exists());
+}
+
+#[test]
+fn the_start_sweep_retries_the_list_and_removes_only_orphaned_trim_folders() {
+    let f = fixture();
+    let meetings_dir = f._dir.path().to_path_buf();
+    trim_meeting(&f.store, &f.id, range(2_000, 6_000)).unwrap();
+    let used = current_mic(&f).parent().unwrap().to_path_buf();
+
+    // Verwaist: ein Ordner, den keine Besprechung nutzt (Abbruch vor dem Commit).
+    let orphan = f.dir.join("trim-verwaist");
+    std::fs::create_dir_all(&orphan).unwrap();
+    write_wav(&orphan.join("mic.wav"), 100);
+    // Kein trim-Ordner: bleibt.
+    let other = f.dir.join("export");
+    std::fs::create_dir_all(&other).unwrap();
+    // Aufraeumliste: eine Datei im Ordner (wird geloescht), eine ausserhalb (bleibt).
+    let old = f.dir.join("alt.wav");
+    write_wav(&old, 100);
+    let outside = meetings_dir.join("fremd.wav");
+    write_wav(&outside, 100);
+    write_cleanup(
+        &f.dir,
+        &[
+            old.to_string_lossy().to_string(),
+            outside.to_string_lossy().to_string(),
+        ],
+    );
+
+    let report = sweep_leftovers(&f.store, &meetings_dir);
+    assert_eq!(report.orphan_dirs_removed, 1);
+    assert!(!orphan.exists() && !old.exists());
+    assert!(used.join("mic.wav").exists(), "benutzter Ordner bleibt");
+    assert!(other.exists());
+    assert!(
+        outside.exists(),
+        "ausserhalb des Ordners wird nichts geloescht"
+    );
+    assert!(!f.dir.join(CLEANUP_FILE).exists() || read_cleanup(&f.dir).is_empty());
+}
+
+#[test]
+fn reading_a_range_with_an_absurd_end_does_not_overflow() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("a.wav");
+    write_wav(&path, 1_000);
+    let all = read_track_range(
+        &path,
+        TimeRange {
+            start_ms: 0,
+            end_ms: u64::MAX,
+        },
+    )
+    .unwrap();
+    assert_eq!(all.len(), 16_000);
+    let none = read_track_range(
+        &path,
+        TimeRange {
+            start_ms: u64::MAX,
+            end_ms: u64::MAX,
+        },
+    )
+    .unwrap();
+    assert!(none.is_empty());
 }

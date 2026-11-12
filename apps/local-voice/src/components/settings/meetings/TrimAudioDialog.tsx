@@ -20,8 +20,12 @@ interface TrimAudioDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   meeting: Meeting;
+  /** Vor dem Befehl: der Aufrufer lässt die Player die Dateien loslassen (Windows sperrt sie sonst). */
+  onWillTrim: () => Promise<void>;
+  /** Der Befehl ist gescheitert: die Player dürfen wieder die (unveränderten) Dateien laden. */
+  onTrimFailed: () => void;
   /** Nach dem Zuschneiden: der Aufrufer lädt Segmente und Aufnahme neu. */
-  onTrimmed: () => void;
+  onTrimmed: () => void | Promise<void>;
 }
 
 /**
@@ -37,6 +41,8 @@ export const TrimAudioDialog: React.FC<TrimAudioDialogProps> = ({
   open,
   onOpenChange,
   meeting,
+  onWillTrim,
+  onTrimFailed,
   onTrimmed,
 }) => {
   const { t } = useTranslation();
@@ -58,20 +64,33 @@ export const TrimAudioDialog: React.FC<TrimAudioDialogProps> = ({
     if (nothingToCut || running) return;
     setRunning(true);
     try {
+      await onWillTrim();
       const result = await commands.meetingsTrimAudio(
         meeting.id,
         range.start_ms,
         range.end_ms,
       );
       if (result.status === "error") {
+        onTrimFailed();
         toast.error(translateMeetingError(result.error, t));
         return;
       }
       toast.success(
-        t("meetings.trim.done", { length: formatRangeTime(result.data) }),
+        t("meetings.trim.done", {
+          length: formatRangeTime(result.data.duration_ms),
+        }),
       );
+      // Alte Dateien, die noch gesperrt sind: die App löscht sie beim nächsten Start.
+      if (result.data.leftover_files > 0) {
+        toast.info(
+          t("meetings.trim.leftovers", { count: result.data.leftover_files }),
+        );
+      }
       onOpenChange(false);
-      onTrimmed();
+      await onTrimmed();
+    } catch (error) {
+      onTrimFailed();
+      toast.error(translateMeetingError(String(error), t));
     } finally {
       setRunning(false);
     }
