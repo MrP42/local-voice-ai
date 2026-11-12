@@ -97,16 +97,49 @@ struct SpeechVoicePicker: View {
 
 struct MicrophoneSettings: View {
     @ObservedObject var model: VoiceModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            #if os(watchOS)
             Text("Mikrofonempfindlichkeit").font(.subheadline)
             Picker("Mikrofonempfindlichkeit", selection: $model.microphoneSensitivity) {
                 ForEach(MicrophoneSensitivity.allCases, id: \.self) { Text($0.label).tag($0) }
             }.labelsHidden().accessibilityIdentifier("microphoneSensitivity")
-            Toggle("Umgebungsgeräusche berücksichtigen", isOn: $model.automaticNoiseFloor)
-                .accessibilityIdentifier("automaticNoiseFloor")
+            #else
+            // Beschriftung links, Auswahl rechts in derselben Zeile; nur bei sehr großer Schrift untereinander.
+            if dynamicTypeSize.isAccessibilitySize {
+                Text("Mikrofonempfindlichkeit").accessibilityHidden(true)
+                sensitivityMenu
+            } else {
+                HStack(alignment: .center, spacing: 12) {
+                    Text("Mikrofonempfindlichkeit").lineLimit(1).minimumScaleFactor(0.8)
+                        .frame(maxWidth: .infinity, alignment: .leading).accessibilityHidden(true)
+                    sensitivityMenu
+                }
+            }
+            #endif
+            VoiceToggleRow(title: "Umgebungsgeräusche berücksichtigen", isOn: $model.automaticNoiseFloor, identifier: "automaticNoiseFloor")
             Text("Steuert, wann Freisprechen Sprache vermutet. Unempfindlich hilft bei Lärm, Empfindlich bei leiser Stimme. Automatisch wird der Umgebungspegel zu Beginn kurz eingemessen. Keine Änderung der Aufnahmelautstärke.")
                 .font(.caption2).foregroundStyle(VoicePalette.secondaryText)
         }
     }
+    #if !os(watchOS)
+    /// Die Auswahl als Menü mit eigener Beschriftung (gewählter Wert und Pfeile): ohne den Innenabstand der Systemauswahl, damit sie
+    /// rechts bündig mit den Schaltern abschließt und ihre Breite nur vom gewählten Wert abhängt.
+    private var sensitivityMenu: some View {
+        Menu {
+            Picker("Mikrofonempfindlichkeit", selection: $model.microphoneSensitivity) {
+                ForEach(MicrophoneSensitivity.allCases, id: \.self) { Text($0.label).tag($0) }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(model.microphoneSensitivity.label)
+                Image(systemName: "chevron.up.chevron.down").font(.footnote.weight(.semibold)).accessibilityHidden(true)
+            }.frame(minHeight: 44).contentShape(Rectangle())
+        }
+        .fixedSize().padding(.vertical, -8)   // 44 pt Tippfläche, ohne die Zeile höher zu machen
+        .accessibilityLabel("Mikrofonempfindlichkeit").accessibilityValue(model.microphoneSensitivity.label)
+        .accessibilityIdentifier("microphoneSensitivity")
+    }
+    #endif
 }
