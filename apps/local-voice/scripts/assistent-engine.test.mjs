@@ -81,7 +81,14 @@ function neu(handlers = {}, { seiteMit } = {}) {
     assistent_messung_melden: () => null,
     ...handlers,
   };
-  const log = { user: [], assistant: [], errors: [], metrics: [] };
+  const log = {
+    user: [],
+    assistant: [],
+    errors: [],
+    metrics: [],
+    denken: [],
+    ende: [],
+  };
   const engine = new VoiceCallEngine(
     {
       onState() {},
@@ -91,6 +98,19 @@ function neu(handlers = {}, { seiteMit } = {}) {
         log.assistant.push({ t, final, interrupted }),
       onMetrics: (m) => log.metrics.push(m),
       onError: (e) => log.errors.push(e),
+      onDenken: (e) => {
+        if (e.art === "ende") {
+          log.ende.push(e.turnId);
+          return;
+        }
+        log.denken.push(
+          e.art === "start"
+            ? "start"
+            : e.art === "gedanke"
+              ? `gedanke:${e.text}`
+              : e.text,
+        );
+      },
       conversationId: () => "c1",
     },
     { systemPrompt: "sys", turn: DEFAULT_TURN_CONFIG, orchestration: {} },
@@ -141,24 +161,43 @@ test("Abbruch während der Einstufung: kein Ton, kein Modellaufruf, keine Messun
   assert.deepEqual(verlauf(t), []);
 });
 
-test("Abbruch während der Ansage-Synthese: nichts wird eingereiht, nichts im Verlauf", async () => {
-  const syn = deferred();
+test("Ansage wird nie synthetisiert, sie steht nur in der Denk-Anzeige (Patrick 12.11.2026)", async () => {
   const t = neu({
     assistent_einstufen: () => ansageE("Ich schaue in den Kalender."),
-    voice_call_synthesize: ({ text }) =>
-      text.startsWith("Ich schaue") ? syn.promise : `wav:${text}`,
     voice_call_chat: chatSagt(ANTWORT),
   });
-  const { done } = t.start("Was steht im Kalender?");
-  await settle();
-  assert.equal(t.aufrufe("voice_call_synthesize").length >= 1, true);
-  t.engine.interrupt();
-  syn.resolve("wav:ansage");
-  await done;
-  assert.deepEqual(t.player.enqueued, []);
-  assert.deepEqual(verlauf(t), []);
-  assert.equal(t.aufrufe("assistent_messung_melden").length, 0);
-  assert.equal(t.aufrufe("voice_call_cancel").length >= 1, true);
+  await t.start("Was steht im Kalender?").done;
+  assert.equal(
+    t
+      .aufrufe("voice_call_synthesize")
+      .some((c) => c.args.text.startsWith("Ich schaue")),
+    false,
+  );
+  assert.deepEqual(t.player.enqueued, [`wav:${ANTWORT}`]);
+  assert.deepEqual(t.log.denken, ["start", "Ich schaue in den Kalender."]);
+  assert.equal(
+    t.log.assistant.some((a) => a.t.includes("Ich schaue")),
+    false,
+  );
+});
+
+test("Allgemeine Ansage („Ich denke kurz nach.“) erscheint nirgends, auch nicht als Schritt", async () => {
+  const t = neu({
+    assistent_einstufen: () => ({
+      stufe: "S2",
+      absicht: "allgemein",
+      ansage: "Ich denke kurz nach.",
+      antwort: null,
+    }),
+    voice_call_chat: chatSagt("Ja, ich höre dich."),
+  });
+  await t.start("Kannst du mich hören?").done;
+  assert.deepEqual(t.player.enqueued, ["wav:Ja, ich höre dich."]);
+  assert.deepEqual(t.log.denken, ["start"]);
+  assert.equal(
+    t.log.assistant.some((a) => a.t.includes("denke")),
+    false,
+  );
 });
 
 test("Verworfener spekulativer Schritt spricht keine Ansage", async () => {
@@ -231,28 +270,26 @@ test("Kein erster Inhalt innerhalb der Frist: Anfrage abbrechen, Vorlage spreche
   }
 });
 
-test("Fehlende Antwort nach einer Ansage: erst die Ansage, dann die Vorlage", async () => {
+test("Fehlende Antwort nach einer Ansage: nur die Vorlage", async () => {
   const t = neu({
     assistent_einstufen: () => ansageE("Ich schaue in den Kalender."),
     voice_call_chat: () => Promise.reject("x"),
   });
   await t.start("Was steht im Kalender?").done;
-  assert.deepEqual(t.player.enqueued, [
-    "wav:Ich schaue in den Kalender.",
-    `wav:${FEHLER_DE}`,
-  ]);
+  assert.deepEqual(t.player.enqueued, [`wav:${FEHLER_DE}`]);
   assert.deepEqual(verlauf(t), []);
 });
 
 // -- MUSS 4: Überbrückung -------------------------------------------------------
 
-test("Bestehende Überbrückung des Orchestrators bleibt ohne Ansage erhalten", async () => {
+test("Überbrückung des Orchestrators wird nicht gesprochen, nur Schritt der Denk-Anzeige", async () => {
   const t = neu({}, { seiteMit: seite(BRUECKE, ANTWORT) });
   await t.start("Was steht im Kalender?").done;
-  assert.deepEqual(t.player.enqueued, [`wav:${BRUECKE}`, `wav:${ANTWORT}`]);
+  assert.deepEqual(t.player.enqueued, [`wav:${ANTWORT}`]);
+  assert.deepEqual(t.log.denken, ["start", BRUECKE]);
 });
 
-test("Nach einer Ansage wird keine zweite Überbrückung gesprochen", async () => {
+test("Weder Ansage noch Überbrückungen werden gesprochen", async () => {
   const t = neu(
     { assistent_einstufen: () => ansageE("Ich schaue in den Kalender.") },
     {
@@ -265,10 +302,8 @@ test("Nach einer Ansage wird keine zweite Überbrückung gesprochen", async () =
     },
   );
   await t.start("Was steht im Kalender?").done;
-  assert.deepEqual(t.player.enqueued, [
-    "wav:Ich schaue in den Kalender.",
-    `wav:${ANTWORT}`,
-  ]);
+  assert.deepEqual(t.player.enqueued, [`wav:${ANTWORT}`]);
+  assert.equal(t.log.denken.length, 5);
   // Verlauf: nur was das Modell gesagt hat, ohne die Ansage.
   assert.deepEqual(verlauf(t), [
     "user:Was steht im Kalender?",
@@ -276,7 +311,7 @@ test("Nach einer Ansage wird keine zweite Überbrückung gesprochen", async () =
   ]);
 });
 
-test("Zweite Überbrückung unterdrückt auch im Textmodus, die Anzeige hält die Ansage", async () => {
+test("Textmodus: Ansage und Überbrückung nur in der Denk-Anzeige, nie im Chat", async () => {
   const t = neu(
     { assistent_einstufen: () => ansageE("Ich schaue in den Kalender.") },
     { seiteMit: seite(BRUECKE, ANTWORT) },
@@ -285,11 +320,150 @@ test("Zweite Überbrückung unterdrückt auch im Textmodus, die Anzeige hält di
   await t.engine.sendText("Was steht im Kalender?");
   const letzte = t.log.assistant.at(-1);
   assert.equal(letzte.final, true);
-  assert.equal(letzte.t, `Ich schaue in den Kalender. ${ANTWORT}`);
+  assert.equal(letzte.t, ANTWORT);
+  assert.deepEqual(t.log.denken, [
+    "start",
+    "Ich schaue in den Kalender.",
+    BRUECKE,
+  ]);
   assert.deepEqual(verlauf(t), [
     "user:Was steht im Kalender?",
     `assistant:${ANTWORT}`,
   ]);
+});
+
+test("Überbrückung verlängert die Frist: Inhalt nach der ersten Frist wird noch gesprochen", async () => {
+  const alt = TUNING.modelFristMs;
+  TUNING.modelFristMs = 30;
+  try {
+    const spaet = {
+      chat: async (_id, _msgs, onPiece) => {
+        onPiece(BRUECKE);
+        await settle(80);
+        onPiece(ANTWORT);
+        return `${BRUECKE} ${ANTWORT}`;
+      },
+      cancel: async () => undefined,
+    };
+    const t = neu({}, { seiteMit: spaet });
+    await t.start("Was steht im Kalender?").done;
+    assert.deepEqual(t.player.enqueued, [`wav:${ANTWORT}`]);
+    assert.deepEqual(verlauf(t), [
+      "user:Was steht im Kalender?",
+      `assistant:${ANTWORT}`,
+    ]);
+  } finally {
+    TUNING.modelFristMs = alt;
+  }
+});
+
+test("Nach einer Überbrückung ohne Inhalt endet die verlängerte Frist trotzdem: Vorlage, Abbruch", async () => {
+  const alt = { ...TUNING };
+  TUNING.modelFristMs = 30;
+  TUNING.denkerFristMs = 120;
+  try {
+    let abgebrochen = 0;
+    const haengt = {
+      chat: (_id, _msgs, onPiece) => {
+        onPiece(BRUECKE);
+        return new Promise(() => undefined);
+      },
+      cancel: async () => {
+        abgebrochen++;
+      },
+    };
+    const t = neu({}, { seiteMit: haengt });
+    const start = Date.now();
+    await t.start("Was steht im Kalender?").done;
+    assert.ok(Date.now() - start >= 100, "die längere Frist gilt");
+    assert.deepEqual(t.player.enqueued, [`wav:${FEHLER_DE}`]);
+    assert.equal(abgebrochen, 1);
+    assert.deepEqual(verlauf(t), []);
+  } finally {
+    Object.assign(TUNING, alt);
+  }
+});
+
+test("Tor-Weg: eine Überbrückung wird weder gesprochen noch Teil von Chat oder Verlauf", async () => {
+  const t = neu({ voice_call_chat: chatSagt(BRUECKE, ANTWORT) });
+  await t.start("Was steht im Kalender?").done;
+  assert.deepEqual(t.player.enqueued, [`wav:${ANTWORT}`]);
+  assert.deepEqual(t.log.denken, ["start", BRUECKE]);
+  assert.deepEqual(verlauf(t), [
+    "user:Was steht im Kalender?",
+    `assistant:${ANTWORT}`,
+  ]);
+});
+
+test("Tor-Weg im Textmodus: die Rückgabe mit Überbrückung zählt nicht, nur das Angezeigte", async () => {
+  const t = neu({ voice_call_chat: chatSagt(BRUECKE, ANTWORT) });
+  t.engine.state = "idle";
+  await t.engine.sendText("Was steht im Kalender?");
+  assert.equal(t.log.assistant.at(-1).t, ANTWORT);
+  assert.deepEqual(verlauf(t), [
+    "user:Was steht im Kalender?",
+    `assistant:${ANTWORT}`,
+  ]);
+});
+
+test("Projekt: der Verlauf führt genau die registrierte Rückgabe des Tors (Sprache und Text)", async () => {
+  // Überbrückungen gibt das Belegtor in Rust gar nicht frei; die Oberfläche führt die Rückgabe
+  // unverändert (mit Marken), damit das Register sie beim nächsten Turn wiedererkennt.
+  const RUECKGABE = `${ANTWORT} [Q1]`;
+  const tor = ({ requestId }) => {
+    emit({ kind: "sentence", request_id: requestId, text: RUECKGABE });
+    emit({ kind: "done", request_id: requestId });
+    return RUECKGABE;
+  };
+  const t = neu({ voice_call_chat: tor });
+  t.engine.cb.projekt = () => ({ id: "p1", stand: null });
+  await t.start("Was steht im Kalender?").done;
+  assert.deepEqual(verlauf(t), [
+    "user:Was steht im Kalender?",
+    `assistant:${RUECKGABE}`,
+  ]);
+
+  const t2 = neu({ voice_call_chat: tor });
+  t2.engine.cb.projekt = () => ({ id: "p1", stand: null });
+  t2.engine.state = "idle";
+  await t2.engine.sendText("Was steht im Kalender?");
+  assert.deepEqual(verlauf(t2), [
+    "user:Was steht im Kalender?",
+    `assistant:${RUECKGABE}`,
+  ]);
+});
+
+test("Denktext des Modells (reasoning) geht nur an die Denk-Anzeige", async () => {
+  const t = neu({
+    voice_call_chat: ({ requestId }) => {
+      emit({ kind: "reasoning", request_id: requestId, text: "Ich prüfe " });
+      emit({ kind: "reasoning", request_id: requestId, text: "den Kalender." });
+      emit({ kind: "sentence", request_id: requestId, text: ANTWORT });
+      emit({ kind: "done", request_id: requestId });
+      return ANTWORT;
+    },
+  });
+  await t.start("Was steht im Kalender?").done;
+  assert.deepEqual(t.player.enqueued, [`wav:${ANTWORT}`]);
+  assert.deepEqual(t.log.denken, [
+    "start",
+    "gedanke:Ich prüfe ",
+    "gedanke:den Kalender.",
+  ]);
+  assert.deepEqual(verlauf(t), [
+    "user:Was steht im Kalender?",
+    `assistant:${ANTWORT}`,
+  ]);
+});
+
+test("Abbruch des Schritts meldet das Ende der Denk-Anzeige", async () => {
+  const t = neu({ voice_call_chat: () => new Promise(() => undefined) });
+  t.engine.state = "idle";
+  const p = t.engine.sendText("Was steht im Kalender?");
+  await settle(20);
+  t.engine.cancelText(false);
+  await p;
+  assert.equal(t.log.ende.length >= 1, true);
 });
 
 // -- MUSS 1: Einstufung gescheitert, S0 ----------------------------------------
@@ -359,6 +533,69 @@ test("Wiederholen spricht die letzte freigegebene Ausgabe, ohne Modell und ohne 
   assert.deepEqual(verlauf(t), []);
   assert.deepEqual(t.engine.ausgabeKey, { id: "c1" });
 });
+
+test("Wiederholen spricht eine gemerkte Überbrückung nicht noch einmal", async () => {
+  const t = neu({
+    assistent_einstufen: () => s0E("wiederholen", "Ich wiederhole."),
+    assistent_letzte_ausgabe: () =>
+      "Moment, ich schaue in den Besprechungen nach. Das ist die Antwort.",
+    voice_call_chat: chatSagt(ANTWORT),
+  });
+  t.engine.ausgabeKey = { id: "c1" };
+  await t.start("Wiederhole das bitte").done;
+  assert.deepEqual(t.player.enqueued, [
+    "wav:Ich wiederhole.",
+    "wav:Das ist die Antwort.",
+  ]);
+});
+
+test("Wiederholen behält eine zitierte Überbrückung innerhalb der Antwort", async () => {
+  const zitat =
+    "Die Ansage lautet: „Moment, ich schaue in den Besprechungen nach.“";
+  const t = neu({
+    assistent_einstufen: () => s0E("wiederholen", "Ich wiederhole."),
+    assistent_letzte_ausgabe: () => zitat,
+    voice_call_chat: chatSagt(ANTWORT),
+  });
+  t.engine.ausgabeKey = { id: "c1" };
+  await t.start("Wiederhole das bitte").done;
+  assert.deepEqual(t.player.enqueued, ["wav:Ich wiederhole.", `wav:${zitat}`]);
+});
+
+test("Wiederholen behält eine Überbrückung in einem Zitat aus mehreren Sätzen (R4)", async () => {
+  const zitat =
+    "Die Ansage lautet: „Bitte warten. Moment, ich schaue kurz nach. Danke.“";
+  const t = neu({
+    assistent_einstufen: () => s0E("wiederholen", "Ich wiederhole."),
+    assistent_letzte_ausgabe: () => zitat,
+    voice_call_chat: chatSagt(ANTWORT),
+  });
+  t.engine.ausgabeKey = { id: "c1" };
+  await t.start("Wiederhole das bitte").done;
+  assert.deepEqual(t.player.enqueued, ["wav:Ich wiederhole.", `wav:${zitat}`]);
+});
+
+for (const [name, zitat] of [
+  [
+    "verschachtelt",
+    'Die Ansage lautet: „Er sagt: "Bitte warten. Moment, ich schaue kurz nach. Danke." Ende.“',
+  ],
+  ["ungeschlossen", "Er sagt: „Bitte warten. Moment, ich schaue kurz nach."],
+]) {
+  test(`Wiederholen behält eine Überbrückung in einem Zitat (${name}, R5)`, async () => {
+    const t = neu({
+      assistent_einstufen: () => s0E("wiederholen", "Ich wiederhole."),
+      assistent_letzte_ausgabe: () => zitat,
+      voice_call_chat: chatSagt(ANTWORT),
+    });
+    t.engine.ausgabeKey = { id: "c1" };
+    await t.start("Wiederhole das bitte").done;
+    assert.deepEqual(t.player.enqueued, [
+      "wav:Ich wiederhole.",
+      `wav:${zitat}`,
+    ]);
+  });
+}
 
 test("Wiederholen ohne Ausgabe: feste Vorlage, nichts ans Modell", async () => {
   const t = neu({
@@ -547,7 +784,8 @@ test("Messung kommt erst nach dem Ende der Wiedergabe, mit warm und weg", async 
   assert.equal(m1.args.messung.warm, false);
   assert.equal(m1.args.messung.weg, "relay");
   assert.equal(typeof m1.args.messung.fertig_ms, "number");
-  assert.equal(typeof m1.args.messung.erste_ansage_ms, "number");
+  // Keine Ansage mehr: die Marke bleibt leer.
+  assert.equal(m1.args.messung.erste_ansage_ms, null);
   assert.equal(
     m1.args.messung.fertig_ms >= m1.args.messung.erster_inhalt_ms,
     true,
