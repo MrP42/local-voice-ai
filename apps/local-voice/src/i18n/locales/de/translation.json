@@ -4362,6 +4362,8 @@
       "cancel": "Abbrechen",
       "close": "Schließen",
       "done": "Aufnahme zugeschnitten. Neue Länge: {{length}}.",
+      "reloadFailed": "Die Aufnahme wurde zugeschnitten, aber der neue Stand ließ sich nicht laden. Die Wiedergabe bleibt aus, bis er geladen ist.",
+      "reload": "Erneut laden",
       "leftovers_one": "Eine alte Audiodatei ist gerade gesperrt und wird beim nächsten Start der App gelöscht.",
       "leftovers_other": "{{count}} alte Audiodateien sind gerade gesperrt und werden beim nächsten Start der App gelöscht."
     },

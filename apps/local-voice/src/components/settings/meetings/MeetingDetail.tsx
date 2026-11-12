@@ -655,17 +655,41 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     await new Promise((resolve) => window.setTimeout(resolve, 250));
   }, []);
   const restorePlayers = useCallback(() => setPlayersParked(false), []);
+  // Anderer Datensatz: die Player gehören dem neuen.
+  useEffect(() => {
+    setPlayersParked(false);
+  }, [meetingId]);
   // Nach dem Zuschneiden stehen Audiopfade, Dauer und Transkript neu in der Datenbank:
-  // Segmente laden und genau diesen Datensatz holen (nicht die ganze Liste).
-  const onTrimmed = useCallback(async () => {
+  // Segmente laden und genau diesen Datensatz holen (nicht die ganze Liste). Nur mit dem
+  // frischen Datensatz kommen die Player zurück; scheitert das Laden, bleiben sie
+  // abgebaut (die alten Pfade gibt es nicht mehr), und ein Hinweis bietet "Erneut laden".
+  const reloadAfterTrim = useCallback(async (): Promise<boolean> => {
     void loadSegmentsRef.current();
     try {
       const r = await commands.meetingsGet(meetingId);
-      if (r.status === "ok" && r.data) onMeetingChangeRef.current(r.data);
-    } finally {
-      setPlayersParked(false);
+      if (r.status === "ok" && r.data) {
+        onMeetingChangeRef.current(r.data);
+        setPlayersParked(false);
+        return true;
+      }
+    } catch {
+      // wie ein Fehlerergebnis behandeln
     }
+    return false;
   }, [meetingId]);
+  const onTrimmed = useCallback(async () => {
+    const attempt = async (): Promise<void> => {
+      if (await reloadAfterTrim()) return;
+      toast.error(t("meetings.trim.reloadFailed"), {
+        duration: 30_000,
+        action: {
+          label: t("meetings.trim.reload"),
+          onClick: () => void attempt(),
+        },
+      });
+    };
+    await attempt();
+  }, [reloadAfterTrim, t]);
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | null = null;

@@ -1,4 +1,10 @@
-import React, { useEffect, useId, useState } from "react";
+import React, {
+  useEffect,
+  useId,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import {
   RANGE_STEP_MS,
@@ -21,6 +27,22 @@ interface AudioRangePickerProps {
   disabled?: boolean;
   /** i18n-Schlüssel der Längenzeile (`{{length}}`, `{{total}}`); Standard: Bereich von Gesamt. */
   lengthKey?: string;
+  /**
+   * Meldet, ob beide Felder lesbar sind (Ausführen-Knopf sperren, solange nicht) und ob ein
+   * getippter Text noch nicht bestätigt ist (`pending`: der Bereich kann sich beim Klick noch ändern).
+   */
+  onValidityChange?: (valid: boolean, pending: boolean) => void;
+  /** Griff zum erneuten Prüfen der Feldtexte im Moment des Klicks. */
+  handleRef?: React.Ref<AudioRangePickerHandle>;
+}
+
+export interface AudioRangePickerHandle {
+  /**
+   * Liest die Texte beider Felder JETZT (auch unbestätigte) und gibt den gültigen
+   * Bereich zurück, den die Felder zeigen; `null`, wenn ein Feld unlesbar ist (dann
+   * darf nichts ausgeführt werden und es gilt kein älterer Wert).
+   */
+  validate: () => MsRange | null;
 }
 
 interface TimeFieldProps {
@@ -32,6 +54,8 @@ interface TimeFieldProps {
   disabled?: boolean;
   /** Nachkommastellen: „Von“ rundet ab, „Bis“ auf (wie `parseRangeTime`). */
   rounding: RangeRounding;
+  /** Meldet jeden Feldtext (auch unbestätigt) an den Wähler. */
+  onDraft: (draft: string) => void;
 }
 
 /**
@@ -46,11 +70,18 @@ const TimeField: React.FC<TimeFieldProps> = ({
   testId,
   disabled,
   rounding,
+  onDraft,
 }) => {
   const { t } = useTranslation();
   const errorId = useId();
   const [draft, setDraft] = useState(formatRangeTime(valueMs));
   const [invalid, setInvalid] = useState(false);
+
+  const onDraftRef = useRef(onDraft);
+  onDraftRef.current = onDraft;
+  useEffect(() => {
+    onDraftRef.current(draft);
+  }, [draft]);
 
   // Von außen geänderter Wert (Regler, anderes Feld, Zurücksetzen).
   useEffect(() => {
@@ -67,8 +98,9 @@ const TimeField: React.FC<TimeFieldProps> = ({
     }
     const parsed = parseRangeTime(draft, rounding);
     if (parsed === null) {
+      // Der unlesbare Text bleibt stehen (mit Meldung), kein stiller Rückgriff auf
+      // den älteren Wert: der Wähler meldet das Feld als ungültig.
       setInvalid(true);
-      setDraft(formatRangeTime(valueMs));
       return;
     }
     setInvalid(false);
@@ -91,7 +123,10 @@ const TimeField: React.FC<TimeFieldProps> = ({
         disabled={disabled}
         aria-invalid={invalid || undefined}
         aria-describedby={invalid ? errorId : undefined}
-        onChange={(e) => setDraft(e.target.value)}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          setInvalid(false);
+        }}
         onBlur={commit}
         onKeyDown={(e) => {
           if (e.key === "Enter") {
@@ -127,8 +162,30 @@ export const AudioRangePicker: React.FC<AudioRangePickerProps> = ({
   testId = "range",
   disabled = false,
   lengthKey = "meetings.range.length",
+  onValidityChange,
+  handleRef,
 }) => {
   const { t } = useTranslation();
+  const drafts = useRef({
+    start: formatRangeTime(value.start_ms),
+    end: formatRangeTime(value.end_ms),
+  });
+  const [texts, setTexts] = useState(drafts.current);
+  const report = (which: "start" | "end") => (draft: string) => {
+    drafts.current = { ...drafts.current, [which]: draft };
+    setTexts(drafts.current);
+  };
+  const valid =
+    parseRangeTime(texts.start, "floor") !== null &&
+    parseRangeTime(texts.end, "ceil") !== null;
+  const pending =
+    texts.start !== formatRangeTime(value.start_ms) ||
+    texts.end !== formatRangeTime(value.end_ms);
+  const onValidityRef = useRef(onValidityChange);
+  onValidityRef.current = onValidityChange;
+  useEffect(() => {
+    onValidityRef.current?.(valid, pending);
+  }, [valid, pending]);
   // Der Regler rechnet in ganzen Sekunden; das Maximum ist die aufgerundete Dauer.
   const max = Math.max(
     RANGE_STEP_MS,
@@ -140,6 +197,37 @@ export const AudioRangePicker: React.FC<AudioRangePickerProps> = ({
     onChange(normalized);
     return normalized;
   };
+  useImperativeHandle(
+    handleRef,
+    () => ({
+      validate: () => {
+        const start = parseRangeTime(drafts.current.start, "floor");
+        const end = parseRangeTime(drafts.current.end, "ceil");
+        if (start === null || end === null) return null;
+        // Ein unveränderter Text lässt den Wert stehen (Bruchteile der Sekunde bleiben).
+        const startSame =
+          drafts.current.start === formatRangeTime(value.start_ms);
+        const endSame = drafts.current.end === formatRangeTime(value.end_ms);
+        const next = {
+          start_ms: startSame ? value.start_ms : start,
+          end_ms: endSame ? value.end_ms : end,
+        };
+        const normalized = normalizeRange(
+          next,
+          durationMs,
+          startSame ? "end" : "start",
+        );
+        if (
+          normalized.start_ms !== value.start_ms ||
+          normalized.end_ms !== value.end_ms
+        ) {
+          onChange(normalized);
+        }
+        return normalized;
+      },
+    }),
+    [value, durationMs, onChange],
+  );
   // Der Griff, der gerade weiter innen liegt, bleibt oben, damit beide greifbar sind.
   const startOnTop = value.start_ms > max / 2;
 
@@ -152,6 +240,7 @@ export const AudioRangePicker: React.FC<AudioRangePickerProps> = ({
           disabled={disabled}
           testId={`${testId}-start`}
           rounding="floor"
+          onDraft={report("start")}
           onCommit={(ms) => set({ ...value, start_ms: ms }, "start").start_ms}
         />
         <TimeField
@@ -160,6 +249,7 @@ export const AudioRangePicker: React.FC<AudioRangePickerProps> = ({
           disabled={disabled}
           testId={`${testId}-end`}
           rounding="ceil"
+          onDraft={report("end")}
           onCommit={(ms) => set({ ...value, end_ms: ms }, "end").end_ms}
         />
       </div>

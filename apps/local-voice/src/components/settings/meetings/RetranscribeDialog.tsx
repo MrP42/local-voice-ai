@@ -15,7 +15,10 @@ import { Alert } from "../../ui/Alert";
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
 import { Select } from "../../ui/Select";
-import { AudioRangePicker } from "./AudioRangePicker";
+import {
+  AudioRangePicker,
+  type AudioRangePickerHandle,
+} from "./AudioRangePicker";
 import { baseLanguage, languageOptions } from "./language/languages";
 import { translateMeetingError } from "./meetingErrors";
 
@@ -73,6 +76,8 @@ export const RetranscribeDialog: React.FC<RetranscribeDialogProps> = ({
   const durationMs = recordingDurationMs(meeting.duration_ms);
   const [scope, setScope] = useState<Scope>("all");
   const [range, setRange] = useState<MsRange>(fullRange(durationMs ?? 0));
+  const pickerRef = useRef<AudioRangePickerHandle>(null);
+  const [fieldsValid, setFieldsValid] = useState(true);
   // Hat der Nutzer das Modell selbst gewählt? Dann überschreibt kein Vorschlag es mehr.
   const modelTouched = useRef(false);
 
@@ -133,10 +138,20 @@ export const RetranscribeDialog: React.FC<RetranscribeDialogProps> = ({
   const start = () => {
     const chosen = modelId === CONFIGURED ? null : modelId;
     const fixed = baseLanguage(language);
+    // Die Feldtexte im Moment des Klicks neu lesen: ein unlesbarer Text sperrt, es
+    // gibt keinen Rückgriff auf einen älteren Wert.
+    let current: MsRange = range;
+    if (scope === "range") {
+      const read = pickerRef.current?.validate() ?? null;
+      if (!read) return;
+      current = read;
+    }
     // Ein Bereich, der die ganze Aufnahme deckt, ist keiner.
     const chosenRange =
-      scope === "range" && durationMs !== null && !coversAll(range, durationMs)
-        ? range
+      scope === "range" &&
+      durationMs !== null &&
+      !coversAll(current, durationMs)
+        ? current
         : null;
     onOpenChange(false);
     // Der Fortschritt steht danach in der Bedienspalte (P8a); ein Fehler
@@ -171,6 +186,7 @@ export const RetranscribeDialog: React.FC<RetranscribeDialogProps> = ({
           <Button
             className="max-sm:min-h-[44px]"
             onClick={start}
+            disabled={scope === "range" && !fieldsValid}
             data-testid="retranscribe-start"
           >
             <RefreshCw width={14} height={14} aria-hidden="true" />
@@ -246,6 +262,8 @@ export const RetranscribeDialog: React.FC<RetranscribeDialogProps> = ({
                   durationMs={durationMs}
                   value={range}
                   onChange={setRange}
+                  handleRef={pickerRef}
+                  onValidityChange={setFieldsValid}
                   testId="retranscribe-range"
                 />
                 <p

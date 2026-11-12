@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Scissors } from "lucide-react";
 import { toast } from "sonner";
@@ -13,7 +13,10 @@ import {
 import { Alert } from "../../ui/Alert";
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
-import { AudioRangePicker } from "./AudioRangePicker";
+import {
+  AudioRangePicker,
+  type AudioRangePickerHandle,
+} from "./AudioRangePicker";
 import { translateMeetingError } from "./meetingErrors";
 
 interface TrimAudioDialogProps {
@@ -49,6 +52,9 @@ export const TrimAudioDialog: React.FC<TrimAudioDialogProps> = ({
   const durationMs = recordingDurationMs(meeting.duration_ms);
   const [range, setRange] = useState<MsRange>(fullRange(durationMs ?? 0));
   const [running, setRunning] = useState(false);
+  const pickerRef = useRef<AudioRangePickerHandle>(null);
+  const [fieldsValid, setFieldsValid] = useState(true);
+  const [fieldsPending, setFieldsPending] = useState(false);
 
   // Beim Öffnen: ganze Aufnahme gewählt (nichts geht verloren, bis man es ändert).
   useEffect(() => {
@@ -61,14 +67,19 @@ export const TrimAudioDialog: React.FC<TrimAudioDialogProps> = ({
   const nothingToCut = durationMs === null || coversAll(range, durationMs);
 
   const trim = async () => {
-    if (nothingToCut || running) return;
+    if (running) return;
+    // Die Feldtexte im Moment des Klicks neu lesen: ein unlesbarer Text sperrt, es
+    // gibt keinen Rückgriff auf einen älteren Wert.
+    const current = pickerRef.current?.validate() ?? null;
+    if (!current) return;
+    if (durationMs === null || coversAll(current, durationMs)) return;
     setRunning(true);
     try {
       await onWillTrim();
       const result = await commands.meetingsTrimAudio(
         meeting.id,
-        range.start_ms,
-        range.end_ms,
+        current.start_ms,
+        current.end_ms,
       );
       if (result.status === "error") {
         onTrimFailed();
@@ -112,7 +123,9 @@ export const TrimAudioDialog: React.FC<TrimAudioDialogProps> = ({
             variant="danger"
             className="max-sm:min-h-[44px]"
             onClick={() => void trim()}
-            disabled={nothingToCut || running}
+            disabled={
+              (nothingToCut && !fieldsPending) || running || !fieldsValid
+            }
             data-testid="trim-start"
           >
             <Scissors width={14} height={14} aria-hidden="true" />
@@ -137,6 +150,11 @@ export const TrimAudioDialog: React.FC<TrimAudioDialogProps> = ({
             durationMs={durationMs}
             value={range}
             onChange={setRange}
+            handleRef={pickerRef}
+            onValidityChange={(valid, pending) => {
+              setFieldsValid(valid);
+              setFieldsPending(pending);
+            }}
             testId="trim-range"
             disabled={running}
             lengthKey="meetings.trim.newLength"

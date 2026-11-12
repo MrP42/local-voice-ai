@@ -32,7 +32,7 @@ type Theme = "light" | "dark";
 /**
  * `meetings_trim_audio` antwortet mit der neuen Dauer (1 800 000 ms) und `__leftover`
  * gesperrten alten Dateien, bei `__trimError` mit diesem Fehlercode; `meetings_get` liefert
- * den einen Datensatz. Beim Aufruf von `meetings_trim_audio` wird gemerkt, wie viele
+ * den einen Datensatz (`__getFail` = "error" | "null" lässt ihn scheitern). Beim Aufruf von `meetings_trim_audio` wird gemerkt, wie viele
  * `<audio src>` noch an der Seite hängen (`__audioAtTrim`): die Player müssen die Dateien
  * vorher losgelassen haben. Die Attrappe der Aufnahmen kennt die Befehle nicht.
  */
@@ -44,11 +44,14 @@ const installTrimMock = async (page: Page, theme: Theme = "light") => {
     w.__trimError = null;
     w.__leftover = 0;
     w.__audioAtTrim = null;
+    w.__getFail = null;
     const internals = w.__TAURI_INTERNALS__;
     const original = internals.invoke;
     internals.invoke = async (cmd: string, args: Record<string, unknown>) => {
       if (cmd === "meetings_get") {
         w.__calls.push({ cmd, args });
+        if (w.__getFail === "error") throw "store_failed";
+        if (w.__getFail === "null") return null;
         return w.__meetings.find((m: any) => m.id === args.meetingId) ?? null;
       }
       if (cmd !== "meetings_trim_audio") return original(cmd, args);
@@ -109,6 +112,32 @@ test.describe("Neu transkribieren: Bereich", () => {
     );
   });
 
+  test("ein unlesbares Feld sperrt Neu transkribieren, es gibt keinen Rückgriff auf älteren Wert", async ({
+    page,
+  }) => {
+    await openM2(page);
+    await chooseMenu(page, "menu-retranscribe");
+    await page.getByTestId("retranscribe-scope-range").click();
+    await setTime(page, "retranscribe-range-start", "5:00");
+    await field(page, "retranscribe-range-end").fill("35:");
+    await expect(page.getByTestId("retranscribe-start")).toBeDisabled();
+    await page.getByTestId("retranscribe-start").click({ force: true });
+    await expect(
+      page.getByTestId("retranscribe-range-end-error"),
+    ).toBeVisible();
+    // Der Text bleibt stehen (kein stilles Zurücksetzen auf 59:00).
+    await expect(field(page, "retranscribe-range-end")).toHaveValue("35:");
+    expect(await calls(page, "meetings_retranscribe")).toHaveLength(0);
+    // Wieder lesbar: es läuft mit dem Feldtext.
+    await setTime(page, "retranscribe-range-end", "35:00");
+    await expect(page.getByTestId("retranscribe-start")).toBeEnabled();
+    await page.getByTestId("retranscribe-start").click();
+    expect((await calls(page, "meetings_retranscribe"))[0].args.range).toEqual({
+      start_ms: 300_000,
+      end_ms: 2_100_000,
+    });
+  });
+
   test("ein Bereich geht als range an meetings_retranscribe, die ganze Aufnahme als null", async ({
     page,
   }) => {
@@ -162,7 +191,7 @@ test.describe("Neu transkribieren: Bereich", () => {
     );
   });
 
-  test("Unlesbares wird gemeldet und zurückgesetzt; Grenzen stoßen an", async ({
+  test("Unlesbares wird gemeldet und sperrt; Grenzen stoßen an", async ({
     page,
   }) => {
     await openM2(page);
@@ -172,7 +201,9 @@ test.describe("Neu transkribieren: Bereich", () => {
     await expect(page.getByTestId("retranscribe-range-start-error")).toHaveText(
       "Zeit nicht lesbar. Beispiele: 1:05 oder 1:02:30.",
     );
-    await expect(field(page, "retranscribe-range-start")).toHaveValue("0:00");
+    // Der unlesbare Text bleibt stehen und sperrt den Knopf (kein stiller Rückgriff).
+    await expect(field(page, "retranscribe-range-start")).toHaveValue("abc");
+    await expect(page.getByTestId("retranscribe-start")).toBeDisabled();
     // Anfang hinter dem Ende der Aufnahme: stößt eine Sekunde vor das Ende.
     await setTime(page, "retranscribe-range-start", "2:00:00");
     await expect(field(page, "retranscribe-range-start")).toHaveValue("58:59");
@@ -248,6 +279,120 @@ test.describe("Aufnahme zuschneiden", () => {
     expect(await calls(page, "meetings_list")).toHaveLength(listCalls);
     // Die Player sind danach wieder da.
     await expect(page.getByTestId("rec-player")).toBeVisible();
+  });
+
+  test("ein unlesbares Feld sperrt Zuschneiden: kein Aufruf, kein Rückgriff auf älteren Wert", async ({
+    page,
+  }) => {
+    await openM2(page);
+    await chooseMenu(page, "menu-trim");
+    await setTime(page, "trim-range-start", "5:00");
+    await field(page, "trim-range-end").fill("35:");
+    await expect(page.getByTestId("trim-start")).toBeDisabled();
+    await page.getByTestId("trim-start").click({ force: true });
+    await expect(page.getByTestId("trim-range-end-error")).toBeVisible();
+    await expect(field(page, "trim-range-end")).toHaveValue("35:");
+    await expect(page.getByTestId("trim-dialog")).toBeVisible();
+    expect(await calls(page, "meetings_trim_audio")).toHaveLength(0);
+  });
+
+  test("ein getipptes, noch nicht bestätigtes Feld gilt beim Klick mit seinem aktuellen Text", async ({
+    page,
+  }) => {
+    await openM2(page);
+    await chooseMenu(page, "menu-trim");
+    await field(page, "trim-range-start").fill("5:00");
+    await page.getByTestId("trim-start").click();
+    await expect(page.getByTestId("trim-dialog")).toHaveCount(0);
+    const trim = await calls(page, "meetings_trim_audio");
+    expect(trim).toHaveLength(1);
+    expect(trim[0].args.startMs).toBe(300_000);
+  });
+
+  test("scheitert das Laden nach dem Zuschnitt: Hinweis mit Erneut laden, Player bleiben abgebaut", async ({
+    page,
+  }) => {
+    await openM2(page);
+    await page.evaluate(() => ((window as any).__getFail = "null"));
+    await chooseMenu(page, "menu-trim");
+    await setTime(page, "trim-range-start", "5:00");
+    await page.getByTestId("trim-start").click();
+    await expect(page.getByTestId("trim-dialog")).toHaveCount(0);
+    const failed = page.locator("[data-sonner-toast]", {
+      hasText: "der neue Stand ließ sich nicht laden",
+    });
+    await expect(failed).toHaveCount(1);
+    // Keine alten Pfade laden: kein Player, kein <audio>.
+    await expect(page.getByTestId("rec-player")).toHaveCount(0);
+    await expect(page.locator("audio")).toHaveCount(0);
+
+    await page.evaluate(() => ((window as any).__getFail = null));
+    await failed.getByRole("button", { name: "Erneut laden" }).click();
+    await expect(page.getByTestId("rec-player")).toBeVisible();
+    expect((await calls(page, "meetings_get")).length).toBe(2);
+  });
+
+  test("ein Fehler beim Laden (statt null) wird ebenso gemeldet", async ({
+    page,
+  }) => {
+    await openM2(page);
+    await page.evaluate(() => ((window as any).__getFail = "error"));
+    await chooseMenu(page, "menu-trim");
+    await setTime(page, "trim-range-start", "5:00");
+    await page.getByTestId("trim-start").click();
+    await expect(
+      page.locator("[data-sonner-toast]", {
+        hasText: "der neue Stand ließ sich nicht laden",
+      }),
+    ).toHaveCount(1);
+    await expect(page.getByTestId("rec-player")).toHaveCount(0);
+  });
+
+  test("die Griffe des Doppelreglers haben bei 390 px eine echte Trefferfläche von 44 px", async ({
+    page,
+  }) => {
+    await openM2(page, 390, 844);
+    await chooseMenu(page, "menu-trim");
+    await setTime(page, "trim-range-start", "10:00");
+    await setTime(page, "trim-range-end", "50:00");
+    const max = 3_540_000;
+    for (const [which, ms] of [
+      ["start", 600_000],
+      ["end", 3_000_000],
+    ] as const) {
+      const id = `trim-range-slider-${which}`;
+      const box = await field(page, id).boundingBox();
+      expect(box).not.toBeNull();
+      const thumb = 44;
+      const cx = box!.x + thumb / 2 + (box!.width - thumb) * (ms / max);
+      const cy = box!.y + box!.height / 2;
+      const hits = await page.evaluate(
+        ({ cx, cy, id }) => {
+          const probe = (dx: number, dy: number) =>
+            document
+              .elementFromPoint(cx + dx, cy + dy)
+              ?.closest("[data-testid]")
+              ?.getAttribute("data-testid") ?? null;
+          return {
+            mitte: probe(0, 0),
+            links: probe(-21, 0),
+            rechts: probe(21, 0),
+            oben: probe(0, -21),
+            unten: probe(0, 21),
+            weit: probe(40, 0),
+            id,
+          };
+        },
+        { cx, cy, id },
+      );
+      expect(hits.mitte, `${which} Mitte`).toBe(id);
+      expect(hits.links, `${which} links`).toBe(id);
+      expect(hits.rechts, `${which} rechts`).toBe(id);
+      expect(hits.oben, `${which} oben`).toBe(id);
+      expect(hits.unten, `${which} unten`).toBe(id);
+      // Außerhalb der 44 px trifft der Griff nichts mehr.
+      expect(hits.weit, `${which} weit`).not.toBe(id);
+    }
   });
 
   test("Nachkommastellen: Von rundet ab, Bis rundet auf", async ({ page }) => {

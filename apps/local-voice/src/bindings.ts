@@ -14205,8 +14205,8 @@ export type TrimResult = {
  */
 duration_ms: number; 
 /**
- * So viele alte Dateien liessen sich nicht loeschen (gesperrt) und stehen in
- * der Aufraeumliste der Besprechung; die App versucht es beim Start wieder.
+ * So viele alte Dateien liessen sich nicht loeschen (gesperrt) und stehen als
+ * Loeschauftrag in der Datenbank; die App versucht es beim Start wieder.
  */
 leftover_files: number }
 export type TtsDownloadInfo = { id: string; kind: TtsDownloadKind; name: string; description: string; 
