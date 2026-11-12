@@ -187,7 +187,9 @@ fn einladung_enthaelt_alles_und_marke() {
         .html
         .contains("href=\"https://intranet.example.org/vorlage\""));
     assert_eq!(finde_marke(&e.text).as_deref(), Some("01HPLAN"));
-    assert_eq!(finde_marke(&e.html).as_deref(), Some("01HPLAN"));
+    // HTML wird nicht durchsucht (der Adapter liefert Text); die Marke steht dort
+    // in einem eigenen Element.
+    assert!(e.html.contains(">lva-plan:01HPLAN<"));
 }
 
 #[test]
@@ -649,7 +651,6 @@ fn marke_in_url_wird_nicht_als_marke_gelesen() {
     p.materials[0].url = Some("https://x.example.org/lva-plan:abc".into());
     let e = einladung_aus("P1", &p, &Gestaltung::default());
     assert_eq!(finde_marke(&e.text).as_deref(), Some("P1"));
-    assert_eq!(finde_marke(&e.html).as_deref(), Some("P1"));
     assert!(!e
         .html
         .contains("href=\"https://x.example.org/lva-plan:abc\""));
@@ -1245,6 +1246,12 @@ fn codex21_blockende_nur_als_vollstaendige_marke() {
     );
     assert!(!a.schreiben_erlaubt);
     assert_eq!(a.link.sync_state, SyncState::Verwaist);
+    // HTML-Zeichen sind im Klartext keine Grenzen.
+    for z in ["lva-plan:P1<Zusatz", "> lva-plan:P1", "<p>lva-plan:P1</p>"] {
+        let m = text.replace("lva-plan:P1", z);
+        assert!(finde_block(&m, "P1").is_none(), "{z}");
+        assert!(finde_marke(&m).is_none(), "{z}");
+    }
     // Markenzeile mit Zusatz ist kein gueltiges Blockende.
     let zusatz = text.replace("lva-plan:P1", "lva-plan:P1 Zusatz");
     assert!(finde_block(&zusatz, "P1").is_none());

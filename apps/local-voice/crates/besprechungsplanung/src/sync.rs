@@ -60,8 +60,8 @@ pub struct Beobachtung {
     pub location: Feld,
     pub join_url: Feld,
     pub cancelled: bool,
-    /// Termintext als Text. `None`: der Adapter liefert keinen Text, dann werden
-    /// Marke und Block nicht geprueft.
+    /// Termintext als Klartext (HTML wandelt der Adapter vorher in Text). `None`:
+    /// der Adapter liefert keinen Text, dann werden Marke und Block nicht geprueft.
     pub description: Option<String>,
     /// Teilnehmende als Identitaet (siehe [`crate::consent::identitaet`]).
     pub attendees: Vec<String>,

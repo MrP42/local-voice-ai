@@ -356,7 +356,8 @@ pub fn block_hash(block_text: &str) -> String {
     format!("{h:016x}")
 }
 
-/// Findet die Plan-Id in einem Termintext (Text oder HTML): die Marke, die den
+/// Findet die Plan-Id in einem Termintext (nur Klartext; HTML wandelt der Adapter
+/// vorher in Text, z. B. Graph mit `outlook.body-content-type="text"`): die Marke, die den
 /// App-Block abschliesst (siehe [`finde_block`]). Eine Marke ausserhalb eines Blocks
 /// zaehlt nicht.
 pub fn finde_marke(beschreibung: &str) -> Option<String> {
@@ -382,10 +383,11 @@ fn blockgrenzen(text: &str) -> Option<(usize, usize, String)> {
     Some((start, ab + rel + laenge, id))
 }
 
-/// Erste Markenzeile: die Marke steht allein auf ihrer Zeile (Text) bzw. allein
-/// in ihrem Element (HTML), umgeben nur von Leerraum bis zum Zeilenumbruch, `>`
-/// oder `<`; die Id ist vollstaendig. So zaehlen weder `https://x/lva-plan:abc`,
-/// noch der Anfang von `lva-plan:P1X`, noch `lva-plan:P1 Zusatz` als Ende von `P1`.
+/// Erste Markenzeile im Klartext: die Marke steht allein auf ihrer Zeile, daneben
+/// bis zum Zeilenumbruch nur Leerraum; die Id ist vollstaendig. So zaehlen weder
+/// `https://x/lva-plan:abc`, noch `lva-plan:P1X`, `lva-plan:P1 Zusatz`,
+/// `lva-plan:P1<x` oder `> lva-plan:P1` als Ende von `P1`. `<` und `>` sind hier
+/// gewoehnliche Zeichen; HTML wird vorher in Text gewandelt.
 /// Liefert Position, Laenge und Id.
 fn erste_marke(beschreibung: &str) -> Option<(usize, usize, String)> {
     let mut ab = 0;
@@ -395,7 +397,7 @@ fn erste_marke(beschreibung: &str) -> Option<(usize, usize, String)> {
         let davor_ok = beschreibung[..pos]
             .chars()
             .rev()
-            .take_while(|c| *c != '\n' && *c != '>')
+            .take_while(|c| *c != '\n')
             .all(char::is_whitespace);
         let rest = &beschreibung[ab..];
         let id: String = rest
@@ -404,7 +406,7 @@ fn erste_marke(beschreibung: &str) -> Option<(usize, usize, String)> {
             .collect();
         let danach_ok = rest[id.len()..]
             .chars()
-            .take_while(|c| *c != '\n' && *c != '<')
+            .take_while(|c| *c != '\n')
             .all(char::is_whitespace);
         if davor_ok && danach_ok && !id.is_empty() && id.len() <= 64 {
             return Some((pos, MARKE_PRAEFIX.len() + id.len(), id));

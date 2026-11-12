@@ -119,6 +119,8 @@ Der Block beginnt beim Kopf und endet an der ersten danach folgenden Markenzeile
 auf ihrer Zeile, nur Leerraum daneben, Id vollständig);
 gehört sie zu einer anderen Planung, gilt der Block als entfernt. Eine Marke außerhalb
 eines Blocks zählt nicht. Marke und Block werden nach derselben Begrenzung gesucht.
+Gesucht wird nur im Klartext; `<` und `>` sind dort gewöhnliche Zeichen. HTML wandelt der
+Adapter vorher in Text (Graph: `Prefer: outlook.body-content-type="text"`).
 Bei Adapter C schreibt die App den Block nach dem Einfügen nie wieder; dort zählt nur die Marke.
 Schreibende Adapter (A, B) dürfen nur bei nachweislich geprüftem Stand schreiben: Termintext liegt
 vor, Prüfsumme der zuletzt geschriebenen Fassung ist gespeichert, Block stimmt mit ihr überein.
