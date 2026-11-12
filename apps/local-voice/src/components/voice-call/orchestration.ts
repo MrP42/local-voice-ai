@@ -110,6 +110,8 @@ export interface OrchestrationDeps {
   conversationId?(): string | null | Promise<string | null>;
   /** Schlüssel der letzten Ausgabe in Rust (Tor: „ja“ nach einer Rückfrage, „wiederholen“); sonst `conversationId`. */
   ausgabeKey?(): string | null | Promise<string | null>;
+  /** Denktext (Reasoning) eines Modells zur Anfrage `requestId`; nur für die Denk-Anzeige. */
+  onDenktext?(requestId: string, text: string): void;
 }
 
 export interface Prepared {
@@ -382,6 +384,9 @@ function makeModel(
       let onText = req.onText;
       const off = await deps.subscribe(turnId, (e) => {
         if (e.kind === "delta" && e.text) onText(e.text);
+        // Denktext nur für die Anzeige; der Sofort-Sprecher zeigt keinen.
+        if (e.kind === "reasoning" && e.text && !ohneGespraech)
+          deps.onDenktext?.(req.requestId, e.text);
         if (e.kind === "usage" && e.usage) deps.onUsage(e.usage);
         if (e.kind === "usage" || e.kind === "failed") usageSeen();
       });

@@ -110,6 +110,12 @@ export const VoiceCallPage: React.FC = () => {
         !letzteZeile.final &&
         (textBusy || state !== "idle")
       : letzteZeile?.role === "user" && (textBusy || state === "thinking"));
+  // Das Modell gehört zum Denkprozess: es bleibt an der Antwort, auch wenn später ein anderes aktiv ist.
+  const denkModell = useVoiceCallStore((s) => s.denkModell);
+  const denkSeit = denkenLive?.seit;
+  useEffect(() => {
+    if (denkSeit !== undefined && activeLlm.label) denkModell(activeLlm.label);
+  }, [denkSeit, activeLlm.label, denkModell]);
   const notice = useVoiceCallStore((s) => s.notice);
   const imProjekt = useVoiceCallStore((s) => s.projectId !== null);
   const settingsOpen = useVoiceCallStore((s) => s.settingsOpen);

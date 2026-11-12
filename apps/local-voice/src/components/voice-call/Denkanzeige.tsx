@@ -1,11 +1,22 @@
-import React, { useEffect, useId, useState } from "react";
+import React, {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import type { Denkprozess, DenkSchritt } from "@/stores/voiceCallStore";
+import {
+  useVoiceCallStore,
+  type Denkprozess,
+  type DenkSchritt,
+} from "@/stores/voiceCallStore";
 
 // Denk-Anzeige (Patrick 12.11.2026): statt einer gesprochenen Floskel („Ich denke kurz nach.“) steht
 // unter der letzten Nachricht ein graues, animiertes „Denkt nach …“. Ein Klick klappt den Denkprozess
-// auf, der live mitläuft (Modell, Abruf eigener Inhalte, Werkzeuge, Zwischenschritte). Nach der Antwort
+// auf, der live mitläuft (Modell, Abruf eigener Inhalte, Werkzeuge, Zwischenschritte und der gestreamte
+// Denktext des Modells, wo Anbieter oder CLI ihn liefern). Nach der Antwort
 // bleibt er als „Nachgedacht · 7,9 s“ an der Antwort aufklappbar. Nichts davon wird gesprochen,
 // gespeichert oder an ein Modell gegeben.
 
@@ -23,6 +34,17 @@ function SchrittText({ s }: { s: DenkSchritt }): React.ReactElement {
       })}
     </>
   );
+}
+
+/**
+ * Fokusübergabe: Hatte der Knopf der laufenden Anzeige den Fokus, als sie verschwand (die Antwort kam),
+ * übernimmt ihn der Knopf des abgeschlossenen Prozesses an der Antwort (gleiches `seit`).
+ */
+let fokusUebergabe: number | null = null;
+
+/** Wartet eine Fokusübergabe auf diesen Prozess (dann muss er an der Antwort sichtbar sein)? */
+export function wartetAufFokus(d: Denkprozess): boolean {
+  return fokusUebergabe === d.seit;
 }
 
 /** Sekunden seit `seit`, jede halbe Sekunde neu (nur solange die Anzeige läuft). */
@@ -44,8 +66,35 @@ export const Denkanzeige: React.FC<{
   modell?: string | null;
 }> = ({ denken, laeuft, modell }) => {
   const { t, i18n } = useTranslation();
-  const [offen, setOffen] = useState(false);
+  const offen = denken.offen ?? false;
+  const denkOffen = useVoiceCallStore((s) => s.denkOffen);
+  const knopf = useRef<HTMLButtonElement>(null);
   const listId = useId();
+  const seit = denken.seit;
+  // Abgeschlossene Anzeige: einen gemerkten Fokus der laufenden übernehmen (sie ist verschwunden).
+  useLayoutEffect(() => {
+    if (laeuft || fokusUebergabe !== seit) return;
+    fokusUebergabe = null;
+    const aktiv = document.activeElement;
+    if (!aktiv || aktiv === document.body) knopf.current?.focus();
+  }, [laeuft, seit]);
+  // Laufende Anzeige: Fokus merken, solange er auf dem Knopf liegt. Verschwindet der Knopf mit dem
+  // Fokus, bleibt die Merkung; ein echtes Verlassen (Knopf noch da) löscht sie.
+  const fokusHandler = laeuft
+    ? {
+        onFocus: () => {
+          fokusUebergabe = seit;
+        },
+        onBlur: () => {
+          const el = knopf.current;
+          window.setTimeout(() => {
+            if (el?.isConnected && fokusUebergabe === seit)
+              fokusUebergabe = null;
+          }, 0);
+        },
+      }
+    : {};
+  const name = denken.modell ?? modell;
   const sek = useSekunden(denken.seit, laeuft);
   const dauer = (laeuft ? sek : (denken.ms ?? 0) / 1000).toLocaleString(
     i18n.language,
@@ -63,10 +112,12 @@ export const Denkanzeige: React.FC<{
       data-testid={laeuft ? "denkanzeige" : "denkprozess"}
     >
       <button
+        ref={knopf}
         type="button"
         aria-expanded={offen}
         aria-controls={listId}
-        onClick={() => setOffen((o) => !o)}
+        onClick={() => denkOffen(seit, !offen)}
+        {...fokusHandler}
         className="self-start inline-flex items-center gap-1 min-h-7 -mx-1 px-1 rounded text-xs text-text/70 hover:text-text hover:bg-mid-gray/10 cursor-pointer"
       >
         <span
@@ -88,24 +139,32 @@ export const Denkanzeige: React.FC<{
         <ol
           id={listId}
           aria-label={t("voiceCall.denken.titel")}
-          aria-live={laeuft ? "polite" : undefined}
           data-testid="denkprozess-liste"
           className="m-0 ml-1 pl-3 border-l border-mid-gray/30 list-none flex flex-col gap-1 text-xs text-text/70"
         >
-          {modell && <li>{t("voiceCall.denken.modell", { modell })}</li>}
+          {name && <li>{t("voiceCall.denken.modell", { modell: name })}</li>}
           {denken.schritte.map((s, i) => (
             <li key={i}>
               <SchrittText s={s} />
             </li>
           ))}
+          {denken.gedanken && (
+            <li
+              data-testid="denkprozess-gedanken"
+              className="whitespace-pre-wrap break-words max-h-64 overflow-y-auto"
+            >
+              {denken.gedanken}
+            </li>
+          )}
           {laeuft && (
             <li className="lv-denken-schimmer">
               {t("voiceCall.denken.arbeitet")}
             </li>
           )}
-          {!laeuft && denken.schritte.length === 0 && !modell && (
-            <li>{t("voiceCall.denken.keineSchritte")}</li>
-          )}
+          {!laeuft &&
+            denken.schritte.length === 0 &&
+            !denken.gedanken &&
+            !name && <li>{t("voiceCall.denken.keineSchritte")}</li>}
         </ol>
       )}
     </div>

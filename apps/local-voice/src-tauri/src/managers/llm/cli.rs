@@ -1312,6 +1312,36 @@ pub struct CallOptions {
     /// Vorschau-Schalter live: vor dem Start, waehrend des Laufs (Prozessbaum
     /// beenden) und vor der Rueckgabe geprueft; „aus“ verwirft das Ergebnis.
     pub preview_switch: Option<super::preview::PreviewSwitch>,
+    /// Gesetzt: jede vollstaendige stdout-Zeile geht schon waehrend des Laufs hierhin (Denkschritte
+    /// der Codex-CLI fuer die Denk-Anzeige, lva#485). Nur ohne Vorschau; das Ergebnis aendert sich nicht.
+    pub stdout_zeile: Option<Zeilenabgriff>,
+}
+
+/// Empfaenger fuer stdout-Zeilen eines laufenden CLI-Aufrufs.
+#[derive(Clone)]
+pub struct Zeilenabgriff(pub std::sync::Arc<dyn Fn(&str) + Send + Sync>);
+
+impl std::fmt::Debug for Zeilenabgriff {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Zeilenabgriff")
+    }
+}
+
+/// Denktext einer Zeile von `codex exec --json` (`item.completed` mit `item.type = reasoning`).
+pub(crate) fn codex_gedanke(zeile: &str) -> Option<String> {
+    let ev: serde_json::Value = serde_json::from_str(zeile.trim()).ok()?;
+    if ev.get("type").and_then(|t| t.as_str()) != Some("item.completed") {
+        return None;
+    }
+    let item = ev.get("item")?;
+    if item.get("type").and_then(|t| t.as_str()) != Some("reasoning") {
+        return None;
+    }
+    item.get("text")
+        .and_then(|t| t.as_str())
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
 }
 
 /// Ob ein Fehler ein Abbruch war (dann kein Wiederholen).
@@ -1629,11 +1659,13 @@ fn call_inner(
     }
     let child = cmd.spawn().map_err(|e| format!("cli_missing: {e}"))?;
     let Some(check) = &opts.preview else {
-        let output = run_cancellable(
+        let output = run_mit_abgriff(
             child,
             Some(stdin_text.into_bytes()),
             timeout,
             opts.cancel.as_deref(),
+            false,
+            opts.stdout_zeile.as_ref(),
         )?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let reply = match cli {
@@ -1871,11 +1903,24 @@ fn wait_rx<T>(
 /// Wie [`run_cancellable`]; mit `group` wurde das Kind in einer eigenen Unix-
 /// Prozessgruppe gestartet und wird samt Gruppe beendet.
 pub(crate) fn run_cancellable_in(
+    child: std::process::Child,
+    input: Option<Vec<u8>>,
+    timeout: Duration,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+    group: bool,
+) -> Result<std::process::Output, String> {
+    run_mit_abgriff(child, input, timeout, cancel, group, None)
+}
+
+/// Wie [`run_cancellable_in`]; mit `abgriff` geht jede vollstaendige stdout-Zeile schon waehrend
+/// des Laufs an den Abgriff (die gesammelte Ausgabe bleibt gleich).
+pub(crate) fn run_mit_abgriff(
     mut child: std::process::Child,
     input: Option<Vec<u8>>,
     timeout: Duration,
     cancel: Option<&std::sync::atomic::AtomicBool>,
     group: bool,
+    abgriff: Option<&Zeilenabgriff>,
 ) -> Result<std::process::Output, String> {
     #[cfg(not(unix))]
     let _ = group;
@@ -1941,7 +1986,34 @@ pub(crate) fn run_cancellable_in(
         (Some(data), Some(mut stdin)) => Some(spawn_into(move || stdin.write_all(&data))),
         _ => None,
     };
-    let out_rx = drain(child.stdout.take());
+    fn drain_zeilen(
+        pipe: Option<impl Read + Send + 'static>,
+        abgriff: Zeilenabgriff,
+    ) -> mpsc::Receiver<Vec<u8>> {
+        spawn_into(move || {
+            let mut buf = Vec::new();
+            let mut gemeldet = 0;
+            if let Some(mut p) = pipe {
+                let mut stueck = [0u8; 8192];
+                loop {
+                    match p.read(&mut stueck) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => buf.extend_from_slice(&stueck[..n]),
+                    }
+                    while let Some(pos) = buf[gemeldet..].iter().position(|b| *b == b'\n') {
+                        let ende = gemeldet + pos;
+                        (abgriff.0)(&String::from_utf8_lossy(&buf[gemeldet..ende]));
+                        gemeldet = ende + 1;
+                    }
+                }
+            }
+            buf
+        })
+    }
+    let out_rx = match abgriff {
+        Some(a) => drain_zeilen(child.stdout.take(), a.clone()),
+        None => drain(child.stdout.take()),
+    };
     let err_rx = drain(child.stderr.take());
 
     let timed_out = || -> Result<std::process::Output, String> {
@@ -2310,6 +2382,59 @@ mod tests {
             Vec::<&str>::new()
         );
         assert_eq!(missing_relay_flags(Cli::Codex, "--json"), vec!["--config"]);
+    }
+
+    #[test]
+    fn codex_reasoning_lines_become_thoughts_and_nothing_else_does() {
+        let gedanke = r#"{"type":"item.completed","item":{"id":"i0","type":"reasoning","text":"**Plan**\n\nErst die Termine lesen."}}"#;
+        assert_eq!(
+            codex_gedanke(gedanke).as_deref(),
+            Some("**Plan**\n\nErst die Termine lesen.")
+        );
+        let antwort = r#"{"type":"item.completed","item":{"type":"agent_message","text":"Hallo"}}"#;
+        assert_eq!(codex_gedanke(antwort), None);
+        assert_eq!(
+            codex_gedanke(r#"{"type":"item.started","item":{"type":"reasoning","text":"x"}}"#),
+            None
+        );
+        assert_eq!(codex_gedanke("kein json"), None);
+        assert_eq!(
+            codex_gedanke(r#"{"type":"item.completed","item":{"type":"reasoning","text":"  "}}"#),
+            None
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_line_tap_sees_each_line_while_the_output_stays_whole() {
+        use std::sync::{Arc, Mutex};
+        let child = Command::new("sh")
+            .args(["-c", "printf 'eins\n'; sleep 0.2; printf 'zwei\ndrei'"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let zeilen = Arc::new(Mutex::new(Vec::<String>::new()));
+        let z = zeilen.clone();
+        let abgriff = Zeilenabgriff(Arc::new(move |l: &str| {
+            z.lock().unwrap().push(l.to_string())
+        }));
+        let out = run_mit_abgriff(
+            child,
+            None,
+            Duration::from_secs(10),
+            None,
+            false,
+            Some(&abgriff),
+        )
+        .unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "eins\nzwei\ndrei");
+        // Die letzte Zeile ohne Umbruch ist nicht vollstaendig und wird nicht gemeldet.
+        assert_eq!(
+            *zeilen.lock().unwrap(),
+            vec!["eins".to_string(), "zwei".to_string()]
+        );
     }
 
     /// Ein Abbruch beendet den Prozess, statt auf die Zeitgrenze zu warten.

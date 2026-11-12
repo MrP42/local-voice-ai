@@ -158,7 +158,11 @@ export type DenkEreignis =
   /** Der Sofort-Sprecher (lokales Modell) wurde gefragt. */
   | { art: "sofort"; modell: string }
   /** Der nächste Text ist der Sofort-Sprecher, der weiterspricht: die Anzeige läuft danach weiter. */
-  | { art: "zwischen" };
+  | { art: "zwischen" }
+  /** Gestreamter Denktext des Modells (Reasoning): nur Anzeige, nie Stimme oder Verlauf. */
+  | { art: "gedanke"; text: string }
+  /** Der Schritt endet ohne Antwort (Abbruch, Unterbrechung, verworfen): die Anzeige verschwindet. */
+  | { art: "ende"; turnId: string };
 
 /** Laufender Sofort-Sprecher eines Schritts (`sofort.ts`). */
 interface SofortLauf {
@@ -315,6 +319,11 @@ export const TUNING = {
    * Jedes Lebenszeichen („laeuft“) verlängert die Frist; diese Obergrenze gilt trotzdem (ms, lva#459).
    */
   projektObergrenzeMs: 300_000,
+  /**
+   * Nach einer Überbrückung (Werkzeug oder Denker arbeitet) gilt diese längere Frist bis zum ersten
+   * Inhalt; sie wird nie ausgeschaltet (ms).
+   */
+  denkerFristMs: 180_000,
   /** So lange darf die Erkennung einer Äußerung dauern, während die Wiedergabe angehalten ist (ms). */
   holdSttMaxMs: 8_000,
 };
@@ -335,6 +344,7 @@ function ersteFrist(
   abgelaufen: Promise<typeof FRIST>;
   stop: () => void;
   lebenszeichen: () => void;
+  verlaengern: (neuMs: number) => void;
 } {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let deckel: ReturnType<typeof setTimeout> | undefined;
@@ -356,6 +366,12 @@ function ersteFrist(
       if (maxMs === undefined || gestoppt) return;
       clearTimeout(timer);
       timer = setTimeout(() => ablaufen(FRIST), ms);
+    },
+    // Neue Frist ab jetzt (nur länger, nie aus); die Obergrenze `maxMs` bleibt.
+    verlaengern: (neuMs: number) => {
+      if (gestoppt || neuMs <= ms) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => ablaufen(FRIST), neuMs);
     },
   };
 }
@@ -484,6 +500,7 @@ export class VoiceCallEngine {
       onStatus: (s) => this.cb.onStatus?.(s),
       conversationId: async () => (await this.cb.conversationId?.()) ?? null,
       ausgabeKey: () => this.konversation(),
+      onDenktext: (id, text) => this.denkText(id, text),
     });
     // Ändern sich Modelle, Verbindungen, Regelwerk oder Einstellungen, liest der nächste Schritt neu.
     const invalidate = () => this.session.invalidate();
@@ -679,6 +696,7 @@ export class VoiceCallEngine {
     this.cb.onStatus?.(null);
     if (keepPartial && run.partial)
       this.cb.onAssistant(run.partial, true, true);
+    this.cb.onDenken?.({ art: "ende", turnId: run.id });
   }
 
   /** Hörer für die Antwortstücke entfernen (Seite wird verlassen). */
@@ -1673,17 +1691,18 @@ export class VoiceCallEngine {
       fristStop = () => frist.stop();
       if (sofortLauf.zustand() === "sprecher") frist.stop();
       let timedOut = false;
+      let ueberbrueckt = false;
       // Das Tor im Projekt hat die Anfrage mit einem Code abgelehnt: Die Hinweisleiste sagt den Grund.
       let projektStopp = false;
       const onModel = (s: string) => {
         if (stale() || timedOut) return;
         // Der Sofort-Sprecher hat vollständig geantwortet: späte Sätze des Denkers verwerfen.
         if (sofortLauf.zustand() === "sprecher") return;
-        // Überbrückungen kommen nur aus `side` (Orchestrator, Werkzeug, Buch-Seite): nur in der
-        // Denk-Anzeige; sie halten die Frist an wie bisher. Auf dem Tor-Weg (auch im Projekt) wird
-        // nichts gefiltert: Die Anzeige muss dem freigegebenen Text gleichen.
-        if (side && istUeberbrueckung(s)) {
-          frist.stop();
+        // Überbrückungen (Orchestrator, Werkzeug, Buch-Seite, oder ein Modell, das eine sagt) auf
+        // jedem Weg nur in der Denk-Anzeige, nie Chat oder Stimme. Die Frist läuft weiter, länger.
+        if (istUeberbrueckung(s)) {
+          ueberbrueckt = true;
+          frist.verlaengern(TUNING.denkerFristMs);
           this.cb.onDenken?.({ art: "schritt", text: s.trim() });
           return;
         }
@@ -1733,6 +1752,10 @@ export class VoiceCallEngine {
             if (e.kind === "laeuft") {
               // Lebenszeichen ohne Inhalt: das Tor puffert noch; die Frist läuft weiter.
               frist.lebenszeichen();
+              return;
+            }
+            if (e.kind === "reasoning") {
+              this.denkText(id, e.text ?? "");
               return;
             }
             if (e.kind === "revoked") {
@@ -1805,10 +1828,14 @@ export class VoiceCallEngine {
       const rueckgabe = timedOut || istUeberbrueckung(full) ? "" : full.trim();
       // Mit Orchestrator oder nach dem Sofort-Sprecher zählt, was angezeigt wurde (die Rückgabe des
       // Denkers kennt den Satz des Sprechers nicht).
+      // Nach einer gefilterten Überbrückung auf dem Tor-Weg enthält die Rückgabe sie noch: dann gilt
+      // nur, was angezeigt wurde.
       const answer =
-        side || sofortLauf.gesprochen()
-          ? modelPartial || rueckgabe
-          : rueckgabe || modelPartial;
+        ueberbrueckt && !side
+          ? modelPartial
+          : side || sofortLauf.gesprochen()
+            ? modelPartial || rueckgabe
+            : rueckgabe || modelPartial;
       if (!answer) {
         // Im Projekt erklärt die Hinweisleiste, warum nichts gesendet wurde: keine zweite, unklare Zeile
         // („Das kann ich gerade nicht sicher beantworten“) und kein Eintrag dazu im Gespräch.
@@ -2086,17 +2113,18 @@ export class VoiceCallEngine {
     fristStop = () => frist.stop();
     if (sofortLauf.zustand() === "sprecher") frist.stop();
     let timedOut = false;
+    let ueberbrueckt = false;
     // Das Tor im Projekt hat die Anfrage mit einem Code abgelehnt: Die Hinweisleiste sagt den Grund.
     let projektStopp = false;
     const onModel = (s: string) => {
       if (dead() || timedOut) return;
       // Der Sofort-Sprecher hat vollständig geantwortet: späte Sätze des Denkers verwerfen.
       if (sofortLauf.zustand() === "sprecher") return;
-      // Überbrückungen kommen nur aus `side` (Orchestrator, Werkzeug, Buch-Seite): nur in der
-      // Denk-Anzeige; sie halten die Frist an wie bisher. Auf dem Tor-Weg (auch im Projekt) wird
-      // nichts gefiltert: Die Anzeige muss dem freigegebenen Text gleichen.
-      if (side && istUeberbrueckung(s)) {
-        frist.stop();
+      // Überbrückungen (Orchestrator, Werkzeug, Buch-Seite, oder ein Modell, das eine sagt) auf
+      // jedem Weg nur in der Denk-Anzeige, nie Chat oder Stimme. Die Frist läuft weiter, länger.
+      if (istUeberbrueckung(s)) {
+        ueberbrueckt = true;
+        frist.verlaengern(TUNING.denkerFristMs);
         this.cb.onDenken?.({ art: "schritt", text: s.trim() });
         return;
       }
@@ -2165,6 +2193,10 @@ export class VoiceCallEngine {
           if (e.kind === "laeuft") {
             // Lebenszeichen ohne Inhalt: das Tor puffert noch; die Frist läuft weiter.
             frist.lebenszeichen();
+            return;
+          }
+          if (e.kind === "reasoning") {
+            this.denkText(turn.id, e.text ?? "");
             return;
           }
           if (e.kind === "revoked") {
@@ -2293,6 +2325,13 @@ export class VoiceCallEngine {
     if (!this.player?.active) this.finishTurn();
   }
 
+  /** Denktext eines Modells: nur, solange seine Anfrage der laufende Schritt ist. */
+  private denkText(requestId: string, text: string): void {
+    if (!text) return;
+    if (this.turn?.id !== requestId && this.textRun?.id !== requestId) return;
+    this.cb.onDenken?.({ art: "gedanke", text });
+  }
+
   private dropTurn(turn: Turn): void {
     if (this.turn === turn) this.turn = null;
     if (this.held === turn) {
@@ -2303,6 +2342,7 @@ export class VoiceCallEngine {
       this.player?.stop();
     }
     this.sentenceHandlers.delete(turn.id);
+    this.cb.onDenken?.({ art: "ende", turnId: turn.id });
     if (!this.utt) this.setState("listening");
   }
 
@@ -2340,6 +2380,7 @@ export class VoiceCallEngine {
       () => undefined,
     );
     this.cb.onStatus?.(null);
+    this.cb.onDenken?.({ art: "ende", turnId: turn.id });
     turn.commit();
     const said = this.gehoert(turn)
       .filter((p) => p.kind === "inhalt")

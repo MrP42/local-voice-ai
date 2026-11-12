@@ -10,7 +10,7 @@ import type {
   VoiceLine,
   VoiceSource,
 } from "@/stores/voiceCallStore";
-import { Denkanzeige } from "./Denkanzeige";
+import { Denkanzeige, wartetAufFokus } from "./Denkanzeige";
 import { sourceTarget } from "./globalContext";
 import { openInReader } from "@/lib/library/books";
 
@@ -86,7 +86,13 @@ const LineEditor: React.FC<{
  */
 const DENKPROZESS_AB_MS = 2000;
 function zeigeDenkprozess(d: Denkprozess): boolean {
-  return d.schritte.length > 0 || (d.ms ?? 0) >= DENKPROZESS_AB_MS;
+  return (
+    d.schritte.length > 0 ||
+    !!d.gedanken ||
+    !!d.offen ||
+    wartetAufFokus(d) ||
+    (d.ms ?? 0) >= DENKPROZESS_AB_MS
+  );
 }
 
 export const Transcript: React.FC<{

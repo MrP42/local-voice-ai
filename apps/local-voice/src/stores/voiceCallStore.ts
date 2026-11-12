@@ -156,6 +156,22 @@ export interface Denkprozess {
   /** Der Sofort-Sprecher hat weitergesprochen; die Anzeige läuft unter seiner Zeile, bis der Denker liefert. */
   weiter?: boolean;
   schritte: DenkSchritt[];
+  /** Gestreamter Denktext des Modells (Reasoning), höchstens `DENKTEXT_MAX` Zeichen. */
+  gedanken?: string;
+  /** Modell, das gedacht hat (bleibt nach der Antwort sichtbar). */
+  modell?: string;
+  /** Aufgeklappt: geht beim Übergang von der laufenden Anzeige an die Antwort mit. */
+  offen?: boolean;
+}
+
+/** Höchstlänge des angezeigten Denktexts (Zeichen). */
+export const DENKTEXT_MAX = 16_000;
+
+/** Hängt Denktext an (bis `DENKTEXT_MAX`). */
+export function denkText(d: Denkprozess, text: string): Denkprozess {
+  const bisher = d.gedanken ?? "";
+  if (bisher.length >= DENKTEXT_MAX) return d;
+  return { ...d, gedanken: (bisher + text).slice(0, DENKTEXT_MAX) };
 }
 
 /** Hängt einen Schritt an; derselbe Schritt direkt hintereinander zählt einmal. */
@@ -420,6 +436,10 @@ interface VoiceCallStore {
   setShowArchived: (show: boolean) => Promise<void>;
   /** Laufende Text-Antwort abbrechen (Stopp-Knopf). */
   stopText: () => void;
+  /** Denkprozess (laufend oder an einer Antwort, erkannt an `seit`) auf- oder zuklappen. */
+  denkOffen: (seit: number, offen: boolean) => void;
+  /** Modell des laufenden Denkprozesses festhalten (bleibt an der Antwort). */
+  denkModell: (modell: string) => void;
   /** Seite verlassen: Anruf beenden, Verlauf bleibt. */
   leave: () => Promise<void>;
   /**
@@ -653,8 +673,9 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
         onVerwerfen: () =>
           set((s) => {
             const last = s.lines[s.lines.length - 1];
-            if (!last || last.role !== "assistant" || last.final) return {};
-            return { lines: s.lines.slice(0, -1) };
+            if (!last || last.role !== "assistant" || last.final)
+              return { denken: null };
+            return { lines: s.lines.slice(0, -1), denken: null };
           }),
         conversationId: async () => {
           // Erst fertig speichern lassen: so kennt der Aufruf das laufende Gespräch,
@@ -684,6 +705,24 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
             set((s) =>
               s.denken ? { denken: { ...s.denken, zwischen: true } } : {},
             );
+            return;
+          }
+          if (e.art === "ende") {
+            set((s) => (s.denken?.turnId === e.turnId ? { denken: null } : {}));
+            return;
+          }
+          if (e.art === "gedanke") {
+            // Denktext läuft auch nach der ersten Antwortzeile weiter (Werkzeugrunden): dann an den
+            // Denkprozess der letzten Antwort.
+            set((s) => {
+              if (s.denken) return { denken: denkText(s.denken, e.text) };
+              const i = s.lines.length - 1;
+              const last = s.lines[i];
+              if (!last || last.role !== "assistant" || !last.denken) return {};
+              const lines = [...s.lines];
+              lines[i] = { ...last, denken: denkText(last.denken, e.text) };
+              return { lines };
+            });
             return;
           }
           const schritt: DenkSchritt =
@@ -1055,6 +1094,23 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
       await sendFeedback(heard, next);
     },
 
+    denkOffen: (seit, offen) =>
+      set((s) => ({
+        denken: s.denken?.seit === seit ? { ...s.denken, offen } : s.denken,
+        lines: s.lines.some((l) => l.denken?.seit === seit)
+          ? s.lines.map((l) =>
+              l.denken?.seit === seit
+                ? { ...l, denken: { ...l.denken, offen } }
+                : l,
+            )
+          : s.lines,
+      })),
+    denkModell: (modell) =>
+      set((s) =>
+        s.denken && s.denken.modell !== modell
+          ? { denken: { ...s.denken, modell } }
+          : {},
+      ),
     stopText: () => {
       engine?.cancelText(true);
       textRun++;

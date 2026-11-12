@@ -671,6 +671,28 @@ test.describe("Sprachgespraech", () => {
     const requestId = await page.evaluate(
       () => (window as any).__chat.args.requestId as string,
     );
+    // Gestreamter Denktext des Modells erscheint live im aufgeklappten Prozess, nie im Chat.
+    await page.evaluate((id) => {
+      const w = window as any;
+      w.__emit("voice-call", {
+        kind: "reasoning",
+        request_id: id,
+        text: "Zuerst die ungelesenen ",
+      });
+      w.__emit("voice-call", {
+        kind: "reasoning",
+        request_id: id,
+        text: "Mails zählen.",
+      });
+    }, requestId);
+    await expect(page.getByTestId("denkprozess-gedanken")).toHaveText(
+      "Zuerst die ungelesenen Mails zählen.",
+    );
+    await expect(
+      log.locator(".rounded-xl", { hasText: "ungelesenen" }),
+    ).toHaveCount(0);
+    // Der Fokus liegt auf dem Aufklappknopf, wenn die Antwort kommt.
+    await anzeige.getByRole("button").focus();
     await page.evaluate((id) => {
       const w = window as any;
       w.__emit("voice-call", {
@@ -684,14 +706,23 @@ test.describe("Sprachgespraech", () => {
     }, requestId);
     await expect(log.getByText("Zwei neue Mails.")).toBeVisible();
     await expect(anzeige).toHaveCount(0);
-    // Die Antwort enthält nur den Inhalt, der Denkprozess bleibt an ihr aufklappbar.
-    await expect(log.getByText("Ich schaue in deine Mails.")).toHaveCount(0);
+    // Die Antwort enthält nur den Inhalt; der Denkprozess hängt an ihr, bleibt aufgeklappt und
+    // übernimmt den Fokus.
+    await expect(
+      log.locator(".rounded-xl", { hasText: "Ich schaue" }),
+    ).toHaveCount(0);
     const prozess = page.getByTestId("denkprozess");
     await expect(prozess).toContainText("Nachgedacht");
-    await prozess.getByRole("button").click();
-    await expect(prozess.getByTestId("denkprozess-liste")).toContainText(
-      "Ich schaue in deine Mails.",
+    const knopf = prozess.getByRole("button");
+    await expect(knopf).toHaveAttribute("aria-expanded", "true");
+    await expect(knopf).toBeFocused();
+    const fertigListe = prozess.getByTestId("denkprozess-liste");
+    await expect(fertigListe).toContainText("Ich schaue in deine Mails.");
+    await expect(fertigListe).toContainText(
+      "Zuerst die ungelesenen Mails zählen.",
     );
+    await knopf.click();
+    await expect(knopf).toHaveAttribute("aria-expanded", "false");
   });
 
   test("Fußleiste: Telefon immer sichtbar, Gesprächsmenü nur auf dieser Seite", async ({

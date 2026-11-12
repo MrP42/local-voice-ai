@@ -81,7 +81,14 @@ function neu(handlers = {}, { seiteMit } = {}) {
     assistent_messung_melden: () => null,
     ...handlers,
   };
-  const log = { user: [], assistant: [], errors: [], metrics: [], denken: [] };
+  const log = {
+    user: [],
+    assistant: [],
+    errors: [],
+    metrics: [],
+    denken: [],
+    ende: [],
+  };
   const engine = new VoiceCallEngine(
     {
       onState() {},
@@ -91,7 +98,19 @@ function neu(handlers = {}, { seiteMit } = {}) {
         log.assistant.push({ t, final, interrupted }),
       onMetrics: (m) => log.metrics.push(m),
       onError: (e) => log.errors.push(e),
-      onDenken: (e) => log.denken.push(e.art === "start" ? "start" : e.text),
+      onDenken: (e) => {
+        if (e.art === "ende") {
+          log.ende.push(e.turnId);
+          return;
+        }
+        log.denken.push(
+          e.art === "start"
+            ? "start"
+            : e.art === "gedanke"
+              ? `gedanke:${e.text}`
+              : e.text,
+        );
+      },
       conversationId: () => "c1",
     },
     { systemPrompt: "sys", turn: DEFAULT_TURN_CONFIG, orchestration: {} },
@@ -313,7 +332,7 @@ test("Textmodus: Ansage und Überbrückung nur in der Denk-Anzeige, nie im Chat"
   ]);
 });
 
-test("Überbrückung hält die Frist an: Inhalt nach Fristablauf wird noch gesprochen", async () => {
+test("Überbrückung verlängert die Frist: Inhalt nach der ersten Frist wird noch gesprochen", async () => {
   const alt = TUNING.modelFristMs;
   TUNING.modelFristMs = 30;
   try {
@@ -338,11 +357,86 @@ test("Überbrückung hält die Frist an: Inhalt nach Fristablauf wird noch gespr
   }
 });
 
-test("Tor-Weg filtert nichts: ein freigegebener Satz gleich einer Überbrückung bleibt", async () => {
+test("Nach einer Überbrückung ohne Inhalt endet die verlängerte Frist trotzdem: Vorlage, Abbruch", async () => {
+  const alt = { ...TUNING };
+  TUNING.modelFristMs = 30;
+  TUNING.denkerFristMs = 120;
+  try {
+    let abgebrochen = 0;
+    const haengt = {
+      chat: (_id, _msgs, onPiece) => {
+        onPiece(BRUECKE);
+        return new Promise(() => undefined);
+      },
+      cancel: async () => {
+        abgebrochen++;
+      },
+    };
+    const t = neu({}, { seiteMit: haengt });
+    const start = Date.now();
+    await t.start("Was steht im Kalender?").done;
+    assert.ok(Date.now() - start >= 100, "die längere Frist gilt");
+    assert.deepEqual(t.player.enqueued, [`wav:${FEHLER_DE}`]);
+    assert.equal(abgebrochen, 1);
+    assert.deepEqual(verlauf(t), []);
+  } finally {
+    Object.assign(TUNING, alt);
+  }
+});
+
+test("Tor-Weg: eine Überbrückung wird weder gesprochen noch Teil von Chat oder Verlauf", async () => {
   const t = neu({ voice_call_chat: chatSagt(BRUECKE, ANTWORT) });
   await t.start("Was steht im Kalender?").done;
-  assert.deepEqual(t.player.enqueued, [`wav:${BRUECKE}`, `wav:${ANTWORT}`]);
-  assert.deepEqual(t.log.denken, ["start"]);
+  assert.deepEqual(t.player.enqueued, [`wav:${ANTWORT}`]);
+  assert.deepEqual(t.log.denken, ["start", BRUECKE]);
+  assert.deepEqual(verlauf(t), [
+    "user:Was steht im Kalender?",
+    `assistant:${ANTWORT}`,
+  ]);
+});
+
+test("Tor-Weg im Textmodus: die Rückgabe mit Überbrückung zählt nicht, nur das Angezeigte", async () => {
+  const t = neu({ voice_call_chat: chatSagt(BRUECKE, ANTWORT) });
+  t.engine.state = "idle";
+  await t.engine.sendText("Was steht im Kalender?");
+  assert.equal(t.log.assistant.at(-1).t, ANTWORT);
+  assert.deepEqual(verlauf(t), [
+    "user:Was steht im Kalender?",
+    `assistant:${ANTWORT}`,
+  ]);
+});
+
+test("Denktext des Modells (reasoning) geht nur an die Denk-Anzeige", async () => {
+  const t = neu({
+    voice_call_chat: ({ requestId }) => {
+      emit({ kind: "reasoning", request_id: requestId, text: "Ich prüfe " });
+      emit({ kind: "reasoning", request_id: requestId, text: "den Kalender." });
+      emit({ kind: "sentence", request_id: requestId, text: ANTWORT });
+      emit({ kind: "done", request_id: requestId });
+      return ANTWORT;
+    },
+  });
+  await t.start("Was steht im Kalender?").done;
+  assert.deepEqual(t.player.enqueued, [`wav:${ANTWORT}`]);
+  assert.deepEqual(t.log.denken, [
+    "start",
+    "gedanke:Ich prüfe ",
+    "gedanke:den Kalender.",
+  ]);
+  assert.deepEqual(verlauf(t), [
+    "user:Was steht im Kalender?",
+    `assistant:${ANTWORT}`,
+  ]);
+});
+
+test("Abbruch des Schritts meldet das Ende der Denk-Anzeige", async () => {
+  const t = neu({ voice_call_chat: () => new Promise(() => undefined) });
+  t.engine.state = "idle";
+  const p = t.engine.sendText("Was steht im Kalender?");
+  await settle(20);
+  t.engine.cancelText(false);
+  await p;
+  assert.equal(t.log.ende.length >= 1, true);
 });
 
 // -- MUSS 1: Einstufung gescheitert, S0 ----------------------------------------
