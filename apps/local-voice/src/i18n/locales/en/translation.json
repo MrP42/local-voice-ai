@@ -3777,6 +3777,9 @@
       "invalidRange": "The range is not valid: the start must be before the end and inside the recording.",
       "nothingToTrim": "The range is the whole recording: there is nothing to trim.",
       "trimChanged": "The recording changed in the meantime. Nothing was changed; please try again.",
+      "metadataUnreadable": "The metadata of this meeting cannot be read. Nothing was changed or deleted.",
+      "rerunPending": "First resume or discard the paused re-transcription.",
+      "rerunRangeDamaged": "The range of the paused re-transcription is damaged. It was not resumed and stays unchanged; please discard it and start again.",
       "trimFailed": "Trimming failed. The recording was left unchanged.",
       "wavUnreadable": "The audio file cannot be read.",
       "wavWriteFailed": "The trimmed recording could not be written (disk space?). Nothing was changed.",
@@ -4365,7 +4368,8 @@
       "reloadFailed": "The recording was trimmed, but the new state could not be loaded. Playback stays off until it is loaded.",
       "reload": "Reload",
       "leftovers_one": "One old audio file is locked at the moment and will be deleted the next time the app starts.",
-      "leftovers_other": "{{count}} old audio files are locked at the moment and will be deleted the next time the app starts."
+      "leftovers_other": "{{count}} old audio files are locked at the moment and will be deleted the next time the app starts.",
+      "uncertain": "Old audio files could not be removed safely; the app will retry at the next start."
     },
     "retranscribeDialog": {
       "title": "Re-transcribe",

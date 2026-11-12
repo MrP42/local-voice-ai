@@ -481,12 +481,17 @@ struct TrackRun {
 /// `on_segment` je Segment (Offset auf der Kanal-Achse). Liefert `on_segment`
 /// `false`, endet der Lauf; `done_ms` ist dann der Anfang dieses Segments.
 /// lva#522: `end_ms` (absolut) begrenzt das Lesen auf einen Bereich; `None`: bis zum Ende.
+/// `strict` (Fortsetzen einer Neu-Transkription): ein Lesefehler oder ein vorzeitiges
+/// Dateiende ist ein Fehler (`Err`), nie ein stilles Ende der Spur; sonst wuerde ein
+/// abgeschnittener Rest als „fertig“ gelten und die Marke verschwinden. Ohne `strict`
+/// (Enddurchlauf, normales Nachholen) beendet ein kaputter Rest die Spur wie bisher.
 fn segment_wav(
     path: &Path,
     from_ms: u64,
     end_ms: Option<u64>,
     max_segment_ms: u64,
     vad: Option<&VadFactory>,
+    strict: bool,
     on_segment: &mut dyn FnMut(Chunk, Option<SegmentMeta>) -> bool,
 ) -> Result<TrackRun, String> {
     let mut reader =
@@ -519,11 +524,22 @@ fn segment_wav(
         block.clear();
         let want = READ_BLOCK.min(usize::try_from(left).unwrap_or(usize::MAX));
         for s in samples.by_ref().take(want) {
-            // Ein kaputter Rest (Absturz mitten im Schreiben) beendet die Spur.
+            // Ein kaputter Rest (Absturz mitten im Schreiben) beendet die Spur,
+            // streng gelesen ist er ein Fehler.
             match s {
                 Ok(v) => block.push(v),
+                Err(e) if strict => {
+                    return Err(format!("{}: unreadable audio data: {e}", path.display()));
+                }
                 Err(_) => break,
             }
+        }
+        if strict && block.len() < want {
+            return Err(format!(
+                "{}: audio data ends early ({} of {want} samples)",
+                path.display(),
+                block.len()
+            ));
         }
         left = left.saturating_sub(block.len() as u64);
         // Letzter Block: kuerzer als angefragt (Dateiende, Defekt) oder der Bereich ist gelesen.
@@ -877,6 +893,7 @@ fn catch_up(
                 end_ms,
                 15_000,
                 vad.as_ref(),
+                strict,
                 &mut on_segment,
             ) {
                 Ok(run) if !run.stopped => {
@@ -1017,6 +1034,7 @@ fn final_pass(
             None,
             max_segment_ms,
             vad.as_ref(),
+            false,
             &mut on_segment,
         ) {
             Ok(run) if run.stopped => {
@@ -1335,9 +1353,15 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
             // Nichts veraendert; abgebrochen und erneut fortsetzbar, mit Hinweis.
             warn!("meetings: rerun not settled ({}): {e}", job.meeting_id);
             let _ = store.set_status(&job.meeting_id, MeetingStatus::Cancelled);
+            // lva#522: ein beschaedigter Bereich hat einen eigenen Text.
+            let message = if e == "partial_rerun_range_damaged" {
+                e
+            } else {
+                "retranscribe_failed".to_string()
+            };
             env.emit(MeetingEvent::Error {
                 meeting_id: job.meeting_id.clone(),
-                message: "retranscribe_failed".to_string(),
+                message,
             });
             env.emit(MeetingEvent::State {
                 meeting_id: job.meeting_id.clone(),
@@ -2825,6 +2849,71 @@ mod tests {
             .phases
             .iter()
             .all(|(p, _)| *p != JobPhase::Transcription));
+    }
+
+    /// Schneidet die letzten `bytes` der Datei ab; der Kopf behaelt die alte Laenge.
+    fn truncate_file(path: &Path, bytes: u64) {
+        let len = std::fs::metadata(path).unwrap().len();
+        let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+        file.set_len(len - bytes).unwrap();
+    }
+
+    #[test]
+    fn a_truncated_wav_is_an_error_when_read_strictly_and_ends_the_track_otherwise() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mic.wav");
+        write_wav(&path, &speech());
+        truncate_file(&path, 40_000);
+
+        let mut blocks = 0usize;
+        let strict = segment_wav(&path, 0, None, 15_000, None, true, &mut |_, _| {
+            blocks += 1;
+            true
+        });
+        assert!(strict.is_err(), "{strict:?}");
+
+        let lenient = segment_wav(&path, 0, None, 15_000, None, false, &mut |_, _| true);
+        assert!(lenient.is_ok(), "{lenient:?}");
+
+        // Eine unversehrte Datei liest auch streng bis zum Ende.
+        let whole = dir.path().join("ganz.wav");
+        write_wav(&whole, &speech());
+        let run = segment_wav(&whole, 0, None, 15_000, None, true, &mut |_, _| true).unwrap();
+        assert_eq!(run.done_ms, 6_000);
+    }
+
+    #[test]
+    fn a_resume_over_a_damaged_range_stops_with_its_own_message_and_keeps_the_marker() {
+        let f = fixture(true, MeetingStatus::Processing);
+        // Erst den gestoppten Lauf herstellen, dann den Bereich seiner Marke beschaedigen.
+        let spec = partial_job(&f);
+        let mut value = marker(&f);
+        value["start_ms"] = serde_json::json!(5);
+        value["end_ms"] = serde_json::Value::Null;
+        super::super::rerun_state::write(&f.store, &f.id, value).unwrap();
+        let mut env = FakeEnv::new();
+        run_job(&f.store, &spec, &mut env);
+        assert!(env.events.iter().any(|e| matches!(
+            e,
+            MeetingEvent::Error { message, .. } if message == "partial_rerun_range_damaged"
+        )));
+        assert_eq!(marker(&f)["phase"], "kept");
+        assert!(
+            env.loads.is_empty(),
+            "nichts wird (als ganze Aufnahme) nachgeholt"
+        );
+        assert_ne!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
+    }
+
+    #[test]
+    fn a_resume_over_a_truncated_track_fails_and_keeps_the_marker() {
+        let f = fixture(true, MeetingStatus::Processing);
+        truncate_file(&f.meeting_dir.join("system.wav"), 40_000);
+        let mut env = FakeEnv::new();
+        run_job(&f.store, &partial_job(&f), &mut env);
+        // Nicht „nachgeholt“: die Marke bleibt, die Besprechung ist nicht `ready`.
+        assert_eq!(marker(&f)["phase"], "kept");
+        assert_ne!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
     }
 
     #[test]

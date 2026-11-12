@@ -3778,6 +3778,9 @@
       "nothingToTrim": "Der Bereich ist die ganze Aufnahme: Es gibt nichts zuzuschneiden.",
       "trimChanged": "Die Aufnahme hat sich währenddessen verändert. Es wurde nichts geändert; bitte erneut versuchen.",
       "trimFailed": "Das Zuschneiden ist fehlgeschlagen. Die Aufnahme blieb unverändert.",
+      "metadataUnreadable": "Die Metadaten dieser Besprechung sind nicht lesbar. Es wurde nichts geändert und nichts gelöscht.",
+      "rerunPending": "Erst die angehaltene Neu-Transkription fortsetzen oder verwerfen.",
+      "rerunRangeDamaged": "Der Bereich der angehaltenen Neu-Transkription ist beschädigt. Sie wurde nicht fortgesetzt und bleibt unverändert; bitte verwerfen und neu starten.",
       "wavUnreadable": "Die Audiodatei lässt sich nicht lesen.",
       "wavWriteFailed": "Die zugeschnittene Aufnahme konnte nicht geschrieben werden (Platz auf der Platte?). Es wurde nichts geändert.",
       "retranscribeFailed": "Die Neu-Transkription ist fehlgeschlagen. Das Transkript blieb unverändert.",
@@ -4365,7 +4368,8 @@
       "reloadFailed": "Die Aufnahme wurde zugeschnitten, aber der neue Stand ließ sich nicht laden. Die Wiedergabe bleibt aus, bis er geladen ist.",
       "reload": "Erneut laden",
       "leftovers_one": "Eine alte Audiodatei ist gerade gesperrt und wird beim nächsten Start der App gelöscht.",
-      "leftovers_other": "{{count}} alte Audiodateien sind gerade gesperrt und werden beim nächsten Start der App gelöscht."
+      "leftovers_other": "{{count}} alte Audiodateien sind gerade gesperrt und werden beim nächsten Start der App gelöscht.",
+      "uncertain": "Alte Audiodateien konnten nicht sicher entfernt werden; Nachholen beim nächsten Start."
     },
     "retranscribeDialog": {
       "title": "Neu transkribieren",

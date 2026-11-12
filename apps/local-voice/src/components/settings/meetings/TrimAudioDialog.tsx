@@ -97,6 +97,10 @@ export const TrimAudioDialog: React.FC<TrimAudioDialogProps> = ({
           t("meetings.trim.leftovers", { count: result.data.leftover_files }),
         );
       }
+      // Aufräumen gescheitert oder unsicher: vorsichtig melden, nie als „nichts“.
+      if (result.data.cleanup_uncertain) {
+        toast.warning(t("meetings.trim.uncertain"));
+      }
       onOpenChange(false);
       await onTrimmed();
     } catch (error) {

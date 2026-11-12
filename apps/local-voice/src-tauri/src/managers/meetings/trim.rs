@@ -55,12 +55,13 @@ use std::sync::Arc;
 use anyhow::Result;
 use chrono::Utc;
 use log::{info, warn};
-use rusqlite::{params, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use specta::Type;
 use ulid::Ulid;
 
+use super::job::JobGuard;
 use super::notes::model::NoteBlock;
 use super::parts::MeetingPart;
 use super::slides::SlideOccurrence;
@@ -421,7 +422,7 @@ fn trimmed_metadata(
     root: &mut Value,
     aec_kept: bool,
     merges: Option<&MergeRemap>,
-    cleanup: &[String],
+    cleanup: &[cleanup::Job],
 ) -> bool {
     let mut changed = false;
     if !aec_kept {
@@ -531,9 +532,10 @@ fn io(e: &dyn std::fmt::Display) -> String {
 
 impl MeetingStore {
     /// Schreibt den Zuschnitt in EINER Transaktion (siehe Modulkopf), auch die
-    /// Loeschauftraege fuer die alten Audiodateien. Gibt diese Auftraege zurueck;
-    /// der Aufrufer loescht erst nach dem Commit (`cleanup::run_cleanup`).
-    pub fn apply_trim(&self, w: &TrimWrite<'_>) -> Result<Vec<String>, String> {
+    /// Loeschauftraege fuer die alten Audiodateien. Gibt zurueck, wie viele alte
+    /// Hauptdateien KEINEN Auftrag bekamen (sie liegen nicht im Besprechungsordner und
+    /// bleiben liegen); der Aufrufer loescht erst nach dem Commit (`cleanup::run_cleanup`).
+    pub fn apply_trim(&self, w: &TrimWrite<'_>) -> Result<u32, String> {
         let mut conn = self.get_connection().map_err(|e| io(&e))?;
         let now = Utc::now().timestamp();
         let tx = conn
@@ -560,6 +562,9 @@ impl MeetingStore {
         if mic.as_deref() != w.old_mic || system.as_deref() != w.old_system {
             return Err("trim_changed".into());
         }
+        // Zustand VOR jeder Aenderung: unlesbare Metadaten und eine angehaltene
+        // Neu-Transkription verbieten den Zuschnitt (die Transaktion rollt zurueck).
+        let mut root = trim_state(&tx, id, metadata)?;
         let old_paths: Vec<String> = [mic, system].into_iter().flatten().collect();
 
         tx.execute(
@@ -613,31 +618,17 @@ impl MeetingStore {
         }
 
         // Metadaten: AEC-Verweis, Zusammenfuehrungen und die Loeschauftraege fuer die
-        // alten Dateien, in derselben Transaktion. Unlesbare Metadaten: keine
-        // Auftraege, also wird auch nichts geloescht.
-        let mut root = match metadata.as_deref() {
-            None => Some(Value::Object(serde_json::Map::new())),
-            Some(text) => serde_json::from_str::<Value>(text)
-                .ok()
-                .filter(Value::is_object),
-        };
-        let mut jobs: Vec<String> = Vec::new();
-        if root.is_some() {
-            jobs = old_paths
-                .iter()
-                .flat_map(|p| std::iter::once(p.clone()).chain(super::derived_audio_paths(p)))
-                .collect();
-        } else {
-            warn!("meetings: metadata of {id} unreadable; the old audio files are not deleted");
-        }
-        if let Some(root) = root.as_mut() {
-            if trimmed_metadata(root, w.aec_kept, merges.as_ref(), &jobs) {
-                tx.execute(
-                    "UPDATE meetings SET metadata_json = ?1 WHERE id = ?2",
-                    params![root.to_string(), id],
-                )
-                .map_err(|e| io(&e))?;
-            }
+        // alten Dateien, in derselben Transaktion. Der Besprechungsordner kommt aus
+        // Datenwurzel plus ID, nie aus den gespeicherten Pfaden.
+        let folder =
+            cleanup::meeting_dir(self, id).ok_or_else(|| "store_failed: folder".to_string())?;
+        let (jobs, unreachable) = cleanup::jobs_for_old(&folder, &old_paths);
+        if trimmed_metadata(&mut root, w.aec_kept, merges.as_ref(), &jobs) {
+            tx.execute(
+                "UPDATE meetings SET metadata_json = ?1 WHERE id = ?2",
+                params![root.to_string(), id],
+            )
+            .map_err(|e| io(&e))?;
         }
 
         // Alle Fassungen (auch die geloeschten, falls eine zurueckgeholt wird).
@@ -781,8 +772,48 @@ impl MeetingStore {
         .map_err(|e| io(&e))?;
 
         tx.commit().map_err(|e| io(&e))?;
-        Ok(old_paths)
+        Ok(unreachable)
     }
+
+    /// Vorab (vor dem Schneiden der WAVs): dieselben Pruefungen wie in der Transaktion.
+    fn trim_precheck(&self, id: &str) -> Result<(), String> {
+        let conn = self.get_connection().map_err(|e| io(&e))?;
+        let metadata: Option<Option<String>> = conn
+            .query_row(
+                "SELECT metadata_json FROM meetings WHERE id = ?1 AND deleted_at IS NULL",
+                params![id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| io(&e))?;
+        let Some(metadata) = metadata else {
+            return Err("meeting_not_found".into());
+        };
+        trim_state(&conn, id, metadata).map(|_| ())
+    }
+}
+
+/// `metadata_json` einer Besprechung als Objekt, wenn der Zuschnitt erlaubt ist:
+/// - kein Eintrag (NULL): leeres Objekt; leer, kaputt oder kein Objekt:
+///   `metadata_unreadable` (sonst gingen Auftraege und Zusammenfuehrungen verloren);
+/// - eine angehaltene oder offene Neu-Transkription (Marke `partial_rerun` in
+///   irgendeiner Phase, oder eine Arbeitskopie): `rerun_pending`. Die Marke verweist
+///   auf Zeiten der Aufnahme, die der Zuschnitt verschiebt.
+fn trim_state(conn: &Connection, id: &str, metadata: Option<String>) -> Result<Value, String> {
+    let root = match metadata.as_deref() {
+        None => Value::Object(serde_json::Map::new()),
+        Some(text) => match serde_json::from_str::<Value>(text) {
+            Ok(v) if v.is_object() => v,
+            _ => return Err("metadata_unreadable".into()),
+        },
+    };
+    let marker_open = root
+        .get(super::rerun_state::KEY)
+        .is_some_and(|m| !m.is_null());
+    if marker_open || super::variants::rerun_pending(conn, id).map_err(|e| io(&e.code()))? {
+        return Err("rerun_pending".into());
+    }
+    Ok(root)
 }
 
 // ---------------------------------------------------------------------------
@@ -797,6 +828,10 @@ pub struct TrimResult {
     /// So viele alte Dateien liessen sich nicht loeschen (gesperrt) und stehen als
     /// Loeschauftrag in der Datenbank; die App versucht es beim Start wieder.
     pub leftover_files: u32,
+    /// Der Aufraeumlauf scheiterte oder eine alte Datei liegt ausserhalb des
+    /// Besprechungsordners: ob alte Audiodateien bleiben, ist unsicher (die Oberflaeche
+    /// meldet das vorsichtig; der naechste Start holt nach, was sich holen laesst).
+    pub cleanup_uncertain: bool,
 }
 
 /// Vorsilbe der Ordner mit zugeschnittenen Aufnahmen (`trim-<ulid>/`).
@@ -811,20 +846,11 @@ struct TrackPlan {
     aec: Option<PathBuf>,
 }
 
+/// Streng `trim-<ULID>` (siehe `cleanup::is_trim_name`).
 fn is_trim_dir(dir: &Path) -> bool {
     dir.file_name()
         .and_then(|n| n.to_str())
-        .is_some_and(|n| n.starts_with(TRIM_DIR_PREFIX))
-}
-
-/// Der Besprechungsordner zu einer Audiodatei: ihr Ordner, bei einem frueheren
-/// Zuschnitt (`trim-<ulid>`) dessen Elternordner, damit die Ordner nicht ineinander wachsen.
-fn meeting_folder(audio: &Path) -> PathBuf {
-    let dir = audio.parent().map(Path::to_path_buf).unwrap_or_default();
-    if is_trim_dir(&dir) {
-        return dir.parent().map(Path::to_path_buf).unwrap_or(dir);
-    }
-    dir
+        .is_some_and(cleanup::is_trim_name)
 }
 
 fn file_name_of(path: &Path, fallback: &str) -> String {
@@ -839,15 +865,17 @@ fn file_name_of(path: &Path, fallback: &str) -> String {
 /// mit demselben Bereich geschnitten, damit `final_pass` sie wieder neben der
 /// `mic.wav` findet), dann EINE Transaktion, dann loescht sie die alten Dateien;
 /// was sich nicht loeschen laesst, kommt in die Aufraeumliste. Ohne App und
-/// Auftrag: den Auftrag (Sperre gegen andere Verarbeitungen) haelt der Aufrufer.
+/// Auftrag: den Auftrag (Sperre gegen andere Verarbeitungen) haelt der Aufrufer und
+/// weist ihn mit `lock` nach; Pruefung und Loeschung der alten Dateien laufen darunter.
 ///
 /// Fehlercodes: `meeting_not_found`, `meeting_busy`, `no_audio`, `audio_missing`,
-/// `invalid_range`, `nothing_to_trim`, `trim_changed`, `wav_unreadable`,
-/// `wav_write_failed`, `store_failed`.
+/// `invalid_range`, `nothing_to_trim`, `trim_changed`, `metadata_unreadable`,
+/// `rerun_pending`, `wav_unreadable`, `wav_write_failed`, `store_failed`.
 pub fn trim_meeting(
     store: &MeetingStore,
     meeting_id: &str,
     range: TimeRange,
+    lock: &JobGuard,
 ) -> Result<TrimResult, String> {
     let range = range.validate()?;
     let meeting = store
@@ -861,6 +889,8 @@ pub fn trim_meeting(
     ) {
         return Err("meeting_busy".into());
     }
+    // Kein Schneiden auf Verdacht: dieselben Pruefungen wie in der Transaktion.
+    store.trim_precheck(meeting_id)?;
     let tracks: Vec<Option<String>> = vec![
         meeting.mic_audio_path.clone(),
         meeting.system_audio_path.clone(),
@@ -907,19 +937,12 @@ pub fn trim_meeting(
         return Err("nothing_to_trim".into());
     }
 
-    let first = plans
-        .iter()
-        .flatten()
-        .map(|p| p.path.as_path())
-        .next()
-        .ok_or_else(|| "no_audio".to_string())?;
-    let folder = meeting_folder(first);
-    let old_dirs: Vec<PathBuf> = plans
-        .iter()
-        .flatten()
-        .filter_map(|p| p.path.parent().map(Path::to_path_buf))
-        .filter(|d| is_trim_dir(d))
-        .collect();
+    // Der Ordner kommt aus Datenwurzel plus ID, nie aus den gespeicherten Pfaden, und
+    // muss ein echtes Verzeichnis sein.
+    let folder = match cleanup::check_folder(store, meeting_id) {
+        cleanup::Folder::Safe(folder) => folder,
+        _ => return Err("audio_missing".into()),
+    };
     let new_dir = folder.join(format!(
         "{TRIM_DIR_PREFIX}{}",
         Ulid::new().to_string().to_lowercase()
@@ -979,21 +1002,16 @@ pub fn trim_meeting(
         aec_kept,
     });
     match applied {
-        Ok(_jobs) => {
-            let leftover_files = run_cleanup(store, meeting_id);
-            for dir in old_dirs {
-                // Nur ein echtes, leeres Verzeichnis; ein Verweis bleibt unberuehrt.
-                if cleanup::plain_dir(&dir) {
-                    let _ = std::fs::remove_dir(dir);
-                }
-            }
+        Ok(unreachable) => {
+            let done = run_cleanup(store, meeting_id, lock);
             info!(
-                "meetings: {meeting_id} trimmed to {}..{} ms ({new_len_ms} ms left, {leftover_files} old file(s) pending)",
-                range.start_ms, range.end_ms
+                "meetings: {meeting_id} trimmed to {}..{} ms ({new_len_ms} ms left, {} old file(s) pending)",
+                range.start_ms, range.end_ms, done.remaining
             );
             Ok(TrimResult {
                 duration_ms: new_len_ms,
-                leftover_files,
+                leftover_files: done.remaining,
+                cleanup_uncertain: done.uncertain || unreachable > 0,
             })
         }
         Err(e) => {
@@ -1021,7 +1039,7 @@ pub fn trim_now(
         .try_start(meeting_id, job::app_emit(app))
         .map_err(|_| "meeting_busy".to_string())?;
     guard.handle().begin_phase(JobPhase::Prepare, 0);
-    let trimmed = trim_meeting(store, meeting_id, range);
+    let trimmed = trim_meeting(store, meeting_id, range, &guard);
     drop(guard);
     let result = trimmed?;
     super::search::indexer::submit(

@@ -56,6 +56,25 @@ pub struct Marker {
     /// transkribiert. Fehlt in Marken ohne Bereich und aus aelterem Bestand.
     pub start_ms: Option<u64>,
     pub end_ms: Option<u64>,
+    /// lva#522: der Bereich ist da, aber beschaedigt (nur ein Feld, falscher Typ,
+    /// Anfang >= Ende). Etwas anderes als „kein Bereich“: ein solcher Lauf darf nicht
+    /// als Lauf ueber die ganze Aufnahme fortgesetzt werden (`prepare_resume` weist ihn ab).
+    pub range_damaged: bool,
+}
+
+/// Bereich einer Marke lesen: `(start, end, beschaedigt)`. Beide Felder fehlen
+/// (oder `null`): kein Bereich, nicht beschaedigt.
+fn range_fields(obj: &serde_json::Map<String, Value>) -> (Option<u64>, Option<u64>, bool) {
+    let flagged = obj.get("range_damaged").and_then(Value::as_bool) == Some(true);
+    let field = |k: &str| obj.get(k).filter(|v| !v.is_null());
+    match (field("start_ms"), field("end_ms")) {
+        (None, None) => (None, None, flagged),
+        (Some(s), Some(e)) => match (s.as_u64(), e.as_u64()) {
+            (Some(start), Some(end)) if start < end && !flagged => (Some(start), Some(end), false),
+            _ => (None, None, true),
+        },
+        _ => (None, None, true),
+    }
 }
 
 impl Marker {
@@ -75,6 +94,7 @@ impl Marker {
             Some(k) if k == variants::KIND_OWN => variants::KIND_OWN,
             _ => variants::KIND_RETRANSCRIBED,
         };
+        let (start_ms, end_ms, range_damaged) = range_fields(obj);
         Some(Self {
             phase,
             model: s("model"),
@@ -86,8 +106,9 @@ impl Marker {
             variant_id: s("variant_id"),
             prev_status: s("prev_status"),
             prev: obj.get("prev").cloned().unwrap_or(Value::Null),
-            start_ms: obj.get("start_ms").and_then(Value::as_u64),
-            end_ms: obj.get("end_ms").and_then(Value::as_u64),
+            start_ms,
+            end_ms,
+            range_damaged,
         })
     }
 
@@ -108,11 +129,17 @@ impl Marker {
             map.insert("start_ms".into(), json!(start));
             map.insert("end_ms".into(), json!(end));
         }
+        if let (Some(map), true) = (value.as_object_mut(), self.range_damaged) {
+            map.insert("range_damaged".into(), json!(true));
+        }
         value
     }
 
     /// Der Bereich dieses Laufs; `None` ohne Bereich oder bei einem unstimmigen.
     pub fn range(&self) -> Option<TimeRange> {
+        if self.range_damaged {
+            return None;
+        }
         let range = TimeRange {
             start_ms: self.start_ms?,
             end_ms: self.end_ms?,
@@ -121,6 +148,7 @@ impl Marker {
     }
 
     fn set_range(&mut self, range: Option<TimeRange>) {
+        self.range_damaged = false;
         self.start_ms = range.map(|r| r.start_ms);
         self.end_ms = range.map(|r| r.end_ms);
     }
@@ -272,6 +300,8 @@ pub struct Resumable {
     pub variant_id: String,
     /// lva#522: Bereich des Laufs (absolute ms), falls er nur einen transkribierte.
     pub range: Option<TimeRange>,
+    /// lva#522: der Bereich der Marke ist beschaedigt (siehe [`Marker::range_damaged`]).
+    pub range_damaged: bool,
 }
 
 /// Wie [`settle`] ausging.
@@ -315,6 +345,7 @@ fn resumable_of(m: &Marker) -> Option<Resumable> {
             model,
             variant_id,
             range: m.range(),
+            range_damaged: m.range_damaged,
         })
 }
 
@@ -499,7 +530,8 @@ pub enum Resume {
 
 /// „Fortsetzen“ und Wiederherstellung (unter dem Auftrag): offenen Lauf abschliessen
 /// und die gestoppte Fassung wieder aktiv machen (der Nutzer kann umgeschaltet haben).
-/// Eine nicht zuordenbare Marke wird abgewiesen, nie still die aktive Fassung ergaenzt.
+/// Eine nicht zuordenbare Marke wird abgewiesen, nie still die aktive Fassung ergaenzt;
+/// ebenso eine mit beschaedigtem Bereich (`partial_rerun_range_damaged`).
 pub fn prepare_resume(
     store: &MeetingStore,
     meeting_id: &str,
@@ -523,6 +555,9 @@ pub fn prepare_resume(
         // Ohne Spur hat `settle` Marke und `ready` schon atomar geschrieben.
         Settled::Kept(None) if !has_track => Ok(Resume::Done(Some(MeetingStatus::Ready))),
         Settled::Kept(None) => Err("partial_rerun_unassigned".to_string()),
+        // Beschaedigter Bereich: nie als Lauf ueber die ganze Aufnahme fortsetzen. Die
+        // Marke bleibt, wie sie ist (der Nutzer kann verwerfen).
+        Settled::Kept(Some(r)) if r.range_damaged => Err("partial_rerun_range_damaged".to_string()),
         Settled::Kept(Some(r)) => in_tx(store, |tx| {
             let active = variants::active_id(tx, meeting_id).map_err(|e| e.code().to_string())?;
             if active.as_deref() != Some(r.variant_id.as_str()) {

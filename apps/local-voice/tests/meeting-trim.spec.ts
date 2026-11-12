@@ -31,7 +31,7 @@ type Theme = "light" | "dark";
 
 /**
  * `meetings_trim_audio` antwortet mit der neuen Dauer (1 800 000 ms) und `__leftover`
- * gesperrten alten Dateien, bei `__trimError` mit diesem Fehlercode; `meetings_get` liefert
+ * gesperrten alten Dateien (`__uncertain`: Aufräumen unsicher), bei `__trimError` mit diesem Fehlercode; `meetings_get` liefert
  * den einen Datensatz (`__getFail` = "error" | "null" lässt ihn scheitern). Beim Aufruf von `meetings_trim_audio` wird gemerkt, wie viele
  * `<audio src>` noch an der Seite hängen (`__audioAtTrim`): die Player müssen die Dateien
  * vorher losgelassen haben. Die Attrappe der Aufnahmen kennt die Befehle nicht.
@@ -43,6 +43,7 @@ const installTrimMock = async (page: Page, theme: Theme = "light") => {
     w.__settings.theme = themeName;
     w.__trimError = null;
     w.__leftover = 0;
+    w.__uncertain = false;
     w.__audioAtTrim = null;
     w.__getFail = null;
     const internals = w.__TAURI_INTERNALS__;
@@ -58,7 +59,11 @@ const installTrimMock = async (page: Page, theme: Theme = "light") => {
       w.__calls.push({ cmd, args });
       w.__audioAtTrim = document.querySelectorAll("audio[src]").length;
       if (w.__trimError) throw w.__trimError;
-      return { duration_ms: 1_800_000, leftover_files: w.__leftover };
+      return {
+        duration_ms: 1_800_000,
+        leftover_files: w.__leftover,
+        cleanup_uncertain: w.__uncertain,
+      };
     };
   }, theme);
 };
@@ -439,6 +444,45 @@ test.describe("Aufnahme zuschneiden", () => {
       }),
     ).toHaveCount(1);
   });
+
+  test("unsicheres Aufräumen: vorsichtiger Hinweis, nie stillschweigend", async ({
+    page,
+  }) => {
+    await openM2(page);
+    await page.evaluate(() => ((window as any).__uncertain = true));
+    await chooseMenu(page, "menu-trim");
+    await setTime(page, "trim-range-start", "5:00");
+    await page.getByTestId("trim-start").click();
+    await expect(
+      page.locator("[data-sonner-toast]", {
+        hasText:
+          "Alte Audiodateien konnten nicht sicher entfernt werden; Nachholen beim nächsten Start.",
+      }),
+    ).toHaveCount(1);
+  });
+
+  for (const [code, text] of [
+    [
+      "metadata_unreadable",
+      "Die Metadaten dieser Besprechung sind nicht lesbar. Es wurde nichts geändert und nichts gelöscht.",
+    ],
+    [
+      "rerun_pending",
+      "Erst die angehaltene Neu-Transkription fortsetzen oder verwerfen.",
+    ],
+  ] as const) {
+    test(`Fehlercode ${code} erscheint übersetzt`, async ({ page }) => {
+      await openM2(page);
+      await page.evaluate((c) => ((window as any).__trimError = c), code);
+      await chooseMenu(page, "menu-trim");
+      await setTime(page, "trim-range-start", "1:00");
+      await page.getByTestId("trim-start").click();
+      await expect(page.locator("[data-sonner-toast]").first()).toContainText(
+        text,
+      );
+      await expect(page.getByTestId("trim-dialog")).toBeVisible();
+    });
+  }
 
   test("bei einem Fehler kommen die Player zurück", async ({ page }) => {
     await openM2(page);

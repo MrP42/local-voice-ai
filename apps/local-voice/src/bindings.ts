@@ -14208,7 +14208,13 @@ duration_ms: number;
  * So viele alte Dateien liessen sich nicht loeschen (gesperrt) und stehen als
  * Loeschauftrag in der Datenbank; die App versucht es beim Start wieder.
  */
-leftover_files: number }
+leftover_files: number; 
+/**
+ * Der Aufraeumlauf scheiterte oder eine alte Datei liegt ausserhalb des
+ * Besprechungsordners: ob alte Audiodateien bleiben, ist unsicher (die Oberflaeche
+ * meldet das vorsichtig; der naechste Start holt nach, was sich holen laesst).
+ */
+cleanup_uncertain: boolean }
 export type TtsDownloadInfo = { id: string; kind: TtsDownloadKind; name: string; description: string; 
 /**
  * Primary language of a voice ("de", "en", …); `None` for the runtime.

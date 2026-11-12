@@ -694,3 +694,62 @@ fn a_run_over_a_kept_ranged_result_does_not_inherit_its_range() {
     mark_start(&f.store, &f.id, None).unwrap();
     assert_eq!(read(&f.store, &f.id).unwrap().unwrap().range(), None);
 }
+
+// -- lva#522 Fixrunde 3 (F): kein Bereich ist nicht beschaedigt --------------
+
+#[test]
+fn no_range_is_not_damaged_but_half_wrong_typed_or_inverted_ranges_are() {
+    let parse = |v: Value| Marker::from_value(&v).unwrap();
+    for ok in [
+        serde_json::json!({"phase": "kept"}),
+        serde_json::json!({"phase": "kept", "start_ms": null, "end_ms": null}),
+    ] {
+        let m = parse(ok);
+        assert!(!m.range_damaged && m.range().is_none());
+    }
+    let good = parse(serde_json::json!({"phase": "kept", "start_ms": 1, "end_ms": 9}));
+    assert!(!good.range_damaged);
+    assert_eq!(good.range(), Some(range(1, 9)));
+
+    for bad in [
+        serde_json::json!({"phase": "kept", "start_ms": 5}),
+        serde_json::json!({"phase": "kept", "end_ms": 5}),
+        serde_json::json!({"phase": "kept", "start_ms": "1", "end_ms": 9}),
+        serde_json::json!({"phase": "kept", "start_ms": 1.5, "end_ms": 9}),
+        serde_json::json!({"phase": "kept", "start_ms": 9, "end_ms": 9}),
+        serde_json::json!({"phase": "kept", "start_ms": 9, "end_ms": 3}),
+        serde_json::json!({"phase": "kept", "start_ms": -1, "end_ms": 3}),
+    ] {
+        let m = parse(bad.clone());
+        assert!(m.range_damaged, "{bad}");
+        assert_eq!(m.range(), None, "{bad}");
+        // Die Beschaedigung geht beim Zurueckschreiben nicht verloren.
+        assert!(Marker::from_value(&m.to_value()).unwrap().range_damaged);
+    }
+}
+
+#[test]
+fn resuming_over_a_damaged_range_is_refused_and_the_marker_stays() {
+    let f = fixture();
+    run_until(&f, 5);
+    settle(&f.store, &f.id, false, Ends::QUIET).unwrap();
+    // Die Marke wird beschaedigt: nur ein Feld des Bereichs.
+    let mut value = read(&f.store, &f.id).unwrap().unwrap().to_value();
+    value["start_ms"] = serde_json::json!(5);
+    write(&f.store, &f.id, value).unwrap();
+    let before = f.store.metadata_json(&f.id).unwrap();
+    let active_before = texts(&f);
+
+    let err = prepare_resume(&f.store, &f.id, true).unwrap_err();
+    assert_eq!(err, "partial_rerun_range_damaged");
+    let m = read(&f.store, &f.id).unwrap().unwrap();
+    assert_eq!(m.phase, PHASE_KEPT);
+    assert!(m.range_damaged);
+    assert_eq!(f.store.metadata_json(&f.id).unwrap(), before);
+    assert_eq!(texts(&f), active_before);
+    // Wiederholt: derselbe Befund, nichts verschwindet.
+    assert_eq!(
+        prepare_resume(&f.store, &f.id, true).unwrap_err(),
+        "partial_rerun_range_damaged"
+    );
+}
