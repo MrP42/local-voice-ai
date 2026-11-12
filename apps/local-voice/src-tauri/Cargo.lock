@@ -4097,6 +4097,7 @@ dependencies = [
  "rusqlite_migration",
  "rustfft",
  "rustls",
+ "same-file",
  "scraper",
  "security-framework",
  "serde",

@@ -1,28 +1,36 @@
 //! lva#522: der Ordner des Zuschnitts und die Vermerke zu den alten Dateien.
 //!
-//! Der Zuschnitt LOESCHT NICHTS. Die alten Audiodateien (`mic.wav`, `system.wav`,
-//! `mic_aec.wav` oder die Dateien eines frueheren Ordners `trim-<ULID>`) bleiben
-//! unangetastet als Sicherung liegen. Dieselbe Transaktion wie der Zuschnitt vermerkt sie
-//! dauerhaft in `meetings.metadata_json["trim_superseded"]` ([`Superseded`]: Pfad, der
-//! ersetzende Zuschnitt, Spur, Zeitpunkt), damit ein spaeteres Aufraeumen (Folge-Issue)
-//! weiss, was ersetzt wurde. Es gibt hier deshalb keine Loeschauftraege, keinen Sweep
-//! beim Start und keine Entscheidung darueber, was loeschbar ist: die Angriffsflaeche
-//! "App loescht Dateien anhand gespeicherter Pfade" entsteht gar nicht erst.
+//! Der Zuschnitt LOESCHT NICHTS: weder die alten Audiodateien noch, wenn etwas schiefgeht,
+//! die eigenen neuen. In diesem Modul und im ganzen Zuschnitt gibt es keine einzige
+//! Dateisystem-Loeschung (kein `remove_*`, kein ersetzendes `rename`, nur `create_new`).
 //!
-//! Die NEUEN Dateien entstehen nur RELATIV zu Verzeichnis-Handles (`cap-std`):
+//! - Die alten Audiodateien (`mic.wav`, `system.wav`, `mic_aec.wav` oder die Dateien eines
+//!   frueheren Ordners `trim-<ULID>`) bleiben unangetastet als Sicherung liegen. Dieselbe
+//!   Transaktion wie der Zuschnitt vermerkt sie dauerhaft in
+//!   `meetings.metadata_json["trim_superseded"]` ([`Superseded`]: Pfad, der ersetzende
+//!   Zuschnitt, Spur, Zeitpunkt), damit ein spaeteres Aufraeumen (#536) weiss, was ersetzt
+//!   wurde.
+//! - Scheitert der Zuschnitt vor dem Commit, bleibt ein unfertiger Ordner `trim-<ULID>`
+//!   liegen (nur Speicher, nie referenziert; Aufraeumen ebenfalls #536). Die Datenbank
+//!   bleibt unveraendert.
+//!
+//! Die NEUEN Dateien entstehen relativ zu Verzeichnis-Handles (`cap-std`), und vor dem
+//! Commit wird bewiesen, dass die gespeicherten Pfade genau diese Dateien benennen:
 //!
 //! - Der Besprechungsordner ergibt sich aus Datenwurzel plus Besprechungs-ID
-//!   ([`open_folder`]), nie aus gespeicherten Pfaden. Er wird einmal geoeffnet (kein
-//!   Verweis, am Handle der Datenwurzel per `symlink_metadata` geprueft).
-//! - Der Ordner `trim-<ULID>` wird ueber dieses Handle angelegt und sofort selbst als
-//!   Handle festgehalten ([`NewDir`]); frisch angelegt, muss er leer sein.
+//!   ([`open_folder`]), nie aus gespeicherten Pfaden. `cap-std` folgt Verweisen, die in der
+//!   Datenwurzel bleiben; deshalb wird er VOR und NACH dem Oeffnen als Nicht-Verweis
+//!   geprueft und das geoeffnete Handle gegen den Pfad verglichen ([`names_file`], Geraet
+//!   und Inode bzw. Dateiindex). Ein Tausch zwischen Pruefung und Oeffnen faellt so auf.
+//! - Der Ordner `trim-<ULID>` wird ueber dieses Handle angelegt und ebenso nach dem Oeffnen
+//!   gegen seinen Pfad verglichen ([`NewDir::create`]); frisch angelegt, muss er leer sein.
 //! - Jede Datei darin entsteht mit `create_new` ueber das Handle des Zuschnittsordners
-//!   (nie ueberschreiben) und wird nur dort vermerkt, wo sie wirklich angelegt wurde.
-//! - Die Fehlerbereinigung entfernt genau diese vermerkten Dateien ueber DASSELBE Handle
-//!   und danach den (leeren) Ordner ueber das Handle des Besprechungsordners mit
-//!   `remove_dir` (nie rekursiv). Wird der Ordner nach dem Oeffnen gegen einen Verweis
-//!   oder einen anderen Ordner getauscht, trifft die Bereinigung weiter den festgehaltenen
-//!   Ordner; unter dem Namen kann sie hoechstens einen LEEREN Ordner entfernen.
+//!   (nie ueberschreiben); der Zuschnitt haelt ihr `File`-Handle bis zum Commit.
+//! - Innerhalb der `IMMEDIATE`-Transaktion, unmittelbar vor dem `UPDATE`, wird fuer jede neue
+//!   Datei geprueft, dass der zu speichernde Pfad dieselbe Datei ist wie das gehaltene Handle
+//!   (`MeetingStore::apply_trim`). Weicht etwas ab, gibt es `trim_changed`, keinen Commit und
+//!   keine Loeschung. Uebrig bleibt nur das Zeitfenster zwischen dieser Pruefung und dem
+//!   Commit (Mikrosekunden, ohne Schaden: nichts wird geloescht).
 
 use std::path::{Component, Path, PathBuf};
 
@@ -40,6 +48,51 @@ pub(super) const SUPERSEDED_KEY: &str = "trim_superseded";
 /// So viele Vermerke haelt `trim_superseded` hoechstens; darueber fallen die aeltesten weg
 /// (die Dateien selbst bleiben liegen, nur der Vermerk entfaellt).
 pub(super) const SUPERSEDED_MAX: usize = 256;
+
+// ---------------------------------------------------------------------------
+// Test-Haken
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+type HookFn = Box<dyn Fn(&str)>;
+
+#[cfg(test)]
+thread_local! {
+    static HOOK: std::cell::RefCell<Option<HookFn>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Haengt in Tests eine Funktion an die benannten Stellen des Ablaufs
+/// (`meeting_folder_checked`, `trim_folder_created`, `written`), etwa um dort einen Ordner
+/// auszutauschen. Gilt nur fuer den aktuellen Thread und nur, solange der Rueckgabewert
+/// lebt (er nimmt den Haken beim Verwerfen wieder ab, auch wenn Tests auf einem Thread laufen).
+#[cfg(test)]
+#[must_use = "the hook is removed again when the guard is dropped"]
+pub(super) fn set_hook(f: impl Fn(&str) + 'static) -> HookGuard {
+    HOOK.with(|h| *h.borrow_mut() = Some(Box::new(f)));
+    HookGuard
+}
+
+#[cfg(test)]
+pub(super) struct HookGuard;
+
+#[cfg(test)]
+impl Drop for HookGuard {
+    fn drop(&mut self) {
+        HOOK.with(|h| *h.borrow_mut() = None);
+    }
+}
+
+/// Eine benannte Stelle des Ablaufs; ausserhalb von Tests ohne Wirkung.
+pub(super) fn hook(point: &str) {
+    #[cfg(test)]
+    HOOK.with(|h| {
+        if let Some(f) = h.borrow().as_ref() {
+            f(point);
+        }
+    });
+    #[cfg(not(test))]
+    let _ = point;
+}
 
 // ---------------------------------------------------------------------------
 // Vermerke
@@ -83,6 +136,12 @@ impl Channel {
             Self::MicAec => "mic_aec",
         }
     }
+
+    fn parse(text: &str) -> Option<Self> {
+        [Self::Mic, Self::System, Self::MicAec]
+            .into_iter()
+            .find(|c| c.as_str() == text)
+    }
 }
 
 /// Eine alte Audiodatei, die ein Zuschnitt ersetzt hat und die unangetastet liegen bleibt.
@@ -106,51 +165,96 @@ impl Superseded {
             "at": self.at,
         })
     }
+}
 
-    fn is_listed_in(&self, list: &[Value]) -> bool {
-        list.iter().any(|v| {
-            v.get("path").and_then(Value::as_str) == Some(self.path.as_str())
-                && v.get("channel").and_then(Value::as_str) == Some(self.channel.as_str())
-        })
+/// Ein gueltiger Vermerk: Objekt mit nicht leerem `path` (Text), gueltiger `trim_id`
+/// (ULID), `channel` aus {mic, system, mic_aec} und `at` (Zahl).
+fn valid_note(value: &Value) -> bool {
+    let text = |key: &str| value.get(key).and_then(Value::as_str);
+    value.is_object()
+        && text("path").is_some_and(|p| !p.is_empty())
+        && text("trim_id").is_some_and(|id| TrimId::parse(id).is_some())
+        && text("channel").is_some_and(|c| Channel::parse(c).is_some())
+        && value.get("at").is_some_and(Value::is_number)
+}
+
+/// Ist `trim_superseded` lesbar: fehlt, `null` oder eine Liste, deren Elemente alle
+/// gueltige Vermerke sind? Alles andere sind beschaedigte Metadaten: der Zuschnitt darf sie
+/// nicht ueberschreiben (`metadata_unreadable`).
+pub(super) fn superseded_readable(root: &Value) -> bool {
+    match root.get(SUPERSEDED_KEY) {
+        None | Some(Value::Null) => true,
+        Some(Value::Array(list)) => list.iter().all(valid_note),
+        Some(_) => false,
     }
 }
 
-/// Ist `trim_superseded` lesbar (fehlt, `null` oder eine Liste)? Alles andere sind
-/// beschaedigte Metadaten: der Zuschnitt darf sie nicht ueberschreiben.
-pub(super) fn superseded_readable(root: &Value) -> bool {
-    matches!(
-        root.get(SUPERSEDED_KEY),
-        None | Some(Value::Null) | Some(Value::Array(_))
-    )
+/// Der Schluessel eines Vermerks zum Deduplizieren: Pfad und Spur.
+fn note_key(value: &Value) -> Option<(&str, &str)> {
+    Some((
+        value.get("path")?.as_str()?,
+        value.get("channel")?.as_str()?,
+    ))
 }
 
-/// Haengt `entries` an `metadata_json["trim_superseded"]` an (ohne Doppelte nach Pfad und
-/// Spur; fremde oder aeltere Eintraege bleiben unveraendert). `true`, wenn sich etwas
-/// aenderte.
+/// Haengt `entries` an `metadata_json["trim_superseded"]` an und bringt die RESULTIERENDE
+/// Liste in Form: ohne Doppelte nach Pfad und Spur (der erste bleibt), hoechstens
+/// [`SUPERSEDED_MAX`] Eintraege (die aeltesten fallen weg). Das gilt auch dann, wenn nichts
+/// Neues hinzukommt. Eine nicht lesbare Liste ([`superseded_readable`]) bleibt unangetastet.
+/// `true`, wenn sich etwas aenderte.
 pub(super) fn push_superseded(root: &mut Value, entries: &[Superseded]) -> bool {
+    // Nie etwas Beschaedigtes umschreiben: der Zuschnitt lehnt das vorher ab.
+    if !superseded_readable(root) {
+        return false;
+    }
     let Some(map) = root.as_object_mut() else {
         return false;
     };
-    let mut list = match map.get(SUPERSEDED_KEY) {
+    let before: Vec<Value> = match map.get(SUPERSEDED_KEY) {
         Some(Value::Array(items)) => items.clone(),
         _ => Vec::new(),
     };
-    let before = list.len();
-    for entry in entries {
-        if !entry.is_listed_in(&list) {
-            list.push(entry.to_value());
+    let mut list: Vec<Value> = Vec::with_capacity(before.len() + entries.len());
+    let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    let added = entries.iter().map(Superseded::to_value);
+    for value in before.iter().cloned().chain(added) {
+        let Some((path, channel)) = note_key(&value) else {
+            continue;
+        };
+        if seen.insert((path.to_string(), channel.to_string())) {
+            list.push(value);
         }
-    }
-    if list.len() == before {
-        return false;
     }
     if list.len() > SUPERSEDED_MAX {
         let excess = list.len() - SUPERSEDED_MAX;
         list.drain(..excess);
         warn!("meetings: trim_superseded is full, {excess} oldest note(s) dropped");
     }
+    if list == before {
+        return false;
+    }
     map.insert(SUPERSEDED_KEY.to_string(), Value::Array(list));
     true
+}
+
+// ---------------------------------------------------------------------------
+// Identitaet
+// ---------------------------------------------------------------------------
+
+/// Ist `path` (jetzt) genau die Datei oder der Ordner, den `file` haelt (Geraet und Inode,
+/// unter Windows Volume und Dateiindex)? Verweise werden aufgeloest; wer sie ausschliessen
+/// will, prueft vorher separat. Jeder Fehler ist ein Nein.
+pub(super) fn names_file(path: &Path, file: &std::fs::File) -> bool {
+    let (Ok(clone), Ok(named)) = (file.try_clone(), same_file::Handle::from_path(path)) else {
+        return false;
+    };
+    same_file::Handle::from_file(clone).is_ok_and(|held| held == named)
+}
+
+/// Wie [`names_file`], fuer ein Verzeichnis-Handle.
+pub(super) fn names_dir(path: &Path, dir: &Dir) -> bool {
+    dir.try_clone()
+        .is_ok_and(|clone| names_file(path, &clone.into_std_file()))
 }
 
 // ---------------------------------------------------------------------------
@@ -188,7 +292,7 @@ fn is_link(meta: &Metadata) -> bool {
 pub(super) struct Folder {
     /// Pfad (Datenwurzel plus ID), zum Benennen der neuen Dateien in der Datenbank.
     pub path: PathBuf,
-    /// Das Verzeichnis selbst: alles entsteht und vergeht relativ dazu.
+    /// Das Verzeichnis selbst: alles entsteht relativ dazu.
     pub dir: Dir,
 }
 
@@ -201,6 +305,9 @@ pub(super) enum Unusable {
     Unsafe,
     /// Nicht lesbar: nicht entscheidbar.
     Unreadable,
+    /// Zwischen Pruefung und Oeffnen ausgetauscht: das Handle ist nicht der Ordner unter
+    /// dem Pfad.
+    Changed,
 }
 
 fn classify(e: &std::io::Error) -> Unusable {
@@ -211,21 +318,30 @@ fn classify(e: &std::io::Error) -> Unusable {
     }
 }
 
-/// Oeffnet den Besprechungsordner relativ zur Datenwurzel (siehe Moduldoku). `cap-std`
-/// folgt Verweisen, die innerhalb der Datenwurzel bleiben (etwa auf den Ordner einer
-/// anderen Besprechung); deshalb wird der Besprechungsordner vorher selbst als
-/// Nicht-Verweis geprueft.
+/// `name` direkt in `parent` ist ein Verzeichnis und kein Verweis.
+fn require_plain_dir(parent: &Dir, name: &Path) -> Result<(), Unusable> {
+    match parent.symlink_metadata(name) {
+        Ok(meta) if meta.is_dir() && !is_link(&meta) => Ok(()),
+        Ok(_) => Err(Unusable::Unsafe),
+        Err(e) => Err(classify(&e)),
+    }
+}
+
+/// Oeffnet den Besprechungsordner relativ zur Datenwurzel (siehe Moduldoku): vor dem
+/// Oeffnen als Nicht-Verweis geprueft, danach noch einmal, und das Handle muss derselbe
+/// Ordner sein wie der unter dem Pfad.
 pub(super) fn open_folder(store: &MeetingStore, meeting_id: &str) -> Result<Folder, Unusable> {
     let path = meeting_dir(store, meeting_id).ok_or(Unusable::Unsafe)?;
     let data_root = store.db_path().parent().ok_or(Unusable::Unsafe)?;
     let root = Dir::open_ambient_dir(data_root, ambient_authority()).map_err(|e| classify(&e))?;
     let name = Path::new(meeting_id);
-    match root.symlink_metadata(name) {
-        Ok(meta) if meta.is_dir() && !is_link(&meta) => {}
-        Ok(_) => return Err(Unusable::Unsafe),
-        Err(e) => return Err(classify(&e)),
-    }
+    require_plain_dir(&root, name)?;
+    hook("meeting_folder_checked");
     let dir = root.open_dir(name).map_err(|e| classify(&e))?;
+    require_plain_dir(&root, name).map_err(|_| Unusable::Changed)?;
+    if !names_dir(&path, &dir) {
+        return Err(Unusable::Changed);
+    }
     Ok(Folder { path, dir })
 }
 
@@ -233,85 +349,40 @@ pub(super) fn open_folder(store: &MeetingStore, meeting_id: &str) -> Result<Fold
 // Neuer Zuschnittsordner (Handle)
 // ---------------------------------------------------------------------------
 
-/// Der frisch angelegte Ordner `trim-<ULID>`, als Handle festgehalten, mit den Namen der
-/// Dateien, die der Zuschnitt selbst darin angelegt hat.
+/// Der frisch angelegte Ordner `trim-<ULID>`, als Handle festgehalten.
 pub(super) struct NewDir {
-    name: String,
     dir: Dir,
-    created: Vec<&'static str>,
 }
 
 impl NewDir {
     /// Legt `name` im Besprechungsordner `home` an und haelt ihn als Handle fest. Der
-    /// Ordner muss vorher gefehlt haben (`create_dir` scheitert sonst) und leer sein.
-    pub(super) fn create(home: &Dir, name: &str) -> Result<Self, String> {
+    /// Ordner muss vorher gefehlt haben (`create_dir` scheitert sonst), nach dem Oeffnen
+    /// kein Verweis und derselbe Ordner wie der unter seinem Pfad sein (sonst `trim_changed`)
+    /// und leer. Scheitert etwas davon, bleibt der Ordner liegen: es wird nichts geloescht.
+    pub(super) fn create(home: &Folder, name: &str) -> Result<Self, String> {
         let failed = |e: &dyn std::fmt::Display| format!("wav_write_failed: {e}");
-        home.create_dir(name).map_err(|e| failed(&e))?;
-        let dir = match home.open_dir(name) {
-            Ok(dir) => dir,
-            Err(e) => {
-                // `remove_dir` entfernt nur einen leeren Ordner.
-                let _ = home.remove_dir(name);
-                return Err(failed(&e));
-            }
-        };
+        home.dir.create_dir(name).map_err(|e| failed(&e))?;
+        hook("trim_folder_created");
+        let dir = home.dir.open_dir(name).map_err(|e| failed(&e))?;
+        let plain = require_plain_dir(&home.dir, Path::new(name)).is_ok();
+        if !plain || !names_dir(&home.path.join(name), &dir) {
+            return Err("trim_changed".to_string());
+        }
         let empty = dir.entries().map(|mut it| it.next().is_none());
         if !matches!(empty, Ok(true)) {
-            drop(dir);
-            let _ = home.remove_dir(name);
             return Err(failed(&"the new folder is not empty"));
         }
-        Ok(Self {
-            name: name.to_string(),
-            dir,
-            created: Vec::new(),
-        })
+        Ok(Self { dir })
     }
 
     /// Legt `name` im Zuschnittsordner NEU an (`create_new`: eine vorhandene Datei bleibt,
-    /// wie sie war, und ist ein Fehler) und merkt es fuer die Bereinigung.
-    pub(super) fn create_file(&mut self, name: &'static str) -> Result<std::fs::File, String> {
+    /// wie sie war, und ist ein Fehler). Der Aufrufer haelt das Handle bis zum Commit.
+    pub(super) fn create_file(&self, name: &str) -> Result<std::fs::File, String> {
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
-        let file = self
-            .dir
+        self.dir
             .open_with(name, &options)
-            .map_err(|e| format!("wav_write_failed: {e}"))?;
-        self.created.push(name);
-        Ok(file.into_std())
-    }
-
-    /// Entfernt eine Datei, die dieser Zuschnitt selbst angelegt hat (etwa eine halb
-    /// geschriebene Kopie), ueber das Handle. Eine Datei, die er nicht angelegt hat, bleibt.
-    pub(super) fn remove_created(&mut self, name: &'static str) {
-        let Some(at) = self.created.iter().position(|n| *n == name) else {
-            return;
-        };
-        self.created.swap_remove(at);
-        match self.dir.remove_file(name) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => warn!("meetings: trim: {}/{name} not removed: {e}", self.name),
-        }
-    }
-
-    /// Fehlerbereinigung: die selbst angelegten Dateien weg, ueber dasselbe Handle, dann
-    /// den Ordner, nur wenn er leer ist, ueber das Handle des Besprechungsordners.
-    /// Best effort; Pfade stehen im Log, nie Inhalt.
-    pub(super) fn discard(self, home: &Dir) {
-        let Self { name, dir, created } = self;
-        for file in created {
-            match dir.remove_file(file) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => warn!("meetings: trim: {name}/{file} not removed: {e}"),
-            }
-        }
-        drop(dir);
-        match home.remove_dir(&name) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => warn!("meetings: trim: folder {name} not removed: {e}"),
-        }
+            .map(cap_std::fs::File::into_std)
+            .map_err(|e| format!("wav_write_failed: {e}"))
     }
 }
