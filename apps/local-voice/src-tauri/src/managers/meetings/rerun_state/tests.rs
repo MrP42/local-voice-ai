@@ -67,7 +67,7 @@ fn variant_count(f: &Fx) -> usize {
 /// Die Schritte eines Laufs bis einschliesslich `upto` (1..=5), genau in der
 /// Reihenfolge von `retranscribe.rs`.
 fn run_until(f: &Fx, upto: u8) {
-    mark_start(&f.store, &f.id).unwrap();
+    mark_start(&f.store, &f.id, None).unwrap();
     if upto < 2 {
         return;
     }
@@ -80,7 +80,14 @@ fn run_until(f: &Fx, upto: u8) {
     if upto < 4 {
         return;
     }
-    mark_running(&f.store, &f.id, "neu-modell", variants::KIND_RETRANSCRIBED).unwrap();
+    mark_running(
+        &f.store,
+        &f.id,
+        "neu-modell",
+        variants::KIND_RETRANSCRIBED,
+        None,
+    )
+    .unwrap();
     if upto < 5 {
         return;
     }
@@ -188,7 +195,7 @@ fn resuming_reactivates_the_stopped_version_after_a_switch() {
     assert_eq!(texts(&f), vec!["alt eins", "alt zwei"]);
     assert_eq!(
         prepare_resume(&f.store, &f.id, true).unwrap(),
-        Resume::Partial("neu-modell".into())
+        Resume::Partial("neu-modell".into(), None)
     );
     assert_eq!(texts(&f), vec!["neu eins"]);
 }
@@ -200,13 +207,13 @@ fn a_new_run_over_a_kept_result_restores_it_when_it_leaves_nothing() {
     settle(&f.store, &f.id, false, Ends::QUIET).unwrap();
     f.store.set_status(&f.id, MeetingStatus::Cancelled).unwrap();
     // Zweiter Lauf, gestoppt vor dem ersten Abschnitt.
-    mark_start(&f.store, &f.id).unwrap();
+    mark_start(&f.store, &f.id, None).unwrap();
     {
         let mut c = f.store.get_connection().unwrap();
         variants::begin_rerun(&mut c, &f.id).unwrap();
     }
     f.store.clear_segments(&f.id).unwrap();
-    mark_running(&f.store, &f.id, "zweit", variants::KIND_RETRANSCRIBED).unwrap();
+    mark_running(&f.store, &f.id, "zweit", variants::KIND_RETRANSCRIBED, None).unwrap();
     assert_eq!(
         settle(&f.store, &f.id, false, Ends::QUIET).unwrap(),
         Settled::RolledBack(Some(MeetingStatus::Cancelled))
@@ -214,7 +221,7 @@ fn a_new_run_over_a_kept_result_restores_it_when_it_leaves_nothing() {
     assert_eq!(texts(&f), vec!["neu eins"], "das erste Teilergebnis bleibt");
     assert_eq!(
         prepare_resume(&f.store, &f.id, true).unwrap(),
-        Resume::Partial("neu-modell".into()),
+        Resume::Partial("neu-modell".into(), None),
         "und bleibt mit seinem Modell fortsetzbar"
     );
 }
@@ -317,7 +324,7 @@ fn a_rollback_writes_the_previous_status_in_the_same_transaction() {
     // ein Schritt; scheitert er, bleibt die Wiederherstellungsinformation stehen.
     let f = fixture();
     f.store.set_status(&f.id, MeetingStatus::Failed).unwrap();
-    mark_start(&f.store, &f.id).unwrap();
+    mark_start(&f.store, &f.id, None).unwrap();
     {
         let mut c = f.store.get_connection().unwrap();
         variants::begin_rerun(&mut c, &f.id).unwrap();
@@ -326,7 +333,7 @@ fn a_rollback_writes_the_previous_status_in_the_same_transaction() {
         .set_status(&f.id, MeetingStatus::Processing)
         .unwrap();
     f.store.clear_segments(&f.id).unwrap();
-    mark_running(&f.store, &f.id, "m", variants::KIND_RETRANSCRIBED).unwrap();
+    mark_running(&f.store, &f.id, "m", variants::KIND_RETRANSCRIBED, None).unwrap();
     append(&f.store, &f.id, &[(0, "neu")]);
     fail_marker_writes(&f, true);
     assert!(settle(&f.store, &f.id, true, Ends::QUIET).is_err());
@@ -415,7 +422,10 @@ fn a_new_run_takes_its_previous_status_after_settling_the_old_one() {
     let f = fixture();
     run_until(&f, 4);
     f.store.set_status(&f.id, MeetingStatus::Cancelled).unwrap();
-    assert_eq!(mark_start(&f.store, &f.id).unwrap(), MeetingStatus::Ready);
+    assert_eq!(
+        mark_start(&f.store, &f.id, None).unwrap(),
+        MeetingStatus::Ready
+    );
     let m = read(&f.store, &f.id).unwrap().unwrap();
     assert_eq!(m.prev_status.as_deref(), Some("ready"));
     assert_eq!(texts(&f), vec!["alt eins", "alt zwei"]);
@@ -583,4 +593,163 @@ fn a_trackless_kept_result_ends_in_one_transaction_and_a_failed_commit_changes_n
     assert_eq!(read(&f.store, &f.id).unwrap(), None);
     assert_eq!(status(&f), "ready");
     assert_eq!(texts(&f), vec!["neu eins"]);
+}
+
+// -- lva#522: Bereich in der Marke ------------------------------------------
+
+fn range(start_ms: u64, end_ms: u64) -> TimeRange {
+    TimeRange { start_ms, end_ms }
+}
+
+#[test]
+fn the_marker_roundtrips_with_and_without_a_range() {
+    let with = Marker {
+        phase: PHASE_RUNNING.to_string(),
+        model: Some("m".into()),
+        kind: variants::KIND_RETRANSCRIBED,
+        epoch: Some(3),
+        start_ms: Some(1_000),
+        end_ms: Some(5_000),
+        ..Default::default()
+    };
+    let value = with.to_value();
+    assert_eq!(value["start_ms"], 1_000);
+    assert_eq!(value["end_ms"], 5_000);
+    let back = Marker::from_value(&value).unwrap();
+    assert_eq!(back, with);
+    assert_eq!(back.range(), Some(range(1_000, 5_000)));
+
+    // Ohne Bereich: keine zusaetzlichen Schluessel (Marken bleiben, wie sie waren).
+    let without = Marker {
+        phase: PHASE_START.to_string(),
+        ..Default::default()
+    };
+    let value = without.to_value();
+    assert!(value.get("start_ms").is_none() && value.get("end_ms").is_none());
+    assert_eq!(Marker::from_value(&value).unwrap().range(), None);
+
+    // Aelterer Bestand ohne die Felder; unstimmige oder halbe Bereiche zaehlen nicht.
+    let old = serde_json::json!({"phase": "kept", "model": "m", "variant_id": "v"});
+    assert_eq!(Marker::from_value(&old).unwrap().range(), None);
+    let half = serde_json::json!({"phase": "kept", "start_ms": 5});
+    assert_eq!(Marker::from_value(&half).unwrap().range(), None);
+    let bad = serde_json::json!({"phase": "kept", "start_ms": 9, "end_ms": 3});
+    assert_eq!(Marker::from_value(&bad).unwrap().range(), None);
+}
+
+#[test]
+fn a_ranged_run_stores_its_range_from_start_to_resume() {
+    let f = fixture();
+    let r = range(1_000, 5_000);
+    mark_start(&f.store, &f.id, Some(r)).unwrap();
+    assert_eq!(read(&f.store, &f.id).unwrap().unwrap().range(), Some(r));
+    {
+        let mut c = f.store.get_connection().unwrap();
+        variants::begin_rerun(&mut c, &f.id).unwrap();
+    }
+    f.store.clear_segments(&f.id).unwrap();
+    mark_running(
+        &f.store,
+        &f.id,
+        "neu-modell",
+        variants::KIND_RETRANSCRIBED,
+        Some(r),
+    )
+    .unwrap();
+    assert_eq!(read(&f.store, &f.id).unwrap().unwrap().range(), Some(r));
+    append(&f.store, &f.id, &[(0, "neu eins")]);
+    // Stopp: behalten, und Fortsetzen kennt den Bereich.
+    let Settled::Kept(Some(kept)) = settle(&f.store, &f.id, false, Ends::QUIET).unwrap() else {
+        panic!("behalten erwartet");
+    };
+    assert_eq!(kept.range, Some(r));
+    assert_eq!(
+        prepare_resume(&f.store, &f.id, true).unwrap(),
+        Resume::Partial("neu-modell".into(), Some(r))
+    );
+}
+
+#[test]
+fn a_run_over_a_kept_ranged_result_does_not_inherit_its_range() {
+    let f = fixture();
+    // Erster Lauf mit Bereich, gestoppt und behalten.
+    mark_start(&f.store, &f.id, Some(range(1_000, 5_000))).unwrap();
+    {
+        let mut c = f.store.get_connection().unwrap();
+        variants::begin_rerun(&mut c, &f.id).unwrap();
+    }
+    f.store.clear_segments(&f.id).unwrap();
+    mark_running(
+        &f.store,
+        &f.id,
+        "neu-modell",
+        variants::KIND_RETRANSCRIBED,
+        Some(range(1_000, 5_000)),
+    )
+    .unwrap();
+    append(&f.store, &f.id, &[(0, "neu eins")]);
+    settle(&f.store, &f.id, false, Ends::QUIET).unwrap();
+    f.store.set_status(&f.id, MeetingStatus::Cancelled).unwrap();
+    // Zweiter Lauf ueber die ganze Aufnahme: seine Marke traegt keinen Bereich.
+    mark_start(&f.store, &f.id, None).unwrap();
+    assert_eq!(read(&f.store, &f.id).unwrap().unwrap().range(), None);
+}
+
+// -- lva#522 Fixrunde 3 (F): kein Bereich ist nicht beschaedigt --------------
+
+#[test]
+fn no_range_is_not_damaged_but_half_wrong_typed_or_inverted_ranges_are() {
+    let parse = |v: Value| Marker::from_value(&v).unwrap();
+    for ok in [
+        serde_json::json!({"phase": "kept"}),
+        serde_json::json!({"phase": "kept", "start_ms": null, "end_ms": null}),
+    ] {
+        let m = parse(ok);
+        assert!(!m.range_damaged && m.range().is_none());
+    }
+    let good = parse(serde_json::json!({"phase": "kept", "start_ms": 1, "end_ms": 9}));
+    assert!(!good.range_damaged);
+    assert_eq!(good.range(), Some(range(1, 9)));
+
+    for bad in [
+        serde_json::json!({"phase": "kept", "start_ms": 5}),
+        serde_json::json!({"phase": "kept", "end_ms": 5}),
+        serde_json::json!({"phase": "kept", "start_ms": "1", "end_ms": 9}),
+        serde_json::json!({"phase": "kept", "start_ms": 1.5, "end_ms": 9}),
+        serde_json::json!({"phase": "kept", "start_ms": 9, "end_ms": 9}),
+        serde_json::json!({"phase": "kept", "start_ms": 9, "end_ms": 3}),
+        serde_json::json!({"phase": "kept", "start_ms": -1, "end_ms": 3}),
+    ] {
+        let m = parse(bad.clone());
+        assert!(m.range_damaged, "{bad}");
+        assert_eq!(m.range(), None, "{bad}");
+        // Die Beschaedigung geht beim Zurueckschreiben nicht verloren.
+        assert!(Marker::from_value(&m.to_value()).unwrap().range_damaged);
+    }
+}
+
+#[test]
+fn resuming_over_a_damaged_range_is_refused_and_the_marker_stays() {
+    let f = fixture();
+    run_until(&f, 5);
+    settle(&f.store, &f.id, false, Ends::QUIET).unwrap();
+    // Die Marke wird beschaedigt: nur ein Feld des Bereichs.
+    let mut value = read(&f.store, &f.id).unwrap().unwrap().to_value();
+    value["start_ms"] = serde_json::json!(5);
+    write(&f.store, &f.id, value).unwrap();
+    let before = f.store.metadata_json(&f.id).unwrap();
+    let active_before = texts(&f);
+
+    let err = prepare_resume(&f.store, &f.id, true).unwrap_err();
+    assert_eq!(err, "partial_rerun_range_damaged");
+    let m = read(&f.store, &f.id).unwrap().unwrap();
+    assert_eq!(m.phase, PHASE_KEPT);
+    assert!(m.range_damaged);
+    assert_eq!(f.store.metadata_json(&f.id).unwrap(), before);
+    assert_eq!(texts(&f), active_before);
+    // Wiederholt: derselbe Befund, nichts verschwindet.
+    assert_eq!(
+        prepare_resume(&f.store, &f.id, true).unwrap_err(),
+        "partial_rerun_range_damaged"
+    );
 }
