@@ -71,6 +71,17 @@ pub fn sovereignty_allows(stufe: &str, cloud: bool, countries: &[String]) -> Res
 }
 
 /// Anbieter, Modell und Schlüssel zu einer Modellkennung unter einer Souveränitätsstufe.
+/// Souveraenitaetsstufe, die tatsaechlich gilt: geschuetzte Inhalte und der Sofort-Sprecher laufen
+/// immer nur lokal, gleich was die Oberflaeche verlangt (der Sprecher kennt nur Verlauf und Frage,
+/// aber auch das verlaesst den Rechner nicht).
+fn wirksame_stufe<'a>(stufe: &'a str, geschuetzt: bool, nur_sprecher: bool) -> &'a str {
+    if geschuetzt || nur_sprecher {
+        "nur_lokal"
+    } else {
+        stufe
+    }
+}
+
 fn resolve(
     settings: &AppSettings,
     model_id: &str,
@@ -169,11 +180,7 @@ pub async fn voice_call_turn(
     let sprache = crate::assistent::sprache_der_app(&app);
     tor::vor_nachrichten(&messages, sprache, conversation_id.as_deref())?;
     let settings = crate::settings::get_settings(&app);
-    let stufe_wirksam = if pruefung.geschuetzt {
-        "nur_lokal"
-    } else {
-        stufe.as_str()
-    };
+    let stufe_wirksam = wirksame_stufe(&stufe, pruefung.geschuetzt, nur_sprecher);
     let (provider, model, api_key) =
         resolve(&settings, &model_id, stufe_wirksam, for_function.as_deref()).map_err(|e| {
             if pruefung.geschuetzt && e.contains("nicht zulässig") {
@@ -321,6 +328,30 @@ pub async fn voice_call_turn(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn der_sofort_sprecher_und_geschuetzte_inhalte_bleiben_lokal() {
+        use super::{sovereignty_allows, wirksame_stufe};
+        assert_eq!(wirksame_stufe("frei", false, false), "frei");
+        assert_eq!(wirksame_stufe("frei", false, true), "nur_lokal");
+        assert_eq!(wirksame_stufe("eu", true, false), "nur_lokal");
+        // Ein Cloudmodell scheitert damit vor dem Versand, auch bei freier Stufe des Aufrufs.
+        assert!(sovereignty_allows(wirksame_stufe("frei", false, true), true, &[]).is_err());
+        assert!(sovereignty_allows(wirksame_stufe("frei", false, false), true, &[]).is_ok());
+    }
+
+    #[test]
+    fn voice_call_turn_nimmt_die_wirksame_stufe_fuer_die_aufloesung() {
+        let quelle = include_str!("turn.rs");
+        let rumpf = &quelle[quelle.find("pub async fn voice_call_turn(").unwrap()..];
+        let stufe = rumpf
+            .find("wirksame_stufe(&stufe, pruefung.geschuetzt, nur_sprecher)")
+            .expect("wirksame Stufe fehlt");
+        let aufloesung = rumpf
+            .find("resolve(&settings, &model_id, stufe_wirksam")
+            .unwrap();
+        assert!(stufe < aufloesung);
+    }
+
     use super::*;
 
     fn c(list: &[&str]) -> Vec<String> {

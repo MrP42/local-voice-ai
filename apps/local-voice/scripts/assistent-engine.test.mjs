@@ -406,6 +406,26 @@ test("Tor-Weg im Textmodus: die Rückgabe mit Überbrückung zählt nicht, nur d
   ]);
 });
 
+test("Projekt: nach einer Überbrückung führt der Verlauf nur die Antwort (Sprache und Text)", async () => {
+  const t = neu({ voice_call_chat: chatSagt(BRUECKE, ANTWORT) });
+  t.engine.cb.projekt = () => ({ id: "p1", stand: null });
+  await t.start("Was steht im Kalender?").done;
+  assert.deepEqual(t.player.enqueued, [`wav:${ANTWORT}`]);
+  assert.deepEqual(verlauf(t), [
+    "user:Was steht im Kalender?",
+    `assistant:${ANTWORT}`,
+  ]);
+
+  const t2 = neu({ voice_call_chat: chatSagt(BRUECKE, ANTWORT) });
+  t2.engine.cb.projekt = () => ({ id: "p1", stand: null });
+  t2.engine.state = "idle";
+  await t2.engine.sendText("Was steht im Kalender?");
+  assert.deepEqual(verlauf(t2), [
+    "user:Was steht im Kalender?",
+    `assistant:${ANTWORT}`,
+  ]);
+});
+
 test("Denktext des Modells (reasoning) geht nur an die Denk-Anzeige", async () => {
   const t = neu({
     voice_call_chat: ({ requestId }) => {
@@ -505,6 +525,21 @@ test("Wiederholen spricht die letzte freigegebene Ausgabe, ohne Modell und ohne 
   assert.equal(t.aufrufe("assistent_letzte_ausgabe").length, 2);
   assert.deepEqual(verlauf(t), []);
   assert.deepEqual(t.engine.ausgabeKey, { id: "c1" });
+});
+
+test("Wiederholen spricht eine gemerkte Überbrückung nicht noch einmal", async () => {
+  const t = neu({
+    assistent_einstufen: () => s0E("wiederholen", "Ich wiederhole."),
+    assistent_letzte_ausgabe: () =>
+      "Moment, ich schaue in den Besprechungen nach. Das ist die Antwort.",
+    voice_call_chat: chatSagt(ANTWORT),
+  });
+  t.engine.ausgabeKey = { id: "c1" };
+  await t.start("Wiederhole das bitte").done;
+  assert.deepEqual(t.player.enqueued, [
+    "wav:Ich wiederhole.",
+    "wav:Das ist die Antwort.",
+  ]);
 });
 
 test("Wiederholen ohne Ausgabe: feste Vorlage, nichts ans Modell", async () => {

@@ -65,7 +65,7 @@ import {
   type Stufen,
 } from "./bedienung";
 import i18n from "@/i18n";
-import { istUeberbrueckung } from "./ueberbrueckung";
+import { istUeberbrueckung, ohneUeberbrueckungen } from "./ueberbrueckung";
 import {
   liesSofort,
   sofortPrompt,
@@ -1590,7 +1590,8 @@ export class VoiceCallEngine {
   private async wiederholung(sprache: Sprache): Promise<string[]> {
     const key = this.ausgabeKey;
     const again = key ? await letzteAusgabe(key.id) : null;
-    const text = again ? speakable(again) : "";
+    // Gemerkt ist die ganze freigegebene Ausgabe: Überbrückungen darin werden nie wiederholt.
+    const text = again ? speakable(ohneUeberbrueckungen(again)) : "";
     return text
       ? [vorlage("wiederhole", sprache), text]
       : [vorlage("nichts-zu-wiederholen", sprache)];
@@ -1890,7 +1891,13 @@ export class VoiceCallEngine {
         role: "assistant",
         // Im Projekt genau der Text, den das Tor freigegeben hat: Das Antwortregister erkennt ihn
         // am Fingerabdruck wieder, `speakable` würde die Marken entfernen.
-        content: this.projekt() ? rueckgabe || answer : speakable(answer),
+        // Nach einer gefilterten Überbrückung nur das Angezeigte: das Register erkennt es dann
+        // nicht wieder und nimmt es aus dem nächsten Kontext (sicher), statt die Überbrückung zu führen.
+        content: this.projekt()
+          ? ueberbrueckt
+            ? answer
+            : rueckgabe || answer
+          : speakable(answer),
         ...tag,
         ...(run.withContext ? { ctx: true } : {}),
       });
@@ -2342,7 +2349,9 @@ export class VoiceCallEngine {
     // Im Projekt zählt nur der freigegebene Text aus der Rückgabe; fehlt er, bleibt der Schritt aus
     // dem Verlauf (das Register kennt dann keine Antwort, und sie wäre ohnehin ersetzt worden).
     const verlaufText = this.projekt()
-      ? (turn.projektText ?? "")
+      ? ueberbrueckt
+        ? modelText
+        : (turn.projektText ?? "")
       : speakable([sofortText, modelText].filter(Boolean).join(" "));
     if (verlaufText) {
       this.history.push({

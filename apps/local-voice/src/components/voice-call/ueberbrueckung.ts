@@ -48,3 +48,23 @@ function normal(text: string): string {
 export function istUeberbrueckung(text: string): boolean {
   return BEKANNT.has(normal(text));
 }
+
+/**
+ * Entfernt bekannte Überbrückungen aus einem längeren Text (z. B. der in Rust gemerkten Ausgabe für
+ * „Wiederholen“ oder der Rückgabe des Tors): nur der Inhalt bleibt.
+ */
+export function ohneUeberbrueckungen(text: string): string {
+  let rest = normal(text);
+  for (const b of BEKANNT) rest = rest.split(b).join(" ");
+  return normal(rest);
+}
+
+/** Feste Floskeln des Wartens, auch frei formuliert („Ich denke kurz nach.“, „Let me check.“). */
+const FLOSKEL =
+  /^(moment|einen moment|augenblick|sekunde|ich (denke|überlege|schaue|sehe|prüfe|suche|gucke)\b[^.!?]*\b(nach|kurz|darüber)\b|lass mich|one moment|just a (moment|second|sec)|hold on|let me (think|check|see|look)|i('m| am) (thinking|checking|looking))/i;
+
+/** Ist der Satz eine Überbrückung oder eine feste Warte-Floskel (nie sprechen, nie anzeigen)? */
+export function istFloskel(text: string): boolean {
+  const t = normal(text);
+  return istUeberbrueckung(t) || FLOSKEL.test(t);
+}

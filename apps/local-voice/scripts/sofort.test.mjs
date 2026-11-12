@@ -63,7 +63,7 @@ test("wendeAn: wer zuerst entscheidet, gewinnt; Datenabsicht verbietet Alleinant
     wendeAn("wartet", { art: "weiter", text: "Gute Frage." }, true),
     {
       zustand: "denker",
-      sagen: "Gute Frage.",
+      sagen: "",
       denkerAbbrechen: false,
     },
   );
@@ -72,6 +72,35 @@ test("wendeAn: wer zuerst entscheidet, gewinnt; Datenabsicht verbietet Alleinant
     sagen: "",
     denkerAbbrechen: false,
   });
+});
+
+test("liesSofort: Warte-Floskeln sind nie eine Reaktion (ANTWORT wie WEITER)", () => {
+  for (const f of [
+    "Ich denke kurz nach.",
+    "Moment, ich schaue in den Besprechungen nach.",
+    "Einen Moment bitte.",
+    "Let me think.",
+    "Lass mich überlegen.",
+  ]) {
+    assert.deepEqual(liesSofort(`ANTWORT: ${f}`), { art: "nichts" }, f);
+    assert.deepEqual(liesSofort(`WEITER: ${f}`), { art: "nichts" }, f);
+  }
+  // Sachsätze mit ähnlichen Wörtern bleiben erhalten.
+  assert.deepEqual(liesSofort("ANTWORT: Ich denke, das passt."), {
+    art: "antwort",
+    text: "Ich denke, das passt.",
+  });
+});
+
+test("wendeAn: bei Datenabsicht sagt der Sprecher auch beim Weitersprechen nichts", () => {
+  assert.deepEqual(
+    wendeAn("wartet", { art: "weiter", text: "Du hast keine Mails." }, true),
+    { zustand: "denker", sagen: "", denkerAbbrechen: false },
+  );
+  assert.deepEqual(
+    wendeAn("wartet", { art: "weiter", text: "Gute Frage." }, false),
+    { zustand: "denker", sagen: "Gute Frage.", denkerAbbrechen: false },
+  );
 });
 
 test("Prompt ohne feste Floskeln als Vorgabe, beide Sprachen", () => {
@@ -332,4 +361,43 @@ test("Alleinantwort des Sprechers: „Wiederholen“ kennt keine ältere Ausgabe
   t.engine.ausgabeKey = { id: "c1" };
   await t.start("Danke");
   assert.equal(t.aufrufe("assistent_ausgabe_vergessen").length, 1);
+});
+
+test("Floskel des Sprechers wird weder gesprochen noch angezeigt (Sprache und Text)", async () => {
+  const s = lokal("ANTWORT: Ich denke kurz nach.");
+  const t = neu({ voice_call_chat: denker(40, ANTWORT) }, s);
+  await t.start("Was steht in meinen Mails?");
+  assert.deepEqual(t.player.enqueued, [`wav:${ANTWORT}`]);
+
+  const s2 = lokal("WEITER: Ich denke kurz nach.");
+  const t2 = neu({ voice_call_chat: denker(40, ANTWORT) }, s2);
+  t2.engine.state = "idle";
+  await t2.engine.sendText("Was steht in meinen Mails?");
+  assert.equal(t2.log.assistant.at(-1).t, ANTWORT);
+  assert.equal(
+    t2.log.assistant.some((a) => a.t.includes("denke kurz nach")),
+    false,
+  );
+});
+
+test("Datenabsicht: falsche Sachauskunft beim Weitersprechen wird nicht gesprochen", async () => {
+  const s = lokal("WEITER: Du hast keine neuen Mails.");
+  const t = neu(
+    {
+      voice_call_chat: denker(40, ANTWORT),
+      assistent_einstufen: () => ({
+        stufe: "S2",
+        absicht: "mails",
+        ansage: "Ich schaue in deine Mails.",
+        antwort: null,
+      }),
+    },
+    s,
+  );
+  await t.start("Was steht in meinen Mails?");
+  assert.equal(
+    t.player.enqueued.some((w) => w.includes("keine neuen Mails")),
+    false,
+  );
+  assert.equal(t.player.enqueued.at(-1), `wav:${ANTWORT}`);
 });

@@ -1035,9 +1035,7 @@ impl SseDecoder {
         while let Some(pos) = self.buf.iter().position(|b| *b == b'\n') {
             let line: Vec<u8> = self.buf.drain(..=pos).collect();
             let line = String::from_utf8_lossy(&line);
-            if let Some(event) = parse_sse_line(line.trim_end_matches(['\r', '\n'])) {
-                events.push(event);
-            }
+            events.extend(parse_sse_line(line.trim_end_matches(['\r', '\n'])));
         }
         if self.buf.len() > SSE_MAX_LINE_BYTES {
             return Err("SSE-Zeile zu lang".to_string());
@@ -1051,54 +1049,58 @@ impl SseDecoder {
         let rest = std::mem::take(&mut self.buf);
         let line = String::from_utf8_lossy(&rest);
         parse_sse_line(line.trim_end_matches(['\r', '\n']))
-            .into_iter()
-            .collect()
     }
 }
 
-fn parse_sse_line(line: &str) -> Option<SseEvent> {
-    let payload = line.strip_prefix("data:")?.trim();
+/// Ereignisse einer SSE-Zeile. Ein Delta kann Denktext UND Antworttext tragen: dann beide, der
+/// Denktext zuerst. Nutzung nur aus einer Zeile ohne Antworttext (wie bisher).
+fn parse_sse_line(line: &str) -> Vec<SseEvent> {
+    let Some(payload) = line.strip_prefix("data:").map(str::trim) else {
+        return Vec::new();
+    };
     if payload.is_empty() {
-        return None;
+        return Vec::new();
     }
     if payload == "[DONE]" {
-        return Some(SseEvent::Done);
+        return vec![SseEvent::Done];
     }
-    let value: Value = serde_json::from_str(payload).ok()?;
+    let Ok(value) = serde_json::from_str::<Value>(payload) else {
+        return Vec::new();
+    };
     if let Some(error) = value.get("error") {
         let code = error
             .get("type")
             .or_else(|| error.get("code"))
             .map(|c| c.to_string())
             .unwrap_or_else(|| "unbekannt".to_string());
-        return Some(SseEvent::Error(code));
+        return vec![SseEvent::Error(code)];
     }
-    if let Some(content) = value
-        .pointer("/choices/0/delta/content")
-        .and_then(|c| c.as_str())
-    {
-        if !content.is_empty() {
-            return Some(SseEvent::Delta(content.to_string()));
-        }
-    }
+    let mut events = Vec::new();
+    // Erster NICHT LEERER Alias: ein leeres `reasoning_content` verdeckt kein `reasoning`.
     if let Some(gedanke) = [
         "/choices/0/delta/reasoning_content",
         "/choices/0/delta/reasoning",
     ]
     .iter()
-    .find_map(|p| value.pointer(p).and_then(|c| c.as_str()))
-    .filter(|g| !g.is_empty())
+    .filter_map(|p| value.pointer(p).and_then(|c| c.as_str()))
+    .find(|g| !g.is_empty())
     {
-        return Some(SseEvent::Reasoning(gedanke.to_string()));
+        events.push(SseEvent::Reasoning(gedanke.to_string()));
     }
-    if let Some(usage) = value.get("usage").filter(|u| u.is_object()) {
+    let content = value
+        .pointer("/choices/0/delta/content")
+        .and_then(|c| c.as_str())
+        .filter(|c| !c.is_empty());
+    if let Some(content) = content {
+        events.push(SseEvent::Delta(content.to_string()));
+    } else if let Some(usage) = value.get("usage").filter(|u| u.is_object()) {
         let count = |key: &str| usage.get(key).and_then(|v| v.as_u64()).unwrap_or(0);
-        return Some(SseEvent::Usage(TokenUsage {
+        events.push(SseEvent::Usage(TokenUsage {
             prompt_tokens: count("prompt_tokens"),
             completion_tokens: count("completion_tokens"),
         }));
     }
-    None
+    events
 }
 
 /// Chat-Anfrage mit Streaming (SSE, `stream: true`). `on_delta` bekommt jedes
@@ -1683,26 +1685,36 @@ mod stream_tests {
             parse_sse_line(&line(
                 serde_json::json!({"choices": [{"delta": {"reasoning_content": "Ich pruefe"}}]})
             )),
-            Some(SseEvent::Reasoning("Ich pruefe".into()))
+            vec![SseEvent::Reasoning("Ich pruefe".into())]
         );
         assert_eq!(
             parse_sse_line(&line(
                 serde_json::json!({"choices": [{"delta": {"content": "", "reasoning": "Plan"}}]})
             )),
-            Some(SseEvent::Reasoning("Plan".into()))
+            vec![SseEvent::Reasoning("Plan".into())]
         );
-        // Antworttext geht vor, leerer Denktext ist nichts.
+        // Gemischtes Delta: beide Inhalte bleiben erhalten, Denktext zuerst.
         assert_eq!(
             parse_sse_line(&line(
                 serde_json::json!({"choices": [{"delta": {"content": "Ja", "reasoning": "x"}}]})
             )),
-            Some(SseEvent::Delta("Ja".into()))
+            vec![
+                SseEvent::Reasoning("x".into()),
+                SseEvent::Delta("Ja".into())
+            ]
+        );
+        // Leerer erster Alias verdeckt den zweiten nicht.
+        assert_eq!(
+            parse_sse_line(&line(
+                serde_json::json!({"choices": [{"delta": {"reasoning_content": "", "reasoning": "Plan"}}]})
+            )),
+            vec![SseEvent::Reasoning("Plan".into())]
         );
         assert_eq!(
             parse_sse_line(&line(
                 serde_json::json!({"choices": [{"delta": {"reasoning_content": ""}}]})
             )),
-            None
+            vec![]
         );
     }
 

@@ -1,4 +1,5 @@
 import type { Sprache } from "./assistentPlan";
+import { istFloskel } from "./ueberbrueckung";
 
 // Sofort-Sprecher (Patrick 12.11.2026, lva#485/#541): Ist das Modell des Gesprächs nicht lokal, antwortet
 // zuerst ein schnelles lokales Modell. Es bekommt nur Verlauf und Frage (keinen App-Kontext, keine
@@ -72,6 +73,8 @@ export function liesSofort(roh: string): SofortEntscheid {
     .split(/\b(?:ANTWORT|WEITER)\s*[:：]/i)[0]
     .trim();
   if (text.length > SOFORT_MAX_ZEICHEN) return { art: "nichts" };
+  // Feste Floskeln („Ich denke kurz nach.“) sind nie eine Reaktion: lieber Stille.
+  if (text && istFloskel(text)) return { art: "nichts" };
   if (m[1].toUpperCase() === "ANTWORT")
     return text ? { art: "antwort", text } : { art: "nichts" };
   return { art: "weiter", text };
@@ -87,8 +90,9 @@ export type SofortZustand = "wartet" | "denker" | "sprecher";
 
 /**
  * Entscheidung des Sprechers anwenden. `datenAbsicht`: die Einstufung hat eine Absicht zu eigenen
- * Inhalten erkannt (z. B. Mails); dann darf der Sprecher nie allein antworten, eine „ANTWORT“ gilt
- * dort als unbrauchbar. Liefert den neuen Zustand und den zu sprechenden Text (leer: nichts sagen).
+ * Inhalten erkannt (z. B. Mails); dann sagt der Sprecher gar nichts (weder „ANTWORT“ noch „WEITER“),
+ * weil er diese Inhalte nicht kennt und jede Sachaussage ungeprüft wäre. Liefert den neuen Zustand
+ * und den zu sprechenden Text (leer: nichts sagen).
  */
 export function wendeAn(
   zustand: SofortZustand,
@@ -100,7 +104,11 @@ export function wendeAn(
   if (e.art === "antwort" && !datenAbsicht)
     return { zustand: "sprecher", sagen: e.text, denkerAbbrechen: true };
   if (e.art === "weiter")
-    return { zustand: "denker", sagen: e.text, denkerAbbrechen: false };
+    return {
+      zustand: "denker",
+      sagen: datenAbsicht ? "" : e.text,
+      denkerAbbrechen: false,
+    };
   return { zustand: "denker", sagen: "", denkerAbbrechen: false };
 }
 
