@@ -7,7 +7,7 @@ use crate::invitation::{
 use crate::model::*;
 use crate::rules::{pruefen, uebergabe_erlaubt, LokaleZeit, Regeln, Stufe};
 use crate::store::*;
-use crate::sync::{abgleichen, verschiebung_bestaetigen, Beobachtung, Ereignis};
+use crate::sync::{abgleichen, verschiebung_bestaetigen, Beobachtung, Ereignis, Feld};
 
 fn eingabe() -> PlanInput {
     PlanInput {
@@ -256,7 +256,7 @@ fn db() -> Connection {
 #[test]
 fn store_anlegen_laden_aendern_loeschen() {
     let c = db();
-    let p = plan_anlegen(&c, "P1", &eingabe(), 1000).unwrap();
+    let p = plan_anlegen(&c, "P1", &eingabe(), &Regeln::default(), 1000).unwrap();
     assert_eq!(p.status, PlanStatus::Entwurf);
     assert_eq!(p.agenda.len(), 3);
     assert_eq!(p.roles.moderation.as_deref(), Some("A. Beispiel"));
@@ -265,7 +265,7 @@ fn store_anlegen_laden_aendern_loeschen() {
     let mut neu = eingabe();
     neu.title = "Neu".into();
     neu.transcription_planned = false;
-    let q = plan_aendern(&c, "P1", &neu, 2000).unwrap();
+    let q = plan_aendern(&c, "P1", &neu, &Regeln::default(), 2000).unwrap();
     assert_eq!(q.title, "Neu");
     assert!(!q.transcription_planned);
     assert_eq!(q.created_at, 1000);
@@ -273,7 +273,7 @@ fn store_anlegen_laden_aendern_loeschen() {
 
     plan_status_setzen(&c, "P1", PlanStatus::Versendet, 3000).unwrap();
     assert_eq!(
-        plan_aendern(&c, "P1", &neu, 4000).unwrap_err(),
+        plan_aendern(&c, "P1", &neu, &Regeln::default(), 4000).unwrap_err(),
         "plan_abgeschlossen"
     );
 
@@ -297,7 +297,7 @@ fn store_id_wird_geprueft() {
     let c = db();
     for id in ["", "a b", "x\"y", &"z".repeat(65)] {
         assert_eq!(
-            plan_anlegen(&c, id, &eingabe(), 1).unwrap_err(),
+            plan_anlegen(&c, id, &eingabe(), &Regeln::default(), 1).unwrap_err(),
             "plan_id_ungueltig"
         );
     }
@@ -306,8 +306,8 @@ fn store_id_wird_geprueft() {
 #[test]
 fn store_liste_sortiert() {
     let c = db();
-    plan_anlegen(&c, "A", &eingabe(), 1).unwrap();
-    plan_anlegen(&c, "B", &eingabe(), 2).unwrap();
+    plan_anlegen(&c, "A", &eingabe(), &Regeln::default(), 1).unwrap();
+    plan_anlegen(&c, "B", &eingabe(), &Regeln::default(), 2).unwrap();
     let ids: Vec<_> = plan_liste(&c).unwrap().into_iter().map(|p| p.id).collect();
     assert_eq!(ids, ["B", "A"]);
 }
@@ -330,14 +330,16 @@ fn link(plan_id: &str) -> PlanLink {
         sync_state: SyncState::Ok,
         verschiebung_offen: false,
         block_konflikt: false,
+        abgesagt: false,
+        instanz: None,
     }
 }
 
 #[test]
 fn store_links_und_einwilligungen() {
     let c = db();
-    plan_anlegen(&c, "P1", &eingabe(), 1).unwrap();
-    plan_anlegen(&c, "P2", &eingabe(), 1).unwrap();
+    plan_anlegen(&c, "P1", &eingabe(), &Regeln::default(), 1).unwrap();
+    plan_anlegen(&c, "P2", &eingabe(), &Regeln::default(), 1).unwrap();
     let mut l = link("P1");
     link_speichern(&c, &l).unwrap();
     l.sync_state = SyncState::Verschoben;
@@ -360,11 +362,11 @@ fn store_links_und_einwilligungen() {
         channel: None,
         recorded_at: None,
     };
-    einwilligung_setzen(&c, &e).unwrap();
+    einwilligung_setzen(&c, &e, 9).unwrap();
     e.state = ConsentState::Zugestimmt;
     e.channel = Some(ConsentChannel::MuendlichBeiStart);
     e.recorded_at = Some(5);
-    einwilligung_setzen(&c, &e).unwrap();
+    einwilligung_setzen(&c, &e, 9).unwrap();
     assert_eq!(einwilligungen(&c, "P1").unwrap(), vec![e]);
 
     // Ohne Planung keine Verknuepfung (Fremdschluessel).
@@ -384,10 +386,11 @@ fn beob(start: i64, beschreibung: Option<String>) -> Beobachtung {
         remote_id: None,
         ical_uid: Some("uid-1".into()),
         change_key: None,
+        instanz: None,
         starts_at: start,
         ends_at: start + 1500,
-        location: Some("Raum 1".into()),
-        join_url: None,
+        location: Feld::Wert("Raum 1".into()),
+        join_url: Feld::Leer,
         cancelled: false,
         description: beschreibung,
         attendees: vec!["a@example.org".into()],
@@ -403,7 +406,8 @@ fn sync_erstverknuepfung() {
     assert_eq!(a.plan_status, Some(PlanStatus::Verknuepft));
     assert_eq!(a.link.sync_state, SyncState::Ok);
     assert_eq!(a.ereignisse, vec![Ereignis::Verknuepft]);
-    assert!(a.schreiben_erlaubt);
+    // Adapter C schreibt nie (Konzept 3.4).
+    assert!(!a.schreiben_erlaubt);
     assert_eq!(a.link.last_seen_at, Some(99));
 }
 
@@ -503,10 +507,11 @@ fn sync_geloescht_oder_marke_weg_ist_verwaist() {
 #[test]
 fn sync_konflikt_wenn_block_geaendert() {
     let c = db();
-    let p = plan_anlegen(&c, "P1", &eingabe(), 1).unwrap();
+    let p = plan_anlegen(&c, "P1", &eingabe(), &Regeln::default(), 1).unwrap();
     let e = einladung(&p, &Gestaltung::default());
     let mut l = link("P1");
     l.body_hash = Some(e.block_hash.clone());
+    l.adapter = AdapterKind::Graph;
 
     let gleich = format!("Einwahl\n{}\nGruss", e.text);
     let a = abgleichen(
@@ -582,8 +587,8 @@ fn zu(p: &str, s: ConsentState) -> Consent {
         plan_id: "P1".into(),
         person: p.into(),
         state: s,
-        channel: None,
-        recorded_at: None,
+        channel: Some(ConsentChannel::MuendlichBeiStart),
+        recorded_at: Some(1),
     }
 }
 
@@ -594,11 +599,14 @@ fn einwilligung_startmodus() {
         zu("b@example.org", ConsentState::Zugestimmt),
     ];
     let anw = vec!["a@example.org".to_string(), "B@example.org".to_string()];
-    assert_eq!(start_modus(true, &anw, &alle), StartModus::MitTranskription);
+    assert_eq!(
+        start_modus("P1", true, &anw, &alle),
+        StartModus::MitTranskription
+    );
 
     // Nicht geplant -> nur Notizen.
     assert!(matches!(
-        start_modus(false, &anw, &alle),
+        start_modus("P1", false, &anw, &alle),
         StartModus::NurNotizen {
             nicht_geplant: true,
             ..
@@ -606,7 +614,7 @@ fn einwilligung_startmodus() {
     ));
     // Niemand erfasst -> keine Transkription.
     assert!(matches!(
-        start_modus(true, &[], &alle),
+        start_modus("P1", true, &[], &alle),
         StartModus::NurNotizen {
             nicht_geplant: false,
             ..
@@ -623,7 +631,7 @@ fn einwilligung_startmodus() {
         "c@example.org".to_string(),
     ];
     assert_eq!(
-        start_modus(true, &anw, &gemischt),
+        start_modus("P1", true, &anw, &gemischt),
         StartModus::NurNotizen {
             nicht_geplant: false,
             offen: vec!["b@example.org".into()],
@@ -654,7 +662,7 @@ fn marke_in_url_wird_nicht_als_marke_gelesen() {
 #[test]
 fn konflikt_ereignis_nur_einmal_auch_bei_absage() {
     let c = db();
-    let p = plan_anlegen(&c, "P1", &eingabe(), 1).unwrap();
+    let p = plan_anlegen(&c, "P1", &eingabe(), &Regeln::default(), 1).unwrap();
     let e = einladung(&p, &Gestaltung::default());
     let mut l = link("P1");
     l.body_hash = Some(e.block_hash.clone());
@@ -670,7 +678,7 @@ fn konflikt_ereignis_nur_einmal_auch_bei_absage() {
 #[test]
 fn verschiebung_ueberlebt_konflikt() {
     let c = db();
-    let p = plan_anlegen(&c, "P1", &eingabe(), 1).unwrap();
+    let p = plan_anlegen(&c, "P1", &eingabe(), &Regeln::default(), 1).unwrap();
     let e = einladung(&p, &Gestaltung::default());
     let mut l = link("P1");
     l.body_hash = Some(e.block_hash.clone());
@@ -735,15 +743,21 @@ fn store_erzwingt_regeln_und_status() {
     let c = db();
     let mut leer = eingabe();
     leer.title = " ".into();
-    assert_eq!(plan_anlegen(&c, "P1", &leer, 1).unwrap_err(), "titel_leer");
-    plan_anlegen(&c, "P1", &eingabe(), 1).unwrap();
+    assert_eq!(
+        plan_anlegen(&c, "P1", &leer, &Regeln::default(), 1).unwrap_err(),
+        "titel_leer"
+    );
+    plan_anlegen(&c, "P1", &eingabe(), &Regeln::default(), 1).unwrap();
     let mut null = eingabe();
     null.duration_min = 0;
-    assert_eq!(plan_aendern(&c, "P1", &null, 2).unwrap_err(), "dauer_null");
+    assert_eq!(
+        plan_aendern(&c, "P1", &null, &Regeln::default(), 2).unwrap_err(),
+        "dauer_null"
+    );
 
     plan_status_setzen(&c, "P1", PlanStatus::Durchgefuehrt, 3).unwrap();
     assert_eq!(
-        plan_aendern(&c, "P1", &eingabe(), 4).unwrap_err(),
+        plan_aendern(&c, "P1", &eingabe(), &Regeln::default(), 4).unwrap_err(),
         "plan_abgeschlossen"
     );
     assert_eq!(
@@ -758,26 +772,26 @@ fn store_erzwingt_regeln_und_status() {
 #[test]
 fn store_prueft_planung_und_normalisiert_person() {
     let c = db();
-    plan_anlegen(&c, "P1", &eingabe(), 1).unwrap();
-    plan_anlegen(&c, "P2", &eingabe(), 1).unwrap();
+    plan_anlegen(&c, "P1", &eingabe(), &Regeln::default(), 1).unwrap();
+    plan_anlegen(&c, "P2", &eingabe(), &Regeln::default(), 1).unwrap();
     let e = Consent {
         plan_id: "P1".into(),
         person: "Anna Beispiel <Anna@Example.org>".into(),
         state: ConsentState::Zugestimmt,
-        channel: None,
+        channel: Some(ConsentChannel::MuendlichBeiStart),
         recorded_at: Some(1),
     };
-    einwilligung_setzen(&c, &e).unwrap();
+    einwilligung_setzen(&c, &e, 9).unwrap();
     let alle = einwilligungen(&c, "P1").unwrap();
     assert_eq!(alle[0].person, "anna@example.org");
     assert_eq!(
-        start_modus(true, &["ANNA@example.org".into()], &alle),
+        start_modus("P1", true, &["ANNA@example.org".into()], &alle),
         StartModus::MitTranskription
     );
     let mut fehlt = e.clone();
     fehlt.plan_id = "FEHLT".into();
     assert_eq!(
-        einwilligung_setzen(&c, &fehlt).unwrap_err(),
+        einwilligung_setzen(&c, &fehlt, 9).unwrap_err(),
         "plan_nicht_gefunden"
     );
 
@@ -788,4 +802,275 @@ fn store_prueft_planung_und_normalisiert_person() {
     let mut l2 = link("P2");
     l2.remote_id = Some("R1".into());
     assert!(link_speichern(&c, &l2).is_err());
+}
+
+// ---------- Fixrunde Codex (lva#535) ----------
+
+#[test]
+fn codex1_einwilligung_gilt_nur_je_planung_und_sperrt_bei_widerspruch() {
+    let mut fremd = zu("a@example.org", ConsentState::Zugestimmt);
+    fremd.plan_id = "P2".into();
+    let anw = vec!["a@example.org".to_string()];
+    // Zustimmung aus P2 erlaubt keinen Start von P1.
+    assert!(matches!(
+        start_modus("P1", true, &anw, &[fremd.clone()]),
+        StartModus::NurNotizen { .. }
+    ));
+    // ... und legt in P1 trotzdem einen offenen Eintrag an.
+    assert_eq!(neue_einwilligungen("P1", &[fremd], &anw).len(), 1);
+    // Widerspruch in P1: Ablehnung gewinnt, unabhaengig von der Reihenfolge.
+    for liste in [
+        vec![
+            zu("a@example.org", ConsentState::Zugestimmt),
+            zu("A@example.org", ConsentState::Abgelehnt),
+        ],
+        vec![
+            zu("a@example.org", ConsentState::Abgelehnt),
+            zu("a@example.org", ConsentState::Zugestimmt),
+        ],
+    ] {
+        assert_eq!(
+            start_modus("P1", true, &anw, &liste),
+            StartModus::NurNotizen {
+                nicht_geplant: false,
+                offen: vec![],
+                abgelehnt: vec!["a@example.org".into()],
+            }
+        );
+    }
+    // Zustimmung plus offener Eintrag: offen.
+    let gemischt = vec![
+        zu("a@example.org", ConsentState::Zugestimmt),
+        zu("a@example.org", ConsentState::Offen),
+    ];
+    assert!(matches!(
+        start_modus("P1", true, &anw, &gemischt),
+        StartModus::NurNotizen { .. }
+    ));
+}
+
+#[test]
+fn codex1_zustimmung_ohne_nachweis_zaehlt_nicht() {
+    let mut ohne = zu("a@example.org", ConsentState::Zugestimmt);
+    ohne.recorded_at = None;
+    assert!(matches!(
+        start_modus("P1", true, &["a@example.org".into()], &[ohne.clone()]),
+        StartModus::NurNotizen { .. }
+    ));
+    let c = db();
+    plan_anlegen(&c, "P1", &eingabe(), &Regeln::default(), 1).unwrap();
+    assert_eq!(
+        einwilligung_setzen(&c, &ohne, 2).unwrap_err(),
+        "einwilligung_nachweis_fehlt"
+    );
+}
+
+#[test]
+fn codex2_unbekannte_anwesende_sperren() {
+    let alle = vec![zu("a@example.org", ConsentState::Zugestimmt)];
+    assert_eq!(
+        start_modus("P1", true, &["a@example.org".into(), " ".into()], &alle),
+        StartModus::NurNotizen {
+            nicht_geplant: false,
+            offen: vec![crate::consent::UNBEKANNT.into()],
+            abgelehnt: vec![],
+        }
+    );
+}
+
+fn graph_link_mit_block(c: &Connection) -> (PlanLink, String) {
+    let p = plan_anlegen(c, "P1", &eingabe(), &Regeln::default(), 1).unwrap();
+    let e = einladung(&p, &Gestaltung::default());
+    let mut l = link("P1");
+    l.adapter = AdapterKind::Graph;
+    l.body_hash = Some(e.block_hash.clone());
+    (l, e.text)
+}
+
+#[test]
+fn codex3_ics_adapter_schreibt_nie() {
+    let c = db();
+    let (mut l, text) = graph_link_mit_block(&c);
+    l.adapter = AdapterKind::IcsMarker;
+    let a = abgleichen(
+        PlanStatus::Verknuepft,
+        &l,
+        Some(&beob(10_000, Some(text))),
+        1,
+    );
+    assert_eq!(a.link.sync_state, SyncState::Ok);
+    assert!(!a.schreiben_erlaubt);
+    assert!(!crate::sync::schreibender_adapter(AdapterKind::IcsMarker));
+}
+
+#[test]
+fn codex4_ohne_geprueften_stand_keine_schreibfreigabe() {
+    let c = db();
+    let (l, text) = graph_link_mit_block(&c);
+    // Kein Termintext: nicht pruefbar.
+    let a = abgleichen(PlanStatus::Verknuepft, &l, Some(&beob(10_000, None)), 1);
+    assert!(!a.schreiben_erlaubt);
+    // Keine gespeicherte Pruefsumme: nicht pruefbar.
+    let mut ohne = l.clone();
+    ohne.body_hash = None;
+    let b = abgleichen(
+        PlanStatus::Verknuepft,
+        &ohne,
+        Some(&beob(10_000, Some(text.clone()))),
+        1,
+    );
+    assert!(!b.schreiben_erlaubt);
+    // Geprueft und gleich: erlaubt.
+    let g = abgleichen(
+        PlanStatus::Verknuepft,
+        &l,
+        Some(&beob(10_000, Some(text))),
+        1,
+    );
+    assert!(g.schreiben_erlaubt);
+}
+
+#[test]
+fn codex5_pruefsumme_sieht_inhalt_aber_nicht_formatierung() {
+    let basis =
+        "— Besprechungsplanung —\n• Dauer 1,5 Stunden\n• https://x.example.org/a-b\nlva-plan:P1";
+    let h = block_hash(basis);
+    for anders in [
+        basis.replace("1,5", "15"),
+        basis.replace("a-b", "ab"),
+        basis.replace("Dauer", "dauer"),
+        basis.replace("Stunden", "Stunden."),
+    ] {
+        assert_ne!(block_hash(&anders), h, "{anders}");
+    }
+    for gleich in [
+        basis.replace('\n', "\r\n"),
+        basis.replace("• ", "*\t"),
+        basis.replace("• ", "-  "),
+        basis.replace("• ", "· "),
+        basis.replace("\n", "\n\n"),
+        basis.replace("Dauer 1,5", "Dauer   1,5"),
+    ] {
+        assert_eq!(block_hash(&gleich), h, "{gleich:?}");
+    }
+}
+
+#[test]
+fn codex6_unbekannter_ort_loescht_nichts() {
+    let mut b = beob(10_000, None);
+    b.location = Feld::Unbekannt;
+    b.join_url = Feld::Unbekannt;
+    let mut l = link("P1");
+    l.join_url = Some("https://meet.example.org/1".into());
+    let a = abgleichen(PlanStatus::Verknuepft, &l, Some(&b), 1);
+    assert_eq!(a.link.location.as_deref(), Some("Raum 1"));
+    assert_eq!(
+        a.link.join_url.as_deref(),
+        Some("https://meet.example.org/1")
+    );
+    assert!(!a.ereignisse.contains(&Ereignis::OrtGeaendert));
+    // Ausdruecklich leer: geloescht, mit Ereignis.
+    b.location = Feld::Leer;
+    let c = abgleichen(PlanStatus::Verknuepft, &l, Some(&b), 2);
+    assert_eq!(c.link.location, None);
+    assert!(c.ereignisse.contains(&Ereignis::OrtGeaendert));
+}
+
+#[test]
+fn codex9_absage_ueberlebt_verwaist() {
+    let mut abg = beob(10_000, None);
+    abg.cancelled = true;
+    let a = abgleichen(PlanStatus::Verknuepft, &link("P1"), Some(&abg), 1);
+    assert!(a.link.abgesagt);
+    let v = abgleichen(PlanStatus::Abgesagt, &a.link, None, 2);
+    assert!(v.link.abgesagt);
+    // Weiter abgesagt: kein neues Absage-Ereignis.
+    let w = abgleichen(PlanStatus::Abgesagt, &v.link, Some(&abg), 3);
+    assert!(!w.ereignisse.contains(&Ereignis::Abgesagt));
+    assert_eq!(w.link.sync_state, SyncState::Abgesagt);
+    // Wiederhergestellt nach verwaist: gemeldet.
+    let r = abgleichen(PlanStatus::Abgesagt, &v.link, Some(&beob(10_000, None)), 4);
+    assert!(r.ereignisse.contains(&Ereignis::Wiederhergestellt));
+    assert_eq!(r.plan_status, Some(PlanStatus::Verknuepft));
+}
+
+#[test]
+fn codex10_beschaedigte_daten_werden_gemeldet() {
+    let c = db();
+    plan_anlegen(&c, "P1", &eingabe(), &Regeln::default(), 1).unwrap();
+    c.execute("UPDATE meeting_plans SET agenda_json = '{kaputt'", [])
+        .unwrap();
+    assert_eq!(plan_laden(&c, "P1").unwrap_err(), "daten_beschaedigt");
+    c.execute(
+        "UPDATE meeting_plans SET agenda_json = '[]', status = 'irgendwas'",
+        [],
+    )
+    .unwrap();
+    assert_eq!(plan_laden(&c, "P1").unwrap_err(), "daten_beschaedigt");
+    c.execute("UPDATE meeting_plans SET status = 'entwurf'", [])
+        .unwrap();
+    link_speichern(&c, &link("P1")).unwrap();
+    c.execute("UPDATE meeting_plan_links SET adapter = 'fax'", [])
+        .unwrap();
+    assert_eq!(link_laden(&c, "P1").unwrap_err(), "daten_beschaedigt");
+}
+
+#[test]
+fn codex8_einwilligungsverlauf_bleibt_erhalten() {
+    let c = db();
+    plan_anlegen(&c, "P1", &eingabe(), &Regeln::default(), 1).unwrap();
+    let mut e = zu("a@example.org", ConsentState::Zugestimmt);
+    einwilligung_setzen(&c, &e, 10).unwrap();
+    e.state = ConsentState::Abgelehnt;
+    e.recorded_at = Some(20);
+    einwilligung_setzen(&c, &e, 20).unwrap();
+    let v = einwilligungs_verlauf(&c, "P1").unwrap();
+    assert_eq!(v.len(), 2);
+    assert_eq!(v[0].0.state, ConsentState::Zugestimmt);
+    assert_eq!(v[1].0.state, ConsentState::Abgelehnt);
+    assert_eq!(
+        einwilligungen(&c, "P1").unwrap()[0].state,
+        ConsentState::Abgelehnt
+    );
+}
+
+#[test]
+fn codex12_uhrzeit_regeln_und_instanz() {
+    let h = pruefen(
+        &eingabe(),
+        Some(LokaleZeit {
+            stunde: 24,
+            minute: 0,
+        }),
+        &Regeln::default(),
+    );
+    assert!(codes(&h).contains(&"beginn_ungueltig"));
+    assert!(!uebergabe_erlaubt(&h));
+    // Store nutzt die uebergebenen Regeln.
+    let c = db();
+    let streng = Regeln {
+        max_dauer_min: 20,
+        ..Regeln::default()
+    };
+    assert_eq!(
+        plan_anlegen(&c, "P1", &eingabe(), &streng, 1).unwrap_err(),
+        "dauer_zu_lang"
+    );
+    // Serieninstanz wird gespeichert.
+    plan_anlegen(&c, "P1", &eingabe(), &Regeln::default(), 1).unwrap();
+    let mut b = beob(10_000, None);
+    b.instanz = Some(9_000);
+    let a = abgleichen(PlanStatus::Verknuepft, &link("P1"), Some(&b), 1);
+    link_speichern(&c, &a.link).unwrap();
+    assert_eq!(link_laden(&c, "P1").unwrap().unwrap().instanz, Some(9_000));
+}
+
+#[test]
+fn abgeschlossene_planung_bleibt_auch_im_link_ruhig() {
+    let mut b = beob(50_000, None);
+    b.cancelled = true;
+    let a = abgleichen(PlanStatus::Versendet, &link("P1"), Some(&b), 1);
+    assert_eq!(a.plan_status, None);
+    // Der Link spiegelt den Termin weiter, der Planstatus bleibt.
+    assert!(a.link.abgesagt);
 }

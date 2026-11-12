@@ -305,6 +305,12 @@ pub struct PlanLink {
     /// Der App-Block weicht von der zuletzt geschriebenen Fassung ab.
     #[serde(default)]
     pub block_konflikt: bool,
+    /// Der Termin ist abgesagt (bleibt auch unter `verwaist` erhalten).
+    #[serde(default)]
+    pub abgesagt: bool,
+    /// Serientermin: urspruenglicher Beginn der Instanz (UTC-ms), sonst `None`.
+    #[serde(default)]
+    pub instanz: Option<i64>,
 }
 
 /// Einwilligung einer Person zur Transkription, je Planung.

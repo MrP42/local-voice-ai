@@ -189,6 +189,14 @@ pub fn pruefen(plan: &PlanInput, beginn: Option<LokaleZeit>, regeln: &Regeln) ->
     }
 
     let dauer_ok = plan.duration_min > 0 && plan.duration_min <= regeln.max_dauer_min;
+    if let Some(b) = beginn.filter(|b| b.stunde > 23 || b.minute > 59) {
+        add(
+            "beginn_ungueltig",
+            Stufe::Fehler,
+            format!("Ungültige Uhrzeit {:02}:{:02}.", b.stunde, b.minute),
+        );
+    }
+    let beginn = beginn.filter(|b| b.stunde <= 23 && b.minute <= 59);
     if let Some(b) = beginn.filter(|_| dauer_ok) {
         if b.minute != 0 && b.minute != 30 {
             add(

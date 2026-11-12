@@ -7,24 +7,58 @@
 //! Erinnerungen neu rechnen und Meldungen zeigen macht die App.
 //!
 //! Vorrang der Zustaende: verwaist > abgesagt > konflikt > verschoben > ok.
+//! Absage, Konflikt und unbestaetigte Verschiebung sind zusaetzlich eigene Merker
+//! der Verknuepfung, damit sie unter einem hoeheren Zustand nicht verloren gehen.
+//!
+//! Schreibfreigabe (Konzept 3.4): nur fuer schreibende Adapter (Graph, Outlook lokal),
+//! nie fuer Adapter C, und nur bei nachweislich geprueftem Stand: der Termintext liegt
+//! vor, eine Pruefsumme der zuletzt geschriebenen Fassung ist gespeichert und der
+//! Block im Termin stimmt mit ihr ueberein.
 
 use serde::{Deserialize, Serialize};
 
 use crate::invitation::{block_hash, finde_block, finde_marke};
-use crate::model::{PlanLink, PlanStatus, SyncState};
+use crate::model::{AdapterKind, PlanLink, PlanStatus, SyncState};
 
-/// Was ein Adapter ueber den verknuepften Termin weiss. `None`-Felder kennt der
-/// Adapter nicht (z. B. liefert ein ICS-Feed keinen `change_key`).
+/// Ein beobachtetes Textfeld: unbekannt (Adapter liefert es nicht), leer (im
+/// Termin geloescht) oder ein Wert. Nur `Leer` loescht einen bekannten Wert.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[serde(tag = "art", content = "wert", rename_all = "snake_case")]
+pub enum Feld {
+    #[default]
+    Unbekannt,
+    Leer,
+    Wert(String),
+}
+
+impl Feld {
+    /// Wendet die Beobachtung auf einen gespeicherten Wert an.
+    fn anwenden(&self, alt: &Option<String>) -> Option<String> {
+        match self {
+            Feld::Unbekannt => alt.clone(),
+            Feld::Leer => None,
+            Feld::Wert(v) => Some(v.clone()),
+        }
+    }
+}
+
+/// Was ein Adapter ueber den verknuepften Termin weiss. `None`-Felder bzw.
+/// [`Feld::Unbekannt`] kennt der Adapter nicht (z. B. liefert ein ICS-Feed keinen
+/// `change_key`); unbekannte Werte veraendern den gespeicherten Stand nie.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct Beobachtung {
     pub remote_id: Option<String>,
     pub ical_uid: Option<String>,
     pub change_key: Option<String>,
+    /// Bei Serienterminen: urspruenglicher Beginn der Instanz (RECURRENCE-ID bzw.
+    /// `originalStart`), UTC-ms. Identifiziert die Instanz auch nach Verschiebung.
+    pub instanz: Option<i64>,
     pub starts_at: i64,
     pub ends_at: i64,
-    pub location: Option<String>,
-    pub join_url: Option<String>,
+    pub location: Feld,
+    pub join_url: Feld,
     pub cancelled: bool,
     /// Termintext als Text. `None`: der Adapter liefert keinen Text, dann werden
     /// Marke und Block nicht geprueft.
@@ -112,6 +146,9 @@ pub fn abgleichen(
     if b.change_key.is_some() {
         neu.change_key = b.change_key.clone();
     }
+    if b.instanz.is_some() {
+        neu.instanz = b.instanz;
+    }
 
     // Marke weg -> verwaist (der Termin gehoert nicht mehr zu dieser Planung).
     if let Some(d) = &b.description {
@@ -136,24 +173,28 @@ pub fn abgleichen(
         });
         neu.verschiebung_offen = true;
     }
-    let ort_neu = link.location != b.location || link.join_url != b.join_url;
+    neu.location = b.location.anwenden(&link.location);
+    neu.join_url = b.join_url.anwenden(&link.join_url);
+    let ort_neu = neu.location != link.location || neu.join_url != link.join_url;
     if ort_neu && schon_bekannt {
         ereignisse.push(Ereignis::OrtGeaendert);
     }
     neu.starts_at = Some(b.starts_at);
     neu.ends_at = Some(b.ends_at);
-    neu.location = b.location.clone();
-    neu.join_url = b.join_url.clone();
 
-    // Block der App pruefen. Ohne Text bleibt der bekannte Stand.
-    neu.block_konflikt = match (&b.description, &link.body_hash) {
+    // Block der App pruefen. Ohne Text oder ohne Pruefsumme bleibt der bekannte
+    // Konfliktstand, und `geprueft` ist falsch (keine Schreibfreigabe).
+    let (konflikt, geprueft) = match (&b.description, &link.body_hash) {
         (Some(d), Some(h)) => match finde_block(d, &link.plan_id) {
-            Some(block) => &block_hash(&block) != h,
-            None => true,
+            Some(block) => {
+                let gleich = &block_hash(&block) == h;
+                (!gleich, gleich)
+            }
+            None => (true, false),
         },
-        (Some(_), None) => false,
-        (None, _) => link.block_konflikt,
+        _ => (link.block_konflikt, false),
     };
+    neu.block_konflikt = konflikt;
     if neu.block_konflikt && !link.block_konflikt {
         ereignisse.push(Ereignis::Konflikt);
     }
@@ -161,7 +202,8 @@ pub fn abgleichen(
         ereignisse.push(Ereignis::KonfliktAufgeloest);
     }
 
-    let war_abgesagt = alt_state == SyncState::Abgesagt;
+    let war_abgesagt = link.abgesagt;
+    neu.abgesagt = b.cancelled;
     if b.cancelled && !war_abgesagt {
         ereignisse.push(Ereignis::Abgesagt);
     }
@@ -179,7 +221,12 @@ pub fn abgleichen(
         SyncState::Ok
     };
     neu.sync_state = state;
-    if state != alt_state || zeit_neu || ort_neu || neu.block_konflikt != link.block_konflikt {
+    if state != alt_state
+        || zeit_neu
+        || ort_neu
+        || neu.block_konflikt != link.block_konflikt
+        || neu.abgesagt != link.abgesagt
+    {
         neu.last_change_at = Some(jetzt);
     }
 
@@ -200,9 +247,17 @@ pub fn abgleichen(
         link: neu,
         plan_status,
         ereignisse,
-        schreiben_erlaubt: matches!(state, SyncState::Ok | SyncState::Verschoben),
+        schreiben_erlaubt: schreibender_adapter(link.adapter)
+            && geprueft
+            && matches!(state, SyncState::Ok | SyncState::Verschoben),
         teilnehmende: b.attendees.clone(),
     }
+}
+
+/// Darf dieser Adapter den Block im Termin ueberhaupt schreiben? Adapter C
+/// (Zwischenablage + ICS) schreibt nach dem Einfuegen nie wieder.
+pub fn schreibender_adapter(a: AdapterKind) -> bool {
+    matches!(a, AdapterKind::Graph | AdapterKind::OutlookCom)
 }
 
 /// Die Nutzerin bzw. der Nutzer hat die Verschiebung zur Kenntnis genommen.

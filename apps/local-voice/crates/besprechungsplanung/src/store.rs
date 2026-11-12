@@ -57,7 +57,9 @@ pub const MIGRATIONS: &[&str] = &["CREATE TABLE IF NOT EXISTS meeting_plans (
         last_change_at INTEGER,
         sync_state TEXT NOT NULL,
         move_pending INTEGER NOT NULL DEFAULT 0,
-        block_conflict INTEGER NOT NULL DEFAULT 0
+        block_conflict INTEGER NOT NULL DEFAULT 0,
+        cancelled INTEGER NOT NULL DEFAULT 0,
+        instance_start INTEGER
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_plan_links_remote
         ON meeting_plan_links(adapter, remote_id) WHERE remote_id IS NOT NULL;
@@ -69,7 +71,18 @@ pub const MIGRATIONS: &[&str] = &["CREATE TABLE IF NOT EXISTS meeting_plans (
         channel TEXT,
         recorded_at INTEGER,
         PRIMARY KEY (plan_id, person)
-    );"];
+    );
+    CREATE TABLE IF NOT EXISTS meeting_plan_consent_log (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        plan_id TEXT NOT NULL REFERENCES meeting_plans(id) ON DELETE CASCADE,
+        person TEXT NOT NULL,
+        state TEXT NOT NULL,
+        channel TEXT,
+        recorded_at INTEGER,
+        logged_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_meeting_plan_consent_log_plan
+        ON meeting_plan_consent_log(plan_id, person);"];
 
 /// Wendet [`MIGRATIONS`] direkt an (Tests, eigenstaendige Nutzung).
 ///
@@ -96,7 +109,42 @@ pub fn gueltige_id(id: &str) -> bool {
 type Res<T> = Result<T, String>;
 
 fn sql(e: rusqlite::Error) -> String {
-    format!("sql: {e}")
+    match e {
+        rusqlite::Error::FromSqlConversionFailure(_, _, ref inner)
+            if inner.downcast_ref::<Beschaedigt>().is_some() =>
+        {
+            "daten_beschaedigt".to_string()
+        }
+        e => format!("sql: {e}"),
+    }
+}
+
+/// Gespeicherter Wert passt nicht zum Schema (ungueltiges JSON, unbekannter
+/// Status oder Adapter). Wird als `daten_beschaedigt` gemeldet, nie still ersetzt:
+/// sonst verschwaenden Inhalte beim naechsten Speichern oder abgeschlossene
+/// Planungen erschienen wieder editierbar.
+#[derive(Debug)]
+struct Beschaedigt;
+
+impl std::fmt::Display for Beschaedigt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("daten_beschaedigt")
+    }
+}
+
+impl std::error::Error for Beschaedigt {}
+
+fn kaputt(spalte: usize) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(
+        spalte,
+        rusqlite::types::Type::Text,
+        Box::new(Beschaedigt),
+    )
+}
+
+fn enum_spalte<T>(r: &Row, i: usize, parse: fn(&str) -> Option<T>) -> rusqlite::Result<T> {
+    let s: String = r.get(i)?;
+    parse(&s).ok_or_else(|| kaputt(i))
 }
 
 fn json<T: serde::Serialize>(v: &T) -> Res<String> {
@@ -105,8 +153,8 @@ fn json<T: serde::Serialize>(v: &T) -> Res<String> {
 
 /// Harte Regeln auch im Speicher: was die Regelpruefung als Fehler meldet,
 /// wird nicht gespeichert (unabhaengig davon, ob die App vorher prueft).
-fn eingabe_pruefen(input: &PlanInput) -> Res<()> {
-    let hinweise = rules::pruefen(input, None, &rules::Regeln::default());
+fn eingabe_pruefen(input: &PlanInput, regeln: &rules::Regeln) -> Res<()> {
+    let hinweise = rules::pruefen(input, None, regeln);
     match hinweise.iter().find(|h| h.stufe == rules::Stufe::Fehler) {
         Some(h) => Err(h.code.clone()),
         None => Ok(()),
@@ -114,11 +162,17 @@ fn eingabe_pruefen(input: &PlanInput) -> Res<()> {
 }
 
 /// Legt eine Planung im Status `entwurf` an.
-pub fn plan_anlegen(conn: &Connection, id: &str, input: &PlanInput, jetzt: i64) -> Res<Plan> {
+pub fn plan_anlegen(
+    conn: &Connection,
+    id: &str,
+    input: &PlanInput,
+    regeln: &rules::Regeln,
+    jetzt: i64,
+) -> Res<Plan> {
     if !gueltige_id(id) {
         return Err("plan_id_ungueltig".into());
     }
-    eingabe_pruefen(input)?;
+    eingabe_pruefen(input, regeln)?;
     conn.execute(
         "INSERT INTO meeting_plans (id, meeting_id, title, goal_type, goal_text, expected_result,
             duration_min, classification, agenda_json, roles_json, materials_json, hints_json,
@@ -148,12 +202,18 @@ pub fn plan_anlegen(conn: &Connection, id: &str, input: &PlanInput, jetzt: i64) 
 
 /// Aendert die Inhalte einer Planung. Nach der Durchfuehrung nicht mehr (das
 /// Protokoll bezieht sich auf die Fassung, die galt).
-pub fn plan_aendern(conn: &Connection, id: &str, input: &PlanInput, jetzt: i64) -> Res<Plan> {
+pub fn plan_aendern(
+    conn: &Connection,
+    id: &str,
+    input: &PlanInput,
+    regeln: &rules::Regeln,
+    jetzt: i64,
+) -> Res<Plan> {
     let alt = plan_laden(conn, id)?.ok_or("plan_nicht_gefunden")?;
     if alt.status.ist_abgeschlossen() {
         return Err("plan_abgeschlossen".into());
     }
-    eingabe_pruefen(input)?;
+    eingabe_pruefen(input, regeln)?;
     conn.execute(
         "UPDATE meeting_plans SET title = ?2, goal_type = ?3, goal_text = ?4, expected_result = ?5,
             duration_min = ?6, classification = ?7, agenda_json = ?8, roles_json = ?9,
@@ -254,27 +314,26 @@ const PLAN_SPALTEN: &str = "id, meeting_id, title, goal_type, goal_text, expecte
     transcription_planned, minutes_template_id, status, created_at, updated_at";
 
 fn plan_aus_zeile(r: &Row) -> rusqlite::Result<Plan> {
-    fn j<T: serde::de::DeserializeOwned + Default>(s: String) -> T {
-        serde_json::from_str(&s).unwrap_or_default()
+    fn j<T: serde::de::DeserializeOwned>(r: &Row, i: usize) -> rusqlite::Result<T> {
+        let s: String = r.get(i)?;
+        serde_json::from_str(&s).map_err(|_| kaputt(i))
     }
-    let goal: String = r.get(3)?;
-    let status: String = r.get(14)?;
     Ok(Plan {
         id: r.get(0)?,
         meeting_id: r.get(1)?,
         title: r.get(2)?,
-        goal_type: GoalType::parse(&goal).unwrap_or(GoalType::Klaeren),
+        goal_type: enum_spalte(r, 3, GoalType::parse)?,
         goal_text: r.get(4)?,
         expected_result: r.get(5)?,
         duration_min: r.get(6)?,
         classification: r.get(7)?,
-        agenda: j(r.get(8)?),
-        roles: j(r.get(9)?),
-        materials: j(r.get(10)?),
-        hints: j(r.get(11)?),
+        agenda: j(r, 8)?,
+        roles: j(r, 9)?,
+        materials: j(r, 10)?,
+        hints: j(r, 11)?,
         transcription_planned: r.get(12)?,
         minutes_template_id: r.get(13)?,
-        status: PlanStatus::parse(&status).unwrap_or(PlanStatus::Entwurf),
+        status: enum_spalte(r, 14, PlanStatus::parse)?,
         created_at: r.get(15)?,
         updated_at: r.get(16)?,
     })
@@ -310,8 +369,8 @@ pub fn link_speichern(conn: &Connection, l: &PlanLink) -> Res<()> {
     conn.execute(
         "INSERT INTO meeting_plan_links (plan_id, adapter, source_id, remote_id, ical_uid,
             change_key, starts_at, ends_at, location, join_url, body_hash, last_seen_at,
-            last_change_at, sync_state, move_pending, block_conflict)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+            last_change_at, sync_state, move_pending, block_conflict, cancelled, instance_start)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
          ON CONFLICT(plan_id) DO UPDATE SET adapter = excluded.adapter,
             source_id = excluded.source_id, remote_id = excluded.remote_id,
             ical_uid = excluded.ical_uid, change_key = excluded.change_key,
@@ -319,7 +378,8 @@ pub fn link_speichern(conn: &Connection, l: &PlanLink) -> Res<()> {
             location = excluded.location, join_url = excluded.join_url,
             body_hash = excluded.body_hash, last_seen_at = excluded.last_seen_at,
             last_change_at = excluded.last_change_at, sync_state = excluded.sync_state,
-            move_pending = excluded.move_pending, block_conflict = excluded.block_conflict",
+            move_pending = excluded.move_pending, block_conflict = excluded.block_conflict,
+            cancelled = excluded.cancelled, instance_start = excluded.instance_start",
         params![
             l.plan_id,
             l.adapter.as_str(),
@@ -337,6 +397,8 @@ pub fn link_speichern(conn: &Connection, l: &PlanLink) -> Res<()> {
             l.sync_state.as_str(),
             l.verschiebung_offen,
             l.block_konflikt,
+            l.abgesagt,
+            l.instanz,
         ],
     )
     .map_err(sql)?;
@@ -344,11 +406,9 @@ pub fn link_speichern(conn: &Connection, l: &PlanLink) -> Res<()> {
 }
 
 fn link_aus_zeile(r: &Row) -> rusqlite::Result<PlanLink> {
-    let adapter: String = r.get(1)?;
-    let state: String = r.get(13)?;
     Ok(PlanLink {
         plan_id: r.get(0)?,
-        adapter: AdapterKind::parse(&adapter).unwrap_or(AdapterKind::IcsMarker),
+        adapter: enum_spalte(r, 1, AdapterKind::parse)?,
         source_id: r.get(2)?,
         remote_id: r.get(3)?,
         ical_uid: r.get(4)?,
@@ -360,15 +420,17 @@ fn link_aus_zeile(r: &Row) -> rusqlite::Result<PlanLink> {
         body_hash: r.get(10)?,
         last_seen_at: r.get(11)?,
         last_change_at: r.get(12)?,
-        sync_state: SyncState::parse(&state).unwrap_or(SyncState::Verwaist),
+        sync_state: enum_spalte(r, 13, SyncState::parse)?,
         verschiebung_offen: r.get(14)?,
         block_konflikt: r.get(15)?,
+        abgesagt: r.get(16)?,
+        instanz: r.get(17)?,
     })
 }
 
 const LINK_SPALTEN: &str = "plan_id, adapter, source_id, remote_id, ical_uid, change_key,
     starts_at, ends_at, location, join_url, body_hash, last_seen_at, last_change_at, sync_state,
-    move_pending, block_conflict";
+    move_pending, block_conflict, cancelled, instance_start";
 
 /// Laedt die Verknuepfung einer Planung.
 pub fn link_laden(conn: &Connection, plan_id: &str) -> Res<Option<PlanLink>> {
@@ -401,14 +463,34 @@ pub fn links_offen(conn: &Connection) -> Res<Vec<PlanLink>> {
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(sql)
 }
 
-/// Setzt eine Einwilligung (legt sie an oder ersetzt sie). Die Person wird hier
-/// normalisiert ([`person_schluessel`]), damit Abgleich und Start-Tor sie finden.
-pub fn einwilligung_setzen(conn: &Connection, c: &Consent) -> Res<()> {
+/// Setzt eine Einwilligung (legt sie an oder ersetzt den aktuellen Stand). Die
+/// Person wird hier normalisiert ([`person_schluessel`]), damit Abgleich und
+/// Start-Tor sie finden. Zustimmung und Ablehnung brauchen einen Nachweis
+/// (Zeitpunkt und Kanal), sonst `einwilligung_nachweis_fehlt`. Jede Aenderung,
+/// auch ein Widerruf, wird zusaetzlich in `meeting_plan_consent_log` angehaengt;
+/// der bisherige Nachweis geht so nie verloren.
+pub fn einwilligung_setzen(conn: &Connection, c: &Consent, jetzt: i64) -> Res<()> {
     plan_laden(conn, &c.plan_id)?.ok_or("plan_nicht_gefunden")?;
     let person = person_schluessel(&c.person);
     if person.is_empty() {
         return Err("daten_ungueltig".into());
     }
+    if c.state != ConsentState::Offen && !crate::consent::mit_nachweis(c) {
+        return Err("einwilligung_nachweis_fehlt".into());
+    }
+    conn.execute(
+        "INSERT INTO meeting_plan_consent_log (plan_id, person, state, channel, recorded_at, logged_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            c.plan_id,
+            person,
+            c.state.as_str(),
+            c.channel.map(|k| k.as_str()),
+            c.recorded_at,
+            jetzt,
+        ],
+    )
+    .map_err(sql)?;
     conn.execute(
         "INSERT INTO meeting_plan_consents (plan_id, person, state, channel, recorded_at)
          VALUES (?1, ?2, ?3, ?4, ?5)
@@ -436,15 +518,48 @@ pub fn einwilligungen(conn: &Connection, plan_id: &str) -> Res<Vec<Consent>> {
         .map_err(sql)?;
     let rows = st
         .query_map([plan_id], |r| {
-            let state: String = r.get(2)?;
             let channel: Option<String> = r.get(3)?;
+            let channel = match channel {
+                None => None,
+                Some(k) => Some(ConsentChannel::parse(&k).ok_or_else(|| kaputt(3))?),
+            };
             Ok(Consent {
                 plan_id: r.get(0)?,
                 person: r.get(1)?,
-                state: ConsentState::parse(&state).unwrap_or(ConsentState::Offen),
-                channel: channel.as_deref().and_then(ConsentChannel::parse),
+                state: enum_spalte(r, 2, ConsentState::parse)?,
+                channel,
                 recorded_at: r.get(4)?,
             })
+        })
+        .map_err(sql)?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(sql)
+}
+
+/// Verlauf der Einwilligungen einer Planung (aelteste zuerst), als Nachweis.
+pub fn einwilligungs_verlauf(conn: &Connection, plan_id: &str) -> Res<Vec<(Consent, i64)>> {
+    let mut st = conn
+        .prepare(
+            "SELECT plan_id, person, state, channel, recorded_at, logged_at
+             FROM meeting_plan_consent_log WHERE plan_id = ?1 ORDER BY seq",
+        )
+        .map_err(sql)?;
+    let rows = st
+        .query_map([plan_id], |r| {
+            let channel: Option<String> = r.get(3)?;
+            let channel = match channel {
+                None => None,
+                Some(k) => Some(ConsentChannel::parse(&k).ok_or_else(|| kaputt(3))?),
+            };
+            Ok((
+                Consent {
+                    plan_id: r.get(0)?,
+                    person: r.get(1)?,
+                    state: enum_spalte(r, 2, ConsentState::parse)?,
+                    channel,
+                    recorded_at: r.get(4)?,
+                },
+                r.get(5)?,
+            ))
         })
         .map_err(sql)?;
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(sql)

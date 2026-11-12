@@ -2,7 +2,9 @@
 
 Stand 12.11.2026 · Epic [lva#534](https://github.com/MrP42/local-voice-ai/issues/534) · Klassifizierung: intern
 
-Organisationsneutral: Das Modul nennt keine Organisationen, Produkte Dritter oder Personen.
+Organisationsneutral: Das Modul nennt keine Organisationen oder Personen und keine
+organisationsinternen Produkte oder Regelwerke. Ausgenommen sind die technischen
+Integrationsnamen, an die es anbindet (Outlook, Exchange, Microsoft Graph, ICS).
 Alles Organisationsspezifische (Erscheinungsbild, erlaubte Sprachmodelle, Aufbewahrung,
 Regelwerke) kommt aus Einstellungen: Briefkopf, Richtlinienprofil, Kalenderquellen.
 
@@ -49,7 +51,7 @@ ohne `wai-*`-Abhängigkeit, damit das Modul auch in einer offenen Ausgabe bleibt
 
 | Baustein | Art | Inhalt |
 |---|---|---|
-| `crates/besprechungsplanung` | neu (Rust, eigenständig) | Datenmodell, Migration, Speicher, Regelprüfung, Einladungstext mit Marke, Abgleich, Einwilligungs-Tor; 26 Tests, `cargo test` in Sekunden |
+| `crates/besprechungsplanung` | neu (Rust, eigenständig) | Datenmodell, Migration, Speicher, Regelprüfung, Einladungstext mit Marke, Abgleich, Einwilligungs-Tor; `cargo test` in Sekunden |
 | `src-tauri/src/managers/planning/` | neu | Adapter-Schnittstelle `OutlookAdapter` mit drei Umsetzungen (3.3), Sync-Tick, Audit |
 | `src-tauri/src/commands/meeting_planning.rs` | neu | Tauri-Befehle: anlegen, ändern, prüfen, Vorschau, an Outlook übergeben, verknüpfen, abgleichen, starten, Protokoll übergeben |
 | `src/components/planung/` | neu (React) | Port des Generators: Formular, Vorschau, Regelhinweise, Status verknüpft/verschoben/abgesagt/Konflikt |
@@ -61,10 +63,16 @@ ohne `wai-*`-Abhängigkeit, damit das Modul auch in einer offenen Ausgabe bleibt
 
 ### 3.2 Datenmodell
 
-Drei Tabellen in der Besprechungs-Datenbank, nur `CREATE`: `meeting_plans`,
-`meeting_plan_links`, `meeting_plan_consents` (Schema: `crates/besprechungsplanung/src/store.rs`).
+Vier Tabellen in der Besprechungs-Datenbank, nur `CREATE`: `meeting_plans`,
+`meeting_plan_links`, `meeting_plan_consents` (aktueller Stand) und `meeting_plan_consent_log`
+(Verlauf, nur anhängen) (Schema: `crates/besprechungsplanung/src/store.rs`).
 Teilnehmende bleiben in `calendar_event_attendees` und `meeting_participants` (Outlook führend).
-Einwilligungen sind je Planung und Person (normalisierte E-Mail-Adresse) gespeichert.
+
+- Einwilligungen gelten je Planung und Person (normalisierte E-Mail-Adresse). Zustimmung und
+  Ablehnung brauchen Zeitpunkt und Kanal; ein Widerruf ist ein neuer Eintrag, der Verlauf bleibt.
+- Die Verknüpfung führt neben dem verdichteten Zustand eigene Merker für unbestätigte
+  Verschiebung, Block-Konflikt und Absage sowie die Instanz eines Serientermins (ursprünglicher Beginn).
+- Beschädigte gespeicherte Werte werden als `daten_beschaedigt` gemeldet, nie still ersetzt.
 
 ### 3.3 Outlook-Anbindung: drei austauschbare Adapter
 
@@ -97,6 +105,12 @@ damit Outlooks HTML→Text-Wandlung keinen falschen Konflikt erzeugt.
 | Planung schon durchgeführt | – | Kalender ändert den Status nicht mehr |
 
 Bei Adapter C schreibt die App den Block nach dem Einfügen nie wieder; dort zählt nur die Marke.
+Schreibende Adapter (A, B) dürfen nur bei nachweislich geprüftem Stand schreiben: Termintext liegt
+vor, Prüfsumme der zuletzt geschriebenen Fassung ist gespeichert, Block stimmt mit ihr überein.
+Die Prüfsumme toleriert nur Formatierung (Zeilenenden, Leerraum, Leerzeilen, Aufzählungszeichen);
+jede Änderung an Zeichen, Ziffern oder URLs ist ein Konflikt. Ein Feld, das ein Adapter nicht
+liefert, gilt als unbekannt und ändert den gespeicherten Wert nicht; nur ein ausdrücklich leeres
+Feld löscht ihn.
 Aus dem Bestand: nie den ganzen Termintext ersetzen, keine Dubletten (`transactionId`, Marke),
 unklarer Ausgang wird gemeldet statt wiederholt, jede schreibende Aktion über das Freigabe-Tor mit Audit.
 
@@ -104,8 +118,9 @@ unklarer Ausgang wird gemeldet statt wiederholt, jede schreibende Aktion über d
 
 - Hinweisfenster 5 Min. vorher (einstellbar) mit Ziel, Agenda, Rollen und Stand der Einwilligungen.
 - „Besprechung starten“ öffnet Agenda-Zeitboxen (Restzeit je Punkt) und Notizblock. Ist Transkription
-  geplant, verlangt der Knopf vorher die Bestätigung je anwesender Person. Fehlt eine Zustimmung oder
-  liegt eine Ablehnung vor, startet die Besprechung nur mit Notizen (`consent::start_modus`).
+  geplant, verlangt der Knopf vorher die Bestätigung je anwesender Person. Fehlt eine Zustimmung,
+  liegt eine Ablehnung vor, widersprechen sich Einträge oder ist eine anwesende Person nicht
+  identifiziert, startet die Besprechung nur mit Notizen (`consent::start_modus`).
 - Beginnt die Besprechung ohne App, bietet die vorhandene Mikrofon-Erkennung die verknüpfte Planung an.
 
 ### 3.6 Protokoll und Versand
@@ -115,19 +130,20 @@ unklarer Ausgang wird gemeldet statt wiederholt, jede schreibende Aktion über d
 - Sprachmodell nur aus der Allowlist des Richtlinienprofils; externe Anbieter mit dem vorhandenen Hinweis vorab.
 - Der Versandtext enthält nur das freigegebene Protokoll, keine Transkriptauszüge.
 - Entwurf an alle Teilnehmenden, Betreff „Protokoll: <Titel> (<Datum>)“, Klassifizierungszeile wie in der Einladung.
-- Nach Freigabe: Audio löschen, Transkript nach eingestellter Frist.
+- Nach Freigabe des Protokolls: Audio löschen (so steht es auch in der Einladung), Transkript nach eingestellter Frist.
 
 ## 4. Datenschutz und Regelwerk (organisationsneutral)
 
 Voraussetzung für jeden Einsatz mit Transkription ist die Freigabe der App als KI-Werkzeug durch die
-zuständige Stelle der Organisation; die Planung ohne Transkription braucht sie nicht.
+zuständige Stelle der Organisation; ein Pilot ist nur zulässig, wenn diese Stelle ihn ausdrücklich
+freigegeben hat. Die Planung ohne Transkription braucht keine Freigabe.
 
 | Thema | Umsetzung im Modul | Grundlage |
 |---|---|---|
 | Keine Aufzeichnung von Inhaltsdaten über den Zweck hinaus | Audio nur als Puffer bis das Protokoll steht; kein Audio-Export | interne Regelung zur Telekommunikation; DSGVO Art. 5 |
-| KI-Mitschrift nur mit freigegebenem Werkzeug | Freigabe durch die zuständige Stelle; bis dahin nur Pilot mit Zustimmung | interne KI-Richtlinie; EU AI Act |
+| KI-Mitschrift nur mit freigegebenem Werkzeug | Freigabe durch die zuständige Stelle (auch für einen Pilot) | interne KI-Richtlinie; EU AI Act |
 | Einwilligung aller | je Termin und Person dokumentiert; Hinweis bereits in der Einladung | § 201 StGB; DSGVO Art. 6, 7 |
-| Keine Leistungs- und Verhaltenskontrolle | Redeanteile im strengen Profil aus; keine Auswertung über Personen hinweg | Personalvertretungsrecht (in BW § 75 Abs. 4 Nr. 11 LPVG) |
+| Keine Leistungs- und Verhaltenskontrolle | Redeanteile im strengen Profil aus; keine Auswertung über Personen hinweg | Mitbestimmung nach dem anwendbaren Personalvertretungs- bzw. Betriebsverfassungsrecht |
 | Datenminimierung, Klassifizierung | Klassifizierung je Planung, im Termin und im Protokoll; Links statt Anhänge | Klassifizierungsrichtlinie der Organisation; DSGVO Art. 5 |
 | Geheimnisse | Token nur im Betriebssystem-Tresor, nie in DB oder Log | Kryptokonzept der Organisation |
 | Protokollierung | Audit jeder schreibenden Outlook-Aktion (Bestand) | Protokollierungsregeln der Organisation |
@@ -144,8 +160,8 @@ Arbeitsweise nach `AGENTS.md`: eigener Zweig je Paket, PR, keine Formatierläufe
 |---|---|---|
 | P0+P1 | Konzept im Repo; Crate mit Modell, Migration, Speicher, Regeln, Einladung, Abgleich, Einwilligung | `cargo test` im Crate grün |
 | P2 | Planungsoberfläche (Port Generator), Regelhinweise, Vorschau | Vorschau entspricht dem Generator; HTML-Vorschau zur Abnahme |
-| P3 | Adapter C + App-Verdrahtung (Migration, Befehle, Bindings) | Termin aus dem Feed wird verknüpft; Verschiebung aktualisiert die Planung |
-| P4 | Hinweisfenster, „Besprechung starten“, Einwilligungs-Check, Agenda-Zeitboxen | Start mit/ohne Transkription, Einwilligung dokumentiert |
+| P3 | Adapter C + App-Verdrahtung (Migration, Befehle, Bindings); Plan, Verknüpfung und Einwilligungen transaktional speichern, Statusprüfungen gegen konkurrierende Änderungen schützen, `PRAGMA foreign_keys = ON` auf jeder Verbindung; Kalender-Instanz (RECURRENCE-ID) an die Beobachtung geben | Termin aus dem Feed wird verknüpft; Verschiebung aktualisiert die Planung |
+| P4 | Hinweisfenster, „Besprechung starten“, Einwilligungs-Check, Agenda-Zeitboxen; Nachweis, Widerruf und später hinzukommende Anwesende in der Oberfläche | Start mit/ohne Transkription, Einwilligung dokumentiert |
 | P5 | Terminbezogene Protokollvorlage, Ziel-Abgleich, Entwurf an Teilnehmende | Protokoll entlang Agenda, Entwurf mit allen Teilnehmenden |
 | P6 | Adapter B: Outlook COM (Windows) | Termin per `Display()`, Verschiebung über `GlobalAppointmentID`, Mail-Entwurf |
 | P7 | Adapter A: Graph | Tests gegen den vorhandenen Test-Server |

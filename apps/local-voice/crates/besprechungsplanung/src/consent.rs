@@ -1,16 +1,22 @@
-//! Einwilligungs-Tor (Konzept 3.5): je Planung und Person dokumentiert.
+//! Einwilligungs-Tor (Konzept 3.5): je Planung (Termin) und Person dokumentiert.
 //!
-//! Regel: Ist Transkription geplant, startet sie nur, wenn ALLE Anwesenden
-//! zugestimmt haben. Fehlt eine Zustimmung oder liegt eine Ablehnung vor, startet
-//! die Besprechung nur mit Notizen. Ohne erfasste Anwesende gibt es ebenfalls keine
-//! Transkription (niemand hat zugestimmt).
+//! Regeln, alle sperrend:
+//! - Transkription nur, wenn sie geplant ist und ALLE Anwesenden zugestimmt haben.
+//! - Es zaehlen nur Einwilligungen DIESER Planung (`plan_id`).
+//! - Eine Zustimmung zaehlt nur mit Nachweis (Zeitpunkt und Kanal).
+//! - Widerspruechliche Eintraege derselben Person: eine Ablehnung gewinnt, sonst offen.
+//! - Eine anwesende Person ohne erkennbare Identitaet sperrt (sie kann nicht zugestimmt haben).
+//! - Ohne erfasste Anwesende keine Transkription.
 
 use serde::{Deserialize, Serialize};
 
 use crate::model::{Consent, ConsentState};
 
+/// Platzhalter in den Listen fuer eine anwesende Person ohne Identitaet.
+pub const UNBEKANNT: &str = "unbekannt";
+
 /// Normalisiert eine Person: E-Mail klein, ohne `mailto:`, ohne Leerraum; aus
-/// `Name <adresse>` zaehlt die Adresse.
+/// `Name <adresse>` zaehlt die Adresse. Leer heisst: keine Identitaet.
 pub fn person_schluessel(s: &str) -> String {
     let t = s.trim();
     let t = match (t.rfind('<'), t.rfind('>')) {
@@ -25,7 +31,13 @@ pub fn person_schluessel(s: &str) -> String {
     t.trim().to_lowercase()
 }
 
-/// Einwilligungen, die fuer neue Teilnehmende anzulegen sind (Zustand `offen`).
+/// Hat eine Zustimmung einen Nachweis (Zeitpunkt und Kanal)?
+pub fn mit_nachweis(c: &Consent) -> bool {
+    c.recorded_at.is_some() && c.channel.is_some()
+}
+
+/// Einwilligungen, die fuer neue Teilnehmende der Planung `plan_id` anzulegen sind
+/// (Zustand `offen`). Eintraege anderer Planungen zaehlen nicht.
 pub fn neue_einwilligungen(
     plan_id: &str,
     bestehend: &[Consent],
@@ -35,7 +47,9 @@ pub fn neue_einwilligungen(
     for t in teilnehmende {
         let p = person_schluessel(t);
         if p.is_empty()
-            || bestehend.iter().any(|c| c.person == p)
+            || bestehend
+                .iter()
+                .any(|c| c.plan_id == plan_id && person_schluessel(&c.person) == p)
             || out.iter().any(|c| c.person == p)
         {
             continue;
@@ -60,15 +74,38 @@ pub enum StartModus {
     NurNotizen {
         /// Transkription war gar nicht geplant.
         nicht_geplant: bool,
-        /// Anwesende ohne Zustimmung.
+        /// Anwesende ohne (nachgewiesene) Zustimmung; [`UNBEKANNT`] fuer Personen
+        /// ohne Identitaet.
         offen: Vec<String>,
         /// Anwesende mit Ablehnung.
         abgelehnt: Vec<String>,
     },
 }
 
-/// Entscheidet den Startmodus aus Planung, Anwesenden und Einwilligungen.
+/// Zusammengefasster Stand einer Person in einer Planung (sperrend).
+fn stand(plan_id: &str, person: &str, einwilligungen: &[Consent]) -> ConsentState {
+    let mut zugestimmt = false;
+    let mut offen = false;
+    for c in einwilligungen
+        .iter()
+        .filter(|c| c.plan_id == plan_id && person_schluessel(&c.person) == person)
+    {
+        match c.state {
+            ConsentState::Abgelehnt => return ConsentState::Abgelehnt,
+            ConsentState::Zugestimmt if mit_nachweis(c) => zugestimmt = true,
+            _ => offen = true,
+        }
+    }
+    if zugestimmt && !offen {
+        ConsentState::Zugestimmt
+    } else {
+        ConsentState::Offen
+    }
+}
+
+/// Entscheidet den Startmodus einer Planung aus Anwesenden und Einwilligungen.
 pub fn start_modus(
+    plan_id: &str,
     transcription_planned: bool,
     anwesende: &[String],
     einwilligungen: &[Consent],
@@ -85,21 +122,21 @@ pub fn start_modus(
     let mut gesehen: Vec<String> = Vec::new();
     for a in anwesende {
         let p = person_schluessel(a);
-        if p.is_empty() || gesehen.contains(&p) {
+        if p.is_empty() {
+            offen.push(UNBEKANNT.to_string());
+            continue;
+        }
+        if gesehen.contains(&p) {
             continue;
         }
         gesehen.push(p.clone());
-        match einwilligungen
-            .iter()
-            .find(|c| c.person == p)
-            .map(|c| c.state)
-        {
-            Some(ConsentState::Zugestimmt) => {}
-            Some(ConsentState::Abgelehnt) => abgelehnt.push(p),
-            _ => offen.push(p),
+        match stand(plan_id, &p, einwilligungen) {
+            ConsentState::Zugestimmt => {}
+            ConsentState::Abgelehnt => abgelehnt.push(p),
+            ConsentState::Offen => offen.push(p),
         }
     }
-    if gesehen.is_empty() || !offen.is_empty() || !abgelehnt.is_empty() {
+    if anwesende.is_empty() || !offen.is_empty() || !abgelehnt.is_empty() {
         return StartModus::NurNotizen {
             nicht_geplant: false,
             offen,

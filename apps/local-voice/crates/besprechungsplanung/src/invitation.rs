@@ -33,7 +33,7 @@ pub struct Gestaltung {
     pub akzentfarbe: String,
 }
 
-/// Neutrale Akzentfarbe (Fluent-Blau).
+/// Neutrale Akzentfarbe, solange der Briefkopf keine eigene vorgibt.
 pub const AKZENT_NEUTRAL: &str = "#0F6CBD";
 
 impl Default for Gestaltung {
@@ -228,7 +228,7 @@ fn zeilen(plan_id: &str, plan: &PlanInput, g: &Gestaltung) -> Vec<Zeile> {
         hinweise.push(
             "Geplant ist eine lokale Transkription als Grundlage für das Protokoll. \
              Sie startet nur, wenn alle Anwesenden zustimmen; ohne Zustimmung gibt es nur Notizen. \
-             Audio wird nach Fertigstellung des Protokolls gelöscht."
+             Audio wird gelöscht, sobald das Protokoll freigegeben ist."
                 .to_string(),
         );
     }
@@ -326,16 +326,28 @@ fn als_html(zeilen: &[Zeile], g: &Gestaltung) -> String {
     h
 }
 
-/// Pruefsumme eines Blocktexts (FNV-1a 64 Bit, hex). Gezaehlt werden nur Buchstaben
-/// und Ziffern, klein geschrieben: Aufzaehlungszeichen, Satzzeichen und Leerraum,
-/// die Outlook bei der HTML->Text-Wandlung anders setzt, aendern sie nicht.
+/// Pruefsumme eines Blocktexts (FNV-1a 64 Bit, hex). Toleriert wird nur
+/// Formatierung, wie sie Outlook bei der HTML->Text-Wandlung aendert: Zeilenenden,
+/// Leerraum (zusammengefasst), Leerzeilen und ein Aufzaehlungszeichen am Zeilenanfang
+/// (`•`, `*`, `·`, `-`, `o` gefolgt von Leerraum). Jedes andere Zeichen zaehlt, also
+/// auch Ziffern, Satzzeichen, Gross-/Kleinschreibung und Zeichen in URLs.
 /// Keine Kryptographie: nur Aenderungserkennung.
 pub fn block_hash(block_text: &str) -> String {
-    let norm: String = block_text
-        .chars()
-        .filter(|c| c.is_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect();
+    let norm = block_text
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .lines()
+        .map(|z| {
+            let z = z.trim();
+            let z = match z.split_once(char::is_whitespace) {
+                Some(("•" | "*" | "·" | "-" | "o", rest)) => rest,
+                _ => z,
+            };
+            z.split_whitespace().collect::<Vec<_>>().join(" ")
+        })
+        .filter(|z| !z.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in norm.bytes() {
         h ^= u64::from(b);
