@@ -532,7 +532,7 @@ fn speaker_rows_of_channel(
 
 /// #266: `metadata_json` als Objekt innerhalb einer Transaktion (leer: neues
 /// Objekt; kein Objekt: Fehler, damit nichts ueberschrieben wird).
-fn metadata_object_tx(
+pub(super) fn metadata_object_tx(
     tx: &rusqlite::Transaction<'_>,
     meeting_id: &str,
 ) -> Result<serde_json::Map<String, serde_json::Value>> {
@@ -553,7 +553,7 @@ fn metadata_object_tx(
     }
 }
 
-fn write_metadata_object_tx(
+pub(super) fn write_metadata_object_tx(
     tx: &rusqlite::Transaction<'_>,
     meeting_id: &str,
     map: serde_json::Map<String, serde_json::Value>,

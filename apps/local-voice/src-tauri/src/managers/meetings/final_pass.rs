@@ -38,6 +38,15 @@
 //! ein Stopp im Nachholen beendet die Besprechung als `cancelled`, ohne
 //! Luecken-Platzhalter: "Fortsetzen" holt dann den Rest nach.
 //!
+//! lva#538: Schreibfehler (Platte voll, RIFF-Grenze) lassen das Live-Transkript
+//! unveraendert. Der Recorder markiert eine unvollstaendige Aufnahme DAUERHAFT
+//! (`metadata_json.audio_incomplete`, `AUDIO_INCOMPLETE_KEY`); der Enddurchlauf ersetzt
+//! das Transkript dann nie aus ihr (`KeepReason::AudioIncomplete`), auch nicht, wenn
+//! spaeter wieder Platz da ist. Dasselbe gilt ohne Marker (Absturz vor dem Schreiben des
+//! Markers), wenn die Aufnahme eines Kanals kuerzer ist als dessen Live-Transkript
+//! (`audio_shorter_than_transcript`): "nicht leer" allein belegt keine vollstaendige
+//! Abdeckung. Gemeinsamer Pfad: Live-Aufnahmen und Mitschnitt profitieren gleich.
+//!
 //! Alles, was Tauri, das Modell oder die Hardware braucht, steckt hinter
 //! [`FinalEnv`]; die Ablaeufe selbst sind ohne Geraet und ohne Modell testbar.
 
@@ -81,6 +90,12 @@ pub const REPORT_KEY: &str = "final_pass";
 pub const SKIPPED_CODE: &str = "final_pass_skipped";
 /// P8a: Hinweis-Code, wenn der Nutzer die Nachbearbeitung gestoppt hat.
 pub const STOPPED_CODE: &str = "final_pass_stopped";
+/// `metadata_json`-Schluessel: die Aufnahme ist unvollstaendig (ein WAV-Schreibfehler),
+/// geschrieben vom Recorder (`mark_audio_incomplete`).
+pub const AUDIO_INCOMPLETE_KEY: &str = "audio_incomplete";
+/// So viel laenger darf das Live-Transkript eines Kanals sein als seine Aufnahme (Zeitachse
+/// der Kanaele, Rundung des WAV-Kopfes), bevor die Aufnahme als unvollstaendig gilt.
+const COVERAGE_SLACK_MS: u64 = 5_000;
 /// Import-Spur ohne Kanaltrennung (wie `retranscribe.rs`).
 const CHANNEL_MIXED: u8 = 2;
 /// `remap_sources`: ohne Ueberlappung zaehlt das naechste Segment, wenn es
@@ -181,6 +196,9 @@ pub enum KeepReason {
     /// lva#523: „Fortsetzen“ einer gestoppten Neu-Transkription: nur der Rest wird
     /// mit dem Modell des Laufs nachgeholt, kein Enddurchlauf ueber alles.
     PartialRerun,
+    /// lva#538: die Aufnahme ist unvollstaendig (WAV-Schreibfehler, Marker oder kuerzer
+    /// als das Live-Transkript): kein Ersatz des Transkripts aus ihr.
+    AudioIncomplete,
 }
 
 impl KeepReason {
@@ -904,6 +922,24 @@ fn catch_up(
     CatchUp::Finished
 }
 
+/// lva#538: ist die Aufnahme eines Kanals deutlich kuerzer als dessen Live-Transkript? Dann
+/// fehlt ihr ein Teil (WAV-Schreibfehler), und ein Enddurchlauf ueber sie verkuerzte das
+/// Transkript. Ein Kanal ohne lesbare Aufnahme zaehlt hier nicht (das ist `NoAudio`).
+fn audio_shorter_than_transcript(tracks: &[Track], segments: &[StoredSegment]) -> bool {
+    tracks.iter().any(|track| {
+        let Some(audio_ms) = wav_duration_ms(&track.path) else {
+            return false;
+        };
+        let said_ms = segments
+            .iter()
+            .filter(|s| s.channel == track.channel)
+            .map(|s| s.end_ms)
+            .max()
+            .unwrap_or(0);
+        said_ms > audio_ms.saturating_add(COVERAGE_SLACK_MS)
+    })
+}
+
 /// Der eigentliche Enddurchlauf. `Ok(epoch)` = ersetzt; `Err` = das
 /// Live-Transkript bleibt unveraendert.
 fn final_pass(
@@ -921,6 +957,13 @@ fn final_pass(
     if tracks.is_empty() {
         return Err(KeepReason::NoAudio);
     }
+    // lva#538: eine Aufnahme mit Schreibfehler ersetzt das Live-Transkript nie.
+    if metadata
+        .as_ref()
+        .is_some_and(|m| m.get(AUDIO_INCOMPLETE_KEY).is_some())
+    {
+        return Err(KeepReason::AudioIncomplete);
+    }
     let snapshot = store
         .transcript_snapshot(&meeting.id)
         .map_err(|_| KeepReason::StoreFailed)?;
@@ -931,6 +974,15 @@ fn final_pass(
     // ueberschreiben.
     if live_copy_epoch(&dir).is_some_and(|e| e < snapshot.epoch) {
         return Err(KeepReason::AlreadyFinal);
+    }
+    // lva#538: auch ohne Marker (Absturz, bevor er geschrieben war): kuerzer als das, was
+    // das Live-Transkript schon abdeckt, heisst, dass die WAV nicht vollstaendig ist.
+    if audio_shorter_than_transcript(&tracks, &snapshot.segments) {
+        warn!(
+            "meetings: recording of {} is shorter than its live transcript - live transcript kept",
+            meeting.id
+        );
+        return Err(KeepReason::AudioIncomplete);
     }
     if env.cancelled() {
         return Err(KeepReason::Cancelled);
@@ -3052,6 +3104,142 @@ mod tests {
         let mut env = FakeEnv::new();
         let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
         assert_kept(&f, &env, &out, KeepReason::NoAudio);
+    }
+
+    // ---- lva#538: Schreibfehler der Aufnahme lassen das Live-Transkript stehen -------
+
+    fn assert_live_untouched(f: &Fixture, env: &FakeEnv, out: &JobOutcome, texts: &[&str]) {
+        assert_eq!(out.report.kept, Some(KeepReason::AudioIncomplete));
+        let snap = f.store.transcript_snapshot(&f.id).unwrap();
+        assert_eq!(snap.epoch, 0, "keine neue Epoche");
+        let live: Vec<&str> = snap.segments.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(live, texts, "Live-Transkript unveraendert");
+        assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
+        assert!(env.kinds().contains(&"error"), "Hinweis final_pass_skipped");
+        assert!(!env.kinds().contains(&"reset"), "nichts ersetzt");
+        assert_eq!(
+            env.calls, 0,
+            "die Aufnahme wurde gar nicht erst transkribiert"
+        );
+        assert!(env.loads.is_empty(), "auch kein Modell geladen");
+        assert!(!f.meeting_dir.join(LIVE_TRANSCRIPT_FILE).exists());
+        assert_eq!(env.final_event(), (0, None));
+    }
+
+    /// Der Recorder hat den Schreibfehler dauerhaft markiert: der Enddurchlauf ersetzt
+    /// das Live-Transkript nicht, auch wenn die WAV lesbar ist und jetzt wieder Platz da
+    /// waere.
+    #[test]
+    fn a_marked_incomplete_recording_never_replaces_the_live_transcript() {
+        let f = fixture(true, MeetingStatus::Processing);
+        f.store
+            .set_metadata_key(
+                &f.id,
+                AUDIO_INCOMPLETE_KEY,
+                serde_json::json!({"channels": [1], "at": 5}),
+            )
+            .unwrap();
+        let mut env = FakeEnv::new();
+        let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        assert_live_untouched(&f, &env, &out, &["s0", "s1"]);
+    }
+
+    /// Absturz, bevor der Marker geschrieben war: die WAV ist nach dem Schreibfehler am
+    /// letzten Kopf-Flush stehengeblieben (6 s), das Live-Transkript lief weiter (bis 14 s).
+    /// Es gibt keinen Marker; "nicht leer" belegt keine Abdeckung, also bleibt das
+    /// laengere Live-Transkript.
+    #[test]
+    fn a_truncated_wav_with_a_longer_live_transcript_keeps_the_live_transcript() {
+        let f = fixture(true, MeetingStatus::Processing);
+        f.store
+            .append_delta(
+                &f.id,
+                &TranscriptDelta {
+                    new_segments: vec![seg(2, 0, 9_000, 14_000)],
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            wav_duration_ms(&f.meeting_dir.join("mic.wav")),
+            Some(6_000),
+            "Voraussetzung: die WAV ist kuerzer als das Transkript"
+        );
+        let marker = f
+            .store
+            .metadata_json(&f.id)
+            .unwrap()
+            .and_then(|m| m.get(AUDIO_INCOMPLETE_KEY).cloned());
+        assert!(marker.is_none());
+
+        let mut env = FakeEnv::new();
+        let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        assert_live_untouched(&f, &env, &out, &["s0", "s1", "s2"]);
+    }
+
+    /// Die Pruefung ist je Kanal: ein kurzer Systemton mit langem Mikrofon-Transkript
+    /// (der Systemton lief laenger als seine WAV) haelt das Live-Transkript genauso.
+    #[test]
+    fn the_coverage_check_is_per_channel() {
+        let f = fixture(true, MeetingStatus::Processing);
+        write_wav(&f.meeting_dir.join("system.wav"), &speech()[..32_000]); // 2 s
+        f.store
+            .append_delta(
+                &f.id,
+                &TranscriptDelta {
+                    new_segments: vec![seg(2, 1, 6_000, 9_000)],
+                },
+            )
+            .unwrap();
+        let mut env = FakeEnv::new();
+        let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        assert_live_untouched(&f, &env, &out, &["s0", "s1", "s2"]);
+    }
+
+    /// Kein falscher Alarm: Rundung und Zeitachse duerfen das Transkript ein Stueck ueber
+    /// die Aufnahme hinausragen lassen (Toleranz), und eine vollstaendige Aufnahme laeuft
+    /// wie bisher durch den Enddurchlauf.
+    #[test]
+    fn a_complete_recording_still_gets_its_final_pass() {
+        let f = fixture(true, MeetingStatus::Processing);
+        // Das Transkript endet 3 s nach der 6-s-Aufnahme: innerhalb der Toleranz.
+        f.store
+            .append_delta(
+                &f.id,
+                &TranscriptDelta {
+                    new_segments: vec![seg(2, 0, 7_000, 9_000)],
+                },
+            )
+            .unwrap();
+        let mut env = FakeEnv::new();
+        let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        assert_eq!(out.report.kept, None, "der Enddurchlauf lief");
+        assert!(env.calls > 0);
+        assert_eq!(f.store.transcript_snapshot(&f.id).unwrap().epoch, 1);
+    }
+
+    /// Die Pruefung ist rein: Aufnahmen ohne Transkript und fehlende Dateien zaehlen nicht.
+    #[test]
+    fn coverage_ignores_unreadable_tracks_and_empty_transcripts() {
+        let dir = tempfile::tempdir().unwrap();
+        let wav = dir.path().join("a.wav");
+        write_wav(&wav, &speech());
+        let track = |path: PathBuf, channel| Track { path, channel };
+        assert!(!audio_shorter_than_transcript(
+            &[track(wav.clone(), 0)],
+            &[]
+        ));
+        assert!(!audio_shorter_than_transcript(
+            &[track(dir.path().join("weg.wav"), 0)],
+            &[seg(0, 0, 0, 90_000)]
+        ));
+        assert!(audio_shorter_than_transcript(
+            &[track(wav.clone(), 0)],
+            &[seg(0, 0, 0, 11_001)]
+        ));
+        assert!(!audio_shorter_than_transcript(
+            &[track(wav, 0)],
+            &[seg(0, 0, 0, 11_000)]
+        ));
     }
 
     #[test]

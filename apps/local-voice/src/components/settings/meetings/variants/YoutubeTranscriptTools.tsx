@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { commands, events, type Meeting, type SubtitleTrack } from "@/bindings";
 import { Button } from "../../../ui/Button";
@@ -53,6 +53,11 @@ export const YoutubeTranscriptTools: React.FC<YoutubeTranscriptToolsProps> = ({
   const recordingElsewhere = recording.active && !capturing;
   const [consentOpen, setConsentOpen] = useState(false);
   const [starting, setStarting] = useState(false);
+  // „Abbrechen“ ist abgeschickt: der Stopp läuft, der Start meldet sich gleich zurück.
+  const [aborting, setAborting] = useState(false);
+  // Escape, X und Hintergrund können im selben Takt mehrfach ankommen, bevor der
+  // Zustand neu gezeichnet ist: der Stopp wird trotzdem nur einmal abgeschickt.
+  const abortSent = useRef(false);
   // Der Player konnte das Video nicht selbst starten: der Nutzer drueckt "Abspielen".
   const [playHint, setPlayHint] = useState(false);
   // Der Systemton liefert seit einiger Zeit nichts (Waechter, Kanal 1).
@@ -171,12 +176,18 @@ export const YoutubeTranscriptTools: React.FC<YoutubeTranscriptToolsProps> = ({
 
   const startCapture = async () => {
     setStarting(true);
+    setAborting(false);
+    abortSent.current = false;
     setMessage(null);
     const result = await commands.meetingsStartPlaybackCapture(meetingId, true);
     setStarting(false);
+    setAborting(false);
     setConsentOpen(false);
     if (result.status !== "ok") {
       const code = result.error.split(":")[0].trim();
+      // Vom Nutzer abgebrochen (oder der Eintrag wurde währenddessen gelöscht):
+      // kein Fehler, der Eintrag ist wie vorher.
+      if (code === "start_cancelled" || code === "meeting_not_found") return;
       setMessage({
         kind: "error",
         text:
@@ -187,6 +198,20 @@ export const YoutubeTranscriptTools: React.FC<YoutubeTranscriptToolsProps> = ({
       return;
     }
     setPlayHint(!onCaptureStarted(result.data));
+  };
+
+  // Der laufende Start wird mit demselben Stopp abgebrochen wie eine Aufnahme:
+  // das Backend setzt den Abbruchmerker, der Start räumt auf und meldet sich mit
+  // `start_cancelled` zurück (siehe `startCapture`).
+  const abortStart = async () => {
+    if (abortSent.current) return;
+    abortSent.current = true;
+    setAborting(true);
+    const result = await commands.meetingsStop();
+    if (result.status !== "ok") {
+      abortSent.current = false;
+      setAborting(false);
+    }
   };
 
   const startOwn = async () => {
@@ -353,7 +378,9 @@ export const YoutubeTranscriptTools: React.FC<YoutubeTranscriptToolsProps> = ({
         open={consentOpen}
         onOpenChange={setConsentOpen}
         busy={starting}
+        aborting={aborting}
         onConfirm={() => void startCapture()}
+        onAbort={() => void abortStart()}
       />
     </div>
   );

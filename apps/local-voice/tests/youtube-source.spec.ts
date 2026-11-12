@@ -826,6 +826,140 @@ test.describe("Beim Abspielen mitschreiben", () => {
     await expect(page.getByTestId("yt-capture-running")).toHaveCount(0);
   });
 
+  // lva#538: Einwilligungstext praezise (Berechtigung unbeschraenkt, Urheberrecht und
+  // Plattformbedingungen, der gesamte Systemausgang wird erfasst).
+  test("der Einwilligungstext verlangt die Berechtigung uneingeschränkt und warnt vor dem gesamten Systemausgang", async ({
+    page,
+  }) => {
+    await setup(page, { empty: true });
+    await pickMeeting(page, YT_MEETING_ID);
+    await page.getByTestId("yt-capture").click();
+    const body = captureDialog(page).getByTestId("yt-capture-dialog");
+    await expect(body).toContainText("erforderliche Berechtigung");
+    await expect(body).toContainText("Urheberrecht");
+    await expect(body).toContainText("Nutzungsbedingungen der Plattform");
+    await expect(body).toContainText(
+      "Dass das Video öffentlich zugänglich ist, reicht dafür nicht aus.",
+    );
+    // Der gesamte Ton des Ausgabegeraets, auch Benachrichtigungen und Anrufe.
+    await expect(body).toContainText("gesamte Ton des gewählten Ausgabegeräts");
+    await expect(body).toContainText("Benachrichtigungstöne, Anrufe");
+    // Die alte Formulierung, die oeffentliche Verfuegbarkeit als Erlaubnis darstellt:
+    await expect(body).not.toContainText(
+      "öffentlich zugänglich, oder alle darin zu hörenden Personen",
+    );
+  });
+
+  test("die Stillewarnung nennt auch den falschen Audioausgang", async ({
+    page,
+  }) => {
+    await setup(page, { empty: true });
+    await pickMeeting(page, YT_MEETING_ID);
+    await startCapture(page);
+    await emitMeeting(page, {
+      kind: "health",
+      meeting_id: YT_MEETING_ID,
+      channel: 1,
+      state: "silent",
+    });
+    const quiet = page.getByTestId("yt-capture-quiet");
+    await expect(quiet).toContainText("anderen Audioausgang");
+    await expect(quiet).toContainText("auf Kopfhörer gewechselt");
+  });
+
+  // lva#538, Blocker 2: der Start haengt (der Treiber antwortet nicht); Abbrechen,
+  // Escape und X sind derselbe Abbruch, kein bloßes Schliessen des Dialogs.
+  test.describe("Abbruch während der Start läuft", () => {
+    /** Dialog offen, Start abgeschickt, haengt. */
+    const hangingStart = async (page: Page) => {
+      await setup(page, { empty: true, startHold: true });
+      await pickMeeting(page, YT_MEETING_ID);
+      await startCapture(page);
+      await expect.poll(async () => (await calls(page, START)).length).toBe(1);
+      const dialog = captureDialog(page);
+      // Der Dialog bleibt offen, solange der Start laeuft; Bestaetigen ist gesperrt.
+      await expect(dialog).toBeVisible();
+      await expect(dialog.getByTestId("yt-capture-confirm")).toBeDisabled();
+      await expect(dialog.getByTestId("yt-capture-cancel")).toHaveText(
+        "Start abbrechen",
+      );
+      return dialog;
+    };
+
+    /** Der Abbruch ist wirksam: ein Stopp, Dialog zu, keine Fehlermeldung, wie vorher. */
+    const expectCancelled = async (page: Page) => {
+      await expect
+        .poll(async () => (await calls(page, "meetings_stop")).length)
+        .toBe(1);
+      await expect(captureDialog(page)).toHaveCount(0);
+      await expect(page.getByTestId("yt-message")).toHaveCount(0);
+      await expect(page.getByTestId("yt-capture-running")).toHaveCount(0);
+      await expect(page.getByTestId("yt-capture")).toBeEnabled();
+      // Der Player blieb unberuehrt, der Eintrag ist ohne Aufnahme wie vorher.
+      expect(await playerCount(page)).toBe(0);
+      await expect(
+        page.getByText("Noch kein Transkript. Starte oben", { exact: false }),
+      ).toBeVisible();
+    };
+
+    test("„Start abbrechen“ bricht den Start ab (ein Stopp)", async ({
+      page,
+    }) => {
+      const dialog = await hangingStart(page);
+      await dialog.getByTestId("yt-capture-cancel").click();
+      await expectCancelled(page);
+    });
+
+    test("Escape ist derselbe Abbruch", async ({ page }) => {
+      await hangingStart(page);
+      await page.keyboard.press("Escape");
+      await expectCancelled(page);
+    });
+
+    test("das X im Dialog ist derselbe Abbruch", async ({ page }) => {
+      const dialog = await hangingStart(page);
+      await dialog
+        .getByRole("button", { name: "Abbrechen", exact: true })
+        .click();
+      await expectCancelled(page);
+    });
+
+    test("ein Klick auf den Hintergrund ist derselbe Abbruch", async ({
+      page,
+    }) => {
+      await hangingStart(page);
+      // Ausserhalb des Dialogs (Ecke der Ueberlagerung).
+      await page.mouse.click(4, 4);
+      await expectCancelled(page);
+    });
+
+    test("mehrfaches Abbrechen schickt nur einen Stopp", async ({ page }) => {
+      const dialog = await hangingStart(page);
+      await dialog.getByTestId("yt-capture-cancel").click();
+      await page.keyboard.press("Escape");
+      await expectCancelled(page);
+      expect(await calls(page, "meetings_stop")).toHaveLength(1);
+    });
+  });
+
+  // lva#538, Hinweis Zeitmarken: bei eigenem Mitschnitt liegen die Zeitmarken auf der
+  // Zeitachse der Aufnahme, nicht der Videozeit: kein Sprung im YouTube-Player.
+  test("Zeitmarken eines Mitschnitts springen im eigenen Audio, nicht im YouTube-Player", async ({
+    page,
+  }) => {
+    await setup(page, { ownAudio: true });
+    await pickMeeting(page, YT_MEETING_ID);
+    const first = page.locator('[data-segment-index="0"] [data-act="seek"]');
+    await expect(first).toBeVisible();
+    await first.click();
+    // Kein YouTube-Player wurde geladen, kein Sprung zur Videozeit.
+    await expect(page.getByTestId("yt-iframe")).toHaveCount(0);
+    expect(await playerCount(page)).toBe(0);
+    expect(await playerCalls(page)).toEqual([]);
+    // Der Mitschnitt selbst ist abspielbar.
+    await expect(page.getByTestId("rec-player-system")).toBeVisible();
+  });
+
   test("läuft schon eine andere Aufnahme, ist der Knopf gesperrt", async ({
     page,
   }) => {

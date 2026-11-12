@@ -34,6 +34,14 @@ export interface YoutubeMockOptions {
   privateOn?: boolean;
   /** Fehlercode, mit dem `meetings_start_playback_capture` scheitert (Standard: keiner). */
   startError?: string;
+  /**
+   * lva#538: `meetings_start_playback_capture` haengt (der Treiber antwortet nicht),
+   * bis `meetings_stop` ihn abbricht; der Start meldet dann `start_cancelled`,
+   * der Stopp liefert "" (wie `RunCore::begin_stop` bei einem Start ohne Sitzung).
+   */
+  startHold?: boolean;
+  /** `y1` hat schon einen eigenen Mitschnitt (Audiopfad), samt Transkript. */
+  ownAudio?: boolean;
 }
 
 export const installYoutubeMock = async (
@@ -60,6 +68,8 @@ export const installYoutubeMock = async (
       empty,
       privateOn,
       startError,
+      startHold,
+      ownAudio,
       id,
       title,
       channel,
@@ -71,6 +81,9 @@ export const installYoutubeMock = async (
       w.__ytEmpty = empty;
       w.__ytSegments = [];
       w.__playbackError = startError ?? null;
+      // lva#538: haengender Start; `w.__heldStart.reject` bricht ihn ab.
+      w.__startHold = startHold;
+      w.__heldStart = null;
       if (privateOn) w.__settings.meeting_youtube_private = true;
       if (fakePlayer) {
         w.YT = {
@@ -138,7 +151,15 @@ export const installYoutubeMock = async (
       };
       if (existing && Array.isArray(w.__meetings)) {
         w.__meetings = [
-          { ...base, id: meetingId, title, created_at: 1_790_100_000 },
+          {
+            ...base,
+            id: meetingId,
+            title,
+            created_at: 1_790_100_000,
+            ...(ownAudio
+              ? { system_audio_path: "C:/Users/patrick/Aufnahmen/y1-system.wav" }
+              : {}),
+          },
           ...w.__meetings,
         ];
         w.__ytSources[meetingId] = source(id, null);
@@ -244,6 +265,12 @@ export const installYoutubeMock = async (
             if (target.source !== "youtube" || target.status !== "ready") {
               throw "target_not_empty";
             }
+            if (w.__startHold) {
+              // Der Treiber haengt: der Start endet erst mit dem Abbruch des Nutzers.
+              return new Promise((_resolve, reject) => {
+                w.__heldStart = { reject };
+              });
+            }
             const started = {
               ...target,
               status: "recording",
@@ -261,6 +288,18 @@ export const installYoutubeMock = async (
               paused: false,
             });
             return started;
+          }
+          case "meetings_stop": {
+            const held = w.__heldStart;
+            // Ohne haengenden Start gilt der Stopp der Grundattrappe (sie zaehlt mit).
+            if (!held) return original(cmd, args);
+            w.__calls.push({ cmd, args });
+            // Spiegel von `RunCore::begin_stop` waehrend des Starts: Abbruchmerker
+            // gesetzt, der Start raeumt auf und meldet `start_cancelled`; der Stopp
+            // selbst hat keine Aufnahme zu liefern.
+            w.__heldStart = null;
+            held.reject("start_cancelled");
+            return "";
           }
           case "change_meeting_youtube_private_setting":
             w.__calls.push({ cmd, args });
@@ -280,6 +319,8 @@ export const installYoutubeMock = async (
       empty: options.empty ?? false,
       privateOn: options.privateOn ?? false,
       startError: options.startError ?? null,
+      startHold: options.startHold ?? false,
+      ownAudio: options.ownAudio ?? false,
       id: YT_ID,
       title: YT_TITLE,
       channel: YT_CHANNEL,

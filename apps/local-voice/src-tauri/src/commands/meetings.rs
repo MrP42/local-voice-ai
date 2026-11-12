@@ -272,11 +272,22 @@ pub async fn meetings_get_documents(
 
 /// Soft-deletes the meeting, then hard-deletes its audio files from disk
 /// (Spec A2 — a tombstoned meeting must never leave an orphaned WAV behind).
+///
+/// lva#538: zuerst endet, was gerade in diese Besprechung aufnimmt: ein laufender Start
+/// (er endet mit `meeting_not_found` und raeumt auf) oder die laufende Aufnahme (ohne
+/// Enddurchlauf). Sonst entstuende eine Aufnahme fuer einen geloeschten Eintrag.
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_delete(app: tauri::AppHandle, meeting_id: String) -> Result<(), String> {
     let store = store_of(&app)?;
     let queue = queue_of(&app)?;
+    if let Some(recorder) = app.try_state::<Arc<MeetingRecorderManager>>() {
+        let recorder = Arc::clone(&recorder);
+        let id = meeting_id.clone();
+        tauri::async_runtime::spawn_blocking(move || recorder.abort_for_delete(&id))
+            .await
+            .map_err(|e| format!("meetings_delete panicked: {e}"))?;
+    }
     // P8a: eine laufende Verarbeitung (Import, Enddurchlauf, Notizen ...) endet,
     // bevor ihre Audiodateien verschwinden. Ohne Auftrag ist das ein leerer Aufruf.
     let _ = job::global().stop(&meeting_id);

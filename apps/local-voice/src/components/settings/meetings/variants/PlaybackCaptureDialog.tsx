@@ -6,9 +6,13 @@ import { Dialog } from "../../../ui/Dialog";
 interface PlaybackCaptureDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Der Start läuft: beide Knöpfe gesperrt. */
+  /** Der Start läuft: „Abbrechen“, Escape, Hintergrund und X brechen ihn ab. */
   busy: boolean;
+  /** Der Abbruch ist unterwegs (Stopp ist abgeschickt): nichts mehr anklickbar. */
+  aborting?: boolean;
   onConfirm: () => void;
+  /** Bricht den laufenden Start ab (der Aufruf, der auch den Stopp-Knopf bedient). */
+  onAbort: () => void;
 }
 
 /**
@@ -18,28 +22,48 @@ interface PlaybackCaptureDialogProps {
  * Start ohne `consent_confirmed`). Hier gibt es nichts zu wählen, weil Titel,
  * Projekt und Notizen der YouTube-Besprechung bleiben und nur der Systemton
  * aufgenommen wird.
+ *
+ * Solange der Start läuft (`busy`), ist jeder Weg hinaus ein Abbruch des Starts:
+ * „Abbrechen“, Escape, Klick auf den Hintergrund und das X rufen `onAbort`,
+ * nicht bloß `onOpenChange(false)`. Sonst schlösse sich der Dialog, und der Start
+ * liefe unsichtbar weiter bis zu einer Aufnahme, die niemand mehr wollte (lva#538).
  */
 export const PlaybackCaptureDialog: React.FC<PlaybackCaptureDialogProps> = ({
   open,
   onOpenChange,
   busy,
+  aborting = false,
   onConfirm,
+  onAbort,
 }) => {
   const { t } = useTranslation();
+  const leave = () => {
+    if (!busy) {
+      onOpenChange(false);
+      return;
+    }
+    if (!aborting) onAbort();
+  };
   return (
     <Dialog
       open={open}
-      onOpenChange={onOpenChange}
+      onOpenChange={(next) => {
+        if (next) onOpenChange(true);
+        else leave();
+      }}
       title={t("meetings.variants.youtube.capture.dialog.title")}
       closeLabel={t("meetings.consent.cancel")}
       footer={
         <>
           <Button
             variant="secondary"
-            onClick={() => onOpenChange(false)}
-            disabled={busy}
+            onClick={leave}
+            disabled={aborting}
+            data-testid="yt-capture-cancel"
           >
-            {t("meetings.consent.cancel")}
+            {busy
+              ? t("meetings.variants.youtube.capture.dialog.abort")
+              : t("meetings.consent.cancel")}
           </Button>
           <Button
             onClick={onConfirm}

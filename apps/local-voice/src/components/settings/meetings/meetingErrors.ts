@@ -31,6 +31,11 @@ const ERROR_KEY_MAP: Record<string, string> = {
   playback_capture_failed: "meetings.errors.playbackCaptureFailed",
   playback_capture_timeout: "meetings.errors.playbackCaptureTimeout",
   playback_capture_died: "meetings.errors.playbackCaptureDied",
+  // lva#538: Abbruch des Starts, Schreibfehler der WAV (Live-Aufnahmen auch)
+  start_cancelled: "meetings.errors.startCancelled",
+  start_busy: "meetings.errors.startBusy",
+  audio_write_failed: "meetings.errors.audioWriteFailed",
+  audio_paths_failed: "meetings.errors.storeFailed",
   mic_stream_error: "meetings.errors.micStreamError",
   import_failed: "meetings.errors.importFailed",
   already_recording: "meetings.errors.alreadyRecording",

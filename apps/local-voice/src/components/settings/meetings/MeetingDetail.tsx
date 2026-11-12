@@ -367,9 +367,19 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   // Umsetzung ein, das Transkript bleibt unveraendert.
   // Eine YouTube-Besprechung hat statt des Audios den YouTube-Player (#66).
   const youtube = useYoutubeSource(meeting);
+  // #537/lva#538: hat die YouTube-Besprechung eine eigene Aufnahme (Mitschnitt beim
+  // Abspielen), liegen die Zeitmarken auf der Zeitachse DER AUFNAHME, nicht der
+  // Videozeit: Pausen, Werbung und Suchsprünge verschieben beide gegeneinander. Ein
+  // Sprung in den YouTube-Player träfe dann die falsche Stelle; die Zeitmarken spielen
+  // deshalb die Aufnahme ab (solange sie läuft, gibt es noch nichts zu spielen).
+  const recordedFromPlayback = youtube.source !== null && hasAudio;
   const player =
-    youtube.player ??
-    audioTranscriptPlayer(micPlayerRef, systemPlayerRef, hasAudio);
+    (!recordedFromPlayback && youtube.player) ||
+    audioTranscriptPlayer(
+      micPlayerRef,
+      systemPlayerRef,
+      hasAudio && !(recordedFromPlayback && live),
+    );
   // D4: die aktuelle Folie folgt der Abspielzeit des Audios; der Zustand springt
   // nur bei einem Folienwechsel um, nicht bei jedem Zeitschritt.
   const onPlayTime = useCallback((seconds: number) => {

@@ -10,7 +10,8 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
-const HEADER_LEN: u64 = 44;
+/// Laenge des WAV-Kopfes (Bytes): eine Datei, die nicht laenger ist, hat keine Samples.
+pub const HEADER_LEN: u64 = 44;
 const BITS_PER_SAMPLE: u16 = 16;
 const CHANNELS: u16 = 1;
 const BYTES_PER_SAMPLE: u32 = (BITS_PER_SAMPLE / 8) as u32;
@@ -96,7 +97,7 @@ impl StreamingWavWriter {
     /// Test-only hook to move the internal frame counter near the RIFF
     /// size limit without actually writing gigabytes of samples to disk.
     #[cfg(test)]
-    fn set_frames_for_test(&mut self, frames: u64) {
+    pub(crate) fn set_frames_for_test(&mut self, frames: u64) {
         self.frames_written = frames;
     }
 

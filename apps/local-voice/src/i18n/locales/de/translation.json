@@ -3775,6 +3775,9 @@
       "playbackCaptureFailed": "Der Systemton ließ sich nicht aufnehmen. Ist ein Ausgabegerät angeschlossen und in Windows eingestellt?",
       "playbackCaptureTimeout": "Der Systemton antwortet nicht. Bitte Ausgabegerät und Treiber prüfen und noch einmal versuchen.",
       "playbackCaptureDied": "Der Systemton ist beim Mitschreiben ausgefallen. Beende die Aufnahme; was bis dahin mitgeschrieben wurde, bleibt erhalten.",
+      "startCancelled": "Der Start wurde abgebrochen.",
+      "startBusy": "Der Start der Aufnahme läuft noch. Bitte gleich noch einmal versuchen.",
+      "audioWriteFailed": "Die Aufnahme konnte nicht mehr auf den Datenträger geschrieben werden (Datenträger voll?). Das Live-Transkript läuft weiter, der Ton wird aber nicht mehr gesichert; ein Enddurchlauf aus dieser Aufnahme findet nicht statt.",
       "micStreamError": "Der Mikrofon-Stream hat während der Aufnahme einen Fehler gemeldet — es können Teile der Aufnahme fehlen.",
       "importFailed": "Die Datei konnte nicht importiert werden.",
       "alreadyRecording": "Es läuft bereits eine Aufnahme.",
@@ -3788,7 +3791,7 @@
       "importSourceMissing": "Die Datei wurde gelöscht oder verschoben, bevor sie an der Reihe war.",
       "importPathInvalid": "Der Dateipfad enthält Zeichen, die nicht unterstützt werden.",
       "retranscribeFailed": "Die Neu-Transkription ist fehlgeschlagen. Das Transkript blieb unverändert.",
-      "finalPassSkipped": "Enddurchlauf übersprungen – das Live-Transkript bleibt gültig (Modell fehlt, zu wenig Speicher oder abgebrochen).",
+      "finalPassSkipped": "Enddurchlauf übersprungen – das Live-Transkript bleibt gültig (Modell fehlt, zu wenig Speicher, abgebrochen oder die Aufnahme ist unvollständig).",
       "finalPassStopped": "Nachbearbeitung gestoppt – das Live-Transkript bleibt gültig.",
       "meetingBusy": "Diese Besprechung wird gerade verarbeitet.",
       "meetingsUnavailable": "Besprechungen sind gerade nicht verfügbar: Die Datenbank ließ sich beim Start nicht öffnen. Bitte die App neu starten; hilft das nicht, steht die Ursache in der Protokolldatei.",
@@ -5191,11 +5194,12 @@
           "explain": "Der Systemton wird beim Abspielen im eingebetteten Player in Echtzeit transkribiert. Spiele das Video von Anfang bis Ende ab, lass die Lautstärke an und schalte andere Töne stumm.",
           "running": "Es wird mitgeschrieben, solange der Ton läuft. Spiele das Video von Anfang bis Ende ab. Mit „Beenden“ in der Aufnahmesteuerung hörst du auf.",
           "playHint": "Jetzt das Video abspielen.",
-          "quiet": "Seit einiger Zeit kommt kein Ton an. Läuft das Video, ist die Lautstärke an und ist der Player nicht stummgeschaltet?",
+          "quiet": "Seit einiger Zeit kommt kein Ton an. Läuft das Video, ist die Lautstärke an und ist der Player nicht stummgeschaltet? Oder geht der Ton an einen anderen Audioausgang, zum Beispiel weil auf Kopfhörer gewechselt wurde? Aufgenommen wird nur der Ausgang, der beim Start eingestellt war.",
           "elsewhere": "Es läuft schon eine andere Aufnahme.",
           "dialog": {
             "title": "Beim Abspielen mitschreiben",
-            "body": "Die App nimmt den Ton auf, der beim Abspielen aus deinen Lautsprechern oder Kopfhörern kommt (nur den Systemton, nicht das Mikrofon), und schreibt ihn mit. Das Video wird nicht heruntergeladen. Bestätige, dass du diese Aufnahme anfertigen darfst: Das Video ist öffentlich zugänglich, oder alle darin zu hörenden Personen haben zugestimmt.",
+            "body": "Die App nimmt den Ton auf, der beim Abspielen aus deinen Lautsprechern oder Kopfhörern kommt (nur den Systemton, nicht das Mikrofon), und schreibt ihn mit. Das Video wird nicht heruntergeladen.\n\nAchtung: Aufgenommen wird der gesamte Ton des gewählten Ausgabegeräts, also auch Benachrichtigungstöne, Anrufe und alles andere, was gerade zu hören ist. Beende andere Programme oder schalte ihre Töne stumm, bevor du startest.\n\nBestätige, dass du die erforderliche Berechtigung für diese Aufnahme und Transkription hast. Beachte dabei das Urheberrecht und die Nutzungsbedingungen der Plattform. Dass das Video öffentlich zugänglich ist, reicht dafür nicht aus.",
+            "abort": "Start abbrechen",
             "confirm": "Mitschreiben starten"
           },
           "errors": {

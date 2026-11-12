@@ -3775,6 +3775,9 @@
       "playbackCaptureFailed": "The system sound could not be recorded. Is an output device connected and selected in Windows?",
       "playbackCaptureTimeout": "The system sound does not respond. Please check the output device and driver and try again.",
       "playbackCaptureDied": "The system sound failed while transcribing. Stop the recording; what was transcribed so far is kept.",
+      "startCancelled": "The start was cancelled.",
+      "startBusy": "The recording is still starting. Please try again in a moment.",
+      "audioWriteFailed": "The recording could no longer be written to disk (disk full?). The live transcript keeps running, but the sound is no longer saved; no final pass runs from this recording.",
       "micStreamError": "The microphone stream reported an error during recording — some audio may be missing.",
       "importFailed": "The file could not be imported.",
       "alreadyRecording": "A recording is already running.",
@@ -3788,7 +3791,7 @@
       "importSourceMissing": "The file was deleted or moved before its turn came.",
       "importPathInvalid": "The file path contains characters that are not supported.",
       "retranscribeFailed": "Re-transcription failed. The transcript was left unchanged.",
-      "finalPassSkipped": "Final pass skipped – the live transcript stays valid (model missing, not enough memory, or cancelled).",
+      "finalPassSkipped": "Final pass skipped – the live transcript stays valid (model missing, not enough memory, cancelled, or the recording is incomplete).",
       "finalPassStopped": "Post-processing stopped – the live transcript stays valid.",
       "meetingBusy": "This meeting is being processed right now.",
       "meetingsUnavailable": "Meetings are not available right now: the database could not be opened at start-up. Please restart the app; if that does not help, the log file names the cause.",
@@ -5191,11 +5194,12 @@
           "explain": "The system sound is transcribed in real time while the embedded player plays. Play the video from start to end, keep the volume on and mute other sounds.",
           "running": "Transcribing as long as the sound plays. Play the video from start to end. Use “Stop” in the recording controls to finish.",
           "playHint": "Now play the video.",
-          "quiet": "No sound has arrived for a while. Is the video playing, is the volume on and is the player not muted?",
+          "quiet": "No sound has arrived for a while. Is the video playing, is the volume on and is the player not muted? Or is the sound going to a different audio output, for example because you switched to headphones? Only the output that was selected at the start is recorded.",
           "elsewhere": "Another recording is already running.",
           "dialog": {
             "title": "Transcribe while playing",
-            "body": "The app records the sound that comes out of your speakers or headphones while the video plays (system sound only, not the microphone) and transcribes it. The video is not downloaded. Confirm that you are allowed to make this recording: the video is publicly available, or everyone heard in it has agreed.",
+            "body": "The app records the sound that comes out of your speakers or headphones while the video plays (system sound only, not the microphone) and transcribes it. The video is not downloaded.\n\nNote: everything that plays on the selected output device is recorded, including notification sounds, calls and anything else you can hear. Close other programs or mute their sounds before you start.\n\nConfirm that you have the permission required for this recording and transcription. Observe copyright and the platform's terms of use. A video being publicly available is not enough for that.",
+            "abort": "Cancel start",
             "confirm": "Start transcribing"
           },
           "errors": {

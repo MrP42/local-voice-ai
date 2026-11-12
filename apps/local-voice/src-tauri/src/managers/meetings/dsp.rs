@@ -2220,6 +2220,36 @@ mod tests {
         );
     }
 
+    /// WASAPI-Loopback liefert bei Stille GAR KEINE Pakete (Messung auf Windows: nach
+    /// drei Sekunden null Bloecke, kein Fehler). Der Waechter des Systemtons darf
+    /// deshalb nicht an Paketen haengen: der Wanduhr-Takt des DSP-Threads meldet
+    /// `NoData`, auch wenn nie ein Block ankam, und nimmt es mit dem ersten Ton
+    /// zurueck. Die Fristen sind hier verkuerzt (echt: 30 s plus Anlaufzeit).
+    #[test]
+    fn a_playback_capture_without_a_single_packet_asks_by_the_wall_clock() {
+        let (notice, log) = notices();
+        let (tx, _rx) = mpsc::channel();
+        let mut cfg = DspConfig::new(Some(energy_factory()), notice).playback_only();
+        cfg.watch_loopback.no_data_ms = Some(200);
+        cfg.watch_loopback.start_grace_ms = 0;
+        cfg.watch_tick = Duration::from_millis(20);
+        let h = DspHandle::spawn(cfg, tx, QUEUE_CAPACITY).unwrap();
+        let mut sys = h.feed(1);
+        std::thread::sleep(Duration::from_millis(700));
+        assert_eq!(
+            health_of(&log),
+            vec![(1, HealthState::NoData)],
+            "Stille ohne Paket muss ohne Paket auffallen; der Mikrofonkanal schweigt"
+        );
+        // Der Ton kommt (Video laeuft): die Meldung geht zurueck.
+        feed_blocks(&mut sys, &loud(1_500));
+        h.finish();
+        assert_eq!(
+            health_of(&log),
+            vec![(1, HealthState::NoData), (1, HealthState::Recovered)]
+        );
+    }
+
     #[test]
     fn a_dead_dsp_thread_makes_push_count_lost_samples_and_never_block() {
         let (tx, rx) = mpsc::sync_channel::<DspMsg>(4);

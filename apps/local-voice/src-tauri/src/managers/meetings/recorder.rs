@@ -14,37 +14,59 @@
 //! Besprechung, nur mit [`CaptureMode::PlaybackOnly`]: kein `mic.wav`, kein
 //! Mikrofon-Capture, kein Echo, `RecordingSession.mic_*` leer.
 //!
-//! Fehlerfaelle des Systemton-only-Modus und ihre Absicherung:
-//! - **Kein Ausgabegeraet / Loopback scheitert / Treiber haengt**: der Start schlaegt
-//!   mit `playback_capture_failed` bzw. `playback_capture_timeout` fehl, nie still
-//!   "nur Mikrofon" (es gibt keins); das Ziel wird `ready` zurueckgesetzt
-//!   (`restore_playback_target`), seine Dateien entfernt. Tests:
-//!   `a_wedged_start_times_out...`, `a_failing_start_reports_its_error`, Rueckfall in
-//!   `playback.rs`.
+//! Fehlerfaelle des Systemton-only-Modus und ihre Absicherung (Stand lva#538):
+//! - **Kein Ausgabegeraet / Loopback scheitert**: der Start schlaegt mit
+//!   `playback_capture_failed` fehl, nie still "nur Mikrofon" (es gibt keins); das Ziel
+//!   wird aus dem gespeicherten Vorzustand zurueckgesetzt (`restore_playback_target`),
+//!   seine Dateien entfernt. Test: `a_failing_start_reports_its_error_at_once`,
+//!   Rueckfall in `playback.rs`.
+//! - **Treiber haengt (Frist)**: `playback_capture_timeout`. Die Frist setzt den
+//!   Abbruchmerker des Kanals (`silenced`): kehrt der Treiber spaeter zurueck und ruft
+//!   den Callback, schreibt der nichts mehr, und der Start schliesst den WAV-Writer
+//!   selbst, bevor er die Dateien entfernt (offene Handles verhindern das Loeschen).
+//!   Tests: `a_wedged_start_times_out...`, `a_late_callback_after_the_timeout_...`.
+//! - **Stopp/Abbruch waehrend des Starts**: `RunCore::begin_stop` setzt den Abbruchmerker
+//!   des laufenden Starts, `publish_started` veroeffentlicht dann nichts mehr (beides
+//!   unter denselben Sperren: nie eine Geisteraufnahme). Der Start endet mit
+//!   `start_cancelled`, der Eintrag ist wie vorher; `stop()` kehrt erst danach zurueck.
+//!   Tests: `a_stop_during_a_start_...`, `a_stop_racing_the_publish_...`.
+//! - **Loeschen waehrend Start oder Aufnahme**: `abort_for_delete` (vor dem Loeschen):
+//!   der Start endet mit `meeting_not_found`, eine laufende Aufnahme wird beendet, ohne
+//!   Enddurchlauf. Vor dem Veroeffentlichen prueft der Start, dass die Zeile noch da ist;
+//!   das Speichern der Audiopfade ist kein "nur loggen" mehr. Tests: `a_delete_...`.
+//! - **Absturz mitten im Start**: Vorzustand steht in der Zeile (`playback.rs`),
+//!   `recover_orphans` setzt einen Mitschnitt ohne Ton zurueck (`reset_unrecorded_capture`).
 //! - **Loopback stirbt mitten in der Aufnahme**: der Waechter meldet
 //!   `playback_capture_died` (nicht den Mikrofon-Text der Besprechung); die Aufnahme
-//!   bleibt stehen, der Nutzer stoppt, das bis dahin Gehoerte bleibt. Test:
-//!   `a_dead_loopback_...`.
+//!   bleibt stehen, der Nutzer stoppt, das bis dahin Gehoerte bleibt.
 //! - **Mikrofon-Waechter**: Kanal 0 liefert nie, ein Standard-Waechter meldete nach 8 s
 //!   `NoData` (`WatchConfig::off()`, Tests in `signal_watch.rs`/`dsp.rs`); Stille am
-//!   Systemton fragt der Waechter nach 30 s nach (`WatchConfig::playback()`).
+//!   Systemton fragt der Waechter nach 30 s nach (`WatchConfig::playback()`), auch ohne
+//!   ein einziges Paket (WASAPI-Loopback liefert bei Stille keine; Test in `dsp.rs`).
 //! - **Warten auf den Mikrofonkanal**: der DSP-Thread, `drain()` und der
 //!   Enddurchlauf behandeln jede Spur einzeln; ein nie beschickter Kanal blockiert
 //!   nichts (Test `a_system_only_feed_...`, `dsp.rs`).
 //! - **Null-WAV-Leichen**: es wird nur `system.wav` angelegt; auch ein gescheiterter
-//!   Start entfernt nur, was er selbst angelegt hat (`remove_capture_files`).
-//! - **Voller Datentraeger**: ein Schreibfehler verwirft den WAV-Writer (Aufnahme und
-//!   Live-Transkript laufen weiter, Callback ohne weitere Allokation); der Enddurchlauf
-//!   findet dann keine lesbare Spur (`NoAudio`) und laesst das Live-Transkript stehen.
+//!   Start entfernt nur, was er selbst angelegt hat (`remove_capture_files`); ein
+//!   Mitschnitt, der ohne einen Ton endet, setzt den Eintrag zurueck (`stop`).
+//! - **Voller Datentraeger / Schreibfehler** (gemeinsamer Pfad, auch Live-Aufnahmen):
+//!   der Callback verwirft den WAV-Writer und setzt ein Merkzeichen (`WriteFlags`, nur
+//!   Atomics); ein Waechter-Thread und `stop()` schreiben es DAUERHAFT als
+//!   `metadata_json.audio_incomplete` und melden `audio_write_failed`. Der Enddurchlauf
+//!   ersetzt das Live-Transkript dann nie aus der unvollstaendigen Aufnahme
+//!   (`KeepReason::AudioIncomplete`, auch ohne Merker, wenn die Aufnahme kuerzer ist als
+//!   das Transkript). Tests: `a_write_error_...`, `final_pass.rs`.
 //! - **Absturz der App**: die Pfade stehen ab dem Start in der Datenbank,
 //!   `recover_orphans` repariert `system.wav` und holt den Rest nach
 //!   (`runs_final_pass`: auch fuer eine YouTube-Besprechung mit eigener Aufnahme).
 //! - **Zwei Starts gleichzeitig**: `start_guard`, `begin_start` und die atomare
 //!   Umwandlung in `begin_playback_capture` (nur einer gewinnt).
 //! - **Echtzeit**: der Callback ist derselbe wie beim Systemton der Besprechung
-//!   (WAV-Append, `try_send`, Pegel), kein Lock mit Wartezeit, keine Allokation,
-//!   keine Datenbank. Ein Ueberlauf der DSP-Queue wird gezaehlt und als
-//!   `Health { QueueOverflow }` gemeldet (nicht verschluckt).
+//!   (WAV-Append, `try_send`, Pegel). Neu darin: nur Atomics (Abbruch, Schreibfehler),
+//!   keine Allokation, keine Datenbank. Ein Ueberlauf der DSP-Queue wird gezaehlt und
+//!   als `Health { QueueOverflow }` gemeldet (nicht verschluckt). Vorbestehend und
+//!   unveraendert: das WAV-Append selbst (Datei-I/O) und die Sperre des Sinks laufen im
+//!   Callback-Thread.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -90,6 +112,21 @@ const LOOPBACK_START_TIMEOUT: Duration = Duration::from_secs(5);
 const LOOPBACK_WATCH_INTERVAL: Duration = Duration::from_millis(500);
 /// How many meetings `recover_orphans` scans per page.
 const RECOVERY_PAGE: u32 = 100;
+/// Wie oft das Warten auf den Capture-Start den Abbruchmerker prueft.
+const START_POLL: Duration = Duration::from_millis(25);
+/// Wie lange ein Stopp bzw. Loeschen auf das Ende eines abgebrochenen Starts (oder einer
+/// laufenden Aufnahme-Anzeige) wartet.
+const START_CANCEL_WAIT: Duration = Duration::from_secs(12);
+/// Takt, in dem solch ein Warten den Zustand neu liest.
+const SETTLE_POLL: Duration = Duration::from_millis(5);
+/// Wie oft der Schreib-Waechter die Merkzeichen der WAV-Writer liest.
+const WRITE_WATCH_INTERVAL: Duration = Duration::from_millis(500);
+/// Fehlercode: der Start wurde durch einen Stopp abgebrochen.
+pub const START_CANCELLED: &str = "start_cancelled";
+/// Fehlercode: die Besprechung ist (mittlerweile) geloescht.
+const MEETING_NOT_FOUND: &str = "meeting_not_found";
+/// Fehlercode (Ereignis): die WAV liess sich nicht weiter schreiben.
+pub const AUDIO_WRITE_FAILED: &str = "audio_write_failed";
 
 /// Transcript channel ids (mirror `StoredSegment::channel`).
 pub const CHANNEL_MIC: u8 = 0;
@@ -124,6 +161,7 @@ impl CaptureMode {
     /// Mitschnitt scheitert der Start.
     fn loopback_start_code(self, failure: &LoopbackStartError) -> &'static str {
         match (self, failure) {
+            (_, LoopbackStartError::Cancelled) => START_CANCELLED,
             (CaptureMode::PlaybackOnly, LoopbackStartError::Timeout) => "playback_capture_timeout",
             (CaptureMode::PlaybackOnly, _) => "playback_capture_failed",
             (_, LoopbackStartError::Timeout) => "loopback_start_timeout",
@@ -160,17 +198,29 @@ pub(crate) enum LoopbackStartError {
     Failed(String),
     /// Der Treiber antwortete nicht innerhalb der Frist.
     Timeout,
+    /// Stopp oder Loeschen waehrend des Starts.
+    Cancelled,
 }
 
 /// Fuehrt `start` auf einem Wegwerf-Thread aus und wartet hoechstens `timeout`:
 /// ein haengender Treiber (bekannter Befund aus Task 4) darf den Start nicht
-/// ewig blockieren. Kommt das Ergebnis nach der Frist doch noch, faellt es beim
-/// Senden aus dem Kanal und wird dabei verworfen (`Drop` stoppt eine Capture).
+/// ewig blockieren. Das Warten prueft alle [`START_POLL`] den Abbruchmerker `cancel`
+/// des ganzen Starts (Stopp, Loeschen). Endet es ohne Capture (Frist, Abbruch), setzt es
+/// `silenced`: der Callback dieser Capture schreibt dann nichts mehr, auch wenn der
+/// Treiber spaeter doch noch zurueckkehrt und den Strom startet (lva#538). Das Ergebnis,
+/// das nach der Frist kommt, faellt beim Senden aus dem Kanal und wird dabei verworfen
+/// (`Drop` stoppt eine Capture).
 pub(crate) fn start_bounded<T: Send + 'static>(
     thread_name: &str,
     timeout: Duration,
+    cancel: &AtomicBool,
+    silenced: &AtomicBool,
     start: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, LoopbackStartError> {
+    if cancel.load(Ordering::Acquire) {
+        silenced.store(true, Ordering::Release);
+        return Err(LoopbackStartError::Cancelled);
+    }
     let (tx, rx) = mpsc::channel::<Result<T, String>>();
     std::thread::Builder::new()
         .name(thread_name.to_string())
@@ -178,14 +228,38 @@ pub(crate) fn start_bounded<T: Send + 'static>(
             let _ = tx.send(start());
         })
         .map_err(|e| LoopbackStartError::Failed(format!("start thread: {e}")))?;
-    match rx.recv_timeout(timeout) {
-        Ok(Ok(started)) => Ok(started),
-        Ok(Err(e)) => Err(LoopbackStartError::Failed(e)),
-        Err(mpsc::RecvTimeoutError::Timeout) => Err(LoopbackStartError::Timeout),
-        // Der Start-Thread ist ohne Ergebnis zu Ende (Panik im Treiber).
-        Err(mpsc::RecvTimeoutError::Disconnected) => Err(LoopbackStartError::Failed(
-            "start thread ended without a result".to_string(),
-        )),
+    let deadline = Instant::now() + timeout;
+    loop {
+        let wait = deadline
+            .saturating_duration_since(Instant::now())
+            .min(START_POLL);
+        match rx.recv_timeout(wait) {
+            Ok(Ok(started)) => {
+                // Ein Abbruch, der gleichzeitig kam: die Capture faellt hier (Drop stoppt sie).
+                if cancel.load(Ordering::Acquire) {
+                    silenced.store(true, Ordering::Release);
+                    return Err(LoopbackStartError::Cancelled);
+                }
+                return Ok(started);
+            }
+            Ok(Err(e)) => return Err(LoopbackStartError::Failed(e)),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if cancel.load(Ordering::Acquire) {
+                    silenced.store(true, Ordering::Release);
+                    return Err(LoopbackStartError::Cancelled);
+                }
+                if Instant::now() >= deadline {
+                    silenced.store(true, Ordering::Release);
+                    return Err(LoopbackStartError::Timeout);
+                }
+            }
+            // Der Start-Thread ist ohne Ergebnis zu Ende (Panik im Treiber).
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(LoopbackStartError::Failed(
+                    "start thread ended without a result".to_string(),
+                ))
+            }
+        }
     }
 }
 
@@ -345,17 +419,48 @@ fn lock_recovering<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// Der Start, der gerade laeuft (zwischen `begin_start` und dem Ende seines Tickets).
+struct StartInfo {
+    /// Abbruchmerker: Stopp und Loeschen setzen ihn; `publish_started` veroeffentlicht dann
+    /// nichts mehr, und jeder Schritt des Starts prueft ihn.
+    cancel: Arc<AtomicBool>,
+    /// Gesetzt, wenn der Abbruch vom Loeschen der Besprechung kam (Fehlercode
+    /// `meeting_not_found` statt `start_cancelled`).
+    deleted: Arc<AtomicBool>,
+    /// Die Besprechung, in die der Start aufnimmt, sobald bekannt (Loeschen vergleicht).
+    meeting_id: Option<String>,
+}
+
 /// Die Zustandsregeln des Recorders mit der Sitzung als Typparameter, damit sie
 /// ohne Mikrofon, Modell und `AppHandle` pruefbar sind. Reihenfolge der Sperren
-/// ueberall: erst `state`, dann `session`.
+/// ueberall: erst `state`, dann `session`, dann `start`.
 ///
 /// Der Zustand wechselt NACH dem Capture-Start auf `Recording` und erst NACH dem
 /// Capture-Stopp zurueck auf `Idle` (#15): solange ein Mikrofon offen ist, gilt
 /// die Aufnahme als laufend, fuer Diktat-Hotkey, neuen Start und Pause.
+///
+/// lva#538: ein Stopp oder Loeschen WAEHREND des Starts (noch keine Sitzung) wird nicht
+/// mehr als "nicht aufgenommen" abgewiesen, sondern setzt den Abbruchmerker des Starts;
+/// `publish_started` prueft ihn unter denselben Sperren wie `begin_stop`: entweder sieht
+/// der Stopp die Sitzung, oder die Veroeffentlichung sieht den Abbruch.
 pub(crate) struct RunCore<S> {
     state: Mutex<MeetingRunState>,
     session: Mutex<Option<S>>,
     starting: AtomicBool,
+    start: Mutex<Option<StartInfo>>,
+}
+
+/// Was ein Stopp (oder das Loeschen) vorfindet.
+pub(crate) enum StopStep<'a, S> {
+    /// Eine laufende Aufnahme: ihre Sitzung und das Ticket (`Idle` erst mit dessen Ende).
+    Running(S, StopTicket<'a, S>),
+    /// Es lief nur ein Start (noch keine Sitzung): sein Abbruchmerker ist gesetzt, er
+    /// raeumt selbst auf und endet mit einem Fehlercode.
+    CancelledStart,
+    /// Die Aufnahme ist veroeffentlicht, ihr Start raeumt aber noch auf (Anzeige,
+    /// Ereignis), oder ein anderer Stopp laeuft: kurz warten und erneut fragen. Sonst
+    /// schaltete der Start die Anzeige NACH dem Stopp wieder ein.
+    Settling,
 }
 
 impl<S> RunCore<S> {
@@ -364,6 +469,7 @@ impl<S> RunCore<S> {
             state: Mutex::new(MeetingRunState::Idle),
             session: Mutex::new(None),
             starting: AtomicBool::new(false),
+            start: Mutex::new(None),
         }
     }
 
@@ -380,7 +486,7 @@ impl<S> RunCore<S> {
 
     /// Beginnt einen Start: `already_recording`, wenn schon einer laeuft oder
     /// aufgenommen wird. Das Ticket meldet "starting" bis zum Ende (auch bei jedem
-    /// Fehlerweg).
+    /// Fehlerweg) und traegt den Abbruchmerker dieses Starts.
     pub(crate) fn begin_start(&self) -> Result<StartingFlag<'_>, String> {
         if !self.is_idle() {
             return Err("already_recording".to_string());
@@ -394,30 +500,119 @@ impl<S> RunCore<S> {
         {
             return Err("already_recording".to_string());
         }
-        Ok(StartingFlag::set(&self.starting))
+        let cancel = Arc::new(AtomicBool::new(false));
+        let deleted = Arc::new(AtomicBool::new(false));
+        *lock_recovering(&self.start) = Some(StartInfo {
+            cancel: Arc::clone(&cancel),
+            deleted: Arc::clone(&deleted),
+            meeting_id: None,
+        });
+        Ok(StartingFlag {
+            starting: &self.starting,
+            info: &self.start,
+            cancel,
+            deleted,
+        })
     }
 
-    /// Die Capture laeuft: Zustand UND Sitzung unter beiden Sperren setzen.
-    pub(crate) fn publish_started(&self, meeting_id: &str, session: S) {
+    /// Wurde der laufende Start abgebrochen?
+    fn start_cancelled(&self) -> bool {
+        lock_recovering(&self.start)
+            .as_ref()
+            .is_some_and(|info| info.cancel.load(Ordering::Acquire))
+    }
+
+    /// Setzt den Abbruchmerker des laufenden Starts, wenn es einen gibt (und, mit
+    /// `only_for`, wenn er in diese Besprechung aufnimmt). `true`, wenn gesetzt.
+    fn cancel_start(&self, only_for: Option<&str>) -> bool {
+        let start = lock_recovering(&self.start);
+        let Some(info) = start.as_ref() else {
+            return false;
+        };
+        if only_for.is_some_and(|id| info.meeting_id.as_deref() != Some(id)) {
+            return false;
+        }
+        if only_for.is_some() {
+            info.deleted.store(true, Ordering::Release);
+        }
+        info.cancel.store(true, Ordering::Release);
+        true
+    }
+
+    /// Wartet, bis kein Start mehr laeuft (`false` nach `max`: er haengt noch).
+    pub(crate) fn wait_start_end(&self, max: Duration) -> bool {
+        let deadline = Instant::now() + max;
+        while self.starting.load(Ordering::Acquire) {
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(SETTLE_POLL);
+        }
+        true
+    }
+
+    /// Die Capture laeuft: Zustand UND Sitzung unter beiden Sperren setzen. `Err`
+    /// gibt die Sitzung zurueck, wenn der Start inzwischen abgebrochen wurde (Stopp,
+    /// Loeschen): dann wird nichts veroeffentlicht, der Aufrufer raeumt sie ab.
+    pub(crate) fn publish_started(&self, meeting_id: &str, session: S) -> Result<(), S> {
         // Beide Sperren zusammen: ein Stopp dazwischen sah vorher die Sitzung, aber
         // noch `Idle`, stellte `Idle` ein, und der Start setzte danach `Recording`
         // ohne Sitzung (Geisteraufnahme).
         let mut state = lock_recovering(&self.state);
         let mut slot = lock_recovering(&self.session);
+        if self.start_cancelled() {
+            return Err(session);
+        }
         *state = MeetingRunState::Recording {
             meeting_id: meeting_id.to_string(),
             paused: false,
         };
         *slot = Some(session);
+        Ok(())
     }
 
     /// Stopp beginnen: die Sitzung herausnehmen. Der Zustand bleibt `Recording`,
-    /// bis das Ticket beendet wird (`finish`) oder faellt (auch bei Panik).
-    pub(crate) fn begin_stop(&self) -> Result<(S, StopTicket<'_, S>), String> {
+    /// bis das Ticket beendet wird (`finish`) oder faellt (auch bei Panik). Ohne
+    /// Sitzung, aber mit laufendem Start: der Start wird abgebrochen (lva#538).
+    pub(crate) fn begin_stop(&self) -> Result<StopStep<'_, S>, String> {
         let _state = lock_recovering(&self.state);
         let mut slot = lock_recovering(&self.session);
-        let session = slot.take().ok_or_else(|| "not_recording".to_string())?;
-        Ok((session, StopTicket { core: self }))
+        if slot.is_some() && self.starting.load(Ordering::Acquire) {
+            return Ok(StopStep::Settling);
+        }
+        if let Some(session) = slot.take() {
+            return Ok(StopStep::Running(session, StopTicket { core: self }));
+        }
+        if self.cancel_start(None) {
+            return Ok(StopStep::CancelledStart);
+        }
+        Err("not_recording".to_string())
+    }
+
+    /// Loeschen der Besprechung `meeting_id`: gilt nur, wenn DIESE Besprechung gerade
+    /// aufgenommen wird oder ein Start in sie aufnimmt; `None`, wenn nichts davon
+    /// zutrifft (dann gibt es nichts zu stoppen).
+    pub(crate) fn begin_delete(&self, meeting_id: &str) -> Option<StopStep<'_, S>> {
+        let state = lock_recovering(&self.state);
+        let mut slot = lock_recovering(&self.session);
+        let recording_it = matches!(
+            &*state,
+            MeetingRunState::Recording { meeting_id: id, .. } if id == meeting_id
+        );
+        if recording_it {
+            if slot.is_none() {
+                // Ein Stopp hat die Sitzung schon genommen und laeuft noch.
+                return Some(StopStep::Settling);
+            }
+            if self.starting.load(Ordering::Acquire) {
+                return Some(StopStep::Settling);
+            }
+            return slot
+                .take()
+                .map(|session| StopStep::Running(session, StopTicket { core: self }));
+        }
+        self.cancel_start(Some(meeting_id))
+            .then_some(StopStep::CancelledStart)
     }
 
     /// Pause/Weiter: nur mit laufender Sitzung. `apply` setzt das Merkzeichen der
@@ -583,6 +778,51 @@ impl ChannelSink {
     }
 }
 
+/// Wohin die Pegel der Capture-Callbacks gehen (die App sendet Ereignisse, ein Test
+/// zaehlt mit). Nur `&self`: der Callback ruft es ohne Sperre mit Wartezeit.
+trait LevelSink: Send + Sync {
+    fn level(&self, channel: u8, rms: f32);
+}
+
+impl LevelSink for LevelEmitter {
+    fn level(&self, channel: u8, rms: f32) {
+        self.record(channel, rms);
+    }
+}
+
+/// lva#538: ein Schreibfehler der WAV je Kanal. Der Capture-Callback setzt nur das
+/// Merkzeichen (Atomic, keine Allokation, kein Lock); der Schreib-Waechter und `stop()`
+/// machen daraus den dauerhaften Marker `metadata_json.audio_incomplete` und die Meldung.
+#[derive(Default)]
+struct WriteFlags {
+    mic: AtomicBool,
+    system: AtomicBool,
+    reported: AtomicBool,
+}
+
+impl WriteFlags {
+    fn flag(&self, channel: u8) -> &AtomicBool {
+        if channel == CHANNEL_MIC {
+            &self.mic
+        } else {
+            &self.system
+        }
+    }
+
+    /// Die Kanaele, deren WAV nicht vollstaendig geschrieben wurde.
+    fn failed_channels(&self) -> Vec<u8> {
+        [CHANNEL_MIC, CHANNEL_SYSTEM]
+            .into_iter()
+            .filter(|c| self.flag(*c).load(Ordering::Acquire))
+            .collect()
+    }
+
+    /// `true` fuer den ersten Aufruf: die Meldung an die Oberflaeche geht nur einmal raus.
+    fn first_report(&self) -> bool {
+        !self.reported.swap(true, Ordering::AcqRel)
+    }
+}
+
 /// Throttles level events to ~5/s per channel while still reporting both
 /// channels in every event (the payload carries mic and system together).
 struct LevelEmitter {
@@ -661,6 +901,7 @@ fn rms(samples: &[i16]) -> f32 {
 /// Everything a running meeting owns. Dropped as a unit by `stop()`.
 struct RecordingSession {
     meeting_id: String,
+    mode: CaptureMode,
     paused: Arc<AtomicBool>,
     mic_capture: Option<MeetingMicCapture>,
     loopback: Option<LoopbackCapture>,
@@ -671,6 +912,10 @@ struct RecordingSession {
     system_path: Option<PathBuf>,
     /// DSP thread + transcription worker of this meeting.
     pipeline: Option<LivePipeline>,
+    /// Schreibfehler der WAV-Writer (lva#538), vom Callback gesetzt.
+    write_flags: Arc<WriteFlags>,
+    /// Beendet den Schreib-Waechter mit der Aufnahme.
+    watch_stop: Arc<AtomicBool>,
 }
 
 /// M2-P2d: der laufende Enddurchlauf-/Recovery-Thread.
@@ -679,19 +924,64 @@ struct FinalJobHandle {
     handle: std::thread::JoinHandle<()>,
 }
 
-/// Setzt `starting` fuer die Dauer von `start()` (auch bei jedem Fehlerweg).
-pub(crate) struct StartingFlag<'a>(&'a AtomicBool);
+/// Was ein Start an laufenden Captures und der Pipeline zusammenbringt.
+struct Captures {
+    mic_capture: Option<MeetingMicCapture>,
+    loopback: Option<LoopbackCapture>,
+    pipeline: LivePipeline,
+}
 
-impl<'a> StartingFlag<'a> {
-    fn set(flag: &'a AtomicBool) -> Self {
-        flag.store(true, Ordering::Release);
-        Self(flag)
+/// Setzt `starting` fuer die Dauer von `start()` (auch bei jedem Fehlerweg) und traegt
+/// den Abbruchmerker dieses Starts.
+pub(crate) struct StartingFlag<'a> {
+    starting: &'a AtomicBool,
+    info: &'a Mutex<Option<StartInfo>>,
+    cancel: Arc<AtomicBool>,
+    deleted: Arc<AtomicBool>,
+}
+
+impl StartingFlag<'_> {
+    /// Der Abbruchmerker: bis in die Capture-Callbacks und das Warten auf den Treiber.
+    pub(crate) fn cancel_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.cancel)
+    }
+
+    /// Wurde der Start abgebrochen (Stopp, Loeschen)?
+    pub(crate) fn cancelled(&self) -> bool {
+        self.cancel.load(Ordering::Acquire)
+    }
+
+    /// Der Fehlercode eines abgebrochenen Starts: das Loeschen der Besprechung heisst
+    /// `meeting_not_found`, ein Stopp `start_cancelled`.
+    pub(crate) fn cancel_code(&self) -> &'static str {
+        if self.deleted.load(Ordering::Acquire) {
+            MEETING_NOT_FOUND
+        } else {
+            START_CANCELLED
+        }
+    }
+
+    /// `Err(code)`, wenn der Start abgebrochen wurde: vor jedem Schritt, der etwas anlegt.
+    pub(crate) fn check(&self) -> Result<(), String> {
+        if self.cancelled() {
+            Err(self.cancel_code().to_string())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Merkt die Besprechung, in die dieser Start aufnimmt (das Loeschen sucht sie).
+    pub(crate) fn set_target(&self, meeting_id: &str) {
+        if let Some(info) = lock_recovering(self.info).as_mut() {
+            info.meeting_id = Some(meeting_id.to_string());
+        }
     }
 }
 
 impl Drop for StartingFlag<'_> {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
+        *lock_recovering(self.info) = None;
+        self.starting.store(false, Ordering::Release);
     }
 }
 
@@ -863,7 +1153,10 @@ impl MeetingRecorderManager {
         // `Mutex<()>` traegt keine Daten: eine Vergiftung hiesse sonst, dass nie
         // wieder eine Aufnahme startet.
         let _start_guard = lock_recovering(&self.start_guard);
-        let _starting = self.core.begin_start()?;
+        let starting = self.core.begin_start()?;
+        if let Some(target) = target_meeting_id {
+            starting.set_target(target);
+        }
 
         // A dictation and a meeting would fight over the microphone and the
         // overlay; the meeting yields to the dictation already in progress
@@ -876,6 +1169,7 @@ impl MeetingRecorderManager {
                 return Err("dictation_active".to_string());
             }
         }
+        starting.check()?;
 
         // M2-P2d: ein laufender Enddurchlauf gibt die Engine vorher frei.
         self.cancel_final_jobs();
@@ -883,7 +1177,8 @@ impl MeetingRecorderManager {
         let consent_at = chrono::Utc::now().timestamp();
         let meeting = begin_live_row(&self.store, &title, consent_at, target_meeting_id)?;
         let meeting_id = meeting.id.clone();
-        let started = self.start_row(meeting, CaptureMode::Meeting { capture_system });
+        starting.set_target(&meeting_id);
+        let started = self.start_row(meeting, CaptureMode::Meeting { capture_system }, &starting);
         if let Err(e) = &started {
             match target_meeting_id {
                 Some(target) => {
@@ -926,10 +1221,12 @@ impl MeetingRecorderManager {
     /// zuerst (der Nutzer bestaetigt im Dialog, dass er das Video mitschneiden darf).
     ///
     /// Fehler: `consent_required`, `already_recording`, `dictation_active`,
-    /// `meeting_not_found`, `target_not_empty` (kein YouTube-Eintrag ohne Transkript
-    /// und ohne Aufnahme: nichts startet, nichts aendert sich),
-    /// `playback_capture_failed` / `playback_capture_timeout` (der Systemton
-    /// liess sich nicht oeffnen; der Eintrag ist danach wieder wie vorher).
+    /// `meeting_not_found` (auch: waehrend des Starts geloescht), `target_not_empty`
+    /// (kein YouTube-Eintrag ohne Transkript und ohne Aufnahme: nichts startet, nichts
+    /// aendert sich), `playback_capture_failed` / `playback_capture_timeout` (der
+    /// Systemton liess sich nicht oeffnen), `start_cancelled` (ein Stopp kam
+    /// dazwischen). Nach jedem Fehler nach der Umwandlung ist der Eintrag wieder wie
+    /// vorher (`undo_playback_start`).
     pub fn start_playback_capture(
         &self,
         meeting_id: &str,
@@ -937,7 +1234,8 @@ impl MeetingRecorderManager {
     ) -> Result<Meeting, String> {
         consent_gate(consent_confirmed)?;
         let _start_guard = lock_recovering(&self.start_guard);
-        let _starting = self.core.begin_start()?;
+        let starting = self.core.begin_start()?;
+        starting.set_target(meeting_id);
 
         if let Some(rm) = self
             .app
@@ -947,35 +1245,37 @@ impl MeetingRecorderManager {
                 return Err("dictation_active".to_string());
             }
         }
+        starting.check()?;
 
-        // ERST die Zeile pruefen und umwandeln (atomar), DANN den Enddurchlauf
-        // einer anderen Besprechung abbrechen: eine abgelehnte Anfrage soll nichts
-        // anrichten.
+        // ERST die Zeile pruefen und umwandeln (atomar, samt Vorzustand), DANN den
+        // Enddurchlauf einer anderen Besprechung abbrechen: eine abgelehnte Anfrage soll
+        // nichts anrichten.
         let consent_at = chrono::Utc::now().timestamp();
-        let (meeting, prior) = self
+        let meeting = self
             .store
             .begin_playback_capture(meeting_id, consent_at)
             .map_err(|e| coded_error("meeting_create_failed", &e))?;
         self.cancel_final_jobs();
 
-        let started = self.start_row(meeting, CaptureMode::PlaybackOnly);
+        let started = self.start_row(meeting, CaptureMode::PlaybackOnly, &starting);
         if let Err(e) = &started {
             info!("meetings: Mitschnitt gescheitert ({e}), {meeting_id} wird zurueckgesetzt");
-            self.undo_playback_start(meeting_id, &prior);
+            self.undo_playback_start(meeting_id);
         }
         started
     }
 
     /// Der Mitschnitt kam nicht zustande: Dateien weg, Zeile wieder die YouTube-
-    /// Besprechung von vorher. Lassen sich die Zeile nicht zuruecksetzen, steht sie
-    /// auf `failed`, nie auf `recording` (der naechste App-Start belebt sie sonst
-    /// als Absturzrest).
-    fn undo_playback_start(&self, meeting_id: &str, prior: &super::playback::PlaybackPrior) {
+    /// Besprechung von vorher (aus dem gespeicherten Vorzustand). Laesst sich die Zeile
+    /// nicht zuruecksetzen, steht sie auf `failed` (mit dem Merker; der naechste
+    /// App-Start setzt sie zurueck), nie auf `recording` (er belebt sie sonst als
+    /// Absturzrest).
+    fn undo_playback_start(&self, meeting_id: &str) {
         match super::meetings_data_dir(&self.app) {
             Ok(base) => remove_capture_files(&base.join(meeting_id)),
             Err(err) => warn!("meetings: Mitschnitt gescheitert, Datenordner unbekannt ({err})"),
         }
-        match self.store.restore_playback_target(meeting_id, prior) {
+        match self.store.restore_playback_target(meeting_id) {
             Ok(true) => {}
             Ok(false) | Err(_) => {
                 warn!("meetings: Eintrag {meeting_id} nicht wiederhergestellt, wird `failed`");
@@ -985,8 +1285,21 @@ impl MeetingRecorderManager {
     }
 
     /// Der Teil des Starts nach dem Anlegen bzw. Umwandeln der Zeile.
-    fn start_row(&self, meeting: Meeting, mode: CaptureMode) -> Result<Meeting, String> {
+    ///
+    /// lva#538: der Start ist abbrechbar. Er prueft den Abbruchmerker (Stopp, Loeschen) vor
+    /// jedem Schritt, der etwas anlegt; das Warten auf den Treiber prueft ihn im Takt;
+    /// `publish_started` entscheidet unter den Sperren des Stopps. Scheitert oder endet er
+    /// vor der Veroeffentlichung, schliesst er die WAV-Writer selbst (ein spaeter
+    /// zurueckkehrender Treiber haelt die Datei sonst offen, das Loeschen scheiterte) und
+    /// ersetzt die Callbacks durch stumme; der Aufrufer raeumt Zeile und Dateien auf.
+    fn start_row(
+        &self,
+        meeting: Meeting,
+        mode: CaptureMode,
+        starting: &StartingFlag<'_>,
+    ) -> Result<Meeting, String> {
         let meeting_id = meeting.id.clone();
+        starting.check()?;
 
         let dir = super::meetings_data_dir(&self.app)
             .map_err(|e| format!("app_data_dir_failed: {e}"))?
@@ -1011,141 +1324,225 @@ impl MeetingRecorderManager {
                     .map_err(|e| format!("system_wav_failed: {e}"))
             })
             .transpose()?;
+        let mic_sink = mic_writer.map(|w| Arc::new(Mutex::new(ChannelSink::new(w))));
+        let system_sink = system_writer.map(|w| Arc::new(Mutex::new(ChannelSink::new(w))));
 
         // Written now, not at stop(): crash recovery can only repair WAVs whose
         // paths it knows, and a crash is exactly the case where stop() never ran.
-        if let Err(e) = self.store.set_audio_paths(
-            &meeting_id,
-            mic_path.as_ref().and_then(|p| p.to_str()),
-            system_path.as_ref().and_then(|p| p.to_str()),
-            None,
-        ) {
-            warn!("meetings: could not persist audio paths: {e}");
-        }
-
-        let mic_sink = mic_writer.map(|w| Arc::new(Mutex::new(ChannelSink::new(w))));
-        let system_sink = system_writer.map(|w| Arc::new(Mutex::new(ChannelSink::new(w))));
-        let paused = Arc::new(AtomicBool::new(false));
-        let levels = Arc::new(LevelEmitter::new(self.app.clone()));
-
-        // M2-P2c2: Echo-Unterdrueckung der Ich-Spur (braucht den Systemton als
-        // Referenz). Das Ergebnis geht an die Transkription und nach
-        // mic_aec.wav; mic.wav bleibt roh. Ohne Mikrofon (#537) gibt es kein Echo.
-        let echo_mode = crate::settings::get_settings(&self.app).meeting_echo_cancellation;
-        let echo = (mode.mic() && echo_mode.enabled(mode.system()))
-            .then(|| self.echo_setup(&meeting_id, &dir.join(super::MIC_AEC_FILE)));
-
-        let pipeline = self
-            .start_pipeline(&meeting_id, echo, mode)
-            .inspect_err(|_| {
-                let _ = self.store.set_status(&meeting_id, MeetingStatus::Failed);
-            })?;
-        let system_feed = pipeline.feed(CHANNEL_SYSTEM);
-        let dsp_control = pipeline.control();
-
-        // Load the meeting model (dedicated `meeting_model` or the dictation
-        // model as fallback); transcribe_segments waits on the load condvar.
-        self.transcription
-            .initiate_meeting_model_load(&crate::settings::get_settings(&self.app));
-
-        // #15: was die begrenzte Queue des Mikrofons verwirft, zaehlt auf demselben
-        // Zaehler wie der Ueberlauf der DSP-Queue (`overflow_ms[mic=..]` im Log).
-        let overflow_stats = pipeline.stats();
-        let mic_overflow: Arc<dyn Fn(u64) + Send + Sync> = Arc::new(move |samples| {
-            overflow_stats.overflow_samples[CHANNEL_MIC as usize]
-                .fetch_add(samples, Ordering::Relaxed);
-        });
-        let mic_capture = match &mic_sink {
-            Some(sink) => {
-                let mic_feed = pipeline.feed(CHANNEL_MIC).ok_or("dsp_thread_failed")?;
-                Some(
-                    MeetingMicCapture::start(
-                        crate::settings::get_settings(&self.app).selected_microphone,
-                        mic_overflow,
-                        channel_callback(
-                            CHANNEL_MIC,
-                            Arc::clone(sink),
-                            Arc::clone(&paused),
-                            mic_feed,
-                            Arc::clone(&levels),
-                        ),
-                    )
-                    .map_err(|e| {
-                        // The meeting row exists but nothing was captured — mark it failed
-                        // rather than leaving a phantom "recording" row behind.
-                        let _ = self.store.set_status(&meeting_id, MeetingStatus::Failed);
-                        format!("mic_start_failed: {e}")
-                    })?,
-                )
-            }
-            None => None,
-        };
-
-        let loopback = match (mode, &system_sink, system_feed) {
-            // Mitschnitt: der Systemton ist alles, was es gibt. Scheitert er, scheitert
-            // der Start (der Aufrufer setzt den Eintrag zurueck).
-            (CaptureMode::PlaybackOnly, Some(sink), Some(feed)) => Some(self.start_loopback(
+        // lva#538: ein Fehler hier ist ein Fehler des Starts (nicht mehr "nur loggen"):
+        // ohne Pfade repariert die Wiederherstellung nichts, und fuer eine inzwischen
+        // geloeschte Zeile gibt es keine Aufnahme.
+        self.store
+            .set_audio_paths(
                 &meeting_id,
-                mode,
+                mic_path.as_ref().and_then(|p| p.to_str()),
+                system_path.as_ref().and_then(|p| p.to_str()),
+                None,
+            )
+            .map_err(|e| audio_paths_error(&e))?;
+
+        let paused = Arc::new(AtomicBool::new(false));
+        let levels: Arc<dyn LevelSink> = Arc::new(LevelEmitter::new(self.app.clone()));
+        let write_flags = Arc::new(WriteFlags::default());
+        let watch_stop = Arc::new(AtomicBool::new(false));
+        let mic_silenced = Arc::new(AtomicBool::new(false));
+        let system_silenced = Arc::new(AtomicBool::new(false));
+
+        let captured = (|| -> Result<Captures, String> {
+            starting.check()?;
+            // M2-P2c2: Echo-Unterdrueckung der Ich-Spur (braucht den Systemton als
+            // Referenz). Das Ergebnis geht an die Transkription und nach
+            // mic_aec.wav; mic.wav bleibt roh. Ohne Mikrofon (#537) gibt es kein Echo.
+            let echo_mode = crate::settings::get_settings(&self.app).meeting_echo_cancellation;
+            let echo = (mode.mic() && echo_mode.enabled(mode.system()))
+                .then(|| self.echo_setup(&meeting_id, &dir.join(super::MIC_AEC_FILE)));
+
+            let pipeline = self
+                .start_pipeline(&meeting_id, echo, mode)
+                .inspect_err(|_| {
+                    let _ = self.store.set_status(&meeting_id, MeetingStatus::Failed);
+                })?;
+            let system_feed = pipeline.feed(CHANNEL_SYSTEM);
+            let dsp_control = pipeline.control();
+
+            // Load the meeting model (dedicated `meeting_model` or the dictation
+            // model as fallback); transcribe_segments waits on the load condvar.
+            self.transcription
+                .initiate_meeting_model_load(&crate::settings::get_settings(&self.app));
+
+            // #15: was die begrenzte Queue des Mikrofons verwirft, zaehlt auf demselben
+            // Zaehler wie der Ueberlauf der DSP-Queue (`overflow_ms[mic=..]` im Log).
+            let overflow_stats = pipeline.stats();
+            let mic_overflow: Arc<dyn Fn(u64) + Send + Sync> = Arc::new(move |samples| {
+                overflow_stats.overflow_samples[CHANNEL_MIC as usize]
+                    .fetch_add(samples, Ordering::Relaxed);
+            });
+            let mic_capture = match &mic_sink {
+                Some(sink) => {
+                    let mic_feed = pipeline.feed(CHANNEL_MIC).ok_or("dsp_thread_failed")?;
+                    starting.check()?;
+                    Some(
+                        MeetingMicCapture::start(
+                            crate::settings::get_settings(&self.app).selected_microphone,
+                            mic_overflow,
+                            channel_callback(
+                                CHANNEL_MIC,
+                                Arc::clone(sink),
+                                Arc::clone(&paused),
+                                Arc::clone(&mic_silenced),
+                                Arc::clone(&write_flags),
+                                mic_feed,
+                                Arc::clone(&levels),
+                            ),
+                        )
+                        .map_err(|e| {
+                            // The meeting row exists but nothing was captured — mark it failed
+                            // rather than leaving a phantom "recording" row behind.
+                            let _ = self.store.set_status(&meeting_id, MeetingStatus::Failed);
+                            format!("mic_start_failed: {e}")
+                        })?,
+                    )
+                }
+                None => None,
+            };
+            starting.check()?;
+
+            let system_callback = |sink: &Arc<Mutex<ChannelSink>>, feed: ChannelFeed| {
                 channel_callback(
                     CHANNEL_SYSTEM,
                     Arc::clone(sink),
                     Arc::clone(&paused),
+                    Arc::clone(&system_silenced),
+                    Arc::clone(&write_flags),
                     feed,
                     Arc::clone(&levels),
-                ),
-                dsp_control.clone(),
-            )?),
-            (CaptureMode::PlaybackOnly, _, _) => return Err("dsp_thread_failed".to_string()),
-            (
-                CaptureMode::Meeting {
-                    capture_system: true,
-                },
-                Some(sink),
-                Some(feed),
-            ) => self
-                .start_loopback(
+                )
+            };
+            let loopback = match (mode, &system_sink, system_feed) {
+                // Mitschnitt: der Systemton ist alles, was es gibt. Scheitert er, scheitert
+                // der Start (der Aufrufer setzt den Eintrag zurueck).
+                (CaptureMode::PlaybackOnly, Some(sink), Some(feed)) => Some(self.start_loopback(
                     &meeting_id,
                     mode,
-                    channel_callback(
-                        CHANNEL_SYSTEM,
-                        Arc::clone(sink),
-                        Arc::clone(&paused),
-                        feed,
-                        Arc::clone(&levels),
-                    ),
+                    starting,
+                    &system_silenced,
+                    system_callback(sink, feed),
                     dsp_control.clone(),
-                )
-                .ok(),
-            _ => None,
-        };
-        if loopback.is_none() {
-            // Ohne Referenz keine Echo-Unterdrueckung (No-op, wenn sie aus ist).
-            if let Some(control) = &dsp_control {
-                control.reference_lost();
+                )?),
+                (CaptureMode::PlaybackOnly, _, _) => return Err("dsp_thread_failed".to_string()),
+                (
+                    CaptureMode::Meeting {
+                        capture_system: true,
+                    },
+                    Some(sink),
+                    Some(feed),
+                ) => self
+                    .start_loopback(
+                        &meeting_id,
+                        mode,
+                        starting,
+                        &system_silenced,
+                        system_callback(sink, feed),
+                        dsp_control.clone(),
+                    )
+                    .ok(),
+                _ => None,
+            };
+            if loopback.is_none() {
+                // Ohne Referenz keine Echo-Unterdrueckung (No-op, wenn sie aus ist).
+                if let Some(control) = &dsp_control {
+                    control.reference_lost();
+                }
             }
-        }
-
-        // Zustand und Sitzung zusammen und erst jetzt, wo die Captures laufen (#15).
-        self.core.publish_started(
-            &meeting_id,
-            RecordingSession {
-                meeting_id: meeting_id.clone(),
-                paused,
+            Ok(Captures {
                 mic_capture,
                 loopback,
-                mic_sink,
-                system_sink,
-                mic_path,
-                system_path,
-                pipeline: Some(pipeline),
-            },
-        );
+                pipeline,
+            })
+        })();
+        let Captures {
+            mic_capture,
+            loopback,
+            pipeline,
+        } = match captured {
+            Ok(captures) => captures,
+            Err(e) => {
+                for flag in [&mic_silenced, &system_silenced] {
+                    flag.store(true, Ordering::Release);
+                }
+                close_sink(mic_sink.as_ref());
+                close_sink(system_sink.as_ref());
+                return Err(e);
+            }
+        };
+
+        let session = RecordingSession {
+            meeting_id: meeting_id.clone(),
+            mode,
+            paused,
+            mic_capture,
+            loopback,
+            mic_sink,
+            system_sink,
+            mic_path,
+            system_path,
+            pipeline: Some(pipeline),
+            write_flags: Arc::clone(&write_flags),
+            watch_stop: Arc::clone(&watch_stop),
+        };
+        // Der letzte Augenblick vor der Veroeffentlichung: abgebrochen, oder die Zeile ist
+        // inzwischen geloescht? Dann wird nichts daraus.
+        if let Err(e) = starting
+            .check()
+            .and_then(|()| self.ensure_present(&meeting_id))
+        {
+            Self::teardown(session);
+            return Err(e);
+        }
+        // Zustand und Sitzung zusammen und erst jetzt, wo die Captures laufen (#15). Ein
+        // Stopp, der zwischen der Pruefung und hier kam, hat den Abbruchmerker gesetzt.
+        if let Err(session) = self.core.publish_started(&meeting_id, session) {
+            Self::teardown(session);
+            return Err(starting.cancel_code().to_string());
+        }
 
         self.set_indicator(true);
         self.emit_state(&meeting_id, "recording", false);
+        self.watch_writes(&meeting_id, &write_flags, &watch_stop);
         info!("meetings: recording started ({meeting_id})");
         Ok(meeting)
+    }
+
+    /// Ist die Zeile noch da? (Geloescht waehrend des Starts: `meeting_not_found`.)
+    fn ensure_present(&self, meeting_id: &str) -> Result<(), String> {
+        match self.store.get_meeting(meeting_id) {
+            Ok(None) => Err(MEETING_NOT_FOUND.to_string()),
+            Ok(Some(_)) | Err(_) => Ok(()),
+        }
+    }
+
+    /// Eine Sitzung, die nie veroeffentlicht wurde (Abbruch im letzten Augenblick): Captures
+    /// zu, WAV-Writer zu (das Entfernen der Dateien folgt), Pipeline fallen lassen.
+    fn teardown(session: RecordingSession) {
+        let RecordingSession {
+            mic_capture,
+            loopback,
+            mic_sink,
+            system_sink,
+            pipeline,
+            watch_stop,
+            ..
+        } = session;
+        watch_stop.store(true, Ordering::Release);
+        if let Some(capture) = mic_capture {
+            capture.stop();
+        }
+        if let Some(capture) = loopback {
+            capture.stop();
+        }
+        close_sink(mic_sink.as_ref());
+        close_sink(system_sink.as_ref());
+        drop(pipeline);
     }
 
     /// Starts the loopback capture with a bounded wait (`start_bounded`): a wedged
@@ -1155,17 +1552,23 @@ impl MeetingRecorderManager {
     /// (Warnung im Log, Fehlerereignis `loopback_start_failed`/`_timeout`; der
     /// Aufrufer verwirft das `Err`). Mitschnitt (#537): scheitert er, scheitert der
     /// Start mit `playback_capture_failed`/`_timeout` (kein Ereignis, der Befehl
-    /// meldet den Fehler selbst). Das `Err` traegt immer den Code.
+    /// meldet den Fehler selbst). Das `Err` traegt immer den Code. Ein Abbruch des Starts
+    /// (Stopp, Loeschen) gibt den Code des Abbruchs zurueck, ohne Ereignis.
     fn start_loopback(
         &self,
         meeting_id: &str,
         mode: CaptureMode,
+        starting: &StartingFlag<'_>,
+        silenced: &Arc<AtomicBool>,
         callback: impl FnMut(&[i16], Option<u64>) + Send + 'static,
         dsp_control: Option<DspControl>,
     ) -> Result<LoopbackCapture, String> {
+        let cancel = starting.cancel_flag();
         let started = start_bounded(
             "meeting-loopback-start",
             LOOPBACK_START_TIMEOUT,
+            &cancel,
+            silenced,
             move || LoopbackCapture::start(callback).map_err(|e| format!("{e:#}")),
         );
         match started {
@@ -1173,6 +1576,7 @@ impl MeetingRecorderManager {
                 self.watch_loopback(meeting_id, &capture, mode, dsp_control);
                 Ok(capture)
             }
+            Err(LoopbackStartError::Cancelled) => Err(starting.cancel_code().to_string()),
             Err(failure) => {
                 let code = mode.loopback_start_code(&failure);
                 match (&failure, mode) {
@@ -1181,7 +1585,7 @@ impl MeetingRecorderManager {
                         warn!("meetings: playback capture could not start ({e})");
                         Err(format!("{code}: {e}"))
                     }
-                    (LoopbackStartError::Timeout, CaptureMode::PlaybackOnly) => {
+                    (_, CaptureMode::PlaybackOnly) => {
                         warn!("meetings: playback capture start timed out");
                         Err(code.to_string())
                     }
@@ -1190,7 +1594,7 @@ impl MeetingRecorderManager {
                         self.emit_error(meeting_id, code);
                         Err(code.to_string())
                     }
-                    (LoopbackStartError::Timeout, _) => {
+                    (_, _) => {
                         warn!("meetings: loopback start timed out - continuing mic-only");
                         self.emit_error(meeting_id, code);
                         Err(code.to_string())
@@ -1338,9 +1742,25 @@ impl MeetingRecorderManager {
         // (das Ticket stellt ihn auf `Idle`, auch bei einer Panik): vorher galt die
         // Aufnahme schon als beendet, waehrend das Mikrofon noch offen war, und ein
         // Diktat-Hotkey oder ein neuer Start konnte dazwischen greifen.
-        let (session, stopping) = self.core.begin_stop()?;
+        let deadline = Instant::now() + START_CANCEL_WAIT;
+        let (session, stopping) = loop {
+            match self.core.begin_stop()? {
+                StopStep::Running(session, ticket) => break (session, ticket),
+                // lva#538: ein Stopp WAEHREND des Starts bricht ihn ab; zurueck kehrt er erst,
+                // wenn der Start aufgeraeumt hat (der Eintrag ist dann wie vorher).
+                StopStep::CancelledStart => {
+                    if !self.core.wait_start_end(START_CANCEL_WAIT) {
+                        warn!("meetings: the cancelled start did not end in time");
+                    }
+                    return Ok(String::new());
+                }
+                StopStep::Settling if Instant::now() < deadline => std::thread::sleep(SETTLE_POLL),
+                StopStep::Settling => return Err("start_busy".to_string()),
+            }
+        };
         let RecordingSession {
             meeting_id,
+            mode,
             mic_capture,
             loopback,
             mic_sink,
@@ -1348,27 +1768,16 @@ impl MeetingRecorderManager {
             mic_path,
             system_path,
             pipeline,
+            write_flags,
+            watch_stop,
             ..
         } = session;
+        watch_stop.store(true, Ordering::Release);
 
         // Captures first: once they are stopped no callback can touch the
         // sinks or the DSP queue any more, so draining and finalizing below is
         // race-free.
-        if let Some(capture) = mic_capture {
-            if capture.had_error() {
-                self.emit_error(&meeting_id, "mic_stream_error");
-            }
-            capture.stop();
-        }
-        if let Some(capture) = loopback {
-            // The watchdog above has already reported this while the meeting
-            // was running; the log line here is what makes it visible in the
-            // evidence of a finished meeting.
-            if capture.had_error() {
-                warn!("meetings: loopback capture had ended with an error ({meeting_id})");
-            }
-            capture.stop();
-        }
+        self.stop_captures(&meeting_id, mic_capture, loopback);
         // Mikrofon und Loopback sind zu: jetzt ist die Maschine nicht mehr in
         // Aufnahme. ZUERST der Zustand, DANACH der Indikator: `hide_recording_overlay`
         // fragt den Zustand und stellte den Indikator sonst wieder auf.
@@ -1413,9 +1822,43 @@ impl MeetingRecorderManager {
                 .initiate_model_load_target(&settings.selected_model);
         }
 
-        let mic_ms = mic_sink.as_ref().and_then(finalize_sink).unwrap_or(0);
-        let system_ms = system_sink.as_ref().and_then(finalize_sink).unwrap_or(0);
+        let mic_ms = mic_sink
+            .as_ref()
+            .and_then(|sink| finalize_sink(sink, write_flags.flag(CHANNEL_MIC)))
+            .unwrap_or(0);
+        let system_ms = system_sink
+            .as_ref()
+            .and_then(|sink| finalize_sink(sink, write_flags.flag(CHANNEL_SYSTEM)))
+            .unwrap_or(0);
         let duration_ms = mic_ms.max(system_ms);
+
+        // lva#538: ein Schreibfehler macht die Aufnahme unvollstaendig. Der Marker steht
+        // VOR dem Auftrag, damit der Enddurchlauf das Live-Transkript nicht aus ihr ersetzt.
+        let failed = write_flags.failed_channels();
+        if !failed.is_empty() {
+            mark_audio_incomplete(&self.store, &meeting_id, &failed);
+            if write_flags.first_report() {
+                self.emit_error(&meeting_id, AUDIO_WRITE_FAILED);
+            }
+        }
+
+        // #537: ein Mitschnitt ohne einen einzigen Ton (das Video stumm, der Treiber
+        // lieferte nichts) laesst keine leere Aufnahme zurueck, die einen neuen Mitschnitt
+        // fuer immer verhindert: der Eintrag ist wieder wie vorher (nur ohne Saetze, das
+        // prueft der Rueckfall selbst).
+        if mode == CaptureMode::PlaybackOnly
+            && duration_ms == 0
+            && failed.is_empty()
+            && self.undo_empty_capture(&meeting_id, system_path.as_deref())
+        {
+            self.transcription
+                .initiate_model_load_target(&settings.selected_model);
+            self.emit_state(&meeting_id, "ready", false);
+            return Ok(meeting_id);
+        }
+        if mode == CaptureMode::PlaybackOnly && duration_ms > 0 {
+            let _ = self.store.discard_playback_prior(&meeting_id);
+        }
 
         if let Err(e) = self.store.set_audio_paths(
             &meeting_id,
@@ -1466,6 +1909,157 @@ impl MeetingRecorderManager {
         Ok(meeting_id)
     }
 
+    /// Beendet die Captures einer Aufnahme (Mikrofon, Loopback) und meldet, was sie
+    /// unterwegs zu sagen hatten. Danach ruft kein Callback mehr in Sinks oder DSP-Queue.
+    fn stop_captures(
+        &self,
+        meeting_id: &str,
+        mic_capture: Option<MeetingMicCapture>,
+        loopback: Option<LoopbackCapture>,
+    ) {
+        if let Some(capture) = mic_capture {
+            if capture.had_error() {
+                self.emit_error(meeting_id, "mic_stream_error");
+            }
+            capture.stop();
+        }
+        if let Some(capture) = loopback {
+            // The watchdog above has already reported this while the meeting
+            // was running; the log line here is what makes it visible in the
+            // evidence of a finished meeting.
+            if capture.had_error() {
+                warn!("meetings: loopback capture had ended with an error ({meeting_id})");
+            }
+            capture.stop();
+        }
+    }
+
+    /// Der Mitschnitt hat keinen einzigen Ton aufgenommen: Eintrag wie vorher, leere
+    /// Capture-Dateien weg. `true`, wenn zurueckgesetzt.
+    fn undo_empty_capture(&self, meeting_id: &str, system_path: Option<&std::path::Path>) -> bool {
+        match self.store.restore_playback_target(meeting_id) {
+            Ok(true) => {
+                if let Some(dir) = system_path.and_then(std::path::Path::parent) {
+                    remove_capture_files(dir);
+                }
+                info!(
+                    "meetings: playback capture without any audio ({meeting_id}) - entry restored"
+                );
+                true
+            }
+            Ok(false) => false,
+            Err(e) => {
+                warn!("meetings: empty playback capture not reset ({meeting_id}): {e}");
+                false
+            }
+        }
+    }
+
+    /// lva#538: VOR dem Loeschen der Besprechung `meeting_id` (`meetings_delete`). Laeuft ein
+    /// Start in sie, endet er mit `meeting_not_found` und raeumt auf (dieser Aufruf kehrt
+    /// danach zurueck); wird sie gerade aufgenommen, wird die Aufnahme beendet, ohne
+    /// Enddurchlauf (die Besprechung verschwindet gleich). Fuer jede andere Besprechung
+    /// ist es ein leerer Aufruf. Blockierend.
+    pub fn abort_for_delete(&self, meeting_id: &str) {
+        let deadline = Instant::now() + START_CANCEL_WAIT;
+        loop {
+            match self.core.begin_delete(meeting_id) {
+                None => return,
+                Some(StopStep::CancelledStart) => {
+                    if !self.core.wait_start_end(START_CANCEL_WAIT) {
+                        warn!("meetings: the start of a deleted meeting did not end in time");
+                    }
+                    return;
+                }
+                Some(StopStep::Running(session, ticket)) => {
+                    self.discard_running(session, ticket);
+                    return;
+                }
+                Some(StopStep::Settling) if Instant::now() < deadline => {
+                    std::thread::sleep(SETTLE_POLL)
+                }
+                Some(StopStep::Settling) => {
+                    warn!("meetings: a recording being deleted did not settle in time");
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Beendet eine laufende Aufnahme, deren Besprechung geloescht wird: Captures zu, die
+    /// Pipeline leert ihre Queue (solange die Zeile noch da ist, sonst meldete der
+    /// Worker spaeter einen Speicherfehler), WAV-Writer zu (die Dateien loescht der
+    /// Aufrufer gleich danach), kein Status, kein Enddurchlauf.
+    fn discard_running(
+        &self,
+        session: RecordingSession,
+        stopping: StopTicket<'_, RecordingSession>,
+    ) {
+        let RecordingSession {
+            meeting_id,
+            mic_capture,
+            loopback,
+            mic_sink,
+            system_sink,
+            pipeline,
+            write_flags,
+            watch_stop,
+            ..
+        } = session;
+        watch_stop.store(true, Ordering::Release);
+        self.stop_captures(&meeting_id, mic_capture, loopback);
+        stopping.finish();
+        self.set_indicator(false);
+        if let Some(pipeline) = pipeline {
+            pipeline.drain();
+        }
+        if let Some(sink) = &mic_sink {
+            finalize_sink(sink, write_flags.flag(CHANNEL_MIC));
+        }
+        if let Some(sink) = &system_sink {
+            finalize_sink(sink, write_flags.flag(CHANNEL_SYSTEM));
+        }
+        let selected = crate::settings::get_settings(&self.app).selected_model;
+        self.transcription.initiate_model_load_target(&selected);
+        self.emit_state(&meeting_id, "cancelled", false);
+        info!("meetings: recording ended because its meeting is deleted ({meeting_id})");
+    }
+
+    /// lva#538: der Waechter der WAV-Writer. Ein Schreibfehler (Platte voll, RIFF-Grenze)
+    /// setzt im Callback nur ein Merkzeichen; hier wird daraus, noch waehrend der
+    /// Aufnahme, der dauerhafte Marker `audio_incomplete` (ein Absturz danach verliert ihn
+    /// nicht) und eine Meldung an den Nutzer. Endet mit der Aufnahme (`stop`) oder nach der
+    /// ersten Meldung.
+    fn watch_writes(&self, meeting_id: &str, flags: &Arc<WriteFlags>, stop: &Arc<AtomicBool>) {
+        let store = Arc::clone(&self.store);
+        let app = self.app.clone();
+        let flags = Arc::clone(flags);
+        let stop = Arc::clone(stop);
+        let meeting_id = meeting_id.to_string();
+        let _ = std::thread::Builder::new()
+            .name("meeting-write-watch".to_string())
+            .spawn(move || {
+                while !stop.load(Ordering::Acquire) {
+                    let failed = flags.failed_channels();
+                    if !failed.is_empty() {
+                        warn!(
+                            "meetings: the recording could not be written any more ({meeting_id})"
+                        );
+                        mark_audio_incomplete(&store, &meeting_id, &failed);
+                        if flags.first_report() {
+                            let _ = (MeetingEvent::Error {
+                                meeting_id: meeting_id.clone(),
+                                message: AUDIO_WRITE_FAILED.to_string(),
+                            })
+                            .emit(&app);
+                        }
+                        return;
+                    }
+                    std::thread::sleep(WRITE_WATCH_INTERVAL);
+                }
+            });
+    }
+
     /// App start: a meeting still marked `recording` or `processing` means the
     /// app died mid recording or mid final pass. Its WAV headers may claim
     /// zero length, so repair them from the file size, store the real
@@ -1478,6 +2072,7 @@ impl MeetingRecorderManager {
         let settings = crate::settings::get_settings(&self.app);
         let choice = FinalChoice::parse(&settings.meeting_final_model);
         let catch_up_model = self.transcription.meeting_model_target(&settings);
+        let data_dir = super::meetings_data_dir(&self.app).ok();
         let mut jobs: Vec<JobSpec> = Vec::new();
         let mut offset = 0u32;
         let mut recovered: Vec<String> = Vec::new();
@@ -1491,6 +2086,16 @@ impl MeetingRecorderManager {
             };
             let page_len = page.len() as u32;
             for meeting in page {
+                // lva#538: ein Mitschnitt, der nie etwas aufgenommen hat (Absturz im Start),
+                // wird wieder die YouTube-Besprechung von vorher, statt als leere
+                // Aufnahme stehenzubleiben. Auch eine `failed`-Zeile mit dem Merker.
+                if reset_unrecorded_capture(&self.store, &meeting, data_dir.as_deref()) {
+                    info!(
+                        "meetings: unrecorded playback capture reset ({})",
+                        meeting.id
+                    );
+                    continue;
+                }
                 if !is_orphan_status(&meeting.status) {
                     continue;
                 }
@@ -1628,6 +2233,9 @@ mod position_tests {
         sink.writer = writer;
         RecordingSession {
             meeting_id: "m-pos".to_string(),
+            mode: CaptureMode::Meeting {
+                capture_system: false,
+            },
             paused: Arc::new(AtomicBool::new(false)),
             mic_capture: None,
             loopback: None,
@@ -1636,6 +2244,8 @@ mod position_tests {
             mic_path: None,
             system_path: None,
             pipeline: None,
+            write_flags: Arc::new(WriteFlags::default()),
+            watch_stop: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -1747,19 +2357,41 @@ pub(crate) fn store_echo_summary(
     }
 }
 
+/// Die Meldung zu einem Fehler beim Speichern der Audiopfade: eine geloeschte Zeile
+/// heisst `meeting_not_found`, alles andere ein Fehler des Starts.
+fn audio_paths_error(error: &anyhow::Error) -> String {
+    let text = error.to_string();
+    if text.ends_with("not found") {
+        MEETING_NOT_FOUND.to_string()
+    } else {
+        format!("audio_paths_failed: {text}")
+    }
+}
+
 /// The per-channel capture callback: WAV append (with 1-s header flush), hand-off
 /// to the DSP thread, and the throttled level readout. The hand-off is a
 /// non-blocking `try_send` (see `dsp::ChannelFeed`); segmentation and VAD never
 /// run here. The second argument is the QPC stamp of the block's first sample
 /// (P2c2), passed through untouched.
+///
+/// lva#538: `silenced` (Abbruch des Starts, Frist des Treibers) macht den Callback stumm,
+/// bevor er etwas anruehrt: ein Treiber, der nach der Frist doch noch zurueckkehrt und
+/// Daten liefert, schreibt nichts mehr. Ein Schreibfehler der WAV setzt das Merkzeichen
+/// in `write_flags` (Atomic) und verwirft den Writer; Aufnahme und Transkription laufen
+/// weiter, der Fehler wird gemeldet und dauerhaft markiert, nicht verschluckt.
 fn channel_callback(
     channel: u8,
     sink: Arc<Mutex<ChannelSink>>,
     paused: Arc<AtomicBool>,
+    silenced: Arc<AtomicBool>,
+    write_flags: Arc<WriteFlags>,
     mut feed: ChannelFeed,
-    levels: Arc<LevelEmitter>,
+    levels: Arc<dyn LevelSink>,
 ) -> impl FnMut(&[i16], Option<u64>) + Send + 'static {
     move |samples: &[i16], qpc: Option<u64>| {
+        if silenced.load(Ordering::Acquire) {
+            return;
+        }
         if paused.load(Ordering::Relaxed) {
             feed.pause();
             return;
@@ -1779,6 +2411,7 @@ fn channel_callback(
             }
             if writer_failed {
                 sink.writer = None;
+                write_flags.flag(channel).store(true, Ordering::Release);
             } else {
                 sink.samples_since_flush += samples.len();
                 if sink.samples_since_flush >= FLUSH_EVERY_SAMPLES {
@@ -1790,18 +2423,92 @@ fn channel_callback(
             }
         }
         feed.push_stamped(samples, qpc);
-        levels.record(channel, rms(samples));
+        levels.level(channel, rms(samples));
     }
 }
 
-/// Finalizes a channel's WAV and returns its duration in milliseconds.
-fn finalize_sink(sink: &Arc<Mutex<ChannelSink>>) -> Option<u64> {
+/// Schliesst den WAV-Writer eines Kanals, ohne den Kopf zu schreiben: der Start, der
+/// nicht zustande kam, braucht die Datei nicht mehr, und ein offenes Handle haelt ihr
+/// Entfernen (Windows) auf.
+fn close_sink(sink: Option<&Arc<Mutex<ChannelSink>>>) {
+    if let Some(sink) = sink {
+        lock_recovering(sink).writer = None;
+    }
+}
+
+/// Finalizes a channel's WAV and returns its duration in milliseconds. Ein Fehler beim
+/// Abschluss setzt dasselbe Merkzeichen wie ein Schreibfehler (die Aufnahme ist dann nicht
+/// vollstaendig).
+fn finalize_sink(sink: &Arc<Mutex<ChannelSink>>, failed: &AtomicBool) -> Option<u64> {
     let writer = sink.lock().ok()?.writer.take()?;
     match writer.finalize() {
         Ok(ms) => Some(ms),
         Err(e) => {
             warn!("meetings: wav finalize failed: {e}");
+            failed.store(true, Ordering::Release);
             None
+        }
+    }
+}
+
+/// lva#538: macht aus dem Merkzeichen einen dauerhaften Marker (`metadata_json.
+/// audio_incomplete`). Ab dann ersetzt der Enddurchlauf das Live-Transkript nie mehr aus
+/// dieser Aufnahme, auch nach einem Absturz oder wenn spaeter wieder Platz da ist.
+/// Mehrfaches Schreiben ist unschaedlich (derselbe Schluessel).
+pub(crate) fn mark_audio_incomplete(store: &MeetingStore, meeting_id: &str, channels: &[u8]) {
+    let value = serde_json::json!({
+        "channels": channels,
+        "at": chrono::Utc::now().timestamp(),
+    });
+    if let Err(e) = store.set_metadata_key(meeting_id, final_pass::AUDIO_INCOMPLETE_KEY, value) {
+        error!("meetings: audio_incomplete marker not stored ({meeting_id}): {e}");
+    }
+}
+
+/// lva#538: nach einem Absturz oder Abbruch des Mitschnitts. Ein YouTube-Eintrag, der
+/// nie etwas aufgenommen hat (Start bis `recording` gekommen, WAV leer oder fehlt, keine
+/// Saetze), wird wieder die YouTube-Besprechung von vorher: Status, Einwilligung und
+/// Dauer aus dem gespeicherten Vorzustand, keine Audiopfade, die leeren Capture-Dateien
+/// weg. `true`, wenn zurueckgesetzt (dann gibt es nichts wiederherzustellen). Mit Ton
+/// (auch ohne erkannte Sprache) bleibt es bei der normalen Wiederherstellung; der Merker
+/// des Vorzustands wird dann nicht mehr gebraucht.
+pub(crate) fn reset_unrecorded_capture(
+    store: &MeetingStore,
+    meeting: &Meeting,
+    data_dir: Option<&std::path::Path>,
+) -> bool {
+    let reachable = is_orphan_status(&meeting.status) || meeting.status == "failed";
+    if meeting.source != super::playback::SOURCE_YOUTUBE || !reachable {
+        return false;
+    }
+    let has_prior = store.playback_prior(&meeting.id).ok().flatten().is_some();
+    if !super::playback::never_recorded(meeting, has_prior) {
+        if has_prior && is_orphan_status(&meeting.status) {
+            // Es gibt Ton: der Vorzustand ist erledigt.
+            let _ = store.discard_playback_prior(&meeting.id);
+        }
+        return false;
+    }
+    match store.restore_playback_target(&meeting.id) {
+        Ok(true) => {
+            let mut dirs: Vec<PathBuf> =
+                data_dir.map(|d| d.join(&meeting.id)).into_iter().collect();
+            dirs.extend(
+                [&meeting.mic_audio_path, &meeting.system_audio_path]
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|p| std::path::Path::new(p).parent().map(PathBuf::from)),
+            );
+            dirs.dedup();
+            for dir in dirs {
+                remove_capture_files(&dir);
+            }
+            true
+        }
+        Ok(false) => false,
+        Err(e) => {
+            warn!("meetings: unrecorded capture {} not reset: {e}", meeting.id);
+            false
         }
     }
 }
@@ -2032,6 +2739,16 @@ mod tests {
 
     type Core = RunCore<&'static str>;
 
+    /// Ein Stopp, der eine laufende Aufnahme vorfindet (sonst schlaegt der Test fehl).
+    fn running<'a>(core: &'a Core) -> (&'static str, StopTicket<'a, &'static str>) {
+        match core.begin_stop() {
+            Ok(StopStep::Running(session, ticket)) => (session, ticket),
+            Ok(StopStep::CancelledStart) => panic!("kein Start, sondern eine Aufnahme erwartet"),
+            Ok(StopStep::Settling) => panic!("der Start raeumt noch auf"),
+            Err(e) => panic!("Stopp abgewiesen: {e}"),
+        }
+    }
+
     #[test]
     fn a_poisoned_state_lock_does_not_take_the_hotkey_path_down() {
         let core = Arc::new(Core::new());
@@ -2051,7 +2768,7 @@ mod tests {
     #[test]
     fn a_poisoned_session_lock_does_not_break_pause_or_position() {
         let core = Arc::new(Core::new());
-        core.publish_started("m1", "sitzung");
+        core.publish_started("m1", "sitzung").unwrap();
         let poisoner = Arc::clone(&core);
         let _ = std::thread::spawn(move || {
             let _guard = poisoner.session.lock().unwrap();
@@ -2065,8 +2782,8 @@ mod tests {
     #[test]
     fn the_state_stays_recording_until_the_stop_has_closed_the_capture() {
         let core = Core::new();
-        core.publish_started("m1", "sitzung");
-        let (session, ticket) = core.begin_stop().unwrap();
+        core.publish_started("m1", "sitzung").unwrap();
+        let (session, ticket) = running(&core);
         assert_eq!(session, "sitzung");
         // Das Mikrofon ist noch offen: Diktat-Hotkey und neuer Start sehen es.
         assert!(
@@ -2087,9 +2804,9 @@ mod tests {
     #[test]
     fn a_panic_while_stopping_still_frees_the_state() {
         let core = Core::new();
-        core.publish_started("m1", "sitzung");
+        core.publish_started("m1", "sitzung").unwrap();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let (_session, _ticket) = core.begin_stop().unwrap();
+            let (_session, _ticket) = running(&core);
             panic!("Capture-Stopp stuerzt ab");
         }));
         assert!(result.is_err());
@@ -2126,12 +2843,13 @@ mod tests {
             core.set_paused(true, |_| {}),
             Err("not_recording".to_string())
         );
-        let _starting = core.begin_start().unwrap();
+        let starting = core.begin_start().unwrap();
         assert_eq!(
             core.set_paused(true, |_| {}),
             Err("not_recording".to_string())
         );
-        core.publish_started("m1", "sitzung");
+        core.publish_started("m1", "sitzung").unwrap();
+        drop(starting);
         let applied = std::cell::Cell::new(false);
         assert_eq!(
             core.set_paused(true, |s| {
@@ -2146,7 +2864,7 @@ mod tests {
             MeetingRunState::Recording { paused: true, .. }
         ));
         // Nach dem Stopp-Beginn gibt es nichts mehr zu pausieren (kein falsches Ereignis).
-        let (_s, ticket) = core.begin_stop().unwrap();
+        let (_s, ticket) = running(&core);
         assert_eq!(
             core.set_paused(false, |_| {}),
             Err("not_recording".to_string())
@@ -2164,12 +2882,12 @@ mod tests {
             let starter = Arc::clone(&core);
             let stopper = Arc::clone(&core);
             let start = std::thread::spawn(move || {
-                starter.publish_started("m1", "sitzung");
+                let _ = starter.publish_started("m1", "sitzung");
             });
             let stop = std::thread::spawn(move || {
                 // Mehrere Versuche, damit mindestens einer nach dem Start liegt.
                 for _ in 0..50 {
-                    if let Ok((_s, ticket)) = stopper.begin_stop() {
+                    if let Ok(StopStep::Running(_s, ticket)) = stopper.begin_stop() {
                         ticket.finish();
                         return true;
                     }
@@ -2181,7 +2899,7 @@ mod tests {
             let stopped = stop.join().unwrap();
             if !stopped {
                 // Der Stopp kam nie dazwischen: aufraeumen wie der echte Stopp.
-                let (_s, ticket) = core.begin_stop().unwrap();
+                let (_s, ticket) = running(&core);
                 ticket.finish();
             }
             assert!(
@@ -2189,6 +2907,144 @@ mod tests {
                 "Runde {round}: Zustand Recording ohne Sitzung (Geisteraufnahme)"
             );
         }
+    }
+
+    // ---- lva#538: Stopp und Loeschen waehrend des Starts ----------------------------
+
+    /// Ein Stopp, der waehrend des Starts kommt (noch keine Sitzung), wird nicht mehr als
+    /// "nicht aufgenommen" abgewiesen: er setzt den Abbruchmerker, und die Veroeffentlichung
+    /// danach gibt die Sitzung zurueck, statt eine Aufnahme zu veroeffentlichen, die der
+    /// Nutzer schon abgebrochen hat.
+    #[test]
+    fn a_stop_during_a_start_cancels_it_and_nothing_is_published() {
+        let core = Core::new();
+        let starting = core.begin_start().unwrap();
+        assert!(!starting.cancelled());
+
+        assert!(matches!(core.begin_stop(), Ok(StopStep::CancelledStart)));
+        assert!(starting.cancelled(), "der Start sieht den Abbruch");
+        assert_eq!(starting.check(), Err(START_CANCELLED.to_string()));
+
+        // Der Start war schon bei der Veroeffentlichung: er bekommt seine Sitzung zurueck.
+        assert_eq!(core.publish_started("m1", "sitzung"), Err("sitzung"));
+        assert!(
+            core.with_session(|s| s.is_none()),
+            "keine Sitzung veroeffentlicht"
+        );
+        assert!(
+            core.is_idle(),
+            "der Zustand blieb Idle: keine Geisteraufnahme"
+        );
+
+        drop(starting);
+        assert!(!core.is_recording());
+        // Ohne Start und ohne Aufnahme bleibt es bei `not_recording`.
+        assert_eq!(core.begin_stop().err(), Some("not_recording".to_string()));
+        // Der naechste Start ist unberuehrt vom alten Abbruch.
+        let next = core.begin_start().unwrap();
+        assert!(!next.cancelled());
+        assert!(core.publish_started("m2", "neu").is_ok());
+    }
+
+    /// Stopp und Veroeffentlichung im Wettlauf (lva#538): entweder sieht der Stopp die
+    /// Sitzung (und kann sie beenden), oder die Veroeffentlichung sieht den Abbruch. Nie
+    /// laeuft eine Aufnahme weiter, obwohl der Stopp "erfolgreich" war.
+    #[test]
+    fn a_stop_racing_the_publish_either_stops_the_recording_or_cancels_the_start() {
+        for round in 0..300 {
+            let core = Arc::new(Core::new());
+            let starting = core.begin_start().unwrap();
+            let stopper = Arc::clone(&core);
+            let stop = std::thread::spawn(move || {
+                matches!(stopper.begin_stop(), Ok(StopStep::CancelledStart))
+            });
+            let published = core.publish_started("m1", "sitzung").is_ok();
+            let cancelled_start = stop.join().unwrap();
+            drop(starting);
+            if published {
+                // Der Stopp kam NACH der Veroeffentlichung: die Sitzung ist da und stoppbar.
+                assert!(!cancelled_start, "Runde {round}");
+                let (_s, ticket) = running(&core);
+                ticket.finish();
+            } else {
+                assert!(cancelled_start, "Runde {round}: abgelehnt ohne Abbruch");
+            }
+            assert!(!core.is_recording(), "Runde {round}: Geisteraufnahme");
+        }
+    }
+
+    /// Eine Aufnahme, deren Start noch aufraeumt (Anzeige, Ereignis), wird nicht schon
+    /// gestoppt: sonst schaltete der Start die Anzeige NACH dem Stopp wieder ein.
+    #[test]
+    fn a_stop_right_after_the_publish_waits_for_the_start_to_finish() {
+        let core = Core::new();
+        let starting = core.begin_start().unwrap();
+        core.publish_started("m1", "sitzung").unwrap();
+        assert!(matches!(core.begin_stop(), Ok(StopStep::Settling)));
+        assert!(matches!(core.begin_delete("m1"), Some(StopStep::Settling)));
+        assert!(
+            core.with_session(|s| s.is_some()),
+            "die Sitzung blieb stehen"
+        );
+        drop(starting);
+        let (_s, ticket) = running(&core);
+        ticket.finish();
+    }
+
+    #[test]
+    fn a_delete_cancels_only_the_start_of_that_meeting() {
+        let core = Core::new();
+        let starting = core.begin_start().unwrap();
+        starting.set_target("a");
+
+        assert!(core.begin_delete("b").is_none(), "eine fremde Besprechung");
+        assert!(!starting.cancelled());
+
+        assert!(matches!(
+            core.begin_delete("a"),
+            Some(StopStep::CancelledStart)
+        ));
+        assert!(starting.cancelled());
+        assert_eq!(
+            starting.cancel_code(),
+            "meeting_not_found",
+            "geloescht, nicht gestoppt"
+        );
+        assert_eq!(core.publish_started("a", "sitzung"), Err("sitzung"));
+        drop(starting);
+        assert!(core.begin_delete("a").is_none(), "nichts mehr zu tun");
+    }
+
+    #[test]
+    fn a_stop_gives_the_start_the_code_start_cancelled_not_meeting_not_found() {
+        let core = Core::new();
+        let starting = core.begin_start().unwrap();
+        starting.set_target("a");
+        assert!(matches!(core.begin_stop(), Ok(StopStep::CancelledStart)));
+        assert_eq!(starting.cancel_code(), START_CANCELLED);
+    }
+
+    #[test]
+    fn a_delete_takes_the_running_session_of_that_meeting_only() {
+        let core = Core::new();
+        core.publish_started("m1", "sitzung").unwrap();
+        assert!(
+            core.begin_delete("m2").is_none(),
+            "andere Besprechung: nichts"
+        );
+        assert!(core.with_session(|s| s.is_some()));
+
+        let Some(StopStep::Running(session, ticket)) = core.begin_delete("m1") else {
+            panic!("die laufende Aufnahme gehoert zu m1");
+        };
+        assert_eq!(session, "sitzung");
+        // Bis das Ticket endet, gilt die Aufnahme als laufend (Captures noch offen).
+        assert!(core.is_recording());
+        // Ein zweites Loeschen waehrend des Stopps wartet, statt zu stoerren.
+        assert!(matches!(core.begin_delete("m1"), Some(StopStep::Settling)));
+        ticket.finish();
+        assert!(!core.is_recording());
+        assert!(core.begin_delete("m1").is_none());
     }
 
     // ---- #15: gescheiterter Start hinterlaesst keine Debris ---------------------------
@@ -2355,18 +3211,34 @@ mod tests {
         );
     }
 
+    /// Frische Merker fuer einen Start: (Abbruch des ganzen Starts, Stummschaltung des Kanals).
+    fn flags() -> (Arc<AtomicBool>, Arc<AtomicBool>) {
+        (
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        )
+    }
+
     #[test]
     fn a_bounded_start_returns_the_started_capture() {
-        let got = start_bounded("t-ok", Duration::from_secs(5), || Ok::<_, String>(42u8));
+        let (cancel, silenced) = flags();
+        let got = start_bounded("t-ok", Duration::from_secs(5), &cancel, &silenced, || {
+            Ok::<_, String>(42u8)
+        });
         assert_eq!(got, Ok(42));
+        assert!(
+            !silenced.load(Ordering::SeqCst),
+            "ein Erfolg schweigt nicht"
+        );
     }
 
     /// Kein Ausgabegeraet (oder es laesst sich nicht oeffnen): der Fehler des
     /// Treibers kommt an, nicht nach einer Frist, sondern sofort.
     #[test]
     fn a_failing_start_reports_its_error_at_once() {
+        let (cancel, silenced) = flags();
         let started = Instant::now();
-        let got = start_bounded("t-err", Duration::from_secs(30), || {
+        let got = start_bounded("t-err", Duration::from_secs(30), &cancel, &silenced, || {
             Err::<u8, _>("kein Wiedergabegeraet".to_string())
         });
         assert_eq!(
@@ -2378,7 +3250,7 @@ mod tests {
 
     /// Haengt der Treiber, endet das Warten nach der Frist, und eine Capture, die
     /// spaeter doch noch aufgeht, wird verworfen (ihr `Drop` stoppt sie): sie laeuft
-    /// nie unbemerkt weiter.
+    /// nie unbemerkt weiter. Der Kanal ist ab der Frist stumm (lva#538).
     #[test]
     fn a_wedged_start_times_out_and_the_late_capture_is_dropped() {
         struct Capture(Arc<AtomicBool>);
@@ -2387,13 +3259,24 @@ mod tests {
                 self.0.store(true, Ordering::SeqCst);
             }
         }
+        let (cancel, silenced) = flags();
         let dropped = Arc::new(AtomicBool::new(false));
         let late = Arc::clone(&dropped);
-        let got = start_bounded("t-wedged", Duration::from_millis(50), move || {
-            std::thread::sleep(Duration::from_millis(400));
-            Ok::<_, String>(Capture(late))
-        });
+        let got = start_bounded(
+            "t-wedged",
+            Duration::from_millis(50),
+            &cancel,
+            &silenced,
+            move || {
+                std::thread::sleep(Duration::from_millis(400));
+                Ok::<_, String>(Capture(late))
+            },
+        );
         assert!(matches!(got, Err(LoopbackStartError::Timeout)));
+        assert!(
+            silenced.load(Ordering::SeqCst),
+            "nach der Frist darf der Callback nichts mehr schreiben"
+        );
         let deadline = Instant::now() + Duration::from_secs(5);
         while !dropped.load(Ordering::SeqCst) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(20));
@@ -2404,17 +3287,297 @@ mod tests {
         );
     }
 
+    /// lva#538: ein Stopp waehrend des Wartens beendet es sofort (nicht erst nach der
+    /// Frist von fuenf Sekunden) und macht den Kanal stumm; die spaete Capture wird
+    /// verworfen.
+    #[test]
+    fn a_cancel_ends_the_wait_at_once_and_silences_the_late_capture() {
+        let (cancel, silenced) = flags();
+        let canceller = Arc::clone(&cancel);
+        let _ = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(60));
+            canceller.store(true, Ordering::SeqCst);
+        });
+        let started = Instant::now();
+        let got = start_bounded(
+            "t-cancel",
+            Duration::from_secs(30),
+            &cancel,
+            &silenced,
+            || {
+                std::thread::sleep(Duration::from_millis(600));
+                Ok::<_, String>(1u8)
+            },
+        );
+        assert_eq!(got, Err(LoopbackStartError::Cancelled));
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "der Abbruch wartet nicht auf den Treiber ({:?})",
+            started.elapsed()
+        );
+        assert!(silenced.load(Ordering::SeqCst));
+    }
+
+    /// Schon abgebrochen, bevor das Warten beginnt: es startet nicht einmal den Treiber.
+    #[test]
+    fn a_start_that_was_cancelled_before_it_began_never_touches_the_driver() {
+        let (cancel, silenced) = flags();
+        cancel.store(true, Ordering::SeqCst);
+        let touched = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&touched);
+        let got = start_bounded(
+            "t-early",
+            Duration::from_secs(5),
+            &cancel,
+            &silenced,
+            move || {
+                flag.store(true, Ordering::SeqCst);
+                Ok::<_, String>(())
+            },
+        );
+        assert_eq!(got, Err(LoopbackStartError::Cancelled));
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(!touched.load(Ordering::SeqCst));
+        assert!(silenced.load(Ordering::SeqCst));
+    }
+
     /// Ein Treiber, der im Start abstuerzt, ist ein Fehler, kein Haenger.
     #[test]
     fn a_panicking_start_is_a_failure_not_a_hang() {
+        let (cancel, silenced) = flags();
         let started = Instant::now();
         let got = start_bounded(
             "t-panic",
             Duration::from_secs(30),
+            &cancel,
+            &silenced,
             || -> Result<u8, String> { panic!("treiber") },
         );
         assert!(matches!(got, Err(LoopbackStartError::Failed(_))));
         assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    // ---- lva#538: der echte Callback nach der Frist, Schreibfehler -----------------------
+
+    /// Pegel, die ein Test mitzaehlt statt ein Ereignis zu senden.
+    #[derive(Default)]
+    struct CountingLevels(std::sync::atomic::AtomicUsize);
+
+    impl LevelSink for CountingLevels {
+        fn level(&self, _channel: u8, _rms: f32) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    type RigCallback = Box<dyn FnMut(&[i16], Option<u64>) + Send>;
+
+    struct CallbackRig {
+        _dir: tempfile::TempDir,
+        path: PathBuf,
+        sink: Arc<Mutex<ChannelSink>>,
+        silenced: Arc<AtomicBool>,
+        flags: Arc<WriteFlags>,
+        levels: Arc<CountingLevels>,
+        pipeline: LivePipeline,
+        callback: RigCallback,
+    }
+
+    fn callback_rig() -> CallbackRig {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("system.wav");
+        let sink = Arc::new(Mutex::new(ChannelSink::new(
+            StreamingWavWriter::create(&path, SAMPLE_RATE).unwrap(),
+        )));
+        let store = Arc::new(MeetingStore::open_at(&dir.path().join("m.db")).unwrap());
+        let pipeline = LivePipeline::start(
+            "m-rig".to_string(),
+            store,
+            DspConfig::new(None, Arc::new(|_| {})).playback_only(),
+            |_chunk: &Chunk| Vec::new(),
+            |_event| {},
+        )
+        .unwrap();
+        let silenced = Arc::new(AtomicBool::new(false));
+        let flags = Arc::new(WriteFlags::default());
+        let levels = Arc::new(CountingLevels::default());
+        let callback = channel_callback(
+            CHANNEL_SYSTEM,
+            Arc::clone(&sink),
+            Arc::new(AtomicBool::new(false)),
+            Arc::clone(&silenced),
+            Arc::clone(&flags),
+            pipeline.feed(CHANNEL_SYSTEM).unwrap(),
+            Arc::clone(&levels) as Arc<dyn LevelSink>,
+        );
+        CallbackRig {
+            _dir: dir,
+            path,
+            sink,
+            silenced,
+            flags,
+            levels,
+            pipeline,
+            callback: Box::new(callback),
+        }
+    }
+
+    fn written_samples(rig: &CallbackRig) -> Option<u64> {
+        lock_recovering(&rig.sink)
+            .writer
+            .as_ref()
+            .map(StreamingWavWriter::frames_written)
+    }
+
+    /// lva#538, "verspaetete echte Callback-Aktivitaet nach Timeout": der Treiber haengt
+    /// ueber die Frist, kehrt dann zurueck und beginnt, den ECHTEN Callback zu rufen. Der
+    /// Start hat laengst gemeldet, dass er gescheitert ist; es darf nichts mehr geschrieben
+    /// werden (weder in die WAV noch an den DSP noch als Pegel), und der Start kann die
+    /// Datei danach schliessen und entfernen.
+    #[test]
+    fn a_late_callback_after_the_timeout_writes_nothing() {
+        let mut rig = callback_rig();
+        let (cancel, _) = flags();
+        let mut callback = std::mem::replace(&mut rig.callback, Box::new(|_, _| {}));
+        let late = Arc::new(Mutex::new(Vec::<usize>::new()));
+        let seen = Arc::clone(&late);
+        let got = start_bounded(
+            "t-late-callback",
+            Duration::from_millis(50),
+            &cancel,
+            &rig.silenced,
+            move || {
+                // Der Treiber kommt zurueck und liefert, wie ein laufender Strom, Bloecke.
+                std::thread::sleep(Duration::from_millis(300));
+                for _ in 0..5 {
+                    callback(&vec![500i16; 1_600], Some(1));
+                    seen.lock().unwrap().push(1_600);
+                }
+                Ok::<_, String>(())
+            },
+        );
+        assert!(matches!(got, Err(LoopbackStartError::Timeout)));
+        // Warten, bis die spaete Aktivitaet wirklich gelaufen ist.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while late.lock().unwrap().len() < 5 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            late.lock().unwrap().len(),
+            5,
+            "Voraussetzung: der Callback lief"
+        );
+
+        assert_eq!(
+            written_samples(&rig),
+            Some(0),
+            "nach der Frist wurde in die WAV geschrieben"
+        );
+        assert_eq!(rig.levels.0.load(Ordering::SeqCst), 0, "auch kein Pegel");
+        assert!(rig.flags.failed_channels().is_empty());
+        let stats = rig.pipeline.stats();
+        assert_eq!(
+            stats.overflow_samples[CHANNEL_SYSTEM as usize].load(Ordering::Relaxed),
+            0
+        );
+
+        // Der Start schliesst die Datei selbst und kann sie dann entfernen.
+        close_sink(Some(&rig.sink));
+        assert!(lock_recovering(&rig.sink).writer.is_none());
+        remove_capture_files(rig.path.parent().unwrap());
+        assert!(!rig.path.exists(), "die Datei liess sich entfernen");
+    }
+
+    /// Das Gegenstueck: ohne Abbruch schreibt derselbe Callback, zaehlt Pegel und
+    /// erzeugt keinen Fehler. (Sonst bewiese der Test oben nichts.)
+    #[test]
+    fn the_same_callback_writes_when_it_is_not_silenced() {
+        let mut rig = callback_rig();
+        (rig.callback)(&vec![500i16; 1_600], Some(1));
+        assert_eq!(written_samples(&rig), Some(1_600));
+        assert_eq!(rig.levels.0.load(Ordering::SeqCst), 1);
+        assert!(rig.flags.failed_channels().is_empty());
+        rig.silenced.store(true, Ordering::SeqCst);
+        (rig.callback)(&vec![500i16; 1_600], Some(2));
+        assert_eq!(written_samples(&rig), Some(1_600), "stumm = nichts mehr");
+    }
+
+    /// lva#538, Schreibfehler: der Callback setzt NUR das Merkzeichen (Atomic), verwirft den
+    /// Writer und liefert weiter an den DSP (Transkription laeuft). Hier ueber die
+    /// RIFF-Grenze, den deterministischen Schreibfehler.
+    #[test]
+    fn a_write_error_sets_the_flag_and_the_transcription_keeps_its_feed() {
+        let mut rig = callback_rig();
+        lock_recovering(&rig.sink)
+            .writer
+            .as_mut()
+            .unwrap()
+            .set_frames_for_test(u32::MAX as u64 / 2);
+
+        (rig.callback)(&vec![500i16; 1_600], Some(1));
+
+        assert_eq!(rig.flags.failed_channels(), vec![CHANNEL_SYSTEM]);
+        assert!(
+            lock_recovering(&rig.sink).writer.is_none(),
+            "der Writer ist verworfen"
+        );
+        assert_eq!(
+            rig.levels.0.load(Ordering::SeqCst),
+            1,
+            "die Aufnahme laeuft fuer die Transkription weiter"
+        );
+        // Weitere Bloecke bleiben ohne neuen Fehler und ohne Schreiben.
+        (rig.callback)(&vec![500i16; 1_600], Some(2));
+        assert_eq!(rig.levels.0.load(Ordering::SeqCst), 2);
+        // Das Merkzeichen meldet nur einmal.
+        assert!(rig.flags.first_report());
+        assert!(!rig.flags.first_report());
+    }
+
+    /// Das dauerhafte Merkzeichen: einmal geschrieben, bleibt es (auch nach einem Absturz);
+    /// zweimal schreiben schadet nicht; andere Schluessel bleiben.
+    #[test]
+    fn the_incomplete_audio_marker_is_durable_and_leaves_other_keys_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("m.db")).unwrap();
+        let meeting = store
+            .create_meeting("Montag", MeetingSource::Live, Some(1))
+            .unwrap();
+        store
+            .set_metadata_key(&meeting.id, "timeline", serde_json::json!({"basis": "qpc"}))
+            .unwrap();
+
+        mark_audio_incomplete(&store, &meeting.id, &[CHANNEL_SYSTEM]);
+        mark_audio_incomplete(&store, &meeting.id, &[CHANNEL_MIC, CHANNEL_SYSTEM]);
+
+        let meta = store.metadata_json(&meeting.id).unwrap().unwrap();
+        assert_eq!(
+            meta[final_pass::AUDIO_INCOMPLETE_KEY]["channels"],
+            serde_json::json!([0, 1])
+        );
+        assert_eq!(meta["timeline"]["basis"], "qpc");
+        // Fuer eine geloeschte Zeile: kein Absturz.
+        mark_audio_incomplete(&store, "gibt-es-nicht", &[CHANNEL_MIC]);
+    }
+
+    /// Das Speichern der Audiopfade ist ein Fehler des Starts: fuer eine geloeschte Zeile
+    /// `meeting_not_found` (keine Aufnahme fuer einen geloeschten Eintrag).
+    #[test]
+    fn failing_to_store_the_audio_paths_fails_the_start_with_the_right_code() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("m.db")).unwrap();
+        let meeting = store
+            .create_meeting("Weg", MeetingSource::Youtube, None)
+            .unwrap();
+        store.soft_delete_meeting(&meeting.id).unwrap();
+        let error = store
+            .set_audio_paths(&meeting.id, None, Some("C:/m/system.wav"), None)
+            .unwrap_err();
+        assert_eq!(audio_paths_error(&error), "meeting_not_found");
+        let other = anyhow::anyhow!("database is locked");
+        assert_eq!(
+            audio_paths_error(&other),
+            "audio_paths_failed: database is locked"
+        );
     }
 
     fn with_source(source: &str, mic: Option<&str>, system: Option<&str>) -> Meeting {
@@ -2491,7 +3654,7 @@ mod tests {
         std::fs::create_dir_all(&folder).unwrap();
         std::fs::write(folder.join("folien.pdf"), b"x").unwrap();
 
-        let (started, prior) = store.begin_playback_capture(&entry.id, 7).unwrap();
+        let started = store.begin_playback_capture(&entry.id, 7).unwrap();
         assert_eq!(started.status, "recording");
         // `start_row`: Datei und Pfad stehen, dann scheitert der Systemton.
         let system = folder.join("system.wav");
@@ -2501,7 +3664,7 @@ mod tests {
             .unwrap();
 
         remove_capture_files(&folder);
-        assert!(store.restore_playback_target(&entry.id, &prior).unwrap());
+        assert!(store.restore_playback_target(&entry.id).unwrap());
 
         let after = store.get_meeting(&entry.id).unwrap().unwrap();
         assert_eq!(
@@ -2512,5 +3675,166 @@ mod tests {
         assert!(!is_orphan_status(&after.status));
         assert!(folder.join("folien.pdf").exists());
         assert!(!system.exists());
+    }
+
+    // ---- lva#538: Recovery eines Mitschnitts, der nie etwas aufgenommen hat -------------
+
+    fn crashed_capture(
+        dir: &std::path::Path,
+        with_audio: bool,
+        write_paths: bool,
+    ) -> (MeetingStore, Meeting, PathBuf) {
+        let store = MeetingStore::open_at(&dir.join("meetings.db")).unwrap();
+        let entry = store
+            .create_meeting("Vortrag", MeetingSource::Youtube, None)
+            .unwrap();
+        store
+            .get_connection()
+            .unwrap()
+            .execute(
+                "UPDATE meetings SET status = 'ready', duration_ms = 1805000 WHERE id = ?1",
+                rusqlite::params![entry.id],
+            )
+            .unwrap();
+        let folder = dir.join("meetings").join(&entry.id);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("folien.pdf"), b"x").unwrap();
+        store.begin_playback_capture(&entry.id, 7).unwrap();
+        let system = folder.join("system.wav");
+        let mut writer = StreamingWavWriter::create(&system, SAMPLE_RATE).unwrap();
+        if with_audio {
+            writer.append(&vec![300i16; 32_000]).unwrap();
+        }
+        drop(writer); // Absturz: weder finalize noch Kopfaktualisierung
+        if write_paths {
+            store
+                .set_audio_paths(&entry.id, None, system.to_str(), None)
+                .unwrap();
+        }
+        let meeting = store.get_meeting(&entry.id).unwrap().unwrap();
+        (store, meeting, system)
+    }
+
+    /// Crash NACH dem Speichern der Pfade, vor dem ersten Ton: der naechste App-Start
+    /// setzt den Eintrag zurueck (Dauer des Players, `ready`, keine Pfade), entfernt die
+    /// leere WAV und laesst die Folien des Nutzers stehen. Danach ist er erneut startbar.
+    #[test]
+    fn the_recovery_resets_a_capture_that_crashed_before_any_audio() {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, meeting, system) = crashed_capture(dir.path(), false, true);
+        assert_eq!(meeting.status, "recording", "Voraussetzung: Absturzrest");
+        assert!(system.exists());
+
+        assert!(reset_unrecorded_capture(
+            &store,
+            &meeting,
+            Some(&dir.path().join("meetings"))
+        ));
+
+        let after = store.get_meeting(&meeting.id).unwrap().unwrap();
+        assert_eq!(
+            (
+                after.status.as_str(),
+                after.duration_ms,
+                after.consent_confirmed_at
+            ),
+            ("ready", Some(1_805_000), None)
+        );
+        assert_eq!(after.system_audio_path, None);
+        assert!(!system.exists(), "die leere WAV ist weg");
+        assert!(system.parent().unwrap().join("folien.pdf").exists());
+        assert!(
+            store.begin_playback_capture(&meeting.id, 8).is_ok(),
+            "kein target_not_empty"
+        );
+    }
+
+    /// Crash VOR dem Speichern der Pfade (Datei angelegt, Zeile steht auf `recording`).
+    #[test]
+    fn the_recovery_resets_a_capture_that_crashed_before_the_paths_were_stored() {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, meeting, system) = crashed_capture(dir.path(), false, false);
+        assert_eq!(meeting.system_audio_path, None);
+        assert!(system.exists());
+
+        assert!(reset_unrecorded_capture(
+            &store,
+            &meeting,
+            Some(&dir.path().join("meetings"))
+        ));
+
+        let after = store.get_meeting(&meeting.id).unwrap().unwrap();
+        assert_eq!(
+            (after.status.as_str(), after.duration_ms),
+            ("ready", Some(1_805_000))
+        );
+        assert!(
+            !system.exists(),
+            "auch die Datei ohne Pfad in der Datenbank"
+        );
+    }
+
+    /// Mit Ton auf der Platte laeuft die normale Wiederherstellung: nichts wird
+    /// zurueckgesetzt, die Datei bleibt, der Vorzustand ist erledigt.
+    #[test]
+    fn the_recovery_keeps_a_capture_that_has_audio() {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, meeting, system) = crashed_capture(dir.path(), true, true);
+
+        assert!(!reset_unrecorded_capture(
+            &store,
+            &meeting,
+            Some(&dir.path().join("meetings"))
+        ));
+
+        let after = store.get_meeting(&meeting.id).unwrap().unwrap();
+        assert_eq!(
+            after.status, "recording",
+            "die Wiederherstellung uebernimmt"
+        );
+        assert!(after.system_audio_path.is_some());
+        assert!(system.exists(), "der Ton bleibt");
+        assert_eq!(store.playback_prior(&meeting.id).unwrap(), None);
+        assert!(
+            runs_final_pass(&after),
+            "und sie bekommt ihren Enddurchlauf"
+        );
+    }
+
+    /// Altdaten: ein Absturzrest OHNE Merker (Zeile aus der ersten Fassung) und Zeilen
+    /// anderer Quellen oder Zustaende bleiben unangetastet.
+    #[test]
+    fn the_recovery_leaves_rows_without_the_marker_and_other_sources_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, meeting, _) = crashed_capture(dir.path(), false, true);
+        store.discard_playback_prior(&meeting.id).unwrap();
+        assert!(!reset_unrecorded_capture(&store, &meeting, None));
+        assert_eq!(
+            store.get_meeting(&meeting.id).unwrap().unwrap().status,
+            "recording"
+        );
+        let mut live = meeting.clone();
+        live.source = "live".into();
+        assert!(!reset_unrecorded_capture(&store, &live, None));
+        let mut ready = meeting.clone();
+        ready.status = "ready".into();
+        assert!(!reset_unrecorded_capture(&store, &ready, None));
+    }
+
+    /// Der Rueckfall des Starts selbst scheiterte (Zeile `failed` mit Merker): der naechste
+    /// App-Start setzt auch sie zurueck.
+    #[test]
+    fn the_recovery_resets_a_failed_row_that_still_has_the_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, meeting, _) = crashed_capture(dir.path(), false, true);
+        store
+            .set_status(&meeting.id, MeetingStatus::Failed)
+            .unwrap();
+        let failed = store.get_meeting(&meeting.id).unwrap().unwrap();
+        assert!(reset_unrecorded_capture(&store, &failed, None));
+        assert_eq!(
+            store.get_meeting(&meeting.id).unwrap().unwrap().status,
+            "ready"
+        );
     }
 }

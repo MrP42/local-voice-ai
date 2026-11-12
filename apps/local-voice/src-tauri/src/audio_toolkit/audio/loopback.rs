@@ -108,24 +108,230 @@ pub fn f32_to_i16(samples: &[f32]) -> Vec<i16> {
         .collect()
 }
 
+/// Ausgabeblockdauer: 30 ms bei 16 kHz = 480 Samples.
+const FRAME_DURATION: std::time::Duration = std::time::Duration::from_millis(30);
+/// Stille wird in Häppchen dieser Größe in den Resampler geschoben.
+const SILENCE_CHUNK_FRAMES: usize = 4096;
+/// Ab so langer Stille (Wanduhr bzw. QPC) ohne Paket wird aufgefüllt. Darunter sind es
+/// Schwankungen der Paketankunft (Planung des Threads, Pufferlatenz), kein Schweigen.
+pub const QUIET_GAP_MIN: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Ein Geräte-Paket, wie der Capture-Thread es liest (#537).
+#[derive(Clone, Copy, Debug)]
+pub struct DevicePacket<'a> {
+    /// Interleaved f32 beim Gerätetakt; `SILENT`-Pakete schon als Nullen.
+    pub interleaved: &'a [f32],
+    /// Position des ersten Frames in Frames seit Stream-Start (`BufferInfo::index`).
+    pub device_position: u64,
+    /// QPC (100 ns) des ersten Frames; `None`, wenn das Gerät keinen gültigen nennt.
+    pub qpc: Option<u64>,
+    /// Wanduhr seit dem Start des Streams (nur für Stille ohne Paket und die
+    /// Plausibilitätsgrenze; die Zeitachse bleibt Geräteposition bzw. QPC).
+    pub since_start: std::time::Duration,
+}
+
+/// Der plattformunabhängige Kern des Capture-Threads: Pakete rein, zeitachsen-
+/// korrekte 16-kHz-Mono-Blöcke samt QPC-Stempel raus.
+///
+/// WASAPI-Loopback liefert bei Stille GAR KEINE Pakete (gemessen auf Windows: nach
+/// drei Sekunden ohne Ton null Blöcke, kein Fehler). Die Zeitachse darf deshalb
+/// nicht an den Paketen hängen: Stille VOR dem ersten Paket und Pausen zwischen zwei
+/// Paketen werden mit Nullen aufgefüllt, und zwar nach der größeren von zwei
+/// Angaben: Lücke der Geräteposition (wo der Treiber sie mitzählt) und Lücke der
+/// QPC-Stempel bzw. der Wanduhr (wo er es nicht tut). Ohne das verrutschen alle
+/// Offsets des Transkripts um die Stille, die nie ankam.
+pub struct LoopbackFeeder {
+    rate: usize,
+    channels: usize,
+    resampler: crate::audio_toolkit::audio::FrameResampler,
+    stamper: QpcStamper,
+    timeline: crate::audio_toolkit::audio::LoopbackTimeline,
+    silence: Vec<f32>,
+    first: bool,
+    last_since_start: std::time::Duration,
+    /// QPC, bei dem das nächste Paket ohne Lücke beginnen müsste.
+    next_qpc: Option<u64>,
+    padded_frames: u64,
+    dropped_buffers: u64,
+}
+
+#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
+impl LoopbackFeeder {
+    pub fn new(mix_rate: usize, channels: usize) -> Self {
+        Self {
+            rate: mix_rate.max(1),
+            channels: channels.max(1),
+            resampler: crate::audio_toolkit::audio::FrameResampler::new(
+                mix_rate,
+                TARGET_SAMPLE_RATE,
+                FRAME_DURATION,
+            ),
+            stamper: QpcStamper::new(mix_rate, TARGET_SAMPLE_RATE),
+            timeline: crate::audio_toolkit::audio::LoopbackTimeline::new(),
+            silence: vec![0.0f32; SILENCE_CHUNK_FRAMES],
+            first: true,
+            last_since_start: std::time::Duration::ZERO,
+            next_qpc: None,
+            padded_frames: 0,
+            dropped_buffers: 0,
+        }
+    }
+
+    /// Die Stille (in Frames beim Gerätetakt), die VOR diesem Paket nie ankam und
+    /// über die Geräteposition nicht zu erkennen ist: vor dem ersten Paket die
+    /// Wanduhr seit dem Start, danach die Lücke der QPC-Stempel. Unter
+    /// [`QUIET_GAP_MIN`] ist es keine Stille; über `max_pad` kein Schweigen mehr,
+    /// sondern ein kaputter Wert.
+    fn clock_gap(
+        &self,
+        frames: u64,
+        qpc: Option<u64>,
+        since_start: std::time::Duration,
+        max_pad: u64,
+    ) -> u64 {
+        let rate = self.rate as u64;
+        let gap = if self.first {
+            let wall = since_start.as_nanos().saturating_mul(rate as u128) / 1_000_000_000;
+            u64::try_from(wall)
+                .unwrap_or(u64::MAX)
+                .saturating_sub(frames)
+        } else {
+            match (qpc, self.next_qpc) {
+                (Some(q), Some(expected)) if q > expected => {
+                    (q - expected).saturating_mul(rate) / QPC_UNITS_PER_SEC as u64
+                }
+                _ => 0,
+            }
+        };
+        let min = (QUIET_GAP_MIN.as_millis() as u64).saturating_mul(rate) / 1_000;
+        if gap >= min {
+            gap.min(max_pad)
+        } else {
+            0
+        }
+    }
+
+    /// Ein Paket verarbeiten; `sink` bekommt die fertigen 16-kHz-Blöcke mit QPC-Stempel
+    /// (der Block, der das erste Sample enthält, mit dessen Zeitpunkt).
+    pub fn on_packet(
+        &mut self,
+        packet: DevicePacket<'_>,
+        sink: &mut impl FnMut(&[i16], Option<u64>),
+    ) {
+        let frames = (packet.interleaved.len() / self.channels) as u64;
+        if frames == 0 {
+            return;
+        }
+        let since_last = packet.since_start.saturating_sub(self.last_since_start);
+        self.last_since_start = packet.since_start;
+        // #15: die Grenze folgt der Wanduhr seit dem letzten Paket.
+        let max_pad = max_plausible_pad_frames(since_last, self.rate);
+        let capped_before = self.timeline.capped_gaps();
+        let position_pad =
+            match self
+                .timeline
+                .on_buffer_capped(packet.device_position, frames, max_pad)
+            {
+                crate::audio_toolkit::audio::TimelineAction::Drop => {
+                    self.dropped_buffers += 1;
+                    if self.dropped_buffers % 100 == 1 {
+                        log::warn!(
+                            "loopback: backwards device position, dropped {} buffer(s)",
+                            self.dropped_buffers
+                        );
+                    }
+                    return;
+                }
+                crate::audio_toolkit::audio::TimelineAction::PadSilence(gap) => gap,
+                crate::audio_toolkit::audio::TimelineAction::Append => 0,
+            };
+        if self.timeline.capped_gaps() != capped_before {
+            let capped = self.timeline.capped_gaps();
+            if capped % 100 == 1 {
+                log::warn!(
+                    "loopback: implausible position jump capped at {position_pad} frames ({capped} so far, {} frames not padded)",
+                    self.timeline.skipped_frames()
+                );
+            }
+        }
+        let clock_pad = self.clock_gap(frames, packet.qpc, packet.since_start, max_pad);
+        let pad_frames = position_pad.max(clock_pad);
+        self.next_qpc = packet.qpc.map(|q| {
+            q.saturating_add(frames.saturating_mul(QPC_UNITS_PER_SEC as u64) / self.rate as u64)
+        });
+        self.first = false;
+
+        // M2-P2c2: QPC des ersten Frames DIESES Pakets (hinter der Stille); die
+        // eingeschobene Stille bekommt davon zurückgerechnete Stempel.
+        self.stamper.mark(packet.qpc, pad_frames);
+        if pad_frames > 0 {
+            self.padded_frames += pad_frames;
+            log::debug!(
+                "loopback: gap of {pad_frames} frames padded with silence (total {})",
+                self.padded_frames
+            );
+            let mut remaining = pad_frames;
+            while remaining > 0 {
+                let take = remaining.min(SILENCE_CHUNK_FRAMES as u64) as usize;
+                self.stamper.advance_input(take as u64);
+                let Self {
+                    resampler,
+                    stamper,
+                    silence,
+                    ..
+                } = self;
+                resampler.push(&silence[..take], |frame| {
+                    let stamp = stamper.next_block(frame.len());
+                    sink(&f32_to_i16(frame), stamp)
+                });
+                remaining -= take as u64;
+            }
+        }
+
+        let mono = downmix_to_mono(packet.interleaved, self.channels);
+        self.stamper.advance_input(mono.len() as u64);
+        let Self {
+            resampler, stamper, ..
+        } = self;
+        resampler.push(&mono, |frame| {
+            let stamp = stamper.next_block(frame.len());
+            sink(&f32_to_i16(frame), stamp)
+        });
+    }
+
+    /// Ende des Streams: der Rest im Resampler geht noch hinaus.
+    pub fn finish(&mut self, sink: &mut impl FnMut(&[i16], Option<u64>)) {
+        let Self {
+            resampler, stamper, ..
+        } = self;
+        resampler.finish(|frame| {
+            let stamp = stamper.next_block(frame.len());
+            sink(&f32_to_i16(frame), stamp)
+        });
+    }
+
+    /// Für das Log am Ende: (gepolsterte Frames, verworfene Pakete, gekürzte Lücken,
+    /// dabei nicht eingeschobene Frames).
+    pub fn summary(&self) -> (u64, u64, u64, u64) {
+        (
+            self.padded_frames,
+            self.dropped_buffers,
+            self.timeline.capped_gaps(),
+            self.timeline.skipped_frames(),
+        )
+    }
+}
+
 #[cfg(target_os = "windows")]
 mod windows_impl {
-    use super::{
-        downmix_to_mono, f32_to_i16, max_plausible_pad_frames, QpcStamper, TARGET_SAMPLE_RATE,
-    };
-    use crate::audio_toolkit::audio::{FrameResampler, LoopbackTimeline, TimelineAction};
+    use super::{DevicePacket, LoopbackFeeder};
     use anyhow::{anyhow, Result};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc;
     use std::sync::Arc;
     use std::thread::JoinHandle;
-    use std::time::Duration;
     use wasapi::{initialize_mta, DeviceEnumerator, Direction, SampleType, StreamMode, WaveFormat};
 
-    /// Ausgabeblockdauer: 30 ms bei 16 kHz = 480 Samples.
-    const FRAME_DURATION: Duration = Duration::from_millis(30);
-    /// Stille wird in Häppchen dieser Größe in den Resampler geschoben.
-    const SILENCE_CHUNK_FRAMES: usize = 4096;
     /// Wartezeit auf das WASAPI-Event; läuft sie ab, prüfen wir das Stop-Flag.
     const EVENT_TIMEOUT_MS: u32 = 200;
 
@@ -250,16 +456,11 @@ mod windows_impl {
         // Ab hier steht der Stream — Startmeldung an start().
         let _ = init_tx.send(Ok(()));
 
-        let mut resampler = FrameResampler::new(mix_rate, TARGET_SAMPLE_RATE, FRAME_DURATION);
-        let mut stamper = QpcStamper::new(mix_rate, TARGET_SAMPLE_RATE);
-        let mut timeline = LoopbackTimeline::new();
+        let mut feeder = LoopbackFeeder::new(mix_rate, channels);
         let mut byte_buf: Vec<u8> = Vec::new();
-        let silence_chunk = vec![0.0f32; SILENCE_CHUNK_FRAMES];
-        let mut dropped_buffers: u64 = 0;
-        let mut padded_frames: u64 = 0;
-        // #15: Wanduhrzeit des letzten gelesenen Pakets, nur als Plausibilitaetsgrenze
-        // fuer die Stille-Polsterung (die Zeitachse bleibt allein die Geraeteposition).
-        let mut last_packet_at = std::time::Instant::now();
+        // #537: Stille VOR dem ersten Paket und Pausen ohne Paket zaehlen ab hier
+        // (WASAPI-Loopback liefert bei Stille gar keine Pakete).
+        let started_at = std::time::Instant::now();
 
         while !stop.load(Ordering::Relaxed) {
             // Alle bereitstehenden Pakete abholen, dann aufs nächste Event warten.
@@ -284,91 +485,36 @@ mod windows_impl {
                     byte_buf[..valid].fill(0);
                 }
 
-                // SPEC C1: Die Zeitachse kommt AUSSCHLIESSLICH aus der
-                // Device-Position (`BufferInfo::index`, das pu64DevicePosition
-                // von IAudioCaptureClient::GetBuffer) — niemals aus gezählten
-                // Buffern oder Wall-Clock-Zeit.
-                let device_position = info.index;
-                // Instant::now() ist ein Zaehlerlesen: keine Allokation, keine Sperre, kein I/O.
-                let now = std::time::Instant::now();
-                let max_pad =
-                    max_plausible_pad_frames(now.duration_since(last_packet_at), mix_rate);
-                last_packet_at = now;
-                let capped_before = timeline.capped_gaps();
-                let pad_frames = match timeline.on_buffer_capped(
-                    device_position,
-                    frames_read as u64,
-                    max_pad,
-                ) {
-                    TimelineAction::Drop => {
-                        dropped_buffers += 1;
-                        if dropped_buffers % 100 == 1 {
-                            log::warn!(
-                                "loopback: backwards device position, dropped {dropped_buffers} buffer(s)"
-                            );
-                        }
-                        continue;
-                    }
-                    TimelineAction::PadSilence(gap_frames) => gap_frames,
-                    TimelineAction::Append => 0,
-                };
-                if timeline.capped_gaps() != capped_before {
-                    let capped = timeline.capped_gaps();
-                    if capped % 100 == 1 {
-                        log::warn!(
-                            "loopback: implausible position jump capped at {pad_frames} frames ({capped} so far, {} frames not padded)",
-                            timeline.skipped_frames()
-                        );
-                    }
-                }
-                // M2-P2c2: QPC des ersten Frames DIESES Puffers (hinter der
-                // Stille); die eingeschobene Stille bekommt davon
-                // zurueckgerechnete Stempel. Kein gueltiger Stempel: alter Anker.
-                let qpc =
-                    (!info.flags.timestamp_error && info.timestamp > 0).then_some(info.timestamp);
-                stamper.mark(qpc, pad_frames);
-                if pad_frames > 0 {
-                    padded_frames += pad_frames;
-                    log::debug!(
-                        "loopback: gap of {pad_frames} frames padded with silence (total {padded_frames})"
-                    );
-                    let mut remaining = pad_frames;
-                    while remaining > 0 {
-                        let take = remaining.min(SILENCE_CHUNK_FRAMES as u64) as usize;
-                        stamper.advance_input(take as u64);
-                        resampler.push(&silence_chunk[..take], |frame| {
-                            let stamp = stamper.next_block(frame.len());
-                            on_samples(&f32_to_i16(frame), stamp)
-                        });
-                        remaining -= take as u64;
-                    }
-                }
-
+                // SPEC C1: Die Zeitachse kommt aus der Device-Position und den
+                // QPC-Stempeln des Geraets (`LoopbackFeeder`), nie aus gezaehlten
+                // Buffern; die Wanduhr dient nur der Stille ohne Paket und als
+                // Plausibilitaetsgrenze.
                 let interleaved: Vec<f32> = byte_buf[..valid]
                     .chunks_exact(4)
                     .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
                     .collect();
-                let mono = downmix_to_mono(&interleaved, channels);
-                stamper.advance_input(mono.len() as u64);
-                resampler.push(&mono, |frame| {
-                    let stamp = stamper.next_block(frame.len());
-                    on_samples(&f32_to_i16(frame), stamp)
-                });
+                let qpc =
+                    (!info.flags.timestamp_error && info.timestamp > 0).then_some(info.timestamp);
+                feeder.on_packet(
+                    DevicePacket {
+                        interleaved: &interleaved,
+                        device_position: info.index,
+                        qpc,
+                        since_start: started_at.elapsed(),
+                    },
+                    &mut on_samples,
+                );
             }
 
             // Timeout ist normal (kein Ton) — dann nur das Stop-Flag prüfen.
             let _ = h_event.wait_for_event(EVENT_TIMEOUT_MS);
         }
 
-        resampler.finish(|frame| {
-            let stamp = stamper.next_block(frame.len());
-            on_samples(&f32_to_i16(frame), stamp)
-        });
+        feeder.finish(&mut on_samples);
         audio_client.stop_stream()?;
+        let (padded_frames, dropped_buffers, capped_gaps, skipped_frames) = feeder.summary();
         log::info!(
-            "loopback capture stopped (padded {padded_frames} silence frames, dropped {dropped_buffers} buffers, capped {} implausible gaps = {} frames not padded)",
-            timeline.capped_gaps(),
-            timeline.skipped_frames()
+            "loopback capture stopped (padded {padded_frames} silence frames, dropped {dropped_buffers} buffers, capped {capped_gaps} implausible gaps = {skipped_frames} frames not padded)"
         );
         Ok(())
     }
@@ -500,5 +646,218 @@ mod tests {
         s.mark(Some(0), 0);
         s.advance_input(480);
         assert_eq!(s.next_block(480), Some(2_000_000 + 300_000));
+    }
+
+    // ---- #537: Stille ohne Paket (WASAPI-Loopback) ------------------------------
+
+    /// Ein Geraetepaket der Nachbildung: Wanduhr seit Stream-Start, Frames, Position,
+    /// QPC (100 ns) und Pegel (Gleichanteil; 0.5 = klar hoerbar).
+    struct Pkt {
+        wall_ms: u64,
+        frames: usize,
+        pos: u64,
+        qpc: Option<u64>,
+        level: f32,
+    }
+
+    /// Schiebt die Pakete durch den Feeder, sammelt Samples und Block-Stempel
+    /// (Index des ersten Samples des Blocks, QPC).
+    fn feed(rate: usize, channels: usize, pkts: &[Pkt]) -> (Vec<i16>, Vec<(usize, Option<u64>)>) {
+        let mut feeder = LoopbackFeeder::new(rate, channels);
+        let mut out: Vec<i16> = Vec::new();
+        let mut stamps: Vec<(usize, Option<u64>)> = Vec::new();
+        {
+            let mut sink = |block: &[i16], stamp: Option<u64>| {
+                stamps.push((out.len(), stamp));
+                out.extend_from_slice(block);
+            };
+            for p in pkts {
+                let data = vec![p.level; p.frames * channels];
+                feeder.on_packet(
+                    DevicePacket {
+                        interleaved: &data,
+                        device_position: p.pos,
+                        qpc: p.qpc,
+                        since_start: std::time::Duration::from_millis(p.wall_ms),
+                    },
+                    &mut sink,
+                );
+            }
+            feeder.finish(&mut sink);
+        }
+        (out, stamps)
+    }
+
+    /// `n` zusammenhaengende 10-ms-Pakete bei 16 kHz (160 Frames), ab Wanduhr/Position/QPC.
+    fn run_of(n: u64, wall_ms: u64, pos: u64, qpc: Option<u64>) -> Vec<Pkt> {
+        (0..n)
+            .map(|k| Pkt {
+                wall_ms: wall_ms + 10 * k,
+                frames: 160,
+                pos: pos + 160 * k,
+                qpc: qpc.map(|q| q + 100_000 * k),
+                level: 0.5,
+            })
+            .collect()
+    }
+
+    /// Stellen, an denen der Pegel von leise auf laut springt (Beginn eines Tons).
+    fn onsets(out: &[i16]) -> Vec<usize> {
+        let loud = |x: i16| x.unsigned_abs() > 8_000;
+        (0..out.len())
+            .filter(|&i| loud(out[i]) && (i == 0 || !loud(out[i - 1])))
+            .collect()
+    }
+
+    const Q0: u64 = 1_000_000_000;
+
+    /// Der Befund von der echten Probe: kein Paket in der Stille. Das erste Paket
+    /// kommt erst nach 10 s; der Ton muss bei ~10 s im Transkript stehen, nicht bei 0.
+    /// Danach eine Pause von 5 s ohne Paket: danach liegt der Ton wieder 5 s spaeter.
+    /// Der Treiber zaehlt die Stille NICHT in der Position mit (Position laeuft nur
+    /// ueber gelieferte Pakete), die QPC-Stempel tun es.
+    #[test]
+    fn silence_before_the_first_packet_and_a_pause_are_padded_with_zeros_by_qpc() {
+        let mut pkts = run_of(100, 10_000, 0, Some(Q0));
+        // 1 s Ton, dann 5 s ohne Paket, Position laeuft nicht weiter.
+        pkts.extend(run_of(
+            100,
+            16_000,
+            100 * 160,
+            Some(Q0 + 100 * 100_000 + 50_000_000),
+        ));
+        let (out, stamps) = feed(16_000, 1, &pkts);
+        let on = onsets(&out);
+        assert_eq!(on.len(), 2, "zwei Toene erwartet: {on:?}");
+        // Stille vor dem ersten Paket: 10 s Wanduhr minus die 10 ms des Pakets.
+        assert!(
+            on[0].abs_diff(159_840) <= 480,
+            "erster Ton bei {} statt ~159 840",
+            on[0]
+        );
+        // 1 s Ton, 5 s Pause: der zweite Ton folgt 80 000 Samples nach dem Ende des ersten.
+        assert!(
+            on[1].abs_diff(159_840 + 16_000 + 80_000) <= 480,
+            "zweiter Ton bei {}",
+            on[1]
+        );
+        // Alles davor sind Nullen, nicht verschluckte Zeit.
+        assert!(out[..on[0] - 480].iter().all(|&x| x == 0));
+        // Die QPC-Stempel gehen mit: der erste Stille-Block liegt um die Stille VOR dem
+        // ersten Paket (159 840 Frames = 99 900 000 x 100 ns), der Block mit dem Ton auf Q0.
+        assert_eq!(stamps[0], (0, Some(Q0 - 99_900_000)));
+        assert!(stamps.contains(&(159_840, Some(Q0))));
+    }
+
+    /// Wie oben, aber der Treiber zaehlt die Stille in der Position mit und liefert
+    /// keinen gueltigen QPC: die Luecke der Position traegt die Pause.
+    #[test]
+    fn a_pause_is_padded_from_the_device_position_when_there_is_no_qpc() {
+        let mut pkts = run_of(100, 10_000, 0, None);
+        pkts.extend(run_of(100, 16_000, 100 * 160 + 80_000, None));
+        let (out, stamps) = feed(16_000, 1, &pkts);
+        let on = onsets(&out);
+        assert_eq!(on.len(), 2, "{on:?}");
+        assert!(on[0].abs_diff(159_840) <= 480, "{on:?}");
+        assert!(on[1].abs_diff(159_840 + 16_000 + 80_000) <= 480, "{on:?}");
+        assert!(
+            stamps.iter().all(|(_, s)| s.is_none()),
+            "ohne QPC kein Stempel"
+        );
+    }
+
+    /// Ton ab dem ersten Paket, nur eine Pause in der Mitte: der Anfang bleibt bei 0.
+    #[test]
+    fn a_stream_that_starts_with_sound_has_no_leading_padding() {
+        let mut pkts = run_of(50, 0, 0, Some(Q0));
+        pkts.extend(run_of(
+            50,
+            3_000,
+            50 * 160,
+            Some(Q0 + 50 * 100_000 + 25_000_000),
+        ));
+        let (out, _) = feed(16_000, 1, &pkts);
+        let on = onsets(&out);
+        assert_eq!(on.len(), 2, "{on:?}");
+        assert!(on[0] <= 480, "Ton ab Anfang, nicht bei {}", on[0]);
+        // 0,5 s Ton, 2,5 s Pause.
+        assert!(on[1].abs_diff(8_000 + 40_000) <= 480, "{on:?}");
+    }
+
+    /// Ein Haenger der Planung des Capture-Threads (Wanduhr springt 400 ms, die Pakete
+    /// selbst schliessen nahtlos an) ist KEINE Stille: nichts wird eingeschoben.
+    #[test]
+    fn a_scheduling_stall_is_not_silence() {
+        let mut pkts = run_of(50, 0, 0, Some(Q0));
+        pkts.extend(run_of(50, 500 + 400, 50 * 160, Some(Q0 + 50 * 100_000)));
+        let (out, _) = feed(16_000, 1, &pkts);
+        assert_eq!(onsets(&out).len(), 1, "ein durchgehender Ton");
+        // 100 Pakete a 160 Frames, nichts zusaetzlich (bis auf den Rest im Block).
+        assert!(out.len().abs_diff(16_000) <= 480, "{} Samples", out.len());
+    }
+
+    /// Ein kurzer Anlauf (Treiber braucht 100 ms bis zum ersten Paket) wird nicht
+    /// als Stille aufgefuellt.
+    #[test]
+    fn a_short_start_up_delay_is_not_padded() {
+        let pkts = run_of(100, 100, 0, Some(Q0));
+        let (out, _) = feed(16_000, 1, &pkts);
+        assert!(onsets(&out)[0] <= 480);
+        assert!(out.len().abs_diff(16_000) <= 480, "{} Samples", out.len());
+    }
+
+    /// Der Weg ueber den Resampler (48 kHz Stereo wie ein echtes Geraet): 3 s Stille am
+    /// Anfang, danach 1 s Ton, 2 s Pause, 1 s Ton. Die Offsets stehen beim 16-kHz-Ausgang.
+    #[test]
+    fn the_padding_survives_resampling_from_48_khz_stereo() {
+        let packet = |wall_ms: u64, pos: u64, qpc: u64| Pkt {
+            wall_ms,
+            frames: 480,
+            pos,
+            qpc: Some(qpc),
+            level: 0.5,
+        };
+        // 480 Frames bei 48 kHz = 10 ms = 100 000 (100 ns).
+        let first: Vec<Pkt> = (0..100)
+            .map(|k| packet(3_000 + 10 * k, 480 * k, Q0 + 100_000 * k))
+            .collect();
+        let second: Vec<Pkt> = (0..100)
+            .map(|k| {
+                packet(
+                    6_010 + 10 * k,
+                    480 * (100 + k),
+                    Q0 + 100_000 * (100 + k) + 20_000_000,
+                )
+            })
+            .collect();
+        let pkts: Vec<Pkt> = first.into_iter().chain(second).collect();
+        let (out, _) = feed(48_000, 2, &pkts);
+        let on = onsets(&out);
+        assert_eq!(on.len(), 2, "{on:?}");
+        // 3 s minus 10 ms Stille, dann der Ton (der Resampler verschmiert um einige Millisekunden).
+        assert!(on[0].abs_diff(47_840) <= 1_600, "erster Ton bei {}", on[0]);
+        // Ton 1 s, Pause 2 s: der zweite Ton 3 s nach dem Beginn des ersten.
+        assert!(
+            on[1].abs_diff(on[0] + 16_000 + 32_000) <= 1_600,
+            "zweiter Ton bei {} nach {}",
+            on[1],
+            on[0]
+        );
+    }
+
+    /// Ein korrupter QPC-Sprung (Stunden) wird wie ein korrupter Positionssprung auf die
+    /// Wanduhr-Grenze gekuerzt, nicht stundenlang aufgefuellt.
+    #[test]
+    fn an_absurd_qpc_gap_is_capped_by_the_wall_clock() {
+        let mut pkts = run_of(10, 0, 0, Some(Q0));
+        pkts.extend(run_of(
+            10,
+            200,
+            10 * 160,
+            Some(Q0 + 10 * 100_000 + 36_000_000_000),
+        ));
+        let (out, _) = feed(16_000, 1, &pkts);
+        // Hoechstens Wanduhr (0,1 s) + 2 s Toleranz Stille dazwischen, nie Stunden.
+        assert!(out.len() < 16_000 * 3, "{} Samples", out.len());
     }
 }
