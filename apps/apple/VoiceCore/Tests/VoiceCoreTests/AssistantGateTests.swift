@@ -383,6 +383,7 @@ final class AssistantGateTests: XCTestCase {
                 case .neutral:
                     if AssistantTurnPart.note(for: .neutral, quote: false) == nil { violations.append("Vorlage ohne Kennzeichnung: \(text)") }
                 case .announcement: break
+                case .conversational, .summarized: violations.append("Einordnung des Stils natural im Stil verbatim: \(text)")
                 }
             }
         }
@@ -418,6 +419,7 @@ final class AssistantGateTests: XCTestCase {
                 case .inventory, .neutral:
                     if !u.sources.isEmpty || u.quote { violations.append("Systemsatz mit Quelle oder als Zitat: \(u.text)") }
                 case .announcement: break
+                case .conversational, .summarized: violations.append("Einordnung des Stils natural im Stil verbatim: \(u.text)")
                 }
             }
         }

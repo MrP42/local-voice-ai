@@ -24,6 +24,13 @@ final class BookTalkSpeaker {
     /// Satzes (`enqueue(_:generation:start:)`), im selben Lock wie die Erhöhung der Generation.
     var onSentenceStarted: ((String) -> Void)?
     var onSentenceFinished: ((String) -> Void)?
+    /// Gesprächsmodus („Sprechen“): Beginn und Ende JEDER Einheit der Warteschlange, auch von Ansagen und Überbrückungen. Der Beginn
+    /// kommt NACH dem tatsächlichen Klangbeginn (wie `onSentenceStarted`, auf dem MainActor, nie im Lock des Starts); das Ende immer,
+    /// wenn eine begonnene Einheit nicht mehr klingt: zu Ende gespielt, abgebrochen (hängendes Audio, abgebrochene Systemstimme)
+    /// oder durch `stop()`. Nie ein Ende ohne Beginn und nie zwei Enden zu einem Beginn. Bei einem Satz kommt `onSentenceFinished`
+    /// vor `onUnitEnded`. Ein `stop()` meldet das Ende SYNCHRON (der Aufrufer von `stop()` ist dann noch mittendrin).
+    var onUnitStarted: (() -> Void)?
+    var onUnitEnded: (() -> Void)?
     /// Wiedergabesperre des Gesprächsmodus („verworfen ab Generation g“, vom Kern im Lock der Freigabe vorgerückt). Ein Satz einer
     /// verworfenen Generation startet nie: Der TATSÄCHLICHE Start (Systemstimme: `synth.speak`, Phonon: Einreihen des ersten
     /// hörbaren Tons) läuft als Body von `gate.start(generation, body)`, also im selben Lock, in dem die Generation steigt; nach
@@ -53,13 +60,34 @@ final class BookTalkSpeaker {
     private var language = BookTalkLanguage.de
     private var phononFailed = false
     private let system = SystemSpeech()
+    /// Haltezustand (Gesprächsmodus, `hold()`/`release()`); eigene Klasse, weil der Start einer Einheit ihn auf beliebigem Thread liest.
+    private let holdState = HoldState()
+    /// Eine Einheit klingt (Beginn gemeldet, Ende noch nicht): Grundlage dafür, dass jedem `onUnitStarted` genau ein `onUnitEnded` folgt.
+    private var soundingUnit = false
 
-    /// Neue Antwort: alles Alte verwerfen.
+    /// Neue Antwort: alles Alte verwerfen (auch das Halten).
     func begin(language: BookTalkLanguage) {
         stop()
         self.language = language
         inputFinished = false
         announced = false
+    }
+
+    /// Gesprächsmodus: Der Nutzer spricht. Ab jetzt beginnt nichts Neues. Eine Einheit, die schon klingt, klingt weiter (das
+    /// entscheidet die Richtlinie vorher: sie meldet Halten nur, wenn nichts klingt). Noch nicht Begonnenes wird zurückgenommen:
+    /// Die Warteschlange gibt nichts mehr heraus (kein Warten in einer Schleife: die Ausgabe endet, `release()` stößt sie wieder an),
+    /// und eine Einheit, die schon in der Synthese ist, aber noch nicht klingt, wird am Start abgewiesen (siehe `start`): kein Aufruf
+    /// des Starts im Kern (kein `commitStart`, keine Marke), kein Ton. Sie wird danach wieder vorn eingereiht und später neu gesprochen.
+    /// Ohne `hold()` bleibt das Verhalten unverändert (Buch-Gespräch).
+    func hold() { holdState.hold() }
+
+    /// Gesprächsmodus: Halten beenden. Die Ausgabe läuft mit dem, was wartet, weiter; ist nichts mehr da und kam das Ende der Eingabe
+    /// schon, meldet `onIdle`. Ohne vorheriges `hold()` wirkungslos.
+    func release() {
+        guard holdState.release() else { return }
+        // Läuft die Ausgabe noch (eine Einheit in der Synthese), reiht sie sich am Ende von `pump()` selbst wieder ein.
+        guard task == nil else { return }
+        if queue.isEmpty { finishIfDrained() } else { pump() }
     }
 
     /// `generation`: Freigabe-Generation des Satzes (nur mit `gate`; sonst ohne Bedeutung). `start`: der atomare Start dieses
@@ -77,7 +105,8 @@ final class BookTalkSpeaker {
         if task == nil { finishIfDrained() }
     }
 
-    /// Sofort still: Warteschlange leer, Ausgabe aus, Vorsynthetisiertes verworfen. `onIdle` kommt nicht.
+    /// Sofort still: Warteschlange leer, Ausgabe aus, Vorsynthetisiertes verworfen, Halten aufgehoben. `onIdle` kommt nicht. Klang eine
+    /// Einheit, kommt `onUnitEnded` (zuletzt, nach dem Aufräumen).
     func stop() {
         generation += 1
         queue.removeAll()
@@ -87,6 +116,10 @@ final class BookTalkSpeaker {
         isActive = false
         PhononEngine.shared.silence()
         system.stop()
+        // Das Halten erst NACH dem Stillstellen der Stimme löschen: Ein Start, der auf einem anderen Thread gerade jetzt ankommt, wird
+        // so noch abgewiesen (oder trifft auf eine stillgelegte Stimme), statt zwischen Löschen und Stillstellen durchzurutschen.
+        holdState.reset()
+        endUnit()
     }
 
     /// Modell und Stimme vorwärmen, damit der erste Satz schnell klingt.
@@ -102,11 +135,13 @@ final class BookTalkSpeaker {
 
     private func pump() {
         guard task == nil else { return }
-        let g = generation
         isActive = true
+        // Gehalten: nichts Neues aus der Warteschlange; `release()` stößt die Ausgabe wieder an.
+        guard !holdState.isHeld else { return }
+        let g = generation
         task = Task { [weak self] in
             if self?.conversationMode != true { Self.activatePlayback() }
-            while let self, g == self.generation, !self.queue.isEmpty {
+            while let self, g == self.generation, !self.queue.isEmpty, !self.holdState.isHeld {
                 let item = self.queue.removeFirst()
                 let text = item.text
                 // Verworfene Generation: der Satz startet nicht (die Sperre steht, sobald die Erhöhung zurückgekehrt ist). Die Ausgabe
@@ -114,16 +149,34 @@ final class BookTalkSpeaker {
                 // Marke „verworfen“ erst im `start`; hier wird nur früh ausgestiegen.
                 guard self.permits(item.generation) else { self.reject(item); self.stop(); break }
                 let begun = StartFlag()
+                self.holdState.clearWithheld()
                 let played = await self.speak(item, generation: g, begun: begun)
-                if played, g == self.generation { self.onSentenceFinished?(text) }
+                // Wurde der Start dieser Einheit wegen des Haltens abgewiesen? (Merker wird hier verbraucht, nie mitgeschleppt.)
+                let withheld = self.holdState.takeWithheld()
+                // `stop()` (auch aus einem Rückruf) hat aufgeräumt, einschließlich des Endes einer klingenden Einheit.
+                guard g == self.generation else { break }
+                if played {
+                    self.onSentenceFinished?(text)
+                    guard g == self.generation else { break }
+                }
+                // Eine begonnene Einheit klingt nicht mehr (fertig oder abgebrochen); nach dem Ende des Satzes. Der Rückruf kann die
+                // Antwort abbrechen (`stop()`): danach nichts mehr anfassen.
+                self.endUnit()
+                guard g == self.generation else { break }
                 // Start abgewiesen (Widerruf): nichts begann, der Satz zählt als nicht gesprochen; die Ausgabe endet still.
-                if !played, g == self.generation, !self.permits(item.generation) { self.stop(); break }
+                if !played, !self.permits(item.generation) { self.stop(); break }
+                // Zurückgehalten (Nutzer spricht): nichts klang, nichts ist markiert, kein Fehler und kein `stop()`. Die Einheit kommt
+                // wieder nach vorn; die Ausgabe endet hier und läuft mit `release()` weiter.
+                if !played, withheld { self.queue.insert(item, at: 0); break }
                 // Kein Start, aber auch kein Widerruf (Audio steht, Strom abgebrochen): „fehlgeschlagen“, nie „ausgeführt“.
-                if !played, !begun.value, g == self.generation { item.failed?() }
+                if !played, !begun.value { item.failed?() }
             }
             guard let self, g == self.generation else { return }
             self.task = nil
-            self.finishIfDrained()
+            // Gehalten: weder „alles gesprochen“ melden noch weitermachen; `release()` entscheidet. Sonst: nichts mehr da (fertig) oder
+            // ein `release()` kam schon, während die zurückgehaltene Einheit noch zurückkehrte (dann läuft sie jetzt).
+            guard !self.holdState.isHeld else { return }
+            if self.queue.isEmpty { self.finishIfDrained() } else { self.pump() }
         }
     }
 
@@ -149,7 +202,13 @@ final class BookTalkSpeaker {
         }
         let chosen = base
         let text = item.text
+        let holder = holdState
         return { [weak self] body in
+            // Gehalten (Nutzer spricht): VOR dem Start im Kern. `chosen` wird nicht gerufen (kein `commitStart`, keine Marke, kein Ton),
+            // die Einheit merkt „zurückgehalten“ und meldet `false`; `pump()` reiht sie wieder vorn ein, ohne `failed` und ohne `stop()`.
+            // Der Lock des Halters ist ein Blatt: Er wird nie gehalten, während der Lock des Kerns genommen wird. Ein Halten, das genau
+            // jetzt beginnt, kommt zu spät; die Richtlinie fängt diesen Wettlauf über `unitStarted` (`releaseAnswer`) auf.
+            if holder.refuseIfHeld() { return false }
             var started = true
             if let chosen { started = chosen(body) } else { body() }
             guard started else { return false }
@@ -169,6 +228,18 @@ final class BookTalkSpeaker {
         guard g == generation else { return }
         if !announced { announced = true; onAudible?() }
         onSentenceStarted?(text)
+        // Der Rückruf des Satzes kann die Ausgabe abgebrochen haben (`stop()`): dann gab es für diese Einheit keinen Beginn, also auch
+        // kein Ende zu melden.
+        guard g == generation else { return }
+        soundingUnit = true
+        onUnitStarted?()
+    }
+
+    /// Eine begonnene Einheit klingt nicht mehr: genau einmal `onUnitEnded` zu jedem gemeldeten `onUnitStarted`.
+    private func endUnit() {
+        guard soundingUnit else { return }
+        soundingUnit = false
+        onUnitEnded?()
     }
 
     /// Folgetöne eines begonnenen Satzes (Synthese in Stücken, nur auf der Audioebene): jedes Stück geht durch dieselbe
@@ -179,7 +250,8 @@ final class BookTalkSpeaker {
     }
 
     private func finishIfDrained() {
-        guard queue.isEmpty, inputFinished else { return }
+        // Gehalten ist nicht „alles gesprochen“: `release()` meldet das Ende, wenn nichts mehr wartet.
+        guard queue.isEmpty, inputFinished, !holdState.isHeld else { return }
         isActive = false
         onIdle?()
     }
@@ -225,6 +297,38 @@ final class BookTalkSpeaker {
         guard permits(sentenceGeneration) else { reject(item); return false }
         return await system.speak(text, language: language, voiceID: voiceID, start: start(item, generation: g, begun: begun))
     }
+}
+
+/// Haltezustand des Sprechers (Gesprächsmodus). Gesetzt und gelesen auf dem MainActor, gelesen und „zurückgehalten“ gemerkt aber auch
+/// im Start einer Einheit auf beliebigem Thread (der unter dem Lock des Kerns läuft): eigener kurzer Lock, nur `withLock`, nie I/O,
+/// nie ein Rückruf, und nie gehalten, während ein anderer Lock genommen wird (Blatt in der Lockordnung).
+private final class HoldState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var held = false
+    private var withheld = false
+
+    var isHeld: Bool { lock.withLock { held } }
+
+    func hold() { lock.withLock { held = true } }
+
+    /// Beendet das Halten; `true`, wenn es gehalten war.
+    func release() -> Bool { lock.withLock { let was = held; held = false; return was } }
+
+    /// Aus dem Start einer Einheit: ist gehalten, merkt es sich „zurückgehalten“ im selben Zug (atomar mit der Prüfung) und meldet `true`.
+    func refuseIfHeld() -> Bool {
+        lock.withLock {
+            if held { withheld = true }
+            return held
+        }
+    }
+
+    func clearWithheld() { lock.withLock { withheld = false } }
+
+    /// Liest und löscht den Merker „zurückgehalten“.
+    func takeWithheld() -> Bool { lock.withLock { let was = withheld; withheld = false; return was } }
+
+    /// `stop()`/`begin()`: das Halten ist aufgehoben, nichts bleibt zurück.
+    func reset() { lock.withLock { held = false; withheld = false } }
 }
 
 /// Merkt, ob der tatsächliche Start eines Satzes lief (gesetzt im Lock des Starts, gelesen auf dem MainActor).

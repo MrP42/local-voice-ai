@@ -1,0 +1,2029 @@
+import Foundation
+import XCTest
+@testable import VoiceCore
+
+// Gesprächsmodus „Sprechen“, Stil `natural` (ADR-0028 E4.2c, Teil B): Sprecher und Denker, Suche mit Überbrückung, Protokollfolge,
+// Ansagen für eine langsame Antwort. Künstliche Modelle unterscheiden Sprecher- und Denker-Aufruf an der Anweisung (nur die des
+// Sprechers nennt „SUCHE:“). Nur synthetische Daten.
+//
+// Fehlerfälle dieses Pakets (Nebenläufigkeit, Abbruch mitten im Vorgang, voller Datenträger, fehlendes Gerät, Absturz des Modells):
+// - Nebenläufigkeit: `testConcurrentNaturalRequests…`, `testCommitNotesAttachAndNoteRaceNeverLosesTheCommit`, Ansagen nie nebenläufig
+//   (`testFillerSteps…`).
+// - Abbruch mitten im Vorgang: `testEveryPrefixOfAJournal…`, `testCancel…`, `testRevocationBetweenThePhases…`, `testFillersEnd…`.
+// - Voller Datenträger / Schreibfehler: `testFailing…LineMeansNoModelAndNoOutput`, `testNoRetrievalWhenTheDataRoundLineFails`.
+// - Fehlendes Gerät / Modell nicht verfügbar: `testModelErrorsMapToTheFailureOfTheRun`.
+// - Absturz eines Kindprozesses (hier: das Modell bricht mitten im Strom mit einem Fehler ab): `testModelCrashInTheMiddleOfTheThinkerStream…`.
+
+// MARK: Hilfen
+
+private func eventually(timeout: TimeInterval = 20, _ condition: () -> Bool) async {
+    let deadline = Date().addingTimeInterval(timeout)
+    while !condition(), Date() < deadline { try? await Task.sleep(nanoseconds: 5_000_000) }
+}
+
+private enum Role: String, Sendable { case speaker, thinker }
+
+private final class ModelCalls: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [(role: Role, instructions: String, prompt: String)] = []
+    private var terminated = 0
+    /// Nummer des Aufrufs dieser Rolle (ab 1).
+    func hit(_ role: Role, _ instructions: String, _ prompt: String) -> Int {
+        lock.withLock {
+            entries.append((role, instructions, prompt))
+            return entries.filter { $0.role == role }.count
+        }
+    }
+    func ended() { lock.withLock { terminated += 1 } }
+    var roles: [Role] { lock.withLock { entries.map(\.role) } }
+    func prompts(_ role: Role) -> [String] { lock.withLock { entries.filter { $0.role == role }.map(\.prompt) } }
+    func instructions(_ role: Role) -> [String] { lock.withLock { entries.filter { $0.role == role }.map(\.instructions) } }
+    func count(_ role: Role) -> Int { lock.withLock { entries.filter { $0.role == role }.count } }
+    var terminations: Int { lock.withLock { terminated } }
+}
+
+/// Eine Rolle des künstlichen Modells: Stücke mit Pause VOR dem i-ten Stück, danach Ende, Fehler oder Hängen.
+private struct Script: Sendable {
+    var pieces: [String] = []
+    var pausesMs: [UInt64] = []
+    var fail: (any Error)?
+    var hang = false
+    /// Die ersten so vielen Aufrufe dieser Rolle werfen `contextOverflow`.
+    var overflows = 0
+}
+
+private struct RoleModel: BookTalkModel {
+    var speaker = Script()
+    var thinker = Script()
+    var calls = ModelCalls()
+    var onCall: (@Sendable (Role) -> Void)?
+
+    func stream(instructions: String, prompt: String, maxTokens: Int) -> AsyncThrowingStream<String, Error> {
+        let role: Role = instructions.contains(AssistantNatural.searchMarker) ? .speaker : .thinker
+        let n = calls.hit(role, instructions, prompt)
+        onCall?(role)
+        let script = role == .speaker ? speaker : thinker
+        let calls = calls
+        return AsyncThrowingStream { c in
+            if n <= script.overflows {
+                c.finish(throwing: BookTalkModelError.contextOverflow)
+                return
+            }
+            let task = Task {
+                for (i, p) in script.pieces.enumerated() {
+                    let pause = i < script.pausesMs.count ? script.pausesMs[i] : 0
+                    if pause > 0 { try? await Task.sleep(nanoseconds: pause * 1_000_000) }
+                    if Task.isCancelled { return }
+                    c.yield(p)
+                }
+                if script.hang {
+                    while !Task.isCancelled { try? await Task.sleep(nanoseconds: 10_000_000) }
+                    return
+                }
+                c.finish(throwing: script.fail)
+            }
+            c.onTermination = { _ in calls.ended(); task.cancel() }
+        }
+    }
+}
+
+private struct Crash: Error {}
+private struct DiskFull: Error {}
+
+private final class Box<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: T
+    init(_ value: T) { stored = value }
+    var value: T {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
+}
+
+private final class FailSwitch: @unchecked Sendable {
+    private let lock = NSLock()
+    private var flag = false
+    var on: Bool {
+        get { lock.withLock { flag } }
+        set { lock.withLock { flag = newValue } }
+    }
+}
+
+/// Eine Quelle, die den Abruf bemerkt (Bereich Notizen) und dabei einen Zustand der Protokolldatei festhält.
+private struct ProbeSource: AssistantSource {
+    let area: AssistantArea = .notes
+    var onSearch: @Sendable () -> Void
+    func items() async -> [AssistantItem] { [] }
+    func search(_ question: String, limit: Int) async -> [AssistantPassage] {
+        onSearch()
+        return []
+    }
+}
+
+private final class Snaps: @unchecked Sendable {
+    private let lock = NSLock()
+    private var texts: [String] = []
+    func add(_ text: String) { lock.withLock { texts.append(text) } }
+    var all: [String] { lock.withLock { texts } }
+}
+
+private struct Seen {
+    struct Sentence: Equatable {
+        let text: String
+        let status: AssistantSentenceStatus
+        let sources: [AssistantPassage]
+    }
+    let events: [AssistantEvent]
+    var sentences: [Sentence] {
+        events.compactMap { e in
+            if case .sentence(_, _, let t, _, let st, let src, _) = e { Sentence(text: t, status: st, sources: src) } else { nil }
+        }
+    }
+    var statuses: [AssistantSentenceStatus] { sentences.map(\.status) }
+    var texts: [String] { sentences.map(\.text) }
+    var spoken: [String] { sentences.filter { $0.status != .announcement }.map(\.text) }
+    var announcements: [String] { sentences.filter { $0.status == .announcement }.map(\.text) }
+    var answer: AssistantAnswer? { if case .done(_, let a)? = events.last { a } else { nil } }
+    var failure: AssistantFailure? { if case .failed(_, let f)? = events.last { f } else { nil } }
+    var sourceEvents: [[AssistantPassage]] {
+        events.compactMap { if case .sources(_, _, let p) = $0 { p } else { nil } }
+    }
+    var progress: [AssistantProgress] {
+        events.compactMap { if case .progress(_, _, let p) = $0 { p } else { nil } }
+    }
+    private static func shape(_ p: AssistantProgress) -> String {
+        switch p {
+        case .speaker: "speaker"
+        case .searching: "searching"
+        case .found(let titles): "found:" + titles.joined(separator: ",")
+        case .composing: "composing"
+        case .draft: "draft"
+        }
+    }
+    /// Der Fortschritt in kurzer Form (Entwürfe als „draft“), damit die Reihenfolge lesbar bleibt.
+    var progressShape: [String] { progress.map(Self.shape) }
+    /// Fortschritt und Sätze in der Reihenfolge des Eintreffens (Sätze als „sentence“, Entwürfe als „draft“).
+    var orderShape: [String] {
+        events.compactMap { e in
+            switch e {
+            case .progress(_, _, let p): Self.shape(p)
+            case .sentence: "sentence"
+            default: nil
+            }
+        }
+    }
+    var drafts: [String] { progress.compactMap { if case .draft(let t) = $0 { t } else { nil } } }
+}
+
+private func collect(_ s: AssistantSession, _ r: AssistantRequest) async -> Seen {
+    var out: [AssistantEvent] = []
+    for await e in s.events(r) { out.append(e) }
+    return Seen(events: out)
+}
+
+private let castorp = "Hans Castorp fährt ins Sanatorium nach Davos und besucht dort seinen Vetter Joachim."
+private let stay = "Er bleibt drei Wochen."
+private let nordlicht = "Anna übernimmt die Planung für das Projekt Nordlicht bis Freitag."
+/// Kein Eigendatenbezug (kein Titel, kein Stamm, kein Besitz): geht zum Sprecher.
+private let castorpQuestion = "Wohin fährt Hans Castorp?"
+private let weather = "Wie ist das Wetter?"
+/// Direkter Inhaltsbezug („meinem“).
+private let ownQuestion = "Was steht in meinem Buch über Davos?"
+private let inventoryQuestion = "Welche Bücher habe ich?"
+private let searchLine = "SUCHE: Davos Sanatorium Castorp\n"
+
+private func journalTags(_ lines: [AssistantJournalLine]) -> [String] {
+    lines.compactMap { l -> String? in
+        switch l.t {
+        case .start: "start:\(l.style?.rawValue ?? "verbatim")"
+        case .round: "round:\(l.round?.rawValue ?? "-")/\(l.reason?.rawValue ?? "-")"
+        case .areas: "areas:" + (l.areas ?? []).joined(separator: ",")
+        case .step: "step:\(l.verdict?.rawValue ?? "-")"
+        case .end: "end"
+        default: nil
+        }
+    }
+}
+
+private func naturalTurn(_ user: String, _ assistant: String, round: AssistantRoundKind, sources: [AssistantPassage] = []) -> AssistantTurn {
+    AssistantTurn(user: user, assistant: assistant, sources: sources, general: sources.isEmpty,
+                  parts: [AssistantTurnPart(text: assistant, unsourced: false,
+                                            note: sources.isEmpty ? AssistantTurnPart.conversationNote : AssistantTurnPart.summaryNote)],
+                  model: "Test", at: Date(), round: round, style: .natural)
+}
+
+final class AssistantNaturalTests: XCTestCase {
+    private var dirs: [URL] = []
+
+    override func tearDown() {
+        for d in dirs { try? FileManager.default.removeItem(at: d) }
+        dirs = []
+        super.tearDown()
+    }
+
+    private func tempDir() -> URL {
+        let d = FileManager.default.temporaryDirectory.appendingPathComponent("assistant-natural-\(UUID().uuidString)", isDirectory: true)
+        dirs.append(d)
+        return d
+    }
+
+    /// Die Standardwerte der Floskeln sind aus (`bridge`, `fillers`); wer die Zeitgeber testet, gibt `first`/`second` an und schaltet sie damit ein.
+    private func config(bridge: Bool = false, cloud: Bool = false, maxSentences: Int = 4, passageLimit: Int = 4,
+                        passageChars: Int = 2_400, first: Int? = nil, second: Int? = nil, timeout: TimeInterval = 5,
+                        tokens: Int = 4_096) -> AssistantConfig {
+        AssistantConfig(modelLabel: "Test", isCloud: cloud, contextTokens: tokens, maxAnswerTokens: 400, userName: "Patrick",
+                        timeout: timeout, style: .natural, bridge: bridge, naturalPassageLimit: passageLimit,
+                        naturalPassageChars: passageChars, naturalMaxSentences: maxSentences, fillers: first != nil || second != nil,
+                        fillerFirstMs: first ?? 1_200, fillerSecondMs: second ?? 8_000)
+    }
+
+    private func books() async -> AssistantKnowledge {
+        let corpus = AssistantCorpus()
+        await corpus.upsert(assistantDoc("b1", "Der Zauberberg", detail: "Thomas Mann", sections: [("S. 12", castorp), ("S. 13", stay)]))
+        return AssistantKnowledge(corpus: corpus)
+    }
+
+    private func booksAndMeeting() async -> AssistantKnowledge {
+        let corpus = AssistantCorpus()
+        await corpus.upsert(assistantDoc("b1", "Der Zauberberg", detail: "Thomas Mann", sections: [("S. 12", castorp), ("S. 13", stay)]))
+        await corpus.upsert(assistantDoc("t1", "Besprechung", area: .transcripts, sections: [("00:14:03", nordlicht)]))
+        return AssistantKnowledge(corpus: corpus)
+    }
+
+    private func newSession(_ model: any BookTalkModel, config c: AssistantConfig? = nil, history: [AssistantTurn] = [],
+                            audit: AssistantAuditLog? = nil, knowledge k: AssistantKnowledge? = nil, cloudConsent: Bool = true,
+                            stepIndex: AssistantStepIndex = AssistantStepIndex()) async -> AssistantSession {
+        let know: AssistantKnowledge
+        if let k { know = k } else { know = await books() }
+        return AssistantSession(model: model, knowledge: know, config: c ?? config(), history: history, audit: audit, released: true,
+                                cloudConsent: cloudConsent, stepIndex: stepIndex)
+    }
+
+    private func ask(_ s: AssistantSession, _ text: String = castorpQuestion, id: String = "r1") async -> Seen {
+        await collect(s, AssistantRequest(requestId: id, text: text))
+    }
+
+    private func close(_ s: AssistantSession, _ id: String = "r1", user: String = castorpQuestion) async {
+        await s.commit(requestId: id, user: user, spoken: .all, interrupted: false)
+    }
+
+    private func journal(_ audit: AssistantAuditLog, _ id: String = "r1") -> [AssistantJournalLine] {
+        let raw = (try? String(contentsOf: audit.url, encoding: .utf8)) ?? ""
+        return raw.split(separator: "\n").compactMap { AssistantJournalFold.journal(Data($0.utf8)) }.filter { $0.req == id }
+    }
+
+    private func rawJournal(_ audit: AssistantAuditLog) -> String { (try? String(contentsOf: audit.url, encoding: .utf8)) ?? "" }
+
+    private func failingAppender(_ needle: String, _ sw: FailSwitch) -> @Sendable (URL, Data) throws -> Void {
+        { url, data in
+            if sw.on, String(decoding: data, as: UTF8.self).contains(needle) { throw DiskFull() }
+            try AssistantAuditWriter.appendFile(url, data)
+        }
+    }
+
+    private let search = Script(pieces: [searchLine])
+    private let answer = Script(pieces: ["Castorp fährt ins Sanatorium nach Davos. ", "Dort besucht er seinen Vetter Joachim."])
+
+    // MARK: Direkte Antwort des Sprechers
+
+    /// Wetterfrage: Der Sprecher antwortet frei, ohne Auszüge, ohne Quellen, ohne Abruf; kein Denker.
+    func testWeatherQuestionIsAnsweredDirectlyAsConversationalWithoutSources() async {
+        let model = RoleModel(speaker: Script(pieces: ["Das Wetter kenne ich leider nicht. ", "Ich habe keinen Internetzugang."]))
+        let s = await newSession(model)
+        let seen = await ask(s, weather)
+
+        XCTAssertEqual(seen.statuses, [.conversational, .conversational])
+        XCTAssertEqual(seen.spoken, ["Das Wetter kenne ich leider nicht.", "Ich habe keinen Internetzugang."])
+        XCTAssertTrue(seen.sentences.allSatisfy { $0.sources.isEmpty })
+        XCTAssertEqual(model.calls.roles, [.speaker], "kein Denker")
+        let prompt = model.calls.prompts(.speaker)[0]
+        XCTAssertFalse(prompt.contains("AUSZÜGE"), "keine Auszüge im Prompt des Sprechers")
+        XCTAssertFalse(prompt.contains("Castorp"))
+        XCTAssertEqual(seen.sourceEvents, [[]], "nur die leere Vorab-Anzeige")
+        guard let a = seen.answer else { return XCTFail("done fehlt: \(seen.events)") }
+        XCTAssertEqual(a.counts.conversational, 2)
+        XCTAssertEqual(a.counts.summarized, 0)
+        XCTAssertEqual(a.round, .general)
+        XCTAssertTrue(a.sources.isEmpty)
+        XCTAssertTrue(a.general)
+        XCTAssertFalse(a.unsourced)
+    }
+
+    func testSpeakerPromptIsTheSpeakerInstructionAndNamesTheSearchProtocol() async {
+        let model = RoleModel(speaker: Script(pieces: ["Hallo!"]))
+        let s = await newSession(model)
+        _ = await ask(s, "Hallo")
+        let instructions = model.calls.instructions(.speaker)[0]
+        XCTAssertTrue(instructions.contains("SUCHE:"))
+        XCTAssertTrue(instructions.contains("Internetzugang"))
+        XCTAssertFalse(instructions.contains("AUSZÜGE"))
+    }
+
+    // MARK: Suche
+
+    /// `SUCHE:`-Zeile: Überbrückung zuerst (mit `bridge`), dann `.summarized` mit den Auszügen als Quellen; nichts von der Zeile wird ausgegeben.
+    func testSearchLineGivesBridgeThenSummarizedSentencesWithSources() async {
+        let model = RoleModel(speaker: search, thinker: answer)
+        let s = await newSession(model, config: config(bridge: true))
+        let seen = await ask(s)
+
+        XCTAssertEqual(seen.statuses, [.announcement, .summarized, .summarized])
+        XCTAssertTrue(AssistantNatural.bridges.contains(seen.texts[0]))
+        XCTAssertEqual(seen.spoken, ["Castorp fährt ins Sanatorium nach Davos.", "Dort besucht er seinen Vetter Joachim."])
+        XCTAssertFalse(seen.texts.joined().contains("SUCHE"))
+        XCTAssertFalse(seen.texts.joined().contains("Sanatorium Castorp\n"))
+        for sentence in seen.sentences where sentence.status == .summarized {
+            XCTAssertEqual(Set(sentence.sources.map(\.itemId)), ["b1"])
+        }
+        XCTAssertEqual(model.calls.roles, [.speaker, .thinker])
+        let prompt = model.calls.prompts(.thinker)[0]
+        XCTAssertTrue(prompt.contains("AUSZÜGE"))
+        XCTAssertTrue(prompt.contains("Sanatorium"))
+        guard let a = seen.answer else { return XCTFail("done fehlt: \(seen.events)") }
+        XCTAssertEqual(a.counts.summarized, 2)
+        XCTAssertEqual(a.counts.conversational, 0)
+        XCTAssertEqual(a.round, .data)
+        XCTAssertEqual(a.sources.map(\.itemId), ["b1"])
+        XCTAssertEqual(a.text, "Castorp fährt ins Sanatorium nach Davos. Dort besucht er seinen Vetter Joachim.", "die Überbrückung ist nicht im Antworttext")
+        XCTAssertFalse(a.general)
+        XCTAssertEqual(seen.sourceEvents.count, 2, "leer vor dem Sprecher, dann die verwendeten Auszüge")
+        XCTAssertEqual(seen.sourceEvents[0], [])
+        XCTAssertEqual(seen.sourceEvents[1].map(\.itemId), ["b1"])
+    }
+
+    func testNoBridgeWithoutTheBridgeSetting() async {
+        let s = await newSession(RoleModel(speaker: search, thinker: answer), config: config(bridge: false))
+        let seen = await ask(s)
+        XCTAssertEqual(seen.statuses, [.summarized, .summarized])
+        XCTAssertTrue(seen.announcements.isEmpty)
+    }
+
+    /// Erkennung am Stromanfang: Groß-/Kleinschreibung, führende Leerzeile, Anführungszeichen, Markdown, Leerzeichen vor dem Doppelpunkt,
+    /// über Stückgrenzen hinweg.
+    func testSearchMarkerVariantsAreRecognized() async {
+        let variants: [[String]] = [
+            ["suche: Davos Sanatorium"], ["\nSUCHE: Davos Sanatorium"], ["\"Suche : Davos Sanatorium\""], ["  **SUCHE:** Davos Sanatorium"],
+            ["SU", "CHE", ": Da", "vos Sanatorium\n"], ["Suche:Davos Sanatorium"], ["Suche\u{00A0}: Davos Sanatorium"],
+        ]
+        for (i, pieces) in variants.enumerated() {
+            let model = RoleModel(speaker: Script(pieces: pieces), thinker: answer)
+            let s = await newSession(model)
+            let seen = await ask(s, castorpQuestion, id: "v\(i)")
+            XCTAssertEqual(seen.statuses, [.summarized, .summarized], "Variante \(i): \(pieces)")
+            XCTAssertEqual(model.calls.roles, [.speaker, .thinker], "Variante \(i)")
+            XCTAssertFalse(seen.texts.joined().lowercased().contains("suche"), "Variante \(i)")
+        }
+    }
+
+    /// Das Wort „suche“ mitten im Satz ist keine Suche; eine Protokollzeile hinter einem Satz wird nie gesprochen.
+    func testSucheInsideAnAnswerIsNoSearchAndProtocolLinesAreNeverSpoken() async {
+        let model = RoleModel(speaker: Script(pieces: ["Ich suche gern nach Kaffee. ", "Wirklich."]))
+        let seen = await ask(await newSession(model))
+        XCTAssertEqual(seen.spoken, ["Ich suche gern nach Kaffee.", "Wirklich."])
+        XCTAssertEqual(model.calls.roles, [.speaker])
+
+        let model2 = RoleModel(speaker: Script(pieces: ["Moin! ", "suche: Davos."]))
+        let seen2 = await ask(await newSession(model2))
+        XCTAssertEqual(seen2.spoken, ["Moin!"])
+        XCTAssertEqual(seen2.answer?.counts.droppedTemplate, 1, "die Protokollzeile ist verworfen")
+        XCTAssertEqual(model2.calls.roles, [.speaker], "keine Suche, wenn die Zeile nicht am Zeilenanfang oder in Großbuchstaben hinter einem Satzende steht")
+    }
+
+    /// Eine Suche ohne Suchwörter sucht mit der Frage.
+    func testEmptySearchWordsSearchWithTheQuestion() async {
+        let model = RoleModel(speaker: Script(pieces: ["SUCHE:\n"]), thinker: answer)
+        let seen = await ask(await newSession(model))
+        XCTAssertEqual(seen.statuses, [.summarized, .summarized])
+        XCTAssertTrue(model.calls.prompts(.thinker)[0].contains("Sanatorium"), "Treffer über die Frage")
+    }
+
+    func testSearchWordsAreAddedToTheQuestionForTheRetrieval() async {
+        // Die Frage allein trifft nichts; die Suchwörter des Sprechers führen zu den Auszügen.
+        let model = RoleModel(speaker: Script(pieces: ["SUCHE: Sanatorium Davos Vetter Joachim\n"]), thinker: answer)
+        let seen = await ask(await newSession(model), "Wie heißt der Mann?")
+        XCTAssertEqual(seen.statuses, [.summarized, .summarized])
+        XCTAssertTrue(model.calls.prompts(.thinker)[0].contains("Joachim"))
+    }
+
+    /// Direkter Inhaltsbezug überspringt den Sprecher.
+    func testDirectContentReferenceSkipsTheSpeaker() async {
+        let model = RoleModel(thinker: answer)
+        let s = await newSession(model, config: config(bridge: true))
+        let seen = await ask(s, ownQuestion)
+        XCTAssertEqual(model.calls.roles, [.thinker], "kein Sprecher-Aufruf")
+        XCTAssertEqual(seen.statuses, [.announcement, .summarized, .summarized])
+        XCTAssertEqual(seen.answer?.round, .data)
+    }
+
+    func testNoPassagesGiveTheFixedSentenceWithoutThinkerCall() async {
+        let model = RoleModel(speaker: Script(pieces: ["SUCHE: Einkaufsliste Kühlschrank Eier\n"]), thinker: answer)
+        let s = await newSession(model, config: config(bridge: true))
+        let seen = await ask(s, "Wie viele Eier brauche ich?")
+        XCTAssertEqual(seen.statuses.suffix(1), [.neutral])
+        XCTAssertEqual(seen.texts.last, AssistantNatural.nothingFoundSentence)
+        XCTAssertEqual(model.calls.roles, [.speaker], "der Denker läuft nicht")
+        XCTAssertEqual(seen.answer?.counts.neutral, 1)
+        XCTAssertEqual(seen.answer?.counts.summarized, 0)
+    }
+
+    func testInventoryQuestionIsAnsweredBySystemWithoutAnyModel() async {
+        let model = RoleModel(speaker: Script(pieces: ["Unsinn."]), thinker: Script(pieces: ["Unsinn."]))
+        let seen = await ask(await newSession(model), inventoryQuestion)
+        XCTAssertTrue(model.calls.roles.isEmpty, "kein Modell")
+        XCTAssertEqual(seen.statuses.first, .announcement)
+        XCTAssertTrue(seen.statuses.dropFirst().allSatisfy { $0 == .inventory })
+        XCTAssertFalse(seen.statuses.dropFirst().isEmpty)
+        XCTAssertEqual(seen.answer?.round, .data)
+    }
+
+    // MARK: Grenzen und Verwerfen
+
+    func testMaxSentencesLimitsTheFreeSentencesOfEachPhase() async {
+        let many = Script(pieces: ["Eins. ", "Zwei. ", "Drei. ", "Vier."])
+        let model = RoleModel(speaker: many)
+        let seen = await ask(await newSession(model, config: config(maxSentences: 2)))
+        XCTAssertEqual(seen.spoken, ["Eins.", "Zwei."])
+        XCTAssertEqual(seen.answer?.counts.conversational, 2)
+        await eventually { model.calls.terminations >= 1 }
+        XCTAssertGreaterThanOrEqual(model.calls.terminations, 1, "der Modellstrom wurde abgebrochen")
+
+        let model2 = RoleModel(speaker: search, thinker: many)
+        let seen2 = await ask(await newSession(model2, config: config(maxSentences: 3)), castorpQuestion, id: "r2")
+        XCTAssertEqual(seen2.spoken, ["Eins.", "Zwei.", "Drei."])
+    }
+
+    /// Sätze des Systems (Fehl-Vorlagen, feste Antworten, Überbrückung) spricht nur das System: Modelltext damit wird verworfen.
+    func testSystemSentencesFromTheModelAreDropped() async {
+        let speakerSaysIt = Script(pieces: ["Dazu finde ich in deinen Inhalten nichts. ", "Ich schaue kurz nach. ", "Hallo!"])
+        let seen = await ask(await newSession(RoleModel(speaker: speakerSaysIt)))
+        XCTAssertEqual(seen.spoken, ["Hallo!"])
+        XCTAssertEqual(seen.answer?.counts.droppedTemplate, 2)
+    }
+
+    func testSpeakerThatOnlySaysDroppedThingsGivesTheFixedNotUnderstoodSentence() async {
+        let seen = await ask(await newSession(RoleModel(speaker: Script(pieces: ["Dazu finde ich in deinen Inhalten nichts."]))))
+        XCTAssertEqual(seen.statuses, [.neutral])
+        XCTAssertEqual(seen.texts, [AssistantNatural.notUnderstoodSentence])
+        XCTAssertNil(seen.failure)
+    }
+
+    func testThinkerThatOnlySaysDroppedThingsGivesTheFixedNothingFoundSentence() async {
+        let thinker = Script(pieces: ["Dazu habe ich in deinen Inhalten nichts Passendes gefunden."])
+        let seen = await ask(await newSession(RoleModel(speaker: search, thinker: thinker)))
+        XCTAssertEqual(seen.statuses, [.neutral])
+        XCTAssertEqual(seen.texts, [AssistantNatural.nothingFoundSentence])
+    }
+
+    func testEmptySpeakerStreamIsAFailureOfTheModel() async {
+        let seen = await ask(await newSession(RoleModel(speaker: Script(pieces: []))))
+        XCTAssertEqual(seen.failure, .modelFailed)
+        XCTAssertTrue(seen.sentences.isEmpty)
+    }
+
+    func testTruncatedSentenceWithoutPunctuationIsDroppedAsFragment() async {
+        let seen = await ask(await newSession(RoleModel(speaker: Script(pieces: ["Hallo zusammen. ", "Und dann wollte ich noch"]))))
+        XCTAssertEqual(seen.spoken, ["Hallo zusammen."])
+        XCTAssertEqual(seen.answer?.counts.droppedFragment, 1)
+    }
+
+    // MARK: Überbrückung
+
+    /// Nie im Verlauf, nie im Antworttext, nie zweimal derselbe hintereinander (je Sitzung), reihum.
+    func testBridgeIsNeverInHistoryAndRotatesWithoutRepeating() async {
+        let model = RoleModel(speaker: search, thinker: answer)
+        let s = await newSession(model, config: config(bridge: true))
+        var bridges: [String] = []
+        for i in 0..<5 {
+            let id = "b\(i)"
+            let seen = await ask(s, castorpQuestion, id: id)
+            bridges += seen.announcements
+            await close(s, id)
+        }
+        XCTAssertEqual(bridges.count, 5)
+        for (a, b) in zip(bridges, bridges.dropFirst()) { XCTAssertNotEqual(a, b, "nie zweimal derselbe hintereinander") }
+        XCTAssertEqual(Set(bridges.prefix(AssistantNatural.bridges.count)).count, AssistantNatural.bridges.count, "reihum durch die ganze Liste")
+        XCTAssertTrue(bridges.allSatisfy { AssistantNatural.bridges.contains($0) })
+        let history = await s.history
+        XCTAssertEqual(history.count, 5)
+        for turn in history {
+            XCTAssertFalse(AssistantNatural.bridges.contains { turn.assistant.contains($0) })
+            XCTAssertFalse(turn.parts.contains { part in AssistantNatural.bridges.contains { part.text.contains($0) } })
+        }
+    }
+
+    func testBridgeRotationUnderConcurrentTakesIsBalanced() async {
+        let rotation = AssistantBridgeRotation()
+        let taken = await withTaskGroup(of: String.self) { group -> [String] in
+            for _ in 0..<40 { group.addTask { rotation.take() } }
+            var all: [String] = []
+            for await t in group { all.append(t) }
+            return all
+        }
+        for bridge in AssistantNatural.bridges {
+            XCTAssertEqual(taken.filter { $0 == bridge }.count, 40 / AssistantNatural.bridges.count)
+        }
+    }
+
+    /// Kein Ansage- oder Überbrückungstext enthält ein Stoppwort (stopp, stop, halt, warte, moment; normalisiert): Das Mikrofon könnte
+    /// die eigene Ausgabe sonst als Stoppbefehl hören.
+    func testNoAnnouncementOrBridgeTextContainsAStopWord() {
+        XCTAssertEqual(AssistantNatural.stoppWords, ["stopp", "stop", "halt", "warte", "moment"])
+        let preface = AssistantGrounding.quotePreface(for: assistantPassage(title: "Der Zauberberg", text: castorp))
+        let all = AssistantNatural.announcementTexts
+            + [AssistantGrounding.inventoryAnnouncement, AssistantGrounding.unsourcedAnnouncement, preface]
+        XCTAssertEqual(AssistantNatural.announcementTexts.count, AssistantNatural.bridges.count + 2)
+        XCTAssertEqual(AssistantNatural.bridges, ["Ich schaue kurz nach.", "Ich suche das heraus.", "Einen Augenblick, ich sehe nach.",
+                                                  "Das schlage ich kurz nach."])
+        XCTAssertEqual(AssistantNatural.fillerFirstSentence, "Einen Augenblick.")
+        XCTAssertEqual(AssistantNatural.fillerSecondSentence, "Das dauert noch etwas.")
+        for text in all {
+            let words = Set(AssistantGrounding.normalize(text).split(separator: " ").map(String.init))
+            XCTAssertTrue(words.isDisjoint(with: AssistantNatural.stoppWords), "Stoppwort in „\(text)“: \(words)")
+        }
+        // Die neuen Texte (Überbrückung, Ansagen für eine langsame Antwort) enthalten die Stoppwörter auch nicht als Wortteil.
+        // (Die vorhandene Ansage „Aus deinen Inhalten:“ des Stils verbatim enthält „halt“ nur als Teil von „Inhalten“; sie bleibt.)
+        for text in AssistantNatural.announcementTexts {
+            for stop in AssistantNatural.stoppWords {
+                XCTAssertFalse(text.lowercased().contains(stop), "Stoppwort „\(stop)“ in „\(text)“ (auch als Teil eines Wortes)")
+            }
+        }
+    }
+
+    // MARK: Protokollfolge
+
+    private func auditSession(_ model: any BookTalkModel, config c: AssistantConfig? = nil, history: [AssistantTurn] = [],
+                              knowledge: AssistantKnowledge? = nil) async -> (AssistantSession, AssistantAuditLog) {
+        let audit = AssistantAuditLog(directory: tempDir())
+        return (await newSession(model, config: c, history: history, audit: audit, knowledge: knowledge), audit)
+    }
+
+    /// Zeilenfolge je Variante; der Prüfer lässt genau sie zu.
+    func testJournalLineSequenceForEachVariant() async {
+        // 1. Nur Sprecher
+        let (s1, a1) = await auditSession(RoleModel(speaker: Script(pieces: ["Hallo zusammen."])))
+        _ = await ask(s1, "Hallo")
+        await close(s1, "r1", user: "Hallo")
+        XCTAssertEqual(journalTags(journal(a1)), ["start:natural", "round:general/naturalTalk", "areas:", "step:conversational", "end"])
+        XCTAssertEqual(AssistantProtocolOrder.check(journal(a1)), [])
+
+        // 2. Sprecher dann Daten, mit Überbrückung
+        let (s2, a2) = await auditSession(RoleModel(speaker: search, thinker: answer), config: config(bridge: true))
+        _ = await ask(s2)
+        await close(s2)
+        XCTAssertEqual(journalTags(journal(a2)), [
+            "start:natural", "round:general/naturalTalk", "areas:", "round:data/naturalSearch", "step:announcement", "areas:books",
+            "step:summarized", "step:summarized", "end",
+        ])
+        XCTAssertEqual(AssistantProtocolOrder.check(journal(a2)), [])
+
+        // 3. Nur Daten (direkter Inhaltsbezug), ohne Überbrückung
+        let (s3, a3) = await auditSession(RoleModel(thinker: answer))
+        _ = await ask(s3, ownQuestion)
+        await close(s3, "r1", user: ownQuestion)
+        XCTAssertEqual(journalTags(journal(a3)), ["start:natural", "round:data/naturalSearch", "areas:books", "step:summarized", "step:summarized", "end"])
+        XCTAssertEqual(AssistantProtocolOrder.check(journal(a3)), [])
+
+        // 4. Bestandsfrage: Datenphase mit Grund `inventory`
+        let (s4, a4) = await auditSession(RoleModel())
+        _ = await ask(s4, inventoryQuestion)
+        await close(s4, "r1", user: inventoryQuestion)
+        let tags4 = journalTags(journal(a4))
+        XCTAssertEqual(Array(tags4.prefix(3)), ["start:natural", "round:data/inventory", "areas:books"])
+        XCTAssertEqual(tags4[3], "step:announcement")
+        XCTAssertEqual(tags4.last, "end")
+        XCTAssertEqual(AssistantProtocolOrder.check(journal(a4)), [])
+
+        // 5. Keine Treffer: feste Antwort, keine Bereichszeile der Auszüge
+        let (s5, a5) = await auditSession(RoleModel(speaker: Script(pieces: ["SUCHE: Einkaufsliste Kühlschrank\n"])))
+        _ = await ask(s5, "Wie viele Eier brauche ich?")
+        await close(s5, "r1", user: "Wie viele Eier brauche ich?")
+        XCTAssertEqual(journalTags(journal(a5)), [
+            "start:natural", "round:general/naturalTalk", "areas:", "round:data/naturalSearch", "step:template", "end",
+        ])
+        XCTAssertEqual(AssistantProtocolOrder.check(journal(a5)), [])
+    }
+
+    /// Die Rundenzeile der Daten-Phase trägt die zulässigen Abrufbereiche (der Stand dieser Anfrage), nicht eine eigene Auswahl.
+    func testDataRoundLineCarriesThePermittedRetrievalAreas() async {
+        let (s, audit) = await auditSession(RoleModel(speaker: search, thinker: answer), knowledge: await booksAndMeeting())
+        _ = await s.setAreas([.books, .transcripts])
+        _ = await ask(s)
+        await close(s)
+        let rounds = journal(audit).filter { $0.t == .round }
+        XCTAssertEqual(rounds.count, 2)
+        XCTAssertNil(rounds[0].areas, "die Sprecher-Rundenzeile trägt keine Abrufbereiche")
+        XCTAssertEqual(rounds[1].areas, ["books", "transcripts"])
+        let entries = await audit.entries().filter { $0.kind == .answer }
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries[0].style, .natural)
+        XCTAssertEqual(entries[0].round, .data, "die letzte Rundenart")
+        XCTAssertEqual(entries[0].contextReason, .naturalSearch)
+        XCTAssertEqual(entries[0].areas, ["books"], "bedeckt sind nur die Bereiche der Quellen der Sätze")
+    }
+
+    /// Vor dem Sprecher stehen Rundenzeile und Bereichszeile dauerhaft in der Datei (das Modell liest die Datei beim Aufruf), vor dem
+    /// Abruf die Rundenzeile der Daten-Phase mit den Abrufbereichen, vor dem Denker die Bereichszeile der verwendeten Auszüge.
+    func testMandatoryLinesAreDurableBeforeSpeakerRetrievalAndThinker() async {
+        let dir = tempDir()
+        let audit = AssistantAuditLog(directory: dir)
+        let url = audit.url
+        let file: @Sendable () -> String = { (try? String(contentsOf: url, encoding: .utf8)) ?? "" }
+        let atModel = Snaps()
+        let atSearch = Snaps()
+        let corpus = AssistantCorpus()
+        await corpus.upsert(assistantDoc("b1", "Der Zauberberg", sections: [("S. 12", castorp), ("S. 13", stay)]))
+        let knowledge = AssistantKnowledge(corpus: corpus, sources: [ProbeSource { atSearch.add(file()) }])
+        let model = RoleModel(speaker: search, thinker: answer, onCall: { role in atModel.add("\(role.rawValue)|" + file()) })
+        let s = await newSession(model, config: config(bridge: true), audit: audit, knowledge: knowledge)
+        _ = await ask(s)
+        await close(s)
+
+        let models = atModel.all
+        XCTAssertEqual(models.count, 2)
+        let speakerFile = models[0]
+        XCTAssertTrue(speakerFile.hasPrefix("speaker|"))
+        XCTAssertTrue(speakerFile.contains("\"reason\":\"naturalTalk\""), "Rundenzeile vor dem Sprecher")
+        XCTAssertTrue(speakerFile.contains("\"t\":\"areas\""), "Bereichszeile des Verlaufs vor dem Sprecher")
+        XCTAssertFalse(speakerFile.contains("naturalSearch"))
+        let searches = atSearch.all
+        XCTAssertEqual(searches.count, 1, "ein Abruf")
+        XCTAssertTrue(searches[0].contains("\"reason\":\"naturalSearch\""), "Rundenzeile der Daten-Phase vor dem Abruf")
+        XCTAssertTrue(searches[0].contains("\"areas\":[\"books\",\"files\",\"notes\",\"transcripts\"]"), "mit den zulässigen Abrufbereichen: \(searches[0])")
+        let thinkerFile = models[1]
+        XCTAssertTrue(thinkerFile.hasPrefix("thinker|"))
+        XCTAssertTrue(thinkerFile.contains("\"areas\":[\"books\"]"), "Bereichszeile der verwendeten Auszüge vor dem Denker")
+    }
+
+    /// Bereichszeile vor dem Sprecher: die Bereiche der Quellen der Verlaufsbeiträge, die im Prompt stehen. Beiträge, die wegen der
+    /// Grenze von sechs nicht mehr im Prompt stehen, zählen nicht.
+    func testSpeakerAreasLineListsTheAreasOfTheHistoryTurnsInThePromptOnly() async {
+        var history: [AssistantTurn] = [
+            naturalTurn("Alt eins", "Antwort eins.", round: .data, sources: [assistantPassage(.notes, itemId: "n1", title: "Notiz", text: "Alt.")]),
+            naturalTurn("Alt zwei", "Antwort zwei.", round: .data, sources: [assistantPassage(.files, itemId: "f1", title: "Datei", text: "Alt.")]),
+        ]
+        history += (0..<4).map { naturalTurn("Neu \($0)", "Antwort \($0).", round: .general) }
+        history.append(naturalTurn("Neu vier", "Antwort vier.", round: .data, sources: [assistantPassage(.books, itemId: "b1", title: "Buch", text: castorp)]))
+        history.append(naturalTurn("Neu fünf", "Antwort fünf.", round: .data,
+                                   sources: [assistantPassage(.transcripts, itemId: "t1", title: "Besprechung", text: nordlicht)]))
+        XCTAssertEqual(history.count, 8)
+        let model = RoleModel(speaker: Script(pieces: ["Hallo zusammen."]))
+        let (s, audit) = await auditSession(model, history: history)
+        _ = await ask(s, "Hallo")
+        await close(s, "r1", user: "Hallo")
+
+        let prompt = model.calls.prompts(.speaker)[0]
+        XCTAssertTrue(prompt.contains("Neu fünf"))
+        XCTAssertTrue(prompt.contains("Neu 0"))
+        XCTAssertFalse(prompt.contains("Alt eins"), "nur die jüngsten sechs Beiträge")
+        XCTAssertFalse(prompt.contains("Alt zwei"))
+        let areas = journal(audit).filter { $0.t == .areas }
+        XCTAssertEqual(areas.count, 1)
+        XCTAssertEqual(areas[0].areas, ["books", "transcripts"], "Quellen der Beiträge im Prompt, nicht die der älteren")
+        XCTAssertEqual(AssistantProtocolOrder.check(journal(audit)), [])
+    }
+
+    /// Nennt der Sprecher dieselben Bereiche wie später die verwendeten Auszüge (Verlauf aus einem Buch, Abruf im Buch), steht die Bereichszeile
+    /// der Daten-Phase trotzdem: Zu JEDER Phase gehört ihre eigene Zeile vor dem Modell (die Zeile des Sprechers ersetzt sie nicht).
+    func testTheDataPhaseHasItsOwnAreasLineEvenWhenTheSpeakerNamedTheSameAreas() async {
+        let history = [naturalTurn("Frühere Frage", "Antwort.", round: .data,
+                                   sources: [assistantPassage(.books, itemId: "b1", title: "Der Zauberberg", text: castorp)])]
+        let model = RoleModel(speaker: search, thinker: answer)
+        let (s, audit) = await auditSession(model, config: config(bridge: true), history: history)
+        let seen = await ask(s)
+        await close(s)
+        XCTAssertEqual(seen.statuses, [.announcement, .summarized, .summarized])
+        XCTAssertEqual(journalTags(journal(audit)), [
+            "start:natural", "round:general/naturalTalk", "areas:books", "round:data/naturalSearch", "step:announcement",
+            "areas:books", "step:summarized", "step:summarized", "end",
+        ])
+        XCTAssertEqual(AssistantProtocolOrder.check(journal(audit)), [])
+    }
+
+    /// Cloud: Die Verlaufsbeiträge im Prompt und in der Bereichszeile sind schon nach den freigegebenen Bereichen gefiltert.
+    func testCloudHistoryIsFilteredByTheAllowedAreasAndSoIsTheAreasLine() async {
+        let history = [
+            naturalTurn("Geheim Besprechung", "Antwort A.", round: .data,
+                        sources: [assistantPassage(.transcripts, itemId: "t1", title: "Besprechung", text: nordlicht)]),
+            naturalTurn("Offen Buch", "Antwort B.", round: .data, sources: [assistantPassage(.books, itemId: "b1", title: "Buch", text: castorp)]),
+        ]
+        let model = RoleModel(speaker: Script(pieces: ["Hallo zusammen."]))
+        let audit = AssistantAuditLog(directory: tempDir())
+        let s = await newSession(model, config: config(cloud: true), history: history, audit: audit, knowledge: await booksAndMeeting())
+        _ = await s.setAreas([.books], cloudConsent: true)
+        _ = await ask(s, "Hallo")
+        await close(s, "r1", user: "Hallo")
+        let prompt = model.calls.prompts(.speaker)[0]
+        XCTAssertFalse(prompt.contains("Geheim Besprechung"), "Gesprochenes aus einem gesperrten Bereich verlässt das Gerät nicht")
+        XCTAssertTrue(prompt.contains("Offen Buch"))
+        XCTAssertEqual(journal(audit).filter { $0.t == .areas }.first?.areas, ["books"])
+    }
+
+    func testCloudWithoutConsentRunsNeitherSpeakerNorThinker() async {
+        let model = RoleModel(speaker: search, thinker: answer)
+        let s = await newSession(model, config: config(cloud: true), cloudConsent: false)
+        let seen = await ask(s)
+        XCTAssertEqual(seen.failure, .consentRequired)
+        XCTAssertTrue(seen.sentences.isEmpty)
+        XCTAssertTrue(model.calls.roles.isEmpty)
+    }
+
+    /// Quellen eines `.summarized`-Satzes = genau die Auszüge im Prompt des Denkers dieser Anfrage (nicht die abgerufenen).
+    func testSourcesOfSummarizedSentencesAreExactlyTheExcerptsInTheThinkerPrompt() async {
+        // Zwei Treffer in verschiedenen Elementen, aber nur ein Auszug im Prompt (Grenze `naturalPassageLimit`).
+        let corpus = AssistantCorpus()
+        await corpus.upsert(assistantDoc("b1", "Der Zauberberg", sections: [("S. 12", castorp)]))
+        await corpus.upsert(assistantDoc("b2", "Davos Reisebericht", sections: [("S. 3", "Davos liegt hoch in den Bergen und hat ein Sanatorium.")]))
+        let model = RoleModel(speaker: search, thinker: answer)
+        let (s, audit) = await auditSession(model, config: config(passageLimit: 1), knowledge: AssistantKnowledge(corpus: corpus))
+        let seen = await ask(s)
+        await close(s)
+        let prompt = model.calls.prompts(.thinker)[0]
+        let inPrompt = ["b1": castorp.prefix(40), "b2": "Davos liegt hoch".prefix(16)].filter { prompt.contains($0.value) }.map(\.key)
+        XCTAssertEqual(inPrompt.count, 1, "genau ein Auszug im Prompt: \(prompt)")
+        for sentence in seen.sentences where sentence.status == .summarized {
+            XCTAssertEqual(sentence.sources.map(\.itemId), inPrompt, "Quellen = Auszüge im Prompt")
+        }
+        XCTAssertEqual(seen.answer?.sources.map(\.itemId), inPrompt)
+        let turn = await s.history.last
+        XCTAssertEqual(turn?.sources.map(\.itemId), inPrompt)
+        XCTAssertEqual(seen.sourceEvents.last?.map(\.itemId), inPrompt, "auch die Vorab-Anzeige")
+        let areas = journal(audit).filter { $0.t == .areas }.map(\.areas)
+        XCTAssertEqual(areas.last ?? nil, ["books"])
+    }
+
+    /// Nach `contextOverflow` wiederholt der Denker mit halbem Auszugsbudget und ohne Verlauf; die Quellen sind die Auszüge der Wiederholung.
+    func testSourcesAfterAnOverflowRetryAreTheExcerptsOfTheRetry() async {
+        let corpus = AssistantCorpus()
+        // Blöcke unter `maxBlockChars` (600), sonst werden sie nicht indexiert.
+        let tail1 = String(repeating: "Hans Castorp fährt ins Sanatorium nach Davos. ", count: 10)
+        let tail2 = String(repeating: "Davos liegt hoch in den Bergen und hat ein Sanatorium. ", count: 9)
+        await corpus.upsert(assistantDoc("b1", "Der Zauberberg", sections: (1...3).map { ("S. \($0)", "Hans Castorp reist, Teil \($0). " + tail1) }))
+        await corpus.upsert(assistantDoc("b2", "Davos Reisebericht", sections: (1...3).map { ("S. \($0)", "Davos und Castorp, Teil \($0). " + tail2) }))
+        let model = RoleModel(speaker: search, thinker: Script(pieces: ["Das passt jetzt."], overflows: 1))
+        let history = [naturalTurn("Frühere Frage", "Frühere Antwort.", round: .general)]
+        let s = await newSession(model, config: config(passageChars: 1_800), history: history, knowledge: AssistantKnowledge(corpus: corpus))
+        let seen = await ask(s)
+        let prompts = model.calls.prompts(.thinker)
+        XCTAssertEqual(prompts.count, 2, "ein Aufruf, eine Wiederholung: \(seen.texts)")
+        guard prompts.count == 2 else { return }
+        XCTAssertTrue(prompts[0].contains("Frühere Frage"))
+        XCTAssertFalse(prompts[1].contains("Frühere Frage"), "Wiederholung ohne Verlauf")
+        XCTAssertLessThan(prompts[1].count, prompts[0].count)
+        XCTAssertEqual(seen.spoken, ["Das passt jetzt."])
+        let ids = ["b1": "Hans Castorp reist", "b2": "Davos und Castorp"].filter { prompts[1].contains($0.value) }.map(\.key).sorted()
+        XCTAssertFalse(ids.isEmpty)
+        let sourceIds = Set(seen.sentences.last?.sources.map(\.itemId) ?? [])
+        XCTAssertEqual(sourceIds, Set(ids), "Quellen = Auszüge des zweiten Prompts")
+        let firstIds = Set(["b1": "Hans Castorp reist", "b2": "Davos und Castorp"].filter { prompts[0].contains($0.value) }.map(\.key))
+        XCTAssertTrue(sourceIds.isSubset(of: firstIds))
+        func excerpts(_ prompt: String) -> Int { prompt.split(separator: "\n").filter { $0.hasPrefix("[") && $0.contains(" · ") }.count }
+        XCTAssertLessThan(excerpts(prompts[1]), excerpts(prompts[0]), "die Wiederholung hat weniger Auszüge")
+        XCTAssertEqual(seen.sentences.last?.sources.count, excerpts(prompts[1]), "genau die Auszüge der Wiederholung, nicht die des ersten Aufrufs")
+        XCTAssertEqual(seen.answer?.sources.count, excerpts(prompts[1]))
+    }
+
+    // MARK: Verlauf
+
+    func testTurnHasConversationalAndSummarizedPartsAndTheNaturalStyle() async {
+        let s = await newSession(RoleModel(speaker: search, thinker: answer), config: config(bridge: true))
+        _ = await ask(s)
+        await close(s)
+        let turn = await s.history.last
+        XCTAssertEqual(turn?.style, .natural)
+        XCTAssertEqual(turn?.round, .data)
+        XCTAssertEqual(turn?.assistant, "Castorp fährt ins Sanatorium nach Davos. Dort besucht er seinen Vetter Joachim.")
+        XCTAssertEqual(turn?.sources.map(\.itemId), ["b1"])
+        XCTAssertEqual(turn?.parts.count, 1, "zwei Sätze gleicher Einordnung sind ein Abschnitt")
+        XCTAssertEqual(turn?.parts.first?.note, AssistantTurnPart.summaryNote)
+        XCTAssertEqual(turn?.parts.first?.isFreeform, true)
+        XCTAssertEqual(turn?.parts.first?.quote, false)
+        XCTAssertEqual(turn?.hasMarkedUnits, true)
+        XCTAssertEqual(turn?.general, false)
+        XCTAssertEqual(turn?.isUnsourced, false)
+
+        let s2 = await newSession(RoleModel(speaker: Script(pieces: ["Hallo zusammen."])))
+        _ = await ask(s2, "Hallo")
+        await close(s2, "r1", user: "Hallo")
+        let talk = await s2.history.last
+        XCTAssertEqual(talk?.round, .general)
+        XCTAssertEqual(talk?.style, .natural)
+        XCTAssertEqual(talk?.parts.first?.note, AssistantTurnPart.conversationNote)
+        XCTAssertTrue(talk?.sources.isEmpty ?? false)
+        XCTAssertEqual(talk?.isUnsourced, false, "ein freies Gespräch im Stil natural ist keine „Antwort ohne Quelle“")
+    }
+
+    func testNaturalSpeakerTurnSurvivesAdmissionWhileAVerbatimGeneralTurnDoesNot() {
+        let natural = naturalTurn("Hallo", "Hallo zusammen.", round: .general)
+        var verbatim = AssistantTurn(user: "Hallo", assistant: "Hallo.", general: true,
+                                     parts: [AssistantTurnPart(text: "Hallo.", unsourced: false, note: AssistantTurnPart.templateNote)],
+                                     model: "Test", at: Date(), round: .general)
+        verbatim.style = nil
+        XCTAssertEqual(AssistantTurn.admitted([natural, verbatim], released: false).count, 1)
+        XCTAssertEqual(AssistantTurn.admitted([natural, verbatim], released: false).first?.style, .natural)
+    }
+
+    func testSpeakerPromptSeesTurnsOfBothRoundKinds() async {
+        let history = [naturalTurn("Allgemeine Frage", "Allgemeine Antwort.", round: .general),
+                       naturalTurn("Frage zum Buch", "Antwort zum Buch.", round: .data,
+                                   sources: [assistantPassage(.books, itemId: "b1", title: "Buch", text: castorp)])]
+        let model = RoleModel(speaker: Script(pieces: ["Hallo zusammen."]))
+        _ = await ask(await newSession(model, history: history), "Hallo")
+        let prompt = model.calls.prompts(.speaker)[0]
+        XCTAssertTrue(prompt.contains("Allgemeine Frage"))
+        XCTAssertTrue(prompt.contains("Frage zum Buch"))
+    }
+
+    // MARK: Fehlerfälle
+
+    func testModelErrorsMapToTheFailureOfTheRun() async {
+        let cases: [(BookTalkModelError, AssistantFailure)] = [(.offline, .offline), (.unavailable, .noModel), (.timeout, .timeout), (.notAllowed, .consentRequired)]
+        for (error, failure) in cases {
+            let seen = await ask(await newSession(RoleModel(speaker: Script(fail: error))))
+            XCTAssertEqual(seen.failure, failure, "Sprecher: \(error)")
+            let seen2 = await ask(await newSession(RoleModel(speaker: search, thinker: Script(fail: error))), castorpQuestion, id: "r2")
+            XCTAssertEqual(seen2.failure, failure, "Denker: \(error)")
+        }
+    }
+
+    /// Absturz des Modells (Kindprozess) mitten im Strom des Denkers: Der erste Satz ging hinaus, danach Fehler, kein `done`, kein Hängen.
+    func testModelCrashInTheMiddleOfTheThinkerStreamEndsWithAFailureAndNoDone() async {
+        let thinker = Script(pieces: ["Castorp fährt nach Davos. ", "Dort bleibt er"], fail: Crash())
+        let seen = await ask(await newSession(RoleModel(speaker: search, thinker: thinker)))
+        XCTAssertEqual(seen.spoken, ["Castorp fährt nach Davos."])
+        XCTAssertEqual(seen.failure, .modelFailed)
+        XCTAssertNil(seen.answer)
+    }
+
+    func testContextOverflowIsRetriedOnceWithoutHistoryAndOnlyOnce() async {
+        let history = [naturalTurn("Frühere Frage", "Frühere Antwort.", round: .general)]
+        let once = RoleModel(speaker: Script(pieces: ["Hallo zusammen."], overflows: 1))
+        let seen = await ask(await newSession(once, history: history), "Hallo")
+        XCTAssertEqual(seen.spoken, ["Hallo zusammen."])
+        let prompts = once.calls.prompts(.speaker)
+        XCTAssertEqual(prompts.count, 2)
+        XCTAssertTrue(prompts[0].contains("Frühere Frage"))
+        XCTAssertFalse(prompts[1].contains("Frühere Frage"))
+
+        let twice = RoleModel(speaker: Script(pieces: ["Hallo zusammen."], overflows: 2))
+        let seen2 = await ask(await newSession(twice), "Hallo")
+        XCTAssertEqual(seen2.failure, .modelFailed)
+        XCTAssertEqual(twice.calls.count(.speaker), 2, "genau eine Wiederholung")
+    }
+
+    func testCancelWhileTheSpeakerRunsStopsEverythingAndRunsNoThinker() async {
+        let model = RoleModel(speaker: Script(hang: true), thinker: answer)
+        let s = await newSession(model)
+        var events: [AssistantEvent] = []
+        for await e in s.events(AssistantRequest(requestId: "r1", text: castorpQuestion)) {
+            events.append(e)
+            if case .sources = e { await s.cancel(requestId: "r1") }
+        }
+        XCTAssertEqual(Seen(events: events).failure, .cancelled)
+        XCTAssertEqual(model.calls.roles, [.speaker])
+        await eventually { model.calls.terminations >= 1 }
+        XCTAssertEqual(model.calls.terminations, 1, "der Modellstrom des Sprechers wurde beendet")
+    }
+
+    func testCancelWhileTheThinkerRunsEndsWithCancelled() async {
+        let model = RoleModel(speaker: search, thinker: Script(hang: true))
+        let s = await newSession(model)
+        var events: [AssistantEvent] = []
+        var sourceEvents = 0
+        for await e in s.events(AssistantRequest(requestId: "r1", text: castorpQuestion)) {
+            events.append(e)
+            if case .sources = e {
+                sourceEvents += 1
+                if sourceEvents == 2 { await s.cancel(requestId: "r1") }
+            }
+        }
+        XCTAssertEqual(Seen(events: events).failure, .cancelled)
+        await eventually { model.calls.terminations >= 2 }
+        XCTAssertEqual(model.calls.terminations, 2, "beide Modellströme sind beendet")
+    }
+
+    func testHangingSpeakerEndsWithTimeout() async {
+        let seen = await ask(await newSession(RoleModel(speaker: Script(hang: true)), config: config(timeout: 0.3)))
+        XCTAssertEqual(seen.failure, .timeout)
+    }
+
+    func testRevocationWhileTheThinkerRunsEndsWithRevokedAndOutputsNothingMore() async {
+        let model = RoleModel(speaker: search, thinker: Script(pieces: ["Castorp fährt nach Davos. Dort "], hang: true))
+        let s = await newSession(model)
+        var events: [AssistantEvent] = []
+        var revoked = false
+        for await e in s.events(AssistantRequest(requestId: "r1", text: castorpQuestion)) {
+            events.append(e)
+            if !revoked, case .sentence = e {
+                revoked = true
+                _ = s.applyReleaseChange(.other)
+            }
+        }
+        let seen = Seen(events: events)
+        XCTAssertEqual(seen.failure, .revoked)
+        XCTAssertEqual(seen.sentences.count, 1)
+    }
+
+    /// Widerruf zwischen den Phasen: Die zweite Rundenzeile steht, aber kein Abruf und kein Denker; die Folge ist für den Prüfer in Ordnung.
+    func testRevocationBetweenThePhasesRunsNoRetrievalAndNoThinker() async {
+        let index = AssistantStepIndex()
+        let box = Box<AssistantSession?>(nil)
+        let visits = Box(0)
+        index.setProbe { _, point in
+            guard point == .beforeRound else { return }
+            visits.value += 1
+            if visits.value == 2 { _ = box.value?.applyReleaseChange(.other) }
+        }
+        let audit = AssistantAuditLog(directory: tempDir())
+        let retrievals = Box(0)
+        let corpus = AssistantCorpus()
+        await corpus.upsert(assistantDoc("b1", "Der Zauberberg", sections: [("S. 12", castorp)]))
+        let knowledge = AssistantKnowledge(corpus: corpus, sources: [ProbeSource { retrievals.value += 1 }])
+        let model = RoleModel(speaker: search, thinker: answer)
+        let s = await newSession(model, audit: audit, knowledge: knowledge, stepIndex: index)
+        box.value = s
+        let seen = await ask(s)
+        await close(s)
+        XCTAssertEqual(seen.failure, .revoked)
+        XCTAssertEqual(model.calls.roles, [.speaker], "kein Denker")
+        XCTAssertEqual(retrievals.value, 0, "kein Abruf")
+        XCTAssertTrue(seen.sentences.isEmpty)
+        XCTAssertEqual(seen.progress, [.speaker], "nach dem Widerruf kein Fortschritt (weder searching noch found noch composing)")
+        XCTAssertEqual(AssistantProtocolOrder.check(journal(audit)), [])
+        let revokedEntries = await audit.entries()
+        XCTAssertEqual(revokedEntries.first { $0.kind == .answer }?.outcome, .revoked)
+    }
+
+    /// Widerruf während des Abrufs: Nach `searching` kommt kein Fortschritt mehr (weder `found` noch `composing` noch ein Entwurf), kein Denker.
+    func testRevocationDuringTheRetrievalSendsNoFurtherProgress() async {
+        let box = Box<AssistantSession?>(nil)
+        let corpus = AssistantCorpus()
+        await corpus.upsert(assistantDoc("b1", "Der Zauberberg", sections: [("S. 12", castorp)]))
+        let knowledge = AssistantKnowledge(corpus: corpus, sources: [ProbeSource { _ = box.value?.applyReleaseChange(.other) }])
+        let model = RoleModel(speaker: Script(pieces: ["Ich sehe in deinem Buch nach.\nSUCHE: Davos Sanatorium Castorp\n"]), thinker: answer)
+        let s = await newSession(model, knowledge: knowledge)
+        box.value = s
+        let seen = await ask(s)
+        XCTAssertEqual(seen.failure, .revoked)
+        XCTAssertEqual(seen.progress, [.speaker, .searching(query: "Davos Sanatorium Castorp")])
+        XCTAssertEqual(model.calls.roles, [.speaker], "kein Denker")
+        XCTAssertEqual(seen.statuses, [.conversational], "der Zwischensatz ging vor dem Widerruf hinaus, danach nichts mehr")
+    }
+
+    // MARK: Schreibfehler (voller Datenträger)
+
+    private func failingRun(_ needle: String, model: RoleModel, knowledge: AssistantKnowledge? = nil, text: String = castorpQuestion,
+                            switchOn: Bool = true) async -> Seen {
+        let sw = FailSwitch()
+        sw.on = switchOn
+        let audit = AssistantAuditLog(directory: tempDir(), reader: AssistantAuditWriter.readFile, appender: failingAppender(needle, sw))
+        let s = await newSession(model, audit: audit, knowledge: knowledge)
+        return await ask(s, text)
+    }
+
+    /// Misslingt das Schreiben einer Pflichtzeile (`round`, `areas`, `start`), läuft kein Modell und geht nichts hinaus; Ausgang „Fehler“.
+    func testFailingMandatoryLineMeansNoModelAndNoOutput() async {
+        for needle in ["\"t\":\"round\"", "\"t\":\"areas\"", "\"t\":\"start\""] {
+            let model = RoleModel(speaker: Script(pieces: ["Hallo zusammen."]))
+            let seen = await failingRun(needle, model: model)
+            XCTAssertEqual(seen.failure, .auditUnavailable, needle)
+            XCTAssertTrue(seen.sentences.isEmpty, needle)
+            XCTAssertTrue(model.calls.roles.isEmpty, "\(needle): kein Modell")
+        }
+    }
+
+    func testFailingStepLineStopsTheOutput() async {
+        let model = RoleModel(speaker: Script(pieces: ["Hallo zusammen. Wie ", "geht es dir?"]))
+        let seen = await failingRun("\"t\":\"step\"", model: model)
+        XCTAssertEqual(seen.failure, .auditUnavailable)
+        XCTAssertTrue(seen.sentences.isEmpty, "die Einordnung steht nicht in der Datei: die Einheit geht nicht hinaus")
+        XCTAssertNil(seen.answer)
+    }
+
+    /// Scheitert die Rundenzeile der Daten-Phase, läuft weder der Abruf noch der Denker.
+    func testNoRetrievalWhenTheDataRoundLineFails() async {
+        let retrievals = Box(0)
+        let corpus = AssistantCorpus()
+        await corpus.upsert(assistantDoc("b1", "Der Zauberberg", sections: [("S. 12", castorp)]))
+        let knowledge = AssistantKnowledge(corpus: corpus, sources: [ProbeSource { retrievals.value += 1 }])
+        let model = RoleModel(speaker: search, thinker: answer)
+        let seen = await failingRun("naturalSearch", model: model, knowledge: knowledge)
+        XCTAssertEqual(seen.failure, .auditUnavailable)
+        XCTAssertEqual(retrievals.value, 0)
+        XCTAssertEqual(model.calls.roles, [.speaker], "kein Denker")
+    }
+
+    /// Scheitert die Bereichszeile der verwendeten Auszüge (die Zeile des Sprechers steht), läuft der Denker nicht.
+    func testNoThinkerWhenTheAreasLineOfTheUsedExcerptsFails() async {
+        let appender: @Sendable (URL, Data) throws -> Void = { url, data in
+            let text = String(decoding: data, as: UTF8.self)
+            if text.contains("\"t\":\"areas\""), text.contains("\"books\"") { throw DiskFull() }
+            try AssistantAuditWriter.appendFile(url, data)
+        }
+        let audit = AssistantAuditLog(directory: tempDir(), reader: AssistantAuditWriter.readFile, appender: appender)
+        let model = RoleModel(speaker: search, thinker: answer)
+        let s = await newSession(model, audit: audit)
+        let seen = await ask(s)
+        XCTAssertEqual(seen.failure, .auditUnavailable)
+        XCTAssertEqual(model.calls.roles, [.speaker])
+        XCTAssertTrue(seen.sentences.isEmpty)
+    }
+
+    // MARK: Abbruch mitten im Vorgang, Altdaten
+
+    /// Jedes Präfix der Zeilenfolge (Prozessende an jeder Stelle) ist für den Prüfer in Ordnung; nichts wird fortgesetzt: Die Datei einer
+    /// abgebrochenen Anfrage ohne `end` faltet zu einem unvollständigen Eintrag mit Stil `natural`.
+    func testEveryPrefixOfAJournalIsValidAndAnUnfinishedRequestFoldsAsIncomplete() async {
+        let (s, audit) = await auditSession(RoleModel(speaker: search, thinker: answer), config: config(bridge: true))
+        _ = await ask(s)
+        await close(s)
+        let lines = journal(audit)
+        XCTAssertGreaterThan(lines.count, 8)
+        for k in 1...lines.count {
+            XCTAssertEqual(AssistantProtocolOrder.check(Array(lines.prefix(k))), [], "Präfix der Länge \(k)")
+        }
+        let cut = lines.prefix { $0.t != .end }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let datas = cut.compactMap { try? encoder.encode($0) }
+        let folded = AssistantJournalFold.fold(datas)
+        XCTAssertEqual(folded.entries.count, 1)
+        XCTAssertEqual(folded.entries[0].style, .natural)
+        XCTAssertEqual(folded.entries[0].outcome, .incomplete, "ohne `end` bleibt der Ausgang offen (unvollständig), nichts wird fortgesetzt")
+    }
+
+    /// Altdaten: Zeilen und Einträge ohne die neuen Felder laden; im Stil `verbatim` bleibt die Startzeile Byte für Byte ohne `style`.
+    func testOldDataLoadsAndVerbatimJournalBytesAreUnchanged() async throws {
+        let oldStart = #"{"t":"start","req":"alt1","at":"2026-11-01T10:00:00Z","session":"s","model":"other","cloud":false,"unsourced":false,"consent":1,"ctx":"data","reason":"locked","round":"data","gen":1}"#
+        let line = try XCTUnwrap(AssistantJournalFold.journal(Data(oldStart.utf8)))
+        XCTAssertNil(line.style)
+        let folded = AssistantJournalFold.fold([Data(oldStart.utf8)])
+        XCTAssertEqual(folded.entries.first?.style, .verbatim)
+
+        let entry = AssistantAuditEntry(at: Date(), kind: .answer, cloud: false, unsourcedMode: false, consentVersion: 1)
+        let encoded = try JSONEncoder().encode(entry)
+        XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("style"), "ein Eintrag im Stil verbatim schreibt kein `style`")
+        XCTAssertEqual(try JSONDecoder().decode(AssistantAuditEntry.self, from: encoded).style, .verbatim)
+
+        let oldTurn = #"{"user":"a","assistant":"b","interrupted":false,"sources":[],"general":false,"model":"m","at":0}"#
+        let turn = try JSONDecoder().decode(AssistantTurn.self, from: Data(oldTurn.utf8))
+        XCTAssertNil(turn.style)
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(turn), as: UTF8.self).contains("\"style\""))
+        var natural = turn
+        natural.style = .natural
+        let back = try JSONDecoder().decode(AssistantTurn.self, from: try JSONEncoder().encode(natural))
+        XCTAssertEqual(back.style, .natural)
+
+        let oldCounts = #"{"grounded":1,"inventory":0,"unsourced":0,"neutral":0,"droppedOwnData":0,"droppedNoMode":0,"droppedNotSnapped":0,"droppedDuplicate":0,"droppedTemplate":0,"revoked":0,"droppedFragment":0}"#
+        let counts = try JSONDecoder().decode(AssistantSentenceCounts.self, from: Data(oldCounts.utf8))
+        XCTAssertEqual(counts, AssistantSentenceCounts(grounded: 1))
+        let zero = String(decoding: try JSONEncoder().encode(counts), as: UTF8.self)
+        XCTAssertFalse(zero.contains("conversational") || zero.contains("summarized"), "neue Zähler nur, wenn sie > 0 sind")
+        let some = String(decoding: try JSONEncoder().encode(AssistantSentenceCounts(conversational: 1, summarized: 2)), as: UTF8.self)
+        XCTAssertTrue(some.contains("\"conversational\":1") && some.contains("\"summarized\":2"))
+
+        // Eine Datei mit einer Anfrage im Stil verbatim und einer im Stil natural faltet zu zwei Einträgen mit dem richtigen Stil.
+        let audit = AssistantAuditLog(directory: tempDir())
+        let verbatimConfig = AssistantConfig(modelLabel: "Test", isCloud: false, contextTokens: 4_096, maxAnswerTokens: 400, userName: nil, timeout: 5)
+        let v = AssistantSession(model: RoleModel(thinker: Script(pieces: ["Hans Castorp fährt nach Davos und besucht seinen Vetter Joachim."])),
+                                 knowledge: await books(), config: verbatimConfig, audit: audit, released: true)
+        _ = await ask(v, "Wohin fährt Hans Castorp im Sanatorium nach Davos?", id: "v1")
+        await v.commit(requestId: "v1", user: "x", spoken: .all, interrupted: false)
+        let n = await newSession(RoleModel(speaker: Script(pieces: ["Hallo zusammen."])), audit: audit)
+        _ = await ask(n, "Hallo", id: "n1")
+        await n.commit(requestId: "n1", user: "Hallo", spoken: .all, interrupted: false)
+        let raw = rawJournal(audit)
+        let startLines = raw.split(separator: "\n").filter { $0.contains("\"t\":\"start\"") }
+        XCTAssertEqual(startLines.count, 2)
+        XCTAssertFalse(startLines[0].contains("\"style\""), "verbatim: kein Schlüssel `style`")
+        XCTAssertTrue(startLines[1].contains("\"style\":\"natural\""))
+        let answers = await audit.entries().filter { $0.kind == .answer }
+        XCTAssertEqual(answers.map(\.style), [.verbatim, .natural])
+        XCTAssertEqual(answers.map(\.outcome), [.completed, .completed])
+        XCTAssertEqual(AssistantProtocolOrder.check(journal(audit, "v1")), [], "verbatim: die alte Folge")
+    }
+
+    func testTheDefaultStyleIsVerbatimAndAVerbatimRunIgnoresTheNaturalPath() async {
+        XCTAssertEqual(AssistantConfig(modelLabel: "T", isCloud: false, contextTokens: 4_096, maxAnswerTokens: 400, userName: nil, timeout: 5).style, .verbatim)
+        // Im Stil verbatim kennt die Anweisung die Suchzeile nicht: Das Modell antwortet in der Rolle „thinker“ dieses Doubles.
+        let model = RoleModel(thinker: Script(pieces: ["Das Wetter ist schön."]))
+        var verbatim = config()
+        verbatim.style = .verbatim
+        let seen = await ask(await newSession(model, config: verbatim), weather)
+        XCTAssertFalse(seen.statuses.contains(.conversational))
+        XCTAssertFalse(seen.statuses.contains(.summarized))
+        XCTAssertFalse(seen.texts.contains("Das Wetter ist schön."), "verbatim: ein freier Modellsatz ohne Quelle wird nie ausgegeben: \(seen.texts)")
+        XCTAssertTrue(seen.statuses.allSatisfy { $0 == .neutral }, "verbatim ohne Opt-in: nur der feste Satz: \(seen.statuses)")
+    }
+
+    // MARK: Zwischensatz vor der Steuerzeile
+
+    /// Ein kurzer Satz vor `SUCHE:` geht sofort hinaus (`.conversational`, ohne Quellen), die Steuerzeile nie; danach die Daten-Phase. Der
+    /// Zwischensatz steht im Antworttext vor der zusammengefassten Antwort und im Verlauf als eigener Abschnitt „Frei formuliert“.
+    func testInterimSentenceIsSpokenBeforeTheControlLineAndTheControlLineNeverIs() async {
+        let model = RoleModel(speaker: Script(pieces: ["Ich sehe in deinem Buch nach.\nSUCHE: Davos Sanatorium Castorp\n"]), thinker: answer)
+        let s = await newSession(model)
+        let seen = await ask(s)
+        await close(s)
+        XCTAssertEqual(seen.statuses, [.conversational, .summarized, .summarized])
+        XCTAssertEqual(seen.texts[0], "Ich sehe in deinem Buch nach.")
+        XCTAssertTrue(seen.sentences[0].sources.isEmpty)
+        XCTAssertFalse(seen.sentences[1].sources.isEmpty)
+        XCTAssertFalse(seen.texts.joined().uppercased().contains("SUCHE"), "die Steuerzeile wird nie ausgegeben: \(seen.texts)")
+        XCTAssertEqual(model.calls.roles, [.speaker, .thinker])
+        XCTAssertEqual(seen.answer?.text, "Ich sehe in deinem Buch nach. Castorp fährt ins Sanatorium nach Davos. Dort besucht er seinen Vetter Joachim.")
+        XCTAssertEqual(seen.answer?.counts.conversational, 1)
+        XCTAssertEqual(seen.answer?.counts.summarized, 2)
+        XCTAssertEqual(seen.answer?.round, .data)
+        let turn = await s.history.last
+        XCTAssertEqual(turn?.parts.map(\.note), [AssistantTurnPart.conversationNote, AssistantTurnPart.summaryNote])
+        XCTAssertEqual(turn?.hasMarkedUnits, true)
+        XCTAssertEqual(turn?.sources.map(\.itemId), ["b1"])
+    }
+
+    /// „Sofort“: Der Zwischensatz geht hinaus, sobald die Steuerzeile erkannt ist, nicht erst am Zeilenende oder am Ende des Sprecher-Stroms.
+    func testInterimSentenceIsOutputAsSoonAsTheControlLineIsRecognized() async {
+        let model = RoleModel(speaker: Script(pieces: ["Ich sehe in deinem Buch nach.\nSUCHE:", " Davos Sanatorium Castorp\n"], pausesMs: [0, 700]),
+                              thinker: answer)
+        let s = await newSession(model)
+        let started = ContinuousClock.now
+        var firstSentenceAt: Duration?
+        var out: [AssistantEvent] = []
+        for await e in s.events(AssistantRequest(requestId: "r1", text: castorpQuestion)) {
+            if firstSentenceAt == nil, case .sentence = e { firstSentenceAt = ContinuousClock.now - started }
+            out.append(e)
+        }
+        XCTAssertEqual(Seen(events: out).statuses, [.conversational, .summarized, .summarized])
+        guard let at = firstSentenceAt else { return XCTFail("kein Satz") }
+        XCTAssertLessThan(at, .milliseconds(450), "vor dem Rest der Steuerzeile (der kommt nach 700 ms)")
+    }
+
+    /// Stückgrenzen, fehlendes Satzzeichen vor dem Zeilenumbruch, mehrere Sätze vor der Steuerzeile.
+    func testInterimSentenceVariants() async {
+        // Über Stückgrenzen, Steuerzeile klein geschrieben.
+        let m1 = RoleModel(speaker: Script(pieces: ["Ich sehe ", "in deinem Buch nach.\nSU", "CHE: Davos\n"]), thinker: answer)
+        let seen1 = await ask(await newSession(m1), castorpQuestion, id: "a")
+        XCTAssertEqual(seen1.texts.first, "Ich sehe in deinem Buch nach.")
+        XCTAssertEqual(seen1.statuses, [.conversational, .summarized, .summarized])
+
+        // Ohne Satzzeichen vor dem Zeilenumbruch: der offene Satz gilt als vollständig.
+        let m2 = RoleModel(speaker: Script(pieces: ["Ich sehe in deinem Buch nach\nSUCHE: Davos\n"]), thinker: answer)
+        let seen2 = await ask(await newSession(m2), castorpQuestion, id: "b")
+        XCTAssertEqual(seen2.texts.first, "Ich sehe in deinem Buch nach.")
+        XCTAssertEqual(seen2.statuses, [.conversational, .summarized, .summarized])
+
+        // Höchstens ein Satz vor der Steuerzeile: der zweite (noch im Satztrenner) wird verworfen.
+        let m3 = RoleModel(speaker: Script(pieces: ["Das steht sicher in deinem Buch. Zweiter Satz.\nSUCHE: Davos\n"]), thinker: answer)
+        let seen3 = await ask(await newSession(m3), castorpQuestion, id: "c")
+        XCTAssertEqual(seen3.spoken.prefix(1), ["Das steht sicher in deinem Buch."])
+        XCTAssertFalse(seen3.texts.contains("Zweiter Satz."))
+        XCTAssertEqual(seen3.statuses, [.conversational, .summarized, .summarized])
+        XCTAssertEqual(seen3.answer?.counts.droppedTemplate, 1, "der zweite Satz ist verworfen")
+        XCTAssertEqual(m3.calls.roles, [.speaker, .thinker], "die Suche läuft trotzdem")
+
+        // Ein Satz des Systems (hier die Ansage) ist als Zwischensatz verworfen; die Suche läuft.
+        let m4 = RoleModel(speaker: Script(pieces: ["\(AssistantNatural.fillerFirstSentence)\nSUCHE: Davos\n"]), thinker: answer)
+        let seen4 = await ask(await newSession(m4), castorpQuestion, id: "d")
+        XCTAssertEqual(seen4.statuses, [.summarized, .summarized])
+        XCTAssertEqual(seen4.answer?.counts.droppedTemplate, 1)
+
+        // Steht „suche:“ klein geschrieben in derselben Zeile hinter dem Satz, ist es keine Steuerzeile: keine Suche, der Text bleibt Text
+        // (eine direkte Antwort).
+        let m5 = RoleModel(speaker: Script(pieces: ["Ich sehe in deinem Buch nach. suche: Davos.\n"]), thinker: answer)
+        let seen5 = await ask(await newSession(m5), castorpQuestion, id: "e")
+        XCTAssertEqual(m5.calls.roles, [.speaker])
+        XCTAssertEqual(seen5.statuses, [.conversational])
+    }
+
+    // MARK: Steuerzeile in derselben Zeile hinter einem Satzende
+
+    /// „SUCHE:“ in Großbuchstaben mitten in der Zeile, NACH einem Satzende (. ! ? …) und Leerraum, ist eine Steuerzeile: der Satz davor ist
+    /// der Zwischensatz, der Rest sind die Suchwörter. Auch über Stückgrenzen (auch mitten im Wort „SUCHE“) und am Stromende ohne Zeilenumbruch.
+    func testControlLineInTheSameLineAfterASentenceEndIsRecognized() async {
+        let variants: [[String]] = [
+            ["Ich sehe in deinem Buch nach. SUCHE: Davos Sanatorium Castorp\n"],
+            ["Ich sehe in deinem Buch nach! SUCHE: Davos Sanatorium Castorp\n"],
+            ["Ich sehe in deinem Buch nach? SUCHE: Davos Sanatorium Castorp\n"],
+            ["Ich sehe in deinem Buch nach\u{2026} SUCHE: Davos Sanatorium Castorp\n"],
+            ["Ich sehe in deinem Buch nach.  \tSUCHE : Davos Sanatorium Castorp\n"],
+            ["Ich sehe in deinem Buch nach. SUCHE: Davos Sanatorium Castorp"],
+            ["Ich sehe in deinem Buch nach. S", "U", "CHE", ":", " Davos Sanatorium", " Castorp\n"],
+            ["Ich sehe in deinem Buch nach.", " ", "SUCHE: Davos Sanatorium Castorp\n"],
+            ["Ich sehe ", "in deinem Buch nach", ". SU", "CHE: Davos Sanatorium Castorp\n"],
+        ]
+        for (i, pieces) in variants.enumerated() {
+            let model = RoleModel(speaker: Script(pieces: pieces), thinker: answer)
+            let seen = await ask(await newSession(model), castorpQuestion, id: "x\(i)")
+            XCTAssertEqual(seen.statuses, [.conversational, .summarized, .summarized], "Variante \(i): \(pieces) -> \(seen.statuses)")
+            XCTAssertEqual(model.calls.roles, [.speaker, .thinker], "Variante \(i)")
+            XCTAssertFalse(seen.texts.joined().uppercased().contains("SUCHE"), "Variante \(i): die Steuerzeile wird nie ausgegeben: \(seen.texts)")
+            XCTAssertTrue(seen.texts.first?.hasPrefix("Ich sehe in deinem Buch nach") == true, "Variante \(i): \(seen.texts)")
+            XCTAssertEqual(seen.progress.contains(.searching(query: "Davos Sanatorium Castorp")), true, "Variante \(i): die Suchwörter")
+        }
+    }
+
+    /// Keine Steuerzeile: klein geschriebenes „suche:“ hinter dem Satzende, „SUCHE:“ ohne Leerraum hinter dem Satzende, „SUCHE:“ mitten im
+    /// Satz ohne Satzende davor, „Suche:“ in gemischter Schreibweise hinter dem Satzende. Die Anfrage geht ohne Suche zu Ende, die
+    /// Protokollzeile wird nie gesprochen (soweit sie am Satzanfang steht).
+    func testControlLineInTheSameLineNeedsASentenceEndWhitespaceAndCapitals() async {
+        let texts: [[String]] = [
+            ["Das sehe ich in deinem Buch. suche: Davos Sanatorium."],
+            ["Das sehe ich in deinem Buch. Suche: Davos Sanatorium."],
+            ["Das sehe ich in deinem Buch.SUCHE: Davos Sanatorium."],
+            ["Das sehe ich in deinem Buch, SUCHE: Davos Sanatorium."],
+            ["Ich suche: Davos Sanatorium und finde es."],
+            ["Das sehe ich in deinem Buch. ", "suche: Davos ", "Sanatorium."],
+            ["Das sehe ich in deinem Buch. Su", "che: Davos Sanatorium."],
+        ]
+        for (i, pieces) in texts.enumerated() {
+            let model = RoleModel(speaker: Script(pieces: pieces), thinker: answer)
+            let seen = await ask(await newSession(model), castorpQuestion, id: "n\(i)")
+            XCTAssertEqual(model.calls.roles, [.speaker], "Variante \(i): \(pieces): keine Suche")
+            XCTAssertFalse(seen.progress.contains { if case .searching = $0 { true } else { false } }, "Variante \(i)")
+            XCTAssertFalse(seen.statuses.contains(.summarized), "Variante \(i)")
+            XCTAssertTrue(seen.texts.allSatisfy { !AssistantNatural.isProtocolLine($0) }, "Variante \(i): \(seen.texts)")
+        }
+    }
+
+    /// Der Satz vor der Steuerzeile in derselben Zeile durchläuft denselben Filter wie der Zwischensatz in der Zeile davor.
+    func testInterimSentenceBeforeAControlLineInTheSameLineIsFilteredToo() async {
+        let model = RoleModel(speaker: Script(pieces: ["Ich schaue kurz nach. SUCHE: Davos Sanatorium Castorp\n"]), thinker: answer)
+        let seen = await ask(await newSession(model))
+        XCTAssertEqual(seen.statuses, [.summarized, .summarized], "der Floskelsatz ist verworfen, die Suche läuft")
+        XCTAssertEqual(seen.answer?.counts.droppedTemplate, 1)
+        XCTAssertEqual(model.calls.roles, [.speaker, .thinker])
+        XCTAssertTrue(seen.announcements.isEmpty)
+    }
+
+    // MARK: Filter für den Zwischensatz
+
+    /// Je Regel ein Satz, der verworfen wird, und einer, der bleibt (Wörter wie `AssistantWords.keys`, Groß-/Kleinschreibung egal).
+    func testFillerInterimFilterDropsAndAllowsPerRule() {
+        let f = AssistantNatural.isFillerInterim
+        // Stoppwörter als Wort
+        for text in ["Stopp, ich sehe in deinem Buch nach.", "Stop das steht in deinem Buch.", "Das steht, halt, in deinem Buch.",
+                     "Warte, ich sehe in deinem Buch nach.", "MOMENT, ich sehe in deinem Buch nach."] {
+            XCTAssertTrue(f(text), text)
+        }
+        XCTAssertFalse(f("Ich halte das in deinem Buch fest."), "„halte“ ist nicht „halt“")
+        XCTAssertFalse(f("Das steht im Haltungskapitel deines Buches."), "kein Wortvergleich auf Teilstrings")
+        // weniger als 4 Wörter
+        for text in ["Ich sehe nach.", "Okay.", "Gleich, Moment.", "Dazu gleich mehr."] { XCTAssertTrue(f(text), text) }
+        XCTAssertFalse(f("Das steht in deinem Buch."))
+        XCTAssertFalse(f("Davos liegt in der Schweiz."))
+        // „denke … nach“ mit höchstens zwei Wörtern dazwischen
+        for text in ["Ich denke kurz darüber nach.", "Ich denke darüber nach, Patrick.", "Denke ich nach, Patrick?", "Ich denke nach, Patrick, und finde es."] {
+            XCTAssertTrue(f(text), text)
+        }
+        XCTAssertFalse(f("Ich denke, das steht in deinem Buch."))
+        XCTAssertFalse(f("Ich denke, dass Davos in der Schweiz liegt und bald nach Hause kommt."), "„nach“ weiter als zwei Wörter hinter „denke“")
+        XCTAssertFalse(f("Ich denke einmal ganz kurz nach."), "drei Wörter zwischen „denke“ und „nach“: außerhalb des Musters")
+        // überlege / überlegen
+        XCTAssertTrue(f("Ich überlege gerade, wo das steht."))
+        XCTAssertTrue(f("Da muss ich erst überlegen, Patrick."))
+        XCTAssertTrue(f("Ich ueberlege kurz, ob das hier passt."), "die Schreibweise ohne Umlaut zählt auch")
+        XCTAssertFalse(f("Das steht wohl in deinem Buch."))
+        // lass mich
+        XCTAssertTrue(f("Lass mich kurz in deinem Buch blättern."))
+        XCTAssertFalse(f("Das Buch lässt dich nicht los, sagt Patrick."))
+        // augenblick, sekunde
+        XCTAssertTrue(f("Einen Augenblick, das steht in deinem Buch."))
+        XCTAssertTrue(f("Eine Sekunde, das steht in deinem Buch."))
+        XCTAssertFalse(f("Das steht im Kapitel Augenblicke der Stille."), "„augenblicke“ ist ein anderes Wort")
+        // gleich wieder, bin gleich
+        XCTAssertTrue(f("Ich bin gleich mit dem Ergebnis bei dir."))
+        XCTAssertTrue(f("Ich melde mich gleich wieder bei dir."))
+        XCTAssertFalse(f("Das Buch ist gleich im Regal neben dir."), "„gleich“ allein reicht nicht")
+        XCTAssertFalse(f("Ich bin im Buch gleich auf Seite zwölf."), "„bin“ und „gleich“ nicht benachbart")
+        // Suchverb + „nach“ ohne Inhaltswort
+        for text in ["Ich schaue kurz nach.", "Ich schaue mal kurz nach.", "Ich schau mal nach, okay.", "Ich sehe gleich kurz mal nach.",
+                     "Ich gucke einmal schnell nach.", "Ich suche kurz mal nach, ja.", "Ich such das jetzt nach.", "Dann schaue ich kurz nach."] {
+            XCTAssertTrue(f(text), text)
+        }
+        XCTAssertFalse(f("Ich schaue in deinem Humboldt-Buch nach."), "mit Inhalt erlaubt")
+        XCTAssertFalse(f("Ich schaue kurz in deinem Humboldt-Buch nach."))
+        XCTAssertFalse(f("Ich sehe bei Humboldt nach."))
+        XCTAssertFalse(f("Ich schaue im Kapitel zwei nach."))
+        XCTAssertFalse(f("Ich schaue nach, ob Davos dort steht."), "mit Inhalt hinter „nach“ erlaubt")
+        XCTAssertFalse(f("Ich suche das Kapitel über Davos."), "kein „nach“: kein Muster")
+        // Schreibweise egal
+        XCTAssertTrue(f("ICH SCHAUE KURZ NACH."))
+        XCTAssertFalse(f("ICH SCHAUE IN DEINEM BUCH NACH."))
+    }
+
+    /// Im Ablauf: Ein verworfener Zwischensatz (je Regel einer) gibt nichts aus, zählt als `droppedTemplate`, die Suche läuft trotzdem,
+    /// es gibt weder Ersatzsatz noch Ansage. Ein erlaubter Zwischensatz geht wie bisher hinaus.
+    func testFilteredInterimSentenceIsDroppedAndTheSearchRunsWithoutAReplacement() async {
+        let dropped = [
+            "Moment, ich sehe in deinem Buch nach.", "Ich sehe nach.", "Ich denke kurz darüber nach.", "Ich überlege gerade, wo das steht.",
+            "Lass mich kurz in deinem Buch blättern.", "Einen Augenblick, das steht in deinem Buch.", "Eine Sekunde, das steht in deinem Buch.",
+            "Ich bin gleich mit dem Ergebnis bei dir.", "Ich melde mich gleich wieder bei dir.", "Ich schaue kurz nach.",
+        ]
+        for (i, text) in dropped.enumerated() {
+            for style in 0..<2 {
+                // Steuerzeile in der nächsten Zeile (style 0) und in derselben Zeile hinter dem Satzende (style 1)
+                let line = style == 0 ? "\(text)\nSUCHE: Davos Sanatorium Castorp\n" : "\(text) SUCHE: Davos Sanatorium Castorp\n"
+                let model = RoleModel(speaker: Script(pieces: [line]), thinker: answer)
+                let seen = await ask(await newSession(model), castorpQuestion, id: "f\(i)-\(style)")
+                XCTAssertEqual(seen.statuses, [.summarized, .summarized], "verworfen: \(text) -> \(seen.statuses)")
+                XCTAssertEqual(seen.answer?.counts.droppedTemplate, 1, text)
+                XCTAssertEqual(model.calls.roles, [.speaker, .thinker], "die Suche läuft: \(text)")
+                XCTAssertTrue(seen.announcements.isEmpty, "keine Ansage: \(text)")
+                XCTAssertFalse(seen.texts.contains { $0.contains(text) }, "nicht ausgegeben: \(text)")
+                XCTAssertFalse(seen.texts.joined().uppercased().contains("SUCHE"), text)
+            }
+        }
+        let allowed = [
+            "Ich schaue in deinem Humboldt-Buch nach.", "Ich denke, das steht in deinem Buch.", "Das steht sicher in deinem Buch.",
+            "Davos liegt in der Schweiz, ich sehe im Buch nach.",
+        ]
+        for (i, text) in allowed.enumerated() {
+            let model = RoleModel(speaker: Script(pieces: ["\(text)\nSUCHE: Davos Sanatorium Castorp\n"]), thinker: answer)
+            let seen = await ask(await newSession(model), castorpQuestion, id: "g\(i)")
+            XCTAssertEqual(seen.statuses, [.conversational, .summarized, .summarized], "erlaubt: \(text) -> \(seen.statuses)")
+            XCTAssertEqual(seen.texts.first, text)
+            XCTAssertEqual(seen.answer?.counts.droppedTemplate, 0, text)
+            XCTAssertEqual(model.calls.roles, [.speaker, .thinker], text)
+        }
+    }
+
+    /// Direkte Antworten werden nie gefiltert (auch nicht, wenn sie wie eine Floskel aussehen); die Zeilenfolge eines verworfenen
+    /// Zwischensatzes hat eine Einheit „verworfen“ (Vorlage) und besteht den Prüfer.
+    func testDirectAnswersAreNeverFilteredAndADroppedInterimSentenceKeepsTheJournalValid() async {
+        let direct = RoleModel(speaker: Script(pieces: ["Ich denke kurz nach. Das Wetter kenne ich leider nicht."]))
+        let seenDirect = await ask(await newSession(direct), weather)
+        XCTAssertEqual(seenDirect.spoken, ["Ich denke kurz nach.", "Das Wetter kenne ich leider nicht."])
+        XCTAssertEqual(seenDirect.answer?.counts.droppedTemplate, 0)
+        let short = await ask(await newSession(RoleModel(speaker: Script(pieces: ["Okay."]))), weather)
+        XCTAssertEqual(short.spoken, ["Okay."])
+        XCTAssertEqual(short.statuses, [.conversational])
+
+        let (s, audit) = await auditSession(RoleModel(speaker: Script(pieces: ["Ich schaue kurz nach.\nSUCHE: Davos\n"]), thinker: answer))
+        _ = await ask(s)
+        await close(s)
+        XCTAssertEqual(journalTags(journal(audit)), [
+            "start:natural", "round:general/naturalTalk", "areas:", "step:droppedTemplate", "round:data/naturalSearch", "areas:books", "step:summarized",
+            "step:summarized", "end",
+        ])
+        XCTAssertEqual(AssistantProtocolOrder.check(journal(audit)), [])
+    }
+
+    /// Die Zeilenfolge mit Zwischensatz: Sprecher-Phase mit dem Satz, dann die Datenphase; der Prüfer lässt sie zu, auch mit Überbrückung.
+    func testJournalSequenceWithAnInterimSentence() async {
+        let (s1, a1) = await auditSession(RoleModel(speaker: Script(pieces: ["Ich sehe in deinem Buch nach.\nSUCHE: Davos\n"]), thinker: answer))
+        _ = await ask(s1)
+        await close(s1)
+        XCTAssertEqual(journalTags(journal(a1)), [
+            "start:natural", "round:general/naturalTalk", "areas:", "step:conversational", "round:data/naturalSearch", "areas:books",
+            "step:summarized", "step:summarized", "end",
+        ])
+        XCTAssertEqual(AssistantProtocolOrder.check(journal(a1)), [])
+
+        let (s2, a2) = await auditSession(RoleModel(speaker: Script(pieces: ["Ich sehe in deinem Buch nach.\nSUCHE: Davos\n"]), thinker: answer),
+                                          config: config(bridge: true))
+        _ = await ask(s2)
+        await close(s2)
+        XCTAssertEqual(journalTags(journal(a2)), [
+            "start:natural", "round:general/naturalTalk", "areas:", "step:conversational", "round:data/naturalSearch", "step:announcement",
+            "areas:books", "step:summarized", "step:summarized", "end",
+        ])
+        XCTAssertEqual(AssistantProtocolOrder.check(journal(a2)), [])
+    }
+
+    // MARK: Fortschritt für die Denk-Anzeige
+
+    /// Direkte Antwort: nur `speaker`.
+    func testProgressOfADirectAnswerIsOnlyTheSpeaker() async {
+        let seen = await ask(await newSession(RoleModel(speaker: Script(pieces: ["Das Wetter kenne ich leider nicht."]))), weather)
+        XCTAssertEqual(seen.progress, [.speaker])
+        XCTAssertEqual(seen.statuses, [.conversational])
+    }
+
+    /// Zwischensatz und Suche: speaker, searching (mit den Suchwörtern), found (Titel der Auszüge im Prompt), composing, draft…; die Entwürfe
+    /// sind kumulativ und der letzte ist der ganze Rohtext des Denkers. Gesprochen wird nur über `sentence`.
+    func testProgressOfAnInterimSentenceAndASearch() async {
+        let model = RoleModel(speaker: Script(pieces: ["Ich sehe in deinem Buch nach.\nSUCHE: Davos Sanatorium Castorp\n"]), thinker: answer)
+        let seen = await ask(await newSession(model))
+        let shape = seen.progressShape
+        XCTAssertEqual(Array(shape.prefix(4)), ["speaker", "searching", "found:Der Zauberberg", "composing"], "\(shape)")
+        XCTAssertTrue(shape.dropFirst(4).allSatisfy { $0 == "draft" } && shape.count > 4, "\(shape)")
+        XCTAssertEqual(seen.progress[1], .searching(query: "Davos Sanatorium Castorp"))
+        XCTAssertEqual(seen.statuses, [.conversational, .summarized, .summarized])
+        let drafts = seen.drafts
+        XCTAssertEqual(drafts.last, answer.pieces.joined(), "am Ende einmal vollständig")
+        for pair in zip(drafts, drafts.dropFirst()) { XCTAssertTrue(pair.1.hasPrefix(pair.0), "kumulativ") }
+        XCTAssertEqual(Set(drafts).count, drafts.count, "kein Entwurf doppelt")
+        // Alle Fortschrittsereignisse tragen Kennung und Generation der Sätze.
+        let ids = Set(seen.events.compactMap { e -> String? in if case .progress(let id, _, _) = e { id } else { nil } })
+        XCTAssertEqual(ids, ["r1"])
+        let gens = Set(seen.events.compactMap { e -> Int? in
+            switch e {
+            case .progress(_, let g, _): g
+            case .sentence(_, let g, _, _, _, _, _): g
+            default: nil
+            }
+        })
+        XCTAssertEqual(gens.count, 1)
+    }
+
+    /// Reihenfolge der Ereignisse insgesamt: Der Zwischensatz kommt zwischen `speaker` und `searching`.
+    func testProgressAndSentencesInOrderForInterimSentenceAndSearch() async {
+        let model = RoleModel(speaker: Script(pieces: ["Ich sehe in deinem Buch nach.\nSUCHE: Davos\n"]), thinker: answer)
+        let seen = await ask(await newSession(model))
+        let order = seen.orderShape
+        // speaker, Satz des Zwischensatzes, searching, found, composing, dann Entwürfe und Sätze durchmischt.
+        XCTAssertEqual(Array(order.prefix(5)), ["speaker", "sentence", "searching", "found:Der Zauberberg", "composing"], "\(order)")
+    }
+
+    /// Nur Suche (ohne Zwischensatz): speaker, searching, found, composing, draft…
+    func testProgressOfASearchWithoutAnInterimSentence() async {
+        let seen = await ask(await newSession(RoleModel(speaker: search, thinker: answer)))
+        XCTAssertEqual(Array(seen.progressShape.prefix(4)), ["speaker", "searching", "found:Der Zauberberg", "composing"])
+        XCTAssertEqual(seen.statuses, [.summarized, .summarized])
+    }
+
+    /// Direkter Inhaltsbezug: der Sprecher läuft nicht, die Folge beginnt mit `searching` (ohne Suchwörter: der Fragetext).
+    func testProgressOfADirectContentReferenceStartsWithSearching() async {
+        let seen = await ask(await newSession(RoleModel(thinker: answer)), ownQuestion)
+        XCTAssertEqual(seen.progress.first, .searching(query: ownQuestion))
+        XCTAssertFalse(seen.progress.contains(.speaker))
+        XCTAssertEqual(Array(seen.progressShape.prefix(3)), ["searching", "found:Der Zauberberg", "composing"])
+    }
+
+    /// Suche ohne Treffer: speaker, searching, found (leer); weder composing noch draft, kein Denker.
+    func testProgressOfASearchWithoutHits() async {
+        let model = RoleModel(speaker: Script(pieces: ["Ich sehe in deinem Buch nach.\nSUCHE: Davos\n"]), thinker: answer)
+        let seen = await ask(await newSession(model, knowledge: AssistantKnowledge(corpus: AssistantCorpus())))
+        XCTAssertEqual(seen.progress, [.speaker, .searching(query: "Davos"), .found(titles: [])])
+        XCTAssertEqual(seen.statuses, [.conversational, .neutral])
+        XCTAssertEqual(model.calls.roles, [.speaker], "kein Denker")
+    }
+
+    /// Eine Bestandsfrage hat keinen Fortschritt (kein Modell); im Stil verbatim gibt es nie Fortschritt.
+    func testNoProgressForInventoryAndInVerbatim() async {
+        let inv = await ask(await newSession(RoleModel(thinker: answer)), inventoryQuestion)
+        XCTAssertTrue(inv.progress.isEmpty)
+        var verbatim = config()
+        verbatim.style = .verbatim
+        let seen = await ask(await newSession(RoleModel(thinker: Script(pieces: ["Das Wetter ist schön."])), config: verbatim), weather)
+        XCTAssertTrue(seen.progress.isEmpty)
+    }
+
+    /// Die Entwürfe sind gedrosselt (höchstens etwa alle 150 ms; der erste sofort) und am Ende einmal vollständig.
+    func testDraftsAreThrottledAndComplete() async {
+        let pieces = ["Castorp ", "fährt ", "ins ", "Sanatorium ", "nach ", "Davos."]
+        let model = RoleModel(speaker: search, thinker: Script(pieces: pieces))
+        let seen = await ask(await newSession(model))
+        let drafts = seen.drafts
+        XCTAssertEqual(drafts.first, "Castorp ", "der erste Entwurf sofort")
+        XCTAssertEqual(drafts.last, pieces.joined(), "am Ende einmal vollständig")
+        XCTAssertLessThan(drafts.count, pieces.count, "gedrosselt: nicht jedes Stück: \(drafts)")
+        for pair in zip(drafts, drafts.dropFirst()) { XCTAssertTrue(pair.1.hasPrefix(pair.0)) }
+
+        // Langsamer Denker: Je Stück (200 ms Abstand) ein Entwurf.
+        let slow = RoleModel(speaker: search, thinker: Script(pieces: ["Castorp ", "fährt ", "nach Davos."], pausesMs: [0, 200, 200]))
+        let seenSlow = await ask(await newSession(slow), castorpQuestion, id: "slow")
+        XCTAssertEqual(seenSlow.drafts, ["Castorp ", "Castorp fährt ", "Castorp fährt nach Davos."])
+    }
+
+    /// Nach `cancel` und nach einem Widerruf kommt kein Fortschritt mehr.
+    func testNoProgressAfterCancelOrRevocation() async {
+        for revoke in [false, true] {
+            let model = RoleModel(speaker: search,
+                                  thinker: Script(pieces: ["Castorp ", "fährt ", "ins ", "Sanatorium ", "nach ", "Davos. "], pausesMs: [0, 200, 200, 200, 200, 200]))
+            let s = await newSession(model)
+            var after: [AssistantProgress] = []
+            var stopped = false
+            for await e in s.events(AssistantRequest(requestId: "r1", text: castorpQuestion)) {
+                guard case .progress(_, _, let p) = e else { continue }
+                if stopped { after.append(p); continue }
+                if case .draft = p {
+                    stopped = true
+                    if revoke { _ = s.applyReleaseChange(.other) } else { await s.cancel(requestId: "r1") }
+                }
+            }
+            XCTAssertTrue(stopped, "es gab einen Entwurf")
+            XCTAssertEqual(after, [], "nach \(revoke ? "Widerruf" : "Abbruch") kein Fortschritt mehr")
+        }
+        // Abbruch beim ersten Fortschritt (Sprecher hängt): nichts folgt.
+        let hang = await newSession(RoleModel(speaker: Script(hang: true)))
+        var later: [AssistantProgress] = []
+        var cancelled = false
+        for await e in hang.events(AssistantRequest(requestId: "r1", text: castorpQuestion)) {
+            guard case .progress(_, _, let p) = e else { continue }
+            if cancelled { later.append(p) } else if p == .speaker {
+                cancelled = true
+                await hang.cancel(requestId: "r1")
+            }
+        }
+        XCTAssertTrue(cancelled)
+        XCTAssertEqual(later, [])
+    }
+
+    /// Fortschritt ist nur Anzeige: nicht im Protokoll (Titel, Suchwörter und Entwurf sind Inhalte) und nicht im Verlauf.
+    func testProgressIsNeverWrittenToTheJournalOrTheHistory() async {
+        let (s, audit) = await auditSession(RoleModel(speaker: Script(pieces: ["Ich sehe in deinem Buch nach.\nSUCHE: Davos Sanatorium Castorp\n"]), thinker: answer))
+        let seen = await ask(s)
+        await close(s)
+        XCTAssertFalse(seen.progress.isEmpty)
+        let raw = rawJournal(audit)
+        for needle in ["draft", "searching", "composing", "progress", "found", "Davos Sanatorium Castorp", "Castorp fährt ins Sanatorium", "Der Zauberberg"] {
+            XCTAssertFalse(raw.contains(needle), "im Protokoll: \(needle)")
+        }
+        XCTAssertEqual(journalTags(journal(audit)), [
+            "start:natural", "round:general/naturalTalk", "areas:", "step:conversational", "round:data/naturalSearch", "areas:books",
+            "step:summarized", "step:summarized", "end",
+        ], "genau die Zeilen wie ohne Fortschritt")
+        XCTAssertEqual(AssistantProtocolOrder.check(journal(audit)), [])
+        let turn = await s.history.last
+        XCTAssertFalse((turn?.assistant ?? "").contains("Davos Sanatorium Castorp"))
+        XCTAssertEqual(turn?.parts.count, 2)
+    }
+
+    // MARK: Keine festen Floskeln (Standard)
+
+    /// Standard: `bridge` und `fillers` aus. Der Kern gibt dann in keinem Fall einen festen Überbrückungs- oder Ansagesatz aus, auch bei
+    /// langsamem Modell und gemeldeter Äußerung; es bleibt kein Zeitpunkt gemerkt.
+    func testWithBridgeAndFillersOffNoFixedPhraseIsEverOutput() async {
+        let defaults = AssistantConfig(modelLabel: "T", isCloud: false, contextTokens: 4_096, maxAnswerTokens: 400, userName: nil, timeout: 5)
+        XCTAssertFalse(defaults.bridge)
+        XCTAssertFalse(defaults.fillers)
+        var c = config()
+        XCTAssertFalse(c.bridge)
+        XCTAssertFalse(c.fillers)
+        c.fillerFirstMs = 0     // Zeiten gesetzt, aber `fillers` aus
+        c.fillerSecondMs = 0
+        let cases: [(String, RoleModel, String, AssistantKnowledge?)] = [
+            ("direkt", RoleModel(speaker: Script(pieces: ["Hallo zusammen."], pausesMs: [400])), "Hallo", nil),
+            ("Zwischensatz und Suche", RoleModel(speaker: Script(pieces: ["Ich sehe in deinem Buch nach.\nSUCHE: Davos\n"], pausesMs: [300]),
+                                                  thinker: Script(pieces: answer.pieces, pausesMs: [400])), castorpQuestion, nil),
+            ("nur Suche", RoleModel(speaker: Script(pieces: [searchLine], pausesMs: [300]), thinker: Script(pieces: answer.pieces, pausesMs: [400])),
+             castorpQuestion, nil),
+            ("keine Treffer", RoleModel(speaker: Script(pieces: [searchLine], pausesMs: [300]), thinker: answer), castorpQuestion,
+             AssistantKnowledge(corpus: AssistantCorpus())),
+            ("direkter Bezug", RoleModel(thinker: Script(pieces: answer.pieces, pausesMs: [400])), ownQuestion, nil),
+        ]
+        for (name, model, text, knowledge) in cases {
+            let s = await newSession(model, config: c, knowledge: knowledge)
+            let stream = s.events(AssistantRequest(requestId: "r1", text: text))
+            s.noteCommitted(requestId: "r1")
+            var out: [AssistantEvent] = []
+            for await e in stream { out.append(e) }
+            let seen = Seen(events: out)
+            XCTAssertTrue(seen.announcements.isEmpty, "\(name): \(seen.announcements)")
+            for fixed in AssistantNatural.announcementTexts { XCTAssertFalse(seen.texts.contains(fixed), "\(name): \(fixed)") }
+            XCTAssertNil(seen.failure, name)
+            XCTAssertEqual(s.commitNoteCountsForTesting.times, 0, "\(name): kein Zeitpunkt gemerkt")
+            XCTAssertEqual(s.commitNoteCountsForTesting.observers, 0, name)
+        }
+    }
+
+    // MARK: Nebenläufigkeit
+
+    func testConcurrentNaturalRequestsKeepTheirOwnLinesAndBridges() async {
+        let (s, audit) = await auditSession(RoleModel(speaker: search, thinker: answer), config: config(bridge: true))
+        let ids = (0..<8).map { "c\($0)" }
+        let results = await withTaskGroup(of: (String, Seen).self) { group -> [(String, Seen)] in
+            for id in ids { group.addTask { (id, await collect(s, AssistantRequest(requestId: id, text: castorpQuestion))) } }
+            var out: [(String, Seen)] = []
+            for await r in group { out.append(r) }
+            return out
+        }
+        XCTAssertEqual(results.count, 8)
+        for (id, seen) in results {
+            XCTAssertEqual(seen.statuses, [.announcement, .summarized, .summarized], id)
+            await close(s, id)
+        }
+        for id in ids {
+            XCTAssertEqual(AssistantProtocolOrder.check(journal(audit, id)), [], id)
+            XCTAssertEqual(journalTags(journal(audit, id)).count, 9, id)
+        }
+        let bridges = results.flatMap { $0.1.announcements }
+        for bridge in AssistantNatural.bridges { XCTAssertEqual(bridges.filter { $0 == bridge }.count, 2, "reihum, jeder gleich oft: \(bridge)") }
+    }
+
+    // MARK: Prüfer, Erkennung, Prompts (reine Funktionen)
+
+    private func line(_ t: AssistantJournalLine.Kind, gen: Int? = 1, _ body: (inout AssistantJournalLine) -> Void = { _ in }) -> AssistantJournalLine {
+        var l = AssistantJournalLine(t, req: "r1")
+        l.gen = gen
+        body(&l)
+        return l
+    }
+
+    private func start(_ style: AssistantStyle?) -> AssistantJournalLine { line(.start) { $0.style = style } }
+    private func round(_ kind: AssistantRoundKind, _ reason: AssistantContext.Reason, areas: [String]? = nil) -> AssistantJournalLine {
+        line(.round) { $0.round = kind; $0.reason = reason; $0.areas = areas }
+    }
+    private func areas(_ names: [String]) -> AssistantJournalLine { line(.areas) { $0.areas = names } }
+    private func step(_ verdict: AssistantTraceVerdict) -> AssistantJournalLine { line(.step) { $0.n = 1; $0.verdict = verdict } }
+
+    func testProtocolOrderAcceptsExactlyTheAllowedSequences() {
+        typealias V = AssistantProtocolOrder.Violation
+        let n = AssistantStyle.natural
+        // erlaubt
+        XCTAssertEqual(AssistantProtocolOrder.check([start(n), round(.general, .naturalTalk), areas([]), step(.conversational), line(.end)]), [])
+        XCTAssertEqual(AssistantProtocolOrder.check([start(n), round(.general, .naturalTalk), areas(["books"]), round(.data, .naturalSearch, areas: ["books"]),
+                                                     step(.announcement), areas(["books"]), step(.summarized), line(.end)]), [])
+        XCTAssertEqual(AssistantProtocolOrder.check([start(n), round(.data, .naturalSearch, areas: []), areas(["books"]), step(.summarized)]), [])
+        // Zwischensatz des Sprechers, dann (mit `bridge`) die Überbrückung am Anfang der Datenphase.
+        XCTAssertEqual(AssistantProtocolOrder.check([start(n), round(.general, .naturalTalk), areas([]), step(.conversational),
+                                                     round(.data, .naturalSearch, areas: ["books"]), step(.announcement), areas(["books"]),
+                                                     step(.summarized), line(.end)]), [])
+        XCTAssertEqual(AssistantProtocolOrder.check([start(n), round(.general, .naturalTalk), areas([]), step(.conversational),
+                                                     round(.data, .naturalSearch, areas: ["books"]), areas(["books"]), step(.summarized),
+                                                     step(.announcement)]), [V.announcementAfterAnswer], "nach einer Antworteinheit der Datenphase nicht")
+        XCTAssertEqual(AssistantProtocolOrder.check([start(nil), round(.data, .locked), areas(["books"]), step(.announcement), step(.grounded)]), [])
+        // verboten
+        XCTAssertEqual(AssistantProtocolOrder.check([start(nil), round(.data, .locked), round(.general, .free)]), [V.roundCount])
+        XCTAssertEqual(AssistantProtocolOrder.check([start(nil), round(.data, .naturalSearch, areas: [])]), [V.naturalInVerbatim])
+        XCTAssertEqual(AssistantProtocolOrder.check([start(nil), round(.data, .locked), areas([]), step(.summarized)]), [V.naturalInVerbatim])
+        XCTAssertTrue(AssistantProtocolOrder.check([start(n), round(.general, .naturalTalk), step(.conversational)]).contains(V.speakerAreasMissing))
+        XCTAssertTrue(AssistantProtocolOrder.check([start(n), round(.data, .naturalSearch)]).contains(V.retrievalAreasMissing))
+        XCTAssertTrue(AssistantProtocolOrder.check([start(n), round(.data, .naturalSearch, areas: []), step(.summarized)]).contains(V.dataAreasMissing))
+        XCTAssertTrue(AssistantProtocolOrder.check([start(n), round(.data, .naturalSearch, areas: []), areas([]), step(.conversational)]).contains(V.verdictNotAllowed))
+        XCTAssertTrue(AssistantProtocolOrder.check([start(n), round(.general, .naturalTalk), areas([]), step(.summarized)]).contains(V.verdictNotAllowed))
+        XCTAssertTrue(AssistantProtocolOrder.check([start(n), round(.general, .naturalTalk), areas([]), round(.general, .naturalTalk)]).contains(V.roundNotAllowed))
+        XCTAssertTrue(AssistantProtocolOrder.check([start(n), round(.data, .naturalSearch, areas: []), areas([]), round(.data, .naturalSearch, areas: [])]).contains(V.roundNotAllowed))
+        XCTAssertTrue(AssistantProtocolOrder.check([start(n), step(.conversational)]).contains(V.stepBeforeRound))
+        XCTAssertTrue(AssistantProtocolOrder.check([start(n), areas([])]).contains(V.areasBeforeRound))
+        XCTAssertTrue(AssistantProtocolOrder.check([start(n), round(.general, .naturalTalk), areas([]), line(.end), step(.conversational)]).contains(V.lineAfterEnd))
+        XCTAssertTrue(AssistantProtocolOrder.check([start(n), line(.round, gen: 2) { $0.round = .general; $0.reason = .naturalTalk }]).contains(V.generationMismatch))
+        XCTAssertEqual(AssistantProtocolOrder.check([line(.round) { $0.round = .data }]), [V.startMissing])
+        // Ansagen: nach einer Antworteinheit nicht mehr; höchstens drei
+        XCTAssertTrue(AssistantProtocolOrder.check([start(n), round(.general, .naturalTalk), areas([]), step(.conversational), step(.announcement)]).contains(V.announcementAfterAnswer))
+        XCTAssertTrue(AssistantProtocolOrder.check([start(n), round(.general, .naturalTalk), areas([]), step(.announcement), step(.announcement),
+                                                    step(.announcement), step(.announcement)]).contains(V.tooManyAnnouncements))
+        XCTAssertEqual(AssistantProtocolOrder.check([start(n), round(.general, .naturalTalk), areas([]), step(.announcement), step(.announcement),
+                                                     step(.conversational)]), [])
+    }
+
+    /// Das Tor trennt Text und Steuerzeile an jedem Zeilenanfang; die Steuerzeile geht nie als Text hinaus.
+    func testSpeakerGateSeparatesTextFromTheControlLineAtEveryLineStart() {
+        typealias Gate = AssistantNatural.SpeakerGate
+        typealias Step = Gate.Step
+        func search(_ words: String, _ complete: Bool) -> Gate.Search { Gate.Search(words: words, complete: complete) }
+
+        // Nur Steuerzeile, über Stückgrenzen.
+        var only = Gate()
+        XCTAssertEqual(only.feed("SU"), Step())
+        XCTAssertEqual(only.feed("CHE "), Step())
+        XCTAssertEqual(only.feed(": Davos"), Step(speech: "", search: search(" Davos", false)))
+        XCTAssertEqual(only.feed(" Berg\nRest"), Step(speech: "", search: search(" Davos Berg\nRest", true)))
+
+        // Zwischensatz, dann Steuerzeile in neuer Zeile: der Satz geht als Text hinaus, die Zeile nicht.
+        var interim = Gate()
+        XCTAssertEqual(interim.feed("Ich sehe nach.\nSU"), Step(speech: "Ich sehe nach.\n"), "der Anfang der nächsten Zeile wird zurückgehalten")
+        XCTAssertEqual(interim.feed("CHE: Davos\n"), Step(speech: "", search: search(" Davos\n", true)))
+        var oneShot = Gate()
+        XCTAssertEqual(oneShot.feed("Ich sehe nach.\nSUCHE: Davos\n"), Step(speech: "Ich sehe nach.\n", search: search(" Davos\n", true)))
+        var blank = Gate()
+        XCTAssertEqual(blank.feed("Ich sehe nach.\n\n  \nsuche : Davos"), Step(speech: "Ich sehe nach.\n", search: search(" Davos", false)),
+                       "Leerzeilen vor der Steuerzeile gehören nicht zum Text")
+
+        // Direkte Antwort: alles geht als Text hinaus, auch das Übersprungene.
+        var talk = Gate()
+        XCTAssertEqual(talk.feed("  \"Hallo"), Step(speech: "  \"Hallo"))
+        XCTAssertEqual(talk.feed(" du.\nSonne scheint."), Step(speech: " du.\nSonne scheint."))
+        XCTAssertEqual(talk.finish(), Step())
+
+        // Ein bloßes „Suche“ am Zeilenanfang oder am Ende ist keine Steuerzeile.
+        var bare = Gate()
+        XCTAssertEqual(bare.feed("Hallo.\nSuche"), Step(speech: "Hallo.\n"))
+        XCTAssertEqual(bare.finish(), Step(speech: "Suche"), "ein bloßes „Suche“ am Ende ist keine Suche")
+        var colon = Gate()
+        XCTAssertEqual(colon.feed("Suche Kaffee: ja."), Step(speech: "Suche Kaffee: ja."))
+
+        // Mitten in einer Zeile: NUR „SUCHE:“ in Großbuchstaben, NACH Satzende (. ! ? …) und Leerraum, ist eine Steuerzeile; der Satz davor
+        // geht als Text hinaus (mit dem Leerraum), die Zeile nicht.
+        for end in [".", "!", "?", "\u{2026}"] {
+            var inside = Gate()
+            XCTAssertEqual(inside.feed("Moin\(end) SUCHE: Davos"), Step(speech: "Moin\(end) ", search: search(" Davos", false)), end)
+            XCTAssertEqual(inside.feed(" Berg\nRest"), Step(speech: "", search: search(" Davos Berg\nRest", true)), end)
+        }
+        var pieces = Gate()
+        XCTAssertEqual(pieces.feed("Moin."), Step(speech: "Moin."))
+        XCTAssertEqual(pieces.feed(" "), Step(speech: " "))
+        XCTAssertEqual(pieces.feed("S"), Step(), "der Anfang wird zurückgehalten")
+        XCTAssertEqual(pieces.feed("UCHE"), Step())
+        XCTAssertEqual(pieces.feed(" :"), Step(speech: "", search: search("", false)))
+        XCTAssertEqual(pieces.feed(" Davos\n"), Step(speech: "", search: search(" Davos\n", true)))
+        // Mehr Leerraum, auch ein Tabulator, vor der Zeile
+        var spaced = Gate()
+        XCTAssertEqual(spaced.feed("Moin.  \t SUCHE: Davos\n"), Step(speech: "Moin.  \t ", search: search(" Davos\n", true)))
+        // Kein Satzende davor, kein Leerraum danach, klein oder gemischt geschrieben: Text, unverändert und vollständig
+        for text in ["Moin, SUCHE: Davos.", "Moin.SUCHE: Davos.", "Moin! suche: Davos.", "Moin! Suche: Davos.", "Ich SUCHE: Davos.", "Moin! SUCHEN: Davos.",
+                     "Moin! SUCHE Davos.", "Moin! SUCH", "Moin! SUCHE"] {
+            var plain = Gate()
+            var out = plain.feed(text)
+            let rest = plain.finish()
+            XCTAssertNil(out.search, text)
+            XCTAssertNil(rest.search, text)
+            out.speech += rest.speech
+            XCTAssertEqual(out.speech, text, "alles geht als Text hinaus, auch das Zurückgehaltene: \(text)")
+        }
+        // Dasselbe über Stückgrenzen
+        var cut = Gate()
+        var spoken = ""
+        for piece in ["Moin! ", "Su", "che", ": Davos."] { spoken += cut.feed(piece).speech }
+        spoken += cut.finish().speech
+        XCTAssertEqual(spoken, "Moin! Suche: Davos.")
+
+        // Stromende in der Steuerzeile: sie gilt als abgeschlossen.
+        var open = Gate()
+        _ = open.feed("SUCHE: Davos")
+        XCTAssertEqual(open.finish(), Step(speech: "", search: search(" Davos", true)))
+
+        var long = Gate()
+        _ = long.feed("SUCHE: ")
+        let step = long.feed(String(repeating: "x", count: 2 * AssistantNatural.maxSearchChars + 1))
+        XCTAssertEqual(step.search?.complete, true, "Obergrenze der Zeile")
+        XCTAssertLessThanOrEqual(AssistantNatural.searchWords(String(repeating: "wort ", count: 100)).count, AssistantNatural.maxSearchChars)
+        XCTAssertEqual(AssistantNatural.searchWords(" \"Davos  Sanatorium.\" \nzweite Zeile"), "Davos Sanatorium")
+    }
+
+    func testPromptsOfTheNaturalStyle() {
+        let c = config()
+        let history = (0..<10).map { naturalTurn("Frage \($0)", "Antwort \($0).", round: .general) }
+        let built = AssistantPrompt.buildSpeaker(question: "Hallo?", afterInterruption: false, history: history, config: c)
+        XCTAssertEqual(built.history.count, AssistantPrompt.speakerHistoryTurns)
+        XCTAssertTrue(built.prompt.contains("Frage 9"))
+        XCTAssertTrue(built.prompt.contains("Frage 4"))
+        XCTAssertFalse(built.prompt.contains("Frage 3"), "höchstens sechs Beiträge")
+        XCTAssertFalse(built.prompt.contains("AUSZÜGE"))
+        let bare = AssistantPrompt.buildSpeaker(question: "Hallo?", afterInterruption: false, history: history, config: c, includeHistory: false)
+        XCTAssertTrue(bare.history.isEmpty)
+        XCTAssertFalse(bare.prompt.contains("VERLAUF"))
+        XCTAssertTrue(bare.prompt.contains("Hallo?"))
+
+        let long = String(repeating: "Hans Castorp fährt ins Sanatorium nach Davos. ", count: 40)
+        let passages = (0..<4).map { assistantPassage(.books, itemId: "b\($0)", title: "Buch \($0)", text: long) }
+        let thinker = AssistantPrompt.buildThinker(question: "Frage?", afterInterruption: false, passages: passages, history: [], config: config(passageChars: 2_000))
+        XCTAssertFalse(thinker.used.isEmpty)
+        XCTAssertLessThan(thinker.used.count, 4, "das kleinere Budget des Stils begrenzt die Auszüge")
+        XCTAssertLessThanOrEqual(thinker.used.reduce(0) { $0 + $1.text.count }, 2_000)
+        XCTAssertTrue(thinker.prompt.contains("AUSZÜGE"))
+        XCTAssertEqual(AssistantPrompt.naturalPassageBudget(config: config(passageChars: 500)), 500)
+        let ti = AssistantPrompt.thinkerInstructions(config: c, now: Date(), timeZone: .current)
+        XCTAssertTrue(ti.contains("AUSZÜGE"))
+        XCTAssertFalse(ti.contains("SUCHE:"))
+
+        // Der Sprecher darf EINEN kurzen Satz vor der Zeile schreiben, soll dabei etwas Konkretes sagen und darf keine Floskel nutzen.
+        let si = AssistantPrompt.speakerInstructions(config: c, now: Date(), timeZone: .current)
+        XCTAssertTrue(si.contains("SUCHE:"))
+        XCTAssertTrue(si.contains("EINEN kurzen, natürlichen Satz"))
+        XCTAssertTrue(si.contains("NEUEN Zeile"))
+        XCTAssertTrue(si.contains("etwas Konkretes"))
+        for phrase in ["Ich denke nach", "Einen Moment", "Ich schaue kurz nach", "Lass mich überlegen"] {
+            XCTAssertTrue(si.contains("„\(phrase)“"), "ausdrücklich verboten: \(phrase)")
+        }
+        XCTAssertTrue(si.contains("Verboten sind Floskeln"))
+    }
+
+    // MARK: Ansagen für eine langsame Antwort
+
+    /// Erste Ansage vor dem ersten Satz, wenn das Modell langsam ist; sie ist keine Antwort: nicht im Text, nicht im Verlauf, nicht gezählt.
+    func testFirstFillerComesBeforeTheFirstSentenceAndIsNeitherAnswerTextNorHistory() async {
+        let audit = AssistantAuditLog(directory: tempDir())
+        let model = RoleModel(speaker: Script(pieces: ["Hallo zusammen."], pausesMs: [500]))
+        let s = await newSession(model, config: config(first: 50, second: 10_000), audit: audit)
+        let stream = s.events(AssistantRequest(requestId: "r1", text: "Hallo"))
+        s.noteCommitted(requestId: "r1")
+        var out: [AssistantEvent] = []
+        for await e in stream { out.append(e) }
+        let seen = Seen(events: out)
+        XCTAssertEqual(seen.statuses, [.announcement, .conversational])
+        XCTAssertEqual(seen.texts, [AssistantNatural.fillerFirstSentence, "Hallo zusammen."])
+        XCTAssertEqual(seen.answer?.text, "Hallo zusammen.")
+        XCTAssertEqual(seen.answer?.counts.conversational, 1)
+        XCTAssertEqual(seen.answer?.counts.neutral, 0)
+        await close(s, "r1", user: "Hallo")
+        let turn = await s.history.last
+        XCTAssertEqual(turn?.assistant, "Hallo zusammen.")
+        XCTAssertEqual(turn?.parts.map(\.text), ["Hallo zusammen."])
+        XCTAssertEqual(journalTags(journal(audit)), [
+            "start:natural", "round:general/naturalTalk", "areas:", "step:announcement", "step:conversational", "end",
+        ], "die Spur trägt die Ansage vor dem Satz")
+        XCTAssertEqual(AssistantProtocolOrder.check(journal(audit)), [])
+    }
+
+    func testNoFirstFillerWhenABridgeOrASentenceIsAlreadyThere() async {
+        // Überbrückung schon da (Suche sofort, Denker langsam): keine erste Ansage.
+        let m1 = RoleModel(speaker: search, thinker: Script(pieces: answer.pieces, pausesMs: [700]))
+        let s1 = await newSession(m1, config: config(bridge: true, first: 200, second: 10_000))
+        let stream1 = s1.events(AssistantRequest(requestId: "r1", text: castorpQuestion))
+        s1.noteCommitted(requestId: "r1")
+        var out1: [AssistantEvent] = []
+        for await e in stream1 { out1.append(e) }
+        let seen1 = Seen(events: out1)
+        XCTAssertEqual(seen1.statuses, [.announcement, .summarized, .summarized])
+        XCTAssertTrue(AssistantNatural.bridges.contains(seen1.texts[0]), "die Überbrückung, nicht die Ansage")
+
+        // Satz schon da (zweiter Satz langsam): keine erste Ansage.
+        let m2 = RoleModel(speaker: Script(pieces: ["Hallo zusammen. Wie ", "geht es dir?"], pausesMs: [0, 700]))
+        let s2 = await newSession(m2, config: config(first: 250, second: 10_000))
+        let stream2 = s2.events(AssistantRequest(requestId: "r1", text: "Hallo"))
+        s2.noteCommitted(requestId: "r1")
+        var out2: [AssistantEvent] = []
+        for await e in stream2 { out2.append(e) }
+        XCTAssertEqual(Seen(events: out2).statuses, [.conversational, .conversational])
+    }
+
+    /// Kommt der Hinweis erst, nachdem Einheiten hinausgingen, entfällt die erste Ansage; die zweite gilt, solange keine Antworteinheit da ist.
+    func testFirstFillerIsOmittedWhenTheNoticeComesAfterUnitsWereEmitted() async {
+        let model = RoleModel(speaker: search, thinker: Script(pieces: answer.pieces, pausesMs: [800]))
+        let s = await newSession(model, config: config(bridge: true, first: 0, second: 250))
+        var out: [AssistantEvent] = []
+        var noted = false
+        for await e in s.events(AssistantRequest(requestId: "r1", text: castorpQuestion)) {
+            out.append(e)
+            if !noted, case .sentence(_, _, _, _, .announcement, _, _) = e {
+                noted = true
+                s.noteCommitted(requestId: "r1")
+            }
+        }
+        let seen = Seen(events: out)
+        XCTAssertEqual(seen.statuses, [.announcement, .announcement, .summarized, .summarized])
+        XCTAssertTrue(AssistantNatural.bridges.contains(seen.texts[0]))
+        XCTAssertEqual(seen.texts[1], AssistantNatural.fillerSecondSentence)
+        XCTAssertFalse(seen.texts.contains(AssistantNatural.fillerFirstSentence))
+    }
+
+    func testSecondFillerComesOnlyWhileNoAnswerUnitWasEmitted() async {
+        // Ganz langsam: beide Ansagen vor dem ersten Satz, in dieser Reihenfolge.
+        let m1 = RoleModel(speaker: Script(pieces: ["Hallo zusammen."], pausesMs: [800]))
+        let s1 = await newSession(m1, config: config(first: 40, second: 250))
+        let stream1 = s1.events(AssistantRequest(requestId: "r1", text: "Hallo"))
+        s1.noteCommitted(requestId: "r1")
+        var out1: [AssistantEvent] = []
+        for await e in stream1 { out1.append(e) }
+        XCTAssertEqual(Seen(events: out1).texts, [AssistantNatural.fillerFirstSentence, AssistantNatural.fillerSecondSentence, "Hallo zusammen."])
+
+        // Der erste Satz kommt vor der zweiten Ansage, der zweite lässt sich Zeit: keine zweite Ansage.
+        let m2 = RoleModel(speaker: Script(pieces: ["Hallo zusammen. Wie ", "geht es dir?"], pausesMs: [150, 900]))
+        let s2 = await newSession(m2, config: config(first: 40, second: 500))
+        let stream2 = s2.events(AssistantRequest(requestId: "r1", text: "Hallo"))
+        s2.noteCommitted(requestId: "r1")
+        var out2: [AssistantEvent] = []
+        for await e in stream2 { out2.append(e) }
+        XCTAssertEqual(Seen(events: out2).texts, [AssistantNatural.fillerFirstSentence, "Hallo zusammen.", "Wie geht es dir?"])
+
+        // Überbrückung, langsamer Denker: erste Ansage entfällt (Überbrückung ist eine Einheit), zweite kommt (keine Antworteinheit).
+        let m3 = RoleModel(speaker: search, thinker: Script(pieces: answer.pieces, pausesMs: [800]))
+        let s3 = await newSession(m3, config: config(bridge: true, first: 150, second: 300))
+        let stream3 = s3.events(AssistantRequest(requestId: "r1", text: castorpQuestion))
+        s3.noteCommitted(requestId: "r1")
+        var out3: [AssistantEvent] = []
+        for await e in stream3 { out3.append(e) }
+        let seen3 = Seen(events: out3)
+        XCTAssertEqual(seen3.statuses, [.announcement, .announcement, .summarized, .summarized])
+        XCTAssertEqual(seen3.texts[1], AssistantNatural.fillerSecondSentence)
+    }
+
+    func testNoFillersWithoutTheCommitNotice() async {
+        let model = RoleModel(speaker: Script(pieces: ["Hallo zusammen."], pausesMs: [500]))
+        let s = await newSession(model, config: config(first: 10, second: 20))
+        let seen = await ask(s, "Hallo")
+        XCTAssertEqual(seen.statuses, [.conversational], "ohne `noteCommitted` keine Ansagen (Vorarbeit, ältere Aufrufer)")
+        XCTAssertEqual(s.commitNoteCountsForTesting.observers, 0, "der Lauf meldet sich am Ende ab, auch wenn nie ein Hinweis kam")
+        XCTAssertEqual(s.commitNoteCountsForTesting.times, 0)
+    }
+
+    func testTheCommitNoticeMayComeBeforeTheRunStarts() async {
+        let model = RoleModel(speaker: Script(pieces: ["Hallo zusammen."], pausesMs: [500]))
+        let s = await newSession(model, config: config(first: 100, second: 10_000))
+        s.noteCommitted(requestId: "r1")
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        let seen = await ask(s, "Hallo")
+        XCTAssertEqual(seen.texts.first, AssistantNatural.fillerFirstSentence, "schon fällig, sobald der Lauf anfängt")
+        XCTAssertEqual(seen.statuses, [.announcement, .conversational])
+    }
+
+    func testNoteCommittedHasNoEffectInTheVerbatimStyle() async {
+        var verbatim = config(first: 0, second: 0)
+        verbatim.style = .verbatim
+        let s = await newSession(RoleModel(thinker: Script(pieces: ["Unsinn."], pausesMs: [300])), config: verbatim)
+        let stream = s.events(AssistantRequest(requestId: "r1", text: castorpQuestion))
+        s.noteCommitted(requestId: "r1")
+        var out: [AssistantEvent] = []
+        for await e in stream { out.append(e) }
+        let announced = Seen(events: out).announcements
+        XCTAssertFalse(announced.contains(AssistantNatural.fillerFirstSentence) || announced.contains(AssistantNatural.fillerSecondSentence), "keine Ansage im Stil verbatim: \(announced)")
+        XCTAssertEqual(s.commitNoteCountsForTesting.times, 0)
+    }
+
+    /// Die Ansagen gehen nie nebenläufig hinaus: Satzspur und Ereignisse haben dieselbe Reihenfolge, die Schritte sind lückenlos aufsteigend,
+    /// jeder Schritt hat genau eine Ergebniszeile des Ausgabe-Commits.
+    func testFillerStepsAreSequentialAndEachHasOneEmitResult() async {
+        let audit = AssistantAuditLog(directory: tempDir())
+        let model = RoleModel(speaker: search, thinker: Script(pieces: ["Eins. ", "Zwei. ", "Drei."], pausesMs: [300, 300, 300]))
+        let s = await newSession(model, config: config(bridge: true, first: 0, second: 0), audit: audit)
+        let stream = s.events(AssistantRequest(requestId: "r1", text: castorpQuestion))
+        s.noteCommitted(requestId: "r1")
+        var out: [AssistantEvent] = []
+        for await e in stream { out.append(e) }
+        await close(s)
+        let seen = Seen(events: out)
+        let steps = journal(audit).filter { $0.t == .step }
+        XCTAssertEqual(steps.compactMap(\.n), Array(1...steps.count), "lückenlos aufsteigend")
+        XCTAssertEqual(steps.compactMap(\.verdict), seen.statuses.map { AssistantTraceVerdict(status: $0) }, "Spur = Reihenfolge der Ereignisse")
+        let marks = journal(audit).filter { $0.t == .commit && $0.mark?.stage == .emit }
+        XCTAssertEqual(marks.compactMap(\.n).sorted(), Array(1...steps.count))
+        XCTAssertTrue(marks.allSatisfy { $0.mark?.ok == true })
+        XCTAssertLessThanOrEqual(seen.announcements.count, 3)
+        XCTAssertEqual(AssistantProtocolOrder.check(journal(audit)), [])
+    }
+
+    /// Abbruch beendet die Zeitgeber: nach dem Abbruch kommt keine Ansage mehr, und es bleibt nichts angemeldet.
+    func testFillersEndWithCancelAndRevoke() async {
+        for revoke in [false, true] {
+            let audit = AssistantAuditLog(directory: tempDir())
+            let model = RoleModel(speaker: Script(hang: true))
+            let s = await newSession(model, config: config(first: 40, second: 200), audit: audit)
+            let stream = s.events(AssistantRequest(requestId: "r1", text: "Hallo"))
+            s.noteCommitted(requestId: "r1")
+            var out: [AssistantEvent] = []
+            var done = false
+            for await e in stream {
+                out.append(e)
+                if !done, case .sentence(_, _, let text, _, .announcement, _, _) = e, text == AssistantNatural.fillerFirstSentence {
+                    done = true
+                    if revoke { _ = s.applyReleaseChange(.other) } else { await s.cancel(requestId: "r1") }
+                }
+            }
+            let seen = Seen(events: out)
+            XCTAssertEqual(seen.failure, revoke ? .revoked : .cancelled)
+            XCTAssertEqual(seen.announcements, [AssistantNatural.fillerFirstSentence], "keine zweite Ansage nach dem Ende")
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            await close(s, "r1", user: "Hallo")
+            XCTAssertEqual(journal(audit).filter { $0.t == .step && $0.verdict == .announcement }.count, 1)
+            XCTAssertEqual(s.commitNoteCountsForTesting.observers, 0, "nichts bleibt angemeldet")
+            XCTAssertEqual(s.commitNoteCountsForTesting.times, 0, "nach dem Abschluss der Anfrage ist ihr Zeitpunkt vergessen")
+        }
+    }
+
+    // MARK: Hinweis „Äußerung gilt“ und Zeitgeber (Bausteine)
+
+    func testCommitNotesReportEachNoticeExactlyOnceAndTheFirstCallWins() {
+        let notes = AssistantCommitNotes()
+        let calls = Box<[ContinuousClock.Instant]>([])
+        let t0 = ContinuousClock.now
+        notes.attach("a") { calls.value.append($0) }
+        XCTAssertTrue(calls.value.isEmpty)
+        notes.note("a", at: t0)
+        notes.note("a", at: t0.advanced(by: .seconds(5)))
+        XCTAssertEqual(calls.value, [t0], "genau einmal, der erste Zeitpunkt")
+
+        notes.note("b", at: t0)
+        notes.attach("b") { calls.value.append($0) }
+        XCTAssertEqual(calls.value, [t0, t0], "eine frühere Meldung wird sofort gemeldet")
+
+        notes.attach("c") { _ in XCTFail("nach detach darf nichts mehr gerufen werden") }
+        notes.detach("c")
+        notes.note("c")
+        XCTAssertEqual(notes.counts.observers, 0)
+        notes.forget("c")
+        notes.forget("b")
+        XCTAssertEqual(notes.counts.times, 1)
+    }
+
+    func testCommitNotesStayBounded() {
+        let notes = AssistantCommitNotes()
+        for i in 0..<(AssistantCommitNotes.maxKept * 3) { notes.note("x\(i)") }
+        XCTAssertEqual(notes.counts.times, AssistantCommitNotes.maxKept)
+    }
+
+    /// Anmelden und Eintreffen laufen gleichzeitig: Der Zeitpunkt geht nie verloren und kommt nie zweimal.
+    func testCommitNotesAttachAndNoteRaceNeverLosesTheCommit() async {
+        for round in 0..<200 {
+            let notes = AssistantCommitNotes()
+            let calls = Box(0)
+            let id = "r\(round)"
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask { notes.attach(id) { _ in calls.value += 1 } }
+                group.addTask { notes.note(id) }
+            }
+            XCTAssertEqual(calls.value, 1, "Runde \(round)")
+        }
+    }
+
+    func testFillerTimersMarkDueOnceAndStopOnShutdown() async {
+        let wakes = Box(0)
+        let fillers = AssistantNaturalFillers(firstMs: 0, secondMs: 40) { wakes.value += 1 }
+        XCTAssertTrue(fillers.takeDue().isEmpty, "ohne `start` nichts fällig")
+        fillers.start(commit: ContinuousClock.now.advanced(by: .milliseconds(-10)))
+        fillers.start(commit: ContinuousClock.now)
+        await eventually { wakes.value >= 1 }
+        XCTAssertEqual(fillers.takeDue(), [1])
+        XCTAssertTrue(fillers.takeDue().isEmpty, "jede Ansage höchstens einmal")
+        await eventually { wakes.value >= 2 }
+        XCTAssertEqual(fillers.takeDue(), [2])
+        XCTAssertEqual(wakes.value, 2, "ein zweites `start` ändert nichts")
+
+        let late = AssistantNaturalFillers(firstMs: 50, secondMs: -1) { wakes.value += 100 }
+        late.start(commit: ContinuousClock.now)
+        late.shutdown()
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        XCTAssertEqual(wakes.value, 2, "nach `shutdown` weckt kein Zeitgeber mehr")
+        XCTAssertTrue(late.takeDue().isEmpty)
+    }
+}
