@@ -30,6 +30,7 @@
     "ariaLabel": "Main navigation"
   },
   "tts": {
+    "pageSaveFailed": "The page could not be saved. The action was not carried out.",
     "editorMenu": {
       "label": "Editor menu",
       "find": "Find and replace",
@@ -96,7 +97,8 @@
         "tooLarge": "Too large to clean up ({{size}} MB): pasted unchanged, no original saved.",
         "reason": {
           "checking": "Checking the checksum … restoring and copying are disabled until it is done.",
-          "damaged": "Damaged: the checksum does not match the saved original. Restoring is disabled.",
+          "damaged": "Damaged: the checksum does not match the saved original or is missing. Restoring is disabled; copying stays possible, but the content may be faulty.",
+          "unverifiable": "Cannot be verified: the checksum could not be computed here (WebCrypto is missing or the check failed). Restoring is disabled; copying stays possible.",
           "empty": "The cleaned text was empty. The place cannot be found; please copy the original.",
           "missing": "The cleaned text is no longer in the text unchanged.",
           "ambiguous": "The cleaned text occurs more than once in the text."

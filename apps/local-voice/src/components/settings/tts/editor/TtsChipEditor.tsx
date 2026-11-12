@@ -16,11 +16,10 @@ import type { TagDef } from "@/lib/tags/types";
 import { tagInsertFor } from "@/lib/tags/registry";
 import { cleanPasted, type PasteCleanResult } from "@/lib/reader/pasteCleanup";
 import {
-  PASTE_ENTRY_MAX_BYTES,
   fitsEntry,
   makeOversizedEntry,
   makePasteEntry,
-  utf8Bytes,
+  rawExceedsEntryLimit,
   type PasteLogEntry,
 } from "@/lib/reader/pasteLog";
 import { useTagLanguage } from "../tags/tagLanguage";
@@ -590,7 +589,14 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
       let entry = await makePasteEntry(original, cleaned, result.items);
       const tooLarge = !fitsEntry(entry);
       if (tooLarge) entry = await makeOversizedEntry(original);
-      const saved = onPasteRecord ? await onPasteRecord(entry) : true;
+      // Ohne Prüfsumme (kein WebCrypto) ließe sich die Rohfassung später nicht
+      // prüfen, also nicht gesichert: der Rohtext bleibt dann unverändert.
+      const saved =
+        entry.sha256 === ""
+          ? false
+          : onPasteRecord
+            ? await onPasteRecord(entry)
+            : true;
       if (taRef.current !== ta || docKeyRef.current !== doc) {
         toast(t("tts.editorMenu.pasteAbortedPage"));
         return;
@@ -655,14 +661,8 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
     raw: string,
   ): boolean => {
     if (!cleanPaste || !raw) return false;
-    // Grenzen zählen UTF-8-Bytes. Einheiten sind nie mehr als Bytes (darüber
-    // passt sicher nichts); darunter genügt die Obergrenze 3 Byte je Einheit,
-    // erst sonst wird exakt gezählt.
-    if (
-      raw.length > PASTE_ENTRY_MAX_BYTES ||
-      (raw.length * 3 > PASTE_ENTRY_MAX_BYTES &&
-        utf8Bytes(raw) > PASTE_ENTRY_MAX_BYTES)
-    ) {
+    // Grenzen zählen UTF-8-Bytes (Näheres bei rawExceedsEntryLimit).
+    if (rawExceedsEntryLimit(raw)) {
       void noteOversized(raw);
       return false;
     }

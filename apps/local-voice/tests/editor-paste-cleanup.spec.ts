@@ -108,7 +108,7 @@ test.beforeEach(async ({ page }) => {
                 { id: "p1", title: "Der Sturm" },
               ]
             );
-          if (cmd === "books_list") return [];
+          if (cmd === "books_list" || cmd === "library_list") return [];
           if (cmd === "books_templates") return [];
           if (cmd === "books_memory_read") return [];
           if (cmd === "tts_tidy_text") return "Sauberer Text.";
@@ -1123,4 +1123,174 @@ test("two dialogs: focus stays in the confirm dialog on top, then returns step b
   await page.keyboard.press("Escape");
   await expect(log).toBeHidden();
   await expect(page.getByTestId("editor-menu-cleanup")).toBeFocused();
+});
+
+test("an autosave queued behind a raw-text write never overwrites it, even after a page switch", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as unknown as { __pagesList: unknown }).__pagesList = [
+      { id: "p1", title: "Der Sturm" },
+      { id: "p2", title: "Das Wintermärchen" },
+    ];
+  });
+  const editor = await openEditor(page);
+  await expect
+    .poll(async () => ((await savedState(page)) as { text: string })?.text)
+    .toBe("Vorher. ");
+  await page.evaluate(() => {
+    (window as unknown as { __saveDelay: number }).__saveDelay = 1500;
+  });
+  // 1. Schreiben der Rohfassung läuft (1,5 s) ...
+  expect(await paste(editor, DIRTY)).toBe(true);
+  // 2. ... dahinter reiht sich der Autosave eines neuen Textes ein ...
+  await editor.press("X");
+  await page.waitForTimeout(800);
+  // 3. ... und die Seite wird gewechselt, bevor beides durch ist.
+  await page.getByText("Das Wintermärchen", { exact: true }).click();
+  await expect
+    .poll(
+      async () => {
+        const state = (await savedState(page)) as {
+          text: string;
+          einfuegungen?: { roh: string }[];
+        };
+        return JSON.stringify([
+          state.text,
+          state.einfuegungen?.map((e) => e.roh),
+        ]);
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(JSON.stringify(["Vorher. X", [DIRTY]]));
+});
+
+test("an entry without checksum but with raw text is damaged, restore stays locked", async ({
+  page,
+}) => {
+  await openSeeded(page, {
+    text: "Roh 1",
+    tab: "original",
+    einfuegungen: [entryFor(1, { sha256: "" })],
+  });
+  await openLog(page);
+  await expect(page.getByTestId("paste-log-restore")).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  await expect(page.getByTestId("paste-log-reason")).toContainText(
+    "Beschädigt",
+  );
+});
+
+test("without WebCrypto a stored hash is not verifiable: restore locked with reason, copy stays", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window.crypto, "subtle", {
+      configurable: true,
+      get: () => undefined,
+    });
+  });
+  await openSeeded(page, {
+    text: "Roh 1",
+    tab: "original",
+    einfuegungen: [entryFor(1)],
+  });
+  await openLog(page);
+  const restore = page.getByTestId("paste-log-restore");
+  await expect(restore).toHaveAttribute("aria-disabled", "true");
+  await expect(page.getByTestId("paste-log-reason")).toContainText(
+    "Nicht prüfbar",
+  );
+  expect(await restore.getAttribute("aria-describedby")).toContain(
+    "paste-log-why-0",
+  );
+  await expect(page.getByTestId("paste-log-copy")).not.toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+});
+
+test("a rejected digest() ends the check as not verifiable instead of hanging", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    crypto.subtle.digest = () => Promise.reject(new Error("digest kaputt"));
+  });
+  await openSeeded(page, {
+    text: "Roh 1",
+    tab: "original",
+    einfuegungen: [entryFor(1)],
+  });
+  await openLog(page);
+  await expect(page.getByTestId("paste-log-reason")).toContainText(
+    "Nicht prüfbar",
+  );
+  await expect(page.getByTestId("paste-log-restore")).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  await expect(page.getByTestId("paste-log-reason")).not.toContainText(
+    "wird geprüft",
+  );
+});
+
+test("without WebCrypto no raw version is written: the text is pasted unchanged with a notice", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window.crypto, "subtle", {
+      configurable: true,
+      get: () => undefined,
+    });
+  });
+  const editor = await openEditor(page);
+  expect(await paste(editor, DIRTY)).toBe(true);
+  await expect(editor).toHaveValue(`Vorher. ${DIRTY}`);
+  await expect(toast(page).last()).toContainText("Rohfassung ließ sich nicht");
+  await expect
+    .poll(async () => ((await savedState(page)) as { text: string })?.text)
+    .toBe(`Vorher. ${DIRTY}`);
+  expect(
+    ((await savedState(page)) as { einfuegungen?: unknown }).einfuegungen,
+  ).toBeUndefined();
+});
+
+test("a failed state write stops a dependent action with a notice; the chain keeps working", async ({
+  page,
+}) => {
+  const editor = await openEditor(page);
+  await expect
+    .poll(async () => ((await savedState(page)) as { text: string })?.text)
+    .toBe("Vorher. ");
+  await page.evaluate(() => {
+    (window as unknown as { __failSave: boolean }).__failSave = true;
+  });
+  const openExport = async () => {
+    await page.getByRole("button", { name: "Weitere Aktionen" }).click();
+    await page
+      .getByTestId("tts-export-open")
+      .evaluate((el: HTMLElement) => el.click());
+  };
+  await openExport();
+  await expect(
+    toast(page).filter({ hasText: "nicht gespeichert werden" }),
+  ).toHaveCount(1);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  // Der Fehler hat die Kette nicht angehalten: danach gelingt der nächste Auftrag.
+  await page.evaluate(() => {
+    (window as unknown as { __failSave: boolean }).__failSave = false;
+  });
+  expect(await paste(editor, DIRTY)).toBe(true);
+  await expect
+    .poll(async () => {
+      const state = (await savedState(page)) as {
+        einfuegungen?: { roh: string }[];
+      };
+      return JSON.stringify(state?.einfuegungen?.map((e) => e.roh));
+    })
+    .toBe(JSON.stringify([DIRTY]));
+  await openExport();
+  await expect(page.getByRole("dialog")).toBeVisible();
 });

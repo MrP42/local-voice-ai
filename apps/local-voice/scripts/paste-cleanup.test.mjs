@@ -23,13 +23,16 @@ import {
   PASTE_LOG_MAX_ENTRIES,
   appendPasteEntry,
   entryBytes,
+  fitsEntry,
   isIsoTime,
   isSha256,
   makeOversizedEntry,
   makePasteEntry,
+  markUnverifiable,
   parsePasteLog,
   pasteEntryChanges,
   pasteEntryKey,
+  rawExceedsEntryLimit,
   removePasteEntry,
   restoreRaw,
   sha256Hex,
@@ -1327,6 +1330,9 @@ const entryFor = async (raw) => {
   const r = cleanPasted(raw);
   return makePasteEntry(raw, r.text, r.items, new Date("2026-11-12T10:00:00Z"));
 };
+/** Wie `entryFor`, aber geprüft (Wiederherstellen setzt eine bestandene Prüfung voraus). */
+const verifiedFor = async (raw) =>
+  (await verifyPasteLog([await entryFor(raw)]))[0];
 
 test("pasteLog: sha256 stimmt mit node:crypto überein, Eintrag trägt Roh- und bereinigten Text", async () => {
   const { createHash } = await import("node:crypto");
@@ -1451,15 +1457,15 @@ test("pasteLog: Prüfsumme passt nicht zur Rohfassung: beschädigt, Wiederherste
     zeit: "2026-11-12T11:00:00.000Z",
   };
   const [a, b] = await verifyPasteLog([gut, kaputt]);
-  assert.equal(a.beschaedigt, undefined);
-  assert.equal(b.beschaedigt, true);
+  assert.equal(a.pruefung, "ok");
+  assert.equal(b.pruefung, "damaged");
   assert.deepEqual(restoreRaw(`${b.bereinigt}`, b), {
     ok: false,
     reason: "damaged",
   });
   assert.equal(restoreRaw(`${a.bereinigt}`, a).ok, true);
   // Das Merkmal wird nicht gespeichert gelesen: Neuladen prüft neu.
-  assert.equal(parsePasteLog([b])[0].beschaedigt, undefined);
+  assert.equal(parsePasteLog([b])[0].pruefung, undefined);
 });
 
 test("pasteLog: Eintrag löschen über seinen Schlüssel", () => {
@@ -1512,7 +1518,7 @@ test("pasteLog: Speichern und Neuladen (JSON) übersteht alte Zustände und Mül
 test("pasteLog: Wiederherstellen nur bei genau einem unveränderten Vorkommen", async () => {
   const raw =
     "Drucken\nTeilen\nText mit Inhalt, der bleibt, in einer ganz normalen Zeile.";
-  const e = await entryFor(raw);
+  const e = await verifiedFor(raw);
   const ok = restoreRaw(`Vorher. ${e.bereinigt} Nachher.`, e);
   assert.deepEqual(ok, { ok: true, text: `Vorher. ${e.roh} Nachher.` });
   assert.deepEqual(restoreRaw("Ganz anderer Text", e), {
@@ -1531,7 +1537,7 @@ test("pasteLog: Wiederherstellen nur bei genau einem unveränderten Vorkommen", 
     ok: false,
     reason: "noRaw",
   });
-  const leer = await entryFor("Drucken\nTeilen");
+  const leer = await verifiedFor("Drucken\nTeilen");
   assert.equal(leer.bereinigt, "");
   assert.deepEqual(restoreRaw("irgendwas", leer), {
     ok: false,
@@ -1540,7 +1546,14 @@ test("pasteLog: Wiederherstellen nur bei genau einem unveränderten Vorkommen", 
 });
 
 test("pasteLog: überlappendes Vorkommen gilt als mehrfach", () => {
-  const e = { zeit: "t", sha256: "s", roh: "R", bereinigt: "aa", regeln: [] };
+  const e = {
+    zeit: "t",
+    sha256: "s",
+    roh: "R",
+    bereinigt: "aa",
+    regeln: [],
+    pruefung: "ok",
+  };
   assert.deepEqual(restoreRaw("aaa", e), { ok: false, reason: "ambiguous" });
 });
 
@@ -1886,4 +1899,197 @@ test("pasteLog: ein einzelner Eintrag, der auch gekürzt über der Grenze liegt,
   const log = appendPasteEntry([eintrag(iso(0), "alt")], unmoeglich);
   assert.equal(log.length, 1);
   assert.equal(log[0].roh, "alt");
+});
+
+// ---------------------------------------------------------------------------
+// Fixrunde 4: Prüfstatus, Hash-Schreibweise, Kalenderdatum, frühe Byte-Grenze
+// ---------------------------------------------------------------------------
+
+/** `globalThis.crypto` für die Dauer von `fn` ersetzen (Node: Zugriffsmethode auf globalThis). */
+async function withCrypto(replacement, fn) {
+  const saved = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+  Object.defineProperty(globalThis, "crypto", {
+    configurable: true,
+    value: replacement,
+  });
+  try {
+    return await fn();
+  } finally {
+    Object.defineProperty(globalThis, "crypto", saved);
+  }
+}
+
+test("Prüfstatus: veränderte Rohfassung mit leerer Prüfsumme ist bei vorhandenem WebCrypto beschädigt", async () => {
+  const e = await entryFor(
+    "Drucken\nTeilen\nText mit Inhalt, der bleibt, in einer ganz normalen Zeile.",
+  );
+  const [leer] = await verifyPasteLog([{ ...e, roh: `${e.roh}!`, sha256: "" }]);
+  assert.equal(leer.pruefung, "damaged");
+  assert.deepEqual(restoreRaw(leer.bereinigt, leer), {
+    ok: false,
+    reason: "damaged",
+  });
+  // Auch eine unveränderte Rohfassung ohne Prüfsumme gilt nicht als unbeschädigt.
+  const [ohne] = await verifyPasteLog([{ ...e, sha256: "" }]);
+  assert.equal(ohne.pruefung, "damaged");
+});
+
+test("Prüfstatus: vorhandener Hash ohne WebCrypto ist nicht prüfbar, Wiederherstellen gesperrt", async () => {
+  const e = await entryFor(
+    "Drucken\nTeilen\nText mit Inhalt, der bleibt, in einer ganz normalen Zeile.",
+  );
+  const [geprueft] = await withCrypto(undefined, () => verifyPasteLog([e]));
+  assert.equal(geprueft.pruefung, "unverifiable");
+  assert.deepEqual(restoreRaw(geprueft.bereinigt, geprueft), {
+    ok: false,
+    reason: "unverifiable",
+  });
+  // Ohne WebCrypto ist auch eine leere Prüfsumme nur „nicht prüfbar“.
+  const [leer] = await withCrypto(undefined, () =>
+    verifyPasteLog([{ ...e, sha256: "" }]),
+  );
+  assert.equal(leer.pruefung, "unverifiable");
+  // Einträge ohne Rohfassung brauchen keine Prüfung.
+  const gross = await makeOversizedEntry("x".repeat(10));
+  assert.equal((await verifyPasteLog([gross]))[0].pruefung, undefined);
+});
+
+test("Prüfstatus: lehnt digest() ab, endet die Prüfung mit „nicht prüfbar“ statt zu hängen", async () => {
+  const e = await entryFor(
+    "Drucken\nTeilen\nText mit Inhalt, der bleibt, in einer ganz normalen Zeile.",
+  );
+  const kaputt = {
+    subtle: { digest: () => Promise.reject(new Error("kein digest")) },
+  };
+  const [geprueft] = await withCrypto(kaputt, () => verifyPasteLog([e]));
+  assert.equal(geprueft.pruefung, "unverifiable");
+  assert.equal(restoreRaw(geprueft.bereinigt, geprueft).ok, false);
+});
+
+test("Prüfstatus: ungeprüft (ohne Vermerk) lässt sich nicht wiederherstellen; markUnverifiable vermerkt alle mit Rohfassung", async () => {
+  const e = await entryFor(
+    "Drucken\nTeilen\nText mit Inhalt, der bleibt, in einer ganz normalen Zeile.",
+  );
+  assert.deepEqual(restoreRaw(e.bereinigt, e), {
+    ok: false,
+    reason: "unverifiable",
+  });
+  const gross = await makeOversizedEntry("x".repeat(10));
+  const [a, b] = markUnverifiable([e, gross]);
+  assert.equal(a.pruefung, "unverifiable");
+  assert.equal(b.pruefung, undefined);
+  assert.equal(
+    restoreRaw(e.bereinigt, (await verifyPasteLog([e]))[0]).ok,
+    true,
+  );
+});
+
+test("pasteLog: derselbe Hash in Groß- und Kleinschreibung wird gleich gelesen und besteht die Prüfung", async () => {
+  const e = await entryFor(
+    "Drucken\nTeilen\nEin ganz normaler Satz bleibt hier stehen.",
+  );
+  const klein = e.sha256;
+  const gross = klein.toUpperCase();
+  assert.notEqual(klein, gross);
+  const [a, b] = parsePasteLog([
+    { ...e, zeit: iso(1), sha256: klein },
+    { ...e, zeit: iso(2), sha256: gross },
+  ]);
+  assert.equal(a.sha256, klein);
+  assert.equal(b.sha256, klein);
+  const [x, y] = await verifyPasteLog([a, b]);
+  assert.equal(x.pruefung, "ok");
+  assert.equal(y.pruefung, "ok");
+});
+
+test("pasteLog: Zeitstempel mit echtem Kalenderdatum", () => {
+  for (const gut of [
+    "2026-11-12T10:00:00Z",
+    "2026-11-12T10:00:00.123Z",
+    "2026-11-12T10:00:00.123456789Z",
+    "2026-11-12T10:00:00+05:30",
+    "2026-11-12T10:00:00-08:00",
+    "2024-02-29T00:00:00Z",
+    "2026-12-31T23:59:59Z",
+    "2000-02-29T12:00:00Z",
+  ])
+    assert.ok(isIsoTime(gut), gut);
+  for (const schlecht of [
+    "2026-02-30T10:00:00Z",
+    "2025-02-29T10:00:00Z",
+    "1900-02-29T10:00:00Z",
+    "2026-04-31T10:00:00Z",
+    "2026-13-01T10:00:00Z",
+    "2026-00-10T10:00:00Z",
+    "2026-11-00T10:00:00Z",
+    "2026-11-12T24:00:00Z",
+    "2026-11-12T10:60:00Z",
+    "2026-11-12T10:00:60Z",
+    "2026-11-12T10:00:00+24:00",
+    "2026-11-12T10:00:00",
+    "2026-11-12 10:00:00Z",
+  ])
+    assert.ok(!isIsoTime(schlecht), schlecht);
+  assert.equal(
+    parsePasteLog([{ ...eintrag("2026-02-30T10:00:00Z", "x") }]).length,
+    0,
+  );
+});
+
+test("frühe Grenze: rawExceedsEntryLimit zählt UTF-8-Bytes, nicht Einheiten", () => {
+  const MAX = PASTE_ENTRY_MAX_BYTES;
+  // ASCII: Einheiten gleich Bytes.
+  assert.equal(rawExceedsEntryLimit("a".repeat(MAX)), false);
+  assert.equal(rawExceedsEntryLimit("a".repeat(MAX + 1)), true);
+  // „ä“: zwei Bytes, die Einheitenzahl liegt weit unter der Grenze.
+  assert.equal(rawExceedsEntryLimit("ä".repeat(MAX / 2)), false);
+  assert.equal(rawExceedsEntryLimit("ä".repeat(MAX / 2 + 1)), true);
+  assert.ok(MAX / 2 + 1 < MAX);
+  // „€“: drei Bytes (gerade noch in der Obergrenze von 3 Byte je Einheit).
+  const euro = Math.floor(MAX / 3);
+  assert.equal(rawExceedsEntryLimit("€".repeat(euro)), false);
+  assert.equal(rawExceedsEntryLimit("€".repeat(euro + 1)), true);
+  // Emoji: zwei Einheiten, vier Bytes.
+  assert.equal(rawExceedsEntryLimit("😀".repeat(MAX / 4)), false);
+  assert.equal(rawExceedsEntryLimit("😀".repeat(MAX / 4 + 1)), true);
+  // Gemischt, genau auf der Grenze und ein Byte darüber.
+  const rest = MAX - 2 * 1000;
+  assert.equal(
+    rawExceedsEntryLimit("ä".repeat(1000) + "a".repeat(rest)),
+    false,
+  );
+  assert.equal(
+    rawExceedsEntryLimit("ä".repeat(1000) + "a".repeat(rest + 1)),
+    true,
+  );
+  assert.equal(rawExceedsEntryLimit(""), false);
+});
+
+test("fitsEntry: Grenze in JSON-Bytes, Maskierung zählt (Zeilenumbruch, Anführungszeichen, Steuerzeichen)", () => {
+  const roh = (text) => ({
+    zeit: iso(1),
+    sha256: SHA,
+    roh: text,
+    bereinigt: "",
+    regeln: [],
+  });
+  // Genau auf der Grenze passt, ein Byte mehr nicht.
+  const leer = entryBytes(roh(""));
+  const platz = PASTE_ENTRY_MAX_BYTES - leer;
+  assert.equal(fitsEntry(roh("a".repeat(platz))), true);
+  assert.equal(fitsEntry(roh("a".repeat(platz + 1))), false);
+  assert.equal(entryBytes(roh("a".repeat(platz))), PASTE_ENTRY_MAX_BYTES);
+  // Maskierung: eine Million Umbrüche sind eine Million Zeichen, als JSON zwei Millionen Bytes.
+  assert.ok(!rawExceedsEntryLimit("\n".repeat(1_100_000)));
+  assert.equal(fitsEntry(roh("\n".repeat(1_100_000))), false);
+  assert.equal(fitsEntry(roh("\n".repeat(platz / 2))), true);
+  assert.equal(fitsEntry(roh("\n".repeat(platz / 2 + 1))), false);
+  assert.equal(fitsEntry(roh('"'.repeat(platz / 2 + 1))), false);
+  // Steuerzeichen werden zu \u00XX: sechs Bytes je Zeichen.
+  const ctrl = String.fromCharCode(1);
+  assert.equal(entryBytes(roh(ctrl)) - leer, 6);
+  assert.equal(fitsEntry(roh(ctrl.repeat(Math.floor(platz / 6)))), true);
+  assert.equal(fitsEntry(roh(ctrl.repeat(Math.floor(platz / 6) + 1))), false);
+  // „ä“ bleibt in JSON zwei Bytes.
+  assert.equal(entryBytes(roh("ä")) - leer, 2);
 });

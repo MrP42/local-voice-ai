@@ -30,6 +30,7 @@
     "ariaLabel": "Hauptnavigation"
   },
   "tts": {
+    "pageSaveFailed": "Die Seite konnte nicht gespeichert werden. Die Aktion wurde nicht ausgeführt.",
     "editorMenu": {
       "label": "Editor-Menü",
       "find": "Suchen und Ersetzen",
@@ -96,7 +97,8 @@
         "tooLarge": "Zu groß für die Bereinigung ({{size}} MB): unverändert eingefügt, keine Rohfassung gespeichert.",
         "reason": {
           "checking": "Prüfsumme wird geprüft … Wiederherstellen und Kopieren sind bis dahin gesperrt.",
-          "damaged": "Beschädigt: Die Prüfsumme passt nicht zur gespeicherten Rohfassung. Wiederherstellen ist gesperrt.",
+          "damaged": "Beschädigt: Die Prüfsumme passt nicht zur gespeicherten Rohfassung oder fehlt. Wiederherstellen ist gesperrt; Kopieren bleibt möglich, der Inhalt kann aber fehlerhaft sein.",
+          "unverifiable": "Nicht prüfbar: Die Prüfsumme ließ sich hier nicht berechnen (WebCrypto fehlt oder die Prüfung ist fehlgeschlagen). Wiederherstellen ist gesperrt; Kopieren bleibt möglich.",
           "empty": "Der bereinigte Text war leer. Die Stelle lässt sich nicht finden; bitte die Rohfassung kopieren.",
           "missing": "Der bereinigte Text steht nicht mehr unverändert im Text.",
           "ambiguous": "Der bereinigte Text kommt mehrfach im Text vor."

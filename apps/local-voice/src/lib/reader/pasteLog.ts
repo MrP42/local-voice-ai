@@ -42,9 +42,14 @@ export interface PasteLogEntry {
   zeichen?: number;
   /** Größe des Rohtexts in UTF-8-Bytes (nur bei `zuGross`). */
   bytes?: number;
-  /** Nur zur Laufzeit: die Prüfsumme passt nicht zur gespeicherten Rohfassung. */
-  beschaedigt?: true;
+  /** Nur zur Laufzeit (nie gespeichert): Ergebnis der Prüfsummenprüfung. Fehlt
+   *  es, wurde noch nicht geprüft; das gilt wie „nicht prüfbar“. */
+  pruefung?: PasteCheck;
 }
+
+/** ok: Prüfsumme stimmt; damaged: sie passt nicht (oder fehlt trotz WebCrypto);
+ *  unverifiable: die Umgebung kann sie nicht berechnen (kein WebCrypto, Fehler). */
+export type PasteCheck = "ok" | "damaged" | "unverifiable";
 
 const RULES: readonly PasteRule[] = [
   "repeated",
@@ -176,14 +181,32 @@ export function removePasteEntry(
   return at < 0 ? [...log] : [...log.slice(0, at), ...log.slice(at + 1)];
 }
 
-/** Zeitstempel eines Eintrags: ISO 8601, höchstens 40 Zeichen, ein echtes Datum. */
 const ISO_TIME =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
-export const isIsoTime = (value: string): boolean =>
-  value.length <= 40 &&
-  ISO_TIME.test(value) &&
-  !Number.isNaN(Date.parse(value));
-/** SHA-256 als 64 Hex-Zeichen; leer nur, wenn die Umgebung keine Prüfsumme kann. */
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-](\d{2}):(\d{2}))$/;
+/**
+ * Zeitstempel eines Eintrags: ISO 8601, höchstens 40 Zeichen, mit echtem
+ * Kalenderdatum (30.02. und 29.02. im Nichtschaltjahr sind ungültig); Offset
+ * und Millisekunden sind erlaubt.
+ */
+export function isIsoTime(value: string): boolean {
+  if (value.length > 40) return false;
+  const m = ISO_TIME.exec(value);
+  if (!m) return false;
+  const [year, month, day, hour, minute, second] = m.slice(1, 7).map(Number);
+  if (hour > 23 || minute > 59 || second > 59) return false;
+  if (m[7] !== undefined && (Number(m[7]) > 23 || Number(m[8]) > 59))
+    return false;
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day &&
+    !Number.isNaN(Date.parse(value))
+  );
+}
+/** SHA-256 als 64 Hex-Zeichen; leer nur bei einem Eintrag ohne Rohfassung
+ *  (mit Rohfassung gilt eine leere Prüfsumme als beschädigt, siehe {@link verifyPasteLog}). */
 export const isSha256 = (value: string): boolean =>
   value === "" || /^[0-9a-f]{64}$/i.test(value);
 
@@ -217,7 +240,12 @@ function parseEntry(value: unknown): PasteLogEntry | null {
         return [{ rule: item.rule, count: item.count }];
       })
     : [];
-  const entry: PasteLogEntry = { zeit: e.zeit, sha256: e.sha256, regeln };
+  // Hex-Schreibweise vereinheitlichen: derselbe Hash gilt in Groß- wie Kleinbuchstaben.
+  const entry: PasteLogEntry = {
+    zeit: e.zeit,
+    sha256: e.sha256.toLowerCase(),
+    regeln,
+  };
   if (typeof e.roh === "string") entry.roh = e.roh;
   if (typeof e.bereinigt === "string") entry.bereinigt = e.bereinigt;
   if (e.zuGross === true) {
@@ -247,21 +275,56 @@ export function parsePasteLog(value: unknown): PasteLogEntry[] {
 }
 
 /**
- * Prüfsummen gegen die gespeicherte Rohfassung prüfen: passt sie nicht, ist
- * der Eintrag beschädigt (nur zur Laufzeit markiert, Wiederherstellen gesperrt).
+ * Prüfsummen gegen die gespeicherte Rohfassung halten und das Ergebnis je
+ * Eintrag mit Rohfassung vermerken (nur zur Laufzeit). „Nicht prüfbar“ ist
+ * nicht „unbeschädigt“: ohne WebCrypto oder wenn `digest` scheitert, gilt der
+ * Eintrag als `unverifiable`; eine leere Prüfsumme gilt bei vorhandenem
+ * WebCrypto als `damaged`. Die Funktion wirft nie.
  */
 export async function verifyPasteLog(
   entries: readonly PasteLogEntry[],
 ): Promise<PasteLogEntry[]> {
+  const subtle = globalThis.crypto?.subtle;
+  const mark = (entry: PasteLogEntry, pruefung: PasteCheck): PasteLogEntry => ({
+    ...entry,
+    pruefung,
+  });
   return Promise.all(
     entries.map(async (entry) => {
-      if (entry.roh === undefined || entry.sha256 === "") return entry;
-      const actual = await sha256Hex(entry.roh);
-      return actual === "" || actual === entry.sha256
-        ? entry
-        : { ...entry, beschaedigt: true as const };
+      if (entry.roh === undefined) return entry;
+      if (!subtle) return mark(entry, "unverifiable");
+      if (entry.sha256 === "") return mark(entry, "damaged");
+      try {
+        const actual = await sha256Hex(entry.roh);
+        if (actual === "") return mark(entry, "unverifiable");
+        return mark(entry, actual === entry.sha256 ? "ok" : "damaged");
+      } catch {
+        return mark(entry, "unverifiable");
+      }
     }),
   );
+}
+
+/** Alle Einträge mit Rohfassung als nicht prüfbar vermerken (Prüfung gescheitert). */
+export const markUnverifiable = (
+  entries: readonly PasteLogEntry[],
+): PasteLogEntry[] =>
+  entries.map((e) =>
+    e.roh === undefined ? e : { ...e, pruefung: "unverifiable" as const },
+  );
+
+/**
+ * Früher Schutz vor dem Bereinigen: ein Rohtext, dessen UTF-8-Bytes allein
+ * schon die Einzelgrenze sprengen, passt nie in einen Eintrag (der außerdem
+ * die bereinigte Fassung und JSON-Maskierung enthält). Grenzen zählen Bytes,
+ * nicht UTF-16-Einheiten: Einheiten sind nie mehr als Bytes (darüber sicher
+ * zu groß), bis zu 3 Byte je Einheit genügt die Obergrenze, erst dazwischen
+ * wird exakt gezählt.
+ */
+export function rawExceedsEntryLimit(raw: string): boolean {
+  if (raw.length > PASTE_ENTRY_MAX_BYTES) return true;
+  if (raw.length * 3 <= PASTE_ENTRY_MAX_BYTES) return false;
+  return utf8Bytes(raw) > PASTE_ENTRY_MAX_BYTES;
 }
 
 /** Anzahl der Änderungen eines Eintrags. */
@@ -272,12 +335,19 @@ export type PasteRestore =
   | { ok: true; text: string }
   | {
       ok: false;
-      reason: "noRaw" | "damaged" | "empty" | "missing" | "ambiguous";
+      reason:
+        | "noRaw"
+        | "damaged"
+        | "unverifiable"
+        | "empty"
+        | "missing"
+        | "ambiguous";
     };
 
 /**
- * Rohfassung an die Stelle der bereinigten setzen. Das geht nur, wenn der
- * Eintrag unbeschädigt ist und der bereinigte Text genau einmal unverändert
+ * Rohfassung an die Stelle der bereinigten setzen. Das geht nur, wenn die
+ * Prüfsumme geprüft stimmt (`pruefung === "ok"`; beschädigt und nicht prüfbar
+ * sind gesperrt) und der bereinigte Text genau einmal unverändert
  * im aktuellen Text steht; war er leer (alles entfernt), ist die Stelle nicht
  * eindeutig.
  */
@@ -288,7 +358,8 @@ export function restoreRaw(
   const { roh, bereinigt } = entry;
   if (roh === undefined || bereinigt === undefined)
     return { ok: false, reason: "noRaw" };
-  if (entry.beschaedigt) return { ok: false, reason: "damaged" };
+  if (entry.pruefung === "damaged") return { ok: false, reason: "damaged" };
+  if (entry.pruefung !== "ok") return { ok: false, reason: "unverifiable" };
   if (bereinigt === "") return { ok: false, reason: "empty" };
   const first = current.indexOf(bereinigt);
   if (first < 0) return { ok: false, reason: "missing" };
