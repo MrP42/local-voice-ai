@@ -97,22 +97,24 @@ struct SpeechVoicePicker: View {
 
 struct MicrophoneSettings: View {
     @ObservedObject var model: VoiceModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             #if os(watchOS)
             Text("Mikrofonempfindlichkeit").font(.subheadline)
-            sensitivityPicker
+            Picker("Mikrofonempfindlichkeit", selection: $model.microphoneSensitivity) {
+                ForEach(MicrophoneSensitivity.allCases, id: \.self) { Text($0.label).tag($0) }
+            }.labelsHidden().accessibilityIdentifier("microphoneSensitivity")
             #else
-            // Beschriftung und Auswahl in einer Zeile, wenn beides nebeneinander passt; sonst untereinander (große Schrift).
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) {
-                    Text("Mikrofonempfindlichkeit").fixedSize()
-                    Spacer(minLength: 8)
-                    sensitivityPicker.fixedSize()
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Mikrofonempfindlichkeit")
-                    sensitivityPicker
+            // Beschriftung links, Auswahl rechts in derselben Zeile; nur bei sehr großer Schrift untereinander.
+            if dynamicTypeSize.isAccessibilitySize {
+                Text("Mikrofonempfindlichkeit").accessibilityHidden(true)
+                sensitivityMenu
+            } else {
+                HStack(alignment: .center, spacing: 12) {
+                    Text("Mikrofonempfindlichkeit").lineLimit(1).minimumScaleFactor(0.8)
+                        .frame(maxWidth: .infinity, alignment: .leading).accessibilityHidden(true)
+                    sensitivityMenu
                 }
             }
             #endif
@@ -121,9 +123,23 @@ struct MicrophoneSettings: View {
                 .font(.caption2).foregroundStyle(VoicePalette.secondaryText)
         }
     }
-    private var sensitivityPicker: some View {
-        Picker("Mikrofonempfindlichkeit", selection: $model.microphoneSensitivity) {
-            ForEach(MicrophoneSensitivity.allCases, id: \.self) { Text($0.label).tag($0) }
-        }.labelsHidden().accessibilityIdentifier("microphoneSensitivity")
+    #if !os(watchOS)
+    /// Die Auswahl als Menü mit eigener Beschriftung (gewählter Wert und Pfeile): ohne den Innenabstand der Systemauswahl, damit sie
+    /// rechts bündig mit den Schaltern abschließt und ihre Breite nur vom gewählten Wert abhängt.
+    private var sensitivityMenu: some View {
+        Menu {
+            Picker("Mikrofonempfindlichkeit", selection: $model.microphoneSensitivity) {
+                ForEach(MicrophoneSensitivity.allCases, id: \.self) { Text($0.label).tag($0) }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(model.microphoneSensitivity.label)
+                Image(systemName: "chevron.up.chevron.down").font(.footnote.weight(.semibold)).accessibilityHidden(true)
+            }.frame(minHeight: 44).contentShape(Rectangle())
+        }
+        .fixedSize().padding(.vertical, -8)   // 44 pt Tippfläche, ohne die Zeile höher zu machen
+        .accessibilityLabel("Mikrofonempfindlichkeit").accessibilityValue(model.microphoneSensitivity.label)
+        .accessibilityIdentifier("microphoneSensitivity")
     }
+    #endif
 }
