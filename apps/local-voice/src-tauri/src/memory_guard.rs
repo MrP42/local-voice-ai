@@ -126,7 +126,7 @@ pub async fn check_before_load(app: &AppHandle, need_mb: u64, what: &str) -> Res
 
 /// Entlaedt alles, was gerade nicht arbeitet: Diktatmodell (Leerlauf),
 /// Chat-Server (nicht beschaeftigt) und Embedding-Server.
-pub(crate) async fn release_idle(app: &AppHandle) {
+async fn release_idle(app: &AppHandle) {
     if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
         let tm = tm.inner().clone();
         let _ = tokio::task::spawn_blocking(move || tm.unload_if_idle(Duration::ZERO)).await;
@@ -136,6 +136,23 @@ pub(crate) async fn release_idle(app: &AppHandle) {
         crate::managers::llm::stop_embedding_if_idle(Duration::ZERO)
     })
     .await;
+}
+
+/// Mindestruhe des Diktatmodells, bevor es fuer ein Sprachmodell weicht.
+const DICTATION_MIN_IDLE: Duration = Duration::from_secs(30);
+
+/// Entlaedt nur das Diktatmodell, und nur wenn es ruht (kein Engine-Zugriff,
+/// keine Aufnahme, kein Laden, mindestens [`DICTATION_MIN_IDLE`] unbenutzt).
+/// Liefert, ob entladen wurde. Fuer den Start des lokalen Sprachmodells bei
+/// knappem RAM; Chat- und Embedding-Server bleiben unberuehrt.
+pub(crate) async fn release_idle_dictation(app: &AppHandle) -> bool {
+    let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() else {
+        return false;
+    };
+    let tm = tm.inner().clone();
+    tokio::task::spawn_blocking(move || tm.unload_if_idle(DICTATION_MIN_IDLE))
+        .await
+        .unwrap_or(false)
 }
 
 /// "Speicher freigeben": entlaedt nicht arbeitende Modelle und liefert die

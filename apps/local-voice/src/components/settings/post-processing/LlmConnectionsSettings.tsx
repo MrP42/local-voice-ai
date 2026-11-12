@@ -24,7 +24,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useSettings } from "../../../hooks/useSettings";
-import { useLlmAvailability } from "@/lib/llmAvailability";
+import { availabilityKey, useLlmAvailability } from "@/lib/llmAvailability";
 import { modelLabel } from "@/lib/modelNames";
 
 /// Stufen fuer den Standard-Effort (alle Abo-Modelle kennen sie).
@@ -210,7 +210,14 @@ export const LlmConnectionsSettings: React.FC = () => {
   // Abo-Verbindungen ohne installierte CLI laufen hier nicht; die App nutzt
   // dann den Ersatz (lokales Modell zuerst).
   const { unavailable_connection_ids: missing, fallback_model_id: fallbackId } =
-    useLlmAvailability(JSON.stringify(connections.map((c) => c.id)));
+    useLlmAvailability(
+      availabilityKey(
+        connections,
+        models,
+        activeId,
+        getSetting("compliance_profile"),
+      ),
+    );
   const activeConnectionId =
     models.find((m) => m.id === activeId)?.connection_id ?? null;
   const activeMissing =

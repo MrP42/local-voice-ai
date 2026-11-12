@@ -2087,8 +2087,9 @@ impl AppSettings {
     }
 
     /// Ein freigegebenes Modell einer eingeschalteten, auf diesem Rechner
-    /// nutzbaren Verbindung; das lokale In-App-Modell zuerst. `None`, wenn es
-    /// keines gibt.
+    /// nutzbaren und unter dem Regelwerk erlaubten Verbindung; das lokale
+    /// In-App-Modell zuerst. `None`, wenn es keines gibt. Das Regelwerk prueft
+    /// jeden Aufruf weiterhin ([`crate::managers::compliance::check_call`]).
     pub fn fallback_llm_model(&self) -> Option<(&LlmConnection, &LlmModelConfig)> {
         let usable = self
             .llm_models
@@ -2099,7 +2100,8 @@ impl AppSettings {
                     .iter()
                     .find(|c| c.id == m.connection_id && c.enabled && connection_usable(c))
                     .map(|c| (c, m))
-            });
+            })
+            .filter(|(c, _)| self.connection_allowed(c));
         let mut first = None;
         for (c, m) in usable {
             if c.kind == crate::managers::llm::LOCAL_PROVIDER_ID {
@@ -2108,6 +2110,25 @@ impl AppSettings {
             first.get_or_insert((c, m));
         }
         first
+    }
+
+    /// Laesst das eingestellte Regelwerk die Verbindung zu? Dieselbe Bewertung
+    /// wie vor jedem Aufruf; eine unbekannte Vorlage gilt als gesperrt.
+    fn connection_allowed(&self, connection: &LlmConnection) -> bool {
+        use crate::managers::compliance::{assess, today, Verdict};
+        let Some(template) = self.llm_template(connection) else {
+            return false;
+        };
+        let mut provider = template.clone();
+        provider.base_url = connection.base_url.clone();
+        assess(
+            self.compliance_profile,
+            &provider,
+            connection.training_opt_out,
+            &today(),
+        )
+        .verdict
+            != Verdict::Blocked
     }
 
     /// Die Wahl des Nutzers ohne Pruefung, ob sie auf diesem Rechner laeuft.
@@ -3511,6 +3532,57 @@ mod tests {
             settings.active_llm_model().map(|(_, m)| m.id.as_str()),
             Some("claude:opus")
         );
+    }
+
+    /// Ohne lokales Modell nimmt der Ersatz kein unter dem Regelwerk gesperrtes
+    /// Modell, sondern das erste erlaubte (hier Mistral unter "EU").
+    #[test]
+    fn fallback_skips_models_the_rules_block() {
+        use crate::managers::compliance::ComplianceProfile;
+        let mut settings = get_default_settings();
+        settings.compliance_profile = ComplianceProfile::Eu;
+        let connection = |id: &str, kind: &str, url: &str| LlmConnection {
+            id: id.into(),
+            kind: kind.into(),
+            label: id.into(),
+            base_url: url.into(),
+            enabled: true,
+            monthly_budget_usd: None,
+            budget_enforced: false,
+            training_opt_out: false,
+        };
+        settings.llm_connections.extend([
+            connection("claude_cli", "claude_cli", "cli://claude"),
+            connection("openai", "openai", "https://api.openai.com/v1"),
+            LlmConnection {
+                training_opt_out: true,
+                ..connection("mistral", "mistral", "https://api.mistral.ai/v1")
+            },
+        ]);
+        settings.llm_models.extend([
+            llm_model("claude:opus", "claude_cli", "opus", true),
+            llm_model("openai:gpt", "openai", "gpt", true),
+            llm_model("mistral:large", "mistral", "mistral-large", true),
+        ]);
+        settings.llm_active_model_id = Some("claude:opus".into());
+
+        TEST_CLI_MISSING.with(|c| c.set(true));
+        assert_eq!(
+            settings.fallback_llm_model().map(|(_, m)| m.id.as_str()),
+            Some("mistral:large")
+        );
+        assert_eq!(
+            settings
+                .for_function(FN_READ_ALOUD)
+                .post_process_provider_id,
+            "mistral"
+        );
+
+        // Nur lokal erlaubt: kein Cloud-Ersatz, die Wahl bleibt (Aufruf meldet
+        // dann `cli_missing` bzw. die Sperre).
+        settings.compliance_profile = ComplianceProfile::LocalOnly;
+        assert!(settings.fallback_llm_model().is_none());
+        TEST_CLI_MISSING.with(|c| c.set(false));
     }
 
     /// Entfernte Modelle verlieren ihre Funktionswahl, Nachfolger erben sie.

@@ -19,7 +19,7 @@ import { useSettings } from "../../hooks/useSettings";
 import { Sparkle } from "lucide-react";
 import { RoleTip } from "./RoleTip";
 import { ModelBadges, reasonsText } from "../compliance/ModelBadges";
-import { useLlmAvailability } from "@/lib/llmAvailability";
+import { availabilityKey, useLlmAvailability } from "@/lib/llmAvailability";
 import { modelLabel } from "@/lib/modelNames";
 import { openSettingsTab } from "@/lib/openSettingsTab";
 import {
@@ -103,7 +103,14 @@ export const LlmSelector: React.FC<{ fn?: string }> = ({ fn }) => {
   // Abo-Verbindung ohne installierte CLI: läuft hier nicht, der Ersatz gilt
   // (wie Rust `active_llm_model`).
   const { unavailable_connection_ids: missing, fallback_model_id: fallbackId } =
-    useLlmAvailability(JSON.stringify(connections.map((c) => c.id)));
+    useLlmAvailability(
+      availabilityKey(
+        connections,
+        models,
+        globalActiveId,
+        getSetting("compliance_profile"),
+      ),
+    );
   const runnable = (s: (typeof selectable)[number] | undefined) =>
     s && !missing.includes(s.connection.id) ? s : undefined;
   const chosenGlobal = selectable.find((s) => s.model.id === globalActiveId);

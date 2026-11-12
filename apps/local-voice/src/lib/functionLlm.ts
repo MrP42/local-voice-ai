@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import type { FunctionModel, LlmConnection, LlmModelConfig } from "@/bindings";
 import { useSettings } from "@/hooks/useSettings";
-import { useLlmAvailability } from "@/lib/llmAvailability";
+import { availabilityKey, useLlmAvailability } from "@/lib/llmAvailability";
 import { modelLabel } from "@/lib/modelNames";
 
 export interface FunctionLlm {
@@ -30,7 +30,14 @@ export function useFunctionLlm(fn: string): FunctionLlm {
   >;
   const ownId = entries[fn]?.model_id ?? null;
   const { unavailable_connection_ids: missing, fallback_model_id: fallbackId } =
-    useLlmAvailability(JSON.stringify(connections.map((c) => c.id)));
+    useLlmAvailability(
+      availabilityKey(
+        connections,
+        models,
+        activeId,
+        getSetting("compliance_profile"),
+      ),
+    );
   return useMemo(() => {
     const on = new Map(
       connections
@@ -43,7 +50,28 @@ export function useFunctionLlm(fn: string): FunctionLlm {
       );
       return model ? { model, connection: on.get(model.connection_id)! } : null;
     };
-    const shown = pick(ownId) ?? pick(activeId) ?? pick(fallbackId);
+    // Wie Rust: der Ersatz gilt nur für eine gültige Standardwahl, die hier
+    // nicht läuft; ohne Ersatz bleibt diese Wahl (der Aufruf meldet dann).
+    const chosen = models.find(
+      (m) =>
+        m.id === activeId &&
+        m.enabled !== false &&
+        connections.some(
+          (c) => c.id === m.connection_id && c.enabled !== false,
+        ),
+    );
+    const chosenShown = chosen
+      ? (() => {
+          const connection = connections.find(
+            (c) => c.id === chosen.connection_id,
+          )!;
+          return { model: chosen, connection };
+        })()
+      : null;
+    const shown =
+      pick(ownId) ??
+      pick(activeId) ??
+      (chosenShown ? (pick(fallbackId) ?? chosenShown) : null);
     if (!shown) return { model: null, connection: null, local: false };
     return {
       model: modelLabel(shown.model.remote_id, shown.model.label),
