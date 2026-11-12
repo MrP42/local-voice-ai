@@ -8,7 +8,7 @@
 //! testable without Tauri, audio hardware or a model.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -525,6 +525,121 @@ struct FinalJobHandle {
     handle: std::thread::JoinHandle<()>,
 }
 
+/// Der Platz fuer den Enddurchlauf-/Recovery-Thread (hoechstens einer) samt Zaehler, wie oft ein
+/// neuer gestartet wurde. Ohne Tauri: die Reihenfolge von "Abbruch abwarten" und Einwilligungs-Tor
+/// beim Start einer Aufnahme ist damit ohne App pruefbar.
+#[derive(Default)]
+pub(crate) struct FinalSlot {
+    job: Mutex<Option<FinalJobHandle>>,
+    /// Wie oft ein Thread gestartet wurde. Der Start einer Aufnahme vergleicht ihn unter dem Tor.
+    generation: AtomicU64,
+}
+
+impl FinalSlot {
+    /// Startet `body` in einem neuen Thread. Laeuft noch ein frueherer, bekommt `body` dessen
+    /// Handle (zum Abwarten) und teilt seinen Abbruch-Merker. Zaehlt `generation` hoch.
+    pub(crate) fn spawn(
+        &self,
+        body: impl FnOnce(Option<std::thread::JoinHandle<()>>, Arc<AtomicBool>) + Send + 'static,
+    ) -> std::io::Result<()> {
+        let mut slot = self.job.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = slot.take().and_then(|p| {
+            if p.handle.is_finished() {
+                let _ = p.handle.join();
+                None
+            } else {
+                Some(p)
+            }
+        });
+        let (cancel, previous_handle) = match previous {
+            Some(p) => (p.cancel, Some(p.handle)),
+            None => (Arc::new(AtomicBool::new(false)), None),
+        };
+        // Vor dem Thread hochzaehlen: wer danach (unter dem Tor) vergleicht, sieht den Start.
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        let job_cancel = Arc::clone(&cancel);
+        let handle = std::thread::Builder::new()
+            .name("meeting-final-pass".to_string())
+            .spawn(move || body(previous_handle, job_cancel))?;
+        *slot = Some(FinalJobHandle { cancel, handle });
+        Ok(())
+    }
+
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
+
+    /// Ein Thread laeuft (nicht nur: ein Handle liegt da).
+    pub(crate) fn active(&self) -> bool {
+        self.job
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .is_some_and(|job| !job.handle.is_finished())
+    }
+
+    /// Eine neue Aufnahme braucht die Engine: der Thread hoert nach dem laufenden Segment auf und
+    /// wird abgewartet. NIE unter der Tor-Sperre (Sperrordnung): der Thread nimmt sie selbst.
+    pub(crate) fn cancel(&self) {
+        crate::managers::planning::ohne_tor_sperre("join des Enddurchlaufs");
+        let job = self.job.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(job) = job {
+            if !job.handle.is_finished() {
+                info!("meetings: a new recording cancels the running final pass");
+            }
+            job.cancel.store(true, Ordering::Relaxed);
+            if job.handle.join().is_err() {
+                error!("meetings: final pass thread panicked");
+            }
+        }
+    }
+
+    /// Wartet auf den Thread (Headless-Laeufe), ohne ihn abzubrechen.
+    pub(crate) fn wait(&self) {
+        crate::managers::planning::ohne_tor_sperre("join des Enddurchlaufs");
+        let job = self.job.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(job) = job {
+            if job.handle.join().is_err() {
+                error!("meetings: final pass thread panicked");
+            }
+        }
+    }
+
+    /// Beginnt eine Aufnahme unter dem Einwilligungs-Tor, in der Reihenfolge der Sperrordnung
+    /// (`managers::planning`, Punkt 4): ERST laufende nachtraegliche Laeufe abbrechen und
+    /// abwarten (ohne Tor-Sperre), DANN unter der Sperre die frische Pruefung und `start`.
+    /// Hat inzwischen ein neuer Lauf begonnen (`generation`), beginnt `start` nicht: Abbrechen und
+    /// Pruefen wiederholen sich. `nach_abbruch` meldet jeden Durchgang (Testhaken).
+    pub(crate) fn start_unter_tor<T>(
+        &self,
+        store: &MeetingStore,
+        event: Option<&crate::managers::calendar::model::CalEvent>,
+        target_meeting_id: Option<&str>,
+        nach_abbruch: impl Fn(),
+        start: impl FnOnce(&crate::managers::planning::TorNachweis) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let mut start = Some(start);
+        loop {
+            let gesehen = self.generation();
+            self.cancel();
+            nach_abbruch();
+            let ergebnis =
+                crate::managers::planning::mit_tor(store, event, target_meeting_id, |tor| {
+                    match start.take() {
+                        Some(f) if self.generation() == gesehen => f(tor).map(Some),
+                        other => {
+                            start = other;
+                            Ok(None)
+                        }
+                    }
+                })?;
+            if let Some(wert) = ergebnis {
+                return Ok(wert);
+            }
+        }
+    }
+}
+
 /// Setzt `starting` fuer die Dauer von `start()` (auch bei jedem Fehlerweg).
 pub(crate) struct StartingFlag<'a>(&'a AtomicBool);
 
@@ -547,7 +662,7 @@ impl Drop for StartingFlag<'_> {
 /// Transkription: der Auftrag wird zu "Live-Transkript behalten" ohne Modell, die Besprechung
 /// schliesst wie gewohnt ab. Ohne zugeordnete Planung ist der Auftrag unveraendert.
 pub(crate) fn unter_tor(store: &MeetingStore, job: &JobSpec) -> JobSpec {
-    match crate::managers::planning::mit_tor_besprechung(store, &job.meeting_id, |_tor| Ok(())) {
+    match crate::managers::planning::tor_pruefen_besprechung(store, &job.meeting_id) {
         Ok(()) => job.clone(),
         Err(code) => {
             info!(
@@ -559,6 +674,30 @@ pub(crate) fn unter_tor(store: &MeetingStore, job: &JobSpec) -> JobSpec {
                 catch_up_model: None,
                 ..job.clone()
             }
+        }
+    }
+}
+
+/// EIN Block der Live-Transkription hinter dem Einwilligungs-Tor (lva#534): vor und nach dem
+/// Modellaufruf unter der Sperre geprueft (`planning::modell_lauf`). Nach einem Widerruf (oder
+/// einer anderen Sperre des Tors) liefert er KEINE Segmente (auch keine Luecken-Platzhalter) und
+/// ruft das Modell nicht mehr; die Aufnahme selbst laeuft weiter. `abgelehnt` meldet das einmal
+/// je Aufnahme an die Oberflaeche.
+pub(crate) fn live_block_gated(
+    store: &MeetingStore,
+    meeting_id: &str,
+    told: &AtomicBool,
+    call: impl FnOnce() -> Vec<crate::managers::transcription::TimedSegment>,
+    abgelehnt: impl FnOnce(),
+) -> Vec<crate::managers::transcription::TimedSegment> {
+    match crate::managers::planning::modell_lauf(store, meeting_id, || Ok(call())) {
+        Ok(segments) => segments,
+        Err(code) => {
+            warn!("meetings: Block nicht transkribiert ({code})");
+            if !told.swap(true, Ordering::Relaxed) {
+                abgelehnt();
+            }
+            Vec::new()
         }
     }
 }
@@ -581,7 +720,7 @@ pub struct MeetingRecorderManager {
     /// could get two starts past `may_start` and leave one orphaned.
     start_guard: Mutex<()>,
     /// M2-P2d: Enddurchlauf bzw. Recovery im Hintergrund (hoechstens einer).
-    final_job: Mutex<Option<FinalJobHandle>>,
+    finals: FinalSlot,
 }
 
 impl MeetingRecorderManager {
@@ -596,7 +735,7 @@ impl MeetingRecorderManager {
             transcription,
             core: RunCore::new(),
             start_guard: Mutex::new(()),
-            final_job: Mutex::new(None),
+            finals: FinalSlot::default(),
         }
     }
 
@@ -615,71 +754,37 @@ impl MeetingRecorderManager {
         if jobs.is_empty() {
             return;
         }
-        let mut slot = self.final_job.lock().unwrap_or_else(|e| e.into_inner());
-        let previous = slot.take();
-        let cancel = match &previous {
-            Some(p) if !p.handle.is_finished() => Arc::clone(&p.cancel),
-            _ => Arc::new(AtomicBool::new(false)),
-        };
         let app = self.app.clone();
         let store = Arc::clone(&self.store);
         let tm = Arc::clone(&self.transcription);
-        let job_cancel = Arc::clone(&cancel);
         let thread_jobs = jobs.clone();
-        let spawned = std::thread::Builder::new()
-            .name("meeting-final-pass".to_string())
-            .spawn(move || {
-                if let Some(previous) = previous {
-                    let _ = previous.handle.join();
-                }
-                let mut env =
-                    final_pass::AppEnv::new(&app, Arc::clone(&tm), Arc::clone(&job_cancel));
-                for job in &thread_jobs {
-                    let job = unter_tor(&store, job);
-                    final_pass::run_job(&store, &job, &mut env);
-                }
-                if !job_cancel.load(Ordering::Relaxed) {
-                    let dictation_model = crate::settings::get_settings(&app).selected_model;
-                    tm.initiate_model_load_target(&dictation_model);
-                }
-            });
-        match spawned {
-            Ok(handle) => *slot = Some(FinalJobHandle { cancel, handle }),
-            Err(e) => {
-                drop(slot);
-                // Ohne Thread kein Enddurchlauf, aber auch kein haengendes
-                // `processing`: jede Besprechung wird hier abgeschlossen.
-                warn!("meetings: final pass thread not started ({e}) - live transcripts stay");
-                let mut env = final_pass::AppEnv::new(
-                    &self.app,
-                    Arc::clone(&self.transcription),
-                    Arc::new(AtomicBool::new(false)),
-                );
-                for mut job in jobs {
-                    job.plan = FinalPlan::Keep(KeepReason::LoadFailed);
-                    job.catch_up_model = None;
-                    final_pass::run_job(&self.store, &job, &mut env);
-                }
+        let spawned = self.finals.spawn(move |previous, job_cancel| {
+            if let Some(previous) = previous {
+                let _ = previous.join();
             }
-        }
-    }
-
-    /// M2-P2d: eine neue Aufnahme braucht die Engine. Der Enddurchlauf hoert
-    /// nach dem laufenden Segment auf (das Live-Transkript bleibt, die
-    /// Besprechung wird `ready`), und erst dann geht es weiter.
-    fn cancel_final_jobs(&self) {
-        let job = self
-            .final_job
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take();
-        if let Some(job) = job {
-            if !job.handle.is_finished() {
-                info!("meetings: a new recording cancels the running final pass");
+            let mut env = final_pass::AppEnv::new(&app, Arc::clone(&tm), Arc::clone(&job_cancel));
+            for job in &thread_jobs {
+                let job = unter_tor(&store, job);
+                final_pass::run_job(&store, &job, &mut env);
             }
-            job.cancel.store(true, Ordering::Relaxed);
-            if job.handle.join().is_err() {
-                error!("meetings: final pass thread panicked");
+            if !job_cancel.load(Ordering::Relaxed) {
+                let dictation_model = crate::settings::get_settings(&app).selected_model;
+                tm.initiate_model_load_target(&dictation_model);
+            }
+        });
+        if let Err(e) = spawned {
+            // Ohne Thread kein Enddurchlauf, aber auch kein haengendes
+            // `processing`: jede Besprechung wird hier abgeschlossen.
+            warn!("meetings: final pass thread not started ({e}) - live transcripts stay");
+            let mut env = final_pass::AppEnv::new(
+                &self.app,
+                Arc::clone(&self.transcription),
+                Arc::new(AtomicBool::new(false)),
+            );
+            for mut job in jobs {
+                job.plan = FinalPlan::Keep(KeepReason::LoadFailed);
+                job.catch_up_model = None;
+                final_pass::run_job(&self.store, &job, &mut env);
             }
         }
     }
@@ -688,26 +793,13 @@ impl MeetingRecorderManager {
     /// beginnt dann nicht auf der gemeinsamen Engine (auch nicht in der Luecke,
     /// bevor sein Auftrag im Verzeichnis steht).
     pub fn final_jobs_active(&self) -> bool {
-        self.final_job
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .as_ref()
-            .is_some_and(|job| !job.handle.is_finished())
+        self.finals.active()
     }
 
     /// M2-P2d: wartet auf den Enddurchlauf-/Recovery-Thread (Headless-Laeufe,
     /// deren Prozess sonst vor dem Ende des Auftrags endete).
     pub fn wait_final_jobs(&self) {
-        let job = self
-            .final_job
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take();
-        if let Some(job) = job {
-            if job.handle.join().is_err() {
-                error!("meetings: final pass thread panicked");
-            }
-        }
+        self.finals.wait();
     }
 
     /// Starts a live meeting: creates the row, the folder and both WAV
@@ -772,10 +864,10 @@ impl MeetingRecorderManager {
         // Aufnahme und Live-Transkription sind EIN Schritt unter der Sperre des Tors. Ein Widerruf,
         // der dazwischen gespeichert wird, wartet bis nach dem Start. Ohne Planung zum Termin bzw.
         // zur Zielbesprechung: unveraendert. `start_row` verlangt den Nachweis des Tors.
-        crate::managers::planning::mit_tor(&self.store, event, target_meeting_id, |tor| {
-            // M2-P2d: ein laufender Enddurchlauf gibt die Engine vorher frei.
-            self.cancel_final_jobs();
-
+        // M2-P2d: ein laufender Enddurchlauf gibt die Engine vorher frei. Das geschieht VOR dem
+        // Tor und ohne dessen Sperre (Sperrordnung, Punkt 4): der Enddurchlauf nimmt die Sperre
+        // selbst; unter ihr zu warten waere ein Deadlock.
+        self.finals.start_unter_tor(&self.store, event, target_meeting_id, || {}, |tor| {
             let consent_at = chrono::Utc::now().timestamp();
             let meeting = begin_live_row(&self.store, &title, consent_at, target_meeting_id)?;
             let meeting_id = meeting.id.clone();
@@ -1063,12 +1155,28 @@ impl MeetingRecorderManager {
             cfg = cfg.with_echo(echo);
         }
 
+        let gate_store = Arc::clone(&self.store);
+        let gate_meeting = meeting_id.to_string();
+        let refusal_told = AtomicBool::new(false);
+        let refusal_app = self.app.clone();
         LivePipeline::start(
             meeting_id.to_string(),
             Arc::clone(&self.store),
             cfg,
             move |chunk: &Chunk| {
-                super::import::transcribe_chunk_resilient(&app, &transcription, chunk)
+                live_block_gated(
+                    &gate_store,
+                    &gate_meeting,
+                    &refusal_told,
+                    || super::import::transcribe_chunk_resilient(&app, &transcription, chunk),
+                    || {
+                        let _ = (MeetingEvent::Error {
+                            meeting_id: gate_meeting.clone(),
+                            message: "nur_notizen".to_string(),
+                        })
+                        .emit(&refusal_app);
+                    },
+                )
             },
             move |event| {
                 let _ = event.emit(&emit_app);
@@ -1330,6 +1438,9 @@ impl MeetingRecorderManager {
             super::job::global().is_running(meeting_id),
             &|p| std::path::Path::new(p).exists(),
         )?;
+        // lva#534: ohne Zustimmung gibt es nichts fortzusetzen: der Nutzer erfaehrt es hier, der
+        // Auftrag (`unter_tor`, `run_job`) haelt die Regel zusaetzlich ein.
+        crate::managers::planning::tor_pruefen_besprechung(&self.store, meeting_id)?;
         let settings = crate::settings::get_settings(&self.app);
         let catch_up_model = self.transcription.meeting_model_target(&settings);
         let plan = if meeting.source == "live" {
@@ -2037,5 +2148,233 @@ mod tests {
         );
         // Und eine unbekannte Besprechung bringt nichts zum Absturz.
         discard_failed_start(&store, "gibt-es-nicht", &dir.path().join("x"));
+    }
+
+    // -- lva#534 Fixrunde 3: Reihenfolge von Abbruch, Tor und Beginn beim Start einer Aufnahme --
+
+    mod start {
+        use super::*;
+        use crate::managers::planning::testhilfe as th;
+        use std::sync::mpsc;
+
+        fn store() -> (tempfile::TempDir, Arc<MeetingStore>) {
+            let dir = tempfile::tempdir().unwrap();
+            let store = Arc::new(MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap());
+            (dir, store)
+        }
+
+        fn spec(meeting_id: &str) -> JobSpec {
+            JobSpec {
+                meeting_id: meeting_id.to_string(),
+                catch_up_model: None,
+                plan: FinalPlan::Keep(KeepReason::Off),
+                live_model: None,
+                recover_from: None,
+            }
+        }
+
+        /// Ein "Enddurchlauf", der erst weitermacht, wenn der Start ihn abbricht (der Abbruch-Merker
+        /// ist gesetzt, der Start ist also im `join`), und DANN das Tor betritt (`unter_tor`, wie
+        /// der echte Thread). Haengt der Start im `join` unter der Tor-Sperre, kann er nie enden.
+        fn haengender_enddurchlauf(
+            slot: &FinalSlot,
+            store: &Arc<MeetingStore>,
+            meeting_id: &str,
+            log: &Arc<Mutex<Vec<&'static str>>>,
+        ) {
+            let (store, meeting_id, log) =
+                (Arc::clone(store), meeting_id.to_string(), Arc::clone(log));
+            slot.spawn(move |_previous, cancel| {
+                while !cancel.load(Ordering::Acquire) {
+                    std::thread::yield_now();
+                }
+                let _ = unter_tor(&store, &spec(&meeting_id));
+                log.lock().unwrap().push("enddurchlauf_fertig");
+            })
+            .unwrap();
+        }
+
+        /// Fuehrt einen Start in einem Thread aus und wartet (nur als Netz gegen ein Haengen) auf
+        /// sein Ende. Gibt das Ergebnis des Starts und das Protokoll zurueck.
+        fn starten(
+            slot: Arc<FinalSlot>,
+            store: Arc<MeetingStore>,
+            ziel: Option<String>,
+            log: Arc<Mutex<Vec<&'static str>>>,
+        ) -> Result<(), String> {
+            let (tx, rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                let (l1, l2) = (Arc::clone(&log), Arc::clone(&log));
+                let r = slot.start_unter_tor(
+                    &store,
+                    None,
+                    ziel.as_deref(),
+                    move || l1.lock().unwrap().push("abbruch_abgewartet"),
+                    move |_tor| {
+                        l2.lock().unwrap().push("start");
+                        Ok(())
+                    },
+                );
+                let _ = tx.send(r);
+            });
+            rx.recv_timeout(Duration::from_secs(60))
+                .expect("Deadlock: der Start endet nicht (Abbruch unter der Tor-Sperre?)")
+        }
+
+        /// Blocker 1, ohne Planung: Start einer Aufnahme, waehrend ein Enddurchlauf noch vor dem
+        /// Tor steht. Beide enden; erst der Enddurchlauf, dann der Start.
+        #[test]
+        fn a_live_start_does_not_deadlock_with_a_final_pass_before_the_gate() {
+            let (_dir, store) = store();
+            let slot = Arc::new(FinalSlot::default());
+            let log = Arc::new(Mutex::new(Vec::new()));
+            let m = store.create_empty_meeting("A", None).unwrap();
+            haengender_enddurchlauf(&slot, &store, &m.id, &log);
+            let r = starten(
+                Arc::clone(&slot),
+                Arc::clone(&store),
+                None,
+                Arc::clone(&log),
+            );
+            assert_eq!(r, Ok(()));
+            assert_eq!(
+                *log.lock().unwrap(),
+                ["enddurchlauf_fertig", "abbruch_abgewartet", "start"]
+            );
+        }
+
+        /// Blocker 1 mit Planung: Zustimmung liegt vor -> der Start laeuft; Ablehnung -> der Start
+        /// laeuft nie. In beiden Faellen endet auch der Enddurchlauf (kein Deadlock).
+        #[test]
+        fn the_same_holds_with_a_plan_that_allows_or_refuses() {
+            for zugestimmt in [true, false] {
+                let (_dir, store) = store();
+                let slot = Arc::new(FinalSlot::default());
+                let log = Arc::new(Mutex::new(Vec::new()));
+                let m = store.create_empty_meeting("B", None).unwrap();
+                th::plan_fuer_besprechung(&store, &m.id, "u-r", zugestimmt);
+                haengender_enddurchlauf(&slot, &store, &m.id, &log);
+                let r = starten(
+                    Arc::clone(&slot),
+                    Arc::clone(&store),
+                    Some(m.id.clone()),
+                    Arc::clone(&log),
+                );
+                let log = log.lock().unwrap().clone();
+                if zugestimmt {
+                    assert_eq!(r, Ok(()));
+                    assert_eq!(log, ["enddurchlauf_fertig", "abbruch_abgewartet", "start"]);
+                } else {
+                    assert_eq!(r, Err("nur_notizen: offen".to_string()));
+                    assert_eq!(log, ["enddurchlauf_fertig", "abbruch_abgewartet"]);
+                }
+            }
+        }
+
+        /// Der alte Weg (Abbruch mit `join` INNERHALB des Tors) ist jetzt nicht mehr moeglich: die
+        /// Pruefung der Sperrordnung meldet ihn sofort, statt zu haengen.
+        #[test]
+        fn cancelling_inside_the_gate_is_reported_by_the_lock_order_check() {
+            let (_dir, store) = store();
+            let slot = FinalSlot::default();
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::managers::planning::mit_tor(&store, None, None, |_| {
+                    slot.cancel();
+                    Ok(())
+                })
+            }));
+            let text = r.expect_err("muss gemeldet werden");
+            let text = text.downcast_ref::<String>().cloned().unwrap_or_default();
+            assert!(
+                text.contains("join des Enddurchlaufs unter der Tor-Sperre"),
+                "{text}"
+            );
+            assert!(!crate::managers::planning::unter_tor_sperre());
+        }
+
+        /// Beginnt zwischen Abwarten und Tor ein neuer Lauf, beginnt der Start NICHT: er bricht ab,
+        /// wartet erneut und prueft das Tor frisch.
+        #[test]
+        fn a_final_pass_that_starts_between_the_wait_and_the_gate_is_awaited_too() {
+            let (_dir, store) = store();
+            let slot = Arc::new(FinalSlot::default());
+            let log = Arc::new(Mutex::new(Vec::new()));
+            let durchgaenge = std::sync::atomic::AtomicUsize::new(0);
+            let r = slot.start_unter_tor(
+                &store,
+                None,
+                None,
+                || {
+                    // Nur im ersten Durchgang kommt ein neuer Lauf dazwischen.
+                    if durchgaenge.fetch_add(1, Ordering::SeqCst) == 0 {
+                        let l = Arc::clone(&log);
+                        slot.spawn(move |_prev, _cancel| {
+                            l.lock().unwrap().push("zweiter_lauf_fertig");
+                        })
+                        .unwrap();
+                    }
+                },
+                |_| {
+                    log.lock().unwrap().push("start");
+                    Ok(())
+                },
+            );
+            assert_eq!(r, Ok(()));
+            assert_eq!(
+                durchgaenge.load(Ordering::SeqCst),
+                2,
+                "Abbruch und Tor wiederholt"
+            );
+            assert_eq!(*log.lock().unwrap(), ["zweiter_lauf_fertig", "start"]);
+        }
+
+        /// Der Block der Live-Transkription: nach einer Ablehnung kein Modellaufruf, keine
+        /// Luecken-Platzhalter, die Meldung nur einmal; ein Widerruf WAEHREND des Blocks verwirft ihn.
+        #[test]
+        fn the_live_block_asks_the_gate_around_the_model_and_reports_a_refusal_once() {
+            let (_dir, store) = store();
+            let m = store.create_empty_meeting("L", None).unwrap();
+            let (p, _) = th::plan_fuer_besprechung(&store, &m.id, "u-l", true);
+            let told = AtomicBool::new(false);
+            let aufrufe = std::sync::atomic::AtomicUsize::new(0);
+            let meldungen = std::sync::atomic::AtomicUsize::new(0);
+            let seg = || {
+                vec![crate::managers::transcription::TimedSegment {
+                    text: "hallo".into(),
+                    start_ms: 0,
+                    end_ms: 100,
+                    words: None,
+                }]
+            };
+            let block = |widerruf_im_aufruf: bool| {
+                live_block_gated(
+                    &store,
+                    &m.id,
+                    &told,
+                    || {
+                        aufrufe.fetch_add(1, Ordering::SeqCst);
+                        if widerruf_im_aufruf {
+                            crate::managers::planning::einwilligung_setzen(
+                                &store,
+                                &th::widerruf(&p.id, th::BERT),
+                                th::NOW + 3,
+                            )
+                            .unwrap();
+                        }
+                        seg()
+                    },
+                    || {
+                        meldungen.fetch_add(1, Ordering::SeqCst);
+                    },
+                )
+            };
+            assert_eq!(block(false).len(), 1, "erlaubt: Segmente");
+            assert!(block(true).is_empty(), "Widerruf im Aufruf: verworfen");
+            assert_eq!(aufrufe.load(Ordering::SeqCst), 2);
+            assert!(block(false).is_empty(), "danach kein Modellaufruf mehr");
+            assert!(block(false).is_empty());
+            assert_eq!(aufrufe.load(Ordering::SeqCst), 2, "kein weiterer Aufruf");
+            assert_eq!(meldungen.load(Ordering::SeqCst), 1, "einmal gemeldet");
+        }
     }
 }

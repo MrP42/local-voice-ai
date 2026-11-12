@@ -354,13 +354,16 @@ pub(super) fn run_import(
         // G5: Sprache bestimmen und das Modell danach waehlen (Einstellung `auto`: Probe
         // aus dem Audio; Nutzerwahl und feste Einstellung gelten vor jeder Erkennung).
         // Die Vorgabe gilt fuer diesen Thread, solange `language_plan` lebt.
-        let language_plan = super::language_run::prepare(
-            app,
-            tm,
-            &samples,
-            &super::language_run::RunRequest::default(),
-            Some(job),
-        );
+        // lva#534: die Probe rechnet ein Modell ueber das Audio: Einwilligungs-Tor davor/danach.
+        let language_plan = crate::managers::planning::modell_lauf(store, meeting_id, || {
+            Ok(super::language_run::prepare(
+                app,
+                tm,
+                &samples,
+                &super::language_run::RunRequest::default(),
+                Some(job),
+            ))
+        })?;
         vor_transkription(store, meeting_id, || {
             job.begin_phase(JobPhase::Transcription, duration_ms)
         })?;
@@ -795,6 +798,7 @@ pub(super) fn drive_chunks(
 /// Spur ist ab `start_ms` geschnitten, ihre Segmente sollen aber die absoluten Zeiten
 /// der Aufnahme tragen). Er wird auf Segmente UND Woerter addiert. `base_ms` ist
 /// dagegen nur der Fortschritt auf der Achse des Auftrags - nicht zu verwechseln.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn drive_chunks_at(
     chunks: Vec<Chunk>,
@@ -804,6 +808,35 @@ pub(super) fn drive_chunks_at(
     channel: u8,
     first_index: u32,
     transcribe: &mut dyn FnMut(&Chunk) -> Vec<TimedSegment>,
+    store_batch: &mut dyn FnMut(Vec<StoredSegment>) -> Result<(), String>,
+    on_resume: &mut dyn FnMut(),
+) -> Result<TranscribeRun, String> {
+    drive_chunks_checked(
+        chunks,
+        job,
+        base_ms,
+        time_offset_ms,
+        channel,
+        first_index,
+        &mut |chunk| Ok(transcribe(chunk)),
+        store_batch,
+        on_resume,
+    )
+}
+
+/// Wie [`drive_chunks_at`], aber ein Block darf scheitern, ohne eine Luecke zu hinterlassen:
+/// liefert `transcribe` einen Fehler (lva#534: das Einwilligungs-Tor lehnt ab), endet der Lauf
+/// SOFORT mit diesem Fehler. Der Block wird nicht gespeichert, es folgt kein weiterer Aufruf; was
+/// vorher gespeichert wurde, bleibt.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn drive_chunks_checked(
+    chunks: Vec<Chunk>,
+    job: &JobHandle,
+    base_ms: u64,
+    time_offset_ms: u64,
+    channel: u8,
+    first_index: u32,
+    transcribe: &mut dyn FnMut(&Chunk) -> Result<Vec<TimedSegment>, String>,
     store_batch: &mut dyn FnMut(Vec<StoredSegment>) -> Result<(), String>,
     on_resume: &mut dyn FnMut(),
 ) -> Result<TranscribeRun, String> {
@@ -827,7 +860,7 @@ pub(super) fn drive_chunks_at(
         }
         let offset_ms = chunk.offset_ms;
         let chunk_ms = chunk.samples.len() as u64 / 16;
-        let timed = transcribe(&chunk);
+        let timed = transcribe(&chunk)?;
         let appended = stored_segments(timed, time_offset_ms + offset_ms, channel, &mut next_index);
         if !appended.is_empty() {
             store_batch(appended)?;
@@ -860,24 +893,28 @@ pub(super) fn transcribe_and_store(
     time_offset_ms: u64,
     on_resume: &mut dyn FnMut(),
 ) -> Result<TranscribeRun, String> {
-    drive_chunks_at(
+    drive_chunks_checked(
         chunk_all(samples, IMPORT_CHUNK_TARGET_MS),
         job,
         base_ms,
         time_offset_ms,
         channel,
         first_index,
+        // lva#534: jeder Block ist ein Modellaufruf ueber Ton der Besprechung: Einwilligungs-Tor
+        // davor und danach (Widerruf waehrend des Blocks verwirft ihn, es folgt kein weiterer).
         &mut |chunk| {
-            if time_offset_ms == 0 {
-                return transcribe_chunk_resilient(app, tm, chunk);
-            }
-            // Der Luecken-Platzhalter nennt den Zeitraum im Text: auf der Achse der
-            // Aufnahme, nicht des Ausschnitts.
-            let shifted = Chunk {
-                samples: chunk.samples.clone(),
-                offset_ms: chunk.offset_ms + time_offset_ms,
-            };
-            transcribe_chunk_resilient(app, tm, &shifted)
+            crate::managers::planning::modell_lauf(store, meeting_id, || {
+                if time_offset_ms == 0 {
+                    return Ok(transcribe_chunk_resilient(app, tm, chunk));
+                }
+                // Der Luecken-Platzhalter nennt den Zeitraum im Text: auf der Achse der
+                // Aufnahme, nicht des Ausschnitts.
+                let shifted = Chunk {
+                    samples: chunk.samples.clone(),
+                    offset_ms: chunk.offset_ms + time_offset_ms,
+                };
+                Ok(transcribe_chunk_resilient(app, tm, &shifted))
+            })
         },
         &mut |appended| {
             store
@@ -1804,6 +1841,65 @@ Guten Tag.
         assert_eq!(
             import_subtitle_file(&store, "x", &bad, None).unwrap_err(),
             "subtitle_invalid"
+        );
+    }
+
+    /// lva#534: lehnt das Einwilligungs-Tor einen Block ab (Widerruf), endet der Lauf SOFORT: der
+    /// Block wird nicht gespeichert, es folgt kein weiterer Aufruf, was vorher gespeichert wurde,
+    /// bleibt, und es entsteht keine Luecke.
+    #[test]
+    fn a_refused_block_ends_the_run_without_a_gap_and_without_further_calls() {
+        use crate::managers::planning::testhilfe as th;
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+        let m = store.create_empty_meeting("Import", None).unwrap();
+        let (p, _) = th::plan_fuer_besprechung(&store, &m.id, "u-i", true);
+        let (job, _events) = job_with_events();
+        job.begin_phase(JobPhase::Transcription, 180_000);
+        let mut aufrufe = 0;
+        let mut gespeichert = 0;
+        let r = drive_chunks_checked(
+            vec![
+                block(0, 60_000),
+                block(60_000, 60_000),
+                block(120_000, 60_000),
+            ],
+            &job,
+            0,
+            0,
+            CHANNEL_MIXED,
+            0,
+            &mut |_chunk| {
+                crate::managers::planning::modell_lauf(&store, &m.id, || {
+                    aufrufe += 1;
+                    if aufrufe == 2 {
+                        // Widerruf WAEHREND des zweiten Blocks.
+                        crate::managers::planning::einwilligung_setzen(
+                            &store,
+                            &th::widerruf(&p.id, th::BERT),
+                            th::NOW + 9,
+                        )
+                        .unwrap();
+                    }
+                    Ok(vec![TimedSegment {
+                        text: "hallo".into(),
+                        start_ms: 0,
+                        end_ms: 1_000,
+                        words: None,
+                    }])
+                })
+            },
+            &mut |_| {
+                gespeichert += 1;
+                Ok(())
+            },
+            &mut || {},
+        );
+        assert_eq!(r.err(), Some("nur_notizen: abgelehnt".to_string()));
+        assert_eq!(aufrufe, 2, "nach der Ablehnung kein weiterer Aufruf");
+        assert_eq!(
+            gespeichert, 1,
+            "der verworfene Block wird nicht gespeichert"
         );
     }
 }

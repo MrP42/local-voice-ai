@@ -854,7 +854,14 @@ pub fn collect_turns(
         };
         let run = Instant::now();
         diarizer.progress(done_ms, total_ms);
-        let result = diarizer.diarize(channel, &pcm);
+        // lva#534: das Sprecher-Modell ist ein Modellaufruf ueber Ton der Besprechung: das
+        // Einwilligungs-Tor gilt davor und danach (Widerruf waehrend des Laufs verwirft ihn).
+        let result = crate::managers::planning::modell_lauf_mit(
+            store,
+            &meeting.id,
+            || diarizer.diarize(channel, &pcm),
+            |_| DiarizeError::Cancelled,
+        );
         drop(pcm);
         // Ein abgebrochener Kanal ist nicht "fertig": der Balken springt nicht auf 100 %.
         if !matches!(result, Err(DiarizeError::Cancelled)) {

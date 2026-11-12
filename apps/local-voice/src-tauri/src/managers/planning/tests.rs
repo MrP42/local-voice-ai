@@ -1616,7 +1616,6 @@ fn the_gate_is_per_series_instance() {
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 /// Eine Planung mit Zustimmung beider Personen; Termin im Cache.
 fn alle_zugestimmt(f: &Fix) -> (Plan, CalEvent) {
@@ -1655,23 +1654,28 @@ fn a_refused_gate_never_runs_the_start() {
     assert_eq!(mit_tor(&f.store, Some(&t), None, |_| Ok(7)), Ok(7));
 }
 
-/// Der Widerruf kommt NACH dem erfolgreichen Tor und VOR dem wirksamen Beginn: er kann nicht
-/// dazwischen gespeichert werden (er wartet auf die Sperre), der laufende Start ist legitim, der
-/// naechste Start sperrt.
-#[test]
-fn a_revocation_between_the_gate_and_the_effective_start_waits_until_after_the_start() {
-    let f = fix();
-    let (p, t) = alle_zugestimmt(&f);
+/// Schreibt `schreiber` waehrend eines laufenden Starts und prueft die Sperrordnung ohne Zeitraten:
+///
+/// 1. Der Start besteht das Tor und bleibt IM wirksamen Beginn stehen (Sperre gehalten).
+/// 2. Der Schreiber laeuft in einem eigenen Thread; ein Haken in `tor_sperre()` meldet, dass er den
+///    Sperrversuch WIRKLICH erreicht hat (ein Schreiber ohne Sperre meldet nie: der Test scheitert
+///    dann am Warten, nicht an einer Schaetzung).
+/// 3. Erst danach darf der Start enden. Weil `tor_sperre()` ein `Mutex` ist, kann der Schreiber nur
+///    nach dem Start fertig werden: das Protokoll muss das zeigen.
+fn schreiber_wartet_auf_start(
+    f: &Fix,
+    event: &CalEvent,
+    schreiber: impl FnOnce(&MeetingStore) + Send,
+) {
     let log: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
     let (im_start_tx, im_start_rx) = mpsc::channel::<()>();
     let (weiter_tx, weiter_rx) = mpsc::channel::<()>();
-    let (fertig_tx, fertig_rx) = mpsc::channel::<()>();
+    let (versucht_tx, versucht_rx) = mpsc::channel::<()>();
 
     std::thread::scope(|s| {
-        // Start: Tor bestanden, jetzt "wirksamer Beginn" (hier haengt der Test den Widerruf ein).
-        let (store, termin, protokoll) = (&f.store, &t, &log);
+        let (store, protokoll) = (&f.store, &log);
         let start = s.spawn(move || {
-            mit_tor(store, Some(termin), None, |_| {
+            mit_tor(store, Some(event), None, |_| {
                 protokoll.lock().unwrap().push("tor_bestanden");
                 im_start_tx.send(()).unwrap();
                 weiter_rx.recv().unwrap();
@@ -1680,40 +1684,43 @@ fn a_revocation_between_the_gate_and_the_effective_start_waits_until_after_the_s
             })
         });
         im_start_rx.recv().unwrap();
-        assert!(
-            TOR_SPERRE.try_lock().is_err(),
-            "die Sperre wird bis zum wirksamen Beginn gehalten"
-        );
 
-        // Der Widerruf wird jetzt gespeichert: er muss warten.
-        let widerrufer = s.spawn(|| {
-            einwilligung_setzen(&f.store, &widerruf(&p.id, NOW + 1), NOW + 1).unwrap();
-            log.lock().unwrap().push("widerruf_gespeichert");
-            fertig_tx.send(()).unwrap();
+        let schreibender = s.spawn(move || {
+            VERSUCH.with(|v| {
+                *v.borrow_mut() = Some(Box::new(move || {
+                    let _ = versucht_tx.send(());
+                }))
+            });
+            schreiber(store);
+            protokoll.lock().unwrap().push("schreiber_fertig");
         });
+        // Der Schreiber hat die Sperre erreicht (und haengt dort, solange der Start sie haelt).
+        versucht_rx.recv().unwrap();
         assert!(
-            fertig_rx.recv_timeout(Duration::from_millis(300)).is_err(),
-            "der Widerruf darf nicht zwischen Tor und Beginn gespeichert werden"
-        );
-        // Auch der Abgleich und der Wechsel des Termins warten (gleiche Sperre).
-        assert_eq!(
-            personen(&f.store, &p.id)
-                .iter()
-                .filter(|(_, s)| *s == ConsentState::Zugestimmt)
-                .count(),
-            2,
-            "gespeichert ist noch nichts"
+            !log.lock().unwrap().contains(&"schreiber_fertig"),
+            "der Schreiber darf waehrend des Starts nicht fertig sein"
         );
 
         weiter_tx.send(()).unwrap();
         assert_eq!(start.join().unwrap(), Ok(()));
-        widerrufer.join().unwrap();
+        schreibender.join().unwrap();
     });
 
     assert_eq!(
         *log.lock().unwrap(),
-        ["tor_bestanden", "start_wirksam", "widerruf_gespeichert"]
+        ["tor_bestanden", "start_wirksam", "schreiber_fertig"]
     );
+}
+
+/// Der Widerruf kommt NACH dem erfolgreichen Tor und VOR dem wirksamen Beginn: er kann nicht
+/// dazwischen gespeichert werden, der laufende Start ist legitim, der naechste sperrt.
+#[test]
+fn a_revocation_between_the_gate_and_the_effective_start_waits_until_after_the_start() {
+    let f = fix();
+    let (p, t) = alle_zugestimmt(&f);
+    schreiber_wartet_auf_start(&f, &t, |store| {
+        einwilligung_setzen(store, &widerruf(&p.id, NOW + 1), NOW + 1).unwrap();
+    });
     // Der Widerruf gilt fuer den NAECHSTEN Start.
     let gestartet = AtomicBool::new(false);
     let r = mit_tor(&f.store, Some(&t), None, |_| {
@@ -1724,73 +1731,273 @@ fn a_revocation_between_the_gate_and_the_effective_start_waits_until_after_the_s
     assert!(!gestartet.load(Ordering::SeqCst));
 }
 
-/// Alles, was das Tor-Ergebnis aendern kann, nimmt dieselbe Sperre (hier: jeder Schreiber blockiert,
-/// solange ein Start unterwegs ist).
 #[test]
-fn every_writer_that_can_change_the_gate_waits_for_a_running_start() {
+fn changing_the_plan_waits_for_a_running_start() {
     let f = fix();
     let (p, t) = alle_zugestimmt(&f);
-    let (im_start_tx, im_start_rx) = mpsc::channel::<()>();
-    let (weiter_tx, weiter_rx) = mpsc::channel::<()>();
-    let fertig = AtomicBool::new(false);
-
-    std::thread::scope(|s| {
-        let (store, termin) = (&f.store, &t);
-        let start = s.spawn(move || {
-            mit_tor(store, Some(termin), None, |_| {
-                im_start_tx.send(()).unwrap();
-                weiter_rx.recv().unwrap();
-                Ok(())
-            })
-        });
-        im_start_rx.recv().unwrap();
-        let schreiber: Vec<Box<dyn FnOnce() + Send + '_>> = vec![
-            Box::new(|| {
-                plan_aendern(&f.store, &p.id, &eingabe(), NOW + 2).unwrap();
-            }),
-            Box::new(|| {
-                let _ = identitaet_loesen(&f.store, &p.id, NOW + 3);
-            }),
-            Box::new(|| {
-                let _ = termin_waehlen(&f.store, &p.id, &t.key, NOW + 4);
-            }),
-            Box::new(|| {
-                let _ = abgleich_lauf(&f.store, NOW);
-            }),
-            Box::new(|| {
-                // Kalender-Cache (Teilnehmende) wie im Dienst: unter der Sperre geschrieben.
-                let _tor = tor_sperre();
-                cache(&f.store, std::slice::from_ref(&t));
-            }),
-        ];
-        let n = schreiber.len();
-        let (klar_tx, klar_rx) = mpsc::channel::<()>();
-        let handles: Vec<_> = schreiber
-            .into_iter()
-            .map(|w| {
-                let klar_tx = klar_tx.clone();
-                let fertig = &fertig;
-                s.spawn(move || {
-                    w();
-                    fertig.store(true, Ordering::SeqCst);
-                    klar_tx.send(()).unwrap();
-                })
-            })
-            .collect();
-        assert!(
-            klar_rx.recv_timeout(Duration::from_millis(300)).is_err(),
-            "kein Schreiber darf waehrend des Starts fertig werden"
-        );
-        assert!(!fertig.load(Ordering::SeqCst));
-        weiter_tx.send(()).unwrap();
-        assert_eq!(start.join().unwrap(), Ok(()));
-        for _ in 0..n {
-            klar_rx.recv_timeout(Duration::from_secs(20)).unwrap();
-        }
-        for h in handles {
-            h.join().unwrap();
-        }
+    schreiber_wartet_auf_start(&f, &t, |store| {
+        plan_aendern(store, &p.id, &eingabe(), NOW + 2).unwrap();
     });
+}
+
+#[test]
+fn releasing_the_identity_waits_for_a_running_start() {
+    let f = fix();
+    let (p, t) = alle_zugestimmt(&f);
+    schreiber_wartet_auf_start(&f, &t, |store| {
+        identitaet_loesen(store, &p.id, NOW + 3).unwrap();
+    });
+}
+
+#[test]
+fn choosing_another_event_waits_for_a_running_start() {
+    let f = fix();
+    let (p, t) = alle_zugestimmt(&f);
+    schreiber_wartet_auf_start(&f, &t, |store| {
+        // Egal, ob die Wahl gelingt: sie nimmt die Sperre, bevor sie etwas prueft oder schreibt.
+        let _ = termin_waehlen(store, &p.id, &t.key, NOW + 4);
+    });
+}
+
+#[test]
+fn the_calendar_reconciliation_waits_for_a_running_start() {
+    let f = fix();
+    let (_p, t) = alle_zugestimmt(&f);
+    schreiber_wartet_auf_start(&f, &t, |store| {
+        abgleich_lauf(store, NOW).unwrap();
+    });
+}
+
+/// Der ECHTE Schreiber des Kalender-Caches (ICS-Abruf), nicht ein Nachbau mit eigener Sperre.
+#[test]
+fn the_real_calendar_cache_writer_waits_for_a_running_start() {
+    let f = fix();
+    let (_p, t) = alle_zugestimmt(&f);
+    schreiber_wartet_auf_start(&f, &t, |store| {
+        crate::managers::calendar::service::apply_body(
+            store,
+            SRC,
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n".to_string(),
+            None,
+            None,
+            NOW,
+            "UTC",
+        )
+        .unwrap();
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Sperrordnung: unter der Tor-Sperre kein Warten auf Threads, kein Modell
+// ---------------------------------------------------------------------------
+
+fn paniktext(f: impl FnOnce() + std::panic::UnwindSafe) -> String {
+    let err = std::panic::catch_unwind(f).expect_err("es muss ein Verstoss gemeldet werden");
+    err.downcast_ref::<String>()
+        .cloned()
+        .or_else(|| err.downcast_ref::<&str>().map(|s| s.to_string()))
+        .unwrap_or_default()
+}
+
+#[test]
+fn the_lock_order_check_fires_for_a_join_or_a_model_call_under_the_gate_lock() {
+    assert!(!unter_tor_sperre());
+    ohne_tor_sperre("Modellaufruf"); // ohne Sperre: still
+    {
+        let _sperre = tor_sperre();
+        assert!(unter_tor_sperre());
+        let text = paniktext(|| ohne_tor_sperre("join des Enddurchlaufs"));
+        assert!(text.contains("Sperrordnung verletzt"), "{text}");
+        assert!(text.contains("join"), "{text}");
+    }
+    assert!(!unter_tor_sperre(), "die Merkung faellt mit der Sperre");
+    ohne_tor_sperre("Modellaufruf");
+
+    // Ein Modellaufruf unter der Sperre meldet sich ebenso (hier ueber den echten Weg).
+    let f = fix();
+    let id = f.store.create_empty_meeting("x", None).unwrap().id;
+    let store = &f.store;
+    let text = paniktext(std::panic::AssertUnwindSafe(|| {
+        let _sperre = tor_sperre();
+        let _ = modell_lauf(store, &id, || Ok(()));
+    }));
+    assert!(text.contains("Modellaufruf unter der Tor-Sperre"), "{text}");
+    // Die Panik hat die Sperre freigegeben (Drop beim Abwickeln): der Thread ist wieder frei.
+    assert!(!unter_tor_sperre());
+}
+
+#[test]
+fn the_gate_lock_is_not_reentrant_and_says_so() {
+    let text = paniktext(|| {
+        let _a = tor_sperre();
+        let _b = tor_sperre();
+    });
+    assert!(text.contains("zweiten Mal"), "{text}");
+    assert!(!unter_tor_sperre());
+}
+
+// ---------------------------------------------------------------------------
+// modell_lauf: Tor vor und nach dem Modellaufruf, nie darin
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_model_run_checks_the_gate_before_and_after_and_never_holds_the_lock_inside() {
+    let f = fix();
+    let (p, id) = aufnahme_mit_planung(&f);
+    zustimmen(&f, &p.id, "anna@example.com");
+    zustimmen(&f, &p.id, "bert@example.org");
+
+    // Erlaubt: der Aufruf laeuft, und die Sperre ist darin FREI (ein Widerruf kann also
+    // waehrend des Modells gespeichert werden, ohne auf es zu warten).
+    let r = modell_lauf(&f.store, &id, || {
+        assert!(
+            !unter_tor_sperre(),
+            "das Modell laeuft nie unter der Sperre"
+        );
+        Ok(5)
+    });
+    assert_eq!(r, Ok(5));
+
+    // Widerruf WAEHREND des Aufrufs: der Schreiber kommt durch (kein Deadlock), das Ergebnis wird
+    // verworfen.
+    let verworfen = modell_lauf(&f.store, &id, || {
+        einwilligung_setzen(&f.store, &widerruf(&p.id, NOW + 1), NOW + 1).unwrap();
+        Ok("ergebnis")
+    });
+    assert_eq!(verworfen, Err("nur_notizen: abgelehnt".to_string()));
+
+    // Danach ruft niemand mehr das Modell.
+    let aufgerufen = AtomicBool::new(false);
+    let r = modell_lauf(&f.store, &id, || {
+        aufgerufen.store(true, Ordering::SeqCst);
+        Ok(())
+    });
+    assert_eq!(r, Err("nur_notizen: abgelehnt".to_string()));
+    assert!(!aufgerufen.load(Ordering::SeqCst), "kein Modellaufruf");
+
+    // Fehler des Aufrufs selbst gehen unveraendert durch; ohne Planung ist alles frei.
+    let frei = f.store.create_empty_meeting("Frei", None).unwrap();
+    assert_eq!(
+        modell_lauf::<()>(&f.store, &frei.id, || Err("kaputt".into())),
+        Err("kaputt".to_string())
+    );
+    assert_eq!(modell_lauf(&f.store, &frei.id, || Ok(1)), Ok(1));
+}
+
+// ---------------------------------------------------------------------------
+// Zuordnung: ALLE Quellen zusammen (uebergebener Termin, Verknuepfung des Ziels, Planung der Besprechung)
+// ---------------------------------------------------------------------------
+
+/// Ein Termin ohne Planung (anderer Kalendereintrag).
+fn fremder_termin(f: &Fix, uid: &str) -> CalEvent {
+    let mut t = termin(uid, NOW + 3 * D, None);
+    t.attendees = vec![person("anna@example.com")];
+    let mut alle = f.store.calendar_events_between(0, i64::MAX, false).unwrap();
+    alle.push(t.clone());
+    cache(&f.store, &alle);
+    f.store.calendar_event(&t.key).unwrap().unwrap()
+}
+
+/// Blocker 4: der uebergebene Termin hat KEINE Planung, die Zielbesprechung ist aber ueber
+/// `meeting_calendar_links` mit einem Termin einer abgelehnten Planung verknuepft: das Tor muss
+/// sperren (der Termin darf die Verknuepfung nicht verdecken).
+#[test]
+fn a_passed_event_does_not_hide_the_calendar_link_of_the_target() {
+    let f = fix();
+    let (p, id) = aufnahme_mit_planung(&f);
+    zustimmen(&f, &p.id, "anna@example.com");
+    einwilligung_setzen(&f.store, &widerruf(&p.id, NOW), NOW).unwrap();
+    let anderer = fremder_termin(&f, "u-ohne-plan");
+
+    // Der andere Termin allein startet wie bisher.
+    assert_eq!(mit_tor(&f.store, Some(&anderer), None, |_| Ok(())), Ok(()));
+    // Mit dem Ziel zusammen sperrt die abgelehnte Planung des Ziel-Termins.
+    let gestartet = AtomicBool::new(false);
+    let r = mit_tor(&f.store, Some(&anderer), Some(&id), |_| {
+        gestartet.store(true, Ordering::SeqCst);
+        Ok(())
+    });
+    assert_eq!(r, Err("nur_notizen: abgelehnt".to_string()));
+    assert!(!gestartet.load(Ordering::SeqCst), "kein Start");
+    // Reihenfolge der Quellen spielt keine Rolle: das Ziel allein sperrt ebenso.
+    assert_eq!(
+        start_tor(&f.store, None, Some(&id)),
+        Err("nur_notizen: abgelehnt".to_string())
+    );
+    // Stimmen beide zu, startet auch die Kombination.
+    zustimmen(&f, &p.id, "bert@example.org");
+    assert_eq!(start_tor(&f.store, Some(&anderer), Some(&id)), Ok(()));
+}
+
+/// Mehrere Planungen aus verschiedenen Quellen: jede einzelne Sperre sperrt, nur alle zusammen
+/// erlauben.
+#[test]
+fn with_several_plans_from_all_sources_each_single_block_blocks() {
+    let f = fix();
+    // Planung A: Termin `u1`, an den die Zielbesprechung verknuepft ist.
+    let (a, id) = aufnahme_mit_planung(&f);
+    // Planung B: eigener Termin `u2`, wird als Termin uebergeben.
+    let (b, tb) = {
+        let (p, e) = uebergeben(&f.store);
+        let mut t = termin("u2", NOW + 4 * D, Some(beschreibung(&e)));
+        t.attendees = vec![person("carla@example.com")];
+        let mut alle = f.store.calendar_events_between(0, i64::MAX, false).unwrap();
+        alle.push(t.clone());
+        cache(&f.store, &alle);
+        assert!(lauf(&f.store).geaendert >= 1);
+        assert_eq!(status(&f.store, &p.id), PlanStatus::Verknuepft);
+        (p, f.store.calendar_event(&t.key).unwrap().unwrap())
+    };
+    // Planung C: fuehrt die Zielbesprechung ausdruecklich (`meeting_plans.meeting_id`).
+    let c = plan_anlegen(&f.store, &eingabe(), NOW).unwrap();
+    f.store
+        .get_connection()
+        .unwrap()
+        .execute(
+            "UPDATE meeting_plans SET meeting_id = ?2 WHERE id = ?1",
+            params![c.id, id],
+        )
+        .unwrap();
+
+    let alle_erlauben = |f: &Fix| start_tor(&f.store, Some(&tb), Some(&id));
+    // Nichts zugestimmt: gesperrt.
+    assert!(alle_erlauben(&f).is_err());
+
+    // Alle drei Quellen stimmen zu: frei. (C sieht die Anwesenden aller bekannten Termine.)
+    zustimmen(&f, &a.id, "anna@example.com");
+    zustimmen(&f, &a.id, "bert@example.org");
+    zustimmen(&f, &b.id, "carla@example.com");
+    for wer in ["anna@example.com", "bert@example.org", "carla@example.com"] {
+        zustimmen(&f, &c.id, wer);
+    }
+    assert_eq!(alle_erlauben(&f), Ok(()));
+
+    // Jede einzelne Ablehnung sperrt, egal aus welcher Quelle sie kommt.
+    for (plan, wer) in [
+        (&a.id, "bert@example.org"),
+        (&b.id, "carla@example.com"),
+        (&c.id, "anna@example.com"),
+    ] {
+        let vorher = einwilligungen(&f.store, plan)
+            .unwrap()
+            .into_iter()
+            .find(|e| e.person == wer)
+            .unwrap();
+        let abgelehnt = Consent {
+            state: ConsentState::Abgelehnt,
+            channel: Some(ConsentChannel::MuendlichBeiStart),
+            recorded_at: Some(NOW + 9),
+            ..vorher.clone()
+        };
+        einwilligung_setzen(&f.store, &abgelehnt, NOW + 9).unwrap();
+        assert_eq!(
+            alle_erlauben(&f),
+            Err("nur_notizen: abgelehnt".to_string()),
+            "Ablehnung in {plan}"
+        );
+        einwilligung_setzen(&f.store, &vorher, NOW + 10).unwrap();
+        assert_eq!(alle_erlauben(&f), Ok(()), "wieder frei nach {plan}");
+    }
 }
 
 #[test]

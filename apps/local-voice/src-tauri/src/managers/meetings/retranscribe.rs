@@ -519,7 +519,24 @@ fn run_retranscribe(
             .iter()
             .max_by_key(|(s, _)| s.len())
             .map(|(s, _)| s.as_slice());
-        super::language_run::prepare(app, tm, longest.unwrap_or(&[]), request, Some(job))
+        // lva#534: die Probe rechnet ein Modell ueber das Audio: Einwilligungs-Tor davor/danach.
+        // Eine Ablehnung hier aendert noch nichts (das alte Transkript steht).
+        let probe = crate::managers::planning::modell_lauf(store, meeting_id, || {
+            Ok(super::language_run::prepare(
+                app,
+                tm,
+                longest.unwrap_or(&[]),
+                request,
+                Some(job),
+            ))
+        });
+        match probe {
+            Ok(plan) => plan,
+            Err(e) => {
+                restore_dictation_model(app, tm);
+                return Err(e);
+            }
+        }
     };
     let target_owned = plan.model_id.clone();
     let target = target_owned.as_str();
