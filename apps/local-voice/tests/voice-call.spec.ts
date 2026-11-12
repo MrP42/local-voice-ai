@@ -1313,6 +1313,8 @@ test.describe("Sprachgespraech Orchestrator", () => {
         JSON.stringify({ meetings: [{ title: "Wochenplanung" }] }),
       ),
     );
+    // Nach dem Werkzeug meldet die Region „Denkt nach“ nicht ein zweites Mal.
+    await expect(status).not.toHaveText(/Denkt nach/);
     await expect(
       page.getByRole("log").getByText("Gestern gab es zwei Besprechungen."),
     ).toBeVisible();
