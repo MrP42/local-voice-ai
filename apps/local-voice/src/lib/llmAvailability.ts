@@ -16,6 +16,18 @@ const listeners = new Set<(a: LlmAvailability) => void>();
 let pending: Promise<void> | null = null;
 let again = false;
 
+/** Eine unvollständige Antwort (ältere Gegenstelle, Testattrappe) gilt als "alles verfügbar". */
+function normalize(raw: unknown): LlmAvailability {
+  const a = (raw ?? {}) as Partial<LlmAvailability>;
+  return {
+    unavailable_connection_ids: Array.isArray(a.unavailable_connection_ids)
+      ? a.unavailable_connection_ids
+      : [],
+    fallback_model_id:
+      typeof a.fallback_model_id === "string" ? a.fallback_model_id : null,
+  };
+}
+
 /**
  * Fragt neu, ob die Abo-Verbindungen auf diesem Rechner laufen (CLI
  * installiert). Kommt ein Anlass, während eine Abfrage läuft, folgt danach
@@ -28,7 +40,8 @@ export function refreshLlmAvailability(): Promise<void> {
   }
   pending = commands
     .llmAvailability()
-    .then((a) => {
+    .then((raw) => {
+      const a = normalize(raw);
       cached = a;
       listeners.forEach((l) => l(a));
     })
