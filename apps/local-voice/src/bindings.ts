@@ -3021,6 +3021,10 @@ async meetingsGetDocuments(meetingId: string) : Promise<Result<MeetingDocument[]
 /**
  * Soft-deletes the meeting, then hard-deletes its audio files from disk
  * (Spec A2 — a tombstoned meeting must never leave an orphaned WAV behind).
+ * 
+ * lva#538: zuerst endet, was gerade in diese Besprechung aufnimmt: ein laufender Start
+ * (er endet mit `meeting_not_found` und raeumt auf) oder die laufende Aufnahme (ohne
+ * Enddurchlauf). Sonst entstuende eine Aufnahme fuer einen geloeschten Eintrag.
  */
 async meetingsDelete(meetingId: string) : Promise<Result<null, string>> {
     try {
