@@ -284,3 +284,52 @@ test("Textmodus: Sprecher antwortet allein, kein Fehlertext trotz abgebrochenem 
     TUNING.modelFristMs = alt;
   }
 });
+
+test("Weitersprechen ist keine Antwort: bleibt der Denker aus, kommt die Vorlage, kein Verlauf", async () => {
+  const s = lokal("WEITER: Deine Mails, gute Frage.");
+  const t = neu({ voice_call_chat: denker(undefined) }, s);
+  const alt = TUNING.modelFristMs;
+  TUNING.modelFristMs = 100;
+  try {
+    await t.start("Was steht in meinen Mails?");
+    assert.deepEqual(t.player.enqueued, [
+      "wav:Deine Mails, gute Frage.",
+      "wav:Das kann ich gerade nicht sicher beantworten.",
+    ]);
+    assert.deepEqual(t.verlauf(), []);
+  } finally {
+    TUNING.modelFristMs = alt;
+  }
+});
+
+test("Denker scheitert, bevor der Sprecher entscheidet: seine Antwort gilt statt der Vorlage", async () => {
+  const s = lokal("ANTWORT: Hallo, schön dich zu hören.", 80);
+  const t = neu({ voice_call_chat: () => Promise.reject("offline") }, s);
+  await t.start("Hallo");
+  await settle(200);
+  assert.deepEqual(t.player.enqueued, ["wav:Hallo, schön dich zu hören."]);
+  assert.deepEqual(t.verlauf(), [
+    "user:Hallo",
+    "assistant:Hallo, schön dich zu hören.",
+  ]);
+  assert.equal(t.log.assistant.filter((a) => !a.final).length >= 1, true);
+  assert.equal(t.log.assistant.at(-1).final, true);
+});
+
+test("Textmodus: Denker scheitert, Sprecher antwortet danach: nur seine Antwort", async () => {
+  const s = lokal("ANTWORT: Gern geschehen!", 60);
+  const t = neu({ voice_call_chat: () => Promise.reject("offline") }, s);
+  t.engine.state = "idle";
+  await t.engine.sendText("Danke");
+  assert.equal(t.log.assistant.at(-1).t, "Gern geschehen!");
+  assert.equal(t.log.assistant.at(-1).final, true);
+  assert.deepEqual(t.verlauf(), ["user:Danke", "assistant:Gern geschehen!"]);
+});
+
+test("Alleinantwort des Sprechers: „Wiederholen“ kennt keine ältere Ausgabe mehr", async () => {
+  const s = lokal("ANTWORT: Gern!");
+  const t = neu({ voice_call_chat: denker(500, ANTWORT) }, s);
+  t.engine.ausgabeKey = { id: "c1" };
+  await t.start("Danke");
+  assert.equal(t.aufrufe("assistent_ausgabe_vergessen").length, 1);
+});

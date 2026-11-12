@@ -1997,8 +1997,10 @@ pub(crate) fn run_mit_abgriff(
                 let mut stueck = [0u8; 8192];
                 loop {
                     match p.read(&mut stueck) {
-                        Ok(0) | Err(_) => break,
+                        Ok(0) => break,
                         Ok(n) => buf.extend_from_slice(&stueck[..n]),
+                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                        Err(_) => break,
                     }
                     while let Some(pos) = buf[gemeldet..].iter().position(|b| *b == b'\n') {
                         let ende = gemeldet + pos;

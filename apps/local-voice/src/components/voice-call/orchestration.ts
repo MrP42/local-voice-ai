@@ -368,7 +368,7 @@ function makeModel(
   stufe: Souveraenitaet,
   deps: OrchestrationDeps,
   forFunction: string | null = null,
-  /** Ohne Gesprächsschlüssel: die Ausgabe wird in Rust nicht als „letzte Ausgabe“ gemerkt (Sofort-Sprecher). */
+  /** Sofort-Sprecher: Rust merkt keine Ausgabe, zeigt keinen Denktext und lehnt Projekt-/Notizbuchgespräche ab. */
   ohneGespraech = false,
 ): VoiceModel {
   return {
@@ -408,9 +408,11 @@ function makeModel(
           modelId: info.id,
           stufe,
           forFunction,
-          conversationId: ohneGespraech
-            ? null
-            : ((await (deps.ausgabeKey ?? deps.conversationId)?.()) ?? null),
+          // Auch der Sofort-Sprecher nennt das Gespräch: Rust lehnt ihn in Projekt- und
+          // Notizbuchgesprächen ab und merkt seine Ausgabe nicht (`nurSprecher`).
+          conversationId:
+            (await (deps.ausgabeKey ?? deps.conversationId)?.()) ?? null,
+          nurSprecher: ohneGespraech,
         });
         // Auch nach Abbruch noch kurz auf den Verbrauch warten: er zählt trotzdem.
         await Promise.race([

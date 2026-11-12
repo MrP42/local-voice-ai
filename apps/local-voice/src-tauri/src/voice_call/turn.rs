@@ -101,6 +101,9 @@ fn resolve(
     crate::managers::meetings::llm_call::resolve_provider(&chosen)
 }
 
+/// Fehler, wenn der Sofort-Sprecher in einem Projekt- oder Notizbuchgespraech gefragt wird.
+pub const SOFORT_GESPERRT: &str = "sofort_gesperrt";
+
 /// Ein Durchgang eines Modells als roher Textstrom (Ereignisse `delta`, am Ende `usage`).
 #[tauri::command]
 #[specta::specta]
@@ -114,7 +117,11 @@ pub async fn voice_call_turn(
     for_function: Option<String>,
     conversation_id: Option<String>,
     expected_stand: Option<String>,
+    nur_sprecher: Option<bool>,
 ) -> Result<String, String> {
+    // Sofort-Sprecher (lva#485): kennt nur Verlauf und Frage. Er laeuft nie in einem Projekt- oder
+    // Notizbuchgespraech, merkt keine Ausgabe (die Antwort gehoert dem Denker) und zeigt keinen Denktext.
+    let nur_sprecher = nur_sprecher.unwrap_or(false);
     // Ein vorgezogener Abbruch wird zuerst eingelöst, auch wenn unten etwas scheitert.
     if EARLY_CANCELS
         .lock()
@@ -128,6 +135,9 @@ pub async fn voice_call_turn(
     // kommt aus dem Tor. Die Souveränitätsstufe prüft vorab dieselbe Regel wie im gewöhnlichen Weg
     // (Länder der Verbindung); das Tor bestimmt das Ziel danach selbst aus der Konfiguration.
     if let Some(projekt) = super::projekt::bindung(&app, conversation_id.as_deref()).await? {
+        if nur_sprecher {
+            return Err(SOFORT_GESPERRT.to_string());
+        }
         let settings = crate::settings::get_settings(&app);
         resolve(&settings, &model_id, &stufe, for_function.as_deref())?;
         let gespraech = conversation_id.unwrap_or_default();
@@ -151,6 +161,9 @@ pub async fn voice_call_turn(
     if pruefung.gesperrt {
         return Err(schutz::UNGESICHERT.to_string());
     }
+    if nur_sprecher && pruefung.geschuetzt {
+        return Err(SOFORT_GESPERRT.to_string());
+    }
     let messages = pruefung.nachrichten.clone();
     // ADR-0028 E4: Einstufung in Rust vor jedem Modellaufruf (Sprecher und Denker).
     let sprache = crate::assistent::sprache_der_app(&app);
@@ -170,7 +183,9 @@ pub async fn voice_call_turn(
             }
         })?;
     // Belegregel (E4.2) fuer JEDEN Durchgang, gleich welche Funktion: was Rust Richtung Oberflaeche
-    // verlaesst (Deltas, Rueckgabewert), geht durch das Tor. Belege sind die Werkzeugergebnisse, die
+    // verlaesst (Deltas, Rueckgabewert), geht durch das Tor. Ausnahme: der Denktext des Modells
+    // (Ereignis `reasoning`, `super::denksenke`) ist keine Aussage, nur Anzeige, und nie bei
+    // geschuetzten Inhalten. Belege sind die Werkzeugergebnisse, die
     // Rust selbst geliefert hat; ausgenommen sind nur voll gueltige Werkzeugaufrufe.
     let (strom, messages) = tor::orchestrator_tor(
         messages,
@@ -220,7 +235,7 @@ pub async fn voice_call_turn(
     };
     let (result, captured) = usage::with_capture(async {
         let call = llm_client::mit_denksenke(
-            super::denksenke(&app, &request_id, pruefung.geschuetzt),
+            super::denksenke(&app, &request_id, pruefung.geschuetzt || nur_sprecher),
             llm_client::send_chat_completion_stream(
                 Purpose::Chat,
                 &provider,
@@ -288,7 +303,9 @@ pub async fn voice_call_turn(
                 );
                 return Err(schutz::UNGESICHERT.to_string());
             }
-            tor::ausgabe_merken(conversation_id.as_deref(), &prosa);
+            if !nur_sprecher {
+                tor::ausgabe_merken(conversation_id.as_deref(), &prosa);
+            }
             Ok(ausgabe)
         }
         Some(Err(e)) => {
