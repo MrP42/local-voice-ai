@@ -311,6 +311,10 @@ pub struct PlanLink {
     /// Serientermin: urspruenglicher Beginn der Instanz (UTC-ms), sonst `None`.
     #[serde(default)]
     pub instanz: Option<i64>,
+    /// Zuletzt wurde ein anderer Termin bzw. eine andere Instanz beobachtet und
+    /// verworfen. Merker, damit die Meldung nur einmal entsteht.
+    #[serde(default)]
+    pub fremd_beobachtet: bool,
 }
 
 /// Einwilligung einer Person zur Transkription, je Planung.

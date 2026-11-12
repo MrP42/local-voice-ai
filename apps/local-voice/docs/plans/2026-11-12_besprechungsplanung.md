@@ -76,8 +76,12 @@ Teilnehmende bleiben in `calendar_event_attendees` und `meeting_participants` (O
   Ablehnung brauchen Zeitpunkt und Kanal; ein Widerruf ist ein neuer Eintrag, der Verlauf bleibt.
 - Die Verknüpfung führt neben dem verdichteten Zustand eigene Merker für unbestätigte
   Verschiebung, Block-Konflikt und Absage sowie die Instanz eines Serientermins (ursprünglicher Beginn).
-  Eine Beobachtung einer anderen Instanz ersetzt die gespeicherte nie still, sie wird verworfen
-  und gemeldet. Je Adapter ist (Termin-Id, Instanz) eindeutig.
+  Ist ein Termin verknüpft, ersetzt ein anderer Termin (andere Id) oder eine andere
+  Serieninstanz ihn nie still, auch nicht von „keine Instanz“ zu einer Instanz: die Beobachtung
+  wird verworfen und einmal gemeldet, bis wieder der richtige Termin beobachtet wird. Nur die
+  Erstverknüpfung übernimmt Id und Instanz; ein Wechsel geht nur über eine bestätigte
+  Neu-Verknüpfung per Auswahl. Je Adapter ist (Termin-Id, Instanz) eindeutig; ein Termin ohne
+  Instanz fällt mit keiner Instanz zusammen.
 - Beschädigte gespeicherte Werte werden als `daten_beschaedigt` gemeldet, nie still ersetzt.
 
 ### 3.3 Outlook-Anbindung: drei austauschbare Adapter
@@ -111,6 +115,9 @@ Outlooks HTML→Text-Wandlung keinen falschen Konflikt erzeugt (Regel siehe unte
 | Termin gelöscht oder Marke weg | – | Status „verwaist“, Neu-Verknüpfung per Auswahl |
 | Planung schon durchgeführt | – | Kalender ändert den Status nicht mehr |
 
+Der Block beginnt beim Kopf und endet an der ersten danach allein stehenden, vollständigen
+Marke; gehört sie zu einer anderen Planung, gilt der Block als entfernt. Eine Marke außerhalb
+eines Blocks zählt nicht. Marke und Block werden nach derselben Begrenzung gesucht.
 Bei Adapter C schreibt die App den Block nach dem Einfügen nie wieder; dort zählt nur die Marke.
 Schreibende Adapter (A, B) dürfen nur bei nachweislich geprüftem Stand schreiben: Termintext liegt
 vor, Prüfsumme der zuletzt geschriebenen Fassung ist gespeichert, Block stimmt mit ihr überein.
@@ -167,7 +174,7 @@ Arbeitsweise nach `AGENTS.md`: eigener Zweig je Paket, PR, keine Formatierläufe
 |---|---|---|
 | P0+P1 | Konzept im Repo; Crate mit Modell, Migration, Speicher, Regeln, Einladung, Abgleich, Einwilligung | `cargo test` im Crate grün |
 | P2 | Planungsoberfläche (Port Generator), Regelhinweise, Vorschau | Vorschau entspricht dem Generator; HTML-Vorschau zur Abnahme |
-| P3 | Adapter C + App-Verdrahtung (Migration, Befehle, Bindings); Plan, Verknüpfung und Einwilligungen transaktional speichern, Statusprüfungen gegen konkurrierende Änderungen schützen, `PRAGMA foreign_keys = ON` auf jeder Verbindung; Kalender-Instanz (RECURRENCE-ID) an die Beobachtung geben | Termin aus dem Feed wird verknüpft; Verschiebung aktualisiert die Planung |
+| P3 | Adapter C + App-Verdrahtung (Migration, Befehle, Bindings); Plan, Verknüpfung und Einwilligungen transaktional speichern, Statusprüfungen gegen konkurrierende Änderungen schützen, `PRAGMA foreign_keys = ON` auf jeder Verbindung; Kalender-Instanz (RECURRENCE-ID) an die Beobachtung geben; Auswahlregel: Erstverknüpfung nur über die Marke im Block, Wechsel des Termins nur per bestätigter Auswahl (`identitaet_loesen`) | Termin aus dem Feed wird verknüpft; Verschiebung aktualisiert die Planung |
 | P4 | Hinweisfenster, „Besprechung starten“, Einwilligungs-Check, Agenda-Zeitboxen; Nachweis, Widerruf und später hinzukommende Anwesende in der Oberfläche | Start mit/ohne Transkription, Einwilligung dokumentiert |
 | P5 | Terminbezogene Protokollvorlage, Ziel-Abgleich, Entwurf an Teilnehmende | Protokoll entlang Agenda, Entwurf mit allen Teilnehmenden |
 | P6 | Adapter B: Outlook COM (Windows) | Termin per `Display()`, Verschiebung über `GlobalAppointmentID`, Mail-Entwurf |

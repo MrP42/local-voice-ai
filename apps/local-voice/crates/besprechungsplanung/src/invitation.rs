@@ -356,11 +356,37 @@ pub fn block_hash(block_text: &str) -> String {
     format!("{h:016x}")
 }
 
-/// Findet die Plan-Id in einem Termintext (Text oder HTML). Gilt nur eine Marke,
-/// die allein steht: davor Textanfang, Zeilenumbruch, Leerraum oder `>`, danach
-/// Textende, Leerraum oder `<`. So zaehlt `https://x/lva-plan:abc` nicht. Die erste
-/// solche Marke gilt.
+/// Findet die Plan-Id in einem Termintext (Text oder HTML): die Marke, die den
+/// App-Block abschliesst (siehe [`finde_block`]). Eine Marke ausserhalb eines Blocks
+/// zaehlt nicht.
 pub fn finde_marke(beschreibung: &str) -> Option<String> {
+    blockgrenzen(&beschreibung.replace("\r\n", "\n")).map(|(_, _, id)| id)
+}
+
+/// Schneidet den App-Block aus einem Termintext (Text). Der Block beginnt beim
+/// ersten [`BLOCK_KOPF`] und endet an der ersten danach allein stehenden Marke;
+/// diese muss vollstaendig `lva-plan:<plan_id>` sein. `None`, wenn Kopf oder Marke
+/// fehlen oder die Marke zu einer anderen Planung gehoert; dann gilt der Block als
+/// entfernt. [`finde_marke`] verlangt dieselbe Begrenzung.
+pub fn finde_block(beschreibung: &str, plan_id: &str) -> Option<String> {
+    let text = beschreibung.replace("\r\n", "\n");
+    let (start, ende, id) = blockgrenzen(&text)?;
+    (id == plan_id).then(|| text[start..ende].to_string())
+}
+
+/// Anfang, Ende (nach der Marke) und Plan-Id des App-Blocks.
+fn blockgrenzen(text: &str) -> Option<(usize, usize, String)> {
+    let start = text.find(BLOCK_KOPF)?;
+    let ab = start + BLOCK_KOPF.len();
+    let (rel, laenge, id) = erste_marke(&text[ab..])?;
+    Some((start, ab + rel + laenge, id))
+}
+
+/// Erste allein stehende Marke: davor Textanfang, Leerraum oder `>`, danach
+/// Textende, Leerraum oder `<`, Id vollstaendig. So zaehlt weder
+/// `https://x/lva-plan:abc` noch der Anfang von `lva-plan:P1X` als `P1`.
+/// Liefert Position, Laenge und Id.
+fn erste_marke(beschreibung: &str) -> Option<(usize, usize, String)> {
     let mut ab = 0;
     while let Some(rel) = beschreibung[ab..].find(MARKE_PRAEFIX) {
         let pos = ab + rel;
@@ -379,20 +405,10 @@ pub fn finde_marke(beschreibung: &str) -> Option<String> {
             .next()
             .is_none_or(|c| c.is_whitespace() || c == '<');
         if davor_ok && danach_ok && !id.is_empty() && id.len() <= 64 {
-            return Some(id);
+            return Some((pos, MARKE_PRAEFIX.len() + id.len(), id));
         }
     }
     None
-}
-
-/// Schneidet den App-Block aus einem Termintext (Text). `None`, wenn Kopf oder
-/// Marke fehlen; dann gilt der Block als entfernt.
-pub fn finde_block(beschreibung: &str, plan_id: &str) -> Option<String> {
-    let text = beschreibung.replace("\r\n", "\n");
-    let start = text.find(BLOCK_KOPF)?;
-    let m = marke(plan_id);
-    let ende_rel = text[start..].find(&m)?;
-    Some(text[start..start + ende_rel + m.len()].to_string())
 }
 
 fn esc(s: &str) -> String {

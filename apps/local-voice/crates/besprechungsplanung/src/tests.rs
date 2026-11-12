@@ -332,6 +332,7 @@ fn link(plan_id: &str) -> PlanLink {
         block_konflikt: false,
         abgesagt: false,
         instanz: None,
+        fremd_beobachtet: false,
     }
 }
 
@@ -654,7 +655,10 @@ fn marke_in_url_wird_nicht_als_marke_gelesen() {
         .contains("href=\"https://x.example.org/lva-plan:abc\""));
     // Auch eine fremde URL im Outlook-Teil des Termins zaehlt nicht.
     assert_eq!(
-        finde_marke("siehe https://x/lva-plan:abc\nlva-plan:P1").as_deref(),
+        finde_marke(&format!(
+            "siehe https://x/lva-plan:abc\n{BLOCK_KOPF}\nlva-plan:P1"
+        ))
+        .as_deref(),
         Some("P1")
     );
 }
@@ -1064,7 +1068,11 @@ fn codex12_uhrzeit_regeln_und_instanz() {
     plan_anlegen(&c, "P1", &eingabe(), &Regeln::default(), 1).unwrap();
     let mut b = beob(10_000, None);
     b.instanz = Some(9_000);
-    let a = abgleichen(PlanStatus::Verknuepft, &link("P1"), Some(&b), 1);
+    // Erstverknuepfung (Zeiten noch unbekannt) uebernimmt die Instanz.
+    let mut neu = link("P1");
+    neu.starts_at = None;
+    neu.ends_at = None;
+    let a = abgleichen(PlanStatus::Verknuepft, &neu, Some(&b), 1);
     link_speichern(&c, &a.link).unwrap();
     assert_eq!(link_laden(&c, "P1").unwrap().unwrap().instanz, Some(9_000));
 }
@@ -1149,12 +1157,18 @@ fn codex15_andere_serieninstanz_ersetzt_nichts() {
     let mut b = beob(18_000, Some(text));
     b.instanz = Some(18_000);
     let a = abgleichen(PlanStatus::Verknuepft, &l, Some(&b), 1);
-    assert_eq!(a.link, l);
+    assert_eq!(
+        a.link,
+        PlanLink {
+            fremd_beobachtet: true,
+            ..l.clone()
+        }
+    );
     assert!(!a.schreiben_erlaubt);
     assert_eq!(a.plan_status, None);
     assert_eq!(
         a.ereignisse,
-        vec![Ereignis::AndereInstanz {
+        vec![Ereignis::AndererTermin {
             erwartet: Some(9_000),
             gesehen: Some(18_000)
         }]
@@ -1162,6 +1176,77 @@ fn codex15_andere_serieninstanz_ersetzt_nichts() {
     // Ohne Instanzangabe ebenfalls nicht uebernehmen.
     b.instanz = None;
     assert!(!abgleichen(PlanStatus::Verknuepft, &l, Some(&b), 1).schreiben_erlaubt);
+}
+
+#[test]
+fn codex15b_keine_instanz_wird_nicht_still_zur_instanz() {
+    let c = db();
+    let (l, text) = graph_link_mit_block(&c);
+    assert_eq!(l.instanz, None);
+    assert!(l.starts_at.is_some());
+    let mut b = beob(18_000, Some(text.clone()));
+    b.instanz = Some(18_000);
+    let a = abgleichen(PlanStatus::Verknuepft, &l, Some(&b), 1);
+    assert!(!a.schreiben_erlaubt);
+    assert_eq!(a.link.instanz, None);
+    assert_eq!(a.link.starts_at, l.starts_at);
+    assert!(a.link.fremd_beobachtet);
+    // Anderer Termin (andere Id) ebenso.
+    let mut l2 = l.clone();
+    l2.remote_id = Some("A".into());
+    let mut b2 = beob(10_000, Some(text.clone()));
+    b2.remote_id = Some("B".into());
+    let a2 = abgleichen(PlanStatus::Verknuepft, &l2, Some(&b2), 1);
+    assert!(!a2.schreiben_erlaubt);
+    assert_eq!(a2.link.remote_id.as_deref(), Some("A"));
+    // Bestaetigter Wechsel: danach Erstverknuepfung mit der neuen Instanz.
+    let frei = crate::sync::identitaet_loesen(&l);
+    let a3 = abgleichen(PlanStatus::Verknuepft, &frei, Some(&b), 2);
+    assert_eq!(a3.ereignisse, vec![Ereignis::Verknuepft]);
+    assert_eq!(a3.link.instanz, Some(18_000));
+    assert!(a3.schreiben_erlaubt);
+}
+
+#[test]
+fn codex22_abgewiesene_instanz_meldet_einmal() {
+    let c = db();
+    let (mut l, text) = graph_link_mit_block(&c);
+    l.instanz = Some(9_000);
+    let mut b = beob(18_000, Some(text.clone()));
+    b.instanz = Some(18_000);
+    let a1 = abgleichen(PlanStatus::Verknuepft, &l, Some(&b), 1);
+    assert_eq!(a1.ereignisse.len(), 1);
+    let a2 = abgleichen(PlanStatus::Verknuepft, &a1.link, Some(&b), 2);
+    assert!(a2.ereignisse.is_empty());
+    assert_eq!(a2.link, a1.link);
+    // Passende Beobachtung setzt den Merker zurueck.
+    let mut passend = beob(10_000, Some(text));
+    passend.instanz = Some(9_000);
+    let a3 = abgleichen(PlanStatus::Verknuepft, &a2.link, Some(&passend), 3);
+    assert!(!a3.link.fremd_beobachtet);
+    assert!(a3.schreiben_erlaubt);
+}
+
+#[test]
+fn codex21_blockende_nur_als_vollstaendige_marke() {
+    let c = db();
+    let (l, text) = graph_link_mit_block(&c);
+    let manipuliert = format!(
+        "lva-plan:P1\n{}",
+        text.replace("lva-plan:P1", "lva-plan:P1X")
+    );
+    assert!(finde_block(&manipuliert, "P1").is_none());
+    assert_eq!(finde_marke(&manipuliert).as_deref(), Some("P1X"));
+    let a = abgleichen(
+        PlanStatus::Verknuepft,
+        &l,
+        Some(&beob(10_000, Some(manipuliert))),
+        1,
+    );
+    assert!(!a.schreiben_erlaubt);
+    assert_eq!(a.link.sync_state, SyncState::Verwaist);
+    // Marke ausserhalb eines Blocks zaehlt nicht.
+    assert!(finde_marke("lva-plan:P1").is_none());
 }
 
 #[test]
@@ -1182,6 +1267,16 @@ fn codex16_eindeutigkeit_je_instanz() {
     l3.remote_id = Some("SERIE".into());
     l3.instanz = Some(2);
     assert!(link_speichern(&c, &l3).is_err());
+    // Fehlende Instanz faellt mit keinem Zeitwert zusammen, auch nicht mit -1.
+    l3.instanz = None;
+    link_speichern(&c, &l3).unwrap();
+    l2.instanz = Some(-1);
+    link_speichern(&c, &l2).unwrap();
+    let mut l4 = link("P2");
+    l4.remote_id = Some("SERIE".into());
+    l4.instanz = None;
+    assert!(link_speichern(&c, &l4).is_err());
+    assert_eq!(link_laden(&c, "P2").unwrap().unwrap().instanz, Some(-1));
 }
 
 #[test]

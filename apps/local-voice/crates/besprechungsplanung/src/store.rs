@@ -59,11 +59,15 @@ pub const MIGRATIONS: &[&str] = &["CREATE TABLE IF NOT EXISTS meeting_plans (
         move_pending INTEGER NOT NULL DEFAULT 0,
         block_conflict INTEGER NOT NULL DEFAULT 0,
         cancelled INTEGER NOT NULL DEFAULT 0,
-        instance_start INTEGER
+        instance_start INTEGER,
+        foreign_seen INTEGER NOT NULL DEFAULT 0
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_plan_links_remote
-        ON meeting_plan_links(adapter, remote_id, COALESCE(instance_start, -1))
-        WHERE remote_id IS NOT NULL;
+        ON meeting_plan_links(adapter, remote_id)
+        WHERE remote_id IS NOT NULL AND instance_start IS NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_plan_links_remote_instanz
+        ON meeting_plan_links(adapter, remote_id, instance_start)
+        WHERE remote_id IS NOT NULL AND instance_start IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_meeting_plan_links_uid ON meeting_plan_links(ical_uid);
     CREATE TABLE IF NOT EXISTS meeting_plan_consents (
         plan_id TEXT NOT NULL REFERENCES meeting_plans(id) ON DELETE CASCADE,
@@ -364,14 +368,19 @@ pub fn plan_liste(conn: &Connection) -> Res<Vec<Plan>> {
 }
 
 /// Speichert eine Verknuepfung (ersetzt die bisherige der Planung). Die Planung
-/// muss existieren; ein Termin (`adapter`, `remote_id`) gehoert hoechstens einer Planung.
+/// muss existieren; ein Termin (`adapter`, `remote_id`, Instanz) gehoert hoechstens
+/// einer Planung. Ohne Instanz ist der Schluessel (`adapter`, `remote_id`); jede
+/// Instanz eines Serientermins ist ein eigener Schluessel (zwei Teilindizes, kein
+/// Ersatzwert fuer die fehlende Instanz).
 pub fn link_speichern(conn: &Connection, l: &PlanLink) -> Res<()> {
     plan_laden(conn, &l.plan_id)?.ok_or("plan_nicht_gefunden")?;
     conn.execute(
         "INSERT INTO meeting_plan_links (plan_id, adapter, source_id, remote_id, ical_uid,
             change_key, starts_at, ends_at, location, join_url, body_hash, last_seen_at,
-            last_change_at, sync_state, move_pending, block_conflict, cancelled, instance_start)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+            last_change_at, sync_state, move_pending, block_conflict, cancelled, instance_start,
+            foreign_seen)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
+            ?19)
          ON CONFLICT(plan_id) DO UPDATE SET adapter = excluded.adapter,
             source_id = excluded.source_id, remote_id = excluded.remote_id,
             ical_uid = excluded.ical_uid, change_key = excluded.change_key,
@@ -380,7 +389,8 @@ pub fn link_speichern(conn: &Connection, l: &PlanLink) -> Res<()> {
             body_hash = excluded.body_hash, last_seen_at = excluded.last_seen_at,
             last_change_at = excluded.last_change_at, sync_state = excluded.sync_state,
             move_pending = excluded.move_pending, block_conflict = excluded.block_conflict,
-            cancelled = excluded.cancelled, instance_start = excluded.instance_start",
+            cancelled = excluded.cancelled, instance_start = excluded.instance_start,
+            foreign_seen = excluded.foreign_seen",
         params![
             l.plan_id,
             l.adapter.as_str(),
@@ -400,6 +410,7 @@ pub fn link_speichern(conn: &Connection, l: &PlanLink) -> Res<()> {
             l.block_konflikt,
             l.abgesagt,
             l.instanz,
+            l.fremd_beobachtet,
         ],
     )
     .map_err(sql)?;
@@ -426,12 +437,13 @@ fn link_aus_zeile(r: &Row) -> rusqlite::Result<PlanLink> {
         block_konflikt: r.get(15)?,
         abgesagt: r.get(16)?,
         instanz: r.get(17)?,
+        fremd_beobachtet: r.get(18)?,
     })
 }
 
 const LINK_SPALTEN: &str = "plan_id, adapter, source_id, remote_id, ical_uid, change_key,
     starts_at, ends_at, location, join_url, body_hash, last_seen_at, last_change_at, sync_state,
-    move_pending, block_conflict, cancelled, instance_start";
+    move_pending, block_conflict, cancelled, instance_start, foreign_seen";
 
 /// Laedt die Verknuepfung einer Planung.
 pub fn link_laden(conn: &Connection, plan_id: &str) -> Res<Option<PlanLink>> {

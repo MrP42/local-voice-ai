@@ -85,8 +85,10 @@ pub enum Ereignis {
     Verwaist,
     /// Ein verwaister Termin ist wieder auffindbar.
     Wiederverknuepft,
-    /// Die Beobachtung gehoert zu einer anderen Instanz der Serie; verworfen.
-    AndereInstanz {
+    /// Die Beobachtung gehoert zu einem anderen Termin bzw. einer anderen Instanz
+    /// der Serie und wurde verworfen. Entsteht einmal je Abweichung; erst eine
+    /// passende Beobachtung setzt den Merker zurueck.
+    AndererTermin {
         erwartet: Option<i64>,
         gesehen: Option<i64>,
     },
@@ -141,6 +143,37 @@ pub fn abgleichen(
         return verwaist(neu, Vec::new());
     };
 
+    // Terminidentitaet: ist der Termin schon verknuepft (Zeiten oder Instanz
+    // bekannt), ersetzt ein anderer Termin oder eine andere Serieninstanz ihn nie
+    // still, auch nicht von "keine Instanz" zu einer Instanz. Die Beobachtung wird
+    // verworfen. Ein gewollter Wechsel geht nur ueber [`identitaet_loesen`].
+    let anders =
+        |a: &Option<String>, b: &Option<String>| matches!((a, b), (Some(x), Some(y)) if x != y);
+    let bekannt = link.starts_at.is_some() || link.instanz.is_some();
+    if anders(&link.remote_id, &b.remote_id)
+        || anders(&link.ical_uid, &b.ical_uid)
+        || (bekannt && b.instanz != link.instanz)
+    {
+        let mut l = link.clone();
+        l.fremd_beobachtet = true;
+        let ereignisse = if link.fremd_beobachtet {
+            Vec::new()
+        } else {
+            vec![Ereignis::AndererTermin {
+                erwartet: link.instanz,
+                gesehen: b.instanz,
+            }]
+        };
+        return Abgleich {
+            link: l,
+            plan_status: None,
+            ereignisse,
+            schreiben_erlaubt: false,
+            teilnehmende: Vec::new(),
+        };
+    }
+    neu.fremd_beobachtet = false;
+
     neu.last_seen_at = Some(jetzt);
     if b.remote_id.is_some() {
         neu.remote_id = b.remote_id.clone();
@@ -150,20 +183,6 @@ pub fn abgleichen(
     }
     if b.change_key.is_some() {
         neu.change_key = b.change_key.clone();
-    }
-    // Serientermin: eine andere Instanz ist ein anderer Termin. Sie ersetzt die
-    // gespeicherte nie still; die Beobachtung wird verworfen.
-    if link.instanz.is_some() && b.instanz != link.instanz {
-        return Abgleich {
-            link: link.clone(),
-            plan_status: None,
-            ereignisse: vec![Ereignis::AndereInstanz {
-                erwartet: link.instanz,
-                gesehen: b.instanz,
-            }],
-            schreiben_erlaubt: false,
-            teilnehmende: Vec::new(),
-        };
     }
     if b.instanz.is_some() {
         neu.instanz = b.instanz;
@@ -279,6 +298,26 @@ pub fn abgleichen(
 /// (Zwischenablage + ICS) schreibt nach dem Einfuegen nie wieder.
 pub fn schreibender_adapter(a: AdapterKind) -> bool {
     matches!(a, AdapterKind::Graph | AdapterKind::OutlookCom)
+}
+
+/// Bestaetigter Identitaetswechsel (Neu-Verknuepfung per Auswahl): vergisst den
+/// bisherigen Termin, damit der naechste Abgleich als Erstverknuepfung gilt. Die
+/// Pruefsumme des zuletzt geschriebenen Blocks bleibt; Planung und Einwilligungen
+/// bleiben unberuehrt.
+pub fn identitaet_loesen(link: &PlanLink) -> PlanLink {
+    PlanLink {
+        remote_id: None,
+        ical_uid: None,
+        change_key: None,
+        instanz: None,
+        starts_at: None,
+        ends_at: None,
+        verschiebung_offen: false,
+        block_konflikt: false,
+        abgesagt: false,
+        fremd_beobachtet: false,
+        ..link.clone()
+    }
 }
 
 /// Die Nutzerin bzw. der Nutzer hat die Verschiebung zur Kenntnis genommen.
