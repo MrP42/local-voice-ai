@@ -45,6 +45,7 @@ pub mod mcp; // M6-P6e
 mod media;
 mod meeting_prompt; // M5-P5b
 mod memory_guard;
+mod netzcheck; // lva#496: Netzwerkprüfung mit Bericht für die IT
 mod overlay;
 mod paste_guard;
 mod paste_session;
@@ -2443,6 +2444,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::meetings::meeting_followup_open,
             commands::meetings::change_meeting_self_emails_setting,
             // M5-P5b: Kalender, Erinnerung, Hinweisfenster, Start aus Termin
+            commands::netzcheck::netzcheck_run, // lva#496
             commands::calendar::calendar_sources_list,
             commands::calendar::calendar_source_add_ics,
             commands::calendar::calendar_source_remove,

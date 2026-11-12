@@ -2914,8 +2914,113 @@
         "storage": "Speicher und Dateien",
         "library": "Bibliothek und Sicherungen",
         "updates": "Updates",
+        "network": "Netzwerk",
         "input": "Mikrofon",
         "feedback": "Hörbare Rückmeldung"
+      },
+      "networkCheck": {
+        "title": "Verbindungen prüfen",
+        "description": "Prüft, ob Local Voice die Gegenstellen erreicht, die Sie eingerichtet haben: Geräteabgleich, Update-Quelle, Online-Anbieter, Kalender und Modell-Downloads. Es geht nur eine leere Anfrage an jeden Server, ohne Zugangsdaten. Läuft nur, wenn Sie auf den Knopf drücken.",
+        "run": "Jetzt prüfen",
+        "running": "Prüfung läuft …",
+        "none": "Es sind keine Gegenstellen eingerichtet, die geprüft werden müssten.",
+        "summary": "Ergebnis: {{ok}} erreichbar, {{limited}} eingeschränkt, {{down}} nicht erreichbar.",
+        "error": "Die Prüfung konnte nicht durchgeführt werden.",
+        "busy": "Es läuft bereits eine Prüfung.",
+        "results": "Ergebnisse der Netzwerkprüfung",
+        "state": {
+          "reachable": "Erreichbar",
+          "limited": "Eingeschränkt",
+          "unreachable": "Nicht erreichbar"
+        },
+        "category": {
+          "sync_hub": "Geräteabgleich",
+          "update": "Update-Quelle",
+          "llm": "Sprachmodell-Anbieter",
+          "tts": "Online-Stimme",
+          "calendar_graph": "Kalender (Microsoft 365)",
+          "calendar_ics": "Kalender (ICS)",
+          "model_download": "Modell-Downloads"
+        },
+        "reason": {
+          "dns_failed": "Namensauflösung fehlgeschlagen",
+          "timeout": "Keine Antwort innerhalb von 5 Sekunden",
+          "connect_failed": "Verbindung abgelehnt oder Ziel nicht erreichbar",
+          "tls_certificate": "Zertifikat nicht vertrauenswürdig – möglicherweise ein TLS-aufbrechender Proxy oder ein fehlendes Stammzertifikat",
+          "tls_failed": "TLS-Aufbau fehlgeschlagen",
+          "http_failed": "HTTP-Anfrage fehlgeschlagen",
+          "http_5xx": "Server oder Proxy meldet einen Fehler (HTTP 5xx)",
+          "proxy_auth": "Der Proxy verlangt eine Anmeldung (HTTP 407)",
+          "tls_inspection": "Das Zertifikat stammt vermutlich von einem TLS-aufbrechenden Proxy",
+          "slow": "Antwortet langsam"
+        },
+        "impact": {
+          "sync_hub": {
+            "reachable": "Der Geräteabgleich sollte funktionieren.",
+            "limited": "Der Geräteabgleich funktioniert vermutlich, ist aber langsam oder unzuverlässig.",
+            "unreachable": "Der Geräteabgleich funktioniert nicht; Änderungen bleiben auf diesem Gerät."
+          },
+          "update": {
+            "reachable": "Neue Versionen werden gefunden.",
+            "limited": "Neue Versionen werden vermutlich gefunden, die Prüfung ist aber langsam oder unzuverlässig.",
+            "unreachable": "Neue Versionen werden nicht gefunden; Updates müssen von Hand eingespielt werden."
+          },
+          "llm": {
+            "reachable": "Die Sprachmodelle dieses Anbieters sollten nutzbar sein.",
+            "limited": "Die Sprachmodelle dieses Anbieters sind vermutlich nutzbar, antworten aber langsam oder fehlerhaft.",
+            "unreachable": "Zusammenfassungen und Nachbearbeitung mit diesem Anbieter sind nicht möglich."
+          },
+          "tts": {
+            "reachable": "Vorlesen mit dieser Online-Stimme sollte funktionieren.",
+            "limited": "Vorlesen mit dieser Online-Stimme funktioniert vermutlich, aber langsam oder mit Aussetzern.",
+            "unreachable": "Vorlesen mit dieser Online-Stimme ist nicht möglich."
+          },
+          "calendar_graph": {
+            "reachable": "Termine aus Outlook / Microsoft 365 sollten sich aktualisieren.",
+            "limited": "Termine aus Outlook / Microsoft 365 aktualisieren sich vermutlich, aber langsam oder unvollständig.",
+            "unreachable": "Termine aus Outlook / Microsoft 365 werden nicht aktualisiert."
+          },
+          "calendar_ics": {
+            "reachable": "Termine aus diesem Kalender sollten sich aktualisieren.",
+            "limited": "Termine aus diesem Kalender aktualisieren sich vermutlich, aber langsam oder unvollständig.",
+            "unreachable": "Termine aus diesem Kalender werden nicht aktualisiert."
+          },
+          "model_download": {
+            "reachable": "Neue Modelle lassen sich herunterladen.",
+            "limited": "Modell-Downloads funktionieren vermutlich, sind aber langsam oder brechen ab.",
+            "unreachable": "Neue Modelle lassen sich nicht herunterladen; bereits geladene Modelle laufen weiter."
+          }
+        },
+        "measure": {
+          "dns": "Namensauflösung",
+          "tls": "TLS-Aufbau",
+          "http": "HTTP",
+          "total": "Gesamt",
+          "none": "–"
+        },
+        "issuer": "Aussteller des Zertifikats: {{issuer}}",
+        "issuerUnknown": "Aussteller des Zertifikats: nicht ermittelbar",
+        "proxy": {
+          "detected": "System-Proxy erkannt: {{list}}.",
+          "pac": "Konfigurationsskript (PAC) eingetragen",
+          "none": "Kein System-Proxy erkannt. Das ist keine Gewähr: macOS-Netzwerkeinstellungen und die automatische Proxy-Erkennung werden nicht gelesen.",
+          "via": "{{endpoint}} ({{scope}})",
+          "scope": {
+            "http": "HTTP",
+            "https": "HTTPS",
+            "all": "alle Protokolle",
+            "socks": "SOCKS"
+          },
+          "note": "Mit Proxy löst nicht dieser Rechner den Namen auf; die Zeiten gelten für den Weg über den Proxy."
+        },
+        "report": {
+          "title": "Bericht für die IT",
+          "show": "Bericht anzeigen",
+          "copy": "Bericht kopieren",
+          "copied": "Bericht kopiert.",
+          "copyFailed": "Kopieren war nicht möglich. Markieren Sie den Text im Bericht und kopieren Sie ihn von Hand.",
+          "privacy": "Enthält nur Hostnamen, Ports und Messwerte, keine Zugangsdaten, Schlüssel, Nutzernamen, Pfade oder Inhalte."
+        }
       },
       "libraryLayout": {
         "title": "Ordnung der Bibliothek",

@@ -14,6 +14,7 @@ import { RecordingRetentionPeriodSelector } from "../RecordingRetentionPeriod";
 import { UpdateChecksToggle } from "../UpdateChecksToggle";
 import { ShowWhatsNewOnUpdate } from "../ShowWhatsNewOnUpdate";
 import { LocalUpdateDirectory } from "../LocalUpdateDirectory";
+import { NetworkCheck } from "../NetworkCheck";
 import { AppDataDirectory } from "../AppDataDirectory";
 import { LibraryLayoutSettings } from "../LibraryLayoutSettings";
 import { openSettingsTab } from "@/lib/openSettingsTab";
@@ -87,6 +88,11 @@ export const AppTab: React.FC = () => {
         <UpdateChecksToggle descriptionMode="tooltip" grouped={true} />
         <LocalUpdateDirectory descriptionMode="tooltip" grouped={true} />
         <ShowWhatsNewOnUpdate descriptionMode="tooltip" grouped={true} />
+      </SettingsGroup>
+
+      {/* lva#496: Netzwerkprüfung mit Bericht für die IT (nur auf Knopfdruck). */}
+      <SettingsGroup title={t("settings.app.groups.network")} anchor="netzwerk">
+        <NetworkCheck />
       </SettingsGroup>
 
       <SettingsGroup title={t("settings.advanced.groups.experimental")}>

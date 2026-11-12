@@ -2914,8 +2914,113 @@
         "storage": "Storage and files",
         "library": "Library and backups",
         "updates": "Updates",
+        "network": "Network",
         "input": "Microphone",
         "feedback": "Audible feedback"
+      },
+      "networkCheck": {
+        "title": "Check connections",
+        "description": "Checks whether Local Voice can reach the servers you have set up: device sync, update source, online providers, calendars and model downloads. Each server only receives an empty request without credentials. Runs only when you press the button.",
+        "run": "Check now",
+        "running": "Checking …",
+        "none": "No servers are set up that would need checking.",
+        "summary": "Result: {{ok}} reachable, {{limited}} limited, {{down}} not reachable.",
+        "error": "The check could not be carried out.",
+        "busy": "A check is already running.",
+        "results": "Results of the network check",
+        "state": {
+          "reachable": "Reachable",
+          "limited": "Limited",
+          "unreachable": "Not reachable"
+        },
+        "category": {
+          "sync_hub": "Device sync",
+          "update": "Update source",
+          "llm": "Language model provider",
+          "tts": "Online voice",
+          "calendar_graph": "Calendar (Microsoft 365)",
+          "calendar_ics": "Calendar (ICS)",
+          "model_download": "Model downloads"
+        },
+        "reason": {
+          "dns_failed": "Name resolution failed",
+          "timeout": "No answer within 5 seconds",
+          "connect_failed": "Connection refused or target unreachable",
+          "tls_certificate": "Certificate not trusted – possibly a TLS-inspecting proxy or a missing root certificate",
+          "tls_failed": "TLS handshake failed",
+          "http_failed": "HTTP request failed",
+          "http_5xx": "Server or proxy reports an error (HTTP 5xx)",
+          "proxy_auth": "The proxy asks for sign-in (HTTP 407)",
+          "tls_inspection": "The certificate probably comes from a TLS-inspecting proxy",
+          "slow": "Responds slowly"
+        },
+        "impact": {
+          "sync_hub": {
+            "reachable": "Device sync should work.",
+            "limited": "Device sync probably works, but is slow or unreliable.",
+            "unreachable": "Device sync does not work; changes stay on this device."
+          },
+          "update": {
+            "reachable": "New versions are found.",
+            "limited": "New versions are probably found, but the check is slow or unreliable.",
+            "unreachable": "New versions are not found; updates have to be installed by hand."
+          },
+          "llm": {
+            "reachable": "The language models of this provider should be usable.",
+            "limited": "The language models of this provider are probably usable, but answer slowly or with errors.",
+            "unreachable": "Summaries and text enhancement with this provider are not possible."
+          },
+          "tts": {
+            "reachable": "Reading aloud with this online voice should work.",
+            "limited": "Reading aloud with this online voice probably works, but slowly or with dropouts.",
+            "unreachable": "Reading aloud with this online voice is not possible."
+          },
+          "calendar_graph": {
+            "reachable": "Appointments from Outlook / Microsoft 365 should update.",
+            "limited": "Appointments from Outlook / Microsoft 365 probably update, but slowly or incompletely.",
+            "unreachable": "Appointments from Outlook / Microsoft 365 are not updated."
+          },
+          "calendar_ics": {
+            "reachable": "Appointments from this calendar should update.",
+            "limited": "Appointments from this calendar probably update, but slowly or incompletely.",
+            "unreachable": "Appointments from this calendar are not updated."
+          },
+          "model_download": {
+            "reachable": "New models can be downloaded.",
+            "limited": "Model downloads probably work, but are slow or break off.",
+            "unreachable": "New models cannot be downloaded; models already downloaded keep working."
+          }
+        },
+        "measure": {
+          "dns": "Name resolution",
+          "tls": "TLS handshake",
+          "http": "HTTP",
+          "total": "Total",
+          "none": "–"
+        },
+        "issuer": "Certificate issuer: {{issuer}}",
+        "issuerUnknown": "Certificate issuer: could not be determined",
+        "proxy": {
+          "detected": "System proxy detected: {{list}}.",
+          "pac": "configuration script (PAC) set",
+          "none": "No system proxy detected. This is no guarantee: macOS network settings and automatic proxy detection are not read.",
+          "via": "{{endpoint}} ({{scope}})",
+          "scope": {
+            "http": "HTTP",
+            "https": "HTTPS",
+            "all": "all protocols",
+            "socks": "SOCKS"
+          },
+          "note": "With a proxy, this computer does not resolve the name itself; the times are for the route through the proxy."
+        },
+        "report": {
+          "title": "Report for IT",
+          "show": "Show report",
+          "copy": "Copy report",
+          "copied": "Report copied.",
+          "copyFailed": "Copying was not possible. Select the text in the report and copy it by hand.",
+          "privacy": "Contains only host names, ports and measurements, no credentials, keys, user names, paths or content."
+        }
       },
       "libraryLayout": {
         "title": "Library layout",

@@ -4907,6 +4907,14 @@ async changeMeetingSelfEmailsSetting(emails: string[]) : Promise<Result<null, st
     else return { status: "error", error: e  as any };
 }
 },
+async netzcheckRun() : Promise<Result<NetzcheckResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("netzcheck_run") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async calendarSourcesList() : Promise<Result<CalendarSource[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("calendar_sources_list") };
@@ -12472,6 +12480,77 @@ export type NameSuggestion = { channel: number; speaker_index: number; name: str
  */
 confidence: number; evidence: NameEvidence[] }
 /**
+ * Wozu die App die Gegenstelle braucht.
+ */
+export type NetzCategory = "sync_hub" | "update" | "llm" | "tts" | "calendar_graph" | "calendar_ics" | "model_download"
+/**
+ * Warum eine Zeile nicht „erreichbar“ ist.
+ */
+export type NetzReason = 
+/**
+ * Der Name lässt sich nicht auflösen.
+ */
+"dns_failed" | 
+/**
+ * Keine Antwort innerhalb des Zeitlimits.
+ */
+"timeout" | 
+/**
+ * Verbindung abgelehnt oder Ziel nicht erreichbar.
+ */
+"connect_failed" | 
+/**
+ * Das Zertifikat wird nicht als vertrauenswürdig angenommen.
+ */
+"tls_certificate" | 
+/**
+ * TLS-Aufbau scheitert aus anderem Grund.
+ */
+"tls_failed" | 
+/**
+ * Verbindung steht, HTTP scheitert.
+ */
+"http_failed" | 
+/**
+ * 5xx vom Server oder vom Proxy.
+ */
+"http_5xx" | 
+/**
+ * 407: Der Proxy verlangt eine Anmeldung.
+ */
+"proxy_auth" | 
+/**
+ * Zertifikat stammt vermutlich von einem TLS-aufbrechenden Proxy.
+ */
+"tls_inspection" | 
+/**
+ * Antwortet, aber langsamer als [`SLOW_MS`].
+ */
+"slow"
+/**
+ * Eine Ergebniszeile für Oberfläche und Bericht.
+ */
+export type NetzRow = { category: NetzCategory; host: string; port: number; tls: boolean; state: NetzState; reason: NetzReason | null; dns_ms: number | null; tls_ms: number | null; http_status: number | null; total_ms: number; 
+/**
+ * Aussteller des Zertifikats, nur gesetzt bei Verdacht auf einen
+ * TLS-aufbrechenden Proxy oder bei nicht vertrautem Zertifikat. Fehlt er
+ * bei Grund `tls_certificate`, war er nicht ermittelbar.
+ */
+issuer: string | null }
+/**
+ * Ergebnis je Zeile.
+ */
+export type NetzState = "reachable" | "limited" | "unreachable"
+/**
+ * Ergebnis der Prüfung: Zeilen für die Oberfläche und der Bericht zum Kopieren.
+ */
+export type NetzcheckResult = { rows: NetzRow[]; proxy: ProxyInfo; 
+/**
+ * Berichtstext (Deutsch) für die IT: Hostname, Port, Ergebnis,
+ * App-Version, Betriebssystem; geschwärzt.
+ */
+report: string }
+/**
  * Ergebnis von `create`: der Zugang und sein Token (nur dieses eine Mal sichtbar).
  */
 export type NewAgentClient = { client: AgentClient; token: string }
@@ -13182,6 +13261,35 @@ export type QuelleSicht = { index: number; title: string; url: string; retrieved
  * Code: official, scholarly, press, forum, unknown (die Oberflaeche uebersetzt).
  */
 sourceType: string }
+/**
+ * Ein erkannter Proxy: wofür er gilt und `host:port`.
+ */
+export type ProxyEntry = { source: ProxySource; 
+/**
+ * `http`, `https`, `all` oder `socks`.
+ */
+scope: string; 
+/**
+ * `host:port`, ohne Zugangsdaten.
+ */
+endpoint: string }
+export type ProxyInfo = { entries: ProxyEntry[]; 
+/**
+ * In den Internetoptionen ist ein Konfigurationsskript (PAC) eingetragen.
+ */
+pac: boolean }
+/**
+ * Woher der Proxy bekannt ist.
+ */
+export type ProxySource = 
+/**
+ * Umgebungsvariable (`HTTPS_PROXY` usw.).
+ */
+"env" | 
+/**
+ * Windows-Internetoptionen.
+ */
+"system"
 /**
  * Stand der Warteschlange. Reihenfolge = Reihenfolge der Abarbeitung; die
  * Position einer wartenden Datei ist ihr Platz in `waiting` (ab 1).
