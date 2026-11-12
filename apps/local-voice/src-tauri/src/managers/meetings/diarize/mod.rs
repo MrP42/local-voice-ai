@@ -1,16 +1,20 @@
 //! M3-P3a: Sprechertrennung (Diarisierung) einer Besprechungsspur.
 //!
 //! `diarize(pcm, params)` -> Turns `{start_ms, end_ms, speaker}` (Sprecher
-//! 1-basiert in Ankunftsreihenfolge, Ueberlappung erlaubt). Modell:
-//! Sortformer 4spk-v2.1 (GGUF Q8) ueber transcribe-cpp; die Nachbearbeitung
-//! (Luecken <= 1 s schliessen, 100 ms Pad) ist Pflicht und Teil des Moduls
-//! (Entwurf `m3-sprecher.md` §2.2, §3.1).
+//! 1-basiert in Ankunftsreihenfolge, Ueberlappung erlaubt). Standardmodell:
+//! Sortformer 4spk-v2.1 (GGUF Q8) ueber transcribe-cpp; zweiter Motor (N1,
+//! Issue #539): Nemotron-3-Diarization bis 8 Sprecher ueber ONNX Runtime
+//! ([`nemotron`]), gewaehlt nach der Modelldatei (`.gguf` / `.onnx`, siehe
+//! [`engine::EngineKind`]). Die Nachbearbeitung (Luecken <= 1 s schliessen,
+//! 100 ms Pad) ist Pflicht und Teil des Moduls (Entwurf `m3-sprecher.md`
+//! §2.2, §3.1) und gilt fuer beide Motoren.
 //!
 //! Fehlerfaelle und ihre Absicherung:
 //! - zwei Aufrufe gleichzeitig: [`engine::ExclusiveSlot`], nie zwei Modelle;
 //! - wenig RAM: Start-Gate vor dem Laden ([`DiarizeError::LowMemory`]);
 //! - Modell fehlt/falsches Modell: [`DiarizeError::ModelMissing`] /
-//!   [`DiarizeError::WrongModel`], ohne Panik;
+//!   [`DiarizeError::WrongModel`], ohne Panik (Nemotron: auch fehlende
+//!   `.onnx_data` neben dem Graphen);
 //! - Abbruch: `cancel` wird vor und nach dem Lauf geprueft und an
 //!   transcribe-cpp weitergereicht; ein abgebrochener Lauf liefert KEINE
 //!   Teil-Turns ([`DiarizeError::Cancelled`]);
@@ -24,6 +28,7 @@
 pub mod assign; // M3-P3b
 pub mod der;
 pub mod engine;
+pub mod nemotron; // N1
 pub mod postproc;
 
 use std::borrow::Cow;
@@ -124,7 +129,7 @@ impl fmt::Display for DiarizeError {
             ),
             Self::WrongModel(arch) => write!(
                 f,
-                "Kein Sprechertrennungs-Modell (Architektur '{arch}', erwartet sortformer)"
+                "Kein Sprechertrennungs-Modell ('{arch}'; erwartet Sortformer (.gguf) oder Nemotron (.onnx))"
             ),
             Self::LowMemory(msg) => write!(f, "{msg}"),
             Self::Load(msg) => write!(f, "Sprechertrennung konnte nicht laden: {msg}"),
@@ -201,21 +206,57 @@ pub fn resolve_model_path(models_root: &Path, spec: Option<&str>) -> PathBuf {
     }
 }
 
-/// Pfad des installierten Katalogmodells `model_id` unter `models_root`
-/// (`<app_data>/models`): `<models_root>/diarization/<datei>`. `None`, wenn
-/// die ID nicht im Katalog steht. Eigener Unterordner, weil der Modell-Scan
-/// des `ModelManager` nur die oberste Ebene liest: so erscheint der
-/// Diarisierer nie als Transkriptionsmodell.
-pub fn catalog_model_path(models_root: &Path, model_id: &str) -> Option<PathBuf> {
+/// Ordner, in dem die Dateien des Katalogmodells `entry` liegen. Ein Eintrag
+/// mit einer Datei (Sortformer) liegt wie bisher direkt in `diarization/`
+/// (Altbestand bleibt gueltig). Ein Eintrag mit mehreren Dateien (Nemotron:
+/// Graph und Gewichte muessen nebeneinander liegen und tragen allgemeine
+/// Namen) bekommt einen eigenen Ordner `diarization/<id>/`.
+pub fn catalog_model_dir(models_root: &Path, entry: &crate::catalog::TtsCatalogEntry) -> PathBuf {
+    let base = models_root.join("diarization");
+    if entry.files.len() > 1 {
+        base.join(&entry.id)
+    } else {
+        base
+    }
+}
+
+/// Alle Dateien des installierten Katalogmodells in der Reihenfolge des
+/// Katalogs (die erste ist die, die der Motor laedt). `None`, wenn die ID nicht
+/// im Katalog steht.
+pub fn catalog_model_files(models_root: &Path, model_id: &str) -> Option<Vec<PathBuf>> {
     let entry = crate::catalog::tts_entries(crate::catalog::Purpose::Diarization)
         .into_iter()
         .find(|e| e.id == model_id)?;
-    let file = entry.files.first()?;
-    Some(models_root.join("diarization").join(&file.filename))
+    if entry.files.is_empty() {
+        return None;
+    }
+    let dir = catalog_model_dir(models_root, &entry);
+    Some(entry.files.iter().map(|f| dir.join(&f.filename)).collect())
+}
+
+/// Pfad des installierten Katalogmodells `model_id` unter `models_root`
+/// (`<app_data>/models`): `<models_root>/diarization/<datei>` bzw. bei
+/// mehreren Dateien `<models_root>/diarization/<id>/<datei>` (die erste Datei
+/// des Eintrags, bei Nemotron der Graph). `None`, wenn die ID nicht im
+/// Katalog steht. Eigener Unterordner, weil der Modell-Scan des `ModelManager`
+/// nur die oberste Ebene liest: so erscheint der Diarisierer nie als
+/// Transkriptionsmodell.
+pub fn catalog_model_path(models_root: &Path, model_id: &str) -> Option<PathBuf> {
+    catalog_model_files(models_root, model_id)?
+        .into_iter()
+        .next()
+}
+
+/// Ist `id` ein Diarisierungsmodell des Katalogs (egal welcher Motor)?
+pub fn is_catalog_model(id: &str) -> bool {
+    crate::catalog::tts_entries(crate::catalog::Purpose::Diarization)
+        .iter()
+        .any(|e| e.id == id)
 }
 
 #[cfg(test)]
 mod tests {
+    use super::engine::EngineKind;
     use super::postproc::RawTurn;
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -420,5 +461,73 @@ mod tests {
         assert!(!crate::catalog::CATALOG
             .iter()
             .any(|d| d.id.contains("sortformer")));
+    }
+
+    /// N1: Nemotron ist ein Katalogeintrag mit zwei Dateien, fester Revision
+    /// und Pruefsummen; die Sprechertrennung findet den Graphen, die Gewichte
+    /// liegen im selben Ordner unter dem Namen, den ONNX Runtime erwartet.
+    #[test]
+    fn the_catalog_knows_nemotron_with_both_files_in_one_folder() {
+        let root = Path::new("C:/data/models");
+        let id = nemotron::MODEL_ID;
+        assert!(is_catalog_model(id));
+        assert!(is_catalog_model(DEFAULT_MODEL_ID));
+        assert!(!is_catalog_model("llm-qwen3.5-4b-q4"));
+
+        let files = catalog_model_files(root, id).expect("Katalogeintrag fehlt");
+        assert_eq!(files.len(), 2);
+        assert!(files[0].ends_with(format!("diarization/{id}/model_quantized.onnx")));
+        assert_eq!(catalog_model_path(root, id).as_ref(), Some(&files[0]));
+        assert_eq!(nemotron::engine::external_data_path(&files[0]), files[1]);
+        assert_eq!(resolve_model_path(root, Some(id)), files[0]);
+        assert_eq!(
+            EngineKind::of_path(&files[0]),
+            Some(EngineKind::Nemotron),
+            "der Graph waehlt den Nemotron-Motor"
+        );
+
+        let entry = crate::catalog::tts_entries(crate::catalog::Purpose::Diarization)
+            .into_iter()
+            .find(|e| e.id == id)
+            .unwrap();
+        let rev = entry.revision.as_deref().expect("feste Revision");
+        assert_eq!(rev.len(), 40, "Commit, kein Zweigname");
+        for f in &entry.files {
+            assert_eq!(
+                f.sha256.as_deref().map(str::len),
+                Some(64),
+                "{}",
+                f.filename
+            );
+            assert!(f.size_bytes > 0);
+            assert!(
+                f.url.starts_with("https://huggingface.co/onnx-community/") && f.url.contains(rev),
+                "{}",
+                f.url
+            );
+        }
+        assert_eq!(entry.license.as_deref(), Some("OpenMDW-1.1"));
+        assert!(!entry.license_non_commercial);
+        assert!(
+            entry.description.contains("bis zu acht Sprecher je Kanal"),
+            "{}",
+            entry.description
+        );
+        // Weder ein Transkriptionsmodell noch das Standardmodell.
+        assert!(!crate::catalog::CATALOG.iter().any(|d| d.id == id));
+        assert_ne!(DEFAULT_MODEL_ID, id);
+    }
+
+    #[test]
+    fn single_file_models_keep_their_old_place() {
+        let root = Path::new("C:/data/models");
+        let files = catalog_model_files(root, DEFAULT_MODEL_ID).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(
+            files[0],
+            root.join("diarization")
+                .join("diar_streaming_sortformer_4spk-v2.1-Q8_0.gguf")
+        );
+        assert_eq!(EngineKind::of_path(&files[0]), Some(EngineKind::Sortformer));
     }
 }

@@ -4947,8 +4947,10 @@ fn run_headless_eval_diarization(app: &AppHandle, args: &CliArgs, dir: &std::pat
     managers::transcription::init_transcribe_backend();
     let params = diarize::DiarizeParams::new(&model_path);
     eprintln!(
-        "eval-diarization: Modell {} ({} Threads)",
+        "eval-diarization: Modell {} ({}, {} Threads)",
         model_path.display(),
+        diarize::engine::EngineKind::of_path(&model_path)
+            .map_or("unbekannter Dateityp", |k| k.label()),
         params.threads
     );
     let (code, payload) = match diarize::Diarizer::load(&model_path, params.threads) {
