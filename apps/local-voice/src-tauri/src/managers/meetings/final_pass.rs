@@ -71,6 +71,7 @@ use super::speakers::{self, ApplyOutcome, ChannelDiarizer, StepReport, TurnSet};
 use super::store::{
     Meeting, MeetingStatus, MeetingStore, ReplaceError, StoredSegment, TranscriptDelta,
 };
+use super::trim::TimeRange;
 use crate::managers::transcription::TimedSegment;
 
 /// Werte der Einstellung `meeting_final_model` neben einer Modell-ID.
@@ -497,11 +498,18 @@ struct TrackRun {
 /// Liest eine Kanal-WAV ab `from_ms` blockweise, segmentiert offline und ruft
 /// `on_segment` je Segment (Offset auf der Kanal-Achse). Liefert `on_segment`
 /// `false`, endet der Lauf; `done_ms` ist dann der Anfang dieses Segments.
+/// lva#522: `end_ms` (absolut) begrenzt das Lesen auf einen Bereich; `None`: bis zum Ende.
+/// `strict` (Fortsetzen einer Neu-Transkription): ein Lesefehler oder ein vorzeitiges
+/// Dateiende ist ein Fehler (`Err`), nie ein stilles Ende der Spur; sonst wuerde ein
+/// abgeschnittener Rest als „fertig“ gelten und die Marke verschwinden. Ohne `strict`
+/// (Enddurchlauf, normales Nachholen) beendet ein kaputter Rest die Spur wie bisher.
 fn segment_wav(
     path: &Path,
     from_ms: u64,
+    end_ms: Option<u64>,
     max_segment_ms: u64,
     vad: Option<&VadFactory>,
+    strict: bool,
     on_segment: &mut dyn FnMut(Chunk, Option<SegmentMeta>) -> bool,
 ) -> Result<TrackRun, String> {
     let mut reader =
@@ -512,11 +520,15 @@ fn segment_wav(
     {
         return Err(format!("{}: not 16 kHz mono PCM16", path.display()));
     }
-    let total = reader.duration() as u64;
-    let start = (from_ms * SAMPLES_PER_MS).min(total);
+    let file_total = reader.duration() as u64;
+    let total = end_ms.map_or(file_total, |e| {
+        e.saturating_mul(SAMPLES_PER_MS).min(file_total)
+    });
+    let start = from_ms.saturating_mul(SAMPLES_PER_MS).min(total);
     reader
         .seek(start as u32)
         .map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut left = total - start;
 
     let mut cutter = Cutter::new(vad, max_segment_ms);
     let mut pending: Vec<(Chunk, Option<SegmentMeta>)> = Vec::new();
@@ -528,14 +540,28 @@ fn segment_wav(
     };
     loop {
         block.clear();
-        for s in samples.by_ref().take(READ_BLOCK) {
-            // Ein kaputter Rest (Absturz mitten im Schreiben) beendet die Spur.
+        let want = READ_BLOCK.min(usize::try_from(left).unwrap_or(usize::MAX));
+        for s in samples.by_ref().take(want) {
+            // Ein kaputter Rest (Absturz mitten im Schreiben) beendet die Spur,
+            // streng gelesen ist er ein Fehler.
             match s {
                 Ok(v) => block.push(v),
+                Err(e) if strict => {
+                    return Err(format!("{}: unreadable audio data: {e}", path.display()));
+                }
                 Err(_) => break,
             }
         }
-        let last = block.len() < READ_BLOCK;
+        if strict && block.len() < want {
+            return Err(format!(
+                "{}: audio data ends early ({} of {want} samples)",
+                path.display(),
+                block.len()
+            ));
+        }
+        left = left.saturating_sub(block.len() as u64);
+        // Letzter Block: kuerzer als angefragt (Dateiende, Defekt) oder der Bereich ist gelesen.
+        let last = block.len() < READ_BLOCK || left == 0;
         cutter.push(&block, from_ms, &mut pending);
         if last {
             cutter.flush(from_ms, &mut pending);
@@ -743,6 +769,9 @@ enum CatchUp {
 /// lva#523 `strict` (Fortsetzen einer Neu-Transkription): jeder Rest ab dem letzten
 /// Abschnitt wird verarbeitet (keine Mindestlaenge), und jeder Fehler endet als
 /// `Failed` OHNE Platzhalter, damit nichts als erledigt gilt, was nicht transkribiert ist.
+///
+/// lva#522 `range` (nur `strict`, Fortsetzen eines Bereichs-Laufs): je Kanal beginnt das
+/// Nachholen nicht vor `start_ms` und endet bei `end_ms` (absolute Zeiten der Aufnahme).
 fn catch_up(
     store: &MeetingStore,
     meeting: &Meeting,
@@ -750,6 +779,7 @@ fn catch_up(
     env: &mut dyn FinalEnv,
     report: &mut FinalReport,
     strict: bool,
+    range: Option<TimeRange>,
 ) -> CatchUp {
     let segments = match store.get_segments(&meeting.id) {
         Ok(s) => s,
@@ -799,8 +829,9 @@ fn catch_up(
                 .filter(|s| s.channel == track.channel)
                 .map(|s| s.end_ms)
                 .max()
-                .unwrap_or(0);
-            let total_ms = wav_duration_ms(&track.path)?;
+                .unwrap_or(0)
+                .max(range.map_or(0, |r| r.start_ms));
+            let total_ms = wav_duration_ms(&track.path)?.min(range.map_or(u64::MAX, |r| r.end_ms));
             // Weniger als eine halbe Sekunde Rest: nichts, was ein Wort traegt
             // (strict: jeder Rest).
             let min_rest = if strict { 0 } else { 500 };
@@ -873,7 +904,16 @@ fn catch_up(
                 });
                 true
             };
-            match segment_wav(&track.path, from_ms, 15_000, vad.as_ref(), &mut on_segment) {
+            let end_ms = range.map(|r| r.end_ms);
+            match segment_wav(
+                &track.path,
+                from_ms,
+                end_ms,
+                15_000,
+                vad.as_ref(),
+                strict,
+                &mut on_segment,
+            ) {
                 Ok(run) if !run.stopped => {
                     done_before += remaining;
                     env.progress(done_before);
@@ -1043,8 +1083,10 @@ fn final_pass(
         match segment_wav(
             &track.path,
             0,
+            None,
             max_segment_ms,
             vad.as_ref(),
+            false,
             &mut on_segment,
         ) {
             Ok(run) if run.stopped => {
@@ -1329,9 +1371,12 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
     // Teilergebnis (wieder) aktiv und streng mit seinem Modell nachholen, oder
     // zurueckgenommen (Status steht), oder eine nicht zuordenbare Marke abweisen.
     let resumed;
+    // lva#522: Bereich eines fortgesetzten Bereichs-Laufs (nur im strengen Nachholen).
+    let mut resume_range: Option<TimeRange> = None;
     let job = match super::rerun_state::prepare_resume(store, &job.meeting_id, has_track) {
         Ok(super::rerun_state::Resume::Normal) => job,
-        Ok(super::rerun_state::Resume::Partial(model)) => {
+        Ok(super::rerun_state::Resume::Partial(model, range)) => {
+            resume_range = range;
             resumed = JobSpec {
                 catch_up_model: Some(model),
                 plan: FinalPlan::Keep(KeepReason::PartialRerun),
@@ -1360,9 +1405,15 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
             // Nichts veraendert; abgebrochen und erneut fortsetzbar, mit Hinweis.
             warn!("meetings: rerun not settled ({}): {e}", job.meeting_id);
             let _ = store.set_status(&job.meeting_id, MeetingStatus::Cancelled);
+            // lva#522: ein beschaedigter Bereich hat einen eigenen Text.
+            let message = if e == "partial_rerun_range_damaged" {
+                e
+            } else {
+                "retranscribe_failed".to_string()
+            };
             env.emit(MeetingEvent::Error {
                 meeting_id: job.meeting_id.clone(),
-                message: "retranscribe_failed".to_string(),
+                message,
             });
             env.emit(MeetingEvent::State {
                 meeting_id: job.meeting_id.clone(),
@@ -1386,7 +1437,15 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
             _ => return Err(KeepReason::StoreFailed),
         };
         if let Some(model) = &job.catch_up_model {
-            match catch_up(store, &meeting, model, env, &mut report, strict) {
+            match catch_up(
+                store,
+                &meeting,
+                model,
+                env,
+                &mut report,
+                strict,
+                resume_range,
+            ) {
                 CatchUp::Stopped => {
                     stopped_in_catch_up = true;
                     return Err(KeepReason::UserStopped);
@@ -2609,16 +2668,21 @@ mod tests {
     /// Ein echter gestoppter Neu-Lauf: alte Fassung = Live-Segmente, neue Fassung =
     /// dieselben Zeitmarken mit Text „neu“, behalten; Status wie nach Fortsetzen.
     fn partial_job(f: &Fixture) -> JobSpec {
+        partial_job_range(f, None)
+    }
+
+    /// Wie `partial_job`, der gestoppte Lauf transkribierte nur `range` (lva#522).
+    fn partial_job_range(f: &Fixture, range: Option<TimeRange>) -> JobSpec {
         use super::super::rerun_state as rs;
         if rs::read(&f.store, &f.id).unwrap().is_none() {
             f.store.set_status(&f.id, MeetingStatus::Ready).unwrap();
-            rs::mark_start(&f.store, &f.id).unwrap();
+            rs::mark_start(&f.store, &f.id, range).unwrap();
             {
                 let mut c = f.store.get_connection().unwrap();
                 super::super::variants::begin_rerun(&mut c, &f.id).unwrap();
             }
             f.store.clear_segments(&f.id).unwrap();
-            rs::mark_running(&f.store, &f.id, "rerun-model", "retranscribed").unwrap();
+            rs::mark_running(&f.store, &f.id, "rerun-model", "retranscribed", range).unwrap();
             let mut a = seg(0, 0, 0, 2_500);
             a.text = "neu mic".into();
             let mut b = seg(1, 1, 0, 2_400);
@@ -2727,6 +2791,83 @@ mod tests {
         assert!(marker(&f).is_null());
     }
 
+    /// Die Segmente, die ein Fortsetzen nach den beiden gesaeten (Index 0 und 1) angehaengt hat.
+    fn appended(f: &Fixture) -> Vec<StoredSegment> {
+        f.store
+            .get_segments(&f.id)
+            .unwrap()
+            .into_iter()
+            .filter(|s| s.segment_index >= 2)
+            .collect()
+    }
+
+    #[test]
+    fn resuming_a_ranged_rerun_stops_at_the_end_of_the_range() {
+        let f = fixture(true, MeetingStatus::Processing);
+        let spec = partial_job_range(
+            &f,
+            Some(TimeRange {
+                start_ms: 1_000,
+                end_ms: 4_000,
+            }),
+        );
+        let mut env = FakeEnv::new();
+        run_job(&f.store, &spec, &mut env);
+        // Mikrofon 2 500..4 000, Systemton 2 400..4 000 (nicht bis zum Dateiende bei 6 000).
+        assert_eq!(env.phases.first(), Some(&(JobPhase::Transcription, 3_100)));
+        let added = appended(&f);
+        assert!(!added.is_empty());
+        assert!(
+            added
+                .iter()
+                .all(|s| s.end_ms <= 4_000 && s.start_ms >= 2_400),
+            "{:?}",
+            added
+                .iter()
+                .map(|s| (s.start_ms, s.end_ms))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
+        assert!(marker(&f).is_null());
+    }
+
+    #[test]
+    fn resuming_a_ranged_rerun_never_starts_before_the_start_of_the_range() {
+        let f = fixture(true, MeetingStatus::Processing);
+        // Bisher nur bis 2 500 ms: der Bereich beginnt spaeter, davor wird nichts nachgeholt.
+        let spec = partial_job_range(
+            &f,
+            Some(TimeRange {
+                start_ms: 4_000,
+                end_ms: 5_000,
+            }),
+        );
+        let mut env = FakeEnv::new();
+        run_job(&f.store, &spec, &mut env);
+        assert_eq!(env.phases.first(), Some(&(JobPhase::Transcription, 2_000)));
+        let added = appended(&f);
+        assert!(!added.is_empty());
+        assert!(
+            added
+                .iter()
+                .all(|s| s.start_ms >= 4_000 && s.end_ms <= 5_000),
+            "{:?}",
+            added
+                .iter()
+                .map(|s| (s.start_ms, s.end_ms))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_resume_without_a_range_still_reads_to_the_end_of_the_file() {
+        let f = fixture(true, MeetingStatus::Processing);
+        let spec = partial_job(&f);
+        let mut env = FakeEnv::new();
+        run_job(&f.store, &spec, &mut env);
+        assert_eq!(env.phases.first(), Some(&(JobPhase::Transcription, 7_100)));
+    }
+
     #[test]
     fn a_resume_also_processes_a_rest_shorter_than_half_a_second() {
         let f = fixture(true, MeetingStatus::Processing);
@@ -2760,6 +2901,71 @@ mod tests {
             .phases
             .iter()
             .all(|(p, _)| *p != JobPhase::Transcription));
+    }
+
+    /// Schneidet die letzten `bytes` der Datei ab; der Kopf behaelt die alte Laenge.
+    fn truncate_file(path: &Path, bytes: u64) {
+        let len = std::fs::metadata(path).unwrap().len();
+        let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+        file.set_len(len - bytes).unwrap();
+    }
+
+    #[test]
+    fn a_truncated_wav_is_an_error_when_read_strictly_and_ends_the_track_otherwise() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mic.wav");
+        write_wav(&path, &speech());
+        truncate_file(&path, 40_000);
+
+        let mut blocks = 0usize;
+        let strict = segment_wav(&path, 0, None, 15_000, None, true, &mut |_, _| {
+            blocks += 1;
+            true
+        });
+        assert!(strict.is_err(), "{strict:?}");
+
+        let lenient = segment_wav(&path, 0, None, 15_000, None, false, &mut |_, _| true);
+        assert!(lenient.is_ok(), "{lenient:?}");
+
+        // Eine unversehrte Datei liest auch streng bis zum Ende.
+        let whole = dir.path().join("ganz.wav");
+        write_wav(&whole, &speech());
+        let run = segment_wav(&whole, 0, None, 15_000, None, true, &mut |_, _| true).unwrap();
+        assert_eq!(run.done_ms, 6_000);
+    }
+
+    #[test]
+    fn a_resume_over_a_damaged_range_stops_with_its_own_message_and_keeps_the_marker() {
+        let f = fixture(true, MeetingStatus::Processing);
+        // Erst den gestoppten Lauf herstellen, dann den Bereich seiner Marke beschaedigen.
+        let spec = partial_job(&f);
+        let mut value = marker(&f);
+        value["start_ms"] = serde_json::json!(5);
+        value["end_ms"] = serde_json::Value::Null;
+        super::super::rerun_state::write(&f.store, &f.id, value).unwrap();
+        let mut env = FakeEnv::new();
+        run_job(&f.store, &spec, &mut env);
+        assert!(env.events.iter().any(|e| matches!(
+            e,
+            MeetingEvent::Error { message, .. } if message == "partial_rerun_range_damaged"
+        )));
+        assert_eq!(marker(&f)["phase"], "kept");
+        assert!(
+            env.loads.is_empty(),
+            "nichts wird (als ganze Aufnahme) nachgeholt"
+        );
+        assert_ne!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
+    }
+
+    #[test]
+    fn a_resume_over_a_truncated_track_fails_and_keeps_the_marker() {
+        let f = fixture(true, MeetingStatus::Processing);
+        truncate_file(&f.meeting_dir.join("system.wav"), 40_000);
+        let mut env = FakeEnv::new();
+        run_job(&f.store, &partial_job(&f), &mut env);
+        // Nicht „nachgeholt“: die Marke bleibt, die Besprechung ist nicht `ready`.
+        assert_eq!(marker(&f)["phase"], "kept");
+        assert_ne!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
     }
 
     #[test]

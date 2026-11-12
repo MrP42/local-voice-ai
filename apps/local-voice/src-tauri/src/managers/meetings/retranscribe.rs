@@ -43,6 +43,7 @@ use super::language_run::{self, RunRequest};
 use super::recorder::MeetingEvent;
 use super::rerun_state::{self, Ends, Settled};
 use super::store::{MeetingStatus, MeetingStore};
+use super::trim::{self, TimeRange};
 use super::variants;
 use crate::managers::transcription::TranscriptionManager;
 use crate::managers::youtube::fetch as yt_fetch;
@@ -62,6 +63,11 @@ const CHANNEL_MIXED: u8 = 2;
 /// G5: `language` ist die Wahl im Dialog (`auto` oder leer: erkennen). Ein Sprachcode gilt
 /// vor der Einstellung und vor jeder Erkennung; ohne ausdrueckliches `model_id` waehlt die
 /// App das passende Modell der Sprache (`language_run::prepare`).
+///
+/// lva#522: mit `range` wird nur dieser Bereich der Aufnahme transkribiert (jede Spur
+/// auf `[start_ms, end_ms)` geschnitten); die Segmente behalten die ABSOLUTEN Zeiten der
+/// Aufnahme. Das bisherige Transkript bleibt wie sonst als Fassung erhalten. Ein
+/// ungueltiger Bereich (`start_ms >= end_ms`, Anfang hinter dem Ende) endet mit `invalid_range`.
 pub async fn retranscribe_meeting(
     app: &tauri::AppHandle,
     store: Arc<MeetingStore>,
@@ -69,6 +75,7 @@ pub async fn retranscribe_meeting(
     meeting_id: String,
     model_id: Option<String>,
     language: Option<String>,
+    range: Option<TimeRange>,
 ) -> Result<(), String> {
     rerun_meeting(
         app,
@@ -78,6 +85,7 @@ pub async fn retranscribe_meeting(
         model_id,
         language,
         RerunSource::Stored,
+        range,
     )
     .await
 }
@@ -106,6 +114,7 @@ enum Input {
 }
 
 /// Neu-Transkription aus gespeichertem Audio oder (A3) aus einem YouTube-Video.
+#[allow(clippy::too_many_arguments)]
 pub async fn rerun_meeting(
     app: &tauri::AppHandle,
     store: Arc<MeetingStore>,
@@ -114,7 +123,10 @@ pub async fn rerun_meeting(
     model_id: Option<String>,
     language: Option<String>,
     source: RerunSource,
+    range: Option<TimeRange>,
 ) -> Result<(), String> {
+    // lva#522: ein ungueltiger Bereich scheitert vor jeder Aenderung.
+    let range = range.map(TimeRange::validate).transpose()?;
     let request = RunRequest {
         language,
         model_id: model_id.clone(),
@@ -162,6 +174,12 @@ pub async fn rerun_meeting(
     for (path, _) in &audio {
         if !Path::new(path).exists() {
             return Err("audio_missing".to_string());
+        }
+    }
+    // lva#522: ein Bereich hinter dem Ende der Aufnahme ergaebe ein leeres Transkript.
+    if let (Some(range), Some(duration_ms)) = (range, meeting.duration_ms) {
+        if duration_ms > 0 && range.start_ms >= duration_ms {
+            return Err("invalid_range".to_string());
         }
     }
 
@@ -212,7 +230,7 @@ pub async fn rerun_meeting(
     // unter DIESEM Auftrag abgeschlossen, bevor etwas Neues beginnt; dann die Marke
     // `start` mit dem Stand davor (fuer das Zuruecknehmen). Der Vorstatus kommt aus dem
     // Zustand NACH diesem Abschluss, unter dem Auftrag gelesen.
-    let previous_status = match rerun_state::mark_start(&store, &meeting_id) {
+    let previous_status = match rerun_state::mark_start(&store, &meeting_id, range) {
         Ok(status) => status,
         Err(e) => {
             if let Input::Youtube { guard, .. } = input {
@@ -243,6 +261,7 @@ pub async fn rerun_meeting(
                 input,
                 &target,
                 &request,
+                range,
                 job.handle(),
             )
         }))
@@ -366,6 +385,7 @@ fn status_name(status: MeetingStatus) -> &'static str {
 /// The blocking body. Clears the old segments only once the first audio file
 /// has actually been read: a meeting whose WAV turns out to be unreadable
 /// keeps the transcript it had.
+#[allow(clippy::too_many_arguments)]
 fn run_retranscribe(
     app: &tauri::AppHandle,
     store: &Arc<MeetingStore>,
@@ -374,6 +394,7 @@ fn run_retranscribe(
     input: Input,
     target: &str,
     request: &RunRequest,
+    range: Option<TimeRange>,
     job: &Arc<JobHandle>,
 ) -> Result<RetranscribeEnd, String> {
     job.begin_phase(JobPhase::Prepare, 0);
@@ -421,7 +442,12 @@ fn run_retranscribe(
         };
         let decoded = crate::media::ensure_wav_cancellable(&downloaded.file, 16_000, &cancel);
         let samples = match decoded {
-            Ok((wav, _tmp)) => read_wav_i16_mono_16k(&wav),
+            Ok((wav, _tmp)) => read_wav_i16_mono_16k(&wav).map(|mut samples| {
+                if let Some(range) = range {
+                    trim::cut_in_place(&mut samples, range);
+                }
+                samples
+            }),
             Err(e) if e == crate::media::DECODE_CANCELLED => {
                 restore_dictation_model(app, tm);
                 return Ok(RetranscribeEnd::Stopped);
@@ -443,7 +469,12 @@ fn run_retranscribe(
             stopped_early = true;
             break;
         }
-        match read_wav_i16_mono_16k(Path::new(path)) {
+        // lva#522: mit Bereich wird nur dieser Abschnitt gelesen (nicht die ganze Aufnahme).
+        let read = match range {
+            Some(range) => trim::read_track_range(Path::new(path), range),
+            None => read_wav_i16_mono_16k(Path::new(path)),
+        };
+        match read {
             Ok(samples) => tracks.push((samples, *channel)),
             Err(e) => {
                 restore_dictation_model(app, tm);
@@ -455,6 +486,17 @@ fn run_retranscribe(
         restore_dictation_model(app, tm);
         return Ok(RetranscribeEnd::Stopped);
     }
+    // lva#522: eine Spur, die im Bereich nichts hat (kuerzer als der Anfang), entfaellt;
+    // bleibt keine, ist der Bereich ungueltig. Noch ist nichts veraendert.
+    if range.is_some() {
+        tracks.retain(|(samples, _)| !samples.is_empty());
+        if tracks.is_empty() {
+            restore_dictation_model(app, tm);
+            return Err("invalid_range".to_string());
+        }
+    }
+    // Beginn der geschnittenen Spuren auf der Achse der Aufnahme.
+    let time_offset_ms = range.map_or(0, |r| r.start_ms);
     let total_ms: u64 = tracks.iter().map(|(s, _)| s.len() as u64 / 16).sum();
     let started = std::time::Instant::now();
     // G5: Sprache und Modell dieses Laufs (Dialog, Einstellung, sonst eine Probe aus dem
@@ -496,7 +538,7 @@ fn run_retranscribe(
             .map_err(|e| format!("clear_segments_failed: {e}"))?;
         // lva#523: ab hier gehoert die Arbeitskopie (diese Epoche) DIESEM Lauf; erst
         // jetzt darf ein Stopp oder Absturz sie als neue Abschnitte behalten.
-        rerun_state::mark_running(store, meeting_id, target, kind)?;
+        rerun_state::mark_running(store, meeting_id, target, kind, range)?;
         let _ = (MeetingEvent::Reset {
             meeting_id: meeting_id.to_string(),
         })
@@ -516,6 +558,7 @@ fn run_retranscribe(
                 next_index,
                 job,
                 base_ms,
+                time_offset_ms,
                 &mut || tm.initiate_model_load_target(target),
             )?;
             if run.stopped {
@@ -538,11 +581,14 @@ fn run_retranscribe(
                 (
                     "youtube_audio",
                     vec![source],
-                    serde_json::json!({
-                        "audio_ms": total_ms,
-                        "tool": "yt-dlp",
-                        "tool_version": tool_version,
-                    }),
+                    trim::params_with_range(
+                        serde_json::json!({
+                            "audio_ms": total_ms,
+                            "tool": "yt-dlp",
+                            "tool_version": tool_version,
+                        }),
+                        range,
+                    ),
                 )
             }
             None => (
@@ -550,7 +596,7 @@ fn run_retranscribe(
                 vec![crate::managers::provenance::SourceRef::new(
                     "audio", meeting_id, None,
                 )],
-                serde_json::json!({ "audio_ms": total_ms }),
+                trim::params_with_range(serde_json::json!({ "audio_ms": total_ms }), range),
             ),
         };
         let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);

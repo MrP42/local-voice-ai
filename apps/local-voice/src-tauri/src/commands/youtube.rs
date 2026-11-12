@@ -208,6 +208,8 @@ pub async fn youtube_own_transcription(
             video_id,
             tool_version: status.version,
         },
+        // lva#522: die YouTube-Neutranskription laeuft immer ueber das ganze Video.
+        None,
     )
     .await
 }

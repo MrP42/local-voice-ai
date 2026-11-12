@@ -30,6 +30,7 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBe
 use serde_json::{json, Value};
 
 use super::store::{MeetingStatus, MeetingStore};
+use super::trim::TimeRange;
 use super::variants;
 
 /// Schluessel in `metadata_json`.
@@ -51,6 +52,29 @@ pub struct Marker {
     pub prev_status: Option<String>,
     /// Die Marke vor diesem Lauf (`Null`: keine).
     pub prev: Value,
+    /// lva#522: Bereich der Aufnahme (ms, absolut), wenn der Lauf nur einen Bereich
+    /// transkribiert. Fehlt in Marken ohne Bereich und aus aelterem Bestand.
+    pub start_ms: Option<u64>,
+    pub end_ms: Option<u64>,
+    /// lva#522: der Bereich ist da, aber beschaedigt (nur ein Feld, falscher Typ,
+    /// Anfang >= Ende). Etwas anderes als „kein Bereich“: ein solcher Lauf darf nicht
+    /// als Lauf ueber die ganze Aufnahme fortgesetzt werden (`prepare_resume` weist ihn ab).
+    pub range_damaged: bool,
+}
+
+/// Bereich einer Marke lesen: `(start, end, beschaedigt)`. Beide Felder fehlen
+/// (oder `null`): kein Bereich, nicht beschaedigt.
+fn range_fields(obj: &serde_json::Map<String, Value>) -> (Option<u64>, Option<u64>, bool) {
+    let flagged = obj.get("range_damaged").and_then(Value::as_bool) == Some(true);
+    let field = |k: &str| obj.get(k).filter(|v| !v.is_null());
+    match (field("start_ms"), field("end_ms")) {
+        (None, None) => (None, None, flagged),
+        (Some(s), Some(e)) => match (s.as_u64(), e.as_u64()) {
+            (Some(start), Some(end)) if start < end && !flagged => (Some(start), Some(end), false),
+            _ => (None, None, true),
+        },
+        _ => (None, None, true),
+    }
 }
 
 impl Marker {
@@ -70,6 +94,7 @@ impl Marker {
             Some(k) if k == variants::KIND_OWN => variants::KIND_OWN,
             _ => variants::KIND_RETRANSCRIBED,
         };
+        let (start_ms, end_ms, range_damaged) = range_fields(obj);
         Some(Self {
             phase,
             model: s("model"),
@@ -81,11 +106,14 @@ impl Marker {
             variant_id: s("variant_id"),
             prev_status: s("prev_status"),
             prev: obj.get("prev").cloned().unwrap_or(Value::Null),
+            start_ms,
+            end_ms,
+            range_damaged,
         })
     }
 
     pub fn to_value(&self) -> Value {
-        json!({
+        let mut value = json!({
             "phase": self.phase,
             "model": self.model,
             "kind": self.kind,
@@ -93,7 +121,36 @@ impl Marker {
             "variant_id": self.variant_id,
             "prev_status": self.prev_status,
             "prev": self.prev,
-        })
+        });
+        // Nur mit Bereich (Marken ohne Bereich bleiben, wie sie waren).
+        if let (Some(map), Some(start), Some(end)) =
+            (value.as_object_mut(), self.start_ms, self.end_ms)
+        {
+            map.insert("start_ms".into(), json!(start));
+            map.insert("end_ms".into(), json!(end));
+        }
+        if let (Some(map), true) = (value.as_object_mut(), self.range_damaged) {
+            map.insert("range_damaged".into(), json!(true));
+        }
+        value
+    }
+
+    /// Der Bereich dieses Laufs; `None` ohne Bereich oder bei einem unstimmigen.
+    pub fn range(&self) -> Option<TimeRange> {
+        if self.range_damaged {
+            return None;
+        }
+        let range = TimeRange {
+            start_ms: self.start_ms?,
+            end_ms: self.end_ms?,
+        };
+        range.validate().ok()
+    }
+
+    fn set_range(&mut self, range: Option<TimeRange>) {
+        self.range_damaged = false;
+        self.start_ms = range.map(|r| r.start_ms);
+        self.end_ms = range.map(|r| r.end_ms);
     }
 }
 
@@ -241,6 +298,10 @@ pub fn status_from_name(name: &str) -> Option<MeetingStatus> {
 pub struct Resumable {
     pub model: String,
     pub variant_id: String,
+    /// lva#522: Bereich des Laufs (absolute ms), falls er nur einen transkribierte.
+    pub range: Option<TimeRange>,
+    /// lva#522: der Bereich der Marke ist beschaedigt (siehe [`Marker::range_damaged`]).
+    pub range_damaged: bool,
 }
 
 /// Wie [`settle`] ausging.
@@ -280,7 +341,12 @@ fn resumable_of(m: &Marker) -> Option<Resumable> {
     m.model
         .clone()
         .zip(m.variant_id.clone())
-        .map(|(model, variant_id)| Resumable { model, variant_id })
+        .map(|(model, variant_id)| Resumable {
+            model,
+            variant_id,
+            range: m.range(),
+            range_damaged: m.range_damaged,
+        })
 }
 
 fn roll_back_tx(
@@ -394,22 +460,23 @@ pub fn restorable_status(name: &str) -> MeetingStatus {
 /// Laufbeginn (unter dem Auftrag, VOR `begin_rerun`): offenen Vorlauf abschliessen,
 /// dann Marke `start` mit dem Stand davor. Der Vorstatus kommt aus dem Zustand NACH
 /// diesem Abschluss (nie aus einem vorher gelesenen Wert) und wird zurueckgegeben.
-pub fn mark_start(store: &MeetingStore, meeting_id: &str) -> Result<MeetingStatus, String> {
+pub fn mark_start(
+    store: &MeetingStore,
+    meeting_id: &str,
+    range: Option<TimeRange>,
+) -> Result<MeetingStatus, String> {
     settle(store, meeting_id, false, Ends::QUIET)?;
     in_tx(store, |tx| {
         let prev_status = restorable_status(&status_tx(tx, meeting_id)?);
         let prev = read_raw_tx(tx, meeting_id)?;
-        write_tx(
-            tx,
-            meeting_id,
-            Marker {
-                phase: PHASE_START.to_string(),
-                prev_status: Some(prev_status.as_str().to_string()),
-                prev,
-                ..Default::default()
-            }
-            .to_value(),
-        )?;
+        let mut marker = Marker {
+            phase: PHASE_START.to_string(),
+            prev_status: Some(prev_status.as_str().to_string()),
+            prev,
+            ..Default::default()
+        };
+        marker.set_range(range);
+        write_tx(tx, meeting_id, marker.to_value())?;
         Ok(prev_status)
     })
 }
@@ -420,9 +487,11 @@ pub fn mark_running(
     meeting_id: &str,
     model: &str,
     kind: &'static str,
+    range: Option<TimeRange>,
 ) -> Result<(), String> {
     in_tx(store, |tx| {
         let mut marker = read_tx(tx, meeting_id)?.unwrap_or_default();
+        marker.set_range(range);
         marker.phase = PHASE_RUNNING.to_string();
         marker.epoch = Some(epoch_tx(tx, meeting_id)?);
         marker.model = Some(model.to_string());
@@ -450,8 +519,9 @@ pub fn complete(
 /// Was vor dem Nachholen mit einem offenen Neu-Lauf geschieht.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Resume {
-    /// Teilergebnis (wieder) aktiv: mit diesem Modell streng nachholen.
-    Partial(String),
+    /// Teilergebnis (wieder) aktiv: mit diesem Modell streng nachholen, bei einem
+    /// Lauf mit Bereich nur in diesem (lva#522).
+    Partial(String, Option<TimeRange>),
     /// Kein Neu-Lauf im Spiel: normal weiter.
     Normal,
     /// Zurueckgenommen, Status geschrieben: nichts weiter zu tun.
@@ -460,7 +530,8 @@ pub enum Resume {
 
 /// „Fortsetzen“ und Wiederherstellung (unter dem Auftrag): offenen Lauf abschliessen
 /// und die gestoppte Fassung wieder aktiv machen (der Nutzer kann umgeschaltet haben).
-/// Eine nicht zuordenbare Marke wird abgewiesen, nie still die aktive Fassung ergaenzt.
+/// Eine nicht zuordenbare Marke wird abgewiesen, nie still die aktive Fassung ergaenzt;
+/// ebenso eine mit beschaedigtem Bereich (`partial_rerun_range_damaged`).
 pub fn prepare_resume(
     store: &MeetingStore,
     meeting_id: &str,
@@ -484,13 +555,16 @@ pub fn prepare_resume(
         // Ohne Spur hat `settle` Marke und `ready` schon atomar geschrieben.
         Settled::Kept(None) if !has_track => Ok(Resume::Done(Some(MeetingStatus::Ready))),
         Settled::Kept(None) => Err("partial_rerun_unassigned".to_string()),
+        // Beschaedigter Bereich: nie als Lauf ueber die ganze Aufnahme fortsetzen. Die
+        // Marke bleibt, wie sie ist (der Nutzer kann verwerfen).
+        Settled::Kept(Some(r)) if r.range_damaged => Err("partial_rerun_range_damaged".to_string()),
         Settled::Kept(Some(r)) => in_tx(store, |tx| {
             let active = variants::active_id(tx, meeting_id).map_err(|e| e.code().to_string())?;
             if active.as_deref() != Some(r.variant_id.as_str()) {
                 variants::activate_for_resume_in_tx(tx, &r.variant_id)
                     .map_err(|e| format!("partial_variant_missing: {}", e.code()))?;
             }
-            Ok(Resume::Partial(r.model))
+            Ok(Resume::Partial(r.model, r.range))
         }),
     }
 }

@@ -44,6 +44,7 @@ import { MeetingHeader } from "./MeetingHeader";
 import { EmptyStartCard } from "./EmptyStartCard";
 import { isEmptyEntry } from "./emptyEntry";
 import { RetranscribeDialog } from "./RetranscribeDialog";
+import { TrimAudioDialog } from "./TrimAudioDialog";
 import { SpeakerPopover } from "./SpeakerPopover";
 import { SpeakerNamesDialog } from "./SpeakerNamesDialog";
 import { SpeakerSharesTable } from "./SpeakerSharesTable";
@@ -218,6 +219,8 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   // Dialoge und Anfragen aus Menue und Kopf.
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [retranscribeOpen, setRetranscribeOpen] = useState(false);
+  // lva#522: Aufnahme zuschneiden.
+  const [trimOpen, setTrimOpen] = useState(false);
   // G5: Vorbelegung des Neu-Transkribierens (aus dem Sprach-Chip) und die Uebersetzung.
   const [retranscribeInitial, setRetranscribeInitial] = useState<{
     language: string;
@@ -653,6 +656,54 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   // dazwischen entsteht, geht so weder beim Laden noch beim Zuhoeren verloren.
   const onMeetingChangeRef = useRef(onMeetingChange);
   onMeetingChangeRef.current = onMeetingChange;
+  // lva#522: Zuschneiden ersetzt die WAV-Dateien. Unter Windows laesst sich eine Datei
+  // nicht loeschen, solange der Player sie offen haelt: die Player werden vor dem
+  // Befehl abgebaut (`playersParked`), danach mit den neuen Pfaden wieder aufgebaut.
+  const [playersParked, setPlayersParked] = useState(false);
+  const releasePlayers = useCallback(async () => {
+    micPlayerRef.current?.stop();
+    systemPlayerRef.current?.stop();
+    setPlayersParked(true);
+    // Der Abbau gibt die Dateien beim naechsten Render frei; das WebView braucht
+    // einen Augenblick, bis die Medienpipeline sie wirklich schliesst.
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+  }, []);
+  const restorePlayers = useCallback(() => setPlayersParked(false), []);
+  // Anderer Datensatz: die Player gehören dem neuen.
+  useEffect(() => {
+    setPlayersParked(false);
+  }, [meetingId]);
+  // Nach dem Zuschneiden stehen Audiopfade, Dauer und Transkript neu in der Datenbank:
+  // Segmente laden und genau diesen Datensatz holen (nicht die ganze Liste). Nur mit dem
+  // frischen Datensatz kommen die Player zurück; scheitert das Laden, bleiben sie
+  // abgebaut (die alten Pfade gibt es nicht mehr), und ein Hinweis bietet "Erneut laden".
+  const reloadAfterTrim = useCallback(async (): Promise<boolean> => {
+    void loadSegmentsRef.current();
+    try {
+      const r = await commands.meetingsGet(meetingId);
+      if (r.status === "ok" && r.data) {
+        onMeetingChangeRef.current(r.data);
+        setPlayersParked(false);
+        return true;
+      }
+    } catch {
+      // wie ein Fehlerergebnis behandeln
+    }
+    return false;
+  }, [meetingId]);
+  const onTrimmed = useCallback(async () => {
+    const attempt = async (): Promise<void> => {
+      if (await reloadAfterTrim()) return;
+      toast.error(t("meetings.trim.reloadFailed"), {
+        duration: 30_000,
+        action: {
+          label: t("meetings.trim.reload"),
+          onClick: () => void attempt(),
+        },
+      });
+    };
+    await attempt();
+  }, [reloadAfterTrim, t]);
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | null = null;
@@ -1067,6 +1118,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         setRetranscribeInitial(null);
         setRetranscribeOpen(true);
       }}
+      onTrim={() => setTrimOpen(true)}
       onTranslate={() => setTranslateOpen(true)}
       onRegenNotes={() => regenerateNotes()}
       onRegenMinutes={() => void regenerateMinutes()}
@@ -1638,7 +1690,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   /** Wiedergabe, Fortschritt und Symbolzeile (rechts oben, unter der Aufnahmezeile). */
   const controlsPart = (
     <>
-      {hasAudio && !live && (
+      {hasAudio && !live && !playersParked && (
         <AudioPlayerGroup>
           {meeting.mic_audio_path && (
             <div data-testid="rec-player">
@@ -1761,6 +1813,14 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         meeting={meeting}
         onFinished={loadSegments}
         initial={retranscribeInitial}
+      />
+      <TrimAudioDialog
+        open={trimOpen}
+        onOpenChange={setTrimOpen}
+        meeting={meeting}
+        onWillTrim={releasePlayers}
+        onTrimFailed={restorePlayers}
+        onTrimmed={onTrimmed}
       />
       <TranslateDialog
         open={translateOpen}
