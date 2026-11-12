@@ -1,0 +1,20 @@
+[package]
+name = "besprechungsplanung"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Besprechungsplanung: Datenmodell, Regelpruefung, Einladungstext mit Marke, Abgleich mit dem Kalender, Einwilligungs-Tor. Ohne App- und ohne wai-*-Abhaengigkeit."
+
+[features]
+default = []
+# Tauri-Bindings der App (specta-Typen). Die Version folgt src-tauri/Cargo.toml.
+specta = ["dep:specta"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.41.1", features = ["bundled"] }
+specta = { version = "=2.0.0-rc.22", optional = true, features = ["derive"] }
+
+[workspace]
