@@ -1229,6 +1229,11 @@ impl MeetingRecorderManager {
                     continue;
                 }
                 let partial = self.partial_rerun_model(&meeting.id);
+                if partial.is_some() {
+                    // lva#523: Absturz mitten in der Neu-Transkription: das bis dahin
+                    // neu Transkribierte wird Fassung, statt spaeter verworfen zu werden.
+                    self.keep_interrupted_rerun(&meeting.id);
+                }
                 let plan = if partial.is_some() {
                     FinalPlan::Keep(KeepReason::PartialRerun)
                 } else if meeting.source == "live" {
@@ -1305,6 +1310,28 @@ impl MeetingRecorderManager {
             live_model: None,
         }]);
         Ok(())
+    }
+
+    /// lva#523: eine nach Absturz noch offene Neu-Transkription als Fassung behalten.
+    fn keep_interrupted_rerun(&self, meeting_id: &str) {
+        let meta = self.store.metadata_json(meeting_id).ok().flatten();
+        let kind = super::retranscribe::partial_rerun_kind(meta.as_ref());
+        let kept = self
+            .store
+            .get_connection()
+            .map_err(|e| e.to_string())
+            .and_then(|mut conn| {
+                if !super::variants::rerun_pending(&conn, meeting_id)
+                    .map_err(|e| e.code().to_string())?
+                {
+                    return Ok(None);
+                }
+                super::variants::keep_partial_rerun(&mut conn, meeting_id, kind, None)
+                    .map_err(|e| e.code().to_string())
+            });
+        if let Err(e) = kept {
+            warn!("meetings: interrupted rerun not kept ({meeting_id}): {e}");
+        }
     }
 
     /// lva#523: Modell eines gestoppten Neu-Laufs, dessen Teilergebnis noch offen ist.

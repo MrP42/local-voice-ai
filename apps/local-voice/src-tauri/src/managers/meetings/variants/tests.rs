@@ -520,3 +520,17 @@ fn a_rerun_stopped_before_the_first_new_section_restores_the_old_one_lva523() {
     assert_eq!(variants.len(), 1);
     assert!(variants[0].active);
 }
+
+#[test]
+fn keeping_a_partial_result_without_a_begun_rerun_changes_nothing_lva523() {
+    let f = fixture(true);
+    let mut c = conn(&f);
+    assert!(!rerun_pending(&c, &f.meeting).unwrap());
+    assert_eq!(
+        keep_partial_rerun(&mut c, &f.meeting, KIND_RETRANSCRIBED, Some("m")).unwrap(),
+        None
+    );
+    assert_eq!(live_text(&f), vec!["alt eins", "alt zwei"]);
+    begin_rerun(&mut c, &f.meeting).unwrap();
+    assert!(rerun_pending(&c, &f.meeting).unwrap());
+}

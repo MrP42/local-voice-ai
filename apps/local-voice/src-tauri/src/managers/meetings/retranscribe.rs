@@ -29,7 +29,11 @@
 //! Besprechung endet als `cancelled`. „Fortsetzen“ (`meetings_continue`) holt den
 //! Rest ab dem letzten Abschnitt je Kanal nach, mit dem Modell dieses Laufs und ohne
 //! Enddurchlauf (`partial_rerun_model`). Nur ein Fehler stellt weiter die alte
-//! Fassung her.
+//! Fassung her. Die Marke `partial_rerun` steht VOR dem ersten neuen Abschnitt (auch
+//! ein Absturz findet sie, `recover_orphans`), endet mit dem fertigen Lauf bzw. dem
+//! fertigen Nachholen und kehrt bei Fehler/Stopp ohne neuen Abschnitt auf den Stand
+//! vor dem Lauf zurueck. YouTube hat keine gespeicherte Spur: dort bleibt das
+//! Teilergebnis als Fassung, aber ohne Fortsetzen (vorheriger Status).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -46,8 +50,8 @@ use super::variants;
 use crate::managers::transcription::TranscriptionManager;
 use crate::managers::youtube::fetch as yt_fetch;
 
-/// lva#523: Schluessel in `metadata_json`: ein gestoppter Neu-Lauf hat ein
-/// Teilergebnis hinterlassen; Wert `{ "model": "<modell>" }`.
+/// lva#523: Schluessel in `metadata_json`: ein (gestoppter) Neu-Lauf hat ein
+/// Teilergebnis; Wert `{ "model": "<modell>", "kind": "<fassungsart>" }`.
 pub const PARTIAL_RERUN_KEY: &str = "partial_rerun";
 
 /// lva#523: das Modell, mit dem „Fortsetzen“ ein gestopptes Teilergebnis einer
@@ -60,6 +64,28 @@ pub fn partial_rerun_model(metadata: Option<&serde_json::Value>) -> Option<Strin
         .map(str::trim)
         .filter(|m| !m.is_empty())
         .map(str::to_string)
+}
+
+/// lva#523: Fassungsart der Marke (`retranscribed`, sonst `stt`).
+pub fn partial_rerun_kind(metadata: Option<&serde_json::Value>) -> &'static str {
+    match metadata
+        .and_then(|m| m.get(PARTIAL_RERUN_KEY))
+        .and_then(|p| p.get("kind"))
+        .and_then(|k| k.as_str())
+    {
+        Some(k) if k == variants::KIND_OWN => variants::KIND_OWN,
+        _ => variants::KIND_RETRANSCRIBED,
+    }
+}
+
+fn set_partial_marker(
+    store: &MeetingStore,
+    meeting_id: &str,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    store
+        .set_metadata_key(meeting_id, PARTIAL_RERUN_KEY, value)
+        .map_err(|e| format!("partial_marker_failed: {e}"))
 }
 
 /// `StoredSegment::channel` values, mirroring `store.rs`.
@@ -229,8 +255,15 @@ pub async fn rerun_meeting(
         }
     };
     let previous_status = restored_status(&meeting.status);
-    // lva#523: ein neuer Lauf ersetzt ein frueheres Teilergebnis.
-    let _ = store.set_metadata_key(&meeting_id, PARTIAL_RERUN_KEY, serde_json::Value::Null);
+    // lva#523: die Marke vor dem Lauf (ein frueheres Teilergebnis); sie kommt zurueck,
+    // wenn dieser Lauf nichts Neues hinterlaesst.
+    let previous_marker = store
+        .metadata_json(&meeting_id)
+        .ok()
+        .flatten()
+        .and_then(|m| m.get(PARTIAL_RERUN_KEY).cloned())
+        .unwrap_or(serde_json::Value::Null);
+    let has_stored_audio = meeting.mic_audio_path.is_some() || meeting.system_audio_path.is_some();
     store
         .set_status(&meeting_id, MeetingStatus::Processing)
         .map_err(|e| format!("status_processing_failed: {e}"))?;
@@ -262,6 +295,9 @@ pub async fn rerun_meeting(
 
     match outcome {
         Ok(RetranscribeEnd::Completed) => {
+            if let Err(e) = set_partial_marker(&store, &meeting_id, serde_json::Value::Null) {
+                error!("meetings: {e} ({meeting_id})");
+            }
             store
                 .set_status(&meeting_id, MeetingStatus::Ready)
                 .map_err(|e| format!("status_ready_failed: {e}"))?;
@@ -282,7 +318,21 @@ pub async fn rerun_meeting(
             } else {
                 false
             };
-            let end_status = if kept {
+            // Fortsetzen braucht gespeichertes Audio (YouTube: nur ein neuer Lauf).
+            let resumable = kept && has_stored_audio;
+            let marker = if resumable {
+                None
+            } else if kept {
+                Some(serde_json::Value::Null)
+            } else {
+                Some(previous_marker)
+            };
+            if let Some(value) = marker {
+                if let Err(e) = set_partial_marker(&store, &meeting_id, value) {
+                    error!("meetings: {e} ({meeting_id})");
+                }
+            }
+            let end_status = if resumable {
                 MeetingStatus::Cancelled
             } else {
                 previous_status
@@ -312,6 +362,9 @@ pub async fn rerun_meeting(
             error!("meetings: retranscribe failed ({meeting_id}): {e}");
             // B17: ein Fehler mitten im Lauf nimmt dem Nutzer das alte Transkript nicht.
             restore_old_transcript(app, &store, &meeting_id);
+            if let Err(e) = set_partial_marker(&store, &meeting_id, previous_marker) {
+                error!("meetings: {e} ({meeting_id})");
+            }
             let _ = store.set_status(&meeting_id, previous_status);
             emit_state(app, &meeting_id, status_name(previous_status));
             emit_error(app, &meeting_id, "retranscribe_failed");
@@ -498,6 +551,13 @@ fn run_retranscribe(
             variants::begin_rerun(&mut conn, meeting_id)
                 .map_err(|e| format!("variants_begin_failed: {e}"))?;
         }
+        // lva#523: die Marke steht, bevor der erste neue Abschnitt geschrieben wird
+        // (Stopp und Absturz finden Modell und Art).
+        set_partial_marker(
+            store,
+            meeting_id,
+            serde_json::json!({ "model": target, "kind": kind }),
+        )?;
         store
             .clear_segments(meeting_id)
             .map_err(|e| format!("clear_segments_failed: {e}"))?;
@@ -618,7 +678,7 @@ fn restore_old_transcript(app: &tauri::AppHandle, store: &Arc<MeetingStore>, mee
 
 /// lva#523: Stopp nach dem ersten neuen Abschnitt: das Teilergebnis wird eine
 /// Fassung und bleibt das Transkript, die alte Fassung bleibt erhalten. `true`:
-/// behalten (und fuer „Fortsetzen“ vorgemerkt). `false`: es gab nichts Neues oder
+/// behalten (die Marke steht schon seit dem Laufbeginn). `false`: es gab nichts Neues oder
 /// das Sichern scheiterte; dann ist die alte Fassung wiederhergestellt.
 fn keep_partial_transcript(
     app: &tauri::AppHandle,
@@ -637,13 +697,6 @@ fn keep_partial_transcript(
         });
     match kept {
         Ok(Some(_)) => {
-            if let Some(model) = model {
-                let _ = store.set_metadata_key(
-                    meeting_id,
-                    PARTIAL_RERUN_KEY,
-                    serde_json::json!({ "model": model }),
-                );
-            }
             let _ = (MeetingEvent::Reset {
                 meeting_id: meeting_id.to_string(),
             })
@@ -717,6 +770,13 @@ mod tests {
             assert_eq!(partial_rerun_model(Some(&none)), None);
         }
         assert_eq!(partial_rerun_model(None), None);
+        let own = serde_json::json!({ "partial_rerun": { "model": "m", "kind": "stt" } });
+        assert_eq!(partial_rerun_kind(Some(&own)), variants::KIND_OWN);
+        assert_eq!(
+            partial_rerun_kind(Some(&noted)),
+            variants::KIND_RETRANSCRIBED
+        );
+        assert_eq!(partial_rerun_kind(None), variants::KIND_RETRANSCRIBED);
     }
 
     #[test]

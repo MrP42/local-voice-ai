@@ -1204,6 +1204,16 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
                 stopped_in_catch_up = true;
                 return Err(KeepReason::UserStopped);
             }
+            // lva#523: das Teilergebnis einer Neu-Transkription ist jetzt vollstaendig.
+            if job.plan == FinalPlan::Keep(KeepReason::PartialRerun) {
+                if let Err(e) = store.set_metadata_key(
+                    &job.meeting_id,
+                    super::retranscribe::PARTIAL_RERUN_KEY,
+                    serde_json::Value::Null,
+                ) {
+                    warn!("meetings: partial marker not cleared: {e}");
+                }
+            }
         }
         // M3-P3b: die Turns VOR dem End-STT holen (ein grosses Modell zur Zeit).
         let turns = turns_before_stt(store, &meeting, &job.plan, env, &mut report);

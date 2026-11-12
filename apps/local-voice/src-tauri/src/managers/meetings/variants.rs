@@ -859,6 +859,9 @@ pub fn keep_partial_rerun(
     kind: &'static str,
     model: Option<&str>,
 ) -> Result<Option<String>, VariantError> {
+    if !rerun_pending(conn, meeting_id)? {
+        return Ok(None);
+    }
     let has_new = {
         let current = transcript_row(conn, meeting_id)?;
         current.is_some_and(|t| count_segments(&t.segments_json) > 0)
@@ -882,6 +885,11 @@ pub fn keep_partial_rerun(
         }
         Err(e) => Err(e),
     }
+}
+
+/// lva#523: steht eine begonnene, nicht abgeschlossene Neu-Transkription aus?
+pub fn rerun_pending(conn: &Connection, meeting_id: &str) -> Result<bool, VariantError> {
+    Ok(matches!(active_marker(conn, meeting_id)?, Some((_, true))))
 }
 
 /// Eine nicht abgeschlossene Neu-Transkription (Absturz) zuruecknehmen. Darf nur
