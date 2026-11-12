@@ -131,6 +131,9 @@ test("liesSofort: Prüf-Ankündigungen, Schreibvarianten und Anführungszeichen 
     "MOMENT, ICH SCHAUE KURZ NACH.",
     "I’m looking into it.",
     "Ich schaue mal nach.",
+    "‘Moment, ich schaue kurz nach.’",
+    "'Moment, ich schaue kurz nach.'",
+    "'Ich prüfe kurz die Angaben.'",
   ]) {
     assert.deepEqual(liesSofort(`ANTWORT: ${f}`), { art: "nichts" }, f);
     assert.deepEqual(liesSofort(`WEITER: ${f}`), { art: "nichts" }, f);
@@ -143,6 +146,8 @@ test("liesSofort: Sachsätze mit Prüf- oder Denkverb bleiben vollständig (R4)"
     "Ich denke oft über meine Kindheit nach.",
     "Ich denke.",
     "I'm thinking about my childhood.",
+    "Ich lese kurz vor dem Schlafengehen.",
+    "Ich sehe mal wieder nichts.",
     "Ich suche in den Besprechungen vom Montag die Entscheidung, sie lautet Ja.",
   ]) {
     assert.deepEqual(

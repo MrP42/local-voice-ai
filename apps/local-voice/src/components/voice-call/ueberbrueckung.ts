@@ -52,10 +52,18 @@ export function istUeberbrueckung(text: string): boolean {
 /** Anführungszeichen, die beim Vergleich von Floskeln keine Rolle spielen. */
 const ZITATZEICHEN = /["„“”‚‘’«»‹›]/g;
 
-/** Vergleichsform: klein, ohne Anführungszeichen, Apostroph vereinheitlicht, Leerraum gefaltet. */
+/**
+ * Vergleichsform: klein, ohne Anführungszeichen, Apostroph vereinheitlicht, Leerraum gefaltet. Einfache
+ * Anführungszeichen zählen nur am Wortrand als Zitatzeichen; ein Apostroph im Wort („I’m“) bleibt.
+ */
 function schluessel(text: string): string {
   return normal(
-    text.toLowerCase().replace(/[’`´]/g, "'").replace(ZITATZEICHEN, " "),
+    text
+      .toLowerCase()
+      .replace(/(^|[\s(])['‘’‚`´]+/g, "$1")
+      .replace(/['‘’`´]+(?=$|[\s.,;:!?…)])/g, "")
+      .replace(/[’`´]/g, "'")
+      .replace(ZITATZEICHEN, " "),
   );
 }
 
@@ -64,40 +72,25 @@ const BEKANNT_SCHLUESSEL: ReadonlySet<string> = new Set(
   [...BEKANNT].map((b) => schluessel(b).replace(/[.!?…]+$/, "")),
 );
 
-/**
- * Zerlegt einen Text in Sätze (Ende an `.`, `!`, `?`, `…` vor Leerraum) und merkt, ob der Satz ganz
- * außerhalb eines Zitats steht. `„…“`, `“…”`, `«…»`, `‚…‘` und `"…"` öffnen bzw. schließen ein Zitat.
- */
-function saetzeMitZitat(text: string): { satz: string; frei: boolean }[] {
-  const aus: { satz: string; frei: boolean }[] = [];
-  let tiefe = 0;
-  for (const satz of normal(text).split(/(?<=[.!?…]["”“»›’‘]?)\s+/)) {
-    if (!satz) continue;
-    let frei = tiefe === 0;
-    for (const z of satz) {
-      if (z === "„" || z === "«" || z === "‹" || z === "‚") tiefe += 1;
-      else if (z === "”" || z === "»" || z === "›" || z === "‘")
-        tiefe = Math.max(0, tiefe - 1);
-      else if (z === "“") tiefe = tiefe > 0 ? tiefe - 1 : tiefe + 1;
-      else if (z === '"') tiefe = tiefe > 0 ? tiefe - 1 : tiefe + 1;
-      else continue;
-      frei = false;
-    }
-    aus.push({ satz, frei });
-  }
-  return aus;
-}
+/** Zitatzeichen jeder Art, auch einfache (für „Wiederholen“: ab dem ersten bleibt alles stehen). */
+const JEDES_ZITATZEICHEN = /["„“”‚‘’«»‹›']/;
 
 /**
  * Entfernt bekannte Überbrückungen aus einem längeren Text (z. B. der in Rust gemerkten Ausgabe für
- * „Wiederholen“): nur eigenständige Sätze außerhalb jedes Zitats, die genau einer Überbrückung
- * entsprechen. Eine zitierte Überbrückung (auch in einem Zitat aus mehreren Sätzen) bleibt Inhalt.
+ * „Wiederholen“): nur eigenständige Sätze, die genau einer Überbrückung entsprechen, und nur vor dem
+ * ersten Zitatzeichen des Textes. Ab dort bleibt alles Inhalt, auch verschachtelte oder ungeschlossene
+ * Zitate; lieber eine Überbrückung zu viel wiederholen als zitierten Inhalt verlieren.
  */
 export function ohneUeberbrueckungen(text: string): string {
-  return saetzeMitZitat(text)
-    .filter(({ satz, frei }) => !(frei && BEKANNT.has(satz)))
-    .map(({ satz }) => satz)
-    .join(" ");
+  const aus: string[] = [];
+  let zitiert = false;
+  for (const satz of normal(text).split(/(?<=[.!?…])\s+/)) {
+    if (!satz) continue;
+    zitiert ||= JEDES_ZITATZEICHEN.test(satz);
+    if (!zitiert && BEKANNT.has(satz)) continue;
+    aus.push(satz);
+  }
+  return aus.join(" ");
 }
 
 /** Adverbien, die aus „ich prüfe …“ eine Ankündigung des Wartens machen. */
@@ -105,6 +98,14 @@ const GLEICH = "(kurz|mal|eben|schnell|rasch)";
 /** Verben des Nachsehens. */
 const NACHSEHEN =
   "(prüfe|schaue|sehe|gucke|suche|lese|checke|kläre|überprüfe|recherchiere)";
+
+/**
+ * Was nach „ich prüfe kurz“ stehen darf: „nach“, ein Gegenstand mit Artikel oder Pronomen, ein Ort mit
+ * Präposition oder „ob …“. Ein anderes Wort („kurz vor dem Schlafengehen“, „mal wieder nichts“) macht
+ * den Satz zur Sachaussage.
+ */
+const WORAUF =
+  "( nach| (das|dies|es|die|der|den|dem|deine|deinen|deinem|deiner|meine|meinen|meinem|meiner|ihre|ihren|unsere|unseren|in|im|bei|ob)( .*)?)";
 
 /**
  * Teile eines Wartesatzes (Vergleichsform, ohne Satzzeichen). Ein Text ist nur dann eine Floskel,
@@ -118,7 +119,7 @@ const WARTETEIL: readonly RegExp[] = [
   /^(eine |nur eine )?sekunde( bitte)?$/,
   /^(ähm|äh|hm+|um+|uh+)$/,
   // „ich prüfe kurz die Angaben“, „ich schaue mal nach“, „ich suche eben in den Mails“
-  new RegExp(`^ich ${NACHSEHEN}( (das|dies|es|nach))? ${GLEICH}( .*)?$`),
+  new RegExp(`^ich ${NACHSEHEN}( (das|dies|es|nach))? ${GLEICH}${WORAUF}?$`),
   // „ich schaue in den Terminen nach“, „ich sehe im Kalender nach“
   /^ich (schaue|sehe|gucke|lese) (in|im|bei) [^ ]+( [^ ]+){0,3} nach$/,
   // „ich suche in den Besprechungen“, „ich lese im Transkript“ (Werkzeug-Ansagen in Varianten)

@@ -575,6 +575,28 @@ test("Wiederholen behält eine Überbrückung in einem Zitat aus mehreren Sätze
   assert.deepEqual(t.player.enqueued, ["wav:Ich wiederhole.", `wav:${zitat}`]);
 });
 
+for (const [name, zitat] of [
+  [
+    "verschachtelt",
+    'Die Ansage lautet: „Er sagt: "Bitte warten. Moment, ich schaue kurz nach. Danke." Ende.“',
+  ],
+  ["ungeschlossen", "Er sagt: „Bitte warten. Moment, ich schaue kurz nach."],
+]) {
+  test(`Wiederholen behält eine Überbrückung in einem Zitat (${name}, R5)`, async () => {
+    const t = neu({
+      assistent_einstufen: () => s0E("wiederholen", "Ich wiederhole."),
+      assistent_letzte_ausgabe: () => zitat,
+      voice_call_chat: chatSagt(ANTWORT),
+    });
+    t.engine.ausgabeKey = { id: "c1" };
+    await t.start("Wiederhole das bitte").done;
+    assert.deepEqual(t.player.enqueued, [
+      "wav:Ich wiederhole.",
+      `wav:${zitat}`,
+    ]);
+  });
+}
+
 test("Wiederholen ohne Ausgabe: feste Vorlage, nichts ans Modell", async () => {
   const t = neu({
     assistent_einstufen: () => s0E("wiederholen", "Ich wiederhole."),
