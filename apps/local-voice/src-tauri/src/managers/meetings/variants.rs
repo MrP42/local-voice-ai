@@ -18,7 +18,7 @@
 //!
 //! Fehlerfaelle und Absicherung:
 //! - **Abbruch mitten im Lauf / Absturz**: die Marke ueberlebt, die alte Fassung
-//!   liegt vollstaendig in der Tabelle; `recover_interrupted` (beim Oeffnen der
+//!   liegt vollstaendig in der Tabelle; `rerun_state::settle` (lva#523; beim Oeffnen der
 //!   Fassungsliste und vor jedem neuen Lauf) stellt sie her. Test:
 //!   `a_crash_during_a_rerun_is_repaired_by_recover`.
 //! - **Zwei Schreiber gleichzeitig**: jede Aenderung in einer IMMEDIATE-Transaktion,
@@ -509,7 +509,7 @@ fn map_variant(conn: &Connection, id: &str) -> Result<TranscriptVariant, Variant
 
 /// Die Fassungen einer Besprechung (nach Nummer), ohne leere. Legt fuer ein
 /// Transkript ohne Fassung die Fassung 1 an (idempotent). Eine unterbrochene
-/// Neu-Transkription stellt der Aufrufer vorher mit `recover_interrupted` her.
+/// Neu-Transkription schliesst der Aufrufer vorher mit `rerun_state::settle` ab.
 pub fn list(
     conn: &mut Connection,
     meeting_id: &str,
@@ -887,13 +887,20 @@ pub fn keep_partial_rerun(
     }
 }
 
+/// lva#523: die Kennung der aktiven Fassung (`None`: keine).
+pub fn active_id(conn: &Connection, meeting_id: &str) -> Result<Option<String>, VariantError> {
+    Ok(active_marker(conn, meeting_id)?.map(|(id, _)| id))
+}
+
 /// lva#523: steht eine begonnene, nicht abgeschlossene Neu-Transkription aus?
 pub fn rerun_pending(conn: &Connection, meeting_id: &str) -> Result<bool, VariantError> {
     Ok(matches!(active_marker(conn, meeting_id)?, Some((_, true))))
 }
 
-/// Eine nicht abgeschlossene Neu-Transkription (Absturz) zuruecknehmen. Darf nur
+/// Eine nicht abgeschlossene Neu-Transkription (Absturz) zuruecknehmen. Produktion:
+/// `rerun_state::settle` (lva#523), das neue Abschnitte eines Laufs behaelt. Darf nur
 /// laufen, wenn kein Auftrag fuer die Besprechung aktiv ist (Aufrufer prueft).
+#[cfg(test)]
 pub fn recover_interrupted(conn: &mut Connection, meeting_id: &str) -> Result<bool, VariantError> {
     abort_rerun(conn, meeting_id)
 }

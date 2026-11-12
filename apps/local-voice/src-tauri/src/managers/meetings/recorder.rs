@@ -116,6 +116,13 @@ pub fn check_can_continue(
     Ok(())
 }
 
+/// lva#523: was mit einem offenen Neu-Lauf vor dem Nachholen geschieht.
+enum RerunResolution {
+    Resume(String),
+    Normal,
+    Done,
+}
+
 /// Die Zeile einer neuen Live-Aufnahme: eine neue Besprechung oder, mit `target`,
 /// ein vorhandener leerer Eintrag (G1, #70), der zur Aufnahme umgewandelt wird.
 /// Ohne Datenbank-Zugriff ausser dem Store: laesst sich ohne App pruefen.
@@ -1223,16 +1230,25 @@ impl MeetingRecorderManager {
                 if !is_orphan_status(&meeting.status) {
                     continue;
                 }
+                // lva#523: Absturz waehrend einer Neu-Transkription: nur nachweislich
+                // neue Abschnitte werden Fassung und fortgesetzt, sonst zurueckgenommen.
+                let partial = match self.resolve_rerun(&meeting.id) {
+                    Ok(RerunResolution::Resume(model)) => Some(model),
+                    Ok(RerunResolution::Normal) => None,
+                    Ok(RerunResolution::Done) => continue,
+                    Err(e) => {
+                        warn!(
+                            "meetings: interrupted rerun not settled ({}): {e}",
+                            meeting.id
+                        );
+                        let _ = self.store.set_status(&meeting.id, MeetingStatus::Failed);
+                        continue;
+                    }
+                };
                 // WAV-Header reparieren, echte Dauer, Status `processing`.
                 if let Err(e) = final_pass::prepare_orphan(&self.store, &meeting) {
                     warn!("meetings: orphan status not stored: {e}");
                     continue;
-                }
-                let partial = self.partial_rerun_model(&meeting.id);
-                if partial.is_some() {
-                    // lva#523: Absturz mitten in der Neu-Transkription: das bis dahin
-                    // neu Transkribierte wird Fassung, statt spaeter verworfen zu werden.
-                    self.keep_interrupted_rerun(&meeting.id);
                 }
                 let plan = if partial.is_some() {
                     FinalPlan::Keep(KeepReason::PartialRerun)
@@ -1282,9 +1298,13 @@ impl MeetingRecorderManager {
             &|p| std::path::Path::new(p).exists(),
         )?;
         let settings = crate::settings::get_settings(&self.app);
-        // lva#523: ein gestoppter Neu-Lauf wird mit SEINEM Modell ergaenzt, ohne
-        // Enddurchlauf (der wuerde die ganze Aufnahme noch einmal rechnen).
-        let partial = self.partial_rerun_model(meeting_id);
+        // lva#523: ein gestoppter Neu-Lauf wird mit SEINEM Modell und SEINER Fassung
+        // ergaenzt, ohne Enddurchlauf (der wuerde die ganze Aufnahme noch einmal rechnen).
+        let partial = match self.resolve_rerun(meeting_id)? {
+            RerunResolution::Resume(model) => Some(model),
+            RerunResolution::Normal => None,
+            RerunResolution::Done => return Ok(()),
+        };
         let catch_up_model = partial
             .clone()
             .unwrap_or_else(|| self.transcription.meeting_model_target(&settings));
@@ -1312,32 +1332,43 @@ impl MeetingRecorderManager {
         Ok(())
     }
 
-    /// lva#523: eine nach Absturz noch offene Neu-Transkription als Fassung behalten.
-    fn keep_interrupted_rerun(&self, meeting_id: &str) {
-        let meta = self.store.metadata_json(meeting_id).ok().flatten();
-        let kind = super::retranscribe::partial_rerun_kind(meta.as_ref());
-        let kept = self
-            .store
-            .get_connection()
-            .map_err(|e| e.to_string())
-            .and_then(|mut conn| {
-                if !super::variants::rerun_pending(&conn, meeting_id)
-                    .map_err(|e| e.code().to_string())?
-                {
-                    return Ok(None);
-                }
-                super::variants::keep_partial_rerun(&mut conn, meeting_id, kind, None)
-                    .map_err(|e| e.code().to_string())
-            });
-        if let Err(e) = kept {
-            warn!("meetings: interrupted rerun not kept ({meeting_id}): {e}");
+    /// lva#523: offenen Neu-Lauf abschliessen. `Resume`: das Teilergebnis ist (wieder)
+    /// die aktive Fassung, mit diesem Modell fortsetzen. `Done`: zurueckgenommen oder
+    /// schon fertig, der Status ist gesetzt, nichts weiter zu tun.
+    fn resolve_rerun(&self, meeting_id: &str) -> Result<RerunResolution, String> {
+        use super::rerun_state::{self, Settled};
+        match rerun_state::settle(&self.store, meeting_id, false)? {
+            Settled::Kept(Some(_)) => match rerun_state::prepare_resume(&self.store, meeting_id)? {
+                Some(model) => Ok(RerunResolution::Resume(model)),
+                None => Ok(RerunResolution::Normal),
+            },
+            Settled::Kept(None) | Settled::Nothing => Ok(RerunResolution::Normal),
+            Settled::RolledBack(prev) => {
+                self.finish_without_job(meeting_id, prev.unwrap_or(MeetingStatus::Ready))
+            }
+            Settled::Finished => self.finish_without_job(meeting_id, MeetingStatus::Ready),
         }
     }
 
-    /// lva#523: Modell eines gestoppten Neu-Laufs, dessen Teilergebnis noch offen ist.
-    fn partial_rerun_model(&self, meeting_id: &str) -> Option<String> {
-        let meta = self.store.metadata_json(meeting_id).ok().flatten();
-        super::retranscribe::partial_rerun_model(meta.as_ref())
+    fn finish_without_job(
+        &self,
+        meeting_id: &str,
+        status: MeetingStatus,
+    ) -> Result<RerunResolution, String> {
+        self.store
+            .set_status(meeting_id, status)
+            .map_err(|e| format!("status_restore_failed: {e}"))?;
+        let _ = (MeetingEvent::Reset {
+            meeting_id: meeting_id.to_string(),
+        })
+        .emit(&self.app);
+        let name = match status {
+            MeetingStatus::Failed => "failed",
+            MeetingStatus::Cancelled => "cancelled",
+            _ => "ready",
+        };
+        self.emit_state(meeting_id, name, false);
+        Ok(RerunResolution::Done)
     }
 
     /// Spec A1: while a meeting records, the machine must show it — tray icon

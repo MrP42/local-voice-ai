@@ -353,8 +353,10 @@ pub trait FinalEnv {
     /// Eine neue Aufnahme will die Engine: zwischen zwei Segmenten aufhoeren.
     fn cancelled(&self) -> bool;
     /// P8a: der Auftrag zu `meeting_id` beginnt (Fortschritt, Pause, Stopp).
-    /// Standard: nichts (Attrappen ohne Oberflaeche).
-    fn job_begin(&mut self, _meeting_id: &str) {}
+    /// `false`: ein anderer Auftrag laeuft schon. Standard: `true` (Attrappen).
+    fn job_begin(&mut self, _meeting_id: &str) -> bool {
+        true
+    }
     /// P8a: der Auftrag ist zu Ende (auch nach einem Fehler oder Stopp).
     fn job_end(&mut self) {}
     /// P8a: eine neue Phase mit ihrer Groesse in ms Audio (0 = unbekannt).
@@ -704,6 +706,9 @@ enum CatchUp {
     /// Der Nutzer hat gestoppt: kein Luecken-Platzhalter, der Rest bleibt
     /// offen und wird beim Fortsetzen nachgeholt.
     Stopped,
+    /// lva#523 (nur `strict`): Lesen, Laden oder Transkribieren scheiterte. Kein
+    /// Platzhalter: der Rest bleibt offen und laesst sich erneut nachholen.
+    Failed,
 }
 
 /// Nachholen nach einem Absturz: je Kanal alles ab dem groessten `end_ms`
@@ -712,18 +717,27 @@ enum CatchUp {
 /// oder bricht eine neue Aufnahme ab, markiert ein Luecken-Platzhalter den
 /// Rest, damit nichts stumm fehlt. Der Nutzer kann stoppen (P8a): dann bleibt
 /// alles bis dahin Gespeicherte, und es entsteht KEIN Platzhalter.
+///
+/// lva#523 `strict` (Fortsetzen einer Neu-Transkription): jeder Rest ab dem letzten
+/// Abschnitt wird verarbeitet (keine Mindestlaenge), und jeder Fehler endet als
+/// `Failed` OHNE Platzhalter, damit nichts als erledigt gilt, was nicht transkribiert ist.
 fn catch_up(
     store: &MeetingStore,
     meeting: &Meeting,
     model_id: &str,
     env: &mut dyn FinalEnv,
     report: &mut FinalReport,
+    strict: bool,
 ) -> CatchUp {
     let segments = match store.get_segments(&meeting.id) {
         Ok(s) => s,
         Err(e) => {
             warn!("meetings: catch-up could not read the transcript: {e}");
-            return CatchUp::Finished;
+            return if strict {
+                CatchUp::Failed
+            } else {
+                CatchUp::Finished
+            };
         }
     };
     let mut next_index = segments
@@ -735,6 +749,24 @@ fn catch_up(
     let stats = DspStats::default();
     let mut loaded = false;
 
+    // lva#523: strict braucht jede Spur der Besprechung lesbar, sonst fehlte ein Kanal still.
+    if strict {
+        let expected = [&meeting.mic_audio_path, &meeting.system_audio_path]
+            .into_iter()
+            .flatten()
+            .count();
+        let readable = catch_up_tracks(meeting)
+            .iter()
+            .filter(|t| wav_duration_ms(&t.path).is_some())
+            .count();
+        if readable != expected {
+            warn!(
+                "meetings: catch-up track missing or unreadable ({})",
+                meeting.id
+            );
+            return CatchUp::Failed;
+        }
+    }
     // P8a: was nachzuholen ist (Spur, Beginn, Ende), fuer den Fortschritt.
     let todo: Vec<(Track, u64, u64)> = catch_up_tracks(meeting)
         .into_iter()
@@ -746,8 +778,10 @@ fn catch_up(
                 .max()
                 .unwrap_or(0);
             let total_ms = wav_duration_ms(&track.path)?;
-            // Weniger als eine halbe Sekunde Rest: nichts, was ein Wort traegt.
-            (from_ms + 500 < total_ms).then_some((track, from_ms, total_ms))
+            // Weniger als eine halbe Sekunde Rest: nichts, was ein Wort traegt
+            // (strict: jeder Rest).
+            let min_rest = if strict { 0 } else { 500 };
+            (from_ms + min_rest < total_ms).then_some((track, from_ms, total_ms))
         })
         .collect();
     let todo_total: u64 = todo.iter().map(|(_, from, total)| total - from).sum();
@@ -828,6 +862,10 @@ fn catch_up(
             if stopped_by_user {
                 return CatchUp::Stopped;
             }
+        }
+        if strict {
+            // Kein Platzhalter: der Rest bleibt offen fuer den naechsten Versuch.
+            return CatchUp::Failed;
         }
         // Rest als Luecke markieren (Muster `import.rs`).
         let gap = StoredSegment {
@@ -1192,25 +1230,42 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
     let started = Instant::now();
     let mut report = FinalReport::default();
     // P8a: der Auftrag (Fortschritt, Pause, Stopp) gilt fuer den ganzen Ablauf.
-    env.job_begin(&job.meeting_id);
+    let controlled = env.job_begin(&job.meeting_id);
+    if !controlled && job.plan == FinalPlan::Keep(KeepReason::PartialRerun) {
+        // lva#523: ein anderer Auftrag besitzt die Besprechung; nichts anfassen.
+        warn!(
+            "meetings: partial rerun not continued, job busy ({})",
+            job.meeting_id
+        );
+        return JobOutcome {
+            report,
+            epoch: store.segment_epoch(&job.meeting_id).unwrap_or(0),
+            model: None,
+        };
+    }
     let mut stopped_in_catch_up = false;
+    let mut failed_in_catch_up = false;
+    let strict = job.plan == FinalPlan::Keep(KeepReason::PartialRerun);
     let result = catch_unwind(AssertUnwindSafe(|| {
         let meeting = match store.get_meeting(&job.meeting_id) {
             Ok(Some(m)) if m.deleted_at.is_none() => m,
             _ => return Err(KeepReason::StoreFailed),
         };
         if let Some(model) = &job.catch_up_model {
-            if catch_up(store, &meeting, model, env, &mut report) == CatchUp::Stopped {
-                stopped_in_catch_up = true;
-                return Err(KeepReason::UserStopped);
+            match catch_up(store, &meeting, model, env, &mut report, strict) {
+                CatchUp::Stopped => {
+                    stopped_in_catch_up = true;
+                    return Err(KeepReason::UserStopped);
+                }
+                CatchUp::Failed => {
+                    failed_in_catch_up = true;
+                    return Err(KeepReason::TranscribeFailed);
+                }
+                CatchUp::Finished => {}
             }
             // lva#523: das Teilergebnis einer Neu-Transkription ist jetzt vollstaendig.
-            if job.plan == FinalPlan::Keep(KeepReason::PartialRerun) {
-                if let Err(e) = store.set_metadata_key(
-                    &job.meeting_id,
-                    super::retranscribe::PARTIAL_RERUN_KEY,
-                    serde_json::Value::Null,
-                ) {
+            if strict {
+                if let Err(e) = super::rerun_state::clear(store, &job.meeting_id) {
                     warn!("meetings: partial marker not cleared: {e}");
                 }
             }
@@ -1258,6 +1313,15 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
     }
 
     if stopped_in_catch_up {
+        return finish_stopped(store, job, env, report);
+    }
+    if failed_in_catch_up || (strict && matches!(result, Err(KeepReason::Panic))) {
+        // lva#523: Nachholen unvollstaendig: abgebrochen wie ein Stopp (fortsetzbar),
+        // die Marke bleibt, dazu eine Fehlermeldung.
+        env.emit(MeetingEvent::Error {
+            meeting_id: job.meeting_id.clone(),
+            message: "retranscribe_failed".to_string(),
+        });
         return finish_stopped(store, job, env, report);
     }
 
@@ -1806,15 +1870,20 @@ impl FinalEnv for AppEnv {
         self.cancel.load(Ordering::Relaxed)
     }
 
-    fn job_begin(&mut self, meeting_id: &str) {
+    fn job_begin(&mut self, meeting_id: &str) -> bool {
         match job::global().try_start(meeting_id, job::app_emit(&self.app)) {
             Ok(guard) => {
                 self.diarizer.attach_job(Arc::clone(guard.handle()));
                 self.job = Some(guard);
+                true
             }
             // Laeuft schon ein Auftrag fuer die Besprechung, arbeitet dieser
-            // hier ohne Steuerung weiter: jede Besprechung muss ein Ende finden.
-            Err(e) => warn!("meetings: no job control for {meeting_id} ({e})"),
+            // hier ohne Steuerung weiter: jede Besprechung muss ein Ende finden
+            // (ausser beim Fortsetzen einer Neu-Transkription, `run_job`).
+            Err(e) => {
+                warn!("meetings: no job control for {meeting_id} ({e})");
+                false
+            }
         }
     }
 
@@ -2140,6 +2209,8 @@ mod tests {
         diar: Option<FakeDiar>,
         /// P8a: der Nutzer stoppt nach so vielen Bloecken (0 = sofort).
         user_stop_after: Option<usize>,
+        /// lva#523: ein anderer Auftrag besitzt die Besprechung.
+        job_busy: bool,
         phases: Vec<(JobPhase, u64)>,
         progress_log: Vec<u64>,
         /// `job_begin` / `job_end` in der Reihenfolge des Aufrufs.
@@ -2162,6 +2233,7 @@ mod tests {
                 log: Rc::new(RefCell::new(Vec::new())),
                 diar: None,
                 user_stop_after: None,
+                job_busy: false,
                 phases: Vec::new(),
                 progress_log: Vec::new(),
                 job_log: Vec::new(),
@@ -2276,8 +2348,9 @@ mod tests {
         fn cancelled(&self) -> bool {
             self.cancel_after.is_some_and(|n| self.calls >= n)
         }
-        fn job_begin(&mut self, _meeting_id: &str) {
+        fn job_begin(&mut self, _meeting_id: &str) -> bool {
             self.job_log.push("job_begin".into());
+            !self.job_busy
         }
         fn job_end(&mut self) {
             self.job_log.push("job_end".into());
@@ -2375,6 +2448,138 @@ mod tests {
             plan,
             live_model: Some("live-model".into()),
         }
+    }
+
+    // -- lva#523: Fortsetzen einer gestoppten Neu-Transkription (strict) --------
+
+    fn partial_job(f: &Fixture) -> JobSpec {
+        super::super::rerun_state::write(
+            &f.store,
+            &f.id,
+            serde_json::json!({ "phase": "kept", "model": "rerun-model", "variant_id": "v" }),
+        )
+        .unwrap();
+        let mut spec = job(f, FinalPlan::Keep(KeepReason::PartialRerun));
+        spec.catch_up_model = Some("rerun-model".into());
+        spec
+    }
+
+    fn marker(f: &Fixture) -> serde_json::Value {
+        f.store
+            .metadata_json(&f.id)
+            .unwrap()
+            .and_then(|m| m.get("partial_rerun").cloned())
+            .unwrap_or(serde_json::Value::Null)
+    }
+
+    #[test]
+    fn resuming_a_partial_rerun_finishes_with_its_model_and_clears_the_marker() {
+        let f = fixture(true, MeetingStatus::Processing);
+        let mut env = FakeEnv::new();
+        let out = run_job(&f.store, &partial_job(&f), &mut env);
+        assert_eq!(out.report.kept, Some(KeepReason::PartialRerun));
+        assert_eq!(env.loads, vec!["rerun-model".to_string()]);
+        assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
+        assert!(marker(&f).is_null(), "vollstaendig: Marke weg");
+        assert!(f
+            .store
+            .get_segments(&f.id)
+            .unwrap()
+            .iter()
+            .all(|s| !s.text.starts_with("[Nicht transkribiert")));
+    }
+
+    #[test]
+    fn a_failing_resume_leaves_no_gap_marker_keeps_the_marker_and_ends_cancelled() {
+        let f = fixture(true, MeetingStatus::Processing);
+        let before = f.store.get_segments(&f.id).unwrap().len();
+        let mut env = FakeEnv::new();
+        env.fail_transcribe = true;
+        run_job(&f.store, &partial_job(&f), &mut env);
+        let segs = f.store.get_segments(&f.id).unwrap();
+        assert_eq!(
+            segs.len(),
+            before,
+            "kein Platzhalter, der Rest bleibt offen"
+        );
+        assert_eq!(
+            f.store.get_meeting(&f.id).unwrap().unwrap().status,
+            "cancelled"
+        );
+        assert_eq!(marker(&f)["phase"], "kept", "erneut fortsetzbar");
+        assert!(env.kinds().contains(&"error"));
+        // Ein zweiter Versuch ohne Fehler holt alles nach.
+        f.store
+            .set_status(&f.id, MeetingStatus::Processing)
+            .unwrap();
+        let mut env = FakeEnv::new();
+        run_job(&f.store, &partial_job(&f), &mut env);
+        assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
+        assert!(marker(&f).is_null());
+    }
+
+    #[test]
+    fn a_resume_also_processes_a_rest_shorter_than_half_a_second() {
+        let f = fixture(true, MeetingStatus::Processing);
+        f.store
+            .append_delta(
+                &f.id,
+                &TranscriptDelta {
+                    new_segments: vec![seg(2, 0, 2_500, 5_800), seg(3, 1, 2_400, 5_800)],
+                },
+            )
+            .unwrap();
+        let mut env = FakeEnv::new();
+        run_job(&f.store, &partial_job(&f), &mut env);
+        assert_eq!(env.phases.first(), Some(&(JobPhase::Transcription, 400)));
+        // Ohne strict bleibt es beim bisherigen Verhalten (Rest < 0,5 s entfaellt).
+        let g = fixture(true, MeetingStatus::Processing);
+        g.store
+            .append_delta(
+                &g.id,
+                &TranscriptDelta {
+                    new_segments: vec![seg(2, 0, 2_500, 5_800), seg(3, 1, 2_400, 5_800)],
+                },
+            )
+            .unwrap();
+        let mut spec = job(&g, FinalPlan::Keep(KeepReason::NotLive));
+        spec.catch_up_model = Some("meeting-model".into());
+        let mut env = FakeEnv::new();
+        run_job(&g.store, &spec, &mut env);
+        assert!(env
+            .phases
+            .iter()
+            .all(|(p, _)| *p != JobPhase::Transcription));
+    }
+
+    #[test]
+    fn a_resume_with_a_missing_track_fails_instead_of_finishing_one_channel() {
+        let f = fixture(true, MeetingStatus::Processing);
+        std::fs::remove_file(f.meeting_dir.join("system.wav")).unwrap();
+        let mut env = FakeEnv::new();
+        run_job(&f.store, &partial_job(&f), &mut env);
+        assert_eq!(
+            f.store.get_meeting(&f.id).unwrap().unwrap().status,
+            "cancelled"
+        );
+        assert_eq!(marker(&f)["phase"], "kept");
+        assert!(env.loads.is_empty());
+    }
+
+    #[test]
+    fn a_resume_never_touches_a_meeting_whose_job_is_taken() {
+        let f = fixture(true, MeetingStatus::Processing);
+        let before = f.store.get_segments(&f.id).unwrap().len();
+        let mut env = FakeEnv::new();
+        env.job_busy = true;
+        run_job(&f.store, &partial_job(&f), &mut env);
+        assert!(env.loads.is_empty());
+        assert_eq!(f.store.get_segments(&f.id).unwrap().len(), before);
+        assert_eq!(
+            f.store.get_meeting(&f.id).unwrap().unwrap().status,
+            "processing"
+        );
+        assert_eq!(marker(&f)["phase"], "kept");
     }
 
     #[test]

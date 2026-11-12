@@ -29,12 +29,21 @@ pub async fn transcript_variants(
     store: State<'_, Arc<MeetingStore>>,
     meeting_id: String,
 ) -> Result<Vec<TranscriptVariant>, String> {
-    let mut conn = store.get_connection().map_err(|e| e.to_string())?;
-    if !job::global().is_running(&meeting_id) {
-        // Nur wenn der Status nicht mehr `processing` ist: dann gehoert die Arbeitskopie
-        // in `transcripts` keinem Lauf mehr.
-        let _ = variants::recover_interrupted(&mut conn, &meeting_id);
+    let idle = !job::global().is_running(&meeting_id)
+        && store
+            .get_meeting(&meeting_id)
+            .ok()
+            .flatten()
+            .is_some_and(|m| !matches!(m.status.as_str(), "recording" | "processing" | "queued"));
+    if idle {
+        // lva#523: ein offener Neu-Lauf wird abgeschlossen (neue Abschnitte dieses
+        // Laufs bleiben Fassung, sonst zurueck). Waehrend `processing` gehoert die
+        // Arbeitskopie noch einem Lauf oder der Wiederherstellung beim Start.
+        if let Err(e) = crate::managers::meetings::rerun_state::settle(&store, &meeting_id, false) {
+            log::warn!("meetings: rerun not settled ({meeting_id}): {e}");
+        }
     }
+    let mut conn = store.get_connection().map_err(|e| e.to_string())?;
     variants::list(&mut conn, &meeting_id).map_err(variant_error)
 }
 
