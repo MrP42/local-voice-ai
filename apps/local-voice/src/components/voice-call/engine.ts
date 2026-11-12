@@ -142,7 +142,8 @@ interface VoiceCallEvent {
 }
 
 /** Ereignis der Denk-Anzeige; Ansagen und Überbrückungen landen hier statt in Chat und Stimme. */
-export type DenkEreignis = { art: "start" } | { art: "schritt"; text: string };
+export type DenkEreignis =
+  { art: "start"; turnId: string } | { art: "schritt"; text: string };
 
 export interface CallCallbacks {
   onState(state: CallState): void;
@@ -1467,7 +1468,7 @@ export class VoiceCallEngine {
       await this.ensureListener();
       if (stale()) return;
       this.cb.onUser(shown, id);
-      this.cb.onDenken?.({ art: "start" });
+      this.cb.onDenken?.({ art: "start", turnId: id });
       const marken: Marken = { start: performance.now() };
       // Was das Modell geliefert hat (ohne Vorlagen): Verlauf und „nichts geantwortet“.
       let modelPartial = "";
@@ -1523,8 +1524,11 @@ export class VoiceCallEngine {
       let projektStopp = false;
       const onModel = (s: string) => {
         if (stale() || timedOut) return;
-        // Überbrückungen (Orchestrator, Werkzeug, Buch-Seite) nur in der Denk-Anzeige.
-        if (istUeberbrueckung(s)) {
+        // Überbrückungen kommen nur aus `side` (Orchestrator, Werkzeug, Buch-Seite): nur in der
+        // Denk-Anzeige; sie halten die Frist an wie bisher. Auf dem Tor-Weg (auch im Projekt) wird
+        // nichts gefiltert: Die Anzeige muss dem freigegebenen Text gleichen.
+        if (side && istUeberbrueckung(s)) {
+          frist.stop();
           this.cb.onDenken?.({ art: "schritt", text: s.trim() });
           return;
         }
@@ -1681,7 +1685,7 @@ export class VoiceCallEngine {
     const dead = () => turn.cancelled || this.turn !== turn;
     turn.userText = display ?? text;
     this.cb.onUser(turn.userText, turn.id);
-    this.cb.onDenken?.({ art: "start" });
+    this.cb.onDenken?.({ art: "start", turnId: turn.id });
 
     const tChat = performance.now();
     let firstSentenceAt = 0;
@@ -1887,8 +1891,11 @@ export class VoiceCallEngine {
     let projektStopp = false;
     const onModel = (s: string) => {
       if (dead() || timedOut) return;
-      // Überbrückungen (Orchestrator, Werkzeug, Buch-Seite) nur in der Denk-Anzeige.
-      if (istUeberbrueckung(s)) {
+      // Überbrückungen kommen nur aus `side` (Orchestrator, Werkzeug, Buch-Seite): nur in der
+      // Denk-Anzeige; sie halten die Frist an wie bisher. Auf dem Tor-Weg (auch im Projekt) wird
+      // nichts gefiltert: Die Anzeige muss dem freigegebenen Text gleichen.
+      if (side && istUeberbrueckung(s)) {
+        frist.stop();
         this.cb.onDenken?.({ art: "schritt", text: s.trim() });
         return;
       }

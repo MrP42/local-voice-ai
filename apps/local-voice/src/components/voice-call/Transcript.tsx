@@ -226,7 +226,9 @@ export const Transcript: React.FC<{
         ? t([`voiceCall.tool.${toolStatus}`, "voiceCall.tool.generic"], {
             name: toolStatus,
           })
-        : null}
+        : denken
+          ? t("voiceCall.denken.laeuft")
+          : null}
     </div>
   );
   const noticeBox = notice ? (

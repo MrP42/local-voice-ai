@@ -313,6 +313,38 @@ test("Textmodus: Ansage und Überbrückung nur in der Denk-Anzeige, nie im Chat"
   ]);
 });
 
+test("Überbrückung hält die Frist an: Inhalt nach Fristablauf wird noch gesprochen", async () => {
+  const alt = TUNING.modelFristMs;
+  TUNING.modelFristMs = 30;
+  try {
+    const spaet = {
+      chat: async (_id, _msgs, onPiece) => {
+        onPiece(BRUECKE);
+        await settle(80);
+        onPiece(ANTWORT);
+        return `${BRUECKE} ${ANTWORT}`;
+      },
+      cancel: async () => undefined,
+    };
+    const t = neu({}, { seiteMit: spaet });
+    await t.start("Was steht im Kalender?").done;
+    assert.deepEqual(t.player.enqueued, [`wav:${ANTWORT}`]);
+    assert.deepEqual(verlauf(t), [
+      "user:Was steht im Kalender?",
+      `assistant:${ANTWORT}`,
+    ]);
+  } finally {
+    TUNING.modelFristMs = alt;
+  }
+});
+
+test("Tor-Weg filtert nichts: ein freigegebener Satz gleich einer Überbrückung bleibt", async () => {
+  const t = neu({ voice_call_chat: chatSagt(BRUECKE, ANTWORT) });
+  await t.start("Was steht im Kalender?").done;
+  assert.deepEqual(t.player.enqueued, [`wav:${BRUECKE}`, `wav:${ANTWORT}`]);
+  assert.deepEqual(t.log.denken, ["start"]);
+});
+
 // -- MUSS 1: Einstufung gescheitert, S0 ----------------------------------------
 
 test("Einstufung gescheitert: feste Meldung, das Modell wird nicht gefragt", async () => {

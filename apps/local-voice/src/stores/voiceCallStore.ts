@@ -144,6 +144,8 @@ export type DenkSchritt =
 
 /** Denkprozess einer Antwort (nur Anzeige: nie gesprochen, nie gespeichert, nie an ein Modell). */
 export interface Denkprozess {
+  /** Äußerung, zu der der Prozess gehört; Schritte eines anderen Schritts werden verworfen. */
+  turnId?: string;
   /** Beginn (ms seit Epoche). */
   seit: number;
   /** Dauer bis zur ersten Antwort (ms); fehlt, solange gedacht wird. */
@@ -628,7 +630,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
             };
             return { lines };
           }),
-        onError: (error) => set({ error }),
+        onError: (error) => set({ error, denken: null }),
         projekt: (): ProjektBindung | null => {
           const id = get().projectId;
           return id ? { id, stand: get().projektStand } : null;
@@ -660,7 +662,9 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
         },
         onDenken: (e) => {
           if (e.art === "start") {
-            set({ denken: { seit: Date.now(), schritte: [] } });
+            set({
+              denken: { turnId: e.turnId, seit: Date.now(), schritte: [] },
+            });
             return;
           }
           set((s) =>
@@ -669,9 +673,9 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
               : {},
           );
         },
-        onContextTiming: (_turnId, _retrieveMs, _promptMs, hits) =>
+        onContextTiming: (turnId, _retrieveMs, _promptMs, hits) =>
           set((s) =>
-            s.denken && hits > 0
+            s.denken && s.denken.turnId === turnId && hits > 0
               ? {
                   denken: denkSchritt(s.denken, {
                     art: "kontext",
@@ -993,7 +997,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
         typedNext = false;
         attachmentsNext = undefined;
         // Eine abgebrochene, ältere Anfrage darf die neue nicht „fertig“ melden.
-        if (run === textRun) set({ textBusy: false });
+        if (run === textRun) set({ textBusy: false, denken: null });
       }
     },
 
