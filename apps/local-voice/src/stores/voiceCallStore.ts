@@ -139,6 +139,7 @@ export interface VoiceLine {
  */
 export type DenkSchritt =
   | { art: "text"; text: string }
+  | { art: "sofort"; modell: string }
   | { art: "werkzeug"; name: string }
   | { art: "kontext"; treffer: number };
 
@@ -150,6 +151,10 @@ export interface Denkprozess {
   seit: number;
   /** Dauer bis zur ersten Antwort (ms); fehlt, solange gedacht wird. */
   ms?: number;
+  /** Der nächste Text ist der Sofort-Sprecher, der weiterspricht: die Anzeige endet damit nicht. */
+  zwischen?: boolean;
+  /** Der Sofort-Sprecher hat weitergesprochen; die Anzeige läuft unter seiner Zeile, bis der Denker liefert. */
+  weiter?: boolean;
   schritte: DenkSchritt[];
 }
 
@@ -548,11 +553,19 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
             enqueueUpdate(last.id, text);
             return;
           }
-          // Mit dem ersten Text endet die Denk-Anzeige; der Denkprozess hängt an der Antwort.
+          // Mit dem ersten Text endet die Denk-Anzeige; der Denkprozess hängt an der Antwort. Spricht
+          // der Sofort-Sprecher nur weiter, läuft sie unter seiner Zeile weiter, bis der Denker liefert.
           const live = get().denken;
+          if (live?.zwischen && !final && text.trim())
+            set({ denken: { ...live, zwischen: false, weiter: true } });
           const denken =
-            live && (text.trim() || final)
-              ? { ...live, ms: Date.now() - live.seit }
+            live && !(live.zwischen && !final) && (text.trim() || final)
+              ? {
+                  ...live,
+                  zwischen: false,
+                  weiter: false,
+                  ms: Date.now() - live.seit,
+                }
               : undefined;
           if (denken) set({ denken: null });
           set((s) => {
@@ -667,10 +680,18 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
             });
             return;
           }
+          if (e.art === "zwischen") {
+            set((s) =>
+              s.denken ? { denken: { ...s.denken, zwischen: true } } : {},
+            );
+            return;
+          }
+          const schritt: DenkSchritt =
+            e.art === "sofort"
+              ? { art: "sofort", modell: e.modell }
+              : { art: "text", text: e.text };
           set((s) =>
-            s.denken
-              ? { denken: denkSchritt(s.denken, { art: "text", text: e.text }) }
-              : {},
+            s.denken ? { denken: denkSchritt(s.denken, schritt) } : {},
           );
         },
         onContextTiming: (turnId, _retrieveMs, _promptMs, hits) =>

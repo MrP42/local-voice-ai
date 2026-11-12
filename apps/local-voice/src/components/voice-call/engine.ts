@@ -67,6 +67,16 @@ import {
 import i18n from "@/i18n";
 import { istUeberbrueckung } from "./ueberbrueckung";
 import {
+  liesSofort,
+  sofortPrompt,
+  SOFORT_MAX_MS,
+  SOFORT_VERLAUF,
+  wendeAn,
+  type SofortEntscheid,
+  type SofortZustand,
+} from "./sofort";
+import type { ModelMessage, VoiceModel } from "@/vendor/wai-voice/model.ts";
+import {
   darfZusammenfuehren,
   entscheide,
   fuegeZusammen,
@@ -143,7 +153,25 @@ interface VoiceCallEvent {
 
 /** Ereignis der Denk-Anzeige; Ansagen und Überbrückungen landen hier statt in Chat und Stimme. */
 export type DenkEreignis =
-  { art: "start"; turnId: string } | { art: "schritt"; text: string };
+  | { art: "start"; turnId: string }
+  | { art: "schritt"; text: string }
+  /** Der Sofort-Sprecher (lokales Modell) wurde gefragt. */
+  | { art: "sofort"; modell: string }
+  /** Der nächste Text ist der Sofort-Sprecher, der weiterspricht: die Anzeige läuft danach weiter. */
+  | { art: "zwischen" };
+
+/** Laufender Sofort-Sprecher eines Schritts (`sofort.ts`). */
+interface SofortLauf {
+  zustand(): SofortZustand;
+  /** Erster Inhalt des Denkers: wartet der Sprecher noch, verliert er. */
+  denkerKommt(): void;
+  /** Abbrechen ohne Entscheidung (Schritt verworfen). */
+  stop(): void;
+  /** Erfüllt sich (mit leerem Text), wenn der Sprecher allein geantwortet hat: niemand wartet auf den Denker. */
+  gewonnen: Promise<string>;
+  /** Der Sprecher hat etwas gesagt (Antwort oder Weitersprechen). */
+  gesprochen(): boolean;
+}
 
 export interface CallCallbacks {
   onState(state: CallState): void;
@@ -237,6 +265,8 @@ interface Turn {
   finishStream?: () => void;
   /** Orchestrator dieses Schritts (nur wenn Denker oder Werkzeuge aktiv sind). */
   side?: ChatSide;
+  /** Bricht einen noch wartenden Sofort-Sprecher ab. */
+  sofortStop?: () => void;
   /** Der Schritt antwortet mit App-Kontext (Widerruf beendet ihn). */
   withContext?: boolean;
   /**
@@ -386,6 +416,8 @@ export class VoiceCallEngine {
     partial: string;
     side?: ChatSide;
     withContext?: boolean;
+    /** Bricht einen noch wartenden Sofort-Sprecher ab. */
+    sofortStop?: () => void;
   } | null = null;
   /** Zählt Neustarts des Gesprächs: späte Antworten alter Anfragen werden verworfen. */
   private generation = 0;
@@ -638,6 +670,7 @@ export class VoiceCallEngine {
     if (!run) return;
     this.textRun = null;
     this.sentenceHandlers.delete(run.id);
+    run.sofortStop?.();
     void run.side?.cancel?.(run.id);
     void invoke("voice_call_cancel", { requestId: run.id }).catch(
       () => undefined,
@@ -1418,6 +1451,101 @@ export class VoiceCallEngine {
   }
 
   /**
+   * Startet den Sofort-Sprecher (lokal, nur Verlauf und Frage). Er entscheidet höchstens einmal:
+   * vollständige Antwort (der Denker wird abgebrochen) oder kurz weitersprechen (der Denker folgt).
+   * Ohne Modell, im Projekt oder bei gesperrtem Gespräch läuft nichts, und der Denker gilt allein.
+   */
+  private sofortStarten(o: {
+    model: VoiceModel | null | undefined;
+    text: string;
+    id: string;
+    datenAbsicht: boolean;
+    tot: () => boolean;
+    sagen: (text: string, weiter: boolean) => void;
+    denkerAbbrechen: () => void;
+  }): SofortLauf {
+    let siegen: (t: string) => void = () => undefined;
+    const gewonnen = new Promise<string>((r) => (siegen = r));
+    let gesprochen = false;
+    let zustand: SofortZustand =
+      o.model && !this.projekt() ? "wartet" : "denker";
+    const nichts: SofortLauf = {
+      zustand: () => zustand,
+      denkerKommt: () => undefined,
+      stop: () => undefined,
+      gewonnen,
+      gesprochen: () => false,
+    };
+    if (!o.model || zustand !== "wartet") return nichts;
+    const model = o.model;
+    const ctl = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const beenden = () => {
+      clearTimeout(timer);
+      if (!ctl.signal.aborted) ctl.abort();
+    };
+    const entscheide = (e: SofortEntscheid) => {
+      if (zustand !== "wartet") return;
+      beenden();
+      if (o.tot()) {
+        zustand = "denker";
+        return;
+      }
+      const r = wendeAn(zustand, e, o.datenAbsicht);
+      zustand = r.zustand;
+      if (r.sagen) {
+        gesprochen = true;
+        o.sagen(r.sagen, r.zustand === "denker");
+      }
+      if (r.denkerAbbrechen) {
+        o.denkerAbbrechen();
+        siegen("");
+      }
+    };
+    timer = setTimeout(() => entscheide({ art: "nichts" }), SOFORT_MAX_MS);
+    this.cb.onDenken?.({ art: "sofort", modell: model.label });
+    const messages: ModelMessage[] = [
+      { role: "system", content: sofortPrompt(aktuelleSprache()) },
+      ...this.plainHistory(false)
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .slice(-SOFORT_VERLAUF)
+        .map((m) => ({
+          role: m.role as "user" | "assistant",
+          content: m.content,
+        })),
+      { role: "user", content: o.text },
+    ];
+    void model
+      .turn({
+        requestId: `${o.id}:sofort`,
+        messages,
+        signal: ctl.signal,
+        onText: () => undefined,
+      })
+      .then(
+        (r) =>
+          entscheide(
+            ctl.signal.aborted ? { art: "nichts" } : liesSofort(r.text),
+          ),
+        () => entscheide({ art: "nichts" }),
+      );
+    return {
+      zustand: () => zustand,
+      denkerKommt: () => {
+        if (zustand !== "wartet") return;
+        zustand = "denker";
+        beenden();
+      },
+      stop: () => {
+        if (zustand === "wartet") zustand = "denker";
+        beenden();
+      },
+      gewonnen,
+      gesprochen: () => gesprochen,
+    };
+  }
+
+  /**
    * Ansage als Schritt der Denk-Anzeige. Die allgemeine Ansage („Ich denke kurz nach.“) sagt nichts,
    * was die Anzeige nicht schon zeigt: sie entfällt ganz.
    */
@@ -1509,21 +1637,48 @@ export class VoiceCallEngine {
         this.cb.onAssistant(run.partial, true, false);
         return;
       }
-      const { side, blocked, systemPrompt } = await this.orchestrate();
+      const { side, blocked, systemPrompt, sofort } = await this.orchestrate();
       if (stale() || blocked) return;
       // Ab S1: die Ansage ist nur ein Schritt der Denk-Anzeige, nie Chat oder Stimme.
       if (plan.kind === "ansage") this.denkSchritt(plan.absicht, plan.text);
+      let fristStop = () => undefined as void;
+      let denkerLaeuft = false;
+      const sofortLauf = this.sofortStarten({
+        model: sofort,
+        text,
+        id,
+        datenAbsicht: plan.kind === "ansage" && plan.absicht !== "allgemein",
+        tot: stale,
+        sagen: (t, weiter) => {
+          if (weiter) this.cb.onDenken?.({ art: "zwischen" });
+          onPiece(t);
+        },
+        denkerAbbrechen: () => {
+          fristStop();
+          if (!denkerLaeuft) return;
+          void side?.cancel?.(id);
+          void invoke("voice_call_cancel", { requestId: id }).catch(
+            () => undefined,
+          );
+          finish();
+        },
+      });
+      run.sofortStop = () => sofortLauf.stop();
       const gctx = await this.contextFor(id, text, side);
       if (stale()) return;
       const frist = ersteFrist(
         TUNING.modelFristMs,
         this.projekt() ? TUNING.projektObergrenzeMs : undefined,
       );
+      fristStop = () => frist.stop();
+      if (sofortLauf.zustand() === "sprecher") frist.stop();
       let timedOut = false;
       // Das Tor im Projekt hat die Anfrage mit einem Code abgelehnt: Die Hinweisleiste sagt den Grund.
       let projektStopp = false;
       const onModel = (s: string) => {
         if (stale() || timedOut) return;
+        // Der Sofort-Sprecher hat vollständig geantwortet: späte Sätze des Denkers verwerfen.
+        if (sofortLauf.zustand() === "sprecher") return;
         // Überbrückungen kommen nur aus `side` (Orchestrator, Werkzeug, Buch-Seite): nur in der
         // Denk-Anzeige; sie halten die Frist an wie bisher. Auf dem Tor-Weg (auch im Projekt) wird
         // nichts gefiltert: Die Anzeige muss dem freigegebenen Text gleichen.
@@ -1532,13 +1687,17 @@ export class VoiceCallEngine {
           this.cb.onDenken?.({ art: "schritt", text: s.trim() });
           return;
         }
+        sofortLauf.denkerKommt();
         frist.stop();
         onPiece(s);
       };
       let full = "";
       // Auch bei einem Rücksprung (veraltet, abgebrochen) die Zeitgeber der Frist abräumen.
       try {
-        if (side) {
+        if (sofortLauf.zustand() === "sprecher") {
+          // Der Sofort-Sprecher hat vollständig geantwortet, bevor der Denker gefragt wurde.
+        } else if (side) {
+          denkerLaeuft = true;
           run.side = side;
           if (!this.ausgabeKey) {
             const id = await this.konversation();
@@ -1549,7 +1708,11 @@ export class VoiceCallEngine {
             (r) => (typeof r === "string" ? r : ""),
             () => "",
           );
-          const r = await Promise.race([chat, frist.abgelaufen]);
+          const r = await Promise.race([
+            chat,
+            frist.abgelaufen,
+            sofortLauf.gewonnen,
+          ]);
           if (r === FRIST) {
             timedOut = true;
             void side.cancel?.(id);
@@ -1557,6 +1720,9 @@ export class VoiceCallEngine {
           frist.stop();
           if (stale()) return;
         } else {
+          // Ab hier gilt der Denker als gefragt: ein Abbruch erreicht ihn auch vor dem Start (Rust
+          // merkt sich vorgezogene Abbrüche).
+          denkerLaeuft = true;
           const projekt = this.projekt();
           this.sentenceHandlers.set(id, (e) => {
             if (stale()) return;
@@ -1610,7 +1776,11 @@ export class VoiceCallEngine {
               return "";
             },
           );
-          const r = await Promise.race([chat, frist.abgelaufen]);
+          const r = await Promise.race([
+            chat,
+            frist.abgelaufen,
+            sofortLauf.gewonnen,
+          ]);
           if (r === FRIST) {
             timedOut = true;
             // Im Projekt: verwerfen über das Tor, keine Vorlagenzeile, der Hinweis sagt den Grund.
@@ -1633,9 +1803,12 @@ export class VoiceCallEngine {
       }
       // Mit Orchestrator zählt, was durch den Filter lief (die Rückgabe kann die Überbrückung enthalten).
       const rueckgabe = timedOut || istUeberbrueckung(full) ? "" : full.trim();
-      const answer = side
-        ? modelPartial || rueckgabe
-        : rueckgabe || modelPartial;
+      // Mit Orchestrator oder nach dem Sofort-Sprecher zählt, was angezeigt wurde (die Rückgabe des
+      // Denkers kennt den Satz des Sprechers nicht).
+      const answer =
+        side || sofortLauf.gesprochen()
+          ? modelPartial || rueckgabe
+          : rueckgabe || modelPartial;
       if (!answer) {
         // Im Projekt erklärt die Hinweisleiste, warum nichts gesendet wurde: keine zweite, unklare Zeile
         // („Das kann ich gerade nicht sicher beantworten“) und kein Eintrag dazu im Gespräch.
@@ -1865,11 +2038,35 @@ export class VoiceCallEngine {
       return;
     }
 
-    const { side, blocked, systemPrompt } = await this.orchestrate();
+    const { side, blocked, systemPrompt, sofort } = await this.orchestrate();
     if (dead()) return;
     // Ab S1: die Ansage ist nur ein Schritt der Denk-Anzeige, nie Chat oder Stimme.
     if (plan.kind === "ansage" && !blocked)
       this.denkSchritt(plan.absicht, plan.text);
+    // Sofort-Sprecher: startet vor dem Abruf des Kontexts, damit die erste Reaktion nicht auf ihn wartet.
+    let fristStop = () => undefined as void;
+    let denkerLaeuft = false;
+    const sofortLauf = this.sofortStarten({
+      model: blocked ? null : sofort,
+      text,
+      id: turn.id,
+      datenAbsicht: plan.kind === "ansage" && plan.absicht !== "allgemein",
+      tot: dead,
+      sagen: (t, weiter) => {
+        if (weiter) this.cb.onDenken?.({ art: "zwischen" });
+        onPiece(t);
+      },
+      denkerAbbrechen: () => {
+        fristStop();
+        if (!denkerLaeuft) return;
+        void turn.side?.cancel?.(turn.id);
+        void invoke("voice_call_cancel", { requestId: turn.id }).catch(
+          () => undefined,
+        );
+        finishStream();
+      },
+    });
+    turn.sofortStop = () => sofortLauf.stop();
     // Globaler Kontext: lokal geholt, schon beim spekulativen Start (Plan L1/M5).
     const gctx = blocked ? null : await this.contextFor(turn.id, text, side);
     turnCtx = gctx;
@@ -1886,11 +2083,15 @@ export class VoiceCallEngine {
       TUNING.modelFristMs,
       this.projekt() ? TUNING.projektObergrenzeMs : undefined,
     );
+    fristStop = () => frist.stop();
+    if (sofortLauf.zustand() === "sprecher") frist.stop();
     let timedOut = false;
     // Das Tor im Projekt hat die Anfrage mit einem Code abgelehnt: Die Hinweisleiste sagt den Grund.
     let projektStopp = false;
     const onModel = (s: string) => {
       if (dead() || timedOut) return;
+      // Der Sofort-Sprecher hat vollständig geantwortet: späte Sätze des Denkers verwerfen.
+      if (sofortLauf.zustand() === "sprecher") return;
       // Überbrückungen kommen nur aus `side` (Orchestrator, Werkzeug, Buch-Seite): nur in der
       // Denk-Anzeige; sie halten die Frist an wie bisher. Auf dem Tor-Weg (auch im Projekt) wird
       // nichts gefiltert: Die Anzeige muss dem freigegebenen Text gleichen.
@@ -1899,12 +2100,16 @@ export class VoiceCallEngine {
         this.cb.onDenken?.({ art: "schritt", text: s.trim() });
         return;
       }
+      sofortLauf.denkerKommt();
       frist.stop();
       onPiece(s);
     };
     // Auch bei einem Rücksprung (veraltet, abgebrochen) die Zeitgeber der Frist abräumen.
     try {
-      if (side) {
+      if (sofortLauf.zustand() === "sprecher") {
+        // Der Sofort-Sprecher hat vollständig geantwortet, bevor der Denker gefragt wurde.
+      } else if (side) {
+        denkerLaeuft = true;
         // Denker oder Werkzeuge aktiv: der Orchestrator liefert die Sätze (auch die Überbrückung).
         turn.side = side;
         if (!this.ausgabeKey) {
@@ -1916,12 +2121,21 @@ export class VoiceCallEngine {
           () => "",
           () => "",
         );
-        if ((await Promise.race([chat, frist.abgelaufen])) === FRIST) {
+        if (
+          (await Promise.race([
+            chat,
+            frist.abgelaufen,
+            sofortLauf.gewonnen,
+          ])) === FRIST
+        ) {
           timedOut = true;
           void side.cancel?.(turn.id);
         }
         frist.stop();
       } else {
+        // Ab hier gilt der Denker als gefragt: ein Abbruch erreicht ihn auch vor dem Start (Rust
+        // merkt sich vorgezogene Abbrüche).
+        denkerLaeuft = true;
         // Mit App-Kontext startet das Modell erst nach dem Commit, und der
         // Kontext wird davor erneut geprüft (Turn, Transkript, Stand; Codex
         // M5, Auflagen 6–8). Ohne Kontext bleibt der spekulative Start.
@@ -1992,7 +2206,13 @@ export class VoiceCallEngine {
             return "";
           },
         );
-        if ((await Promise.race([chat, frist.abgelaufen])) === FRIST) {
+        if (
+          (await Promise.race([
+            chat,
+            frist.abgelaufen,
+            sofortLauf.gewonnen,
+          ])) === FRIST
+        ) {
           timedOut = true;
           // Im Projekt: verwerfen über das Tor, keine Vorlagenzeile, der Hinweis sagt den Grund.
           if (projekt) {
@@ -2114,6 +2334,7 @@ export class VoiceCallEngine {
     }
     this.globalContext.discard(turn.id);
     this.sentenceHandlers.delete(turn.id);
+    turn.sofortStop?.();
     void turn.side?.cancel?.(turn.id);
     void invoke("voice_call_cancel", { requestId: turn.id }).catch(
       () => undefined,

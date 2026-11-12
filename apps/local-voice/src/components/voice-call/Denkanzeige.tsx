@@ -12,6 +12,8 @@ import type { Denkprozess, DenkSchritt } from "@/stores/voiceCallStore";
 function SchrittText({ s }: { s: DenkSchritt }): React.ReactElement {
   const { t } = useTranslation();
   if (s.art === "text") return <>{s.text}</>;
+  if (s.art === "sofort")
+    return <>{t("voiceCall.denken.sofort", { modell: s.modell })}</>;
   if (s.art === "kontext")
     return <>{t("voiceCall.denken.kontext", { count: s.treffer })}</>;
   return (

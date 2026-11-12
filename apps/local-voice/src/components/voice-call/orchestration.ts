@@ -7,6 +7,7 @@ import {
 } from "@/bindings";
 import { modelLabel } from "@/lib/modelNames";
 import { ANNOUNCE } from "./ueberbrueckung";
+import { sofortModell } from "./sofort";
 import { KNOWLEDGE_AREAS, NOTEBOOK_AREA, type KnowledgeArea } from "./bereiche";
 import type { ChatMessage, ChatSide } from "@/vendor/wai-voice/backend.ts";
 import {
@@ -49,6 +50,8 @@ export interface OrchestrationConfig {
   souveraenitaet: Souveraenitaet;
   /** Lesende LVA-Werkzeuge nutzen. */
   useTools: boolean;
+  /** Sofort-Sprecher: ein lokales Modell antwortet zuerst (Standard: an). */
+  sofort?: boolean;
 }
 
 export const DEFAULT_ORCHESTRATION: OrchestrationConfig = {
@@ -116,6 +119,11 @@ export interface Prepared {
   blocked: boolean;
   /** Systemanweisung samt Hinweis auf nicht freigegebene Wissensbereiche (gilt auch für den alten Weg). */
   systemPrompt: string;
+  /**
+   * Sofort-Sprecher (`sofort.ts`): ein lokales Modell, das zuerst antwortet, wenn das Modell des
+   * Gesprächs nicht lokal ist. Läuft immer mit „nur lokal“; `null` ohne lokales Modell.
+   */
+  sofort?: VoiceModel | null;
 }
 
 /** Ländercodes der EU (ISO 3166-1 alpha-2): dort sitzende Anbieter gelten als „EU“. */
@@ -358,6 +366,8 @@ function makeModel(
   stufe: Souveraenitaet,
   deps: OrchestrationDeps,
   forFunction: string | null = null,
+  /** Ohne Gesprächsschlüssel: die Ausgabe wird in Rust nicht als „letzte Ausgabe“ gemerkt (Sofort-Sprecher). */
+  ohneGespraech = false,
 ): VoiceModel {
   return {
     id: info.id,
@@ -393,8 +403,9 @@ function makeModel(
           modelId: info.id,
           stufe,
           forFunction,
-          conversationId:
-            (await (deps.ausgabeKey ?? deps.conversationId)?.()) ?? null,
+          conversationId: ohneGespraech
+            ? null
+            : ((await (deps.ausgabeKey ?? deps.conversationId)?.()) ?? null),
         });
         // Auch nach Abbruch noch kurz auf den Verbrauch warten: er zählt trotzdem.
         await Promise.race([
@@ -480,6 +491,8 @@ async function listTools(): Promise<VoiceTool[]> {
 interface LoadedModels {
   active: ModelDescription | null;
   all: ModelDescription[];
+  /** Lokales Modell für den Sofort-Sprecher; nur, wenn das Modell des Gesprächs nicht lokal ist. */
+  sofort: ModelDescription | null;
   /** Freigegebene Wissensbereiche (Einstellungen), gelesen mit den Modellen. */
   knowledge: KnowledgeState;
 }
@@ -490,15 +503,24 @@ async function loadModels(): Promise<LoadedModels> {
     commands.complianceAssessModels().catch(() => null),
   ]);
   if (!settings || settings.status !== "ok")
-    return { active: null, all: [], knowledge: NO_KNOWLEDGE };
+    return { active: null, all: [], sofort: null, knowledge: NO_KNOWLEDGE };
   const all = describeModels(settings.data, assessedById(compliance));
   const speakerId = speakerModelId(settings.data);
+  const active = all.find((m) => m.id === speakerId) ?? null;
   return {
-    active: all.find((m) => m.id === speakerId) ?? null,
+    active,
     all,
+    sofort: sofortModell(
+      active,
+      all,
+      settings.data.function_models?.[VOICE_SOFORT]?.model_id ?? null,
+    ),
     knowledge: knowledgeFrom(settings.data),
   };
 }
+
+/** Funktion des Sofort-Sprechers in `function_models` (optional; sonst das erste lokale Modell). */
+export const VOICE_SOFORT = "voice_sofort";
 
 /** Fehlertext eines Werkzeugs für das Modell: kurz, ohne Steuerzeichen. */
 function errorText(e: unknown): string {
@@ -550,6 +572,7 @@ export class OrchestrationSession {
   private models: LoadedModels | null = null;
   private side: ChatSide | null = null;
   private sideKey = "";
+  private sofort: VoiceModel | null = null;
 
   constructor(private readonly deps: OrchestrationDeps) {}
 
@@ -565,6 +588,7 @@ export class OrchestrationSession {
     this.dispose();
     this.tools = null;
     this.models = null;
+    this.sofort = null;
   }
 
   /**
@@ -583,6 +607,14 @@ export class OrchestrationSession {
       deps.onStatus({ kind: "notice", code: "speaker_blocked" });
       return { side: null, blocked: true, systemPrompt };
     }
+    const sofortInfo = cfg.sofort === false ? null : this.models.sofort;
+    this.sofort =
+      sofortInfo && this.sofort?.id === sofortInfo.id
+        ? this.sofort
+        : sofortInfo
+          ? makeModel(sofortInfo, "nur_lokal", deps, null, true)
+          : null;
+    const sofort = this.sofort;
     if (cfg.useTools) this.tools ??= await listTools();
     const offered = onlyLocalAllowed(
       cfg.useTools ? (this.tools ?? []) : [],
@@ -600,7 +632,7 @@ export class OrchestrationSession {
         ? denkerInfo
         : undefined;
     if (offered.length === 0 && !denker)
-      return { side: null, blocked: false, systemPrompt };
+      return { side: null, blocked: false, systemPrompt, sofort };
 
     const key = JSON.stringify([
       cfg,
@@ -610,7 +642,7 @@ export class OrchestrationSession {
       offered.map((t) => t.name),
     ]);
     if (this.side && key === this.sideKey)
-      return { side: this.side, blocked: false, systemPrompt };
+      return { side: this.side, blocked: false, systemPrompt, sofort };
     this.dispose();
     const names = new Set(offered.map((t) => t.name));
     const stufe = cfg.souveraenitaet;
@@ -637,7 +669,7 @@ export class OrchestrationSession {
       },
     });
     this.sideKey = key;
-    return { side: this.side, blocked: false, systemPrompt };
+    return { side: this.side, blocked: false, systemPrompt, sofort };
   }
 }
 

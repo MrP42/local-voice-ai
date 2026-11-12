@@ -101,10 +101,15 @@ export const VoiceCallPage: React.FC = () => {
   const denkenLive = useVoiceCallStore((s) => s.denken);
   const activeLlm = useActiveLlm();
   // Denk-Anzeige nur, solange nach der letzten Äußerung noch keine Antwort steht.
+  // Hat der Sofort-Sprecher weitergesprochen, steht sie unter seiner Zeile, bis der Denker liefert.
+  const letzteZeile = lines[lines.length - 1];
   const denkSichtbar =
     !!denkenLive &&
-    lines[lines.length - 1]?.role === "user" &&
-    (textBusy || state === "thinking");
+    (denkenLive.weiter
+      ? letzteZeile?.role === "assistant" &&
+        !letzteZeile.final &&
+        (textBusy || state !== "idle")
+      : letzteZeile?.role === "user" && (textBusy || state === "thinking"));
   const notice = useVoiceCallStore((s) => s.notice);
   const imProjekt = useVoiceCallStore((s) => s.projectId !== null);
   const settingsOpen = useVoiceCallStore((s) => s.settingsOpen);
