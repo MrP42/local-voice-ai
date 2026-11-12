@@ -1245,6 +1245,25 @@ fn codex21_blockende_nur_als_vollstaendige_marke() {
     );
     assert!(!a.schreiben_erlaubt);
     assert_eq!(a.link.sync_state, SyncState::Verwaist);
+    // Markenzeile mit Zusatz ist kein gueltiges Blockende.
+    let zusatz = text.replace("lva-plan:P1", "lva-plan:P1 Zusatz");
+    assert!(finde_block(&zusatz, "P1").is_none());
+    assert!(finde_marke(&zusatz).is_none());
+    let a = abgleichen(
+        PlanStatus::Verknuepft,
+        &l,
+        Some(&beob(10_000, Some(zusatz))),
+        1,
+    );
+    assert!(!a.schreiben_erlaubt);
+    let davor = text.replace("lva-plan:P1", "Text lva-plan:P1");
+    assert!(finde_block(&davor, "P1").is_none());
+    // Leerraum und CRLF um die Markenzeile bleiben toleriert.
+    let crlf = text
+        .replace("lva-plan:P1", "  lva-plan:P1\t")
+        .replace('\n', "\r\n");
+    assert_eq!(finde_marke(&crlf).as_deref(), Some("P1"));
+    assert!(finde_block(&crlf, "P1").is_some());
     // Marke ausserhalb eines Blocks zaehlt nicht.
     assert!(finde_marke("lva-plan:P1").is_none());
 }

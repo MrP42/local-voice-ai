@@ -382,9 +382,10 @@ fn blockgrenzen(text: &str) -> Option<(usize, usize, String)> {
     Some((start, ab + rel + laenge, id))
 }
 
-/// Erste allein stehende Marke: davor Textanfang, Leerraum oder `>`, danach
-/// Textende, Leerraum oder `<`, Id vollstaendig. So zaehlt weder
-/// `https://x/lva-plan:abc` noch der Anfang von `lva-plan:P1X` als `P1`.
+/// Erste Markenzeile: die Marke steht allein auf ihrer Zeile (Text) bzw. allein
+/// in ihrem Element (HTML), umgeben nur von Leerraum bis zum Zeilenumbruch, `>`
+/// oder `<`; die Id ist vollstaendig. So zaehlen weder `https://x/lva-plan:abc`,
+/// noch der Anfang von `lva-plan:P1X`, noch `lva-plan:P1 Zusatz` als Ende von `P1`.
 /// Liefert Position, Laenge und Id.
 fn erste_marke(beschreibung: &str) -> Option<(usize, usize, String)> {
     let mut ab = 0;
@@ -393,8 +394,9 @@ fn erste_marke(beschreibung: &str) -> Option<(usize, usize, String)> {
         ab = pos + MARKE_PRAEFIX.len();
         let davor_ok = beschreibung[..pos]
             .chars()
-            .next_back()
-            .is_none_or(|c| c.is_whitespace() || c == '>');
+            .rev()
+            .take_while(|c| *c != '\n' && *c != '>')
+            .all(char::is_whitespace);
         let rest = &beschreibung[ab..];
         let id: String = rest
             .chars()
@@ -402,8 +404,8 @@ fn erste_marke(beschreibung: &str) -> Option<(usize, usize, String)> {
             .collect();
         let danach_ok = rest[id.len()..]
             .chars()
-            .next()
-            .is_none_or(|c| c.is_whitespace() || c == '<');
+            .take_while(|c| *c != '\n' && *c != '<')
+            .all(char::is_whitespace);
         if davor_ok && danach_ok && !id.is_empty() && id.len() <= 64 {
             return Some((pos, MARKE_PRAEFIX.len() + id.len(), id));
         }
