@@ -63,7 +63,7 @@ fn ready_import(
     name: Option<&str>,
 ) -> Meeting {
     let m = store
-        .create_meeting("Komm.ONE", MeetingSource::Import, Some(1))
+        .create_meeting("Projektrunde", MeetingSource::Import, Some(1))
         .unwrap();
     store
         .set_source_path(&m.id, &format!("C:/Aufnahmen/{file}"))
@@ -360,7 +360,7 @@ fn merging_writes_one_meeting_and_removes_the_others_in_one_go() {
         vec![seg(0, 2, 0, 500, Some(1))],
         None,
     );
-    let folder = store.folder_save(None, "Komm.ONE", None).unwrap();
+    let folder = store.folder_save(None, "Projektrunde", None).unwrap();
     store
         .set_meeting_folders(&b.id, &[folder.id.clone()])
         .unwrap();
@@ -716,7 +716,7 @@ fn pending_parts_are_listed_in_order_and_go_with_a_deleted_target() {
         Some(a.id.as_str())
     );
     let info = parts_info(&store, &b.id).unwrap();
-    assert_eq!(info.append_to, Some((a.id.clone(), "Komm.ONE".to_string())));
+    assert_eq!(info.append_to, Some((a.id.clone(), "Projektrunde".to_string())));
 
     assert!(store.append_pending_remove(&c.id).unwrap());
     assert_eq!(store.append_pending_of(&a.id).unwrap().len(), 1);
@@ -729,7 +729,7 @@ fn pending_parts_are_listed_in_order_and_go_with_a_deleted_target() {
 fn the_manual_order_follows_the_start_time_then_the_file_number() {
     let m = |id: &str, started: i64, file: &str| Meeting {
         id: id.into(),
-        title: "Komm.ONE".into(),
+        title: "Projektrunde".into(),
         status: "ready".into(),
         source: "import".into(),
         started_at: Some(started),
