@@ -149,6 +149,8 @@ struct LibraryShelf: View {
     @ObservedObject var playback = LibraryPlayback.shared
     @State private var query = ""
     @State private var filter = ShelfFilter.all
+    /// Sortierung, gerätelokal gemerkt; gleiche Werte wie am Desktop (dort `lva.ui.library.sort`, lva#474).
+    @AppStorage("library.sort") private var sortRaw = LibrarySort.recent.rawValue
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var importing = false
     @State private var showSync = false
@@ -158,9 +160,16 @@ struct LibraryShelf: View {
     private func textFraction(_ b: LibraryBook) -> Double { LibraryProgress.fraction(library.record(library.textKey(library.activeView(b)))) }
     private func audioFraction(_ b: LibraryBook) -> Double { LibraryProgress.fraction(library.record(library.audioKey(library.activeView(b)))) }
 
+    /// Jüngster Fortschrittsstempel der aktiven Fassung (Text oder Hörbuch) für „Zuletzt gehört“.
+    private func lastUsed(_ b: LibraryBook) -> Double {
+        let v = library.activeView(b)
+        return max(library.record(library.textKey(v))?.updated ?? 0, library.record(library.audioKey(v))?.updated ?? 0)
+    }
+
     private var visible: [LibraryBook] {
         let q = query.trimmingCharacters(in: .whitespaces)
-        return LibraryText.favoritesFirst(library.books.filter { b in
+        let sort = LibrarySort.stored(sortRaw)
+        return LibraryText.sorted(library.books.filter { b in
             let matches = q.isEmpty || b.title.localizedCaseInsensitiveContains(q) || b.authors.contains { $0.localizedCaseInsensitiveContains(q) }
             let done = b.finished || max(textFraction(b), audioFraction(b)) >= 1
             switch filter {
@@ -170,7 +179,7 @@ struct LibraryShelf: View {
             case .audio: return matches && b.audio != nil
             case .finished: return matches && done
             }
-        })
+        }, by: sort, lastUsed: lastUsed)
     }
 
     /// In sehr großer Schrift steht das Cover über dem Text.
@@ -257,7 +266,20 @@ struct LibraryShelf: View {
                     }.buttonStyle(.plain)
                 }
 
-                Text("ALLE BÜCHER · \(shown.count)").font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(VoicePalette.secondaryText)
+                HStack(alignment: .center, spacing: 8) {
+                    Text("ALLE BÜCHER · \(shown.count)").font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(VoicePalette.secondaryText)
+                    Spacer(minLength: 8)
+                    Menu {
+                        Picker("Sortieren", selection: $sortRaw) {
+                            ForEach(LibrarySort.allCases) { Text($0.label).tag($0.rawValue) }
+                        }
+                    } label: {
+                        Label(LibrarySort.stored(sortRaw).label, systemImage: "arrow.up.arrow.down")
+                            .font(.subheadline).frame(minHeight: 44).contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("Sortieren: \(LibrarySort.stored(sortRaw).label)")
+                    .accessibilityIdentifier("librarySort")
+                }
                 if library.books.isEmpty {
                     ContentUnavailableView {
                         Label("Noch keine Bücher", systemImage: "books.vertical")
@@ -862,17 +884,26 @@ struct LibraryPlayerScreen: View {
 
 /// Text mit markiertem Absatz. Scrollt der Nutzer selbst, folgt der Text nicht mehr, bis er
 /// „Zur aktuellen Stelle“ tippt (wie Audible): kein Zurückspringen mitten im Lesen.
+/// Scrollauftrag an `FollowText`: jeder neue `token` scrollt zum Absatz.
+struct BookReveal: Equatable {
+    var token: Int
+    var paragraph: Int
+}
+
 struct FollowText<Row: View>: View {
     let paragraphs: [TextParagraph]
     let current: Int
     /// Aus: kein Mitscrollen (Ansicht „Lesen“), die Stelle bleibt, wo der Nutzer liest.
     var follow = true
     let row: (Int, TextParagraph) -> Row
+    /// Scrollauftrag von außen (Inhalt und Suche, lva#476): gilt auch ohne Mitscrollen.
+    var reveal: BookReveal? = nil
     /// Nutzer hat selbst gescrollt: kein Mitscrollen, Knopf „Zur aktuellen Stelle“ sichtbar.
     @State private var detached = false
 
-    init(paragraphs: [TextParagraph], current: Int, follow: Bool = true, @ViewBuilder row: @escaping (Int, TextParagraph) -> Row) {
-        self.paragraphs = paragraphs; self.current = current; self.follow = follow; self.row = row
+    init(paragraphs: [TextParagraph], current: Int, follow: Bool = true, reveal: BookReveal? = nil,
+         @ViewBuilder row: @escaping (Int, TextParagraph) -> Row) {
+        self.paragraphs = paragraphs; self.current = current; self.follow = follow; self.reveal = reveal; self.row = row
     }
 
     var body: some View {
@@ -915,7 +946,12 @@ struct FollowText<Row: View>: View {
                     .padding(12)
                 }
             }
-            .onAppear { proxy.scrollTo(current, anchor: .center) }  // ohne Animation: sonst baut die Liste jede Zeile bis dorthin
+            .onAppear { proxy.scrollTo(reveal?.paragraph ?? current, anchor: .center) }  // ohne Animation: sonst baut die Liste jede Zeile bis dorthin
+            .onChange(of: reveal) { _, value in
+                guard let value else { return }
+                detached = false
+                proxy.scrollTo(value.paragraph, anchor: .top)
+            }
             .onChange(of: current) { old, value in
                 guard follow, !detached else { return }
                 if abs(value - old) > 3 { proxy.scrollTo(value, anchor: .center) }

@@ -32,6 +32,7 @@ use serde_json::json;
 use specta::Type;
 use tauri::{AppHandle, Manager};
 
+use super::berechtigung::{self, Inhaltszugriff, Setzen};
 use super::index::AppIndex;
 use super::model::{ContextDoc, ContextHits, Jump, SourceKind};
 use super::progress;
@@ -295,15 +296,26 @@ fn collect_conversations(app: &AppHandle) -> Vec<ContextDoc> {
     let Some(store) = state::<ConversationStore>(app) else {
         return Vec::new();
     };
-    let mut list = store.list(false).unwrap_or_default();
+    conversation_docs(&store)
+}
+
+/// Die Gespräche für den globalen Index. Projektgespräche (`scope.project_id`) und Gespräche, deren
+/// Zuordnung sich nicht sicher lesen lässt, gehören nie hinein (lva#365 P4c-2): Ihre Antworten stammen aus
+/// Projektinhalten, die das Projekt nur über das Versandtor verlassen.
+fn conversation_docs(store: &ConversationStore) -> Vec<ContextDoc> {
+    let mut list = store.list_ohne_projekt(false).unwrap_or_default();
     list.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     list.into_iter()
         .take(MAX_CONVERSATIONS)
-        .filter_map(|c| conversation_doc(&store, &c.id))
+        .filter_map(|c| conversation_doc(store, &c.id))
         .collect()
 }
 
 fn conversation_doc(store: &ConversationStore, id: &str) -> Option<ContextDoc> {
+    // Auch der Einzelabruf (Kennung aus einem Treffer oder von außen) prüft die Zuordnung selbst.
+    if !store.ausserhalb_projekt_lesbar(id) {
+        return None;
+    }
     let detail = store.get(id).ok()?;
     let conv = detail.conversation;
     if conv.archived {
@@ -546,6 +558,17 @@ pub fn on_settings_changed(app: &AppHandle) {
     }
 }
 
+/// Ist ein Gesprächstreffer noch ausgebbar? Es gibt das Gespräch, es ist nicht archiviert oder
+/// eingeschränkt, und es gehört zu keinem Projekt (fail-closed bei unlesbarer Zuordnung).
+fn gespraech_noch_gueltig(store: &ConversationStore, id: &str) -> bool {
+    store.ausserhalb_projekt_lesbar(id)
+        && store.get(id).ok().is_some_and(|d| {
+            !d.conversation.archived
+                && d.conversation.scope.data_class != RESTRICTED
+                && !d.conversation.scope.special_category
+        })
+}
+
 /// Gibt es die Quelle eines Treffers noch? (Löschung vor der Ausgabe prüfen.)
 fn still_present(app: &AppHandle, jump: &Jump) -> bool {
     match jump.kind {
@@ -561,13 +584,9 @@ fn still_present(app: &AppHandle, jump: &Jump) -> bool {
                 .and_then(|dir| crate::book_ai::store::read_text(&dir, doc).ok())
                 .is_some()
         }
-        SourceKind::Conversation => state::<ConversationStore>(app)
-            .and_then(|s| s.get(&jump.id).ok())
-            .is_some_and(|d| {
-                !d.conversation.archived
-                    && d.conversation.scope.data_class != RESTRICTED
-                    && !d.conversation.scope.special_category
-            }),
+        SourceKind::Conversation => {
+            state::<ConversationStore>(app).is_some_and(|s| gespraech_noch_gueltig(&s, &jump.id))
+        }
         SourceKind::Meeting => state::<MeetingStore>(app)
             .and_then(|s| s.get_meeting(&jump.id).ok().flatten())
             .is_some_and(|m| m.deleted_at.is_none()),
@@ -631,11 +650,48 @@ pub fn change_voice_global_context_enabled_setting(
     app: AppHandle,
     enabled: bool,
 ) -> Result<(), String> {
-    let mut settings = crate::settings::get_settings(&app);
-    settings.voice_global_context_enabled = enabled;
-    crate::settings::write_settings(&app, settings);
+    crate::settings::update_settings_gesperrt(&app, |s| s.voice_global_context_enabled = enabled);
     on_settings_changed(&app);
     Ok(())
+}
+
+/// Der Inhaltszugriff samt Berechtigungsversion (lva#509): Hauptschalter, Bereiche, Transkripte.
+/// Version und Werte werden unter derselben Sperre gelesen, die jeder Schreiber hält.
+#[tauri::command]
+#[specta::specta]
+pub fn voice_call_inhaltszugriff_lesen(app: AppHandle) -> Inhaltszugriff {
+    let (version, settings) =
+        berechtigung::global().lesen_mit(|| crate::settings::get_settings(&app));
+    Inhaltszugriff::aus_einstellungen(version, &settings)
+}
+
+/// Gibt den Inhaltszugriff in EINEM Schritt frei oder zurück: nur wenn `erwartete_version` noch die
+/// aktuelle ist, werden Hauptschalter, Bereiche und Transkripte zusammen geschrieben und die Version
+/// erhöht; sonst wird nichts geschrieben (`konflikt`) und die Oberfläche liest neu. Ein Widerruf
+/// zwischen Lesen und Setzen gewinnt damit immer.
+#[tauri::command]
+#[specta::specta]
+pub fn voice_call_inhaltszugriff_setzen(
+    app: AppHandle,
+    erwartete_version: u32,
+    enabled: bool,
+    areas: Vec<String>,
+    read_transcripts: bool,
+) -> Result<Setzen, String> {
+    let ergebnis = berechtigung::setzen_mit(
+        berechtigung::global(),
+        erwartete_version,
+        enabled,
+        &areas,
+        read_transcripts,
+        || crate::settings::get_settings(&app),
+        |neu| crate::settings::write_settings_gesperrt(&app, neu),
+    );
+    if matches!(ergebnis, Setzen::Ok { .. }) {
+        on_settings_changed(&app);
+        crate::commands::voice_tools::schutz_nachpruefen(&app);
+    }
+    Ok(ergebnis)
 }
 
 /// Abruf für eine Frage. Lokal, ohne Modell. Jeder Abruf läuft durch das Tor
@@ -672,12 +728,16 @@ fn retrieve_blocking(app: &AppHandle, req: &AppContextRequest) -> Result<Context
         });
     };
     let started = Instant::now();
-    let settings = crate::settings::get_settings(app);
+    // Version und Einstellungen als ein Schnappschuss (unter der Sperre der Schreiber): jede Änderung
+    // danach macht das Ergebnis ungültig, und es gibt keine neue Version zu alten Einstellungen.
+    let (v_start, settings) =
+        berechtigung::global().lesen_mit(|| crate::settings::get_settings(app));
     apply_grants(&settings);
     let allowed = allowed_kinds(&settings);
     if allowed.is_empty() {
         return Ok(ContextHits {
             epoch: index_read().epoch(),
+            berechtigung: v_start,
             ..Default::default()
         });
     }
@@ -743,7 +803,7 @@ fn retrieve_blocking(app: &AppHandle, req: &AppContextRequest) -> Result<Context
     }
     hits.retrieve_ms = started.elapsed().as_millis() as u32;
     hits.question_hash = super::model::question_hash(&req.question);
-    Ok(hits)
+    Ok(hits.an_version_gebunden(v_start, berechtigung::version()))
 }
 
 /// Kontextnachricht für den Sprecher (gleiche Regeln wie im Kern, damit die
@@ -752,24 +812,31 @@ fn retrieve_blocking(app: &AppHandle, req: &AppContextRequest) -> Result<Context
 #[specta::specta]
 pub fn app_context_message(hits: ContextHits, german: bool) -> Option<String> {
     // Nur für den aktuellen Stand (Codex Auflage 11).
-    if index_read().epoch() != hits.epoch {
+    if index_read().epoch() != hits.epoch
+        || hits.berechtigung_geaendert
+        || hits.berechtigung != berechtigung::version()
+    {
         return None;
     }
     super::prompt::context_message(&hits.hits, german)
 }
 
 /// Darf dieser Abruf jetzt an einen Sprecher gehen? Rein, damit testbar:
-/// Schalter an, Empfänger lokal, gleicher Stand, jede Quelle freigegeben und
-/// unverändert. Sonst geht kein Kontext an das Modell.
+/// Schalter an, Empfänger lokal, gleiche Berechtigungsversion (kein Widerruf und keine Freigabe
+/// seit dem Abruf), gleicher Stand, jede Quelle freigegeben und unverändert. Sonst geht kein
+/// Kontext an das Modell.
 pub(crate) fn admissible(
     idx: &AppIndex,
     allowed: &HashSet<SourceKind>,
     enabled: bool,
     local: bool,
+    berechtigung: u32,
     hits: &ContextHits,
 ) -> bool {
     enabled
         && local
+        && hits.berechtigung == berechtigung
+        && !hits.berechtigung_geaendert
         && !hits.hits.is_empty()
         && idx.epoch() == hits.epoch
         && hits.hits.iter().all(|h| {
@@ -841,7 +908,8 @@ pub fn bind_for_speaker_quellen(
     if !bound_to(ctx, request_id, question) {
         return None;
     }
-    let settings = crate::settings::get_settings(app);
+    let (v_start, settings) =
+        berechtigung::global().lesen_mit(|| crate::settings::get_settings(app));
     apply_grants(&settings);
     let allowed = allowed_kinds(&settings);
     {
@@ -851,6 +919,7 @@ pub fn bind_for_speaker_quellen(
             &allowed,
             settings.voice_global_context_enabled,
             local,
+            v_start,
             &ctx.hits,
         ) {
             return None;
@@ -872,6 +941,11 @@ pub fn bind_for_speaker_quellen(
     });
     if !fresh {
         sync_in_background(app);
+        return None;
+    }
+    // Letzte Prüfung unmittelbar vor der Übergabe: hat sich der Inhaltszugriff währenddessen
+    // geändert, geht kein Auszug an das Modell (Widerruf gewinnt).
+    if berechtigung::version() != v_start {
         return None;
     }
     super::prompt::context_message(&ctx.hits.hits, ctx.german)
@@ -897,7 +971,10 @@ pub(crate) fn bound_to(
 #[specta::specta]
 pub fn app_context_verify(answer: String, hits: ContextHits) -> Vec<u32> {
     let idx = index_read();
-    if idx.epoch() != hits.epoch {
+    if idx.epoch() != hits.epoch
+        || hits.berechtigung_geaendert
+        || hits.berechtigung != berechtigung::version()
+    {
         return Vec::new();
     }
     super::prompt::cited(&answer, &hits.hits)
@@ -1003,5 +1080,118 @@ mod quellen_tests {
     fn auszug_ohne_rand_und_mit_gefaltetem_leerraum() {
         assert_eq!(excerpt_clean("… Eins  zwei\n drei …"), "Eins zwei drei");
         assert_eq!(excerpt_clean("   "), "");
+    }
+}
+
+#[cfg(test)]
+mod projekt_tests {
+    //! lva#365 P4c-2: Projektgespräche gehören nicht in den globalen App-Kontext (Index, Einzelabruf,
+    //! Prüfung vor der Ausgabe). Nur synthetische Texte.
+    use super::*;
+    use crate::conversations::store::{NewEntry, OWNER_ID, VOICEBOT_ID};
+
+    const PROJEKT: &str = "prj_01HZZZZZZZZZZZZZZZZZZZZZZZ";
+    const GEHEIM: &str = "AKTENZEICHEN-77x-nur-im-Projekt";
+
+    fn beitrag(role: &str, text: &str) -> NewEntry {
+        NewEntry {
+            id: None,
+            role: role.to_string(),
+            mode: "typed".to_string(),
+            text: text.to_string(),
+            status: "complete".to_string(),
+            created_at: None,
+            author_id: Some(
+                if role == "user" {
+                    OWNER_ID
+                } else {
+                    VOICEBOT_ID
+                }
+                .to_string(),
+            ),
+            triggered_by: None,
+            model: None,
+            attachments: Vec::new(),
+            variants: Vec::new(),
+            active_variant: None,
+            sources: Vec::new(),
+            untrusted: None,
+            reply_to: None,
+            ext: None,
+        }
+    }
+
+    /// Ein gewöhnliches Gespräch, ein Projektgespräch und eines mit unlesbarem `scope` (roh geschrieben).
+    fn szene() -> (tempfile::TempDir, ConversationStore, String, String, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let unlesbar = format!("conv_{:0>26}", 1);
+        let store = ConversationStore::open_upgrading(&dir.path().join("c.db"), |conn| {
+            conn.execute(
+                "INSERT INTO conversations (id, schema_version, ts, trace_id, title, created_at,
+                    updated_at, kind, scope, participants, context, pinned, archived)
+                 VALUES (?1, '0.1.3', 't', 'tr', 'Unlesbar', '2026-01-01T00:00:00.000Z',
+                    '2026-01-02T00:00:00.000Z', 'voice', '{ kaputt', '[]', '[]', 0, 0)",
+                rusqlite::params![format!("conv_{:0>26}", 1)],
+            )
+            .unwrap();
+        })
+        .unwrap();
+        let gewoehnlich = store.create(Some("Gewöhnlich".into())).unwrap();
+        store
+            .append_entry(&gewoehnlich.id, beitrag("user", "Wie wird das Wetter?"))
+            .unwrap();
+        let projekt = store
+            .create_in_project(Some("Im Projekt".into()), PROJEKT)
+            .unwrap();
+        store
+            .append_entry(
+                &projekt.id,
+                beitrag("assistant", &format!("Das Aktenzeichen ist {GEHEIM}.")),
+            )
+            .unwrap();
+        (dir, store, gewoehnlich.id, projekt.id, unlesbar)
+    }
+
+    #[test]
+    fn der_index_enthaelt_keine_projektgespraeche() {
+        let (_d, store, gewoehnlich, projekt, unlesbar) = szene();
+        let docs = conversation_docs(&store);
+        let ids: Vec<&str> = docs.iter().map(|d| d.id.as_str()).collect();
+        assert_eq!(ids, [gewoehnlich.as_str()]);
+        assert!(!ids.contains(&projekt.as_str()));
+        assert!(!ids.contains(&unlesbar.as_str()));
+        let alles = docs
+            .iter()
+            .map(|d| format!("{} {}", d.title, d.text))
+            .collect::<String>();
+        assert!(!alles.contains(GEHEIM));
+        assert!(!alles.contains("Im Projekt"));
+    }
+
+    #[test]
+    fn der_einzelabruf_liefert_kein_projektgespraech() {
+        let (_d, store, gewoehnlich, projekt, unlesbar) = szene();
+        assert!(conversation_doc(&store, &gewoehnlich).is_some());
+        assert!(conversation_doc(&store, &projekt).is_none());
+        assert!(conversation_doc(&store, &unlesbar).is_none());
+        assert!(conversation_doc(&store, "nicht-vorhanden").is_none());
+    }
+
+    #[test]
+    fn die_pruefung_vor_der_ausgabe_laesst_kein_projektgespraech_durch() {
+        let (_d, store, gewoehnlich, projekt, unlesbar) = szene();
+        assert!(gespraech_noch_gueltig(&store, &gewoehnlich));
+        assert!(!gespraech_noch_gueltig(&store, &projekt));
+        assert!(!gespraech_noch_gueltig(&store, &unlesbar));
+    }
+
+    #[test]
+    fn archiviert_oder_geloescht_ist_nicht_mehr_gueltig() {
+        let (_d, store, gewoehnlich, _projekt, _unlesbar) = szene();
+        store.update(&gewoehnlich, None, None, Some(true)).unwrap();
+        assert!(!gespraech_noch_gueltig(&store, &gewoehnlich));
+        assert!(conversation_doc(&store, &gewoehnlich).is_none());
+        store.delete(&gewoehnlich).unwrap();
+        assert!(!gespraech_noch_gueltig(&store, &gewoehnlich));
     }
 }

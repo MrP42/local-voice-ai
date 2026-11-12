@@ -52,12 +52,19 @@
 	<string>2</string>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<false/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Scannt den Kopplungscode, den die Desktop-App am PC anzeigt.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Local Voice verbindet sich auf Wunsch mit einem Sprachmodell auf deinem PC im Heimnetz, zum Beispiel Ollama oder LM Studio. Dabei gehen nur deine Gesprächsanfragen an diesen PC.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Nimmt deine ausdrücklich gestarteten Sprachnotizen, Besprechungen und Fragen im Buch-Gespräch auf.</string>
+	<string>Nimmt deine ausdrücklich gestarteten Sprachnotizen, Besprechungen, Gespräche mit dem Assistenten und Fragen im Buch-Gespräch auf.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Transkribiert deine Sprachnotizen, Besprechungen und Fragen im Buch-Gespräch lokal auf dem Gerät.</string>
+	<string>Transkribiert deine Sprachnotizen, Besprechungen, Gespräche mit dem Assistenten und Fragen im Buch-Gespräch lokal auf dem Gerät.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

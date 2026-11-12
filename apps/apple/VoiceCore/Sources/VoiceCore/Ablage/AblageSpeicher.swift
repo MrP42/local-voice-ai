@@ -52,6 +52,12 @@ final class AblageZwischenRegister: @unchecked Sendable {
     func istAktiv(_ pfad: String) -> Bool { lock.lock(); defer { lock.unlock() }; return aktiv.contains(pfad) }
 }
 
+/// Größe und SHA-256 (hex) einer heruntergeladenen Datei, vor der Sperre des Speichers berechnet.
+public struct AblageOriginalPruefsumme: Equatable, Sendable {
+    public let groesse: UInt64
+    public let sha256Hex: String
+}
+
 public final class AblageSpeicher: @unchecked Sendable {
     public static let zustandsdatei = "ablage-zustand.json"
     static let dateienOrdner = "dateien"
@@ -61,6 +67,13 @@ public final class AblageSpeicher: @unchecked Sendable {
     public let wurzel: URL
     private let fm = FileManager.default
     private let bestandSperre = NSLock()
+    private let wartendeSperre = NSLock()
+    private var wartende = 0
+    /// Assistent (Klasse B): der Zustand (ohne Cursor), den dieser Speicher zuletzt geschrieben hat; `nil`, wenn unbekannt (erster
+    /// Aufruf, nach einem Fehler, nach dem Entfernen). Nur `speichern` und die Entfernungen ändern ihn, nie ein Leser (`laden`),
+    /// damit er nie hinter dem zurückbleibt, was auf der Platte liegt. Nur die Meldung hängt daran, nie eine Entscheidung über Daten.
+    private let merkSperre = NSLock()
+    private var merk: AblageZustand?
 
     public init(wurzel: URL) { self.wurzel = wurzel }
 
@@ -70,10 +83,15 @@ public final class AblageSpeicher: @unchecked Sendable {
     /// Original einer begrabenen Datei ab, das niemand mehr wegräumt. Beide Seiten halten die Sperre über ihren ganzen
     /// Schritt. Nur kurze, synchrone Dateizugriffe darin, nie ein `await`; nicht wiedereintrittsfähig.
     func exklusiv<T>(_ body: () throws -> T) rethrows -> T {
+        wartendeSperre.withLock { wartende += 1 }
         bestandSperre.lock()
+        wartendeSperre.withLock { wartende -= 1 }
         defer { bestandSperre.unlock() }
         return try body()
     }
+
+    /// Aufrufer von `exklusiv`, die gerade an der Sperre warten (damit Tests auf „wartet“ warten können, statt zu schlafen).
+    var wartetAufExklusiv: Int { wartendeSperre.withLock { wartende } }
 
     // MARK: Dateisystem-Hilfen
 
@@ -129,8 +147,12 @@ public final class AblageSpeicher: @unchecked Sendable {
         if art(url) != nil { bytes = (try? Data(contentsOf: url)).map { [UInt8]($0) } ?? [] }
         let r = AblageZustand.laden(bytes: bytes, konto: konto)
         if r.verlust == .unlesbar || r.verlust == .neuereVersion {
-            try? fm.removeItem(at: defektURL)
-            try? fm.moveItem(at: url, to: defektURL)
+            // Assistent (Klasse B): Der gespeicherte Stand fällt weg, der Zustand gilt ab hier als leer: Meldung VOR dem Verschieben.
+            AssistantContentWatch.shared.around {
+                try? fm.removeItem(at: defektURL)
+                try? fm.moveItem(at: url, to: defektURL)
+            }
+            merkSperre.withLock { merk = nil }
         }
         return r
     }
@@ -142,13 +164,28 @@ public final class AblageSpeicher: @unchecked Sendable {
     public func defektEntfernen() { try? fm.removeItem(at: defektURL) }
 
     /// Schreibt den Zustand atomar (temporäre Datei, dann Umbenennen): bei Abbruch oder Fehler bleibt der alte Stand ganz.
+    ///
+    /// Assistent (Klasse B): Schutzklasse, Papierkorb, angehaltene und nur lokale Dateien stehen in diesem Zustand. Die Meldung
+    /// kommt VOR dem Schreiben, aber nur, wenn sich Bestand oder Stand der Objekte ändern; ein Lauf ohne Neues (nur der Cursor rückt
+    /// vor) meldet nichts. Ist unbekannt, was auf der Platte liegt (`merk == nil`), wird gemeldet.
     public func speichern(_ z: AblageZustand) throws {
+        let neu = Self.ohneCursor(z)
+        let unveraendert = merkSperre.withLock { merk == neu }
         do {
             try fm.createDirectory(at: wurzel, withIntermediateDirectories: true)
-            try Data(z.serialisieren()).write(to: zustandURL, options: .atomic)
+            let schreiben = { try Data(z.serialisieren()).write(to: self.zustandURL, options: .atomic) }
+            if unveraendert { try schreiben() } else { try AssistantContentWatch.shared.around(schreiben) }
+            merkSperre.withLock { merk = neu }
         } catch {
+            merkSperre.withLock { merk = nil }
             throw AblageSpeicherFehler.schreiben
         }
+    }
+
+    private static func ohneCursor(_ z: AblageZustand) -> AblageZustand {
+        var kopie = z
+        kopie.ledger.cursor = AblageKarte()
+        return kopie
     }
 
     // MARK: Vorhanden
@@ -236,11 +273,24 @@ public final class AblageSpeicher: @unchecked Sendable {
         return true
     }
 
+    /// Größe und SHA-256 einer Zwischendatei, streamend und ohne Sperre des Speichers (`originalEinlegen` übernimmt das
+    /// Ergebnis, statt unter der Sperre noch einmal über die ganze Datei zu lesen). Wirft `passtNicht`, wenn die Datei nicht
+    /// lesbar ist.
+    public func pruefsumme(zwischen: URL) throws -> AblageOriginalPruefsumme {
+        guard istDatei(zwischen), let size = (try? fm.attributesOfItem(atPath: zwischen.path)[.size] as? NSNumber)?.uint64Value,
+              let sha = try? Self.sha256Hex(datei: zwischen) else { throw AblageSpeicherFehler.passtNicht }
+        return AblageOriginalPruefsumme(groesse: size, sha256Hex: sha)
+    }
+
     /// Legt ein heruntergeladenes Original ohne Ersetzen an seinen Platz (`original_einlegen`). Größe und SHA-256 (streamend)
     /// müssen zur Fassung passen. `false`: Datei oder Fassung gibt es nicht mehr. Die Zwischendatei ist danach in jedem
-    /// Fall weg (verschoben oder entfernt).
+    /// Fall weg (verschoben oder entfernt). `vorgeprueft`: Größe und Hash, die der Aufrufer schon vor der Sperre berechnet hat
+    /// (`pruefsumme`); ohne sie wird hier gelesen. Die Größe wird immer frisch von der Datei genommen; passt die Größe der
+    /// Vorprüfsumme nicht dazu (die Datei hat sich seit der Prüfung geändert), gilt sie als veraltet, und der Hash wird hier
+    /// neu berechnet.
     @discardableResult
-    public func originalEinlegen(bestand: AblageBestand, dat: String, fas: String, zwischen: URL) throws -> Bool {
+    public func originalEinlegen(bestand: AblageBestand, dat: String, fas: String, zwischen: URL,
+                                 vorgeprueft: AblageOriginalPruefsumme? = nil) throws -> Bool {
         var fertig = false
         defer {
             if !fertig { try? fm.removeItem(at: zwischen) }
@@ -252,7 +302,10 @@ public final class AblageSpeicher: @unchecked Sendable {
         guard let d = bestand.dateien[dat], let f = d.fassungen.first(where: { AblageBytes.equal($0.fas, fas) }) else { return false }
         guard let ziel = originalURL(dat: dat, fas: fas, typ: f.typ) else { throw AblageSpeicherFehler.ungueltigeKennung }
         guard istDatei(zwischen), let size = (try? fm.attributesOfItem(atPath: zwischen.path)[.size] as? NSNumber)?.uint64Value,
-              size == f.size, try Self.sha256Hex(datei: zwischen) == f.blob else { throw AblageSpeicherFehler.passtNicht }
+              size == f.size else { throw AblageSpeicherFehler.passtNicht }
+        let sha: String
+        if let v = vorgeprueft, v.groesse == size { sha = v.sha256Hex } else { sha = try Self.sha256Hex(datei: zwischen) }
+        guard sha == f.blob else { throw AblageSpeicherFehler.passtNicht }
         let dir = try ordnerSichern(Self.dateienOrdner, dat)
         if art(ziel) != nil { return true }          // liegt schon: nicht ersetzen (die Zwischendatei räumt `defer`)
         do { try fm.moveItem(at: zwischen, to: dir.appendingPathComponent(ziel.lastPathComponent)) } catch {
@@ -276,8 +329,13 @@ public final class AblageSpeicher: @unchecked Sendable {
 
     /// Entfernt Originale und Texte der Dateien mit diesen Kennungen (begraben). Ungültige Kennungen werden ignoriert.
     public func entfernen(dateien ids: [String]) {
-        for id in ids where AblageId.idGueltig(id, prefix: AblageId.praefixDatei) {
-            for sub in [Self.dateienOrdner, Self.textOrdner] { try? fm.removeItem(at: unter(sub, id)) }
+        let gueltig = ids.filter { AblageId.idGueltig($0, prefix: AblageId.praefixDatei) }
+        guard !gueltig.isEmpty else { return }
+        // Assistent (Klasse B): Mit den Texten verschwinden Quellen, die der Assistent lesen könnte: Meldung VOR dem Entfernen.
+        AssistantContentWatch.shared.around {
+            for id in gueltig {
+                for sub in [Self.dateienOrdner, Self.textOrdner] { try? fm.removeItem(at: unter(sub, id)) }
+            }
         }
     }
 
@@ -313,13 +371,18 @@ public final class AblageSpeicher: @unchecked Sendable {
     /// Entfernt den ganzen Speicherordner dieses Kontos (Zustand, `.defekt`, Originale, Texte, Zwischendateien): Abmelden.
     /// Der Aufrufer sorgt dafür, dass kein Lauf mehr schreibt (siehe `AblageDienst.verlassen`).
     public func alleEntfernen() {
-        try? fm.removeItem(at: wurzel)
+        // Assistent (Klasse B): Abmelden nimmt alle Texte und den Zustand vom Gerät: Meldung VOR dem Entfernen.
+        AssistantContentWatch.shared.around { try? fm.removeItem(at: wurzel) }
+        merkSperre.withLock { merk = nil }
     }
 
     /// Entfernt alle Originale, Texte und Zwischendateien (Konto gewechselt); der Zustand bleibt.
     public func alleDateienEntfernen() {
-        for sub in [Self.dateienOrdner, Self.textOrdner, Self.eingangOrdner] {
-            try? fm.removeItem(at: wurzel.appendingPathComponent(sub, isDirectory: true))
+        // Assistent (Klasse B): Die Texte des alten Kontos verschwinden: Meldung VOR dem Entfernen.
+        AssistantContentWatch.shared.around {
+            for sub in [Self.dateienOrdner, Self.textOrdner, Self.eingangOrdner] {
+                try? fm.removeItem(at: wurzel.appendingPathComponent(sub, isDirectory: true))
+            }
         }
     }
 }

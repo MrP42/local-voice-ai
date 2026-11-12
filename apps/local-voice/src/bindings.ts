@@ -1017,6 +1017,13 @@ async ablageCloudAusnahmeSetzen(ordner: string, anbieter: string, an: boolean) :
 }
 },
 /**
+ * Anbieterliste für die Cloud-Ausnahme (D7-Rest): konfigurierte Verbindungen, gefiltert nach Regelwerk
+ * und Datenklasse; nicht wählbare stehen mit Grund darin.
+ */
+async ablageCloudAnbieter() : Promise<AblageAnbieterListe> {
+    return await TAURI_INVOKE("ablage_cloud_anbieter");
+},
+/**
  * Einziges schreibendes KI-Werkzeug (D3, Spec §5.5): legt einen Entwurf (Markdown) als neue Datei in
  * „KI-Entwürfe“ oder in einem Zielordner mit `zielordner_ki` ab. Klasse = Maximum aus Zielordner und
  * Quellen; ist eine Quelle „nur dieses Gerät“, landet er in „KI-Entwürfe (nur dieses Gerät)“. `quellen`:
@@ -1468,6 +1475,21 @@ async projektKontextUebersicht(suiteId: string) : Promise<Result<KontextUebersic
 }
 },
 /**
+ * Die KI schreibt aus dem Kontext des Projekts ein Dokument und legt es als Entwurf in der Ablage ab
+ * (Ablauf und Regeln: `dokument.rs`). Kontext, Klassen und Modell bestimmt das Versandtor; der Befehl
+ * nimmt bewusst **keine** Mindestklasse und keine Quellen entgegen, die Oberflaeche kann die Klasse des
+ * Entwurfs also nicht senken. Der Entwurf ist im Projekt ausgeschaltet. Ist die Sperre der KI im Projekt
+ * gesetzt (Rückbau, `dienst.rs`), antwortet das Tor mit `projekt.ki_gesperrt`.
+ */
+async projektKiDokumentErstellen(suiteId: string, auftrag: string, ordner: string | null, name: string, expectedStand: string | null) : Promise<Result<DokumentErgebnis, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_ki_dokument_erstellen", { suiteId, auftrag, ordner, name, expectedStand }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Schaltet „Als Kontext“ eines Eintrags. `form` ändert die Form, `edition` die Fassung eines
  * Buchs (leer = Hauptfassung); fehlt eines, bleibt es, wie es ist. `expected_stand`: der `stand` der
  * angezeigten Übersicht; hat sich die Auswahl seitdem geändert, kommt `projekte.stand_veraltet` und es
@@ -1539,10 +1561,15 @@ async rechercheAdresseSetzen(adresse: string | null) : Promise<Result<RechercheS
  * Chat-Werkzeug "recherche" (Modus Schnell). Der Kontext einer Besprechung ist mindestens
  * `PERSONAL`; die Klasse des Projekts hebt sie an. Ab `PERSONAL` haelt der Lauf an
  * (`status` = "freigabe") und wartet auf die Entscheidung in `recherche_freigabe_entscheiden`.
+ * 
+ * `mit_kontext` (lva#365 P4c-3): Die Recherche nimmt den Kontext des Projekts hinzu. Den liest das
+ * Versandtor frisch, ebenso Klassen und Modell; die Oberflaeche bestimmt davon nichts. Der Lauf haelt
+ * dann immer vor dem ersten Webzugriff an. Ist die Sperre der KI im Projekt gesetzt (Rückbau,
+ * `dienst.rs`), antwortet das Tor mit `projekt.ki_gesperrt`.
  */
-async rechercheStarten(frage: string, suiteProjekt: string | null, besprechung: string | null) : Promise<Result<LaufAntwort, string>> {
+async rechercheStarten(frage: string, suiteProjekt: string | null, besprechung: string | null, mitKontext: boolean | null) : Promise<Result<LaufAntwort, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("recherche_starten", { frage, suiteProjekt, besprechung }) };
+    return { status: "ok", data: await TAURI_INVOKE("recherche_starten", { frage, suiteProjekt, besprechung, mitKontext }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4338,9 +4365,9 @@ async voiceCallTranscribe(pcm16B64: string) : Promise<Result<string, string>> {
  * fertige Antwort ist der Rückgabewert. Bricht `voice_call_cancel` ab, endet
  * der Aufruf mit `Ok` und leerem Text.
  */
-async voiceCallChat(requestId: string, messages: VoiceCallMessage[], context: SpeakerContext | null, conversationId: string | null) : Promise<Result<string, string>> {
+async voiceCallChat(requestId: string, messages: VoiceCallMessage[], context: SpeakerContext | null, conversationId: string | null, expectedStand: string | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("voice_call_chat", { requestId, messages, context, conversationId }) };
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_chat", { requestId, messages, context, conversationId, expectedStand }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4349,9 +4376,9 @@ async voiceCallChat(requestId: string, messages: VoiceCallMessage[], context: Sp
 /**
  * Ein Durchgang eines Modells als roher Textstrom (Ereignisse `delta`, am Ende `usage`).
  */
-async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: string, stufe: string, forFunction: string | null, conversationId: string | null) : Promise<Result<string, string>> {
+async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: string, stufe: string, forFunction: string | null, conversationId: string | null, expectedStand: string | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("voice_call_turn", { requestId, messages, modelId, stufe, forFunction, conversationId }) };
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_turn", { requestId, messages, modelId, stufe, forFunction, conversationId, expectedStand }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4406,11 +4433,15 @@ async conversationGet(id: string) : Promise<Result<ConversationDetail, string>> 
 }
 },
 /**
- * Legt eine leere Unterhaltung an (`kind` = `voice`, Datenklasse INTERNAL).
+ * Legt eine leere Unterhaltung an (`kind` = `voice`, Datenklasse INTERNAL). Mit `project_id` gehört
+ * sie zu einem Suite-Projekt (`scope.project_id`, lva#365 P4c-2): Das Projekt muss es geben und darf
+ * nicht archiviert sein, und das Gespräch trägt die Datenklasse des Projekts (Momentaufnahme, das
+ * Versandtor liest sie bei jedem Versand frisch). Die Bindung wird nur hier gesetzt; kein Befehl
+ * ändert sie danach.
  */
-async conversationCreate(title: string | null) : Promise<Result<Conversation, string>> {
+async conversationCreate(title: string | null, projectId: string | null) : Promise<Result<Conversation, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("conversation_create", { title }) };
+    return { status: "ok", data: await TAURI_INVOKE("conversation_create", { title, projectId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4439,7 +4470,8 @@ async conversationSetPinned(id: string, pinned: boolean) : Promise<Result<Conver
 }
 },
 /**
- * Löscht die Unterhaltung samt aller Beiträge.
+ * Löscht die Unterhaltung samt aller Beiträge. Gehörte sie zu einem Projekt, vergisst das Versandtor
+ * ihre Antworten (`gespraech_vergessen`, lva#365 P4c-2) und merkt sich die Kennung als gelöscht.
  */
 async conversationDelete(id: string) : Promise<Result<null, string>> {
     try {
@@ -6407,6 +6439,27 @@ async appContextVerify(answer: string, hits: ContextHits) : Promise<number[]> {
 async changeVoiceGlobalContextEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_voice_global_context_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Der Inhaltszugriff samt Berechtigungsversion (lva#509): Hauptschalter, Bereiche, Transkripte.
+ * Version und Werte werden unter derselben Sperre gelesen, die jeder Schreiber hält.
+ */
+async voiceCallInhaltszugriffLesen() : Promise<Inhaltszugriff> {
+    return await TAURI_INVOKE("voice_call_inhaltszugriff_lesen");
+},
+/**
+ * Gibt den Inhaltszugriff in EINEM Schritt frei oder zurück: nur wenn `erwartete_version` noch die
+ * aktuelle ist, werden Hauptschalter, Bereiche und Transkripte zusammen geschrieben und die Version
+ * erhöht; sonst wird nichts geschrieben (`konflikt`) und die Oberfläche liest neu. Ein Widerruf
+ * zwischen Lesen und Setzen gewinnt damit immer.
+ */
+async voiceCallInhaltszugriffSetzen(erwarteteVersion: number, enabled: boolean, areas: string[], readTranscripts: boolean) : Promise<Result<Setzen, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_inhaltszugriff_setzen", { erwarteteVersion, enabled, areas, readTranscripts }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -8547,7 +8600,50 @@ ttsProviderVoiceSample: "tts-provider-voice-sample"
 
 /** user-defined types **/
 
+/**
+ * Eine Anbieterart für Cloud-Ausnahmen (D7-Rest): konfigurierte Verbindung, gefiltert nach Regelwerk und
+ * Datenklasse.
+ */
+export type AblageAnbieter = { 
+/**
+ * Kennung wie in `freigabe.json` (Vorlagenkennung der Verbindung).
+ */
+id: string; 
+/**
+ * Bezeichnung der Verbindung (Anzeige).
+ */
+name: string; 
+/**
+ * Für „Vertraulich“ wählbar: Regelwerk erlaubt den Anbieter und er nimmt `confidential` an.
+ */
+waehlbar: boolean; 
+/**
+ * Warum nicht wählbar: `regelwerk` (der Anbieter erfüllt das Regelwerk nicht) oder `klasse` (er nimmt
+ * höchstens „Intern“ an); sonst `null`.
+ */
+grund: string | null }
+/**
+ * Anbieterliste für die Cloud-Ausnahme eines Ordners.
+ */
+export type AblageAnbieterListe = { 
+/**
+ * Aktives Regelwerk: `eu`, `nur_lokal` oder `keines`.
+ */
+regelwerk: string; anbieter: AblageAnbieter[] }
 export type AblageArt = "datei" | "ordner"
+/**
+ * Cloud-Ausnahmen (D3/D7-Rest, Spec §5.1) in der Sicht. Nur, was gilt: der Ordner, an dem die Ausnahme
+ * hängt, ist wirksam „Vertraulich“. Anbieter-Kennungen wie in `freigabe.json`, sortiert.
+ */
+export type AblageCloud = { 
+/**
+ * Ausnahmen an diesem Ordner selbst (bei Dateien immer leer).
+ */
+anbieter: string[]; 
+/**
+ * Ausnahmen, die von einem übergeordneten Ordner gelten (bei Dateien auch vom eigenen Ordner).
+ */
+geerbt: string[] }
 export type AblageDatei = { id: string; name: string; ordner: string; typ: string; groesse: number; geaendert: number; fassungen: number; konflikt: boolean; klasse: string; ki: AblageKi; nur_geraet: boolean; 
 /**
  * Stand der Textfassung der aktuellen Fassung: `ausstehend`, `ok`, `kein_text` oder `fehler`;
@@ -8561,7 +8657,11 @@ text_code: string | null;
 /**
  * D7: Datei eines verknüpften Ordners (nur lesen; Name = Pfad im verknüpften Ordner).
  */
-verknuepft: boolean }
+verknuepft: boolean; 
+/**
+ * D7-Rest: Cloud-Ausnahmen, die für diese Datei gelten (alle geerbt).
+ */
+cloud: AblageCloud }
 export type AblageEinstellungen = { datenklasse: string | null; nur_geraet: boolean | null; zielordner_ki: boolean | null }
 /**
  * Ergebnis von `ablage_entwurf_anlegen`.
@@ -8659,7 +8759,11 @@ klasse: string; nur_geraet: boolean; nur_geraet_wirksam: boolean; zielordner_ki:
 /**
  * D7: verknüpfter Ordner (nur lesen, nur dieses Gerät).
  */
-verknuepft: boolean }
+verknuepft: boolean; 
+/**
+ * D7-Rest: Cloud-Ausnahmen (nur an vertraulichen Ordnern).
+ */
+cloud: AblageCloud }
 /**
  * Zustand der semantischen Suche für die Seite „Ablage“.
  */
@@ -8764,6 +8868,18 @@ belegt: number | null; kontingent: number | null; eintraege: AblageSyncEintrag[]
  */
 export type AblageSyncZustand = "synchronisiert" | "ausstehend" | "konflikt" | "wartet_auf_text" | "nur_geraet" | "angehalten"
 /**
+ * Ein Unterordner eines verknüpften Ordners für den Baum der Oberfläche (nur lesen).
+ */
+export type AblageUnterordner = { 
+/**
+ * Relativer Pfad mit `/`.
+ */
+pfad: string; 
+/**
+ * Liegt nur online (er selbst oder ein Vorfahr): wird nie betreten.
+ */
+nur_online: boolean }
+/**
  * Ein verknüpfter Ordner für die Oberfläche.
  */
 export type AblageVerknuepft = { ordner: AblageOrdner; erreichbar: boolean; 
@@ -8783,7 +8899,11 @@ zu_viele: boolean;
 /**
  * Letztes Abtasten (ms), 0 = noch nie.
  */
-abgetastet: number }
+abgetastet: number; 
+/**
+ * Unterordner (sortiert), auch leere; nur Pfade relativ zum verknüpften Ordner.
+ */
+unterordner: AblageUnterordner[] }
 export type AccountState = "not_configured" | "no_capabilities" | "needs_sign_in" | "needs_consent" | "ready"
 /**
  * Eine Aufgabe (Zeile in `action_items`). `assignee_label` ist Freitext, die
@@ -10431,7 +10551,17 @@ epoch: number;
  * Fingerabdruck der Frage, zu der abgerufen wurde: das Backend gibt den
  * Kontext nur zu genau dieser Frage weiter (Codex M5 Must-fix 6).
  */
-question_hash?: string }
+question_hash?: string; 
+/**
+ * Berechtigungsversion beim Start des Abrufs (`berechtigung`): ändert sich der Inhaltszugriff,
+ * bevor die Auszüge ins Modell gehen, ist das Ergebnis ungültig (lva#509). `0` heißt unbekannt
+ * und passt nie.
+ */
+berechtigung?: number; 
+/**
+ * Marker: der Inhaltszugriff hat sich während des Abrufs geändert; deshalb gibt es keine Auszüge.
+ */
+berechtigung_geaendert?: boolean }
 /**
  * Verknüpfte Quelle (Vertrag `ContextSource`).
  */
@@ -10662,6 +10792,20 @@ output_language: string | null }
  * Ereignis eines Dokumentlaufs; `doc_type` ist der Schluessel des Katalogs.
  */
 export type DocumentEvent = { kind: "progress"; meeting_id: string; doc_type: string; phase: MinutesPhase; done: number; total: number } | { kind: "done"; meeting_id: string; doc_type: string; document_id: string } | { kind: "failed"; meeting_id: string; doc_type: string; code: string }
+/**
+ * Ergebnis für die Oberfläche. Name und Ordner sind die der Ablage (die Person hat sie selbst
+ * angegeben); der Inhalt des Dokuments ist nicht dabei.
+ */
+export type DokumentErgebnis = { dat: string; name: string; ordner: string; 
+/**
+ * Wirksame Klasse des Entwurfs (`public` … `personal`).
+ */
+klasse: string; nurGeraet: boolean; 
+/**
+ * Ist der Entwurf Mitglied des Projekts (als Eintrag, ausgeschaltet)? `false`, wenn nur die
+ * Mitgliedschaft scheiterte: Der Entwurf liegt dann in der Ablage.
+ */
+imProjekt: boolean }
 /**
  * Eine Sprachfassung: Text und/oder Hörbuch in einer Sprache.
  */
@@ -10936,7 +11080,12 @@ export type FreigabeInfo = { id: string; question: string; dataClass: string;
 /**
  * Frist des Halts in Sekunden (Rest ab jetzt).
  */
-expiresInSecs: number; projectId: string | null; queries: FreigabeZeile[] }
+expiresInSecs: number; projectId: string | null; queries: FreigabeZeile[]; 
+/**
+ * Die Anfragen entstanden mit dem Kontext des Projekts (Recherche mit Projektkontext): Die Person
+ * sieht, was aus ihrem Projekt in die Suche eingeht.
+ */
+withContext: boolean }
 export type FreigabeZeile = { id: string; text: string; 
 /**
  * Datenklasse (`PERSONAL` ...) der Anfrage, wenn sie eine Freigabe verlangt; die Oberflaeche
@@ -11083,6 +11232,10 @@ server_running: boolean;
  * Code des letzten Fehlers der Vektorstufe (`memory_low`, `no_model`, ...).
  */
 last_error: string | null }
+/**
+ * Der gelesene Stand für die Oberfläche (`voice_call_inhaltszugriff_lesen`).
+ */
+export type Inhaltszugriff = { version: number; enabled: boolean; areas: string[]; read_transcripts: boolean }
 /**
  * Eine Integration, wie Oberflaeche und Dump sie sehen. Enthaelt kein Geheimnis.
  */
@@ -13272,6 +13425,18 @@ matched_percent: number; pairs: LearnedPair[] }
  * Der Vorlesetext, einmal als Sätze (zum Anzeigen) und einmal am Stück (zum Vergleichen).
  */
 export type SetupText = { sentences: string[]; text: string }
+/**
+ * Antwort von `voice_call_inhaltszugriff_setzen`.
+ */
+export type Setzen = 
+/**
+ * Geschrieben; `version` ist die neue Version.
+ */
+{ status: "ok"; version: number } | 
+/**
+ * Nichts geschrieben: die erwartete Version war nicht mehr die aktuelle.
+ */
+{ status: "konflikt"; version: number }
 /**
  * Ein Pruefpunkt der Schild-Erklaerung. `id` wird in der Oberflaeche
  * uebersetzt, `detail` traegt Namen und Zahlen.

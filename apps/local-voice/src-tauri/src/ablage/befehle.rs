@@ -232,11 +232,32 @@ pub async fn ablage_cloud_ausnahme_setzen(
     anbieter: String,
     an: bool,
 ) -> Antwort<()> {
+    // Erteilen nur für Anbieter, die Regelwerk und Datenklasse jetzt zulassen (die Liste kommt aus den
+    // Einstellungen, nie aus der Oberfläche); Entziehen geht immer.
+    let zulaessig = !an || {
+        let s = crate::settings::get_settings(&app);
+        super::anbieter::zulaessig(&s, &crate::managers::compliance::today(), &anbieter)
+    };
     let r = blockierend(&app, move |a| {
+        if !zulaessig {
+            return Err(super::Fehler::neu(
+                "ablage.anbieter_nicht_zugelassen",
+                "Für diesen Anbieter ist keine Cloud-Ausnahme möglich.",
+            ));
+        }
         a.cloud_ausnahme_setzen(&ordner, &anbieter, an)
     })
     .await;
     widerrufen(&app, r)
+}
+
+/// Anbieterliste für die Cloud-Ausnahme (D7-Rest): konfigurierte Verbindungen, gefiltert nach Regelwerk
+/// und Datenklasse; nicht wählbare stehen mit Grund darin.
+#[tauri::command]
+#[specta::specta]
+pub fn ablage_cloud_anbieter(app: AppHandle) -> super::anbieter::AblageAnbieterListe {
+    let s = crate::settings::get_settings(&app);
+    super::anbieter::anbieterliste(&s, &crate::managers::compliance::today())
 }
 
 /// Einziges schreibendes KI-Werkzeug (D3, Spec §5.5): legt einen Entwurf (Markdown) als neue Datei in
@@ -263,6 +284,31 @@ pub async fn ablage_entwurf_anlegen(
             })?),
         };
         super::ki::entwurf_anlegen(&a, ordner.as_deref(), &name, &inhalt_md, &quellen, mindest)
+    })
+    .await
+}
+
+/// Legt einen KI-Entwurf für die Projekt-KI an (lva#365 P4c-3, KI-Dokument). Nur aus Rust erreichbar, kein
+/// Befehl: Die Mindestklasse kommt vom Versandtor und ist hier ein fester Parameter, den keine
+/// Oberfläche setzt oder senkt. Wie der Befehl gleicht der Aufruf danach den Index ab und weckt den
+/// Textarbeiter. Der Fehler ist `<code>: <text>` der Ablage, ohne Namen, Pfade oder Inhalte.
+pub(crate) async fn entwurf_fuer_projekt(
+    app: &AppHandle,
+    ordner: Option<String>,
+    name: String,
+    inhalt_md: String,
+    quellen: Vec<String>,
+    mindestklasse: super::zusammenfuehren::Klasse,
+) -> Antwort<AblageEntwurf> {
+    mit_nachlauf(app, false, move |a| {
+        super::ki::entwurf_anlegen(
+            &a,
+            ordner.as_deref(),
+            &name,
+            &inhalt_md,
+            &quellen,
+            Some(mindestklasse),
+        )
     })
     .await
 }

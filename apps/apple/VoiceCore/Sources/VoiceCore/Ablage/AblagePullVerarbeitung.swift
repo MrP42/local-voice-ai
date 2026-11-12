@@ -97,6 +97,8 @@ public enum AblageWarnung: Hashable, Sendable {
     case dateiPasstNicht
     /// Eine heruntergeladene Datei konnte nicht gespeichert werden (Speicher voll, Schreibschutz): Downloads ruhen.
     case dateiNichtSpeicherbar
+    /// Ein angefordertes Original konnte nicht geladen werden (Blob fehlt, Antwort unlesbar, Größe oder Hash passen nicht).
+    case originalNichtGeladen
 
     public var text: String {
         switch self {
@@ -106,6 +108,7 @@ public enum AblageWarnung: Hashable, Sendable {
         case .verworfen: return "Ablage: ein ungültiger Eintrag vom Hub wurde übersprungen"
         case .dateiPasstNicht: return "Ablage: eine Datei vom Hub passte nicht"
         case .dateiNichtSpeicherbar: return "Ablage: eine Datei konnte nicht gespeichert werden (Speicher voll?)"
+        case .originalNichtGeladen: return "Ablage: ein angefordertes Original konnte nicht geladen werden"
         }
     }
 }

@@ -135,6 +135,7 @@ final class VoicePhoneDelegate: NSObject, UIApplicationDelegate, UNUserNotificat
         VoiceModel.shared.registerBackgroundProcessing()
         _ = ModelDownloads.shared
         _ = AudioDownloads.shared  // Hörbuch-Downloads im Hintergrund wieder zuordnen
+        AssistantReleaseFiles.start()  // Assistent: Ordnung des Prozesses mit Protokoll und Meldestelle der Quellen verbinden (ohne Gespräch)
         UNUserNotificationCenter.current().delegate = self
         return true
     }

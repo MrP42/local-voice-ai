@@ -672,6 +672,19 @@ pub struct AblageKi {
     pub vorgabe: bool,
 }
 
+/// Cloud-Ausnahmen (D3/D7-Rest, Spec §5.1) in der Sicht. Nur, was gilt: der Ordner, an dem die Ausnahme
+/// hängt, ist wirksam „Vertraulich“. Anbieter-Kennungen wie in `freigabe.json`, sortiert.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, specta::Type)]
+pub struct AblageCloud {
+    /// Ausnahmen an diesem Ordner selbst (bei Dateien immer leer).
+    pub anbieter: Vec<String>,
+    /// Ausnahmen, die von einem übergeordneten Ordner gelten (bei Dateien auch vom eigenen Ordner).
+    pub geerbt: Vec<String>,
+}
+
+/// Wirksame Klasse der Ordner mit Cloud-Ausnahme zu einem Zeitpunkt (`None` = Ordner nicht vorhanden).
+type Klassenstand = BTreeMap<String, Option<Klasse>>;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
 pub struct AblageOrdner {
     pub id: String,
@@ -691,6 +704,8 @@ pub struct AblageOrdner {
     pub dateien: u32,
     /// D7: verknüpfter Ordner (nur lesen, nur dieses Gerät).
     pub verknuepft: bool,
+    /// D7-Rest: Cloud-Ausnahmen (nur an vertraulichen Ordnern).
+    pub cloud: AblageCloud,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
@@ -713,6 +728,8 @@ pub struct AblageDatei {
     pub text_code: Option<String>,
     /// D7: Datei eines verknüpften Ordners (nur lesen; Name = Pfad im verknüpften Ordner).
     pub verknuepft: bool,
+    /// D7-Rest: Cloud-Ausnahmen, die für diese Datei gelten (alle geerbt).
+    pub cloud: AblageCloud,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
@@ -1387,12 +1404,15 @@ impl Ablage {
         let lage = freigabe::laden(&self.dir);
         let eltern = st.eltern();
         let jetzt = jetzt_ms();
+        let gueltig = gueltige_ausnahmen(&st, &eltern, &lage);
         let mut ordner: Vec<AblageOrdner> = st
             .ordner
             .values()
             .filter(|o| !st.ordner_im_korb(&eltern, &o.id))
             .map(|o| {
                 let kette = zf::kette(&eltern, &o.id);
+                let klasse = zf::wirksame_klasse(&st.ordner, &eltern, &o.id);
+                let cloud = cloud_ordner(&gueltig, &kette, klasse);
                 let e = eltern.get(&o.id);
                 AblageOrdner {
                     id: o.id.clone(),
@@ -1403,9 +1423,7 @@ impl Ablage {
                     },
                     wiederhergestellt: matches!(e, Some(Eltern::Wiederhergestellt)),
                     datenklasse: o.datenklasse.wert.clone(),
-                    klasse: zf::wirksame_klasse(&st.ordner, &eltern, &o.id)
-                        .text()
-                        .into(),
+                    klasse: klasse.text().into(),
                     nur_geraet: o.nur_geraet.wert,
                     nur_geraet_wirksam: zf::wirksam_nur_geraet(&st.ordner, &eltern, &o.id),
                     zielordner_ki: o.zielordner_ki.wert,
@@ -1421,6 +1439,7 @@ impl Ablage {
                         .filter(|d| d.ordner.wert == o.id && d.papierkorb.wert.is_none())
                         .count() as u32,
                     verknuepft: false,
+                    cloud,
                 }
             })
             .collect();
@@ -1429,7 +1448,7 @@ impl Ablage {
             .dateien
             .values()
             .filter(|d| st.datei_lebt(&eltern, d))
-            .map(|d| datei_sicht(&st, &eltern, &lage, d))
+            .map(|d| datei_sicht(&st, &eltern, &lage, &gueltig, d))
             .collect();
         dateien.sort_by_key(|d| vergleichsschluessel(&d.name));
         let mut korb = Vec::new();
@@ -1608,6 +1627,42 @@ impl Ablage {
         self.sichern(&mut st)
     }
 
+    /// Merkt vor einer Änderung des Baums die wirksame Klasse jedes Ordners, an dem eine Cloud-Ausnahme
+    /// hängt (`None`: den Ordner gibt es hier nicht). Leer, wenn es keine Ausnahme gibt.
+    fn klassenstand(&self, st: &Stand) -> Klassenstand {
+        let freigabe::Lage::Gueltig(f) = freigabe::laden(&self.dir) else {
+            return Klassenstand::new();
+        };
+        let eltern = st.eltern();
+        f.ausnahmen
+            .keys()
+            .map(|o| {
+                let klasse = st
+                    .ordner
+                    .contains_key(o)
+                    .then(|| zf::wirksame_klasse(&st.ordner, &eltern, o));
+                (o.clone(), klasse)
+            })
+            .collect()
+    }
+
+    /// Entzieht die Cloud-Ausnahmen aller Ordner, deren wirksame Klasse sich gegenüber `vorher` geändert hat
+    /// (Spec §5.1: eine Ausnahme verfällt bei jedem Klassenwechsel, auch einem, der per Abgleich oder durch
+    /// Verschieben ankommt). Aufrufen, bevor der neue Stand gespeichert wird: schlägt der Entzug fehl, bleibt
+    /// der alte Stand und der Vorgang beginnt von vorn; die Ausnahme lebt nie unbemerkt wieder auf.
+    fn ausnahmen_nach_klassenwechsel(&self, st: &Stand, vorher: &Klassenstand) -> Res<()> {
+        if vorher.is_empty() {
+            return Ok(());
+        }
+        let jetzt = self.klassenstand(st);
+        let betroffen: Vec<String> = vorher
+            .iter()
+            .filter(|(o, k)| jetzt.get(*o) != Some(*k))
+            .map(|(o, _)| o.clone())
+            .collect();
+        freigabe::ausnahmen_entziehen(&self.dir, &betroffen)
+    }
+
     /// Verschiebt einen Ordner (`None` = oberste Ebene). Ziele im eigenen Unterbaum werden abgewiesen.
     pub fn ordner_verschieben(&self, id: &str, neu_eltern: Option<&str>) -> Res<()> {
         ordner_id_pruefen(id)?;
@@ -1634,8 +1689,12 @@ impl Ablage {
             .clone();
         gleichnamig_pruefen(&st, &eltern, neu_eltern, &name, Some(id))?;
         let (z, g) = (st.zaehler()?, st.geraet().to_string());
+        let klassen_vorher = self.klassenstand(&st);
         let o = st.ordner.get_mut(id).ok_or_else(nicht_gefunden)?;
         o.eltern = Register::neu(neu_eltern.map(str::to_string), z, &g);
+        // Unter einem anderen Elternordner kann sich die wirksame Klasse ändern: dann verfallen die
+        // Ausnahmen (vor dem Speichern, fail-closed).
+        self.ausnahmen_nach_klassenwechsel(&st, &klassen_vorher)?;
         self.sichern(&mut st)
     }
 
@@ -1687,10 +1746,10 @@ impl Ablage {
                 o.zielordner_ki = Register::neu(k, z, &g);
             }
         }
-        self.sichern(&mut st)?;
         if klasse_gewechselt {
             // Cloud-Ausnahmen gelten nur für `confidential`: bei jedem Klassenwechsel verfallen sie für
-            // den Ordner und alle Unterordner (die wirksame Klasse kann sich dort mitändern).
+            // den Ordner und alle Unterordner (die wirksame Klasse kann sich dort mitändern). Vor dem
+            // Speichern, fail-closed: scheitert das Entziehen, bleibt auch die Klasse unverändert.
             let eltern = st.eltern();
             let betroffen: Vec<String> = st
                 .ordner
@@ -1700,7 +1759,7 @@ impl Ablage {
                 .collect();
             freigabe::ausnahmen_entziehen(&self.dir, &betroffen)?;
         }
-        Ok(())
+        self.sichern(&mut st)
     }
 
     /// KI-Freigabe eines Ordners (gerätelokal, `freigabe.json`); `None` = erbt wieder.
@@ -3146,10 +3205,12 @@ fn datei_sicht(
     st: &Stand,
     eltern: &BTreeMap<String, Eltern>,
     lage: &freigabe::Lage,
+    gueltig: &BTreeMap<String, BTreeSet<String>>,
     d: &Datei,
 ) -> AblageDatei {
     let f = aktuelle_fassung(d);
     let kette = zf::kette(eltern, &d.ordner.wert);
+    let klasse = zf::wirksame_klasse_datei(&st.ordner, eltern, d);
     AblageDatei {
         id: d.id.clone(),
         name: d.name.wert.clone(),
@@ -3159,9 +3220,7 @@ fn datei_sicht(
         geaendert: f.map(|f| f.zeit).unwrap_or(0),
         fassungen: d.fassungen.len() as u32,
         konflikt: zf::konflikt(d),
-        klasse: zf::wirksame_klasse_datei(&st.ordner, eltern, d)
-            .text()
-            .into(),
+        klasse: klasse.text().into(),
         ki: ki_sicht(
             st,
             lage,
@@ -3174,6 +3233,73 @@ fn datei_sicht(
         text: f.and_then(|f| textstand(f).0),
         text_code: f.and_then(|f| textstand(f).1),
         verknuepft: false,
+        cloud: cloud_datei(gueltig, &kette, klasse),
+    }
+}
+
+/// Cloud-Ausnahmen, die jetzt gelten: je Ordner mit gespeicherter Ausnahme, der wirksam „Vertraulich“ ist
+/// (Spec §5.1). Bei unklarer Freigabe leer.
+fn gueltige_ausnahmen(
+    st: &Stand,
+    eltern: &BTreeMap<String, Eltern>,
+    lage: &freigabe::Lage,
+) -> BTreeMap<String, BTreeSet<String>> {
+    let freigabe::Lage::Gueltig(f) = lage else {
+        return BTreeMap::new();
+    };
+    f.ausnahmen
+        .iter()
+        .filter(|(o, a)| {
+            !a.is_empty()
+                && st.ordner.contains_key(*o)
+                && zf::wirksame_klasse(&st.ordner, eltern, o) == Klasse::Confidential
+        })
+        .map(|(o, a)| (o.clone(), a.clone()))
+        .collect()
+}
+
+/// Vereinigung der geltenden Ausnahmen der genannten Ordner, sortiert.
+fn ausnahmen_der(gueltig: &BTreeMap<String, BTreeSet<String>>, ordner: &[String]) -> Vec<String> {
+    ordner
+        .iter()
+        .filter_map(|o| gueltig.get(o))
+        .flatten()
+        .cloned()
+        .collect::<BTreeSet<String>>()
+        .into_iter()
+        .collect()
+}
+
+/// Cloud-Sicht eines Ordners: eigene Ausnahmen und die der Vorfahren. Nur, wenn der Ordner selbst wirksam
+/// „Vertraulich“ ist (darunter liegende Dateien sind sonst höher oder niedriger eingestuft, die Ausnahme
+/// greift dort nie).
+fn cloud_ordner(
+    gueltig: &BTreeMap<String, BTreeSet<String>>,
+    kette: &[String],
+    klasse: Klasse,
+) -> AblageCloud {
+    if klasse != Klasse::Confidential || kette.is_empty() {
+        return AblageCloud::default();
+    }
+    AblageCloud {
+        anbieter: ausnahmen_der(gueltig, &kette[..1]),
+        geerbt: ausnahmen_der(gueltig, &kette[1..]),
+    }
+}
+
+/// Cloud-Sicht einer Datei: alles, was für sie gilt, als geerbt (auch vom eigenen Ordner), nur bei
+/// wirksamer Klasse „Vertraulich“ – wie der Abruf in `ki.rs`.
+fn cloud_datei(
+    gueltig: &BTreeMap<String, BTreeSet<String>>,
+    kette: &[String],
+    klasse: Klasse,
+) -> AblageCloud {
+    if klasse != Klasse::Confidential {
+        return AblageCloud::default();
+    }
+    AblageCloud {
+        anbieter: Vec::new(),
+        geerbt: ausnahmen_der(gueltig, kette),
     }
 }
 

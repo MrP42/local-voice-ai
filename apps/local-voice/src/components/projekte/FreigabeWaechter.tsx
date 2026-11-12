@@ -26,7 +26,8 @@ const PRUEFEN_MS = 20_000;
  * Wächter der Recherche-Freigabe (ADR-0026): zeigt den Dialog, sobald eine Recherche ab der Klasse
  * PERSONAL angehalten wurde. Gesendet wird nur, was die Person ankreuzt; "Abbrechen" sendet nichts
  * ("Nur im Projekt suchen" gibt es erst mit dem Projektindex, PR-9, und hat hier keinen Knopf). Der
- * Dialog nennt die Frage der Recherche, die Datenklasse und die Restzeit des Halts. Einmal pro App
+ * Dialog nennt die Frage der Recherche, die Datenklasse und die Restzeit des Halts; bei einer Recherche
+ * mit Projektkontext (immer mit Halt) auch, dass die Anfragen aus dem Projekt entstanden. Einmal pro App
  * einbinden (`App.tsx`); Chat-Spalte, Sprachgespräch und Projektseite melden über
  * `meldeProjekte("freigabe")`.
  *
@@ -141,8 +142,15 @@ export const FreigabeWaechter: React.FC = () => {
   const rest = aktuell
     ? freigabeRestzeit(aktuell, geladenAm, Date.now(), t)
     : undefined;
+  // Mit Projektkontext (lva#365 P4c-3): Die Person sieht, dass die Suchanfragen aus ihrem Projekt entstanden.
   const kontext = aktuell
-    ? [freigabeKontext(aktuell, t), rest].filter(Boolean).join("; ")
+    ? [
+        freigabeKontext(aktuell, t),
+        aktuell.withContext ? t("projekte.freigabe.mitKontext") : undefined,
+        rest,
+      ]
+        .filter(Boolean)
+        .join("; ")
     : "";
 
   return (

@@ -1,0 +1,4721 @@
+{
+  "fragen": [
+    {
+      "bm25": [
+        {
+          "name": "Hausordnung.txt",
+          "seite": 2,
+          "wert": -2.0411161108832117
+        }
+      ],
+      "bm25_anzahl": 1,
+      "dateien": [
+        {
+          "name": "Hausordnung.txt",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "zeile=4",
+              "auszug": "Ruhezeiten: Die Nachtruhe gilt täglich von 22 Uhr bis 6 Uhr. Auch mittags zwischen 13 und 15 Uhr ist auf die Nachbarn Rücksicht zu nehmen. Musik und Heimwerken sind in dieser Zeit zu unterlassen.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        }
+      ],
+      "frage": "Wann gelten die Ruhezeiten im Haus?",
+      "stellen": [
+        {
+          "anker": "zeile=4",
+          "name": "Hausordnung.txt",
+          "rang": 0.5,
+          "seite": 2
+        }
+      ],
+      "tokens": [
+        "gelten",
+        "ruhezeiten",
+        "haus"
+      ],
+      "treffer_gesamt": 1
+    },
+    {
+      "bm25": [
+        {
+          "name": "Mietvertrag.docx",
+          "seite": 6,
+          "wert": -2.4834768372574776
+        },
+        {
+          "name": "Protokoll.txt",
+          "seite": 6,
+          "wert": -2.207341268661672
+        },
+        {
+          "name": "Nebenkosten.txt",
+          "seite": 1,
+          "wert": -1.8057760258041908
+        }
+      ],
+      "bm25_anzahl": 3,
+      "dateien": [
+        {
+          "name": "Mietvertrag.docx",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "absatz=6",
+              "auszug": "Die Kündigungsfrist beträgt für den Mieter drei Monate. Eine Kündigung muss schriftlich erfolgen.",
+              "pfad": [
+                "Mietvertrag Beispielstraße 12",
+                "§ 7 Kündigung"
+              ]
+            }
+          ],
+          "typ": "docx"
+        },
+        {
+          "name": "Protokoll.txt",
+          "rang": 0.4919354838709677,
+          "stellen": [
+            {
+              "anker": "zeile=7",
+              "auszug": "Verschiedenes: Die Kündigungsfrist für den Wartungsvertrag der Aufzüge beträgt sechs Monate; eine Kündigung muss rechtzeitig vorbereitet werden.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        },
+        {
+          "name": "Nebenkosten.txt",
+          "rang": 0.4841269841269841,
+          "stellen": [
+            {
+              "anker": "zeile=1",
+              "auszug": "Nebenkostenabrechnung 2025: Heizung, Wasser, Müllabfuhr und Hausmeister.\nDie Abrechnung erfolgt jährlich, Nachzahlungen sind innerhalb von vier Wochen fällig. Die Kündigungsfrist für Wartungsverträge beträgt ein Monat.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        }
+      ],
+      "frage": "Kündigungsfrist",
+      "stellen": [
+        {
+          "anker": "absatz=6",
+          "name": "Mietvertrag.docx",
+          "rang": 0.5,
+          "seite": 6
+        },
+        {
+          "anker": "zeile=7",
+          "name": "Protokoll.txt",
+          "rang": 0.4919354838709677,
+          "seite": 6
+        },
+        {
+          "anker": "zeile=1",
+          "name": "Nebenkosten.txt",
+          "rang": 0.4841269841269841,
+          "seite": 1
+        }
+      ],
+      "tokens": [
+        "kündigungsfrist"
+      ],
+      "treffer_gesamt": 3
+    },
+    {
+      "bm25": [
+        {
+          "name": "Mietvertrag.docx",
+          "seite": 5,
+          "wert": -3.0183316401476725
+        },
+        {
+          "name": "Kuendigung.md",
+          "seite": 1,
+          "wert": -2.8809770860798167
+        },
+        {
+          "name": "Mietvertrag.docx",
+          "seite": 6,
+          "wert": -1.979960717348489
+        },
+        {
+          "name": "Kuendigung.md",
+          "seite": 3,
+          "wert": -1.9199159597998596
+        },
+        {
+          "name": "Protokoll.txt",
+          "seite": 6,
+          "wert": -1.7598106558378888
+        }
+      ],
+      "bm25_anzahl": 5,
+      "dateien": [
+        {
+          "name": "Mietvertrag.docx",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "absatz=5",
+              "auszug": "§ 7 Kündigung",
+              "pfad": [
+                "Mietvertrag Beispielstraße 12",
+                "§ 3 Miete und Nebenkosten"
+              ]
+            },
+            {
+              "anker": "absatz=6",
+              "auszug": "Die Kündigungsfrist beträgt für den Mieter drei Monate. Eine Kündigung muss schriftlich erfolgen.",
+              "pfad": [
+                "Mietvertrag Beispielstraße 12",
+                "§ 7 Kündigung"
+              ]
+            }
+          ],
+          "typ": "docx"
+        },
+        {
+          "name": "Kuendigung.md",
+          "rang": 0.4919354838709677,
+          "stellen": [
+            {
+              "anker": "zeile=1",
+              "auszug": "# Kündigung des Vertrags",
+              "pfad": []
+            },
+            {
+              "anker": "zeile=5",
+              "auszug": "hiermit kündige ich den Vertrag zum nächstmöglichen Termin. Bitte bestätigen Sie die Kündigung schriftlich.",
+              "pfad": []
+            }
+          ],
+          "typ": "md"
+        },
+        {
+          "name": "Protokoll.txt",
+          "rang": 0.46923076923076923,
+          "stellen": [
+            {
+              "anker": "zeile=7",
+              "auszug": "Verschiedenes: Die Kündigungsfrist für den Wartungsvertrag der Aufzüge beträgt sechs Monate; eine Kündigung muss rechtzeitig vorbereitet werden.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        }
+      ],
+      "frage": "KUNDIGUNG",
+      "stellen": [
+        {
+          "anker": "absatz=5",
+          "name": "Mietvertrag.docx",
+          "rang": 0.5,
+          "seite": 5
+        },
+        {
+          "anker": "zeile=1",
+          "name": "Kuendigung.md",
+          "rang": 0.4919354838709677,
+          "seite": 1
+        },
+        {
+          "anker": "absatz=6",
+          "name": "Mietvertrag.docx",
+          "rang": 0.4841269841269841,
+          "seite": 6
+        },
+        {
+          "anker": "zeile=5",
+          "name": "Kuendigung.md",
+          "rang": 0.4765625,
+          "seite": 3
+        },
+        {
+          "anker": "zeile=7",
+          "name": "Protokoll.txt",
+          "rang": 0.46923076923076923,
+          "seite": 6
+        }
+      ],
+      "tokens": [
+        "kundigung"
+      ],
+      "treffer_gesamt": 3
+    },
+    {
+      "bm25": [
+        {
+          "name": "Mietvertrag.docx",
+          "seite": 2,
+          "wert": -2.8452962314815076
+        },
+        {
+          "name": "Kuendigung.md",
+          "seite": 3,
+          "wert": -2.759009104228737
+        },
+        {
+          "name": "Mietvertrag.docx",
+          "seite": 6,
+          "wert": -2.4834768372574776
+        },
+        {
+          "name": "Protokoll.txt",
+          "seite": 6,
+          "wert": -2.207341268661672
+        },
+        {
+          "name": "Nebenkosten.txt",
+          "seite": 1,
+          "wert": -1.8057760258041908
+        }
+      ],
+      "bm25_anzahl": 5,
+      "dateien": [
+        {
+          "name": "Mietvertrag.docx",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "absatz=2",
+              "auszug": "Zwischen der Beispiel-Genossenschaft und dem Mieter Max Mustermann wird folgender Vertrag geschlossen.",
+              "pfad": [
+                "Mietvertrag Beispielstraße 12"
+              ]
+            },
+            {
+              "anker": "absatz=6",
+              "auszug": "Die Kündigungsfrist beträgt für den Mieter drei Monate. Eine Kündigung muss schriftlich erfolgen.",
+              "pfad": [
+                "Mietvertrag Beispielstraße 12",
+                "§ 7 Kündigung"
+              ]
+            }
+          ],
+          "typ": "docx"
+        },
+        {
+          "name": "Kuendigung.md",
+          "rang": 0.4919354838709677,
+          "stellen": [
+            {
+              "anker": "zeile=5",
+              "auszug": "hiermit kündige ich den Vertrag zum nächstmöglichen Termin. Bitte bestätigen Sie die Kündigung schriftlich.",
+              "pfad": []
+            }
+          ],
+          "typ": "md"
+        },
+        {
+          "name": "Protokoll.txt",
+          "rang": 0.4765625,
+          "stellen": [
+            {
+              "anker": "zeile=7",
+              "auszug": "Verschiedenes: Die Kündigungsfrist für den Wartungsvertrag der Aufzüge beträgt sechs Monate; eine Kündigung muss rechtzeitig vorbereitet werden.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        },
+        {
+          "name": "Nebenkosten.txt",
+          "rang": 0.46923076923076923,
+          "stellen": [
+            {
+              "anker": "zeile=1",
+              "auszug": "Nebenkostenabrechnung 2025: Heizung, Wasser, Müllabfuhr und Hausmeister.\nDie Abrechnung erfolgt jährlich, Nachzahlungen sind innerhalb von vier Wochen fällig. Die Kündigungsfrist für Wartungsverträge beträgt ein Monat.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        }
+      ],
+      "frage": "Kündigungsfrist Vertrag Laufzeit",
+      "stellen": [
+        {
+          "anker": "absatz=2",
+          "name": "Mietvertrag.docx",
+          "rang": 0.5,
+          "seite": 2
+        },
+        {
+          "anker": "zeile=5",
+          "name": "Kuendigung.md",
+          "rang": 0.4919354838709677,
+          "seite": 3
+        },
+        {
+          "anker": "absatz=6",
+          "name": "Mietvertrag.docx",
+          "rang": 0.4841269841269841,
+          "seite": 6
+        },
+        {
+          "anker": "zeile=7",
+          "name": "Protokoll.txt",
+          "rang": 0.4765625,
+          "seite": 6
+        },
+        {
+          "anker": "zeile=1",
+          "name": "Nebenkosten.txt",
+          "rang": 0.46923076923076923,
+          "seite": 1
+        }
+      ],
+      "tokens": [
+        "kündigungsfrist",
+        "vertrag",
+        "laufzeit"
+      ],
+      "treffer_gesamt": 4
+    },
+    {
+      "bm25": [
+        {
+          "name": "Cafe.txt",
+          "seite": 2,
+          "wert": -3.4908310593598575
+        }
+      ],
+      "bm25_anzahl": 1,
+      "dateien": [
+        {
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "zeile=4",
+              "auszug": "Unsere Adresse: Straße der Pariser Kommune 5. Inhaber: Müller und Mueller GbR.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        }
+      ],
+      "frage": "Straße",
+      "stellen": [
+        {
+          "anker": "zeile=4",
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "seite": 2
+        }
+      ],
+      "tokens": [
+        "straße"
+      ],
+      "treffer_gesamt": 1
+    },
+    {
+      "bm25": [
+        {
+          "name": "Cafe.txt",
+          "seite": 2,
+          "wert": -3.4908310593598575
+        }
+      ],
+      "bm25_anzahl": 1,
+      "dateien": [
+        {
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "zeile=4",
+              "auszug": "Unsere Adresse: Straße der Pariser Kommune 5. Inhaber: Müller und Mueller GbR.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        }
+      ],
+      "frage": "Strasse",
+      "stellen": [
+        {
+          "anker": "zeile=4",
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "seite": 2
+        }
+      ],
+      "tokens": [
+        "strasse"
+      ],
+      "treffer_gesamt": 1
+    },
+    {
+      "bm25": [
+        {
+          "name": "Cafe.txt",
+          "seite": 1,
+          "wert": -6.981662118719715
+        }
+      ],
+      "bm25_anzahl": 1,
+      "dateien": [
+        {
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "zeile=1",
+              "auszug": "Café de la Gare\nCrème brûlée, Œuf cocotte und Zoë's Quiche.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        }
+      ],
+      "frage": "creme brulee",
+      "stellen": [
+        {
+          "anker": "zeile=1",
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "seite": 1
+        }
+      ],
+      "tokens": [
+        "creme",
+        "brulee"
+      ],
+      "treffer_gesamt": 1
+    },
+    {
+      "bm25": [
+        {
+          "name": "Cafe.txt",
+          "seite": 1,
+          "wert": -6.981662118719715
+        }
+      ],
+      "bm25_anzahl": 1,
+      "dateien": [
+        {
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "zeile=1",
+              "auszug": "Café de la Gare\nCrème brûlée, Œuf cocotte und Zoë's Quiche.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        }
+      ],
+      "frage": "Zoe Chloe cafe",
+      "stellen": [
+        {
+          "anker": "zeile=1",
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "seite": 1
+        }
+      ],
+      "tokens": [
+        "zoe",
+        "chloe",
+        "cafe"
+      ],
+      "treffer_gesamt": 1
+    },
+    {
+      "bm25": [
+        {
+          "name": "Cafe.txt",
+          "seite": 2,
+          "wert": -6.981662118719715
+        }
+      ],
+      "bm25_anzahl": 1,
+      "dateien": [
+        {
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "zeile=4",
+              "auszug": "Unsere Adresse: Straße der Pariser Kommune 5. Inhaber: Müller und Mueller GbR.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        }
+      ],
+      "frage": "Mueller Müller",
+      "stellen": [
+        {
+          "anker": "zeile=4",
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "seite": 2
+        }
+      ],
+      "tokens": [
+        "mueller",
+        "müller"
+      ],
+      "treffer_gesamt": 1
+    },
+    {
+      "bm25": [
+        {
+          "name": "Handbuch.html",
+          "seite": 6,
+          "wert": -13.95067617029438
+        },
+        {
+          "name": "Invoice.txt",
+          "seite": 1,
+          "wert": -3.0476626975532257
+        },
+        {
+          "name": "Rezepte.md",
+          "seite": 2,
+          "wert": -2.3372813819945133
+        }
+      ],
+      "bm25_anzahl": 3,
+      "dateien": [
+        {
+          "name": "Handbuch.html",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "absatz=6",
+              "auszug": "To reset the device, hold the power button for ten seconds. If the display stays red, contact support at support@example.com.",
+              "pfad": [
+                "Handbuch Beispielgerät",
+                "Troubleshooting"
+              ]
+            }
+          ],
+          "typ": "html"
+        },
+        {
+          "name": "Invoice.txt",
+          "rang": 0.4919354838709677,
+          "stellen": [
+            {
+              "anker": "zeile=1",
+              "auszug": "Invoice 2026-114\nPayment terms: net 30 days. Please transfer the amount to the account of Example Ltd. Late payment fees apply after the due date. Contact: billing@example.com.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        },
+        {
+          "name": "Rezepte.md",
+          "rang": 0.4841269841269841,
+          "stellen": [
+            {
+              "anker": "zeile=3",
+              "auszug": "Mix the flour, milk and eggs. Fry in butter until golden. Serve with maple syrup.",
+              "pfad": []
+            }
+          ],
+          "typ": "md"
+        }
+      ],
+      "frage": "reset the device power button",
+      "stellen": [
+        {
+          "anker": "absatz=6",
+          "name": "Handbuch.html",
+          "rang": 0.5,
+          "seite": 6
+        },
+        {
+          "anker": "zeile=1",
+          "name": "Invoice.txt",
+          "rang": 0.4919354838709677,
+          "seite": 1
+        },
+        {
+          "anker": "zeile=3",
+          "name": "Rezepte.md",
+          "rang": 0.4841269841269841,
+          "seite": 2
+        }
+      ],
+      "tokens": [
+        "reset",
+        "the",
+        "device",
+        "power",
+        "button"
+      ],
+      "treffer_gesamt": 3
+    },
+    {
+      "bm25": [
+        {
+          "name": "Invoice.txt",
+          "seite": 1,
+          "wert": -7.817453627811567
+        }
+      ],
+      "bm25_anzahl": 1,
+      "dateien": [
+        {
+          "name": "Invoice.txt",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "zeile=1",
+              "auszug": "Invoice 2026-114\nPayment terms: net 30 days. Please transfer the amount to the account of Example Ltd. Late payment fees apply after the due date. Contact: billing@example.com.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        }
+      ],
+      "frage": "payment terms invoice",
+      "stellen": [
+        {
+          "anker": "zeile=1",
+          "name": "Invoice.txt",
+          "rang": 0.5,
+          "seite": 1
+        }
+      ],
+      "tokens": [
+        "payment",
+        "terms",
+        "invoice"
+      ],
+      "treffer_gesamt": 1
+    },
+    {
+      "bm25": [
+        {
+          "name": "Hausordnung.txt",
+          "seite": 3,
+          "wert": -10.252937367036234
+        },
+        {
+          "name": "Hausordnung.txt",
+          "seite": 4,
+          "wert": -2.27587750366512
+        }
+      ],
+      "bm25_anzahl": 2,
+      "dateien": [
+        {
+          "name": "Hausordnung.txt",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "zeile=6",
+              "auszug": "Müll und Wertstoffe: Müll gehört in die Tonnen im Hof, Wertstoffe in die gelben Säcke. Sperrmüll darf nicht im Treppenhaus abgestellt werden. Fragen an hausmeister@example.org",
+              "pfad": []
+            },
+            {
+              "anker": "zeile=8",
+              "auszug": "Fahrräder und Kinderwagen: Fahrräder werden im Fahrradkeller abgestellt, nicht im Treppenhaus. Kinderwagen dürfen im Flur stehen, solange der Fluchtweg frei bleibt.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        }
+      ],
+      "frage": "Müll Tonnen Säcke Treppenhaus",
+      "stellen": [
+        {
+          "anker": "zeile=6",
+          "name": "Hausordnung.txt",
+          "rang": 0.5,
+          "seite": 3
+        },
+        {
+          "anker": "zeile=8",
+          "name": "Hausordnung.txt",
+          "rang": 0.4919354838709677,
+          "seite": 4
+        }
+      ],
+      "tokens": [
+        "müll",
+        "tonnen",
+        "säcke",
+        "treppenhaus"
+      ],
+      "treffer_gesamt": 1
+    },
+    {
+      "bm25": [
+        {
+          "name": "Protokoll.txt",
+          "seite": 2,
+          "wert": -11.167166673457308
+        },
+        {
+          "name": "Protokoll.txt",
+          "seite": 3,
+          "wert": -10.18963162525281
+        }
+      ],
+      "bm25_anzahl": 2,
+      "dateien": [
+        {
+          "name": "Protokoll.txt",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "zeile=3",
+              "auszug": "Das Budget für 2027 wurde diskutiert. Das Budget sieht Ausgaben für Heizung, Fassade und Spielplatz vor; das Budget für die Fassade wurde um zehn Prozent gekürzt, weil das Budget der Rücklage nicht ausreicht. Über das",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        }
+      ],
+      "frage": "Budget Budget Budget",
+      "stellen": [
+        {
+          "anker": "zeile=3",
+          "name": "Protokoll.txt",
+          "rang": 0.5,
+          "seite": 2
+        },
+        {
+          "anker": "zeile=3",
+          "name": "Protokoll.txt",
+          "rang": 0.4919354838709677,
+          "seite": 3
+        }
+      ],
+      "tokens": [
+        "budget",
+        "budget",
+        "budget"
+      ],
+      "treffer_gesamt": 1
+    },
+    {
+      "bm25": [
+        {
+          "name": "Invoice.txt",
+          "seite": 1,
+          "wert": -5.2554864458314565
+        },
+        {
+          "name": "Rezepte.md",
+          "seite": 2,
+          "wert": -5.015082844980901
+        },
+        {
+          "name": "Rezepte.md",
+          "seite": 4,
+          "wert": -3.9928118012876923
+        },
+        {
+          "name": "Handbuch.html",
+          "seite": 6,
+          "wert": -3.395139679697061
+        }
+      ],
+      "bm25_anzahl": 4,
+      "dateien": [
+        {
+          "name": "Invoice.txt",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "zeile=1",
+              "auszug": "Invoice 2026-114\nPayment terms: net 30 days. Please transfer the amount to the account of Example Ltd. Late payment fees apply after the due date. Contact: billing@example.com.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        },
+        {
+          "name": "Rezepte.md",
+          "rang": 0.4919354838709677,
+          "stellen": [
+            {
+              "anker": "zeile=3",
+              "auszug": "Mix the flour, milk and eggs. Fry in butter until golden. Serve with maple syrup.",
+              "pfad": []
+            },
+            {
+              "anker": "zeile=7",
+              "auszug": "Simmer onions and carrots for twenty minutes. Season with salt and pepper.",
+              "pfad": []
+            }
+          ],
+          "typ": "md"
+        },
+        {
+          "name": "Handbuch.html",
+          "rang": 0.4765625,
+          "stellen": [
+            {
+              "anker": "absatz=6",
+              "auszug": "To reset the device, hold the power button for ten seconds. If the display stays red, contact support at support@example.com.",
+              "pfad": [
+                "Handbuch Beispielgerät",
+                "Troubleshooting"
+              ]
+            }
+          ],
+          "typ": "html"
+        }
+      ],
+      "frage": "the and of der die das",
+      "stellen": [
+        {
+          "anker": "zeile=1",
+          "name": "Invoice.txt",
+          "rang": 0.5,
+          "seite": 1
+        },
+        {
+          "anker": "zeile=3",
+          "name": "Rezepte.md",
+          "rang": 0.4919354838709677,
+          "seite": 2
+        },
+        {
+          "anker": "zeile=7",
+          "name": "Rezepte.md",
+          "rang": 0.4841269841269841,
+          "seite": 4
+        },
+        {
+          "anker": "absatz=6",
+          "name": "Handbuch.html",
+          "rang": 0.4765625,
+          "seite": 6
+        }
+      ],
+      "tokens": [
+        "the",
+        "and",
+        "of"
+      ],
+      "treffer_gesamt": 3
+    },
+    {
+      "bm25": [
+        {
+          "name": "Angebot.eml",
+          "seite": 2,
+          "wert": -7.079552295090948
+        },
+        {
+          "name": "Angebot.eml",
+          "seite": 1,
+          "wert": -4.55175500733024
+        }
+      ],
+      "bm25_anzahl": 2,
+      "dateien": [
+        {
+          "name": "Angebot.eml",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "teil=text",
+              "auszug": "Hallo Bernd,\r\nanbei das Angebot für die Fähre nach Rügen. Die Überfahrt dauert zwei Stunden. Preis pro Person 24 Euro.\r\nGruß Anna",
+              "pfad": []
+            },
+            {
+              "anker": "teil=kopf",
+              "auszug": "Von: Anna Beispiel <anna@example.org>\nAn: bernd@example.com\nBetreff: Angebot Fähre\nDatum: 2026-11-02T10:00:00+01:00",
+              "pfad": []
+            }
+          ],
+          "typ": "eml"
+        }
+      ],
+      "frage": "Angebot Fähre Überfahrt",
+      "stellen": [
+        {
+          "anker": "teil=text",
+          "name": "Angebot.eml",
+          "rang": 0.5,
+          "seite": 2
+        },
+        {
+          "anker": "teil=kopf",
+          "name": "Angebot.eml",
+          "rang": 0.4919354838709677,
+          "seite": 1
+        }
+      ],
+      "tokens": [
+        "angebot",
+        "fähre",
+        "überfahrt"
+      ],
+      "treffer_gesamt": 1
+    },
+    {
+      "bm25": [
+        {
+          "name": "Griechisch.txt",
+          "seite": 1,
+          "wert": -9.02012508407584
+        }
+      ],
+      "bm25_anzahl": 1,
+      "dateien": [
+        {
+          "name": "Griechisch.txt",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "zeile=1",
+              "auszug": "Привет мир! Ёлка и Ёж.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        }
+      ],
+      "frage": "ЁЛКА привет",
+      "stellen": [
+        {
+          "anker": "zeile=1",
+          "name": "Griechisch.txt",
+          "rang": 0.5,
+          "seite": 1
+        }
+      ],
+      "tokens": [
+        "ёлка",
+        "привет"
+      ],
+      "treffer_gesamt": 1
+    },
+    {
+      "bm25": [
+        {
+          "name": "Griechisch.txt",
+          "seite": 2,
+          "wert": -4.162797372555708
+        }
+      ],
+      "bm25_anzahl": 1,
+      "dateien": [
+        {
+          "name": "Griechisch.txt",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "zeile=3",
+              "auszug": "Όμηρος και Σίσυφος. ΌΣΟΣ ο ΣΟΦΟΣ. Ελλάδα.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        }
+      ],
+      "frage": "όσος σισυφος",
+      "stellen": [
+        {
+          "anker": "zeile=3",
+          "name": "Griechisch.txt",
+          "rang": 0.5,
+          "seite": 2
+        }
+      ],
+      "tokens": [
+        "όσος",
+        "σισυφος"
+      ],
+      "treffer_gesamt": 1
+    },
+    {
+      "bm25": [],
+      "bm25_anzahl": 0,
+      "dateien": [],
+      "frage": "Ruhe-Zeiten l'étage",
+      "stellen": [],
+      "tokens": [
+        "ruhe",
+        "zeiten",
+        "l",
+        "étage"
+      ],
+      "treffer_gesamt": 0
+    },
+    {
+      "bm25": [
+        {
+          "name": "Hausordnung.txt",
+          "seite": 2,
+          "wert": -8.03009629830229
+        }
+      ],
+      "bm25_anzahl": 1,
+      "dateien": [
+        {
+          "name": "Hausordnung.txt",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "zeile=4",
+              "auszug": "Ruhezeiten: Die Nachtruhe gilt täglich von 22 Uhr bis 6 Uhr. Auch mittags zwischen 13 und 15 Uhr ist auf die Nachbarn Rücksicht zu nehmen. Musik und Heimwerken sind in dieser Zeit zu unterlassen.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        }
+      ],
+      "frage": "Nachtruhe 22 Uhr",
+      "stellen": [
+        {
+          "anker": "zeile=4",
+          "name": "Hausordnung.txt",
+          "rang": 0.5,
+          "seite": 2
+        }
+      ],
+      "tokens": [
+        "nachtruhe",
+        "22",
+        "uhr"
+      ],
+      "treffer_gesamt": 1
+    },
+    {
+      "bm25": [
+        {
+          "name": "Stopwoerter.txt",
+          "seite": 2,
+          "wert": -5.303261552403765
+        }
+      ],
+      "bm25_anzahl": 1,
+      "dateien": [
+        {
+          "name": "Stopwoerter.txt",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "zeile=3",
+              "auszug": "Nur das Wort Zugvogel steht hier wirklich, dazu Zugvogel und noch ein Zugvogel.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        }
+      ],
+      "frage": "Zugvogel",
+      "stellen": [
+        {
+          "anker": "zeile=3",
+          "name": "Stopwoerter.txt",
+          "rang": 0.5,
+          "seite": 2
+        }
+      ],
+      "tokens": [
+        "zugvogel"
+      ],
+      "treffer_gesamt": 1
+    },
+    {
+      "bm25": [
+        {
+          "name": "Hausordnung.txt",
+          "seite": 1,
+          "wert": -15.193135902017179
+        },
+        {
+          "name": "Hausordnung.txt",
+          "seite": 2,
+          "wert": -12.246696665299272
+        },
+        {
+          "name": "Mietvertrag.docx",
+          "seite": 2,
+          "wert": -9.380143964422928
+        },
+        {
+          "name": "Kuendigung.md",
+          "seite": 3,
+          "wert": -6.558207041523665
+        },
+        {
+          "name": "Protokoll.txt",
+          "seite": 1,
+          "wert": -5.677159002230399
+        },
+        {
+          "name": "Mietvertrag.docx",
+          "seite": 8,
+          "wert": -4.707650838316323
+        },
+        {
+          "name": "Mietvertrag.docx",
+          "seite": 6,
+          "wert": -4.4131902899079725
+        }
+      ],
+      "bm25_anzahl": 7,
+      "dateien": [
+        {
+          "name": "Hausordnung.txt",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "zeile=1",
+              "auszug": "Hausordnung der Beispiel-Genossenschaft\nGültig ab dem 1. Januar 2026 für alle Mieter und Gäste.",
+              "pfad": []
+            },
+            {
+              "anker": "zeile=4",
+              "auszug": "Ruhezeiten: Die Nachtruhe gilt täglich von 22 Uhr bis 6 Uhr. Auch mittags zwischen 13 und 15 Uhr ist auf die Nachbarn Rücksicht zu nehmen. Musik und Heimwerken sind in dieser Zeit zu unterlassen.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        },
+        {
+          "name": "Mietvertrag.docx",
+          "rang": 0.4841269841269841,
+          "stellen": [
+            {
+              "anker": "absatz=2",
+              "auszug": "Zwischen der Beispiel-Genossenschaft und dem Mieter Max Mustermann wird folgender Vertrag geschlossen.",
+              "pfad": [
+                "Mietvertrag Beispielstraße 12"
+              ]
+            },
+            {
+              "anker": "absatz=8",
+              "auszug": "Der Mieter übernimmt keine Schönheitsreparaturen. Über Ausnahmen entscheidet die Vermieterin schriftlich.",
+              "pfad": [
+                "Mietvertrag Beispielstraße 12",
+                "§ 8 Schönheitsreparaturen"
+              ]
+            },
+            {
+              "anker": "absatz=6",
+              "auszug": "Die Kündigungsfrist beträgt für den Mieter drei Monate. Eine Kündigung muss schriftlich erfolgen.",
+              "pfad": [
+                "Mietvertrag Beispielstraße 12",
+                "§ 7 Kündigung"
+              ]
+            }
+          ],
+          "typ": "docx"
+        },
+        {
+          "name": "Kuendigung.md",
+          "rang": 0.4765625,
+          "stellen": [
+            {
+              "anker": "zeile=5",
+              "auszug": "hiermit kündige ich den Vertrag zum nächstmöglichen Termin. Bitte bestätigen Sie die Kündigung schriftlich.",
+              "pfad": []
+            }
+          ],
+          "typ": "md"
+        },
+        {
+          "name": "Protokoll.txt",
+          "rang": 0.46923076923076923,
+          "stellen": [
+            {
+              "anker": "zeile=1",
+              "auszug": "Protokoll der Sitzung vom 3. November 2026 (Beispiel-Genossenschaft)",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        }
+      ],
+      "frage": "Ruhezeiten im Haus und Nachtruhe für alle Mieter der Genossenschaft bitte beachten Ruhezeiten im Haus und Nachtruhe für alle Mieter der Genossenschaft bitte beachten Ruhezeiten im Haus und Nachtruhe für alle Mieter der Genossenschaft bitte beachten  Zugvogel",
+      "stellen": [
+        {
+          "anker": "zeile=1",
+          "name": "Hausordnung.txt",
+          "rang": 0.5,
+          "seite": 1
+        },
+        {
+          "anker": "zeile=4",
+          "name": "Hausordnung.txt",
+          "rang": 0.4919354838709677,
+          "seite": 2
+        },
+        {
+          "anker": "absatz=2",
+          "name": "Mietvertrag.docx",
+          "rang": 0.4841269841269841,
+          "seite": 2
+        },
+        {
+          "anker": "zeile=5",
+          "name": "Kuendigung.md",
+          "rang": 0.4765625,
+          "seite": 3
+        },
+        {
+          "anker": "zeile=1",
+          "name": "Protokoll.txt",
+          "rang": 0.46923076923076923,
+          "seite": 1
+        },
+        {
+          "anker": "absatz=8",
+          "name": "Mietvertrag.docx",
+          "rang": 0.4621212121212121,
+          "seite": 8
+        },
+        {
+          "anker": "absatz=6",
+          "name": "Mietvertrag.docx",
+          "rang": 0.4552238805970149,
+          "seite": 6
+        }
+      ],
+      "tokens": [
+        "ruhezeiten",
+        "haus",
+        "nachtruhe",
+        "alle",
+        "mieter",
+        "genossenschaft",
+        "bitte",
+        "beachten",
+        "ruhezeiten",
+        "haus",
+        "nachtruhe",
+        "alle",
+        "mieter",
+        "genossenschaft",
+        "bitte",
+        "beachten",
+        "ruhezeiten",
+        "haus",
+        "nachtruhe",
+        "f"
+      ],
+      "treffer_gesamt": 4
+    },
+    {
+      "bm25": [
+        {
+          "name": "Protokoll.txt",
+          "seite": 4,
+          "wert": -6.80361226251021
+        },
+        {
+          "name": "Protokoll.txt",
+          "seite": 2,
+          "wert": -3.153755157553805
+        },
+        {
+          "name": "Mietvertrag.docx",
+          "seite": 5,
+          "wert": -3.0183316401476725
+        },
+        {
+          "name": "Kuendigung.md",
+          "seite": 1,
+          "wert": -2.8809770860798167
+        },
+        {
+          "name": "Mietvertrag.docx",
+          "seite": 6,
+          "wert": -1.979960717348489
+        },
+        {
+          "name": "Kuendigung.md",
+          "seite": 3,
+          "wert": -1.9199159597998596
+        },
+        {
+          "name": "Protokoll.txt",
+          "seite": 6,
+          "wert": -1.7598106558378888
+        }
+      ],
+      "bm25_anzahl": 7,
+      "dateien": [
+        {
+          "name": "Protokoll.txt",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "zeile=5",
+              "auszug": "Beschlüsse: Der Vorstand wird beauftragt, drei Angebote für die Fassadensanierung einzuholen. Die Angebote sind bis Ende Januar vorzulegen. Der Vorstand berichtet in der nächsten Sitzung über das Ergebnis und schlägt",
+              "pfad": []
+            },
+            {
+              "anker": "zeile=3",
+              "auszug": "Das Budget für 2027 wurde diskutiert. Das Budget sieht Ausgaben für Heizung, Fassade und Spielplatz vor; das Budget für die Fassade wurde um zehn Prozent gekürzt, weil das Budget der Rücklage nicht ausreicht. Über das",
+              "pfad": []
+            },
+            {
+              "anker": "zeile=7",
+              "auszug": "Verschiedenes: Die Kündigungsfrist für den Wartungsvertrag der Aufzüge beträgt sechs Monate; eine Kündigung muss rechtzeitig vorbereitet werden.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        },
+        {
+          "name": "Mietvertrag.docx",
+          "rang": 0.4841269841269841,
+          "stellen": [
+            {
+              "anker": "absatz=5",
+              "auszug": "§ 7 Kündigung",
+              "pfad": [
+                "Mietvertrag Beispielstraße 12",
+                "§ 3 Miete und Nebenkosten"
+              ]
+            },
+            {
+              "anker": "absatz=6",
+              "auszug": "Die Kündigungsfrist beträgt für den Mieter drei Monate. Eine Kündigung muss schriftlich erfolgen.",
+              "pfad": [
+                "Mietvertrag Beispielstraße 12",
+                "§ 7 Kündigung"
+              ]
+            }
+          ],
+          "typ": "docx"
+        },
+        {
+          "name": "Kuendigung.md",
+          "rang": 0.4765625,
+          "stellen": [
+            {
+              "anker": "zeile=1",
+              "auszug": "# Kündigung des Vertrags",
+              "pfad": []
+            },
+            {
+              "anker": "zeile=5",
+              "auszug": "hiermit kündige ich den Vertrag zum nächstmöglichen Termin. Bitte bestätigen Sie die Kündigung schriftlich.",
+              "pfad": []
+            }
+          ],
+          "typ": "md"
+        }
+      ],
+      "frage": "Fassade Angebote Vorstand Kündigung",
+      "stellen": [
+        {
+          "anker": "zeile=5",
+          "name": "Protokoll.txt",
+          "rang": 0.5,
+          "seite": 4
+        },
+        {
+          "anker": "zeile=3",
+          "name": "Protokoll.txt",
+          "rang": 0.4919354838709677,
+          "seite": 2
+        },
+        {
+          "anker": "absatz=5",
+          "name": "Mietvertrag.docx",
+          "rang": 0.4841269841269841,
+          "seite": 5
+        },
+        {
+          "anker": "zeile=1",
+          "name": "Kuendigung.md",
+          "rang": 0.4765625,
+          "seite": 1
+        },
+        {
+          "anker": "absatz=6",
+          "name": "Mietvertrag.docx",
+          "rang": 0.46923076923076923,
+          "seite": 6
+        },
+        {
+          "anker": "zeile=5",
+          "name": "Kuendigung.md",
+          "rang": 0.4621212121212121,
+          "seite": 3
+        },
+        {
+          "anker": "zeile=7",
+          "name": "Protokoll.txt",
+          "rang": 0.4552238805970149,
+          "seite": 6
+        }
+      ],
+      "tokens": [
+        "fassade",
+        "angebote",
+        "vorstand",
+        "kündigung"
+      ],
+      "treffer_gesamt": 3
+    },
+    {
+      "bm25": [
+        {
+          "name": "Cafe.txt",
+          "seite": 2,
+          "wert": -3.4908310593598575
+        }
+      ],
+      "bm25_anzahl": 1,
+      "dateien": [
+        {
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "zeile=4",
+              "auszug": "Unsere Adresse: Straße der Pariser Kommune 5. Inhaber: Müller und Mueller GbR.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        }
+      ],
+      "frage": "STRASSE",
+      "stellen": [
+        {
+          "anker": "zeile=4",
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "seite": 2
+        }
+      ],
+      "tokens": [
+        "strasse"
+      ],
+      "treffer_gesamt": 1
+    },
+    {
+      "bm25": [
+        {
+          "name": "Cafe.txt",
+          "seite": 2,
+          "wert": -6.981662118719715
+        }
+      ],
+      "bm25_anzahl": 1,
+      "dateien": [
+        {
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "zeile=4",
+              "auszug": "Unsere Adresse: Straße der Pariser Kommune 5. Inhaber: Müller und Mueller GbR.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        }
+      ],
+      "frage": "Pariser Strasse",
+      "stellen": [
+        {
+          "anker": "zeile=4",
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "seite": 2
+        }
+      ],
+      "tokens": [
+        "pariser",
+        "strasse"
+      ],
+      "treffer_gesamt": 1
+    },
+    {
+      "bm25": [
+        {
+          "name": "Mietvertrag.docx",
+          "seite": 1,
+          "wert": -4.920539390267526
+        }
+      ],
+      "bm25_anzahl": 1,
+      "dateien": [
+        {
+          "name": "Mietvertrag.docx",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "absatz=1",
+              "auszug": "Mietvertrag Beispielstraße 12",
+              "pfad": []
+            }
+          ],
+          "typ": "docx"
+        }
+      ],
+      "frage": "Beispielstrasse",
+      "stellen": [
+        {
+          "anker": "absatz=1",
+          "name": "Mietvertrag.docx",
+          "rang": 0.5,
+          "seite": 1
+        }
+      ],
+      "tokens": [
+        "beispielstrasse"
+      ],
+      "treffer_gesamt": 1
+    },
+    {
+      "bm25": [
+        {
+          "name": "Cafe.txt",
+          "seite": 3,
+          "wert": -5.848727465388337
+        }
+      ],
+      "bm25_anzahl": 1,
+      "dateien": [
+        {
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "zeile=6",
+              "auszug": "Gäste aus Łódź, Gdańsk, Ærø und Ørsted-Allee: naïve Résumé-Mappe mit ﬁnal-Preis. İstanbul-Gebäck ab 3 €.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        }
+      ],
+      "frage": "Lodz Gdansk",
+      "stellen": [
+        {
+          "anker": "zeile=6",
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "seite": 3
+        }
+      ],
+      "tokens": [
+        "lodz",
+        "gdansk"
+      ],
+      "treffer_gesamt": 1
+    },
+    {
+      "bm25": [
+        {
+          "name": "Cafe.txt",
+          "seite": 3,
+          "wert": -5.848727465388337
+        }
+      ],
+      "bm25_anzahl": 1,
+      "dateien": [
+        {
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "stellen": [
+            {
+              "anker": "zeile=6",
+              "auszug": "Gäste aus Łódź, Gdańsk, Ærø und Ørsted-Allee: naïve Résumé-Mappe mit ﬁnal-Preis. İstanbul-Gebäck ab 3 €.",
+              "pfad": []
+            }
+          ],
+          "typ": "txt"
+        }
+      ],
+      "frage": "Aero Orsted",
+      "stellen": [
+        {
+          "anker": "zeile=6",
+          "name": "Cafe.txt",
+          "rang": 0.5,
+          "seite": 3
+        }
+      ],
+      "tokens": [
+        "aero",
+        "orsted"
+      ],
+      "treffer_gesamt": 1
+    }
+  ],
+  "fts5": {
+    "entfernen": "300-304,306-30c,30f,311,31b,323-328,32d-32e,330-331",
+    "falten": "65:26:1:32,181:1:1:775,192:1:1:-95,193:1:1:-96,194:1:1:-97,195:1:1:-98,196:1:1:-99,197:1:1:-100,198:1:1:32,199:1:1:-100,200:1:1:-99,201:1:1:-100,202:1:1:-101,203:1:1:-102,204:1:1:-99,205:1:1:-100,206:1:1:-101,207:1:1:-102,208:1:1:32,209:2:1:-99,211:1:1:-100,212:1:1:-101,213:1:1:-102,214:1:1:-103,216:1:1:32,217:1:1:-100,218:1:1:-101,219:1:1:-102,220:1:1:-103,221:1:1:-100,222:1:1:32,224:1:1:-127,225:1:1:-128,226:1:1:-129,227:1:1:-130,228:1:1:-131,229:2:2:-132,232:1:1:-131,233:1:1:-132,234:1:1:-133,235:1:1:-134,236:1:1:-131,237:1:1:-132,238:1:1:-133,239:1:1:-134,241:2:1:-131,243:1:1:-132,244:1:1:-133,245:1:1:-134,246:1:1:-135,249:1:1:-132,250:1:1:-133,251:1:1:-134,252:1:1:-135,253:1:1:-132,255:1:1:-134,256:1:1:-159,257:1:1:-160,258:1:1:-161,259:1:1:-162,260:1:1:-163,261:1:1:-164,262:1:1:-163,263:1:1:-164,264:1:1:-165,265:1:1:-166,266:1:1:-167,267:1:1:-168,268:1:1:-169,269:2:1:-170,271:1:1:-171,272:1:1:1,274:1:1:-173,275:1:1:-174,276:1:1:-175,277:1:1:-176,278:1:1:-177,279:1:1:-178,280:1:1:-179,281:1:1:-180,282:1:1:-181,283:1:1:-182,284:1:1:-181,285:1:1:-182,286:1:1:-183,287:1:1:-184,288:1:1:-185,289:1:1:-186,290:1:1:-187,291:2:1:-188,293:1:1:-189,294:1:1:1,296:1:1:-191,297:1:1:-192,298:1:1:-193,299:1:1:-194,300:1:1:-195,301:1:1:-196,302:1:1:-197,303:1:1:-198,304:1:1:-199,306:1:1:1,308:1:1:-202,309:2:1:-203,311:1:1:-204,313:1:1:-205,314:1:1:-206,315:1:1:-207,316:1:1:-208,317:1:1:-209,318:1:1:-210,319:2:2:1,323:1:1:-213,324:1:1:-214,325:1:1:-215,326:1:1:-216,327:1:1:-217,328:1:1:-218,330:1:1:1,332:1:1:-221,333:1:1:-222,334:1:1:-223,335:1:1:-224,336:1:1:-225,337:1:1:-226,338:1:1:1,340:1:1:-226,341:1:1:-227,342:1:1:-228,343:1:1:-229,344:1:1:-230,345:2:1:-231,347:1:1:-232,348:1:1:-233,349:1:1:-234,350:1:1:-235,351:1:1:-236,352:1:1:-237,353:2:1:-238,355:1:1:-239,356:1:1:-240,357:1:1:-241,358:1:1:1,360:1:1:-243,361:1:1:-244,362:1:1:-245,363:1:1:-246,364:1:1:-247,365:1:1:-248,366:1:1:-249,367:1:1:-250,368:1:1:-251,369:1:1:-252,370:1:1:-253,371:1:1:-254,372:1:1:-253,373:1:1:-254,374:1:1:-253,375:1:1:-254,376:2:1:-255,378:1:1:-256,379:1:1:-257,380:1:1:-258,381:1:1:-259,382:1:1:-260,383:1:1:-268,385:1:1:210,386:2:2:1,390:1:1:206,391:1:1:1,393:2:1:205,395:1:1:1,398:1:1:79,399:1:1:202,400:1:1:203,401:1:1:1,403:1:1:205,404:1:1:207,406:1:1:211,407:1:1:209,408:1:1:1,412:1:1:211,413:1:1:213,415:1:1:214,416:1:1:-305,417:1:1:-306,418:2:2:1,422:1:1:218,423:1:1:1,425:1:1:218,428:1:1:1,430:1:1:218,431:1:1:-314,432:1:1:-315,433:2:1:217,435:2:2:1,439:1:1:219,440:1:1:1,444:1:1:1,452:1:1:2,453:1:1:1,455:1:1:2,456:1:1:1,458:1:1:2,459:1:1:1,461:1:1:-364,462:1:1:-365,463:1:1:-358,464:1:1:-359,465:1:1:-354,466:1:1:-355,467:1:1:-350,468:1:1:-351,469:1:1:-352,470:1:1:-353,471:1:1:-354,472:1:1:-355,473:1:1:-356,474:1:1:-357,475:1:1:-358,476:1:1:-359,478:1:1:-381,479:1:1:-382,480:3:2:1,486:1:1:-383,487:1:1:-384,488:1:1:-381,489:1:1:-382,490:1:1:-379,491:1:1:-380,492:1:1:-381,493:1:1:-382,494:1:1:1,496:1:1:-390,497:1:1:2,498:1:1:1,500:1:1:-397,501:1:1:-398,502:1:1:-97,503:1:1:-56,504:1:1:-394,505:1:1:-395,506:1:1:-409,507:1:1:-410,508:2:2:1,512:1:1:-415,513:1:1:-416,514:1:1:-417,515:1:1:-418,516:1:1:-415,517:1:1:-416,518:1:1:-417,519:1:1:-418,520:1:1:-415,521:1:1:-416,522:1:1:-417,523:1:1:-418,524:1:1:-413,525:1:1:-414,526:1:1:-415,527:1:1:-416,528:1:1:-414,529:1:1:-415,530:1:1:-416,531:1:1:-417,532:1:1:-415,533:1:1:-416,534:1:1:-417,535:1:1:-418,536:1:1:-421,537:2:1:-422,539:1:1:-423,540:1:1:1,542:1:1:-438,543:1:1:-439,544:1:1:-130,546:2:2:1,550:1:1:-453,551:1:1:-454,552:1:1:-451,553:1:1:-452,554:1:1:-443,555:1:1:-444,556:1:1:-445,557:1:1:-446,558:1:1:-447,559:1:1:-448,560:1:1:-449,561:1:1:-450,562:1:1:-441,563:1:1:-442,570:1:1:10795,571:1:1:1,573:1:1:-163,574:1:1:10792,577:1:1:1,579:1:1:-195,580:1:1:69,581:1:1:71,582:5:2:1,880:2:2:1,886:1:1:1,902:1:1:38,904:3:1:37,908:1:1:64,910:2:1:63,913:17:1:32,931:9:1:32,962:1:1:1,975:1:1:8,976:1:1:-30,977:1:1:-25,981:1:1:-15,982:1:1:-22,984:12:2:1,1008:1:1:-54,1009:1:1:-48,1012:1:1:-60,1013:1:1:-64,1015:1:1:1,1017:1:1:-7,1018:1:1:1,1021:3:1:-130,1024:16:1:80,1040:32:1:32,1120:17:2:1,1162:27:2:1,1216:1:1:15,1217:7:2:1,1232:44:2:1,1329:38:1:48,4256:38:1:7264,4295:1:1:7264,4301:1:1:7264,7680:1:1:-7583,7681:2:1:-7584,7683:1:1:-7585,7684:1:1:-7586,7685:1:1:-7587,7686:1:1:-7588,7687:2:1:-7589,7689:2:1:-7590,7691:1:1:-7591,7692:1:1:-7592,7693:1:1:-7593,7694:1:1:-7594,7695:1:1:-7595,7696:1:1:-7596,7697:1:1:-7597,7698:1:1:-7598,7699:2:1:-7599,7701:1:1:-7600,7702:1:1:-7601,7703:1:1:-7602,7704:1:1:-7603,7705:1:1:-7604,7706:1:1:-7605,7707:1:1:-7606,7708:1:1:-7607,7709:2:1:-7608,7711:2:1:-7609,7713:2:1:-7610,7715:1:1:-7611,7716:1:1:-7612,7717:1:1:-7613,7718:1:1:-7614,7719:1:1:-7615,7720:1:1:-7616,7721:1:1:-7617,7722:1:1:-7618,7723:2:1:-7619,7725:1:1:-7620,7726:1:1:-7621,7727:1:1:-7622,7728:1:1:-7621,7729:1:1:-7622,7730:1:1:-7623,7731:1:1:-7624,7732:1:1:-7625,7733:2:1:-7626,7735:1:1:-7627,7736:1:1:-7628,7737:1:1:-7629,7738:1:1:-7630,7739:1:1:-7631,7740:1:1:-7632,7741:2:1:-7633,7743:1:1:-7634,7744:1:1:-7635,7745:1:1:-7636,7746:1:1:-7637,7747:2:1:-7638,7749:1:1:-7639,7750:1:1:-7640,7751:1:1:-7641,7752:1:1:-7642,7753:1:1:-7643,7754:1:1:-7644,7755:2:1:-7645,7757:1:1:-7646,7758:1:1:-7647,7759:1:1:-7648,7760:1:1:-7649,7761:1:1:-7650,7762:1:1:-7651,7763:2:1:-7652,7765:1:1:-7653,7766:1:1:-7654,7767:1:1:-7655,7768:1:1:-7654,7769:1:1:-7655,7770:1:1:-7656,7771:1:1:-7657,7772:1:1:-7658,7773:1:1:-7659,7774:1:1:-7660,7775:2:1:-7661,7777:1:1:-7662,7778:1:1:-7663,7779:1:1:-7664,7780:1:1:-7665,7781:1:1:-7666,7782:1:1:-7667,7783:1:1:-7668,7784:1:1:-7669,7785:2:1:-7670,7787:1:1:-7671,7788:1:1:-7672,7789:1:1:-7673,7790:1:1:-7674,7791:1:1:-7675,7792:1:1:-7676,7793:2:1:-7677,7795:1:1:-7678,7796:1:1:-7679,7797:1:1:-7680,7798:1:1:-7681,7799:1:1:-7682,7800:1:1:-7683,7801:1:1:-7684,7802:1:1:-7685,7803:2:1:-7686,7805:1:1:-7687,7806:1:1:-7688,7807:2:1:-7689,7809:1:1:-7690,7810:1:1:-7691,7811:1:1:-7692,7812:1:1:-7693,7813:1:1:-7694,7814:1:1:-7695,7815:1:1:-7696,7816:1:1:-7697,7817:2:1:-7698,7819:1:1:-7699,7820:1:1:-7700,7821:2:1:-7701,7823:2:1:-7702,7825:1:1:-7703,7826:1:1:-7704,7827:1:1:-7705,7828:1:1:-7706,7829:1:1:-7707,7830:1:1:-7726,7831:1:1:-7715,7832:1:1:-7713,7833:1:1:-7712,7835:1:1:-7720,7838:1:1:-7615,7840:1:1:-7743,7841:1:1:-7744,7842:1:1:-7745,7843:1:1:-7746,7844:1:1:-7747,7845:1:1:-7748,7846:1:1:-7749,7847:1:1:-7750,7848:1:1:-7751,7849:1:1:-7752,7850:1:1:-7753,7851:1:1:-7754,7852:1:1:-7755,7853:1:1:-7756,7854:1:1:-7757,7855:1:1:-7758,7856:1:1:-7759,7857:1:1:-7760,7858:1:1:-7761,7859:1:1:-7762,7860:1:1:-7763,7861:1:1:-7764,7862:1:1:-7765,7863:1:1:-7766,7864:1:1:-7763,7865:1:1:-7764,7866:1:1:-7765,7867:1:1:-7766,7868:1:1:-7767,7869:1:1:-7768,7870:1:1:-7769,7871:1:1:-7770,7872:1:1:-7771,7873:1:1:-7772,7874:1:1:-7773,7875:1:1:-7774,7876:1:1:-7775,7877:1:1:-7776,7878:1:1:-7777,7879:1:1:-7778,7880:1:1:-7775,7881:1:1:-7776,7882:1:1:-7777,7883:1:1:-7778,7884:1:1:-7773,7885:1:1:-7774,7886:1:1:-7775,7887:1:1:-7776,7888:1:1:-7777,7889:1:1:-7778,7890:1:1:-7779,7891:1:1:-7780,7892:1:1:-7781,7893:1:1:-7782,7894:1:1:-7783,7895:1:1:-7784,7896:1:1:-7785,7897:1:1:-7786,7898:1:1:-7787,7899:1:1:-7788,7900:1:1:-7789,7901:1:1:-7790,7902:1:1:-7791,7903:1:1:-7792,7904:1:1:-7793,7905:1:1:-7794,7906:1:1:-7795,7907:1:1:-7796,7908:1:1:-7791,7909:1:1:-7792,7910:1:1:-7793,7911:1:1:-7794,7912:1:1:-7795,7913:1:1:-7796,7914:1:1:-7797,7915:1:1:-7798,7916:1:1:-7799,7917:1:1:-7800,7918:1:1:-7801,7919:1:1:-7802,7920:1:1:-7803,7921:1:1:-7804,7922:1:1:-7801,7923:1:1:-7802,7924:1:1:-7803,7925:1:1:-7804,7926:1:1:-7805,7927:1:1:-7806,7928:1:1:-7807,7929:1:1:-7808,7930:3:2:1,7944:8:1:-8,7960:6:1:-8,7976:8:1:-8,7992:8:1:-8,8008:6:1:-8,8025:4:2:-8,8040:8:1:-8,8072:8:1:-8,8088:8:1:-8,8104:8:1:-8,8120:2:1:-8,8122:2:1:-74,8124:1:1:-9,8126:1:1:-7173,8136:4:1:-86,8140:1:1:-9,8152:2:1:-8,8154:2:1:-100,8168:2:1:-8,8170:2:1:-112,8172:1:1:-7,8184:2:1:-128,8186:2:1:-126,8188:1:1:-9,8486:1:1:-7517,8490:1:1:-8383,8491:1:1:-8394,8498:1:1:28,8544:16:1:16,8579:1:1:1,11264:47:1:48,11360:1:1:1,11362:1:1:-10743,11363:1:1:-3814,11364:1:1:-10727,11367:3:2:1,11373:1:1:-10780,11374:1:1:-10749,11375:1:1:-10783,11376:1:1:-10782,11378:1:1:1,11381:1:1:1,11390:2:1:-10815,11392:50:2:1,11499:2:2:1,11506:1:1:1,42560:23:2:1,42624:12:2:1,42786:7:2:1,42802:31:2:1,42873:2:2:1,42877:1:1:-35332,42878:5:2:1,42891:1:1:1,42893:1:1:-42280,42896:2:2:1,42912:5:2:1,42922:1:1:-42308,65313:26:1:32,66560:40:1:40",
+    "folge_zeichen": "300-304,306-30c,30f,311,31b,323-328,32d-32e,330-331",
+    "hinweis": "Verhalten von FTS5 unicode61 remove_diacritics 2 je Code-Punkt (SQLite des Index). token_zeichen: beginnen und setzen ein Wort fort (Hex-Bereiche). folge_zeichen: setzen nur ein Wort fort (Diakritika). falten: Läufe start:anzahl:schritt:delta (dezimal) vom Code-Punkt zum gefalteten. entfernen: Zeichen, die im Wort verschwinden (Hex-Bereiche). Alle anderen Code-Punkte trennen Wörter; nicht aufgeführte Zeichen falten auf sich selbst.",
+    "token_zeichen": "30-39,41-5a,61-7a,aa,b2-b3,b5,b9-ba,bc-be,c0-d6,d8-f6,f8-2c1,2c6-2d1,2e0-2e4,2ec,2ee,370-374,376-37d,37f-383,386,388-3f5,3f7-481,48a-559,560-588,58b-58e,590,5c8-5f2,5f5-5ff,605,61c-61d,620-64a,660-669,66e-66f,671-6d3,6d5,6e5-6e6,6ee-6fc,6ff,70e,710,712-72f,74b-7a5,7b1-7ea,7f4-7f5,7fa-815,81a,824,828,82e-82f,83f-858,85c-85d,85f-8e3,8ff,904-939,93d,950,958-961,966-96f,971-980,984-9bb,9bd,9c5-9c6,9c9-9ca,9ce-9d6,9d8-9e1,9e4-9f1,9f4-9f9,9fc-a00,a04-a3b,a3d,a43-a46,a49-a4a,a4e-a50,a52-a6f,a72-a74,a76-a80,a84-abb,abd,ac6,aca,ace-ae1,ae4-aef,af2-b00,b04-b3b,b3d,b45-b46,b49-b4a,b4e-b55,b58-b61,b64-b6f,b71-b81,b83-bbd,bc3-bc5,bc9,bce-bd6,bd8-bf2,bfb-c00,c04-c3d,c45,c49,c4e-c54,c57-c61,c64-c7e,c80-c81,c84-cbb,cbd,cc5,cc9,cce-cd4,cd7-ce1,ce4-d01,d04-d3d,d45,d49,d4e-d56,d58-d61,d64-d78,d7a-d81,d84-dc9,dcb-dce,dd5,dd7,de0-df1,df5-e30,e32-e33,e3b-e3e,e40-e46,e50-e59,e5c-eb0,eb2-eb3,eba,ebd-ec7,ece-f00,f20-f33,f40-f70,f88-f8c,f98,fbd,fcd,fdb-102a,103f-1049,1050-1055,105a-105d,1061,1065-1066,106e-1070,1075-1081,108e,1090-1099,10a0-10fa,10fc-135c,1369-138f,139a-13ff,1401-166c,166f-167f,1681-169a,169d-16ea,16ee-1711,1715-1731,1737-1751,1754-1771,1774-17b3,17d7,17dc,17de-17ff,180f-18a8,18aa-191f,192c-192f,193c-193f,1941-1943,1946-19af,19c1-19c7,19ca-19dd,1a00-1a16,1a1c-1a1d,1a20-1a54,1a5f,1a7d-1a7e,1a80-1a9f,1aa7,1aae-1aff,1b05-1b33,1b45-1b59,1b7d-1b7f,1b83-1ba0,1bae-1be5,1bf4-1bfb,1c00-1c23,1c38-1c3a,1c40-1c7d,1c80-1cbf,1cc8-1ccf,1ce9-1cec,1cee-1cf1,1cf5-1dbf,1de7-1dfb,1e00-1fbc,1fbe,1fc2-1fcc,1fd0-1fdc,1fe0-1fec,1ff0-1ffc,1fff,2065-2069,2070-2079,207f-2089,208f-209f,20ba-20cf,20f1-20ff,2102,2107,210a-2113,2115,2119-211d,2124,2126,2128,212a-212d,212f-2139,213c-213f,2145-2149,214e,2150-218f,23f4-23ff,2427-243f,244b-249b,24ea-24ff,2700,2776-2793,2b4d-2b4f,2b5a-2ce4,2ceb-2cee,2cf2-2cf8,2cfd,2d00-2d6f,2d71-2d7e,2d80-2ddf,2e2f,2e3c-2e7f,2e9a,2ef4-2eff,2fd6-2fef,2ffc-2fff,3005-3007,3021-3029,3031-3035,3038-303c,3040-3098,309d-309f,30a1-30fa,30fc-318f,3192-3195,31a0-31bf,31e4-31ff,321f-3229,3248-324f,3251-325f,3280-3289,32b1-32bf,32ff,3400-4dbf,4e00-a48f,a4c7-a4fd,a500-a60c,a610-a66e,a67f-a69e,a6a0-a6ef,a6f8-a6ff,a717-a71f,a722-a788,a78b-a801,a803-a805,a807-a80a,a80c-a822,a82c-a835,a83a-a873,a878-a87f,a882-a8b3,a8c5-a8cd,a8d0-a8df,a8f2-a8f7,a8fb-a925,a930-a946,a954-a95e,a960-a97f,a984-a9b2,a9ce-a9dd,a9e0-aa28,aa37-aa42,aa44-aa4b,aa4e-aa5b,aa60-aa76,aa7a,aa7c-aaaf,aab1,aab5-aab6,aab9-aabd,aac0,aac2-aadd,aae0-aaea,aaf2-aaf4,aaf7-abe2,abee-d7ff,e000-fb1d,fb1f-fb28,fb2a-fbb1,fbc2-fd3d,fd40-fdfb,fdfe-fdff,fe1a-fe1f,fe27-fe2f,fe53,fe67,fe6c-fefe,ff00,ff10-ff19,ff21-ff3a,ff41-ff5a,ff66-ffdf,ffe7,ffef-fff8,10000-100ff,10103-10136,10140-10178,1018a-1018f,1019c-101cf,101fe-1039e,103a0-103cf,103d1-10856,10858-1091e,10920-1093e,10940-10a00,10a04,10a07-10a0b,10a10-10a37,10a3b-10a3e,10a40-10a4f,10a59-10a7e,10a80-10b38,10b40-10fff,11003-11037,1104e-1107f,11083-110af,110c2-110ff,11103-11126,11135-1113f,11144-1117f,11183-111b2,111c1-111c4,111c9-116aa,116b8-1246f,12474-16f50,16f7f-16f8e,16f93-1cfff,1d0f6-1d0ff,1d127-1d128,1d1de-1d1ff,1d246-1d2ff,1d357-1d6c0,1d6c2-1d6da,1d6dc-1d6fa,1d6fc-1d714,1d716-1d734,1d736-1d74e,1d750-1d76e,1d770-1d788,1d78a-1d7a8,1d7aa-1d7c2,1d7c4-1eeef,1eef2-1efff,1f02c-1f02f,1f094-1f09f,1f0af-1f0b0,1f0bf-1f0c0,1f0d0,1f0e0-1f10f,1f12f,1f16c-1f16f,1f19b-1f1e5,1f203-1f20f,1f23b-1f23f,1f249-1f24f,1f252-1f2ff,1f321-1f32f,1f336,1f37d-1f37f,1f394-1f39f,1f3c5,1f3cb-1f3df,1f3f1-1f3ff,1f43f,1f441,1f4f8,1f4fd-1f4ff,1f53e-1f53f,1f544-1f54f,1f568-1f5fa,1f641-1f644,1f650-1f67f,1f6c6-1f6ff,1f774-e0000,e0002-e001f,e0080-e00ff,e01f0-10ffff"
+  },
+  "gesperrt": {
+    "dateien": [
+      {
+        "grund": "papierkorb",
+        "name": "Gesperrt-Vertrag.txt",
+        "text": "Kündigung Kündigungsfrist Vertrag Laufzeit Straße Strasse Budget Fassade Angebot Vorstand. Kündigung Kündigungsfrist Vertrag Laufzeit Straße Strasse Budget Fassade Angebot Vorstand. Kündigung Kündigungsfrist Vertrag Laufzeit Straße Strasse Budget Fassade Angebot Vorstand. Kündigung Kündigungsfrist Vertrag Laufzeit Straße Strasse Budget Fassade Angebot Vorstand. Kündigung Kündigungsfrist Vertrag Laufzeit Straße Strasse Budget Fassade Angebot Vorstand. Kündigung Kündigungsfrist Vertrag Laufzeit Straße Strasse Budget Fassade Angebot Vorstand. Kündigung Kündigungsfrist Vertrag Laufzeit Straße Strasse Budget Fassade Angebot Vorstand. Kündigung Kündigungsfrist Vertrag Laufzeit Straße Strasse Budget Fassade Angebot Vorstand. "
+      },
+      {
+        "grund": "papierkorb",
+        "name": "Gesperrt-Haus.txt",
+        "text": "Ruhezeiten Haus Müll Tonnen Säcke Treppenhaus Nachtruhe Zugvogel Mieter Genossenschaft. Ruhezeiten Haus Müll Tonnen Säcke Treppenhaus Nachtruhe Zugvogel Mieter Genossenschaft. Ruhezeiten Haus Müll Tonnen Säcke Treppenhaus Nachtruhe Zugvogel Mieter Genossenschaft. Ruhezeiten Haus Müll Tonnen Säcke Treppenhaus Nachtruhe Zugvogel Mieter Genossenschaft. Ruhezeiten Haus Müll Tonnen Säcke Treppenhaus Nachtruhe Zugvogel Mieter Genossenschaft. Ruhezeiten Haus Müll Tonnen Säcke Treppenhaus Nachtruhe Zugvogel Mieter Genossenschaft. Ruhezeiten Haus Müll Tonnen Säcke Treppenhaus Nachtruhe Zugvogel Mieter Genossenschaft. Ruhezeiten Haus Müll Tonnen Säcke Treppenhaus Nachtruhe Zugvogel Mieter Genossenschaft. "
+      },
+      {
+        "grund": "papierkorb",
+        "name": "Gesperrt-Cafe.txt",
+        "text": "Café crème brûlée Zoë Müller Mueller Lodz Gdansk Ærø Ørsted Straße Pariser Kommune. Café crème brûlée Zoë Müller Mueller Lodz Gdansk Ærø Ørsted Straße Pariser Kommune. Café crème brûlée Zoë Müller Mueller Lodz Gdansk Ærø Ørsted Straße Pariser Kommune. Café crème brûlée Zoë Müller Mueller Lodz Gdansk Ærø Ørsted Straße Pariser Kommune. Café crème brûlée Zoë Müller Mueller Lodz Gdansk Ærø Ørsted Straße Pariser Kommune. Café crème brûlée Zoë Müller Mueller Lodz Gdansk Ærø Ørsted Straße Pariser Kommune. Café crème brûlée Zoë Müller Mueller Lodz Gdansk Ærø Ørsted Straße Pariser Kommune. Café crème brûlée Zoë Müller Mueller Lodz Gdansk Ærø Ørsted Straße Pariser Kommune. "
+      }
+    ],
+    "fragen": [
+      {
+        "bm25": [
+          {
+            "name": "Hausordnung.txt",
+            "seite": 2,
+            "wert": -2.0411161108832117
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "Wann gelten die Ruhezeiten im Haus?"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Mietvertrag.docx",
+            "seite": 6,
+            "wert": -2.4834768372574776
+          },
+          {
+            "name": "Protokoll.txt",
+            "seite": 6,
+            "wert": -2.207341268661672
+          },
+          {
+            "name": "Nebenkosten.txt",
+            "seite": 1,
+            "wert": -1.8057760258041908
+          }
+        ],
+        "bm25_anzahl": 3,
+        "frage": "Kündigungsfrist"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Mietvertrag.docx",
+            "seite": 5,
+            "wert": -3.0183316401476725
+          },
+          {
+            "name": "Kuendigung.md",
+            "seite": 1,
+            "wert": -2.8809770860798167
+          },
+          {
+            "name": "Mietvertrag.docx",
+            "seite": 6,
+            "wert": -1.979960717348489
+          },
+          {
+            "name": "Kuendigung.md",
+            "seite": 3,
+            "wert": -1.9199159597998596
+          },
+          {
+            "name": "Protokoll.txt",
+            "seite": 6,
+            "wert": -1.7598106558378888
+          }
+        ],
+        "bm25_anzahl": 5,
+        "frage": "KUNDIGUNG"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Mietvertrag.docx",
+            "seite": 2,
+            "wert": -2.8452962314815076
+          },
+          {
+            "name": "Kuendigung.md",
+            "seite": 3,
+            "wert": -2.759009104228737
+          },
+          {
+            "name": "Mietvertrag.docx",
+            "seite": 6,
+            "wert": -2.4834768372574776
+          },
+          {
+            "name": "Protokoll.txt",
+            "seite": 6,
+            "wert": -2.207341268661672
+          },
+          {
+            "name": "Nebenkosten.txt",
+            "seite": 1,
+            "wert": -1.8057760258041908
+          }
+        ],
+        "bm25_anzahl": 5,
+        "frage": "Kündigungsfrist Vertrag Laufzeit"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Cafe.txt",
+            "seite": 2,
+            "wert": -3.4908310593598575
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "Straße"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Cafe.txt",
+            "seite": 2,
+            "wert": -3.4908310593598575
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "Strasse"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Cafe.txt",
+            "seite": 1,
+            "wert": -6.981662118719715
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "creme brulee"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Cafe.txt",
+            "seite": 1,
+            "wert": -6.981662118719715
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "Zoe Chloe cafe"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Cafe.txt",
+            "seite": 2,
+            "wert": -6.981662118719715
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "Mueller Müller"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Handbuch.html",
+            "seite": 6,
+            "wert": -13.95067617029438
+          },
+          {
+            "name": "Invoice.txt",
+            "seite": 1,
+            "wert": -3.0476626975532257
+          },
+          {
+            "name": "Rezepte.md",
+            "seite": 2,
+            "wert": -2.3372813819945133
+          }
+        ],
+        "bm25_anzahl": 3,
+        "frage": "reset the device power button"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Invoice.txt",
+            "seite": 1,
+            "wert": -7.817453627811567
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "payment terms invoice"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Hausordnung.txt",
+            "seite": 3,
+            "wert": -10.252937367036234
+          },
+          {
+            "name": "Hausordnung.txt",
+            "seite": 4,
+            "wert": -2.27587750366512
+          }
+        ],
+        "bm25_anzahl": 2,
+        "frage": "Müll Tonnen Säcke Treppenhaus"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Protokoll.txt",
+            "seite": 2,
+            "wert": -11.167166673457308
+          },
+          {
+            "name": "Protokoll.txt",
+            "seite": 3,
+            "wert": -10.18963162525281
+          }
+        ],
+        "bm25_anzahl": 2,
+        "frage": "Budget Budget Budget"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Invoice.txt",
+            "seite": 1,
+            "wert": -5.2554864458314565
+          },
+          {
+            "name": "Rezepte.md",
+            "seite": 2,
+            "wert": -5.015082844980901
+          },
+          {
+            "name": "Rezepte.md",
+            "seite": 4,
+            "wert": -3.9928118012876923
+          },
+          {
+            "name": "Handbuch.html",
+            "seite": 6,
+            "wert": -3.395139679697061
+          }
+        ],
+        "bm25_anzahl": 4,
+        "frage": "the and of der die das"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Angebot.eml",
+            "seite": 2,
+            "wert": -7.079552295090948
+          },
+          {
+            "name": "Angebot.eml",
+            "seite": 1,
+            "wert": -4.55175500733024
+          }
+        ],
+        "bm25_anzahl": 2,
+        "frage": "Angebot Fähre Überfahrt"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Griechisch.txt",
+            "seite": 1,
+            "wert": -9.02012508407584
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "ЁЛКА привет"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Griechisch.txt",
+            "seite": 2,
+            "wert": -4.162797372555708
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "όσος σισυφος"
+      },
+      {
+        "bm25": [],
+        "bm25_anzahl": 0,
+        "frage": "Ruhe-Zeiten l'étage"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Hausordnung.txt",
+            "seite": 2,
+            "wert": -8.03009629830229
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "Nachtruhe 22 Uhr"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Stopwoerter.txt",
+            "seite": 2,
+            "wert": -5.303261552403765
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "Zugvogel"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Hausordnung.txt",
+            "seite": 1,
+            "wert": -15.193135902017179
+          },
+          {
+            "name": "Hausordnung.txt",
+            "seite": 2,
+            "wert": -12.246696665299272
+          },
+          {
+            "name": "Mietvertrag.docx",
+            "seite": 2,
+            "wert": -9.380143964422928
+          },
+          {
+            "name": "Kuendigung.md",
+            "seite": 3,
+            "wert": -6.558207041523665
+          },
+          {
+            "name": "Protokoll.txt",
+            "seite": 1,
+            "wert": -5.677159002230399
+          },
+          {
+            "name": "Mietvertrag.docx",
+            "seite": 8,
+            "wert": -4.707650838316323
+          },
+          {
+            "name": "Mietvertrag.docx",
+            "seite": 6,
+            "wert": -4.4131902899079725
+          }
+        ],
+        "bm25_anzahl": 7,
+        "frage": "Ruhezeiten im Haus und Nachtruhe für alle Mieter der Genossenschaft bitte beachten Ruhezeiten im Haus und Nachtruhe für alle Mieter der Genossenschaft bitte beachten Ruhezeiten im Haus und Nachtruhe für alle Mieter der Genossenschaft bitte beachten  Zugvogel"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Protokoll.txt",
+            "seite": 4,
+            "wert": -6.80361226251021
+          },
+          {
+            "name": "Protokoll.txt",
+            "seite": 2,
+            "wert": -3.153755157553805
+          },
+          {
+            "name": "Mietvertrag.docx",
+            "seite": 5,
+            "wert": -3.0183316401476725
+          },
+          {
+            "name": "Kuendigung.md",
+            "seite": 1,
+            "wert": -2.8809770860798167
+          },
+          {
+            "name": "Mietvertrag.docx",
+            "seite": 6,
+            "wert": -1.979960717348489
+          },
+          {
+            "name": "Kuendigung.md",
+            "seite": 3,
+            "wert": -1.9199159597998596
+          },
+          {
+            "name": "Protokoll.txt",
+            "seite": 6,
+            "wert": -1.7598106558378888
+          }
+        ],
+        "bm25_anzahl": 7,
+        "frage": "Fassade Angebote Vorstand Kündigung"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Cafe.txt",
+            "seite": 2,
+            "wert": -3.4908310593598575
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "STRASSE"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Cafe.txt",
+            "seite": 2,
+            "wert": -6.981662118719715
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "Pariser Strasse"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Mietvertrag.docx",
+            "seite": 1,
+            "wert": -4.920539390267526
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "Beispielstrasse"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Cafe.txt",
+            "seite": 3,
+            "wert": -5.848727465388337
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "Lodz Gdansk"
+      },
+      {
+        "bm25": [
+          {
+            "name": "Cafe.txt",
+            "seite": 3,
+            "wert": -5.848727465388337
+          }
+        ],
+        "bm25_anzahl": 1,
+        "frage": "Aero Orsted"
+      }
+    ],
+    "hinweis": "Gemischter Bestand (lva#463): zusätzlich zum Korpus liegen diese Dateien im Papierkorb des Desktops (für den Leser der Suche gesperrt). Der Desktop zählt sie nicht in N, n (IDF) und avgdl; der Rohrang `bm25` je Frage ist deshalb derselbe wie ohne sie und gleich dem Rohrang von `fragen`. Der iPhone-Index enthält sie nie (Index-Tor)."
+  },
+  "hinweis": "Paritätsvektoren des lexikalischen Index der Dokumentenablage (D5a-4). Erzeugt von ablage::tests_index_paritaet::json_passt_zum_code aus den echten Desktop-Wegen (Import, Textwarteschlange, index.db, FTS5). Neu schreiben nur mit LVA_VEKTOREN_SCHREIBEN=1 (cargo test --lib ablage::tests_index_paritaet::json_passt_zum_code); ohne die Variable prüft der Test nur. Nicht von Hand ändern. Alle Inhalte sind synthetisch (example.*).",
+  "konstanten": {
+    "anfrage_max": 200,
+    "bm25_b": 0.75,
+    "bm25_k1": 1.2,
+    "kandidaten": 60,
+    "sql_zeilen": 3000,
+    "stellen_je_datei": 3,
+    "stueck": 220,
+    "ueberlappung": 40
+  },
+  "korpus": [
+    {
+      "abschnitte": [
+        {
+          "anker": "teil=kopf",
+          "pfad": [],
+          "text": "Von: Anna Beispiel <anna@example.org>\nAn: bernd@example.com\nBetreff: Angebot Fähre\nDatum: 2026-11-02T10:00:00+01:00"
+        },
+        {
+          "anker": "teil=text",
+          "pfad": [],
+          "text": "Hallo Bernd,\r\nanbei das Angebot für die Fähre nach Rügen. Die Überfahrt dauert zwei Stunden. Preis pro Person 24 Euro.\r\nGruß Anna"
+        }
+      ],
+      "name": "Angebot.eml",
+      "stuecke": [
+        {
+          "abschnitt": 0,
+          "anker": "teil=kopf",
+          "laenge": 21,
+          "pfad": [],
+          "seite": 1,
+          "text": "Von: Anna Beispiel <anna@example.org>\nAn: bernd@example.com\nBetreff: Angebot Fähre\nDatum: 2026-11-02T10:00:00+01:00"
+        },
+        {
+          "abschnitt": 1,
+          "anker": "teil=text",
+          "laenge": 22,
+          "pfad": [],
+          "seite": 2,
+          "text": "Hallo Bernd,\r\nanbei das Angebot für die Fähre nach Rügen. Die Überfahrt dauert zwei Stunden. Preis pro Person 24 Euro.\r\nGruß Anna"
+        }
+      ],
+      "typ": "eml"
+    },
+    {
+      "abschnitte": [
+        {
+          "anker": "zeile=1",
+          "pfad": [],
+          "text": "Café de la Gare\nCrème brûlée, Œuf cocotte und Zoë's Quiche."
+        },
+        {
+          "anker": "zeile=4",
+          "pfad": [],
+          "text": "Unsere Adresse: Straße der Pariser Kommune 5. Inhaber: Müller und Mueller GbR."
+        },
+        {
+          "anker": "zeile=6",
+          "pfad": [],
+          "text": "Gäste aus Łódź, Gdańsk, Ærø und Ørsted-Allee: naïve Résumé-Mappe mit ﬁnal-Preis. İstanbul-Gebäck ab 3 €."
+        }
+      ],
+      "name": "Cafe.txt",
+      "stuecke": [
+        {
+          "abschnitt": 0,
+          "anker": "zeile=1",
+          "laenge": 12,
+          "pfad": [],
+          "seite": 1,
+          "text": "Café de la Gare\nCrème brûlée, Œuf cocotte und Zoë's Quiche."
+        },
+        {
+          "abschnitt": 1,
+          "anker": "zeile=4",
+          "laenge": 12,
+          "pfad": [],
+          "seite": 2,
+          "text": "Unsere Adresse: Straße der Pariser Kommune 5. Inhaber: Müller und Mueller GbR."
+        },
+        {
+          "abschnitt": 2,
+          "anker": "zeile=6",
+          "laenge": 18,
+          "pfad": [],
+          "seite": 3,
+          "text": "Gäste aus Łódź, Gdańsk, Ærø und Ørsted-Allee: naïve Résumé-Mappe mit ﬁnal-Preis. İstanbul-Gebäck ab 3 €."
+        }
+      ],
+      "typ": "txt"
+    },
+    {
+      "abschnitte": [
+        {
+          "anker": "zeile=1",
+          "pfad": [],
+          "text": "Привет мир! Ёлка и Ёж."
+        },
+        {
+          "anker": "zeile=3",
+          "pfad": [],
+          "text": "Όμηρος και Σίσυφος. ΌΣΟΣ ο ΣΟΦΟΣ. Ελλάδα."
+        }
+      ],
+      "name": "Griechisch.txt",
+      "stuecke": [
+        {
+          "abschnitt": 0,
+          "anker": "zeile=1",
+          "laenge": 5,
+          "pfad": [],
+          "seite": 1,
+          "text": "Привет мир! Ёлка и Ёж."
+        },
+        {
+          "abschnitt": 1,
+          "anker": "zeile=3",
+          "laenge": 7,
+          "pfad": [],
+          "seite": 2,
+          "text": "Όμηρος και Σίσυφος. ΌΣΟΣ ο ΣΟΦΟΣ. Ελλάδα."
+        }
+      ],
+      "typ": "txt"
+    },
+    {
+      "abschnitte": [
+        {
+          "anker": "absatz=1",
+          "pfad": [],
+          "text": "Handbuch Beispielgerät"
+        },
+        {
+          "anker": "absatz=2",
+          "pfad": [
+            "Handbuch Beispielgerät"
+          ],
+          "text": "Dieses Handbuch beschreibt Installation und Fehlerbehebung des Geräts."
+        },
+        {
+          "anker": "absatz=3",
+          "pfad": [
+            "Handbuch Beispielgerät"
+          ],
+          "text": "Installation"
+        },
+        {
+          "anker": "absatz=4",
+          "pfad": [
+            "Handbuch Beispielgerät",
+            "Installation"
+          ],
+          "text": "Stecken Sie das Netzteil ein und drücken Sie die Taste für drei Sekunden. Die Anzeige leuchtet grün."
+        },
+        {
+          "anker": "absatz=5",
+          "pfad": [
+            "Handbuch Beispielgerät",
+            "Installation"
+          ],
+          "text": "Troubleshooting"
+        },
+        {
+          "anker": "absatz=6",
+          "pfad": [
+            "Handbuch Beispielgerät",
+            "Troubleshooting"
+          ],
+          "text": "To reset the device, hold the power button for ten seconds. If the display stays red, contact support at support@example.com."
+        },
+        {
+          "anker": "absatz=7",
+          "pfad": [
+            "Handbuch Beispielgerät",
+            "Troubleshooting"
+          ],
+          "text": "Das Gerät lässt sich über die Taste an der Rückseite auf die Werkseinstellungen zurücksetzen."
+        }
+      ],
+      "name": "Handbuch.html",
+      "stuecke": [
+        {
+          "abschnitt": 0,
+          "anker": "absatz=1",
+          "laenge": 2,
+          "pfad": [],
+          "seite": 1,
+          "text": "Handbuch Beispielgerät"
+        },
+        {
+          "abschnitt": 1,
+          "anker": "absatz=2",
+          "laenge": 8,
+          "pfad": [
+            "Handbuch Beispielgerät"
+          ],
+          "seite": 2,
+          "text": "Dieses Handbuch beschreibt Installation und Fehlerbehebung des Geräts."
+        },
+        {
+          "abschnitt": 2,
+          "anker": "absatz=3",
+          "laenge": 1,
+          "pfad": [
+            "Handbuch Beispielgerät"
+          ],
+          "seite": 3,
+          "text": "Installation"
+        },
+        {
+          "abschnitt": 3,
+          "anker": "absatz=4",
+          "laenge": 17,
+          "pfad": [
+            "Handbuch Beispielgerät",
+            "Installation"
+          ],
+          "seite": 4,
+          "text": "Stecken Sie das Netzteil ein und drücken Sie die Taste für drei Sekunden. Die Anzeige leuchtet grün."
+        },
+        {
+          "abschnitt": 4,
+          "anker": "absatz=5",
+          "laenge": 1,
+          "pfad": [
+            "Handbuch Beispielgerät",
+            "Installation"
+          ],
+          "seite": 5,
+          "text": "Troubleshooting"
+        },
+        {
+          "abschnitt": 5,
+          "anker": "absatz=6",
+          "laenge": 22,
+          "pfad": [
+            "Handbuch Beispielgerät",
+            "Troubleshooting"
+          ],
+          "seite": 6,
+          "text": "To reset the device, hold the power button for ten seconds. If the display stays red, contact support at support@example.com."
+        },
+        {
+          "abschnitt": 6,
+          "anker": "absatz=7",
+          "laenge": 14,
+          "pfad": [
+            "Handbuch Beispielgerät",
+            "Troubleshooting"
+          ],
+          "seite": 7,
+          "text": "Das Gerät lässt sich über die Taste an der Rückseite auf die Werkseinstellungen zurücksetzen."
+        }
+      ],
+      "typ": "html"
+    },
+    {
+      "abschnitte": [
+        {
+          "anker": "zeile=1",
+          "pfad": [],
+          "text": "Hausordnung der Beispiel-Genossenschaft\nGültig ab dem 1. Januar 2026 für alle Mieter und Gäste."
+        },
+        {
+          "anker": "zeile=4",
+          "pfad": [],
+          "text": "Ruhezeiten: Die Nachtruhe gilt täglich von 22 Uhr bis 6 Uhr. Auch mittags zwischen 13 und 15 Uhr ist auf die Nachbarn Rücksicht zu nehmen. Musik und Heimwerken sind in dieser Zeit zu unterlassen."
+        },
+        {
+          "anker": "zeile=6",
+          "pfad": [],
+          "text": "Müll und Wertstoffe: Müll gehört in die Tonnen im Hof, Wertstoffe in die gelben Säcke. Sperrmüll darf nicht im Treppenhaus abgestellt werden. Fragen an hausmeister@example.org"
+        },
+        {
+          "anker": "zeile=8",
+          "pfad": [],
+          "text": "Fahrräder und Kinderwagen: Fahrräder werden im Fahrradkeller abgestellt, nicht im Treppenhaus. Kinderwagen dürfen im Flur stehen, solange der Fluchtweg frei bleibt."
+        }
+      ],
+      "name": "Hausordnung.txt",
+      "stuecke": [
+        {
+          "abschnitt": 0,
+          "anker": "zeile=1",
+          "laenge": 15,
+          "pfad": [],
+          "seite": 1,
+          "text": "Hausordnung der Beispiel-Genossenschaft\nGültig ab dem 1. Januar 2026 für alle Mieter und Gäste."
+        },
+        {
+          "abschnitt": 1,
+          "anker": "zeile=4",
+          "laenge": 34,
+          "pfad": [],
+          "seite": 2,
+          "text": "Ruhezeiten: Die Nachtruhe gilt täglich von 22 Uhr bis 6 Uhr. Auch mittags zwischen 13 und 15 Uhr ist auf die Nachbarn Rücksicht zu nehmen. Musik und Heimwerken sind in dieser Zeit zu unterlassen."
+        },
+        {
+          "abschnitt": 2,
+          "anker": "zeile=6",
+          "laenge": 27,
+          "pfad": [],
+          "seite": 3,
+          "text": "Müll und Wertstoffe: Müll gehört in die Tonnen im Hof, Wertstoffe in die gelben Säcke. Sperrmüll darf nicht im Treppenhaus abgestellt werden. Fragen an hausmeister@example.org"
+        },
+        {
+          "abschnitt": 3,
+          "anker": "zeile=8",
+          "laenge": 21,
+          "pfad": [],
+          "seite": 4,
+          "text": "Fahrräder und Kinderwagen: Fahrräder werden im Fahrradkeller abgestellt, nicht im Treppenhaus. Kinderwagen dürfen im Flur stehen, solange der Fluchtweg frei bleibt."
+        }
+      ],
+      "typ": "txt"
+    },
+    {
+      "abschnitte": [
+        {
+          "anker": "zeile=1",
+          "pfad": [],
+          "text": "Invoice 2026-114\nPayment terms: net 30 days. Please transfer the amount to the account of Example Ltd. Late payment fees apply after the due date. Contact: billing@example.com."
+        }
+      ],
+      "name": "Invoice.txt",
+      "stuecke": [
+        {
+          "abschnitt": 0,
+          "anker": "zeile=1",
+          "laenge": 30,
+          "pfad": [],
+          "seite": 1,
+          "text": "Invoice 2026-114\nPayment terms: net 30 days. Please transfer the amount to the account of Example Ltd. Late payment fees apply after the due date. Contact: billing@example.com."
+        }
+      ],
+      "typ": "txt"
+    },
+    {
+      "abschnitte": [
+        {
+          "anker": "zeile=1",
+          "pfad": [],
+          "text": "# Kündigung des Vertrags"
+        },
+        {
+          "anker": "zeile=3",
+          "pfad": [],
+          "text": "Sehr geehrte Damen und Herren,"
+        },
+        {
+          "anker": "zeile=5",
+          "pfad": [],
+          "text": "hiermit kündige ich den Vertrag zum nächstmöglichen Termin. Bitte bestätigen Sie die Kündigung schriftlich."
+        },
+        {
+          "anker": "zeile=7",
+          "pfad": [],
+          "text": "Mit freundlichen Grüßen\nMax Mustermann (max@example.com)"
+        }
+      ],
+      "name": "Kuendigung.md",
+      "stuecke": [
+        {
+          "abschnitt": 0,
+          "anker": "zeile=1",
+          "laenge": 3,
+          "pfad": [],
+          "seite": 1,
+          "text": "# Kündigung des Vertrags"
+        },
+        {
+          "abschnitt": 1,
+          "anker": "zeile=3",
+          "laenge": 5,
+          "pfad": [],
+          "seite": 2,
+          "text": "Sehr geehrte Damen und Herren,"
+        },
+        {
+          "abschnitt": 2,
+          "anker": "zeile=5",
+          "laenge": 14,
+          "pfad": [],
+          "seite": 3,
+          "text": "hiermit kündige ich den Vertrag zum nächstmöglichen Termin. Bitte bestätigen Sie die Kündigung schriftlich."
+        },
+        {
+          "abschnitt": 3,
+          "anker": "zeile=7",
+          "laenge": 8,
+          "pfad": [],
+          "seite": 4,
+          "text": "Mit freundlichen Grüßen\nMax Mustermann (max@example.com)"
+        }
+      ],
+      "typ": "md"
+    },
+    {
+      "abschnitte": [
+        {
+          "anker": "absatz=1",
+          "pfad": [],
+          "text": "Mietvertrag Beispielstraße 12"
+        },
+        {
+          "anker": "absatz=2",
+          "pfad": [
+            "Mietvertrag Beispielstraße 12"
+          ],
+          "text": "Zwischen der Beispiel-Genossenschaft und dem Mieter Max Mustermann wird folgender Vertrag geschlossen."
+        },
+        {
+          "anker": "absatz=3",
+          "pfad": [
+            "Mietvertrag Beispielstraße 12"
+          ],
+          "text": "§ 3 Miete und Nebenkosten"
+        },
+        {
+          "anker": "absatz=4",
+          "pfad": [
+            "Mietvertrag Beispielstraße 12",
+            "§ 3 Miete und Nebenkosten"
+          ],
+          "text": "Die Kaltmiete beträgt 650 Euro im Monat. Die Nebenkosten werden jährlich abgerechnet."
+        },
+        {
+          "anker": "absatz=5",
+          "pfad": [
+            "Mietvertrag Beispielstraße 12",
+            "§ 3 Miete und Nebenkosten"
+          ],
+          "text": "§ 7 Kündigung"
+        },
+        {
+          "anker": "absatz=6",
+          "pfad": [
+            "Mietvertrag Beispielstraße 12",
+            "§ 7 Kündigung"
+          ],
+          "text": "Die Kündigungsfrist beträgt für den Mieter drei Monate. Eine Kündigung muss schriftlich erfolgen."
+        },
+        {
+          "anker": "absatz=7",
+          "pfad": [
+            "Mietvertrag Beispielstraße 12",
+            "§ 7 Kündigung"
+          ],
+          "text": "§ 8 Schönheitsreparaturen"
+        },
+        {
+          "anker": "absatz=8",
+          "pfad": [
+            "Mietvertrag Beispielstraße 12",
+            "§ 8 Schönheitsreparaturen"
+          ],
+          "text": "Der Mieter übernimmt keine Schönheitsreparaturen. Über Ausnahmen entscheidet die Vermieterin schriftlich."
+        }
+      ],
+      "name": "Mietvertrag.docx",
+      "stuecke": [
+        {
+          "abschnitt": 0,
+          "anker": "absatz=1",
+          "laenge": 3,
+          "pfad": [],
+          "seite": 1,
+          "text": "Mietvertrag Beispielstraße 12"
+        },
+        {
+          "abschnitt": 1,
+          "anker": "absatz=2",
+          "laenge": 13,
+          "pfad": [
+            "Mietvertrag Beispielstraße 12"
+          ],
+          "seite": 2,
+          "text": "Zwischen der Beispiel-Genossenschaft und dem Mieter Max Mustermann wird folgender Vertrag geschlossen."
+        },
+        {
+          "abschnitt": 2,
+          "anker": "absatz=3",
+          "laenge": 4,
+          "pfad": [
+            "Mietvertrag Beispielstraße 12"
+          ],
+          "seite": 3,
+          "text": "§ 3 Miete und Nebenkosten"
+        },
+        {
+          "abschnitt": 3,
+          "anker": "absatz=4",
+          "laenge": 12,
+          "pfad": [
+            "Mietvertrag Beispielstraße 12",
+            "§ 3 Miete und Nebenkosten"
+          ],
+          "seite": 4,
+          "text": "Die Kaltmiete beträgt 650 Euro im Monat. Die Nebenkosten werden jährlich abgerechnet."
+        },
+        {
+          "abschnitt": 4,
+          "anker": "absatz=5",
+          "laenge": 2,
+          "pfad": [
+            "Mietvertrag Beispielstraße 12",
+            "§ 3 Miete und Nebenkosten"
+          ],
+          "seite": 5,
+          "text": "§ 7 Kündigung"
+        },
+        {
+          "abschnitt": 5,
+          "anker": "absatz=6",
+          "laenge": 13,
+          "pfad": [
+            "Mietvertrag Beispielstraße 12",
+            "§ 7 Kündigung"
+          ],
+          "seite": 6,
+          "text": "Die Kündigungsfrist beträgt für den Mieter drei Monate. Eine Kündigung muss schriftlich erfolgen."
+        },
+        {
+          "abschnitt": 6,
+          "anker": "absatz=7",
+          "laenge": 2,
+          "pfad": [
+            "Mietvertrag Beispielstraße 12",
+            "§ 7 Kündigung"
+          ],
+          "seite": 7,
+          "text": "§ 8 Schönheitsreparaturen"
+        },
+        {
+          "abschnitt": 7,
+          "anker": "absatz=8",
+          "laenge": 11,
+          "pfad": [
+            "Mietvertrag Beispielstraße 12",
+            "§ 8 Schönheitsreparaturen"
+          ],
+          "seite": 8,
+          "text": "Der Mieter übernimmt keine Schönheitsreparaturen. Über Ausnahmen entscheidet die Vermieterin schriftlich."
+        }
+      ],
+      "typ": "docx"
+    },
+    {
+      "abschnitte": [
+        {
+          "anker": "zeile=1",
+          "pfad": [],
+          "text": "Nebenkostenabrechnung 2025: Heizung, Wasser, Müllabfuhr und Hausmeister.\nDie Abrechnung erfolgt jährlich, Nachzahlungen sind innerhalb von vier Wochen fällig. Die Kündigungsfrist für Wartungsverträge beträgt ein Monat."
+        }
+      ],
+      "name": "Nebenkosten.txt",
+      "stuecke": [
+        {
+          "abschnitt": 0,
+          "anker": "zeile=1",
+          "laenge": 25,
+          "pfad": [],
+          "seite": 1,
+          "text": "Nebenkostenabrechnung 2025: Heizung, Wasser, Müllabfuhr und Hausmeister.\nDie Abrechnung erfolgt jährlich, Nachzahlungen sind innerhalb von vier Wochen fällig. Die Kündigungsfrist für Wartungsverträge beträgt ein Monat."
+        }
+      ],
+      "typ": "txt"
+    },
+    {
+      "abschnitte": [
+        {
+          "anker": "zeile=1",
+          "pfad": [],
+          "text": "Protokoll der Sitzung vom 3. November 2026 (Beispiel-Genossenschaft)"
+        },
+        {
+          "anker": "zeile=3",
+          "pfad": [],
+          "text": "Das Budget für 2027 wurde diskutiert. Das Budget sieht Ausgaben für Heizung, Fassade und Spielplatz vor; das Budget für die Fassade wurde um zehn Prozent gekürzt, weil das Budget der Rücklage nicht ausreicht. Über das Budget des Spielplatzes wird im Frühjahr erneut abgestimmt, sobald das Budget der Stadt feststeht."
+        },
+        {
+          "anker": "zeile=5",
+          "pfad": [],
+          "text": "Beschlüsse: Der Vorstand wird beauftragt, drei Angebote für die Fassadensanierung einzuholen. Die Angebote sind bis Ende Januar vorzulegen. Der Vorstand berichtet in der nächsten Sitzung über das Ergebnis und schlägt eine Reihenfolge der Maßnahmen vor."
+        },
+        {
+          "anker": "zeile=7",
+          "pfad": [],
+          "text": "Verschiedenes: Die Kündigungsfrist für den Wartungsvertrag der Aufzüge beträgt sechs Monate; eine Kündigung muss rechtzeitig vorbereitet werden."
+        }
+      ],
+      "name": "Protokoll.txt",
+      "stuecke": [
+        {
+          "abschnitt": 0,
+          "anker": "zeile=1",
+          "laenge": 9,
+          "pfad": [],
+          "seite": 1,
+          "text": "Protokoll der Sitzung vom 3. November 2026 (Beispiel-Genossenschaft)"
+        },
+        {
+          "abschnitt": 1,
+          "anker": "zeile=3",
+          "laenge": 35,
+          "pfad": [],
+          "seite": 2,
+          "text": "Das Budget für 2027 wurde diskutiert. Das Budget sieht Ausgaben für Heizung, Fassade und Spielplatz vor; das Budget für die Fassade wurde um zehn Prozent gekürzt, weil das Budget der Rücklage nicht ausreicht. Über das"
+        },
+        {
+          "abschnitt": 1,
+          "anker": "zeile=3",
+          "laenge": 20,
+          "pfad": [],
+          "seite": 3,
+          "text": "der Rücklage nicht ausreicht. Über das Budget des Spielplatzes wird im Frühjahr erneut abgestimmt, sobald das Budget der Stadt feststeht."
+        },
+        {
+          "abschnitt": 2,
+          "anker": "zeile=5",
+          "laenge": 30,
+          "pfad": [],
+          "seite": 4,
+          "text": "Beschlüsse: Der Vorstand wird beauftragt, drei Angebote für die Fassadensanierung einzuholen. Die Angebote sind bis Ende Januar vorzulegen. Der Vorstand berichtet in der nächsten Sitzung über das Ergebnis und schlägt"
+        },
+        {
+          "abschnitt": 2,
+          "anker": "zeile=5",
+          "laenge": 11,
+          "pfad": [],
+          "seite": 5,
+          "text": "Sitzung über das Ergebnis und schlägt eine Reihenfolge der Maßnahmen vor."
+        },
+        {
+          "abschnitt": 3,
+          "anker": "zeile=7",
+          "laenge": 17,
+          "pfad": [],
+          "seite": 6,
+          "text": "Verschiedenes: Die Kündigungsfrist für den Wartungsvertrag der Aufzüge beträgt sechs Monate; eine Kündigung muss rechtzeitig vorbereitet werden."
+        }
+      ],
+      "typ": "txt"
+    },
+    {
+      "abschnitte": [
+        {
+          "anker": "zeile=1",
+          "pfad": [],
+          "text": "# Pancakes"
+        },
+        {
+          "anker": "zeile=3",
+          "pfad": [],
+          "text": "Mix the flour, milk and eggs. Fry in butter until golden. Serve with maple syrup."
+        },
+        {
+          "anker": "zeile=5",
+          "pfad": [],
+          "text": "# Soup"
+        },
+        {
+          "anker": "zeile=7",
+          "pfad": [],
+          "text": "Simmer onions and carrots for twenty minutes. Season with salt and pepper."
+        }
+      ],
+      "name": "Rezepte.md",
+      "stuecke": [
+        {
+          "abschnitt": 0,
+          "anker": "zeile=1",
+          "laenge": 1,
+          "pfad": [],
+          "seite": 1,
+          "text": "# Pancakes"
+        },
+        {
+          "abschnitt": 1,
+          "anker": "zeile=3",
+          "laenge": 15,
+          "pfad": [],
+          "seite": 2,
+          "text": "Mix the flour, milk and eggs. Fry in butter until golden. Serve with maple syrup."
+        },
+        {
+          "abschnitt": 2,
+          "anker": "zeile=5",
+          "laenge": 1,
+          "pfad": [],
+          "seite": 3,
+          "text": "# Soup"
+        },
+        {
+          "abschnitt": 3,
+          "anker": "zeile=7",
+          "laenge": 12,
+          "pfad": [],
+          "seite": 4,
+          "text": "Simmer onions and carrots for twenty minutes. Season with salt and pepper."
+        }
+      ],
+      "typ": "md"
+    },
+    {
+      "abschnitte": [
+        {
+          "anker": "zeile=1",
+          "pfad": [],
+          "text": "Der die das und oder ist sind wie was wer."
+        },
+        {
+          "anker": "zeile=3",
+          "pfad": [],
+          "text": "Nur das Wort Zugvogel steht hier wirklich, dazu Zugvogel und noch ein Zugvogel."
+        }
+      ],
+      "name": "Stopwoerter.txt",
+      "stuecke": [
+        {
+          "abschnitt": 0,
+          "anker": "zeile=1",
+          "laenge": 10,
+          "pfad": [],
+          "seite": 1,
+          "text": "Der die das und oder ist sind wie was wer."
+        },
+        {
+          "abschnitt": 1,
+          "anker": "zeile=3",
+          "laenge": 13,
+          "pfad": [],
+          "seite": 2,
+          "text": "Nur das Wort Zugvogel steht hier wirklich, dazu Zugvogel und noch ein Zugvogel."
+        }
+      ],
+      "typ": "txt"
+    }
+  ],
+  "normalisierung": {
+    "hinweis": "lva#463: Vor dem Indexieren UND bei der Anfrage ersetzt der Desktop die Zeichen aus `zeichen` (ß/ẞ → ss, æ → ae, …); danach zerlegt `unicode61 remove_diacritics 2`. Der Anfragetext durchläuft zuerst `content_tokens` (Kleinschreibung, Stoppwörter), dann die Faltung, dann den Tokenizer. Gespeicherter Text und Zitat bleiben unverändert. `proben`: Eingabe → `normalisiert` (Ergebnis der Faltung) → `fts5` (Wörter des Tokenizers dazu, in Reihenfolge).",
+    "proben": [
+      {
+        "fts5": [
+          "strasse"
+        ],
+        "normalisiert": "Strasse",
+        "text": "Straße"
+      },
+      {
+        "fts5": [
+          "strasse"
+        ],
+        "normalisiert": "STRASSE",
+        "text": "STRASSE"
+      },
+      {
+        "fts5": [
+          "strasse"
+        ],
+        "normalisiert": "Strasse",
+        "text": "Strasse"
+      },
+      {
+        "fts5": [
+          "grosse"
+        ],
+        "normalisiert": "GROssE",
+        "text": "GROẞE"
+      },
+      {
+        "fts5": [
+          "mass",
+          "fuss",
+          "ball",
+          "weiss",
+          "sussigkeit"
+        ],
+        "normalisiert": "Mass Fuss-Ball weiss Süssigkeit",
+        "text": "Maß Fuß-Ball weiß Süßigkeit"
+      },
+      {
+        "fts5": [
+          "ssss",
+          "ss"
+        ],
+        "normalisiert": "ssss ss",
+        "text": "ßß ẞ"
+      },
+      {
+        "fts5": [
+          "aether",
+          "aero",
+          "oeuvre",
+          "coeur"
+        ],
+        "normalisiert": "aether aero oeuvre coeur",
+        "text": "Æther Ærø Œuvre cœur"
+      },
+      {
+        "fts5": [
+          "orsted",
+          "oresund",
+          "lodz",
+          "lukasz"
+        ],
+        "normalisiert": "orsted oresund lódź lukasz",
+        "text": "Ørsted Øresund Łódź Łukasz"
+      },
+      {
+        "fts5": [
+          "dorde",
+          "thor",
+          "dora",
+          "hal"
+        ],
+        "normalisiert": "dorde thór dóra hal",
+        "text": "Đorđe Þór Ðóra Ħal"
+      },
+      {
+        "fts5": [
+          "istanbul",
+          "istanbul",
+          "ijssel",
+          "ijs"
+        ],
+        "normalisiert": "istanbul İstanbul ijssel ijs",
+        "text": "ıstanbul İstanbul Ĳssel ĳs"
+      },
+      {
+        "fts5": [
+          "naive",
+          "resume",
+          "cafe"
+        ],
+        "normalisiert": "naïve Résumé café",
+        "text": "naïve Résumé café"
+      },
+      {
+        "fts5": [
+          "muller",
+          "mueller"
+        ],
+        "normalisiert": "Müller Mueller",
+        "text": "Müller Mueller"
+      },
+      {
+        "fts5": [
+          "s",
+          "ǆ",
+          "ﬁnal",
+          "ŉ",
+          "ŋ",
+          "ŧ",
+          "ŀ",
+          "ĸ"
+        ],
+        "normalisiert": "ſ ǅ ﬁnal ŉ ŋ ŧ ŀ ĸ",
+        "text": "ſ ǅ ﬁnal ŉ ŋ ŧ ŀ ĸ"
+      },
+      {
+        "fts5": [
+          "x²",
+          "1",
+          "000"
+        ],
+        "normalisiert": "x²  1,000",
+        "text": "x²  1,000"
+      },
+      {
+        "fts5": [],
+        "normalisiert": "",
+        "text": ""
+      },
+      {
+        "fts5": [
+          "ascii",
+          "only",
+          "123"
+        ],
+        "normalisiert": "ASCII only 123",
+        "text": "ASCII only 123"
+      }
+    ],
+    "zeichen": [
+      {
+        "codepunkt": 223,
+        "nach": "ss",
+        "von": "ß"
+      },
+      {
+        "codepunkt": 7838,
+        "nach": "ss",
+        "von": "ẞ"
+      },
+      {
+        "codepunkt": 230,
+        "nach": "ae",
+        "von": "æ"
+      },
+      {
+        "codepunkt": 198,
+        "nach": "ae",
+        "von": "Æ"
+      },
+      {
+        "codepunkt": 339,
+        "nach": "oe",
+        "von": "œ"
+      },
+      {
+        "codepunkt": 338,
+        "nach": "oe",
+        "von": "Œ"
+      },
+      {
+        "codepunkt": 248,
+        "nach": "o",
+        "von": "ø"
+      },
+      {
+        "codepunkt": 216,
+        "nach": "o",
+        "von": "Ø"
+      },
+      {
+        "codepunkt": 322,
+        "nach": "l",
+        "von": "ł"
+      },
+      {
+        "codepunkt": 321,
+        "nach": "l",
+        "von": "Ł"
+      },
+      {
+        "codepunkt": 273,
+        "nach": "d",
+        "von": "đ"
+      },
+      {
+        "codepunkt": 272,
+        "nach": "d",
+        "von": "Đ"
+      },
+      {
+        "codepunkt": 240,
+        "nach": "d",
+        "von": "ð"
+      },
+      {
+        "codepunkt": 208,
+        "nach": "d",
+        "von": "Ð"
+      },
+      {
+        "codepunkt": 254,
+        "nach": "th",
+        "von": "þ"
+      },
+      {
+        "codepunkt": 222,
+        "nach": "th",
+        "von": "Þ"
+      },
+      {
+        "codepunkt": 295,
+        "nach": "h",
+        "von": "ħ"
+      },
+      {
+        "codepunkt": 294,
+        "nach": "h",
+        "von": "Ħ"
+      },
+      {
+        "codepunkt": 305,
+        "nach": "i",
+        "von": "ı"
+      },
+      {
+        "codepunkt": 307,
+        "nach": "ij",
+        "von": "ĳ"
+      },
+      {
+        "codepunkt": 306,
+        "nach": "ij",
+        "von": "Ĳ"
+      }
+    ]
+  },
+  "papierkorb": {
+    "frage": "Zebrafink",
+    "treffer_nachher": 0,
+    "treffer_vorher": 1
+  },
+  "proben": [
+    {
+      "fts5": [
+        "wann",
+        "gelten",
+        "die",
+        "ruhezeiten",
+        "im",
+        "haus"
+      ],
+      "inhalt": [
+        "gelten",
+        "ruhezeiten",
+        "haus"
+      ],
+      "text": "Wann gelten die Ruhezeiten im Haus?"
+    },
+    {
+      "fts5": [
+        "der",
+        "die",
+        "das",
+        "den",
+        "dem",
+        "des",
+        "ein",
+        "eine",
+        "einer",
+        "einen",
+        "und",
+        "oder",
+        "ist",
+        "sind",
+        "wie",
+        "was",
+        "wer",
+        "wo",
+        "wann",
+        "im",
+        "in",
+        "am",
+        "an",
+        "auf",
+        "zu",
+        "zum",
+        "zur"
+      ],
+      "inhalt": [],
+      "text": "der die das den dem des ein eine einer einen und oder ist sind wie was wer wo wann im in am an auf zu zum zur"
+    },
+    {
+      "fts5": [
+        "von",
+        "vom",
+        "mit",
+        "bei",
+        "fuer",
+        "fur",
+        "es",
+        "sie",
+        "er",
+        "wir",
+        "ihr",
+        "nicht",
+        "auch",
+        "wird",
+        "werden",
+        "hat",
+        "haben",
+        "nach",
+        "als",
+        "ab"
+      ],
+      "inhalt": [],
+      "text": "von vom mit bei fuer für es sie er wir ihr nicht auch wird werden hat haben nach als ab"
+    },
+    {
+      "fts5": [
+        "der",
+        "hund",
+        "und",
+        "die",
+        "katze",
+        "sind",
+        "nicht",
+        "im",
+        "haus"
+      ],
+      "inhalt": [
+        "hund",
+        "katze",
+        "haus"
+      ],
+      "text": "Der Hund und die Katze sind nicht im Haus"
+    },
+    {
+      "fts5": [
+        "the",
+        "and",
+        "of",
+        "a",
+        "to",
+        "in",
+        "is",
+        "it"
+      ],
+      "inhalt": [
+        "the",
+        "and",
+        "of",
+        "a",
+        "to",
+        "is",
+        "it"
+      ],
+      "text": "the and of a to in is it"
+    },
+    {
+      "fts5": [
+        "arger",
+        "ol",
+        "ubung",
+        "aou",
+        "aou",
+        "ß",
+        "ß",
+        "straße",
+        "strasse"
+      ],
+      "inhalt": [
+        "ärger",
+        "öl",
+        "übung",
+        "äöü",
+        "äöü",
+        "ß",
+        "ß",
+        "straße",
+        "strasse"
+      ],
+      "text": "Ärger Öl Übung ÄÖÜ äöü ß ẞ Straße STRASSE"
+    },
+    {
+      "fts5": [
+        "œuvre",
+        "æther",
+        "ørsted",
+        "łodz",
+        "gdansk",
+        "istanbul",
+        "ı",
+        "ŉ",
+        "ǆ",
+        "ǆ",
+        "ﬁnal",
+        "ﬀ"
+      ],
+      "inhalt": [
+        "œuvre",
+        "æther",
+        "ørsted",
+        "łódź",
+        "gdańsk",
+        "i̇stanbul",
+        "ı",
+        "ŉ",
+        "ǆ",
+        "ǆ",
+        "ﬁnal",
+        "ﬀ"
+      ],
+      "text": "Œuvre Æther Ørsted Łódź Gdańsk İstanbul ı ŉ ǅ ǆ ﬁnal ﬀ"
+    },
+    {
+      "fts5": [
+        "naive",
+        "resume",
+        "cafe",
+        "creme",
+        "brulee",
+        "zoe",
+        "chloe"
+      ],
+      "inhalt": [
+        "naïve",
+        "résumé",
+        "café",
+        "crème",
+        "brûlée",
+        "zoë",
+        "chloé"
+      ],
+      "text": "naïve Résumé café crème brûlée Zoë Chloé"
+    },
+    {
+      "fts5": [
+        "привет",
+        "мир",
+        "ёлка",
+        "ёж",
+        "ёлка"
+      ],
+      "inhalt": [
+        "привет",
+        "мир",
+        "ёлка",
+        "ёж",
+        "ёлка"
+      ],
+      "text": "Привет мир Ёлка ёж ЁЛКА"
+    },
+    {
+      "fts5": [
+        "όμηροσ",
+        "σίσυφοσ",
+        "όσοσ",
+        "σασ",
+        "ὀδυσσεύσ",
+        "σ",
+        "σ",
+        "σ"
+      ],
+      "inhalt": [
+        "όμηρος",
+        "σίσυφος",
+        "όσος",
+        "σας",
+        "ὀδυσσεύς",
+        "ς",
+        "σ",
+        "σ"
+      ],
+      "text": "Όμηρος Σίσυφος ΌΣΟΣ ΣΑΣ ὈΔΥΣΣΕΎΣ ς σ Σ"
+    },
+    {
+      "fts5": [
+        "x²",
+        "x₂",
+        "co₂",
+        "①",
+        "②",
+        "½",
+        "ⅷ"
+      ],
+      "inhalt": [
+        "x²",
+        "x₂",
+        "co₂",
+        "①",
+        "②",
+        "½",
+        "ⅷ"
+      ],
+      "text": "x² x₂ co₂ ① ② ½ Ⅷ"
+    },
+    {
+      "fts5": [
+        "a",
+        "b",
+        "a",
+        "b",
+        "a",
+        "b",
+        "a",
+        "b",
+        "3",
+        "14",
+        "1",
+        "000",
+        "e",
+        "mail",
+        "user",
+        "example",
+        "org"
+      ],
+      "inhalt": [
+        "a",
+        "b",
+        "a",
+        "b",
+        "a",
+        "b",
+        "a",
+        "b",
+        "3",
+        "14",
+        "1",
+        "000",
+        "e",
+        "mail",
+        "user",
+        "example",
+        "org"
+      ],
+      "text": "a_b a-b a'b a.b 3.14 1,000 e-mail user@example.org"
+    },
+    {
+      "fts5": [
+        "tab",
+        "new",
+        "line",
+        "mehrere",
+        "leerzeichen"
+      ],
+      "inhalt": [
+        "tab",
+        "new",
+        "line",
+        "mehrere",
+        "leerzeichen"
+      ],
+      "text": "tab\tnew\nline  mehrere   Leerzeichen"
+    },
+    {
+      "fts5": [
+        "e",
+        "a",
+        "o",
+        "u"
+      ],
+      "inhalt": [
+        "e",
+        "a",
+        "o",
+        "u"
+      ],
+      "text": "é ä ö ü"
+    },
+    {
+      "fts5": [
+        "ह",
+        "न",
+        "द",
+        "ह",
+        "द",
+        "ไทย",
+        "ภาษาไทย"
+      ],
+      "inhalt": [
+        "हिन",
+        "दी",
+        "हिंदी",
+        "ไทย",
+        "ภาษาไทย"
+      ],
+      "text": "हिन्दी हिंदी ไทย ภาษาไทย"
+    },
+    {
+      "fts5": [
+        "日本語のテキスト",
+        "中文",
+        "한국어"
+      ],
+      "inhalt": [
+        "日本語のテキスト",
+        "中文",
+        "한국어"
+      ],
+      "text": "日本語のテキスト 中文 한국어"
+    },
+    {
+      "fts5": [
+        "emoji",
+        "🙂",
+        "ok"
+      ],
+      "inhalt": [
+        "emoji",
+        "ok"
+      ],
+      "text": "😀 emoji 🙂 ok"
+    },
+    {
+      "fts5": [
+        "j",
+        "s",
+        "k",
+        "k",
+        "a",
+        "a"
+      ],
+      "inhalt": [
+        "ǰ",
+        "ſ",
+        "k",
+        "k",
+        "å",
+        "å"
+      ],
+      "text": "ǰ ſ K K å Å"
+    },
+    {
+      "fts5": [],
+      "inhalt": [],
+      "text": ""
+    },
+    {
+      "fts5": [],
+      "inhalt": [],
+      "text": "   "
+    },
+    {
+      "fts5": [],
+      "inhalt": [],
+      "text": "---"
+    },
+    {
+      "fts5": [
+        "der"
+      ],
+      "inhalt": [],
+      "text": "der"
+    },
+    {
+      "fts5": [
+        "der"
+      ],
+      "inhalt": [],
+      "text": "DER"
+    },
+    {
+      "fts5": [
+        "die"
+      ],
+      "inhalt": [],
+      "text": "die"
+    },
+    {
+      "fts5": [
+        "die"
+      ],
+      "inhalt": [],
+      "text": "DIE"
+    },
+    {
+      "fts5": [
+        "das"
+      ],
+      "inhalt": [],
+      "text": "das"
+    },
+    {
+      "fts5": [
+        "das"
+      ],
+      "inhalt": [],
+      "text": "DAS"
+    },
+    {
+      "fts5": [
+        "den"
+      ],
+      "inhalt": [],
+      "text": "den"
+    },
+    {
+      "fts5": [
+        "den"
+      ],
+      "inhalt": [],
+      "text": "DEN"
+    },
+    {
+      "fts5": [
+        "dem"
+      ],
+      "inhalt": [],
+      "text": "dem"
+    },
+    {
+      "fts5": [
+        "dem"
+      ],
+      "inhalt": [],
+      "text": "DEM"
+    },
+    {
+      "fts5": [
+        "des"
+      ],
+      "inhalt": [],
+      "text": "des"
+    },
+    {
+      "fts5": [
+        "des"
+      ],
+      "inhalt": [],
+      "text": "DES"
+    },
+    {
+      "fts5": [
+        "ein"
+      ],
+      "inhalt": [],
+      "text": "ein"
+    },
+    {
+      "fts5": [
+        "ein"
+      ],
+      "inhalt": [],
+      "text": "EIN"
+    },
+    {
+      "fts5": [
+        "eine"
+      ],
+      "inhalt": [],
+      "text": "eine"
+    },
+    {
+      "fts5": [
+        "eine"
+      ],
+      "inhalt": [],
+      "text": "EINE"
+    },
+    {
+      "fts5": [
+        "einer"
+      ],
+      "inhalt": [],
+      "text": "einer"
+    },
+    {
+      "fts5": [
+        "einer"
+      ],
+      "inhalt": [],
+      "text": "EINER"
+    },
+    {
+      "fts5": [
+        "einen"
+      ],
+      "inhalt": [],
+      "text": "einen"
+    },
+    {
+      "fts5": [
+        "einen"
+      ],
+      "inhalt": [],
+      "text": "EINEN"
+    },
+    {
+      "fts5": [
+        "und"
+      ],
+      "inhalt": [],
+      "text": "und"
+    },
+    {
+      "fts5": [
+        "und"
+      ],
+      "inhalt": [],
+      "text": "UND"
+    },
+    {
+      "fts5": [
+        "oder"
+      ],
+      "inhalt": [],
+      "text": "oder"
+    },
+    {
+      "fts5": [
+        "oder"
+      ],
+      "inhalt": [],
+      "text": "ODER"
+    },
+    {
+      "fts5": [
+        "ist"
+      ],
+      "inhalt": [],
+      "text": "ist"
+    },
+    {
+      "fts5": [
+        "ist"
+      ],
+      "inhalt": [],
+      "text": "IST"
+    },
+    {
+      "fts5": [
+        "sind"
+      ],
+      "inhalt": [],
+      "text": "sind"
+    },
+    {
+      "fts5": [
+        "sind"
+      ],
+      "inhalt": [],
+      "text": "SIND"
+    },
+    {
+      "fts5": [
+        "wie"
+      ],
+      "inhalt": [],
+      "text": "wie"
+    },
+    {
+      "fts5": [
+        "wie"
+      ],
+      "inhalt": [],
+      "text": "WIE"
+    },
+    {
+      "fts5": [
+        "was"
+      ],
+      "inhalt": [],
+      "text": "was"
+    },
+    {
+      "fts5": [
+        "was"
+      ],
+      "inhalt": [],
+      "text": "WAS"
+    },
+    {
+      "fts5": [
+        "wer"
+      ],
+      "inhalt": [],
+      "text": "wer"
+    },
+    {
+      "fts5": [
+        "wer"
+      ],
+      "inhalt": [],
+      "text": "WER"
+    },
+    {
+      "fts5": [
+        "wo"
+      ],
+      "inhalt": [],
+      "text": "wo"
+    },
+    {
+      "fts5": [
+        "wo"
+      ],
+      "inhalt": [],
+      "text": "WO"
+    },
+    {
+      "fts5": [
+        "wann"
+      ],
+      "inhalt": [],
+      "text": "wann"
+    },
+    {
+      "fts5": [
+        "wann"
+      ],
+      "inhalt": [],
+      "text": "WANN"
+    },
+    {
+      "fts5": [
+        "im"
+      ],
+      "inhalt": [],
+      "text": "im"
+    },
+    {
+      "fts5": [
+        "im"
+      ],
+      "inhalt": [],
+      "text": "IM"
+    },
+    {
+      "fts5": [
+        "in"
+      ],
+      "inhalt": [],
+      "text": "in"
+    },
+    {
+      "fts5": [
+        "in"
+      ],
+      "inhalt": [],
+      "text": "IN"
+    },
+    {
+      "fts5": [
+        "am"
+      ],
+      "inhalt": [],
+      "text": "am"
+    },
+    {
+      "fts5": [
+        "am"
+      ],
+      "inhalt": [],
+      "text": "AM"
+    },
+    {
+      "fts5": [
+        "an"
+      ],
+      "inhalt": [],
+      "text": "an"
+    },
+    {
+      "fts5": [
+        "an"
+      ],
+      "inhalt": [],
+      "text": "AN"
+    },
+    {
+      "fts5": [
+        "auf"
+      ],
+      "inhalt": [],
+      "text": "auf"
+    },
+    {
+      "fts5": [
+        "auf"
+      ],
+      "inhalt": [],
+      "text": "AUF"
+    },
+    {
+      "fts5": [
+        "zu"
+      ],
+      "inhalt": [],
+      "text": "zu"
+    },
+    {
+      "fts5": [
+        "zu"
+      ],
+      "inhalt": [],
+      "text": "ZU"
+    },
+    {
+      "fts5": [
+        "zum"
+      ],
+      "inhalt": [],
+      "text": "zum"
+    },
+    {
+      "fts5": [
+        "zum"
+      ],
+      "inhalt": [],
+      "text": "ZUM"
+    },
+    {
+      "fts5": [
+        "zur"
+      ],
+      "inhalt": [],
+      "text": "zur"
+    },
+    {
+      "fts5": [
+        "zur"
+      ],
+      "inhalt": [],
+      "text": "ZUR"
+    },
+    {
+      "fts5": [
+        "von"
+      ],
+      "inhalt": [],
+      "text": "von"
+    },
+    {
+      "fts5": [
+        "von"
+      ],
+      "inhalt": [],
+      "text": "VON"
+    },
+    {
+      "fts5": [
+        "vom"
+      ],
+      "inhalt": [],
+      "text": "vom"
+    },
+    {
+      "fts5": [
+        "vom"
+      ],
+      "inhalt": [],
+      "text": "VOM"
+    },
+    {
+      "fts5": [
+        "mit"
+      ],
+      "inhalt": [],
+      "text": "mit"
+    },
+    {
+      "fts5": [
+        "mit"
+      ],
+      "inhalt": [],
+      "text": "MIT"
+    },
+    {
+      "fts5": [
+        "bei"
+      ],
+      "inhalt": [],
+      "text": "bei"
+    },
+    {
+      "fts5": [
+        "bei"
+      ],
+      "inhalt": [],
+      "text": "BEI"
+    },
+    {
+      "fts5": [
+        "fuer"
+      ],
+      "inhalt": [],
+      "text": "fuer"
+    },
+    {
+      "fts5": [
+        "fuer"
+      ],
+      "inhalt": [],
+      "text": "FUER"
+    },
+    {
+      "fts5": [
+        "fur"
+      ],
+      "inhalt": [],
+      "text": "für"
+    },
+    {
+      "fts5": [
+        "fur"
+      ],
+      "inhalt": [],
+      "text": "FÜR"
+    },
+    {
+      "fts5": [
+        "es"
+      ],
+      "inhalt": [],
+      "text": "es"
+    },
+    {
+      "fts5": [
+        "es"
+      ],
+      "inhalt": [],
+      "text": "ES"
+    },
+    {
+      "fts5": [
+        "sie"
+      ],
+      "inhalt": [],
+      "text": "sie"
+    },
+    {
+      "fts5": [
+        "sie"
+      ],
+      "inhalt": [],
+      "text": "SIE"
+    },
+    {
+      "fts5": [
+        "er"
+      ],
+      "inhalt": [],
+      "text": "er"
+    },
+    {
+      "fts5": [
+        "er"
+      ],
+      "inhalt": [],
+      "text": "ER"
+    },
+    {
+      "fts5": [
+        "wir"
+      ],
+      "inhalt": [],
+      "text": "wir"
+    },
+    {
+      "fts5": [
+        "wir"
+      ],
+      "inhalt": [],
+      "text": "WIR"
+    },
+    {
+      "fts5": [
+        "ihr"
+      ],
+      "inhalt": [],
+      "text": "ihr"
+    },
+    {
+      "fts5": [
+        "ihr"
+      ],
+      "inhalt": [],
+      "text": "IHR"
+    },
+    {
+      "fts5": [
+        "nicht"
+      ],
+      "inhalt": [],
+      "text": "nicht"
+    },
+    {
+      "fts5": [
+        "nicht"
+      ],
+      "inhalt": [],
+      "text": "NICHT"
+    },
+    {
+      "fts5": [
+        "auch"
+      ],
+      "inhalt": [],
+      "text": "auch"
+    },
+    {
+      "fts5": [
+        "auch"
+      ],
+      "inhalt": [],
+      "text": "AUCH"
+    },
+    {
+      "fts5": [
+        "wird"
+      ],
+      "inhalt": [],
+      "text": "wird"
+    },
+    {
+      "fts5": [
+        "wird"
+      ],
+      "inhalt": [],
+      "text": "WIRD"
+    },
+    {
+      "fts5": [
+        "werden"
+      ],
+      "inhalt": [],
+      "text": "werden"
+    },
+    {
+      "fts5": [
+        "werden"
+      ],
+      "inhalt": [],
+      "text": "WERDEN"
+    },
+    {
+      "fts5": [
+        "hat"
+      ],
+      "inhalt": [],
+      "text": "hat"
+    },
+    {
+      "fts5": [
+        "hat"
+      ],
+      "inhalt": [],
+      "text": "HAT"
+    },
+    {
+      "fts5": [
+        "haben"
+      ],
+      "inhalt": [],
+      "text": "haben"
+    },
+    {
+      "fts5": [
+        "haben"
+      ],
+      "inhalt": [],
+      "text": "HABEN"
+    },
+    {
+      "fts5": [
+        "nach"
+      ],
+      "inhalt": [],
+      "text": "nach"
+    },
+    {
+      "fts5": [
+        "nach"
+      ],
+      "inhalt": [],
+      "text": "NACH"
+    },
+    {
+      "fts5": [
+        "als"
+      ],
+      "inhalt": [],
+      "text": "als"
+    },
+    {
+      "fts5": [
+        "als"
+      ],
+      "inhalt": [],
+      "text": "ALS"
+    },
+    {
+      "fts5": [
+        "ab"
+      ],
+      "inhalt": [],
+      "text": "ab"
+    },
+    {
+      "fts5": [
+        "ab"
+      ],
+      "inhalt": [],
+      "text": "AB"
+    }
+  ],
+  "statistik": {
+    "stuecke": 44,
+    "tokens": 578
+  },
+  "stop": [
+    "der",
+    "die",
+    "das",
+    "den",
+    "dem",
+    "des",
+    "ein",
+    "eine",
+    "einer",
+    "einen",
+    "und",
+    "oder",
+    "ist",
+    "sind",
+    "wie",
+    "was",
+    "wer",
+    "wo",
+    "wann",
+    "im",
+    "in",
+    "am",
+    "an",
+    "auf",
+    "zu",
+    "zum",
+    "zur",
+    "von",
+    "vom",
+    "mit",
+    "bei",
+    "fuer",
+    "für",
+    "es",
+    "sie",
+    "er",
+    "wir",
+    "ihr",
+    "nicht",
+    "auch",
+    "wird",
+    "werden",
+    "hat",
+    "haben",
+    "nach",
+    "als",
+    "ab"
+  ],
+  "stuecke_proben": [
+    {
+      "max": 220,
+      "stuecke": [
+        "kurz"
+      ],
+      "text": "kurz",
+      "ueber": 40
+    },
+    {
+      "max": 30,
+      "stuecke": [
+        "kurz"
+      ],
+      "text": "kurz",
+      "ueber": 10
+    },
+    {
+      "max": 7,
+      "stuecke": [
+        "kurz"
+      ],
+      "text": "kurz",
+      "ueber": 2
+    },
+    {
+      "max": 220,
+      "stuecke": [],
+      "text": "",
+      "ueber": 40
+    },
+    {
+      "max": 30,
+      "stuecke": [],
+      "text": "",
+      "ueber": 10
+    },
+    {
+      "max": 7,
+      "stuecke": [],
+      "text": "",
+      "ueber": 2
+    },
+    {
+      "max": 220,
+      "stuecke": [],
+      "text": "  \n\t ",
+      "ueber": 40
+    },
+    {
+      "max": 30,
+      "stuecke": [],
+      "text": "  \n\t ",
+      "ueber": 10
+    },
+    {
+      "max": 7,
+      "stuecke": [],
+      "text": "  \n\t ",
+      "ueber": 2
+    },
+    {
+      "max": 220,
+      "stuecke": [
+        "Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort"
+      ],
+      "text": "Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort ",
+      "ueber": 40
+    },
+    {
+      "max": 30,
+      "stuecke": [
+        "Wort Wort Wort Wort Wort Wort",
+        "Wort Wort Wort Wort Wort Wort",
+        "Wort Wort Wort Wort Wort Wort",
+        "Wort Wort Wort Wort Wort Wort",
+        "Wort Wort Wort Wort Wort Wort",
+        "Wort Wort Wort Wort Wort Wort",
+        "Wort Wort Wort Wort Wort Wort"
+      ],
+      "text": "Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort ",
+      "ueber": 10
+    },
+    {
+      "max": 7,
+      "stuecke": [
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort",
+        "Wort"
+      ],
+      "text": "Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort Wort ",
+      "ueber": 2
+    },
+    {
+      "max": 220,
+      "stuecke": [
+        "äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€"
+      ],
+      "text": "äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ ",
+      "ueber": 40
+    },
+    {
+      "max": 30,
+      "stuecke": [
+        "äöü ßé€ äöü ßé€ äöü ßé€ äöü",
+        "ßé€ äöü ßé€ äöü ßé€ äöü ßé€",
+        "äöü ßé€ äöü ßé€ äöü ßé€ äöü",
+        "ßé€ äöü ßé€ äöü ßé€ äöü ßé€",
+        "äöü ßé€ äöü ßé€ äöü ßé€ äöü",
+        "ßé€ äöü ßé€ äöü ßé€ äöü ßé€",
+        "äöü ßé€ äöü ßé€ äöü ßé€ äöü",
+        "ßé€ äöü ßé€ äöü ßé€"
+      ],
+      "text": "äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ ",
+      "ueber": 10
+    },
+    {
+      "max": 7,
+      "stuecke": [
+        "äöü",
+        "ßé€",
+        "äöü",
+        "ßé€",
+        "äöü",
+        "ßé€",
+        "äöü",
+        "ßé€",
+        "äöü",
+        "ßé€",
+        "äöü",
+        "ßé€",
+        "äöü",
+        "ßé€",
+        "äöü",
+        "ßé€",
+        "äöü",
+        "ßé€",
+        "äöü",
+        "ßé€",
+        "äöü",
+        "ßé€",
+        "äöü",
+        "ßé€",
+        "äöü",
+        "ßé€",
+        "äöü",
+        "ßé€",
+        "äöü",
+        "ßé€",
+        "äöü",
+        "ßé€",
+        "äöü",
+        "ßé€",
+        "äöü",
+        "ßé€",
+        "äöü",
+        "ßé€",
+        "äöü",
+        "ßé€"
+      ],
+      "text": "äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ äöü ßé€ ",
+      "ueber": 2
+    },
+    {
+      "max": 220,
+      "stuecke": [
+        "ääääääääääääääääääääääääääääääääääääääääääääääääääääääääääääääääääääää"
+      ],
+      "text": "ääääääääääääääääääääääääääääääääääääääääääääääääääääääääääääääääääääää",
+      "ueber": 40
+    },
+    {
+      "max": 30,
+      "stuecke": [
+        "ääääääääääääääääääääääääääääää",
+        "ääääääääääääääääääääääääääääää",
+        "ääääääääää"
+      ],
+      "text": "ääääääääääääääääääääääääääääääääääääääääääääääääääääääääääääääääääääää",
+      "ueber": 10
+    },
+    {
+      "max": 7,
+      "stuecke": [
+        "äääääää",
+        "äääääää",
+        "äääääää",
+        "äääääää",
+        "äääääää",
+        "äääääää",
+        "äääääää",
+        "äääääää",
+        "äääääää",
+        "äääääää"
+      ],
+      "text": "ääääääääääääääääääääääääääääääääääääääääääääääääääääääääääääääääääääää",
+      "ueber": 2
+    },
+    {
+      "max": 220,
+      "stuecke": [
+        "Zeile eins\nZeile zwei\r\nZeile drei mit geschütztem Leerzeichen und Geviert. Zeile eins\nZeile zwei\r\nZeile drei mit geschütztem Leerzeichen und Geviert."
+      ],
+      "text": "Zeile eins\nZeile zwei\r\nZeile drei mit geschütztem Leerzeichen und Geviert. Zeile eins\nZeile zwei\r\nZeile drei mit geschütztem Leerzeichen und Geviert. ",
+      "ueber": 40
+    },
+    {
+      "max": 30,
+      "stuecke": [
+        "Zeile eins\nZeile zwei\r\nZeile",
+        "Zeile drei mit geschütztem",
+        "Leerzeichen und Geviert.",
+        "Geviert. Zeile eins\nZeile",
+        "eins\nZeile zwei\r\nZeile drei",
+        "Zeile drei mit geschütztem",
+        "Leerzeichen und Geviert."
+      ],
+      "text": "Zeile eins\nZeile zwei\r\nZeile drei mit geschütztem Leerzeichen und Geviert. Zeile eins\nZeile zwei\r\nZeile drei mit geschütztem Leerzeichen und Geviert. ",
+      "ueber": 10
+    },
+    {
+      "max": 7,
+      "stuecke": [
+        "Zeile",
+        "eins",
+        "Zeile",
+        "zwei",
+        "Zeile",
+        "drei",
+        "mit",
+        "geschüt",
+        "ztem",
+        "Leerzei",
+        "chen",
+        "und",
+        "Geviert",
+        ". Zeile",
+        "eins",
+        "Zeile",
+        "zwei",
+        "Zeile",
+        "drei",
+        "mit",
+        "geschüt",
+        "ztem",
+        "Leerzei",
+        "chen",
+        "und",
+        "Geviert",
+        "."
+      ],
+      "text": "Zeile eins\nZeile zwei\r\nZeile drei mit geschütztem Leerzeichen und Geviert. Zeile eins\nZeile zwei\r\nZeile drei mit geschütztem Leerzeichen und Geviert. ",
+      "ueber": 2
+    },
+    {
+      "max": 220,
+      "stuecke": [
+        "😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂"
+      ],
+      "text": "😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 ",
+      "ueber": 40
+    },
+    {
+      "max": 30,
+      "stuecke": [
+        "😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂",
+        "😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂",
+        "😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂",
+        "😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂",
+        "😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂",
+        "😀 emoji 🙂 😀 emoji 🙂"
+      ],
+      "text": "😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 ",
+      "ueber": 10
+    },
+    {
+      "max": 7,
+      "stuecke": [
+        "😀 emoji",
+        "🙂 😀",
+        "😀 emoji",
+        "🙂 😀",
+        "😀 emoji",
+        "🙂 😀",
+        "😀 emoji",
+        "🙂 😀",
+        "😀 emoji",
+        "🙂 😀",
+        "😀 emoji",
+        "🙂 😀",
+        "😀 emoji",
+        "🙂 😀",
+        "😀 emoji",
+        "🙂 😀",
+        "😀 emoji",
+        "🙂 😀",
+        "😀 emoji",
+        "🙂 😀",
+        "😀 emoji",
+        "🙂 😀",
+        "😀 emoji",
+        "🙂"
+      ],
+      "text": "😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 😀 emoji 🙂 ",
+      "ueber": 2
+    },
+    {
+      "max": 220,
+      "stuecke": [
+        "a b c d e f g h i j k l m n o p q r s t u v w x y z a b c d e f g h i j k l m n o p q r s t u v w x y z"
+      ],
+      "text": "a b c d e f g h i j k l m n o p q r s t u v w x y z a b c d e f g h i j k l m n o p q r s t u v w x y z ",
+      "ueber": 40
+    },
+    {
+      "max": 30,
+      "stuecke": [
+        "a b c d e f g h i j k l m n o",
+        "k l m n o p q r s t u v w x y",
+        "u v w x y z a b c d e f g h i",
+        "e f g h i j k l m n o p q r s",
+        "o p q r s t u v w x y z"
+      ],
+      "text": "a b c d e f g h i j k l m n o p q r s t u v w x y z a b c d e f g h i j k l m n o p q r s t u v w x y z ",
+      "ueber": 10
+    },
+    {
+      "max": 7,
+      "stuecke": [
+        "a b c",
+        "c d e",
+        "e f g",
+        "g h i",
+        "i j k",
+        "k l m",
+        "m n o",
+        "o p q",
+        "q r s",
+        "s t u",
+        "u v w",
+        "w x y",
+        "y z a",
+        "a b c",
+        "c d e",
+        "e f g",
+        "g h i",
+        "i j k",
+        "k l m",
+        "m n o",
+        "o p q",
+        "q r s",
+        "s t u",
+        "u v w",
+        "w x y",
+        "y z"
+      ],
+      "text": "a b c d e f g h i j k l m n o p q r s t u v w x y z a b c d e f g h i j k l m n o p q r s t u v w x y z ",
+      "ueber": 2
+    },
+    {
+      "max": 220,
+      "stuecke": [
+        "führender Leerraum und langes_Wort_ohne_Trenner_das_nicht_in_ein_kleines_Stueck_passt_und_noch_laenger_wird nachher mehr Text folgt"
+      ],
+      "text": "   führender Leerraum und langes_Wort_ohne_Trenner_das_nicht_in_ein_kleines_Stueck_passt_und_noch_laenger_wird nachher mehr Text folgt",
+      "ueber": 40
+    },
+    {
+      "max": 30,
+      "stuecke": [
+        "führender Leerraum und",
+        "und langes_Wort_ohne_Trenner_d",
+        "as_nicht_in_ein_kleines_Stueck",
+        "_passt_und_noch_laenger_wird",
+        "nachher mehr Text folgt"
+      ],
+      "text": "   führender Leerraum und langes_Wort_ohne_Trenner_das_nicht_in_ein_kleines_Stueck_passt_und_noch_laenger_wird nachher mehr Text folgt",
+      "ueber": 10
+    },
+    {
+      "max": 7,
+      "stuecke": [
+        "führend",
+        "er Leer",
+        "raum",
+        "und",
+        "langes_",
+        "Wort_oh",
+        "ne_Tren",
+        "ner_das",
+        "_nicht_",
+        "in_ein_",
+        "kleines",
+        "_Stueck",
+        "_passt_",
+        "und_noc",
+        "h_laeng",
+        "er_wird",
+        "nachher",
+        "mehr",
+        "Text",
+        "folgt"
+      ],
+      "text": "   führender Leerraum und langes_Wort_ohne_Trenner_das_nicht_in_ein_kleines_Stueck_passt_und_noch_laenger_wird nachher mehr Text folgt",
+      "ueber": 2
+    },
+    {
+      "max": 220,
+      "stuecke": [
+        "x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x Ende"
+      ],
+      "text": "x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x Ende",
+      "ueber": 40
+    },
+    {
+      "max": 30,
+      "stuecke": [
+        "x x x x x x x x x x x x x x x",
+        "x x x x x x x x x x x x x x x",
+        "x x x x x x x x x x x x x x x",
+        "x x x x x x x x x x Ende"
+      ],
+      "text": "x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x Ende",
+      "ueber": 10
+    },
+    {
+      "max": 7,
+      "stuecke": [
+        "x x x",
+        "x x x",
+        "x x x",
+        "x x x",
+        "x x x",
+        "x x x",
+        "x x x",
+        "x x x",
+        "x x x",
+        "x x x",
+        "x x x",
+        "x x x",
+        "x x x",
+        "x x x",
+        "x x x",
+        "x x x",
+        "x x x",
+        "x x x",
+        "x x x",
+        "x x",
+        "x Ende"
+      ],
+      "text": "x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x Ende",
+      "ueber": 2
+    }
+  ]
+}

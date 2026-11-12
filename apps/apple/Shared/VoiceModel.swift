@@ -31,6 +31,8 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
     @Published var entries: [Entry] = []
     @Published var storageIssues: [StorageIssue] = []
     @Published var status = "Bereit"
+    /// Die Einrichtung (Speicher, Aufnahme, Übertragung) ist gescheitert: „Erneut versuchen“ baut die Teile neu auf.
+    @Published private(set) var setupFailed = false
     @Published var recording = false
     @Published var reachable = false
     @Published var availableVoices: [SpeechVoiceOption] = []
@@ -55,7 +57,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
     @Published var autoPlayReplies = UserDefaults.standard.object(forKey: "autoPlayReplies") as? Bool ?? true {
         didSet { UserDefaults.standard.set(autoPlayReplies, forKey: "autoPlayReplies") }
     }
-    @Published var handsFreeEnabled = UserDefaults.standard.bool(forKey: "handsFreeEnabled") {
+    @Published var handsFreeEnabled = VoiceModel.storedHandsFree() {
         didSet { UserDefaults.standard.set(handsFreeEnabled, forKey: "handsFreeEnabled"); if !handsFreeEnabled { endConversation() } }
     }
     @Published var microphoneSensitivity = MicrophoneSensitivity(rawValue: UserDefaults.standard.string(forKey: "microphoneSensitivity") ?? "") ?? .balanced {
@@ -68,6 +70,23 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
     @Published private(set) var conversationId = UserDefaults.standard.string(forKey: "conversationId").flatMap(UUID.init(uuidString:))
     private var awaitingConversationReply: UUID?
     private var resumeConversationTask: Task<Void, Never>?
+
+    /// Freisprechen ist mit dem Gesprächsmodus (Paket A) auf dem iPhone Standard: einmal für Bestandsgeräte nachziehen
+    /// (Merker `assistant_handsfree_migrated`, Logik und Tests in `AssistantHandsFreeMigration`), danach gilt die Wahl im
+    /// Menü. Auf der Watch bleibt es beim alten Wert.
+    nonisolated static func storedHandsFree() -> Bool {
+        #if os(iOS)
+        #if DEBUG
+        // UI-Tests der Einzelaufnahme starten ohne Freisprechen (jedes Mal, unabhängig vom Merker).
+        let forceOff = ProcessInfo.processInfo.arguments.contains("--no-handsfree")
+        #else
+        let forceOff = false
+        #endif
+        return AssistantHandsFreeMigration.resolve(.standard, forceOff: forceOff)
+        #else
+        return UserDefaults.standard.bool(forKey: "handsFreeEnabled")
+        #endif
+    }
 
     @Published var fixedAnswer = UserDefaults.standard.object(forKey: "fixedAnswer") as? Bool ?? false {
         didSet {
@@ -90,6 +109,11 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
         didSet { UserDefaults.standard.set(sttModel, forKey: "sttModel") }
     }
     #endif
+    /// „Erneut versuchen“ hat etwas zu tun: Einrichtung gescheitert, Wiederherstellung nötig oder eine Aufnahme wartet
+    /// unbeantwortet, ohne dass ihre Verarbeitung gerade läuft. Sonst zeigt die Karte den Knopf nicht (nichts zu wiederholen).
+    var canRetry: Bool {
+        setupFailed || !storageIssues.isEmpty || entries.contains { $0.state != .answered && $0.reply == nil && $0.job?.running != true }
+    }
     private var store: DurableStore?
     private var transport: VoiceTransport?
     private var capture: CaptureController?
@@ -193,7 +217,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
         }
         #endif
         do { try configureComponents(); try recoverStorageState() }
-        catch { status = "Speicherprüfung erforderlich – Wiederherstellung erneut versuchen"; refresh() }
+        catch { setupFailed = true; status = "Speicherprüfung erforderlich – Wiederherstellung erneut versuchen"; refresh() }
         interruptionObservation = AudioInterruptionObservation { [weak self] notification in
             guard let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
                   AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
@@ -384,9 +408,15 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
         #if os(iOS)
         if jobs?.currentId == id { jobs?.cancelCurrent() }
         #endif
-        try store.deleteEntry(id)
-        transport?.cancelDelivery(for: id)
-        refresh()
+        // Assistent (Klasse B): Die Notiz muss auch aus der Sicht (`entries`) verschwunden sein, bevor die Änderung als beendet gilt
+        // (der Durchgang der Indexierung liest `entries`). Schlägt das Lesen des Verlaufs in `refresh` fehl, nimmt der letzte Schritt
+        // sie heraus. Die Meldung des Speichers (`deleteEntry`) liegt in dieser Klammer.
+        try NoteChangeHook.shared.around {
+            try store.deleteEntry(id)
+            transport?.cancelDelivery(for: id)
+            refresh()
+            if entries.contains(where: { $0.id == id }) { entries.removeAll { $0.id == id } }
+        }
         status = "Sprachnotiz gelöscht"
     }
     func recordingURL(_ id: UUID) -> URL? {
@@ -493,6 +523,26 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
         stopAllSpeech()
         status = "Gespräch beendet · Verlauf gespeichert"
     }
+    #if os(iOS)
+    /// Hauptknopf öffnet das neue Gespräch (Vollbild) statt der Aufnahme-Unterhaltung. Nur mit Freisprechen; die alten
+    /// UI-Tests der Aufnahme-Unterhaltung starten mit `--legacy-conversation`.
+    var assistantMode: Bool {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--legacy-conversation") { return false }
+        #endif
+        return handsFreeEnabled
+    }
+
+    /// Gesprächsmodus „Sprechen“ (Paket A): das Zuhören gehört jetzt dem Assistenten. Aufnahme-Unterhaltung, Originalwiedergabe,
+    /// Hörprobe und alte Sprachausgabe enden still (ohne Statusmeldung), damit nichts unter dem Gespräch weiterläuft.
+    func yieldToAssistant() {
+        endConversation()
+        stopOriginalPlayback()
+        previewingVoiceID = nil
+        currentUtterance = nil; speakingId = nil
+        stopAllSpeech()
+    }
+    #endif
     private func handleAnswer(_ text: String, id: UUID) {
         guard originalPlayer == nil else { return }
         if let entry = entries.first(where: { $0.id == id }), ConversationOutcome.isNoSpeech(entry) {
@@ -523,9 +573,10 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
             #if os(iOS)
             backgroundRuntime?.setForeground(active)
             #endif
+            setupFailed = false
             retry()
         }
-        catch { status = "Wiederherstellung nicht abgeschlossen – Originale bleiben erhalten"; refresh() }
+        catch { setupFailed = true; status = "Wiederherstellung nicht abgeschlossen – Originale bleiben erhalten"; refresh() }
     }
     func retry(forceReload: Bool = false) {
         if forceReload && (capture == nil || transport == nil) { recoverStorage(); return }

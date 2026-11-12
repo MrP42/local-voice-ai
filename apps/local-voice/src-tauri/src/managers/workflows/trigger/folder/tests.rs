@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 
 use super::*;
+use crate::ablage::eintrag::{self, Gattung};
 use crate::managers::integrations::model::{Capability, GrantMode, NewIntegration};
 use crate::managers::integrations::store as integrations;
 use crate::managers::workflows::engine::Engine;
@@ -56,7 +57,7 @@ impl TestProbe {
 }
 
 impl FileProbe for TestProbe {
-    fn cloud_only(&self, path: &Path, _meta: &fs::Metadata) -> bool {
+    fn cloud_only(&self, path: &Path, _roh: &Roh) -> bool {
         self.cloud.lock().unwrap().contains(&Self::name(path))
     }
     fn locked(&self, path: &Path) -> bool {
@@ -134,6 +135,13 @@ impl World {
             &self.probe,
             self.now,
         )
+    }
+
+    /// Ein Takt mit einer anderen Auskunft des Systems (z. B. `SystemProbe` mit Test-Naht).
+    fn tick_with(&mut self, probe: &dyn FileProbe) -> TickReport {
+        self.now += TICK;
+        self.clock.set(self.now);
+        on_tick(&self.engine, &self.state, &self.fx.db_path, probe, self.now)
     }
 
     /// Mehrere Takte; fasst die Berichte zusammen.
@@ -264,11 +272,469 @@ fn the_system_probe_sees_a_writer_on_windows() {
     assert!(probe.locked(&p), "ein Schreiber haelt sie offen");
     drop(writer);
     assert!(!probe.locked(&p), "wieder frei");
-    let meta = fs::symlink_metadata(&p).unwrap();
+    let roh = eintrag::roh(&p).unwrap();
     assert!(
-        !probe.cloud_only(&p, &meta),
+        !probe.cloud_only(&p, &roh),
         "eine gewoehnliche Datei ist lokal"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Attribute aus `ablage::eintrag` (Issue 451): Entscheidung rein, Windows-Werte ueber die Test-Naht
+// ---------------------------------------------------------------------------
+
+const ATTR_ARCHIV: u32 = 0x20;
+const ATTR_REPARSE: u32 = 0x400;
+const ATTR_SPARSE: u32 = 0x200;
+const ATTR_UNPINNED: u32 = 0x10_0000;
+const ONEDRIVE_TAG: u32 = 0x9000_701A;
+
+fn roh_with(gattung: Gattung, attribute: u32, tag: u32) -> Roh {
+    Roh {
+        gattung,
+        attribute,
+        tag,
+        groesse: 10,
+        zeit: 1,
+        nlink: 1,
+    }
+}
+
+#[test]
+fn the_decision_to_fire_comes_from_the_attributes_alone() {
+    use EntryState::*;
+    let datei = |a, t| entry_state(&roh_with(Gattung::Datei, a, t));
+    // Wie Windows einen nur-online-Platzhalter liefert: mit und ohne REPARSE_POINT/OFFLINE.
+    assert_eq!(
+        datei(0x50_0020, 0),
+        CloudOnly,
+        "0x500020 (ohne Reparse/Offline)"
+    );
+    assert_eq!(
+        datei(0x50_1620, ONEDRIVE_TAG),
+        CloudOnly,
+        "0x501620 (mit Reparse/Offline)"
+    );
+    assert_eq!(datei(0x40_0000, 0), CloudOnly, "nur RECALL_ON_DATA_ACCESS");
+    assert_eq!(datei(0x4_0000, 0), CloudOnly, "nur RECALL_ON_OPEN");
+    assert_eq!(datei(0x1000, 0), CloudOnly, "nur OFFLINE");
+    assert_eq!(
+        datei(0x1000 | ATTR_REPARSE, 0xA000_000C),
+        CloudOnly,
+        "nur online schlaegt den Tag"
+    );
+    // Lokal: gewoehnlich, angeheftet, „Platz freigeben“ ohne Abruf-Bit, hydrierter Platzhalter.
+    assert_eq!(datei(ATTR_ARCHIV, 0), Local);
+    assert_eq!(datei(0, 0), Local);
+    assert_eq!(datei(0x8_0000 | ATTR_ARCHIV, 0), Local, "PINNED");
+    assert_eq!(
+        datei(ATTR_UNPINNED | ATTR_ARCHIV, 0),
+        Local,
+        "UNPINNED allein"
+    );
+    assert_eq!(
+        datei(ATTR_REPARSE | ATTR_SPARSE | ATTR_ARCHIV, ONEDRIVE_TAG),
+        Local,
+        "hydrierter Cloud-Platzhalter"
+    );
+    // Verknuepfungen und unbekannte Reparse-Points: nie.
+    assert_eq!(datei(ATTR_REPARSE, 0xA000_000C), Detour, "Symlink");
+    assert_eq!(datei(ATTR_REPARSE, 0xA000_0003), Detour, "Junction");
+    assert_eq!(datei(ATTR_REPARSE, 0x8000_0018), Detour, "fremdes Tag");
+    // Datentransparent (kein Abruf, normales Oeffnen liefert den Inhalt): lokale Dateien.
+    assert_eq!(
+        datei(ATTR_REPARSE | ATTR_ARCHIV, 0x8000_0017),
+        Local,
+        "WOF (compact /exe)"
+    );
+    assert_eq!(
+        datei(ATTR_REPARSE | ATTR_SPARSE, 0x8000_0013),
+        Local,
+        "Dedup"
+    );
+    assert_eq!(
+        datei(ATTR_REPARSE | 0x40_0000, 0x8000_0017),
+        CloudOnly,
+        "nur online schlaegt auch ein transparentes Tag"
+    );
+    assert_eq!(
+        datei(0x8000_0017, 0x8000_0017),
+        Local,
+        "ohne Reparse-Bit ist das Tag belanglos"
+    );
+    // Keine Datei.
+    assert_eq!(entry_state(&roh_with(Gattung::Ordner, 0x10, 0)), NotAFile);
+    assert_eq!(entry_state(&roh_with(Gattung::Link, 0, 0)), NotAFile);
+    assert_eq!(entry_state(&roh_with(Gattung::Anderes, 0, 0)), NotAFile);
+}
+
+#[test]
+fn the_system_probe_judges_the_find_data_attributes() {
+    let p = Path::new("x.wav");
+    for (attrs, cloud) in [
+        (0x50_0020, true),
+        (0x50_1620, true),
+        (0x4_0000, true),
+        (0x1000, true),
+        (ATTR_ARCHIV, false),
+        (0, false),
+        (0x8_0000, false),
+        (ATTR_UNPINNED, false),
+    ] {
+        let roh = roh_with(Gattung::Datei, attrs, 0);
+        assert_eq!(SystemProbe.cloud_only(p, &roh), cloud, "{attrs:#x}");
+    }
+}
+
+#[test]
+fn placeholders_reported_by_the_find_data_never_fire_and_are_never_hashed() {
+    let mut w = world();
+    let root = fs::canonicalize(w.inbox.path()).unwrap();
+    for (name, attrs, tag) in [
+        ("a-ohne-bits.wav", 0x50_0020, 0),
+        ("b-voll.wav", 0x50_1620, ONEDRIVE_TAG),
+        ("c-open.wav", 0x4_0000, 0),
+        ("d-offline.wav", 0x1000, 0),
+    ] {
+        w.put(name, b"inhalt");
+        eintrag::naht::setzen(&root.join(name), attrs, tag);
+    }
+    w.put("lokal.wav", b"lokal");
+    eintrag::naht::setzen(&root.join("lokal.wav"), ATTR_ARCHIV, 0);
+    // Wuerde eine der vier gehasht, laege ihr Inhalt im Ledger; ein Handle, das „nur online“ meldet,
+    // lehnt `sha256_file` ausserdem ab (`the_hash_refuses_a_handle_that_became_online`).
+    let mut all = TickReport::default();
+    for _ in 0..6 {
+        all.absorb(w.tick_with(&SystemProbe));
+    }
+    assert_eq!(all.started.len(), 1, "nur die lokale Datei: {all:?}");
+    assert_eq!(all.skipped.len(), 4, "jede einmal gemeldet: {all:?}");
+    assert_eq!(w.state.cloud_only().len(), 4);
+    for line in &all.skipped {
+        assert!(
+            !line.contains(".wav"),
+            "kein Dateiname im Bericht (Log): {line}"
+        );
+    }
+    let mut names: Vec<String> = w.state.cloud_only().into_iter().map(|c| c.name).collect();
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "a-ohne-bits.wav",
+            "b-voll.wav",
+            "c-open.wav",
+            "d-offline.wav"
+        ],
+        "die Namen erreichen die Oberflaeche nur ueber `State::cloud_only`"
+    );
+    let runs = w.runs();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(context_of(&runs[0])["trigger"]["name"], "lokal.wav");
+    assert_eq!(
+        w.state.waiting(),
+        1,
+        "nur die lokale Datei hat eine Stabilitaetsuhr"
+    );
+    eintrag::naht::leeren();
+}
+
+#[test]
+fn a_watched_folder_that_is_online_only_is_not_listed_and_comes_back_when_local() {
+    let mut w = world();
+    let root = fs::canonicalize(w.inbox.path()).unwrap();
+    w.put("a.wav", b"inhalt");
+    // macOS: `lstat` des Ordners meldet `SF_DATALESS` (die Naht speist es ein wie ein File Provider).
+    eintrag::naht::stat_flags_setzen(&root, eintrag::SF_DATALESS);
+    let mut all = TickReport::default();
+    for _ in 0..4 {
+        all.absorb(w.tick_with(&SystemProbe));
+    }
+    assert!(all.started.is_empty(), "{all:?}");
+    assert_eq!(all.skipped.len(), 1, "einmal gemeldet: {all:?}");
+    assert!(all.skipped[0].contains("nur in der Cloud"), "{all:?}");
+    assert!(!all.skipped[0].contains("a.wav"), "kein Dateiname: {all:?}");
+    assert_eq!(w.state.waiting(), 0, "nichts wurde aufgelistet");
+    assert!(w.state.cloud_only().is_empty());
+    // Wieder lokal: die Datei wird wie jede andere aufgenommen.
+    eintrag::naht::leeren();
+    let mut all = TickReport::default();
+    for _ in 0..3 {
+        all.absorb(w.tick_with(&SystemProbe));
+    }
+    assert_eq!(all.started.len(), 1, "{all:?}");
+    eintrag::naht::leeren();
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn without_the_download_lock_nothing_is_listed_or_hashed() {
+    // Fail-closed: laesst sich die Abrufsperre nicht setzen (macOS), wird weder aufgelistet noch gelesen.
+    let mut w = world();
+    let p = w.put("a.wav", b"inhalt");
+    eintrag::naht::sperre_verweigern(true);
+    let mut all = TickReport::default();
+    for _ in 0..4 {
+        all.absorb(w.tick_with(&SystemProbe));
+    }
+    assert!(all.started.is_empty(), "{all:?}");
+    assert_eq!(all.skipped.len(), 1, "einmal gemeldet: {all:?}");
+    assert!(sha256_file(&p).is_err());
+    assert_eq!(w.state.waiting(), 0);
+    eintrag::naht::leeren();
+    // Mit der Sperre geht alles wie sonst.
+    let mut all = TickReport::default();
+    for _ in 0..3 {
+        all.absorb(w.tick_with(&SystemProbe));
+    }
+    assert_eq!(all.started.len(), 1, "{all:?}");
+    assert!(sha256_file(&p).is_ok());
+}
+
+#[test]
+fn a_placeholder_that_comes_down_is_taken_like_any_file() {
+    let mut w = world();
+    let root = fs::canonicalize(w.inbox.path()).unwrap();
+    let p = w.put("spaeter.wav", b"inhalt");
+    eintrag::naht::setzen(&root.join("spaeter.wav"), 0x50_0020, 0);
+    assert!(w.tick_with(&SystemProbe).started.is_empty());
+    assert_eq!(w.state.cloud_only().len(), 1);
+    eintrag::naht::setzen(&p, ATTR_ARCHIV, 0);
+    eintrag::naht::setzen(&root.join("spaeter.wav"), ATTR_ARCHIV, 0);
+    let mut all = TickReport::default();
+    for _ in 0..3 {
+        all.absorb(w.tick_with(&SystemProbe));
+    }
+    assert_eq!(all.started.len(), 1, "{all:?}");
+    assert!(w.state.cloud_only().is_empty());
+    eintrag::naht::leeren();
+}
+
+#[test]
+fn a_detour_is_ignored_silently() {
+    let mut w = world();
+    let root = fs::canonicalize(w.inbox.path()).unwrap();
+    w.put("link.wav", b"inhalt");
+    eintrag::naht::setzen(&root.join("link.wav"), ATTR_REPARSE, 0xA000_000C);
+    let mut all = TickReport::default();
+    for _ in 0..4 {
+        all.absorb(w.tick_with(&SystemProbe));
+    }
+    assert!(all.started.is_empty() && all.skipped.is_empty(), "{all:?}");
+    assert_eq!(w.state.waiting(), 0);
+    eintrag::naht::leeren();
+}
+
+#[test]
+fn the_hash_refuses_a_handle_that_became_online() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("x.wav");
+    fs::write(&p, b"inhalt").unwrap();
+    assert_eq!(sha256_file(&p).unwrap().len(), 64, "lokal: wird gehasht");
+    // Zwischen Abtastung und Oeffnen wieder ausgelagert: das Handle meldet „nur online“.
+    eintrag::naht::handle_setzen(&p, 0x50_0020, 0);
+    let err = sha256_file(&p).expect_err("nicht lesen");
+    assert_eq!(err.kind(), std::io::ErrorKind::Other);
+    assert!(open_checked(&p).is_err());
+    eintrag::naht::handle_setzen(&p, 0x50_1620, ONEDRIVE_TAG);
+    assert!(sha256_file(&p).is_err());
+    eintrag::naht::leeren();
+    assert!(sha256_file(&p).is_ok(), "wieder lokal");
+}
+
+#[test]
+fn a_file_that_goes_online_while_it_is_hashed_is_not_taken() {
+    let mut w = world();
+    let root = fs::canonicalize(w.inbox.path()).unwrap();
+    w.put("fluechtig.wav", b"inhalt");
+    // Die Abtastung sieht eine lokale Datei, das Handle beim Hashen „nur online“.
+    eintrag::naht::handle_setzen(&root.join("fluechtig.wav"), 0x50_0020, 0);
+    let mut all = TickReport::default();
+    for _ in 0..4 {
+        all.absorb(w.tick_with(&SystemProbe));
+    }
+    assert!(all.started.is_empty(), "{all:?}");
+    assert!(w.runs().is_empty());
+    eintrag::naht::leeren();
+    assert_eq!(w.ticks(2).started.len(), 1);
+}
+
+/// Handle-Urteil fuer transparente Tags: eine WOF-komprimierte Datei wird gehasht, ein fremdes Tag nicht.
+#[test]
+fn the_hash_accepts_a_transparent_reparse_handle_and_refuses_a_foreign_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("w.wav");
+    fs::write(&p, b"inhalt").unwrap();
+    eintrag::naht::handle_setzen(&p, ATTR_REPARSE | ATTR_ARCHIV, 0x8000_0017);
+    assert!(sha256_file(&p).is_ok(), "WOF");
+    eintrag::naht::handle_setzen(&p, ATTR_REPARSE | ATTR_SPARSE, 0x8000_0013);
+    assert!(sha256_file(&p).is_ok(), "Dedup");
+    eintrag::naht::handle_setzen(&p, ATTR_REPARSE, 0x8000_0018);
+    assert!(sha256_file(&p).is_err(), "fremdes Tag");
+    eintrag::naht::handle_setzen(&p, ATTR_REPARSE, 0xA000_000C);
+    assert!(sha256_file(&p).is_err(), "Symlink");
+    eintrag::naht::leeren();
+}
+
+#[test]
+fn the_hash_reports_size_and_time_from_the_handle() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("w.wav");
+    fs::write(&p, b"inhalt").unwrap();
+    let h = hash_file(&p).unwrap();
+    let roh = eintrag::roh(&p).unwrap();
+    assert_eq!(h.size, roh.groesse);
+    assert_eq!(h.mtime_ms, roh.zeit);
+    assert_eq!(h.hash, sha256_file(&p).unwrap());
+}
+
+/// Eine Attrappe, die die Datei zwischen Stabilitaetspruefung und Hash veraendert (wie ein Schreiber,
+/// dessen Verzeichniseintrag noch nicht nachgezogen hat).
+struct WriterProbe(PathBuf, AtomicUsize);
+
+impl FileProbe for WriterProbe {
+    fn cloud_only(&self, _path: &Path, _roh: &Roh) -> bool {
+        false
+    }
+    fn locked(&self, _path: &Path) -> bool {
+        if self.1.fetch_add(1, Ordering::SeqCst) == 0 {
+            let mut f = fs::OpenOptions::new().append(true).open(&self.0).unwrap();
+            f.write_all(b"-mehr").unwrap();
+        }
+        false
+    }
+}
+
+#[test]
+fn a_file_that_grows_before_the_hash_is_not_taken_until_it_is_quiet_again() {
+    let mut w = world();
+    let p = w.put("waechst.wav", b"inhalt");
+    let probe = WriterProbe(p, AtomicUsize::new(0));
+    let mut all = TickReport::default();
+    for _ in 0..2 {
+        all.absorb(w.tick_with(&probe));
+    }
+    assert!(
+        all.started.is_empty(),
+        "gewachsen waehrend des Hashens: {all:?}"
+    );
+    let mut after = TickReport::default();
+    for _ in 0..3 {
+        after.absorb(w.tick_with(&probe));
+    }
+    assert_eq!(after.started.len(), 1, "danach ruhig: {after:?}");
+    assert_eq!(context_of(&w.runs()[0])["trigger"]["size"], 11);
+}
+
+// ---------------------------------------------------------------------------
+// Zweistufiges Oeffnen: Urteil vor dem Lesezugriff, Kennung zwischen den Stufen
+// ---------------------------------------------------------------------------
+
+fn art() -> eintrag::OeffnenArt {
+    eintrag::OeffnenArt {
+        folgen: true,
+        teilen: 7,
+    }
+}
+
+#[test]
+fn the_read_stage_is_never_reached_for_a_placeholder() {
+    use eintrag::{oeffnen_ohne_abruf, OeffnenFehler};
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("w.wav");
+    fs::write(&p, b"inhalt").unwrap();
+    // Lokal: beide Stufen.
+    assert!(oeffnen_ohne_abruf(&p, art(), trigger_urteil).is_ok());
+    assert_eq!(eintrag::naht::stufe2_aufrufe(&p), 1);
+    // Stufe 1 meldet „nur online“ (0x500020 und 0x501620): Stufe 2 (Lesezugriff) wird nie gerufen.
+    for (attrs, tag) in [
+        (0x50_0020, 0),
+        (0x50_1620, ONEDRIVE_TAG),
+        (0x4_0000, 0),
+        (0x1000, 0),
+    ] {
+        eintrag::naht::handle_setzen(&p, attrs, tag);
+        match oeffnen_ohne_abruf(&p, art(), trigger_urteil) {
+            Err(OeffnenFehler::Urteil(Urteil::NurOnline)) => {}
+            other => panic!("{attrs:#x}: {other:?}"),
+        }
+        assert_eq!(
+            eintrag::naht::stufe2_aufrufe(&p),
+            1,
+            "{attrs:#x}: kein Lesezugriff"
+        );
+    }
+    // Auch ein Umweg erreicht Stufe 2 nie.
+    eintrag::naht::handle_setzen(&p, ATTR_REPARSE, 0xA000_000C);
+    assert!(matches!(
+        oeffnen_ohne_abruf(&p, art(), trigger_urteil),
+        Err(OeffnenFehler::Urteil(Urteil::Umweg))
+    ));
+    assert_eq!(eintrag::naht::stufe2_aufrufe(&p), 1);
+    eintrag::naht::leeren();
+}
+
+#[test]
+fn a_file_that_goes_online_between_the_stages_is_judged_again_after_the_read_open() {
+    use eintrag::{oeffnen_ohne_abruf, OeffnenFehler};
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("w.wav");
+    fs::write(&p, b"inhalt").unwrap();
+    // Erste Abfrage (Stufe 1) und zweite (am selben Handle unmittelbar vor dem Hochstufen): lokal; dritte (am
+    // hochgestuften Lese-Handle): nur online: es wird nichts geliefert.
+    eintrag::naht::handle_folge(&p, &[(ATTR_ARCHIV, 0), (ATTR_ARCHIV, 0), (0x50_0020, 0)]);
+    assert!(matches!(
+        oeffnen_ohne_abruf(&p, art(), trigger_urteil),
+        Err(OeffnenFehler::Urteil(Urteil::NurOnline))
+    ));
+    assert_eq!(
+        eintrag::naht::stufe2_aufrufe(&p),
+        1,
+        "Stufe 2 lief, geliefert wurde nichts"
+    );
+    eintrag::naht::leeren();
+}
+
+#[test]
+fn a_swapped_file_between_the_stages_is_refused() {
+    use eintrag::{oeffnen_ohne_abruf, OeffnenFehler};
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("w.wav");
+    fs::write(&p, b"inhalt").unwrap();
+    eintrag::naht::id_folge(&p, &[(1, 100), (1, 200)]);
+    assert!(matches!(
+        oeffnen_ohne_abruf(&p, art(), trigger_urteil),
+        Err(OeffnenFehler::Getauscht)
+    ));
+    // Gleiche Kennung: geliefert.
+    eintrag::naht::id_folge(&p, &[(1, 100), (1, 100)]);
+    assert!(oeffnen_ohne_abruf(&p, art(), trigger_urteil).is_ok());
+    // Ueber `open_checked` (Hash) ebenso: Err, nichts gelesen.
+    eintrag::naht::id_folge(&p, &[(1, 100), (2, 100)]);
+    assert!(sha256_file(&p).is_err());
+    eintrag::naht::leeren();
+}
+
+#[test]
+fn the_ablage_judgement_keeps_its_stricter_rule_in_the_same_helper() {
+    use eintrag::{oeffnen_ohne_abruf, OeffnenArt, OeffnenFehler};
+    let dir = tempfile::tempdir().unwrap();
+    // Kanonisch (macOS: /var -> /private/var): die Ablage oeffnet ohne Folgen und lehnt dort jeden
+    // Symlink im Pfad ab (`O_NOFOLLOW_ANY`); ihre Pfade sind immer kanonisch.
+    let p = fs::canonicalize(dir.path()).unwrap().join("w.wav");
+    fs::write(&p, b"inhalt").unwrap();
+    let ablage = OeffnenArt {
+        folgen: false,
+        teilen: 7,
+    };
+    // WOF: fuer den Ausloeser lokal, fuer die Ablage (Roh-Oeffnen mit Reparse-Flag) ein Umweg.
+    eintrag::naht::handle_setzen(&p, ATTR_REPARSE | ATTR_ARCHIV, 0x8000_0017);
+    assert!(oeffnen_ohne_abruf(&p, art(), trigger_urteil).is_ok());
+    assert!(matches!(
+        oeffnen_ohne_abruf(&p, ablage, eintrag::reparse_urteil),
+        Err(OeffnenFehler::Urteil(Urteil::Umweg))
+    ));
+    eintrag::naht::leeren();
 }
 
 // ---------------------------------------------------------------------------
@@ -508,7 +974,11 @@ fn a_cloud_only_placeholder_is_reported_once_never_read_and_taken_after_it_is_lo
         "einmal gemeldet, nicht bei jedem Takt: {r:?}"
     );
     assert!(r.skipped[0].contains("Cloud"), "{}", r.skipped[0]);
-    assert!(r.skipped[0].contains("nur-cloud.wav"));
+    assert!(
+        !r.skipped[0].contains("nur-cloud.wav"),
+        "`skipped` geht ins Log: kein Dateiname: {}",
+        r.skipped[0]
+    );
     assert_eq!(
         w.probe.locked_calls.load(Ordering::SeqCst),
         0,
@@ -724,4 +1194,299 @@ fn the_hash_is_the_sha256_of_the_content_regardless_of_name() {
     let big = dir.path().join("big.bin");
     fs::write(&big, vec![7u8; HASH_BLOCK * 2 + 5]).unwrap();
     assert_eq!(sha256_file(&big).unwrap().len(), 64);
+}
+
+// ---------------------------------------------------------------------------
+// lva#507: Abrufschutz, geprueftes Ordner-Handle, Aufzaehlung, Hash-Grenzen
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_folder_without_a_positive_current_verdict_is_never_listed() {
+    let mut w = world();
+    let root = fs::canonicalize(w.inbox.path()).unwrap();
+    w.put("a.wav", b"inhalt");
+    // Attribute am Ordner-Handle nicht bestimmbar (z. B. eine fluechtig scheiternde Abfrage): fail-closed.
+    eintrag::naht::handle_ausfall_setzen(&root);
+    let mut all = TickReport::default();
+    for _ in 0..4 {
+        all.absorb(w.tick_with(&SystemProbe));
+    }
+    assert!(all.started.is_empty(), "{all:?}");
+    assert_eq!(all.skipped.len(), 1, "einmal gemeldet: {all:?}");
+    assert!(!all.skipped[0].contains("a.wav"), "kein Dateiname: {all:?}");
+    assert_eq!(w.state.waiting(), 0, "nichts wurde aufgelistet");
+    // Wieder bestimmbar: die Datei wird aufgenommen.
+    eintrag::naht::leeren();
+    let mut all = TickReport::default();
+    for _ in 0..3 {
+        all.absorb(w.tick_with(&SystemProbe));
+    }
+    assert_eq!(all.started.len(), 1, "{all:?}");
+    eintrag::naht::leeren();
+}
+
+#[test]
+fn a_folder_that_is_a_detour_at_the_handle_is_not_listed() {
+    let mut w = world();
+    let root = fs::canonicalize(w.inbox.path()).unwrap();
+    w.put("a.wav", b"inhalt");
+    // Das Handle meldet einen Symlink-Reparse-Point (Junction/Symlink auf den Ordner).
+    eintrag::naht::handle_setzen(
+        &root,
+        eintrag::ATTR_REPARSE_POINT | 0x10,
+        eintrag::REPARSE_TAG_SYMLINK,
+    );
+    let mut all = TickReport::default();
+    for _ in 0..4 {
+        all.absorb(w.tick_with(&SystemProbe));
+    }
+    assert!(all.started.is_empty(), "{all:?}");
+    assert_eq!(w.state.waiting(), 0, "nichts wurde aufgelistet");
+    eintrag::naht::leeren();
+}
+
+#[test]
+fn a_folder_with_more_candidates_than_one_tick_takes_is_continued_not_starved() {
+    let mut w = world();
+    let n = MAX_ENTRIES + 5;
+    for i in 0..n {
+        w.put(&format!("x{i:04}.wav"), format!("inhalt {i}").as_bytes());
+    }
+    // Zwei Takte: der erste sieht 500 Kandidaten, der zweite setzt dahinter fort (kein Haengenbleiben
+    // an den ersten 500).
+    w.ticks(2);
+    assert_eq!(w.state.waiting(), n, "alle {n} Dateien wurden beobachtet");
+    // Der Umlauf ist zu Ende: weitere Takte verlieren keine Beobachtung.
+    w.ticks(2);
+    assert_eq!(w.state.waiting(), n);
+}
+
+#[test]
+fn entries_that_are_not_candidates_do_not_use_up_the_window() {
+    let mut w = world();
+    // Viele Unterordner und Fremdendungen vor einer einzigen echten Datei.
+    for i in 0..(MAX_ENTRIES + 20) {
+        fs::create_dir(w.inbox.path().join(format!("ordner{i:04}"))).unwrap();
+        w.put(&format!("fremd{i:04}.xyz"), b"x");
+    }
+    w.put("echt.wav", b"inhalt");
+    let all = w.ticks(4);
+    assert_eq!(all.started.len(), 1, "{all:?}");
+}
+
+fn hash_ordner(w: &World) -> (Arc<eintrag::Ordner>, PathBuf) {
+    let root = fs::canonicalize(w.inbox.path()).unwrap();
+    (
+        eintrag::Ordner::wurzel(&root, eintrag::reparse_urteil).unwrap(),
+        root,
+    )
+}
+
+#[test]
+fn the_hash_handle_denies_writers() {
+    let a = hash_art();
+    assert_ne!(a.teilen & 1, 0, "lesen bleibt erlaubt");
+    assert_eq!(a.teilen & 2, 0, "kein FILE_SHARE_WRITE");
+}
+
+#[test]
+fn the_hash_respects_byte_budget_time_limit_and_abort() {
+    let w = world();
+    w.put("gross.wav", &vec![7u8; 4096]);
+    let (o, _root) = hash_ordner(&w);
+    let nie = || false;
+    let name = std::ffi::OsStr::new("gross.wav");
+    // Bytebudget kleiner als die Datei: gar nicht erst gelesen.
+    let g = HashGrenzen {
+        max_bytes: 100,
+        frist: HASH_FRIST,
+        abbruch: &nie,
+    };
+    assert!(hash_in(&o, name, &g).is_err());
+    // Zeitlimit abgelaufen.
+    let g = HashGrenzen {
+        max_bytes: MAX_HASH_BYTES,
+        frist: Duration::ZERO,
+        abbruch: &nie,
+    };
+    assert!(hash_in(&o, name, &g).is_err());
+    // Abbruch.
+    let ja = || true;
+    let g = HashGrenzen {
+        max_bytes: MAX_HASH_BYTES,
+        frist: HASH_FRIST,
+        abbruch: &ja,
+    };
+    assert!(hash_in(&o, name, &g).is_err());
+    // Innerhalb der Grenzen: derselbe Hash wie ueber den Pfad.
+    let g = HashGrenzen {
+        max_bytes: MAX_HASH_BYTES,
+        frist: HASH_FRIST,
+        abbruch: &nie,
+    };
+    let h = hash_in(&o, name, &g).unwrap();
+    assert_eq!(
+        h.hash,
+        sha256_file(&w.inbox.path().join("gross.wav")).unwrap()
+    );
+    assert_eq!(h.size, 4096);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_file_that_grows_while_it_is_read_aborts_the_hash() {
+    let w = world();
+    // Mehr als zwei Bloecke, damit nach dem ersten Block noch gelesen wird.
+    let p = w.put("waechst.wav", &vec![1u8; HASH_BLOCK * 2 + 123]);
+    let (o, _root) = hash_ordner(&w);
+    let aufrufe = std::cell::Cell::new(0usize);
+    let abbruch = || {
+        aufrufe.set(aufrufe.get() + 1);
+        if aufrufe.get() == 2 {
+            // Ein Schreiber haengt an, waehrend der Hash laeuft.
+            let mut f = fs::OpenOptions::new().append(true).open(&p).unwrap();
+            f.write_all(&vec![2u8; HASH_BLOCK]).unwrap();
+        }
+        false
+    };
+    let g = HashGrenzen {
+        max_bytes: MAX_HASH_BYTES,
+        frist: HASH_FRIST,
+        abbruch: &abbruch,
+    };
+    let e = hash_in(&o, std::ffi::OsStr::new("waechst.wav"), &g).unwrap_err();
+    assert!(e.to_string().contains("wächst"), "{e}");
+}
+
+#[test]
+fn a_scan_that_is_aborted_hashes_nothing_and_a_new_scan_does_not_start() {
+    let mut w = world();
+    w.put("a.wav", b"inhalt");
+    w.ticks(2);
+    w.state.abbrechen();
+    let all = w.ticks(4);
+    assert!(all.started.is_empty(), "{all:?}");
+}
+
+/// Einreihen scheitert fuer die genannten Dateinamen dauerhaft; alle anderen laufen durch die Engine.
+struct NamenSink<'a> {
+    engine: &'a Engine,
+    schlecht: HashSet<String>,
+    /// Alle Namen scheitern (Fenstertest).
+    alle: bool,
+    /// Jeder Name, fuer den das Einreihen versucht wurde (also gehasht war).
+    versucht: Mutex<HashSet<String>>,
+    eingereiht: Mutex<Vec<String>>,
+}
+
+impl RunSink for NamenSink<'_> {
+    fn workflows(&self) -> Result<Vec<store::WorkflowRow>, store::WorkflowError> {
+        self.engine.workflows()
+    }
+
+    fn enqueue(
+        &self,
+        req: &crate::managers::workflows::engine::EnqueueRequest,
+    ) -> Result<crate::managers::workflows::engine::Enqueued, store::WorkflowError> {
+        let name = req.trigger["name"].as_str().unwrap_or_default().to_string();
+        self.versucht.lock().unwrap().insert(name.clone());
+        if self.alle || self.schlecht.contains(&name) {
+            return Err(store::WorkflowError::Store(
+                "dauerhaft kaputt (simuliert)".to_string(),
+            ));
+        }
+        self.eingereiht.lock().unwrap().push(name);
+        self.engine.enqueue(req)
+    }
+}
+
+#[test]
+fn candidates_whose_enqueue_fails_for_good_do_not_starve_the_ones_behind_them() {
+    let mut w = world();
+    for n in ["a.wav", "b.wav", "c.wav"] {
+        w.put(n, format!("inhalt {n}").as_bytes());
+    }
+    // Aufzaehlungsreihenfolge des Dateisystems: die ersten beiden scheitern, der dritte nicht.
+    let (o, _) = hash_ordner(&w);
+    let mut reihe = Vec::new();
+    o.auflisten(|e| {
+        reihe.push(e.name.to_string_lossy().into_owned());
+        std::ops::ControlFlow::Continue(())
+    })
+    .unwrap();
+    assert_eq!(reihe.len(), 3);
+    w.tick(); // beobachten
+    let sink = NamenSink {
+        engine: &w.engine,
+        schlecht: reihe[..2].iter().cloned().collect(),
+        alle: false,
+        versucht: Mutex::new(HashSet::new()),
+        eingereiht: Mutex::new(Vec::new()),
+    };
+    for takt in 1..=4 {
+        w.now += TICK;
+        w.clock.set(w.now);
+        on_tick(&sink, &w.state, &w.fx.db_path, &w.probe, w.now);
+        if sink.eingereiht.lock().unwrap().contains(&reihe[2]) {
+            assert!(takt <= 2, "der dritte Kandidat kam erst im Takt {takt}");
+            return;
+        }
+    }
+    panic!("der dritte Kandidat wurde nie gehasht und eingereiht");
+}
+
+#[test]
+fn a_file_swapped_for_one_of_the_same_size_and_time_after_the_hash_is_not_taken() {
+    eintrag::naht::leeren();
+    let mut w = world();
+    let p = w.put("tausch.wav", b"inhalt");
+    let kanonisch = fs::canonicalize(w.inbox.path()).unwrap().join("tausch.wav");
+    let _ = p;
+    // Erster Takt: beobachten.
+    w.tick();
+    // Kennungsabfragen dieser Datei: zweistufiges Oeffnen (2), Hash-Handle (3), Pfad nach dem Hash (4,
+    // eine andere Datei).
+    eintrag::naht::id_folge(&kanonisch, &[(1, 1), (1, 1), (1, 1), (2, 2)]);
+    let r = w.tick();
+    assert!(r.started.is_empty(), "{r:?}");
+    assert_eq!(ledger::count(&w.fx.conn(), "").unwrap(), 0);
+    // Die Beobachtung beginnt neu; danach (echte Kennungen) wird die Datei genommen.
+    assert_eq!(w.ticks(4).started.len(), 1);
+    eintrag::naht::leeren();
+}
+
+#[test]
+fn with_more_files_than_one_window_every_file_is_hashed_after_finitely_many_ticks() {
+    // 501 stabile Dateien (ein Fenster fasst 500), das Einreihen scheitert dauerhaft: das Hash-Budget (2 je
+    // Takt) wandert ueber beide Fenster hinweg, keine Datei verhungert.
+    let mut w = world();
+    let n = MAX_ENTRIES + 1;
+    for i in 0..n {
+        w.put(&format!("y{i:04}.wav"), format!("inhalt {i}").as_bytes());
+    }
+    w.tick(); // beobachten (Fenster A)
+    w.tick(); // beobachten (Fenster B)
+    let sink = NamenSink {
+        engine: &w.engine,
+        schlecht: HashSet::new(),
+        alle: true,
+        versucht: Mutex::new(HashSet::new()),
+        eingereiht: Mutex::new(Vec::new()),
+    };
+    // Hoechstens so viele Takte, wie bei fairer Reihenfolge noetig sind (zwei Fenster je Umlauf, zwei
+    // Dateien je Takt), mit Reserve.
+    let grenze = n + 20;
+    for takt in 1..=grenze {
+        w.now += TICK;
+        w.clock.set(w.now);
+        on_tick(&sink, &w.state, &w.fx.db_path, &w.probe, w.now);
+        if sink.versucht.lock().unwrap().len() == n {
+            assert!(takt <= grenze);
+            return;
+        }
+    }
+    panic!(
+        "nach {grenze} Takten war erst {} von {n} Dateien einmal gehasht",
+        sink.versucht.lock().unwrap().len()
+    );
 }

@@ -32,6 +32,28 @@ pub const CODE_ZIEL_LOKAL: &str = "projekt.ziel_lokal";
 /// Kein bekanntes Fenster bei einem Ziel, das nicht streng lokal ist.
 pub const CODE_FENSTER: &str = "projekt.ziel_fenster";
 
+/// Höchste Datenklasse, die ein Ziel annimmt: lokal alles, Cloud `Confidential` nur unter dem Profil EU mit
+/// bekannten, aktuellen Anbieterangaben (`Allowed` mit `eu_ok`, dann mit Ausnahme je Ordner), sonst höchstens
+/// `Internal`. Dieselbe Regel nutzt die Anbieterliste der Ablage (`ablage::anbieter`), damit Dialog und
+/// Versandtor nie auseinanderlaufen.
+pub fn datenklasse_max(
+    profil: ComplianceProfile,
+    lokal: bool,
+    bewertung: &compliance::Assessment,
+) -> AblageKlasse {
+    if lokal {
+        AblageKlasse::Personal
+    } else if profil == ComplianceProfile::Eu
+        && bewertung.cloud
+        && bewertung.verdict == Verdict::Allowed
+        && bewertung.reasons.iter().any(|r| r == "eu_ok")
+    {
+        AblageKlasse::Confidential
+    } else {
+        AblageKlasse::Internal
+    }
+}
+
 /// Bestimmt das Ziel aus den Einstellungen. `heute` als `YYYY-MM-DD` (Alter der Anbieterangaben).
 /// `server_kontext`: Kontext des lokalen Servers in Token, falls bekannt; er begrenzt nur das Fenster
 /// eines lokalen Ziels. `pinned_local` setzt der Aufrufer nach dem Start des Servers.
@@ -66,17 +88,7 @@ pub fn aus_einstellungen(
             code: CODE_COMPLIANCE,
         });
     }
-    let datenklasse_max = if lokal {
-        AblageKlasse::Personal
-    } else if s.compliance_profile == ComplianceProfile::Eu
-        && bewertung.cloud
-        && bewertung.verdict == Verdict::Allowed
-        && bewertung.reasons.iter().any(|r| r == "eu_ok")
-    {
-        AblageKlasse::Confidential
-    } else {
-        AblageKlasse::Internal
-    };
+    let datenklasse_max = datenklasse_max(s.compliance_profile, lokal, &bewertung);
     let (kontext, eingabe, ausgabe) = s
         .active_llm_model()
         .map(|(_, m)| (m.context_limit, m.max_input_tokens, m.max_output_tokens))

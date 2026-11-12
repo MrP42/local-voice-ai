@@ -121,6 +121,20 @@
       "replacedAll_other": "{{count}} spots replaced."
     },
     "reader": {
+      "search": {
+        "label": "Search in the book",
+        "placeholder": "Search in the book",
+        "hint": "Search the whole book (Ctrl+F). Enter jumps to the next hit, Shift+Enter to the previous one.",
+        "clear": "Clear search",
+        "results": "Search results",
+        "none": "No hits",
+        "count_one": "{{count}} hit",
+        "count_other": "{{count}} hits",
+        "countMore": "{{count}} hits, first {{shown}} shown",
+        "allWords_one": "{{count}} paragraph with all words",
+        "allWords_other": "{{count}} paragraphs with all words",
+        "position": "Hit {{n}} of {{total}}"
+      },
       "startHere": "Start",
       "startHint": "Reading aloud starts here unless a position is saved.",
       "frontMatter": "Front matter – skipped when reading aloud, but reachable here",
@@ -5799,7 +5813,7 @@
       "cloudTitle_one": "{{count}} file is only in the cloud and will not be processed",
       "cloudTitle_other": "{{count}} files are only in the cloud and will not be processed",
       "cloudFile": "{{file}} (workflow “{{workflow}}”)",
-      "cloudHint": "OneDrive placeholders are never downloaded. Set the file to “always keep on this device” and it will be picked up.",
+      "cloudHint": "OneDrive placeholders are not processed. Local Voice skips online-only files it recognizes. Simultaneous changes by the sync service can still trigger an automatic download while a file is being read. Set the file to “always keep on this device” and it will be picked up.",
       "channelTitle_one": "{{count}} YouTube channel is not responding",
       "channelTitle_other": "{{count}} YouTube channels are not responding",
       "channelLine": "{{channel}} (workflow “{{workflow}}”): {{failures}} failures in a row",
@@ -7488,6 +7502,45 @@
     }
   },
   "voiceCall": {
+    "projekt": {
+      "chip": "Project: {{name}}",
+      "chipOhneName": "Project",
+      "chipTitel": "Open project",
+      "chipText": "Answers are based on the selection in the project.",
+      "schliessen": "Dismiss notice",
+      "uebernehmen": "Use current selection",
+      "titel": {
+        "stopp": "Not sent",
+        "info": "Notice",
+        "widerrufen": "Answer removed",
+        "modell": "No answer"
+      },
+      "hinweis": {
+        "budget": "Too much context for the model: {{benoetigt}} of {{fenster}} tokens needed (context {{kontext}}, history {{historie}}, excerpts {{auszuege}}, question {{frage}}, output {{ausgabe}}). Nothing was sent and nothing was trimmed. Turn off entries in the project or choose a model with a larger window.",
+        "stand_veraltet": "The selection in the project changed since it was shown. Nothing was sent. Use the current selection and ask the question again.",
+        "zurueckgesetzt": "The earlier history was not carried over. The answer is based only on the last question and the current selection in the project.",
+        "entzogen_one": "An earlier answer was based on content that is no longer enabled and was replaced.",
+        "entzogen_other": "{{count}} earlier answers were based on content that is no longer enabled and were replaced.",
+        "widerrufen": "The selection in the project changed while the answer was being written. The answer was removed.",
+        "ki_gesperrt": "AI in the project is switched off in this version. Nothing was sent.",
+        "klasse_ziel": "A project item is too sensitive for this model. Choose a local model or turn the item off. Nothing was sent.",
+        "ungueltig": "The project is not available right now. Nothing was sent. Open the project and check that it still exists.",
+        "anfrage": "The request was incomplete. Nothing was sent. Please ask the question again.",
+        "fremdkontext": "Only content from the project is allowed in a project conversation. Nothing was sent.",
+        "register": "The project's answer register cannot be read or written right now. As long as that lasts, nothing is sent and nothing is kept. Try again later.",
+        "ablage": "The document store cannot be read right now. Nothing was sent. Try again later.",
+        "bindung": "This conversation can no longer be safely matched to the project. Nothing was sent. Start a new conversation in the project.",
+        "werkzeuge_aus": "Tools are switched off in the project. Nothing was run.",
+        "kein_modell": "No permitted model is selected. Nothing was sent. Choose a model under Settings > AI models & providers.",
+        "ziel_compliance": "The selected model is not permitted by the organisation's rules. Nothing was sent. Choose another model.",
+        "ziel_fenster": "The size of this model's context window is not known. Nothing was sent. Enter the model's context limit under Settings > AI models & providers.",
+        "ziel_lokal": "The local model is not ready right now. Nothing was sent. Wait a moment and ask again, or choose another model.",
+        "modell": "The model did not answer. No answer was kept. Ask the question again or choose another model.",
+        "verspaetet": "The answer came too late: the selection in the project changed while it was being written. Nothing was kept.",
+        "zeitueberschreitung": "The model took too long (more than five minutes). The answer was discarded and nothing was spoken. Ask the question again, choose a smaller project context or use a faster model.",
+        "andere": "An unexpected error occurred in the project. No answer was kept. Code: {{code}}."
+      }
+    },
     "tool": {
       "generic": "Using the tool \"{{name}}\" …",
       "meetings_list": "Looking through meetings …",
@@ -7808,6 +7861,9 @@
         "tts_page": "Read-aloud page"
       }
     },
+    "error": {
+      "notUnderstood": "I didn't understand you."
+    },
     "knowledge": {
       "intro": "What the model may look up during the conversation. Every access is logged.",
       "toolsOff": "The tools are switched off under “Models”. While they are off, the model looks nothing up.",
@@ -7858,7 +7914,14 @@
       "global": {
         "title": "Global knowledge (preview)",
         "switch": "Search all shared content",
-        "hint": "Before each answer the app searches the shared areas locally and gives the model matching excerpts with sources. Local language model only; books only up to your reading position."
+        "hint": "Before each answer the app searches the shared areas locally and gives the model matching excerpts with sources. Local language model only; books only up to your reading position.",
+        "enableAll": "Share books, knowledge areas and transcripts",
+        "enableAllHint": "Turns the search on and shares these areas: meetings with transcripts, dictations, earlier conversations, appointments, read-aloud pages, books, book notes and AI documents. Not included: notebook sections (separate permission below) and the storage area (not yet connected to the voice call). The content goes only to the built-in local model.",
+        "allOn": "Books, knowledge areas and transcripts are shared",
+        "allOnHint": "Meetings with transcripts, dictations, conversations, appointments, read-aloud pages, books, book notes and AI documents. You share notebook sections separately; the storage area is not yet connected to the voice call. The content goes only to the built-in local model. You can switch off single areas above.",
+        "enableAllError": "The permission could not be saved. The previous setting still applies.",
+        "enableAllConflict": "The setting has changed in the meantime. Nothing was overwritten; the switches show the current state.",
+        "localOnly": "Content currently goes only to the built-in local model. With {{model}}, the assistant answers without access to your content."
       },
       "notebook": {
         "groupLabel": "Shared notebook sections",
@@ -8831,8 +8894,18 @@
     },
     "ki": {
       "titel": "AI in the project",
-      "text": "Chat and voice conversation use this selection as soon as they are enabled for projects.",
-      "gesperrt": "Locked: AI calls in the project follow with the next step."
+      "text": "Chat, voice conversation, research and AI document use only the entries that are switched on as context. Before anything is sent, the app checks the data class, the size and the destination; whatever does not fit is not sent.",
+      "start": "Start a conversation in the project",
+      "startHinweis": "Opens a new conversation that uses only this selection as context.",
+      "dokument": "Create AI document",
+      "dokumentHinweis": "The AI writes a draft in the document store from the selection in the project.",
+      "dokumentAuftrag": "Task for the AI",
+      "dokumentName": "Name of the document",
+      "dokumentRegel": "The draft is saved in the document store and is switched off in the project. Its class is at least as high as the highest class of the content used.",
+      "dokumentSenden": "Create document",
+      "dokumentLaeuft": "The AI is writing …",
+      "dokumentFertig": "Draft “{{name}}” created (class {{klasse}}). It is switched off in the project; switch it on to use it as context.",
+      "dokumentNurAblage": "Draft “{{name}}” is in the document store (class {{klasse}}) but could not be added to the project."
     },
     "banner": {
       "reset": "The context selection of this device could not be read. For safety all entries are switched off. Switch on what the AI should use.",
@@ -8903,7 +8976,8 @@
       "kontextFrage": "Research “{{frage}}” ({{klasse}})",
       "restzeit_one": "1 minute left",
       "restzeit_other": "{{count}} minutes left",
-      "anfrageHinweis": "Context {{klasse}}: approval needed"
+      "anfrageHinweis": "Context {{klasse}}: approval needed",
+      "mitKontext": "The queries were written using content from your project"
     },
     "karte": {
       "titel": "Research",
@@ -8918,7 +8992,9 @@
       "hinweis": "Answer the question by web research (quick mode) in this folder’s suite project",
       "keinProjekt": "For research, the meeting folder must be linked to a suite project that allows the web.",
       "projektWaehlen": "In which project?",
-      "wartet": "The search queries are waiting for your approval."
+      "wartet": "The search queries are waiting for your approval.",
+      "mitKontext": "Research with project context",
+      "mitKontextHinweis": "The search queries are written using the project content that is switched on. A dialog shows them for approval before the search."
     },
     "sprache": {
       "menu": "Web research in project …",
@@ -9098,7 +9174,25 @@
       "recherche_fehlgeschlagen": "The research failed.",
       "speichern_fehlgeschlagen": "The research document could not be saved.",
       "projekt_passt_nicht": "The suite project does not belong to this meeting. The research was not run.",
-      "kein_modell": "No language model is set."
+      "kein_modell": "No language model is set.",
+      "kontext_geaendert": "The selection in the project changed. Nothing was sent and nothing was saved.",
+      "kontext_nicht_verfuegbar": "Research with project context is not available. Nothing was sent.",
+      "projekt.ki_gesperrt": "AI in the project is switched off in this version. Nothing was sent.",
+      "projekt.klasse_ziel": "A project item is too sensitive for this model. Choose a local model or switch the item off. Nothing was sent.",
+      "projekt.budget": "Too much context for the model. Nothing was sent and nothing was shortened. Switch items in the project off or choose a model with a larger window.",
+      "projekt.modell": "The model did not respond. No answer was accepted. Try again or choose another model.",
+      "projekt.kein_modell": "No permitted model is selected. Nothing was sent. Choose a model under Settings > AI models & providers.",
+      "projekt.ziel_lokal": "The local model is not ready right now. Nothing was sent. Wait a moment and try again, or choose another model.",
+      "projekt.ziel_fenster": "The size of this model’s context window is not known. Enter the model’s context limit in the settings. Nothing was sent.",
+      "projekt.ziel_compliance": "The selected model is not permitted by the organisation’s rules. Nothing was sent. Choose another model.",
+      "projekt.ungueltig": "The project is not available right now. Nothing was sent. Open the project and check that it still exists.",
+      "projekt.anfrage": "The request was incomplete. Nothing was sent. Please try again.",
+      "projekt.stand_veraltet": "The selection in the project changed since it was displayed. Nothing was sent. Look at the current selection and start again.",
+      "projekt.ablage": "The document store cannot be read right now. Nothing was sent. Try again later.",
+      "projekt.register": "The project’s answer register cannot be read or written right now. Nothing was accepted. Try again later.",
+      "projekt.verspaetet": "The selection in the project changed while the answer was being written. The answer was not accepted. Start again.",
+      "projekt.widerrufen": "The selection in the project changed. Nothing was sent. Start again.",
+      "projekt.fremdkontext": "Only project content is allowed in the project. Nothing was sent."
     },
     "fehlercode": {
       "recherche.not_found": "No open approval with this ID (expired, decided, or the app was restarted).",
@@ -9108,7 +9202,10 @@
       "recherche.storage": "The research could not be saved.",
       "projekte.storage": "The project directory could not be read or written.",
       "projekte.not_found": "Not found.",
-      "projekte.stand_veraltet": "The selection changed since it was displayed. Please reload."
+      "projekte.stand_veraltet": "The selection changed since it was displayed. Please reload.",
+      "projekt.dokument_eingabe": "The task or the name is missing or too long. Nothing was sent.",
+      "projekt.dokument_leer": "The model returned no text. No draft was created.",
+      "projekt.dokument_ablage": "The draft could not be created. No file was written."
     },
     "ergebnis": {
       "modus": "Quick",
@@ -9191,7 +9288,12 @@
       "label": "Folders",
       "meine": "My folders",
       "wiederhergestellt": "Restored",
-      "weitere": "More folders"
+      "weitere": "More folders",
+      "aufklappen": "Expand {{name}}",
+      "zuklappen": "Collapse {{name}}",
+      "nurLesen": "Read-only",
+      "nurOnline": "Online-only",
+      "unterordner": "Subfolders of {{name}}"
     },
     "ordner": {
       "neu": "New folder",
@@ -9212,7 +9314,11 @@
       "dateien_other": "{{count}} files"
     },
     "stand": {
-      "konflikt": "Conflict"
+      "konflikt": "Conflict",
+      "imIndex": "In index",
+      "nurOnline": "Online-only",
+      "zuletztBekannt": "Last known",
+      "imIndexLabel": "In the search index"
     },
     "leer": {
       "titel": "No files yet",
@@ -9417,7 +9523,8 @@
       "nurBestaetigen": "Only on this device",
       "syncFrage": "Sync with other devices again?",
       "syncFolge": "Copies already stored in the cloud cannot be retrieved afterwards.",
-      "syncBestaetigen": "Allow sync"
+      "syncBestaetigen": "Allow sync",
+      "weiter": "Continue"
     },
     "lage": {
       "titel": "The files cannot be opened",
@@ -9443,21 +9550,77 @@
       "geloescht": "Deleted permanently",
       "geleert": "Trash emptied"
     },
+    "cloud": {
+      "titel": "Cloud exception",
+      "schalter": "The AI may use this folder through a cloud provider",
+      "schalterHinweis": "Only for confidential folders. Without an exception it stays with local models.",
+      "info": "The AI may send excerpts from this folder and its subfolders to the selected providers. This applies only on this device and only for the data class “Confidential”. Subfolders marked “Personal data” are excluded: they never go to a cloud provider.",
+      "anbieter": "Providers (rule set “{{regelwerk}}”)",
+      "regelwerk": {
+        "eu": "EU",
+        "nur_lokal": "Local only",
+        "keines": "No restriction"
+      },
+      "gesperrt": "blocked",
+      "grund": {
+        "regelwerk": "Does not meet the rule set “{{regelwerk}}”.",
+        "klasse": "Accepts “Internal” at most.",
+        "unbekannt": "No longer available. The exception can be withdrawn."
+      },
+      "keinAnbieter": "Select at least one provider.",
+      "nichtGeladen": "The provider list could not be loaded. Existing exceptions can still be revoked.",
+      "verwalten": "Manage rule set and providers",
+      "sperre": {
+        "nur_lokal": "The rule set “Local only” does not allow cloud providers. Confidential folders stay with local models.",
+        "keines": "The rule set “No restriction” does not release confidential data to cloud providers. That needs the rule set “EU”.",
+        "eu": "No configured provider meets the rule set “EU” for confidential data. It needs processing in the EU, a data processing agreement and no training on your data.",
+        "ki": "AI sharing is “Locked”. While it applies, no cloud exception can be granted. An existing exception stays and can be withdrawn."
+      },
+      "geerbt": "An exception from a parent folder also applies to this folder ({{anbieter}}).",
+      "braucht": "“{{klasse}}” needs no exception: excerpts may go to approved cloud models as far as the rule set allows.",
+      "personal": "Personal data only goes to local models. There is no cloud exception for it.",
+      "verfaellt": "The cloud exception ({{anbieter}}) lapses when you save. If you switch back to “Confidential” later, it has to be granted again.",
+      "erstSpeichern": "Save the data class “Confidential” first. After that you can grant a cloud exception here.",
+      "chip": "Cloud exception",
+      "chipGeerbt": "Cloud exception (inherited)",
+      "chipLabel": "Cloud exception: the AI may use this folder through {{anbieter}}. Open folder settings",
+      "chipLabelGeerbt": "Cloud exception from a parent folder: the AI may use this folder through {{anbieter}}. Open folder settings",
+      "baum": "Cloud exception",
+      "details": "Cloud",
+      "detailsWert": "Exception",
+      "detailsQuelle": "{{anbieter}} · inherited from {{ordner}}",
+      "frage": "Grant a cloud exception for “{{name}}”?",
+      "umfang_one": "Excerpts from {{count}} confidential file in “{{name}}” and its subfolders may be sent to:",
+      "umfang_other": "Excerpts from {{count}} confidential files in “{{name}}” and its subfolders may be sent to:",
+      "umfangNull": "There are currently no confidential files in “{{name}}” and its subfolders. The exception also applies to files added later. Excerpts may be sent to:",
+      "ausgenommen": "Excluded are subfolders with the data class “Personal data”: {{namen}}. They never go to a cloud provider.",
+      "anbieterZeile": "{{name}} (rule set “{{regelwerk}}”)",
+      "bedeutet": "What this means",
+      "punkt1": "The AI only sees excerpts, never the originals. The exception applies to the assistant (AI sharing “On”) and to projects in which the folder is switched on. “Locked” excludes both.",
+      "punkt2": "The exception applies only on this device and lapses when the data class is changed.",
+      "punkt3": "You can withdraw it at any time. Excerpts that were already sent cannot be retrieved.",
+      "punkt4": "Personal data does not belong in this folder. Classify it as “Personal data”; it never goes to a cloud provider.",
+      "erteilen": "Grant exception",
+      "verlassenTitel": "Discard unsaved changes?",
+      "verlassenText": "You have not saved your changes to the folder settings. If you switch to “AI models & providers” now, they are lost.",
+      "verlassenAktion": "Discard and switch"
+    },
     "verknuepft": {
       "gruppe": "Linked folders (read-only)",
       "verknuepfen": "Link folder",
       "waehlen": "Choose a folder to link",
       "hinweis": "Read-only, this device only: the files stay where they are. The store reads them for search only, never changes them and never uploads anything. The AI does not access linked folders.",
       "hinweisKurz": "Read-only, this device only",
+      "cloudGrenze": "Local Voice skips online-only files it recognizes. Simultaneous changes by the sync service can still trigger an automatic download while a file is being read.",
       "angabe": "Linked – read-only, this device only",
       "nichtErreichbar": "Not reachable",
-      "nichtErreichbarText": "The linked folder is not reachable right now or was moved. Known files stay in the list until it is back.",
+      "nichtErreichbarText": "The linked folder is not reachable right now or was moved. The last known files and subfolders stay in the list until it is back.",
       "ausgelassen_one": "{{count}} entry was skipped (link or hard link).",
       "ausgelassen_other": "{{count}} entries were skipped (links or hard links).",
-      "nurOnline_one": "{{count}} entry is online-only and is not read.",
-      "nurOnline_other": "{{count}} entries are online-only and are not read.",
+      "nurOnline_one": "{{count}} entry is online-only at the cloud provider (e.g. OneDrive) and is not read.",
+      "nurOnline_other": "{{count}} entries are online-only at the cloud provider (e.g. OneDrive) and are not read.",
       "nurOnlineHinweis": "In OneDrive, choose “Always keep on this device” so that the text can be captured.",
-      "zuViele": "The folder is very large; only the first 20,000 files are read.",
+      "zuViele": "The folder is very large: at most 20,000 files and 5,000 subfolders are captured.",
       "leer": "No readable files in this folder",
       "neuEinlesen": "Rescan",
       "loesen": "Unlink folder",
@@ -9467,7 +9630,19 @@
       "einstellungenHinweis": "Linked folder: read-only, this device only. It is never uploaded or synchronised; the AI does not access it. The data class can still be set.",
       "toastVerknuepft": "Folder linked",
       "toastEingelesen": "Folder rescanned",
-      "toastGeloest": "Folder unlinked"
+      "toastGeloest": "Folder unlinked",
+      "nurLesenChip": "Read-only",
+      "keineKi": "The AI never accesses linked folders – neither with local models nor through a cloud provider. That is why there is neither AI sharing nor a cloud exception here.",
+      "keineKi2": "If the AI should use certain files, put copies in a folder of your own in the file store and share that folder.",
+      "nurOnlineTipp": "The file is online-only at the cloud provider (e.g. OneDrive), not on this device. It is not read and not searched. Choose “Always keep on this device” in OneDrive to make it readable. Local Voice skips online-only files it recognizes. Simultaneous changes by the sync service can still trigger an automatic download while a file is being read.",
+      "behaltenTitel": "Keep on this device",
+      "behaltenText": "This file is online-only at the cloud provider (e.g. OneDrive). Local Voice skips online-only files it recognizes. Simultaneous changes by the sync service can still trigger an automatic download while a file is being read. As long as the file is not on the device, it stays unread and is missing from search.",
+      "behaltenSchritt1": "In File Explorer, right-click the file.",
+      "behaltenSchritt2": "Choose “Always keep on this device”.",
+      "behaltenDanach": "Once the file is on the device, the file store usually reads it itself within a minute. Otherwise “Rescan” helps.",
+      "keineVorschau": "No preview – the file is online-only.",
+      "keineVorschauLabel": "No preview: the file is online-only",
+      "unterordnerLeer": "No subfolders and no files in this folder"
     },
     "fehler": {
       "verknuepft_defekt": "The list of linked folders is damaged.",
@@ -9505,7 +9680,9 @@
       "datenstrom": "Alternate data streams are not imported.",
       "nicht_neu_aufbaubar": "The index cannot be rebuilt.",
       "loeschen_offen": "A permanent deletion has not finished yet. Please try again later.",
-      "datei_im_papierkorb": "The file is in the trash."
+      "datei_im_papierkorb": "The file is in the trash.",
+      "ausnahme_klasse": "Cloud exceptions exist only for confidential folders.",
+      "anbieter_nicht_zugelassen": "This provider is not approved for confidential folders."
     }
   }
 }

@@ -13,8 +13,9 @@
 //! Quellen dieses Turns, denen aller behaltenen Texte und den berechtigten Marken aus den übrigen
 //! Texten; die Klassen sind das Maximum daraus. `abschliessen` prüft diese ganze Menge neu.
 //!
-//! P4c-1 schließt **keinen** Weg an: Die Sperre `PROJEKT_KI_FREIGEGEBEN` bleibt `false`. Das Tor ist mit
-//! Attrappen für Ziel, Kontext und Ablage getestet.
+//! Angeschlossen sind Chat und Sprache (`voice_call/projekt.rs`), Recherche (`recherche.rs`), KI-Dokument
+//! (`dokument.rs`) und die Einzelläufe des Stapels (`einzellauf`). Seit P4c-4 ist die Sperre
+//! `PROJEKT_KI_FREIGEGEBEN` aufgehoben; sie bleibt als Rückbau (ein Wert) bestehen.
 //!
 //! Sicherheitsregeln:
 //! - Fail-closed: Jeder Fehler, jede unlesbare Quelle und jede unklare Lage führt zu einem Abbruch oder
@@ -24,7 +25,10 @@
 //! - Nichts im Tor wartet auf eine Sperre über einen `await` hinweg (die Läufetabelle ist ein
 //!   `std::sync::Mutex`, dessen Wächter nicht `Send` ist: der Übersetzer erzwingt das).
 
-#![allow(dead_code)] // Vorbau: Aufrufer sind die Wege ab P4c-2/-3 und die Tests.
+// Die Stapel-Schnittstelle (`stapel`, `StapelAuftrag`, `Element`) hat bis P5 keine Oberfläche und darum
+// keinen Aufrufer in der App (E5, nur Tests); dazu Zugriffe für die Tests und das Siegel der Belege.
+// Alle App-Wege (Chat, Sprache, Recherche, KI-Dokument) laufen über `vor_versand` und `fortsetzen`.
+#![allow(dead_code)]
 
 use super::dienst::{ki_freigegeben, klasse_aus_text, proj_aus, ProjektDienst, SuiteProjekt};
 use super::herkunft::suite_id_gueltig;
@@ -54,6 +58,8 @@ pub const ENTZOGEN_ANTWORT_PROJEKT: &str =
 pub const CODE_KLASSE: &str = "projekt.klasse_ziel";
 /// Code, wenn die Ablage nicht lesbar ist.
 pub const CODE_ABLAGE: &str = "projekt.ablage";
+/// Code, wenn das Modell oder sein Sendeweg scheitert (derselbe wie im Sprachgespräch).
+pub const CODE_MODELL: &str = "projekt.modell";
 
 /// Aufschlag auf die Token-Schätzung (Prozent). Startwert, nicht gemessen: Die Schätzung ist bewusst
 /// vorsichtig (UTF-8-Bytes/3, bei CJK mindestens Zeichen/2; `kontext::tokens`) und kann je nach
@@ -252,6 +258,10 @@ pub struct Freigabe {
     pub nachrichten: Vec<Nachricht>,
     pub ziel: Ziel,
     pub budget: Budgetbeleg,
+    /// Belege der Belegregel (`assistent::tor::Ausgabetor`): `(k, Text)` je Quelle `[Q<k>]`. Die
+    /// Projektinhalte sind `Q1` bis `Qn` (wie die Blöcke `<<<inhalt k>>>`), die Ablage-Auszüge folgen
+    /// ab `Q(n+1)`; die Nummern im Prompt sind dieselben.
+    pub quellen: Vec<(u32, String)>,
     /// Ersetzte Antworten, Blöcke und verworfene Zwischenstände.
     pub entzogen: u32,
     /// Der Verlauf wurde verworfen: nur die neue Frage ist im Prompt.
@@ -262,9 +272,17 @@ pub struct Freigabe {
     /// `hash(gespraech, stand)`: Eine zustandsbehaftete Provider-Sitzung darf nur unter diesem Schlüssel
     /// geführt werden und wird bei neuem `stand` oder nach einem Zurücksetzen verworfen.
     pub sitzung: String,
+    /// Die bereinigte Frage (ersetzte Quellen und Blöcke sind entfernt). Wer die Frage selbst weiterreicht
+    /// (Recherche: Suchanfragen), nimmt diese und nie die Frage aus dem Auftrag.
+    pub frage: String,
 }
 
 impl Freigabe {
+    /// Das Ziel als Beleg des Tors, siehe [`FreigegebenesZiel`].
+    pub fn freigegebenes_ziel(&self) -> FreigegebenesZiel {
+        FreigegebenesZiel(self.ziel.clone())
+    }
+
     /// Wurde der Lauf inzwischen widerrufen? (Zusätzlich zum `abbruch`, für synchrone Prüfungen.)
     pub fn ist_widerrufen(&self) -> bool {
         self.schein.wache.veraltet()
@@ -277,6 +295,7 @@ impl fmt::Debug for Freigabe {
             .field("nachrichten", &self.nachrichten.len())
             .field("ziel", &self.ziel)
             .field("budget", &self.budget)
+            .field("quellen", &self.quellen.len())
             .field("entzogen", &self.entzogen)
             .field("zurueckgesetzt", &self.zurueckgesetzt)
             .finish_non_exhaustive()
@@ -311,6 +330,32 @@ impl Versandschein {
     pub fn weg(&self) -> Weg {
         self.weg
     }
+
+    /// Das Projekt, für das der Schein gilt.
+    pub fn projekt(&self) -> &str {
+        &self.projekt
+    }
+
+    /// Höchste Klasse der gelieferten Projektinhalte (auch der vererbten Herkunft).
+    pub fn klasse_projekt(&self) -> Klasse {
+        self.klasse_projekt
+    }
+
+    /// Höchste Klasse der gelieferten Ablage-Auszüge; `None`, wenn keine geliefert wurden.
+    pub fn klasse_ablage(&self) -> Option<AblageKlasse> {
+        self.klasse_ablage
+    }
+
+    /// Trägt das Projekt das Art.-9-Kennzeichen?
+    pub fn art9(&self) -> bool {
+        self.projekt_art9
+    }
+
+    /// Wurde der Lauf widerrufen (oder ist er nicht mehr eingetragen)? Ein gehaltener Schein (Recherche
+    /// vor der Freigabe) erkennt so, dass er nicht mehr fortgesetzt werden darf.
+    pub fn ist_widerrufen(&self) -> bool {
+        self.wache.veraltet()
+    }
 }
 
 impl fmt::Debug for Versandschein {
@@ -325,7 +370,7 @@ impl fmt::Debug for Versandschein {
 /// Warum das Tor nicht freigibt oder eine Antwort nicht übernimmt. Enthält nie Inhalte.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Abbruch {
-    /// Die Sperre der Projekt-KI ist nicht aufgehoben (bis P4c-4).
+    /// Die Sperre der Projekt-KI ist gesetzt (Rückbau, `PROJEKT_KI_FREIGEGEBEN` in `dienst.rs`).
     Gesperrt,
     /// Das Projekt gibt es nicht, ist archiviert oder die Kennung ist ungültig.
     ProjektUngueltig,
@@ -349,6 +394,9 @@ pub enum Abbruch {
     Verspaetet,
     /// Der Lauf wurde vor dem Versand widerrufen.
     Widerrufen,
+    /// Das Modell oder sein Sendeweg ist gescheitert. Der Text des Anbieters wird nie weitergegeben: Er
+    /// kann Teile der Anfrage (Projektinhalte) wiedergeben.
+    Modell,
 }
 
 impl Abbruch {
@@ -366,13 +414,17 @@ impl Abbruch {
             Abbruch::RegisterDefekt => "projekt.register",
             Abbruch::Verspaetet => "projekt.verspaetet",
             Abbruch::Widerrufen => "projekt.widerrufen",
+            Abbruch::Modell => CODE_MODELL,
         }
     }
 
     /// Verständlicher Text ohne Inhalte, Titel oder Namen.
     pub fn text(&self) -> String {
         match self {
-            Abbruch::Gesperrt => "Die KI im Projekt ist noch nicht freigegeben.".into(),
+            Abbruch::Gesperrt => {
+                "Die KI im Projekt ist in dieser Version abgeschaltet. Es wurde nichts gesendet."
+                    .into()
+            }
             Abbruch::ProjektUngueltig => "Das Projekt ist nicht verfügbar.".into(),
             Abbruch::Anfrage => "Die Anfrage ist ungültig.".into(),
             Abbruch::StandVeraltet => {
@@ -422,6 +474,9 @@ impl Abbruch {
             }
             Abbruch::Verspaetet | Abbruch::Widerrufen => {
                 "Die Auswahl hat sich geändert; die Antwort wurde entfernt.".into()
+            }
+            Abbruch::Modell => {
+                "Das Modell hat nicht geantwortet. Es wurde keine Antwort übernommen.".into()
             }
         }
     }
@@ -689,7 +744,7 @@ fn kennung_gueltig(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 128
         && s.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':'))
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':' | b'~'))
 }
 
 /// Wirksame Klasse eines Texts: Maximum aus Eintrags- und Projektklasse; mit Art.-9-Kennzeichen
@@ -946,10 +1001,17 @@ impl ProjektTor {
                 kontext.ablage.clone(),
                 ziel.anbieter.clone(),
             );
-            let antwort = blockierend(move || q.auszuege(&f, &v, &z))
+            let mut antwort = blockierend(move || q.auszuege(&f, &v, &z))
                 .await?
                 .map_err(|_| Abbruch::Ablage { code: CODE_ABLAGE })?;
             wache.pruefen()?;
+            // Die Nummern der Auszüge folgen auf die der Projektinhalte: ein `[Q<k>]` gilt genau
+            // eine Quelle (Belegregel).
+            let versatz = u32::try_from(kontext.texte.len()).unwrap_or(u32::MAX);
+            for x in &mut antwort.auszuege {
+                x.q = x.q.saturating_add(versatz);
+                x.kennung = format!("[Q{}]", x.q);
+            }
             Some(antwort)
         };
 
@@ -1183,6 +1245,17 @@ impl ProjektTor {
                 klasse_ablage = klasse_ablage.max(Some(AblageKlasse::Unbekannt));
             }
         }
+        let quellen: Vec<(u32, String)> = kontext
+            .texte
+            .iter()
+            .zip(1u32..)
+            .map(|(t, k)| (k, t.text.clone()))
+            .chain(
+                auszuege
+                    .iter()
+                    .flat_map(|a| a.auszuege.iter().map(|x| (x.q, x.text.clone()))),
+            )
+            .collect();
         let mut nachrichten = Vec::with_capacity(bereinigte.len() + 2);
         nachrichten.push(Nachricht::neu(Rolle::System, system));
         nachrichten.extend(bereinigte);
@@ -1214,10 +1287,12 @@ impl ProjektTor {
             nachrichten,
             ziel,
             budget,
+            quellen,
             entzogen,
             zurueckgesetzt,
             abbruch: notify,
             sitzung,
+            frage,
         })
     }
 
@@ -1229,20 +1304,10 @@ impl ProjektTor {
             .map_err(|_| Abbruch::RegisterDefekt)
     }
 
-    /// Löst den Schein ein, nachdem das Modell geantwortet hat. `Ok`: Die Antwort ist freigegeben und im
-    /// Register eingetragen. Jeder Fehler heißt: Die Antwort nicht übernehmen, nicht zeigen, nicht
-    /// speichern, nicht sprechen (`Verspaetet`, `RegisterDefekt`).
-    ///
-    /// Verspätet ist die Antwort, wenn der Lauf widerrufen wurde, sich der `stand` oder die Klasse des
-    /// Projekts geändert hat oder eine Marke des Scheins nicht mehr gilt. Geprüft wird die **ganze**
-    /// Menge des Scheins neu: alle Inhaltsmarken (auch die der behaltenen Antworten) gegen den frischen
-    /// Kontext und alle Ablage-Marken (auch die vererbten) gegen die Ablage. Jede Änderung von `stand`
-    /// verwirft, auch eine reine Inhaltsänderung eines eingeschalteten Eintrags; das ist konservativ.
-    ///
-    /// Ohne `Bindung::gespraech` wird nichts eingetragen. Wird der Lauf während des Eintragens
-    /// widerrufen, ist die Antwort verspätet; der Eintrag bleibt dann stehen (er gilt nur, solange
-    /// alle seine Quellen gelten).
-    pub async fn abschliessen(&self, s: Versandschein, antwort: &str) -> Result<(), Abbruch> {
+    /// Prüft einen Schein gegen den frischen Zustand: Widerruf, Projekt (archiviert, Klasse, Art. 9),
+    /// `stand`, alle Inhaltsmarken und alle Ablage-Marken. Jede Abweichung ist `Verspaetet` (der Widerruf
+    /// selbst ebenfalls). Gemeinsam für [`Self::abschliessen`] und [`Self::fortsetzen`].
+    async fn schein_pruefen(&self, s: &Versandschein) -> Result<(), Abbruch> {
         if s.wache.veraltet() {
             return Err(Abbruch::Verspaetet);
         }
@@ -1291,6 +1356,24 @@ impl ProjektTor {
         if s.wache.veraltet() {
             return Err(Abbruch::Verspaetet);
         }
+        Ok(())
+    }
+
+    /// Löst den Schein ein, nachdem das Modell geantwortet hat. `Ok`: Die Antwort ist freigegeben und im
+    /// Register eingetragen. Jeder Fehler heißt: Die Antwort nicht übernehmen, nicht zeigen, nicht
+    /// speichern, nicht sprechen (`Verspaetet`, `RegisterDefekt`).
+    ///
+    /// Verspätet ist die Antwort, wenn der Lauf widerrufen wurde, sich der `stand` oder die Klasse des
+    /// Projekts geändert hat oder eine Marke des Scheins nicht mehr gilt. Geprüft wird die **ganze**
+    /// Menge des Scheins neu: alle Inhaltsmarken (auch die der behaltenen Antworten) gegen den frischen
+    /// Kontext und alle Ablage-Marken (auch die vererbten) gegen die Ablage. Jede Änderung von `stand`
+    /// verwirft, auch eine reine Inhaltsänderung eines eingeschalteten Eintrags; das ist konservativ.
+    ///
+    /// Ohne `Bindung::gespraech` wird nichts eingetragen. Wird der Lauf während des Eintragens
+    /// widerrufen, ist die Antwort verspätet; der Eintrag bleibt dann stehen (er gilt nur, solange
+    /// alle seine Quellen gelten).
+    pub async fn abschliessen(&self, s: Versandschein, antwort: &str) -> Result<(), Abbruch> {
+        self.schein_pruefen(&s).await?;
         if antwort.trim().is_empty() || !s.registrieren {
             return Ok(());
         }
@@ -1400,9 +1483,286 @@ impl ProjektTor {
         }
     }
 
+    /// Nimmt den Registereintrag einer Antwort zurück, die nach dem Urteil des Tors doch nicht gezeigt
+    /// wird (Abbruch während `abschliessen`).
+    pub fn antwort_vergessen(&self, gespraech: &str, antwort: &str) {
+        if self.register.antwort_vergessen(gespraech, antwort).is_err() {
+            log::warn!("projekte: Antwortregister konnte eine Antwort nicht zurücknehmen");
+        }
+    }
+
     /// Zahl der eingetragenen Läufe (Tests, Diagnose).
     pub fn offene_laeufe(&self) -> usize {
         self.laeufe.sperren().len()
+    }
+}
+
+// ---------------------------------------------------------------- Fortsetzen, Einzellauf und Stapel
+
+/// Reserve für Webauszüge im Prompt einer Recherche mit Projektkontext (Token). Startwert, nicht
+/// gemessen: höchstens fünf Abrufe mit je höchstens 2 000 Zeichen Auszug, dazu Titel und Rahmen. Das Tor
+/// kennt nur den Prompt, den es selbst gebaut hat; was die Recherche später aus dem Web hinzunimmt, zählt
+/// über diese Reserve ([`budget_mit_reserve`]).
+pub const WEB_RESERVE_TOKEN: u32 = 4_000;
+
+/// Prüft das Budget eines Laufs erneut gegen ein (frisch bestimmtes) Ziel und mit einer Reserve für
+/// Inhalte, die erst nach dem Tor dazukommen. Gekürzt wird nie.
+pub fn budget_mit_reserve(
+    b: Budgetbeleg,
+    ziel: &Ziel,
+    reserve: u32,
+) -> Result<Budgetbeleg, Abbruch> {
+    budget_pruefen(Budgetbeleg {
+        auszuege: b.auszuege.saturating_add(reserve),
+        ausgabe: ziel.ausgabe,
+        fenster: ziel.fenster,
+        ..b
+    })
+}
+
+/// Ergebnis von [`ProjektTor::fortsetzen`]: das frisch bestimmte Ziel und der Abbruch des Laufs.
+pub struct Fortsetzung {
+    pub ziel: Ziel,
+    /// Wird ausgelöst, sobald der Lauf widerrufen wird (wie `Freigabe::abbruch`).
+    pub abbruch: Arc<Notify>,
+    /// Privat: Eine Fortsetzung baut allein [`ProjektTor::fortsetzen`]; außerhalb dieses Moduls gibt es
+    /// kein Literal (und ein Muster braucht `..`).
+    siegel: (),
+}
+
+impl Fortsetzung {
+    /// Das Ziel als Beleg des Tors, siehe [`FreigegebenesZiel`].
+    pub fn freigegebenes_ziel(&self) -> FreigegebenesZiel {
+        FreigegebenesZiel(self.ziel.clone())
+    }
+}
+
+/// Ein Ziel mit dem Beleg, dass das Tor es freigegeben hat. Das Feld ist privat zu diesem Modul: Einen Wert
+/// gibt es nur aus einer [`Freigabe`] (deren Schein nur das Tor ausstellt) oder einer [`Fortsetzung`]. Wer
+/// über ein Ziel sendet und das Tor nicht selbst durchläuft (die Recherche: `weg_modell`), nimmt dieses Gewand
+/// statt eines freien [`Ziel`]; der Compiler hält so einen Versand ohne Tor fern, ohne dass ein Test auf
+/// Dateipositionen achten müsste.
+#[derive(Clone)]
+pub struct FreigegebenesZiel(Ziel);
+
+impl FreigegebenesZiel {
+    pub fn ziel(&self) -> &Ziel {
+        &self.0
+    }
+}
+
+impl fmt::Debug for Fortsetzung {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Fortsetzung")
+            .field("ziel", &self.ziel)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Sendeweg eines Einzellaufs: schickt die vom Tor freigegebenen Nachrichten an das Ziel und liefert den
+/// rohen Antworttext. Ein lokales Ziel geht nur an `ziel.pinned_local` (Vertrag wie bei [`Freigabe`]).
+/// Ein Fehler trägt nur einen Text für das Protokoll des Aufrufers; das Tor gibt ihn nie weiter.
+#[async_trait]
+pub trait Versand: Send + Sync {
+    async fn senden(&self, ziel: &Ziel, nachrichten: &[Nachricht]) -> Result<String, String>;
+}
+
+/// Ergebnis eines freigegebenen Einzellaufs. Der Schein ist eingelöst: `text` ist übernommen.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Einzel {
+    pub text: String,
+    /// Herkunftsmarken der gelieferten Ablage-Auszüge (auch der vererbten), für die Quellen eines
+    /// Entwurfs.
+    pub ablage_marken: Vec<String>,
+    pub entzogen: u32,
+    pub zurueckgesetzt: bool,
+    /// Der `stand` der Übersicht, auf dem der Lauf beruht.
+    pub stand: String,
+    pub klasse_projekt: Klasse,
+    pub klasse_ablage: Option<AblageKlasse>,
+}
+
+impl fmt::Debug for Einzel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Einzel")
+            .field("zeichen", &self.text.chars().count())
+            .field("ablage_marken", &self.ablage_marken.len())
+            .field("entzogen", &self.entzogen)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Ein Stapel: gleiche Aufgabe (`system`), mehrere Fragen. Jede Frage ist ein eigener Einzellauf mit
+/// eigenem Schein und eigenem Budget; sie teilen kein Gespräch und keinen Verlauf.
+pub struct StapelAuftrag<'a> {
+    /// Präfix der Lauf-Kennungen; Element `n` läuft als `<präfix>.<n>`.
+    pub request_id: &'a str,
+    pub projekt: String,
+    pub funktion: &'a str,
+    pub modell: Option<&'a str>,
+    pub system: String,
+    pub fragen: Vec<String>,
+    /// Der `stand`, den die Person gesehen hat. Fehlt er, bindet das erste gelungene Element den Stand
+    /// für alle weiteren.
+    pub erwarteter_stand: Option<String>,
+}
+
+/// Ergebnis je Frage eines Stapels.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Element {
+    Fertig(Einzel),
+    Fehler(Abbruch),
+    /// Nicht gestartet, weil ein vorheriges Element den Stapel beendet hat (Widerruf, geänderter Stand,
+    /// Sperre, Modellfehler).
+    Abgebrochen,
+}
+
+/// Beendet dieser Fehler den ganzen Stapel? Nur ein Budgetstopp oder eine ungültige Frage trifft allein
+/// das eigene Element.
+fn beendet_stapel(a: &Abbruch) -> bool {
+    !matches!(a, Abbruch::Budget(_) | Abbruch::Anfrage)
+}
+
+impl ProjektTor {
+    /// Prüft einen gehaltenen Schein erneut, bevor der Lauf fortgesetzt wird (Recherche nach dem Halt,
+    /// Plan 2.8), und bestimmt das Ziel frisch aus der Konfiguration: Zwischen Halt und Freigabe kann der
+    /// lokale Server gestorben, das Modell gewechselt oder ein Eintrag ausgeschaltet worden sein.
+    ///
+    /// Geprüft wird wie in [`Self::abschliessen`] (Widerruf, Projekt, `stand`, alle Marken), danach gilt
+    /// für das frische Ziel dieselbe Klassenregel wie in [`Self::vor_versand`]. Der Schein bleibt dem
+    /// Aufrufer; jede Abweichung ist ein Fehler, und der Aufrufer sendet dann nichts.
+    pub async fn fortsetzen(
+        &self,
+        s: &Versandschein,
+        funktion: &str,
+        modell: Option<&str>,
+    ) -> Result<Fortsetzung, Abbruch> {
+        if !self.kontext.freigegeben() {
+            return Err(Abbruch::Gesperrt);
+        }
+        s.wache.pruefen()?;
+        self.schein_pruefen(s).await?;
+        let ziel = self.ziele.ziel(funktion, modell).await?;
+        s.wache.pruefen()?;
+        if ziel.anbieter.lokal && ziel.pinned_local.is_none() {
+            return Err(Abbruch::ZielUnklar {
+                code: CODE_ZIEL_LOKAL,
+            });
+        }
+        let ablage_ok = s
+            .klasse_ablage
+            .is_none_or(|k| ki::klasse_erlaubt(k, &ziel.anbieter, true));
+        if !klasse_zulaessig(s.klasse_projekt, &ziel) || !ablage_ok {
+            return Err(Abbruch::Klasse { code: CODE_KLASSE });
+        }
+        let abbruch = self
+            .laeufe
+            .sperren()
+            .get(&s.wache.request_id)
+            .filter(|l| l.nr == s.wache.nr)
+            .map(|l| l.notify.clone())
+            .ok_or(Abbruch::Widerrufen)?;
+        Ok(Fortsetzung {
+            ziel,
+            abbruch,
+            siegel: (),
+        })
+    }
+
+    /// Ein vollständiger Lauf ohne Gespräch und ohne Oberfläche: Tor, Versand, Urteil. Für das
+    /// KI-Dokument und die Stapel-Schnittstelle (W4a, W5). Der Versand läuft im `select!` auf den Abbruch
+    /// des Laufs (ein Widerruf zuerst); jeder Fehler und jede verspätete Antwort ergibt einen
+    /// [`Abbruch`], und der Schein wird nie ohne Urteil übernommen.
+    ///
+    /// Mit `Bindung::gespraech` trägt das Tor die Antwort mit Herkunft und Klassen ins Antwortregister
+    /// ein (Grundlage von [`Self::mindestklasse`]); ohne bleibt nichts zurück.
+    pub async fn einzellauf(
+        &self,
+        a: Versandauftrag<'_>,
+        versand: &dyn Versand,
+    ) -> Result<Einzel, Abbruch> {
+        let Freigabe {
+            schein,
+            nachrichten,
+            ziel,
+            entzogen,
+            zurueckgesetzt,
+            abbruch,
+            ..
+        } = self.vor_versand(a).await?;
+        let roh = {
+            let call = versand.senden(&ziel, &nachrichten);
+            // Abbruch zuerst: Ein schon vorliegender Widerruf verhindert den Versand, statt mit ihm zu
+            // wetteifern.
+            tokio::select! {
+                biased;
+                _ = abbruch.notified() => Err(Abbruch::Widerrufen),
+                r = call => r.map_err(|_anbieterfehler| Abbruch::Modell),
+            }
+        }?;
+        let (_, ablage_marken) = schein.marken();
+        let (stand, klasse_projekt, klasse_ablage) = (
+            schein.stand.clone(),
+            schein.klasse_projekt,
+            schein.klasse_ablage,
+        );
+        self.abschliessen(schein, &roh).await?;
+        Ok(Einzel {
+            text: roh,
+            ablage_marken,
+            entzogen,
+            zurueckgesetzt,
+            stand,
+            klasse_projekt,
+            klasse_ablage,
+        })
+    }
+
+    /// Stapel-Schnittstelle (W5): Die Fragen laufen nacheinander, jede als [`Self::einzellauf`] mit eigenem
+    /// Schein und eigenem Budget. Der Stand ist an den Stapel gebunden: Ändert sich der Kontext zwischen
+    /// zwei Elementen, folgt `StandVeraltet`. Nach einem Widerruf, einer geänderten Auswahl, der Sperre
+    /// oder einem Modellfehler beginnt kein weiteres Element (`Abgebrochen`); fertige bleiben stehen. Ein
+    /// Budgetstopp oder eine ungültige Frage trifft nur das eigene Element.
+    pub async fn stapel(&self, a: StapelAuftrag<'_>, versand: &dyn Versand) -> Vec<Element> {
+        let mut stand = a.erwarteter_stand.clone();
+        let mut aus: Vec<Element> = Vec::with_capacity(a.fragen.len());
+        let mut beendet = false;
+        for (i, frage) in a.fragen.iter().enumerate() {
+            if beendet {
+                aus.push(Element::Abgebrochen);
+                continue;
+            }
+            let id = format!("{}.{}", a.request_id, i + 1);
+            let auftrag = Versandauftrag {
+                request_id: &id,
+                bindung: Bindung {
+                    projekt: a.projekt.clone(),
+                    gespraech: None,
+                },
+                weg: Weg::Stapel,
+                funktion: a.funktion,
+                modell: a.modell,
+                erwarteter_stand: stand.as_deref(),
+                teile: PromptTeile {
+                    system: a.system.clone(),
+                    frage: frage.clone(),
+                    ..PromptTeile::default()
+                },
+            };
+            match self.einzellauf(auftrag, versand).await {
+                Ok(e) => {
+                    if stand.is_none() {
+                        stand = Some(e.stand.clone());
+                    }
+                    aus.push(Element::Fertig(e));
+                }
+                Err(ab) => {
+                    beendet = beendet_stapel(&ab);
+                    aus.push(Element::Fehler(ab));
+                }
+            }
+        }
+        aus
     }
 }
 

@@ -17,6 +17,14 @@ public enum BookStart {
         public var hasPreface: Bool
     }
 
+    /// Titelei auf oberster Ebene (erste `#`-Überschrift oder der wiederholte
+    /// Buchtitel), aber kein „# Impressum“ o. Ä.
+    static func titleContainer(_ s: Section, index: Int, title: String?) -> Bool {
+        guard let heading = s.heading, s.level == 1 else { return false }
+        let h = normalizeHeading(heading)
+        return (index == 0 || h == title) && !matches(frontHeading, h)
+    }
+
     /// Schlüssel der Einstellung „Vorwort und Einleitung mitlesen“ (Standard: ja).
     public static let readPrefaceKey = "lva.reader.readPreface"
 
@@ -26,6 +34,10 @@ public enum BookStart {
         let secs = sections(paragraphs(ns))
         let norm = secs.map { $0.heading.map(normalizeHeading) }
         let title: String? = secs.first.flatMap { $0.level == 1 ? norm[0] : nil }
+        // Ein Inhaltsverzeichnis in den ersten 15 % des Texts.
+        let tocSoon = secs.indices.contains { i in
+            norm[i].map { matches(tocHeading, $0) } == true && Double(secs[i].start) <= Double(ns.length) * 0.15
+        }
         var pending: (start: Int, level: Int)?
         // Unterabschnitte eines übersprungenen Abschnitts bleiben übersprungen.
         var skipBelow: Int?
@@ -33,7 +45,8 @@ public enum BookStart {
         for (i, s) in secs.enumerated() {
             if let below = skipBelow, s.heading != nil, s.level > below { continue }
             skipBelow = nil
-            let kind = classify(s, index: i, count: secs.count, title: title, later: { Set(norm[(i + 1)...].compactMap { $0 }) })
+            let kind = classify(s, index: i, count: secs.count, title: title, later: { Set(norm[(i + 1)...].compactMap { $0 }) }, tocSoon: tocSoon,
+                                nextLevel: i + 1 < secs.count ? secs[i + 1].level : nil)
             if kind == .neutral {
                 if pending == nil || s.level <= pending!.level { pending = (s.start, s.level) }
                 continue
@@ -41,7 +54,9 @@ public enum BookStart {
             if kind == .preface { hasPreface = true }
             if kind == .front || (kind == .preface && !readPreface) {
                 pending = nil
-                if s.heading != nil { skipBelow = s.level }
+                // Die Titelei vorn („# Titel“, „von …“) umschließt das ganze Buch:
+                // ihre Unterabschnitte („## Kapitel 1“) sind kein Vorspann.
+                if s.heading != nil, !titleContainer(s, index: i, title: title) { skipBelow = s.level }
                 continue
             }
             let head: Int? = pending.flatMap { $0.level < s.level ? $0.start : nil }
@@ -73,9 +88,14 @@ public enum BookStart {
         "bibliographische information", "abbildungsverzeichnis", "tabellenverzeichnis", "abkürzungsverzeichnis",
         "verzeichnis der abbildungen", "list of figures", "list of tables", "weitere titel", "weitere bücher",
         "also by", "praise for", "lob für", "pressestimmen", "stimmen zum buch",
+        // Bildtafeln und Abbildungslisten (Grimm-PDF von archive.org).
+        "bildtafeln", "bilderplatten", "die bilderplatten", "bildliche dokumentation", "illustrationen",
+        "abbildungen", "illustrations", "list of illustrations",
     ]
     static let frontHeading = regex("^(?:" + frontWords.map { $0.replacingOccurrences(of: " ", with: "\\s+") }.joined(separator: "|")
         + ")$")
+    /// Kopf eines Project-Gutenberg-E-Books („The Project Gutenberg eBook of …“).
+    static let frontPrefix = regex("^(?:the\\s+)?project\\s+gutenberg(?:'s)?\\s+e-?(?:book|text)\\b")
     // Ganze Überschrift: „Vorwort zur zweiten Auflage“ ja, „Einführung in die Algebra“ nicht.
     static let prefaceHeading = regex("^(?:vorwort|geleitwort|vorrede|vorbemerkung|einleitung|einführung|zur einführung|prolog|prologue|preface|foreword|introduction)(?:\\s+(?:zur|zum|des|der|von|to the|of the|by)\\s.*)?$")
     static let frontBody = [
@@ -94,6 +114,10 @@ public enum BookStart {
     static let pageMarks = regex("\\{\\{S\\. ?\\d{1,5}\\}\\}")
     static let headingLine = regex("^(#{1,6})\\s+(.*)$")
     static let byline = regex("^(?:von|by)\\s+\\p{Lu}")
+    /// Autorzeile als Überschrift („By Jacob Grimm“, „von Anna Muster“).
+    static let headingByline = regex("^(?:[vV]on|[bB]y)\\s+\\p{Lu}")
+    /// Überschrift eines Inhaltsverzeichnisses.
+    static let tocHeading = regex("^(?:inhalt|inhaltsverzeichnis|inhaltsübersicht|contents|table of contents)$")
     static let prose = regex("[.!?…:\"“”»«')]\\s*$")
     static let sentenceBreak = regex("[.!?…]\\s+\\p{Lu}")
     static let paragraphBreak = regex("\\n[ \\t\\r]*\\n")
@@ -127,6 +151,7 @@ public enum BookStart {
         s = trim(replace(regex("\\s+"), s, " "))
         s = replace(regex("[\\s.:;,!?…–—-]+$"), s, "")
         s = replace(regex("^[\\s.:;,…–—-]+"), s, "")
+        s = replace(regex("[’‘]"), s, "'")
         return s.lowercased()
     }
 
@@ -214,12 +239,19 @@ public enum BookStart {
             && s.body.allSatisfy { ($0.text as NSString).length <= 200 && !matches(sentenceBreak, $0.text) }
     }
 
-    static func classify(_ s: Section, index: Int, count: Int, title: String?, later: () -> Set<String>) -> Kind {
+    static func classify(_ s: Section, index: Int, count: Int, title: String?, later: () -> Set<String>, tocSoon: Bool = false,
+                         nextLevel: Int? = nil) -> Kind {
         let text = bodyText(s)
         if let heading = s.heading {
             let h = normalizeHeading(heading)
-            if matches(frontHeading, h) { return .front }
+            if matches(frontHeading, h) || matches(frontPrefix, h) { return .front }
             if let title, h == title, index > 0 { return .front }
+            // Autorzeile als Überschrift („## by Lewis Carroll“) gehört zur Titelei – aber nur ohne
+            // eigenen Text und ohne Unterkapitel: „## Von Hexen und Zauberern“ ist ein Kapitel.
+            if index < 5, (h as NSString).length <= 80,
+               (text.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).length <= 120,
+               nextLevel.map({ $0 <= s.level }) ?? true,
+               matches(headingByline, replace(regex("^[*_\\s]+"), heading, "")) { return .front }
             if matches(prefaceHeading, h) { return .preface }
             if count > 1, looksLikeTitlePage(s) { return .front }
             if s.body.isEmpty { return .neutral }
@@ -227,6 +259,9 @@ public enum BookStart {
             return looksLikeToc(s, later) ? .front : .content
         }
         if looksLikeFront(text, max: frontBodyMax) || looksLikeToc(s, later) { return .front }
+        // PDF ohne Überschriften vorn: Text mit Impressum-Merkmal vor einem
+        // Inhaltsverzeichnis gleich danach ist Titelei, auch wenn er lang ist.
+        if index == 0, tocSoon, !frontHits(text).isEmpty { return .front }
         return .content
     }
 

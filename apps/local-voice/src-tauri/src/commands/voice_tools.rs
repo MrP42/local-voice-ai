@@ -51,9 +51,7 @@ pub fn change_voice_call_read_transcripts_setting(
     app: AppHandle,
     enabled: bool,
 ) -> Result<(), String> {
-    let mut settings = crate::settings::get_settings(&app);
-    settings.voice_call_read_transcripts = enabled;
-    crate::settings::write_settings(&app, settings);
+    crate::settings::update_settings_gesperrt(&app, |s| s.voice_call_read_transcripts = enabled);
     crate::app_context::service::on_settings_changed(&app);
     Ok(())
 }
@@ -66,9 +64,9 @@ pub fn change_voice_call_knowledge_setting(
     app: AppHandle,
     areas: Vec<String>,
 ) -> Result<(), String> {
-    let mut settings = crate::settings::get_settings(&app);
-    settings.voice_call_knowledge = areas::normalize_keys(&areas);
-    crate::settings::write_settings(&app, settings);
+    crate::settings::update_settings_gesperrt(&app, |s| {
+        s.voice_call_knowledge = areas::normalize_keys(&areas)
+    });
     crate::app_context::service::on_settings_changed(&app);
     schutz_nachpruefen(&app);
     Ok(())
@@ -82,9 +80,9 @@ pub fn change_voice_notebook_sections_setting(
     app: AppHandle,
     sections: Vec<String>,
 ) -> Result<(), String> {
-    let mut settings = crate::settings::get_settings(&app);
-    settings.voice_call_notebook_sections = notizbuch::eintraege_normalisieren(&sections);
-    crate::settings::write_settings(&app, settings);
+    crate::settings::update_settings_gesperrt(&app, |s| {
+        s.voice_call_notebook_sections = notizbuch::eintraege_normalisieren(&sections)
+    });
     crate::app_context::service::on_settings_changed(&app);
     // Widerruf sofort: was nicht mehr freigegeben ist, verschwindet aus Belegen und Ausgaben.
     schutz_nachpruefen(&app);
@@ -318,6 +316,11 @@ pub async fn voice_tool_call(
     args: String,
     conversation_id: Option<String>,
 ) -> Result<String, String> {
+    // Projektgespräch: Werkzeuge sind aus (lva#365 P4c-2, `projekt.werkzeuge_aus`). Das gilt vor allem
+    // anderen, auch vor der Begrenzung; ist die Bindung des Gesprächs nicht lesbar, ebenfalls.
+    crate::voice_call::projekt::werkzeuge_erlaubt(
+        &crate::voice_call::projekt::bindung(&app, conversation_id.as_deref()).await,
+    )?;
     let (bridge, store) = parts(&app)?;
     let opts = options(&app);
     let freigabe = crate::settings::get_settings(&app).voice_call_notebook_sections;
@@ -412,6 +415,78 @@ fn read_error(what: &str, e: &dyn std::fmt::Display) -> String {
     format!("{what} ist gerade nicht lesbar.")
 }
 
+/// Die Gesprächswerkzeuge lesen nur Gespräche außerhalb von Projekten (lva#365 P4c-2): Ein Projektgespräch
+/// trägt Antworten aus Projektinhalten und verlässt das Projekt nur über das Versandtor, auch nicht über
+/// ein Werkzeug im gewöhnlichen Gespräch (und von dort an ein Cloud-Modell). Projektgespräche und
+/// Gespräche, deren Zuordnung sich nicht sicher lesen lässt, fehlen in jeder Auskunft.
+const GESPRAECH_FEHLT: &str = "Das Gespräch gibt es nicht (mehr).";
+
+fn gespraeche_ausserhalb_projekt(
+    store: &ConversationStore,
+) -> Result<Vec<ConversationInfo>, String> {
+    let list = store
+        .list_ohne_projekt(false)
+        .map_err(|e| read_error("Der Gesprächsverlauf", &e))?;
+    let mut out: Vec<ConversationInfo> = list
+        .into_iter()
+        .map(|c| ConversationInfo {
+            updated_ms: ts_ms(&c.updated_at),
+            id: c.id,
+            title: c.title,
+            entries: c.entry_count,
+            last_text: c.last_text,
+        })
+        .collect();
+    out.sort_by_key(|c| std::cmp::Reverse(c.updated_ms));
+    Ok(out)
+}
+
+fn beitraege_ausserhalb_projekt(
+    store: &ConversationStore,
+    limit: usize,
+) -> Result<Vec<EntryInfo>, String> {
+    Ok(store
+        .recent_entries(limit)
+        .map_err(|e| read_error("Der Gesprächsverlauf", &e))?
+        .into_iter()
+        .map(|h| EntryInfo {
+            at_ms: ts_ms(&h.created_at),
+            conversation_id: h.conversation_id,
+            title: h.title,
+            role: h.role,
+            text: h.text,
+        })
+        .collect())
+}
+
+fn gespraech_ausserhalb_projekt(
+    store: &ConversationStore,
+    id: &str,
+) -> Result<ConversationView, String> {
+    // Dieselbe Antwort wie bei einem fehlenden Gespräch: Die Auskunft verrät nicht, dass es eines gibt.
+    if !store.ausserhalb_projekt_lesbar(id) {
+        return Err(GESPRAECH_FEHLT.to_string());
+    }
+    let detail = store.get(id).map_err(|_| GESPRAECH_FEHLT.to_string())?;
+    if detail.conversation.archived {
+        return Err(GESPRAECH_FEHLT.to_string());
+    }
+    Ok(ConversationView {
+        id: detail.conversation.id,
+        title: detail.conversation.title,
+        updated_ms: ts_ms(&detail.conversation.updated_at),
+        entries: detail
+            .entries
+            .into_iter()
+            .map(|e| EntryLine {
+                at_ms: ts_ms(&e.created_at),
+                role: e.role,
+                text: e.text,
+            })
+            .collect(),
+    })
+}
+
 impl KnowledgeSource for AppKnowledge {
     fn dictations(
         &self,
@@ -437,62 +512,15 @@ impl KnowledgeSource for AppKnowledge {
     }
 
     fn conversations(&self) -> Result<Vec<ConversationInfo>, String> {
-        let list = self
-            .conversation_store()?
-            .list(false)
-            .map_err(|e| read_error("Der Gesprächsverlauf", &e))?;
-        let mut out: Vec<ConversationInfo> = list
-            .into_iter()
-            .map(|c| ConversationInfo {
-                updated_ms: ts_ms(&c.updated_at),
-                id: c.id,
-                title: c.title,
-                entries: c.entry_count,
-                last_text: c.last_text,
-            })
-            .collect();
-        out.sort_by(|a, b| b.updated_ms.cmp(&a.updated_ms));
-        Ok(out)
+        gespraeche_ausserhalb_projekt(&*self.conversation_store()?)
     }
 
     fn conversation_entries(&self, limit: usize) -> Result<Vec<EntryInfo>, String> {
-        Ok(self
-            .conversation_store()?
-            .recent_entries(limit)
-            .map_err(|e| read_error("Der Gesprächsverlauf", &e))?
-            .into_iter()
-            .map(|h| EntryInfo {
-                at_ms: ts_ms(&h.created_at),
-                conversation_id: h.conversation_id,
-                title: h.title,
-                role: h.role,
-                text: h.text,
-            })
-            .collect())
+        beitraege_ausserhalb_projekt(&*self.conversation_store()?, limit)
     }
 
     fn conversation(&self, id: &str) -> Result<ConversationView, String> {
-        let detail = self
-            .conversation_store()?
-            .get(id)
-            .map_err(|_| "Das Gespräch gibt es nicht (mehr).".to_string())?;
-        if detail.conversation.archived {
-            return Err("Das Gespräch gibt es nicht (mehr).".to_string());
-        }
-        Ok(ConversationView {
-            id: detail.conversation.id,
-            title: detail.conversation.title,
-            updated_ms: ts_ms(&detail.conversation.updated_at),
-            entries: detail
-                .entries
-                .into_iter()
-                .map(|e| EntryLine {
-                    at_ms: ts_ms(&e.created_at),
-                    role: e.role,
-                    text: e.text,
-                })
-                .collect(),
-        })
+        gespraech_ausserhalb_projekt(&*self.conversation_store()?, id)
     }
 
     fn calendar(&self, from_ms: i64, to_ms: i64) -> Result<Vec<EventInfo>, String> {
@@ -579,3 +607,6 @@ impl KnowledgeSource for AppKnowledge {
             .unwrap_or(raw))
     }
 }
+
+#[cfg(test)]
+mod projekt_tests;

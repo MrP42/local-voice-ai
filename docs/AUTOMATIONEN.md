@@ -11,7 +11,7 @@ Zu finden unter **Integrationen → Automationen**; zum Anbinden von Agenten sie
 |---|---|
 | Termin beginnt / endet | Kalender (ICS oder Microsoft 365), mit Vorlaufzeit, Filter „nur Besprechungen“, Titel, Mindestzahl Teilnehmende |
 | Besprechung fertig | wenn Transkript (oder Protokoll) einer Besprechung vorliegt |
-| Datei im Ordner | neue Audio-/Videodatei in einem Ordner; sie muss einige Sekunden unverändert sein. OneDrive-Platzhalter („nur in der Cloud“) werden nie heruntergeladen und nicht verarbeitet |
+| Datei im Ordner | neue Audio-/Videodatei in einem Ordner; sie muss einige Sekunden unverändert sein. OneDrive-Platzhalter („nur in der Cloud“) werden erkannt und übersprungen; durch gleichzeitige Änderungen des Synchronisationsdienstes kann beim Lesen dennoch ein automatischer Download ausgelöst werden (siehe `docs/ablage-abrufschutz.md`) |
 | Neues Video im Kanal | YouTube-Kanal, Abruf alle n Minuten; beim ersten Abruf auf Wunsch die neuesten Videos nachholen; antwortet der Kanal nicht, wird nachgeholt, nichts geht verloren |
 | Zeitplan | täglich oder wöchentlich (gewählte Wochentage) zu einer Uhrzeit |
 | Von Hand / Durch einen Agenten | nur auf Zuruf: Knopf „Jetzt starten“ oder `run_workflow` über die Agentenbrücke |

@@ -105,8 +105,8 @@ pub fn extraktor(f: Format) -> (&'static str, &'static str) {
         Format::Pdf => ("pdf-extract", "0.12.0+lva1"),
         Format::Docx | Format::Odt | Format::Pptx | Format::Odp => ("lva-office", "1"),
         Format::Tabelle => ("calamine", "0.32.0+lva1"),
-        Format::Text => ("lva-text", "1"),
-        Format::Html => ("lva-html", "1"),
+        Format::Text => ("lva-text", "2"),
+        Format::Html => ("lva-html", "2"),
         Format::Eml => ("lva-mail", "1"),
     }
 }
@@ -290,10 +290,78 @@ pub(crate) fn zugelassen(pfad: &std::path::Path, stdin: &mut dyn std::io::Read) 
     eltern.starts_with(&wurzel) && eltern.join(name).starts_with(&wurzel)
 }
 
+/// Liegt die geöffnete Datei unter `wurzel` (kanonisch)? Geprüft wird das Handle, nicht der Pfad: Prüfung
+/// des Pfades und Öffnen sind zwei Schritte, dazwischen kann ein übergeordnetes Verzeichnis durch eine
+/// Verknüpfung (Unix Symlink, Windows Junction) ersetzt werden; `O_NOFOLLOW` und
+/// `FILE_FLAG_OPEN_REPARSE_POINT` schützen nur die letzte Pfadkomponente (lva#508).
+///
+/// * Windows: `GetFinalPathNameByHandleW` liefert den tatsächlichen Pfad des Handles.
+/// * Unix: Der Pfad wird nach dem Öffnen aufgelöst und gilt nur, wenn die Datei dort (Gerät, Inode) die
+///   geöffnete ist und der aufgelöste Pfad unter der Wurzel liegt. Dieselbe Datei liegt dann unter der
+///   Wurzel, wohin der Pfad inzwischen auch zeigt; ein Austausch nach dem Öffnen ändert nichts am
+///   Handle. (Hartlinks nach draußen lehnt [`datei_lesen`] getrennt ab.)
+fn handle_unter_wurzel(
+    datei: &std::fs::File,
+    pfad: &std::path::Path,
+    wurzel: &std::path::Path,
+) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStringExt;
+        use std::os::windows::io::AsRawHandle;
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::Storage::FileSystem::{
+            GetFinalPathNameByHandleW, GETFINALPATHNAMEBYHANDLE_FLAGS,
+        };
+        let _ = pfad;
+        let handle = HANDLE(datei.as_raw_handle());
+        let mut puffer = vec![0u16; 1024];
+        loop {
+            // SAFETY: gültiges, offenes Dateihandle; `puffer` ist ein beschreibbarer Ausgabepuffer.
+            // Flags 0 = FILE_NAME_NORMALIZED | VOLUME_NAME_DOS (`\\?\C:\…`, wie `canonicalize`).
+            let n = unsafe {
+                GetFinalPathNameByHandleW(handle, &mut puffer, GETFINALPATHNAMEBYHANDLE_FLAGS(0))
+            } as usize;
+            if n == 0 {
+                return false;
+            }
+            if n < puffer.len() {
+                let echt = std::path::PathBuf::from(std::ffi::OsString::from_wide(&puffer[..n]));
+                return echt.starts_with(wurzel);
+            }
+            // Puffer zu klein: `n` ist die nötige Länge samt Nullzeichen.
+            puffer.resize(n + 1, 0);
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let Ok(offen) = datei.metadata() else {
+            return false;
+        };
+        let Ok(aufgeloest) = std::fs::canonicalize(pfad) else {
+            return false;
+        };
+        let Ok(dort) = std::fs::metadata(&aufgeloest) else {
+            return false;
+        };
+        dort.dev() == offen.dev() && dort.ino() == offen.ino() && aufgeloest.starts_with(wurzel)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (datei, pfad, wurzel);
+        false
+    }
+}
+
 /// Öffnet die Eingabe ohne Folgen einer Verknüpfung (Unix `O_NOFOLLOW`, Windows
-/// `FILE_FLAG_OPEN_REPARSE_POINT`), prüft am offenen Handle, dass es eine gewöhnliche Datei ist, und
-/// liest höchstens `max` Bytes.
-pub(crate) fn datei_lesen(pfad: &std::path::Path, max: u64) -> Result<Vec<u8>, ExtraktFehler> {
+/// `FILE_FLAG_OPEN_REPARSE_POINT`), prüft am offenen Handle, dass es eine gewöhnliche Datei unter
+/// `wurzel` (kanonisch) ist ([`handle_unter_wurzel`]), und liest höchstens `max` Bytes.
+pub(crate) fn datei_lesen(
+    pfad: &std::path::Path,
+    wurzel: &std::path::Path,
+    max: u64,
+) -> Result<Vec<u8>, ExtraktFehler> {
     use std::io::Read;
     let lesen = || ExtraktFehler::neu("lesen");
     let mut o = std::fs::OpenOptions::new();
@@ -313,6 +381,9 @@ pub(crate) fn datei_lesen(pfad: &std::path::Path, max: u64) -> Result<Vec<u8>, E
         o.share_mode(0x1 | 0x2 | 0x4);
     }
     let datei = o.open(pfad).map_err(|_| lesen())?;
+    if !handle_unter_wurzel(&datei, pfad, wurzel) {
+        return Err(lesen());
+    }
     let meta = datei.metadata().map_err(|_| lesen())?;
     if super::ist_umweg(&meta) || !meta.is_file() {
         return Err(lesen());
@@ -344,12 +415,17 @@ pub(crate) fn datei_lesen(pfad: &std::path::Path, max: u64) -> Result<Vec<u8>, E
 }
 
 fn ausfuehren(pfad: &std::path::Path, sha: &str, typ: &str) -> Result<Textfassung, ExtraktFehler> {
+    // Die Wurzel kommt vom Elternprozess; dieselbe, gegen die `zugelassen` den Pfad geprüft hat. Das
+    // Handle der Eingabe wird in `datei_lesen` nochmals gegen sie geprüft (lva#508).
+    let wurzel = std::env::var_os(ENV_WURZEL)
+        .and_then(|w| std::fs::canonicalize(w).ok())
+        .ok_or(ExtraktFehler::neu("lesen"))?;
     // D7: `ocr:<typ>` liest Bild-PDFs und Bilder mit der lokalen Texterkennung (nach derselben Prüfung).
     if let Some(innen) = typ.strip_prefix(super::ocr::PRAEFIX) {
         if !super::ocr::ocr_typ(innen) {
             return Err(ExtraktFehler::neu("format"));
         }
-        let bytes = datei_lesen(pfad, MAX_EINGABE)?;
+        let bytes = datei_lesen(pfad, &wurzel, MAX_EINGABE)?;
         if hex(&Sha256::digest(&bytes)) != sha.to_ascii_lowercase() {
             return Err(ExtraktFehler::neu("pruefsumme"));
         }
@@ -357,7 +433,7 @@ fn ausfuehren(pfad: &std::path::Path, sha: &str, typ: &str) -> Result<Textfassun
         return super::ocr::textfassung(pfad, &sha.to_ascii_lowercase(), innen);
     }
     let f = format_aus_typ(typ).ok_or(ExtraktFehler::neu("format"))?;
-    let bytes = datei_lesen(pfad, MAX_EINGABE)?;
+    let bytes = datei_lesen(pfad, &wurzel, MAX_EINGABE)?;
     #[cfg(test)]
     if let Some(f) = tests_kind::haken(typ) {
         return Err(f);
@@ -508,14 +584,121 @@ pub(crate) mod tests_kind {
                 std::process::exit(0);
             }
             Ok("speicher") if typ == "txt" => {
+                // Optional: eigene PID ablegen, damit ein Test nach dem Lauf prüfen kann, dass das Kind
+                // weder läuft noch als Zombie liegt (lva#462).
+                if let Some(p) = std::env::var_os("LVA_EXTRAKT_PIDDATEI") {
+                    let _ = std::fs::write(p, std::process::id().to_string());
+                }
                 let mut v: Vec<Vec<u8>> = Vec::new();
-                loop {
+                // Sicherheitsnetz für die Testmaschine: versagt die Speichergrenze des Elternprozesses,
+                // endet der Haken nach 4 GiB ohne Antwort (der Test sieht dann `extrakt.programm`
+                // statt eines Abbruchs und wird rot), statt den Rechner leerzufressen.
+                for _ in 0..64 {
                     v.push(vec![1u8; 64 * 1024 * 1024]);
                     std::hint::black_box(&v);
                 }
+                std::process::exit(0);
             }
             _ => {}
         }
         None
+    }
+}
+
+/// lva#508: Die Zugehörigkeit zur Ablage wird am geöffneten Handle geprüft, nicht am Pfad.
+#[cfg(all(test, unix))]
+mod tests_handle {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    struct Baum {
+        _d: tempfile::TempDir,
+        wurzel: std::path::PathBuf,
+        draussen: std::path::PathBuf,
+    }
+
+    fn baum() -> Baum {
+        let d = tempfile::tempdir().unwrap();
+        let wurzel = d.path().join("ablage");
+        let draussen = d.path().join("draussen");
+        std::fs::create_dir_all(wurzel.join("unter")).unwrap();
+        std::fs::create_dir_all(&draussen).unwrap();
+        std::fs::write(wurzel.join("innen.txt"), b"innen").unwrap();
+        std::fs::write(wurzel.join("unter").join("tief.txt"), b"tief").unwrap();
+        std::fs::write(draussen.join("geheim.txt"), b"geheim").unwrap();
+        let wurzel = std::fs::canonicalize(&wurzel).unwrap();
+        Baum {
+            _d: d,
+            wurzel,
+            draussen,
+        }
+    }
+
+    #[test]
+    fn dateien_unter_der_wurzel_werden_gelesen() {
+        let b = baum();
+        assert_eq!(
+            datei_lesen(&b.wurzel.join("innen.txt"), &b.wurzel, 100).unwrap(),
+            b"innen"
+        );
+        assert_eq!(
+            datei_lesen(&b.wurzel.join("unter").join("tief.txt"), &b.wurzel, 100).unwrap(),
+            b"tief"
+        );
+        // Ein Symlink im Pfad, der innerhalb der Wurzel bleibt, ist in Ordnung.
+        symlink(b.wurzel.join("unter"), b.wurzel.join("kurz")).unwrap();
+        assert_eq!(
+            datei_lesen(&b.wurzel.join("kurz").join("tief.txt"), &b.wurzel, 100).unwrap(),
+            b"tief"
+        );
+    }
+
+    /// Ein übergeordnetes Verzeichnis ist inzwischen eine Verknüpfung nach draußen: `O_NOFOLLOW` hält
+    /// nur die letzte Komponente auf, das Handle zeigt aber aus der Ablage hinaus.
+    #[test]
+    fn verknuepftes_elternverzeichnis_nach_draussen_wird_abgelehnt() {
+        let b = baum();
+        symlink(&b.draussen, b.wurzel.join("abzweig")).unwrap();
+        let pfad = b.wurzel.join("abzweig").join("geheim.txt");
+        assert_eq!(
+            datei_lesen(&pfad, &b.wurzel, 100).unwrap_err().code,
+            "lesen"
+        );
+        // Eine Ebene tiefer, mehrere Verknüpfungen.
+        symlink(
+            b.wurzel.join("abzweig"),
+            b.wurzel.join("unter").join("zwei"),
+        )
+        .unwrap();
+        let pfad = b.wurzel.join("unter").join("zwei").join("geheim.txt");
+        assert_eq!(
+            datei_lesen(&pfad, &b.wurzel, 100).unwrap_err().code,
+            "lesen"
+        );
+    }
+
+    /// Der Wettlauf selbst: Das Handle gehört zu einer Datei draußen, der Pfad zeigt (nach dem Austausch)
+    /// auf eine andere Datei innerhalb der Wurzel. Die Pfadprüfung allein bestünde, das Handle nicht.
+    #[test]
+    fn handle_draussen_pfad_drinnen_ist_nicht_zugehoerig() {
+        let b = baum();
+        let offen = std::fs::File::open(b.draussen.join("geheim.txt")).unwrap();
+        assert!(!handle_unter_wurzel(
+            &offen,
+            &b.wurzel.join("innen.txt"),
+            &b.wurzel
+        ));
+        let drinnen = std::fs::File::open(b.wurzel.join("innen.txt")).unwrap();
+        assert!(handle_unter_wurzel(
+            &drinnen,
+            &b.wurzel.join("innen.txt"),
+            &b.wurzel
+        ));
+        // Gleiche Datei, aber Wurzel ist ein anderer Ordner.
+        assert!(!handle_unter_wurzel(
+            &drinnen,
+            &b.wurzel.join("innen.txt"),
+            &b.draussen
+        ));
     }
 }

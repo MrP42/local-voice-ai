@@ -24,6 +24,7 @@
 //! - Der Index ist inkrementell: unveränderte Dokumente (gleicher Hash) werden
 //!   nicht neu zerlegt.
 
+pub mod berechtigung;
 pub mod chunk;
 pub mod index;
 pub mod model;

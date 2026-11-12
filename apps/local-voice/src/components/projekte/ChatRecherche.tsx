@@ -2,6 +2,7 @@ import "./styles";
 import React, { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Globe } from "lucide-react";
+import { Checkbox } from "@fluentui/react-components";
 import { commands, type SuiteProjekt } from "@/bindings";
 import { auspacken, fehlerText } from "@/lib/projekte";
 import { useErwartung, type HaltEnde } from "@/lib/projekteBus";
@@ -17,6 +18,10 @@ import { useRechercheStart } from "./useRechercheStart";
  * der Freigabe-Wächter zeigt dann den Dialog mit der Frage und den Suchanfragen. Das Ergebnis wird
  * über die Kennung des Halts bzw. der Recherche zugeordnet und liegt im Projektordner.
  *
+ * "Mit Projektkontext" (lva#365 P4c-3/P4c-4): Das Backend nimmt dann den Kontext des Projekts hinzu und
+ * hält vor der Suche immer an; der Freigabe-Dialog zeigt die Suchanfragen. Die Oberfläche bietet den
+ * Schalter an, die Entscheidung (Tor, Klasse, Budget, Freigabe) trifft allein das Backend.
+ *
  * Gibt zurück: `knopf` (neben "Senden"), `unten` (Wahl des Projekts, Ergebnis) und `busy`.
  * `onGestartet` (Eingabefeld leeren) kommt erst, wenn der Start angenommen wurde.
  */
@@ -28,6 +33,7 @@ export function useChatRecherche(
 ) {
   const { t } = useTranslation();
   const { start, busy } = useRechercheStart();
+  const [mitKontext, setMitKontext] = useState(false);
   const [wahl, setWahl] = useState<{
     frage: string;
     projekte: SuiteProjekt[];
@@ -59,7 +65,7 @@ export function useChatRecherche(
       setWahl(null);
       setKarte(null);
       erwartung.leeren();
-      const r = await start(text, projekt.id, meetingId);
+      const r = await start(text, projekt.id, meetingId, mitKontext);
       if (r.status === "fehler") {
         onHinweis(r.message ?? t("projekte.fehler.unbekannt"));
         return;
@@ -79,7 +85,7 @@ export function useChatRecherche(
       onHinweis(t("projekte.chat.wartet"));
     },
     // erwartung ist je Render neu, aber nur ueber stabile Refs wirksam
-    [start, meetingId, onGestartet, onHinweis, t],
+    [start, meetingId, mitKontext, onGestartet, onHinweis, t],
   );
 
   const los = useCallback(async () => {
@@ -118,6 +124,25 @@ export function useChatRecherche(
 
   const unten = (
     <>
+      {meetingId && (
+        <div className="text-xs" data-testid="chat-recherche-kontext-zeile">
+          <Checkbox
+            size="medium"
+            checked={mitKontext}
+            disabled={busy}
+            onChange={(_e, d) => setMitKontext(d.checked === true)}
+            label={t("projekte.chat.mitKontext")}
+            aria-describedby="chat-recherche-kontext-hinweis"
+            data-testid="chat-recherche-kontext"
+          />
+          <p
+            id="chat-recherche-kontext-hinweis"
+            className="m-0 ps-8 text-text/60"
+          >
+            {t("projekte.chat.mitKontextHinweis")}
+          </p>
+        </div>
+      )}
       {wahl && (
         <div
           role="group"

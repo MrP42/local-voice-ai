@@ -183,6 +183,9 @@ final class LibrarySync: ObservableObject {
             self.error = error.localizedDescription
             status = "Abgleich unterbrochen"
         }
+        // Die Ablage hängt am selben Konto: nach jedem Bibliothek-Abgleich anstoßen (in eigener Aufgabe, damit dieser Lauf nicht auf
+        // Downloads der Ablage wartet; ein laufender Ablage-Lauf nimmt den Anstoß als Folgelauf).
+        if account != nil { Task { await AblageSync.shared.run() } }
     }
 
     private func pull(_ acc: Account) async throws {
@@ -305,7 +308,8 @@ final class LibrarySync: ObservableObject {
         // Texte sind klein: bei jedem Lauf fehlende nachladen (überlebt Abbrüche).
         for book in library.books {
             if let ref = library.meta(book).files.text, !library.hasText(book) {
-                try await downloadBlob(ref, acc, to: library.textURL(book)) { _ in }
+                // Assistent (Klasse B): Mit dem Ablegen steht der Text des Buchs im Speicher (`announce`: Meldung davor).
+                try await downloadBlob(ref, acc, to: library.textURL(book), announce: true) { _ in }
             }
             // Texte weiterer Sprachfassungen (lva#344) sind ebenso klein: je Fassung unter `editions/<fassung>/`.
             // Hörbuchteile weiterer Fassungen lädt `AudioDownloads` erst bei Bedarf.
@@ -547,15 +551,16 @@ final class LibrarySync: ObservableObject {
     /// Blob Stück für Stück laden, prüfen, entschlüsseln und in `<ziel>.part`
     /// schreiben; erst vollständig wird umbenannt. Ein Abbruch setzt beim
     /// nächsten Mal am ersten fehlenden Stück wieder an. Nie die ganze Datei im Speicher.
-    private func downloadBlob(_ ref: BlobRef, _ acc: Account, to target: URL, progress: (Int) -> Void) async throws {
-        try await fetchBlob(ref, acc, to: target, bulk: wifiOnly, progress: progress)
+    private func downloadBlob(_ ref: BlobRef, _ acc: Account, to target: URL, announce: Bool = false, progress: (Int) -> Void) async throws {
+        try await fetchBlob(ref, acc, to: target, bulk: wifiOnly, announce: announce, progress: progress)
         // Vollständig aus dem Konto geladen: dort also vollständig vorhanden.
         ledger.uploaded.insert(ref.blob); saveLedger()
     }
 
     /// Der Kern von `downloadBlob` ohne das Buchführen im Bibliothek-Ledger (auch für die Dokumentenablage, deren Blobs
-    /// dort nichts verloren haben). `bulk`: Dateiverkehr unter „nur im WLAN“.
-    func fetchBlob(_ ref: BlobRef, _ acc: Account, to target: URL, bulk: Bool, progress: (Int) -> Void) async throws {
+    /// dort nichts verloren haben). `bulk`: Dateiverkehr unter „nur im WLAN“. `announce`: Das Ablegen am Ziel ändert eine Quelle
+    /// des Assistenten (Text eines Buchs, Klasse B); die Meldung kommt VOR dem Ersetzen, das Laden selbst ist nicht eingeklammert.
+    func fetchBlob(_ ref: BlobRef, _ acc: Account, to target: URL, bulk: Bool, announce: Bool = false, progress: (Int) -> Void) async throws {
         let part = target.appendingPathExtension("part")
         let fm = FileManager.default
         if !fm.fileExists(atPath: part.path) {
@@ -587,8 +592,11 @@ final class LibrarySync: ObservableObject {
         guard Self.fileSize(part) == ref.size else {
             try? fm.removeItem(at: part); throw SyncError.corrupt("Größe")
         }
-        _ = try? fm.removeItem(at: target)
-        try fm.moveItem(at: part, to: target)
+        func place() throws {
+            _ = try? fm.removeItem(at: target)
+            try fm.moveItem(at: part, to: target)
+        }
+        if announce { try AssistantContentWatch.shared.around { try place() } } else { try place() }
     }
 
     /// Cover laden (klein, meist ein Stück), als JPEG ablegen und merken,

@@ -1,12 +1,25 @@
 //! Startet den Extraktor `lva-extrakt` als eigenen Unterprozess mit Grenzen (Spec §4.1, ADR-0029 E9).
 //!
 //! * Zeit: nach [`Grenzen::zeit`] (Standard 60 s) wird der Prozess beendet.
-//! * Speicher: Unix `RLIMIT_AS` im Kind (Standard 1 GiB) und eigene Prozessgruppe, die bei Zeitablauf
-//!   oder Abbruch als Ganzes `SIGKILL` erhält; Windows Job-Objekt mit Speichergrenze
+//! * Speicher: Linux (sonstiges Unix) `RLIMIT_AS` im Kind (Standard 1 GiB) und eigene Prozessgruppe, die
+//!   bei Zeitablauf oder Abbruch als Ganzes `SIGKILL` erhält; Windows Job-Objekt mit Speichergrenze
 //!   (`process_guard::ProcessGuard`, `JOB_OBJECT_LIMIT_JOB_MEMORY`, `KILL_ON_JOB_CLOSE`), angehalten
 //!   gestartet und erst nach der Zuordnung fortgesetzt.
-//!   macOS nimmt `RLIMIT_AS` hin, setzt es aber nicht verlässlich durch; dort begrenzen Zeitgrenze und
-//!   Prozessgruppe (offen: Speicherwächter je Kind, falls nötig).
+//!   macOS: `RLIMIT_AS` ist dort nicht setzbar (lva#462). Jeder Prozess hat unter macOS rund 32 GiB
+//!   virtuellen Adressraum, und `setrlimit(RLIMIT_AS)` scheitert im Kind mit `EINVAL`, sobald das Limit
+//!   unter dieser Größe liegt (gemessen: Schwelle = virtuelle Größe des Elternprozesses; ein Limit von
+//!   1 GiB lässt sich nie setzen, der Start schlüge mit `extrakt.start` fehl). Die Grenze gilt dort
+//!   stattdessen im Elternprozess: dieselbe Warteschleife, die auf das Ende des Kindes wartet, liest alle
+//!   20 ms den Speicherbedarf des Kindes (`proc_pid_rusage`, größerer Wert aus physischem Fußabdruck und
+//!   resident size) und beendet bei Überschreitung die Prozessgruppe (`SIGKILL`, Fehlercode wie beim
+//!   Absturz am Limit: `extrakt.abbruch`). Kein eigener Thread: der Wächter kann das Kind nicht überleben
+//!   und nie eine schon geerntete, womöglich neu vergebene PID treffen. Lässt sich der Speicherbedarf des
+//!   lebenden Kindes mehrfach hintereinander nicht lesen, endet der Lauf geschlossen mit
+//!   `extrakt.schutz` (wie unter Windows, wenn das Job-Objekt fehlt). Rest-Risiko: gemessen wird nur das
+//!   Kind selbst, nicht dessen Enkel (der Extraktor startet keine; die Zeitgrenze fängt den Rest ab).
+//!   Weiche Grenze: anders als `RLIMIT_AS` greift der Wächter erst bei der nächsten Messung; ein sehr
+//!   schnell belegendes Kind kann die Grenze um Belegungsrate × 20 ms überschreiten (bis einige hundert
+//!   MiB). Außerdem misst macOS physischen Speicher, Linux virtuellen; die 1-GiB-Grenze ist am Mac also laxer.
 //! * Kein Netz: der Extraktor enthält keinen Netzcode und bekommt nur den Pfad der einen Fassung. Eine
 //!   Netzsperre des Betriebssystems (Namensräume, Firewall-Regel) setzt diese Stufe nicht.
 //! * Ausgabe: stdout höchstens [`MAX_AUSGABE`] (mehr → `extrakt.zu_gross`, der Prozess wird sofort
@@ -14,6 +27,14 @@
 //! * Aufruf: zufälliges Kennzeichen in der Umgebung und als erste Zeile auf stdin, dazu der Ablageordner
 //!   ([`super::extrakt::zugelassen`]); ohne beides antwortet der Extraktor nicht.
 //! * Jeder Ausgang nach dem Start beendet und erntet das Kind (samt Prozessgruppe).
+//! * Prozessbaum vor dem Leser-Join (lva#508): Startet das Kind einen Enkel, der stdout erbt, und endet
+//!   selbst, bekäme der Leser nie EOF. Deshalb wird der ganze Baum beendet, bevor die Ausgabe eingesammelt
+//!   wird: Unix `SIGKILL` an die Prozessgruppe, solange der Anführer noch als Zombie die Gruppenkennung
+//!   hält (`waitid(WNOWAIT)`, erst danach Ernte; so trifft das Signal nie eine neu vergebene Kennung),
+//!   Windows Schließen des Job-Objekts (`KILL_ON_JOB_CLOSE`). Die Ausgabe wird dann mit Frist
+//!   ([`LESER_FRIST`]) eingesammelt; ein Prozess, der sich dem Baum entzieht (Unix `setsid`, Windows
+//!   Breakaway) und stdout weiter hält, lässt den Lauf nach der Frist mit `extrakt.programm` enden. Der
+//!   Leserthread bleibt dann abgehängt zurück (er endet mit dem letzten Halter von stdout).
 //!
 //! Programm: `lva-extrakt[.exe]` neben dem App-Programm, sonst das App-Programm selbst mit
 //! [`super::extrakt::SCHALTER`] (gebündelte App ohne eigenes Hilfsprogramm).
@@ -27,6 +48,23 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 pub const MAX_AUSGABE: u64 = 96 * 1024 * 1024;
+
+/// So lange wartet der Lauf nach dem Ende des Prozessbaums auf die restliche Ausgabe des Lesers.
+pub const LESER_FRIST: Duration = Duration::from_secs(5);
+
+#[cfg(test)]
+thread_local! {
+    /// Kürzere Frist für Tests (je Thread, damit parallele Tests sich nicht stören).
+    static LESER_FRIST_TEST: std::cell::Cell<Option<Duration>> = const { std::cell::Cell::new(None) };
+}
+
+fn leser_frist() -> Duration {
+    #[cfg(test)]
+    if let Some(f) = LESER_FRIST_TEST.with(|c| c.get()) {
+        return f;
+    }
+    LESER_FRIST
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Grenzen {
@@ -121,17 +159,22 @@ pub fn ausfuehren(
     {
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
+        #[cfg(not(target_os = "macos"))]
         let bytes = grenzen.speicher_mb.saturating_mul(1024 * 1024);
         let sekunden = grenzen.zeit.as_secs().saturating_add(5);
         // SAFETY: zwischen fork und exec nur async-signal-sichere Aufrufe (setrlimit), keine Allokation.
         unsafe {
             cmd.pre_exec(move || {
-                let as_lim = libc::rlimit {
-                    rlim_cur: bytes as libc::rlim_t,
-                    rlim_max: bytes as libc::rlim_t,
-                };
-                if libc::setrlimit(libc::RLIMIT_AS, &as_lim) != 0 {
-                    return Err(std::io::Error::last_os_error());
+                // macOS: kein `RLIMIT_AS` (EINVAL, siehe Kopf der Datei); dort liest der Elternprozess.
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let as_lim = libc::rlimit {
+                        rlim_cur: bytes as libc::rlim_t,
+                        rlim_max: bytes as libc::rlim_t,
+                    };
+                    if libc::setrlimit(libc::RLIMIT_AS, &as_lim) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
                 }
                 // Rückhalt zur Zeitgrenze: CPU-Zeit (der Elternprozess beendet ohnehin nach `zeit`).
                 let cpu = libc::rlimit {
@@ -150,8 +193,9 @@ pub fn ausfuehren(
         }
     }
     let mut child = cmd.spawn().map_err(|_| "extrakt.start".to_string())?;
+    let mut baum = Baum::default();
     #[cfg(windows)]
-    let _job = {
+    {
         let job = crate::process_guard::ProcessGuard::attach(
             &child,
             Some(grenzen.speicher_mb),
@@ -166,11 +210,11 @@ pub fn ausfuehren(
             let _ = child.wait();
             return Err("extrakt.schutz".into());
         }
-        job
-    };
+        baum.job = job;
+    }
     // Ab hier beendet und erntet jeder Ausgang das Kind (auch ein früher Fehler).
     let (Some(mut stdin), Some(mut stdout)) = (child.stdin.take(), child.stdout.take()) else {
-        beenden(&mut child);
+        beenden(&mut child, &mut baum);
         return Err("extrakt.start".into());
     };
     // Kennzeichen als erste Zeile; danach stdin schließen (65 Bytes passen in jeden Pipe-Puffer).
@@ -179,41 +223,64 @@ pub fn ausfuehren(
         .and_then(|_| stdin.flush());
     drop(stdin);
     if geschrieben.is_err() {
-        beenden(&mut child);
+        beenden(&mut child, &mut baum);
         return Err("extrakt.start".into());
     }
     let zu_viel = std::sync::Arc::new(AtomicBool::new(false));
     let zu_viel_leser = zu_viel.clone();
+    let (sender, empfaenger) = std::sync::mpsc::channel::<(bool, Vec<u8>)>();
     let leser = std::thread::spawn(move || {
         let mut buf = Vec::new();
         let r = (&mut stdout).take(MAX_AUSGABE + 1).read_to_end(&mut buf);
-        if buf.len() as u64 > MAX_AUSGABE {
+        let ergebnis = if buf.len() as u64 > MAX_AUSGABE {
             // Sofort melden; stdout wird mit dem Ende des Threads geschlossen, das Kind nicht abgewartet.
             zu_viel_leser.store(true, Ordering::Relaxed);
-            return (false, Vec::new());
-        }
-        (r.is_ok(), buf)
+            (false, Vec::new())
+        } else {
+            (r.is_ok(), buf)
+        };
+        let _ = sender.send(ergebnis);
     });
     let ende = Instant::now() + grenzen.zeit;
+    #[cfg(target_os = "macos")]
+    let mut waechter = mac_waechter::Waechter::neu(grenzen.speicher_mb);
     let status = loop {
         if zu_viel.load(Ordering::Relaxed) {
-            beenden(&mut child);
-            let _ = leser.join();
+            beenden(&mut child, &mut baum);
+            let _ = ausgabe_einsammeln(&empfaenger, leser);
             return Err("extrakt.zu_gross".into());
         }
-        match child.try_wait() {
-            Ok(Some(s)) => break s,
+        match kind_pruefen(&mut child) {
+            Ok(Some(s)) => {
+                // Windows: Job schließen beendet den restlichen Baum (`KILL_ON_JOB_CLOSE`).
+                baum.nach_ernte();
+                break s;
+            }
             Ok(None) => {}
             Err(_) => {
-                beenden(&mut child);
-                let _ = leser.join();
+                beenden(&mut child, &mut baum);
+                let _ = ausgabe_einsammeln(&empfaenger, leser);
                 return Err("extrakt.programm".into());
+            }
+        }
+        // macOS: Speichergrenze im Elternprozess. Das Kind lebt hier noch und ist nicht geerntet
+        // (`try_wait` eben `None`), seine PID ist also nicht neu vergeben.
+        #[cfg(target_os = "macos")]
+        match waechter.pruefen(child.id()) {
+            mac_waechter::Urteil::Ok => {}
+            urteil => {
+                beenden(&mut child, &mut baum);
+                let _ = ausgabe_einsammeln(&empfaenger, leser);
+                return Err(match urteil {
+                    mac_waechter::Urteil::Zuviel => "extrakt.abbruch".into(),
+                    _ => "extrakt.schutz".into(),
+                });
             }
         }
         let abgebrochen = abbrechen.load(Ordering::Relaxed);
         if abgebrochen || Instant::now() >= ende {
-            beenden(&mut child);
-            let _ = leser.join();
+            beenden(&mut child, &mut baum);
+            let _ = ausgabe_einsammeln(&empfaenger, leser);
             return Err(if abgebrochen {
                 "extrakt.abgebrochen".into()
             } else {
@@ -222,8 +289,12 @@ pub fn ausfuehren(
         }
         std::thread::sleep(Duration::from_millis(20));
     };
-    // Das Kind ist beendet und geerntet (kein Signal mehr an seine Kennung: sie kann neu vergeben sein).
-    let (ok, ausgabe) = leser.join().unwrap_or((false, Vec::new()));
+    // Das Kind ist beendet und geerntet, sein Prozessbaum beendet (kein Signal mehr an seine Kennung: sie
+    // kann neu vergeben sein). Die Ausgabe kommt mit Frist: hält ein dem Baum entkommener Prozess stdout,
+    // endet der Lauf, statt hier zu hängen.
+    let Some((ok, ausgabe)) = ausgabe_einsammeln(&empfaenger, leser) else {
+        return Err("extrakt.programm".into());
+    };
     if zu_viel.load(Ordering::Relaxed) || ausgabe.len() as u64 > MAX_AUSGABE {
         return Err("extrakt.zu_gross".into());
     }
@@ -238,6 +309,86 @@ pub fn ausfuehren(
         }
         _ => Err(unklarer_ausgang(&status).into()),
     }
+}
+
+/// Sammelt die Ausgabe des Lesers mit Frist ein. `None`: der Leser ist nach [`leser_frist`] nicht
+/// fertig (stdout hält noch ein Prozess); der Thread bleibt abgehängt zurück.
+fn ausgabe_einsammeln(
+    empfaenger: &std::sync::mpsc::Receiver<(bool, Vec<u8>)>,
+    leser: std::thread::JoinHandle<()>,
+) -> Option<(bool, Vec<u8>)> {
+    let r = empfaenger.recv_timeout(leser_frist()).ok()?;
+    // Der Leser hat gesendet und endet gleich; Join nur zum Aufräumen.
+    let _ = leser.join();
+    Some(r)
+}
+
+/// Prozessbaum des Kindes. Windows: das Job-Objekt (Schließen beendet alle Prozesse darin). Unix: die
+/// Prozessgruppe, deren Anführer das Kind ist (`process_group(0)`), braucht keinen Halter.
+#[derive(Default)]
+struct Baum {
+    #[cfg(windows)]
+    job: Option<crate::process_guard::ProcessGuard>,
+}
+
+impl Baum {
+    /// Nach der Ernte des Kindes: Windows beendet den restlichen Baum durch Schließen des Jobs. Unix
+    /// hat das Signal vor der Ernte gesendet.
+    fn nach_ernte(&mut self) {
+        #[cfg(windows)]
+        drop(self.job.take());
+    }
+}
+
+/// `SIGKILL` an die Prozessgruppe des Kindes. Nur aufrufen, solange der Anführer nicht geerntet ist
+/// (lebend oder Zombie): dann ist die Gruppenkennung nicht neu vergeben.
+#[cfg(unix)]
+fn gruppe_beenden(pid: u32) {
+    // SAFETY: kill mit negativer PID adressiert nur die eigene Gruppe des Kindes.
+    unsafe {
+        libc::kill(-(pid as libc::pid_t), libc::SIGKILL);
+    }
+}
+
+/// Ist das Kind beendet, aber noch nicht geerntet (`waitid` mit `WNOWAIT`, erntet nicht)?
+#[cfg(unix)]
+fn beendet_ungeerntet(pid: u32) -> std::io::Result<bool> {
+    // SAFETY: `info` ist nullinitialisiert und groß genug; `waitid` schreibt nur dorthin.
+    let (rc, beendet) = unsafe {
+        let mut info: libc::siginfo_t = std::mem::zeroed();
+        let rc = libc::waitid(
+            libc::P_PID,
+            pid as libc::id_t,
+            &mut info,
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        );
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let kennung = info.si_pid();
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        let kennung = info.si_pid;
+        (rc, kennung != 0)
+    };
+    if rc != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(beendet)
+}
+
+/// Prüft, ob das Kind beendet ist, und erntet es dann. Unix: Geerntet wird nie ohne vorherigen
+/// `SIGKILL` an die Gruppe. `waitid` mit `WNOWAIT` erntet nicht (die Gruppenkennung bleibt gehalten);
+/// meldet es „beendet“, geht das Signal an die ganze Gruppe (Enkel mit geerbtem stdout sterben), erst
+/// danach `try_wait`. Ein Kind, das zwischen zwei Prüfungen endet, wird so nie ohne Gruppen-Kill geerntet.
+fn kind_pruefen(
+    child: &mut std::process::Child,
+) -> std::io::Result<Option<std::process::ExitStatus>> {
+    #[cfg(unix)]
+    {
+        if !beendet_ungeerntet(child.id())? {
+            return Ok(None);
+        }
+        gruppe_beenden(child.id());
+    }
+    child.try_wait()
 }
 
 /// Fehlercode für ein Ende ohne gültige Antwort. Endgültig (`extrakt.abbruch`, Giftdatei) nur bei
@@ -292,19 +443,376 @@ fn antwort_lesen(b: &[u8]) -> Option<Antwort> {
     // Im Testlauf schreibt der Test-Harness des Kindes eine Kopfzeile vor das JSON.
     #[cfg(test)]
     let b = &b[b.iter().position(|&x| x == b'{')?..];
-    let mut it = serde_json::Deserializer::from_slice(b).into_iter::<Antwort>();
-    it.next()?.ok()
+    // Genau ein JSON-Dokument: angehängte Daten (zweites JSON, Müll) machen die Antwort ungültig
+    // (lva#508); nur Leerraum danach ist erlaubt.
+    use serde::Deserialize;
+    let mut de = serde_json::Deserializer::from_slice(b);
+    let antwort = Antwort::deserialize(&mut de).ok()?;
+    de.end().ok()?;
+    Some(antwort)
 }
 
-fn beenden(child: &mut std::process::Child) {
-    #[cfg(unix)]
-    {
-        // Ganze Prozessgruppe (das Kind ist deren Anführer, `process_group(0)`).
-        // SAFETY: kill mit negativer PID adressiert nur die eigene Gruppe des Kindes.
-        unsafe {
-            libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+/// Speicherwächter für macOS (lva#462), siehe Kopf der Datei.
+#[cfg(target_os = "macos")]
+mod mac_waechter {
+    /// So viele aufeinanderfolgende Fehlmessungen bei lebendem Kind (je ein Durchlauf der Warteschleife,
+    /// rund 20 ms) gelten als „nicht messbar“; erst dann bricht der Lauf geschlossen ab. Eine einzelne
+    /// Fehlmessung ist unschädlich (z. B. vorübergehender Fehler der API); ein zwischen `try_wait` und
+    /// Messung beendetes Kind ist als Zombie weiter messbar (`proc_pid_rusage` liefert dann den Endstand).
+    pub(super) const MAX_FEHLMESSUNGEN: u32 = 10;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(super) enum Urteil {
+        Ok,
+        /// Speicherbedarf über der Grenze: Prozessgruppe beenden, `extrakt.abbruch`.
+        Zuviel,
+        /// Speicherbedarf des lebenden Kindes dauerhaft nicht lesbar: geschlossen abbrechen,
+        /// `extrakt.schutz` (vorübergehend, wiederholbar).
+        Unmessbar,
+    }
+
+    pub(super) struct Waechter {
+        grenze: u64,
+        fehlmessungen: u32,
+    }
+
+    impl Waechter {
+        pub(super) fn neu(speicher_mb: u64) -> Self {
+            Self {
+                grenze: speicher_mb.saturating_mul(1024 * 1024),
+                fehlmessungen: 0,
+            }
+        }
+
+        /// Misst das (nicht geerntete, lebende) Kind und urteilt. Keine Allokation.
+        pub(super) fn pruefen(&mut self, pid: u32) -> Urteil {
+            urteil(belegt(pid), self.grenze, &mut self.fehlmessungen)
         }
     }
+
+    /// Entscheidung aus einer Messung; rein, damit sie ohne Prozess prüfbar ist.
+    pub(super) fn urteil(messung: Option<u64>, grenze: u64, fehlmessungen: &mut u32) -> Urteil {
+        match messung {
+            Some(bytes) => {
+                *fehlmessungen = 0;
+                if bytes > grenze {
+                    Urteil::Zuviel
+                } else {
+                    Urteil::Ok
+                }
+            }
+            None => {
+                *fehlmessungen = fehlmessungen.saturating_add(1);
+                if *fehlmessungen >= MAX_FEHLMESSUNGEN {
+                    Urteil::Unmessbar
+                } else {
+                    Urteil::Ok
+                }
+            }
+        }
+    }
+
+    /// Speicherbedarf des Prozesses in Bytes: der größere Wert aus physischem Fußabdruck (zählt auch
+    /// komprimierte Seiten, die `resident size` nicht mehr enthält) und `resident size`.
+    /// `None`, wenn der Prozess nicht (mehr) lesbar ist (beendet, geerntet, keine Berechtigung).
+    pub(super) fn belegt(pid: u32) -> Option<u64> {
+        let pid = libc::c_int::try_from(pid).ok()?;
+        // SAFETY: `proc_pid_rusage` füllt höchstens `size_of::<rusage_info_v2>()` Bytes des Puffers, den
+        // wir mit passender Größe und Ausrichtung bereitstellen; ein Fehler wird am Rückgabewert erkannt
+        // und der Puffer dann nicht gelesen.
+        let info = unsafe {
+            let mut info = std::mem::MaybeUninit::<libc::rusage_info_v2>::zeroed();
+            let rc = libc::proc_pid_rusage(
+                pid,
+                libc::RUSAGE_INFO_V2,
+                info.as_mut_ptr() as *mut libc::rusage_info_t,
+            );
+            if rc != 0 {
+                return None;
+            }
+            info.assume_init()
+        };
+        Some(info.ri_phys_footprint.max(info.ri_resident_size))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        const MB: u64 = 1024 * 1024;
+
+        #[test]
+        fn urteil_vergleicht_mit_der_grenze_und_setzt_fehlmessungen_zurueck() {
+            let mut f = 5;
+            assert_eq!(urteil(Some(100 * MB), 100 * MB, &mut f), Urteil::Ok);
+            assert_eq!(f, 0);
+            assert_eq!(urteil(Some(100 * MB + 1), 100 * MB, &mut f), Urteil::Zuviel);
+            assert_eq!(urteil(Some(0), 0, &mut f), Urteil::Ok);
+            assert_eq!(urteil(Some(1), 0, &mut f), Urteil::Zuviel);
+        }
+
+        #[test]
+        fn einzelne_fehlmessungen_sind_normal_erst_die_serie_bricht_ab() {
+            let mut f = 0;
+            for i in 1..MAX_FEHLMESSUNGEN {
+                assert_eq!(urteil(None, MB, &mut f), Urteil::Ok, "{i}");
+            }
+            assert_eq!(urteil(None, MB, &mut f), Urteil::Unmessbar);
+            assert_eq!(urteil(None, MB, &mut f), Urteil::Unmessbar);
+            // Eine gelungene Messung dazwischen beginnt die Zählung neu.
+            let mut f = MAX_FEHLMESSUNGEN - 1;
+            assert_eq!(urteil(Some(0), MB, &mut f), Urteil::Ok);
+            assert_eq!(urteil(None, MB, &mut f), Urteil::Ok);
+            // Kein Überlauf der Zählung.
+            let mut f = u32::MAX;
+            assert_eq!(urteil(None, MB, &mut f), Urteil::Unmessbar);
+        }
+
+        #[test]
+        fn messung_folgt_dem_speicher_eines_kindes_geerntete_pid_ist_none() {
+            let b = belegt(std::process::id()).expect("eigener Prozess muss messbar sein");
+            assert!(b > MB && b < (1 << 40), "{b}");
+            // Ein Kind mit rund 120 MiB berührtem Speicher (je Prozess eigen, daher unabhängig von
+            // parallel laufenden Tests): die Messung muss das sehen.
+            let mut k = std::process::Command::new("/usr/bin/perl")
+                .args(["-e", "my $x = 'a' x (120 * 1024 * 1024); sleep 30;"])
+                .spawn()
+                .unwrap();
+            let pid = k.id();
+            let start = std::time::Instant::now();
+            let mut gemessen = 0;
+            while gemessen <= 100 * MB && start.elapsed() < std::time::Duration::from_secs(20) {
+                gemessen = belegt(pid).unwrap_or(0);
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            let _ = k.kill();
+            k.wait().unwrap();
+            assert!(gemessen > 100 * MB, "gemessen: {gemessen}");
+            // Geerntetes Kind: nicht mehr lesbar (None), kein Absturz, kein Fremdprozess.
+            assert_eq!(belegt(pid), None);
+            // Ungültige PIDs.
+            assert_eq!(belegt(0x7fff_fff0), None);
+            assert_eq!(belegt(u32::MAX), None);
+        }
+
+        #[test]
+        fn waechter_urteilt_ueber_ein_lebendes_kind() {
+            let mut k = std::process::Command::new("/bin/sleep")
+                .arg("5")
+                .spawn()
+                .unwrap();
+            let mut w = Waechter::neu(1024);
+            assert_eq!(w.pruefen(k.id()), Urteil::Ok);
+            let mut klein = Waechter::neu(0);
+            assert_eq!(klein.pruefen(k.id()), Urteil::Zuviel);
+            let _ = k.kill();
+            let _ = k.wait();
+        }
+    }
+}
+
+/// Beendet den ganzen Prozessbaum (noch vor der Ernte) und erntet das Kind.
+fn beenden(child: &mut std::process::Child, baum: &mut Baum) {
+    #[cfg(unix)]
+    {
+        let _ = &baum;
+        gruppe_beenden(child.id());
+    }
+    // Windows: Job schließen, der Rest des Baums stirbt mit (`KILL_ON_JOB_CLOSE`).
+    baum.nach_ernte();
     let _ = child.kill();
     let _ = child.wait();
+}
+
+#[cfg(all(test, unix))]
+mod tests_508 {
+    use super::*;
+
+    /// `sh -c <skript>`: Ersatz für den Extraktor. Das Skript bekommt `PIDDATEI` in der Umgebung.
+    fn shell(skript: &str, piddatei: &Path) -> Programm {
+        Programm {
+            pfad: PathBuf::from("/bin/sh"),
+            vorweg: vec!["-c".into(), skript.into(), "sh".into()],
+            umgebung: vec![("PIDDATEI".into(), piddatei.into())],
+        }
+    }
+
+    fn lauf(prog: &Programm, wurzel: &Path) -> Result<Textfassung, String> {
+        ausfuehren(
+            prog,
+            wurzel,
+            &wurzel.join("x.txt"),
+            &"0".repeat(64),
+            "txt",
+            Grenzen {
+                zeit: Duration::from_secs(20),
+                speicher_mb: 1024,
+            },
+            &AtomicBool::new(false),
+        )
+    }
+
+    fn pid_lesen(datei: &Path) -> libc::pid_t {
+        // Das Skript schreibt die Kennung, bevor es endet.
+        std::fs::read_to_string(datei)
+            .expect("Skript hat seine Kennung nicht abgelegt")
+            .trim()
+            .parse()
+            .unwrap()
+    }
+
+    /// Lebt der Prozess (ein Zombie zählt nicht: er ist beendet, nur nicht geerntet)?
+    fn lebt(pid: libc::pid_t) -> bool {
+        match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+            Ok(s) => s
+                .rsplit(')')
+                .next()
+                .and_then(|r| r.trim().chars().next())
+                .is_some_and(|z| z != 'Z'),
+            // Kein /proc (macOS): `kill(pid, 0)`.
+            Err(_) => unsafe { libc::kill(pid, 0) == 0 },
+        }
+    }
+
+    /// Codex-Befund 1: Wird das Kind erst nach dem Ende gesehen, stirbt die Gruppe vor der Ernte
+    /// (kein Fenster zwischen „lebt“ und Ernte). Lebend: kein Signal, keine Ernte.
+    #[test]
+    fn kind_pruefen_beendet_die_gruppe_vor_der_ernte() {
+        let d = tempfile::tempdir().unwrap();
+        let pid = d.path().join("enkel.pid");
+        let prog = shell("sleep 30 & echo $! > \"$PIDDATEI\"; exit 0", &pid);
+        let mut cmd = std::process::Command::new(&prog.pfad);
+        cmd.args(&prog.vorweg)
+            .env("PIDDATEI", &pid)
+            .stdout(std::process::Stdio::null());
+        std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+        let mut kind = cmd.spawn().unwrap();
+        let ende = Instant::now() + Duration::from_secs(10);
+        let status = loop {
+            if let Some(s) = kind_pruefen(&mut kind).unwrap() {
+                break s;
+            }
+            assert!(Instant::now() < ende, "Kind endet nicht");
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        assert!(status.success());
+        let enkel = pid_lesen(&pid);
+        // Das Signal ging vor der Ernte raus; der Enkel braucht nur noch einen Augenblick zum Sterben.
+        let frist = Instant::now() + Duration::from_secs(5);
+        while lebt(enkel) && Instant::now() < frist {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let lebt_noch = lebt(enkel);
+        if lebt_noch {
+            unsafe { libc::kill(enkel, libc::SIGKILL) };
+        }
+        assert!(!lebt_noch, "Enkel {enkel} überlebt die Ernte");
+
+        let mut lang = std::process::Command::new("/bin/sh");
+        lang.args(["-c", "sleep 30"]);
+        std::os::unix::process::CommandExt::process_group(&mut lang, 0);
+        let mut lang = lang.spawn().unwrap();
+        assert!(kind_pruefen(&mut lang).unwrap().is_none());
+        assert!(
+            lebt(lang.id() as libc::pid_t),
+            "lebendes Kind darf nicht beendet werden"
+        );
+        gruppe_beenden(lang.id());
+        let _ = lang.wait();
+    }
+
+    /// lva#508: Das Kind startet einen Enkel mit geerbtem stdout und endet. Der Leser bekäme erst mit
+    /// dem Enkel (30 s) EOF; der Prozessbaum wird vor dem Leser-Join beendet.
+    #[test]
+    fn enkel_mit_geerbtem_stdout_haelt_den_lauf_nicht_auf() {
+        let d = tempfile::tempdir().unwrap();
+        let pid = d.path().join("enkel.pid");
+        let prog = shell("sleep 30 & echo $! > \"$PIDDATEI\"; exit 0", &pid);
+        let start = Instant::now();
+        let r = lauf(&prog, d.path());
+        let dauer = start.elapsed();
+        let enkel = pid_lesen(&pid);
+        if lebt(enkel) {
+            unsafe { libc::kill(enkel, libc::SIGKILL) };
+            panic!("Enkel {enkel} lebt noch");
+        }
+        // Keine gültige Antwort: vorübergehender Fehler, aber schnell.
+        assert_eq!(r.unwrap_err(), "extrakt.programm");
+        assert!(dauer < Duration::from_secs(10), "{dauer:?}");
+    }
+
+    /// Auch bei Zeitgrenze und Abbruch sterben Enkel mit (Prozessgruppe), der Leser wird fristgerecht
+    /// eingesammelt.
+    #[test]
+    fn zeitgrenze_beendet_auch_enkel_und_haengt_nicht() {
+        let d = tempfile::tempdir().unwrap();
+        let pid = d.path().join("enkel.pid");
+        let prog = shell("sleep 30 & echo $! > \"$PIDDATEI\"; sleep 30", &pid);
+        let start = Instant::now();
+        let r = ausfuehren(
+            &prog,
+            d.path(),
+            &d.path().join("x.txt"),
+            &"0".repeat(64),
+            "txt",
+            Grenzen {
+                zeit: Duration::from_secs(1),
+                speicher_mb: 1024,
+            },
+            &AtomicBool::new(false),
+        );
+        let dauer = start.elapsed();
+        let enkel = pid_lesen(&pid);
+        if lebt(enkel) {
+            unsafe { libc::kill(enkel, libc::SIGKILL) };
+            panic!("Enkel {enkel} lebt noch");
+        }
+        assert_eq!(r.unwrap_err(), "extrakt.zeit");
+        assert!(dauer < Duration::from_secs(10), "{dauer:?}");
+    }
+
+    /// Ein Prozess, der dem Baum entkommt (`setsid`) und stdout hält, lässt den Lauf nach der Frist
+    /// enden statt ewig zu warten.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn entkommener_halter_von_stdout_endet_mit_frist() {
+        let d = tempfile::tempdir().unwrap();
+        let pid = d.path().join("halter.pid");
+        let prog = shell("setsid sleep 30 & echo $! > \"$PIDDATEI\"; exit 0", &pid);
+        LESER_FRIST_TEST.with(|c| c.set(Some(Duration::from_millis(500))));
+        let start = Instant::now();
+        let r = lauf(&prog, d.path());
+        let dauer = start.elapsed();
+        LESER_FRIST_TEST.with(|c| c.set(None));
+        let halter = pid_lesen(&pid);
+        unsafe { libc::kill(halter, libc::SIGKILL) };
+        assert_eq!(r.unwrap_err(), "extrakt.programm");
+        assert!(dauer < Duration::from_secs(10), "{dauer:?}");
+    }
+
+    #[test]
+    fn antwort_mit_angehaengten_daten_ist_ungueltig() {
+        let ok = |b: &[u8]| matches!(antwort_lesen(b), Some(Antwort::Fehler { .. }));
+        assert!(ok(br#"{"fehler":"zeit"}"#));
+        assert!(ok(b"{\"fehler\":\"zeit\"}\n \t\r\n"));
+        assert!(!ok(br#"{"fehler":"zeit"}{"fehler":"x"}"#));
+        assert!(!ok(br#"{"fehler":"zeit"} muell"#));
+        assert!(!ok(br#"{"fehler":"zeit"}1"#));
+        assert!(!ok(br#"{"fehler":"zeit"#));
+    }
+
+    #[test]
+    fn stdout_mit_zweitem_json_wird_im_lauf_abgewiesen() {
+        let d = tempfile::tempdir().unwrap();
+        let pid = d.path().join("unbenutzt.pid");
+        let sauber = shell(r#"printf '{"fehler":"zeit"}'; exit 2"#, &pid);
+        assert_eq!(lauf(&sauber, d.path()).unwrap_err(), "extrakt.zeit");
+        let mit_anhang = shell(
+            r#"printf '{"fehler":"zeit"}{"fehler":"abbruch"}'; exit 2"#,
+            &pid,
+        );
+        assert_eq!(lauf(&mit_anhang, d.path()).unwrap_err(), "extrakt.programm");
+        let mit_muell = shell(r#"printf '{"fehler":"zeit"}garbage'; exit 2"#, &pid);
+        assert_eq!(lauf(&mit_muell, d.path()).unwrap_err(), "extrakt.programm");
+    }
 }

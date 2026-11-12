@@ -1186,6 +1186,48 @@ fn momentkopie_prueft_am_handle_und_in_jedem_pfadglied_auf_nur_online() {
 }
 
 #[test]
+fn momentkopie_zweistufiges_oeffnen_ordnet_online_und_tausch_den_codes_zu() {
+    let _n = naht_sauber();
+    let e = env();
+    let datei = e.schreiben(
+        "Akte/brief.txt",
+        format!("vertraulich {KONTROLLE}").as_bytes(),
+    );
+    e.verknuepfen();
+    let auf = verknuepft::auftraege(&e.a, None).unwrap().remove(0);
+    // Stufe 1 (nur Attribute) sieht eine hydrierte Datei, der Lesezugriff (Stufe 2) trifft sie schon
+    // wieder nur online: nichts wird kopiert, Code „cloud“.
+    eintrag::naht::handle_folge(
+        &datei,
+        &[
+            (0x420, 0x9000_001A),
+            (0x420, 0x9000_001A),
+            (NUR_ONLINE_DATEI, ONEDRIVE_TAG),
+        ],
+    );
+    assert_eq!(
+        verknuepft::momentkopie(&e.a, &auf).unwrap_err(),
+        "verknuepft.cloud"
+    );
+    assert!(!e.a.dir().join("verknuepft").join("zwischen").exists());
+    eintrag::naht::leeren();
+    // Zwei verschiedene Kennungen zwischen den Stufen: die Datei wurde getauscht, Code „geaendert“.
+    eintrag::naht::id_folge(&datei, &[(1, 1), (1, 2)]);
+    assert_eq!(
+        verknuepft::momentkopie(&e.a, &auf).unwrap_err(),
+        "verknuepft.geaendert"
+    );
+    assert!(!e.a.dir().join("verknuepft").join("zwischen").exists());
+    eintrag::naht::leeren();
+    // Gleiche Kennung: unauffaellig, wird gelesen.
+    eintrag::naht::id_folge(&datei, &[(1, 1), (1, 1)]);
+    let (kopie, _sha) = verknuepft::momentkopie(&e.a, &auf).unwrap();
+    assert!(kopie.is_file());
+    fs::remove_file(&kopie).unwrap();
+    eintrag::naht::leeren();
+}
+
+#[test]
 fn hydrierte_datei_wird_beim_naechsten_lauf_aufgenommen_und_online_wieder_ausgeblendet() {
     let _n = naht_sauber();
     let e = env();
@@ -1347,6 +1389,150 @@ fn altbestand_ohne_nur_online_feld_wird_gelesen_und_vorwaerts_uebernommen() {
     assert!(!verknuepft::abtasten(&e.a, &id).unwrap());
     let roh: serde_json::Value = serde_json::from_slice(&fs::read(&p).unwrap()).unwrap();
     assert_eq!(roh["nur_online_ordner"], 0);
+}
+
+// ---------------------------------------------------------------------------
+// D7-Rest: Unterordnerbaum der verknüpften Ordner (nur lesen, nur Pfade)
+// ---------------------------------------------------------------------------
+
+fn unterordner(e: &Env, id: &str) -> Vec<(String, bool)> {
+    let s = e.a.ansicht().unwrap();
+    s.verknuepft
+        .iter()
+        .find(|v| v.ordner.id == id)
+        .unwrap()
+        .unterordner
+        .iter()
+        .map(|u| (u.pfad.clone(), u.nur_online))
+        .collect()
+}
+
+fn paar(p: &str, online: bool) -> (String, bool) {
+    (p.to_string(), online)
+}
+
+#[test]
+fn unterordner_stehen_im_bestand_und_in_der_sicht_auch_leere() {
+    let _n = naht_sauber();
+    let e = env();
+    e.schreiben("a.txt", b"a");
+    e.schreiben("Akte/Angebote/x.txt", b"x");
+    fs::create_dir_all(e.quelle.join("Leer")).unwrap();
+    fs::create_dir_all(e.quelle.join("Akte/Protokolle")).unwrap();
+    // Ausgeschlossene Ordner gehören nicht in den Baum.
+    fs::create_dir_all(e.quelle.join(".git")).unwrap();
+    fs::create_dir_all(e.quelle.join("$RECYCLE.BIN")).unwrap();
+    let id = e.verknuepfen();
+    let b = verknuepft::bestand(e.a.dir(), &id);
+    let ordner: Vec<&str> = b.ordner.iter().map(String::as_str).collect();
+    assert_eq!(ordner, ["Akte", "Akte/Angebote", "Akte/Protokolle", "Leer"]);
+    assert!(b.online_ordner.is_empty());
+    assert_eq!(
+        unterordner(&e, &id),
+        vec![
+            paar("Akte", false),
+            paar("Akte/Angebote", false),
+            paar("Akte/Protokolle", false),
+            paar("Leer", false),
+        ]
+    );
+    // Ein neuer und ein verschwundener Ordner zählen als Änderung (der Baum bleibt aktuell), ein
+    // unveränderter Lauf nicht.
+    fs::create_dir_all(e.quelle.join("Neu")).unwrap();
+    fs::remove_dir(e.quelle.join("Leer")).unwrap();
+    assert!(verknuepft::abtasten(&e.a, &id).unwrap());
+    let namen: Vec<String> = unterordner(&e, &id).into_iter().map(|p| p.0).collect();
+    assert_eq!(namen, ["Akte", "Akte/Angebote", "Akte/Protokolle", "Neu"]);
+    assert!(!verknuepft::abtasten(&e.a, &id).unwrap());
+}
+
+#[test]
+fn nur_online_ordner_stehen_im_baum_und_vererben_ihre_marke_nach_unten() {
+    let _n = naht_sauber();
+    let e = env();
+    e.schreiben("Akte/Angebote/x.txt", b"x");
+    e.schreiben("Frei/y.txt", b"y");
+    let id = e.verknuepfen();
+    // „Akte“ wird nur online: nicht betreten, der bekannte Unterbaum bleibt, aber als nur online gekennzeichnet.
+    eintrag::naht::setzen(&e.quelle.join("Akte"), NUR_ONLINE_ORDNER, ONEDRIVE_TAG);
+    assert!(verknuepft::abtasten(&e.a, &id).unwrap());
+    let b = verknuepft::bestand(e.a.dir(), &id);
+    assert!(b.online_ordner.contains("Akte"));
+    assert!(!b.ordner.contains("Akte"), "nicht betreten");
+    assert!(b.ordner.contains("Akte/Angebote"), "bekannt bleibt bekannt");
+    assert_eq!(
+        unterordner(&e, &id),
+        vec![
+            paar("Akte", true),
+            paar("Akte/Angebote", true),
+            paar("Frei", false),
+        ]
+    );
+    // Wieder lokal: die Marke entfällt, der Ordner wird betreten.
+    eintrag::naht::leeren();
+    assert!(verknuepft::abtasten(&e.a, &id).unwrap());
+    let b = verknuepft::bestand(e.a.dir(), &id);
+    assert!(b.online_ordner.is_empty());
+    assert!(b.ordner.contains("Akte"));
+    assert_eq!(unterordner(&e, &id)[0], paar("Akte", false));
+}
+
+#[test]
+fn altbestand_ohne_ordnerliste_leitet_den_baum_aus_den_dateipfaden_ab() {
+    let _n = naht_sauber();
+    let e = env();
+    e.schreiben("Akte/Angebote/x.txt", b"x");
+    e.schreiben("b.txt", b"b");
+    let id = e.verknuepfen();
+    let p = e.a.dir().join("verknuepft").join(&id).join("bestand.json");
+    let mut roh: serde_json::Value = serde_json::from_slice(&fs::read(&p).unwrap()).unwrap();
+    let o = roh.as_object_mut().unwrap();
+    assert!(o.remove("ordner").is_some());
+    assert!(o.remove("online_ordner").is_some());
+    fs::write(&p, serde_json::to_vec(&roh).unwrap()).unwrap();
+    let alt = verknuepft::bestand(e.a.dir(), &id);
+    assert!(alt.ordner.is_empty() && alt.online_ordner.is_empty());
+    // Ohne Ordnerliste zeigt die Sicht wenigstens die Ordner, in denen Dateien liegen.
+    assert_eq!(
+        unterordner(&e, &id),
+        vec![paar("Akte", false), paar("Akte/Angebote", false)]
+    );
+    // Der nächste Lauf übernimmt vorwärts (die Ordnerliste ist neu, das gilt als Änderung) und ist dann ruhig.
+    assert!(verknuepft::abtasten(&e.a, &id).unwrap());
+    assert!(!verknuepft::abtasten(&e.a, &id).unwrap());
+    let b = verknuepft::bestand(e.a.dir(), &id);
+    assert!(b.ordner.contains("Akte/Angebote"));
+}
+
+#[test]
+fn unlesbarer_unterordner_behaelt_seine_bekannten_unterordner() {
+    let _n = naht_sauber();
+    let e = env();
+    e.schreiben("Akte/Tief/x.txt", b"x");
+    fs::create_dir_all(e.quelle.join("Akte/Leer")).unwrap();
+    let id = e.verknuepfen();
+    verknuepft::tests_haken::DIR_FEHLER.with(|d| d.borrow_mut().push(e.quelle.join("Akte")));
+    verknuepft::abtasten(&e.a, &id).unwrap();
+    verknuepft::tests_haken::DIR_FEHLER.with(|d| d.borrow_mut().clear());
+    // Nicht lesbar heißt nicht gelöscht: „Akte“ selbst und alles darunter bleibt, auch der leere Ordner.
+    let b = verknuepft::bestand(e.a.dir(), &id);
+    let ordner: Vec<&str> = b.ordner.iter().map(String::as_str).collect();
+    assert_eq!(ordner, ["Akte", "Akte/Leer", "Akte/Tief"]);
+    assert!(b.dateien.contains_key("Akte/Tief/x.txt"));
+}
+
+#[test]
+fn ordnerzahl_ist_begrenzt_und_meldet_zu_viele() {
+    let _n = naht_sauber();
+    let e = env();
+    for i in 0..(verknuepft::MAX_ORDNER + 5) {
+        fs::create_dir_all(e.quelle.join(format!("o{i:05}"))).unwrap();
+    }
+    let id = e.verknuepfen();
+    let b = verknuepft::bestand(e.a.dir(), &id);
+    assert_eq!(b.ordner.len(), verknuepft::MAX_ORDNER);
+    assert!(b.zu_viele, "Überlauf wird gemeldet, nicht verschluckt");
+    assert_eq!(unterordner(&e, &id).len(), verknuepft::MAX_ORDNER);
 }
 
 // ---------------------------------------------------------------------------
@@ -1679,4 +1865,102 @@ fn freigaben_neu_festlegen_schliesst_verknuepfte_ordner_ein_und_verwirft_ausnahm
         |_| true
     ));
     e.null_auszuege(KONTROLLE, &id, &dat);
+}
+
+// ---------------------------------------------------------------------------
+// lva#507: Abrufschutz, geprüfte Ordnerkette, Aufzählbudget, unvollständige Abtastung
+// ---------------------------------------------------------------------------
+
+#[test]
+fn unvollstaendige_abtastung_loescht_nichts_aus_abwesenheit() {
+    let _n = naht_sauber();
+    let e = env();
+    e.schreiben("a.txt", format!("alt {KONTROLLE}").as_bytes());
+    e.schreiben("b.txt", b"b");
+    let id = e.verknuepfen();
+    e.lauf(None, None);
+    assert_eq!(e.treffer(KONTROLLE).len(), 1);
+    let dat = e.rel_dat(&id, "a.txt");
+    // Eine abgeschnittene Abtastung (Grenze erreicht): `a.txt` fehlt im Ergebnis, ist aber nicht gelöscht.
+    let b0 = verknuepft::bestand(e.a.dir(), &id);
+    let mut ab = verknuepft::Abtastung::default();
+    ab.dateien.insert(
+        "b.txt".into(),
+        (
+            b0.dateien["b.txt"].groesse,
+            b0.dateien["b.txt"].zeit,
+            "txt".into(),
+        ),
+    );
+    ab.zu_viele = true;
+    verknuepft::uebernehmen(&e.a, &id, Some(&ab)).unwrap();
+    let b = verknuepft::bestand(e.a.dir(), &id);
+    assert_eq!(b.dateien["a.txt"].dat, dat, "Eintrag und Kennung bleiben");
+    assert_eq!(b.dateien["a.txt"].stand, "ok", "Textstand bleibt");
+    assert!(b.zu_viele, "die Unvollständigkeit wird gemeldet");
+    assert_eq!(e.treffer(KONTROLLE).len(), 1, "Text und Index bleiben");
+    // Eine vollständige Abtastung ohne `a.txt`: jetzt ist sie wirklich weg.
+    ab.zu_viele = false;
+    verknuepft::uebernehmen(&e.a, &id, Some(&ab)).unwrap();
+    let b = verknuepft::bestand(e.a.dir(), &id);
+    assert!(!b.dateien.contains_key("a.txt"));
+}
+
+#[test]
+fn die_aufzaehlung_bricht_im_gesamtbudget_ab_und_meldet_zu_viele() {
+    let _n = naht_sauber();
+    let e = env();
+    for i in 0..60 {
+        e.schreiben(&format!("d{i:02}.txt"), b"x");
+    }
+    verknuepft::verknuepfen(&e.a, &e.quelle).unwrap();
+    let v = verknuepft::liste(e.a.dir()).unwrap().remove(0);
+    let ab = verknuepft::abtasten_mit_budget(&v, 10).unwrap();
+    assert!(
+        ab.zu_viele,
+        "Budget erreicht: unvollständig, nicht verschwiegen"
+    );
+    assert!(ab.dateien.len() <= 10, "nie mehr als das Budget gelesen");
+    let voll = verknuepft::abtasten_roh(&v).unwrap();
+    assert!(!voll.zu_viele);
+    assert_eq!(voll.dateien.len(), 60);
+}
+
+#[cfg(unix)]
+#[test]
+fn momentkopie_liest_das_geprueft_geoeffnete_objekt_auch_wenn_ein_zwischenglied_danach_ersetzt_wird(
+) {
+    let _n = naht_sauber();
+    let e = env();
+    let original = e.schreiben("sub/brief.txt", b"original-inhalt");
+    e.verknuepfen();
+    let auf = verknuepft::auftraege(&e.a, None)
+        .unwrap()
+        .into_iter()
+        .find(|a| a.rel == "sub/brief.txt")
+        .unwrap();
+    // Draußen liegt eine gleich große Datei mit gleicher Änderungszeit anderen Inhalts.
+    let draussen = e.d.path().join("draussen");
+    fs::create_dir_all(&draussen).unwrap();
+    let fremd = draussen.join("brief.txt");
+    fs::write(&fremd, b"fremder-inhalt!").unwrap();
+    let zeit = fs::metadata(&original).unwrap().modified().unwrap();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&fremd)
+        .unwrap()
+        .set_modified(zeit)
+        .unwrap();
+    // Zwischen Urteil und Hochstufen wird `sub` durch eine Verknüpfung auf `draussen` ersetzt.
+    let quelle = e.quelle.clone();
+    eintrag::naht::vor_hochstufen_haken(Some(Box::new(move |_p: &Path| {
+        let _ = fs::rename(quelle.join("sub"), quelle.join("sub_alt"));
+        let _ = std::os::unix::fs::symlink(&draussen, quelle.join("sub"));
+    })));
+    let (kopie, _sha) = verknuepft::momentkopie(&e.a, &auf).unwrap();
+    assert_eq!(
+        fs::read(&kopie).unwrap(),
+        b"original-inhalt",
+        "gelesen wurde das geprüfte Objekt, nie das Ziel der Verknüpfung"
+    );
 }

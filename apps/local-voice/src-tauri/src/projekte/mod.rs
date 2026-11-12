@@ -7,7 +7,10 @@
 //! * [`audit`]: Protokoll ohne Inhalte.
 //! * [`tor`], [`tor_herkunft`], [`tor_ziel`]: Versandtor der Projekt-KI (lva#365 P4c-1): Ziel aus der
 //!   Konfiguration, frischer Kontext, Klassen, Bereinigung des Verlaufs, Budget, Widerruf und
-//!   Antwortregister. Noch kein Weg angeschlossen; die Sperre `PROJEKT_KI_FREIGEGEBEN` bleibt.
+//!   Antwortregister. Alle Wege laufen darüber; die Sperre `PROJEKT_KI_FREIGEGEBEN` ist seit P4c-4 aufgehoben
+//!   (ein Wert in `dienst.rs`, zugleich der Rückbau).
+//! * [`dokument`]: KI-Dokument im Projekt (lva#365 P4c-3): Einzellauf über das Tor, Entwurf in der Ablage
+//!   mit der Mindestklasse des Tors, Mitgliedschaft als Automation (aus).
 //! * [`befehle`]: die Tauri-Befehle.
 //!
 //! Das Projektverzeichnis (`projekte.db`) und die Recherche-Dokumente (`recherche.db`) liegen im
@@ -30,6 +33,7 @@ pub mod audit;
 pub mod befehle;
 pub mod dateien;
 pub mod dienst;
+pub mod dokument;
 pub mod herkunft;
 pub mod kontext;
 pub mod quellen;
@@ -45,7 +49,9 @@ mod tests;
 #[cfg(test)]
 mod tests_p4;
 #[cfg(test)]
-mod tests_p4c;
+pub(crate) mod tests_p4c;
+#[cfg(test)]
+mod tests_p4c3;
 
 use std::fmt;
 use wai_security::{

@@ -1,0 +1,760 @@
+{
+ "vorschau_sha256": "a351223263968b5bf44bb32071f5670ffccdb64f548d8e0926ec4fe7dcf6adcc",
+ "erzeugt": "2026-11-10T18:33:49.691Z",
+ "bilder": {
+  "01-cloud-aus-1440-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 43,
+   "unter44": [],
+   "scroller": [
+    ".col"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": true,
+   "fokusImModal": true,
+   "fokus": "An",
+   "tabBleibtImModal": true,
+   "escapeFokus": "opener"
+  },
+  "01-cloud-aus-1440-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 43,
+   "unter44": [],
+   "scroller": [
+    ".col"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": true,
+   "fokusImModal": true,
+   "fokus": "An",
+   "tabBleibtImModal": true,
+   "escapeFokus": "opener"
+  },
+  "01-cloud-aus-390-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 18,
+   "unter44": [],
+   "scroller": [],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": true,
+   "fokusImModal": true,
+   "fokus": "An",
+   "tabBleibtImModal": true,
+   "escapeFokus": "opener"
+  },
+  "01-cloud-aus-390-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 18,
+   "unter44": [],
+   "scroller": [],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": true,
+   "fokusImModal": true,
+   "fokus": "An",
+   "tabBleibtImModal": true,
+   "escapeFokus": "opener"
+  },
+  "02-cloud-anbieter-1440-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 47,
+   "unter44": [],
+   "scroller": [
+    ".col",
+    "#dbd.bd"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": true,
+   "fokusImModal": true,
+   "fokus": "An",
+   "tabBleibtImModal": true,
+   "escapeFokus": "opener"
+  },
+  "02-cloud-anbieter-1440-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 47,
+   "unter44": [],
+   "scroller": [
+    ".col",
+    "#dbd.bd"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": true,
+   "fokusImModal": true,
+   "fokus": "An",
+   "tabBleibtImModal": true,
+   "escapeFokus": "opener"
+  },
+  "02-cloud-anbieter-390-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 22,
+   "unter44": [],
+   "scroller": [
+    "#dbd.bd"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": true,
+   "fokusImModal": true,
+   "fokus": "An",
+   "tabBleibtImModal": true,
+   "escapeFokus": "opener"
+  },
+  "02-cloud-anbieter-390-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 22,
+   "unter44": [],
+   "scroller": [
+    "#dbd.bd"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": true,
+   "fokusImModal": true,
+   "fokus": "An",
+   "tabBleibtImModal": true,
+   "escapeFokus": "opener"
+  },
+  "03-cloud-bestaetigen-1440-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 36,
+   "unter44": [],
+   "scroller": [
+    ".col"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": true,
+   "fokusImModal": true,
+   "fokus": "Zurück",
+   "tabBleibtImModal": true,
+   "escapeFokus": "opener"
+  },
+  "03-cloud-bestaetigen-1440-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 36,
+   "unter44": [],
+   "scroller": [
+    ".col"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": true,
+   "fokusImModal": true,
+   "fokus": "Zurück",
+   "tabBleibtImModal": true,
+   "escapeFokus": "opener"
+  },
+  "03-cloud-bestaetigen-390-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 11,
+   "unter44": [],
+   "scroller": [],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": true,
+   "fokusImModal": true,
+   "fokus": "Zurück",
+   "tabBleibtImModal": true,
+   "escapeFokus": "opener"
+  },
+  "03-cloud-bestaetigen-390-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 11,
+   "unter44": [],
+   "scroller": [],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": true,
+   "fokusImModal": true,
+   "fokus": "Zurück",
+   "tabBleibtImModal": true,
+   "escapeFokus": "opener"
+  },
+  "04-cloud-chip-1440-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 37,
+   "unter44": [],
+   "scroller": [
+    ".col"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": false,
+   "fokusImModal": null,
+   "fokus": "AblageDokumente auf allen Geräten, Ende-"
+  },
+  "04-cloud-chip-1440-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 37,
+   "unter44": [],
+   "scroller": [
+    ".col"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": false,
+   "fokusImModal": null,
+   "fokus": "AblageDokumente auf allen Geräten, Ende-"
+  },
+  "04-cloud-chip-390-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 10,
+   "unter44": [],
+   "scroller": [],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": false,
+   "fokusImModal": null,
+   "fokus": "AblageDokumente auf allen Geräten, Ende-"
+  },
+  "04-cloud-chip-390-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 10,
+   "unter44": [],
+   "scroller": [],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": false,
+   "fokusImModal": null,
+   "fokus": "AblageDokumente auf allen Geräten, Ende-"
+  },
+  "05-cloud-klassenwechsel-1440-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 43,
+   "unter44": [],
+   "scroller": [
+    ".col"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": true,
+   "fokusImModal": true,
+   "fokus": "An",
+   "tabBleibtImModal": true,
+   "escapeFokus": "opener"
+  },
+  "05-cloud-klassenwechsel-1440-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 43,
+   "unter44": [],
+   "scroller": [
+    ".col"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": true,
+   "fokusImModal": true,
+   "fokus": "An",
+   "tabBleibtImModal": true,
+   "escapeFokus": "opener"
+  },
+  "05-cloud-klassenwechsel-390-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 18,
+   "unter44": [],
+   "scroller": [],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": true,
+   "fokusImModal": true,
+   "fokus": "An",
+   "tabBleibtImModal": true,
+   "escapeFokus": "opener"
+  },
+  "05-cloud-klassenwechsel-390-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 18,
+   "unter44": [],
+   "scroller": [],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": true,
+   "fokusImModal": true,
+   "fokus": "An",
+   "tabBleibtImModal": true,
+   "escapeFokus": "opener"
+  },
+  "06-verknuepft-eigenschaften-1440-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 41,
+   "unter44": [],
+   "scroller": [
+    ".col"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": true,
+   "fokusImModal": true,
+   "fokus": "ÖffentlichInternVertraulichPersonenbezog",
+   "tabBleibtImModal": true,
+   "escapeFokus": "opener"
+  },
+  "06-verknuepft-eigenschaften-1440-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 41,
+   "unter44": [],
+   "scroller": [
+    ".col"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": true,
+   "fokusImModal": true,
+   "fokus": "ÖffentlichInternVertraulichPersonenbezog",
+   "tabBleibtImModal": true,
+   "escapeFokus": "opener"
+  },
+  "06-verknuepft-eigenschaften-390-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 16,
+   "unter44": [],
+   "scroller": [],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": true,
+   "fokusImModal": true,
+   "fokus": "ÖffentlichInternVertraulichPersonenbezog",
+   "tabBleibtImModal": true,
+   "escapeFokus": "opener"
+  },
+  "06-verknuepft-eigenschaften-390-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 16,
+   "unter44": [],
+   "scroller": [],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": true,
+   "fokusImModal": true,
+   "fokus": "ÖffentlichInternVertraulichPersonenbezog",
+   "tabBleibtImModal": true,
+   "escapeFokus": "opener"
+  },
+  "07-baum-1440-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 34,
+   "unter44": [],
+   "scroller": [
+    ".col"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": false,
+   "fokusImModal": null,
+   "fokus": "AblageDokumente auf allen Geräten, Ende-"
+  },
+  "07-baum-1440-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 34,
+   "unter44": [],
+   "scroller": [
+    ".col"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": false,
+   "fokusImModal": null,
+   "fokus": "AblageDokumente auf allen Geräten, Ende-"
+  },
+  "07-baum-390-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 28,
+   "unter44": [],
+   "scroller": [
+    "#tbd.bd"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": true,
+   "fokusImModal": true,
+   "fokus": "Protokolle",
+   "tabBleibtImModal": true,
+   "escapeFokus": "btntree"
+  },
+  "07-baum-390-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 28,
+   "unter44": [],
+   "scroller": [
+    "#tbd.bd"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": true,
+   "fokusImModal": true,
+   "fokus": "Protokolle",
+   "tabBleibtImModal": true,
+   "escapeFokus": "btntree"
+  },
+  "08-baum-nicht-erreichbar-1440-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 30,
+   "unter44": [],
+   "scroller": [],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": false,
+   "fokusImModal": null,
+   "fokus": "AblageDokumente auf allen Geräten, Ende-"
+  },
+  "08-baum-nicht-erreichbar-1440-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 30,
+   "unter44": [],
+   "scroller": [],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": false,
+   "fokusImModal": null,
+   "fokus": "AblageDokumente auf allen Geräten, Ende-"
+  },
+  "08-baum-nicht-erreichbar-390-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 24,
+   "unter44": [],
+   "scroller": [],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": true,
+   "fokusImModal": true,
+   "fokus": "Archiv (Netzlaufwerk)",
+   "tabBleibtImModal": true,
+   "escapeFokus": "btntree"
+  },
+  "08-baum-nicht-erreichbar-390-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 24,
+   "unter44": [],
+   "scroller": [],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": true,
+   "fokusImModal": true,
+   "fokus": "Archiv (Netzlaufwerk)",
+   "tabBleibtImModal": true,
+   "escapeFokus": "btntree"
+  },
+  "09-nur-online-liste-1440-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 40,
+   "unter44": [],
+   "scroller": [
+    ".col"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": false,
+   "fokusImModal": null,
+   "fokus": "AblageDokumente auf allen Geräten, Ende-"
+  },
+  "09-nur-online-liste-1440-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 40,
+   "unter44": [],
+   "scroller": [
+    ".col"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": false,
+   "fokusImModal": null,
+   "fokus": "AblageDokumente auf allen Geräten, Ende-"
+  },
+  "09-nur-online-liste-390-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 15,
+   "unter44": [],
+   "scroller": [
+    ".col"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": false,
+   "fokusImModal": null,
+   "fokus": "AblageDokumente auf allen Geräten, Ende-"
+  },
+  "09-nur-online-liste-390-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 15,
+   "unter44": [],
+   "scroller": [
+    ".col"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": false,
+   "fokusImModal": null,
+   "fokus": "AblageDokumente auf allen Geräten, Ende-"
+  },
+  "09b-nur-online-tooltip-1440-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 40,
+   "unter44": [],
+   "scroller": [
+    ".col"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": false,
+   "fokusImModal": null,
+   "fokus": "AblageDokumente auf allen Geräten, Ende-"
+  },
+  "09b-nur-online-tooltip-1440-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 40,
+   "unter44": [],
+   "scroller": [
+    ".col"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": false,
+   "fokusImModal": null,
+   "fokus": "AblageDokumente auf allen Geräten, Ende-"
+  },
+  "10-nur-online-hinweis-1440-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 42,
+   "unter44": [],
+   "scroller": [
+    ".col",
+    ".col"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": false,
+   "fokusImModal": null,
+   "fokus": "AblageDokumente auf allen Geräten, Ende-"
+  },
+  "10-nur-online-hinweis-1440-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 42,
+   "unter44": [],
+   "scroller": [
+    ".col",
+    ".col"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": false,
+   "fokusImModal": null,
+   "fokus": "AblageDokumente auf allen Geräten, Ende-"
+  },
+  "10-nur-online-hinweis-390-hell": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 17,
+   "unter44": [],
+   "scroller": [
+    ".col",
+    ".col"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": true,
+   "fokusImModal": true,
+   "fokus": "Details schließen",
+   "tabBleibtImModal": true,
+   "escapeFokus": "selfile"
+  },
+  "10-nur-online-hinweis-390-dunkel": {
+   "scrollX": 0,
+   "ueberlauf": 0,
+   "bedienelemente": 17,
+   "unter44": [],
+   "scroller": [
+    ".col",
+    ".col"
+   ],
+   "verschachtelteScroller": 0,
+   "h1": 1,
+   "wai": false,
+   "ersatzschreibung": false,
+   "modal": true,
+   "fokusImModal": true,
+   "fokus": "Details schließen",
+   "tabBleibtImModal": true,
+   "escapeFokus": "selfile"
+  }
+ },
+ "abläufe": {
+  "cloud-ausnahme-1440": {
+   "schalterAus": true,
+   "anbieterListeNachEin": true,
+   "dritterGesperrt": true,
+   "dritterBleibtAus": true,
+   "ohneAuswahlFehler": true,
+   "bestaetigungSichtbar": true,
+   "fokusZurueck": "Zurück",
+   "zurueckZeigtFormular": true,
+   "dialogZu": true,
+   "chipDa": true,
+   "chipName": "Cloud-Ausnahme: KI darf diesen Ordner über Beispiel-Cloud EU nutzen. Ordnereinstellungen öffnen",
+   "chipHoehe": 44,
+   "chipOeffnetDialog": true,
+   "klassenwechselWarnung": true,
+   "fokusBleibtAmSelect": "dk",
+   "chipWegNachKlassenwechsel": true
+  },
+  "baum-nur-online-1440": {
+   "anfangOffen": true,
+   "zugeklappt": true,
+   "name": "Projektakten 2026 aufklappen",
+   "wiederOffen": true,
+   "tooltipSichtbar": true,
+   "chipOeffnetHinweis": true
+  },
+  "cloud-ausnahme-390": {
+   "schalterAus": true,
+   "anbieterListeNachEin": true,
+   "dritterGesperrt": true,
+   "dritterBleibtAus": true,
+   "ohneAuswahlFehler": true,
+   "bestaetigungSichtbar": true,
+   "fokusZurueck": "Zurück",
+   "zurueckZeigtFormular": true,
+   "dialogZu": true,
+   "chipDa": true,
+   "chipName": "Cloud-Ausnahme: KI darf diesen Ordner über Beispiel-Cloud EU nutzen. Ordnereinstellungen öffnen",
+   "chipHoehe": 44,
+   "chipOeffnetDialog": true,
+   "klassenwechselWarnung": true,
+   "fokusBleibtAmSelect": "dk",
+   "chipWegNachKlassenwechsel": true
+  },
+  "baum-nur-online-390": {
+   "blattOffen": true,
+   "odZu": true,
+   "fokusZurueck": "btntree",
+   "chipOeffnetBlatt": true
+  }
+ }
+}

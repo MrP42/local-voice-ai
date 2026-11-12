@@ -21,6 +21,11 @@ import {
   type CallStatus,
 } from "@/components/voice-call/orchestration";
 import {
+  zusammen,
+  type ProjektBindung,
+  type ProjektHinweis,
+} from "@/components/voice-call/projekt";
+import {
   LOCAL_USER_ID,
   MAX_ENTRY_CHARS,
   VOICEBOT_ID,
@@ -310,6 +315,15 @@ interface VoiceCallStore {
   settingsTab: VoiceSettingsTab;
   /** Gespeichertes Gespräch, das gerade offen ist; `null` bis zum ersten Beitrag. */
   conversationId: string | null;
+  /**
+   * Projekt des offenen Gesprächs (`scope.project_id` des gespeicherten Gesprächs); `null` in einem
+   * gewöhnlichen Gespräch. Gesetzt nur durch `newProjectConversation` und beim Öffnen.
+   */
+  projectId: string | null;
+  /** Stand der Auswahl im Projekt, den die Person gesehen hat (geht als `expectedStand` an das Tor). */
+  projektStand: string | null;
+  /** Hinweis aus dem Projektweg (Budgetstopp, Auswahl geändert, Verlauf zurückgesetzt …). */
+  projektHinweis: ProjektHinweis | null;
   conversations: ConversationSummary[];
   /** Archivierte Gespräche in der Liste zeigen. */
   showArchived: boolean;
@@ -349,6 +363,17 @@ interface VoiceCallStore {
   editLine: (lineId: number, text: string) => Promise<void>;
   /** Leeres Gespräch; gespeichert wird erst beim ersten Beitrag. */
   newConversation: () => Promise<void>;
+  /**
+   * Leeres Gespräch im Projekt. Es wird sofort angelegt, damit Rust die Bindung aus dem Speicher
+   * kennt, bevor die erste Frage geht. `stand`: Stand der Auswahl, den die Person gerade sieht.
+   */
+  newProjectConversation: (
+    projectId: string,
+    stand: string | null,
+  ) => Promise<void>;
+  /** Die Person hat die aktuelle Auswahl gesehen (nach „Auswahl geändert“): der Hinweis verschwindet. */
+  setProjektStand: (stand: string | null) => void;
+  dismissProjektHinweis: () => void;
   loadConversations: () => Promise<void>;
   /** Gespeichertes Gespräch öffnen (beendet einen laufenden Anruf). */
   openConversation: (id: string) => Promise<void>;
@@ -444,7 +469,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
           const attachments = attachmentsNext;
           typedNext = false;
           attachmentsNext = undefined;
-          set({ notice: null, toolStatus: null });
+          set({ notice: null, toolStatus: null, projektHinweis: null });
           set((s) => {
             // Verworfene spekulative Vorarbeit (Weitersprechen) ersetzen.
             const kept = [...s.lines];
@@ -531,6 +556,11 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
             }
             return { lines, metrics: [...s.metrics.slice(-19), m] };
           }),
+        // Ein durch eine Ergänzung ersetzter Schritt hinterlässt keine Messung (lva#485).
+        onMetricsVerwerfen: (turnId) =>
+          set((s) => ({
+            metrics: s.metrics.filter((m) => m.turnId !== turnId),
+          })),
         onCitations: (turnId, hits) =>
           set((s) => {
             if (hits.length === 0) return {};
@@ -556,6 +586,18 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
             return { lines };
           }),
         onError: (error) => set({ error }),
+        projekt: (): ProjektBindung | null => {
+          const id = get().projectId;
+          return id ? { id, stand: get().projektStand } : null;
+        },
+        onProjekt: (h) =>
+          set((s) => ({ projektHinweis: zusammen(s.projektHinweis, h) })),
+        onVerwerfen: () =>
+          set((s) => {
+            const last = s.lines[s.lines.length - 1];
+            if (!last || last.role !== "assistant" || last.final) return {};
+            return { lines: s.lines.slice(0, -1) };
+          }),
         conversationId: async () => {
           // Erst fertig speichern lassen: so kennt der Aufruf das laufende Gespräch,
           // und das Backend kann es ausnehmen (ohne Kennung sperrt es Gesprächswerkzeuge).
@@ -705,6 +747,8 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
     id: string | null,
     lines: VoiceLine[],
     usage: CallUsage,
+    projectId: string | null = null,
+    projektStand: string | null = null,
   ): void => {
     textRun++;
     pendingUsage = null;
@@ -714,6 +758,9 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
     engine?.setHistoryLimit(next.main ? MAIN_HISTORY_LIMIT : undefined);
     set({
       conversationId: id,
+      projectId,
+      projektStand,
+      projektHinweis: null,
       textBusy: false,
       lines,
       metrics: [],
@@ -797,6 +844,9 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
     settingsOpen: false,
     settingsTab: "talk",
     conversationId: null,
+    projectId: null,
+    projektStand: null,
+    projektHinweis: null,
     conversations: [],
     showArchived: false,
     switching: false,
@@ -922,6 +972,43 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
       switchTo({ id: null, titled: false }, null, [], EMPTY_USAGE);
     },
 
+    newProjectConversation: async (projectId, stand) => {
+      const run = ++openRun;
+      set({ switching: true });
+      await endCall();
+      flushLines(true);
+      await persistChain;
+      try {
+        // Die Bindung setzt nur das Anlegen; das Projekt prüft Rust (es muss es geben, nicht archiviert).
+        const created = await invoke<ConversationRecord>(
+          "conversation_create",
+          {
+            title: null,
+            projectId,
+          },
+        );
+        if (run !== openRun) return;
+        engine?.resetHistory();
+        switchTo(
+          { id: created.id, titled: false },
+          created.id,
+          [],
+          EMPTY_USAGE,
+          projectId,
+          stand,
+        );
+      } catch (e) {
+        if (run === openRun) set({ error: String(e) });
+      } finally {
+        if (run === openRun) set({ switching: false });
+      }
+      await loadConversations();
+    },
+
+    setProjektStand: (stand) =>
+      set({ projektStand: stand, projektHinweis: null }),
+    dismissProjektHinweis: () => set({ projektHinweis: null }),
+
     loadConversations,
 
     openConversation: async (id) => {
@@ -965,6 +1052,10 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
           id,
           lines,
           usageFromEntries(detail.entries),
+          // Die Bindung kommt aus dem gespeicherten Gespräch. Der Stand der Auswahl ist unbekannt, bis
+          // die Person ihn sieht: ohne Stand prüft das Tor nur gegen den aktuellen Kontext.
+          detail.conversation.scope?.project_id ?? null,
+          null,
         );
       } catch (e) {
         if (run === openRun) set({ error: String(e) });

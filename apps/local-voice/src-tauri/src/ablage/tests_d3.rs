@@ -405,6 +405,32 @@ fn konflikt_nutzt_gemeinsame_vorgaengerin_ohne_sie_die_datei_nicht() {
     assert_eq!(a.abdeckung.durchsucht, 1);
 }
 
+/// lva#463: Die direkte Suche in der Vorgängerfassung einer Konfliktdatei faltet wie der Index (ß → ss).
+#[test]
+fn konflikt_direkte_suche_faltet_ss() {
+    let e = env();
+    let o = e.ordner("Frei");
+    e.a.ki_setzen(&o, Some(KiStufe::An)).unwrap();
+    let dat = e.ablegen("Plan.txt", "Grundfassung Straße Kranich", &o);
+    e.lauf();
+    let basis = e.a.fassungen(&dat).unwrap()[0].fas.clone();
+    e.ablegen_wahl(
+        "Plan.txt",
+        "Gerät A Reiher",
+        &o,
+        Some(AblageKollisionswahl::NeueFassung),
+    );
+    fassung_anhaengen(&e, &dat, Some(&basis), "Gerät B Storch");
+    e.lauf();
+    assert!(e.a.ansicht().unwrap().dateien[0].konflikt);
+    for frage in ["Strasse", "STRASSE", "Straße"] {
+        let a = e.global(frage);
+        assert_eq!(a.auszuege.len(), 1, "{frage}: {:?}", a.abdeckung);
+        assert_eq!(a.auszuege[0].fas, basis);
+        assert!(a.auszuege[0].text.contains("Straße"));
+    }
+}
+
 #[test]
 fn datenklasse_gegen_anbieter() {
     let e = env();
@@ -901,6 +927,187 @@ fn cloud_ausnahme_verfaellt_beim_klassenwechsel_und_wirkt_nur_an_vertraulichem_o
     e.lauf();
     let a = e.frage(KONTROLLE, &KiBereich::Global, &c);
     assert!(!enthaelt(&a, "Entwurfstext"));
+}
+
+// ---------------------------------------------------------------------------
+// D7-Rest: Cloud-Ausnahme in der Sicht, Entzug bei Klassenwechsel per Sync und beim Verschieben
+// ---------------------------------------------------------------------------
+
+/// Gilt für diesen Ordner gespeichert eine Ausnahme für `anbieter-x`? (Wirksamkeit erzwungen: es geht
+/// um das, was auf der Platte steht, nicht um die Klasse des Ordners.)
+fn gespeichert(e: &Env, ordner: &str) -> bool {
+    freigabe::ausnahme_gilt(
+        &freigabe::laden(e.a.dir()),
+        std::slice::from_ref(&ordner.to_string()),
+        "anbieter-x",
+        |_| true,
+    )
+}
+
+/// Ordnerstand, wie ihn ein anderes Gerät mit höherem Zähler schickt: neue Datenklasse.
+fn fremde_klasse(e: &Env, ordner: &str, klasse: &str) -> super::speicher::Eingang {
+    let mut x = e.a.sync_bestand().unwrap().ordner[ordner].clone();
+    x.datenklasse = super::zusammenfuehren::Register::neu(
+        klasse.to_string(),
+        x.datenklasse.zaehler + 10,
+        "g_fremd",
+    );
+    super::speicher::Eingang::Ordner(x)
+}
+
+#[test]
+fn sicht_nennt_cloud_ausnahmen_je_ordner_und_geerbt_je_datei() {
+    let e = env();
+    let vertr = e.ordner("Vertraulich");
+    let unter = e.a.ordner_anlegen(Some(&vertr), "Unter").unwrap();
+    let offen = e.ordner("Offen");
+    e.klasse(&vertr, "confidential");
+    let d_unter = e.ablegen("u.txt", "unter", &unter);
+    let d_offen = e.ablegen("o.txt", "offen", &offen);
+    let leer = |c: &super::speicher::AblageCloud| c.anbieter.is_empty() && c.geerbt.is_empty();
+    let s = e.a.ansicht().unwrap();
+    assert!(s.ordner.iter().all(|o| leer(&o.cloud)));
+    assert!(s.dateien.iter().all(|d| leer(&d.cloud)));
+
+    e.a.cloud_ausnahme_setzen(&vertr, "anbieter-b", true)
+        .unwrap();
+    e.a.cloud_ausnahme_setzen(&vertr, "anbieter-a", true)
+        .unwrap();
+    let s = e.a.ansicht().unwrap();
+    let o = |id: &str| s.ordner.iter().find(|o| o.id == id).unwrap().cloud.clone();
+    let d = |id: &str| s.dateien.iter().find(|d| d.id == id).unwrap().cloud.clone();
+    // Am Ordner selbst: sortiert, nicht geerbt. Darunter: geerbt. Daneben: nichts.
+    assert_eq!(o(&vertr).anbieter, ["anbieter-a", "anbieter-b"]);
+    assert!(o(&vertr).geerbt.is_empty());
+    assert!(o(&unter).anbieter.is_empty());
+    assert_eq!(o(&unter).geerbt, ["anbieter-a", "anbieter-b"]);
+    assert!(leer(&o(&offen)));
+    // Dateien tragen alles als geerbt (auch vom eigenen Ordner).
+    assert_eq!(d(&d_unter).geerbt, ["anbieter-a", "anbieter-b"]);
+    assert!(d(&d_unter).anbieter.is_empty());
+    assert!(leer(&d(&d_offen)));
+
+    // KI „Gesperrt“: die bestehende Ausnahme bleibt sichtbar (und damit entziehbar).
+    e.a.ki_setzen(&vertr, Some(KiStufe::Gesperrt)).unwrap();
+    let s = e.a.ansicht().unwrap();
+    let v = s.ordner.iter().find(|o| o.id == vertr).unwrap();
+    assert_eq!(v.cloud.anbieter, ["anbieter-a", "anbieter-b"]);
+    assert_eq!(v.ki.zustand, "gesperrt");
+    e.a.cloud_ausnahme_setzen(&vertr, "anbieter-a", false)
+        .unwrap();
+    let s = e.a.ansicht().unwrap();
+    let v = s.ordner.iter().find(|o| o.id == vertr).unwrap();
+    assert_eq!(v.cloud.anbieter, ["anbieter-b"]);
+
+    // Eine gespeicherte Ausnahme an einem Ordner, der nicht wirksam vertraulich ist, wirkt nie und
+    // wird nicht als wirksam gezeigt (auch nicht geerbt).
+    freigabe::ausnahme_setzen(e.a.dir(), &offen, "anbieter-z", true).unwrap();
+    let s = e.a.ansicht().unwrap();
+    assert!(s
+        .ordner
+        .iter()
+        .filter(|o| o.id == offen)
+        .all(|o| leer(&o.cloud)));
+    assert!(s
+        .dateien
+        .iter()
+        .filter(|d| d.id == d_offen)
+        .all(|d| leer(&d.cloud)));
+}
+
+#[test]
+fn klassenwechsel_per_sync_entzieht_ausnahmen_auch_nach_dem_zurueckwechseln() {
+    use super::speicher::Eingang;
+    use super::zusammenfuehren::Register;
+    let e = env();
+    let vertr = e.ordner("Vertraulich");
+    let unter = e.a.ordner_anlegen(Some(&vertr), "Unter").unwrap();
+    e.a.ki_setzen(&vertr, Some(KiStufe::An)).unwrap();
+    e.klasse(&vertr, "confidential");
+    e.ablegen("v.txt", &format!("{KONTROLLE} Vertraulich"), &vertr);
+    e.ablegen("u.txt", &format!("{KONTROLLE} Untersatz"), &unter);
+    e.lauf();
+    let c = cloud("anbieter-x", Klasse::Confidential);
+    e.a.cloud_ausnahme_setzen(&vertr, "anbieter-x", true)
+        .unwrap();
+    e.a.cloud_ausnahme_setzen(&unter, "anbieter-x", true)
+        .unwrap();
+    assert!(gespeichert(&e, &vertr) && gespeichert(&e, &unter));
+    let a = e.frage(KONTROLLE, &KiBereich::Global, &c);
+    assert!(enthaelt(&a, "Vertraulich") && enthaelt(&a, "Untersatz"));
+
+    // Nur der Name ändert sich (Klasse gleich): die Ausnahmen bleiben.
+    let mut x = e.a.sync_bestand().unwrap().ordner[&vertr].clone();
+    x.name = Register::neu("Vertraulich 2".to_string(), x.name.zaehler + 10, "g_fremd");
+    let r = e.a.sync_einspielen(&[Eingang::Ordner(x)]).unwrap();
+    assert_eq!(r.geaendert, vec![vertr.clone()]);
+    assert!(gespeichert(&e, &vertr) && gespeichert(&e, &unter));
+
+    // Ein anderes Gerät senkt die Klasse: die Ausnahmen am Ordner und im Unterbaum verfallen.
+    e.a.sync_einspielen(&[fremde_klasse(&e, &vertr, "internal")])
+        .unwrap();
+    assert!(!gespeichert(&e, &vertr), "Ordner");
+    assert!(!gespeichert(&e, &unter), "Unterordner");
+
+    // Und wieder zurück auf „Vertraulich“, ebenfalls per Sync: die Ausnahmen leben nicht wieder auf.
+    e.a.sync_einspielen(&[fremde_klasse(&e, &vertr, "confidential")])
+        .unwrap();
+    assert!(!gespeichert(&e, &vertr) && !gespeichert(&e, &unter));
+    e.lauf();
+    let a = e.frage(KONTROLLE, &KiBereich::Global, &c);
+    assert!(!enthaelt(&a, "Vertraulich") && !enthaelt(&a, "Untersatz"));
+    let s = e.a.ansicht().unwrap();
+    assert!(s
+        .ordner
+        .iter()
+        .all(|o| o.cloud.anbieter.is_empty() && o.cloud.geerbt.is_empty()));
+    // Neu erteilen geht wieder, ausdrücklich.
+    e.a.cloud_ausnahme_setzen(&vertr, "anbieter-x", true)
+        .unwrap();
+    assert!(enthaelt(
+        &e.frage(KONTROLLE, &KiBereich::Global, &c),
+        "Vertraulich"
+    ));
+}
+
+#[test]
+fn klassenwechsel_per_sync_im_elternordner_entzieht_die_ausnahme_des_unterordners() {
+    let e = env();
+    let eltern = e.ordner("Eltern");
+    let kind = e.a.ordner_anlegen(Some(&eltern), "Kind").unwrap();
+    e.klasse(&eltern, "confidential");
+    e.a.cloud_ausnahme_setzen(&kind, "anbieter-x", true)
+        .unwrap();
+    assert!(gespeichert(&e, &kind));
+    // Der Elternordner wird per Sync „personal“: das Kind erbt, seine wirksame Klasse ändert sich.
+    e.a.sync_einspielen(&[fremde_klasse(&e, &eltern, "personal")])
+        .unwrap();
+    assert!(!gespeichert(&e, &kind));
+    e.a.sync_einspielen(&[fremde_klasse(&e, &eltern, "confidential")])
+        .unwrap();
+    assert!(!gespeichert(&e, &kind));
+}
+
+#[test]
+fn verschieben_mit_klassenwechsel_entzieht_die_ausnahme_ohne_wechsel_nicht() {
+    let e = env();
+    let vertr = e.ordner("Vertraulich");
+    let zweit = e.ordner("Zweit");
+    let privat = e.ordner("Privat");
+    e.klasse(&vertr, "confidential");
+    e.klasse(&zweit, "confidential");
+    e.klasse(&privat, "personal");
+    let kind = e.a.ordner_anlegen(Some(&vertr), "Kind").unwrap();
+    e.a.cloud_ausnahme_setzen(&kind, "anbieter-x", true)
+        .unwrap();
+    // In einen anderen vertraulichen Ordner: wirksame Klasse bleibt, die Ausnahme auch.
+    e.a.ordner_verschieben(&kind, Some(&zweit)).unwrap();
+    assert!(gespeichert(&e, &kind));
+    // Unter „Privat“ wird das Kind wirksam „personal“: die Ausnahme verfällt und bleibt es.
+    e.a.ordner_verschieben(&kind, Some(&privat)).unwrap();
+    assert!(!gespeichert(&e, &kind));
+    e.a.ordner_verschieben(&kind, Some(&vertr)).unwrap();
+    assert!(!gespeichert(&e, &kind));
 }
 
 fn sql_dats(e: &Env, weg: index::KiWeg, p: index::KiProfil) -> Vec<String> {

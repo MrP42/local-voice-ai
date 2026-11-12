@@ -121,6 +121,20 @@
       "replacedAll_other": "{{count}} Stellen ersetzt."
     },
     "reader": {
+      "search": {
+        "label": "Im Buch suchen",
+        "placeholder": "Im Buch suchen",
+        "hint": "Im ganzen Buch suchen (Strg+F). Enter springt zum nächsten Treffer, Umschalt+Enter zum vorigen.",
+        "clear": "Suche leeren",
+        "results": "Suchergebnisse",
+        "none": "Keine Treffer",
+        "count_one": "{{count}} Treffer",
+        "count_other": "{{count}} Treffer",
+        "countMore": "{{count}} Treffer, die ersten {{shown}} angezeigt",
+        "allWords_one": "{{count}} Absatz mit allen Wörtern",
+        "allWords_other": "{{count}} Absätze mit allen Wörtern",
+        "position": "Treffer {{n}} von {{total}}"
+      },
       "startHere": "Start",
       "startHint": "Hier beginnt das Vorlesen, solange keine Stelle gemerkt ist.",
       "frontMatter": "Vorspann – wird beim Vorlesen übersprungen, ist aber hier erreichbar",
@@ -5799,7 +5813,7 @@
       "cloudTitle_one": "{{count}} Datei liegt nur in der Cloud und wird nicht verarbeitet",
       "cloudTitle_other": "{{count}} Dateien liegen nur in der Cloud und werden nicht verarbeitet",
       "cloudFile": "{{file}} (Ablauf „{{workflow}}“)",
-      "cloudHint": "OneDrive-Platzhalter werden nie heruntergeladen. Machen Sie die Datei „immer auf diesem Gerät verfügbar“, dann läuft sie mit.",
+      "cloudHint": "OneDrive-Platzhalter werden nicht verarbeitet. Local Voice überspringt erkannte, nur online gespeicherte Dateien. Durch gleichzeitige Änderungen des Synchronisationsdienstes kann beim Lesen dennoch ein automatischer Download ausgelöst werden. Machen Sie die Datei „immer auf diesem Gerät verfügbar“, dann läuft sie mit.",
       "channelTitle_one": "{{count}} YouTube-Kanal antwortet nicht",
       "channelTitle_other": "{{count}} YouTube-Kanäle antworten nicht",
       "channelLine": "{{channel}} (Ablauf „{{workflow}}“): {{failures}} Fehlversuche in Folge",
@@ -7488,6 +7502,45 @@
     }
   },
   "voiceCall": {
+    "projekt": {
+      "chip": "Projekt: {{name}}",
+      "chipOhneName": "Projekt",
+      "chipTitel": "Projekt öffnen",
+      "chipText": "Die Antworten stützen sich auf die Auswahl im Projekt.",
+      "schliessen": "Hinweis schließen",
+      "uebernehmen": "Auswahl übernehmen",
+      "titel": {
+        "stopp": "Nicht gesendet",
+        "info": "Hinweis",
+        "widerrufen": "Antwort entfernt",
+        "modell": "Keine Antwort"
+      },
+      "hinweis": {
+        "budget": "Zu viel Kontext für das Modell: Nötig sind {{benoetigt}} von {{fenster}} Token (Kontext {{kontext}}, Verlauf {{historie}}, Auszüge {{auszuege}}, Frage {{frage}}, Ausgabe {{ausgabe}}). Es wurde nichts gesendet und nichts gekürzt. Einträge im Projekt ausschalten oder ein Modell mit größerem Fenster wählen.",
+        "stand_veraltet": "Die Auswahl im Projekt hat sich seit der Anzeige geändert. Es wurde nichts gesendet. Die aktuelle Auswahl übernehmen und die Frage erneut stellen.",
+        "zurueckgesetzt": "Der bisherige Verlauf wurde nicht übernommen. Die Antwort beruht nur auf der letzten Frage und der aktuellen Auswahl im Projekt.",
+        "entzogen_one": "Eine frühere Antwort beruhte auf Inhalten, die nicht mehr freigegeben sind, und wurde ersetzt.",
+        "entzogen_other": "{{count}} frühere Antworten beruhten auf Inhalten, die nicht mehr freigegeben sind, und wurden ersetzt.",
+        "widerrufen": "Die Auswahl im Projekt hat sich geändert, während die Antwort entstand. Die Antwort wurde entfernt.",
+        "ki_gesperrt": "Die KI im Projekt ist in dieser Version abgeschaltet. Es wurde nichts gesendet.",
+        "klasse_ziel": "Ein Projektinhalt ist für dieses Modell zu schutzbedürftig. Ein lokales Modell wählen oder den Eintrag ausschalten. Es wurde nichts gesendet.",
+        "ungueltig": "Das Projekt ist gerade nicht verfügbar. Es wurde nichts gesendet. Das Projekt öffnen und prüfen, ob es noch vorhanden ist.",
+        "anfrage": "Die Anfrage war unvollständig. Es wurde nichts gesendet. Die Frage bitte noch einmal stellen.",
+        "fremdkontext": "Im Projektgespräch sind nur Inhalte aus dem Projekt zulässig. Es wurde nichts gesendet.",
+        "register": "Das Antwortregister des Projekts lässt sich gerade nicht lesen oder schreiben. Solange das so bleibt, wird nichts gesendet und nichts übernommen. Später noch einmal versuchen.",
+        "ablage": "Die Dokumentenablage ist gerade nicht lesbar. Es wurde nichts gesendet. Später noch einmal versuchen.",
+        "bindung": "Dieses Gespräch lässt sich dem Projekt nicht mehr sicher zuordnen. Es wurde nichts gesendet. Ein neues Gespräch im Projekt beginnen.",
+        "werkzeuge_aus": "Im Projekt sind Werkzeuge ausgeschaltet. Es wurde nichts ausgeführt.",
+        "kein_modell": "Es ist kein zulässiges Modell gewählt. Es wurde nichts gesendet. Unter Einstellungen > KI-Modelle & Anbieter ein Modell wählen.",
+        "ziel_compliance": "Das gewählte Modell ist nach den Regeln der Organisation nicht zulässig. Es wurde nichts gesendet. Ein anderes Modell wählen.",
+        "ziel_fenster": "Für dieses Modell ist die Größe des Kontextfensters nicht bekannt. Es wurde nichts gesendet. Unter Einstellungen > KI-Modelle & Anbieter das Kontextlimit des Modells eintragen.",
+        "ziel_lokal": "Das lokale Modell ist gerade nicht bereit. Es wurde nichts gesendet. Einen Moment warten und noch einmal fragen oder ein anderes Modell wählen.",
+        "modell": "Das Modell hat nicht geantwortet. Es wurde keine Antwort übernommen. Die Frage noch einmal stellen oder ein anderes Modell wählen.",
+        "verspaetet": "Die Antwort kam zu spät: Die Auswahl im Projekt hat sich geändert, während sie entstand. Es wurde nichts übernommen.",
+        "zeitueberschreitung": "Das Modell hat zu lange gebraucht (mehr als fünf Minuten). Die Antwort wurde verworfen und nichts gesprochen. Die Frage noch einmal stellen, einen kleineren Projektkontext wählen oder ein schnelleres Modell nutzen.",
+        "andere": "Im Projekt ist ein unerwarteter Fehler aufgetreten. Es wurde keine Antwort übernommen. Kennung: {{code}}."
+      }
+    },
     "tool": {
       "generic": "Nutze das Werkzeug „{{name}}“ …",
       "meetings_list": "Schaue in Besprechungen nach …",
@@ -7808,6 +7861,9 @@
         "tts_page": "Vorlesen-Seite"
       }
     },
+    "error": {
+      "notUnderstood": "Ich habe dich nicht verstanden."
+    },
     "knowledge": {
       "intro": "Was das Modell im Gespräch nachschlagen darf. Jeder Zugriff wird protokolliert.",
       "toolsOff": "Die Werkzeuge sind unter „Modelle“ ausgeschaltet. Solange sie aus sind, schlägt das Modell nichts nach.",
@@ -7858,7 +7914,14 @@
       "global": {
         "title": "Globales Wissen (Vorschau)",
         "switch": "Alle freigegebenen Inhalte durchsuchen",
-        "hint": "Vor jeder Antwort sucht die App lokal in den freigegebenen Bereichen und gibt dem Modell die passenden Auszüge mit Belegen. Nur mit lokalem Sprachmodell; Bücher nur bis zu deiner Leseposition."
+        "hint": "Vor jeder Antwort sucht die App lokal in den freigegebenen Bereichen und gibt dem Modell die passenden Auszüge mit Belegen. Nur mit lokalem Sprachmodell; Bücher nur bis zu deiner Leseposition.",
+        "enableAll": "Bücher, Wissensbereiche und Transkripte freigeben",
+        "enableAllHint": "Schaltet die Suche ein und gibt diese Bereiche frei: Besprechungen samt Transkripten, Diktate, frühere Gespräche, Termine, Vorlesen-Seiten, Bücher, Buchnotizen und KI-Dokumente. Nicht dabei: Notizbuch-Abschnitte (eigene Freigabe unten) und die Ablage (im Sprachgespräch noch nicht angebunden). Die Inhalte gehen nur an das eingebaute lokale Modell.",
+        "allOn": "Bücher, Wissensbereiche und Transkripte sind freigegeben",
+        "allOnHint": "Besprechungen samt Transkripten, Diktate, Gespräche, Termine, Vorlesen-Seiten, Bücher, Buchnotizen und KI-Dokumente. Notizbuch-Abschnitte gibst du eigens frei; die Ablage ist im Sprachgespräch noch nicht angebunden. Die Inhalte gehen nur an das eingebaute lokale Modell. Einzelne Bereiche kannst du oben wieder abwählen.",
+        "enableAllError": "Die Freigabe konnte nicht gespeichert werden. Es gilt weiter die vorherige Einstellung.",
+        "enableAllConflict": "Die Einstellung wurde inzwischen geändert. Es wurde nichts überschrieben; die Schalter zeigen den aktuellen Stand.",
+        "localOnly": "Inhalte gehen derzeit nur an das eingebaute lokale Modell. Mit {{model}} antwortet der Assistent ohne Zugriff auf deine Inhalte."
       },
       "notebook": {
         "groupLabel": "Freigegebene Notizbuch-Abschnitte",
@@ -8831,8 +8894,18 @@
     },
     "ki": {
       "titel": "KI im Projekt",
-      "text": "Chat und Sprachgespräch nutzen diese Auswahl, sobald sie für Projekte freigegeben sind.",
-      "gesperrt": "Gesperrt: KI-Aufrufe im Projekt folgen mit dem nächsten Schritt."
+      "text": "Chat, Sprachgespräch, Recherche und KI-Dokument nutzen nur die Einträge, die als Kontext eingeschaltet sind. Vor jedem Senden prüft die App Datenklasse, Größe und Ziel; was nicht passt, wird nicht gesendet.",
+      "start": "Gespräch im Projekt beginnen",
+      "startHinweis": "Öffnet ein neues Gespräch, das nur diese Auswahl als Kontext nutzt.",
+      "dokument": "KI-Dokument erstellen",
+      "dokumentHinweis": "Die KI schreibt aus der Auswahl im Projekt einen Entwurf in der Dokumentenablage.",
+      "dokumentAuftrag": "Auftrag an die KI",
+      "dokumentName": "Name des Dokuments",
+      "dokumentRegel": "Der Entwurf liegt in der Dokumentenablage und ist im Projekt ausgeschaltet. Seine Klasse ist mindestens so hoch wie die höchste Klasse der verwendeten Inhalte.",
+      "dokumentSenden": "Dokument erstellen",
+      "dokumentLaeuft": "Die KI schreibt …",
+      "dokumentFertig": "Entwurf „{{name}}“ angelegt (Klasse {{klasse}}). Er ist im Projekt ausgeschaltet; zum Nutzen als Kontext einschalten.",
+      "dokumentNurAblage": "Entwurf „{{name}}“ liegt in der Dokumentenablage (Klasse {{klasse}}), ließ sich aber dem Projekt nicht zuordnen."
     },
     "banner": {
       "reset": "Die Kontextauswahl dieses Geräts war nicht lesbar. Zur Sicherheit sind alle Einträge ausgeschaltet. Schalte ein, was die KI nutzen soll.",
@@ -8903,7 +8976,8 @@
       "kontextFrage": "Recherche „{{frage}}“ ({{klasse}})",
       "restzeit_one": "noch 1 Minute",
       "restzeit_other": "noch {{count}} Minuten",
-      "anfrageHinweis": "Kontext {{klasse}}: Freigabe nötig"
+      "anfrageHinweis": "Kontext {{klasse}}: Freigabe nötig",
+      "mitKontext": "Die Anfragen entstanden mit Inhalten aus Ihrem Projekt"
     },
     "karte": {
       "titel": "Recherche",
@@ -8918,7 +8992,9 @@
       "hinweis": "Frage per Web-Recherche (Modus Schnell) im Suite-Projekt dieses Ordners beantworten",
       "keinProjekt": "Für die Recherche muss der Besprechungsordner mit einem Suite-Projekt verknüpft sein, das das Web freigibt.",
       "projektWaehlen": "In welchem Projekt?",
-      "wartet": "Die Suchanfragen warten auf Ihre Freigabe."
+      "wartet": "Die Suchanfragen warten auf Ihre Freigabe.",
+      "mitKontext": "Mit Projektkontext recherchieren",
+      "mitKontextHinweis": "Die Suchanfragen entstehen mit den eingeschalteten Inhalten des Projekts. Vor der Suche zeigt ein Dialog sie zur Freigabe."
     },
     "sprache": {
       "menu": "Web-Recherche im Projekt …",
@@ -9098,7 +9174,25 @@
       "recherche_fehlgeschlagen": "Die Recherche ist fehlgeschlagen.",
       "speichern_fehlgeschlagen": "Das Recherche-Dokument konnte nicht gespeichert werden.",
       "projekt_passt_nicht": "Das Suite-Projekt gehört nicht zu dieser Besprechung. Die Recherche wurde nicht ausgeführt.",
-      "kein_modell": "Es ist kein Sprachmodell eingestellt."
+      "kein_modell": "Es ist kein Sprachmodell eingestellt.",
+      "kontext_geaendert": "Die Auswahl im Projekt hat sich geändert. Es wurde nichts gesendet und nichts gespeichert.",
+      "kontext_nicht_verfuegbar": "Die Recherche mit Projektkontext ist nicht verfügbar. Es wurde nichts gesendet.",
+      "projekt.ki_gesperrt": "Die KI im Projekt ist in dieser Version abgeschaltet. Es wurde nichts gesendet.",
+      "projekt.klasse_ziel": "Ein Projektinhalt ist für dieses Modell zu schutzbedürftig. Ein lokales Modell wählen oder den Eintrag ausschalten. Es wurde nichts gesendet.",
+      "projekt.budget": "Zu viel Kontext für das Modell. Es wurde nichts gesendet und nichts gekürzt. Einträge im Projekt ausschalten oder ein Modell mit größerem Fenster wählen.",
+      "projekt.modell": "Das Modell hat nicht geantwortet. Es wurde keine Antwort übernommen. Noch einmal versuchen oder ein anderes Modell wählen.",
+      "projekt.kein_modell": "Es ist kein zulässiges Modell gewählt. Es wurde nichts gesendet. Unter Einstellungen > KI-Modelle & Anbieter ein Modell wählen.",
+      "projekt.ziel_lokal": "Das lokale Modell ist gerade nicht bereit. Es wurde nichts gesendet. Einen Moment warten und noch einmal versuchen oder ein anderes Modell wählen.",
+      "projekt.ziel_fenster": "Für dieses Modell ist die Größe des Kontextfensters nicht bekannt. Das Kontextlimit des Modells in den Einstellungen eintragen. Es wurde nichts gesendet.",
+      "projekt.ziel_compliance": "Das gewählte Modell ist nach den Regeln der Organisation nicht zulässig. Es wurde nichts gesendet. Ein anderes Modell wählen.",
+      "projekt.ungueltig": "Das Projekt ist gerade nicht verfügbar. Es wurde nichts gesendet. Das Projekt öffnen und prüfen, ob es noch vorhanden ist.",
+      "projekt.anfrage": "Die Anfrage war unvollständig. Es wurde nichts gesendet. Bitte noch einmal versuchen.",
+      "projekt.stand_veraltet": "Die Auswahl im Projekt hat sich seit der Anzeige geändert. Es wurde nichts gesendet. Die aktuelle Auswahl ansehen und noch einmal starten.",
+      "projekt.ablage": "Die Dokumentenablage ist gerade nicht lesbar. Es wurde nichts gesendet. Später noch einmal versuchen.",
+      "projekt.register": "Das Antwortregister des Projekts lässt sich gerade nicht lesen oder schreiben. Es wurde nichts übernommen. Später noch einmal versuchen.",
+      "projekt.verspaetet": "Die Auswahl im Projekt hat sich geändert, während die Antwort entstand. Die Antwort wurde nicht übernommen. Noch einmal starten.",
+      "projekt.widerrufen": "Die Auswahl im Projekt hat sich geändert. Es wurde nichts gesendet. Noch einmal starten.",
+      "projekt.fremdkontext": "Im Projekt sind nur Projektinhalte zulässig. Es wurde nichts gesendet."
     },
     "fehlercode": {
       "recherche.not_found": "Keine offene Freigabe mit dieser Kennung (abgelaufen, entschieden oder die App wurde neu gestartet).",
@@ -9108,7 +9202,10 @@
       "recherche.storage": "Die Recherche konnte nicht gespeichert werden.",
       "projekte.storage": "Das Projektverzeichnis konnte nicht gelesen oder geschrieben werden.",
       "projekte.not_found": "Nicht gefunden.",
-      "projekte.stand_veraltet": "Die Auswahl hat sich seit der Anzeige geändert. Bitte neu laden."
+      "projekte.stand_veraltet": "Die Auswahl hat sich seit der Anzeige geändert. Bitte neu laden.",
+      "projekt.dokument_eingabe": "Auftrag oder Name fehlen oder sind zu lang. Es wurde nichts gesendet.",
+      "projekt.dokument_leer": "Das Modell hat keinen Text geliefert. Es wurde kein Entwurf angelegt.",
+      "projekt.dokument_ablage": "Der Entwurf konnte nicht angelegt werden. Es wurde keine Datei erstellt."
     },
     "ergebnis": {
       "modus": "Schnell",
@@ -9191,7 +9288,12 @@
       "label": "Ordner",
       "meine": "Meine Ordner",
       "wiederhergestellt": "Wiederhergestellt",
-      "weitere": "Weitere Ordner"
+      "weitere": "Weitere Ordner",
+      "aufklappen": "{{name}} aufklappen",
+      "zuklappen": "{{name}} zuklappen",
+      "nurLesen": "Nur lesen",
+      "nurOnline": "Nur online",
+      "unterordner": "Unterordner von {{name}}"
     },
     "ordner": {
       "neu": "Neuer Ordner",
@@ -9212,7 +9314,11 @@
       "dateien_other": "{{count}} Dateien"
     },
     "stand": {
-      "konflikt": "Konflikt"
+      "konflikt": "Konflikt",
+      "imIndex": "Im Index",
+      "nurOnline": "Nur online",
+      "zuletztBekannt": "Zuletzt bekannt",
+      "imIndexLabel": "Im Suchindex"
     },
     "leer": {
       "titel": "Noch keine Dateien",
@@ -9417,7 +9523,8 @@
       "nurBestaetigen": "Nur auf diesem Gerät",
       "syncFrage": "Wieder mit anderen Geräten abgleichen?",
       "syncFolge": "Bereits abgelegte Kopien in der Cloud können danach nicht zurückgeholt werden.",
-      "syncBestaetigen": "Abgleich erlauben"
+      "syncBestaetigen": "Abgleich erlauben",
+      "weiter": "Weiter"
     },
     "lage": {
       "titel": "Die Ablage kann nicht geöffnet werden",
@@ -9443,21 +9550,77 @@
       "geloescht": "Endgültig gelöscht",
       "geleert": "Papierkorb geleert"
     },
+    "cloud": {
+      "titel": "Cloud-Ausnahme",
+      "schalter": "KI darf diesen Ordner über einen Cloud-Anbieter nutzen",
+      "schalterHinweis": "Nur für vertrauliche Ordner. Ohne Ausnahme bleibt er lokalen Modellen vorbehalten.",
+      "info": "Die KI darf Auszüge aus diesem Ordner und seinen Unterordnern an die gewählten Anbieter senden. Das gilt nur auf diesem Gerät und nur bei der Datenklasse „Vertraulich“. Unterordner mit „Personenbezogen“ sind ausgenommen: Sie gehen nie an einen Cloud-Anbieter.",
+      "anbieter": "Anbieter (Regelwerk „{{regelwerk}}“)",
+      "regelwerk": {
+        "eu": "EU",
+        "nur_lokal": "Nur lokal",
+        "keines": "Keine Einschränkung"
+      },
+      "gesperrt": "gesperrt",
+      "grund": {
+        "regelwerk": "Erfüllt das Regelwerk „{{regelwerk}}“ nicht.",
+        "klasse": "Nimmt höchstens „Intern“ an.",
+        "unbekannt": "Nicht mehr verfügbar. Die Ausnahme lässt sich entziehen."
+      },
+      "keinAnbieter": "Wählen Sie mindestens einen Anbieter.",
+      "nichtGeladen": "Die Anbieterliste ließ sich nicht laden. Bestehende Ausnahmen lassen sich trotzdem entziehen.",
+      "verwalten": "Regelwerk und Anbieter verwalten",
+      "sperre": {
+        "nur_lokal": "Das Regelwerk „Nur lokal“ lässt keine Cloud-Anbieter zu. Vertrauliche Ordner bleiben lokalen Modellen vorbehalten.",
+        "keines": "Das Regelwerk „Keine Einschränkung“ gibt vertrauliche Daten nicht für Cloud-Anbieter frei. Dafür ist das Regelwerk „EU“ nötig.",
+        "eu": "Kein konfigurierter Anbieter erfüllt das Regelwerk „EU“ für vertrauliche Daten. Nötig sind Verarbeitung in der EU, ein Auftragsverarbeitungsvertrag und kein Training mit Ihren Daten.",
+        "ki": "Die KI-Freigabe ist „Gesperrt“. Solange sie gilt, lässt sich keine Cloud-Ausnahme erteilen. Eine bestehende Ausnahme bleibt bestehen und lässt sich entziehen."
+      },
+      "geerbt": "Für diesen Ordner gilt außerdem eine Ausnahme von einem übergeordneten Ordner ({{anbieter}}).",
+      "braucht": "Für „{{klasse}}“ braucht es keine Ausnahme: Auszüge dürfen an freigegebene Cloud-Modelle gehen, soweit das Regelwerk es erlaubt.",
+      "personal": "Personenbezogene Dateien gehen nur an lokale Modelle. Eine Cloud-Ausnahme gibt es dafür nicht.",
+      "verfaellt": "Die Cloud-Ausnahme ({{anbieter}}) verfällt mit dem Speichern. Bei einem späteren Wechsel zurück zu „Vertraulich“ muss sie neu erteilt werden.",
+      "erstSpeichern": "Speichern Sie zuerst die Datenklasse „Vertraulich“. Danach lässt sich hier eine Cloud-Ausnahme erteilen.",
+      "chip": "Cloud-Ausnahme",
+      "chipGeerbt": "Cloud-Ausnahme (geerbt)",
+      "chipLabel": "Cloud-Ausnahme: Die KI darf diesen Ordner über {{anbieter}} nutzen. Ordnereinstellungen öffnen",
+      "chipLabelGeerbt": "Cloud-Ausnahme von einem übergeordneten Ordner: Die KI darf diesen Ordner über {{anbieter}} nutzen. Ordnereinstellungen öffnen",
+      "baum": "Cloud-Ausnahme",
+      "details": "Cloud",
+      "detailsWert": "Ausnahme",
+      "detailsQuelle": "{{anbieter}} · geerbt von {{ordner}}",
+      "frage": "Cloud-Ausnahme für „{{name}}“ erteilen?",
+      "umfang_one": "Auszüge aus {{count}} vertraulichen Datei in „{{name}}“ und seinen Unterordnern dürfen gesendet werden an:",
+      "umfang_other": "Auszüge aus {{count}} vertraulichen Dateien in „{{name}}“ und seinen Unterordnern dürfen gesendet werden an:",
+      "umfangNull": "In „{{name}}“ und seinen Unterordnern liegen aktuell keine vertraulichen Dateien. Die Ausnahme gilt auch für später abgelegte. Auszüge dürfen gesendet werden an:",
+      "ausgenommen": "Ausgenommen sind Unterordner mit der Datenklasse „Personenbezogen“: {{namen}}. Sie gehen nie an einen Cloud-Anbieter.",
+      "anbieterZeile": "{{name}} (Regelwerk „{{regelwerk}}“)",
+      "bedeutet": "Das bedeutet",
+      "punkt1": "Die KI sieht nur Auszüge, nie die Originale. Die Ausnahme gilt für den Assistenten (KI-Freigabe „An“) und für Projekte, in denen der Ordner eingeschaltet ist. „Gesperrt“ schließt beides aus.",
+      "punkt2": "Die Ausnahme gilt nur auf diesem Gerät und verfällt, wenn die Datenklasse geändert wird.",
+      "punkt3": "Sie lässt sich jederzeit entziehen. Bereits gesendete Auszüge lassen sich nicht zurückholen.",
+      "punkt4": "Personenbezogene Daten gehören nicht in diesen Ordner. Stufen Sie sie als „Personenbezogen“ ein; sie gehen nie an einen Cloud-Anbieter.",
+      "erteilen": "Ausnahme erteilen",
+      "verlassenTitel": "Ungespeicherte Änderungen verwerfen?",
+      "verlassenText": "Sie haben Änderungen an den Ordnereinstellungen nicht gespeichert. Wenn Sie jetzt zu „KI-Modelle & Anbieter“ wechseln, gehen sie verloren.",
+      "verlassenAktion": "Verwerfen und wechseln"
+    },
     "verknuepft": {
       "gruppe": "Verknüpfte Ordner (nur lesen)",
       "verknuepfen": "Ordner verknüpfen",
       "waehlen": "Ordner zum Verknüpfen wählen",
       "hinweis": "Nur lesen, nur dieses Gerät: Die Dateien bleiben, wo sie sind. Die Ablage liest sie nur für die Suche, ändert nichts daran und lädt nichts hoch. Die KI greift auf verknüpfte Ordner nicht zu.",
       "hinweisKurz": "Nur lesen, nur dieses Gerät",
+      "cloudGrenze": "Local Voice überspringt erkannte, nur online gespeicherte Dateien. Durch gleichzeitige Änderungen des Synchronisationsdienstes kann beim Lesen dennoch ein automatischer Download ausgelöst werden.",
       "angabe": "Verknüpft – nur lesen, nur dieses Gerät",
       "nichtErreichbar": "Nicht erreichbar",
-      "nichtErreichbarText": "Der verknüpfte Ordner ist gerade nicht erreichbar oder wurde verschoben. Die bekannten Dateien bleiben in der Liste, bis er wieder da ist.",
+      "nichtErreichbarText": "Der verknüpfte Ordner ist gerade nicht erreichbar oder wurde verschoben. Die zuletzt bekannten Dateien und Unterordner bleiben in der Liste, bis er wieder da ist.",
       "ausgelassen_one": "{{count}} Eintrag wurde ausgelassen (Verknüpfung oder Hartlink).",
       "ausgelassen_other": "{{count}} Einträge wurden ausgelassen (Verknüpfungen oder Hartlinks).",
-      "nurOnline_one": "{{count}} Eintrag liegt nur online und wird nicht gelesen.",
-      "nurOnline_other": "{{count}} Einträge liegen nur online und werden nicht gelesen.",
+      "nurOnline_one": "{{count}} Eintrag liegt nur online beim Cloud-Anbieter (z. B. OneDrive) und wird nicht gelesen.",
+      "nurOnline_other": "{{count}} Einträge liegen nur online beim Cloud-Anbieter (z. B. OneDrive) und werden nicht gelesen.",
       "nurOnlineHinweis": "In OneDrive „Immer auf diesem Gerät behalten“ wählen, damit der Text erfasst wird.",
-      "zuViele": "Der Ordner ist sehr groß; nur die ersten 20 000 Dateien werden gelesen.",
+      "zuViele": "Der Ordner ist sehr groß: Es sind höchstens 20 000 Dateien und 5 000 Unterordner erfasst.",
       "leer": "Keine lesbaren Dateien in diesem Ordner",
       "neuEinlesen": "Neu einlesen",
       "loesen": "Verknüpfung lösen",
@@ -9467,7 +9630,19 @@
       "einstellungenHinweis": "Verknüpfter Ordner: nur lesen, nur dieses Gerät. Er wird nie hochgeladen oder abgeglichen; die KI greift darauf nicht zu. Die Datenklasse bleibt einstellbar.",
       "toastVerknuepft": "Ordner verknüpft",
       "toastEingelesen": "Ordner neu eingelesen",
-      "toastGeloest": "Verknüpfung gelöst"
+      "toastGeloest": "Verknüpfung gelöst",
+      "nurLesenChip": "Nur lesen",
+      "keineKi": "Die KI greift auf verknüpfte Ordner nie zu – weder mit lokalen Modellen noch über einen Cloud-Anbieter. Darum gibt es hier weder eine KI-Freigabe noch eine Cloud-Ausnahme.",
+      "keineKi2": "Soll die KI bestimmte Dateien nutzen, legen Sie Kopien in einen eigenen Ablage-Ordner und geben Sie diesen frei.",
+      "nurOnlineTipp": "Die Datei liegt nur online beim Cloud-Anbieter (z. B. OneDrive), nicht auf diesem Gerät. Sie wird nicht gelesen und nicht durchsucht. Wählen Sie in OneDrive „Immer auf diesem Gerät behalten“, dann wird sie lesbar. Local Voice überspringt erkannte, nur online gespeicherte Dateien. Durch gleichzeitige Änderungen des Synchronisationsdienstes kann beim Lesen dennoch ein automatischer Download ausgelöst werden.",
+      "behaltenTitel": "Auf diesem Gerät behalten",
+      "behaltenText": "Diese Datei liegt nur online beim Cloud-Anbieter (z. B. OneDrive). Local Voice überspringt erkannte, nur online gespeicherte Dateien. Durch gleichzeitige Änderungen des Synchronisationsdienstes kann beim Lesen dennoch ein automatischer Download ausgelöst werden. Solange die Datei nicht auf dem Gerät liegt, bleibt sie ungelesen und fehlt in der Suche.",
+      "behaltenSchritt1": "Im Datei-Explorer die Datei mit der rechten Maustaste anklicken.",
+      "behaltenSchritt2": "„Immer auf diesem Gerät behalten“ wählen.",
+      "behaltenDanach": "Sobald die Datei auf dem Gerät liegt, liest die Ablage sie in der Regel innerhalb einer Minute selbst ein. Sonst hilft „Neu einlesen“.",
+      "keineVorschau": "Keine Vorschau – die Datei liegt nur online.",
+      "keineVorschauLabel": "Keine Vorschau: Die Datei liegt nur online",
+      "unterordnerLeer": "Keine Unterordner und keine Dateien in diesem Ordner"
     },
     "fehler": {
       "verknuepft_defekt": "Die Liste der verknüpften Ordner ist beschädigt.",
@@ -9505,7 +9680,9 @@
       "datenstrom": "Alternative Datenströme werden nicht übernommen.",
       "nicht_neu_aufbaubar": "Der Bestand lässt sich nicht neu aufbauen.",
       "loeschen_offen": "Ein endgültiges Löschen ist noch nicht abgeschlossen. Bitte später erneut versuchen.",
-      "datei_im_papierkorb": "Die Datei liegt im Papierkorb."
+      "datei_im_papierkorb": "Die Datei liegt im Papierkorb.",
+      "ausnahme_klasse": "Cloud-Ausnahmen gibt es nur für vertrauliche Ordner.",
+      "anbieter_nicht_zugelassen": "Dieser Anbieter ist für vertrauliche Ordner nicht zugelassen."
     }
   }
 }

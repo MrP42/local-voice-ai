@@ -1,11 +1,26 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { AblageOrdner, AblageEinstellungen, KiStufe } from "@/bindings";
+import { Eye, Settings } from "lucide-react";
+import type {
+  AblageAnbieterListe,
+  AblageDatei,
+  AblageEinstellungen,
+  AblageOrdner,
+  KiStufe,
+} from "@/bindings";
 import { Dialog } from "../ui/Dialog";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
 import { Select, type SelectOption } from "../ui/Select";
-import { KLASSEN, geerbteKlasse, klasseRang } from "./logik";
+import {
+  KLASSEN,
+  anbieterNamen,
+  cloudAenderung,
+  geerbteKlasse,
+  klasseRang,
+  vertraulicheImUnterbaum,
+  wirksameKlasseNeu,
+} from "./logik";
 
 /** Eingabe eines Namens (neuer Ordner, Umbenennen). Enter speichert, Escape schließt. */
 export const NameDialog: React.FC<{
@@ -201,29 +216,67 @@ export const KiWahl: React.FC<{
 export interface EinstellungenAenderung {
   ki?: KiStufe | null;
   einstellungen: AblageEinstellungen;
+  /** D7-Rest: Cloud-Ausnahmen, die erteilt oder entzogen werden (nur bei „Vertraulich“). */
+  cloud?: { erteilen: string[]; entziehen: string[] };
 }
 
+type Schritt = "form" | "nur" | "cloud" | "verlassen";
+
+/** Hinweisblock im Dialog (Info oder Warnung). */
+const Hinweis: React.FC<{
+  warn?: boolean;
+  testid?: string;
+  children: React.ReactNode;
+}> = ({ warn, testid, children }) => (
+  <div
+    className={`ablage-fold${warn ? " ablage-fold--warn" : ""}`}
+    data-testid={testid}
+  >
+    {children}
+  </div>
+);
+
 /**
- * Ordnereinstellungen: KI-Freigabe (gerätelokal), Datenklasse, Nur dieses Gerät, KI-Entwürfe.
- * Ein Wechsel von „Nur dieses Gerät“ braucht eine Bestätigung mit Folge im selben Dialog.
- * D7: Bei einem verknüpften Ordner nur KI-Freigabe und Datenklasse (ohne „Erben“); „Nur dieses
- * Gerät“ gilt dort immer, KI-Entwürfe landen nie dort.
+ * Ordnereinstellungen: KI-Freigabe (gerätelokal), Datenklasse, Cloud-Ausnahme, Nur dieses Gerät,
+ * KI-Entwürfe. Wechsel von „Nur dieses Gerät“ und das Erteilen einer Cloud-Ausnahme brauchen eine
+ * Bestätigung mit Folge im selben Dialog (die Frage ist dort der Titel). D7: Bei einem verknüpften
+ * Ordner nur die Datenklasse (ohne „Erben“): die KI erreicht ihn nie, „Nur dieses Gerät“ gilt dort
+ * immer, KI-Entwürfe landen nie dort.
  */
 export const OrdnerEinstellungen: React.FC<{
   open: boolean;
   ordner: AblageOrdner | null;
   alle: AblageOrdner[];
+  /** Für die Zahl in der Bestätigung der Cloud-Ausnahme. */
+  dateien: AblageDatei[];
+  /** Konfigurierte Anbieter für „Vertraulich“; `null` = ließ sich nicht laden. */
+  anbieter: AblageAnbieterListe | null;
   busy: boolean;
   onSpeichern(a: EinstellungenAenderung): void;
+  /** Wechsel zu „KI-Modelle & Anbieter“ (Regelwerk und Anbieter). */
+  onRegelwerk(): void;
   onClose(): void;
-}> = ({ open, ordner, alle, busy, onSpeichern, onClose }) => {
+}> = ({
+  open,
+  ordner,
+  alle,
+  dateien,
+  anbieter,
+  busy,
+  onSpeichern,
+  onRegelwerk,
+  onClose,
+}) => {
   const { t } = useTranslation();
   const [ki, setKi] = useState<KiStufe>("aus");
   const [eigeneKi, setEigeneKi] = useState(false);
   const [klasse, setKlasse] = useState("erbt");
   const [nur, setNur] = useState(false);
   const [entwuerfe, setEntwuerfe] = useState(false);
-  const [bestaetigen, setBestaetigen] = useState(false);
+  const [schritt, setSchritt] = useState<Schritt>("form");
+  const [cloudAn, setCloudAn] = useState(false);
+  const [auswahl, setAuswahl] = useState<string[]>([]);
+  const [cloudFehler, setCloudFehler] = useState(false);
   const ordnerId = ordner?.id ?? null;
   useEffect(() => {
     // Nur beim Öffnen oder Ordnerwechsel zurücksetzen: ein Neuladen im Hintergrund
@@ -235,9 +288,20 @@ export const OrdnerEinstellungen: React.FC<{
     setKlasse(ordner.datenklasse);
     setNur(ordner.nur_geraet);
     setEntwuerfe(ordner.zielordner_ki);
-    setBestaetigen(false);
+    setSchritt("form");
+    const eigene = ordner.cloud?.anbieter ?? [];
+    setCloudAn(eigene.length > 0);
+    setAuswahl(eigene);
+    setCloudFehler(false);
   }, [open, ordnerId]);
   const kiRef = useRef<HTMLButtonElement>(null);
+  const zurueckRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    // Bestätigungen: der Fokus liegt auf der sicheren Wahl („Zurück“).
+    if (!open || schritt === "form") return;
+    const frame = requestAnimationFrame(() => zurueckRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [open, schritt]);
   const unklar = ordner?.ki.zustand === "unklar";
   if (!ordner) return null;
   const hatEltern = !!ordner.eltern;
@@ -267,6 +331,59 @@ export const OrdnerEinstellungen: React.FC<{
     !unklar &&
     (ki !== ordner.ki.zustand ||
       eigeneKi !== (!ordner.ki.von && !ordner.ki.vorgabe));
+
+  // --- Cloud-Ausnahme (D7-Rest) ---
+  const bestand = ordner.cloud?.anbieter ?? [];
+  const geerbt = ordner.cloud?.geerbt ?? [];
+  const wirksamNeu = wirksameKlasseNeu(alle, ordner.id, klasse);
+  const gespeichertVertraulich = ordner.klasse === "confidential";
+  /** Schalter und Liste nur, solange die Klasse „Vertraulich“ gespeichert UND gewählt ist. */
+  const cloudAktiv =
+    !verknuepft && wirksamNeu === "confidential" && gespeichertVertraulich;
+  const liste = anbieter?.anbieter ?? [];
+  const namenVon = (ids: string[]) => anbieterNamen(ids, liste);
+  const regelwerk = anbieter?.regelwerk ?? "eu";
+  const regelwerkName = t(`ablage.cloud.regelwerk.${regelwerk}`, {
+    defaultValue: regelwerk,
+  });
+  const waehlbare = liste.filter((a) => a.waehlbar);
+  const regelSperre: "nur_lokal" | "keines" | "eu" | null = !anbieter
+    ? null
+    : regelwerk === "nur_lokal"
+      ? "nur_lokal"
+      : regelwerk === "keines"
+        ? "keines"
+        : waehlbare.length === 0
+          ? "eu"
+          : null;
+  const kiGesperrt = ki === "gesperrt";
+  // Erteilen ist gesperrt, solange kein Anbieter zulässig ist oder die KI „Gesperrt“ ist.
+  // Eine bestehende Ausnahme bleibt sichtbar und lässt sich entziehen.
+  const erteilenGesperrt = !anbieter || regelSperre !== null || kiGesperrt;
+  const auswahlWirksam = cloudAktiv && cloudAn ? auswahl : [];
+  const cloudAend = cloudAenderung(cloudAktiv ? bestand : [], auswahlWirksam);
+  const cloudDa =
+    cloudAend.erteilen.length > 0 || cloudAend.entziehen.length > 0;
+  const zeilen = [
+    ...liste,
+    ...bestand
+      .filter((id) => !liste.some((a) => a.id === id))
+      .map((id) => ({ id, name: id, waehlbar: false, grund: "unbekannt" })),
+  ];
+  const zaehlung = vertraulicheImUnterbaum(alle, dateien, ordner.id);
+  const aendern = (id: string, an: boolean) => {
+    setCloudFehler(false);
+    setAuswahl((alt) =>
+      an ? [...new Set([...alt, id])] : alt.filter((x) => x !== id),
+    );
+  };
+
+  const geaendert =
+    kiGeaendert ||
+    klasse !== ordner.datenklasse ||
+    nurGeaendert ||
+    entwuerfe !== ordner.zielordner_ki ||
+    cloudDa;
   const speichern = () => {
     const einstellungen: AblageEinstellungen = {
       datenklasse: klasse !== ordner.datenklasse ? klasse : null,
@@ -276,80 +393,336 @@ export const OrdnerEinstellungen: React.FC<{
     onSpeichern({
       ki: kiGeaendert ? (eigeneKi ? ki : null) : undefined,
       einstellungen,
+      cloud: cloudDa ? cloudAend : undefined,
     });
   };
+  /** Nächster Schritt nach „Speichern“ oder nach einer Bestätigung. */
+  const weiter = (von: Schritt) => {
+    if (von === "form") {
+      if (cloudAktiv && cloudAn && auswahl.length === 0) {
+        setCloudFehler(true);
+        return;
+      }
+      if (nurGeaendert) return setSchritt("nur");
+    }
+    if (von !== "cloud" && cloudAend.erteilen.length > 0)
+      return setSchritt("cloud");
+    speichern();
+  };
+  const wechselZuRegelwerk = () =>
+    geaendert ? setSchritt("verlassen") : onRegelwerk();
   const nurGeerbt = ordner.nur_geraet_wirksam && !ordner.nur_geraet;
+
+  const titel =
+    schritt === "nur"
+      ? t(
+          nur
+            ? "ablage.einstellungen.nurFrage"
+            : "ablage.einstellungen.syncFrage",
+          {
+            name: ordner.name,
+          },
+        )
+      : schritt === "cloud"
+        ? t("ablage.cloud.frage", { name: ordner.name })
+        : schritt === "verlassen"
+          ? t("ablage.cloud.verlassenTitel")
+          : t("ablage.einstellungen.titel", { name: ordner.name });
+  const beschreibung =
+    schritt === "nur"
+      ? t(
+          nur
+            ? "ablage.einstellungen.nurFolge"
+            : "ablage.einstellungen.syncFolge",
+        )
+      : schritt === "cloud"
+        ? t(
+            zaehlung.dateien === 0
+              ? "ablage.cloud.umfangNull"
+              : "ablage.cloud.umfang",
+            { count: zaehlung.dateien, name: ordner.name },
+          )
+        : schritt === "verlassen"
+          ? t("ablage.cloud.verlassenText")
+          : undefined;
+  const zurueck = (
+    <Button
+      ref={zurueckRef}
+      onClick={() => setSchritt("form")}
+      disabled={busy}
+      data-testid="ablage-einstellungen-zurueck"
+    >
+      {t("ablage.zurueck")}
+    </Button>
+  );
+  const fuss =
+    schritt === "nur" ? (
+      <>
+        <Button
+          variant="primary"
+          onClick={() => weiter("nur")}
+          disabled={busy}
+          data-testid="ablage-einstellungen-bestaetigen"
+        >
+          {cloudAend.erteilen.length > 0
+            ? t("ablage.einstellungen.weiter")
+            : t(
+                nur
+                  ? "ablage.einstellungen.nurBestaetigen"
+                  : "ablage.einstellungen.syncBestaetigen",
+              )}
+        </Button>
+        {zurueck}
+      </>
+    ) : schritt === "cloud" ? (
+      <>
+        <Button
+          variant="primary"
+          onClick={() => weiter("cloud")}
+          disabled={busy}
+          data-testid="ablage-cloud-erteilen"
+        >
+          {t("ablage.cloud.erteilen")}
+        </Button>
+        {zurueck}
+      </>
+    ) : schritt === "verlassen" ? (
+      <>
+        <Button
+          variant="primary"
+          onClick={onRegelwerk}
+          disabled={busy}
+          data-testid="ablage-cloud-verlassen"
+        >
+          {t("ablage.cloud.verlassenAktion")}
+        </Button>
+        {zurueck}
+      </>
+    ) : (
+      <>
+        <Button
+          variant="primary"
+          disabled={busy}
+          onClick={() => weiter("form")}
+          data-testid="ablage-einstellungen-speichern"
+        >
+          {t("ablage.speichern")}
+        </Button>
+        <Button onClick={onClose} disabled={busy}>
+          {t("ablage.abbrechen")}
+        </Button>
+      </>
+    );
+
+  const cloudAbschnitt = (): React.ReactNode => {
+    const eigeneNamen = namenVon(bestand).join(", ");
+    if (verknuepft) return null;
+    if (wirksamNeu === "confidential" && !gespeichertVertraulich)
+      return (
+        <Hinweis testid="ablage-cloud-erst-speichern">
+          {t("ablage.cloud.erstSpeichern")}
+        </Hinweis>
+      );
+    if (!cloudAktiv)
+      return (
+        <>
+          <Hinweis testid="ablage-cloud-braucht-keine">
+            {wirksamNeu === "personal"
+              ? t("ablage.cloud.personal")
+              : t("ablage.cloud.braucht", {
+                  klasse: t(`ablage.klasse.lang.${wirksamNeu}`, {
+                    defaultValue: wirksamNeu,
+                  }),
+                })}
+          </Hinweis>
+          {bestand.length > 0 && (
+            <Hinweis warn testid="ablage-cloud-verfaellt">
+              <b>{t("ablage.cloud.verfaellt", { anbieter: eigeneNamen })}</b>
+            </Hinweis>
+          )}
+        </>
+      );
+    const sperrText = regelSperre
+      ? t(`ablage.cloud.sperre.${regelSperre}`)
+      : kiGesperrt
+        ? t("ablage.cloud.sperre.ki")
+        : null;
+    return (
+      <>
+        <div className="ablage-sw">
+          <span>
+            {t("ablage.cloud.schalter")}
+            <br />
+            <span className="ablage-mut">
+              {t("ablage.cloud.schalterHinweis")}
+            </span>
+          </span>
+          <Schalter
+            an={cloudAn}
+            disabled={!cloudAn && erteilenGesperrt}
+            label={t("ablage.cloud.schalter")}
+            onChange={(a) => {
+              setCloudAn(a);
+              setCloudFehler(false);
+            }}
+          />
+        </div>
+        {!anbieter && (
+          <Hinweis warn testid="ablage-cloud-nicht-geladen">
+            {t("ablage.cloud.nichtGeladen")}
+          </Hinweis>
+        )}
+        {sperrText && (
+          <Hinweis testid="ablage-cloud-sperre">{sperrText}</Hinweis>
+        )}
+        {geerbt.length > 0 && (
+          <Hinweis testid="ablage-cloud-geerbt">
+            {t("ablage.cloud.geerbt", {
+              anbieter: namenVon(geerbt).join(", "),
+            })}
+          </Hinweis>
+        )}
+        {cloudAn && (
+          <>
+            <Hinweis testid="ablage-cloud-info">
+              {t("ablage.cloud.info")}
+            </Hinweis>
+            <fieldset
+              className="ablage-cbs"
+              aria-describedby={cloudFehler ? "ablage-cloud-fehler" : undefined}
+              data-testid="ablage-cloud-anbieter"
+            >
+              <legend className="ablage-grp" style={{ padding: "8px 0 4px" }}>
+                {t("ablage.cloud.anbieter", { regelwerk: regelwerkName })}
+              </legend>
+              {zeilen.map((z, i) => {
+                const an = auswahl.includes(z.id);
+                const gesperrt = !z.waehlbar && !bestand.includes(z.id);
+                const grundId = `ablage-cloud-grund-${i}`;
+                const grund = z.grund
+                  ? t(`ablage.cloud.grund.${z.grund}`, {
+                      regelwerk: regelwerkName,
+                      defaultValue: "",
+                    })
+                  : "";
+                return (
+                  <label
+                    key={z.id}
+                    className="ablage-cb"
+                    data-an={an}
+                    data-gesperrt={gesperrt}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={an}
+                      disabled={gesperrt}
+                      aria-describedby={grund ? grundId : undefined}
+                      onChange={(e) => aendern(z.id, e.target.checked)}
+                      data-testid={`ablage-cloud-anbieter-${z.id}`}
+                    />
+                    <span className="ablage-cb__text">
+                      <b>{z.name}</b>
+                      {(gesperrt || grund) && (
+                        <span id={grundId} className="ablage-cb__grund">
+                          {gesperrt && `${t("ablage.cloud.gesperrt")}`}
+                          {gesperrt && grund && " · "}
+                          {grund}
+                        </span>
+                      )}
+                    </span>
+                  </label>
+                );
+              })}
+            </fieldset>
+            {cloudFehler && (
+              <p
+                id="ablage-cloud-fehler"
+                role="alert"
+                className="ablage-fehler"
+                data-testid="ablage-cloud-fehler"
+              >
+                {t("ablage.cloud.keinAnbieter")}
+              </p>
+            )}
+          </>
+        )}
+        <button
+          type="button"
+          className="ablage-lnkrow"
+          onClick={wechselZuRegelwerk}
+          data-testid="ablage-cloud-regelwerk"
+        >
+          <Settings size={16} aria-hidden="true" />
+          {t("ablage.cloud.verwalten")}
+        </button>
+      </>
+    );
+  };
+
+  const bestaetigungCloud = (
+    <div className="text-sm" data-testid="ablage-cloud-bestaetigung">
+      <ul className="ablage-ul">
+        {auswahlWirksam.length > 0 &&
+          namenVon(auswahlWirksam).map((n) => (
+            <li key={n}>
+              <b>
+                {t("ablage.cloud.anbieterZeile", {
+                  name: n,
+                  regelwerk: regelwerkName,
+                })}
+              </b>
+            </li>
+          ))}
+      </ul>
+      {zaehlung.personenbezogen.length > 0 && (
+        <p className="ablage-mut" style={{ margin: "8px 0 0" }}>
+          {t("ablage.cloud.ausgenommen", {
+            namen: zaehlung.personenbezogen.map((n) => `„${n}“`).join(", "),
+          })}
+        </p>
+      )}
+      <div className="ablage-grp" style={{ padding: "12px 0 4px" }}>
+        {t("ablage.cloud.bedeutet")}
+      </div>
+      <ul className="ablage-ul">
+        <li>{t("ablage.cloud.punkt1")}</li>
+        <li>{t("ablage.cloud.punkt2")}</li>
+        <li>{t("ablage.cloud.punkt3")}</li>
+        <li>{t("ablage.cloud.punkt4")}</li>
+      </ul>
+    </div>
+  );
+
   return (
     <Dialog
       open={open}
       className="ablage-dlg"
       onOpenChange={(o) => !o && !busy && onClose()}
-      title={t("ablage.einstellungen.titel", { name: ordner.name })}
+      title={titel}
+      description={beschreibung}
       closeLabel={t("ablage.schliessen")}
-      initialFocusRef={unklar || bestaetigen || verknuepft ? undefined : kiRef}
-      footer={
-        bestaetigen ? (
-          <>
-            <Button
-              variant="primary"
-              onClick={speichern}
-              disabled={busy}
-              data-testid="ablage-einstellungen-bestaetigen"
-            >
-              {t(
-                nur
-                  ? "ablage.einstellungen.nurBestaetigen"
-                  : "ablage.einstellungen.syncBestaetigen",
-              )}
-            </Button>
-            <Button onClick={() => setBestaetigen(false)} disabled={busy}>
-              {t("ablage.zurueck")}
-            </Button>
-          </>
-        ) : (
-          <>
-            <Button
-              variant="primary"
-              disabled={busy}
-              onClick={() =>
-                nurGeaendert ? setBestaetigen(true) : speichern()
-              }
-              data-testid="ablage-einstellungen-speichern"
-            >
-              {t("ablage.speichern")}
-            </Button>
-            <Button onClick={onClose} disabled={busy}>
-              {t("ablage.abbrechen")}
-            </Button>
-          </>
-        )
+      initialFocusRef={
+        unklar || schritt !== "form" || verknuepft ? undefined : kiRef
       }
+      footer={fuss}
     >
-      {bestaetigen ? (
-        <div className="text-sm" role="alert">
-          <p>
-            {t(
-              nur
-                ? "ablage.einstellungen.nurFrage"
-                : "ablage.einstellungen.syncFrage",
-              { name: ordner.name },
-            )}
-          </p>
-          <p className="ablage-mut" style={{ marginTop: 8 }}>
-            {t(
-              nur
-                ? "ablage.einstellungen.nurFolge"
-                : "ablage.einstellungen.syncFolge",
-            )}
-          </p>
-        </div>
+      {schritt === "nur" || schritt === "verlassen" ? null : schritt ===
+        "cloud" ? (
+        bestaetigungCloud
       ) : (
         <div>
           {verknuepft ? (
             <>
+              <span
+                className="ablage-chip"
+                data-testid="ablage-einstellungen-chip"
+              >
+                <Eye size={14} aria-hidden="true" />
+                {t("ablage.verknuepft.angabe")}
+              </span>
               <div
                 className="ablage-grp"
-                style={{ padding: "0 0 4px" }}
+                style={{ padding: "12px 0 4px" }}
                 id="ablage-ki-label"
               >
                 {t("ablage.ki.fuerDieKi")}
@@ -361,6 +734,10 @@ export const OrdnerEinstellungen: React.FC<{
               >
                 {t("ablage.ki.verknuepftNichtVerfuegbar")}
               </p>
+              <Hinweis testid="ablage-keine-ki">
+                <p>{t("ablage.verknuepft.keineKi")}</p>
+                <p>{t("ablage.verknuepft.keineKi2")}</p>
+              </Hinweis>
             </>
           ) : (
             <>
@@ -427,6 +804,14 @@ export const OrdnerEinstellungen: React.FC<{
             </p>
           ) : (
             <>
+              <div
+                className="ablage-grp"
+                style={{ padding: "12px 0 4px" }}
+                data-testid="ablage-cloud-abschnitt"
+              >
+                {t("ablage.cloud.titel")}
+              </div>
+              {cloudAbschnitt()}
               <div className="ablage-sw">
                 <span>
                   {t("ablage.nurGeraet.titel")}

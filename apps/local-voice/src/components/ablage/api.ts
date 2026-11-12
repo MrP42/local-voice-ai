@@ -24,6 +24,11 @@ export const api = {
     ok(commands.ablageOrdnerEinstellungen(id, e)),
   kiSetzen: (id: string, stufe: KiStufe | null) =>
     ok(commands.ablageKiSetzen(id, stufe)),
+  /** D7-Rest: Cloud-Ausnahme je (Ordner, Anbieter) erteilen oder entziehen. */
+  cloudAusnahmeSetzen: (ordner: string, anbieter: string, an: boolean) =>
+    ok(commands.ablageCloudAusnahmeSetzen(ordner, anbieter, an)),
+  /** D7-Rest: konfigurierte Anbieter, gefiltert nach Regelwerk und Datenklasse. */
+  cloudAnbieter: () => commands.ablageCloudAnbieter(),
   freigabenNeuFestlegen: () => ok(commands.ablageFreigabenNeuFestlegen()),
   importieren: (
     ordner: string,

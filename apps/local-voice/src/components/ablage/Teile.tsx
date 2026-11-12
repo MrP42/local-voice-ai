@@ -1,9 +1,14 @@
-import React from "react";
+import React, { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   AlertTriangle,
   Check,
+  ChevronDown,
+  ChevronRight,
   Clock,
+  Cloud,
+  CloudCheck,
+  Eye,
   FileText,
   Folder,
   FolderSymlink,
@@ -11,6 +16,7 @@ import {
   Monitor,
   PauseCircle,
   Plus,
+  RefreshCw,
   RotateCcw,
   Sparkles,
   Trash2,
@@ -35,19 +41,27 @@ import { Button } from "../ui/Button";
 import { Auszug, fundstelleText } from "./Suche";
 import {
   baumBauen,
+  cloudAlle,
   dateiArt,
   dateiKuerzel,
   formatBytes,
+  letztesGlied,
+  unterAnsicht,
   type BaumKnoten,
+  type UnterKnoten,
 } from "./logik";
 
 export const KORB = "korb";
 
 const Chip: React.FC<{
-  art?: "ki" | "sperre" | "ok";
+  art?: "ki" | "sperre" | "ok" | "cloud" | "warn";
+  title?: string;
   children: React.ReactNode;
-}> = ({ art, children }) => (
-  <span className={`ablage-chip${art ? ` ablage-chip--${art}` : ""}`}>
+}> = ({ art, title, children }) => (
+  <span
+    className={`ablage-chip${art ? ` ablage-chip--${art}` : ""}`}
+    title={title}
+  >
     {children}
   </span>
 );
@@ -80,11 +94,42 @@ export const SyncZeichen: React.FC<{ zustand: AblageSyncZustand }> = ({
   );
 };
 
+/**
+ * Cloud-Ausnahme als Chip (D7-Rest): Text „Cloud-Ausnahme“, die Anbieter stehen im Titel und für
+ * Hilfstechnik im Text. Nur geerbt: „(geerbt)“.
+ */
+export const CloudChip: React.FC<{
+  namen: string[];
+  geerbt?: boolean;
+}> = ({ namen, geerbt = false }) => {
+  const { t } = useTranslation();
+  if (namen.length === 0) return null;
+  const liste = namen.join(", ");
+  return (
+    <Chip
+      art="cloud"
+      title={t(
+        geerbt ? "ablage.cloud.chipLabelGeerbt" : "ablage.cloud.chipLabel",
+        {
+          anbieter: liste,
+        },
+      )}
+    >
+      <CloudCheck size={14} aria-hidden="true" />
+      {t(geerbt ? "ablage.cloud.chipGeerbt" : "ablage.cloud.chip")}
+      <span className="ablage-sr"> ({liste})</span>
+    </Chip>
+  );
+};
+
 /** KI-Zustand und Datenklasse als Chips (Liste und Details). */
-export const KiKlasseChips: React.FC<{ ki: AblageKi; klasse: string }> = ({
-  ki,
-  klasse,
-}) => {
+export const KiKlasseChips: React.FC<{
+  ki: AblageKi;
+  klasse: string;
+  /** D7-Rest: Cloud-Ausnahme dieses Eintrags (Namen der Anbieter); `geerbt` = nur von oben. */
+  cloudNamen?: string[];
+  cloudGeerbt?: boolean;
+}> = ({ ki, klasse, cloudNamen, cloudGeerbt }) => {
   const { t } = useTranslation();
   return (
     <>
@@ -108,11 +153,17 @@ export const KiKlasseChips: React.FC<{ ki: AblageKi; klasse: string }> = ({
           defaultValue: t("ablage.klasse.kurz.unbekannt"),
         })}
       </Chip>
+      {cloudNamen && cloudNamen.length > 0 && (
+        <>
+          {" "}
+          <CloudChip namen={cloudNamen} geerbt={cloudGeerbt} />
+        </>
+      )}
     </>
   );
 };
 
-/** Ordnerbaum: eigene Ordner, „Wiederhergestellt“, Papierkorb. */
+/** Ordnerbaum: eigene Ordner, „Wiederhergestellt“, verknüpfte Ordner mit Unterbaum, Papierkorb. */
 export const OrdnerBaum: React.FC<{
   ordner: AblageOrdner[];
   gewaehlt: string | null;
@@ -122,6 +173,15 @@ export const OrdnerBaum: React.FC<{
   /** D7: verknüpfte Ordner (nur lesen, nur dieses Gerät). */
   verknuepft?: AblageVerknuepft[];
   onVerknuepfen?: () => void;
+  /** D7-Rest: Unterordnerbaum je verknüpftem Ordner (nur lesen). */
+  unterbaeume?: Map<string, UnterKnoten[]>;
+  /** Aufgeklappte Knoten (Ansichts-Schlüssel: Kennung oder `<Kennung>|<Pfad>`). */
+  offen?: Set<string>;
+  onUmschalten?: (schluessel: string, name: string) => void;
+  /** Namen der Anbieter einer Cloud-Ausnahme (für Titel der Zeichen). */
+  anbieterNamen?: (ids: string[]) => string[];
+  /** Kennung-Vorsatz für `aria-controls` (der Baum steht in Spalte und Blatt). */
+  idVorsatz?: string;
 }> = ({
   ordner,
   gewaehlt,
@@ -130,53 +190,203 @@ export const OrdnerBaum: React.FC<{
   onNeu,
   verknuepft = [],
   onVerknuepfen,
+  unterbaeume,
+  offen,
+  onUmschalten,
+  anbieterNamen,
+  idVorsatz = "baum",
 }) => {
   const { t } = useTranslation();
   const { wurzeln, wiederhergestellt } = baumBauen(ordner);
-  const zeile = (k: BaumKnoten): React.ReactNode => (
-    <React.Fragment key={k.ordner.id}>
+  const zeile = (k: BaumKnoten): React.ReactNode => {
+    const cloud = cloudAlle(k.ordner.cloud);
+    const cloudTitel = (anbieterNamen?.(cloud) ?? cloud).join(", ");
+    return (
+      <React.Fragment key={k.ordner.id}>
+        <button
+          type="button"
+          className="ablage-row"
+          style={{ paddingLeft: 12 + k.tiefe * 18 }}
+          aria-current={gewaehlt === k.ordner.id ? "true" : undefined}
+          onClick={() => onWahl(k.ordner.id)}
+          data-testid={`ablage-ordner-${k.ordner.id}`}
+        >
+          <Folder size={20} aria-hidden="true" />
+          <span className="ablage-row__name">{k.ordner.name}</span>
+          {k.ordner.ki.zustand === "an" && (
+            <span
+              role="img"
+              aria-label={t("ablage.ki.fuerKiFreigegeben")}
+              style={{ color: "var(--color-logo-primary)" }}
+            >
+              <Sparkles size={16} aria-hidden="true" />
+            </span>
+          )}
+          {k.ordner.ki.zustand === "gesperrt" && (
+            <span
+              role="img"
+              aria-label={t("ablage.ki.stufe.gesperrt")}
+              style={{ color: "var(--abl-warn)" }}
+            >
+              <Lock size={16} aria-hidden="true" />
+            </span>
+          )}
+          {cloud.length > 0 && (
+            <span
+              role="img"
+              aria-label={`${t("ablage.cloud.baum")}: ${cloudTitel}`}
+              title={`${t("ablage.cloud.baum")}: ${cloudTitel}`}
+              style={{ color: "var(--color-logo-primary)" }}
+              data-testid={`ablage-baum-cloud-${k.ordner.id}`}
+            >
+              <CloudCheck size={16} aria-hidden="true" />
+            </span>
+          )}
+          {k.ordner.nur_geraet_wirksam && (
+            <span
+              role="img"
+              aria-label={t("ablage.nurGeraet.titel")}
+              className="ablage-row__ct"
+            >
+              <Monitor size={16} aria-hidden="true" />
+            </span>
+          )}
+          <span className="ablage-row__ct">{k.ordner.dateien}</span>
+        </button>
+        {k.kinder.map(zeile)}
+      </React.Fragment>
+    );
+  };
+  const kennung = (schluessel: string) =>
+    `${idVorsatz}-k-${encodeURIComponent(schluessel)}`;
+  /** Aufklapp-Knopf (44 × 44 px) oder Platzhalter gleicher Breite. */
+  const umschalter = (schluessel: string, name: string, hatKinder: boolean) => {
+    if (!hatKinder) return <span className="ablage-tsp" aria-hidden="true" />;
+    const auf = offen?.has(schluessel) ?? false;
+    return (
       <button
         type="button"
-        className="ablage-row"
-        style={{ paddingLeft: 12 + k.tiefe * 18 }}
-        aria-current={gewaehlt === k.ordner.id ? "true" : undefined}
-        onClick={() => onWahl(k.ordner.id)}
-        data-testid={`ablage-ordner-${k.ordner.id}`}
+        className="ablage-tw"
+        aria-expanded={auf}
+        aria-controls={kennung(schluessel)}
+        aria-label={t(
+          auf ? "ablage.baum.zuklappen" : "ablage.baum.aufklappen",
+          {
+            name,
+          },
+        )}
+        onClick={() => onUmschalten?.(schluessel, name)}
+        data-testid={`ablage-baum-umschalter-${schluessel}`}
       >
-        <Folder size={20} aria-hidden="true" />
-        <span className="ablage-row__name">{k.ordner.name}</span>
-        {k.ordner.ki.zustand === "an" && (
-          <span
-            role="img"
-            aria-label={t("ablage.ki.fuerKiFreigegeben")}
-            style={{ color: "var(--color-logo-primary)" }}
-          >
-            <Sparkles size={16} aria-hidden="true" />
-          </span>
+        {auf ? (
+          <ChevronDown size={16} aria-hidden="true" />
+        ) : (
+          <ChevronRight size={16} aria-hidden="true" />
         )}
-        {k.ordner.ki.zustand === "gesperrt" && (
-          <span
-            role="img"
-            aria-label={t("ablage.ki.stufe.gesperrt")}
-            style={{ color: "var(--abl-warn)" }}
-          >
-            <Lock size={16} aria-hidden="true" />
-          </span>
-        )}
-        {k.ordner.nur_geraet_wirksam && (
-          <span
-            role="img"
-            aria-label={t("ablage.nurGeraet.titel")}
-            className="ablage-row__ct"
-          >
-            <Monitor size={16} aria-hidden="true" />
-          </span>
-        )}
-        <span className="ablage-row__ct">{k.ordner.dateien}</span>
       </button>
-      {k.kinder.map(zeile)}
-    </React.Fragment>
-  );
+    );
+  };
+  const unterZeile = (
+    wurzel: string,
+    k: UnterKnoten,
+    tiefe: number,
+  ): React.ReactNode => {
+    const schluessel = unterAnsicht(wurzel, k.pfad);
+    // Ordner, die nur online liegen, betritt die App nie: nicht aufklappbar.
+    const hatKinder = !k.nurOnline && k.kinder.length > 0;
+    const auf = offen?.has(schluessel) ?? false;
+    return (
+      <li key={schluessel}>
+        <div
+          className="ablage-trow"
+          data-aktiv={gewaehlt === schluessel}
+          style={{ "--lv": tiefe } as React.CSSProperties}
+        >
+          {umschalter(schluessel, k.name, hatKinder)}
+          <button
+            type="button"
+            className="ablage-rm"
+            aria-current={gewaehlt === schluessel ? "true" : undefined}
+            onClick={() => onWahl(schluessel)}
+            data-testid={`ablage-ordner-${schluessel}`}
+          >
+            <Folder size={20} aria-hidden="true" />
+            <span className="ablage-rm__name">{k.name}</span>
+            {k.nurOnline && (
+              <span
+                role="img"
+                aria-label={t("ablage.baum.nurOnline")}
+                title={t("ablage.baum.nurOnline")}
+                className="ablage-mut"
+              >
+                <Cloud size={16} aria-hidden="true" />
+              </span>
+            )}
+            {k.dateien > 0 && (
+              <span className="ablage-row__ct">{k.dateien}</span>
+            )}
+          </button>
+        </div>
+        {hatKinder && (
+          <ul id={kennung(schluessel)} className="ablage-tl" hidden={!auf}>
+            {k.kinder.map((c) => unterZeile(wurzel, c, tiefe + 1))}
+          </ul>
+        )}
+      </li>
+    );
+  };
+  const verknuepftZeile = (v: AblageVerknuepft) => {
+    const id = v.ordner.id;
+    const baum = unterbaeume?.get(id) ?? [];
+    const auf = offen?.has(id) ?? false;
+    return (
+      <li key={id}>
+        <div
+          className="ablage-trow"
+          data-aktiv={gewaehlt === id}
+          data-weg={!v.erreichbar}
+          style={{ "--lv": 0 } as React.CSSProperties}
+        >
+          {umschalter(id, v.ordner.name, baum.length > 0)}
+          <button
+            type="button"
+            className="ablage-rm"
+            aria-current={gewaehlt === id ? "true" : undefined}
+            onClick={() => onWahl(id)}
+            title={t("ablage.verknuepft.hinweisKurz")}
+            data-testid={`ablage-ordner-${id}`}
+          >
+            <FolderSymlink size={20} aria-hidden="true" />
+            <span className="ablage-rm__name">{v.ordner.name}</span>
+            <span
+              role="img"
+              aria-label={t("ablage.baum.nurLesen")}
+              title={t("ablage.baum.nurLesen")}
+              className="ablage-mut"
+            >
+              <Eye size={16} aria-hidden="true" />
+            </span>
+            {!v.erreichbar && (
+              <span
+                role="img"
+                aria-label={t("ablage.verknuepft.nichtErreichbar")}
+                title={t("ablage.verknuepft.nichtErreichbar")}
+                style={{ color: "var(--abl-warn)" }}
+              >
+                <AlertTriangle size={16} aria-hidden="true" />
+              </span>
+            )}
+            <span className="ablage-row__ct">{v.ordner.dateien}</span>
+          </button>
+        </div>
+        {baum.length > 0 && (
+          <ul id={kennung(id)} className="ablage-tl" hidden={!auf}>
+            {baum.map((k) => unterZeile(id, k, 1))}
+          </ul>
+        )}
+      </li>
+    );
+  };
   return (
     <nav className="ablage-col ablage-baum" aria-label={t("ablage.baum.label")}>
       <div className="ablage-head">
@@ -202,36 +412,14 @@ export const OrdnerBaum: React.FC<{
       <div className="ablage-grp" data-testid="ablage-verknuepft-gruppe">
         {t("ablage.verknuepft.gruppe")}
       </div>
-      {verknuepft.map((v) => (
-        <button
-          key={v.ordner.id}
-          type="button"
-          className="ablage-row"
-          aria-current={gewaehlt === v.ordner.id ? "true" : undefined}
-          onClick={() => onWahl(v.ordner.id)}
-          title={t("ablage.verknuepft.hinweisKurz")}
-          data-testid={`ablage-ordner-${v.ordner.id}`}
-        >
-          <FolderSymlink size={20} aria-hidden="true" />
-          <span className="ablage-row__name">{v.ordner.name}</span>
-          {!v.erreichbar && (
-            <span
-              role="img"
-              aria-label={t("ablage.verknuepft.nichtErreichbar")}
-              style={{ color: "var(--abl-warn)" }}
-            >
-              <AlertTriangle size={16} aria-hidden="true" />
-            </span>
-          )}
-          <span className="ablage-row__ct">{v.ordner.dateien}</span>
-        </button>
-      ))}
+      <ul className="ablage-tl">{verknuepft.map(verknuepftZeile)}</ul>
       {onVerknuepfen && (
         <button
           type="button"
           className="ablage-row ablage-mut"
           onClick={onVerknuepfen}
           aria-haspopup="dialog"
+          title={t("ablage.verknuepft.cloudGrenze")}
           data-testid="ablage-verknuepfen"
         >
           <LinkSymbol size={20} aria-hidden="true" />
@@ -256,8 +444,11 @@ export const OrdnerBaum: React.FC<{
   );
 };
 
-const Symbol: React.FC<{ typ: string }> = ({ typ }) => (
-  <span className={`ablage-ic ablage-ic--${dateiArt(typ)}`} aria-hidden="true">
+const Symbol: React.FC<{ typ: string; aus?: boolean }> = ({ typ, aus }) => (
+  <span
+    className={`ablage-ic ablage-ic--${dateiArt(typ)}${aus ? " ablage-ic--aus" : ""}`}
+    aria-hidden="true"
+  >
     {dateiKuerzel(typ)}
   </span>
 );
@@ -269,6 +460,68 @@ const datum = (ms: number, sprache: string) =>
     year: "numeric",
   });
 
+/**
+ * „Nur online“ (OneDrive-Platzhalter) als Knopf mit Hinweis: Hover und Tastaturfokus zeigen ihn, Escape
+ * schließt ihn (WCAG 1.4.13), der Zeiger darf in den Hinweis wechseln. Ein Klick öffnet die Details der
+ * Datei, dort steht, wie sie sich lesbar machen lässt. Local Voice überspringt erkannte Platzhalter; ein Abruf durch gleichzeitige Änderungen des Sync-Dienstes bleibt möglich.
+ */
+export const NurOnlineChip: React.FC<{
+  onOeffnen(ausloeser: HTMLElement): void;
+  testid?: string;
+}> = ({ onOeffnen, testid }) => {
+  const { t } = useTranslation();
+  const tipId = useId();
+  const [zeiger, setZeiger] = useState(false);
+  const [fokus, setFokus] = useState(false);
+  const [zu, setZu] = useState(false);
+  const sichtbar = (zeiger || fokus) && !zu;
+  return (
+    <span
+      className="ablage-tipw"
+      onMouseEnter={() => {
+        setZeiger(true);
+        setZu(false);
+      }}
+      onMouseLeave={() => setZeiger(false)}
+    >
+      <button
+        type="button"
+        className="ablage-chipbtn"
+        aria-describedby={tipId}
+        aria-haspopup="dialog"
+        onFocus={() => {
+          setFokus(true);
+          setZu(false);
+        }}
+        onBlur={() => setFokus(false)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape" && sichtbar) {
+            e.stopPropagation();
+            setZu(true);
+          }
+        }}
+        onClick={(e) => onOeffnen(e.currentTarget)}
+        data-testid={testid}
+      >
+        <span className="ablage-chip">
+          <Cloud size={14} aria-hidden="true" />
+          {t("ablage.stand.nurOnline")}
+        </span>
+      </button>
+      <span
+        role="tooltip"
+        id={tipId}
+        className="ablage-tip"
+        data-offen={sichtbar}
+        data-testid={testid ? `${testid}-tipp` : undefined}
+      >
+        <b>{t("ablage.stand.nurOnline")}</b>
+        {t("ablage.verknuepft.nurOnlineTipp")}
+      </span>
+    </span>
+  );
+};
+
 /** Liste des Ordners: Unterordner zuerst, dann Dateien. */
 export const DateiTabelle: React.FC<{
   titel: string;
@@ -279,10 +532,65 @@ export const DateiTabelle: React.FC<{
   onDatei(id: string, ausloeser: HTMLElement): void;
   /** Sync-Zustand je Kennung (D4); fehlt ohne Konto. */
   sync?: Map<string, AblageSyncZustand>;
-}> = ({ titel, unter, dateien, gewaehlt, onOrdner, onDatei, sync }) => {
+  /** Namen der Anbieter einer Cloud-Ausnahme (Chip am Ordner). */
+  anbieterNamen?: (ids: string[]) => string[];
+  /** D7-Rest: Liste eines verknüpften Ordners (nur lesen): Unterordner als Pfade, Dateien mit Namen
+   *  ohne Pfad, Stand „Im Index“ oder „Nur online“, auf schmalen Fenstern als Karten. */
+  verknuepft?: {
+    wurzel: string;
+    klasse: string;
+    unterPfade: UnterKnoten[];
+    onUnterPfad(schluessel: string): void;
+    /** Der Ordner war nicht erreichbar oder liegt nur online: die Dateien sind zuletzt bekannte. */
+    zuletztBekannt: boolean;
+  };
+}> = ({
+  titel,
+  unter,
+  dateien,
+  gewaehlt,
+  onOrdner,
+  onDatei,
+  sync,
+  anbieterNamen,
+  verknuepft,
+}) => {
   const { t, i18n } = useTranslation();
+  const vk = verknuepft;
+  /** Stand einer verknüpften Datei: im Index, nur online (mit Hinweis) oder Textstand. */
+  const standVerknuepft = (d: AblageDatei): React.ReactNode => {
+    if (vk?.zuletztBekannt)
+      return (
+        <span className="ablage-mut" data-testid={`ablage-zuletzt-${d.id}`}>
+          {t("ablage.stand.zuletztBekannt")}
+        </span>
+      );
+    if (d.text === "nur_online")
+      return (
+        <NurOnlineChip
+          onOeffnen={(a) => onDatei(d.id, a)}
+          testid={`ablage-nur-online-${d.id}`}
+        />
+      );
+    if (d.text === "ok")
+      return (
+        <span className="ablage-stn ablage-stn--ok">
+          <span role="img" aria-label={t("ablage.stand.imIndexLabel")}>
+            <Check size={16} aria-hidden="true" />
+          </span>
+          {t("ablage.stand.imIndex")}
+        </span>
+      );
+    if (d.text)
+      return (
+        <Chip art={d.text === "fehler" ? "warn" : undefined}>
+          {t(`ablage.details.text.${d.text}`, { defaultValue: d.text })}
+        </Chip>
+      );
+    return <span className="ablage-mut">—</span>;
+  };
   return (
-    <table className="ablage-tabelle">
+    <table className={`ablage-tabelle${vk ? " ablage-karten" : ""}`}>
       <caption className="ablage-sr">
         {t("ablage.liste.caption", { name: titel })}
       </caption>
@@ -302,33 +610,89 @@ export const DateiTabelle: React.FC<{
         </tr>
       </thead>
       <tbody>
-        {unter.map((o) => (
-          <tr key={o.id}>
-            <td className="ablage-name">
-              <button
-                type="button"
-                className="ablage-lnk"
-                onClick={() => onOrdner(o.id)}
-                data-testid={`ablage-unterordner-${o.id}`}
-              >
-                <span className="ablage-ic ablage-ic--dir" aria-hidden="true">
-                  <Folder size={20} />
-                </span>
-                <span>{o.name}</span>
-              </button>
-            </td>
-            <td className="ablage-spalte-datum ablage-mut">—</td>
-            <td className="ablage-spalte-groesse ablage-mut">
-              {t("ablage.liste.dateien", { count: o.dateien })}
-            </td>
-            <td className="ablage-spalte-klasse">
-              <KiKlasseChips ki={o.ki} klasse={o.klasse} />
-            </td>
-            <td>
-              {sync?.get(o.id) && <SyncZeichen zustand={sync.get(o.id)!} />}
-            </td>
-          </tr>
-        ))}
+        {unter.map((o) => {
+          const cloud = cloudAlle(o.cloud);
+          return (
+            <tr key={o.id}>
+              <td className="ablage-name">
+                <button
+                  type="button"
+                  className="ablage-lnk"
+                  onClick={() => onOrdner(o.id)}
+                  data-testid={`ablage-unterordner-${o.id}`}
+                >
+                  <span className="ablage-ic ablage-ic--dir" aria-hidden="true">
+                    <Folder size={20} />
+                  </span>
+                  <span>{o.name}</span>
+                </button>
+              </td>
+              <td className="ablage-spalte-datum ablage-mut">—</td>
+              <td className="ablage-spalte-groesse ablage-mut">
+                {t("ablage.liste.dateien", { count: o.dateien })}
+              </td>
+              <td className="ablage-spalte-klasse">
+                <KiKlasseChips
+                  ki={o.ki}
+                  klasse={o.klasse}
+                  cloudNamen={anbieterNamen?.(cloud) ?? cloud}
+                  cloudGeerbt={(o.cloud?.anbieter.length ?? 0) === 0}
+                />
+              </td>
+              <td>
+                {sync?.get(o.id) && <SyncZeichen zustand={sync.get(o.id)!} />}
+              </td>
+            </tr>
+          );
+        })}
+        {vk?.unterPfade.map((k) => {
+          const schluessel = unterAnsicht(vk.wurzel, k.pfad);
+          return (
+            <tr key={schluessel}>
+              <td className="ablage-name">
+                <button
+                  type="button"
+                  className="ablage-lnk"
+                  onClick={() => vk.onUnterPfad(schluessel)}
+                  data-testid={`ablage-unterordner-${schluessel}`}
+                >
+                  <span className="ablage-ic ablage-ic--dir" aria-hidden="true">
+                    <Folder size={20} />
+                  </span>
+                  <span>{k.name}</span>
+                </button>
+              </td>
+              <td className="ablage-meta">
+                {t("ablage.liste.dateien", { count: k.dateien })}
+              </td>
+              <td className="ablage-spalte-datum ablage-mut">—</td>
+              <td className="ablage-spalte-groesse ablage-mut">
+                {t("ablage.liste.dateien", { count: k.dateien })}
+              </td>
+              <td className="ablage-spalte-klasse">
+                <KiKlasseChips
+                  ki={{
+                    zustand: "aus",
+                    von: null,
+                    von_name: null,
+                    vorgabe: true,
+                  }}
+                  klasse={vk.klasse}
+                />
+              </td>
+              <td className="ablage-stand">
+                {k.nurOnline ? (
+                  <Chip>
+                    <Cloud size={14} aria-hidden="true" />
+                    {t("ablage.stand.nurOnline")}
+                  </Chip>
+                ) : (
+                  <span className="ablage-mut">—</span>
+                )}
+              </td>
+            </tr>
+          );
+        })}
         {dateien.map((d) => (
           <tr key={d.id} data-gewaehlt={gewaehlt === d.id}>
             <td className="ablage-name">
@@ -339,10 +703,23 @@ export const DateiTabelle: React.FC<{
                 onClick={(e) => onDatei(d.id, e.currentTarget)}
                 data-testid={`ablage-datei-${d.id}`}
               >
-                <Symbol typ={d.typ} />
-                <span>{d.name}</span>
+                <Symbol typ={d.typ} aus={vk && d.text === "nur_online"} />
+                <span title={vk ? d.name : undefined}>
+                  {vk ? letztesGlied(d.name) : d.name}
+                </span>
               </button>
             </td>
+            {vk && (
+              <td className="ablage-meta">
+                {[
+                  d.typ.toUpperCase(),
+                  formatBytes(d.groesse, i18n.language),
+                  datum(d.geaendert, i18n.language),
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </td>
+            )}
             <td className="ablage-spalte-datum ablage-mut">
               {datum(d.geaendert, i18n.language)}
             </td>
@@ -355,7 +732,9 @@ export const DateiTabelle: React.FC<{
                 klasse={d.klasse}
               />
             </td>
-            {sync?.get(d.id) && !d.konflikt ? (
+            {vk ? (
+              <td className="ablage-stand">{standVerknuepft(d)}</td>
+            ) : sync?.get(d.id) && !d.konflikt ? (
               <td>
                 <SyncZeichen zustand={sync.get(d.id)!} />
               </td>
@@ -499,6 +878,10 @@ export const Details: React.FC<{
   anfrage?: string;
   /** Im Blatt (schmales Fenster) trägt der Dialog Titel und Schließen-Knopf: kein zweiter Kopf. */
   imBlatt?: boolean;
+  /** D7-Rest: Cloud-Ausnahmen, die für die Datei gelten (Anbietername, Ordner, von dem sie stammen). */
+  cloud?: { name: string; von: string | null }[];
+  /** D7-Rest: verknüpfter Ordner neu einlesen (Hinweis „Auf diesem Gerät behalten“). */
+  onNeuEinlesen?: () => void;
 }> = ({
   datei,
   pfad,
@@ -512,6 +895,8 @@ export const Details: React.FC<{
   fundstelle,
   anfrage,
   imBlatt = false,
+  cloud = [],
+  onNeuEinlesen,
 }) => {
   const { t, i18n } = useTranslation();
   const textFehler = datei.text_code
@@ -562,13 +947,54 @@ export const Details: React.FC<{
           </p>
         </div>
       )}
-      <div
-        className="ablage-vorschau"
-        role="img"
-        aria-label={t("ablage.details.vorschau")}
-      >
-        {t("ablage.details.vorschauHinweis")}
-      </div>
+      {datei.text === "nur_online" ? (
+        <>
+          <div
+            className="ablage-vorschau ablage-vorschau--leer"
+            role="img"
+            aria-label={t("ablage.verknuepft.keineVorschauLabel")}
+          >
+            <div>
+              <Cloud size={36} aria-hidden="true" />
+              <div>{t("ablage.verknuepft.keineVorschau")}</div>
+            </div>
+          </div>
+          <div
+            className="ablage-hint"
+            role="note"
+            data-testid="ablage-nur-online-hinweis"
+          >
+            <div className="ablage-hint__kopf">
+              <Cloud size={20} aria-hidden="true" />
+              <b>{t("ablage.verknuepft.behaltenTitel")}</b>
+            </div>
+            <p>{t("ablage.verknuepft.behaltenText")}</p>
+            <ol>
+              <li>{t("ablage.verknuepft.behaltenSchritt1")}</li>
+              <li>{t("ablage.verknuepft.behaltenSchritt2")}</li>
+            </ol>
+            <p>{t("ablage.verknuepft.behaltenDanach")}</p>
+            {onNeuEinlesen && (
+              <Button
+                onClick={onNeuEinlesen}
+                disabled={busy}
+                icon={<RefreshCw size={16} aria-hidden="true" />}
+                data-testid="ablage-nur-online-einlesen"
+              >
+                {t("ablage.verknuepft.neuEinlesen")}
+              </Button>
+            )}
+          </div>
+        </>
+      ) : (
+        <div
+          className="ablage-vorschau"
+          role="img"
+          aria-label={t("ablage.details.vorschau")}
+        >
+          {t("ablage.details.vorschauHinweis")}
+        </div>
+      )}
       <div className="ablage-sec">
         <h3>{t("ablage.ki.fuerDieKi")}</h3>
         {datei.verknuepft ? (
@@ -604,9 +1030,36 @@ export const Details: React.FC<{
             klasse={datei.klasse}
           />
         </div>
+        {cloud.length > 0 && (
+          <div className="ablage-sw" data-testid="ablage-details-cloud">
+            <span>
+              {t("ablage.cloud.details")}
+              {cloud.map((c) => (
+                <React.Fragment key={c.name}>
+                  <br />
+                  <span className="ablage-mut">
+                    {c.von
+                      ? t("ablage.cloud.detailsQuelle", {
+                          anbieter: c.name,
+                          ordner: c.von,
+                        })
+                      : c.name}
+                  </span>
+                </React.Fragment>
+              ))}
+            </span>
+            <Chip art="cloud">
+              <CloudCheck size={14} aria-hidden="true" />
+              {t("ablage.cloud.detailsWert")}
+            </Chip>
+          </div>
+        )}
         <div className="ablage-sw">
           <span>{t("ablage.details.textfassung")}</span>
           <Chip>
+            {datei.text === "nur_online" && (
+              <Cloud size={14} aria-hidden="true" />
+            )}
             {datei.text
               ? t(`ablage.details.text.${datei.text}`, {
                   defaultValue: datei.text,
@@ -617,11 +1070,6 @@ export const Details: React.FC<{
         {textFehler && (
           <div className="ablage-mut" data-testid="ablage-textfehler">
             {textFehler}
-          </div>
-        )}
-        {datei.text === "nur_online" && (
-          <div className="ablage-mut" data-testid="ablage-nur-online-hinweis">
-            {t("ablage.verknuepft.nurOnlineHinweis")}
           </div>
         )}
       </div>

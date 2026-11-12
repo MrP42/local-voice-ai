@@ -48,6 +48,7 @@ mod memory_guard;
 mod overlay;
 mod paste_guard;
 mod paste_session;
+mod pdf_text; // lva#149: PDF-Zeilen mit Schriftgröße und Lesezeichen
 pub mod portable;
 pub mod portable_parts;
 mod process_guard;
@@ -2044,6 +2045,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             ablage::befehle::ablage_ki_setzen,
             ablage::befehle::ablage_freigaben_neu_festlegen,
             ablage::befehle::ablage_cloud_ausnahme_setzen,
+            ablage::befehle::ablage_cloud_anbieter,
             ablage::befehle::ablage_entwurf_anlegen,
             ablage::befehle::ablage_importieren,
             ablage::befehle::ablage_in_papierkorb,
@@ -2090,6 +2092,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             projekte::befehle::projekt_dateien_neu_aufbauen,
             projekte::befehle::projekt_datei_gefunden_aufnehmen,
             projekte::befehle::projekt_kontext_uebersicht,
+            projekte::befehle::projekt_ki_dokument_erstellen,
             projekte::befehle::projekt_kontext_schalten,
             projekte::befehle::projekt_buch_entfernen,
             projekte::befehle::projekt_besprechung_zuordnen,
@@ -2587,6 +2590,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             app_context::service::app_context_message,
             app_context::service::app_context_verify,
             app_context::service::change_voice_global_context_enabled_setting,
+            app_context::service::voice_call_inhaltszugriff_lesen,
+            app_context::service::voice_call_inhaltszugriff_setzen,
             library_export::library_export_text,
             library_export::library_ffmpeg_available,
             library_export::library_export_audio,

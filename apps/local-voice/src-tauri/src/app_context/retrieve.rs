@@ -430,5 +430,6 @@ pub fn retrieve(idx: &AppIndex, q: &Query) -> ContextHits {
         retrieve_ms: 0,
         epoch: idx.epoch(),
         question_hash: String::new(),
+        ..Default::default()
     }
 }

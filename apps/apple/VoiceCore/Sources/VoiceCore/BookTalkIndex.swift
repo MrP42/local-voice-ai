@@ -38,6 +38,24 @@ public struct BookTalkChunk: Sendable, Equatable {
     }
 }
 
+/// Ein Absatz des Buchtextes als ganzer Block (`BookTalkIndex.blocks(in:)`).
+public struct BookTalkBlock: Sendable, Equatable {
+    public let chapterIndex: Int
+    public let chapterTitle: String
+    /// Letzte Seitenmarke `{{S. n}}` vor dem Absatz; nil, wenn noch keine kam.
+    public let page: Int?
+    public let start: Int
+    /// Originaloffset hinter dem Absatz (für die Lesegrenze).
+    public let end: Int
+    /// Gesäubert (ohne Sprecher- und Stilmarken, Leerraum gefaltet): nur für Suche und Abruf.
+    public let text: String
+    /// Der ROHE gespeicherte Absatz: der Teilstring des Buchtextes vom Anfang der ersten bis zum Ende der letzten Zeile des
+    /// Absatzes (UTF-16-Bereich `rawStart..<end`), Zeichen für Zeichen (Zeilenenden darin bleiben). `nil`, wenn es keinen
+    /// eindeutigen Rohtext gibt: der Absatz enthält Sprecher-, Stil- oder Seitenmarken (dann wäre `text` nicht der gespeicherte
+    /// Text), oder er ist länger als `rawLimit`.
+    public let raw: String?
+}
+
 public struct BookTalkPageMark: Sendable, Equatable {
     public let offset: Int
     public let page: Int
@@ -63,6 +81,46 @@ public struct BookTalkIndex: Sendable {
         let marks = BookTalkIndex.scanMarks(units)
         self.pageMarks = marks
         self.chunks = BookTalkIndex.pack(BookTalkIndex.parse(units), marks: marks)
+    }
+
+    /// Die Absätze des Buchtextes als ganze Blöcke (Quellblöcke des Assistenten): Zeilen bis zur Leerzeile, Kapitelüberschrift
+    /// oder Seitenmarke, gesäubert (ohne Sprecher- und Stilmarken, Leerraum gefaltet), mit Seite, Kapitel und Originaloffsets. Kein
+    /// Absatz wird geteilt, gekürzt oder mit einem anderen zusammengezogen.
+    public static func blocks(in text: String, rawLimit: Int = AssistantGrounding.maxBlockChars) -> [BookTalkBlock] {
+        let units = Array(text.utf16)
+        let marks = scanMarks(units)
+        return parse(units).map { p in
+            BookTalkBlock(chapterIndex: max(p.chapterIndex - 1, 0), chapterTitle: p.chapterTitle, page: page(in: marks, at: p.start),
+                          start: p.start, end: p.end, text: p.text, raw: rawBlock(of: p, in: units, limit: rawLimit))
+        }
+    }
+
+    /// Der rohe Absatz, wenn er eindeutig ist: Der gesäuberte Text ist genau der Rohtext mit zusammengefaltetem Leerraum
+    /// (dieselben fünf Leerraumzeichen wie im Säuberer). Dann wurde nichts als Leerraum verändert, und der Rohtext ist der
+    /// gespeicherte Teilstring. Sonst (Marken entfernt) `nil`, nie der gesäuberte Text als Ersatz. Gleiche Bytefolge wie `text`:
+    /// derselbe Speicher.
+    private static func rawBlock(of p: Paragraph, in u: [UInt16], limit: Int) -> String? {
+        guard p.rawStart >= 0, p.end <= u.count, p.end > p.rawStart, p.end - p.rawStart <= limit else { return nil }
+        let cleaned = Array(p.text.utf16)
+        var n = 0
+        var pendingSpace = false
+        for i in p.rawStart..<p.end {
+            let c = u[i]
+            if BookTalkText.isSpace(c) {
+                pendingSpace = n > 0
+                continue
+            }
+            if pendingSpace {
+                guard n < cleaned.count, cleaned[n] == 32 else { return nil }
+                n += 1
+                pendingSpace = false
+            }
+            guard n < cleaned.count, cleaned[n] == c else { return nil }
+            n += 1
+        }
+        guard n == cleaned.count else { return nil }
+        let raw = String(decoding: u[p.rawStart..<p.end], as: UTF16.self)
+        return raw.hasSameBytes(as: p.text) ? p.text : raw
     }
 
     /// Seite an einem Originaloffset (letzte Marke bei oder vor `offset`).
@@ -110,6 +168,8 @@ public struct BookTalkIndex: Sendable {
     struct Paragraph {
         let chapterIndex: Int
         let chapterTitle: String
+        /// Anfang der ersten Zeile (erstes Zeichen, das kein Leerraum ist), im Original.
+        let rawStart: Int
         let start: Int
         let end: Int
         let text: String
@@ -132,7 +192,7 @@ public struct BookTalkIndex: Sendable {
             }
             let c = cleaner.finish()
             guard !c.text.isEmpty else { return }
-            paragraphs.append(Paragraph(chapterIndex: chapterIndex, chapterTitle: chapterTitle,
+            paragraphs.append(Paragraph(chapterIndex: chapterIndex, chapterTitle: chapterTitle, rawStart: first.s,
                                         start: c.map.first ?? first.s, end: last.e, text: c.text, map: c.map))
         }
 
@@ -235,7 +295,7 @@ public struct BookTalkIndex: Sendable {
             while b > a, u[b - 1] == 32 { b -= 1 }
             guard b > a else { return nil }
             let map = Array(p.map[a...b])
-            return Paragraph(chapterIndex: p.chapterIndex, chapterTitle: p.chapterTitle,
+            return Paragraph(chapterIndex: p.chapterIndex, chapterTitle: p.chapterTitle, rawStart: map[0],
                              start: map[0], end: map[map.count - 1],
                              text: String(decoding: u[a..<b], as: UTF16.self), map: map)
         }

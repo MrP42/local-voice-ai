@@ -148,6 +148,32 @@ pub struct ContextHits {
     /// Kontext nur zu genau dieser Frage weiter (Codex M5 Must-fix 6).
     #[serde(default)]
     pub question_hash: String,
+    /// Berechtigungsversion beim Start des Abrufs (`berechtigung`): ändert sich der Inhaltszugriff,
+    /// bevor die Auszüge ins Modell gehen, ist das Ergebnis ungültig (lva#509). `0` heißt unbekannt
+    /// und passt nie.
+    #[serde(default)]
+    pub berechtigung: u32,
+    /// Marker: der Inhaltszugriff hat sich während des Abrufs geändert; deshalb gibt es keine Auszüge.
+    #[serde(default)]
+    pub berechtigung_geaendert: bool,
+}
+
+impl ContextHits {
+    /// Bindet das Ergebnis an die Berechtigungsversion: hat sich der Inhaltszugriff seit dem Start
+    /// des Abrufs geändert (`jetzt != beim_start`), bleibt kein Auszug übrig, nur der Marker.
+    pub fn an_version_gebunden(mut self, beim_start: u32, jetzt: u32) -> Self {
+        self.berechtigung = beim_start;
+        if jetzt == beim_start {
+            return self;
+        }
+        Self {
+            epoch: self.epoch,
+            question_hash: self.question_hash,
+            berechtigung: beim_start,
+            berechtigung_geaendert: true,
+            ..Default::default()
+        }
+    }
 }
 
 /// Fingerabdruck einer Frage (ohne Inhalt im Klartext).
@@ -164,4 +190,52 @@ pub struct SpeakerContext {
     pub german: bool,
     /// Schritt, für den abgerufen wurde; muss die Anfrage-ID sein.
     pub turn_id: String,
+}
+
+#[cfg(test)]
+mod berechtigung_tests {
+    use super::*;
+
+    fn mit_treffer() -> ContextHits {
+        ContextHits {
+            hits: vec![ContextHit {
+                k: 1,
+                kind: SourceKind::Meeting,
+                title: "Runde".into(),
+                chapter: None,
+                at_ms: 0,
+                excerpt: "Geheimer Auszug".into(),
+                jump: Jump {
+                    kind: SourceKind::Meeting,
+                    id: "m1".into(),
+                    offset: 0,
+                    page: None,
+                    book_id: None,
+                },
+                score: 1.0,
+                version: "00".into(),
+            }],
+            searched: vec![SourceKind::Meeting],
+            epoch: 4,
+            question_hash: "h".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn unveraenderte_version_behaelt_die_auszuege() {
+        let h = mit_treffer().an_version_gebunden(3, 3);
+        assert_eq!(h.hits.len(), 1);
+        assert_eq!(h.berechtigung, 3);
+        assert!(!h.berechtigung_geaendert);
+    }
+
+    #[test]
+    fn geaenderte_version_liefert_keine_auszuege_nur_den_marker() {
+        let h = mit_treffer().an_version_gebunden(3, 4);
+        assert!(h.hits.is_empty());
+        assert!(h.searched.is_empty());
+        assert!(h.berechtigung_geaendert);
+        assert_eq!((h.epoch, h.berechtigung), (4, 3));
+    }
 }

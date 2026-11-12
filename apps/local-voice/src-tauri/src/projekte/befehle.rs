@@ -7,11 +7,15 @@ use super::dateien::JournalLage;
 use super::dienst::{
     klasse_aus_text, EintragSicht, GefundeneDatei, LoeschErgebnis, SuiteProjekt, SyncBericht,
 };
+use super::dokument::{self, DokumentAuftrag, DokumentErgebnis, WegVersand};
 use super::kontext::{KontextForm, KontextUebersicht};
 use super::recherche::{
-    FreigabeAktion, FreigabeInfo, LaufAntwort, RechercheKurz, RechercheSicht, RechercheStatus,
+    FreigabeAktion, FreigabeInfo, LaufAntwort, RechercheDienst, RechercheKurz, RechercheSicht,
+    RechercheStatus,
 };
-use super::zustand::{modell_bereit, ProjekteZustand};
+use super::zustand::{modell_bereit, AppEntwurf, ProjekteZustand};
+use crate::voice_call::projekt::LlmWeg;
+use std::sync::Arc;
 use tauri::{AppHandle, State};
 use wai_recherche::Datenklasse;
 
@@ -361,6 +365,11 @@ pub async fn recherche_adresse_setzen(
 /// Chat-Werkzeug "recherche" (Modus Schnell). Der Kontext einer Besprechung ist mindestens
 /// `PERSONAL`; die Klasse des Projekts hebt sie an. Ab `PERSONAL` haelt der Lauf an
 /// (`status` = "freigabe") und wartet auf die Entscheidung in `recherche_freigabe_entscheiden`.
+///
+/// `mit_kontext` (lva#365 P4c-3): Die Recherche nimmt den Kontext des Projekts hinzu. Den liest das
+/// Versandtor frisch, ebenso Klassen und Modell; die Oberflaeche bestimmt davon nichts. Der Lauf haelt
+/// dann immer vor dem ersten Webzugriff an. Ist die Sperre der KI im Projekt gesetzt (Rückbau,
+/// `dienst.rs`), antwortet das Tor mit `projekt.ki_gesperrt`.
 #[tauri::command]
 #[specta::specta]
 pub async fn recherche_starten(
@@ -369,26 +378,65 @@ pub async fn recherche_starten(
     frage: String,
     suite_projekt: Option<String>,
     besprechung: Option<String>,
+    mit_kontext: Option<bool>,
 ) -> Antwort<LaufAntwort> {
     let d = z.dienste().await?;
-    if let Err(e) = modell_bereit(&app) {
-        return Ok(LaufAntwort {
-            status: "fehler".into(),
-            recherche_id: None,
-            message: Some(e.message),
-            code: Some("kein_modell".into()),
-            halt_bleibt: false,
-        });
+    let mit_kontext = mit_kontext.unwrap_or(false);
+    // Mit Kontext bestimmt das Tor das Modell; die Einstellung der Besprechungs-Recherche gilt dann nicht.
+    if !mit_kontext {
+        if let Err(e) = modell_bereit(&app) {
+            return Ok(LaufAntwort {
+                status: "fehler".into(),
+                recherche_id: None,
+                message: Some(e.message),
+                code: Some("kein_modell".into()),
+                halt_bleibt: false,
+            });
+        }
     }
-    Ok(d.recherche
-        .starten_fuer(
-            besprechung.as_deref(),
-            &frage,
+    Ok(recherche_mit(
+        &d.recherche,
+        &frage,
+        suite_projekt,
+        besprechung.as_deref(),
+        mit_kontext,
+    )
+    .await)
+}
+
+/// Klasse der Frage beim Aufruf aus der Oberflaeche. Eine Frage aus einer Besprechung ist mindestens
+/// `PERSONAL` (ihr Chat kennt das Transkript); ohne Besprechung traegt sie ohne Projektkontext
+/// ebenfalls `PERSONAL` (unveraendert). Mit Projektkontext und ohne Besprechung traegt die Frage selbst
+/// keine Klasse: Dann gelten die Klassen des Projekts und seiner Inhalte, und das Tor bestimmt das Ziel
+/// danach. Ein Internal-Projekt laeuft so mit einem Cloud-Ziel; ein hoeher eingestuftes scheitert vor
+/// dem Halt mit `projekt.klasse_ziel`, nicht erst im Modell.
+pub(super) fn frage_klasse(besprechung: Option<&str>, mit_kontext: bool) -> Datenklasse {
+    if mit_kontext && besprechung.is_none() {
+        Datenklasse::Public
+    } else {
+        Datenklasse::Personal
+    }
+}
+
+/// Der Weg des Befehls `recherche_starten` ab der Pruefung des Modells: Klasse der Frage bestimmen und
+/// die Recherche starten (mit oder ohne Projektkontext).
+pub(super) async fn recherche_mit(
+    recherche: &RechercheDienst,
+    frage: &str,
+    suite_projekt: Option<String>,
+    besprechung: Option<&str>,
+    mit_kontext: bool,
+) -> LaufAntwort {
+    recherche
+        .starten_fuer_mit(
+            besprechung,
+            frage,
             MODELL,
-            Datenklasse::Personal,
+            frage_klasse(besprechung, mit_kontext),
             suite_projekt,
+            mit_kontext,
         )
-        .await)
+        .await
 }
 
 #[tauri::command]
@@ -435,4 +483,39 @@ pub async fn recherche_lesen(z: State<'_, ProjekteZustand>, id: String) -> Antwo
 #[specta::specta]
 pub async fn recherche_loeschen(z: State<'_, ProjekteZustand>, id: String) -> Antwort<()> {
     Ok(z.dienste().await?.recherche.loeschen(&id).await?)
+}
+
+// ---------------------------------------------------------------- KI-Dokument (lva#365 P4c-3)
+
+/// Die KI schreibt aus dem Kontext des Projekts ein Dokument und legt es als Entwurf in der Ablage ab
+/// (Ablauf und Regeln: `dokument.rs`). Kontext, Klassen und Modell bestimmt das Versandtor; der Befehl
+/// nimmt bewusst **keine** Mindestklasse und keine Quellen entgegen, die Oberflaeche kann die Klasse des
+/// Entwurfs also nicht senken. Der Entwurf ist im Projekt ausgeschaltet. Ist die Sperre der KI im Projekt
+/// gesetzt (Rückbau, `dienst.rs`), antwortet das Tor mit `projekt.ki_gesperrt`.
+#[tauri::command]
+#[specta::specta]
+pub async fn projekt_ki_dokument_erstellen(
+    app: AppHandle,
+    z: State<'_, ProjekteZustand>,
+    suite_id: String,
+    auftrag: String,
+    ordner: Option<String>,
+    name: String,
+    expected_stand: Option<String>,
+) -> Antwort<DokumentErgebnis> {
+    let d = z.dienste().await?;
+    Ok(dokument::erstellen(
+        &d.tor,
+        &WegVersand(Arc::new(LlmWeg)),
+        &d.projekte,
+        &AppEntwurf(app),
+        DokumentAuftrag {
+            projekt: suite_id,
+            auftrag,
+            ordner,
+            name,
+            erwarteter_stand: expected_stand,
+        },
+    )
+    .await?)
 }

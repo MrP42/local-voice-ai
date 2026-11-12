@@ -12,8 +12,13 @@
 //!   tatsaechlichen Stand und holt nach einem Neustart alles nach.
 //! - Kein neuer Thread, keine Abhaengigkeit, kein Dauerbetrieb bei ungenutztem Ablauf: ohne
 //!   eingeschalteten Ablauf mit diesem Ausloeser liest nichts den Datentraeger.
-//!   Der Scan kostet je Ordner ein `read_dir` ohne Unterordner (hoechstens
-//!   [`MAX_ENTRIES`] Eintraege).
+//!   Der Scan zaehlt je Ordner iterativ ueber ein geprueftes Ordner-Handle auf (`ablage::eintrag::Ordner`,
+//!   kein `read_dir` ueber einen Pfad, kein Vec ueber den ganzen Ordner): hoechstens [`MAX_ENTRIES`] Kandidaten
+//!   je Takt, bis zu [`MAX_VERZEICHNIS`] Eintraege je Umlauf; ein Ordner mit mehr Kandidaten wird ueber
+//!   mehrere Takte reihum gelesen (kein Haengenbleiben an den ersten 500). Aufgelistet wird nur nach einem
+//!   positiven, aktuellen Urteil am Ordner-Handle (fail-closed, auch fuer Laufwerkswurzeln); liegt der Ordner
+//!   nur online (macOS „dataless“, Windows `RECALL_*`), wird er nicht aufgelistet; das Auflisten laeuft unter
+//!   der Abrufsperre (`ablage::eintrag::abruf_sperren`).
 //! Preis: Reaktionszeit 15 s bis `stable_seconds` + 15 s statt Millisekunden; fuer
 //! Eingangsordner ist das ohne Belang.
 //!
@@ -27,9 +32,17 @@
 //!    (Windows: Oeffnen mit `FILE_SHARE_READ` scheitert, solange ein Schreiber sie haelt).
 //! 3. **Lokal da**: OneDrive-Platzhalter, die nur in der Cloud liegen
 //!    (`RECALL_ON_DATA_ACCESS`/`RECALL_ON_OPEN`/`OFFLINE`), werden NICHT gelesen (jeder Zugriff
-//!    wuerde den Download anstossen), sondern gemeldet (`TickReport::skipped`, Log, und
+//!    wuerde den Download anstossen), sondern gemeldet (`TickReport::skipped` und Log, beide ohne Dateinamen, und
 //!    [`State::cloud_only`] fuer die Oberflaeche). Sobald der Nutzer sie herunterlaedt
 //!    („Immer auf diesem Gerät behalten“), wird sie wie jede andere Datei behandelt.
+//!    Die Attribute kommen unter Windows NICHT aus `fs::metadata`/`symlink_metadata` (Rust oeffnet
+//!    einen Reparse-Point, der kein Symlink ist, ohne `FILE_FLAG_OPEN_REPARSE_POINT` noch einmal und
+//!    liefert dann Attribute ohne `REPARSE_POINT`/`OFFLINE`), sondern aus `ablage::eintrag::roh`
+//!    (`FindFirstFileExW`, oeffnet nichts). Entschieden wird vor jedem Oeffnen, auch vor der
+//!    Pfadaufloesung der Sandbox ([`entry_state`], rein). Wo der Ausloeser danach doch oeffnet
+//!    (Sperrpruefung, Hash), geschieht es zweistufig (erst nur Attribute am Handle, dann der Lesezugriff;
+//!    `FILE_FLAG_OPEN_NO_RECALL` allein verhindert den Abruf nicht), und das Handle wird vor dem
+//!    ersten Lesen erneut geprueft ([`open_checked`]).
 //! 4. **Nicht voruebergehend**: Namen wie `~$x.docx`, `.tmp`, `.part`, `.crdownload`,
 //!    `desktop.ini` und Punkt-Dateien zaehlen nicht.
 //! Unterordner werden nicht abgesucht (der Ordner ist der Eingang, `subfolder` waehlt einen
@@ -66,10 +79,12 @@ use std::io::Read;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
+use crate::ablage::eintrag::{self, OeffnenFehler, Roh, Urteil};
 use crate::managers::integrations::folder::{self as sandbox_folder, FolderConfig, Sandbox};
 use crate::managers::integrations::grants;
 use crate::managers::integrations::model::{Caller, Capability, GrantMode, Kind};
@@ -89,6 +104,18 @@ pub const MAX_ENTRIES: usize = 500;
 pub const MAX_HASH_PER_SCAN: usize = 2;
 /// Leseblock beim Hashen.
 const HASH_BLOCK: usize = 1024 * 1024;
+/// So viele Verzeichniseintraege sieht ein Scan hoechstens je Ordner an (ueber alle Takte eines Umlaufs,
+/// lva#507 Befund 4): mehr werden nie aufgezaehlt, der Ordner wird gemeldet.
+pub const MAX_VERZEICHNIS: usize = 100_000;
+/// Hoechstens so viele Bytes liest das Hashen aus EINER Datei (lva#507 Befund 6).
+pub const MAX_HASH_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// Frist fuer das Hashen EINER Datei. Sie wird ZWISCHEN den Lesebloecken geprueft ([`HASH_BLOCK`]); ein einzelnes
+/// blockierendes `read` kehrt erst mit dem System zurueck und wird nicht hart abgebrochen.
+pub const HASH_FRIST: Duration = Duration::from_secs(60);
+/// Frist fuer das Hashen innerhalb eines ganzen Scans (alle Ablaeufe, alle Dateien); sie wird zwischen den
+/// Lesebloecken geprueft, danach bricht das Hashen ab und der naechste Takt macht weiter. Keine harte
+/// Obergrenze der Scandauer (siehe [`HASH_FRIST`]).
+pub const SCAN_FRIST: Duration = Duration::from_secs(150);
 
 /// Endungen, wenn der Ausloeser keine nennt: alles, was der Import kennt.
 pub fn default_extensions() -> Vec<String> {
@@ -205,17 +232,62 @@ pub fn is_ignored_name(name: &str) -> bool {
     .any(|e| n.ends_with(e))
 }
 
-/// Dateiattribute (Windows), die einen Platzhalter ohne lokalen Inhalt kennzeichnen:
-/// `OFFLINE`, `RECALL_ON_OPEN`, `RECALL_ON_DATA_ACCESS`.
+/// Dateiattribute (Windows; macOS: `SF_DATALESS` als `OFFLINE`), die einen Platzhalter ohne lokalen Inhalt
+/// kennzeichnen: `OFFLINE`, `RECALL_ON_OPEN`, `RECALL_ON_DATA_ACCESS` (dieselbe Regel wie in der Ablage).
 pub fn attributes_cloud_only(attrs: u32) -> bool {
-    const FILE_ATTRIBUTE_OFFLINE: u32 = 0x0000_1000;
-    const FILE_ATTRIBUTE_RECALL_ON_OPEN: u32 = 0x0004_0000;
-    const FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS: u32 = 0x0040_0000;
-    attrs
-        & (FILE_ATTRIBUTE_OFFLINE
-            | FILE_ATTRIBUTE_RECALL_ON_OPEN
-            | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS)
-        != 0
+    eintrag::online_urteil(attrs)
+}
+
+/// Was der Takt mit einem Eintrag des Ordners tut (Entscheidung aus den Rohdaten, ohne zu oeffnen).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntryState {
+    /// Keine Datei (Ordner, Verknuepfung, Geraet): ignorieren.
+    NotAFile,
+    /// Nur in der Cloud: nie oeffnen, lesen oder hashen; melden.
+    CloudOnly,
+    /// Verknuepfung oder unbekannter Reparse-Point: nie folgen, ignorieren.
+    Detour,
+    /// Lokal vorhanden: darf geprueft und gehasht werden.
+    Local,
+}
+
+/// `IO_REPARSE_TAG_WOF` (Windows Overlay Filter, „compact /exe“) und `IO_REPARSE_TAG_DEDUP`: der
+/// Treiber liefert die Daten beim normalen Oeffnen transparent und holt nichts aus der Cloud.
+const REPARSE_TAG_WOF: u32 = 0x8000_0017;
+const REPARSE_TAG_DEDUP: u32 = 0x8000_0013;
+
+/// Ist `tag` ein datentransparentes Tag (komprimierte oder deduplizierte lokale Datei)?
+pub fn reparse_tag_transparent(tag: u32) -> bool {
+    tag == REPARSE_TAG_WOF || tag == REPARSE_TAG_DEDUP
+}
+
+/// Urteil des Ausloesers ueber Attribute und Tag: wie `eintrag::reparse_urteil`, doch WOF und
+/// Dedup sind lokale Dateien. Beim zweistufigen Oeffnen (`eintrag::oeffnen_ohne_abruf`) oeffnet
+/// Stufe 1 (nur Attribute) MIT `FILE_FLAG_OPEN_REPARSE_POINT` und urteilt ueber den Reparse-Point
+/// selbst; Stufe 2 (Lesezugriff) FOLGT ihm (ohne das Flag) und liest damit den echten Inhalt. Die
+/// Ablage oeffnet auch in Stufe 2 mit dem Flag und behaelt ihr strenges Urteil.
+pub fn trigger_urteil(tag: u32, attribute: u32) -> Urteil {
+    let u = eintrag::reparse_urteil(tag, attribute);
+    if u == Urteil::Umweg
+        && attribute & eintrag::ATTR_REPARSE_POINT != 0
+        && reparse_tag_transparent(tag)
+    {
+        return Urteil::Lesbar;
+    }
+    u
+}
+
+/// Reine Entscheidung „ausloesen ja/nein“ aus den Rohdaten (`ablage::eintrag::roh`). Nur
+/// [`EntryState::Local`] darf den Ausloeser anstossen; „nur online“ gilt unabhaengig vom Reparse-Bit.
+pub fn entry_state(roh: &Roh) -> EntryState {
+    if !roh.ist_datei() {
+        return EntryState::NotAFile;
+    }
+    match trigger_urteil(roh.tag, roh.attribute) {
+        Urteil::NurOnline => EntryState::CloudOnly,
+        Urteil::Umweg => EntryState::Detour,
+        Urteil::Lesbar => EntryState::Local,
+    }
 }
 
 /// Ein Zustand einer Datei ueber mehrere Takte.
@@ -239,8 +311,9 @@ impl Seen {
 /// Was das System ueber eine Datei sagt. Tests setzen eine Attrappe (Platzhalter,
 /// Sperre), die Anwendung `SystemProbe`.
 pub trait FileProbe: Send + Sync {
-    /// Liegt die Datei nur in der Cloud? Der Aufruf darf den Inhalt NICHT lesen.
-    fn cloud_only(&self, path: &Path, meta: &fs::Metadata) -> bool;
+    /// Liegt die Datei nur in der Cloud? `roh` stammt aus `ablage::eintrag::roh`. Der Aufruf darf die
+    /// Datei NICHT oeffnen.
+    fn cloud_only(&self, path: &Path, roh: &Roh) -> bool;
     /// Haelt ein anderer Prozess die Datei zum Schreiben offen?
     fn locked(&self, path: &Path) -> bool;
 }
@@ -248,26 +321,26 @@ pub trait FileProbe: Send + Sync {
 pub struct SystemProbe;
 
 impl FileProbe for SystemProbe {
-    #[cfg(windows)]
-    fn cloud_only(&self, _path: &Path, meta: &fs::Metadata) -> bool {
-        use std::os::windows::fs::MetadataExt;
-        attributes_cloud_only(meta.file_attributes())
-    }
-
-    #[cfg(not(windows))]
-    fn cloud_only(&self, _path: &Path, _meta: &fs::Metadata) -> bool {
-        // macOS kennt „dataless“-Dateien (SF_DATALESS); die App ist auf Windows ausgelegt.
-        false
+    fn cloud_only(&self, _path: &Path, roh: &Roh) -> bool {
+        // Unter Windows kommen die Attribute aus `FindFirstFileExW`, unter macOS aus `lstat`
+        // (`SF_DATALESS`, siehe `ablage::eintrag`); sonst sind sie 0.
+        attributes_cloud_only(roh.attribute)
     }
 
     #[cfg(windows)]
     fn locked(&self, path: &Path) -> bool {
-        use std::os::windows::fs::OpenOptionsExt;
-        // FILE_SHARE_READ: scheitert, solange ein anderer Prozess Schreibzugriff hat.
-        match fs::OpenOptions::new().read(true).share_mode(1).open(path) {
+        // Teilen wie ein Leser (`FILE_SHARE_READ`): Stufe 2 scheitert, solange ein anderer Prozess
+        // Schreibzugriff hat. Zweistufig: ein Platzhalter erreicht den Lesezugriff nie.
+        let art = eintrag::OeffnenArt {
+            folgen: true,
+            teilen: 1,
+        };
+        match eintrag::oeffnen_ohne_abruf(path, art, trigger_urteil) {
             Ok(_) => false,
-            // ERROR_SHARING_VIOLATION (32), ERROR_LOCK_VIOLATION (33)
-            Err(e) => matches!(e.raw_os_error(), Some(32) | Some(33)),
+            // ERROR_SHARING_VIOLATION (32), ERROR_LOCK_VIOLATION (33); der Win32-Code bleibt beim
+            // Hochstufen erhalten (`system::win_io`).
+            Err(eintrag::OeffnenFehler::Io(e)) => matches!(e.raw_os_error(), Some(32) | Some(33)),
+            Err(_) => false,
         }
     }
 
@@ -277,19 +350,167 @@ impl FileProbe for SystemProbe {
     }
 }
 
-/// SHA-256 des Inhalts als Kleinbuchstaben-Hex, in Bloecken (kein Laden der ganzen Datei).
-pub fn sha256_file(path: &Path) -> std::io::Result<String> {
-    let mut file = fs::File::open(path)?;
+/// Wie die Datei zum Hashen geoeffnet wird: lesen und loeschen/umbenennen duerfen andere, SCHREIBEN nicht
+/// (kein `FILE_SHARE_WRITE`, lva#507 Befund 6): ein Schreiber, der waehrend des Lesens anhaengt, scheitert
+/// am Oeffnen (bzw. wird ausgesperrt) und haelt den Scan nicht fest.
+fn hash_art() -> eintrag::OeffnenArt {
+    eintrag::OeffnenArt {
+        folgen: true,
+        teilen: 1 | 4,
+    }
+}
+
+fn open_fehler(e: OeffnenFehler) -> std::io::Error {
+    match e {
+        OeffnenFehler::Io(e) => e,
+        OeffnenFehler::Urteil(_) => std::io::Error::other("nur online oder Verknüpfung"),
+        OeffnenFehler::Getauscht => std::io::Error::other("Datei ausgetauscht"),
+    }
+}
+
+/// Oeffnet `path` zum Lesen ueber das zweistufige Oeffnen der Ablage ([`eintrag::oeffnen_ohne_abruf`]):
+/// erst nur Attribute und Urteil am Handle, nur bei „lokal“ (und nach einem zweiten Urteil am selben Handle)
+/// wird dieses Handle auf Lesezugriff hochgestuft (kein zweiter Pfadzugriff), dann erneut Urteil und
+/// Datei-Kennung. `FILE_FLAG_OPEN_NO_RECALL` allein verhindert den Abruf NICHT; der Schutz ist das Urteil
+/// vor dem Lesezugriff (Restrisiko: Auslagern zwischen letztem Urteil und Hochstufen). Wird nichts gelesen,
+/// ist das Ergebnis `Err` (Art `Other`, ausser bei Fehlern des Oeffnens selbst).
+pub fn open_checked(path: &Path) -> std::io::Result<fs::File> {
+    eintrag::oeffnen_ohne_abruf(path, hash_art(), trigger_urteil).map_err(open_fehler)
+}
+
+/// Ergebnis des Hashens: Hash und Groesse/Zeit, wie das geprueft-geoeffnete Handle sie NACH dem Lesen
+/// meldet (der Verzeichniseintrag hinkt auf NTFS/SMB nach).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Hashed {
+    pub hash: String,
+    pub size: u64,
+    pub mtime_ms: i64,
+    /// Kennung der gehashten Datei (Volume und Datei-Index bzw. Gerät und Inode), am Lese-Handle nach dem
+    /// Lesen. Wer danach prüft, dass der Pfad noch dieselbe Datei meint, vergleicht sie mit der Kennung des
+    /// Pfades (lva#507): gleiche Größe und gleiche Zeit allein beweisen das nicht.
+    pub id: (u64, u64),
+}
+
+/// Grenzen eines Hash-Laufs (lva#507 Befund 6): Bytebudget, Zeitlimit und eine Abbruchfrage, die vor jedem
+/// Block gestellt wird.
+pub struct HashGrenzen<'a> {
+    pub max_bytes: u64,
+    pub frist: Duration,
+    pub abbruch: &'a dyn Fn() -> bool,
+}
+
+fn grenze_erreicht(was: &'static str) -> std::io::Error {
+    std::io::Error::other(was)
+}
+
+/// SHA-256 des Inhalts aus einem geprueft-geoeffneten Handle, in Bloecken (kein Laden der ganzen Datei).
+/// Bricht ab, wenn die Datei groesser als das Budget ist, beim Lesen ueber ihre Anfangsgroesse hinauswaechst
+/// (ein Schreiber haengt an), die Frist ablaeuft oder die Abbruchfrage `true` sagt.
+///
+/// Grenze der Harte (lva#507 Befund 6): Frist und Abbruch werden ZWISCHEN den Bloecken geprueft. Ein einzelnes
+/// `read` ist ein synchroner Systemaufruf und laesst sich nicht unterbrechen (haengt z. B. ein Netzlaufwerk,
+/// blockiert es bis zur Rueckkehr des Systems). Deshalb ist der Block klein ([`HASH_BLOCK`], 1 MiB): ein
+/// gesunder Datentraeger kehrt in Millisekunden zurueck, Frist und Abbruch greifen dann spaetestens nach
+/// einem Block. Der Abbruch beim Beenden der App haengt an `WorkflowHub::shutdown` ([`State::abbrechen`]).
+/// `pfad` ist nur fuer die Test-Naht der Kennung.
+fn hash_aus(mut file: fs::File, g: &HashGrenzen<'_>, pfad: &Path) -> std::io::Result<Hashed> {
+    let anfang = file.metadata()?.len();
+    if anfang > g.max_bytes {
+        return Err(grenze_erreicht("Datei zu groß zum Prüfen"));
+    }
+    let start = Instant::now();
+    let mut gelesen: u64 = 0;
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; HASH_BLOCK];
     loop {
-        let n = file.read(&mut buf)?;
+        if (g.abbruch)() {
+            return Err(grenze_erreicht("abgebrochen"));
+        }
+        if start.elapsed() >= g.frist {
+            return Err(grenze_erreicht("Zeitlimit beim Prüfen"));
+        }
+        let n = file.read(&mut buf).map_err(|e| {
+            if eintrag::ist_abruf_gesperrt(&e) {
+                std::io::Error::other("nur online oder Verknüpfung")
+            } else {
+                e
+            }
+        })?;
         if n == 0 {
             break;
         }
+        gelesen += n as u64;
+        if gelesen > anfang || gelesen > g.max_bytes {
+            return Err(grenze_erreicht("Datei wächst während des Prüfens"));
+        }
         hasher.update(&buf[..n]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    let meta = file.metadata()?;
+    let id = eintrag::datei_id(&file, pfad)?;
+    Ok(Hashed {
+        hash: format!("{:x}", hasher.finalize()),
+        size: meta.len(),
+        mtime_ms: meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_millis() as i64),
+        id,
+    })
+}
+
+fn standard_grenzen() -> HashGrenzen<'static> {
+    HashGrenzen {
+        max_bytes: MAX_HASH_BYTES,
+        frist: HASH_FRIST,
+        abbruch: &|| false,
+    }
+}
+
+/// SHA-256 des Inhalts ueber ein No-Recall-Handle (Pfad, mit den Standardgrenzen).
+pub fn hash_file(path: &Path) -> std::io::Result<Hashed> {
+    // macOS: wird die Datei nach dem Urteil doch noch ausgelagert, scheitert das Lesen (`EDEADLK`), statt
+    // sie herunterzuladen; die Sperre gilt fuer diesen Faden bis zum Ende des Hashens.
+    let _abrufsperre = eintrag::abruf_sperren();
+    hash_aus(open_checked(path)?, &standard_grenzen(), path)
+}
+
+/// Wie [`hash_file`], aber die Datei `name` im geprueften, gehaltenen Ordner (relativ geoeffnet, kein
+/// Pfadzugriff) und mit den Grenzen des Aufrufers.
+pub fn hash_in(
+    ordner: &eintrag::Ordner,
+    name: &std::ffi::OsStr,
+    g: &HashGrenzen<'_>,
+) -> std::io::Result<Hashed> {
+    let _abrufsperre = eintrag::abruf_sperren();
+    let file = ordner
+        .datei_oeffnen(name, hash_art(), trigger_urteil)
+        .map_err(open_fehler)?;
+    hash_aus(file, g, &ordner.pfad().join(name))
+}
+
+/// Wie [`hash_in`], aber die Ordner-Kette wird nur zum OEFFNEN gehalten: `kette` oeffnet sie frisch, die Datei
+/// wird relativ dazu geoeffnet, dann faellt die Kette weg und nur das Datei-Handle liest. Waehrend des
+/// Hashens bleibt der Ordner so umbenennbar (ein Datei-Handle haelt seinen Platz, die Kette sperrt nicht).
+fn hash_getrennt(
+    kette: &dyn Fn() -> Result<std::sync::Arc<eintrag::Ordner>, OeffnenFehler>,
+    name: &std::ffi::OsStr,
+    g: &HashGrenzen<'_>,
+    pfad: &Path,
+) -> std::io::Result<Hashed> {
+    let _abrufsperre = eintrag::abruf_sperren();
+    let file = {
+        let ordner = kette().map_err(open_fehler)?;
+        ordner
+            .datei_oeffnen(name, hash_art(), trigger_urteil)
+            .map_err(open_fehler)?
+    };
+    hash_aus(file, g, pfad)
+}
+
+/// SHA-256 des Inhalts als Kleinbuchstaben-Hex.
+pub fn sha256_file(path: &Path) -> std::io::Result<String> {
+    hash_file(path).map(|h| h.hash)
 }
 
 /// Pfad fuer Anzeige und Parameter: ohne das `\\?\`-Praefix der kanonischen Windows-Pfade.
@@ -305,14 +526,6 @@ pub fn display_path(p: &Path) -> String {
         }
     }
     s.into_owned()
-}
-
-fn mtime_ms(meta: &fs::Metadata) -> i64 {
-    meta.modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
 }
 
 // ---------------------------------------------------------------------------
@@ -333,6 +546,25 @@ struct Inner {
     /// Zuletzt gemeldetes Problem je Ablauf (Ordner fehlt, Recht aus, ...): jede Aenderung wird
     /// einmal gemeldet, nicht alle 15 s dasselbe.
     problems: HashMap<String, String>,
+    /// Fortsetzung je Ablauf in grossen Ordnern (lva#507 Befund 5): wo der naechste Takt weiterliest und
+    /// welche Schluessel der laufende Umlauf schon gesehen hat.
+    umlauf: HashMap<String, Umlauf>,
+    /// Zuletzt versucht (lva#507 Befund 5): je Schluessel die laufende Nummer seines letzten Hashversuchs. Bei
+    /// knappem Hash-Budget kommt der am laengsten nicht Versuchte zuerst dran (nie Versuchte vor allen), und
+    /// zwar ueber Takte UND wechselnde Kandidatenfenster hinweg: ein Kandidat, dessen Hashen oder Einreihen
+    /// dauerhaft scheitert, rueckt nach hinten und haelt die anderen nicht auf.
+    versuche: HashMap<String, u64>,
+    /// Laufende Nummer der Hashversuche (Reihenfolge ueber Takte und Fenster hinweg).
+    versuch_zaehler: u64,
+}
+
+/// Stand eines Umlaufs durch einen Ordner, der mehr Kandidaten hat als ein Takt schafft.
+#[derive(Default)]
+struct Umlauf {
+    /// Index (in Aufzaehlungsreihenfolge) des ersten Eintrags, den der naechste Takt ansieht.
+    ab: usize,
+    /// Schluessel, die der Umlauf bisher gesehen hat; erst am Ende des Umlaufs wird aufgeraeumt.
+    gesehen: HashSet<String>,
 }
 
 /// Der fluechtige Zustand: Beobachtungen (Stabilitaet), gemeldete Platzhalter und Probleme.
@@ -340,6 +572,8 @@ struct Inner {
 #[derive(Default)]
 pub struct State {
     scanning: AtomicBool,
+    /// Bricht laufende und kuenftige Scans ab (Beenden der App); das Hashen fragt es vor jedem Block.
+    abbruch: AtomicBool,
     inner: Mutex<Inner>,
 }
 
@@ -424,6 +658,8 @@ impl State {
             .retain(|k, _| !k.starts_with(&prefix) || keep.contains(k));
         g.cloud
             .retain(|k, _| !k.starts_with(&prefix) || keep.contains(k));
+        g.versuche
+            .retain(|k, _| !k.starts_with(&prefix) || keep.contains(k));
     }
 
     /// Vergisst alles zu Ablaeufen, die nicht mehr eingeschaltet sind.
@@ -433,6 +669,9 @@ impl State {
             .retain(|k, _| k.split('|').next().is_some_and(|w| live.contains(w)));
         g.cloud.retain(|_, f| live.contains(&f.workflow_id));
         g.problems.retain(|w, _| live.contains(w));
+        g.umlauf.retain(|w, _| live.contains(w));
+        g.versuche
+            .retain(|k, _| k.split('|').next().is_some_and(|w| live.contains(w)));
     }
 
     /// Dateien, die nur in der Cloud liegen und deshalb nicht verarbeitet werden.
@@ -440,6 +679,36 @@ impl State {
         let mut v: Vec<CloudFile> = self.lock().cloud.values().cloned().collect();
         v.sort_by(|a, b| (&a.workflow_id, &a.name).cmp(&(&b.workflow_id, &b.name)));
         v
+    }
+
+    /// Bricht laufende Scans ab und verhindert neue (lva#507 Befund 6): das Hashen prueft es vor jedem Block.
+    pub fn abbrechen(&self) {
+        self.abbruch.store(true, Ordering::Release);
+    }
+
+    fn abgebrochen(&self) -> bool {
+        self.abbruch.load(Ordering::Acquire)
+    }
+
+    /// Der Stand des Umlaufs dieses Ablaufs: (Startindex, bisher gesehene Schluessel).
+    fn umlauf_nehmen(&self, workflow_id: &str) -> Umlauf {
+        self.lock().umlauf.remove(workflow_id).unwrap_or_default()
+    }
+
+    /// Nummer des letzten Hashversuchs dieses Schluessels (0: noch nie versucht).
+    fn versuch_von(&self, key: &str) -> u64 {
+        self.lock().versuche.get(key).copied().unwrap_or(0)
+    }
+
+    fn versuch_merken(&self, key: &str) {
+        let mut g = self.lock();
+        g.versuch_zaehler += 1;
+        let n = g.versuch_zaehler;
+        g.versuche.insert(key.to_string(), n);
+    }
+
+    fn umlauf_merken(&self, workflow_id: &str, u: Umlauf) {
+        self.lock().umlauf.insert(workflow_id.to_string(), u);
     }
 
     /// Laeuft gerade ein Scan? (billige Frage fuer den Takt)
@@ -467,6 +736,9 @@ pub fn on_tick(
     now_ms: i64,
 ) -> TickReport {
     let mut report = TickReport::default();
+    if state.abgebrochen() {
+        return report;
+    }
     let Some(_guard) = state.try_begin() else {
         report
             .skipped
@@ -492,14 +764,32 @@ pub fn on_tick(
             return report;
         }
     };
+    let beginn = Instant::now();
     for a in &armed {
         let Some(spec) = Spec::from_def(&a.def.trigger) else {
             continue;
         };
-        scan_workflow(sink, state, probe, &conn, a, &spec, now_ms, &mut report);
+        scan_workflow(
+            sink,
+            state,
+            probe,
+            &conn,
+            a,
+            &spec,
+            now_ms,
+            beginn,
+            &mut report,
+        );
     }
     report
 }
+
+/// Meldung, wenn der ueberwachte Ordner selbst nur in der Cloud liegt (nicht aufgelistet). Kein Name, kein Pfad.
+const FOLDER_CLOUD_ONLY: &str = "Der überwachte Ordner liegt nur in der Cloud und wird nicht gelesen; \"Immer auf diesem Gerät behalten\" holt ihn.";
+
+/// Meldung, wenn der Ordner eine Verknüpfung ist oder sich nicht sicher beurteilen lässt (nicht aufgelistet).
+const FOLDER_UNSICHER: &str =
+    "Der überwachte Ordner ist eine Verknüpfung oder ließ sich nicht sicher prüfen und wird nicht gelesen.";
 
 /// Meldet ein Problem einmal je Aenderung (`skipped` mit dem Namen des Ablaufs).
 fn problem(state: &State, report: &mut TickReport, a: &Armed, text: &str) {
@@ -518,6 +808,7 @@ fn scan_workflow(
     a: &Armed,
     spec: &Spec,
     now_ms: i64,
+    beginn: Instant,
     report: &mut TickReport,
 ) {
     let wf = a.row.id.as_str();
@@ -603,9 +894,36 @@ fn scan_workflow(
             return;
         }
     };
-    let entries = match fs::read_dir(&dir) {
-        Ok(rd) => rd,
-        Err(e) => {
+    // Der Ordner selbst zuerst, ohne ihn zu oeffnen (macOS `lstat`: `SF_DATALESS`, Windows Find-Daten): liegt er
+    // nur online, wird er nicht aufgelistet (das Auflisten kann ihn laden oder synchronisieren).
+    if eintrag::roh(&dir).is_ok_and(|r| r.urteil() == Urteil::NurOnline) {
+        problem(state, report, a, FOLDER_CLOUD_ONLY);
+        return;
+    }
+    // Aufgelistet wird NUR nach einem positiven, aktuellen Urteil am Ordner-Handle (lva#507 Befund 3,
+    // fail-closed): Handle nicht oeffenbar oder Attribute nicht bestimmbar, Verknuepfung, nur online, Pfad
+    // fuehrt woandershin = nicht auflisten. Das gilt auch fuer Laufwerkswurzeln (die Find-Abfrage per Pfad
+    // scheitert dort, das Handle liefert trotzdem ein Urteil). Auflisten und Oeffnen laufen ueber dieses
+    // gehaltene Handle, nicht ueber den Pfad (Befund 2). Gehalten wird die ganze Kette von der Wurzel der
+    // Integration bis zum Eingangsordner: der Eingangsordner besitzt seine Eltern, solange er lebt. Die Kette
+    // wird nur zum Auflisten und zum Oeffnen einer Datei gehalten; vor dem Hashen und Einreihen faellt sie weg
+    // (der Ordner bleibt dann umbenennbar), jedes Oeffnen und die Kennungspruefung nach dem Hash oeffnen sie neu.
+    let Ok(rest) = dir.strip_prefix(sandbox.root()) else {
+        problem(state, report, a, FOLDER_UNSICHER);
+        return;
+    };
+    let ordner = match eintrag::Ordner::kette(sandbox.root(), rest.iter(), eintrag::reparse_urteil)
+    {
+        Ok(o) => o,
+        Err(OeffnenFehler::Urteil(Urteil::NurOnline)) => {
+            problem(state, report, a, FOLDER_CLOUD_ONLY);
+            return;
+        }
+        Err(OeffnenFehler::Urteil(_)) | Err(OeffnenFehler::Getauscht) => {
+            problem(state, report, a, FOLDER_UNSICHER);
+            return;
+        }
+        Err(OeffnenFehler::Io(e)) => {
             problem(
                 state,
                 report,
@@ -615,42 +933,138 @@ fn scan_workflow(
             return;
         }
     };
-    state.clear_problem(wf);
+    // Iterativ aufzaehlen (Befund 4): kein Vec ueber den ganzen Ordner, Abbruch in der Aufzaehlung. Ein Takt
+    // nimmt hoechstens `MAX_ENTRIES` Kandidaten (Dateien, die Name und Endung bestehen); die naechsten Takte
+    // setzen dahinter fort (Befund 5, `Umlauf`), erst am Ende des Ordners beginnt ein neuer Umlauf.
+    let basis = ordner.pfad().to_path_buf();
+    let kette_neu = || eintrag::Ordner::kette(sandbox.root(), rest.iter(), eintrag::reparse_urteil);
+    let mut umlauf = state.umlauf_nehmen(wf);
+    let start = umlauf.ab;
+    let mut index = 0usize;
+    let mut stopp: Option<usize> = None;
+    let mut zu_gross = false;
+    let mut kandidaten: Vec<(std::ffi::OsString, Roh)> = Vec::new();
+    // Ein Fehler mitten im Auflisten, der „nur online“ heisst, gilt fuer den ganzen Ordner (nie eine
+    // Teilliste), alles andere ebenso: nichts wird aus einer abgebrochenen Aufzaehlung gewertet.
+    let mut abgebrochen = false;
+    let fertig = ordner.auflisten(|e| {
+        // Beenden der App: zwischen den Eintraegen abbrechen, nichts aus dem Teilstand werten.
+        if state.abgebrochen() {
+            abgebrochen = true;
+            return std::ops::ControlFlow::Break(());
+        }
+        let i = index;
+        index += 1;
+        if i >= MAX_VERZEICHNIS {
+            zu_gross = true;
+            return std::ops::ControlFlow::Break(());
+        }
+        if i < start {
+            return std::ops::ControlFlow::Continue(());
+        }
+        let Some(name) = e.name.to_str() else {
+            return std::ops::ControlFlow::Continue(());
+        };
+        let Some(roh) = e.roh else {
+            return std::ops::ControlFlow::Continue(());
+        };
+        if !roh.ist_datei() || is_ignored_name(name) {
+            return std::ops::ControlFlow::Continue(());
+        }
+        let extension = Path::new(name)
+            .extension()
+            .and_then(|x| x.to_str())
+            .unwrap_or_default();
+        if !spec.wants(extension) {
+            return std::ops::ControlFlow::Continue(());
+        }
+        if kandidaten.len() >= MAX_ENTRIES {
+            stopp = Some(i);
+            return std::ops::ControlFlow::Break(());
+        }
+        kandidaten.push((e.name, roh));
+        std::ops::ControlFlow::Continue(())
+    });
+    drop(ordner);
+    if abgebrochen {
+        state.umlauf_merken(wf, umlauf);
+        return;
+    }
+    let fertig = match fertig {
+        Ok(f) => f,
+        Err(OeffnenFehler::Urteil(Urteil::NurOnline)) => {
+            state.umlauf_merken(wf, umlauf);
+            problem(state, report, a, FOLDER_CLOUD_ONLY);
+            return;
+        }
+        Err(OeffnenFehler::Urteil(_)) | Err(OeffnenFehler::Getauscht) => {
+            state.umlauf_merken(wf, umlauf);
+            problem(state, report, a, FOLDER_UNSICHER);
+            return;
+        }
+        Err(OeffnenFehler::Io(e)) => {
+            state.umlauf_merken(wf, umlauf);
+            let text = if eintrag::ist_abruf_gesperrt(&e) {
+                FOLDER_CLOUD_ONLY.to_string()
+            } else {
+                format!("Der Ordner ließ sich nicht lesen ({})", e.kind())
+            };
+            problem(state, report, a, &text);
+            return;
+        }
+    };
+    if zu_gross {
+        problem(
+            state,
+            report,
+            a,
+            &format!(
+                "Der überwachte Ordner hat mehr als {MAX_VERZEICHNIS} Einträge; nur die ersten werden geprüft."
+            ),
+        );
+    } else {
+        state.clear_problem(wf);
+    }
+    // Umlauf zu Ende (Ordner bis zum Ende gelesen oder Obergrenze erreicht) oder fortsetzen?
+    let weiter_ab = if fertig || zu_gross { None } else { stopp };
+    let _ = fertig;
 
     // ---- Dateien --------------------------------------------------------------------
     let mut keep: HashSet<String> = HashSet::new();
     let mut hashed = 0usize;
     let mut wrote = false;
-    for entry in entries.flatten().take(MAX_ENTRIES) {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if is_ignored_name(&name) {
-            continue;
-        }
-        let path = entry.path();
+    // Reihenfolge (Befund 5): wer am laengsten nicht versucht wurde, kommt zuerst an das knappe Hash-Budget
+    // (stabil: bei Gleichstand bleibt die Aufzaehlungsreihenfolge). Die Nummer gilt ueber Takte und Fenster.
+    let mut kandidaten = kandidaten;
+    let schluessel_von = |n: &std::ffi::OsString| -> String {
+        let rel = sandbox.rel_of(&basis.join(n));
+        format!("{wf}|{}", rel.to_lowercase())
+    };
+    kandidaten.sort_by_cached_key(|(n, _)| state.versuch_von(&schluessel_von(n)));
+    for (entry_name, roh) in kandidaten {
+        // Name, Endung und Art hat die Aufzaehlung schon geprueft (Roh kommt vom Ordner-Handle, nicht
+        // vom Pfad; `fs::metadata` liefert fuer OneDrive-Platzhalter falsche Attribute). Vor allem anderen
+        // entscheiden: schon die Pfadaufloesung der Sandbox oeffnet die Datei.
+        let name = entry_name.to_string_lossy().into_owned();
+        let path = basis.join(&entry_name);
         let extension = path
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or_default()
             .to_string();
-        if !spec.wants(&extension) {
-            continue;
-        }
-        // Weder Ordner noch Verknuepfung: `symlink_metadata` folgt ihr nicht.
-        let Ok(meta) = fs::symlink_metadata(&path) else {
-            continue;
-        };
-        if !meta.is_file() {
+        let kind = entry_state(&roh);
+        if matches!(kind, EntryState::NotAFile | EntryState::Detour) {
             continue;
         }
         let rel = sandbox.rel_of(&path);
-        if rel.is_empty() || sandbox.resolve_file(&rel, false).is_err() {
+        if rel.is_empty() {
             continue;
         }
-        let key = format!("{wf}|{}", rel.to_lowercase());
-        keep.insert(key.clone());
 
         // Nur in der Cloud: nicht anfassen, melden.
-        if probe.cloud_only(&path, &meta) {
+        if kind == EntryState::CloudOnly || probe.cloud_only(&path, &roh) {
+            let key = format!("{wf}|{}", rel.to_lowercase());
+            keep.insert(key.clone());
             let first = state.note_cloud(
                 &key,
                 CloudFile {
@@ -660,21 +1074,28 @@ fn scan_workflow(
             );
             if first {
                 log::info!(
-                    "workflows: „{}“: „{name}“ liegt nur in OneDrive und wird nicht heruntergeladen",
+                    "workflows: „{}“: eine Datei liegt nur in OneDrive und wurde übersprungen",
                     a.row.name
                 );
+                // Kein Dateiname: `skipped` geht ins Log; der Name erreicht die Oberflaeche nur ueber
+                // `State::cloud_only`.
                 report.skipped.push(format!(
-                    "{}: „{name}“ liegt nur in der Cloud (OneDrive) und wird nicht heruntergeladen; \"Immer auf diesem Gerät behalten\" holt sie.",
+                    "{}: eine Datei liegt nur in der Cloud (OneDrive) und wurde übersprungen; \"Immer auf diesem Gerät behalten\" macht sie lesbar.",
                     a.row.name
                 ));
             }
             state.reset(&key);
             continue;
         }
+        if sandbox.resolve_file(&rel, false).is_err() {
+            continue;
+        }
+        let key = format!("{wf}|{}", rel.to_lowercase());
+        keep.insert(key.clone());
         state.clear_cloud(&key);
 
-        let size = meta.len();
-        let modified = mtime_ms(&meta);
+        let size = roh.groesse;
+        let modified = roh.zeit;
         let seen = state.observe(&key, size, modified, now_ms);
         if !seen.is_stable(now_ms, spec.stable_ms) {
             continue;
@@ -698,18 +1119,36 @@ fn scan_workflow(
             continue;
         }
         hashed += 1;
-        let hash = match sha256_file(&path) {
-            Ok(h) => h,
+        state.versuch_merken(&key);
+        let grenzen = HashGrenzen {
+            max_bytes: MAX_HASH_BYTES,
+            frist: HASH_FRIST,
+            abbruch: &|| state.abgebrochen() || beginn.elapsed() > SCAN_FRIST,
+        };
+        let (hash, at_hash) = match hash_getrennt(&kette_neu, &entry_name, &grenzen, &path) {
+            Ok(h) => (h.hash.clone(), h),
             Err(e) => {
                 // Gesperrt oder verschwunden: beim naechsten Takt erneut.
-                log::debug!("workflows: „{name}“ nicht gelesen: {e}");
+                log::debug!("workflows: Datei nicht gelesen ({})", e.kind());
                 state.reset(&key);
                 continue;
             }
         };
-        // Waehrend des Hashens veraendert? Dann war sie nicht fertig.
-        match fs::metadata(&path) {
-            Ok(m) if m.len() == size && mtime_ms(&m) == modified => {}
+        // Waehrend des Hashens veraendert? Dann war sie nicht fertig: zuerst nach dem Handle, dann
+        // nach dem Verzeichniseintrag.
+        if at_hash.size != size || at_hash.mtime_ms != modified {
+            state.reset(&key);
+            continue;
+        }
+        // Dann noch einmal Pfad und Datei-Kennung: gleiche Groesse und Zeit allein beweisen nicht, dass unter dem
+        // Namen noch dieselbe Datei liegt (Austausch durch eine gleich grosse, gleich datierte Datei).
+        let kennung = kette_neu().and_then(|o| o.kennung(&entry_name, hash_art()));
+        match (eintrag::roh(&path), kennung) {
+            (Ok(r), Ok(id))
+                if entry_state(&r) == EntryState::Local
+                    && r.groesse == size
+                    && r.zeit == modified
+                    && id == at_hash.id => {}
             _ => {
                 state.reset(&key);
                 continue;
@@ -770,7 +1209,22 @@ fn scan_workflow(
             }
         }
     }
-    state.retain_keys(wf, &keep);
+    // Aufraeumen erst am Ende eines ganzen Umlaufs: in grossen Ordnern sieht ein Takt nur einen Ausschnitt,
+    // die Beobachtungen der anderen Ausschnitte duerfen nicht verloren gehen.
+    umlauf.gesehen.extend(keep);
+    match weiter_ab {
+        Some(ab) => {
+            umlauf.ab = ab;
+            state.umlauf_merken(wf, umlauf);
+        }
+        // Teilscan (Obergrenze erreicht): was hinter der Grenze liegt, wurde nicht gesehen und darf nicht aus
+        // dem fluechtigen Zustand verschwinden (bekannte Cloud-Anzeigen, Beobachtungen).
+        None if zu_gross => {}
+        None => {
+            state.retain_keys(wf, &umlauf.gesehen);
+            // `umlauf` bleibt weg: der naechste Takt beginnt vorn.
+        }
+    }
     if wrote {
         for family in ["p:", "h:"] {
             if let Err(e) = ledger::prune_family(conn, family, ledger::FILE_CAP) {
