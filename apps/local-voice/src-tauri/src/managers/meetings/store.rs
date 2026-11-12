@@ -131,7 +131,23 @@ pub(crate) static MIGRATIONS: &[M] = &[
     // Mehrere Audiodateien je Besprechung (Teile), Index 15: hinter lva#208. Nur
     // CREATE ... IF NOT EXISTS. Der SQL-Text steht in `parts.rs`.
     M::up(super::parts::PARTS_MIGRATION),
+    // Besprechungsplanung P3 (lva#534), Index 16: hinter den Teilen. Die vier Planungstabellen
+    // (`meeting_plans`, `meeting_plan_links`, `meeting_plan_consents`, `meeting_plan_consent_log`),
+    // nur CREATE ... IF NOT EXISTS. Der SQL-Text steht im Crate `besprechungsplanung`
+    // (`store::MIGRATIONS`, jeder Eintrag ein eigener Schritt) und wird hier NICHT kopiert; der Test
+    // `planning_steps_follow_the_crate` haelt Crate und Kette gleich lang.
+    M::up(besprechungsplanung::store::MIGRATIONS[0]),
+    // Besprechungsplanung P3 (lva#534), Index 17: die Instanz eines Serientermins im Kalender-Cache
+    // (RECURRENCE-ID). Nur ADD COLUMN (nullable) und ein Index; vorhandene Zeilen bleiben
+    // unveraendert, die Spalte fuellt der naechste Abruf der Quelle.
+    M::up(CALENDAR_INSTANCE_MIGRATION),
 ];
+
+/// Index 17: urspruenglicher Beginn der Instanz eines Serientermins (UTC-ms, `NULL` bei einem
+/// Einzeltermin) und ein Index auf `uid` fuer den Abgleich der Besprechungsplanung.
+pub(crate) const CALENDAR_INSTANCE_MIGRATION: &str =
+    "ALTER TABLE calendar_events ADD COLUMN instance_start INTEGER;
+    CREATE INDEX IF NOT EXISTS idx_cal_events_uid ON calendar_events(uid);";
 
 /// Migration Index 3 (M4, `entwurf/m4-chat-suche.md` §3).
 ///
@@ -747,6 +763,11 @@ pub(crate) const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_s
 pub(crate) fn open_connection(path: &Path) -> rusqlite::Result<Connection> {
     let conn = Connection::open(path)?;
     conn.busy_timeout(BUSY_TIMEOUT)?;
+    // Besprechungsplanung P3: ohne Fremdschluessel bliebe beim endgueltigen Loeschen einer Planung ihre
+    // Einwilligung (Personendaten) liegen. Das gebuendelte SQLite hat die Vorgabe schon an
+    // (`SQLITE_DEFAULT_FOREIGN_KEYS=1`, geprueft in `planning::tests`); ausdruecklich gesetzt gilt es
+    // unabhaengig davon, wie SQLite gebaut wurde. Fuer die bestehenden Tabellen aendert das nichts.
+    conn.pragma_update(None, "foreign_keys", true)?;
     Ok(conn)
 }
 
@@ -3287,8 +3308,9 @@ impl MeetingStore {
         {
             let mut ins = tx.prepare(
                 "INSERT INTO calendar_events (key, source_id, uid, title, starts_at, ends_at, all_day,
-                        cancelled, location, join_url, description, reminded_at, dismissed_at, fetched_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                        cancelled, location, join_url, description, reminded_at, dismissed_at, fetched_at,
+                        instance_start)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             )?;
             let mut ins_att = tx.prepare(
                 "INSERT OR IGNORE INTO calendar_event_attendees (event_key, email, name, organizer, partstat)
@@ -3316,7 +3338,8 @@ impl MeetingStore {
                     e.description,
                     reminded,
                     dismissed,
-                    meta.now_ms
+                    meta.now_ms,
+                    e.instance_start
                 ])?;
                 for a in &e.attendees {
                     // Die Primaerschluessel-Spalten duerfen nicht NULL sein (NULLs
@@ -3409,7 +3432,7 @@ impl MeetingStore {
              AND e.source_id IN (SELECT id FROM calendar_sources WHERE deleted_at IS NULL AND enabled = 1)";
         let mut stmt = conn.prepare(&format!(
             "SELECT e.key, e.source_id, e.uid, e.title, e.starts_at, e.ends_at, e.all_day, e.cancelled,
-                    e.location, e.join_url, e.description
+                    e.location, e.join_url, e.description, e.instance_start
              FROM calendar_events e WHERE {filter} ORDER BY e.starts_at, e.uid, e.key"
         ))?;
         let mut events = stmt
@@ -3455,7 +3478,7 @@ impl MeetingStore {
         let event = conn
             .query_row(
                 "SELECT e.key, e.source_id, e.uid, e.title, e.starts_at, e.ends_at, e.all_day, e.cancelled,
-                        e.location, e.join_url, e.description
+                        e.location, e.join_url, e.description, e.instance_start
                  FROM calendar_events e WHERE e.key = ?1",
                 params![key],
                 Self::map_cal_event,
@@ -3487,6 +3510,7 @@ impl MeetingStore {
             location: row.get(8)?,
             join_url: row.get(9)?,
             description: row.get(10)?,
+            instance_start: row.get(11)?,
             attendees: Vec::new(),
         })
     }
@@ -6534,7 +6558,9 @@ mod tests {
                 "description",
                 "reminded_at",
                 "dismissed_at",
-                "fetched_at"
+                "fetched_at",
+                // Index 17 der Kette (Besprechungsplanung P3), hinten angehaengt.
+                "instance_start"
             ]
         );
         assert_eq!(
@@ -6625,6 +6651,7 @@ mod tests {
             location: Some("Raum 2.14".into()),
             join_url: Some("https://meet.google.com/abc-defg-hij".into()),
             description: Some("Agenda\nPunkt 1".into()),
+            instance_start: None,
             attendees: vec![
                 Attendee {
                     email: Some("anna.berg@example.com".into()),
