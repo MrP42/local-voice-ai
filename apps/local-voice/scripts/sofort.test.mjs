@@ -121,6 +121,49 @@ test("liesSofort: Warte-Floskeln sind nie eine Reaktion (ANTWORT wie WEITER)", (
   });
 });
 
+test("liesSofort: Prüf-Ankündigungen, Schreibvarianten und Anführungszeichen sind Floskeln (R4)", () => {
+  for (const f of [
+    "Ich prüfe kurz die Angaben.",
+    "I'm checking the book.",
+    "moment, ich suche in den Besprechungen.",
+    "„Moment, ich schaue kurz nach.“",
+    '"Ich denke kurz nach."',
+    "MOMENT, ICH SCHAUE KURZ NACH.",
+    "I’m looking into it.",
+    "Ich schaue mal nach.",
+  ]) {
+    assert.deepEqual(liesSofort(`ANTWORT: ${f}`), { art: "nichts" }, f);
+    assert.deepEqual(liesSofort(`WEITER: ${f}`), { art: "nichts" }, f);
+  }
+});
+
+test("liesSofort: Sachsätze mit Prüf- oder Denkverb bleiben vollständig (R4)", () => {
+  for (const echt of [
+    "Ich lese jeden Abend kurz.",
+    "Ich denke oft über meine Kindheit nach.",
+    "Ich denke.",
+    "I'm thinking about my childhood.",
+    "Ich suche in den Besprechungen vom Montag die Entscheidung, sie lautet Ja.",
+  ]) {
+    assert.deepEqual(
+      liesSofort(`ANTWORT: ${echt}`),
+      { art: "antwort", text: echt },
+      echt,
+    );
+  }
+});
+
+test("liesSofort: eine zweite Marke am Satzanfang schneidet ab", () => {
+  assert.deepEqual(liesSofort("ANTWORT: Ja, gern. WEITER: Noch etwas."), {
+    art: "antwort",
+    text: "Ja, gern.",
+  });
+  assert.deepEqual(liesSofort("WEITER: Gute Frage! ANTWORT: Nein."), {
+    art: "weiter",
+    text: "Gute Frage!",
+  });
+});
+
 test("wendeAn: bei Datenabsicht sagt der Sprecher auch beim Weitersprechen nichts", () => {
   assert.deepEqual(
     wendeAn("wartet", { art: "weiter", text: "Du hast keine Mails." }, true),
@@ -429,4 +472,21 @@ test("Datenabsicht: falsche Sachauskunft beim Weitersprechen wird nicht gesproch
     false,
   );
   assert.equal(t.player.enqueued.at(-1), `wav:${ANTWORT}`);
+});
+
+test("Floskel unter ANTWORT bricht den Denker nicht ab (R4)", async () => {
+  const s = lokal("ANTWORT: Ich prüfe kurz die Angaben.");
+  const t = neu({ voice_call_chat: denker(40, ANTWORT) }, s);
+  await t.start("Was steht in meinen Mails?");
+  assert.deepEqual(t.player.enqueued, [`wav:${ANTWORT}`]);
+  assert.equal(
+    t
+      .aufrufe("voice_call_cancel")
+      .some((c) => !c.args.requestId.endsWith(":sofort")),
+    false,
+  );
+  assert.deepEqual(t.verlauf(), [
+    "user:Was steht in meinen Mails?",
+    `assistant:${ANTWORT}`,
+  ]);
 });
