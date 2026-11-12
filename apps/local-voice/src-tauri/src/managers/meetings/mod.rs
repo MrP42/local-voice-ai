@@ -34,6 +34,7 @@ pub mod queue; // U7
 pub mod queue_store; // U7
 pub mod recorder;
 pub mod relabel; // #242: Sprechernamen in gespeicherten Texten
+pub mod rerun_state; // lva#523: Stopp/Fehler/Absturz einer Neu-Transkription
 pub mod retention;
 pub mod retranscribe;
 pub mod search;

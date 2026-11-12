@@ -81,6 +81,8 @@ private struct VoiceHome: View {
     @State private var showHistory = false
     /// Gesprächsmodus „Sprechen“ (Paket A) als Vollbild.
     @State private var showAssistant = false
+    /// Abschnitt „Gespräch“ auf „Sprechen“: zu Beginn zugeklappt.
+    @State private var conversationExpanded = false
     @FocusState private var searchFocused: Bool
     #if DEBUG
     @State private var tab = ProcessInfo.processInfo.arguments.contains("--meeting-import-probe") ? 2
@@ -260,16 +262,20 @@ private struct VoiceHome: View {
                 }
             }
             if !dynamicTypeSize.isAccessibilitySize { recordButton }
-            HStack(alignment: .top, spacing: 8) {
-                if model.processing { ProgressView().controlSize(.small).accessibilityLabel("Verarbeitung läuft") }
-                Text(model.status).font(.subheadline.weight(.medium)).accessibilityIdentifier("status")
+            // Stand und Watch links, das Menü „Optionen“ rechts in derselben Zeile (keine eigene Zeile mehr darunter).
+            HStack(alignment: .center, spacing: 8) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .top, spacing: 8) {
+                        if model.processing { ProgressView().controlSize(.small).accessibilityLabel("Verarbeitung läuft") }
+                        Text(model.status).font(.subheadline.weight(.medium)).accessibilityIdentifier("status")
+                    }
+                    Label(model.reachable ? "Watch verbunden" : "Watch-Übergabe bei nächster Verbindung", systemImage: model.reachable ? "applewatch" : "clock")
+                        .font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                }
+                Spacer(minLength: 8)
+                optionsMenu
             }
-            Label(model.reachable ? "Watch verbunden" : "Watch-Übergabe bei nächster Verbindung", systemImage: model.reachable ? "applewatch" : "clock")
-                .font(.caption).foregroundStyle(VoicePalette.secondaryText)
-            ViewThatFits(in: .horizontal) {
-                HStack { recoveryButton; Spacer(); optionsMenu }
-                VStack(alignment: .leading, spacing: 8) { recoveryButton; optionsMenu }
-            }.font(.footnote).buttonStyle(.borderless)
+            recoveryButton.font(.footnote).buttonStyle(.borderless)
         }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
             .background(VoicePalette.background, in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(VoicePalette.border, lineWidth: 1))
@@ -286,7 +292,11 @@ private struct VoiceHome: View {
         Menu {
             Button("Wiedergabe stoppen", systemImage: "stop.circle") { model.stopPlayback() }
             if model.processing { Button("Verarbeitung abbrechen", systemImage: "pause.circle") { model.cancelProcessing() } }
-        } label: { Label("Optionen", systemImage: "ellipsis.circle").frame(minHeight: 44) }
+        } label: {
+            Image(systemName: "ellipsis.circle").font(.title3)
+                .frame(minWidth: 44, minHeight: 44, alignment: .trailing).contentShape(Rectangle())
+        }
+        .accessibilityLabel("Optionen").accessibilityIdentifier("captureOptions")
     }
     private var emptyHistory: some View {
         ContentUnavailableView("Raum für deine Gedanken", systemImage: "text.bubble", description: Text("Deine erste Aufnahme und die Antwort erscheinen hier."))
@@ -300,13 +310,28 @@ private struct VoiceHome: View {
             Label("Gespräch", systemImage: "bubble.left.and.bubble.right")
         }.accessibilityIdentifier("conversationControls")
         #else
-        DisclosureGroup("Gespräch") { conversationOptions }
+        // Eigener Aufklapper statt `DisclosureGroup`: Die Gruppe beschneidet ihren Inhalt, und der Systemschalter von iOS 26 ragte
+        // rechts über die Kante (abgeschnittene Schalter). Hier beschneidet nichts.
+        VStack(alignment: .leading, spacing: 10) {
+            Button { withAnimation(.easeInOut(duration: 0.2)) { conversationExpanded.toggle() } } label: {
+                HStack(spacing: 8) {
+                    Text("Gespräch").foregroundStyle(VoicePalette.text)
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(VoicePalette.accent)
+                        .rotationEffect(.degrees(conversationExpanded ? 90 : 0)).accessibilityHidden(true)
+                }.frame(minHeight: 44).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).padding(.vertical, -8)   // 44 pt Tippfläche, ohne die Karte höher zu machen
+            .accessibilityLabel("Gespräch").accessibilityValue(conversationExpanded ? "Geöffnet" : "Geschlossen")
+            .accessibilityHint("Zeigt oder verbirgt die Einstellungen des Gesprächs")
+            if conversationExpanded { conversationOptions }
+        }
         #endif
     }
     private var conversationOptions: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Toggle("Antwort vorlesen", isOn: $model.autoPlayReplies).accessibilityIdentifier("autoPlayReplies")
-            Toggle("Freisprechen", isOn: $model.handsFreeEnabled).accessibilityIdentifier("handsFreeEnabled")
+            VoiceToggleRow(title: "Antwort vorlesen", isOn: $model.autoPlayReplies, identifier: "autoPlayReplies")
+            VoiceToggleRow(title: "Freisprechen", isOn: $model.handsFreeEnabled, identifier: "handsFreeEnabled")
             NavigationLink { SpeechVoicePicker(model: model) } label: {
                 Label("Stimme & Hörprobe", systemImage: "speaker.wave.2")
             }.accessibilityIdentifier("voiceSettings")
@@ -556,6 +581,32 @@ extension View {
             .background(VoicePalette.background, in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(VoicePalette.border, lineWidth: 1))
     }
+}
+
+/// Eine Schalterzeile: Beschriftung links, Schalter rechts.
+///
+/// Auf dem iPhone bekommt der Schalter einen eigenen Rahmen in der Breite des Systemschalters von iOS 26 (63 pt). Ohne ihn ragte der
+/// Schalter rechts über seinen Platz und wurde in beschneidenden Behältern abgeschnitten. Die Beschriftung trägt der Schalter selbst
+/// (VoiceOver liest sie einmal); der sichtbare Text ist für die Bedienungshilfen ausgeblendet.
+struct VoiceToggleRow: View {
+    let title: String
+    @Binding var isOn: Bool
+    let identifier: String
+
+    var body: some View {
+        #if os(watchOS)
+        Toggle(title, isOn: $isOn).accessibilityIdentifier(identifier)
+        #else
+        HStack(alignment: .center, spacing: 12) {
+            Text(title).frame(maxWidth: .infinity, alignment: .leading).accessibilityHidden(true)
+            Toggle(title, isOn: $isOn).labelsHidden().accessibilityIdentifier(identifier)
+                .frame(minWidth: Self.switchWidth, alignment: .center)
+        }
+        #endif
+    }
+
+    /// Breite des Systemschalters ab iOS 26.
+    static let switchWidth: CGFloat = 63
 }
 
 // Geometry mirrors LocalVoiceAiMark's 32-point SVG viewBox on desktop.
