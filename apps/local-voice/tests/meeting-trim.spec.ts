@@ -31,7 +31,8 @@ type Theme = "light" | "dark";
 
 /**
  * `meetings_trim_audio` antwortet mit der neuen Dauer (1 800 000 ms) und `__leftover`
- * gesperrten alten Dateien (`__uncertain`: Aufräumen unsicher), bei `__trimError` mit diesem Fehlercode; `meetings_get` liefert
+ * gesperrten alten Dateien (`__uncertain`: Aufräumen unsicher, `__kept`: alte Dateien außerhalb des
+ * Besprechungsordners, nie gelöscht), bei `__trimError` mit diesem Fehlercode; `meetings_get` liefert
  * den einen Datensatz (`__getFail` = "error" | "null" lässt ihn scheitern). Beim Aufruf von `meetings_trim_audio` wird gemerkt, wie viele
  * `<audio src>` noch an der Seite hängen (`__audioAtTrim`): die Player müssen die Dateien
  * vorher losgelassen haben. Die Attrappe der Aufnahmen kennt die Befehle nicht.
@@ -44,6 +45,7 @@ const installTrimMock = async (page: Page, theme: Theme = "light") => {
     w.__trimError = null;
     w.__leftover = 0;
     w.__uncertain = false;
+    w.__kept = 0;
     w.__audioAtTrim = null;
     w.__getFail = null;
     const internals = w.__TAURI_INTERNALS__;
@@ -63,6 +65,7 @@ const installTrimMock = async (page: Page, theme: Theme = "light") => {
         duration_ms: 1_800_000,
         leftover_files: w.__leftover,
         cleanup_uncertain: w.__uncertain,
+        kept_files: w.__kept,
       };
     };
   }, theme);
@@ -441,6 +444,38 @@ test.describe("Aufnahme zuschneiden", () => {
       page.locator("[data-sonner-toast]", {
         hasText:
           "2 alte Audiodateien sind gerade gesperrt und werden beim nächsten Start der App gelöscht.",
+      }),
+    ).toHaveCount(1);
+  });
+
+  test("alte Dateien außerhalb des Besprechungsordners: Hinweis, dass sie nicht gelöscht wurden", async ({
+    page,
+  }) => {
+    await openM2(page);
+    await page.evaluate(() => ((window as any).__kept = 2));
+    await chooseMenu(page, "menu-trim");
+    await setTime(page, "trim-range-start", "5:00");
+    await page.getByTestId("trim-start").click();
+    await expect(
+      page.locator("[data-sonner-toast]", {
+        hasText:
+          "2 alte Audiodateien liegen außerhalb des Besprechungsordners und wurden nicht gelöscht.",
+      }),
+    ).toHaveCount(1);
+  });
+
+  test("eine alte Datei außerhalb des Besprechungsordners: Einzahl", async ({
+    page,
+  }) => {
+    await openM2(page);
+    await page.evaluate(() => ((window as any).__kept = 1));
+    await chooseMenu(page, "menu-trim");
+    await setTime(page, "trim-range-start", "5:00");
+    await page.getByTestId("trim-start").click();
+    await expect(
+      page.locator("[data-sonner-toast]", {
+        hasText:
+          "Eine alte Audiodatei liegt außerhalb des Besprechungsordners und wurde nicht gelöscht.",
       }),
     ).toHaveCount(1);
   });

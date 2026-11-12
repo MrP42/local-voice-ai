@@ -4369,6 +4369,8 @@
       "reload": "Erneut laden",
       "leftovers_one": "Eine alte Audiodatei ist gerade gesperrt und wird beim nächsten Start der App gelöscht.",
       "leftovers_other": "{{count}} alte Audiodateien sind gerade gesperrt und werden beim nächsten Start der App gelöscht.",
+      "kept_one": "Eine alte Audiodatei liegt außerhalb des Besprechungsordners und wurde nicht gelöscht.",
+      "kept_other": "{{count}} alte Audiodateien liegen außerhalb des Besprechungsordners und wurden nicht gelöscht.",
       "uncertain": "Alte Audiodateien konnten nicht sicher entfernt werden; Nachholen beim nächsten Start."
     },
     "retranscribeDialog": {

@@ -8,93 +8,232 @@
 //! eigenen kleinen Transaktion, der Rest bleibt, und der Start ([`sweep_leftovers`])
 //! versucht es wieder.
 //!
-//! Ein Auftrag ist KEIN Pfad, sondern ein Name im Besprechungsordner:
+//! Ein Auftrag ist KEIN Pfad, sondern ein Name im Besprechungsordner plus Herkunft:
 //!
-//! - `{"kind":"root","name":"mic.wav"}`: eine Datei direkt im Besprechungsordner. Der
-//!   Name ist ein einfacher `.wav`-Dateiname (`mic.wav`, `system.wav`, `mic_aec.wav`,
-//!   `import.wav`, `<Name>-mic.wav` der Zusammenfuehrung), nie ein Pfad.
-//! - `{"kind":"trim","dir":"trim-<ULID>"}`: ein Zuschnittsordner, streng `trim-` plus
-//!   gueltige ULID. Er wird als Ganzes geloescht.
+//! - `{"kind":"root","name":"mic.wav","origin":{..}}`: eine Datei direkt im
+//!   Besprechungsordner. Der Name ist ein einfacher `.wav`-Dateiname (`mic.wav`,
+//!   `system.wav`, `mic_aec.wav`, `import.wav`, `<Name>-mic.wav` der Zusammenfuehrung),
+//!   nie ein Pfad.
+//! - `{"kind":"trim","dir":"trim-<ULID>","origin":{..}}`: ein Zuschnittsordner, streng
+//!   `trim-` plus gueltige ULID. Er wird als Ganzes geloescht.
+//! - Herkunft: `{"from":"trim","trim_id":"<ULID>","channel":"mic|system|mic_aec"}`. Ein
+//!   Auftrag entsteht nur in `apply_trim`, aus den alten Pfaden DERSELBEN Zeile, und
+//!   nennt den Zuschnitt (die ULID seines neuen Ordners) und die Spur, die er ersetzt
+//!   hat. Ein Eintrag ohne gueltige Herkunft (auch der alte Auftrag mit freiem Pfad
+//!   oder nur Name) wird verworfen, ohne etwas zu loeschen. Ein Zuschnittsordner nennt
+//!   nie seinen eigenen Zuschnitt als Herkunft.
 //!
 //! Der Besprechungsordner ergibt sich aus Datenwurzel plus Besprechungs-ID
-//! ([`meeting_dir`]), nie aus gespeicherten Pfaden. Vor JEDER Loeschung gilt: der
-//! Ordner ist ein echtes Verzeichnis (kein Symlink, keine Junction, kein Reparse-Point,
-//! per `symlink_metadata`), kanonisch ein direktes Kind der kanonischen Datenwurzel;
-//! das Ziel ist selbst kein Verweis und kanonisch ein direktes Kind des Ordners; und
-//! es gehoert nicht zur aktuellen Zeile (Referenzschutz: nie `mic`/`system`, deren
-//! `mic_aec.wav` oder der Ordner, in dem sie liegen). Alles Ungueltige, auch ein altes
-//! Auftragsformat (freier Pfad), wird verworfen, ohne etwas zu loeschen. Pruefung UND
-//! Loeschung laufen unter dem Auftrag (Sperre) der Besprechung: der Aufrufer weist
-//! das mit einem `&JobGuard` nach.
+//! ([`open_folder`]), nie aus gespeicherten Pfaden. Geloescht wird nur RELATIV zu
+//! Verzeichnis-Handles (`cap-std`): die Datenwurzel wird einmal geoeffnet, der
+//! Besprechungsordner relativ dazu (kein Verweis, per `symlink_metadata` am Handle
+//! geprueft, und das geoeffnete Verzeichnis ist dasselbe wie das gepruefte); Datei oder
+//! Ordner darin werden mit `remove_file` bzw. `remove_dir_all` AM HANDLE entfernt. Wird
+//! der Ordner oder ein Vorfahre nach der Pruefung gegen einen Verweis ausgetauscht, trifft
+//! die Loeschung weiter das gepruefte Verzeichnis, nie das Ziel des Verweises. Das Ziel
+//! ist selbst kein Verweis (am Handle geprueft).
+//!
+//! Referenzschutz ueber ALLE Besprechungen: vor jeder Loeschung werden alle Zeilen von
+//! `meetings` (auch weich geloeschte, solange Dateipfade gesetzt sind) gelesen. Was eine
+//! Zeile braucht (ihre `mic`/`system`-Datei, deren `mic_aec.wav`, bei einem Ordner jede
+//! Datei darin; normalisiert, unter Windows ohne Gross-/Kleinschreibung), wird nicht
+//! geloescht. Lesen und Loeschen laufen in EINER `IMMEDIATE`-Transaktion: niemand schreibt
+//! dazwischen einen neuen Pfad. Zusaetzlich haelt der Aufrufer den Auftrag (Sperre) der
+//! Besprechung und weist das mit einem `&JobGuard` nach.
+//!
+//! Alte Dateien, die keinen Auftrag bekommen koennen (ausserhalb des Besprechungsordners
+//! oder mit nicht zulaessigem Namen), werden NIE geloescht. Der Zuschnitt haelt sie in
+//! derselben Transaktion dauerhaft in `metadata_json["trim_kept"]` fest
+//! (`[{"path","reason"}]`).
 
 use std::collections::HashSet;
 use std::fs::Metadata;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, Path, PathBuf, MAIN_SEPARATOR};
 use std::sync::Arc;
 
+use cap_std::ambient_authority;
+use cap_std::fs::{Dir, Metadata as CapMetadata};
 use log::{info, warn};
-use rusqlite::{params, OptionalExtension, TransactionBehavior};
-use serde_json::{json, Value};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use serde_json::{json, Map, Value};
 use ulid::Ulid;
 
-use super::{is_trim_dir, TRIM_DIR_PREFIX};
+use super::TRIM_DIR_PREFIX;
 use crate::managers::meetings::job::{self, JobGuard};
 use crate::managers::meetings::store::MeetingStore;
 
 /// `metadata_json`-Schluessel der Loeschauftraege.
 pub(super) const CLEANUP_KEY: &str = "trim_cleanup";
+/// `metadata_json`-Schluessel der alten Dateien, die der Zuschnitt nie loescht.
+pub(super) const KEPT_KEY: &str = "trim_kept";
+/// Grund: die alte Datei liegt nicht direkt im Besprechungsordner (oder in einem
+/// `trim-<ULID>` darin).
+pub(super) const REASON_OUTSIDE: &str = "outside_folder";
+/// Grund: die alte Datei liegt im Ordner, ihr Name ist aber nicht zulaessig.
+pub(super) const REASON_NAME: &str = "invalid_name";
 
 // ---------------------------------------------------------------------------
 // Auftraege
 // ---------------------------------------------------------------------------
 
+/// Spur, die ein Zuschnitt ersetzt hat.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Channel {
+    Mic,
+    System,
+    /// Die entechote Kopie `mic_aec.wav` neben der `mic.wav`.
+    MicAec,
+}
+
+impl Channel {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Mic => "mic",
+            Self::System => "system",
+            Self::MicAec => "mic_aec",
+        }
+    }
+
+    fn parse(text: &str) -> Option<Self> {
+        match text {
+            "mic" => Some(Self::Mic),
+            "system" => Some(Self::System),
+            "mic_aec" => Some(Self::MicAec),
+            _ => None,
+        }
+    }
+}
+
+/// ULID des neuen Ordners eines Zuschnitts (klein geschrieben, 26 Zeichen).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct TrimId(String);
+
+impl TrimId {
+    /// Gueltige ULID (26 Zeichen, Crockford-Base32), gross oder klein.
+    pub(super) fn parse(text: &str) -> Option<Self> {
+        (text.len() == 26 && Ulid::from_string(text).is_ok())
+            .then(|| Self(text.to_ascii_lowercase()))
+    }
+
+    pub(super) fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Name des Ordners `trim-<ULID>`.
+    pub(super) fn dir_name(&self) -> String {
+        format!("{TRIM_DIR_PREFIX}{}", self.0)
+    }
+}
+
+/// Herkunft eines Auftrags: der Zuschnitt und die Spur, die er ersetzt hat.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Origin {
+    pub trim_id: TrimId,
+    pub channel: Channel,
+}
+
+impl Origin {
+    fn to_value(&self) -> Value {
+        json!({
+            "from": "trim",
+            "trim_id": self.trim_id.as_str(),
+            "channel": self.channel.as_str(),
+        })
+    }
+
+    fn from_value(value: &Value) -> Option<Self> {
+        let obj = value.as_object()?;
+        let text = |k: &str| obj.get(k).and_then(Value::as_str);
+        if text("from")? != "trim" {
+            return None;
+        }
+        Some(Self {
+            trim_id: TrimId::parse(text("trim_id")?)?,
+            channel: Channel::parse(text("channel")?)?,
+        })
+    }
+}
+
+/// Datei oder Ordner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Kind {
+    File,
+    Dir,
+}
+
 /// Ein Loeschauftrag (siehe Moduldoku).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum Job {
-    /// Datei direkt im Besprechungsordner.
-    Root(String),
-    /// Zuschnittsordner `trim-<ULID>` im Besprechungsordner.
-    Trim(String),
+pub(super) struct Job {
+    /// `File`: Datei direkt im Besprechungsordner; `Dir`: Zuschnittsordner darin.
+    pub kind: Kind,
+    /// Einfacher Name im Besprechungsordner.
+    pub name: String,
+    pub origin: Origin,
 }
 
 impl Job {
     /// Datei im Besprechungsordner; `None`, wenn der Name nicht gueltig ist.
-    pub(super) fn root(name: &str) -> Option<Self> {
-        valid_root_name(name).then(|| Self::Root(name.to_string()))
+    pub(super) fn root(name: &str, origin: Origin) -> Option<Self> {
+        valid_root_name(name).then(|| Self {
+            kind: Kind::File,
+            name: name.to_string(),
+            origin,
+        })
     }
 
-    /// Zuschnittsordner; `None`, wenn der Name nicht streng `trim-<ULID>` ist.
-    pub(super) fn trim(dir: &str) -> Option<Self> {
-        is_trim_name(dir).then(|| Self::Trim(dir.to_string()))
+    /// Zuschnittsordner; `None`, wenn der Name nicht streng `trim-<ULID>` ist oder der
+    /// Ordner der eigene neue Ordner des Zuschnitts waere.
+    pub(super) fn trim(dir: &str, origin: Origin) -> Option<Self> {
+        let own = origin.trim_id.dir_name();
+        (is_trim_name(dir) && !dir.eq_ignore_ascii_case(&own)).then(|| Self {
+            kind: Kind::Dir,
+            name: dir.to_string(),
+            origin,
+        })
     }
 
     pub(super) fn to_value(&self) -> Value {
-        match self {
-            Self::Root(name) => json!({"kind": "root", "name": name}),
-            Self::Trim(dir) => json!({"kind": "trim", "dir": dir}),
+        let origin = self.origin.to_value();
+        match self.kind {
+            Kind::File => json!({"kind": "root", "name": self.name, "origin": origin}),
+            Kind::Dir => json!({"kind": "trim", "dir": self.name, "origin": origin}),
         }
     }
 
-    /// Ein gespeicherter Eintrag; `None` bei jedem anderen Format (auch dem alten freien Pfad).
+    /// Ein gespeicherter Eintrag; `None` bei jedem anderen Format (auch dem alten freien
+    /// Pfad) und ohne gueltige Herkunft.
     pub(super) fn from_value(value: &Value) -> Option<Self> {
         let obj = value.as_object()?;
         let text = |k: &str| obj.get(k).and_then(Value::as_str);
+        let origin = Origin::from_value(obj.get("origin")?)?;
         match text("kind")? {
-            "root" => Self::root(text("name")?),
-            "trim" => Self::trim(text("dir")?),
+            "root" => Self::root(text("name")?, origin),
+            "trim" => Self::trim(text("dir")?, origin),
             _ => None,
         }
+    }
+
+    fn same_target(&self, other: &Self) -> bool {
+        self.kind == other.kind && self.name == other.name
     }
 }
 
 /// `trim-` plus gueltige ULID (26 Zeichen, Crockford-Base32), gross oder klein.
 pub(super) fn is_trim_name(name: &str) -> bool {
     name.strip_prefix(TRIM_DIR_PREFIX)
-        .is_some_and(|ulid| ulid.len() == 26 && Ulid::from_string(ulid).is_ok())
+        .is_some_and(|ulid| TrimId::parse(ulid).is_some())
 }
 
 /// Einfacher `.wav`-Dateiname: ASCII-Buchstaben, Ziffern, `.`, `_`, `-`; kein Pfad,
-/// kein Stream (`:`), kein Geraetename (Windows: `NUL.wav`).
+/// kein Stream (`:`), kein Geraetename (Windows: `NUL.wav`), und keiner, der wie ein
+/// Zuschnittsordner beginnt (`trim-...`, auch `trim-<ULID>.wav`): so bleibt ein Name im
+/// Besprechungsordner nie zweideutig.
+///
+/// Die Namen, die die App selbst vergibt, erfuellen das alle: `mic.wav`, `system.wav`,
+/// `mic_aec.wav` (Aufnahme), `import.wav` (Import: der Originalname der Datei wird nur
+/// Titel, nie Dateiname), `teile-<ulid>-mic.wav` und `teile-<ulid>-system.wav`
+/// (Zusammenfuehrung). Leerzeichen und Nicht-ASCII kommen darin nie vor; solche Namen
+/// stammen von aussen und gehen den Weg `trim_kept` (nie loeschen).
 fn valid_root_name(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     let Some(stem) = lower.strip_suffix(".wav").filter(|s| !s.is_empty()) else {
@@ -110,6 +249,7 @@ fn valid_root_name(name: &str) -> bool {
     name.len() <= 128
         && !reserved
         && !name.starts_with('.')
+        && !lower.starts_with(TRIM_DIR_PREFIX)
         && name
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
@@ -143,41 +283,107 @@ pub(super) fn push_jobs(root: &mut Value, jobs: &[Job]) -> bool {
     true
 }
 
-/// Die Auftraege fuer alte Audiodateien einer Besprechung: Datei direkt im Ordner ->
-/// `root`, Datei in einem `trim-<ULID>` direkt im Ordner -> `trim`. Gibt zusaetzlich
-/// zurueck, wie viele der Hauptdateien (`paths`) so NICHT loeschbar sind (liegen
-/// anderswo): die bleiben liegen.
-pub(super) fn jobs_for_old(folder: &Path, paths: &[String]) -> (Vec<Job>, u32) {
+/// Eine alte Datei, die der Zuschnitt nie loescht (siehe Moduldoku).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Kept {
+    pub path: String,
+    pub reason: &'static str,
+}
+
+/// Haengt `kept` an `metadata_json["trim_kept"]` an (ohne Doppelte nach Pfad).
+/// `true`, wenn sich etwas aenderte.
+pub(super) fn push_kept(root: &mut Value, kept: &[Kept]) -> bool {
+    let Some(map) = root.as_object_mut() else {
+        return false;
+    };
+    let mut list = map
+        .get(KEPT_KEY)
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let before = list.len();
+    for entry in kept {
+        let known = list
+            .iter()
+            .any(|v| v.get("path").and_then(Value::as_str) == Some(entry.path.as_str()));
+        if !known {
+            list.push(json!({"path": entry.path, "reason": entry.reason}));
+        }
+    }
+    if list.len() == before {
+        return false;
+    }
+    map.insert(KEPT_KEY.to_string(), Value::Array(list));
+    true
+}
+
+/// Die Auftraege fuer die alten Audiodateien einer Besprechung (`files`: Spur und Pfad
+/// laut Zeile): Datei direkt im Ordner -> `root`, Datei in einem `trim-<ULID>` direkt
+/// im Ordner -> `trim`; die abgeleitete `mic_aec.wav` zaehlt als eigene Spur. Alles
+/// andere (anderer Ort, nicht zulaessiger Name) bekommt keinen Auftrag und kommt als
+/// [`Kept`] zurueck: es bleibt liegen und wird festgehalten. Abgeleitete Dateien, die
+/// es gar nicht gibt, bleiben ungenannt.
+pub(super) fn jobs_for_old(
+    folder: &Path,
+    trim_id: &TrimId,
+    files: &[(Channel, &str)],
+) -> (Vec<Job>, Vec<Kept>) {
     let mut jobs: Vec<Job> = Vec::new();
-    let mut unreachable = 0u32;
-    for path in paths {
+    let mut kept: Vec<Kept> = Vec::new();
+    for (channel, path) in files {
         let derived = crate::managers::meetings::derived_audio_paths(path);
-        for (i, candidate) in std::iter::once(path).chain(derived.iter()).enumerate() {
-            match job_for(folder, candidate) {
-                Some(job) if !jobs.contains(&job) => jobs.push(job),
-                Some(_) => {}
-                None if i == 0 => unreachable += 1,
-                None => {}
+        let candidates = std::iter::once((*channel, (*path).to_string()))
+            .chain(derived.into_iter().map(|d| (Channel::MicAec, d)));
+        for (i, (channel, candidate)) in candidates.enumerate() {
+            match job_for(folder, &candidate, trim_id, channel) {
+                Ok(job) if !jobs.iter().any(|j| j.same_target(&job)) => jobs.push(job),
+                Ok(_) => {}
+                Err(reason) => {
+                    let exists = i == 0 || std::fs::symlink_metadata(&candidate).is_ok();
+                    if exists && !kept.iter().any(|k| k.path == candidate) {
+                        kept.push(Kept {
+                            path: candidate,
+                            reason,
+                        });
+                    }
+                }
             }
         }
     }
-    (jobs, unreachable)
+    (jobs, kept)
 }
 
-fn job_for(folder: &Path, path: &str) -> Option<Job> {
+fn job_for(
+    folder: &Path,
+    path: &str,
+    trim_id: &TrimId,
+    channel: Channel,
+) -> Result<Job, &'static str> {
+    let origin = Origin {
+        trim_id: trim_id.clone(),
+        channel,
+    };
     let p = Path::new(path);
-    let dir = p.parent()?;
+    let dir = p.parent().ok_or(REASON_OUTSIDE)?;
+    let name = p.file_name().and_then(|n| n.to_str()).ok_or(REASON_NAME)?;
     if key(dir) == key(folder) {
-        return Job::root(p.file_name()?.to_str()?);
+        return Job::root(name, origin).ok_or(REASON_NAME);
     }
-    if key(dir.parent()?) == key(folder) {
-        return Job::trim(dir.file_name()?.to_str()?);
+    let in_folder = dir
+        .parent()
+        .is_some_and(|parent| key(parent) == key(folder));
+    let trim_dir = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .filter(|n| is_trim_name(n));
+    match trim_dir {
+        Some(trim_dir) if in_folder => Job::trim(trim_dir, origin).ok_or(REASON_OUTSIDE),
+        _ => Err(REASON_OUTSIDE),
     }
-    None
 }
 
 // ---------------------------------------------------------------------------
-// Pruefungen
+// Pfadvergleiche
 // ---------------------------------------------------------------------------
 
 /// Verweis? Symlink, unter Windows auch Junction und jeder andere Reparse-Point.
@@ -196,9 +402,33 @@ pub(super) fn is_link(meta: &Metadata) -> bool {
     false
 }
 
-/// Ein echtes Verzeichnis (kein Verweis).
-pub(super) fn plain_dir(path: &Path) -> bool {
-    std::fs::symlink_metadata(path).is_ok_and(|m| m.is_dir() && !is_link(&m))
+/// Wie [`is_link`], fuer die Metadaten am Verzeichnis-Handle.
+fn is_link_cap(meta: &CapMetadata) -> bool {
+    if meta.is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if cap_std::fs::MetadataExt::file_attributes(meta) & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return true;
+        }
+    }
+    false
+}
+
+/// Ist das geoeffnete Verzeichnis dasselbe wie das vorher gepruefte (Geraet und Inode)?
+/// Unter Windows liefert `cap-std` keine stabile Kennung: dort schuetzt allein, dass
+/// `cap-std` Verweisen aus dem Baum der Datenwurzel heraus nie folgt.
+#[cfg(unix)]
+fn same_dir(seen: &CapMetadata, opened: &CapMetadata) -> bool {
+    use cap_std::fs::MetadataExt;
+    seen.dev() == opened.dev() && seen.ino() == opened.ino()
+}
+
+#[cfg(not(unix))]
+fn same_dir(_seen: &CapMetadata, _opened: &CapMetadata) -> bool {
+    true
 }
 
 /// Kanonischer Pfad; fehlt die Datei selbst, der kanonische Elternpfad mit ihrem Namen.
@@ -215,22 +445,23 @@ fn canonical(path: &Path) -> PathBuf {
     }
 }
 
-/// Vergleichsschluessel: kanonisch, unter Windows ohne Gross-/Kleinschreibung.
-pub(super) fn key(path: &Path) -> String {
-    let text = canonical(path).to_string_lossy().to_string();
-    if cfg!(windows) {
+/// Windows vergleicht Namen ohne Gross-/Kleinschreibung.
+pub(super) fn fold(text: String, case_insensitive: bool) -> String {
+    if case_insensitive {
         text.to_lowercase()
     } else {
         text
     }
 }
 
-/// Ist `child` kanonisch ein DIREKTES Kind von `parent`?
-fn direct_child(child: &Path, parent: &Path) -> bool {
-    match (std::fs::canonicalize(child), std::fs::canonicalize(parent)) {
-        (Ok(c), Ok(p)) => c.parent() == Some(p.as_path()),
-        _ => false,
-    }
+/// Vergleichsschluessel: kanonisch (Verweise aufgeloest), unter Windows klein.
+fn key(path: &Path) -> String {
+    fold(canonical(path).to_string_lossy().to_string(), cfg!(windows))
+}
+
+/// Vergleichsschluessel ohne Dateizugriff (nur der Text), unter Windows klein.
+fn norm(path: &Path) -> String {
+    fold(path.to_string_lossy().to_string(), cfg!(windows))
 }
 
 /// Der Besprechungsordner: Datenwurzel (Ordner der Datenbank) plus Besprechungs-ID,
@@ -245,57 +476,134 @@ pub(super) fn meeting_dir(store: &MeetingStore, meeting_id: &str) -> Option<Path
         .then(|| store.db_path().parent().map(|r| r.join(meeting_id)))?
 }
 
-/// Zustand des Besprechungsordners.
+// ---------------------------------------------------------------------------
+// Besprechungsordner (Handle)
+// ---------------------------------------------------------------------------
+
+/// Der geoeffnete Besprechungsordner: ein echtes Verzeichnis direkt in der Datenwurzel.
+pub(super) struct Folder {
+    /// Pfad (Datenwurzel plus ID), zum Anlegen neuer Dateien.
+    pub path: PathBuf,
+    /// Kanonischer Pfad der Datenwurzel plus ID, zum Vergleichen mit den Pfaden der
+    /// Zeilen; einmal beim Oeffnen berechnet, spaetere Austausche aendern ihn nicht.
+    canon: PathBuf,
+    /// Das Verzeichnis selbst: alles wird relativ dazu geloescht.
+    pub dir: Dir,
+}
+
+/// Warum sich der Besprechungsordner nicht oeffnen laesst.
 #[derive(Debug, PartialEq, Eq)]
-pub(super) enum Folder {
-    /// Echtes Verzeichnis direkt in der Datenwurzel.
-    Safe(PathBuf),
+pub(super) enum Unusable {
     /// Gibt es nicht (mehr).
     Missing,
     /// Verweis, kein Verzeichnis oder ausserhalb der Datenwurzel: nichts anfassen.
     Unsafe,
-    /// Nicht lesbar: nicht entscheidbar.
+    /// Nicht lesbar (oder zwischen Pruefung und Oeffnen veraendert): nicht entscheidbar.
     Unreadable,
 }
 
-pub(super) fn check_folder(store: &MeetingStore, meeting_id: &str) -> Folder {
-    let (Some(folder), Some(root)) = (meeting_dir(store, meeting_id), store.db_path().parent())
-    else {
-        return Folder::Unsafe;
-    };
-    match std::fs::symlink_metadata(&folder) {
-        Ok(meta) if meta.is_dir() && !is_link(&meta) => {}
-        Ok(_) => return Folder::Unsafe,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Folder::Missing,
-        Err(_) => return Folder::Unreadable,
-    }
-    if direct_child(&folder, root) {
-        Folder::Safe(folder)
+fn classify(e: &std::io::Error) -> Unusable {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        Unusable::Missing
     } else {
-        Folder::Unsafe
+        Unusable::Unreadable
     }
 }
 
-/// Was die aktuelle Zeile der Besprechung braucht und nie geloescht werden darf.
+/// Oeffnet den Besprechungsordner relativ zur Datenwurzel (siehe Moduldoku).
+pub(super) fn open_folder(store: &MeetingStore, meeting_id: &str) -> Result<Folder, Unusable> {
+    let path = meeting_dir(store, meeting_id).ok_or(Unusable::Unsafe)?;
+    let data_root = store.db_path().parent().ok_or(Unusable::Unsafe)?;
+    // Ueber den Pfad: Verweise jeder Art (unter Windows auch Reparse-Points) abweisen.
+    match std::fs::symlink_metadata(&path) {
+        Ok(meta) if meta.is_dir() && !is_link(&meta) => {}
+        Ok(_) => return Err(Unusable::Unsafe),
+        Err(e) => return Err(classify(&e)),
+    }
+    let canon_root = std::fs::canonicalize(data_root).map_err(|e| classify(&e))?;
+    let root = Dir::open_ambient_dir(data_root, ambient_authority()).map_err(|e| classify(&e))?;
+    let name = Path::new(meeting_id);
+    // Und am Handle der Datenwurzel: der Besprechungsordner ist kein Verweis.
+    let seen = match root.symlink_metadata(name) {
+        Ok(meta) if meta.is_dir() && !is_link_cap(&meta) => meta,
+        Ok(_) => return Err(Unusable::Unsafe),
+        Err(e) => return Err(classify(&e)),
+    };
+    let dir = root.open_dir(name).map_err(|e| classify(&e))?;
+    let opened = dir.dir_metadata().map_err(|e| classify(&e))?;
+    if !opened.is_dir() || !same_dir(&seen, &opened) {
+        return Err(Unusable::Unreadable);
+    }
+    Ok(Folder {
+        path,
+        canon: canon_root.join(meeting_id),
+        dir,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Referenzen aller Besprechungen
+// ---------------------------------------------------------------------------
+
+/// Was irgendeine Zeile von `meetings` braucht und nie geloescht werden darf.
 #[derive(Default)]
 struct Referenced {
+    /// Schluessel jeder Datei, die eine Zeile nennt (auch `mic_aec.wav` daneben).
     files: HashSet<String>,
-    dirs: HashSet<String>,
 }
 
 impl Referenced {
-    fn of(mic: Option<&str>, system: Option<&str>) -> Self {
+    /// Alle Zeilen, auch weich geloeschte, solange Dateipfade gesetzt sind.
+    fn scan(conn: &Connection) -> Result<Self, String> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT mic_audio_path, system_audio_path FROM meetings
+                 WHERE mic_audio_path IS NOT NULL OR system_audio_path IS NOT NULL",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, Option<String>>(0)?,
+                    r.get::<_, Option<String>>(1)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
         let mut me = Self::default();
-        for path in [mic, system].into_iter().flatten() {
-            me.files.insert(key(Path::new(path)));
-            for derived in crate::managers::meetings::derived_audio_paths(path) {
-                me.files.insert(key(Path::new(&derived)));
-            }
-            if let Some(dir) = Path::new(path).parent().filter(|d| is_trim_dir(d)) {
-                me.dirs.insert(key(dir));
+        for row in rows {
+            let (mic, system) = row.map_err(|e| e.to_string())?;
+            for path in [mic, system].into_iter().flatten() {
+                me.add(&path);
             }
         }
-        me
+        Ok(me)
+    }
+
+    /// Eine Datei samt der abgeleiteten; kanonisch UND als roher Text, damit auch ein
+    /// Pfad auffaellt, der sich nicht aufloesen laesst.
+    fn add(&mut self, path: &str) {
+        if path.is_empty() {
+            return;
+        }
+        let derived = crate::managers::meetings::derived_audio_paths(path);
+        for p in std::iter::once(path.to_string()).chain(derived) {
+            let p = Path::new(&p);
+            self.files.insert(key(p));
+            self.files.insert(norm(p));
+        }
+    }
+
+    /// Braucht eine Zeile das Ziel (`target`: kanonischer Besprechungsordner plus Name)?
+    /// Bei einem Ordner: irgendeine Datei darin.
+    fn protects(&self, target: &Path, kind: Kind) -> bool {
+        let key = norm(target);
+        match kind {
+            Kind::File => self.files.contains(&key),
+            Kind::Dir => {
+                let prefix = format!("{key}{MAIN_SEPARATOR}");
+                self.files.iter().any(|f| f.starts_with(&prefix))
+            }
+        }
     }
 }
 
@@ -303,7 +611,7 @@ impl Referenced {
 #[derive(Debug, PartialEq, Eq)]
 enum Verdict {
     /// Loeschen.
-    Delete(PathBuf, Kind),
+    Delete,
     /// Es gibt es nicht (mehr): Auftrag erledigt.
     Gone,
     /// Ungueltig, gefaehrlich oder in Gebrauch: nichts loeschen, Auftrag verwerfen.
@@ -312,39 +620,23 @@ enum Verdict {
     Keep,
 }
 
-/// Datei oder Ordner.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Kind {
-    File,
-    Dir,
-}
-
-fn check_job(folder: &Path, job: &Job, referenced: &Referenced) -> Verdict {
-    let (name, kind) = match job {
-        Job::Root(name) => (name, Kind::File),
-        Job::Trim(dir) => (dir, Kind::Dir),
-    };
-    let path = folder.join(name);
-    let meta = match std::fs::symlink_metadata(&path) {
+fn check_job(folder: &Folder, job: &Job, referenced: &Referenced) -> Verdict {
+    let meta = match folder.dir.symlink_metadata(&job.name) {
         Ok(meta) => meta,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Verdict::Gone,
         Err(_) => return Verdict::Keep,
     };
-    let right_type = match kind {
+    let right_type = match job.kind {
         Kind::File => meta.is_file(),
         Kind::Dir => meta.is_dir(),
     };
-    if !right_type || is_link(&meta) || !direct_child(&path, folder) {
+    if !right_type || is_link_cap(&meta) {
         return Verdict::Discard;
     }
-    let used = match kind {
-        Kind::File => referenced.files.contains(&key(&path)),
-        Kind::Dir => referenced.dirs.contains(&key(&path)),
-    };
-    if used {
+    if referenced.protects(&folder.canon.join(&job.name), job.kind) {
         return Verdict::Discard;
     }
-    Verdict::Delete(path, kind)
+    Verdict::Delete
 }
 
 // ---------------------------------------------------------------------------
@@ -370,17 +662,17 @@ impl Cleanup {
     }
 }
 
-type RemoveFn<'a> = &'a dyn Fn(&Path, Kind) -> std::io::Result<()>;
+/// Loescht Datei oder Ordner `name` im Besprechungsordner (Tests: gesperrte Datei,
+/// Austausch des Ordners vor der Loeschung).
+type RemoveFn<'a> = &'a dyn Fn(&Dir, &str, Kind) -> std::io::Result<()>;
 
-/// Loescht eine Datei oder einen ganzen Ordner.
-fn remove_target(path: &Path, kind: Kind) -> std::io::Result<()> {
+/// Loescht eine Datei oder einen ganzen Ordner RELATIV zum Handle. `cap-std` folgt keinem
+/// Verweis aus dem Baum heraus; ein Verweis als Ziel oder darin wird selbst entfernt,
+/// nie sein Ziel.
+pub(super) fn remove_target(dir: &Dir, name: &str, kind: Kind) -> std::io::Result<()> {
     match kind {
-        Kind::File => std::fs::remove_file(path),
-        // `remove_dir_all` der Standardbibliothek ist seit Rust 1.58.1 gegen den Wettlauf
-        // CVE-2022-21658 gehaertet (Verweise im Ordner werden entfernt, nie verfolgt;
-        // vorher konnte ein zwischen Pruefung und Loeschung ausgetauschter Symlink fremde
-        // Dateien treffen). Deshalb nie eine eigene Rekursion.
-        Kind::Dir => std::fs::remove_dir_all(path),
+        Kind::File => dir.remove_file(name),
+        Kind::Dir => dir.remove_dir_all(name),
     }
 }
 
@@ -390,7 +682,7 @@ pub fn run_cleanup(store: &MeetingStore, meeting_id: &str, lock: &JobGuard) -> C
     run_cleanup_with(store, meeting_id, &remove_target, lock)
 }
 
-/// Wie [`run_cleanup`] mit austauschbarer Loeschfunktion (Tests: gesperrte Datei).
+/// Wie [`run_cleanup`] mit austauschbarer Loeschfunktion.
 pub(super) fn run_cleanup_with(
     store: &MeetingStore,
     meeting_id: &str,
@@ -406,15 +698,13 @@ pub(super) fn run_cleanup_with(
     }
 }
 
-/// Mikrofonpfad, Systempfad, `metadata_json` einer Besprechung.
-type AudioRow = (Option<String>, Option<String>, Option<String>);
-
-fn read_row(store: &MeetingStore, meeting_id: &str) -> Result<Option<AudioRow>, String> {
+/// `metadata_json` einer Besprechung: keine Zeile -> `None`, sonst der Text (auch `NULL`).
+fn read_metadata(store: &MeetingStore, meeting_id: &str) -> Result<Option<Option<String>>, String> {
     let conn = store.get_connection().map_err(|e| e.to_string())?;
     conn.query_row(
-        "SELECT mic_audio_path, system_audio_path, metadata_json FROM meetings WHERE id = ?1",
+        "SELECT metadata_json FROM meetings WHERE id = ?1",
         params![meeting_id],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        |r| r.get(0),
     )
     .optional()
     .map_err(|e| e.to_string())
@@ -423,7 +713,7 @@ fn read_row(store: &MeetingStore, meeting_id: &str) -> Result<Option<AudioRow>, 
 /// `metadata_json` als Objekt: kein Eintrag -> leer, kaputt oder kein Objekt -> Fehler.
 fn parse_root(metadata: Option<&str>) -> Result<Value, String> {
     match metadata {
-        None => Ok(Value::Object(serde_json::Map::new())),
+        None => Ok(Value::Object(Map::new())),
         Some(text) => match serde_json::from_str::<Value>(text) {
             Ok(v) if v.is_object() => Ok(v),
             _ => Err("metadata_unreadable".to_string()),
@@ -431,12 +721,49 @@ fn parse_root(metadata: Option<&str>) -> Result<Value, String> {
     }
 }
 
+/// Was aus einem Auftrag wurde.
+enum Settled {
+    /// Erledigt: geloescht oder gab es nicht mehr.
+    Done,
+    /// Verworfen (ungueltig, Verweis, in Gebrauch): nichts geloescht, Auftrag weg.
+    Discarded,
+    /// Bleibt (gesperrt, nicht lesbar).
+    Keep,
+}
+
+/// Ein Auftrag unter EINER `IMMEDIATE`-Transaktion: alle Zeilen lesen, pruefen, loeschen.
+/// Waehrenddessen kann keine andere Besprechung einen Pfad in diese Datei schreiben.
+fn settle(
+    conn: &mut Connection,
+    folder: &Folder,
+    job: &Job,
+    remove: RemoveFn,
+) -> Result<Settled, String> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| e.to_string())?;
+    let referenced = Referenced::scan(&tx)?;
+    Ok(match check_job(folder, job, &referenced) {
+        Verdict::Gone => Settled::Done,
+        Verdict::Discard => Settled::Discarded,
+        Verdict::Keep => Settled::Keep,
+        Verdict::Delete => match remove(&folder.dir, &job.name, job.kind) {
+            Ok(()) => Settled::Done,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Settled::Done,
+            Err(e) => {
+                warn!("meetings: old audio not deleted ({e}); kept for retry");
+                Settled::Keep
+            }
+        },
+    })
+}
+
 fn cleanup_inner(
     store: &MeetingStore,
     meeting_id: &str,
     remove: RemoveFn,
 ) -> Result<Cleanup, String> {
-    let Some((mic, system, metadata)) = read_row(store, meeting_id)? else {
+    let Some(metadata) = read_metadata(store, meeting_id)? else {
         return Ok(Cleanup::default());
     };
     let root = parse_root(metadata.as_deref())?;
@@ -445,27 +772,27 @@ fn cleanup_inner(
         return Ok(Cleanup::default());
     }
     let total = u32::try_from(raw.len()).unwrap_or(u32::MAX);
-    let folder = match check_folder(store, meeting_id) {
-        Folder::Safe(folder) => folder,
+    let folder = match open_folder(store, meeting_id) {
+        Ok(folder) => folder,
         // Es gibt den Ordner nicht mehr: nichts zu loeschen, die Auftraege sind erledigt.
-        Folder::Missing => {
+        Err(Unusable::Missing) => {
             forget_jobs(store, meeting_id, &raw)?;
             return Ok(Cleanup::default());
         }
-        Folder::Unsafe => {
+        Err(Unusable::Unsafe) => {
             warn!("meetings: folder of {meeting_id} is not a plain data folder; nothing deleted");
             forget_jobs(store, meeting_id, &raw)?;
             return Ok(Cleanup::default());
         }
-        Folder::Unreadable => {
+        Err(Unusable::Unreadable) => {
             return Ok(Cleanup {
                 remaining: total,
                 uncertain: true,
             })
         }
     };
-    let referenced = Referenced::of(mic.as_deref(), system.as_deref());
 
+    let mut conn = store.get_connection().map_err(|e| e.to_string())?;
     let mut done: Vec<Value> = Vec::new();
     let mut discarded = 0u32;
     for entry in &raw {
@@ -474,20 +801,16 @@ fn cleanup_inner(
             done.push(entry.clone());
             continue;
         };
-        match check_job(&folder, &job, &referenced) {
-            Verdict::Gone => done.push(entry.clone()),
-            Verdict::Discard => {
+        match settle(&mut conn, &folder, &job, remove)? {
+            Settled::Done => done.push(entry.clone()),
+            Settled::Discarded => {
                 discarded += 1;
                 done.push(entry.clone());
             }
-            Verdict::Keep => {}
-            Verdict::Delete(path, kind) => match remove(&path, kind) {
-                Ok(()) => done.push(entry.clone()),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => done.push(entry.clone()),
-                Err(e) => warn!("meetings: old audio not deleted ({e}); kept for retry"),
-            },
+            Settled::Keep => {}
         }
     }
+    drop(conn);
     if discarded > 0 {
         warn!("meetings: {discarded} invalid trim cleanup entr(y/ies) discarded for {meeting_id}");
     }
@@ -559,16 +882,19 @@ pub struct SweepReport {
 /// unberuehrt, ihre Auftraege zaehlen als Rest) die Loeschauftraege abarbeiten und
 /// verwaiste `trim-<ULID>`-Ordner entfernen (Abbruch zwischen Schneiden und Commit).
 /// Verwaist heisst: ein echtes Verzeichnis mit streng gueltigem Namen direkt im
-/// Besprechungsordner, in dem weder `mic_audio_path` noch `system_audio_path` der
-/// Zeile liegt. Es wird ganz entfernt. Ist die Zeile oder der Ordner nicht sicher
-/// lesbar, wird nichts als verwaist geloescht.
+/// Besprechungsordner, in dem KEINE Zeile irgendeiner Besprechung (auch weich
+/// geloeschte) eine Datei nennt. Es wird ganz entfernt. Ist der Ordner oder die
+/// Datenbank nicht sicher lesbar, wird nichts als verwaist geloescht.
 pub fn sweep_leftovers(store: &MeetingStore) -> SweepReport {
     let mut report = SweepReport::default();
     for (id, has_jobs) in meetings_to_tidy(store) {
-        let Some(folder) = meeting_dir(store, &id) else {
+        if meeting_dir(store, &id).is_none() {
             continue;
-        };
-        if !has_jobs && orphan_candidates(&folder).is_empty() {
+        }
+        let has_orphans = open_folder(store, &id)
+            .map(|folder| !orphan_candidates(&folder).is_empty())
+            .unwrap_or(false);
+        if !has_jobs && !has_orphans {
             continue;
         }
         let Ok(guard) = job::global().try_start(&id, Arc::new(|_| {})) else {
@@ -593,37 +919,44 @@ pub fn sweep_leftovers(store: &MeetingStore) -> SweepReport {
     report
 }
 
-/// Zuschnittsordner im Besprechungsordner mit streng gueltigem Namen (nur echte Verzeichnisse).
-fn orphan_candidates(folder: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(folder) else {
+/// Namen der Zuschnittsordner im Besprechungsordner mit streng gueltigem Namen
+/// (nur echte Verzeichnisse, am Handle geprueft).
+fn orphan_candidates(folder: &Folder) -> Vec<String> {
+    let Ok(entries) = folder.dir.entries() else {
         return Vec::new();
     };
     entries
         .flatten()
-        .filter(|e| e.file_name().to_str().is_some_and(is_trim_name))
-        .map(|e| e.path())
-        .filter(|p| plain_dir(p))
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|name| is_trim_name(name))
+        .filter(|name| {
+            folder
+                .dir
+                .symlink_metadata(name)
+                .is_ok_and(|m| m.is_dir() && !is_link_cap(&m))
+        })
         .collect()
 }
 
 /// Verwaiste Zuschnittsordner einer Besprechung entfernen (unter ihrem Auftrag).
 /// Gibt zurueck: entfernt, haengengeblieben.
 fn sweep_orphans(store: &MeetingStore, meeting_id: &str, _lock: &JobGuard) -> (u32, u32) {
-    let Ok(Some((mic, system, _))) = read_row(store, meeting_id) else {
+    let Ok(folder) = open_folder(store, meeting_id) else {
         return (0, 0);
     };
-    let Folder::Safe(folder) = check_folder(store, meeting_id) else {
+    let candidates = orphan_candidates(&folder);
+    let all = u32::try_from(candidates.len()).unwrap_or(u32::MAX);
+    if all == 0 {
         return (0, 0);
+    }
+    let Ok(mut conn) = store.get_connection() else {
+        return (0, all);
     };
-    let referenced = Referenced::of(mic.as_deref(), system.as_deref());
     let (mut removed, mut stuck) = (0, 0);
-    for dir in orphan_candidates(&folder) {
-        if !direct_child(&dir, &folder) || referenced.dirs.contains(&key(&dir)) {
-            continue;
-        }
-        match remove_target(&dir, Kind::Dir) {
-            Ok(()) => removed += 1,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => removed += 1,
+    for name in candidates {
+        match sweep_orphan(&mut conn, &folder, &name) {
+            Ok(true) => removed += 1,
+            Ok(false) => {}
             Err(e) => {
                 warn!("meetings: orphaned trim folder not removed: {e}");
                 stuck += 1;
@@ -631,6 +964,29 @@ fn sweep_orphans(store: &MeetingStore, meeting_id: &str, _lock: &JobGuard) -> (u
         }
     }
     (removed, stuck)
+}
+
+/// Ein Zuschnittsordner unter EINER `IMMEDIATE`-Transaktion: alle Zeilen lesen, nur
+/// loeschen, wenn keine eine Datei darin nennt. `true`, wenn er weg ist.
+fn sweep_orphan(conn: &mut Connection, folder: &Folder, name: &str) -> Result<bool, String> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| e.to_string())?;
+    let referenced = Referenced::scan(&tx)?;
+    if referenced.protects(&folder.canon.join(name), Kind::Dir) {
+        return Ok(false);
+    }
+    match folder.dir.symlink_metadata(name) {
+        Ok(meta) if meta.is_dir() && !is_link_cap(&meta) => {}
+        Ok(_) => return Ok(false),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e.to_string()),
+    }
+    match remove_target(&folder.dir, name, Kind::Dir) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 /// Alle Besprechungen (auch geloeschte: ihr Ordner kann noch liegen) und ob ihre

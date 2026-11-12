@@ -4369,6 +4369,8 @@
       "reload": "Reload",
       "leftovers_one": "One old audio file is locked at the moment and will be deleted the next time the app starts.",
       "leftovers_other": "{{count}} old audio files are locked at the moment and will be deleted the next time the app starts.",
+      "kept_one": "One old audio file lies outside the meeting folder and was not deleted.",
+      "kept_other": "{{count}} old audio files lie outside the meeting folder and were not deleted.",
       "uncertain": "Old audio files could not be removed safely; the app will retry at the next start."
     },
     "retranscribeDialog": {

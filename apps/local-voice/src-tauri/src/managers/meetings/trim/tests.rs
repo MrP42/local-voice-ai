@@ -443,6 +443,22 @@ fn a_failing_cut_leaves_no_half_written_file() {
     assert!(!dst.exists());
 }
 
+#[test]
+fn a_cut_never_overwrites_an_existing_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("in.wav");
+    write_wav(&src, 2_000);
+    let dst = dir.path().join("out.wav");
+    std::fs::write(&dst, b"vorhanden").unwrap();
+    let err = cut_wav(&src, &dst, range(0, 1_000)).unwrap_err();
+    assert!(err.starts_with("wav_write_failed"), "{err}");
+    assert_eq!(
+        std::fs::read(&dst).unwrap(),
+        b"vorhanden",
+        "die vorhandene Datei bleibt, wie sie war (auch nicht geloescht)"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Store und Ablauf
 // ---------------------------------------------------------------------------
@@ -891,6 +907,7 @@ fn a_change_of_the_audio_paths_between_cutting_and_committing_is_refused() {
         .store
         .apply_trim(&TrimWrite {
             meeting_id: &f.id,
+            trim_id: &ulid_of('b'),
             old_mic: Some("ein/anderer/Pfad.wav"),
             old_system: f.system.to_str(),
             new_mic: None,
@@ -924,6 +941,13 @@ fn current_mic(f: &Fixture) -> PathBuf {
             .mic_audio_path
             .unwrap(),
     )
+}
+
+/// Streng `trim-<ULID>`.
+fn is_trim_dir(dir: &Path) -> bool {
+    dir.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(cleanup::is_trim_name)
 }
 
 fn trim_dirs(dir: &Path) -> Vec<PathBuf> {
@@ -1043,12 +1067,19 @@ fn reading_a_range_with_an_absurd_end_does_not_overflow() {
 // Loeschauftraege (cleanup.rs)
 // ---------------------------------------------------------------------------
 
-use super::cleanup::{is_trim_name, run_cleanup_with, Cleanup, Job, Kind, CLEANUP_KEY};
+use super::cleanup::{
+    fold, is_trim_name, open_folder, push_kept, remove_target, run_cleanup_with, Channel, Cleanup,
+    Job, Kept, Kind, Origin, TrimId, Unusable, CLEANUP_KEY, KEPT_KEY, REASON_NAME, REASON_OUTSIDE,
+};
 use crate::managers::meetings::rerun_state;
 
-/// Gueltige ULID-Namen (Crockford-Base32, 26 Zeichen) fuer feste Testordner.
+/// Gueltige ULID (Crockford-Base32, 26 Zeichen) fuer feste Testordner und Herkunft.
+fn ulid_of(fill: char) -> String {
+    format!("01{}", fill.to_string().repeat(24))
+}
+
 fn ulid_dir(fill: char) -> String {
-    format!("trim-01{}", fill.to_string().repeat(24))
+    format!("trim-{}", ulid_of(fill))
 }
 
 fn jobs(f: &Fixture) -> Vec<Value> {
@@ -1064,16 +1095,55 @@ fn set_jobs(f: &Fixture, list: &[Value]) {
     set_metadata(f, &serde_json::json!({ CLEANUP_KEY: list }).to_string());
 }
 
+fn origin_of(trim_fill: char, channel: &str) -> Value {
+    serde_json::json!({"from": "trim", "trim_id": ulid_of(trim_fill), "channel": channel})
+}
+
+/// Datei-Auftrag mit Herkunft (Zuschnitt `trim_fill`, Spur `channel`).
+fn root_job_from(name: &str, trim_fill: char, channel: &str) -> Value {
+    serde_json::json!({"kind": "root", "name": name, "origin": origin_of(trim_fill, channel)})
+}
+
+/// Ordner-Auftrag mit Herkunft.
+fn trim_job_from(dir: &str, trim_fill: char, channel: &str) -> Value {
+    serde_json::json!({"kind": "trim", "dir": dir, "origin": origin_of(trim_fill, channel)})
+}
+
+/// Gueltige Auftraege fuer Tests, die nur Namen vorgeben (Herkunft: ein anderer Zuschnitt).
 fn root_job(name: &str) -> Value {
-    serde_json::json!({"kind": "root", "name": name})
+    root_job_from(name, '7', "mic")
 }
 
 fn trim_job(dir: &str) -> Value {
-    serde_json::json!({"kind": "trim", "dir": dir})
+    trim_job_from(dir, '7', "mic")
 }
 
 fn path_text(p: &Path) -> String {
     p.to_string_lossy().to_string()
+}
+
+fn origin(trim_fill: char, channel: Channel) -> Origin {
+    Origin {
+        trim_id: TrimId::parse(&ulid_of(trim_fill)).unwrap(),
+        channel,
+    }
+}
+
+/// Eine weitere Besprechung im selben Speicher, deren Zeile die Pfade nennt.
+fn other_meeting(f: &Fixture, mic: Option<&Path>, system: Option<&Path>) -> String {
+    let m = f
+        .store
+        .create_meeting("Andere", MeetingSource::Live, Some(1))
+        .unwrap();
+    f.store
+        .set_audio_paths(
+            &m.id,
+            mic.and_then(Path::to_str),
+            system.and_then(Path::to_str),
+            Some(1_000),
+        )
+        .unwrap();
+    m.id
 }
 
 /// Zuschneiden bis zum Commit, OHNE die alten Dateien zu loeschen: das, was ein Absturz
@@ -1092,6 +1162,7 @@ fn commit_without_deleting(f: &Fixture) -> PathBuf {
     f.store
         .apply_trim(&TrimWrite {
             meeting_id: &f.id,
+            trim_id: &ulid_of('a'),
             old_mic: f.mic.to_str(),
             old_system: f.system.to_str(),
             new_mic: Some(&mic),
@@ -1132,7 +1203,8 @@ fn job_names_are_strict_and_old_free_paths_are_no_jobs() {
         "import.wav",
         "Sitzung-2-mic.wav",
     ] {
-        assert_eq!(Job::root(good), Some(Job::Root(good.to_string())), "{good}");
+        let job = Job::root(good, origin('7', Channel::Mic)).expect(good);
+        assert_eq!((job.kind, job.name.as_str()), (Kind::File, good));
     }
     for bad in [
         "",
@@ -1148,20 +1220,115 @@ fn job_names_are_strict_and_old_free_paths_are_no_jobs() {
         "COM1.wav",
         ".versteckt.wav",
         "ü.wav",
+        "mit Leerzeichen.wav",
+        // Wie ein Zuschnittsordner benannt: nie ein Datei-Auftrag.
+        "trim-01HZZZ.wav",
+        "trim-.wav",
+        "Trim-x.wav",
+        "TRIM-ABC.WAV",
     ] {
-        assert_eq!(Job::root(bad), None, "{bad}");
+        assert_eq!(Job::root(bad, origin('7', Channel::Mic)), None, "{bad}");
     }
-    // Der alte Auftrag war ein freier Pfad als Text: kein Auftrag mehr.
+    // Der alte Auftrag war ein freier Pfad als Text, dann ein Name ohne Herkunft: kein
+    // Auftrag mehr.
     for old in [
         serde_json::json!("C:/x/mic.wav"),
         serde_json::json!({"kind": "root"}),
-        serde_json::json!({"kind": "andere", "name": "mic.wav"}),
-        serde_json::json!({"kind": "trim", "dir": "trim-x"}),
+        serde_json::json!({"kind": "root", "name": "mic.wav"}),
+        serde_json::json!({"kind": "root", "name": "notizen.wav"}),
+        serde_json::json!({"kind": "trim", "dir": ulid_dir('a')}),
+        serde_json::json!({"kind": "andere", "name": "mic.wav", "origin": origin_of('7', "mic")}),
+        serde_json::json!({"kind": "trim", "dir": "trim-x", "origin": origin_of('7', "mic")}),
         serde_json::json!(5),
     ] {
         assert_eq!(Job::from_value(&old), None, "{old}");
     }
-    assert_eq!(Job::from_value(&root_job("mic.wav")), Job::root("mic.wav"));
+    assert_eq!(
+        Job::from_value(&root_job("mic.wav")),
+        Job::root("mic.wav", origin('7', Channel::Mic))
+    );
+}
+
+/// Die Namen, die die App beim Aufnehmen, Importieren und Zusammenfuehren selbst vergibt,
+/// sind zulaessige Auftragsnamen (kein Leerzeichen, kein Nicht-ASCII).
+#[test]
+fn the_names_the_app_assigns_itself_are_valid_job_names() {
+    // Aufnahme (`recorder`), Import (`import`): feste Namen.
+    for name in ["mic.wav", "system.wav", "mic_aec.wav", "import.wav"] {
+        assert!(
+            Job::root(name, origin('7', Channel::Mic)).is_some(),
+            "{name}"
+        );
+    }
+    // Zusammenfuehrung: der Name entsteht in `parts::concat_audio`, hier echt erzeugt.
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = (dir.path().join("a.wav"), dir.path().join("b.wav"));
+    write_wav(&a, 200);
+    write_wav(&b, 200);
+    let merged = crate::managers::meetings::parts::concat_audio(
+        &[(a.clone(), Some(b.clone())), (b, Some(a))],
+        &dir.path().join("zusammen"),
+    )
+    .unwrap();
+    for path in [Some(merged.mic), merged.system].into_iter().flatten() {
+        let name = path.file_name().unwrap().to_str().unwrap().to_string();
+        assert!(name.starts_with("teile-"), "{name}");
+        assert!(
+            Job::root(&name, origin('7', Channel::System)).is_some(),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn a_job_needs_a_valid_origin_and_never_names_its_own_trim_folder() {
+    let name = |v: &Value| Job::from_value(v).map(|j| j.name);
+    assert_eq!(name(&root_job("mic.wav")), Some("mic.wav".to_string()));
+    for (label, origin) in [
+        ("null", Value::Null),
+        ("kein Objekt", serde_json::json!("trim")),
+        ("leer", serde_json::json!({})),
+        (
+            "andere Herkunft",
+            serde_json::json!({"from": "import", "trim_id": ulid_of('7'), "channel": "mic"}),
+        ),
+        (
+            "ohne from",
+            serde_json::json!({"trim_id": ulid_of('7'), "channel": "mic"}),
+        ),
+        (
+            "ULID zu kurz",
+            serde_json::json!({"from": "trim", "trim_id": "abc", "channel": "mic"}),
+        ),
+        (
+            "ULID mit ungueltigem Zeichen",
+            serde_json::json!({"from": "trim", "trim_id": "01iiiiiiiiiiiiiiiiiiiiiiii", "channel": "mic"}),
+        ),
+        (
+            "Spur unbekannt",
+            serde_json::json!({"from": "trim", "trim_id": ulid_of('7'), "channel": "video"}),
+        ),
+        (
+            "ohne Spur",
+            serde_json::json!({"from": "trim", "trim_id": ulid_of('7')}),
+        ),
+    ] {
+        let job = serde_json::json!({"kind": "root", "name": "mic.wav", "origin": origin});
+        assert_eq!(name(&job), None, "{label}");
+    }
+    // Ein Zuschnittsordner kann nicht die Herkunft seines eigenen Zuschnitts sein.
+    assert_eq!(name(&trim_job_from(&ulid_dir('a'), 'a', "mic")), None);
+    assert_eq!(
+        name(&trim_job_from(&ulid_dir('a'), 'c', "system")),
+        Some(ulid_dir('a'))
+    );
+    // Hin und zurueck.
+    for value in [
+        root_job_from("mic_aec.wav", 'c', "mic_aec"),
+        trim_job_from(&ulid_dir('a'), 'c', "system"),
+    ] {
+        assert_eq!(Job::from_value(&value).unwrap().to_value(), value);
+    }
 }
 
 #[test]
@@ -1169,6 +1336,7 @@ fn trimming_leaves_no_job_behind_when_the_old_files_could_be_deleted() {
     let f = fixture();
     let result = trim_meeting(&f.store, &f.id, range(2_000, 6_000), &lock(&f.id)).unwrap();
     assert_eq!(result.leftover_files, 0);
+    assert_eq!(result.kept_files, 0);
     assert!(!result.cleanup_uncertain);
     assert!(jobs(&f).is_empty());
     assert!(!f.mic.exists() && !f.system.exists() && !f.dir.join("mic_aec.wav").exists());
@@ -1178,13 +1346,14 @@ fn trimming_leaves_no_job_behind_when_the_old_files_could_be_deleted() {
 fn the_commit_carries_structured_jobs_and_the_sweep_finishes_them_after_a_crash() {
     let f = fixture();
     let new_dir = commit_without_deleting(&f);
-    // Aufträge in der Datenbank: Namen im Besprechungsordner, keine Pfade.
+    // Auftraege in der Datenbank: Namen im Besprechungsordner mit Herkunft (Zuschnitt und
+    // ersetzte Spur), keine Pfade.
     assert_eq!(
         jobs(&f),
         vec![
-            root_job("mic.wav"),
-            root_job("mic_aec.wav"),
-            root_job("system.wav")
+            root_job_from("mic.wav", 'a', "mic"),
+            root_job_from("mic_aec.wav", 'a', "mic_aec"),
+            root_job_from("system.wav", 'a', "system")
         ]
     );
     assert!(f.mic.exists() && f.system.exists() && f.dir.join("mic_aec.wav").exists());
@@ -1218,6 +1387,7 @@ fn trimming_twice_deletes_the_whole_previous_folder_with_one_job() {
     f.store
         .apply_trim(&TrimWrite {
             meeting_id: &f.id,
+            trim_id: &ulid_of('c'),
             old_mic: Some(&old_mic),
             old_system: Some(&path_text(&first.join("system.wav"))),
             new_mic: Some(&new_mic),
@@ -1228,7 +1398,7 @@ fn trimming_twice_deletes_the_whole_previous_folder_with_one_job() {
         })
         .unwrap();
     let dir_name = first.file_name().unwrap().to_str().unwrap().to_string();
-    assert_eq!(jobs(&f), vec![trim_job(&dir_name)]);
+    assert_eq!(jobs(&f), vec![trim_job_from(&dir_name, 'c', "mic")]);
 
     let done = run_cleanup(&f.store, &f.id, &lock(&f.id));
     assert_eq!(done, Cleanup::default());
@@ -1241,17 +1411,14 @@ fn trimming_twice_deletes_the_whole_previous_folder_with_one_job() {
 fn a_locked_file_stays_a_job_is_counted_and_goes_at_the_next_try() {
     let f = fixture();
     commit_without_deleting(&f);
-    let locked = f.system.clone();
     let done = run_cleanup_with(
         &f.store,
         &f.id,
-        &|p, kind| {
-            if p == locked {
+        &|dir, name, kind| {
+            if name == "system.wav" {
                 Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
-            } else if kind == Kind::Dir {
-                std::fs::remove_dir_all(p)
             } else {
-                std::fs::remove_file(p)
+                remove_target(dir, name, kind)
             }
         },
         &lock(&f.id),
@@ -1263,7 +1430,7 @@ fn a_locked_file_stays_a_job_is_counted_and_goes_at_the_next_try() {
             uncertain: false
         }
     );
-    assert_eq!(jobs(&f), vec![root_job("system.wav")]);
+    assert_eq!(jobs(&f), vec![root_job_from("system.wav", 'a', "system")]);
     assert!(f.system.exists() && !f.mic.exists());
 
     assert_eq!(
@@ -1281,12 +1448,17 @@ fn unsafe_or_invalid_entries_are_discarded_and_only_the_harmless_old_file_goes()
     write_wav(&outside, 100);
     let old = f.dir.join("alt.wav");
     write_wav(&old, 100);
+    let notes = f.dir.join("notizen.wav");
+    write_wav(&notes, 100);
     set_jobs(
         &f,
         &[
             // Alter Auftrag: freier Pfad, auch auf eine harmlose Datei.
             serde_json::json!(path_text(&old)),
             serde_json::json!(path_text(&outside)),
+            // Ein Name ohne Herkunft: nichts weist nach, dass der Zuschnitt die Datei
+            // ersetzt hat (eine fremde `.wav` im Ordner, zum Beispiel Notizen).
+            serde_json::json!({"kind": "root", "name": "notizen.wav"}),
             // Pfade und Namen, die keine einfachen Namen sind.
             root_job("../fremd.wav"),
             root_job(&path_text(&outside)),
@@ -1307,6 +1479,7 @@ fn unsafe_or_invalid_entries_are_discarded_and_only_the_harmless_old_file_goes()
         Cleanup::default()
     );
     assert!(!old.exists(), "nur der strukturierte Auftrag loescht");
+    assert!(notes.exists(), "ohne Herkunft wird nichts geloescht");
     assert!(outside.exists(), "ausserhalb wird nichts geloescht");
     assert!(f.mic.exists() && f.system.exists() && f.dir.join("mic_aec.wav").exists());
     assert!(f.dir.exists());
@@ -1316,6 +1489,34 @@ fn unsafe_or_invalid_entries_are_discarded_and_only_the_harmless_old_file_goes()
     set_jobs(&f, &[root_job("mic.wav")]);
     run_cleanup(&f.store, &f.id, &lock(&f.id));
     assert!(f.mic.exists());
+}
+
+#[test]
+fn a_job_without_a_valid_origin_deletes_nothing_even_for_a_harmless_name() {
+    let f = fixture();
+    let notes = f.dir.join("notizen.wav");
+    write_wav(&notes, 100);
+    let kept_dir = f.dir.join(ulid_dir('b'));
+    std::fs::create_dir_all(&kept_dir).unwrap();
+    write_wav(&kept_dir.join("x.wav"), 100);
+    let bad_origin =
+        serde_json::json!({"from": "import", "trim_id": ulid_of('7'), "channel": "mic"});
+    set_jobs(
+        &f,
+        &[
+            serde_json::json!({"kind": "root", "name": "notizen.wav"}),
+            serde_json::json!({"kind": "root", "name": "notizen.wav", "origin": bad_origin}),
+            serde_json::json!({"kind": "trim", "dir": ulid_dir('b')}),
+            // Der eigene neue Ordner des Zuschnitts ist nie Ziel seiner Auftraege.
+            trim_job_from(&ulid_dir('b'), 'b', "mic"),
+        ],
+    );
+    assert_eq!(
+        run_cleanup(&f.store, &f.id, &lock(&f.id)),
+        Cleanup::default()
+    );
+    assert!(notes.exists() && kept_dir.join("x.wav").exists());
+    assert!(jobs(&f).is_empty());
 }
 
 #[test]
@@ -1425,6 +1626,471 @@ fn a_meeting_folder_that_is_a_link_is_never_touched() {
 }
 
 #[test]
+fn a_meeting_folder_that_links_to_another_meeting_inside_the_data_root_is_never_touched() {
+    let f = fixture();
+    // Der Verweis zeigt auf einen Nachbarordner INNERHALB der Datenwurzel: `cap-std` wuerde
+    // ihm folgen, deshalb prueft das Oeffnen den Besprechungsordner selbst als Nicht-Verweis.
+    let sibling = f._dir.path().join("nachbar");
+    std::fs::create_dir_all(sibling.join(ulid_dir('e'))).unwrap();
+    let victim = sibling.join("alt.wav");
+    write_wav(&victim, 100);
+    let moved = f._dir.path().join("verschoben");
+    std::fs::rename(&f.dir, &moved).unwrap();
+    if !link_dir(&sibling, &f.dir) {
+        return;
+    }
+    assert_eq!(
+        open_folder(&f.store, &f.id).err(),
+        Some(Unusable::Unsafe),
+        "ein Verweis ist kein Besprechungsordner"
+    );
+    set_jobs(&f, &[root_job("alt.wav"), trim_job(&ulid_dir('e'))]);
+    assert_eq!(
+        run_cleanup(&f.store, &f.id, &lock(&f.id)),
+        Cleanup::default()
+    );
+    assert!(victim.exists() && sibling.join(ulid_dir('e')).exists());
+    sweep_leftovers(&f.store);
+    assert!(sibling.join(ulid_dir('e')).exists());
+}
+
+#[test]
+fn only_a_single_plain_name_opens_as_a_meeting_folder() {
+    let f = fixture();
+    assert!(open_folder(&f.store, &f.id).is_ok());
+    for bad in ["", ".", "..", "../x", "a/b", "C:x", "x:y"] {
+        assert_eq!(
+            open_folder(&f.store, bad).err(),
+            Some(Unusable::Unsafe),
+            "{bad}"
+        );
+    }
+    assert_eq!(
+        open_folder(&f.store, "gibt-es-nicht").err(),
+        Some(Unusable::Missing)
+    );
+}
+
+/// A: nach der Pruefung wird der Besprechungsordner gegen einen Verweis auf fremde Dateien
+/// getauscht (der Zeitpunkt ist die Loeschfunktion, die der Test einhaengt). Geloescht
+/// wird relativ zum geprueften Verzeichnis: das Ziel des Verweises bleibt heil.
+#[test]
+fn swapping_the_meeting_folder_after_the_check_never_deletes_outside() {
+    let f = fixture();
+    let foreign_root = tempfile::tempdir().unwrap();
+    let foreign = foreign_root.path().to_path_buf();
+    write_wav(&foreign.join("alt.wav"), 100);
+    std::fs::create_dir_all(foreign.join(ulid_dir('b')).join("innen")).unwrap();
+    write_wav(
+        &foreign.join(ulid_dir('b')).join("innen").join("x.wav"),
+        100,
+    );
+    let old = f.dir.join("alt.wav");
+    write_wav(&old, 100);
+    let old_trim = f.dir.join(ulid_dir('b'));
+    std::fs::create_dir_all(old_trim.join("innen")).unwrap();
+    write_wav(&old_trim.join("innen").join("x.wav"), 100);
+    set_jobs(&f, &[root_job("alt.wav"), trim_job(&ulid_dir('b'))]);
+
+    let moved = f._dir.path().join("verschoben");
+    let swapped = std::cell::Cell::new(false);
+    let skipped = std::cell::Cell::new(false);
+    let done = run_cleanup_with(
+        &f.store,
+        &f.id,
+        &|dir, name, kind| {
+            if !swapped.replace(true) {
+                // Windows laesst einen geoeffneten Ordner nicht umbenennen; ohne Symlinks
+                // entfaellt der Test dort.
+                let ok = std::fs::rename(&f.dir, &moved).is_ok() && link_dir(&foreign, &f.dir);
+                skipped.set(!ok);
+            }
+            remove_target(dir, name, kind)
+        },
+        &lock(&f.id),
+    );
+    if skipped.get() {
+        return;
+    }
+    assert_eq!(done, Cleanup::default());
+    assert!(foreign.join("alt.wav").exists(), "fremde Datei bleibt");
+    assert!(
+        foreign
+            .join(ulid_dir('b'))
+            .join("innen")
+            .join("x.wav")
+            .exists(),
+        "fremder Ordner bleibt"
+    );
+    assert!(
+        !moved.join("alt.wav").exists() && !moved.join(ulid_dir('b')).exists(),
+        "geloescht wurde im geprueften (verschobenen) Ordner"
+    );
+    assert!(jobs(&f).is_empty());
+}
+
+#[test]
+fn replacing_the_target_by_a_link_after_the_check_removes_the_link_not_its_target() {
+    let f = fixture();
+    let foreign_root = tempfile::tempdir().unwrap();
+    let foreign_file = foreign_root.path().join("fremd.wav");
+    write_wav(&foreign_file, 100);
+    let foreign_dir = foreign_root.path().join("ordner");
+    std::fs::create_dir_all(&foreign_dir).unwrap();
+    write_wav(&foreign_dir.join("x.wav"), 100);
+    write_wav(&f.dir.join("alt.wav"), 100);
+    std::fs::create_dir_all(f.dir.join(ulid_dir('b'))).unwrap();
+    set_jobs(&f, &[root_job("alt.wav"), trim_job(&ulid_dir('b'))]);
+
+    let skipped = std::cell::Cell::new(false);
+    let done = run_cleanup_with(
+        &f.store,
+        &f.id,
+        &|dir, name, kind| {
+            // Zwischen Pruefung und Loeschung wird das Ziel selbst zum Verweis.
+            let path = f.dir.join(name);
+            let _ = match kind {
+                Kind::File => std::fs::remove_file(&path),
+                Kind::Dir => std::fs::remove_dir_all(&path),
+            };
+            let ok = match kind {
+                Kind::File => link_file(&foreign_file, &path),
+                Kind::Dir => link_dir(&foreign_dir, &path),
+            };
+            skipped.set(skipped.get() || !ok);
+            remove_target(dir, name, kind)
+        },
+        &lock(&f.id),
+    );
+    if skipped.get() {
+        return;
+    }
+    assert_eq!(done, Cleanup::default());
+    assert!(foreign_file.exists(), "das Ziel der Datei bleibt");
+    assert!(
+        foreign_dir.join("x.wav").exists(),
+        "das Ziel des Ordners bleibt"
+    );
+    assert!(std::fs::symlink_metadata(f.dir.join("alt.wav")).is_err());
+    assert!(std::fs::symlink_metadata(f.dir.join(ulid_dir('b'))).is_err());
+}
+
+/// B: was irgendeine Zeile (auch einer anderen oder weich geloeschten Besprechung) nennt,
+/// wird nicht geloescht, die Auftraege werden verworfen.
+#[test]
+fn a_file_another_meeting_uses_is_never_deleted() {
+    let f = fixture();
+    let old = f.dir.join("alt.wav");
+    write_wav(&old, 100);
+    let old_trim = f.dir.join(ulid_dir('b'));
+    std::fs::create_dir_all(&old_trim).unwrap();
+    write_wav(&old_trim.join("mic.wav"), 100);
+    write_wav(&old_trim.join("system.wav"), 100);
+    let free = f.dir.join("frei.wav");
+    write_wav(&free, 100);
+    let free_trim = f.dir.join(ulid_dir('c'));
+    std::fs::create_dir_all(&free_trim).unwrap();
+    // B nennt eine Datei aus dem Ordner von A und eine aus einem trim-Ordner von A.
+    let other = other_meeting(&f, Some(&old), Some(&old_trim.join("mic.wav")));
+    set_jobs(
+        &f,
+        &[
+            root_job("alt.wav"),
+            trim_job(&ulid_dir('b')),
+            root_job("frei.wav"),
+            trim_job(&ulid_dir('c')),
+        ],
+    );
+    assert_eq!(
+        run_cleanup(&f.store, &f.id, &lock(&f.id)),
+        Cleanup::default()
+    );
+    assert!(old.exists(), "B nutzt die Datei");
+    assert!(
+        old_trim.join("mic.wav").exists() && old_trim.join("system.wav").exists(),
+        "B nutzt eine Datei im Ordner: er bleibt ganz"
+    );
+    assert!(!free.exists() && !free_trim.exists(), "unbenutzt geht");
+    assert!(
+        jobs(&f).is_empty(),
+        "die geschuetzten Auftraege sind verworfen"
+    );
+
+    // Auch eine weich geloeschte Besprechung mit gesetztem Pfad schuetzt.
+    f.store
+        .get_connection()
+        .unwrap()
+        .execute(
+            "UPDATE meetings SET deleted_at = 1 WHERE id = ?1",
+            params![other],
+        )
+        .unwrap();
+    set_jobs(&f, &[root_job("alt.wav"), trim_job(&ulid_dir('b'))]);
+    run_cleanup(&f.store, &f.id, &lock(&f.id));
+    assert!(old.exists() && old_trim.join("mic.wav").exists());
+    assert!(jobs(&f).is_empty());
+
+    // Erst wenn keine Zeile die Dateien mehr nennt, geht der Auftrag durch.
+    f.store
+        .get_connection()
+        .unwrap()
+        .execute(
+            "UPDATE meetings SET mic_audio_path = NULL, system_audio_path = NULL WHERE id = ?1",
+            params![other],
+        )
+        .unwrap();
+    set_jobs(&f, &[root_job("alt.wav"), trim_job(&ulid_dir('b'))]);
+    run_cleanup(&f.store, &f.id, &lock(&f.id));
+    assert!(!old.exists() && !old_trim.exists());
+}
+
+#[test]
+fn an_orphan_folder_another_meeting_uses_survives_the_sweep() {
+    let f = fixture();
+    let used = f.dir.join(ulid_dir('b'));
+    std::fs::create_dir_all(&used).unwrap();
+    write_wav(&used.join("mic.wav"), 100);
+    let unused = f.dir.join(ulid_dir('c'));
+    std::fs::create_dir_all(&unused).unwrap();
+    write_wav(&unused.join("mic.wav"), 100);
+    other_meeting(&f, Some(&used.join("mic.wav")), None);
+
+    let report = sweep_leftovers(&f.store);
+    assert!(used.join("mic.wav").exists(), "eine fremde Zeile nutzt ihn");
+    assert!(!unused.exists(), "von keiner Zeile benutzt: verwaist");
+    assert_eq!(report.orphan_dirs_removed, 1);
+    assert_eq!(report.remaining, 0);
+}
+
+#[test]
+fn windows_names_are_compared_without_case() {
+    assert_eq!(
+        fold("C:\\Daten\\A\\MIC.WAV".to_string(), true),
+        fold("c:\\daten\\a\\mic.wav".to_string(), true)
+    );
+    assert_ne!(
+        fold("/daten/a/MIC.WAV".to_string(), false),
+        fold("/daten/a/mic.wav".to_string(), false)
+    );
+}
+
+/// H: neue Spuren haben feste Namen je Kanal und werden nie ueberschrieben.
+#[test]
+fn sources_whose_names_differ_only_in_case_get_two_separate_files() {
+    let f = fixture();
+    let (a, b) = (f._dir.path().join("A"), f._dir.path().join("B"));
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    write_wav(&a.join("mic.wav"), 10_000);
+    write_wav(&b.join("MIC.WAV"), 8_000);
+    f.store
+        .set_audio_paths(
+            &f.id,
+            a.join("mic.wav").to_str(),
+            b.join("MIC.WAV").to_str(),
+            Some(10_000),
+        )
+        .unwrap();
+
+    let result = trim_meeting(&f.store, &f.id, range(2_000, 6_000), &lock(&f.id)).unwrap();
+    let m = f.store.get_meeting(&f.id).unwrap().unwrap();
+    let (mic, system) = (
+        PathBuf::from(m.mic_audio_path.unwrap()),
+        PathBuf::from(m.system_audio_path.unwrap()),
+    );
+    assert_eq!(mic.parent(), system.parent());
+    assert_eq!(mic.file_name().unwrap(), "mic.wav");
+    assert_eq!(system.file_name().unwrap(), "system.wav");
+    assert_ne!(
+        path_text(&mic).to_lowercase(),
+        path_text(&system).to_lowercase(),
+        "auch ohne Gross-/Kleinschreibung verschieden"
+    );
+    let (mic_samples, system_samples) = (read_i16(&mic), read_i16(&system));
+    assert_eq!((mic_samples.len(), system_samples.len()), (64_000, 64_000));
+    assert_eq!((mic_samples[0], system_samples[0]), (2_000, 2_000));
+    // Beide Quellen liegen ausserhalb des Besprechungsordners: sie bleiben, gemeldet.
+    assert_eq!(result.kept_files, 2);
+    assert!(a.join("mic.wav").exists() && b.join("MIC.WAV").exists());
+}
+
+#[test]
+fn the_new_names_are_fixed_whatever_the_old_ones_were() {
+    let f = fixture();
+    let old_mic = f.dir.join("Sitzung-mic.wav");
+    let old_system = f.dir.join("import.wav");
+    write_wav(&old_mic, 10_000);
+    write_wav(&old_system, 6_000);
+    f.store
+        .set_audio_paths(&f.id, old_mic.to_str(), old_system.to_str(), Some(10_000))
+        .unwrap();
+    let result = trim_meeting(&f.store, &f.id, range(2_000, 6_000), &lock(&f.id)).unwrap();
+    let m = f.store.get_meeting(&f.id).unwrap().unwrap();
+    let (mic, system) = (
+        PathBuf::from(m.mic_audio_path.unwrap()),
+        PathBuf::from(m.system_audio_path.unwrap()),
+    );
+    assert_eq!(mic.file_name().unwrap(), "mic.wav");
+    assert_eq!(system.file_name().unwrap(), "system.wav");
+    // Beide alten Namen sind harmlos und im Besprechungsordner: sie gehen.
+    assert!(!old_mic.exists() && !old_system.exists());
+    assert_eq!(result.kept_files, 0);
+    assert!(jobs(&f).is_empty());
+}
+
+#[test]
+fn the_origin_must_match_the_folder_of_the_new_files() {
+    let f = fixture();
+    let new_dir = f.dir.join(ulid_dir('a'));
+    std::fs::create_dir_all(&new_dir).unwrap();
+    cut_wav(&f.mic, &new_dir.join("mic.wav"), range(2_000, 6_000)).unwrap();
+    let new_mic = path_text(&new_dir.join("mic.wav"));
+    for trim_id in [ulid_of('b'), "abc".to_string(), String::new()] {
+        let err = f
+            .store
+            .apply_trim(&TrimWrite {
+                meeting_id: &f.id,
+                trim_id: &trim_id,
+                old_mic: f.mic.to_str(),
+                old_system: f.system.to_str(),
+                new_mic: Some(&new_mic),
+                new_system: None,
+                duration_ms: 4_000,
+                range: range(2_000, 6_000),
+                aec_kept: false,
+            })
+            .unwrap_err();
+        assert_eq!(err, "store_failed: trim_id", "{trim_id:?}");
+    }
+    assert_eq!(current_mic(&f), f.mic);
+    assert_eq!(f.store.segment_epoch(&f.id).unwrap(), 0);
+}
+
+/// I: eine alte Datei, die nie geloescht wird, steht dauerhaft in der Datenbank.
+#[test]
+fn an_old_file_outside_the_meeting_folder_stays_and_is_recorded_for_good() {
+    let f = fixture();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let mic = elsewhere.path().join("mic.wav");
+    write_wav(&mic, 10_000);
+    f.store
+        .set_audio_paths(&f.id, mic.to_str(), None, Some(10_000))
+        .unwrap();
+    let result = trim_meeting(&f.store, &f.id, range(2_000, 6_000), &lock(&f.id)).unwrap();
+    assert_eq!(result.kept_files, 1);
+    assert!(
+        !result.cleanup_uncertain,
+        "bekannt und gemeldet, nicht unsicher"
+    );
+    assert_eq!(result.leftover_files, 0);
+    assert!(
+        mic.exists(),
+        "was nicht im Besprechungsordner liegt, wird nie geloescht"
+    );
+    assert!(current_mic(&f).starts_with(&f.dir));
+    let metadata = f.store.metadata_json(&f.id).unwrap().unwrap();
+    assert_eq!(
+        metadata[KEPT_KEY],
+        serde_json::json!([{"path": path_text(&mic), "reason": REASON_OUTSIDE}])
+    );
+    assert!(jobs(&f).is_empty());
+}
+
+#[test]
+fn an_old_file_with_an_unusable_name_stays_and_is_recorded_for_good() {
+    let f = fixture();
+    let odd = f.dir.join("ü.wav");
+    write_wav(&odd, 10_000);
+    let in_subfolder = f.dir.join("export");
+    std::fs::create_dir_all(&in_subfolder).unwrap();
+    let nested = in_subfolder.join("system.wav");
+    write_wav(&nested, 6_000);
+    f.store
+        .set_audio_paths(&f.id, odd.to_str(), nested.to_str(), Some(10_000))
+        .unwrap();
+    let result = trim_meeting(&f.store, &f.id, range(2_000, 6_000), &lock(&f.id)).unwrap();
+    assert_eq!(result.kept_files, 2);
+    assert!(odd.exists() && nested.exists());
+    let metadata = f.store.metadata_json(&f.id).unwrap().unwrap();
+    assert_eq!(
+        metadata[KEPT_KEY],
+        serde_json::json!([
+            {"path": path_text(&odd), "reason": REASON_NAME},
+            {"path": path_text(&nested), "reason": REASON_OUTSIDE},
+        ])
+    );
+}
+
+#[test]
+fn a_crash_after_the_commit_leaves_the_kept_files_in_the_database() {
+    let f = fixture();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let outside_mic = elsewhere.path().join("mic.wav");
+    write_wav(&outside_mic, 10_000);
+    f.store
+        .set_audio_paths(&f.id, outside_mic.to_str(), f.system.to_str(), Some(10_000))
+        .unwrap();
+    // Wie trim_meeting bis zum Commit; dann „stuerzt die App ab“: kein Aufraeumlauf.
+    let r = range(2_000, 6_000);
+    let new_dir = f.dir.join(ulid_dir('a'));
+    std::fs::create_dir_all(&new_dir).unwrap();
+    cut_wav(&outside_mic, &new_dir.join("mic.wav"), r).unwrap();
+    cut_wav(&f.system, &new_dir.join("system.wav"), r).unwrap();
+    let (new_mic, new_system) = (
+        path_text(&new_dir.join("mic.wav")),
+        path_text(&new_dir.join("system.wav")),
+    );
+    let kept = f
+        .store
+        .apply_trim(&TrimWrite {
+            meeting_id: &f.id,
+            trim_id: &ulid_of('a'),
+            old_mic: outside_mic.to_str(),
+            old_system: f.system.to_str(),
+            new_mic: Some(&new_mic),
+            new_system: Some(&new_system),
+            duration_ms: 4_000,
+            range: r,
+            aec_kept: false,
+        })
+        .unwrap();
+    assert_eq!(kept, 1);
+
+    // Nach dem Neustart: der Rest steht in der Datenbank.
+    let metadata = f.store.metadata_json(&f.id).unwrap().unwrap();
+    assert_eq!(
+        metadata[KEPT_KEY],
+        serde_json::json!([{"path": path_text(&outside_mic), "reason": REASON_OUTSIDE}])
+    );
+    assert_eq!(jobs(&f), vec![root_job_from("system.wav", 'a', "system")]);
+
+    // Der Start holt nach, was sich holen laesst; die Datei draussen bleibt, der Eintrag auch.
+    let report = sweep_leftovers(&f.store);
+    assert_eq!(report.remaining, 0);
+    assert!(!f.system.exists());
+    assert!(outside_mic.exists());
+    let metadata = f.store.metadata_json(&f.id).unwrap().unwrap();
+    assert_eq!(metadata[KEPT_KEY].as_array().map(Vec::len), Some(1));
+    assert!(jobs(&f).is_empty());
+}
+
+#[test]
+fn kept_files_are_recorded_once_per_path() {
+    let kept = |path: &str| Kept {
+        path: path.to_string(),
+        reason: REASON_OUTSIDE,
+    };
+    let mut root = serde_json::json!({"timeline": {"basis": "qpc"}});
+    assert!(push_kept(&mut root, &[kept("a.wav")]));
+    assert!(!push_kept(&mut root, &[kept("a.wav")]));
+    assert!(push_kept(&mut root, &[kept("a.wav"), kept("b.wav")]));
+    assert_eq!(root[KEPT_KEY].as_array().map(Vec::len), Some(2));
+    assert_eq!(root["timeline"]["basis"], "qpc");
+    assert!(!push_kept(&mut root, &[]));
+    assert!(!push_kept(&mut Value::Null, &[kept("c.wav")]));
+}
+
+#[test]
 fn a_failing_cleanup_is_reported_as_a_remainder_never_as_zero() {
     let f = fixture();
     commit_without_deleting(&f);
@@ -1439,25 +2105,6 @@ fn a_failing_cleanup_is_reported_as_a_remainder_never_as_zero() {
         }
     );
     assert!(f.mic.exists() && f.system.exists(), "nichts geloescht");
-}
-
-#[test]
-fn an_old_file_outside_the_meeting_folder_stays_and_is_reported_as_uncertain() {
-    let f = fixture();
-    let elsewhere = f._dir.path().join("anderswo");
-    std::fs::create_dir_all(&elsewhere).unwrap();
-    let mic = elsewhere.join("mic.wav");
-    write_wav(&mic, 10_000);
-    f.store
-        .set_audio_paths(&f.id, mic.to_str(), None, Some(10_000))
-        .unwrap();
-    let result = trim_meeting(&f.store, &f.id, range(2_000, 6_000), &lock(&f.id)).unwrap();
-    assert!(result.cleanup_uncertain);
-    assert!(
-        mic.exists(),
-        "was nicht im Besprechungsordner liegt, wird nie geloescht"
-    );
-    assert!(current_mic(&f).starts_with(&f.dir));
 }
 
 #[test]
@@ -1577,12 +2224,13 @@ fn missing_metadata_counts_as_an_empty_object() {
 fn the_transaction_itself_refuses_unreadable_metadata_too() {
     let f = fixture();
     set_metadata(&f, "kaputt{");
-    let new_dir = f.dir.join(ulid_dir('i'));
+    let new_dir = f.dir.join(ulid_dir('j'));
     std::fs::create_dir_all(&new_dir).unwrap();
     let err = f
         .store
         .apply_trim(&TrimWrite {
             meeting_id: &f.id,
+            trim_id: &ulid_of('j'),
             old_mic: f.mic.to_str(),
             old_system: f.system.to_str(),
             new_mic: None,
@@ -1653,6 +2301,7 @@ fn the_transaction_refuses_a_marker_that_appeared_after_the_precheck() {
         .store
         .apply_trim(&TrimWrite {
             meeting_id: &f.id,
+            trim_id: &ulid_of('j'),
             old_mic: f.mic.to_str(),
             old_system: f.system.to_str(),
             new_mic: None,

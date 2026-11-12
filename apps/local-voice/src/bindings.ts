@@ -14210,11 +14210,17 @@ duration_ms: number;
  */
 leftover_files: number; 
 /**
- * Der Aufraeumlauf scheiterte oder eine alte Datei liegt ausserhalb des
- * Besprechungsordners: ob alte Audiodateien bleiben, ist unsicher (die Oberflaeche
- * meldet das vorsichtig; der naechste Start holt nach, was sich holen laesst).
+ * Der Aufraeumlauf scheiterte: ob alte Audiodateien bleiben, ist unsicher (die
+ * Oberflaeche meldet das vorsichtig; der naechste Start holt nach, was sich holen
+ * laesst).
  */
-cleanup_uncertain: boolean }
+cleanup_uncertain: boolean; 
+/**
+ * So viele alte Audiodateien liegen ausserhalb des Besprechungsordners (oder haben
+ * keinen zulaessigen Namen) und wurden NIE geloescht; sie stehen dauerhaft in
+ * `metadata_json["trim_kept"]`.
+ */
+kept_files: number }
 export type TtsDownloadInfo = { id: string; kind: TtsDownloadKind; name: string; description: string; 
 /**
  * Primary language of a voice ("de", "en", …); `None` for the runtime.

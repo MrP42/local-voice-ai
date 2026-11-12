@@ -97,6 +97,13 @@ export const TrimAudioDialog: React.FC<TrimAudioDialogProps> = ({
           t("meetings.trim.leftovers", { count: result.data.leftover_files }),
         );
       }
+      // Alte Dateien außerhalb des Besprechungsordners (oder mit unzulässigem Namen):
+      // die App löscht sie nie, der Zuschnitt hält sie in der Besprechung fest.
+      if (result.data.kept_files > 0) {
+        toast.warning(
+          t("meetings.trim.kept", { count: result.data.kept_files }),
+        );
+      }
       // Aufräumen gescheitert oder unsicher: vorsichtig melden, nie als „nichts“.
       if (result.data.cleanup_uncertain) {
         toast.warning(t("meetings.trim.uncertain"));
