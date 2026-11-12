@@ -27,7 +27,7 @@
 use std::sync::LazyLock;
 
 use besprechungsplanung::consent;
-use besprechungsplanung::invitation::{finde_marke, marke};
+use besprechungsplanung::invitation::finde_marke;
 use besprechungsplanung::model::{AdapterKind, Plan, PlanLink, SyncState};
 use besprechungsplanung::store as plan_store;
 use besprechungsplanung::sync::{self, Beobachtung, Ereignis, Feld};
@@ -99,13 +99,34 @@ static HTML_TAG: LazyLock<Regex> = LazyLock::new(|| {
         .expect("statischer Ausdruck")
 });
 
+static ZEICHENREFERENZ: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"&#(?:[xX]([0-9a-fA-F]{1,6})|([0-9]{1,7}));").expect("statischer Ausdruck")
+});
+
+/// Loest numerische Zeichenreferenzen (`&#58;`, `&#x3a;`) und die benannten der Marke (`&colon;`,
+/// `&hyphen;`) auf; `media::html_to_text` kennt nur wenige benannte Entitaeten. Ungueltige
+/// Codepunkte bleiben stehen.
+fn zeichenreferenzen(text: &str) -> String {
+    let nummer = ZEICHENREFERENZ.replace_all(text, |c: &regex::Captures<'_>| {
+        let wert = match (c.get(1), c.get(2)) {
+            (Some(h), _) => u32::from_str_radix(h.as_str(), 16).ok(),
+            (_, Some(d)) => d.as_str().parse::<u32>().ok(),
+            _ => None,
+        };
+        wert.and_then(char::from_u32)
+            .map_or_else(|| c[0].to_string(), |z| z.to_string())
+    });
+    nummer.replace("&colon;", ":").replace("&hyphen;", "-")
+}
+
 /// Die Marke wird nur im Klartext gesucht (Konzept 3.4). ICS fuehrt in `DESCRIPTION` Text; manche
 /// Anbieter legen dort aber HTML ab. Sieht die Beschreibung nach HTML aus, wird sie vorher in
-/// Text gewandelt (`media::html_to_text`: Blockenden werden Zeilenumbrueche, Tags fallen weg).
+/// Text gewandelt (`media::html_to_text`: Blockenden werden Zeilenumbrueche, Tags fallen weg) und
+/// ihre Zeichenreferenzen aufgeloest (die Marke kann als `lva-plan&#58;ID` ankommen).
 /// Gewoehnlicher Text bleibt unveraendert, damit `<` und `>` darin keine Tags werden.
 pub(crate) fn klartext(beschreibung: &str) -> String {
     if HTML_TAG.is_match(beschreibung) {
-        crate::media::html_to_text(beschreibung)
+        zeichenreferenzen(&crate::media::html_to_text(beschreibung))
     } else {
         beschreibung.to_string()
     }
@@ -168,11 +189,20 @@ fn sql_fehler(e: rusqlite::Error) -> String {
 }
 
 /// Termine, deren Klartext die Marke dieser Planung als Blockende traegt.
+///
+/// Die Vorauswahl in SQL laeuft auf dem ROHEN Text, die Entscheidung auf dem Klartext. Rohes HTML
+/// kann die Marke kodiert tragen (`lva-plan&#58;ID`, `&#45;`), ein blosses `instr(.., marke)` wuerde
+/// solche Termine nie finden. Deshalb kommen alle Termine als Kandidaten in Frage, die `lva-plan`
+/// im Rohtext tragen ODER ein `&` (jede Entitaet); genau geprueft wird nach der Normalisierung
+/// ([`klartext`]) mit `finde_marke`. (`instr`, kein LIKE: `_` waere ein Platzhalter.)
 fn termine_mit_marke(conn: &Connection, plan_id: &str) -> Res<Vec<Termin>> {
-    // Vorauswahl in SQL (`instr`, kein LIKE: `_` waere ein Platzhalter), genau pruefen in Rust.
-    let m = marke(plan_id);
     let mut gefunden: Vec<Termin> = Vec::new();
-    for t in termine(conn, "instr(e.description, ?1) > 0", &[&m])? {
+    let kandidaten = termine(
+        conn,
+        "(instr(e.description, 'lva-plan') > 0 OR instr(e.description, '&') > 0)",
+        &[],
+    )?;
+    for t in kandidaten {
         let schon = gefunden
             .iter()
             .any(|g| g.uid == t.uid && g.instance_start == t.instance_start);
@@ -253,6 +283,8 @@ pub(crate) fn beobachtung(t: &Termin) -> Beobachtung {
 pub(crate) struct Angewendet {
     pub ereignisse: Vec<Ereignis>,
     pub geschrieben: bool,
+    /// Die Verknuepfung nach dem Abgleich (Grundlage fuer einen zweiten Schritt).
+    pub link: PlanLink,
 }
 
 /// Gleicht `link` mit der Beobachtung ab und speichert das Ergebnis: Verknuepfung (nur bei
@@ -298,6 +330,7 @@ pub(crate) fn anwenden(
     Ok(Angewendet {
         ereignisse: a.ereignisse,
         geschrieben,
+        link: a.link,
     })
 }
 
@@ -309,8 +342,13 @@ enum Suche {
     /// Der Termin (bei bekannter Verknuepfung ggf. ein anderer derselben UID: der Abgleich
     /// verwirft ihn und meldet es).
     Treffer(Box<Termin>),
-    /// Der Cache haette den Termin zeigen muessen und zeigt ihn nicht.
-    Verschwunden,
+    /// Die gebundene Instanz (UID + Instanz) steht nicht im Cache. `fremd`: eine ANDERE Instanz
+    /// derselben UID ist da (wird gemeldet, ersetzt aber nie die gebundene). `verwaist`: der Cache
+    /// haette die Instanz zeigen muessen, also ist sie verwaist. Beides sind getrennte Schritte.
+    Fehlt {
+        fremd: Option<Box<Termin>>,
+        verwaist: bool,
+    },
     /// Mehrere Termine tragen die Marke.
     Mehrdeutig,
     /// Nichts zu tun: noch kein Termin mit der Marke, oder der Cache sagt nichts.
@@ -344,7 +382,7 @@ fn suche_bekannt(tx: &Transaction<'_>, link: &PlanLink, jetzt: i64) -> Res<Suche
         return Ok(Suche::Nichts);
     };
     let mut zeilen = termine(tx, "e.uid = ?1", &[&uid])?;
-    // Dieselbe Instanz, bevorzugt aus der Quelle der Verknuepfung.
+    // UID und Instanz bestimmen die Identitaet, bevorzugt aus der Quelle der Verknuepfung.
     let passend = |t: &Termin| t.instance_start == link.instanz;
     let bevorzugt = zeilen
         .iter()
@@ -353,20 +391,16 @@ fn suche_bekannt(tx: &Transaction<'_>, link: &PlanLink, jetzt: i64) -> Res<Suche
     if let Some(i) = bevorzugt {
         return Ok(Suche::Treffer(Box::new(zeilen.swap_remove(i))));
     }
-    if !zeilen.is_empty() {
-        // Die UID ist da, die Instanz nicht: die Beobachtung gehoert zu einer anderen Instanz.
-        // Der Abgleich verwirft sie und meldet es einmal; verwaist ist der Termin damit nicht.
-        return Ok(Suche::Treffer(Box::new(zeilen.remove(0))));
-    }
+    let fremd = (!zeilen.is_empty()).then(|| Box::new(zeilen.remove(0)));
     let (von, bis) = window_for(jetzt);
     let im_fenster = link
         .starts_at
         .is_some_and(|s| s >= von + DAY_MS && s <= bis - DAY_MS);
-    if im_fenster && quelle_aktiv(tx, link.source_id.as_deref())? {
-        Ok(Suche::Verschwunden)
-    } else {
-        Ok(Suche::Nichts)
+    let verwaist = im_fenster && quelle_aktiv(tx, link.source_id.as_deref())?;
+    if fremd.is_none() && !verwaist {
+        return Ok(Suche::Nichts);
     }
+    Ok(Suche::Fehlt { fremd, verwaist })
 }
 
 // ---------------------------------------------------------------------------
@@ -374,9 +408,39 @@ fn suche_bekannt(tx: &Transaction<'_>, link: &PlanLink, jetzt: i64) -> Res<Suche
 // ---------------------------------------------------------------------------
 
 enum Ergebnis {
-    Angewendet(Angewendet),
+    Angewendet(Box<Angewendet>),
     Mehrdeutig,
     Uebersprungen,
+}
+
+/// Die gebundene Instanz fehlt im Cache: erst eine fremde Instanz melden (verworfen, einmal), dann
+/// die Abwesenheit pruefen (verwaist). Zwei Schritte auf derselben Transaktion.
+fn fehlende_instanz(
+    tx: &Transaction<'_>,
+    plan: &Plan,
+    link: &PlanLink,
+    fremd: Option<Box<Termin>>,
+    verwaist: bool,
+    jetzt: i64,
+) -> Res<Angewendet> {
+    let mut gesamt = Angewendet {
+        ereignisse: Vec::new(),
+        geschrieben: false,
+        link: link.clone(),
+    };
+    if let Some(f) = fremd {
+        let a = anwenden(tx, plan, &gesamt.link, Some(&*f), jetzt)?;
+        gesamt.ereignisse.extend(a.ereignisse);
+        gesamt.geschrieben |= a.geschrieben;
+        gesamt.link = a.link;
+    }
+    if verwaist {
+        let a = anwenden(tx, plan, &gesamt.link, None, jetzt)?;
+        gesamt.ereignisse.extend(a.ereignisse);
+        gesamt.geschrieben |= a.geschrieben;
+        gesamt.link = a.link;
+    }
+    Ok(gesamt)
 }
 
 /// Gleicht eine Planung ab (eine Transaktion). Stand und Verknuepfung werden erst nach der
@@ -397,12 +461,14 @@ fn pruefe_plan(conn: &mut Connection, plan_id: &str, jetzt: i64) -> Res<Ergebnis
     }
     let angewendet = match suche(&tx, &plan, &link, jetzt)? {
         Suche::Treffer(t) => anwenden(&tx, &plan, &link, Some(&*t), jetzt)?,
-        Suche::Verschwunden => anwenden(&tx, &plan, &link, None, jetzt)?,
+        Suche::Fehlt { fremd, verwaist } => {
+            fehlende_instanz(&tx, &plan, &link, fremd, verwaist, jetzt)?
+        }
         Suche::Mehrdeutig => return Ok(Ergebnis::Mehrdeutig),
         Suche::Nichts => return Ok(Ergebnis::Uebersprungen),
     };
     tx.commit().map_err(sql_fehler)?;
-    Ok(Ergebnis::Angewendet(angewendet))
+    Ok(Ergebnis::Angewendet(Box::new(angewendet)))
 }
 
 /// Gleicht alle offenen Verknuepfungen von Adapter C mit dem Kalender-Cache ab. Laeuft nach jedem
@@ -468,7 +534,17 @@ pub fn termin_waehlen(
         return Err("termin_belegt".to_string());
     }
     let link = match plan_store::link_laden(&tx, plan_id)? {
-        Some(l) => lose(&l),
+        Some(l) => {
+            // Einwilligung gilt je Termin (und Instanz): ein anderer Termin entwertet sie, die
+            // erneute Wahl desselben nicht.
+            let gleich = super::hat_termin(&l)
+                && l.remote_id.as_deref().or(l.ical_uid.as_deref()) == Some(termin.uid.as_str())
+                && l.instanz == termin.instance_start;
+            if super::hat_termin(&l) && !gleich {
+                super::einwilligungen_zuruecksetzen(&tx, plan_id, jetzt)?;
+            }
+            lose(&l)
+        }
         None => super::leere_verknuepfung(plan_id),
     };
     let angewendet = anwenden(&tx, &plan, &link, Some(&termin), jetzt)?;

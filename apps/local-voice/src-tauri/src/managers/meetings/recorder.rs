@@ -705,6 +705,28 @@ impl MeetingRecorderManager {
         capture_system: bool,
         target_meeting_id: Option<&str>,
     ) -> Result<Meeting, String> {
+        self.start_for_event(
+            title,
+            consent_confirmed,
+            capture_system,
+            target_meeting_id,
+            None,
+        )
+    }
+
+    /// [`Self::start_into`] mit dem Termin, zu dem die Besprechung gehoert (`event`; sonst
+    /// wird er ueber die Verknuepfung des Zieleintrags gesucht). Gehoert der Termin zu einer
+    /// Planung (lva#534), entscheidet das Einwilligungs-Tor `planning::start_tor` hier,
+    /// unmittelbar vor dem Start, aus dem aktuellen Stand der Datenbank: ohne Zustimmung aller
+    /// Anwesenden startet weder Aufnahme noch Transkription (`nur_notizen: <grund>`).
+    pub fn start_for_event(
+        &self,
+        title: String,
+        consent_confirmed: bool,
+        capture_system: bool,
+        target_meeting_id: Option<&str>,
+        event: Option<&crate::managers::calendar::model::CalEvent>,
+    ) -> Result<Meeting, String> {
         consent_gate(consent_confirmed)?;
         // `Mutex<()>` traegt keine Daten: eine Vergiftung hiesse sonst, dass nie
         // wieder eine Aufnahme startet.
@@ -722,6 +744,10 @@ impl MeetingRecorderManager {
                 return Err("dictation_active".to_string());
             }
         }
+
+        // Einwilligungs-Tor der Besprechungsplanung (lva#534): als letzte Pruefung vor dem
+        // Start, mit frisch gelesenen Einwilligungen. Ohne Planung zum Termin: unveraendert.
+        crate::managers::planning::start_tor(&self.store, event, target_meeting_id)?;
 
         // M2-P2d: ein laufender Enddurchlauf gibt die Engine vorher frei.
         self.cancel_final_jobs();

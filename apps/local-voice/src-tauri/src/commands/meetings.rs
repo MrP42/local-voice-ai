@@ -740,11 +740,12 @@ pub async fn meetings_start_from_event(
     let store = Arc::clone(&store);
     let meeting = tauri::async_runtime::spawn_blocking(move || {
         let plan = plan_start(&store, event_key.as_deref(), title.as_deref())?;
-        let meeting = recorder.start_into(
+        let meeting = recorder.start_for_event(
             plan.title.clone(),
             consent_confirmed,
             capture_system,
             target_meeting_id.as_deref(),
+            plan.event.as_ref(),
         )?;
         let now = chrono::Utc::now().timestamp_millis();
         for problem in finish_start(&store, &meeting.id, &plan, linked_by, now) {

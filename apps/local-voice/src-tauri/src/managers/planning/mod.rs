@@ -284,8 +284,9 @@ pub fn verschiebung_bestaetigen(store: &MeetingStore, id: &str, jetzt: i64) -> R
 
 /// Loest die Termin-Identitaet der Verknuepfung (ausdrueckliche Auswahl der Nutzerin bzw. des
 /// Nutzers: "anderer Termin"). Der naechste Abgleich gilt dann als Erstverknuepfung ueber die
-/// Marke. Die Planung faellt auf `uebergeben` zurueck, solange sie an keinen Termin gebunden ist;
-/// Planung und Einwilligungen bleiben sonst unberuehrt.
+/// Marke. Die Planung faellt auf `uebergeben` zurueck, solange sie an keinen Termin gebunden ist.
+/// Die Einwilligungen gelten je Termin: war die Planung gebunden, werden alle auf `offen`
+/// zurueckgesetzt (siehe [`einwilligungen_zuruecksetzen`]).
 pub fn identitaet_loesen(store: &MeetingStore, id: &str, jetzt: i64) -> Res<PlanLink> {
     in_tx(store, |tx| {
         let plan = plan_holen(tx, id)?;
@@ -294,6 +295,9 @@ pub fn identitaet_loesen(store: &MeetingStore, id: &str, jetzt: i64) -> Res<Plan
         }
         let link = plan_store::link_laden(tx, id)?.ok_or("verknuepfung_fehlt")?;
         let neu = lose(&link);
+        if hat_termin(&link) {
+            einwilligungen_zuruecksetzen(tx, id, jetzt)?;
+        }
         plan_store::link_speichern(tx, &neu)?;
         zuruecksetzen_auf_uebergeben(tx, &plan, jetzt)?;
         Ok(neu)
@@ -306,6 +310,32 @@ pub(crate) fn lose(link: &PlanLink) -> PlanLink {
         source_id: None,
         ..sync::identitaet_loesen(link)
     }
+}
+
+/// Setzt alle aktuellen Einwilligungen der Planung auf `offen` (ohne Nachweis), je Person mit einer
+/// Verlaufszeile; die bisherigen Zeilen mit dem Nachweis bleiben im Verlauf. Aufrufer halten die
+/// Transaktion des Termin-Wechsels. Eine Einwilligung gilt je Termin und Person (Konzept 3.5).
+pub(crate) fn einwilligungen_zuruecksetzen(
+    conn: &Connection,
+    plan_id: &str,
+    jetzt: i64,
+) -> Res<()> {
+    for c in plan_store::einwilligungen(conn, plan_id)? {
+        if c.state == besprechungsplanung::model::ConsentState::Offen
+            && c.channel.is_none()
+            && c.recorded_at.is_none()
+        {
+            continue;
+        }
+        let offen = Consent {
+            state: besprechungsplanung::model::ConsentState::Offen,
+            channel: None,
+            recorded_at: None,
+            ..c
+        };
+        plan_store::einwilligung_setzen(conn, &offen, jetzt)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn zuruecksetzen_auf_uebergeben(conn: &Connection, plan: &Plan, jetzt: i64) -> Res<()> {
@@ -363,4 +393,151 @@ pub fn start_modus(store: &MeetingStore, plan_id: &str, anwesende: &[String]) ->
         anwesende,
         &einwilligungen,
     ))
+}
+
+// ---------------------------------------------------------------------------
+// Einwilligungs-Tor am Start der Besprechung
+// ---------------------------------------------------------------------------
+
+/// Die Planungen, die zu einem Start gehoeren, und die Anwesenden dazu.
+struct StartBezug {
+    plan_ids: Vec<String>,
+    anwesende: Vec<String>,
+}
+
+/// Findet die Planungen der Besprechung, die gleich startet.
+///
+/// Verknuepfung (der kleinste saubere Weg, ohne neue Tabelle): Besprechung und Planung teilen den
+/// KALENDERTERMIN. Der Start kennt den Termin (`event`, bei `meetings_start_from_event` und der
+/// Workflow-Aktion) oder die Besprechung, in die aufgenommen wird, ueber `meeting_calendar_links`
+/// (`target_meeting_id`); die Planung gehoert dazu, wenn ihre Verknuepfung dieselbe UID und
+/// Instanz traegt (Adapter C, `meeting_plan_links`) oder sie die Besprechung ausdruecklich
+/// fuehrt (`meeting_plans.meeting_id`). Eine ausdrueckliche `plan_id` beim Start waere dagegen
+/// freiwillig: wer sie weglaesst, umginge das Tor.
+///
+/// Ist der Termin nicht mehr im Cache (nur noch der Schnappschuss der Verknuepfung), ist die
+/// Instanz unbekannt: dann zaehlen alle Planungen der UID, und es gibt keine Anwesenden (sperrt).
+fn start_bezug(
+    conn: &Connection,
+    store: &MeetingStore,
+    event: Option<&crate::managers::calendar::model::CalEvent>,
+    target_meeting_id: Option<&str>,
+) -> Res<StartBezug> {
+    let sql = |e: anyhow::Error| format!("sql: {e}");
+    // (uid, Instanz: `None` = unbekannt, `Some(None)` = Einzeltermin), Anwesende
+    let mut termin: Option<(String, Option<Option<i64>>)> = None;
+    let mut anwesende: Vec<String> = Vec::new();
+    let mut ereignis = event.cloned();
+    if ereignis.is_none() {
+        if let Some(target) = target_meeting_id {
+            if let Some(link) = store.meeting_calendar_link(target).map_err(sql)? {
+                if let Some(key) = link.event_key.as_deref() {
+                    ereignis = store.calendar_event(key).map_err(sql)?;
+                }
+                if ereignis.is_none() {
+                    termin = Some((link.uid, None));
+                }
+            }
+        }
+    }
+    if let Some(e) = &ereignis {
+        termin = Some((e.uid.clone(), Some(e.instance_start)));
+        anwesende = e
+            .attendees
+            .iter()
+            .map(|a| {
+                a.email
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|m| !m.is_empty())
+                    .map_or_else(|| consent::UNBEKANNT.to_string(), str::to_string)
+            })
+            .collect();
+    }
+    let mut plan_ids: Vec<String> = Vec::new();
+    if let Some((uid, instanz)) = &termin {
+        let mut st = conn
+            .prepare(
+                "SELECT l.plan_id FROM meeting_plan_links l
+                 JOIN meeting_plans p ON p.id = l.plan_id
+                 WHERE p.deleted_at IS NULL
+                   AND (l.remote_id = ?1 OR l.ical_uid = ?1)
+                   AND (?2 = 1 OR l.instance_start IS ?3)
+                 ORDER BY l.plan_id",
+            )
+            .map_err(|e| format!("sql: {e}"))?;
+        let flach: Option<i64> = instanz.and_then(|i| i);
+        let rows = st
+            .query_map(params![uid, instanz.is_none(), flach], |r| {
+                r.get::<_, String>(0)
+            })
+            .map_err(|e| format!("sql: {e}"))?;
+        for id in rows {
+            plan_ids.push(id.map_err(|e| format!("sql: {e}"))?);
+        }
+    }
+    if let Some(target) = target_meeting_id {
+        let mut st = conn
+            .prepare("SELECT id FROM meeting_plans WHERE meeting_id = ?1 AND deleted_at IS NULL")
+            .map_err(|e| format!("sql: {e}"))?;
+        let rows = st
+            .query_map([target], |r| r.get::<_, String>(0))
+            .map_err(|e| format!("sql: {e}"))?;
+        for id in rows {
+            let id = id.map_err(|e| format!("sql: {e}"))?;
+            if !plan_ids.contains(&id) {
+                plan_ids.push(id);
+            }
+        }
+    }
+    Ok(StartBezug {
+        plan_ids,
+        anwesende,
+    })
+}
+
+/// Das Einwilligungs-Tor: laeuft im Recorder UNMITTELBAR vor dem Start einer Aufnahme mit
+/// Live-Transkription und liest die Einwilligungen dabei frisch aus der Datenbank (ein Widerruf
+/// zwischen einer Abfrage per [`start_modus`] und dem Start wirkt damit). Gehoert die Besprechung
+/// zu keiner Planung, passiert nichts. Sonst muss JEDE zugehoerige Planung
+/// [`StartModus::MitTranskription`] ergeben; bei `NurNotizen` startet nichts (kein Ton, keine
+/// Transkription) und der Fehler ist `nur_notizen: <grund>` (`nicht_geplant`, `abgelehnt` oder
+/// `offen`; nie Namen). Personen ohne Identitaet und fehlende Anwesende sperren.
+pub fn start_tor(
+    store: &MeetingStore,
+    event: Option<&crate::managers::calendar::model::CalEvent>,
+    target_meeting_id: Option<&str>,
+) -> Res<()> {
+    let mut conn = verbindung(store)?;
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Deferred)
+        .map_err(sql)?;
+    let bezug = start_bezug(&tx, store, event, target_meeting_id)?;
+    for plan_id in &bezug.plan_ids {
+        let plan = plan_holen(&tx, plan_id)?;
+        let einwilligungen = plan_store::einwilligungen(&tx, plan_id)?;
+        match consent::start_modus(
+            plan_id,
+            plan.transcription_planned,
+            &bezug.anwesende,
+            &einwilligungen,
+        ) {
+            StartModus::MitTranskription => {}
+            StartModus::NurNotizen {
+                nicht_geplant,
+                abgelehnt,
+                ..
+            } => {
+                let grund = if nicht_geplant {
+                    "nicht_geplant"
+                } else if !abgelehnt.is_empty() {
+                    "abgelehnt"
+                } else {
+                    "offen"
+                };
+                return Err(format!("nur_notizen: {grund}"));
+            }
+        }
+    }
+    Ok(())
 }

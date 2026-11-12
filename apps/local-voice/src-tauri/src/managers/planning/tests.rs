@@ -650,6 +650,12 @@ fn only_html_looking_descriptions_are_converted() {
         klartext("<div>Zeile 1</div><div>lva-plan:ABC</div>"),
         "Zeile 1\nlva-plan:ABC"
     );
+    // Zeichenreferenzen nur im HTML-Zweig: Dezimal, hexadezimal und benannt.
+    assert_eq!(klartext("<p>lva&#45;plan&#58;ABC</p>"), "lva-plan:ABC");
+    assert_eq!(klartext("<p>lva&#x2d;plan&#x3A;ABC</p>"), "lva-plan:ABC");
+    assert_eq!(klartext("<p>lva&hyphen;plan&colon;ABC</p>"), "lva-plan:ABC");
+    assert_eq!(klartext("<p>x&#99999999;y</p>"), "x&#99999999;y");
+    assert_eq!(klartext("lva&#58;ABC"), "lva&#58;ABC");
 }
 
 #[test]
@@ -889,36 +895,56 @@ fn an_instanz2(f: &Fix) -> (Plan, String) {
 }
 
 #[test]
-fn another_instance_of_the_series_never_replaces_the_linked_one() {
+fn a_deleted_instance_in_a_running_series_is_orphaned_and_never_replaced_by_another() {
     let f = fix();
     let (p, text) = an_instanz2(&f);
-    // Instanz 2 fehlt im Cache, die anderen sind da: verworfen und einmal gemeldet.
+    // Instanz 2 fehlt im Cache, die anderen sind da: Fremdinstanz melden (verworfen, einmal) und
+    // Abwesenheit pruefen (verwaist) sind getrennte Schritte; die Bindung bleibt Instanz 2.
     cache(&f.store, &serie(&text, &[I1, I3]));
     let b = lauf(&f.store);
     assert_eq!(
         arten(&b),
-        [Ereignis::AndererTermin {
-            erwartet: Some(I2),
-            gesehen: Some(I1)
-        }]
+        [
+            Ereignis::AndererTermin {
+                erwartet: Some(I2),
+                gesehen: Some(I1)
+            },
+            Ereignis::Verwaist
+        ]
     );
     let l = link(&f.store, &p.id);
     assert_eq!(
         (l.instanz, l.starts_at),
         (Some(I2), Some(I2)),
-        "Bindung bleibt"
+        "Bindung bleibt, keine andere Instanz springt ein"
     );
     assert!(l.fremd_beobachtet);
-    assert_eq!(l.sync_state, SyncState::Ok, "nicht verwaist");
-    assert_eq!(status(&f.store, &p.id), PlanStatus::Verknuepft);
+    assert_eq!(l.sync_state, SyncState::Verwaist);
     assert!(lauf(&f.store).ereignisse.is_empty(), "nur einmal gemeldet");
 
-    // Die richtige Instanz ist wieder da: der Merker faellt, nichts ist verschoben.
+    // Auch ohne jede andere Instanz im Cache: verwaist (kein Treffer, nichts zu melden).
+    cache(&f.store, &[]);
+    assert!(lauf(&f.store).ereignisse.is_empty(), "schon verwaist");
+    assert_eq!(link(&f.store, &p.id).sync_state, SyncState::Verwaist);
+
+    // Die richtige Instanz ist wieder da: der Merker faellt, die Verknuepfung lebt wieder.
     cache(&f.store, &serie(&text, &[I1, I2, I3]));
-    assert!(lauf(&f.store).ereignisse.is_empty());
+    assert_eq!(arten(&lauf(&f.store)), [Ereignis::Wiederverknuepft]);
     let l = link(&f.store, &p.id);
     assert!(!l.fremd_beobachtet);
-    assert_eq!(status(&f.store, &p.id), PlanStatus::Verknuepft);
+    assert_eq!(l.sync_state, SyncState::Ok);
+}
+
+#[test]
+fn a_deleted_instance_without_other_instances_is_orphaned() {
+    let f = fix();
+    let (p, text) = an_instanz2(&f);
+    // Nur Instanz 1 und 3 fallen weg, eine Instanz einer ANDEREN Serie bleibt im Cache.
+    let andere = instanz("andere-serie", I2, I2, Some(text));
+    cache(&f.store, &[andere]);
+    assert_eq!(arten(&lauf(&f.store)), [Ereignis::Verwaist]);
+    assert_eq!(link(&f.store, &p.id).sync_state, SyncState::Verwaist);
+    assert_eq!(link(&f.store, &p.id).instanz, Some(I2));
 }
 
 #[test]
@@ -955,12 +981,16 @@ fn a_single_event_is_not_silently_replaced_by_a_series_instance() {
             t.description.clone(),
         )],
     );
+    // Der Einzeltermin (UID, ohne Instanz) ist weg; die Serie mit gleicher UID ersetzt ihn nie.
     assert_eq!(
         arten(&lauf(&f.store)),
-        [Ereignis::AndererTermin {
-            erwartet: None,
-            gesehen: Some(t.starts_at)
-        }]
+        [
+            Ereignis::AndererTermin {
+                erwartet: None,
+                gesehen: Some(t.starts_at)
+            },
+            Ereignis::Verwaist
+        ]
     );
     assert_eq!(link(&f.store, &p.id).instanz, None);
 }
@@ -1210,4 +1240,357 @@ fn the_start_mode_follows_the_consents_of_this_plan() {
         start_modus(&f.store, "gibt-es-nicht", &anwesend).unwrap_err(),
         "plan_nicht_gefunden"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Marke in kodiertem HTML (Vorauswahl nach der Normalisierung)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_marker_with_html_entities_is_found_after_normalising_the_description() {
+    let f = fix();
+    let (p, e) = uebergeben(&f.store);
+    let html: String = e
+        .text
+        .lines()
+        .map(|z| {
+            // Der Doppelpunkt und der Bindestrich der Marke kommen kodiert an: `lva&#45;plan&#58;ID`.
+            format!(
+                "<p>{}</p>",
+                z.replace(':', "&#58;").replace("lva-plan", "lva&#45;plan")
+            )
+        })
+        .collect();
+    assert!(
+        !html.contains("lva-plan"),
+        "Test-Aufbau: roh steht keine Marke im Text"
+    );
+    assert!(html.contains("&#58;"), "Test-Aufbau");
+    cache(
+        &f.store,
+        &[termin(
+            "u1",
+            NOW + D,
+            Some(format!("<html><body>{html}</body></html>")),
+        )],
+    );
+    assert_eq!(lauf(&f.store).geaendert, 1);
+    assert_eq!(status(&f.store, &p.id), PlanStatus::Verknuepft);
+
+    // Nur der Doppelpunkt kodiert (Rohtext traegt noch `lva-plan`): ebenso.
+    let f = fix();
+    let (p, e) = uebergeben(&f.store);
+    let html: String = e
+        .text
+        .lines()
+        .map(|z| format!("<p>{}</p>", z.replace(':', "&#58;")))
+        .collect();
+    cache(
+        &f.store,
+        &[termin("u2", NOW + D, Some(format!("<div>{html}</div>")))],
+    );
+    assert_eq!(lauf(&f.store).geaendert, 1);
+    assert_eq!(status(&f.store, &p.id), PlanStatus::Verknuepft);
+}
+
+// ---------------------------------------------------------------------------
+// Einwilligung gilt je Termin und Person
+// ---------------------------------------------------------------------------
+
+fn zustimmen(f: &Fix, plan_id: &str, email: &str) {
+    einwilligung_setzen(
+        &f.store,
+        &Consent {
+            plan_id: plan_id.into(),
+            person: email.into(),
+            state: ConsentState::Zugestimmt,
+            channel: Some(ConsentChannel::Einladung),
+            recorded_at: Some(NOW),
+        },
+        NOW,
+    )
+    .unwrap();
+}
+
+/// Eine Planung an Termin `uid` mit zwei Teilnehmenden (Einwilligungen `offen`).
+fn mit_teilnehmenden(f: &Fix, uid: &str) -> (Plan, CalEvent) {
+    let (p, e) = uebergeben(&f.store);
+    let mut t = termin(uid, NOW + 2 * D, Some(beschreibung(&e)));
+    t.attendees = vec![person("anna@example.com"), person("bert@example.org")];
+    cache(&f.store, std::slice::from_ref(&t));
+    assert_eq!(lauf(&f.store).geaendert, 1);
+    assert_eq!(personen(&f.store, &p.id).len(), 2);
+    (p, t)
+}
+
+#[test]
+fn a_consent_for_one_event_does_not_carry_over_when_the_identity_is_released() {
+    let f = fix();
+    let (p, _) = mit_teilnehmenden(&f, "termin-a");
+    zustimmen(&f, &p.id, "anna@example.com");
+    zustimmen(&f, &p.id, "bert@example.org");
+    let anwesend = vec![
+        "anna@example.com".to_string(),
+        "bert@example.org".to_string(),
+    ];
+    assert_eq!(
+        start_modus(&f.store, &p.id, &anwesend).unwrap(),
+        StartModus::MitTranskription
+    );
+    let verlauf_vorher = einwilligungs_verlauf(&f.store, &p.id).unwrap().len();
+
+    identitaet_loesen(&f.store, &p.id, NOW + 10).unwrap();
+
+    // Alle offen, ohne Nachweis; je Person eine Verlaufszeile, die alten Nachweise bleiben im Log.
+    let aktuell = einwilligungen(&f.store, &p.id).unwrap();
+    assert_eq!(aktuell.len(), 2);
+    assert!(aktuell
+        .iter()
+        .all(|c| c.state == ConsentState::Offen && c.channel.is_none() && c.recorded_at.is_none()));
+    let verlauf = einwilligungs_verlauf(&f.store, &p.id).unwrap();
+    assert_eq!(verlauf.len(), verlauf_vorher + 2);
+    assert!(verlauf
+        .iter()
+        .any(|v| v.einwilligung.state == ConsentState::Zugestimmt
+            && v.einwilligung.recorded_at == Some(NOW)));
+    assert_eq!(
+        verlauf
+            .iter()
+            .filter(|v| v.festgehalten_am == NOW + 10 && v.einwilligung.state == ConsentState::Offen)
+            .count(),
+        2
+    );
+    assert!(matches!(
+        start_modus(&f.store, &p.id, &anwesend).unwrap(),
+        StartModus::NurNotizen { .. }
+    ));
+}
+
+#[test]
+fn a_consent_for_event_a_does_not_hold_after_choosing_event_b() {
+    let f = fix();
+    let (p, a) = mit_teilnehmenden(&f, "termin-a");
+    zustimmen(&f, &p.id, "anna@example.com");
+    zustimmen(&f, &p.id, "bert@example.org");
+    let anwesend = vec![
+        "anna@example.com".to_string(),
+        "bert@example.org".to_string(),
+    ];
+
+    // Termin B traegt dieselbe Marke (Einladung weitergeleitet): die Nutzerin waehlt ihn.
+    let mut b = termin("termin-b", NOW + 5 * D, a.description.clone());
+    b.attendees = vec![person("anna@example.com"), person("bert@example.org")];
+    cache(&f.store, &[a.clone(), b.clone()]);
+    termin_waehlen(&f.store, &p.id, &b.key, NOW + 20).unwrap();
+    assert_eq!(link(&f.store, &p.id).remote_id.as_deref(), Some("termin-b"));
+    assert!(personen(&f.store, &p.id)
+        .iter()
+        .all(|(_, s)| *s == ConsentState::Offen));
+    assert!(matches!(
+        start_modus(&f.store, &p.id, &anwesend).unwrap(),
+        StartModus::NurNotizen { .. }
+    ));
+    // Der Nachweis fuer Termin A bleibt im Verlauf.
+    assert!(einwilligungs_verlauf(&f.store, &p.id)
+        .unwrap()
+        .iter()
+        .any(|v| v.einwilligung.state == ConsentState::Zugestimmt));
+
+    // Fuer Termin B neu zugestimmt; dieselbe Wahl noch einmal entwertet das nicht.
+    zustimmen(&f, &p.id, "anna@example.com");
+    termin_waehlen(&f.store, &p.id, &b.key, NOW + 30).unwrap();
+    assert!(personen(&f.store, &p.id)
+        .contains(&("anna@example.com".to_string(), ConsentState::Zugestimmt)));
+}
+
+#[test]
+fn a_consent_for_one_series_instance_does_not_hold_for_another() {
+    let f = fix();
+    let (p, text) = an_instanz2(&f);
+    let mut i3 = instanz("serie", I3, I3, Some(text));
+    i3.attendees = vec![person("anna@example.com")];
+    zustimmen(&f, &p.id, "anna@example.com");
+    cache(&f.store, &[i3.clone()]);
+    termin_waehlen(&f.store, &p.id, &i3.key, NOW + 5).unwrap();
+    assert_eq!(link(&f.store, &p.id).instanz, Some(I3));
+    assert!(personen(&f.store, &p.id)
+        .iter()
+        .all(|(_, s)| *s == ConsentState::Offen));
+}
+
+// ---------------------------------------------------------------------------
+// Einwilligungs-Tor am Start der Besprechung
+// ---------------------------------------------------------------------------
+
+fn tor(f: &Fix, event: &CalEvent) -> Result<(), String> {
+    start_tor(&f.store, Some(event), None)
+}
+
+#[test]
+fn without_a_plan_the_start_is_unchanged() {
+    let f = fix();
+    let frei = termin("ohne-planung", NOW + D, None);
+    assert_eq!(start_tor(&f.store, Some(&frei), None), Ok(()));
+    assert_eq!(start_tor(&f.store, None, None), Ok(()));
+    // Eine Besprechung ohne Terminverknuepfung als Ziel: ebenfalls unveraendert.
+    let m = f.store.create_empty_meeting("Leer", None).unwrap();
+    assert_eq!(start_tor(&f.store, None, Some(&m.id)), Ok(()));
+}
+
+#[test]
+fn open_or_refused_consents_block_the_start() {
+    let f = fix();
+    let (p, t) = mit_teilnehmenden(&f, "u1");
+    // Offen (noch niemand gefragt).
+    assert_eq!(tor(&f, &t), Err("nur_notizen: offen".to_string()));
+    // Eine Person stimmt zu, die andere lehnt ab: die Ablehnung sperrt.
+    zustimmen(&f, &p.id, "anna@example.com");
+    einwilligung_setzen(
+        &f.store,
+        &Consent {
+            plan_id: p.id.clone(),
+            person: "bert@example.org".into(),
+            state: ConsentState::Abgelehnt,
+            channel: Some(ConsentChannel::Einladung),
+            recorded_at: Some(NOW),
+        },
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(tor(&f, &t), Err("nur_notizen: abgelehnt".to_string()));
+}
+
+#[test]
+fn a_revocation_after_a_positive_query_blocks_at_the_start() {
+    let f = fix();
+    let (p, t) = mit_teilnehmenden(&f, "u1");
+    zustimmen(&f, &p.id, "anna@example.com");
+    zustimmen(&f, &p.id, "bert@example.org");
+    let anwesend = vec![
+        "anna@example.com".to_string(),
+        "bert@example.org".to_string(),
+    ];
+    // Die Abfrage sagt "mit Transkription" ...
+    assert_eq!(
+        start_modus(&f.store, &p.id, &anwesend).unwrap(),
+        StartModus::MitTranskription
+    );
+    // ... bis Bert widerruft; der Start liest den aktuellen Stand und sperrt.
+    einwilligung_setzen(
+        &f.store,
+        &Consent {
+            plan_id: p.id.clone(),
+            person: "bert@example.org".into(),
+            state: ConsentState::Abgelehnt,
+            channel: Some(ConsentChannel::MuendlichBeiStart),
+            recorded_at: Some(NOW + 1),
+        },
+        NOW + 1,
+    )
+    .unwrap();
+    assert_eq!(tor(&f, &t), Err("nur_notizen: abgelehnt".to_string()));
+}
+
+#[test]
+fn an_unknown_person_blocks_the_start() {
+    let f = fix();
+    let (p, mut t) = mit_teilnehmenden(&f, "u1");
+    zustimmen(&f, &p.id, "anna@example.com");
+    zustimmen(&f, &p.id, "bert@example.org");
+    assert_eq!(
+        tor(&f, &t),
+        Ok(()),
+        "Aufbau: beide bekannten Personen stimmen zu"
+    );
+    // Eine Teilnehmerin nur mit Namen (keine Adresse): kann nicht zugestimmt haben.
+    t.attendees.push(Attendee {
+        email: None,
+        name: Some("Chris Ohne Adresse".into()),
+        organizer: false,
+        is_self: false,
+        partstat: None,
+    });
+    assert_eq!(tor(&f, &t), Err("nur_notizen: offen".to_string()));
+    // Auch eine Planung ohne erfasste Anwesende erlaubt keine Transkription.
+    t.attendees.clear();
+    assert_eq!(tor(&f, &t), Err("nur_notizen: offen".to_string()));
+}
+
+#[test]
+fn all_consents_with_proof_start_with_transcription() {
+    let f = fix();
+    let (p, t) = mit_teilnehmenden(&f, "u1");
+    zustimmen(&f, &p.id, "anna@example.com");
+    zustimmen(&f, &p.id, "bert@example.org");
+    assert_eq!(tor(&f, &t), Ok(()));
+    // Eine geplante Transkription ist Voraussetzung.
+    let mut eing = eingabe();
+    eing.transcription_planned = false;
+    plan_aendern(&f.store, &p.id, &eing, NOW + 1).unwrap();
+    assert_eq!(tor(&f, &t), Err("nur_notizen: nicht_geplant".to_string()));
+}
+
+#[test]
+fn the_gate_finds_the_plan_through_the_meeting_link_of_the_target_entry() {
+    let f = fix();
+    let (p, t) = mit_teilnehmenden(&f, "u1");
+    let m = f.store.create_empty_meeting("Ziel", None).unwrap();
+    let im_cache = f.store.calendar_event(&t.key).unwrap().unwrap();
+    f.store
+        .link_meeting_event(&m.id, &im_cache, "prompt", NOW)
+        .unwrap();
+    // Ohne Termin im Aufruf: der Zieleintrag fuehrt ueber `meeting_calendar_links` zur Planung.
+    assert_eq!(
+        start_tor(&f.store, None, Some(&m.id)),
+        Err("nur_notizen: offen".to_string())
+    );
+    zustimmen(&f, &p.id, "anna@example.com");
+    zustimmen(&f, &p.id, "bert@example.org");
+    assert_eq!(start_tor(&f.store, None, Some(&m.id)), Ok(()));
+
+    // Der Termin ist aus dem Cache gefallen: nur noch die UID ist bekannt, Anwesende fehlen: sperrt.
+    cache(&f.store, &[]);
+    assert_eq!(
+        start_tor(&f.store, None, Some(&m.id)),
+        Err("nur_notizen: offen".to_string())
+    );
+}
+
+#[test]
+fn the_gate_is_per_series_instance() {
+    let f = fix();
+    let (p, text) = an_instanz2(&f);
+    let mut i1 = instanz("serie", I1, I1, Some(text.clone()));
+    let mut i2 = instanz("serie", I2, I2, Some(text));
+    i1.attendees = vec![person("anna@example.com")];
+    i2.attendees = vec![person("anna@example.com")];
+    // Die Planung gehoert zu Instanz 2; Instanz 1 hat keine Planung und startet wie bisher.
+    assert_eq!(tor(&f, &i1), Ok(()));
+    assert_eq!(tor(&f, &i2), Err("nur_notizen: offen".to_string()));
+    zustimmen(&f, &p.id, "anna@example.com");
+    assert_eq!(tor(&f, &i2), Ok(()));
+}
+
+/// Die Recorder-Methode ruft das Tor vor dem Anlegen der Zeile auf; ein Umbau, der es
+/// uebergeht, faellt hier auf. Alle drei Startwege laufen durch `start_for_event`.
+#[test]
+fn the_recorder_asks_the_gate_before_anything_starts() {
+    let recorder = include_str!("../meetings/recorder.rs");
+    let produktiv = recorder.split("#[cfg(test)]").next().unwrap();
+    let fn_start = produktiv
+        .find("pub fn start_for_event")
+        .expect("start_for_event");
+    let rumpf = &produktiv[fn_start..];
+    let tor = rumpf.find("planning::start_tor(").expect("Tor im Start");
+    for spaeter in ["begin_live_row(", "cancel_final_jobs()", "start_row("] {
+        assert!(
+            tor < rumpf.find(spaeter).expect(spaeter),
+            "das Tor muss vor {spaeter} stehen"
+        );
+    }
+    assert!(produktiv.contains("self.start_for_event(\n            title,"));
+    let befehle = include_str!("../../commands/meetings.rs");
+    assert!(befehle.contains("recorder.start_for_event("));
+    let hub = include_str!("../workflows/hub.rs");
+    assert!(hub.contains("recorder.start_for_event("));
 }

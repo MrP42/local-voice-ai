@@ -20,13 +20,29 @@ fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
+/// Die Datenbankarbeit gehoert nicht auf den Async-Worker: `BEGIN IMMEDIATE` kann auf eine
+/// Schreibsperre warten (laufender Kalenderabruf, Aufnahme), deshalb `spawn_blocking`.
+async fn blockierend<T, F>(store: State<'_, Arc<MeetingStore>>, arbeit: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&MeetingStore) -> Result<T, String> + Send + 'static,
+{
+    let store = Arc::clone(&store);
+    tauri::async_runtime::spawn_blocking(move || arbeit(&store))
+        .await
+        .map_err(|e| format!("Planung abgebrochen: {e}"))?
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn besprechungsplanung_anlegen(
     store: State<'_, Arc<MeetingStore>>,
     input: PlanInput,
 ) -> Result<Plan, String> {
-    planning::plan_anlegen(&store, &input, now_ms())
+    blockierend(store, move |store| {
+        planning::plan_anlegen(store, &input, now_ms())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -36,7 +52,10 @@ pub async fn besprechungsplanung_aendern(
     id: String,
     input: PlanInput,
 ) -> Result<Plan, String> {
-    planning::plan_aendern(&store, &id, &input, now_ms())
+    blockierend(store, move |store| {
+        planning::plan_aendern(store, &id, &input, now_ms())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -45,7 +64,7 @@ pub async fn besprechungsplanung_laden(
     store: State<'_, Arc<MeetingStore>>,
     id: String,
 ) -> Result<Option<Plan>, String> {
-    planning::plan_laden(&store, &id)
+    blockierend(store, move |store| planning::plan_laden(store, &id)).await
 }
 
 #[tauri::command]
@@ -53,7 +72,7 @@ pub async fn besprechungsplanung_laden(
 pub async fn besprechungsplanung_liste(
     store: State<'_, Arc<MeetingStore>>,
 ) -> Result<Vec<Plan>, String> {
-    planning::plan_liste(&store)
+    blockierend(store, planning::plan_liste).await
 }
 
 /// Weiches Loeschen (Papierkorb).
@@ -63,7 +82,10 @@ pub async fn besprechungsplanung_loeschen(
     store: State<'_, Arc<MeetingStore>>,
     id: String,
 ) -> Result<(), String> {
-    planning::plan_loeschen(&store, &id, now_ms())
+    blockierend(store, move |store| {
+        planning::plan_loeschen(store, &id, now_ms())
+    })
+    .await
 }
 
 /// Status von Hand setzen. `verknuepft`, `verschoben` und `abgesagt` setzt nur der Abgleich mit
@@ -75,7 +97,10 @@ pub async fn besprechungsplanung_status_setzen(
     id: String,
     status: PlanStatus,
 ) -> Result<(), String> {
-    planning::status_setzen(&store, &id, status, now_ms())
+    blockierend(store, move |store| {
+        planning::status_setzen(store, &id, status, now_ms())
+    })
+    .await
 }
 
 /// Einladungstext (HTML und Text, Marke `lva-plan:<id>`) der gespeicherten Planung und Vermerk der
@@ -88,7 +113,10 @@ pub async fn besprechungsplanung_einladung(
     id: String,
     gestaltung: Option<Gestaltung>,
 ) -> Result<Einladung, String> {
-    planning::einladung_erzeugen(&store, &id, &gestaltung.unwrap_or_default(), now_ms())
+    blockierend(store, move |store| {
+        planning::einladung_erzeugen(store, &id, &gestaltung.unwrap_or_default(), now_ms())
+    })
+    .await
 }
 
 /// Die Verknuepfung der Planung mit ihrem Termin (`None`, solange nichts uebergeben wurde).
@@ -98,7 +126,7 @@ pub async fn besprechungsplanung_verknuepfung(
     store: State<'_, Arc<MeetingStore>>,
     id: String,
 ) -> Result<Option<PlanLink>, String> {
-    planning::verknuepfung_laden(&store, &id)
+    blockierend(store, move |store| planning::verknuepfung_laden(store, &id)).await
 }
 
 /// Einwilligung einer Person setzen (Zustimmung und Ablehnung nur mit Zeitpunkt und Kanal).
@@ -108,7 +136,10 @@ pub async fn besprechungsplanung_einwilligung_setzen(
     store: State<'_, Arc<MeetingStore>>,
     einwilligung: Consent,
 ) -> Result<(), String> {
-    planning::einwilligung_setzen(&store, &einwilligung, now_ms())
+    blockierend(store, move |store| {
+        planning::einwilligung_setzen(store, &einwilligung, now_ms())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -117,7 +148,7 @@ pub async fn besprechungsplanung_einwilligungen(
     store: State<'_, Arc<MeetingStore>>,
     id: String,
 ) -> Result<Vec<Consent>, String> {
-    planning::einwilligungen(&store, &id)
+    blockierend(store, move |store| planning::einwilligungen(store, &id)).await
 }
 
 /// Verlauf der Einwilligungen (aelteste zuerst), als Nachweis.
@@ -127,7 +158,10 @@ pub async fn besprechungsplanung_einwilligungs_verlauf(
     store: State<'_, Arc<MeetingStore>>,
     id: String,
 ) -> Result<Vec<EinwilligungsEintrag>, String> {
-    planning::einwilligungs_verlauf(&store, &id)
+    blockierend(store, move |store| {
+        planning::einwilligungs_verlauf(store, &id)
+    })
+    .await
 }
 
 /// Wie die Besprechung startet: mit Transkription nur, wenn sie geplant ist und alle Anwesenden
@@ -139,7 +173,10 @@ pub async fn besprechungsplanung_start_modus(
     id: String,
     anwesende: Vec<String>,
 ) -> Result<StartModus, String> {
-    planning::start_modus(&store, &id, &anwesende)
+    blockierend(store, move |store| {
+        planning::start_modus(store, &id, &anwesende)
+    })
+    .await
 }
 
 /// Die Verschiebung zur Kenntnis genommen: der Merker faellt, `verschoben` wird `verknuepft`.
@@ -149,7 +186,10 @@ pub async fn besprechungsplanung_verschiebung_bestaetigen(
     store: State<'_, Arc<MeetingStore>>,
     id: String,
 ) -> Result<PlanLink, String> {
-    planning::verschiebung_bestaetigen(&store, &id, now_ms())
+    blockierend(store, move |store| {
+        planning::verschiebung_bestaetigen(store, &id, now_ms())
+    })
+    .await
 }
 
 /// Loest die Bindung an den bisherigen Termin (nur auf ausdrueckliche Auswahl der Nutzerin bzw. des
@@ -160,7 +200,10 @@ pub async fn besprechungsplanung_identitaet_loesen(
     store: State<'_, Arc<MeetingStore>>,
     id: String,
 ) -> Result<PlanLink, String> {
-    planning::identitaet_loesen(&store, &id, now_ms())
+    blockierend(store, move |store| {
+        planning::identitaet_loesen(store, &id, now_ms())
+    })
+    .await
 }
 
 /// Bestaetigte Auswahl eines Termins aus dem Kalender-Cache (`event_key`): fuer mehrdeutige
@@ -172,7 +215,10 @@ pub async fn besprechungsplanung_termin_waehlen(
     id: String,
     event_key: String,
 ) -> Result<Vec<Ereignis>, String> {
-    adapter_c::termin_waehlen(&store, &id, &event_key, now_ms())
+    blockierend(store, move |store| {
+        adapter_c::termin_waehlen(store, &id, &event_key, now_ms())
+    })
+    .await
 }
 
 /// Gleicht alle offenen Planungen jetzt mit dem Kalender-Cache ab (sonst nach jedem Abruf).
