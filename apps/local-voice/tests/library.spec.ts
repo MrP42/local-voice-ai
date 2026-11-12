@@ -3955,7 +3955,7 @@ test("Erhaltenes Vorlesen übernimmt still einen in der Bibliothek geänderten T
  * eines Anhängens (4) bzw. beim Zusammenführen (5) verloren, weil beide mit
  * einem früher gelesenen Stand arbeiten. Die Tests beschreiben das gewünschte
  * Verhalten (die Änderung bleibt) und sind als erwarteter Fehlschlag markiert;
- * auf origin/main schlagen sie genauso fehl. Eigenes lva#546.
+ * auf origin/main schlagen sie genauso fehl. Siehe lva#546.
  */
 test("Anhängen scheitert und rollt zurück: eine zwischendurch geänderte Seite behält ihren Text", async ({
   page,

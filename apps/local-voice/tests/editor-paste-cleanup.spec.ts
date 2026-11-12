@@ -1738,7 +1738,7 @@ test("replace speaker on a left page while its raw-text write is still pending k
  * Fremdschreiber ändert den Text in der Datei, danach schreibt der Autosave den
  * geladenen alten Text zurück. Der Test beschreibt das gewünschte Verhalten (die
  * Änderung bleibt) und ist deshalb als erwarteter Fehlschlag markiert; auf
- * origin/main schlägt er genauso fehl. Eigenes lva#546.
+ * origin/main schlägt er genauso fehl. Siehe lva#546.
  */
 test("a foreign text change during a page load survives the autosave of the loaded page", async ({
   page,
