@@ -13,7 +13,7 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::rules;
 
-use crate::consent::person_schluessel;
+use crate::consent::identitaet;
 use crate::model::{
     AdapterKind, Consent, ConsentChannel, ConsentState, GoalType, Plan, PlanInput, PlanLink,
     PlanStatus, SyncState,
@@ -62,7 +62,8 @@ pub const MIGRATIONS: &[&str] = &["CREATE TABLE IF NOT EXISTS meeting_plans (
         instance_start INTEGER
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_plan_links_remote
-        ON meeting_plan_links(adapter, remote_id) WHERE remote_id IS NOT NULL;
+        ON meeting_plan_links(adapter, remote_id, COALESCE(instance_start, -1))
+        WHERE remote_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_meeting_plan_links_uid ON meeting_plan_links(ical_uid);
     CREATE TABLE IF NOT EXISTS meeting_plan_consents (
         plan_id TEXT NOT NULL REFERENCES meeting_plans(id) ON DELETE CASCADE,
@@ -464,17 +465,16 @@ pub fn links_offen(conn: &Connection) -> Res<Vec<PlanLink>> {
 }
 
 /// Setzt eine Einwilligung (legt sie an oder ersetzt den aktuellen Stand). Die
-/// Person wird hier normalisiert ([`person_schluessel`]), damit Abgleich und
+/// Person wird hier normalisiert ([`identitaet`]), damit Abgleich und
 /// Start-Tor sie finden. Zustimmung und Ablehnung brauchen einen Nachweis
 /// (Zeitpunkt und Kanal), sonst `einwilligung_nachweis_fehlt`. Jede Aenderung,
 /// auch ein Widerruf, wird zusaetzlich in `meeting_plan_consent_log` angehaengt;
 /// der bisherige Nachweis geht so nie verloren.
 pub fn einwilligung_setzen(conn: &Connection, c: &Consent, jetzt: i64) -> Res<()> {
     plan_laden(conn, &c.plan_id)?.ok_or("plan_nicht_gefunden")?;
-    let person = person_schluessel(&c.person);
-    if person.is_empty() {
-        return Err("daten_ungueltig".into());
-    }
+    let Some(person) = identitaet(&c.person) else {
+        return Err("person_ohne_identitaet".into());
+    };
     if c.state != ConsentState::Offen && !crate::consent::mit_nachweis(c) {
         return Err("einwilligung_nachweis_fehlt".into());
     }

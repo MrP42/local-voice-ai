@@ -63,7 +63,7 @@ pub struct Beobachtung {
     /// Termintext als Text. `None`: der Adapter liefert keinen Text, dann werden
     /// Marke und Block nicht geprueft.
     pub description: Option<String>,
-    /// Teilnehmende, normalisiert (siehe [`crate::consent::person_schluessel`]).
+    /// Teilnehmende als Identitaet (siehe [`crate::consent::identitaet`]).
     pub attendees: Vec<String>,
 }
 
@@ -85,6 +85,11 @@ pub enum Ereignis {
     Verwaist,
     /// Ein verwaister Termin ist wieder auffindbar.
     Wiederverknuepft,
+    /// Die Beobachtung gehoert zu einer anderen Instanz der Serie; verworfen.
+    AndereInstanz {
+        erwartet: Option<i64>,
+        gesehen: Option<i64>,
+    },
 }
 
 /// Ergebnis eines Abgleichs.
@@ -146,6 +151,20 @@ pub fn abgleichen(
     if b.change_key.is_some() {
         neu.change_key = b.change_key.clone();
     }
+    // Serientermin: eine andere Instanz ist ein anderer Termin. Sie ersetzt die
+    // gespeicherte nie still; die Beobachtung wird verworfen.
+    if link.instanz.is_some() && b.instanz != link.instanz {
+        return Abgleich {
+            link: link.clone(),
+            plan_status: None,
+            ereignisse: vec![Ereignis::AndereInstanz {
+                erwartet: link.instanz,
+                gesehen: b.instanz,
+            }],
+            schreiben_erlaubt: false,
+            teilnehmende: Vec::new(),
+        };
+    }
     if b.instanz.is_some() {
         neu.instanz = b.instanz;
     }
@@ -184,7 +203,9 @@ pub fn abgleichen(
 
     // Block der App pruefen. Ohne Text oder ohne Pruefsumme bleibt der bekannte
     // Konfliktstand, und `geprueft` ist falsch (keine Schreibfreigabe).
+    // Adapter C wertet nach dem Einfuegen nur die Marke aus, nie den Blockinhalt.
     let (konflikt, geprueft) = match (&b.description, &link.body_hash) {
+        _ if !schreibender_adapter(link.adapter) => (false, false),
         (Some(d), Some(h)) => match finde_block(d, &link.plan_id) {
             Some(block) => {
                 let gleich = &block_hash(&block) == h;

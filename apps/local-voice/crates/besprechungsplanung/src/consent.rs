@@ -5,7 +5,12 @@
 //! - Es zaehlen nur Einwilligungen DIESER Planung (`plan_id`).
 //! - Eine Zustimmung zaehlt nur mit Nachweis (Zeitpunkt und Kanal).
 //! - Widerspruechliche Eintraege derselben Person: eine Ablehnung gewinnt, sonst offen.
-//! - Eine anwesende Person ohne erkennbare Identitaet sperrt (sie kann nicht zugestimmt haben).
+//! - Eine anwesende Person ohne Identitaet sperrt (sie kann nicht zugestimmt haben).
+//!
+//! Identitaet ist NUR eine E-Mail-Adresse (`lokal@domain`) oder eine Personen-Id der
+//! App mit Praefix `id:` (z. B. `id:01H...`). Ein Anzeigename wie `Alex` ist keine
+//! Identitaet: zwei Personen gleichen Namens duerfen nicht zusammenfallen. Solche
+//! Anwesende sperren einzeln und werden nicht zusammengefasst.
 //! - Ohne erfasste Anwesende keine Transkription.
 
 use serde::{Deserialize, Serialize};
@@ -15,8 +20,32 @@ use crate::model::{Consent, ConsentState};
 /// Platzhalter in den Listen fuer eine anwesende Person ohne Identitaet.
 pub const UNBEKANNT: &str = "unbekannt";
 
-/// Normalisiert eine Person: E-Mail klein, ohne `mailto:`, ohne Leerraum; aus
-/// `Name <adresse>` zaehlt die Adresse. Leer heisst: keine Identitaet.
+/// Identitaet einer Person (siehe Moduldoku) oder `None`, wenn keine erkennbar ist.
+pub fn identitaet(s: &str) -> Option<String> {
+    let t = s.trim();
+    if let Some(id) = t.strip_prefix("id:") {
+        let id = id.trim();
+        let ok = !id.is_empty()
+            && id.len() <= 64
+            && id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+        return ok.then(|| format!("id:{id}"));
+    }
+    let p = person_schluessel(t);
+    let (lokal, domain) = p.split_once('@')?;
+    let ok = !lokal.is_empty()
+        && domain.contains('.')
+        && !domain.starts_with('.')
+        && !domain.ends_with('.')
+        && !p.chars().any(char::is_whitespace)
+        && p.matches('@').count() == 1;
+    ok.then_some(p)
+}
+
+/// Normalisiert eine E-Mail-Angabe: klein, ohne `mailto:`, ohne Leerraum; aus
+/// `Name <adresse>` zaehlt die Adresse. Prueft NICHT, ob eine Identitaet vorliegt
+/// (dafuer [`identitaet`]).
 pub fn person_schluessel(s: &str) -> String {
     let t = s.trim();
     let t = match (t.rfind('<'), t.rfind('>')) {
@@ -45,11 +74,12 @@ pub fn neue_einwilligungen(
 ) -> Vec<Consent> {
     let mut out: Vec<Consent> = Vec::new();
     for t in teilnehmende {
-        let p = person_schluessel(t);
-        if p.is_empty()
-            || bestehend
-                .iter()
-                .any(|c| c.plan_id == plan_id && person_schluessel(&c.person) == p)
+        let Some(p) = identitaet(t) else {
+            continue;
+        };
+        if bestehend
+            .iter()
+            .any(|c| c.plan_id == plan_id && identitaet(&c.person).as_deref() == Some(&p))
             || out.iter().any(|c| c.person == p)
         {
             continue;
@@ -88,7 +118,7 @@ fn stand(plan_id: &str, person: &str, einwilligungen: &[Consent]) -> ConsentStat
     let mut offen = false;
     for c in einwilligungen
         .iter()
-        .filter(|c| c.plan_id == plan_id && person_schluessel(&c.person) == person)
+        .filter(|c| c.plan_id == plan_id && identitaet(&c.person).as_deref() == Some(person))
     {
         match c.state {
             ConsentState::Abgelehnt => return ConsentState::Abgelehnt,
@@ -121,11 +151,11 @@ pub fn start_modus(
     let mut abgelehnt = Vec::new();
     let mut gesehen: Vec<String> = Vec::new();
     for a in anwesende {
-        let p = person_schluessel(a);
-        if p.is_empty() {
+        let Some(p) = identitaet(a) else {
+            // Jede nicht identifizierte Person sperrt fuer sich.
             offen.push(UNBEKANNT.to_string());
             continue;
-        }
+        };
         if gesehen.contains(&p) {
             continue;
         }

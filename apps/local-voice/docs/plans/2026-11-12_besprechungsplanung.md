@@ -66,12 +66,18 @@ ohne `wai-*`-Abhängigkeit, damit das Modul auch in einer offenen Ausgabe bleibt
 Vier Tabellen in der Besprechungs-Datenbank, nur `CREATE`: `meeting_plans`,
 `meeting_plan_links`, `meeting_plan_consents` (aktueller Stand) und `meeting_plan_consent_log`
 (Verlauf, nur anhängen) (Schema: `crates/besprechungsplanung/src/store.rs`).
+Bis zum Merge ist das Schema unveröffentlicht und darf noch umgebaut werden; danach kommen
+Änderungen nur als neue, angehängte Migrationsschritte.
 Teilnehmende bleiben in `calendar_event_attendees` und `meeting_participants` (Outlook führend).
 
-- Einwilligungen gelten je Planung und Person (normalisierte E-Mail-Adresse). Zustimmung und
+- Einwilligungen gelten je Planung und Person. Identität ist nur eine normalisierte
+  E-Mail-Adresse oder eine Personen-Id der App (`id:<id>`); ein Anzeigename ist keine Identität,
+  eine anwesende Person ohne Identität sperrt die Transkription einzeln. Zustimmung und
   Ablehnung brauchen Zeitpunkt und Kanal; ein Widerruf ist ein neuer Eintrag, der Verlauf bleibt.
 - Die Verknüpfung führt neben dem verdichteten Zustand eigene Merker für unbestätigte
   Verschiebung, Block-Konflikt und Absage sowie die Instanz eines Serientermins (ursprünglicher Beginn).
+  Eine Beobachtung einer anderen Instanz ersetzt die gespeicherte nie still, sie wird verworfen
+  und gemeldet. Je Adapter ist (Termin-Id, Instanz) eindeutig.
 - Beschädigte gespeicherte Werte werden als `daten_beschaedigt` gemeldet, nie still ersetzt.
 
 ### 3.3 Outlook-Anbindung: drei austauschbare Adapter
@@ -92,12 +98,13 @@ EWS scheidet aus (Abschaltung für Exchange Online).
 Die App schreibt einen eigenen Block: Kopfzeile „— Besprechungsplanung —“ bis zur Zeile
 `lva-plan:<id>`. Sichtbare Textmarke statt HTML-Kommentar, weil Outlook Kommentare beim
 Bearbeiten entfernt und der ICS-Feed nur Text liefert. Inhalte werden einzeilig gemacht und
-können keine fremde Marke einschleusen. Die Prüfsumme läuft nur über Buchstaben und Ziffern,
-damit Outlooks HTML→Text-Wandlung keinen falschen Konflikt erzeugt.
+können keine fremde Marke einschleusen. Die Prüfsumme toleriert nur Formatierung, damit
+Outlooks HTML→Text-Wandlung keinen falschen Konflikt erzeugt (Regel siehe unten).
 
 | Feld | Führend | Verhalten bei Änderung |
 |---|---|---|
-| Beginn, Ende, Ort, Beitritts-Link | Outlook | App übernimmt, Status „verschoben“ bis zur Bestätigung; Erinnerung und Automationen rechnen neu |
+| Beginn, Ende | Outlook | App übernimmt, Status „verschoben“ bis zur Bestätigung; Erinnerung und Automationen rechnen neu |
+| Ort, Beitritts-Link | Outlook | App übernimmt und meldet die Änderung; kein Status „verschoben“ |
 | Teilnehmende, Antwortstatus | Outlook | übernehmen; Neue bekommen Einwilligung „offen“ |
 | Absage | Outlook | Status „abgesagt“, Erinnerung aus, Planung bleibt; Wiederherstellung wird erkannt |
 | Ziel, Ergebnis, Agenda, Rollen, Hinweise | App | App schreibt nur ihren Block mit `If-Match`/`changeKey`; wurde der Block in Outlook geändert: Konflikt, nie überschreiben |
@@ -140,7 +147,7 @@ freigegeben hat. Die Planung ohne Transkription braucht keine Freigabe.
 
 | Thema | Umsetzung im Modul | Grundlage |
 |---|---|---|
-| Keine Aufzeichnung von Inhaltsdaten über den Zweck hinaus | Audio nur als Puffer bis das Protokoll steht; kein Audio-Export | interne Regelung zur Telekommunikation; DSGVO Art. 5 |
+| Keine Aufzeichnung von Inhaltsdaten über den Zweck hinaus | Audio nur als Puffer bis zur Freigabe des Protokolls; kein Audio-Export | interne Regelung zur Telekommunikation; DSGVO Art. 5 |
 | KI-Mitschrift nur mit freigegebenem Werkzeug | Freigabe durch die zuständige Stelle (auch für einen Pilot) | interne KI-Richtlinie; EU AI Act |
 | Einwilligung aller | je Termin und Person dokumentiert; Hinweis bereits in der Einladung | § 201 StGB; DSGVO Art. 6, 7 |
 | Keine Leistungs- und Verhaltenskontrolle | Redeanteile im strengen Profil aus; keine Auswertung über Personen hinweg | Mitbestimmung nach dem anwendbaren Personalvertretungs- bzw. Betriebsverfassungsrecht |

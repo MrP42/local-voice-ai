@@ -666,6 +666,7 @@ fn konflikt_ereignis_nur_einmal_auch_bei_absage() {
     let e = einladung(&p, &Gestaltung::default());
     let mut l = link("P1");
     l.body_hash = Some(e.block_hash.clone());
+    l.adapter = AdapterKind::Graph;
     let mut b = beob(10_000, Some(e.text.replace("Optionen", "Varianten")));
     b.cancelled = true;
     let a1 = abgleichen(PlanStatus::Verknuepft, &l, Some(&b), 1);
@@ -682,6 +683,7 @@ fn verschiebung_ueberlebt_konflikt() {
     let e = einladung(&p, &Gestaltung::default());
     let mut l = link("P1");
     l.body_hash = Some(e.block_hash.clone());
+    l.adapter = AdapterKind::Graph;
     // Verschoben und Block geaendert zugleich.
     let geaendert = e.text.replace("Optionen", "Varianten");
     let a = abgleichen(
@@ -940,13 +942,15 @@ fn codex5_pruefsumme_sieht_inhalt_aber_nicht_formatierung() {
         basis.replace("a-b", "ab"),
         basis.replace("Dauer", "dauer"),
         basis.replace("Stunden", "Stunden."),
+        // Nur echte Listenzeichen sind Formatierung, `-` und `o` sind Inhalt.
+        basis.replace("• ", "- "),
+        basis.replace("• Dauer", "Dauer"),
     ] {
         assert_ne!(block_hash(&anders), h, "{anders}");
     }
     for gleich in [
         basis.replace('\n', "\r\n"),
         basis.replace("• ", "*\t"),
-        basis.replace("• ", "-  "),
         basis.replace("• ", "· "),
         basis.replace("\n", "\n\n"),
         basis.replace("Dauer 1,5", "Dauer   1,5"),
@@ -1073,4 +1077,127 @@ fn abgeschlossene_planung_bleibt_auch_im_link_ruhig() {
     assert_eq!(a.plan_status, None);
     // Der Link spiegelt den Termin weiter, der Planstatus bleibt.
     assert!(a.link.abgesagt);
+}
+
+// ---------- Fixrunde 2 Codex (lva#535) ----------
+
+#[test]
+fn codex2b_anzeigenamen_sind_keine_identitaet() {
+    use crate::consent::{identitaet, UNBEKANNT};
+    assert_eq!(identitaet("Alex"), None);
+    assert_eq!(identitaet("alex@"), None);
+    assert_eq!(identitaet("a@b"), None);
+    assert_eq!(identitaet("a b@example.org"), None);
+    assert_eq!(
+        identitaet("Alex <ALEX@example.org>").as_deref(),
+        Some("alex@example.org")
+    );
+    assert_eq!(identitaet("id:01HXYZ").as_deref(), Some("id:01HXYZ"));
+    assert_eq!(identitaet("id:"), None);
+    // Zwei Personen namens Alex: beide sperren einzeln, keine Zustimmung kann gelten.
+    let mut z = zu("a@example.org", ConsentState::Zugestimmt);
+    z.person = "alex".into();
+    assert_eq!(
+        start_modus("P1", true, &["Alex".into(), "alex".into()], &[z]),
+        StartModus::NurNotizen {
+            nicht_geplant: false,
+            offen: vec![UNBEKANNT.into(), UNBEKANNT.into()],
+            abgelehnt: vec![],
+        }
+    );
+    // Personen-Id der App funktioniert.
+    let id = zu("id:P-7", ConsentState::Zugestimmt);
+    assert_eq!(
+        start_modus("P1", true, &["id:P-7".into()], &[id]),
+        StartModus::MitTranskription
+    );
+    // Speicher lehnt Anzeigenamen ab.
+    let c = db();
+    plan_anlegen(&c, "P1", &eingabe(), &Regeln::default(), 1).unwrap();
+    let mut n = zu("x", ConsentState::Zugestimmt);
+    n.person = "Alex".into();
+    assert_eq!(
+        einwilligung_setzen(&c, &n, 1).unwrap_err(),
+        "person_ohne_identitaet"
+    );
+    // Neue Teilnehmende ohne Identitaet bekommen keinen Eintrag.
+    assert!(neue_einwilligungen("P1", &[], &["Alex".into()]).is_empty());
+}
+
+#[test]
+fn codex5b_inhalt_mit_listenzeichen_bleibt_inhalt() {
+    let mut p = eingabe();
+    p.title = "* Dringend".into();
+    let a = einladung_aus("P1", &p, &Gestaltung::default());
+    p.title = "• Dringend".into();
+    let b = einladung_aus("P1", &p, &Gestaltung::default());
+    p.title = "Dringend".into();
+    let c = einladung_aus("P1", &p, &Gestaltung::default());
+    assert_ne!(a.block_hash, b.block_hash);
+    assert_ne!(a.block_hash, c.block_hash);
+    assert_ne!(b.block_hash, c.block_hash);
+    // Outlook-Listenformat fuer echte Punkte bleibt toleriert.
+    let outlook = a.text.replace("\n• ", "\n*\t");
+    assert_eq!(block_hash(&outlook), a.block_hash);
+}
+
+#[test]
+fn codex15_andere_serieninstanz_ersetzt_nichts() {
+    let c = db();
+    let (mut l, text) = graph_link_mit_block(&c);
+    l.instanz = Some(9_000);
+    let mut b = beob(18_000, Some(text));
+    b.instanz = Some(18_000);
+    let a = abgleichen(PlanStatus::Verknuepft, &l, Some(&b), 1);
+    assert_eq!(a.link, l);
+    assert!(!a.schreiben_erlaubt);
+    assert_eq!(a.plan_status, None);
+    assert_eq!(
+        a.ereignisse,
+        vec![Ereignis::AndereInstanz {
+            erwartet: Some(9_000),
+            gesehen: Some(18_000)
+        }]
+    );
+    // Ohne Instanzangabe ebenfalls nicht uebernehmen.
+    b.instanz = None;
+    assert!(!abgleichen(PlanStatus::Verknuepft, &l, Some(&b), 1).schreiben_erlaubt);
+}
+
+#[test]
+fn codex16_eindeutigkeit_je_instanz() {
+    let c = db();
+    plan_anlegen(&c, "P1", &eingabe(), &Regeln::default(), 1).unwrap();
+    plan_anlegen(&c, "P2", &eingabe(), &Regeln::default(), 1).unwrap();
+    plan_anlegen(&c, "P3", &eingabe(), &Regeln::default(), 1).unwrap();
+    let mut l1 = link("P1");
+    l1.remote_id = Some("SERIE".into());
+    l1.instanz = Some(1);
+    link_speichern(&c, &l1).unwrap();
+    let mut l2 = link("P2");
+    l2.remote_id = Some("SERIE".into());
+    l2.instanz = Some(2);
+    link_speichern(&c, &l2).unwrap();
+    let mut l3 = link("P3");
+    l3.remote_id = Some("SERIE".into());
+    l3.instanz = Some(2);
+    assert!(link_speichern(&c, &l3).is_err());
+}
+
+#[test]
+fn codex18_ics_wertet_blockinhalt_nicht_aus() {
+    let c = db();
+    let (mut l, text) = graph_link_mit_block(&c);
+    l.adapter = AdapterKind::IcsMarker;
+    let geaendert = text.replace("Optionen", "Varianten");
+    let a = abgleichen(
+        PlanStatus::Verknuepft,
+        &l,
+        Some(&beob(10_000, Some(geaendert))),
+        1,
+    );
+    assert_eq!(a.link.sync_state, SyncState::Ok);
+    assert!(!a.link.block_konflikt);
+    assert!(a.ereignisse.is_empty());
+    assert!(!a.schreiben_erlaubt);
 }

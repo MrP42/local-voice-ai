@@ -328,9 +328,10 @@ fn als_html(zeilen: &[Zeile], g: &Gestaltung) -> String {
 
 /// Pruefsumme eines Blocktexts (FNV-1a 64 Bit, hex). Toleriert wird nur
 /// Formatierung, wie sie Outlook bei der HTML->Text-Wandlung aendert: Zeilenenden,
-/// Leerraum (zusammengefasst), Leerzeilen und ein Aufzaehlungszeichen am Zeilenanfang
-/// (`•`, `*`, `·`, `-`, `o` gefolgt von Leerraum). Jedes andere Zeichen zaehlt, also
-/// auch Ziffern, Satzzeichen, Gross-/Kleinschreibung und Zeichen in URLs.
+/// Leerraum (zusammengefasst), Leerzeilen und die Gestalt des Listenzeichens: ein
+/// fuehrendes `•`, `*` oder `·` mit Leerraum danach gilt als dasselbe Listenzeichen
+/// `•` (es bleibt Teil der Pruefsumme). Alles andere zaehlt, auch `-` oder `o` am
+/// Zeilenanfang, Ziffern, Satzzeichen, Gross-/Kleinschreibung und Zeichen in URLs.
 /// Keine Kryptographie: nur Aenderungserkennung.
 pub fn block_hash(block_text: &str) -> String {
     let norm = block_text
@@ -338,12 +339,11 @@ pub fn block_hash(block_text: &str) -> String {
         .replace('\r', "\n")
         .lines()
         .map(|z| {
-            let z = z.trim();
-            let z = match z.split_once(char::is_whitespace) {
-                Some(("•" | "*" | "·" | "-" | "o", rest)) => rest,
+            let z = z.split_whitespace().collect::<Vec<_>>().join(" ");
+            match z.split_once(' ') {
+                Some(("•" | "*" | "·", rest)) => format!("• {rest}"),
                 _ => z,
-            };
-            z.split_whitespace().collect::<Vec<_>>().join(" ")
+            }
         })
         .filter(|z| !z.is_empty())
         .collect::<Vec<_>>()
@@ -413,11 +413,18 @@ fn esc(s: &str) -> String {
 /// Zeilenumbrueche im Inhalt wuerden die Blockstruktur brechen; eine Zeile daraus.
 /// Ausserdem darf kein Inhalt eine fremde Marke einschleusen.
 fn einzeilig(s: &str) -> String {
-    s.split_whitespace()
+    let t = s
+        .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
         .replace(MARKE_PRAEFIX, "lva-plan\u{2060}:")
-        .replace(BLOCK_KOPF, "Besprechungsplanung")
+        .replace(BLOCK_KOPF, "Besprechungsplanung");
+    // Inhalt, der wie ein Listenzeichen beginnt, darf in der Pruefsumme nicht mit
+    // echter Listenformatierung zusammenfallen: Wortverbinder nach dem Zeichen.
+    match t.split_once(' ') {
+        Some((k @ ("•" | "*" | "·"), rest)) => format!("{k}\u{2060} {rest}"),
+        _ => t,
+    }
 }
 
 fn nicht_leer(s: Option<&str>) -> Option<&str> {
