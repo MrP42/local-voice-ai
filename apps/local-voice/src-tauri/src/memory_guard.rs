@@ -126,7 +126,7 @@ pub async fn check_before_load(app: &AppHandle, need_mb: u64, what: &str) -> Res
 
 /// Entlaedt alles, was gerade nicht arbeitet: Diktatmodell (Leerlauf),
 /// Chat-Server (nicht beschaeftigt) und Embedding-Server.
-async fn release_idle(app: &AppHandle) {
+pub(crate) async fn release_idle(app: &AppHandle) {
     if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
         let tm = tm.inner().clone();
         let _ = tokio::task::spawn_blocking(move || tm.unload_if_idle(Duration::ZERO)).await;

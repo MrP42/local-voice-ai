@@ -2998,6 +2998,13 @@
       }
     },
     "llm": {
+        "unavailable": {
+          "short": "nicht installiert",
+          "activeBadge": "gewählt · läuft hier nicht",
+          "activeHint": "Die CLI dieses Abos ist auf diesem PC nicht installiert. Die App nutzt stattdessen ein anderes freigegebenes Modell, bis die CLI da ist.",
+          "fallback": "Läuft auf diesem PC nicht (CLI nicht installiert). Die App nutzt stattdessen {{model}}.",
+          "noFallback": "Läuft auf diesem PC nicht (CLI nicht installiert). Gib ein lokales Modell frei, damit die App ohne Installation arbeitet."
+        },
         "cliStatus": {
           "loggedIn": "Angemeldet.",
           "loggedOut": "Nicht angemeldet. Die Anmeldung öffnet ein Fenster und danach den Browser.",

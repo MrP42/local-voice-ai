@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import type { FunctionModel, LlmConnection, LlmModelConfig } from "@/bindings";
 import { useSettings } from "@/hooks/useSettings";
+import { useLlmAvailability } from "@/lib/llmAvailability";
 import { modelLabel } from "@/lib/modelNames";
 
 export interface FunctionLlm {
@@ -16,7 +17,8 @@ export interface FunctionLlm {
  * Welches Sprachmodell eine Funktion (`function_models`, z. B. `read_aloud`)
  * nutzt: der eigene Eintrag, sonst das aktive Modell -- dieselbe Auflösung wie
  * `FunctionModelChip` und `for_function` in Rust. Für Hinweise vor dem Start,
- * wo der Text verarbeitet wird.
+ * wo der Text verarbeitet wird. Eine Abo-Verbindung ohne installierte CLI
+ * zählt nicht; dann gilt der Ersatz (lokales Modell zuerst), wie in Rust.
  */
 export function useFunctionLlm(fn: string): FunctionLlm {
   const { getSetting } = useSettings();
@@ -27,9 +29,13 @@ export function useFunctionLlm(fn: string): FunctionLlm {
     Record<string, FunctionModel>
   >;
   const ownId = entries[fn]?.model_id ?? null;
+  const { unavailable_connection_ids: missing, fallback_model_id: fallbackId } =
+    useLlmAvailability(JSON.stringify(connections.map((c) => c.id)));
   return useMemo(() => {
     const on = new Map(
-      connections.filter((c) => c.enabled !== false).map((c) => [c.id, c]),
+      connections
+        .filter((c) => c.enabled !== false && !missing.includes(c.id))
+        .map((c) => [c.id, c]),
     );
     const pick = (id: string | null) => {
       const model = models.find(
@@ -37,12 +43,12 @@ export function useFunctionLlm(fn: string): FunctionLlm {
       );
       return model ? { model, connection: on.get(model.connection_id)! } : null;
     };
-    const shown = pick(ownId) ?? pick(activeId);
+    const shown = pick(ownId) ?? pick(activeId) ?? pick(fallbackId);
     if (!shown) return { model: null, connection: null, local: false };
     return {
       model: modelLabel(shown.model.remote_id, shown.model.label),
       connection: shown.connection.label,
       local: shown.connection.kind === "local",
     };
-  }, [connections, models, activeId, ownId]);
+  }, [connections, models, activeId, ownId, missing, fallbackId]);
 }

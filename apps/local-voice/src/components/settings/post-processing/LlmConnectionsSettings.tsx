@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Select as FluentSelect } from "@fluentui/react-components";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useTranslation } from "react-i18next";
@@ -18,6 +24,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useSettings } from "../../../hooks/useSettings";
+import { useLlmAvailability } from "@/lib/llmAvailability";
 import { modelLabel } from "@/lib/modelNames";
 
 /// Stufen fuer den Standard-Effort (alle Abo-Modelle kennen sie).
@@ -200,6 +207,15 @@ export const LlmConnectionsSettings: React.FC = () => {
   const connections = (getSetting("llm_connections") ?? []) as LlmConnection[];
   const models = (getSetting("llm_models") ?? []) as LlmModelConfig[];
   const activeId = (getSetting("llm_active_model_id") ?? null) as string | null;
+  // Abo-Verbindungen ohne installierte CLI laufen hier nicht; die App nutzt
+  // dann den Ersatz (lokales Modell zuerst).
+  const { unavailable_connection_ids: missing, fallback_model_id: fallbackId } =
+    useLlmAvailability(JSON.stringify(connections.map((c) => c.id)));
+  const activeConnectionId =
+    models.find((m) => m.id === activeId)?.connection_id ?? null;
+  const activeMissing =
+    activeConnectionId !== null && missing.includes(activeConnectionId);
+  const fallbackModel = models.find((m) => m.id === fallbackId) ?? null;
   const templates = (getSetting("post_process_providers") ??
     []) as PostProcessProvider[];
   const apiKeys = (getSetting("post_process_api_keys") ?? {}) as Record<
@@ -288,6 +304,21 @@ export const LlmConnectionsSettings: React.FC = () => {
               <span className="text-sm text-text/60">
                 {t("settings.llm.active.none")}
               </span>
+            )}
+            {activeMissing && (
+              <p
+                className="mt-1 text-xs text-orange-500"
+                data-llm-active-fallback={fallbackModel?.id ?? ""}
+              >
+                {fallbackModel
+                  ? t("settings.llm.unavailable.fallback", {
+                      model: modelLabel(
+                        fallbackModel.remote_id,
+                        fallbackModel.label,
+                      ),
+                    })
+                  : t("settings.llm.unavailable.noFallback")}
+              </p>
             )}
           </div>
         </SettingContainer>
@@ -385,6 +416,7 @@ export const LlmConnectionsSettings: React.FC = () => {
               models={models.filter((m) => m.connection_id === connection.id)}
               apiKey={apiKeys[connection.id] ?? ""}
               activeId={activeId}
+              unavailable={missing.includes(connection.id)}
               run={run}
             />
           ))}
@@ -411,6 +443,8 @@ interface RowProps {
   models: LlmModelConfig[];
   apiKey: string;
   activeId: string | null;
+  /** Abo-Verbindung, deren CLI auf diesem Rechner fehlt. */
+  unavailable: boolean;
   run: (
     call: () => Promise<{ status: string; error?: unknown }>,
   ) => Promise<boolean>;
@@ -424,6 +458,7 @@ const ConnectionRow: React.FC<RowProps> = ({
   models,
   apiKey,
   activeId,
+  unavailable,
   run,
 }) => {
   const { t } = useTranslation();
@@ -508,6 +543,13 @@ const ConnectionRow: React.FC<RowProps> = ({
         {!enabled && (
           <Badge variant="secondary">{t("settings.llm.connections.off")}</Badge>
         )}
+        {enabled && unavailable && (
+          <span data-connection-unavailable={connection.id}>
+            <Badge variant="warning">
+              {t("settings.llm.unavailable.short")}
+            </Badge>
+          </span>
+        )}
         {models.length > 0 && (
           <span className="text-xs text-text/50">
             {t("settings.llm.connections.releasedCount", {
@@ -586,7 +628,10 @@ const ConnectionRow: React.FC<RowProps> = ({
           )}
           {complianceProfile === "eu" &&
             BLOCKED_UNDER_EU.has(connection.kind) && (
-              <p className="text-xs text-text/80" data-eu-hint={connection.kind}>
+              <p
+                className="text-xs text-text/80"
+                data-eu-hint={connection.kind}
+              >
                 {t("settings.llm.connections.blockedUnderEu")}
               </p>
             )}
@@ -745,6 +790,7 @@ const ConnectionRow: React.FC<RowProps> = ({
                   key={m.id}
                   model={m}
                   isActive={activeId === m.id}
+                  unavailable={unavailable}
                   run={run}
                 />
               ))}
@@ -762,8 +808,9 @@ const ConnectionRow: React.FC<RowProps> = ({
 const ModelRow: React.FC<{
   model: LlmModelConfig;
   isActive: boolean;
+  unavailable: boolean;
   run: RowProps["run"];
-}> = ({ model, isActive, run }) => {
+}> = ({ model, isActive, unavailable, run }) => {
   const { t } = useTranslation();
   const assessment = useComplianceStore((s) => s.byModel[model.id]);
   const { getSetting } = useSettings();
@@ -835,7 +882,17 @@ const ModelRow: React.FC<{
         </span>
         <ModelBadges assessment={assessment} />
         {isActive && (
-          <Badge variant="success">{t("settings.llm.model.active")}</Badge>
+          <span
+            title={
+              unavailable ? t("settings.llm.unavailable.activeHint") : undefined
+            }
+          >
+            <Badge variant={unavailable ? "warning" : "success"}>
+              {unavailable
+                ? t("settings.llm.unavailable.activeBadge")
+                : t("settings.llm.model.active")}
+            </Badge>
+          </span>
         )}
         <span className="flex-1" />
         {efforts.length > 0 && (

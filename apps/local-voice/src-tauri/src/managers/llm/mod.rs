@@ -171,6 +171,13 @@ async fn ensure_local_with(model_id: &str, vision: bool) -> Result<String, Strin
         .map(|m| m.len() / (1024 * 1024))
         .unwrap_or(0);
     crate::memory_guard::check_before_load(runtime.app_handle(), size_mb, model_id).await?;
+    // Das Start-Gate des Servers verlangt Modell plus Reserve frei. Reicht das
+    // nicht, erst eigene ruhende Modelle (Diktat, Embedding) entladen, statt
+    // gleich "zu wenig Arbeitsspeicher" zu melden.
+    if crate::process_guard::check_ram_for_start(size_mb).is_err() {
+        crate::memory_guard::release_idle(runtime.app_handle()).await;
+        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+    }
     let (_, backend, binary) = runtime.resolve_runtime().await?;
     let gpu_layers = if backend == "cpu" { 0 } else { 99 };
     let context_tokens = plan_context(&model_path, &backend).await;
