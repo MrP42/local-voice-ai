@@ -82,13 +82,20 @@ impl Brief {
     }
 }
 
-/// Der Brief zum Termin. `self_emails`: die eigenen Adressen (Einstellung
-/// „Meine E-Mail-Adressen“).
-pub fn brief_scope(
+/// Die anderen Teilnehmenden eines Termins (ohne mich): Anzeigenamen (auch der
+/// noch unbekannten) und die Kennungen der schon bekannten Personen. Gemeinsame
+/// Grundlage fuer den Brief und die Vorbereitung (`prep.rs`): es gibt nur diese
+/// eine Zuordnung von Termin-Teilnehmenden zu Personen.
+pub(crate) struct EventPeople {
+    pub names: Vec<String>,
+    pub ids: Vec<String>,
+}
+
+pub(crate) fn event_people(
     store: &MeetingStore,
     event: &CalEvent,
     self_emails: &[String],
-) -> Result<Brief> {
+) -> Result<EventPeople> {
     let own = own_set(self_emails);
     let mut names: Vec<String> = Vec::new();
     let mut seen_names: HashSet<String> = HashSet::new();
@@ -123,6 +130,17 @@ pub fn brief_scope(
             }
         }
     }
+    Ok(EventPeople { names, ids })
+}
+
+/// Der Brief zum Termin. `self_emails`: die eigenen Adressen (Einstellung
+/// „Meine E-Mail-Adressen“).
+pub fn brief_scope(
+    store: &MeetingStore,
+    event: &CalEvent,
+    self_emails: &[String],
+) -> Result<Brief> {
+    let EventPeople { names, ids } = event_people(store, event, self_emails)?;
 
     let shared = {
         let conn = store.get_connection()?;

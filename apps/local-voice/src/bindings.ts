@@ -5965,6 +5965,43 @@ async peopleBriefOpen(eventKey: string) : Promise<Result<null, string>> {
 async peopleBriefPending() : Promise<string | null> {
     return await TAURI_INVOKE("people_brief_pending");
 },
+/**
+ * Die Vorbereitung zu einem Termin. `view`: die Karte wird angezeigt (nur Regeln
+ * oder ein lokales Modell); `click`: der Nutzer hat „Mit KI zusammenfassen“
+ * gedrueckt (erst dann geht etwas an ein nicht-lokales Modell). Leer (`points`
+ * leer), wenn die Funktion aus ist oder es keinen frueheren Stoff gibt: die
+ * Oberflaeche zeigt dann nichts. `calendar_event_not_found` bei unbekanntem Termin.
+ */
+async meetingPrepGet(eventKey: string, trigger: PrepTrigger) : Promise<Result<Prep, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_prep_get", { eventKey, trigger }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung „Vorbereitung vor dem Termin“ (Standard an).
+ */
+async changeMeetingPrepEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_prep_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung „Vorab fuer die Termine des Tages erzeugen“ (Standard aus).
+ */
+async changeMeetingPrepPrefetchSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_prep_prefetch_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ttsSpeakText(text: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_speak_text", { text }) };
@@ -9496,6 +9533,16 @@ meeting_reminder_lead_s?: number;
  */
 meeting_reminder_all_events?: boolean; 
 /**
+ * G4 (#499): vor einem Termin zwei bis drei offene Punkte aus den eigenen
+ * frueheren Notizen zeigen („Vorbereitet aus deinen letzten Notizen“). Standard an.
+ */
+meeting_prep_enabled?: boolean; 
+/**
+ * G4 (#499): die Vorbereitung vorab fuer die Termine des Tages erzeugen (nach dem
+ * ersten Kalenderabruf des Tages), nur mit einem lokalen Modell. Standard aus.
+ */
+meeting_prep_prefetch?: boolean; 
+/**
  * M6-P6e (F21, E13): der lokale MCP-Server (`local-voice-ai.exe --mcp`)
  * gibt Besprechungsinhalte an einen KI-Client weiter. Standard AUS; der
  * Server liest diese Datei bei jedem Aufruf frisch (`mcp::read_settings`),
@@ -12884,6 +12931,70 @@ export type PhononVoiceErrorKind = "consent_required" | "no_key" | "key_store" |
  */
 export type PlacedInfo = { rel: string; bytes: number }
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
+/**
+ * Die Vorbereitung zu einem Termin. `points` leer = nichts anzuzeigen.
+ */
+export type Prep = { points: PrepPoint[]; mode: PrepMode; 
+/**
+ * Wie viele fruehere Besprechungen in die Auswahl kamen.
+ */
+meetings: number; 
+/**
+ * Ein nicht-lokales Modell koennte zusammenfassen, wurde aber nicht gefragt:
+ * die Karte bietet „Mit KI zusammenfassen“ an, erst der Klick sendet.
+ */
+summarizable: boolean }
+/**
+ * Art eines offenen Punktes.
+ */
+export type PrepKind = 
+/**
+ * Offene Aufgabe.
+ */
+"task" | 
+/**
+ * Ungeklaerte Frage.
+ */
+"question" | 
+/**
+ * Zugesagte Lieferung.
+ */
+"delivery"
+/**
+ * Womit die Punkte entstanden sind.
+ */
+export type PrepMode = 
+/**
+ * Das gewaehlte Sprachmodell hat ausgewaehlt und gekuerzt.
+ */
+"model" | 
+/**
+ * Regelbasiert: Texte aus den Notizen ohne Umformulierung.
+ */
+"rules"
+export type PrepPoint = { text: string; kind: PrepKind; source: PrepSource }
+/**
+ * Woher ein Punkt stammt: die fruehere Besprechung (Sprung dorthin).
+ */
+export type PrepSource = { meeting_id: string; title: string; 
+/**
+ * Zeitpunkt der Besprechung in Sekunden.
+ */
+at: number }
+/**
+ * Was die Oberflaeche melden darf: nur Anzeigen oder Klick. Vorab gibt es von
+ * dort nicht, damit das Backend die Regel („nicht-lokal nur auf Klick“) selbst
+ * durchsetzt und nicht der Aufrufer.
+ */
+export type PrepTrigger = 
+/**
+ * Die Karte wird angezeigt.
+ */
+"view" | 
+/**
+ * Der Nutzer hat „Mit KI zusammenfassen“ gedrueckt.
+ */
+"click"
 /**
  * Das Tupel, an das die Freigabe gebunden ist. Aendert sich eines der Felder,
  * ist die Freigabe ungueltig und muss erneut bestaetigt werden.

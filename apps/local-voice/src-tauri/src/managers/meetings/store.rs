@@ -2095,6 +2095,9 @@ impl MeetingStore {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let audio_paths = Self::soft_delete_in_tx(&tx, id, now)?;
         tx.commit()?;
+        // G4 (#499): der Zwischenspeicher der Terminvorbereitung haelt Notiztexte
+        // frueherer Besprechungen; mit der geloeschten Besprechung gehen sie mit.
+        crate::managers::people::prep::cache_clear();
         Ok(audio_paths)
     }
 

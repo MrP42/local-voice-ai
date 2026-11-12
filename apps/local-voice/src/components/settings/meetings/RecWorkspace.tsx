@@ -16,6 +16,7 @@ import { TabList } from "../../ui/TabList";
 import type { LowerTab } from "@/lib/meetingTabs";
 import type { RecLayout } from "./useRecLayout";
 import { useStableSlot } from "./useStableSlot";
+import { PrepSlotContext } from "./people/prepSlot";
 
 /** Die Stellen, an denen die Detailansicht ihre Teile einhaengt. */
 export interface RecSlotRefs {
@@ -165,6 +166,8 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
   const narrow = mode === "narrow";
   const fluss = narrow && flow;
   const [unterOffen, setUnterOffen] = useState(true);
+  // G4 (#499): Platz fuer die schwebende Vorbereitungskarte (unten in der Notizflaeche).
+  const [prepSlot, setPrepSlot] = useState<HTMLDivElement | null>(null);
   const drawerOpen = drawerWanted && !sessionsColumn;
   const showColumn = sessionsColumn || drawerOpen;
   const containerRef = layout.ref;
@@ -324,7 +327,7 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
   const lowerCard = (
     <div
       data-testid="rec-lower"
-      className="flex min-h-[8rem] min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-mid-gray/20 bg-background"
+      className="relative flex min-h-[8rem] min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-mid-gray/20 bg-background"
     >
       <TabList
         compact
@@ -362,6 +365,12 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
           {chatBody}
         </div>
       )}
+      <div
+        ref={setPrepSlot}
+        aria-live="polite"
+        data-testid="prep-slot"
+        className="pointer-events-none absolute inset-x-2 bottom-2 z-10"
+      />
     </div>
   );
 
@@ -435,7 +444,7 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
   );
 
   return (
-    <>
+    <PrepSlotContext.Provider value={prepSlot}>
       <div
         ref={containerRef}
         data-mode={mode}
@@ -565,6 +574,6 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
       {createPortal(contentCard, contentSlot.el)}
       {createPortal(controlsPiece, controlsSlot.el)}
       {createPortal(lowerCard, lowerSlot.el)}
-    </>
+    </PrepSlotContext.Provider>
   );
 };

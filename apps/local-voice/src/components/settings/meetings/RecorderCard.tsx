@@ -18,6 +18,7 @@ import { Alert } from "../../ui/Alert";
 import { translateMeetingError } from "./meetingErrors";
 import { MeetingChatNotice } from "./MeetingChatNotice";
 import { MeetingImportAction } from "./MeetingImportAction";
+import { PrepCard } from "./people/PrepCard";
 import { YoutubeLinkAction } from "./youtube/YoutubeLinkAction";
 import { NO_PROJECT, StartRecordingDialog } from "./StartRecordingDialog";
 import { flushAllNotes } from "./notes/useNotesAutosave";
@@ -479,6 +480,9 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
   const paused = phase === "paused";
   const active = recording || paused;
   const showSystem = startedWithSystem ?? captureSetting;
+  // G4 (#499): die Vorbereitung gehoert zum Termin der naechsten bzw. laufenden Aufnahme.
+  const prepEvent =
+    eventChoice?.event ?? (!active && !suggestionCleared ? suggestion : null);
 
   // Ein Text je Ursache: Ueberlauf und fehlende Spracherkennung betreffen
   // beide Kanaele, sollen aber nur einmal erscheinen.
@@ -625,6 +629,8 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
             </div>
           </div>
         )}
+
+        {prepEvent && <PrepCard eventKey={prepEvent.key} />}
 
         {active && (
           <div data-testid="health-warnings" className="space-y-2">
