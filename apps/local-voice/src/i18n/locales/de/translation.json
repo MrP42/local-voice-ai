@@ -7735,6 +7735,17 @@
     "transcript": "Gespräch",
     "local": "lokal",
     "seconds": "{{value}} s",
+    "denken": {
+      "laeuft": "Denkt nach",
+      "fertig": "Nachgedacht · {{dauer}} s",
+      "titel": "Denkprozess",
+      "modell": "Fragt {{modell}}",
+      "arbeitet": "Arbeitet an der Antwort …",
+      "sofort": "Schnelle Antwort lokal mit {{modell}}",
+      "keineSchritte": "Keine Zwischenschritte",
+      "kontext_one": "{{count}} passende Stelle in den eigenen Inhalten gefunden",
+      "kontext_other": "{{count}} passende Stellen in den eigenen Inhalten gefunden"
+    },
     "aiAvatar": "KI",
     "latencyDetail": "Spracherkennung {{stt}} ms · erster Satz {{llm}} ms · Stimme {{tts}} ms",
     "firstSound": "⏱ {{last}} (Ø {{median}})",

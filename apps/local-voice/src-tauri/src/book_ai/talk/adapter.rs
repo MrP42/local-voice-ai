@@ -199,6 +199,7 @@ impl TalkModel for CliModel {
                         require_usage: true,
                         preview: None,
                         preview_switch: None,
+                        stdout_zeile: None,
                     },
                 )
             })

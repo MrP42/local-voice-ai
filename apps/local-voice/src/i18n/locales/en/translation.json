@@ -7735,6 +7735,17 @@
     "transcript": "Conversation",
     "local": "local",
     "seconds": "{{value}} s",
+    "denken": {
+      "laeuft": "Thinking",
+      "fertig": "Thought for {{dauer}} s",
+      "titel": "Thought process",
+      "modell": "Asking {{modell}}",
+      "arbeitet": "Working on the answer …",
+      "sofort": "Quick local reply with {{modell}}",
+      "keineSchritte": "No intermediate steps",
+      "kontext_one": "Found {{count}} matching passage in your own content",
+      "kontext_other": "Found {{count}} matching passages in your own content"
+    },
     "aiAvatar": "AI",
     "latencyDetail": "Speech recognition {{stt}} ms · first sentence {{llm}} ms · voice {{tts}} ms",
     "firstSound": "⏱ {{last}} (avg {{median}})",
