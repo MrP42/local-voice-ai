@@ -95,7 +95,7 @@ test.describe("Neu transkribieren: Bereich", () => {
     await expect(field(page, "retranscribe-range-start")).toHaveValue("0:00");
     await expect(field(page, "retranscribe-range-end")).toHaveValue("59:00");
     await expect(dialog.getByTestId("retranscribe-range-hint")).toHaveText(
-      "Nur der Bereich wird transkribiert; das bisherige Transkript bleibt als Fassung erhalten.",
+      "Nur der gewählte Bereich wird transkribiert; die Zeitstempel bleiben an der Aufnahme ausgerichtet.",
     );
   });
 
