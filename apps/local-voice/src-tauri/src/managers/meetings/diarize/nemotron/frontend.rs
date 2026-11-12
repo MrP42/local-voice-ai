@@ -139,7 +139,7 @@ impl MelFrontend {
         out.reserve(count * MEL_BINS);
         for row in first..first + count {
             if row >= valid {
-                out.extend(std::iter::repeat(0.0).take(MEL_BINS));
+                out.extend(std::iter::repeat_n(0.0, MEL_BINS));
                 continue;
             }
             // Fenster [160 * row - 200, 160 * row + 200) im Signal.

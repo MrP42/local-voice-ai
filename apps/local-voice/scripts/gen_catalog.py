@@ -12,13 +12,26 @@ Merges three sources into one catalog.json:
 
 Emits catalog.json to be committed and `include_str!`'d into the Rust binary.
 Run:  HF_TOKEN=$(hf auth token) uv run gen_catalog.py [out_path]
+      (default out_path: the checked-in src-tauri/src/catalog/catalog.json)
+
+The generator owns only the entries of the `handy-computer` org (the ASR models, ids
+`handy-computer/...`). Everything else in the catalog is maintained by hand and has no
+generator source: Piper voices and runtimes, llama.cpp runtimes and language models,
+diarization (Sortformer, Nemotron-3), speaker embedding, Ablage embedding, Phonon.
+A run therefore reads the checked-in catalog, keeps every entry whose id is not an org
+repo exactly as it is (same order, appended after the generated ones) and replaces only
+the generated part. Corrections to a generated entry that the card does not carry
+(e.g. a wrong license) live in LICENSE_OVERRIDES below, not in catalog.json, so the next
+run does not undo them. `scripts/test_gen_catalog.py` proves both offline.
 """
 import json, os, re, sys, math, struct, datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from huggingface_hub import HfApi, HfFileSystem
 
 ORG = "handy-computer"
 CATALOG_VERSION = 2
+# The checked-in catalog: source of the hand-maintained entries and default output.
+CATALOG_PATH = os.path.normpath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "src-tauri", "src", "catalog", "catalog.json"))
 
 # Download sources tried in order after Hugging Face itself. Each entry is a
 # base URL; the full file URL is `{mirror}/{repo_id}/{revision}/{filename}`
@@ -68,6 +81,13 @@ CURATION = {
 OVERRIDES = {
     "granite-4.0-1b-speech": {"timestamps": "none"},
     "granite-speech-4.1-2b": {"timestamps": "none"},
+}
+# slug -> {"license": ..., "license_url"?: ...}. The HF card of the GGUF repo carries a
+# license that differs from the base model's; the base model's terms apply to the weights.
+# Applied after the card, so it wins even if the card changes. Remove once the card is fixed.
+LICENSE_OVERRIDES = {
+    # card says cc-by-4.0; base model nvidia/parakeet-unified-en-0.6b is under the NVIDIA Open Model License
+    "parakeet-unified-en-0.6b": {"license": "NVIDIA Open Model License"},
 }
 
 # ───────────────────────── helpers ──────────────────────────────────────────
@@ -120,8 +140,13 @@ def auto_desc(langs, caps):
         base = f"{lang} speech-to-text"
     return base + (" with " + ", ".join(feats) + "." if feats else ".")
 
-api = HfApi(token=os.environ.get("HF_TOKEN"))
-fs  = HfFileSystem(token=os.environ.get("HF_TOKEN"))
+api = None   # HfApi, set by connect() — keeps the pure parts importable offline (tests)
+fs  = None   # HfFileSystem, set by connect()
+def connect():
+    global api, fs
+    from huggingface_hub import HfApi, HfFileSystem
+    api = HfApi(token=os.environ.get("HF_TOKEN"))
+    fs  = HfFileSystem(token=os.environ.get("HF_TOKEN"))
 
 GGUF_WANT = {"general.architecture", "general.name", "general.basename", "general.size_label"}
 def probe_header(repo, filename, nbytes=65536):
@@ -203,6 +228,20 @@ def gguf_files(repo, siblings):
         raise ValueError(f"{repo}: missing/invalid size or sha256 metadata for {', '.join(invalid)}")
     return sorted(files, key=lambda f: f["size_bytes"])
 
+def license_fields(cd, s):
+    """`license` / `license_url` of a generated entry from its card, then LICENSE_OVERRIDES.
+
+    Card license "other" is no information: carry the card's own license_name and link
+    instead, so the notices and the model list can name the real terms.
+    """
+    other = cd.get("license") == "other"
+    out = {
+        "license": (cd.get("license_name") or cd.get("license")) if other else cd.get("license"),
+        "license_url": cd.get("license_link") if other else None,
+    }
+    out.update(LICENSE_OVERRIDES.get(s, {}))
+    return out
+
 def build(repo):
     info = api.model_info(repo, files_metadata=True)
     if not info.sha:
@@ -253,10 +292,7 @@ def build(repo):
         "parameters": gg.get("general.size_label"),          # "0.6B" / "1.7B" / "62M"
         "description": cur.get("desc") or auto_desc(langs, caps),
         "base_model": cd.get("base_model"),
-        # Card license "other" is no information: carry the card's own license_name and
-        # link instead, so the notices and the model list can name the real terms.
-        "license": (cd.get("license_name") or cd.get("license")) if cd.get("license") == "other" else cd.get("license"),
-        "license_url": cd.get("license_link") if cd.get("license") == "other" else None,
+        **license_fields(cd, s),
         "language_count": len(langs),
         "languages": langs,
         "capabilities": caps,
@@ -268,7 +304,76 @@ def build(repo):
         "recommended_rank": cur.get("rank"),          # editorial sort position (independent)
     }
 
+def is_generated(entry):
+    """True for the entries this script owns: the repos of the org."""
+    return entry["id"].startswith(ORG + "/")
+
+def assemble(generated, existing):
+    """Generated entries first, then every hand-maintained entry of `existing` untouched.
+
+    `existing` is the previous catalog's `models` list. Entries the generator owns are
+    dropped from it (they are replaced by `generated`); all others keep their content
+    and relative order. Refuses duplicate ids instead of silently shadowing one.
+    """
+    kept = [m for m in existing if not is_generated(m)]
+    models = list(generated) + kept
+    seen, dup = set(), []
+    for m in models:
+        if m["id"] in seen: dup.append(m["id"])
+        seen.add(m["id"])
+    if dup:
+        raise ValueError(f"duplicate catalog ids: {', '.join(sorted(set(dup)))}")
+    return models
+
+def read_catalog(path):
+    """Existing catalog; a missing or unreadable file is an error, never an empty list.
+
+    An empty fallback would make a run drop every hand-maintained entry silently.
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)["models"]
+    except (OSError, ValueError, KeyError) as e:
+        raise SystemExit(f"cannot read the existing catalog {path} (needed to keep the "
+                         f"hand-maintained entries): {e}")
+
+def render(catalog):
+    text = json.dumps(catalog, indent=2, ensure_ascii=False)
+    # print each `languages` array on a single line for readability
+    text = re.sub(r'"languages": \[(.*?)\]',
+                  lambda m: '"languages": [' + ", ".join(re.findall(r'"[^"]*"', m.group(1))) + ']',
+                  text, flags=re.S)
+    # one line per `files[]` entry: a file is one diff line, so schema additions
+    # and hash changes don't cascade into per-key comma churn. `[^{}]` keeps the
+    # match inside one object: entries whose file objects end in another key than
+    # sha256 (hand-maintained ones carry `url`) stay in the plain layout instead of
+    # being fused with a later object.
+    text = re.sub(r'\{\s+("filename":[^{}]*?"sha256": "[0-9a-f]{64}")\s+\}',
+                  lambda m: "{" + re.sub(r",\s+", ", ", m.group(1)) + "}",
+                  text, flags=re.S)
+    return text + "\n"
+
+def write_catalog(out, generated, existing_path=CATALOG_PATH):
+    models = assemble(generated, read_catalog(existing_path))
+    catalog = {
+        "catalog_version": CATALOG_VERSION,
+        "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+        "mirrors": MIRRORS,
+        "models": models,
+    }
+    tmp = out + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+            f.write(render(catalog))
+        os.replace(tmp, out)      # a crash mid-write never leaves a half catalog behind
+    except BaseException:
+        if os.path.exists(tmp): os.remove(tmp)
+        raise
+    return models
+
 def main():
+    connect()
+    out = sys.argv[1] if len(sys.argv) > 1 else CATALOG_PATH
     repos = [m.id for m in api.list_models(author=ORG, limit=500)]
     models = []
     failures = []
@@ -286,25 +391,9 @@ def main():
         raise SystemExit(1)
     models.sort(key=lambda m: (not m["recommended"], m["recommended_rank"] or 1e9,
                                m["family"], -(m["speed_score"] or 0), m["slug"]))
-    catalog = {
-        "catalog_version": CATALOG_VERSION,
-        "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-        "mirrors": MIRRORS,
-        "models": models,
-    }
-    text = json.dumps(catalog, indent=2, ensure_ascii=False)
-    # print each `languages` array on a single line for readability
-    text = re.sub(r'"languages": \[(.*?)\]',
-                  lambda m: '"languages": [' + ", ".join(re.findall(r'"[^"]*"', m.group(1))) + ']',
-                  text, flags=re.S)
-    # one line per `files[]` entry: a file is one diff line, so schema additions
-    # and hash changes don't cascade into per-key comma churn
-    text = re.sub(r'\{\s+("filename":.*?"sha256": "[0-9a-f]{64}")\s+\}',
-                  lambda m: "{" + re.sub(r",\s+", ", ", m.group(1)) + "}",
-                  text, flags=re.S)
-    out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), "catalog.json")
-    open(out, "w").write(text)
-    print(f"wrote {out}: {len(models)} models, {os.path.getsize(out)/1024:.1f} KB", file=sys.stderr)
+    all_models = write_catalog(out, models)
+    print(f"wrote {out}: {len(models)} generated + {len(all_models) - len(models)} hand-maintained "
+          f"models, {os.path.getsize(out)/1024:.1f} KB", file=sys.stderr)
 
 if __name__ == "__main__":
     main()

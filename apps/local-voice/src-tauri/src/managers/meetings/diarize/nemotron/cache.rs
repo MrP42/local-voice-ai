@@ -17,9 +17,19 @@
 //! Pro Sprecher bleiben `silence_frames` Plaetze fuer die gelernte Stille
 //! reserviert.
 //!
-//! Gleichstand: bei exakt gleichen Werten gewinnt der kleinere Index. Die
-//! Referenz (`torch.topk`) legt das nicht fest; bei Gleitkommawerten aus einem
-//! Modell tritt er nur bei Saettigung auf und hat dann denselben Wert.
+//! Gleichstand, bewusste Abweichung von transformers: die Klasse waehlt mit
+//! `torch.topk`, und das legt bei exakt gleichen Werten nicht fest, welcher
+//! Index bleibt. Hier und im Golden (`make_reference.py::deterministic_topk`,
+//! `torch.sort(stable=True)`) gewinnt der kleinere Index. Gegen die UNVERAENDERTE
+//! transformers-Auswahl stimmen die Rahmen bei ueberlagerter Sprache von vier
+//! Sprechern nur zu 97,6 % ueberein (groesste Logit-Abweichung 0,78), bei zwei
+//! Sprechern zu 100 % (`torch_default_topk` in `pipeline_ref.json`); die Regel
+//! hier ist also eine feste Wahl unter gleichwertigen, keine Naeherung.
+//! Dabei gilt wie bei `torch.sort`: `-0.0` und `+0.0` sind gleich, NaN gilt als
+//! groesster Wert. NaN kommt nicht vor, weil [`SpeakerCache::update`] nicht
+//! endliche Logits abweist, bevor irgendetwas ausgewaehlt wird.
+
+use std::cmp::Ordering;
 
 use super::NUM_SPEAKERS;
 
@@ -108,6 +118,18 @@ fn sigmoid(x: f32) -> f32 {
     1.0 / (1.0 + (-x).exp())
 }
 
+/// Absteigende Ordnung der Werte wie `torch.sort(descending=True)`: `-0.0` und
+/// `+0.0` sind gleich (IEEE-Vergleich, nicht `total_cmp`, das sie trennt), NaN
+/// steht vor allen Zahlen.
+fn descending(a: f32, b: f32) -> Ordering {
+    match (a.is_nan(), b.is_nan()) {
+        (true, true) => Ordering::Equal,
+        (true, false) => Ordering::Less,
+        (false, true) => Ordering::Greater,
+        (false, false) => b.partial_cmp(&a).unwrap_or(Ordering::Equal),
+    }
+}
+
 /// Indizes der `k` groessten Werte; bei Gleichstand der kleinere Index zuerst.
 ///
 /// Gleichstand ist hier der Normalfall an der Auswahlgrenze: nach dem ersten
@@ -117,10 +139,11 @@ fn sigmoid(x: f32) -> f32 {
 /// Stelle im Speicher, die Logits des naechsten Blocks aber spuerbar (gemessen
 /// bis 0,8 Logit, 97,6 % gleiche Rahmen bei ueberlagerter Sprache von vier
 /// Sprechern, 100 % bei zwei Sprechern). Die Regel hier ist fest und die der
-/// Goldwerte (`make_reference.py::deterministic_topk`).
+/// Goldwerte (`make_reference.py::deterministic_topk`); Vorzeichen der Null und
+/// NaN: siehe [`descending`] und den Modulkopf.
 fn top_indices(values: &[f32], k: usize) -> Vec<usize> {
     let mut idx: Vec<usize> = (0..values.len()).collect();
-    idx.sort_by(|&a, &b| values[b].total_cmp(&values[a]).then(a.cmp(&b)));
+    idx.sort_by(|&a, &b| descending(values[a], values[b]).then(a.cmp(&b)));
     idx.truncate(k);
     idx
 }
@@ -236,6 +259,11 @@ impl SpeakerCache {
         {
             return Err("Zwischenspeicher: Groessen passen nicht");
         }
+        // Die Wichtigkeit der Rahmen entsteht aus den Logits; mit NaN waere die
+        // Auswahl unbestimmt. Vor jeder Aenderung des Zustands abweisen.
+        if !logits.iter().all(|v| v.is_finite()) {
+            return Err("Zwischenspeicher: Logits sind nicht endlich");
+        }
         let (nc, nf) = (self.num_cache, self.num_fifo);
         let chunk_start = nc + nf + lookback;
         if chunk_start + num_chunk_frames > frames {
@@ -344,7 +372,7 @@ impl SpeakerCache {
         let mut flat = Vec::with_capacity(scored * s);
         for spk in 0..s {
             flat.extend((0..n).map(|f| scores[f * s + spk]));
-            flat.extend(std::iter::repeat(f32::INFINITY).take(self.cfg.silence_frames));
+            flat.extend(std::iter::repeat_n(f32::INFINITY, self.cfg.silence_frames));
         }
         let mut picked: Vec<usize> = top_indices(&flat, self.cfg.cache_length)
             .into_iter()
@@ -371,7 +399,7 @@ impl SpeakerCache {
                 out_probs.extend_from_slice(&probs[frame * s..(frame + 1) * s]);
             } else {
                 out_embeds.extend_from_slice(silence);
-                out_probs.extend(std::iter::repeat(0.0).take(s));
+                out_probs.extend(std::iter::repeat_n(0.0, s));
             }
         }
         (out_embeds, out_probs)
@@ -455,7 +483,7 @@ mod tests {
             for id in first..base + (chunk + lookahead) as i64 {
                 input.push(id as f32);
                 input.push((id % 7) as f32);
-                input.extend(std::iter::repeat(0.0).take(hidden.saturating_sub(2)));
+                input.extend(std::iter::repeat_n(0.0, hidden.saturating_sub(2)));
             }
             let frames = input.len() / hidden;
             let mut mask = vec![true; frames];
@@ -619,6 +647,58 @@ mod tests {
             top_indices(&[f32::NEG_INFINITY, 0.0, f32::NEG_INFINITY], 3),
             vec![1, 0, 2]
         );
+    }
+
+    /// `-0.0` und `+0.0` sind gleich: es entscheidet der Index, nicht das
+    /// Vorzeichen (wie `torch.sort(stable=True, descending=True)`; `total_cmp`
+    /// haette alle `+0.0` vor die `-0.0` gesetzt).
+    #[test]
+    fn signed_zeros_are_equal_and_the_lower_index_wins() {
+        assert_eq!(top_indices(&[-0.0, 0.0, -0.0, 0.0], 4), vec![0, 1, 2, 3]);
+        assert_eq!(top_indices(&[0.0, -0.0, 0.0, -0.0], 2), vec![0, 1]);
+        assert_eq!(top_indices(&[-0.0, 1.0, 0.0], 3), vec![1, 0, 2]);
+    }
+
+    /// NaN steht wie bei `torch.sort(descending=True)` vor allen Zahlen, in
+    /// Indexreihenfolge; die Folge ist genau die gemessene von torch 2 (stabil).
+    #[test]
+    fn nan_sorts_first_like_torch_and_is_deterministic() {
+        let v = [
+            0.0,
+            -0.0,
+            0.0,
+            -0.0,
+            f32::NAN,
+            1.0,
+            -f32::NAN,
+            f32::NEG_INFINITY,
+        ];
+        assert_eq!(top_indices(&v, 8), vec![4, 6, 5, 0, 1, 2, 3, 7]);
+        assert_eq!(top_indices(&v, 2), vec![4, 6]);
+        // Wiederholung gibt dieselbe Folge (kein Zufall durch die Sortierung).
+        assert_eq!(top_indices(&v, 8), top_indices(&v, 8));
+    }
+
+    /// NaN in den Logits kommt nie bis zur Auswahl: `update` weist sie ab, und
+    /// der Zustand bleibt, wie er war.
+    #[test]
+    fn non_finite_logits_are_rejected_before_anything_changes() {
+        let cfg = CacheConfig::offline();
+        let silence = [0.0f32; 4];
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut c = SpeakerCache::new(cfg, 4);
+            let mut logits = vec![0.0f32; cfg.subsampling * cfg.num_speakers];
+            logits[3] = bad;
+            let r = c.update(&[0.0; 4], &logits, &silence, 1, &[true], 0);
+            assert!(r.is_err(), "{bad} muss abgewiesen werden");
+            assert_eq!((c.cached_frames(), c.num_fifo()), (0, 0));
+        }
+        // Mit endlichen Logits geht derselbe Aufruf durch (der Fehler lag an NaN).
+        let mut c = SpeakerCache::new(cfg, 4);
+        let logits = vec![0.0f32; cfg.subsampling * cfg.num_speakers];
+        c.update(&[0.0; 4], &logits, &silence, 1, &[true], 0)
+            .unwrap();
+        assert_eq!(c.num_fifo(), 1);
     }
 
     #[test]

@@ -440,9 +440,16 @@ mod tests {
 }
 
 /// Tests mit dem echten Modell. Sie laufen, wenn `LVA_NEMOTRON_MODEL` auf die
-/// `.onnx`-Datei zeigt (die `.onnx_data` liegt daneben), und melden sonst
-/// "uebersprungen". Die Referenz stammt aus
+/// `.onnx`-Datei zeigt (die `.onnx_data` liegt daneben). Die Referenz stammt aus
 /// `koordination/nvidia-speech/tools/make_reference.py`.
+///
+/// Fehlt das Modell oder eine Pruef-WAV, gibt es zwei Faelle:
+/// * ohne `LVA_NEMOTRON_REQUIRED`: der Test meldet `UEBERSPRUNGEN` (auf dem
+///   echten stderr, also auch ohne `--nocapture` sichtbar) und gilt als bestanden;
+///   das ist ein Lauf OHNE Modellnachweis;
+/// * mit `LVA_NEMOTRON_REQUIRED=1` (Abnahme, Nachweislauf): fehlendes Modell oder
+///   fehlende WAV ist ein Fehler, und der Hauptvergleich muss mindestens ein
+///   Pruefaudio wirklich verglichen haben.
 #[cfg(test)]
 mod model_tests {
     use super::*;
@@ -464,13 +471,102 @@ mod model_tests {
             .join(name)
     }
 
-    fn model_path() -> Option<PathBuf> {
-        let path = PathBuf::from(std::env::var_os("LVA_NEMOTRON_MODEL")?);
-        (path.is_file() && external_data_path(&path).is_file()).then_some(path)
+    /// Pflichtmodus: `LVA_NEMOTRON_REQUIRED` gesetzt und nicht leer/`0`/`false`.
+    fn required_flag(value: Option<&str>) -> bool {
+        value.is_some_and(|v| !matches!(v.trim().to_ascii_lowercase().as_str(), "" | "0" | "false"))
+    }
+
+    fn required() -> bool {
+        required_flag(std::env::var("LVA_NEMOTRON_REQUIRED").ok().as_deref())
+    }
+
+    /// Meldung auf dem echten stderr: `eprintln!` wuerde von libtest bei
+    /// bestandenen Tests verschluckt, ein uebersprungener Nachweis soll sichtbar sein.
+    fn report(msg: &str) {
+        use std::io::Write;
+        let _ = writeln!(std::io::stderr(), "{msg}");
+    }
+
+    /// Fehlt etwas, was der Test braucht: im Pflichtmodus Fehlschlag, sonst sichtbar melden.
+    fn on_missing(why: &str, required: bool) {
+        if required {
+            panic!("LVA_NEMOTRON_REQUIRED ist gesetzt, aber: {why}");
+        }
+        report(&format!(
+            "UEBERSPRUNGEN (kein Modellnachweis, mit LVA_NEMOTRON_REQUIRED=1 waere das ein Fehler): {why}"
+        ));
     }
 
     fn skip(why: &str) {
-        eprintln!("uebersprungen: {why}");
+        on_missing(why, required());
+    }
+
+    /// Im Pflichtmodus muss der Hauptvergleich etwas verglichen haben.
+    fn check_ran(ran: usize, total: usize, required: bool) {
+        if required {
+            assert!(
+                ran > 0,
+                "LVA_NEMOTRON_REQUIRED ist gesetzt, aber von {total} Pruefaudios wurde keins verglichen"
+            );
+        }
+    }
+
+    /// Das Modell, oder `None` nach `skip` (im Pflichtmodus kommt es nie dazu:
+    /// dann bricht `skip` den Test ab). Der Pfad steht nicht in der Meldung.
+    fn model_or_skip() -> Option<PathBuf> {
+        let Some(var) = std::env::var_os("LVA_NEMOTRON_MODEL") else {
+            skip("LVA_NEMOTRON_MODEL nicht gesetzt");
+            return None;
+        };
+        let path = PathBuf::from(var);
+        if path.is_file() && external_data_path(&path).is_file() {
+            return Some(path);
+        }
+        skip("LVA_NEMOTRON_MODEL zeigt nicht auf eine .onnx-Datei mit .onnx_data daneben");
+        None
+    }
+
+    #[test]
+    fn the_required_flag_reads_the_variable_strictly() {
+        for (value, want) in [
+            (None, false),
+            (Some(""), false),
+            (Some("0"), false),
+            (Some("false"), false),
+            (Some(" FALSE "), false),
+            (Some("1"), true),
+            (Some("true"), true),
+            (Some("yes"), true),
+        ] {
+            assert_eq!(required_flag(value), want, "{value:?}");
+        }
+    }
+
+    #[test]
+    fn a_missing_model_or_audio_is_an_error_in_required_mode_and_a_visible_skip_otherwise() {
+        on_missing("Modell fehlt", false);
+        let err = std::panic::catch_unwind(|| on_missing("Modell fehlt", true))
+            .expect_err("Pflichtmodus muss scheitern");
+        let msg = err
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| err.downcast_ref::<&str>().map(|s| s.to_string()))
+            .unwrap_or_default();
+        assert!(
+            msg.contains("LVA_NEMOTRON_REQUIRED") && msg.contains("Modell fehlt"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn required_mode_demands_at_least_one_compared_audio() {
+        check_ran(0, 2, false);
+        check_ran(1, 2, true);
+        check_ran(2, 2, true);
+        let err = std::panic::catch_unwind(|| check_ran(0, 2, true))
+            .expect_err("kein Vergleich im Pflichtmodus muss scheitern");
+        let msg = err.downcast_ref::<String>().cloned().unwrap_or_default();
+        assert!(msg.contains("keins verglichen"), "{msg}");
     }
 
     fn read_wav(path: &Path) -> Option<Vec<f32>> {
@@ -509,8 +605,9 @@ mod model_tests {
     fn masks_from_turns(turns: impl Iterator<Item = (u64, u64, u32)>, frames: usize) -> Vec<u8> {
         let mut m = vec![0u8; frames];
         for (t0, t1, speaker) in turns {
-            for f in (t0 / 10) as usize..((t1 / 10) as usize).min(frames) {
-                m[f] |= 1 << (speaker - 1);
+            let (from, to) = ((t0 / 10) as usize, ((t1 / 10) as usize).min(frames));
+            for cell in m.iter_mut().take(to).skip(from) {
+                *cell |= 1 << (speaker - 1);
             }
         }
         m
@@ -518,8 +615,8 @@ mod model_tests {
 
     #[test]
     fn the_model_files_are_the_pinned_catalog_files() {
-        let Some(path) = model_path() else {
-            return skip("LVA_NEMOTRON_MODEL nicht gesetzt");
+        let Some(path) = model_or_skip() else {
+            return;
         };
         let entry = crate::catalog::tts_entries(crate::catalog::Purpose::Diarization)
             .into_iter()
@@ -527,12 +624,14 @@ mod model_tests {
             .unwrap();
         let dir = path.parent().unwrap();
         for f in &entry.files {
+            let file = dir.join(&f.filename);
             assert_eq!(
-                sha256(&dir.join(&f.filename)),
-                f.sha256.clone().unwrap(),
-                "{}",
+                std::fs::metadata(&file).unwrap().len(),
+                f.size_bytes,
+                "Groesse von {} (die Statusanzeige vergleicht sie mit dem Katalog)",
                 f.filename
             );
+            assert_eq!(sha256(&file), f.sha256.clone().unwrap(), "{}", f.filename);
         }
     }
 
@@ -572,8 +671,8 @@ mod model_tests {
     /// Turns der Referenz, Rahmen fuer Rahmen.
     #[test]
     fn turns_agree_with_the_reference_frame_by_frame_on_long_audio() {
-        let Some(path) = model_path() else {
-            return skip("LVA_NEMOTRON_MODEL nicht gesetzt");
+        let Some(path) = model_or_skip() else {
+            return;
         };
         let reference: Value = serde_json::from_str(PIPELINE_REF).unwrap();
         let load_start = Instant::now();
@@ -677,13 +776,20 @@ mod model_tests {
             );
             ran += 1;
         }
-        eprintln!("{ran} Pruefaudios gegen die Referenz verglichen");
+        let total = reference["cases"].as_array().unwrap().len();
+        eprintln!("{ran} von {total} Pruefaudios gegen die Referenz verglichen");
+        if ran == 0 {
+            report(
+                "UEBERSPRUNGEN: kein Pruefaudio verglichen, dieser Lauf belegt die Paritaet nicht",
+            );
+        }
+        check_ran(ran, total, required());
     }
 
     #[test]
     fn a_truncated_weights_file_is_a_load_error_not_a_crash() {
-        let Some(path) = model_path() else {
-            return skip("LVA_NEMOTRON_MODEL nicht gesetzt");
+        let Some(path) = model_or_skip() else {
+            return;
         };
         let dir = tempfile::tempdir().unwrap();
         let graph = dir.path().join("model_quantized.onnx");
@@ -700,8 +806,8 @@ mod model_tests {
 
     #[test]
     fn cancel_in_the_middle_of_a_long_run_returns_cancelled_and_the_engine_survives() {
-        let Some(path) = model_path() else {
-            return skip("LVA_NEMOTRON_MODEL nicht gesetzt");
+        let Some(path) = model_or_skip() else {
+            return;
         };
         // 100 s Wiederholung des Ausschnitts: vier Bloecke, mit einem Thread langsam genug.
         let one = clip();
@@ -736,8 +842,8 @@ mod model_tests {
 
     #[test]
     fn very_short_and_empty_audio_never_panic_and_a_non_finite_sample_is_an_error() {
-        let Some(path) = model_path() else {
-            return skip("LVA_NEMOTRON_MODEL nicht gesetzt");
+        let Some(path) = model_or_skip() else {
+            return;
         };
         let mut engine = NemotronOnnxEngine::load(&path, 1).expect("Modell laedt");
         assert!(engine.logits(&[], None).unwrap().is_empty());

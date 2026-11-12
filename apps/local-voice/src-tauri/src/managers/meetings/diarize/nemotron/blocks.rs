@@ -14,7 +14,7 @@
 
 use super::cache::{CacheConfig, SpeakerCache};
 use super::frontend::{num_frames, MelFrontend};
-use super::{FRAME_MS, HIDDEN, MEL_BINS, NUM_SPEAKERS, SUBSAMPLING};
+use super::{FRAME_MS, HIDDEN, NUM_SPEAKERS, SUBSAMPLING};
 use crate::managers::meetings::diarize::postproc::RawTurn;
 use crate::managers::meetings::diarize::DiarizeError;
 
@@ -103,8 +103,9 @@ fn run_error(msg: &str) -> DiarizeError {
 /// Rechnet eine ganze Datei Block fuer Block und liefert die Logits aller
 /// gueltigen Mel-Rahmen (`num_frames(pcm.len()) * 8`, rahmenweise).
 ///
-/// `cancelled` wird vor jedem Block gefragt; ein Abbruch liefert nie
-/// Teil-Ergebnisse. Kein Block wird gerechnet, wenn schon vorher abgebrochen ist.
+/// `cancelled` wird vor jedem Block und noch einmal nach dem letzten gefragt; ein
+/// Abbruch liefert nie Teil-Ergebnisse, auch nicht, wenn er erst waehrend des
+/// letzten Blocks kommt. Kein Block wird gerechnet, wenn schon vorher abgebrochen ist.
 pub fn run_offline(
     model: &mut dyn BlockModel,
     front: &MelFrontend,
@@ -163,6 +164,7 @@ pub fn run_offline(
         }
         if out.logits.iter().any(|v| !v.is_finite())
             || out.chunk_embeds.iter().any(|v| !v.is_finite())
+            || out.silence.iter().any(|v| !v.is_finite())
         {
             return Err(run_error("Modell lieferte ungueltige Werte (NaN/Inf)"));
         }
@@ -185,6 +187,9 @@ pub fn run_offline(
         let from = cached_frames * SUBSAMPLING * NUM_SPEAKERS;
         let to = from + block.chunk_frames * SUBSAMPLING * NUM_SPEAKERS;
         logits.extend_from_slice(&out.logits[from..to]);
+    }
+    if cancelled() {
+        return Err(DiarizeError::Cancelled);
     }
     logits.truncate(valid * NUM_SPEAKERS);
     Ok(logits)
@@ -226,6 +231,7 @@ pub fn turns_from_logits(logits: &[f32]) -> Vec<RawTurn> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::managers::meetings::diarize::nemotron::MEL_BINS;
 
     const SMALL: BlockPlan = BlockPlan {
         chunk_length: 5,
@@ -252,7 +258,8 @@ mod tests {
     struct Probe {
         calls: Vec<(usize, usize, Vec<i64>)>,
         fail_at: Option<usize>,
-        poison: bool,
+        /// Welche der drei Ausgaben NaN/Inf enthaelt: `logits`, `embeds`, `silence`.
+        poison: Option<&'static str>,
     }
 
     impl Probe {
@@ -260,7 +267,7 @@ mod tests {
             Self {
                 calls: Vec::new(),
                 fail_at: None,
-                poison: false,
+                poison: None,
             }
         }
     }
@@ -285,13 +292,19 @@ mod tests {
             for r in 0..rows {
                 logits[r * NUM_SPEAKERS] = r as f32;
             }
-            if self.poison {
-                logits[3] = f32::NAN;
+            let mut chunk_embeds: Vec<f32> =
+                (0..block_frames).flat_map(|i| [i as f32, 0.0]).collect();
+            let mut silence = vec![-1.0, -1.0];
+            match self.poison {
+                Some("logits") => logits[3] = f32::NAN,
+                Some("embeds") => chunk_embeds[0] = f32::INFINITY,
+                Some("silence") => silence[1] = f32::NAN,
+                _ => {}
             }
             Ok(BlockOutput {
                 logits,
-                chunk_embeds: (0..block_frames).flat_map(|i| [i as f32, 0.0]).collect(),
-                silence: vec![-1.0, -1.0],
+                chunk_embeds,
+                silence,
             })
         }
     }
@@ -539,14 +552,63 @@ mod tests {
         assert_eq!(probe.calls.len(), 2);
     }
 
+    /// Jede der drei Ausgaben (Logits, Rahmen-Einbettungen, Stille-Einbettung)
+    /// wird auf NaN/Inf geprueft: die beiden Einbettungen gehen in den
+    /// Zwischenspeicher und von dort in jeden spaeteren Block.
     #[test]
     fn non_finite_model_output_is_an_error_before_it_poisons_the_cache() {
+        for which in ["logits", "embeds", "silence"] {
+            let mut probe = Probe::new();
+            probe.poison = Some(which);
+            let err = run(&secs(3.0), &mut probe, SMALL).unwrap_err();
+            assert!(matches!(err, DiarizeError::Run(_)), "{which}: {err}");
+            assert!(err.to_string().contains("NaN"), "{which}: {err}");
+            assert_eq!(probe.calls.len(), 1, "{which}");
+        }
+    }
+
+    /// Ein Abbruch, der erst waehrend des letzten Blocks kommt, wird nicht
+    /// verschluckt: kein Ergebnis, sondern `Cancelled` (zuvor lieferte das
+    /// direkte Logit-API hier noch alle Logits).
+    #[test]
+    fn a_cancel_during_the_last_block_still_cancels() {
+        use std::cell::Cell;
+        let pcm = secs(18.0);
+        let mut counting = Probe::new();
+        run(&pcm, &mut counting, SMALL).unwrap();
+        let blocks = counting.calls.len();
+        assert!(blocks > 1);
+
         let mut probe = Probe::new();
-        probe.poison = true;
-        let err = run(&secs(3.0), &mut probe, SMALL).unwrap_err();
-        assert!(matches!(err, DiarizeError::Run(_)), "{err}");
-        assert!(err.to_string().contains("NaN"), "{err}");
-        assert_eq!(probe.calls.len(), 1);
+        let asked = Cell::new(0);
+        let err = run_offline(
+            &mut probe,
+            &MelFrontend::new(),
+            &pcm,
+            small_cache(),
+            SMALL,
+            // Je Block eine Frage davor; die Frage nach dem letzten ist die (blocks + 1)-te.
+            &|| {
+                asked.set(asked.get() + 1);
+                asked.get() > blocks
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, DiarizeError::Cancelled), "{err}");
+        assert_eq!(
+            probe.calls.len(),
+            blocks,
+            "alle Bloecke liefen, das Ergebnis wird verworfen"
+        );
+        assert_eq!(asked.get(), blocks + 1);
+    }
+
+    /// Gegenprobe: wer bis zum Schluss nicht abbricht, bekommt alle Logits.
+    #[test]
+    fn without_a_cancel_the_last_question_changes_nothing() {
+        let mut probe = Probe::new();
+        let out = run(&secs(18.0), &mut probe, SMALL).unwrap();
+        assert_eq!(out.len(), num_frames(secs(18.0).len()) * NUM_SPEAKERS);
     }
 
     #[test]
