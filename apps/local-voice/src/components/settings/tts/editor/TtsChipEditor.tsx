@@ -9,10 +9,12 @@ import React, {
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { Check, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { TagDef } from "@/lib/tags/types";
 import { tagInsertFor } from "@/lib/tags/registry";
+import { cleanPasted } from "@/lib/reader/pasteCleanup";
 import { useTagLanguage } from "../tags/tagLanguage";
 import {
   TagAutocomplete,
@@ -167,6 +169,10 @@ interface TtsChipEditorProps {
   engineLabel?: string;
   /** Rechtschreibprüfung des Systems (Editor-Menü), Standard an. */
   spellCheck?: boolean;
+  /** Eingefügten Text nach festen Regeln bereinigen (Seitenzahlen, Kopfzeilen,
+   *  Web-Reste, unsichtbare Zeichen). Hinweis mit „Rückgängig“; nur der
+   *  Original-Editor einer Vorlesen-Seite setzt das. */
+  cleanPaste?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -388,6 +394,7 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
   pausesOnly,
   engineLabel,
   spellCheck = true,
+  cleanPaste = false,
 }) => {
   const { t } = useTranslation();
   const tagLang = useTagLanguage();
@@ -537,6 +544,50 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
     },
     [execInsert],
   );
+
+  /**
+   * Eingefügten Text bereinigen: ersetzt `[start, end)` durch die bereinigte
+   * Fassung (über `execInsert`, Strg+Z bleibt ein Schritt) und meldet die
+   * Anzahl der Änderungen mit „Rückgängig“. Das ersetzt den Bereich nur, solange
+   * er noch genau den bereinigten Text enthält. Ohne Änderung: `false`, der
+   * Aufrufer fügt dann unverändert ein.
+   */
+  const insertCleaned = useCallback(
+    (ta: HTMLTextAreaElement, start: number, end: number, raw: string) => {
+      const result = cleanPasted(raw);
+      if (result.changes === 0) return false;
+      const original = raw.replace(/\r\n?/g, "\n");
+      const cleaned = result.text;
+      const to = start + cleaned.length;
+      execInsert(ta, start, end, cleaned);
+      toast(t("tts.editorMenu.pasteCleaned", { count: result.changes }), {
+        duration: 10000,
+        action: {
+          label: t("tts.editorMenu.pasteUndo"),
+          onClick: () => {
+            const current = taRef.current;
+            if (!current) return;
+            if (valueRef.current.slice(start, to) !== cleaned) {
+              toast(t("tts.editorMenu.pasteUndoStale"));
+              return;
+            }
+            execInsert(current, start, to, original);
+          },
+        },
+      });
+      return true;
+    },
+    [execInsert, t],
+  );
+
+  const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!cleanPaste) return;
+    const raw = event.clipboardData.getData("text/plain");
+    if (!raw || cleanPasted(raw).changes === 0) return;
+    event.preventDefault();
+    const ta = event.currentTarget;
+    insertCleaned(ta, ta.selectionStart, ta.selectionEnd, raw);
+  };
 
   // ---- Punkt → Offset (Palette-Drag) -------------------------------------
 
@@ -1087,6 +1138,7 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
       .then((clipText) => {
         const ta = taRef.current;
         if (!clipText || !ta) return;
+        if (cleanPaste && insertCleaned(ta, selStart, selEnd, clipText)) return;
         execInsert(ta, selStart, selEnd, clipText);
       })
       .catch(() => undefined);
@@ -1184,6 +1236,7 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
         onCompositionStart={handleCompositionStart}
         onCompositionEnd={handleCompositionEnd}
         onContextMenu={handleContextMenu}
+        onPaste={handlePaste}
         onBlur={() => setAc(null)}
         placeholder={placeholder}
         rows={rows}

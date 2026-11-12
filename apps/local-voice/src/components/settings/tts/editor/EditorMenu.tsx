@@ -13,6 +13,7 @@ import {
   CaseSensitive,
   ChevronDown,
   ChevronUp,
+  ClipboardCheck,
   Clock,
   Eraser,
   Heading1,
@@ -74,6 +75,10 @@ interface EditorMenuProps {
   apiRef: React.RefObject<ChipEditorInsertApi | null>;
   spellCheck: boolean;
   onSpellCheck(on: boolean): void;
+  /** Beim Einfügen automatisch bereinigen (nur der Original-Editor kennt
+   *  den Schalter; ohne `onPasteCleanup` erscheint der Eintrag nicht). */
+  pasteCleanup?: boolean;
+  onPasteCleanup?(on: boolean): void;
   /** Bestehendes „Text aufbereiten" (ganzer Text über das LLM). */
   onTidy?: () => void;
   tidying?: boolean;
@@ -122,6 +127,8 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
   apiRef,
   spellCheck,
   onSpellCheck,
+  pasteCleanup = true,
+  onPasteCleanup,
   onTidy,
   tidying = false,
   labeled = false,
@@ -371,7 +378,9 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
             label: t("tts.editorMenu.cleanup"),
             description: t("tts.editorMenu.cleanupHint"),
             testId: "editor-menu-cleanup",
-            disabled: readOnly || empty,
+            // Mit Schalter „Beim Einfügen bereinigen“ bleibt das Menü auch bei
+            // leerem Text erreichbar; die Regeln sind dann einzeln gesperrt.
+            disabled: readOnly || (empty && !onPasteCleanup),
           }}
           items={[
             {
@@ -380,6 +389,7 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
               title: t("tts.editorMenu.rules.allHint"),
               icon: ListChecks,
               testId: "editor-cleanup-all",
+              disabled: empty,
               onSelect: () => cleanup(CLEANUP_RULES),
             },
             ...CLEANUP_RULES.map((rule) => ({
@@ -388,8 +398,23 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
               title: t(`tts.editorMenu.rules.${rule}Hint`),
               icon: RULE_ICONS[rule],
               testId: `editor-cleanup-${rule}`,
+              disabled: empty,
               onSelect: () => cleanup([rule]),
             })),
+            ...(onPasteCleanup
+              ? [
+                  {
+                    id: "paste",
+                    label: t("tts.editorMenu.pasteCleanup"),
+                    title: t("tts.editorMenu.pasteCleanupHint"),
+                    icon: ClipboardCheck,
+                    testId: "editor-cleanup-paste",
+                    checked: pasteCleanup,
+                    dividerBefore: true,
+                    onSelect: () => onPasteCleanup(!pasteCleanup),
+                  },
+                ]
+              : []),
           ]}
         />
         <ActionMenu

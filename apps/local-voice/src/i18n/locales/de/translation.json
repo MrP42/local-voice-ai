@@ -61,6 +61,12 @@
       "cleanupNothing": "Nichts zu bereinigen.",
       "cleanupDone_one": "{{count}} Stelle bereinigt.",
       "cleanupDone_other": "{{count}} Stellen bereinigt.",
+      "pasteCleanup": "Beim Einfügen automatisch bereinigen",
+      "pasteCleanupHint": "Eingefügten Text von Seitenzahlen, Kopf- und Fußzeilen, Bedienresten von Webseiten und unsichtbaren Zeichen befreien; Rückgängig im Hinweis oder mit Strg+Z",
+      "pasteCleaned_one": "Beim Einfügen bereinigt: {{count}} Änderung",
+      "pasteCleaned_other": "Beim Einfügen bereinigt: {{count}} Änderungen",
+      "pasteUndo": "Rückgängig",
+      "pasteUndoStale": "Der Text wurde inzwischen geändert. Bitte mit Strg+Z zurücknehmen.",
       "rules": {
         "all": "Alle Regeln",
         "allHint": "Zeitstempel, abgerissene Zeilen, Leerzeichen und Absätze in einem Schritt",

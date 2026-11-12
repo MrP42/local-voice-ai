@@ -61,6 +61,12 @@
       "cleanupNothing": "Nothing to clean up.",
       "cleanupDone_one": "{{count}} spot cleaned up.",
       "cleanupDone_other": "{{count}} spots cleaned up.",
+      "pasteCleanup": "Clean up automatically when pasting",
+      "pasteCleanupHint": "Remove page numbers, headers and footers, web page controls and invisible characters from pasted text; undo from the notice or with Ctrl+Z",
+      "pasteCleaned_one": "Cleaned up while pasting: {{count}} change",
+      "pasteCleaned_other": "Cleaned up while pasting: {{count}} changes",
+      "pasteUndo": "Undo",
+      "pasteUndoStale": "The text has changed since. Please undo with Ctrl+Z.",
       "rules": {
         "all": "All rules",
         "allHint": "Timestamps, broken lines, spaces and paragraphs in one step",

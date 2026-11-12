@@ -2152,6 +2152,11 @@ export const TtsSettings = () => {
     "tts.editor.spell",
     "1",
   );
+  // Beim Einfügen bereinigen (Editor-Menü > Bereinigen), gerätelokal, Standard an.
+  const [pasteStored, setPasteStored] = usePersistentState<"1" | "0">(
+    "paste.cleanup",
+    "1",
+  );
   const [fontFamily, setFontFamily] = usePersistentState<ReaderFont>(
     "tts.reader.family",
     "book",
@@ -4642,6 +4647,12 @@ export const TtsSettings = () => {
                 apiRef={editorApiRef}
                 spellCheck={spellStored === "1"}
                 onSpellCheck={(on) => setSpellStored(on ? "1" : "0")}
+                pasteCleanup={pasteStored === "1"}
+                onPasteCleanup={
+                  tab === "original"
+                    ? (on) => setPasteStored(on ? "1" : "0")
+                    : undefined
+                }
                 onTidy={tab === "original" ? () => void tidyText() : undefined}
                 tidying={tidying}
               />
@@ -4655,6 +4666,7 @@ export const TtsSettings = () => {
                     pausesOnly={pausesOnly}
                     engineLabel={engineCaps.providerLabel ?? undefined}
                     spellCheck={spellStored === "1"}
+                    cleanPaste={pasteStored === "1"}
                     placeholder={t("tts.inputPlaceholder")}
                     className="w-full"
                     suggestions={tagSuggestions}
