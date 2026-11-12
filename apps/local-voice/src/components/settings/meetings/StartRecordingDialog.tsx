@@ -1,14 +1,16 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { X } from "lucide-react";
-import type { CalEvent, Folder } from "@/bindings";
+import { commands, type CalEvent, type Folder } from "@/bindings";
 import { distinctAttendees } from "@/lib/meetingCalendar";
+import { noticeIsRequired, noticeSettingsOf } from "@/lib/meetingNotice";
+import { useSettings } from "../../../hooks/useSettings";
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
 import { Input } from "../../ui/Input";
 import { Select } from "../../ui/Select";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
-import { MeetingChatNotice } from "./MeetingChatNotice";
+import { ParticipantNotice } from "./ParticipantNotice";
 import { TemplatePicker } from "./notes/TemplatePicker";
 
 /** Auswahlwert für "Kein Projekt". */
@@ -18,7 +20,11 @@ interface StartRecordingDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   busy: boolean;
-  onConfirm: () => void;
+  /**
+   * Bestätigt den Start. `noticeToken` ist das Token dieses Dialogs: nur der Start
+   * damit sieht den Nachweis, der hier bereitgestellt wurde (G2, #497).
+   */
+  onConfirm: (noticeToken: string | null) => void;
   title: string;
   onTitleChange: (title: string) => void;
   /** Termin, dem die Aufnahme gehört (Kalender), samt Knopf zum Lösen. */
@@ -67,6 +73,43 @@ export const StartRecordingDialog: React.FC<StartRecordingDialogProps> = ({
   onDiarizeMicChange,
 }) => {
   const { t } = useTranslation();
+  const { getSetting } = useSettings();
+  // G2 (#497): gilt die Pflicht zum Hinweis an Teilnehmende, startet die
+  // Aufnahme erst mit einem Nachweis (das Backend prüft es ebenfalls).
+  const [noticeCount, setNoticeCount] = useState(0);
+  // Jeder geöffnete Dialog bekommt vom Backend ein eigenes Token. Der Nachweis
+  // gehört zu ihm: Schließt der Dialog (Abbrechen, Schließen, nach dem Start),
+  // verfällt er; ein späterer Dialog beginnt leer.
+  const [dialogToken, setDialogToken] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    let issued: string | null = null;
+    setNoticeCount(0);
+    setDialogToken(null);
+    void (async () => {
+      try {
+        const r = await commands.meetingNoticeDialogOpen();
+        if (r.status !== "ok") return;
+        if (cancelled) {
+          void commands.meetingNoticeDialogClose(r.data);
+          return;
+        }
+        issued = r.data;
+        setDialogToken(r.data);
+      } catch {
+        // Ohne Token startet nur, wer keinen Nachweis braucht.
+      }
+    })();
+    return () => {
+      cancelled = true;
+      setDialogToken(null);
+      if (issued) void commands.meetingNoticeDialogClose(issued);
+    };
+  }, [open]);
+  const noticeBlocks =
+    noticeIsRequired(noticeSettingsOf(getSetting("meeting_notice"))) &&
+    noticeCount === 0;
   const projectOptions = [
     { value: NO_PROJECT, label: t("meetings.startDialog.projectNone") },
     ...folders.map((f) => ({ value: f.id, label: f.name })),
@@ -90,7 +133,14 @@ export const StartRecordingDialog: React.FC<StartRecordingDialogProps> = ({
           >
             {t("meetings.consent.cancel")}
           </Button>
-          <Button onClick={onConfirm} disabled={busy}>
+          <Button
+            onClick={() => onConfirm(dialogToken)}
+            disabled={busy || noticeBlocks}
+            aria-describedby={
+              noticeBlocks ? "consent-notice-required-text" : undefined
+            }
+            data-testid="start-confirm"
+          >
             {t("meetings.consent.confirm")}
           </Button>
         </>
@@ -206,7 +256,12 @@ export const StartRecordingDialog: React.FC<StartRecordingDialogProps> = ({
             {t("meetings.consent.body")}
           </p>
         </div>
-        <MeetingChatNotice testId="consent" />
+        <ParticipantNotice
+          meetingId={null}
+          dialogToken={dialogToken}
+          testId="consent"
+          onRecordsChange={setNoticeCount}
+        />
       </div>
     </Dialog>
   );

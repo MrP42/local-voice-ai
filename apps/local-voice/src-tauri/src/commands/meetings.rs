@@ -74,6 +74,10 @@ fn queue_of(app: &tauri::AppHandle) -> Result<Arc<ImportQueue>, String> {
 /// G1 (#70): mit `target_meeting_id` nimmt die Aufnahme in einem vorhandenen
 /// LEEREN Eintrag auf (Notizen, Projekte und Id bleiben); ist das Ziel nicht
 /// (mehr) leer, kommt `target_not_empty`. Die Einwilligung gilt in jedem Fall.
+///
+/// G2 (#497): `notice_token` ist das Token des Startdialogs (`meeting_notice_dialog_open`),
+/// in dem der Hinweis an Teilnehmende bereitgestellt wurde; ohne es gilt bei Pflicht
+/// `notice_required`.
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_start(
@@ -82,6 +86,7 @@ pub async fn meetings_start(
     consent_confirmed: bool,
     capture_system: bool,
     target_meeting_id: Option<String>,
+    notice_token: Option<String>,
 ) -> Result<Meeting, String> {
     let recorder = recorder_of(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -90,6 +95,7 @@ pub async fn meetings_start(
             consent_confirmed,
             capture_system,
             target_meeting_id.as_deref(),
+            notice_token.as_deref(),
         )
     })
     .await
@@ -667,6 +673,8 @@ pub fn change_meeting_self_emails_setting(
 /// (`consent_required` vom Recorder). Fehler NACH dem Start (Verknuepfung,
 /// Vorlage) kippen die laufende Aufnahme nicht; sie stehen im Log. G1 (#70):
 /// `target_meeting_id` wie bei `meetings_start` (Aufnahme in einen leeren Eintrag).
+/// G2 (#497): `notice_token` wie bei `meetings_start`; das Hinweisfenster hat keinen
+/// Startdialog und uebergibt keins.
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
@@ -679,6 +687,7 @@ pub async fn meetings_start_from_event(
     title: Option<String>,
     link_mode: Option<String>,
     target_meeting_id: Option<String>,
+    notice_token: Option<String>,
 ) -> Result<Meeting, String> {
     let store = store_of(&app)?;
     let recorder = recorder_of(&app)?;
@@ -697,6 +706,7 @@ pub async fn meetings_start_from_event(
             consent_confirmed,
             capture_system,
             target_meeting_id.as_deref(),
+            notice_token.as_deref(),
         )?;
         let now = chrono::Utc::now().timestamp_millis();
         for problem in finish_start(&store, &meeting.id, &plan, linked_by, now) {

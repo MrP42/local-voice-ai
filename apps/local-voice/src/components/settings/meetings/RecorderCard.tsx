@@ -16,7 +16,7 @@ import { Button } from "../../ui/Button";
 import { IconAction } from "../../ui/IconAction";
 import { Alert } from "../../ui/Alert";
 import { translateMeetingError } from "./meetingErrors";
-import { MeetingChatNotice } from "./MeetingChatNotice";
+import { ParticipantNoticeButton } from "./ParticipantNotice";
 import { MeetingImportAction } from "./MeetingImportAction";
 import { YoutubeLinkAction } from "./youtube/YoutubeLinkAction";
 import { NO_PROJECT, StartRecordingDialog } from "./StartRecordingDialog";
@@ -337,7 +337,7 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
     });
   };
 
-  const confirmStart = async () => {
+  const confirmStart = async (noticeToken: string | null) => {
     setBusy(true);
     setError(null);
     const typed = title.trim();
@@ -353,6 +353,7 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
           typed && typed !== eventChoice.event.title ? typed : null,
           eventChoice.mode,
           targetId,
+          noticeToken,
         )
       : await commands.meetingsStart(
           // Ohne Eingabe der Standardtitel, nicht der Platzhaltertext des Feldes
@@ -361,6 +362,7 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
           true,
           captureSetting,
           targetId,
+          noticeToken,
         );
     setBusy(false);
     setConsentOpen(false);
@@ -621,7 +623,9 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
                 onClick={() => void stop()}
                 disabled={busy}
               />
-              <MeetingChatNotice testId="recording" compact />
+              {recordingIdRef.current && (
+                <ParticipantNoticeButton meetingId={recordingIdRef.current} />
+              )}
             </div>
           </div>
         )}
@@ -641,7 +645,7 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
         open={consentOpen}
         onOpenChange={setConsentOpen}
         busy={busy}
-        onConfirm={() => void confirmStart()}
+        onConfirm={(token) => void confirmStart(token)}
         title={title}
         onTitleChange={setTitle}
         eventChoice={eventChoice?.event ?? null}

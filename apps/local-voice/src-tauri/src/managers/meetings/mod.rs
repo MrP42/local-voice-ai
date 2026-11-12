@@ -25,6 +25,7 @@ pub mod mic_capture;
 mod migration_chain; // I1: Migrationskette A1, A3, U7
 pub mod minutes;
 pub mod notes;
+pub mod notice; // G2 (#497): Hinweis an Teilnehmende, Nachweis an der Besprechung
 pub mod notizbuch; // lva#396 N4a
 pub mod parts; // Mehrere Audiodateien (Teile) je Besprechung
 pub mod pdf; // M6-P6b

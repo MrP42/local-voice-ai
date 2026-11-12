@@ -78,6 +78,26 @@ pub fn consent_gate(consent_confirmed: bool) -> Result<(), String> {
     }
 }
 
+/// G2 (#497): die Pflicht zum Hinweis an Teilnehmende. Ohne Pflicht (Standard)
+/// nie ein Hindernis; mit Pflicht braucht der Start einen geltenden Nachweis
+/// aus dem Startdialog, der das Token `notice_token` traegt
+/// (`notice_required`). Starts ohne Token (Hinweisfenster, Ablauf, Agent,
+/// Termin) sehen nie einen Nachweis. Ergebnis: die Nachweise, die nach dem
+/// Start an die Besprechung kommen. Die Einwilligung (`consent_gate`) gilt davon
+/// unabhaengig.
+pub fn notice_evidence(
+    settings: &crate::managers::compliance::notice::MeetingNoticeSettings,
+    notice_token: Option<&str>,
+    now: i64,
+) -> Result<Vec<crate::managers::compliance::notice::NoticeRecord>, String> {
+    crate::managers::compliance::notice::evidence_for_start(
+        &crate::managers::compliance::notice::PENDING,
+        settings,
+        notice_token,
+        now,
+    )
+}
+
 /// Only one meeting records at a time (one WAV pair, one worker, one indicator).
 pub fn may_start(state: &MeetingRunState) -> bool {
     matches!(state, MeetingRunState::Idle)
@@ -698,14 +718,27 @@ impl MeetingRecorderManager {
     /// nicht (mehr) leer, kommt `target_not_empty` und nichts startet. Scheitert
     /// der Start danach (Mikrofon, Datei), wird der Eintrag wieder leer, statt als
     /// "fehlgeschlagene Aufnahme" ohne Ton stehenzubleiben.
+    ///
+    /// G2 (#497): `notice_token` ist das Token des Startdialogs, in dem der
+    /// Nachweis zum Hinweis an Teilnehmende entstand; nur der Startdialog hat
+    /// eins, alle anderen Startwege uebergeben `None` und sehen nie einen
+    /// Nachweis (bei Pflicht: `notice_required`).
     pub fn start_into(
         &self,
         title: String,
         consent_confirmed: bool,
         capture_system: bool,
         target_meeting_id: Option<&str>,
+        notice_token: Option<&str>,
     ) -> Result<Meeting, String> {
         consent_gate(consent_confirmed)?;
+        // G2 (#497): gilt die Pflicht zum Hinweis an Teilnehmende, braucht der
+        // Start einen Nachweis (Zwischenablage, Einfuegen, "muendlich informiert").
+        let evidence = notice_evidence(
+            &crate::settings::get_settings(&self.app).meeting_notice,
+            notice_token,
+            chrono::Utc::now().timestamp(),
+        )?;
         // `Mutex<()>` traegt keine Daten: eine Vergiftung hiesse sonst, dass nie
         // wieder eine Aufnahme startet.
         let _start_guard = lock_recovering(&self.start_guard);
@@ -761,6 +794,17 @@ impl MeetingRecorderManager {
                     }
                 },
             }
+        }
+        // G2 (#497): der Nachweis aus dem Startdialog gehoert jetzt zur
+        // Besprechung und ist damit verbraucht.
+        if let Ok(started) = &started {
+            super::notice::finish_start(
+                &crate::managers::compliance::notice::PENDING,
+                &self.store,
+                &started.id,
+                notice_token,
+                &evidence,
+            );
         }
         started
     }
@@ -1569,6 +1613,44 @@ mod tests {
     fn start_without_consent_is_refused() {
         assert_eq!(consent_gate(false), Err("consent_required".to_string()));
         assert!(consent_gate(true).is_ok());
+    }
+
+    /// G2 (#497): die persoenliche Voreinstellung (an, nicht Pflicht) haelt nie auf;
+    /// ohne die Funktion gilt auch eine eingestellte Pflicht nicht. Die Pflicht
+    /// selbst und die Bindung an das Token des Startdialogs sind in
+    /// `compliance::notice` geprueft (dort ohne den prozessweiten Satz).
+    #[test]
+    fn notice_evidence_never_blocks_without_the_obligation() {
+        use crate::managers::compliance::notice::MeetingNoticeSettings;
+        assert_eq!(
+            notice_evidence(&MeetingNoticeSettings::default(), None, 1_000),
+            Ok(Vec::new())
+        );
+        let off = MeetingNoticeSettings {
+            enabled: false,
+            required: true,
+            ..Default::default()
+        };
+        assert_eq!(notice_evidence(&off, None, 1_000), Ok(Vec::new()));
+    }
+
+    /// G2 (#497): bei Pflicht scheitert ein Start ohne Token mit `notice_required`,
+    /// gleich was im prozessweiten Satz liegt (kein Token passt zu keinem Dialog).
+    #[test]
+    fn notice_evidence_with_the_obligation_refuses_a_start_without_a_token() {
+        use crate::managers::compliance::notice::MeetingNoticeSettings;
+        let required = MeetingNoticeSettings {
+            required: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            notice_evidence(&required, None, 1_000),
+            Err("notice_required".to_string())
+        );
+        assert_eq!(
+            notice_evidence(&required, Some("kein-offener-dialog"), 1_000),
+            Err("notice_required".to_string())
+        );
     }
 
     #[test]

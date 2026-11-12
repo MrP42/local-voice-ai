@@ -906,5 +906,10 @@ fn the_start_failure_texts_are_german_sentences_that_keep_the_code() {
     assert!(start_failure("already_recording").contains("schon eine Aufnahme"));
     assert!(start_failure("loopback_start_failed").contains("Systemton"));
     assert!(start_failure("mic_stream_error: kein Geraet").contains("Mikrofon"));
+    // G2 (#497): bei Pflicht zum Hinweis an Teilnehmende hat nur der Startdialog der
+    // Seite "Aufnahmen" eine Oberflaeche dafuer; Ablauf und Agent verweisen dorthin.
+    let notice = start_failure("notice_required");
+    assert!(notice.contains("Seite „Aufnahmen“"), "{notice}");
+    assert!(notice.contains("(notice_required)"), "{notice}");
     assert!(start_failure("etwas_neues").contains("etwas_neues"));
 }

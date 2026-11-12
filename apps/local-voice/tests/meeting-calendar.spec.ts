@@ -708,6 +708,7 @@ test.describe("Aufnahmeseite mit Kalender", () => {
       title: null,
       linkMode: "auto",
       targetMeetingId: null,
+      noticeToken: null,
     });
     expect(await calls(page, "meetings_start")).toHaveLength(0);
     // Die Standardvorlage darf die Vorlage der Serie nicht ueberschreiben.
@@ -735,6 +736,7 @@ test.describe("Aufnahmeseite mit Kalender", () => {
       consentConfirmed: true,
       captureSystem: true,
       targetMeetingId: null,
+      noticeToken: null,
     });
     expect(await calls(page, "meetings_start_from_event")).toHaveLength(0);
   });
@@ -885,6 +887,7 @@ test.describe("Aufnahmeseite mit Kalender", () => {
       title: null,
       linkMode: "prompt",
       targetMeetingId: null,
+      noticeToken: null,
     });
   });
 

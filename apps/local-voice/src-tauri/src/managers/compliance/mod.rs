@@ -10,6 +10,7 @@
 //! wie das harte Budget.
 
 pub mod facts;
+pub mod notice; // G2 (#497): Hinweis an Teilnehmende mit Nachweis
 
 use serde::{Deserialize, Serialize};
 use specta::Type;

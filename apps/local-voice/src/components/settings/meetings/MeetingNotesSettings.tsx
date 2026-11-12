@@ -11,6 +11,7 @@ import { SettingContainer } from "../../ui/SettingContainer";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { useSettings } from "../../../hooks/useSettings";
 import { MeetingDetectSettings } from "./MeetingDetectSettings";
+import { MeetingNoticeSetting } from "./MeetingNoticeSetting";
 import { MeetingSelfNameSetting } from "./MeetingSelfNameSetting";
 import { MeetingSemanticSearchSetting } from "./MeetingSemanticSearchSetting";
 import { MeetingSlideVisionSetting } from "./MeetingSlideVisionSetting";
@@ -139,6 +140,7 @@ export const MeetingNotesSettings: React.FC = () => {
         />
       </SettingContainer>
       <MeetingSelfNameSetting />
+      <MeetingNoticeSetting />
       <MeetingSemanticSearchSetting />
       <MeetingSlideVisionSetting />
       <MeetingDetectSettings />
