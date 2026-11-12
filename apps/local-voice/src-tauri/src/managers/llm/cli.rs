@@ -332,6 +332,40 @@ pub fn locate(cli: Cli) -> Option<PathBuf> {
     candidates(cli).into_iter().next()
 }
 
+/// Wie lange ein Ergebnis von [`installed_cached`] gilt.
+const INSTALLED_TTL: Duration = Duration::from_secs(30);
+
+static INSTALLED: std::sync::Mutex<Vec<(Cli, std::time::Instant, bool)>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Ist die CLI auf diesem Rechner installiert? Kurz zwischengespeichert, weil
+/// jede Modellaufloesung (`AppSettings::active_llm_model`) fragt; ohne CLI
+/// faellt die App auf ein anderes freigegebenes Modell zurueck.
+pub fn installed_cached(cli: Cli) -> bool {
+    let now = std::time::Instant::now();
+    if let Ok(cache) = INSTALLED.lock() {
+        if let Some((_, at, found)) = cache.iter().find(|(c, _, _)| *c == cli) {
+            if now.duration_since(*at) < INSTALLED_TTL {
+                return *found;
+            }
+        }
+    }
+    let found = locate(cli).is_some();
+    if let Ok(mut cache) = INSTALLED.lock() {
+        cache.retain(|(c, _, _)| *c != cli);
+        cache.push((cli, now, found));
+    }
+    found
+}
+
+/// Vergisst die zwischengespeicherte Antwort (nach `cli_missing`, nach der
+/// Einrichtung), damit die naechste Aufloesung neu sucht.
+pub fn forget_installed() {
+    if let Ok(mut cache) = INSTALLED.lock() {
+        cache.clear();
+    }
+}
+
 /// Sortierschluessel eines Versionsnamens (`2.1.50`): numerische Teile, ein
 /// nicht numerischer Teil zaehlt 0.
 fn version_key(name: &str) -> Vec<u64> {

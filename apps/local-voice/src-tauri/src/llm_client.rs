@@ -580,8 +580,11 @@ async fn send_cli(
     json_schema: Option<Value>,
 ) -> Result<(ChatReply, TokenUsage), String> {
     use crate::managers::llm::cli;
-    let binary = cli::locate(cli)
-        .ok_or_else(|| "cli_missing: Die CLI des Anbieters ist nicht installiert".to_string())?;
+    let binary = cli::locate(cli).ok_or_else(|| {
+        // Naechste Modellaufloesung sucht neu und weicht auf den Ersatz aus.
+        cli::forget_installed();
+        "cli_missing: Die CLI des Anbieters ist nicht installiert".to_string()
+    })?;
     let wants_json = json_schema.is_some();
     let system = match json_schema {
         Some(schema) => Some(format!(

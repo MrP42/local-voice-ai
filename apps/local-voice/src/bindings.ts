@@ -338,6 +338,9 @@ async llmCliStatus(kind: string) : Promise<Result<CliStatus, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async llmAvailability() : Promise<LlmAvailability> {
+    return await TAURI_INVOKE("llm_availability");
+},
 /**
  * Oeffnet die Anmeldung der CLI (`claude auth login`, `codex login`) in einem
  * eigenen Fenster. Zugangsdaten bleiben bei der CLI.
@@ -11844,6 +11847,11 @@ weights: string; non_commercial: boolean; verified: boolean; source_url: string;
  * Datum der Prüfung (`JJJJ-MM-TT`), nur zusammen mit `verified`.
  */
 verified_on: string | null; note: string }
+/**
+ * Verbindungen, die auf diesem Rechner nicht laufen (Abo ohne installierte
+ * CLI), und das Modell, das die App stattdessen nutzt (`None`: kein Ersatz).
+ */
+export type LlmAvailability = { unavailable_connection_ids: string[]; fallback_model_id: string | null }
 /**
  * Eine konfigurierte Verbindung zu einem Sprachmodell-Anbieter.
  * 

@@ -1985,6 +1985,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::llm::llm_answer_model_updates,
             commands::llm::llm_set_auto_update_models,
             commands::llm::llm_cli_status,
+            commands::llm::llm_availability,
             commands::llm::llm_cli_login,
             commands::llm::llm_cli_setup,
             commands::llm::llm_set_cli_auto_update,
