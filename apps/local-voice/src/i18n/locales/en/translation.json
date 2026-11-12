@@ -3655,6 +3655,9 @@
     },
     "live": {
       "empty": "No segments yet — the first one appears after ~20 seconds.",
+      "emptyYoutube": "No transcript yet. Start “Transcribe while playing” above.",
+      "emptyProcessing": "The transcript appears here as soon as the first sections are done.",
+      "emptyNeutral": "No transcript yet.",
       "me": "Me",
       "remote": "Other party",
       "mixed": "Recording"
@@ -3769,6 +3772,9 @@
       "loopbackStartTimeout": "System audio could not be started — the recording continues with the microphone only.",
       "loopbackStartFailed": "System audio failed to start — the recording continues with the microphone only.",
       "loopbackDied": "System audio failed during the recording — the meeting continues with the microphone only.",
+      "playbackCaptureFailed": "The system sound could not be recorded. Is an output device connected and selected in Windows?",
+      "playbackCaptureTimeout": "The system sound does not respond. Please check the output device and driver and try again.",
+      "playbackCaptureDied": "The system sound failed while transcribing. Stop the recording; what was transcribed so far is kept.",
       "micStreamError": "The microphone stream reported an error during recording — some audio may be missing.",
       "importFailed": "The file could not be imported.",
       "alreadyRecording": "A recording is already running.",
@@ -4144,7 +4150,7 @@
         "minutes_cancelled": "Generation was cancelled.",
         "meeting_not_found": "The meeting no longer exists.",
         "meeting_not_finished": "The recording is still running. Minutes can only be generated after it has stopped.",
-        "no_transcript": "There is no transcript yet to write minutes from.",
+        "no_transcript": "Minutes need a transcript first. In the “Transcript” tab, start a recording or transcribe the video while it plays.",
         "template_not_found": "This template no longer exists. Please choose another one.",
         "no_provider": "No language model set up (Settings → Post-processing).",
         "no_model": "No model entered for the provider (Settings → Post-processing → Model).",
@@ -5166,7 +5172,7 @@
         "region": "Differences per line"
       },
       "youtube": {
-        "needTool": "For subtitles and transcription, install yt-dlp yourself and switch on “private” in the settings.",
+        "needTool": "Faster with subtitles: install yt-dlp yourself and switch on “private” in the settings (optional).",
         "subtitles": "Load subtitles",
         "subtitlesBusy": "Looking for subtitles …",
         "pick": "Subtitle language",
@@ -5178,7 +5184,24 @@
         "ownDone": "The own transcription is done.",
         "trackManual": "{{name}} (uploaded)",
         "trackAuto": "{{name}} (automatic)",
-        "tools": "Subtitles and transcription"
+        "tools": "Subtitles and transcription",
+        "capture": {
+          "button": "Transcribe while playing",
+          "starting": "Starting …",
+          "explain": "The system sound is transcribed in real time while the embedded player plays. Play the video from start to end, keep the volume on and mute other sounds.",
+          "running": "Transcribing as long as the sound plays. Play the video from start to end. Use “Stop” in the recording controls to finish.",
+          "playHint": "Now play the video.",
+          "quiet": "No sound has arrived for a while. Is the video playing, is the volume on and is the player not muted?",
+          "elsewhere": "Another recording is already running.",
+          "dialog": {
+            "title": "Transcribe while playing",
+            "body": "The app records the sound that comes out of your speakers or headphones while the video plays (system sound only, not the microphone) and transcribes it. The video is not downloaded. Confirm that you are allowed to make this recording: the video is publicly available, or everyone heard in it has agreed.",
+            "confirm": "Start transcribing"
+          },
+          "errors": {
+            "notReady": "This entry already has a transcript or a recording. Transcribing while playing only works for a YouTube meeting with neither."
+          }
+        }
       }
     },
     "slides": {

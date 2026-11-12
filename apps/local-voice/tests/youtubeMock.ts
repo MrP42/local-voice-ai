@@ -11,6 +11,10 @@ import type { Page } from "@playwright/test";
  *   (`__yt.calls`) und meldet sich wie der echte per `onReady`.
  * - Jeder Netzzugriff auf YouTube-Hosts wird abgefangen und gezaehlt
  *   (`youtubeRequests`): vor einem Klick auf "Video abspielen" darf es keinen geben.
+ * - #537 „Beim Abspielen mitschreiben“: `empty` macht `y1` zu einem Eintrag ohne
+ *   Transkript, `meetings_start_playback_capture` spiegelt die Regeln des Backends
+ *   (Einwilligung, nur YouTube ohne Aufnahme, danach Status `recording`); die Logik
+ *   selbst pruefen die Rust-Tests (`cargo test --lib meetings::playback recorder::`).
  */
 
 export const YT_ID = "dQw4w9WgXcQ";
@@ -24,6 +28,12 @@ export interface YoutubeMockOptions {
   fakePlayer?: boolean;
   /** Besprechung `y1` mit YouTube-Quelle ist schon da (Standard: an). */
   existing?: boolean;
+  /** `y1` hat noch kein Transkript (Standard: aus; sonst die Saetze der Rec-Attrappe). */
+  empty?: boolean;
+  /** Der Schalter „privat“ (yt-dlp) steht an (Standard: aus). */
+  privateOn?: boolean;
+  /** Fehlercode, mit dem `meetings_start_playback_capture` scheitert (Standard: keiner). */
+  startError?: string;
 }
 
 export const installYoutubeMock = async (
@@ -44,9 +54,24 @@ export const installYoutubeMock = async (
   );
 
   await page.addInitScript(
-    ({ fakePlayer, existing, id, title, channel, meetingId }) => {
+    ({
+      fakePlayer,
+      existing,
+      empty,
+      privateOn,
+      startError,
+      id,
+      title,
+      channel,
+      meetingId,
+    }) => {
       const w = window as any;
       w.__yt = { players: [], calls: [] };
+      // #537: ein YouTube-Eintrag ohne Transkript; Saetze kommen erst beim Mitschreiben.
+      w.__ytEmpty = empty;
+      w.__ytSegments = [];
+      w.__playbackError = startError ?? null;
+      if (privateOn) w.__settings.meeting_youtube_private = true;
       if (fakePlayer) {
         w.YT = {
           Player: class {
@@ -201,6 +226,42 @@ export const installYoutubeMock = async (
           case "youtube_tool_detect":
             w.__calls.push({ cmd, args });
             return w.__toolStatus;
+          case "meetings_get_segments":
+            if (w.__ytEmpty && args.meetingId === meetingId) {
+              return w.__ytSegments;
+            }
+            break;
+          case "meetings_start_playback_capture": {
+            // Spiegel von `Recorder::start_playback_capture`: Einwilligung zuerst,
+            // dann nur ein YouTube-Eintrag ohne Aufnahme; sonst bleibt alles wie es war.
+            w.__calls.push({ cmd, args });
+            if (!args.consentConfirmed) throw "consent_required";
+            if (w.__playbackError) throw w.__playbackError;
+            const target = (w.__meetings as any[]).find(
+              (m) => m.id === args.meetingId,
+            );
+            if (!target) throw "meeting_not_found";
+            if (target.source !== "youtube" || target.status !== "ready") {
+              throw "target_not_empty";
+            }
+            const started = {
+              ...target,
+              status: "recording",
+              consent_confirmed_at: 1_790_300_000,
+            };
+            w.__meetings = (w.__meetings as any[]).map((m) =>
+              m.id === started.id ? started : m,
+            );
+            w.__recording = true;
+            w.__position = { meeting_id: started.id, position_ms: 0 };
+            w.__emit("meeting-event", {
+              kind: "state",
+              meeting_id: started.id,
+              status: "recording",
+              paused: false,
+            });
+            return started;
+          }
           case "change_meeting_youtube_private_setting":
             w.__calls.push({ cmd, args });
             w.__settings.meeting_youtube_private = args.enabled;
@@ -216,6 +277,9 @@ export const installYoutubeMock = async (
     {
       fakePlayer: options.fakePlayer ?? true,
       existing: options.existing ?? true,
+      empty: options.empty ?? false,
+      privateOn: options.privateOn ?? false,
+      startError: options.startError ?? null,
       id: YT_ID,
       title: YT_TITLE,
       channel: YT_CHANNEL,
@@ -224,6 +288,37 @@ export const installYoutubeMock = async (
   );
   return { youtubeRequests: requests };
 };
+
+/**
+ * Beim Mitschreiben kommt ein Satz des Systemtons (Kanal 1) in `y1` an: wird
+ * gemerkt (ein Neuladen der Saetze liefert ihn) und als Ereignis gemeldet.
+ */
+export const captureSegment = (
+  page: Page,
+  index: number,
+  text: string,
+  startMs = index * 6_000,
+) =>
+  page.evaluate(
+    ({ meetingId, index, text, startMs }) => {
+      const w = window as any;
+      const segment = {
+        segment_index: index,
+        text,
+        start_ms: startMs,
+        end_ms: startMs + 5_000,
+        channel: 1,
+        speaker_index: null,
+      };
+      w.__ytSegments.push(segment);
+      w.__emit("meeting-event", {
+        kind: "segments",
+        meeting_id: meetingId,
+        appended: [segment],
+      });
+    },
+    { meetingId: YT_MEETING_ID, index, text, startMs },
+  );
 
 /** Aufrufe des falschen YouTube-Players in Reihenfolge. */
 export const playerCalls = (page: Page): Promise<unknown[][]> =>

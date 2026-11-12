@@ -26,6 +26,11 @@ const ERROR_KEY_MAP: Record<string, string> = {
   loopback_start_timeout: "meetings.errors.loopbackStartTimeout",
   loopback_start_failed: "meetings.errors.loopbackStartFailed",
   loopback_died: "meetings.errors.loopbackDied",
+  // #537: Mitschnitt des Systemtons (YouTube); anders als in der Besprechung gibt
+  // es kein Mikrofon, auf das die Aufnahme zurueckfaellt.
+  playback_capture_failed: "meetings.errors.playbackCaptureFailed",
+  playback_capture_timeout: "meetings.errors.playbackCaptureTimeout",
+  playback_capture_died: "meetings.errors.playbackCaptureDied",
   mic_stream_error: "meetings.errors.micStreamError",
   import_failed: "meetings.errors.importFailed",
   already_recording: "meetings.errors.alreadyRecording",

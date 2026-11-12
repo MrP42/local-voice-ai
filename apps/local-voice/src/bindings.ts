@@ -2806,6 +2806,31 @@ async meetingsCreateEmpty(title: string, folderId: string | null) : Promise<Resu
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * #537: "Beim Abspielen mitschreiben". Nimmt NUR den Systemton (Loopback, kein
+ * Mikrofon) in die vorhandene YouTube-Besprechung `meeting_id` auf, waehrend der
+ * Nutzer das Video im eingebetteten Player abspielt; Live-Transkript, Stopp
+ * (`meetings_stop`) und Enddurchlauf wie bei jeder Aufnahme. Kein Download, der
+ * Player bleibt unveraendert. Eigener Befehl statt eines Parameters an
+ * `meetings_start`: dort ist das Ziel ein LEERER Eintrag und es gibt einen Titel,
+ * ein Mikrofon und einen Systemton-Schalter; hier ist das Ziel ein YouTube-Eintrag
+ * ohne Transkript, und es gibt nichts davon zu waehlen.
+ * 
+ * Die Einwilligung (`consent_confirmed`) gilt zuerst. Fehler (Codes, die die
+ * Oberflaeche uebersetzt): `consent_required`, `already_recording`,
+ * `dictation_active`, `meeting_not_found`, `target_not_empty` (kein YouTube-Eintrag
+ * ohne Transkript und Aufnahme), `playback_capture_failed`,
+ * `playback_capture_timeout` (der Systemton liess sich nicht oeffnen; der Eintrag
+ * ist danach wie vorher).
+ */
+async meetingsStartPlaybackCapture(meetingId: string, consentConfirmed: boolean) : Promise<Result<Meeting, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_start_playback_capture", { meetingId, consentConfirmed }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async meetingsPause() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meetings_pause") };

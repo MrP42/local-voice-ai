@@ -6,6 +6,45 @@
 //! Everything that can be decided without I/O lives in the free functions at
 //! the top (`consent_gate`, `may_start`, `apply_pause`) so the state rules are
 //! testable without Tauri, audio hardware or a model.
+//!
+//! #537: `start_playback_capture` nimmt NUR den Systemton auf (kein Mikrofon) und
+//! schreibt ihn in eine vorhandene YouTube-Besprechung (`playback.rs`): der Nutzer
+//! spielt das Video im eingebetteten Player ab, die Aufnahme laeuft wie jede andere
+//! (`system.wav`, Live-Transkript, Stopp, Enddurchlauf). Dasselbe Geruest wie die
+//! Besprechung, nur mit [`CaptureMode::PlaybackOnly`]: kein `mic.wav`, kein
+//! Mikrofon-Capture, kein Echo, `RecordingSession.mic_*` leer.
+//!
+//! Fehlerfaelle des Systemton-only-Modus und ihre Absicherung:
+//! - **Kein Ausgabegeraet / Loopback scheitert / Treiber haengt**: der Start schlaegt
+//!   mit `playback_capture_failed` bzw. `playback_capture_timeout` fehl, nie still
+//!   "nur Mikrofon" (es gibt keins); das Ziel wird `ready` zurueckgesetzt
+//!   (`restore_playback_target`), seine Dateien entfernt. Tests:
+//!   `a_wedged_start_times_out...`, `a_failing_start_reports_its_error`, Rueckfall in
+//!   `playback.rs`.
+//! - **Loopback stirbt mitten in der Aufnahme**: der Waechter meldet
+//!   `playback_capture_died` (nicht den Mikrofon-Text der Besprechung); die Aufnahme
+//!   bleibt stehen, der Nutzer stoppt, das bis dahin Gehoerte bleibt. Test:
+//!   `a_dead_loopback_...`.
+//! - **Mikrofon-Waechter**: Kanal 0 liefert nie, ein Standard-Waechter meldete nach 8 s
+//!   `NoData` (`WatchConfig::off()`, Tests in `signal_watch.rs`/`dsp.rs`); Stille am
+//!   Systemton fragt der Waechter nach 30 s nach (`WatchConfig::playback()`).
+//! - **Warten auf den Mikrofonkanal**: der DSP-Thread, `drain()` und der
+//!   Enddurchlauf behandeln jede Spur einzeln; ein nie beschickter Kanal blockiert
+//!   nichts (Test `a_system_only_feed_...`, `dsp.rs`).
+//! - **Null-WAV-Leichen**: es wird nur `system.wav` angelegt; auch ein gescheiterter
+//!   Start entfernt nur, was er selbst angelegt hat (`remove_capture_files`).
+//! - **Voller Datentraeger**: ein Schreibfehler verwirft den WAV-Writer (Aufnahme und
+//!   Live-Transkript laufen weiter, Callback ohne weitere Allokation); der Enddurchlauf
+//!   findet dann keine lesbare Spur (`NoAudio`) und laesst das Live-Transkript stehen.
+//! - **Absturz der App**: die Pfade stehen ab dem Start in der Datenbank,
+//!   `recover_orphans` repariert `system.wav` und holt den Rest nach
+//!   (`runs_final_pass`: auch fuer eine YouTube-Besprechung mit eigener Aufnahme).
+//! - **Zwei Starts gleichzeitig**: `start_guard`, `begin_start` und die atomare
+//!   Umwandlung in `begin_playback_capture` (nur einer gewinnt).
+//! - **Echtzeit**: der Callback ist derselbe wie beim Systemton der Besprechung
+//!   (WAV-Append, `try_send`, Pegel), kein Lock mit Wartezeit, keine Allokation,
+//!   keine Datenbank. Ein Ueberlauf der DSP-Queue wird gezaehlt und als
+//!   `Health { QueueOverflow }` gemeldet (nicht verschluckt).
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -55,6 +94,112 @@ const RECOVERY_PAGE: u32 = 100;
 /// Transcript channel ids (mirror `StoredSegment::channel`).
 pub const CHANNEL_MIC: u8 = 0;
 pub const CHANNEL_SYSTEM: u8 = 1;
+
+/// Was eine Aufnahme aufnimmt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CaptureMode {
+    /// Die gewohnte Besprechung: Mikrofon, auf Wunsch dazu der Systemton.
+    Meeting { capture_system: bool },
+    /// #537: NUR der Systemton, in eine YouTube-Besprechung. Ohne Systemton gibt es
+    /// nichts aufzunehmen, darum ist sein Start Pflicht (kein stilles "nur Mikrofon").
+    PlaybackOnly,
+}
+
+impl CaptureMode {
+    /// Gibt es einen Mikrofonkanal (Capture, `mic.wav`, Echo-Unterdrueckung)?
+    pub(crate) fn mic(self) -> bool {
+        matches!(self, CaptureMode::Meeting { .. })
+    }
+
+    /// Gibt es einen Systemton-Kanal (`system.wav`)?
+    pub(crate) fn system(self) -> bool {
+        match self {
+            CaptureMode::Meeting { capture_system } => capture_system,
+            CaptureMode::PlaybackOnly => true,
+        }
+    }
+
+    /// Fehlercode fuer die Oberflaeche, wenn der Systemton nicht startete. In der
+    /// Besprechung geht es mit dem Mikrofon weiter (die Texte sagen das), beim
+    /// Mitschnitt scheitert der Start.
+    fn loopback_start_code(self, failure: &LoopbackStartError) -> &'static str {
+        match (self, failure) {
+            (CaptureMode::PlaybackOnly, LoopbackStartError::Timeout) => "playback_capture_timeout",
+            (CaptureMode::PlaybackOnly, _) => "playback_capture_failed",
+            (_, LoopbackStartError::Timeout) => "loopback_start_timeout",
+            (_, _) => "loopback_start_failed",
+        }
+    }
+
+    /// Die Meldungen, wenn der Loopback NACH erfolgreichem Start stirbt. In der
+    /// Besprechung: Kanalzustand plus Fehler ("laeuft nur mit dem Mikrofon weiter");
+    /// beim Mitschnitt nur der eigene Fehler, denn der Mikrofon-Text waere falsch.
+    fn loopback_died_events(self, meeting_id: &str) -> Vec<MeetingEvent> {
+        let error = |message: &str| MeetingEvent::Error {
+            meeting_id: meeting_id.to_string(),
+            message: message.to_string(),
+        };
+        match self {
+            CaptureMode::PlaybackOnly => vec![error("playback_capture_died")],
+            CaptureMode::Meeting { .. } => vec![
+                MeetingEvent::Health {
+                    meeting_id: meeting_id.to_string(),
+                    channel: CHANNEL_SYSTEM,
+                    state: HealthState::LoopbackDied,
+                },
+                error("loopback_died"),
+            ],
+        }
+    }
+}
+
+/// Warum ein Capture-Start nicht zustande kam.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum LoopbackStartError {
+    /// Der Start meldete einen Fehler (kein Geraet, Treiber).
+    Failed(String),
+    /// Der Treiber antwortete nicht innerhalb der Frist.
+    Timeout,
+}
+
+/// Fuehrt `start` auf einem Wegwerf-Thread aus und wartet hoechstens `timeout`:
+/// ein haengender Treiber (bekannter Befund aus Task 4) darf den Start nicht
+/// ewig blockieren. Kommt das Ergebnis nach der Frist doch noch, faellt es beim
+/// Senden aus dem Kanal und wird dabei verworfen (`Drop` stoppt eine Capture).
+pub(crate) fn start_bounded<T: Send + 'static>(
+    thread_name: &str,
+    timeout: Duration,
+    start: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, LoopbackStartError> {
+    let (tx, rx) = mpsc::channel::<Result<T, String>>();
+    std::thread::Builder::new()
+        .name(thread_name.to_string())
+        .spawn(move || {
+            let _ = tx.send(start());
+        })
+        .map_err(|e| LoopbackStartError::Failed(format!("start thread: {e}")))?;
+    match rx.recv_timeout(timeout) {
+        Ok(Ok(started)) => Ok(started),
+        Ok(Err(e)) => Err(LoopbackStartError::Failed(e)),
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(LoopbackStartError::Timeout),
+        // Der Start-Thread ist ohne Ergebnis zu Ende (Panik im Treiber).
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(LoopbackStartError::Failed(
+            "start thread ended without a result".to_string(),
+        )),
+    }
+}
+
+/// Gilt fuer diese Besprechung der Plan des Enddurchlaufs (Recovery, "Fortsetzen")?
+/// Eine Live-Aufnahme immer; eine YouTube-Besprechung nur, wenn sie eine eigene
+/// Aufnahme hat (#537, Systemton): ohne Aufnahme gibt es nichts zu verarbeiten.
+/// Import und Untertitel bekommen keinen Enddurchlauf (`KeepReason::NotLive`).
+pub(crate) fn runs_final_pass(meeting: &Meeting) -> bool {
+    match meeting.source.as_str() {
+        "live" => true,
+        "youtube" => meeting.mic_audio_path.is_some() || meeting.system_audio_path.is_some(),
+        _ => false,
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Pure state logic
@@ -151,6 +296,17 @@ pub(crate) fn discard_failed_start(store: &MeetingStore, meeting_id: &str, dir: 
     if let Err(e) = store.set_status(meeting_id, MeetingStatus::Failed) {
         warn!("meetings: failed start of {meeting_id}: status not stored: {e}");
     }
+    remove_capture_files(dir);
+    if let Err(e) = store.set_audio_paths(meeting_id, None, None, None) {
+        warn!("meetings: failed start of {meeting_id}: audio paths not cleared: {e}");
+    }
+}
+
+/// Entfernt, was ein Aufnahmestart im Ordner angelegt haben kann (`mic.wav`,
+/// `system.wav`, `mic_aec.wav`), und den Ordner, wenn er danach leer ist. Fremdes
+/// (Folien, Notizen einer YouTube-Besprechung) bleibt. Best effort: was sich nicht
+/// loeschen laesst, steht im Log.
+pub(crate) fn remove_capture_files(dir: &std::path::Path) {
     for name in ["mic.wav", "system.wav", super::MIC_AEC_FILE] {
         let path = dir.join(name);
         match std::fs::remove_file(&path) {
@@ -162,9 +318,6 @@ pub(crate) fn discard_failed_start(store: &MeetingStore, meeting_id: &str, dir: 
     }
     // `remove_dir` entfernt nur einen leeren Ordner: Fremdes bleibt.
     let _ = std::fs::remove_dir(dir);
-    if let Err(e) = store.set_audio_paths(meeting_id, None, None, None) {
-        warn!("meetings: failed start of {meeting_id}: audio paths not cleared: {e}");
-    }
 }
 
 /// Pause/resume only mean something while recording.
@@ -511,9 +664,10 @@ struct RecordingSession {
     paused: Arc<AtomicBool>,
     mic_capture: Option<MeetingMicCapture>,
     loopback: Option<LoopbackCapture>,
-    mic_sink: Arc<Mutex<ChannelSink>>,
+    /// `None` nur beim Mitschnitt des Systemtons (#537): dann gibt es kein Mikrofon.
+    mic_sink: Option<Arc<Mutex<ChannelSink>>>,
     system_sink: Option<Arc<Mutex<ChannelSink>>>,
-    mic_path: PathBuf,
+    mic_path: Option<PathBuf>,
     system_path: Option<PathBuf>,
     /// DSP thread + transcription worker of this meeting.
     pipeline: Option<LivePipeline>,
@@ -729,7 +883,7 @@ impl MeetingRecorderManager {
         let consent_at = chrono::Utc::now().timestamp();
         let meeting = begin_live_row(&self.store, &title, consent_at, target_meeting_id)?;
         let meeting_id = meeting.id.clone();
-        let started = self.start_row(meeting, capture_system);
+        let started = self.start_row(meeting, CaptureMode::Meeting { capture_system });
         if let Err(e) = &started {
             match target_meeting_id {
                 Some(target) => {
@@ -765,8 +919,73 @@ impl MeetingRecorderManager {
         started
     }
 
+    /// #537: nimmt den Systemton (NUR den, kein Mikrofon) in die vorhandene
+    /// YouTube-Besprechung `meeting_id` auf, solange der Nutzer das Video im
+    /// eingebetteten Player abspielt. Titel, Quelle, Notizen und Projekte bleiben;
+    /// Transkript, Zeitachse und Stopp wie bei jeder Aufnahme. Die Einwilligung gilt
+    /// zuerst (der Nutzer bestaetigt im Dialog, dass er das Video mitschneiden darf).
+    ///
+    /// Fehler: `consent_required`, `already_recording`, `dictation_active`,
+    /// `meeting_not_found`, `target_not_empty` (kein YouTube-Eintrag ohne Transkript
+    /// und ohne Aufnahme: nichts startet, nichts aendert sich),
+    /// `playback_capture_failed` / `playback_capture_timeout` (der Systemton
+    /// liess sich nicht oeffnen; der Eintrag ist danach wieder wie vorher).
+    pub fn start_playback_capture(
+        &self,
+        meeting_id: &str,
+        consent_confirmed: bool,
+    ) -> Result<Meeting, String> {
+        consent_gate(consent_confirmed)?;
+        let _start_guard = lock_recovering(&self.start_guard);
+        let _starting = self.core.begin_start()?;
+
+        if let Some(rm) = self
+            .app
+            .try_state::<Arc<crate::managers::audio::AudioRecordingManager>>()
+        {
+            if rm.is_recording() {
+                return Err("dictation_active".to_string());
+            }
+        }
+
+        // ERST die Zeile pruefen und umwandeln (atomar), DANN den Enddurchlauf
+        // einer anderen Besprechung abbrechen: eine abgelehnte Anfrage soll nichts
+        // anrichten.
+        let consent_at = chrono::Utc::now().timestamp();
+        let (meeting, prior) = self
+            .store
+            .begin_playback_capture(meeting_id, consent_at)
+            .map_err(|e| coded_error("meeting_create_failed", &e))?;
+        self.cancel_final_jobs();
+
+        let started = self.start_row(meeting, CaptureMode::PlaybackOnly);
+        if let Err(e) = &started {
+            info!("meetings: Mitschnitt gescheitert ({e}), {meeting_id} wird zurueckgesetzt");
+            self.undo_playback_start(meeting_id, &prior);
+        }
+        started
+    }
+
+    /// Der Mitschnitt kam nicht zustande: Dateien weg, Zeile wieder die YouTube-
+    /// Besprechung von vorher. Lassen sich die Zeile nicht zuruecksetzen, steht sie
+    /// auf `failed`, nie auf `recording` (der naechste App-Start belebt sie sonst
+    /// als Absturzrest).
+    fn undo_playback_start(&self, meeting_id: &str, prior: &super::playback::PlaybackPrior) {
+        match super::meetings_data_dir(&self.app) {
+            Ok(base) => remove_capture_files(&base.join(meeting_id)),
+            Err(err) => warn!("meetings: Mitschnitt gescheitert, Datenordner unbekannt ({err})"),
+        }
+        match self.store.restore_playback_target(meeting_id, prior) {
+            Ok(true) => {}
+            Ok(false) | Err(_) => {
+                warn!("meetings: Eintrag {meeting_id} nicht wiederhergestellt, wird `failed`");
+                let _ = self.store.set_status(meeting_id, MeetingStatus::Failed);
+            }
+        }
+    }
+
     /// Der Teil des Starts nach dem Anlegen bzw. Umwandeln der Zeile.
-    fn start_row(&self, meeting: Meeting, capture_system: bool) -> Result<Meeting, String> {
+    fn start_row(&self, meeting: Meeting, mode: CaptureMode) -> Result<Meeting, String> {
         let meeting_id = meeting.id.clone();
 
         let dir = super::meetings_data_dir(&self.app)
@@ -774,46 +993,53 @@ impl MeetingRecorderManager {
             .join(&meeting_id);
         std::fs::create_dir_all(&dir).map_err(|e| format!("meeting_dir_failed: {e}"))?;
 
-        let mic_path = dir.join("mic.wav");
-        let mic_writer = StreamingWavWriter::create(&mic_path, SAMPLE_RATE)
-            .map_err(|e| format!("mic_wav_failed: {e}"))?;
-        let system_path = capture_system.then(|| dir.join("system.wav"));
-        let system_writer = match &system_path {
-            Some(path) => Some(
+        // Nur die Dateien des Modus: beim Mitschnitt entsteht keine `mic.wav`
+        // (sonst bliebe eine Null-Spur liegen, auf die der Enddurchlauf wartet).
+        let mic_path = mode.mic().then(|| dir.join("mic.wav"));
+        let mic_writer = mic_path
+            .as_ref()
+            .map(|path| {
                 StreamingWavWriter::create(path, SAMPLE_RATE)
-                    .map_err(|e| format!("system_wav_failed: {e}"))?,
-            ),
-            None => None,
-        };
+                    .map_err(|e| format!("mic_wav_failed: {e}"))
+            })
+            .transpose()?;
+        let system_path = mode.system().then(|| dir.join("system.wav"));
+        let system_writer = system_path
+            .as_ref()
+            .map(|path| {
+                StreamingWavWriter::create(path, SAMPLE_RATE)
+                    .map_err(|e| format!("system_wav_failed: {e}"))
+            })
+            .transpose()?;
 
         // Written now, not at stop(): crash recovery can only repair WAVs whose
         // paths it knows, and a crash is exactly the case where stop() never ran.
         if let Err(e) = self.store.set_audio_paths(
             &meeting_id,
-            mic_path.to_str(),
+            mic_path.as_ref().and_then(|p| p.to_str()),
             system_path.as_ref().and_then(|p| p.to_str()),
             None,
         ) {
             warn!("meetings: could not persist audio paths: {e}");
         }
 
-        let mic_sink = Arc::new(Mutex::new(ChannelSink::new(mic_writer)));
+        let mic_sink = mic_writer.map(|w| Arc::new(Mutex::new(ChannelSink::new(w))));
         let system_sink = system_writer.map(|w| Arc::new(Mutex::new(ChannelSink::new(w))));
         let paused = Arc::new(AtomicBool::new(false));
         let levels = Arc::new(LevelEmitter::new(self.app.clone()));
 
         // M2-P2c2: Echo-Unterdrueckung der Ich-Spur (braucht den Systemton als
         // Referenz). Das Ergebnis geht an die Transkription und nach
-        // mic_aec.wav; mic.wav bleibt roh.
+        // mic_aec.wav; mic.wav bleibt roh. Ohne Mikrofon (#537) gibt es kein Echo.
         let echo_mode = crate::settings::get_settings(&self.app).meeting_echo_cancellation;
-        let echo = echo_mode
-            .enabled(capture_system)
+        let echo = (mode.mic() && echo_mode.enabled(mode.system()))
             .then(|| self.echo_setup(&meeting_id, &dir.join(super::MIC_AEC_FILE)));
 
-        let pipeline = self.start_pipeline(&meeting_id, echo).inspect_err(|_| {
-            let _ = self.store.set_status(&meeting_id, MeetingStatus::Failed);
-        })?;
-        let mic_feed = pipeline.feed(CHANNEL_MIC).ok_or("dsp_thread_failed")?;
+        let pipeline = self
+            .start_pipeline(&meeting_id, echo, mode)
+            .inspect_err(|_| {
+                let _ = self.store.set_status(&meeting_id, MeetingStatus::Failed);
+            })?;
         let system_feed = pipeline.feed(CHANNEL_SYSTEM);
         let dsp_control = pipeline.control();
 
@@ -829,27 +1055,38 @@ impl MeetingRecorderManager {
             overflow_stats.overflow_samples[CHANNEL_MIC as usize]
                 .fetch_add(samples, Ordering::Relaxed);
         });
-        let mic_capture = MeetingMicCapture::start(
-            crate::settings::get_settings(&self.app).selected_microphone,
-            mic_overflow,
-            channel_callback(
-                CHANNEL_MIC,
-                Arc::clone(&mic_sink),
-                Arc::clone(&paused),
-                mic_feed,
-                Arc::clone(&levels),
-            ),
-        )
-        .map_err(|e| {
-            // The meeting row exists but nothing was captured — mark it failed
-            // rather than leaving a phantom "recording" row behind.
-            let _ = self.store.set_status(&meeting_id, MeetingStatus::Failed);
-            format!("mic_start_failed: {e}")
-        })?;
+        let mic_capture = match &mic_sink {
+            Some(sink) => {
+                let mic_feed = pipeline.feed(CHANNEL_MIC).ok_or("dsp_thread_failed")?;
+                Some(
+                    MeetingMicCapture::start(
+                        crate::settings::get_settings(&self.app).selected_microphone,
+                        mic_overflow,
+                        channel_callback(
+                            CHANNEL_MIC,
+                            Arc::clone(sink),
+                            Arc::clone(&paused),
+                            mic_feed,
+                            Arc::clone(&levels),
+                        ),
+                    )
+                    .map_err(|e| {
+                        // The meeting row exists but nothing was captured — mark it failed
+                        // rather than leaving a phantom "recording" row behind.
+                        let _ = self.store.set_status(&meeting_id, MeetingStatus::Failed);
+                        format!("mic_start_failed: {e}")
+                    })?,
+                )
+            }
+            None => None,
+        };
 
-        let loopback = match (&system_sink, system_feed, capture_system) {
-            (Some(sink), Some(feed), true) => self.start_loopback(
+        let loopback = match (mode, &system_sink, system_feed) {
+            // Mitschnitt: der Systemton ist alles, was es gibt. Scheitert er, scheitert
+            // der Start (der Aufrufer setzt den Eintrag zurueck).
+            (CaptureMode::PlaybackOnly, Some(sink), Some(feed)) => Some(self.start_loopback(
                 &meeting_id,
+                mode,
                 channel_callback(
                     CHANNEL_SYSTEM,
                     Arc::clone(sink),
@@ -858,7 +1095,28 @@ impl MeetingRecorderManager {
                     Arc::clone(&levels),
                 ),
                 dsp_control.clone(),
-            ),
+            )?),
+            (CaptureMode::PlaybackOnly, _, _) => return Err("dsp_thread_failed".to_string()),
+            (
+                CaptureMode::Meeting {
+                    capture_system: true,
+                },
+                Some(sink),
+                Some(feed),
+            ) => self
+                .start_loopback(
+                    &meeting_id,
+                    mode,
+                    channel_callback(
+                        CHANNEL_SYSTEM,
+                        Arc::clone(sink),
+                        Arc::clone(&paused),
+                        feed,
+                        Arc::clone(&levels),
+                    ),
+                    dsp_control.clone(),
+                )
+                .ok(),
             _ => None,
         };
         if loopback.is_none() {
@@ -874,7 +1132,7 @@ impl MeetingRecorderManager {
             RecordingSession {
                 meeting_id: meeting_id.clone(),
                 paused,
-                mic_capture: Some(mic_capture),
+                mic_capture,
                 loopback,
                 mic_sink,
                 system_sink,
@@ -890,40 +1148,54 @@ impl MeetingRecorderManager {
         Ok(meeting)
     }
 
-    /// Runs `LoopbackCapture::start` on a throwaway thread with a bounded
-    /// wait: a wedged audio driver must cost the meeting its system channel,
-    /// not the whole recording (known Task-4 finding). On timeout the started
-    /// capture — if it ever arrives — is dropped by the send error, which
-    /// stops it.
+    /// Starts the loopback capture with a bounded wait (`start_bounded`): a wedged
+    /// audio driver must not block the start forever (known Task-4 finding).
+    ///
+    /// Besprechung: scheitert er, laeuft die Aufnahme mit dem Mikrofon weiter
+    /// (Warnung im Log, Fehlerereignis `loopback_start_failed`/`_timeout`; der
+    /// Aufrufer verwirft das `Err`). Mitschnitt (#537): scheitert er, scheitert der
+    /// Start mit `playback_capture_failed`/`_timeout` (kein Ereignis, der Befehl
+    /// meldet den Fehler selbst). Das `Err` traegt immer den Code.
     fn start_loopback(
         &self,
         meeting_id: &str,
+        mode: CaptureMode,
         callback: impl FnMut(&[i16], Option<u64>) + Send + 'static,
         dsp_control: Option<DspControl>,
-    ) -> Option<LoopbackCapture> {
-        let (tx, rx) = mpsc::channel::<Result<LoopbackCapture, String>>();
-        std::thread::Builder::new()
-            .name("meeting-loopback-start".to_string())
-            .spawn(move || {
-                let result = LoopbackCapture::start(callback).map_err(|e| format!("{e:#}"));
-                let _ = tx.send(result);
-            })
-            .ok()?;
-
-        match rx.recv_timeout(LOOPBACK_START_TIMEOUT) {
-            Ok(Ok(capture)) => {
-                self.watch_loopback(meeting_id, &capture, dsp_control);
-                Some(capture)
+    ) -> Result<LoopbackCapture, String> {
+        let started = start_bounded(
+            "meeting-loopback-start",
+            LOOPBACK_START_TIMEOUT,
+            move || LoopbackCapture::start(callback).map_err(|e| format!("{e:#}")),
+        );
+        match started {
+            Ok(capture) => {
+                self.watch_loopback(meeting_id, &capture, mode, dsp_control);
+                Ok(capture)
             }
-            Ok(Err(e)) => {
-                warn!("meetings: loopback start failed ({e}) — continuing mic-only");
-                self.emit_error(meeting_id, "loopback_start_failed");
-                None
-            }
-            Err(_) => {
-                warn!("meetings: loopback start timed out — continuing mic-only");
-                self.emit_error(meeting_id, "loopback_start_timeout");
-                None
+            Err(failure) => {
+                let code = mode.loopback_start_code(&failure);
+                match (&failure, mode) {
+                    // Nur der Code und die Art des Fehlers, nie Inhalt.
+                    (LoopbackStartError::Failed(e), CaptureMode::PlaybackOnly) => {
+                        warn!("meetings: playback capture could not start ({e})");
+                        Err(format!("{code}: {e}"))
+                    }
+                    (LoopbackStartError::Timeout, CaptureMode::PlaybackOnly) => {
+                        warn!("meetings: playback capture start timed out");
+                        Err(code.to_string())
+                    }
+                    (LoopbackStartError::Failed(e), _) => {
+                        warn!("meetings: loopback start failed ({e}) - continuing mic-only");
+                        self.emit_error(meeting_id, code);
+                        Err(code.to_string())
+                    }
+                    (LoopbackStartError::Timeout, _) => {
+                        warn!("meetings: loopback start timed out - continuing mic-only");
+                        self.emit_error(meeting_id, code);
+                        Err(code.to_string())
+                    }
+                }
             }
         }
     }
@@ -933,11 +1205,13 @@ impl MeetingRecorderManager {
     /// simply goes quiet, the meeting keeps recording and half the minutes are
     /// missing without anyone noticing. This watchdog turns that silence into
     /// an error event; it ends with the capture (stop flag) or right after it
-    /// reported the failure.
+    /// reported the failure. Welche Ereignisse das sind, haengt vom Modus ab
+    /// (`CaptureMode::loopback_died_events`).
     fn watch_loopback(
         &self,
         meeting_id: &str,
         capture: &LoopbackCapture,
+        mode: CaptureMode,
         dsp_control: Option<DspControl>,
     ) {
         let (stopped, failed) = capture.watch_flags();
@@ -949,23 +1223,15 @@ impl MeetingRecorderManager {
                 while !stopped.load(Ordering::Relaxed) {
                     if failed.load(Ordering::Relaxed) {
                         warn!(
-                            "meetings: loopback capture died mid-meeting ({meeting_id})                              - system audio is gone, the meeting continues mic-only"
+                            "meetings: loopback capture died mid-recording ({meeting_id}) - system audio is gone"
                         );
                         // M2-P2c2: ohne Referenz Echo-Unterdrueckung aus.
                         if let Some(control) = &dsp_control {
                             control.reference_lost();
                         }
-                        let _ = (MeetingEvent::Health {
-                            meeting_id: meeting_id.clone(),
-                            channel: CHANNEL_SYSTEM,
-                            state: HealthState::LoopbackDied,
-                        })
-                        .emit(&app);
-                        let _ = (MeetingEvent::Error {
-                            meeting_id,
-                            message: "loopback_died".to_string(),
-                        })
-                        .emit(&app);
+                        for event in mode.loopback_died_events(&meeting_id) {
+                            let _ = event.emit(&app);
+                        }
                         return;
                     }
                     std::thread::sleep(LOOPBACK_WATCH_INTERVAL);
@@ -980,6 +1246,7 @@ impl MeetingRecorderManager {
         &self,
         meeting_id: &str,
         echo: Option<EchoSetup>,
+        mode: CaptureMode,
     ) -> Result<LivePipeline, String> {
         let app = self.app.clone();
         let transcription = Arc::clone(&self.transcription);
@@ -1001,7 +1268,10 @@ impl MeetingRecorderManager {
         });
 
         let mut cfg = DspConfig::new(vad_factory, notice);
-        if let Some(echo) = echo {
+        if mode == CaptureMode::PlaybackOnly {
+            // Ohne Mikrofon: kein Echo, kein Mikrofon-Waechter (#537).
+            cfg = cfg.playback_only();
+        } else if let Some(echo) = echo {
             cfg = cfg.with_echo(echo);
         }
 
@@ -1143,13 +1413,13 @@ impl MeetingRecorderManager {
                 .initiate_model_load_target(&settings.selected_model);
         }
 
-        let mic_ms = finalize_sink(&mic_sink).unwrap_or(0);
+        let mic_ms = mic_sink.as_ref().and_then(finalize_sink).unwrap_or(0);
         let system_ms = system_sink.as_ref().and_then(finalize_sink).unwrap_or(0);
         let duration_ms = mic_ms.max(system_ms);
 
         if let Err(e) = self.store.set_audio_paths(
             &meeting_id,
-            mic_path.to_str(),
+            mic_path.as_ref().and_then(|p| p.to_str()),
             system_path.as_ref().and_then(|p| p.to_str()),
             Some(duration_ms),
         ) {
@@ -1226,7 +1496,7 @@ impl MeetingRecorderManager {
                 }
                 // lva#523: WAV-Header, Dauer und `processing` erst unter dem Auftrag
                 // (`run_job`, `recover_from`): eine Ablehnung aendert nichts.
-                let plan = if meeting.source == "live" {
+                let plan = if runs_final_pass(&meeting) {
                     final_pass::plan_for_app(&self.app, &choice)
                 } else {
                     FinalPlan::Keep(KeepReason::NotLive)
@@ -1274,7 +1544,7 @@ impl MeetingRecorderManager {
         )?;
         let settings = crate::settings::get_settings(&self.app);
         let catch_up_model = self.transcription.meeting_model_target(&settings);
-        let plan = if meeting.source == "live" {
+        let plan = if runs_final_pass(&meeting) {
             final_pass::plan_for_app(
                 &self.app,
                 &FinalChoice::parse(&settings.meeting_final_model),
@@ -1330,7 +1600,8 @@ impl MeetingRecorderManager {
     // M1-P1c (Beruehrpunkt B2): Audioposition fuer den Notizblock.
     /// The running meeting's id and the microphone audio position in
     /// milliseconds, or `None` when nothing is being recorded. Same timeline
-    /// as `StoredSegment.start_ms` (paused stretches are compressed).
+    /// as `StoredSegment.start_ms` (paused stretches are compressed). Beim
+    /// Mitschnitt des Systemtons (#537) ohne Mikrofon zaehlt die Systemton-Datei.
     pub fn position_ms(&self) -> Option<(String, u64)> {
         self.core
             .with_session(|session| session.and_then(Self::session_position))
@@ -1339,7 +1610,8 @@ impl MeetingRecorderManager {
     /// `None` once the mic WAV writer is gone (RIFF limit reached): a wrong
     /// position would be worse than none, the notepad then stores no timestamp.
     fn session_position(session: &RecordingSession) -> Option<(String, u64)> {
-        let sink = session.mic_sink.lock().ok()?;
+        let sink = session.mic_sink.as_ref().or(session.system_sink.as_ref())?;
+        let sink = sink.lock().ok()?;
         let ms = sink.writer.as_ref()?.position_ms();
         Some((session.meeting_id.clone(), ms))
     }
@@ -1359,9 +1631,9 @@ mod position_tests {
             paused: Arc::new(AtomicBool::new(false)),
             mic_capture: None,
             loopback: None,
-            mic_sink: Arc::new(Mutex::new(sink)),
+            mic_sink: Some(Arc::new(Mutex::new(sink))),
             system_sink: None,
-            mic_path: PathBuf::new(),
+            mic_path: None,
             system_path: None,
             pipeline: None,
         }
@@ -1380,6 +1652,8 @@ mod position_tests {
         // Weiterschreiben ueber den Sink: die Position laeuft mit.
         session
             .mic_sink
+            .as_ref()
+            .unwrap()
             .lock()
             .unwrap()
             .writer
@@ -1397,6 +1671,28 @@ mod position_tests {
     fn position_is_none_without_a_mic_writer() {
         let dir = tempfile::tempdir().unwrap();
         let session = session_with(dir.path(), None);
+        assert_eq!(MeetingRecorderManager::session_position(&session), None);
+    }
+
+    /// #537: ohne Mikrofon (Mitschnitt des Systemtons) zaehlt die Systemton-Datei:
+    /// der Notizblock bekommt die Position, an der das Transkript wirklich steht.
+    #[test]
+    fn position_follows_the_system_writer_when_there_is_no_microphone() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut w = StreamingWavWriter::create(&dir.path().join("system.wav"), 16_000).unwrap();
+        w.append(&vec![0i16; 32_000]).unwrap(); // 2 s
+        let mut session = session_with(dir.path(), None);
+        session.mic_sink = None;
+        session.system_sink = Some(Arc::new(Mutex::new(ChannelSink::new(w))));
+        assert_eq!(
+            MeetingRecorderManager::session_position(&session),
+            Some(("m-pos".to_string(), 2_000))
+        );
+        // Kein Writer mehr (Platte voll, RIFF-Grenze): lieber keine als eine falsche Zeit.
+        session.system_sink.as_ref().unwrap().lock().unwrap().writer = None;
+        assert_eq!(MeetingRecorderManager::session_position(&session), None);
+        // Gar keine Spur: ebenfalls keine Position.
+        session.system_sink = None;
         assert_eq!(MeetingRecorderManager::session_position(&session), None);
     }
 }
@@ -1979,5 +2275,242 @@ mod tests {
         );
         // Und eine unbekannte Besprechung bringt nichts zum Absturz.
         discard_failed_start(&store, "gibt-es-nicht", &dir.path().join("x"));
+    }
+
+    // ---- #537: Mitschnitt des Systemtons -----------------------------------------
+
+    #[test]
+    fn a_playback_capture_has_a_system_channel_and_no_microphone() {
+        let meeting = CaptureMode::Meeting {
+            capture_system: true,
+        };
+        let mic_only = CaptureMode::Meeting {
+            capture_system: false,
+        };
+        assert!(meeting.mic() && meeting.system());
+        assert!(mic_only.mic() && !mic_only.system());
+        let playback = CaptureMode::PlaybackOnly;
+        assert!(!playback.mic(), "kein Mikrofon, kein mic.wav, kein Echo");
+        assert!(playback.system());
+    }
+
+    /// Der Mitschnitt scheitert laut, wenn der Systemton nicht startet (er ist die
+    /// einzige Quelle); die Besprechung sagt weiterhin "nur Mikrofon".
+    #[test]
+    fn a_loopback_that_does_not_start_has_its_own_code_per_mode() {
+        let failed = LoopbackStartError::Failed("kein Geraet".into());
+        let timeout = LoopbackStartError::Timeout;
+        let playback = CaptureMode::PlaybackOnly;
+        assert_eq!(
+            playback.loopback_start_code(&failed),
+            "playback_capture_failed"
+        );
+        assert_eq!(
+            playback.loopback_start_code(&timeout),
+            "playback_capture_timeout"
+        );
+        let meeting = CaptureMode::Meeting {
+            capture_system: true,
+        };
+        assert_eq!(
+            meeting.loopback_start_code(&failed),
+            "loopback_start_failed"
+        );
+        assert_eq!(
+            meeting.loopback_start_code(&timeout),
+            "loopback_start_timeout"
+        );
+    }
+
+    /// Stirbt der Systemton mitten im Mitschnitt, ist der Mikrofon-Text der
+    /// Besprechung ("laeuft nur mit dem Mikrofon weiter") falsch: es kommt nur der
+    /// eigene Fehler, kein Kanalzustand `loopback_died`.
+    #[test]
+    fn a_dead_loopback_is_reported_with_the_text_of_its_mode() {
+        let json = |events: Vec<MeetingEvent>| {
+            events
+                .iter()
+                .map(|e| serde_json::to_value(e).unwrap())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            json(CaptureMode::PlaybackOnly.loopback_died_events("m1")),
+            vec![serde_json::json!({
+                "kind": "error", "meeting_id": "m1", "message": "playback_capture_died"
+            })]
+        );
+        let meeting = CaptureMode::Meeting {
+            capture_system: true,
+        };
+        assert_eq!(
+            json(meeting.loopback_died_events("m1")),
+            vec![
+                serde_json::json!({
+                    "kind": "health", "meeting_id": "m1", "channel": 1, "state": "loopback_died"
+                }),
+                serde_json::json!({
+                    "kind": "error", "meeting_id": "m1", "message": "loopback_died"
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_bounded_start_returns_the_started_capture() {
+        let got = start_bounded("t-ok", Duration::from_secs(5), || Ok::<_, String>(42u8));
+        assert_eq!(got, Ok(42));
+    }
+
+    /// Kein Ausgabegeraet (oder es laesst sich nicht oeffnen): der Fehler des
+    /// Treibers kommt an, nicht nach einer Frist, sondern sofort.
+    #[test]
+    fn a_failing_start_reports_its_error_at_once() {
+        let started = Instant::now();
+        let got = start_bounded("t-err", Duration::from_secs(30), || {
+            Err::<u8, _>("kein Wiedergabegeraet".to_string())
+        });
+        assert_eq!(
+            got,
+            Err(LoopbackStartError::Failed("kein Wiedergabegeraet".into()))
+        );
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    /// Haengt der Treiber, endet das Warten nach der Frist, und eine Capture, die
+    /// spaeter doch noch aufgeht, wird verworfen (ihr `Drop` stoppt sie): sie laeuft
+    /// nie unbemerkt weiter.
+    #[test]
+    fn a_wedged_start_times_out_and_the_late_capture_is_dropped() {
+        struct Capture(Arc<AtomicBool>);
+        impl Drop for Capture {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let dropped = Arc::new(AtomicBool::new(false));
+        let late = Arc::clone(&dropped);
+        let got = start_bounded("t-wedged", Duration::from_millis(50), move || {
+            std::thread::sleep(Duration::from_millis(400));
+            Ok::<_, String>(Capture(late))
+        });
+        assert!(matches!(got, Err(LoopbackStartError::Timeout)));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !dropped.load(Ordering::SeqCst) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            dropped.load(Ordering::SeqCst),
+            "die spaete Capture lief weiter"
+        );
+    }
+
+    /// Ein Treiber, der im Start abstuerzt, ist ein Fehler, kein Haenger.
+    #[test]
+    fn a_panicking_start_is_a_failure_not_a_hang() {
+        let started = Instant::now();
+        let got = start_bounded(
+            "t-panic",
+            Duration::from_secs(30),
+            || -> Result<u8, String> { panic!("treiber") },
+        );
+        assert!(matches!(got, Err(LoopbackStartError::Failed(_))));
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    fn with_source(source: &str, mic: Option<&str>, system: Option<&str>) -> Meeting {
+        let mut m = meeting_with("recording", mic, system);
+        m.source = source.into();
+        m
+    }
+
+    /// Recovery und "Fortsetzen": Live immer, YouTube nur mit eigener Aufnahme.
+    #[test]
+    fn only_recordings_get_the_plan_of_the_final_pass() {
+        assert!(runs_final_pass(&with_source("live", Some("m.wav"), None)));
+        assert!(runs_final_pass(&with_source(
+            "youtube",
+            None,
+            Some("system.wav")
+        )));
+        assert!(
+            !runs_final_pass(&with_source("youtube", None, None)),
+            "ohne Aufnahme gibt es nichts zu verarbeiten"
+        );
+        for source in ["import", "subtitle", "empty"] {
+            assert!(
+                !runs_final_pass(&with_source(source, Some("a.wav"), None)),
+                "{source}"
+            );
+        }
+    }
+
+    /// Ein gescheiterter Mitschnitt entfernt nur `system.wav` und was er sonst
+    /// angelegt hat; die Folien der YouTube-Besprechung bleiben samt Ordner.
+    #[test]
+    fn a_failed_playback_start_removes_only_its_own_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("m1");
+        std::fs::create_dir_all(&folder).unwrap();
+        drop(StreamingWavWriter::create(&folder.join("system.wav"), SAMPLE_RATE).unwrap());
+        std::fs::write(folder.join("folien.pdf"), b"gehoert dem Nutzer").unwrap();
+
+        remove_capture_files(&folder);
+
+        assert!(!folder.join("system.wav").exists());
+        assert!(folder.join("folien.pdf").exists(), "Fremdes bleibt");
+        assert!(folder.exists());
+        assert!(
+            !folder.join("mic.wav").exists(),
+            "beim Mitschnitt entsteht nie eine Mikrofonspur"
+        );
+    }
+
+    #[test]
+    fn a_failed_playback_start_removes_the_folder_when_nothing_else_is_in_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("m2");
+        std::fs::create_dir_all(&folder).unwrap();
+        drop(StreamingWavWriter::create(&folder.join("system.wav"), SAMPLE_RATE).unwrap());
+        remove_capture_files(&folder);
+        assert!(!folder.exists());
+        // Ein nie angelegter Ordner ist kein Fehler.
+        remove_capture_files(&dir.path().join("gibt-es-nicht"));
+    }
+
+    /// Das Zusammenspiel von Zielpruefung und Rueckfall wie `start_playback_capture` es
+    /// nutzt: Start scheitert nach der Umwandlung -> Eintrag wie vorher, Dateien weg,
+    /// nichts, was der naechste App-Start als Absturz belebt.
+    #[test]
+    fn a_playback_start_that_fails_leaves_the_entry_as_it_was() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+        let entry = store
+            .create_meeting("Vortrag", MeetingSource::Youtube, None)
+            .unwrap();
+        let folder = dir.path().join("meetings").join(&entry.id);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("folien.pdf"), b"x").unwrap();
+
+        let (started, prior) = store.begin_playback_capture(&entry.id, 7).unwrap();
+        assert_eq!(started.status, "recording");
+        // `start_row`: Datei und Pfad stehen, dann scheitert der Systemton.
+        let system = folder.join("system.wav");
+        drop(StreamingWavWriter::create(&system, SAMPLE_RATE).unwrap());
+        store
+            .set_audio_paths(&entry.id, None, system.to_str(), None)
+            .unwrap();
+
+        remove_capture_files(&folder);
+        assert!(store.restore_playback_target(&entry.id, &prior).unwrap());
+
+        let after = store.get_meeting(&entry.id).unwrap().unwrap();
+        assert_eq!(
+            (after.source.as_str(), after.status.as_str()),
+            ("youtube", "ready")
+        );
+        assert_eq!(after.system_audio_path, None);
+        assert!(!is_orphan_status(&after.status));
+        assert!(folder.join("folien.pdf").exists());
+        assert!(!system.exists());
     }
 }

@@ -28,6 +28,7 @@ pub mod notes;
 pub mod notizbuch; // lva#396 N4a
 pub mod parts; // Mehrere Audiodateien (Teile) je Besprechung
 pub mod pdf; // M6-P6b
+pub mod playback; // #537: YouTube-Besprechung beim Abspielen mitschreiben
 pub mod project_minutes_store; // G3 (#70): Projekt-Protokolle
 pub mod projekt; // ADR-0026 PR-7: Besprechungsordner <-> Suite-Projekt
 pub mod queue; // U7

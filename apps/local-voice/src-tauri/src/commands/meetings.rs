@@ -96,6 +96,36 @@ pub async fn meetings_start(
     .map_err(|e| format!("meetings_start panicked: {e}"))?
 }
 
+/// #537: "Beim Abspielen mitschreiben". Nimmt NUR den Systemton (Loopback, kein
+/// Mikrofon) in die vorhandene YouTube-Besprechung `meeting_id` auf, waehrend der
+/// Nutzer das Video im eingebetteten Player abspielt; Live-Transkript, Stopp
+/// (`meetings_stop`) und Enddurchlauf wie bei jeder Aufnahme. Kein Download, der
+/// Player bleibt unveraendert. Eigener Befehl statt eines Parameters an
+/// `meetings_start`: dort ist das Ziel ein LEERER Eintrag und es gibt einen Titel,
+/// ein Mikrofon und einen Systemton-Schalter; hier ist das Ziel ein YouTube-Eintrag
+/// ohne Transkript, und es gibt nichts davon zu waehlen.
+///
+/// Die Einwilligung (`consent_confirmed`) gilt zuerst. Fehler (Codes, die die
+/// Oberflaeche uebersetzt): `consent_required`, `already_recording`,
+/// `dictation_active`, `meeting_not_found`, `target_not_empty` (kein YouTube-Eintrag
+/// ohne Transkript und Aufnahme), `playback_capture_failed`,
+/// `playback_capture_timeout` (der Systemton liess sich nicht oeffnen; der Eintrag
+/// ist danach wie vorher).
+#[tauri::command]
+#[specta::specta]
+pub async fn meetings_start_playback_capture(
+    app: tauri::AppHandle,
+    meeting_id: String,
+    consent_confirmed: bool,
+) -> Result<Meeting, String> {
+    let recorder = recorder_of(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        recorder.start_playback_capture(&meeting_id, consent_confirmed)
+    })
+    .await
+    .map_err(|e| format!("meetings_start_playback_capture panicked: {e}"))?
+}
+
 /// G1 (#70): legt einen leeren Eintrag an, ein Notizblock ohne Audio und ohne
 /// Quelle, auf Wunsch gleich im Projekt `folder_id`. `title` ist der
 /// vorgeschlagene Titel (die Oberflaeche liefert den lokalisierten). Aufnahme,

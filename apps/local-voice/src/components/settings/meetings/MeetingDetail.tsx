@@ -93,7 +93,7 @@ import { SlideViewer } from "./slides/SlideViewer";
 import { SlidesPanel } from "./slides/SlidesPanel";
 import { startSlideDetection } from "./slides/useSlidesBackground";
 import { useMeetingSlides } from "./slides/useMeetingSlides";
-import { useYoutubeSource } from "./youtube/useYoutubeSource";
+import { useYoutubeSource, YOUTUBE_SOURCE } from "./youtube/useYoutubeSource";
 import { CompareView } from "./variants/CompareView";
 import { ProvenanceArea } from "./variants/ProvenanceArea";
 import { VariantChip } from "./variants/VariantChip";
@@ -119,12 +119,16 @@ const formatMmSs = (ms: number) => {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 };
 
-const channelLabelKey = (channel: number) => {
+const channelLabelKey = (channel: number, source: string) => {
   switch (channel) {
     case 0:
       return "meetings.live.me";
+    // #537: bei einer YouTube-Besprechung ist der Systemton die ganze Aufnahme,
+    // keine "Gegenseite".
     case 1:
-      return "meetings.live.remote";
+      return source === "youtube"
+        ? "meetings.live.mixed"
+        : "meetings.live.remote";
     default:
       return "meetings.live.mixed";
   }
@@ -887,7 +891,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     if (whole?.display_name) return whole.display_name;
     return channel === 0 && selfName !== ""
       ? selfName
-      : t(channelLabelKey(channel));
+      : t(channelLabelKey(channel, meeting.source));
   };
   const whoLabel = (segment: StoredSegment) =>
     speakerOf(segment)?.label ?? channelLabel(segment.channel);
@@ -1099,6 +1103,22 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   const showChip =
     variants.length > 1 || (youtube.source !== null && variants.length > 0);
 
+  /**
+   * Leeres Transkript: die Zeitangabe der Live-Ansicht gilt nur, solange wirklich
+   * aufgenommen wird. Eine YouTube-Besprechung ohne Aufnahme verweist auf das
+   * Mitschreiben beim Abspielen (#537); alles andere bekommt einen Text ohne
+   * Zeitversprechen.
+   */
+  const emptyTranscriptText = emptyEntry
+    ? t("meetings.empty.transcriptEmpty")
+    : live
+      ? t("meetings.live.empty")
+      : meeting.source === YOUTUBE_SOURCE && !growing && !hasAudio
+        ? t("meetings.live.emptyYoutube")
+        : transcribing
+          ? t("meetings.live.emptyProcessing")
+          : t("meetings.live.emptyNeutral");
+
   /** Fassungs-Chip: gilt fuer Transkript und Vergleich, deshalb ueber beiden Reitern. */
   const variantRow = showChip && (
     <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -1124,7 +1144,15 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         <YoutubeTranscriptTools
           meetingId={meetingId}
           busy={growing}
+          hasTranscript={segments.length > 0}
+          hasAudio={hasAudio}
           onChanged={() => loadSegments()}
+          onCaptureStarted={(started) => {
+            // Der Eintrag ist jetzt eine laufende Aufnahme: die Seite zeigt sie
+            // sofort (Status, Live-Ansicht), ohne auf die Liste zu warten.
+            onMeetingChange(started);
+            return youtube.playFromStart();
+          }}
         />
       )}
       {growing && (
@@ -1187,11 +1215,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
           {t("meetings.list.loading")}
         </p>
       ) : segments.length === 0 ? (
-        <p className="text-sm text-text/60">
-          {emptyEntry
-            ? t("meetings.empty.transcriptEmpty")
-            : t("meetings.live.empty")}
-        </p>
+        <p className="text-sm text-text/60">{emptyTranscriptText}</p>
       ) : (
         <ProvenanceArea
           subject={{

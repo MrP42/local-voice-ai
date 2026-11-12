@@ -177,6 +177,18 @@ impl DspConfig {
         self.echo = Some(echo);
         self
     }
+
+    /// #537: Mitschnitt des Systemtons ohne Mikrofon. Kanal 0 bekommt nie einen
+    /// Block, sein Waechter ist aus (sonst Dauer-Alarm `NoData` nach 8 s), der
+    /// Systemton-Waechter fragt bei Stille nach. Keine Echo-Unterdrueckung: ohne
+    /// Mikrofon gibt es kein Echo, und ohne `echo` entstehen weder `mic_aec.wav`
+    /// noch das Sicherheitsnetz.
+    pub fn playback_only(mut self) -> Self {
+        self.echo = None;
+        self.watch_mic = WatchConfig::off();
+        self.watch_loopback = WatchConfig::playback();
+        self
+    }
 }
 
 /// Zaehler einer Besprechung. Nur Zahlen, nie Inhalte.
@@ -2128,6 +2140,84 @@ mod tests {
         }
         h.finish();
         assert_eq!(health_of(&log), vec![(0, HealthState::QueueOverflow)]);
+    }
+
+    // ---- #537: Mitschnitt des Systemtons ohne Mikrofon ----------------------
+
+    fn playback_dsp() -> (DspHandle, Receiver<WorkItem>, Arc<Mutex<Vec<DspNotice>>>) {
+        let (notice, log) = notices();
+        let (tx, rx) = mpsc::channel();
+        let cfg = DspConfig::new(Some(energy_factory()), notice).playback_only();
+        (DspHandle::spawn(cfg, tx, QUEUE_CAPACITY).unwrap(), rx, log)
+    }
+
+    #[test]
+    fn the_playback_config_switches_the_mic_watch_and_the_echo_stage_off() {
+        let (notice, _) = notices();
+        let cfg = DspConfig::new(None, notice).playback_only();
+        assert!(cfg.echo.is_none());
+        let mic = &cfg.watch_mic;
+        assert!(mic.no_data_ms.is_none() && mic.digital_zero_ms.is_none());
+        assert!(mic.silent_ms.is_none() && mic.clip_window_ms.is_none());
+        assert_eq!(cfg.watch_loopback.silent_ms, Some(30_000));
+        assert_eq!(cfg.watch_loopback.no_data_ms, Some(30_000));
+    }
+
+    /// Nur Kanal 1 liefert: Segmente kommen von Kanal 1 mit der Zeitachse des
+    /// Systemtons, der Schluss (`finish`) kehrt ohne Warten auf den nie
+    /// beschickten Kanal 0 zurueck, und es entsteht keine Mikrofon-Meldung.
+    #[test]
+    fn a_system_only_feed_segments_on_channel_one_and_finishes_without_the_mic() {
+        let (h, rx, log) = playback_dsp();
+        let mut sys = h.feed(1);
+        feed_blocks(&mut sys, &cat(&[quiet(2_000), loud(2_000), quiet(2_000)]));
+        let started = std::time::Instant::now();
+        h.finish();
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "finish() wartete auf den Mikrofonkanal"
+        );
+        let got = seg_offsets(&items(&rx));
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].0, 1, "der Systemton ist Kanal 1");
+        // Sprache ab 2 s, dazu der Vorlauf des Segmentierers (30-ms-Raster).
+        assert!((1_650..=1_720).contains(&got[0].1), "offset {}", got[0].1);
+        assert!(
+            health_of(&log).iter().all(|(channel, _)| *channel == 1),
+            "{:?}",
+            health_of(&log)
+        );
+    }
+
+    #[test]
+    fn the_open_segment_of_a_system_only_capture_is_flushed_at_the_end() {
+        let (h, rx, _) = playback_dsp();
+        let mut sys = h.feed(1);
+        // Die Aufnahme endet mitten im Satz (Stopp): nichts geht verloren.
+        feed_blocks(&mut sys, &cat(&[quiet(1_000), loud(1_500)]));
+        h.finish();
+        let got = items(&rx);
+        assert_eq!(got.len(), 1);
+        assert!(matches!(&got[0], WorkItem::Segment(1, _, _)));
+    }
+
+    /// Stille am Systemton wird nach 30 s gemeldet (die Nutzerin hat das Video
+    /// vermutlich noch nicht gestartet) und mit dem ersten hoerbaren Ton wieder
+    /// zurueckgenommen: digitale Null, Uebergang auf "still", dann "erholt".
+    #[test]
+    fn a_silent_system_channel_asks_after_thirty_seconds_in_a_playback_capture() {
+        let (h, _rx, log) = playback_dsp();
+        let mut sys = h.feed(1);
+        feed_blocks(&mut sys, &cat(&[loud(1_000), zeros(31_000), loud(1_500)]));
+        h.finish();
+        assert_eq!(
+            health_of(&log),
+            vec![
+                (1, HealthState::DigitalZero),
+                (1, HealthState::Silent),
+                (1, HealthState::Recovered)
+            ]
+        );
     }
 
     #[test]

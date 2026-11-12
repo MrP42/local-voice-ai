@@ -2247,6 +2247,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::history::update_recording_retention_period,
             commands::meetings::meetings_start,
             commands::meetings::meetings_create_empty, // G1 (#70)
+            commands::meetings::meetings_start_playback_capture, // #537
             commands::meetings::meetings_pause,
             commands::meetings::meetings_resume,
             commands::meetings::meetings_stop,

@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import {
   calls,
+  emitMeeting,
   goToRecordings,
   installRecMock,
   openRecordings,
@@ -8,6 +9,7 @@ import {
 } from "./recLayoutMock";
 import { installTauriMock } from "./calendarMock";
 import {
+  captureSegment,
   installYoutubeMock,
   pasteText,
   playerCalls,
@@ -16,6 +18,7 @@ import {
   YT_ID,
   YT_MEETING_ID,
   YT_TITLE,
+  type YoutubeMockOptions,
 } from "./youtubeMock";
 import { geheZu } from "./profilmenue";
 
@@ -23,6 +26,7 @@ import { geheZu } from "./profilmenue";
 // (Dialog und Strg+V), Meldungen fuer ungueltige und Playlist-Links, der Player
 // in der Inhaltsspalte (einklappbar, Hoehe, erst nach Klick), Zeitsprung beim Klick
 // auf ein Transkript-Segment, die Einstellung "privat" mit yt-dlp-Erkennung.
+// #537: "Beim Abspielen mitschreiben" (Einwilligung, Start, Hinweise, Stopp).
 // Die Link-Logik selbst pruefen die Rust-Tests (`cargo test --lib youtube::`).
 
 test.use({ timezoneId: "Europe/Berlin", locale: "de-DE" });
@@ -31,7 +35,7 @@ const LINK = `https://youtu.be/${YT_ID}?si=TRACK&t=1m30s`;
 
 const setup = async (
   page: Page,
-  options: { fakePlayer?: boolean; existing?: boolean; recording?: boolean } = {},
+  options: YoutubeMockOptions & { recording?: boolean } = {},
 ) => {
   await installRecMock(page, { recording: options.recording });
   const mock = await installYoutubeMock(page, options);
@@ -616,5 +620,222 @@ test.describe("Einstellung privat", () => {
     // Geprueft wird der Wert aus dem Feld.
     const detects = await calls(page, "youtube_tool_detect");
     expect(detects.at(-1)?.args).toEqual({ path: "C:\\Tools\\yt-dlp.exe" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #537: Beim Abspielen mitschreiben (ohne yt-dlp, ohne Download)
+// ---------------------------------------------------------------------------
+
+test.describe("Beim Abspielen mitschreiben", () => {
+  const START = "meetings_start_playback_capture";
+  const NEED_TOOL =
+    "Schneller mit Untertiteln: yt-dlp selbst installieren und unter Einstellungen „privat“ einschalten (optional).";
+
+  const captureDialog = (page: Page) =>
+    page.getByRole("dialog", { name: "Beim Abspielen mitschreiben" });
+
+  /** Knopf, Einwilligung bestaetigen. */
+  const startCapture = async (page: Page) => {
+    await page.getByTestId("yt-capture").click();
+    const dialog = captureDialog(page);
+    await expect(dialog).toBeVisible();
+    await dialog.getByTestId("yt-capture-confirm").click();
+  };
+
+  test("ohne yt-dlp ist Mitschreiben der erste Schritt, mit Erklärung und kleinem Hinweis", async ({
+    page,
+  }) => {
+    const { youtubeRequests } = await setup(page, { empty: true });
+    await pickMeeting(page, YT_MEETING_ID);
+    const block = page.getByTestId("yt-capture-block");
+    await expect(block).toBeVisible();
+    await expect(page.getByTestId("yt-capture")).toHaveText(
+      "Beim Abspielen mitschreiben",
+    );
+    await expect(page.getByTestId("yt-capture-explain")).toContainText(
+      "Der Systemton wird beim Abspielen im eingebetteten Player in Echtzeit transkribiert.",
+    );
+    // Der Hinweis auf yt-dlp steht darunter, klein, und ist optional.
+    await expect(page.getByTestId("yt-tool-hint")).toHaveText(NEED_TOOL);
+    const blockBox = (await block.boundingBox())!;
+    const hintBox = (await page.getByTestId("yt-tool-hint").boundingBox())!;
+    expect(hintBox.y).toBeGreaterThan(blockBox.y);
+    await expect(page.getByTestId("yt-subtitles")).toHaveCount(0);
+    await expect(page.getByTestId("yt-own-transcription")).toHaveCount(0);
+    // Der Leerzustand verweist auf den Knopf (keine Aufnahme laeuft).
+    await expect(
+      page.getByText("Noch kein Transkript. Starte oben „Beim Abspielen mitschreiben“."),
+    ).toBeVisible();
+    // Bis zur Bestaetigung passiert nichts: kein Start, kein Netz.
+    expect(await calls(page, START)).toHaveLength(0);
+    expect(youtubeRequests).toEqual([]);
+  });
+
+  test("mit yt-dlp bleiben Untertitel und eigene Transkription, dazu der Knopf zum Mitschreiben", async ({
+    page,
+  }) => {
+    await setup(page, { empty: true, privateOn: true });
+    await pickMeeting(page, YT_MEETING_ID);
+    await expect(page.getByTestId("yt-subtitles")).toBeVisible();
+    await expect(page.getByTestId("yt-own-transcription")).toBeVisible();
+    await expect(page.getByTestId("yt-capture")).toBeVisible();
+    // Der Hinweis auf yt-dlp entfaellt, wenn es da ist.
+    await expect(page.getByTestId("yt-tool-hint")).toHaveCount(0);
+    await expect(page.getByTestId("yt-capture-block")).toHaveCount(0);
+  });
+
+  test("mit vorhandenem Transkript wird das Mitschreiben nicht angeboten", async ({
+    page,
+  }) => {
+    await setup(page, { empty: false });
+    await pickMeeting(page, YT_MEETING_ID);
+    await expect(page.getByTestId("yt-tool-hint")).toBeVisible();
+    await expect(page.getByTestId("yt-capture")).toHaveCount(0);
+    await expect(page.getByTestId("yt-capture-block")).toHaveCount(0);
+  });
+
+  test("Abbrechen im Einwilligungsdialog startet nichts", async ({ page }) => {
+    await setup(page, { empty: true });
+    await pickMeeting(page, YT_MEETING_ID);
+    await page.getByTestId("yt-capture").click();
+    const dialog = captureDialog(page);
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByTestId("yt-capture-dialog")).toContainText(
+      "Einwilligung erforderlich",
+    );
+    await expect(dialog.getByTestId("yt-capture-dialog")).toContainText(
+      "nur den Systemton, nicht das Mikrofon",
+    );
+    await dialog.getByRole("button", { name: "Abbrechen" }).last().click();
+    await expect(dialog).toHaveCount(0);
+    expect(await calls(page, START)).toHaveLength(0);
+    await expect(page.getByTestId("yt-capture")).toBeVisible();
+  });
+
+  test("Bestätigen startet das Mitschreiben in genau diesen Eintrag und spielt das Video von vorn", async ({
+    page,
+  }) => {
+    await setup(page, { empty: true });
+    await pickMeeting(page, YT_MEETING_ID);
+    await startCapture(page);
+    await expect.poll(async () => (await calls(page, START)).length).toBe(1);
+    expect((await calls(page, START))[0].args).toEqual({
+      meetingId: YT_MEETING_ID,
+      consentConfirmed: true,
+    });
+    // Der Dialog geht zu, der Knopf weicht dem Hinweis "es wird mitgeschrieben".
+    await expect(captureDialog(page)).toHaveCount(0);
+    await expect(page.getByTestId("yt-capture-running")).toContainText(
+      "Es wird mitgeschrieben",
+    );
+    await expect(page.getByTestId("yt-capture")).toHaveCount(0);
+    // Der offizielle Player startet von vorn; kein Hinweis "Jetzt abspielen" noetig.
+    await expect(page.getByTestId("yt-panel")).toHaveAttribute(
+      "data-phase",
+      "ready",
+    );
+    expect(await playerCalls(page)).toEqual([["seekTo", 0, true], ["playVideo"]]);
+    await expect(page.getByTestId("yt-capture-play-hint")).toHaveCount(0);
+    // Die normale Aufnahmesteuerung ist da, der Leerzustand der Aufnahme auch.
+    await expect(page.getByTestId("rec-live")).toBeVisible();
+    await expect(page.getByText("Noch keine Segmente", { exact: false })).toBeVisible();
+    await expect(
+      page.getByText("Noch kein Transkript. Starte oben", { exact: false }),
+    ).toHaveCount(0);
+  });
+
+  test("Sätze des Systemtons erscheinen live, Beenden ist der normale Stopp-Knopf", async ({
+    page,
+  }) => {
+    await setup(page, { empty: true });
+    await pickMeeting(page, YT_MEETING_ID);
+    await startCapture(page);
+    await expect(page.getByTestId("yt-capture-running")).toBeVisible();
+    await captureSegment(page, 0, "Willkommen zum Vortrag über Lastgänge.");
+    const row = page.locator('[data-segment-index="0"]');
+    await expect(row).toContainText("Willkommen zum Vortrag über Lastgänge.");
+    // Ein Kanal allein bekommt kein Sprecherschild, schon gar keine "Gegenseite".
+    await expect(row).not.toContainText("Gegenseite");
+    await page.getByTestId("rec-stop").click();
+    await expect.poll(async () => (await calls(page, "meetings_stop")).length).toBe(1);
+  });
+
+  test("kommt kein Ton an, fragt die Oberfläche nach und nimmt es mit dem Ton zurück", async ({
+    page,
+  }) => {
+    await setup(page, { empty: true });
+    await pickMeeting(page, YT_MEETING_ID);
+    await startCapture(page);
+    await expect(page.getByTestId("yt-capture-running")).toBeVisible();
+    await expect(page.getByTestId("yt-capture-quiet")).toHaveCount(0);
+    // Ein stiller Mikrofonkanal (0) ist hier kein Thema, nur der Systemton (1).
+    await emitMeeting(page, {
+      kind: "health",
+      meeting_id: YT_MEETING_ID,
+      channel: 0,
+      state: "silent",
+    });
+    await expect(page.getByTestId("yt-capture-quiet")).toHaveCount(0);
+    await emitMeeting(page, {
+      kind: "health",
+      meeting_id: YT_MEETING_ID,
+      channel: 1,
+      state: "silent",
+    });
+    await expect(page.getByTestId("yt-capture-quiet")).toContainText(
+      "kommt kein Ton an",
+    );
+    await emitMeeting(page, {
+      kind: "health",
+      meeting_id: YT_MEETING_ID,
+      channel: 1,
+      state: "recovered",
+    });
+    await expect(page.getByTestId("yt-capture-quiet")).toHaveCount(0);
+  });
+
+  test("scheitert der Systemton, steht eine verständliche Meldung, der Eintrag bleibt wie er war", async ({
+    page,
+  }) => {
+    await setup(page, { empty: true, startError: "playback_capture_failed: kein Ausgabegerät" });
+    await pickMeeting(page, YT_MEETING_ID);
+    await startCapture(page);
+    await expect(page.getByTestId("yt-message")).toContainText(
+      "Der Systemton ließ sich nicht aufnehmen.",
+    );
+    await expect(captureDialog(page)).toHaveCount(0);
+    // Keine Aufnahme laeuft; der Knopf ist wieder da, und der Player blieb unberuehrt.
+    await expect(page.getByTestId("yt-capture-running")).toHaveCount(0);
+    await expect(page.getByTestId("yt-capture")).toBeEnabled();
+    expect(await playerCount(page)).toBe(0);
+    await expect(
+      page.getByText("Noch kein Transkript. Starte oben", { exact: false }),
+    ).toBeVisible();
+  });
+
+  test("ein Eintrag, der nicht leer ist, wird abgewiesen (target_not_empty)", async ({
+    page,
+  }) => {
+    await setup(page, { empty: true, startError: "target_not_empty" });
+    await pickMeeting(page, YT_MEETING_ID);
+    await startCapture(page);
+    await expect(page.getByTestId("yt-message")).toContainText(
+      "Dieser Eintrag hat schon ein Transkript oder eine Aufnahme.",
+    );
+    await expect(page.getByTestId("yt-capture-running")).toHaveCount(0);
+  });
+
+  test("läuft schon eine andere Aufnahme, ist der Knopf gesperrt", async ({
+    page,
+  }) => {
+    await setup(page, { empty: true, recording: true });
+    await pickMeeting(page, YT_MEETING_ID);
+    await expect(page.getByTestId("yt-capture")).toBeDisabled();
+    await expect(page.getByTestId("yt-capture")).toHaveAttribute(
+      "title",
+      "Es läuft schon eine andere Aufnahme.",
+    );
+    expect(await calls(page, START)).toHaveLength(0);
   });
 });

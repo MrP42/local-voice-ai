@@ -3655,6 +3655,9 @@
     },
     "live": {
       "empty": "Noch keine Segmente — das erste erscheint nach ~20 Sekunden.",
+      "emptyYoutube": "Noch kein Transkript. Starte oben „Beim Abspielen mitschreiben“.",
+      "emptyProcessing": "Das Transkript erscheint hier, sobald die ersten Abschnitte fertig sind.",
+      "emptyNeutral": "Noch kein Transkript.",
       "me": "Ich",
       "remote": "Gegenseite",
       "mixed": "Aufnahme"
@@ -3769,6 +3772,9 @@
       "loopbackStartTimeout": "System-Audio konnte nicht gestartet werden — die Aufnahme läuft nur mit dem Mikrofon weiter.",
       "loopbackStartFailed": "System-Audio ist beim Start fehlgeschlagen — die Aufnahme läuft nur mit dem Mikrofon weiter.",
       "loopbackDied": "Der System-Ton ist während der Aufnahme ausgefallen — die Besprechung läuft nur mit dem Mikrofon weiter.",
+      "playbackCaptureFailed": "Der Systemton ließ sich nicht aufnehmen. Ist ein Ausgabegerät angeschlossen und in Windows eingestellt?",
+      "playbackCaptureTimeout": "Der Systemton antwortet nicht. Bitte Ausgabegerät und Treiber prüfen und noch einmal versuchen.",
+      "playbackCaptureDied": "Der Systemton ist beim Mitschreiben ausgefallen. Beende die Aufnahme; was bis dahin mitgeschrieben wurde, bleibt erhalten.",
       "micStreamError": "Der Mikrofon-Stream hat während der Aufnahme einen Fehler gemeldet — es können Teile der Aufnahme fehlen.",
       "importFailed": "Die Datei konnte nicht importiert werden.",
       "alreadyRecording": "Es läuft bereits eine Aufnahme.",
@@ -4144,7 +4150,7 @@
         "minutes_cancelled": "Die Erzeugung wurde abgebrochen.",
         "meeting_not_found": "Die Besprechung gibt es nicht mehr.",
         "meeting_not_finished": "Die Aufnahme läuft noch. Das Protokoll kann erst nach dem Stopp erzeugt werden.",
-        "no_transcript": "Es gibt noch kein Transkript, aus dem ein Protokoll entstehen könnte.",
+        "no_transcript": "Für ein Protokoll braucht es zuerst ein Transkript. Im Reiter „Transkript“ eine Aufnahme starten oder das Video mitschreiben.",
         "template_not_found": "Diese Vorlage gibt es nicht mehr. Bitte eine andere wählen.",
         "no_provider": "Kein Sprachmodell eingerichtet (Einstellungen → Nachbearbeitung).",
         "no_model": "Für den Anbieter ist kein Modell eingetragen (Einstellungen → Nachbearbeitung → Modell).",
@@ -5166,7 +5172,7 @@
         "region": "Unterschiede je Zeile"
       },
       "youtube": {
-        "needTool": "Für Untertitel und Transkription yt-dlp selbst installieren und in den Einstellungen „privat“ einschalten.",
+        "needTool": "Schneller mit Untertiteln: yt-dlp selbst installieren und unter Einstellungen „privat“ einschalten (optional).",
         "subtitles": "Untertitel laden",
         "subtitlesBusy": "Suche Untertitel …",
         "pick": "Sprache der Untertitel",
@@ -5178,7 +5184,24 @@
         "ownDone": "Die eigene Transkription ist fertig.",
         "trackManual": "{{name}} (hochgeladen)",
         "trackAuto": "{{name}} (automatisch)",
-        "tools": "Untertitel und Transkription"
+        "tools": "Untertitel und Transkription",
+        "capture": {
+          "button": "Beim Abspielen mitschreiben",
+          "starting": "Starte …",
+          "explain": "Der Systemton wird beim Abspielen im eingebetteten Player in Echtzeit transkribiert. Spiele das Video von Anfang bis Ende ab, lass die Lautstärke an und schalte andere Töne stumm.",
+          "running": "Es wird mitgeschrieben, solange der Ton läuft. Spiele das Video von Anfang bis Ende ab. Mit „Beenden“ in der Aufnahmesteuerung hörst du auf.",
+          "playHint": "Jetzt das Video abspielen.",
+          "quiet": "Seit einiger Zeit kommt kein Ton an. Läuft das Video, ist die Lautstärke an und ist der Player nicht stummgeschaltet?",
+          "elsewhere": "Es läuft schon eine andere Aufnahme.",
+          "dialog": {
+            "title": "Beim Abspielen mitschreiben",
+            "body": "Die App nimmt den Ton auf, der beim Abspielen aus deinen Lautsprechern oder Kopfhörern kommt (nur den Systemton, nicht das Mikrofon), und schreibt ihn mit. Das Video wird nicht heruntergeladen. Bestätige, dass du diese Aufnahme anfertigen darfst: Das Video ist öffentlich zugänglich, oder alle darin zu hörenden Personen haben zugestimmt.",
+            "confirm": "Mitschreiben starten"
+          },
+          "errors": {
+            "notReady": "Dieser Eintrag hat schon ein Transkript oder eine Aufnahme. Mitschreiben geht nur bei einer YouTube-Besprechung ohne beides."
+          }
+        }
       }
     },
     "slides": {

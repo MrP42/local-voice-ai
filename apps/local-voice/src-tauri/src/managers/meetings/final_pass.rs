@@ -3891,6 +3891,110 @@ mod tests {
         assert_eq!(env.kinds().last(), Some(&"final"));
     }
 
+    /// #537: ein Mitschnitt des Systemtons in eine YouTube-Besprechung hat NUR
+    /// `system.wav`. Absturz mitten in der Aufnahme: Kopf repariert, Rest auf
+    /// Kanal 1 nachgeholt, Besprechung `ready`; es entsteht keine Mikrofonspur und
+    /// nichts wartet auf sie.
+    #[test]
+    fn a_system_only_playback_capture_survives_a_crash_and_is_caught_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+        let m = store
+            .create_meeting("Vortrag", MeetingSource::Youtube, None)
+            .unwrap();
+        let meeting_dir = dir.path().join(&m.id);
+        std::fs::create_dir_all(&meeting_dir).unwrap();
+        let system = meeting_dir.join("system.wav");
+        {
+            // Absturz: geschrieben, nie finalisiert (Header sagt 0).
+            let mut w = StreamingWavWriter::create(&system, 16_000).unwrap();
+            w.append(&speech()).unwrap();
+        }
+        store
+            .set_audio_paths(&m.id, None, system.to_str(), None)
+            .unwrap();
+        store
+            .append_delta(
+                &m.id,
+                &TranscriptDelta {
+                    new_segments: vec![seg(0, 1, 0, 2_400)],
+                },
+            )
+            .unwrap();
+        store.set_status(&m.id, MeetingStatus::Recording).unwrap();
+        let meeting = store.get_meeting(&m.id).unwrap().unwrap();
+        assert!(
+            crate::managers::meetings::recorder::runs_final_pass(&meeting),
+            "eine YouTube-Besprechung mit eigener Aufnahme bekommt den Plan der Aufnahme"
+        );
+        assert_eq!(prepare_orphan(&store, &meeting).unwrap(), Some(6_000));
+
+        let mut env = FakeEnv::new();
+        let spec = JobSpec {
+            meeting_id: m.id.clone(),
+            catch_up_model: Some("meeting-model".into()),
+            plan: FinalPlan::Keep(KeepReason::CpuOnly),
+            live_model: None,
+            recover_from: None,
+        };
+        let out = run_job(&store, &spec, &mut env);
+
+        assert!(out.report.catch_up_segments >= 1);
+        let segs = store.get_segments(&m.id).unwrap();
+        assert!(segs.iter().all(|s| s.channel == 1), "nur der Systemton");
+        assert!(segs.iter().map(|s| s.end_ms).max().unwrap() >= 5_000);
+        let after = store.get_meeting(&m.id).unwrap().unwrap();
+        assert_eq!(after.status, "ready");
+        assert_eq!(after.source, "youtube");
+        assert_eq!(after.mic_audio_path, None, "keine Mikrofonspur entstanden");
+        assert!(!meeting_dir.join("mic.wav").exists());
+        assert_eq!(env.kinds().last(), Some(&"final"));
+    }
+
+    /// #537: der Enddurchlauf ueber die einzige Spur (Systemton): das Ergebnis
+    /// ersetzt das Live-Transkript auf Kanal 1, die Besprechung wird `ready`.
+    #[test]
+    fn the_final_pass_of_a_system_only_capture_replaces_the_live_transcript() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+        let m = store
+            .create_meeting("Vortrag", MeetingSource::Youtube, None)
+            .unwrap();
+        let meeting_dir = dir.path().join(&m.id);
+        std::fs::create_dir_all(&meeting_dir).unwrap();
+        let system = meeting_dir.join("system.wav");
+        write_wav(&system, &speech());
+        store
+            .set_audio_paths(&m.id, None, system.to_str(), Some(6_000))
+            .unwrap();
+        store
+            .append_delta(
+                &m.id,
+                &TranscriptDelta {
+                    new_segments: vec![seg(0, 1, 0, 2_400)],
+                },
+            )
+            .unwrap();
+        store.set_status(&m.id, MeetingStatus::Processing).unwrap();
+
+        let mut env = FakeEnv::new();
+        let spec = JobSpec {
+            meeting_id: m.id.clone(),
+            catch_up_model: None,
+            plan: run_plan("final-model"),
+            live_model: Some("live-model".into()),
+            recover_from: None,
+        };
+        run_job(&store, &spec, &mut env);
+
+        let segs = store.get_segments(&m.id).unwrap();
+        assert!(segs.len() >= 2, "beide Aeusserungen: {}", segs.len());
+        assert!(segs.iter().all(|s| s.channel == 1));
+        assert!(segs.iter().all(|s| s.text.contains("final-model")));
+        assert_eq!(store.get_meeting(&m.id).unwrap().unwrap().status, "ready");
+        assert_eq!(env.final_event().1.as_deref(), Some("final-model"));
+    }
+
     /// Ein gestoppter Import ist beim Start kein Wiederherstellungsfall: die
     /// Besprechung bleibt `cancelled`, bis der Nutzer sie fortsetzt.
     #[test]
