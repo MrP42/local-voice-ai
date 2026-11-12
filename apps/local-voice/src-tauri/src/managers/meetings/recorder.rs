@@ -541,6 +541,28 @@ impl Drop for StartingFlag<'_> {
     }
 }
 
+/// lva#534: Enddurchlauf, Wiederherstellung und Fortsetzen transkribieren eine vorhandene
+/// Aufnahme erneut bzw. holen Rest nach. Gehoert die Besprechung einer Planung, die das
+/// Einwilligungs-Tor sperrt (z. B. Widerruf waehrend der Aufnahme), laeuft keine weitere
+/// Transkription: der Auftrag wird zu "Live-Transkript behalten" ohne Modell, die Besprechung
+/// schliesst wie gewohnt ab. Ohne zugeordnete Planung ist der Auftrag unveraendert.
+pub(crate) fn unter_tor(store: &MeetingStore, job: &JobSpec) -> JobSpec {
+    match crate::managers::planning::mit_tor_besprechung(store, &job.meeting_id, |_tor| Ok(())) {
+        Ok(()) => job.clone(),
+        Err(code) => {
+            info!(
+                "meetings: keine weitere Transkription fuer {} ({code})",
+                job.meeting_id
+            );
+            JobSpec {
+                plan: FinalPlan::Keep(KeepReason::NoConsent),
+                catch_up_model: None,
+                ..job.clone()
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Manager
 // ---------------------------------------------------------------------------
@@ -613,7 +635,8 @@ impl MeetingRecorderManager {
                 let mut env =
                     final_pass::AppEnv::new(&app, Arc::clone(&tm), Arc::clone(&job_cancel));
                 for job in &thread_jobs {
-                    final_pass::run_job(&store, job, &mut env);
+                    let job = unter_tor(&store, job);
+                    final_pass::run_job(&store, &job, &mut env);
                 }
                 if !job_cancel.load(Ordering::Relaxed) {
                     let dictation_model = crate::settings::get_settings(&app).selected_model;
@@ -745,54 +768,63 @@ impl MeetingRecorderManager {
             }
         }
 
-        // Einwilligungs-Tor der Besprechungsplanung (lva#534): als letzte Pruefung vor dem
-        // Start, mit frisch gelesenen Einwilligungen. Ohne Planung zum Termin: unveraendert.
-        crate::managers::planning::start_tor(&self.store, event, target_meeting_id)?;
+        // Einwilligungs-Tor der Besprechungsplanung (lva#534): Pruefung und wirksamer Beginn von
+        // Aufnahme und Live-Transkription sind EIN Schritt unter der Sperre des Tors. Ein Widerruf,
+        // der dazwischen gespeichert wird, wartet bis nach dem Start. Ohne Planung zum Termin bzw.
+        // zur Zielbesprechung: unveraendert. `start_row` verlangt den Nachweis des Tors.
+        crate::managers::planning::mit_tor(&self.store, event, target_meeting_id, |tor| {
+            // M2-P2d: ein laufender Enddurchlauf gibt die Engine vorher frei.
+            self.cancel_final_jobs();
 
-        // M2-P2d: ein laufender Enddurchlauf gibt die Engine vorher frei.
-        self.cancel_final_jobs();
-
-        let consent_at = chrono::Utc::now().timestamp();
-        let meeting = begin_live_row(&self.store, &title, consent_at, target_meeting_id)?;
-        let meeting_id = meeting.id.clone();
-        let started = self.start_row(meeting, capture_system);
-        if let Err(e) = &started {
-            match target_meeting_id {
-                Some(target) => {
-                    // Nichts wurde aufgenommen: der Eintrag wird wieder leer.
-                    match self.store.restore_empty_meeting(target) {
-                        Ok(true) => {
-                            info!("meetings: Start gescheitert ({e}), Eintrag {target} ist wieder leer");
-                            if let Ok(dir) = super::meetings_data_dir(&self.app) {
-                                let _ = std::fs::remove_dir_all(dir.join(target));
+            let consent_at = chrono::Utc::now().timestamp();
+            let meeting = begin_live_row(&self.store, &title, consent_at, target_meeting_id)?;
+            let meeting_id = meeting.id.clone();
+            let started = self.start_row(meeting, capture_system, tor);
+            if let Err(e) = &started {
+                match target_meeting_id {
+                    Some(target) => {
+                        // Nichts wurde aufgenommen: der Eintrag wird wieder leer.
+                        match self.store.restore_empty_meeting(target) {
+                            Ok(true) => {
+                                info!("meetings: Start gescheitert ({e}), Eintrag {target} ist wieder leer");
+                                if let Ok(dir) = super::meetings_data_dir(&self.app) {
+                                    let _ = std::fs::remove_dir_all(dir.join(target));
+                                }
+                            }
+                            Ok(false) => {}
+                            Err(err) => {
+                                warn!("meetings: Eintrag {target} nicht wiederhergestellt: {err}")
                             }
                         }
-                        Ok(false) => {}
-                        Err(err) => {
-                            warn!("meetings: Eintrag {target} nicht wiederhergestellt: {err}")
+                    }
+                    // #15: eine neue Besprechung bleibt als `failed` stehen, ohne die
+                    // Null-Header-WAVs und ohne dass der naechste App-Start sie als
+                    // "Absturzrest" wiederbelebt.
+                    None => match super::meetings_data_dir(&self.app) {
+                        Ok(base) => {
+                            info!(
+                                "meetings: Start gescheitert ({e}), {meeting_id} wird aufgeraeumt"
+                            );
+                            discard_failed_start(&self.store, &meeting_id, &base.join(&meeting_id));
                         }
-                    }
+                        Err(err) => {
+                            warn!("meetings: Start gescheitert, Datenordner unbekannt ({err})");
+                            let _ = self.store.set_status(&meeting_id, MeetingStatus::Failed);
+                        }
+                    },
                 }
-                // #15: eine neue Besprechung bleibt als `failed` stehen, ohne die
-                // Null-Header-WAVs und ohne dass der naechste App-Start sie als
-                // "Absturzrest" wiederbelebt.
-                None => match super::meetings_data_dir(&self.app) {
-                    Ok(base) => {
-                        info!("meetings: Start gescheitert ({e}), {meeting_id} wird aufgeraeumt");
-                        discard_failed_start(&self.store, &meeting_id, &base.join(&meeting_id));
-                    }
-                    Err(err) => {
-                        warn!("meetings: Start gescheitert, Datenordner unbekannt ({err})");
-                        let _ = self.store.set_status(&meeting_id, MeetingStatus::Failed);
-                    }
-                },
             }
-        }
-        started
+            started
+        })
     }
 
     /// Der Teil des Starts nach dem Anlegen bzw. Umwandeln der Zeile.
-    fn start_row(&self, meeting: Meeting, capture_system: bool) -> Result<Meeting, String> {
+    fn start_row(
+        &self,
+        meeting: Meeting,
+        capture_system: bool,
+        _tor: &crate::managers::planning::TorNachweis,
+    ) -> Result<Meeting, String> {
         let meeting_id = meeting.id.clone();
 
         let dir = super::meetings_data_dir(&self.app)

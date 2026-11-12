@@ -182,6 +182,9 @@ pub enum KeepReason {
     /// lva#523: „Fortsetzen“ einer gestoppten Neu-Transkription: nur der Rest wird
     /// mit dem Modell des Laufs nachgeholt, kein Enddurchlauf ueber alles.
     PartialRerun,
+    /// lva#534: das Einwilligungs-Tor der Besprechungsplanung sperrt weitere Transkription
+    /// (Ablehnung oder fehlende Zustimmung); das Live-Transkript bleibt, wie es ist.
+    NoConsent,
 }
 
 impl KeepReason {
@@ -195,6 +198,7 @@ impl KeepReason {
                 | KeepReason::AlreadyFinal
                 | KeepReason::NotLive
                 | KeepReason::PartialRerun
+                | KeepReason::NoConsent
         )
     }
 }

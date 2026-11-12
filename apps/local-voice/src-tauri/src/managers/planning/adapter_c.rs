@@ -486,7 +486,13 @@ pub fn abgleich_lauf(store: &MeetingStore, jetzt: i64) -> Res<AbgleichBericht> {
         ..AbgleichBericht::default()
     };
     for id in ids {
-        match pruefe_plan(&mut conn, &id, jetzt) {
+        // Der Abgleich kann Verknuepfung und neue Einwilligungen schreiben: je Planung unter der
+        // Sperre des Einwilligungs-Tors (nicht fuer den ganzen Lauf, damit ein Start nie lange wartet).
+        let ergebnis = {
+            let _sperre = super::tor_sperre();
+            pruefe_plan(&mut conn, &id, jetzt)
+        };
+        match ergebnis {
             Ok(Ergebnis::Angewendet(a)) => {
                 if a.geschrieben {
                     bericht.geaendert += 1;
@@ -517,6 +523,7 @@ pub fn termin_waehlen(
     event_key: &str,
     jetzt: i64,
 ) -> Res<Vec<Ereignis>> {
+    let _sperre = super::tor_sperre();
     let mut conn = verbindung(store)?;
     let tx = schreib_tx(&mut conn)?;
     let plan = plan_store::plan_laden(&tx, plan_id)?.ok_or("plan_nicht_gefunden")?;

@@ -129,6 +129,7 @@ pub fn plan_anlegen(store: &MeetingStore, input: &PlanInput, jetzt: i64) -> Res<
 
 /// Aendert die Inhalte einer Planung (nicht mehr nach der Durchfuehrung).
 pub fn plan_aendern(store: &MeetingStore, id: &str, input: &PlanInput, jetzt: i64) -> Res<Plan> {
+    let _sperre = tor_sperre();
     in_tx(store, |tx| {
         plan_store::plan_aendern(tx, id, input, &Regeln::default(), jetzt)
     })
@@ -145,6 +146,7 @@ pub fn plan_liste(store: &MeetingStore) -> Res<Vec<Plan>> {
 /// Weiches Loeschen (Papierkorb); Verknuepfung und Einwilligungen bleiben bis zum endgueltigen
 /// Entfernen der Zeile.
 pub fn plan_loeschen(store: &MeetingStore, id: &str, jetzt: i64) -> Res<()> {
+    let _sperre = tor_sperre();
     in_tx(store, |tx| plan_store::plan_loeschen(tx, id, jetzt))
 }
 
@@ -288,6 +290,7 @@ pub fn verschiebung_bestaetigen(store: &MeetingStore, id: &str, jetzt: i64) -> R
 /// Die Einwilligungen gelten je Termin: war die Planung gebunden, werden alle auf `offen`
 /// zurueckgesetzt (siehe [`einwilligungen_zuruecksetzen`]).
 pub fn identitaet_loesen(store: &MeetingStore, id: &str, jetzt: i64) -> Res<PlanLink> {
+    let _sperre = tor_sperre();
     in_tx(store, |tx| {
         let plan = plan_holen(tx, id)?;
         if plan.status.ist_abgeschlossen() {
@@ -355,6 +358,7 @@ pub(crate) fn zuruecksetzen_auf_uebergeben(conn: &Connection, plan: &Plan, jetzt
 /// Setzt die Einwilligung einer Person (Zustimmung und Ablehnung nur mit Zeitpunkt und Kanal);
 /// Stand und Verlaufszeile entstehen in einer Transaktion.
 pub fn einwilligung_setzen(store: &MeetingStore, c: &Consent, jetzt: i64) -> Res<()> {
+    let _sperre = tor_sperre();
     in_tx(store, |tx| plan_store::einwilligung_setzen(tx, c, jetzt))
 }
 
@@ -427,16 +431,23 @@ fn start_bezug(
     // (uid, Instanz: `None` = unbekannt, `Some(None)` = Einzeltermin), Anwesende
     let mut termin: Option<(String, Option<Option<i64>>)> = None;
     let mut anwesende: Vec<String> = Vec::new();
-    let mut ereignis = event.cloned();
-    if ereignis.is_none() {
-        if let Some(target) = target_meeting_id {
-            if let Some(link) = store.meeting_calendar_link(target).map_err(sql)? {
-                if let Some(key) = link.event_key.as_deref() {
-                    ereignis = store.calendar_event(key).map_err(sql)?;
-                }
-                if ereignis.is_none() {
-                    termin = Some((link.uid, None));
-                }
+    // Der Termin kommt IMMER frisch aus dem Cache: Teilnehmende koennen sich seit dem Laden des
+    // Aufrufers geaendert haben (Kalenderabruf). Ein uebergebener Schnappschuss ist nur der
+    // Schluessel (Key bzw. UID + Instanz); fehlt der Termin im Cache, gibt es keine Anwesenden
+    // (das sperrt, sobald eine Planung dazugehoert).
+    let mut ereignis = None;
+    if let Some(e) = event {
+        ereignis = store.calendar_event(&e.key).map_err(sql)?;
+        if ereignis.is_none() {
+            termin = Some((e.uid.clone(), Some(e.instance_start)));
+        }
+    } else if let Some(target) = target_meeting_id {
+        if let Some(link) = store.meeting_calendar_link(target).map_err(sql)? {
+            if let Some(key) = link.event_key.as_deref() {
+                ereignis = store.calendar_event(key).map_err(sql)?;
+            }
+            if ereignis.is_none() {
+                termin = Some((link.uid, None));
             }
         }
     }
@@ -496,9 +507,59 @@ fn start_bezug(
     })
 }
 
-/// Das Einwilligungs-Tor: laeuft im Recorder UNMITTELBAR vor dem Start einer Aufnahme mit
-/// Live-Transkription und liest die Einwilligungen dabei frisch aus der Datenbank (ein Widerruf
-/// zwischen einer Abfrage per [`start_modus`] und dem Start wirkt damit). Gehoert die Besprechung
+/// Die prozessweite Sperre des Einwilligungs-Tors. Wer das Tor-Ergebnis beeinflussen kann
+/// (Einwilligung setzen, Planung aendern, Termin wechseln bzw. Identitaet loesen, Abgleich mit dem
+/// Kalender, Schreiben des Kalender-Caches), nimmt sie VOR dem Schreiben; wer eine Transkription
+/// startet, haelt sie vom Tor bis zum wirksamen Beginn ([`mit_tor`]). Ein Widerruf, der waehrend
+/// eines Starts gespeichert wird, wartet damit bis nach dem Start und gilt fuer den naechsten.
+///
+/// Reihenfolge der Sperren (nie umdrehen): Recorder-Start (`start_guard`) -> diese Sperre ->
+/// Datenbank-Schreibsperre. Eine Datenbankverbindung wird nicht ueber sie hinaus gehalten. Die
+/// Sperre gilt je Prozess; die App ist die einzige Schreiberin dieser Tabellen.
+static TOR_SPERRE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub fn tor_sperre() -> std::sync::MutexGuard<'static, ()> {
+    // `Mutex<()>` traegt keine Daten: eine Vergiftung darf nie alle spaeteren Starts blockieren.
+    TOR_SPERRE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Nachweis, dass das Einwilligungs-Tor fuer diesen Start bestanden wurde und die Sperre noch
+/// gehalten wird. Nur [`mit_tor`] erzeugt ihn; Startfunktionen verlangen ihn als Parameter und
+/// sind damit ohne Tor nicht aufrufbar (Compiler statt Zeichenkettenpruefung).
+pub struct TorNachweis {
+    _nur_hier: (),
+}
+
+/// Fuehrt `start` unter dem Einwilligungs-Tor aus: Sperre nehmen, Tor pruefen
+/// ([`start_tor`], alles frisch aus der Datenbank), dann `start` AUSFUEHREN, waehrend die Sperre
+/// noch gehalten wird. `start` ist die Funktion, die Aufnahme bzw. Transkription wirksam beginnt;
+/// sie darf nicht selbst Planungsfunktionen mit Sperre rufen (die Sperre ist nicht
+/// wiedereintrittsfaehig). Bei `NurNotizen` wird `start` nie aufgerufen.
+pub fn mit_tor<T>(
+    store: &MeetingStore,
+    event: Option<&crate::managers::calendar::model::CalEvent>,
+    target_meeting_id: Option<&str>,
+    start: impl FnOnce(&TorNachweis) -> Res<T>,
+) -> Res<T> {
+    let _sperre = tor_sperre();
+    start_tor(store, event, target_meeting_id)?;
+    start(&TorNachweis { _nur_hier: () })
+}
+
+/// [`mit_tor`] fuer eine vorhandene Besprechung (nachtraegliche Transkription, Import in einen
+/// verknuepften Eintrag, Fortsetzen): die Planung ergibt sich aus der Besprechung.
+pub fn mit_tor_besprechung<T>(
+    store: &MeetingStore,
+    meeting_id: &str,
+    start: impl FnOnce(&TorNachweis) -> Res<T>,
+) -> Res<T> {
+    mit_tor(store, None, Some(meeting_id), start)
+}
+
+/// Das Einwilligungs-Tor: laeuft UNMITTELBAR vor dem Start einer Aufnahme mit
+/// Live-Transkription (und vor jeder nachtraeglichen Transkription) und liest dabei alles frisch
+/// aus der Datenbank: Einwilligungen, Termin und Teilnehmende (ein Widerruf zwischen einer Abfrage per [`start_modus`] und dem Start wirkt damit). Allein ohne Sperre
+/// ist das nur eine Momentaufnahme; atomar mit dem Start ist es nur ueber [`mit_tor`]. Gehoert die Besprechung
 /// zu keiner Planung, passiert nichts. Sonst muss JEDE zugehoerige Planung
 /// [`StartModus::MitTranskription`] ergeben; bei `NurNotizen` startet nichts (kein Ton, keine
 /// Transkription) und der Fehler ist `nur_notizen: <grund>` (`nicht_geplant`, `abgelehnt` oder

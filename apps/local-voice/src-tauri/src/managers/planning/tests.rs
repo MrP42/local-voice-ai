@@ -1502,7 +1502,8 @@ fn an_unknown_person_blocks_the_start() {
         Ok(()),
         "Aufbau: beide bekannten Personen stimmen zu"
     );
-    // Eine Teilnehmerin nur mit Namen (keine Adresse): kann nicht zugestimmt haben.
+    // Eine Teilnehmerin nur mit Namen (keine Adresse): kann nicht zugestimmt haben. Das Tor liest
+    // den Termin aus dem Cache, also kommt sie dort an.
     t.attendees.push(Attendee {
         email: None,
         name: Some("Chris Ohne Adresse".into()),
@@ -1510,10 +1511,45 @@ fn an_unknown_person_blocks_the_start() {
         is_self: false,
         partstat: None,
     });
+    cache(&f.store, std::slice::from_ref(&t));
     assert_eq!(tor(&f, &t), Err("nur_notizen: offen".to_string()));
     // Auch eine Planung ohne erfasste Anwesende erlaubt keine Transkription.
     t.attendees.clear();
+    cache(&f.store, std::slice::from_ref(&t));
     assert_eq!(tor(&f, &t), Err("nur_notizen: offen".to_string()));
+}
+
+#[test]
+fn a_stale_snapshot_cannot_hide_a_person_added_to_the_event_since() {
+    let f = fix();
+    let (p, alt) = mit_teilnehmenden(&f, "u1");
+    zustimmen(&f, &p.id, "anna@example.com");
+    zustimmen(&f, &p.id, "bert@example.org");
+    // Der Aufrufer behaelt den alten Schnappschuss (nur zustimmende Personen) ...
+    assert_eq!(tor(&f, &alt), Ok(()));
+    // ... der Kalenderabruf ergaenzt danach eine unbekannte Person im Cache.
+    let mut neu = alt.clone();
+    neu.attendees.push(Attendee {
+        email: None,
+        name: Some("Dora Ohne Adresse".into()),
+        organizer: false,
+        is_self: false,
+        partstat: None,
+    });
+    cache(&f.store, std::slice::from_ref(&neu));
+    // Mit dem ALTEN Schnappschuss als Schluessel: gesperrt; ebenso mit einer neuen Person mit
+    // Adresse, die noch nicht zugestimmt hat.
+    assert_eq!(tor(&f, &alt), Err("nur_notizen: offen".to_string()));
+    let mut mit_adresse = alt.clone();
+    mit_adresse.attendees.push(person("eva@example.com"));
+    cache(&f.store, std::slice::from_ref(&mit_adresse));
+    assert_eq!(tor(&f, &alt), Err("nur_notizen: offen".to_string()));
+    // Fehlt der Termin im Cache ganz: gesperrt (keine Anwesenden), solange eine Planung dazugehoert.
+    cache(&f.store, &[]);
+    assert_eq!(tor(&f, &alt), Err("nur_notizen: offen".to_string()));
+    // Ein Termin ohne Planung ist davon nicht betroffen.
+    let frei = termin("ohne-planung", NOW + D, None);
+    assert_eq!(tor(&f, &frei), Ok(()));
 }
 
 #[test]
@@ -1564,6 +1600,8 @@ fn the_gate_is_per_series_instance() {
     let mut i2 = instanz("serie", I2, I2, Some(text));
     i1.attendees = vec![person("anna@example.com")];
     i2.attendees = vec![person("anna@example.com")];
+    // Das Tor liest die Teilnehmenden aus dem Cache.
+    cache(&f.store, &[i1.clone(), i2.clone()]);
     // Die Planung gehoert zu Instanz 2; Instanz 1 hat keine Planung und startet wie bisher.
     assert_eq!(tor(&f, &i1), Ok(()));
     assert_eq!(tor(&f, &i2), Err("nur_notizen: offen".to_string()));
@@ -1571,26 +1609,369 @@ fn the_gate_is_per_series_instance() {
     assert_eq!(tor(&f, &i2), Ok(()));
 }
 
-/// Die Recorder-Methode ruft das Tor vor dem Anlegen der Zeile auf; ein Umbau, der es
-/// uebergeht, faellt hier auf. Alle drei Startwege laufen durch `start_for_event`.
-#[test]
-fn the_recorder_asks_the_gate_before_anything_starts() {
-    let recorder = include_str!("../meetings/recorder.rs");
-    let produktiv = recorder.split("#[cfg(test)]").next().unwrap();
-    let fn_start = produktiv
-        .find("pub fn start_for_event")
-        .expect("start_for_event");
-    let rumpf = &produktiv[fn_start..];
-    let tor = rumpf.find("planning::start_tor(").expect("Tor im Start");
-    for spaeter in ["begin_live_row(", "cancel_final_jobs()", "start_row("] {
-        assert!(
-            tor < rumpf.find(spaeter).expect(spaeter),
-            "das Tor muss vor {spaeter} stehen"
-        );
+// ---------------------------------------------------------------------------
+// Tor und wirksamer Beginn sind atomar (Sperre), alle Einstiege laufen durchs Tor
+// ---------------------------------------------------------------------------
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+/// Eine Planung mit Zustimmung beider Personen; Termin im Cache.
+fn alle_zugestimmt(f: &Fix) -> (Plan, CalEvent) {
+    let (p, t) = mit_teilnehmenden(f, "u1");
+    zustimmen(f, &p.id, "anna@example.com");
+    zustimmen(f, &p.id, "bert@example.org");
+    (p, t)
+}
+
+fn widerruf(plan_id: &str, jetzt: i64) -> Consent {
+    Consent {
+        plan_id: plan_id.into(),
+        person: "bert@example.org".into(),
+        state: ConsentState::Abgelehnt,
+        channel: Some(ConsentChannel::MuendlichBeiStart),
+        recorded_at: Some(jetzt),
     }
-    assert!(produktiv.contains("self.start_for_event(\n            title,"));
-    let befehle = include_str!("../../commands/meetings.rs");
-    assert!(befehle.contains("recorder.start_for_event("));
-    let hub = include_str!("../workflows/hub.rs");
-    assert!(hub.contains("recorder.start_for_event("));
+}
+
+#[test]
+fn a_refused_gate_never_runs_the_start() {
+    let f = fix();
+    let (p, t) = mit_teilnehmenden(&f, "u1");
+    let gestartet = AtomicBool::new(false);
+    let r = mit_tor(&f.store, Some(&t), None, |_| {
+        gestartet.store(true, Ordering::SeqCst);
+        Ok(())
+    });
+    assert_eq!(r, Err("nur_notizen: offen".to_string()));
+    assert!(
+        !gestartet.load(Ordering::SeqCst),
+        "weder Aufnahme noch Transkription"
+    );
+    zustimmen(&f, &p.id, "anna@example.com");
+    zustimmen(&f, &p.id, "bert@example.org");
+    assert_eq!(mit_tor(&f.store, Some(&t), None, |_| Ok(7)), Ok(7));
+}
+
+/// Der Widerruf kommt NACH dem erfolgreichen Tor und VOR dem wirksamen Beginn: er kann nicht
+/// dazwischen gespeichert werden (er wartet auf die Sperre), der laufende Start ist legitim, der
+/// naechste Start sperrt.
+#[test]
+fn a_revocation_between_the_gate_and_the_effective_start_waits_until_after_the_start() {
+    let f = fix();
+    let (p, t) = alle_zugestimmt(&f);
+    let log: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+    let (im_start_tx, im_start_rx) = mpsc::channel::<()>();
+    let (weiter_tx, weiter_rx) = mpsc::channel::<()>();
+    let (fertig_tx, fertig_rx) = mpsc::channel::<()>();
+
+    std::thread::scope(|s| {
+        // Start: Tor bestanden, jetzt "wirksamer Beginn" (hier haengt der Test den Widerruf ein).
+        let (store, termin, protokoll) = (&f.store, &t, &log);
+        let start = s.spawn(move || {
+            mit_tor(store, Some(termin), None, |_| {
+                protokoll.lock().unwrap().push("tor_bestanden");
+                im_start_tx.send(()).unwrap();
+                weiter_rx.recv().unwrap();
+                protokoll.lock().unwrap().push("start_wirksam");
+                Ok(())
+            })
+        });
+        im_start_rx.recv().unwrap();
+        assert!(
+            TOR_SPERRE.try_lock().is_err(),
+            "die Sperre wird bis zum wirksamen Beginn gehalten"
+        );
+
+        // Der Widerruf wird jetzt gespeichert: er muss warten.
+        let widerrufer = s.spawn(|| {
+            einwilligung_setzen(&f.store, &widerruf(&p.id, NOW + 1), NOW + 1).unwrap();
+            log.lock().unwrap().push("widerruf_gespeichert");
+            fertig_tx.send(()).unwrap();
+        });
+        assert!(
+            fertig_rx.recv_timeout(Duration::from_millis(300)).is_err(),
+            "der Widerruf darf nicht zwischen Tor und Beginn gespeichert werden"
+        );
+        // Auch der Abgleich und der Wechsel des Termins warten (gleiche Sperre).
+        assert_eq!(
+            personen(&f.store, &p.id)
+                .iter()
+                .filter(|(_, s)| *s == ConsentState::Zugestimmt)
+                .count(),
+            2,
+            "gespeichert ist noch nichts"
+        );
+
+        weiter_tx.send(()).unwrap();
+        assert_eq!(start.join().unwrap(), Ok(()));
+        widerrufer.join().unwrap();
+    });
+
+    assert_eq!(
+        *log.lock().unwrap(),
+        ["tor_bestanden", "start_wirksam", "widerruf_gespeichert"]
+    );
+    // Der Widerruf gilt fuer den NAECHSTEN Start.
+    let gestartet = AtomicBool::new(false);
+    let r = mit_tor(&f.store, Some(&t), None, |_| {
+        gestartet.store(true, Ordering::SeqCst);
+        Ok(())
+    });
+    assert_eq!(r, Err("nur_notizen: abgelehnt".to_string()));
+    assert!(!gestartet.load(Ordering::SeqCst));
+}
+
+/// Alles, was das Tor-Ergebnis aendern kann, nimmt dieselbe Sperre (hier: jeder Schreiber blockiert,
+/// solange ein Start unterwegs ist).
+#[test]
+fn every_writer_that_can_change_the_gate_waits_for_a_running_start() {
+    let f = fix();
+    let (p, t) = alle_zugestimmt(&f);
+    let (im_start_tx, im_start_rx) = mpsc::channel::<()>();
+    let (weiter_tx, weiter_rx) = mpsc::channel::<()>();
+    let fertig = AtomicBool::new(false);
+
+    std::thread::scope(|s| {
+        let (store, termin) = (&f.store, &t);
+        let start = s.spawn(move || {
+            mit_tor(store, Some(termin), None, |_| {
+                im_start_tx.send(()).unwrap();
+                weiter_rx.recv().unwrap();
+                Ok(())
+            })
+        });
+        im_start_rx.recv().unwrap();
+        let schreiber: Vec<Box<dyn FnOnce() + Send + '_>> = vec![
+            Box::new(|| {
+                plan_aendern(&f.store, &p.id, &eingabe(), NOW + 2).unwrap();
+            }),
+            Box::new(|| {
+                let _ = identitaet_loesen(&f.store, &p.id, NOW + 3);
+            }),
+            Box::new(|| {
+                let _ = termin_waehlen(&f.store, &p.id, &t.key, NOW + 4);
+            }),
+            Box::new(|| {
+                let _ = abgleich_lauf(&f.store, NOW);
+            }),
+            Box::new(|| {
+                // Kalender-Cache (Teilnehmende) wie im Dienst: unter der Sperre geschrieben.
+                let _tor = tor_sperre();
+                cache(&f.store, std::slice::from_ref(&t));
+            }),
+        ];
+        let n = schreiber.len();
+        let (klar_tx, klar_rx) = mpsc::channel::<()>();
+        let handles: Vec<_> = schreiber
+            .into_iter()
+            .map(|w| {
+                let klar_tx = klar_tx.clone();
+                let fertig = &fertig;
+                s.spawn(move || {
+                    w();
+                    fertig.store(true, Ordering::SeqCst);
+                    klar_tx.send(()).unwrap();
+                })
+            })
+            .collect();
+        assert!(
+            klar_rx.recv_timeout(Duration::from_millis(300)).is_err(),
+            "kein Schreiber darf waehrend des Starts fertig werden"
+        );
+        assert!(!fertig.load(Ordering::SeqCst));
+        weiter_tx.send(()).unwrap();
+        assert_eq!(start.join().unwrap(), Ok(()));
+        for _ in 0..n {
+            klar_rx.recv_timeout(Duration::from_secs(20)).unwrap();
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+    });
+}
+
+#[test]
+fn the_gate_without_an_event_finds_the_plan_through_the_target_link() {
+    let f = fix();
+    let (p, t) = mit_teilnehmenden(&f, "u1");
+    let m = f.store.create_empty_meeting("Ziel", None).unwrap();
+    let im_cache = f.store.calendar_event(&t.key).unwrap().unwrap();
+    f.store
+        .link_meeting_event(&m.id, &im_cache, "prompt", NOW)
+        .unwrap();
+    let gestartet = AtomicBool::new(false);
+    // Innerster Start OHNE Termin (z. B. `meetings_start` in einen verknuepften Eintrag).
+    let r = mit_tor(&f.store, None, Some(&m.id), |_| {
+        gestartet.store(true, Ordering::SeqCst);
+        Ok(())
+    });
+    assert_eq!(r, Err("nur_notizen: offen".to_string()));
+    assert!(!gestartet.load(Ordering::SeqCst));
+    zustimmen(&f, &p.id, "anna@example.com");
+    zustimmen(&f, &p.id, "bert@example.org");
+    assert_eq!(mit_tor(&f.store, None, Some(&m.id), |_| Ok(())), Ok(()));
+    // Ohne Termin und ohne Ziel: nichts zu pruefen (freie Aufnahme, wie bisher).
+    assert_eq!(mit_tor(&f.store, None, None, |_| Ok(())), Ok(()));
+}
+
+#[test]
+fn the_gate_with_an_event_decides_before_the_start() {
+    let f = fix();
+    let (p, t) = mit_teilnehmenden(&f, "u1");
+    let gestartet = AtomicBool::new(false);
+    let r = mit_tor(&f.store, Some(&t), None, |_| {
+        gestartet.store(true, Ordering::SeqCst);
+        Ok(())
+    });
+    assert_eq!(r, Err("nur_notizen: offen".to_string()));
+    assert!(!gestartet.load(Ordering::SeqCst));
+    einwilligung_setzen(&f.store, &widerruf(&p.id, NOW), NOW).unwrap();
+    assert_eq!(
+        mit_tor(&f.store, Some(&t), None, |_| Ok(())),
+        Err("nur_notizen: abgelehnt".to_string())
+    );
+}
+
+// --- nachtraegliche Transkription: Neu-Transkription, Import, Enddurchlauf/Fortsetzen ---
+
+/// Eine fertige, einer Planung zugeordnete Aufnahme (Termin `u1`, zwei Teilnehmende).
+fn aufnahme_mit_planung(f: &Fix) -> (Plan, String) {
+    let (p, t) = mit_teilnehmenden(f, "u1");
+    let m = f.store.create_empty_meeting("Aufnahme", None).unwrap();
+    f.store
+        .set_status(
+            &m.id,
+            crate::managers::meetings::store::MeetingStatus::Ready,
+        )
+        .unwrap();
+    let im_cache = f.store.calendar_event(&t.key).unwrap().unwrap();
+    f.store
+        .link_meeting_event(&m.id, &im_cache, "prompt", NOW)
+        .unwrap();
+    (p, m.id)
+}
+
+fn kein_emit() -> crate::managers::meetings::job::EmitFn {
+    Arc::new(|_| {})
+}
+
+#[test]
+fn a_refusal_stops_the_retranscription_before_any_job_or_status_change() {
+    use crate::managers::meetings::{job, retranscribe::begin_run};
+    let f = fix();
+    let (p, id) = aufnahme_mit_planung(&f);
+    zustimmen(&f, &p.id, "anna@example.com");
+    einwilligung_setzen(&f.store, &widerruf(&p.id, NOW), NOW).unwrap();
+    let vorher = f.store.get_meeting(&id).unwrap().unwrap().status;
+
+    let r = begin_run(&f.store, &id, None, kein_emit());
+    assert_eq!(r.err(), Some("nur_notizen: abgelehnt".to_string()));
+    // Kein Auftrag, kein Status `processing`: Speech-to-Text kann gar nicht anlaufen.
+    assert!(!job::global().is_running(&id));
+    assert_eq!(f.store.get_meeting(&id).unwrap().unwrap().status, vorher);
+}
+
+#[test]
+fn with_all_consents_the_retranscription_begins_and_without_a_plan_nothing_changes() {
+    use crate::managers::meetings::{job, retranscribe::begin_run};
+    let f = fix();
+    let (p, id) = aufnahme_mit_planung(&f);
+    zustimmen(&f, &p.id, "anna@example.com");
+    zustimmen(&f, &p.id, "bert@example.org");
+    {
+        let (auftrag, _vorher) = begin_run(&f.store, &id, None, kein_emit()).unwrap();
+        assert!(job::global().is_running(&id));
+        drop(auftrag);
+    }
+    assert!(!job::global().is_running(&id));
+
+    // Eine Besprechung ohne zugeordnete Planung: unveraendert.
+    let frei = f.store.create_empty_meeting("Frei", None).unwrap();
+    f.store
+        .set_status(
+            &frei.id,
+            crate::managers::meetings::store::MeetingStatus::Ready,
+        )
+        .unwrap();
+    let (auftrag, _) = begin_run(&f.store, &frei.id, None, kein_emit()).unwrap();
+    drop(auftrag);
+}
+
+#[test]
+fn a_revocation_after_a_positive_query_blocks_the_retranscription_too() {
+    use crate::managers::meetings::retranscribe::begin_run;
+    let f = fix();
+    let (p, id) = aufnahme_mit_planung(&f);
+    zustimmen(&f, &p.id, "anna@example.com");
+    zustimmen(&f, &p.id, "bert@example.org");
+    let anwesend = vec![
+        "anna@example.com".to_string(),
+        "bert@example.org".to_string(),
+    ];
+    assert_eq!(
+        start_modus(&f.store, &p.id, &anwesend).unwrap(),
+        StartModus::MitTranskription
+    );
+    einwilligung_setzen(&f.store, &widerruf(&p.id, NOW + 1), NOW + 1).unwrap();
+    assert_eq!(
+        begin_run(&f.store, &id, None, kein_emit()).err(),
+        Some("nur_notizen: abgelehnt".to_string())
+    );
+}
+
+#[test]
+fn an_import_into_a_linked_entry_needs_the_consent_before_transcription_begins() {
+    use crate::managers::meetings::import::vor_transkription;
+    let f = fix();
+    let (p, id) = aufnahme_mit_planung(&f);
+    let begonnen = AtomicBool::new(false);
+    let r = vor_transkription(&f.store, &id, || begonnen.store(true, Ordering::SeqCst));
+    assert_eq!(r, Err("nur_notizen: offen".to_string()));
+    assert!(!begonnen.load(Ordering::SeqCst), "keine Transkription");
+    zustimmen(&f, &p.id, "anna@example.com");
+    zustimmen(&f, &p.id, "bert@example.org");
+    assert_eq!(
+        vor_transkription(&f.store, &id, || begonnen.store(true, Ordering::SeqCst)),
+        Ok(())
+    );
+    assert!(begonnen.load(Ordering::SeqCst));
+    // Ein frischer Import ohne Zuordnung (Datei ohne Zieleintrag) bleibt wie bisher.
+    let frei = f.store.create_empty_meeting("Import", None).unwrap();
+    begonnen.store(false, Ordering::SeqCst);
+    assert_eq!(
+        vor_transkription(&f.store, &frei.id, || begonnen
+            .store(true, Ordering::SeqCst)),
+        Ok(())
+    );
+    assert!(begonnen.load(Ordering::SeqCst));
+}
+
+#[test]
+fn the_final_pass_and_continuing_do_not_transcribe_further_after_a_refusal() {
+    use crate::managers::meetings::final_pass::{FinalPlan, JobSpec, KeepReason};
+    use crate::managers::meetings::recorder::unter_tor;
+    let f = fix();
+    let (p, id) = aufnahme_mit_planung(&f);
+    let auftrag = JobSpec {
+        meeting_id: id.clone(),
+        catch_up_model: Some("modell".into()),
+        plan: FinalPlan::Keep(KeepReason::Off),
+        live_model: Some("live".into()),
+        recover_from: Some("cancelled".into()),
+    };
+    // Offen: gesperrt, das Live-Transkript bleibt, kein Modell laeuft.
+    let gesperrt = unter_tor(&f.store, &auftrag);
+    assert_eq!(gesperrt.plan, FinalPlan::Keep(KeepReason::NoConsent));
+    assert_eq!(gesperrt.catch_up_model, None);
+    assert_eq!(gesperrt.meeting_id, id);
+    assert_eq!(gesperrt.recover_from, auftrag.recover_from);
+    // Alle zugestimmt: der Auftrag bleibt, wie er ist.
+    zustimmen(&f, &p.id, "anna@example.com");
+    zustimmen(&f, &p.id, "bert@example.org");
+    let frei = unter_tor(&f.store, &auftrag);
+    assert_eq!(frei.plan, auftrag.plan);
+    assert_eq!(frei.catch_up_model, auftrag.catch_up_model);
 }

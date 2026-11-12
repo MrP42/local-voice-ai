@@ -211,27 +211,11 @@ pub async fn rerun_meeting(
     if let Some(e) = youtube_guard_failed {
         return Err(e.to_command_error());
     }
-    // P8a: der Auftrag zuerst: gibt es schon einen, geschieht nichts.
-    let job = match job::global().try_start(&meeting_id, job::app_emit(app)) {
-        Ok(job) => job,
-        Err(e) => {
-            if let Input::Youtube { guard, .. } = input {
-                yt_fetch::end(
-                    &store,
-                    guard,
-                    &Err(crate::managers::youtube::YoutubeError::Cancelled),
-                );
-            }
-            return Err(e.to_string());
-        }
-    };
     let has_stored_audio = meeting.mic_audio_path.is_some() || meeting.system_audio_path.is_some();
-    // lva#523 / A3: ein offener frueherer Lauf (Absturz, gescheiterter Abschluss) wird
-    // unter DIESEM Auftrag abgeschlossen, bevor etwas Neues beginnt; dann die Marke
-    // `start` mit dem Stand davor (fuer das Zuruecknehmen). Der Vorstatus kommt aus dem
-    // Zustand NACH diesem Abschluss, unter dem Auftrag gelesen.
-    let previous_status = match rerun_state::mark_start(&store, &meeting_id, range) {
-        Ok(status) => status,
+    // lva#534: Einwilligungs-Tor der Besprechungsplanung, dann Auftrag, Marke und Status unter
+    // derselben Sperre (siehe `begin_run`). Erst danach laeuft Transkription.
+    let (job, previous_status) = match begin_run(&store, &meeting_id, range, job::app_emit(app)) {
+        Ok(started) => started,
         Err(e) => {
             if let Input::Youtube { guard, .. } = input {
                 yt_fetch::end(
@@ -243,9 +227,6 @@ pub async fn rerun_meeting(
             return Err(e);
         }
     };
-    store
-        .set_status(&meeting_id, MeetingStatus::Processing)
-        .map_err(|e| format!("status_processing_failed: {e}"))?;
     emit_state(app, &meeting_id, "processing");
 
     let app_owned = app.clone();
@@ -285,6 +266,37 @@ pub async fn rerun_meeting(
         Ok(result) => result,
         Err(join_err) => Err(format!("meetings_retranscribe panicked: {join_err}")),
     }
+}
+
+/// Der Beginn eines Neu-Transkriptions-Laufs, unter dem Einwilligungs-Tor der
+/// Besprechungsplanung (lva#534): Ist die Besprechung einer Planung zugeordnet
+/// (`meeting_calendar_links`, `meeting_plans.meeting_id`), die nicht `MitTranskription` ergibt
+/// (nicht geplant, Ablehnung, fehlende Zustimmung, unbekannte Person), endet der Aufruf mit
+/// `nur_notizen: <grund>`, bevor ein Auftrag, eine Marke oder ein Status entstehen; Speech-to-Text
+/// laeuft dann nie. Tor, Auftrag, Marke und Status `processing` stehen unter einer Sperre: ein
+/// Widerruf wartet bis nach dem Beginn und gilt fuer den naechsten Lauf. Ohne zugeordnete
+/// Planung aendert sich nichts.
+pub(crate) fn begin_run(
+    store: &MeetingStore,
+    meeting_id: &str,
+    range: Option<TimeRange>,
+    emit: job::EmitFn,
+) -> Result<(job::JobGuard, MeetingStatus), String> {
+    crate::managers::planning::mit_tor_besprechung(store, meeting_id, |_tor| {
+        // P8a: der Auftrag zuerst: gibt es schon einen, geschieht nichts.
+        let job = job::global()
+            .try_start(meeting_id, emit)
+            .map_err(|e| e.to_string())?;
+        // lva#523 / A3: ein offener frueherer Lauf (Absturz, gescheiterter Abschluss) wird
+        // unter DIESEM Auftrag abgeschlossen, bevor etwas Neues beginnt; dann die Marke
+        // `start` mit dem Stand davor (fuer das Zuruecknehmen). Der Vorstatus kommt aus dem
+        // Zustand NACH diesem Abschluss, unter dem Auftrag gelesen.
+        let previous_status = rerun_state::mark_start(store, meeting_id, range)?;
+        store
+            .set_status(meeting_id, MeetingStatus::Processing)
+            .map_err(|e| format!("status_processing_failed: {e}"))?;
+        Ok((job, previous_status))
+    })
 }
 
 /// lva#523: Endzustand eines Laufs, unter seinem Auftrag.

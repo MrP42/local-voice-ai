@@ -268,6 +268,23 @@ fn register_import_audio(
         })
 }
 
+/// lva#534: Einwilligungs-Tor und Beginn der Transkription eines Imports unter derselben Sperre
+/// (`beginn` markiert den Start der Transkription). Ein Widerruf, der dazwischen gespeichert wird,
+/// wartet bis nach dem Beginn und gilt fuer den naechsten Lauf. Ist der Eintrag einer Planung
+/// zugeordnet, die das Tor sperrt, endet der Aufruf mit `nur_notizen: <grund>` OHNE `beginn`
+/// aufzurufen: keine Transkription. Ohne zugeordnete Planung ruft er nur `beginn` auf. Frische
+/// Importe (Datei ohne Zieleintrag) haben keinen Termin und damit nie eine Planung.
+pub(crate) fn vor_transkription(
+    store: &MeetingStore,
+    meeting_id: &str,
+    beginn: impl FnOnce(),
+) -> Result<(), String> {
+    crate::managers::planning::mit_tor_besprechung(store, meeting_id, |_tor| {
+        beginn();
+        Ok(())
+    })
+}
+
 /// Wie eine Import-Verarbeitung endete, wenn sie nicht scheiterte.
 enum ImportEnd {
     /// Das Transkript ist vollstaendig (die Sprechertrennung darf gestoppt sein).
@@ -293,6 +310,10 @@ pub(super) fn run_import(
 ) -> Result<(), String> {
     let import_started = std::time::Instant::now();
     let outcome = (|| -> Result<ImportEnd, String> {
+        // lva#534: ist der Eintrag einer Planung zugeordnet (Import in einen verknuepften
+        // Eintrag, Fortsetzen), darf nur mit Zustimmung transkribiert werden. Frueh pruefen
+        // (nichts wird dekodiert); verbindlich ist das Tor unmittelbar vor der Transkription.
+        crate::managers::planning::start_tor(store, None, Some(meeting_id))?;
         job.begin_phase(JobPhase::Prepare, 0);
         // Kick the model load FIRST (non-blocking) so it warms up while ffmpeg
         // decodes; `transcribe_segments` then waits on the load condvar instead
@@ -340,7 +361,9 @@ pub(super) fn run_import(
             &super::language_run::RunRequest::default(),
             Some(job),
         );
-        job.begin_phase(JobPhase::Transcription, duration_ms);
+        vor_transkription(store, meeting_id, || {
+            job.begin_phase(JobPhase::Transcription, duration_ms)
+        })?;
         let run = transcribe_and_store(
             app,
             store,

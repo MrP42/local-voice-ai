@@ -137,6 +137,9 @@ pub fn apply_parsed(
         last_modified,
         now_ms,
     };
+    // Teilnehmende gehoeren zum Einwilligungs-Tor der Besprechungsplanung: der Cache wird nie
+    // geschrieben, waehrend ein Start zwischen Tor und Aufnahmebeginn steht.
+    let _tor = planning::tor_sperre();
     store
         .calendar_replace_events(source_id, &parsed.events, &meta)
         .map_err(|e| format!("Die Termine konnten nicht gespeichert werden: {e}"))?;
@@ -547,6 +550,7 @@ impl CalendarService {
         let events = fetched.events;
         let count = events.len() as u32;
         tauri::async_runtime::spawn_blocking(move || {
+            let _tor = planning::tor_sperre();
             store
                 .calendar_replace_events(
                     &id,
