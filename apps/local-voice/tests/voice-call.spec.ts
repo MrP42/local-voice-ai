@@ -199,6 +199,9 @@ async function install(
             }
             case "voice_call_start":
               return w.__startHang ? new Promise(() => {}) : null;
+            // Einstufung (ADR-0028 A2): ohne Vorgabe keine (Ansagen aus).
+            case "assistent_einstufen":
+              return w.__einstufung ?? null;
             case "voice_call_chat":
               return new Promise((resolve) => {
                 w.__chat = { args, resolve };
@@ -519,9 +522,7 @@ async function goTo(page: Page, name: string) {
 async function openPage(page: Page) {
   await page.goto("/");
   await goTo(page, "Start");
-  await expect(
-    page.getByTestId("chat-greeting"),
-  ).toBeVisible();
+  await expect(page.getByTestId("chat-greeting")).toBeVisible();
 }
 
 /** Kontextmenü „Gesprächsoptionen“ rechts in der Infozeile. */
@@ -556,8 +557,7 @@ const historyToggleSelector =
   "button[aria-controls][aria-label='Gesprächsverlauf']";
 const newChat = (page: Page) =>
   page.getByRole("button", { name: "Neues Gespräch", exact: true });
-const emptyTitle = (page: Page) =>
-  page.getByTestId("chat-greeting");
+const emptyTitle = (page: Page) => page.getByTestId("chat-greeting");
 
 /** Schickt eine Nachricht und beantwortet sie mit den gegebenen Saetzen. */
 async function exchange(
@@ -632,6 +632,66 @@ test.describe("Sprachgespraech", () => {
     await expect(page.getByText("Hallo KI").first()).toBeVisible();
     await expect(page.getByText("150 Token")).toBeVisible();
     await expect(page.getByText("Abo · keine API-Kosten")).toBeVisible();
+  });
+
+  test("Denk-Anzeige statt Ansage: grau unter der letzten Nachricht, Klick zeigt den Denkprozess", async ({
+    page,
+  }) => {
+    await openPage(page);
+    await page.evaluate(
+      () =>
+        ((window as any).__einstufung = {
+          stufe: "S2",
+          absicht: "mails",
+          ansage: "Ich schaue in deine Mails.",
+          antwort: null,
+        }),
+    );
+    await page.evaluate(() => ((window as any).__chat = null));
+    await message(page).fill("Was steht in meinen Mails?");
+    await message(page).press("Enter");
+    const anzeige = page.getByTestId("denkanzeige");
+    await expect(anzeige).toBeVisible();
+    await expect(page.getByTestId("denkanzeige-label")).toHaveText(
+      "Denkt nach",
+    );
+    // Die Ansage steht nie im Chat, nur im aufgeklappten Denkprozess.
+    const log = page.getByRole("log");
+    await expect(
+      log.locator(".rounded-xl", { hasText: "Ich schaue" }),
+    ).toHaveCount(0);
+    await anzeige.getByRole("button").click();
+    const liste = page.getByTestId("denkprozess-liste");
+    await expect(liste).toContainText("Ich schaue in deine Mails.");
+    await expect(liste).toContainText("Arbeitet an der Antwort");
+
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__chat !== null))
+      .toBe(true);
+    const requestId = await page.evaluate(
+      () => (window as any).__chat.args.requestId as string,
+    );
+    await page.evaluate((id) => {
+      const w = window as any;
+      w.__emit("voice-call", {
+        kind: "sentence",
+        request_id: id,
+        index: 0,
+        text: "Zwei neue Mails.",
+      });
+      w.__emit("voice-call", { kind: "done", request_id: id });
+      w.__chat.resolve("Zwei neue Mails.");
+    }, requestId);
+    await expect(log.getByText("Zwei neue Mails.")).toBeVisible();
+    await expect(anzeige).toHaveCount(0);
+    // Die Antwort enthält nur den Inhalt, der Denkprozess bleibt an ihr aufklappbar.
+    await expect(log.getByText("Ich schaue in deine Mails.")).toHaveCount(0);
+    const prozess = page.getByTestId("denkprozess");
+    await expect(prozess).toContainText("Nachgedacht");
+    await prozess.getByRole("button").click();
+    await expect(prozess.getByTestId("denkprozess-liste")).toContainText(
+      "Ich schaue in deine Mails.",
+    );
   });
 
   test("Fußleiste: Telefon immer sichtbar, Gesprächsmenü nur auf dieser Seite", async ({
@@ -718,9 +778,7 @@ test.describe("Sprachgespraech", () => {
       },
       [requestId] as const,
     );
-    await expect(
-      page.getByTestId("chat-greeting"),
-    ).toBeVisible();
+    await expect(page.getByTestId("chat-greeting")).toBeVisible();
     await expect(page.getByText("Späte Antwort.")).toHaveCount(0);
     await expect(page.getByText("55 Token")).toHaveCount(0);
   });

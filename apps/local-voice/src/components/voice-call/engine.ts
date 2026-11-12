@@ -141,6 +141,9 @@ interface VoiceCallEvent {
   budget?: ProjektBudget | null;
 }
 
+/** Ereignis der Denk-Anzeige; Ansagen und Überbrückungen landen hier statt in Chat und Stimme. */
+export type DenkEreignis = { art: "start" } | { art: "schritt"; text: string };
+
 export interface CallCallbacks {
   onState(state: CallState): void;
   onLevel(level: number): void;
@@ -154,6 +157,11 @@ export interface CallCallbacks {
   onUsage?(usage: CallUsageEvent): void;
   /** Werkzeug läuft / Hinweis des Orchestrators; `null` löscht die Werkzeugzeile. */
   onStatus?(status: CallStatus | null): void;
+  /**
+   * Denk-Anzeige (Patrick 12.11.2026): `start` nach der Äußerung, `schritt` je Zwischenschritt
+   * (Ansage, Überbrückung, Werkzeug). Gesprochen und in den Chat geschrieben wird davon nichts.
+   */
+  onDenken?(e: DenkEreignis): void;
   /** Das laufende gespeicherte Gespräch (für die Wissenswerkzeuge); `null` bis zum ersten Beitrag; wartet auf ein laufendes Speichern. */
   conversationId?(): string | null | Promise<string | null>;
   /** Globaler Sprachassistent (lva#325): geprüfte Belege einer Antwort. */
@@ -1408,6 +1416,15 @@ export class VoiceCallEngine {
     return { plan: planAssistent(r, sprache), stufe: stufeVon(r), sprache };
   }
 
+  /**
+   * Ansage als Schritt der Denk-Anzeige. Die allgemeine Ansage („Ich denke kurz nach.“) sagt nichts,
+   * was die Anzeige nicht schon zeigt: sie entfällt ganz.
+   */
+  private denkSchritt(absicht: string, text: string): void {
+    if (absicht === "allgemein" || !text.trim()) return;
+    this.cb.onDenken?.({ art: "schritt", text: text.trim() });
+  }
+
   /** „Wiederholen“: die letzte vom Tor freigegebene Ausgabe, sonst die Vorlage „nichts gesagt“. */
   private async wiederholung(sprache: Sprache): Promise<string[]> {
     const key = this.ausgabeKey;
@@ -1450,21 +1467,14 @@ export class VoiceCallEngine {
       await this.ensureListener();
       if (stale()) return;
       this.cb.onUser(shown, id);
+      this.cb.onDenken?.({ art: "start" });
       const marken: Marken = { start: performance.now() };
-      // Was das Modell geliefert hat (ohne Ansage und Vorlagen): Verlauf und „nichts geantwortet“.
+      // Was das Modell geliefert hat (ohne Vorlagen): Verlauf und „nichts geantwortet“.
       let modelPartial = "";
-      let ansageText = "";
-      let ansageGesprochen = false;
       const onPiece = (piece: string, kind: PieceKind = "inhalt") => {
         run.partial += (run.partial ? " " : "") + piece;
         this.cb.onAssistant(run.partial, false, false);
         const now = performance.now();
-        if (kind === "ansage") {
-          marken.ansage ??= now;
-          ansageGesprochen = true;
-          ansageText = piece;
-          return;
-        }
         marken.inhalt ??= now;
         if (kind === "inhalt")
           modelPartial += (modelPartial ? " " : "") + piece;
@@ -1500,10 +1510,8 @@ export class VoiceCallEngine {
       }
       const { side, blocked, systemPrompt } = await this.orchestrate();
       if (stale() || blocked) return;
-      // Ab S1: Ansage sofort, danach das Modell.
-      // Im Projekt ohne Ansage: Die angezeigte Antwort muss dem freigegebenen Text gleichen.
-      if (plan.kind === "ansage" && !this.projekt())
-        onPiece(plan.text, "ansage");
+      // Ab S1: die Ansage ist nur ein Schritt der Denk-Anzeige, nie Chat oder Stimme.
+      if (plan.kind === "ansage") this.denkSchritt(plan.absicht, plan.text);
       const gctx = await this.contextFor(id, text, side);
       if (stale()) return;
       const frist = ersteFrist(
@@ -1515,8 +1523,11 @@ export class VoiceCallEngine {
       let projektStopp = false;
       const onModel = (s: string) => {
         if (stale() || timedOut) return;
-        // Nach einer Ansage keine zweite Überbrückung.
-        if (ansageGesprochen && istUeberbrueckung(s)) return;
+        // Überbrückungen (Orchestrator, Werkzeug, Buch-Seite) nur in der Denk-Anzeige.
+        if (istUeberbrueckung(s)) {
+          this.cb.onDenken?.({ art: "schritt", text: s.trim() });
+          return;
+        }
         frist.stop();
         onPiece(s);
       };
@@ -1647,12 +1658,7 @@ export class VoiceCallEngine {
         ...tag,
         ...(run.withContext ? { ctx: true } : {}),
       });
-      // Die Ansage gehört zur angezeigten Antwort, nicht zur Prüfung der Belege.
-      this.cb.onAssistant(
-        ansageText ? `${ansageText} ${answer}` : answer,
-        true,
-        false,
-      );
+      this.cb.onAssistant(answer, true, false);
       void this.reportCitations(id, answer, gctx);
     } catch (e) {
       if (!stale()) this.cb.onError(String(e));
@@ -1675,15 +1681,15 @@ export class VoiceCallEngine {
     const dead = () => turn.cancelled || this.turn !== turn;
     turn.userText = display ?? text;
     this.cb.onUser(turn.userText, turn.id);
+    this.cb.onDenken?.({ art: "start" });
 
     const tChat = performance.now();
     let firstSentenceAt = 0;
     let firstAudioAt = 0;
     let chain: Promise<void> = Promise.resolve();
     let assistantText = "";
-    // Was das Modell geliefert hat (ohne Ansage und Vorlagen): Verlauf, Belege, „nichts geantwortet“.
+    // Was das Modell geliefert hat (ohne Vorlagen): Verlauf, Belege, „nichts geantwortet“.
     let modelText = "";
-    let ansageGesprochen = false;
     // ADR-0028 E9: Zeitmarken dieses Schritts (ohne Inhalte).
     const marken: Marken = { start: turn.lastSpeechWall };
     let metricsSent = false;
@@ -1718,7 +1724,6 @@ export class VoiceCallEngine {
     const onPiece = (piece: string, kind: PieceKind = "inhalt") => {
       const ansage = kind === "ansage";
       if (!ansage && !firstSentenceAt) firstSentenceAt = performance.now();
-      if (ansage) ansageGesprochen = true;
       if (kind === "inhalt") modelText += (modelText ? " " : "") + piece;
       assistantText += (assistantText ? " " : "") + piece;
       this.cb.onAssistant(assistantText, false, false);
@@ -1858,10 +1863,9 @@ export class VoiceCallEngine {
 
     const { side, blocked, systemPrompt } = await this.orchestrate();
     if (dead()) return;
-    // Ab S1: Ansage sofort (vor dem Abruf des Kontexts), danach das Modell.
-    // Im Projekt ohne Ansage: Die angezeigte Antwort muss dem freigegebenen Text gleichen.
-    if (plan.kind === "ansage" && !blocked && !this.projekt())
-      onPiece(plan.text, "ansage");
+    // Ab S1: die Ansage ist nur ein Schritt der Denk-Anzeige, nie Chat oder Stimme.
+    if (plan.kind === "ansage" && !blocked)
+      this.denkSchritt(plan.absicht, plan.text);
     // Globaler Kontext: lokal geholt, schon beim spekulativen Start (Plan L1/M5).
     const gctx = blocked ? null : await this.contextFor(turn.id, text, side);
     turnCtx = gctx;
@@ -1883,8 +1887,11 @@ export class VoiceCallEngine {
     let projektStopp = false;
     const onModel = (s: string) => {
       if (dead() || timedOut) return;
-      // Nach einer Ansage keine zweite Überbrückung (Orchestrator, Buch-Seite).
-      if (ansageGesprochen && istUeberbrueckung(s)) return;
+      // Überbrückungen (Orchestrator, Werkzeug, Buch-Seite) nur in der Denk-Anzeige.
+      if (istUeberbrueckung(s)) {
+        this.cb.onDenken?.({ art: "schritt", text: s.trim() });
+        return;
+      }
       frist.stop();
       onPiece(s);
     };

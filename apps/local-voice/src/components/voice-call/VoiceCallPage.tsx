@@ -34,6 +34,7 @@ import { ProjekteGruppe } from "../projekte/ProjekteGruppe";
 import { ConversationOptions } from "./ConversationOptions";
 import { ConversationSearch, type SearchAction } from "./ConversationSearch";
 import { InfoLine } from "./InfoLine";
+import { useActiveLlm } from "./useVoiceInfo";
 import { LevelWave } from "./LevelWave";
 import { ModelPicker } from "./ModelPicker";
 import { PermissionChip } from "./PermissionChip";
@@ -97,6 +98,13 @@ export const VoiceCallPage: React.FC = () => {
   const muted = useVoiceCallStore((s) => s.muted);
   const textBusy = useVoiceCallStore((s) => s.textBusy);
   const toolStatus = useVoiceCallStore((s) => s.toolStatus);
+  const denkenLive = useVoiceCallStore((s) => s.denken);
+  const activeLlm = useActiveLlm();
+  // Denk-Anzeige nur, solange nach der letzten Äußerung noch keine Antwort steht.
+  const denkSichtbar =
+    !!denkenLive &&
+    lines[lines.length - 1]?.role === "user" &&
+    (textBusy || state === "thinking");
   const notice = useVoiceCallStore((s) => s.notice);
   const imProjekt = useVoiceCallStore((s) => s.projectId !== null);
   const settingsOpen = useVoiceCallStore((s) => s.settingsOpen);
@@ -482,7 +490,7 @@ export const VoiceCallPage: React.FC = () => {
         }`}
       >
         <LevelWave live={inCall && !muted} busy={busy || textBusy} />
-        <span className="max-sm:hidden">
+        <span className={denkSichtbar ? "hidden" : "max-sm:hidden"}>
           {textBusy
             ? t("voiceCall.state.thinking")
             : t(`voiceCall.state.${state}`)}
@@ -591,6 +599,8 @@ export const VoiceCallPage: React.FC = () => {
             active={inCall}
             greeting={switching || guideOpen ? undefined : greeting}
             toolStatus={toolStatus}
+            denken={denkSichtbar ? denkenLive : null}
+            modell={activeLlm.label}
             notice={notice}
             onOpenSettings={() => store.getState().openSettings("models")}
             onEditLine={(id, text) => void store.getState().editLine(id, text)}

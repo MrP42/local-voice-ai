@@ -81,7 +81,7 @@ function neu(handlers = {}, { seiteMit } = {}) {
     assistent_messung_melden: () => null,
     ...handlers,
   };
-  const log = { user: [], assistant: [], errors: [], metrics: [] };
+  const log = { user: [], assistant: [], errors: [], metrics: [], denken: [] };
   const engine = new VoiceCallEngine(
     {
       onState() {},
@@ -91,6 +91,7 @@ function neu(handlers = {}, { seiteMit } = {}) {
         log.assistant.push({ t, final, interrupted }),
       onMetrics: (m) => log.metrics.push(m),
       onError: (e) => log.errors.push(e),
+      onDenken: (e) => log.denken.push(e.art === "start" ? "start" : e.text),
       conversationId: () => "c1",
     },
     { systemPrompt: "sys", turn: DEFAULT_TURN_CONFIG, orchestration: {} },
@@ -141,24 +142,43 @@ test("Abbruch während der Einstufung: kein Ton, kein Modellaufruf, keine Messun
   assert.deepEqual(verlauf(t), []);
 });
 
-test("Abbruch während der Ansage-Synthese: nichts wird eingereiht, nichts im Verlauf", async () => {
-  const syn = deferred();
+test("Ansage wird nie synthetisiert, sie steht nur in der Denk-Anzeige (Patrick 12.11.2026)", async () => {
   const t = neu({
     assistent_einstufen: () => ansageE("Ich schaue in den Kalender."),
-    voice_call_synthesize: ({ text }) =>
-      text.startsWith("Ich schaue") ? syn.promise : `wav:${text}`,
     voice_call_chat: chatSagt(ANTWORT),
   });
-  const { done } = t.start("Was steht im Kalender?");
-  await settle();
-  assert.equal(t.aufrufe("voice_call_synthesize").length >= 1, true);
-  t.engine.interrupt();
-  syn.resolve("wav:ansage");
-  await done;
-  assert.deepEqual(t.player.enqueued, []);
-  assert.deepEqual(verlauf(t), []);
-  assert.equal(t.aufrufe("assistent_messung_melden").length, 0);
-  assert.equal(t.aufrufe("voice_call_cancel").length >= 1, true);
+  await t.start("Was steht im Kalender?").done;
+  assert.equal(
+    t
+      .aufrufe("voice_call_synthesize")
+      .some((c) => c.args.text.startsWith("Ich schaue")),
+    false,
+  );
+  assert.deepEqual(t.player.enqueued, [`wav:${ANTWORT}`]);
+  assert.deepEqual(t.log.denken, ["start", "Ich schaue in den Kalender."]);
+  assert.equal(
+    t.log.assistant.some((a) => a.t.includes("Ich schaue")),
+    false,
+  );
+});
+
+test("Allgemeine Ansage („Ich denke kurz nach.“) erscheint nirgends, auch nicht als Schritt", async () => {
+  const t = neu({
+    assistent_einstufen: () => ({
+      stufe: "S2",
+      absicht: "allgemein",
+      ansage: "Ich denke kurz nach.",
+      antwort: null,
+    }),
+    voice_call_chat: chatSagt("Ja, ich höre dich."),
+  });
+  await t.start("Kannst du mich hören?").done;
+  assert.deepEqual(t.player.enqueued, ["wav:Ja, ich höre dich."]);
+  assert.deepEqual(t.log.denken, ["start"]);
+  assert.equal(
+    t.log.assistant.some((a) => a.t.includes("denke")),
+    false,
+  );
 });
 
 test("Verworfener spekulativer Schritt spricht keine Ansage", async () => {
@@ -231,28 +251,26 @@ test("Kein erster Inhalt innerhalb der Frist: Anfrage abbrechen, Vorlage spreche
   }
 });
 
-test("Fehlende Antwort nach einer Ansage: erst die Ansage, dann die Vorlage", async () => {
+test("Fehlende Antwort nach einer Ansage: nur die Vorlage", async () => {
   const t = neu({
     assistent_einstufen: () => ansageE("Ich schaue in den Kalender."),
     voice_call_chat: () => Promise.reject("x"),
   });
   await t.start("Was steht im Kalender?").done;
-  assert.deepEqual(t.player.enqueued, [
-    "wav:Ich schaue in den Kalender.",
-    `wav:${FEHLER_DE}`,
-  ]);
+  assert.deepEqual(t.player.enqueued, [`wav:${FEHLER_DE}`]);
   assert.deepEqual(verlauf(t), []);
 });
 
 // -- MUSS 4: Überbrückung -------------------------------------------------------
 
-test("Bestehende Überbrückung des Orchestrators bleibt ohne Ansage erhalten", async () => {
+test("Überbrückung des Orchestrators wird nicht gesprochen, nur Schritt der Denk-Anzeige", async () => {
   const t = neu({}, { seiteMit: seite(BRUECKE, ANTWORT) });
   await t.start("Was steht im Kalender?").done;
-  assert.deepEqual(t.player.enqueued, [`wav:${BRUECKE}`, `wav:${ANTWORT}`]);
+  assert.deepEqual(t.player.enqueued, [`wav:${ANTWORT}`]);
+  assert.deepEqual(t.log.denken, ["start", BRUECKE]);
 });
 
-test("Nach einer Ansage wird keine zweite Überbrückung gesprochen", async () => {
+test("Weder Ansage noch Überbrückungen werden gesprochen", async () => {
   const t = neu(
     { assistent_einstufen: () => ansageE("Ich schaue in den Kalender.") },
     {
@@ -265,10 +283,8 @@ test("Nach einer Ansage wird keine zweite Überbrückung gesprochen", async () =
     },
   );
   await t.start("Was steht im Kalender?").done;
-  assert.deepEqual(t.player.enqueued, [
-    "wav:Ich schaue in den Kalender.",
-    `wav:${ANTWORT}`,
-  ]);
+  assert.deepEqual(t.player.enqueued, [`wav:${ANTWORT}`]);
+  assert.equal(t.log.denken.length, 5);
   // Verlauf: nur was das Modell gesagt hat, ohne die Ansage.
   assert.deepEqual(verlauf(t), [
     "user:Was steht im Kalender?",
@@ -276,7 +292,7 @@ test("Nach einer Ansage wird keine zweite Überbrückung gesprochen", async () =
   ]);
 });
 
-test("Zweite Überbrückung unterdrückt auch im Textmodus, die Anzeige hält die Ansage", async () => {
+test("Textmodus: Ansage und Überbrückung nur in der Denk-Anzeige, nie im Chat", async () => {
   const t = neu(
     { assistent_einstufen: () => ansageE("Ich schaue in den Kalender.") },
     { seiteMit: seite(BRUECKE, ANTWORT) },
@@ -285,7 +301,12 @@ test("Zweite Überbrückung unterdrückt auch im Textmodus, die Anzeige hält di
   await t.engine.sendText("Was steht im Kalender?");
   const letzte = t.log.assistant.at(-1);
   assert.equal(letzte.final, true);
-  assert.equal(letzte.t, `Ich schaue in den Kalender. ${ANTWORT}`);
+  assert.equal(letzte.t, ANTWORT);
+  assert.deepEqual(t.log.denken, [
+    "start",
+    "Ich schaue in den Kalender.",
+    BRUECKE,
+  ]);
   assert.deepEqual(verlauf(t), [
     "user:Was steht im Kalender?",
     `assistant:${ANTWORT}`,
@@ -547,7 +568,8 @@ test("Messung kommt erst nach dem Ende der Wiedergabe, mit warm und weg", async 
   assert.equal(m1.args.messung.warm, false);
   assert.equal(m1.args.messung.weg, "relay");
   assert.equal(typeof m1.args.messung.fertig_ms, "number");
-  assert.equal(typeof m1.args.messung.erste_ansage_ms, "number");
+  // Keine Ansage mehr: die Marke bleibt leer.
+  assert.equal(m1.args.messung.erste_ansage_ms, null);
   assert.equal(
     m1.args.messung.fertig_ms >= m1.args.messung.erster_inhalt_ms,
     true,

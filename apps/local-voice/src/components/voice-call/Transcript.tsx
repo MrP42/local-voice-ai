@@ -5,7 +5,12 @@ import { commands } from "@/bindings";
 import { splitStory, type StorySegment } from "./guide/steps";
 import { listen } from "@tauri-apps/api/event";
 import { useSpeakers } from "./guide/useSpeakers";
-import type { VoiceLine, VoiceSource } from "@/stores/voiceCallStore";
+import type {
+  Denkprozess,
+  VoiceLine,
+  VoiceSource,
+} from "@/stores/voiceCallStore";
+import { Denkanzeige } from "./Denkanzeige";
 import { sourceTarget } from "./globalContext";
 import { openInReader } from "@/lib/library/books";
 
@@ -75,6 +80,15 @@ const LineEditor: React.FC<{
   );
 };
 
+/**
+ * Abgeschlossener Denkprozess an der Antwort: nur, wenn es etwas zu zeigen gibt (Zwischenschritte)
+ * oder spürbar gedacht wurde; eine schnelle Antwort ohne Schritte bleibt ohne Zeile.
+ */
+const DENKPROZESS_AB_MS = 2000;
+function zeigeDenkprozess(d: Denkprozess): boolean {
+  return d.schritte.length > 0 || (d.ms ?? 0) >= DENKPROZESS_AB_MS;
+}
+
 export const Transcript: React.FC<{
   lines: VoiceLine[];
   active: boolean;
@@ -86,6 +100,13 @@ export const Transcript: React.FC<{
 
   /** Werkzeug, das der Orchestrator gerade aufruft (Name). */
   toolStatus?: string | null;
+  /**
+   * Laufender Denkprozess: graue, animierte Anzeige unter der letzten Nachricht (statt gesprochener
+   * Floskel), aufklappbar. Nur gesetzt, solange auf die erste Antwort gewartet wird.
+   */
+  denken?: Denkprozess | null;
+  /** Name des antwortenden Modells für den Denkprozess. */
+  modell?: string | null;
   /** Hinweis des Orchestrators (Code). */
   notice?: string | null;
   /** Öffnet die Einstellungen (Reiter Modelle), z. B. aus dem Hinweis zum gesperrten Modell. */
@@ -99,6 +120,8 @@ export const Transcript: React.FC<{
   active,
   greeting,
   toolStatus = null,
+  denken = null,
+  modell = null,
   notice = null,
   onOpenSettings,
   onEditLine,
@@ -188,7 +211,7 @@ export const Transcript: React.FC<{
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
-  }, [lines, toolStatus, notice]);
+  }, [lines, toolStatus, notice, denken]);
 
   // Die Live-Region ist immer da (leer), damit Ansagen zuverlässig ankommen; sie trägt nur die
   // Werkzeugzeile. Der Hinweis ist ein eigenes Element, ein gesperrtes Modell meldet sich als Alarm.
@@ -197,7 +220,7 @@ export const Transcript: React.FC<{
       role="status"
       aria-live="polite"
       data-testid="call-status"
-      className="self-start text-xs text-text/60 italic min-h-[1em]"
+      className="sr-only"
     >
       {toolStatus
         ? t([`voiceCall.tool.${toolStatus}`, "voiceCall.tool.generic"], {
@@ -276,6 +299,11 @@ export const Transcript: React.FC<{
                 </span>
               )}
               <div className="min-w-0">
+                {!user && line.denken && zeigeDenkprozess(line.denken) && (
+                  <div className="mb-0.5">
+                    <Denkanzeige denken={line.denken} laeuft={false} />
+                  </div>
+                )}
                 {isEditing ? (
                   <LineEditor
                     initial={line.text}
@@ -410,6 +438,7 @@ export const Transcript: React.FC<{
             </button>
           </div>
         )}
+        {denken && <Denkanzeige denken={denken} laeuft modell={modell} />}
         {noticeBox}
         {liveRegion}
         <div ref={endRef} />

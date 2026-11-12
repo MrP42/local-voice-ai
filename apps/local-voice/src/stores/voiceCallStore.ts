@@ -129,6 +129,33 @@ export interface VoiceLine {
   persisted?: boolean;
   /** Dateien, die der Nutzer mitgeschickt hat (nur Name, Typ, Größe; kein Inhalt). */
   attachments?: HistoryAttachment[];
+  /** Denkprozess vor dieser Antwort (nur in der laufenden Sitzung, nicht gespeichert). */
+  denken?: Denkprozess;
+}
+
+/**
+ * Ein Schritt der Denk-Anzeige: Ansage oder Überbrückung (Text, schon in der Sprache der App),
+ * ein Werkzeug (Name) oder der Abruf eigener Inhalte (Zahl der Treffer).
+ */
+export type DenkSchritt =
+  | { art: "text"; text: string }
+  | { art: "werkzeug"; name: string }
+  | { art: "kontext"; treffer: number };
+
+/** Denkprozess einer Antwort (nur Anzeige: nie gesprochen, nie gespeichert, nie an ein Modell). */
+export interface Denkprozess {
+  /** Beginn (ms seit Epoche). */
+  seit: number;
+  /** Dauer bis zur ersten Antwort (ms); fehlt, solange gedacht wird. */
+  ms?: number;
+  schritte: DenkSchritt[];
+}
+
+/** Hängt einen Schritt an; derselbe Schritt direkt hintereinander zählt einmal. */
+export function denkSchritt(d: Denkprozess, s: DenkSchritt): Denkprozess {
+  const last = d.schritte[d.schritte.length - 1];
+  if (last && JSON.stringify(last) === JSON.stringify(s)) return d;
+  return { ...d, schritte: [...d.schritte, s] };
 }
 
 /** Verbrauch des Gesprächs seit „Neues Gespräch“. */
@@ -305,6 +332,8 @@ interface VoiceCallStore {
   toolStatus: string | null;
   /** Hinweis des Orchestrators (z. B. Cloud-Modell bei „nur lokal“ gesperrt). */
   notice: Extract<CallStatus, { kind: "notice" }>["code"] | null;
+  /** Laufender Denkprozess bis zur ersten Antwort (graue Denk-Anzeige unter der letzten Nachricht). */
+  denken: Denkprozess | null;
   metrics: TurnMetrics[];
   lines: VoiceLine[];
   usage: CallUsage;
@@ -459,7 +488,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
           }
           // Endet ein Hauptgespräch (auch durch einen Fehler), die letzte Zeile mitspeichern.
           const wasMain = get().mainCall;
-          set({ state, mainCall: false });
+          set({ state, mainCall: false, denken: null });
           if (wasMain) flushLines(true);
         },
         // Der Pegel läuft am Store vorbei: 50 Bilder je Sekunde gehören nicht in den Zustand.
@@ -517,6 +546,13 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
             enqueueUpdate(last.id, text);
             return;
           }
+          // Mit dem ersten Text endet die Denk-Anzeige; der Denkprozess hängt an der Antwort.
+          const live = get().denken;
+          const denken =
+            live && (text.trim() || final)
+              ? { ...live, ms: Date.now() - live.seit }
+              : undefined;
+          if (denken) set({ denken: null });
           set((s) => {
             const l = s.lines;
             const last = l[l.length - 1];
@@ -524,7 +560,13 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
               return {
                 lines: [
                   ...l.slice(0, -1),
-                  { ...last, text, final, interrupted },
+                  {
+                    ...last,
+                    text,
+                    final,
+                    interrupted,
+                    ...(denken ? { denken } : {}),
+                  },
                 ],
               };
             }
@@ -539,6 +581,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
                   interrupted,
                   at: Date.now(),
                   mode: callRunning(s.state) ? "spoken" : "typed",
+                  ...(denken ? { denken } : {}),
                 },
               ],
             };
@@ -606,9 +649,37 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
         },
         onStatus: (status) => {
           if (status === null) set({ toolStatus: null });
-          else if (status.kind === "tool") set({ toolStatus: status.tool });
+          else if (status.kind === "tool")
+            set((s) => ({
+              toolStatus: status.tool,
+              denken: s.denken
+                ? denkSchritt(s.denken, { art: "werkzeug", name: status.tool })
+                : null,
+            }));
           else set({ notice: status.code });
         },
+        onDenken: (e) => {
+          if (e.art === "start") {
+            set({ denken: { seit: Date.now(), schritte: [] } });
+            return;
+          }
+          set((s) =>
+            s.denken
+              ? { denken: denkSchritt(s.denken, { art: "text", text: e.text }) }
+              : {},
+          );
+        },
+        onContextTiming: (_turnId, _retrieveMs, _promptMs, hits) =>
+          set((s) =>
+            s.denken && hits > 0
+              ? {
+                  denken: denkSchritt(s.denken, {
+                    art: "kontext",
+                    treffer: hits,
+                  }),
+                }
+              : {},
+          ),
         onUsage: (u: CallUsageEvent) => {
           pendingUsage = mergeUsage(pendingUsage, u);
           set((s) => ({ usage: addUsage(s.usage, u) }));
@@ -768,6 +839,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
       error: null,
       toolStatus: null,
       notice: null,
+      denken: null,
       ready: get().state === "idle" ? null : get().ready,
     });
   };
@@ -836,6 +908,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
     error: null,
     toolStatus: null,
     notice: null,
+    denken: null,
     metrics: [],
     lines: [],
     usage: EMPTY_USAGE,
@@ -960,7 +1033,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
     stopText: () => {
       engine?.cancelText(true);
       textRun++;
-      set({ textBusy: false });
+      set({ textBusy: false, denken: null });
     },
 
     newConversation: async () => {
