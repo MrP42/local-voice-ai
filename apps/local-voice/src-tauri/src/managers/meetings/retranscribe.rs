@@ -41,7 +41,7 @@ use super::import::{read_wav_i16_mono_16k, run_speaker_step, transcribe_and_stor
 use super::job::{self, JobHandle, JobPhase};
 use super::language_run::{self, RunRequest};
 use super::recorder::MeetingEvent;
-use super::rerun_state::{self, Settled};
+use super::rerun_state::{self, Ends, Settled};
 use super::store::{MeetingStatus, MeetingStore};
 use super::variants;
 use crate::managers::transcription::TranscriptionManager;
@@ -276,90 +276,80 @@ fn finish_run(
     has_stored_audio: bool,
 ) -> Result<(), String> {
     match outcome {
+        // Fassung, Marke und `ready` stehen schon (`rerun_state::complete`).
         Ok(RetranscribeEnd::Completed) => {
-            if let Err(e) = rerun_state::clear(store, meeting_id) {
-                error!("meetings: {e} ({meeting_id})");
-            }
-            store
-                .set_status(meeting_id, MeetingStatus::Ready)
-                .map_err(|e| format!("status_ready_failed: {e}"))?;
             emit_state(app, meeting_id, "ready");
             info!("meetings: retranscribe ready ({meeting_id})");
             Ok(())
         }
         Ok(RetranscribeEnd::Stopped) => {
-            let settled = rerun_state::settle(store, meeting_id, false);
-            let end_status = stop_status(&settled, previous_status, has_stored_audio);
-            match &settled {
-                Ok(Settled::Kept(_)) if !has_stored_audio => {
-                    // YouTube: das Teilergebnis bleibt Fassung, Fortsetzen gibt es nicht.
-                    if let Err(e) = rerun_state::clear(store, meeting_id) {
-                        error!("meetings: {e} ({meeting_id})");
-                    }
+            // lva#523: behalten (mit Spur fortsetzbar, `cancelled`) oder zuruecknehmen
+            // (Vorstatus), jeweils mit Marke und Status in EINER Transaktion.
+            let kept_status = if has_stored_audio {
+                MeetingStatus::Cancelled
+            } else {
+                previous_status
+            };
+            let ends = Ends {
+                kept: Some(kept_status),
+                resumable: has_stored_audio,
+                fallback: Some(previous_status),
+            };
+            let status = match rerun_state::settle(store, meeting_id, false, ends) {
+                Ok(Settled::Kept(_)) => kept_status,
+                Ok(Settled::RolledBack(status)) => status.unwrap_or(previous_status),
+                Ok(Settled::Nothing) => {
+                    store
+                        .set_status(meeting_id, previous_status)
+                        .map_err(|e| format!("status_restore_failed: {e}"))?;
+                    previous_status
                 }
-                Ok(_) => {}
-                Err(e) => error!("meetings: stop not settled ({meeting_id}): {e}"),
-            }
-            emit_reset(app, meeting_id);
-            let stored = store
-                .set_status(meeting_id, end_status)
-                .map_err(|e| format!("status_restore_failed: {e}"));
-            match stored {
-                Ok(()) => {
-                    emit_state(app, meeting_id, status_name(end_status));
-                    if settled.is_err() {
-                        emit_error(app, meeting_id, "retranscribe_failed");
-                    }
-                    info!("meetings: retranscribe stopped by the user ({meeting_id})");
-                    Ok(())
-                }
-                // Der Endzustand liess sich nicht schreiben: `failed` statt
-                // eines haengenden `processing`.
+                // Nichts veraendert: Arbeitskopie und alte Fassung bleiben beide; ein
+                // spaeterer Abschluss (Fortsetzen, neuer Lauf, Fassungsliste) holt es nach.
                 Err(e) => {
-                    error!("meetings: stop not stored ({meeting_id}): {e}");
-                    let _ = store.set_status(meeting_id, MeetingStatus::Failed);
-                    emit_state(app, meeting_id, "failed");
+                    error!("meetings: stop not settled ({meeting_id}): {e}");
+                    let _ = store.set_status(meeting_id, MeetingStatus::Cancelled);
+                    emit_reset(app, meeting_id);
+                    emit_state(app, meeting_id, "cancelled");
                     emit_error(app, meeting_id, "retranscribe_failed");
-                    Err(e)
+                    return Err(e);
                 }
-            }
+            };
+            emit_reset(app, meeting_id);
+            emit_state(app, meeting_id, status_name(status));
+            info!("meetings: retranscribe stopped by the user ({meeting_id})");
+            Ok(())
         }
         Err(e) => {
             error!("meetings: retranscribe failed ({meeting_id}): {e}");
             // B17: ein Fehler mitten im Lauf nimmt dem Nutzer das alte Transkript nicht.
-            // Scheitert das Zuruecknehmen, bleibt die Absicht (`rollback`) stehen und
-            // der Status ist ehrlich `failed`; der naechste Abschluss holt es nach.
-            let status = match rerun_state::settle(store, meeting_id, true) {
-                Ok(_) => previous_status,
-                Err(e) => {
-                    error!("meetings: rollback not finished ({meeting_id}): {e}");
+            let ends = Ends {
+                kept: None,
+                resumable: false,
+                fallback: Some(previous_status),
+            };
+            let status = match rerun_state::settle(store, meeting_id, true, ends) {
+                Ok(Settled::RolledBack(status)) => status.unwrap_or(previous_status),
+                Ok(_) => {
+                    let _ = store.set_status(meeting_id, previous_status);
+                    previous_status
+                }
+                // Zuruecknehmen gescheitert: Absicht und `failed` festhalten (jedes
+                // davon allein laesst den naechsten Abschluss zuruecknehmen, nie behalten).
+                Err(err) => {
+                    error!("meetings: rollback not finished ({meeting_id}): {err}");
+                    if let Err(m) = rerun_state::mark_rollback(store, meeting_id) {
+                        error!("meetings: rollback intent not stored ({meeting_id}): {m}");
+                    }
+                    let _ = store.set_status(meeting_id, MeetingStatus::Failed);
                     MeetingStatus::Failed
                 }
             };
             emit_reset(app, meeting_id);
-            let _ = store.set_status(meeting_id, status);
             emit_state(app, meeting_id, status_name(status));
             emit_error(app, meeting_id, "retranscribe_failed");
             Err(e)
         }
-    }
-}
-
-/// lva#523: Status nach einem Stopp. Behalten mit gespeicherter Spur: `cancelled`
-/// (fortsetzbar). Nichts Neues: wie vorher. Abschluss gescheitert: der Zustand ist
-/// unveraendert offen; mit Spur `cancelled` (Fortsetzen schliesst erneut ab), sonst
-/// `failed`.
-fn stop_status(
-    settled: &Result<Settled, String>,
-    previous_status: MeetingStatus,
-    has_stored_audio: bool,
-) -> MeetingStatus {
-    match settled {
-        Ok(Settled::Kept(_)) if has_stored_audio => MeetingStatus::Cancelled,
-        Ok(Settled::RolledBack(Some(status))) => *status,
-        Ok(_) => previous_status,
-        Err(_) if has_stored_audio => MeetingStatus::Cancelled,
-        Err(_) => MeetingStatus::Failed,
     }
 }
 
@@ -595,13 +585,8 @@ fn run_retranscribe(
         };
         crate::managers::provenance::generation::record_stt(store, run());
         // B17: das Ergebnis wird erst JETZT die neue aktive Fassung.
-        let variant_id = {
-            let mut conn = store
-                .get_connection()
-                .map_err(|e| format!("variants_finish_failed: {e}"))?;
-            variants::finish_rerun(&mut conn, meeting_id, kind, None)
-                .map_err(|e| format!("variants_finish_failed: {e}"))?
-        };
+        // lva#523: Fassung, Marke weg und `ready` in einer Transaktion.
+        let variant_id = rerun_state::complete(store, meeting_id, kind)?;
         crate::managers::provenance::generation::record_stt_variant(store, &variant_id, run());
         // G5: die gueltige Sprache (Gegenprobe am Text) und das Modell an Besprechung,
         // Transkript und die neue aktive Fassung.
@@ -656,34 +641,6 @@ mod tests {
         // Nie `processing` oder `recording`: ein haengender Zustand waere der Fehler.
         assert_eq!(restored_status("processing"), MeetingStatus::Ready);
         assert_eq!(restored_status("recording"), MeetingStatus::Ready);
-    }
-
-    #[test]
-    fn a_stop_ends_cancelled_only_when_kept_with_stored_audio_lva523() {
-        use MeetingStatus::*;
-        let kept = Ok(Settled::Kept(None));
-        assert_eq!(stop_status(&kept, Ready, true), Cancelled);
-        assert_eq!(
-            stop_status(&kept, Ready, false),
-            Ready,
-            "YouTube: keine Sackgasse"
-        );
-        assert_eq!(
-            stop_status(&Ok(Settled::RolledBack(Some(Failed))), Ready, true),
-            Failed
-        );
-        assert_eq!(
-            stop_status(&Ok(Settled::RolledBack(None)), Cancelled, true),
-            Cancelled
-        );
-        assert_eq!(stop_status(&Ok(Settled::Nothing), Ready, true), Ready);
-        let failed: Result<Settled, String> = Err("x".into());
-        assert_eq!(
-            stop_status(&failed, Ready, true),
-            Cancelled,
-            "offen, Fortsetzen schliesst ab"
-        );
-        assert_eq!(stop_status(&failed, Ready, false), Failed);
     }
 
     #[test]

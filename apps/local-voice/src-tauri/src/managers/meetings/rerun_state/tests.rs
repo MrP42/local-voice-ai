@@ -94,7 +94,7 @@ fn a_crash_before_or_right_after_clearing_never_keeps_old_segments_as_new() {
     for upto in 1..=4 {
         let f = fixture();
         run_until(&f, upto);
-        let settled = settle(&f.store, &f.id, false).unwrap();
+        let settled = settle(&f.store, &f.id, false, Ends::QUIET).unwrap();
         assert_eq!(
             settled,
             Settled::RolledBack(Some(MeetingStatus::Ready)),
@@ -103,7 +103,7 @@ fn a_crash_before_or_right_after_clearing_never_keeps_old_segments_as_new() {
         assert_eq!(texts(&f), vec!["alt eins", "alt zwei"], "Schritt {upto}");
         assert_eq!(read(&f.store, &f.id).unwrap(), None, "Schritt {upto}");
         assert_eq!(variant_count(&f), 1, "Schritt {upto}");
-        assert_eq!(prepare_resume(&f.store, &f.id).unwrap(), None);
+        assert_eq!(prepare_resume(&f.store, &f.id).unwrap(), Resume::Normal);
     }
 }
 
@@ -111,7 +111,7 @@ fn a_crash_before_or_right_after_clearing_never_keeps_old_segments_as_new() {
 fn a_stop_or_crash_after_new_sections_keeps_them_and_the_old_version() {
     let f = fixture();
     run_until(&f, 5);
-    let Settled::Kept(Some(r)) = settle(&f.store, &f.id, false).unwrap() else {
+    let Settled::Kept(Some(r)) = settle(&f.store, &f.id, false, Ends::QUIET).unwrap() else {
         panic!("behalten erwartet");
     };
     assert_eq!(r.model, "neu-modell");
@@ -119,7 +119,7 @@ fn a_stop_or_crash_after_new_sections_keeps_them_and_the_old_version() {
     assert_eq!(variant_count(&f), 2);
     // Doppelter Abschluss (doppelter Stopp, danach Wiederherstellung): unveraendert.
     assert_eq!(
-        settle(&f.store, &f.id, false).unwrap(),
+        settle(&f.store, &f.id, false, Ends::QUIET).unwrap(),
         Settled::Kept(Some(r.clone()))
     );
     assert_eq!(texts(&f), vec!["neu eins"]);
@@ -135,7 +135,7 @@ fn an_old_marker_with_another_epoch_never_claims_a_working_copy() {
     f.store.clear_segments(&f.id).unwrap();
     append(&f.store, &f.id, &[(0, "fremd")]);
     assert_eq!(
-        settle(&f.store, &f.id, false).unwrap(),
+        settle(&f.store, &f.id, false, Ends::QUIET).unwrap(),
         Settled::RolledBack(Some(MeetingStatus::Ready))
     );
     assert_eq!(texts(&f), vec!["alt eins", "alt zwei"]);
@@ -147,11 +147,9 @@ fn a_failure_rolls_back_and_a_crash_mid_rollback_still_rolls_back() {
     // (auch ohne `rollback`-Wunsch) behaelt dann nichts.
     let f = fixture();
     run_until(&f, 5);
-    let mut m = read(&f.store, &f.id).unwrap().unwrap();
-    m.phase = PHASE_ROLLBACK.to_string();
-    write_marker(&f.store, &f.id, &m).unwrap(); // Absturz direkt danach
+    mark_rollback(&f.store, &f.id).unwrap(); // Absturz direkt danach
     assert_eq!(
-        settle(&f.store, &f.id, false).unwrap(),
+        settle(&f.store, &f.id, false, Ends::QUIET).unwrap(),
         Settled::RolledBack(Some(MeetingStatus::Ready))
     );
     assert_eq!(texts(&f), vec!["alt eins", "alt zwei"]);
@@ -160,7 +158,7 @@ fn a_failure_rolls_back_and_a_crash_mid_rollback_still_rolls_back() {
     let g = fixture();
     run_until(&g, 5);
     assert_eq!(
-        settle(&g.store, &g.id, true).unwrap(),
+        settle(&g.store, &g.id, true, Ends::QUIET).unwrap(),
         Settled::RolledBack(Some(MeetingStatus::Ready))
     );
     assert_eq!(texts(&g), vec!["alt eins", "alt zwei"]);
@@ -172,7 +170,7 @@ fn resuming_reactivates_the_stopped_version_after_a_switch() {
     // Fortsetzen ergaenzt trotzdem die gestoppte.
     let f = fixture();
     run_until(&f, 5);
-    let Settled::Kept(Some(r)) = settle(&f.store, &f.id, false).unwrap() else {
+    let Settled::Kept(Some(r)) = settle(&f.store, &f.id, false, Ends::QUIET).unwrap() else {
         panic!("behalten erwartet");
     };
     let old = {
@@ -186,8 +184,8 @@ fn resuming_reactivates_the_stopped_version_after_a_switch() {
     }
     assert_eq!(texts(&f), vec!["alt eins", "alt zwei"]);
     assert_eq!(
-        prepare_resume(&f.store, &f.id).unwrap().as_deref(),
-        Some("neu-modell")
+        prepare_resume(&f.store, &f.id).unwrap(),
+        Resume::Partial("neu-modell".into())
     );
     assert_eq!(texts(&f), vec!["neu eins"]);
 }
@@ -196,7 +194,7 @@ fn resuming_reactivates_the_stopped_version_after_a_switch() {
 fn a_new_run_over_a_kept_result_restores_it_when_it_leaves_nothing() {
     let f = fixture();
     run_until(&f, 5);
-    settle(&f.store, &f.id, false).unwrap();
+    settle(&f.store, &f.id, false, Ends::QUIET).unwrap();
     f.store.set_status(&f.id, MeetingStatus::Cancelled).unwrap();
     // Zweiter Lauf, gestoppt vor dem ersten Abschnitt.
     mark_start(&f.store, &f.id, "cancelled").unwrap();
@@ -207,28 +205,197 @@ fn a_new_run_over_a_kept_result_restores_it_when_it_leaves_nothing() {
     f.store.clear_segments(&f.id).unwrap();
     mark_running(&f.store, &f.id, "zweit", variants::KIND_RETRANSCRIBED).unwrap();
     assert_eq!(
-        settle(&f.store, &f.id, false).unwrap(),
+        settle(&f.store, &f.id, false, Ends::QUIET).unwrap(),
         Settled::RolledBack(Some(MeetingStatus::Cancelled))
     );
     assert_eq!(texts(&f), vec!["neu eins"], "das erste Teilergebnis bleibt");
     assert_eq!(
-        prepare_resume(&f.store, &f.id).unwrap().as_deref(),
-        Some("neu-modell"),
+        prepare_resume(&f.store, &f.id).unwrap(),
+        Resume::Partial("neu-modell".into()),
         "und bleibt mit seinem Modell fortsetzbar"
     );
 }
 
 #[test]
-fn a_finished_run_whose_marker_was_not_cleared_is_just_finished() {
+fn completing_a_run_ends_variant_marker_and_status_together() {
+    let f = fixture();
+    run_until(&f, 5);
+    f.store
+        .set_status(&f.id, MeetingStatus::Processing)
+        .unwrap();
+    complete(&f.store, &f.id, variants::KIND_RETRANSCRIBED).unwrap();
+    assert_eq!(read(&f.store, &f.id).unwrap(), None);
+    assert_eq!(status(&f), "ready");
+    assert_eq!(texts(&f), vec!["neu eins"]);
+    assert_eq!(
+        settle(&f.store, &f.id, false, Ends::QUIET).unwrap(),
+        Settled::Nothing
+    );
+}
+
+#[test]
+fn running_without_an_open_run_is_an_error_never_finished() {
+    // F1: frueher als „fertig“ gedeutet (Marke weg, `ready`); jetzt ein Fehler ohne
+    // jede Aenderung.
     let f = fixture();
     run_until(&f, 5);
     {
         let mut c = f.store.get_connection().unwrap();
         variants::finish_rerun(&mut c, &f.id, variants::KIND_RETRANSCRIBED, None).unwrap();
     }
-    assert_eq!(settle(&f.store, &f.id, false).unwrap(), Settled::Finished);
-    assert_eq!(read(&f.store, &f.id).unwrap(), None);
+    f.store
+        .set_status(&f.id, MeetingStatus::Processing)
+        .unwrap();
+    assert!(settle(&f.store, &f.id, false, Ends::QUIET).is_err());
+    assert_eq!(read(&f.store, &f.id).unwrap().unwrap().phase, PHASE_RUNNING);
+    assert_eq!(status(&f), "processing");
+}
+
+fn status(f: &Fx) -> String {
+    f.store.get_meeting(&f.id).unwrap().unwrap().status
+}
+
+fn raw_metadata(f: &Fx) -> Option<String> {
+    f.store
+        .get_connection()
+        .unwrap()
+        .query_row(
+            "SELECT metadata_json FROM meetings WHERE id = ?1",
+            rusqlite::params![f.id],
+            |r| r.get(0),
+        )
+        .unwrap()
+}
+
+fn set_raw_metadata(f: &Fx, value: Option<&str>) {
+    f.store
+        .get_connection()
+        .unwrap()
+        .execute(
+            "UPDATE meetings SET metadata_json = ?1 WHERE id = ?2",
+            rusqlite::params![value, f.id],
+        )
+        .unwrap();
+}
+
+#[test]
+fn a_failing_marker_write_undoes_the_kept_version_in_the_same_transaction() {
+    // F1/F3 (Fenster nach dem Fassungs-Commit): das Schreiben der Marke scheitert
+    // NACH dem Sichern der Fassung in derselben Transaktion -> nichts ist geschehen,
+    // ein spaeterer Abschluss behaelt alles.
+    let f = fixture();
+    run_until(&f, 5);
+    f.store
+        .set_status(&f.id, MeetingStatus::Processing)
+        .unwrap();
+    let good = raw_metadata(&f);
+    set_raw_metadata(&f, Some("[kaputt"));
+    let ends = Ends {
+        kept: Some(MeetingStatus::Cancelled),
+        resumable: true,
+        fallback: Some(MeetingStatus::Ready),
+    };
+    assert!(settle(&f.store, &f.id, false, ends).is_err());
+    {
+        let c = f.store.get_connection().unwrap();
+        assert!(
+            variants::rerun_pending(&c, &f.id).unwrap(),
+            "Lauf weiter offen"
+        );
+    }
+    assert_eq!(texts(&f), vec!["neu eins"], "Arbeitskopie unveraendert");
+    assert_eq!(variant_count(&f), 1, "keine halbe Fassung");
+    assert_eq!(status(&f), "processing");
+    set_raw_metadata(&f, good.as_deref());
+    assert!(matches!(
+        settle(&f.store, &f.id, false, ends).unwrap(),
+        Settled::Kept(Some(_))
+    ));
+    assert_eq!(status(&f), "cancelled", "Status im selben Schritt");
     assert_eq!(texts(&f), vec!["neu eins"]);
+    assert_eq!(variant_count(&f), 2);
+}
+
+#[test]
+fn a_rollback_writes_the_previous_status_in_the_same_transaction() {
+    // F4: Vorstatus `failed`, keine Vormarke. Zuruecknehmen, Marke und Status sind
+    // ein Schritt; scheitert er, bleibt die Wiederherstellungsinformation stehen.
+    let f = fixture();
+    f.store.set_status(&f.id, MeetingStatus::Failed).unwrap();
+    mark_start(&f.store, &f.id, "failed").unwrap();
+    {
+        let mut c = f.store.get_connection().unwrap();
+        variants::begin_rerun(&mut c, &f.id).unwrap();
+    }
+    f.store
+        .set_status(&f.id, MeetingStatus::Processing)
+        .unwrap();
+    f.store.clear_segments(&f.id).unwrap();
+    mark_running(&f.store, &f.id, "m", variants::KIND_RETRANSCRIBED).unwrap();
+    append(&f.store, &f.id, &[(0, "neu")]);
+    let good = raw_metadata(&f);
+    set_raw_metadata(&f, Some("[kaputt"));
+    assert!(settle(&f.store, &f.id, true, Ends::QUIET).is_err());
+    assert_eq!(status(&f), "processing");
+    set_raw_metadata(&f, good.as_deref());
+    assert_eq!(
+        settle(&f.store, &f.id, true, Ends::QUIET).unwrap(),
+        Settled::RolledBack(Some(MeetingStatus::Failed))
+    );
+    assert_eq!(status(&f), "failed");
+    assert_eq!(texts(&f), vec!["alt eins", "alt zwei"]);
+    assert_eq!(read(&f.store, &f.id).unwrap(), None);
+}
+
+#[test]
+fn a_failed_meeting_is_never_reinterpreted_as_a_kept_result() {
+    // F3: Absicht `rollback` liess sich nicht speichern, nur `failed`: der naechste
+    // Abschluss nimmt zurueck.
+    let f = fixture();
+    run_until(&f, 5);
+    f.store.set_status(&f.id, MeetingStatus::Failed).unwrap();
+    assert_eq!(
+        settle(&f.store, &f.id, false, Ends::QUIET).unwrap(),
+        Settled::RolledBack(Some(MeetingStatus::Ready))
+    );
+    assert_eq!(texts(&f), vec!["alt eins", "alt zwei"]);
+}
+
+#[test]
+fn a_kept_marker_without_a_version_is_rejected_not_resumed() {
+    // F5: Marke aus 02c1f87 (`{model, kind}`, ohne Phase und Fassung).
+    let f = fixture();
+    f.store.set_status(&f.id, MeetingStatus::Cancelled).unwrap();
+    write(
+        &f.store,
+        &f.id,
+        serde_json::json!({ "model": "alt", "kind": "retranscribed" }),
+    )
+    .unwrap();
+    assert_eq!(
+        prepare_resume(&f.store, &f.id).unwrap_err(),
+        "partial_rerun_unassigned"
+    );
+    assert_eq!(texts(&f), vec!["alt eins", "alt zwei"], "nichts ergaenzt");
+}
+
+#[test]
+fn a_stop_of_a_run_without_stored_audio_keeps_the_version_but_no_resume_marker() {
+    let f = fixture();
+    run_until(&f, 5);
+    let ends = Ends {
+        kept: Some(MeetingStatus::Ready),
+        resumable: false,
+        fallback: Some(MeetingStatus::Ready),
+    };
+    assert_eq!(
+        settle(&f.store, &f.id, false, ends).unwrap(),
+        Settled::Kept(None)
+    );
+    assert_eq!(read(&f.store, &f.id).unwrap(), None);
+    assert_eq!(status(&f), "ready");
+    assert_eq!(texts(&f), vec!["neu eins"]);
+    assert_eq!(variant_count(&f), 2);
 }
 
 #[test]
@@ -241,7 +408,7 @@ fn a_pending_run_without_any_marker_is_rolled_back() {
     f.store.clear_segments(&f.id).unwrap();
     append(&f.store, &f.id, &[(0, "ohne marke")]);
     assert_eq!(
-        settle(&f.store, &f.id, false).unwrap(),
+        settle(&f.store, &f.id, false, Ends::QUIET).unwrap(),
         Settled::RolledBack(None)
     );
     assert_eq!(texts(&f), vec!["alt eins", "alt zwei"]);

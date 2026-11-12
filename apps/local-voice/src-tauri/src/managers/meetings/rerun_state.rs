@@ -14,11 +14,19 @@
 //!
 //! `prev` und `prev_status` halten den Stand vor dem Lauf. [`settle`] fuehrt jeden
 //! Zwischenstand in einen Endzustand: Stopp, Fehler, Wiederherstellung nach Absturz,
-//! Fortsetzen und das Oeffnen der Fassungsliste rufen dieselbe Funktion. Neue
-//! Abschnitte werden nur behalten, wenn Phase `running` UND die Epoche der Arbeitskopie
-//! passt; sonst wird zurueckgenommen. Scheitert ein Schritt, bleibt der Zustand
-//! unveraendert und laesst sich erneut abschliessen (nie halb, nie verworfen).
+//! Fortsetzen und das Oeffnen der Fassungsliste rufen dieselbe Funktion, immer unter
+//! dem Auftrag der Besprechung (`job::try_start`). Neue Abschnitte werden nur
+//! behalten, wenn Phase `running`, die Epoche der Arbeitskopie passt und die
+//! Besprechung nicht `failed` ist; sonst wird zurueckgenommen.
+//!
+//! **Atomar:** Fassungsaenderung (behalten, zuruecknehmen, abschliessen), Marke und
+//! Besprechungsstatus stehen in EINER SQLite-Transaktion (`IMMEDIATE`). Es gibt keinen
+//! sichtbaren Zwischenstand zwischen „Fassung gesichert“ und „Marke/Status
+//! geschrieben“; scheitert die Transaktion, bleibt alles wie vorher und laesst sich
+//! erneut abschliessen. `running` ohne offenen Lauf kann es daher nicht geben und wird
+//! als Fehler gemeldet, nie als „fertig“ gedeutet.
 
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde_json::{json, Value};
 
 use super::store::{MeetingStatus, MeetingStore};
@@ -55,6 +63,8 @@ impl Marker {
                 .filter(|x| !x.is_empty())
                 .map(str::to_string)
         };
+        // Ohne Phase (Stand 02c1f87): eine behaltene Marke OHNE Fassung, also nicht
+        // zuordenbar (`prepare_resume` weist sie ab).
         let phase = s("phase").unwrap_or_else(|| PHASE_KEPT.to_string());
         let kind = match s("kind").as_deref() {
             Some(k) if k == variants::KIND_OWN => variants::KIND_OWN,
@@ -87,70 +97,128 @@ impl Marker {
     }
 }
 
-pub fn read(store: &MeetingStore, meeting_id: &str) -> Result<Option<Marker>, String> {
-    let meta = store
-        .metadata_json(meeting_id)
-        .map_err(|e| format!("partial_marker_read_failed: {e}"))?;
-    Ok(meta
-        .as_ref()
-        .and_then(|m| m.get(KEY))
-        .and_then(Marker::from_value))
+// ---------------------------------------------------------------------------
+// Lesen und Schreiben IN einer Transaktion
+// ---------------------------------------------------------------------------
+
+fn metadata_tx(
+    conn: &Connection,
+    meeting_id: &str,
+) -> Result<serde_json::Map<String, Value>, String> {
+    let current: Option<Option<String>> = conn
+        .query_row(
+            "SELECT metadata_json FROM meetings WHERE id = ?1 AND deleted_at IS NULL",
+            params![meeting_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let Some(current) = current else {
+        return Err("meeting_not_found".to_string());
+    };
+    match current.as_deref().map(str::trim) {
+        None | Some("") => Ok(serde_json::Map::new()),
+        Some(text) => match serde_json::from_str::<Value>(text) {
+            Ok(Value::Object(map)) => Ok(map),
+            _ => Err("metadata_json_invalid".to_string()),
+        },
+    }
 }
 
-/// Die rohe Marke (fuer `prev`).
-pub fn read_raw(store: &MeetingStore, meeting_id: &str) -> Result<Value, String> {
-    let meta = store
-        .metadata_json(meeting_id)
-        .map_err(|e| format!("partial_marker_read_failed: {e}"))?;
-    Ok(meta
-        .and_then(|m| m.get(KEY).cloned())
+fn read_raw_tx(conn: &Connection, meeting_id: &str) -> Result<Value, String> {
+    Ok(metadata_tx(conn, meeting_id)?
+        .get(KEY)
+        .cloned()
         .unwrap_or(Value::Null))
 }
 
-pub fn write(store: &MeetingStore, meeting_id: &str, value: Value) -> Result<(), String> {
-    store
-        .set_metadata_key(meeting_id, KEY, value)
-        .map_err(|e| format!("partial_marker_failed: {e}"))
+fn read_tx(conn: &Connection, meeting_id: &str) -> Result<Option<Marker>, String> {
+    Ok(Marker::from_value(&read_raw_tx(conn, meeting_id)?))
 }
 
-pub fn write_marker(store: &MeetingStore, meeting_id: &str, m: &Marker) -> Result<(), String> {
-    write(store, meeting_id, m.to_value())
-}
-
-/// Laufbeginn (unter dem Auftrag, VOR `begin_rerun`): offenen Vorlauf abschliessen,
-/// dann Marke `start` mit dem Stand davor.
-pub fn mark_start(store: &MeetingStore, meeting_id: &str, prev_status: &str) -> Result<(), String> {
-    settle(store, meeting_id, false)?;
-    let prev = read_raw(store, meeting_id)?;
-    write_marker(
-        store,
-        meeting_id,
-        &Marker {
-            phase: PHASE_START.to_string(),
-            prev_status: Some(prev_status.to_string()),
-            prev,
-            ..Default::default()
-        },
+fn write_tx(conn: &Connection, meeting_id: &str, value: Value) -> Result<(), String> {
+    let mut map = metadata_tx(conn, meeting_id)?;
+    map.insert(KEY.to_string(), value);
+    conn.execute(
+        "UPDATE meetings SET metadata_json = ?1, updated_at = ?2 WHERE id = ?3",
+        params![Value::Object(map).to_string(), now_s(), meeting_id],
     )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
-/// Nach `clear_segments`: die Arbeitskopie (diese Epoche) gehoert jetzt dem Lauf.
-pub fn mark_running(
-    store: &MeetingStore,
-    meeting_id: &str,
-    model: &str,
-    kind: &'static str,
-) -> Result<(), String> {
-    let epoch = store
-        .segment_epoch(meeting_id)
-        .map_err(|e| format!("segment_epoch_failed: {e}"))?;
-    let mut marker = read(store, meeting_id)?.unwrap_or_default();
-    marker.phase = PHASE_RUNNING.to_string();
-    marker.epoch = Some(epoch);
-    marker.model = Some(model.to_string());
-    marker.kind = kind;
-    write_marker(store, meeting_id, &marker)
+fn status_tx(conn: &Connection, meeting_id: &str) -> Result<String, String> {
+    conn.query_row(
+        "SELECT status FROM meetings WHERE id = ?1 AND deleted_at IS NULL",
+        params![meeting_id],
+        |r| r.get(0),
+    )
+    .map_err(|e| e.to_string())
 }
+
+fn set_status_tx(conn: &Connection, meeting_id: &str, status: MeetingStatus) -> Result<(), String> {
+    conn.execute(
+        "UPDATE meetings SET status = ?1, updated_at = ?2 WHERE id = ?3 AND deleted_at IS NULL",
+        params![status.as_str(), now_s(), meeting_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn epoch_tx(conn: &Connection, meeting_id: &str) -> Result<u32, String> {
+    let epoch: Option<i64> = conn
+        .query_row(
+            "SELECT segment_epoch FROM transcripts WHERE meeting_id = ?1 AND deleted_at IS NULL",
+            params![meeting_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    Ok(u32::try_from(epoch.unwrap_or(0)).unwrap_or(0))
+}
+
+fn now_s() -> i64 {
+    chrono::Utc::now().timestamp()
+}
+
+fn in_tx<T>(
+    store: &MeetingStore,
+    f: impl FnOnce(&Transaction<'_>) -> Result<T, String>,
+) -> Result<T, String> {
+    let mut conn = store.get_connection().map_err(|e| e.to_string())?;
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| e.to_string())?;
+    let out = f(&tx)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(out)
+}
+
+/// Lesen ohne Aenderung (Anzeige, Tests).
+#[cfg(test)]
+pub fn read(store: &MeetingStore, meeting_id: &str) -> Result<Option<Marker>, String> {
+    let conn = store.get_connection().map_err(|e| e.to_string())?;
+    read_tx(&conn, meeting_id)
+}
+
+/// Rohes Schreiben der Marke (nur Tests und Altbestand).
+#[cfg(test)]
+pub fn write(store: &MeetingStore, meeting_id: &str, value: Value) -> Result<(), String> {
+    in_tx(store, |tx| write_tx(tx, meeting_id, value))
+}
+
+pub fn status_from_name(name: &str) -> Option<MeetingStatus> {
+    match name {
+        "ready" => Some(MeetingStatus::Ready),
+        "failed" => Some(MeetingStatus::Failed),
+        "cancelled" => Some(MeetingStatus::Cancelled),
+        _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Uebergaenge
+// ---------------------------------------------------------------------------
 
 /// Ein offenes Teilergebnis, das „Fortsetzen“ ergaenzen kann.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -164,132 +232,243 @@ pub struct Resumable {
 pub enum Settled {
     /// Keine Marke und kein offener Lauf.
     Nothing,
-    /// Das Teilergebnis ist (jetzt oder schon) Fassung; mit Modell fortsetzbar.
+    /// Das Teilergebnis ist (jetzt oder schon) Fassung. `None`: nicht zuordenbar
+    /// (Altbestand ohne Fassung) oder bewusst nicht fortsetzbar.
     Kept(Option<Resumable>),
-    /// Zurueckgenommen: alte Fassung aktiv, Marke auf dem Stand vor dem Lauf;
-    /// der Status vor dem Lauf (falls bekannt).
+    /// Zurueckgenommen: alte Fassung aktiv, Marke auf dem Stand vor dem Lauf, Status
+    /// (falls bekannt) geschrieben, alles in einer Transaktion.
     RolledBack(Option<MeetingStatus>),
-    /// Ein abgeschlossener Lauf hatte nur die Marke noch nicht geloescht.
-    Finished,
 }
 
-pub fn status_from_name(name: &str) -> Option<MeetingStatus> {
-    match name {
-        "ready" => Some(MeetingStatus::Ready),
-        "failed" => Some(MeetingStatus::Failed),
-        "cancelled" => Some(MeetingStatus::Cancelled),
-        _ => None,
-    }
+/// Was [`settle`] im Endzustand schreibt.
+#[derive(Clone, Copy, Debug)]
+pub struct Ends {
+    /// Status, wenn das Teilergebnis JETZT behalten wird (`None`: unveraendert).
+    pub kept: Option<MeetingStatus>,
+    /// Behalten mit Fortsetzen-Marke (`false`: YouTube, nur die Fassung bleibt).
+    pub resumable: bool,
+    /// Status beim Zuruecknehmen, wenn der Vorstatus unbekannt ist.
+    pub fallback: Option<MeetingStatus>,
 }
 
-fn rerun_pending(store: &MeetingStore, meeting_id: &str) -> Result<bool, String> {
-    let conn = store.get_connection().map_err(|e| e.to_string())?;
-    variants::rerun_pending(&conn, meeting_id).map_err(|e| e.code().to_string())
+impl Ends {
+    /// Nichts am Status aendern (Fassungsdialog, Laufbeginn).
+    pub const QUIET: Ends = Ends {
+        kept: None,
+        resumable: true,
+        fallback: None,
+    };
 }
 
-fn roll_back(
-    store: &MeetingStore,
+fn resumable_of(m: &Marker) -> Option<Resumable> {
+    m.model
+        .clone()
+        .zip(m.variant_id.clone())
+        .map(|(model, variant_id)| Resumable { model, variant_id })
+}
+
+fn roll_back_tx(
+    tx: &Transaction<'_>,
     meeting_id: &str,
     marker: Option<&Marker>,
     pending: bool,
+    fallback: Option<MeetingStatus>,
 ) -> Result<Settled, String> {
     if pending {
-        // Absicht dauerhaft festhalten, BEVOR zurueckgenommen wird: ein Absturz
-        // mitten darin endet beim naechsten Abschluss wieder hier.
-        if let Some(m) = marker {
-            if m.phase != PHASE_ROLLBACK {
-                let mut r = m.clone();
-                r.phase = PHASE_ROLLBACK.to_string();
-                write_marker(store, meeting_id, &r)?;
-            }
-        }
-        let mut conn = store.get_connection().map_err(|e| e.to_string())?;
-        variants::abort_rerun(&mut conn, meeting_id).map_err(|e| e.code().to_string())?;
+        variants::restore_in_tx(tx, meeting_id).map_err(|e| e.code().to_string())?;
     }
-    let prev_status = marker
+    let status = marker
         .and_then(|m| m.prev_status.as_deref())
-        .and_then(status_from_name);
+        .and_then(status_from_name)
+        .or(fallback);
     if let Some(m) = marker {
-        write(store, meeting_id, m.prev.clone())?;
+        write_tx(tx, meeting_id, m.prev.clone())?;
     }
-    Ok(Settled::RolledBack(prev_status))
+    if let Some(status) = status {
+        set_status_tx(tx, meeting_id, status)?;
+    }
+    Ok(Settled::RolledBack(status))
 }
 
-/// Fuehrt einen offenen Neu-Lauf in einen Endzustand. Nur rufen, wenn KEIN Auftrag
-/// fuer die Besprechung laeuft (oder der eigene Auftrag ruft). `rollback`: der Lauf
-/// ist gescheitert, nichts behalten.
-pub fn settle(store: &MeetingStore, meeting_id: &str, rollback: bool) -> Result<Settled, String> {
-    let marker = read(store, meeting_id)?;
-    let pending = rerun_pending(store, meeting_id)?;
-    let Some(m) = marker else {
-        if pending {
-            // Ein Lauf ohne Marke (Stand vor lva#523): nur Zuruecknehmen ist sicher.
-            return roll_back(store, meeting_id, None, true);
-        }
-        return Ok(Settled::Nothing);
-    };
-    if !pending {
-        return match m.phase.as_str() {
-            PHASE_KEPT => Ok(Settled::Kept(
-                m.model
-                    .clone()
-                    .zip(m.variant_id.clone())
-                    .map(|(model, variant_id)| Resumable { model, variant_id }),
-            )),
-            // Abgeschlossen (finish_rerun lief), nur die Marke stand noch.
-            PHASE_RUNNING if !rollback => {
-                write(store, meeting_id, Value::Null)?;
-                Ok(Settled::Finished)
-            }
-            _ => roll_back(store, meeting_id, Some(&m), false),
+/// Fuehrt einen offenen Neu-Lauf in einen Endzustand, atomar (siehe Moduldoku).
+/// Nur unter dem Auftrag der Besprechung rufen. `rollback`: der Lauf ist
+/// gescheitert, nichts behalten. Scheitert es, ist nichts veraendert.
+pub fn settle(
+    store: &MeetingStore,
+    meeting_id: &str,
+    rollback: bool,
+    ends: Ends,
+) -> Result<Settled, String> {
+    in_tx(store, |tx| {
+        let marker = read_tx(tx, meeting_id)?;
+        let pending = variants::rerun_pending(tx, meeting_id).map_err(|e| e.code().to_string())?;
+        let Some(m) = marker else {
+            return if pending {
+                // Ein Lauf ohne Marke (Stand vor lva#523): nur Zuruecknehmen ist sicher.
+                roll_back_tx(tx, meeting_id, None, true, ends.fallback)
+            } else {
+                Ok(Settled::Nothing)
+            };
         };
-    }
-    let epoch = store
-        .segment_epoch(meeting_id)
-        .map_err(|e| format!("segment_epoch_failed: {e}"))?;
-    let own_copy = m.phase == PHASE_RUNNING && m.epoch == Some(epoch);
-    if rollback || !own_copy {
-        return roll_back(store, meeting_id, Some(&m), true);
-    }
-    let kept = {
-        let mut conn = store.get_connection().map_err(|e| e.to_string())?;
-        variants::keep_partial_rerun(&mut conn, meeting_id, m.kind, m.model.as_deref())
-            .map_err(|e| e.code().to_string())?
-    };
-    match kept {
-        Some(variant_id) => {
-            let mut k = m.clone();
-            k.phase = PHASE_KEPT.to_string();
-            k.variant_id = Some(variant_id);
-            k.prev = Value::Null;
-            write_marker(store, meeting_id, &k)?;
-            Ok(Settled::Kept(k.model.zip(k.variant_id).map(
-                |(model, variant_id)| Resumable { model, variant_id },
-            )))
+        if !pending {
+            return match m.phase.as_str() {
+                PHASE_KEPT => Ok(Settled::Kept(resumable_of(&m))),
+                PHASE_START | PHASE_ROLLBACK => {
+                    roll_back_tx(tx, meeting_id, Some(&m), false, ends.fallback)
+                }
+                // `running` endet nur atomar (behalten, zuruecknehmen, abschliessen):
+                // ohne offenen Lauf ist das ein Widerspruch, nie „fertig“.
+                _ => Err("rerun_state_inconsistent".to_string()),
+            };
         }
-        // Kein neuer Abschnitt: `keep_partial_rerun` hat schon zurueckgenommen.
-        None => roll_back(store, meeting_id, Some(&m), false),
+        let failed = status_tx(tx, meeting_id)? == "failed";
+        let own_copy = m.phase == PHASE_RUNNING && m.epoch == Some(epoch_tx(tx, meeting_id)?);
+        if rollback || failed || !own_copy {
+            return roll_back_tx(tx, meeting_id, Some(&m), true, ends.fallback);
+        }
+        match variants::keep_partial_in_tx(tx, meeting_id, m.kind, m.model.as_deref())
+            .map_err(|e| e.code().to_string())?
+        {
+            Some(variant_id) => {
+                let mut k = m.clone();
+                k.phase = PHASE_KEPT.to_string();
+                k.variant_id = Some(variant_id);
+                k.prev = Value::Null;
+                write_tx(
+                    tx,
+                    meeting_id,
+                    if ends.resumable {
+                        k.to_value()
+                    } else {
+                        Value::Null
+                    },
+                )?;
+                if let Some(status) = ends.kept {
+                    set_status_tx(tx, meeting_id, status)?;
+                }
+                Ok(Settled::Kept(
+                    ends.resumable.then(|| resumable_of(&k)).flatten(),
+                ))
+            }
+            // Kein neuer Abschnitt: in derselben Transaktion schon zurueckgenommen.
+            None => roll_back_tx(tx, meeting_id, Some(&m), false, ends.fallback),
+        }
+    })
+}
+
+/// Laufbeginn (unter dem Auftrag, VOR `begin_rerun`): offenen Vorlauf abschliessen,
+/// dann Marke `start` mit dem Stand davor.
+pub fn mark_start(store: &MeetingStore, meeting_id: &str, prev_status: &str) -> Result<(), String> {
+    settle(store, meeting_id, false, Ends::QUIET)?;
+    in_tx(store, |tx| {
+        let prev = read_raw_tx(tx, meeting_id)?;
+        write_tx(
+            tx,
+            meeting_id,
+            Marker {
+                phase: PHASE_START.to_string(),
+                prev_status: Some(prev_status.to_string()),
+                prev,
+                ..Default::default()
+            }
+            .to_value(),
+        )
+    })
+}
+
+/// Nach `clear_segments`: die Arbeitskopie (diese Epoche) gehoert jetzt dem Lauf.
+pub fn mark_running(
+    store: &MeetingStore,
+    meeting_id: &str,
+    model: &str,
+    kind: &'static str,
+) -> Result<(), String> {
+    in_tx(store, |tx| {
+        let mut marker = read_tx(tx, meeting_id)?.unwrap_or_default();
+        marker.phase = PHASE_RUNNING.to_string();
+        marker.epoch = Some(epoch_tx(tx, meeting_id)?);
+        marker.model = Some(model.to_string());
+        marker.kind = kind;
+        write_tx(tx, meeting_id, marker.to_value())
+    })
+}
+
+/// Der Lauf ist fertig: Ergebnis wird aktive Fassung, Marke weg, Status `ready`, in
+/// einer Transaktion. Gibt die Kennung der neuen Fassung zurueck.
+pub fn complete(
+    store: &MeetingStore,
+    meeting_id: &str,
+    kind: &'static str,
+) -> Result<String, String> {
+    in_tx(store, |tx| {
+        let id = variants::finish_in_tx(tx, meeting_id, kind, None)
+            .map_err(|e| format!("variants_finish_failed: {}", e.code()))?;
+        write_tx(tx, meeting_id, Value::Null)?;
+        set_status_tx(tx, meeting_id, MeetingStatus::Ready)?;
+        Ok(id)
+    })
+}
+
+/// Was vor dem Nachholen mit einem offenen Neu-Lauf geschieht.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Resume {
+    /// Teilergebnis (wieder) aktiv: mit diesem Modell streng nachholen.
+    Partial(String),
+    /// Kein Neu-Lauf im Spiel: normal weiter.
+    Normal,
+    /// Zurueckgenommen, Status geschrieben: nichts weiter zu tun.
+    Done(Option<MeetingStatus>),
+}
+
+/// „Fortsetzen“ und Wiederherstellung (unter dem Auftrag): offenen Lauf abschliessen
+/// und die gestoppte Fassung wieder aktiv machen (der Nutzer kann umgeschaltet haben).
+/// Eine nicht zuordenbare Marke wird abgewiesen, nie still die aktive Fassung ergaenzt.
+pub fn prepare_resume(store: &MeetingStore, meeting_id: &str) -> Result<Resume, String> {
+    let settled = settle(
+        store,
+        meeting_id,
+        false,
+        Ends {
+            kept: None,
+            resumable: true,
+            fallback: Some(MeetingStatus::Ready),
+        },
+    )?;
+    match settled {
+        Settled::Nothing => Ok(Resume::Normal),
+        Settled::RolledBack(status) => Ok(Resume::Done(status)),
+        Settled::Kept(None) => Err("partial_rerun_unassigned".to_string()),
+        Settled::Kept(Some(r)) => in_tx(store, |tx| {
+            let active = variants::active_id(tx, meeting_id).map_err(|e| e.code().to_string())?;
+            if active.as_deref() != Some(r.variant_id.as_str()) {
+                variants::activate_for_resume_in_tx(tx, &r.variant_id)
+                    .map_err(|e| format!("partial_variant_missing: {}", e.code()))?;
+            }
+            Ok(Resume::Partial(r.model))
+        }),
     }
 }
 
-/// „Fortsetzen“ und Wiederherstellung: das offene Teilergebnis, mit seiner Fassung
-/// als aktiver (der Nutzer kann nach dem Stopp umgeschaltet haben). Ohne Marke `None`.
-pub fn prepare_resume(store: &MeetingStore, meeting_id: &str) -> Result<Option<String>, String> {
-    let Settled::Kept(Some(r)) = settle(store, meeting_id, false)? else {
-        return Ok(None);
-    };
-    let mut conn = store.get_connection().map_err(|e| e.to_string())?;
-    let active = variants::active_id(&conn, meeting_id).map_err(|e| e.code().to_string())?;
-    if active.as_deref() != Some(r.variant_id.as_str()) {
-        variants::activate(&mut conn, &r.variant_id)
-            .map_err(|e| format!("partial_variant_missing: {}", e.code()))?;
-    }
-    Ok(Some(r.model))
+/// Fehlerpfad, wenn `settle(rollback)` selbst scheiterte: die Absicht festhalten.
+pub fn mark_rollback(store: &MeetingStore, meeting_id: &str) -> Result<(), String> {
+    in_tx(store, |tx| {
+        let Some(mut m) = read_tx(tx, meeting_id)? else {
+            return Ok(());
+        };
+        if m.phase == PHASE_KEPT {
+            return Ok(());
+        }
+        m.phase = PHASE_ROLLBACK.to_string();
+        write_tx(tx, meeting_id, m.to_value())
+    })
 }
 
-/// Nach vollstaendigem Nachholen: das Teilergebnis ist fertig.
-pub fn clear(store: &MeetingStore, meeting_id: &str) -> Result<(), String> {
-    write(store, meeting_id, Value::Null)
+/// Nach vollstaendigem strengen Nachholen: Marke weg und `ready`, in einer Transaktion.
+pub fn finish_partial(store: &MeetingStore, meeting_id: &str) -> Result<(), String> {
+    in_tx(store, |tx| {
+        write_tx(tx, meeting_id, Value::Null)?;
+        set_status_tx(tx, meeting_id, MeetingStatus::Ready)
+    })
 }
 
 #[cfg(test)]

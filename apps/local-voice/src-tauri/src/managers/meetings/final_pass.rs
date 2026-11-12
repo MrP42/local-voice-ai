@@ -1230,19 +1230,68 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
     let started = Instant::now();
     let mut report = FinalReport::default();
     // P8a: der Auftrag (Fortschritt, Pause, Stopp) gilt fuer den ganzen Ablauf.
-    let controlled = env.job_begin(&job.meeting_id);
-    if !controlled && job.plan == FinalPlan::Keep(KeepReason::PartialRerun) {
-        // lva#523: ein anderer Auftrag besitzt die Besprechung; nichts anfassen.
-        warn!(
-            "meetings: partial rerun not continued, job busy ({})",
-            job.meeting_id
-        );
+    // lva#523: ohne Reservierung keine Verarbeitung: ein anderer Auftrag besitzt die
+    // Besprechung und bringt sie selbst zu Ende.
+    if !env.job_begin(&job.meeting_id) {
+        warn!("meetings: job busy, nothing processed ({})", job.meeting_id);
         return JobOutcome {
             report,
             epoch: store.segment_epoch(&job.meeting_id).unwrap_or(0),
             model: None,
         };
     }
+    // lva#523: eine offene Neu-Transkription unter DIESEM Auftrag abschliessen:
+    // Teilergebnis (wieder) aktiv und streng mit seinem Modell nachholen, oder
+    // zurueckgenommen (Status steht), oder eine nicht zuordenbare Marke abweisen.
+    let resumed;
+    let job = match super::rerun_state::prepare_resume(store, &job.meeting_id) {
+        Ok(super::rerun_state::Resume::Normal) => job,
+        Ok(super::rerun_state::Resume::Partial(model)) => {
+            resumed = JobSpec {
+                catch_up_model: Some(model),
+                plan: FinalPlan::Keep(KeepReason::PartialRerun),
+                ..job.clone()
+            };
+            &resumed
+        }
+        Ok(super::rerun_state::Resume::Done(status)) => {
+            let name = status.as_ref().map_or("ready", MeetingStatus::as_str);
+            env.emit(MeetingEvent::Reset {
+                meeting_id: job.meeting_id.clone(),
+            });
+            env.emit(MeetingEvent::State {
+                meeting_id: job.meeting_id.clone(),
+                status: name.to_string(),
+                paused: false,
+            });
+            env.job_end();
+            return JobOutcome {
+                report,
+                epoch: store.segment_epoch(&job.meeting_id).unwrap_or(0),
+                model: None,
+            };
+        }
+        Err(e) => {
+            // Nichts veraendert; abgebrochen und erneut fortsetzbar, mit Hinweis.
+            warn!("meetings: rerun not settled ({}): {e}", job.meeting_id);
+            let _ = store.set_status(&job.meeting_id, MeetingStatus::Cancelled);
+            env.emit(MeetingEvent::Error {
+                meeting_id: job.meeting_id.clone(),
+                message: "retranscribe_failed".to_string(),
+            });
+            env.emit(MeetingEvent::State {
+                meeting_id: job.meeting_id.clone(),
+                status: "cancelled".to_string(),
+                paused: false,
+            });
+            env.job_end();
+            return JobOutcome {
+                report,
+                epoch: store.segment_epoch(&job.meeting_id).unwrap_or(0),
+                model: None,
+            };
+        }
+    };
     let mut stopped_in_catch_up = false;
     let mut failed_in_catch_up = false;
     let strict = job.plan == FinalPlan::Keep(KeepReason::PartialRerun);
@@ -1262,12 +1311,6 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
                     return Err(KeepReason::TranscribeFailed);
                 }
                 CatchUp::Finished => {}
-            }
-            // lva#523: das Teilergebnis einer Neu-Transkription ist jetzt vollstaendig.
-            if strict {
-                if let Err(e) = super::rerun_state::clear(store, &job.meeting_id) {
-                    warn!("meetings: partial marker not cleared: {e}");
-                }
             }
         }
         // M3-P3b: die Turns VOR dem End-STT holen (ein grosses Modell zur Zeit).
@@ -1371,7 +1414,15 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
     }
     // G5: Sprache aus dem Text des Transkripts (eine gewaehlte Sprache bleibt).
     super::language_run::finalize_from_text(store, &job.meeting_id, model.clone());
-    if let Err(e) = store.set_status(&job.meeting_id, MeetingStatus::Ready) {
+    // lva#523: nach vollstaendigem strengen Nachholen enden Marke und Status zusammen.
+    let ready = if strict {
+        super::rerun_state::finish_partial(store, &job.meeting_id)
+    } else {
+        store
+            .set_status(&job.meeting_id, MeetingStatus::Ready)
+            .map_err(|e| e.to_string())
+    };
+    if let Err(e) = ready {
         warn!("meetings: status 'ready' not stored: {e}");
     }
     env.emit(MeetingEvent::State {
@@ -1877,9 +1928,8 @@ impl FinalEnv for AppEnv {
                 self.job = Some(guard);
                 true
             }
-            // Laeuft schon ein Auftrag fuer die Besprechung, arbeitet dieser
-            // hier ohne Steuerung weiter: jede Besprechung muss ein Ende finden
-            // (ausser beim Fortsetzen einer Neu-Transkription, `run_job`).
+            // Laeuft schon ein Auftrag fuer die Besprechung, besitzt er sie und
+            // bringt sie zu Ende; `run_job` verarbeitet dann nichts (lva#523).
             Err(e) => {
                 warn!("meetings: no job control for {meeting_id} ({e})");
                 false
@@ -2452,16 +2502,71 @@ mod tests {
 
     // -- lva#523: Fortsetzen einer gestoppten Neu-Transkription (strict) --------
 
+    /// Ein echter gestoppter Neu-Lauf: alte Fassung = Live-Segmente, neue Fassung =
+    /// dieselben Zeitmarken mit Text „neu“, behalten; Status wie nach Fortsetzen.
     fn partial_job(f: &Fixture) -> JobSpec {
-        super::super::rerun_state::write(
-            &f.store,
-            &f.id,
-            serde_json::json!({ "phase": "kept", "model": "rerun-model", "variant_id": "v" }),
-        )
-        .unwrap();
-        let mut spec = job(f, FinalPlan::Keep(KeepReason::PartialRerun));
-        spec.catch_up_model = Some("rerun-model".into());
+        use super::super::rerun_state as rs;
+        if rs::read(&f.store, &f.id).unwrap().is_none() {
+            f.store.set_status(&f.id, MeetingStatus::Ready).unwrap();
+            rs::mark_start(&f.store, &f.id, "ready").unwrap();
+            {
+                let mut c = f.store.get_connection().unwrap();
+                super::super::variants::begin_rerun(&mut c, &f.id).unwrap();
+            }
+            f.store.clear_segments(&f.id).unwrap();
+            rs::mark_running(&f.store, &f.id, "rerun-model", "retranscribed").unwrap();
+            let mut a = seg(0, 0, 0, 2_500);
+            a.text = "neu mic".into();
+            let mut b = seg(1, 1, 0, 2_400);
+            b.text = "neu system".into();
+            f.store
+                .append_delta(
+                    &f.id,
+                    &TranscriptDelta {
+                        new_segments: vec![a, b],
+                    },
+                )
+                .unwrap();
+            let ends = rs::Ends {
+                kept: Some(MeetingStatus::Cancelled),
+                resumable: true,
+                fallback: None,
+            };
+            assert!(matches!(
+                rs::settle(&f.store, &f.id, false, ends).unwrap(),
+                rs::Settled::Kept(Some(_))
+            ));
+        }
+        f.store
+            .set_status(&f.id, MeetingStatus::Processing)
+            .unwrap();
+        // Wie `continue_processing`: normale Vorgaben; `run_job` erkennt den Neu-Lauf.
+        let mut spec = job(f, FinalPlan::Keep(KeepReason::NotLive));
+        spec.catch_up_model = Some("meeting-model".into());
         spec
+    }
+
+    #[test]
+    fn a_resume_reactivates_the_stopped_version_even_after_a_switch() {
+        let f = fixture(true, MeetingStatus::Processing);
+        partial_job(&f);
+        // Der Nutzer schaltet nach dem Stopp auf die alte Fassung.
+        {
+            let mut c = f.store.get_connection().unwrap();
+            let list = super::super::variants::list(&mut c, &f.id).unwrap();
+            let old = list.iter().find(|v| !v.active).unwrap().id.clone();
+            f.store.set_status(&f.id, MeetingStatus::Cancelled).unwrap();
+            super::super::variants::activate(&mut c, &old).unwrap();
+        }
+        let mut env = FakeEnv::new();
+        run_job(&f.store, &partial_job(&f), &mut env);
+        assert_eq!(env.loads, vec!["rerun-model".to_string()]);
+        let segs = f.store.get_segments(&f.id).unwrap();
+        assert!(
+            segs.iter().any(|s| s.text == "neu mic"),
+            "gestoppte Fassung ergaenzt"
+        );
+        assert!(segs.iter().all(|s| s.text != "s0"), "nicht die alte");
     }
 
     fn marker(f: &Fixture) -> serde_json::Value {
@@ -2521,6 +2626,7 @@ mod tests {
     #[test]
     fn a_resume_also_processes_a_rest_shorter_than_half_a_second() {
         let f = fixture(true, MeetingStatus::Processing);
+        let spec = partial_job(&f);
         f.store
             .append_delta(
                 &f.id,
@@ -2530,7 +2636,7 @@ mod tests {
             )
             .unwrap();
         let mut env = FakeEnv::new();
-        run_job(&f.store, &partial_job(&f), &mut env);
+        run_job(&f.store, &spec, &mut env);
         assert_eq!(env.phases.first(), Some(&(JobPhase::Transcription, 400)));
         // Ohne strict bleibt es beim bisherigen Verhalten (Rest < 0,5 s entfaellt).
         let g = fixture(true, MeetingStatus::Processing);

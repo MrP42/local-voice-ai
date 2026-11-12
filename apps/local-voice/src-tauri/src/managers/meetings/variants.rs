@@ -383,15 +383,34 @@ fn load_row(tx: &Connection, variant_id: &str) -> Result<VariantRow, VariantErro
 }
 
 fn activate_in_tx(tx: &Transaction<'_>, variant_id: &str) -> Result<(), VariantError> {
+    activate_checked(tx, variant_id, true)
+}
+
+/// lva#523: „Fortsetzen“ macht die gestoppte Fassung wieder aktiv, unter dem Auftrag
+/// der Besprechung (Status ist dabei schon `processing`). Nie waehrend eines Neu-Laufs.
+pub(super) fn activate_for_resume_in_tx(
+    tx: &Transaction<'_>,
+    variant_id: &str,
+) -> Result<(), VariantError> {
+    activate_checked(tx, variant_id, false)
+}
+
+fn activate_checked(
+    tx: &Transaction<'_>,
+    variant_id: &str,
+    check_status: bool,
+) -> Result<(), VariantError> {
     let (meeting_id, _kind, language, model, segments_json, hints, active) =
         load_row(tx, variant_id)?;
     if active {
         return Ok(());
     }
-    if matches!(
-        meeting_status(tx, &meeting_id)?.as_deref(),
-        Some("recording") | Some("processing")
-    ) {
+    if check_status
+        && matches!(
+            meeting_status(tx, &meeting_id)?.as_deref(),
+            Some("recording") | Some("processing")
+        )
+    {
         return Err(VariantError::Busy);
     }
     if matches!(active_marker(tx, &meeting_id)?, Some((_, true))) {
@@ -733,7 +752,7 @@ pub fn activate(
 // Neu-Transkription (B17)
 // ---------------------------------------------------------------------------
 
-fn restore_in_tx(tx: &Transaction<'_>, meeting_id: &str) -> Result<bool, VariantError> {
+pub(super) fn restore_in_tx(tx: &Transaction<'_>, meeting_id: &str) -> Result<bool, VariantError> {
     let Some((id, true)) = active_marker(tx, meeting_id)? else {
         return Ok(false);
     };
@@ -782,6 +801,7 @@ pub fn begin_rerun(conn: &mut Connection, meeting_id: &str) -> Result<(), Varian
 
 /// Der Lauf ist fertig: das Ergebnis in `transcripts` wird die NEUE aktive Fassung,
 /// die alte bleibt als Fassung erhalten. Gibt die Kennung der neuen zurueck.
+#[cfg(test)]
 pub fn finish_rerun(
     conn: &mut Connection,
     meeting_id: &str,
@@ -789,10 +809,22 @@ pub fn finish_rerun(
     language: Option<&str>,
 ) -> Result<String, VariantError> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let Some((old_id, true)) = active_marker(&tx, meeting_id)? else {
+    let id = finish_in_tx(&tx, meeting_id, kind, language)?;
+    tx.commit()?;
+    Ok(id)
+}
+
+/// `finish_rerun` in einer fremden Transaktion (lva#523: zusammen mit Marke und Status).
+pub(super) fn finish_in_tx(
+    tx: &Transaction<'_>,
+    meeting_id: &str,
+    kind: &'static str,
+    language: Option<&str>,
+) -> Result<String, VariantError> {
+    let Some((old_id, true)) = active_marker(tx, meeting_id)? else {
         return Err(VariantError::NoRerun);
     };
-    let current = transcript_row(&tx, meeting_id)?.ok_or(VariantError::Empty)?;
+    let current = transcript_row(tx, meeting_id)?.ok_or(VariantError::Empty)?;
     if count_segments(&current.segments_json) == 0 {
         return Err(VariantError::Empty);
     }
@@ -836,12 +868,12 @@ pub fn finish_rerun(
             now_s()
         ],
     )?;
-    tx.commit()?;
     Ok(id)
 }
 
 /// Stopp oder Fehler: die alte Fassung ist wieder das Transkript. `false`: kein
 /// Neu-Lauf begonnen, nichts getan.
+#[cfg(test)]
 pub fn abort_rerun(conn: &mut Connection, meeting_id: &str) -> Result<bool, VariantError> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let restored = restore_in_tx(&tx, meeting_id)?;
@@ -853,38 +885,44 @@ pub fn abort_rerun(conn: &mut Connection, meeting_id: &str) -> Result<bool, Vari
 /// Abschnitte, werden sie eine eigene, aktive Fassung (`kind`, `model`); die alte
 /// bleibt vollstaendig als Fassung erhalten. Ohne neue Abschnitte ist alles wie
 /// vor dem Lauf (`abort_rerun`). `Some(id)`: das Teilergebnis wurde behalten.
+#[cfg(test)]
 pub fn keep_partial_rerun(
     conn: &mut Connection,
     meeting_id: &str,
     kind: &'static str,
     model: Option<&str>,
 ) -> Result<Option<String>, VariantError> {
-    if !rerun_pending(conn, meeting_id)? {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let kept = keep_partial_in_tx(&tx, meeting_id, kind, model)?;
+    tx.commit()?;
+    Ok(kept)
+}
+
+/// `keep_partial_rerun` in einer fremden Transaktion (lva#523: zusammen mit Marke
+/// und Status, damit kein Zwischenstand sichtbar wird).
+pub(super) fn keep_partial_in_tx(
+    tx: &Transaction<'_>,
+    meeting_id: &str,
+    kind: &'static str,
+    model: Option<&str>,
+) -> Result<Option<String>, VariantError> {
+    if !rerun_pending(tx, meeting_id)? {
         return Ok(None);
     }
-    let has_new = {
-        let current = transcript_row(conn, meeting_id)?;
-        current.is_some_and(|t| count_segments(&t.segments_json) > 0)
-    };
+    let has_new =
+        transcript_row(tx, meeting_id)?.is_some_and(|t| count_segments(&t.segments_json) > 0);
     if !has_new {
-        abort_rerun(conn, meeting_id)?;
+        restore_in_tx(tx, meeting_id)?;
         return Ok(None);
     }
     if let Some(model) = model {
         // Die Arbeitskopie traegt sonst noch das Modell der alten Fassung.
-        conn.execute(
+        tx.execute(
             "UPDATE transcripts SET model = ?1 WHERE meeting_id = ?2 AND deleted_at IS NULL",
             params![model, meeting_id],
         )?;
     }
-    match finish_rerun(conn, meeting_id, kind, None) {
-        Ok(id) => Ok(Some(id)),
-        Err(VariantError::Empty) => {
-            abort_rerun(conn, meeting_id)?;
-            Ok(None)
-        }
-        Err(e) => Err(e),
-    }
+    finish_in_tx(tx, meeting_id, kind, None).map(Some)
 }
 
 /// lva#523: die Kennung der aktiven Fassung (`None`: keine).
