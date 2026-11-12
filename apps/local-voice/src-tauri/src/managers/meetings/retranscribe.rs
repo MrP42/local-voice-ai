@@ -324,28 +324,13 @@ fn finish_run(
         }
         Err(e) => {
             error!("meetings: retranscribe failed ({meeting_id}): {e}");
-            // lva#523: die Absicht ZUERST dauerhaft festhalten (eigene Transaktion): bricht
-            // das Zuruecknehmen danach ab, nimmt jeder spaetere Abschluss zurueck, nie behalten.
-            if let Err(m) = rerun_state::mark_rollback(store, meeting_id) {
-                error!("meetings: rollback intent not stored ({meeting_id}): {m}");
-            }
-            // B17: ein Fehler mitten im Lauf nimmt dem Nutzer das alte Transkript nicht.
-            let ends = Ends {
-                kept: None,
-                resumable: false,
-                fallback: Some(previous_status),
-            };
-            let status = match rerun_state::settle(store, meeting_id, true, ends) {
-                Ok(Settled::RolledBack(status)) => status.unwrap_or(previous_status),
-                Ok(_) => {
-                    let _ = store.set_status(meeting_id, previous_status);
-                    previous_status
-                }
-                // Zuruecknehmen gescheitert: Absicht und `failed` festhalten (jedes
-                // davon allein laesst den naechsten Abschluss zuruecknehmen, nie behalten).
+            // B17 / lva#523: das alte Transkript zurueck, aber erst nach dauerhaft
+            // gespeicherter Absicht (`rerun_state::fail_run`). Ohne sie beginnt kein
+            // Zuruecknehmen; der Stand bleibt, wie er ist.
+            let status = match rerun_state::fail_run(store, meeting_id, previous_status) {
+                Ok(status) => status,
                 Err(err) => {
-                    error!("meetings: rollback not finished ({meeting_id}): {err}");
-                    let _ = store.set_status(meeting_id, MeetingStatus::Failed);
+                    error!("meetings: rollback not started ({meeting_id}): {err}");
                     MeetingStatus::Failed
                 }
             };

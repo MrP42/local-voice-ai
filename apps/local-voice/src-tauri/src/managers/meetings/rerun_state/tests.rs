@@ -474,3 +474,113 @@ fn resuming_without_a_stored_track_finishes_the_partial_result_not_resumable() {
     assert_eq!(read(&g.store, &g.id).unwrap(), None);
     assert_eq!(texts(&g), vec!["neu eins"]);
 }
+
+/// Commit-Fehler injizieren: `pred` liest den Endstand IN der Transaktion.
+fn fail_commit_if(pred: impl Fn(&Connection) -> bool + 'static) {
+    FAIL_COMMIT_IF.with(|p| *p.borrow_mut() = Some(Box::new(pred)));
+}
+
+fn clear_commit_probe() {
+    FAIL_COMMIT_IF.with(|p| *p.borrow_mut() = None);
+}
+
+fn pending(f: &Fx) -> bool {
+    let c = f.store.get_connection().unwrap();
+    variants::rerun_pending(&c, &f.id).unwrap()
+}
+
+#[test]
+fn a_failed_intent_write_falls_back_to_failed_and_a_crash_in_the_restore_still_rolls_back() {
+    // Codex R2 (Produktionspfad `fail_run`): `mark_rollback` scheitert, also wird
+    // `failed` gespeichert; dann bricht auch der Restore ab (wie ein Absturz vor dem
+    // Commit). Der naechste Abschluss nimmt trotzdem zurueck.
+    let f = fixture();
+    run_until(&f, 5);
+    f.store
+        .set_status(&f.id, MeetingStatus::Processing)
+        .unwrap();
+    fail_commit_if(|_| true);
+    assert_eq!(
+        fail_run(&f.store, &f.id, MeetingStatus::Ready).unwrap(),
+        MeetingStatus::Failed
+    );
+    clear_commit_probe();
+    assert!(pending(&f), "Restore nicht gespeichert");
+    assert_eq!(
+        status(&f),
+        "failed",
+        "gleichwertiger dauerhafter Fehlerzustand"
+    );
+    let ends = Ends {
+        kept: None,
+        resumable: true,
+        fallback: Some(MeetingStatus::Ready),
+    };
+    assert_eq!(
+        settle(&f.store, &f.id, false, ends).unwrap(),
+        Settled::RolledBack(Some(MeetingStatus::Ready))
+    );
+    assert_eq!(texts(&f), vec!["alt eins", "alt zwei"]);
+}
+
+#[test]
+fn without_any_stored_intent_no_restore_is_started() {
+    // Codex R2: weder Marke `rollback` noch `failed` speicherbar -> kein Restore.
+    let f = fixture();
+    run_until(&f, 5);
+    f.store
+        .set_status(&f.id, MeetingStatus::Processing)
+        .unwrap();
+    f.store
+        .get_connection()
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER fail_status BEFORE UPDATE OF status ON meetings \
+             BEGIN SELECT RAISE(ABORT, 'injected'); END;",
+        )
+        .unwrap();
+    let commits = std::rc::Rc::new(std::cell::Cell::new(0u32));
+    let seen = std::rc::Rc::clone(&commits);
+    fail_commit_if(move |_| {
+        seen.set(seen.get() + 1);
+        true
+    });
+    assert!(fail_run(&f.store, &f.id, MeetingStatus::Ready).is_err());
+    clear_commit_probe();
+    assert_eq!(commits.get(), 1, "nur der Absichtsversuch, kein Restore");
+    assert!(pending(&f));
+    assert_eq!(texts(&f), vec!["neu eins"]);
+}
+
+#[test]
+fn a_trackless_kept_result_ends_in_one_transaction_and_a_failed_commit_changes_nothing() {
+    // Codex R6: behaltene Marke ohne Spur -> EIN Schritt (Marke weg + `ready`).
+    // Scheitert sein Commit, bleibt alles wie vorher (kein halber Abschluss).
+    let f = fixture();
+    run_until(&f, 5);
+    assert!(matches!(
+        settle(&f.store, &f.id, false, Ends::QUIET).unwrap(),
+        Settled::Kept(Some(_))
+    ));
+    f.store.set_status(&f.id, MeetingStatus::Cancelled).unwrap();
+    fail_commit_if(|_| true);
+    assert!(prepare_resume(&f.store, &f.id, false).is_err());
+    clear_commit_probe();
+    assert_eq!(read(&f.store, &f.id).unwrap().unwrap().phase, PHASE_KEPT);
+    assert_eq!(status(&f), "cancelled");
+    let commits = std::rc::Rc::new(std::cell::Cell::new(0u32));
+    let seen = std::rc::Rc::clone(&commits);
+    fail_commit_if(move |_| {
+        seen.set(seen.get() + 1);
+        false
+    });
+    assert_eq!(
+        prepare_resume(&f.store, &f.id, false).unwrap(),
+        Resume::Done(Some(MeetingStatus::Ready))
+    );
+    clear_commit_probe();
+    assert_eq!(commits.get(), 1, "genau eine Transaktion");
+    assert_eq!(read(&f.store, &f.id).unwrap(), None);
+    assert_eq!(status(&f), "ready");
+    assert_eq!(texts(&f), vec!["neu eins"]);
+}

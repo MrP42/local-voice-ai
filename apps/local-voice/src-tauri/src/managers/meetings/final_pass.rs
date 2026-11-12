@@ -2787,20 +2787,30 @@ mod tests {
         // `TranscriptFinal`; die Marke bleibt, erneut fortsetzbar.
         let f = fixture(true, MeetingStatus::Processing);
         let spec = partial_job(&f);
-        f.store
-            .get_connection()
-            .unwrap()
-            .execute_batch(
-                "CREATE TRIGGER fail_marker BEFORE UPDATE OF metadata_json ON meetings \
-                 BEGIN SELECT RAISE(ABORT, 'injected'); END;",
-            )
-            .unwrap();
+        // Der Commit des Abschlusses (Marke weg + `ready`) selbst scheitert.
+        let id = f.id.clone();
+        super::super::rerun_state::FAIL_COMMIT_IF.with(|p| {
+            *p.borrow_mut() = Some(Box::new(move |c: &rusqlite::Connection| {
+                let (status, meta): (String, Option<String>) = c
+                    .query_row(
+                        "SELECT status, metadata_json FROM meetings WHERE id = ?1",
+                        [&id],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .unwrap();
+                status == "ready" && !meta.unwrap_or_default().contains("\"phase\"")
+            }))
+        });
         let mut env = FakeEnv::new();
         run_job(&f.store, &spec, &mut env);
+        super::super::rerun_state::FAIL_COMMIT_IF.with(|p| *p.borrow_mut() = None);
         assert!(!env.kinds().contains(&"final"), "kein TranscriptFinal");
         assert!(!states(&env).iter().any(|s| s == "ready"), "kein ready");
         assert!(env.kinds().contains(&"error"));
-        assert_ne!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
+        assert_eq!(
+            f.store.get_meeting(&f.id).unwrap().unwrap().status,
+            "cancelled"
+        );
         assert_eq!(marker(&f)["phase"], "kept");
     }
 

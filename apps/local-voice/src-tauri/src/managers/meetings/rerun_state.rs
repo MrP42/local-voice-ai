@@ -181,6 +181,17 @@ fn now_s() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
+#[cfg(test)]
+type CommitProbe = Box<dyn Fn(&Connection) -> bool>;
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: laesst den Commit jeder Transaktion scheitern, deren Endstand dieses
+    /// Praedikat erfuellt (gelesen in der Transaktion, kurz vor `commit()`).
+    pub(crate) static FAIL_COMMIT_IF: std::cell::RefCell<Option<CommitProbe>> =
+        std::cell::RefCell::new(None);
+}
+
 fn in_tx<T>(
     store: &MeetingStore,
     f: impl FnOnce(&Transaction<'_>) -> Result<T, String>,
@@ -190,6 +201,11 @@ fn in_tx<T>(
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|e| e.to_string())?;
     let out = f(&tx)?;
+    #[cfg(test)]
+    if FAIL_COMMIT_IF.with(|p| p.borrow().as_ref().is_some_and(|p| p(&tx))) {
+        // Wie ein gescheitertes `commit()`: nichts gespeichert, Fehler zurueck.
+        return Err("injected_commit_failure".to_string());
+    }
     tx.commit().map_err(|e| e.to_string())?;
     Ok(out)
 }
@@ -312,7 +328,16 @@ pub fn settle(
         };
         if !pending {
             return match m.phase.as_str() {
-                PHASE_KEPT => Ok(Settled::Kept(resumable_of(&m))),
+                PHASE_KEPT if ends.resumable => Ok(Settled::Kept(resumable_of(&m))),
+                // Nicht fortsetzbar (keine Spur): Marke weg und Endstatus in DIESER
+                // Transaktion, das Teilergebnis bleibt.
+                PHASE_KEPT => {
+                    write_tx(tx, meeting_id, Value::Null)?;
+                    if let Some(status) = ends.kept {
+                        set_status_tx(tx, meeting_id, status)?;
+                    }
+                    Ok(Settled::Kept(None))
+                }
                 PHASE_START | PHASE_ROLLBACK => {
                     roll_back_tx(tx, meeting_id, Some(&m), false, ends.fallback)
                 }
@@ -456,12 +481,8 @@ pub fn prepare_resume(
     match settled {
         Settled::Nothing => Ok(Resume::Normal),
         Settled::RolledBack(status) => Ok(Resume::Done(status)),
-        // Ohne Spur: Marke weg, `ready` (beim offenen Lauf schon geschehen, sonst hier).
-        Settled::Kept(None) if !has_track => in_tx(store, |tx| {
-            write_tx(tx, meeting_id, Value::Null)?;
-            set_status_tx(tx, meeting_id, MeetingStatus::Ready)?;
-            Ok(Resume::Done(Some(MeetingStatus::Ready)))
-        }),
+        // Ohne Spur hat `settle` Marke und `ready` schon atomar geschrieben.
+        Settled::Kept(None) if !has_track => Ok(Resume::Done(Some(MeetingStatus::Ready))),
         Settled::Kept(None) => Err("partial_rerun_unassigned".to_string()),
         Settled::Kept(Some(r)) => in_tx(store, |tx| {
             let active = variants::active_id(tx, meeting_id).map_err(|e| e.code().to_string())?;
@@ -469,13 +490,7 @@ pub fn prepare_resume(
                 variants::activate_for_resume_in_tx(tx, &r.variant_id)
                     .map_err(|e| format!("partial_variant_missing: {}", e.code()))?;
             }
-            if has_track {
-                return Ok(Resume::Partial(r.model));
-            }
-            // Behaltene Marke ohne Spur: als Teilergebnis abschliessen.
-            write_tx(tx, meeting_id, Value::Null)?;
-            set_status_tx(tx, meeting_id, MeetingStatus::Ready)?;
-            Ok(Resume::Done(Some(MeetingStatus::Ready)))
+            Ok(Resume::Partial(r.model))
         }),
     }
 }
@@ -492,6 +507,42 @@ pub fn mark_rollback(store: &MeetingStore, meeting_id: &str) -> Result<(), Strin
         m.phase = PHASE_ROLLBACK.to_string();
         write_tx(tx, meeting_id, m.to_value())
     })
+}
+
+/// Fehlerpfad eines Laufs (STT gescheitert): erst die Absicht dauerhaft speichern
+/// (Marke `rollback`, sonst Status `failed`: beides laesst jeden spaeteren Abschluss
+/// zuruecknehmen), DANN zuruecknehmen. Ist keins von beiden gespeichert, beginnt kein
+/// Zuruecknehmen (`Err`): ein Absturz darin liesse sonst `running` + offen zurueck.
+/// Gibt den Endstatus zurueck.
+pub fn fail_run(
+    store: &MeetingStore,
+    meeting_id: &str,
+    fallback: MeetingStatus,
+) -> Result<MeetingStatus, String> {
+    if let Err(m) = mark_rollback(store, meeting_id) {
+        log::error!("meetings: rollback intent not stored ({meeting_id}): {m}");
+        store
+            .set_status(meeting_id, MeetingStatus::Failed)
+            .map_err(|e| format!("rollback_intent_not_stored: {m}; {e}"))?;
+    }
+    let ends = Ends {
+        kept: None,
+        resumable: false,
+        fallback: Some(fallback),
+    };
+    match settle(store, meeting_id, true, ends) {
+        Ok(Settled::RolledBack(status)) => Ok(status.unwrap_or(fallback)),
+        Ok(_) => {
+            let _ = store.set_status(meeting_id, fallback);
+            Ok(fallback)
+        }
+        // Absicht steht: der naechste Abschluss nimmt zurueck.
+        Err(err) => {
+            log::error!("meetings: rollback not finished ({meeting_id}): {err}");
+            let _ = store.set_status(meeting_id, MeetingStatus::Failed);
+            Ok(MeetingStatus::Failed)
+        }
+    }
 }
 
 /// Nach vollstaendigem strengen Nachholen: Marke weg und `ready`, in einer Transaktion.
