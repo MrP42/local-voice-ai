@@ -19,6 +19,7 @@ import { useSettings } from "../../hooks/useSettings";
 import { Sparkle } from "lucide-react";
 import { RoleTip } from "./RoleTip";
 import { ModelBadges, reasonsText } from "../compliance/ModelBadges";
+import { availabilityKey, useLlmAvailability } from "@/lib/llmAvailability";
 import { modelLabel } from "@/lib/modelNames";
 import { openSettingsTab } from "@/lib/openSettingsTab";
 import {
@@ -99,12 +100,32 @@ export const LlmSelector: React.FC<{ fn?: string }> = ({ fn }) => {
       .map((m) => ({ model: m, connection: on.get(m.connection_id)! }));
   }, [connections, models]);
 
+  // Abo-Verbindung ohne installierte CLI: läuft hier nicht, der Ersatz gilt
+  // (wie Rust `active_llm_model`).
+  const { unavailable_connection_ids: missing, fallback_model_id: fallbackId } =
+    useLlmAvailability(
+      availabilityKey(
+        connections,
+        models,
+        globalActiveId,
+        getSetting("compliance_profile"),
+      ),
+    );
+  const runnable = (s: (typeof selectable)[number] | undefined) =>
+    s && !missing.includes(s.connection.id) ? s : undefined;
+  const chosenGlobal = selectable.find((s) => s.model.id === globalActiveId);
   const globalActive =
-    selectable.find((s) => s.model.id === globalActiveId) ?? null;
-  // Funktion: eigener Eintrag; ist dessen Modell nicht mehr wählbar, gilt der
-  // Standard (wie Rust `for_function`).
+    runnable(chosenGlobal) ??
+    (chosenGlobal
+      ? runnable(selectable.find((s) => s.model.id === fallbackId))
+      : undefined) ??
+    chosenGlobal ??
+    null;
+  // Funktion: eigener Eintrag; ist dessen Modell nicht mehr wählbar oder läuft
+  // es hier nicht, gilt der Standard (wie Rust `for_function`).
   const own = fn
-    ? (selectable.find((s) => s.model.id === entries[fn]?.model_id) ?? null)
+    ? (runnable(selectable.find((s) => s.model.id === entries[fn]?.model_id)) ??
+      null)
     : null;
   /** Das Modell, das der Knopf zeigt (und dessen Ampel, Budget, Verbrauch). */
   const active = own ?? globalActive;
@@ -747,7 +768,18 @@ export const LlmSelector: React.FC<{ fn?: string }> = ({ fn }) => {
                     )}
                     <ModelBadges assessment={assessment} />
                   </div>
-                  <div className="text-xs text-text/50">{connection.label}</div>
+                  <div className="text-xs text-text/50">
+                    {connection.label}
+                    {missing.includes(connection.id) && (
+                      <span
+                        className="text-orange-500"
+                        data-llm-unavailable={connection.id}
+                      >
+                        {" · "}
+                        {t("settings.llm.unavailable.short")}
+                      </span>
+                    )}
+                  </div>
                 </div>
               );
             })

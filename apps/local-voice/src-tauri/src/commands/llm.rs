@@ -391,9 +391,41 @@ pub fn llm_answer_model_updates(
 #[specta::specta]
 pub async fn llm_cli_status(kind: String) -> Result<cli::CliStatus, String> {
     let cli = Cli::from_kind(&kind).ok_or_else(|| format!("Keine CLI-Vorlage: {kind}"))?;
+    cli::forget_installed();
     tokio::task::spawn_blocking(move || cli::status(cli))
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Verbindungen, die auf diesem Rechner nicht laufen (Abo ohne installierte
+/// CLI), und das Modell, das die App stattdessen nutzt (`None`: kein Ersatz).
+#[derive(serde::Serialize, specta::Type)]
+pub struct LlmAvailability {
+    pub unavailable_connection_ids: Vec<String>,
+    pub fallback_model_id: Option<String>,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn llm_availability(app: AppHandle) -> LlmAvailability {
+    cli::forget_installed();
+    tokio::task::spawn_blocking(move || {
+        let s = settings::get_settings(&app);
+        LlmAvailability {
+            unavailable_connection_ids: s
+                .llm_connections
+                .iter()
+                .filter(|c| !settings::connection_usable(c))
+                .map(|c| c.id.clone())
+                .collect(),
+            fallback_model_id: s.fallback_llm_model().map(|(_, m)| m.id.clone()),
+        }
+    })
+    .await
+    .unwrap_or(LlmAvailability {
+        unavailable_connection_ids: Vec::new(),
+        fallback_model_id: None,
+    })
 }
 
 /// Oeffnet die Anmeldung der CLI (`claude auth login`, `codex login`) in einem

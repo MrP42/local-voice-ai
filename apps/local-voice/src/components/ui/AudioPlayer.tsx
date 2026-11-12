@@ -450,6 +450,25 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     }
   }, [isDragging, handleMouseUp]);
 
+  // Beim Abbau die Datei loslassen: ein ausgehaengtes <audio> haelt sie sonst bis zur
+  // Muellsammlung offen, und unter Windows laesst sich eine gesperrte WAV nicht
+  // loeschen (lva#522: Zuschneiden ersetzt die Dateien).
+  const srcRef = useRef(src);
+  srcRef.current = src;
+  useEffect(() => {
+    const audio = audioRef.current;
+    // Der Strict-Mode-Probelauf baut den Effekt ab und wieder auf: die Quelle zurueckgeben.
+    if (audio && srcRef.current && !audio.getAttribute("src")) {
+      audio.setAttribute("src", srcRef.current);
+    }
+    return () => {
+      if (!audio) return;
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+    };
+  }, []);
+
   // Cleanup blob URLs on unmount
   useEffect(() => {
     return () => {

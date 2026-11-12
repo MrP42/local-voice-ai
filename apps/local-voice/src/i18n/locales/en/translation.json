@@ -3036,6 +3036,13 @@
       }
     },
     "llm": {
+        "unavailable": {
+          "short": "not installed",
+          "activeBadge": "chosen · not available here",
+          "activeHint": "This subscription's CLI is not installed on this PC. The app uses another released model until the CLI is available.",
+          "fallback": "Not available on this PC (CLI not installed). The app uses {{model}} instead.",
+          "noFallback": "Not available on this PC (CLI not installed). Release a local model so the app works without installing anything."
+        },
         "cliStatus": {
           "loggedIn": "Signed in.",
           "loggedOut": "Not signed in. Signing in opens a window and then your browser.",
@@ -3812,6 +3819,15 @@
       "audioMissing": "The recording is no longer on disk (retention period expired).",
       "importSourceMissing": "The file was deleted or moved before its turn came.",
       "importPathInvalid": "The file path contains characters that are not supported.",
+      "invalidRange": "The range is not valid: the start must be before the end and inside the recording.",
+      "nothingToTrim": "The range is the whole recording: there is nothing to trim.",
+      "trimChanged": "The recording changed in the meantime. Nothing was changed; please try again.",
+      "metadataUnreadable": "The metadata of this meeting cannot be read. Nothing was changed or deleted.",
+      "rerunPending": "First resume or discard the paused re-transcription.",
+      "rerunRangeDamaged": "The range of the paused re-transcription is damaged. It was not resumed and stays unchanged; please discard it and start again.",
+      "trimFailed": "Trimming failed. The recording was left unchanged.",
+      "wavUnreadable": "The audio file cannot be read.",
+      "wavWriteFailed": "The trimmed recording could not be written (disk space?). Nothing was changed.",
       "retranscribeFailed": "Re-transcription failed. The transcript was left unchanged.",
       "finalPassSkipped": "Final pass skipped – the live transcript stays valid (model missing, not enough memory, or cancelled).",
       "finalPassStopped": "Post-processing stopped – the live transcript stays valid.",
@@ -4350,6 +4366,10 @@
       "retranscribe": "Re-transcribe …",
       "translate": "Translate to …",
       "translateHint": "Translates the transcript sentence by sentence into another language. The original stays as its own version.",
+      "trim": "Trim recording …",
+      "trimHint": "Cuts the recording down to a range for good.",
+      "trimNoAudio": "Without an audio file there is nothing to trim.",
+      "trimBusy": "A task is running, the recording cannot be trimmed.",
       "retranscribeBusy": "A job is running for this meeting, it cannot be re-transcribed now.",
       "retranscribeNoAudio": "Without an audio file there is nothing to re-transcribe.",
       "regenNotes": "Regenerate AI notes",
@@ -4370,6 +4390,28 @@
       "templateTitle": "Choose template",
       "templateBody": "The template decides how the AI notes and the minutes of this meeting are structured.",
       "close": "Close"
+    },
+    "range": {
+      "from": "From",
+      "to": "To",
+      "slider": "Range of the recording",
+      "startAria": "Start of the range",
+      "endAria": "End of the range",
+      "length": "Range: {{length}} of {{total}}",
+      "invalidTime": "Time not readable. Examples: 1:05 or 1:02:30."
+    },
+    "trim": {
+      "title": "Trim recording",
+      "intro": "Choose the part of the recording to keep.",
+      "warning": "The audio outside the range is removed from the recording. The original files stay in the meeting folder as a backup for now; the storage is only freed with a later update. Transcript passages outside are dropped, and the timestamps start at 0:00 afterwards. Older versions are trimmed as well. This cannot be undone in the app.",
+      "newLength": "New length: {{length}} of {{total}}",
+      "nothing": "The range is the whole recording: there is nothing to trim.",
+      "submit": "Trim",
+      "cancel": "Cancel",
+      "close": "Close",
+      "done": "Recording trimmed. New length: {{length}}.",
+      "reloadFailed": "The recording was trimmed, but the new state could not be loaded. Playback stays off until it is loaded.",
+      "reload": "Reload"
     },
     "retranscribeDialog": {
       "title": "Re-transcribe",
@@ -4517,6 +4559,10 @@
       "languageAuto": "Detect automatically",
       "suggestInstalled": "Suited to this language: {{model}} (installed, selected).",
       "suggestMissing": "{{model}} would suit this language. It is not installed yet: download it under Models and pick it here.",
+      "rangeLabel": "Range",
+      "rangeAll": "Whole recording",
+      "rangeOnly": "Only a range",
+      "rangeHint": "Only the selected range is transcribed; timestamps stay aligned with the recording. The rest stays in the previous version.",
       "start": "Re-transcribe",
       "running": "Transcribing…",
       "runningHint": "The existing transcript is kept as a version. While the run progresses the view shows the new text; only at the end does it become the active version. If you stop early, the existing transcript stays active. This can take a while for long recordings."

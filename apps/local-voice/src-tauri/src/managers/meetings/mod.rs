@@ -34,6 +34,7 @@ pub mod queue; // U7
 pub mod queue_store; // U7
 pub mod recorder;
 pub mod relabel; // #242: Sprechernamen in gespeicherten Texten
+pub mod rerun_state; // lva#523: Stopp/Fehler/Absturz einer Neu-Transkription
 pub mod retention;
 pub mod retranscribe;
 pub mod search;
@@ -50,6 +51,7 @@ pub mod stats;
 pub mod store;
 pub mod subtitle;
 pub mod translate; // G5: Uebersetzung als neue Fassung
+pub mod trim; // lva#522: Bereich einer Aufnahme (transkribieren, zuschneiden)
 pub mod variants; // A3: Transkript-Fassungen
 pub mod voiceprint; // Stimmprofile 2a: Stimmabdruecke innerhalb einer Besprechung
 

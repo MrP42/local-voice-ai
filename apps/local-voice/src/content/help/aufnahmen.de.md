@@ -43,7 +43,7 @@ Audio- und Videodateien sowie Untertitel (VTT, SRT) importierst du mit dem Symbo
 
 ## Fortschritt, Pause und Stopp
 
-Während eine Besprechung verarbeitet wird, zeigt ein Fortschrittsbalken Phase, Prozent und Restdauer. **Pausieren** hält die Verarbeitung an und gibt den Rechner frei, **Fortsetzen** macht weiter. **Stoppen** bricht ab; das bisherige Transkript bleibt, du kannst später fortsetzen oder neu transkribieren.
+Während eine Besprechung verarbeitet wird, zeigt ein Fortschrittsbalken Phase, Prozent und Restdauer. **Pausieren** hält die Verarbeitung an und gibt den Rechner frei, **Fortsetzen** macht weiter. **Stoppen** bricht ab; das bisherige Transkript bleibt, du kannst später fortsetzen oder neu transkribieren. Das gilt auch für **Neu transkribieren**: Stoppst du mittendrin, bleiben die schon neu transkribierten Abschnitte als eigene Fassung das Transkript, **Fortsetzen** macht mit demselben Modell an der Stelle weiter, und das vorherige Transkript liegt unverändert als ältere Fassung daneben.
 
 ## Menü ☰ und Details
 
