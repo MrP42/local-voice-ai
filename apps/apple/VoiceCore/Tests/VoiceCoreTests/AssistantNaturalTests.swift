@@ -23,9 +23,62 @@ import XCTest
 
 // MARK: Hilfen
 
-private func eventually(timeout: TimeInterval = 20, _ condition: () -> Bool) async {
-    let deadline = Date().addingTimeInterval(timeout)
-    while !condition(), Date() < deadline { try? await Task.sleep(nanoseconds: 5_000_000) }
+/// Zähler mit unteilbarem Erhöhen (mehrere Zeitgeber rufen gleichzeitig).
+private final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var n = 0
+    @discardableResult
+    func increment() -> Int { lock.withLock { n += 1; return n } }
+    var value: Int { lock.withLock { n } }
+}
+
+/// Haltepunkt statt fester Wartezeit: `wait` kehrt zurück, sobald `open()` gerufen wurde (auch wenn das schon vorher geschah), und gibt
+/// zurück, ob er wirklich geöffnet wurde. Die Frist (60 s) ist nur ein Netz gegen ein nie endendes Warten, keine Abstimmung. Ein
+/// abgebrochener Wartender kehrt sofort zurück.
+private final class Latch: @unchecked Sendable {
+    private let lock = NSLock()
+    private var opened = false
+    private var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+
+    func open() {
+        let all: [UUID: CheckedContinuation<Void, Never>] = lock.withLock {
+            opened = true
+            let w = waiters
+            waiters = [:]
+            return w
+        }
+        for continuation in all.values { continuation.resume() }
+    }
+
+    var isOpen: Bool { lock.withLock { opened } }
+
+    private func release(_ id: UUID) {
+        let continuation = lock.withLock { waiters.removeValue(forKey: id) }
+        continuation?.resume()
+    }
+
+    @discardableResult
+    func wait(timeoutSeconds: UInt64 = 60) async -> Bool {
+        let id = UUID()
+        let timer = Task { [self] in
+            try? await Task.sleep(nanoseconds: timeoutSeconds * 1_000_000_000)
+            if !Task.isCancelled { release(id) }
+        }
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                let ready: Bool = lock.withLock {
+                    if opened || Task.isCancelled { return true }
+                    waiters[id] = continuation
+                    return false
+                }
+                if ready { continuation.resume() }
+            }
+        } onCancel: {
+            release(id)
+        }
+        timer.cancel()
+        return isOpen
+    }
 }
 
 private enum Role: String, Sendable { case speaker, thinker }
@@ -34,14 +87,46 @@ private final class ModelCalls: @unchecked Sendable {
     private let lock = NSLock()
     private var entries: [(role: Role, instructions: String, prompt: String)] = []
     private var terminated = 0
+    private var latches: [String: Latch] = [:]
     /// Nummer des Aufrufs dieser Rolle (ab 1).
     func hit(_ role: Role, _ instructions: String, _ prompt: String) -> Int {
-        lock.withLock {
+        let (number, latch): (Int, Latch?) = lock.withLock {
             entries.append((role, instructions, prompt))
-            return entries.filter { $0.role == role }.count
+            let n = entries.filter { $0.role == role }.count
+            return (n, latches["call:\(role.rawValue):\(n)"])
+        }
+        latch?.open()
+        return number
+    }
+    func ended() {
+        let latch: Latch? = lock.withLock {
+            terminated += 1
+            return latches["end:\(terminated)"]
+        }
+        latch?.open()
+    }
+
+    private func latch(_ key: String, reached: () -> Bool) -> Latch {
+        lock.withLock {
+            if let known = latches[key] { return known }
+            let made = Latch()
+            latches[key] = made
+            if reached() { made.open() }
+            return made
         }
     }
-    func ended() { lock.withLock { terminated += 1 } }
+    /// Haltepunkt: kehrt zurück, sobald das Modell-Double den `count`-ten Aufruf dieser Rolle angenommen hat.
+    @discardableResult
+    func accepted(_ role: Role, _ count: Int = 1) async -> Bool {
+        let latch = latch("call:\(role.rawValue):\(count)") { entries.filter { $0.role == role }.count >= count }
+        return await latch.wait()
+    }
+    /// Haltepunkt: kehrt zurück, sobald `count` Modellströme beendet sind (abgebrochen oder zu Ende).
+    @discardableResult
+    func ended(_ count: Int) async -> Bool {
+        let latch = latch("end:\(count)") { terminated >= count }
+        return await latch.wait()
+    }
     var roles: [Role] { lock.withLock { entries.map(\.role) } }
     func prompts(_ role: Role) -> [String] { lock.withLock { entries.filter { $0.role == role }.map(\.prompt) } }
     func instructions(_ role: Role) -> [String] { lock.withLock { entries.filter { $0.role == role }.map(\.instructions) } }
@@ -49,7 +134,9 @@ private final class ModelCalls: @unchecked Sendable {
     var terminations: Int { lock.withLock { terminated } }
 }
 
-/// Eine Rolle des künstlichen Modells: Stücke mit Pause VOR dem i-ten Stück, danach Ende, Fehler oder Hängen.
+/// Eine Rolle des künstlichen Modells: Stücke mit Pause VOR dem i-ten Stück, danach Ende, Fehler oder Hängen. `holds[i]` hält das i-te Stück
+/// zurück, bis der Haltepunkt offen ist (davor, dann kommt die Pause): So hängt die Reihenfolge der Ereignisse nicht von der Geschwindigkeit
+/// des Rechners ab.
 private struct Script: Sendable {
     var pieces: [String] = []
     var pausesMs: [UInt64] = []
@@ -57,6 +144,29 @@ private struct Script: Sendable {
     var hang = false
     /// Die ersten so vielen Aufrufe dieser Rolle werfen `contextOverflow`.
     var overflows = 0
+    var holds: [Int: Latch] = [:]
+
+    /// Dasselbe Skript, dessen i-tes Stück auf `latch` wartet.
+    func holding(_ index: Int = 0, until latch: Latch) -> Script {
+        var copy = self
+        copy.holds[index] = latch
+        return copy
+    }
+
+    func play(_ c: AsyncThrowingStream<String, Error>.Continuation) async {
+        for (i, p) in pieces.enumerated() {
+            if let hold = holds[i] { await hold.wait() }
+            let pause = i < pausesMs.count ? pausesMs[i] : 0
+            if pause > 0 { try? await Task.sleep(nanoseconds: pause * 1_000_000) }
+            if Task.isCancelled { return }
+            c.yield(p)
+        }
+        if hang {
+            while !Task.isCancelled { try? await Task.sleep(nanoseconds: 10_000_000) }
+            return
+        }
+        c.finish(throwing: fail)
+    }
 }
 
 private struct RoleModel: BookTalkModel {
@@ -76,19 +186,7 @@ private struct RoleModel: BookTalkModel {
                 c.finish(throwing: BookTalkModelError.contextOverflow)
                 return
             }
-            let task = Task {
-                for (i, p) in script.pieces.enumerated() {
-                    let pause = i < script.pausesMs.count ? script.pausesMs[i] : 0
-                    if pause > 0 { try? await Task.sleep(nanoseconds: pause * 1_000_000) }
-                    if Task.isCancelled { return }
-                    c.yield(p)
-                }
-                if script.hang {
-                    while !Task.isCancelled { try? await Task.sleep(nanoseconds: 10_000_000) }
-                    return
-                }
-                c.finish(throwing: script.fail)
-            }
+            let task = Task { await script.play(c) }
             c.onTermination = { _ in calls.ended(); task.cancel() }
         }
     }
@@ -107,15 +205,7 @@ private struct PendingAwareModel: BookTalkModel {
         let script = !isSpeaker ? thinker : (prompt.contains("OFFENER SUCHAUFTRAG") ? pendingSpeaker : plainSpeaker)
         let calls = calls
         return AsyncThrowingStream { c in
-            let task = Task {
-                for (i, p) in script.pieces.enumerated() {
-                    let pause = i < script.pausesMs.count ? script.pausesMs[i] : 0
-                    if pause > 0 { try? await Task.sleep(nanoseconds: pause * 1_000_000) }
-                    if Task.isCancelled { return }
-                    c.yield(p)
-                }
-                c.finish(throwing: script.fail)
-            }
+            let task = Task { await script.play(c) }
             c.onTermination = { _ in calls.ended(); task.cancel() }
         }
     }
@@ -363,7 +453,7 @@ final class AssistantNaturalTests: XCTestCase {
         let seen = await ask(s)
 
         XCTAssertEqual(seen.statuses, [.announcement, .summarized, .summarized])
-        XCTAssertTrue(AssistantNatural.bridges.contains(seen.texts[0]))
+        XCTAssertTrue(AssistantNatural.bridges.contains(seen.texts.first ?? ""))
         XCTAssertEqual(seen.spoken, ["Castorp fährt ins Sanatorium nach Davos.", "Dort besucht er seinen Vetter Joachim."])
         XCTAssertFalse(seen.texts.joined().contains("SUCHE"))
         XCTAssertFalse(seen.texts.joined().contains("Sanatorium Castorp\n"))
@@ -481,8 +571,8 @@ final class AssistantNaturalTests: XCTestCase {
         let seen = await ask(await newSession(model, config: config(maxSentences: 2)))
         XCTAssertEqual(seen.spoken, ["Eins.", "Zwei."])
         XCTAssertEqual(seen.answer?.counts.conversational, 2)
-        await eventually { model.calls.terminations >= 1 }
-        XCTAssertGreaterThanOrEqual(model.calls.terminations, 1, "der Modellstrom wurde abgebrochen")
+        let ended = await model.calls.ended(1)
+        XCTAssertTrue(ended, "der Modellstrom wurde abgebrochen")
 
         let model2 = RoleModel(speaker: search, thinker: many)
         let seen2 = await ask(await newSession(model2, config: config(maxSentences: 3)), castorpQuestion, id: "r2")
@@ -916,11 +1006,17 @@ final class AssistantNaturalTests: XCTestCase {
         var events: [AssistantEvent] = []
         for await e in s.events(AssistantRequest(requestId: "r1", text: castorpQuestion)) {
             events.append(e)
-            if case .sources = e { await s.cancel(requestId: "r1") }
+            // Haltepunkt: erst abbrechen, wenn das Double den Sprecher-Aufruf angenommen hat (nicht schon bei der Vorab-Anzeige).
+            if case .sources = e {
+                let accepted = await model.calls.accepted(.speaker)
+                XCTAssertTrue(accepted, "der Sprecher-Aufruf kam nie am Modell an")
+                await s.cancel(requestId: "r1")
+            }
         }
         XCTAssertEqual(Seen(events: events).failure, .cancelled)
         XCTAssertEqual(model.calls.roles, [.speaker])
-        await eventually { model.calls.terminations >= 1 }
+        let ended = await model.calls.ended(1)
+        XCTAssertTrue(ended)
         XCTAssertEqual(model.calls.terminations, 1, "der Modellstrom des Sprechers wurde beendet")
     }
 
@@ -933,11 +1029,17 @@ final class AssistantNaturalTests: XCTestCase {
             events.append(e)
             if case .sources = e {
                 sourceEvents += 1
-                if sourceEvents == 2 { await s.cancel(requestId: "r1") }
+                if sourceEvents == 2 {
+                    // Haltepunkt: Der Denker-Aufruf muss am Double angekommen sein, sonst gäbe es keinen zweiten Strom zu beenden.
+                    let accepted = await model.calls.accepted(.thinker)
+                    XCTAssertTrue(accepted, "der Denker-Aufruf kam nie am Modell an")
+                    await s.cancel(requestId: "r1")
+                }
             }
         }
         XCTAssertEqual(Seen(events: events).failure, .cancelled)
-        await eventually { model.calls.terminations >= 2 }
+        let ended = await model.calls.ended(2)
+        XCTAssertTrue(ended)
         XCTAssertEqual(model.calls.terminations, 2, "beide Modellströme sind beendet")
     }
 
@@ -1165,7 +1267,7 @@ final class AssistantNaturalTests: XCTestCase {
         let seen = await ask(s)
         await close(s)
         XCTAssertEqual(seen.statuses, [.conversational, .summarized, .summarized])
-        XCTAssertEqual(seen.texts[0], "Ich sehe in deinem Buch nach.")
+        XCTAssertEqual(seen.texts.first, "Ich sehe in deinem Buch nach.")
         XCTAssertTrue(seen.sentences[0].sources.isEmpty)
         XCTAssertFalse(seen.sentences[1].sources.isEmpty)
         XCTAssertFalse(seen.texts.joined().uppercased().contains("SUCHE"), "die Steuerzeile wird nie ausgegeben: \(seen.texts)")
@@ -1182,19 +1284,24 @@ final class AssistantNaturalTests: XCTestCase {
 
     /// „Sofort“: Der Zwischensatz geht hinaus, sobald die Steuerzeile erkannt ist, nicht erst am Zeilenende oder am Ende des Sprecher-Stroms.
     func testInterimSentenceIsOutputAsSoonAsTheControlLineIsRecognized() async {
-        let model = RoleModel(speaker: Script(pieces: ["Ich sehe in deinem Buch nach.\nSUCHE:", " Davos Sanatorium Castorp\n"], pausesMs: [0, 700]),
+        // Der Rest der Steuerzeile (Stück 1) wird zurückgehalten, bis der Zwischensatz bei der Anzeige ankam: keine Zeitmessung nötig.
+        // Käme der Satz erst mit dem Rest der Zeile, bliebe der Strom hängen und die Anfrage endete mit `timeout`.
+        let release = Latch()
+        let model = RoleModel(speaker: Script(pieces: ["Ich sehe in deinem Buch nach.\nSUCHE:", " Davos Sanatorium Castorp\n"])
+                                .holding(1, until: release),
                               thinker: answer)
-        let s = await newSession(model)
-        let started = ContinuousClock.now
-        var firstSentenceAt: Duration?
+        let s = await newSession(model, config: config(timeout: 30))
+        var sentenceBeforeTheRest = false
         var out: [AssistantEvent] = []
         for await e in s.events(AssistantRequest(requestId: "r1", text: castorpQuestion)) {
-            if firstSentenceAt == nil, case .sentence = e { firstSentenceAt = ContinuousClock.now - started }
+            if case .sentence = e, !release.isOpen {
+                sentenceBeforeTheRest = true
+                release.open()
+            }
             out.append(e)
         }
+        XCTAssertTrue(sentenceBeforeTheRest, "der Zwischensatz kam vor dem Rest der Steuerzeile")
         XCTAssertEqual(Seen(events: out).statuses, [.conversational, .summarized, .summarized])
-        guard let at = firstSentenceAt else { return XCTFail("kein Satz") }
-        XCTAssertLessThan(at, .milliseconds(450), "vor dem Rest der Steuerzeile (der kommt nach 700 ms)")
     }
 
     /// Stückgrenzen, fehlendes Satzzeichen vor dem Zeilenumbruch, mehrere Sätze vor der Steuerzeile.
@@ -1510,26 +1617,43 @@ final class AssistantNaturalTests: XCTestCase {
 
     /// Die Entwürfe sind gedrosselt (höchstens etwa alle 150 ms; der erste sofort) und am Ende einmal vollständig.
     func testDraftsAreThrottledAndComplete() async {
-        let pieces = ["Castorp ", "fährt ", "ins ", "Sanatorium ", "nach ", "Davos."]
+        // Viele Stücke ohne Pause: Es reicht, dass irgendwelche zwei innerhalb der 150 ms verarbeitet werden (bei vielen Stücken auch
+        // auf einem ausgelasteten Rechner), damit die Zahl der Entwürfe unter der der Stücke bleibt.
+        let pieces = (1...40).map { "Wort\($0) " } + ["Davos."]
         let model = RoleModel(speaker: search, thinker: Script(pieces: pieces))
         let seen = await ask(await newSession(model))
         let drafts = seen.drafts
-        XCTAssertEqual(drafts.first, "Castorp ", "der erste Entwurf sofort")
+        XCTAssertEqual(drafts.first, "Wort1 ", "der erste Entwurf sofort")
         XCTAssertEqual(drafts.last, pieces.joined(), "am Ende einmal vollständig")
-        XCTAssertLessThan(drafts.count, pieces.count, "gedrosselt: nicht jedes Stück: \(drafts)")
+        XCTAssertLessThan(drafts.count, pieces.count, "gedrosselt: nicht jedes Stück: \(drafts.count) Entwürfe")
         for pair in zip(drafts, drafts.dropFirst()) { XCTAssertTrue(pair.1.hasPrefix(pair.0)) }
 
-        // Langsamer Denker: Je Stück (200 ms Abstand) ein Entwurf.
-        let slow = RoleModel(speaker: search, thinker: Script(pieces: ["Castorp ", "fährt ", "nach Davos."], pausesMs: [0, 200, 200]))
-        let seenSlow = await ask(await newSession(slow), castorpQuestion, id: "slow")
-        XCTAssertEqual(seenSlow.drafts, ["Castorp ", "Castorp fährt ", "Castorp fährt nach Davos."])
+        // Langsamer Denker: Je Stück ein Entwurf. Jedes weitere Stück wartet, bis der Entwurf davor bei der Anzeige ankam, und dann 200 ms
+        // (mehr als die Drosselung): Der Abstand ist so auch bei einem ausgelasteten Rechner nie kürzer.
+        let afterFirst = Latch()
+        let afterSecond = Latch()
+        let slow = RoleModel(speaker: search,
+                             thinker: Script(pieces: ["Castorp ", "fährt ", "nach Davos."], pausesMs: [0, 200, 200])
+                                .holding(1, until: afterFirst).holding(2, until: afterSecond))
+        let s = await newSession(slow, config: config(timeout: 30))
+        var slowDrafts: [String] = []
+        for await e in s.events(AssistantRequest(requestId: "slow", text: castorpQuestion)) {
+            guard case .progress(_, _, .draft(let text)) = e else { continue }
+            slowDrafts.append(text)
+            if text == "Castorp " { afterFirst.open() }
+            if text == "Castorp fährt " { afterSecond.open() }
+        }
+        XCTAssertEqual(slowDrafts, ["Castorp ", "Castorp fährt ", "Castorp fährt nach Davos."])
     }
 
     /// Nach `cancel` und nach einem Widerruf kommt kein Fortschritt mehr.
     func testNoProgressAfterCancelOrRevocation() async {
         for revoke in [false, true] {
+            // Das zweite Stück kommt erst, nachdem Abbruch bzw. Widerruf angewendet sind: Alles, was danach noch ankäme, wäre ein Fehler.
+            let applied = Latch()
             let model = RoleModel(speaker: search,
-                                  thinker: Script(pieces: ["Castorp ", "fährt ", "ins ", "Sanatorium ", "nach ", "Davos. "], pausesMs: [0, 200, 200, 200, 200, 200]))
+                                  thinker: Script(pieces: ["Castorp ", "fährt ", "ins ", "Sanatorium ", "nach ", "Davos. "], pausesMs: [0, 200, 200, 200, 200, 200])
+                                    .holding(1, until: applied))
             let s = await newSession(model)
             var after: [AssistantProgress] = []
             var stopped = false
@@ -1539,6 +1663,7 @@ final class AssistantNaturalTests: XCTestCase {
                 if case .draft = p {
                     stopped = true
                     if revoke { _ = s.applyReleaseChange(.other) } else { await s.cancel(requestId: "r1") }
+                    applied.open()
                 }
             }
             XCTAssertTrue(stopped, "es gab einen Entwurf")
@@ -1824,12 +1949,17 @@ final class AssistantNaturalTests: XCTestCase {
     /// Erste Ansage vor dem ersten Satz, wenn das Modell langsam ist; sie ist keine Antwort: nicht im Text, nicht im Verlauf, nicht gezählt.
     func testFirstFillerComesBeforeTheFirstSentenceAndIsNeitherAnswerTextNorHistory() async {
         let audit = AssistantAuditLog(directory: tempDir())
-        let model = RoleModel(speaker: Script(pieces: ["Hallo zusammen."], pausesMs: [500]))
+        // Das Modell antwortet erst, nachdem die Ansage bei der Anzeige ankam (Haltepunkt statt Zeitabstand).
+        let release = Latch()
+        let model = RoleModel(speaker: Script(pieces: ["Hallo zusammen."]).holding(0, until: release))
         let s = await newSession(model, config: config(first: 50, second: 10_000), audit: audit)
         let stream = s.events(AssistantRequest(requestId: "r1", text: "Hallo"))
         s.noteCommitted(requestId: "r1")
         var out: [AssistantEvent] = []
-        for await e in stream { out.append(e) }
+        for await e in stream {
+            out.append(e)
+            if case .sentence(_, _, _, _, .announcement, _, _) = e { release.open() }
+        }
         let seen = Seen(events: out)
         XCTAssertEqual(seen.statuses, [.announcement, .conversational])
         XCTAssertEqual(seen.texts, [AssistantNatural.fillerFirstSentence, "Hallo zusammen."])
@@ -1847,20 +1977,21 @@ final class AssistantNaturalTests: XCTestCase {
     }
 
     func testNoFirstFillerWhenABridgeOrASentenceIsAlreadyThere() async {
-        // Überbrückung schon da (Suche sofort, Denker langsam): keine erste Ansage.
-        let m1 = RoleModel(speaker: search, thinker: Script(pieces: answer.pieces, pausesMs: [700]))
-        let s1 = await newSession(m1, config: config(bridge: true, first: 200, second: 10_000))
+        // Überbrückung schon da (Suche sofort, Denker langsam): keine erste Ansage. Die Zeiten haben reichlich Spielraum (Faktor 5 und mehr)
+        // für einen langsamen Rechner: Die Überbrückung muss vor der ersten Ansage (1 s) hinausgehen, der Denker kommt nach ihr (1,5 s).
+        let m1 = RoleModel(speaker: search, thinker: Script(pieces: answer.pieces, pausesMs: [1_500]))
+        let s1 = await newSession(m1, config: config(bridge: true, first: 1_000, second: 10_000))
         let stream1 = s1.events(AssistantRequest(requestId: "r1", text: castorpQuestion))
         s1.noteCommitted(requestId: "r1")
         var out1: [AssistantEvent] = []
         for await e in stream1 { out1.append(e) }
         let seen1 = Seen(events: out1)
         XCTAssertEqual(seen1.statuses, [.announcement, .summarized, .summarized])
-        XCTAssertTrue(AssistantNatural.bridges.contains(seen1.texts[0]), "die Überbrückung, nicht die Ansage")
+        XCTAssertTrue(AssistantNatural.bridges.contains(seen1.texts.first ?? ""), "die Überbrückung, nicht die Ansage")
 
         // Satz schon da (zweiter Satz langsam): keine erste Ansage.
-        let m2 = RoleModel(speaker: Script(pieces: ["Hallo zusammen. Wie ", "geht es dir?"], pausesMs: [0, 700]))
-        let s2 = await newSession(m2, config: config(first: 250, second: 10_000))
+        let m2 = RoleModel(speaker: Script(pieces: ["Hallo zusammen. Wie ", "geht es dir?"], pausesMs: [0, 1_500]))
+        let s2 = await newSession(m2, config: config(first: 1_000, second: 10_000))
         let stream2 = s2.events(AssistantRequest(requestId: "r1", text: "Hallo"))
         s2.noteCommitted(requestId: "r1")
         var out2: [AssistantEvent] = []
@@ -1870,7 +2001,9 @@ final class AssistantNaturalTests: XCTestCase {
 
     /// Kommt der Hinweis erst, nachdem Einheiten hinausgingen, entfällt die erste Ansage; die zweite gilt, solange keine Antworteinheit da ist.
     func testFirstFillerIsOmittedWhenTheNoticeComesAfterUnitsWereEmitted() async {
-        let model = RoleModel(speaker: search, thinker: Script(pieces: answer.pieces, pausesMs: [800]))
+        // Der Denker antwortet erst, nachdem die zweite Ansage bei der Anzeige ankam (Haltepunkt statt Zeitabstand).
+        let secondSeen = Latch()
+        let model = RoleModel(speaker: search, thinker: Script(pieces: answer.pieces).holding(0, until: secondSeen))
         let s = await newSession(model, config: config(bridge: true, first: 0, second: 250))
         var out: [AssistantEvent] = []
         var noted = false
@@ -1879,44 +2012,60 @@ final class AssistantNaturalTests: XCTestCase {
             if !noted, case .sentence(_, _, _, _, .announcement, _, _) = e {
                 noted = true
                 s.noteCommitted(requestId: "r1")
+            } else if case .sentence(_, _, let text, _, .announcement, _, _) = e, text == AssistantNatural.fillerSecondSentence {
+                secondSeen.open()
             }
         }
         let seen = Seen(events: out)
         XCTAssertEqual(seen.statuses, [.announcement, .announcement, .summarized, .summarized])
-        XCTAssertTrue(AssistantNatural.bridges.contains(seen.texts[0]))
-        XCTAssertEqual(seen.texts[1], AssistantNatural.fillerSecondSentence)
+        XCTAssertTrue(AssistantNatural.bridges.contains(seen.texts.first ?? ""))
+        XCTAssertEqual(seen.texts.dropFirst().first, AssistantNatural.fillerSecondSentence)
         XCTAssertFalse(seen.texts.contains(AssistantNatural.fillerFirstSentence))
     }
 
     func testSecondFillerComesOnlyWhileNoAnswerUnitWasEmitted() async {
         // Ganz langsam: beide Ansagen vor dem ersten Satz, in dieser Reihenfolge.
-        let m1 = RoleModel(speaker: Script(pieces: ["Hallo zusammen."], pausesMs: [800]))
+        let secondSeen1 = Latch()
+        let m1 = RoleModel(speaker: Script(pieces: ["Hallo zusammen."]).holding(0, until: secondSeen1))
         let s1 = await newSession(m1, config: config(first: 40, second: 250))
         let stream1 = s1.events(AssistantRequest(requestId: "r1", text: "Hallo"))
         s1.noteCommitted(requestId: "r1")
         var out1: [AssistantEvent] = []
-        for await e in stream1 { out1.append(e) }
+        for await e in stream1 {
+            out1.append(e)
+            if case .sentence(_, _, let text, _, .announcement, _, _) = e, text == AssistantNatural.fillerSecondSentence { secondSeen1.open() }
+        }
         XCTAssertEqual(Seen(events: out1).texts, [AssistantNatural.fillerFirstSentence, AssistantNatural.fillerSecondSentence, "Hallo zusammen."])
 
-        // Der erste Satz kommt vor der zweiten Ansage, der zweite lässt sich Zeit: keine zweite Ansage.
-        let m2 = RoleModel(speaker: Script(pieces: ["Hallo zusammen. Wie ", "geht es dir?"], pausesMs: [150, 900]))
-        let s2 = await newSession(m2, config: config(first: 40, second: 500))
+        // Der erste Satz kommt nach der ersten Ansage und vor der zweiten (fällig nach 1 s), der zweite lässt sich Zeit (1,5 s nach dem ersten,
+        // also nach der Fälligkeit der zweiten Ansage): keine zweite Ansage.
+        let firstSeen2 = Latch()
+        let m2 = RoleModel(speaker: Script(pieces: ["Hallo zusammen. Wie ", "geht es dir?"], pausesMs: [0, 1_500]).holding(0, until: firstSeen2))
+        let s2 = await newSession(m2, config: config(first: 40, second: 1_000))
         let stream2 = s2.events(AssistantRequest(requestId: "r1", text: "Hallo"))
         s2.noteCommitted(requestId: "r1")
         var out2: [AssistantEvent] = []
-        for await e in stream2 { out2.append(e) }
+        for await e in stream2 {
+            out2.append(e)
+            if case .sentence(_, _, let text, _, .announcement, _, _) = e, text == AssistantNatural.fillerFirstSentence { firstSeen2.open() }
+        }
         XCTAssertEqual(Seen(events: out2).texts, [AssistantNatural.fillerFirstSentence, "Hallo zusammen.", "Wie geht es dir?"])
 
         // Überbrückung, langsamer Denker: erste Ansage entfällt (Überbrückung ist eine Einheit), zweite kommt (keine Antworteinheit).
-        let m3 = RoleModel(speaker: search, thinker: Script(pieces: answer.pieces, pausesMs: [800]))
-        let s3 = await newSession(m3, config: config(bridge: true, first: 150, second: 300))
+        // Die Überbrückung muss vor der ersten Ansage (0,8 s) hinausgehen; der Denker antwortet erst nach der zweiten Ansage.
+        let secondSeen3 = Latch()
+        let m3 = RoleModel(speaker: search, thinker: Script(pieces: answer.pieces).holding(0, until: secondSeen3))
+        let s3 = await newSession(m3, config: config(bridge: true, first: 800, second: 1_000))
         let stream3 = s3.events(AssistantRequest(requestId: "r1", text: castorpQuestion))
         s3.noteCommitted(requestId: "r1")
         var out3: [AssistantEvent] = []
-        for await e in stream3 { out3.append(e) }
+        for await e in stream3 {
+            out3.append(e)
+            if case .sentence(_, _, let text, _, .announcement, _, _) = e, text == AssistantNatural.fillerSecondSentence { secondSeen3.open() }
+        }
         let seen3 = Seen(events: out3)
         XCTAssertEqual(seen3.statuses, [.announcement, .announcement, .summarized, .summarized])
-        XCTAssertEqual(seen3.texts[1], AssistantNatural.fillerSecondSentence)
+        XCTAssertEqual(seen3.texts.dropFirst().first, AssistantNatural.fillerSecondSentence)
     }
 
     func testNoFillersWithoutTheCommitNotice() async {
@@ -1929,11 +2078,18 @@ final class AssistantNaturalTests: XCTestCase {
     }
 
     func testTheCommitNoticeMayComeBeforeTheRunStarts() async {
-        let model = RoleModel(speaker: Script(pieces: ["Hallo zusammen."], pausesMs: [500]))
-        let s = await newSession(model, config: config(first: 100, second: 10_000))
+        // `first: 0`: Die erste Ansage ist schon fällig, sobald der Lauf anfängt (keine Wartezeit zur Abstimmung); das Modell antwortet erst,
+        // nachdem sie bei der Anzeige ankam.
+        let release = Latch()
+        let model = RoleModel(speaker: Script(pieces: ["Hallo zusammen."]).holding(0, until: release))
+        let s = await newSession(model, config: config(first: 0, second: 10_000))
         s.noteCommitted(requestId: "r1")
-        try? await Task.sleep(nanoseconds: 150_000_000)
-        let seen = await ask(s, "Hallo")
+        var out: [AssistantEvent] = []
+        for await e in s.events(AssistantRequest(requestId: "r1", text: "Hallo")) {
+            out.append(e)
+            if case .sentence(_, _, _, _, .announcement, _, _) = e { release.open() }
+        }
+        let seen = Seen(events: out)
         XCTAssertEqual(seen.texts.first, AssistantNatural.fillerFirstSentence, "schon fällig, sobald der Lauf anfängt")
         XCTAssertEqual(seen.statuses, [.announcement, .conversational])
     }
@@ -1978,8 +2134,9 @@ final class AssistantNaturalTests: XCTestCase {
         for revoke in [false, true] {
             let audit = AssistantAuditLog(directory: tempDir())
             let model = RoleModel(speaker: Script(hang: true))
-            let s = await newSession(model, config: config(first: 40, second: 200), audit: audit)
+            let s = await newSession(model, config: config(first: 40, second: 600), audit: audit)
             let stream = s.events(AssistantRequest(requestId: "r1", text: "Hallo"))
+            let commitAt = ContinuousClock.now
             s.noteCommitted(requestId: "r1")
             var out: [AssistantEvent] = []
             var done = false
@@ -1993,7 +2150,9 @@ final class AssistantNaturalTests: XCTestCase {
             let seen = Seen(events: out)
             XCTAssertEqual(seen.failure, revoke ? .revoked : .cancelled)
             XCTAssertEqual(seen.announcements, [AssistantNatural.fillerFirstSentence], "keine zweite Ansage nach dem Ende")
-            try? await Task.sleep(nanoseconds: 350_000_000)
+            // Die zweite Ansage wäre 600 ms nach dem Hinweis fällig gewesen: bis 500 ms danach (vom Hinweis an gemessen, nicht vom Ende des
+            // Laufs) wird nichts mehr hinausgehen oder angemeldet bleiben.
+            try? await Task.sleep(until: commitAt.advanced(by: .milliseconds(1_100)), clock: .continuous)
             await close(s, "r1", user: "Hallo")
             XCTAssertEqual(journal(audit).filter { $0.t == .step && $0.verdict == .announcement }.count, 1)
             XCTAssertEqual(s.commitNoteCountsForTesting.observers, 0, "nichts bleibt angemeldet")
@@ -2036,10 +2195,10 @@ final class AssistantNaturalTests: XCTestCase {
     func testCommitNotesAttachAndNoteRaceNeverLosesTheCommit() async {
         for round in 0..<200 {
             let notes = AssistantCommitNotes()
-            let calls = Box(0)
+            let calls = Counter()
             let id = "r\(round)"
             await withTaskGroup(of: Void.self) { group in
-                group.addTask { notes.attach(id) { _ in calls.value += 1 } }
+                group.addTask { notes.attach(id) { _ in calls.increment() } }
                 group.addTask { notes.note(id) }
             }
             XCTAssertEqual(calls.value, 1, "Runde \(round)")
@@ -2047,23 +2206,41 @@ final class AssistantNaturalTests: XCTestCase {
     }
 
     func testFillerTimersMarkDueOnceAndStopOnShutdown() async {
-        let wakes = Box(0)
-        let fillers = AssistantNaturalFillers(firstMs: 0, secondMs: 40) { wakes.value += 1 }
-        XCTAssertTrue(fillers.takeDue().isEmpty, "ohne `start` nichts fällig")
-        fillers.start(commit: ContinuousClock.now.advanced(by: .milliseconds(-10)))
-        fillers.start(commit: ContinuousClock.now)
-        await eventually { wakes.value >= 1 }
-        XCTAssertEqual(fillers.takeDue(), [1])
-        XCTAssertTrue(fillers.takeDue().isEmpty, "jede Ansage höchstens einmal")
-        await eventually { wakes.value >= 2 }
-        XCTAssertEqual(fillers.takeDue(), [2])
-        XCTAssertEqual(wakes.value, 2, "ein zweites `start` ändert nichts")
+        // Nur die erste Ansage fällig (die zweite weit weg): genau [1], einmal.
+        let firstWake = Latch()
+        let onlyFirst = AssistantNaturalFillers(firstMs: 0, secondMs: 600_000) { firstWake.open() }
+        XCTAssertTrue(onlyFirst.takeDue().isEmpty, "ohne `start` nichts fällig")
+        onlyFirst.start(commit: ContinuousClock.now.advanced(by: .milliseconds(-10)))
+        onlyFirst.start(commit: ContinuousClock.now)
+        let woken = await firstWake.wait()
+        XCTAssertTrue(woken)
+        XCTAssertEqual(onlyFirst.takeDue(), [1])
+        XCTAssertTrue(onlyFirst.takeDue().isEmpty, "jede Ansage höchstens einmal")
+        onlyFirst.shutdown()
 
-        let late = AssistantNaturalFillers(firstMs: 50, secondMs: -1) { wakes.value += 100 }
-        late.start(commit: ContinuousClock.now)
+        // Beide fällig: in der Reihenfolge 1, 2, jede einmal, auch wenn das zweite `start` nichts ändert.
+        let wakes = Counter()
+        let secondWake = Latch()
+        let both = AssistantNaturalFillers(firstMs: 0, secondMs: 40) {
+            if wakes.increment() >= 2 { secondWake.open() }
+        }
+        both.start(commit: ContinuousClock.now)
+        both.start(commit: ContinuousClock.now)
+        let wokenTwice = await secondWake.wait()
+        XCTAssertTrue(wokenTwice)
+        XCTAssertEqual(both.takeDue(), [1, 2])
+        XCTAssertTrue(both.takeDue().isEmpty, "jede Ansage höchstens einmal")
+        XCTAssertEqual(wakes.value, 2, "ein zweites `start` ändert nichts")
+        both.shutdown()
+
+        // `shutdown` gleich nach `start`: Der Zeitgeber (hier 300 ms) weckt nichts mehr; bis weit nach seiner Fälligkeit warten.
+        let lateWakes = Counter()
+        let late = AssistantNaturalFillers(firstMs: 300, secondMs: -1) { lateWakes.increment() }
+        let startedAt = ContinuousClock.now
+        late.start(commit: startedAt)
         late.shutdown()
-        try? await Task.sleep(nanoseconds: 150_000_000)
-        XCTAssertEqual(wakes.value, 2, "nach `shutdown` weckt kein Zeitgeber mehr")
+        try? await Task.sleep(until: startedAt.advanced(by: .milliseconds(800)), clock: .continuous)
+        XCTAssertEqual(lateWakes.value, 0, "nach `shutdown` weckt kein Zeitgeber mehr")
         XCTAssertTrue(late.takeDue().isEmpty)
     }
 
@@ -2278,7 +2455,9 @@ final class AssistantNaturalTests: XCTestCase {
     /// ausgegeben noch als Zeile gewertet, wenn der Lauf endet.
     func testNoAbandonAfterCancelOrRevocationAndAPartialLineIsNeverOutput() async {
         for revoke in [false, true] {
-            let model = RoleModel(speaker: Script(pieces: [farewell + "\nABBRUCH\n"], pausesMs: [300]), thinker: answer)
+            // Der Text des Sprechers kommt erst, nachdem Abbruch bzw. Widerruf angewendet sind (Haltepunkt statt Wartezeit).
+            let applied = Latch()
+            let model = RoleModel(speaker: Script(pieces: [farewell + "\nABBRUCH\n"]).holding(0, until: applied), thinker: answer)
             let s = await newSession(model)
             var later: [AssistantProgress] = []
             var sentencesLater = 0
@@ -2291,6 +2470,7 @@ final class AssistantNaturalTests: XCTestCase {
                     } else if p == .speaker {
                         stopped = true
                         if revoke { _ = s.applyReleaseChange(.other) } else { await s.cancel(requestId: "r1") }
+                        applied.open()
                     }
                 case .sentence:
                     if stopped { sentencesLater += 1 }
@@ -2310,8 +2490,9 @@ final class AssistantNaturalTests: XCTestCase {
         for await e in s.events(AssistantRequest(requestId: "r1", text: "Und wie geht es dir?", pending: openSearch)) {
             out.append(e)
             if case .progress(_, _, .speaker) = e {
+                // Haltepunkt: erst abbrechen, wenn das Double den Sprecher-Aufruf (mit dem hängenden Rest „ABBRU“) angenommen hat.
                 Task {
-                    try? await Task.sleep(nanoseconds: 300_000_000)
+                    await hang.calls.accepted(.speaker)
                     await s.cancel(requestId: "r1")
                 }
             }
@@ -2419,27 +2600,32 @@ final class AssistantNaturalTests: XCTestCase {
     /// Suchauftrag und endet mit `ABBRUCH`. Jede hat ihre eigenen Sätze, ihren eigenen Fortschritt und ihre eigene Zeilenfolge; `abandon` gehört
     /// nur zu B; B ist fertig, während A noch läuft.
     func testTwoConcurrentRequestsOneInTheDataPhaseOneSpeakerWithAPendingSearchDoNotDisturbEachOther() async {
+        // Der Denker von A hält sein zweites Stück zurück, bis B fertig ist (Haltepunkt statt Wartezeit): „B ist fertig, während A läuft“
+        // gilt dann auf jedem Rechner.
+        let bIsDone = Latch()
         let model = PendingAwareModel(
             plainSpeaker: search,
             pendingSpeaker: Script(pieces: ["Mir geht es gut, danke.\nABBRUCH\n"]),
-            thinker: Script(pieces: ["Castorp fährt ins Sanatorium nach Davos. ", "Dort besucht er seinen Vetter Joachim."], pausesMs: [0, 1_500]))
+            thinker: Script(pieces: ["Castorp fährt ins Sanatorium nach Davos. ", "Dort besucht er seinen Vetter Joachim."])
+                .holding(1, until: bIsDone))
         let (s, audit) = await auditSession(model)
-        let composing = Box(false)
+        let composing = Latch()
         let finishedA = Box(false)
         let taskA = Task { () -> Seen in
             var out: [AssistantEvent] = []
             for await e in s.events(AssistantRequest(requestId: "A", text: castorpQuestion)) {
-                if case .progress(_, _, .composing) = e { composing.value = true }
+                if case .progress(_, _, .composing) = e { composing.open() }
                 out.append(e)
             }
             finishedA.value = true
             return Seen(events: out)
         }
-        await eventually { composing.value }
-        XCTAssertTrue(composing.value, "A ist in der Datenphase")
+        let aInDataPhase = await composing.wait()
+        XCTAssertTrue(aInDataPhase, "A ist in der Datenphase")
         let pending = AssistantPendingSearch(question: castorpQuestion, query: "Davos Sanatorium Castorp")
         let seenB = await collect(s, AssistantRequest(requestId: "B", text: "Und wie geht es dir?", pending: pending))
         XCTAssertFalse(finishedA.value, "B ist fertig, während A noch läuft")
+        bIsDone.open()
         let seenA = await taskA.value
         await s.commit(requestId: "A", user: castorpQuestion, spoken: .all, interrupted: false)
         await s.commit(requestId: "B", user: "Und wie geht es dir?", spoken: .all, interrupted: false)
@@ -2566,7 +2752,8 @@ final class AssistantNaturalTests: XCTestCase {
         let model = forcedModel([lookAndMore], hang: true)
         let seen = await ask(await newSession(model, config: config(forcedMs: 30_000)), ownQuestion)
         XCTAssertEqual(seen.statuses, [.conversational, .summarized, .summarized])
-        await eventually { model.calls.terminations >= 2 }
+        let ended = await model.calls.ended(2)
+        XCTAssertTrue(ended)
         XCTAssertEqual(model.calls.terminations, 2, "Sprecher- und Denkerstrom sind beendet")
     }
 
@@ -2643,7 +2830,8 @@ final class AssistantNaturalTests: XCTestCase {
             XCTAssertEqual(model.calls.roles, [.speaker, .thinker], "\(pieces)")
             XCTAssertGreaterThanOrEqual(took, .milliseconds(140), "die Suche beginnt erst an der Frist: \(pieces)")
             XCTAssertNil(seen.failure, "\(pieces)")
-            await eventually { model.calls.terminations >= 2 }
+            let ended = await model.calls.ended(2)
+            XCTAssertTrue(ended, "\(pieces)")
             XCTAssertEqual(model.calls.terminations, 2, "der hängende Sprecherstrom wurde abgebrochen: \(pieces)")
         }
     }
@@ -2867,7 +3055,8 @@ final class AssistantNaturalTests: XCTestCase {
     /// schon ausgegebener Zwischensatz macht sie überflüssig.
     func testFillersStillApplyWhileTheForcedSpeakerHangsButNotAfterItsSentence() async {
         let hanging = forcedModel([], hang: true)
-        let s1 = await newSession(hanging, config: config(first: 40, second: 10_000, forcedMs: 400))
+        // Die Frist (1,5 s) ist weit hinter der ersten Ansage (40 ms), auch auf einem ausgelasteten Rechner.
+        let s1 = await newSession(hanging, config: config(first: 40, second: 10_000, forcedMs: 1_500))
         let stream1 = s1.events(AssistantRequest(requestId: "r1", text: ownQuestion))
         s1.noteCommitted(requestId: "r1")
         var out1: [AssistantEvent] = []
@@ -2877,8 +3066,8 @@ final class AssistantNaturalTests: XCTestCase {
         XCTAssertEqual(seen1.texts.first, AssistantNatural.fillerFirstSentence)
         XCTAssertEqual(Array(seen1.orderShape.prefix(3)), ["speaker", "sentence", "searching"])
 
-        let talking = forcedModel([lookAndMore], thinker: Script(pieces: answer.pieces, pausesMs: [300]))
-        let s2 = await newSession(talking, config: config(first: 100, second: 10_000))
+        let talking = forcedModel([lookAndMore], thinker: Script(pieces: answer.pieces, pausesMs: [800]))
+        let s2 = await newSession(talking, config: config(first: 500, second: 10_000))
         let stream2 = s2.events(AssistantRequest(requestId: "r1", text: ownQuestion))
         s2.noteCommitted(requestId: "r1")
         var out2: [AssistantEvent] = []
@@ -2894,8 +3083,9 @@ final class AssistantNaturalTests: XCTestCase {
         for await e in s.events(AssistantRequest(requestId: "r1", text: ownQuestion)) {
             events.append(e)
             if case .progress(_, _, .speaker) = e {
+                // Haltepunkt: erst abbrechen, wenn das Double den Sprecher-Aufruf angenommen hat.
                 Task {
-                    try? await Task.sleep(nanoseconds: 200_000_000)
+                    await model.calls.accepted(.speaker)
                     await s.cancel(requestId: "r1")
                 }
             }
@@ -2904,7 +3094,8 @@ final class AssistantNaturalTests: XCTestCase {
         XCTAssertEqual(seen.failure, .cancelled)
         XCTAssertEqual(model.calls.roles, [.speaker])
         XCTAssertFalse(seen.progressShape.contains("searching"))
-        await eventually { model.calls.terminations >= 1 }
+        let ended = await model.calls.ended(1)
+        XCTAssertTrue(ended)
         XCTAssertEqual(model.calls.terminations, 1)
     }
 
@@ -2916,8 +3107,9 @@ final class AssistantNaturalTests: XCTestCase {
         for await e in s.events(AssistantRequest(requestId: "r1", text: ownQuestion)) {
             events.append(e)
             if case .progress(_, _, .speaker) = e {
+                // Haltepunkt: erst widerrufen, wenn das Double den Sprecher-Aufruf angenommen hat.
                 Task {
-                    try? await Task.sleep(nanoseconds: 200_000_000)
+                    await model.calls.accepted(.speaker)
                     _ = s.applyReleaseChange(.other)
                 }
             }
@@ -2995,7 +3187,8 @@ final class AssistantNaturalTests: XCTestCase {
             XCTAssertEqual(AssistantProtocolOrder.check(journal(hAudit, id)), [], id)
             XCTAssertEqual(journalTags(journal(hAudit, id)).count, 8, id)
         }
-        await eventually { hanging.calls.terminations >= 16 }
+        let allEnded = await hanging.calls.ended(16)
+        XCTAssertTrue(allEnded)
         XCTAssertEqual(hanging.calls.terminations, 16, "alle Sprecher- und Denkerströme sind beendet")
     }
 
@@ -3031,16 +3224,19 @@ final class AssistantNaturalTests: XCTestCase {
     /// Die Frist kommt genau einmal als Ereignis der Stufe; eine abgebrochene Stufe und eine negative Frist liefern nichts; nach `close` endet
     /// der Strom ohne Nachzügler.
     func testMailboxDeadlineArrivesOnceForItsStageAndNeverAfterCancelOrWithANegativeValue() async {
+        // Stufe 2 hat 300 ms und wird gleich abgebrochen (reichlich Zeit auch auf einem ausgelasteten Rechner); danach wird bis 700 ms nach
+        // dem Setzen gewartet, ob doch noch etwas kommt.
         let box = AssistantNaturalMailbox()
+        let setAt = ContinuousClock.now
         box.deadline(stage: 1, ms: 20)
-        box.deadline(stage: 2, ms: 20)
+        box.deadline(stage: 2, ms: 300)
         box.cancel(stage: 2)
         box.deadline(stage: 3, ms: -1)
         var iterator = box.stream.makeAsyncIterator()
         let first = await iterator.next()
         guard case .deadline(let stage)? = first else { return XCTFail("keine Frist: \(String(describing: first))") }
         XCTAssertEqual(stage, 1)
-        try? await Task.sleep(nanoseconds: 120_000_000)
+        try? await Task.sleep(until: setAt.advanced(by: .milliseconds(700)), clock: .continuous)
         box.close()
         let rest = await iterator.next()
         XCTAssertNil(rest, "keine zweite Frist: Stufe 2 war abgebrochen, Stufe 3 ohne Frist")
@@ -3056,9 +3252,10 @@ final class AssistantNaturalTests: XCTestCase {
         XCTAssertNil(none)
 
         let pending = AssistantNaturalMailbox()
-        pending.deadline(stage: 1, ms: 60)
+        let setAt = ContinuousClock.now
+        pending.deadline(stage: 1, ms: 300)
         pending.close()
-        try? await Task.sleep(nanoseconds: 150_000_000)
+        try? await Task.sleep(until: setAt.advanced(by: .milliseconds(700)), clock: .continuous)
         var pendingIterator = pending.stream.makeAsyncIterator()
         let gone = await pendingIterator.next()
         XCTAssertNil(gone, "die Frist wurde mit `close` abgebrochen")

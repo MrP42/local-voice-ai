@@ -822,6 +822,8 @@ struct AssistantConversationView: View {
                 if thinkingOpen { thinkingDetail(thinking) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            // Behälter bleibt durchlässig: sonst überdeckt sein Bezeichner den des Knopfs, und UI-Tests finden den Umschalter nicht.
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("assistantThinking")
         }
     }
