@@ -379,8 +379,8 @@ pub fn finde_block(beschreibung: &str, plan_id: &str) -> Option<String> {
 fn blockgrenzen(text: &str) -> Option<(usize, usize, String)> {
     let start = text.find(BLOCK_KOPF)?;
     let ab = start + BLOCK_KOPF.len();
-    let (rel, laenge, id) = erste_marke(&text[ab..])?;
-    Some((start, ab + rel + laenge, id))
+    let (pos, laenge, id) = erste_marke(text, ab)?;
+    Some((start, pos + laenge, id))
 }
 
 /// Erste Markenzeile im Klartext: die Marke steht allein auf ihrer Zeile, daneben
@@ -389,8 +389,10 @@ fn blockgrenzen(text: &str) -> Option<(usize, usize, String)> {
 /// `lva-plan:P1<x` oder `> lva-plan:P1` als Ende von `P1`. `<` und `>` sind hier
 /// gewoehnliche Zeichen; HTML wird vorher in Text gewandelt.
 /// Liefert Position, Laenge und Id.
-fn erste_marke(beschreibung: &str) -> Option<(usize, usize, String)> {
-    let mut ab = 0;
+/// Gesucht wird ab `ab`, geprueft wird aber die vollstaendige Zeile im ganzen
+/// Text (auch eine Marke direkt hinter dem Kopf auf derselben Zeile zaehlt nicht).
+fn erste_marke(beschreibung: &str, ab: usize) -> Option<(usize, usize, String)> {
+    let mut ab = ab;
     while let Some(rel) = beschreibung[ab..].find(MARKE_PRAEFIX) {
         let pos = ab + rel;
         ab = pos + MARKE_PRAEFIX.len();

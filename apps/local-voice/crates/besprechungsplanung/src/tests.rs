@@ -1252,6 +1252,12 @@ fn codex21_blockende_nur_als_vollstaendige_marke() {
         assert!(finde_block(&m, "P1").is_none(), "{z}");
         assert!(finde_marke(&m).is_none(), "{z}");
     }
+    // Marke auf der Kopfzeile ist keine allein stehende Markenzeile.
+    let kopfzeile = format!("{BLOCK_KOPF} lva-plan:P1");
+    assert!(finde_block(&kopfzeile, "P1").is_none());
+    assert!(finde_marke(&kopfzeile).is_none());
+    let kopf_dann_zeile = format!("{BLOCK_KOPF} lva-plan:P1\nlva-plan:P1");
+    assert_eq!(finde_marke(&kopf_dann_zeile).as_deref(), Some("P1"));
     // Markenzeile mit Zusatz ist kein gueltiges Blockende.
     let zusatz = text.replace("lva-plan:P1", "lva-plan:P1 Zusatz");
     assert!(finde_block(&zusatz, "P1").is_none());
