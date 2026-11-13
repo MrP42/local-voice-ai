@@ -65,49 +65,151 @@ export function stripTimestamps(text: string): CleanupResult {
   return { text: out.join("\n"), changes };
 }
 
+const SENTENCE_CHARS = new Set([".", "!", "?", "…", ":", ";"]);
+const CLOSING_CHARS = new Set([
+  '"',
+  "'",
+  "»",
+  "«",
+  "“",
+  "”",
+  "‘",
+  "’",
+  ")",
+  "]",
+]);
+const WHITESPACE = /\s/;
+
+/** Wie `SENTENCE_END.test(s)`, aber vom Ende her gelesen: linear in den
+ *  angehängten Leerzeichen und Anführungszeichen, nicht in der Zeilenlänge. */
+function endsSentence(s: string): boolean {
+  let i = s.length;
+  while (i > 0 && WHITESPACE.test(s[i - 1])) i -= 1;
+  while (i > 0 && CLOSING_CHARS.has(s[i - 1])) i -= 1;
+  return i > 0 && SENTENCE_CHARS.has(s[i - 1]);
+}
+
+/** Mehr Nicht-Leerzeichen kann eine reine Initialen-Zeile nicht haben (drei
+ *  Initialen, davor höchstens ein Zeitstempel). */
+const INITIALS_MAX_CONTENT = 64;
+/** So viele Zeichen hinter der Einrückung genügen den Anfangsprüfungen
+ *  (Sprecher `<Name>` höchstens 42, Blockmarken wenige). */
+const HEAD_LOOKAHEAD = 64;
+const countContent = (s: string): number => s.replace(/\s/g, "").length;
+
+/**
+ * Die zuletzt ausgegebene Zeile, solange sie noch wachsen kann. Statt den
+ * wachsenden Text bei jedem Anhängen neu zu prüfen (quadratisch bei vielen
+ * kurzen Zeilen), hält sie Stücke und die wenigen Merkmale, die die Regeln
+ * brauchen: Anfang, Länge des Inhalts, Satzende und die letzten Zeichen.
+ */
+interface OpenLine {
+  parts: string[];
+  /** Länge des zusammengesetzten Texts. */
+  length: number;
+  /** Anfang des Texts (Einrückung plus {@link HEAD_LOOKAHEAD} Zeichen). */
+  head: string;
+  headLimit: number;
+  plain: boolean;
+  content: number;
+  sentenceEnd: boolean;
+  /** Letzte vier Zeichen ohne Leerzeichen am Ende. */
+  tail: string;
+}
+
+const openLine = (raw: string): OpenLine => {
+  const trimmed = raw.trimEnd();
+  const lead = raw.length - raw.trimStart().length;
+  const headLimit = lead + HEAD_LOOKAHEAD;
+  return {
+    parts: [raw],
+    length: raw.length,
+    head: raw.slice(0, headLimit),
+    headLimit,
+    plain: isPlain(raw),
+    content: countContent(raw),
+    sentenceEnd: endsSentence(raw),
+    tail: trimmed.slice(-4),
+  };
+};
+
+/** `body` an die offene Zeile hängen (`prev.trimEnd() + sep + body`); `joinHyphen`
+ *  nimmt vorher den Trennstrich weg. */
+function append(line: OpenLine, body: string, joinHyphen: boolean): void {
+  const last = line.parts.length - 1;
+  let end = line.parts[last].trimEnd();
+  line.length -= line.parts[last].length - end.length;
+  if (joinHyphen) {
+    end = end.slice(0, -1);
+    line.length -= 1;
+  }
+  line.parts[last] = end;
+  line.head = line.head.slice(0, line.length);
+  const added = joinHyphen ? body : ` ${body}`;
+  line.parts.push(added);
+  line.length += added.length;
+  if (line.head.length < line.headLimit) {
+    line.head += added.slice(0, line.headLimit - line.head.length);
+    line.plain = isPlain(line.head);
+  }
+  line.content += countContent(body);
+  line.sentenceEnd = endsSentence(body);
+  line.tail = (
+    (joinHyphen ? line.tail.slice(0, -1) : `${line.tail} `) + body
+  ).slice(-4);
+}
+
 /**
  * Abgerissene Zeilen zusammenfügen:
  * - Initialen allein auf einer Zeile (`J.` ↵ `L.` ↵ `Collins hat …`),
  * - Silbentrennung am Zeilenende (`Ge-` ↵ `danken`),
  * - Zeile ohne Satzende, die nächste beginnt klein (`… auf www.x.com` ↵
  *   `zu schreiben begann.`).
- * Leerzeilen, Sprecherwechsel und Markdown-Blöcke trennen immer.
+ * Leerzeilen, Sprecherwechsel und Markdown-Blöcke trennen immer. Laufzeit
+ * linear in der Textlänge, auch bei Hunderttausenden verbundener Zeilen.
  */
 export function joinFragments(text: string): CleanupResult {
-  const lines = text.split("\n");
   const out: string[] = [];
   let changes = 0;
-  for (const raw of lines) {
-    const prev = out.length > 0 ? out[out.length - 1] : null;
-    if (prev !== null && isPlain(prev) && isPlain(raw)) {
+  let line: OpenLine | null = null;
+  for (const raw of text.split("\n")) {
+    if (line !== null && line.plain && isPlain(raw)) {
       // Ein Zeitstempel vor dem Bruchstück gehört zum Satz davor.
       const body = raw.replace(TIMESTAMP, "").replace(LONE_COLON, "").trim();
-      const prevBody = prev
-        .replace(TIMESTAMP, "")
-        .replace(LONE_COLON, "")
-        .trim();
       if (body.length > 0) {
-        if (HYPHEN_END.test(prev.trimEnd()) && STARTS_LOWER.test(body)) {
+        if (HYPHEN_END.test(line.tail) && STARTS_LOWER.test(body)) {
           // `Wirtschafts-` ↵ `und Sozialpolitik`: Ergänzungsstrich bleibt.
-          out[out.length - 1] = SUSPENDED.test(body)
-            ? `${prev.trimEnd()} ${body}`
-            : prev.trimEnd().slice(0, -1) + body;
+          append(line, body, !SUSPENDED.test(body));
           changes += 1;
           continue;
         }
         if (
-          INITIALS.test(prevBody) ||
-          (!SENTENCE_END.test(prev) && STARTS_LOWER.test(body))
+          initialsOnly(line) ||
+          (!line.sentenceEnd && STARTS_LOWER.test(body))
         ) {
-          out[out.length - 1] = `${prev.trimEnd()} ${body}`;
+          append(line, body, false);
           changes += 1;
           continue;
         }
       }
     }
-    out.push(raw);
+    if (line !== null) out.push(line.parts.join(""));
+    line = openLine(raw);
   }
+  if (line !== null) out.push(line.parts.join(""));
   return { text: out.join("\n"), changes };
+}
+
+/** Besteht die Zeile (ohne Zeitstempel) nur aus Initialen? Nur bei wenig
+ *  Inhalt überhaupt möglich, der Text wird erst dann zusammengesetzt. */
+function initialsOnly(line: OpenLine): boolean {
+  if (line.content > INITIALS_MAX_CONTENT) return false;
+  const body = line.parts
+    .join("")
+    .replace(TIMESTAMP, "")
+    .replace(LONE_COLON, "")
+    .trim();
+  return INITIALS.test(body);
 }
 
 /** Doppelte Leerzeichen, Leerzeichen vor Satzzeichen und am Zeilenende. */

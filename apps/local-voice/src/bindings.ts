@@ -4465,9 +4465,9 @@ async voiceCallChat(requestId: string, messages: VoiceCallMessage[], context: Sp
 /**
  * Ein Durchgang eines Modells als roher Textstrom (Ereignisse `delta`, am Ende `usage`).
  */
-async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: string, stufe: string, forFunction: string | null, conversationId: string | null, expectedStand: string | null) : Promise<Result<string, string>> {
+async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: string, stufe: string, forFunction: string | null, conversationId: string | null, expectedStand: string | null, nurSprecher: boolean | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("voice_call_turn", { requestId, messages, modelId, stufe, forFunction, conversationId, expectedStand }) };
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_turn", { requestId, messages, modelId, stufe, forFunction, conversationId, expectedStand, nurSprecher }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

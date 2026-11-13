@@ -3948,3 +3948,222 @@ test("Erhaltenes Vorlesen übernimmt still einen in der Bibliothek geänderten T
   await nav(page, "Vorlesen").click();
   await expect(page.getByTestId("reader-book")).toContainText("Zusammengeführt aus der Bibliothek");
 });
+
+/**
+ * Vorbestehend, nicht Teil von lva#530 (Codex Runde 6, Fälle 4 und 5): Texte, die
+ * ein Fremdschreiber zwischendurch an der Seite ändert, gehen beim Zurückrollen
+ * eines Anhängens (4) bzw. beim Zusammenführen (5) verloren, weil beide mit
+ * einem früher gelesenen Stand arbeiten. Die Tests beschreiben das gewünschte
+ * Verhalten (die Änderung bleibt) und sind als erwarteter Fehlschlag markiert;
+ * auf origin/main schlagen sie genauso fehl. Siehe lva#546.
+ */
+test("Anhängen scheitert und rollt zurück: eine zwischendurch geänderte Seite behält ihren Text", async ({
+  page,
+}) => {
+  test.fail(true, "vorbestehend auf main (Text bei fremden Schreibern), lva#546");
+  const { text, sync } = followText();
+  await addBooks(page, [
+    baseBook("book_m", "Der Prozess", {
+      authors: ["Franz Kafka"],
+      text: { page_id: "page_m", origin: "transcript", source_name: null },
+      ...multiAudio(
+        "book_m",
+        [
+          track(1, "Teil 1", 10_000),
+          track(2, "Teil 2", 20_000),
+          track(3, "Teil 3", 15_000, "m31"),
+        ],
+        sync,
+      ),
+    }),
+  ]);
+  await page.addInitScript(
+    ([t]) => {
+      const w = window as unknown as Record<string, any>;
+      w.__pageText["page_m"] = t;
+      w.__jobs.push("m31");
+      w.__jobStatus["m31"] = "ready";
+      w.__segments["m31"] = [
+        { segment_index: 0, text: "Neu.", start_ms: 2000, end_ms: 3000, channel: 0, speaker_index: null },
+      ];
+      // Zustand der Seiten wie im Kern; beim Speichern des Buchs (scheitert einmal)
+      // ändert ein Fremdschreiber zwischendurch den Text der Seite.
+      const internals = w.__TAURI_INTERNALS__;
+      const orig = internals.invoke;
+      const store: Record<string, string> = {};
+      let saves = 0;
+      let failed = false;
+      internals.invoke = async (cmd: string, args: Record<string, any>) => {
+        if (cmd === "page_state_load" && store[args.id]) {
+          await orig(cmd, args);
+          return store[args.id];
+        }
+        if (cmd === "page_state_save") {
+          const result = await orig(cmd, args);
+          store[args.id] = args.state;
+          if (++saves === 2) w.__nachRollback = args.state;
+          return result;
+        }
+        if (cmd === "library_save" && !failed) {
+          failed = true;
+          store["page_m"] = JSON.stringify({
+            ...JSON.parse(store["page_m"]),
+            text: "Fremd geändert.",
+          });
+          throw "Platte voll";
+        }
+        return orig(cmd, args);
+      };
+    },
+    [text],
+  );
+  await page.goto("/");
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => (window as unknown as { __nachRollback?: string }).__nachRollback ?? null),
+      { timeout: 15_000 },
+    )
+    .not.toBeNull();
+  const after = await page.evaluate(
+    () => (window as unknown as { __nachRollback: string }).__nachRollback,
+  );
+  expect(JSON.parse(after).text).toBe("Fremd geändert.");
+});
+
+test("Zusammenführen: eine zwischendurch geänderte Seite des Ziels behält ihren Text", async ({
+  page,
+}) => {
+  test.fail(true, "vorbestehend auf main (Text bei fremden Schreibern), lva#546");
+  const titles = [2, 1].map(
+    (n) => `Robert Kiyosaki - Rich Dad Poor Dad Disc 3 - ${pad(n)} - Track ${pad(n)}`,
+  );
+  await addBooks(page, [
+    partWithTranscript("book_t2", titles[0], 60_000),
+    partWithTranscript("book_t1", titles[1], 30_000),
+  ]);
+  await page.addInitScript((titles) => {
+    const w = window as unknown as Record<string, any>;
+    w.__pageText.page_book_t1 = `# ${titles[1]}\n\nAnfang des Buchs.`;
+    w.__pageText.page_book_t2 = `# ${titles[0]}\n\nZweiter Teil.`;
+    // Zustand der Seiten wie im Kern; nachdem die Texte gelesen sind (beim
+    // Zusammenführen der Hörbücher), ändert ein Fremdschreiber die Seite des Ziels.
+    const internals = w.__TAURI_INTERNALS__;
+    const orig = internals.invoke;
+    const store: Record<string, string> = {};
+    internals.invoke = async (cmd: string, args: Record<string, any>) => {
+      if (cmd === "page_state_load" && store[args.id]) {
+        await orig(cmd, args);
+        return store[args.id];
+      }
+      if (cmd === "page_state_save") {
+        const result = await orig(cmd, args);
+        store[args.id] = args.state;
+        if (args.id === "page_book_t1") w.__gespeichert = args.state;
+        return result;
+      }
+      if (cmd === "library_merge_audio")
+        store["page_book_t1"] = JSON.stringify({
+          text: "Fremd geändert.",
+          tab: "original",
+        });
+      return orig(cmd, args);
+    };
+  }, titles);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByTestId("library-select-start").click();
+  for (const id of ["book_t1", "book_t2"])
+    await page.locator(`[data-drop-book="${id}"] [data-testid="library-select"]`).check();
+  await page.getByTestId("library-select-merge").click();
+  await page.getByTestId("library-merge-confirm").click();
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => (window as unknown as { __gespeichert?: string }).__gespeichert ?? null),
+      { timeout: 15_000 },
+    )
+    .not.toBeNull();
+  const saved = await page.evaluate(
+    () => (window as unknown as { __gespeichert: string }).__gespeichert,
+  );
+  expect(JSON.parse(saved).text).toContain("Fremd geändert.");
+});
+
+/**
+ * lva#530: Das Zurückrollen eines gescheiterten Anhängens stellt den Text wie
+ * bisher auf den Stand von vorher, dreht aber gesicherte Rohfassungen
+ * (`einfuegungen`) nicht zurück, die inzwischen an der Seite hängen.
+ */
+test("Anhängen scheitert und rollt zurück: gesicherte Rohfassungen der Seite bleiben", async ({
+  page,
+}) => {
+  const { text, sync } = followText();
+  await addBooks(page, [
+    baseBook("book_m", "Der Prozess", {
+      authors: ["Franz Kafka"],
+      text: { page_id: "page_m", origin: "transcript", source_name: null },
+      ...multiAudio(
+        "book_m",
+        [
+          track(1, "Teil 1", 10_000),
+          track(2, "Teil 2", 20_000),
+          track(3, "Teil 3", 15_000, "m31"),
+        ],
+        sync,
+      ),
+    }),
+  ]);
+  await page.addInitScript(
+    ([t]) => {
+      const w = window as unknown as Record<string, any>;
+      w.__pageText["page_m"] = t;
+      w.__jobs.push("m31");
+      w.__jobStatus["m31"] = "ready";
+      w.__segments["m31"] = [
+        { segment_index: 0, text: "Neu.", start_ms: 2000, end_ms: 3000, channel: 0, speaker_index: null },
+      ];
+      const internals = w.__TAURI_INTERNALS__;
+      const orig = internals.invoke;
+      const store: Record<string, string> = {};
+      let saves = 0;
+      let failed = false;
+      internals.invoke = async (cmd: string, args: Record<string, any>) => {
+        if (cmd === "page_state_load" && store[args.id]) {
+          await orig(cmd, args);
+          return store[args.id];
+        }
+        if (cmd === "page_state_save") {
+          const result = await orig(cmd, args);
+          store[args.id] = args.state;
+          if (++saves === 2) w.__nachRollback = args.state;
+          return result;
+        }
+        if (cmd === "library_save" && !failed) {
+          failed = true;
+          // Zwischendurch wird eine Rohfassung an der Seite gesichert.
+          store["page_m"] = JSON.stringify({
+            ...JSON.parse(store["page_m"]),
+            einfuegungen: [{ zeit: "2026-01-01T00:00:00.000Z", roh: "Roh" }],
+          });
+          throw "Platte voll";
+        }
+        return orig(cmd, args);
+      };
+    },
+    [text],
+  );
+  await page.goto("/");
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => (window as unknown as { __nachRollback?: string }).__nachRollback ?? null),
+      { timeout: 15_000 },
+    )
+    .not.toBeNull();
+  const after = JSON.parse(
+    await page.evaluate(() => (window as unknown as { __nachRollback: string }).__nachRollback),
+  ) as { text: string; einfuegungen?: { roh: string }[] };
+  expect(after.text).toBe(text);
+  expect(after.einfuegungen?.map((e) => e.roh)).toEqual(["Roh"]);
+});
