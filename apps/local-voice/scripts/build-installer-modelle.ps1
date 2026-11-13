@@ -42,76 +42,16 @@ $tauriDir = Join-Path $appDir 'src-tauri'
 
 if (-not $OutDir) { $OutDir = Join-Path $tauriDir 'target/release/bundle/vorinstalliert' }
 
-# Das Skript ersetzt -OutDir vollstaendig. Damit nie fremde Dateien verloren gehen:
-# - Ziel relativ zum PowerShell-Arbeitsverzeichnis absolut aufloesen (nicht zum Prozessverzeichnis),
-# - Platzhalter (* ? [ ]) ablehnen; Pruefen, Loeschen und Anlegen des Ziels laufen literal,
-# - Laufwerkswurzeln und Ordner ablehnen, die Quellen, Arbeitsverzeichnis oder Profil enthalten,
-# - Verknuepfungen (Junction/Symlink) im Ziel oder einem seiner Elternordner ablehnen; die
-#   geschuetzten Ordner zusaetzlich physisch aufloesen (ein Arbeitsverzeichnis unter einer
-#   Junction auf das Ziel ist sonst lexikalisch nicht als dasselbe Verzeichnis erkennbar),
-# - einen vorhandenen Ordner nur ersetzen, wenn er leer ist oder die Marke dieses Skripts traegt.
-$OutMarker = '.lva-vorinstalliert-nutzlast'
+# -OutDir wird nie geloescht oder ersetzt (Codex R1-R4 zu lva#574): Ein vorhandener Ordner muss
+# leer sein, sonst bricht das Skript ab, bevor es irgendetwas schreibt. Damit gibt es keinen
+# Loeschpfad, und Aliasnamen (Junction, subst, 8.3, UNC) koennen keine fremden Dateien treffen.
+# Eine fruehere Nutzlast entfernt, wer sie nicht mehr braucht, selbst.
 if ($OutDir.IndexOfAny([char[]]'*?[]') -ge 0) { throw "-OutDir enthaelt Platzhalter (* ? [ ]): $OutDir; bitte einen konkreten Ordner angeben" }
-$outFull = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutDir).TrimEnd('\', '/')
-if ($outFull.IndexOfAny([char[]]'*?[]') -ge 0) { throw "-OutDir enthaelt Platzhalter (* ? [ ]): $outFull" }
-function Test-IsSameOrAncestor([string]$Ancestor, [string]$Path) {
-    $a = [System.IO.Path]::GetFullPath($Ancestor).TrimEnd('\', '/')
-    $p = [System.IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
-    return $p.Equals($a, [StringComparison]::OrdinalIgnoreCase) -or
-        $p.StartsWith($a + [System.IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
-        $p.StartsWith($a + '/', [StringComparison]::OrdinalIgnoreCase)
-}
-# Physischer Pfad: jede vorhandene Verknuepfung im Pfad (Junction/Symlink, auch verkettet) durch
-# ihr endgueltiges Ziel ersetzen. Nicht aufloesbare Reparse-Punkte bleiben lexikalisch stehen.
-function Resolve-PhysicalPath([string]$Path) {
-    $full = [System.IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
-    for ($round = 0; $round -lt 64; $round++) {
-        $root = [System.IO.Path]::GetPathRoot($full)
-        $parts = @($full.Substring($root.Length).Split([char[]]'\/', [StringSplitOptions]::RemoveEmptyEntries))
-        $cur = $root
-        $changed = $false
-        for ($i = 0; $i -lt $parts.Count; $i++) {
-            $cur = Join-Path $cur $parts[$i]
-            $item = Get-Item -LiteralPath $cur -Force -ErrorAction SilentlyContinue
-            if (-not $item -or -not ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { continue }
-            $target = $null
-            try { $target = [System.IO.Directory]::ResolveLinkTarget($cur, $true) } catch { $target = $null }
-            if (-not $target) { continue }
-            $next = $target.FullName.TrimEnd('\', '/')
-            for ($k = $i + 1; $k -lt $parts.Count; $k++) { $next = Join-Path $next $parts[$k] }
-            $full = [System.IO.Path]::GetFullPath($next).TrimEnd('\', '/')
-            $changed = $true
-            break
-        }
-        if (-not $changed) { return $full }
-    }
-    throw "Verknuepfungen in $Path lassen sich nicht aufloesen (Schleife?)"
-}
-$protected = @($appDir, (Get-Location).ProviderPath, $PSScriptRoot, [Environment]::GetFolderPath('UserProfile'))
-if ([System.IO.Path]::GetPathRoot($outFull).TrimEnd('\', '/') -eq $outFull) { throw "-OutDir ist eine Laufwerkswurzel: $outFull" }
-$outPhysical = Resolve-PhysicalPath $outFull
-foreach ($p in $protected) {
-    if (-not $p) { continue }
-    $pPhysical = Resolve-PhysicalPath $p
-    if ((Test-IsSameOrAncestor $outFull $p) -or (Test-IsSameOrAncestor $outPhysical $pPhysical)) {
-        throw "-OutDir $outFull enthaelt $p ($pPhysical); bitte einen eigenen Ausgabeordner angeben"
-    }
-}
-$walk = $outFull
-while ($walk) {
-    $item = Get-Item -LiteralPath $walk -Force -ErrorAction SilentlyContinue
-    if ($item -and ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
-        throw "-OutDir $outFull liegt in oder ist eine Verknuepfung ($walk); bitte einen echten Ordner angeben"
-    }
-    $parent = [System.IO.Path]::GetDirectoryName($walk)
-    if (-not $parent -or $parent -eq $walk) { break }
-    $walk = $parent
-}
+$outFull = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutDir)
 if (Test-Path -LiteralPath $outFull) {
     if (-not (Test-Path -LiteralPath $outFull -PathType Container)) { throw "-OutDir ist eine Datei: $outFull" }
-    $existing = @(Get-ChildItem -LiteralPath $outFull -Force)
-    if ($existing.Count -gt 0 -and -not (Test-Path -LiteralPath (Join-Path $outFull $OutMarker) -PathType Leaf)) {
-        throw "-OutDir $outFull ist nicht leer und stammt nicht von diesem Skript (Marke $OutMarker fehlt); nichts geloescht"
+    if (@(Get-ChildItem -LiteralPath $outFull -Force).Count -gt 0) {
+        throw "-OutDir $outFull ist nicht leer; das Skript loescht nichts. Bitte einen neuen oder leeren Ordner angeben (eine fruehere Nutzlast vorher selbst entfernen)"
     }
 }
 
@@ -196,10 +136,8 @@ function Get-DirBytes([string]$Dir) {
 }
 
 try {
-    # Oben geprueft: leer oder eine fruehere Nutzlast dieses Skripts.
-    if (Test-Path -LiteralPath $outFull) { Remove-Item -LiteralPath $outFull -Recurse -Force }
+    # Oben geprueft: fehlt oder ist leer. Es wird nichts geloescht.
     $null = [System.IO.Directory]::CreateDirectory($outFull)
-    [System.IO.File]::WriteAllText((Join-Path $outFull $OutMarker), "Nutzlast von scripts/build-installer-modelle.ps1`n")
     $selected = @{}
     $summary = [ordered]@{}
 
