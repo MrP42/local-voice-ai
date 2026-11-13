@@ -62,6 +62,34 @@ pub(crate) fn is_refusal(err: &io::Error) -> bool {
     err.get_ref().is_some_and(|inner| inner.is::<Refused>())
 }
 
+/// Der Datentraeger liefert keine brauchbare Datei-Kennung (Windows: `FileIdInfo` nicht
+/// lesbar oder nur Nullen/`0xFF`; typisch FAT, je nach Treiber exFAT und manche
+/// Netzfreigaben). Ohne Kennung laesst sich weder ein Ordnertausch noch ein Namenstausch
+/// belegen; der verankerte Ladeweg lehnt dort ab (fail closed), statt auf etwas
+/// Schwaecheres zurueckzufallen. Das ist KEINE Ablehnung wegen eines Links
+/// ([`Refused`], `unsafe_path`), sondern eine Eigenschaft des Datentraegers
+/// (`volume_unsupported`). Der Text nennt keinen Pfad.
+#[derive(Debug)]
+pub(crate) struct VolumeUnsupported;
+
+impl std::fmt::Display for VolumeUnsupported {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("volume_unsupported: the volume gives no usable file ID")
+    }
+}
+
+impl std::error::Error for VolumeUnsupported {}
+
+pub(super) fn volume_unsupported() -> io::Error {
+    io::Error::new(io::ErrorKind::Unsupported, VolumeUnsupported)
+}
+
+/// Ist `err` die Meldung "Datentraeger ohne Datei-Kennung" ([`VolumeUnsupported`])?
+pub(crate) fn is_volume_unsupported(err: &io::Error) -> bool {
+    err.get_ref()
+        .is_some_and(|inner| inner.is::<VolumeUnsupported>())
+}
+
 /// Symbolischer Link oder (unter Windows) irgendein Reparse-Punkt.
 fn is_link(meta: &fs::Metadata) -> bool {
     if meta.file_type().is_symlink() {
@@ -174,13 +202,50 @@ impl FileInfo {
     }
 }
 
+/// Test-Naht: laesst `file_info` auf diesem Thread keine Kennung liefern, so wie ein
+/// Datentraeger ohne Datei-Kennung (unter Windows nicht herstellbar, unter Unix liefert
+/// jedes Dateisystem eine). Gilt nur fuer den Thread, der den Wachposten haelt; die
+/// Tests laufen parallel.
+#[cfg(all(unix, test))]
+pub(crate) mod inject {
+    use std::cell::Cell;
+
+    thread_local! {
+        static UNKNOWN: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// Solange er lebt, ist jede Kennung auf diesem Thread unbekannt.
+    pub(crate) struct UnknownIdentities;
+
+    impl UnknownIdentities {
+        pub(crate) fn on() -> Self {
+            UNKNOWN.set(true);
+            Self
+        }
+    }
+
+    impl Drop for UnknownIdentities {
+        fn drop(&mut self) {
+            UNKNOWN.set(false);
+        }
+    }
+
+    pub(super) fn unknown() -> bool {
+        UNKNOWN.get()
+    }
+}
+
 /// [`FileInfo`] des Handles `file`.
 #[cfg(unix)]
 pub(crate) fn file_info(file: &File) -> io::Result<FileInfo> {
     use std::os::unix::fs::MetadataExt;
     let meta = file.metadata()?;
+    #[cfg(test)]
+    let known = !inject::unknown();
+    #[cfg(not(test))]
+    let known = true;
     Ok(FileInfo {
-        identity: Some(Identity {
+        identity: known.then(|| Identity {
             volume: meta.dev(),
             id: u128::from(meta.ino()),
         }),
@@ -193,7 +258,11 @@ pub(crate) fn file_info(file: &File) -> io::Result<FileInfo> {
 
 /// [`FileInfo`] des Handles `file`: Attribute und Zahl der Namen aus
 /// `GetFileInformationByHandle`, die Kennung aus `GetFileInformationByHandleEx`
-/// (`FileIdInfo`, 128 Bit). Scheitert die zweite Abfrage, ist die Kennung unbekannt.
+/// (`FileIdInfo`, 128 Bit). Scheitert die zweite Abfrage (Datentraeger ohne Datei-Kennung,
+/// typisch FAT), ist die Kennung unbekannt (`None`). Das ist kein stilles Weitermachen:
+/// jeder Vergleich lehnt eine unbekannte Kennung ab ([`same_identity`]), und der
+/// verankerte Ladeweg meldet sie als [`VolumeUnsupported`] (`volume_unsupported`),
+/// nicht als Link-Ablehnung.
 #[cfg(windows)]
 pub(crate) fn file_info(file: &File) -> io::Result<FileInfo> {
     use std::os::windows::io::AsRawHandle;

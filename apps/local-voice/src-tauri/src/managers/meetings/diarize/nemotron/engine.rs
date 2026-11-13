@@ -206,6 +206,14 @@ fn check_io(session: &Session) -> Result<(), DiarizeError> {
     }
 }
 
+/// Ladefehler, wenn der Datentraeger keine Datei-Kennung liefert (Windows: `FileIdInfo`;
+/// typisch FAT): ohne sie laesst sich weder ein Ordner- noch ein Namenstausch belegen, der
+/// verankerte Ladeweg lehnt ab (siehe `download::anchor`). Der Provisionierungscode dazu
+/// ist `volume_unsupported`.
+const VOLUME_UNSUPPORTED: &str = "volume_unsupported: Datentraeger liefert keine Datei-Kennung \
+     (z. B. FAT); das Modell wird dort weder bereitgestellt noch geladen \
+     (Datenordner auf einen NTFS- oder ReFS-Datentraeger legen)";
+
 impl OnnxBlockModel {
     /// Laedt das Modell. Liegt `model_path` an seinem Katalogplatz, ist es eine
     /// geschuetzte Generation ([`Self::load_verified`]): beide Dateien werden ueber
@@ -285,6 +293,12 @@ impl OnnxBlockModel {
                     short(model_path)
                 )))
             }
+            Err(e) if safe::is_volume_unsupported(&e) => {
+                return Err(DiarizeError::Load(format!(
+                    "{}: {VOLUME_UNSUPPORTED}",
+                    short(model_path)
+                )))
+            }
             Err(e) => {
                 return Err(DiarizeError::Load(format!("{}: {e}", short(model_path))));
             }
@@ -350,6 +364,8 @@ impl OnnxBlockModel {
                         "{}: Modelldatei ist ein Link oder keine normale Datei (im Modellmanager neu bereitstellen)",
                         short(&graph_path)
                     ))
+                } else if safe::is_volume_unsupported(&e) {
+                    DiarizeError::Load(format!("{}: {VOLUME_UNSUPPORTED}", short(&graph_path)))
                 } else {
                     DiarizeError::Load(format!("{}: {e}", short(&graph_path)))
                 }
@@ -1218,6 +1234,40 @@ mod tests {
             "Pfad im Text: {msg}"
         );
         assert_eq!(std::fs::read(&foreign).unwrap(), tiny.weights);
+    }
+
+    /// Ein Datentraeger ohne Datei-Kennung (hier eingespielt: jede Kennung unbekannt) ist ein
+    /// eigener Ladefehler `volume_unsupported`, keine Link-Ablehnung, ohne Pfad im Text, und
+    /// es wird nichts geladen. Einmal an der Datei (der Anker steht schon), einmal am
+    /// Ordner des Katalogplatzes (der Anker kommt gar nicht zustande).
+    #[cfg(unix)]
+    #[test]
+    fn a_volume_without_file_ids_is_its_own_load_error() {
+        use crate::managers::model::download::safe::inject::UnknownIdentities;
+        let tiny = Tiny::new(10.0);
+        let dir = tempfile::tempdir().unwrap();
+        let files = catalog_layout(dir.path(), catalog_sizes());
+        let _unknown = UnknownIdentities::on();
+
+        for (what, msg, hidden_dir) in [
+            ("Datei", load_message(tiny.load()), tiny.dir.path()),
+            (
+                "Ordner",
+                load_message(OnnxBlockModel::load(&files[0], 1)),
+                dir.path(),
+            ),
+        ] {
+            assert!(msg.contains("volume_unsupported"), "{what}: {msg}");
+            assert!(
+                msg.contains("NTFS"),
+                "{what}: ohne den Hinweis auf NTFS/ReFS: {msg}"
+            );
+            assert!(!msg.contains("Link"), "{what}: als Link gemeldet: {msg}");
+            assert!(
+                !msg.contains(hidden_dir.to_str().unwrap()),
+                "{what}: Pfad im Text: {msg}"
+            );
+        }
     }
 }
 

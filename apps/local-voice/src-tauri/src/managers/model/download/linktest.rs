@@ -37,24 +37,40 @@ fn skipped(what: &str, why: &std::io::Error) {
     );
 }
 
+/// Der Pfad mit Windows-Trennern. `std` fasst `/` und `\` als Trenner, `cmd` (`mklink`)
+/// liest ein unquotiertes `/a` aber als Schalter, und ein relatives Symlink-Ziel wird so
+/// abgelegt, wie es ankommt. Darum gehen Link und Ziel nie mit gemischten Trennern an
+/// diese Aufrufe (die Tests bauen Pfade ausserdem Stueck fuer Stueck).
+#[cfg(windows)]
+fn windows_form(path: &Path) -> std::path::PathBuf {
+    std::path::PathBuf::from(path.to_string_lossy().replace('/', "\\"))
+}
+
 /// Ein Link auf einen Ordner, der keine Rechte braucht: unter Unix ein Symlink,
-/// unter Windows eine Junction. Scheitert das Anlegen, schlaegt der Test fehl.
+/// unter Windows eine Junction (das Ziel muss dort ein absoluter Pfad sein). Scheitert das
+/// Anlegen, schlaegt der Test fehl, mit der vollen Ausgabe von `mklink` (stdout UND
+/// stderr, dort steht die Fehlermeldung) und beiden Pfaden.
 pub(crate) fn folder_link(link: &Path, target: &Path) {
     #[cfg(unix)]
     std::os::unix::fs::symlink(target, link)
         .unwrap_or_else(|e| panic!("Ordner-Link nicht anlegbar: {e}"));
     #[cfg(windows)]
     {
+        let (link, target) = (windows_form(link), windows_form(target));
         let made = std::process::Command::new("cmd")
             .args(["/C", "mklink", "/J"])
-            .arg(link)
-            .arg(target)
+            .arg(&link)
+            .arg(&target)
             .output()
             .unwrap_or_else(|e| panic!("mklink nicht startbar: {e}"));
         assert!(
             made.status.success(),
-            "Junction nicht anlegbar: {}",
-            String::from_utf8_lossy(&made.stdout)
+            "Junction nicht anlegbar (Status {:?}): stdout={:?} stderr={:?}; Link={}, Ziel={}",
+            made.status.code(),
+            String::from_utf8_lossy(&made.stdout),
+            String::from_utf8_lossy(&made.stderr),
+            link.display(),
+            target.display()
         );
     }
 }
@@ -70,7 +86,7 @@ pub(crate) fn symlink_file(link: &Path, target: &Path) -> bool {
     }
     #[cfg(windows)]
     {
-        match std::os::windows::fs::symlink_file(target, link) {
+        match std::os::windows::fs::symlink_file(windows_form(target), windows_form(link)) {
             Ok(()) => true,
             Err(e) if skip_requested() => {
                 skipped("Datei-Symlink", &e);
@@ -94,7 +110,7 @@ pub(crate) fn symlink_dir(link: &Path, target: &Path) -> bool {
     }
     #[cfg(windows)]
     {
-        match std::os::windows::fs::symlink_dir(target, link) {
+        match std::os::windows::fs::symlink_dir(windows_form(target), windows_form(link)) {
             Ok(()) => true,
             Err(e) if skip_requested() => {
                 skipped("Ordner-Symlink", &e);

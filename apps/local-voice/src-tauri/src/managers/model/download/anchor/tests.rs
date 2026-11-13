@@ -435,6 +435,29 @@ fn link_forms() -> &'static [bool] {
     }
 }
 
+/// `root` plus die durch `/` getrennten Bestandteile von `spec`, Stueck fuer Stueck gefuegt.
+/// Nie `root.join("w/a")`: unter Windows entstuende `...\root\w/a`, und `cmd` liest bei
+/// `mklink` das unquotierte `/a` als Schalter (Junction nicht anlegbar).
+fn rel(root: &Path, spec: &str) -> PathBuf {
+    spec.split('/')
+        .fold(root.to_path_buf(), |path, part| path.join(part))
+}
+
+/// Benennt `victim` (Ordner oder Datei) nach `moved` um und legt danach an seine Stelle,
+/// was `make` anlegt. `true`: getauscht. Scheitert das Umbenennen oder das Anlegen
+/// (erlaubtes Ueberspringen unter Windows), ist `victim` danach wieder an seinem Platz:
+/// sonst fehlte es, und der Nicht-getauscht-Zweig des Tests stuende vor einem leeren Platz.
+fn swap_dir(victim: &Path, moved: &Path, make: impl FnOnce() -> bool) -> bool {
+    if std::fs::rename(victim, moved).is_err() {
+        return false;
+    }
+    if make() {
+        return true;
+    }
+    std::fs::rename(moved, victim).expect("weg benannten Ordner zurueckbenennen");
+    false
+}
+
 /// Alle Dateien unter `dir` mit Inhalt, sortiert (Ordner mit `None`): ein Abbild, das
 /// jede angelegte, geaenderte oder geloeschte Datei verraet.
 fn snapshot(dir: &Path) -> Vec<(String, Option<Vec<u8>>)> {
@@ -476,16 +499,16 @@ fn a_folder_replaced_by_a_link_just_before_it_is_opened_is_refused_and_the_sibli
                 let dir = TempDir::new().unwrap();
                 let root = dir.path().join("root");
                 for tree in ["w/b", "x"] {
-                    let tree = root.join(tree);
+                    let tree = rel(&root, tree);
                     std::fs::create_dir_all(&tree).unwrap();
                     write(&tree.join("fremd.bin"), SENTINEL);
                     write(&tree.join("model.onnx_data.partial"), SENTINEL);
                 }
-                std::fs::create_dir_all(root.join("w").join("a")).unwrap();
-                let sibling_path = root.join(sibling);
+                std::fs::create_dir_all(rel(&root, "w/a")).unwrap();
+                let sibling_path = rel(&root, sibling);
                 let before = snapshot(&sibling_path);
 
-                let victim_path = root.join(victim);
+                let victim_path = rel(&root, victim);
                 let moved = victim_path.with_extension("alt");
                 // Unix: relativer Link im Elternordner; Windows: die Junction braucht
                 // einen absoluten Pfad.
@@ -502,12 +525,10 @@ fn a_folder_replaced_by_a_link_just_before_it_is_opened_is_refused_and_the_sibli
                         if point != Point::BeforeDir(index) || swapped.load(Ordering::SeqCst) {
                             return;
                         }
-                        if std::fs::rename(&victim_path, &moved).is_err() {
-                            return;
-                        }
-                        if link_dir(real_symlink, &victim_path, &link_to) {
-                            swapped.store(true, Ordering::SeqCst);
-                        }
+                        let done = swap_dir(&victim_path, &moved, || {
+                            link_dir(real_symlink, &victim_path, &link_to)
+                        });
+                        swapped.store(done, Ordering::SeqCst);
                     })
                 };
 
@@ -532,6 +553,174 @@ fn a_folder_replaced_by_a_link_just_before_it_is_opened_is_refused_and_the_sibli
             }
         }
     }
+}
+
+/// Der geprueft Ordner wird UNMITTELBAR vor `open_dir` weg benannt und ein ganz NORMALER
+/// fremder Geschwisterordner (mit fremder Datei und fremder `.partial` als Wachposten)
+/// unter seinen Namen verschoben: kein Link, nichts, was `symlink_metadata` oder die
+/// Attribute verraten. Unter Unix kennt schon die Namenslesung dev/ino; unter Windows hat
+/// nur der festgehaltene Ursprung (`Origin`) eine Kennung. Erwartet: Ablehnung vor jeder
+/// Arbeit im Ordner; der fremde Baum (jetzt unter dem Namen des Opfers) und der weg
+/// benannte Ursprung bleiben Byte fuer Byte gleich. Index 1 tauscht den letzten Ordner
+/// der Kette, Index 0 den ersten. Lassen sich Ordner dort nicht tauschen (Windows), gibt
+/// es den Tausch nicht.
+#[test]
+fn a_folder_renamed_away_and_replaced_by_a_normal_sibling_just_before_opening_is_refused() {
+    for (index, victim, sibling) in [(1usize, "w/a", "w/b"), (0, "w", "x")] {
+        for create in [false, true] {
+            let dir = TempDir::new().unwrap();
+            let root = dir.path().join("root");
+            for tree in ["w/b", "x"] {
+                let tree = rel(&root, tree);
+                std::fs::create_dir_all(&tree).unwrap();
+                write(&tree.join("fremd.bin"), SENTINEL);
+                write(&tree.join("model.onnx_data.partial"), SENTINEL);
+            }
+            std::fs::create_dir_all(rel(&root, "w/a")).unwrap();
+            let (victim_path, sibling_path) = (rel(&root, victim), rel(&root, sibling));
+            let moved = victim_path.with_extension("alt");
+            let (origin_before, sibling_before) = (snapshot(&victim_path), snapshot(&sibling_path));
+
+            let swapped = Arc::new(AtomicBool::new(false));
+            let _hook = {
+                let swapped = swapped.clone();
+                let (victim_path, sibling_path, moved) =
+                    (victim_path.clone(), sibling_path.clone(), moved.clone());
+                hook::set(&root, move |point| {
+                    if point != Point::BeforeDir(index) || swapped.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    let done = swap_dir(&victim_path, &moved, || {
+                        std::fs::rename(&sibling_path, &victim_path).is_ok()
+                    });
+                    swapped.store(done, Ordering::SeqCst);
+                })
+            };
+
+            let result = Anchor::open(&root, &["w", "a"], create);
+
+            let what = format!("index={index} create={create}");
+            if swapped.load(Ordering::SeqCst) {
+                assert_refused(result);
+                assert_eq!(
+                    snapshot(&victim_path),
+                    sibling_before,
+                    "fremder Baum veraendert ({what})"
+                );
+                assert_eq!(
+                    read(&victim_path.join("model.onnx_data.partial")),
+                    SENTINEL,
+                    "{what}"
+                );
+                assert_eq!(
+                    snapshot(&moved),
+                    origin_before,
+                    "weg benannter Ordner veraendert ({what})"
+                );
+            } else {
+                swap_must_have_happened();
+                assert!(result.unwrap().is_some(), "{what}");
+            }
+        }
+    }
+}
+
+/// Die Datei wird UNMITTELBAR vor dem Oeffnen (nach der Namenspruefung) durch einen
+/// relativen Link `name -> fremd/neu` ersetzt (Unterordner `fremd` im Ankerordner; das Ziel
+/// fehlt oder ist eine fremde Datei). `cap-std` folgt einem Link innerhalb des Ordners
+/// dort, wo es von Hand aufloest, auch mit `create`: die Datei entstuende am Linkziel.
+/// Erwartet: Ablehnung, an `fremd/` aendert sich nichts (nichts angelegt, nichts
+/// beschrieben), die weg benannte echte Datei bleibt Byte fuer Byte gleich. Fuer das
+/// Anlegen (`open_partial` ohne Datei), das Fortsetzen (`open_partial` mit Datei) und das
+/// Lesen (`open_read`). Windows: Datei-Symlinks brauchen Rechte (Skip-Regel aus `linktest`).
+#[test]
+fn a_file_replaced_by_a_link_just_before_it_is_opened_is_refused_and_nothing_is_created() {
+    const NAME: &str = "model.onnx_data.partial";
+    for (op, existing) in [("create", false), ("resume", true), ("read", true)] {
+        for target_exists in [false, true] {
+            let dir = TempDir::new().unwrap();
+            let anchor = open(dir.path(), &["m"]);
+            let folder = dir.path().join("m");
+            let behind = folder.join("fremd");
+            std::fs::create_dir(&behind).unwrap();
+            if target_exists {
+                write(&behind.join("neu"), SENTINEL);
+            }
+            if existing {
+                write(&folder.join(NAME), b"echt");
+            }
+            let before = snapshot(&behind);
+
+            let swapped = Arc::new(AtomicBool::new(false));
+            let _hook = {
+                let (folder, swapped) = (folder.clone(), swapped.clone());
+                hook::set(anchor.root(), move |point| {
+                    if point != Point::BeforeFile || swapped.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    let (link, moved) = (folder.join(NAME), folder.join("echt.alt"));
+                    let target = Path::new("fremd").join("neu");
+                    let make = || symlink_file(&link, &target);
+                    let done = if existing {
+                        swap_dir(&link, &moved, make)
+                    } else {
+                        make()
+                    };
+                    swapped.store(done, Ordering::SeqCst);
+                })
+            };
+
+            let result = match op {
+                "read" => anchor.open_read(NAME),
+                _ => anchor.open_partial(NAME),
+            };
+
+            let what = format!("op={op} target_exists={target_exists}");
+            if swapped.load(Ordering::SeqCst) {
+                assert_refused(result);
+                assert_eq!(snapshot(&behind), before, "am Linkziel geaendert ({what})");
+                assert!(is_link(&folder.join(NAME)), "{what}");
+                if existing {
+                    assert_eq!(read(&folder.join("echt.alt")), b"echt", "{what}");
+                }
+            } else {
+                swap_must_have_happened();
+                assert!(result.is_ok(), "{what}");
+            }
+        }
+    }
+}
+
+/// `no_follow` allein (ohne ein von Hand gesetztes `O_NOFOLLOW`) lehnt einen Link im
+/// letzten Stueck ab, auch mit `create` und Schreiben, und legt hinter ihm nichts an. Das
+/// ist die Naht zu `cap-std`: ohne sie folgt es dem Link dort, wo es von Hand aufloest.
+#[test]
+fn no_follow_alone_refuses_a_link_and_creates_nothing_behind_it() {
+    let dir = TempDir::new().unwrap();
+    let folder = Dir::open_ambient_dir(dir.path(), ambient_authority()).unwrap();
+    std::fs::create_dir(dir.path().join("fremd")).unwrap();
+    if !symlink_file(&dir.path().join("link"), &Path::new("fremd").join("neu")) {
+        return;
+    }
+    for (write, create) in [(false, false), (true, false), (true, true)] {
+        let mut options = OpenOptions::new();
+        options.read(true);
+        if write {
+            options.write(true);
+        }
+        if create {
+            options.create(true);
+        }
+        no_follow(&mut options);
+        assert!(
+            folder.open_with("link", &options).is_err(),
+            "Link geoeffnet (write={write} create={create})"
+        );
+    }
+    assert!(
+        names_in(&dir.path().join("fremd")).is_empty(),
+        "hinter dem Link wurde etwas angelegt"
+    );
 }
 
 // ---- check_set -----------------------------------------------------------------
@@ -797,4 +986,78 @@ fn an_oversized_file_is_not_read() {
         GRAPH.len(),
         "nur der Graph wurde gelesen"
     );
+}
+
+// ---- Datentraeger ohne Datei-Kennung ---------------------------------------------------
+
+/// Ohne bekannte Kennung gibt es keinen Anker und keinen Namensvergleich, und das ist ein
+/// eigener Fehler (`volume_unsupported`), keine Ablehnung wegen eines Links. Die Kennung
+/// wird hier eingespielt (Unix liefert immer eine); das Verhalten der Windows-Abfrage
+/// selbst ist nur typgeprueft.
+#[cfg(unix)]
+mod unknown_ids {
+    use super::*;
+    use crate::managers::model::download::safe::inject::UnknownIdentities;
+
+    fn assert_volume_unsupported<T: Debug>(result: io::Result<T>) {
+        let err = result.expect_err("haette abgelehnt werden muessen");
+        assert!(
+            safe::is_volume_unsupported(&err),
+            "kein volume_unsupported, sondern: {err}"
+        );
+        assert!(
+            !safe::is_refusal(&err),
+            "als Link-Ablehnung gemeldet: {err}"
+        );
+        assert!(
+            !err.to_string().contains(std::path::MAIN_SEPARATOR),
+            "Text nennt einen Pfad: {err}"
+        );
+    }
+
+    #[test]
+    fn without_a_file_id_there_is_no_anchor_and_the_error_says_why() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("models");
+        {
+            let _unknown = UnknownIdentities::on();
+            assert_volume_unsupported(Anchor::open(&root, &["diarization", "id"], true));
+            assert_volume_unsupported(Anchor::open(&root, &["diarization", "id"], false));
+            assert_volume_unsupported(Anchor::open(&root, &[], false));
+        }
+        // Gegenprobe: mit Kennung geht es, und was vorher angelegt wurde, stoert nicht.
+        let anchor = Anchor::open(&root, &["diarization", "id"], true)
+            .unwrap()
+            .unwrap();
+        anchor.still_at().unwrap();
+    }
+
+    #[test]
+    fn a_file_or_the_folder_check_without_a_file_id_is_volume_unsupported_not_a_refusal() {
+        let dir = TempDir::new().unwrap();
+        let anchor = open(dir.path(), &["m"]);
+        let folder = dir.path().join("m");
+        write(&folder.join("a.bin"), b"eins");
+        // Ein Anker ohne Kettenstufen (der Ordner selbst ist die Wurzel): kein `step`, nur
+        // `Anchor::open` und `still_at` sehen die Kennung des Ordners.
+        let flat = open(&folder, &[]);
+        let file = anchor.open_read("a.bin").unwrap();
+        {
+            let _unknown = UnknownIdentities::on();
+            assert_volume_unsupported(anchor.open_read("a.bin"));
+            assert_volume_unsupported(anchor.open_partial("neu.partial"));
+            assert_volume_unsupported(anchor.names("a.bin", &file));
+            assert_volume_unsupported(anchor.still_at());
+            assert_volume_unsupported(flat.still_at());
+            let wanted = [Wanted {
+                name: "a.bin",
+                size: 4,
+                sha256: None,
+            }];
+            assert_volume_unsupported(check_set(&anchor, &wanted, &|| false, None));
+        }
+        assert!(anchor.names("a.bin", &file).unwrap());
+        anchor.still_at().unwrap();
+        flat.still_at().unwrap();
+    }
 }

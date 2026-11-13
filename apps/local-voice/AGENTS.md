@@ -114,7 +114,16 @@ folder opened before the first network access (`download/anchor.rs`; every folde
 is opened without following links and compared with its name by a 128-bit file ID, and an
 unknown ID counts as a mismatch), and the loader builds the ONNX session from the very bytes it
 hashed (graph and weights read once each, session created from memory), so a swap between check
-and use cannot change what runs.
+and use cannot change what runs. The identity of each folder is read from a handle on its name
+before the folder is opened and held until the comparison (a folder renamed away and replaced by
+another ordinary folder is refused, also on Windows, where `symlink_metadata` has no ID), and the
+last name component of a file is opened without following links on every system (`cap-std`
+resolves by hand on Windows, macOS and Linux without `openat2` and would otherwise follow a link
+there, even when creating). Limit: on a volume that gives no usable file ID (Windows
+`FileIdInfo`; typically FAT, depending on the driver exFAT and some network shares) the model is
+neither provisioned nor loaded: provisioning fails with `volume_unsupported` (not `unsafe_path`,
+no link is in the way), the loader with a load error of that name; keep the data folder on NTFS
+or ReFS. The UI shows its generic download-failed text for it; there is no dedicated message yet.
 
 Threat model of that path. Integrity is guaranteed only by the loader
 (`OnnxBlockModel::load_verified`). A provisioning `Done` is a hint, not a promise: a finished

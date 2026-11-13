@@ -34,11 +34,45 @@
 //! `0xFF`), gilt jeder Vergleich als Ablehnung; es gibt keinen Rueckfall auf eine
 //! 64-Bit-Kennung.
 //!
+//! Ursprung des Ordners ([`step`]): VOR dem Oeffnen (und vor dem Test-Haken, der dazwischen
+//! einen Tausch einschiebt) wird der Name ohne Link-Folgen geoeffnet (Unix
+//! `O_NOFOLLOW | O_DIRECTORY`; Windows `FILE_FLAG_OPEN_REPARSE_POINT |
+//! FILE_FLAG_BACKUP_SEMANTICS`, nur Attribute lesend, alles geteilt), seine Art und
+//! Kennung am Handle gelesen und dieses Handle bis NACH dem Vergleich gehalten. Ein
+//! Ordner, der nach dieser Lesung weg benannt und durch einen anderen, ganz normalen
+//! Ordner unter seinem Namen ersetzt wird, hat eine andere Kennung als der Ursprung und
+//! ist abgelehnt. Unter Windows liefert `symlink_metadata` keine Kennung; ohne diesen
+//! Ursprung gaebe es dort keinen Vergleich. Das gehaltene Handle verhindert zudem, dass
+//! die Kennung des Ursprungs neu vergeben wird (Inode- oder Dateiindex-Wiederverwendung
+//! nach einem Loeschen). Der Ursprung MUSS eine bekannte Kennung haben.
+//!
 //! Pro Datei zusaetzlich (wie in [`safe`], aber ueber das Handle): vor dem Oeffnen
 //! `symlink_metadata` des Namens (Link, Ordner, Geraet: Ablehnung), nach dem Oeffnen
 //! die Pruefung des Handles (normale Datei, kein Reparse-Punkt, zum Schreiben nicht
 //! mehrfach verlinkt) und der Vergleich Name gegen Handle. Ein Abschneiden geschieht
 //! nie beim Oeffnen, sondern erst danach (`set_len`).
+//!
+//! Letztes Namensstueck ohne Link-Folgen, schon beim Oeffnen: `cap-std` loest auf
+//! Windows, macOS und Linux ohne `openat2` (auch wenn eine seccomp-Regel `openat2`
+//! sperrt) von Hand auf und folgt dort einem Link im letzten Stueck selbst, auch beim
+//! Anlegen (`create`): die Datei entstuende am Linkziel, innerhalb des Ordners. Darum
+//! setzt `open_checked` auf allen Systemen `FollowSymlinks::No` ([`no_follow`]). Unter
+//! Windows haengt `cap-std` dann selbst `FILE_FLAG_OPEN_REPARSE_POINT` an (gelesen in
+//! `cap-primitives` 4.0.3, `windows/fs/oflags.rs`): ein bestehender Link wird selbst
+//! geoeffnet und als Fehler gemeldet, am Linkziel entsteht nichts. Unter Unix bleibt
+//! `O_NOFOLLOW` zusaetzlich. Ein Link, der zwischen `symlink_metadata` und dem Oeffnen
+//! eingeschoben wird (Test-Haken `Point::BeforeFile`), ist damit abgelehnt, ohne dass
+//! etwas angelegt wird.
+//!
+//! # Einschraenkung: Datentraeger ohne Datei-Kennung
+//!
+//! Ohne bekannte 128-Bit-Kennung laesst sich weder ein Ordnertausch noch ein
+//! Namenstausch belegen, und es gibt keinen schwaecheren Ersatz. [`Anchor::open`] und
+//! [`check_set`] melden das als [`safe::VolumeUnsupported`] (`volume_unsupported`), nicht
+//! als Link-Ablehnung (`unsafe_path`): Das Modell wird auf einem solchen Datentraeger
+//! weder bereitgestellt noch geladen (typisch FAT, je nach Treiber exFAT und manche
+//! Netzfreigaben; NTFS und ReFS liefern die Kennung). Wer den Datenordner dort hat,
+//! legt ihn auf einen NTFS- oder ReFS-Datentraeger.
 //!
 //! # Bedrohungsmodell und Grenze
 //!
@@ -81,6 +115,7 @@ use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
+use cap_primitives::fs::FollowSymlinks;
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, Metadata, OpenOptions};
 use sha2::{Digest, Sha256};
@@ -158,21 +193,82 @@ fn entry(dir: &Dir, name: &str) -> io::Result<Option<Entry>> {
     }
 }
 
+/// Das letzte Namensstueck wird nie als Link verfolgt. Ohne diese Option loest `cap-std`
+/// dort, wo es von Hand aufloest (Windows, macOS, Linux ohne `openat2`), einen Link im
+/// letzten Stueck selbst auf, auch mit `create`: die Datei entstuende am Linkziel. Mit ihr
+/// meldet es den Link als Fehler (Unix `O_NOFOLLOW`; Windows
+/// `FILE_FLAG_OPEN_REPARSE_POINT` setzt `cap-std` dann selbst, siehe Modulkopf).
+///
+/// Die Option steht oeffentlich nur in `cap-fs-ext` (`OpenOptionsFollowExt`); die Methode
+/// dort ruft genau diesen Wrapper.
+fn no_follow(options: &mut OpenOptions) {
+    options._cap_fs_ext_follow(FollowSymlinks::No);
+}
+
+/// Oeffnet den Namen `name` in `dir` OHNE einem Link zu folgen und liest am Handle, was
+/// er ist: nur Attribute lesend, alles geteilt (der Name laesst sich waehrenddessen
+/// umbenennen und ersetzen, wie ohne das Handle). `None`: es gibt den Namen nicht. Das
+/// Handle geht an den Aufrufer, damit die Kennung nicht neu vergeben werden kann, solange
+/// er sie braucht. Ein Link am Namen ist ein Fehler des Oeffnens (Unix `ELOOP`), unter
+/// Windows ein Handle auf den Reparse-Punkt selbst (`FileInfo::reparse`).
+///
+/// Unix: `O_NOFOLLOW`, fuer Ordner `O_DIRECTORY` (ein ersetzter Eintrag, der keiner ist,
+/// scheitert statt zu blockieren, etwa eine FIFO). Windows: `FILE_FLAG_OPEN_REPARSE_POINT`,
+/// dazu `FILE_FLAG_BACKUP_SEMANTICS` (Ordner), so wie `cap-std` selbst Eintraege ohne
+/// Folgen oeffnet.
+#[cfg_attr(windows, allow(unused_variables))]
+fn open_name(dir: &Dir, name: &str, kind: Kind) -> io::Result<Option<(File, safe::FileInfo)>> {
+    use cap_std::fs::OpenOptionsExt;
+    let mut options = OpenOptions::new();
+    options.read(true);
+    no_follow(&mut options);
+    #[cfg(unix)]
+    options.custom_flags(
+        libc::O_NOFOLLOW
+            | match kind {
+                Kind::Dir => libc::O_DIRECTORY,
+                Kind::File => libc::O_NONBLOCK,
+            },
+    );
+    #[cfg(windows)]
+    {
+        const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+        const SHARE_ALL: u32 = 0x0000_0007;
+        const OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        const BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        options
+            .access_mode(FILE_READ_ATTRIBUTES)
+            .share_mode(SHARE_ALL)
+            .custom_flags(OPEN_REPARSE_POINT | BACKUP_SEMANTICS);
+    }
+    let file = match dir.open_with(name, &options) {
+        Ok(f) => f.into_std(),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let info = file_info(&file)?;
+    Ok(Some((file, info)))
+}
+
 /// Zeigt der Name `name` im Ordner `dir` auf genau das Objekt hinter `info` (ein
 /// geoeffnetes Handle) und ist es von der Art `kind`? Der Name wird ohne Link-Folgen
 /// gelesen; ein Link, die falsche Art, ein fehlender Name oder eine andere Kennung
 /// ist "nein". Eine unbekannte Kennung ist nie gleich ([`same_identity`]): was sich
-/// nicht belegen laesst, wird abgelehnt.
+/// nicht belegen laesst, wird abgelehnt; hat der Datentraeger keine Kennung
+/// ([`safe::VolumeUnsupported`]), ist das ein eigener Fehler und kein "nein".
 ///
 /// Unter Unix liefert `symlink_metadata` Geraet und Inode. Unter Windows nicht; dort
-/// wird der Name ein zweites Mal geoeffnet (nur Attribute lesend, ohne einem
-/// Reparse-Punkt zu folgen, alles geteilt) und die Kennung dieses Handles verglichen.
+/// wird der Name ein zweites Mal geoeffnet ([`open_name`]: ohne einem Reparse-Punkt zu
+/// folgen) und die Kennung dieses Handles verglichen.
 fn names_handle(dir: &Dir, name: &str, info: &safe::FileInfo, kind: Kind) -> io::Result<bool> {
     let Some(e) = entry(dir, name)? else {
         return Ok(false);
     };
     if !e.is(kind) {
         return Ok(false);
+    }
+    if info.identity.is_none() {
+        return Err(safe::volume_unsupported());
     }
     match e.identity {
         Some(_) => Ok(same_identity(e.identity, info.identity)),
@@ -186,34 +282,26 @@ fn reopened_is(_dir: &Dir, _name: &str, _info: &safe::FileInfo, _kind: Kind) -> 
     Ok(false)
 }
 
-/// Der Name wird zum zweiten Mal geoeffnet, ohne einem Reparse-Punkt zu folgen
-/// (`FILE_FLAG_OPEN_REPARSE_POINT`, fuer Ordner mit `FILE_FLAG_BACKUP_SEMANTICS`, so
-/// wie `cap-std` selbst Eintraege ohne Folgen oeffnet), und mit dem Handle `info`
-/// verglichen: kein Reparse-Punkt, die verlangte Art, dieselbe 128-Bit-Kennung.
+/// Der Name wird zum zweiten Mal geoeffnet ([`open_name`]: ohne einem Reparse-Punkt zu
+/// folgen) und mit dem Handle `info` verglichen: kein Reparse-Punkt, die verlangte Art,
+/// dieselbe 128-Bit-Kennung. Hat der Name keine Kennung, ist das der Datentraeger
+/// ([`safe::VolumeUnsupported`]).
 #[cfg(windows)]
 fn reopened_is(dir: &Dir, name: &str, info: &safe::FileInfo, kind: Kind) -> io::Result<bool> {
-    use cap_std::fs::OpenOptionsExt;
-    const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
-    const SHARE_ALL: u32 = 0x0000_0007;
-    const OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-    const BACKUP_SEMANTICS: u32 = 0x0200_0000;
-    let mut options = OpenOptions::new();
-    options
-        .read(true)
-        .access_mode(FILE_READ_ATTRIBUTES)
-        .share_mode(SHARE_ALL)
-        .custom_flags(OPEN_REPARSE_POINT | BACKUP_SEMANTICS);
-    let other = match dir.open_with(name, &options) {
-        Ok(f) => f.into_std(),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
-        Err(e) => return Err(e),
+    let Some((_other, found)) = open_name(dir, name, kind)? else {
+        return Ok(false);
     };
-    let found = file_info(&other)?;
     let right_kind = match kind {
         Kind::File => found.is_file,
         Kind::Dir => found.is_dir,
     };
-    Ok(!found.reparse && right_kind && found.same_file_as(info))
+    if found.reparse || !right_kind {
+        return Ok(false);
+    }
+    if found.identity.is_none() {
+        return Err(safe::volume_unsupported());
+    }
+    Ok(found.same_file_as(info))
 }
 
 fn dir_info(dir: &Dir) -> io::Result<safe::FileInfo> {
@@ -229,18 +317,75 @@ fn plain(name: &str) -> io::Result<()> {
     }
 }
 
+/// Der Ordner `name` von `parent`, wie er VOR dem Oeffnen war: ein normaler Ordner
+/// (kein Link, kein Reparse-Punkt) und seine Kennung, gelesen an einem Handle, das
+/// festgehalten wird, bis der Vergleich gemacht ist.
+struct Origin {
+    plain_dir: bool,
+    identity: Option<Identity>,
+    _held: Option<File>,
+}
+
+/// Ist der Eintrag `name` in `dir` jetzt kein normaler Ordner (mehr)? Fuer Fehler, die
+/// entstehen, weil ein Eintrag im Fenster zu etwas anderem wurde.
+fn is_foreign_dir(dir: &Dir, name: &str) -> bool {
+    entry(dir, name)
+        .ok()
+        .flatten()
+        .is_some_and(|now| !now.is(Kind::Dir))
+}
+
+/// Liest den Ursprung des Namens: erst ohne Link-Folgen die Art (`symlink_metadata`),
+/// dann das Handle ([`open_name`]) mit Art und Kennung. `None`: es gibt den Namen nicht.
+/// Ein Eintrag, der kein normaler Ordner ist, ist ein Ursprung ohne Handle
+/// (`plain_dir == false`); der Aufrufer lehnt ihn ab.
+fn origin(parent: &Dir, name: &str) -> io::Result<Option<Origin>> {
+    let Some(e) = entry(parent, name)? else {
+        return Ok(None);
+    };
+    if !e.is(Kind::Dir) {
+        return Ok(Some(Origin {
+            plain_dir: false,
+            identity: None,
+            _held: None,
+        }));
+    }
+    match open_name(parent, name, Kind::Dir) {
+        Ok(None) => Ok(None),
+        Ok(Some((held, info))) => Ok(Some(Origin {
+            plain_dir: info.is_dir && !info.reparse,
+            identity: info.identity,
+            _held: Some(held),
+        })),
+        Err(_) if is_foreign_dir(parent, name) => Err(safe::refusal()),
+        Err(e) => Err(e),
+    }
+}
+
 /// Ein Schritt der Kette: der Unterordner `name` von `parent`, ohne Link zu folgen.
 /// `None`, wenn er fehlt und nicht angelegt werden soll. `before_open` laeuft
 /// unmittelbar vor dem Oeffnen (Test-Haken: genau hier laesst sich der Ordner tauschen).
 ///
-/// Das geoeffnete Handle wird gegen den Namen geprueft, BEVOR die Kette damit
-/// weiterlaeuft oder irgendetwas im Ordner getan wird: der Name muss (ohne Link-Folgen)
-/// ein Ordner sein, der dieselbe Kennung hat wie das Handle. Wurde der Ordner im
-/// Fenster durch einen Link auf einen Nachbarordner ersetzt und hat `open_dir` dem Link
-/// gefolgt, ist das Handle der Nachbar, der Name ein Link: Ablehnung.
+/// Zuerst wird der Ursprung gelesen und festgehalten ([`origin`]: Art und Kennung an einem
+/// Handle, das bis nach dem Vergleich offen bleibt). Das geoeffnete Handle wird dann
+/// gegen diesen Ursprung UND gegen den Namen geprueft, BEVOR die Kette damit
+/// weiterlaeuft oder irgendetwas im Ordner getan wird:
+///
+/// - Die Kennung des Ursprungs muss bekannt sein und mit der des Handles uebereinstimmen.
+///   Wurde der Ordner im Fenster weg benannt und durch einen anderen, ganz normalen
+///   Ordner unter seinem Namen ersetzt, oeffnet `open_dir` diesen: andere Kennung,
+///   Ablehnung. Das gilt auf allen Systemen; unter Windows kennt erst das Handle eine
+///   Kennung, nicht `symlink_metadata`.
+/// - Der Name muss (ohne Link-Folgen) ein Ordner sein, der dieselbe Kennung hat wie das
+///   Handle. Wurde der Ordner im Fenster durch einen Link auf einen Nachbarordner ersetzt
+///   und hat `open_dir` dem Link gefolgt, ist das Handle der Nachbar, der Name ein Link:
+///   Ablehnung.
+///
+/// Fehlt dem Datentraeger die Kennung, ist das [`safe::VolumeUnsupported`], keine
+/// Ablehnung wegen eines Links.
 fn step(parent: &Dir, name: &str, create: bool, before_open: &dyn Fn()) -> io::Result<Option<Dir>> {
     plain(name)?;
-    let mut before = entry(parent, name)?;
+    let mut before = origin(parent, name)?;
     if before.is_none() {
         if !create {
             return Ok(None);
@@ -250,29 +395,31 @@ fn step(parent: &Dir, name: &str, create: bool, before_open: &dyn Fn()) -> io::R
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
             Err(e) => return Err(e),
         }
-        before = entry(parent, name)?;
+        before = origin(parent, name)?;
     }
     let Some(before) = before else {
         return Err(io::Error::from(io::ErrorKind::NotFound));
     };
-    if !before.is(Kind::Dir) {
+    if !before.plain_dir {
         return Err(safe::refusal());
     }
     before_open();
     let dir = parent.open_dir(name).map_err(|e| {
-        let foreign = entry(parent, name)
-            .ok()
-            .flatten()
-            .is_some_and(|now| !now.is(Kind::Dir));
-        if foreign {
+        if is_foreign_dir(parent, name) {
             safe::refusal()
         } else {
             e
         }
     })?;
     let info = dir_info(&dir)?;
-    let moved = before.identity.is_some() && !same_identity(before.identity, info.identity);
-    if !info.is_dir || info.reparse || moved || !names_handle(parent, name, &info, Kind::Dir)? {
+    if !info.is_dir || info.reparse {
+        return Err(safe::refusal());
+    }
+    if before.identity.is_none() || info.identity.is_none() {
+        return Err(safe::volume_unsupported());
+    }
+    let moved = !same_identity(before.identity, info.identity);
+    if moved || !names_handle(parent, name, &info, Kind::Dir)? {
         return Err(safe::refusal());
     }
     Ok(Some(dir))
@@ -305,8 +452,8 @@ pub(crate) struct Anchor {
     chain: Vec<Dir>,
     root: PathBuf,
     parts: Vec<String>,
-    /// Kennung des Modellordners; `None`: unbekannt, dann besteht keine Pruefung.
-    id: Option<Identity>,
+    /// Kennung des Modellordners; bekannt (sonst gibt es keinen Anker, siehe [`Anchor::open`]).
+    id: Identity,
 }
 
 /// Ohne Pfade: ein Anker taucht in Fehlertexten und Logs nie mit seinem Ordner auf.
@@ -322,17 +469,23 @@ impl Anchor {
     /// Oeffnet `root`/`parts...` Komponente fuer Komponente ohne Link-Folgen. Mit
     /// `create` werden fehlende Ordner angelegt, sonst ist ein fehlender Rest `None`.
     /// Ein Link oder Nicht-Ordner auf dem Weg ist eine Ablehnung ([`safe::is_refusal`]).
+    /// Liefert der Datentraeger keine Kennung fuer den Modellordner (oder einen Ordner der
+    /// Kette), ist das [`safe::VolumeUnsupported`] ([`safe::is_volume_unsupported`]), keine
+    /// Ablehnung: ohne Kennung gibt es keinen Anker.
     pub(crate) fn open(root: &Path, parts: &[&str], create: bool) -> io::Result<Option<Self>> {
         let parts: Vec<String> = parts.iter().map(|p| (*p).to_string()).collect();
         let Some(chain) = walk(root, &parts, create)? else {
             return Ok(None);
         };
         let info = dir_info(chain.last().expect("Kette nicht leer"))?;
+        let Some(id) = info.identity else {
+            return Err(safe::volume_unsupported());
+        };
         Ok(Some(Self {
             chain,
             root: root.to_path_buf(),
             parts,
-            id: info.identity,
+            id,
         }))
     }
 
@@ -355,7 +508,10 @@ impl Anchor {
             return Err(safe::refusal());
         };
         let info = dir_info(chain.last().expect("Kette nicht leer"))?;
-        if same_identity(info.identity, self.id) {
+        if info.identity.is_none() {
+            return Err(safe::volume_unsupported());
+        }
+        if same_identity(info.identity, Some(self.id)) {
             Ok(())
         } else {
             Err(safe::refusal())
@@ -396,8 +552,10 @@ impl Anchor {
             None if !create => return Err(io::Error::from(io::ErrorKind::NotFound)),
             _ => {}
         }
+        fire(&self.root, Point::BeforeFile);
         let mut options = OpenOptions::new();
         options.read(true);
+        no_follow(&mut options);
         if write {
             options.write(true);
         }
@@ -523,6 +681,9 @@ pub(crate) enum Point {
     /// Unmittelbar vor dem Oeffnen der Komponente mit diesem Index der Kette (Index in
     /// `parts`, 0 = der erste Ordner unter der Datenwurzel).
     BeforeDir(usize),
+    /// Unmittelbar vor dem Oeffnen einer Datei im Modellordner, nach der Namenspruefung
+    /// (`symlink_metadata`): hier laesst sich der Name durch einen Link ersetzen.
+    BeforeFile,
     /// Alle Dateien sind geoeffnet, noch keine gelesen.
     Opened,
     /// Die Datei mit diesem Index ist gelesen und gehasht.

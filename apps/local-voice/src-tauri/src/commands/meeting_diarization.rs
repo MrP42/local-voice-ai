@@ -29,15 +29,14 @@
 //!   dieselbe Luecke (sie belegt nur, dass die Datei einmal gut war) und liesse
 //!   Altbestaende ohne Marke als „nicht installiert“ erscheinen;
 //! - Reihenfolge: die Datei, die der Motor oeffnet (die erste des Eintrags),
-//!   kommt zuletzt; sie liegt nur da, wenn alle anderen zuvor erfolgreich geprueft
-//!   wurden. Muss
-//!   eine andere Datei ersetzt werden, wird sie vorher zurueckgezogen (nicht
-//!   geloescht, sondern als `.partial` abgelegt, damit eine gueltige Datei nicht
-//!   neu geladen werden muss), der Motor bekommt also nie einen Graphen neben
-//!   ungeprueften oder defekten Gewichten, auch nicht, wenn die Reparatur
-//!   scheitert. Die Reihenfolge der Umbenennungen ist keine Sicherheitsgrenze
-//!   mehr (das ist die Pruefung beim Laden, siehe unten), sie haelt nur den
-//!   Normalfall sauber;
+//!   kommt zuletzt; sie liegt im Normalfall nur da, wenn alle anderen zuvor erfolgreich
+//!   geprueft wurden. Muss eine andere Datei ersetzt werden, wird sie vorher
+//!   zurueckgezogen (nicht geloescht, sondern als `.partial` abgelegt, damit eine
+//!   gueltige Datei nicht neu geladen werden muss), der Motor bekommt also im Normalfall
+//!   (ohne gleichzeitigen Eingriff eines anderen Prozesses) nie einen Graphen neben
+//!   ungeprueften oder defekten Gewichten, auch nicht, wenn die Reparatur scheitert. Die
+//!   Reihenfolge der Umbenennungen ist keine Sicherheitsgrenze (das ist die Pruefung
+//!   beim Laden, siehe unten), sie haelt nur den Normalfall sauber;
 //! - Bedeutung von `Done` ([`Fetch::Done`]): ein abgeschlossener Bereitstellungsversuch
 //!   mit erfolgreichen Lesepruefungen. Das ist ein Hinweis und KEINE Integritaetszusage
 //!   fuer den Plattenbestand danach und keine gemeinsame Momentaufnahme des Paars (die
@@ -82,6 +81,13 @@
 //!   hinausfuehren koennte (absoluter Pfad, `..`, Backslash, Laufwerksbuchstabe,
 //!   Windows-Geraetename, zwei Namen nur in der Schreibweise verschieden), ergibt
 //!   `catalog_invalid`;
+//! - Datentraeger ohne Datei-Kennung: liefert er keine 128-Bit-Kennung fuer den
+//!   Modellordner (Windows `FileIdInfo`; typisch FAT, je nach Treiber exFAT und manche
+//!   Netzfreigaben), laesst sich weder ein Ordner- noch ein Namenstausch belegen. Das
+//!   Bereitstellen meldet dann `volume_unsupported` (nicht `unsafe_path`: es ist kein Link
+//!   im Weg), der Lader einen entsprechenden Ladefehler. Das Modell wird dort weder
+//!   bereitgestellt noch geladen (fail closed, kein schwaecherer Ersatz); der Datenordner
+//!   gehoert auf einen NTFS- oder ReFS-Datentraeger (`download::anchor`);
 //! - voller Datentraeger: der Schreibfehler bricht ab, die Teildatei bleibt fuer
 //!   die Fortsetzung, bereits fertige Dateien bleiben liegen;
 //! - zwei Aufrufe gleichzeitig: einer laeuft, der andere meldet `download_running`.
@@ -160,10 +166,13 @@ fn is_sha256(text: &str) -> bool {
 }
 
 /// Fehlertext eines E/A-Fehlers; eine Ablehnung wegen Verknuepfung heisst
-/// `unsafe_path` (kein Pfad im Text).
+/// `unsafe_path`, ein Datentraeger ohne Datei-Kennung `volume_unsupported` (kein Pfad im
+/// Text).
 fn io_msg(e: &std::io::Error) -> String {
     if safe::is_refusal(e) {
         "unsafe_path".to_string()
+    } else if safe::is_volume_unsupported(e) {
+        "volume_unsupported".to_string()
     } else {
         e.to_string()
     }
@@ -1656,6 +1665,11 @@ mod tests {
                             }
                             if dir_link(real_symlink, &victim, &link_to) {
                                 swapped.store(true, Ordering::SeqCst);
+                            } else {
+                                // Kein Link anlegbar (erlaubtes Ueberspringen): der Ordner
+                                // kommt zurueck, sonst fehlte er im Nicht-getauscht-Zweig.
+                                std::fs::rename(&moved, &victim)
+                                    .expect("weg benannten Ordner zurueckbenennen");
                             }
                         })
                     };
@@ -1791,6 +1805,54 @@ mod tests {
                     assert_eq!(out.unwrap(), Fetch::Done);
                 }
             }
+        }
+
+        // ---- Datentraeger ohne Datei-Kennung ------------------------------------------
+
+        /// Die Abbildung auf den Code der Oberflaeche: ein Datentraeger ohne Datei-Kennung
+        /// heisst `volume_unsupported`, eine Link-Ablehnung `unsafe_path`, alles andere
+        /// bleibt sein Text. Auf jedem System, ohne eingespielte Kennung.
+        #[test]
+        fn io_errors_map_to_their_codes() {
+            let unsupported =
+                std::io::Error::new(std::io::ErrorKind::Unsupported, safe::VolumeUnsupported);
+            assert_eq!(io_msg(&unsupported), "volume_unsupported");
+            let refused = std::io::Error::new(std::io::ErrorKind::PermissionDenied, safe::Refused);
+            assert_eq!(io_msg(&refused), "unsafe_path");
+            assert_eq!(io_msg(&std::io::Error::other("x")), "x");
+            // Ein gewoehnlicher Unsupported-Fehler ist noch kein Datentraegerbefund.
+            let plain = std::io::Error::from(std::io::ErrorKind::Unsupported);
+            assert_ne!(io_msg(&plain), "volume_unsupported");
+        }
+
+        /// Liefert der Datentraeger keine Datei-Kennung (hier eingespielt), ist das
+        /// Ergebnis `volume_unsupported` und nicht `unsafe_path`: es ist kein Link im Weg.
+        /// Es geht kein Netzzugriff voraus und es entsteht keine Modelldatei. Mit Kennung
+        /// gelingt dieselbe Bereitstellung danach (die Unbekanntheit haengt nur am Wachposten).
+        #[cfg(unix)]
+        #[tokio::test]
+        async fn a_volume_without_file_ids_is_volume_unsupported_and_provisions_nothing() {
+            use crate::managers::model::download::safe::inject::UnknownIdentities;
+            let server = serve(both_routes()).await;
+            let dir = tempfile::tempdir().unwrap();
+            let files = rebase(two_files(&server, None), dir.path());
+            let err = {
+                let _unknown = UnknownIdentities::on();
+                provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
+                    .await
+                    .unwrap_err()
+            };
+            assert_eq!(err, "volume_unsupported");
+            assert!(
+                server.requests.lock().unwrap().is_empty(),
+                "Netzzugriff trotz fehlender Kennung"
+            );
+            assert!(!files[0].1.exists() && !files[1].1.exists());
+
+            let out = provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
+                .await
+                .unwrap();
+            assert_eq!(out, Fetch::Done);
         }
 
         // ---- Dateien mit mehreren Namen (Hardlink), auf jedem System ---------------

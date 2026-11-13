@@ -74,6 +74,56 @@ fn an_ordinary_error_is_not_a_refusal() {
     assert!(!is_refusal(&io::Error::other("x")));
 }
 
+/// Ein Datentraeger ohne Datei-Kennung ist ein eigener Fehler, keine Link-Ablehnung: die
+/// beiden Meldungen lassen sich nicht verwechseln, und keine nennt einen Pfad.
+#[test]
+fn a_volume_without_file_ids_is_its_own_error_and_not_a_refusal() {
+    let err = volume_unsupported();
+    assert!(is_volume_unsupported(&err));
+    assert!(!is_refusal(&err));
+    assert!(err.to_string().starts_with("volume_unsupported"), "{err}");
+    assert!(
+        !err.to_string().contains(std::path::MAIN_SEPARATOR),
+        "{err}"
+    );
+
+    assert!(!is_volume_unsupported(&refusal()));
+    assert!(!is_volume_unsupported(&io::Error::from(
+        io::ErrorKind::Unsupported
+    )));
+    assert!(!is_volume_unsupported(&io::Error::other("x")));
+}
+
+/// Die eingespielte Unbekanntheit (Unix liefert sonst immer eine Kennung) gilt nur fuer
+/// den Wachposten auf diesem Thread, und der Vergleich lehnt sie ab.
+#[cfg(unix)]
+#[test]
+fn an_injected_unknown_identity_is_unknown_only_while_the_guard_lives_and_never_equal() {
+    let dir = TempDir::new().unwrap();
+    let a = dir.path().join("a");
+    fs::write(&a, b"1").unwrap();
+    let info = || file_info(&File::open(&a).unwrap()).unwrap();
+    assert!(info().identity.is_some());
+    {
+        let _unknown = inject::UnknownIdentities::on();
+        let unknown = info();
+        assert!(unknown.identity.is_none());
+        assert!(!unknown.same_file_as(&unknown));
+        let elsewhere = a.clone();
+        let other_thread = std::thread::spawn(move || {
+            file_info(&File::open(&elsewhere).unwrap())
+                .unwrap()
+                .identity
+                .is_some()
+        });
+        assert!(
+            other_thread.join().unwrap(),
+            "galt auch auf einem anderen Thread"
+        );
+    }
+    assert!(info().identity.is_some());
+}
+
 /// Ein Symlink auf eine Datei: Unix immer, Windows nur mit Entwicklermodus oder
 /// Administrator (sonst rot, ausser `LVA_SKIP_SYMLINK_TESTS=1`, dann mit Meldung).
 #[test]
