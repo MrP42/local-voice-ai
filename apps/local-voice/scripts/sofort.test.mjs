@@ -496,9 +496,8 @@ function neu(handlers, sofort, optionen = {}) {
       player.gespielt.push(wav);
       onStart?.();
     });
-  player.onIdle = () => {
-    if (engine.turn?.audible && engine.turn.done) engine.finishTurn();
-  };
+  // Wie in `start()`: das Ende der Wiedergabe geht an die Engine (Ende des Schritts, Wartezeit auf das nächste Stück).
+  player.onIdle = () => engine.playerLeer();
   engine.player = player;
   engine.state = "listening";
   engine.stopped = false;
@@ -3458,3 +3457,537 @@ test("denkOffenSetzen: klappt die laufende Anzeige, die des Auftrags im Hintergr
   // Nichts davon passt: der Zustand bleibt, wie er war.
   assert.deepEqual(denkOffenSetzen(s, 99, true), s);
 });
+
+// -- Runde 5 (Codex R3 zu lva#547) ----------------------------------------------------------------------
+//
+// Fehlerfälle dieser Runde (vor dem Code aufgeschrieben, Status im Bericht):
+//  H6 Abbruch mitten im Vorgang: das Ergebnis eines Auftrags ist eingereiht und angezeigt (Zeile mit Zwischenstand),
+//     sein Ton hat nie begonnen; Esc, Stoppwort, Modell-/Gesprächswechsel, Widerruf, getippter Text oder Rückstellung
+//     (der Nutzer spricht): die Zeile verschwindet, nichts ist gespeichert, kein Verlauf, keine Quellen; ein später
+//     Beginn des Players oder eine späte Synthese bleibt wirkungslos und berührt die Frist des wartenden Auftrags nicht.
+//  H7 Hängende Synthese ab dem zweiten Stück: erster Ton klingt, das nächste Stück kommt nie: nach
+//     `nachreichenStueckMaxMs` (ab Ende des Players) sind Schritt und Auftrag frei, das Gehörte bleibt als
+//     unterbrochene Zeile, eine späte Synthese bleibt ohne Wirkung. Klingendes wird nie abgeschnitten, ein
+//     rechtzeitiges Stück läuft weiter, angehaltene Wiedergabe (Entscheidung läuft) und Nutzerunterbrechung sind
+//     keine Zeitüberschreitung.
+//  Nicht neu: voller Speicher (Satzpuffer gedeckelt, Runde 1), fehlendes Gerät und Absturz des Denkers (Runde 1),
+//  Player wirft (H3), Synthese des ersten Stücks hängt (H4: Frist des Auftrags).
+
+/**
+ * Wartet, bis alles abgearbeitet ist, was schon angestoßen wurde (Mikroaufgaben und anstehende Rückrufe), ohne
+ * Zeitgeber: Grundlage negativer Nachweise („es kommt nichts mehr“).
+ */
+const flush = async () => {
+  for (let i = 0; i < 3; i++) await new Promise((r) => setImmediate(r));
+};
+
+/**
+ * Das Ergebnis des Auftrags (zwei Sätze) ist eingereiht und angezeigt, sein Ton hat nicht begonnen (der Player
+ * hängt): der Schritt des Nachreichens ist komplett (`historyPushed`), aber noch nichts war zu hören.
+ */
+async function ergebnisStumm(aufbauOptionen = {}) {
+  const r = await aufbauSteuerbar({
+    zeilen: [WEITER_ZEILE, ZWEITE_ZEILE, WETTER_ZEILE],
+    ...aufbauOptionen,
+  });
+  r.d.liefere(0, ...ZWEI_SAETZE);
+  assert.equal(await bis(() => r.t.engine.auftrag?.fertig), true);
+  r.t.player.deferStart = true;
+  r.t.player.finish();
+  assert.equal(
+    await bis(() => r.t.engine.turn?.historyPushed === true),
+    true,
+    "das Ergebnis ist eingereiht, der Ton hat nicht begonnen",
+  );
+  return r;
+}
+
+/** Was in der Liste des echten Speichers zum Ergebnis des Auftrags steht. */
+const ergebnisZeilen = (store, id) =>
+  store.getState().lines.filter((l) => l.auftragVon === id);
+
+/** Was die KI zum Ergebnis dieser Auftragsfrage im Verlauf kennt (Frage oder Ergebnistext). */
+const kenntErgebnis = (t) =>
+  t.verlauf().some((m) => m === `user:${FRAGE}` || m.includes("Protokoll"));
+
+test("H6 echter Speicher, Esc bei eingereihtem, noch stummem Ergebnis: keine Zeile, kein Speicherbeitrag, kein Verlauf, kein späterer Ton", () =>
+  ohneStille(async () => {
+    const { store, engine, gespeichert, handlers } = await mitEchtemSpeicher();
+    const { t, a1 } = await ergebnisStumm({
+      handlers,
+      optionen: { kontext: true, engine },
+    });
+    const gehoert = [...t.player.gespielt];
+    const verworfen = t.log.verworfen;
+    const zeilen = ergebnisZeilen(store, a1.id);
+    assert.equal(zeilen.length, 1, "die Zeile mit dem Zwischenstand steht");
+    assert.equal(zeilen[0].final, false);
+    assert.equal(t.player.gespielt.length, gehoert.length, "noch kein Ton");
+
+    t.engine.interrupt();
+
+    assert.deepEqual(ergebnisZeilen(store, a1.id), [], "Esc nimmt sie zurück");
+    assert.equal(
+      store.getState().lines.some((l) => l.role === "assistant" && !l.final),
+      false,
+      "auch keine andere unfertige Antwortzeile",
+    );
+    assert.equal(t.log.verworfen, verworfen + 1);
+    assert.equal(t.engine.auftrag, null);
+    assert.equal(t.engine.turn, null);
+    assert.equal(t.engine.state, "listening");
+    assert.equal(store.getState().denken, null);
+    assert.equal(store.getState().auftrag, null);
+    assert.equal(kenntErgebnis(t), false, "kein Verlauf");
+    assert.deepEqual(quellen(t, a1.id), [], "keine Quellen");
+    // Später Beginn und Ende des Players, späte Ereignisse: nichts davon wirkt.
+    t.player.deferStart = false;
+    t.player.audioStart();
+    t.player.finish();
+    await flush();
+    assert.deepEqual(t.player.gespielt, gehoert, "kein späterer Ton");
+    assert.deepEqual(ergebnisZeilen(store, a1.id), []);
+    assert.equal(
+      gespeichert.some((e) => e.text.includes("Anna")),
+      false,
+      "nichts gespeichert",
+    );
+    assert.equal(kenntErgebnis(t), false);
+    assert.deepEqual(quellen(t, a1.id), []);
+    assert.equal(t.log.errors.length, 0);
+  }));
+
+test("H6 ein Player, der nach Esc noch einen Beginn meldet: keine endgültige Antwort, keine Quellen, kein Speicherbeitrag", () =>
+  ohneStille(async () => {
+    const { store, engine, gespeichert, handlers } = await mitEchtemSpeicher();
+    const { t, a1 } = await ergebnisStumm({
+      handlers,
+      optionen: { kontext: true, engine },
+    });
+    // Der Player vergisst sein Eingereihtes beim Stoppen nicht (zu spät gemeldete Beginne sind denkbar).
+    t.player.stop = function () {
+      this.stopped++;
+    };
+    t.engine.interrupt();
+    assert.deepEqual(ergebnisZeilen(store, a1.id), []);
+    t.player.deferStart = false;
+    t.player.audioStart();
+    t.player.finish();
+    await flush();
+    assert.deepEqual(ergebnisZeilen(store, a1.id), []);
+    assert.equal(
+      t.log.zeilen.some((z) => z.final && z.auftragVon),
+      false,
+    );
+    assert.deepEqual(quellen(t, a1.id), []);
+    assert.equal(
+      gespeichert.some((e) => e.text.includes("Anna")),
+      false,
+    );
+    assert.equal(t.engine.state, "listening");
+    assert.equal(t.engine.turn, null);
+  }));
+
+test("H6 Esc, solange die Synthese des Ergebnisses noch läuft: nichts erscheint, auch nicht, wenn sie später fertig wird", () =>
+  ohneStille(async () => {
+    let freigeben;
+    const haengt = new Promise((r) => (freigeben = r));
+    const { t, a1 } = await ergebnisBereit([ANTWORT], {
+      handlers: {
+        voice_call_synthesize: ({ text }) =>
+          text === ANTWORT ? haengt : `wav:${text}`,
+      },
+    });
+    t.player.finish();
+    assert.equal(
+      await bis(() => t.engine.turn?.nachreichen !== undefined),
+      true,
+    );
+    const verworfen = t.log.verworfen;
+    t.engine.interrupt();
+    assert.equal(t.engine.auftrag, null);
+    assert.equal(t.engine.turn, null);
+    assert.equal(t.engine.state, "listening");
+    freigeben(ERGEBNIS);
+    await flush();
+    assert.equal(t.player.enqueued.includes(ERGEBNIS), false);
+    assert.equal(
+      t.log.zeilen.some((z) => z.auftragVon),
+      false,
+      "keine Zeile, auch keine unfertige",
+    );
+    assert.equal(t.log.verworfen, verworfen, "nichts zurückzunehmen");
+    assert.equal(kenntErgebnis(t), false);
+    assert.deepEqual(quellen(t, a1.id), []);
+  }));
+
+const ABBRUCHWEGE = {
+  "Esc (interrupt)": (t) => t.engine.interrupt(),
+  "Ende des Gesprächs (stop)": (t) => t.engine.stop(),
+  "Neues Gespräch (resetHistory)": (t) => t.engine.resetHistory(),
+  "Modellwechsel (updateConfig)": (t) =>
+    t.engine.updateConfig({ ...t.config, orchestration: { modell: "b" } }),
+  "Widerruf der Freigabe (revoked)": () =>
+    emit({ kind: "revoked", request_id: "*" }),
+  "getippter Text (sendText)": (t) => void t.engine.sendText("Hallo"),
+};
+for (const [name, ausloeser] of Object.entries(ABBRUCHWEGE)) {
+  test(`H6 ${name} bei eingereihtem, noch stummem Ergebnis: genau eine Rücknahme der Zeile, kein Verlauf, keine Quellen, kein Nachreichen`, () =>
+    mitUhr(() =>
+      ohneStille(async () => {
+        const { t, a1 } = await ergebnisStumm({ optionen: { kontext: true } });
+        const verworfen = t.log.verworfen;
+        assert.ok(
+          t.log.zeilen.some((z) => z.auftragVon === a1.id && !z.final),
+          "die Zeile mit dem Zwischenstand steht",
+        );
+        await ausloeser(t, a1);
+        assert.equal(t.log.verworfen, verworfen + 1);
+        assert.equal(t.engine.auftrag, null);
+        assert.equal(
+          t.log.zeilen.some((z) => z.final && z.auftragVon),
+          false,
+          "nie eine endgültige Zeile des Auftrags",
+        );
+        assert.equal(kenntErgebnis(t), false);
+        // Späte Ereignisse des alten Versuchs: Beginn, Ende, Synthese.
+        t.player.deferStart = false;
+        t.player.audioStart();
+        t.player.finish();
+        await flush();
+        assert.equal(
+          t.log.zeilen.some((z) => z.final && z.auftragVon),
+          false,
+        );
+        assert.equal(t.log.verworfen, verworfen + 1, "keine zweite Rücknahme");
+        assert.deepEqual(quellen(t, a1.id), []);
+        assert.equal(t.log.errors.length, 0);
+      }),
+    ));
+}
+
+test("H6 echter Speicher: der Nutzer spricht (Rückstellung), danach Stoppwort: die Zeile verschwindet sofort, der Auftrag ist verworfen, nichts bleibt", () =>
+  ohneStille(async () => {
+    const { store, engine, gespeichert, handlers } = await mitEchtemSpeicher();
+    const { t, a1 } = await ergebnisStumm({
+      handlers,
+      optionen: { kontext: true, engine },
+    });
+    t.redeLos();
+    assert.ok(
+      t.engine.auftrag && !t.engine.auftrag.verworfen,
+      "zurückgestellt, der Auftrag bleibt",
+    );
+    assert.deepEqual(
+      ergebnisZeilen(store, a1.id),
+      [],
+      "die Zeile steht nicht gespenstisch weiter, bis irgendwann eine Nutzerzeile kommt",
+    );
+    // Das Stoppwort geht nie als Nutzerzeile ins Gespräch: nichts würde die Zeile sonst wegräumen.
+    t.erkenne("Stopp.");
+    t.fruehEnde();
+    t.ende();
+    assert.equal(await bis(() => t.engine.auftrag === null), true);
+    await flush();
+    assert.deepEqual(ergebnisZeilen(store, a1.id), []);
+    assert.equal(
+      store.getState().lines.some((l) => l.role === "assistant" && !l.final),
+      false,
+    );
+    assert.equal(
+      store.getState().lines.some((l) => l.text === "Stopp."),
+      false,
+    );
+    assert.equal(
+      gespeichert.some((e) => e.text.includes("Anna")),
+      false,
+    );
+    assert.equal(kenntErgebnis(t), false);
+    assert.deepEqual(quellen(t, a1.id), []);
+    assert.equal(t.engine.turn, null);
+  }));
+
+test("H6 ein später Beginn des zurückgestellten Versuchs lässt die Frist des wartenden Auftrags unberührt", () =>
+  mitUhr((tick) =>
+    ohneStille(async () => {
+      const { t, a1 } = await ergebnisStumm({ optionen: { kontext: true } });
+      // Der Player gibt sein Eingereihtes beim Stoppen nicht frei: der Beginn kommt nach der Rückstellung doch noch.
+      t.player.stop = function () {
+        this.stopped++;
+      };
+      t.redeLos();
+      assert.ok(t.engine.auftrag && !t.engine.auftrag.nachreichend);
+      t.player.deferStart = false;
+      t.player.audioStart();
+      await flush();
+      assert.ok(
+        t.engine.auftrag && !t.engine.auftrag.verworfen,
+        "der Auftrag wartet weiter",
+      );
+      tick(TUNING.auftragMaxMs);
+      assert.equal(
+        t.engine.auftrag,
+        null,
+        "die Frist des wartenden Auftrags lief weiter und endete ihn",
+      );
+      assert.equal(
+        t.log.zeilen.some((z) => z.final && z.auftragVon === a1.id),
+        false,
+      );
+    }),
+  ));
+
+// H7 ----------------------------------------------------------------------------------------------
+
+/** Zwei Stücke: das erste klingt, die Synthese des zweiten hängt bis `freigeben`. */
+async function zweitesStueckHaengt() {
+  let freigeben;
+  const haengt = new Promise((r) => (freigeben = r));
+  const r = await ergebnisBereit(["Satz eins.", "Satz zwei."], {
+    zeilen: [WEITER_ZEILE, ZWEITE_ZEILE, WETTER_ZEILE],
+    handlers: {
+      voice_call_synthesize: ({ text }) =>
+        text === "Satz zwei." ? haengt : `wav:${text}`,
+    },
+  });
+  r.t.player.finish();
+  assert.equal(
+    await bis(() => r.t.player.gespielt.includes("wav:Satz eins.")),
+    true,
+    "das erste Stück klingt",
+  );
+  return { ...r, freigeben };
+}
+
+test("H7 hängende Synthese ab dem zweiten Stück: nach nachreichenStueckMaxMs sind Schritt und Auftrag frei, das Gehörte bleibt unterbrochen stehen, die späte Synthese bleibt ohne Wirkung", () =>
+  mitUhr((tick) =>
+    ohneStille(async () => {
+      const { t, a1, freigeben } = await zweitesStueckHaengt();
+      // Solange das erste Stück klingt, läuft keine Wartezeit: nichts wird abgeschnitten, so lange es auch dauert.
+      tick(TUNING.auftragMaxMs + 3 * TUNING.nachreichenStueckMaxMs);
+      assert.equal(t.engine.turn?.nachreichen?.turnId, a1.id);
+      assert.equal(t.engine.turn.cancelled, false);
+      assert.ok(t.engine.auftrag && !t.engine.auftrag.verworfen);
+      // Das erste Stück ist zu Ende: der Player ist leer, das zweite fehlt.
+      t.player.finishPiece();
+      tick(TUNING.nachreichenStueckMaxMs - 1);
+      assert.equal(t.engine.turn?.nachreichen?.turnId, a1.id, "noch geduldig");
+      assert.equal(t.engine.state !== "listening", true);
+      tick(1);
+      assert.equal(t.engine.turn, null, "der Schritt ist frei");
+      assert.equal(t.engine.auftrag, null, "der Auftrag ist erledigt");
+      assert.equal(t.engine.state, "listening");
+      assert.deepEqual(t.log.zeilen.at(-1), {
+        t: "Satz eins.",
+        final: true,
+        interrupted: true,
+        auftragVon: a1.id,
+      });
+      assert.ok(
+        t.engine.history.some(
+          (m) =>
+            m.role === "assistant" &&
+            m.interrupted &&
+            m.content.includes("Satz eins"),
+        ),
+        "der Verlauf kennt das Gehörte als unterbrochen",
+      );
+      assert.equal(
+        t.engine.history.some((m) => m.content.includes("Satz zwei")),
+        false,
+      );
+      const zeilen = t.log.zeilen.length;
+      const verworfen = t.log.verworfen;
+      freigeben("wav:Satz zwei.");
+      await flush();
+      assert.equal(t.player.enqueued.includes("wav:Satz zwei."), false);
+      assert.equal(t.log.zeilen.length, zeilen, "keine weitere Zeile");
+      assert.equal(t.log.verworfen, verworfen);
+      assert.equal(t.log.errors.length, 0);
+      assert.equal(t.engine.turn, null);
+      assert.equal(t.engine.state, "listening");
+    }),
+  ));
+
+test("H7 das zweite Stück kommt vor Ablauf der Wartezeit: das Ergebnis wird ganz gesprochen, danach ändert kein Zeitablauf etwas", () =>
+  mitUhr((tick) =>
+    ohneStille(async () => {
+      const { t, a1, freigeben } = await zweitesStueckHaengt();
+      t.player.finishPiece();
+      tick(TUNING.nachreichenStueckMaxMs - 1);
+      freigeben("wav:Satz zwei.");
+      assert.equal(
+        await bis(() => t.player.enqueued.includes("wav:Satz zwei.")),
+        true,
+      );
+      tick(TUNING.nachreichenStueckMaxMs * 3);
+      assert.equal(t.engine.turn?.nachreichen?.turnId, a1.id);
+      assert.equal(t.engine.turn.cancelled, false, "nicht abgeschnitten");
+      t.player.finish();
+      assert.equal(await bis(() => t.engine.auftrag === null), true);
+      assert.deepEqual(t.log.zeilen.at(-1), {
+        t: "Satz eins. Satz zwei.",
+        final: true,
+        interrupted: false,
+        auftragVon: a1.id,
+      });
+      tick(TUNING.nachreichenStueckMaxMs * 3);
+      assert.equal(t.log.zeilen.at(-1).interrupted, false);
+      assert.equal(t.log.errors.length, 0);
+      assert.equal(t.engine.state, "listening");
+    }),
+  ));
+
+test("H7 drei Stücke: jedes Stück stellt die Wartezeit neu, nur die Lücke zählt, nicht die Gesamtdauer", () =>
+  mitUhr((tick) =>
+    ohneStille(async () => {
+      const gates = new Map();
+      const tor = (text) =>
+        new Promise((r) => gates.set(text, () => r(`wav:${text}`)));
+      const { t, a1 } = await ergebnisBereit(
+        ["Satz eins.", "Satz zwei.", "Satz drei."],
+        {
+          handlers: {
+            voice_call_synthesize: ({ text }) =>
+              text === "Satz zwei." || text === "Satz drei."
+                ? tor(text)
+                : `wav:${text}`,
+          },
+        },
+      );
+      t.player.finish();
+      assert.equal(
+        await bis(() => t.player.gespielt.includes("wav:Satz eins.")),
+        true,
+      );
+      for (const [satz, naechster] of [
+        ["Satz zwei.", "Satz drei."],
+        ["Satz drei.", null],
+      ]) {
+        t.player.finishPiece();
+        tick(TUNING.nachreichenStueckMaxMs - 1);
+        assert.equal(t.engine.turn?.nachreichen?.turnId, a1.id);
+        assert.equal(await bis(() => gates.has(satz)), true);
+        gates.get(satz)();
+        assert.equal(
+          await bis(() => t.player.enqueued.includes(`wav:${satz}`)),
+          true,
+        );
+        if (naechster) assert.equal(t.engine.turn?.cancelled, false);
+      }
+      t.player.finish();
+      assert.equal(await bis(() => t.engine.auftrag === null), true);
+      assert.deepEqual(t.log.zeilen.at(-1), {
+        t: "Satz eins. Satz zwei. Satz drei.",
+        final: true,
+        interrupted: false,
+        auftragVon: a1.id,
+      });
+    }),
+  ));
+
+test("H7 der Player lief leer, während das zweite Stück noch eingereiht wird (Dekodieren) und das dritte fehlt: das klingende zweite Stück wird nach Ablauf der Wartezeit nicht abgeschnitten", () =>
+  mitUhr((tick) =>
+    ohneStille(async () => {
+      const frei = {};
+      const tor = (text) =>
+        new Promise((r) => (frei[text] = () => r(`wav:${text}`)));
+      const { t, a1 } = await ergebnisBereit(
+        ["Satz eins.", "Satz zwei.", "Satz drei."],
+        {
+          zeilen: [WEITER_ZEILE, ZWEITE_ZEILE, WETTER_ZEILE],
+          handlers: {
+            voice_call_synthesize: ({ text }) =>
+              text === "Satz zwei." || text === "Satz drei."
+                ? tor(text)
+                : `wav:${text}`,
+          },
+        },
+      );
+      t.player.finish();
+      assert.equal(
+        await bis(() => t.player.gespielt.includes("wav:Satz eins.")),
+        true,
+      );
+      const einreihen = t.player.enqueue;
+      let dekodiert;
+      const dekodieren = new Promise((r) => (dekodiert = r));
+      t.player.enqueue = async (wav, ...rest) => {
+        if (wav === "wav:Satz zwei.") await dekodieren;
+        return einreihen(wav, ...rest);
+      };
+      assert.equal(await bis(() => frei["Satz zwei."]), true);
+      frei["Satz zwei."]();
+      await flush();
+      // Das erste Stück endet, bevor das zweite im Player liegt: die Wartezeit beginnt.
+      t.player.finishPiece();
+      dekodiert();
+      assert.equal(
+        await bis(() => t.player.gespielt.includes("wav:Satz zwei.")),
+        true,
+        "das zweite Stück klingt",
+      );
+      tick(TUNING.nachreichenStueckMaxMs * 3);
+      assert.equal(t.engine.turn?.nachreichen?.turnId, a1.id);
+      assert.equal(t.engine.turn.cancelled, false, "nichts abgeschnitten");
+      assert.equal(await bis(() => frei["Satz drei."]), true);
+      frei["Satz drei."]();
+      assert.equal(
+        await bis(() => t.player.enqueued.includes("wav:Satz drei.")),
+        true,
+      );
+      t.player.finish();
+      assert.equal(await bis(() => t.engine.auftrag === null), true);
+      assert.deepEqual(t.log.zeilen.at(-1), {
+        t: "Satz eins. Satz zwei. Satz drei.",
+        final: true,
+        interrupted: false,
+        auftragVon: a1.id,
+      });
+    }),
+  ));
+
+test("H7 angehaltene Wiedergabe (die Entscheidung läuft) ist keine Zeitüberschreitung", () =>
+  mitUhr((tick) =>
+    ohneStille(async () => {
+      const { t, a1 } = await zweitesStueckHaengt();
+      t.player.finishPiece();
+      t.barge();
+      assert.equal(t.engine.held?.nachreichen?.turnId, a1.id, "angehalten");
+      tick(TUNING.nachreichenStueckMaxMs * 3);
+      assert.equal(t.engine.turn?.nachreichen?.turnId, a1.id);
+      assert.equal(t.engine.turn.cancelled, false);
+      assert.ok(t.engine.auftrag && !t.engine.auftrag.verworfen);
+      t.engine.interrupt();
+      assert.equal(t.engine.turn, null);
+    }),
+  ));
+
+test("H7 der Nutzer unterbricht in der Wartezeit wie sonst: ein Abbruch, die Wartezeit läuft danach nicht noch einmal", () =>
+  mitUhr((tick) =>
+    ohneStille(async () => {
+      const { t, a1 } = await zweitesStueckHaengt();
+      t.player.finishPiece();
+      t.aeussere(WETTER);
+      assert.equal(
+        await bis(() => t.player.gespielt.includes(WETTER_SATZ)),
+        true,
+      );
+      assert.equal(t.engine.auftrag, null, "der Auftrag ist erledigt");
+      const unterbrochen = t.log.zeilen.filter(
+        (z) => z.auftragVon === a1.id && z.interrupted,
+      );
+      assert.equal(unterbrochen.length, 1);
+      assert.equal(unterbrochen[0].t, "Satz eins.");
+      const turn = t.engine.turn;
+      tick(TUNING.nachreichenStueckMaxMs * 3);
+      assert.equal(t.engine.turn, turn, "der neue Schritt läuft ungestört");
+      assert.equal(turn.cancelled, false);
+      assert.equal(
+        t.log.zeilen.filter((z) => z.auftragVon === a1.id && z.interrupted)
+          .length,
+        1,
+        "keine zweite Unterbrechungszeile",
+      );
+    }),
+  ));

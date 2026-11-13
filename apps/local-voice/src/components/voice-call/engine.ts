@@ -410,6 +410,11 @@ interface Turn {
    * meldet das Nachreichen die Quellen.
    */
   quellenMelden?: () => void;
+  /**
+   * Nachreichen: Wartezeit auf das nächste Stück, seit der Player leer lief, ohne dass die Antwort fertig erzeugt
+   * ist (`warteAufStueck`). Läuft sie ab, endet der Schritt wie bei einem Abbruch.
+   */
+  stueckTimer?: ReturnType<typeof setTimeout>;
 }
 
 const PREROLL_FRAMES = 15;
@@ -437,6 +442,11 @@ export const TUNING = {
   nachreichenStilleMs: 600,
   /** Deckel für den Satzpuffer eines Auftrags (Zeichen); was darüber liegt, wird gezählt und verworfen. */
   auftragMaxZeichen: 20_000,
+  /**
+   * Nachreichen: so lange darf die Synthese des nächsten Stücks ausbleiben, nachdem der Player leer lief (ms). Was
+   * schon klingt, wird nie abgeschnitten; ein Stück, das danach nicht kommt, beendet den Schritt wie ein Abbruch.
+   */
+  nachreichenStueckMaxMs: 10_000,
 };
 /** Was ein Häppchen ist: Inhalt (Modell, S0-Antwort), Ansage (Ab S1, Überbrückung) oder feste Vorlage. */
 /** `sofort`: Weitersprechen des Sofort-Sprechers (keine Antwort, schließt keinen ersten Satz). */
@@ -960,9 +970,7 @@ export class VoiceCallEngine {
       if (aborted()) throw new Error(START_ABORTED);
       this.player = new SpeechPlayer(ctx);
       this.stufenAnwenden();
-      this.player.onIdle = () => {
-        if (this.turn?.audible && this.turn.done) this.finishTurn();
-      };
+      this.player.onIdle = () => this.playerLeer();
       await this.ensureListener();
       const capture = await startCapture(ctx, {
         onFrame: (f) => this.onFrame(f),
@@ -3030,8 +3038,12 @@ export class VoiceCallEngine {
     this.auftragAusgabe(a, false);
     this.cb.onDenken?.({ art: "ende", turnId: turn.id });
     if (merken) this.merkeAuftragFrage(a);
-    // Wurde das Ergebnis gerade gesprochen, endet auch das.
-    if (a.nachreichend && this.turn?.nachreichen === a) this.cancelTurn(true);
+    // Wird das Ergebnis gerade nachgereicht, endet auch das: Gehörtes bleibt als unterbrochene Zeile, was nur
+    // angezeigt war, verschwindet (`cancelTurn`). Der Schritt ist frei, die Anrufschleife hört wieder zu.
+    if (a.nachreichend && this.turn?.nachreichen === a) {
+      this.cancelTurn(true);
+      if (!this.utt && this.inCall) this.setState("listening");
+    }
   }
 
   /** Die verworfene Frage bleibt als unterbrochener Eintrag im Verlauf, damit der nächste Denker sie kennt. */
@@ -3089,11 +3101,8 @@ export class VoiceCallEngine {
     if (a.verworfen) return;
     const lauf = this.turn?.nachreichen === a ? this.turn : null;
     if (lauf && this.warZuHoeren(lauf)) return;
+    // Auch ein laufendes, noch stummes Nachreichen endet damit (Zeile, Verlauf, Player: `cancelTurn`).
     this.verwerfeAuftrag(a);
-    if (!lauf) return;
-    // Eine schon angezeigte, ungehörte Zeile des Nachreichens verschwindet mit ihm.
-    if (lauf.audible) this.cb.onVerwerfen?.();
-    this.dropTurn(lauf);
   }
 
   /** Das Nachreichen ist vor dem ersten Ton unterbrochen worden: der Auftrag wartet wieder, die Frist läuft weiter. */
@@ -3176,8 +3185,7 @@ export class VoiceCallEngine {
       this.cb.onError(String(e));
       this.auftragVerbraucht(a);
       // Was zu hören war, bleibt als unterbrochene Zeile; was nur angezeigt war, verschwindet mit dem Fehler.
-      if (this.warZuHoeren(turn)) this.cancelTurn(true);
-      else if (turn.audible) this.cb.onVerwerfen?.();
+      this.cancelTurn(true);
       this.dropTurn(turn);
     });
   }
@@ -3203,6 +3211,9 @@ export class VoiceCallEngine {
         }
         const player = this.player;
         if (dead() || !player) return;
+        // Das nächste Stück ist da: die Wartezeit auf es (`warteAufStueck`) ist vorbei.
+        clearTimeout(turn.stueckTimer);
+        turn.stueckTimer = undefined;
         if (!turn.audible) {
           // Erst jetzt wird etwas hörbar: die Zeile entsteht, die Anzeige des Auftrags wird ihre.
           turn.audible = true;
@@ -3238,6 +3249,8 @@ export class VoiceCallEngine {
     }
     await kette;
     if (dead()) return;
+    clearTimeout(turn.stueckTimer);
+    turn.stueckTimer = undefined;
     turn.done = true;
     this.pruefeSatzende(turn);
     if (turn.heard === 0) {
@@ -3275,9 +3288,43 @@ export class VoiceCallEngine {
    * begonnen hat, wird nicht abgeschnitten), die wartende Antwortzeile und die Quellen gehen jetzt hinaus.
    */
   private nachreichenBegonnen(turn: Turn, a: Auftrag): void {
-    clearTimeout(a.timer);
+    // Ein später Beginn nach dem Abbruch (zurückgestellt, verworfen) rührt die Frist nicht an: sie gehört seit der
+    // Rückstellung wieder dem wartenden Auftrag. Meldungen eines abgebrochenen Schritts sind schon abgeräumt.
+    if (!turn.cancelled) clearTimeout(a.timer);
     this.sendeAntwort(turn);
     this.quellenMeldenJetzt(turn);
+  }
+
+  /**
+   * Der Player ist leer gelaufen. Ist die Antwort fertig erzeugt, endet der Schritt. Beim Nachreichen fehlt sonst noch
+   * ein Stück (seine Synthese läuft): länger als `nachreichenStueckMaxMs` wartet der Schritt nicht darauf.
+   */
+  private playerLeer(): void {
+    const turn = this.turn;
+    if (!turn?.audible) return;
+    if (turn.done) this.finishTurn();
+    else if (turn.nachreichen) this.warteAufStueck(turn);
+  }
+
+  private warteAufStueck(turn: Turn): void {
+    clearTimeout(turn.stueckTimer);
+    turn.stueckTimer = setTimeout(
+      () => this.stueckFrist(turn),
+      TUNING.nachreichenStueckMaxMs,
+    );
+  }
+
+  /**
+   * Das nächste Stück kam nicht: das Nachreichen endet wie ein Abbruch durch den Nutzer. Das Gehörte bleibt als
+   * unterbrochene Zeile des Auftrags, der Rest ist verworfen, Schritt und Auftrag sind frei; eine späte Synthese
+   * bleibt ohne Wirkung. Bei angehaltener Wiedergabe (Entscheidung läuft) oder neuem Ton läuft nichts ab.
+   */
+  private stueckFrist(turn: Turn): void {
+    turn.stueckTimer = undefined;
+    if (turn.cancelled || turn.done || this.turn !== turn) return;
+    if (this.held === turn || this.player?.active) return;
+    this.cancelTurn(true);
+    if (!this.utt && this.inCall) this.setState("listening");
   }
 
   private dropTurn(turn: Turn): void {
@@ -3320,6 +3367,8 @@ export class VoiceCallEngine {
     const turn = this.turn;
     if (!turn) return;
     turn.cancelled = true;
+    clearTimeout(turn.stueckTimer);
+    turn.stueckTimer = undefined;
     turn.finishStream?.();
     this.turn = null;
     if (this.held === turn) {
@@ -3350,6 +3399,12 @@ export class VoiceCallEngine {
     const said = this.gehoert(turn)
       .filter((p) => p.kind === "inhalt")
       .map((p) => p.text);
+    // Ein Nachreichen, von dem nichts zu hören war, hinterlässt nichts (Esc, Stoppwort, Wechsel, Fehler, Rückstellung):
+    // die angezeigte Zeile mit dem Zwischenstand verschwindet, und seine Quellen werden nie gemeldet.
+    if (turn.nachreichen && said.length === 0) {
+      turn.quellenMelden = undefined;
+      if (turn.audible) this.cb.onVerwerfen?.();
+    }
     // Ein Nachreichen ohne Ton wird zurückgestellt: sein Verlaufseintrag geht zurück, der nächste Versuch legt ihn neu an.
     const zurueckgestellt =
       !!turn.nachreichen && said.length === 0 && turn.historyPushed;
