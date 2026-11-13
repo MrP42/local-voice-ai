@@ -4,6 +4,9 @@
 //! (`downmix_to_mono`, `f32_to_i16`) sind plattformunabhängig und getestet; der
 //! eigentliche Capture-Thread ist Windows-only (Abnahme im Harness, Task 15).
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 /// Ziel-Samplerate der Meeting-Pipeline.
 pub const TARGET_SAMPLE_RATE: usize = 16_000;
 
@@ -97,21 +100,17 @@ const FRAME_DURATION: std::time::Duration = std::time::Duration::from_millis(30)
 /// Stille wird in Häppchen dieser Größe in den Resampler geschoben.
 const SILENCE_CHUNK_FRAMES: usize = 4096;
 /// lva#538: so weit darf die Position eines Pakets hinter dem Ende der Zeitachse liegen (Takt von
-/// Gerät und QPC läuft nie ganz gleich), bevor sie als zurückspringend gilt.
+/// Gerät und QPC läuft nie ganz gleich), bevor der Stempel als zurückspringend gilt.
 pub const STAMP_BACK_TOLERANCE: std::time::Duration = std::time::Duration::from_millis(250);
 /// lva#538: ab dieser Lücke zwischen dem Ende der Zeitachse und der Position eines Pakets wird AN
 /// DIESER STELLE aufgefüllt. Die Positionen sind Gerätezeit (kein Ankunftsjitter): eine Pause
 /// bleibt dort, wo sie war. Darunter bleibt der Rest stehen und zählt beim nächsten Paket mit
 /// (Takt-Drift von Gerät und QPC), der Fehler ist höchstens diese Schwelle.
 pub const STAMP_GAP_MIN: std::time::Duration = std::time::Duration::from_millis(10);
-/// lva#538: so lange (in Audiozeit) dürfen Positionen in Folge unplausibel sein, bevor die jetzige
-/// als neue Referenz gilt (echte Uhrenverstellung, Gerätewechsel). Ein einzelner Ausreisser bleibt
-/// so ohne Wirkung, eine bleibende Verschiebung wird übernommen.
-pub const STAMP_REANCHOR: std::time::Duration = std::time::Duration::from_secs(1);
-/// lva#538: so lang darf EINE Lücke höchstens sein, damit ihre Position glaubwürdig ist. Was
-/// darüber liegt (korrupter Stempel, Standby) wird NICHT als Nullen in die WAV geschrieben
-/// (Platte: 115 MB je Stunde), sondern wie ein unplausibler Stempel behandelt: das Paket hängt
-/// lückenlos an.
+/// lva#538: so lang darf EINE Lücke höchstens sein, um als Stille in die WAV geschrieben zu werden
+/// (Platte: 115 MB je Stunde). Eine längere Pause wird auf der Zeitachse GEKÜRZT (die Zeit davor
+/// fehlt dann in der Aufnahme); das ist erlaubt, wird aber gezählt
+/// (`SessionEnd::truncated_gap_frames`) und macht die Aufnahme dauerhaft unvollständig.
 pub const MAX_GAP: std::time::Duration = std::time::Duration::from_secs(2 * 3_600);
 /// lva#538: so viele Frames (Gerätetakt) verarbeitet ein Schritt von `pump` höchstens, bevor
 /// der Capture-Thread wieder das Stop-Flag prüft und das Gerät liest. Auch ein einzelnes
@@ -132,8 +131,8 @@ const MAX_PACKETS_PER_READ: usize = 256;
 pub struct DevicePacket<'a> {
     /// Interleaved f32 beim Gerätetakt; `SILENT`-Pakete schon als Nullen.
     pub interleaved: &'a [f32],
-    /// Position des ersten Frames in Frames seit Stream-Start (`BufferInfo::index`). Nur der
-    /// Maßstab, wenn das Gerät keine QPC-Stempel nennt.
+    /// Position des ersten Frames in Frames seit Stream-Start (`BufferInfo::index`). Nur zur
+    /// Diagnose: der Loopback zählt die Stille nicht mit, die Zeitachse hängt allein am QPC.
     pub device_position: u64,
     /// QPC (100 ns) des ersten Frames; `None`, wenn das Gerät keinen gültigen nennt.
     pub qpc: Option<u64>,
@@ -189,15 +188,6 @@ struct Job {
     marked: bool,
 }
 
-/// Woran die Position eines Pakets gemessen wird (entschieden mit dem ersten Paket).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Axis {
-    /// QPC-Stempel gegen den Stream-Start: auch die Stille ohne Paket zählt mit.
-    Qpc,
-    /// Geräteposition (nur, wenn das Gerät gar keine Stempel nennt).
-    Position,
-}
-
 /// Der plattformunabhängige Kern des Capture-Threads: Pakete rein, zeitachsen-
 /// korrekte 16-kHz-Mono-Blöcke samt QPC-Stempel raus. Eine Zustandsmaschine mit fester
 /// Schlangengrenze: `push` reiht ein, `pump` arbeitet in begrenzten Schritten ab, `finish`
@@ -205,29 +195,30 @@ enum Axis {
 ///
 /// WASAPI-Loopback liefert bei Stille GAR KEINE Pakete (gemessen auf Windows: nach drei
 /// Sekunden ohne Ton null Blöcke, kein Fehler). Die Zeitachse darf deshalb nicht an den Paketen
-/// hängen. Sie hat EINEN Maßstab (lva#538, Runde 4):
+/// hängen. Sie hat EINEN Maßstab und EINE Regel (lva#538, Runde 5):
 ///
-/// - **Position jedes Pakets** = (QPC des Pakets − QPC beim Stream-Start) in Frames. Die
-///   Anfangsstille ist damit einfach die Position des ersten Pakets: keine Wanduhr, kein
-///   Rückstau-Saldo, keine Ankunftszeit. Wann der Capture-Thread ein Paket LIEST, hat auf keine
-///   Position Einfluss; auch eine volle Schlange verschiebt nichts.
-/// - **Lücke** = Position des Pakets − Frames, die die Zeitachse bis hierher belegt (Daten und
-///   Stille). Ab [`STAMP_GAP_MIN`] wird sie AN DIESER STELLE mit Nullen aufgefüllt, darunter bleibt
-///   der Rest stehen und zählt beim nächsten Paket mit (Takt-Drift).
-/// - **Unplausible Position** (mehr als [`STAMP_BACK_TOLERANCE`] vor dem Ende der Zeitachse,
-///   also nicht monoton, oder weiter voraus als [`MAX_GAP`]), gemessen allein an Gerätestempel
-///   gegen Sampleanzahl: der Stempel wird ignoriert, das Paket hängt lückenlos an (kein Sample
-///   geht verloren, kein Paket wird verworfen). Dauert sie über [`STAMP_REANCHOR`] an, gilt sie
-///   als neue Referenz.
+/// - **Position jedes Pakets** = (QPC des Pakets − QPC beim Stream-Start) in Frames, JE PAKET
+///   entschieden. Die Anfangsstille ist die Position des ersten Pakets: keine Wanduhr, kein
+///   Rückstau-Saldo, keine Ankunftszeit; eine volle Schlange verschiebt nichts. Die
+///   Geräteposition zählt die Stille nicht mit und ist für die Achse ohne Wert.
+/// - **Lücke** = Position − Frames, die die Zeitachse bis hierher belegt. Ab [`STAMP_GAP_MIN`]
+///   wird sie AN DIESER STELLE mit Nullen aufgefüllt, darunter bleibt der Rest stehen und zählt
+///   beim nächsten Paket mit (Takt-Drift).
+/// - **Ein Paket ohne gültigen Stempel** (`TIMESTAMP_ERROR`) hängt lückenlos an. Das entwertet
+///   keinen späteren gültigen Stempel: der nächste positioniert wieder auf der QPC-Achse.
+/// - **Ein Stempel weiter als [`STAMP_BACK_TOLERANCE`] vor dem Ende der Zeitachse** (nicht
+///   monoton) wird ignoriert: lückenlos anhängen, nichts verwerfen. Es gibt KEINE Neuverankerung:
+///   kehrt der Stempel zurück, passt er wieder zur Achse, und es entsteht keine erfundene Stille.
+/// - **Eine Lücke über [`MAX_GAP`]** wird gekürzt (die Zeitachse rückt um sie vor) und gezählt.
+/// - **Jede Unsicherheit der Zeitachse** (Paket ohne Stempel, ignorierter Stempel, gekürzte Lücke)
+///   setzt [`LoopbackFeeder::timeline_uncertain`]; der Recorder markiert die Aufnahme dann
+///   dauerhaft als unvollständig. Fail-closed statt einer Heuristik, die rät.
 /// - **Stille ist ein Zähler**: eine Lücke steht als ausstehende Nullframes am Auftrag ihres
 ///   Pakets und wird in Schritten ausgegeben ([`PUMP_STEP_FRAMES`]); die Schlangengrenze
 ///   ([`QUEUE_LIMIT`]) gilt nur für Audio.
 /// - **Abschluss mit Budget**: was `finish` nicht mehr schreiben kann (Audio über dem Budget,
 ///   oder eine Lücke, die nicht mehr hineinpasst und das Audio dahinter zu früh stehen liesse),
 ///   wird gezählt und zurückgegeben; der Aufrufer meldet es als unvollständige Aufnahme.
-///
-/// Ohne QPC-Stempel (Gerät nennt keine) gilt die Geräteposition als Maßstab, mit denselben
-/// Regeln.
 pub struct LoopbackFeeder {
     rate: usize,
     channels: usize,
@@ -236,31 +227,30 @@ pub struct LoopbackFeeder {
     silence: Vec<f32>,
     /// QPC (100 ns) beim Stream-Start, soweit der Aufrufer ihn kennt.
     origin_qpc: Option<u64>,
-    /// Maßstab, entschieden mit dem ersten Paket.
-    axis: Option<Axis>,
-    /// Frames (Gerätetakt) des Stream-Starts auf der Skala des Maßstabs: Position = roh − `base`.
-    base: i128,
+    /// Frames (Gerätetakt) des Stream-Starts auf der QPC-Skala: Position = roh − `base`.
+    /// Steht mit dem ersten gültigen Stempel fest (Ursprung des Aufrufers, sonst dieser Stempel).
+    base: Option<i128>,
     /// Frames (Daten und Stille), die die Zeitachse bis hierher belegt.
     end: u64,
-    /// Frames in Folge, deren Position unplausibel war.
-    bad_stamp_frames: u64,
     queue: std::collections::VecDeque<Job>,
     /// Frames (Daten), die noch in der Schlange warten; die Stille zählt nicht mit.
     queued_frames: u64,
     queue_limit_frames: u64,
     peak_queued_frames: u64,
-    /// Obergrenze einer glaubwürdigen Lücke ([`MAX_GAP`]; der Test setzt eine kleinere).
+    /// Obergrenze einer Lücke ([`MAX_GAP`]; der Test setzt eine kleinere).
     max_gap: std::time::Duration,
     padded_frames: u64,
     bad_stamps: u64,
+    unstamped_packets: u64,
+    truncated_gap_frames: u64,
     lost_at_stop_frames: u64,
 }
 
 #[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
 impl LoopbackFeeder {
     /// `origin_qpc`: QPC (100 ns) kurz VOR dem Start des Streams; `None`, wenn der Aufrufer ihn
-    /// nicht lesen konnte (dann gilt der erste Stempel abzüglich seiner Geräteposition als Start,
-    /// ohne erfundene Anfangsstille).
+    /// nicht lesen konnte (dann gilt der erste gültige Stempel als Start, ohne erfundene
+    /// Anfangsstille).
     pub fn new(mix_rate: usize, channels: usize, origin_qpc: Option<u64>) -> Self {
         let rate = mix_rate.max(1);
         Self {
@@ -274,10 +264,8 @@ impl LoopbackFeeder {
             stamper: QpcStamper::new(mix_rate, TARGET_SAMPLE_RATE),
             silence: vec![0.0f32; SILENCE_CHUNK_FRAMES],
             origin_qpc: origin_qpc.filter(|q| *q > 0),
-            axis: None,
-            base: 0,
+            base: None,
             end: 0,
-            bad_stamp_frames: 0,
             queue: std::collections::VecDeque::new(),
             queued_frames: 0,
             queue_limit_frames: QUEUE_LIMIT.as_secs().saturating_mul(rate as u64),
@@ -285,20 +273,22 @@ impl LoopbackFeeder {
             max_gap: MAX_GAP,
             padded_frames: 0,
             bad_stamps: 0,
+            unstamped_packets: 0,
+            truncated_gap_frames: 0,
             lost_at_stop_frames: 0,
         }
     }
 
-    /// Test: eine kleinere Obergrenze fuer eine glaubwuerdige Luecke.
+    /// Test: eine kleinere Obergrenze fuer eine Luecke.
     #[cfg(test)]
-    fn with_max_gap(mut self, max_gap: std::time::Duration) -> Self {
+    pub(crate) fn with_max_gap(mut self, max_gap: std::time::Duration) -> Self {
         self.max_gap = max_gap;
         self
     }
 
     /// Test: eine kleinere Schlangengrenze (in Frames beim Gerätetakt).
     #[cfg(test)]
-    fn with_queue_limit(mut self, frames: u64) -> Self {
+    pub(crate) fn with_queue_limit(mut self, frames: u64) -> Self {
         self.queue_limit_frames = frames;
         self
     }
@@ -342,7 +332,7 @@ impl LoopbackFeeder {
         if frames == 0 {
             return;
         }
-        let (pad_frames, stamp) = self.place(packet, frames);
+        let (pad_frames, stamp) = self.place(packet);
         self.end = self.end.saturating_add(pad_frames).saturating_add(frames);
         self.queued_frames += frames;
         self.peak_queued_frames = self.peak_queued_frames.max(self.queued_frames);
@@ -368,66 +358,51 @@ impl LoopbackFeeder {
     }
 
     /// Die Stille, die vor diesem Paket steht, und der Stempel, der gelten darf (`None`: keiner
-    /// oder unplausibel). Die EINE Regel der Zeitachse (siehe [`LoopbackFeeder`]).
-    fn place(&mut self, packet: &DevicePacket<'_>, frames: u64) -> (u64, Option<u64>) {
-        let stamp = packet.qpc.filter(|q| *q > 0);
-        let first = self.axis.is_none();
-        if first {
-            let axis = if stamp.is_some() {
-                Axis::Qpc
-            } else {
-                Axis::Position
-            };
-            self.axis = Some(axis);
-            self.base = match (axis, stamp, self.origin_qpc) {
-                (Axis::Qpc, _, Some(origin)) => self.frames_of_units(origin as i128),
-                (Axis::Qpc, Some(q), None) => {
-                    self.frames_of_units(q as i128) - packet.device_position as i128
-                }
-                _ => 0,
-            };
-        }
-        let (raw, stamp) = match self.axis {
-            Some(Axis::Qpc) => (stamp.map(|q| self.frames_of_units(q as i128)), stamp),
-            _ => (Some(packet.device_position as i128), None),
-        };
-        // Ein Gerät mit Stempeln, dessen Paket gerade keinen nennt: nichts zu messen, lückenlos.
-        let Some(raw) = raw else {
+    /// oder unbrauchbar). Die EINE Regel der Zeitachse (siehe [`LoopbackFeeder`]), je Paket.
+    fn place(&mut self, packet: &DevicePacket<'_>) -> (u64, Option<u64>) {
+        let Some(stamp) = packet.qpc.filter(|q| *q > 0) else {
+            // Kein gültiger Stempel an DIESEM Paket: nichts zu messen, lückenlos anhängen. Ein
+            // späterer gültiger Stempel positioniert wieder auf der QPC-Achse.
+            self.unstamped_packets += 1;
             return (0, None);
         };
-        let mut gap = raw - self.base - self.end as i128;
-        let back = self.frames_of(STAMP_BACK_TOLERANCE) as i128;
-        let limit = self.frames_of(self.max_gap) as i128;
-        if first && (gap < 0 || gap > limit) {
-            // Der Anfang hat nichts, woran er sich messen liesse, ausser dem Stream-Start: ein
-            // Paket davor (Grenzfall des Geräts) ist der Anfang selbst.
-            self.base += gap;
-            gap = 0;
+        let raw = self.frames_of_units(stamp as i128);
+        let base = match self.base {
+            Some(base) => base,
+            None => {
+                let base = match self.origin_qpc {
+                    Some(origin) => self.frames_of_units(origin as i128),
+                    None => raw - self.end as i128,
+                };
+                self.base = Some(base);
+                base
+            }
+        };
+        let gap = raw - base - self.end as i128;
+        if gap > self.frames_of(self.max_gap) as i128 {
+            // Eine Pause, die nicht als Stille gespeichert wird: die Zeitachse rückt um sie vor
+            // (die Zeit davor fehlt in der Aufnahme), gezählt und als unsicher vermerkt.
+            let cut = gap as u64;
+            self.base = Some(base + gap);
+            self.truncated_gap_frames = self.truncated_gap_frames.saturating_add(cut);
+            log::warn!("loopback: a gap of {cut} frames is beyond the limit and was cut");
+            return (0, Some(stamp));
         }
-        if gap < -back || gap > limit {
+        if gap < -(self.frames_of(STAMP_BACK_TOLERANCE) as i128) {
             self.bad_stamps += 1;
             if self.bad_stamps % 100 == 1 {
                 log::warn!(
-                    "loopback: implausible packet position ignored ({gap} frames off the time axis, {} so far)",
+                    "loopback: stamp behind the time axis ignored ({gap} frames, {} so far)",
                     self.bad_stamps
                 );
             }
-            self.bad_stamp_frames = self.bad_stamp_frames.saturating_add(frames);
-            if self.bad_stamp_frames >= self.frames_of(STAMP_REANCHOR) {
-                // Bleibt sie, ist es kein Ausreisser mehr: neue Referenz, ohne Stille.
-                self.bad_stamp_frames = 0;
-                self.base += gap;
-                return (0, stamp);
-            }
             return (0, None);
         }
-        self.bad_stamp_frames = 0;
-        let min = self.frames_of(STAMP_GAP_MIN) as i128;
-        if gap >= min {
-            (gap as u64, stamp)
+        if gap >= self.frames_of(STAMP_GAP_MIN) as i128 {
+            (gap as u64, Some(stamp))
         } else {
             // Unter der Schwelle: Rest, nicht Verlust (er bleibt in der Differenz).
-            (0, stamp)
+            (0, Some(stamp))
         }
     }
 
@@ -565,9 +540,26 @@ impl LoopbackFeeder {
         self.lost_at_stop_frames
     }
 
-    /// Wie oft eine Position als unplausibel ignoriert wurde.
+    /// Wie oft ein Stempel hinter der Zeitachse ignoriert wurde.
     pub fn bad_stamps(&self) -> u64 {
         self.bad_stamps
+    }
+
+    /// Pakete ohne gültigen Stempel (sie hängen lückenlos an).
+    pub fn unstamped_packets(&self) -> u64 {
+        self.unstamped_packets
+    }
+
+    /// Frames Pause, die über [`MAX_GAP`] lagen und von der Zeitachse gekürzt wurden.
+    pub fn truncated_gap_frames(&self) -> u64 {
+        self.truncated_gap_frames
+    }
+
+    /// War die Zeitachse irgendwann unsicher? Ein Paket ohne Stempel, ein ignorierter Stempel
+    /// und eine gekürzte Pause zählen alle: die Aufnahme ist dann dauerhaft unvollständig
+    /// (der Recorder ersetzt das Live-Transkript nicht aus der WAV).
+    pub fn timeline_uncertain(&self) -> bool {
+        self.unstamped_packets > 0 || self.bad_stamps > 0 || self.truncated_gap_frames > 0
     }
 }
 
@@ -611,8 +603,9 @@ pub fn run_cycle(
     }
 }
 
-/// Wie eine Sitzung des Capture-Threads endete: ein Fehler, der sie beendet hat, und was der
-/// Abschluss nicht mehr schreiben konnte. Beides kommt erst NACH dem Abschluss.
+/// Wie eine Sitzung des Capture-Threads endete: ein Fehler, der sie beendet hat, was der
+/// Abschluss nicht mehr schreiben konnte und ob die Zeitachse sicher war. Alles kommt erst NACH
+/// dem Abschluss.
 #[derive(Debug, Default)]
 pub struct SessionEnd {
     /// Ein Lesefehler des Geräts (Endpoint entfernt, Treiberfehler).
@@ -620,6 +613,10 @@ pub struct SessionEnd {
     /// Frames Audio (oder Lücke vor Audio), die der Abschluss wegen seines Budgets nicht mehr
     /// geschrieben hat: 0 = nichts verloren.
     pub lost_frames: u64,
+    /// Frames Pause, die über [`MAX_GAP`] lagen und von der Zeitachse gekürzt wurden.
+    pub truncated_gap_frames: u64,
+    /// Die Zeitachse war unsicher (Paket ohne Stempel, ignorierter Stempel, gekürzte Pause).
+    pub timeline_uncertain: bool,
 }
 
 impl SessionEnd {
@@ -640,12 +637,12 @@ impl SessionEnd {
 pub fn capture_session(
     source: &mut impl PacketSource,
     feeder: &mut LoopbackFeeder,
-    stop: &std::sync::atomic::AtomicBool,
+    stop: &AtomicBool,
     wait: &mut dyn FnMut(),
     sink: &mut impl FnMut(&[i16], Option<u64>),
 ) -> SessionEnd {
     let mut error = None;
-    while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+    while !stop.load(Ordering::Relaxed) {
         if let Err(e) = run_cycle(source, feeder, stop, sink) {
             error = Some(e);
             break;
@@ -654,7 +651,12 @@ pub fn capture_session(
     }
     let budget = feeder.finish_budget();
     let lost_frames = feeder.finish(budget, sink);
-    SessionEnd { error, lost_frames }
+    SessionEnd {
+        error,
+        lost_frames,
+        truncated_gap_frames: feeder.truncated_gap_frames(),
+        timeline_uncertain: feeder.timeline_uncertain(),
+    }
 }
 
 /// Liest, was bereitsteht, als einen Durchgang: solange die Schlange Platz hat, höchstens
@@ -677,14 +679,275 @@ fn read_ready(
     Ok(ReadEnd::Cap)
 }
 
+/// lva#538 (Runde 5): wie ein Capture beim Stopp endete. JEDES Feld ist ein Grund, die Aufnahme
+/// dauerhaft als unvollständig zu markieren (`audio_incomplete` mit Grund, `capture_open` bleibt,
+/// der Enddurchlauf ersetzt nichts). Sauber ist nur, wenn alle Felder `false` sind.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CaptureEnd {
+    /// Der Abschluss konnte bereits gelesenes Audio nicht mehr schreiben (Budget).
+    pub lost: bool,
+    /// Das Gerät oder der Treiber meldete einen Fehler (Endpoint entfernt), auch ohne Verlust
+    /// beim Abschluss: danach fehlt Systemton.
+    pub error: bool,
+    /// Der Capture-Thread ist abgestürzt (Panik): was er gerade verarbeitete, ist weg.
+    pub panicked: bool,
+    /// Die Zeitachse war unsicher (Paket ohne Stempel, ignorierter Stempel, gekürzte Pause).
+    pub timeline_uncertain: bool,
+}
+
+impl CaptureEnd {
+    /// Ein sauberer Abschluss: nichts verloren, kein Fehler, keine Panik, Zeitachse sicher.
+    pub fn is_clean(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Die Gründe als feste Namen (`audio_incomplete.reason`, Log), schwerster zuerst.
+    pub fn reasons(&self) -> Vec<&'static str> {
+        [
+            (self.panicked, "capture_panicked"),
+            (self.error, "capture_error"),
+            (self.lost, "capture_lost"),
+            (self.timeline_uncertain, "timeline_uncertain"),
+        ]
+        .into_iter()
+        .filter_map(|(on, name)| on.then_some(name))
+        .collect()
+    }
+}
+
+/// Was der Capture-Thread für den Stopp festhält (ein Fehler des Geräts steht in
+/// [`LoopbackCapture`] selbst, damit der Wächter ihn schon während der Aufnahme sieht).
+#[derive(Default)]
+pub struct CaptureFlags {
+    lost: AtomicBool,
+    uncertain: AtomicBool,
+}
+
+impl CaptureFlags {
+    /// Hält fest, was eine beendete Sitzung für den Stopp bedeutet.
+    #[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
+    pub fn record(&self, end: &SessionEnd) {
+        if end.audio_lost() {
+            self.lost.store(true, Ordering::Release);
+        }
+        if end.timeline_uncertain {
+            self.uncertain.store(true, Ordering::Release);
+        }
+    }
+}
+
+/// Was der Rumpf des Capture-Threads von außen bekommt.
+pub struct CaptureCtx {
+    /// Das Stop-Flag (der Stopp setzt es).
+    pub stop: Arc<AtomicBool>,
+    /// Hier hält [`run_session`] fest, wie die Sitzung endete.
+    pub flags: Arc<CaptureFlags>,
+}
+
+/// Der Rumpf des Capture-Threads ohne Gerät (Windows: nach dem Öffnen des Endpoints; Test: eine
+/// Nachbildung): die Sitzung fahren und festhalten, wie sie endete. Ein Gerätefehler steht danach
+/// in `SessionEnd::error` und ist vom Aufrufer zurückzugeben (er setzt den Fehlermerker).
+#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
+pub fn run_session(
+    source: &mut impl PacketSource,
+    feeder: &mut LoopbackFeeder,
+    ctx: &CaptureCtx,
+    wait: &mut dyn FnMut(),
+    sink: &mut impl FnMut(&[i16], Option<u64>),
+) -> SessionEnd {
+    let end = capture_session(source, feeder, &ctx.stop, wait, sink);
+    ctx.flags.record(&end);
+    end
+}
+
+/// Setzt den Fehlermerker, wenn der Capture-Thread durch eine Panik endet (der Wächter meldet
+/// den Ausfall dann schon während der Aufnahme, der Stopp zählt ihn als unsauber).
+struct PanicGuard(Arc<AtomicBool>);
+
+impl Drop for PanicGuard {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+}
+
+/// Der Capture-Thread des Loopbacks samt allem, was der Stopp auswertet. Auf Nicht-Windows-
+/// Plattformen scheitert `start`; Thread und Stopp-Auswertung sind dieselben und werden dort mit
+/// einem nachgebildeten Rumpf getestet (`for_test`).
+pub struct LoopbackCapture {
+    stop: Arc<AtomicBool>,
+    /// Wird gesetzt, wenn der Capture-Thread NACH erfolgreichem Start mit einem Fehler oder einer
+    /// Panik endet (Endpoint entfernt, Treiberfehler). Ohne dieses Flag verstummt der Callback
+    /// still und die Aufnahme läuft ohne Systemton weiter, ohne dass es jemand merkt.
+    error: Arc<AtomicBool>,
+    flags: Arc<CaptureFlags>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl LoopbackCapture {
+    /// Startet den Thread mit seinem Rumpf. Endet der Rumpf mit einem Fehler (oder einer Panik),
+    /// steht der Fehlermerker.
+    #[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
+    fn spawn(
+        body: impl FnOnce(CaptureCtx) -> anyhow::Result<()> + Send + 'static,
+    ) -> anyhow::Result<Self> {
+        let stop = Arc::new(AtomicBool::new(false));
+        let error = Arc::new(AtomicBool::new(false));
+        let flags = Arc::new(CaptureFlags::default());
+        let ctx = CaptureCtx {
+            stop: Arc::clone(&stop),
+            flags: Arc::clone(&flags),
+        };
+        let thread_error = Arc::clone(&error);
+        let handle = std::thread::Builder::new()
+            .name("loopback-capture".to_string())
+            .spawn(move || {
+                let _guard = PanicGuard(Arc::clone(&thread_error));
+                if let Err(e) = body(ctx) {
+                    log::error!("loopback capture ended with error: {e:#}");
+                    thread_error.store(true, Ordering::Release);
+                }
+            })?;
+        Ok(Self {
+            stop,
+            error,
+            flags,
+            handle: Some(handle),
+        })
+    }
+
+    /// Test: ein Capture mit nachgebildetem Rumpf, ohne Gerät.
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        body: impl FnOnce(CaptureCtx) -> anyhow::Result<()> + Send + 'static,
+    ) -> Self {
+        Self::spawn(body).expect("thread spawn")
+    }
+
+    /// True, sobald der Capture-Thread mit einem Fehler oder einer Panik geendet ist.
+    pub fn had_error(&self) -> bool {
+        self.error.load(Ordering::Relaxed)
+    }
+
+    /// Beide Flags für einen Beobachter (Stop, Fehler) - damit ein Wachthread den stillen
+    /// Ausfall bemerken kann, ohne die Capture selbst zu besitzen.
+    pub fn watch_flags(&self) -> (Arc<AtomicBool>, Arc<AtomicBool>) {
+        (Arc::clone(&self.stop), Arc::clone(&self.error))
+    }
+
+    /// Wartet auf das Ende des Threads; `true`, wenn er durch eine Panik endete.
+    fn join(&mut self) -> bool {
+        self.handle
+            .take()
+            .is_some_and(|handle| handle.join().is_err())
+    }
+
+    /// Beendet die Aufnahme und wertet aus, wie sie endete (lva#538 Runde 5): Verlust beim
+    /// Abschluss, Gerätefehler, Panik des Threads und Unsicherheit der Zeitachse. Jedes davon
+    /// macht die Aufnahme dauerhaft unvollständig; eine fehlgeschlagene Auswertung gibt es nicht
+    /// (eine Panik beim `join` IST das Ergebnis `panicked`).
+    pub fn stop(mut self) -> CaptureEnd {
+        self.stop.store(true, Ordering::Relaxed);
+        let panicked = self.join();
+        CaptureEnd {
+            lost: self.flags.lost.load(Ordering::Acquire),
+            error: self.error.load(Ordering::Acquire),
+            panicked,
+            timeline_uncertain: self.flags.uncertain.load(Ordering::Acquire),
+        }
+    }
+}
+
+impl Drop for LoopbackCapture {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        let _ = self.join();
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+impl LoopbackCapture {
+    /// Auf Nicht-Windows-Plattformen gibt es in M8 keinen Loopback-Capture.
+    pub fn start(
+        _on_samples: impl FnMut(&[i16], Option<u64>) + Send + 'static,
+    ) -> anyhow::Result<Self> {
+        Err(anyhow::anyhow!("loopback capture is windows-only in M8"))
+    }
+}
+
+/// Test: ein nachgebildetes Geraet fuer einen echten Capture-Thread (`LoopbackCapture::for_test`).
+/// Die Pakete kommen der Reihe nach, danach beendet die Sitzung sich selbst (ein Stopp-Aufruf des
+/// Tests kann so nicht vor dem Lesen kommen); Stempel gegen [`Script::ORIGIN`] bei 16 kHz Mono.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct Script {
+    pub packets: Vec<OwnedPacket>,
+    /// Nach so vielen gelieferten Paketen meldet das Geraet einen Fehler (Endpoint entfernt).
+    pub error_after: Option<usize>,
+    /// Der Stopp kommt mit dem ersten ausgegebenen Block: was noch in der Schlange wartet, geht
+    /// ueber das Budget des Abschlusses (und kann verloren gehen).
+    pub stop_at_first_block: bool,
+    /// Der Rumpf stuerzt beim ersten ausgegebenen Block ab (Panik mit ausstehendem PCM).
+    pub panic_at_first_block: bool,
+    /// Eine kleinere Obergrenze fuer eine Luecke ([`MAX_GAP`] sonst).
+    pub max_gap: Option<std::time::Duration>,
+}
+
+#[cfg(test)]
+impl Script {
+    /// Der Stream-Start der Nachbildung auf der QPC-Uhr (100 ns).
+    pub(crate) const ORIGIN: u64 = 1_000_000_000;
+
+    /// Startet den Capture-Thread mit diesem Geraet.
+    pub(crate) fn capture(self) -> LoopbackCapture {
+        LoopbackCapture::for_test(move |ctx| {
+            let mut queue: std::collections::VecDeque<OwnedPacket> = self.packets.into();
+            let mut delivered = 0usize;
+            let error_after = self.error_after;
+            let mut source = move || -> anyhow::Result<Option<OwnedPacket>> {
+                if error_after.is_some_and(|n| delivered >= n) {
+                    return Err(anyhow::anyhow!("endpoint removed"));
+                }
+                let next = queue.pop_front();
+                delivered += usize::from(next.is_some());
+                Ok(next)
+            };
+            let mut feeder = LoopbackFeeder::new(16_000, 1, Some(Self::ORIGIN));
+            if let Some(max_gap) = self.max_gap {
+                feeder = feeder.with_max_gap(max_gap);
+            }
+            // Die Sitzung endet von selbst: ein eigenes Stop-Flag, der aeussere Stopp wartet nur.
+            let own = CaptureCtx {
+                stop: Arc::new(AtomicBool::new(false)),
+                flags: Arc::clone(&ctx.flags),
+            };
+            let (stop_first, panic_first) = (self.stop_at_first_block, self.panic_at_first_block);
+            let stop = Arc::clone(&own.stop);
+            let mut sink = |_: &[i16], _: Option<u64>| {
+                assert!(!panic_first, "scripted capture panic");
+                if stop_first {
+                    stop.store(true, Ordering::Relaxed);
+                }
+            };
+            let stop = Arc::clone(&own.stop);
+            let mut end = run_session(
+                &mut source,
+                &mut feeder,
+                &own,
+                &mut || stop.store(true, Ordering::Relaxed),
+                &mut sink,
+            );
+            end.error.take().map_or(Ok(()), Err)
+        })
+    }
+}
+
 #[cfg(target_os = "windows")]
 mod windows_impl {
-    use super::{capture_session, LoopbackFeeder, OwnedPacket};
+    use super::{run_session, CaptureCtx, LoopbackCapture, LoopbackFeeder, OwnedPacket};
     use anyhow::{anyhow, Result};
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc;
-    use std::sync::Arc;
-    use std::thread::JoinHandle;
     use wasapi::{initialize_mta, DeviceEnumerator, Direction, SampleType, StreamMode, WaveFormat};
     use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
 
@@ -708,104 +971,44 @@ mod windows_impl {
         u64::try_from(counter as i128 * super::QPC_UNITS_PER_SEC / frequency as i128).ok()
     }
 
-    /// Startet Loopback-Capture des Default-Render-Endpoints. Liefert
-    /// 16-kHz-Mono-i16-Blöcke (zeitachsen-korrekt inkl. Silence-Padding) an den
-    /// Callback, bis `stop()` gerufen wird. Zweites Argument: QPC-Zeitstempel
-    /// (100 ns) des ersten Samples im Block, `None`, solange WASAPI keinen
-    /// gültigen Stempel geliefert hat (M2-P2c2, gemeinsame Zeitachse mit dem
-    /// Mikrofon für die Echo-Unterdrückung).
-    pub struct LoopbackCapture {
-        stop: Arc<AtomicBool>,
-        /// Wird gesetzt, wenn der Capture-Thread NACH erfolgreichem Start mit
-        /// einem Fehler endet (Endpoint entfernt, Treiberfehler). Ohne dieses
-        /// Flag verstummt der Callback still und die Aufnahme laeuft ohne
-        /// Systemton weiter, ohne dass es jemand merkt.
-        error: Arc<AtomicBool>,
-        /// lva#538 (Runde 4): wird gesetzt, wenn der Abschluss des Capture-Threads bereits
-        /// gelesenes Audio nicht mehr schreiben konnte (Budget). Der Recorder macht daraus nach
-        /// dem Stopp einen Schreibfehler des Systemkanals: `audio_incomplete` bleibt dauerhaft.
-        lost: Arc<AtomicBool>,
-        handle: Option<JoinHandle<()>>,
-    }
-
     impl LoopbackCapture {
+        /// Startet Loopback-Capture des Default-Render-Endpoints. Liefert
+        /// 16-kHz-Mono-i16-Blöcke (zeitachsen-korrekt inkl. Silence-Padding) an den
+        /// Callback, bis `stop()` gerufen wird. Zweites Argument: QPC-Zeitstempel
+        /// (100 ns) des ersten Samples im Block, `None`, solange WASAPI keinen
+        /// gültigen Stempel geliefert hat (M2-P2c2, gemeinsame Zeitachse mit dem
+        /// Mikrofon für die Echo-Unterdrückung).
         pub fn start(on_samples: impl FnMut(&[i16], Option<u64>) + Send + 'static) -> Result<Self> {
-            let stop = Arc::new(AtomicBool::new(false));
-            let thread_stop = Arc::clone(&stop);
-            let error = Arc::new(AtomicBool::new(false));
-            let thread_error = Arc::clone(&error);
-            let lost = Arc::new(AtomicBool::new(false));
-            let thread_lost = Arc::clone(&lost);
             // Der COM-Init und das Öffnen des Endpoints müssen IM Thread passieren
             // (MTA gilt pro Thread); das Ergebnis kommt über diesen Kanal zurück,
             // damit start() echte Fehler melden kann statt still zu scheitern.
             let (init_tx, init_rx) = mpsc::channel::<Result<(), String>>();
 
-            let handle = std::thread::Builder::new()
-                .name("loopback-capture".to_string())
-                .spawn(move || {
-                    if let Err(e) = capture_loop(thread_stop, thread_lost, on_samples, &init_tx) {
-                        log::error!("loopback capture ended with error: {e:#}");
-                        thread_error.store(true, Ordering::Relaxed);
-                        // Falls der Fehler vor der Init-Meldung auftrat, hier melden.
-                        let _ = init_tx.send(Err(format!("{e:#}")));
-                    }
-                })?;
+            let capture = Self::spawn(move |ctx| {
+                let result = capture_loop(ctx, on_samples, &init_tx);
+                if let Err(e) = &result {
+                    // Falls der Fehler vor der Init-Meldung auftrat, hier melden.
+                    let _ = init_tx.send(Err(format!("{e:#}")));
+                }
+                result
+            })?;
 
             match init_rx.recv() {
-                Ok(Ok(())) => Ok(LoopbackCapture {
-                    stop,
-                    error,
-                    lost,
-                    handle: Some(handle),
-                }),
+                Ok(Ok(())) => Ok(capture),
                 Ok(Err(e)) => {
-                    let _ = handle.join();
+                    drop(capture);
                     Err(anyhow!("loopback capture failed to start: {e}"))
                 }
                 Err(_) => {
-                    let _ = handle.join();
+                    drop(capture);
                     Err(anyhow!("loopback capture thread died before startup"))
                 }
-            }
-        }
-
-        /// True, sobald der Capture-Thread mit einem Fehler geendet ist.
-        pub fn had_error(&self) -> bool {
-            self.error.load(Ordering::Relaxed)
-        }
-
-        /// Beide Flags fuer einen Beobachter (Stop, Fehler) - damit ein
-        /// Wachthread den stillen Ausfall bemerken kann, ohne die Capture
-        /// selbst zu besitzen.
-        pub fn watch_flags(&self) -> (Arc<AtomicBool>, Arc<AtomicBool>) {
-            (Arc::clone(&self.stop), Arc::clone(&self.error))
-        }
-
-        /// Beendet die Aufnahme und wartet auf den Abschluss des Capture-Threads. `true`, wenn der
-        /// Abschluss bereits gelesenes Audio nicht mehr schreiben konnte: der Aufrufer behandelt
-        /// den Systemkanal dann wie einen Schreibfehler (`audio_incomplete`, lva#538 Runde 4).
-        pub fn stop(mut self) -> bool {
-            self.stop.store(true, Ordering::Relaxed);
-            if let Some(handle) = self.handle.take() {
-                let _ = handle.join();
-            }
-            self.lost.load(Ordering::Acquire)
-        }
-    }
-
-    impl Drop for LoopbackCapture {
-        fn drop(&mut self) {
-            self.stop.store(true, Ordering::Relaxed);
-            if let Some(handle) = self.handle.take() {
-                let _ = handle.join();
             }
         }
     }
 
     fn capture_loop(
-        stop: Arc<AtomicBool>,
-        lost: Arc<AtomicBool>,
+        ctx: CaptureCtx,
         mut on_samples: impl FnMut(&[i16], Option<u64>) + Send + 'static,
         init_tx: &mpsc::Sender<Result<(), String>>,
     ) -> Result<()> {
@@ -893,72 +1096,30 @@ mod windows_impl {
         let mut wait = || {
             let _ = h_event.wait_for_event(EVENT_TIMEOUT_MS);
         };
-        let end = capture_session(
+        let mut end = run_session(
             &mut read_packet,
             &mut feeder,
-            &stop,
+            &ctx,
             &mut wait,
             &mut on_samples,
         );
         let stopped = audio_client.stop_stream();
         let (padded_frames, bad_stamps, lost_frames) = feeder.summary();
         log::info!(
-            "loopback capture stopped (padded {padded_frames} silence frames, {bad_stamps} implausible positions ignored, {lost_frames} frames lost at stop, queue peak {} frames)",
+            "loopback capture stopped (padded {padded_frames} silence frames, {bad_stamps} stamps behind the axis ignored, {} packets without stamp, {} frames of pause cut, {lost_frames} frames lost at stop, queue peak {} frames)",
+            feeder.unstamped_packets(),
+            feeder.truncated_gap_frames(),
             feeder.peak_queued_frames()
         );
-        // Verlorenes Audio ist KEIN Absturz des Captures: das Flag geht an den Recorder, der
-        // die Aufnahme als unvollstaendig markiert.
-        if end.audio_lost() {
-            lost.store(true, Ordering::Release);
-        }
-        if let Some(error) = end.error {
+        // Verlust, Unsicherheit der Zeitachse und Gerätefehler gehen über `ctx.flags` und den
+        // Fehlermerker an den Stopp: der Recorder markiert die Aufnahme dann als unvollständig.
+        if let Some(error) = end.error.take() {
             return Err(error);
         }
         stopped?;
         Ok(())
     }
 }
-
-#[cfg(target_os = "windows")]
-pub use windows_impl::LoopbackCapture;
-
-#[cfg(not(target_os = "windows"))]
-mod stub_impl {
-    use anyhow::{anyhow, Result};
-    use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
-
-    /// Auf Nicht-Windows-Plattformen gibt es in M8 keinen Loopback-Capture.
-    pub struct LoopbackCapture {
-        _private: (),
-    }
-
-    impl LoopbackCapture {
-        pub fn start(
-            _on_samples: impl FnMut(&[i16], Option<u64>) + Send + 'static,
-        ) -> Result<Self> {
-            Err(anyhow!("loopback capture is windows-only in M8"))
-        }
-
-        pub fn stop(self) -> bool {
-            false
-        }
-
-        pub fn had_error(&self) -> bool {
-            false
-        }
-
-        pub fn watch_flags(&self) -> (Arc<AtomicBool>, Arc<AtomicBool>) {
-            (
-                Arc::new(AtomicBool::new(true)),
-                Arc::new(AtomicBool::new(false)),
-            )
-        }
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-pub use stub_impl::LoopbackCapture;
 
 #[cfg(test)]
 mod tests {
@@ -1139,21 +1300,28 @@ mod tests {
         assert!(stamps.contains(&(159_840, Some(Q0 + 10 * SEC - 100_000))));
     }
 
-    /// Ohne gueltigen QPC misst die Geraeteposition (der Treiber zaehlt die Stille mit): sie
-    /// traegt die Anfangsstille und die Pause, und es gibt keine Stempel.
+    /// Ein Geraet ohne jeden gueltigen Stempel hat nichts, woran sich Stille messen liesse: alle
+    /// Pakete haengen lueckenlos an (nichts geht verloren, keine Stille wird erfunden), und die
+    /// Zeitachse gilt als unsicher.
     #[test]
-    fn a_device_without_stamps_is_measured_by_its_position() {
+    fn a_device_without_any_stamp_appends_gaplessly_and_is_flagged() {
         let mut pkts = run_of(100, 160_000, None);
         pkts.extend(run_of(100, 160_000 + 100 * 160 + 80_000, None));
-        let (out, stamps) = feed(16_000, 1, Some(Q0), &pkts);
-        let on = onsets(&out);
-        assert_eq!(on.len(), 2, "{on:?}");
-        assert!(on[0].abs_diff(160_000) <= 480, "{on:?}");
-        assert!(on[1].abs_diff(160_000 + 16_000 + 80_000) <= 480, "{on:?}");
+        let mut feeder = LoopbackFeeder::new(16_000, 1, Some(Q0));
+        let (out, stamps) = feed_into(&mut feeder, 1, &pkts);
+        assert_eq!(loud(&out), 200 * 160, "alles ist da");
+        assert!(
+            out.len().abs_diff(200 * 160) <= 480,
+            "{} Samples",
+            out.len()
+        );
+        assert_eq!(onsets(&out).len(), 1, "ein durchgehender Ton");
         assert!(
             stamps.iter().all(|(_, s)| s.is_none()),
             "ohne QPC kein Stempel"
         );
+        assert_eq!(feeder.unstamped_packets(), 200);
+        assert!(feeder.timeline_uncertain());
     }
 
     /// Ton ab dem ersten Paket, nur eine Pause in der Mitte: der Anfang bleibt bei 0.
@@ -1170,8 +1338,9 @@ mod tests {
     }
 
     /// Ein erstes Paket wenige Millisekunden nach dem Start (unter der Schwelle) wird nicht
-    /// aufgefuellt; eines VOR dem Start (Grenzfall des Geraets) ist der Anfang selbst, und eine
-    /// spaetere Pause wird danach richtig gemessen.
+    /// aufgefuellt; eines kurz VOR dem Start (Grenzfall des Geraets, innerhalb der Toleranz) auch
+    /// nicht: sein Versatz bleibt als Rest stehen (hoechstens eine Toleranz), und die Pause danach
+    /// wird um diesen Rest kuerzer gemessen, nicht erfunden. Beides ist KEINE Unsicherheit.
     #[test]
     fn a_first_packet_near_the_start_is_not_padded() {
         let (out, _) = feed(16_000, 1, Some(Q0), &run_of(100, 0, Some(Q0 + 50_000)));
@@ -1185,12 +1354,14 @@ mod tests {
             50 * 160,
             Some(before + 50 * 100_000 + 3_000_000),
         ));
-        let (out, _) = feed(16_000, 1, Some(Q0), &pkts);
+        let mut feeder = LoopbackFeeder::new(16_000, 1, Some(Q0));
+        let (out, _) = feed_into(&mut feeder, 1, &pkts);
         let on = onsets(&out);
         assert_eq!(on.len(), 2, "{on:?}");
         assert!(on[0] <= 480, "{on:?}");
-        // 0,5 s Ton, 0,3 s Pause.
-        assert!(on[1].abs_diff(8_000 + 4_800) <= 160, "{on:?}");
+        // 0,5 s Ton, 0,3 s Pause minus der Versatz des ersten Pakets (40 ms).
+        assert!(on[1].abs_diff(8_000 + 4_800 - 640) <= 160, "{on:?}");
+        assert!(!feeder.timeline_uncertain());
     }
 
     /// Kennt der Aufrufer den Stream-Start nicht, ist das erste Paket der Anfang: keine
@@ -1209,12 +1380,16 @@ mod tests {
         let mut pkts = run_of(10, 0, Some(Q0));
         pkts.extend(run_of(10, 10 * 160, None));
         pkts.extend(run_of(10, 20 * 160, Some(Q0 + 20 * 100_000 + 10_000_000)));
-        let (out, _) = feed(16_000, 1, Some(Q0), &pkts);
+        let mut feeder = LoopbackFeeder::new(16_000, 1, Some(Q0));
+        let (out, _) = feed_into(&mut feeder, 1, &pkts);
         assert_eq!(loud(&out), 30 * 160, "alles ist da");
         let on = onsets(&out);
         // Ein Ton (die ersten 200 ms), dann 1 s Pause, dann der letzte Block.
         assert_eq!(on.len(), 2, "{on:?}");
         assert!(on[1].abs_diff(3_200 + 16_000) <= 160, "{on:?}");
+        // Ein Paket, dessen Zeit nicht belegt ist, macht die Zeitachse unsicher.
+        assert_eq!(feeder.unstamped_packets(), 10);
+        assert!(feeder.timeline_uncertain());
     }
 
     /// Der Weg ueber den Resampler (48 kHz Stereo wie ein echtes Geraet): 3 s Stille am
@@ -1254,16 +1429,17 @@ mod tests {
         );
     }
 
-    /// Ein korrupter QPC-Sprung (Stunden) wird nicht stundenlang aufgefuellt: der Stempel gilt
-    /// als unplausibel, die Pakete haengen lueckenlos an (kein Sample geht verloren). Bleibt der
-    /// Sprung, wird er nach `STAMP_REANCHOR` die neue Referenz, und die Pause danach stimmt wieder.
+    /// Eine Pause ueber `max_gap` (hier 10 h voraus, in sich stimmig) wird nicht als Stunden
+    /// Nullen geschrieben: die Zeitachse rueckt um sie vor, die Zeit davor FEHLT in der Aufnahme.
+    /// Das ist erlaubt, aber nicht still: die gekuerzten Frames sind gezaehlt und die Zeitachse
+    /// gilt als unsicher. Kein Sample geht verloren, eine echte Pause danach steht wieder richtig.
     #[test]
-    fn an_absurd_qpc_gap_is_not_trusted_and_loses_no_audio() {
+    fn a_gap_beyond_the_limit_is_cut_counted_and_flagged() {
         let mut pkts = run_of(10, 0, Some(Q0));
         // 10 h voraus, in sich stimmig.
         let far = Q0 + 36_000 * SEC;
         pkts.extend(run_of(300, 10 * 160, Some(far + 10 * 100_000)));
-        // Danach eine echte Pause von 1 s, auf der neuen Referenz gemessen.
+        // Danach eine echte Pause von 1 s, auf der neuen Zeitachse gemessen.
         pkts.extend(run_of(10, 310 * 160, Some(far + 310 * 100_000 + SEC)));
         let mut feeder = LoopbackFeeder::new(16_000, 1, Some(Q0));
         let (out, _) = feed_into(&mut feeder, 1, &pkts);
@@ -1274,19 +1450,27 @@ mod tests {
             "{} Samples",
             out.len()
         );
-        assert_eq!(feeder.bad_stamps(), 100, "eine Sekunde lang ignoriert");
+        assert_eq!(feeder.truncated_gap_frames(), 36_000 * 16_000);
+        assert!(feeder.timeline_uncertain());
+        assert_eq!(
+            feeder.bad_stamps(),
+            0,
+            "ein gekuerzter Sprung ist kein Rueckwaertssprung"
+        );
     }
 
-    /// Eine Lücke über `max_gap` ist unglaubwürdig, auch als erster Abstand: der Anfang gilt als
-    /// Stream-Start, es entstehen keine Nullen.
+    /// Dasselbe als ERSTE Lücke (Anfangsstille über dem Limit, hier 10 s statt 2 h): der Ton
+    /// beginnt bei 0, die Nullen entstehen nicht, die gekürzte Zeit ist gezaehlt und vermerkt.
     #[test]
-    fn a_first_gap_beyond_the_limit_is_not_padded() {
+    fn a_first_gap_beyond_the_limit_is_cut_counted_and_flagged() {
         let mut feeder = LoopbackFeeder::new(16_000, 1, Some(Q0))
             .with_max_gap(std::time::Duration::from_secs(10));
         let (out, _) = feed_into(&mut feeder, 1, &run_of(10, 0, Some(Q0 + 3_600 * SEC)));
         assert_eq!(loud(&out), 10 * 160);
         assert!(out.len().abs_diff(1_600) <= 480, "{} Samples", out.len());
         assert_eq!(feeder.summary().0, 0, "nichts aufgefuellt");
+        assert_eq!(feeder.truncated_gap_frames(), 3_600 * 16_000);
+        assert!(feeder.timeline_uncertain());
     }
 
     // ---- lva#538: Zeitachse bei kurzen Luecken, QPC-Ruecksprung -----------------------
@@ -1410,27 +1594,130 @@ mod tests {
             "ein zurueckgesprungener Stempel wurde uebernommen: {stamps:?}"
         );
         assert_eq!(feeder.bad_stamps(), 5);
+        assert!(
+            feeder.timeline_uncertain(),
+            "ein ignorierter Stempel ist eine Unsicherheit"
+        );
     }
 
-    /// Ein Stempel, der NICHT zurueckkehrt (echte Verschiebung der Uhr), gilt nach
-    /// `STAMP_REANCHOR` als neue Referenz: ohne Stille, und die Stempel folgen ihm wieder.
+    /// Ein Stempel, der NICHT zurueckkehrt, wird nie zur neuen Referenz (keine Neuverankerung,
+    /// Runde 5): alle Pakete haengen lueckenlos an, die Zeitachse ist unsicher. Es entsteht keine
+    /// erfundene Stille und kein Sample geht verloren.
     #[test]
-    fn a_stamp_that_stays_off_becomes_the_new_reference() {
+    fn a_stamp_that_stays_off_is_never_adopted_as_the_reference() {
         let shifted = Q0 - 5 * SEC; // 5 s zurueck, bleibt so
         let mut pkts = run_of(30, 0, Some(Q0));
         pkts.extend(run_of(300, 30 * 160, Some(shifted + 30 * 100_000)));
-        let (out, stamps) = feed(16_000, 1, Some(Q0), &pkts);
-        assert!(
-            out.len().abs_diff(330 * 160) <= 480,
-            "{} Samples",
-            out.len()
+        let mut feeder = LoopbackFeeder::new(16_000, 1, Some(Q0));
+        let (out, stamps) = feed_into(&mut feeder, 1, &pkts);
+        assert_eq!(loud(&out), 330 * 160, "kein Sample geht verloren");
+        assert_eq!(
+            onsets(&out).len(),
+            1,
+            "ein durchgehender Ton, keine Stille erfunden"
         );
-        let last = stamps.iter().rev().find_map(|(_, s)| *s).unwrap();
-        let expected = shifted + 330 * 100_000;
+        assert_eq!(feeder.summary().0, 0, "nichts aufgefuellt");
+        assert_eq!(feeder.bad_stamps(), 300);
+        assert!(feeder.timeline_uncertain());
+        // Kein Stempel der verschobenen Pakete wird weitergegeben: jeder Blockstempel folgt der
+        // Position des Blocks in der Ausgabe (1 Sample = 625 Einheiten zu 100 ns), nicht dem
+        // verschobenen Stempel (der laege bis zu 5 s daneben).
+        let stamped: Vec<(usize, u64)> = stamps
+            .iter()
+            .filter_map(|(idx, s)| s.map(|s| (*idx, s)))
+            .collect();
+        assert!(!stamped.is_empty(), "Voraussetzung: es gibt Blockstempel");
         assert!(
-            last.abs_diff(expected) <= 1_000_000,
-            "der letzte Stempel {last} folgt der neuen Referenz {expected} nicht"
+            stamped
+                .iter()
+                .all(|(idx, s)| s.abs_diff(Q0 + *idx as u64 * 625) <= 160_000),
+            "ein verschobener Stempel wurde uebernommen: {stamped:?}"
         );
+    }
+
+    /// Runde 5, Befund 2: 30 normale 10-ms-Pakete, 100 Pakete mit Stempeln 5 s zurueck (genau
+    /// die frueher noetige Sekunde fuer eine Neuverankerung), danach wieder normale Stempel. Die
+    /// Rueckkehr erfindet KEINE 5 s Stille; die Zeitachse ist dauerhaft als unsicher vermerkt.
+    #[test]
+    fn the_return_after_a_long_stamp_error_adds_no_silence() {
+        for bad in [100u64, 101, 300] {
+            let mut source = ScriptedSource::ready(
+                (0..30u64)
+                    .map(|k| owned(160 * k, Q0 + 100_000 * k, 0.5))
+                    .chain((30..30 + bad).map(|k| owned(160 * k, Q0 - 5 * SEC + 100_000 * k, 0.5)))
+                    .chain((30 + bad..60 + bad).map(|k| owned(160 * k, Q0 + 100_000 * k, 0.5))),
+            );
+            let mut feeder = LoopbackFeeder::new(16_000, 1, Some(Q0));
+            let stop = AtomicBool::new(false);
+            let mut out: Vec<i16> = Vec::new();
+            run_cycle(
+                &mut source,
+                &mut feeder,
+                &stop,
+                &mut |b: &[i16], _: Option<u64>| out.extend_from_slice(b),
+            )
+            .unwrap();
+            let budget = feeder.finish_budget();
+            feeder.finish(budget, &mut |b: &[i16], _: Option<u64>| {
+                out.extend_from_slice(b)
+            });
+            let packets = (60 + bad) as usize;
+            assert_eq!(
+                loud(&out),
+                packets * 160,
+                "{bad}: kein Sample geht verloren"
+            );
+            assert!(
+                out.len().abs_diff(packets * 160) <= 480,
+                "{bad}: {} Samples statt ~{} (5 s Stille erfunden?)",
+                out.len(),
+                packets * 160
+            );
+            assert_eq!(onsets(&out).len(), 1, "{bad}: ein durchgehender Ton");
+            assert_eq!(feeder.summary().0, 0, "{bad}: nichts aufgefuellt");
+            assert_eq!(feeder.bad_stamps(), bad);
+            assert!(feeder.timeline_uncertain(), "{bad}: dauerhaft unsicher");
+        }
+    }
+
+    /// Runde 5, Befund 1: ein erstes Paket OHNE gueltigen Stempel (`TIMESTAMP_ERROR`) entwertet
+    /// spaetere gueltige Stempel nicht. 10 ms ohne Stempel, 3 s Pause ohne Paket, dann ein Paket
+    /// mit gueltigem QPC `Start + 3,01 s`: Tonanfaenge bei 0 und 3,01 s, alle Nutzsamples da.
+    #[test]
+    fn a_first_packet_without_a_stamp_does_not_disable_the_later_stamps() {
+        let first = OwnedPacket {
+            interleaved: vec![0.5; 160],
+            device_position: 0,
+            qpc: None,
+        };
+        let second = OwnedPacket {
+            interleaved: vec![0.5; 160],
+            device_position: 160,
+            qpc: Some(Q0 + 301 * SEC / 100),
+        };
+        let mut source = ScriptedSource::ready([first, second]);
+        let mut feeder = LoopbackFeeder::new(16_000, 1, Some(Q0));
+        let stop = AtomicBool::new(false);
+        let mut out: Vec<i16> = Vec::new();
+        run_cycle(
+            &mut source,
+            &mut feeder,
+            &stop,
+            &mut |b: &[i16], _: Option<u64>| out.extend_from_slice(b),
+        )
+        .unwrap();
+        let budget = feeder.finish_budget();
+        feeder.finish(budget, &mut |b: &[i16], _: Option<u64>| {
+            out.extend_from_slice(b)
+        });
+        let on = onsets(&out);
+        assert_eq!(on.len(), 2, "{on:?}");
+        assert!(on[0] <= 160, "{on:?}");
+        assert!(on[1].abs_diff(48_160) <= 160, "zweiter Ton bei {}", on[1]);
+        assert_eq!(loud(&out), 320, "alle Nutzsamples erhalten");
+        // Das Paket ohne Stempel ist nicht belegt: die Zeitachse ist vermerkt unsicher.
+        assert_eq!(feeder.unstamped_packets(), 1);
+        assert!(feeder.timeline_uncertain());
     }
 
     // ---- lva#538, Runde 4: Befund 1 und 2 (Position unabhaengig von Schlange und Lesen) ----
@@ -2011,5 +2298,137 @@ mod tests {
         assert_eq!(padded, PUMP_STEP_FRAMES);
         assert_eq!(end.lost_frames, 960_000 - 160 - PUMP_STEP_FRAMES);
         assert!(end.audio_lost());
+    }
+
+    // ---- lva#538, Runde 5: Befund 4 (jeder nicht saubere Abschluss zaehlt beim Stopp) ----------
+
+    /// Ein sauberer Abschluss ist der einzige, der als sauber gilt: Pakete mit Stempeln, die
+    /// Sitzung endet von selbst, nichts geht verloren.
+    #[test]
+    fn a_clean_capture_ends_clean() {
+        let packets = (0..50u64)
+            .map(|k| owned(160 * k, Script::ORIGIN + 100_000 * k, 0.5))
+            .collect();
+        let end = Script {
+            packets,
+            ..Script::default()
+        }
+        .capture()
+        .stop();
+        assert_eq!(end, CaptureEnd::default());
+        assert!(end.is_clean() && end.reasons().is_empty());
+    }
+
+    /// Verlust beim Abschluss (ein Uebergroessenpaket, der Stopp kommt mit dem ersten Block).
+    #[test]
+    fn a_lost_tail_makes_stop_report_lost() {
+        let big = OwnedPacket {
+            interleaved: vec![0.5; 20 * 16_000],
+            device_position: 0,
+            qpc: Some(Script::ORIGIN),
+        };
+        let end = Script {
+            packets: vec![big],
+            stop_at_first_block: true,
+            ..Script::default()
+        }
+        .capture()
+        .stop();
+        assert_eq!(
+            end,
+            CaptureEnd {
+                lost: true,
+                ..CaptureEnd::default()
+            }
+        );
+        assert_eq!(end.reasons(), vec!["capture_lost"]);
+    }
+
+    /// Ein Geraetefehler waehrend der Aufnahme, OHNE Verlust beim Abschluss: er zaehlt trotzdem
+    /// (danach fehlt Systemton). `had_error` sieht ihn schon vor dem Stopp.
+    #[test]
+    fn a_device_error_makes_stop_report_error_even_without_loss() {
+        let packets = (0..20u64)
+            .map(|k| owned(160 * k, Script::ORIGIN + 100_000 * k, 0.5))
+            .collect();
+        let capture = Script {
+            packets,
+            error_after: Some(20),
+            ..Script::default()
+        }
+        .capture();
+        let end = capture.stop();
+        assert_eq!(
+            end,
+            CaptureEnd {
+                error: true,
+                ..CaptureEnd::default()
+            }
+        );
+        assert_eq!(end.reasons(), vec!["capture_error"]);
+    }
+
+    /// Eine Panik des Capture-Threads mit ausstehendem PCM: `join` schlaegt fehl. Das ist
+    /// KEIN sauberer Abschluss: `panicked` (und `error`: der Waechter meldet den Ausfall).
+    #[test]
+    fn a_thread_panic_makes_stop_report_panicked() {
+        let packets = (0..20u64)
+            .map(|k| owned(160 * k, Script::ORIGIN + 100_000 * k, 0.5))
+            .collect();
+        let capture = Script {
+            packets,
+            panic_at_first_block: true,
+            ..Script::default()
+        }
+        .capture();
+        let end = capture.stop();
+        assert!(end.panicked, "{end:?}");
+        assert!(end.error, "die Panik setzt auch den Fehlermerker: {end:?}");
+        assert!(!end.is_clean());
+        assert_eq!(end.reasons()[0], "capture_panicked");
+    }
+
+    /// Eine unsichere Zeitachse (ein Paket ohne Stempel) reicht: sie kommt aus dem Thread bis in
+    /// das Ergebnis von `stop`.
+    #[test]
+    fn an_uncertain_timeline_makes_stop_report_it() {
+        let mut packets: Vec<OwnedPacket> = (0..20u64)
+            .map(|k| owned(160 * k, Script::ORIGIN + 100_000 * k, 0.5))
+            .collect();
+        packets[3].qpc = None;
+        let end = Script {
+            packets,
+            ..Script::default()
+        }
+        .capture()
+        .stop();
+        assert_eq!(
+            end,
+            CaptureEnd {
+                timeline_uncertain: true,
+                ..CaptureEnd::default()
+            }
+        );
+        assert_eq!(end.reasons(), vec!["timeline_uncertain"]);
+    }
+
+    /// Mehrere Gruende stehen alle da, der schwerste zuerst.
+    #[test]
+    fn several_reasons_are_all_named_worst_first() {
+        let end = CaptureEnd {
+            lost: true,
+            error: true,
+            panicked: true,
+            timeline_uncertain: true,
+        };
+        assert_eq!(
+            end.reasons(),
+            vec![
+                "capture_panicked",
+                "capture_error",
+                "capture_lost",
+                "timeline_uncertain"
+            ]
+        );
     }
 }

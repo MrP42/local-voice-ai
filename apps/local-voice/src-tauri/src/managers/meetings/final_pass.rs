@@ -3485,38 +3485,25 @@ mod tests {
         assert_eq!(snap.segments.iter().map(|s| s.end_ms).max(), Some(9_000));
     }
 
-    /// Die Capture-Seite des Loopbacks bis zum Stopp (lva#538 Runde 4): ein Paket von `seconds`
-    /// Sekunden liegt beim Stopp in der Schlange (der Stopp kommt mit dem ersten Block). Das
-    /// echte `capture_session`, ohne Geraet.
-    fn loopback_session_end(seconds: usize) -> crate::audio_toolkit::audio::loopback::SessionEnd {
-        use crate::audio_toolkit::audio::loopback::{capture_session, LoopbackFeeder, OwnedPacket};
-        use std::sync::atomic::{AtomicBool, Ordering};
-        const ORIGIN: u64 = 10_000_000;
-        let mut packet = Some(OwnedPacket {
-            interleaved: vec![0.5; seconds * 16_000],
+    // -- lva#538 Runde 5: die Kette vom Capture-Thread bis zum Neustart ------------
+
+    use crate::audio_toolkit::audio::loopback::{OwnedPacket, Script};
+    use crate::audio_toolkit::audio::CaptureEnd;
+
+    /// Ein Paket Ton (16 kHz Mono, `millis` lang), gestempelt `offset_ms` nach dem Stream-Start
+    /// der Nachbildung (1 ms = 10 000 Einheiten zu 100 ns); ohne Stempel, wenn `stamped` fehlt.
+    fn tone(offset_ms: u64, millis: usize, stamped: bool) -> OwnedPacket {
+        OwnedPacket {
+            interleaved: vec![0.5; millis * 16],
             device_position: 0,
-            qpc: Some(ORIGIN),
-        });
-        let mut source = move || Ok(packet.take());
-        let mut feeder = LoopbackFeeder::new(16_000, 1, Some(ORIGIN));
-        let stop = AtomicBool::new(false);
-        capture_session(
-            &mut source,
-            &mut feeder,
-            &stop,
-            &mut || {},
-            &mut |_: &[i16], _: Option<u64>| stop.store(true, Ordering::Relaxed),
-        )
+            qpc: stamped.then_some(Script::ORIGIN + offset_ms * 10_000),
+        }
     }
 
-    /// lva#538 Runde 4, Befund 4: ein Verlust beim Stopp des Loopbacks bleibt nicht auf der
-    /// Capture-Seite stehen. Kette: ein uebergrosses Paket liegt beim Stopp in der Schlange
-    /// (`capture_session` meldet den Verlust), der Stopp macht daraus einen unvollstaendigen
-    /// Systemkanal (`settle_after_stop`): `audio_incomplete` steht dauerhaft, `capture_open`
-    /// bleibt, und nach dem "Neustart" (Store neu geoeffnet) ersetzt der Enddurchlauf nichts.
-    #[test]
-    fn a_loss_at_loopback_stop_keeps_the_live_transcript_after_a_restart() {
-        let f = fixture(true, MeetingStatus::Processing);
+    /// Die Aufnahme beginnt (Marker `capture_open` aus dem Start), das Live-Transkript lief bis
+    /// 9 s, die WAV ist 6 s lang: die Unterdeckung liegt innerhalb der Toleranz, die Abdeckung
+    /// allein liesse den Ersatz zu.
+    fn started_capture(f: &Fixture) {
         let mic = f.meeting_dir.join("mic.wav");
         let system = f.meeting_dir.join("system.wav");
         f.store
@@ -3530,20 +3517,31 @@ mod tests {
                 },
             )
             .unwrap();
+    }
 
-        let end = loopback_session_end(20);
-        assert!(end.error.is_none());
-        assert!(
-            end.audio_lost(),
-            "Voraussetzung: der Abschluss verlor Audio"
-        );
+    /// Die ganze Kette fuer einen NICHT sauberen Abschluss des Loopbacks, ueber die echte
+    /// Stopp-Auswertung: ein Capture-Thread mit der Nachbildung `script`, beendet von
+    /// `recorder::stop_loopback` (wie in `Recorder::stop`), das Ergebnis in `settle_after_stop`,
+    /// dann der "Neustart" (der Store wird neu geoeffnet) und der Enddurchlauf. `precondition`
+    /// prueft, was die Nachbildung ausloeste; `reason` ist der Name im Marker.
+    fn chain_keeps_the_live_transcript(
+        script: Script,
+        precondition: impl FnOnce(&CaptureEnd),
+        reason: &str,
+    ) {
+        let f = fixture(true, MeetingStatus::Processing);
+        started_capture(&f);
 
-        // Der Stopp: keine Schreibfehler der WAV, aber der Verlust des Loopbacks.
+        let end = super::super::recorder::stop_loopback(&f.id, script.capture());
+        precondition(&end);
+        assert!(!end.is_clean(), "Voraussetzung: kein sauberer Abschluss");
+
+        // Der Stopp: keine Schreibfehler der WAV, nur das Ende des Loopbacks.
         let (failed, _plan) = super::super::recorder::settle_after_stop(
             &f.store,
             &f.id,
             Vec::new(),
-            end.audio_lost(),
+            &end,
             run_plan(LARGE),
             1,
         );
@@ -3554,13 +3552,21 @@ mod tests {
             serde_json::json!([1]),
             "{meta}"
         );
+        let stored = meta[AUDIO_INCOMPLETE_KEY]["reason"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(stored.contains(reason), "Grund {reason} fehlt: {meta}");
         assert!(
             meta.get(super::super::store::CAPTURE_OPEN_KEY).is_some(),
             "der Marker bleibt: die Aufnahme gilt nicht als sauber geschlossen"
         );
 
-        // Neustart: ein neuer Store auf derselben Datenbank. Der Enddurchlauf ersetzt nichts.
+        // Neustart: ein neuer Store auf derselben Datenbank. Beide Marker stehen weiter, und der
+        // Enddurchlauf ersetzt nichts.
         let restarted = MeetingStore::open_at(&f._dir.path().join("meetings.db")).unwrap();
+        let meta = restarted.metadata_json(&f.id).unwrap().unwrap();
+        assert!(meta.get(AUDIO_INCOMPLETE_KEY).is_some(), "{meta}");
+        assert!(meta.get(super::super::store::CAPTURE_OPEN_KEY).is_some());
         let mut env = FakeEnv::new();
         let out = run_job(&restarted, &job(&f, run_plan(LARGE)), &mut env);
         assert_live_untouched(&f, &env, &out, &["s0", "s1", "s2"]);
@@ -3569,33 +3575,162 @@ mod tests {
         assert_eq!(snap.segments.iter().map(|s| s.end_ms).max(), Some(9_000));
     }
 
-    /// Das Gegenstueck zur Kette oben: ein Stopp ohne Verlust (Paket in Groesse der
-    /// Schlangengrenze) laesst den Marker fallen, und der Enddurchlauf ersetzt. Sonst bewiese
-    /// der Test oben nichts.
+    /// Befund 4 (Runde 4/5): ein Verlust beim Stopp des Loopbacks bleibt nicht auf der
+    /// Capture-Seite stehen. Ein uebergrosses Paket (20 s) liegt beim Stopp in der Schlange.
     #[test]
-    fn a_lossless_loopback_stop_closes_the_marker_and_the_final_pass_replaces() {
+    fn a_loss_at_loopback_stop_keeps_the_live_transcript_after_a_restart() {
+        chain_keeps_the_live_transcript(
+            Script {
+                packets: vec![tone(0, 20_000, true)],
+                stop_at_first_block: true,
+                ..Script::default()
+            },
+            |end| {
+                assert!(end.lost, "{end:?}");
+                assert!(!end.error && !end.panicked, "{end:?}");
+            },
+            "capture_lost",
+        );
+    }
+
+    /// Befund 4 (Runde 5): eine Panik des Capture-Threads mit ausstehendem PCM. Das `join`
+    /// schlaegt fehl; frueher kam daraus `false`/nichts, jetzt ein unvollstaendiger Systemkanal.
+    #[test]
+    fn a_capture_thread_panic_keeps_the_live_transcript_after_a_restart() {
+        chain_keeps_the_live_transcript(
+            Script {
+                packets: vec![tone(0, 2_000, true)],
+                panic_at_first_block: true,
+                ..Script::default()
+            },
+            |end| assert!(end.panicked, "{end:?}"),
+            "capture_panicked",
+        );
+    }
+
+    /// Befund 4 (Runde 5): ein Geraetefehler waehrend der laufenden Aufnahme, OHNE Verlust beim
+    /// Abschluss (alles Gelesene ist geschrieben). Danach fehlt Systemton: der Marker steht.
+    #[test]
+    fn a_device_error_keeps_the_live_transcript_after_a_restart() {
+        chain_keeps_the_live_transcript(
+            Script {
+                packets: vec![tone(0, 1_000, true)],
+                error_after: Some(1),
+                ..Script::default()
+            },
+            |end| {
+                assert!(end.error, "{end:?}");
+                assert!(!end.lost && !end.panicked, "{end:?}");
+            },
+            "capture_error",
+        );
+    }
+
+    /// Befund 3 (Runde 5): eine echte Pause am ANFANG, laenger als die Obergrenze. Das Kuerzen
+    /// ist erlaubt, aber nicht unsichtbar: der Marker steht auch nach dem Neuoeffnen.
+    #[test]
+    fn a_truncated_initial_pause_keeps_the_live_transcript_after_a_restart() {
+        chain_keeps_the_live_transcript(
+            Script {
+                packets: vec![tone(6_000, 1_000, true), tone(7_000, 1_000, true)],
+                max_gap: Some(std::time::Duration::from_secs(2)),
+                ..Script::default()
+            },
+            |end| {
+                assert!(end.timeline_uncertain, "{end:?}");
+                assert!(!end.lost && !end.error && !end.panicked, "{end:?}");
+            },
+            "timeline_uncertain",
+        );
+    }
+
+    /// Befund 3 (Runde 5): eine echte Pause ZWISCHEN zwei Paketen, laenger als die Obergrenze.
+    #[test]
+    fn a_truncated_inner_pause_keeps_the_live_transcript_after_a_restart() {
+        chain_keeps_the_live_transcript(
+            Script {
+                packets: vec![tone(0, 1_000, true), tone(6_000, 1_000, true)],
+                max_gap: Some(std::time::Duration::from_secs(2)),
+                ..Script::default()
+            },
+            |end| {
+                assert!(end.timeline_uncertain, "{end:?}");
+                assert!(!end.lost && !end.error && !end.panicked, "{end:?}");
+            },
+            "timeline_uncertain",
+        );
+    }
+
+    /// Befund 1/2 (Runde 5): ein Paket ohne Stempel haengt lueckenlos an, aber die Zeitachse
+    /// ist danach nicht mehr sicher: dauerhaft unvollstaendig.
+    #[test]
+    fn a_packet_without_a_stamp_keeps_the_live_transcript_after_a_restart() {
+        chain_keeps_the_live_transcript(
+            Script {
+                packets: vec![
+                    tone(0, 10, false),
+                    tone(3_010, 10, true),
+                    tone(3_020, 1_000, true),
+                ],
+                ..Script::default()
+            },
+            |end| {
+                assert!(end.timeline_uncertain, "{end:?}");
+                assert!(!end.lost && !end.error && !end.panicked, "{end:?}");
+            },
+            "timeline_uncertain",
+        );
+    }
+
+    /// Befund 2 (Runde 5): ein Stempel weit hinter dem Stand der Zeitachse wird ignoriert (kein
+    /// Neuverankern, keine erfundene Stille), und die Unsicherheit bleibt dauerhaft stehen.
+    #[test]
+    fn a_stamp_far_behind_keeps_the_live_transcript_after_a_restart() {
+        chain_keeps_the_live_transcript(
+            Script {
+                packets: vec![tone(0, 1_000, true), tone(100, 1_000, true)],
+                ..Script::default()
+            },
+            |end| {
+                assert!(end.timeline_uncertain, "{end:?}");
+                assert!(!end.lost && !end.error && !end.panicked, "{end:?}");
+            },
+            "timeline_uncertain",
+        );
+    }
+
+    /// Das Gegenstueck zu allen Ketten oben: ein sauberer Abschluss (gestempelte, lueckenlose
+    /// Pakete) laesst den Marker fallen, und der Enddurchlauf ersetzt. Sonst bewiesen die Tests
+    /// oben nichts (und die normale Live-Aufnahme verlore den Enddurchlauf).
+    #[test]
+    fn a_clean_loopback_stop_closes_the_marker_and_the_final_pass_replaces() {
         let f = fixture(true, MeetingStatus::Processing);
         let mic = f.meeting_dir.join("mic.wav");
         let system = f.meeting_dir.join("system.wav");
         f.store
             .begin_capture(&f.id, mic.to_str(), system.to_str())
             .unwrap();
-        let end = loopback_session_end(8);
-        assert!(end.error.is_none() && !end.audio_lost());
+        let script = Script {
+            packets: (0..100).map(|k| tone(10 * k, 10, true)).collect(),
+            ..Script::default()
+        };
+        let end = super::super::recorder::stop_loopback(&f.id, script.capture());
+        assert!(end.is_clean(), "{end:?}");
         let (failed, _plan) = super::super::recorder::settle_after_stop(
             &f.store,
             &f.id,
             Vec::new(),
-            end.audio_lost(),
+            &end,
             run_plan(LARGE),
             1,
         );
         assert!(failed.is_empty());
-        let meta = f.store.metadata_json(&f.id).unwrap().unwrap();
+        let restarted = MeetingStore::open_at(&f._dir.path().join("meetings.db")).unwrap();
+        let meta = restarted.metadata_json(&f.id).unwrap().unwrap();
         assert!(meta.get(AUDIO_INCOMPLETE_KEY).is_none(), "{meta}");
         assert!(meta.get(super::super::store::CAPTURE_OPEN_KEY).is_none());
         let mut env = FakeEnv::new();
-        let _ = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        let _ = run_job(&restarted, &job(&f, run_plan(LARGE)), &mut env);
         assert!(env.kinds().contains(&"reset"), "der Enddurchlauf ersetzt");
     }
 

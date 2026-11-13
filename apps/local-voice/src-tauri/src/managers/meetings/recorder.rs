@@ -4,7 +4,7 @@
 //! recovery and the recording indicator (tray + overlay).
 //!
 //! Everything that can be decided without I/O lives in free functions (`consent_gate`,
-//! `plan_after_write_failures`, ...) and in `lifecycle.rs` (der Lebenszyklus), so the state
+//! `settle_after_stop`, ...) and in `lifecycle.rs` (der Lebenszyklus), so the state
 //! rules are testable without Tauri, audio hardware or a model.
 //!
 //! #537: `start_playback_capture` nimmt NUR den Systemton auf (kein Mikrofon) und
@@ -52,9 +52,18 @@
 //!   Merkzeichen (`WriteFlags`, nur Atomics); ein Waechter-Thread und `stop()` schreiben es
 //!   DAUERHAFT als `metadata_json.audio_incomplete` und melden `audio_write_failed`. Laesst sich
 //!   der Marker nicht speichern, versucht es der Waechter weiter, und `stop()` weicht fail-closed
-//!   auf `Keep(AudioIncomplete)` aus (`plan_after_write_failures`). Tests: `a_write_error_...`,
+//!   auf `Keep(AudioIncomplete)` aus (`settle_after_stop`). Tests: `a_write_error_...`,
 //!   `a_header_flush_error_...`, `a_marker_that_cannot_be_stored_keeps_the_live_transcript`,
 //!   `wav_writer.rs`, `final_pass.rs` (Abdeckung je Spur).
+//! - **Nicht sauberer Abschluss des Loopbacks (lva#538 Runde 5)**: `LoopbackCapture::stop`
+//!   liefert `CaptureEnd {lost, error, panicked, timeline_uncertain}` (nie ein `bool`). Jedes Feld
+//!   (Verlust beim Abschluss, Geraetefehler, Panik des Capture-Threads, deren `join` fehlschlaegt,
+//!   unsichere Zeitachse durch ein Paket ohne Stempel, einen ignorierten Stempel oder eine ueber
+//!   `MAX_GAP` gekuerzte Pause) macht den Systemkanal dauerhaft unvollstaendig:
+//!   `settle_after_stop` schreibt `audio_incomplete` mit Grund, laesst `capture_open` stehen, und
+//!   der Enddurchlauf ersetzt nichts. Tests: die
+//!   `..._keeps_the_live_transcript_after_a_restart` in `final_pass.rs` (echter Capture-Thread ->
+//!   `stop_loopback` -> `settle_after_stop` -> Store neu geoeffnet -> `run_job`).
 //! - **Kein Ausgabegeraet / Loopback scheitert**: der Start schlaegt mit
 //!   `playback_capture_failed` fehl, nie still "nur Mikrofon" (es gibt keins); das Ziel wird
 //!   aus dem gespeicherten Vorzustand zurueckgesetzt. Test: `a_failing_start_reports_its_error_at_once`.
@@ -109,7 +118,7 @@ use super::lifecycle::{
 use super::mic_capture::MeetingMicCapture;
 use super::signal_watch::HealthState;
 use super::store::{Meeting, MeetingSource, MeetingStatus, MeetingStore, StoredSegment};
-use crate::audio_toolkit::audio::{LoopbackCapture, StreamingWavWriter};
+use crate::audio_toolkit::audio::{CaptureEnd, LoopbackCapture, StreamingWavWriter};
 use crate::managers::transcription::TranscriptionManager;
 
 /// Sample rate of the whole meetings pipeline (mic capture and loopback both
@@ -1595,7 +1604,7 @@ impl MeetingRecorderManager {
         // Captures first: once they are stopped no callback can touch the
         // sinks or the DSP queue any more, so draining and finalizing below is
         // race-free.
-        let system_lost = self.stop_captures(&meeting_id, mic_capture, loopback);
+        let capture_end = self.stop_captures(&meeting_id, mic_capture, loopback);
         // Mikrofon und Loopback sind zu: jetzt ist die Maschine nicht mehr in
         // Aufnahme. ZUERST der Zustand, DANACH der Indikator: `hide_recording_overlay`
         // fragt den Zustand und stellte den Indikator sonst wieder auf. Der Abschluss
@@ -1654,12 +1663,13 @@ impl MeetingRecorderManager {
         let duration_ms = mic_ms.max(system_ms);
 
         // lva#538: ein Schreibfehler (auch ein Fehler beim Kopf-Flush oder beim Abschluss) und
-        // ein Verlust des Loopbacks beim Stopp (Runde 4) machen die Aufnahme unvollstaendig.
+        // jeder nicht saubere Abschluss des Loopbacks (Runde 5: Verlust, Geraetefehler, Panik,
+        // unsichere Zeitachse) machen die Aufnahme unvollstaendig.
         let (failed, plan) = settle_after_stop(
             &self.store,
             &meeting_id,
             write_flags.failed_channels(),
-            system_lost,
+            &capture_end,
             plan,
             MARKER_TRIES,
         );
@@ -1736,34 +1746,23 @@ impl MeetingRecorderManager {
 
     /// Beendet die Captures einer Aufnahme (Mikrofon, Loopback) und meldet, was sie
     /// unterwegs zu sagen hatten. Danach ruft kein Callback mehr in Sinks oder DSP-Queue.
-    /// Rueckgabe: `true`, wenn der Loopback beim Stopp bereits gelesenes Audio nicht mehr
-    /// schreiben konnte (lva#538 Runde 4, Befund 4): der Systemkanal ist dann unvollstaendig.
+    /// Rueckgabe: wie der Loopback endete (lva#538 Runde 5): jeder nicht saubere Abschluss macht
+    /// den Systemkanal unvollstaendig.
     fn stop_captures(
         &self,
         meeting_id: &str,
         mic_capture: Option<MeetingMicCapture>,
         loopback: Option<LoopbackCapture>,
-    ) -> bool {
+    ) -> CaptureEnd {
         if let Some(capture) = mic_capture {
             if capture.had_error() {
                 self.emit_error(meeting_id, "mic_stream_error");
             }
             capture.stop();
         }
-        let Some(capture) = loopback else {
-            return false;
-        };
-        // The watchdog above has already reported this while the meeting
-        // was running; the log line here is what makes it visible in the
-        // evidence of a finished meeting.
-        if capture.had_error() {
-            warn!("meetings: loopback capture had ended with an error ({meeting_id})");
-        }
-        let lost = capture.stop();
-        if lost {
-            warn!("meetings: loopback capture lost audio at stop ({meeting_id})");
-        }
-        lost
+        loopback
+            .map(|capture| stop_loopback(meeting_id, capture))
+            .unwrap_or_default()
     }
 
     /// Der Mitschnitt hat keinen einzigen Ton aufgenommen: Eintrag wie vorher, leere
@@ -2312,13 +2311,26 @@ fn finalize_sink(sink: &Arc<Mutex<ChannelSink>>, failed: &AtomicBool) -> Option<
 /// dieser Aufnahme, auch nach einem Absturz oder wenn spaeter wieder Platz da ist.
 /// Mehrfaches Schreiben ist unschaedlich (derselbe Schluessel). Ein Fehler wird gemeldet,
 /// nicht nur geloggt: der Aufrufer weicht darauf fail-closed aus.
+#[cfg(test)]
 pub(crate) fn mark_audio_incomplete(
     store: &MeetingStore,
     meeting_id: &str,
     channels: &[u8],
 ) -> Result<(), String> {
+    mark_audio_incomplete_because(store, meeting_id, channels, "write_failed")
+}
+
+/// Wie [`mark_audio_incomplete`], mit dem Grund (`reason`: `write_failed`, `capture_lost`,
+/// `capture_error`, `capture_panicked`, `timeline_uncertain`, kommagetrennt bei mehreren).
+pub(crate) fn mark_audio_incomplete_because(
+    store: &MeetingStore,
+    meeting_id: &str,
+    channels: &[u8],
+    reason: &str,
+) -> Result<(), String> {
     let value = serde_json::json!({
         "channels": channels,
+        "reason": reason,
         "at": chrono::Utc::now().timestamp(),
     });
     store
@@ -2336,11 +2348,21 @@ fn persist_audio_incomplete(
     channels: &[u8],
     tries: u32,
 ) -> bool {
+    persist_audio_incomplete_because(store, meeting_id, channels, "write_failed", tries)
+}
+
+fn persist_audio_incomplete_because(
+    store: &MeetingStore,
+    meeting_id: &str,
+    channels: &[u8],
+    reason: &str,
+    tries: u32,
+) -> bool {
     for attempt in 0..tries.max(1) {
         if attempt > 0 {
             std::thread::sleep(Duration::from_millis(50));
         }
-        if mark_audio_incomplete(store, meeting_id, channels).is_ok() {
+        if mark_audio_incomplete_because(store, meeting_id, channels, reason).is_ok() {
             return true;
         }
     }
@@ -2363,28 +2385,52 @@ pub(crate) fn close_capture_marker(store: &MeetingStore, meeting_id: &str, tries
     false
 }
 
+/// lva#538 (Runde 5): beendet den Loopback und wertet aus, wie er endete. Die Auswertung ist
+/// `LoopbackCapture::stop`: Verlust beim Abschluss, Gerätefehler, Panik des Threads (das `join`
+/// schlug fehl) und unsichere Zeitachse. Nichts davon wird nur protokolliert.
+pub(crate) fn stop_loopback(meeting_id: &str, capture: LoopbackCapture) -> CaptureEnd {
+    // The watchdog above has already reported an error while the meeting was running; the log
+    // line here is what makes it visible in the evidence of a finished meeting.
+    if capture.had_error() {
+        warn!("meetings: loopback capture had ended with an error ({meeting_id})");
+    }
+    let end = capture.stop();
+    if !end.is_clean() {
+        warn!(
+            "meetings: loopback capture did not end cleanly ({meeting_id}): {}",
+            end.reasons().join(",")
+        );
+    }
+    end
+}
+
 /// lva#538: das Ende des Stopps am Marker. Unvollstaendig ist ein Kanal, dessen WAV nicht
-/// vollstaendig geschrieben wurde (`write_failed`), und der Systemkanal, wenn der Loopback beim
-/// Stopp bereits gelesenes Audio nicht mehr schreiben konnte (`system_lost`, Runde 4 Befund 4).
-/// Der Marker `audio_incomplete` steht VOR dem Auftrag, damit der Enddurchlauf das
-/// Live-Transkript nicht aus der WAV ersetzt (fail-closed: laesst er sich nicht speichern, gilt
-/// fuer DIESEN Lauf trotzdem `Keep(AudioIncomplete)`). Nur eine sauber geschlossene Aufnahme ohne
-/// jeden Verlust laesst den pessimistischen Marker `capture_open` fallen; bei einem Fehler bleibt
-/// er (zusaetzlich zu `audio_incomplete`), laesst er sich nicht entfernen, bleibt er ebenfalls:
-/// das ist die sichere Seite. Rueckgabe: die unvollstaendigen Kanaele und der Plan.
+/// vollstaendig geschrieben wurde (`write_failed`), und der Systemkanal bei JEDEM nicht sauberen
+/// Abschluss des Loopbacks (`end`, Runde 5). Der Marker `audio_incomplete` steht VOR dem Auftrag,
+/// mit Grund (`reason`), damit der Enddurchlauf das Live-Transkript nicht aus der WAV ersetzt
+/// (fail-closed: laesst er sich nicht speichern, gilt fuer DIESEN Lauf trotzdem
+/// `Keep(AudioIncomplete)`). Nur eine sauber geschlossene Aufnahme ohne jeden Verlust laesst den
+/// pessimistischen Marker `capture_open` fallen; bei einem Fehler bleibt er (zusaetzlich zu
+/// `audio_incomplete`), laesst er sich nicht entfernen, bleibt er ebenfalls: das ist die sichere
+/// Seite. Rueckgabe: die unvollstaendigen Kanaele und der Plan.
 pub(crate) fn settle_after_stop(
     store: &MeetingStore,
     meeting_id: &str,
     write_failed: Vec<u8>,
-    system_lost: bool,
+    end: &CaptureEnd,
     plan: FinalPlan,
     tries: u32,
 ) -> (Vec<u8>, FinalPlan) {
     let mut failed = write_failed;
-    if system_lost && !failed.contains(&CHANNEL_SYSTEM) {
+    let mut reasons: Vec<&str> = Vec::new();
+    if !failed.is_empty() {
+        reasons.push("write_failed");
+    }
+    reasons.extend(end.reasons());
+    if !end.is_clean() && !failed.contains(&CHANNEL_SYSTEM) {
         failed.push(CHANNEL_SYSTEM);
     }
-    let plan = plan_after_write_failures(store, meeting_id, &failed, plan, tries);
+    let plan = plan_after_incomplete(store, meeting_id, &failed, &reasons.join(","), plan, tries);
     if failed.is_empty() {
         close_capture_marker(store, meeting_id, tries);
     }
@@ -2397,6 +2443,7 @@ pub(crate) fn settle_after_stop(
 /// Lauf trotzdem `Keep(AudioIncomplete)`: das Live-Transkript bleibt, auch wenn die Datenbank
 /// den Marker verweigert. (Ein spaeterer Lauf ohne Marker faengt `final_pass` ueber die
 /// Abdeckung der Spuren ab.)
+#[cfg(test)]
 pub(crate) fn plan_after_write_failures(
     store: &MeetingStore,
     meeting_id: &str,
@@ -2404,7 +2451,21 @@ pub(crate) fn plan_after_write_failures(
     plan: FinalPlan,
     tries: u32,
 ) -> FinalPlan {
-    if failed.is_empty() || persist_audio_incomplete(store, meeting_id, failed, tries) {
+    plan_after_incomplete(store, meeting_id, failed, "write_failed", plan, tries)
+}
+
+/// Wie [`plan_after_write_failures`], mit dem Grund, der im Marker steht.
+pub(crate) fn plan_after_incomplete(
+    store: &MeetingStore,
+    meeting_id: &str,
+    failed: &[u8],
+    reason: &str,
+    plan: FinalPlan,
+    tries: u32,
+) -> FinalPlan {
+    if failed.is_empty()
+        || persist_audio_incomplete_because(store, meeting_id, failed, reason, tries)
+    {
         return plan;
     }
     FinalPlan::Keep(KeepReason::AudioIncomplete)
