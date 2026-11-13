@@ -428,15 +428,29 @@ struct AblageAssistantSource: AssistantSource {
     var area: AssistantArea { .files }
 
     func items() async -> [AssistantItem] {
-        let files = await MainActor.run { AblageSync.shared.uebersicht?.dateien ?? [] }
+        let overview = await MainActor.run { AblageSync.shared.uebersicht }
+        // Ordnerzugehörigkeit aus der Übersicht (verknüpfte Kontexte, lva#557): je Datei der eigene Ordner und alle darüber, nur Kennungen.
+        var parents: [String: String?] = [:]
+        for folder in overview?.ordner ?? [] {
+            if case .ordner(let parent) = folder.eltern { parents.updateValue(parent, forKey: folder.id) } else { parents.updateValue(nil, forKey: folder.id) }
+        }
+        let files = overview?.dateien ?? []
         return files.filter { allowed($0) && $0.textBereit }.map { file in
-            AssistantItem(area: .files, id: file.id, title: file.name, detail: file.typ?.uppercased(), updated: nil)
+            AssistantItem(area: .files, id: file.id, title: file.name, detail: file.typ?.uppercased(), updated: nil,
+                          folders: AssistantScope.folderChain(file.ordner, parents: parents))
         }
     }
 
     func search(_ question: String, limit: Int) async -> [AssistantPassage] {
+        await search(question, limit: limit, only: nil)
+    }
+
+    /// `only`: nur diese Dateien. Der Filter steht im Index der Ablage VOR der Kandidatenzahl (`AblageIndex.kandidatenstellen`), nicht
+    /// erst nach der Begrenzung; die Schutzregeln (`allowed`) gelten unverändert dahinter.
+    func search(_ question: String, limit: Int, only itemIds: Set<String>?) async -> [AssistantPassage] {
         guard limit > 0 else { return [] }
-        let found = await AblageSync.shared.suchen(question)
+        if let itemIds, itemIds.isEmpty { return [] }
+        let found = await AblageSync.shared.suchen(question, nur: itemIds)
         // Ablage-Auszüge sind Fenster aus der Dateisuche, keine gespeicherten Blöcke (Standard `isBlock: false`): Sie dienen dem
         // Abruf und der Erkennung, werden aber nie wörtlich ausgegeben.
         var out: [AssistantPassage] = []

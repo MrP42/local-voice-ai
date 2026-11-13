@@ -32,6 +32,8 @@ struct AssistantConversationView: View {
     @State private var showOptions = false
     /// Blatt „Assistenten“ (lva#556) und der Editor, der aus „Optionen“ heraus aufgeht (Assistent bearbeiten, Vorlage kopieren).
     @State private var showProfiles = false
+    /// Anhänge-Blatt (lva#557): Inhalte an dieses Gespräch hängen.
+    @State private var showAttach = false
     @State private var optionsEditor: AssistantEditorTarget?
     @State private var optionsFailure: String?
     #if DEBUG
@@ -54,12 +56,14 @@ struct AssistantConversationView: View {
         VStack(spacing: 0) {
             header
             Divider()
+            contextRow
             if talk.style == .natural { aiNotice }
             content
                 .sheet(isPresented: $showLocalModels, onDismiss: localModelsClosed) { ModelPanel(model: VoiceModel.shared) }
                 .sheet(isPresented: $showAreas) { areasSheet }
                 .sheet(isPresented: $showOptions) { optionsSheet }
                 .sheet(isPresented: $showProfiles) { AssistantProfilesView(close: { showProfiles = false }) }
+                .sheet(isPresented: $showAttach) { attachSheet }
                 #if DEBUG
                 .sheet(item: $demoEditor) { target in AssistantProfileEditorView(target: target, close: { demoEditor = nil }) }
                 #endif
@@ -73,6 +77,7 @@ struct AssistantConversationView: View {
             await talk.start()
             #if DEBUG
             if AssistantController.demoProfiles { showProfiles = true }
+            if AssistantController.demoContextPicker { showAttach = true }
             if AssistantController.demoProfileEditor { demoEditor = AssistantEditorTarget(profile: AssistantProfiles.demoFront) }
             #endif
         }
@@ -343,6 +348,37 @@ struct AssistantConversationView: View {
         Button("Abbrechen", role: .cancel) {}
     }
 
+    // MARK: Verknüpfte Inhalte (lva#557)
+
+    /// Chip-Zeile unter der Kopfzeile: die Inhalte des Assistenten und die des Gesprächs. Ohne Kontexte keine Zeile.
+    @ViewBuilder private var contextRow: some View {
+        let chips = talk.contextChips
+        if !chips.isEmpty {
+            AssistantContextChipsView(chips: chips, modeLine: talk.contextModeLine) { chip in
+                talk.removeConversationContext(kind: chip.kind, id: chip.contextId)
+            }
+            Divider()
+        }
+    }
+
+    /// Anhänge-Blatt: Bereiche, die der Assistent nutzen darf (freigegeben ∩ Assistent); die Inhalte des Assistenten stehen mit Haken, nicht änderbar.
+    private var attachSheet: some View {
+        let profile = profiles.isEverything ? nil : profiles.active
+        let assistantContexts = profile.map { $0.effectiveContextMode == .all ? [] : $0.knowledge.contexts } ?? []
+        return AssistantContextPickerView(
+            title: "Inhalt anhängen",
+            areas: talk.usableAreas,
+            linked: talk.conversationContexts.contexts.compactMap { $0.context },
+            locked: assistantContexts,
+            showsOnlySwitch: true,
+            onlyFromThese: talk.conversationContexts.onlyFromThese,
+            done: { selection in
+                talk.applyAttachment(selection)
+                showAttach = false
+            },
+            cancel: { showAttach = false })
+    }
+
     // MARK: Kopf
 
     /// Schließen und Menü bleiben fest; der Modellchip nur bei normaler Schrift (bei sehr großer steht er im Inhalt).
@@ -355,6 +391,12 @@ struct AssistantConversationView: View {
             .accessibilityLabel("Schließen")
             .accessibilityHint("Beendet das Gespräch")
             .accessibilityIdentifier("assistantClose")
+            Button { showAttach = true } label: {
+                Image(systemName: "paperclip").font(.body.weight(.semibold)).frame(width: 44, height: 44).contentShape(Rectangle())
+            }
+            .accessibilityLabel("Inhalt anhängen")
+            .accessibilityHint("Wählt Inhalte, die in diesem Gespräch Vorrang haben")
+            .accessibilityIdentifier("assistantContextAttach")
             Spacer(minLength: 8)
             if !accessible {
                 assistantChip
@@ -1299,7 +1341,7 @@ private struct AssistantGridLayout: Layout {
 }
 
 /// Knöpfe in Zeilen, die umbrechen (auch bei großer Schrift); zu breite Knöpfe werden auf die Breite begrenzt.
-private struct AssistantFlowLayout: Layout {
+struct AssistantFlowLayout: Layout {
     var spacing: CGFloat = 6
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {

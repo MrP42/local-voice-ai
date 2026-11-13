@@ -273,8 +273,9 @@ final class AblageSync: ObservableObject {
     }
 
     /// Suche im lokalen Index; Ergebnisse tragen Name, Ordner und Zustand der Datei. Nichts verlässt das Gerät.
-    func suchen(_ frage: String) async -> [AblageSuchErgebnis] {
-        let treffer = await suchdienst.suche(frage)
+    /// `nur`: nur Dateien mit diesen Kennungen (verknüpfte Kontexte des Assistenten; der Filter steht im Index vor der Kandidatenzahl).
+    func suchen(_ frage: String, nur: Set<String>? = nil) async -> [AblageSuchErgebnis] {
+        let treffer = await suchdienst.suche(frage, nur: nur)
         guard let u = uebersicht else { return [] }
         var je: [String: AblageDateiEintrag] = [:]
         for d in u.dateien { je[d.id] = d }

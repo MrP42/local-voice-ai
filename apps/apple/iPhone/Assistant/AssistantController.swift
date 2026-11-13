@@ -345,6 +345,12 @@ final class AssistantController: ObservableObject {
     @Published private(set) var areas: Set<AssistantArea> = []
     /// Der Assistent, mit dem die laufende Sitzung gebaut ist (lva#556); `nil` bei „Alles“ (das Gespräch läuft wie bisher).
     @Published private(set) var activeProfile: AssistantProfile?
+    /// Kontexte dieses Gesprächs (lva#557): angehängte Inhalte und der Schalter „Nur aus diesen Inhalten antworten“. Nur für dieses
+    /// Gespräch; liegen neben dem Verlauf (`kontexte.json`), nicht im Profil. Ein neues Gespräch und ein anderer Assistent leeren sie.
+    @Published private(set) var conversationContexts = AssistantConversationContexts.empty
+    /// Verfügbarkeit der Kontexte (Assistent und Gespräch) gegen den Index; Schlüssel `AssistantContextChip.key`. Ein fehlender Eintrag
+    /// heißt „noch nicht bekannt“ (Index im Aufbau) und zählt als verfügbar.
+    @Published private(set) var contextAvailability: [String: AssistantContextAvailability] = [:]
     /// Die Begrüßung des Assistenten am Beginn des Gesprächs, wie sie angezeigt wird (Kennzeichnung „Begrüßung“). Kein Beitrag im Verlauf:
     /// Sie wird nicht gespeichert und kommt nie in den Prompt; ein neues Gespräch löscht sie.
     @Published private(set) var greeting: String?
@@ -372,6 +378,9 @@ final class AssistantController: ObservableObject {
     private let listener = AssistantListener()
     private let speaker = BookTalkSpeaker()
     private let store = AssistantHistoryStore(directory: AssistantHistoryStore.standardDirectory())
+    /// Kontexte des Gesprächs: eigene Datei im selben Verzeichnis wie der Verlauf.
+    private let contextStore = AssistantConversationContextStore(directory: AssistantHistoryStore.standardDirectory())
+    private var contextRefresh: Task<Void, Never>?
     private let audit = AssistantReleaseFiles.audit
     /// Die Zustandsdatei der Freigaben (Kern): einzige Quelle des Stands beim Start.
     private var releaseStore: AssistantReleaseStore { AssistantReleaseFiles.store }
@@ -430,8 +439,10 @@ final class AssistantController: ObservableObject {
     private struct SessionSetup: Equatable {
         var style: AssistantStyle
         var profile: AssistantProfile?
+        /// Verknüpfte Kontexte des Assistenten und des Gesprächs (lva#557); `nil`: kein Filter. Eine Änderung baut die Sitzung neu.
+        var scope: AssistantScope?
     }
-    private var appliedSetup = SessionSetup(style: AssistantController.storedStyle, profile: nil)
+    private var appliedSetup = SessionSetup(style: AssistantController.storedStyle, profile: nil, scope: nil)
     private var refreshingSession = false
     /// Die Begrüßung dieses Gesprächs ist schon ausgegeben (oder entfällt); ein neues Gespräch und das Schließen setzen sie zurück.
     private var greeted = false
@@ -449,6 +460,13 @@ final class AssistantController: ObservableObject {
         bargeIn = behavior.bargeIn
         hub.$progress.receive(on: RunLoop.main).sink { [weak self] value in
             MainActor.assumeIsolated { self?.preparing = value }
+        }.store(in: &bag)
+        // Verknüpfte Kontexte: Ist der Index fertig oder ändern sich die Bereiche, wird die Verfügbarkeit neu gerechnet.
+        hub.$version.dropFirst().receive(on: RunLoop.main).sink { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshContextAvailability() }
+        }.store(in: &bag)
+        $areas.dropFirst().receive(on: RunLoop.main).sink { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshContextAvailability() }
         }.store(in: &bag)
 
         listener.onSpeechStarted = { [weak self] in self?.speechStarted() }
@@ -509,7 +527,12 @@ final class AssistantController: ObservableObject {
     static let demoProfiles = ProcessInfo.processInfo.arguments.contains("--assistant-demo-profiles")
     static let demoProfileEditor = ProcessInfo.processInfo.arguments.contains("--assistant-demo-profile-editor")
     static let demoGreeting = ProcessInfo.processInfo.arguments.contains("--assistant-demo-greeting")
-    static let demoAssistant = demoProfiles || demoProfileEditor || demoGreeting
+    /// Verknüpfte Inhalte (lva#557): `--assistant-demo-contexts` zeigt das Gespräch mit drei Chips (einer vom Assistenten, einer vom Gespräch,
+    /// einer nicht mehr verfügbar), `--assistant-demo-context-picker` das Anhänge-Blatt mit erfundenen Titeln (Assistent „Alles“, ein Inhalt
+    /// schon angehängt). Wie die übrigen Beispielzustände: nur im Speicher, ohne Modell, Mikrofon, Index und Dateien.
+    static let demoContexts = ProcessInfo.processInfo.arguments.contains("--assistant-demo-contexts")
+    static let demoContextPicker = ProcessInfo.processInfo.arguments.contains("--assistant-demo-context-picker")
+    static let demoAssistant = demoProfiles || demoProfileEditor || demoGreeting || demoContexts || demoContextPicker
     static let demoQuote = demoMulti || demoLocked || demoAudit || demoInterrupted || demoLegacy || demoReady || demoThinking
         || demoAssistant || ProcessInfo.processInfo.arguments.contains("--assistant-demo-quote")
 
@@ -568,10 +591,22 @@ final class AssistantController: ObservableObject {
         style = behavior.style
         pause = behavior.pause
         bargeIn = behavior.bargeIn
-        activeProfile = profiles.isEverything ? nil : profiles.active
+        activeProfile = profiles.isEverything || Self.demoContextPicker ? nil : profiles.active
+        if Self.demoContexts || Self.demoContextPicker {
+            conversationContexts = Self.demoConversationContexts
+            refreshContextAvailability()
+        }
         guard Self.demoGreeting, let profile = activeProfile else { return }
         let spoken = AssistantProfileText.spokenGreeting(profile, values: AssistantPlaceholderValues(date: Date(), name: nil))
         greeting = spoken.isEmpty ? nil : spoken.text
+    }
+
+    /// Kontexte des Gesprächs in den Beispielzuständen: ein Buch (im Index) und eine Notiz, die es nicht mehr gibt.
+    private static var demoConversationContexts: AssistantConversationContexts {
+        var contexts = AssistantConversationContexts()
+        contexts.add(kind: .book, id: "demo-buch", title: "Beispielbuch")
+        if !demoContextPicker { contexts.add(kind: .voiceNote, id: "demo-geloescht", title: "Sprachnotiz Gartenplanung (gelöscht)") }
+        return contexts
     }
 
     /// Ein gespeicherter Block der Beispielrunde (`isBlock: true`: ganz, unverändert, zitierbar).
@@ -675,6 +710,9 @@ final class AssistantController: ObservableObject {
             // Beiträge aus Runden ohne Quelle sind bei abgeschaltetem freien Modus nie sichtbar und nie im Prompt; die Datei bleibt
             // bis zum nächsten Speichern unberührt, dann fehlen sie (`persist` schreibt, was angezeigt wird).
             turns = AssistantTurn.admitted(store.load(), released: AssistantUnsourcedConsent.isReleased)
+            // Die Kontexte des Gesprächs überleben den Neustart zusammen mit dem Verlauf.
+            // Die Verfügbarkeit folgt, sobald die Bereiche feststehen (`adopt` setzt `areas`).
+            conversationContexts = contextStore.load()
         }
 
         var built = await AssistantEngine.make(choice: explicit)
@@ -878,7 +916,7 @@ final class AssistantController: ObservableObject {
             // Cloud-Modell ohne Zustimmung gar nicht erst laufen (`consentRequired`).
             // Nach dem letzten Wartepunkt: Stil und Assistent stehen jetzt fest und gehören zusammen in die Sitzung.
             let setup = wantedSetup
-            let next = AssistantSession(model: model, knowledge: kn.withCeiling(setup.profile?.areaCeiling),
+            let next = AssistantSession(model: model, knowledge: kn.withCeiling(setup.profile?.areaCeiling).withScope(setup.scope),
                                         config: built.sessionConfig(style: setup.style, profile: setup.profile), history: history, audit: audit,
                                         cloudConsent: false, releaseStore: releaseStore, cloudTarget: built.target?.id)
             observeRelease(of: next)
@@ -992,7 +1030,7 @@ final class AssistantController: ObservableObject {
                   consentRequest == nil, clearRequested == clearDone else { continue }
             old.setReleaseObserver(nil)
             let setup = wantedSetup
-            let next = AssistantSession(model: model, knowledge: knowledge.withCeiling(setup.profile?.areaCeiling),
+            let next = AssistantSession(model: model, knowledge: knowledge.withCeiling(setup.profile?.areaCeiling).withScope(setup.scope),
                                         config: built.sessionConfig(style: setup.style, profile: setup.profile), history: stored,
                                         audit: audit, cloudConsent: false, releaseStore: releaseStore, cloudTarget: built.target?.id)
             observeRelease(of: next)
@@ -1200,7 +1238,7 @@ final class AssistantController: ObservableObject {
 
     /// Der gewählte Assistent samt Stil; `profile == nil` bei „Alles“. Daran misst sich, ob die Sitzung neu gebaut werden muss.
     private var wantedSetup: SessionSetup {
-        SessionSetup(style: style, profile: profiles.isEverything ? nil : profiles.active)
+        SessionSetup(style: style, profile: wantedProfile, scope: wantedScope)
     }
 
     /// Gleicht Stil, Sprechpause und „Beim Antworten zuhören“ mit dem gewählten Assistenten ab (wie ihre Setter, aber ohne etwas zu
@@ -1222,6 +1260,7 @@ final class AssistantController: ObservableObject {
             cancelJob()
         }
         refreshSessionStyle()
+        refreshContextAvailability()
     }
 
     /// Zeichen der Anweisungen, die für das aktuelle Modell in den Prompt kommen (`AssistantProfile.roleBudget`); der Editor zeigt es an.
@@ -1262,6 +1301,168 @@ final class AssistantController: ObservableObject {
     var usableAreas: Set<AssistantArea> {
         guard let activeProfile else { return areas }
         return Set(activeProfile.effectiveAreas(released: areas))
+    }
+
+    // MARK: Verknüpfte Inhalte (lva#557)
+
+    /// Der Assistent, der gerade gewählt ist (`nil` bei „Alles“), wie ihn die nächste Sitzung bekommt.
+    private var wantedProfile: AssistantProfile? { profiles.isEverything ? nil : profiles.active }
+
+    /// Der wirksame Scope des Gesprächs (Assistent und Gespräch zusammen); `nil`: kein Filter.
+    private var wantedScope: AssistantScope? { AssistantScope.effective(profile: wantedProfile, conversation: conversationContexts) }
+
+    /// Kontexte, die gerade wirken oder angezeigt werden: die des Assistenten (nur, wenn sein Modus sie wirken lässt; bei „Alles“
+    /// haben sie keine Wirkung) und die des Gesprächs.
+    private var shownContexts: [(context: AssistantProfile.Context, fromAssistant: Bool)] {
+        var out: [(context: AssistantProfile.Context, fromAssistant: Bool)] = []
+        if let profile = wantedProfile, profile.effectiveContextMode != .all {
+            out += profile.knowledge.contexts.map { (context: $0, fromAssistant: true) }
+        }
+        out += conversationContexts.contexts.compactMap { stored in stored.context.map { (context: $0, fromAssistant: false) } }
+        return out
+    }
+
+    /// Die Chips der Chip-Zeile: zuerst die des Assistenten (nicht entfernbar), dann die des Gesprächs. Ohne Kontexte keine.
+    var contextChips: [AssistantContextChip] {
+        var seen = Set<String>()
+        var out: [AssistantContextChip] = []
+        for entry in shownContexts {
+            let chip = AssistantContextChip(context: entry.context, fromAssistant: entry.fromAssistant, availability: availability(of: entry.context))
+            if seen.insert(chip.id).inserted { out.append(chip) }
+        }
+        return out
+    }
+
+    private func availability(of context: AssistantProfile.Context) -> AssistantContextAvailability {
+        if AssistantScope.area(of: context.kind) == nil { return .unsupported }
+        return contextAvailability[AssistantContextChip.key(context)] ?? .available
+    }
+
+    /// Ein Satz zur Wirkung der Kontexte über der Chip-Zeile; `nil` ohne Wirkung.
+    var contextModeLine: String? {
+        switch wantedScope?.mode {
+        case .only: "Antworten kommen nur aus diesen Inhalten."
+        case .first: "Diese Inhalte haben Vorrang."
+        case nil: nil
+        }
+    }
+
+    /// Die Inhalte, die das Anhänge-Blatt anbietet: alles im Index der Bereiche `areas` (nutzbar = freigegeben und vom Assistenten
+    /// gewollt), je Bereich neueste zuerst. Nur Verweise: Kennung, Titel, Art.
+    func contextCandidates(areas: Set<AssistantArea>) async -> [AssistantContextCandidate] {
+        #if DEBUG
+        if Self.demoQuote { return AssistantContextCandidate.demo.filter { areas.contains($0.area) } }
+        #endif
+        let items = await indexedItems(areas: areas)
+        return items.compactMap { AssistantContextCandidate(item: $0) }
+    }
+
+    private func indexedItems(areas: Set<AssistantArea>) async -> [AssistantItem] {
+        guard !areas.isEmpty else { return [] }
+        let knowledge = await hub.knowledge(cloud: isCloud, areas: areas)
+        return await knowledge.indexedItems(areas: areas)
+    }
+
+    /// Verfügbarkeit je Kontext gegen den Index der Bereiche `areas`; leer, solange der Index noch aufgebaut wird (dann zählt alles als
+    /// verfügbar, statt fälschlich „nicht mehr verfügbar“ zu zeigen).
+    func availabilityMap(of contexts: [AssistantProfile.Context], areas: Set<AssistantArea>) async -> [String: AssistantContextAvailability] {
+        guard !contexts.isEmpty else { return [:] }
+        #if DEBUG
+        let items: [AssistantItem]
+        if Self.demoQuote { items = AssistantContextCandidate.demoItems } else {
+            guard hub.version > 0, hub.progress == nil else { return [:] }
+            items = await indexedItems(areas: areas)
+        }
+        #else
+        guard hub.version > 0, hub.progress == nil else { return [:] }
+        let items = await indexedItems(areas: areas)
+        #endif
+        var out: [String: AssistantContextAvailability] = [:]
+        for context in contexts { out[AssistantContextChip.key(context)] = AssistantScope.availability(of: context, in: items) }
+        return out
+    }
+
+    /// Stößt die Berechnung der Verfügbarkeit an (bei geänderten Kontexten, Bereichen, Assistent und fertigem Index); frühere Läufe enden.
+    func refreshContextAvailability() {
+        contextRefresh?.cancel()
+        let contexts = shownContexts.map(\.context)
+        guard !contexts.isEmpty else {
+            if !contextAvailability.isEmpty { contextAvailability = [:] }
+            return
+        }
+        contextRefresh = Task { [weak self] in
+            guard let self else { return }
+            let map = await self.availabilityMap(of: contexts, areas: self.usableAreas)
+            guard !Task.isCancelled else { return }
+            self.contextAvailability = map
+        }
+    }
+
+    /// Übernimmt die Auswahl des Anhänge-Blatts: Abgewählte, die das Blatt angeboten hat, fallen weg; Gewählte kommen dazu; was das
+    /// Blatt nicht anbot (zum Beispiel ein verwaister Verweis), bleibt. Der Schalter setzt für dieses Gespräch den Modus `nur`.
+    func applyAttachment(_ selection: AssistantContextSelection) {
+        var next = conversationContexts
+        let chosenKeys = Set(selection.chosen.map(\.key))
+        for stored in conversationContexts.contexts {
+            guard let context = stored.context else { continue }
+            let key = AssistantContextChip.key(context)
+            if selection.offered.contains(key), !chosenKeys.contains(key) { next.remove(kind: context.kind, id: context.id) }
+        }
+        for candidate in selection.chosen { next.add(kind: candidate.kind, id: candidate.itemId, title: candidate.title) }
+        next.onlyFromThese = selection.onlyFromThese
+        setConversationContexts(next)
+    }
+
+    func removeConversationContext(kind: AssistantProfile.Context.Kind, id: String) {
+        var next = conversationContexts
+        next.remove(kind: kind, id: id)
+        setConversationContexts(next)
+    }
+
+    /// Kontexte des Gesprächs ändern: anzeigen, sichern (neben dem Verlauf), Verfügbarkeit neu rechnen, Sitzung neu bauen, sobald nichts läuft.
+    private func setConversationContexts(_ next: AssistantConversationContexts) {
+        guard next != conversationContexts else { return }
+        conversationContexts = next
+        persistContexts()
+        refreshContextAvailability()
+        refreshSessionStyle()
+    }
+
+    /// Neues Gespräch und anderer Assistent: die Kontexte des Gesprächs sind weg (Anzeige und Datei, in der Reihenfolge des Speicherns).
+    private func resetConversationContexts() {
+        let changed = conversationContexts != .empty
+        conversationContexts = .empty
+        deleteStoredContexts()
+        guard changed else { return }
+        refreshContextAvailability()
+        refreshSessionStyle()
+    }
+
+    private func persistContexts() {
+        #if DEBUG
+        guard !Self.demoQuote else { return }
+        #endif
+        let store = contextStore
+        let value = conversationContexts
+        let previous = saveChain
+        saveChain = Task { [weak self] in
+            await previous?.value
+            let ok = await Task.detached(priority: .utility) { (try? store.save(value)) != nil }.value
+            if !ok { self?.notice = AssistantNotice(text: "Die angehängten Inhalte konnten nicht gespeichert werden.", action: nil) }
+        }
+    }
+
+    private func deleteStoredContexts() {
+        #if DEBUG
+        guard !Self.demoQuote else { return }
+        #endif
+        let store = contextStore
+        let previous = saveChain
+        saveChain = Task { [weak self] in
+            await previous?.value
+            let deleted = await Task.detached(priority: .utility) { store.clear() }.value
+            if !deleted { self?.notice = AssistantNotice(text: "Die angehängten Inhalte konnten nicht gelöscht werden.", action: nil) }
+        }
     }
 
     /// Wählt einen anderen Assistenten; damit beginnt ein neues Gespräch (der bisherige Verlauf wird gelöscht, die Ansicht hat vorher
@@ -1491,6 +1692,9 @@ final class AssistantController: ObservableObject {
         clearRequested += 1
         greeting = nil
         greeted = false
+        // Kontexte des Gesprächs gelten nur für dieses Gespräch: weg, in Anzeige und Datei (die Sitzung wird mit dem Ende der Antwort
+        // ohne sie neu gebaut, `refreshSessionStyle`).
+        resetConversationContexts()
         if current != nil { cancelAnswer(merge: true) }
         cancelJob()
         mergePrefix = ""

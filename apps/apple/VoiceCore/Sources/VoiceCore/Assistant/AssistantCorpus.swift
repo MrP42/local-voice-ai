@@ -176,8 +176,17 @@ public actor AssistantCorpus {
     }
 
     /// Wie `search`; `previous` (vorige Nutzeräußerung) fließt mit halbem Gewicht ein (kurze Anschlussfragen).
-    public func search(_ question: String, previous: String?, areas: Set<AssistantArea>, limit: Int) -> [AssistantPassage] {
+    ///
+    /// `only` (verknüpfte Kontexte, `AssistantScope`): nur Stücke dieser Elemente. Der Filter wirkt VOR der Begrenzung auf `limit` und
+    /// vor der Untergrenze, nicht erst hinterher; Elemente, die nicht im Index stehen, kommen nie vor. Die Punktzahlen rechnen mit den
+    /// Zahlen aller gewählten Bereiche (ein Treffer hat mit und ohne Filter denselben Wert). `floorFromAll`: die Untergrenze misst sich
+    /// an der besten Punktzahl ALLER Stücke, nicht nur der gefilterten (Modus „zuerst“: ein schwacher Kontexttreffer ist kein Treffer);
+    /// ohne sie (Modus „nur“) an der besten gefilterten.
+    public func search(_ question: String, previous: String?, areas: Set<AssistantArea>, limit: Int,
+                       only: Set<AssistantScope.Entry>? = nil, floorFromAll: Bool = false) -> [AssistantPassage] {
         guard limit > 0, !areas.isEmpty else { return [] }
+        let allowed: Set<Int>? = only.map { entries in Set(entries.compactMap { slots[Key(area: $0.area, id: $0.itemId)] }) }
+        if let allowed, allowed.isEmpty { return [] }
         var weights: [String: Double] = [:]
         for t in BookTalkTokens.tokenize(question) { weights[t] = 1 }
         if let previous { for t in BookTalkTokens.tokenize(previous) where weights[t] == nil { weights[t] = 0.5 } }
@@ -216,8 +225,17 @@ public actor AssistantCorpus {
         if weights.count >= 3 { hits = hits.filter { $0.value.terms >= 2 || $0.value.rare } }
 
         var scored = hits.mapValues(\.score)
-        applyTitleBonus(&scored, terms: Set(weights.keys), selected: selected)
-        guard let top = scored.values.max(), top > 0 else { return [] }
+        var top = 0.0
+        if let allowed, floorFromAll {
+            applyTitleBonus(&scored, terms: Set(weights.keys), selected: selected, allowed: nil)
+            top = scored.values.max() ?? 0
+            scored = scored.filter { allowed.contains(Int(chunks[Int($0.key)].doc)) }
+        } else {
+            if let allowed { scored = scored.filter { allowed.contains(Int(chunks[Int($0.key)].doc)) } }
+            applyTitleBonus(&scored, terms: Set(weights.keys), selected: selected, allowed: allowed)
+            top = scored.values.max() ?? 0
+        }
+        guard top > 0, !scored.isEmpty else { return [] }
         let floor = top * Self.relativeFloor
         let ranked = scored.filter { $0.value >= floor }.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }
 
@@ -240,9 +258,10 @@ public actor AssistantCorpus {
 
     /// Nennt die Frage Buch- oder Transkripttitel, bekommen Stücke dieses Elements einen Bonus; hat es keinen Treffer im
     /// Text, rücken seine ersten Stücke nach.
-    private func applyTitleBonus(_ scored: inout [Int32: Double], terms: Set<String>, selected: [Bool]) {
+    private func applyTitleBonus(_ scored: inout [Int32: Double], terms: Set<String>, selected: [Bool], allowed: Set<Int>?) {
         var matched: [Int] = []
         for (slot, d) in docs.enumerated() where d.alive && selected[d.item.area.order] && !d.titleStems.isEmpty {
+            if let allowed, !allowed.contains(slot) { continue }
             let common = d.titleStems.intersection(terms).count
             if common >= 1, Double(common) / Double(d.titleStems.count) >= 0.6 { matched.append(slot) }
         }

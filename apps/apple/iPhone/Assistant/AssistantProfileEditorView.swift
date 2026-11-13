@@ -30,6 +30,14 @@ enum AssistantProfileProblem {
         default: break
         }
         if path.hasPrefix("verhalten") { return "Eine Vorgabe zum Gesprächsverhalten ist ungültig." }
+        if path.hasPrefix("wissen.kontexte") {
+            switch issue.code {
+            case .tooMany: return "Es sind höchstens 50 verknüpfte Inhalte möglich."
+            case .missing, .type, .value: return "Ein verknüpfter Inhalt ist ungültig."
+            default: return "Die Kennung oder der Titel eines verknüpften Inhalts ist zu lang oder leer."
+            }
+        }
+        if path == "wissen.modus" { return "Der Modus der verknüpften Inhalte ist ungültig." }
         if path.hasPrefix("wissen") { return "Eine Angabe zum Wissen ist ungültig." }
         switch issue.code {
         case .schemaNewer: return "Dieser Assistent stammt aus einer neueren Fassung der App."
@@ -63,6 +71,9 @@ struct AssistantProfileEditorView: View {
     @State private var draft: AssistantProfile
     @State private var saveError: String?
     @State private var confirmDiscard = false
+    /// Verknüpfte Inhalte (lva#557): das Blatt zum Hinzufügen und die Verfügbarkeit der Verweise gegen den Index.
+    @State private var showContextPicker = false
+    @State private var contextStates: [String: AssistantContextAvailability] = [:]
     @ScaledMetric(relativeTo: .body) private var editorHeight: CGFloat = 140
 
     private static let nameMax = 60
@@ -108,6 +119,7 @@ struct AssistantProfileEditorView: View {
                 instructionsSection.disabled(readOnly)
                 greetingSection
                 knowledgeSection.disabled(readOnly)
+                contextsSection.disabled(readOnly)
                 behaviorSection.disabled(readOnly)
             }
             .navigationTitle(readOnly ? "Vorlage" : (target.isNew ? "Neuer Assistent" : "Assistent bearbeiten"))
@@ -124,6 +136,8 @@ struct AssistantProfileEditorView: View {
                 Text(saveError ?? "")
             }
             .onDisappear { talk.stopPreview() }
+            .sheet(isPresented: $showContextPicker) { contextPicker }
+            .task(id: contextStateKey) { contextStates = await talk.availabilityMap(of: draft.knowledge.contexts, areas: contextAreas) }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("assistantProfileEditor")
@@ -316,7 +330,7 @@ struct AssistantProfileEditorView: View {
                         .accessibilityIdentifier("assistantProfileNoAreas")
                 }
             }
-            problemLines(problems("wissen"), identifier: "assistantProfileKnowledgeProblem")
+            problemLines(problems("wissen.alle_bereiche", "wissen.bereiche"), identifier: "assistantProfileKnowledgeProblem")
         } header: {
             Text("Wissen")
         } footer: {
@@ -332,6 +346,138 @@ struct AssistantProfileEditorView: View {
                 draft.knowledge.areas.removeAll { $0 == key }
                 if on { draft.knowledge.areas.append(key) }
             })
+    }
+
+    // MARK: Verknüpfte Inhalte
+
+    /// Eine Zeile der Liste der verknüpften Inhalte (Index als Kennung: derselbe Verweis kann zweimal stehen).
+    private struct ContextRow: Identifiable {
+        let id: Int
+        let kind: AssistantProfile.Context.Kind
+        let title: String
+        let note: String?
+    }
+
+    /// Bereiche, aus denen sich Inhalte wählen lassen: gewollt vom Assistenten (Entwurf) UND im Menü freigegeben.
+    private var contextAreas: Set<AssistantArea> { Set(draft.effectiveAreas(released: talk.areas)) }
+
+    /// Ändert sich, wenn sich Verweise oder Bereiche ändern: dann wird die Verfügbarkeit neu gerechnet.
+    private var contextStateKey: String {
+        draft.knowledge.contexts.map { AssistantContextChip.key($0) }.joined(separator: "|") + "#" + contextAreas.map(\.rawValue).sorted().joined(separator: ",")
+    }
+
+    private var contextRows: [ContextRow] {
+        draft.knowledge.contexts.enumerated().map { index, context in
+            let state = AssistantScope.area(of: context.kind) == nil
+                ? AssistantContextAvailability.unsupported
+                : (contextStates[AssistantContextChip.key(context)] ?? .available)
+            return ContextRow(id: index, kind: context.kind,
+                              title: context.title.isEmpty ? AssistantContextText.kind(context.kind) : context.title,
+                              note: AssistantContextText.note(state))
+        }
+    }
+
+    private var contextModeExplanation: String {
+        switch draft.knowledge.mode {
+        case .all: "Der Assistent antwortet aus allen Inhalten, die er nutzen darf. Verknüpfte Inhalte haben dann keine Wirkung."
+        case .first: "Treffer aus den verknüpften Inhalten stehen vor allen anderen. Die beste Stelle aus den übrigen Inhalten bleibt erhalten."
+        case .only: "Der Assistent antwortet ausschließlich aus den verknüpften Inhalten."
+        }
+    }
+
+    private var contextsSection: some View {
+        let rows = contextRows
+        return Section {
+            Picker("Verwendung", selection: $draft.knowledge.mode) {
+                Text("Alles").tag(AssistantProfile.Knowledge.Mode.all)
+                Text("Zuerst").tag(AssistantProfile.Knowledge.Mode.first)
+                Text("Nur").tag(AssistantProfile.Knowledge.Mode.only)
+            }
+            .pickerStyle(.segmented)
+            .frame(minHeight: 44)
+            .accessibilityLabel("Verwendung der verknüpften Inhalte")
+            .accessibilityIdentifier("assistantProfileContextMode")
+            Text(contextModeExplanation)
+                .font(.footnote)
+                .foregroundStyle(VoicePalette.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("assistantProfileContextModeText")
+            if rows.isEmpty {
+                Text("Noch keine Inhalte verknüpft.")
+                    .foregroundStyle(VoicePalette.secondaryText)
+                    .accessibilityIdentifier("assistantProfileContextsNone")
+                if draft.knowledge.mode != .all {
+                    Text("Ohne verknüpfte Inhalte wirkt der Assistent wie bei „Alles“.")
+                        .font(.footnote)
+                        .foregroundStyle(VoicePalette.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            ForEach(rows) { row in contextRowView(row) }
+            Button { showContextPicker = true } label: {
+                Label("Inhalt hinzufügen", systemImage: "plus").frame(minHeight: 44)
+            }
+            .disabled(draft.knowledge.contexts.count >= AssistantConversationContexts.maxCount)
+            .accessibilityIdentifier("assistantProfileContextAdd")
+            problemLines(problems("wissen.kontexte", "wissen.modus"), identifier: "assistantProfileContextsProblem")
+        } header: {
+            Text("Verknüpfte Inhalte")
+        } footer: {
+            Text("Verknüpft sind Verweise, keine Kopien. Es gilt zusätzlich, was im Menü freigegeben ist; ein Verweis öffnet nie einen nicht freigegebenen Bereich.")
+        }
+    }
+
+    private func contextRowView(_ row: ContextRow) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: AssistantContextText.symbol(row.kind)).foregroundStyle(VoicePalette.secondaryText)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(row.title).fixedSize(horizontal: false, vertical: true)
+                Text(row.note.map { "\(AssistantContextText.kind(row.kind)) · \($0)" } ?? AssistantContextText.kind(row.kind))
+                    .font(.caption)
+                    .foregroundStyle(VoicePalette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Button {
+                if draft.knowledge.contexts.indices.contains(row.id) { draft.knowledge.contexts.remove(at: row.id) }
+            } label: {
+                Image(systemName: "minus.circle.fill").foregroundStyle(Color.red).frame(width: 44, height: 44).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(row.title) entfernen")
+            .accessibilityIdentifier("assistantProfileContextRemove")
+        }
+        .frame(minHeight: 44)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("assistantProfileContextRow")
+    }
+
+    /// Dasselbe Blatt wie im Gespräch, ohne den Schalter „Nur aus diesen Inhalten antworten“; „Fertig“ übernimmt die Auswahl in den Entwurf.
+    private var contextPicker: some View {
+        AssistantContextPickerView(
+            title: "Inhalt hinzufügen",
+            areas: contextAreas,
+            linked: draft.knowledge.contexts,
+            done: { selection in
+                applyContextSelection(selection)
+                showContextPicker = false
+            },
+            cancel: { showContextPicker = false })
+    }
+
+    /// Verknüpfungen, die das Blatt nicht anbot (Ordner, Arten ohne Abbildung, verwaiste Verweise), bleiben; abgewählte fallen weg; neue
+    /// kommen hinten dazu (höchstens 50, wie im Schema).
+    private func applyContextSelection(_ selection: AssistantContextSelection) {
+        let chosenKeys = Set(selection.chosen.map(\.key))
+        var next = draft.knowledge.contexts.filter { context in
+            let key = AssistantContextChip.key(context)
+            return !selection.offered.contains(key) || chosenKeys.contains(key)
+        }
+        let existing = Set(next.map { AssistantContextChip.key($0) })
+        for candidate in selection.chosen where !existing.contains(candidate.key) && next.count < AssistantConversationContexts.maxCount {
+            next.append(AssistantProfile.Context(kind: candidate.kind, id: candidate.itemId, title: candidate.title))
+        }
+        draft.knowledge.contexts = next
     }
 
     // MARK: Verhalten
