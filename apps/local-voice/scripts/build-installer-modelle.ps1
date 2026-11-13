@@ -28,7 +28,10 @@ param(
     [string]$OutDir,
     [switch]$SmokeTest,
     # Ohne HF_TOKEN abbrechen statt das deutsche Phonon-Modell (gated) auszulassen.
-    [switch]$RequireHfToken
+    [switch]$RequireHfToken,
+    # Deutsches Phonon-Modell (CC BY-NC 4.0) gar nicht erst einpacken, z. B. fuer eine Weitergabe
+    # mit geschaeftlichem Zweck. Englisch und alle englischen Stimmen bleiben.
+    [switch]$OhnePhononDe
 )
 
 $ErrorActionPreference = 'Stop'
@@ -39,11 +42,17 @@ $tauriDir = Join-Path $appDir 'src-tauri'
 
 if (-not $OutDir) { $OutDir = Join-Path $tauriDir 'target/release/bundle/vorinstalliert' }
 
-# Das Skript ersetzt -OutDir vollstaendig. Damit nie fremde Dateien verloren gehen: Ziel absolut
-# aufloesen, Wurzeln und Ordner, die Quellen oder das Heimatverzeichnis enthalten, ablehnen, und
-# einen vorhandenen Ordner nur ersetzen, wenn er leer ist oder die Marke dieses Skripts traegt.
+# Das Skript ersetzt -OutDir vollstaendig. Damit nie fremde Dateien verloren gehen:
+# - Ziel relativ zum PowerShell-Arbeitsverzeichnis absolut aufloesen (nicht zum Prozessverzeichnis),
+# - Platzhalter (* ? [ ]) ablehnen; alle Dateioperationen auf das Ziel laufen mit -LiteralPath,
+# - Laufwerkswurzeln und Ordner ablehnen, die Quellen, Arbeitsverzeichnis oder Profil enthalten,
+# - Verknuepfungen (Junction/Symlink) im Ziel oder einem seiner Elternordner ablehnen, weil der
+#   lexikalische Vergleich sie nicht aufloest,
+# - einen vorhandenen Ordner nur ersetzen, wenn er leer ist oder die Marke dieses Skripts traegt.
 $OutMarker = '.lva-vorinstalliert-nutzlast'
-$outFull = [System.IO.Path]::GetFullPath($OutDir).TrimEnd('\', '/')
+if ($OutDir.IndexOfAny([char[]]'*?[]') -ge 0) { throw "-OutDir enthaelt Platzhalter (* ? [ ]): $OutDir; bitte einen konkreten Ordner angeben" }
+$outFull = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutDir).TrimEnd('\', '/')
+if ($outFull.IndexOfAny([char[]]'*?[]') -ge 0) { throw "-OutDir enthaelt Platzhalter (* ? [ ]): $outFull" }
 function Test-IsSameOrAncestor([string]$Ancestor, [string]$Path) {
     $a = [System.IO.Path]::GetFullPath($Ancestor).TrimEnd('\', '/')
     $p = [System.IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
@@ -51,15 +60,25 @@ function Test-IsSameOrAncestor([string]$Ancestor, [string]$Path) {
         $p.StartsWith($a + [System.IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
         $p.StartsWith($a + '/', [StringComparison]::OrdinalIgnoreCase)
 }
-$protected = @($appDir, (Get-Location).Path, $PSScriptRoot, [Environment]::GetFolderPath('UserProfile'))
+$protected = @($appDir, (Get-Location).ProviderPath, $PSScriptRoot, [Environment]::GetFolderPath('UserProfile'))
 if ([System.IO.Path]::GetPathRoot($outFull).TrimEnd('\', '/') -eq $outFull) { throw "-OutDir ist eine Laufwerkswurzel: $outFull" }
 foreach ($p in $protected) {
     if ($p -and (Test-IsSameOrAncestor $outFull $p)) { throw "-OutDir $outFull enthaelt $p; bitte einen eigenen Ausgabeordner angeben" }
 }
-if (Test-Path $outFull) {
-    if (-not (Test-Path $outFull -PathType Container)) { throw "-OutDir ist eine Datei: $outFull" }
-    $existing = @(Get-ChildItem $outFull -Force)
-    if ($existing.Count -gt 0 -and -not (Test-Path (Join-Path $outFull $OutMarker) -PathType Leaf)) {
+$walk = $outFull
+while ($walk) {
+    $item = Get-Item -LiteralPath $walk -Force -ErrorAction SilentlyContinue
+    if ($item -and ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+        throw "-OutDir $outFull liegt in oder ist eine Verknuepfung ($walk); bitte einen echten Ordner angeben"
+    }
+    $parent = [System.IO.Path]::GetDirectoryName($walk)
+    if (-not $parent -or $parent -eq $walk) { break }
+    $walk = $parent
+}
+if (Test-Path -LiteralPath $outFull) {
+    if (-not (Test-Path -LiteralPath $outFull -PathType Container)) { throw "-OutDir ist eine Datei: $outFull" }
+    $existing = @(Get-ChildItem -LiteralPath $outFull -Force)
+    if ($existing.Count -gt 0 -and -not (Test-Path -LiteralPath (Join-Path $outFull $OutMarker) -PathType Leaf)) {
         throw "-OutDir $outFull ist nicht leer und stammt nicht von diesem Skript (Marke $OutMarker fehlt); nichts geloescht"
     }
 }
@@ -68,7 +87,7 @@ if (-not $Exe) {
     $targetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $tauriDir 'target' }
     $Exe = Join-Path $targetDir 'release/local-voice-ai.exe'
 }
-if (-not (Test-Path $Exe -PathType Leaf)) { throw "EXE nicht gefunden: $Exe (erst 'npx tauri build' ausführen)" }
+if (-not (Test-Path -LiteralPath $Exe -PathType Leaf)) { throw "EXE nicht gefunden: $Exe (erst 'npx tauri build' ausführen)" }
 
 $libsDir = Join-Path $tauriDir 'transcribe-libs'
 $resDir = Join-Path $tauriDir 'resources'
@@ -87,7 +106,11 @@ $components = [ordered]@{
 }
 
 $phononDe = $true
-if (-not $env:HF_TOKEN) {
+if ($OhnePhononDe) {
+    Write-Host 'Ohne deutsches Phonon-Modell (-OhnePhononDe).'
+    $components.phonon.Ids = @($components.phonon.Ids | Where-Object { $_ -ne 'phonon-40m-de' })
+    $phononDe = $false
+} elseif (-not $env:HF_TOKEN) {
     if ($RequireHfToken) { throw 'HF_TOKEN fehlt: phonon-40m-de ist auf Hugging Face zugangsbeschraenkt.' }
     Write-Warning 'HF_TOKEN fehlt: das deutsche Phonon-Modell (gated) wird ausgelassen, Englisch bleibt.'
     if ($env:GITHUB_ACTIONS) { Write-Host '::warning::HF_TOKEN fehlt: Installer mit Modellen ohne deutsches Phonon-Modell' }
@@ -117,7 +140,7 @@ function Restore-HfCache([hashtable]$Saved) {
 # (portable.rs: alle Daten nach Data\ neben der EXE).
 function New-AppRoot([string]$Dir) {
     New-Item -ItemType Directory -Force $Dir | Out-Null
-    Copy-Item $Exe (Join-Path $Dir 'local-voice-ai.exe')
+    Copy-Item -LiteralPath $Exe (Join-Path $Dir 'local-voice-ai.exe')
     Get-ChildItem $libsDir -File | Copy-Item -Destination $Dir
     Copy-Item $resDir (Join-Path $Dir 'resources') -Recurse
     [System.IO.File]::WriteAllText((Join-Path $Dir 'portable'), 'Handy Portable Mode', [System.Text.Encoding]::ASCII)
@@ -142,8 +165,8 @@ function Get-DirBytes([string]$Dir) {
 
 try {
     # Oben geprueft: leer oder eine fruehere Nutzlast dieses Skripts.
-    if (Test-Path $outFull) { Remove-Item $outFull -Recurse -Force }
-    New-Item -ItemType Directory -Force $outFull | Out-Null
+    if (Test-Path -LiteralPath $outFull) { Remove-Item -LiteralPath $outFull -Recurse -Force }
+    $null = [System.IO.Directory]::CreateDirectory($outFull)
     [System.IO.File]::WriteAllText((Join-Path $outFull $OutMarker), "Nutzlast von scripts/build-installer-modelle.ps1`n")
     $selected = @{}
     $summary = [ordered]@{}
@@ -206,13 +229,13 @@ try {
     }
 
     # Ohne diese Pruefungen entstuende still ein Installer, der doch wieder laedt.
-    if (-not (Get-ChildItem (Join-Path $outFull 'nemotron/models') -File -Filter 'nemotron-3.5-asr-*.gguf' -ErrorAction SilentlyContinue)) {
+    if (-not (Get-ChildItem -LiteralPath (Join-Path $outFull 'nemotron/models') -File -Filter 'nemotron-3.5-asr-*.gguf' -ErrorAction SilentlyContinue)) {
         throw 'Nemotron 3.5 ASR fehlt in der Nutzlast'
     }
-    if (-not (Test-Path (Join-Path $outFull 'phonon/tts/phonon'))) { throw 'Phonon fehlt in der Nutzlast (tts\phonon)' }
+    if (-not (Test-Path -LiteralPath (Join-Path $outFull 'phonon/tts/phonon'))) { throw 'Phonon fehlt in der Nutzlast (tts\phonon)' }
     # Je installiertem Phonon-Teil (Programm, je Sprachmodell) schreibt phonon_models.rs zuletzt
     # die Marke .lva-install.json; ohne sie gilt der Teil in der App als nicht installiert.
-    $markers = @(Get-ChildItem (Join-Path $outFull 'phonon/tts/phonon') -Recurse -File -Force -Filter '.lva-install.json')
+    $markers = @(Get-ChildItem -LiteralPath (Join-Path $outFull 'phonon/tts/phonon') -Recurse -File -Force -Filter '.lva-install.json')
     foreach ($id in @('phonon-31m-en') + @(if ($phononDe) { 'phonon-40m-de' })) {
         if (-not ($markers | Where-Object { (Get-Content $_.FullName -Raw) -match [regex]::Escape("`"$id`"") })) {
             throw "Phonon: keine Installationsmarke fuer $id"

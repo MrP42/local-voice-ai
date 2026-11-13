@@ -15,6 +15,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const nsi = readFileSync(join(here, "../src-tauri/nsis/installer.nsi"), "utf8");
@@ -87,7 +88,7 @@ test("leere Variable baut schlank", { skip }, () => {
 });
 
 test("gesetzte Variable ohne Ordner bricht ab", { skip }, () => {
-  const missing = join(tmpdir(), "lva-gibt-es-nicht-574");
+  const missing = join(tmpdir(), `lva-gibt-es-nicht-${randomUUID()}`);
   assert.ok(!existsSync(missing));
   const r = compile(missing);
   assert.notEqual(r.status, 0, r.out);
@@ -113,4 +114,17 @@ test("Lizenzaussage: kostenlos ist keine Freigabe für CC BY-NC", () => {
   assert.match(doc, /nur zu nicht-kommerziellen Zwecken/);
   assert.match(doc, /kostenlos ist, genügt dafür allein nicht/);
   assert.match(doc, /kostenlose, aber geschäftlich motivierte Weitergabe[^.]*ist nicht gedeckt/);
+});
+
+test("Lizenzaussage: Abwählen beim Empfänger heilt keine Weitergabe", () => {
+  // Gegenbeispiel: vollständiger Installer als Beigabe weitergegeben, Empfänger wählt Deutsch ab.
+  const weitergabe = doc.match(/\*\*Weitergabe\.\*\*([^\n]*)/);
+  assert.ok(weitergabe, "Absatz zur Weitergabe vorhanden");
+  assert.match(weitergabe[1], /Daran ändert nichts, wenn der Empfänger die Komponente[^.]*abwählt/);
+  assert.match(weitergabe[1], /-OhnePhononDe/);
+  assert.match(weitergabe[1], /gesonderte Erlaubnis/);
+  // Abwählen/Entfernen darf nur als Weg für die Nutzung stehen, nie als Lösung der Weitergabe.
+  assert.doesNotMatch(doc, /Für solche Fälle das deutsche Modell nach der Installation entfernen/);
+  const lic = readFileSync(join(here, "../src-tauri/nsis/LIZENZEN-MODELLE.txt"), "utf8");
+  assert.match(lic, /auch wenn der Empfänger es abwählt/);
 });

@@ -31,8 +31,12 @@ Sprachausgabe Phonon
   Lizenz:  Creative Commons Namensnennung – Nicht kommerziell 4.0
            International (CC BY-NC 4.0)
            https://creativecommons.org/licenses/by-nc/4.0/legalcode.de
-  WICHTIG: Dieses Modell darf nur für nicht-kommerzielle Zwecke genutzt
-  und weitergegeben werden. Für kommerzielle Nutzung das deutsche Modell
+  WICHTIG: Dieses Modell darf nur für nicht-kommerzielle Zwecke genutzt,
+  vervielfältigt und weitergegeben werden. Es steckt in diesem Installer:
+  Wer den Installer zu geschäftlichen Zwecken weitergibt, gibt auch das
+  Modell weiter, auch wenn der Empfänger es abwählt. Dafür einen Installer
+  ohne das deutsche Modell verwenden oder eine Erlaubnis von gradium
+  einholen. Für die eigene kommerzielle Nutzung das deutsche Modell
   unter Modelle entfernen; das englische Modell und seine Stimmen bleiben
   dann installiert. Wer bei der Installation die ganze Komponente
   "Vorlesen Phonon" abwählt, erhält auch Englisch nicht; es lässt sich
