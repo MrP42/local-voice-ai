@@ -246,8 +246,25 @@ public enum AssistantSentenceStatus: String, Sendable, Codable, Equatable {
     case unsourced
     /// Vorlage: Gruß, Dank, feste Rückfrage, fester Satz, Uhrzeit und Datum aus der Systemuhr. Sagt nichts über eigene Inhalte.
     case neutral
-    /// Hörbare Ansage („Ohne Quelle:“, „Wörtlicher Auszug aus ‚Titel‘:“, „Aus deinen Inhalten:“). Gehört nicht zum Antworttext.
+    /// Hörbare Ansage („Ohne Quelle:“, „Wörtlicher Auszug aus ‚Titel‘:“, „Aus deinen Inhalten:“) oder, im Stil `natural`, der
+    /// Überbrückungssatz („Ich schaue kurz nach.“). Gehört nicht zum Antworttext und nicht in den Verlauf.
     case announcement
+    /// Stil `natural`: freier Satz des Sprechers ohne Inhalte des Nutzers (keine Auszüge im Prompt, keine Quelle).
+    case conversational
+    /// Stil `natural`: freier Satz des Denkers auf Grundlage von Auszügen. `sources` = genau die Auszüge im Prompt des Denkers;
+    /// die Quellen sind Daten am Satz, nie Teil des gesprochenen Textes.
+    case summarized
+
+    /// Die Einordnung deckt Quellen: wörtlicher Auszug, im Stil `natural` die freie Zusammenfassung von Auszügen. Nur solche Sätze
+    /// machen ihre Quellen zu Quellen der Antwort, des Beitrags und der bedeckten Bereiche der Schlusszeile.
+    var coversSources: Bool { self == .grounded || self == .summarized }
+}
+
+/// Antwortstil des Gesprächsmodus (ADR-0028 E4.2c). `verbatim` ist der bisherige Pfad (nur wörtliche Quellblöcke, Bestandsangaben
+/// und feste Sätze des Systems) und bleibt der Standard. `natural`: ein kurzer Sprecher antwortet direkt oder verlangt eine Suche;
+/// dann ein Denker, der aus Auszügen frei in ein bis drei Sätzen antwortet.
+public enum AssistantStyle: String, Sendable, Codable, Equatable {
+    case verbatim, natural
 }
 
 /// Art einer Runde, vor dem Modellaufruf festgelegt (`AssistantContext`). Datenrunde ist der Standard:
@@ -296,6 +313,11 @@ public struct AssistantTurnPart: Sendable, Equatable, Codable {
 
     public static let templateNote = "Feste Antwort"
     public static let inventoryNote = "Aus deinem Bestand"
+    /// Stil `natural`: freier Satz des Sprechers (keine Inhalte des Nutzers) bzw. freie Zusammenfassung von Auszügen (Quellen als
+    /// Daten am Beitrag, `AssistantTurn.sources`). Die Marke macht den Abschnitt anzeigbar (`isMarked`); wie die App sie zeigt, ist
+    /// ihre Sache (`isFreeform`).
+    public static let conversationNote = "Frei formuliert"
+    public static let summaryNote = "Zusammengefasst aus deinen Inhalten"
 
     public init(text: String, unsourced: Bool, quote: Bool = false, source: String? = nil, note: String? = nil) {
         self.text = text
@@ -324,6 +346,10 @@ public struct AssistantTurnPart: Sendable, Equatable, Codable {
         return note != nil || unsourced
     }
 
+    /// Der Abschnitt stammt aus dem Stil `natural` (frei formuliert oder frei zusammengefasst): Er ist kein Zitat und keine feste
+    /// Antwort des Systems; die Ansicht braucht dafür keine auffällige Kennzeichnung.
+    public var isFreeform: Bool { !quote && (note == Self.conversationNote || note == Self.summaryNote) }
+
     /// Die Einheiten der laufenden Antwort, die die Ansicht zeigen darf (Runde 8, U2): nur die mit vollständiger Marke, jede ganz.
     /// Eine Einheit ohne Marke erscheint nicht, auch nicht als einfacher Text.
     public static func displayed(_ list: [AssistantTurnPart]) -> [AssistantTurnPart] { list.filter(\.isMarked) }
@@ -335,6 +361,8 @@ public struct AssistantTurnPart: Sendable, Equatable, Codable {
         switch status {
         case .neutral: return templateNote
         case .inventory: return inventoryNote
+        case .conversational: return conversationNote
+        case .summarized: return summaryNote
         case .grounded, .unsourced, .announcement: return nil
         }
     }
@@ -382,12 +410,15 @@ public struct AssistantTurn: Sendable, Equatable, Codable {
     public var parts: [AssistantTurnPart]
     public var model: String
     public var at: Date
-    /// Rundenart des Beitrags. Alte Beiträge ohne das Feld: `nil` (gelten für die Prompt-Auswahl als Datenrunde).
+    /// Rundenart des Beitrags. Alte Beiträge ohne das Feld: `nil` (gelten für die Prompt-Auswahl als Datenrunde). Im Stil `natural`
+    /// die letzte Rundenart der Anfrage (Sprecher: `.general`, mit Suche: `.data`).
     public var round: AssistantRoundKind?
+    /// Stil, in dem der Beitrag entstand. `nil` = `verbatim` (alte Beiträge und der Standard bleiben unverändert gespeichert).
+    public var style: AssistantStyle?
 
     public init(user: String, assistant: String, interrupted: Bool = false, sources: [AssistantPassage] = [],
                 general: Bool = false, unsourced: Bool = false, parts: [AssistantTurnPart] = [], model: String = "", at: Date = Date(),
-                round: AssistantRoundKind? = nil) {
+                round: AssistantRoundKind? = nil, style: AssistantStyle? = nil) {
         self.user = user
         self.assistant = assistant
         self.interrupted = interrupted
@@ -398,15 +429,21 @@ public struct AssistantTurn: Sendable, Equatable, Codable {
         self.model = model
         self.at = at
         self.round = round
+        self.style = style
     }
 
     private enum CodingKeys: String, CodingKey {
-        case user, assistant, interrupted, sources, general, unsourced, parts, model, at, round
+        case user, assistant, interrupted, sources, general, unsourced, parts, model, at, round, style
     }
 
     /// Beitrag aus einer Runde ohne Quelle: Rundenart `.general`, ein Satz ohne Quelle oder ein Abschnitt ohne Quelle. Alte
     /// Beiträge ohne das Feld `unsourced` gelten über `general` ebenso (vorsichtig: im Zweifel ohne Quelle).
-    public var isUnsourced: Bool { round == .general || unsourced || parts.contains { $0.unsourced } }
+    /// Im Stil `natural` ist die Rundenart `.general` die des Sprechers (freies Gespräch), nicht die Funktion „Antworten ohne Quelle“:
+    /// Dort zählt nur, was ausdrücklich als Satz ohne Quelle (`unsourced`) ausgegeben wurde.
+    public var isUnsourced: Bool {
+        if style == .natural { return unsourced || parts.contains { $0.unsourced } }
+        return round == .general || unsourced || parts.contains { $0.unsourced }
+    }
 
     /// Die Beiträge, die ein Gespräch ANZEIGEN und in einen Prompt geben darf. Ist die Funktion „Antworten ohne Quelle“ nicht
     /// freigeschaltet (`released == false`), fallen alle Beiträge aus Runden ohne Quelle heraus, bevor sie angezeigt werden oder
@@ -441,6 +478,7 @@ public struct AssistantTurn: Sendable, Equatable, Codable {
         model = try c.decode(String.self, forKey: .model)
         at = try c.decode(Date.self, forKey: .at)
         round = try c.decodeIfPresent(AssistantRoundKind.self, forKey: .round)
+        style = try c.decodeIfPresent(AssistantStyle.self, forKey: .style)
     }
 }
 
@@ -455,9 +493,36 @@ public struct AssistantConfig: Sendable {
     public var allowUnsourced: Bool
     /// Version des Einwilligungstextes zu `allowUnsourced` (nur für das Protokoll).
     public var consentVersion: Int
+    /// Antwortstil (E4.2c). Standard `.verbatim`: Alle bisherigen Aufrufer laufen unverändert im bisherigen Pfad.
+    public var style: AssistantStyle
+    /// Stil `natural`: einen festen Überbrückungssatz sprechen, wenn die Suche beginnt. Standard AUS (Vorgabe: keine festen Floskeln im
+    /// Gespräch; das Warten zeigt die Denk-Anzeige, `AssistantProgress`). Der Überbrückungssatz ist eine Ansage (`.announcement`).
+    public var bridge: Bool
+    /// Stil `natural`: höchstens so viele Auszüge und Zeichen für den Denker (zusätzlich zum Budget des Kontexts).
+    public var naturalPassageLimit: Int
+    public var naturalPassageChars: Int
+    /// Stil `natural`: höchstens so viele freie Sätze je Phase (Sprecher oder Denker); danach wird das Modell abgebrochen.
+    public var naturalMaxSentences: Int
+    /// Stil `natural`: feste Ansagen für langsame Antworten. Standard AUS (wie `bridge`: keine festen Floskeln). Eingeschaltet gilt:
+    /// gemessen ab dem Hinweis „Äußerung gilt“ (`AssistantSession.noteCommitted`) kommt die erste Ansage („Einen Augenblick.“) nach
+    /// `fillerFirstMs`, wenn bis dahin noch keine Einheit ausgegeben wurde, die zweite („Das dauert noch etwas.“) nach `fillerSecondMs`,
+    /// wenn bis dahin noch keine Antworteinheit ausgegeben wurde. Ohne den Hinweis gibt es keine dieser Ansagen. Mit `bridge` und
+    /// `fillers` beide aus gibt der Kern in keinem Fall einen festen Überbrückungs- oder Ansagesatz aus.
+    public var fillers: Bool
+    public var fillerFirstMs: Int
+    public var fillerSecondMs: Int
+    /// Stil `natural`, erzwungene Suche bei direktem Inhaltsbezug: So lange (ab Start des Sprecher-Aufrufs) wartet der Kern auf den einen
+    /// Zwischensatz des Sprechers; danach beginnt die Daten-Phase ohne Satz. Negativ: keine Frist (Ende des Sprecher-Stroms).
+    public var forcedSpeakerMs: Int
 
     public init(modelLabel: String, isCloud: Bool, contextTokens: Int, maxAnswerTokens: Int, userName: String?, timeout: TimeInterval,
-                allowUnsourced: Bool = false, consentVersion: Int = 0) {
+                allowUnsourced: Bool = false, consentVersion: Int = 0, style: AssistantStyle = .verbatim, bridge: Bool = false,
+                naturalPassageLimit: Int = 4, naturalPassageChars: Int = 2400, naturalMaxSentences: Int = 4,
+                fillers: Bool = false, fillerFirstMs: Int = 1_200, fillerSecondMs: Int = 8_000, forcedSpeakerMs: Int = 2_500) {
+        self.forcedSpeakerMs = forcedSpeakerMs
+        self.fillers = fillers
+        self.fillerFirstMs = fillerFirstMs
+        self.fillerSecondMs = fillerSecondMs
         self.modelLabel = modelLabel
         self.isCloud = isCloud
         self.contextTokens = contextTokens
@@ -466,6 +531,29 @@ public struct AssistantConfig: Sendable {
         self.timeout = timeout
         self.allowUnsourced = allowUnsourced
         self.consentVersion = consentVersion
+        self.style = style
+        self.bridge = bridge
+        self.naturalPassageLimit = naturalPassageLimit
+        self.naturalPassageChars = naturalPassageChars
+        self.naturalMaxSentences = naturalMaxSentences
+    }
+}
+
+/// Ein offener Suchauftrag, den die Steuerung im Hintergrund weiterlaufen lässt, während der Nutzer weiterspricht (nur Stil `natural`).
+/// Er steht NUR im Prompt des Sprechers der neuen Anfrage (und in der Frage ihres Denkers, wenn sie selbst eine Suche verlangt): nie im
+/// Protokoll, nie im Verlauf, nie im Fortschritt außer als Fragetext der Suche.
+public struct AssistantPendingSearch: Sendable, Equatable {
+    /// Frage des offenen Suchauftrags.
+    public var question: String
+    /// Seine Suchwörter.
+    public var query: String
+    /// Das Ergebnis liegt schon vor und wird gleich nachgereicht.
+    public var ready: Bool
+
+    public init(question: String, query: String, ready: Bool = false) {
+        self.question = question
+        self.query = query
+        self.ready = ready
     }
 }
 
@@ -473,11 +561,14 @@ public struct AssistantRequest: Sendable, Equatable {
     public let requestId: String
     public let text: String
     public let afterInterruption: Bool
+    /// Stil `natural`: ein offener Suchauftrag, der im Hintergrund läuft (Standard: keiner). Der Stil `verbatim` ignoriert ihn.
+    public var pending: AssistantPendingSearch?
 
-    public init(requestId: String, text: String, afterInterruption: Bool = false) {
+    public init(requestId: String, text: String, afterInterruption: Bool = false, pending: AssistantPendingSearch? = nil) {
         self.requestId = requestId
         self.text = text
         self.afterInterruption = afterInterruption
+        self.pending = pending
     }
 }
 
@@ -497,10 +588,15 @@ public struct AssistantSentenceCounts: Sendable, Equatable, Codable {
     public var revoked = 0
     /// Verworfen: Rest ohne Satzzeichen am Stromende.
     public var droppedFragment = 0
+    /// Stil `natural`: freie Sätze des Sprechers und freie Zusammenfassungen des Denkers (im Stil `verbatim` immer 0).
+    public var conversational = 0
+    public var summarized = 0
 
     public init(grounded: Int = 0, inventory: Int = 0, unsourced: Int = 0, neutral: Int = 0, droppedOwnData: Int = 0,
                 droppedNoMode: Int = 0, droppedNotSnapped: Int = 0, droppedDuplicate: Int = 0, droppedTemplate: Int = 0,
-                revoked: Int = 0, droppedFragment: Int = 0) {
+                revoked: Int = 0, droppedFragment: Int = 0, conversational: Int = 0, summarized: Int = 0) {
+        self.conversational = conversational
+        self.summarized = summarized
         self.grounded = grounded
         self.inventory = inventory
         self.unsourced = unsourced
@@ -516,7 +612,7 @@ public struct AssistantSentenceCounts: Sendable, Equatable, Codable {
 
     private enum CodingKeys: String, CodingKey {
         case grounded, inventory, unsourced, neutral, droppedOwnData, droppedNoMode, droppedNotSnapped, droppedDuplicate, droppedTemplate
-        case revoked, droppedFragment
+        case revoked, droppedFragment, conversational, summarized
     }
 
     /// Fehlende Zähler gelten als 0: Zeilen älterer und neuerer Fassungen bleiben lesbar.
@@ -527,7 +623,26 @@ public struct AssistantSentenceCounts: Sendable, Equatable, Codable {
                   neutral: try count(.neutral), droppedOwnData: try count(.droppedOwnData), droppedNoMode: try count(.droppedNoMode),
                   droppedNotSnapped: try count(.droppedNotSnapped), droppedDuplicate: try count(.droppedDuplicate),
                   droppedTemplate: try count(.droppedTemplate), revoked: try count(.revoked),
-                  droppedFragment: try count(.droppedFragment))
+                  droppedFragment: try count(.droppedFragment), conversational: try count(.conversational),
+                  summarized: try count(.summarized))
+    }
+
+    /// Schreibt die neuen Zähler nur, wenn sie gesetzt sind: Zähler des Stils `verbatim` bleiben Byte für Byte, wie sie waren.
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(grounded, forKey: .grounded)
+        try c.encode(inventory, forKey: .inventory)
+        try c.encode(unsourced, forKey: .unsourced)
+        try c.encode(neutral, forKey: .neutral)
+        try c.encode(droppedOwnData, forKey: .droppedOwnData)
+        try c.encode(droppedNoMode, forKey: .droppedNoMode)
+        try c.encode(droppedNotSnapped, forKey: .droppedNotSnapped)
+        try c.encode(droppedDuplicate, forKey: .droppedDuplicate)
+        try c.encode(droppedTemplate, forKey: .droppedTemplate)
+        try c.encode(revoked, forKey: .revoked)
+        try c.encode(droppedFragment, forKey: .droppedFragment)
+        if conversational > 0 { try c.encode(conversational, forKey: .conversational) }
+        if summarized > 0 { try c.encode(summarized, forKey: .summarized) }
     }
 
     /// Alle verworfenen Sätze (nicht gesprochen, nicht angezeigt), unabhängig vom Grund.
@@ -548,7 +663,7 @@ public struct AssistantSentenceCounts: Sendable, Equatable, Codable {
     }
 
     /// Ausgegebene Sätze (ohne Ansagen).
-    public var emitted: Int { grounded + inventory + unsourced + neutral }
+    public var emitted: Int { grounded + inventory + unsourced + neutral + conversational + summarized }
 }
 
 public struct AssistantAnswer: Sendable, Equatable {
@@ -587,7 +702,33 @@ public enum AssistantFailure: String, Sendable, Equatable {
     case auditUnavailable
 }
 
+/// Fortschritt eines Laufs im Stil `natural` für die Denk-Anzeige. NUR Anzeige: Er steht nicht im Protokoll und nicht im Verlauf (Titel
+/// und Suchwörter sind Inhalte), und gesprochen und veröffentlicht wird weiter ausschließlich über `AssistantEvent.sentence`.
+/// Reihenfolge je Anfrage: `speaker`, dann nur bei einer Suche `searching`, `found`, `composing` und `draft` (mehrfach). Eine Runde
+/// ohne Suche hat nur `speaker`; bei direktem Inhaltsbezug (der Sprecher läuft nicht) beginnt die Folge mit `searching`, eine
+/// Bestandsfrage hat keinen Fortschritt (kein Modell). Mit einem offenen Suchauftrag (`AssistantRequest.pending`) kann nach `speaker`
+/// einmal `abandon` kommen (dann folgt keine Suche dieser Anfrage).
+public enum AssistantProgress: Sendable, Equatable {
+    /// Der Sprecher-Aufruf läuft.
+    case speaker
+    /// Die Daten-Phase beginnt, der Abruf läuft mit diesen Suchwörtern (ohne Suchwörter des Sprechers: der Fragetext).
+    case searching(query: String)
+    /// Titel der Auszüge im Prompt des Denkers, in der Reihenfolge der Auszüge und ohne Dubletten. Leer: nichts gefunden (dann kommt
+    /// weder `composing` noch `draft`).
+    case found(titles: [String])
+    /// Der Denker-Aufruf läuft.
+    case composing
+    /// Der Rohtext des Denkers bisher (kumulativ), höchstens etwa alle 150 ms und am Ende einmal vollständig.
+    case draft(String)
+    /// Steuerzeile `ABBRUCH` des Sprechers: Der Nutzer will den offenen Suchauftrag (`AssistantRequest.pending`) nicht mehr. Höchstens
+    /// einmal je Anfrage, nur mit `pending`; ein Satz davor ist eine normale direkte Antwort. Nach `abandon` folgt keine Suche dieser Anfrage.
+    case abandon
+}
+
 public enum AssistantEvent: Sendable, Equatable {
+    /// Fortschritt für die Denk-Anzeige (nur Stil `natural`, nur Anzeige). `generation` wie bei `sentence`: Wer sie nicht mehr kennt
+    /// (Widerruf), zeigt nichts. Nach `cancel` und nach einem Widerruf kommt keiner mehr.
+    case progress(requestId: String, generation: Int, AssistantProgress)
     /// Abgerufene Auszüge dieser Anfrage (Vorab-Anzeige; in einer Allgemeinrunde leer). Gedeckt wird erst je Satz.
     case sources(requestId: String, generation: Int, [AssistantPassage])
     /// Ein Satz zur Ausgabe. `speech` = ohne Markdown, sprechbar. `sources`: bei einem Zitat sein Block, sonst leer.

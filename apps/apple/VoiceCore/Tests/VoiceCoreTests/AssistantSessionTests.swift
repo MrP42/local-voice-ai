@@ -398,6 +398,8 @@ final class AssistantSessionTests: XCTestCase {
                         XCTAssertTrue(systemSentences.contains(s.text), "\(text) → \(s.text)")
                     case .unsourced, .inventory:
                         XCTFail("in einer Datenrunde nie \(s.status): \(text) → \(s.text)")
+                    case .conversational, .summarized:
+                        XCTFail("Einordnung des Stils natural im Stil verbatim: \(text) → \(s.text)")
                     }
                 }
                 XCTAssertFalse(seen.spoken.isEmpty, "es bleibt immer etwas Sprechbares (mindestens der feste Satz): \(text)")

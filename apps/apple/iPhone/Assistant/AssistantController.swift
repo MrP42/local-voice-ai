@@ -11,10 +11,99 @@ import Combine
 // - `speculate`: Antwort schon vorbereiten (lokale Modelle), gepuffert, nichts wird gesprochen;
 // - `commit`: die Äußerung gilt; eine passende Vorarbeit wird übernommen, sonst beginnt eine neue Anfrage;
 // - `cancelAnswer`: der Nutzer redet in die Antwort; vor dem ersten fertig gesprochenen Satz wird ergänzt (`merge`),
-//   danach gilt es als Unterbrechung (das Gesprochene kommt als „unterbrochen“ in den Verlauf).
+//   danach gilt es als Unterbrechung (das Gesprochene kommt als „unterbrochen“ in den Verlauf);
+// - `holdAnswer`/`releaseAnswer`: Der Nutzer spricht, keine Einheit klingt: Die Stimme beginnt nichts Neues (auch keine Ansage), bis die
+//   Richtlinie freigibt oder die Antwort endet; `holdStalled` zeigt einen Hinweis mit Handbedienung (`holdNotice`).
 // Eine Antwort steht erst im Verlauf, wenn sie zu Ende gesprochen ist (oder unterbrochen wurde).
 
 enum AssistantPhase: Equatable { case idle, listening, hearing, thinking, speaking }
+
+/// Warum die Antwort zurückgehalten wird und nicht weiterkommt (die Richtlinie hält, solange der Nutzer spricht; `holdStalled`).
+/// `activity`: Dauergeräusch ohne Wort: Hinweis „Ich warte, bis du fertig bist.“ mit beiden Knöpfen („Antwort jetzt hören“, „Verwerfen“).
+/// `recognition`: Die Erkennung hinkt nach: „Die Erkennung kommt nicht hinterher.“, nur „Verwerfen“ (eine Handfreigabe wäre dann
+/// verfrüht: Die Richtlinie nähme sie nicht an). Der Grund kann während eines Haltens wechseln; die Steuerung überschreibt dann den Wert.
+enum AssistantHoldNotice: Equatable {
+    case activity, recognition
+
+    var text: String {
+        switch self {
+        case .activity: "Ich warte, bis du fertig bist."
+        case .recognition: "Die Erkennung kommt nicht hinterher."
+        }
+    }
+
+    /// Soll die Ansicht „Antwort jetzt hören“ (`releaseHold()`) anbieten?
+    var offersRelease: Bool { self == .activity }
+
+    /// Soll die Ansicht „Verwerfen“ (`discardHeldAnswer()`) anbieten? Immer.
+    var offersDiscard: Bool { true }
+}
+
+/// Länge der Sprechpause, nach der eine Äußerung als beendet gilt (alle Fristen der Richtlinie werden mit `scale` gestreckt oder gekürzt).
+enum AssistantPauseSetting: String, CaseIterable, Identifiable {
+    case short, normal, long
+
+    var id: String { rawValue }
+
+    var scale: Double {
+        switch self {
+        case .short: 0.8
+        case .normal: 1.0
+        case .long: 1.5
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .short: "Kurz"
+        case .normal: "Normal"
+        case .long: "Lang"
+        }
+    }
+}
+
+/// Graue Denk-Anzeige unter der letzten Antwort (statt fester Floskeln): `active` solange noch gedacht wird (animierte Anzeige),
+/// `steps` die Schritte in Reihenfolge, `draft` der gestreamte Rohtext des Denkers (leer, solange keiner kommt). Gehört zur Anfrage, die
+/// zuletzt festgeschrieben wurde; der letzte Stand bleibt (inaktiv) stehen, bis die nächste Anfrage festgeschrieben wird. Nichts davon
+/// wird gespeichert oder protokolliert.
+struct AssistantThinking: Equatable {
+    /// `true`: Es wird noch gedacht (animierte Anzeige).
+    var active: Bool
+    /// Schritte in Reihenfolge.
+    var steps: [String]
+    /// Gestreamter Rohtext des Denkers (`""`, solange keiner da ist).
+    var draft: String
+}
+
+extension AssistantThinking {
+    /// Höchstens so viele Titel nennt der Schritt „Auszüge gefunden“.
+    private static let shownTitles = 4
+
+    /// Der Schritt in Worten zu einem Fortschritt des Kerns; `nil`, wenn er keinen Schritt ergibt (`.speaker`, `.draft`, `.abandon`).
+    static func step(for progress: AssistantProgress) -> String? {
+        switch progress {
+        case .speaker, .draft, .abandon:
+            return nil
+        case .searching(let query):
+            return query.isEmpty ? "Suche in deinen Inhalten." : "Suche in deinen Inhalten: „\(query)“"
+        case .found(let titles):
+            guard !titles.isEmpty else { return "Nichts gefunden." }
+            let noun = titles.count == 1 ? "1 Auszug" : "\(titles.count) Auszüge"
+            let shown = titles.prefix(shownTitles).joined(separator: ", ")
+            return "\(noun): \(shown)\(titles.count > shownTitles ? ", …" : "")"
+        case .composing:
+            return "Formuliere die Antwort."
+        }
+    }
+}
+
+/// Der Suchauftrag im Hintergrund, solange er noch nicht nachgereicht ist: seine Frage und die schon gesprochenen Sätze davor
+/// (Zwischensatz des Sprechers). Er gehört ans ENDE der Anzeige (nach `turns` und der laufenden Antwort), die Denk-Anzeige
+/// darunter; mit dem Nachreichen übernimmt die laufende Antwort (`currentUser`, `liveParts`) seinen Platz. Nicht gespeichert.
+struct AssistantBackgroundTurn: Equatable {
+    var user: String
+    var parts: [AssistantTurnPart]
+}
 
 struct AssistantNotice: Equatable {
     enum Action: Equatable { case retrySend, resume, retryStart, retryAudit, retryRelease, chooseModel, openLocalModels, openAreas }
@@ -61,6 +150,30 @@ final class AssistantLevelMeter: ObservableObject {
 }
 
 /// Eine Anfrage an das Modell samt gepuffertem Strom (Vorarbeit liefert, bevor sie gilt).
+///
+/// Suchauftrag (nur Stil `natural`): Meldet der festgeschriebene Vordergrund-Lauf `searching`, wird er zum Auftrag (`job`, höchstens
+/// einer). Sein Strom läuft weiter, spätere Sätze werden gepuffert und nicht ausgegeben (`limit`), der Nutzer redet inzwischen mit
+/// einer neuen Anfrage weiter (`pending` im Auftrag an den Kern). Zustände eines Laufs und ihre Übergänge:
+///
+///   V Vordergrund     `current === run`, alles wird ausgegeben (Normalfall)
+///   T Vorderteil      `current === job === run`, `limit` gesetzt: nur die Sätze vor `searching` (Zwischensatz) klingen noch aus
+///   H Hintergrund     `job === run`, `current !== run`: Strom läuft, Sätze gepuffert, Fortschritt füttert `thinking`,
+///                     `backgroundTurn` zeigt Frage und Zwischensatz
+///   N Nachgereicht    `current === run`, `promoted`, `limit == nil`: normale Ausgabe, der Richtlinie als `detached` gemeldet
+///   E Ende            `completed`
+///
+///   V -> T   `progress(.searching)` des Vordergrund-Laufs; ein früherer Auftrag wird dabei verworfen (Ersetzen), `thinking` beginnt neu
+///   T -> H   Zwischensatz ausgesprochen (Sprecher leer) oder keiner da: `answerFinished`, `current = nil`, Phase Zuhören
+///   T -> H   Fortsetzung des Nutzers (`cancelAnswer`): nur der Vordergrund endet, der Auftrag lebt (`tailCut`)
+///   H -> N   Auftrag fertig oder >= 1 gepufferter Antwortsatz UND Vordergrund frei (kein `current`, keine Vorarbeit, keine offene
+///            Äußerung, Erkennung eingeholt, >= 600 ms Stille): `current = job`, `answerStarted(detached: true)`, `deliver`
+///   N -> H   Richtlinie: `cancelAnswer(merge: false)`, bevor eine Einheit klang: Zurückstufen (Stimme leer, Anzeige zurückgenommen,
+///            Sätze wieder gepuffert); klang schon eine Einheit: N -> E (Rest verworfen, Unterbrechung)
+///   N -> E   alles gesprochen, Fehler oder Abbruch (`completeAnswer`)
+///   T/H -> E Stoppbefehl, Verwerfen, `stopAnswer`, neues Gespräch, Modell-/Stilwechsel, Widerruf, Protokollfehler, `shutdown`,
+///            `abandon` einer Vordergrund-Anfrage, Ersetzen, 60 s ohne Ergebnis (`cancelJob`); `failed` des Auftrags still (`failJob`)
+///
+/// Eine Anfrage, die bei bestehendem Auftrag beginnt, trägt `pending` und lässt `thinking` beim Auftrag (`ownsThinking`).
 private final class AssistantRun {
     /// Ein empfangenes `sentence`-Ereignis; seine Stelle in `sentences` ist die Nummer für die Satzspur im Protokoll.
     struct Sentence {
@@ -74,9 +187,23 @@ private final class AssistantRun {
         let generation: Int
     }
 
+    /// Ein empfangenes `progress`-Ereignis. `before`: Zahl der Sätze, die schon da waren, als es kam; es gilt vor dem Satz mit dieser
+    /// Nummer (so bleibt die Reihenfolge von Sätzen und Fortschritt erhalten, auch wenn Vorarbeit gepuffert war).
+    struct Progress {
+        let progress: AssistantProgress
+        let generation: Int
+        let before: Int
+    }
+
     let id = UUID().uuidString
     /// Freigabe-Generation des Laufs (aus dem ersten Ereignis); unbekannt, solange noch kein Ereignis da ist.
     var generation: Int?
+    /// Fortschritt des Kerns, gepuffert wie die Sätze (Vorarbeit zeigt nichts, bis sie gilt); `progressShown` = schon angewendet.
+    var progressEvents: [Progress] = []
+    var progressShown = 0
+    /// Eine Suche läuft: Ein Satz davor (Zwischensatz des Sprechers) beendet das Denken nicht, erst der erste Satz nach `composing`
+    /// (oder nach „nichts gefunden“).
+    var thinkingWaitsForFinal = false
     let text: String
     let afterInterruption: Bool
     var task: Task<Void, Never>?
@@ -99,10 +226,45 @@ private final class AssistantRun {
     var finishedSpeaking: [Int] = []
     /// Geschätztes Ende der Äußerung (ms seit Gesprächsbeginn) für „erster Ton“.
     var endedAtMs = 0
+    /// Latenzmessung dieses Laufs (lva#521): läuft ab `beginAnswer` (Ende der Äußerung), endet in `completeAnswer`/`cancelAnswer`.
+    /// Kalt/lokal/Modellart stehen beim Beginn fest (ein Modellwechsel mitten in der Runde ändert die Messung nicht).
+    var latency = AssistantLatencyClock()
+    var latencyCold = false
+    var latencyLocal = true
+    var latencyModel = AssistantModelKind.other
+    /// Suchwörter des Auftrags (aus `searching`), für `pending` der nächsten Anfrage.
+    var query = ""
+    /// Der offene Auftrag, mit dem die Anfrage an den Kern ging (Vorarbeit wird nur mit demselben Stand übernommen).
+    var pending: AssistantPendingSearch?
+    /// Suchauftrag: nur die Sätze vor dieser Nummer werden ausgegeben (`nil`: alle). Gilt im Vorderteil und im Hintergrund.
+    var limit: Int?
+    /// Zahl der Sätze, die beim Wechsel zum Auftrag schon ausgegeben waren (der Zwischensatz des Sprechers), und ihre Abschnitte.
+    var tailCount = 0
+    var tailParts: [AssistantTurnPart] = []
+    /// Eine Fortsetzung des Nutzers beendete den Vorderteil, bevor er ausgesprochen war: der Beitrag nennt dann nur ganz Gesprochenes.
+    var tailCut = false
+    /// Nachgereicht (Zustand N); `unitHeard`/`promotedStartCount`: Hat seit dem Nachreichen eine Einheit geklungen?
+    var promoted = false
+    var unitHeard = false
+    var promotedStartCount = 0
+    /// Zahl der Sätze, deren Anzeige im Protokoll schon steht (kein zweiter Anzeige-Commit nach Zurückstufen und Nachreichen).
+    var displayMarked = 0
 
     init(text: String, afterInterruption: Bool) {
         self.text = text
         self.afterInterruption = afterInterruption
+    }
+
+    /// Puffert ein `progress`-Ereignis vor dem nächsten Satz. Der Rohtext des Denkers (`draft`) ist kumulativ: Ein noch nicht angewendeter
+    /// Stand vor demselben Satz wird ersetzt, nicht angehängt (sonst wüchse der Puffer einer Vorarbeit quadratisch).
+    func bufferProgress(_ event: AssistantProgress, generation: Int) {
+        let entry = Progress(progress: event, generation: generation, before: sentences.count)
+        if case .draft = event, progressEvents.count > progressShown, let last = progressEvents.last, case .draft = last.progress,
+           last.before == entry.before {
+            progressEvents[progressEvents.count - 1] = entry
+            return
+        }
+        progressEvents.append(entry)
     }
 
     /// Nur die Einheiten, die ganz gesprochen wurden (Ansagen wie „Wörtlicher Auszug aus …“ gehören nicht zum Beitrag): ihre Nummern
@@ -120,6 +282,17 @@ final class AssistantController: ObservableObject {
 
     static let bargeInKey = "assistant_barge_in"
     static var storedBargeIn: Bool { UserDefaults.standard.object(forKey: bargeInKey) as? Bool ?? true }
+    static let pauseKey = "assistant_pause"
+    static var storedPause: AssistantPauseSetting {
+        UserDefaults.standard.string(forKey: pauseKey).flatMap(AssistantPauseSetting.init(rawValue:)) ?? .normal
+    }
+    static let styleKey = "assistant_style"
+    /// Standard ist der freie Stil (`natural`); der wörtliche Pfad (`verbatim`) bleibt wählbar.
+    static var storedStyle: AssistantStyle {
+        UserDefaults.standard.string(forKey: styleKey).flatMap(AssistantStyle.init(rawValue:)) ?? .natural
+    }
+    /// Die erste Runde je Prozess misst „kalt“ (Latenzmessung, lva#521).
+    private static var coldRoundPending = true
 
     // MARK: Veröffentlicht (Anzeige)
 
@@ -147,6 +320,20 @@ final class AssistantController: ObservableObject {
     @Published private(set) var firstSoundMs: Int?
     @Published private(set) var muted = false
     @Published private(set) var bargeIn = AssistantController.storedBargeIn
+    /// Sprechpause (Äußerungsende nach Inhalt, gestreckt oder gekürzt); wirkt auf die Richtlinie.
+    @Published private(set) var pause = AssistantController.storedPause
+    /// Antwortstil: `natural` (frei formuliert, Suche im Hintergrund) oder `verbatim` (nur wörtliche Auszüge). Wirkt ab der nächsten
+    /// Anfrage; die Sitzung wird dazu neu aufgebaut, sobald nichts läuft.
+    @Published private(set) var style = AssistantController.storedStyle
+    /// Die Antwort wird zurückgehalten, weil der Nutzer spricht, und kommt nicht weiter: Hinweis mit „Antwort jetzt hören“
+    /// (`releaseHold()`), bei `recognition` auch „Verwerfen“ (`discardHeldAnswer()`). `nil`, solange nichts hängt.
+    @Published private(set) var holdNotice: AssistantHoldNotice?
+    /// Graue Denk-Anzeige der zuletzt festgeschriebenen Anfrage (Schritte, Rohtext des Denkers). `nil`: nichts zu zeigen (keine Anfrage
+    /// seit Beginn des Gesprächs, Abbruch ohne Schritt, Runde ohne Suche, Freigabe entzogen).
+    @Published private(set) var thinking: AssistantThinking?
+    /// Der Suchauftrag im Hintergrund (Frage und Zwischensatz), solange er nicht nachgereicht ist und der Vordergrund ihn nicht selbst
+    /// zeigt; sonst `nil`. Die Denk-Anzeige (`thinking`) gehört dann ihm. Ans Ende der Anzeige, nach der laufenden Antwort.
+    @Published private(set) var backgroundTurn: AssistantBackgroundTurn?
     @Published private(set) var running = false
     @Published private(set) var loading = false
     /// Bereiche, die der Assistent im aktuellen Modus (lokal oder Cloud) nutzen darf.
@@ -159,8 +346,14 @@ final class AssistantController: ObservableObject {
         [mergePrefix, liveStable, liveVolatile].filter { !$0.isEmpty }.joined(separator: " ")
     }
 
-    /// Ein Modell ist da: tippen und Senden gehen auch ohne Mikrofon.
-    var canSend: Bool { session != nil }
+    /// Ein Modell ist da: tippen und Senden gehen auch ohne Mikrofon. (Nur Debug: Die Beispielzustände `--assistant-demo-ready` und
+    /// `--assistant-demo-thinking` zeigen die Ansicht wie mit geladenem Modell, auch im Simulator ohne Systemmodell.)
+    var canSend: Bool {
+        #if DEBUG
+        if Self.demoReady || Self.demoThinking { return true }
+        #endif
+        return session != nil
+    }
 
     // MARK: Intern
 
@@ -178,8 +371,20 @@ final class AssistantController: ObservableObject {
     private var engine = AssistantEngine.unavailable("")
     private var session: AssistantSession?
     private var policy = DuplexTurnPolicy()
-    private var current: AssistantRun?
+    /// Die laufende Antwort. Solange eine läuft, fordert der Hörer bei Stille den Abschluss der Erkennung an (`catchUpOnSilence`).
+    private var current: AssistantRun? {
+        didSet { listener.catchUpOnSilence = current != nil }
+    }
     private var speculation: AssistantRun?
+    /// Der Suchauftrag (höchstens einer): Vorderteil (`current === job`) oder Hintergrund. Zustände siehe `AssistantRun`.
+    private var job: AssistantRun?
+    /// Die Frist des Auftrags ohne Ergebnis (`jobTimeoutSeconds`).
+    private var jobWatch: Task<Void, Never>?
+    /// Stand der Erkennung (Hörer): eingeholt = kein Wort der laufenden Äußerung steht noch aus. Bedingung für das Nachreichen.
+    private var recognitionCaughtUp = true
+    /// So lange muss es still sein, bevor ein Auftrag nachgereicht wird; ohne Ergebnis nach so vielen Sekunden endet er.
+    private static let promoteQuietMs = 600
+    private static let jobTimeoutSeconds = 60
     private var currentRunID: String?
     /// Abbruch, Verlauf und Aufräumen laufen hintereinander; neue Anfragen warten darauf.
     private var chain: Task<Void, Never>?
@@ -191,6 +396,8 @@ final class AssistantController: ObservableObject {
     private var historyLoaded = false
     private var origin = ProcessInfo.processInfo.systemUptime
     private var lastSilenceMs = 0
+    /// Zeitpunkt (ms seit Gesprächsbeginn) der zuletzt gemeldeten Stille `lastSilenceMs`.
+    private var lastSilenceAtMs = 0
     /// Eine Unterbrechung steht aus: die nächste Frage trägt `afterInterruption`.
     private var interruptedPending = false
     private var userMuted = false
@@ -202,6 +409,14 @@ final class AssistantController: ObservableObject {
     private var clearRequested = 0
     private var clearDone = 0
     private var mergeWatch: Task<Void, Never>?
+    /// Die Antwort ist zurückgehalten (Richtlinie: `holdAnswer` bis `releaseAnswer`/Abbruch/Ende); der Sprecher ist dann gehalten. Der
+    /// Sprecher vergisst das Halten bei `begin()`/`stop()`; die Steuerung setzt es nach `begin()` wieder (`deliver`).
+    private var holdActive = false
+    /// Stil, mit dem die laufende Sitzung gebaut ist (ihre Konfiguration ist unveränderlich); weicht er von `style` ab, wird sie neu gebaut.
+    private var appliedStyle = AssistantController.storedStyle
+    private var refreshingSession = false
+    /// Die Sprechpause wurde geändert, während eine Antwort lief: Die Richtlinie wird nach deren Ende neu gebaut (ihr Zustand ginge sonst verloren).
+    private var policyStale = false
     private var bag: Set<AnyCancellable> = []
     private var memoryObserver: NSObjectProtocol?
     private var overflowShown = false
@@ -212,15 +427,20 @@ final class AssistantController: ObservableObject {
         }.store(in: &bag)
 
         listener.onSpeechStarted = { [weak self] in self?.speechStarted() }
-        listener.onPartial = { [weak self] text in self?.partial(text) }
+        // Zweiter Wert: Rückstand des Ergebnisendes hinter dem eingespeisten Audio in Sekunden (nil, wenn die Erkennung keinen Zeitbereich liefert).
+        listener.onPartial = { [weak self] text, lag in self?.partial(text, lag: lag) }
         listener.onSilence = { [weak self] ms in self?.silence(ms) }
         listener.onInterrupted = { [weak self] why in self?.listenerInterrupted(why) }
         listener.onLevel = { [weak self] level in self?.meter.push(level) }
         listener.onOverflow = { [weak self] count in self?.overflow(count) }
+        // Vor jedem `onSilence`: Stand der Erkennung an die Richtlinie (Freigabe des Haltens erst bei eingeholter Erkennung).
+        listener.onRecognition = { [weak self] caughtUp, following in self?.recognition(caughtUp, following: following) }
 
         speaker.onAudible = { [weak self] in self?.audible() }
         speaker.onSentenceStarted = { [weak self] text in self?.sentenceStarted(text) }
         speaker.onSentenceFinished = { [weak self] text in self?.sentenceFinished(text) }
+        speaker.onUnitStarted = { [weak self] in self?.unitStarted() }
+        speaker.onUnitEnded = { [weak self] in self?.unitEnded() }
         speaker.onIdle = { [weak self] in self?.speakerIdle() }
         // Schreibfehler des Protokolls (E4.2b, Schreibfolge 7): Die Ausgabe stoppt SOFORT, auch mitten in der Wiedergabe und ohne
         // dass eine weitere Einheit startet. Der Beobachter kommt von der Schreibwarteschlange; die Arbeit geschieht auf dem MainActor.
@@ -244,12 +464,19 @@ final class AssistantController: ObservableObject {
     /// `--assistant-demo-interrupted`: eine unterbrochene Antwort (der ganz gesprochene Auszug mit Quellzeile, die Unterbrechung als
     /// eigene Zeile darunter). `--assistant-demo-legacy`: ältere Beiträge ohne Marken fallen beim Laden heraus, gezeigt wird nur der
     /// gültige.
+    /// Für Simulatorbilder (der Simulator hat kein Systemmodell, `canSend` wäre sonst falsch): `--assistant-demo-ready` zeigt den leeren
+    /// Bereit-Zustand wie mit geladenem Modell („Sprich einfach los“, kein Verlauf, Stil „Natürlich“); `--assistant-demo-thinking` eine
+    /// laufende Runde aus synthetischem Inhalt (Frage, frei formulierter Zwischensatz, graue Denk-Anzeige mit zwei Schritten und Rohtext).
+    /// Beide laufen über denselben Pfad und dieselben Schutzbedingungen wie die anderen (`demoQuote`): kein Modell, kein Mikrofon, keine
+    /// Ausgabe an die Stimme, nichts wird gespeichert oder protokolliert.
     static let demoMulti = ProcessInfo.processInfo.arguments.contains("--assistant-demo-multi")
     static let demoLocked = ProcessInfo.processInfo.arguments.contains("--assistant-demo-locked")
     static let demoAudit = ProcessInfo.processInfo.arguments.contains("--assistant-demo-audit")
     static let demoInterrupted = ProcessInfo.processInfo.arguments.contains("--assistant-demo-interrupted")
     static let demoLegacy = ProcessInfo.processInfo.arguments.contains("--assistant-demo-legacy")
-    static let demoQuote = demoMulti || demoLocked || demoAudit || demoInterrupted || demoLegacy
+    static let demoReady = ProcessInfo.processInfo.arguments.contains("--assistant-demo-ready")
+    static let demoThinking = ProcessInfo.processInfo.arguments.contains("--assistant-demo-thinking")
+    static let demoQuote = demoMulti || demoLocked || demoAudit || demoInterrupted || demoLegacy || demoReady || demoThinking
         || ProcessInfo.processInfo.arguments.contains("--assistant-demo-quote")
 
     private func showDemo() {
@@ -257,6 +484,10 @@ final class AssistantController: ObservableObject {
         historyLoaded = true
         notice = Self.demoAudit ? Self.auditUnavailableNotice() : nil
         releaseAlert = Self.demoLocked ? Self.releaseLockedNotice : nil
+        if Self.demoReady || Self.demoThinking {
+            showDemoLive()
+            return
+        }
         if Self.demoLegacy {
             // Wie beim Laden und Wiederherstellen: Beiträge ohne gespeicherte, vollständig markierte Einheiten fallen heraus.
             turns = AssistantTurn.admitted(Self.demoLegacyTurns, released: AssistantUnsourcedConsent.isReleased)
@@ -266,6 +497,33 @@ final class AssistantController: ObservableObject {
             turns = Self.demoMulti ? Self.demoMultiTurns : Self.demoTurns
         }
         modelLabel = "Beispiel"
+    }
+
+    /// `--assistant-demo-ready` und `--assistant-demo-thinking`: die Ansicht wie mit geladenem Modell, nur als Anzeigezustand. Kein
+    /// Verlauf, Stil „Natürlich“ (ohne ihn zu speichern: `style` wird gesetzt, nicht `setStyle`), alle Bereiche wie lokal im Standard. Es
+    /// startet nichts (kein Hörer, keine Stimme, keine Sitzung); `running` und `phase` bestimmen nur die Bedienknöpfe. Bereit: Zuhören.
+    /// Denken: die Frage, ein frei formulierter Zwischensatz (Kennzeichnung „Frei formuliert“, dieselbe Zuordnung wie bei einer echten
+    /// Antwort) und die Denk-Anzeige mit zwei Schritten und dem Rohtext des Denkers.
+    private func showDemoLive() {
+        style = .natural
+        turns = []
+        modelLabel = "Beispiel"
+        areas = Set(AssistantArea.allCases)
+        running = true
+        guard Self.demoThinking else {
+            phase = .listening
+            return
+        }
+        var parts: [AssistantTurnPart] = []
+        AssistantTurnPart.append(to: &parts, text: "Dazu sehe ich in deiner Notiz zur Gartenplanung nach.", status: .conversational,
+                                 quote: false, sources: [])
+        currentUser = "Was stand in meiner Notiz zur Gartenplanung?"
+        liveParts = parts
+        thinking = AssistantThinking(active: true,
+                                     steps: ["Suche in deinen Inhalten: „gartenplanung notiz“",
+                                             "2 Auszüge: Gartenplanung 2026, Einkaufsliste Beet"],
+                                     draft: "Du wolltest im März die Hochbeete")
+        phase = .thinking
     }
 
     /// Ein gespeicherter Block der Beispielrunde (`isBlock: true`: ganz, unverändert, zitierbar).
@@ -396,10 +654,17 @@ final class AssistantController: ObservableObject {
 
         origin = ProcessInfo.processInfo.systemUptime
         lastSilenceMs = 0
+        lastSilenceAtMs = 0
         interruptedPending = false
         overflowShown = false
         overflowCount = 0
-        policy.reset()
+        thinking = nil
+        backgroundTurn = nil
+        recognitionCaughtUp = true
+        clearHold()
+        // Eine geänderte Sprechpause, die noch aussteht, gilt ab diesem Gespräch (`rebuildPolicy` setzt den Zustand ohnehin zurück).
+        if policyStale { rebuildPolicy() } else { policy.reset() }
+        prewarmModel()
         speaker.voiceID = VoiceModel.shared.selectedVoiceID
         speaker.conversationMode = true
         speaker.prepare()
@@ -466,8 +731,11 @@ final class AssistantController: ObservableObject {
         // ohne Gespräch keine Indexierung mehr an.
         hub.close()
         if current != nil { cancelAnswer(merge: false) }
+        cancelJob()
         discardSpeculation()
+        // `stop()` löscht auch das Halten des Sprechers; der Zustand der Steuerung und der Hinweis folgen.
         speaker.stop()
+        clearHold()
         speaker.conversationMode = false
         running = false
         phase = .idle
@@ -517,7 +785,7 @@ final class AssistantController: ObservableObject {
 
     /// Speicherwarnung: das große Modell nur freigeben, wenn gerade nichts damit läuft (es lädt beim nächsten Mal neu).
     private func memoryWarning() {
-        guard phase != .thinking, phase != .speaking else { return }
+        guard phase != .thinking, phase != .speaking, job == nil else { return }
         engine.llama?.release()
     }
 
@@ -534,7 +802,7 @@ final class AssistantController: ObservableObject {
     private func consentSession(for built: AssistantEngine) async -> AssistantSession? {
         guard let model = built.model, let target = built.target else { return nil }
         let kn = await hub.knowledge(cloud: true, areas: AssistantAreaSettings.areas(cloud: true))
-        return AssistantSession(model: model, knowledge: kn, config: built.config, audit: audit, cloudConsent: false,
+        return AssistantSession(model: model, knowledge: kn, config: built.sessionConfig(style: style), audit: audit, cloudConsent: false,
                                 releaseStore: releaseStore, cloudTarget: target.id)
     }
 
@@ -557,11 +825,12 @@ final class AssistantController: ObservableObject {
         if let model = built.model {
             // Die Zustimmung zum Cloud-Ziel kommt aus der Zustandsdatei (für lokale Modelle ohne Belang). Der Kern lässt ein
             // Cloud-Modell ohne Zustimmung gar nicht erst laufen (`consentRequired`).
-            let next = AssistantSession(model: model, knowledge: kn, config: built.config, history: history, audit: audit,
+            let next = AssistantSession(model: model, knowledge: kn, config: built.sessionConfig(style: style), history: history, audit: audit,
                                         cloudConsent: false, releaseStore: releaseStore, cloudTarget: built.target?.id)
             observeRelease(of: next)
             speaker.gate = next.playbackGate
             session = next
+            appliedStyle = style
             // Ein Lesen für Bereiche und Zustimmung (nicht mehrere Lesungen, zwischen denen sich der Stand ändern kann).
             let effective = next.effectiveState
             areas = effective.areas
@@ -600,15 +869,83 @@ final class AssistantController: ObservableObject {
         // Die Anzeige der Bereiche folgt dem Stand der Ordnung nach JEDER Erhöhung, auch einer anderen Sitzung, einer Änderung ohne
         // Sitzung oder der Blockade (Runde 8, R3: keine Kopie, die dem Stand hinterherläuft).
         areas = session.effectiveAreas
-        guard let run = current, !run.completed, let started = run.generation, started < generation else { return }
-        stopForRevocation(Self.revokedText, retry: run.text)
+        // Die Vordergrund-Antwort UND der Suchauftrag (er läuft im Hintergrund weiter) sind betroffen, wenn ihre Generation älter ist.
+        let staleCurrent = current.flatMap { Self.isStale($0, generation) ? $0 : nil }
+        let staleJob = job.flatMap { Self.isStale($0, generation) ? $0 : nil }
+        guard let stale = staleCurrent ?? staleJob else { return }
+        // Betrifft der Widerruf nur den Auftrag, läuft die (neuere) Vordergrund-Antwort weiter.
+        stopForRevocation(Self.revokedText, retry: stale.text, onlyJob: staleCurrent == nil)
+    }
+
+    private static func isStale(_ run: AssistantRun, _ generation: Int) -> Bool {
+        guard !run.completed, let started = run.generation else { return false }
+        return started < generation
     }
 
     private func rebuildPolicy() {
         var config = DuplexTurnPolicy.Config()
         config.speculate = !engine.isCloud
         config.bargeIn = bargeIn
+        config.pauseScale = pause.scale
+        config.adaptiveEnd = true
         policy = DuplexTurnPolicy(config: config)
+        policyStale = false
+        // Die neue Richtlinie kennt das Halten nicht: Die Antwort darf nicht gehalten zurückbleiben (ohne Hinweis, ohne Freigabe).
+        if holdActive {
+            clearHold()
+            speaker.release()
+        }
+    }
+
+    /// Die Richtlinie trägt ihre Fristen unveränderlich; eine Änderung der Sprechpause baut sie neu, aber nur, wenn ihr Zustand nichts
+    /// mehr braucht (keine Antwort, keine Vorarbeit, keine zusammenzuführende Äußerung). Sonst nach dem Ende der Antwort.
+    private func applyPolicyConfig() {
+        if policyIsIdle { rebuildPolicy() } else { policyStale = true }
+    }
+
+    /// Die Richtlinie trägt keinen Zustand, der verloren gehen dürfte: keine Antwort, keine Vorarbeit, keine zusammenzuführende und keine
+    /// laufende Äußerung.
+    private var policyIsIdle: Bool {
+        current == nil && speculation == nil && mergePrefix.isEmpty && liveStable.isEmpty && liveVolatile.isEmpty
+    }
+
+    /// Die Sitzung trägt ihre Konfiguration (auch den Stil) unveränderlich (`AssistantSession.config`). Weicht `style` vom Stil der
+    /// Sitzung ab, wird sie mit derselben Engine, demselben Verlauf und denselben Freigaben neu aufgebaut, sobald nichts läuft; der
+    /// Anstoß kommt bei der Änderung und am Ende jeder Antwort. Bis dahin gilt der bisherige Stil.
+    private func refreshSessionStyle() {
+        guard session != nil, appliedStyle != style, !refreshingSession else { return }
+        refreshingSession = true
+        Task { [weak self] in
+            await self?.installSessionForStyle()
+            self?.refreshingSession = false
+        }
+    }
+
+    /// Alle Wartepunkte (Kette der Anfragen, Wissen, Verlauf der alten Sitzung) liegen VOR der Prüfung; zwischen Prüfung und Tausch gibt
+    /// es keinen mehr. Eine Anfrage, die dazwischen begann, hätte die alte Sitzung gebunden: Die Prüfung (`current`, `speculation`) sieht
+    /// sie, und es wird nach kurzer Pause noch einmal versucht (höchstens dreimal; danach bleibt es für das Ende der nächsten Antwort).
+    private func installSessionForStyle() async {
+        for attempt in 0..<3 {
+            guard let old = session, let model = engine.model, appliedStyle != style else { return }
+            if attempt > 0 { try? await Task.sleep(for: .milliseconds(250)) }
+            let built = engine
+            let waiting = chain
+            await waiting?.value
+            let knowledge = await hub.knowledge(cloud: built.isCloud, areas: AssistantAreaSettings.areas(cloud: built.isCloud))
+            let stored = AssistantTurn.admitted(await old.history, released: AssistantUnsourcedConsent.isReleased)
+            guard session === old, chain == waiting, current == nil, job == nil, speculation == nil, mergePrefix.isEmpty,
+                  consentRequest == nil, clearRequested == clearDone else { continue }
+            old.setReleaseObserver(nil)
+            let next = AssistantSession(model: model, knowledge: knowledge, config: built.sessionConfig(style: style), history: stored,
+                                        audit: audit, cloudConsent: false, releaseStore: releaseStore, cloudTarget: built.target?.id)
+            observeRelease(of: next)
+            speaker.gate = next.playbackGate
+            session = next
+            appliedStyle = style
+            areas = next.effectiveAreas
+            refreshReleaseAlert()
+            return
+        }
     }
 
     // MARK: Einstellungen im Gespräch
@@ -631,6 +968,7 @@ final class AssistantController: ObservableObject {
         }
         let mine = generation
         if current != nil { cancelAnswer(merge: false) }
+        cancelJob()
         discardSpeculation()
         listener.consumeUtterance()
         clearLive()
@@ -654,12 +992,21 @@ final class AssistantController: ObservableObject {
         // Während der Wartepunkte kann eine Antwort mit der alten Sitzung begonnen haben: abbrechen, bevor die neue übernimmt,
         // sonst schriebe ein Lauf der alten Sitzung in die neue. Die Kette wartet, bis der Beitrag der alten Sitzung steht.
         if current != nil { cancelAnswer(merge: false) }
+        cancelJob()
         discardSpeculation()
         await chain?.value
         guard mine == generation else { built.llama?.release(); return }
         await adopt(built)
         notice = built.note.map { AssistantNotice(text: $0, action: nil) }
+        prewarmModel()
         announce("Modell: \(built.label)")
+    }
+
+    /// Das Apple-Systemmodell vorladen, solange der Nutzer noch nicht spricht (nur wenn es gewählt und verfügbar ist; kein Netz, keine
+    /// Inhalte, nichts wird geschrieben). Für alle anderen Modelle ohne Wirkung.
+    private func prewarmModel() {
+        guard engine.choice == .apple, engine.hasModel else { return }
+        AssistantEngine.prewarmApple()
     }
 
     func toggleArea(_ area: AssistantArea) {
@@ -689,9 +1036,11 @@ final class AssistantController: ObservableObject {
         let pending = session?.applyAreas(next, cloudConsent: target.map { AssistantConsent.isGranted($0, areas: next) })
         // Ein Bereich, aus dem die laufende Antwort Auszüge hat, wird entzogen: wartende Sätze werden nicht mehr gesprochen.
         let removed = previous.subtracting(next)
-        if let run = current, run.sources?.contains(where: { removed.contains($0.area) }) == true {
-            stopForRevocation("Antwort angehalten: Ein Bereich wurde abgeschaltet.")
-        }
+        // Titel und Rohtext aus einem entzogenen Bereich bleiben nicht stehen (die Denk-Anzeige kennt die Herkunft nicht: ganz weg).
+        if !removed.isEmpty { thinking = nil }
+        // Die Auszüge der Vordergrund-Antwort und die des Suchauftrags: beide enden, wenn ihr Bereich entzogen wird.
+        let touched = [current, job].contains { run in run?.sources?.contains(where: { removed.contains($0.area) }) == true }
+        if touched { stopForRevocation("Antwort angehalten: Ein Bereich wurde abgeschaltet.") }
         inAreaChain { [weak self] in
             guard let self else { return }
             let effective = await self.settleAreas(pending, session: session, cloud: cloud, wanted: next)
@@ -747,6 +1096,24 @@ final class AssistantController: ObservableObject {
         }
     }
 
+    /// Sprechpause (Kurz, Normal, Lang): streckt oder kürzt alle Fristen, nach denen eine Äußerung als beendet gilt.
+    func setPause(_ value: AssistantPauseSetting) {
+        UserDefaults.standard.set(value.rawValue, forKey: Self.pauseKey)
+        guard value != pause else { return }
+        pause = value
+        applyPolicyConfig()
+    }
+
+    /// Antwortstil. Wirkt ab der nächsten Anfrage.
+    func setStyle(_ value: AssistantStyle) {
+        UserDefaults.standard.set(value.rawValue, forKey: Self.styleKey)
+        guard value != style else { return }
+        style = value
+        // Ein Stilwechsel beendet den Suchauftrag (die Sitzung wird neu gebaut, sobald nichts mehr läuft).
+        cancelJob()
+        refreshSessionStyle()
+    }
+
     func setBargeIn(_ on: Bool) {
         UserDefaults.standard.set(on, forKey: Self.bargeInKey)
         bargeIn = on
@@ -756,11 +1123,17 @@ final class AssistantController: ObservableObject {
 
     /// Entzug (Bereich, Cloud-Zustimmung) mitten in der Antwort: Sprache stoppt, das bisher Gesprochene steht als
     /// unterbrochen im Verlauf (und im Protokoll als widerrufen).
-    private func stopForRevocation(_ text: String, retry: String? = nil) {
-        guard current != nil else { return }
-        cancelAnswer(merge: false, revoked: true)
-        interruptedPending = false
-        phase = running ? .listening : .idle
+    private func stopForRevocation(_ text: String, retry: String? = nil, onlyJob: Bool = false) {
+        guard current != nil || job != nil else { return }
+        // Der Widerruf trifft die Vordergrund-Antwort und den Suchauftrag (`onlyJob`: nur ihn, die Vordergrund-Antwort ist neuer).
+        if current != nil, !onlyJob { cancelAnswer(merge: false, revoked: true) }
+        cancelJob(revoked: true)
+        // Was entzogen ist, erscheint nicht mehr: auch nicht die Titel und der Rohtext der Denk-Anzeige.
+        thinking = nil
+        if current == nil {
+            interruptedPending = false
+            phase = running ? .listening : .idle
+        }
         if let retry { retryText = retry }
         notice = AssistantNotice(text: text, action: retry == nil ? nil : AssistantNotice.Action.retrySend)
         announce(text)
@@ -776,6 +1149,7 @@ final class AssistantController: ObservableObject {
         #if DEBUG
         guard !Self.demoQuote else { return }
         #endif
+        thinking = nil
         guard let session else {
             Task { [weak self] in _ = await self?.recordConsentEntry(.cloudRevoked, areas: consented) }
             return
@@ -907,6 +1281,7 @@ final class AssistantController: ObservableObject {
     func newConversation() {
         clearRequested += 1
         if current != nil { cancelAnswer(merge: true) }
+        cancelJob()
         mergePrefix = ""
         discardSpeculation()
         listener.consumeUtterance()
@@ -917,7 +1292,10 @@ final class AssistantController: ObservableObject {
         notice = nil
         retryText = nil
         interruptedPending = false
-        policy.reset()
+        thinking = nil
+        backgroundTurn = nil
+        clearHold()
+        if policyStale { rebuildPolicy() } else { policy.reset() }
         turns = []
         enqueue { [weak self] in
             // Die Sitzung erst jetzt nachschlagen: ein Modellwechsel dazwischen hat sie vielleicht ersetzt.
@@ -938,19 +1316,37 @@ final class AssistantController: ObservableObject {
         perform(policy.feed(.speechStarted(atMs: nowMs)))
     }
 
-    private func partial(_ text: String) {
+    /// `lag`: Rückstand des Ergebnisendes hinter dem eingespeisten Audio in Sekunden. Daraus die Audiozeit des erkannten Bereichs auf der
+    /// Uhr der Richtlinie (jetzt minus Rückstand): für den Echo-Abgleich. Die Umrechnung ist näherungsweise (das Audio im Tap liegt
+    /// selbst etwas hinter der Uhr, grob 100 ms); ohne Zeitbereich der Erkennung bleibt `audioMs` leer, und die Richtlinie rechnet mit
+    /// der Ankunftszeit.
+    private func partial(_ text: String, lag: Double?) {
         guard running else { return }
         let parts = listener.liveParts
         liveStable = parts.stable
         liveVolatile = parts.volatile
         if phase == .listening, !text.isEmpty { phase = .hearing }
-        perform(policy.feed(.partial(text: text, atMs: nowMs)))
+        let now = nowMs
+        let audioMs: Int? = lag.flatMap { $0.isFinite && $0 >= 0 && $0 < 3_600 ? max(0, now - Int(($0 * 1_000).rounded())) : nil }
+        perform(policy.feed(.partial(text: text, atMs: now, audioMs: audioMs)))
+    }
+
+    /// Stand der Erkennung (Listener, immer VOR dem zugehörigen `onSilence`): `caughtUp` = der letzte laute Puffer ist im Text angekommen;
+    /// `following` = der bestätigte Stand liegt höchstens 1,5 s hinter dem Mikrofon (nur bei nachweislich hängender Anforderung falsch).
+    private func recognition(_ caughtUp: Bool, following: Bool) {
+        guard running else { return }
+        recognitionCaughtUp = caughtUp
+        perform(policy.feed(.recognition(caughtUp: caughtUp, following: following, atMs: nowMs)))
     }
 
     private func silence(_ ms: Int) {
         guard running else { return }
+        let now = nowMs
         lastSilenceMs = ms
-        perform(policy.feed(.silence(sinceMs: ms, atMs: nowMs)))
+        lastSilenceAtMs = now
+        perform(policy.feed(.silence(sinceMs: ms, atMs: now)))
+        // Ein Suchauftrag wartet auf Stille (die Richtlinie hat vorher ein `commit` oder `cancelAnswer` liefern können).
+        if job != nil { promoteJobIfReady() }
     }
 
     private func overflow(_ count: Int) {
@@ -978,11 +1374,80 @@ final class AssistantController: ObservableObject {
             case .speculate(let text): speculate(text)
             case .discardSpeculation: discardSpeculation()
             case .commit(let text, _, let afterInterruption): commit(text: text, afterInterruption: afterInterruption)
-            case .cancelAnswer(let merge): cancelAnswer(merge: merge)
+            // Mit `stopCommand` im selben Schritt (Stopp, Verwerfen) ist es ein Abbruch; sonst redet der Nutzer in die Antwort (Fortsetzung).
+            case .cancelAnswer(let merge): cancelAnswer(merge: merge, continuation: !actions.contains(.stopCommand))
             case .stopCommand: stopCommand()
             case .ignored: ignore()
+            case .holdAnswer: holdAnswer()
+            case .releaseAnswer: releaseAnswer()
+            case .holdStalled(let reason): holdStalled(reason)
             }
         }
+    }
+
+    // MARK: Zurückhalten der Antwort (Sprecherwechsel)
+
+    /// `holdAnswer`: Der Nutzer spricht, keine Einheit klingt. Nichts Neues beginnt, und was die Stimme schon bekam, aber noch nicht
+    /// klingt, wird zurückgenommen (der Sprecher stellt es vorn in die Warteschlange zurück). Das Modell läuft weiter; Anzeige und
+    /// Übergabe an die Stimme laufen unverändert (die Stimme hält nur das Starten).
+    private func holdAnswer() {
+        guard current != nil else { return }
+        holdActive = true
+        if holdNotice != nil { holdNotice = nil }
+        speaker.hold()
+    }
+
+    /// `releaseAnswer`: Das Halten ist vorbei (Stille, Handfreigabe oder eine Einheit klang schon). Die Antwort darf sprechen; der
+    /// Erkennertext der Zwischenzeit wird verbraucht (er war Geräusch, kein Wort).
+    private func releaseAnswer() {
+        clearHold()
+        speaker.release()
+        listener.consumeUtterance()
+        clearLive()
+    }
+
+    /// `holdStalled`: Das Halten dauert, ohne dass ein Wort oder eine Freigabe kommt. Der Hinweis wird veröffentlicht (die Ansicht
+    /// zeigt ihn mit den Knöpfen, die `offersRelease`/`offersDiscard` nennen); gehalten wird weiter. Ein anderer Grund überschreibt den
+    /// Hinweis (die Richtlinie meldet je Grund einmal je Halten).
+    private func holdStalled(_ reason: DuplexTurnPolicy.StallReason) {
+        guard current != nil, holdActive else { return }
+        let next: AssistantHoldNotice
+        switch reason {
+        case .activity: next = .activity
+        case .recognition: next = .recognition
+        }
+        guard holdNotice != next else { return }
+        holdNotice = next
+        announce(next.text)
+    }
+
+    /// Das Halten ist zu Ende (oder die Antwort selbst): nur der Zustand der Steuerung und der Hinweis. Den Sprecher lösen `release()`
+    /// (Freigabe) und `stop()` (Abbruch) selbst; ein neues `begin()` löscht das Halten ebenfalls.
+    private func clearHold() {
+        holdActive = false
+        if holdNotice != nil { holdNotice = nil }
+    }
+
+    /// „Antwort jetzt hören“ (Handfreigabe bei `holdNotice == .activity`). Die Richtlinie nimmt sie nur an, solange gehalten wird und die
+    /// Erkennung folgt; sonst geschieht nichts (kein Erzwingen am Richtlinienzustand vorbei: Sprecher und Richtlinie blieben sonst
+    /// auseinander).
+    func releaseHold() {
+        guard current != nil, holdActive else { return }
+        perform(policy.feed(.manualRelease(atMs: nowMs)))
+    }
+
+    /// „Verwerfen“ (immer anbietbar, solange `holdNotice` gesetzt ist): beendet die Antwort wie ein Stoppbefehl; die Richtlinie
+    /// antwortet mit `cancelAnswer(merge: false)` und `stopCommand`. Antwortet sie nicht (die Antwort war für sie schon beendet),
+    /// hält `stopAnswer()` die Antwort trotzdem an: Der Knopf wirkt immer.
+    func discardHeldAnswer() {
+        // Nur solange gehalten wird: Ein Tippen, das erst nach der Freigabe ankommt, soll keine schon klingende Antwort beenden.
+        guard current != nil, holdActive else { return }
+        let actions = policy.feed(.manualDiscard(atMs: nowMs))
+        guard !actions.isEmpty else {
+            stopAnswer()
+            return
+        }
+        perform(actions)
     }
 
     private func speculate(_ text: String) {
@@ -1003,8 +1468,9 @@ final class AssistantController: ObservableObject {
         mergePrefix = ""
         interruptedPending = false
         let run: AssistantRun
-        if let spec = speculation, !spec.abandoned, AssistantWords.same(spec.text, text) {
-            // Vorarbeit mit identischem Text: übernehmen. `afterInterruption` kannte sie nicht; der Hinweissatz fehlt dann im Prompt.
+        if let spec = speculation, !spec.abandoned, AssistantWords.same(spec.text, text), spec.pending == pendingSearch() {
+            // Vorarbeit mit identischem Text (und demselben offenen Suchauftrag): übernehmen. `afterInterruption` kannte sie nicht; der
+            // Hinweissatz fehlt dann im Prompt.
             run = spec
             speculation = nil
         } else {
@@ -1016,32 +1482,64 @@ final class AssistantController: ObservableObject {
             }
             run = makeRun(text: text, afterInterruption: afterInterruption)
         }
-        run.endedAtMs = max(0, nowMs - lastSilenceMs)
+        // Ende der Äußerung = Beginn der zuletzt gemeldeten Stille. Das `commit` kann der Meldung folgen (klingt bei der Unterbrechung noch
+        // eine Einheit, kommt es erst mit `unitEnded`): `nowMs - lastSilenceMs` ginge dann zu spät an und verkürzte die Messung.
+        run.endedAtMs = max(0, lastSilenceAtMs - lastSilenceMs)
         beginAnswer(run)
     }
 
+    /// „Stopp“ (auch „Verwerfen“): Die Richtlinie liefert vorher `cancelAnswer(merge: false)`. Danach läuft nichts wieder an: Sprecher
+    /// nicht mehr gehalten und leer (`stop()`), die Antwort abgeschlossen (verspätete Ergebnisse und Sätze werden nicht mehr
+    /// ausgegeben), kein `releaseAnswer` mehr, keine neue Anfrage.
     private func stopCommand() {
+        if current != nil { cancelAnswer(merge: false) }
+        // Auch ein Suchauftrag im Hintergrund endet: „Stopp“ meint alles, was gerade für den Nutzer läuft.
+        cancelJob()
+        clearHold()
         listener.consumeUtterance()
         clearLive()
         interruptedPending = false
         phase = running ? .listening : .idle
     }
 
-    /// Echo oder Rückmeldelaut: Text verbrauchen, damit er nicht beim nächsten Teilergebnis wieder vorn steht.
+    /// Echo oder Rückmeldelaut: Die Richtlinie zieht die Wörter selbst über ihre Position im kumulativen Text ab (`consumedPrefixWords`).
+    /// Der Erkenner wird deshalb NICHT verbraucht: `partial.text` bleibt bis zum Äußerungsende kumulativ (sonst würde ein Wort doppelt
+    /// abgezogen). Verbraucht wird bei `commit`, `stopCommand` und `releaseAnswer`. Nur die Anzeige wird geleert: Das Echo erscheint
+    /// nie als Text des Nutzers (jedes weitere Teilergebnis setzt die Anzeige neu, die Richtlinie meldet es erneut als Echo).
     private func ignore() {
-        listener.consumeUtterance()
         clearLive()
     }
 
     /// Abbrechen der laufenden Antwort. `merge`: die Äußerung wird fortgesetzt, nichts kommt in den Verlauf; sonst
     /// kommt das tatsächlich Gesprochene als „unterbrochen“ in den Verlauf.
-    private func cancelAnswer(merge: Bool, revoked: Bool = false) {
+    /// `continuation`: Der Nutzer redet in die Antwort (Fortsetzung der Richtlinie, getippte Äußerung), kein Stopp. Eine Fortsetzung beendet
+    /// den Suchauftrag NIE (er läuft weiter und kommt nach); den Auftrag beenden nur die Aufrufer, die es ausdrücklich verlangen (`cancelJob`).
+    private func cancelAnswer(merge: Bool, revoked: Bool = false, continuation: Bool = false) {
         guard let run = current else { return }
-        speaker.stop()
+        // Eine nachgereichte Antwort, von der noch nichts geklungen hat: nicht abbrechen, sondern zurückstellen, damit die neue Äußerung
+        // zuerst beantwortet wird.
+        if continuation, !merge, !revoked, run.promoted, !heardUnit(of: run) {
+            demote(run)
+            return
+        }
+        // Vorderteil eines Suchauftrags (Zwischensatz klingt noch): nur der Vordergrund endet, der Auftrag lebt.
+        if run === job {
+            cancelForeground(of: run, merge: merge)
+            return
+        }
+        // `current` zuerst leeren: `speaker.stop()` meldet das Ende der klingenden Einheit SYNCHRON (`onUnitEnded`); die Steuerung
+        // ignoriert es dann (`unitEnded()` prüft `current`), und die Richtlinie kann nicht mitten im Abbruch erneut abbrechen lassen.
         current = nil
         run.cancelled = true
+        // `stop()` leert die Warteschlange, nimmt Übergebenes zurück und löscht das Halten des Sprechers; ab jetzt wird von dieser
+        // Antwort nichts mehr ausgegeben (`deliverIfCurrent`: `run === current`; `deliver`: `run.completed`).
+        speaker.stop()
+        clearHold()
         if !run.completed { _ = policy.feed(.answerFinished(requestId: run.id)) }
         run.completed = true
+        finishLatency(run)
+        // Die Denk-Anzeige gehört einem bestehenden Suchauftrag, nicht der Zwischenantwort.
+        if ownsThinking(run) { deactivateThinking() }
         releaseAutoMute()
         let spoken = run.spokenUnits
         let session = self.session
@@ -1065,6 +1563,7 @@ final class AssistantController: ObservableObject {
             self?.auditResult(ok ?? true)
             await self?.refreshTurns(after: run, keepLive: merge)
         }
+        refreshSessionStyle()
     }
 
     /// Sicherheitsnetz für „Ergänzen“: Folgt auf die verworfene Äußerung binnen etwa 4 s nichts Neues (Räuspern, der
@@ -1079,6 +1578,11 @@ final class AssistantController: ObservableObject {
                 guard !Task.isCancelled, let self, mine == self.generation, self.running, self.current == nil,
                       self.mergePrefix == text else { return }
                 if self.liveStable.isEmpty, self.liveVolatile.isEmpty {
+                    // Die Frage läuft schon als Suchauftrag (die Fortsetzung fiel in dessen Zwischensatz): nicht noch einmal stellen.
+                    if self.job?.text == text {
+                        self.mergePrefix = ""
+                        return
+                    }
                     self.send(text: text)
                     return
                 }
@@ -1088,8 +1592,9 @@ final class AssistantController: ObservableObject {
 
     /// „Antwort anhalten“ (Taste, Fernbedienung): wie eine Unterbrechung ohne neue Äußerung.
     func stopAnswer() {
-        guard current != nil else { return }
-        cancelAnswer(merge: false)
+        guard current != nil || job != nil else { return }
+        if current != nil { cancelAnswer(merge: false) }
+        cancelJob()
         interruptedPending = false
         phase = running ? .listening : .idle
     }
@@ -1104,8 +1609,10 @@ final class AssistantController: ObservableObject {
             notice = noModelNotice()
             return
         }
-        let cutOff = current.map { !$0.finishedSpeaking.isEmpty } ?? false
-        if current != nil { cancelAnswer(merge: false) }
+        // Bei einer nachgereichten Antwort zählt nur, was seit dem Nachreichen geklungen hat (der Zwischensatz davor war eine frühere Antwort).
+        let cutOff = current.map { $0.promoted ? heardUnit(of: $0) : !$0.finishedSpeaking.isEmpty } ?? false
+        // Getippt wie gesprochen: Der Suchauftrag lebt weiter (die neue Anfrage trägt ihn als `pending`).
+        if current != nil { cancelAnswer(merge: false, continuation: true) }
         discardSpeculation()
         listener.consumeUtterance()
         clearLive()
@@ -1130,7 +1637,11 @@ final class AssistantController: ObservableObject {
         let run = AssistantRun(text: text, afterInterruption: afterInterruption)
         guard let session else { run.abandoned = true; return run }
         let waiting = chain
-        let request = AssistantRequest(requestId: run.id, text: text, afterInterruption: afterInterruption)
+        // Besteht ein Suchauftrag, erfährt der Sprecher der neuen Anfrage davon (Stil `natural`; `verbatim` ignoriert es).
+        let pending = pendingSearch()
+        run.pending = pending
+        var request = AssistantRequest(requestId: run.id, text: text, afterInterruption: afterInterruption)
+        request.pending = pending
         run.task = Task { [weak self] in
             await waiting?.value
             guard !run.abandoned else { return }
@@ -1179,12 +1690,19 @@ final class AssistantController: ObservableObject {
             return
         }
         run.committed = true
+        // Stil `natural`: Ab jetzt zählt die Äußerung als Frage (Zeitgeber der Ansagen bei langsamer Antwort); bei Vorarbeit erst hier,
+        // nicht schon beim Start der Vorarbeit. Ohne Wirkung im Stil `verbatim`. Aus jedem Thread, ohne Warten.
+        session?.noteCommitted(requestId: run.id)
+        beginLatency(run)
         current = run
         currentRunID = run.id
         currentUser = run.text
         liveParts = []
         firstSoundMs = nil
         phase = .thinking
+        // Die Denk-Anzeige gehört zu dieser Anfrage; der Stand der vorigen wird ersetzt. Gepufferter Fortschritt der Vorarbeit folgt in `deliver`.
+        // Besteht ein Suchauftrag, gehört sie ihm: Die Zwischenantwort setzt sie nicht zurück.
+        if job == nil { thinking = AssistantThinking(active: true, steps: [], draft: "") }
         _ = policy.feed(.answerStarted(requestId: run.id))
         if !bargeIn { autoMuted = true; updateMute() }
         deliver(run)
@@ -1200,6 +1718,10 @@ final class AssistantController: ObservableObject {
         case .sentence(_, let generation, let text, let speech, let status, let covering, let quote):
             run.generation = run.generation ?? generation
             run.sentences.append(.init(text: text, speech: speech, status: status, sources: covering, quote: quote, generation: generation))
+        case .progress(_, let generation, let progress):
+            // Wie ein Satz gepuffert: Angezeigt wird erst in `deliver`, nur für den festgeschriebenen Lauf und nur bei gültiger Generation.
+            run.generation = run.generation ?? generation
+            run.bufferProgress(progress, generation: generation)
         case .done(_, let answer):
             run.answer = answer
             run.finished = true
@@ -1218,6 +1740,11 @@ final class AssistantController: ObservableObject {
     }
 
     private func deliverIfCurrent(_ run: AssistantRun) {
+        // Der Suchauftrag im Hintergrund gibt nichts aus; er nimmt Fortschritt an und prüft, ob er nachgereicht werden kann.
+        if run === job, run !== current {
+            advanceJob(run)
+            return
+        }
         guard run.committed, run === current else { return }
         // Die Zustimmung für das Cloud-Ziel ist unterwegs entfallen: nichts Weiteres von dieser Antwort wird gesprochen.
         if let target = engine.target, !AssistantConsent.isGranted(target, areas: areas) {
@@ -1284,17 +1811,23 @@ final class AssistantController: ObservableObject {
     /// Ein Schreibfehler einer Protokollzeile ist gemeldet (Beobachter am Protokoll): Gilt er der laufenden Antwort, stoppt die
     /// Ausgabe jetzt, auch die gerade klingende Einheit und alle wartenden.
     private func auditWriteFailed(key: String) {
-        guard let run = current, run.id == key, !run.completed else { return }
+        guard let run = [current, job].compactMap({ $0 }).first(where: { $0.id == key }), !run.completed else { return }
         stopForAuditFailure(run)
     }
 
     /// Das Protokoll ist nicht schreibbar (Ergebnis- oder Pflichtzeile): nichts wird mehr angezeigt oder gesprochen; der Zustand
-    /// „Protokoll nicht schreibbar“ mit „Erneut versuchen“.
+    /// „Protokoll nicht schreibbar“ mit „Erneut versuchen“. Ein Suchauftrag endet damit ebenfalls (auch wenn der Fehler der
+    /// Vordergrund-Antwort galt); gilt er nur dem Auftrag, läuft die Vordergrund-Antwort weiter.
     private func stopForAuditFailure(_ run: AssistantRun) {
-        guard let active = current, active === run else { return }
-        cancelAnswer(merge: false)
-        interruptedPending = false
-        phase = running ? .listening : .idle
+        guard run === current || run === job else { return }
+        if run === current { cancelAnswer(merge: false) }
+        cancelJob()
+        // Ohne Protokoll gibt der Assistent nichts aus eigenen Inhalten aus: Die Denk-Anzeige verschwindet ebenfalls.
+        thinking = nil
+        if current == nil {
+            interruptedPending = false
+            phase = running ? .listening : .idle
+        }
         retryText = run.text
         auditFailureShown = true
         let shown = Self.auditUnavailableNotice()
@@ -1322,22 +1855,45 @@ final class AssistantController: ObservableObject {
             speaker.conversationMode = running
             speaker.voiceID = VoiceModel.shared.selectedVoiceID
             speaker.begin(language: .de)
+            // `begin()` löscht das Halten des Sprechers; besteht es in der Steuerung, wird es hier erneuert.
+            if holdActive { speaker.hold() }
         }
         while run.delivered < run.sentences.count {
             let index = run.delivered
+            // Kann den Lauf zum Suchauftrag machen (`searching` kam nach den Sätzen davor): dann setzt es `limit` auf `index`.
+            showProgress(of: run, before: index)
+            if let limit = run.limit, index >= limit { break }
             let sentence = run.sentences[index]
+            if index == 0 { run.latency.markUnit(Self.latencyClass(of: sentence.status)) }
             // Ansagen („Wörtlicher Auszug aus …“) werden nur gesprochen, alles andere auch angezeigt.
             if sentence.status != .announcement {
-                switch commitOutput(run, index, .display, { showLive(sentence) }) {
-                case .done: break
-                case .revoked:
-                    stopForRevocation(Self.revokedText, retry: run.text)
-                    return
-                case .auditFailed:
-                    stopForAuditFailure(run)
-                    return
+                if index < run.displayMarked {
+                    // Zurückgestuft und erneut nachgereicht: Die Anzeige dieses Satzes steht schon im Protokoll (kein zweiter Commit); nur
+                    // die Vorprüfung der Generation, dann erscheint er wieder.
+                    guard session?.playbackGate.permits(sentence.generation) == true else {
+                        stopForRevocation(Self.revokedText, retry: run.text)
+                        return
+                    }
+                    showLive(sentence)
+                    run.latency.markVisible()
+                    if !run.thinkingWaitsForFinal, ownsThinking(run) { deactivateThinking() }
+                } else {
+                    switch commitOutput(run, index, .display, { showLive(sentence) }) {
+                    case .done:
+                        run.latency.markVisible()
+                        // Ein angezeigter Antwortsatz beendet das Denken, außer es läuft eine Suche und `composing` fehlt noch
+                        // (Zwischensatz) oder die Denk-Anzeige gehört einem Suchauftrag (diese Antwort ist die Zwischenantwort).
+                        if !run.thinkingWaitsForFinal, ownsThinking(run) { deactivateThinking() }
+                    case .revoked:
+                        stopForRevocation(Self.revokedText, retry: run.text)
+                        return
+                    case .auditFailed:
+                        stopForAuditFailure(run)
+                        return
+                    }
                 }
             }
+            run.displayMarked = max(run.displayMarked, index + 1)
             if !sentence.speech.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 // Übergabe an die Stimme im Commit (nur eine Ablehnung wird gemeldet). Der Audiostart selbst ist der `start` des
                 // Satzes: Er läuft in der Stimme, im Lock der Freigabe, zusammen mit dem tatsächlichen Start und der Marke.
@@ -1362,6 +1918,12 @@ final class AssistantController: ObservableObject {
             }
             run.delivered += 1
         }
+        showProgress(of: run, before: Int.max)
+        // Suchauftrag (Vorderteil): Die Sätze nach `searching` bleiben gepuffert; ist der Zwischensatz ausgesprochen, wird der Vordergrund frei.
+        if run.limit != nil {
+            endForeground(of: run)
+            return
+        }
         guard run.finished, !run.inputEnded else { return }
         run.inputEnded = true
         // Alles gesprochen (oder nichts zu sprechen): `onIdle` kommt, auch sofort.
@@ -1376,10 +1938,345 @@ final class AssistantController: ObservableObject {
         AssistantTurnPart.append(to: &liveParts, text: sentence.text, status: sentence.status, quote: sentence.quote, sources: sentence.sources)
     }
 
+    // MARK: Denk-Anzeige
+
+    /// Wendet den gepufferten Fortschritt an, der vor dem Satz mit der Nummer `sentenceIndex` kam (`Int.max`: allen Rest). Nur für den
+    /// festgeschriebenen, laufenden Lauf (`deliver`). Ein Ereignis einer verworfenen Generation zeigt nichts: Vorprüfung an der
+    /// Wiedergabesperre der Sitzung (wie vor dem Start eines Satzes; der Widerruf selbst läuft über `releaseBumped` und den nächsten
+    /// Satz). Ohne Sitzung zeigt nichts.
+    private func showProgress(of run: AssistantRun, before sentenceIndex: Int) {
+        while run.progressShown < run.progressEvents.count, run.progressEvents[run.progressShown].before <= sentenceIndex {
+            let entry = run.progressEvents[run.progressShown]
+            run.progressShown += 1
+            guard session?.playbackGate.permits(entry.generation) == true else { continue }
+            applyProgress(entry.progress, for: run)
+        }
+        // Alles angewendet: Puffer leeren (Nummern gelten relativ zum Puffer, nicht zur Zählung des Laufs).
+        if run.progressShown == run.progressEvents.count, run.progressShown > 0 {
+            run.progressEvents.removeAll(keepingCapacity: true)
+            run.progressShown = 0
+        }
+    }
+
+    /// Fortschritt in die Denk-Anzeige: `.speaker` ist kein Schritt, `.draft` setzt den Rohtext, die anderen hängen einen Schritt an.
+    /// `.searching` öffnet die Anzeige wieder, falls ein Zwischensatz des Sprechers sie schon beendet hatte.
+    private func applyProgress(_ progress: AssistantProgress, for run: AssistantRun) {
+        switch progress {
+        case .speaker:
+            return
+        case .abandon:
+            // Der Nutzer will den offenen Suchauftrag nicht mehr (Sprecher der Zwischenanfrage): abbrechen und verwerfen.
+            if let open = job, open !== run { cancelJob() }
+            return
+        case .searching(let query):
+            run.thinkingWaitsForFinal = true
+            beginSearchJob(run, query: query)
+        case .found(let titles):
+            if titles.isEmpty { run.thinkingWaitsForFinal = false }
+        case .composing:
+            run.thinkingWaitsForFinal = false
+        case .draft(let text):
+            guard ownsThinking(run), var state = thinking, state.draft != text else { return }
+            state.draft = text
+            thinking = state
+            return
+        }
+        // Die Denk-Anzeige gehört dem Suchauftrag; der Fortschritt einer Zwischenantwort ändert sie nicht.
+        guard ownsThinking(run), let step = AssistantThinking.step(for: progress) else { return }
+        var state = thinking ?? AssistantThinking(active: true, steps: [], draft: "")
+        state.steps.append(step)
+        if case .searching = progress { state.active = true }
+        thinking = state
+    }
+
+    /// Die Denk-Anzeige gehört dem Suchauftrag, solange einer besteht; sonst der laufenden Anfrage.
+    private func ownsThinking(_ run: AssistantRun) -> Bool { job == nil || job === run }
+
+    /// Das Denken ist zu Ende (erster Antwortsatz angezeigt, Ende, Abbruch, Stopp, Fehler): Der letzte Stand bleibt inaktiv stehen;
+    /// gab es keinen Schritt und keinen Rohtext, gibt es nichts zu zeigen (`nil`).
+    private func deactivateThinking() {
+        guard let state = thinking else { return }
+        if state.steps.isEmpty, state.draft.isEmpty {
+            thinking = nil
+            return
+        }
+        guard state.active else { return }
+        thinking = AssistantThinking(active: false, steps: state.steps, draft: state.draft)
+    }
+
+    // MARK: Suchauftrag (Zustände und Übergänge: siehe `AssistantRun`)
+
+    /// Der offene Suchauftrag für die nächste Anfrage (Stil `natural`): Frage, Suchwörter und ob das Ergebnis schon vorliegt. Er steht
+    /// nur im Prompt des Sprechers der neuen Anfrage, nie im Protokoll oder im Verlauf.
+    private func pendingSearch() -> AssistantPendingSearch? {
+        guard let job, !job.completed else { return nil }
+        return AssistantPendingSearch(question: job.text, query: job.query, ready: job.finished)
+    }
+
+    /// Hat von der nachgereichten Antwort schon etwas geklungen? Beginn einer Einheit (`unitStarted`) oder eines Satzes (`startMs`):
+    /// Das zweite fängt den Fall, dass der Beginn eines Satzes kam, sein Rückruf aber die Ausgabe abbrach, bevor `unitStarted` kam.
+    private func heardUnit(of run: AssistantRun) -> Bool {
+        run.unitHeard || run.startMs.count > run.promotedStartCount
+    }
+
+    /// Hält `enqueued` und `startMs` in Gleichklang (`sentenceFinished` ordnet über die Stelle): Was an die Stimme ging, aber nie begann
+    /// (abgebrochener Zwischensatz, zurückgestufte Sätze), steht danach nicht mehr in `enqueued`, sonst bekäme ein späterer Satz die Nummer
+    /// des nie gesprochenen.
+    private func alignEnqueued(_ run: AssistantRun) {
+        let extra = run.enqueued.count - run.startMs.count
+        if extra > 0 { run.enqueued.removeLast(extra) }
+    }
+
+    /// `searching` des Vordergrund-Laufs: Er wird zum Suchauftrag. Ein früherer Auftrag wird dabei verworfen (nichts von ihm wird
+    /// ausgegeben), die Denk-Anzeige beginnt für den neuen. Die Sätze, die bis hier ausgegeben waren (Zwischensatz des Sprechers),
+    /// bleiben der Vordergrund (Vorderteil); alles weitere wird gepuffert (`limit`).
+    private func beginSearchJob(_ run: AssistantRun, query: String) {
+        guard run === current, run.limit == nil, job !== run else { return }
+        cancelJob()
+        thinking = AssistantThinking(active: true, steps: [], draft: "")
+        run.query = query
+        run.limit = run.delivered
+        run.tailCount = run.delivered
+        run.tailParts = liveParts
+        job = run
+        startJobWatch(run)
+    }
+
+    /// Der Vorderteil ist übergeben. Klingt nichts aus (keine Einheit an die Stimme gegeben), wird der Vordergrund sofort frei; sonst
+    /// sobald der Sprecher leer ist (`speakerIdle`).
+    private func endForeground(of run: AssistantRun) {
+        guard run === current, !run.inputEnded else { return }
+        run.inputEnded = true
+        if run.enqueued.isEmpty {
+            if run.begun { speaker.stop() }
+            releaseForeground(of: run)
+            return
+        }
+        speaker.endOfInput()
+    }
+
+    /// Der Vordergrund wird frei: Der Vorderteil des Suchauftrags ist ausgesprochen (oder war leer). Die Richtlinie erfährt das Ende der
+    /// Antwort, die Phase geht auf Zuhören; Frage und Zwischensatz stehen ab jetzt als `backgroundTurn` (der Auftrag läuft weiter).
+    private func releaseForeground(of run: AssistantRun) {
+        guard run === current, run === job else { return }
+        current = nil
+        if holdActive { speaker.release() }
+        clearHold()
+        alignEnqueued(run)
+        _ = policy.feed(.answerFinished(requestId: run.id))
+        showInBackground(run)
+        currentUser = nil
+        liveParts = []
+        currentRunID = nil
+        if policyStale, policyIsIdle { rebuildPolicy() }
+        releaseAutoMute()
+        phase = running ? .listening : .idle
+        advanceJobDeferred()
+    }
+
+    private func showInBackground(_ run: AssistantRun) {
+        backgroundTurn = AssistantBackgroundTurn(user: run.text, parts: run.tailParts)
+    }
+
+    /// Fortsetzung des Nutzers, solange der Vorderteil eines Suchauftrags klingt: Nur der Vordergrund endet (Stimme still, die Richtlinie hat
+    /// die Antwort schon beendet); der Auftrag läuft weiter und kommt später nach. Der Beitrag nennt dann nur ganz Gesprochenes (`tailCut`).
+    private func cancelForeground(of run: AssistantRun, merge: Bool) {
+        // Wie bei `cancelAnswer`: `current` zuerst leeren, bevor `speaker.stop()` das Ende der klingenden Einheit meldet.
+        current = nil
+        run.tailCut = true
+        run.inputEnded = true
+        speaker.stop()
+        clearHold()
+        alignEnqueued(run)
+        if !run.completed { _ = policy.feed(.answerFinished(requestId: run.id)) }
+        showInBackground(run)
+        currentUser = nil
+        liveParts = []
+        currentRunID = nil
+        if merge {
+            mergePrefix = run.text
+            watchMerge(run.text)
+        } else {
+            interruptedPending = true
+        }
+        phase = running ? .hearing : .idle
+        releaseAutoMute()
+    }
+
+    /// Nachgereichte Antwort, von der noch nichts geklungen hat, und der Nutzer redet los: Die neue Äußerung wird zuerst beantwortet. Die
+    /// Antwort wird nicht abgebrochen, sondern zurückgestuft: Stimme leer, die Sätze wieder gepuffert (nichts davon klang, es gibt keine
+    /// Marke zum Ton), ihre Anzeige zurückgenommen (die Marke der Anzeige bleibt: `displayMarked`); der Auftrag wartet wieder auf Stille.
+    private func demote(_ run: AssistantRun) {
+        current = nil
+        speaker.stop()
+        clearHold()
+        if !run.completed { _ = policy.feed(.answerFinished(requestId: run.id)) }
+        run.promoted = false
+        run.limit = run.tailCount
+        run.delivered = run.tailCount
+        alignEnqueued(run)
+        run.inputEnded = true
+        currentUser = nil
+        liveParts = []
+        currentRunID = nil
+        job = run
+        showInBackground(run)
+        if var state = thinking, !state.active {
+            state.active = true
+            thinking = state
+        }
+        phase = running ? .hearing : .idle
+        releaseAutoMute()
+    }
+
+    /// Ereignis oder Stille für den Suchauftrag im Hintergrund: Zustimmung und Protokoll prüfen, Fortschritt anwenden (er füttert die
+    /// Denk-Anzeige), Scheitern still verwerfen, sonst prüfen, ob er nachgereicht werden kann.
+    private func advanceJob(_ run: AssistantRun) {
+        guard run === job, run !== current, !run.completed else { return }
+        if let target = engine.target, !AssistantConsent.isGranted(target, areas: areas) {
+            revokeConsent(areas: areas)
+            stopForRevocation("Antwort angehalten: Die Zustimmung für das Cloud-Modell fehlt.")
+            return
+        }
+        if session?.hasAuditFailure(requestId: run.id) == true {
+            stopForAuditFailure(run)
+            return
+        }
+        showProgress(of: run, before: Int.max)
+        if run.finished, run.failure != nil {
+            failJob(run)
+            return
+        }
+        promoteJobIfReady()
+    }
+
+    /// Wie `advanceJob`, aber nicht im Rückruf der Stimme (`onIdle` kommt synchron aus `endOfInput()`): erst auf dem nächsten Hauptakteur-Zug.
+    private func advanceJobDeferred() {
+        guard job != nil else { return }
+        Task { [weak self] in
+            guard let self, let run = self.job else { return }
+            self.advanceJob(run)
+        }
+    }
+
+    /// Der Suchauftrag wird zur laufenden Antwort, wenn er ein Ergebnis hat (fertig oder mindestens ein gepufferter Antwortsatz) UND der
+    /// Vordergrund frei ist. Geprüft bei: Auftrag liefert Satz oder Ende, Ende einer Vordergrund-Antwort, Stille-Meldung des Hörers.
+    private func promoteJobIfReady() {
+        guard let run = job, run !== current, current == nil, running, !run.completed, run.failure == nil else { return }
+        guard run.finished || run.sentences.count > run.tailCount else { return }
+        guard foregroundIsQuiet else { return }
+        promote(run)
+    }
+
+    /// Vordergrund frei: keine Vorarbeit, keine offene Äußerung (kein Text, nichts zum Ergänzen, Erkennung eingeholt) und seit
+    /// mindestens `promoteQuietMs` still. Die Stille ist die zuletzt gemeldete, fortgeschrieben bis jetzt.
+    private var foregroundIsQuiet: Bool {
+        guard speculation == nil, mergePrefix.isEmpty, liveStable.isEmpty, liveVolatile.isEmpty, recognitionCaughtUp, !autoMuted,
+              consentRequest == nil else { return false }
+        return lastSilenceMs + max(0, nowMs - lastSilenceAtMs) >= Self.promoteQuietMs
+    }
+
+    /// Nachreichen: Der Auftrag wird die laufende Antwort. Sie erscheint als KI-Antwort am Ende der Anzeige (mit dem Zwischensatz davor),
+    /// die Richtlinie kennt sie als nachgereicht (`detached`: Nutzersprache wird nie mit der letzten Äußerung zusammengeführt). Die
+    /// Latenzmessung läuft weiter (erster Ton ab seiner Äußerung); `deliver` setzt mit den gepufferten Sätzen fort.
+    private func promote(_ run: AssistantRun) {
+        job = nil
+        jobWatch?.cancel()
+        jobWatch = nil
+        backgroundTurn = nil
+        run.limit = nil
+        run.promoted = true
+        run.unitHeard = false
+        run.promotedStartCount = run.startMs.count
+        run.begun = false
+        run.inputEnded = false
+        current = run
+        currentRunID = run.id
+        currentUser = run.text
+        liveParts = run.tailParts
+        phase = .thinking
+        _ = policy.feed(.answerStarted(requestId: run.id, detached: true))
+        if !bargeIn { autoMuted = true; updateMute() }
+        deliverIfCurrent(run)
+    }
+
+    /// Ohne Ergebnis nach `jobTimeoutSeconds` endet der Auftrag still (nichts wird gesprochen).
+    private func startJobWatch(_ run: AssistantRun) {
+        jobWatch?.cancel()
+        let mine = generation
+        jobWatch = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.jobTimeoutSeconds))
+            guard !Task.isCancelled, let self, mine == self.generation, self.job === run, !run.completed else { return }
+            if run.finished || run.sentences.count > run.tailCount { return }
+            self.cancelJob()
+        }
+    }
+
+    /// Beendet den Suchauftrag, ohne dass noch etwas von ihm ausgegeben wird (Stopp, Verwerfen, neues Gespräch, Modell- und Stilwechsel,
+    /// Widerruf, Protokollfehler, Ersetzen, Abbruch durch den Sprecher, Zeitgrenze, `shutdown`): Strom abbrechen, die Anfrage bekommt ihren
+    /// Protokolleintrag (ein Beitrag nur für ganz Gesprochenes, etwa den Zwischensatz). Klingt sein Vorderteil noch, wird auch die Stimme
+    /// still. Die Denk-Anzeige wird inaktiv (wie bei jedem Abbruch); Aufrufer, die Entzogenes verbergen, setzen sie auf `nil`.
+    private func cancelJob(revoked: Bool = false) {
+        guard let run = job else { return }
+        job = nil
+        jobWatch?.cancel()
+        jobWatch = nil
+        if current === run {
+            current = nil
+            run.inputEnded = true
+            speaker.stop()
+            clearHold()
+            _ = policy.feed(.answerFinished(requestId: run.id))
+            phase = running ? .listening : .idle
+        }
+        backgroundTurn = nil
+        run.cancelled = true
+        run.completed = true
+        finishLatency(run)
+        deactivateThinking()
+        releaseAutoMute()
+        let spoken = run.spokenUnits
+        let session = self.session
+        let task = run.task
+        enqueue { [weak self] in
+            await session?.cancel(requestId: run.id)
+            _ = await LiveCapture.bounded(1.5) { _ = await task?.value }
+            task?.cancel()
+            let ok = await session?.commit(requestId: run.id, user: run.text, spoken: spoken, interrupted: true, revoked: revoked)
+            self?.auditResult(ok ?? true)
+            await self?.refreshTurns(after: run, keepLive: false)
+        }
+        refreshSessionStyle()
+    }
+
+    /// Der Suchauftrag scheitert (`failed` oder Stromende ohne Antwort): still verwerfen, nichts sprechen, der vorhandene Fehlerhinweis
+    /// erscheint (mit „Erneut senden“). Der Zwischensatz, falls gesprochen, bleibt als Beitrag.
+    private func failJob(_ run: AssistantRun) {
+        guard run === job, run !== current, let failure = run.failure else { return }
+        job = nil
+        jobWatch?.cancel()
+        jobWatch = nil
+        backgroundTurn = nil
+        run.completed = true
+        finishLatency(run)
+        if failure == .revoked { thinking = nil } else { deactivateThinking() }
+        showFailure(failure, run: run)
+        let spoken = run.spokenUnits
+        let session = self.session
+        enqueue { [weak self] in
+            let written = await session?.commit(requestId: run.id, user: run.text, spoken: spoken, interrupted: true,
+                                                revoked: failure == .revoked)
+            self?.auditResult(written ?? true)
+            await self?.refreshTurns(after: run, keepLive: false)
+        }
+        refreshSessionStyle()
+    }
+
     // MARK: Stimme (Speaker → Policy, Abschluss)
 
     private func audible() {
         guard let run = current else { return }
+        run.latency.markAudio()
         phase = .speaking
         if firstSoundMs == nil { firstSoundMs = max(0, nowMs - run.endedAtMs) }
     }
@@ -1405,8 +2302,29 @@ final class AssistantController: ObservableObject {
         perform(policy.feed(.sentenceSpoken(text: text, startedAtMs: run.startMs[last], endedAtMs: nowMs)))
     }
 
+    /// Eine Einheit der Antwort klingt jetzt (JEDE Einheit, auch Ansagen und Überbrückung; NACH dem tatsächlichen Start). Ohne laufende
+    /// Antwort (abgebrochen, abgeschlossen) wird nichts gemeldet: Die Richtlinie hat die Antwort dann schon beendet.
+    private func unitStarted() {
+        guard let run = current else { return }
+        // Merkt, dass von dieser (nachgereichten) Antwort etwas geklungen hat: Dann gilt ein Dazwischenreden als Unterbrechung.
+        run.unitHeard = true
+        perform(policy.feed(.unitStarted(atMs: nowMs)))
+    }
+
+    /// Die Einheit klingt nicht mehr (zu Ende gesprochen oder abgebrochen). Die Richtlinie kann hier nach einem Wort des Nutzers in der
+    /// Lücke `cancelAnswer` liefern oder das Halten beginnen (`holdAnswer`, ab Klangende).
+    private func unitEnded() {
+        guard current != nil else { return }
+        perform(policy.feed(.unitEnded(atMs: nowMs)))
+    }
+
     private func speakerIdle() {
         guard let run = current, run.inputEnded else { return }
+        // Suchauftrag: Der Zwischensatz ist ausgesprochen; die Antwort ist nicht zu Ende, nur der Vordergrund wird frei.
+        if run.limit != nil {
+            releaseForeground(of: run)
+            return
+        }
         completeAnswer(run)
     }
 
@@ -1415,13 +2333,20 @@ final class AssistantController: ObservableObject {
         guard !run.completed else { return }
         run.completed = true
         current = nil
+        // Regulär kann das Ende nur kommen, wenn der Sprecher nicht gehalten ist (`finishIfDrained`); sicherheitshalber lösen.
+        if holdActive { speaker.release() }
+        clearHold()
         _ = policy.feed(.answerFinished(requestId: run.id))
+        finishLatency(run)
+        if ownsThinking(run) { deactivateThinking() }
+        if policyStale, policyIsIdle { rebuildPolicy() }
         releaseAutoMute()
         phase = running ? .listening : .idle
         let session = self.session
         let failure = run.failure
-        // Regulär beendet: alle ausgegebenen Einheiten; sonst (Fehler, Abbruch) nur die, die ganz gesprochen wurden.
-        let spoken: AssistantSpokenUnits = failure == nil ? .all : run.spokenUnits
+        // Regulär beendet: alle ausgegebenen Einheiten; sonst (Fehler, Abbruch, abgebrochener Zwischensatz eines Auftrags) nur die, die
+        // ganz gesprochen wurden.
+        let spoken: AssistantSpokenUnits = failure == nil && !run.tailCut ? .all : run.spokenUnits
         let keep = failure != nil && spoken == .nothing
         if let failure { showFailure(failure, run: run) }
         enqueue { [weak self] in
@@ -1432,6 +2357,9 @@ final class AssistantController: ObservableObject {
             self?.auditResult(written ?? true)
             await self?.refreshTurns(after: run, keepLive: keep)
         }
+        refreshSessionStyle()
+        // Ende einer Vordergrund-Antwort: ein wartender Suchauftrag kann jetzt nachkommen (nicht im Rückruf der Stimme).
+        advanceJobDeferred()
     }
 
     private func showFailure(_ failure: AssistantFailure, run: AssistantRun) {
@@ -1456,6 +2384,50 @@ final class AssistantController: ObservableObject {
         retryText = run.text
         notice = AssistantNotice(text: text, action: .retrySend)
         announce(text)
+    }
+
+    // MARK: Latenzmessung (lva#521)
+
+    /// Die Messwerte als Texttabelle zum Kopieren (nur Zeiten, Klassen und Zähler, nie Inhalte), samt fsync-Dauer des Protokolls. Nicht
+    /// veröffentlicht: Die Ansicht liest sie beim Anzeigen und nach `resetLatency()`.
+    var latencyText: String { AssistantLatencyLog.shared.summaryText(durable: audit.durableStats) }
+
+    /// Löscht alle Messwerte (Speicher und Datei).
+    func resetLatency() { AssistantLatencyLog.shared.reset() }
+
+    /// Die Messung beginnt beim Ende der Äußerung (`endedAtMs`, bei getipptem Text: jetzt), auf der monotonen Uhr der Messung
+    /// (`systemUptime`, wie `origin`). Kalt: die erste Runde je Prozess. Lokal: Modell auf dem Gerät oder Endpunkt im privaten Netz
+    /// (nicht Cloud). Beides und die Modellart stehen hier fest; ein Modellwechsel mitten in der Runde ändert die Messung nicht.
+    private func beginLatency(_ run: AssistantRun) {
+        run.latencyCold = Self.coldRoundPending
+        Self.coldRoundPending = false
+        run.latencyLocal = !engine.isCloud
+        run.latencyModel = latencyModelKind
+        run.latency.begin(at: origin + Double(run.endedAtMs) / 1_000)
+    }
+
+    /// Beendet die Messung der Runde und schreibt sie abseits des MainActors (kleine Datei, atomar; ein Schreibfehler bleibt folgenlos:
+    /// Messwerte sind keine Pflichtdaten). Ohne sichtbares Zeichen und ohne Ton entsteht keine Messung.
+    private func finishLatency(_ run: AssistantRun) {
+        guard let sample = run.latency.finish(cold: run.latencyCold, local: run.latencyLocal, model: run.latencyModel) else { return }
+        Task.detached(priority: .utility) { AssistantLatencyLog.shared.add(sample) }
+    }
+
+    private var latencyModelKind: AssistantModelKind {
+        switch engine.choice {
+        case .apple?: .apple
+        case .gemma?: .gemma
+        default: .other
+        }
+    }
+
+    /// Klasse der ersten Einheit: Vorlage (fester Satz, Gruß, Uhrzeit) und freier Satz ohne Inhalte des Nutzers gelten als `template`;
+    /// Auszug, Bestandsangabe, Satz ohne Quelle, Zusammenfassung und jede Ansage (davor folgt ein Abruf) als `content`.
+    private static func latencyClass(of status: AssistantSentenceStatus) -> AssistantLatencyUnitClass {
+        switch status {
+        case .neutral, .conversational: .template
+        case .grounded, .inventory, .unsourced, .summarized, .announcement: .content
+        }
     }
 
     // MARK: Verlauf

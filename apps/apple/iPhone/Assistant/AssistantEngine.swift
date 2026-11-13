@@ -209,6 +209,33 @@ struct AssistantEngine {
     var hasModel: Bool { model != nil }
     var label: String { config.modelLabel }
 
+    /// Die Konfiguration für eine Sitzung im gewählten Antwortstil (die Konfiguration der Sitzung ist unveränderlich). Es werden keine
+    /// festen Floskeln gesprochen oder geschrieben (kein Überbrückungssatz: `bridge` immer aus; die Ansagen für langsame Antworten,
+    /// `fillers`, bleiben auf ihrem Standard `false` und werden hier nicht gesetzt). Stattdessen zeigt die Ansicht die graue Denk-Anzeige
+    /// (`AssistantController.thinking`). Die Auszüge für den Denker sind auf dem Gerät auf 2400 Zeichen begrenzt, sonst auf 6000.
+    func sessionConfig(style: AssistantStyle) -> AssistantConfig {
+        var next = config
+        next.style = style
+        next.bridge = false
+        next.naturalPassageChars = isCloud ? 6_000 : 2_400
+        return next
+    }
+
+    /// Lädt das Apple-Systemmodell vor, damit die erste Antwort nicht auf das Laden warten muss (`LanguageModelSession.prewarm`; die
+    /// Dokumentation verlangt mindestens eine Sekunde bis zur Anfrage: Beim Start des Gesprächs spricht noch niemand). Nur wenn das
+    /// Modell verfügbar ist. Es entsteht keine Anfrage, kein Inhalt verlässt das Gerät, nichts wird geschrieben. Die Sitzung bleibt in
+    /// einer Variablen stehen, bis eine neue sie ersetzt: Eine sofort freigegebene Sitzung könnte das Laden abbrechen (die Dokumentation
+    /// sagt dazu nichts). Das Laden ist ausdrücklich nicht garantiert (Hintergrund, Last).
+    @MainActor
+    static func prewarmApple() {
+        guard FoundationBookTalkModel.isAvailable else { return }
+        let session = LanguageModelSession(instructions: "Antworte kurz auf Deutsch.")
+        session.prewarm()
+        prewarmed = session
+    }
+
+    @MainActor private static var prewarmed: LanguageModelSession?
+
     static func unavailable(_ note: String, detail: String? = nil) -> AssistantEngine {
         AssistantEngine(model: nil, config: AssistantConfig(modelLabel: "Kein Modell", isCloud: false, contextTokens: 4_096, maxAnswerTokens: 400,
                                                             userName: nil, timeout: 45),

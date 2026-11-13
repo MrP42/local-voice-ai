@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import CoreMedia
 import Speech
 
 /// Durchgehendes Zuhören für das Gespräch (Paket A): Engine, Voice Processing und `SpeechAnalyzer` laufen vom Start bis
@@ -40,8 +41,10 @@ final class AssistantListener {
 
     /// Der Nutzer beginnt zu sprechen (auch nach kurzer Pause wieder).
     var onSpeechStarted: (() -> Void)?
-    /// Gesamter Text der laufenden Äußerung: fester und vorläufiger Teil.
-    var onPartial: ((String) -> Void)?
+    /// Gesamter Text der laufenden Äußerung: fester und vorläufiger Teil. Zweiter Wert: wie weit (Sekunden) das Ende des Audiobereichs
+    /// des Ergebnisses hinter dem bisher an den Erkenner gegebenen Ton liegt (nie negativ; `nil`, wenn das Ergebnis keinen Bereich
+    /// hat). Die Steuerung rechnet damit die Audiozeit auf ihre Millisekundenuhr um (`nowMs - lag`).
+    var onPartial: ((String, Double?) -> Void)?
     /// Dauer der aktuellen Stille in ms (je Puffer, solange eine Äußerung läuft); nach dem Erkenner-Tor.
     var onSilence: ((Int) -> Void)?
     var onInterrupted: ((Interruption) -> Void)?
@@ -49,6 +52,17 @@ final class AssistantListener {
     var onLevel: ((Float) -> Void)?
     /// Puffer des Erkenners liefen über (gezählt, nicht verschluckt); Parameter: Gesamtzahl seit Start.
     var onOverflow: ((Int) -> Void)?
+    /// Stand der Erkennung bei JEDEM Stille-Ereignis, unmittelbar VOR `onSilence`. `caughtUp`: Sie hat den Ton bis zum letzten lauten
+    /// Puffer verarbeitet (ihre Ergebnisse reichen bis `lastLoudAt - AssistantSilenceGate.tolerance`) oder ein Abschluss bis dorthin
+    /// (`catchUpOnSilence`) ist zurückgekehrt. `following`: Die Erkennung folgt dem Mikrofon; `false` nur, wenn ein angeforderter
+    /// Abschluss seit mehr als `followingLimitMs` aussteht (dann ist belegt, dass die Analyse mindestens so weit hinterherhinkt);
+    /// ohne Beleg `true` (die Doku nennt keine zuverlässige Größe für den Rückstand, siehe `requestCatchUp`). Die gemeldete Stille selbst
+    /// (`onSilence`) bleibt davon unberührt.
+    var onRecognition: ((_ caughtUp: Bool, _ following: Bool) -> Void)?
+    /// Solange `true` (die Steuerung setzt es, solange eine Antwort aktiv ist), fordert der Hörer bei Stille, wenn die Erkennung dem
+    /// letzten lauten Puffer nicht folgt, den Abschluss bis dorthin an (`SpeechAnalyzer.finalize(through:)`). Nach einem Geräusch ohne
+    /// Wort (Husten) kommt sonst nie ein Ergebnis, und die Erkennung gälte für immer als „nicht eingeholt“. Aus: nichts wird angefordert.
+    var catchUpOnSilence = false
 
     private let engine = AVAudioEngine()
     private let tap = AssistantTapState()
@@ -63,6 +77,12 @@ final class AssistantListener {
     /// Jeder Start und jedes `stop()` zählt hoch; ein Start mit veraltetem Token baut sich selbst zurück.
     private var token = 0
     private var startedAt: ContinuousClock.Instant?
+    /// Zeitachse (s), bis zu der ein angeforderter Abschluss zurückgekehrt ist (nach `finalize(through:)`), und der laufende Abschluss.
+    private var finalizedThrough = 0.0
+    private var finalizingThrough: Double?
+    private var finalizeTask: Task<Void, Never>?
+    /// Angeforderte, noch nicht zurückgekehrte Abschlüsse (Zeitachse des letzten lauten Puffers → Beginn der Anforderung).
+    private var pendingFinalizes: [Double: ContinuousClock.Instant] = [:]
     private(set) var overflowCount = 0
     private var recoveries: [ContinuousClock.Instant] = []
 
@@ -71,6 +91,13 @@ final class AssistantListener {
     private static let recoveryWindow: Duration = .seconds(20)
     /// Routenwechsel kurz nach dem Start stammen von der eigenen Sitzungsaktivierung.
     private static let routeGrace: Duration = .milliseconds(1_500)
+    /// Erst bei so viel Stille (ms) nach dem letzten lauten Puffer wird der Abschluss angefordert (kein Eingriff mitten im Satz).
+    private static let catchUpAfterMs = 400
+    /// Nach der Rückkehr des Abschlusses so lange (ms) warten: Die Doku sagt, die Ergebnisse stehen veröffentlicht im Strom, die App hat
+    /// sie womöglich noch nicht gelesen. Die Ergebnisschleife läuft auf demselben Actor; die Frist gibt ihr sicher Zeit dafür.
+    private static let catchUpSettleMs = 120
+    /// Steht ein Abschluss so lange (ms) aus, hinkt die Erkennung nachweislich hinterher (`following == false`).
+    private static let followingLimitMs = 1_500
 
     /// Start, Zuhören oder Rückbau laufen.
     var isBusy: Bool { starting || running || finishing }
@@ -102,6 +129,9 @@ final class AssistantListener {
         utterance.reset()
         overflowCount = 0
         recoveries = []
+        finalizedThrough = 0
+        finalizingThrough = nil
+        pendingFinalizes = [:]
         let english = languageCode?.lowercased().hasPrefix("en") == true
         let locale = Locale(identifier: english ? "en-US" : "de-DE")
         guard SpeechTranscriber.isAvailable, let supported = await SpeechTranscriber.supportedLocale(equivalentTo: locale) else {
@@ -183,8 +213,53 @@ final class AssistantListener {
         if event.started { onSpeechStarted?() }
         if event.speech { utterance.noteSpeech(ms: event.ms) }
         if let ms = event.silenceMs {
+            let recognized = utterance.latestEnd >= event.lastLoudAt - AssistantSilenceGate.tolerance
+            let caughtUp = recognized || finalizedThrough >= event.lastLoudAt - Self.timelineEpsilon
+            onRecognition?(caughtUp, recognitionFollows())
+            if !caughtUp { requestCatchUp(loudUntil: event.lastLoudAt, silenceMs: ms) }
             onSilence?(AssistantSilenceGate.reported(silenceMs: ms, lastLoudAt: event.lastLoudAt, recognizedUntil: utterance.latestEnd))
         }
+    }
+
+    /// Rundungsspielraum beim Vergleich von Zeitachsenwerten (s).
+    private static let timelineEpsilon = 0.001
+
+    /// Fordert den Abschluss der Erkennung bis zum letzten lauten Puffer an (`SpeechAnalyzer.finalize(through:)`, Doku: Rückkehr heißt
+    /// „Eingabe bis einschließlich dieser Zeit ist analysiert, die finalen Ergebnisse sind im Strom veröffentlicht“, auch wenn es kein
+    /// Ergebnis gab; liegt die Zeit schon vor dem flüchtigen Bereich, tut der Aufruf nichts). Danach gilt die Erkennung als eingeholt.
+    /// Höchstens ein Aufruf je Position des letzten lauten Puffers; ein Fehler (Abbruch, Analyse beendet) markiert nichts.
+    private func requestCatchUp(loudUntil: Double, silenceMs: Int) {
+        guard catchUpOnSilence, running, !finishing, silenceMs >= Self.catchUpAfterMs, loudUntil > 0,
+              finalizingThrough != loudUntil, finalizedThrough < loudUntil, let analyzer else { return }
+        finalizingThrough = loudUntil
+        pendingFinalizes[loudUntil] = ContinuousClock.now
+        let mine = token
+        finalizeTask = Task { [weak self] in
+            var completed = false
+            do {
+                try await analyzer.finalize(through: CMTime(seconds: loudUntil, preferredTimescale: 1_000))
+                try await Task.sleep(for: .milliseconds(Self.catchUpSettleMs))
+                completed = true
+            } catch {
+                completed = false
+            }
+            self?.catchUpEnded(loudUntil: loudUntil, completed: completed, token: mine)
+        }
+    }
+
+    private func catchUpEnded(loudUntil: Double, completed: Bool, token mine: Int) {
+        guard token == mine, running else { return }
+        pendingFinalizes[loudUntil] = nil
+        if completed { finalizedThrough = max(finalizedThrough, loudUntil) }
+    }
+
+    /// Folgt die Erkennung dem Mikrofon? Nur belegt „nein“, wenn ein angeforderter Abschluss zu lange aussteht: Er kehrt erst zurück, wenn
+    /// die Eingabe bis zur angefragten Zeit analysiert ist, und diese Zeit liegt mindestens `catchUpAfterMs` hinter dem Mikrofon.
+    /// (`volatileRange` taugt dafür nicht: Ihr Ende ist die Stelle, bis zu der Eingabe aus der Folge geholt wurde, einschließlich der
+    /// noch ausstehenden Analysen, nicht die Stelle, bis zu der analysiert ist.)
+    private func recognitionFollows() -> Bool {
+        let now = ContinuousClock.now
+        return !pendingFinalizes.values.contains { $0.duration(to: now) >= .milliseconds(Self.followingLimitMs) }
     }
 
     private func received(_ text: String, start: Double?, end: Double?, final: Bool, token mine: Int) {
@@ -192,7 +267,9 @@ final class AssistantListener {
         guard utterance.apply(text, start: start, end: end, isFinal: final) else { return }
         // Der Erkenner hört Sprache, die der Pegelmesser nicht als solche zählte (leise Stimme): Stille ab jetzt zählen.
         tap.assumeSpeech()
-        onPartial?(utterance.text)
+        // Rückstand des Ergebnisses gegenüber dem Mikrofon (die Zeitachse läuft nur mit den an den Erkenner gegebenen Puffern).
+        let lag = end.map { max(0, tap.timeline() - $0) }
+        onPartial?(utterance.text, lag)
     }
 
     private func recognizerEnded(token mine: Int) {
@@ -203,7 +280,9 @@ final class AssistantListener {
     // MARK: Steuerung
 
     /// Äußerung abschließen: Text abholen und die Erkennung für die nächste Äußerung zurücksetzen. Ergebnisse, die vor
-    /// diesem Zeitpunkt enden, zählen nicht zur nächsten Äußerung. Aufrufen bei `.commit`, `.stopCommand`, `.ignored`.
+    /// diesem Zeitpunkt enden, zählen nicht zur nächsten Äußerung. Aufrufen bei `.commit`, `.stopCommand` und `.releaseAnswer` (und beim
+    /// Zurücksetzen: neues Gespräch, Senden von Hand). NICHT bei `.ignored`: Die Richtlinie zieht Echo und Rückmeldelaute selbst über die
+    /// Wortposition im kumulativen Text ab; `onPartial` muss bis zum Äußerungsende kumulativ bleiben.
     @discardableResult
     func consumeUtterance() -> String {
         let text = utterance.consume(at: tap.timeline())
@@ -263,6 +342,9 @@ final class AssistantListener {
         sinks.events?.finish()
         pump?.cancel()
         pump = nil
+        finalizeTask?.cancel()
+        finalizeTask = nil
+        finalizingThrough = nil
         if let analyzer {
             _ = await LiveCapture.bounded(2) { await analyzer.cancelAndFinishNow() }
         }
