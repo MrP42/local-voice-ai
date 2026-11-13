@@ -1025,11 +1025,13 @@ fn final_pass(
     if tracks.is_empty() {
         return Err(KeepReason::NoAudio);
     }
-    // lva#538: eine Aufnahme mit Schreibfehler ersetzt das Live-Transkript nie.
-    if metadata
-        .as_ref()
-        .is_some_and(|m| m.get(AUDIO_INCOMPLETE_KEY).is_some())
-    {
+    // lva#538: eine Aufnahme mit Schreibfehler ersetzt das Live-Transkript nie, und eine, die
+    // nie sauber geschlossen wurde (Marker `capture_open` steht noch: Absturz, oder der Abschluss
+    // konnte ihn nicht entfernen), ebenso wenig. Das gilt unabhaengig von der Abdeckung unten:
+    // sie laesst fuenf Sekunden Unterdeckung zu.
+    if metadata.as_ref().is_some_and(|m| {
+        m.get(AUDIO_INCOMPLETE_KEY).is_some() || m.get(super::store::CAPTURE_OPEN_KEY).is_some()
+    }) {
         return Err(KeepReason::AudioIncomplete);
     }
     let snapshot = store
@@ -3419,6 +3421,118 @@ mod tests {
         let mut env = FakeEnv::new();
         let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
         assert_live_untouched(&f, &env, &out, &["s0", "s1"]);
+    }
+
+    /// lva#538 Befund B (Runde 3): der Absturz nach einem Schreibfehler, bei dem der Marker
+    /// `audio_incomplete` nie geschrieben wurde (die Datenbank verweigert ihn, wie ein voller
+    /// Datentraeger). Die WAV steht bei 6 s, das Live-Transkript lief bis 9 s: 3 s Unterdeckung
+    /// liegen innerhalb der Abdeckungs-Toleranz, die Abdeckung allein liesse den Ersatz zu. Der
+    /// pessimistische Marker `capture_open` aus dem START schuetzt: nach dem "Neustart" (der Store
+    /// wird neu geoeffnet) bleiben Epoche und Live-Transkript unveraendert.
+    #[test]
+    fn a_crash_with_an_unwritable_marker_never_lets_the_final_pass_cut_the_live_transcript() {
+        let f = fixture(true, MeetingStatus::Processing);
+        let mic = f.meeting_dir.join("mic.wav");
+        let system = f.meeting_dir.join("system.wav");
+        // Der Start: Pfade und Marker in EINER Transaktion.
+        f.store
+            .begin_capture(&f.id, mic.to_str(), system.to_str())
+            .unwrap();
+        f.store
+            .append_delta(
+                &f.id,
+                &TranscriptDelta {
+                    new_segments: vec![seg(2, 0, 6_000, 9_000)],
+                },
+            )
+            .unwrap();
+        // Die Datenbank verweigert den spaeten Marker (voller Datentraeger).
+        f.store
+            .get_connection()
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER refuse_marker BEFORE UPDATE OF metadata_json ON meetings
+                 WHEN NEW.metadata_json LIKE '%audio_incomplete%'
+                 BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END;",
+            )
+            .unwrap();
+        // Der Stopp sieht den Schreibfehler auf dem Systemkanal: Marker nicht speicherbar, der
+        // Plan dieses Laufs bleibt `Keep`.
+        let plan = super::super::recorder::plan_after_write_failures(
+            &f.store,
+            &f.id,
+            &[1],
+            run_plan(LARGE),
+            1,
+        );
+        assert!(matches!(plan, FinalPlan::Keep(KeepReason::AudioIncomplete)));
+        let meta = f.store.metadata_json(&f.id).unwrap().unwrap();
+        assert!(
+            meta.get(AUDIO_INCOMPLETE_KEY).is_none(),
+            "Voraussetzung: nie geschrieben"
+        );
+        assert!(meta.get(super::super::store::CAPTURE_OPEN_KEY).is_some());
+        assert_eq!(wav_duration_ms(&mic), Some(6_000));
+
+        // Absturz und Neustart: ein neuer Store auf derselben Datenbank, die Wiederherstellung
+        // laeuft den Enddurchlauf mit dem urspruenglichen Plan (`Run`).
+        let restarted = MeetingStore::open_at(&f._dir.path().join("meetings.db")).unwrap();
+        let mut env = FakeEnv::new();
+        let out = run_job(&restarted, &job(&f, run_plan(LARGE)), &mut env);
+        assert_live_untouched(&f, &env, &out, &["s0", "s1", "s2"]);
+        let snap = restarted.transcript_snapshot(&f.id).unwrap();
+        assert_eq!(snap.epoch, 0, "die Epoche blieb");
+        assert_eq!(snap.segments.iter().map(|s| s.end_ms).max(), Some(9_000));
+    }
+
+    /// Das Gegenstueck: eine sauber geschlossene Aufnahme laesst den Marker fallen, und der
+    /// Enddurchlauf ersetzt wie bisher. Sonst bewiese der Test oben nichts (und die normale
+    /// Live-Aufnahme verlore den Enddurchlauf).
+    #[test]
+    fn a_cleanly_closed_capture_drops_the_marker_and_the_final_pass_replaces() {
+        let f = fixture(true, MeetingStatus::Processing);
+        let mic = f.meeting_dir.join("mic.wav");
+        let system = f.meeting_dir.join("system.wav");
+        f.store
+            .begin_capture(&f.id, mic.to_str(), system.to_str())
+            .unwrap();
+        // Waehrend der Aufnahme (Marker steht): kein Ersatz.
+        let mut env = FakeEnv::new();
+        let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        assert_live_untouched(&f, &env, &out, &["s0", "s1"]);
+        // Alle Writer sauber zu: der Marker faellt, der Ersatz laeuft.
+        assert!(f.store.end_capture(&f.id).unwrap());
+        assert!(
+            !f.store.end_capture(&f.id).unwrap(),
+            "zweimal ist unschaedlich"
+        );
+        let mut env = FakeEnv::new();
+        let _ = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        assert!(env.kinds().contains(&"reset"), "der Enddurchlauf ersetzt");
+    }
+
+    /// Die Fortsetzung vergisst keinen Absturz: steht der Marker eines frueheren, nie
+    /// geschlossenen Laufs noch, wird er beim naechsten Start zum dauerhaften
+    /// `audio_incomplete`, und das saubere Ende des neuen Laufs entfernt nur seinen eigenen.
+    #[test]
+    fn a_new_start_turns_the_marker_of_an_unclosed_run_into_the_permanent_one() {
+        let f = fixture(true, MeetingStatus::Processing);
+        let mic = f.meeting_dir.join("mic.wav");
+        f.store.begin_capture(&f.id, mic.to_str(), None).unwrap();
+        // Absturz: kein end_capture. Der naechste Start:
+        f.store.begin_capture(&f.id, mic.to_str(), None).unwrap();
+        let meta = f.store.metadata_json(&f.id).unwrap().unwrap();
+        assert_eq!(
+            meta[AUDIO_INCOMPLETE_KEY]["reason"], "capture_not_closed",
+            "{meta}"
+        );
+        assert!(f.store.end_capture(&f.id).unwrap());
+        let meta = f.store.metadata_json(&f.id).unwrap().unwrap();
+        assert!(meta.get(super::super::store::CAPTURE_OPEN_KEY).is_none());
+        assert!(
+            meta.get(AUDIO_INCOMPLETE_KEY).is_some(),
+            "der fruehere Absturz bleibt dauerhaft vermerkt"
+        );
     }
 
     /// lva#538 Befund 6: ein Lesefehler der Metadaten belegt nicht, dass es keinen Marker gibt.

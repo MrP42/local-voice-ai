@@ -1890,6 +1890,13 @@ impl LivePipeline {
         info!("meetings: live pipeline aborted ({})", self.stats.summary());
     }
 
+    /// Test: das Abbruchflag (gesetzt von `abort` BEVOR es den Worker joint), damit ein Test die
+    /// Reihenfolge "Abbruch gesetzt, Engine noch im Block" beobachten kann, ohne zu schlafen.
+    #[cfg(test)]
+    pub(crate) fn discard_handle(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.discard)
+    }
+
     fn join_all(&mut self) {
         if let Some(dsp) = self.dsp.take() {
             dsp.finish();
@@ -2729,9 +2736,39 @@ mod tests {
 
     // ---- lva#538: Abbruch als Barriere --------------------------------------------------
 
-    /// Eine Pipeline mit einer langsamen Engine fuer die Abbruch-Tests: der Zeuge ist ein Arc,
-    /// den die Worker-Closure haelt (weg = Worker beendet und gejoint), `entered` meldet den
-    /// Eintritt in die Engine, `calls` zaehlt die Engine-Aufrufe.
+    /// Haelt die Engine ohne jede Zeitannahme im Block fest: sie meldet ihren Eintritt auf
+    /// `entered` und wartet dann auf `release` (oder darauf, dass der Sender wegfaellt; das
+    /// gibt auch alle spaeteren Bloecke frei). Die 60 s sind nur das Netz gegen ein
+    /// haengendes Testprogramm, nie eine Annahme ueber Laufzeiten.
+    struct EngineGate {
+        entered: Receiver<()>,
+        release: Option<Sender<()>>,
+    }
+
+    impl EngineGate {
+        fn wait_entered(&self) {
+            self.entered
+                .recv_timeout(Duration::from_secs(60))
+                .expect("Voraussetzung: die Engine arbeitet");
+        }
+
+        fn open(&mut self) {
+            self.release.take();
+        }
+    }
+
+    /// Wartet auf eine Bedingung, die ein anderer Thread herstellt, ohne zu schlafen.
+    fn spin_until(what: &str, cond: impl Fn() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !cond() {
+            assert!(Instant::now() < deadline, "nicht eingetreten: {what}");
+            std::thread::yield_now();
+        }
+    }
+
+    /// Eine Pipeline mit einer langsamen oder festgehaltenen Engine fuer die Abbruch-Tests: der
+    /// Zeuge ist ein Arc, den die Worker-Closure haelt (weg = Worker beendet und gejoint),
+    /// `entered` meldet den Eintritt in die Engine, `calls` zaehlt die Engine-Aufrufe.
     struct AbortRig {
         pipeline: Option<LivePipeline>,
         store: Arc<MeetingStore>,
@@ -2740,10 +2777,23 @@ mod tests {
         witness: Arc<()>,
         entered: Arc<std::sync::atomic::AtomicBool>,
         calls: Arc<std::sync::atomic::AtomicUsize>,
+        gate: Option<EngineGate>,
     }
 
     fn abort_rig(engine_delay: Duration) -> AbortRig {
+        abort_rig_with(engine_delay, false)
+    }
+
+    /// Mit `gated` haelt die Engine in jedem Block, bis `gate.open()` aufgerufen wird.
+    fn abort_rig_with(engine_delay: Duration, gated: bool) -> AbortRig {
         use std::sync::atomic::{AtomicBool, AtomicUsize};
+        let (entered_tx, entered_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let gate = gated.then_some(EngineGate {
+            entered: entered_rx,
+            release: Some(release_tx),
+        });
+        let held_gate = gated.then_some((entered_tx, release_rx));
         let witness = Arc::new(());
         let held = Arc::clone(&witness);
         let entered = Arc::new(AtomicBool::new(false));
@@ -2765,6 +2815,10 @@ mod tests {
                 let _keep = &held;
                 call_count.fetch_add(1, Ordering::SeqCst);
                 entered_flag.store(true, Ordering::SeqCst);
+                if let Some((entered, release)) = &held_gate {
+                    let _ = entered.send(());
+                    let _ = release.recv_timeout(Duration::from_secs(60));
+                }
                 std::thread::sleep(engine_delay);
                 // Ein Wort je Sekunde Audio, damit weder Dichte noch Wiederholung greift.
                 let secs = (chunk.samples.len() / 16_000).max(1);
@@ -2790,6 +2844,7 @@ mod tests {
             witness,
             entered,
             calls,
+            gate,
         }
     }
 
@@ -2815,30 +2870,49 @@ mod tests {
 
     /// Befund 3: ein Block, der beim Abbruch schon in der Engine ist, schreibt sein Ergebnis
     /// nicht mehr, und `abort` kehrt erst zurueck, wenn der Worker beendet und gejoint ist.
-    /// Danach kommt nichts mehr: kein Segment in der Datenbank, kein Ereignis.
+    /// Danach kommt nichts mehr: kein Segment in der Datenbank, kein Ereignis. Ohne Zeitannahme:
+    /// die Engine steht an der Barriere, der Abbruch wird gesetzt (am Flag beobachtet), und erst
+    /// dann gibt der Test die Engine frei.
     #[test]
     fn an_abort_returns_only_when_the_worker_is_done_and_nothing_is_stored_after_it() {
-        let mut r = abort_rig(Duration::from_millis(300));
+        let mut r = abort_rig_with(Duration::ZERO, true);
+        let discard = r.pipeline.as_ref().unwrap().discard_handle();
         let mut mic = r.pipeline.as_ref().unwrap().feed(0).unwrap();
         feed_blocks(&mut mic, &cat(&[loud(1_500), quiet(1_000)]));
-        wait_entered(&r);
+        r.gate.as_ref().unwrap().wait_entered();
         assert_eq!(
             Arc::strong_count(&r.witness),
             2,
             "Voraussetzung: Worker lebt"
         );
 
-        r.pipeline.take().unwrap().abort();
+        let pipeline = r.pipeline.take().unwrap();
+        let (done_tx, done_rx) = mpsc::channel();
+        let aborter = std::thread::spawn(move || {
+            pipeline.abort();
+            let _ = done_tx.send(());
+        });
+        spin_until("Abbruchflag gesetzt", || discard.load(Ordering::Acquire));
+        assert!(
+            done_rx.try_recv().is_err(),
+            "abort kehrte zurueck, waehrend die Engine noch im Block stand"
+        );
+        assert_eq!(
+            Arc::strong_count(&r.witness),
+            2,
+            "der Worker war schon weg, bevor die Engine frei war"
+        );
 
+        r.gate.as_mut().unwrap().open();
+        aborter.join().unwrap();
+
+        assert!(done_rx.try_recv().is_ok());
         assert_eq!(
             Arc::strong_count(&r.witness),
             1,
             "abort kehrte zurueck, bevor der Worker gejoint war"
         );
-        assert!(r.store.get_segments(&r.meeting_id).unwrap().is_empty());
-        assert_eq!(segment_events(&r), 0);
-        // Und es bleibt so: kein Nachzuegler schreibt spaeter noch.
-        std::thread::sleep(Duration::from_millis(400));
+        // Der Worker ist beendet und gejoint: kein Nachzuegler kann spaeter noch schreiben.
         assert!(r.store.get_segments(&r.meeting_id).unwrap().is_empty());
         assert_eq!(segment_events(&r), 0);
     }
@@ -2856,11 +2930,16 @@ mod tests {
     }
 
     /// Der Rest der Warteschlange wird abgeworfen, nicht mehr transkribiert (auch das, was der
-    /// DSP-Thread beim Beenden noch aus dem offenen Segment flusht).
+    /// DSP-Thread beim Beenden noch aus dem offenen Segment flusht). Die Voraussetzung wird
+    /// gezaehlt, nicht erschlafen: der erste Block steht in der Engine, der zweite ist
+    /// nachweislich schon in die Warteschlange gelegt.
     #[test]
     fn an_abort_drops_the_queue_without_transcribing_it() {
-        let mut r = abort_rig(Duration::from_millis(300));
-        let mut mic = r.pipeline.as_ref().unwrap().feed(0).unwrap();
+        let mut r = abort_rig_with(Duration::ZERO, true);
+        let pipeline_ref = r.pipeline.as_ref().unwrap();
+        let discard = pipeline_ref.discard_handle();
+        let stats = pipeline_ref.stats();
+        let mut mic = pipeline_ref.feed(0).unwrap();
         feed_blocks(
             &mut mic,
             &cat(&[
@@ -2871,9 +2950,16 @@ mod tests {
                 loud(1_500),
             ]),
         );
-        wait_entered(&r);
+        r.gate.as_ref().unwrap().wait_entered();
+        spin_until("zweiter Block in der Warteschlange", || {
+            stats.segments_emitted.load(Ordering::Acquire) >= 2
+        });
 
-        r.pipeline.take().unwrap().abort();
+        let pipeline = r.pipeline.take().unwrap();
+        let aborter = std::thread::spawn(move || pipeline.abort());
+        spin_until("Abbruchflag gesetzt", || discard.load(Ordering::Acquire));
+        r.gate.as_mut().unwrap().open();
+        aborter.join().unwrap();
 
         assert_eq!(
             r.calls.load(Ordering::SeqCst),
@@ -2906,11 +2992,16 @@ mod tests {
                 .create_meeting("Absturz", MeetingSource::Live, Some(1))
                 .unwrap();
             let (notice, _) = notices();
+            let witness = Arc::new(());
+            let held = Arc::clone(&witness);
             let pipeline = LivePipeline::start(
                 meeting.id.clone(),
                 Arc::clone(&store),
                 DspConfig::new(Some(energy_factory()), notice),
-                |_chunk: &Chunk| -> Vec<TimedSegment> { panic!("Engine abgestuerzt") },
+                move |_chunk: &Chunk| -> Vec<TimedSegment> {
+                    let _keep = &held;
+                    panic!("Engine abgestuerzt")
+                },
                 |_e| {},
             )
             .unwrap();
@@ -2919,7 +3010,11 @@ mod tests {
                 &mut mic,
                 &cat(&[loud(1_500), quiet(1_000), loud(1_500), quiet(1_000)]),
             );
-            std::thread::sleep(Duration::from_millis(150));
+            // Der Worker ist wirklich tot, wenn seine Closure (und mit ihr der Zeuge) freigegeben
+            // ist; erst dann beginnt der Abschluss.
+            spin_until("Worker durch den Absturz beendet", || {
+                Arc::strong_count(&witness) == 1
+            });
             let (done_tx, done_rx) = mpsc::channel();
             std::thread::spawn(move || {
                 if abort {

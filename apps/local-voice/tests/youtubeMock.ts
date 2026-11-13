@@ -45,6 +45,17 @@ export interface YoutubeMockOptions {
    * der Start haengt noch in einem Treiber); der zweite Versuch gelingt.
    */
   cancelErrorOnce?: string;
+  /**
+   * lva#538, Blocker F: der Abbruch setzt den Eintrag zurueck (wie der Rollback des Backends:
+   * die gespeicherten Saetze sind danach leer) und meldet dies mit `reset` und `state ready`.
+   * Ohne diese Option kommt KEIN Ereignis: nur ein Neuladen der Saetze zeigt den Rollback.
+   */
+  rollbackEmits?: boolean;
+  /**
+   * lva#538: der haengende Start laeuft durch, sobald der Abbruch ankommt (der Abbruch kam
+   * erst nach der Veroeffentlichung an; das Backend beendet die Aufnahme und setzt zurueck).
+   */
+  holdFinishesOnCancel?: boolean;
   /** `y1` hat schon einen eigenen Mitschnitt (Audiopfad), samt Transkript. */
   ownAudio?: boolean;
 }
@@ -75,6 +86,8 @@ export const installYoutubeMock = async (
       startError,
       startHold,
       cancelErrorOnce,
+      rollbackEmits,
+      holdFinishesOnCancel,
       ownAudio,
       id,
       title,
@@ -91,6 +104,8 @@ export const installYoutubeMock = async (
       w.__startHold = startHold;
       w.__heldStart = null;
       w.__cancelErrorOnce = cancelErrorOnce ?? null;
+      w.__rollbackEmits = rollbackEmits;
+      w.__holdFinishesOnCancel = holdFinishesOnCancel;
       if (privateOn) w.__settings.meeting_youtube_private = true;
       if (fakePlayer) {
         w.YT = {
@@ -255,6 +270,7 @@ export const installYoutubeMock = async (
             w.__calls.push({ cmd, args });
             return w.__toolStatus;
           case "meetings_get_segments":
+            w.__calls.push({ cmd, args });
             if (w.__ytEmpty && args.meetingId === meetingId) {
               return w.__ytSegments;
             }
@@ -276,7 +292,12 @@ export const installYoutubeMock = async (
               // Der Treiber haengt: der Start endet erst mit dem Abbruch des Nutzers
               // (`meetings_cancel_start` mit derselben Vorgangs-Id).
               return new Promise((_resolve, reject) => {
-                w.__heldStart = { reject, opId: args.opId ?? null };
+                w.__heldStart = {
+                  reject,
+                  resolve: _resolve,
+                  opId: args.opId ?? null,
+                  meeting: target,
+                };
               });
             }
             const started = {
@@ -309,7 +330,23 @@ export const installYoutubeMock = async (
             const held = w.__heldStart;
             if (held && held.opId === args.opId) {
               w.__heldStart = null;
-              held.reject("start_cancelled");
+              // Rollback des Backends: was die Live-Pipeline schon gespeichert und gemeldet
+              // hatte, ist verworfen; der Eintrag ist wieder leer und bereit.
+              w.__ytSegments.length = 0;
+              if (w.__rollbackEmits) {
+                w.__emit("meeting-event", {
+                  kind: "reset",
+                  meeting_id: held.meeting.id,
+                });
+                w.__emit("meeting-event", {
+                  kind: "state",
+                  meeting_id: held.meeting.id,
+                  status: "ready",
+                  paused: false,
+                });
+              }
+              if (w.__holdFinishesOnCancel) held.resolve(held.meeting);
+              else held.reject("start_cancelled");
             }
             return null;
           }
@@ -333,6 +370,8 @@ export const installYoutubeMock = async (
       startError: options.startError ?? null,
       startHold: options.startHold ?? false,
       cancelErrorOnce: options.cancelErrorOnce ?? null,
+      rollbackEmits: options.rollbackEmits ?? false,
+      holdFinishesOnCancel: options.holdFinishesOnCancel ?? false,
       ownAudio: options.ownAudio ?? false,
       id: YT_ID,
       title: YT_TITLE,

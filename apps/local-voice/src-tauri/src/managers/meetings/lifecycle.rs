@@ -44,8 +44,15 @@ pub const RECORDING_BUSY: &str = "recording_busy";
 /// Fehlercode: der abgebrochene Start ist noch nicht zu Ende (haengt im Treiber).
 pub const START_BUSY: &str = "start_busy";
 
-/// So viele abgebrochene, noch nicht registrierte Vorgangs-Ids merkt sich der Kern.
-const TOMBSTONES: usize = 32;
+/// lva#538 (Runde 3): so viele Abbrueche, die ihrem Start vorauseilten, haelt der Kern, bis
+/// der Start sie verbraucht. Ein BESTAETIGTER Abbruch wird nie wieder vergessen: ist die
+/// Grenze erreicht, wird der naechste Abbruch nicht bestaetigt (`CancelOp::Refused`), der
+/// aelteste nicht verdraengt.
+const MAX_PENDING_CANCELS: usize = 1024;
+/// So viele zuletzt registrierte Vorgangs-Ids merkt sich der Kern, damit ein Abbruch, der einem
+/// laengst beendeten Start gilt, nicht als "kommt noch" vorgemerkt wird. Das Verdraengen einer
+/// alten Id kostet hoechstens einen unnuetzen Merker, nie einen verlorenen Abbruch.
+const REGISTERED_MEMORY: usize = 64;
 
 /// Sperre nehmen, auch wenn ein anderer Thread mit ihr abgestuerzt ist. Der Zustand hier
 /// ist ein kleines Enum: ein "vergifteter" Wert ist nie halb geschrieben. Wer auf dem
@@ -93,8 +100,11 @@ enum Phase<S> {
 
 struct Inner<S> {
     phase: Phase<S>,
-    /// Abgebrochene Vorgangs-Ids, die sich noch nicht registriert hatten.
-    cancelled: VecDeque<String>,
+    /// Abgebrochene Vorgangs-Ids, die sich noch nicht registriert hatten. Bleiben, bis genau
+    /// dieser Start sie verbraucht (`begin_start`); keine Verdraengung.
+    cancelled: Vec<String>,
+    /// Die zuletzt registrierten Vorgangs-Ids (Beweis, dass der Start schon kam und ging).
+    registered: VecDeque<String>,
     /// Besprechungen, die gerade geloescht werden (Reservierung bis nach dem Tombstone).
     deleting: Vec<String>,
     /// Die Besprechungen, deren Stopp noch abschliesst (Pipeline leeren, Writer schliessen):
@@ -112,9 +122,15 @@ pub(crate) enum CancelOp {
     Starting,
     /// Der Start hat schon veroeffentlicht: der Abbruch ist ein Stopp der Aufnahme.
     Running,
-    /// Der Vorgang hat sich noch nicht registriert (oder ist laengst zu Ende): die Id ist
-    /// vermerkt, die Registrierung weist ihn ab.
+    /// Der Vorgang hat sich noch nicht registriert: die Id ist vermerkt und bleibt es, bis
+    /// genau dieser Start sie verbraucht; die Registrierung weist ihn ab.
     Remembered,
+    /// Der Vorgang hatte sich registriert und ist laengst zu Ende: nichts zu vermerken, nichts
+    /// zu tun.
+    Finished,
+    /// Zu viele Abbrueche warten auf ihren Start: dieser wird NICHT bestaetigt (und keiner
+    /// vergessen). Der Aufrufer meldet es als Fehler, ein neuer Versuch ist moeglich.
+    Refused,
 }
 
 /// Was ein Stopp vorfindet.
@@ -139,6 +155,11 @@ pub(crate) enum DeleteStep<'a, S> {
 pub(crate) struct RunCore<S> {
     inner: Mutex<Inner<S>>,
     changed: Condvar,
+    /// Test-Haken: wie viele Threads gerade in `wait` stehen (zaehlt unter der Sperre hoch, die
+    /// das Warten erst freigibt). Wer ihn sieht und dann die Sperre nimmt, weiss: der Wartende
+    /// steht in der Condvar, ein Aufwecken geht nicht mehr verloren. Ersetzt Schlafzeiten.
+    #[cfg(test)]
+    waiters: std::sync::atomic::AtomicUsize,
 }
 
 impl<S> RunCore<S> {
@@ -146,12 +167,15 @@ impl<S> RunCore<S> {
         Self {
             inner: Mutex::new(Inner {
                 phase: Phase::Idle,
-                cancelled: VecDeque::new(),
+                cancelled: Vec::new(),
+                registered: VecDeque::new(),
                 deleting: Vec::new(),
                 finalizing: Vec::new(),
                 next_op: 0,
             }),
             changed: Condvar::new(),
+            #[cfg(test)]
+            waiters: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -166,10 +190,15 @@ impl<S> RunCore<S> {
         deadline: Instant,
     ) -> MutexGuard<'a, Inner<S>> {
         let remaining = deadline.saturating_duration_since(Instant::now());
-        match self.changed.wait_timeout(guard, remaining) {
+        #[cfg(test)]
+        self.waiters.fetch_add(1, Ordering::SeqCst);
+        let guard = match self.changed.wait_timeout(guard, remaining) {
             Ok((guard, _)) => guard,
             Err(poisoned) => poisoned.into_inner().0,
-        }
+        };
+        #[cfg(test)]
+        self.waiters.fetch_sub(1, Ordering::SeqCst);
+        guard
     }
 
     fn notify(&self) {
@@ -201,7 +230,7 @@ impl<S> RunCore<S> {
         let op = match op {
             Some(op) => {
                 if let Some(at) = inner.cancelled.iter().position(|c| c == op) {
-                    inner.cancelled.remove(at);
+                    inner.cancelled.swap_remove(at);
                     return Err(START_CANCELLED.to_string());
                 }
                 op.to_string()
@@ -217,6 +246,10 @@ impl<S> RunCore<S> {
         if target.is_some_and(|t| inner.deleting.iter().any(|d| d == t)) {
             return Err(MEETING_NOT_FOUND.to_string());
         }
+        if inner.registered.len() >= REGISTERED_MEMORY {
+            inner.registered.pop_front();
+        }
+        inner.registered.push_back(op.clone());
         let cancel = Arc::new(AtomicBool::new(false));
         let deleted = Arc::new(AtomicBool::new(false));
         inner.phase = Phase::Starting(StartOp {
@@ -270,13 +303,11 @@ impl<S> RunCore<S> {
             }
             Phase::Recording(run) if run.op == op => CancelOp::Running,
             Phase::Stopping { op: o, .. } if o == op => CancelOp::Running,
+            _ if inner.registered.iter().any(|r| r == op) => CancelOp::Finished,
+            _ if inner.cancelled.iter().any(|c| c == op) => CancelOp::Remembered,
+            _ if inner.cancelled.len() >= MAX_PENDING_CANCELS => CancelOp::Refused,
             _ => {
-                if !inner.cancelled.iter().any(|c| c == op) {
-                    if inner.cancelled.len() >= TOMBSTONES {
-                        inner.cancelled.pop_front();
-                    }
-                    inner.cancelled.push_back(op.to_string());
-                }
+                inner.cancelled.push(op.to_string());
                 CancelOp::Remembered
             }
         }
@@ -623,6 +654,19 @@ mod tests {
 
     type Core = RunCore<&'static str>;
 
+    /// Wartet (ohne Schlafzeit), bis `n` Threads in der Condvar des Kerns stehen: danach geht
+    /// kein Aufwecken mehr verloren, und das Ergebnis haengt von keiner Zeit ab.
+    fn until_waiting(core: &Core, n: usize) {
+        let started = Instant::now();
+        while core.waiters.load(Ordering::SeqCst) < n {
+            assert!(
+                started.elapsed() < Duration::from_secs(20),
+                "niemand wartet in der Condvar"
+            );
+            std::thread::yield_now();
+        }
+    }
+
     fn soon() -> Instant {
         Instant::now() + Duration::from_millis(40)
     }
@@ -822,6 +866,66 @@ mod tests {
         }
     }
 
+    /// Befund 4, Runde 3: die Reservierung ueberdauert den Abschluss der Aufnahme und endet erst
+    /// NACH dem Tombstone. Ausdruecklich sequenziert (explizite Barriere statt Schlafzeit): der
+    /// Abschluss wird vom Test gehalten, der Loeschwartepunkt ist beobachtet (`until_waiting`),
+    /// ein Start in dieselbe Besprechung wird abgelehnt; dann gibt der Test den Abschluss frei,
+    /// setzt den Tombstone und laesst die Reservierung erst danach fallen.
+    #[test]
+    fn the_reservation_outlives_the_finalizing_and_ends_after_the_tombstone() {
+        let core = Arc::new(Core::new());
+        let starting = core.begin_start(Some("op-1"), Some("a")).unwrap();
+        core.publish_started(&starting, "a", "sitzung").unwrap();
+        drop(starting);
+        let (_session, ticket) = running(&core);
+        let finalizing = ticket.finish();
+
+        core.reserve_delete("a").unwrap();
+        let log = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+        let waiter = Arc::clone(&core);
+        let order = Arc::clone(&log);
+        let deleting = std::thread::spawn(move || {
+            let free = matches!(
+                waiter.delete_step("a", Instant::now() + Duration::from_secs(60)),
+                Ok(DeleteStep::Free)
+            );
+            order.lock().unwrap().push("delete_frei");
+            free
+        });
+        until_waiting(&core, 1);
+        assert_eq!(
+            core.begin_start(Some("op-2"), Some("a")).err(),
+            Some(MEETING_NOT_FOUND.to_string()),
+            "waehrend des Abschlusses nimmt kein Start in diese Besprechung auf"
+        );
+
+        log.lock().unwrap().push("abschluss_fertig");
+        drop(finalizing);
+        assert!(
+            deleting.join().unwrap(),
+            "das Loeschen kam erst nach dem Abschluss zum Zug"
+        );
+
+        log.lock().unwrap().push("tombstone");
+        assert_eq!(
+            core.begin_start(Some("op-3"), Some("a")).err(),
+            Some(MEETING_NOT_FOUND.to_string()),
+            "auch nach dem Abschluss und dem Tombstone haelt die Reservierung noch"
+        );
+        core.release_delete("a");
+        log.lock().unwrap().push("reservierung_frei");
+        assert!(core.begin_start(Some("op-4"), Some("a")).is_ok());
+        assert_eq!(
+            *log.lock().unwrap(),
+            [
+                "abschluss_fertig",
+                "delete_frei",
+                "tombstone",
+                "reservierung_frei"
+            ]
+        );
+    }
+
     // ---- lva#538: Stopp und Abbruch waehrend des Starts --------------------------------
 
     /// Ein Stopp, der waehrend des Starts kommt (noch keine Sitzung), wird nicht als "nicht
@@ -884,8 +988,10 @@ mod tests {
                 )
             });
             let published = core.publish_started(&starting, "m1", "sitzung").is_ok();
-            let cancelled_start = stop.join().unwrap();
+            // Der Start ist mit der Veroeffentlichung fertig: ein Stopp, der auf sein Ende
+            // wartet, kommt jetzt zum Zug (kein Warten bis zur Frist).
             drop(starting);
+            let cancelled_start = stop.join().unwrap();
             if published {
                 // Der Stopp kam NACH der Veroeffentlichung (er wartete auf das Ende des Starts):
                 // die Sitzung ist da und stoppbar.
@@ -925,7 +1031,7 @@ mod tests {
                 Ok(StopStep::Running(..))
             )
         });
-        std::thread::sleep(Duration::from_millis(30));
+        until_waiting(&core, 1);
         drop(starting);
         assert!(waiting.join().unwrap());
     }
@@ -991,19 +1097,105 @@ mod tests {
         drop(ticket.finish());
     }
 
-    /// Nur eine begrenzte Zahl abgebrochener Vorgangs-Ids wird gemerkt (kein Wachstum).
+    /// Befund A (Runde 3): ein BESTAETIGTER Abbruch geht nie verloren, wie viele andere auch
+    /// danach kommen (vorher verdraengte der 33. den aeltesten, und dessen Start lief an).
+    /// Ausdruecklich sequenziert, ohne Zeit.
     #[test]
-    fn remembered_cancels_are_bounded() {
+    fn a_confirmed_cancel_survives_any_number_of_later_cancels() {
         let core = Core::new();
-        for k in 0..(TOMBSTONES + 10) {
+        assert_eq!(core.cancel_op("op-0"), CancelOp::Remembered);
+        for k in 1..=300 {
+            assert_eq!(core.cancel_op(&format!("op-{k}")), CancelOp::Remembered);
+        }
+        assert_eq!(
+            core.begin_start(Some("op-0"), Some("m1")).err(),
+            Some(START_CANCELLED.to_string()),
+            "der erste Abbruch gilt noch nach 300 weiteren"
+        );
+        for k in 1..=300 {
+            assert_eq!(
+                core.begin_start(Some(&format!("op-{k}")), None).err(),
+                Some(START_CANCELLED.to_string()),
+                "op-{k}"
+            );
+        }
+        assert!(core.lock().cancelled.is_empty(), "jeder Merker verbraucht");
+        assert!(core.is_idle(), "keiner dieser Starts wurde registriert");
+    }
+
+    /// 33 ausstehende Vorgaenge (eins mehr als die alte Grenze): alle werden abgewiesen.
+    #[test]
+    fn thirty_three_pending_operations_are_all_cancelled() {
+        let core = Core::new();
+        for k in 0..33 {
             core.cancel_op(&format!("op-{k}"));
         }
-        assert_eq!(core.lock().cancelled.len(), TOMBSTONES);
-        // Die neueste ist noch da, die aelteste vergessen.
-        assert!(core
-            .begin_start(Some(&format!("op-{}", TOMBSTONES + 9)), None)
-            .is_err());
-        assert!(core.begin_start(Some("op-0"), None).is_ok());
+        for k in 0..33 {
+            assert_eq!(
+                core.begin_start(Some(&format!("op-{k}")), None).err(),
+                Some(START_CANCELLED.to_string()),
+                "op-{k}"
+            );
+        }
+    }
+
+    /// An der Grenze wird der naechste Abbruch NICHT bestaetigt (Fehler, neuer Versuch), und
+    /// keiner der gemerkten wird verdraengt. Verbraucht ein Start einen, ist wieder Platz.
+    #[test]
+    fn at_the_limit_a_new_cancel_is_refused_and_no_old_one_is_forgotten() {
+        let core = Core::new();
+        for k in 0..MAX_PENDING_CANCELS {
+            assert_eq!(core.cancel_op(&format!("op-{k}")), CancelOp::Remembered);
+        }
+        assert_eq!(core.cancel_op("zu-viel"), CancelOp::Refused);
+        assert_eq!(
+            core.cancel_op("op-0"),
+            CancelOp::Remembered,
+            "ein bekannter Abbruch bleibt bestaetigt"
+        );
+        assert_eq!(
+            core.begin_start(Some("op-0"), None).err(),
+            Some(START_CANCELLED.to_string()),
+            "der aelteste ist nicht verdraengt"
+        );
+        assert_eq!(
+            core.cancel_op("zu-viel"),
+            CancelOp::Remembered,
+            "wieder Platz"
+        );
+        assert_eq!(
+            core.begin_start(Some("zu-viel"), None).err(),
+            Some(START_CANCELLED.to_string())
+        );
+    }
+
+    /// Ein Abbruch fuer einen Start, der schon kam und ging, wird nicht als "kommt noch"
+    /// vorgemerkt (sonst fuellte jeder spaete Abbruch die Merkliste).
+    #[test]
+    fn a_cancel_for_a_finished_start_is_not_remembered() {
+        let core = Core::new();
+        for k in 0..(3 * MAX_PENDING_CANCELS) {
+            let op = format!("done-{k}");
+            drop(core.begin_start(Some(&op), None).unwrap());
+            assert_eq!(core.cancel_op(&op), CancelOp::Finished, "{op}");
+        }
+        assert!(core.lock().cancelled.is_empty());
+    }
+
+    /// Der Abbruch NACH der Registrierung trifft den laufenden Start, ausdruecklich sequenziert:
+    /// registriert, abgebrochen, der Start sieht es, die Veroeffentlichung gibt die Sitzung zurueck.
+    #[test]
+    fn a_cancel_after_the_registration_hits_the_running_start() {
+        let core = Core::new();
+        let starting = core.begin_start(Some("op-1"), Some("m1")).unwrap();
+        assert_eq!(core.cancel_op("op-1"), CancelOp::Starting);
+        assert!(starting.cancelled());
+        assert_eq!(
+            core.publish_started(&starting, "m1", "sitzung"),
+            Err("sitzung")
+        );
+        drop(starting);
+        assert!(core.is_idle());
     }
 
     #[test]
@@ -1015,7 +1207,7 @@ mod tests {
         let ended = std::thread::spawn(move || {
             waiter.wait_start_end("op", Instant::now() + Duration::from_secs(10))
         });
-        std::thread::sleep(Duration::from_millis(30));
+        until_waiting(&core, 1);
         drop(starting);
         assert!(ended.join().unwrap());
     }
@@ -1140,7 +1332,7 @@ mod tests {
                 Ok(DeleteStep::Free)
             )
         });
-        std::thread::sleep(Duration::from_millis(30));
+        until_waiting(&core, 1);
         drop(finalizing);
         assert!(deleting.join().unwrap());
     }
@@ -1213,7 +1405,7 @@ mod tests {
                 Ok(DeleteStep::Running(..))
             )
         });
-        std::thread::sleep(Duration::from_millis(30));
+        until_waiting(&core, 1);
         drop(starting);
         assert!(deleting.join().unwrap());
     }

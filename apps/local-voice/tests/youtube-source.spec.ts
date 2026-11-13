@@ -873,8 +873,8 @@ test.describe("Beim Abspielen mitschreiben", () => {
   // Escape und X sind derselbe Abbruch, kein bloßes Schliessen des Dialogs.
   test.describe("Abbruch während der Start läuft", () => {
     /** Dialog offen, Start abgeschickt, haengt. */
-    const hangingStart = async (page: Page) => {
-      await setup(page, { empty: true, startHold: true });
+    const hangingStart = async (page: Page, extra: YoutubeMockOptions = {}) => {
+      await setup(page, { empty: true, startHold: true, ...extra });
       await pickMeeting(page, YT_MEETING_ID);
       await startCapture(page);
       await expect.poll(async () => (await calls(page, START)).length).toBe(1);
@@ -976,6 +976,64 @@ test.describe("Beim Abspielen mitschreiben", () => {
       await dialog.getByTestId("yt-capture-cancel").click();
       await expect(captureDialog(page)).toHaveCount(0);
       expect(await calls(page, "meetings_cancel_start")).toHaveLength(2);
+    });
+
+    // lva#538, Blocker F: die Live-Pipeline hat VOR dem Abbruch schon einen Satz gemeldet;
+    // der Rollback verwirft ihn im Backend. Hier kommt KEIN Ereignis: die Oberflaeche muss
+    // den gespeicherten Stand selbst neu laden (sonst bliebe der Phantomsatz stehen, der
+    // Knopf „Beim Abspielen mitschreiben“ verschwaende und der Eintrag haette ein
+    // „Transkript“, das es nicht gibt). Kein Warten auf Zeit: der Satz wird erst
+    // gemeldet, wenn der Start haengt, und der Abbruch ist der einzige Ausloeser.
+    const PHANTOM = "Phantomsatz vor dem Abbruch.";
+
+    test("ein vor dem Abbruch gemeldeter Satz verschwindet, die Oberfläche lädt neu", async ({
+      page,
+    }) => {
+      const dialog = await hangingStart(page);
+      const phantom = page.getByText(PHANTOM);
+      await captureSegment(page, 0, PHANTOM);
+      await expect(phantom).toBeVisible();
+      const loadsBefore = (await calls(page, "meetings_get_segments")).length;
+      await dialog.getByTestId("yt-capture-cancel").click();
+      await expectCancelled(page);
+      await expect(phantom).toHaveCount(0);
+      // Das Neuladen kam von der Oberflaeche selbst (es gab kein Ereignis).
+      expect(
+        (await calls(page, "meetings_get_segments")).length,
+      ).toBeGreaterThan(loadsBefore);
+    });
+
+    // Dasselbe, wenn das Backend nach dem Rollback `reset` und `state ready` meldet
+    // (`emit_restored`): der Eintrag ist leer, der Knopf wieder da.
+    test("meldet das Backend den Rollback (reset und ready), ist der Eintrag leer", async ({
+      page,
+    }) => {
+      const dialog = await hangingStart(page, { rollbackEmits: true });
+      const phantom = page.getByText(PHANTOM);
+      await captureSegment(page, 0, PHANTOM);
+      await expect(phantom).toBeVisible();
+      await dialog.getByTestId("yt-capture-cancel").click();
+      await expectCancelled(page);
+      await expect(phantom).toHaveCount(0);
+    });
+
+    // Der Abbruch kam erst nach der Veroeffentlichung an: der Start endet mit Erfolg, das
+    // Backend beendet genau diese Aufnahme und setzt zurueck. Die Oberflaeche zeigt keine
+    // laufende Aufnahme und laedt den gespeicherten Stand (ohne den Phantomsatz) neu.
+    test("ein Abbruch nach der Veröffentlichung lädt den zurückgesetzten Stand", async ({
+      page,
+    }) => {
+      const dialog = await hangingStart(page, { holdFinishesOnCancel: true });
+      const phantom = page.getByText(PHANTOM);
+      await captureSegment(page, 0, PHANTOM);
+      await expect(phantom).toBeVisible();
+      const loadsBefore = (await calls(page, "meetings_get_segments")).length;
+      await dialog.getByTestId("yt-capture-cancel").click();
+      await expectCancelled(page);
+      await expect(phantom).toHaveCount(0);
+      expect(
+        (await calls(page, "meetings_get_segments")).length,
+      ).toBeGreaterThan(loadsBefore);
     });
   });
 

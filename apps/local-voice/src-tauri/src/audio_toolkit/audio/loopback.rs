@@ -119,7 +119,12 @@ const SILENCE_CHUNK_FRAMES: usize = 4096;
 pub const QUIET_GAP_MIN: std::time::Duration = std::time::Duration::from_millis(250);
 /// lva#538: so weit darf ein QPC-Stempel hinter der Zeitachse liegen (Gerätetakt gegen QPC),
 /// bevor er als ungültig gilt (zurückspringender Stempel).
-pub const STAMP_BACK_TOLERANCE: std::time::Duration = QUIET_GAP_MIN;
+pub const STAMP_BACK_TOLERANCE: std::time::Duration = std::time::Duration::from_millis(250);
+/// lva#538 (Runde 3): ab dieser Lücke zwischen Zeitachse und Stempel eines Pakets wird AN DIESER
+/// STELLE aufgefüllt. Die Stempel sind Gerätezeit (kein Ankunftsjitter): eine bestätigte Pause
+/// bleibt dort, wo sie war. Darunter bleibt der Rest in der Zeitachse stehen und zählt beim
+/// nächsten Paket mit (Takt-Drift von Gerät und QPC), der Fehler ist höchstens diese Schwelle.
+pub const STAMP_GAP_MIN: std::time::Duration = std::time::Duration::from_millis(10);
 /// lva#538: so lange (in Audiozeit) dürfen Stempel in Folge unplausibel sein, bevor der
 /// jetzige als neue Referenz gilt (echte Uhrenverstellung, Takt-Drift). Ein einzelner
 /// Ausreisser bleibt so ohne Wirkung, eine bleibende Verschiebung wird übernommen.
@@ -129,8 +134,13 @@ pub const STAMP_REANCHOR: std::time::Duration = std::time::Duration::from_secs(1
 /// gezählt (`summary`); die Zeitachse ist danach um den Rest kürzer.
 pub const MAX_GAP: std::time::Duration = std::time::Duration::from_secs(2 * 3_600);
 /// lva#538: so viele Frames (Gerätetakt) verarbeitet ein Schritt von `pump` höchstens, bevor
-/// der Capture-Thread wieder das Stop-Flag prüft und das Gerät liest.
+/// der Capture-Thread wieder das Stop-Flag prüft und das Gerät liest. Auch ein einzelnes
+/// grosses Datenpaket wird in Teilen verarbeitet (nie mehr als der Rest des Budgets).
 pub const PUMP_STEP_FRAMES: u64 = 16_384;
+/// lva#538 (Runde 3): so viel Audio (Gerätetakt) darf in der Arbeitsschlange des Feeders warten.
+/// Ist sie voll, liest `read_ready` nicht weiter: das Gerät puffert, der Capture-Thread arbeitet
+/// erst ab. Die Schlange ist so nie grösser als die Grenze plus ein Paket (Speicher).
+pub const QUEUE_LIMIT: std::time::Duration = std::time::Duration::from_secs(8);
 /// So viele Pakete holt ein Lesedurchgang höchstens (sonst fände ein Gerät, das nie leer
 /// wird, nie den Weg zum Stop-Flag).
 const MAX_PACKETS_PER_READ: usize = 256;
@@ -188,6 +198,9 @@ where
 struct Job {
     /// Das Paket als Mono beim Gerätetakt.
     mono: Vec<f32>,
+    /// So viele Frames des Pakets sind schon im Resampler (Teilverarbeitung: ein grosses Paket
+    /// frisst nie mehr als das Budget eines Schritts).
+    offset: usize,
     /// Der Stempel des ersten Frames (`None`: keiner, oder unplausibel).
     qpc: Option<u64>,
     /// So viele Frames Stille gehen VOR dem Paket in den Resampler (ganze Lücke).
@@ -198,7 +211,9 @@ struct Job {
 }
 
 /// Der plattformunabhängige Kern des Capture-Threads: Pakete rein, zeitachsen-
-/// korrekte 16-kHz-Mono-Blöcke samt QPC-Stempel raus.
+/// korrekte 16-kHz-Mono-Blöcke samt QPC-Stempel raus. Eine Zustandsmaschine mit fester
+/// Schlangengrenze: `on_burst` reiht ein, `pump` arbeitet in begrenzten Schritten ab,
+/// `finish` schliesst mit einem Budget ab.
 ///
 /// WASAPI-Loopback liefert bei Stille GAR KEINE Pakete (gemessen auf Windows: nach
 /// drei Sekunden ohne Ton null Blöcke, kein Fehler). Die Zeitachse darf deshalb
@@ -208,22 +223,25 @@ struct Job {
 /// QPC-Stempel (wo er es nicht tut). Ohne das verrutschen alle Offsets des Transkripts um
 /// die Stille, die nie ankam.
 ///
-/// lva#538, getrennte Behandlung von Gerätezeit, Ankunftslatenz und ungültigen Stempeln:
-/// - **Zeitachse (`axis`)**: die QPC-Zeit des nächsten Frames, FORTGESCHRIEBEN aus dem, was
-///   ausgegeben wurde (Daten und Stille), nicht aus dem Stempel des letzten Pakets. Der Stempel
-///   eines Pakets wird an ihr gemessen: eine Lücke unter [`QUIET_GAP_MIN`] bleibt als Rest
-///   stehen und zählt bei der nächsten mit (100 Pausen zu 200 ms ergeben 20 s Stille, nicht 0).
+/// lva#538, Zeitachse aus Gerätestempeln JE PAKET (nicht aus einem Gesamtsaldo):
+/// - **Zeitachse (`axis`)**: die QPC-Zeit des nächsten Frames, fortgeschrieben aus dem, was
+///   ausgegeben wurde. Der Stempel jedes Pakets wird an ihr gemessen; ab [`STAMP_GAP_MIN`]
+///   wird die Lücke VOR DIESEM Paket aufgefüllt, die Pause bleibt also an ihrer Stelle. Nur ein
+///   Rest darunter bleibt in der Zeitachse und zählt beim nächsten Paket mit.
 /// - **Ungültige Stempel**: ein Stempel, der mehr als [`STAMP_BACK_TOLERANCE`] hinter der
 ///   Zeitachse liegt oder weiter voraus als die Wanduhr erlaubt, füllt nichts auf und ersetzt
 ///   die Zeitachse nicht (ein einzelner Ausreisser verschiebt nichts, seine Rückkehr zum
 ///   normalen Wert erzeugt keine Stille). Dauert er über [`STAMP_REANCHOR`] an, gilt er als neue
 ///   Referenz.
-/// - **Ankunftslatenz**: der Verzug des Capture-Threads beim ersten Lesen ist keine Stille:
-///   die Anfangsstille ist die Wanduhr bis zum ENDE des ersten Lesedurchgangs minus ALLE Frames,
-///   die er mitbrachte (`on_burst`), nicht minus die des ersten Pakets.
-/// - **Große Lücken** sind Arbeit, kein Aufruf: `on_burst` reiht nur ein, `pump` arbeitet sie in
-///   Schritten von [`PUMP_STEP_FRAMES`] ab (Stop-Flag und Gerät dazwischen, siehe `run_cycle`);
-///   eine Lücke ist auf [`MAX_GAP`] begrenzt.
+/// - **Erster Rückstau**: der Verzug des Capture-Threads beim ersten Lesen ist keine Stille. Der
+///   Feeder hält die Ausgabe an, bis der erste Rückstau GANZ eingelesen ist (`end_of_read` mit
+///   `drained`): die Anfangsstille ist die Wanduhr dann minus ALLE Frames, die er mitbrachte,
+///   nicht die eines Teils. Kam der Rückstau nicht zu Ende (Schlange voll, Fehler), wird keine
+///   Anfangsstille erfunden.
+/// - **Begrenzte Arbeit und Speicher**: die Schlange fasst höchstens [`QUEUE_LIMIT`] Audio
+///   (`has_room`; `read_ready` liest bei voller Schlange nicht weiter), `pump` verarbeitet
+///   höchstens sein Budget, auch von EINEM grossen Datenpaket, und eine Lücke ist auf
+///   [`MAX_GAP`] begrenzt.
 pub struct LoopbackFeeder {
     rate: usize,
     channels: usize,
@@ -231,29 +249,38 @@ pub struct LoopbackFeeder {
     stamper: QpcStamper,
     timeline: crate::audio_toolkit::audio::LoopbackTimeline,
     silence: Vec<f32>,
-    first: bool,
-    /// Anfangsstille aus dem ersten Lesedurchgang (`on_burst`), bis das erste Paket sie braucht.
-    first_gap: Option<u64>,
+    /// Das erste Paket wurde schon eingereiht.
+    started: bool,
+    /// Der erste Rückstau ist noch nicht ganz eingelesen: die Ausgabe wartet.
+    first_open: bool,
+    /// Frames (Daten und Stille dazwischen) des ersten Rückstaus.
+    first_frames: u64,
     last_since_start: std::time::Duration,
     /// QPC (100 ns), bei dem der nächste ausgegebene Frame liegt (Fortschreibung).
     axis: Option<i128>,
     /// Frames in Folge, deren Stempel unplausibel waren.
     bad_stamp_frames: u64,
     queue: std::collections::VecDeque<Job>,
+    /// Daten-Frames, die noch in der Schlange warten (ohne die Stille).
+    queued_frames: u64,
+    queue_limit_frames: u64,
+    peak_queued_frames: u64,
     /// Obergrenze EINER Luecke ([`MAX_GAP`]; der Test setzt eine kleinere).
     max_gap: std::time::Duration,
     padded_frames: u64,
     dropped_buffers: u64,
     capped_gaps: u64,
     skipped_frames: u64,
+    lost_at_stop_frames: u64,
     bad_stamps: u64,
 }
 
 #[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
 impl LoopbackFeeder {
     pub fn new(mix_rate: usize, channels: usize) -> Self {
+        let rate = mix_rate.max(1);
         Self {
-            rate: mix_rate.max(1),
+            rate,
             channels: channels.max(1),
             resampler: crate::audio_toolkit::audio::FrameResampler::new(
                 mix_rate,
@@ -263,17 +290,22 @@ impl LoopbackFeeder {
             stamper: QpcStamper::new(mix_rate, TARGET_SAMPLE_RATE),
             timeline: crate::audio_toolkit::audio::LoopbackTimeline::new(),
             silence: vec![0.0f32; SILENCE_CHUNK_FRAMES],
-            first: true,
-            first_gap: None,
+            started: false,
+            first_open: false,
+            first_frames: 0,
             last_since_start: std::time::Duration::ZERO,
             axis: None,
             bad_stamp_frames: 0,
             queue: std::collections::VecDeque::new(),
+            queued_frames: 0,
+            queue_limit_frames: QUEUE_LIMIT.as_secs().saturating_mul(rate as u64),
+            peak_queued_frames: 0,
             max_gap: MAX_GAP,
             padded_frames: 0,
             dropped_buffers: 0,
             capped_gaps: 0,
             skipped_frames: 0,
+            lost_at_stop_frames: 0,
             bad_stamps: 0,
         }
     }
@@ -285,13 +317,21 @@ impl LoopbackFeeder {
         self
     }
 
+    /// Test: eine kleinere Schlangengrenze (in Frames beim Gerätetakt).
+    #[cfg(test)]
+    fn with_queue_limit(mut self, frames: u64) -> Self {
+        self.queue_limit_frames = frames;
+        self
+    }
+
     /// Frames (Gerätetakt) einer Dauer.
     fn frames_of(&self, duration: std::time::Duration) -> u64 {
         let frames = duration.as_nanos().saturating_mul(self.rate as u128) / 1_000_000_000;
         u64::try_from(frames).unwrap_or(u64::MAX)
     }
 
-    /// Die Schwelle, ab der eine Stille aufgefüllt wird.
+    /// Die Schwelle, ab der die Stille VOR dem ersten Paket aufgefüllt wird (Wanduhr; darunter
+    /// ist es Anlauf des Treibers).
     fn min_gap_frames(&self) -> u64 {
         self.frames_of(QUIET_GAP_MIN)
     }
@@ -306,11 +346,11 @@ impl LoopbackFeeder {
         units * self.rate as i128 / QPC_UNITS_PER_SEC
     }
 
-    /// Die Anfangsstille, in Frames: die Wanduhr beim Ende des ersten Lesedurchgangs minus
-    /// alle Frames, die er brachte (das Gerät lieferte sie, solange der Thread noch nicht
-    /// las). Unter [`QUIET_GAP_MIN`] ist es Anlauf, keine Stille.
-    fn initial_gap(&self, read_end: std::time::Duration, burst_frames: u64) -> u64 {
-        let gap = self.frames_of(read_end).saturating_sub(burst_frames);
+    /// Die Anfangsstille, in Frames: die Wanduhr am Ende des ersten Rückstaus minus alle Frames,
+    /// die er brachte (das Gerät lieferte sie, solange der Thread noch nicht las). Unter
+    /// [`QUIET_GAP_MIN`] ist es Anlauf, keine Stille.
+    fn initial_gap(&self, read_end: std::time::Duration, backlog_frames: u64) -> u64 {
+        let gap = self.frames_of(read_end).saturating_sub(backlog_frames);
         if gap >= self.min_gap_frames() {
             gap
         } else {
@@ -318,19 +358,59 @@ impl LoopbackFeeder {
         }
     }
 
+    /// Hat die Schlange noch Platz fuer Daten? (`false`: erst abarbeiten, dann weiterlesen.)
+    pub fn has_room(&self) -> bool {
+        self.queued_frames < self.queue_limit_frames
+    }
+
+    /// So viele Frames darf der naechste Lesedurchgang noch einreihen.
+    pub fn room_frames(&self) -> u64 {
+        self.queue_limit_frames.saturating_sub(self.queued_frames)
+    }
+
+    /// Frames, die gerade auf Verarbeitung warten.
+    pub fn queued_frames(&self) -> u64 {
+        self.queued_frames
+    }
+
+    /// Das Maximum von [`Self::queued_frames`] seit dem Start (fuer Log und Test der Grenze).
+    pub fn peak_queued_frames(&self) -> u64 {
+        self.peak_queued_frames
+    }
+
+    /// Wartet der erste Rückstau noch auf sein Ende (`end_of_read`)? Dann gibt `pump` nichts aus.
+    pub fn first_open(&self) -> bool {
+        self.first_open
+    }
+
     /// Reiht einen Lesedurchgang des Geräts ein (nur einreihen, kein Ausgeben: `pump` arbeitet).
-    /// `read_end` ist die Wanduhr seit dem Stream-Start NACH dem Lesen des Durchgangs; vor dem
-    /// ersten Paket bestimmt sie zusammen mit der Summe der Frames die Anfangsstille.
-    pub fn on_burst(&mut self, packets: &[DevicePacket<'_>], read_end: std::time::Duration) {
-        if self.first {
-            let burst_frames: u64 = packets
-                .iter()
-                .map(|p| (p.interleaved.len() / self.channels) as u64)
-                .sum();
-            self.first_gap = Some(self.initial_gap(read_end, burst_frames));
-        }
+    /// Die Anfangsstille entscheidet erst `end_of_read`, wenn der erste Rückstau ganz da ist.
+    pub fn on_burst(&mut self, packets: &[DevicePacket<'_>]) {
         for packet in packets {
             self.enqueue(packet);
+        }
+    }
+
+    /// Das Ende eines Lesedurchgangs: `drained` = das Gerät hatte nichts mehr bereit, `read_end`
+    /// die Wanduhr seit dem Stream-Start jetzt. Schliesst den ersten Rückstau und setzt dessen
+    /// Anfangsstille VOR das erste Paket (nur wenn er ganz da ist; sonst keine erfundene Stille).
+    /// Ohne Pakete im Rückstau (das Gerät schweigt noch) bleibt er offen.
+    pub fn end_of_read(&mut self, drained: bool, read_end: std::time::Duration) {
+        if !self.first_open {
+            return;
+        }
+        self.first_open = false;
+        if !drained {
+            return;
+        }
+        let gap = self.initial_gap(read_end, self.first_frames);
+        let gap = self.cap_gap(gap);
+        if gap == 0 {
+            return;
+        }
+        if let Some(job) = self.queue.front_mut() {
+            job.pad_total += gap;
+            job.pad_left += gap;
         }
     }
 
@@ -341,8 +421,24 @@ impl LoopbackFeeder {
         packet: DevicePacket<'_>,
         sink: &mut impl FnMut(&[i16], Option<u64>),
     ) {
-        self.on_burst(&[packet], packet.since_start);
+        self.on_burst(&[packet]);
+        self.end_of_read(true, packet.since_start);
         self.pump(u64::MAX, sink);
+    }
+
+    /// Begrenzt EINE Luecke auf `max_gap`; der Rest wird gezaehlt, nicht geschrieben.
+    fn cap_gap(&mut self, pad_frames: u64) -> u64 {
+        let cap = self.frames_of(self.max_gap);
+        if pad_frames <= cap {
+            return pad_frames;
+        }
+        self.capped_gaps += 1;
+        self.skipped_frames = self.skipped_frames.saturating_add(pad_frames - cap);
+        log::warn!(
+            "loopback: gap of {pad_frames} frames capped at {cap} ({} frames not padded)",
+            pad_frames - cap
+        );
+        cap
     }
 
     /// Entscheidet für EIN Paket, was davor an Stille steht, und reiht es mit seinem Stempel ein.
@@ -351,6 +447,7 @@ impl LoopbackFeeder {
         if frames == 0 {
             return;
         }
+        let first = !self.started;
         let since_last = packet.since_start.saturating_sub(self.last_since_start);
         self.last_since_start = packet.since_start;
         // #15: die Grenze folgt der Wanduhr seit dem letzten Paket.
@@ -383,23 +480,25 @@ impl LoopbackFeeder {
                 );
             }
         }
-        let (clock_pad, stamp) = self.clock_pad(packet, frames, max_pad);
-        let mut pad_frames = position_pad.max(clock_pad);
-        // Obergrenze EINER Luecke (Platte, Arbeit): der Rest wird gezaehlt, nicht geschrieben.
-        let cap = self.frames_of(self.max_gap);
-        if pad_frames > cap {
-            self.capped_gaps += 1;
-            self.skipped_frames = self.skipped_frames.saturating_add(pad_frames - cap);
-            log::warn!(
-                "loopback: gap of {pad_frames} frames capped at {cap} ({} frames not padded)",
-                pad_frames - cap
-            );
-            pad_frames = cap;
+        let (clock_pad, stamp) = self.clock_pad(packet, frames, max_pad, first);
+        let pad_frames = self.cap_gap(position_pad.max(clock_pad));
+        if first {
+            self.started = true;
+            self.first_open = true;
+            self.first_frames = 0;
         }
-        self.first = false;
+        if self.first_open {
+            self.first_frames = self
+                .first_frames
+                .saturating_add(frames)
+                .saturating_add(pad_frames);
+        }
         self.advance_axis(stamp, frames, pad_frames);
+        self.queued_frames += frames;
+        self.peak_queued_frames = self.peak_queued_frames.max(self.queued_frames);
         self.queue.push_back(Job {
             mono: downmix_to_mono(packet.interleaved, self.channels),
+            offset: 0,
             qpc: stamp,
             pad_total: pad_frames,
             pad_left: pad_frames,
@@ -414,16 +513,13 @@ impl LoopbackFeeder {
         packet: &DevicePacket<'_>,
         frames: u64,
         max_pad: u64,
+        first: bool,
     ) -> (u64, Option<u64>) {
         let stamp = packet.qpc.filter(|q| *q > 0);
-        if self.first {
-            // Ankunftslatenz: die Anfangsstille kommt aus dem Lesedurchgang, nicht aus dem
+        if first {
+            // Die Anfangsstille kommt aus dem ersten Rückstau (`end_of_read`), nicht aus dem
             // Stempel (davor gibt es keine Zeitachse, an der er sich messen liesse).
-            let pad = self
-                .first_gap
-                .take()
-                .unwrap_or_else(|| self.initial_gap(packet.since_start, frames));
-            return (pad, stamp);
+            return (0, stamp);
         }
         let (Some(q), Some(axis)) = (stamp, self.axis) else {
             return (0, stamp);
@@ -450,7 +546,7 @@ impl LoopbackFeeder {
             return (0, None);
         }
         self.bad_stamp_frames = 0;
-        let min = self.min_gap_frames() as i128;
+        let min = self.frames_of(STAMP_GAP_MIN) as i128;
         if gap_frames >= min {
             (gap_frames as u64, stamp)
         } else {
@@ -481,13 +577,19 @@ impl LoopbackFeeder {
         });
     }
 
-    /// Arbeitet die Schlange ab, hoechstens `budget` Frames (Gerätetakt) Stille und Daten, und
-    /// meldet, ob noch Arbeit bleibt. Aufrufer mit Stop-Flag rufen es in Schritten
-    /// ([`PUMP_STEP_FRAMES`]) und lesen dazwischen das Gerät (`run_cycle`).
+    /// Arbeitet die Schlange ab, hoechstens `budget` Frames (Gerätetakt) Stille und Daten, auch
+    /// von EINEM grossen Paket (der Rest bleibt in der Schlange), und meldet, ob noch Arbeit
+    /// bleibt. Solange der erste Rückstau offen ist (`first_open`), gibt es nichts aus. Aufrufer
+    /// mit Stop-Flag rufen es in Schritten ([`PUMP_STEP_FRAMES`]) und lesen dazwischen das Gerät
+    /// (`run_cycle`).
     pub fn pump(&mut self, budget: u64, sink: &mut impl FnMut(&[i16], Option<u64>)) -> bool {
+        if self.first_open {
+            return !self.queue.is_empty();
+        }
         let mut left = budget;
         let Self {
             queue,
+            queued_frames,
             stamper,
             resampler,
             silence,
@@ -522,15 +624,19 @@ impl LoopbackFeeder {
                 left -= take as u64;
                 continue;
             }
-            let Some(job) = queue.pop_front() else {
-                break;
-            };
-            stamper.advance_input(job.mono.len() as u64);
-            resampler.push(&job.mono, |frame| {
+            let rest = job.mono.len() - job.offset;
+            let take = (rest as u64).min(left) as usize;
+            stamper.advance_input(take as u64);
+            resampler.push(&job.mono[job.offset..job.offset + take], |frame| {
                 let stamp = stamper.next_block(frame.len());
                 sink(&f32_to_i16(frame), stamp)
             });
-            left = left.saturating_sub(job.mono.len() as u64);
+            job.offset += take;
+            *queued_frames = queued_frames.saturating_sub(take as u64);
+            left -= take as u64;
+            if job.offset >= job.mono.len() {
+                queue.pop_front();
+            }
         }
         !queue.is_empty()
     }
@@ -540,10 +646,20 @@ impl LoopbackFeeder {
         !self.queue.is_empty()
     }
 
-    /// Ende des Streams: die Daten in der Schlange gehen noch hinaus (Audio geht nie
-    /// verloren), eine angefangene Stille nicht mehr (sie wird gezaehlt, der Stempler
-    /// setzt seinen Anker auf den Stempel des Pakets zurueck), dann der Rest im Resampler.
-    pub fn finish(&mut self, sink: &mut impl FnMut(&[i16], Option<u64>)) {
+    /// So viel Arbeit (Frames) darf der Abschluss hoechstens leisten: die Schlange ist nie
+    /// groesser als ihre Grenze plus ein Paket, also verliert er im Normalfall nichts.
+    pub fn finish_budget(&self) -> u64 {
+        self.queue_limit_frames.saturating_mul(2)
+    }
+
+    /// Ende des Streams, mit Budget: die Daten in der Schlange gehen noch hinaus (Audio geht nie
+    /// verloren), hoechstens `budget` Frames; was darueber bleibt, wird GEZAEHLT und gemeldet
+    /// (Rueckgabe, `lost_at_stop`), nie verschluckt. Eine angefangene Stille geht nicht mehr
+    /// hinaus (gezaehlt; der Stempler setzt seinen Anker auf den Stempel des Pakets zurueck), und
+    /// ein noch offener erster Rueckstau bekommt keine erfundene Anfangsstille. Danach der Rest
+    /// im Resampler.
+    pub fn finish(&mut self, budget: u64, sink: &mut impl FnMut(&[i16], Option<u64>)) -> u64 {
+        self.first_open = false;
         let mut dropped = 0u64;
         for job in self.queue.iter_mut() {
             if job.pad_left > 0 {
@@ -557,7 +673,14 @@ impl LoopbackFeeder {
             self.skipped_frames = self.skipped_frames.saturating_add(dropped);
             log::warn!("loopback: stopped inside a gap, {dropped} frames of silence not written");
         }
-        self.pump(u64::MAX, sink);
+        self.pump(budget, sink);
+        let lost = self.queued_frames;
+        if lost > 0 {
+            self.queue.clear();
+            self.queued_frames = 0;
+            self.lost_at_stop_frames = self.lost_at_stop_frames.saturating_add(lost);
+            log::warn!("loopback: stop budget exhausted, {lost} frames of audio not written");
+        }
         let Self {
             resampler, stamper, ..
         } = self;
@@ -565,6 +688,7 @@ impl LoopbackFeeder {
             let stamp = stamper.next_block(frame.len());
             sink(&f32_to_i16(frame), stamp)
         });
+        lost
     }
 
     /// Für das Log am Ende: (gepolsterte Frames, verworfene Pakete, gekürzte Lücken,
@@ -580,17 +704,36 @@ impl LoopbackFeeder {
         )
     }
 
+    /// Audio-Frames, die der Abschluss wegen seines Budgets nicht mehr schreiben konnte.
+    pub fn lost_at_stop(&self) -> u64 {
+        self.lost_at_stop_frames
+    }
+
     /// Wie oft ein Stempel als unplausibel ignoriert wurde.
     pub fn bad_stamps(&self) -> u64 {
         self.bad_stamps
     }
 }
 
-/// Ein Durchgang des Capture-Threads (lva#538): alles lesen, was das Gerät bereit hat, dann die
-/// Schlange des Feeders in begrenzten Schritten abarbeiten ([`PUMP_STEP_FRAMES`]) und DAZWISCHEN
-/// das Gerät erneut lesen: ein Gerät, das waehrend einer langen Stille weiterliefert, laeuft
-/// nicht ueber (kein Paket geht verloren), und das Stop-Flag wirkt nach jedem Schritt, nicht erst
-/// nach Stunden Nullen. Endet, wenn die Schlange leer ist oder `stop` gesetzt wurde.
+/// Wie ein Lesedurchgang endete.
+#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReadEnd {
+    /// Das Gerät hatte nichts mehr bereit.
+    Drained,
+    /// `MAX_PACKETS_PER_READ` erreicht: es kann mehr bereitstehen.
+    Cap,
+    /// Die Schlange ist voll: erst abarbeiten.
+    Full,
+}
+
+/// Ein Durchgang des Capture-Threads (lva#538): lesen, was das Gerät bereit hat (solange die
+/// Schlange Platz hat), den ersten Rückstau GANZ einlesen, dann die Schlange des Feeders in
+/// begrenzten Schritten abarbeiten ([`PUMP_STEP_FRAMES`]) und DAZWISCHEN das Gerät erneut lesen:
+/// ein Gerät, das während einer langen Stille weiterliefert, läuft nicht über (kein Paket geht
+/// verloren), die Schlange wächst nie über ihre Grenze, und das Stop-Flag wirkt nach jedem
+/// Schritt, nicht erst nach Stunden Nullen. Endet, wenn die Schlange leer ist oder `stop`
+/// gesetzt wurde. Ein Lesefehler kommt NACH dem Einreihen dessen, was schon gelesen war.
 #[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
 pub fn run_cycle(
     source: &mut impl PacketSource,
@@ -599,38 +742,94 @@ pub fn run_cycle(
     now: &dyn Fn() -> std::time::Duration,
     sink: &mut impl FnMut(&[i16], Option<u64>),
 ) -> anyhow::Result<()> {
-    read_ready(source, feeder, now)?;
+    let mut end = read_ready(source, feeder)?;
+    // Der erste Rückstau wird ganz eingelesen (die Anfangsstille hängt an seiner Gesamtgrösse);
+    // begrenzt durch die Schlangengrenze, auch bei einem Gerät, das nie leer wird.
+    while feeder.first_open() && end == ReadEnd::Cap {
+        end = read_ready(source, feeder)?;
+    }
+    feeder.end_of_read(end == ReadEnd::Drained, now());
     while feeder.has_work() && !stop.load(std::sync::atomic::Ordering::Relaxed) {
         feeder.pump(PUMP_STEP_FRAMES, sink);
-        read_ready(source, feeder, now)?;
+        let end = read_ready(source, feeder)?;
+        feeder.end_of_read(end == ReadEnd::Drained, now());
     }
     Ok(())
 }
 
-/// Liest, was bereitsteht, als einen Durchgang (`on_burst`).
+/// Die Sitzung des Capture-Threads: Durchgänge, bis `stop` gesetzt ist oder das Gerät einen Fehler
+/// meldet; `wait` wartet zwischen den Durchgängen auf das nächste Ereignis. Der Abschluss
+/// (`finish`) läuft IMMER, auch nach einem Fehler: was das Gerät schon geliefert hat und in der
+/// Schlange wartet, geht noch hinaus, erst dann kommt der Fehler zurück. Der Abschluss hat ein
+/// Budget (`finish_budget`), der Stopp wartet also nie auf unbegrenzte Arbeit.
+#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
+pub fn capture_session(
+    source: &mut impl PacketSource,
+    feeder: &mut LoopbackFeeder,
+    stop: &std::sync::atomic::AtomicBool,
+    now: &dyn Fn() -> std::time::Duration,
+    wait: &mut dyn FnMut(),
+    sink: &mut impl FnMut(&[i16], Option<u64>),
+) -> anyhow::Result<()> {
+    let mut result = Ok(());
+    while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+        if let Err(e) = run_cycle(source, feeder, stop, now, sink) {
+            result = Err(e);
+            break;
+        }
+        wait();
+    }
+    let budget = feeder.finish_budget();
+    feeder.finish(budget, sink);
+    result
+}
+
+/// Liest, was bereitsteht, als einen Durchgang: solange die Schlange Platz hat, höchstens
+/// `MAX_PACKETS_PER_READ` Pakete. Ein Lesefehler beendet den Durchgang, aber erst nachdem die
+/// schon gelesenen Pakete eingereiht sind (sie sind echtes Audio).
+#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
 fn read_ready(
     source: &mut impl PacketSource,
     feeder: &mut LoopbackFeeder,
-    now: &dyn Fn() -> std::time::Duration,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<ReadEnd> {
+    let channels = feeder.channels;
+    let mut room = feeder.room_frames();
     let mut burst: Vec<OwnedPacket> = Vec::new();
+    let mut end = ReadEnd::Cap;
+    let mut failure: Option<anyhow::Error> = None;
     while burst.len() < MAX_PACKETS_PER_READ {
-        match source.next_packet()? {
-            Some(packet) => burst.push(packet),
-            None => break,
+        if room == 0 {
+            end = ReadEnd::Full;
+            break;
+        }
+        match source.next_packet() {
+            Ok(Some(packet)) => {
+                room = room.saturating_sub((packet.interleaved.len() / channels) as u64);
+                burst.push(packet);
+            }
+            Ok(None) => {
+                end = ReadEnd::Drained;
+                break;
+            }
+            Err(e) => {
+                failure = Some(e);
+                break;
+            }
         }
     }
-    if burst.is_empty() {
-        return Ok(());
+    if !burst.is_empty() {
+        let refs: Vec<DevicePacket<'_>> = burst.iter().map(OwnedPacket::as_packet).collect();
+        feeder.on_burst(&refs);
     }
-    let refs: Vec<DevicePacket<'_>> = burst.iter().map(OwnedPacket::as_packet).collect();
-    feeder.on_burst(&refs, now());
-    Ok(())
+    match failure {
+        Some(e) => Err(e),
+        None => Ok(end),
+    }
 }
 
 #[cfg(target_os = "windows")]
 mod windows_impl {
-    use super::{run_cycle, LoopbackFeeder, OwnedPacket};
+    use super::{capture_session, LoopbackFeeder, OwnedPacket};
     use anyhow::{anyhow, Result};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc;
@@ -806,27 +1005,31 @@ mod windows_impl {
             }))
         };
 
-        while !stop.load(Ordering::Relaxed) {
-            // lva#538: alles lesen, die Schlange des Feeders in begrenzten Schritten abarbeiten
-            // (Stop-Flag und Geraet dazwischen), dann aufs naechste Event warten.
-            run_cycle(
-                &mut read_packet,
-                &mut feeder,
-                &stop,
-                &|| started_at.elapsed(),
-                &mut on_samples,
-            )?;
-
-            // Timeout ist normal (kein Ton) — dann nur das Stop-Flag prüfen.
+        // lva#538: Durchgaenge (alles lesen, die Schlange des Feeders in begrenzten Schritten
+        // abarbeiten, Stop-Flag und Geraet dazwischen), dann aufs naechste Event warten. Der
+        // Abschluss laeuft IMMER, auch nach einem Geraetefehler: was schon gelesen wurde, wird
+        // noch geschrieben, erst dann geht der Fehler zurueck.
+        // Timeout ist normal (kein Ton) - dann nur das Stop-Flag pruefen.
+        let mut wait = || {
             let _ = h_event.wait_for_event(EVENT_TIMEOUT_MS);
-        }
-
-        feeder.finish(&mut on_samples);
-        audio_client.stop_stream()?;
+        };
+        let result = capture_session(
+            &mut read_packet,
+            &mut feeder,
+            &stop,
+            &|| started_at.elapsed(),
+            &mut wait,
+            &mut on_samples,
+        );
+        let stopped = audio_client.stop_stream();
         let (padded_frames, dropped_buffers, capped_gaps, skipped_frames) = feeder.summary();
         log::info!(
-            "loopback capture stopped (padded {padded_frames} silence frames, dropped {dropped_buffers} buffers, capped {capped_gaps} implausible gaps = {skipped_frames} frames not padded)"
+            "loopback capture stopped (padded {padded_frames} silence frames, dropped {dropped_buffers} buffers, capped {capped_gaps} implausible gaps = {skipped_frames} frames not padded, {} audio frames lost at stop, queue peak {} frames)",
+            feeder.lost_at_stop(),
+            feeder.peak_queued_frames()
         );
+        result?;
+        stopped?;
         Ok(())
     }
 }
@@ -994,7 +1197,8 @@ mod tests {
                     &mut sink,
                 );
             }
-            feeder.finish(&mut sink);
+            let budget = feeder.finish_budget();
+            feeder.finish(budget, &mut sink);
         }
         (out, stamps)
     }
@@ -1201,37 +1405,84 @@ mod tests {
         pkts
     }
 
-    /// Gegenbeispiel 1: 100 Pausen zu je 200 ms (jede unter `QUIET_GAP_MIN`). Vorher ging jede
-    /// einzeln verloren, die Zeitachse war um 20 s zu kurz; jetzt bleibt der Rest stehen und
-    /// zaehlt bei der naechsten Pause mit (Fehler hoechstens eine Schwelle).
+    /// Gegenbeispiel 1 (Runde 3): 100 Pausen zu je 200 ms. Jede bleibt AN IHRER STELLE: der
+    /// k-te Ton beginnt bei k x 300 ms, nicht nur die Gesamtlaenge stimmt (vorher blieb jede
+    /// Pause unter 250 ms als Rest stehen und wurde erst hinter bereits ausgegebenem Ton
+    /// eingeschoben).
     #[test]
     fn repeated_short_pauses_keep_the_time_axis() {
         let (out, _) = feed(16_000, 1, &paused_stream(100, 10, 200));
         // 100 x 100 ms Ton + 99 x 200 ms Pause = 29,8 s.
         let expected = 29_800 * 16;
-        let missing = expected as i64 - out.len() as i64;
         assert!(
-            (0..=(QUIET_GAP_MIN.as_millis() as i64 * 16 + 480)).contains(&missing),
-            "{} Samples statt ~{expected} (fehlen {missing}); vorher fehlten 20 s",
+            out.len().abs_diff(expected) <= 480,
+            "{} Samples statt ~{expected}",
             out.len()
         );
-        // Alle Toene sind da; die Stille liegt nach jeder zweiten Pause (der Rest einer Pause
-        // unter der Schwelle wird mit der naechsten aufgefuellt), nicht nach jeder.
         let loud_samples = out.iter().filter(|x| x.unsigned_abs() > 8_000).count();
         assert_eq!(loud_samples, 100 * 1_600, "alle Toene sind da");
+        let on = onsets(&out);
+        assert_eq!(on.len(), 100, "jeder Ton hat seinen Anfang");
+        for (k, onset) in on.iter().enumerate() {
+            let want = k * 300 * 16;
+            assert!(
+                onset.abs_diff(want) <= 160,
+                "Ton {k} beginnt bei {onset} statt {want}"
+            );
+        }
+    }
+
+    /// Gegenbeispiel 1b: zwei 100-ms-Toene, dazwischen EINE bestaetigte Pause von 200 ms: der
+    /// zweite Ton beginnt bei 300 ms (4 800 Samples), nicht bei 100 ms.
+    #[test]
+    fn a_single_200_ms_pause_keeps_its_position() {
+        let (out, _) = feed(16_000, 1, &paused_stream(2, 10, 200));
+        let on = onsets(&out);
+        assert_eq!(on.len(), 2, "{on:?}");
+        assert!(on[0] <= 160, "{on:?}");
+        assert!(on[1].abs_diff(4_800) <= 160, "zweiter Ton bei {}", on[1]);
+        assert!(out.len().abs_diff(6_400) <= 480, "{} Samples", out.len());
+    }
+
+    /// Ein Stempel, der gleichmaessig 4 ms neben der Zeitachse liegt (unter `STAMP_GAP_MIN`),
+    /// fuellt nichts auf: kein Rauschen der Stempel wird zu Stille.
+    #[test]
+    fn a_small_constant_stamp_offset_is_not_padded() {
+        let mut pkts = run_of(100, 0, 0, Some(Q0));
+        pkts.extend(run_of(
+            100,
+            1_000,
+            100 * 160,
+            Some(Q0 + 100 * 100_000 + 40_000),
+        ));
+        let (out, _) = feed(16_000, 1, &pkts);
         assert!(
-            onsets(&out).len() >= 40,
-            "die Pausen sind nicht alle verloren"
+            out.len().abs_diff(200 * 160) <= 480,
+            "{} Samples",
+            out.len()
         );
     }
 
-    /// Eine einzelne kurze Pause (unter der Schwelle) bleibt Rest und wird nicht geraten.
+    /// Takt-Drift zwischen Geraet und QPC: der Stempel laeuft je Paket 1 ms voraus. Der Rest
+    /// sammelt sich unter der Schwelle und wird in Schritten zurueckgezahlt, die Zeitachse
+    /// driftet nicht weg (Fehler hoechstens eine Schwelle).
     #[test]
-    fn a_single_short_pause_is_not_padded() {
-        let (out, _) = feed(16_000, 1, &paused_stream(2, 10, 200));
+    fn a_drift_between_stamps_and_samples_is_paid_back_in_small_steps() {
+        let pkts: Vec<Pkt> = (0..100u64)
+            .map(|k| Pkt {
+                wall_ms: 11 * k,
+                frames: 160,
+                pos: 160 * k,
+                qpc: Some(Q0 + 110_000 * k),
+                level: 0.5,
+            })
+            .collect();
+        let (out, _) = feed(16_000, 1, &pkts);
+        // 100 x 10 ms Ton + 99 x 1 ms Drift = 1 099 ms.
+        let expected = 1_099 * 16;
         assert!(
-            out.len().abs_diff(2 * 1_600) <= 480,
-            "{} Samples",
+            out.len().abs_diff(expected) <= (STAMP_GAP_MIN.as_millis() as usize * 16) + 480,
+            "{} Samples statt ~{expected}",
             out.len()
         );
     }
@@ -1316,9 +1567,14 @@ mod tests {
             .collect();
         let mut out: Vec<i16> = Vec::new();
         let mut sink = |block: &[i16], _: Option<u64>| out.extend_from_slice(block);
-        feeder.on_burst(&packets, std::time::Duration::from_millis(600));
+        feeder.on_burst(&packets);
+        // Solange der Rueckstau nicht ganz da ist, gibt der Feeder nichts aus.
+        assert!(feeder.pump(u64::MAX, &mut sink));
+        assert!(feeder.first_open());
+        feeder.end_of_read(true, std::time::Duration::from_millis(600));
         feeder.pump(u64::MAX, &mut sink);
-        feeder.finish(&mut sink);
+        let budget = feeder.finish_budget();
+        feeder.finish(budget, &mut sink);
         let on = onsets(&out);
         assert_eq!(on.len(), 1, "{on:?}");
         // 600 ms - 50 ms = 550 ms = 8 800 Samples Stille.
@@ -1331,19 +1587,59 @@ mod tests {
         assert!(out.len().abs_diff(9_600) <= 480, "{} Samples", out.len());
     }
 
+    /// Gegenbeispiel 3b (Runde 3): 300 gepufferte 10-ms-Pakete (3 s), der Thread liest zum ersten
+    /// Mal nach 3 s. Ein Lesedurchgang holt hoechstens 256 Pakete; der Rest des Rueckstaus
+    /// gehoert zum selben ersten Rueckstau. Es entsteht KEINE Anfangsstille (vorher ~440 ms).
+    #[test]
+    fn a_first_backlog_beyond_one_read_invents_no_silence() {
+        let wall = std::time::Duration::from_secs(3);
+        let mut source = ScriptedSource {
+            packets: (0..300u64)
+                .map(|k| (0usize, owned(wall, 160 * k, Q0 + 100_000 * k, 0.5)))
+                .collect(),
+            polls: 0,
+            fail_at: None,
+        };
+        let mut feeder = LoopbackFeeder::new(16_000, 1);
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        let mut out: Vec<i16> = Vec::new();
+        run_cycle(
+            &mut source,
+            &mut feeder,
+            &stop,
+            &|| wall,
+            &mut |b: &[i16], _: Option<u64>| out.extend_from_slice(b),
+        )
+        .unwrap();
+        let budget = feeder.finish_budget();
+        feeder.finish(budget, &mut |b: &[i16], _: Option<u64>| {
+            out.extend_from_slice(b)
+        });
+        let on = onsets(&out);
+        assert_eq!(on.len(), 1, "{on:?}");
+        assert!(on[0] <= 160, "erfundene Anfangsstille: Ton bei {}", on[0]);
+        assert!(out.len().abs_diff(48_000) <= 480, "{} Samples", out.len());
+        assert_eq!(feeder.summary().0, 0, "nichts aufgefuellt");
+    }
+
     // ---- lva#538 Befund 9: grosse Luecken sind begrenzt, unterbrechbar, ohne Paketverlust ----
 
     /// Eine Nachbildung des Geraets: gibt die Pakete der Reihe nach heraus, jedes erst, wenn
     /// der Feeder schon `release_after` Mal abgefragt wurde (so "trifft" ein Paket ein, WAEHREND
-    /// der Feeder eine lange Stille abarbeitet).
+    /// der Feeder eine lange Stille abarbeitet). Ab der `fail_at`-ten Abfrage meldet es einen
+    /// Geraetefehler (Endpoint entfernt).
     struct ScriptedSource {
         packets: std::collections::VecDeque<(usize, OwnedPacket)>,
         polls: usize,
+        fail_at: Option<usize>,
     }
 
     impl PacketSource for ScriptedSource {
         fn next_packet(&mut self) -> anyhow::Result<Option<OwnedPacket>> {
             self.polls += 1;
+            if self.fail_at.is_some_and(|at| self.polls >= at) {
+                return Err(anyhow::anyhow!("endpoint removed"));
+            }
             if let Some((after, _)) = self.packets.front() {
                 if self.polls > *after {
                     return Ok(self.packets.pop_front().map(|(_, p)| p));
@@ -1360,6 +1656,10 @@ mod tests {
             qpc: Some(qpc),
             since_start: wall,
         }
+    }
+
+    fn loud(samples: &[i16]) -> usize {
+        samples.iter().filter(|x| x.unsigned_abs() > 8_000).count()
     }
 
     /// Das erste Audio kommt nach 1,5 Stunden. Der Capture-Thread schreibt nicht Stunden
@@ -1386,6 +1686,7 @@ mod tests {
                 ),
             ]),
             polls: 0,
+            fail_at: None,
         };
         let mut feeder = LoopbackFeeder::new(16_000, 1);
         let stop = AtomicBool::new(false);
@@ -1398,12 +1699,7 @@ mod tests {
                     stop.store(true, Ordering::Relaxed);
                 }
             };
-            let started = std::time::Instant::now();
             run_cycle(&mut source, &mut feeder, &stop, &|| wall, &mut sink).unwrap();
-            assert!(
-                started.elapsed() < std::time::Duration::from_secs(5),
-                "der Durchgang haengt an der Stille"
-            );
         }
         assert!(stop.load(Ordering::Relaxed));
         assert!(
@@ -1422,7 +1718,8 @@ mod tests {
         // Stopp: das Paket, das waehrend der Stille eintraf, geht noch hinaus, die Stille nicht.
         let mut tail: Vec<i16> = Vec::new();
         let mut sink = |block: &[i16], _: Option<u64>| tail.extend_from_slice(block);
-        feeder.finish(&mut sink);
+        let budget = feeder.finish_budget();
+        assert_eq!(feeder.finish(budget, &mut sink), 0, "nichts verloren");
         assert!(!feeder.has_work());
         assert!(
             tail.iter().any(|&x| x.unsigned_abs() > 8_000),
@@ -1463,10 +1760,13 @@ mod tests {
         );
     }
 
-    /// Ein Gerät, das nie leer wird, haelt `run_cycle` nicht ewig im Lesen: ein Durchgang
-    /// holt hoechstens `MAX_PACKETS_PER_READ` Pakete.
+    // ---- lva#538 Runde 3, Befund D: durchgehende Arbeits- und Speichergrenze ----
+
+    /// Ein Gerät, das nie leer wird: die Schlange bleibt unter ihrer Grenze (plus ein Paket),
+    /// egal wie viele volle Lesedurchgaenge kommen, und die Arbeit geht voran. Das Stop-Flag
+    /// beendet den Durchgang nach wenigen Schritten.
     #[test]
-    fn a_device_that_never_runs_dry_does_not_hold_the_cycle_in_reading() {
+    fn repeated_full_bursts_respect_the_queue_limit() {
         struct Endless(u64);
         impl PacketSource for Endless {
             fn next_packet(&mut self) -> anyhow::Result<Option<OwnedPacket>> {
@@ -1480,21 +1780,204 @@ mod tests {
                 )))
             }
         }
+        let limit = 16_000u64;
         let mut source = Endless(0);
-        let mut feeder = LoopbackFeeder::new(16_000, 1);
-        let stop = std::sync::atomic::AtomicBool::new(true);
+        let mut feeder = LoopbackFeeder::new(16_000, 1).with_queue_limit(limit);
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        let mut written = 0usize;
         run_cycle(
             &mut source,
             &mut feeder,
             &stop,
             &|| std::time::Duration::from_secs(1),
-            &mut |_: &[i16], _: Option<u64>| {},
+            &mut |b: &[i16], _: Option<u64>| {
+                written += b.len();
+                if written >= 10 * limit as usize {
+                    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            },
         )
         .unwrap();
         assert!(
-            source.0 <= MAX_PACKETS_PER_READ as u64 + 1,
-            "{} Pakete gelesen",
+            feeder.peak_queued_frames() <= limit + 160,
+            "Schlange bis {} Frames (Grenze {limit})",
+            feeder.peak_queued_frames()
+        );
+        assert!(written >= 10 * limit as usize, "die Arbeit ging voran");
+        // Es wurde nur gelesen, was die Schlange fasste (plus die Pakete, die waehrend der
+        // Schritte Platz machten), nie "256 Pakete je Schritt" ohne Rueckblick.
+        assert!(
+            source.0 <= (written as u64 / 160) + limit / 160 + 2,
+            "{} Pakete gelesen, {written} Samples ausgegeben",
             source.0
         );
+    }
+
+    /// Ein grosses Datenpaket (1 s) frisst nie mehr als das Budget eines Schritts; der Rest
+    /// bleibt in der Schlange, nichts geht verloren.
+    #[test]
+    fn a_big_packet_is_worked_in_parts_within_the_budget() {
+        let mut feeder = LoopbackFeeder::new(16_000, 1);
+        let data = vec![0.5f32; 16_000];
+        feeder.on_burst(&[DevicePacket {
+            interleaved: &data,
+            device_position: 0,
+            qpc: Some(Q0),
+            since_start: std::time::Duration::ZERO,
+        }]);
+        feeder.end_of_read(true, std::time::Duration::ZERO);
+        let out: std::cell::RefCell<Vec<i16>> = std::cell::RefCell::new(Vec::new());
+        let mut sink = |b: &[i16], _: Option<u64>| out.borrow_mut().extend_from_slice(b);
+        assert!(feeder.pump(100, &mut sink));
+        assert_eq!(
+            feeder.queued_frames(),
+            15_900,
+            "genau das Budget verbraucht"
+        );
+        assert!(
+            out.borrow().len() <= 100,
+            "{} Samples fuer 100 Frames Budget",
+            out.borrow().len()
+        );
+        assert!(feeder.pump(1_000, &mut sink));
+        assert_eq!(feeder.queued_frames(), 14_900);
+        assert!(out.borrow().len() <= 1_100);
+        while feeder.pump(PUMP_STEP_FRAMES, &mut sink) {}
+        let budget = feeder.finish_budget();
+        feeder.finish(budget, &mut sink);
+        assert_eq!(loud(&out.borrow()), 16_000, "kein Sample verloren");
+    }
+
+    /// Der Abschluss hat ein Budget: was darueber liegt, wird GEZAEHLT und gemeldet, nie
+    /// verschluckt. Mit `finish_budget()` geht eine volle Schlange ohne Verlust hinaus.
+    #[test]
+    fn the_stop_work_is_bounded_by_its_budget_and_counts_what_it_drops() {
+        let data = vec![0.5f32; 160];
+        let packets: Vec<DevicePacket<'_>> = (0..5u64)
+            .map(|k| DevicePacket {
+                interleaved: &data,
+                device_position: 160 * k,
+                qpc: Some(Q0 + 100_000 * k),
+                since_start: std::time::Duration::ZERO,
+            })
+            .collect();
+        // Mit knappem Budget: 800 Frames in der Schlange, 300 Budget.
+        let mut feeder = LoopbackFeeder::new(16_000, 1);
+        feeder.on_burst(&packets);
+        feeder.end_of_read(true, std::time::Duration::ZERO);
+        let mut out: Vec<i16> = Vec::new();
+        let lost = feeder.finish(300, &mut |b: &[i16], _: Option<u64>| {
+            out.extend_from_slice(b)
+        });
+        assert_eq!(lost, 500);
+        assert_eq!(feeder.lost_at_stop(), 500);
+        assert_eq!(loud(&out), 300, "genau das Budget geschrieben");
+        assert!(!feeder.has_work());
+        // Mit dem vorgesehenen Budget geht auch eine bis zur Grenze gefuellte Schlange hinaus.
+        let mut feeder = LoopbackFeeder::new(16_000, 1).with_queue_limit(1_600);
+        let mut source = ScriptedSource {
+            packets: (0..50u64)
+                .map(|k| {
+                    (
+                        0usize,
+                        owned(std::time::Duration::ZERO, 160 * k, Q0 + 100_000 * k, 0.5),
+                    )
+                })
+                .collect(),
+            polls: 0,
+            fail_at: None,
+        };
+        assert_eq!(read_ready(&mut source, &mut feeder).unwrap(), ReadEnd::Full);
+        let queued = feeder.queued_frames();
+        assert!((1_600..=1_760).contains(&queued), "{queued} Frames");
+        let mut out: Vec<i16> = Vec::new();
+        let budget = feeder.finish_budget();
+        let lost = feeder.finish(budget, &mut |b: &[i16], _: Option<u64>| {
+            out.extend_from_slice(b)
+        });
+        assert_eq!(lost, 0);
+        assert_eq!(loud(&out) as u64, queued, "nichts verloren");
+    }
+
+    // ---- lva#538 Runde 3, Befund E: ein Geraetefehler vernichtet nichts Gelesenes ----
+
+    /// Die Quelle liefert markiertes PCM und meldet dann einen Fehler. Der Fehler kommt zurueck,
+    /// aber alles, was vorher gelesen war, ist geschrieben.
+    #[test]
+    fn a_device_error_keeps_the_audio_that_was_already_read() {
+        let mut source = ScriptedSource {
+            packets: (0..5u64)
+                .map(|k| {
+                    (
+                        0usize,
+                        owned(
+                            std::time::Duration::from_millis(10 * k),
+                            160 * k,
+                            Q0 + 100_000 * k,
+                            0.5,
+                        ),
+                    )
+                })
+                .collect(),
+            polls: 0,
+            // 5 Pakete, dann der Fehler (beim Abfragen nach dem fuenften).
+            fail_at: Some(6),
+        };
+        let mut feeder = LoopbackFeeder::new(16_000, 1);
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        let mut out: Vec<i16> = Vec::new();
+        let result = capture_session(
+            &mut source,
+            &mut feeder,
+            &stop,
+            &|| std::time::Duration::from_millis(50),
+            &mut || {},
+            &mut |b: &[i16], _: Option<u64>| out.extend_from_slice(b),
+        );
+        assert!(result.is_err(), "der Fehler geht zurueck");
+        assert_eq!(loud(&out), 5 * 160, "alles Gelesene ist geschrieben");
+        assert!(!feeder.has_work());
+    }
+
+    /// Der Fehler kommt, WAEHREND eine lange Stille abgearbeitet wird: das Paket davor und das
+    /// danach (schon gelesen, in der Schlange) gehen trotzdem hinaus; die angefangene Stille
+    /// wird gezaehlt, nicht geschrieben.
+    #[test]
+    fn a_device_error_during_pending_padding_keeps_the_data_around_it() {
+        let wall = std::time::Duration::from_millis(10);
+        let mut source = ScriptedSource {
+            packets: std::collections::VecDeque::from(vec![
+                (0, owned(wall, 0, Q0, 0.5)),
+                // Das zweite kommt eine Minute spaeter (Stille davor), im zweiten Durchgang.
+                (
+                    2,
+                    owned(
+                        wall + std::time::Duration::from_secs(60),
+                        160,
+                        Q0 + 100_000 + 600_000_000,
+                        0.5,
+                    ),
+                ),
+            ]),
+            polls: 0,
+            // Fehler, sobald nach dem ersten Schritt der Stille gelesen wird.
+            fail_at: Some(5),
+        };
+        let mut feeder = LoopbackFeeder::new(16_000, 1);
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        let mut out: Vec<i16> = Vec::new();
+        let result = capture_session(
+            &mut source,
+            &mut feeder,
+            &stop,
+            &|| wall,
+            &mut || {},
+            &mut |b: &[i16], _: Option<u64>| out.extend_from_slice(b),
+        );
+        assert!(result.is_err());
+        assert_eq!(loud(&out), 2 * 160, "beide Pakete sind geschrieben");
+        let (padded, _, _, skipped) = feeder.summary();
+        assert!(padded > 0, "ein Teil der Stille lief noch");
+        assert!(skipped > 0, "der Rest der Stille ist gezaehlt");
     }
 }

@@ -13,6 +13,12 @@ use crate::managers::calendar::model::{
 };
 use crate::managers::transcription::WordTime;
 
+/// lva#538 (Runde 3): `metadata_json.capture_open` - die Aufnahme ist offen oder wurde nie sauber
+/// geschlossen. Gesetzt mit dem Start ([`MeetingStore::begin_capture`]), entfernt, wenn alle Writer
+/// zu sind ([`MeetingStore::end_capture`]). Solange er steht, ersetzt der Enddurchlauf das
+/// Live-Transkript nie aus dieser Aufnahme.
+pub const CAPTURE_OPEN_KEY: &str = "capture_open";
+
 use super::notes::model::{
     ActionItem, MeetingNotes, NoteBlock, TemplateInfo, TemplateSpec, SOURCE_AI, SOURCE_MANUAL,
     SOURCE_USER, STATUS_DONE, STATUS_TODO,
@@ -1960,6 +1966,85 @@ impl MeetingStore {
             return Err(anyhow!("Meeting {} not found", id));
         }
         Ok(())
+    }
+
+    /// lva#538 (Runde 3): der Start einer Aufnahme, PESSIMISTISCH. In EINER Transaktion kommen
+    /// die Audiopfade UND der Marker [`CAPTURE_OPEN_KEY`] (`metadata_json.capture_open`) in die
+    /// Zeile. Er faellt erst, wenn alle Writer sauber geschlossen sind ([`Self::end_capture`]).
+    /// Ein Absturz (oder ein Marker, der sich spaeter nicht mehr schreiben liesse) laesst ihn
+    /// stehen: das Audio gilt dann als unvollstaendig, und der Enddurchlauf ersetzt das
+    /// Live-Transkript nie aus ihm. Eine Zeile, die noch den Marker eines frueheren, nie
+    /// geschlossenen Laufs traegt, bekommt hier den dauerhaften `audio_incomplete` (die
+    /// Fortsetzung darf den Absturz nicht vergessen machen).
+    pub fn begin_capture(&self, id: &str, mic: Option<&str>, system: Option<&str>) -> Result<()> {
+        let mut conn = self.get_connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut meta =
+            metadata_object_tx(&tx, id).map_err(|e| match e.downcast_ref::<rusqlite::Error>() {
+                Some(rusqlite::Error::QueryReturnedNoRows) => {
+                    anyhow!("Meeting {} not found", id)
+                }
+                _ => e,
+            })?;
+        let now = Utc::now().timestamp();
+        if meta.contains_key(CAPTURE_OPEN_KEY)
+            && !meta.contains_key(super::final_pass::AUDIO_INCOMPLETE_KEY)
+        {
+            meta.insert(
+                super::final_pass::AUDIO_INCOMPLETE_KEY.to_string(),
+                serde_json::json!({
+                    "channels": [],
+                    "reason": "capture_not_closed",
+                    "at": now,
+                }),
+            );
+        }
+        meta.insert(
+            CAPTURE_OPEN_KEY.to_string(),
+            serde_json::json!({ "at": now }),
+        );
+        let updated = tx.execute(
+            "UPDATE meetings SET mic_audio_path = ?1, system_audio_path = ?2, duration_ms = NULL,
+                    metadata_json = ?3, updated_at = ?4
+             WHERE id = ?5 AND deleted_at IS NULL",
+            params![
+                mic,
+                system,
+                serde_json::Value::Object(meta).to_string(),
+                now,
+                id
+            ],
+        )?;
+        if updated == 0 {
+            return Err(anyhow!("Meeting {} not found", id));
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// lva#538 (Runde 3): alle Writer der Aufnahme sind sauber geschlossen, der Marker
+    /// [`CAPTURE_OPEN_KEY`] faellt. `Ok(true)`, wenn er stand und jetzt weg ist.
+    pub fn end_capture(&self, id: &str) -> Result<bool> {
+        let mut conn = self.get_connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut meta = match metadata_object_tx(&tx, id) {
+            Ok(meta) => meta,
+            Err(e)
+                if matches!(
+                    e.downcast_ref::<rusqlite::Error>(),
+                    Some(rusqlite::Error::QueryReturnedNoRows)
+                ) =>
+            {
+                return Ok(false)
+            }
+            Err(e) => return Err(e),
+        };
+        if meta.remove(CAPTURE_OPEN_KEY).is_none() {
+            return Ok(false);
+        }
+        write_metadata_object_tx(&tx, id, meta, Utc::now().timestamp())?;
+        tx.commit()?;
+        Ok(true)
     }
 
     /// M2-P2c2: setzt `key` im JSON-Objekt `meetings.metadata_json` und laesst

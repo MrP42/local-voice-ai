@@ -397,6 +397,10 @@ pub(crate) fn discard_failed_start(store: &MeetingStore, meeting_id: &str, dir: 
     if let Err(e) = store.set_audio_paths(meeting_id, None, None, None) {
         warn!("meetings: failed start of {meeting_id}: audio paths not cleared: {e}");
     }
+    // Es gibt kein Audio mehr, das der Marker schuetzen koennte.
+    if let Err(e) = store.end_capture(meeting_id) {
+        warn!("meetings: failed start of {meeting_id}: capture marker not cleared: {e}");
+    }
 }
 
 /// Entfernt, was ein Aufnahmestart im Ordner angelegt haben kann (`mic.wav`,
@@ -1007,14 +1011,17 @@ impl MeetingRecorderManager {
                 if let Ok(dir) = super::meetings_data_dir(&self.app) {
                     let _ = std::fs::remove_dir_all(dir.join(target));
                 }
+                self.emit_restored(target);
             }
             Ok(false) => {
                 warn!("meetings: Eintrag {target} nicht wiederherstellbar, wird `failed` (Audio bleibt)");
                 let _ = self.store.set_status(target, MeetingStatus::Failed);
+                self.emit_state(target, "failed", false);
             }
             Err(err) => {
                 warn!("meetings: Eintrag {target} nicht wiederhergestellt: {err}");
                 let _ = self.store.set_status(target, MeetingStatus::Failed);
+                self.emit_state(target, "failed", false);
             }
         }
     }
@@ -1085,15 +1092,19 @@ impl MeetingRecorderManager {
     /// (er belebt sie sonst als Absturzrest).
     fn undo_playback_start(&self, meeting_id: &str) {
         match self.store.rollback_playback_capture(meeting_id) {
-            Ok(true) => match super::meetings_data_dir(&self.app) {
-                Ok(base) => remove_capture_files(&base.join(meeting_id)),
-                Err(err) => {
-                    warn!("meetings: Mitschnitt gescheitert, Datenordner unbekannt ({err})")
+            Ok(true) => {
+                match super::meetings_data_dir(&self.app) {
+                    Ok(base) => remove_capture_files(&base.join(meeting_id)),
+                    Err(err) => {
+                        warn!("meetings: Mitschnitt gescheitert, Datenordner unbekannt ({err})")
+                    }
                 }
-            },
+                self.emit_restored(meeting_id);
+            }
             Ok(false) | Err(_) => {
                 warn!("meetings: Eintrag {meeting_id} nicht wiederhergestellt, wird `failed`");
                 let _ = self.store.set_status(meeting_id, MeetingStatus::Failed);
+                self.emit_state(meeting_id, "failed", false);
             }
         }
     }
@@ -1106,7 +1117,10 @@ impl MeetingRecorderManager {
     /// veroeffentlicht, ist der Abbruch ein Stopp genau dieser Aufnahme. Blockierend.
     pub fn cancel_start(&self, op: &str) -> Result<(), String> {
         match self.core.cancel_op(op) {
-            CancelOp::Remembered => Ok(()),
+            CancelOp::Remembered | CancelOp::Finished => Ok(()),
+            // Zu viele Abbrueche warten: dieser ist NICHT bestaetigt. Wie ein haengender Abbruch
+            // ein Fehler mit neuem Versuch, nie ein stiller Erfolg.
+            CancelOp::Refused => Err(START_BUSY.to_string()),
             CancelOp::Starting => {
                 if self
                     .core
@@ -1183,12 +1197,14 @@ impl MeetingRecorderManager {
         // lva#538: ein Fehler hier ist ein Fehler des Starts (nicht mehr "nur loggen"):
         // ohne Pfade repariert die Wiederherstellung nichts, und fuer eine inzwischen
         // geloeschte Zeile gibt es keine Aufnahme.
+        // lva#538 (Runde 3): die Pfade und der pessimistische Marker `capture_open` stehen in
+        // DERSELBEN Transaktion. Er faellt erst, wenn alle Writer sauber zu sind (`stop`); ein
+        // Absturz laesst ihn stehen, und das Audio gilt dann als unvollstaendig.
         self.store
-            .set_audio_paths(
+            .begin_capture(
                 &meeting_id,
                 session.mic_path.as_deref().and_then(|p| p.to_str()),
                 session.system_path.as_deref().and_then(|p| p.to_str()),
-                None,
             )
             .map_err(|e| audio_paths_error(&e))?;
 
@@ -1644,6 +1660,13 @@ impl MeetingRecorderManager {
         // Waechter versucht es weiter (Sperre in `final_pass`: Abdeckung der Spuren).
         let failed = write_flags.failed_channels();
         let plan = plan_after_write_failures(&self.store, &meeting_id, &failed, plan, MARKER_TRIES);
+        // lva#538 (Runde 3): nur eine sauber geschlossene Aufnahme ohne einen Schreibfehler laesst
+        // den pessimistischen Marker fallen. Bei einem Fehler bleibt er (zusaetzlich zu
+        // `audio_incomplete`); laesst er sich nicht entfernen, bleibt er ebenfalls: das ist die
+        // sichere Seite, der Enddurchlauf ersetzt dann nichts.
+        if failed.is_empty() {
+            close_capture_marker(&self.store, &meeting_id, MARKER_TRIES);
+        }
         if !failed.is_empty() && write_flags.first_report() {
             self.emit_error(&meeting_id, AUDIO_WRITE_FAILED);
         }
@@ -2006,6 +2029,26 @@ impl MeetingRecorderManager {
         .emit(&self.app);
     }
 
+    /// lva#538 (Runde 3): ein abgebrochener oder gescheiterter Start hat die Zeile zurueckgesetzt
+    /// (Eintrag wieder wie vorher, Saetze verworfen). Die Oberflaeche hat die Saetze, die die
+    /// Pipeline VOR dem Abbruch schon gemeldet hatte, als Ereignisse uebernommen: `Reset` leert
+    /// ihre Liste, der Zustand danach (aus der Zeile gelesen) laesst sie Segmente und Eintrag neu
+    /// laden. Ohne das blieben Phantomsaetze stehen und der erneute Mitschnitt verschwaende.
+    fn emit_restored(&self, meeting_id: &str) {
+        let status = self
+            .store
+            .get_meeting(meeting_id)
+            .ok()
+            .flatten()
+            .map(|m| m.status)
+            .unwrap_or_else(|| "ready".to_string());
+        let _ = (MeetingEvent::Reset {
+            meeting_id: meeting_id.to_string(),
+        })
+        .emit(&self.app);
+        self.emit_state(meeting_id, &status, false);
+    }
+
     // M1-P1c (Beruehrpunkt B2): Audioposition fuer den Notizblock.
     /// The running meeting's id and the microphone audio position in
     /// milliseconds, or `None` when nothing is being recorded. Same timeline
@@ -2301,13 +2344,29 @@ fn persist_audio_incomplete(
     false
 }
 
+/// lva#538 (Runde 3): laesst den Marker `capture_open` fallen, mit bis zu `tries` Versuchen.
+/// `true`, wenn er nicht (mehr) steht. Scheitert es, bleibt der Marker (fail-closed): das Audio
+/// gilt weiter als unvollstaendig und der Enddurchlauf ersetzt das Live-Transkript nicht.
+pub(crate) fn close_capture_marker(store: &MeetingStore, meeting_id: &str, tries: u32) -> bool {
+    for attempt in 0..tries.max(1) {
+        if attempt > 0 {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        match store.end_capture(meeting_id) {
+            Ok(_) => return true,
+            Err(e) => warn!("meetings: capture marker of {meeting_id} not cleared: {e}"),
+        }
+    }
+    false
+}
+
 /// lva#538, fail-closed: der Plan des Enddurchlaufs nach den Schreibfehlern (`failed` = die
 /// Kanaele, deren WAV nicht vollstaendig geschrieben wurde). Ohne Fehler bleibt der Plan. Mit
 /// Fehler steht der Marker VOR dem Auftrag; laesst er sich nicht speichern, gilt fuer diesen
 /// Lauf trotzdem `Keep(AudioIncomplete)`: das Live-Transkript bleibt, auch wenn die Datenbank
 /// den Marker verweigert. (Ein spaeterer Lauf ohne Marker faengt `final_pass` ueber die
 /// Abdeckung der Spuren ab.)
-fn plan_after_write_failures(
+pub(crate) fn plan_after_write_failures(
     store: &MeetingStore,
     meeting_id: &str,
     failed: &[u8],
@@ -2332,17 +2391,29 @@ pub(crate) fn reset_unrecorded_capture(
     meeting: &Meeting,
     data_dir: Option<&std::path::Path>,
 ) -> bool {
+    reset_unrecorded_capture_with(store, meeting, data_dir, super::playback::audio_state)
+}
+
+/// Wie [`reset_unrecorded_capture`], mit dem Dateizustand als Parameter (Test: ein Zugriffsfehler
+/// laesst sich einspielen, ohne die Platte zu bemuehen).
+fn reset_unrecorded_capture_with(
+    store: &MeetingStore,
+    meeting: &Meeting,
+    data_dir: Option<&std::path::Path>,
+    audio_state: impl Fn(&Meeting) -> super::playback::AudioState,
+) -> bool {
     let reachable = is_orphan_status(&meeting.status) || meeting.status == "failed";
     if meeting.source != super::playback::SOURCE_YOUTUBE || !reachable {
         return false;
     }
     let has_prior = store.playback_prior(&meeting.id).ok().flatten().is_some();
-    if !super::playback::never_recorded(meeting, has_prior) {
+    let state = audio_state(meeting);
+    if !(has_prior && state == super::playback::AudioState::Empty) {
         // Nur NACHGEWIESENER Ton erledigt den Vorzustand. Laesst sich der Dateizustand nicht
         // lesen, bleibt der Merker (und alles andere) stehen: im Zweifel behalten.
         if has_prior
             && is_orphan_status(&meeting.status)
-            && super::playback::audio_state(meeting) == super::playback::AudioState::Present
+            && state == super::playback::AudioState::Present
         {
             let _ = store.discard_playback_prior(&meeting.id);
         }
@@ -2813,24 +2884,25 @@ mod tests {
     /// BEVOR das Warten zurueckkehrte.
     #[test]
     fn a_wedged_start_times_out_abandons_the_sink_and_drops_the_late_capture() {
-        struct Capture(Arc<AtomicBool>);
+        struct Capture(mpsc::Sender<()>);
         impl Drop for Capture {
             fn drop(&mut self) {
-                self.0.store(true, Ordering::SeqCst);
+                let _ = self.0.send(());
             }
         }
         let cancel = cancel_flag();
         let (abandoned, abandon) = abandon_counter();
-        let dropped = Arc::new(AtomicBool::new(false));
-        let late = Arc::clone(&dropped);
+        let (dropped_tx, dropped_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
         let got = start_bounded(
             "t-wedged",
             Duration::from_millis(50),
             &cancel,
             abandon,
             move || {
-                std::thread::sleep(Duration::from_millis(400));
-                Ok::<_, String>(Capture(late))
+                // Der Treiber haengt, bis der Test ihn freigibt: die Frist laeuft sicher ab.
+                let _ = release_rx.recv();
+                Ok::<_, String>(Capture(dropped_tx))
             },
         );
         assert!(matches!(got, Err(LoopbackStartError::Timeout)));
@@ -2839,45 +2911,43 @@ mod tests {
             1,
             "nach der Frist darf der Callback nichts mehr anrufen"
         );
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !dropped.load(Ordering::SeqCst) && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        assert!(
-            dropped.load(Ordering::SeqCst),
-            "die spaete Capture lief weiter"
-        );
+        release_tx.send(()).unwrap();
+        dropped_rx
+            .recv_timeout(Duration::from_secs(60))
+            .expect("die spaete Capture lief weiter");
     }
 
     /// lva#538: ein Stopp waehrend des Wartens beendet es sofort (nicht erst nach der
-    /// Frist von fuenf Sekunden) und sperrt den Kanal; die spaete Capture wird verworfen.
+    /// Frist von dreissig Sekunden) und sperrt den Kanal; die spaete Capture wird verworfen.
+    /// Der Abbruch kommt erst, wenn der Start-Thread nachweislich im Treiber steht.
     #[test]
     fn a_cancel_ends_the_wait_at_once_and_abandons_the_sink() {
         let cancel = cancel_flag();
         let (abandoned, abandon) = abandon_counter();
+        let (entered_tx, entered_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
         let canceller = Arc::clone(&cancel);
-        let _ = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(60));
+        let cancel_thread = std::thread::spawn(move || {
+            entered_rx.recv().unwrap();
             canceller.store(true, Ordering::SeqCst);
         });
-        let started = Instant::now();
         let got = start_bounded(
             "t-cancel",
-            Duration::from_secs(30),
+            Duration::from_secs(300),
             &cancel,
             abandon,
-            || {
-                std::thread::sleep(Duration::from_millis(600));
+            move || {
+                entered_tx.send(()).unwrap();
+                let _ = release_rx.recv();
                 Ok::<_, String>(1u8)
             },
         );
+        // Ohne den Abbruch laege hier erst nach 300 s `Timeout`: der Test belegt die Reihenfolge,
+        // nicht die Zeit.
         assert_eq!(got, Err(LoopbackStartError::Cancelled));
-        assert!(
-            started.elapsed() < Duration::from_millis(500),
-            "der Abbruch wartet nicht auf den Treiber ({:?})",
-            started.elapsed()
-        );
         assert_eq!(abandoned.load(Ordering::SeqCst), 1);
+        cancel_thread.join().unwrap();
+        release_tx.send(()).unwrap();
     }
 
     /// Schon abgebrochen, bevor das Warten beginnt: es startet nicht einmal den Treiber.
@@ -2888,18 +2958,30 @@ mod tests {
         let (abandoned, abandon) = abandon_counter();
         let touched = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&touched);
+        // Der Wachposten meldet, wann der Start-Aufruf verbraucht oder verworfen ist.
+        struct Sentinel(mpsc::Sender<()>);
+        impl Drop for Sentinel {
+            fn drop(&mut self) {
+                let _ = self.0.send(());
+            }
+        }
+        let (gone_tx, gone_rx) = mpsc::channel::<()>();
+        let sentinel = Sentinel(gone_tx);
         let got = start_bounded(
             "t-early",
             Duration::from_secs(5),
             &cancel,
             abandon,
             move || {
+                let _keep = &sentinel;
                 flag.store(true, Ordering::SeqCst);
                 Ok::<_, String>(())
             },
         );
         assert_eq!(got, Err(LoopbackStartError::Cancelled));
-        std::thread::sleep(Duration::from_millis(100));
+        gone_rx
+            .recv_timeout(Duration::from_secs(60))
+            .expect("der Start-Aufruf wurde nie verworfen");
         assert!(!touched.load(Ordering::SeqCst));
         assert_eq!(abandoned.load(Ordering::SeqCst), 1);
     }
@@ -2943,23 +3025,80 @@ mod tests {
 
     // ---- lva#538: der echte Callback hinter der Sperre, Schreibfehler ------------------------
 
-    /// Pegel, die ein Test mitzaehlt statt ein Ereignis zu senden. `hold` laesst den Callback
-    /// im Pegelpfad (also unter der Sperre seines Sinks) verweilen.
+    /// lva#538 (Runde 3): ein Tor haelt einen Test-Thread an einer Stelle fest, bis der Test es
+    /// oeffnet. `wait_entered` kehrt erst zurueck, wenn der Thread DA ist: keine Schlafzeit,
+    /// kein Raten. Die Frist ist nur ein Netz gegen ein Haengen im Fehlerfall.
+    #[derive(Default)]
+    struct Gate {
+        state: Mutex<(bool, bool)>,
+        changed: std::sync::Condvar,
+    }
+
+    impl Gate {
+        /// Vom festgehaltenen Thread: ich bin da, jetzt warte ich auf das Oeffnen.
+        fn pass(&self) {
+            let mut state = self.state.lock().unwrap();
+            state.0 = true;
+            self.changed.notify_all();
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while !state.1 {
+                let left = deadline.saturating_duration_since(Instant::now());
+                assert!(!left.is_zero(), "das Tor wurde nie geoeffnet");
+                state = self.changed.wait_timeout(state, left).unwrap().0;
+            }
+        }
+
+        /// Vom Test: wartet, bis ein Thread am Tor steht.
+        fn wait_entered(&self) {
+            let mut state = self.state.lock().unwrap();
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while !state.0 {
+                let left = deadline.saturating_duration_since(Instant::now());
+                assert!(!left.is_zero(), "niemand kam ans Tor");
+                state = self.changed.wait_timeout(state, left).unwrap().0;
+            }
+        }
+
+        fn open(&self) {
+            self.state.lock().unwrap().1 = true;
+            self.changed.notify_all();
+        }
+    }
+
+    /// Wartet (ohne Schlafzeit, nur mit Yield) auf eine Bedingung, die ein anderer Thread
+    /// herstellt; die Frist ist ein Netz gegen ein Haengen.
+    fn until(what: &str, condition: impl Fn() -> bool) {
+        let started = Instant::now();
+        while !condition() {
+            assert!(
+                started.elapsed() < Duration::from_secs(60),
+                "nie eingetreten: {what}"
+            );
+            std::thread::yield_now();
+        }
+    }
+
+    /// Der Haken fuer den Schliessversuch: meldet, dass er gleich die Sperre des Sinks nimmt.
+    fn close_sink_hooked(sink: Option<&Arc<Mutex<ChannelSink>>>, on_attempt: impl FnOnce()) {
+        on_attempt();
+        close_sink(sink);
+    }
+
+    /// Pegel, die ein Test mitzaehlt statt ein Ereignis zu senden. Mit einem `gate` bleibt der
+    /// Callback im Pegelpfad (also unter der Sperre seines Sinks) stehen, bis der Test es oeffnet.
     #[derive(Default)]
     struct CountingLevels {
         calls: AtomicUsize,
         finished: AtomicUsize,
-        inside: AtomicBool,
-        hold: Mutex<Duration>,
+        gate: Mutex<Option<Arc<Gate>>>,
     }
 
     impl LevelSink for CountingLevels {
         fn level(&self, _channel: u8, _rms: f32) {
             self.calls.fetch_add(1, Ordering::SeqCst);
-            self.inside.store(true, Ordering::SeqCst);
-            let hold = *self.hold.lock().unwrap();
-            if !hold.is_zero() {
-                std::thread::sleep(hold);
+            let gate = self.gate.lock().unwrap().clone();
+            if let Some(gate) = gate {
+                gate.pass();
             }
             self.finished.fetch_add(1, Ordering::SeqCst);
         }
@@ -3030,8 +3169,8 @@ mod tests {
         let mut rig = callback_rig();
         let cancel = cancel_flag();
         let mut callback = std::mem::replace(&mut rig.callback, Box::new(|_, _| {}));
-        let late = Arc::new(AtomicUsize::new(0));
-        let seen = Arc::clone(&late);
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let (done_tx, done_rx) = mpsc::channel::<()>();
         let barrier_sink = Arc::clone(&rig.sink);
         let got = start_bounded(
             "t-late-callback",
@@ -3039,26 +3178,21 @@ mod tests {
             &cancel,
             move || close_sink(Some(&barrier_sink)),
             move || {
-                // Der Treiber kommt zurueck und liefert, wie ein laufender Strom, Bloecke.
-                std::thread::sleep(Duration::from_millis(300));
+                // Der Treiber haengt, bis der Test ihn freigibt; dann liefert er, wie ein
+                // laufender Strom, Bloecke.
+                let _ = release_rx.recv();
                 for _ in 0..5 {
                     callback(&vec![500i16; 1_600], Some(1));
-                    seen.fetch_add(1, Ordering::SeqCst);
                 }
+                let _ = done_tx.send(());
                 Ok::<_, String>(())
             },
         );
         assert!(matches!(got, Err(LoopbackStartError::Timeout)));
-        // Warten, bis die spaete Aktivitaet wirklich gelaufen ist.
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while late.load(Ordering::SeqCst) < 5 && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        assert_eq!(
-            late.load(Ordering::SeqCst),
-            5,
-            "Voraussetzung: der Callback lief"
-        );
+        release_tx.send(()).unwrap();
+        done_rx
+            .recv_timeout(Duration::from_secs(60))
+            .expect("Voraussetzung: der Callback lief");
 
         assert_eq!(
             written_samples(&rig),
@@ -3113,46 +3247,80 @@ mod tests {
 
     /// lva#538 Befund 1: der Abbruch ist eine BARRIERE. Ein Callback, der gerade laeuft (hier:
     /// im Pegelpfad, unter der Sperre seines Sinks), ist fertig, wenn `close_sink` zurueckkehrt;
-    /// jeder spaetere tut nichts. Die WAV hat danach einen gueltigen Kopf und genau die Toene des
-    /// einen Blocks.
+    /// jeder spaetere tut nichts. Zwei Kanaele: der zweite wird unabhaengig vom ersten
+    /// geschlossen. Deterministisch: der Callback steht nachweislich im Pegelpfad (Tor), der
+    /// Schliessversuch laeuft nachweislich (Haken), erst dann wird der Callback freigegeben;
+    /// danach WAV, DSP und Pegel unveraendert.
     #[test]
     fn a_running_callback_is_finished_when_the_barrier_returns() {
-        let rig = callback_rig();
-        *rig.levels.hold.lock().unwrap() = Duration::from_millis(300);
-        let mut callback = rig.callback;
+        let mut held = callback_rig();
+        let mut other = callback_rig();
+        let gate = Arc::new(Gate::default());
+        *held.levels.gate.lock().unwrap() = Some(Arc::clone(&gate));
+        let mut callback = std::mem::replace(&mut held.callback, Box::new(|_, _| {}));
         let in_flight = std::thread::spawn(move || {
             callback(&vec![500i16; 1_600], Some(1));
             callback
         });
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !rig.levels.inside.load(Ordering::SeqCst) && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(5));
-        }
+        gate.wait_entered();
         assert!(
-            rig.levels.inside.load(Ordering::SeqCst),
-            "Voraussetzung: der Callback laeuft"
+            held.sink.try_lock().is_err(),
+            "Voraussetzung: der Callback haelt die Sperre seines Sinks"
         );
         assert_eq!(
-            rig.levels.finished.load(Ordering::SeqCst),
+            held.levels.finished.load(Ordering::SeqCst),
             0,
             "Voraussetzung: er ist noch nicht fertig"
         );
 
-        close_sink(Some(&rig.sink));
+        // Der andere Kanal laesst sich unabhaengig schliessen (die Sperren sind je Kanal).
+        close_sink(Some(&other.sink));
+        assert_eq!(written_samples(&other), None);
 
+        let (attempt_tx, attempt_rx) = mpsc::channel::<()>();
+        let closing_sink = Arc::clone(&held.sink);
+        let closing_levels = Arc::clone(&held.levels);
+        let closer = std::thread::spawn(move || {
+            close_sink_hooked(Some(&closing_sink), || attempt_tx.send(()).unwrap());
+            // Was der Callback bei der Rueckkehr der Barriere geschafft hat.
+            closing_levels.finished.load(Ordering::SeqCst)
+        });
+        attempt_rx.recv().unwrap();
+        gate.open();
+        let finished_at_return = closer.join().unwrap();
         assert_eq!(
-            rig.levels.finished.load(Ordering::SeqCst),
-            1,
+            finished_at_return, 1,
             "die Barriere kehrte zurueck, waehrend ein Callback noch lief"
         );
         let mut callback = in_flight.join().unwrap();
+        let stats = held.pipeline.stats();
+        let overflow = stats.overflow_samples[CHANNEL_SYSTEM as usize].load(Ordering::Relaxed);
         callback(&vec![500i16; 1_600], Some(2));
-        assert_eq!(rig.levels.calls.load(Ordering::SeqCst), 1, "danach nichts");
+        let mut other_callback = std::mem::replace(&mut other.callback, Box::new(|_, _| {}));
+        other_callback(&vec![500i16; 1_600], Some(3));
+        assert_eq!(held.levels.calls.load(Ordering::SeqCst), 1, "danach nichts");
+        assert_eq!(
+            other.levels.calls.load(Ordering::SeqCst),
+            0,
+            "auch der andere nicht"
+        );
+        assert_eq!(
+            stats.overflow_samples[CHANNEL_SYSTEM as usize].load(Ordering::Relaxed),
+            overflow,
+            "und nichts mehr an den DSP"
+        );
+        assert_eq!(written_samples(&held), None);
+        assert_eq!(written_samples(&other), None);
 
-        let bytes = std::fs::read(&rig.path).unwrap();
+        let bytes = std::fs::read(&held.path).unwrap();
         assert_eq!(bytes.len() as u64, wav_header_len() + 1_600 * 2);
         let data_len = u32::from_le_bytes(bytes[40..44].try_into().unwrap());
         assert_eq!(data_len, 1_600 * 2, "der Kopf der behaltenen Datei stimmt");
+        assert_eq!(
+            std::fs::metadata(&other.path).unwrap().len(),
+            wav_header_len(),
+            "der zweite Kanal bekam keinen Ton"
+        );
     }
 
     /// lva#538, Schreibfehler: der Callback setzt NUR das Merkzeichen (Atomic), verwirft den
@@ -3250,12 +3418,14 @@ mod tests {
         callback: RigCallback,
         levels: Arc<CountingLevels>,
         events: Arc<Mutex<Vec<MeetingEvent>>>,
-        entered: Arc<AtomicBool>,
+        flags: Arc<WriteFlags>,
         calls: Arc<AtomicUsize>,
         witness: Arc<()>,
     }
 
-    fn session_rig(engine_delay: Duration) -> SessionRig {
+    /// Die Engine der Sitzung bleibt am Tor `gate` stehen (mitten in einem Block), bis der Test es
+    /// oeffnet: kein Warten auf Zeit, die Reihenfolge entscheidet.
+    fn session_rig(gate: Arc<Gate>) -> SessionRig {
         let dir = tempfile::tempdir().unwrap();
         let store = Arc::new(MeetingStore::open_at(&dir.path().join("m.db")).unwrap());
         let meeting = store
@@ -3267,8 +3437,6 @@ mod tests {
         )));
         let events = Arc::new(Mutex::new(Vec::new()));
         let event_sink = Arc::clone(&events);
-        let entered = Arc::new(AtomicBool::new(false));
-        let entered_flag = Arc::clone(&entered);
         let calls = Arc::new(AtomicUsize::new(0));
         let call_count = Arc::clone(&calls);
         let witness = Arc::new(());
@@ -3280,8 +3448,7 @@ mod tests {
             move |chunk: &Chunk| {
                 let _keep = &held;
                 call_count.fetch_add(1, Ordering::SeqCst);
-                entered_flag.store(true, Ordering::SeqCst);
-                std::thread::sleep(engine_delay);
+                gate.pass();
                 // Ein Wort je Sekunde Audio, damit weder Dichte noch Wiederholung greift.
                 let secs = (chunk.samples.len() / 16_000).max(1);
                 let text = (0..secs)
@@ -3326,7 +3493,7 @@ mod tests {
             callback: Box::new(callback),
             levels,
             events,
-            entered,
+            flags,
             calls,
             witness,
         }
@@ -3339,36 +3506,52 @@ mod tests {
         }
     }
 
-    fn wait_for(flag: &AtomicBool) {
-        let deadline = Instant::now() + Duration::from_secs(20);
-        while !flag.load(Ordering::SeqCst) && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        assert!(
-            flag.load(Ordering::SeqCst),
-            "Voraussetzung nicht eingetreten"
-        );
-    }
-
     /// lva#538 Befund 3: ein abgebrochener Start veroeffentlicht kein Transkript mehr. Die
-    /// Engine ist gerade mitten in einem Block, als die Sitzung faellt. Wenn das `Drop`
-    /// zurueckkehrt, ist der Worker beendet und gejoint (der Zeuge ist weg), es steht kein
-    /// Segment in der Datenbank, es kam kein Ereignis, und ein Treiber, der danach noch
-    /// Callbacks ruft, bewirkt nichts mehr.
+    /// Engine steht mitten in einem Block (Tor), als die Sitzung faellt. Reihenfolge, nicht
+    /// Zeit: der Abbruch ist gesetzt, das Fallenlassen haengt am Join des Workers; erst wenn die
+    /// Engine freigegeben ist, kehrt es zurueck (der Zeuge ist weg). Dann steht kein Segment in der
+    /// Datenbank, es kam kein Ereignis, der Rollback stellt den Eintrag wieder her, und ein
+    /// Treiber, der danach noch Callbacks ruft, bewirkt nichts mehr (DB, Ereignisse, WAV, Pegel).
     #[test]
     fn a_dropped_session_leaves_no_segment_event_or_callback_effect() {
-        let mut rig = session_rig(Duration::from_millis(300));
+        let gate = Arc::new(Gate::default());
+        let mut rig = session_rig(Arc::clone(&gate));
+        let before = rig.store.get_meeting(&rig.meeting_id).unwrap().unwrap();
+        rig.store
+            .begin_playback_capture(&rig.meeting_id, 1)
+            .unwrap();
         // 20 s Ton fuellen den ersten Block des Notfall-Chunkers; die Engine beginnt.
         drive(&mut rig, 21);
-        wait_for(&rig.entered);
+        gate.wait_entered();
         assert_eq!(
             Arc::strong_count(&rig.witness),
             2,
             "Voraussetzung: Worker lebt"
         );
 
-        drop(rig.session.take());
+        let discard = rig
+            .session
+            .as_ref()
+            .unwrap()
+            .pipeline
+            .as_ref()
+            .unwrap()
+            .discard_handle();
+        let session = rig.session.take().unwrap();
+        let dropper = std::thread::spawn(move || drop(session));
+        until("Abbruch gesetzt", || discard.load(Ordering::Acquire));
+        assert!(
+            !dropper.is_finished(),
+            "das Fallenlassen kehrte zurueck, waehrend die Engine noch mitten im Block stand"
+        );
+        assert_eq!(
+            Arc::strong_count(&rig.witness),
+            2,
+            "der Worker ist noch nicht gejoint"
+        );
 
+        gate.open();
+        dropper.join().unwrap();
         assert_eq!(
             Arc::strong_count(&rig.witness),
             1,
@@ -3378,6 +3561,7 @@ mod tests {
             rig.store.get_segments(&rig.meeting_id).unwrap().is_empty(),
             "nach dem Abbruch steht ein Segment in der Datenbank"
         );
+        let event_count = rig.events.lock().unwrap().len();
         assert!(
             !rig.events
                 .lock()
@@ -3386,13 +3570,21 @@ mod tests {
                 .any(|e| matches!(e, MeetingEvent::Segments { .. })),
             "nach dem Abbruch kam ein Segmente-Ereignis"
         );
+
+        // Erst NACH dem Join: der Rollback stellt den Eintrag her.
+        assert!(rig
+            .store
+            .rollback_playback_capture(&rig.meeting_id)
+            .unwrap());
+        let restored = rig.store.get_meeting(&rig.meeting_id).unwrap().unwrap();
+        assert_eq!(restored.status, before.status);
+        assert!(restored.system_audio_path.is_none());
         let calls = rig.calls.load(Ordering::SeqCst);
         let levels = rig.levels.calls.load(Ordering::SeqCst);
         let size = std::fs::metadata(&rig.path).unwrap().len();
 
         // Ein spaeter Treiber: nichts davon darf noch eine Wirkung haben.
         drive(&mut rig, 3);
-        std::thread::sleep(Duration::from_millis(100));
         assert_eq!(
             rig.levels.calls.load(Ordering::SeqCst),
             levels,
@@ -3405,21 +3597,71 @@ mod tests {
             "kein WAV"
         );
         assert!(rig.store.get_segments(&rig.meeting_id).unwrap().is_empty());
+        assert_eq!(
+            rig.events.lock().unwrap().len(),
+            event_count,
+            "kein Ereignis mehr nach dem Rollback"
+        );
     }
 
     /// Das Gegenstueck: ohne Abbruch landet derselbe Block als Segment in der Datenbank
     /// (`drain` statt `abort`). Sonst bewiese der Test oben nichts.
     #[test]
     fn the_same_session_stores_its_segment_when_it_is_drained_not_aborted() {
-        let mut rig = session_rig(Duration::from_millis(50));
+        let gate = Arc::new(Gate::default());
+        gate.open();
+        let mut rig = session_rig(Arc::clone(&gate));
         drive(&mut rig, 21);
-        wait_for(&rig.entered);
+        gate.wait_entered();
         let parts = rig.session.take().unwrap().into_parts();
         close_sink(parts.system_sink.as_ref());
         parts.pipeline.unwrap().drain();
         assert!(
             !rig.store.get_segments(&rig.meeting_id).unwrap().is_empty(),
             "Voraussetzung: der Block wurde transkribiert"
+        );
+    }
+
+    /// lva#538 Befund 5, Runde 3: der Zugriff auf den Kopf scheitert gezielt NACH einem
+    /// erfolgreichen Append. Das Merkzeichen steht, der Writer ist verworfen, weitere Appends
+    /// werden abgelehnt (die Datei waechst nicht mehr), und der DSP wird weiter beschickt (die
+    /// Engine bekommt noch ihren Block).
+    #[test]
+    fn a_failing_header_after_a_good_append_stops_the_writes_but_not_the_dsp_feed() {
+        let gate = Arc::new(Gate::default());
+        gate.open();
+        let mut rig = session_rig(Arc::clone(&gate));
+        let sink = Arc::clone(rig.session.as_ref().unwrap().system_sink.as_ref().unwrap());
+        (rig.callback)(&vec![3_000i16; 1_600], Some(1));
+        assert_eq!(
+            lock_recovering(&sink)
+                .writer
+                .as_ref()
+                .map(StreamingWavWriter::frames_written),
+            Some(1_600),
+            "Voraussetzung: der Append davor ging durch"
+        );
+        lock_recovering(&sink)
+            .writer
+            .as_mut()
+            .unwrap()
+            .fail_header_for_test();
+        (rig.callback)(&vec![3_000i16; FLUSH_EVERY_SAMPLES], Some(2));
+        assert_eq!(rig.flags.failed_channels(), vec![CHANNEL_SYSTEM]);
+        assert!(lock_recovering(&sink).writer.is_none());
+        let size = std::fs::metadata(&rig.path).unwrap().len();
+
+        // Weiter: 21 s Ton. Die WAV waechst nicht mehr, die Engine kommt trotzdem dran.
+        drive(&mut rig, 21);
+        gate.wait_entered();
+        assert!(
+            rig.calls.load(Ordering::SeqCst) >= 1,
+            "der DSP wurde beschickt"
+        );
+        assert_eq!(
+            std::fs::metadata(&rig.path).unwrap().len(),
+            size,
+            "weitere Appends wurden abgelehnt"
         );
     }
 
@@ -3779,6 +4021,57 @@ mod tests {
         assert!(
             store.playback_prior(&meeting.id).unwrap().is_some(),
             "der Weg zurueck bleibt"
+        );
+    }
+
+    /// lva#538 Befund 7, Runde 3: ein EINGESPIELTER Zugriffsfehler (Zugriff verweigert, E/A-Fehler,
+    /// Zeitueberschreitung) ist nicht "leer": die Wiederherstellung aendert weder die Pfade noch
+    /// den Merker des Vorzustands noch das Audio. Ein bestaetigtes `NotFound` dagegen setzt zurueck.
+    #[test]
+    fn an_injected_access_error_keeps_paths_prior_marker_and_audio() {
+        use super::super::playback::{audio_state_of, AudioState};
+        use std::io::{Error, ErrorKind};
+        for kind in [
+            ErrorKind::PermissionDenied,
+            ErrorKind::Other,
+            ErrorKind::TimedOut,
+            ErrorKind::Interrupted,
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let (store, meeting, system) = crashed_capture(dir.path(), false, true);
+            let size = std::fs::metadata(&system).unwrap().len();
+            let reset = reset_unrecorded_capture_with(
+                &store,
+                &meeting,
+                Some(&dir.path().join("meetings")),
+                |_| audio_state_of([Err(Error::from(kind))]),
+            );
+            assert!(!reset, "{kind:?}: ein unlesbarer Zustand ist nicht leer");
+            let after = store.get_meeting(&meeting.id).unwrap().unwrap();
+            assert_eq!(after.status, "recording", "{kind:?}: nichts zurueckgesetzt");
+            assert_eq!(
+                after.system_audio_path, meeting.system_audio_path,
+                "{kind:?}"
+            );
+            assert_eq!(std::fs::metadata(&system).unwrap().len(), size, "{kind:?}");
+            assert!(
+                store.playback_prior(&meeting.id).unwrap().is_some(),
+                "{kind:?}: der Weg zurueck bleibt"
+            );
+        }
+        // Gegenprobe: ein bestaetigtes Fehlen (NotFound) setzt zurueck.
+        let dir = tempfile::tempdir().unwrap();
+        let (store, meeting, system) = crashed_capture(dir.path(), false, true);
+        assert!(reset_unrecorded_capture_with(
+            &store,
+            &meeting,
+            Some(&dir.path().join("meetings")),
+            |_| audio_state_of([Err(Error::from(ErrorKind::NotFound))]),
+        ));
+        assert!(!system.exists());
+        assert_eq!(
+            audio_state_of([Err(Error::from(ErrorKind::NotFound))]),
+            AudioState::Empty
         );
     }
 

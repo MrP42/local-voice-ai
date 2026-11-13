@@ -201,6 +201,11 @@ export const YoutubeTranscriptTools: React.FC<YoutubeTranscriptToolsProps> = ({
     setConsentOpen(false);
     if (result.status !== "ok") {
       const code = result.error.split(":")[0].trim();
+      // Der Start ist gescheitert oder abgebrochen: das Backend hat den Eintrag
+      // zurückgesetzt und Sätze verworfen, die die Live-Pipeline schon gemeldet hatte.
+      // Die Oberfläche lädt den gespeicherten Stand neu, statt Phantomsätze zu zeigen
+      // (sonst bliebe `hasTranscript` wahr und der Mitschnitt verschwände).
+      await onChanged();
       // Vom Nutzer abgebrochen (oder der Eintrag wurde währenddessen gelöscht):
       // kein Fehler, der Eintrag ist wie vorher.
       if (code === "start_cancelled" || code === "meeting_not_found") return;
@@ -215,7 +220,10 @@ export const YoutubeTranscriptTools: React.FC<YoutubeTranscriptToolsProps> = ({
     }
     // Der Abbruch kam erst nach der Veröffentlichung an: das Backend beendet genau diese
     // Aufnahme (Stopp mit derselben Vorgangs-Id), die Oberfläche zeigt keine laufende an.
-    if (abortRequested) return;
+    if (abortRequested) {
+      await onChanged();
+      return;
+    }
     setPlayHint(!onCaptureStarted(result.data));
   };
 

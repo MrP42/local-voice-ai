@@ -124,13 +124,21 @@ pub enum AudioState {
 /// Der Zustand der Tonspuren einer Besprechung. Ton auf einer Spur gewinnt vor einem Fehler auf
 /// einer anderen; ein Fehler (nicht `NotFound`) macht eine sonst leere Aufnahme `Unknown`.
 pub fn audio_state(meeting: &Meeting) -> AudioState {
+    audio_state_of(
+        [&meeting.mic_audio_path, &meeting.system_audio_path]
+            .into_iter()
+            .flatten()
+            .map(|path| std::fs::metadata(path).map(|m| m.len())),
+    )
+}
+
+/// Wie [`audio_state`], aber aus den Ergebnissen der Dateiabfragen (Laenge je Spur): so lassen
+/// sich Fehlerarten (Zugriff verweigert, E/A-Fehler) ohne Platte einspielen.
+pub fn audio_state_of(lengths: impl IntoIterator<Item = std::io::Result<u64>>) -> AudioState {
     let mut unknown = false;
-    for path in [&meeting.mic_audio_path, &meeting.system_audio_path]
-        .into_iter()
-        .flatten()
-    {
-        match std::fs::metadata(path) {
-            Ok(m) if m.len() > HEADER_LEN => return AudioState::Present,
+    for length in lengths {
+        match length {
+            Ok(len) if len > HEADER_LEN => return AudioState::Present,
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => unknown = true,
@@ -292,6 +300,10 @@ impl MeetingStore {
             return Ok(false);
         }
         meta.remove(PRIOR_KEY);
+        // Nichts blieb von diesem Mitschnitt: auch seine Marker (offene Aufnahme, unvollstaendiges
+        // Audio) gehen, sonst ersetzte der Enddurchlauf des naechsten, echten Mitschnitts nie.
+        meta.remove(super::store::CAPTURE_OPEN_KEY);
+        meta.remove(super::final_pass::AUDIO_INCOMPLETE_KEY);
         write_metadata_object_tx(&tx, id, meta, now)?;
         tx.commit()?;
         Ok(true)
@@ -901,5 +913,41 @@ mod tests {
         store.set_status(&id, MeetingStatus::Ready).unwrap();
         assert!(!store.restore_playback_target(&id).unwrap());
         assert!(!store.restore_playback_target("gibt-es-nicht").unwrap());
+    }
+
+    /// lva#538 Befund 7, Runde 3: die Fehlerarten der Dateiabfrage, ohne Platte eingespielt. Nur
+    /// ein bestaetigtes Fehlen (`NotFound`) oder hoechstens der Kopf ist leer; jeder andere Fehler
+    /// ist `Unknown`, Ton auf einer Spur gewinnt vor einem Fehler auf der anderen.
+    #[test]
+    fn the_audio_state_follows_the_kind_of_the_file_error() {
+        use std::io::{Error, ErrorKind};
+        let err = |kind| Err(Error::from(kind));
+        for kind in [
+            ErrorKind::PermissionDenied,
+            ErrorKind::Other,
+            ErrorKind::TimedOut,
+            ErrorKind::InvalidInput,
+        ] {
+            assert_eq!(audio_state_of([err(kind)]), AudioState::Unknown, "{kind:?}");
+            assert_eq!(
+                audio_state_of([Ok(HEADER_LEN), err(kind)]),
+                AudioState::Unknown,
+                "{kind:?}: ein Fehler macht eine leere Aufnahme unbekannt"
+            );
+            assert_eq!(
+                audio_state_of([err(kind), Ok(HEADER_LEN + 1)]),
+                AudioState::Present,
+                "{kind:?}: Ton gewinnt vor einem Fehler"
+            );
+        }
+        assert_eq!(
+            audio_state_of([err(ErrorKind::NotFound)]),
+            AudioState::Empty
+        );
+        assert_eq!(audio_state_of([Ok(0), Ok(HEADER_LEN)]), AudioState::Empty);
+        assert_eq!(
+            audio_state_of(std::iter::empty::<std::io::Result<u64>>()),
+            AudioState::Empty
+        );
     }
 }
