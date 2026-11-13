@@ -1,0 +1,623 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-voice.invalid/schemas/lva.schnittstellen/1.json",
+  "title": "Schnittstellen-Verzeichnis",
+  "description": "Dokumentation der STRUKTUR des Schnittstellen-Verzeichnisses lva.schnittstellen/1 (Arbeitsname); es wird nicht zur Laufzeit ausgewertet. Maßgeblich ist die Prüfung in den Kernen, die Fehler mit Pfad und Code liefert. Nicht in JSON Schema ausdrückbar und nur dort geprüft: eindeutige id je Verzeichnis, eindeutige Parameternamen und Kopfzeilen ohne Beachtung der Groß-/Kleinschreibung, Trimmen des Namens, ganzzahlige Darstellung (15000.0 wird abgewiesen), die Adressgrammatik (keine Normalisierung, IP-Literale, Ports, Prozent-Kodierung), Übereinstimmung der Platzhalter der Adressvorlage mit den Pfadparametern, min ≤ max, ein Geheimnis-Kopf ungleich einer festen Kopfzeile. Längen zählen in Unicode-Codepunkten. Unbekannte Felder sind überall erlaubt, bleiben erhalten und wirken nicht; eine unbekannte art ist ein Fehler.",
+  "type": "object",
+  "required": ["schema", "eintraege"],
+  "properties": {
+    "schema": {
+      "const": "lva.schnittstellen/1",
+      "description": "Genau diese Fassung. Eine höhere Hauptversion wird als schema_neuer abgewiesen, alles andere als schema_unbekannt."
+    },
+    "eintraege": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "$ref": "#/$defs/eintrag"
+      },
+      "description": "Höchstens 64 Einträge, id eindeutig."
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "eintrag": {
+      "type": "object",
+      "required": ["id", "name", "art", "zugriff", "abfluss"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60,
+          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]*$",
+          "description": "Nach dem Entfernen von Leerzeichen an den Enden 1 bis 60 Codepunkte, ohne Steuerzeichen (U+0000–U+001F, U+007F–U+009F, U+2028, U+2029)."
+        },
+        "beschreibung": {
+          "type": "string",
+          "maxLength": 300,
+          "default": "",
+          "description": "Sagt dem Modell, wann die Schnittstelle passt."
+        },
+        "art": {
+          "enum": ["app", "http", "web", "mcp"]
+        },
+        "zugriff": {
+          "enum": ["lesend", "schreibend"]
+        },
+        "abfluss": {
+          "enum": ["lokal", "netz"]
+        },
+        "zeitlimit_ms": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 60000,
+          "default": 15000
+        },
+        "http": {
+          "$ref": "#/$defs/http"
+        },
+        "web": {
+          "$ref": "#/$defs/web"
+        },
+        "app": {
+          "$ref": "#/$defs/app"
+        },
+        "mcp": {
+          "$ref": "#/$defs/mcp"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["art"],
+            "properties": {
+              "art": {
+                "const": "http"
+              }
+            }
+          },
+          "then": {
+            "required": ["http"],
+            "properties": {
+              "web": false,
+              "app": false,
+              "mcp": false
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["art"],
+            "properties": {
+              "art": {
+                "const": "web"
+              }
+            }
+          },
+          "then": {
+            "required": ["web"],
+            "properties": {
+              "http": false,
+              "app": false,
+              "mcp": false
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["art"],
+            "properties": {
+              "art": {
+                "const": "app"
+              }
+            }
+          },
+          "then": {
+            "required": ["app"],
+            "properties": {
+              "http": false,
+              "web": false,
+              "mcp": false
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["art"],
+            "properties": {
+              "art": {
+                "const": "mcp"
+              }
+            }
+          },
+          "then": {
+            "required": ["mcp"],
+            "properties": {
+              "http": false,
+              "web": false,
+              "app": false
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["art"],
+            "properties": {
+              "art": {
+                "const": "web"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "zugriff": {
+                "const": "lesend"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["http"],
+            "properties": {
+              "http": {
+                "required": ["methode"],
+                "properties": {
+                  "methode": {
+                    "enum": ["PUT", "PATCH", "DELETE"]
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "zugriff": {
+                "const": "schreibend"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["art", "http"],
+            "properties": {
+              "art": {
+                "const": "http"
+              },
+              "http": {
+                "required": ["netz"],
+                "properties": {
+                  "netz": {
+                    "const": "geraet"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "abfluss": {
+                "const": "lokal"
+              }
+            }
+          },
+          "else": {
+            "if": {
+              "required": ["art"],
+              "properties": {
+                "art": {
+                  "const": "http"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "abfluss": {
+                  "const": "netz"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["art", "web"],
+            "properties": {
+              "art": {
+                "const": "web"
+              },
+              "web": {
+                "required": ["netz"],
+                "properties": {
+                  "netz": {
+                    "const": "geraet"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "abfluss": {
+                "const": "lokal"
+              }
+            }
+          },
+          "else": {
+            "if": {
+              "required": ["art"],
+              "properties": {
+                "art": {
+                  "const": "web"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "abfluss": {
+                  "const": "netz"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": true,
+      "description": "Genau der zur art passende Block ist Pflicht, die anderen dürfen nicht vorkommen. Widersprüche (Code widerspruch): web nur lesend; PUT, PATCH, DELETE nur schreibend; bei http und web: netz geraet verlangt abfluss lokal, sonst abfluss netz; GET und DELETE ohne Körperparameter; Platzhalter der Adresse und Pfadparameter entsprechen sich genau (Letzteres nur in den Kernen)."
+    },
+    "http": {
+      "type": "object",
+      "required": ["methode", "adresse"],
+      "properties": {
+        "methode": {
+          "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]
+        },
+        "adresse": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "pattern": "^https?://[a-z0-9.:-]+/[A-Za-z0-9._~%{}/-]*$",
+          "description": "Adressvorlage: schema://host[:port]/pfad, Segmente aus [A-Za-z0-9._~-] oder %XX (Großbuchstaben-Hex) oder genau {name}. Das Muster hier ist nur eine grobe Vorprüfung; maßgeblich ist die Adressgrammatik der Kerne (README, Abschnitt Adressgrammatik)."
+        },
+        "netz": {
+          "enum": ["oeffentlich", "privat", "geraet"],
+          "default": "oeffentlich"
+        },
+        "parameter": {
+          "type": "array",
+          "maxItems": 16,
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/parameter"
+          },
+          "description": "Namen eindeutig. Jedes Segment {name} der Adresse braucht genau einen Parameter mit ort pfad und umgekehrt."
+        },
+        "kopfzeilen": {
+          "type": "array",
+          "maxItems": 8,
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/kopfzeile"
+          },
+          "description": "Feste, nicht geheime Kopfzeilen; Namen ohne Beachtung der Groß-/Kleinschreibung eindeutig."
+        },
+        "geheimnis": {
+          "type": ["object", "null"],
+          "default": null,
+          "required": ["kopf", "schluessel"],
+          "properties": {
+            "kopf": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9-]{0,63}$",
+              "not": {
+                "pattern": "^([Hh][Oo][Ss][Tt]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt]\\-[Ll][Ee][Nn][Gg][Tt][Hh]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt]\\-[Tt][Yy][Pp][Ee]|[Tt][Rr][Aa][Nn][Ss][Ff][Ee][Rr]\\-[Ee][Nn][Cc][Oo][Dd][Ii][Nn][Gg]|[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]|[Uu][Pp][Gg][Rr][Aa][Dd][Ee]|[Tt][Ee]|[Tt][Rr][Aa][Ii][Ll][Ee][Rr]|[Aa][Cc][Cc][Ee][Pp][Tt]|[Pp][Rr][Oo][Xx][Yy]\\-[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Cc][Oo][Oo][Kk][Ii][Ee])$"
+              }
+            },
+            "praefix": {
+              "type": "string",
+              "pattern": "^[\\u0020-\\u007e]{0,32}$",
+              "default": ""
+            },
+            "schluessel": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+            }
+          },
+          "additionalProperties": true,
+          "description": "null oder {kopf, praefix, schluessel}. schluessel ist der Name im Schlüsselspeicher des Geräts; der Wert steht nie im Verzeichnis, Profil, Export, Protokoll, Prompt oder in einer Fehlermeldung. kopf darf nicht gleich einer festen Kopfzeile sein."
+        },
+        "antwort_max_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 262144,
+          "default": 20480
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["methode"],
+            "properties": {
+              "methode": {
+                "enum": ["GET", "DELETE"]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "parameter": {
+                "items": {
+                  "properties": {
+                    "ort": {
+                      "enum": ["pfad", "abfrage"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": true
+    },
+    "parameter": {
+      "type": "object",
+      "required": ["name", "typ", "ort"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,31}$"
+        },
+        "beschreibung": {
+          "type": "string",
+          "maxLength": 200,
+          "default": ""
+        },
+        "typ": {
+          "enum": ["text", "ganzzahl", "wahrheitswert", "auswahl"]
+        },
+        "ort": {
+          "enum": ["pfad", "abfrage", "koerper"]
+        },
+        "pflicht": {
+          "type": "boolean",
+          "default": false
+        },
+        "max_zeichen": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4000,
+          "default": 500
+        },
+        "min": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "max": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "optionen": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60,
+            "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]*$"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["ort"],
+            "properties": {
+              "ort": {
+                "const": "pfad"
+              }
+            }
+          },
+          "then": {
+            "required": ["pflicht"],
+            "properties": {
+              "pflicht": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["typ"],
+            "properties": {
+              "typ": {
+                "const": "text"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "min": false,
+              "max": false,
+              "optionen": false
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["typ"],
+            "properties": {
+              "typ": {
+                "const": "ganzzahl"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "max_zeichen": false,
+              "optionen": false
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["typ"],
+            "properties": {
+              "typ": {
+                "const": "wahrheitswert"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "max_zeichen": false,
+              "min": false,
+              "max": false,
+              "optionen": false
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["typ"],
+            "properties": {
+              "typ": {
+                "const": "auswahl"
+              }
+            }
+          },
+          "then": {
+            "required": ["optionen"],
+            "properties": {
+              "max_zeichen": false,
+              "min": false,
+              "max": false
+            }
+          }
+        },
+        {
+          "if": {
+            "allOf": [
+              {
+                "required": ["ort"],
+                "properties": {
+                  "ort": {
+                    "const": "pfad"
+                  }
+                }
+              },
+              {
+                "required": ["typ"],
+                "properties": {
+                  "typ": {
+                    "const": "auswahl"
+                  }
+                }
+              }
+            ]
+          },
+          "then": {
+            "properties": {
+              "optionen": {
+                "items": {
+                  "not": {
+                    "enum": [".", ".."]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": true,
+      "description": "max_zeichen nur bei text, min und max nur bei ganzzahl (min ≤ max), optionen nur und Pflicht bei auswahl. Bei ort pfad muss pflicht true sein. Bei ort pfad und typ auswahl darf keine Option genau . oder .. sein (Schutz gegen Pfadwechsel)."
+    },
+    "kopfzeile": {
+      "type": "object",
+      "required": ["name", "wert"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9-]{0,63}$",
+          "not": {
+            "pattern": "^([Hh][Oo][Ss][Tt]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt]\\-[Ll][Ee][Nn][Gg][Tt][Hh]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt]\\-[Tt][Yy][Pp][Ee]|[Tt][Rr][Aa][Nn][Ss][Ff][Ee][Rr]\\-[Ee][Nn][Cc][Oo][Dd][Ii][Nn][Gg]|[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]|[Uu][Pp][Gg][Rr][Aa][Dd][Ee]|[Tt][Ee]|[Tt][Rr][Aa][Ii][Ll][Ee][Rr]|[Aa][Cc][Cc][Ee][Pp][Tt]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Pp][Rr][Oo][Xx][Yy]\\-[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Cc][Oo][Oo][Kk][Ii][Ee])$"
+          },
+          "description": "Nicht in der Sperrliste: host, content-length, content-type, transfer-encoding, connection, upgrade, te, trailer, accept, authorization, proxy-authorization, cookie."
+        },
+        "wert": {
+          "type": "string",
+          "pattern": "^[\\u0020-\\u007e]{1,200}$"
+        }
+      },
+      "additionalProperties": true
+    },
+    "web": {
+      "type": "object",
+      "required": ["adressen"],
+      "properties": {
+        "adressen": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "pattern": "^https?://[a-z0-9.:-]+/[A-Za-z0-9._~%/-]*(\\?[A-Za-z0-9._~%=&+-]+)?$"
+          },
+          "description": "Vollständige Adressen (Abfrageteil erlaubt), grob vorgeprüft; maßgeblich ist die Adressgrammatik der Kerne."
+        },
+        "netz": {
+          "enum": ["oeffentlich", "privat", "geraet"],
+          "default": "oeffentlich"
+        },
+        "antwort_max_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 262144,
+          "default": 20480
+        }
+      },
+      "additionalProperties": true
+    },
+    "app": {
+      "type": "object",
+      "required": ["faehigkeit"],
+      "properties": {
+        "faehigkeit": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,3}$"
+        }
+      },
+      "additionalProperties": true,
+      "description": "Nur Kopf; Regeln folgen mit der Umsetzung."
+    },
+    "mcp": {
+      "type": "object",
+      "required": ["server", "werkzeug"],
+      "properties": {
+        "server": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        },
+        "werkzeug": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,128}$"
+        }
+      },
+      "additionalProperties": true,
+      "description": "Nur Kopf; Regeln folgen mit lva#491."
+    }
+  }
+}
