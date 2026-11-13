@@ -98,11 +98,12 @@ pub fn schwaerzen(text: &str) -> String {
     use regex::Regex;
     use std::sync::LazyLock;
     static URL: LazyLock<Regex> = LazyLock::new(|| {
-        // Die ganze Adresse bis zum naechsten Leerraum/Anfuehrungszeichen:
-        // Klammern duerfen in Userinfo, Pfad, Query und Fragment stehen
-        // (`u:a(GEHEIM)@host`, `/m(v1)?sig=a(x)GEHEIM`). Eine schliessende
-        // Klammer dahinter geht im Zweifel mit, das kostet nur Lesbarkeit.
-        Regex::new(r#"(?i)\b([a-z][a-z0-9+.-]*://)([^\s"'<>`]+)"#).expect("URL-Muster")
+        // Strukturell statt Grenzzeichen-Liste: ab dem Schema alles bis zum
+        // naechsten Leerraum, `"`, `<` oder `>` gehoert zur Adresse. Diese vier
+        // stehen in einer gueltigen (vom `url`-Crate erzeugten) Adresse nie roh;
+        // Klammern, Backticks, `'` usw. duerfen also nirgends eine Erfassung
+        // beenden. Was dahinter steht, zerlegt `adressen_schwaerzen`.
+        Regex::new(r#"(?i)\b[a-z][a-z0-9+.-]*://[^\s"<>]*"#).expect("URL-Muster")
     });
     static PAAR: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
@@ -115,27 +116,68 @@ pub fn schwaerzen(text: &str) -> String {
             .expect("Bearer-Muster")
     });
 
-    let ohne_urls = URL.replace_all(text, |c: &regex::Captures| {
-        let schema = &c[1];
-        let rest = &c[2];
-        // Query und Fragment fallen ganz weg (signierte CDN-Adressen).
-        let (vorne, query) = match rest.find(['?', '#']) {
-            Some(i) => (&rest[..i], "?…"),
-            None => (rest, ""),
-        };
-        // Authority endet am ersten '/'; Userinfo bis zum letzten '@' darin.
-        let ende = vorne.find('/').unwrap_or(vorne.len());
-        let (authority, pfad) = vorne.split_at(ende);
-        let authority = match authority.rfind('@') {
-            Some(i) => format!("…@{}", &authority[i + 1..]),
-            None => authority.to_string(),
-        };
-        format!("{schema}{authority}{pfad}{query}")
-    });
+    let ohne_urls = URL.replace_all(text, |c: &regex::Captures| adressen_schwaerzen(&c[0]));
     // Erst Bearer/Basic (sonst bliebe nach „Authorization: …“ der Wert stehen),
     // dann die Paare.
     let ohne_bearer = BEARER.replace_all(&ohne_urls, "$1$2 …");
     PAAR.replace_all(&ohne_bearer, "$1$2$3…").into_owned()
+}
+
+/// Ein Adress-Token (Schema bis Leerraum), das auch mehrere aneinanderhaengende
+/// Adressen enthalten kann (`(https://a/m)(https://u:x@b/m)`). Jede beginnt bei
+/// ihrem Schema und wird fuer sich geschwaerzt. Steht ein weiteres Schema erst
+/// in Query oder Fragment (`?next=https://…`), faellt es mit der Query weg.
+fn adressen_schwaerzen(token: &str) -> String {
+    use regex::Regex;
+    use std::sync::LazyLock;
+    static SCHEMA: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)[a-z][a-z0-9+.-]*://").expect("Schema-Muster"));
+
+    let mut aus = String::with_capacity(token.len());
+    let mut rest = token;
+    while let Some(start) = rest.find("://").map(|i| i + 3) {
+        let (schema, hinten) = rest.split_at(start);
+        let query = hinten.find(['?', '#']);
+        let naechste = SCHEMA
+            .find(hinten)
+            .map(|m| m.start())
+            .filter(|&n| query.is_none_or(|q| n < q));
+        match naechste {
+            Some(n) => {
+                aus.push_str(&eine_adresse(schema, &hinten[..n]));
+                rest = &hinten[n..];
+            }
+            None => {
+                aus.push_str(&eine_adresse(schema, hinten));
+                return aus;
+            }
+        }
+    }
+    aus.push_str(rest);
+    aus
+}
+
+/// Eine Adresse ohne weiteres Schema davor: Userinfo (bis zum letzten `@` vor
+/// Query/Fragment), Query und Fragment fallen ganz weg; Host und Pfad bleiben lesbar.
+fn eine_adresse(schema: &str, rest: &str) -> String {
+    let (vorne, query) = match rest.find(['?', '#']) {
+        Some(i) => (&rest[..i], "?…"),
+        None => (rest, ""),
+    };
+    // Alles bis zum letzten '@' vor Query/Fragment gilt als Userinfo, auch wenn
+    // ein (ungueltiges) '/' darin steht; lieber ein Pfadstueck zu viel weg.
+    let (authority, pfad) = match vorne.rfind('@') {
+        Some(i) => {
+            let nach = &vorne[i + 1..];
+            let ende = nach.find('/').unwrap_or(nach.len());
+            (format!("…@{}", &nach[..ende]), &nach[ende..])
+        }
+        None => {
+            let ende = vorne.find('/').unwrap_or(vorne.len());
+            (vorne[..ende].to_string(), &vorne[ende..])
+        }
+    };
+    format!("{schema}{authority}{pfad}{query}")
 }
 
 /// Was ein gescheiterter Download nach außen gibt (Log, Event, Befehlsfehler):
@@ -415,6 +457,52 @@ mod tests {
             schwaerzen("https://u:prefix(GEHEIM)@spiegel.example/m"),
             "https://…@spiegel.example/m"
         );
+    }
+
+    /// Codex R5: Backtick/Apostroph in der Query und aneinanderhaengende
+    /// Adressen; dazu eine Eigenschaftspruefung ueber viele Sonderzeichen.
+    #[test]
+    fn sonderzeichen_und_aneinanderhaengende_adressen() {
+        assert_eq!(
+            schwaerzen("https://spiegel.example/m?sig=a`GEHEIM"),
+            "https://spiegel.example/m?…"
+        );
+        assert_eq!(
+            schwaerzen("https://spiegel.example/m?sig=a'GEHEIM x"),
+            "https://spiegel.example/m?… x"
+        );
+        assert_eq!(
+            schwaerzen("(https://a.example/m)(https://u:GEHEIM@b.example/m)"),
+            "(https://a.example/m)(https://…@b.example/m)"
+        );
+        assert_eq!(
+            schwaerzen("https://a.example/m?next=https://u:GEHEIM@b.example/x"),
+            "https://a.example/m?…"
+        );
+        assert_eq!(
+            schwaerzen("https://a.example/mhttp://u:GEHEIM@b.example/x?y=GEHEIM"),
+            "https://a.example/mhttp://…@b.example/x?…"
+        );
+        // Jedes druckbare ASCII-Zeichen ausser den vier Grenzen, an jeder Stelle
+        // von Userinfo, Pfad, Query und Fragment, auch zwei Adressen hintereinander.
+        let zeichen: Vec<char> = (0x21u8..0x7f)
+            .map(char::from)
+            .filter(|c| !matches!(c, '"' | '<' | '>'))
+            .collect();
+        for z in zeichen {
+            let fälle = [
+                format!("https://u{z}GEHEIM:p{z}w@h.example/m"),
+                format!("https://h.example/m{z}x?sig=a{z}GEHEIM{z}b"),
+                format!("https://h.example/m{z}#a{z}GEHEIM"),
+                format!("https://h.example/m{z}(https://u{z}GEHEIM@h2.example/x?t={z}GEHEIM)"),
+            ];
+            for roh in fälle {
+                let a = ausgabe(&roh);
+                for feld in [schwaerzen(&roh), a.meldung, a.detail] {
+                    assert!(!feld.contains("GEHEIM"), "{z:?}: {feld}");
+                }
+            }
+        }
     }
 
     #[test]
