@@ -381,6 +381,9 @@ export const TtsSettings = () => {
     string | null
   >(null);
   const [pages, setPages] = useState<PageInfo[]>([]);
+  /** Immer die Seitenliste des letzten Renders (Hinweise aus Rückrufen nennen die Seite). */
+  const pagesRef = useRef<PageInfo[]>([]);
+  pagesRef.current = pages;
   const [activePage, setActivePage] = usePersistentState<string>(
     "tts.activePage",
     "",
@@ -1131,19 +1134,22 @@ export const TtsSettings = () => {
     if (!activePage) return;
     pageLoaded.current = false;
     setLangCheckedFor(null);
+    // Das Laden läuft über die Kette der Seitenzustände: es wartet auf alle
+    // bereits eingereihten Schreibvorgänge dieser Seite (Rohfassung, Autosave der
+    // eben verlassenen Seite) und sieht so den Stand danach, nie einen älteren.
     // Marke der Anzeige vor dem Lesen: hat danach ein Protokollschreiben die
     // Anzeige neu gesetzt, zeigt diese Antwort einen älteren Stand.
-    const logMark = store.mark(activePage);
-    const showFileLog = (entries: PasteLogEntry[]) => {
-      if (!store.changedSince(activePage, logMark)) publishLog(entries);
-    };
     // Ein überholter Ladevorgang (Seitenwechsel) setzt nichts mehr.
     let stale = false;
-    void commands.pageStateLoad(activePage).then((result) => {
-      if (stale || result.status !== "ok") return;
-      if (result.data) {
+    void store.read(activePage).then((read) => {
+      if (stale || read === null) return;
+      const showFileLog = (entries: PasteLogEntry[]) => {
+        if (!store.changedSince(activePage, read.mark)) publishLog(entries);
+      };
+      const data = read.text;
+      if (data) {
         try {
-          const state = JSON.parse(result.data) as {
+          const state = JSON.parse(data) as {
             text?: string;
             summary?: string;
             kiDoc?: string | null;
@@ -1204,8 +1210,8 @@ export const TtsSettings = () => {
                 : "original"),
           );
         } catch {
-          setText(result.data);
-          openModeRef.current?.(result.data);
+          setText(data);
+          openModeRef.current?.(data);
           showFileLog([]);
         }
       } else {
@@ -1338,9 +1344,22 @@ export const TtsSettings = () => {
             void reloadPages();
             void commands.syncTouch();
           },
-          // Ein Hinweis, kein Stapel: derselbe ersetzt den vorigen.
+          // Ein Hinweis, kein Stapel: derselbe ersetzt den vorigen. Eine
+          // verlassene Seite wird genannt; ihr Stand bleibt im Store und wird
+          // beim nächsten Öffnen der Seite erneut gesichert.
           () =>
-            toast.error(t("tts.pageSaveFailed"), { id: "page-save-failed" }),
+            activePage === activePageRef.current
+              ? toast.error(t("tts.pageSaveFailed"), {
+                  id: "page-save-failed",
+                })
+              : toast.error(
+                  t("tts.pageSaveFailedLeft", {
+                    title:
+                      pagesRef.current.find((p) => p.id === activePage)
+                        ?.title ?? activePage,
+                  }),
+                  { id: `page-save-failed:${activePage}` },
+                ),
         );
     };
     pendingSave.current = { page: activePage, run };
@@ -2991,11 +3010,11 @@ export const TtsSettings = () => {
     void reloadPages();
     const page = activePage;
     if (!page || !pageLoaded.current || storedActivePage() !== page) return;
-    void commands.pageStateLoad(page).then((result) => {
-      if (result.status !== "ok" || !result.data) return;
+    void store.read(page).then((read) => {
+      if (!read || !read.text) return;
       if (savePending.current || storedActivePage() !== page) return;
       try {
-        const state = JSON.parse(result.data) as { text?: unknown };
+        const state = JSON.parse(read.text) as { text?: unknown };
         if (typeof state.text === "string" && state.text !== textRef.current)
           setText(state.text);
       } catch {

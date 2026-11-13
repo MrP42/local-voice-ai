@@ -92,12 +92,22 @@ export function createPageStateStore(options: PageStateStoreOptions) {
   /** Anzahl gesicherter Protokollschreiben je Seite (nur für die Anzeige). */
   const writes = new Map<string, number>();
   let tail: Promise<unknown> = Promise.resolve();
+  /** Letzter eingereihter Auftrag je Seite: ein Lesen dieser Seite wartet darauf. */
+  const pageTails = new Map<string, Promise<unknown>>();
+  /** Snapshots verlassener Seiten, deren Sichern gescheitert ist: werden beim
+   *  nächsten Lesen (Öffnen) der Seite erneut versucht, bis ein Sichern gelingt. */
+  const failedSaves = new Map<string, string>();
 
   /** Auftrag in die Kette stellen. Ein Fehler bricht nur diesen Auftrag ab
    *  (er geht an den Aufrufer), die Kette läuft weiter. */
-  function enqueue<T>(job: () => Promise<T>): Promise<T> {
+  function enqueue<T>(job: () => Promise<T>, page: string): Promise<T> {
     const run = tail.then(job, job);
-    tail = run.catch(() => undefined);
+    const settled = run.catch(() => undefined);
+    tail = settled;
+    pageTails.set(page, settled);
+    void settled.then(() => {
+      if (pageTails.get(page) === settled) pageTails.delete(page);
+    });
     return run;
   }
 
@@ -120,7 +130,7 @@ export function createPageStateStore(options: PageStateStoreOptions) {
       writes.set(page, (writes.get(page) ?? 0) + 1);
       options.onCommit?.(page, next);
       return "saved";
-    });
+    }, page);
   }
 
   /** Wie {@link commitLogOutcome}; `true`, wenn gesichert. */
@@ -130,7 +140,8 @@ export function createPageStateStore(options: PageStateStoreOptions) {
   /**
    * Rohfassung anhängen, atomar mit der Prüfung auf Platz: ist die Grenze
    * erreicht, meldet der Auftrag `full`, statt etwas zu verdrängen. Der Editor
-   * setzt den Text erst ein, wenn dieses Ergebnis vorliegt.
+   * hat den Rohtext zu diesem Zeitpunkt schon eingefügt und bereinigt ihn erst
+   * nach diesem Ergebnis, und nur bei `saved`.
    */
   const addLogEntry = (
     page: string,
@@ -143,23 +154,59 @@ export function createPageStateStore(options: PageStateStoreOptions) {
 
   /**
    * Seitenstand sichern (Autosave, Export, KI-Dokument). `snapshot` ist der
-   * vorab gebaute Zustand; auf der offenen Seite wird er erst beim Schreiben
-   * neu gebaut (neuester Text), sonst gilt er. `einfuegungen` kommt in beiden
-   * Fällen aus der frisch gelesenen Datei. Schreib- oder Lesefehler gehen an
-   * den Aufrufer.
+   * vorab gebaute Zustand. Wird er für die gerade OFFENE Seite eingereiht, wird
+   * er erst beim Schreiben neu gebaut (neuester Text), solange sie offen ist.
+   * Wird er für eine nicht offene (verlassene) Seite eingereiht, gilt immer der
+   * Snapshot, auch wenn die Seite bis zur Ausführung wieder offen ist: er ist der
+   * Stand beim Verlassen, die Oberfläche lädt danach erst hinter diesem Auftrag.
+   * `einfuegungen` kommt in beiden Fällen aus der frisch gelesenen Datei.
+   * Schreib- oder Lesefehler gehen an den Aufrufer. Scheitert das Sichern einer
+   * nicht offenen Seite, bleibt der Snapshot für einen erneuten Versuch beim
+   * nächsten Öffnen (`read`); ein später gelungenes Sichern ersetzt ihn.
    */
   function save(page: string, snapshot: string): Promise<void> {
+    const openAtEnqueue = live.isLive(page);
     return enqueue(async () => {
-      const text = await io.load(page);
-      if (text === null) throw new Error("page state not read");
-      const state = parseState(live.isLive(page) ? live.build() : snapshot);
-      let body = snapshot;
-      if (state) {
-        state.einfuegungen = parseState(text)?.einfuegungen;
-        body = JSON.stringify(state);
+      try {
+        const text = await io.load(page);
+        if (text === null) throw new Error("page state not read");
+        const state = parseState(
+          openAtEnqueue && live.isLive(page) ? live.build() : snapshot,
+        );
+        let body = snapshot;
+        if (state) {
+          state.einfuegungen = parseState(text)?.einfuegungen;
+          body = JSON.stringify(state);
+        }
+        if (!(await io.save(page, body)))
+          throw new Error("page state not saved");
+        failedSaves.delete(page);
+      } catch (error) {
+        if (!openAtEnqueue) failedSaves.set(page, snapshot);
+        throw error;
       }
-      if (!(await io.save(page, body))) throw new Error("page state not saved");
-    });
+    }, page);
+  }
+
+  /** Steht für die Seite ein gescheitertes Sichern aus (Snapshot beim Verlassen)? */
+  const hasFailedSave = (page: string): boolean => failedSaves.has(page);
+
+  /**
+   * Seite lesen, hinter allen bereits eingereihten Aufträgen dieser Seite: wer
+   * eine Seite (wieder) öffnet, sieht so immer den Stand nach allen ausstehenden
+   * Schreibvorgängen, nicht den Dateistand von davor. Ein früher gescheitertes
+   * Sichern dieser Seite wird zuerst erneut versucht. `mark` ist die Marke der
+   * Anzeige VOR dem Lesen (siehe `changedSince`); `null` bei Lesefehler.
+   */
+  async function read(
+    page: string,
+  ): Promise<{ text: string; mark: number } | null> {
+    const failed = failedSaves.get(page);
+    if (failed !== undefined) await save(page, failed).catch(() => undefined);
+    await pageTails.get(page);
+    const mark = writes.get(page) ?? 0;
+    const text = await io.load(page);
+    return text === null ? null : { text, mark };
   }
 
   /**
@@ -194,7 +241,7 @@ export function createPageStateStore(options: PageStateStoreOptions) {
       if (!state || !change(state, text)) return false;
       state.einfuegungen = log;
       return io.save(page, JSON.stringify(state));
-    });
+    }, page);
   }
 
   return {
@@ -202,6 +249,8 @@ export function createPageStateStore(options: PageStateStoreOptions) {
     commitLogOutcome,
     addLogEntry,
     save,
+    read,
+    hasFailedSave,
     mutate,
     /** Marke der Anzeige: vor dem Lesen einer Seite holen. */
     mark: (page: string): number => writes.get(page) ?? 0,

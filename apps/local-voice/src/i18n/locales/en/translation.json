@@ -31,6 +31,7 @@
   },
   "tts": {
     "pageSaveFailed": "The page could not be saved. The action was not carried out.",
+    "pageSaveFailedLeft": "The page “{{title}}” could not be saved. It will be tried again the next time the page is opened.",
     "editorMenu": {
       "label": "Editor menu",
       "find": "Find and replace",
@@ -74,7 +75,7 @@
       "pasteFullAction": "Clean up recent pastes",
       "pasteAbortedPage": "Paste cancelled: page changed.",
       "pasteAbortedChanged": "Paste cancelled: the text changed in the meantime. The clipboard is unchanged.",
-      "pasteNotCleaned": "Not cleaned up: the text has changed in the meantime. The original is saved, the text is in the document uncleaned.",
+      "pasteNotCleaned": "The original is saved. Cleanup was skipped because the text has changed in the meantime.",
       "pasteNotSaved": "The original could not be saved: text pasted unchanged.",
       "pasteLogItem": "Recent pastes …",
       "pasteLogItemHint": "View, restore or copy the original of earlier pastes",

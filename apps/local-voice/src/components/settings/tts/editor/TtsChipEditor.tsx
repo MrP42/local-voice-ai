@@ -649,15 +649,47 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
         toast.error(t("tts.editorMenu.pasteNotSaved"));
         return;
       }
+      // Nur bereinigen, wenn der Nutzer inzwischen nichts am Einfügen vorbei
+      // getan hat: andere Seite oder Textarea, geänderter Text, laufende
+      // IME-Komposition oder verlorener Fokus (execInsert würde ihn holen)
+      // lassen den Rohtext stehen.
       const intact =
         taRef.current === ta &&
         docKeyRef.current === doc &&
+        !composingRef.current &&
+        document.activeElement === ta &&
         valueRef.current.slice(start, rawEnd) === original;
       if (!intact) {
         toast(t("tts.editorMenu.pasteNotCleaned"));
         return;
       }
+      // Auswahl des Nutzers beibehalten: davor bleibt sie, dahinter rückt sie um
+      // den Längenunterschied nach, im ersetzten Bereich endet sie hinter dem Ergebnis.
+      const { selectionStart, selectionEnd, selectionDirection } = ta;
+      const shift = cleaned.length - original.length;
+      const mapPos = (pos: number) =>
+        pos <= start
+          ? pos
+          : pos >= rawEnd
+            ? pos + shift
+            : start + Math.min(pos - start, cleaned.length);
       execInsert(ta, start, rawEnd, cleaned);
+      const restoreSelection = () =>
+        ta.setSelectionRange(
+          mapPos(selectionStart),
+          mapPos(selectionEnd),
+          selectionDirection ?? undefined,
+        );
+      restoreSelection();
+      const cleanedValue = valueRef.current;
+      window.requestAnimationFrame(() => {
+        if (
+          taRef.current === ta &&
+          valueRef.current === cleanedValue &&
+          !composingRef.current
+        )
+          restoreSelection();
+      });
       // Stand direkt nach dem Einfügen (valueRef folgt dem input-Ereignis sofort).
       const after = valueRef.current;
       const to = start + cleaned.length;

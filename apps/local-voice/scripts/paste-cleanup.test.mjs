@@ -2636,3 +2636,174 @@ test("pageState: Schreibfehler bleibt „failed“, nicht „full“ (lva#548)",
   assert.equal(await h.store.addLogEntry("A", E1), "failed");
   assert.equal(await h.store.addLogEntry("A", E1), "saved");
 });
+
+// ---------------------------------------------------------------------------
+// lva#548 Fixrunde 2: Laden über die Kette, Snapshot beim Einreihen, Wiederholen
+// ---------------------------------------------------------------------------
+
+test("pageState: Laden hinter dem Schreiben: Einfügen bei 20 Einträgen, Abfrage hängt, Seite verlassen und wieder öffnen, freigeben: der Text der Einfügung bleibt (Dokument und Datei)", async () => {
+  const h = harness({ A: stateWith({ einfuegungen: voll() }) });
+  h.active = "A";
+  h.loaded = true;
+  h.uiText = "alt + Einfügung";
+  // 1. Die Dateiabfrage des Protokollschreibens hängt (einmalig).
+  const held = gate();
+  h.holdLoad = async () => {
+    h.holdLoad = null;
+    await held.promise;
+  };
+  const added = h.store.addLogEntry("A", E1);
+  await tick();
+  // 2. Seite verlassen: der Autosave reiht den Snapshot ein.
+  h.active = null;
+  h.loaded = false;
+  const flush = h.store.save("A", stateWith({ text: "alt + Einfügung" }));
+  // 3. Seite wieder öffnen: die Oberfläche lädt erst, ist noch nicht „live“.
+  h.active = "A";
+  h.uiText = "alt";
+  const reopened = h.store.read("A");
+  await tick();
+  // 4. Freigeben: full, dann der Snapshot, dann erst das Lesen.
+  held.release();
+  assert.equal(await added, "full");
+  await flush;
+  const read = await reopened;
+  assert.equal(JSON.parse(read.text).text, "alt + Einfügung");
+  // Die Oberfläche ist jetzt fertig geladen: der nächste Autosave behält den Text.
+  h.loaded = true;
+  h.uiText = JSON.parse(read.text).text;
+  await h.store.save("A", stateWith({ text: h.uiText }));
+  assert.equal(h.fileState("A").text, "alt + Einfügung");
+  assert.equal(h.fileState("A").einfuegungen.length, PASTE_LOG_MAX_ENTRIES);
+});
+
+test("pageState: ein für die verlassene Seite eingereihter save schreibt immer seinen Snapshot, auch wenn die Seite bis zur Ausführung wieder offen ist", async () => {
+  const h = harness({ A: stateWith({}) });
+  const held = gate();
+  h.holdLoad = async () => {
+    h.holdLoad = null;
+    await held.promise;
+  };
+  const flush = h.store.save(
+    "A",
+    stateWith({ text: "Snapshot beim Verlassen" }),
+  );
+  await tick();
+  h.active = "A";
+  h.loaded = true;
+  h.uiText = "älterer Stand der Oberfläche";
+  held.release();
+  await flush;
+  assert.equal(h.fileState("A").text, "Snapshot beim Verlassen");
+});
+
+test("pageState: ein für die offene Seite eingereihter save nimmt weiter den neuesten Text der Oberfläche", async () => {
+  const h = harness({ A: stateWith({}) });
+  h.active = "A";
+  h.loaded = true;
+  h.uiText = "alt";
+  const held = gate();
+  h.holdLoad = async () => {
+    h.holdLoad = null;
+    await held.promise;
+  };
+  const saved = h.store.save("A", stateWith({ text: "alt" }));
+  await tick();
+  h.uiText = "neuer, während es wartete";
+  held.release();
+  await saved;
+  assert.equal(h.fileState("A").text, "neuer, während es wartete");
+});
+
+test("pageState: Tippen, verlassen, wieder öffnen, während ein Schreibvorgang hängt: das Laden zeigt den getippten Text", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.active = "A";
+  h.loaded = true;
+  const held = gate();
+  h.holdSave = async () => {
+    h.holdSave = null;
+    await held.promise;
+  };
+  const first = h.store.save("A", stateWith({ text: "alt X" }));
+  h.uiText = "alt X";
+  await tick();
+  h.active = null;
+  h.loaded = false;
+  const flush = h.store.save("A", stateWith({ text: "alt XY" }));
+  h.active = "A";
+  const reopened = h.store.read("A");
+  await tick();
+  held.release();
+  await first;
+  await flush;
+  assert.equal(JSON.parse((await reopened).text).text, "alt XY");
+});
+
+test("pageState: read liefert die Marke vor dem Lesen und nur diese Seite wartet auf ihre Aufträge", async () => {
+  const h = harness({
+    A: stateWith({ text: "a" }),
+    B: stateWith({ text: "b" }),
+  });
+  const held = gate();
+  h.holdSave = async (page) => {
+    if (page !== "A") return;
+    h.holdSave = null;
+    await held.promise;
+  };
+  const writing = h.store.save("A", stateWith({ text: "a2" }));
+  await tick();
+  // Eine andere Seite wartet nicht auf den hängenden Auftrag von A.
+  const other = await h.store.read("B");
+  assert.equal(JSON.parse(other.text).text, "b");
+  let done = false;
+  const waiting = h.store.read("A").then((r) => {
+    done = true;
+    return r;
+  });
+  await tick();
+  assert.equal(done, false);
+  held.release();
+  await writing;
+  const r = await waiting;
+  assert.equal(JSON.parse(r.text).text, "a2");
+  assert.equal(r.mark, h.store.mark("A"));
+  assert.equal(await h.store.read("fehlt").then((x) => x?.text), "");
+});
+
+test("pageState: gescheitertes Sichern einer verlassenen Seite: der Snapshot bleibt und wird beim nächsten Öffnen erneut versucht", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failNextSave = true;
+  await assert.rejects(
+    h.store.save("A", stateWith({ text: "neu beim Verlassen" })),
+  );
+  assert.equal(h.store.hasFailedSave("A"), true);
+  assert.equal(h.fileState("A").text, "alt");
+  const read = await h.store.read("A");
+  assert.equal(JSON.parse(read.text).text, "neu beim Verlassen");
+  assert.equal(h.store.hasFailedSave("A"), false);
+  assert.equal(h.fileState("A").text, "neu beim Verlassen");
+});
+
+test("pageState: scheitert auch der erneute Versuch, bleibt der Snapshot; ein späteres Sichern ersetzt ihn", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failNextSave = true;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  h.failNextSave = true;
+  const first = await h.store.read("A");
+  assert.equal(JSON.parse(first.text).text, "alt");
+  assert.equal(h.store.hasFailedSave("A"), true);
+  // Ein gelungenes Sichern derselben Seite (neuerer Stand) ersetzt den Snapshot.
+  await h.store.save("A", stateWith({ text: "v2" }));
+  assert.equal(h.store.hasFailedSave("A"), false);
+  const second = await h.store.read("A");
+  assert.equal(JSON.parse(second.text).text, "v2");
+});
+
+test("pageState: scheitert das Sichern der OFFENEN Seite, bleibt kein Snapshot (die Oberfläche hält den Stand)", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.active = "A";
+  h.loaded = true;
+  h.failNextSave = true;
+  await assert.rejects(h.store.save("A", stateWith({ text: "x" })));
+  assert.equal(h.store.hasFailedSave("A"), false);
+});

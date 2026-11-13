@@ -82,6 +82,15 @@ test.beforeEach(async ({ page }) => {
             };
             if (w.__saveDelay)
               await new Promise((r) => setTimeout(r, w.__saveDelay));
+            const hold = (
+              window as unknown as { __holdNextSave?: Promise<void> }
+            ).__holdNextSave;
+            if (hold) {
+              (
+                window as unknown as { __holdNextSave?: Promise<void> }
+              ).__holdNextSave = undefined;
+              await hold;
+            }
             if (w.__failSave) throw "disk full";
             sessionStorage.setItem(`__ps_${args?.id}`, String(args?.state));
             return null;
@@ -94,6 +103,16 @@ test.beforeEach(async ({ page }) => {
             // verspäteter Ladevorgang bringt den Stand von VOR dem Warten.
             const stored = sessionStorage.getItem(`__ps_${args?.id}`);
             if (delay) await new Promise((r) => setTimeout(r, delay));
+            // Einmalige Sperre (Test gibt sie frei): erst lesen, dann hängen.
+            const hold = (
+              window as unknown as { __holdNextLoad?: Promise<void> }
+            ).__holdNextLoad;
+            if (hold) {
+              (
+                window as unknown as { __holdNextLoad?: Promise<void> }
+              ).__holdNextLoad = undefined;
+              await hold;
+            }
             return stored;
           }
           if (cmd === "book_ai_document_import") {
@@ -698,9 +717,12 @@ test("a page switch while the raw text is being saved: the raw text stays in the
   // Der Rohtext steht sofort im Dokument, ungereinigt.
   await expect(editor).toHaveValue(`Vorher. ${DIRTY}`);
   await page.getByText("Das Wintermärchen", { exact: true }).click();
-  await expect(toast(page).last()).toContainText("Nicht bereinigt", {
-    timeout: 15_000,
-  });
+  await expect(toast(page).last()).toContainText(
+    "Bereinigung wurde ausgelassen",
+    {
+      timeout: 15_000,
+    },
+  );
   // Seite 2 bekam nichts.
   const p2 = await page.evaluate(() => sessionStorage.getItem("__ps_p2"));
   expect(p2 === null || !p2.includes("Telefonanlage")).toBe(true);
@@ -784,9 +806,9 @@ test("two simultaneous pastes keep both raw entries; the first is cleaned, the s
     .toBe(JSON.stringify([DIRTY, SECOND]));
   // Beide Texte stehen im Dokument: der erste bereinigt, der zweite roh.
   await expect(editor).toHaveValue(CLEAN + SECOND);
-  await expect(toast(page).filter({ hasText: "Nicht bereinigt" })).toHaveCount(
-    1,
-  );
+  await expect(
+    toast(page).filter({ hasText: "Bereinigung wurde ausgelassen" }),
+  ).toHaveCount(1);
 });
 
 test("limits count bytes: ä text is too large as an entry although short in characters", async ({
@@ -831,8 +853,14 @@ async function openSeeded(
   state: Record<string, unknown>,
 ): Promise<ReturnType<Page["locator"]>> {
   await page.addInitScript((json) => {
-    sessionStorage.setItem("__ps_p1", json);
+    if (sessionStorage.getItem("__ps_p1") === null)
+      sessionStorage.setItem("__ps_p1", json);
   }, JSON.stringify(state));
+  return reopenEditor(page);
+}
+
+/** Vorlesen öffnen (nach Neuladen: der Stand im sessionStorage bleibt), Bearbeiten-Ansicht. */
+async function reopenEditor(page: Page): Promise<ReturnType<Page["locator"]>> {
   await page.goto("/");
   await page
     .getByRole("navigation")
@@ -1456,7 +1484,10 @@ async function typeAfterReopen(page: Page, mark: string) {
   if (await edit.count()) await edit.click();
   const editor = page.locator("textarea").first();
   await expect(editor).toBeVisible();
-  await editor.press("End");
+  // Das Laden wartet hinter den Schreibvorgängen der Seite (lva#548): erst tippen,
+  // wenn der Text der Seite da ist, sonst überschreibt ihn die Ladeantwort.
+  await expect(editor).not.toHaveValue("", { timeout: 20_000 });
+  await editor.press("Control+End");
   await editor.press(mark);
 }
 
@@ -2038,6 +2069,14 @@ test("two overlapping pastes at 19 entries: the second gets `full`, both texts e
   // Der gesicherte Text wurde bereinigt, der mit „voll“ steht noch roh da.
   const unsaved = rohs[19] === DIRTY ? SECOND : DIRTY;
   expect(value).toContain(unsaved);
+  // Der final gespeicherte Dokumenttext (Datei) ist genau der des Editors, auch
+  // nach erneutem Laden.
+  await expect
+    .poll(async () => ((await savedState(page)) as { text: string }).text)
+    .toBe(value);
+  const reloaded = await reopenEditor(page);
+  await expect(reloaded).toHaveValue(value);
+  expect(await savedRohs(page)).toEqual(rohs);
 });
 
 test("two overlapping pastes at 20 entries: both are `full`, both stay raw in the document, the file is unchanged", async ({
@@ -2083,10 +2122,232 @@ test("saved while typing in front of the paste during the wait: not cleaned, raw
   await editor.focus();
   await page.keyboard.press("Control+Home");
   await page.keyboard.type("Vorne ");
-  await expect(toast(page).last()).toContainText("Nicht bereinigt", {
-    timeout: 15_000,
-  });
+  await expect(toast(page).last()).toContainText(
+    "Bereinigung wurde ausgelassen",
+    {
+      timeout: 15_000,
+    },
+  );
   await expect(editor).toHaveValue(`Vorne Anfang ${DIRTY}`);
   await expect.poll(async () => (await savedRohs(page)).length).toBe(1);
   expect((await savedRohs(page))[0]).toBe(DIRTY);
+});
+
+// -- Wieder geöffnete Ursprungsseite: das Laden läuft hinter allen Schreibvorgängen --
+
+const TWO_PAGES = [
+  { id: "p1", title: "Der Sturm" },
+  { id: "p2", title: "Das Wintermärchen" },
+];
+
+/** Seite p1 (Text und Einträge) mit zweiter Seite p2 öffnen, Editor im Original. */
+async function openTwoPages(page: Page, text: string, entries: number) {
+  await page.addInitScript((list) => {
+    (window as unknown as { __pagesList: unknown }).__pagesList = list;
+  }, TWO_PAGES);
+  const many = Array.from({ length: entries }, (_, i) => entryFor(i + 1));
+  const editor = await openSeeded(page, {
+    text,
+    tab: "original",
+    einfuegungen: many,
+  });
+  await expect(editor).toHaveValue(text);
+  return { editor, many };
+}
+
+const gotoPage = (page: Page, title: string) =>
+  page.getByText(title, { exact: true }).click();
+
+test("paste at 20 entries, file query hangs, leave and reopen the page, release: the full document text stays (UI and file)", async ({
+  page,
+}) => {
+  const { editor, many } = await openTwoPages(page, "Vorher. ", 20);
+  // 1. Die Dateiabfrage des Protokollschreibens hängt.
+  await page.evaluate(() => {
+    const w = window as unknown as {
+      __holdNextLoad?: Promise<void>;
+      __release?: () => void;
+    };
+    w.__holdNextLoad = new Promise<void>((resolve) => {
+      w.__release = resolve;
+    });
+  });
+  // 2. Einfügen: der Rohtext steht sofort im Dokument.
+  expect(await paste(editor, DIRTY)).toBe(true);
+  await expect(editor).toHaveValue(`Vorher. ${DIRTY}`);
+  // 3. Seite verlassen (der Autosave reiht den Stand ein) und wieder öffnen.
+  await gotoPage(page, "Das Wintermärchen");
+  await expect(editor).toHaveValue("");
+  await gotoPage(page, "Der Sturm");
+  // 4. Freigeben: Abfrage meldet „voll“, der Autosave schreibt den Stand der
+  // Einfügung, erst danach lädt die wieder geöffnete Seite.
+  await page.evaluate(() =>
+    (window as unknown as { __release: () => void }).__release(),
+  );
+  await expect(editor).toHaveValue(`Vorher. ${DIRTY}`);
+  await expect(toast(page).last()).toContainText("Rohfassungen voll");
+  await expect
+    .poll(async () => ((await savedState(page)) as { text: string }).text)
+    .toBe(`Vorher. ${DIRTY}`);
+  expect(await savedRohs(page)).toEqual(many.map((e) => e.roh));
+  // Nach erneutem Laden (Neustart) stimmt die Datei.
+  const reloaded = await reopenEditor(page);
+  await expect(reloaded).toHaveValue(`Vorher. ${DIRTY}`);
+  expect(await savedRohs(page)).toEqual(many.map((e) => e.roh));
+});
+
+test("typing, leave and reopen the page while a write hangs: the typed text stays (UI and file)", async ({
+  page,
+}) => {
+  const { editor } = await openTwoPages(page, "Vorher. ", 0);
+  await expect
+    .poll(async () => ((await savedState(page)) as { text: string })?.text)
+    .toBe("Vorher. ");
+  // Der erste Autosave (nach „X“) hängt in der Datei.
+  await page.evaluate(() => {
+    const w = window as unknown as {
+      __holdNextSave?: Promise<void>;
+      __release?: () => void;
+    };
+    w.__holdNextSave = new Promise<void>((resolve) => {
+      w.__release = resolve;
+    });
+  });
+  await editor.focus();
+  await editor.press("Control+End");
+  await page.keyboard.type("X");
+  await page.waitForTimeout(800);
+  // „Y“ und sofort verlassen: der Autosave der verlassenen Seite reiht sich dahinter ein.
+  await page.keyboard.type("Y");
+  await gotoPage(page, "Das Wintermärchen");
+  await gotoPage(page, "Der Sturm");
+  await page.evaluate(() =>
+    (window as unknown as { __release: () => void }).__release(),
+  );
+  await expect(editor).toHaveValue("Vorher. XY");
+  await expect
+    .poll(async () => ((await savedState(page)) as { text: string }).text)
+    .toBe("Vorher. XY");
+  const reloaded = await reopenEditor(page);
+  await expect(reloaded).toHaveValue("Vorher. XY");
+});
+
+test("a failed save of a left page names the page and is tried again when it is opened", async ({
+  page,
+}) => {
+  const { editor } = await openTwoPages(page, "Vorher. ", 0);
+  await expect
+    .poll(async () => ((await savedState(page)) as { text: string })?.text)
+    .toBe("Vorher. ");
+  await editor.focus();
+  await editor.press("Control+End");
+  await page.keyboard.type("Z");
+  await page.evaluate(() => {
+    (window as unknown as { __failSave: boolean }).__failSave = true;
+  });
+  await gotoPage(page, "Das Wintermärchen");
+  await expect(toast(page).last()).toContainText("Die Seite „Der Sturm“");
+  await expect(toast(page).last()).toContainText("erneut versucht");
+  expect(((await savedState(page)) as { text: string }).text).toBe("Vorher. ");
+  // Die Seite wird wieder geöffnet: der Snapshot wird erneut gesichert und angezeigt.
+  await page.evaluate(() => {
+    (window as unknown as { __failSave: boolean }).__failSave = false;
+  });
+  await gotoPage(page, "Der Sturm");
+  await expect(editor).toHaveValue("Vorher. Z");
+  await expect
+    .poll(async () => ((await savedState(page)) as { text: string }).text)
+    .toBe("Vorher. Z");
+});
+
+// -- Bereinigen nach dem Warten: IME, Fokus, Auswahl ---------------------------------
+
+test("an IME composition that is active when the wait ends: not cleaned, the raw text stays", async ({
+  page,
+}) => {
+  const editor = await openEditor(page);
+  await page.evaluate(() => {
+    (window as unknown as { __saveDelay: number }).__saveDelay = 800;
+  });
+  expect(await paste(editor, DIRTY)).toBe(true);
+  await editor.evaluate((el) =>
+    el.dispatchEvent(
+      new CompositionEvent("compositionstart", { bubbles: true }),
+    ),
+  );
+  await expect(toast(page).last()).toContainText(
+    "Bereinigung wurde ausgelassen",
+    { timeout: 10_000 },
+  );
+  await expect(editor).toHaveValue(`Vorher. ${DIRTY}`);
+  await editor.evaluate((el) =>
+    el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true })),
+  );
+  expect((await savedRohs(page))[0]).toBe(DIRTY);
+});
+
+test("the editor lost focus while waiting: not cleaned, focus is not stolen", async ({
+  page,
+}) => {
+  const editor = await openEditor(page);
+  await page.evaluate(() => {
+    (window as unknown as { __saveDelay: number }).__saveDelay = 800;
+  });
+  expect(await paste(editor, DIRTY)).toBe(true);
+  await editor.evaluate((el) => (el as HTMLTextAreaElement).blur());
+  await expect(toast(page).last()).toContainText(
+    "Bereinigung wurde ausgelassen",
+    { timeout: 10_000 },
+  );
+  await expect(editor).toHaveValue(`Vorher. ${DIRTY}`);
+  await expect(editor).not.toBeFocused();
+});
+
+test("cleaning keeps the user's caret: before the paste it stays, behind it it moves with the text", async ({
+  page,
+}) => {
+  const editor = await openEditor(page, "Anfang ");
+  await page.evaluate(() => {
+    (window as unknown as { __saveDelay: number }).__saveDelay = 800;
+  });
+  expect(await paste(editor, DIRTY)).toBe(true);
+  // Cursor während des Wartens an Position 3 (vor der Einfügung).
+  await editor.evaluate((el: HTMLTextAreaElement) =>
+    el.setSelectionRange(3, 3),
+  );
+  await expect(editor).toHaveValue(`Anfang ${CLEAN}`, { timeout: 10_000 });
+  expect(await caret(editor)).toEqual([3, 3]);
+
+  // Zweite Einfügung, dahinter wird getippt: der Cursor bleibt am Ende des Textes.
+  await paste(editor, SECOND);
+  await page.keyboard.type(" Ende");
+  await expect(editor).toHaveValue(
+    `Anfang ${CLEAN}Zweiter Absatz mit Text, der lang genug ist, um bleiben zu dürfen. Ende`,
+    { timeout: 10_000 },
+  );
+  const value = await editor.inputValue();
+  expect(await caret(editor)).toEqual([value.length, value.length]);
+});
+
+test("the action of the full notice is reachable with the keyboard and Enter opens the dialog", async ({
+  page,
+}) => {
+  const { editor } = await openFullLog(page);
+  await paste(editor, DIRTY);
+  await expect(toast(page).last()).toContainText("Rohfassungen voll");
+  await page.keyboard.press("Alt+KeyT");
+  const focusedText = () =>
+    page.evaluate(() => document.activeElement?.textContent ?? "");
+  for (
+    let i = 0;
+    i < 8 && (await focusedText()) !== "Letzte Einfügungen aufräumen";
+    i += 1
+  )
+    await page.keyboard.press("Tab");
+  expect(await focusedText()).toBe("Letzte Einfügungen aufräumen");
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("dialog", { name: "Letzte Einfügungen" }),
+  ).toBeVisible();
+  await expect(page.getByTestId("paste-log-entry")).toHaveCount(20);
 });

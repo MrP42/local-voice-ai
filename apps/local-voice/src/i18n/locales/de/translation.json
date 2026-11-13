@@ -31,6 +31,7 @@
   },
   "tts": {
     "pageSaveFailed": "Die Seite konnte nicht gespeichert werden. Die Aktion wurde nicht ausgeführt.",
+    "pageSaveFailedLeft": "Die Seite „{{title}}“ konnte nicht gespeichert werden. Beim nächsten Öffnen der Seite wird es erneut versucht.",
     "editorMenu": {
       "label": "Editor-Menü",
       "find": "Suchen und Ersetzen",
@@ -74,7 +75,7 @@
       "pasteFullAction": "Letzte Einfügungen aufräumen",
       "pasteAbortedPage": "Einfügen abgebrochen: Seite gewechselt.",
       "pasteAbortedChanged": "Einfügen abgebrochen: Der Text wurde währenddessen geändert. Die Zwischenablage ist unverändert.",
-      "pasteNotCleaned": "Nicht bereinigt: Der Text hat sich inzwischen geändert. Die Rohfassung ist gesichert, der Text steht unbereinigt im Dokument.",
+      "pasteNotCleaned": "Die Rohfassung ist gesichert. Die Bereinigung wurde ausgelassen, weil sich der Text inzwischen geändert hat.",
       "pasteNotSaved": "Die Rohfassung ließ sich nicht sichern: Text unverändert eingefügt.",
       "pasteLogItem": "Letzte Einfügungen …",
       "pasteLogItemHint": "Rohfassung früherer Einfügungen ansehen, zurückholen oder kopieren",
