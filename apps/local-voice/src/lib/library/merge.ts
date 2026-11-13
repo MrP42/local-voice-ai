@@ -199,9 +199,9 @@ interface TextLoad {
 }
 
 async function loadText(pageId: string): Promise<TextLoad | null> {
-  const r = await commands.pageStateLoad(pageId);
-  if (r.status !== "ok") return null;
   try {
+    const r = await commands.pageStateLoad(pageId);
+    if (r.status !== "ok") return null;
     const state: unknown = JSON.parse(r.data);
     if (typeof state !== "object" || state === null || Array.isArray(state))
       return null;
