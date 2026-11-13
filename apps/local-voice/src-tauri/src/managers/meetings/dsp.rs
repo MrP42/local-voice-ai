@@ -1716,6 +1716,10 @@ fn run_worker(
     transcribe: &mut dyn FnMut(&Chunk) -> Vec<TimedSegment>,
     emit: &mut dyn FnMut(MeetingEvent),
 ) {
+    // lva#544: dieser Thread schickt Ton der Besprechung durch das Modell und speichert das
+    // Ergebnis: jeder Modellaufruf braucht diesen Abschnitt (`planning::modell_lauf`), und jedes
+    // `append_delta` prueft das Einwilligungs-Tor beim Schreiben (`planning::schreibschutz`).
+    let _arbeit = crate::managers::planning::Modellarbeit::beginnen(meeting_id);
     let mut next_index: u32 = 0;
     while let Ok(item) = rx.recv() {
         let (channel, chunk, meta) = match item {
@@ -1752,6 +1756,12 @@ fn run_worker(
             new_segments: appended.clone(),
         };
         if let Err(e) = store.append_delta(meeting_id, &delta) {
+            if crate::managers::planning::ist_ablehnung(&e.to_string()) {
+                // Widerruf zwischen Modell und Speichern: der Block faellt weg, ohne Fehler der
+                // Ablage. Die Meldung an die Oberflaeche kommt mit dem naechsten Block.
+                warn!("meetings: Block verworfen ({meeting_id}, Einwilligungs-Tor)");
+                continue;
+            }
             error!("meetings: delta not stored: {e}");
             emit(MeetingEvent::Error {
                 meeting_id: meeting_id.to_string(),

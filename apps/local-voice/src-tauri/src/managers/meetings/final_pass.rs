@@ -182,6 +182,9 @@ pub enum KeepReason {
     /// lva#523: „Fortsetzen“ einer gestoppten Neu-Transkription: nur der Rest wird
     /// mit dem Modell des Laufs nachgeholt, kein Enddurchlauf ueber alles.
     PartialRerun,
+    /// lva#534: das Einwilligungs-Tor der Besprechungsplanung sperrt weitere Transkription
+    /// (Ablehnung oder fehlende Zustimmung); das Live-Transkript bleibt, wie es ist.
+    NoConsent,
 }
 
 impl KeepReason {
@@ -195,6 +198,7 @@ impl KeepReason {
                 | KeepReason::AlreadyFinal
                 | KeepReason::NotLive
                 | KeepReason::PartialRerun
+                | KeepReason::NoConsent
         )
     }
 }
@@ -345,9 +349,19 @@ pub fn remap_sources(old: &[StoredSegment], new: &[StoredSegment], ids: &[u32]) 
 pub trait FinalEnv {
     /// Laedt das Modell exklusiv (blockierend) und gibt die Ladezeit in ms zurueck.
     fn load(&mut self, model_id: &str) -> Result<u64, KeepReason>;
-    /// Transkribiert einen Block mit genau diesem Modell (laedt nach, falls es
-    /// inzwischen verdraengt wurde).
-    fn transcribe(&mut self, model_id: &str, chunk: &Chunk) -> Result<Vec<TimedSegment>, String>;
+    /// EIN Versuch, einen Block mit genau diesem Modell zu transkribieren (laedt nach, falls es
+    /// inzwischen verdraengt wurde). lva#544: `frei` ist die Erlaubnis fuer genau diese eine
+    /// Inferenz; Wiederholungen fuehrt [`gated_transcribe`] aus, jede mit eigener Freigabe.
+    fn transcribe(
+        &mut self,
+        frei: &crate::managers::planning::Freigabe,
+        model_id: &str,
+        chunk: &Chunk,
+    ) -> Result<Vec<TimedSegment>, String>;
+    /// Wie oft ein Block hoechstens versucht wird. Standard: einmal (Attrappen).
+    fn attempts(&self) -> u32 {
+        1
+    }
     /// VAD fuer die Offline-Segmentierung; `None` = Rueckfall-Chunker.
     fn vad(&self) -> Option<VadFactory>;
     fn emit(&mut self, event: MeetingEvent);
@@ -393,6 +407,41 @@ pub trait FinalEnv {
 // ---------------------------------------------------------------------------
 // Offline-Segmentierung einer Kanal-WAV
 // ---------------------------------------------------------------------------
+
+/// EIN Block durch die Spracherkennung der Umgebung, hinter dem Einwilligungs-Tor der
+/// Besprechungsplanung (lva#534). Bis zu [`FinalEnv::attempts`] Versuche; JEDER Versuch ist ein
+/// eigener Modellaufruf mit eigener Pruefung davor und danach, nie unter der Sperre waehrend das
+/// Modell rechnet (`planning::modell_lauf`). Lehnt das Tor ab (vor einem Versuch, waehrend eines
+/// Versuchs, auch eines gescheiterten), ist das Ergebnis `Err("nur_notizen: ...")` und es folgt
+/// KEIN weiterer Versuch. Ein Abbruch (neue Aufnahme) beendet die Versuche ebenfalls.
+fn gated_transcribe(
+    store: &MeetingStore,
+    meeting_id: &str,
+    env: &mut dyn FinalEnv,
+    model_id: &str,
+    chunk: &Chunk,
+) -> Result<Vec<TimedSegment>, String> {
+    let mut last = String::from("model changed during transcription");
+    for _ in 0..env.attempts().max(1) {
+        // Gleiche Koordination wie der Start einer Aufnahme (`FinalSlot`): mit gesetztem
+        // Abbruch-Merker beginnt kein Modellaufruf mehr.
+        if env.cancelled() {
+            return Err("cancelled".into());
+        }
+        use crate::managers::planning::LaufFehler;
+        let lauf = crate::managers::planning::modell_versuch(store, meeting_id, |frei| {
+            env.transcribe(frei, model_id, chunk)
+        });
+        match lauf {
+            Ok(timed) => return Ok(timed),
+            // Das Tor gab nicht frei (Ablehnung ODER nicht pruefbar, etwa ein Datenbankfehler):
+            // kein weiterer Versuch. Wiederholt wird nur ein Fehler des Modells (Typ, nicht Text).
+            Err(LaufFehler::Tor(tor)) => return Err(tor.code()),
+            Err(LaufFehler::Aufruf(e)) => last = e,
+        }
+    }
+    Err(last)
+}
 
 /// Laenge einer 16-kHz-WAV in ms (`None`, wenn nicht lesbar).
 pub fn wav_duration_ms(path: &Path) -> Option<u64> {
@@ -739,6 +788,10 @@ enum CatchUp {
     /// lva#523 (nur `strict`): Lesen, Laden oder Transkribieren scheiterte. Kein
     /// Platzhalter: der Rest bleibt offen und laesst sich erneut nachholen.
     Failed,
+    /// lva#544: das Einwilligungs-Tor hat abgelehnt (vor dem Laden, an einem Block oder beim
+    /// Speichern). Kein Platzhalter, kein weiterer Aufruf: was gespeichert ist, bleibt, der Rest
+    /// bleibt offen und wird nach der Zustimmung ueber "Fortsetzen" nachgeholt.
+    Rejected,
 }
 
 /// Nachholen nach einem Absturz: je Kanal alles ab dem groessten `end_ms`
@@ -763,6 +816,8 @@ fn catch_up(
     strict: bool,
     range: Option<TimeRange>,
 ) -> CatchUp {
+    // lva#544: Modellarbeit ueber Ton dieser Besprechung; jedes Schreiben prueft das Tor.
+    let _arbeit = crate::managers::planning::Modellarbeit::beginnen(&meeting.id);
     let segments = match store.get_segments(&meeting.id) {
         Ok(s) => s,
         Err(e) => {
@@ -832,13 +887,24 @@ fn catch_up(
         }
         let remaining = total_ms - from_ms;
         let mut failed = env.cancelled();
+        // lva#544: das Tor hat abgelehnt: weder Luecke noch weiterer Aufruf.
+        let mut rejected = false;
         if !failed && !loaded {
-            match env.load(model_id) {
-                Ok(_) => loaded = true,
-                Err(reason) => {
-                    warn!("meetings: catch-up model not loaded ({reason:?})");
+            // lva#534: ein grosses Modell wird nicht fuer nichts geladen: steht das Tor schon
+            // zu, beginnt das Nachholen gar nicht erst (jeder Block prueft es zusaetzlich).
+            match crate::managers::planning::tor_pruefen_besprechung(store, &meeting.id) {
+                Err(code) => {
+                    warn!("meetings: catch-up not started ({code})");
                     failed = true;
+                    rejected = true;
                 }
+                Ok(()) => match env.load(model_id) {
+                    Ok(_) => loaded = true,
+                    Err(reason) => {
+                        warn!("meetings: catch-up model not loaded ({reason:?})");
+                        failed = true;
+                    }
+                },
             }
         }
         let mut done_ms = from_ms;
@@ -854,13 +920,14 @@ fn catch_up(
                     }
                     Gate::Cancelled => return false,
                 }
-                let timed = match env.transcribe(model_id, &chunk) {
+                let timed = match gated_transcribe(store, &meeting.id, env, model_id, &chunk) {
                     Ok(t) => t,
                     Err(e) => {
                         warn!(
                             "meetings: catch-up block at {} ms failed: {e}",
                             chunk.offset_ms
                         );
+                        rejected = crate::managers::planning::ist_ablehnung(&e);
                         return false;
                     }
                 };
@@ -877,6 +944,9 @@ fn catch_up(
                     },
                 ) {
                     warn!("meetings: catch-up delta not stored: {e}");
+                    // Der Schreibschutz des Tors hat den Block verworfen (Widerruf zwischen
+                    // Modell und Speichern).
+                    rejected = crate::managers::planning::ist_ablehnung(&e.to_string());
                     return false;
                 }
                 report.catch_up_segments += appended.len();
@@ -908,11 +978,18 @@ fn catch_up(
                 return CatchUp::Stopped;
             }
         }
+        if rejected {
+            // Keine Luecke (auch nicht im normalen Nachholen): der Rest bleibt offen.
+            return CatchUp::Rejected;
+        }
         if strict {
             // Kein Platzhalter: der Rest bleibt offen fuer den naechsten Versuch.
             return CatchUp::Failed;
         }
-        // Rest als Luecke markieren (Muster `import.rs`).
+        // Rest als Luecke markieren (Muster `import.rs`). lva#544: die Luecke gilt spaeter als
+        // "erledigt". Verweigert der Schreibschutz des Tors sie (Widerruf seit dem Beginn, etwa
+        // waehrend eines gescheiterten Ladens), ist der Rest NICHT erledigt: abgelehnt, also
+        // fortsetzbar, ohne Luecke.
         let gap = StoredSegment {
             segment_index: next_index,
             text: super::import::gap_placeholder(done_ms, total_ms),
@@ -936,6 +1013,10 @@ fn catch_up(
                     appended: vec![gap],
                 });
             }
+            Err(e) if crate::managers::planning::ist_ablehnung(&e.to_string()) => {
+                warn!("meetings: catch-up gap marker refused by the consent gate");
+                return CatchUp::Rejected;
+            }
             Err(e) => warn!("meetings: catch-up gap marker not stored: {e}"),
         }
         done_before += remaining;
@@ -955,6 +1036,8 @@ fn final_pass(
     report: &mut FinalReport,
     turns: Option<&TurnSet>,
 ) -> Result<u32, KeepReason> {
+    // lva#544: Modellarbeit ueber Ton dieser Besprechung; jedes Schreiben prueft das Tor.
+    let _arbeit = crate::managers::planning::Modellarbeit::beginnen(&meeting.id);
     let metadata = store.metadata_json(&meeting.id).ok().flatten();
     let tracks = final_tracks(meeting, metadata.as_ref());
     let dir = meeting_dir(meeting).ok_or(KeepReason::NoAudio)?;
@@ -982,6 +1065,11 @@ fn final_pass(
     // Modells (das Laden eines grossen Modells dauert Sekunden).
     let total_ms: u64 = tracks.iter().filter_map(|t| wav_duration_ms(&t.path)).sum();
     env.phase(JobPhase::FinalPass, total_ms);
+    // lva#534: steht das Tor zu, wird das Endmodell nicht einmal geladen (RAM); jeder Block
+    // prueft es zusaetzlich (`gated_transcribe`).
+    if crate::managers::planning::tor_pruefen_besprechung(store, &meeting.id).is_err() {
+        return Err(KeepReason::NoConsent);
+    }
     report.load_ms = env.load(model_id)?;
 
     let vad = env.vad();
@@ -1004,7 +1092,7 @@ fn final_pass(
                 }
             }
             let started = Instant::now();
-            let timed = match env.transcribe(model_id, &chunk) {
+            let timed = match gated_transcribe(store, &meeting.id, env, model_id, &chunk) {
                 Ok(t) => t,
                 Err(e) => {
                     warn!(
@@ -1012,7 +1100,13 @@ fn final_pass(
                         chunk.offset_ms,
                         chunk.samples.len() as u64 / SAMPLES_PER_MS
                     );
-                    failure = Some(KeepReason::TranscribeFailed);
+                    // lva#534: das Tor hat abgelehnt (Widerruf): nichts wird ersetzt, das
+                    // Live-Transkript bleibt, ohne Fehlermeldung (gewollt).
+                    failure = Some(if crate::managers::planning::ist_ablehnung(&e) {
+                        KeepReason::NoConsent
+                    } else {
+                        KeepReason::TranscribeFailed
+                    });
                     return false;
                 }
             };
@@ -1117,6 +1211,11 @@ fn final_pass(
         warn!("meetings: final transcript not stored ({e}) - live transcript kept");
         match e {
             ReplaceError::Conflict { .. } => KeepReason::Conflict,
+            // lva#544: der Schreibschutz des Tors hat das Ersetzen verworfen (Widerruf nach dem
+            // letzten Block): das Live-Transkript bleibt, gewollt und ohne Fehlermeldung.
+            ReplaceError::Store(e) if crate::managers::planning::ist_ablehnung(&e) => {
+                KeepReason::NoConsent
+            }
             ReplaceError::Store(_) => KeepReason::StoreFailed,
         }
     })?;
@@ -1175,6 +1274,15 @@ fn turns_before_stt(
     let metadata = store.metadata_json(&meeting.id).ok().flatten();
     let tracks = speakers::diarize_tracks(meeting, metadata.as_ref());
     if tracks.is_empty() {
+        return None;
+    }
+    // lva#534: bei gesperrtem Tor laeuft auch das Sprecher-Modell nicht.
+    if *plan == FinalPlan::Keep(KeepReason::NoConsent) {
+        return None;
+    }
+    // lva#544: mit gesetztem Abbruch-Merker (neue Aufnahme, oder der Auftrag entstand neben
+    // einer laufenden: `FinalSlot::spawn`) beginnt auch das Sprecher-Modell nicht.
+    if env.cancelled() {
         return None;
     }
     // Bleibt das Live-Transkript stehen und ist leer, gibt es nichts zuzuordnen.
@@ -1268,6 +1376,44 @@ pub struct JobOutcome {
     pub model: Option<String>,
 }
 
+/// Was [`prepare_job`] vor dem Ablauf eines Auftrags geaendert hat.
+struct Prepared {
+    /// Recovery/Fortsetzen: Ergebnis von [`prepare_orphan`] (`None`: kein solcher Auftrag).
+    orphan: Option<Result<(), String>>,
+    /// Abschluss eines offenen Neu-Laufs (`rerun_state::prepare_resume`).
+    settled: Result<super::rerun_state::Resume, String>,
+}
+
+/// Die Zustandsaenderungen vor dem Ablauf eines Auftrags, in dieser Reihenfolge: Recovery
+/// (WAV-Kopf, Dauer, Status `processing`), dann mit `with_resume` der Abschluss eines offenen
+/// Neu-Laufs (kann die gestoppte Teilfassung wieder aktiv machen). `run_job` ruft das unter der
+/// Sperre des Einwilligungs-Tors, zusammen mit dessen Pruefung (lva#544).
+fn prepare_job(store: &MeetingStore, job: &JobSpec, with_resume: bool) -> Prepared {
+    let meeting_now = store.get_meeting(&job.meeting_id).ok().flatten();
+    let orphan = job
+        .recover_from
+        .as_ref()
+        .map(|expected| match &meeting_now {
+            Some(m) if m.deleted_at.is_none() && m.status == *expected => prepare_orphan(store, m)
+                .map(|_| ())
+                .map_err(|e| format!("status_processing_failed: {e}")),
+            _ => Err("recovery_state_changed".to_string()),
+        });
+    if !with_resume || matches!(orphan, Some(Err(_))) {
+        return Prepared {
+            orphan,
+            settled: Ok(super::rerun_state::Resume::Normal),
+        };
+    }
+    let has_track = meeting_now
+        .as_ref()
+        .is_some_and(|m| m.mic_audio_path.is_some() || m.system_audio_path.is_some());
+    Prepared {
+        orphan,
+        settled: super::rerun_state::prepare_resume(store, &job.meeting_id, has_track),
+    }
+}
+
 /// Fuehrt einen Auftrag aus und schliesst die Besprechung in JEDEM Fall ab:
 /// Status `ready`, `State`, bei einem unerwarteten Verbleib des
 /// Live-Transkripts der Hinweis `final_pass_skipped`, dann `TranscriptFinal`
@@ -1287,16 +1433,78 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
             model: None,
         };
     }
+    // lva#544: dieser Thread leistet ab hier Modellarbeit fuer die Besprechung: jede Aenderung am
+    // Transkript prueft das Einwilligungs-Tor beim Schreiben (`planning::schreibschutz`).
+    let _arbeit = crate::managers::planning::Modellarbeit::beginnen(&job.meeting_id);
+    // lva#544: das Tor wird HIER entschieden, frisch und unter seiner Sperre, und die
+    // Vorbereitung (Recovery: WAV-Kopf, Dauer, `processing`; Fortsetzen: gestoppte Teilfassung
+    // wieder aktiv) steht unter DERSELBEN Sperre. Ein Widerruf, der nach dem Planen des Auftrags
+    // gespeichert wurde, verhindert damit auch jede dieser Zustandsaenderungen. Ein von aussen
+    // schon gesperrter Auftrag (`Keep(NoConsent)`) gilt ohne Pruefung als abgelehnt.
+    let mut prepared: Option<Prepared> = None;
+    let mut refused = job.plan == FinalPlan::Keep(KeepReason::NoConsent);
+    if !refused {
+        match crate::managers::planning::mit_tor_besprechung(store, &job.meeting_id, |_tor| {
+            Ok(prepare_job(store, job, true))
+        }) {
+            Ok(p) => prepared = Some(p),
+            Err(code) => {
+                info!(
+                    "meetings: keine weitere Transkription fuer {} ({code})",
+                    job.meeting_id
+                );
+                refused = true;
+            }
+        }
+    }
+    // lva#534: eine Ablehnung des Einwilligungs-Tors gewinnt IMMER. Gilt sie fuer ein
+    // Fortsetzen/eine Wiederherstellung einer gestoppten Neu-Transkription (Status
+    // `cancelled` oder offene Lauf-Marke), bleibt ALLES, wie es ist: kein Modell, keine
+    // Aenderung am Transkript, am Status, an der aktiven Fassung oder an der Marke. Die
+    // Neu-Transkription bleibt fortsetzbar, sobald die Zustimmung vorliegt.
+    if refused
+        && job.recover_from.is_some()
+        && (job.recover_from.as_deref() == Some("cancelled")
+            || super::rerun_state::read(store, &job.meeting_id)
+                .ok()
+                .flatten()
+                .is_some())
+    {
+        info!(
+            "meetings: no consent - nothing continued, state kept ({})",
+            job.meeting_id
+        );
+        env.job_end();
+        return JobOutcome {
+            report,
+            epoch: store.segment_epoch(&job.meeting_id).unwrap_or(0),
+            model: None,
+        };
+    }
+    // Abgelehnt: der Auftrag schliesst die Besprechung ohne Modell ab (Live-Transkript bleibt,
+    // kein Nachholen, keine Sprecher); ein Lauf wird nie fortgesetzt.
+    // Sollte der Auftrag NACHHOLEN (Recovery nach einem Absturz), ist die Arbeit damit nicht
+    // getan: die Besprechung endet dann fortsetzbar (`cancelled`) statt `ready`, siehe unten.
+    let catch_up_refused = refused && job.catch_up_model.is_some();
+    let refused_job;
+    let job = if refused {
+        refused_job = JobSpec {
+            plan: FinalPlan::Keep(KeepReason::NoConsent),
+            catch_up_model: None,
+            ..job.clone()
+        };
+        &refused_job
+    } else {
+        job
+    };
+    let Prepared { orphan, settled } = match prepared {
+        Some(p) => p,
+        // Abgelehnt: nur die Recovery der Dateien (ohne Modell), kein Fortsetzen.
+        None => prepare_job(store, job, false),
+    };
     // lva#523: Recovery-Aenderungen (WAV-Kopf, Dauer, `processing`) erst unter der
     // Reservierung, und nur auf dem Stand, der beim Planen galt.
-    let meeting_now = store.get_meeting(&job.meeting_id).ok().flatten();
-    if let Some(expected) = &job.recover_from {
-        let prepared = match &meeting_now {
-            Some(m) if m.deleted_at.is_none() && m.status == *expected => {
-                prepare_orphan(store, m).map_err(|e| format!("status_processing_failed: {e}"))
-            }
-            _ => Err("recovery_state_changed".to_string()),
-        };
+    if let Some(prepared) = orphan {
         if let Err(e) = prepared {
             warn!("meetings: nothing recovered ({}): {e}", job.meeting_id);
             env.job_end();
@@ -1312,16 +1520,26 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
             paused: false,
         });
     }
-    let has_track = meeting_now
-        .as_ref()
-        .is_some_and(|m| m.mic_audio_path.is_some() || m.system_audio_path.is_some());
+    // lva#544: das Tor hat einen Auftrag abgelehnt, der nachholen sollte (Absturzrest ohne
+    // Neu-Lauf; der mit Neu-Lauf oder `cancelled` endete schon oben, ohne jede Aenderung). Die
+    // Dateien sind repariert (kein Modell), das Transkript ist unberuehrt und keine Luecke
+    // geschrieben. `ready` waere falsch: der Rest gaelte als erledigt und "Fortsetzen" waere
+    // gesperrt. Also wie ein Stopp: `cancelled`, kein `TranscriptFinal`; "Fortsetzen" holt den
+    // Rest nach, sobald die Zustimmung vorliegt.
+    if catch_up_refused {
+        env.emit(MeetingEvent::Error {
+            meeting_id: job.meeting_id.clone(),
+            message: "nur_notizen".to_string(),
+        });
+        return finish_stopped(store, job, env, report, KeepReason::NoConsent);
+    }
     // lva#523: eine offene Neu-Transkription unter DIESEM Auftrag abschliessen:
     // Teilergebnis (wieder) aktiv und streng mit seinem Modell nachholen, oder
     // zurueckgenommen (Status steht), oder eine nicht zuordenbare Marke abweisen.
     let resumed;
     // lva#522: Bereich eines fortgesetzten Bereichs-Laufs (nur im strengen Nachholen).
     let mut resume_range: Option<TimeRange> = None;
-    let job = match super::rerun_state::prepare_resume(store, &job.meeting_id, has_track) {
+    let job = match settled {
         Ok(super::rerun_state::Resume::Normal) => job,
         Ok(super::rerun_state::Resume::Partial(model, range)) => {
             resume_range = range;
@@ -1378,6 +1596,8 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
     };
     let mut stopped_in_catch_up = false;
     let mut failed_in_catch_up = false;
+    // lva#544: das Tor hat waehrend des Nachholens abgelehnt.
+    let mut rejected_in_catch_up = false;
     let strict = job.plan == FinalPlan::Keep(KeepReason::PartialRerun);
     let result = catch_unwind(AssertUnwindSafe(|| {
         let meeting = match store.get_meeting(&job.meeting_id) {
@@ -1401,6 +1621,10 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
                 CatchUp::Failed => {
                     failed_in_catch_up = true;
                     return Err(KeepReason::TranscribeFailed);
+                }
+                CatchUp::Rejected => {
+                    rejected_in_catch_up = true;
+                    return Err(KeepReason::NoConsent);
                 }
                 CatchUp::Finished => {}
             }
@@ -1429,7 +1653,10 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
                 .map(|epoch| (epoch, model_id.clone())),
             }
         };
-        if outcome.is_err() {
+        // lva#544: nach einer Ablehnung des Tors (Widerruf waehrend des Enddurchlaufs) aendert
+        // auch der Sprecher-Schritt nichts mehr: Segmente, Sprecherzeilen und Hinweise bleiben,
+        // wie sie sind. (Der Schreibschutz des Speichers haelt das zusaetzlich ein.)
+        if outcome.is_err() && outcome != Err(KeepReason::NoConsent) {
             // Das Live-Transkript bleibt: die Sprecher kommen auf dieses.
             apply_speakers_to_live(store, &meeting, turns.as_ref(), env, &mut report);
         }
@@ -1448,7 +1675,17 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
     }
 
     if stopped_in_catch_up {
-        return finish_stopped(store, job, env, report);
+        return finish_stopped(store, job, env, report, KeepReason::UserStopped);
+    }
+    // lva#544: das Tor hat das Nachholen beendet. Keine Luecke, kein `ready`, kein
+    // `TranscriptFinal`: die Besprechung endet fortsetzbar (`cancelled`, eine offene Marke
+    // bleibt), und "Fortsetzen" holt den Rest nach, sobald die Zustimmung vorliegt.
+    if rejected_in_catch_up {
+        env.emit(MeetingEvent::Error {
+            meeting_id: job.meeting_id.clone(),
+            message: "nur_notizen".to_string(),
+        });
+        return finish_stopped(store, job, env, report, KeepReason::NoConsent);
     }
     // lva#523: streng gilt nur das nachgewiesen vollstaendige Nachholen
     // (`Err(PartialRerun)` nach `CatchUp::Finished`) als Abschluss; alles andere
@@ -1460,7 +1697,7 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
             meeting_id: job.meeting_id.clone(),
             message: "retranscribe_failed".to_string(),
         });
-        return finish_stopped(store, job, env, report);
+        return finish_stopped(store, job, env, report, KeepReason::UserStopped);
     }
 
     let (epoch, model) = match result {
@@ -1533,7 +1770,7 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
             }
             .to_string(),
         });
-        return finish_stopped(store, job, env, report);
+        return finish_stopped(store, job, env, report, KeepReason::UserStopped);
     }
     env.emit(MeetingEvent::State {
         meeting_id: job.meeting_id.clone(),
@@ -1577,13 +1814,17 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
 /// fertigen Bloecke bleiben, "Fortsetzen" holt den Rest nach. Faellt das
 /// Schreiben des Status aus, wird es `failed` statt eines haengenden
 /// `processing`.
+///
+/// lva#544: derselbe Endzustand, wenn das Einwilligungs-Tor das Nachholen beendet hat
+/// (`reason` = `NoConsent`): unvollstaendig, aber fortsetzbar.
 fn finish_stopped(
     store: &MeetingStore,
     job: &JobSpec,
     env: &mut dyn FinalEnv,
     mut report: FinalReport,
+    reason: KeepReason,
 ) -> JobOutcome {
-    report.kept = Some(KeepReason::UserStopped);
+    report.kept = Some(reason);
     let epoch = store.segment_epoch(&job.meeting_id).unwrap_or(0);
     report.epoch = epoch;
     if let Ok(value) = serde_json::to_value(&report) {
@@ -1826,6 +2067,40 @@ impl AppDiarizer {
     }
 }
 
+/// Laesst `inferenz` laufen und daneben einen Waechter-Thread, der `abbrechen` ruft, sobald
+/// `stop` wahr wird (Abbruch der Engine, Stopp des Nutzers). Der Waechter endet IMMER mit der
+/// Inferenz, auch wenn sie mit einer Panik endet: der Abschlussmerker faellt im `Drop` (RAII),
+/// also auch beim Abwickeln. Sonst wartete `thread::scope` beim Abwickeln fuer immer auf den
+/// Waechter, und der Auftrag hinge, statt mit dem Fehler zurueckzukehren (lva#544, Fixrunde 6).
+/// Die Panik selbst geht unveraendert an den Aufrufer.
+fn mit_abbruchwaechter<T>(
+    stop: impl Fn() -> bool + Sync,
+    abbrechen: impl Fn() + Sync,
+    poll: std::time::Duration,
+    inferenz: impl FnOnce() -> T,
+) -> T {
+    struct Fertig<'a>(&'a AtomicBool);
+    impl Drop for Fertig<'_> {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+    let done = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            while !done.load(Ordering::Acquire) {
+                if stop() {
+                    abbrechen();
+                    break;
+                }
+                std::thread::sleep(poll);
+            }
+        });
+        let _fertig = Fertig(&done);
+        inferenz()
+    })
+}
+
 impl ChannelDiarizer for AppDiarizer {
     fn model_name(&self) -> String {
         speakers::HINTS_MODEL_NAME.to_string()
@@ -1847,6 +2122,7 @@ impl ChannelDiarizer for AppDiarizer {
 
     fn diarize(
         &mut self,
+        frei: &crate::managers::planning::Freigabe,
         _channel: u8,
         pcm: &[f32],
     ) -> Result<Vec<super::diarize::Turn>, super::diarize::DiarizeError> {
@@ -1854,6 +2130,7 @@ impl ChannelDiarizer for AppDiarizer {
         if self.stop_requested() {
             return Err(DiarizeError::Cancelled);
         }
+        frei.einloesen().map_err(DiarizeError::Run)?;
         if self.loaded.is_none() {
             self.loaded = Some(Diarizer::load(&self.model_path, self.threads)?);
         }
@@ -1864,23 +2141,14 @@ impl ChannelDiarizer for AppDiarizer {
         let mut params = DiarizeParams::new(&self.model_path);
         params.threads = self.threads;
         params.cancel = Some(token.clone());
-        let done = AtomicBool::new(false);
         let cancel = &self.cancel;
         let job = self.job.as_ref();
-        std::thread::scope(|scope| {
-            scope.spawn(|| {
-                while !done.load(Ordering::Relaxed) {
-                    if cancel.load(Ordering::Relaxed) || job.is_some_and(|j| j.is_stopped()) {
-                        token.cancel();
-                        break;
-                    }
-                    std::thread::sleep(CANCEL_POLL);
-                }
-            });
-            let result = diarizer.diarize(pcm, &params);
-            done.store(true, Ordering::Relaxed);
-            result
-        })
+        mit_abbruchwaechter(
+            || cancel.load(Ordering::Relaxed) || job.is_some_and(|j| j.is_stopped()),
+            || token.cancel(),
+            CANCEL_POLL,
+            || diarizer.diarize(pcm, &params),
+        )
     }
 
     fn cancelled(&self) -> bool {
@@ -1952,6 +2220,11 @@ impl FinalEnv for AppEnv {
     /// `load_model` vor dem neuen frei (nie zwei grosse Modelle im Speicher).
     fn load(&mut self, model_id: &str) -> Result<u64, KeepReason> {
         let started = Instant::now();
+        // lva#544: ein Auftrag, der neben einer laufenden Aufnahme entstanden ist, traegt den
+        // Abbruch-Merker von Geburt an (`FinalSlot::spawn`) und laedt kein Modell.
+        if self.cancelled() {
+            return Err(KeepReason::Cancelled);
+        }
         if let Err(e) =
             crate::process_guard::check_ram_for_start(ram_need_mb(self.size_mb(model_id)))
         {
@@ -1984,7 +2257,11 @@ impl FinalEnv for AppEnv {
                     .current_backend()
                     .is_some_and(|b| !b.eq_ignore_ascii_case("cpu") && b != "onnx");
                 if gpu {
-                    let _ = self.tm.transcribe_segments(vec![0.0; 16_000]);
+                    // Eine Sekunde Stille, kein Besprechungsinhalt: der benannte Ausweg.
+                    let frei = crate::managers::planning::Freigabe::ohne_besprechung(
+                        crate::managers::planning::OhneBesprechung::Aufwaermen,
+                    );
+                    let _ = self.tm.transcribe_segments(&frei, vec![0.0; 16_000]);
                 }
                 Ok(started.elapsed().as_millis() as u64)
             }
@@ -1996,26 +2273,32 @@ impl FinalEnv for AppEnv {
         }
     }
 
-    /// Bis zu drei Versuche. Vor und nach jedem Versuch muss genau dieses
-    /// Modell geladen sein: ein Diktat oder Import kann es zwischen zwei
-    /// Segmenten verdraengen, dann wird nachgeladen und wiederholt.
-    fn transcribe(&mut self, model_id: &str, chunk: &Chunk) -> Result<Vec<TimedSegment>, String> {
-        let mut last = String::from("model changed during transcription");
-        for _ in 0..TRANSCRIBE_ATTEMPTS {
-            if self.cancelled() {
-                return Err("cancelled".into());
-            }
-            if !self.is_current(model_id) {
-                self.load(model_id)
-                    .map_err(|r| format!("model reload failed: {r:?}"))?;
-            }
-            match self.tm.transcribe_segments(chunk.samples.clone()) {
-                Ok(timed) if self.is_current(model_id) => return Ok(timed),
-                Ok(_) => {}
-                Err(e) => last = e.to_string(),
-            }
+    /// EIN Versuch (lva#544: jede Inferenz traegt ihre eigene Freigabe, die Wiederholung
+    /// liegt in [`gated_transcribe`]). Vor und nach dem Versuch muss genau dieses Modell
+    /// geladen sein: ein Diktat oder Import kann es zwischen zwei Segmenten verdraengen,
+    /// dann wird nachgeladen bzw. der Versuch als gescheitert gemeldet.
+    fn transcribe(
+        &mut self,
+        frei: &crate::managers::planning::Freigabe,
+        model_id: &str,
+        chunk: &Chunk,
+    ) -> Result<Vec<TimedSegment>, String> {
+        if self.cancelled() {
+            return Err("cancelled".into());
         }
-        Err(last)
+        if !self.is_current(model_id) {
+            self.load(model_id)
+                .map_err(|r| format!("model reload failed: {r:?}"))?;
+        }
+        match self.tm.transcribe_segments(frei, chunk.samples.clone()) {
+            Ok(timed) if self.is_current(model_id) => Ok(timed),
+            Ok(_) => Err("model changed during transcription".into()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    fn attempts(&self) -> u32 {
+        TRANSCRIBE_ATTEMPTS
     }
 
     fn vad(&self) -> Option<VadFactory> {
@@ -2326,6 +2609,9 @@ mod tests {
         log: Rc<RefCell<Vec<String>>>,
         unavailable: Option<&'static str>,
         panic: bool,
+        /// lva#544: die Inferenz laeuft im Waechter-Ablauf der Produktion
+        /// (`mit_abbruchwaechter`, wie in `AppDiarizer::diarize`).
+        waechter: bool,
         runs: Rc<RefCell<usize>>,
     }
 
@@ -2339,14 +2625,33 @@ mod tests {
         fn check_ram(&mut self, _: u64) -> Result<(), String> {
             Ok(())
         }
-        fn diarize(&mut self, channel: u8, pcm: &[f32]) -> Result<Vec<Turn>, DiarizeError> {
+        fn diarize(
+            &mut self,
+            frei: &crate::managers::planning::Freigabe,
+            channel: u8,
+            pcm: &[f32],
+        ) -> Result<Vec<Turn>, DiarizeError> {
             assert!(!pcm.is_empty());
+            frei.einloesen().map_err(DiarizeError::Run)?;
             self.log.borrow_mut().push(format!("diarize:{channel}"));
             *self.runs.borrow_mut() += 1;
-            if self.panic {
-                panic!("diarizer exploded");
+            let panic = self.panic;
+            let turns = self.turns.get(&channel).cloned().unwrap_or_default();
+            let inferenz = move || {
+                if panic {
+                    panic!("diarizer exploded");
+                }
+                Ok(turns)
+            };
+            if self.waechter {
+                return mit_abbruchwaechter(
+                    || false,
+                    || {},
+                    std::time::Duration::from_millis(1),
+                    inferenz,
+                );
             }
-            Ok(self.turns.get(&channel).cloned().unwrap_or_default())
+            inferenz()
         }
         fn release(&mut self) {
             self.log.borrow_mut().push("release".into());
@@ -2358,6 +2663,8 @@ mod tests {
         events: Vec<MeetingEvent>,
         cancel_after: Option<usize>,
         fail_load: Option<KeepReason>,
+        /// lva#544: laeuft zu Beginn jedes Ladens (auch eines, das dann scheitert).
+        on_load: Option<Box<dyn FnMut()>>,
         fail_transcribe: bool,
         panic_transcribe: bool,
         empty: bool,
@@ -2375,6 +2682,12 @@ mod tests {
         progress_log: Vec<u64>,
         /// `job_begin` / `job_end` in der Reihenfolge des Aufrufs.
         job_log: Vec<String>,
+        /// lva#544: Versuche je Block (`FinalEnv::attempts`).
+        attempts: u32,
+        /// lva#544: die ersten so vielen Modellaufrufe scheitern, danach gelingen sie.
+        fail_first: usize,
+        /// lva#544: der Abbruch-Merker des Auftrags (`FinalSlot::spawn`).
+        cancel_flag: Option<Arc<AtomicBool>>,
     }
 
     impl FakeEnv {
@@ -2384,6 +2697,7 @@ mod tests {
                 events: Vec::new(),
                 cancel_after: None,
                 fail_load: None,
+                on_load: None,
                 fail_transcribe: false,
                 panic_transcribe: false,
                 empty: false,
@@ -2397,6 +2711,9 @@ mod tests {
                 phases: Vec::new(),
                 progress_log: Vec::new(),
                 job_log: Vec::new(),
+                attempts: 1,
+                fail_first: 0,
+                cancel_flag: None,
             }
         }
 
@@ -2408,6 +2725,7 @@ mod tests {
                 log: Rc::clone(&self.log),
                 unavailable: None,
                 panic: false,
+                waechter: false,
                 runs: Rc::clone(&runs),
             });
             (self, runs)
@@ -2440,6 +2758,9 @@ mod tests {
 
     impl FinalEnv for FakeEnv {
         fn load(&mut self, model_id: &str) -> Result<u64, KeepReason> {
+            if let Some(f) = self.on_load.as_mut() {
+                f();
+            }
             if let Some(r) = self.fail_load {
                 return Err(r);
             }
@@ -2452,9 +2773,12 @@ mod tests {
         }
         fn transcribe(
             &mut self,
+            frei: &crate::managers::planning::Freigabe,
             model_id: &str,
             chunk: &Chunk,
         ) -> Result<Vec<TimedSegment>, String> {
+            // Wie das echte Modell: ohne gueltige Freigabe keine Inferenz (und kein Zaehlen).
+            frei.einloesen()?;
             self.calls += 1;
             if let Some(f) = self.on_call.as_mut() {
                 f(self.calls);
@@ -2462,7 +2786,7 @@ mod tests {
             if self.panic_transcribe {
                 panic!("engine exploded");
             }
-            if self.fail_transcribe {
+            if self.fail_transcribe || self.calls <= self.fail_first {
                 return Err("boom".into());
             }
             if self.empty {
@@ -2505,8 +2829,15 @@ mod tests {
         fn emit(&mut self, event: MeetingEvent) {
             self.events.push(event);
         }
+        fn attempts(&self) -> u32 {
+            self.attempts
+        }
         fn cancelled(&self) -> bool {
             self.cancel_after.is_some_and(|n| self.calls >= n)
+                || self
+                    .cancel_flag
+                    .as_ref()
+                    .is_some_and(|c| c.load(Ordering::Acquire))
         }
         fn job_begin(&mut self, _meeting_id: &str) -> bool {
             self.job_log.push("job_begin".into());
@@ -3688,7 +4019,11 @@ mod tests {
         let mut d = app_diarizer(true, &model, true);
         assert!(d.cancelled());
         assert!(matches!(
-            d.diarize(1, &[0.0; 16]),
+            d.diarize(
+                &crate::managers::planning::Freigabe::fuer_test(),
+                1,
+                &[0.0; 16]
+            ),
             Err(DiarizeError::Cancelled)
         ));
         assert!(d.loaded.is_none());
@@ -3696,7 +4031,11 @@ mod tests {
         // Fehlt die Datei, ist es ein Fehler und keine Panik.
         let mut d = app_diarizer(true, &dir.path().join("weg.gguf"), false);
         assert!(matches!(
-            d.diarize(1, &[0.0; 16]),
+            d.diarize(
+                &crate::managers::planning::Freigabe::fuer_test(),
+                1,
+                &[0.0; 16]
+            ),
             Err(DiarizeError::ModelMissing(_))
         ));
         d.release();
@@ -4001,7 +4340,11 @@ mod tests {
         handle.stop().unwrap();
         assert!(d.cancelled());
         assert!(matches!(
-            d.diarize(1, &[0.0; 16]),
+            d.diarize(
+                &crate::managers::planning::Freigabe::fuer_test(),
+                1,
+                &[0.0; 16]
+            ),
             Err(DiarizeError::Cancelled)
         ));
         assert!(d.loaded.is_none());
@@ -4107,5 +4450,1024 @@ mod tests {
         assert!(!crate::managers::meetings::recorder::is_orphan_status(
             &meeting.status
         ));
+    }
+
+    // -- lva#534 Fixrunde 3: jeder Modellaufruf steht hinter dem Einwilligungs-Tor ----------
+
+    mod tor {
+        use super::*;
+        use crate::managers::planning::testhilfe as th;
+
+        fn texte(f: &Fixture) -> Vec<(u32, String)> {
+            f.store
+                .get_segments(&f.id)
+                .unwrap()
+                .into_iter()
+                .map(|s| (s.segment_index, s.text))
+                .collect()
+        }
+
+        fn widerrufen(f: &Fixture, plan_id: &str) {
+            crate::managers::planning::einwilligung_setzen(
+                &f.store,
+                &th::widerruf(plan_id, th::BERT),
+                th::NOW + 5,
+            )
+            .unwrap();
+        }
+
+        /// Blocker 2: Tor offen, der Auftrag wird geplant -> Widerruf -> `run_job`: KEIN Aufruf
+        /// der Spracherkennung und des Sprecher-Modells, das Transkript bleibt. `run_job`
+        /// entscheidet das Tor selbst (es gibt kein Tor mehr davor, das veralten koennte).
+        #[test]
+        fn a_revocation_after_planning_reaches_run_job_without_any_model_call() {
+            let f = fixture(true, MeetingStatus::Processing);
+            let (p, _) = th::plan_fuer_besprechung(&f.store, &f.id, "u-a", true);
+            let before = texte(&f);
+            let freigegeben = job(&f, run_plan(LARGE));
+            assert_eq!(
+                crate::managers::planning::tor_pruefen_besprechung(&f.store, &f.id),
+                Ok(()),
+                "zum Zeitpunkt des Planens steht das Tor offen"
+            );
+            widerrufen(&f, &p.id);
+
+            let (mut env, runs) = FakeEnv::new().with_turns(&two_speakers());
+            let out = run_job(&f.store, &freigegeben, &mut env);
+            assert_eq!(env.calls, 0, "keine Spracherkennung");
+            assert_eq!(*runs.borrow(), 0, "kein Sprecher-Modell");
+            assert!(env.loads.is_empty(), "nicht einmal ein Modell wird geladen");
+            assert_eq!(out.report.kept, Some(KeepReason::NoConsent));
+            assert_eq!(texte(&f), before, "Transkript unveraendert");
+            assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
+        }
+
+        /// Blocker 2 (Sprecher): ein Auftrag, der schon `Keep(NoConsent)` ist, rechnet auch das
+        /// Sprecher-Modell nicht.
+        #[test]
+        fn a_refused_job_does_not_run_the_speaker_model_either() {
+            let f = fixture(true, MeetingStatus::Processing);
+            let _ = th::plan_fuer_besprechung(&f.store, &f.id, "u-b", false);
+            let (mut env, runs) = FakeEnv::new().with_turns(&two_speakers());
+            let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+            assert_eq!(out.report.kept, Some(KeepReason::NoConsent));
+            assert_eq!(*runs.borrow(), 0);
+            assert_eq!(env.calls, 0);
+            assert!(env.loads.is_empty());
+        }
+
+        /// Blocker 3: ein gestopptes Teilergebnis mit Lauf-Marke, Ablehnung, "Fortsetzen":
+        /// kein Modellaufruf, Transkript, Status und Marke bleiben; mit Zustimmung laeuft dasselbe
+        /// Fortsetzen danach durch.
+        #[test]
+        fn continuing_a_stopped_partial_run_never_overwrites_a_refusal() {
+            let f = fixture(true, MeetingStatus::Processing);
+            let mut spec = partial_job(&f);
+            f.store.set_status(&f.id, MeetingStatus::Cancelled).unwrap();
+            spec.recover_from = Some("cancelled".into());
+            let (p, _) = th::plan_fuer_besprechung(&f.store, &f.id, "u-c", false);
+            let before = texte(&f);
+            let marker_before = marker(&f);
+            assert!(!marker_before.is_null());
+
+            let (mut env, runs) = FakeEnv::new().with_turns(&two_speakers());
+            run_job(&f.store, &spec, &mut env);
+            assert_eq!(env.calls, 0, "keine Spracherkennung");
+            assert_eq!(*runs.borrow(), 0, "kein Sprecher-Modell");
+            assert!(env.loads.is_empty());
+            assert!(
+                env.events.is_empty(),
+                "die Ablehnung gewinnt, bevor etwas fortgesetzt wird (kein Fehler, kein Status)"
+            );
+            assert_eq!(texte(&f), before, "Transkript unveraendert");
+            assert_eq!(marker(&f), marker_before, "Lauf-Marke bleibt");
+            assert_eq!(
+                f.store.get_meeting(&f.id).unwrap().unwrap().status,
+                "cancelled",
+                "bleibt fortsetzbar"
+            );
+
+            // Zustimmung liegt vor: dasselbe Fortsetzen holt den Rest mit dem Modell des Laufs nach.
+            for wer in [th::ANNA, th::BERT] {
+                crate::managers::planning::einwilligung_setzen(
+                    &f.store,
+                    &th::zustimmung(&p.id, wer),
+                    th::NOW + 6,
+                )
+                .unwrap();
+            }
+            let mut env = FakeEnv::new();
+            let out = run_job(&f.store, &spec, &mut env);
+            assert_eq!(out.report.kept, Some(KeepReason::PartialRerun));
+            assert_eq!(env.loads, vec!["rerun-model".to_string()]);
+            assert!(marker(&f).is_null(), "vollstaendig: Marke weg");
+        }
+
+        /// Blocker 3, harte Form: auch ein Auftrag, der von aussen schon als `Keep(NoConsent)`
+        /// kommt, ruft nichts und laesst Marke und Transkript stehen.
+        #[test]
+        fn run_job_alone_keeps_the_partial_run_when_the_gate_is_closed() {
+            let f = fixture(true, MeetingStatus::Processing);
+            let mut spec = partial_job(&f);
+            f.store.set_status(&f.id, MeetingStatus::Cancelled).unwrap();
+            spec.recover_from = Some("cancelled".into());
+            spec.plan = FinalPlan::Keep(KeepReason::NoConsent);
+            spec.catch_up_model = None;
+            let _ = th::plan_fuer_besprechung(&f.store, &f.id, "u-d", false);
+            let before = texte(&f);
+            let marker_before = marker(&f);
+            let mut env = FakeEnv::new();
+            run_job(&f.store, &spec, &mut env);
+            assert_eq!(env.calls, 0);
+            assert!(env.loads.is_empty());
+            assert!(env.events.is_empty(), "nichts fortgesetzt, nichts gemeldet");
+            assert_eq!(texte(&f), before);
+            assert_eq!(marker(&f), marker_before);
+            assert_eq!(
+                f.store.get_meeting(&f.id).unwrap().unwrap().status,
+                "cancelled"
+            );
+        }
+
+        /// Blocker 2/3 (c): der Widerruf kommt WAEHREND eines laufenden Modellaufrufs (im Modell
+        /// der Attrappe, ohne Sperre): das Ergebnis wird nicht gespeichert, es folgt kein weiterer
+        /// Aufruf, und der Widerruf kam durch, ohne auf das Modell zu warten.
+        #[test]
+        fn a_revocation_during_a_running_call_discards_its_result_and_stops_further_calls() {
+            let f = fixture(true, MeetingStatus::Processing);
+            let (p, _) = th::plan_fuer_besprechung(&f.store, &f.id, "u-e", true);
+            let before = texte(&f);
+            let db = f._dir.path().join("meetings.db");
+            let plan_id = p.id.clone();
+            let mut env = FakeEnv::new();
+            env.on_call = Some(Box::new(move |n| {
+                if n == 1 {
+                    // Im Aufruf ist die Sperre FREI: dieser Schreiber kommt sofort durch.
+                    assert!(!crate::managers::planning::unter_tor_sperre());
+                    let andere = MeetingStore::open_at(&db).unwrap();
+                    crate::managers::planning::einwilligung_setzen(
+                        &andere,
+                        &th::widerruf(&plan_id, th::BERT),
+                        th::NOW + 7,
+                    )
+                    .unwrap();
+                }
+            }));
+            let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+            assert_eq!(env.calls, 1, "kein weiterer Aufruf nach dem Widerruf");
+            assert_eq!(out.report.kept, Some(KeepReason::NoConsent));
+            assert_eq!(
+                texte(&f),
+                before,
+                "das verworfene Ergebnis steht nicht im Transkript"
+            );
+        }
+
+        /// (c) fuers Fortsetzen: Widerruf waehrend des ersten Nachhol-Blocks: strenger Lauf endet
+        /// `cancelled` und bleibt mit Marke fortsetzbar, ohne weiteren Aufruf.
+        #[test]
+        fn a_revocation_during_a_catch_up_call_stops_the_resume_and_keeps_it_resumable() {
+            let f = fixture(true, MeetingStatus::Processing);
+            let spec = partial_job(&f);
+            let (p, _) = th::plan_fuer_besprechung(&f.store, &f.id, "u-f", true);
+            let before = texte(&f);
+            let db = f._dir.path().join("meetings.db");
+            let plan_id = p.id.clone();
+            let mut env = FakeEnv::new();
+            env.on_call = Some(Box::new(move |n| {
+                if n == 1 {
+                    let andere = MeetingStore::open_at(&db).unwrap();
+                    crate::managers::planning::einwilligung_setzen(
+                        &andere,
+                        &th::widerruf(&plan_id, th::BERT),
+                        th::NOW + 7,
+                    )
+                    .unwrap();
+                }
+            }));
+            run_job(&f.store, &spec, &mut env);
+            assert_eq!(env.calls, 1);
+            assert_eq!(texte(&f), before);
+            assert!(!marker(&f).is_null(), "Marke bleibt");
+            assert_eq!(
+                f.store.get_meeting(&f.id).unwrap().unwrap().status,
+                "cancelled"
+            );
+        }
+        // ---- lva#544, Fixrunde 5: die sechs Blocker der vierten Pruefung ---------------------
+
+        /// Widerruft die Einwilligung von Bert im `n`-ten Modellaufruf (ueber eine zweite
+        /// Verbindung, wie ein anderer Thread der App; die Tor-Sperre ist im Aufruf frei).
+        fn widerruf_im_aufruf(
+            f: &Fixture,
+            plan_id: &str,
+            n: usize,
+        ) -> Option<Box<dyn FnMut(usize)>> {
+            let db = f._dir.path().join("meetings.db");
+            let plan_id = plan_id.to_string();
+            Some(Box::new(move |aufruf| {
+                if aufruf == n {
+                    assert!(!crate::managers::planning::unter_tor_sperre());
+                    let andere = MeetingStore::open_at(&db).unwrap();
+                    crate::managers::planning::einwilligung_setzen(
+                        &andere,
+                        &th::widerruf(&plan_id, th::BERT),
+                        th::NOW + 7,
+                    )
+                    .unwrap();
+                }
+            }))
+        }
+
+        /// Alles, was ein Auftrag am Transkript aendern kann, als Text: `transcripts`
+        /// (Segmente, Hinweise, Revision, Epoche), `speakers`, `transcript_variants` (samt aktiver
+        /// Fassung), Zahl der Deltas, Status und Lauf-Marke. Jede Spalte, auch `updated_at`.
+        fn zustand(f: &Fixture) -> Vec<String> {
+            let conn = f.store.get_connection().unwrap();
+            let mut out = Vec::new();
+            for tabelle in ["transcripts", "speakers", "transcript_variants"] {
+                let mut st = conn
+                    .prepare(&format!(
+                        "SELECT * FROM {tabelle} WHERE meeting_id = ?1 ORDER BY rowid"
+                    ))
+                    .unwrap();
+                let spalten: Vec<String> = st.column_names().map(|s| s.to_string()).collect();
+                let mut rows = st.query([&f.id]).unwrap();
+                while let Some(row) = rows.next().unwrap() {
+                    let zeile: Vec<String> = spalten
+                        .iter()
+                        .enumerate()
+                        .map(|(i, name)| format!("{name}={:?}", row.get_ref(i).unwrap()))
+                        .collect();
+                    out.push(format!("{tabelle}: {}", zeile.join(" | ")));
+                }
+            }
+            let deltas: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM transcript_deltas d JOIN transcripts t
+                     ON t.id = d.transcript_id WHERE t.meeting_id = ?1",
+                    [&f.id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            out.push(format!("deltas: {deltas}"));
+            let m = f.store.get_meeting(&f.id).unwrap().unwrap();
+            out.push(format!(
+                "meeting: status={} duration={:?} ended={:?}",
+                m.status, m.duration_ms, m.ended_at
+            ));
+            out.push(format!("marke: {}", marker(f)));
+            out
+        }
+
+        fn keine_luecke(f: &Fixture) {
+            assert!(
+                f.store
+                    .get_segments(&f.id)
+                    .unwrap()
+                    .iter()
+                    .all(|s| !s.text.starts_with("[Nicht transkribiert")),
+                "keine Luecken-Platzhalter"
+            );
+        }
+
+        /// R4-1: der Start einer Aufnahme haelt im Rueckruf UNTER dem Tor (also nach jeder
+        /// Pruefung des Starts), dann entsteht ein Enddurchlauf (`FinalSlot::spawn`). Der echte
+        /// `run_job` dieses Auftrags laedt kein Modell und ruft weder Spracherkennung noch
+        /// Sprecher-Modell, solange die Aufnahme angemeldet ist; nach ihrem Ende laeuft derselbe
+        /// Auftrag normal.
+        #[test]
+        fn a_final_pass_spawned_during_a_live_start_never_runs_a_model() {
+            use crate::managers::meetings::recorder::FinalSlot;
+            use std::sync::atomic::AtomicUsize;
+            use std::sync::mpsc;
+
+            let f = fixture(true, MeetingStatus::Processing);
+            let db = f._dir.path().join("meetings.db");
+            let slot = FinalSlot::default();
+            // (Modellaufrufe, Ladevorgaenge, Sprecher-Laeufe, Grund)
+            let (tx, rx) = mpsc::channel::<(usize, usize, usize, Option<KeepReason>)>();
+            let auftrag = |tx: mpsc::Sender<(usize, usize, usize, Option<KeepReason>)>| {
+                let (db, spec) = (db.clone(), job(&f, run_plan(LARGE)));
+                move |vorher: Option<std::thread::JoinHandle<()>>, cancel: Arc<AtomicBool>| {
+                    if let Some(vorher) = vorher {
+                        let _ = vorher.join();
+                    }
+                    let store = MeetingStore::open_at(&db).unwrap();
+                    let (mut env, runs) = FakeEnv::new().with_turns(&two_speakers());
+                    env.cancel_flag = Some(cancel);
+                    let out = run_job(&store, &spec, &mut env);
+                    let runs = *runs.borrow();
+                    let _ = tx.send((env.calls, env.loads.len(), runs, out.report.kept));
+                }
+            };
+            let im_start = AtomicUsize::new(0);
+            let ((), live) = slot
+                .start_unter_tor(
+                    &f.store,
+                    None,
+                    None,
+                    || {},
+                    |_tor| {
+                        // Hier hat der Start alles geprueft und haelt die Tor-Sperre.
+                        im_start.fetch_add(1, Ordering::SeqCst);
+                        slot.spawn(auftrag(tx.clone())).unwrap();
+                        Ok(())
+                    },
+                )
+                .unwrap();
+            assert_eq!(im_start.load(Ordering::SeqCst), 1);
+            // Die Aufnahme laeuft (`live` lebt): der Auftrag endet, ohne ein Modell zu beruehren.
+            let (calls, loads, runs, kept) = rx.recv().unwrap();
+            assert_eq!(calls, 0, "keine Spracherkennung neben der Aufnahme");
+            assert_eq!(loads, 0, "kein Endmodell geladen");
+            assert_eq!(runs, 0, "kein Sprecher-Modell");
+            assert_eq!(kept, Some(KeepReason::Cancelled));
+            // Auch ein zweiter Auftrag waehrend der Aufnahme: nichts.
+            slot.spawn(auftrag(tx.clone())).unwrap();
+            let (calls, loads, runs, _) = rx.recv().unwrap();
+            assert_eq!((calls, loads, runs), (0, 0, 0));
+            slot.wait();
+
+            // Die Aufnahme ist zu Ende: derselbe Auftrag rechnet jetzt.
+            drop(live);
+            f.store
+                .set_status(&f.id, MeetingStatus::Processing)
+                .unwrap();
+            slot.spawn(auftrag(tx)).unwrap();
+            let (calls, loads, runs, kept) = rx.recv().unwrap();
+            assert!(
+                calls > 0 && loads == 1 && runs == 1,
+                "{calls} {loads} {runs}"
+            );
+            assert_eq!(kept, None);
+            slot.wait();
+        }
+
+        /// R4-2 (Enddurchlauf, drei Versuche je Block): der ERSTE echte Versuch wird widerrufen
+        /// und endet mit einem Fehler. Es folgt kein zweiter Versuch: der Zaehler bleibt bei eins.
+        #[test]
+        fn a_revoked_and_failed_first_attempt_is_not_retried() {
+            let f = fixture(true, MeetingStatus::Processing);
+            let (p, _) = th::plan_fuer_besprechung(&f.store, &f.id, "u-r2", true);
+            let before = texte(&f);
+            let mut env = FakeEnv::new();
+            env.attempts = 3;
+            env.fail_transcribe = true;
+            env.on_call = widerruf_im_aufruf(&f, &p.id, 1);
+            let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+            assert_eq!(env.calls, 1, "genau ein Modellaufruf, keine Wiederholung");
+            assert_eq!(out.report.kept, Some(KeepReason::NoConsent));
+            assert_eq!(texte(&f), before);
+        }
+
+        /// R4-2, Gegenprobe: ohne Widerruf wird derselbe gescheiterte Versuch wiederholt, und zwar
+        /// mit einer NEUEN Freigabe (die Attrappe loest jede ein; eine wiederverwendete waere
+        /// `freigabe_verbraucht` und der Block scheiterte).
+        #[test]
+        fn without_a_revocation_a_failed_attempt_is_retried_with_its_own_release() {
+            let ohne = fixture(true, MeetingStatus::Processing);
+            let mut env = FakeEnv::new();
+            env.attempts = 3;
+            let out = run_job(&ohne.store, &job(&ohne, run_plan(LARGE)), &mut env);
+            assert_eq!(out.report.kept, None);
+            let bloecke = env.calls;
+            assert!(bloecke > 0);
+
+            let f = fixture(true, MeetingStatus::Processing);
+            let _ = th::plan_fuer_besprechung(&f.store, &f.id, "u-r2b", true);
+            let mut env = FakeEnv::new();
+            env.attempts = 3;
+            env.fail_first = 1;
+            let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+            assert_eq!(out.report.kept, None, "der zweite Versuch gelingt");
+            assert_eq!(env.calls, bloecke + 1, "ein Versuch mehr als Bloecke");
+            assert_eq!(out.report.blocks, bloecke);
+        }
+
+        /// R4-2 (Nachholen): dasselbe im Nachhol-Lauf; kein zweiter Versuch, keine Luecke.
+        #[test]
+        fn a_revoked_and_failed_first_catch_up_attempt_is_not_retried() {
+            let f = fixture(true, MeetingStatus::Processing);
+            let (p, _) = th::plan_fuer_besprechung(&f.store, &f.id, "u-r2c", true);
+            let before = texte(&f);
+            let mut spec = job(&f, FinalPlan::Keep(KeepReason::CpuOnly));
+            spec.catch_up_model = Some("meeting-model".into());
+            let mut env = FakeEnv::new();
+            env.attempts = 3;
+            env.fail_transcribe = true;
+            env.on_call = widerruf_im_aufruf(&f, &p.id, 1);
+            let out = run_job(&f.store, &spec, &mut env);
+            assert_eq!(env.calls, 1);
+            assert_eq!(out.report.kept, Some(KeepReason::NoConsent));
+            assert_eq!(out.report.catch_up_gaps, 0);
+            assert_eq!(texte(&f), before);
+        }
+
+        /// R4-3: ein GEWOEHNLICHER Recovery-Lauf (keine Lauf-Marke, kein `PartialRerun`) wird
+        /// waehrend der Spracherkennung widerrufen: keine Luecke, der Status ist fortsetzbar
+        /// (`cancelled`), und nach der Zustimmung verarbeitet "Fortsetzen" den Rest wirklich.
+        #[test]
+        fn a_revocation_during_a_normal_catch_up_leaves_no_gap_and_stays_resumable() {
+            let f = fixture(true, MeetingStatus::Processing);
+            let (p, _) = th::plan_fuer_besprechung(&f.store, &f.id, "u-r3", true);
+            assert!(marker(&f).is_null(), "kein Neu-Lauf im Spiel");
+            let before = texte(&f);
+            let mut spec = job(&f, FinalPlan::Keep(KeepReason::CpuOnly));
+            spec.catch_up_model = Some("meeting-model".into());
+            spec.recover_from = Some("processing".into());
+            let mut env = FakeEnv::new();
+            env.on_call = widerruf_im_aufruf(&f, &p.id, 1);
+            let out = run_job(&f.store, &spec, &mut env);
+            assert_eq!(env.calls, 1, "kein weiterer Aufruf nach dem Widerruf");
+            assert_eq!(out.report.kept, Some(KeepReason::NoConsent));
+            assert_eq!(out.report.catch_up_gaps, 0);
+            assert_eq!(out.report.catch_up_segments, 0);
+            assert_eq!(
+                texte(&f),
+                before,
+                "weder der verworfene Block noch eine Luecke"
+            );
+            keine_luecke(&f);
+            assert_eq!(
+                f.store.get_meeting(&f.id).unwrap().unwrap().status,
+                "cancelled",
+                "fortsetzbar"
+            );
+            assert!(!env.kinds().contains(&"final"), "kein TranscriptFinal");
+            assert!(env.events.iter().any(|e| matches!(
+                e,
+                MeetingEvent::Error { message, .. } if message == "nur_notizen"
+            )));
+
+            // Ohne Zustimmung aendert "Fortsetzen" nichts ...
+            spec.recover_from = Some("cancelled".into());
+            let vorher = zustand(&f);
+            let mut env = FakeEnv::new();
+            run_job(&f.store, &spec, &mut env);
+            assert_eq!((env.calls, env.loads.len()), (0, 0));
+            assert_eq!(zustand(&f), vorher);
+
+            // ... und mit Zustimmung holt es den Rest nach.
+            crate::managers::planning::einwilligung_setzen(
+                &f.store,
+                &th::zustimmung(&p.id, th::BERT),
+                th::NOW + 9,
+            )
+            .unwrap();
+            let mut env = FakeEnv::new();
+            let out = run_job(&f.store, &spec, &mut env);
+            assert_eq!(
+                out.report.catch_up_segments, 2,
+                "je Kanal die zweite Aeusserung"
+            );
+            assert_eq!(out.report.catch_up_gaps, 0);
+            let segs = f.store.get_segments(&f.id).unwrap();
+            assert_eq!(segs.len(), 4);
+            assert!(segs[2].text.contains("meeting-model"));
+            keine_luecke(&f);
+            assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
+        }
+
+        /// R4-3, Schreibebene: der Widerruf faellt ZWISCHEN Modell und Speichern (nach der
+        /// Nachpruefung des Modellaufrufs). Der Speicher selbst verwirft den Block.
+        #[test]
+        fn the_store_refuses_a_model_result_once_the_gate_closed() {
+            let f = fixture(true, MeetingStatus::Processing);
+            let (p, _) = th::plan_fuer_besprechung(&f.store, &f.id, "u-r3b", true);
+            let before = texte(&f);
+            let delta = TranscriptDelta {
+                new_segments: vec![seg(2, 0, 3_000, 5_000)],
+            };
+            // Ausserhalb von Modellarbeit ist das eine Aenderung von Hand: erlaubt, auch nach
+            // einem Widerruf (die Regel sperrt Transkription, nicht das Bearbeiten).
+            let _arbeit = crate::managers::planning::Modellarbeit::beginnen(&f.id);
+            widerrufen(&f, &p.id);
+            let fehler = f.store.append_delta(&f.id, &delta).unwrap_err().to_string();
+            assert!(
+                crate::managers::planning::ist_ablehnung(&fehler),
+                "{fehler}"
+            );
+            assert!(f.store.clear_segments(&f.id).is_err());
+            assert_eq!(texte(&f), before);
+            assert!(!crate::managers::planning::unter_tor_sperre());
+            drop(_arbeit);
+            f.store.append_delta(&f.id, &delta).unwrap();
+            assert_eq!(texte(&f).len(), before.len() + 1);
+        }
+
+        /// R4-4: das Sprecher-Modell hat erfolgreich gerechnet (Turns, die Segmente zuordnen
+        /// wuerden), der Widerruf faellt in die Spracherkennung. Danach ist ALLES wie vorher:
+        /// Segmente, Revision, Epoche, Sprecherzeilen, Hinweise.
+        #[test]
+        fn a_revocation_during_stt_leaves_segments_speakers_and_hints_untouched() {
+            // Gegenprobe: ohne Widerruf ordnet derselbe Lauf Sprecher zu.
+            let g = fixture(true, MeetingStatus::Processing);
+            let (mut env, _) = FakeEnv::new().with_turns(&two_speakers());
+            env.many_words = true;
+            let vorher = zustand(&g);
+            run_job(&g.store, &job(&g, run_plan(LARGE)), &mut env);
+            assert_ne!(zustand(&g), vorher);
+            assert!(g.store.speaker_hints(&g.id).unwrap().is_some());
+
+            let f = fixture(true, MeetingStatus::Ready);
+            let (p, _) = th::plan_fuer_besprechung(&f.store, &f.id, "u-r4", true);
+            let (mut env, runs) = FakeEnv::new().with_turns(&two_speakers());
+            env.many_words = true;
+            env.on_call = widerruf_im_aufruf(&f, &p.id, 1);
+            let vorher = zustand(&f);
+            let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+            assert_eq!(*runs.borrow(), 1, "die Sprecherberechnung ist gelaufen");
+            assert_eq!(env.calls, 1, "Widerruf im ersten STT-Aufruf");
+            assert_eq!(out.report.kept, Some(KeepReason::NoConsent));
+            assert_eq!(zustand(&f), vorher);
+            assert_eq!(f.store.speaker_hints(&f.id).unwrap(), None);
+            assert!(f.store.speaker_rows(&f.id).unwrap().is_empty());
+        }
+
+        /// R4-4, zweiter Weg: das Live-Transkript bleibt (Keep-Plan), die Sprecher kaemen ueber
+        /// `apply_speakers_to_live`. Der Widerruf faellt zwischen Berechnung und Anwenden: der
+        /// Schreibschutz des Speichers verwirft die Sprecher, nichts aendert sich.
+        #[test]
+        fn a_revocation_during_the_speaker_model_never_reaches_the_live_transcript() {
+            let f = fixture(true, MeetingStatus::Ready);
+            let (p, _) = th::plan_fuer_besprechung(&f.store, &f.id, "u-r4b", true);
+            let (mut env, runs) = FakeEnv::new().with_turns(&two_speakers());
+            // Die beiden Schritte von `run_job` einzeln, damit der Widerruf genau ZWISCHEN der
+            // erfolgreichen Berechnung der Turns und dem Anwenden auf das Transkript liegt.
+            let vorher = zustand(&f);
+            let spec = job(&f, FinalPlan::Keep(KeepReason::CpuOnly));
+            let _arbeit = crate::managers::planning::Modellarbeit::beginnen(&f.id);
+            let meeting = f.store.get_meeting(&f.id).unwrap().unwrap();
+            let mut report = FinalReport::default();
+            let turns = turns_before_stt(&f.store, &meeting, &spec.plan, &mut env, &mut report);
+            assert!(turns.is_some(), "Turns berechnet");
+            assert_eq!(*runs.borrow(), 1);
+            widerrufen(&f, &p.id);
+            apply_speakers_to_live(&f.store, &meeting, turns.as_ref(), &mut env, &mut report);
+            drop(_arbeit);
+            assert_eq!(
+                zustand(&f),
+                vorher,
+                "der Schreibschutz verwirft die Sprecher"
+            );
+        }
+
+        /// R4-5: gestoppte Teilfassung, der Nutzer aktiviert eine ANDERE Fassung, der Auftrag
+        /// wird bei offenem Tor geplant, dann der Widerruf, dann `run_job`. Die Vorbereitung
+        /// (`prepare_orphan`, `prepare_resume`) laeuft nicht: aktive Fassung, Status, Marke,
+        /// Dauer und Transkript sind unveraendert, kein Ereignis, kein Modell.
+        #[test]
+        fn a_late_revocation_reaches_the_resume_before_any_state_change() {
+            let f = fixture(true, MeetingStatus::Processing);
+            let mut spec = partial_job(&f);
+            let aktiv_vorher = {
+                let mut c = f.store.get_connection().unwrap();
+                let list = super::super::super::variants::list(&mut c, &f.id).unwrap();
+                let old = list.iter().find(|v| !v.active).unwrap().id.clone();
+                f.store.set_status(&f.id, MeetingStatus::Cancelled).unwrap();
+                super::super::super::variants::activate(&mut c, &old).unwrap();
+                old
+            };
+            spec.recover_from = Some("cancelled".into());
+            let (p, _) = th::plan_fuer_besprechung(&f.store, &f.id, "u-r5", true);
+            // Der Auftrag wird freigegeben, solange das Tor offen steht ...
+            assert_eq!(
+                crate::managers::planning::tor_pruefen_besprechung(&f.store, &f.id),
+                Ok(())
+            );
+            // ... und erst danach widerrufen.
+            widerrufen(&f, &p.id);
+            let vorher = zustand(&f);
+            let (mut env, runs) = FakeEnv::new().with_turns(&two_speakers());
+            run_job(&f.store, &spec, &mut env);
+            assert_eq!((env.calls, env.loads.len(), *runs.borrow()), (0, 0, 0));
+            assert!(
+                env.events.is_empty(),
+                "kein Status, kein Fehler: {:?}",
+                env.kinds()
+            );
+            assert_eq!(zustand(&f), vorher, "gesamter Zustand gleich");
+            let c = f.store.get_connection().unwrap();
+            assert_eq!(
+                super::super::super::variants::active_id(&c, &f.id).unwrap(),
+                Some(aktiv_vorher),
+                "die vom Nutzer gewaehlte Fassung bleibt aktiv"
+            );
+        }
+
+        /// R4-5 / R4-3, Recovery ohne Neu-Lauf: nach einem spaeten Widerruf repariert der Auftrag
+        /// nur noch die Dateien (`prepare_orphan`, kein Modell): kein Nachholen, keine Luecke. Er
+        /// endet fortsetzbar (`cancelled`, nicht `ready`), und nach der Zustimmung verarbeitet
+        /// "Fortsetzen" den Rest.
+        #[test]
+        fn a_late_revocation_before_a_recovery_runs_no_model_and_writes_no_gap() {
+            let f = fixture(true, MeetingStatus::Processing);
+            let (p, _) = th::plan_fuer_besprechung(&f.store, &f.id, "u-r5b", true);
+            let before = texte(&f);
+            let mut spec = job(&f, FinalPlan::Keep(KeepReason::CpuOnly));
+            spec.catch_up_model = Some("meeting-model".into());
+            spec.recover_from = Some("processing".into());
+            widerrufen(&f, &p.id);
+            let (mut env, runs) = FakeEnv::new().with_turns(&two_speakers());
+            let out = run_job(&f.store, &spec, &mut env);
+            assert_eq!((env.calls, env.loads.len(), *runs.borrow()), (0, 0, 0));
+            assert_eq!(out.report.kept, Some(KeepReason::NoConsent));
+            assert_eq!(texte(&f), before);
+            keine_luecke(&f);
+            // Nicht `ready`: der Rest gaelte sonst als erledigt, und "Fortsetzen" waere gesperrt.
+            assert_eq!(
+                f.store.get_meeting(&f.id).unwrap().unwrap().status,
+                "cancelled",
+                "fortsetzbar"
+            );
+            assert!(!env.kinds().contains(&"final"), "kein TranscriptFinal");
+
+            // Nach der Zustimmung holt "Fortsetzen" den Rest wirklich nach.
+            crate::managers::planning::einwilligung_setzen(
+                &f.store,
+                &th::zustimmung(&p.id, th::BERT),
+                th::NOW + 9,
+            )
+            .unwrap();
+            spec.recover_from = Some("cancelled".into());
+            let mut env = FakeEnv::new();
+            let out = run_job(&f.store, &spec, &mut env);
+            assert_eq!(
+                out.report.catch_up_segments, 2,
+                "je Kanal die zweite Aeusserung"
+            );
+            assert_eq!(out.report.catch_up_gaps, 0);
+            keine_luecke(&f);
+            assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
+        }
+
+        /// Import: beendet das Einwilligungs-Tor einen Import, dessen Audiodatei schon in der
+        /// Besprechung steht (`import::mark_refused`, der Endzustand von `run_import` nach
+        /// `nur_notizen`), bleibt er fortsetzbar: `cancelled` statt `failed`, das bis dahin
+        /// gespeicherte Transkript unveraendert, keine Luecke. "Fortsetzen" rechnet ohne
+        /// Zustimmung weiter nichts und holt den Rest danach wirklich nach. Ohne Audiodatei
+        /// (Ablehnung vor dem Dekodieren) gibt es nichts fortzusetzen: `failed`.
+        #[test]
+        fn an_import_ended_by_the_gate_stays_resumable_and_is_caught_up_after_consent() {
+            use crate::managers::meetings::import::mark_refused;
+            let dir = tempfile::tempdir().unwrap();
+            let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+            let m = store
+                .create_meeting("Import", MeetingSource::Import, Some(0))
+                .unwrap();
+            let meeting_dir = dir.path().join(&m.id);
+            std::fs::create_dir_all(&meeting_dir).unwrap();
+            let wav = meeting_dir.join("import.wav");
+            write_wav(&wav, &speech());
+            // Wie `run_import` vor der Transkription: Pfade und Dauer stehen, ein Block ist
+            // gespeichert; dann widerruft eine Person.
+            store
+                .set_audio_paths(&m.id, wav.to_str(), None, Some(6_000))
+                .unwrap();
+            let (p, _) = th::plan_fuer_besprechung(&store, &m.id, "u-imp", true);
+            store
+                .append_delta(
+                    &m.id,
+                    &TranscriptDelta {
+                        new_segments: vec![seg(0, 2, 0, 2_500)],
+                    },
+                )
+                .unwrap();
+            crate::managers::planning::einwilligung_setzen(
+                &store,
+                &th::widerruf(&p.id, th::BERT),
+                th::NOW + 5,
+            )
+            .unwrap();
+            let texte = |store: &MeetingStore| -> Vec<String> {
+                store
+                    .get_segments(&m.id)
+                    .unwrap()
+                    .into_iter()
+                    .map(|s| s.text)
+                    .collect()
+            };
+            let before = texte(&store);
+
+            let status = mark_refused(
+                &store,
+                &m.id,
+                1_800_000_000,
+                &MeetingAudioRetention::Days(7),
+            );
+            assert_eq!(status, "cancelled");
+            let after = store.get_meeting(&m.id).unwrap().unwrap();
+            assert_eq!(after.status, "cancelled", "fortsetzbar, nicht gescheitert");
+            assert_eq!(
+                texte(&store),
+                before,
+                "Transkript unveraendert, keine Luecke"
+            );
+
+            // "Fortsetzen" ohne Zustimmung: kein Modell, kein Schreiben, weiter fortsetzbar.
+            let spec = JobSpec {
+                meeting_id: m.id.clone(),
+                catch_up_model: Some("meeting-model".into()),
+                plan: FinalPlan::Keep(KeepReason::NotLive),
+                live_model: None,
+                recover_from: Some("cancelled".into()),
+            };
+            let mut env = FakeEnv::new();
+            let out = run_job(&store, &spec, &mut env);
+            assert_eq!((env.calls, env.loads.len()), (0, 0));
+            assert_eq!(out.report.catch_up_segments, 0);
+            assert!(
+                env.events.is_empty(),
+                "die Ablehnung gewinnt, bevor etwas fortgesetzt wird"
+            );
+            assert_eq!(texte(&store), before);
+            assert_eq!(
+                store.get_meeting(&m.id).unwrap().unwrap().status,
+                "cancelled"
+            );
+
+            // Nach der Zustimmung holt dasselbe "Fortsetzen" den Rest nach, ohne Luecke.
+            crate::managers::planning::einwilligung_setzen(
+                &store,
+                &th::zustimmung(&p.id, th::BERT),
+                th::NOW + 9,
+            )
+            .unwrap();
+            let mut env = FakeEnv::new();
+            let out = run_job(&store, &spec, &mut env);
+            assert!(out.report.catch_up_segments >= 1);
+            assert_eq!(out.report.catch_up_gaps, 0);
+            let segs = store.get_segments(&m.id).unwrap();
+            assert!(
+                segs.iter().map(|s| s.end_ms).max().unwrap() >= 5_000,
+                "bis zum Ende"
+            );
+            assert!(segs
+                .iter()
+                .all(|s| !s.text.starts_with("[Nicht transkribiert")));
+            assert_eq!(store.get_meeting(&m.id).unwrap().unwrap().status, "ready");
+
+            // Ohne Audiodatei gibt es nichts fortzusetzen.
+            let leer = store
+                .create_meeting("Import ohne Ton", MeetingSource::Import, Some(0))
+                .unwrap();
+            assert_eq!(
+                mark_refused(
+                    &store,
+                    &leer.id,
+                    1_800_000_000,
+                    &MeetingAudioRetention::Days(7)
+                ),
+                "failed"
+            );
+            assert_eq!(
+                store.get_meeting(&leer.id).unwrap().unwrap().status,
+                "failed"
+            );
+        }
+
+        /// R5-2: das Laden des Modells scheitert, und waehrenddessen widerruft eine Person. Der
+        /// Luecken-Marker fuer den Rest wird vom Schreibschutz des Tors verworfen. Das ist kein
+        /// erledigtes Nachholen: kein Modellaufruf, Segmente unveraendert, keine Luecke, Status
+        /// `cancelled`, kein `TranscriptFinal`; nach der Zustimmung holt "Fortsetzen" den Rest
+        /// wirklich nach. EINE Spur (wie ein Import): es gibt danach keine weitere Spur, deren
+        /// Pruefung vor dem Laden die Ablehnung ohnehin bemerkte; der verworfene Marker ist die
+        /// einzige Stelle, an der sie auffaellt.
+        #[test]
+        fn a_gap_marker_refused_by_the_gate_leaves_the_catch_up_resumable() {
+            let f = fixture(false, MeetingStatus::Processing);
+            let (p, _) = th::plan_fuer_besprechung(&f.store, &f.id, "u-r5-2", true);
+            let before = texte(&f);
+            let mut spec = job(&f, FinalPlan::Keep(KeepReason::CpuOnly));
+            spec.catch_up_model = Some("meeting-model".into());
+            spec.recover_from = Some("processing".into());
+            let mut env = FakeEnv::new();
+            env.fail_load = Some(KeepReason::LoadFailed);
+            let mut widerruf = widerruf_im_aufruf(&f, &p.id, 1).unwrap();
+            let geladen = Rc::new(RefCell::new(0usize));
+            let zaehler = Rc::clone(&geladen);
+            env.on_load = Some(Box::new(move || {
+                *zaehler.borrow_mut() += 1;
+                let n = *zaehler.borrow();
+                widerruf(n);
+            }));
+            let out = run_job(&f.store, &spec, &mut env);
+            assert_eq!(
+                *geladen.borrow(),
+                1,
+                "genau ein Ladeversuch (er scheiterte, dabei der Widerruf)"
+            );
+            assert_eq!(env.calls, 0, "kein Modellaufruf");
+            assert_eq!(out.report.catch_up_gaps, 0);
+            assert_eq!(out.report.catch_up_segments, 0);
+            assert_eq!(texte(&f), before, "Segmente unveraendert");
+            keine_luecke(&f);
+            assert_eq!(out.report.kept, Some(KeepReason::NoConsent));
+            assert_eq!(
+                f.store.get_meeting(&f.id).unwrap().unwrap().status,
+                "cancelled",
+                "fortsetzbar, nicht erledigt"
+            );
+            assert!(!env.kinds().contains(&"final"), "kein TranscriptFinal");
+
+            // Nach der Zustimmung holt "Fortsetzen" den Rest nach.
+            crate::managers::planning::einwilligung_setzen(
+                &f.store,
+                &th::zustimmung(&p.id, th::BERT),
+                th::NOW + 9,
+            )
+            .unwrap();
+            spec.recover_from = Some("cancelled".into());
+            let mut env = FakeEnv::new();
+            let out = run_job(&f.store, &spec, &mut env);
+            assert_eq!(
+                out.report.catch_up_segments, 1,
+                "die zweite Aeusserung der Spur"
+            );
+            assert_eq!(out.report.catch_up_gaps, 0);
+            keine_luecke(&f);
+            assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
+        }
+
+        /// R5-3: das Tor laesst sich vor einem Modellaufruf nicht LESEN (Datenbankfehler,
+        /// injiziert fuer genau einen Lesevorgang; beim naechsten Schreiben ist die Datenbank
+        /// wieder da). Das ist kein Modellfehler: kein erneuter Versuch (also kein einziger
+        /// Modellaufruf, obwohl drei Versuche erlaubt waeren), keine neuen Segmente, keine Luecke,
+        /// fortsetzbar; "Fortsetzen" holt den Rest danach nach.
+        #[test]
+        fn a_gate_that_cannot_be_read_stops_the_catch_up_without_retry_or_gap() {
+            use crate::managers::planning::TOR_STOERUNG;
+            let f = fixture(true, MeetingStatus::Processing);
+            let _ = th::plan_fuer_besprechung(&f.store, &f.id, "u-r5-3", true);
+            let before = texte(&f);
+            let mut spec = job(&f, FinalPlan::Keep(KeepReason::CpuOnly));
+            spec.catch_up_model = Some("meeting-model".into());
+            spec.recover_from = Some("processing".into());
+            let mut env = FakeEnv::new();
+            env.attempts = 3;
+            // Nach dem Laden (alle Pruefungen davor bestanden): der naechste Lesevorgang des Tors
+            // ist der vor dem ersten Modellversuch.
+            env.on_load = Some(Box::new(|| TOR_STOERUNG.with(|c| c.set(1))));
+            let out = run_job(&f.store, &spec, &mut env);
+            assert_eq!(env.loads.len(), 1);
+            assert_eq!(
+                TOR_STOERUNG.with(|c| c.get()),
+                0,
+                "die Stoerung traf genau einen Lesevorgang: die Datenbank ist wieder da"
+            );
+            assert_eq!(env.calls, 0, "kein Modellaufruf, auch kein zweiter Versuch");
+            assert_eq!(out.report.catch_up_gaps, 0);
+            assert_eq!(out.report.catch_up_segments, 0);
+            assert_eq!(texte(&f), before, "keine neuen Segmente");
+            keine_luecke(&f);
+            assert_eq!(
+                f.store.get_meeting(&f.id).unwrap().unwrap().status,
+                "cancelled",
+                "fortsetzbar"
+            );
+            assert!(!env.kinds().contains(&"final"), "kein TranscriptFinal");
+
+            spec.recover_from = Some("cancelled".into());
+            let mut env = FakeEnv::new();
+            let out = run_job(&f.store, &spec, &mut env);
+            assert_eq!(
+                out.report.catch_up_segments, 2,
+                "je Kanal die zweite Aeusserung"
+            );
+            assert_eq!(out.report.catch_up_gaps, 0);
+            keine_luecke(&f);
+            assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
+        }
+
+        /// R5-4: der Waechter des Sprecher-Modells (`mit_abbruchwaechter`, derselbe Ablauf wie in
+        /// `AppDiarizer::diarize`) endet auch, wenn die Inferenz mit einer Panik endet. Die
+        /// Inferenz wartet, bis der Waechter laeuft (Kanal), und panikt dann; die Rueckkehr von
+        /// `mit_abbruchwaechter` heisst, dass der Waechter beendet ist (`thread::scope` wartet
+        /// auf ihn). Der Thread drumherum und die Frist sind nur das Netz gegen ein Haengen.
+        #[test]
+        fn the_watchdog_ends_when_the_inference_panics() {
+            use std::sync::mpsc;
+            let (fertig_tx, fertig_rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                let (laeuft_tx, laeuft_rx) = mpsc::channel::<()>();
+                let laeuft_tx = std::sync::Mutex::new(laeuft_tx);
+                let abgebrochen = AtomicBool::new(false);
+                let r = catch_unwind(AssertUnwindSafe(|| {
+                    mit_abbruchwaechter(
+                        || {
+                            let _ = laeuft_tx.lock().unwrap().send(());
+                            false
+                        },
+                        || abgebrochen.store(true, Ordering::Release),
+                        std::time::Duration::from_millis(1),
+                        || -> Result<Vec<Turn>, DiarizeError> {
+                            laeuft_rx.recv().unwrap();
+                            panic!("inference exploded");
+                        },
+                    )
+                }));
+                let _ = fertig_tx.send((r.is_err(), abgebrochen.load(Ordering::Acquire)));
+            });
+            let (panik, abgebrochen) = fertig_rx
+                .recv_timeout(std::time::Duration::from_secs(60))
+                .expect("der Waechter haelt den Auftrag fest (Panik ohne Abschlussmerker)");
+            assert!(panik, "die Panik geht an den Aufrufer");
+            assert!(!abgebrochen, "niemand hat abgebrochen");
+
+            // Gegenprobe: ohne Panik laeuft die Inferenz durch, und ein Stopp wird weitergereicht.
+            let gestoppt = AtomicBool::new(false);
+            let (stopp_tx, stopp_rx) = mpsc::channel::<()>();
+            let stopp_tx = std::sync::Mutex::new(stopp_tx);
+            let wert = mit_abbruchwaechter(
+                || true,
+                || {
+                    gestoppt.store(true, Ordering::Release);
+                    let _ = stopp_tx.lock().unwrap().send(());
+                },
+                std::time::Duration::from_millis(1),
+                || {
+                    stopp_rx.recv().unwrap();
+                    7
+                },
+            );
+            assert_eq!(wert, 7);
+            assert!(gestoppt.load(Ordering::Acquire));
+        }
+
+        /// R5-4, der Auftrag: ein Sprecher-Modell, dessen Inferenz im Waechter-Ablauf der
+        /// Produktion panikt, haelt `run_job` nicht fest. Der Auftrag kehrt zurueck, der
+        /// Sprecher-Schritt ist als abgebrochen vermerkt, das Transkript bleibt ohne Sprecher.
+        #[test]
+        fn a_panicking_speaker_inference_under_the_watchdog_returns_the_job() {
+            use std::sync::mpsc;
+            let (fertig_tx, fertig_rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                let f = fixture(true, MeetingStatus::Processing);
+                let (mut env, runs) = FakeEnv::new().with_turns(&two_speakers());
+                let diar = env.diar.as_mut().unwrap();
+                diar.panic = true;
+                diar.waechter = true;
+                let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+                let _ = fertig_tx.send((
+                    *runs.borrow(),
+                    out.report.speakers.as_ref().map(|s| s.state.clone()),
+                    f.store.get_meeting(&f.id).unwrap().unwrap().status,
+                    f.store.speaker_hints(&f.id).unwrap().is_none(),
+                ));
+            });
+            let (laeufe, schritt, status, ohne_hinweise) = fertig_rx
+                .recv_timeout(std::time::Duration::from_secs(60))
+                .expect("der Auftrag haengt am Waechter des Sprecher-Modells");
+            assert_eq!(laeufe, 1, "die Inferenz lief (und panikte)");
+            assert_eq!(schritt.as_deref(), Some("aborted"));
+            assert_eq!(status, "ready");
+            assert!(ohne_hinweise);
+        }
+
+        /// Durchsetzungspunkt Modellebene: `FinalEnv::transcribe` und `ChannelDiarizer::diarize`
+        /// verlangen eine `Freigabe` (Signatur), und eine Freigabe gilt fuer genau EINE Inferenz.
+        /// Ein neuer Pfad, der das Modell ohne `modell_lauf` ruft, hat keine Freigabe (der
+        /// Konstruktor ist privat) und uebersetzt nicht; einer, der sie zweimal nutzt, scheitert.
+        #[test]
+        #[allow(clippy::type_complexity)]
+        fn a_model_call_needs_a_release_and_a_release_is_good_for_one_call() {
+            use crate::managers::planning::{Freigabe, FREIGABE_VERBRAUCHT};
+            // Die Signaturen, festgehalten als Funktionszeiger: faellt der Parameter weg,
+            // uebersetzt dieser Test nicht mehr.
+            let _stt: fn(
+                &mut FakeEnv,
+                &Freigabe,
+                &str,
+                &Chunk,
+            ) -> Result<Vec<TimedSegment>, String> = <FakeEnv as FinalEnv>::transcribe;
+            let _app: fn(
+                &mut AppEnv,
+                &Freigabe,
+                &str,
+                &Chunk,
+            ) -> Result<Vec<TimedSegment>, String> = <AppEnv as FinalEnv>::transcribe;
+            let _diar: fn(
+                &mut AppDiarizer,
+                &Freigabe,
+                u8,
+                &[f32],
+            ) -> Result<Vec<Turn>, DiarizeError> = <AppDiarizer as ChannelDiarizer>::diarize;
+
+            let f = fixture(false, MeetingStatus::Processing);
+            let chunk = Chunk {
+                samples: vec![0.0; 16_000],
+                offset_ms: 0,
+            };
+            let mut env = FakeEnv::new();
+            let _arbeit = crate::managers::planning::Modellarbeit::beginnen(&f.id);
+            let r = crate::managers::planning::modell_lauf(&f.store, &f.id, |frei| {
+                let erstes = env.transcribe(frei, "m", &chunk);
+                assert!(erstes.is_ok());
+                env.transcribe(frei, "m", &chunk)
+            });
+            assert_eq!(r.err(), Some(FREIGABE_VERBRAUCHT.to_string()));
+            assert_eq!(env.calls, 1, "die zweite Inferenz fand nicht statt");
+        }
     }
 }

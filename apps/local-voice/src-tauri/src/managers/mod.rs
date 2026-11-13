@@ -11,6 +11,7 @@ pub mod meetings;
 pub mod model;
 pub mod model_capabilities;
 pub mod people; // M5-P5d
+pub mod planning; // lva#534 (Besprechungsplanung, P3)
 pub mod provenance; // A1 (Goal Integrationen)
 pub mod transcription;
 pub mod tts;

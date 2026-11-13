@@ -426,7 +426,11 @@ fn window_blocking(
     let tm = app.state::<Arc<TranscriptionManager>>();
     let settings = crate::settings::get_settings(app);
     tm.initiate_meeting_model_load(&settings);
-    let segments = tm.transcribe_segments(samples);
+    // lva#544: Ton eines Hoerbuchs, keiner Besprechung: der benannte Ausweg der Modellebene.
+    let frei = crate::managers::planning::Freigabe::ohne_besprechung(
+        crate::managers::planning::OhneBesprechung::Hoerbuch,
+    );
+    let segments = tm.transcribe_segments(&frei, samples);
     // Danach wieder das Diktatmodell laden (wie die Nachbearbeitung).
     tm.initiate_model_load_target(&settings.selected_model);
     let segments = segments.map_err(|e| e.to_string())?;
