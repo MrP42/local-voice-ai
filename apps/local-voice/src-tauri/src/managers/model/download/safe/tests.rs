@@ -1,4 +1,5 @@
 use super::*;
+use crate::managers::model::download::linktest::{folder_link, is_link as is_a_link, symlink_file};
 use std::io::{Read, Write};
 use tempfile::TempDir;
 
@@ -20,6 +21,16 @@ fn assert_refused<T: std::fmt::Debug>(result: io::Result<T>) {
     );
 }
 
+/// Jede Operation dieses Moduls lehnt `link` ab, ohne etwas zu veraendern.
+fn assert_every_operation_refuses(link: &Path) {
+    assert_refused(plain_len(link));
+    assert_refused(open_read(link));
+    assert_refused(open_append(link));
+    assert_refused(open_truncated(link));
+    assert_refused(remove(link));
+    assert!(is_a_link(link), "der Link wurde ersetzt oder entfernt");
+}
+
 #[test]
 fn a_plain_file_reports_its_length_and_an_absent_one_nothing() {
     let dir = TempDir::new().unwrap();
@@ -37,7 +48,7 @@ fn a_directory_is_not_a_plain_file() {
 }
 
 #[test]
-fn ordinary_files_open_truncate_append_rename_and_remove() {
+fn ordinary_files_open_truncate_append_and_remove() {
     let dir = TempDir::new().unwrap();
     let file = dir.path().join("a.partial");
     let mut f = open_truncated(&file).unwrap();
@@ -52,25 +63,9 @@ fn ordinary_files_open_truncate_append_rename_and_remove() {
     // Neu anlegen leert.
     drop(open_truncated(&file).unwrap());
     assert_eq!(fs::read(&file).unwrap(), b"");
-    fs::write(&file, b"x").unwrap();
-    let dest = dir.path().join("a.bin");
-    rename_over(&file, &dest).unwrap();
-    assert!(!file.exists() && dest.exists());
-    // Ueber eine vorhandene normale Datei.
-    fs::write(&file, b"yy").unwrap();
-    rename_over(&file, &dest).unwrap();
-    assert_eq!(fs::read(&dest).unwrap(), b"yy");
-    remove(&dest).unwrap();
-    remove(&dest).unwrap();
-    assert!(!dest.exists());
-}
-
-#[test]
-fn rename_of_a_missing_source_is_not_found() {
-    let dir = TempDir::new().unwrap();
-    let err = rename_over(&dir.path().join("fehlt"), &dir.path().join("ziel")).unwrap_err();
-    assert_eq!(err.kind(), io::ErrorKind::NotFound);
-    assert!(!is_refusal(&err));
+    remove(&file).unwrap();
+    remove(&file).unwrap();
+    assert!(!file.exists());
 }
 
 #[test]
@@ -79,186 +74,113 @@ fn an_ordinary_error_is_not_a_refusal() {
     assert!(!is_refusal(&io::Error::other("x")));
 }
 
+/// Ein Symlink auf eine Datei: Unix immer, Windows nur mit Entwicklermodus oder
+/// Administrator (sonst rot, ausser `LVA_SKIP_SYMLINK_TESTS=1`, dann mit Meldung).
 #[test]
-fn a_directory_below_the_root_is_created_and_a_missing_tail_is_fine_without_create() {
+fn a_file_symlink_is_refused_by_every_operation_and_the_target_stays_untouched() {
     let dir = TempDir::new().unwrap();
-    let root = dir.path().join("models");
-    let deep = root.join("diarization").join("id");
-    dir_inside(&root, &deep, false).unwrap();
-    assert!(!root.exists(), "ohne create darf nichts angelegt werden");
-    dir_inside(&root, &deep, true).unwrap();
-    assert!(deep.is_dir());
-    dir_inside(&root, &deep, false).unwrap();
+    let outside = sentinel(&dir);
+    let link = dir.path().join("link.partial");
+    if !symlink_file(&link, &outside) {
+        return;
+    }
+    assert_every_operation_refuses(&link);
+    assert_eq!(fs::read(&outside).unwrap(), SENTINEL);
 }
 
+/// Das Gegenstueck ohne Rechte: ein Ordner-Link (Unix: Symlink, Windows: Junction) an
+/// der Stelle einer Datei. Er wird von jeder Operation abgelehnt; der fremde Ordner
+/// dahinter bleibt, wie er ist.
 #[test]
-fn a_directory_outside_the_root_is_refused() {
+fn a_folder_link_in_place_of_a_file_is_refused_by_every_operation() {
     let dir = TempDir::new().unwrap();
-    let root = dir.path().join("models");
-    fs::create_dir_all(&root).unwrap();
-    assert_refused(dir_inside(&root, &dir.path().join("anders"), true));
-    assert_refused(dir_inside(&root, &root.join("..").join("anders"), true));
-    assert!(!dir.path().join("anders").exists());
+    let foreign = dir.path().join("fremder-ordner");
+    fs::create_dir_all(&foreign).unwrap();
+    fs::write(foreign.join("fremd.bin"), SENTINEL).unwrap();
+    let link = dir.path().join("link.partial");
+    folder_link(&link, &foreign);
+
+    assert_every_operation_refuses(&link);
+
+    assert_eq!(fs::read(foreign.join("fremd.bin")).unwrap(), SENTINEL);
+    assert_eq!(fs::read_dir(&foreign).unwrap().count(), 1);
 }
 
-#[cfg(unix)]
-mod unix {
-    use super::*;
-    use std::os::unix::fs::symlink;
-
-    #[test]
-    fn a_symlink_is_refused_by_every_operation_and_the_target_stays_untouched() {
-        let dir = TempDir::new().unwrap();
-        let outside = sentinel(&dir);
-        let link = dir.path().join("link.partial");
-        symlink(&outside, &link).unwrap();
-
-        assert_refused(plain_len(&link));
-        assert_refused(open_read(&link));
-        assert_refused(open_append(&link));
-        assert_refused(open_truncated(&link));
-        assert_refused(remove(&link));
-        let other = dir.path().join("andere.bin");
-        fs::write(&other, b"x").unwrap();
-        assert_refused(rename_over(&link, &dir.path().join("neu")));
-        assert_refused(rename_over(&other, &link));
-
-        assert_eq!(fs::read(&outside).unwrap(), SENTINEL);
-        assert!(fs::symlink_metadata(&link)
-            .unwrap()
-            .file_type()
-            .is_symlink());
-        assert_eq!(fs::read(&other).unwrap(), b"x");
+/// Ein Link ins Leere (Symlink auf eine Datei, die es nicht gibt): hinter dem Link
+/// entsteht nichts.
+#[test]
+fn a_dangling_file_symlink_is_refused_and_nothing_is_created_behind_it() {
+    let dir = TempDir::new().unwrap();
+    let target = dir.path().join("noch-nicht-da");
+    let link = dir.path().join("link.partial");
+    if !symlink_file(&link, &target) {
+        return;
     }
-
-    #[test]
-    fn a_dangling_symlink_is_refused_and_nothing_is_created_behind_it() {
-        let dir = TempDir::new().unwrap();
-        let target = dir.path().join("noch-nicht-da");
-        let link = dir.path().join("link.partial");
-        symlink(&target, &link).unwrap();
-        assert_refused(plain_len(&link));
-        assert_refused(open_truncated(&link));
-        assert_refused(open_append(&link));
-        assert!(!target.exists(), "hinter dem Link wurde etwas angelegt");
-    }
-
-    #[test]
-    fn a_hard_link_is_not_written_through() {
-        let dir = TempDir::new().unwrap();
-        let outside = sentinel(&dir);
-        let link = dir.path().join("hart.partial");
-        fs::hard_link(&outside, &link).unwrap();
-        assert_refused(open_append(&link));
-        assert_refused(open_truncated(&link));
-        assert_eq!(fs::read(&outside).unwrap(), SENTINEL);
-        // Lesen ist unbedenklich.
-        let mut text = Vec::new();
-        open_read(&link).unwrap().read_to_end(&mut text).unwrap();
-        assert_eq!(text, SENTINEL);
-    }
-
-    #[test]
-    fn a_linked_directory_below_the_root_is_refused_even_when_it_points_outside() {
-        let dir = TempDir::new().unwrap();
-        let root = dir.path().join("models");
-        let outside = dir.path().join("draussen");
-        fs::create_dir_all(&root).unwrap();
-        fs::create_dir_all(&outside).unwrap();
-        symlink(&outside, root.join("diarization")).unwrap();
-        let target = root.join("diarization").join("id");
-        assert_refused(dir_inside(&root, &target, true));
-        assert_refused(dir_inside(&root, &target, false));
-        assert!(
-            fs::read_dir(&outside).unwrap().next().is_none(),
-            "ausserhalb wurde etwas angelegt"
-        );
-    }
-
-    #[test]
-    fn a_linked_directory_that_points_inside_the_root_is_refused_too() {
-        // Strenger als noetig, aber eindeutig: unterhalb der Wurzel kein Link.
-        let dir = TempDir::new().unwrap();
-        let root = dir.path().join("models");
-        fs::create_dir_all(root.join("echt")).unwrap();
-        symlink(root.join("echt"), root.join("diarization")).unwrap();
-        assert_refused(dir_inside(&root, &root.join("diarization"), true));
-    }
-
-    #[test]
-    fn the_root_itself_may_be_a_link() {
-        let dir = TempDir::new().unwrap();
-        let real = dir.path().join("platte-d");
-        fs::create_dir_all(&real).unwrap();
-        let root = dir.path().join("models");
-        symlink(&real, &root).unwrap();
-        let target = root.join("diarization").join("id");
-        dir_inside(&root, &target, true).unwrap();
-        assert!(real.join("diarization").join("id").is_dir());
-    }
-
-    #[test]
-    fn a_file_where_a_directory_belongs_is_refused() {
-        let dir = TempDir::new().unwrap();
-        let root = dir.path().join("models");
-        fs::create_dir_all(&root).unwrap();
-        fs::write(root.join("diarization"), b"datei").unwrap();
-        assert_refused(dir_inside(
-            &root,
-            &root.join("diarization").join("id"),
-            true,
-        ));
-        assert_eq!(fs::read(root.join("diarization")).unwrap(), b"datei");
-    }
+    assert_refused(plain_len(&link));
+    assert_refused(open_truncated(&link));
+    assert_refused(open_append(&link));
+    assert!(!target.exists(), "hinter dem Link wurde etwas angelegt");
 }
 
-/// Windows: ein Symlink braucht Entwicklermodus oder Administratorrechte, eine
-/// Junction (Ordner-Reparse-Punkt) nicht. Der Symlink-Fall wird uebersprungen,
-/// wenn er sich nicht anlegen laesst (mit Meldung, nicht still).
-#[cfg(windows)]
-mod windows {
-    use super::*;
-    use std::os::windows::fs::symlink_file;
-    use std::process::Command;
+/// Dasselbe ohne Rechte: eine Junction bzw. ein Symlink auf einen Ordner, der danach
+/// verschwindet.
+#[test]
+fn a_dangling_folder_link_is_refused_and_nothing_is_created_behind_it() {
+    let dir = TempDir::new().unwrap();
+    let target = dir.path().join("wird-geloescht");
+    fs::create_dir_all(&target).unwrap();
+    let link = dir.path().join("link.partial");
+    folder_link(&link, &target);
+    fs::remove_dir(&target).unwrap();
 
-    #[test]
-    fn a_file_symlink_is_refused_when_it_can_be_created() {
-        let dir = TempDir::new().unwrap();
-        let outside = sentinel(&dir);
-        let link = dir.path().join("link.partial");
-        if let Err(e) = symlink_file(&outside, &link) {
-            eprintln!("uebersprungen: Symlink nicht anlegbar ({e}); Entwicklermodus oder Administrator noetig");
-            return;
-        }
-        assert_refused(plain_len(&link));
-        assert_refused(open_read(&link));
-        assert_refused(open_append(&link));
-        assert_refused(open_truncated(&link));
-        assert_refused(remove(&link));
-        assert_eq!(fs::read(&outside).unwrap(), SENTINEL);
-    }
+    assert_refused(plain_len(&link));
+    assert_refused(open_truncated(&link));
+    assert_refused(open_append(&link));
+    assert!(!target.exists(), "hinter dem Link wurde etwas angelegt");
+}
 
-    #[test]
-    fn a_junction_below_the_root_is_refused() {
-        let dir = TempDir::new().unwrap();
-        let root = dir.path().join("models");
-        let outside = dir.path().join("draussen");
-        fs::create_dir_all(&root).unwrap();
-        fs::create_dir_all(&outside).unwrap();
-        let junction = root.join("diarization");
-        let made = Command::new("cmd")
-            .args(["/C", "mklink", "/J"])
-            .arg(&junction)
-            .arg(&outside)
-            .output();
-        if !made.is_ok_and(|o| o.status.success()) {
-            eprintln!("uebersprungen: Junction nicht anlegbar");
-            return;
-        }
-        assert_refused(dir_inside(&root, &junction.join("id"), true));
-        assert!(
-            fs::read_dir(&outside).unwrap().next().is_none(),
-            "ausserhalb wurde etwas angelegt"
-        );
-    }
+/// Eine Datei mit zweitem Namen (Hardlink) wird nie durchgeschrieben: nicht
+/// angehaengt, nicht abgeschnitten. Gilt auf jedem System (unter Windows zaehlt
+/// `nNumberOfLinks`); `std::fs::hard_link` braucht keine Rechte.
+#[test]
+fn a_hard_link_is_not_written_through() {
+    let dir = TempDir::new().unwrap();
+    let outside = sentinel(&dir);
+    let link = dir.path().join("hart.partial");
+    fs::hard_link(&outside, &link).unwrap();
+    assert_refused(open_append(&link));
+    assert_refused(open_truncated(&link));
+    assert_eq!(fs::read(&outside).unwrap(), SENTINEL);
+    assert_eq!(fs::read(&link).unwrap(), SENTINEL);
+    // Lesen ist unbedenklich.
+    let mut text = Vec::new();
+    open_read(&link).unwrap().read_to_end(&mut text).unwrap();
+    assert_eq!(text, SENTINEL);
+}
+
+/// Ein Hardlink auf eine LEERE Datei (der Fall "frischer Download"): auch dann wird
+/// nichts hineingeschrieben, und die Pruefung geschieht vor dem Abschneiden.
+#[test]
+fn a_hard_link_to_an_empty_file_is_refused_before_anything_is_written() {
+    let dir = TempDir::new().unwrap();
+    let outside = dir.path().join("leer.bin");
+    fs::write(&outside, b"").unwrap();
+    let link = dir.path().join("hart.partial");
+    fs::hard_link(&outside, &link).unwrap();
+    assert_refused(open_append(&link));
+    assert_refused(open_truncated(&link));
+    assert_eq!(fs::read(&outside).unwrap(), b"");
+}
+
+/// Die Pruefung des Hardlinks gilt vor dem Abschneiden, nicht danach: eine Datei, die
+/// nach dem Abschneiden als verlinkt erkannt wuerde, waere schon geleert.
+#[test]
+fn a_hard_linked_file_keeps_its_bytes_when_truncation_is_refused() {
+    let dir = TempDir::new().unwrap();
+    let outside = sentinel(&dir);
+    let link = dir.path().join("hart.partial");
+    fs::hard_link(&outside, &link).unwrap();
+    assert!(open_truncated(&link).is_err());
+    assert_eq!(fs::metadata(&outside).unwrap().len(), SENTINEL.len() as u64);
+    assert_eq!(fs::read(&outside).unwrap(), SENTINEL);
 }

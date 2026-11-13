@@ -215,13 +215,16 @@ pub fn resolve_model_path(models_root: &Path, spec: Option<&str>) -> PathBuf {
 /// `None`, wenn der Eintrag nicht sicher abzulegen ist: ein Dateiname (und bei
 /// mehreren Dateien die Kennung) muss ein einzelner, harmloser Pfadbestandteil
 /// sein ([`crate::catalog::is_plain_name`]); sonst koennte ein Katalogwert aus dem
-/// Modellordner hinausfuehren.
+/// Modellordner hinausfuehren. Zwei Dateinamen, die sich nur in der Schreibweise
+/// unterscheiden, sind auch unsicher ([`crate::catalog::names_collide`]).
 pub fn catalog_model_dir(
     models_root: &Path,
     entry: &crate::catalog::TtsCatalogEntry,
 ) -> Option<PathBuf> {
-    use crate::catalog::is_plain_name;
-    if !entry.files.iter().all(|f| is_plain_name(&f.filename)) {
+    use crate::catalog::{is_plain_name, names_collide};
+    if !entry.files.iter().all(|f| is_plain_name(&f.filename))
+        || names_collide(entry.files.iter().map(|f| f.filename.as_str()))
+    {
         return None;
     }
     let base = models_root.join("diarization");
@@ -247,11 +250,24 @@ pub fn catalog_model_files(models_root: &Path, model_id: &str) -> Option<Vec<Pat
     Some(entry.files.iter().map(|f| dir.join(&f.filename)).collect())
 }
 
+/// Wo ein Katalogmodell liegt, wenn man von seiner Hauptdatei ausgeht: der Eintrag,
+/// die Wurzel (`<app_data>/models`), der Ordner mit den Dateien und die Namen der
+/// Ordner von der Wurzel dorthin (`diarization` und bei mehreren Dateien die
+/// Kennung). Damit oeffnet der Lader die Kette ohne Link-Folgen
+/// (`download::anchor::Anchor`), statt Pfade zu benutzen.
+#[derive(Debug, Clone)]
+pub struct CatalogPlace {
+    pub entry: crate::catalog::TtsCatalogEntry,
+    pub root: PathBuf,
+    pub dir: PathBuf,
+    pub parts: Vec<String>,
+}
+
 /// Ist `model_path` die Hauptdatei (die der Motor oeffnet) eines Katalogmodells an
-/// seinem Platz `.../diarization[/<id>]/<datei>`? Dann: alle Dateien des Eintrags
-/// mit der Groesse laut Katalog. Erkannt wird am Pfadende, nicht an einer
-/// Wurzel; ein Pfad von Hand (anderer Ordner, anderer Name) ist kein Katalogmodell.
-pub fn catalog_file_sizes(model_path: &Path) -> Option<Vec<(PathBuf, u64)>> {
+/// seinem Platz `.../diarization[/<id>]/<datei>`? Erkannt wird am Pfadende, nicht an
+/// einer Wurzel; ein Pfad von Hand (anderer Ordner, anderer Name) ist kein
+/// Katalogmodell.
+pub fn catalog_place(model_path: &Path) -> Option<CatalogPlace> {
     let dir = model_path.parent()?;
     crate::catalog::tts_entries(crate::catalog::Purpose::Diarization)
         .into_iter()
@@ -262,20 +278,38 @@ pub fn catalog_file_sizes(model_path: &Path) -> Option<Vec<(PathBuf, u64)>> {
             } else {
                 dir
             };
+            let root = diarization_dir.parent()?;
             // `catalog_model_dir` legt fest, wo der Eintrag liegt; vom Pfad aus
             // zurueckgerechnet, muss es genau dieser Ordner sein.
-            let expected = catalog_model_dir(diarization_dir.parent()?, &entry)?;
+            let expected = catalog_model_dir(root, &entry)?;
             if expected != dir || model_path.file_name()? != first.filename.as_str() {
                 return None;
             }
-            Some(
-                entry
-                    .files
-                    .iter()
-                    .map(|f| (dir.join(&f.filename), f.size_bytes))
-                    .collect(),
-            )
+            let mut parts = vec!["diarization".to_string()];
+            if entry.files.len() > 1 {
+                parts.push(entry.id.clone());
+            }
+            Some(CatalogPlace {
+                root: root.to_path_buf(),
+                dir: dir.to_path_buf(),
+                parts,
+                entry,
+            })
         })
+}
+
+/// Ist `model_path` die Hauptdatei eines Katalogmodells an seinem Platz
+/// ([`catalog_place`])? Dann: alle Dateien des Eintrags mit der Groesse laut Katalog.
+pub fn catalog_file_sizes(model_path: &Path) -> Option<Vec<(PathBuf, u64)>> {
+    let place = catalog_place(model_path)?;
+    Some(
+        place
+            .entry
+            .files
+            .iter()
+            .map(|f| (place.dir.join(&f.filename), f.size_bytes))
+            .collect(),
+    )
 }
 
 /// Pfad des installierten Katalogmodells `model_id` unter `models_root`
@@ -589,7 +623,8 @@ mod tests {
         let root = Path::new("models");
         assert!(catalog_model_dir(root, &nemotron_entry()).is_some());
         let bad = [
-            "..", "../x", "a/b", "/etc/x", "\\x", "a\\b", "C:", "C:\\x", "", ".",
+            "..", "../x", "a/b", "/etc/x", "\\x", "a\\b", "C:", "C:\\x", "", ".", "nul",
+            "NUL.onnx", "COM1", "x.", "x ", "a:strom",
         ];
         for name in bad {
             let mut id = nemotron_entry();
@@ -614,6 +649,17 @@ mod tests {
             single.files[0].filename = name.to_string();
             assert!(catalog_model_dir(root, &single).is_none(), "{name:?}");
         }
+    }
+
+    /// Zwei Dateien eines Eintrags, die sich nur in der Schreibweise unterscheiden,
+    /// waeren auf Windows und macOS dieselbe Datei: kein Ordner, keine Zielpfade.
+    #[test]
+    fn two_files_that_differ_only_in_case_have_no_directory() {
+        let root = Path::new("models");
+        let mut entry = nemotron_entry();
+        let upper = entry.files[0].filename.to_uppercase();
+        entry.files[1].filename = upper;
+        assert!(catalog_model_dir(root, &entry).is_none());
     }
 
     /// Wo der Eintrag liegt, erkennt man ihn am Pfadende; alles andere (Pfad von

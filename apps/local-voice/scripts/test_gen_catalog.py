@@ -3,14 +3,18 @@
 No network and no huggingface_hub needed (the module connects lazily in main()).
 Run:  python scripts/test_gen_catalog.py     (or: bun run test:catalog)
 """
+import contextlib
 import copy
 import datetime as dt
 import importlib.util
+import io
+import itertools
 import json
 import os
 import struct
 import sys
 import tempfile
+import threading
 import types
 import unittest
 
@@ -167,12 +171,27 @@ class Writing(unittest.TestCase):
             out = os.path.join(d, "catalog.json")
             with open(out, "w", encoding="utf-8") as f:
                 f.write("ALT")
-            broken = generated + [{"id": "handy-computer/x-gguf", "boom": object()}]
+            unserializable = dict(copy.deepcopy(generated[0]), id="handy-computer/x-gguf", slug="x", boom=object())
+            broken = generated + [unserializable]
             with self.assertRaises(TypeError):
                 gc.write_catalog(out, broken, STAMP, gc.CATALOG_PATH)
             with open(out, encoding="utf-8") as f:
                 self.assertEqual(f.read(), "ALT")
             self.assertEqual(os.listdir(d), ["catalog.json"], "the half-written temp file is removed")
+
+    def test_an_invalid_entry_aborts_before_the_file_is_touched(self):
+        cat = checked_in()
+        generated = [copy.deepcopy(m) for m in cat["models"] if gc.is_generated(m)]
+        generated[3]["files"][0]["sha256"] = generated[3]["files"][0]["sha256"].upper()
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "catalog.json")
+            with open(out, "wb") as f:
+                f.write(b"ALT")
+            with self.assertRaises(ValueError):
+                gc.write_catalog(out, generated, STAMP, gc.CATALOG_PATH)
+            with open(out, "rb") as f:
+                self.assertEqual(f.read(), b"ALT")
+            self.assertEqual(os.listdir(d), ["catalog.json"])
 
     def test_main_end_to_end_with_a_fake_hub(self):
         cat = checked_in()
@@ -246,15 +265,28 @@ def gguf(kvs, pad_to=0):
     return body + b"\0" * max(0, pad_to - len(body))
 
 
-def asr_gguf(arch="whisper", size_label="0.6B", name="Fake ASR", with_label=True, pad_to=0):
+def kv_u32(key, val):
+    return kv_key(key) + struct.pack("<II", 4, val)
+
+
+def kv_bool(key, val):
+    return kv_key(key) + struct.pack("<I?", 7, val)
+
+
+def kv_f32(key, val):
+    return kv_key(key) + struct.pack("<If", 6, val)
+
+
+def asr_gguf(arch="whisper", size_label="0.6B", name="Fake ASR", with_label=True, pad_to=0,
+             arch_kv=None, size_kv=None):
     kvs = [
-        kv_str("general.architecture", arch),
+        arch_kv if arch_kv is not None else kv_str("general.architecture", arch),
         kv_strarr("tokenizer.ggml.tokens", ["a", "bb", "ccc"]),
         kv_nested("tokenizer.nested"),
         kv_str("general.name", name),
     ]
     if with_label:
-        kvs.append(kv_str("general.size_label", size_label))
+        kvs.append(size_kv if size_kv is not None else kv_str("general.size_label", size_label))
     return gguf(kvs, pad_to)
 
 
@@ -279,6 +311,8 @@ class FakeHub:
         self.fault = None
         self.opened = []
         self.model_info_calls = []
+        self.file_sha = {}      # filename -> value the listing reports instead of the real hash
+        self.file_size = {}     # filename -> value the listing reports instead of the real size
 
     def add(self, name, sha, modified, header=None, files=None):
         header = header if header is not None else asr_gguf()
@@ -301,8 +335,8 @@ class FakeHub:
             r = self.repos[repo]
             siblings = [
                 types.SimpleNamespace(
-                    rfilename=n, size=len(b),
-                    lfs=types.SimpleNamespace(sha256=hashlib.sha256(b).hexdigest()))
+                    rfilename=n, size=self.file_size.get(n, len(b)),
+                    lfs=types.SimpleNamespace(sha256=self.file_sha.get(n, hashlib.sha256(b).hexdigest())))
                 for n, b in r.files.items()
             ]
             return types.SimpleNamespace(
@@ -369,8 +403,6 @@ class HubRuns(unittest.TestCase):
         self.hub.add("other", "b" * 40, self.t2)
 
     def run_main(self, out=None):
-        import contextlib
-        import io
         saved = (gc.api, gc.fs, gc.connect, gc.CATALOG_PATH, sys.argv)
         try:
             gc.connect = lambda: None
@@ -506,23 +538,213 @@ class HubRuns(unittest.TestCase):
         self.run_main(b)
         self.assertEqual(self.read(a), self.read(b))
 
-    def test_unchanged_content_leaves_the_file_byte_identical(self):
-        self.run_main()
-        first, mtime = self.read(), os.stat(self.out).st_mtime_ns
-        for r in self.hub.repos.values():          # only a README changed: later lastModified
-            r.modified += dt.timedelta(days=3)
-        self.run_main()
-        self.assertEqual(self.read(), first)
-        self.assertEqual(os.stat(self.out).st_mtime_ns, mtime, "the file was rewritten")
-        self.assertEqual(json.loads(first)["generated_at"], STAMP)
+    # -- the output is a function of the inputs, not of the file it replaces ----
 
-    def test_unchanged_content_leaves_a_file_in_another_layout_alone(self):
+    def baseline(self):
+        out = os.path.join(self.dir, "baseline.json")
+        self.run_main(out)
+        return self.read(out)
+
+    def test_differently_prefilled_output_files_give_byte_identical_output(self):
+        want = self.baseline()
+        plain = json.loads(want)
+        other_stamp = dict(plain, generated_at="1999-01-01T00:00:00+00:00")
+        other_content = copy.deepcopy(plain)
+        other_content["models"][0]["revision"] = "f" * 40
+        variants = {
+            "empty": b"",
+            "garbage": b"ALT",
+            "list": b"[]",
+            "truncated": want[: len(want) // 2],
+            "same content, other stamp, other layout":
+                (json.dumps(other_stamp, indent=4, ensure_ascii=True) + "\n").encode(),
+            "same bytes but the stamp": want.replace(plain["generated_at"].encode(), b"2001-01-01T00:00:00+00:00"),
+            "other content, CRLF": want.replace(b"\n", b"\r\n") + b"x",
+            "other revision": (json.dumps(other_content, indent=2) + "\n").encode(),
+            "the generator's own output": want,
+        }
+        for name, prefill in variants.items():
+            with self.subTest(prefill=name):
+                with open(self.out, "wb") as f:
+                    f.write(prefill)
+                self.run_main()
+                self.assertEqual(self.read(), want)
+                self.assertEqual([n for n in os.listdir(self.dir) if n.endswith(".tmp")], [])
+
+    def test_a_missing_output_and_an_unreadable_one_give_the_same_bytes(self):
+        want = self.baseline()
+        os.mkdir(os.path.join(self.dir, "sub"))
+        out = os.path.join(self.dir, "sub", "catalog.json")
+        self.run_main(out)
+        self.assertEqual(self.read(out), want)
+
+    def test_a_run_over_its_own_output_is_a_fixpoint(self):
+        # default use: the checked-in catalog is both the source of the hand entries and the target
+        self.run_main(self.existing)
+        first = self.read(self.existing)
+        self.run_main(self.existing)
+        self.assertEqual(self.read(self.existing), first)
+        self.assertEqual([m for m in json.loads(first)["models"] if not gc.is_generated(m)], self.hand)
+
+    def test_hand_entries_are_taken_over_by_content_and_written_canonically(self):
+        want = self.baseline()
+        doc = {"catalog_version": 2, "generated_at": "x", "mirrors": [], "models": self.hand}
+        layouts = {
+            "minified": json.dumps(doc, separators=(",", ":")),
+            "indent 4": json.dumps(doc, indent=4),
+            "escaped": json.dumps(doc, ensure_ascii=True, indent=1),
+            "CRLF": json.dumps(doc, indent=2).replace("\n", "\r\n"),
+        }
+        for name, text in layouts.items():
+            with self.subTest(layout=name):
+                with open(self.existing, "w", encoding="utf-8", newline="") as f:
+                    f.write(text)
+                self.run_main()
+                self.assertEqual(self.read(), want)
+
+    def test_the_output_does_not_depend_on_the_listing_order(self):
+        self.hub.add("third", "c" * 40, self.t1)
+        self.hub.add("fourth", "d" * 40, self.t1)
+        keep = dict(self.hub.repos)
+        outs = set()
+        for order in itertools.permutations(keep):
+            self.hub.repos = {r: keep[r] for r in order}
+            self.run_main()
+            outs.add(self.read())
+        self.assertEqual(len(outs), 1)
+
+    # -- slug collisions and completion order ---------------------------------
+
+    @contextlib.contextmanager
+    def completion_order(self, reverse):
+        """Make `build` finish in sorted repo order, or the other way round."""
+        real = gc.build
+        repos = sorted(self.hub.repos)
+        done = {r: threading.Event() for r in repos}
+        later = {r: (repos[i + 1] if i + 1 < len(repos) else None) for i, r in enumerate(repos)}
+
+        def ordered(repo):
+            try:
+                result = real(repo)
+            except BaseException:
+                done[repo].set()
+                raise
+            if reverse and later[repo]:
+                self.assertTrue(done[later[repo]].wait(10), "the later repo never finished")
+            done[repo].set()
+            return result
+        gc.build = ordered
+        try:
+            yield
+        finally:
+            gc.build = real
+
+    def test_completion_order_does_not_change_the_bytes(self):
+        self.hub.add("third", "c" * 40, self.t1)
+        self.hub.add("fourth", "d" * 40, self.t2)
+        outs = []
+        for reverse in (False, True):
+            with self.completion_order(reverse):
+                out = os.path.join(self.dir, f"rev{reverse}.json")
+                self.run_main(out)
+                outs.append(self.read(out))
+        self.assertEqual(outs[0], outs[1])
+
+    def test_colliding_slugs_abort_before_any_read_in_every_completion_order(self):
+        # `x-gguf` and `x-gguf-gguf` are both slug `x`
+        self.hub.add("x", "c" * 40, self.t1)
+        self.hub.add("x-gguf", "d" * 40, self.t1)
+        self.assertEqual(gc.slug(f"{gc.ORG}/x-gguf"), gc.slug(f"{gc.ORG}/x-gguf-gguf"))
+        for reverse in (False, True):
+            with self.subTest(reverse=reverse), self.completion_order(reverse):
+                self.hub.model_info_calls.clear()
+                self.assert_aborts_without_touching_the_file()
+                self.assertEqual(self.hub.model_info_calls, [], "a repo was read before the collision stopped the run")
+
+    def test_colliding_slugs_are_caught_again_after_the_build(self):
+        self.hub.add("x", "c" * 40, self.t1)
+        self.hub.add("x-gguf", "d" * 40, self.t1)
+        saved, gc.check_repos = gc.check_repos, lambda repos: None
+        try:
+            for reverse in (False, True):
+                with self.subTest(reverse=reverse), self.completion_order(reverse):
+                    self.assert_aborts_without_touching_the_file()
+        finally:
+            gc.check_repos = saved
+
+    def test_slug_collisions_are_not_hidden_by_case(self):
+        self.hub.add("Fakeasr", "c" * 40, self.t1)
+        self.assert_aborts_without_touching_the_file()
+
+    def test_check_generated_names_the_colliding_pair(self):
+        a = copy.deepcopy([m for m in checked_in()["models"] if gc.is_generated(m)][0])
+        b = dict(copy.deepcopy(a), id=a["id"].replace("-gguf", "-gguf-gguf"))
+        with self.assertRaises(ValueError) as ctx:
+            gc.check_generated([a, b])
+        self.assertIn(b["id"], str(ctx.exception))
+
+    # -- strict forms ----------------------------------------------------------
+
+    def test_a_number_or_bool_as_architecture_stops_the_run(self):
+        for name, kv in (("u32", kv_u32("general.architecture", 7)),
+                         ("bool", kv_bool("general.architecture", True)),
+                         ("float", kv_f32("general.architecture", 1.5))):
+            with self.subTest(arch=name):
+                self.hub.repos.clear()
+                self.hub.add("num", "d" * 40, self.t1, header=asr_gguf(arch_kv=kv))
+                self.assert_aborts_without_touching_the_file()
+
+    def test_an_architecture_of_the_wrong_form_stops_the_run(self):
+        for arch in ("", " ", "Whisper", "wh isper", "whisper\n", "1whisper", "whis/per", "w" * 65):
+            with self.subTest(arch=arch):
+                self.hub.repos.clear()
+                self.hub.add("form", "d" * 40, self.t1, header=asr_gguf(arch=arch))
+                self.assert_aborts_without_touching_the_file()
+
+    def test_a_size_label_that_is_not_a_size_stops_the_run(self):
+        numeric = kv_u32("general.size_label", 600)
+        for name, kw in (("u32", {"size_kv": numeric}), ("empty", {"size_label": ""}),
+                         ("no unit", {"size_label": "0.6"}), ("words", {"size_label": "big"}),
+                         ("trailing newline", {"size_label": "0.6B\n"}),
+                         ("range", {"size_label": "1B-3B"})):
+            with self.subTest(label=name):
+                self.hub.repos.clear()
+                self.hub.add("lab", "d" * 40, self.t1, header=asr_gguf(**kw))
+                self.assert_aborts_without_touching_the_file()
+
+    def test_a_name_that_is_not_text_stops_the_run(self):
+        kvs = [kv_str("general.architecture", "whisper"), kv_u32("general.name", 5),
+               kv_str("general.size_label", "0.6B")]
+        self.hub.repos.clear()
+        self.hub.add("nm", "d" * 40, self.t1, header=gguf(kvs))
+        self.assert_aborts_without_touching_the_file()
+
+    def test_a_commit_sha_of_the_wrong_form_stops_the_run(self):
+        for sha in ("A" * 40, "a" * 39, "a" * 41, "g" * 40, "a" * 40 + "\n", "", None, 5, " " + "a" * 39):
+            with self.subTest(sha=sha):
+                self.hub.repos[f"{gc.ORG}/other-gguf"].sha = sha
+                self.assert_aborts_without_touching_the_file()
+                self.hub.repos[f"{gc.ORG}/other-gguf"].sha = "b" * 40
+
+    def test_a_file_hash_of_the_wrong_form_stops_the_run(self):
+        name = "other-Q8_0.gguf"
+        for sha in ("A" * 64, "a" * 63, "a" * 65, "a" * 64 + "\n", "sha256:" + "a" * 64, "", None, 12345, True, b"a" * 64):
+            with self.subTest(sha=sha):
+                self.hub.file_sha = {name: sha}
+                self.assert_aborts_without_touching_the_file()
+
+    def test_a_file_size_that_is_not_a_positive_int_stops_the_run(self):
+        name = "other-Q8_0.gguf"
+        for size in (0, -1, True, False, "5", 5.0, None):
+            with self.subTest(size=size):
+                self.hub.file_size = {name: size}
+                self.assert_aborts_without_touching_the_file()
+
+    def test_a_valid_run_still_passes_all_the_gates(self):
         self.run_main()
-        plain = (json.dumps(json.loads(self.read()), indent=2, ensure_ascii=False) + "\n").encode()
-        with open(self.out, "wb") as f:
-            f.write(plain)
-        self.run_main()
-        self.assertEqual(self.read(), plain)
+        for m in json.loads(self.read())["models"]:
+            if gc.is_generated(m):
+                gc.check_entry(m)
 
     def test_changed_content_is_written_with_the_stamp_of_the_new_state(self):
         self.run_main()
@@ -541,6 +763,48 @@ class HubRuns(unittest.TestCase):
         cet = dt.timezone(dt.timedelta(hours=1))
         self.assertEqual(gc.stamp(dt.datetime(2026, 1, 2, 4, 4, 5, tzinfo=cet)), "2026-01-02T03:04:05+00:00")
         self.assertEqual(gc.stamp(dt.datetime(2026, 1, 2, 3, 4, 5)), "2026-01-02T03:04:05+00:00")
+
+
+class Forms(unittest.TestCase):
+    def test_exact_forms_reject_what_a_dollar_anchor_would_let_through(self):
+        self.assertTrue(gc.is_sha256("0" * 64))
+        self.assertFalse(gc.is_sha256("0" * 64 + "\n"))
+        self.assertTrue(gc.is_commit("f" * 40))
+        self.assertFalse(gc.is_commit("f" * 40 + "\n"))
+        self.assertFalse(gc.is_commit("F" * 40))
+
+    def test_only_a_real_int_above_zero_is_a_size(self):
+        self.assertTrue(gc.is_size(1))
+        for v in (0, -3, True, False, 1.0, "1", None):
+            self.assertFalse(gc.is_size(v), repr(v))
+
+    def test_check_header_wants_both_labels_as_text(self):
+        ok = {"general.architecture": "whisper", "general.size_label": "0.6B"}
+        gc.check_header(ok)
+        for broken in ({"general.architecture": "whisper"},
+                       {"general.size_label": "0.6B"},
+                       dict(ok, **{"general.architecture": 3}),
+                       dict(ok, **{"general.size_label": True}),
+                       dict(ok, **{"general.name": 4})):
+            with self.assertRaises(ValueError):
+                gc.check_header(broken)
+
+    def test_check_entry_names_every_violation(self):
+        entry = copy.deepcopy([m for m in checked_in()["models"] if gc.is_generated(m)][0])
+        gc.check_entry(entry)
+        entry.update(revision="x", architecture=7, parameters="big")
+        entry["files"][0]["sha256"] = "zz"
+        entry["files"][0]["size_bytes"] = True
+        entry["default_quant"] = "Q0_0"
+        with self.assertRaises(ValueError) as ctx:
+            gc.check_entry(entry)
+        for part in ("revision", "architecture", "parameters", "sha256", "default_quant"):
+            self.assertIn(part, str(ctx.exception))
+
+    def test_every_generated_entry_of_the_checked_in_catalog_passes(self):
+        generated = [m for m in checked_in()["models"] if gc.is_generated(m)]
+        self.assertGreater(len(generated), 50)
+        gc.check_generated(generated)
 
 
 class HeaderParsing(unittest.TestCase):

@@ -99,12 +99,20 @@ it is and replaces only the generated ones, so a new hand entry needs no generat
 A correction to a *generated* entry that its HF card does not carry (a wrong license, say)
 goes into `LICENSE_OVERRIDES` in the script, not into the JSON: the next run would undo it.
 After touching the script: `bun run test:catalog` (offline, plain Python).
-A live run is a function of the hub metadata only (repo list, commit per repo, card and GGUF
-header at that commit): `generated_at` comes from the latest `lastModified`, an unchanged
-result leaves the file byte-identical, and a header that cannot be read aborts the run without
-writing. Ids and filenames in the catalog must be single path components (no `/`, `\`, `:`,
-`..`); a test in `catalog/mod.rs` enforces it, and the downloader only writes plain files
-inside the model folder (links, junctions and foreign files are refused, error `unsafe_path`).
+A live run is a pure function of the hub metadata only (repo list, commit per repo, card and
+GGUF header at that commit): the output never depends on what the previous file held,
+`generated_at` comes from the latest `lastModified`, entries are sorted by a total key
+(including the full repo id), and anything doubtful (a slug used twice, an unreadable header, a
+required label missing or of the wrong type, a malformed SHA-256 or commit) aborts the run with
+the file unchanged. Ids and filenames in the catalog must be single path components (no `/`,
+`\`, `:`, `..`, no Windows device names such as `nul`, no trailing dot or space, no two names
+of one entry that differ only in case); a test in `catalog/mod.rs` enforces it. The downloader
+only writes plain files inside the model folder (links, junctions, files with several names and
+foreign files are refused, error `unsafe_path`). Models with several files (Nemotron
+diarization) go further: provisioning and loading work through a directory handle of the model
+folder opened before the first network access (`download/anchor.rs`), and the loader builds the
+ONNX session from the very bytes it hashed (graph and weights read once each, session created
+from memory), so a swap between check and use cannot change what runs.
 
 ## Versioning and releases
 

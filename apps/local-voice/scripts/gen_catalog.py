@@ -24,18 +24,30 @@ the generated part. Corrections to a generated entry that the card does not carr
 (e.g. a wrong license) live in LICENSE_OVERRIDES below, not in catalog.json, so the next
 run does not undo them. `scripts/test_gen_catalog.py` proves both offline.
 
-Determinism. A run is a function of the hub metadata and nothing else. Its inputs are
-exactly: the repo list of the org, per repo the commit sha of its listing, and the card,
+Determinism. The output is a pure function of the inputs and of nothing else. Its inputs
+are exactly: the repo list of the org, per repo the commit sha of its listing, the card,
 file listing and GGUF header of THAT sha (the header is read at `repo@sha`, never at
-"main"). No clock enters the output: `generated_at` is the latest lastModified of the
-repos. Any read that fails or comes back short or malformed, and any needed field the
-sources do not carry, aborts the run before anything is written; nothing is filled in
-from a default. So the same hub state gives the same catalog, and a new commit in a repo
-legitimately changes it. If the generated content equals what the file already holds
-(`generated_at` aside), the file is left byte for byte as it is.
+"main"), and the hand-maintained entries of the checked-in catalog. No clock enters the
+output (`generated_at` is the latest lastModified of the repos), and neither does the file
+that is being overwritten: its old bytes, stamp, layout or entries are never read back, so
+a differently pre-filled output file cannot change what is written. The order of the
+generated entries is a total order (the sort key ends in slug and the full repo id); the
+repos are processed and reported in sorted order, not in the order the threads finish.
+Hand-maintained entries are taken over by content and re-serialized by the one renderer
+(key order is that of the source entry).
+
+Fail closed. Any read that fails or comes back short or malformed, any needed field the
+sources do not carry, and any value that is not of the exact expected form aborts the run
+before anything is written; nothing is filled in from a default. The forms: the GGUF labels
+`general.architecture` and `general.size_label` are present, are strings (a number or bool
+in the header is no label) and match `ARCH_RE` / `SIZE_LABEL_RE`; a commit sha is exactly
+40 lower-case hex digits; a file sha256 exactly 64; sizes are ints > 0 (a bool is not an
+int here); two repos whose slugs collide (`x-gguf` and `x-gguf-gguf` are both `x`) abort,
+because the slug is a key of the catalog. So the same hub state gives the same catalog,
+and a new commit in a repo legitimately changes it.
 """
 import json, os, re, sys, math, struct, datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 
 ORG = "handy-computer"
 CATALOG_VERSION = 2
@@ -165,6 +177,20 @@ HEADER_REQUIRED = ("general.architecture", "general.size_label")
 HEADER_BYTES = 65536
 # `list_models(limit=...)` truncates silently; reaching the limit means "maybe more".
 LIST_LIMIT = 500
+# Exact forms. `fullmatch` everywhere: `$` would let a trailing newline through.
+COMMIT_RE = re.compile(r"[0-9a-f]{40}")
+SHA256_RE = re.compile(r"[0-9a-f]{64}")
+ARCH_RE = re.compile(r"[a-z][a-z0-9_]{0,63}")
+SIZE_LABEL_RE = re.compile(r"[0-9]+(?:\.[0-9]+)?[BM]")
+def _matches(rx, value):
+    """True only for a `str` (not a number, bool or bytes) that `rx` matches completely."""
+    return type(value) is str and rx.fullmatch(value) is not None
+def is_commit(value): return _matches(COMMIT_RE, value)
+def is_sha256(value): return _matches(SHA256_RE, value)
+def is_size(value):
+    """An int above zero; `type(...) is int` keeps True/False out."""
+    return type(value) is int and value > 0
+
 class _WindowEnd(Exception):
     """The metadata section runs past the bytes that were read (tokenizer arrays): normal."""
 
@@ -240,10 +266,32 @@ def probe_header(repo, revision, filename, size, nbytes=HEADER_BYTES):
         out = parse_header(buf)
     except ValueError as e:
         raise ValueError(f"{where}: {e}") from e
-    missing = [k for k in HEADER_REQUIRED if k not in out]
-    if missing:
-        raise ValueError(f"{where}: header lacks {', '.join(missing)}")
+    try:
+        check_header(out)
+    except ValueError as e:
+        raise ValueError(f"{where}: {e}") from e
     return out
+
+def check_header(labels):
+    """The required labels are present, are strings and have the exact expected form.
+
+    A GGUF value of another type under a label name (a number or a bool) is no label: it is
+    refused instead of being turned into text. `general.name` is optional but, if there, a
+    string.
+    """
+    missing = [k for k in HEADER_REQUIRED if k not in labels]
+    if missing:
+        raise ValueError(f"header lacks {', '.join(missing)}")
+    bad = []
+    if not _matches(ARCH_RE, labels["general.architecture"]):
+        bad.append("general.architecture")
+    if not _matches(SIZE_LABEL_RE, labels["general.size_label"]):
+        bad.append("general.size_label")
+    for k in ("general.name", "general.basename"):
+        if k in labels and type(labels[k]) is not str:
+            bad.append(k)
+    if bad:
+        raise ValueError(f"header label(s) not of the expected form: {', '.join(bad)}")
 
 def lfs_sha256(x):
     """Content sha256 from the sibling's LFS/Xet info (dataclass or dict by hub version)."""
@@ -259,16 +307,17 @@ def gguf_files(repo, siblings):
     at app startup when deserialized by `include_str!("catalog.json")`.
 
     `sha256` is the trust anchor for downloads (HF or mirror alike), so it is
-    equally mandatory. Every GGUF is LFS/Xet-tracked; a missing hash means the
-    listing is broken, not that the file is small.
+    equally mandatory, and exactly 64 lower-case hex digits. Every GGUF is
+    LFS/Xet-tracked; a missing hash means the listing is broken, not that the file
+    is small. A size must be an int above zero.
     """
     files = []
     invalid = []
     for x in siblings:
-        if not x.rfilename.endswith(".gguf"):
+        if type(x.rfilename) is not str or not x.rfilename.endswith(".gguf"):
             continue
         sha = lfs_sha256(x)
-        if type(x.size) is not int or x.size <= 0 or not sha:
+        if not is_size(x.size) or not is_sha256(sha):
             invalid.append(x.rfilename)
             continue
         files.append({
@@ -297,8 +346,8 @@ def license_fields(cd, s):
 
 def build(repo):
     info = api.model_info(repo, files_metadata=True)
-    if not info.sha:
-        raise ValueError(f"{repo}: listing has no commit sha to pin")
+    if not is_commit(info.sha):
+        raise ValueError(f"{repo}: listing has no commit sha to pin (need 40 hex digits)")
     modified = getattr(info, "last_modified", None)
     if modified is None:
         raise ValueError(f"{repo}: listing has no lastModified (generated_at is derived from it)")
@@ -361,7 +410,62 @@ def build(repo):
         "recommended": bool(cur.get("rec")),         # small badge/onboarding subset
         "recommended_rank": cur.get("rank"),          # editorial sort position (independent)
     }
+    check_entry(entry)
     return entry, modified
+
+def check_entry(entry):
+    """A generated entry in its final shape; the last gate before it can be written.
+
+    Collects every violation so one run names them all. Pure; raises ValueError.
+    """
+    bad = []
+    rid = entry.get("id")
+    if type(rid) is not str or not rid.startswith(ORG + "/") or rid.count("/") != 1:
+        bad.append("id")
+    elif entry.get("slug") != slug(rid):
+        bad.append("slug")
+    if not is_commit(entry.get("revision")):
+        bad.append("revision")
+    if not _matches(ARCH_RE, entry.get("architecture")):
+        bad.append("architecture")
+    if not _matches(SIZE_LABEL_RE, entry.get("parameters")):
+        bad.append("parameters")
+    files = entry.get("files")
+    if not isinstance(files, list) or not files:
+        bad.append("files")
+    else:
+        for f in files:
+            name = f.get("filename") if isinstance(f, dict) else None
+            if type(name) is not str or not name:
+                bad.append("files[].filename")
+            elif not is_size(f.get("size_bytes")) or not is_sha256(f.get("sha256")):
+                bad.append(f"files[{name}] size_bytes/sha256")
+        quants = {f.get("quant") for f in files if isinstance(f, dict)}
+        if entry.get("default_quant") not in quants:
+            bad.append("default_quant")
+    if bad:
+        raise ValueError(f"{rid!r}: invalid field(s): {', '.join(bad)}")
+
+def check_generated(entries):
+    """Every entry passes `check_entry`; ids and slugs are unique (case-insensitively)."""
+    seen_id, seen_slug, clash = {}, {}, []
+    for m in entries:
+        check_entry(m)
+        for table, key in ((seen_id, m["id"].casefold()), (seen_slug, m["slug"].casefold())):
+            if key in table: clash.append(f"{table[key]} / {m['id']}")
+            table[key] = m["id"]
+    if clash:
+        raise ValueError(f"colliding ids or slugs: {', '.join(sorted(set(clash)))}")
+
+def check_repos(repos):
+    """Two repos whose slugs collide would fight over one catalog key: abort before any read."""
+    seen, clash = {}, []
+    for r in repos:
+        key = slug(r).casefold()
+        if key in seen: clash.append(f"{seen[key]} / {r}")
+        seen[key] = r
+    if clash:
+        raise SystemExit(f"repos with the same catalog slug: {', '.join(clash)}")
 
 def is_generated(entry):
     """True for the entries this script owns: the repos of the org."""
@@ -397,7 +501,7 @@ def read_catalog(path):
                          f"hand-maintained entries): {e}")
 
 def render(catalog):
-    text = json.dumps(catalog, indent=2, ensure_ascii=False)
+    text = json.dumps(catalog, indent=2, ensure_ascii=False, allow_nan=False)
     # print each `languages` array on a single line for readability
     text = re.sub(r'"languages": \[(.*?)\]',
                   lambda m: '"languages": [' + ", ".join(re.findall(r'"[^"]*"', m.group(1))) + ']',
@@ -418,27 +522,16 @@ def stamp(moment):
         moment = moment.replace(tzinfo=datetime.timezone.utc)
     return moment.astimezone(datetime.timezone.utc).isoformat(timespec="seconds")
 
-def same_content(a, b):
-    """Equal apart from `generated_at`."""
-    strip = lambda c: {k: v for k, v in c.items() if k != "generated_at"}
-    return strip(a) == strip(b)
-
-def load_catalog(path):
-    """The catalog at `path` as a dict, or None if there is none or it is unreadable."""
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        return None
-    return data if isinstance(data, dict) else None
-
 def write_catalog(out, generated, generated_at, existing_path=None):
     """Write generated + hand-maintained entries to `out`; returns (models, written).
 
-    `generated_at` comes from the inputs (see the module docstring). If `out` already
-    holds the same content apart from `generated_at`, nothing is written: the file keeps
-    its bytes, layout and old stamp.
+    The bytes are a function of the arguments and of the hand-maintained entries of
+    `existing_path`; whatever `out` holds now is neither read nor compared (a stale stamp
+    or another layout there changes nothing). The generated entries are checked first;
+    a violation raises before `out` is touched, and the write is a temp file renamed over
+    it. `written` is False only when `out` already has exactly these bytes.
     """
+    check_generated(generated)
     models = assemble(generated, read_catalog(existing_path or CATALOG_PATH))
     catalog = {
         "catalog_version": CATALOG_VERSION,
@@ -446,13 +539,17 @@ def write_catalog(out, generated, generated_at, existing_path=None):
         "mirrors": MIRRORS,
         "models": models,
     }
-    current = load_catalog(out)
-    if current is not None and same_content(current, json.loads(json.dumps(catalog))):
-        return models, False
+    text = render(catalog)
+    try:
+        with open(out, "rb") as f:
+            if f.read() == text.encode("utf-8"):
+                return models, False
+    except OSError:
+        pass
     tmp = out + ".tmp"
     try:
         with open(tmp, "w", encoding="utf-8", newline="\n") as f:
-            f.write(render(catalog))
+            f.write(text)
         os.replace(tmp, out)      # a crash mid-write never leaves a half catalog behind
     except BaseException:
         if os.path.exists(tmp): os.remove(tmp)
@@ -469,24 +566,31 @@ def main():
     repos = sorted(r for r in listed if not CURATION.get(slug(r), {}).get("hidden"))
     if not repos:
         raise SystemExit("the org lists no usable repo; refusing to write an empty ASR catalog")
+    check_repos(repos)
     models = []
     stamps = []
     failures = []
     with ThreadPoolExecutor(max_workers=10) as ex:
-        futs = {ex.submit(build, r): r for r in repos}
-        for f in as_completed(futs):
+        # Collected in the sorted order of `repos`, never in the order the threads finish:
+        # neither the entries nor the error messages depend on network timing.
+        futs = [(r, ex.submit(build, r)) for r in repos]
+        for repo, f in futs:
             try:
                 entry, modified = f.result()
                 models.append(entry)
                 stamps.append(modified)
             except Exception as e:
-                failures.append((futs[f], e))
-                print(f"!! {futs[f]}: {e}", file=sys.stderr)
+                failures.append((repo, e))
+                print(f"!! {repo}: {e}", file=sys.stderr)
     if failures:
         print(f"catalog generation failed for {len(failures)} repo(s), nothing written", file=sys.stderr)
         raise SystemExit(1)
+    try:
+        check_generated(models)
+    except ValueError as e:
+        raise SystemExit(f"catalog generation refused, nothing written: {e}")
     models.sort(key=lambda m: (not m["recommended"], m["recommended_rank"] or 1e9,
-                               m["family"], -(m["speed_score"] or 0), m["slug"]))
+                               m["family"], -(m["speed_score"] or 0), m["slug"], m["id"]))
     all_models, written = write_catalog(out, models, stamp(max(stamps)))
     state = (f"wrote {out}" if written else f"{out} unchanged")
     print(f"{state}: {len(models)} generated + {len(all_models) - len(models)} hand-maintained "

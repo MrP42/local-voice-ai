@@ -34,30 +34,47 @@
 //!   geloescht, sondern als `.partial` abgelegt, damit eine gueltige Datei nicht
 //!   neu geladen werden muss), der Motor bekommt also nie einen Graphen neben
 //!   ungeprueften oder defekten Gewichten, auch nicht, wenn die Reparatur
-//!   scheitert;
-//! - Ende nur mit verifiziertem Paar: unmittelbar vor dem Erfolg werden ALLE
-//!   Dateien des Eintrags erneut nach Groesse und SHA-256 geprueft ([`confirm`]).
-//!   Wurde dazwischen eine Datei getauscht (auch eine, die schon verifiziert
-//!   dalag), gibt es keinen Erfolg: Fehler `verification_failed`, der Graph wird
-//!   zurueckgezogen. Dasselbe bei Abbruch oder Lesefehler in dieser letzten
-//!   Pruefung. Erfolg heisst also: zum Zeitpunkt des Erfolgs stimmten alle Dateien.
-//!   Ein Tausch NACH dem Erfolg (zwischen Bereitstellen und Laden) bleibt moeglich;
-//!   der Lader prueft dort nur die Groessen (`nemotron::engine::check_catalog_sizes`);
-//! - Verknuepfungen: das Bereitstellen aendert nur eigene, normale Dateien
-//!   unterhalb des Modellordners. Ein Symlink (unter Windows jeder Reparse-Punkt,
-//!   also auch Junctions) als Ziel oder als `.partial`, ein Ordner dazwischen, der
-//!   ein Link ist oder aus dem Modellordner hinauszeigt, oder etwas, das keine
-//!   normale Datei ist, wird mit dem Fehler `unsafe_path` abgelehnt, bevor
-//!   geschrieben, umbenannt oder geloescht wird (`download::safe`). Die Wurzel
-//!   selbst darf ein Link sein (verschobener Datenordner). Ein Katalogwert, der
-//!   aus dem Modellordner hinausfuehren koennte (absoluter Pfad, `..`,
-//!   Backslash, Laufwerksbuchstabe), ergibt `catalog_invalid`;
+//!   scheitert. Die Reihenfolge der Umbenennungen ist keine Sicherheitsgrenze
+//!   mehr (das ist die Pruefung beim Laden, siehe unten), sie haelt nur den
+//!   Normalfall sauber;
+//! - Erfolg nur nach genau dem Weg, den der Lader geht: die Pruefung vor dem
+//!   Erfolg ([`confirm`], und ebenso die der vorhandenen Dateien am Anfang) ist
+//!   `anchor::check_set`, dieselbe Funktion, aus der der Lader seine Bytes bezieht:
+//!   alle Dateien des Eintrags zugleich als Handle offen, Groesse und SHA-256 ueber
+//!   die Handles, danach Name gegen Handle verglichen (ein Tausch durch eine andere
+//!   Datei gleicher Groesse ist `Changed`, nie Erfolg). Mismatch, Abbruch oder
+//!   Lesefehler: kein Erfolg, Fehler `verification_failed` bzw. der Grund, der Graph
+//!   wird zurueckgezogen. Zuletzt liegt der Ordner noch dort, wohin der Pfad fuehrt
+//!   (`Anchor::still_at`), sonst `unsafe_path`. Ein Tausch NACH dem Erfolg
+//!   (zwischen Bereitstellen und Laden) bleibt moeglich und ist unschaedlich: der
+//!   Lader (`nemotron::engine::OnnxBlockModel::load_verified`) liest die Bytes selbst
+//!   ueber Handles, prueft sie gegen den Katalog und baut die Sitzung aus genau diesen
+//!   Bytes im Speicher, ohne einen Pfad ein zweites Mal zu oeffnen;
+//! - Verknuepfungen und Ordnertausch: das Bereitstellen oeffnet VOR dem ersten
+//!   Netzzugriff die Kette Datenwurzel -> Modellordner Komponente fuer Komponente
+//!   ohne Link-Folgen und haelt den Modellordner als offenes Handle bis zum Ende;
+//!   anlegen, anhaengen, abschneiden, lesen, umbenennen und loeschen laufen alle
+//!   ueber dieses Handle und einen Dateinamen (`download::anchor`), nie ueber einen
+//!   Pfad. Wird der Ordner im Dateisystem durch einen Link auf einen fremden Ordner
+//!   ersetzt, landen alle Operationen weiter im alten Ordner (unter Windows laesst
+//!   sich der Ordner nicht ersetzen, solange das Handle offen ist), im fremden
+//!   Ordner entsteht, aendert und verschwindet nichts. Ein Symlink (unter Windows
+//!   jeder Reparse-Punkt, also auch Junctions) als Ziel oder als `.partial`, ein
+//!   Ordner dazwischen, der ein Link ist, eine Datei mit mehreren Namen (Hardlink,
+//!   unter Windows `nNumberOfLinks`) als Teildatei oder etwas, das keine normale
+//!   Datei ist, wird mit dem Fehler `unsafe_path` abgelehnt, bevor geschrieben,
+//!   abgeschnitten, umbenannt oder geloescht wird. Die Wurzel selbst darf ein Link
+//!   sein (verschobener Datenordner). Ein Katalogwert, der aus dem Modellordner
+//!   hinausfuehren koennte (absoluter Pfad, `..`, Backslash, Laufwerksbuchstabe,
+//!   Windows-Geraetename, zwei Namen nur in der Schreibweise verschieden), ergibt
+//!   `catalog_invalid`;
 //! - voller Datentraeger: der Schreibfehler bricht ab, die Teildatei bleibt fuer
 //!   die Fortsetzung, bereits fertige Dateien bleiben liegen;
 //! - zwei Aufrufe gleichzeitig: einer laeuft, der andere meldet `download_running`.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use hf_hub::api::tokio::CancellationToken;
 use serde::Serialize;
@@ -66,6 +83,7 @@ use tauri::{AppHandle, Emitter};
 
 use crate::catalog::{TtsCatalogEntry, TtsCatalogFile};
 use crate::managers::meetings::diarize;
+use crate::managers::model::download::anchor::{self, Anchor, Check, Wanted};
 use crate::managers::model::download::{is_refused, safe, HttpDownloadEvent, HttpDownloadOutcome};
 use crate::managers::model::ModelManager;
 
@@ -103,11 +121,25 @@ fn targets(
 ) -> Result<Vec<(TtsCatalogFile, PathBuf)>, String> {
     let dir = diarize::catalog_model_dir(models_root, entry)
         .ok_or_else(|| "catalog_invalid".to_string())?;
+    // Ohne Pruefsumme und Groesse gaebe es nichts, wogegen eine Datei zu verifizieren
+    // waere: bereitgestellt (und spaeter geladen) wird nur, was sich pruefen laesst.
+    if entry
+        .files
+        .iter()
+        .any(|f| f.size_bytes == 0 || f.sha256.as_deref().is_none_or(|h| !is_sha256(h)))
+    {
+        return Err("catalog_invalid".to_string());
+    }
     Ok(entry
         .files
         .iter()
         .map(|f| (f.clone(), dir.join(&f.filename)))
         .collect())
+}
+
+/// Eine SHA-256 in Hex: 64 Zeichen.
+fn is_sha256(text: &str) -> bool {
+    text.len() == 64 && text.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// Fehlertext eines E/A-Fehlers; eine Ablehnung wegen Verknuepfung heisst
@@ -170,11 +202,9 @@ enum Fetch {
     Cancelled,
 }
 
-/// Die fortsetzbare Teildatei neben dem Ziel.
-fn partial_path(dest: &Path) -> PathBuf {
-    let mut name = dest.as_os_str().to_owned();
-    name.push(".partial");
-    PathBuf::from(name)
+/// Name der fortsetzbaren Teildatei neben der Datei `name`.
+fn partial_name(name: &str) -> String {
+    format!("{name}.partial")
 }
 
 /// Zustand einer Datei am Ziel gegenueber dem Katalog.
@@ -182,121 +212,119 @@ fn partial_path(dest: &Path) -> PathBuf {
 enum FileState {
     Valid,
     Missing,
-    /// Liegt da, hat aber nicht die Groesse oder die SHA-256 aus dem Katalog.
+    /// Liegt da, hat aber nicht die Groesse oder die SHA-256 aus dem Katalog (oder
+    /// wurde waehrend der Pruefung getauscht).
     Invalid,
 }
 
-/// Prueft die Datei am Ziel: erst die Groesse (billig), dann die SHA-256 ueber
-/// den ganzen Inhalt, gelesen in 1-MiB-Bloecken (kein Speicherbedarf nach der
-/// Dateigroesse). Ohne Pruefsumme im Katalog zaehlt nur die Groesse. `None`:
-/// waehrend des Lesens abgebrochen. Ein Link oder eine Nicht-Datei am Ziel ist
-/// ein Fehler (Ablehnung, [`safe::is_refusal`]), nie eine Datei, der gefolgt wird;
-/// gelesen wird ohne Link zu folgen.
-fn check_file(
-    file: &TtsCatalogFile,
-    dest: &Path,
-    cancel: &CancellationToken,
-) -> std::io::Result<Option<FileState>> {
-    use sha2::{Digest, Sha256};
-    use std::io::Read;
-    let Some(len) = safe::plain_len(dest)? else {
-        return Ok(Some(FileState::Missing));
-    };
-    if len != file.size_bytes {
-        return Ok(Some(FileState::Invalid));
-    }
-    let Some(expected) = file.sha256.as_deref() else {
-        return Ok(Some(FileState::Valid));
-    };
-    let mut reader = safe::open_read(dest)?;
-    let mut hasher = Sha256::new();
-    let mut block = vec![0u8; 1 << 20];
-    let mut total = 0u64;
-    loop {
-        if cancel.is_cancelled() {
-            return Ok(None);
+impl From<Check> for FileState {
+    fn from(check: Check) -> Self {
+        match check {
+            Check::Valid => Self::Valid,
+            Check::Missing => Self::Missing,
+            Check::Size(_) | Check::Hash | Check::Changed => Self::Invalid,
         }
-        let n = reader.read(&mut block)?;
-        if n == 0 {
-            break;
-        }
-        total += n as u64;
-        hasher.update(&block[..n]);
     }
-    let actual = format!("{:x}", hasher.finalize());
-    // Gewachsen oder geschrumpft zwischen `stat` und Lesen: nicht die Datei aus dem Katalog.
-    Ok(Some(
-        if total == file.size_bytes && actual.eq_ignore_ascii_case(expected) {
-            FileState::Valid
-        } else {
-            FileState::Invalid
-        },
-    ))
 }
 
-/// Prueft alle Dateien ([`check_file`]), im Hintergrundthread. `None`: abgebrochen.
+/// Die Ordner von `root` bis zum Ordner der Ziele (alle Ziele liegen im selben
+/// Ordner). Ein Ziel ausserhalb von `root` oder mit einem Bestandteil, der kein
+/// Name ist (`..`, absolut), ist `unsafe_path`.
+fn place(root: &Path, targets: &[(TtsCatalogFile, PathBuf)]) -> Result<Vec<String>, String> {
+    let dir = targets
+        .first()
+        .and_then(|(_, dest)| dest.parent())
+        .ok_or_else(|| "model_missing".to_string())?;
+    if targets.iter().any(|(_, dest)| dest.parent() != Some(dir)) {
+        return Err("catalog_invalid".into());
+    }
+    let rel = dir
+        .strip_prefix(root)
+        .map_err(|_| "unsafe_path".to_string())?;
+    rel.components()
+        .map(|part| match part {
+            Component::Normal(name) => name
+                .to_str()
+                .map(str::to_string)
+                .ok_or_else(|| "catalog_invalid".to_string()),
+            _ => Err("unsafe_path".to_string()),
+        })
+        .collect()
+}
+
+/// Prueft alle Dateien ueber den Anker (`anchor::check_set`: alle Handles zugleich
+/// offen, Groesse und SHA-256 ueber die Handles, Name gegen Handle), im
+/// Hintergrundthread. `None`: abgebrochen. Ein Link oder eine Nicht-Datei ist ein
+/// Fehler (Ablehnung), nie eine Datei, der gefolgt wird.
 async fn verify_all(
+    anchor: &Arc<Anchor>,
     targets: &[(TtsCatalogFile, PathBuf)],
     cancel: &CancellationToken,
 ) -> Result<Option<Vec<FileState>>, String> {
-    let mut states = Vec::with_capacity(targets.len());
-    for (file, dest) in targets {
-        if cancel.is_cancelled() {
-            return Ok(None);
-        }
-        let (file, dest, token) = (file.clone(), dest.clone(), cancel.clone());
-        let state = tokio::task::spawn_blocking(move || check_file(&file, &dest, &token))
-            .await
-            .map_err(|e| e.to_string())?
-            .map_err(|e| io_msg(&e))?;
-        match state {
-            Some(state) => states.push(state),
-            None => return Ok(None),
-        }
-    }
-    Ok(Some(states))
+    let anchor = anchor.clone();
+    let owned: Vec<(String, u64, Option<String>)> = targets
+        .iter()
+        .map(|(f, _)| (f.filename.clone(), f.size_bytes, f.sha256.clone()))
+        .collect();
+    let token = cancel.clone();
+    let checked = tokio::task::spawn_blocking(move || {
+        let wanted: Vec<Wanted<'_>> = owned
+            .iter()
+            .map(|(name, size, sha)| Wanted {
+                name,
+                size: *size,
+                sha256: sha.as_deref(),
+            })
+            .collect();
+        anchor::check_set(&anchor, &wanted, &|| token.is_cancelled(), None)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| io_msg(&e))?;
+    Ok(checked.map(|states| states.into_iter().map(FileState::from).collect()))
 }
 
-/// Zieht die Datei zurueck, die der Motor oeffnet (die erste des Eintrags), damit
-/// er sie nicht neben ungeprueften oder defekten Dateien findet. Ungueltig:
+/// Zieht die Datei `name` zurueck, die der Motor oeffnet (die erste des Eintrags),
+/// damit er sie nicht neben ungeprueften oder defekten Dateien findet. Ungueltig:
 /// geloescht; fehlend: nichts zu tun. Gueltig oder unbekannt (`None`, etwa nach
 /// Abbruch oder Lesefehler): als `.partial` ablegen (kommt ohne Netz zurueck, der
 /// Downloader prueft sie dann erneut); geht das nicht (ein Link, ein Hindernis,
-/// fehlende Rechte), die Datei selbst entfernen; ein Link wird dabei ohne
-/// Folgen entfernt, nie sein Ziel. Scheitert auch das, ist es ein Fehler: der
-/// Aufrufer meldet dann keinen Erfolg.
-fn withdraw_graph(entry_dest: &Path, state: Option<FileState>) -> Result<(), String> {
+/// fehlende Rechte), den Eintrag selbst entfernen ([`Anchor::unlink`]: ein Link
+/// verschwindet, sein Ziel bleibt). Scheitert auch das, ist es ein Fehler: der
+/// Aufrufer meldet dann keinen Erfolg. Alles ueber den Anker, nie ueber einen Pfad.
+fn withdraw_graph(anchor: &Anchor, name: &str, state: Option<FileState>) -> Result<(), String> {
     match state {
         Some(FileState::Missing) => Ok(()),
-        Some(FileState::Invalid) => safe::remove(entry_dest).map_err(|e| io_msg(&e)),
-        Some(FileState::Valid) | None => {
-            match safe::rename_over(entry_dest, &partial_path(entry_dest)) {
-                Ok(()) => Ok(()),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(_) => match std::fs::remove_file(entry_dest) {
-                    Ok(()) => Ok(()),
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                    Err(e) => Err(io_msg(&e)),
-                },
-            }
-        }
+        Some(FileState::Invalid) => anchor.remove(name).map_err(|e| io_msg(&e)),
+        Some(FileState::Valid) | None => match anchor.rename_over(name, &partial_name(name)) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(_) => anchor.unlink(name).map_err(|e| io_msg(&e)),
+        },
     }
 }
 
-/// Die letzte Pruefung vor dem Erfolg: alle Dateien des Eintrags erneut nach
-/// Groesse und SHA-256, jetzt, nachdem alles an seinem Platz liegt. Stimmt eine
-/// nicht (getauscht, beschaedigt, durch einen Link ersetzt) oder wird die Pruefung
-/// abgebrochen, gibt es keinen Erfolg und der Graph wird zurueckgezogen
-/// ([`withdraw_graph`]): der Motor findet nie ein Paar, das nicht gerade
-/// verifiziert war. `verification_failed`, wenn der Inhalt nicht stimmt.
+/// Das Ende eines Erfolgs: der Ordner liegt noch dort, wohin der Pfad fuehrt.
+fn finish(anchor: &Anchor) -> Result<Fetch, String> {
+    anchor.still_at().map_err(|e| io_msg(&e))?;
+    Ok(Fetch::Done)
+}
+
+/// Die letzte Pruefung vor dem Erfolg: alle Dateien des Eintrags erneut, jetzt,
+/// nachdem alles an seinem Platz liegt, ueber denselben Weg, den der Lader geht
+/// ([`verify_all`]). Stimmt eine nicht (getauscht, beschaedigt, durch einen Link
+/// ersetzt) oder wird die Pruefung abgebrochen, gibt es keinen Erfolg und der Graph
+/// wird zurueckgezogen ([`withdraw_graph`]). `verification_failed`, wenn der Inhalt
+/// nicht stimmt.
 async fn confirm(
+    anchor: &Arc<Anchor>,
     targets: &[(TtsCatalogFile, PathBuf)],
     cancel: &CancellationToken,
 ) -> Result<Fetch, String> {
-    let outcome = verify_all(targets, cancel).await;
+    let outcome = verify_all(anchor, targets, cancel).await;
     if let Ok(Some(states)) = &outcome {
         if states.iter().all(|s| *s == FileState::Valid) {
-            return Ok(Fetch::Done);
+            return finish(anchor);
         }
     }
     let graph_state = match &outcome {
@@ -308,7 +336,7 @@ async fn confirm(
         Ok(Some(_)) => Some("verification_failed".to_string()),
         Err(e) => Some(e.clone()),
     };
-    if let Err(w) = withdraw_graph(&targets[0].1, graph_state) {
+    if let Err(w) = withdraw_graph(anchor, &targets[0].0.filename, graph_state) {
         return Err(format!(
             "{}; graph_not_withdrawn: {w}",
             reason.as_deref().unwrap_or("cancelled")
@@ -320,20 +348,76 @@ async fn confirm(
     }
 }
 
+/// Laedt EINE Datei nach `<name>.partial` und benennt sie erst nach bestandener
+/// Pruefung ueber das Ziel um. Die Teildatei wird VOR der Anfrage ueber den Anker
+/// geoeffnet (Link, Hardlink und Nicht-Datei sind dann schon abgelehnt) und der
+/// Downloader schreibt in dieses Handle: er folgt keinem Pfad. Ein leer gebliebenes
+/// Handle (Fehler vor dem ersten Byte) raeumt die Teildatei wieder ab.
+async fn fetch_one(
+    anchor: &Anchor,
+    model_id: &str,
+    file: &TtsCatalogFile,
+    cancel: &CancellationToken,
+    emit: &(dyn Fn(HttpDownloadEvent<'_>) + Send + Sync),
+) -> Result<Fetch, String> {
+    let partial = partial_name(&file.filename);
+    let mut handle = anchor.open_partial(&partial).map_err(|e| io_msg(&e))?;
+    let outcome = ModelManager::download_http_into_file(
+        model_id,
+        &file.url,
+        &mut handle,
+        Some(file.size_bytes),
+        file.sha256.as_deref(),
+        cancel,
+        emit,
+    )
+    .await;
+    let remove_if_empty = |handle: std::fs::File| {
+        if handle.metadata().is_ok_and(|m| m.len() == 0) {
+            drop(handle);
+            let _ = anchor.remove(&partial);
+        }
+    };
+    match outcome {
+        Ok(HttpDownloadOutcome::Completed) => {
+            // Der Name zeigt noch auf die Datei, in die geschrieben wurde.
+            if !anchor.names(&partial, &handle).map_err(|e| io_msg(&e))? {
+                return Err("unsafe_path".into());
+            }
+            drop(handle);
+            anchor
+                .rename_over(&partial, &file.filename)
+                .map_err(|e| io_msg(&e))?;
+            Ok(Fetch::Done)
+        }
+        Ok(HttpDownloadOutcome::Cancelled) => {
+            remove_if_empty(handle);
+            Ok(Fetch::Cancelled)
+        }
+        Err(e) => {
+            remove_if_empty(handle);
+            Err(net_msg(&e))
+        }
+    }
+}
+
 /// Stellt alle Dateien des Eintrags verifiziert bereit.
 ///
-/// 0. Jeder Ordner der Ziele liegt unterhalb von `root` ohne Link, der
-///    hinauszeigt ([`safe::dir_inside`]); jede Datei am Ziel und jede
-///    `.partial` ist eine eigene normale Datei (`unsafe_path` sonst).
-/// 1. Jede vorhandene Datei wird nach Groesse und SHA-256 geprueft. Sind alle
-///    gueltig, ist nichts zu tun (kein Netz).
+/// 0. Die Kette von `root` bis zum Ordner der Ziele wird VOR dem ersten Netzzugriff
+///    Komponente fuer Komponente ohne Link-Folgen geoeffnet (fehlende Ordner werden
+///    angelegt) und als Handle bis zum Ende gehalten ([`Anchor`]); jede weitere
+///    Dateioperation laeuft ueber dieses Handle (`unsafe_path`, wenn ein Link oder
+///    eine Nicht-Datei im Weg ist).
+/// 1. Jede vorhandene Datei wird nach Groesse und SHA-256 geprueft ([`verify_all`]).
+///    Sind alle gueltig, ist nichts zu tun (kein Netz).
 /// 2. Muss eine andere als die erste Datei ersetzt werden, wird die erste (die
 ///    der Motor oeffnet) zurueckgezogen: als `<ziel>.partial` abgelegt, ein
 ///    gueltiger Graph wird dadurch ohne Netz wieder uebernommen.
 /// 3. Jede fehlende oder ungueltige Datei wird nach `<ziel>.partial` geladen
 ///    (fortsetzbar, Groesse und SHA-256 aus dem Katalog geprueft) und erst
 ///    dann ueber das Ziel umbenannt; die erste Datei kommt zuletzt.
-/// 4. Zuletzt pruefen alle Dateien noch einmal ([`confirm`]); nur dann Erfolg.
+/// 4. Zuletzt pruefen alle Dateien noch einmal ([`confirm`]); nur dann Erfolg, und
+///    nur wenn der Ordner noch dort liegt, wohin der Pfad fuehrt.
 async fn provision(
     root: &Path,
     model_id: &str,
@@ -344,54 +428,40 @@ async fn provision(
     if targets.is_empty() {
         return Err("model_missing".into());
     }
-    for (_, dest) in targets {
-        let dir = dest.parent().ok_or_else(|| "model_missing".to_string())?;
-        safe::dir_inside(root, dir, false).map_err(|e| io_msg(&e))?;
-    }
-    let Some(mut states) = verify_all(targets, cancel).await? else {
+    let parts = place(root, targets)?;
+    let parts: Vec<&str> = parts.iter().map(String::as_str).collect();
+    let anchor = Anchor::open(root, &parts, true)
+        .map_err(|e| io_msg(&e))?
+        .ok_or_else(|| "model_missing".to_string())?;
+    let anchor = Arc::new(anchor);
+
+    let Some(mut states) = verify_all(&anchor, targets, cancel).await? else {
         return Ok(Fetch::Cancelled);
     };
     if states.iter().all(|s| *s == FileState::Valid) {
-        return Ok(Fetch::Done);
+        return finish(&anchor);
     }
     // Die erste Datei oeffnet der Motor: sie darf nicht neben Dateien liegen, die
     // gleich ersetzt werden. Eine gueltige wandert als Teildatei beiseite (kommt
     // ohne Netz zurueck), eine ungueltige wird ohnehin neu geladen.
-    let entry_dest = &targets[0].1;
+    let graph = &targets[0].0.filename;
     let others_broken = states[1..].iter().any(|s| *s != FileState::Valid);
     if others_broken && states[0] != FileState::Missing {
-        withdraw_graph(entry_dest, Some(states[0]))?;
+        withdraw_graph(&anchor, graph, Some(states[0]))?;
         states[0] = FileState::Missing;
     }
-    for ((file, dest), state) in targets.iter().zip(&states).rev() {
+    for ((file, _), state) in targets.iter().zip(&states).rev() {
         if *state == FileState::Valid {
             continue;
         }
         if cancel.is_cancelled() {
             return Ok(Fetch::Cancelled);
         }
-        let dir = dest.parent().ok_or_else(|| "model_missing".to_string())?;
-        safe::dir_inside(root, dir, true).map_err(|e| io_msg(&e))?;
-        let partial = partial_path(dest);
-        let outcome = ModelManager::download_http_resumable_with_events(
-            model_id,
-            &file.url,
-            &partial,
-            Some(file.size_bytes),
-            file.sha256.as_deref(),
-            cancel,
-            emit,
-        )
-        .await
-        .map_err(|e| net_msg(&e))?;
-        match outcome {
-            HttpDownloadOutcome::Completed => {
-                safe::rename_over(&partial, dest).map_err(|e| io_msg(&e))?;
-            }
-            HttpDownloadOutcome::Cancelled => return Ok(Fetch::Cancelled),
+        if fetch_one(&anchor, model_id, file, cancel, emit).await? == Fetch::Cancelled {
+            return Ok(Fetch::Cancelled);
         }
     }
-    confirm(targets, cancel).await
+    confirm(&anchor, targets, cancel).await
 }
 
 /// Stellt das Modell `id` bereit (alle seine Dateien), nur auf Knopfdruck oder
@@ -603,6 +673,16 @@ mod tests {
                 (f, dest)
             })
             .collect()
+    }
+
+    /// Der Anker auf einen schon vorhandenen Ordner (ohne Ordner anzulegen).
+    fn anchor_of(dir: &Path) -> Arc<Anchor> {
+        Arc::new(Anchor::open(dir, &[], false).unwrap().unwrap())
+    }
+
+    /// Die Teildatei neben der Datei `path`.
+    fn partial_path(path: &Path) -> PathBuf {
+        path.with_file_name(partial_name(path.file_name().unwrap().to_str().unwrap()))
     }
 
     fn leftovers(dir: &Path) -> Vec<String> {
@@ -1061,14 +1141,15 @@ mod tests {
         let files = rebase(two_files(&server, None), dir.path());
         install(&files);
         let none = CancellationToken::new();
+        let anchor = anchor_of(dir.path());
 
-        assert_eq!(confirm(&files, &none).await.unwrap(), Fetch::Done);
+        assert_eq!(confirm(&anchor, &files, &none).await.unwrap(), Fetch::Done);
         assert_eq!(leftovers(dir.path()), ["model.onnx", "model.onnx_data"]);
 
         // Gewichte getauscht, Graph gut: Graph als Teildatei beiseite.
         std::fs::write(&files[1].1, same_size_wrong()).unwrap();
         assert_eq!(
-            confirm(&files, &none).await.unwrap_err(),
+            confirm(&anchor, &files, &none).await.unwrap_err(),
             "verification_failed"
         );
         assert!(!files[0].1.exists());
@@ -1083,8 +1164,9 @@ mod tests {
         let files = rebase(two_files(&server, None), dir.path());
         install(&files);
         std::fs::write(&files[0].1, vec![b'y'; GRAPH.len()]).unwrap();
+        let anchor = anchor_of(dir.path());
         assert_eq!(
-            confirm(&files, &none).await.unwrap_err(),
+            confirm(&anchor, &files, &none).await.unwrap_err(),
             "verification_failed"
         );
         assert_eq!(leftovers(dir.path()), ["model.onnx_data"]);
@@ -1100,7 +1182,11 @@ mod tests {
         install(&files);
         let cancel = CancellationToken::new();
         cancel.cancel();
-        assert_eq!(confirm(&files, &cancel).await.unwrap(), Fetch::Cancelled);
+        let anchor = anchor_of(dir.path());
+        assert_eq!(
+            confirm(&anchor, &files, &cancel).await.unwrap(),
+            Fetch::Cancelled
+        );
         assert!(!files[0].1.exists());
         assert_eq!(
             std::fs::read(dir.path().join("model.onnx.partial")).unwrap(),
@@ -1166,6 +1252,33 @@ mod tests {
         }
     }
 
+    /// Ein Eintrag ohne Pruefsumme (oder mit einer, die keine SHA-256 ist) oder ohne
+    /// Groesse wird weder bereitgestellt noch angezeigt: es gaebe nichts zu pruefen. Alle
+    /// Eintraege des Katalogs erfuellen das.
+    #[test]
+    fn targets_refuse_files_without_a_checksum_or_a_size() {
+        let root = Path::new("models");
+        for entry in crate::catalog::tts_entries(crate::catalog::Purpose::Diarization) {
+            assert!(targets(root, &entry).is_ok(), "{}", entry.id);
+        }
+        let entry = catalog_entry(diarize::nemotron::MODEL_ID).unwrap();
+        for victim in 0..entry.files.len() {
+            for bad in [
+                None,
+                Some(String::new()),
+                Some("0".repeat(63)),
+                Some("g".repeat(64)),
+            ] {
+                let mut e = entry.clone();
+                e.files[victim].sha256 = bad.clone();
+                assert_eq!(targets(root, &e).unwrap_err(), "catalog_invalid", "{bad:?}");
+            }
+            let mut e = entry.clone();
+            e.files[victim].size_bytes = 0;
+            assert_eq!(targets(root, &e).unwrap_err(), "catalog_invalid");
+        }
+    }
+
     // ---- Verknuepfungen: nur eigene, normale Dateien im Modellordner --------
 
     const FOREIGN: &[u8] = b"ABCDE";
@@ -1186,10 +1299,38 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    /// Jede Datei unter `dir` mit ihren Bytes, nach Pfad sortiert (Ordner als Eintrag
+    /// ohne Bytes); Links werden nicht verfolgt, es gibt in diesen Baeumen keine.
+    fn tree(dir: &Path) -> Vec<(String, Option<Vec<u8>>)> {
+        fn walk(base: &Path, dir: &Path, out: &mut Vec<(String, Option<Vec<u8>>)>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let entry = entry.unwrap();
+                let path = entry.path();
+                let rel = path
+                    .strip_prefix(base)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                if entry.file_type().unwrap().is_dir() {
+                    out.push((rel, None));
+                    walk(base, &path, out);
+                } else {
+                    out.push((rel, Some(std::fs::read(&path).unwrap())));
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(dir, dir, &mut out);
+        out.sort();
+        out
+    }
+
     mod links {
         use super::*;
-        use std::os::unix::fs::symlink;
+        use crate::managers::model::download::linktest::{
+            folder_link, is_link, swap_must_have_happened, symlink_dir, symlink_file,
+        };
+        use std::sync::atomic::{AtomicBool, AtomicUsize};
 
         fn foreign(dir: &Path, bytes: &[u8]) -> PathBuf {
             let path = dir.join("fremd.bin");
@@ -1197,15 +1338,29 @@ mod tests {
             path
         }
 
-        fn is_link(path: &Path) -> bool {
-            std::fs::symlink_metadata(path)
-                .unwrap()
-                .file_type()
-                .is_symlink()
+        /// Ein Ordner-Link in beiden Formen: ohne Rechte (Unix: Symlink, Windows:
+        /// Junction) und, nur unter Windows, als echter Symlink (rot ohne Rechte, ausser
+        /// `LVA_SKIP_SYMLINK_TESTS=1`). `false`: nicht angelegt (erlaubtes Ueberspringen).
+        fn dir_link(real_symlink: bool, link: &Path, target: &Path) -> bool {
+            if real_symlink {
+                symlink_dir(link, target)
+            } else {
+                folder_link(link, target);
+                true
+            }
+        }
+
+        /// Die Formen, die dieses System kennt: unter Unix ist beides derselbe Symlink.
+        fn link_forms() -> &'static [bool] {
+            if cfg!(windows) {
+                &[false, true]
+            } else {
+                &[false]
+            }
         }
 
         /// Ein Link als Ziel wird abgelehnt, auch wenn dahinter genau die richtigen
-        /// Bytes liegen: die fremde Datei wird weder gelesen als "gueltig" noch
+        /// Bytes liegen: die fremde Datei wird weder als "gueltig" gelesen noch
         /// ersetzt, noch umbenannt, noch geloescht.
         #[tokio::test]
         async fn a_symlinked_target_is_refused_even_when_it_holds_the_right_bytes() {
@@ -1218,7 +1373,9 @@ mod tests {
                 let right = if victim == 1 { WEIGHTS } else { GRAPH };
                 let target = foreign(outside.path(), right);
                 std::fs::remove_file(&files[victim].1).unwrap();
-                symlink(&target, &files[victim].1).unwrap();
+                if !symlink_file(&files[victim].1, &target) {
+                    return;
+                }
                 assert!(
                     !looks_complete(&files),
                     "Anzeige: bereit trotz Link an Stelle {victim}"
@@ -1237,6 +1394,28 @@ mod tests {
             }
         }
 
+        /// Das Gegenstueck ohne Rechte: ein Ordner-Link (Windows: Junction) an der
+        /// Stelle des Ziels. Auch er wird abgelehnt, der fremde Ordner bleibt leer.
+        #[tokio::test]
+        async fn a_folder_link_as_target_is_refused_and_the_foreign_folder_stays_as_it_is() {
+            for victim in [1usize, 0] {
+                let server = serve(both_routes()).await;
+                let dir = tempfile::tempdir().unwrap();
+                let outside = tempfile::tempdir().unwrap();
+                let files = rebase(two_files(&server, None), dir.path());
+                install(&files);
+                std::fs::remove_file(&files[victim].1).unwrap();
+                folder_link(&files[victim].1, outside.path());
+                std::fs::write(outside.path().join("fremd.bin"), FOREIGN).unwrap();
+                let before = tree(outside.path());
+
+                assert_refused_without_network(dir.path(), &files, &server).await;
+
+                assert_eq!(tree(outside.path()), before);
+                assert!(is_link(&files[victim].1), "Link ersetzt");
+            }
+        }
+
         /// Ein Link als Teildatei: die fremde Datei dahinter (kuerzer als die
         /// Gewichte) bekommt keine Bytes angehaengt, das Netz wird nie gefragt.
         #[tokio::test]
@@ -1247,7 +1426,9 @@ mod tests {
             let files = rebase(two_files(&server, None), dir.path());
             let target = foreign(outside.path(), FOREIGN);
             let partial = partial_path(&files[1].1);
-            symlink(&target, &partial).unwrap();
+            if !symlink_file(&partial, &target) {
+                return;
+            }
 
             assert_refused_without_network(dir.path(), &files, &server).await;
 
@@ -1264,42 +1445,69 @@ mod tests {
             let outside = tempfile::tempdir().unwrap();
             let files = rebase(two_files(&server, None), dir.path());
             let behind = outside.path().join("noch-nicht-da.bin");
-            symlink(&behind, partial_path(&files[1].1)).unwrap();
+            if !symlink_file(&partial_path(&files[1].1), &behind) {
+                return;
+            }
 
             assert_refused_without_network(dir.path(), &files, &server).await;
             assert!(!behind.exists());
         }
 
-        /// Ein Zwischenordner, der ein Link aus dem Modellordner heraus ist: es wird
-        /// weder dahinter etwas angelegt noch geschrieben, und das Netz nicht gefragt.
+        /// Ein Ordner-Link (Windows: Junction) als Teildatei, dahinter ein fremder
+        /// Ordner mit einer Datei: nichts darin wird veraendert.
+        #[tokio::test]
+        async fn a_folder_link_as_partial_is_refused_and_the_foreign_folder_stays_as_it_is() {
+            let server = serve(both_routes()).await;
+            let dir = tempfile::tempdir().unwrap();
+            let outside = tempfile::tempdir().unwrap();
+            let files = rebase(two_files(&server, None), dir.path());
+            std::fs::write(outside.path().join("fremd.bin"), FOREIGN).unwrap();
+            let before = tree(outside.path());
+            folder_link(&partial_path(&files[1].1), outside.path());
+
+            assert_refused_without_network(dir.path(), &files, &server).await;
+
+            assert_eq!(tree(outside.path()), before);
+        }
+
+        /// Ein Zwischenordner, der ein Link aus dem Modellordner heraus ist (Unix:
+        /// Symlink; Windows: Junction und, mit Rechten, Symlink): es wird weder dahinter
+        /// etwas angelegt noch geschrieben, und das Netz nicht gefragt.
         #[tokio::test]
         async fn a_linked_folder_pointing_outside_the_model_root_is_refused() {
-            for leaf_only in [false, true] {
-                let server = serve(both_routes()).await;
-                let dir = tempfile::tempdir().unwrap();
-                let outside = tempfile::tempdir().unwrap();
-                let root = dir.path().join("models");
-                std::fs::create_dir_all(&root).unwrap();
-                let sub = root.join("diarization").join("id");
-                if leaf_only {
-                    std::fs::create_dir_all(root.join("diarization")).unwrap();
-                    symlink(outside.path(), &sub).unwrap();
-                } else {
-                    symlink(outside.path(), root.join("diarization")).unwrap();
+            for &real_symlink in link_forms() {
+                for leaf_only in [false, true] {
+                    let server = serve(both_routes()).await;
+                    let dir = tempfile::tempdir().unwrap();
+                    let outside = tempfile::tempdir().unwrap();
+                    let root = dir.path().join("models");
+                    std::fs::create_dir_all(&root).unwrap();
+                    let sub = root.join("diarization").join("id");
+                    let made = if leaf_only {
+                        std::fs::create_dir_all(root.join("diarization")).unwrap();
+                        dir_link(real_symlink, &sub, outside.path())
+                    } else {
+                        dir_link(real_symlink, &root.join("diarization"), outside.path())
+                    };
+                    if !made {
+                        return;
+                    }
+                    let files = rebase(two_files(&server, None), &sub);
+
+                    assert_refused_without_network(&root, &files, &server).await;
+
+                    assert!(
+                        std::fs::read_dir(outside.path()).unwrap().next().is_none(),
+                        "ausserhalb des Modellordners wurde etwas angelegt \
+                         (leaf_only={leaf_only}, symlink={real_symlink})"
+                    );
                 }
-                let files = rebase(two_files(&server, None), &sub);
-
-                assert_refused_without_network(&root, &files, &server).await;
-
-                assert!(
-                    std::fs::read_dir(outside.path()).unwrap().next().is_none(),
-                    "ausserhalb des Modellordners wurde etwas angelegt (leaf_only={leaf_only})"
-                );
             }
         }
 
-        /// Gegenprobe: ein verschobener Datenordner (die Wurzel ist ein Link) ist
-        /// kein Verstoss, alles darunter liegt dann dort, wohin die Wurzel zeigt.
+        /// Gegenprobe: ein verschobener Datenordner (die Wurzel ist ein Link; unter
+        /// Windows eine Junction) ist kein Verstoss, alles darunter liegt dann dort,
+        /// wohin die Wurzel zeigt.
         #[tokio::test]
         async fn a_model_root_that_is_itself_a_link_still_works() {
             let server = serve(both_routes()).await;
@@ -1307,7 +1515,7 @@ mod tests {
             let real = dir.path().join("platte-d");
             std::fs::create_dir_all(&real).unwrap();
             let root = dir.path().join("models");
-            symlink(&real, &root).unwrap();
+            folder_link(&root, &real);
             let sub = root.join("diarization").join("id");
             let files = rebase(two_files(&server, None), &sub);
 
@@ -1331,12 +1539,19 @@ mod tests {
             let outside = tempfile::tempdir().unwrap();
             let target = foreign(outside.path(), WEIGHTS);
             let weights = dir.path().join("model.onnx_data");
+            // Vorab pruefen, ob sich hier ein Symlink anlegen laesst (unter Windows
+            // nur mit Rechten); im Haken waere ein Ueberspringen nicht moeglich.
+            let probe = outside.path().join("probe");
+            if !symlink_file(&probe, &target) {
+                return;
+            }
+            std::fs::remove_file(&probe).unwrap();
             let hook: Arc<dyn Fn(&str) + Send + Sync> = {
                 let (weights, target) = (weights.clone(), target.clone());
                 Arc::new(move |path: &str| {
                     if path == "/model.onnx" {
                         std::fs::remove_file(&weights).unwrap();
-                        symlink(&target, &weights).unwrap();
+                        assert!(symlink_file(&weights, &target));
                     }
                 })
             };
@@ -1352,27 +1567,397 @@ mod tests {
             assert_eq!(std::fs::read(&target).unwrap(), WEIGHTS);
             assert!(is_link(&weights));
         }
-    }
 
-    /// Windows: ein Symlink braucht Entwicklermodus oder Administrator; laesst er
-    /// sich nicht anlegen, wird der Fall mit Meldung uebersprungen.
-    #[cfg(windows)]
-    #[tokio::test]
-    async fn a_symlinked_target_is_refused_when_a_symlink_can_be_created() {
-        let server = serve(both_routes()).await;
-        let dir = tempfile::tempdir().unwrap();
-        let outside = tempfile::tempdir().unwrap();
-        let files = rebase(two_files(&server, None), dir.path());
-        install(&files);
-        let target = outside.path().join("fremd.bin");
-        std::fs::write(&target, WEIGHTS).unwrap();
-        std::fs::remove_file(&files[1].1).unwrap();
-        if let Err(e) = std::os::windows::fs::symlink_file(&target, &files[1].1) {
-            eprintln!("uebersprungen: Symlink nicht anlegbar ({e})");
-            return;
+        /// Aufbau fuer den Ordnertausch: unter `outside` liegt ein fremder Baum
+        /// `fremd/id` mit einer Wachposten-Datei und fremden Teildateien, genau dort, wo
+        /// das Bereitstellen sie aufnehmen wuerde, fuhre ein Pfad dorthin.
+        fn foreign_tree(outside: &Path) -> PathBuf {
+            let root = outside.join("fremd");
+            let leaf = root.join("id");
+            std::fs::create_dir_all(&leaf).unwrap();
+            std::fs::write(leaf.join("fremd.bin"), FOREIGN).unwrap();
+            std::fs::write(leaf.join("model.onnx_data.partial"), FOREIGN).unwrap();
+            std::fs::write(leaf.join("model.onnx.partial"), FOREIGN).unwrap();
+            root
         }
-        assert!(!looks_complete(&files));
-        assert_refused_without_network(dir.path(), &files, &server).await;
-        assert_eq!(std::fs::read(&target).unwrap(), WEIGHTS);
+
+        /// Der Fehlerfall, um den es in dieser Runde geht: der Modellordner wird NACH
+        /// der Ordnerpruefung und VOR den Dateioperationen (waehrend der erste Abruf
+        /// laeuft) durch einen Link auf einen fremden Ordner ersetzt, der Wachposten und
+        /// fremde Teildateien enthaelt. Alle Dateioperationen laufen ueber das geoeffnete
+        /// Ordner-Handle: im fremden Baum entsteht, aendert, verschwindet nichts, und die
+        /// Bereitstellung meldet keinen Erfolg (`unsafe_path`, der Ordner liegt nicht mehr
+        /// dort, wohin der Pfad fuehrt). Unter Windows laesst sich der Ordner solange das
+        /// Handle offen ist gar nicht ersetzen: dann gibt es den Tausch nicht, und die
+        /// Bereitstellung gelingt im richtigen Ordner. Getauscht wird einmal der
+        /// Modellordner selbst, einmal der Ordner davor; als Link und, unter Windows, auch
+        /// als Junction.
+        #[tokio::test]
+        async fn replacing_the_model_folder_by_a_link_mid_download_touches_nothing_outside() {
+            for &real_symlink in link_forms() {
+                for swap_parent in [false, true] {
+                    let dir = tempfile::tempdir().unwrap();
+                    let outside = tempfile::tempdir().unwrap();
+                    let foreign_root = foreign_tree(outside.path());
+                    let before = tree(&foreign_root);
+
+                    let root = dir.path().join("models");
+                    let parent = root.join("diarization");
+                    let sub = parent.join("id");
+                    // Der Haken tauscht beim ersten Abruf; das Ordner-Handle liegt dann
+                    // schon (der Anker wird vor dem ersten Netzzugriff geoeffnet).
+                    let (victim, moved, link_to) = if swap_parent {
+                        (
+                            parent.clone(),
+                            root.join("diarization.alt"),
+                            foreign_root.clone(),
+                        )
+                    } else {
+                        (sub.clone(), parent.join("id.alt"), foreign_root.join("id"))
+                    };
+                    let tried = Arc::new(AtomicBool::new(false));
+                    let swapped = Arc::new(AtomicBool::new(false));
+                    let hook: Arc<dyn Fn(&str) + Send + Sync> = {
+                        let (tried, swapped) = (tried.clone(), swapped.clone());
+                        let (victim, moved) = (victim.clone(), moved.clone());
+                        Arc::new(move |_: &str| {
+                            if tried.swap(true, Ordering::SeqCst) {
+                                return;
+                            }
+                            if std::fs::rename(&victim, &moved).is_err() {
+                                return;
+                            }
+                            if dir_link(real_symlink, &victim, &link_to) {
+                                swapped.store(true, Ordering::SeqCst);
+                            }
+                        })
+                    };
+                    let server = serve_with(both_routes(), hook).await;
+                    let files = rebase(two_files(&server, None), &sub);
+                    // Der Link, den der Haken anlegt, muss sich anlegen lassen (Windows:
+                    // Symlink nur mit Rechten); vorab pruefen, im Haken geht kein Skip.
+                    if !dir_link(real_symlink, &dir.path().join("probe-link"), outside.path()) {
+                        return;
+                    }
+
+                    let out =
+                        provision(&root, "t", &files, &CancellationToken::new(), &|_| {}).await;
+
+                    assert_eq!(
+                        tree(&foreign_root),
+                        before,
+                        "im fremden Baum wurde etwas angelegt, geaendert oder geloescht \
+                         (parent={swap_parent}, symlink={real_symlink})"
+                    );
+                    if swapped.load(Ordering::SeqCst) {
+                        assert_eq!(out.unwrap_err(), "unsafe_path");
+                        let new_home = if swap_parent {
+                            moved.join("id")
+                        } else {
+                            moved.clone()
+                        };
+                        // Die Arbeit landete im ALTEN Ordner (Handle), nicht im Link.
+                        assert_eq!(std::fs::read(new_home.join("model.onnx")).unwrap(), GRAPH);
+                        assert_eq!(
+                            std::fs::read(new_home.join("model.onnx_data")).unwrap(),
+                            WEIGHTS
+                        );
+                    } else {
+                        swap_must_have_happened();
+                        assert_eq!(out.unwrap(), Fetch::Done);
+                        assert!(looks_complete(&files));
+                    }
+                }
+            }
+        }
+
+        /// Zweiter Abruf: der Tausch geschieht erst, wenn die Gewichte schon liegen und
+        /// der Graph geholt wird. Auch dann landet nichts im fremden Baum, und der
+        /// Graph wird nicht im fremden Ordner abgelegt.
+        #[tokio::test]
+        async fn replacing_the_model_folder_during_the_second_fetch_touches_nothing_outside() {
+            let dir = tempfile::tempdir().unwrap();
+            let outside = tempfile::tempdir().unwrap();
+            let foreign_root = foreign_tree(outside.path());
+            let before = tree(&foreign_root);
+            let root = dir.path().join("models");
+            let sub = root.join("diarization").join("id");
+            let moved = root.join("diarization").join("id.alt");
+            let link_to = foreign_root.join("id");
+            let swapped = Arc::new(AtomicBool::new(false));
+            let hook: Arc<dyn Fn(&str) + Send + Sync> = {
+                let (sub, moved, link_to, swapped) =
+                    (sub.clone(), moved.clone(), link_to.clone(), swapped.clone());
+                Arc::new(move |path: &str| {
+                    if path == "/model.onnx" && std::fs::rename(&sub, &moved).is_ok() {
+                        folder_link(&sub, &link_to);
+                        swapped.store(true, Ordering::SeqCst);
+                    }
+                })
+            };
+            let server = serve_with(both_routes(), hook).await;
+            let files = rebase(two_files(&server, None), &sub);
+
+            let out = provision(&root, "t", &files, &CancellationToken::new(), &|_| {}).await;
+
+            assert_eq!(tree(&foreign_root), before);
+            if swapped.load(Ordering::SeqCst) {
+                assert_eq!(out.unwrap_err(), "unsafe_path");
+                assert_eq!(
+                    std::fs::read(moved.join("model.onnx_data")).unwrap(),
+                    WEIGHTS
+                );
+            } else {
+                swap_must_have_happened();
+                assert_eq!(out.unwrap(), Fetch::Done);
+            }
+        }
+
+        /// Die Teildatei wird waehrend des Abrufs durch eine andere Datei ersetzt (das
+        /// Handle haelt die alte, der Name zeigt auf die neue), beim Abruf der Gewichte
+        /// wie beim Abruf des Graphen. Das darf nie als Erfolg gelten, und die fremde Datei
+        /// darf nicht unter dem Katalognamen landen.
+        #[tokio::test]
+        async fn replacing_the_partial_file_mid_download_is_no_success() {
+            const REPLACEMENT: &[u8] = b"ersatz-statt-teildatei";
+            for route in ["/model.onnx_data", "/model.onnx"] {
+                let dir = tempfile::tempdir().unwrap();
+                let root = dir.path().join("models");
+                let sub = root.join("diarization").join("id");
+                let name = route.trim_start_matches('/');
+                let swapped = Arc::new(AtomicBool::new(false));
+                let hook: Arc<dyn Fn(&str) + Send + Sync> = {
+                    let (sub, swapped) = (sub.clone(), swapped.clone());
+                    Arc::new(move |path: &str| {
+                        if path != route {
+                            return;
+                        }
+                        let spare = sub.join("ersatz.tmp");
+                        let partial = partial_path(&sub.join(name));
+                        if std::fs::write(&spare, REPLACEMENT).is_ok()
+                            && std::fs::rename(&spare, &partial).is_ok()
+                        {
+                            swapped.store(true, Ordering::SeqCst);
+                        }
+                    })
+                };
+                let server = serve_with(both_routes(), hook).await;
+                let files = rebase(two_files(&server, None), &sub);
+
+                let out = provision(&root, "t", &files, &CancellationToken::new(), &|_| {}).await;
+
+                if swapped.load(Ordering::SeqCst) {
+                    assert_eq!(out.unwrap_err(), "unsafe_path", "{route}");
+                    assert!(
+                        !sub.join(name).exists(),
+                        "die fremde Datei liegt unter dem Katalognamen ({route})"
+                    );
+                    assert_eq!(
+                        std::fs::read(partial_path(&sub.join(name))).unwrap(),
+                        REPLACEMENT,
+                        "die fremde Datei wurde veraendert ({route})"
+                    );
+                } else {
+                    swap_must_have_happened();
+                    assert_eq!(out.unwrap(), Fetch::Done);
+                }
+            }
+        }
+
+        // ---- Dateien mit mehreren Namen (Hardlink), auf jedem System ---------------
+
+        /// Eine Teildatei, die ein Hardlink auf eine fremde Datei ist: Fortsetzung
+        /// (fremde Datei kuerzer als die Gewichte: ein Range-Abruf waere der Fall) und
+        /// frischer Abruf (leere fremde Datei) werden vor dem ersten Netzzugriff und vor
+        /// jeder Aenderung abgelehnt; die fremde Datei bleibt Byte fuer Byte gleich.
+        #[tokio::test]
+        async fn a_hard_linked_partial_is_refused_for_resume_and_fresh_download() {
+            for content in [FOREIGN, &b""[..]] {
+                let server = serve(both_routes()).await;
+                let dir = tempfile::tempdir().unwrap();
+                let outside = tempfile::tempdir().unwrap();
+                let files = rebase(two_files(&server, None), dir.path());
+                let sentinel = foreign(outside.path(), content);
+                std::fs::hard_link(&sentinel, partial_path(&files[1].1)).unwrap();
+
+                assert_refused_without_network(dir.path(), &files, &server).await;
+
+                assert_eq!(
+                    std::fs::read(&sentinel).unwrap(),
+                    content,
+                    "fremde Datei veraendert (Laenge {})",
+                    content.len()
+                );
+                assert!(!files[0].1.exists() && !files[1].1.exists());
+            }
+        }
+
+        /// Dasselbe fuer die Teildatei des Graphen, die erst nach den Gewichten
+        /// drankommt: die Gewichte liegen dann, der Graph nie, die fremde Datei bleibt.
+        #[tokio::test]
+        async fn a_hard_linked_graph_partial_is_refused_and_no_graph_appears() {
+            let server = serve(both_routes()).await;
+            let dir = tempfile::tempdir().unwrap();
+            let outside = tempfile::tempdir().unwrap();
+            let files = rebase(two_files(&server, None), dir.path());
+            let sentinel = foreign(outside.path(), FOREIGN);
+            std::fs::hard_link(&sentinel, partial_path(&files[0].1)).unwrap();
+
+            let err = provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
+                .await
+                .unwrap_err();
+
+            assert_eq!(err, "unsafe_path");
+            assert_eq!(std::fs::read(&sentinel).unwrap(), FOREIGN);
+            assert!(!files[0].1.exists(), "Graph trotz abgelehnter Teildatei");
+            assert_eq!(std::fs::read(&files[1].1).unwrap(), WEIGHTS);
+        }
+
+        /// Ein Ziel, das ein Hardlink auf eine fremde Datei ist: gleich gross mit
+        /// richtigen Bytes ist es gueltig (nur gelesen), mit falschen Bytes wird der
+        /// EINTRAG ersetzt (Umbenennen), nie in die Datei hineingeschrieben.
+        #[tokio::test]
+        async fn a_hard_linked_target_is_only_read_or_replaced_by_name() {
+            for (content, expect_fetch) in [(WEIGHTS.to_vec(), false), (same_size_wrong(), true)] {
+                let server = serve(both_routes()).await;
+                let dir = tempfile::tempdir().unwrap();
+                let outside = tempfile::tempdir().unwrap();
+                let files = rebase(two_files(&server, None), dir.path());
+                std::fs::write(&files[0].1, GRAPH).unwrap();
+                let sentinel = foreign(outside.path(), &content);
+                std::fs::hard_link(&sentinel, &files[1].1).unwrap();
+
+                let out = provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
+                    .await
+                    .unwrap();
+
+                assert_eq!(out, Fetch::Done);
+                assert_eq!(
+                    std::fs::read(&sentinel).unwrap(),
+                    content,
+                    "fremde Datei veraendert"
+                );
+                assert_eq!(std::fs::read(&files[1].1).unwrap(), WEIGHTS);
+                assert_eq!(
+                    server.requests.lock().unwrap().is_empty(),
+                    !expect_fetch,
+                    "Netzzugriff passt nicht zum Befund"
+                );
+            }
+        }
+
+        // ---- Die letzte Pruefung ist genau der Weg des Laders -----------------------
+
+        /// Sperre nach der Pruefung des Graphen (`Point::Checked(0)`): getauscht wird
+        /// einmal in die Datei hinein (gleich grosse falsche Bytes), einmal durch eine
+        /// andere Datei unter demselben Namen. Beides ist kein Erfolg: der Graph liegt
+        /// nicht am Ziel, die Anzeige sagt "nicht bereit". Unter Windows laesst sich eine
+        /// geoeffnete Datei nicht tauschen; dann gibt es den Tausch nicht und die
+        /// Bereitstellung gelingt.
+        #[tokio::test]
+        async fn a_same_size_swap_after_the_graph_check_is_no_success() {
+            for by_rename in [false, true] {
+                let dir = tempfile::tempdir().unwrap();
+                let server = serve(both_routes()).await;
+                let files = rebase(two_files(&server, None), dir.path());
+                let weights = files[1].1.clone();
+                let swapped = Arc::new(AtomicBool::new(false));
+                let seen = Arc::new(AtomicUsize::new(0));
+                let _guard = anchor::hook::set(dir.path(), {
+                    let (swapped, seen) = (swapped.clone(), seen.clone());
+                    move |point| {
+                        if point != anchor::Point::Checked(0) {
+                            return;
+                        }
+                        if seen.fetch_add(1, Ordering::SeqCst) != 0 {
+                            return;
+                        }
+                        let ok = if by_rename {
+                            let other = weights.with_extension("neu");
+                            std::fs::write(&other, same_size_wrong()).is_ok()
+                                && std::fs::rename(&other, &weights).is_ok()
+                        } else {
+                            std::fs::write(&weights, same_size_wrong()).is_ok()
+                        };
+                        swapped.store(ok, Ordering::SeqCst);
+                    }
+                });
+
+                let out =
+                    provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {}).await;
+
+                if swapped.load(Ordering::SeqCst) {
+                    assert_eq!(
+                        out.unwrap_err(),
+                        "verification_failed",
+                        "rename={by_rename}"
+                    );
+                    assert!(!files[0].1.exists(), "Graph neben getauschten Gewichten");
+                    assert!(!looks_complete(&files));
+                    assert_eq!(
+                        std::fs::read(partial_path(&files[0].1)).unwrap(),
+                        GRAPH,
+                        "der verifizierte Graph wartet als Teildatei"
+                    );
+                } else {
+                    swap_must_have_happened();
+                    assert_eq!(out.unwrap(), Fetch::Done);
+                }
+            }
+        }
+
+        /// Der Erfolg folgt einer vollstaendigen Pruefung ueber Handles NACH dem letzten
+        /// Abruf (alle Dateien offen, dann jede gelesen und gehasht), und die Pruefung der
+        /// schon vorhandenen Dateien am Anfang geht denselben Weg: eine Pruefung, wenn
+        /// alles vorhanden ist; bei frischer Installation eine leere am Anfang (nichts zu
+        /// lesen) und eine volle am Ende.
+        #[tokio::test]
+        async fn success_follows_a_full_handle_check_after_the_last_download() {
+            for existing in [false, true] {
+                let dir = tempfile::tempdir().unwrap();
+                let server = serve(both_routes()).await;
+                let files = rebase(two_files(&server, None), dir.path());
+                if existing {
+                    install(&files);
+                }
+                let events = Arc::new(Mutex::new(Vec::<(anchor::Point, usize)>::new()));
+                let _guard = anchor::hook::set(dir.path(), {
+                    let (events, requests) = (events.clone(), server.requests.clone());
+                    move |point| {
+                        let asked = requests.lock().unwrap().len();
+                        events.lock().unwrap().push((point, asked));
+                    }
+                });
+
+                let out = provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
+                    .await
+                    .unwrap();
+
+                assert_eq!(out, Fetch::Done);
+                let events = events.lock().unwrap().clone();
+                let total = server.requests.lock().unwrap().len();
+                let opened = events
+                    .iter()
+                    .filter(|(p, _)| *p == anchor::Point::Opened)
+                    .count();
+                assert_eq!(opened, if existing { 1 } else { 2 }, "{events:?}");
+                // Die letzte Pruefung beginnt und endet nach dem letzten Abruf und hat
+                // beide Dateien gelesen.
+                let last_open = events
+                    .iter()
+                    .rposition(|(p, _)| *p == anchor::Point::Opened)
+                    .unwrap();
+                let tail = &events[last_open..];
+                assert!(tail.iter().all(|(_, asked)| *asked == total), "{events:?}");
+                assert_eq!(
+                    tail.iter().map(|(p, _)| *p).collect::<Vec<_>>(),
+                    [
+                        anchor::Point::Opened,
+                        anchor::Point::Checked(0),
+                        anchor::Point::Checked(1)
+                    ]
+                );
+            }
+        }
     }
 }

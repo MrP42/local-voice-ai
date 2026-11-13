@@ -6,13 +6,21 @@
 //! Graphen `model_quantized.onnx` und den Gewichten `model_quantized.onnx_data`
 //! (ONNX "external data", der Graph nennt die Datei beim Namen). Fehlt die zweite
 //! oder ist sie abgeschnitten, meldet das Laden einen Fehler, nie eine Panik.
-//! Liegt das Modell an seinem Katalogplatz, kommt eine billige Pruefung der
-//! Dateigroessen gegen den Katalog dazu ([`check_catalog_sizes`], ohne Hash).
+//! Liegt das Modell an seinem Katalogplatz, laedt es eine geschuetzte Generation:
+//! beide Dateien werden je ueber EIN Handle (ein verankerter Ordner, kein Pfad)
+//! vollstaendig in den Speicher gelesen und dort nach Groesse und SHA-256 gegen den
+//! Katalog geprueft; die ONNX-Sitzung entsteht aus genau diesen Bytes
+//! (`commit_from_memory` plus Gewichte als externe Initialisierer im Speicher). ONNX
+//! Runtime oeffnet danach keinen Pfad mehr, ein Tausch der Dateien nach der Pruefung
+//! aendert nichts an der Sitzung ([`OnnxBlockModel::load_verified`]). Ein Pfad von
+//! Hand (kein Katalogplatz) bleibt ungeprueft und wird wie bisher von ONNX Runtime
+//! selbst geoeffnet.
 //!
 //! Wie bei Sortformer (`diarize::engine`): ein Diarisierer im Prozess (der
 //! `ExclusiveSlot` im umgebenden `Diarizer`), RAM-Start-Gate davor, eine Panik im
 //! Aufruf macht die Engine unbrauchbar statt die App zu beenden.
 
+use std::borrow::Cow;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 
@@ -29,7 +37,11 @@ use super::cache::CacheConfig;
 use super::frontend::MelFrontend;
 use super::{HIDDEN, MEL_BINS};
 use crate::managers::meetings::diarize::postproc::RawTurn;
-use crate::managers::meetings::diarize::{catalog_file_sizes, DiarizeEngine, DiarizeError, Preset};
+use crate::managers::meetings::diarize::{
+    catalog_file_sizes, catalog_place, DiarizeEngine, DiarizeError, Preset,
+};
+use crate::managers::model::download::anchor::{self, Anchor, Check, Point, Wanted};
+use crate::managers::model::download::safe;
 
 const INPUTS: [&str; 3] = ["input_features", "cached_embeds", "attention_mask"];
 const OUTPUTS: [&str; 3] = ["logits", "chunk_embeds", "silence_embeds"];
@@ -72,16 +84,11 @@ fn without_dir(text: &str, model_path: &Path) -> String {
 /// Ein Pfad von Hand (anderer Ordner oder Name) ist kein Katalogmodell und wird
 /// hier nicht geprueft.
 ///
-/// Reichweite, ehrlich: das ist nur `stat`, kein Hash (120 MB lesen bei jedem
-/// Laden waere zu teuer). Es faengt abgeschnittene oder unvollstaendige Dateien
-/// und einen Graphen neben Gewichten anderer Groesse. Es erkennt NICHT, wenn
-/// zwischen dem Bereitstellen (dort Groesse und SHA-256 je Datei) und dem Laden
-/// Bytes bei gleicher Groesse getauscht wurden, und es ist von dem Oeffnen durch
-/// ONNX Runtime getrennt (die Datei kann nach der Pruefung noch ersetzt werden).
-/// Eine staerkere Garantie braucht eine geschuetzte Generation (ein beim
-/// Bereitstellen versiegelter, schreibgeschuetzter Ordner, aus dem geladen wird,
-/// oder ein Hash, der beim Laden ueber dieselben Bytes gebildet wird, die ONNX
-/// Runtime liest). Das ist nicht Teil von N1.
+/// Reichweite, ehrlich: das ist nur `stat` ueber Pfade, kein Hash, und es ist von
+/// dem, was danach geladen wird, getrennt. Es taugt fuer eine billige, fruehe
+/// Meldung (etwa vor dem Lesen von 120 MB), nicht als Schutz: der Schutz ist
+/// [`OnnxBlockModel::load_verified`], das beim Laden Groesse UND SHA-256 ueber
+/// dieselben Bytes prueft, aus denen die Sitzung entsteht.
 pub fn check_catalog_sizes(model_path: &Path) -> Result<(), DiarizeError> {
     let Some(files) = catalog_file_sizes(model_path) else {
         return Ok(());
@@ -91,25 +98,121 @@ pub fn check_catalog_sizes(model_path: &Path) -> Result<(), DiarizeError> {
             .map_err(|_| DiarizeError::ModelMissing(path.clone()))?
             .len();
         if actual != expected {
-            return Err(DiarizeError::Load(format!(
-                "{}: Groesse {actual} statt {expected} laut Katalog (unvollstaendig oder veraendert; im Modellmanager neu bereitstellen)",
-                short(&path)
-            )));
+            return Err(DiarizeError::Load(size_message(&path, actual, expected)));
         }
     }
     Ok(())
 }
 
+fn size_message(path: &Path, actual: u64, expected: u64) -> String {
+    format!(
+        "{}: Groesse {actual} statt {expected} laut Katalog (unvollstaendig oder veraendert; im Modellmanager neu bereitstellen)",
+        short(path)
+    )
+}
+
+/// Ein Puffer, den ONNX Runtime fuer die Lebensdauer der Sitzung referenziert (die
+/// Gewichte als externe Initialisierer im Speicher; `commit_from_memory` behaelt sie
+/// nicht, ONNX Runtime haelt nur den Zeiger). Der Puffer gehoert diesem Wert allein
+/// und wird nie veraendert; er wird erst nach der Sitzung freigegeben (siehe die
+/// Feldreihenfolge in [`OnnxBlockModel`]).
+struct Pinned {
+    ptr: *mut [u8],
+}
+
+// SAFETY: der Puffer gehoert dem Wert allein, wird nur gelesen und erst im `Drop`
+// freigegeben; ein Zeiger auf unveraenderliche Bytes darf zwischen Threads wandern.
+unsafe impl Send for Pinned {}
+unsafe impl Sync for Pinned {}
+
+impl Pinned {
+    fn new(bytes: Vec<u8>) -> Self {
+        Self {
+            ptr: Box::into_raw(bytes.into_boxed_slice()),
+        }
+    }
+
+    /// Die Bytes fuer ONNX Runtime. `'static` ist gelogen im Typ, wahr im Ablauf: die
+    /// Sitzung, die sie haelt, steht in [`OnnxBlockModel`] vor diesem Wert und wird
+    /// zuerst freigegeben; scheitert der Bau der Sitzung, gibt es keine.
+    fn bytes(&self) -> &'static [u8] {
+        // SAFETY: `ptr` stammt aus `Box::into_raw` und bleibt bis `drop` gueltig.
+        unsafe { &*self.ptr }
+    }
+}
+
+impl Drop for Pinned {
+    fn drop(&mut self) {
+        // SAFETY: `ptr` stammt aus `Box::into_raw` in `new` und wird nur hier freigegeben.
+        drop(unsafe { Box::from_raw(self.ptr) });
+    }
+}
+
 /// Die ONNX-Sitzung des Blockmodells.
 pub struct OnnxBlockModel {
+    /// Zuerst: Felder werden in dieser Reihenfolge freigegeben, die Sitzung also vor
+    /// den Gewichten, die sie referenziert.
     session: Session,
+    _weights: Option<Pinned>,
+}
+
+/// Die Sitzung aus dem Graphen und den Gewichten im Speicher. Kein Pfad wird
+/// geoeffnet: ONNX Runtime sieht nur diese Bytes. Der Name der Gewichte ist der
+/// Name, unter dem der Graph sie als externe Daten nennt.
+fn session_from_memory(
+    graph: &[u8],
+    weights_name: &str,
+    weights: &'static [u8],
+    threads: usize,
+    load_err: &dyn Fn(&dyn std::fmt::Display) -> DiarizeError,
+) -> Result<Session, DiarizeError> {
+    let mut builder = session_builder(threads, load_err)?
+        .with_external_initializer_file_in_memory(weights_name, Cow::Borrowed(weights))
+        .map_err(|e| load_err(&e))?;
+    builder.commit_from_memory(graph).map_err(|e| load_err(&e))
+}
+
+fn session_builder(
+    threads: usize,
+    load_err: &dyn Fn(&dyn std::fmt::Display) -> DiarizeError,
+) -> Result<ort::session::builder::SessionBuilder, DiarizeError> {
+    // Die Blockgroessen wechseln (zuletzt ein Rest): ein Speichermuster
+    // fuer feste Formen bringt hier nichts.
+    Session::builder()
+        .map_err(|e| load_err(&e))?
+        .with_optimization_level(GraphOptimizationLevel::Level3)
+        .map_err(|e| load_err(&e))?
+        .with_intra_threads(threads.clamp(1, 64))
+        .map_err(|e| load_err(&e))?
+        .with_inter_threads(1)
+        .map_err(|e| load_err(&e))?
+        .with_memory_pattern(false)
+        .map_err(|e| load_err(&e))
+}
+
+/// Die Namen der Ein- und Ausgaenge muessen die des Nemotron-Modells sein: eine
+/// fremde ONNX-Datei ist ein Bedienfehler (`WrongModel`), kein Absturz beim ersten Block.
+fn check_io(session: &Session) -> Result<(), DiarizeError> {
+    let have_in: Vec<&str> = session.inputs().iter().map(|o| o.name()).collect();
+    let have_out: Vec<&str> = session.outputs().iter().map(|o| o.name()).collect();
+    match INPUTS
+        .iter()
+        .find(|n| !have_in.contains(n))
+        .or_else(|| OUTPUTS.iter().find(|n| !have_out.contains(n)))
+    {
+        Some(missing) => Err(DiarizeError::WrongModel(format!("onnx ohne '{missing}'"))),
+        None => Ok(()),
+    }
 }
 
 impl OnnxBlockModel {
-    /// Prueft beide Dateien (Vorhandensein, am Katalogplatz auch die Groesse,
-    /// [`check_catalog_sizes`]), laedt die Sitzung mit `threads` CPU-Threads und
-    /// prueft Ein- und Ausgaenge: eine fremde ONNX-Datei ist ein Bedienfehler
-    /// (`WrongModel`), kein Absturz beim ersten Block.
+    /// Laedt das Modell. Liegt `model_path` an seinem Katalogplatz, ist es eine
+    /// geschuetzte Generation ([`Self::load_verified`]): beide Dateien werden ueber
+    /// ein geoeffnetes Ordner-Handle gelesen, gegen Groesse und SHA-256 des Katalogs
+    /// geprueft und die Sitzung aus genau diesen Bytes gebaut. Ein Pfad von Hand
+    /// bleibt ungeprueft und wird von ONNX Runtime selbst geoeffnet.
+    ///
+    /// Fehlende Dateien sind `ModelMissing`, eine fremde ONNX-Datei `WrongModel`.
     pub fn load(model_path: &Path, threads: usize) -> Result<Self, DiarizeError> {
         if !model_path.is_file() {
             return Err(DiarizeError::ModelMissing(model_path.to_path_buf()));
@@ -118,38 +221,184 @@ impl OnnxBlockModel {
         if !data.is_file() {
             return Err(DiarizeError::ModelMissing(data));
         }
-        check_catalog_sizes(model_path)?;
-        let load_err = |e: &dyn std::fmt::Display| {
+        match catalog_place(model_path) {
+            Some(place) => Self::load_catalog(model_path, &place, threads),
+            None => Self::load_by_path(model_path, threads),
+        }
+    }
+
+    fn load_err(model_path: &Path) -> impl Fn(&dyn std::fmt::Display) -> DiarizeError + '_ {
+        move |e| {
             DiarizeError::Load(format!(
                 "{}: {}",
                 short(model_path),
                 without_dir(&e.to_string(), model_path)
             ))
-        };
-        // Die Blockgroessen wechseln (zuletzt ein Rest): ein Speichermuster
-        // fuer feste Formen bringt hier nichts.
-        let session = Session::builder()
-            .map_err(|e| load_err(&e))?
-            .with_optimization_level(GraphOptimizationLevel::Level3)
-            .map_err(|e| load_err(&e))?
-            .with_intra_threads(threads.clamp(1, 64))
-            .map_err(|e| load_err(&e))?
-            .with_inter_threads(1)
-            .map_err(|e| load_err(&e))?
-            .with_memory_pattern(false)
-            .map_err(|e| load_err(&e))?
+        }
+    }
+
+    /// Ein Pfad von Hand: ONNX Runtime oeffnet Graph und Gewichte selbst.
+    fn load_by_path(model_path: &Path, threads: usize) -> Result<Self, DiarizeError> {
+        let load_err = Self::load_err(model_path);
+        let session = session_builder(threads, &load_err)?
             .commit_from_file(model_path)
             .map_err(|e| load_err(&e))?;
-        let have_in: Vec<&str> = session.inputs().iter().map(|o| o.name()).collect();
-        let have_out: Vec<&str> = session.outputs().iter().map(|o| o.name()).collect();
-        if let Some(missing) = INPUTS
-            .iter()
-            .find(|n| !have_in.contains(n))
-            .or_else(|| OUTPUTS.iter().find(|n| !have_out.contains(n)))
-        {
-            return Err(DiarizeError::WrongModel(format!("onnx ohne '{missing}'")));
+        check_io(&session)?;
+        Ok(Self {
+            session,
+            _weights: None,
+        })
+    }
+
+    /// Das Modell an seinem Katalogplatz.
+    fn load_catalog(
+        model_path: &Path,
+        place: &crate::managers::meetings::diarize::CatalogPlace,
+        threads: usize,
+    ) -> Result<Self, DiarizeError> {
+        let [graph, weights] = place.entry.files.as_slice() else {
+            return Err(DiarizeError::Load(format!(
+                "{}: Katalogeintrag ohne Graph und Gewichte",
+                short(model_path)
+            )));
+        };
+        if graph.sha256.is_none() || weights.sha256.is_none() {
+            return Err(DiarizeError::Load(format!(
+                "{}: Katalogeintrag ohne SHA-256 (geladen wird nur, was sich pruefen laesst)",
+                short(model_path)
+            )));
         }
-        Ok(Self { session })
+        if short(&external_data_path(model_path)) != weights.filename {
+            return Err(DiarizeError::Load(format!(
+                "{}: Gewichte heissen im Katalog anders als neben dem Graphen erwartet",
+                short(model_path)
+            )));
+        }
+        let parts: Vec<&str> = place.parts.iter().map(String::as_str).collect();
+        let anchor = match Anchor::open(&place.root, &parts, false) {
+            Ok(Some(anchor)) => anchor,
+            Ok(None) => return Err(DiarizeError::ModelMissing(model_path.to_path_buf())),
+            Err(e) if safe::is_refusal(&e) => {
+                return Err(DiarizeError::Load(format!(
+                    "{}: Modellordner ist ein Link oder kein Ordner (im Modellmanager neu bereitstellen)",
+                    short(model_path)
+                )))
+            }
+            Err(e) => {
+                return Err(DiarizeError::Load(format!("{}: {e}", short(model_path))));
+            }
+        };
+        fn wanted(f: &crate::catalog::TtsCatalogFile) -> Wanted<'_> {
+            Wanted {
+                name: &f.filename,
+                size: f.size_bytes,
+                sha256: f.sha256.as_deref(),
+            }
+        }
+        Self::load_verified(
+            &anchor,
+            [wanted(graph), wanted(weights)],
+            &place.dir,
+            threads,
+        )
+    }
+
+    /// Die geschuetzte Generation: liest beide Dateien (Graph, Gewichte) ueber je EIN
+    /// Handle des verankerten Ordners vollstaendig in den Speicher, prueft Groesse
+    /// und SHA-256 gegen `wanted` ueber genau diese Bytes (`anchor::check_set`: alle
+    /// Handles zugleich offen, danach Name gegen Handle verglichen) und baut die
+    /// Sitzung aus dem Speicher. Eine Datei wird nie ein zweites Mal ueber einen Pfad
+    /// geoeffnet; ein Tausch nach dem Lesen aendert die Sitzung nicht.
+    ///
+    /// `dir` dient nur den Fehlertexten (Dateinamen, kein Pfad im Text).
+    pub(crate) fn load_verified(
+        anchor: &Anchor,
+        wanted: [Wanted<'_>; 2],
+        dir: &Path,
+        threads: usize,
+    ) -> Result<Self, DiarizeError> {
+        let [graph_want, weights_want] = &wanted;
+        let graph_path = dir.join(graph_want.name);
+        let load_err = Self::load_err(&graph_path);
+
+        // Der Speicher wird VOR dem Lesen reserviert: ein Fehlschlag ist ein Ladefehler
+        // (voller Arbeitsspeicher), kein Abbruch des Prozesses mitten im Lesen. Der Sink
+        // schreibt nie ueber die Reserve hinaus (eine gewachsene Datei liefert ein Byte
+        // mehr; sie gilt dann ohnehin als veraendert).
+        let mut bytes: [Vec<u8>; 2] = [Vec::new(), Vec::new()];
+        for (buffer, w) in bytes.iter_mut().zip(&wanted) {
+            let reserved = usize::try_from(w.size)
+                .ok()
+                .and_then(|size| buffer.try_reserve_exact(size).ok());
+            if reserved.is_none() {
+                return Err(DiarizeError::Load(format!(
+                    "{}: nicht genug Arbeitsspeicher, um die Datei zu laden ({} MB)",
+                    w.name,
+                    w.size.div_ceil(1_000_000)
+                )));
+            }
+        }
+        let mut sink = |i: usize, block: &[u8]| {
+            let room = bytes[i].capacity() - bytes[i].len();
+            bytes[i].extend_from_slice(&block[..block.len().min(room)]);
+        };
+        let states = anchor::check_set(anchor, &wanted, &|| false, Some(&mut sink))
+            .map_err(|e| {
+                if safe::is_refusal(&e) {
+                    DiarizeError::Load(format!(
+                        "{}: Modelldatei ist ein Link oder keine normale Datei (im Modellmanager neu bereitstellen)",
+                        short(&graph_path)
+                    ))
+                } else {
+                    DiarizeError::Load(format!("{}: {e}", short(&graph_path)))
+                }
+            })?
+            .ok_or(DiarizeError::Cancelled)?;
+        // Reihenfolge der Meldung: fehlt etwas, dann Groesse, dann Inhalt, dann Aenderung
+        // waehrend des Ladens (wie vor der geschuetzten Generation: erst die Groessen).
+        let rank = |c: &Check| match c {
+            Check::Valid => 5,
+            Check::Missing => 0,
+            Check::Size(_) => 1,
+            Check::Hash => 2,
+            Check::Changed => 3,
+        };
+        if let Some((w, state)) = wanted
+            .iter()
+            .zip(&states)
+            .filter(|(_, c)| **c != Check::Valid)
+            .min_by_key(|(_, c)| rank(c))
+        {
+            let path = dir.join(w.name);
+            return Err(match *state {
+                Check::Missing => DiarizeError::ModelMissing(path),
+                Check::Size(actual) => DiarizeError::Load(size_message(&path, actual, w.size)),
+                Check::Hash => DiarizeError::Load(format!(
+                    "{}: SHA-256 stimmt nicht mit dem Katalog ueberein (Inhalt veraendert; im Modellmanager neu bereitstellen)",
+                    short(&path)
+                )),
+                Check::Changed | Check::Valid => DiarizeError::Load(format!(
+                    "{}: waehrend des Ladens veraendert (im Modellmanager neu bereitstellen)",
+                    short(&path)
+                )),
+            });
+        }
+        anchor::fire(anchor.root(), Point::Loaded);
+
+        let [graph_bytes, weights_bytes] = bytes;
+        let weights = Pinned::new(weights_bytes);
+        let session = session_from_memory(
+            &graph_bytes,
+            weights_want.name,
+            weights.bytes(),
+            threads,
+            &load_err,
+        )?;
+        check_io(&session)?;
+        Ok(Self {
+            session,
+            _weights: Some(weights),
+        })
     }
 }
 
@@ -280,6 +529,9 @@ impl DiarizeEngine for NemotronOnnxEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::managers::model::download::linktest::swap_must_have_happened;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
 
     fn dir_with(files: &[(&str, &[u8])]) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
@@ -550,6 +802,421 @@ mod tests {
             }
             other => panic!("erwartet Load, bekam {:?}", other.err()),
         }
+    }
+
+    // ---- Die geschuetzte Generation: ONNX Runtime bekommt genau die geprueften Bytes ----
+    //
+    // Ein winziges ONNX von Hand (Ein-/Ausgaenge wie Nemotron, `logits = input_features + w`),
+    // dessen Gewicht `w` als externe Daten in `w.bin` liegt: so laesst sich zeigen, womit die
+    // Sitzung rechnet, ohne das 120-MB-Modell.
+
+    fn pb_varint(mut v: u64) -> Vec<u8> {
+        let mut out = Vec::new();
+        loop {
+            let b = (v & 0x7f) as u8;
+            v >>= 7;
+            if v == 0 {
+                out.push(b);
+                return out;
+            }
+            out.push(b | 0x80);
+        }
+    }
+
+    fn pb_bytes(tag: u64, payload: &[u8]) -> Vec<u8> {
+        let mut out = pb_varint(tag << 3 | 2);
+        out.extend(pb_varint(payload.len() as u64));
+        out.extend_from_slice(payload);
+        out
+    }
+
+    fn pb_num(tag: u64, v: u64) -> Vec<u8> {
+        let mut out = pb_varint(tag << 3);
+        out.extend(pb_varint(v));
+        out
+    }
+
+    /// Ein Ein- oder Ausgang `name`: float, Form `[1]`.
+    fn pb_value_info(name: &str) -> Vec<u8> {
+        let shape = pb_bytes(2, &pb_bytes(1, &pb_num(1, 1)));
+        let mut tensor_type = pb_num(1, 1);
+        tensor_type.extend(shape);
+        let mut info = pb_bytes(1, name.as_bytes());
+        info.extend(pb_bytes(2, &pb_bytes(1, &tensor_type)));
+        info
+    }
+
+    fn pb_node(inputs: &[&str], output: &str, op: &str) -> Vec<u8> {
+        let mut node = Vec::new();
+        for input in inputs {
+            node.extend(pb_bytes(1, input.as_bytes()));
+        }
+        node.extend(pb_bytes(2, output.as_bytes()));
+        node.extend(pb_bytes(4, op.as_bytes()));
+        node
+    }
+
+    const WEIGHTS_NAME: &str = "w.bin";
+    const GRAPH_NAME: &str = "g.onnx";
+
+    /// Die Nemotron-Namen, `logits = input_features + w` mit `w` (ein float) als externe
+    /// Daten in `weights_name`; die beiden anderen Ausgaenge geben ihre Eingaenge zurueck.
+    fn tiny_graph(weights_name: &str) -> Vec<u8> {
+        let mut w = pb_num(1, 1); // dims [1]
+        w.extend(pb_num(2, 1)); // FLOAT
+        w.extend(pb_bytes(8, b"w"));
+        for (key, value) in [("location", weights_name), ("offset", "0"), ("length", "4")] {
+            let mut entry = pb_bytes(1, key.as_bytes());
+            entry.extend(pb_bytes(2, value.as_bytes()));
+            w.extend(pb_bytes(13, &entry));
+        }
+        w.extend(pb_num(14, 1)); // data_location EXTERNAL
+        let mut graph = pb_bytes(1, &pb_node(&["input_features", "w"], "logits", "Add"));
+        graph.extend(pb_bytes(
+            1,
+            &pb_node(&["cached_embeds"], "chunk_embeds", "Identity"),
+        ));
+        graph.extend(pb_bytes(
+            1,
+            &pb_node(&["attention_mask"], "silence_embeds", "Identity"),
+        ));
+        graph.extend(pb_bytes(2, b"g"));
+        graph.extend(pb_bytes(5, &w));
+        for name in INPUTS {
+            graph.extend(pb_bytes(11, &pb_value_info(name)));
+        }
+        for name in OUTPUTS {
+            graph.extend(pb_bytes(12, &pb_value_info(name)));
+        }
+        let mut model = pb_num(1, 8); // ir_version
+        model.extend(pb_bytes(7, &graph));
+        let mut opset = pb_bytes(1, b"");
+        opset.extend(pb_num(2, 13));
+        model.extend(pb_bytes(8, &opset));
+        model
+    }
+
+    fn sha_hex(bytes: &[u8]) -> String {
+        use sha2::{Digest, Sha256};
+        format!("{:x}", Sha256::digest(bytes))
+    }
+
+    /// Ein Ordner mit `g.onnx` und `w.bin` (Gewicht `weight`), ein Anker darauf, und was
+    /// der Katalog von den beiden Dateien verlangt.
+    struct Tiny {
+        dir: tempfile::TempDir,
+        anchor: Anchor,
+        graph: Vec<u8>,
+        weights: Vec<u8>,
+    }
+
+    impl Tiny {
+        fn new(weight: f32) -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let graph = tiny_graph(WEIGHTS_NAME);
+            let weights = weight.to_le_bytes().to_vec();
+            std::fs::write(dir.path().join(GRAPH_NAME), &graph).unwrap();
+            std::fs::write(dir.path().join(WEIGHTS_NAME), &weights).unwrap();
+            let anchor = Anchor::open(dir.path(), &[], false).unwrap().unwrap();
+            Self {
+                dir,
+                anchor,
+                graph,
+                weights,
+            }
+        }
+
+        fn weights_path(&self) -> PathBuf {
+            self.dir.path().join(WEIGHTS_NAME)
+        }
+
+        fn graph_path(&self) -> PathBuf {
+            self.dir.path().join(GRAPH_NAME)
+        }
+
+        fn load(&self) -> Result<OnnxBlockModel, DiarizeError> {
+            let (graph_sha, weights_sha) = (sha_hex(&self.graph), sha_hex(&self.weights));
+            OnnxBlockModel::load_verified(
+                &self.anchor,
+                [
+                    Wanted {
+                        name: GRAPH_NAME,
+                        size: self.graph.len() as u64,
+                        sha256: Some(&graph_sha),
+                    },
+                    Wanted {
+                        name: WEIGHTS_NAME,
+                        size: self.weights.len() as u64,
+                        sha256: Some(&weights_sha),
+                    },
+                ],
+                self.dir.path(),
+                1,
+            )
+        }
+    }
+
+    /// `logits` fuer `input_features = [1.0]`: `1 + w`.
+    fn logit(model: &mut OnnxBlockModel) -> f32 {
+        let (x, cached, mask) = ([1.0f32], [0.0f32], [0.0f32]);
+        let outputs = model
+            .session
+            .run(ort::inputs![
+                "input_features" => TensorRef::from_array_view(([1usize], &x[..])).unwrap(),
+                "cached_embeds" => TensorRef::from_array_view(([1usize], &cached[..])).unwrap(),
+                "attention_mask" => TensorRef::from_array_view(([1usize], &mask[..])).unwrap(),
+            ])
+            .unwrap();
+        outputs["logits"].try_extract_tensor::<f32>().unwrap().1[0]
+    }
+
+    /// Ersetzt `path` durch `bytes`: einmal in die Datei hinein, einmal durch eine andere
+    /// Datei unter demselben Namen. `false`, wenn das System es nicht zulaesst (Windows:
+    /// eine geoeffnete Datei laesst sich so nicht tauschen).
+    fn replace_file(path: &Path, bytes: &[u8], by_rename: bool) -> bool {
+        if by_rename {
+            let other = path.with_extension("neu");
+            std::fs::write(&other, bytes).is_ok() && std::fs::rename(&other, path).is_ok()
+        } else {
+            std::fs::write(path, bytes).is_ok()
+        }
+    }
+
+    fn load_message(result: Result<OnnxBlockModel, DiarizeError>) -> String {
+        match result.err() {
+            Some(DiarizeError::Load(msg)) => msg,
+            other => panic!("erwartet Load, bekam {other:?}"),
+        }
+    }
+
+    /// Die Sitzung rechnet mit den Gewichten aus dem Speicher: kein Pfad wird geoeffnet,
+    /// und `w.bin` ist ein externer Initialisierer des Graphen.
+    #[test]
+    fn the_session_computes_with_the_checked_weights_from_memory() {
+        let tiny = Tiny::new(10.0);
+        let mut model = tiny.load().expect("geprueftes Paar laedt");
+        assert_eq!(logit(&mut model), 11.0);
+    }
+
+    /// Ein Tausch NACH dem Lesen (Haken `Loaded`: alle Bytes im Speicher, noch keine
+    /// Sitzung) aendert die Sitzung nicht: sie rechnet mit den geprueften Bytes, nicht mit
+    /// dem, was jetzt am Pfad liegt.
+    #[test]
+    fn a_swap_after_the_read_has_no_effect_on_the_session() {
+        for by_rename in [false, true] {
+            let tiny = Tiny::new(10.0);
+            let swapped = Arc::new(AtomicBool::new(false));
+            let _guard = anchor::hook::set(tiny.dir.path(), {
+                let (path, swapped) = (tiny.weights_path(), swapped.clone());
+                move |point| {
+                    if point == Point::Loaded {
+                        let ok = replace_file(&path, &99.0f32.to_le_bytes(), by_rename);
+                        swapped.store(ok, Ordering::SeqCst);
+                    }
+                }
+            });
+
+            let mut model = tiny.load().expect("das Paar war beim Lesen gueltig");
+
+            assert!(
+                swapped.load(Ordering::SeqCst),
+                "der Tausch hat nicht stattgefunden (rename={by_rename}): der Test prueft nichts"
+            );
+            assert_eq!(
+                std::fs::read(tiny.weights_path()).unwrap(),
+                99.0f32.to_le_bytes(),
+                "Testannahme: am Pfad liegen jetzt die anderen Bytes"
+            );
+            assert_eq!(logit(&mut model), 11.0, "rename={by_rename}");
+        }
+    }
+
+    /// Zwischen der Pruefung des Graphen (`Checked(0)`) und dem Lesen der Gewichte werden
+    /// die Gewichte gegen gleich grosse andere Bytes getauscht: einmal in die Datei hinein
+    /// (der Hash sieht es), einmal durch eine andere Datei (der Name zeigt nicht mehr auf
+    /// die gelesene). Beides ist ein Ladefehler, kein Modell. Unter Windows laesst sich
+    /// die geoeffnete Datei nicht tauschen; dann gibt es den Tausch nicht.
+    #[test]
+    fn a_same_size_swap_between_the_graph_check_and_the_weights_read_is_rejected() {
+        for by_rename in [false, true] {
+            let tiny = Tiny::new(10.0);
+            let swapped = Arc::new(AtomicBool::new(false));
+            let _guard = anchor::hook::set(tiny.dir.path(), {
+                let (path, swapped) = (tiny.weights_path(), swapped.clone());
+                move |point| {
+                    if point == Point::Checked(0) {
+                        let ok = replace_file(&path, &99.0f32.to_le_bytes(), by_rename);
+                        swapped.store(ok, Ordering::SeqCst);
+                    }
+                }
+            });
+
+            let result = tiny.load();
+
+            if swapped.load(Ordering::SeqCst) {
+                let msg = load_message(result);
+                assert!(msg.starts_with(WEIGHTS_NAME), "{msg}");
+                assert!(
+                    msg.contains(if by_rename {
+                        "waehrend des Ladens"
+                    } else {
+                        "SHA-256"
+                    }),
+                    "{msg}"
+                );
+                assert!(
+                    !msg.contains(tiny.dir.path().to_str().unwrap()),
+                    "Pfad im Text: {msg}"
+                );
+            } else {
+                swap_must_have_happened();
+                assert!(result.is_ok());
+            }
+        }
+    }
+
+    /// Dasselbe fuer den Graphen: getauscht, ehe er gelesen wird (`Opened`: alle Dateien
+    /// offen, noch keine gelesen), ist er ein Ladefehler mit dem Namen des Graphen.
+    #[test]
+    fn a_same_size_swap_of_the_graph_before_it_is_read_is_rejected() {
+        let tiny = Tiny::new(10.0);
+        let mut other = tiny.graph.clone();
+        let last = other.len() - 1;
+        other[last] ^= 0xff;
+        let swapped = Arc::new(AtomicBool::new(false));
+        let _guard = anchor::hook::set(tiny.dir.path(), {
+            let (path, swapped) = (tiny.graph_path(), swapped.clone());
+            move |point| {
+                if point == Point::Opened {
+                    swapped.store(replace_file(&path, &other, false), Ordering::SeqCst);
+                }
+            }
+        });
+
+        let result = tiny.load();
+
+        if swapped.load(Ordering::SeqCst) {
+            let msg = load_message(result);
+            assert!(msg.starts_with(GRAPH_NAME), "{msg}");
+            assert!(msg.contains("SHA-256"), "{msg}");
+        } else {
+            swap_must_have_happened();
+            assert!(result.is_ok());
+        }
+    }
+
+    /// Das Paar liegt nach einem erfolgreichen Bereitstellen vollstaendig am Platz, und
+    /// danach (zwischen Bereitstellen und Laden) werden die Gewichte oder der Graph
+    /// getauscht: der Lader lehnt es ab, auch bei gleicher Groesse.
+    #[test]
+    fn a_pair_swapped_between_provisioning_and_loading_is_rejected() {
+        let tiny = Tiny::new(10.0);
+        tiny.load().expect("Ausgangslage gueltig");
+        std::fs::write(tiny.weights_path(), 99.0f32.to_le_bytes()).unwrap();
+        let msg = load_message(tiny.load());
+        assert!(
+            msg.starts_with(WEIGHTS_NAME) && msg.contains("SHA-256"),
+            "{msg}"
+        );
+
+        let tiny = Tiny::new(10.0);
+        let mut other = tiny.graph.clone();
+        other[0] ^= 0x01;
+        std::fs::write(tiny.graph_path(), &other).unwrap();
+        let msg = load_message(tiny.load());
+        assert!(
+            msg.starts_with(GRAPH_NAME) && msg.contains("SHA-256"),
+            "{msg}"
+        );
+    }
+
+    /// Reihenfolge der Meldungen (wie vor der geschuetzten Generation): fehlt eine Datei,
+    /// ist es `ModelMissing`; sonst kommt die Groesse vor dem Inhalt.
+    #[test]
+    fn a_missing_file_comes_before_a_wrong_size_and_a_wrong_size_before_a_wrong_hash() {
+        let tiny = Tiny::new(10.0);
+        std::fs::write(tiny.graph_path(), b"anderer graph mit anderer groesse").unwrap();
+        std::fs::write(tiny.weights_path(), 99.0f32.to_le_bytes()).unwrap();
+        // Graph: falsche Groesse; Gewichte: gleiche Groesse, falscher Inhalt.
+        let msg = load_message(tiny.load());
+        assert!(
+            msg.starts_with(GRAPH_NAME) && msg.contains("laut Katalog"),
+            "{msg}"
+        );
+
+        std::fs::remove_file(tiny.weights_path()).unwrap();
+        match tiny.load().err() {
+            Some(DiarizeError::ModelMissing(path)) => assert!(path.ends_with(WEIGHTS_NAME)),
+            other => panic!("erwartet ModelMissing, bekam {other:?}"),
+        }
+    }
+
+    /// Voller Arbeitsspeicher: eine Reserve, die nicht zu bekommen ist (hier eine
+    /// absurde Groesse aus einem beschaedigten Katalog), ist ein Ladefehler mit dem
+    /// Dateinamen, kein Abbruch des Prozesses, und es wird nichts gelesen.
+    #[test]
+    fn memory_that_cannot_be_reserved_is_a_load_error_not_an_abort() {
+        let tiny = Tiny::new(10.0);
+        let sha = sha_hex(&tiny.graph);
+        let result = OnnxBlockModel::load_verified(
+            &tiny.anchor,
+            [
+                Wanted {
+                    name: GRAPH_NAME,
+                    size: tiny.graph.len() as u64,
+                    sha256: Some(&sha),
+                },
+                Wanted {
+                    name: WEIGHTS_NAME,
+                    size: u64::MAX / 2,
+                    sha256: None,
+                },
+            ],
+            tiny.dir.path(),
+            1,
+        );
+        let msg = load_message(result);
+        assert!(msg.starts_with(WEIGHTS_NAME), "{msg}");
+        assert!(msg.contains("Arbeitsspeicher"), "{msg}");
+    }
+
+    /// Ein Katalogeintrag ohne Pruefsumme wird nicht geladen: ohne SHA-256 gaebe es nichts,
+    /// wogegen die Bytes zu pruefen waeren, und die Sitzung bekaeme ungepruefte Bytes.
+    #[test]
+    fn a_catalog_entry_without_a_checksum_is_not_loaded() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = catalog_layout(dir.path(), catalog_sizes());
+        for victim in 0..2 {
+            let mut place = catalog_place(&files[0]).expect("Katalogplatz");
+            place.entry.files[victim].sha256 = None;
+            let msg = load_message(OnnxBlockModel::load_catalog(&files[0], &place, 1));
+            assert!(msg.contains("ohne SHA-256"), "{msg}");
+            assert!(
+                !msg.contains(dir.path().to_str().unwrap()),
+                "Pfad im Text: {msg}"
+            );
+        }
+    }
+
+    /// Ein Link an Stelle einer der Dateien ist ein Ladefehler (Ablehnung), kein Folgen.
+    #[test]
+    fn a_link_in_place_of_the_weights_is_a_load_error_and_is_not_followed() {
+        use crate::managers::model::download::linktest::symlink_file;
+        let tiny = Tiny::new(10.0);
+        let outside = tempfile::tempdir().unwrap();
+        let foreign = outside.path().join("fremd.bin");
+        std::fs::write(&foreign, &tiny.weights).unwrap();
+        std::fs::remove_file(tiny.weights_path()).unwrap();
+        if !symlink_file(&tiny.weights_path(), &foreign) {
+            return;
+        }
+        let msg = load_message(tiny.load());
+        assert!(msg.contains("Link"), "{msg}");
+        assert!(
+            !msg.contains(outside.path().to_str().unwrap()),
+            "Pfad im Text: {msg}"
+        );
+        assert_eq!(std::fs::read(&foreign).unwrap(), tiny.weights);
     }
 }
 
@@ -916,6 +1583,62 @@ mod model_tests {
             }
             other => panic!("erwartet Load, bekam {:?}", other.err()),
         }
+    }
+
+    /// Der geschuetzte Ladeweg mit dem echten Modell: beide Dateien ueber ein Ordner-Handle
+    /// gelesen, gegen Groesse und SHA-256 des Katalogs geprueft, die Sitzung aus genau
+    /// diesen Bytes im Speicher gebaut (Gewichte als externe Initialisierer im Speicher).
+    /// Die Logits stimmen mit denen der Sitzung ueberein, die ONNX Runtime selbst aus den
+    /// Dateien laedt. Im Pflichtmodus (`LVA_NEMOTRON_REQUIRED=1`) fehlt dieser Nachweis nie.
+    #[test]
+    fn the_protected_load_gives_the_same_logits_as_the_load_by_path() {
+        let Some(path) = model_or_skip() else {
+            return;
+        };
+        let entry = crate::catalog::tts_entries(crate::catalog::Purpose::Diarization)
+            .into_iter()
+            .find(|e| e.id == crate::managers::meetings::diarize::nemotron::MODEL_ID)
+            .unwrap();
+        let dir = path.parent().unwrap();
+        let (Some(root), Some(name)) = (dir.parent(), dir.file_name().and_then(|n| n.to_str()))
+        else {
+            skip("der Modellordner hat keinen Namen oder keinen uebergeordneten Ordner");
+            return;
+        };
+        let anchor = Anchor::open(root, &[name], false)
+            .expect("Ordner offen")
+            .expect("Ordner da");
+        let wanted = |i: usize| Wanted {
+            name: &entry.files[i].filename,
+            size: entry.files[i].size_bytes,
+            sha256: entry.files[i].sha256.as_deref(),
+        };
+        let start = Instant::now();
+        let verified = OnnxBlockModel::load_verified(&anchor, [wanted(0), wanted(1)], dir, 1)
+            .expect("geschuetzte Generation laedt das gepruefte Paar");
+        eprintln!(
+            "Geschuetztes Laden (lesen, SHA-256, Sitzung aus dem Speicher): {:.2} s",
+            start.elapsed().as_secs_f64()
+        );
+        let by_path = OnnxBlockModel::load_by_path(&path, 1).expect("Laden ueber den Pfad");
+        let engine = |model| NemotronOnnxEngine {
+            model,
+            front: MelFrontend::new(),
+            broken: false,
+        };
+        let pcm = clip();
+        let a = engine(verified)
+            .logits(&pcm, None)
+            .expect("Lauf geschuetzt");
+        let b = engine(by_path).logits(&pcm, None).expect("Lauf Pfad");
+        assert_eq!(a.len(), b.len());
+        assert!(!a.is_empty());
+        let worst = a
+            .iter()
+            .zip(&b)
+            .map(|(x, y)| (x - y).abs())
+            .fold(0.0f32, f32::max);
+        assert!(worst <= 1e-4, "Logits weichen um {worst} ab");
     }
 
     #[test]

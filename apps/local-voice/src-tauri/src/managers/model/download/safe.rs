@@ -13,24 +13,25 @@
 //!   zu folgen;
 //! - beim Oeffnen zusaetzlich unter Unix `O_NOFOLLOW`, unter Windows
 //!   `FILE_FLAG_OPEN_REPARSE_POINT`, und danach eine Pruefung des geoeffneten
-//!   Handles (normale Datei, unter Unix zum Schreiben nicht mehrfach verlinkt).
+//!   Handles (normale Datei, zum Schreiben nicht mehrfach verlinkt: unter Unix
+//!   `nlink`, unter Windows `nNumberOfLinks` aus `GetFileInformationByHandle`).
 //!   Das schliesst das Zeitfenster zwischen Pruefung und Oeffnen fuer die letzte
 //!   Pfadkomponente; ein Abschneiden geschieht erst nach dieser Pruefung (`set_len`),
-//!   nie schon beim Oeffnen;
-//! - Ordner: [`dir_inside`] laeuft den Pfad unterhalb der Wurzel Komponente fuer
-//!   Komponente ab (kein Link, nur Ordner) und verlangt zusaetzlich, dass der
-//!   kanonische Ordner unter der kanonischen Wurzel liegt. Die Wurzel selbst darf
-//!   ein Link sein (ein verschobener Datenordner), alles darunter nicht.
+//!   nie schon beim Oeffnen.
 //!
-//! Nicht abgedeckt: ein Link, der zwischen Ordnerpruefung und Oeffnen in einen
-//! Zwischenordner gelegt wird (dafuer fehlt mit `std` ein `openat`); wer das
-//! kann, kann dieselben Dateien auch direkt ueberschreiben. Der Modul braucht nur
-//! `std` (und unter Unix `libc`), damit die Windows-Zweige auch ohne Windows auf
-//! Typfehler geprueft werden koennen.
+//! Ordner und Umbenennen gehoeren nicht (mehr) hierher: wer Ordner anlegt oder
+//! Dateien umbenennt, tut es ueber ein geoeffnetes Ordner-Handle (`anchor`), nie
+//! ueber einen Pfad, den ein Dritter zwischen Pruefung und Gebrauch ersetzen koennte.
+//!
+//! Nicht abgedeckt: ein Link, der in einem Ordner VOR dem Modellordner liegt oder dort
+//! zwischen Pruefung und Oeffnen eingeschoben wird (dafuer fehlt mit `std` ein `openat`).
+//! Dieser Weg bleibt fuer die uebrigen Modelle (Piper, Sprachmodelle, ...); der Ladeweg
+//! des Nemotron-Modells arbeitet stattdessen ueber ein geoeffnetes Ordner-Handle
+//! (`anchor`), das diese Luecke nicht hat.
 
 use std::fs::{self, File, OpenOptions};
 use std::io;
-use std::path::{Component, Path};
+use std::path::Path;
 
 /// Reparse-Punkt (Symlink, Junction, Cloud-Platzhalter u. a.).
 #[cfg(windows)]
@@ -52,7 +53,7 @@ impl std::fmt::Display for Refused {
 
 impl std::error::Error for Refused {}
 
-fn refusal() -> io::Error {
+pub(super) fn refusal() -> io::Error {
     io::Error::new(io::ErrorKind::PermissionDenied, Refused)
 }
 
@@ -118,23 +119,69 @@ fn opened(result: io::Result<File>, path: &Path) -> io::Result<File> {
     })
 }
 
-/// Prueft das geoeffnete Handle selbst (nicht den Pfad): normale Datei, kein
-/// Reparse-Punkt, zum Schreiben unter Unix nicht mit einem anderen Namen verlinkt
-/// (ein Hardlink wuerde die andere Datei mitschreiben).
-fn checked(file: File, write: bool) -> io::Result<File> {
+/// Was ein geoeffnetes Handle ueber seine Datei sagt (nicht der Pfad, den man
+/// zum Oeffnen nahm): Kennung (Laufwerk, Index), Zahl der Namen, Art.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FileInfo {
+    pub(crate) volume: u64,
+    pub(crate) index: u64,
+    /// Zahl der Verzeichniseintraege der Datei (Hardlinks); 1 bei einer gewoehnlichen.
+    pub(crate) links: u64,
+    pub(crate) is_file: bool,
+    pub(crate) is_dir: bool,
+    /// Reparse-Punkt (nur unter Windows; ein Unix-Handle zeigt nie auf einen Link).
+    pub(crate) reparse: bool,
+}
+
+/// [`FileInfo`] des Handles `file`.
+#[cfg(unix)]
+pub(crate) fn file_info(file: &File) -> io::Result<FileInfo> {
+    use std::os::unix::fs::MetadataExt;
     let meta = file.metadata()?;
-    if is_link(&meta) || !meta.is_file() {
+    Ok(FileInfo {
+        volume: meta.dev(),
+        index: meta.ino(),
+        links: meta.nlink(),
+        is_file: meta.is_file(),
+        is_dir: meta.is_dir(),
+        reparse: false,
+    })
+}
+
+/// [`FileInfo`] des Handles `file` (`GetFileInformationByHandle`).
+#[cfg(windows)]
+pub(crate) fn file_info(file: &File) -> io::Result<FileInfo> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+    const DIRECTORY: u32 = 0x0000_0010;
+    let mut raw = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: `file` haelt ein gueltiges Handle fuer die Dauer des Aufrufs, `raw` ist
+    // ein beschreibbarer Zielpuffer der verlangten Groesse.
+    unsafe { GetFileInformationByHandle(HANDLE(file.as_raw_handle()), &mut raw) }
+        .map_err(io::Error::from)?;
+    let dir = raw.dwFileAttributes & DIRECTORY != 0;
+    Ok(FileInfo {
+        volume: u64::from(raw.dwVolumeSerialNumber),
+        index: u64::from(raw.nFileIndexHigh) << 32 | u64::from(raw.nFileIndexLow),
+        links: u64::from(raw.nNumberOfLinks),
+        is_file: !dir,
+        is_dir: dir,
+        reparse: raw.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0,
+    })
+}
+
+/// Prueft das geoeffnete Handle selbst (nicht den Pfad): normale Datei, kein
+/// Reparse-Punkt, zum Schreiben nicht mit einem anderen Namen verlinkt (ein
+/// Hardlink wuerde die andere Datei mitschreiben). Das gilt unter Unix und unter
+/// Windows, und es gilt vor jeder Aenderung (auch vor dem Abschneiden).
+fn checked(file: File, write: bool) -> io::Result<File> {
+    let info = file_info(&file)?;
+    if info.reparse || !info.is_file || (write && info.links > 1) {
         return Err(refusal());
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        if write && meta.nlink() > 1 {
-            return Err(refusal());
-        }
-    }
-    #[cfg(not(unix))]
-    let _ = write;
     Ok(file)
 }
 
@@ -175,67 +222,6 @@ pub(crate) fn remove(path: &Path) -> io::Result<()> {
 /// [`remove`] ohne Fehlerrueckgabe: fuer Aufraeumen nach einem Fehler.
 pub(crate) fn discard(path: &Path) {
     let _ = remove(path);
-}
-
-/// Benennt `from` ueber `to` um. Beide Enden muessen normale Dateien sein
-/// (`to` darf fehlen); ein Link an einem der Enden wird abgelehnt.
-pub(crate) fn rename_over(from: &Path, to: &Path) -> io::Result<()> {
-    if plain_len(from)?.is_none() {
-        return Err(io::Error::from(io::ErrorKind::NotFound));
-    }
-    plain_len(to)?;
-    fs::rename(from, to)
-}
-
-/// Liegt `dir` unterhalb von `root`, ohne dass ein Link oder Reparse-Punkt
-/// dazwischen liegt, und zeigt der kanonische Pfad nicht aus `root` heraus?
-/// Mit `create` werden fehlende Ordner unterhalb der Wurzel angelegt (die Wurzel
-/// selbst auch); ohne `create` ist ein fehlender Rest kein Fehler (es gibt dort
-/// nichts, dem man folgen koennte). Ein Verstoss ist eine Ablehnung
-/// ([`is_refusal`]).
-pub(crate) fn dir_inside(root: &Path, dir: &Path, create: bool) -> io::Result<()> {
-    let rel = dir.strip_prefix(root).map_err(|_| refusal())?;
-    if create {
-        fs::create_dir_all(root)?;
-    }
-    let canonical_root = match fs::canonicalize(root) {
-        Ok(p) => p,
-        Err(e) if e.kind() == io::ErrorKind::NotFound && !create => return Ok(()),
-        Err(e) => return Err(e),
-    };
-    let mut current = root.to_path_buf();
-    for part in rel.components() {
-        let Component::Normal(name) = part else {
-            return Err(refusal());
-        };
-        current.push(name);
-        match fs::symlink_metadata(&current) {
-            Ok(meta) if is_link(&meta) || !meta.is_dir() => return Err(refusal()),
-            Ok(_) => {}
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                if !create {
-                    return Ok(());
-                }
-                match fs::create_dir(&current) {
-                    Ok(()) => {}
-                    Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                        let plain = fs::symlink_metadata(&current)
-                            .is_ok_and(|m| m.is_dir() && !is_link(&m));
-                        if !plain {
-                            return Err(refusal());
-                        }
-                    }
-                    Err(e) => return Err(e),
-                }
-            }
-            Err(e) => return Err(e),
-        }
-    }
-    if fs::canonicalize(&current)?.starts_with(&canonical_root) {
-        Ok(())
-    } else {
-        Err(refusal())
-    }
 }
 
 #[cfg(test)]

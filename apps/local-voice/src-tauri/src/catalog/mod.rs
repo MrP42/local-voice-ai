@@ -440,14 +440,55 @@ pub fn rank_of(model_id: &str) -> u32 {
 /// Dateiname) werden zu Ordner- und Dateinamen im Modellordner; ein Wert mit
 /// Pfadtrenner, `..`, absolutem Pfad oder Laufwerksbuchstaben koennte aus dem
 /// Modellordner hinausfuehren. Abgelehnt werden: leer, `.`, `..`, `/`, `\`, `:`
-/// (Laufwerk, Windows-Datenstrom) und Steuerzeichen einschliesslich NUL.
+/// (Laufwerk, Windows-Datenstrom), Steuerzeichen einschliesslich NUL, die unter
+/// Windows unzulaessigen Zeichen `< > " | ? *`, ein Name auf Punkt oder Leerzeichen
+/// (Windows streicht beides, `x.` und `x` waeren dieselbe Datei) und die
+/// reservierten Geraetenamen (`CON`, `PRN`, `AUX`, `NUL`, `COM0`-`COM9`,
+/// `LPT0`-`LPT9`, `CONIN$`, `CONOUT$`, `CLOCK$`), auch mit Endung (`nul.txt`) und in
+/// jeder Schreibweise. Gilt auf jedem Betriebssystem: der Katalog ist einer, und
+/// ein Modellordner wandert zwischen Rechnern.
 pub fn is_plain_name(name: &str) -> bool {
     !name.is_empty()
         && name != "."
         && name != ".."
-        && !name
-            .chars()
-            .any(|c| c == '/' || c == '\\' || c == ':' || c.is_control())
+        && !name.ends_with(['.', ' '])
+        && !name.chars().any(|c| {
+            matches!(c, '/' | '\\' | ':' | '<' | '>' | '"' | '|' | '?' | '*') || c.is_control()
+        })
+        && !is_windows_device_name(name)
+}
+
+/// Windows behandelt `NUL`, `nul.txt` und `NUL .txt` als das Geraet, nicht als Datei:
+/// massgebend ist der Teil vor dem ersten Punkt ohne nachgestellte Leerzeichen.
+fn is_windows_device_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or("").trim_end_matches(' ');
+    let up = stem.to_uppercase();
+    if matches!(
+        up.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$" | "CLOCK$"
+    ) {
+        return true;
+    }
+    let mut chars = up.chars();
+    let prefix: String = chars.by_ref().take(3).collect();
+    matches!(prefix.as_str(), "COM" | "LPT")
+        && matches!(
+            chars.next(),
+            Some('0'..='9' | '\u{b9}' | '\u{b2}' | '\u{b3}')
+        )
+        && chars.next().is_none()
+}
+
+/// Fallen zwei Namen einer Liste auf demselben Dateisystem zusammen? Windows und
+/// macOS unterscheiden Gross- und Kleinschreibung beim Zugriff nicht: `Model.onnx`
+/// und `model.onnx` desselben Eintrags waeren eine Datei, die zweite Ablage
+/// ueberschriebe die erste. Verglichen wird ohne Unterschied der Schreibweise
+/// (hin und zurueck gefaltet, im Zweifel lieber zu viel als zu wenig).
+pub fn names_collide<'a>(names: impl IntoIterator<Item = &'a str>) -> bool {
+    let mut seen = std::collections::HashSet::new();
+    names
+        .into_iter()
+        .any(|n| !seen.insert(n.to_uppercase().to_lowercase()))
 }
 
 #[cfg(test)]
@@ -1092,6 +1133,16 @@ mod tests {
                 );
                 checked += 1;
             }
+            assert!(
+                !names_collide(m.files.iter().map(|f| f.filename.as_str())),
+                "{}: zwei Dateinamen unterscheiden sich nur in der Schreibweise",
+                m.id
+            );
+            assert!(
+                !names_collide(m.file_git_blobs.keys().map(String::as_str)),
+                "{}: zwei Blob-Namen unterscheiden sich nur in der Schreibweise",
+                m.id
+            );
         }
         assert!(checked > 100, "zu wenig Dateinamen geprueft: {checked}");
     }
@@ -1105,7 +1156,14 @@ mod tests {
             "a.b.c",
             "name mit Leerzeichen.bin",
             "..datei",
-            "datei..",
+            "console.txt",
+            "nullable.bin",
+            "com10",
+            "com",
+            "lpt",
+            "COM1x",
+            "a b",
+            "a.b",
         ] {
             assert!(is_plain_name(ok), "{ok:?} abgelehnt");
         }
@@ -1127,8 +1185,67 @@ mod tests {
             "\\\\server\\share",
             "a\0b",
             "a\nb",
+            "datei..",
+            "datei.",
+            "datei ",
+            "datei. ",
+            " ",
+            "a<b",
+            "a>b",
+            "a\"b",
+            "a|b",
+            "a?b",
+            "a*b",
         ] {
             assert!(!is_plain_name(bad), "{bad:?} angenommen");
         }
+    }
+
+    /// Unter Windows ist `nul.txt` das Geraet NUL, kein Dateiname: das Schreiben
+    /// ginge ins Leere und der Pruefer sahe nichts. Jede Schreibweise, mit und
+    /// ohne Endung, auch mit Leerzeichen vor dem Punkt und mit hochgestellten Ziffern.
+    #[test]
+    fn plain_names_reject_the_windows_device_names() {
+        let devices = [
+            "CON",
+            "PRN",
+            "AUX",
+            "NUL",
+            "CONIN$",
+            "CONOUT$",
+            "CLOCK$",
+            "COM0",
+            "COM1",
+            "COM9",
+            "LPT0",
+            "LPT1",
+            "LPT9",
+            "COM\u{b9}",
+            "COM\u{b2}",
+            "COM\u{b3}",
+            "LPT\u{b9}",
+        ];
+        for d in devices {
+            for name in [
+                d.to_string(),
+                d.to_lowercase(),
+                format!("{d}.txt"),
+                format!("{}.onnx_data", d.to_lowercase()),
+                format!("{d} .txt"),
+                format!("{d}.a.b"),
+            ] {
+                assert!(!is_plain_name(&name), "{name:?} angenommen");
+            }
+        }
+    }
+
+    #[test]
+    fn names_that_differ_only_in_case_collide() {
+        assert!(names_collide(["Model.onnx", "model.onnx"]));
+        assert!(names_collide(["a.bin", "b.bin", "A.BIN"]));
+        assert!(names_collide(["x", "x"]));
+        assert!(!names_collide(["model.onnx", "model.onnx_data"]));
+        assert!(!names_collide([] as [&str; 0]));
+        assert!(!names_collide(["only.one"]));
     }
 }
