@@ -4188,10 +4188,19 @@ test("H8 Pause beginnt bei klingendem Stück und endet vor dessen Ende: die Wied
 //  Zeit: gesteuerte Uhr, kein abschließendes `interrupt()`, keine begrenzten Wartezeiten für negative Nachweise.
 
 /**
- * Gewöhnlicher Schritt (kein Sprecher, kein Auftrag): der Denker (`d`) liefert die Sätze als Stücke. Die Synthese der
- * Sätze in `haengt` antwortet erst mit `frei(satz)`. Der Schritt läuft im Hintergrund (`lauf`).
+ * Gewöhnlicher Schritt (kein Auftrag): der Denker (`d`) liefert die Sätze als Stücke. Die Synthese der Sätze in
+ * `haengt` antwortet erst mit `frei(satz)`. Der Schritt läuft im Hintergrund. `sprecher`: lokaler Sofort-Sprecher
+ * (dann als gesprochene Äußerung), `ohneDenker`: Vorlagenantwort ohne Modellaufruf.
  */
-async function gewoehnlich({ haengt = [], optionen, handlers = {} } = {}) {
+async function gewoehnlich({
+  haengt = [],
+  optionen,
+  handlers = {},
+  frage = FRAGE,
+  sprecher,
+  ohneDenker = false,
+  vorbereiten,
+} = {}) {
   const d = denkerSteuerbar();
   const tore = new Map(
     haengt.map((satz) => {
@@ -4207,11 +4216,14 @@ async function gewoehnlich({ haengt = [], optionen, handlers = {} } = {}) {
       voice_call_synthesize: ({ text }) => tore.get(text)?.tor ?? `wav:${text}`,
       ...handlers,
     },
-    undefined,
+    sprecher,
     optionen,
   );
-  const lauf = t.start(FRAGE).catch((e) => t.log.errors.push(String(e)));
-  assert.equal(await bis(() => d.laeufe.length === 1), true);
+  vorbereiten?.(t);
+  const lauf = sprecher
+    ? t.startSprache(frage).fertig
+    : t.start(frage).catch((e) => t.log.errors.push(String(e)));
+  if (!ohneDenker) assert.equal(await bis(() => d.laeufe.length === 1), true);
   return { d, t, lauf, frei: (satz) => tore.get(satz).frei() };
 }
 
@@ -4707,4 +4719,371 @@ test("H9 Synthese eines Stücks schlägt fehl, das Modell liefert später weiter
       false,
     );
     assert.equal(t.log.errors.length, 1);
+  }));
+
+// -- Runde 8 (Codex R1 zu lva#564) --------------------------------------------------------------------------
+//
+// Fehlerfälle dieser Runde (vor dem Code aufgeschrieben, Status im Bericht):
+//  J1 Abbruch mitten im Vorgang, Nebenläufigkeit: „wiederholen“ liefert zwei Vorlagenstücke, das zweite hängt. Nach
+//     dem Ablauf steht nur das Gehörte als unterbrochene Zeile, der ungesprochene Text ist weg, es gibt keinen
+//     Verlauf (Vorlage). Mit dem echten Speicher auch beim Beginn des nächsten Schritts: kein Rest, nichts Ungesprochenes
+//     gespeichert.
+//  J2 Weitersprechen gehört, die erste Inhaltssynthese hängt: die Zeile ist auf das Weitersprechen gekürzt
+//     (unterbrochen), auch im echten Speicher.
+//  J3 Nichts gehört (Ton hat nie begonnen): bricht der Nutzer ab, verschwindet die angezeigte, noch offene Zeile.
+//  J4 Haltefrist der Erkennung, danach Wartegrenze, dann kommt die Erkennung: die Äußerung geht nicht verloren (ein
+//     neuer Schritt, Text unverändert), ebenso auf dem Weg des Auftragskandidaten (Erkennung ohne Pause).
+//  J5 Die späte Erkennung nach dem Ablauf ist ein Stoppwort: sie wirkt wie sonst (kein neuer Schritt).
+//  J6 Zwischen Ablauf und später Erkennung beginnt ein anderer Schritt (getippter Text): die späte Erkennung gilt
+//     nicht mehr und beginnt keinen zweiten Schritt.
+//  Zeit: gesteuerte Uhr, kein abschließendes `interrupt()`, keine begrenzten Wartezeiten für negative Nachweise.
+
+/** „Wiederholen“ als Vorlage mit zwei Stücken: „Ich wiederhole.“ klingt, die Synthese der älteren Ausgabe hängt. */
+async function wiederholenHaengt({
+  optionen,
+  handlers,
+  haengt = ["Eine ältere Ausgabe."],
+} = {}) {
+  const r = await gewoehnlich({
+    frage: WIEDERHOLEN,
+    ohneDenker: true,
+    haengt,
+    handlers: {
+      assistent_einstufen: einstufungWiederholen,
+      assistent_letzte_ausgabe: () => "Eine ältere Ausgabe.",
+      ...handlers,
+    },
+    optionen,
+    vorbereiten: (t) => (t.engine.ausgabeKey = { id: "c1" }),
+  });
+  assert.equal(
+    await bis(() => r.t.player.gespielt.includes("wav:Ich wiederhole.")),
+    true,
+  );
+  return r;
+}
+
+/** Weitersprechen des Sprechers klingt, die Synthese des ersten Inhaltsstücks des Denkers hängt. */
+async function weiterHaengt({ optionen, handlers } = {}) {
+  const r = await gewoehnlich({
+    sprecher: lokalFolge([WEITER_ZEILE, ZWEITE_ZEILE]),
+    haengt: ["Satz eins."],
+    handlers,
+    optionen,
+  });
+  assert.equal(
+    await bis(() => r.t.player.gespielt.includes(WEITER_SATZ)),
+    true,
+  );
+  r.d.liefere(0, "Satz eins.");
+  assert.equal(
+    await bis(() => r.t.log.zeilen.at(-1)?.t === `${WEITER_TEXT} Satz eins.`),
+    true,
+    "beides ist angezeigt, nur das Weitersprechen ist zu hören",
+  );
+  return r;
+}
+const WEITER_TEXT = "Gute Frage, ich schaue nach.";
+
+/** Die Zeilen des echten Speichers als (Rolle, Text, endgültig, unterbrochen). */
+const speicherZeilen = (store) =>
+  store
+    .getState()
+    .lines.map((l) => [l.role, l.text, !!l.final, !!l.interrupted]);
+
+const assistentZeilen = (store) =>
+  speicherZeilen(store).filter(([rolle]) => rolle === "assistant");
+
+for (const echt of [false, true]) {
+  const art = echt ? "echter Speicher" : "Protokoll";
+  const aufbauen = async (bau) => {
+    if (!echt) return { ...(await bau({})), store: null, gespeichert: [] };
+    const { store, engine, gespeichert, handlers } = await mitEchtemSpeicher();
+    return {
+      ...(await bau({ optionen: { engine }, handlers })),
+      store,
+      gespeichert,
+    };
+  };
+
+  test(`H10 Wiederholen mit hängendem zweiten Stück (${art}): nach dem Ablauf steht nur das Gehörte als unterbrochene Zeile, der ungesprochene Text ist weg`, () =>
+    mitUhr(async (tick) => {
+      const { d, t, frei, store, gespeichert } =
+        await aufbauen(wiederholenHaengt);
+      assert.deepEqual(t.log.zeilen.at(-1), {
+        t: "Ich wiederhole. Eine ältere Ausgabe.",
+        final: false,
+        interrupted: false,
+        auftragVon: undefined,
+      });
+      t.player.finishPiece();
+      tick(TUNING.stueckMaxMs - 1);
+      assert.ok(t.engine.turn, "noch geduldig");
+      tick(1);
+      assert.equal(t.engine.turn, null, "Schritt frei");
+      assert.equal(t.engine.state, "listening");
+      assert.deepEqual(t.log.zeilen.at(-1), {
+        t: "Ich wiederhole.",
+        final: true,
+        interrupted: true,
+        auftragVon: undefined,
+      });
+      assert.deepEqual(t.verlauf(), [], "eine Vorlage hat keinen Verlauf");
+      await spaeteSynthese(t, frei, "Eine ältere Ausgabe.");
+      if (!echt) return;
+      assert.deepEqual(assistentZeilen(store), [
+        ["assistant", "Ich wiederhole.", true, true],
+      ]);
+      // Beim Beginn des nächsten Schritts bleibt die gekürzte Zeile, nichts Ungesprochenes taucht auf.
+      t.aeussere(WETTER, { mitBarge: false });
+      assert.equal(await bis(() => d.laeufe.length === 1), true);
+      d.liefere(0, "Satz drei.");
+      assert.equal(
+        await bis(() => t.player.gespielt.includes("wav:Satz drei.")),
+        true,
+      );
+      assert.deepEqual(
+        speicherZeilen(store)
+          .slice(0, 3)
+          .map(([rolle, text]) => [rolle, text]),
+        [
+          ["user", WIEDERHOLEN],
+          ["assistant", "Ich wiederhole."],
+          ["user", WETTER],
+        ],
+      );
+      assert.deepEqual(assistentZeilen(store).slice(0, 1), [
+        ["assistant", "Ich wiederhole.", true, true],
+      ]);
+      assert.equal(
+        store.getState().lines.some((l) => l.text.includes("ältere")),
+        false,
+      );
+      await settle(80);
+      assert.equal(
+        gespeichert.some((e) => e.text.includes("ältere")),
+        false,
+        "nichts Ungesprochenes gespeichert",
+      );
+    }));
+
+  test(`H10 Wiederholen ganz eingereiht, der Nutzer unterbricht beim ersten Stück (${art}): die schon endgültige Zeile ist auf das Gehörte gekürzt`, () =>
+    mitUhr(async () => {
+      const { d, t, store } = await aufbauen((o) =>
+        wiederholenHaengt({ ...o, haengt: [] }),
+      );
+      assert.equal(
+        await bis(() => t.engine.turn?.finalSent === true),
+        true,
+        "die Zeile ist endgültig, das zweite Stück wartet im Player",
+      );
+      t.aeussere(WETTER);
+      assert.equal(await bis(() => d.laeufe.length === 1), true);
+      assert.deepEqual(
+        t.log.zeilen.filter((z) => z.interrupted),
+        [
+          {
+            t: "Ich wiederhole.",
+            final: true,
+            interrupted: true,
+            auftragVon: undefined,
+          },
+        ],
+      );
+      assert.equal(t.log.errors.length, 0);
+      if (!echt) return;
+      assert.deepEqual(assistentZeilen(store).slice(0, 1), [
+        ["assistant", "Ich wiederhole.", true, true],
+      ]);
+      assert.equal(
+        store.getState().lines.some((l) => l.text.includes("ältere")),
+        false,
+      );
+    }));
+
+  test(`H10 Weitersprechen gehört, die erste Inhaltssynthese hängt (${art}): nach dem Ablauf steht nur das Weitersprechen als unterbrochene Zeile`, () =>
+    mitUhr(async (tick) => {
+      const { d, t, frei, store, gespeichert } = await aufbauen(weiterHaengt);
+      t.player.finishPiece();
+      tick(TUNING.stueckMaxMs - 1);
+      assert.ok(t.engine.turn, "noch geduldig");
+      tick(1);
+      assert.equal(t.engine.turn, null, "Schritt frei");
+      assert.equal(t.engine.state, "listening");
+      assert.deepEqual(t.log.zeilen.at(-1), {
+        t: WEITER_TEXT,
+        final: true,
+        interrupted: true,
+        auftragVon: undefined,
+      });
+      assert.equal(
+        t.abgebrochen(d.laeufe[0].requestId),
+        1,
+        "Denker abgebrochen",
+      );
+      await spaeteSynthese(t, frei, "Satz eins.");
+      if (!echt) return;
+      assert.deepEqual(assistentZeilen(store), [
+        ["assistant", WEITER_TEXT, true, true],
+      ]);
+      await settle(80);
+      assert.equal(
+        gespeichert.some((e) => e.text.includes("Satz eins")),
+        false,
+        "nichts Ungesprochenes gespeichert",
+      );
+    }));
+}
+
+test("H10 nichts gehört (der Ton hat nie begonnen): bricht der Nutzer ab, verschwindet die angezeigte, noch offene Zeile", () =>
+  mitUhr(async () => {
+    const { d, t } = await gewoehnlich({ haengt: ["Satz zwei."] });
+    t.player.deferStart = true;
+    d.liefere(0, "Satz eins.", "Satz zwei.");
+    assert.equal(
+      await bis(() => t.player.enqueued.includes("wav:Satz eins.")),
+      true,
+    );
+    assert.equal(t.player.gespielt.length, 0, "es war nichts zu hören");
+    assert.equal(t.log.zeilen.at(-1)?.final, false, "die Zeile ist offen");
+    const verworfen = t.log.verworfen;
+    t.aeussere(WETTER);
+    assert.equal(
+      await bis(() => d.laeufe.length === 2),
+      true,
+      "der neue Schritt beginnt",
+    );
+    assert.equal(t.log.verworfen, verworfen + 1, "die offene Zeile ist zurück");
+    assert.equal(
+      t.log.zeilen.some((z) => z.interrupted),
+      false,
+    );
+  }));
+
+/** Erkennung, die erst mit `frei()` antwortet, und ein Schritt, dessen Wartegrenze der Test ablaufen lässt. */
+async function spaeteErkennung(text, { stopp = false } = {}) {
+  const { d, t, frei } = await gewoehnlich({ haengt: ["Satz zwei."] });
+  d.liefere(0, "Satz eins.", "Satz zwei.");
+  assert.equal(await ersterKlingt(t), true);
+  t.player.finishPiece();
+  const erkannt = erkennungMitTor(text);
+  t.barge();
+  t.fruehEnde();
+  t.ende();
+  assert.equal(t.engine.held, t.engine.turn, "angehalten, die Erkennung läuft");
+  return { d, t, frei, erkannt, stopp };
+}
+
+/** Haltefrist der Erkennung, danach die Wartegrenze des Schritts: der Schritt ist zu Ende, die Erkennung läuft noch. */
+async function bisZumAblauf(t, tick) {
+  tick(TUNING.holdSttMaxMs);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(t.engine.held, null, "die Haltefrist hat die Pause beendet");
+  assert.ok(t.engine.turn, "der Schritt wartet auf sein Stück");
+  tick(TUNING.stueckMaxMs);
+  assert.equal(t.engine.turn, null, "Wartegrenze: der Schritt ist zu Ende");
+}
+
+test("H10 Haltefrist der Erkennung, danach Wartegrenze, dann kommt die Erkennung: die Äußerung geht nicht verloren, genau ein neuer Schritt mit unverändertem Text", () =>
+  mitUhr(async (tick) => {
+    const { d, t, erkannt } = await spaeteErkennung(WETTER);
+    await bisZumAblauf(t, tick);
+    erkannt();
+    assert.equal(
+      await bis(() => d.laeufe.length === 2),
+      true,
+      "ein neuer Schritt",
+    );
+    assert.deepEqual(t.log.user, [FRAGE, WETTER]);
+    d.liefere(1, "Satz drei.");
+    assert.equal(
+      await bis(() => t.player.gespielt.includes("wav:Satz drei.")),
+      true,
+    );
+    assert.equal(await bis(() => t.engine.turn?.done), true);
+    t.player.finishPiece();
+    assert.equal(t.engine.turn, null);
+    assert.deepEqual(t.verlauf(), [
+      `user:${FRAGE}`,
+      "assistant:Satz eins. …",
+      `user:${WETTER}`,
+      "assistant:Satz drei.",
+    ]);
+    assert.equal(d.laeufe.length, 2, "kein weiterer Schritt");
+    assert.equal(t.log.errors.length, 0);
+  }));
+
+test("H10 späte Erkennung nach dem Ablauf ist ein Stoppwort: kein neuer Schritt", () =>
+  mitUhr(async (tick) => {
+    const { d, t, erkannt } = await spaeteErkennung("Stopp.");
+    await bisZumAblauf(t, tick);
+    erkannt();
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.equal(d.laeufe.length, 1, "nichts ging ans Modell");
+    assert.deepEqual(t.log.user, [FRAGE]);
+    assert.equal(t.engine.turn, null);
+    assert.equal(t.engine.state, "listening");
+  }));
+
+test("H10 zwischen Ablauf und später Erkennung beginnt ein anderer Schritt (getippter Text): die späte Erkennung gilt nicht mehr", () =>
+  mitUhr(async (tick) => {
+    const { d, t, erkannt } = await spaeteErkennung(WETTER);
+    await bisZumAblauf(t, tick);
+    void t.engine.sendText(FOLGE);
+    assert.equal(
+      await bis(() => d.laeufe.length === 2),
+      true,
+      "der getippte Text beginnt einen Schritt",
+    );
+    const turn = t.engine.turn;
+    erkannt();
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.equal(d.laeufe.length, 2, "die späte Erkennung beginnt keinen");
+    assert.equal(t.engine.turn, turn);
+    assert.equal(turn.cancelled, false);
+    assert.deepEqual(t.log.user, [FRAGE, FOLGE]);
+  }));
+
+test("H10 Auftragskandidat: die Wartegrenze läuft ab, während die Äußerung erkannt wird: sie geht nicht verloren, genau ein neuer Schritt", () =>
+  mitUhr(async (tick) => {
+    const { d, t } = await weiterHaengt();
+    t.player.finishPiece();
+    const erkannt = erkennungMitTor(WETTER);
+    t.redeLos();
+    t.fruehEnde();
+    t.ende();
+    assert.equal(
+      await bis(() => t.aufrufe("voice_call_transcribe").length === 1),
+      true,
+      "die Äußerung wird erkannt",
+    );
+    tick(TUNING.stueckMaxMs);
+    assert.equal(t.engine.turn, null, "Wartegrenze: der Schritt ist zu Ende");
+    const nutzer = t.log.user.length;
+    erkannt();
+    assert.equal(
+      await bis(() => t.log.user.length === nutzer + 1),
+      true,
+      "ein neuer Schritt",
+    );
+    assert.equal(t.log.user.at(-1), WETTER);
+    assert.equal(t.log.user.filter((u) => u === WETTER).length, 1);
+    assert.equal(t.log.errors.length, 0);
+    void d;
+  }));
+
+test("H10 nichts angezeigt (der Denker antwortet noch nicht): eine Unterbrechung durch getippten Text nimmt keine Zeile zurück", () =>
+  mitUhr(async () => {
+    const { d, t } = await gewoehnlich();
+    const verworfen = t.log.verworfen;
+    void t.engine.sendText(FOLGE);
+    assert.equal(
+      await bis(() => d.laeufe.length === 2),
+      true,
+      "der getippte Text beginnt einen Schritt",
+    );
+    assert.equal(t.log.verworfen, verworfen, "nichts war angezeigt");
+    assert.equal(t.abgebrochen(d.laeufe[0].requestId), 1);
   }));

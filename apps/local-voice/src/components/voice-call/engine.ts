@@ -421,6 +421,11 @@ interface Turn {
    * Läuft sie ab, endet der Schritt wie bei einem Abbruch.
    */
   stueckTimer?: ReturnType<typeof setTimeout>;
+  /**
+   * Die Wartegrenze (`stueckFrist`) hat den Schritt beendet, nicht der Nutzer. Eine Erkennung, die danach noch
+   * eintrifft, bleibt gültig (`aeusserungGilt`): ein Timeout überholt keine Äußerung.
+   */
+  abgelaufen?: boolean;
 }
 
 const PREROLL_FRAMES = 15;
@@ -1354,18 +1359,12 @@ export class VoiceCallEngine {
     // Läuft der Schritt (noch), entscheidet die Logik. Ist er weg, ohne abgebrochen zu sein (Fehler,
     // zu Ende gelaufen), ist die Äußerung ein gewöhnlicher neuer Beitrag; sonst gilt sie nicht mehr.
     const laeuft = this.turn === turn && !turn.cancelled;
-    if (!laeuft && (turn.cancelled || this.turn !== null)) return;
-    const inhalt = (laeuft ? this.gehoert(turn) : []).filter(
+    if (!this.aeusserungGilt(turn, laeuft)) return;
+    const stand = this.entscheidungsStand(turn, laeuft, spaet);
+    const inhalt = (stand ? this.gehoert(turn) : []).filter(
       (p) => p.kind === "inhalt",
     );
     const satz = inhalt.length > 0 ? inhalt[inhalt.length - 1].text : "";
-    // Nach der Frist ist die Antwort schon wieder zu hören: wie ein spätes Unterbrechen behandeln.
-    const stand: TurnStand | null = laeuft
-      ? {
-          ...this.stand(turn),
-          ersterSatzFertig: this.stand(turn).ersterSatzFertig || spaet,
-        }
-      : null;
     const d = entscheide(text, stand, turn.userText, satz);
     if (d.art === "weiter") {
       if (!spaet) this.releaseHold();
@@ -1392,6 +1391,36 @@ export class VoiceCallEngine {
       lastSpeechWall,
       performance.now() - t0,
     );
+  }
+
+  /**
+   * Gilt eine erkannte Äußerung noch, deren Schritt `turn` ist? Ja, solange er läuft; ist er weg, nur wenn nichts
+   * Neues begonnen hat und er von selbst zu Ende lief (Fehler, ausgesprochen) oder die Wartegrenze ihn beendet hat
+   * (`stueckFrist`): ein Timeout überholt keine Äußerung, die Erkennung durfte nur länger dauern. Nach Abbruch durch
+   * den Nutzer, Esc oder einen anderen Schritt gilt sie nicht mehr.
+   */
+  private aeusserungGilt(turn: Turn, laeuft: boolean): boolean {
+    if (laeuft) return true;
+    return this.turn === null && (!turn.cancelled || !!turn.abgelaufen);
+  }
+
+  /**
+   * Stand für die Entscheidung über eine erkannte Äußerung (`entscheide`). Läuft der Schritt, gilt sein Stand
+   * (`spaet`: die Antwort ist schon wieder zu hören, nichts mehr zusammenzuführen). Hat ihn die Wartegrenze
+   * beendet, gilt er als schon gehört: zusammengeführt wird nie, Rückmeldelaut und Stoppwort wirken wie sonst.
+   * Sonst ist die Äußerung ein gewöhnlicher neuer Beitrag (`null`).
+   */
+  private entscheidungsStand(
+    turn: Turn,
+    laeuft: boolean,
+    spaet: boolean,
+  ): TurnStand | null {
+    if (!laeuft && !turn.abgelaufen) return null;
+    const stand = this.stand(turn);
+    return {
+      ...stand,
+      ersterSatzFertig: stand.ersterSatzFertig || spaet || !laeuft,
+    };
   }
 
   /**
@@ -1654,11 +1683,12 @@ export class VoiceCallEngine {
     const laeuft = this.turn === kandidat && !kandidat.cancelled;
     // Der Schritt ist weg, weil ihn etwas anderes beendet hat (getippter Text, Esc, Widerruf): die Äußerung
     // gilt nicht mehr und darf weder den neuen Schritt abbrechen noch einen eigenen beginnen. Nur ein Schritt,
-    // der von selbst zu Ende lief (Fehler, ausgesprochen), lässt sie als gewöhnlichen Beitrag gelten.
-    if (!laeuft && (kandidat.cancelled || this.turn !== null)) return;
+    // der von selbst zu Ende lief (Fehler, ausgesprochen) oder dem die Wartegrenze ein Ende setzte, lässt sie
+    // gelten (`aeusserungGilt`).
+    if (!this.aeusserungGilt(kandidat, laeuft)) return;
     const d = entscheide(
       erkannt,
-      laeuft ? this.stand(kandidat) : null,
+      this.entscheidungsStand(kandidat, laeuft, false),
       kandidat.userText,
     );
     if (d.art === "weiter") {
@@ -3369,6 +3399,7 @@ export class VoiceCallEngine {
     if (turn.cancelled || turn.done || this.turn !== turn) return;
     if (turn.synthOffen <= 0 || this.held === turn || this.player?.active)
       return;
+    turn.abgelaufen = true;
     this.cancelTurn(true);
     if (!this.utt && this.inCall) this.setState("listening");
   }
@@ -3488,8 +3519,25 @@ export class VoiceCallEngine {
         ...(turn.withContext ? { ctx: true } : {}),
       });
       this.cb.onAssistant(heard, true, true, turn.nachreichen?.turnId);
+    } else if (interrupted && !turn.nachreichen) {
+      this.kuerzeAnzeige(turn);
     }
     this.player?.stop();
+  }
+
+  /**
+   * Der Schritt endet unterbrochen, ohne dass Inhalt zu hören war (Vorlage wie „Ich wiederhole.“, Weitersprechen
+   * des Sprechers, Ansage oder gar nichts): die angezeigte Zeile darf nichts Ungesprochenes behalten. Das Gehörte
+   * bleibt als unterbrochene Zeile stehen; war nichts zu hören, verschwindet die noch offene Zeile. Eine schon
+   * endgültige Zeile lässt sich nur kürzen, nicht zurücknehmen. (Mit Inhalt kürzt `cancelTurn` auf diesen.)
+   */
+  private kuerzeAnzeige(turn: Turn): void {
+    if (!turn.angezeigt) return;
+    const gehoert = this.gehoert(turn)
+      .map((p) => p.text)
+      .join(" ");
+    if (gehoert) this.cb.onAssistant(gehoert, true, true);
+    else if (!turn.finalSent) this.cb.onVerwerfen?.();
   }
 }
 
