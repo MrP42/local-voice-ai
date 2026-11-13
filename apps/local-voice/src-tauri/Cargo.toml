@@ -131,6 +131,11 @@ wai-konto = { path = "vendor/wai-konto" }
 wai-links = { path = "vendor/wai-links" }
 # Hörbuch-Sync: Abgleich Hörbuch ↔ Buchtext (eigenes Crate, ohne Abhängigkeiten).
 hoersync = { path = "../crates/hoersync" }
+# Besprechungsplanung (lva#534): Datenmodell, Regelpruefung, Einladungstext mit Marke, Abgleich mit dem
+# Kalender, Einwilligungs-Tor. Eigenes Crate mit eigenem `[workspace]` (wie hoersync: als Path-Dependency
+# stoert das nicht, es gibt kein uebergeordnetes Workspace). `specta` liefert die Typen fuer bindings.ts;
+# rusqlite und specta stehen dort auf denselben Versionen wie hier (ein SQLite im Programm).
+besprechungsplanung = { path = "../crates/besprechungsplanung", features = ["specta"] }
 wai-security = { path = "vendor/wai-security" }
 wai-storage = { path = "vendor/wai-storage" }
 wai-providers = { path = "vendor/wai-providers" }

@@ -1464,6 +1464,7 @@ fn cal(source: &str, uid: &str, title: &str, start: i64) -> CalEvent {
         location: None,
         join_url: None,
         description: None,
+        instance_start: None,
         attendees: vec![],
     }
 }
