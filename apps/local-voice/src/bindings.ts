@@ -10080,7 +10080,12 @@ export type AssistentenFehler =
 /**
  * Das Verzeichnis ließ sich nicht lesen.
  */
-"read_failed"
+"read_failed" | 
+/**
+ * Das Verzeichnis der Assistenten ist ein Link (Symlink, unter Windows Junction oder anderer Reparse-Punkt):
+ * nichts wird gelesen, geschrieben oder gelöscht, auch nicht außerhalb.
+ */
+"unsafe_path"
 /**
  * Alles, was im Verzeichnis liegt, in einem Zug (unter der Sperre, also ein stimmiger Stand).
  */

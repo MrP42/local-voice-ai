@@ -242,6 +242,14 @@ interface Auftrag {
   nachreichend: boolean;
 }
 
+/** Der Assistent an der Engine (lva#556): der des offenen Gesprächs und ob die Auswahl inzwischen eine andere ist. */
+export interface AssistentStand {
+  /** Mit diesem Assistenten läuft das Gespräch; `null`: keiner („Alles“). */
+  gilt: AssistentWirkung | null;
+  /** Die Auswahl ist eine andere; sie gilt ab dem nächsten neuen Gespräch. */
+  ausstehend: boolean;
+}
+
 export interface CallCallbacks {
   onState(state: CallState): void;
   onLevel(level: number): void;
@@ -290,6 +298,11 @@ export interface CallCallbacks {
   ): void;
   /** Buch-Gespräch: per Sprache auf „allgemein“ oder „im Buch“ gewechselt. */
   onTalkMode?(mode: TalkMode): void;
+  /**
+   * Der Stand des Assistenten an dieser Engine: `gilt` ist der, mit dem das offene Gespräch läuft; `ausstehend` heißt, dass
+   * die Auswahl inzwischen eine andere ist und erst im nächsten neuen Gespräch gilt (`setAssistent`).
+   */
+  onAssistentStand?(stand: AssistentStand): void;
   /**
    * Das Projekt des offenen Gespräches (aus dem gespeicherten Gespräch) und der Stand der Auswahl, den
    * die Person gesehen hat; `null` in einem gewöhnlichen Gespräch. Im Projekt gibt es keinen
@@ -705,45 +718,133 @@ export class VoiceCallEngine {
     this.generalMode = false;
     // Seitenwechsel: vorbereiteter Kontext gilt nicht mehr (Plan M5).
     this.globalContext.clear();
+    // Ein Buch-Gespräch hat die Sprechpause des Nutzers, ein anderes die des Assistenten.
+    this.turnNeu();
   }
 
   /**
    * Der gewählte Assistent (lva#556); `null` mit „Alles“ und ohne Auswahl: dann gilt, was die Nutzereinstellungen sagen,
    * und nichts ändert sich gegenüber früher. Wirkt auf den Rollenblock im Prompt (Sprecher, Denker, Sofort-Sprecher), die
-   * Begrenzung der Bereiche, Sprechpause und Unterbrechen. Im Buch-Gespräch (eigene Seite) und im Projektgespräch gilt er
-   * für Rolle und Wissen nicht: dort bestimmen eigene Regeln, was die KI sagt und kennt (Sprechpause und Unterbrechen
-   * gelten überall, sie gehören zur Stimme, nicht zum Inhalt).
+   * Begrenzung der Bereiche, Sprechpause und Unterbrechen. Im Projektgespräch und im Buch-Gespräch (eigene Seite) wirkt er
+   * gar nicht (`wirksamerAssistent`): dort bestimmen eigene Regeln, was die KI sagt und kennt, und die Nutzereinstellungen
+   * gelten für Sprechpause und Unterbrechen.
    */
   private assistent: AssistentWirkung | null = null;
+  /**
+   * Eine Änderung der Auswahl, die erst im nächsten neuen Gespräch gilt (`setAssistent` nach dem Beginn eines Gesprächs).
+   * Rolle und Begrenzung gehören zum Beginn eines Gesprächs: ein spät geladener oder geänderter Assistent darf sie in einem
+   * laufenden nicht wechseln.
+   */
+  private assistentAusstehend: { wirkung: AssistentWirkung | null } | null =
+    null;
   /** Werte der Platzhalter; gelesen, wenn ein Gespräch beginnt (`resetHistory`) oder der Assistent wechselt. */
   private rolleWerte: PlatzhalterWerte | null = null;
 
   /**
-   * Setzt den Assistenten (`null`: keiner). Der nächste Schritt baut den Orchestrator mit Rolle und Begrenzung neu; ein
-   * offener Auftrag fällt weg (er gehört zur alten Rolle), vorbereiteter Abrufkontext auch. Der Wechsel in der
-   * Oberfläche beginnt ein neues Gespräch, der Verlauf bleibt dabei nicht stehen.
+   * Hat ein Gespräch begonnen? Ja, sobald ein Anruf läuft (auch ohne ein Wort), ein Verlauf da ist oder ein Schritt offen
+   * ist. Ein neues Gespräch (`resetHistory`, auch über `setHistory`) beginnt von vorn.
    */
-  setAssistent(a: AssistentWirkung | null): void {
+  private get gespraechBegonnen(): boolean {
+    return (
+      this.history.length > 0 ||
+      this.state !== "idle" ||
+      this.utt !== null ||
+      this.turn !== null ||
+      this.textRun !== null ||
+      this.auftrag !== null
+    );
+  }
+
+  /** Meldet den Stand des Assistenten an die Oberfläche. */
+  private meldeAssistentStand(): void {
+    this.cb.onAssistentStand?.({
+      gilt: this.assistent,
+      ausstehend: this.assistentAusstehend !== null,
+    });
+  }
+
+  /**
+   * Der Assistent, soweit er im offenen Gespräch wirkt: nicht im Projektgespräch und nicht im Buch-Gespräch (eigene Seite,
+   * auch wenn dort „allgemein“ gesprochen wird). Dort bleibt alles, wie es ohne Assistenten wäre.
+   */
+  private wirksamerAssistent(): AssistentWirkung | null {
+    return this.projekt() || this.sideOverride ? null : this.assistent;
+  }
+
+  /**
+   * Sprechpause und Unterbrechen des Gesprächs: die des Nutzers, mit einem wirksamen Assistenten die seines Profils. Neu zu
+   * setzen, wenn sich der Assistent, die Einstellungen oder die Art des Gesprächs (Projekt, Buch) ändern.
+   */
+  turnNeu(): void {
+    this.taker.config = wirksamerTurn(this.cfg.turn, this.wirksamerAssistent());
+  }
+
+  /**
+   * Setzt den Assistenten (`null`: keiner). Rolle und Begrenzung gehören zum Beginn eines Gesprächs:
+   *  - Hat noch kein Gespräch begonnen (kein Anruf, kein Verlauf, kein offener Schritt), gilt er sofort und `true` kommt
+   *    zurück. Der nächste Schritt baut den Orchestrator mit Rolle und Begrenzung neu; vorbereiteter Abrufkontext fällt weg.
+   *  - Sonst behält das Gespräch seinen Assistenten, die Auswahl wartet bis zum nächsten neuen Gespräch (`resetHistory`) und
+   *    `false` kommt zurück. Nichts geht verloren: Verlauf, Auftrag und Kontext bleiben, die Oberfläche zeigt die Auswahl als
+   *    „ab dem nächsten Gespräch“ (`onAssistentStand`). Ein späteres `setAssistent` ersetzt die wartende Auswahl; ist es der
+   *    Assistent des Gesprächs, entfällt sie.
+   * Der Wechsel in der Oberfläche beginnt ein neues Gespräch (`newConversation`), dort gilt er.
+   */
+  setAssistent(a: AssistentWirkung | null): boolean {
+    if (this.gespraechBegonnen) {
+      const gleich = a?.profil === this.assistent?.profil;
+      this.assistentAusstehend = gleich ? null : { wirkung: a };
+      this.meldeAssistentStand();
+      return gleich;
+    }
+    this.assistentAusstehend = null;
+    this.uebernimmAssistent(a);
+    return true;
+  }
+
+  /** Der Assistent gilt jetzt: Rolle, Begrenzung, Sprechpause; offener Auftrag und vorbereiteter Kontext gehören zur alten Rolle. */
+  private uebernimmAssistent(a: AssistentWirkung | null): void {
     this.assistent = a;
     this.rolleWerte = a ? a.werte() : null;
-    this.taker.config = wirksamerTurn(this.cfg.turn, a);
+    this.turnNeu();
     this.globalContext.clear();
     this.invalidiere(true);
+    this.meldeAssistentStand();
+  }
+
+  /** Die wartende Auswahl gilt ab jetzt (ein neues Gespräch beginnt); ohne wartende Auswahl tut es nichts. */
+  private ausstehendUebernehmen(): void {
+    if (!this.assistentAusstehend) return;
+    const { wirkung } = this.assistentAusstehend;
+    this.assistentAusstehend = null;
+    this.assistent = wirkung;
+    this.turnNeu();
+    this.session.invalidate();
+    this.globalContext.clear();
+    this.meldeAssistentStand();
+  }
+
+  /**
+   * Ein Anruf oder Text beginnt ohne Verlauf (etwa nach einem leeren Anruf, der beendet wurde, bevor etwas gesagt war): dann
+   * hat noch kein Gespräch begonnen, und eine wartende Auswahl gilt.
+   */
+  private leereAuswahlUebernehmen(): void {
+    if (!this.gespraechBegonnen) this.ausstehendUebernehmen();
   }
 
   /**
    * Liest die Werte der Platzhalter neu (der Name wird erst bekannt, wenn das Konto geladen ist, oder ändert sich); wirkt
-   * ab dem nächsten Schritt. Ohne Assistent tut es nichts.
+   * ab dem nächsten Schritt, aber nur, solange noch kein Gespräch begonnen hat: danach gelten die Werte vom Beginn des
+   * Gesprächs, und ein neues liest sie neu (`resetHistory`). Ohne Assistent tut es nichts.
    */
   werteNeu(): void {
-    if (!this.assistent) return;
+    if (!this.assistent || this.gespraechBegonnen) return;
     this.rolleWerte = this.assistent.werte();
     this.invalidiere(false);
   }
 
   /** Was der Assistent am nächsten Schritt ändert (für die Orchestrierung); `null` ohne Assistent. */
   private assistentSicht(): AssistentSicht | null {
-    const a = this.assistent;
+    const a = this.wirksamerAssistent();
     if (!a) return null;
     const werte = (this.rolleWerte ??= a.werte());
     return {
@@ -812,7 +913,7 @@ export class VoiceCallEngine {
     if (side || this.bookSide || !this.speakerLocal) return null;
     if (!this.globalContextOn()) return null;
     // Der Assistent kann die Bereiche begrenzen: bleibt keiner mit Abrufindex, gibt es keinen Abruf; sonst schneidet Rust.
-    const grenze = begrenzung(this.assistent);
+    const grenze = begrenzung(this.wirksamerAssistent());
     if (!hatAbrufBereich(grenze)) return null;
     const conversationId = (await this.cb.conversationId?.()) ?? null;
     const ctx =
@@ -884,6 +985,8 @@ export class VoiceCallEngine {
     this.generation++;
     this.verwerfeAuftrag();
     this.session.invalidate();
+    // Ein neues Gespräch beginnt mit der Auswahl, die inzwischen gilt (Rolle und Begrenzung gehören zum Beginn).
+    this.ausstehendUebernehmen();
     // Datum und Uhrzeit der Rolle gelten ab dem Beginn des Gesprächs.
     this.rolleWerte = this.assistent ? this.assistent.werte() : null;
     this.cancelText(false);
@@ -997,7 +1100,7 @@ export class VoiceCallEngine {
       JSON.stringify(cfg.orchestration);
     this.cfg = cfg;
     this.invalidiere(wechsel);
-    this.taker.config = wirksamerTurn(cfg.turn, this.assistent);
+    this.turnNeu();
   }
 
   /**
@@ -1028,6 +1131,7 @@ export class VoiceCallEngine {
     // `voice_call_start` noch lädt, darf der alte nach dem Warten nichts mehr anlegen.
     const gen = ++this.startGen;
     const aborted = () => this.stopped || gen !== this.startGen;
+    this.leereAuswahlUebernehmen();
     this.stopped = false;
     this.setState("starting");
     let ctx: AudioContext | null = null;
@@ -1805,6 +1909,7 @@ export class VoiceCallEngine {
   async sendText(text: string, display?: string): Promise<void> {
     const clean = text.trim();
     if (!clean) return;
+    this.leereAuswahlUebernehmen();
     if (!this.inCall) {
       await this.runTextOnly(clean, display);
       return;

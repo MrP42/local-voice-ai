@@ -45,8 +45,9 @@ import { Transcript } from "./Transcript";
 import { SprachRecherche } from "../projekte/SprachRecherche";
 import { useKonto } from "../konto/useKonto";
 import { greetingKey, greetingName } from "./greeting";
+import { useGeltenderAssistent } from "./profil/gilt";
 import { begruessung, werteJetzt } from "./profil/wirkung";
-import { aktuelleWirkung, useAssistentStore } from "@/stores/assistentStore";
+import { useAssistentStore } from "@/stores/assistentStore";
 import { ChatGuide } from "./guide/ChatGuide";
 import { useIntroTourStore } from "@/stores/introTourStore";
 
@@ -161,15 +162,13 @@ export const VoiceCallPage: React.FC = () => {
   }, [hasLines, guidePending]);
   // Je Aufruf der Seite eine andere Variante, innerhalb des Aufrufs stabil.
   const [greetingSeed] = useState(() => Date.now());
-  const assistenten = useAssistentStore((s) => s.assistenten);
   const wahlFehler = useAssistentStore((s) => s.wahlFehler);
+  // Der Assistent, der im Gespräch gilt (nicht im Projektgespräch, und eine spät eintreffende Auswahl erst ab dem nächsten).
+  const { wirkung: geltender } = useGeltenderAssistent();
   const greeting = useMemo(() => {
     const name = greetingName(profil);
     // Ein gewählter Assistent hat eine feste Begrüßung (kein Modell, kein Verlaufseintrag); sonst die allgemeine.
-    const fest = begruessung(
-      aktuelleWirkung({ assistenten }),
-      werteJetzt(name || null),
-    );
+    const fest = begruessung(geltender, werteJetzt(name || null));
     if (fest) return fest;
     const { key, index } = greetingKey(
       new Date().getHours(),
@@ -180,7 +179,7 @@ export const VoiceCallPage: React.FC = () => {
     return Array.isArray(variants)
       ? String(variants[index] ?? variants[0])
       : String(variants);
-  }, [profil, assistenten, greetingSeed, t]);
+  }, [profil, geltender, greetingSeed, t]);
 
   // Die eigenen Assistenten laden; der Name aus dem Konto füllt die Platzhalter (nicht die Anrede ohne Namen).
   const kontoName = greetingName(profil);
@@ -493,7 +492,9 @@ export const VoiceCallPage: React.FC = () => {
                 ? "voiceCall.assistant.saveOccupied"
                 : wahlFehler === "read_failed"
                   ? "voiceCall.assistant.saveReadFailed"
-                  : "voiceCall.assistant.saveFailed",
+                  : wahlFehler === "unsafe_path"
+                    ? "voiceCall.assistant.saveUnsafe"
+                    : "voiceCall.assistant.saveFailed",
             ),
           },
         ]

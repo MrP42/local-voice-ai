@@ -7741,6 +7741,8 @@
       "chipCount_other": "{{level}} · {{count}} areas",
       "level": "Sovereignty",
       "knowledge": "Knowledge",
+      "titleAssistent": "Shared: {{frei}}. The assistant “{{name}}” uses {{count}} of them.",
+      "vomAssistentAusgelassen": "not used by the assistant",
       "allSettings": "All settings …"
     },
     "model": {
@@ -7755,18 +7757,22 @@
       "title": "Choose assistant",
       "aria": "Assistant: {{name}}",
       "ariaProjekt": "Assistant: {{name}} (does not apply in a project conversation)",
+      "ariaSpaeter": "Assistant: {{name}} (applies from the next conversation)",
+      "spaeter": "This choice applies from the next conversation. The current one keeps its assistant.",
       "projekt": "In a project conversation the assistant does not apply.",
       "all": "Everything",
       "groupAll": "Default",
       "groupTemplates": "Templates",
       "groupOwn": "My assistants",
       "switched": "New conversation with assistant {{name}}.",
-      "loadFailed": "Your own assistants cannot be read. Only the templates are available.",
+      "loadFailed": "Your own assistants cannot be read. Until that is fixed the assistant cannot be changed; Everything applies.",
+      "loadUnsafe": "The folder of your assistants is a link to another folder and is not used for security reasons. Until that is fixed the assistant cannot be changed; Everything applies.",
       "rejected_one": "{{count}} file is invalid and is not used.",
       "rejected_other": "{{count}} files are invalid and are not used.",
       "saveFailed": "The choice could not be saved. The assistant stays as it was.",
       "saveOccupied": "The choice cannot be saved: the file aktiv.json is in use by something else. The assistant stays as it was.",
-      "saveReadFailed": "The choice cannot be saved because your assistants cannot be read."
+      "saveReadFailed": "The choice cannot be saved because your assistants cannot be read.",
+      "saveUnsafe": "The choice cannot be saved: the folder of your assistants is a link to another folder and is not used for security reasons."
     },
     "options": {
       "label": "Conversation options",

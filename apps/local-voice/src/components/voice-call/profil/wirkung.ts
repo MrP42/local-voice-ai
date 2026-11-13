@@ -53,6 +53,30 @@ export function werteJetzt(
   };
 }
 
+/** Der Stand des Assistenten an der Engine (Spiegel von `AssistentStand` der Engine, ohne sie zu laden). */
+export interface GiltStand {
+  /** Mit diesem Assistenten läuft das offene Gespräch; `null`: keiner. */
+  gilt: AssistentWirkung | null;
+  /** Die Auswahl ist eine andere und gilt erst ab dem nächsten Gespräch. */
+  ausstehend: boolean;
+}
+
+/**
+ * Welcher Assistent im offenen Gespräch gilt, für die Anzeige (Begrüßung, Bereichs-Chip): im Projektgespräch keiner; sonst der
+ * gewählte, außer die Auswahl ist erst nach dem Beginn des Gesprächs eingetroffen (`ausstehend`): dann gilt noch der, mit dem
+ * das Gespräch läuft.
+ */
+export function geltender(
+  imProjekt: boolean,
+  stand: GiltStand,
+  gewaehlt: AssistentWirkung | null,
+): { wirkung: AssistentWirkung | null; ausstehend: boolean } {
+  if (imProjekt) return { wirkung: null, ausstehend: false };
+  return stand.ausstehend
+    ? { wirkung: stand.gilt, ausstehend: true }
+    : { wirkung: gewaehlt, ausstehend: false };
+}
+
 // ---------------------------------------------------------------- Rollenblock
 
 /** Zeichen, die ein Modell mit höchstens 4096 Token Kontext für die Rolle bekommt. */

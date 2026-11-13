@@ -50,6 +50,9 @@ function eigenerText(id, aenderung = (p) => p) {
   return kodiereProfil(aenderung(kopie.profil));
 }
 
+const { useAssistentStore: assistentenStore } =
+  await import("../src/stores/assistentStore.ts");
+
 // ===================================================================== Ladeschicht
 
 /**
@@ -209,6 +212,60 @@ test("Ladeschicht: ein nicht lesbarer Speicher gibt nur die Vorlagen und „Alle
   }
 });
 
+test("Ladeschicht: ein verlinktes Verzeichnis (unsafe_path) bleibt ein eigener Fehlercode, nichts wird gelesen oder geschrieben (B1)", async () => {
+  const s = platte({ dateien: { "eigen-a.json": eigenerText("eigen-a") } });
+  s.listeFehler = "unsafe_path";
+  const a = await speicher.ladeAssistenten(tauriZugriff);
+  assert.equal(a.ladefehler, "unsafe_path");
+  assert.equal(a.aktivId, ALLES_ID);
+  assert.equal(a.eigene.length, 0);
+  assert.deepEqual(s.calls, ["liste"]);
+  // Eine Auswahl wird dann nicht versucht, und der Fehler sagt es genau.
+  assistentenStore.setState({
+    assistenten: a,
+    geladen: true,
+    wahlFehler: null,
+  });
+  assert.equal(
+    await assistentenStore.getState().waehlen("vorlage-lernpartner"),
+    false,
+  );
+  assert.equal(assistentenStore.getState().wahlFehler, "unsafe_path");
+  assert.deepEqual(s.calls, ["liste"], "kein Schreibversuch");
+  // Auch ein Schreibbefehl, den Rust mit unsafe_path abweist, kommt als SpeicherFehler mit diesem Code an.
+  s.listeFehler = null;
+  s.setzeFehler = "unsafe_path";
+  const b = await speicher.ladeAssistenten(tauriZugriff);
+  await assert.rejects(
+    speicher.waehleAssistent(tauriZugriff, b, "vorlage-lernpartner"),
+    (e) => e.code === "unsafe_path",
+  );
+});
+
+test("Ladeschicht: Dateinamen mit Großbuchstaben oder großer Endung sind abgewiesen und werden nie benutzt (Windows: dieselbe Datei)", async () => {
+  platte({
+    dateien: {
+      "Eigen-A.json": eigenerText("eigen-a"),
+      "eigen-b.JSON": eigenerText("eigen-b"),
+      "eigen-c.json": eigenerText("eigen-c"),
+    },
+  });
+  const a = await speicher.ladeAssistenten(tauriZugriff);
+  assert.deepEqual(
+    a.eigene.map((e) => e.profil.id),
+    ["eigen-c"],
+  );
+  assert.deepEqual(a.abgewiesen.map((x) => x.datei).sort(), [
+    "Eigen-A.json",
+    "eigen-b.JSON",
+  ]);
+  for (const x of a.abgewiesen)
+    assert.deepEqual(
+      x.fehler.map((f) => [f.pfad, f.code]),
+      [["id", "muster"]],
+    );
+});
+
 test("Auswahl: unbekannte Id ist not_found ohne Aufruf, eine gültige schreibt genau einmal, ein Fehler bleibt ein SpeicherFehler", async () => {
   const s = platte({ dateien: { "eigen-a.json": eigenerText("eigen-a") } });
   const a = await speicher.ladeAssistenten(tauriZugriff);
@@ -250,6 +307,38 @@ const werte =
   () =>
     wirkung.werteJetzt(name, jetzt);
 const wirkungVon = (id, w = werte()) => wirkung.wirkungFuer(vorlage(id), w);
+
+test("Anzeige: im Projektgespräch gilt kein Assistent, sonst der gewählte, mit wartender Auswahl der des Gesprächs", () => {
+  const lp = wirkungVon("vorlage-lernpartner");
+  const bn = wirkungVon("vorlage-besprechung-nachbereiten");
+  const still = { gilt: null, ausstehend: false };
+  assert.deepEqual(wirkung.geltender(false, still, lp), {
+    wirkung: lp,
+    ausstehend: false,
+  });
+  assert.deepEqual(wirkung.geltender(false, still, null), {
+    wirkung: null,
+    ausstehend: false,
+  });
+  // Projekt: kein Assistent, auch nicht der, der an der Engine liegt.
+  assert.deepEqual(wirkung.geltender(true, still, lp), {
+    wirkung: null,
+    ausstehend: false,
+  });
+  assert.deepEqual(
+    wirkung.geltender(true, { gilt: bn, ausstehend: true }, lp),
+    { wirkung: null, ausstehend: false },
+  );
+  // Die Auswahl (lp) wartet auf das nächste Gespräch: es gilt noch der des Gesprächs (bn, oder keiner).
+  assert.deepEqual(
+    wirkung.geltender(false, { gilt: bn, ausstehend: true }, lp),
+    { wirkung: bn, ausstehend: true },
+  );
+  assert.deepEqual(
+    wirkung.geltender(false, { gilt: null, ausstehend: true }, lp),
+    { wirkung: null, ausstehend: true },
+  );
+});
 
 test("Wirkung: „Alles“ wirkt nicht, jede andere Vorlage schon", () => {
   assert.equal(wirkung.wirkungFuer(vorlage(ALLES_ID), werte()), null);
@@ -854,7 +943,11 @@ const TREFFER = {
   version: "00",
 };
 
-/** Die Engine mit nachgeahmtem Tauri; `prepare` merkt sich, was die Orchestrierung bekommen hat. */
+/**
+ * Die Engine mit nachgeahmtem Tauri; `prepare` merkt sich, was die Orchestrierung bekommen hat. Sie steht im Ruhezustand
+ * (kein Gespräch begonnen); `start` setzt den Anruf in Gang, danach hat ein Gespräch begonnen. `projekt` ist ein Wert oder
+ * eine Funktion (das Projekt kann sich ändern).
+ */
 function neu({
   handlers = {},
   sofort = null,
@@ -903,7 +996,7 @@ function neu({
     app_context_verify: () => [1],
     ...handlers,
   };
-  const log = { errors: [], assistant: [] };
+  const log = { errors: [], assistant: [], stand: [] };
   const engine = new VoiceCallEngine(
     {
       onState() {},
@@ -913,7 +1006,10 @@ function neu({
       onAssistant: (t, final) => log.assistant.push({ t, final }),
       onError: (e) => log.errors.push(String(e)),
       conversationId: () => "c1",
-      ...(projekt ? { projekt: () => projekt } : {}),
+      onAssistentStand: (stand) => log.stand.push(stand),
+      ...(projekt
+        ? { projekt: typeof projekt === "function" ? projekt : () => projekt }
+        : {}),
     },
     { systemPrompt: "sys", turn: DEFAULT_TURN_CONFIG, orchestration: {} },
   );
@@ -921,10 +1017,10 @@ function neu({
   const player = new SpeechPlayer(null);
   player.onIdle = () => engine.playerLeer();
   engine.player = player;
-  engine.state = "listening";
   engine.stopped = false;
   engine.speakerLocal = kontext;
   const start = (text) => {
+    engine.state = "listening";
     const turn = engine.newTurn(0, performance.now());
     engine.turn = turn;
     turn.committed = true;
@@ -1085,6 +1181,195 @@ test("Engine: im Projektgespräch gilt der Assistent für Rolle und Wissen nicht
   assert.equal(t.aufrufe("app_context_retrieve").length, 0);
 });
 
+test("Engine: im Projektgespräch gelten Sprechpause und Unterbrechen des Nutzers, nicht die des Assistenten (B3)", () => {
+  const gs = wirkungVon("vorlage-gedanken-sortieren");
+  assert.equal(wirkung.wirksamerTurn(DEFAULT_TURN_CONFIG, gs).endMs, 1300);
+  // Das Projekt ist von Anfang an da.
+  const p = neu({ projekt: { projectId: "p1" } });
+  p.engine.setAssistent(gs);
+  assert.deepEqual(turnVon(p.engine), DEFAULT_TURN_CONFIG);
+  const eigene = { ...DEFAULT_TURN_CONFIG, endMs: 600, bargeIn: true };
+  p.engine.updateConfig({
+    systemPrompt: "sys",
+    turn: eigene,
+    orchestration: {},
+  });
+  assert.deepEqual(turnVon(p.engine), eigene, "Einstellungen des Nutzers");
+  // Das Projekt kommt erst nach dem Assistenten (ein Projektgespräch wird geöffnet) und geht wieder.
+  let projekt = null;
+  const w = neu({ projekt: () => projekt });
+  w.engine.setAssistent(gs);
+  assert.deepEqual(
+    [turnVon(w.engine).endMs, turnVon(w.engine).bargeIn],
+    [1300, false],
+  );
+  projekt = { projectId: "p1" };
+  w.engine.turnNeu();
+  assert.deepEqual(turnVon(w.engine), DEFAULT_TURN_CONFIG);
+  w.engine.updateConfig({
+    systemPrompt: "sys",
+    turn: eigene,
+    orchestration: {},
+  });
+  assert.deepEqual(turnVon(w.engine), eigene);
+  projekt = null;
+  w.engine.turnNeu();
+  assert.deepEqual(
+    [turnVon(w.engine).endMs, turnVon(w.engine).bargeIn],
+    [1300, false],
+    "wieder ein gewöhnliches Gespräch: der Assistent gilt",
+  );
+});
+
+test("Engine: im Buchgespräch gelten Sprechpause und Unterbrechen des Nutzers, auch wenn „allgemein“ gesprochen wird (B3)", async () => {
+  const gs = wirkungVon("vorlage-gedanken-sortieren");
+  const t = neu({ kontext: true });
+  t.engine.setAssistent(gs);
+  assert.equal(turnVon(t.engine).endMs, 1300);
+  t.engine.setSideOverride({});
+  assert.deepEqual(turnVon(t.engine), DEFAULT_TURN_CONFIG, "Buchseite");
+  const eigene = { ...DEFAULT_TURN_CONFIG, endMs: 600 };
+  t.engine.updateConfig({
+    systemPrompt: "sys",
+    turn: eigene,
+    orchestration: {},
+  });
+  assert.deepEqual(turnVon(t.engine), eigene);
+  // „Allgemein“ im Buchgespräch: dasselbe Gespräch, derselbe Takt, und weder Rolle noch Begrenzung.
+  t.engine.setTalkMode("general");
+  assert.deepEqual(turnVon(t.engine), eigene);
+  await t.start("Wer übernimmt das Protokoll?");
+  assert.equal(t.preps.length, 1);
+  assert.equal(t.preps[0].assistent, null, "keine Rolle im Buchgespräch");
+  assert.equal(t.aufrufe("app_context_retrieve")[0].args.req.area_cap, null);
+  // Zurück in ein gewöhnliches Gespräch: der Assistent gilt wieder.
+  t.engine.setSideOverride(null);
+  assert.deepEqual(
+    [turnVon(t.engine).endMs, turnVon(t.engine).bargeIn],
+    [1300, false],
+  );
+});
+
+test("Engine: eine Auswahl, die nach dem Beginn des Gesprächs eintrifft, gilt erst im nächsten neuen Gespräch (B2)", async () => {
+  const lp = wirkungVon("vorlage-lernpartner");
+  const bn = wirkungVon("vorlage-tagesrueckblick");
+  const t = neu({ kontext: true });
+  assert.equal(
+    t.engine.setAssistent(lp),
+    true,
+    "vor dem Beginn gilt sie sofort",
+  );
+  assert.equal(t.log.stand.at(-1).gilt, lp);
+  assert.equal(t.log.stand.at(-1).ausstehend, false);
+  await t.start("Eins.");
+  const takt = { ...turnVon(t.engine) };
+  let werteGelesen = 0;
+  const w0 = t.engine.werteNeu.bind(t.engine);
+  assert.equal(t.engine.setAssistent(bn), false, "das Gespräch läuft schon");
+  assert.equal(t.log.stand.at(-1).gilt, lp);
+  assert.equal(t.log.stand.at(-1).ausstehend, true);
+  // Die neue Wirkung steht nirgends: Rolle, Begrenzung, Sprechpause und Abruf sind noch die des Gesprächs.
+  await t.start("Zwei.");
+  assert.match(
+    t.preps[1].assistent.rolle(1200).text,
+    /^ROLLE \(vom Nutzer eingestellt, Assistent „Lernpartner“\)/,
+  );
+  assert.deepEqual(t.preps[1].assistent.grenze, wirkung.begrenzung(lp));
+  assert.deepEqual(turnVon(t.engine), takt);
+  assert.deepEqual(
+    t.aufrufe("app_context_retrieve").map((c) => c.args.req.area_cap),
+    [wirkung.begrenzung(lp), wirkung.begrenzung(lp)],
+  );
+  // Auch die Werte der Platzhalter ändern sich im laufenden Gespräch nicht.
+  const werte0 = t.engine.rolleWerte;
+  t.engine.werteNeu();
+  assert.equal(t.engine.rolleWerte, werte0);
+  assert.equal(werteGelesen, 0);
+  void w0;
+  // Ein neues Gespräch übernimmt die wartende Auswahl.
+  t.engine.resetHistory();
+  assert.equal(t.log.stand.at(-1).gilt, bn);
+  assert.equal(t.log.stand.at(-1).ausstehend, false);
+  assert.deepEqual(
+    turnVon(t.engine),
+    wirkung.wirksamerTurn(DEFAULT_TURN_CONFIG, bn),
+  );
+  assert.notDeepEqual(
+    turnVon(t.engine),
+    takt,
+    "die Sprechpause wechselt erst jetzt",
+  );
+  await t.start("Drei.");
+  assert.deepEqual(t.preps[2].assistent.grenze, wirkung.begrenzung(bn));
+  assert.deepEqual(
+    t.aufrufe("app_context_retrieve").at(-1).args.req.area_cap,
+    wirkung.begrenzung(bn),
+  );
+  assert.equal(t.log.errors.length, 0);
+});
+
+test("Engine: ein spät geladener Assistent ändert ein Gespräch ohne Assistent nicht, das nächste nutzt ihn (B2)", async () => {
+  const lp = wirkungVon("vorlage-lernpartner");
+  const t = neu({ kontext: true });
+  await t.start("Eins.");
+  assert.equal(t.preps[0].assistent, null);
+  assert.equal(t.engine.setAssistent(lp), false);
+  await t.start("Zwei.");
+  assert.equal(t.preps[1].assistent, null, "keine Rolle mitten im Gespräch");
+  assert.deepEqual(
+    t.aufrufe("app_context_retrieve").map((c) => c.args.req.area_cap),
+    [null, null],
+  );
+  assert.deepEqual(turnVon(t.engine), DEFAULT_TURN_CONFIG);
+  t.engine.resetHistory();
+  await t.start("Drei.");
+  assert.ok(t.preps[2].assistent);
+  assert.equal(
+    t.aufrufe("app_context_retrieve").at(-1).args.req.area_cap.length > 0,
+    true,
+  );
+  assert.equal(t.log.errors.length, 0);
+});
+
+test("Engine: auch ein Anruf ohne ein Wort hat begonnen; wartende Auswahl entfällt, wenn sie wieder die des Gesprächs ist (B2)", () => {
+  const lp = wirkungVon("vorlage-lernpartner");
+  const bn = wirkungVon("vorlage-besprechung-nachbereiten");
+  const t = neu();
+  t.engine.setAssistent(lp);
+  t.engine.state = "listening";
+  assert.equal(t.engine.setAssistent(bn), false, "ein Anruf läuft");
+  assert.equal(t.log.stand.at(-1).ausstehend, true);
+  // Zurück zum Assistenten des Gesprächs: nichts wartet mehr.
+  assert.equal(t.engine.setAssistent(lp), true);
+  assert.equal(t.log.stand.at(-1).gilt, lp);
+  assert.equal(t.log.stand.at(-1).ausstehend, false);
+  t.engine.resetHistory();
+  assert.equal(t.engine.assistent, lp);
+  // Ohne Anruf und ohne Verlauf wirkt es sofort.
+  t.engine.state = "idle";
+  assert.equal(t.engine.setAssistent(bn), true);
+  assert.equal(t.engine.assistent, bn);
+  assert.equal(t.log.stand.at(-1).ausstehend, false);
+});
+
+test("Engine: ein leerer Anruf, der ohne ein Wort endete, hat kein Gespräch begonnen: die wartende Auswahl gilt beim nächsten Schritt (B2)", async () => {
+  const lp = wirkungVon("vorlage-lernpartner");
+  const bn = wirkungVon("vorlage-besprechung-nachbereiten");
+  const t = neu({ kontext: true });
+  t.engine.setAssistent(lp);
+  t.engine.state = "listening";
+  assert.equal(t.engine.setAssistent(bn), false);
+  // Der Anruf endet leer (Verlauf bleibt leer): die Auswahl wartet nur, bis etwas Neues beginnt.
+  t.engine.state = "idle";
+  assert.equal(t.engine.assistent, lp);
+  assert.equal(t.log.stand.at(-1).ausstehend, true);
+  await t.engine.sendText("Hallo");
+  assert.equal(t.engine.assistent, bn);
+  assert.equal(t.log.stand.at(-1).ausstehend, false);
+  assert.equal(t.preps.at(-1).assistent.grenze[0], "meetings");
+  assert.equal(t.log.errors.length, 0);
+});
+
 test("Engine: die Werte der Platzhalter gelten ab dem Beginn des Gesprächs, nicht je Schritt", async () => {
   let n = 0;
   const w = () => (
@@ -1103,6 +1388,7 @@ test("Engine: die Werte der Platzhalter gelten ab dem Beginn des Gesprächs, nic
   t.engine.setAssistent(null);
   t.engine.resetHistory();
   assert.equal(n, 2, "ohne Assistent liest niemand");
+  t.engine.state = "idle";
   t.engine.setAssistent(a);
   t.engine.werteNeu();
   assert.equal(n, 4);
@@ -1111,11 +1397,12 @@ test("Engine: die Werte der Platzhalter gelten ab dem Beginn des Gesprächs, nic
   assert.equal(n, 4, "ohne Assistent tut werteNeu nichts");
 });
 
-test("Engine: ein Wechsel des Assistenten verwirft vorbereiteten Abrufkontext und baut neu", async () => {
+test("Engine: ein Wechsel des Assistenten verwirft vorbereiteten Abrufkontext und baut im neuen Gespräch neu", async () => {
   const t = neu({ kontext: true });
   t.engine.setAssistent(wirkungVon("vorlage-lernpartner"));
   await t.start("Eins.");
   t.engine.setAssistent(wirkungVon("vorlage-besprechung-nachbereiten"));
+  t.engine.resetHistory();
   await t.start("Zwei.");
   const caps = t
     .aufrufe("app_context_retrieve")
@@ -1334,6 +1621,8 @@ test("Speicher: der erste Schritt wartet auf das Laden, die Rolle ist von Anfang
     name: null,
     wahlFehler: null,
   });
+  // Ein frisches Gespräch (die Engine des Speichers lebt über die Tests hinweg; ein altes Gespräch behielte seinen Assistenten).
+  await store.getState().newConversation();
   const preps = [];
   tauri.prepare = (cfg) => {
     preps.push(cfg);
@@ -1364,6 +1653,8 @@ test("Speicher: hängt das Laden, geht das Gespräch nach der Wartezeit mit „A
     name: null,
     wahlFehler: null,
   });
+  // Ein frisches Gespräch (die Engine des Speichers lebt über die Tests hinweg; ein altes Gespräch behielte seinen Assistenten).
+  await store.getState().newConversation();
   const preps = [];
   tauri.prepare = (cfg) => {
     preps.push(cfg);
@@ -1423,4 +1714,127 @@ test("Speicher: ein Laden, das während einer Auswahl liest, überschreibt sie n
     assistenten.getState().assistenten.aktivId,
     "vorlage-lernpartner",
   );
+});
+
+test("Speicher: ein spät geladener Assistent wechselt die Rolle nie mitten im Gespräch, das nächste Gespräch nutzt ihn (B2)", async () => {
+  const s = platte({ aktiv: "vorlage-lernpartner" });
+  const offen = deferred();
+  s.liste = () => offen.promise;
+  Object.assign(tauri.handlers, speicherHandlers());
+  assistenten.setState({
+    assistenten: speicher.nurVorlagen(null),
+    geladen: false,
+    name: null,
+    wahlFehler: null,
+  });
+  await store.getState().newConversation();
+  const preps = [];
+  tauri.prepare = (cfg) => {
+    preps.push(cfg);
+    return { side: null, blocked: false, systemPrompt: cfg.systemPrompt };
+  };
+  tauri.calls = [];
+  const engine = globalThis.window.__voiceCallEngine;
+  // Die Wartezeit läuft ab, das Gespräch beginnt mit „Alles“ …
+  await store.getState().sendText("Erste Frage");
+  assert.equal(preps[0].assistent ?? null, null);
+  assert.equal(store.getState().assistentStand.ausstehend, false);
+  // … und erst danach kommt das Laden an.
+  offen.resolve({
+    dateien: [],
+    aktiv_id: "vorlage-lernpartner",
+    aktiv_belegt: false,
+  });
+  await settle(30);
+  assert.equal(
+    assistenten.getState().assistenten.aktivId,
+    "vorlage-lernpartner",
+  );
+  assert.equal(
+    engine.assistent,
+    null,
+    "das laufende Gespräch behält seine Wirkung",
+  );
+  assert.equal(store.getState().assistentStand.ausstehend, true);
+  assert.equal(store.getState().assistentStand.gilt, null);
+  await store.getState().sendText("Zweite Frage");
+  assert.equal(
+    preps.at(-1).assistent ?? null,
+    null,
+    "keine Rolle im laufenden Gespräch",
+  );
+  assert.deepEqual(turnVon(engine), store.getState().config.turn);
+  // Das nächste neue Gespräch nutzt das geladene Profil.
+  await store.getState().newConversation();
+  assert.equal(store.getState().assistentStand.ausstehend, false);
+  assert.equal(engine.assistent?.profil.id, "vorlage-lernpartner");
+  await store.getState().sendText("Dritte Frage");
+  assert.match(
+    preps.at(-1).assistent.rolle(1200).text,
+    /^ROLLE \(vom Nutzer eingestellt, Assistent „Lernpartner“\)/,
+  );
+  assert.deepEqual(
+    turnVon(engine),
+    wirkung.wirksamerTurn(
+      store.getState().config.turn,
+      wirkung.wirkungFuer(vorlage("vorlage-lernpartner"), werte),
+    ),
+  );
+  await engine.dispose();
+});
+
+test("Speicher: ein nachgeladener, geänderter Text des aktiven Assistenten gilt erst im nächsten Gespräch (B2)", async () => {
+  const alt = eigenerText("eigen-a", (p) => ({ ...p, anweisungen: "Alt." }));
+  const { s, engine } = await speicherNeu({
+    dateien: { "eigen-a.json": alt },
+    aktiv: "eigen-a",
+  });
+  const preps = [];
+  tauri.prepare = (cfg) => {
+    preps.push(cfg);
+    return { side: null, blocked: false, systemPrompt: cfg.systemPrompt };
+  };
+  await store.getState().sendText("Erste Frage");
+  assert.match(preps.at(-1).assistent.rolle(1200).text, /Alt\./);
+  // Die Datei ändert sich (z. B. im Editor) und wird nachgeladen: das Gespräch bleibt bei „Alt.“.
+  s.dateien.set(
+    "eigen-a.json",
+    eigenerText("eigen-a", (p) => ({ ...p, anweisungen: "Neu." })),
+  );
+  await assistenten.getState().laden();
+  assert.equal(store.getState().assistentStand.ausstehend, true);
+  await store.getState().sendText("Zweite Frage");
+  assert.match(preps.at(-1).assistent.rolle(1200).text, /Alt\./);
+  assert.doesNotMatch(preps.at(-1).assistent.rolle(1200).text, /Neu\./);
+  await store.getState().newConversation();
+  assert.equal(store.getState().assistentStand.ausstehend, false);
+  await store.getState().sendText("Dritte Frage");
+  assert.match(preps.at(-1).assistent.rolle(1200).text, /Neu\./);
+  assert.doesNotMatch(preps.at(-1).assistent.rolle(1200).text, /Alt\./);
+  await engine.dispose();
+});
+
+test("Speicher: ein Projektgespräch hat die Sprechpause des Nutzers, auch mit gewähltem Assistenten (B3)", async () => {
+  const { engine } = await speicherNeu({ aktiv: "vorlage-gedanken-sortieren" });
+  const nutzer = store.getState().config.turn;
+  assert.equal(
+    turnVon(engine).endMs,
+    1300,
+    "gewöhnliches Gespräch: der Assistent",
+  );
+  tauri.handlers.conversation_create = ({ projectId }) => ({
+    id: "k-projekt",
+    projectId,
+  });
+  await store.getState().newProjectConversation("p1", null);
+  assert.equal(store.getState().projectId, "p1");
+  assert.deepEqual(
+    turnVon(engine),
+    nutzer,
+    "Projektgespräch: die Einstellungen des Nutzers",
+  );
+  await store.getState().newConversation();
+  assert.equal(store.getState().projectId, null);
+  assert.equal(turnVon(engine).endMs, 1300, "wieder gewöhnlich");
+  await engine.dispose();
 });

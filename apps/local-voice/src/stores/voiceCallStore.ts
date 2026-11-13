@@ -8,6 +8,7 @@ import {
   type CallConfig,
   type CallReady,
   type CallState,
+  type AssistentStand,
   type CallUsageEvent,
   type TurnMetrics,
 } from "@/components/voice-call/engine";
@@ -413,6 +414,12 @@ interface VoiceCallStore {
   mainConversationId: string | null;
   /** Der laufende Anruf gehört zum Hauptgespräch (Tastenkürzel/Fußleiste): er überlebt das Verlassen der Seite. */
   mainCall: boolean;
+  /**
+   * Der Assistent an der Engine (lva#556): `gilt` ist der, mit dem das offene Gespräch läuft, `ausstehend` heißt, dass die
+   * Auswahl eine andere ist und erst im nächsten neuen Gespräch gilt (ein spät geladener Assistent wechselt die Rolle nie
+   * mitten im Gespräch). Ohne Engine: nichts ausstehend.
+   */
+  assistentStand: AssistentStand;
 
   setActive: (active: boolean) => void;
   setConfig: (update: (c: CallConfig) => CallConfig) => void;
@@ -838,6 +845,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
           pendingUsage = mergeUsage(pendingUsage, u);
           set((s) => ({ usage: addUsage(s.usage, u) }));
         },
+        onAssistentStand: (assistentStand) => set({ assistentStand }),
       },
       get().config,
     );
@@ -1001,6 +1009,8 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
       auftrag: null,
       ready: get().state === "idle" ? null : get().ready,
     });
+    // Ein Projektgespräch hat die Sprechpause des Nutzers, ein gewöhnliches die des Assistenten.
+    engine?.turnNeu();
   };
 
   /** Das Hauptgespräch vergessen (gelöscht, archiviert, neu begonnen). */
@@ -1086,6 +1096,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
     saveError: null,
     mainConversationId: loadMainConversationId(),
     mainCall: false,
+    assistentStand: { gilt: null, ausstehend: false },
 
     setActive: (active) => {
       if (active) visit++;
@@ -1415,8 +1426,10 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
   };
 });
 
-// Die Auswahl des Assistenten (und der Name für die Platzhalter) folgt der Engine, auch wenn sie erst nach dem Start
-// des Gesprächs ankommt (Laden, Konto). Eine unveränderte Auswahl fasst die Engine nicht an.
+// Die Auswahl des Assistenten (und der Name für die Platzhalter) geht an die Engine, auch wenn sie erst nach dem Start
+// des Gesprächs ankommt (Laden, Konto). Ob sie sofort gilt oder erst im nächsten neuen Gespräch, entscheidet die Engine
+// (Rolle und Begrenzung gehören zum Beginn eines Gesprächs, `assistentStand` zeigt es an). Eine unveränderte Auswahl fasst
+// die Engine nicht an.
 let letzterName = useAssistentStore.getState().name;
 useAssistentStore.subscribe((zustand) => {
   if (!engine) return;

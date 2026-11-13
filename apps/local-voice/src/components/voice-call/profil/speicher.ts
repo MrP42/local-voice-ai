@@ -44,7 +44,8 @@ export type SpeicherCode =
   | "too_many"
   | "occupied"
   | "write_failed"
-  | "read_failed";
+  | "read_failed"
+  | "unsafe_path";
 
 export class SpeicherFehler extends Error {
   readonly code: SpeicherCode;

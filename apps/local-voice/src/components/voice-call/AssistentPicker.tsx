@@ -11,9 +11,10 @@ import {
   MenuTrigger,
   MenuDivider,
 } from "@fluentui/react-components";
-import { ChevronDown, UserRound } from "lucide-react";
+import { ChevronDown, Clock, UserRound } from "lucide-react";
 import { useAssistentStore } from "@/stores/assistentStore";
 import { useVoiceCallStore } from "@/stores/voiceCallStore";
+import { useGeltenderAssistent } from "./profil/gilt";
 import { aktivesProfil } from "./profil/speicher";
 import { ALLES_ID, VORLAGEN } from "./assistenten";
 import type { Profil } from "./assistenten";
@@ -24,7 +25,8 @@ import type { Profil } from "./assistenten";
  * Eine Auswahl beginnt ein neues, leeres Gespräch: Rolle, Begrenzung der Bereiche und Begrüßung gehören zum Beginn eines
  * Gesprächs, ein halbes Gespräch bekäme sie nicht. Im Projektgespräch gilt der Assistent für Rolle und Wissen nicht
  * (dort bestimmen die Regeln des Projekts, was die KI sagt und kennt): die Auswahl zeigt das und lässt sich dort nicht
- * öffnen.
+ * öffnen. Trifft eine Auswahl erst nach dem Beginn eines Gesprächs ein (spät geladen, Datei geändert), wechselt das laufende
+ * Gespräch die Rolle nicht: die Auswahl zeigt sie als „gilt ab dem nächsten Gespräch“.
  */
 export const AssistentPicker: React.FC<{ gesperrt?: boolean }> = ({
   gesperrt = false,
@@ -34,6 +36,7 @@ export const AssistentPicker: React.FC<{ gesperrt?: boolean }> = ({
   const switching = useVoiceCallStore((s) => s.switching);
   const [offen, setOffen] = useState(false);
   const [angesagt, setAngesagt] = useState("");
+  const { ausstehend: spaeter } = useGeltenderAssistent();
 
   const aktiv = aktivesProfil(assistenten);
   const anzeige = (p: Profil) =>
@@ -43,6 +46,13 @@ export const AssistentPicker: React.FC<{ gesperrt?: boolean }> = ({
   // Chatkopf ist knapp); der Name steht immer in der Beschriftung für den Screenreader.
   const gewaehlt = aktiv.id !== ALLES_ID;
   const ladefehler = assistenten.ladefehler !== null;
+  // Ein Link statt des Ordners der Assistenten wird nie benutzt; der Text sagt es genauer als „nicht lesbar“.
+  const ladeText =
+    assistenten.ladefehler === "unsafe_path"
+      ? "voiceCall.assistant.loadUnsafe"
+      : "voiceCall.assistant.loadFailed";
+  // Auf dem Telefon sind auch die Einträge des Menüs mindestens 44 px hoch.
+  const eintrag = "max-sm:!min-h-[44px]";
   const vorlagen = VORLAGEN.filter((p) => p.id !== ALLES_ID);
   const eigene = assistenten.eigene.map((e) => e.profil);
 
@@ -82,12 +92,16 @@ export const AssistentPicker: React.FC<{ gesperrt?: boolean }> = ({
             aria-label={
               gesperrt
                 ? t("voiceCall.assistant.ariaProjekt", { name })
-                : t("voiceCall.assistant.aria", { name })
+                : spaeter
+                  ? t("voiceCall.assistant.ariaSpaeter", { name })
+                  : t("voiceCall.assistant.aria", { name })
             }
             title={
               gesperrt
                 ? t("voiceCall.assistant.projekt")
-                : t("voiceCall.assistant.title")
+                : spaeter
+                  ? t("voiceCall.assistant.spaeter")
+                  : t("voiceCall.assistant.title")
             }
             className={`inline-flex items-center gap-1 h-8 min-w-8 max-sm:h-[44px] max-sm:min-w-[44px] max-w-full rounded-full px-2 text-xs cursor-pointer hover:bg-mid-gray/15 border border-transparent focus-visible:border-logo-primary ${
               gewaehlt ? "" : "shrink-0"
@@ -103,6 +117,13 @@ export const AssistentPicker: React.FC<{ gesperrt?: boolean }> = ({
               <span className="truncate max-w-[10rem] max-sm:hidden font-semibold text-text/90">
                 {name}
               </span>
+            )}
+            {spaeter && !gesperrt && (
+              <Clock
+                data-testid="assistent-spaeter"
+                className="w-3 h-3 shrink-0 text-logo-primary"
+                aria-hidden="true"
+              />
             )}
             <ChevronDown
               className="w-3 h-3 shrink-0 text-text-muted"
@@ -120,6 +141,7 @@ export const AssistentPicker: React.FC<{ gesperrt?: boolean }> = ({
                 name="assistent"
                 value={ALLES_ID}
                 disabled={switching}
+                className={eintrag}
               >
                 {t("voiceCall.assistant.all")}
               </MenuItemRadio>
@@ -135,6 +157,7 @@ export const AssistentPicker: React.FC<{ gesperrt?: boolean }> = ({
                   name="assistent"
                   value={p.id}
                   disabled={switching || ladefehler}
+                  className={eintrag}
                 >
                   {p.name}
                 </MenuItemRadio>
@@ -153,6 +176,7 @@ export const AssistentPicker: React.FC<{ gesperrt?: boolean }> = ({
                       name="assistent"
                       value={p.id}
                       disabled={switching}
+                      className={eintrag}
                     >
                       {p.name}
                     </MenuItemRadio>
@@ -164,12 +188,20 @@ export const AssistentPicker: React.FC<{ gesperrt?: boolean }> = ({
               <>
                 <MenuDivider />
                 {ladefehler && (
-                  <MenuItem disabled data-testid="assistent-ladefehler">
-                    {t("voiceCall.assistant.loadFailed")}
+                  <MenuItem
+                    disabled
+                    data-testid="assistent-ladefehler"
+                    className={eintrag}
+                  >
+                    {t(ladeText)}
                   </MenuItem>
                 )}
                 {assistenten.abgewiesen.length > 0 && (
-                  <MenuItem disabled data-testid="assistent-abgewiesen">
+                  <MenuItem
+                    disabled
+                    data-testid="assistent-abgewiesen"
+                    className={eintrag}
+                  >
                     {t("voiceCall.assistant.rejected", {
                       count: assistenten.abgewiesen.length,
                     })}

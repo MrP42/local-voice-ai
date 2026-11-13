@@ -9,7 +9,13 @@
 //!   `aktiv` und `vorlage-…`), damit aus einer Id nie ein fremder Pfad wird,
 //! * die Größe (256 KiB je Datei, 200 Dateien),
 //! * die Art des Eintrags (nur reguläre Dateien werden gelesen oder verändert; Symlinks, Sockets, FIFOs
-//!   und Verzeichnisse nie) und
+//!   und Verzeichnisse nie),
+//! * das Verzeichnis selbst: ist `<App-Datenpfad>/assistenten` ein Link (Symlink, unter Windows jeder
+//!   Reparse-Punkt, also auch eine Junction), führt keine Operation etwas aus (`unsafe_path`): `O_NOFOLLOW`
+//!   schützt nur die letzte Pfadkomponente, ein verlinktes Verzeichnis würde sonst jeden Zugriff nach
+//!   draußen lenken. Die Prüfung steht unter der Sperre vor jeder Operation (Rust bietet ohne Zusatzpaket keinen
+//!   Zugriff relativ zu einem geöffneten Verzeichnis); ein Prozess desselben Benutzers, der das Verzeichnis
+//!   zwischen Prüfung und Zugriff austauscht, liegt wie bei den Modellen außerhalb der Grenze, und
 //! * dass eine bestehende Datei, die es überschreiben oder löschen soll, **byte-genau** dem Text
 //!   entspricht, den TypeScript geprüft hat (`ersetzt`/`erwartet`, Vergleich-und-Tausch), zusätzlich
 //!   ein JSON-Objekt mit `schema = "lva.assistent/1"` und `id` = Dateiname ist.
@@ -92,6 +98,9 @@ pub enum AssistentenFehler {
     WriteFailed,
     /// Das Verzeichnis ließ sich nicht lesen.
     ReadFailed,
+    /// Das Verzeichnis der Assistenten ist ein Link (Symlink, unter Windows Junction oder anderer Reparse-Punkt):
+    /// nichts wird gelesen, geschrieben oder gelöscht, auch nicht außerhalb.
+    UnsafePath,
 }
 
 /// Eine Datei des Verzeichnisses: der Text (unverändert, nicht kodiert) oder der Grund, warum es keinen gibt.
@@ -172,6 +181,34 @@ fn dateiname(id: &str) -> String {
 }
 
 // ---------------------------------------------------------------- Dateien
+
+/// Ist der Eintrag ein Link auf etwas anderes: ein Symlink, unter Windows jeder Reparse-Punkt (auch eine Junction,
+/// die `is_symlink` je nach Rust-Version nicht meldet)?
+fn ist_verlinkt(meta: &fs::Metadata) -> bool {
+    if meta.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return true;
+        }
+    }
+    false
+}
+
+/// Das Verzeichnis der Assistenten darf kein Link sein: sonst folgten `read_dir`, `create_dir_all` und jeder
+/// Dateizugriff (`O_NOFOLLOW` gilt nur für die letzte Komponente) dem Link aus dem Profilspeicher hinaus. Ein
+/// fehlendes Verzeichnis ist in Ordnung (es ist leer und wird beim Schreiben als echtes Verzeichnis angelegt); jeder
+/// andere Fehler wird den Zugriff selbst scheitern lassen.
+fn wurzel_pruefen(verzeichnis: &Path) -> Result<(), AssistentenFehler> {
+    match fs::symlink_metadata(verzeichnis) {
+        Ok(meta) if ist_verlinkt(&meta) => Err(AssistentenFehler::UnsafePath),
+        _ => Ok(()),
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Art {
@@ -261,7 +298,10 @@ fn schreibe_atomar_mit(
     bytes: &[u8],
     schreiber: &dyn Fn(&mut File, &[u8]) -> io::Result<()>,
 ) -> Result<(), AssistentenFehler> {
+    wurzel_pruefen(verzeichnis)?;
     fs::create_dir_all(verzeichnis).map_err(|_| AssistentenFehler::WriteFailed)?;
+    // Noch einmal nach dem Anlegen: erst jetzt steht fest, dass die Hilfsdatei in einem echten Verzeichnis entsteht.
+    wurzel_pruefen(verzeichnis)?;
     let hilfsname = format!(
         ".lva-{}-{}.tmp",
         std::process::id(),
@@ -307,6 +347,11 @@ impl Speicher {
         self.verzeichnis.join(name)
     }
 
+    /// Vor jeder Operation (unter der Sperre): das Verzeichnis ist kein Link, sonst `UnsafePath`.
+    fn wurzel(&self) -> Result<(), AssistentenFehler> {
+        wurzel_pruefen(&self.verzeichnis)
+    }
+
     /// Dateinamen der Profile (endet auf `.json`, ohne `aktiv.json`, ohne Verzeichnisse), nach Bytes sortiert.
     /// Symlinks und andere nicht reguläre Einträge zählen mit (sie erscheinen als abgewiesen), Hilfsdateien
     /// und fremde Endungen nicht. Ein fehlendes Verzeichnis ist leer; jeder andere Lesefehler ist einer.
@@ -320,7 +365,10 @@ impl Speicher {
         for eintrag in eintraege {
             let eintrag = eintrag.map_err(|_| AssistentenFehler::ReadFailed)?;
             let name = eintrag.file_name().to_string_lossy().into_owned();
-            if name.len() <= ".json".len() || !name.ends_with(".json") || name == AKTIV_DATEI {
+            // Die Endung zählt ohne Rücksicht auf Groß- und Kleinschreibung: `A.JSON` ist unter Windows dieselbe Datei
+            // wie `a.json` und erscheint hier als Kandidat, den der Leser (Dateiname = Id) abweist, statt still zu fehlen.
+            let klein = name.to_ascii_lowercase();
+            if klein.len() <= ".json".len() || !klein.ends_with(".json") || klein == AKTIV_DATEI {
                 continue;
             }
             if matches!(art(&eintrag.path()), Art::Regulaer | Art::Anderes) {
@@ -365,6 +413,7 @@ impl Speicher {
     /// wird nichts gelesen. Eine belegte `aktiv.json` steht am Ende und zählt nicht zur Grenze von 200.
     pub fn liste(&self) -> Result<AssistentenListe, AssistentenFehler> {
         let _sperre = sperre();
+        self.wurzel()?;
         let namen = self.dateinamen()?;
         let mut dateien = Vec::with_capacity(namen.len() + 1);
         for (index, name) in namen.into_iter().enumerate() {
@@ -411,6 +460,7 @@ impl Speicher {
             return Ok(None);
         }
         let _sperre = sperre();
+        self.wurzel()?;
         let name = dateiname(id);
         let pfad = self.pfad(&name);
         if matches!(art(&pfad), Art::Fehlt | Art::Verzeichnis) || !self.in_auswahl(&name)? {
@@ -448,6 +498,7 @@ impl Speicher {
             return Err(AssistentenFehler::TooLarge);
         }
         let _sperre = sperre();
+        self.wurzel()?;
         let name = dateiname(id);
         let ziel = self.pfad(&name);
         match art(&ziel) {
@@ -484,6 +535,7 @@ impl Speicher {
             return Err(AssistentenFehler::NotFound);
         }
         let _sperre = sperre();
+        self.wurzel()?;
         let name = dateiname(id);
         let ziel = self.pfad(&name);
         if art(&ziel) != Art::Regulaer {
@@ -514,6 +566,7 @@ impl Speicher {
     /// Die aktive Auswahl allein.
     pub fn aktiv(&self) -> Result<AssistentenAktiv, AssistentenFehler> {
         let _sperre = sperre();
+        self.wurzel()?;
         // Ein nicht lesbares Verzeichnis ist ein Fehler, kein „fehlt“: sonst sähe es aus wie „Alles“.
         self.dateinamen()?;
         Ok(match self.aktiv_zustand() {
@@ -542,6 +595,7 @@ impl Speicher {
             return Err(AssistentenFehler::ReservedId);
         }
         let _sperre = sperre();
+        self.wurzel()?;
         if !ist_vorbehalten(id) {
             let name = dateiname(id);
             let pfad = self.pfad(&name);
@@ -792,7 +846,6 @@ mod tests {
             "notiz.txt",
             "x.json.bak",
             ".json",
-            "X.JSON",
             ".lva-1-1.tmp",
             "eigen-b.json.tmp",
         ] {
@@ -1190,6 +1243,180 @@ mod tests {
             .is_symlink());
         assert_eq!(fs::read(&draussen).unwrap(), text.as_bytes());
         assert!(s.pfad("ordner-d.json").is_dir());
+    }
+
+    // ------------------------------------------------------------ Verlinktes Verzeichnis
+
+    /// Alle Einträge eines Verzeichnisses mit ihren Bytes (Verzeichnisse als `None`), sortiert: ein Vergleichsstand.
+    fn schnappschuss(dir: &Path) -> Vec<(String, Option<Vec<u8>>)> {
+        let mut alle: Vec<(String, Option<Vec<u8>>)> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| {
+                let e = e.unwrap();
+                let inhalt = if e.path().is_file() {
+                    Some(fs::read(e.path()).unwrap())
+                } else {
+                    None
+                };
+                (e.file_name().to_string_lossy().into_owned(), inhalt)
+            })
+            .collect();
+        alle.sort();
+        alle
+    }
+
+    /// Verlinkt `link` auf das Verzeichnis `ziel`: unter Unix ein Symlink, unter Windows eine Junction (`mklink /J`
+    /// braucht keine besonderen Rechte). Das Anlegen muss gelingen, sonst scheitert der Test laut.
+    fn verlinke_verzeichnis(link: &Path, ziel: &Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(ziel, link).unwrap();
+        #[cfg(windows)]
+        {
+            let ausgabe = std::process::Command::new("cmd")
+                .arg("/C")
+                .arg("mklink")
+                .arg("/J")
+                .arg(link)
+                .arg(ziel)
+                .output()
+                .unwrap();
+            assert!(
+                ausgabe.status.success(),
+                "Junction nicht angelegt: {}{}",
+                String::from_utf8_lossy(&ausgabe.stdout),
+                String::from_utf8_lossy(&ausgabe.stderr)
+            );
+        }
+    }
+
+    /// B1 (Codex R1): Ist `<App-Datenpfad>/assistenten` ein Link auf ein fremdes Verzeichnis (Unix: Symlink,
+    /// Windows: Junction), wird alles abgewiesen (Lesen und jede Veränderung), und das fremde Verzeichnis bleibt
+    /// Byte für Byte, wie es war (auch keine Hilfsdatei).
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn verlinktes_verzeichnis_wird_nie_gelesen_oder_veraendert() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fremd = tmp.path().join("fremd");
+        fs::create_dir_all(&fremd).unwrap();
+        let text = profil("eigen-a");
+        fs::write(fremd.join("eigen-a.json"), &text).unwrap();
+        fs::write(fremd.join(AKTIV_DATEI), b"{\"id\": \"eigen-a\"}").unwrap();
+        fs::write(fremd.join("notiz.txt"), b"fremd").unwrap();
+        let wurzel = tmp.path().join(VERZEICHNIS);
+        verlinke_verzeichnis(&wurzel, &fremd);
+        assert!(
+            ist_verlinkt(&fs::symlink_metadata(&wurzel).unwrap()),
+            "der Link wird als Link erkannt"
+        );
+        let s = Speicher::neu(wurzel.clone());
+        let vorher = schnappschuss(&fremd);
+
+        let verweigert = AssistentenFehler::UnsafePath;
+        let nein = Err(verweigert);
+        assert_eq!(s.liste().unwrap_err(), verweigert);
+        assert_eq!(s.lesen("eigen-a").unwrap_err(), verweigert);
+        assert_eq!(s.aktiv().unwrap_err(), verweigert);
+        assert_eq!(s.waehlen("eigen-a"), nein);
+        assert_eq!(s.waehlen("alles"), nein);
+        assert_eq!(s.speichern("eigen-b", &profil("eigen-b"), None), nein);
+        assert_eq!(
+            s.speichern("eigen-a", &profil("eigen-a"), Some(&text)),
+            nein
+        );
+        assert_eq!(s.loeschen("eigen-a", &text), nein);
+        assert_eq!(
+            schreibe_atomar_mit(&wurzel, "eigen-c.json", b"{}", &|d, b| d.write_all(b)),
+            nein
+        );
+        assert_eq!(
+            schreibe_atomar_mit(&wurzel, AKTIV_DATEI, b"{}", &|d, b| d.write_all(b)),
+            nein
+        );
+        assert_eq!(
+            schnappschuss(&fremd),
+            vorher,
+            "fremdes Verzeichnis unberührt"
+        );
+        assert!(
+            ist_verlinkt(&fs::symlink_metadata(&wurzel).unwrap()),
+            "der Link bleibt, wie er war"
+        );
+        // Ungültige und vorbehaltene Ids erreichen das Dateisystem ohnehin nie.
+        assert_eq!(s.lesen("alles"), Ok(None));
+        assert_eq!(s.lesen("Ungültig"), Ok(None));
+    }
+
+    /// Ein Link ins Leere (Ziel fehlt): auch er wird nicht benutzt, und das Ziel wird nicht angelegt.
+    #[cfg(unix)]
+    #[test]
+    fn verlinktes_verzeichnis_ins_leere_legt_das_ziel_nicht_an() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ziel = tmp.path().join("gibt-es-nicht");
+        let wurzel = tmp.path().join(VERZEICHNIS);
+        std::os::unix::fs::symlink(&ziel, &wurzel).unwrap();
+        let s = Speicher::neu(wurzel);
+        assert_eq!(s.liste().unwrap_err(), AssistentenFehler::UnsafePath);
+        assert_eq!(
+            s.speichern("eigen-a", &profil("eigen-a"), None),
+            Err(AssistentenFehler::UnsafePath)
+        );
+        assert_eq!(s.waehlen("alles"), Err(AssistentenFehler::UnsafePath));
+        assert!(!ziel.exists(), "das Ziel des Links wurde nicht angelegt");
+    }
+
+    /// Ein Link, der erst nach der ersten Prüfung entsteht (das Verzeichnis fehlte, jemand legt einen Link an), wird
+    /// nach dem Anlegen noch einmal erkannt: die Hilfsdatei entsteht nie im fremden Verzeichnis.
+    #[cfg(unix)]
+    #[test]
+    fn link_statt_fehlendem_verzeichnis_beim_schreiben_wird_erkannt() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fremd = tmp.path().join("fremd");
+        fs::create_dir_all(&fremd).unwrap();
+        let wurzel = tmp.path().join(VERZEICHNIS);
+        let s = Speicher::neu(wurzel.clone());
+        assert_eq!(
+            s.liste().unwrap().dateien.len(),
+            0,
+            "fehlt: leer, kein Fehler"
+        );
+        std::os::unix::fs::symlink(&fremd, &wurzel).unwrap();
+        assert_eq!(
+            s.speichern("eigen-a", &profil("eigen-a"), None),
+            Err(AssistentenFehler::UnsafePath)
+        );
+        assert!(schnappschuss(&fremd).is_empty());
+    }
+
+    /// Ein echtes Verzeichnis, dessen Elternpfad über einen Link läuft, ist kein Link (der App-Datenpfad liegt unter
+    /// der Hoheit des Benutzers, etwa auf einem anderen Laufwerk): es wird benutzt.
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn verlinkter_elternpfad_ist_erlaubt_nur_das_verzeichnis_selbst_zaehlt() {
+        let tmp = tempfile::tempdir().unwrap();
+        let echt = tmp.path().join("echt");
+        fs::create_dir_all(&echt).unwrap();
+        let eltern = tmp.path().join("daten");
+        verlinke_verzeichnis(&eltern, &echt);
+        let s = Speicher::neu(eltern.join(VERZEICHNIS));
+        s.speichern("eigen-a", &profil("eigen-a"), None).unwrap();
+        assert_eq!(s.liste().unwrap().dateien.len(), 1);
+        assert!(echt.join(VERZEICHNIS).join("eigen-a.json").is_file());
+    }
+
+    #[test]
+    fn endung_gross_und_klein_wird_als_kandidat_gelistet_aktiv_json_nie() {
+        let (_t, s) = werkstatt();
+        lege(&s, "eigen.JSON", profil("eigen").as_bytes());
+        lege(&s, "Mix.json", profil("mix").as_bytes());
+        lege(&s, "notiz.txt", b"x");
+        let l = s.liste().unwrap();
+        let namen: Vec<&str> = l.dateien.iter().map(|d| d.name.as_str()).collect();
+        // Auf einem Dateisystem, das Groß- und Kleinschreibung unterscheidet, sind es zwei Kandidaten; wo nicht
+        // (Windows, macOS), steht jede Datei einmal unter dem Namen, den das Dateisystem meldet.
+        assert!(namen.contains(&"eigen.JSON"), "{namen:?}");
+        assert!(namen.contains(&"Mix.json"), "{namen:?}");
+        assert!(!namen.contains(&"notiz.txt"));
+        assert_eq!(bytes(&s, "Mix.json"), profil("mix").as_bytes());
     }
 
     // ------------------------------------------------------------ 200 Dateien

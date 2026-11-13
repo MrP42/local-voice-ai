@@ -7741,6 +7741,8 @@
       "chipCount_other": "{{level}} · {{count}} Bereiche",
       "level": "Souveränität",
       "knowledge": "Wissen",
+      "titleAssistent": "Freigegeben: {{frei}}. Der Assistent „{{name}}“ nutzt davon {{count}}.",
+      "vomAssistentAusgelassen": "vom Assistenten nicht genutzt",
       "allSettings": "Alle Einstellungen …"
     },
     "model": {
@@ -7755,18 +7757,22 @@
       "title": "Assistent wählen",
       "aria": "Assistent: {{name}}",
       "ariaProjekt": "Assistent: {{name}} (gilt im Projektgespräch nicht)",
+      "ariaSpaeter": "Assistent: {{name}} (gilt ab dem nächsten Gespräch)",
+      "spaeter": "Diese Auswahl gilt ab dem nächsten Gespräch. Das laufende behält seinen Assistenten.",
       "projekt": "Im Projektgespräch gilt der Assistent nicht.",
       "all": "Alles",
       "groupAll": "Standard",
       "groupTemplates": "Vorlagen",
       "groupOwn": "Eigene Assistenten",
       "switched": "Neues Gespräch mit dem Assistenten {{name}}.",
-      "loadFailed": "Deine eigenen Assistenten lassen sich nicht lesen. Es gibt nur die Vorlagen.",
+      "loadFailed": "Deine eigenen Assistenten lassen sich nicht lesen. Solange das so ist, lässt sich der Assistent nicht wechseln; es gilt „Alles“.",
+      "loadUnsafe": "Der Ordner deiner Assistenten ist eine Verknüpfung auf einen anderen Ordner und wird aus Sicherheitsgründen nicht benutzt. Solange das so ist, lässt sich der Assistent nicht wechseln; es gilt „Alles“.",
       "rejected_one": "{{count}} Datei ist ungültig und wird nicht benutzt.",
       "rejected_other": "{{count}} Dateien sind ungültig und werden nicht benutzt.",
       "saveFailed": "Die Auswahl ließ sich nicht speichern. Der Assistent bleibt, wie er war.",
       "saveOccupied": "Die Auswahl lässt sich nicht speichern: Die Datei aktiv.json ist anderweitig belegt. Der Assistent bleibt, wie er war.",
-      "saveReadFailed": "Die Auswahl lässt sich nicht speichern, weil deine Assistenten nicht lesbar sind."
+      "saveReadFailed": "Die Auswahl lässt sich nicht speichern, weil deine Assistenten nicht lesbar sind.",
+      "saveUnsafe": "Die Auswahl lässt sich nicht speichern: Der Ordner deiner Assistenten ist eine Verknüpfung auf einen anderen Ordner und wird aus Sicherheitsgründen nicht benutzt."
     },
     "options": {
       "label": "Gesprächsoptionen",

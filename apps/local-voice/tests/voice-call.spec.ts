@@ -232,20 +232,35 @@ async function install(
               return w.__startHang ? new Promise(() => {}) : null;
             case "voice_assistants_list": {
               if (w.__assistentListeFehler) throw w.__assistentListeFehler;
-              const platte = platteLesen();
-              return {
-                dateien: Object.entries(platte.dateien).map(([name, wert]) =>
-                  typeof wert === "string"
-                    ? { name, inhalt: wert, abgewiesen: null }
-                    : {
-                        name,
-                        inhalt: null,
-                        abgewiesen: (wert as { abgewiesen: string }).abgewiesen,
-                      },
-                ),
-                aktiv_id: platte.aktiv,
-                aktiv_belegt: platte.belegt,
+              const antwort = () => {
+                const platte = platteLesen();
+                return {
+                  dateien: Object.entries(platte.dateien).map(([name, wert]) =>
+                    typeof wert === "string"
+                      ? { name, inhalt: wert, abgewiesen: null }
+                      : {
+                          name,
+                          inhalt: null,
+                          abgewiesen: (wert as { abgewiesen: string })
+                            .abgewiesen,
+                        },
+                  ),
+                  aktiv_id: platte.aktiv,
+                  aktiv_belegt: platte.belegt,
+                };
               };
+              // Ein hängendes Laden: alle Aufrufe warten, bis `__assistentListeFreigeben()` sie beantwortet.
+              if (w.__assistentListeHaengt)
+                return new Promise((resolve) => {
+                  w.__assistentListeWartet ??= [];
+                  w.__assistentListeWartet.push(resolve);
+                  w.__assistentListeFreigeben = () => {
+                    w.__assistentListeHaengt = false;
+                    for (const r of w.__assistentListeWartet) r(antwort());
+                    w.__assistentListeWartet = [];
+                  };
+                });
+              return antwort();
             }
             case "voice_assistant_active_set": {
               if (w.__assistentFehler) throw w.__assistentFehler;
@@ -4104,6 +4119,164 @@ test.describe("Sprachgespraech Assistent (lva#556)", () => {
       "Assistent: Alles",
     );
   });
+
+  test("Ein spät geladener Assistent wechselt die Rolle nie mitten im Gespräch: er gilt ab dem nächsten Gespräch (B2)", async ({
+    page,
+  }) => {
+    // Das Laden hängt: nach der Wartezeit beginnt das Gespräch mit „Alles“; erst danach kommt die gespeicherte Auswahl.
+    await page.addInitScript(
+      () => ((window as any).__assistentListeHaengt = true),
+    );
+    await install(page, "light", {
+      settings: LOCAL_SPEAKER,
+      assistenten: { aktiv: "vorlage-lernpartner" },
+    });
+    await openPage(page);
+    await exchange(page, "Hallo", "Hallo zurück.");
+    expect(
+      (await prompt(page)).startsWith(
+        "Du bist ein Gesprächspartner am Telefon.",
+      ),
+    ).toBe(true);
+    await page.evaluate(() => (window as any).__assistentListeFreigeben());
+    const picker = assistentPicker(page);
+    await expect(picker).toHaveAccessibleName(
+      "Assistent: Lernpartner (gilt ab dem nächsten Gespräch)",
+    );
+    await expect(page.getByTestId("assistent-spaeter")).toBeVisible();
+    // Das laufende Gespräch behält seine Wirkung: kein Rollenblock im Prompt.
+    await exchange(page, "Und weiter?", "Noch ohne Rolle.");
+    expect(await prompt(page)).not.toContain("ROLLE");
+    // Das nächste Gespräch nutzt den geladenen Assistenten: Marke weg, Begrüßung und Prompt des Assistenten.
+    await newChat(page).click();
+    await expect(picker).toHaveAccessibleName("Assistent: Lernpartner");
+    await expect(page.getByTestId("assistent-spaeter")).toHaveCount(0);
+    await expect(emptyTitle(page)).toContainText("Welches Thema");
+    await exchange(page, "Frag mich ab.", "Gern.");
+    expect(
+      (await prompt(page)).startsWith(
+        "ROLLE (vom Nutzer eingestellt, Assistent „Lernpartner“):\n",
+      ),
+    ).toBe(true);
+  });
+
+  test("Der Bereichs-Chip zeigt die wirksame Schnittmenge, Freigabe und Begrenzung stehen getrennt im Hinweis und im Menü", async ({
+    page,
+  }) => {
+    await install(page, "light", {
+      settings: {
+        ...LOCAL_SPEAKER,
+        voice_call_knowledge: ["meetings", "dictations", "calendar"],
+      },
+    });
+    await openPage(page);
+    const chip = page.getByTestId("permission-chip");
+    await expect(chip).toContainText("3 Bereiche");
+    await expect(chip).toHaveAttribute(
+      "title",
+      "Berechtigungen dieses Gesprächs",
+    );
+    // „Besprechung nachbereiten“ nutzt nur Besprechungen: freigegeben sind drei, wirksam ist einer.
+    await waehle(page, "Besprechung nachbereiten");
+    await expect(chip).toContainText("1 Bereich");
+    await expect(chip).not.toContainText("3 Bereiche");
+    await expect(chip).toHaveAttribute(
+      "title",
+      "Freigegeben: 3. Der Assistent „Besprechung nachbereiten“ nutzt davon 1.",
+    );
+    await expect(chip).toHaveAccessibleName(/nutzt davon 1\.$/);
+    await chip.click();
+    const menu = page.getByRole("menu");
+    // Die Häkchen bleiben die Freigabe (unverändert), der Zusatz nennt, was der Assistent auslässt.
+    for (const name of ["Besprechungen", "Diktate", "Termine"])
+      await expect(
+        menu.getByRole("menuitemcheckbox", { name: new RegExp(`^${name}`) }),
+      ).toBeChecked();
+    await expect(
+      menu.getByRole("menuitemcheckbox", { name: /^Diktate/ }),
+    ).toContainText("vom Assistenten nicht genutzt");
+    await expect(
+      menu.getByRole("menuitemcheckbox", { name: /^Termine/ }),
+    ).toContainText("vom Assistenten nicht genutzt");
+    await expect(
+      menu.getByRole("menuitemcheckbox", { name: /^Besprechungen/ }),
+    ).not.toContainText("vom Assistenten nicht genutzt");
+    expect(
+      await calls(page, "change_voice_call_knowledge_setting"),
+    ).toHaveLength(0);
+    await page.keyboard.press("Escape");
+    // Zurück zu „Alles“: wieder alles Freigegebene, kein Zusatzhinweis.
+    await waehle(page, "Alles");
+    await expect(chip).toContainText("3 Bereiche");
+    await expect(chip).toHaveAttribute(
+      "title",
+      "Berechtigungen dieses Gesprächs",
+    );
+  });
+
+  test("Schmal (390 px): auch die Einträge des Auswahlmenüs sind mindestens 44 px hoch", async ({
+    browser,
+  }) => {
+    const ctx = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      baseURL: test.info().project.use.baseURL,
+    });
+    const page = await ctx.newPage();
+    await install(page, "light", {
+      settings: TWO_MODELS,
+      assistenten: { dateien: { "kaputt.json": "{ kein JSON" } },
+    });
+    await openPage(page);
+    await assistentPicker(page).click();
+    const menu = page.getByRole("menu");
+    await expect(menu).toBeVisible();
+    const eintraege = menu.getByRole("menuitemradio");
+    const n = await eintraege.count();
+    expect(n).toBeGreaterThan(10);
+    for (let i = 0; i < n; i++) {
+      const box = (await eintraege.nth(i).boundingBox())!;
+      // Teilpixel-Rundung der Darstellung (43,99997) zählt nicht als zu klein.
+      expect(Math.round(box.height), `Eintrag ${i}`).toBeGreaterThanOrEqual(44);
+    }
+    // Auch die Hinweiszeile (ungültige Dateien) ist ein Eintrag mit 44 px.
+    const hinweis = (await menu
+      .getByTestId("assistent-abgewiesen")
+      .boundingBox())!;
+    expect(Math.round(hinweis.height)).toBeGreaterThanOrEqual(44);
+    await ctx.close();
+  });
+
+  for (const [fehler, text] of [
+    ["read_failed", "lassen sich nicht lesen"],
+    ["unsafe_path", "Verknüpfung auf einen anderen Ordner"],
+  ] as const) {
+    test(`Ist der Speicher nicht benutzbar (${fehler}), sagt die Meldung, dass sich der Assistent nicht wechseln lässt`, async ({
+      page,
+    }) => {
+      await page.addInitScript(
+        (f) => ((window as any).__assistentListeFehler = f),
+        fehler,
+      );
+      await install(page, "light", { settings: TWO_MODELS });
+      await openPage(page);
+      await assistentPicker(page).click();
+      const menu = page.getByRole("menu");
+      const meldung = menu.getByTestId("assistent-ladefehler");
+      await expect(meldung).toContainText(text);
+      await expect(meldung).toContainText(
+        "lässt sich der Assistent nicht wechseln; es gilt „Alles“",
+      );
+      // Die Meldung verspricht keine Vorlagen: sie sind gesperrt, „Alles“ gilt.
+      await expect(
+        menu.getByRole("menuitemradio", { name: "Lernpartner", exact: true }),
+      ).toHaveAttribute("aria-disabled", "true");
+      await expect(
+        menu.getByRole("menuitemradio", { name: "Alles", exact: true }),
+      ).toBeChecked();
+      await page.keyboard.press("Escape");
+      expect(await calls(page, "voice_assistant_active_set")).toHaveLength(0);
+    });
+  }
 
   test("Axe: die offene Auswahl hat keine Verstöße gegen Name, Rolle und Wert", async ({
     page,
