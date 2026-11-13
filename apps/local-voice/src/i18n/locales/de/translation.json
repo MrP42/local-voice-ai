@@ -7742,6 +7742,7 @@
       "modell": "Fragt {{modell}}",
       "arbeitet": "Arbeitet an der Antwort …",
       "sofort": "Schnelle Antwort lokal mit {{modell}}",
+      "auftrag": "Läuft im Hintergrund weiter: „{{frage}}“",
       "keineSchritte": "Keine Zwischenschritte",
       "kontext_one": "{{count}} passende Stelle in den eigenen Inhalten gefunden",
       "kontext_other": "{{count}} passende Stellen in den eigenen Inhalten gefunden"
