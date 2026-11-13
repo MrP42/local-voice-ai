@@ -211,18 +211,31 @@ pub fn resolve_model_path(models_root: &Path, spec: Option<&str>) -> PathBuf {
 /// (Altbestand bleibt gueltig). Ein Eintrag mit mehreren Dateien (Nemotron:
 /// Graph und Gewichte muessen nebeneinander liegen und tragen allgemeine
 /// Namen) bekommt einen eigenen Ordner `diarization/<id>/`.
-pub fn catalog_model_dir(models_root: &Path, entry: &crate::catalog::TtsCatalogEntry) -> PathBuf {
+///
+/// `None`, wenn der Eintrag nicht sicher abzulegen ist: ein Dateiname (und bei
+/// mehreren Dateien die Kennung) muss ein einzelner, harmloser Pfadbestandteil
+/// sein ([`crate::catalog::is_plain_name`]); sonst koennte ein Katalogwert aus dem
+/// Modellordner hinausfuehren.
+pub fn catalog_model_dir(
+    models_root: &Path,
+    entry: &crate::catalog::TtsCatalogEntry,
+) -> Option<PathBuf> {
+    use crate::catalog::is_plain_name;
+    if !entry.files.iter().all(|f| is_plain_name(&f.filename)) {
+        return None;
+    }
     let base = models_root.join("diarization");
     if entry.files.len() > 1 {
-        base.join(&entry.id)
+        is_plain_name(&entry.id).then(|| base.join(&entry.id))
     } else {
-        base
+        Some(base)
     }
 }
 
 /// Alle Dateien des installierten Katalogmodells in der Reihenfolge des
 /// Katalogs (die erste ist die, die der Motor laedt). `None`, wenn die ID nicht
-/// im Katalog steht.
+/// im Katalog steht oder der Eintrag nicht sicher abzulegen ist
+/// ([`catalog_model_dir`]).
 pub fn catalog_model_files(models_root: &Path, model_id: &str) -> Option<Vec<PathBuf>> {
     let entry = crate::catalog::tts_entries(crate::catalog::Purpose::Diarization)
         .into_iter()
@@ -230,8 +243,39 @@ pub fn catalog_model_files(models_root: &Path, model_id: &str) -> Option<Vec<Pat
     if entry.files.is_empty() {
         return None;
     }
-    let dir = catalog_model_dir(models_root, &entry);
+    let dir = catalog_model_dir(models_root, &entry)?;
     Some(entry.files.iter().map(|f| dir.join(&f.filename)).collect())
+}
+
+/// Ist `model_path` die Hauptdatei (die der Motor oeffnet) eines Katalogmodells an
+/// seinem Platz `.../diarization[/<id>]/<datei>`? Dann: alle Dateien des Eintrags
+/// mit der Groesse laut Katalog. Erkannt wird am Pfadende, nicht an einer
+/// Wurzel; ein Pfad von Hand (anderer Ordner, anderer Name) ist kein Katalogmodell.
+pub fn catalog_file_sizes(model_path: &Path) -> Option<Vec<(PathBuf, u64)>> {
+    let dir = model_path.parent()?;
+    crate::catalog::tts_entries(crate::catalog::Purpose::Diarization)
+        .into_iter()
+        .find_map(|entry| {
+            let first = entry.files.first()?;
+            let diarization_dir = if entry.files.len() > 1 {
+                dir.parent()?
+            } else {
+                dir
+            };
+            // `catalog_model_dir` legt fest, wo der Eintrag liegt; vom Pfad aus
+            // zurueckgerechnet, muss es genau dieser Ordner sein.
+            let expected = catalog_model_dir(diarization_dir.parent()?, &entry)?;
+            if expected != dir || model_path.file_name()? != first.filename.as_str() {
+                return None;
+            }
+            Some(
+                entry
+                    .files
+                    .iter()
+                    .map(|f| (dir.join(&f.filename), f.size_bytes))
+                    .collect(),
+            )
+        })
 }
 
 /// Pfad des installierten Katalogmodells `model_id` unter `models_root`
@@ -529,5 +573,81 @@ mod tests {
                 .join("diar_streaming_sortformer_4spk-v2.1-Q8_0.gguf")
         );
         assert_eq!(EngineKind::of_path(&files[0]), Some(EngineKind::Sortformer));
+    }
+    fn nemotron_entry() -> crate::catalog::TtsCatalogEntry {
+        crate::catalog::tts_entries(crate::catalog::Purpose::Diarization)
+            .into_iter()
+            .find(|e| e.id == nemotron::MODEL_ID)
+            .unwrap()
+    }
+
+    /// Ein Katalogwert, der aus dem Modellordner hinausfuehrt (absoluter Pfad,
+    /// `..`, Backslash, Laufwerksbuchstabe, Trenner), gibt keinen Ordner und
+    /// keine Zielpfade; der unveraenderte Eintrag schon.
+    #[test]
+    fn a_catalog_entry_that_could_leave_the_model_folder_has_no_directory() {
+        let root = Path::new("models");
+        assert!(catalog_model_dir(root, &nemotron_entry()).is_some());
+        let bad = [
+            "..", "../x", "a/b", "/etc/x", "\\x", "a\\b", "C:", "C:\\x", "", ".",
+        ];
+        for name in bad {
+            let mut id = nemotron_entry();
+            id.id = name.to_string();
+            assert!(
+                catalog_model_dir(root, &id).is_none(),
+                "Kennung {name:?} angenommen"
+            );
+            for i in 0..2 {
+                let mut file = nemotron_entry();
+                file.files[i].filename = name.to_string();
+                assert!(
+                    catalog_model_dir(root, &file).is_none(),
+                    "Dateiname {name:?} an Stelle {i} angenommen"
+                );
+            }
+            // Einzeldatei-Eintrag: die Kennung wird nicht zum Ordner, der Dateiname schon.
+            let mut single = crate::catalog::tts_entries(crate::catalog::Purpose::Diarization)
+                .into_iter()
+                .find(|e| e.id == DEFAULT_MODEL_ID)
+                .unwrap();
+            single.files[0].filename = name.to_string();
+            assert!(catalog_model_dir(root, &single).is_none(), "{name:?}");
+        }
+    }
+
+    /// Wo der Eintrag liegt, erkennt man ihn am Pfadende; alles andere (Pfad von
+    /// Hand, fremder Ordner, falscher Name, die Gewichte statt des Graphen) ist
+    /// kein Katalogmodell und bekommt keine Katalog-Groessen.
+    #[test]
+    fn catalog_sizes_are_known_for_the_main_file_of_a_catalog_model_only() {
+        let root = Path::new("C:/data/models");
+        let id = nemotron::MODEL_ID;
+        let files = catalog_model_files(root, id).unwrap();
+        let entry = nemotron_entry();
+        let sizes = catalog_file_sizes(&files[0]).expect("Graph am Katalogplatz");
+        assert_eq!(sizes.len(), 2);
+        for (i, (path, size)) in sizes.iter().enumerate() {
+            assert_eq!(path, &files[i]);
+            assert_eq!(*size, entry.files[i].size_bytes);
+        }
+        let sorm = catalog_model_files(root, DEFAULT_MODEL_ID).unwrap();
+        let one = catalog_file_sizes(&sorm[0]).expect("Sortformer am Katalogplatz");
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].0, sorm[0]);
+
+        assert!(
+            catalog_file_sizes(&files[1]).is_none(),
+            "Gewichte sind nicht die Hauptdatei"
+        );
+        for other in [
+            "C:/x/model_quantized.onnx",
+            "C:/data/models/diarization/anderer-ordner/model_quantized.onnx",
+            "C:/data/models/diarization/model_quantized.onnx",
+            "C:/data/models/andere-ablage/diar-nemotron3-8spk-onnx-q8/model_quantized.onnx",
+            "model_quantized.onnx",
+        ] {
+            assert!(catalog_file_sizes(Path::new(other)).is_none(), "{other}");
+        }
     }
 }

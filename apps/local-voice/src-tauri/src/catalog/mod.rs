@@ -436,6 +436,20 @@ pub fn rank_of(model_id: &str) -> u32 {
     RANK_BY_ID.get(model_id).copied().unwrap_or(u32::MAX)
 }
 
+/// Ist `name` ein einzelner, harmloser Pfadbestandteil? Katalogwerte (Kennung,
+/// Dateiname) werden zu Ordner- und Dateinamen im Modellordner; ein Wert mit
+/// Pfadtrenner, `..`, absolutem Pfad oder Laufwerksbuchstaben koennte aus dem
+/// Modellordner hinausfuehren. Abgelehnt werden: leer, `.`, `..`, `/`, `\`, `:`
+/// (Laufwerk, Windows-Datenstrom) und Steuerzeichen einschliesslich NUL.
+pub fn is_plain_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && !name
+            .chars()
+            .any(|c| c == '/' || c == '\\' || c == ':' || c.is_control())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1045,5 +1059,76 @@ mod tests {
             Some("incomplete_archive")
         );
         assert!(by("piper-runtime-windows-x64").unsupported_reason.is_none());
+    }
+
+    /// Katalogwerte werden zu Pfaden im Modellordner. Kein Dateiname und keine
+    /// Kennung darf daraus hinausfuehren: kein absoluter Pfad, kein `..`, kein
+    /// Backslash, kein Laufwerksbuchstabe, kein Trenner. Gilt fuer JEDEN Eintrag,
+    /// auch fuer kuenftige Zwecke. (ASR-Kennungen sind `<Organisation>/<Name>`,
+    /// jeder der beiden Teile muss harmlos sein; alle anderen Kennungen sind
+    /// ein einzelner Bestandteil, weil sie als Ordnername dienen.)
+    #[test]
+    fn no_catalog_id_or_filename_can_leave_the_model_folder() {
+        let mut checked = 0usize;
+        for m in &ROOT.models {
+            let id_ok = if m.purpose == Purpose::Asr {
+                let parts: Vec<&str> = m.id.split('/').collect();
+                parts.len() == 2 && parts.iter().all(|p| is_plain_name(p))
+            } else {
+                is_plain_name(&m.id)
+            };
+            assert!(id_ok, "Kennung {:?} fuehrt aus dem Modellordner", m.id);
+            let names = m
+                .files
+                .iter()
+                .map(|f| f.filename.as_str())
+                .chain(m.file_git_blobs.keys().map(String::as_str));
+            for name in names {
+                assert!(
+                    is_plain_name(name),
+                    "{}: Dateiname {:?} fuehrt aus dem Modellordner",
+                    m.id,
+                    name
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 100, "zu wenig Dateinamen geprueft: {checked}");
+    }
+
+    #[test]
+    fn plain_names_reject_everything_that_can_leave_a_folder() {
+        for ok in [
+            "model_quantized.onnx",
+            "model_quantized.onnx_data",
+            "diar-nemotron3-8spk-onnx-q8",
+            "a.b.c",
+            "name mit Leerzeichen.bin",
+            "..datei",
+            "datei..",
+        ] {
+            assert!(is_plain_name(ok), "{ok:?} abgelehnt");
+        }
+        for bad in [
+            "",
+            ".",
+            "..",
+            "../x",
+            "x/../y",
+            "a/b",
+            "/etc/passwd",
+            "\\x",
+            "a\\b",
+            "..\\x",
+            "C:",
+            "C:\\Windows",
+            "C:x",
+            "datei:strom",
+            "\\\\server\\share",
+            "a\0b",
+            "a\nb",
+        ] {
+            assert!(!is_plain_name(bad), "{bad:?} angenommen");
+        }
     }
 }

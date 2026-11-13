@@ -35,6 +35,23 @@
 //!   neu geladen werden muss), der Motor bekommt also nie einen Graphen neben
 //!   ungeprueften oder defekten Gewichten, auch nicht, wenn die Reparatur
 //!   scheitert;
+//! - Ende nur mit verifiziertem Paar: unmittelbar vor dem Erfolg werden ALLE
+//!   Dateien des Eintrags erneut nach Groesse und SHA-256 geprueft ([`confirm`]).
+//!   Wurde dazwischen eine Datei getauscht (auch eine, die schon verifiziert
+//!   dalag), gibt es keinen Erfolg: Fehler `verification_failed`, der Graph wird
+//!   zurueckgezogen. Dasselbe bei Abbruch oder Lesefehler in dieser letzten
+//!   Pruefung. Erfolg heisst also: zum Zeitpunkt des Erfolgs stimmten alle Dateien.
+//!   Ein Tausch NACH dem Erfolg (zwischen Bereitstellen und Laden) bleibt moeglich;
+//!   der Lader prueft dort nur die Groessen (`nemotron::engine::check_catalog_sizes`);
+//! - Verknuepfungen: das Bereitstellen aendert nur eigene, normale Dateien
+//!   unterhalb des Modellordners. Ein Symlink (unter Windows jeder Reparse-Punkt,
+//!   also auch Junctions) als Ziel oder als `.partial`, ein Ordner dazwischen, der
+//!   ein Link ist oder aus dem Modellordner hinauszeigt, oder etwas, das keine
+//!   normale Datei ist, wird mit dem Fehler `unsafe_path` abgelehnt, bevor
+//!   geschrieben, umbenannt oder geloescht wird (`download::safe`). Die Wurzel
+//!   selbst darf ein Link sein (verschobener Datenordner). Ein Katalogwert, der
+//!   aus dem Modellordner hinausfuehren koennte (absoluter Pfad, `..`,
+//!   Backslash, Laufwerksbuchstabe), ergibt `catalog_invalid`;
 //! - voller Datentraeger: der Schreibfehler bricht ab, die Teildatei bleibt fuer
 //!   die Fortsetzung, bereits fertige Dateien bleiben liegen;
 //! - zwei Aufrufe gleichzeitig: einer laeuft, der andere meldet `download_running`.
@@ -49,7 +66,7 @@ use tauri::{AppHandle, Emitter};
 
 use crate::catalog::{TtsCatalogEntry, TtsCatalogFile};
 use crate::managers::meetings::diarize;
-use crate::managers::model::download::{HttpDownloadEvent, HttpDownloadOutcome};
+use crate::managers::model::download::{is_refused, safe, HttpDownloadEvent, HttpDownloadOutcome};
 use crate::managers::model::ModelManager;
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -78,23 +95,49 @@ fn catalog_entry(id: &str) -> Option<TtsCatalogEntry> {
 }
 
 /// Die Dateien eines Eintrags mit ihrem Zielpfad, in Katalogreihenfolge.
-fn targets(models_root: &Path, entry: &TtsCatalogEntry) -> Vec<(TtsCatalogFile, PathBuf)> {
-    let dir = diarize::catalog_model_dir(models_root, entry);
-    entry
+/// `catalog_invalid`, wenn ein Katalogwert (Dateiname, Kennung) aus dem
+/// Modellordner hinausfuehren koennte.
+fn targets(
+    models_root: &Path,
+    entry: &TtsCatalogEntry,
+) -> Result<Vec<(TtsCatalogFile, PathBuf)>, String> {
+    let dir = diarize::catalog_model_dir(models_root, entry)
+        .ok_or_else(|| "catalog_invalid".to_string())?;
+    Ok(entry
         .files
         .iter()
         .map(|f| (f.clone(), dir.join(&f.filename)))
-        .collect()
+        .collect())
+}
+
+/// Fehlertext eines E/A-Fehlers; eine Ablehnung wegen Verknuepfung heisst
+/// `unsafe_path` (kein Pfad im Text).
+fn io_msg(e: &std::io::Error) -> String {
+    if safe::is_refusal(e) {
+        "unsafe_path".to_string()
+    } else {
+        e.to_string()
+    }
+}
+
+/// Wie [`io_msg`] fuer Fehler des Downloaders.
+fn net_msg(e: &anyhow::Error) -> String {
+    if is_refused(e) {
+        "unsafe_path".to_string()
+    } else {
+        e.to_string()
+    }
 }
 
 /// Bereit (fuer die Anzeige) heisst: alle Dateien des Eintrags liegen an ihrem
-/// Platz und haben genau die Groesse aus dem Katalog. Nur `stat`, kein Lesen der
-/// Inhalte; die volle Pruefung (SHA-256) macht [`provision`].
+/// Platz als normale Dateien (kein Link) und haben genau die Groesse aus dem
+/// Katalog. Nur `stat`, kein Lesen der Inhalte; die volle Pruefung (SHA-256)
+/// macht [`provision`].
 fn looks_complete(targets: &[(TtsCatalogFile, PathBuf)]) -> bool {
     !targets.is_empty()
-        && targets.iter().all(|(file, path)| {
-            std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() == file.size_bytes)
-        })
+        && targets
+            .iter()
+            .all(|(file, path)| safe::plain_len(path).is_ok_and(|len| len == Some(file.size_bytes)))
 }
 
 fn status_for(app: &AppHandle, id: &str) -> Result<DiarizationModelStatus, String> {
@@ -102,7 +145,7 @@ fn status_for(app: &AppHandle, id: &str) -> Result<DiarizationModelStatus, Strin
     let size: u64 = entry.files.iter().map(|f| f.size_bytes).sum();
     Ok(DiarizationModelStatus {
         model_id: entry.id.clone(),
-        model_ready: looks_complete(&targets(&models_root(app), &entry)),
+        model_ready: looks_complete(&targets(&models_root(app), &entry)?),
         downloading: DOWNLOADING.load(Ordering::Relaxed),
         size_mb: size.div_ceil(1_000_000).min(u64::from(u32::MAX)) as u32,
     })
@@ -146,7 +189,9 @@ enum FileState {
 /// Prueft die Datei am Ziel: erst die Groesse (billig), dann die SHA-256 ueber
 /// den ganzen Inhalt, gelesen in 1-MiB-Bloecken (kein Speicherbedarf nach der
 /// Dateigroesse). Ohne Pruefsumme im Katalog zaehlt nur die Groesse. `None`:
-/// waehrend des Lesens abgebrochen.
+/// waehrend des Lesens abgebrochen. Ein Link oder eine Nicht-Datei am Ziel ist
+/// ein Fehler (Ablehnung, [`safe::is_refusal`]), nie eine Datei, der gefolgt wird;
+/// gelesen wird ohne Link zu folgen.
 fn check_file(
     file: &TtsCatalogFile,
     dest: &Path,
@@ -154,20 +199,19 @@ fn check_file(
 ) -> std::io::Result<Option<FileState>> {
     use sha2::{Digest, Sha256};
     use std::io::Read;
-    let meta = match std::fs::metadata(dest) {
-        Ok(m) => m,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Some(FileState::Missing)),
-        Err(e) => return Err(e),
+    let Some(len) = safe::plain_len(dest)? else {
+        return Ok(Some(FileState::Missing));
     };
-    if !meta.is_file() || meta.len() != file.size_bytes {
+    if len != file.size_bytes {
         return Ok(Some(FileState::Invalid));
     }
     let Some(expected) = file.sha256.as_deref() else {
         return Ok(Some(FileState::Valid));
     };
-    let mut reader = std::fs::File::open(dest)?;
+    let mut reader = safe::open_read(dest)?;
     let mut hasher = Sha256::new();
     let mut block = vec![0u8; 1 << 20];
+    let mut total = 0u64;
     loop {
         if cancel.is_cancelled() {
             return Ok(None);
@@ -176,18 +220,111 @@ fn check_file(
         if n == 0 {
             break;
         }
+        total += n as u64;
         hasher.update(&block[..n]);
     }
     let actual = format!("{:x}", hasher.finalize());
-    Ok(Some(if actual.eq_ignore_ascii_case(expected) {
-        FileState::Valid
-    } else {
-        FileState::Invalid
-    }))
+    // Gewachsen oder geschrumpft zwischen `stat` und Lesen: nicht die Datei aus dem Katalog.
+    Ok(Some(
+        if total == file.size_bytes && actual.eq_ignore_ascii_case(expected) {
+            FileState::Valid
+        } else {
+            FileState::Invalid
+        },
+    ))
+}
+
+/// Prueft alle Dateien ([`check_file`]), im Hintergrundthread. `None`: abgebrochen.
+async fn verify_all(
+    targets: &[(TtsCatalogFile, PathBuf)],
+    cancel: &CancellationToken,
+) -> Result<Option<Vec<FileState>>, String> {
+    let mut states = Vec::with_capacity(targets.len());
+    for (file, dest) in targets {
+        if cancel.is_cancelled() {
+            return Ok(None);
+        }
+        let (file, dest, token) = (file.clone(), dest.clone(), cancel.clone());
+        let state = tokio::task::spawn_blocking(move || check_file(&file, &dest, &token))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| io_msg(&e))?;
+        match state {
+            Some(state) => states.push(state),
+            None => return Ok(None),
+        }
+    }
+    Ok(Some(states))
+}
+
+/// Zieht die Datei zurueck, die der Motor oeffnet (die erste des Eintrags), damit
+/// er sie nicht neben ungeprueften oder defekten Dateien findet. Ungueltig:
+/// geloescht; fehlend: nichts zu tun. Gueltig oder unbekannt (`None`, etwa nach
+/// Abbruch oder Lesefehler): als `.partial` ablegen (kommt ohne Netz zurueck, der
+/// Downloader prueft sie dann erneut); geht das nicht (ein Link, ein Hindernis,
+/// fehlende Rechte), die Datei selbst entfernen; ein Link wird dabei ohne
+/// Folgen entfernt, nie sein Ziel. Scheitert auch das, ist es ein Fehler: der
+/// Aufrufer meldet dann keinen Erfolg.
+fn withdraw_graph(entry_dest: &Path, state: Option<FileState>) -> Result<(), String> {
+    match state {
+        Some(FileState::Missing) => Ok(()),
+        Some(FileState::Invalid) => safe::remove(entry_dest).map_err(|e| io_msg(&e)),
+        Some(FileState::Valid) | None => {
+            match safe::rename_over(entry_dest, &partial_path(entry_dest)) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(_) => match std::fs::remove_file(entry_dest) {
+                    Ok(()) => Ok(()),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                    Err(e) => Err(io_msg(&e)),
+                },
+            }
+        }
+    }
+}
+
+/// Die letzte Pruefung vor dem Erfolg: alle Dateien des Eintrags erneut nach
+/// Groesse und SHA-256, jetzt, nachdem alles an seinem Platz liegt. Stimmt eine
+/// nicht (getauscht, beschaedigt, durch einen Link ersetzt) oder wird die Pruefung
+/// abgebrochen, gibt es keinen Erfolg und der Graph wird zurueckgezogen
+/// ([`withdraw_graph`]): der Motor findet nie ein Paar, das nicht gerade
+/// verifiziert war. `verification_failed`, wenn der Inhalt nicht stimmt.
+async fn confirm(
+    targets: &[(TtsCatalogFile, PathBuf)],
+    cancel: &CancellationToken,
+) -> Result<Fetch, String> {
+    let outcome = verify_all(targets, cancel).await;
+    if let Ok(Some(states)) = &outcome {
+        if states.iter().all(|s| *s == FileState::Valid) {
+            return Ok(Fetch::Done);
+        }
+    }
+    let graph_state = match &outcome {
+        Ok(Some(states)) => states.first().copied(),
+        _ => None,
+    };
+    let reason = match &outcome {
+        Ok(None) => None,
+        Ok(Some(_)) => Some("verification_failed".to_string()),
+        Err(e) => Some(e.clone()),
+    };
+    if let Err(w) = withdraw_graph(&targets[0].1, graph_state) {
+        return Err(format!(
+            "{}; graph_not_withdrawn: {w}",
+            reason.as_deref().unwrap_or("cancelled")
+        ));
+    }
+    match reason {
+        None => Ok(Fetch::Cancelled),
+        Some(reason) => Err(reason),
+    }
 }
 
 /// Stellt alle Dateien des Eintrags verifiziert bereit.
 ///
+/// 0. Jeder Ordner der Ziele liegt unterhalb von `root` ohne Link, der
+///    hinauszeigt ([`safe::dir_inside`]); jede Datei am Ziel und jede
+///    `.partial` ist eine eigene normale Datei (`unsafe_path` sonst).
 /// 1. Jede vorhandene Datei wird nach Groesse und SHA-256 geprueft. Sind alle
 ///    gueltig, ist nichts zu tun (kein Netz).
 /// 2. Muss eine andere als die erste Datei ersetzt werden, wird die erste (die
@@ -196,27 +333,24 @@ fn check_file(
 /// 3. Jede fehlende oder ungueltige Datei wird nach `<ziel>.partial` geladen
 ///    (fortsetzbar, Groesse und SHA-256 aus dem Katalog geprueft) und erst
 ///    dann ueber das Ziel umbenannt; die erste Datei kommt zuletzt.
+/// 4. Zuletzt pruefen alle Dateien noch einmal ([`confirm`]); nur dann Erfolg.
 async fn provision(
+    root: &Path,
     model_id: &str,
     targets: &[(TtsCatalogFile, PathBuf)],
     cancel: &CancellationToken,
     emit: &(dyn Fn(HttpDownloadEvent<'_>) + Send + Sync),
 ) -> Result<Fetch, String> {
-    let mut states = Vec::with_capacity(targets.len());
-    for (file, dest) in targets {
-        if cancel.is_cancelled() {
-            return Ok(Fetch::Cancelled);
-        }
-        let (file, dest, token) = (file.clone(), dest.clone(), cancel.clone());
-        let state = tokio::task::spawn_blocking(move || check_file(&file, &dest, &token))
-            .await
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.to_string())?;
-        match state {
-            Some(state) => states.push(state),
-            None => return Ok(Fetch::Cancelled),
-        }
+    if targets.is_empty() {
+        return Err("model_missing".into());
     }
+    for (_, dest) in targets {
+        let dir = dest.parent().ok_or_else(|| "model_missing".to_string())?;
+        safe::dir_inside(root, dir, false).map_err(|e| io_msg(&e))?;
+    }
+    let Some(mut states) = verify_all(targets, cancel).await? else {
+        return Ok(Fetch::Cancelled);
+    };
     if states.iter().all(|s| *s == FileState::Valid) {
         return Ok(Fetch::Done);
     }
@@ -225,18 +359,9 @@ async fn provision(
     // ohne Netz zurueck), eine ungueltige wird ohnehin neu geladen.
     let entry_dest = &targets[0].1;
     let others_broken = states[1..].iter().any(|s| *s != FileState::Valid);
-    if others_broken {
-        match states[0] {
-            FileState::Valid => {
-                std::fs::rename(entry_dest, partial_path(entry_dest)).map_err(|e| e.to_string())?;
-                states[0] = FileState::Missing;
-            }
-            FileState::Invalid => {
-                std::fs::remove_file(entry_dest).map_err(|e| e.to_string())?;
-                states[0] = FileState::Missing;
-            }
-            FileState::Missing => {}
-        }
+    if others_broken && states[0] != FileState::Missing {
+        withdraw_graph(entry_dest, Some(states[0]))?;
+        states[0] = FileState::Missing;
     }
     for ((file, dest), state) in targets.iter().zip(&states).rev() {
         if *state == FileState::Valid {
@@ -246,7 +371,7 @@ async fn provision(
             return Ok(Fetch::Cancelled);
         }
         let dir = dest.parent().ok_or_else(|| "model_missing".to_string())?;
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        safe::dir_inside(root, dir, true).map_err(|e| io_msg(&e))?;
         let partial = partial_path(dest);
         let outcome = ModelManager::download_http_resumable_with_events(
             model_id,
@@ -258,15 +383,15 @@ async fn provision(
             emit,
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| net_msg(&e))?;
         match outcome {
             HttpDownloadOutcome::Completed => {
-                std::fs::rename(&partial, dest).map_err(|e| e.to_string())?;
+                safe::rename_over(&partial, dest).map_err(|e| io_msg(&e))?;
             }
             HttpDownloadOutcome::Cancelled => return Ok(Fetch::Cancelled),
         }
     }
-    Ok(Fetch::Done)
+    confirm(targets, cancel).await
 }
 
 /// Stellt das Modell `id` bereit (alle seine Dateien), nur auf Knopfdruck oder
@@ -276,7 +401,11 @@ async fn provision(
 /// naechsten Sprechertrennung.
 pub async fn download_model(app: &AppHandle, id: &str) -> Result<(), String> {
     let entry = catalog_entry(id).ok_or_else(|| "model_missing".to_string())?;
-    let files = targets(&models_root(app), &entry);
+    let root = models_root(app);
+    if root.as_os_str().is_empty() {
+        return Err("data_dir_missing".into());
+    }
+    let files = targets(&root, &entry)?;
     if files.is_empty() {
         return Err("model_missing".into());
     }
@@ -299,7 +428,7 @@ pub async fn download_model(app: &AppHandle, id: &str) -> Result<(), String> {
     };
     let cancel = CancellationToken::new();
     *CANCEL.lock().unwrap_or_else(|e| e.into_inner()) = Some(cancel.clone());
-    match provision(&entry.id, &files, &cancel, &emit).await? {
+    match provision(&root, &entry.id, &files, &cancel, &emit).await? {
         Fetch::Done => {
             let _ = app.emit("model-download-complete", entry.id.as_str());
             Ok(())
@@ -359,7 +488,7 @@ mod tests {
     fn the_nemotron_entry_has_two_targets_in_its_own_folder_graph_first() {
         let root = Path::new("models");
         let entry = catalog_entry(diarize::nemotron::MODEL_ID).expect("Nemotron im Katalog");
-        let t = targets(root, &entry);
+        let t = targets(root, &entry).unwrap();
         assert_eq!(t.len(), 2);
         let dir = root.join("diarization").join(&entry.id);
         assert_eq!(t[0].1, dir.join("model_quantized.onnx"));
@@ -370,7 +499,7 @@ mod tests {
         );
         // Sortformer bleibt, wo es war (Altbestand).
         let old = catalog_entry(diarize::DEFAULT_MODEL_ID).unwrap();
-        let t = targets(root, &old);
+        let t = targets(root, &old).unwrap();
         assert_eq!(t.len(), 1);
         assert_eq!(t[0].1.parent().unwrap(), root.join("diarization"));
     }
@@ -495,9 +624,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let files = rebase(two_files(&server, None), dir.path());
         assert!(!looks_complete(&files));
-        let out = provision("test/nemotron", &files, &CancellationToken::new(), &|_| {})
-            .await
-            .unwrap();
+        let out = provision(
+            dir.path(),
+            "test/nemotron",
+            &files,
+            &CancellationToken::new(),
+            &|_| {},
+        )
+        .await
+        .unwrap();
         assert_eq!(out, Fetch::Done);
         assert!(looks_complete(&files));
         assert_eq!(std::fs::read(&files[0].1).unwrap(), GRAPH);
@@ -519,11 +654,11 @@ mod tests {
         .await;
         let dir = tempfile::tempdir().unwrap();
         let files = rebase(two_files(&server, None), dir.path());
-        provision("t", &files, &CancellationToken::new(), &|_| {})
+        provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
             .await
             .unwrap();
         let asked = server.requests.lock().unwrap().len();
-        provision("t", &files, &CancellationToken::new(), &|_| {})
+        provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
             .await
             .unwrap();
         assert_eq!(
@@ -534,7 +669,7 @@ mod tests {
 
         // Eine fehlende Datei wird einzeln nachgeladen, die vorhandene bleibt.
         std::fs::remove_file(&files[0].1).unwrap();
-        provision("t", &files, &CancellationToken::new(), &|_| {})
+        provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
             .await
             .unwrap();
         assert_eq!(server.requests.lock().unwrap().len(), asked + 1);
@@ -557,7 +692,7 @@ mod tests {
         .await;
         let dir = tempfile::tempdir().unwrap();
         let files = rebase(two_files(&server, None), dir.path());
-        let err = provision("t", &files, &CancellationToken::new(), &|_| {})
+        let err = provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
             .await
             .unwrap_err();
         assert!(!err.is_empty());
@@ -576,9 +711,11 @@ mod tests {
         .await;
         let dir = tempfile::tempdir().unwrap();
         let files = rebase(two_files(&server, Some("0".repeat(64))), dir.path());
-        assert!(provision("t", &files, &CancellationToken::new(), &|_| {})
-            .await
-            .is_err());
+        assert!(
+            provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
+                .await
+                .is_err()
+        );
         assert!(!files[0].1.exists() && !files[1].1.exists());
         assert!(!looks_complete(&files));
         assert_eq!(*server.requests.lock().unwrap(), ["/model.onnx_data"]);
@@ -595,7 +732,9 @@ mod tests {
         let files = rebase(two_files(&server, None), dir.path());
         let cancel = CancellationToken::new();
         cancel.cancel();
-        let out = provision("t", &files, &cancel, &|_| {}).await.unwrap();
+        let out = provision(dir.path(), "t", &files, &cancel, &|_| {})
+            .await
+            .unwrap();
         assert_eq!(out, Fetch::Cancelled);
         assert!(server.requests.lock().unwrap().is_empty());
         assert!(!looks_complete(&files));
@@ -619,7 +758,7 @@ mod tests {
             !looks_complete(&files),
             "Teildatei darf nicht als installiert gelten"
         );
-        provision("t", &files, &CancellationToken::new(), &|_| {})
+        provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
             .await
             .unwrap();
         assert!(looks_complete(&files));
@@ -652,7 +791,7 @@ mod tests {
         let files = rebase(two_files(&server, None), dir.path());
         install(&files);
         assert!(looks_complete(&files));
-        let out = provision("t", &files, &CancellationToken::new(), &|_| {})
+        let out = provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
             .await
             .unwrap();
         assert_eq!(out, Fetch::Done);
@@ -687,7 +826,7 @@ mod tests {
             "abgeschnitten gilt nicht als bereit"
         );
 
-        let out = provision("t", &files, &CancellationToken::new(), &|_| {})
+        let out = provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
             .await
             .unwrap();
         assert_eq!(out, Fetch::Done);
@@ -712,7 +851,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let files = rebase(two_files(&server, None), dir.path());
         std::fs::write(&files[1].1, vec![b'x'; WEIGHTS.len()]).unwrap();
-        let out = provision("t", &files, &CancellationToken::new(), &|_| {})
+        let out = provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
             .await
             .unwrap();
         assert_eq!(out, Fetch::Done);
@@ -736,7 +875,7 @@ mod tests {
         install(&files);
         std::fs::write(&files[1].1, vec![b'x'; WEIGHTS.len()]).unwrap();
         assert!(looks_complete(&files), "die Anzeige liest keine Inhalte");
-        provision("t", &files, &CancellationToken::new(), &|_| {})
+        provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
             .await
             .unwrap();
         assert_eq!(std::fs::read(&files[1].1).unwrap(), WEIGHTS);
@@ -757,9 +896,11 @@ mod tests {
         let files = rebase(two_files(&broken, None), dir.path());
         install(&files);
         std::fs::write(&files[1].1, &WEIGHTS[..5]).unwrap();
-        assert!(provision("t", &files, &CancellationToken::new(), &|_| {})
-            .await
-            .is_err());
+        assert!(
+            provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
+                .await
+                .is_err()
+        );
         assert!(!files[0].1.exists(), "Graph neben defekten Gewichten");
         assert!(!looks_complete(&files));
         assert_eq!(
@@ -770,7 +911,7 @@ mod tests {
 
         let healthy = serve(both_routes()).await;
         let files = rebase(two_files(&healthy, None), dir.path());
-        let out = provision("t", &files, &CancellationToken::new(), &|_| {})
+        let out = provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
             .await
             .unwrap();
         assert_eq!(out, Fetch::Done);
@@ -791,14 +932,16 @@ mod tests {
         let files = vec![one(&down)];
         std::fs::write(&files[0].1, b"alte-datei-bytes").unwrap();
         assert!(!looks_complete(&files));
-        assert!(provision("t", &files, &CancellationToken::new(), &|_| {})
-            .await
-            .is_err());
+        assert!(
+            provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
+                .await
+                .is_err()
+        );
         assert_eq!(std::fs::read(&files[0].1).unwrap(), b"alte-datei-bytes");
 
         let up = serve(both_routes()).await;
         let files = vec![one(&up)];
-        let out = provision("t", &files, &CancellationToken::new(), &|_| {})
+        let out = provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
             .await
             .unwrap();
         assert_eq!(out, Fetch::Done);
@@ -817,10 +960,419 @@ mod tests {
         std::fs::write(&files[1].1, &WEIGHTS[..5]).unwrap();
         let cancel = CancellationToken::new();
         cancel.cancel();
-        let out = provision("t", &files, &cancel, &|_| {}).await.unwrap();
+        let out = provision(dir.path(), "t", &files, &cancel, &|_| {})
+            .await
+            .unwrap();
         assert_eq!(out, Fetch::Cancelled);
         assert!(server.requests.lock().unwrap().is_empty());
         assert_eq!(std::fs::read(&files[0].1).unwrap(), GRAPH);
         assert_eq!(std::fs::read(&files[1].1).unwrap(), &WEIGHTS[..5]);
+    }
+    // ---- Ende nur mit verifiziertem Paar ------------------------------------
+
+    /// Gewichte gleicher Groesse mit falschen Bytes: nur die SHA-256 sieht es.
+    fn same_size_wrong() -> Vec<u8> {
+        vec![b'x'; WEIGHTS.len()]
+    }
+
+    /// Hook, der bei der Anfrage `trigger` die Datei `victim` durch gleich grosse
+    /// falsche Bytes ersetzt (ein Tausch mitten im Bereitstellen).
+    fn swap_on(trigger: &'static str, victim: PathBuf) -> Arc<dyn Fn(&str) + Send + Sync> {
+        Arc::new(move |path: &str| {
+            if path == trigger {
+                std::fs::write(&victim, same_size_wrong()).unwrap();
+            }
+        })
+    }
+
+    /// Gewichte gueltig, Graph fehlt; waehrend der Graph geladen wird, werden die
+    /// Gewichte gegen gleich grosse falsche Bytes getauscht. Das ist kein Erfolg:
+    /// Fehler, der Graph liegt nicht am Ziel (er wartet als verifizierte Teildatei),
+    /// die Anzeige sagt "nicht bereit"; die naechste Runde holt nur die Gewichte.
+    #[tokio::test]
+    async fn a_swap_of_the_weights_while_the_graph_downloads_is_no_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let hook = swap_on("/model.onnx", dir.path().join("model.onnx_data"));
+        let server = serve_with(both_routes(), hook).await;
+        let files = rebase(two_files(&server, None), dir.path());
+        std::fs::write(&files[1].1, WEIGHTS).unwrap();
+
+        let err = provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
+            .await
+            .unwrap_err();
+        assert_eq!(err, "verification_failed");
+        assert_eq!(*server.requests.lock().unwrap(), ["/model.onnx"]);
+        assert!(!files[0].1.exists(), "Graph neben getauschten Gewichten");
+        assert_eq!(
+            std::fs::read(&files[1].1).unwrap(),
+            same_size_wrong(),
+            "Testannahme: der Tausch hat stattgefunden"
+        );
+        assert!(
+            !looks_complete(&files),
+            "Anzeige: bereit trotz fehlendem Graph"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("model.onnx.partial")).unwrap(),
+            GRAPH,
+            "der verifizierte Graph wartet als Teildatei"
+        );
+
+        let healthy = serve(both_routes()).await;
+        let files = rebase(two_files(&healthy, None), dir.path());
+        let out = provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
+            .await
+            .unwrap();
+        assert_eq!(out, Fetch::Done);
+        assert_eq!(*healthy.requests.lock().unwrap(), ["/model.onnx_data"]);
+        assert_eq!(std::fs::read(&files[0].1).unwrap(), GRAPH);
+        assert_eq!(std::fs::read(&files[1].1).unwrap(), WEIGHTS);
+        assert_eq!(leftovers(dir.path()), ["model.onnx", "model.onnx_data"]);
+    }
+
+    /// Dasselbe bei frischer Installation: die Gewichte liegen gerade erst
+    /// verifiziert am Ziel, als sie waehrend der Graph-Anfrage getauscht werden.
+    #[tokio::test]
+    async fn a_swap_after_a_fresh_weights_install_is_caught_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let hook = swap_on("/model.onnx", dir.path().join("model.onnx_data"));
+        let server = serve_with(both_routes(), hook).await;
+        let files = rebase(two_files(&server, None), dir.path());
+
+        let err = provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
+            .await
+            .unwrap_err();
+        assert_eq!(err, "verification_failed");
+        assert_eq!(
+            *server.requests.lock().unwrap(),
+            ["/model.onnx_data", "/model.onnx"]
+        );
+        assert!(!files[0].1.exists());
+        assert!(!looks_complete(&files));
+    }
+
+    /// Die letzte Pruefung allein: alles gueltig ist Erfolg und fasst nichts an;
+    /// sonst kein Erfolg, und der Graph ist je nach Befund zurueckgezogen
+    /// (gueltig: als Teildatei, ungueltig: weg).
+    #[tokio::test]
+    async fn the_final_check_passes_only_a_verified_pair_and_withdraws_the_graph_otherwise() {
+        let server = serve(both_routes()).await;
+        let dir = tempfile::tempdir().unwrap();
+        let files = rebase(two_files(&server, None), dir.path());
+        install(&files);
+        let none = CancellationToken::new();
+
+        assert_eq!(confirm(&files, &none).await.unwrap(), Fetch::Done);
+        assert_eq!(leftovers(dir.path()), ["model.onnx", "model.onnx_data"]);
+
+        // Gewichte getauscht, Graph gut: Graph als Teildatei beiseite.
+        std::fs::write(&files[1].1, same_size_wrong()).unwrap();
+        assert_eq!(
+            confirm(&files, &none).await.unwrap_err(),
+            "verification_failed"
+        );
+        assert!(!files[0].1.exists());
+        assert_eq!(
+            std::fs::read(dir.path().join("model.onnx.partial")).unwrap(),
+            GRAPH
+        );
+        assert_eq!(std::fs::read(&files[1].1).unwrap(), same_size_wrong());
+
+        // Graph getauscht (gleich gross, falsche Bytes): weg, auch keine Teildatei.
+        let dir = tempfile::tempdir().unwrap();
+        let files = rebase(two_files(&server, None), dir.path());
+        install(&files);
+        std::fs::write(&files[0].1, vec![b'y'; GRAPH.len()]).unwrap();
+        assert_eq!(
+            confirm(&files, &none).await.unwrap_err(),
+            "verification_failed"
+        );
+        assert_eq!(leftovers(dir.path()), ["model.onnx_data"]);
+    }
+
+    /// Abbruch in der letzten Pruefung ist kein Erfolg und laesst keinen
+    /// ungeprueften Graphen am Ziel liegen.
+    #[tokio::test]
+    async fn cancelling_the_final_check_is_no_success_and_withdraws_the_graph() {
+        let server = serve(both_routes()).await;
+        let dir = tempfile::tempdir().unwrap();
+        let files = rebase(two_files(&server, None), dir.path());
+        install(&files);
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        assert_eq!(confirm(&files, &cancel).await.unwrap(), Fetch::Cancelled);
+        assert!(!files[0].1.exists());
+        assert_eq!(
+            std::fs::read(dir.path().join("model.onnx.partial")).unwrap(),
+            GRAPH
+        );
+        assert!(!looks_complete(&files));
+        // Die naechste Runde stellt ohne Netz wieder her.
+        let out = provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
+            .await
+            .unwrap();
+        assert_eq!(out, Fetch::Done);
+        assert!(server.requests.lock().unwrap().is_empty());
+        assert!(looks_complete(&files));
+    }
+
+    /// Fehlende Ordner unterhalb der Wurzel legt das Bereitstellen an.
+    #[tokio::test]
+    async fn provisioning_creates_the_folders_below_the_root() {
+        let server = serve(both_routes()).await;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("models");
+        let sub = root.join("diarization").join("id");
+        let files = rebase(two_files(&server, None), &sub);
+        let out = provision(&root, "t", &files, &CancellationToken::new(), &|_| {})
+            .await
+            .unwrap();
+        assert_eq!(out, Fetch::Done);
+        assert!(looks_complete(&files));
+        assert_eq!(leftovers(&sub), ["model.onnx", "model.onnx_data"]);
+    }
+
+    // ---- Katalogwerte, die aus dem Modellordner hinausfuehren -----------------
+
+    #[test]
+    fn targets_refuse_catalog_values_that_could_leave_the_model_folder() {
+        let root = Path::new("models");
+        let entry = catalog_entry(diarize::nemotron::MODEL_ID).unwrap();
+        assert_eq!(targets(root, &entry).unwrap().len(), 2);
+        let single = catalog_entry(diarize::DEFAULT_MODEL_ID).unwrap();
+        assert_eq!(targets(root, &single).unwrap().len(), 1);
+        for bad in ["..", "../x", "a/b", "/abs", "a\\b", "C:\\x", "C:", ""] {
+            let mut by_id = entry.clone();
+            by_id.id = bad.to_string();
+            assert_eq!(
+                targets(root, &by_id).unwrap_err(),
+                "catalog_invalid",
+                "{bad:?}"
+            );
+            let mut by_name = entry.clone();
+            by_name.files[1].filename = bad.to_string();
+            assert_eq!(
+                targets(root, &by_name).unwrap_err(),
+                "catalog_invalid",
+                "{bad:?}"
+            );
+            let mut one = single.clone();
+            one.files[0].filename = bad.to_string();
+            assert_eq!(
+                targets(root, &one).unwrap_err(),
+                "catalog_invalid",
+                "{bad:?}"
+            );
+        }
+    }
+
+    // ---- Verknuepfungen: nur eigene, normale Dateien im Modellordner --------
+
+    const FOREIGN: &[u8] = b"ABCDE";
+
+    /// Prueft, dass `provision` mit `unsafe_path` ablehnt, ohne das Netz zu fragen.
+    async fn assert_refused_without_network(
+        root: &Path,
+        files: &[(TtsCatalogFile, PathBuf)],
+        server: &Server,
+    ) {
+        let err = provision(root, "t", files, &CancellationToken::new(), &|_| {})
+            .await
+            .unwrap_err();
+        assert_eq!(err, "unsafe_path");
+        assert!(
+            server.requests.lock().unwrap().is_empty(),
+            "Netzzugriff trotz Ablehnung"
+        );
+    }
+
+    #[cfg(unix)]
+    mod links {
+        use super::*;
+        use std::os::unix::fs::symlink;
+
+        fn foreign(dir: &Path, bytes: &[u8]) -> PathBuf {
+            let path = dir.join("fremd.bin");
+            std::fs::write(&path, bytes).unwrap();
+            path
+        }
+
+        fn is_link(path: &Path) -> bool {
+            std::fs::symlink_metadata(path)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        }
+
+        /// Ein Link als Ziel wird abgelehnt, auch wenn dahinter genau die richtigen
+        /// Bytes liegen: die fremde Datei wird weder gelesen als "gueltig" noch
+        /// ersetzt, noch umbenannt, noch geloescht.
+        #[tokio::test]
+        async fn a_symlinked_target_is_refused_even_when_it_holds_the_right_bytes() {
+            for victim in [1usize, 0] {
+                let server = serve(both_routes()).await;
+                let dir = tempfile::tempdir().unwrap();
+                let outside = tempfile::tempdir().unwrap();
+                let files = rebase(two_files(&server, None), dir.path());
+                install(&files);
+                let right = if victim == 1 { WEIGHTS } else { GRAPH };
+                let target = foreign(outside.path(), right);
+                std::fs::remove_file(&files[victim].1).unwrap();
+                symlink(&target, &files[victim].1).unwrap();
+                assert!(
+                    !looks_complete(&files),
+                    "Anzeige: bereit trotz Link an Stelle {victim}"
+                );
+
+                assert_refused_without_network(dir.path(), &files, &server).await;
+
+                assert_eq!(
+                    std::fs::read(&target).unwrap(),
+                    right,
+                    "fremde Datei veraendert"
+                );
+                assert!(is_link(&files[victim].1), "Link ersetzt");
+                let other = 1 - victim;
+                assert!(!is_link(&files[other].1) && files[other].1.is_file());
+            }
+        }
+
+        /// Ein Link als Teildatei: die fremde Datei dahinter (kuerzer als die
+        /// Gewichte) bekommt keine Bytes angehaengt, das Netz wird nie gefragt.
+        #[tokio::test]
+        async fn a_symlinked_partial_is_refused_and_the_foreign_file_stays_byte_identical() {
+            let server = serve(both_routes()).await;
+            let dir = tempfile::tempdir().unwrap();
+            let outside = tempfile::tempdir().unwrap();
+            let files = rebase(two_files(&server, None), dir.path());
+            let target = foreign(outside.path(), FOREIGN);
+            let partial = partial_path(&files[1].1);
+            symlink(&target, &partial).unwrap();
+
+            assert_refused_without_network(dir.path(), &files, &server).await;
+
+            assert_eq!(std::fs::read(&target).unwrap(), FOREIGN);
+            assert!(is_link(&partial));
+            assert!(!files[0].1.exists() && !files[1].1.exists());
+        }
+
+        /// Ein Link ins Leere als Teildatei: hinter dem Link entsteht nichts.
+        #[tokio::test]
+        async fn a_dangling_symlinked_partial_creates_nothing() {
+            let server = serve(both_routes()).await;
+            let dir = tempfile::tempdir().unwrap();
+            let outside = tempfile::tempdir().unwrap();
+            let files = rebase(two_files(&server, None), dir.path());
+            let behind = outside.path().join("noch-nicht-da.bin");
+            symlink(&behind, partial_path(&files[1].1)).unwrap();
+
+            assert_refused_without_network(dir.path(), &files, &server).await;
+            assert!(!behind.exists());
+        }
+
+        /// Ein Zwischenordner, der ein Link aus dem Modellordner heraus ist: es wird
+        /// weder dahinter etwas angelegt noch geschrieben, und das Netz nicht gefragt.
+        #[tokio::test]
+        async fn a_linked_folder_pointing_outside_the_model_root_is_refused() {
+            for leaf_only in [false, true] {
+                let server = serve(both_routes()).await;
+                let dir = tempfile::tempdir().unwrap();
+                let outside = tempfile::tempdir().unwrap();
+                let root = dir.path().join("models");
+                std::fs::create_dir_all(&root).unwrap();
+                let sub = root.join("diarization").join("id");
+                if leaf_only {
+                    std::fs::create_dir_all(root.join("diarization")).unwrap();
+                    symlink(outside.path(), &sub).unwrap();
+                } else {
+                    symlink(outside.path(), root.join("diarization")).unwrap();
+                }
+                let files = rebase(two_files(&server, None), &sub);
+
+                assert_refused_without_network(&root, &files, &server).await;
+
+                assert!(
+                    std::fs::read_dir(outside.path()).unwrap().next().is_none(),
+                    "ausserhalb des Modellordners wurde etwas angelegt (leaf_only={leaf_only})"
+                );
+            }
+        }
+
+        /// Gegenprobe: ein verschobener Datenordner (die Wurzel ist ein Link) ist
+        /// kein Verstoss, alles darunter liegt dann dort, wohin die Wurzel zeigt.
+        #[tokio::test]
+        async fn a_model_root_that_is_itself_a_link_still_works() {
+            let server = serve(both_routes()).await;
+            let dir = tempfile::tempdir().unwrap();
+            let real = dir.path().join("platte-d");
+            std::fs::create_dir_all(&real).unwrap();
+            let root = dir.path().join("models");
+            symlink(&real, &root).unwrap();
+            let sub = root.join("diarization").join("id");
+            let files = rebase(two_files(&server, None), &sub);
+
+            let out = provision(&root, "t", &files, &CancellationToken::new(), &|_| {})
+                .await
+                .unwrap();
+            assert_eq!(out, Fetch::Done);
+            assert!(looks_complete(&files));
+            assert_eq!(
+                std::fs::read(real.join("diarization").join("id").join("model.onnx")).unwrap(),
+                GRAPH
+            );
+        }
+
+        /// Ein Link als Gewichte-Ziel, der erst in der letzten Pruefung auffaellt
+        /// (eingeschoben waehrend des Ladens): kein Erfolg, Graph zurueckgezogen,
+        /// fremde Datei unberuehrt.
+        #[tokio::test]
+        async fn a_link_slipped_in_during_the_download_is_caught_by_the_final_check() {
+            let dir = tempfile::tempdir().unwrap();
+            let outside = tempfile::tempdir().unwrap();
+            let target = foreign(outside.path(), WEIGHTS);
+            let weights = dir.path().join("model.onnx_data");
+            let hook: Arc<dyn Fn(&str) + Send + Sync> = {
+                let (weights, target) = (weights.clone(), target.clone());
+                Arc::new(move |path: &str| {
+                    if path == "/model.onnx" {
+                        std::fs::remove_file(&weights).unwrap();
+                        symlink(&target, &weights).unwrap();
+                    }
+                })
+            };
+            let server = serve_with(both_routes(), hook).await;
+            let files = rebase(two_files(&server, None), dir.path());
+            std::fs::write(&files[1].1, WEIGHTS).unwrap();
+
+            let err = provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
+                .await
+                .unwrap_err();
+            assert_eq!(err, "unsafe_path");
+            assert!(!files[0].1.exists(), "Graph neben einem Link als Gewichte");
+            assert_eq!(std::fs::read(&target).unwrap(), WEIGHTS);
+            assert!(is_link(&weights));
+        }
+    }
+
+    /// Windows: ein Symlink braucht Entwicklermodus oder Administrator; laesst er
+    /// sich nicht anlegen, wird der Fall mit Meldung uebersprungen.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn a_symlinked_target_is_refused_when_a_symlink_can_be_created() {
+        let server = serve(both_routes()).await;
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let files = rebase(two_files(&server, None), dir.path());
+        install(&files);
+        let target = outside.path().join("fremd.bin");
+        std::fs::write(&target, WEIGHTS).unwrap();
+        std::fs::remove_file(&files[1].1).unwrap();
+        if let Err(e) = std::os::windows::fs::symlink_file(&target, &files[1].1) {
+            eprintln!("uebersprungen: Symlink nicht anlegbar ({e})");
+            return;
+        }
+        assert!(!looks_complete(&files));
+        assert_refused_without_network(dir.path(), &files, &server).await;
+        assert_eq!(std::fs::read(&target).unwrap(), WEIGHTS);
     }
 }

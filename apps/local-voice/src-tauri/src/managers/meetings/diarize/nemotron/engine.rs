@@ -6,6 +6,8 @@
 //! Graphen `model_quantized.onnx` und den Gewichten `model_quantized.onnx_data`
 //! (ONNX "external data", der Graph nennt die Datei beim Namen). Fehlt die zweite
 //! oder ist sie abgeschnitten, meldet das Laden einen Fehler, nie eine Panik.
+//! Liegt das Modell an seinem Katalogplatz, kommt eine billige Pruefung der
+//! Dateigroessen gegen den Katalog dazu ([`check_catalog_sizes`], ohne Hash).
 //!
 //! Wie bei Sortformer (`diarize::engine`): ein Diarisierer im Prozess (der
 //! `ExclusiveSlot` im umgebenden `Diarizer`), RAM-Start-Gate davor, eine Panik im
@@ -27,7 +29,7 @@ use super::cache::CacheConfig;
 use super::frontend::MelFrontend;
 use super::{HIDDEN, MEL_BINS};
 use crate::managers::meetings::diarize::postproc::RawTurn;
-use crate::managers::meetings::diarize::{DiarizeEngine, DiarizeError, Preset};
+use crate::managers::meetings::diarize::{catalog_file_sizes, DiarizeEngine, DiarizeError, Preset};
 
 const INPUTS: [&str; 3] = ["input_features", "cached_embeds", "attention_mask"];
 const OUTPUTS: [&str; 3] = ["logits", "chunk_embeds", "silence_embeds"];
@@ -65,13 +67,47 @@ fn without_dir(text: &str, model_path: &Path) -> String {
     out
 }
 
+/// Liegt `model_path` an seinem Katalogplatz (`.../diarization/<id>/<graph>`),
+/// muessen beide Dateien des Eintrags genau die Groesse aus dem Katalog haben.
+/// Ein Pfad von Hand (anderer Ordner oder Name) ist kein Katalogmodell und wird
+/// hier nicht geprueft.
+///
+/// Reichweite, ehrlich: das ist nur `stat`, kein Hash (120 MB lesen bei jedem
+/// Laden waere zu teuer). Es faengt abgeschnittene oder unvollstaendige Dateien
+/// und einen Graphen neben Gewichten anderer Groesse. Es erkennt NICHT, wenn
+/// zwischen dem Bereitstellen (dort Groesse und SHA-256 je Datei) und dem Laden
+/// Bytes bei gleicher Groesse getauscht wurden, und es ist von dem Oeffnen durch
+/// ONNX Runtime getrennt (die Datei kann nach der Pruefung noch ersetzt werden).
+/// Eine staerkere Garantie braucht eine geschuetzte Generation (ein beim
+/// Bereitstellen versiegelter, schreibgeschuetzter Ordner, aus dem geladen wird,
+/// oder ein Hash, der beim Laden ueber dieselben Bytes gebildet wird, die ONNX
+/// Runtime liest). Das ist nicht Teil von N1.
+pub fn check_catalog_sizes(model_path: &Path) -> Result<(), DiarizeError> {
+    let Some(files) = catalog_file_sizes(model_path) else {
+        return Ok(());
+    };
+    for (path, expected) in files {
+        let actual = std::fs::metadata(&path)
+            .map_err(|_| DiarizeError::ModelMissing(path.clone()))?
+            .len();
+        if actual != expected {
+            return Err(DiarizeError::Load(format!(
+                "{}: Groesse {actual} statt {expected} laut Katalog (unvollstaendig oder veraendert; im Modellmanager neu bereitstellen)",
+                short(&path)
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Die ONNX-Sitzung des Blockmodells.
 pub struct OnnxBlockModel {
     session: Session,
 }
 
 impl OnnxBlockModel {
-    /// Prueft beide Dateien, laedt die Sitzung mit `threads` CPU-Threads und
+    /// Prueft beide Dateien (Vorhandensein, am Katalogplatz auch die Groesse,
+    /// [`check_catalog_sizes`]), laedt die Sitzung mit `threads` CPU-Threads und
     /// prueft Ein- und Ausgaenge: eine fremde ONNX-Datei ist ein Bedienfehler
     /// (`WrongModel`), kein Absturz beim ersten Block.
     pub fn load(model_path: &Path, threads: usize) -> Result<Self, DiarizeError> {
@@ -82,6 +118,7 @@ impl OnnxBlockModel {
         if !data.is_file() {
             return Err(DiarizeError::ModelMissing(data));
         }
+        check_catalog_sizes(model_path)?;
         let load_err = |e: &dyn std::fmt::Display| {
             DiarizeError::Load(format!(
                 "{}: {}",
@@ -281,6 +318,83 @@ mod tests {
             other => panic!("erwartet ModelMissing, bekam {:?}", other.err()),
         }
         assert!(NemotronOnnxEngine::load(&path, 1).is_err());
+    }
+
+    /// Beide Dateien des Katalogeintrags an ihrem Platz unter `root`, mit den
+    /// angegebenen Groessen (duenn besetzte Dateien, kein Inhalt noetig).
+    fn catalog_layout(root: &Path, sizes: [u64; 2]) -> Vec<PathBuf> {
+        let files =
+            crate::managers::meetings::diarize::catalog_model_files(root, super::super::MODEL_ID)
+                .expect("Katalogeintrag");
+        std::fs::create_dir_all(files[0].parent().unwrap()).unwrap();
+        for (path, size) in files.iter().zip(sizes) {
+            std::fs::File::create(path).unwrap().set_len(size).unwrap();
+        }
+        files
+    }
+
+    fn catalog_sizes() -> [u64; 2] {
+        let entry = crate::catalog::tts_entries(crate::catalog::Purpose::Diarization)
+            .into_iter()
+            .find(|e| e.id == super::super::MODEL_ID)
+            .unwrap();
+        [entry.files[0].size_bytes, entry.files[1].size_bytes]
+    }
+
+    /// Am Katalogplatz mit der falschen Groesse (abgeschnitten, ein halber Austausch):
+    /// das Laden meldet es, bevor ONNX Runtime etwas oeffnet; der Text nennt den
+    /// Dateinamen, keinen Pfad.
+    #[test]
+    fn wrong_sizes_at_the_catalog_place_fail_the_load_naming_the_file() {
+        let [graph, weights] = catalog_sizes();
+        for (sizes, bad) in [
+            ([graph, weights - 1], "model_quantized.onnx_data"),
+            ([graph + 1, weights], "model_quantized.onnx"),
+            ([0, weights], "model_quantized.onnx"),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let files = catalog_layout(dir.path(), sizes);
+            match OnnxBlockModel::load(&files[0], 1) {
+                Err(DiarizeError::Load(msg)) => {
+                    assert!(msg.starts_with(bad), "{msg}");
+                    assert!(msg.contains("laut Katalog"), "{msg}");
+                    assert!(
+                        !msg.contains(dir.path().to_str().unwrap()),
+                        "Pfad im Text: {msg}"
+                    );
+                }
+                other => panic!("erwartet Load, bekam {:?}", other.err()),
+            }
+        }
+    }
+
+    #[test]
+    fn the_right_sizes_pass_the_check_and_a_hand_placed_model_is_not_checked() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = catalog_layout(dir.path(), catalog_sizes());
+        check_catalog_sizes(&files[0]).expect("Groessen laut Katalog");
+
+        // Von Hand abgelegt (kein Katalogplatz): keine Groessenpruefung, auch bei
+        // beliebiger Groesse.
+        let manual = dir_with(&[
+            ("model_quantized.onnx", b"graph"),
+            ("model_quantized.onnx_data", b"daten"),
+        ]);
+        check_catalog_sizes(&manual.path().join("model_quantized.onnx"))
+            .expect("kein Katalogmodell");
+    }
+
+    /// Die zweite Datei fehlt am Katalogplatz: weiter `ModelMissing` mit dieser
+    /// Datei (die Pruefung davor), keine Groessenmeldung.
+    #[test]
+    fn a_missing_weights_file_at_the_catalog_place_is_still_model_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = catalog_layout(dir.path(), catalog_sizes());
+        std::fs::remove_file(&files[1]).unwrap();
+        match OnnxBlockModel::load(&files[0], 1) {
+            Err(DiarizeError::ModelMissing(p)) => assert_eq!(p, files[1]),
+            other => panic!("erwartet ModelMissing, bekam {:?}", other.err()),
+        }
     }
 
     /// Modell, das im Aufruf panikt (stellvertretend fuer einen Fehler in der FFI-Schicht).

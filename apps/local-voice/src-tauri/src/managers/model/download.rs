@@ -9,8 +9,6 @@ use futures_util::StreamExt;
 use hf_hub::api::tokio::CancellationToken;
 use log::{info, warn};
 use sha2::{Digest, Sha256};
-use std::fs;
-use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -18,6 +16,17 @@ use tauri::Emitter;
 
 mod auth;
 pub(crate) use auth::{DownloadAuth, HttpStatusError, Origin, Secret};
+
+/// Dateisystemregeln: nur eigene, normale Dateien anfassen (kein Link, kein
+/// Reparse-Punkt), siehe das Moduldoku.
+pub(crate) mod safe;
+
+/// Hat der Downloader die Datei als Link, Reparse-Punkt oder Nicht-Datei abgelehnt
+/// (und war es kein gewoehnlicher E/A-Fehler)?
+pub(crate) fn is_refused(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<std::io::Error>()
+        .is_some_and(safe::is_refusal)
+}
 
 /// Bound on connection setup for direct HTTP downloads (mirror + URL models).
 const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -77,14 +86,14 @@ impl ModelManager {
                     "SHA256 mismatch for model {}: expected {}, got {}",
                     model_id, expected, actual
                 );
-                let _ = fs::remove_file(path);
+                safe::discard(path);
                 Err(anyhow::anyhow!(
                     "Download verification failed for model {}: file is corrupt. Please retry.",
                     model_id
                 ))
             }
             Err(e) => {
-                let _ = fs::remove_file(path);
+                safe::discard(path);
                 Err(anyhow::anyhow!(
                     "Failed to verify download for model {}: {}. Please retry.",
                     model_id,
@@ -96,7 +105,7 @@ impl ModelManager {
 
     /// Computes the SHA256 hex digest of a file, reading in 64KB chunks to handle large models.
     fn compute_sha256(path: &Path) -> Result<String> {
-        let mut file = File::open(path)?;
+        let mut file = safe::open_read(path)?;
         let mut hasher = Sha256::new();
         let mut buffer = [0u8; 65536];
         loop {
@@ -175,6 +184,11 @@ impl ModelManager {
     /// socket server.
     ///
     /// Robustness properties, in the order the failure modes appear:
+    /// - the partial must be a plain file of our own: a symlink, a Windows
+    ///   reparse point or anything that is not a regular file is refused
+    ///   (`safe::is_refusal`) before any request or write, and the file is then
+    ///   opened without following links (`safe`); it is never truncated through
+    ///   a link. The directory above is the caller's business (`safe::dir_inside`)
     /// - a partial already at the expected size (crash between completion and
     ///   finalize) is verified and accepted instead of asking the server for
     ///   `Range: bytes=<EOF>-` and looping on 416 forever; an oversized one is
@@ -234,11 +248,13 @@ impl ModelManager {
         emit: &(dyn Fn(HttpDownloadEvent<'_>) + Send + Sync),
         auth: Option<&DownloadAuth>,
     ) -> Result<HttpDownloadOutcome> {
-        let mut resume_from = partial_path.metadata().map(|m| m.len()).unwrap_or(0);
+        // Ein Link oder Reparse-Punkt als Teildatei wird abgelehnt, bevor
+        // irgendetwas geschrieben oder das Netz gefragt wird.
+        let mut resume_from = safe::plain_len(partial_path)?.unwrap_or(0);
 
         if let Some(expected) = expected_size {
             if resume_from > expected {
-                let _ = fs::remove_file(partial_path);
+                safe::discard(partial_path);
                 resume_from = 0;
             } else if resume_from == expected && expected > 0 {
                 info!(
@@ -298,7 +314,7 @@ impl ModelManager {
         // just a broken server, which the generic status check below rejects.
         if resume_from > 0 && response.status() == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
             if expected_size.is_some() || expected_sha256.is_none() {
-                let _ = fs::remove_file(partial_path);
+                safe::discard(partial_path);
                 return Err(anyhow::anyhow!(
                     "server object ends before the expected size (HTTP 416)"
                 ));
@@ -309,7 +325,7 @@ impl ModelManager {
         // A 200 to a Range request means the server ignored it and is sending
         // the whole file; appending it to the partial would corrupt the model.
         if resume_from > 0 && response.status() == reqwest::StatusCode::OK {
-            let _ = fs::remove_file(partial_path);
+            safe::discard(partial_path);
             resume_from = 0;
         }
         if !response.status().is_success() {
@@ -324,7 +340,7 @@ impl ModelManager {
                 .and_then(|v| v.to_str().ok())
                 .and_then(content_range_start);
             if starts_at != Some(resume_from) {
-                let _ = fs::remove_file(partial_path);
+                safe::discard(partial_path);
                 return Err(anyhow::anyhow!(
                     "server returned Content-Range starting at {:?}, expected {}",
                     starts_at,
@@ -349,11 +365,9 @@ impl ModelManager {
         let total_size = known_total.unwrap_or(0);
         let mut downloaded = resume_from;
         let mut file = if resume_from > 0 {
-            std::fs::OpenOptions::new()
-                .append(true)
-                .open(partial_path)?
+            safe::open_append(partial_path)?
         } else {
-            std::fs::File::create(partial_path)?
+            safe::open_truncated(partial_path)?
         };
 
         let emit_progress = |downloaded: u64| {
@@ -397,7 +411,7 @@ impl ModelManager {
             if let Some(cap) = known_total {
                 if downloaded + chunk.len() as u64 > cap {
                     drop(file);
-                    let _ = fs::remove_file(partial_path);
+                    safe::discard(partial_path);
                     return Err(anyhow::anyhow!(
                         "server sent more than the expected {} bytes",
                         cap
@@ -416,9 +430,9 @@ impl ModelManager {
         emit_progress(downloaded);
 
         if let Some(expected) = known_total {
-            let actual = partial_path.metadata()?.len();
+            let actual = safe::plain_len(partial_path)?.unwrap_or(0);
             if actual != expected {
-                let _ = fs::remove_file(partial_path);
+                safe::discard(partial_path);
                 return Err(anyhow::anyhow!(
                     "download incomplete: expected {} bytes, got {}",
                     expected,
