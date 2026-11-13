@@ -211,25 +211,6 @@ pub fn weiterleitung_erlaubt<'a>(bisher: impl IntoIterator<Item = &'a str>, ziel
     !ist_lokal(ziel) || bisher.into_iter().all(ist_lokal)
 }
 
-/// Weiterleitungsregel für Downloads: höchstens 10 Schritte, nie von entfernt
-/// auf lokal.
-pub fn weiterleitungen() -> reqwest::redirect::Policy {
-    reqwest::redirect::Policy::custom(|versuch| {
-        if versuch.previous().len() >= 10 {
-            return versuch.error("zu viele Weiterleitungen");
-        }
-        let erlaubt = weiterleitung_erlaubt(
-            versuch.previous().iter().map(|u| u.as_str()),
-            versuch.url().as_str(),
-        );
-        if erlaubt {
-            versuch.follow()
-        } else {
-            versuch.error("Weiterleitung auf ein lokales Ziel abgelehnt")
-        }
-    })
-}
-
 /// PAC-Regeln dürfen nach Pfad und Port unterscheiden (WinHTTP wertet je URL
 /// aus): Schlüssel ist die URL ohne Query und Fragment.
 fn cache_schluessel(url: &str) -> String {
@@ -323,61 +304,12 @@ async fn weg_mit(url: &str, frist: Duration, system: fn(&str) -> Weg) -> Weg {
     }
 }
 
-/// Folgt Weiterleitungen per `HEAD` selbst, mit dem für jedes Ziel eigens
-/// bestimmten Weg (PAC kann für Start- und CDN-Adresse verschiedene Proxys
-/// oder DIRECT vorgeben), und liefert die Adresse, die den Inhalt ausliefert.
-/// Endet bei der ersten Antwort ohne Weiterleitung (auch 403/405: signierte
-/// CDN-Adressen erlauben oft nur GET). Netzfehler gehen zurück.
-///
-/// Lokale Startadressen (lokale Dienste, Tests) bleiben unverändert: sie gehen
-/// ohnehin direkt, und ihre Weiterleitungen regelt [`weiterleitungen`].
-pub async fn endziel(url: &str) -> anyhow::Result<String> {
-    if ist_lokal(url) {
-        return Ok(url.to_string());
-    }
-    endziel_mit(url, |u| Box::pin(weg_fuer_async_owned(u))).await
-}
+/// Zukünftiger Weg einer Adresse (für injizierte Resolver in Tests).
+pub(crate) type WegFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Weg> + Send>>;
 
-async fn weg_fuer_async_owned(url: String) -> Weg {
-    weg_fuer_async(&url).await
-}
-
-type WegFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Weg> + Send>>;
-
-async fn endziel_mit(url: &str, weg: impl Fn(String) -> WegFuture) -> anyhow::Result<String> {
-    let mut aktuell = url::Url::parse(url)?;
-    let mut bisher: Vec<String> = Vec::new();
-    for _ in 0..10 {
-        let w = weg(aktuell.to_string()).await;
-        let client = anwenden(reqwest::Client::builder(), &w)
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(Duration::from_secs(15))
-            .timeout(Duration::from_secs(30))
-            .build()?;
-        let antwort = client.head(aktuell.clone()).send().await?;
-        if !antwort.status().is_redirection() {
-            return Ok(aktuell.to_string());
-        }
-        let Some(ort) = antwort
-            .headers()
-            .get(reqwest::header::LOCATION)
-            .and_then(|v| v.to_str().ok())
-        else {
-            return Ok(aktuell.to_string());
-        };
-        let naechste = aktuell.join(ort)?;
-        if !matches!(naechste.scheme(), "http" | "https")
-            || (aktuell.scheme() == "https" && naechste.scheme() == "http")
-        {
-            anyhow::bail!("Weiterleitung auf ein unzulässiges Schema abgelehnt");
-        }
-        bisher.push(aktuell.to_string());
-        if !weiterleitung_erlaubt(bisher.iter().map(String::as_str), naechste.as_str()) {
-            anyhow::bail!("Weiterleitung auf ein lokales Ziel abgelehnt");
-        }
-        aktuell = naechste;
-    }
-    anyhow::bail!("zu viele Weiterleitungen")
+/// [`weg_fuer_async`] als [`WegFuture`] für ein eigenes `String`.
+pub(crate) fn weg_future(url: String) -> WegFuture {
+    Box::pin(async move { weg_fuer_async(&url).await })
 }
 
 /// Wendet `weg` auf einen Client-Bauplan an. Eine Adresse, die reqwest nicht
@@ -510,7 +442,7 @@ fn system_weg(url: &str) -> Option<Weg> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// Tests, die den eigenen Proxy (globaler Zustand) setzen, laufen nacheinander.
@@ -652,7 +584,9 @@ mod tests {
 
     /// Testserver (auch als Proxy nutzbar): merkt sich die erste Zeile jeder
     /// Anfrage und antwortet immer mit `antwort` (vollständige HTTP-Antwort).
-    async fn testserver(antwort: String) -> (String, std::sync::Arc<Mutex<Vec<String>>>) {
+    pub(crate) async fn testserver(
+        antwort: String,
+    ) -> (String, std::sync::Arc<Mutex<Vec<String>>>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let adresse = format!("http://{}", listener.local_addr().unwrap());
@@ -674,11 +608,11 @@ mod tests {
         (adresse, gesehen)
     }
 
-    fn antwort(status: &str, kopf: &str) -> String {
+    pub(crate) fn antwort(status: &str, kopf: &str) -> String {
         format!("HTTP/1.1 {status}\r\n{kopf}content-length: 0\r\nconnection: close\r\n\r\n")
     }
 
-    fn gesehen(log: &std::sync::Arc<Mutex<Vec<String>>>) -> Vec<String> {
+    pub(crate) fn gesehen(log: &std::sync::Arc<Mutex<Vec<String>>>) -> Vec<String> {
         log.lock().unwrap().clone()
     }
 
@@ -746,87 +680,6 @@ mod tests {
             setze_eigenen(None);
             assert_eq!(weg, Weg::Direkt);
         }
-    }
-
-    /// R2-B3: Jeder Schritt einer Weiterleitung bekommt seinen eigenen Weg.
-    #[tokio::test]
-    async fn endziel_nimmt_je_ziel_den_eigenen_weg() {
-        let (proxy_b, log_b) = testserver(antwort("200 OK", "")).await;
-        let (proxy_a, log_a) = testserver(antwort(
-            "302 Found",
-            "location: http://cdn.example.org/x?sig=1\r\n",
-        ))
-        .await;
-        let (a, b) = (proxy_a.clone(), proxy_b.clone());
-        let weg = move |u: String| -> WegFuture {
-            let w = if u.starts_with("http://start.example.org/") {
-                Weg::Ueber(a.clone())
-            } else {
-                Weg::Ueber(b.clone())
-            };
-            Box::pin(async move { w })
-        };
-        let ende = tokio::time::timeout(FRIST, endziel_mit("http://start.example.org/m", weg))
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(ende, "http://cdn.example.org/x?sig=1");
-        assert_eq!(
-            gesehen(&log_a),
-            ["HEAD http://start.example.org/m HTTP/1.1"]
-        );
-        assert_eq!(
-            gesehen(&log_b),
-            ["HEAD http://cdn.example.org/x?sig=1 HTTP/1.1"]
-        );
-    }
-
-    /// Start DIRECT (hier: lokaler Server), CDN nur über Proxy erreichbar.
-    #[tokio::test]
-    async fn endziel_start_direkt_cdn_ueber_proxy() {
-        let (proxy, proxy_log) = testserver(antwort("200 OK", "")).await;
-        let (start, start_log) = testserver(antwort(
-            "302 Found",
-            "location: http://cdn.example.org/y\r\n",
-        ))
-        .await;
-        let p = proxy.clone();
-        let weg = move |u: String| -> WegFuture {
-            let w = if ist_lokal(&u) {
-                Weg::Direkt
-            } else {
-                Weg::Ueber(p.clone())
-            };
-            Box::pin(async move { w })
-        };
-        let ende = tokio::time::timeout(FRIST, endziel_mit(&format!("{start}/m"), weg))
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(ende, "http://cdn.example.org/y");
-        assert_eq!(gesehen(&start_log), ["HEAD /m HTTP/1.1"]);
-        assert_eq!(
-            gesehen(&proxy_log),
-            ["HEAD http://cdn.example.org/y HTTP/1.1"]
-        );
-    }
-
-    #[tokio::test]
-    async fn endziel_lehnt_entfernt_nach_lokal_ab() {
-        let (proxy, _) = testserver(antwort(
-            "302 Found",
-            "location: http://127.0.0.1:1/geheim\r\n",
-        ))
-        .await;
-        let weg = move |_u: String| -> WegFuture {
-            let w = Weg::Ueber(proxy.clone());
-            Box::pin(async move { w })
-        };
-        let fehler = tokio::time::timeout(FRIST, endziel_mit("http://start.example.org/m", weg))
-            .await
-            .unwrap()
-            .unwrap_err();
-        assert!(fehler.to_string().contains("lokales Ziel"), "{fehler}");
     }
 
     #[test]

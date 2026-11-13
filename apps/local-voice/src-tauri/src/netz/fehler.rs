@@ -98,7 +98,11 @@ pub fn schwaerzen(text: &str) -> String {
     use regex::Regex;
     use std::sync::LazyLock;
     static URL: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"(?i)\b([a-z][a-z0-9+.-]*://)([^\s"'<>(){}]+)"#).expect("URL-Muster")
+        // Authority und Pfad enden an Klammern (URL in Klammern), Query und
+        // Fragment reichen bis zum naechsten Leerraum/Anfuehrungszeichen:
+        // `?token=a(GEHEIM)` gehoert ganz zur Query.
+        Regex::new(r#"(?i)\b([a-z][a-z0-9+.-]*://)([^\s"'<>(){}?#]+)([?#][^\s"'<>]*)?"#)
+            .expect("URL-Muster")
     });
     static PAAR: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
@@ -114,18 +118,15 @@ pub fn schwaerzen(text: &str) -> String {
     let ohne_urls = URL.replace_all(text, |c: &regex::Captures| {
         let schema = &c[1];
         let rest = &c[2];
-        // Authority endet am ersten '/', '?' oder '#'.
-        let ende = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+        // Authority endet am ersten '/'.
+        let ende = rest.find('/').unwrap_or(rest.len());
         let (authority, pfad) = rest.split_at(ende);
         let authority = match authority.rfind('@') {
             Some(i) => format!("…@{}", &authority[i + 1..]),
             None => authority.to_string(),
         };
-        let pfad = match pfad.find(['?', '#']) {
-            Some(i) => format!("{}?…", &pfad[..i]),
-            None => pfad.to_string(),
-        };
-        format!("{schema}{authority}{pfad}")
+        let query = if c.get(3).is_some() { "?…" } else { "" };
+        format!("{schema}{authority}{pfad}{query}")
     });
     // Erst Bearer/Basic (sonst bliebe nach „Authorization: …“ der Wert stehen),
     // dann die Paare.
@@ -350,6 +351,27 @@ mod tests {
         let b = ausgabe(&format!("{BEFUND} http://[::1]/m?auth=GEHEIM7"));
         assert_eq!(b.code, "dns");
         assert!(!b.detail.contains("GEHEIM7") && !b.meldung.contains("GEHEIM7"));
+    }
+
+    #[test]
+    fn query_mit_klammern_wird_ganz_geschwaerzt() {
+        for roh in [
+            "fehler bei https://spiegel.example/m?token=prefix(GEHEIM) weiter",
+            "fehler bei https://spiegel.example/m?a=1&b=(x)GEHEIM",
+            "fehler bei https://spiegel.example/m#frag(GEHEIM)",
+            "(https://spiegel.example/m?sig=a(GEHEIM)b)",
+        ] {
+            let s = schwaerzen(roh);
+            assert!(!s.contains("GEHEIM"), "{s}");
+            assert!(s.contains("https://spiegel.example/m?…"), "{s}");
+            let a = ausgabe(roh);
+            assert!(!a.detail.contains("GEHEIM") && !a.meldung.contains("GEHEIM"));
+        }
+        // Pfad ohne Query bleibt lesbar, Klammer davor/dahinter bleibt stehen.
+        assert_eq!(
+            schwaerzen("(https://huggingface.co/a/b.gguf)"),
+            "(https://huggingface.co/a/b.gguf)"
+        );
     }
 
     #[test]

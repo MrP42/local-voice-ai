@@ -264,42 +264,9 @@ impl ModelManager {
             );
         }
 
-        // lva#573: Ohne Zugang die Weiterleitungen (z. B. HF -> CDN) vorab
-        // selbst aufloesen, je Ziel mit eigenem Proxyweg (PAC kann fuer Start
-        // und CDN verschiedenes vorgeben); mit Zugang folgt `auth` selbst.
-        let aufgeloest;
-        let url = match auth {
-            Some(_) => url,
-            None => {
-                aufgeloest = tokio::select! {
-                    r = crate::netz::proxy::endziel(url) => r.unwrap_or_else(|_| url.to_string()),
-                    _ = cancel_token.cancelled() => return Ok(HttpDownloadOutcome::Cancelled),
-                };
-                aufgeloest.as_str()
-            }
-        };
-        // Proxy wie Windows (PAC/Auto-Erkennung, eigene Einstellung), lva#573.
-        let client = crate::netz::proxy::client_fuer(url)
-            .await
-            .connect_timeout(HTTP_CONNECT_TIMEOUT)
-            .redirect(if auth.is_some() {
-                reqwest::redirect::Policy::none()
-            } else {
-                crate::netz::proxy::weiterleitungen()
-            })
-            .build()?;
-        let send = async {
-            match auth {
-                Some(auth) => auth::send_following(&client, url, resume_from, auth).await,
-                None => {
-                    let mut request = client.get(url);
-                    if resume_from > 0 {
-                        request = request.header("Range", format!("bytes={}-", resume_from));
-                    }
-                    Ok(request.send().await?)
-                }
-            }
-        };
+        // lva#573: Weiterleitungen folgt `send_following` selbst, je Schritt mit
+        // dem Proxyweg seines Ziels (PAC, eigene Einstellung), mit oder ohne Zugang.
+        let send = auth::send_following(url, resume_from, auth, HTTP_CONNECT_TIMEOUT);
         let response = tokio::select! {
             r = tokio::time::timeout(DOWNLOAD_STALL_TIMEOUT, send) => r
                 .map_err(|_| anyhow::anyhow!(
