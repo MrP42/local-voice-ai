@@ -7,6 +7,13 @@ export const startCapture = async (): Promise<{ stop: () => void }> => ({
   stop: () => undefined,
 });
 
+interface Stueck {
+  onEnd?: () => void;
+  onStart?: () => void;
+  started: boolean;
+  gemeldet: boolean;
+}
+
 export class SpeechPlayer {
   onFirstSound?: (at: number) => void;
   onIdle?: () => void;
@@ -25,13 +32,14 @@ export class SpeechPlayer {
   private firstFired = false;
   private playing = false;
   private held = false;
-  private queue: {
-    onEnd?: () => void;
-    onStart?: () => void;
-    started: boolean;
-  }[] = [];
+  private queue: Stueck[] = [];
   /** Test: Häppchen sind eingeplant, aber noch nicht zu hören, bis `audioStart()` kommt. */
   deferStart = false;
+  /**
+   * Test: wie der echte Player meldet die Attrappe den Beginn eines Häppchens nur auf Anfrage (`syncStarts`) oder
+   * mit seinem Ende, nicht von selbst.
+   */
+  lazy = false;
   get active(): boolean {
     return this.playing;
   }
@@ -44,7 +52,7 @@ export class SpeechPlayer {
     onStart?: () => void,
   ): Promise<void> {
     this.enqueued.push(wav);
-    this.queue.push({ onEnd, onStart, started: false });
+    this.queue.push({ onEnd, onStart, started: false, gemeldet: false });
     this.playing = true;
     if (!this.firstFired && !this.held) {
       this.firstFired = true;
@@ -56,23 +64,32 @@ export class SpeechPlayer {
   private startHead(): void {
     const head = this.queue[0];
     if (!head || head.started || this.held || this.deferStart) return;
+    this.beginnen(head);
+  }
+  private beginnen(head: Stueck): void {
     head.started = true;
+    if (!this.lazy) this.melden(head);
+  }
+  private melden(head: Stueck): void {
+    if (head.gemeldet) return;
+    head.gemeldet = true;
     head.onStart?.();
   }
   /** Test: der Ton des vordersten Häppchens beginnt tatsächlich. */
   audioStart(): void {
     const head = this.queue[0];
     if (!head || head.started || this.held) return;
-    head.started = true;
-    head.onStart?.();
+    this.beginnen(head);
   }
+  /** Meldet die Beginne, die schon klingen (nur mit `lazy`; sonst wurden sie sofort gemeldet). */
   syncStarts(): void {
-    /* Die Attrappe meldet Beginne sofort (`startHead`/`audioStart`). */
+    if (this.held) return;
+    for (const p of [...this.queue]) if (p.started) this.melden(p);
   }
   /** Das älteste Häppchen ist zu Ende gesprochen (Test); das letzte löst `onIdle` aus. */
   finishPiece(): void {
     const head = this.queue.shift();
-    if (head && !head.started) head.onStart?.();
+    if (head) this.melden(head);
     head?.onEnd?.();
     if (this.queue.length === 0 && !this.held) {
       this.playing = false;
@@ -85,7 +102,7 @@ export class SpeechPlayer {
   finish(): void {
     while (this.queue.length > 0) {
       const head = this.queue.shift();
-      if (head && !head.started) head.onStart?.();
+      if (head) this.melden(head);
       head?.onEnd?.();
     }
     this.playing = false;

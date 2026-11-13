@@ -759,8 +759,11 @@ export class VoiceCallEngine {
     nachgereicht = false,
   ): Promise<void> {
     if (!ctx || ctx.hits.hits.length === 0) return;
+    const gen = this.generation;
     const ok = await this.globalContext.verify(answer, ctx);
     this.globalContext.discard(turnId);
+    // Ein neues Gespräch hat begonnen, während die Belege geprüft wurden: sie gehören nicht mehr dazu.
+    if (gen !== this.generation) return;
     this.cb.onCitations?.(turnId, ok, nachgereicht);
   }
 
@@ -777,6 +780,8 @@ export class VoiceCallEngine {
    * Sätze fallen weg (Plan §3.7 Bereichswechsel, Esc).
    */
   interrupt(): void {
+    // Eine Erkennung, die noch läuft, gilt nach Esc nicht mehr (auch wenn der Schritt von selbst zu Ende war).
+    this.lage++;
     this.verwerfeAuftrag();
     this.cancelText(false);
     this.cancelTurn(false);
@@ -1452,6 +1457,11 @@ export class VoiceCallEngine {
   private sendeAntwort(turn: Turn): void {
     if (turn.finalSent || turn.finalText === undefined || turn.cancelled)
       return;
+    // Das Ergebnis eines Auftrags wird erst gemeldet (und damit gespeichert), wenn sein Ton wirklich begonnen
+    // hat: bis dahin lässt sich das Nachreichen noch zurückstellen, und die Zeile wäre nicht mehr zurückzunehmen.
+    if (turn.nachreichen && !this.warZuHoeren(turn)) return;
+    // `warZuHoeren` kann den Beginn melden, und der meldet die Antwort bereits.
+    if (turn.finalSent) return;
     turn.finalSent = true;
     this.cb.onAssistant(turn.finalText, true, false, turn.nachreichen?.turnId);
   }
@@ -1590,12 +1600,16 @@ export class VoiceCallEngine {
     const run = this.ausserungRun;
     const gen = this.generation;
     const start = this.startGen;
-    // Überholt: der Nutzer spricht weiter (die nächste Erkennung deckt die ganze Äußerung ab) oder das
-    // Gespräch hat sich geändert (neues Gespräch, Ende oder Neustart des Anrufs). Diese Erkennung wirkt dann gar nicht.
+    const lage = this.lage;
+    // Überholt: der Nutzer spricht weiter (die nächste Erkennung deckt die ganze Äußerung ab), das Gespräch hat
+    // sich geändert (neues Gespräch, Ende oder Neustart des Anrufs) oder inzwischen hat ein anderer Schritt
+    // begonnen, auch einer, der schon wieder zu Ende ist (getippter Text), oder Esc hat alles beendet (`lage`).
+    // Diese Erkennung wirkt dann gar nicht.
     const ueberholt = () =>
       run !== this.ausserungRun ||
       gen !== this.generation ||
       start !== this.startGen ||
+      lage !== this.lage ||
       !this.inCall;
     const t0 = performance.now();
     let erkannt: string;
@@ -1784,6 +1798,17 @@ export class VoiceCallEngine {
     const a = this.auftrag;
     if (a && !a.verworfen && a.ausgabe) return a.ausgabe.id;
     return this.konversation();
+  }
+
+  /**
+   * Der Schlüssel, den der Denker-Lauf von `turn` gewählt hat, gehört diesem Lauf: ist er inzwischen ein offener
+   * Auftrag (die Kennungsabfrage dauerte), kommt er in den Auftrag, nie ins Feld des Gesprächs, wo ihn die kurze
+   * Antwort des Sprechers samt Gedächtnis des Tors löschen würde.
+   */
+  private schluesselDesLaufs(turn: Turn, key: { id: string | null }): void {
+    const a = turn.auftrag;
+    if (a && !a.verworfen) a.ausgabe = key;
+    else this.ausgabeKey = key;
   }
 
   /** Stufen von Lautstärke und Tempo der Wiedergabe (lauter, leiser, schneller, langsamer). */
@@ -2629,7 +2654,7 @@ export class VoiceCallEngine {
         if (!this.ausgabeKey) {
           const id = await this.konversation();
           if (denkerTot()) return;
-          this.ausgabeKey = { id };
+          this.schluesselDesLaufs(turn, { id });
         }
         const chat = side.chat(turn.id, this.historyFor(text), onModel).then(
           () => "",
@@ -2708,7 +2733,7 @@ export class VoiceCallEngine {
         });
         const conversationId = await this.konversation();
         if (denkerTot()) return;
-        this.ausgabeKey = { id: conversationId };
+        this.schluesselDesLaufs(turn, { id: conversationId });
         let abgelehnt = false;
         const chat = invoke<string>("voice_call_chat", {
           requestId: turn.id,
@@ -3052,7 +3077,23 @@ export class VoiceCallEngine {
   private starteFrist(a: Auftrag): void {
     clearTimeout(a.timer);
     const rest = TUNING.auftragMaxMs - (performance.now() - a.gestartet);
-    a.timer = setTimeout(() => this.verwerfeAuftrag(a), Math.max(0, rest));
+    a.timer = setTimeout(() => this.fristAbgelaufen(a), Math.max(0, rest));
+  }
+
+  /**
+   * Die Frist des Auftrags ist um. Hat das Nachreichen schon zu klingen begonnen (der Beginn wird vom Player nur
+   * auf Anfrage gemeldet), spricht es weiter. Sonst verfällt der Auftrag still: Ausgabe 0, der Schritt des
+   * Nachreichens endet, späte Ergebnisse von Synthese und Player verhallen.
+   */
+  private fristAbgelaufen(a: Auftrag): void {
+    if (a.verworfen) return;
+    const lauf = this.turn?.nachreichen === a ? this.turn : null;
+    if (lauf && this.warZuHoeren(lauf)) return;
+    this.verwerfeAuftrag(a);
+    if (!lauf) return;
+    // Eine schon angezeigte, ungehörte Zeile des Nachreichens verschwindet mit ihm.
+    if (lauf.audible) this.cb.onVerwerfen?.();
+    this.dropTurn(lauf);
   }
 
   /** Das Nachreichen ist vor dem ersten Ton unterbrochen worden: der Auftrag wartet wieder, die Frist läuft weiter. */
@@ -3116,8 +3157,8 @@ export class VoiceCallEngine {
   /** Das Ergebnis eines Auftrags als eigener Schritt: eigene Assistentenzeile, gesprochen, mit Verlauf. */
   private nachreichen(a: Auftrag): void {
     a.nachreichend = true;
-    // Es wird gesprochen: die Frist endet (ein Ergebnis, das zu sprechen begonnen hat, wird nicht abgeschnitten).
-    clearTimeout(a.timer);
+    // Die Frist läuft weiter, bis das erste Stück wirklich klingt (`nachreichenBegonnen`): eine Synthese oder ein
+    // Player, der nie antwortet, hält den Auftrag nicht länger als `auftragMaxMs`.
     const turn = this.newTurn(this.frameIndex, performance.now());
     // Die Kennung des Auftrags: Verlauf und Zeile der Frage bleiben so einander zugeordnet.
     turn.id = a.turnId;
@@ -3134,6 +3175,9 @@ export class VoiceCallEngine {
       if (turn.cancelled || this.turn !== turn) return;
       this.cb.onError(String(e));
       this.auftragVerbraucht(a);
+      // Was zu hören war, bleibt als unterbrochene Zeile; was nur angezeigt war, verschwindet mit dem Fehler.
+      if (this.warZuHoeren(turn)) this.cancelTurn(true);
+      else if (turn.audible) this.cb.onVerwerfen?.();
       this.dropTurn(turn);
     });
   }
@@ -3186,6 +3230,7 @@ export class VoiceCallEngine {
           },
           () => {
             rec.started = true;
+            this.nachreichenBegonnen(turn, a);
           },
         );
         rec.queued = true;
@@ -3216,9 +3261,23 @@ export class VoiceCallEngine {
     });
     turn.historyPushed = true;
     this.schliesseAntwort(turn, text);
-    // Die Quellen des Ergebnisses, wie bei einem gewöhnlichen Abschluss (nur der Text des Denkers).
-    void this.reportCitations(a.turnId, text, a.turn.kontext ?? null, true);
+    // Die Quellen des Ergebnisses, wie bei einem gewöhnlichen Abschluss (nur der Text des Denkers), und erst mit
+    // dem echten Beginn des Tons: ein zurückgestelltes Nachreichen meldet keine, nur der gültige Versuch.
+    const quellen = () =>
+      void this.reportCitations(a.turnId, text, a.turn.kontext ?? null, true);
+    if (this.warZuHoeren(turn)) quellen();
+    else turn.quellenMelden = quellen;
     if (!this.player?.active) this.finishTurn();
+  }
+
+  /**
+   * Das erste Stück des Nachreichens klingt wirklich: die Frist des Auftrags endet (ein Ergebnis, das zu sprechen
+   * begonnen hat, wird nicht abgeschnitten), die wartende Antwortzeile und die Quellen gehen jetzt hinaus.
+   */
+  private nachreichenBegonnen(turn: Turn, a: Auftrag): void {
+    clearTimeout(a.timer);
+    this.sendeAntwort(turn);
+    this.quellenMeldenJetzt(turn);
   }
 
   private dropTurn(turn: Turn): void {
@@ -3291,7 +3350,14 @@ export class VoiceCallEngine {
     const said = this.gehoert(turn)
       .filter((p) => p.kind === "inhalt")
       .map((p) => p.text);
-    if (merge || (interrupted && said.length === 0 && turn.historyPushed)) {
+    // Ein Nachreichen ohne Ton wird zurückgestellt: sein Verlaufseintrag geht zurück, der nächste Versuch legt ihn neu an.
+    const zurueckgestellt =
+      !!turn.nachreichen && said.length === 0 && turn.historyPushed;
+    if (
+      merge ||
+      zurueckgestellt ||
+      (interrupted && said.length === 0 && turn.historyPushed)
+    ) {
       // Nur der Verlauf der KI: Anzeige und Speicher ersetzt `onUser` der zusammengeführten Äußerung.
       const i = this.history.findIndex(
         (m) => m.role === "user" && m.turnId === turn.id,

@@ -6,7 +6,8 @@ import type { Denkprozess, VoiceLine } from "@/stores/voiceCallStore";
 /**
  * Hängt die geprüften Belege einer Antwort an ihre Zeile. Gewöhnlich ist das die erste Antwortzeile nach der
  * Frage; das Ergebnis eines Auftrags (`nachgereicht`) steht in der Zeile, die seine Kennung trägt
- * (`auftragVon`), nie in einer Zeile, die nur zufällig die letzte ist. `null`: nichts zu ändern.
+ * (`auftragVon`), nie in einer Zeile, die nur zufällig die letzte ist; tragen mehrere Zeilen die Kennung, gilt die
+ * jüngste. `null`: nichts zu ändern.
  */
 export function mitQuellen(
   lines: VoiceLine[],
@@ -16,7 +17,7 @@ export function mitQuellen(
 ): VoiceLine[] | null {
   if (hits.length === 0) return null;
   const i = nachgereicht
-    ? lines.findIndex((l) => l.role === "assistant" && l.auftragVon === turnId)
+    ? zeileDesAuftrags(lines, turnId)
     : zeileNachFrage(lines, turnId);
   if (i < 0) return null;
   const out = [...lines];
@@ -31,6 +32,14 @@ export function mitQuellen(
     })),
   };
   return out;
+}
+
+/** Index der jüngsten Zeile, die das Ergebnis dieses Auftrags trägt (`-1`: keine): der gültige Versuch zählt. */
+function zeileDesAuftrags(lines: VoiceLine[], turnId: string): number {
+  for (let i = lines.length - 1; i >= 0; i--)
+    if (lines[i].role === "assistant" && lines[i].auftragVon === turnId)
+      return i;
+  return -1;
 }
 
 /** Index der ersten Antwortzeile nach der Frage mit dieser Kennung (`-1`: keine). */
