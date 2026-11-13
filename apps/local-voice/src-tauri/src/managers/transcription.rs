@@ -1116,6 +1116,8 @@ impl TranscriptionManager {
     /// Kern von `initiate_model_load_target_with_fallback`; `ram_gate` schaltet
     /// das RAM-Tor vor dem Laden ein (Live-Modell der Besprechung, P1i).
     fn initiate_model_load_inner(&self, model_id: &str, fallback: Option<&str>, ram_gate: bool) {
+        // lva#544 (Sperrordnung): keine Sperre des Modell-Managers unter der Tor-Sperre.
+        crate::managers::planning::ohne_tor_sperre("Modell laden");
         // U7: ein Import mit eigener Engine laedt, tauscht und stellt nichts an
         // der gemeinsamen Engine um (sie gehoert Diktat, Aufnahme und dem ersten
         // Import der Warteschlange).
@@ -2293,8 +2295,16 @@ impl TranscriptionManager {
     // structure (activity touch, load-wait, catch_unwind engine-take, engine
     // match) so the dictation path stays byte-identical and M3-stable; the
     // duplication is the price of that stability.
-    pub fn transcribe_segments(&self, audio: Vec<f32>) -> Result<Vec<TimedSegment>> {
-        self.transcribe_segments_detecting(audio)
+    ///
+    /// lva#544: `frei` ist die Erlaubnis fuer genau DIESE Inferenz. Ton einer Besprechung bekommt
+    /// sie nur aus `planning::modell_lauf` (Einwilligungs-Tor davor und danach); ohne sie ist die
+    /// Funktion nicht aufrufbar.
+    pub fn transcribe_segments(
+        &self,
+        frei: &crate::managers::planning::Freigabe,
+        audio: Vec<f32>,
+    ) -> Result<Vec<TimedSegment>> {
+        self.transcribe_segments_detecting(frei, audio)
             .map(|(segments, _)| segments)
     }
 
@@ -2304,8 +2314,14 @@ impl TranscriptionManager {
     /// Threads ([`LanguageOverride`]); die Einstellung wird nie geschrieben.
     pub fn transcribe_segments_detecting(
         &self,
+        frei: &crate::managers::planning::Freigabe,
         audio: Vec<f32>,
     ) -> Result<(Vec<TimedSegment>, Option<String>)> {
+        // lva#544: eine Freigabe gilt fuer genau eine Inferenz (Wiederholung und weiteres Fenster
+        // brauchen eine neue, also ein neues Tor). Nie unter der Tor-Sperre: hier wird auf das
+        // Laden gewartet und gerechnet.
+        crate::managers::planning::ohne_tor_sperre("Spracherkennung");
+        frei.einloesen().map_err(|code| anyhow::anyhow!(code))?;
         // Update last activity timestamp
         self.touch_activity();
 

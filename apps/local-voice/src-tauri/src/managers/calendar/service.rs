@@ -46,6 +46,7 @@ use super::reminder::{self, ReminderCtx};
 use super::secret;
 use crate::managers::meetings::recorder::MeetingRecorderManager;
 use crate::managers::meetings::store::{MeetingStore, SyncMark, SyncMeta};
+use crate::managers::planning;
 
 /// Abstand der Abrufe.
 pub const SYNC_INTERVAL: Duration = Duration::from_secs(15 * 60);
@@ -136,6 +137,9 @@ pub fn apply_parsed(
         last_modified,
         now_ms,
     };
+    // Teilnehmende gehoeren zum Einwilligungs-Tor der Besprechungsplanung: der Cache wird nie
+    // geschrieben, waehrend ein Start zwischen Tor und Aufnahmebeginn steht.
+    let _tor = planning::tor_sperre();
     store
         .calendar_replace_events(source_id, &parsed.events, &meta)
         .map_err(|e| format!("Die Termine konnten nicht gespeichert werden: {e}"))?;
@@ -286,7 +290,15 @@ pub fn finish_start(
 ) -> Vec<String> {
     let mut problems = Vec::new();
     if let Some(event) = &plan.event {
-        if let Err(e) = store.link_meeting_event(meeting_id, event, linked_by, now_ms) {
+        // lva#544: die Verknuepfung ist eine Quelle des Einwilligungs-Tors und ERSETZT eine
+        // fruehere (`INSERT OR REPLACE`): geschrieben wird unter der Tor-Sperre, damit keine
+        // Pruefung einen halben Stand sieht. Was beim Start galt, haengt unabhaengig davon als
+        // Bindung an der Besprechung (`meeting_plan_bindings`) und geht hier nicht verloren.
+        let linked = {
+            let _tor = crate::managers::planning::tor_sperre();
+            store.link_meeting_event(meeting_id, event, linked_by, now_ms)
+        };
+        if let Err(e) = linked {
             problems.push(format!("Verknüpfung mit dem Termin: {e}"));
         }
         let attendees: Vec<serde_json::Value> = event
@@ -460,7 +472,10 @@ impl CalendarService {
         };
         let now = now_ms();
         let (ok, count) = match outcome {
-            Ok(report) => (true, report.count),
+            Ok(report) => {
+                self.planung_abgleichen(now).await;
+                (true, report.count)
+            }
             Err(msg) => {
                 log::warn!("calendar: sync of {} failed: {msg}", source.id);
                 if let Err(e) =
@@ -478,6 +493,34 @@ impl CalendarService {
             count,
         }
         .emit(&self.app);
+    }
+
+    /// Besprechungsplanung (lva#534, P3): nach jedem erfolgreichen Abruf die offenen Planungen mit
+    /// dem Cache abgleichen (Adapter C). Ein Fehler hier darf den Abruf nicht beruehren: er wird
+    /// nur protokolliert (Ids, Codes und Zahlen, keine Inhalte).
+    async fn planung_abgleichen(&self, now_ms: i64) {
+        let store = self.store.clone();
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            planning::adapter_c::abgleich_lauf(&store, now_ms)
+        })
+        .await;
+        match result {
+            Ok(Ok(report)) => {
+                if report.geaendert > 0 || !report.mehrdeutig.is_empty() {
+                    log::info!(
+                        "planning: {} checked, {} changed, {} ambiguous",
+                        report.geprueft,
+                        report.geaendert,
+                        report.mehrdeutig.len()
+                    );
+                }
+                for f in &report.fehler {
+                    log::warn!("planning: plan {} not synced: {}", f.plan_id, f.code);
+                }
+            }
+            Ok(Err(e)) => log::warn!("planning: sync run failed: {e}"),
+            Err(e) => log::warn!("planning: sync run aborted: {e}"),
+        }
     }
 
     /// Ein Graph-Abruf: Zugriffstoken (Cache oder Erneuerung), Termine im Fenster,
@@ -515,6 +558,7 @@ impl CalendarService {
         let events = fetched.events;
         let count = events.len() as u32;
         tauri::async_runtime::spawn_blocking(move || {
+            let _tor = planning::tor_sperre();
             store
                 .calendar_replace_events(
                     &id,
@@ -711,6 +755,7 @@ impl CalendarService {
             secret::secret_delete(&id);
             return Err(msg);
         }
+        self.planung_abgleichen(now_ms()).await;
         let source = self
             .store
             .calendar_source(&id)
@@ -831,6 +876,7 @@ mod tests {
             location: None,
             join_url: None,
             description: None,
+            instance_start: None,
             attendees: (0..attendees)
                 .map(|i| Attendee {
                     email: Some(format!("p{i}@example.org")),

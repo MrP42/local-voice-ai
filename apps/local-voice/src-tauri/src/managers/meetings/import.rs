@@ -292,7 +292,15 @@ pub(super) fn run_import(
     job: &Arc<JobHandle>,
 ) -> Result<(), String> {
     let import_started = std::time::Instant::now();
+    // lva#544: dieser Thread schickt ab hier Ton der Besprechung durch Modelle und speichert die
+    // Ergebnisse: jede Aenderung am Transkript prueft das Einwilligungs-Tor beim Schreiben.
+    let _arbeit = crate::managers::planning::Modellarbeit::beginnen(meeting_id);
     let outcome = (|| -> Result<ImportEnd, String> {
+        // lva#534: ist der Eintrag einer Planung zugeordnet (Import in einen verknuepften
+        // Eintrag, Fortsetzen), darf nur mit Zustimmung transkribiert werden. Frueh pruefen
+        // (nichts wird dekodiert); verbindlich ist das Tor an jedem einzelnen Modellaufruf
+        // (`planning::modell_lauf`) und an jedem Schreiben des Transkripts.
+        crate::managers::planning::tor_pruefen_besprechung(store, meeting_id)?;
         job.begin_phase(JobPhase::Prepare, 0);
         // Kick the model load FIRST (non-blocking) so it warms up while ffmpeg
         // decodes; `transcribe_segments` then waits on the load condvar instead
@@ -333,13 +341,16 @@ pub(super) fn run_import(
         // G5: Sprache bestimmen und das Modell danach waehlen (Einstellung `auto`: Probe
         // aus dem Audio; Nutzerwahl und feste Einstellung gelten vor jeder Erkennung).
         // Die Vorgabe gilt fuer diesen Thread, solange `language_plan` lebt.
+        // lva#534: die Probe rechnet ein Modell ueber das Audio: Einwilligungs-Tor je Fenster.
         let language_plan = super::language_run::prepare(
             app,
             tm,
+            store,
+            meeting_id,
             &samples,
             &super::language_run::RunRequest::default(),
             Some(job),
-        );
+        )?;
         job.begin_phase(JobPhase::Transcription, duration_ms);
         let run = transcribe_and_store(
             app,
@@ -419,6 +430,17 @@ pub(super) fn run_import(
                     Err(e)
                 }
             }
+        }
+        // lva#544: das Einwilligungs-Tor hat den Import beendet (frueh, an einem Modellaufruf
+        // oder beim Speichern). Kein Fehler der Verarbeitung: was gespeichert ist, bleibt, es
+        // gibt keine Luecke, und mit eingetragener Audiodatei endet die Besprechung fortsetzbar.
+        Err(e) if crate::managers::planning::ist_ablehnung(&e) => {
+            info!("meetings: import ended by the consent gate ({meeting_id}): {e}");
+            let policy = crate::settings::get_meeting_audio_retention(app);
+            let status = mark_refused(store, meeting_id, chrono::Utc::now().timestamp(), &policy);
+            emit_state(app, meeting_id, status);
+            emit_error(app, meeting_id, "nur_notizen");
+            Err(e)
         }
         Err(e) => {
             error!("meetings: import failed ({meeting_id}): {e}");
@@ -507,6 +529,32 @@ pub(super) fn mark_stopped(
         log::warn!("meetings: retention_until not stored after stop: {e}");
     }
     Ok(())
+}
+
+/// lva#544: Endzustand eines Imports, den das Einwilligungs-Tor beendet hat. Steht die
+/// Audiodatei schon in der Besprechung (die Ablehnung kam waehrend Sprachprobe, Transkription
+/// oder Speichern), endet sie wie nach einem Stopp: `cancelled`, also ueber "Fortsetzen"
+/// nachholbar, sobald die Zustimmung vorliegt (`recorder::check_can_continue`,
+/// `final_pass::catch_up` ab dem letzten gespeicherten Abschnitt). Ohne Audiodatei (Ablehnung vor
+/// dem Dekodieren) gibt es nichts fortzusetzen: `failed`, wie jeder Import ohne Ergebnis. Gibt
+/// den Status fuer die Anzeige zurueck. Nie ein Luecken-Platzhalter.
+pub(super) fn mark_refused(
+    store: &MeetingStore,
+    meeting_id: &str,
+    now: i64,
+    policy: &MeetingAudioRetention,
+) -> &'static str {
+    let has_audio = store
+        .get_meeting(meeting_id)
+        .ok()
+        .flatten()
+        .is_some_and(|m| m.mic_audio_path.is_some() || m.system_audio_path.is_some());
+    if has_audio && mark_stopped(store, meeting_id, now, policy).is_ok() {
+        "cancelled"
+    } else {
+        let _ = store.set_status(meeting_id, MeetingStatus::Failed);
+        "failed"
+    }
 }
 
 /// M3-P3b: Sprechertrennung fuer das gespeicherte Transkript einer
@@ -652,24 +700,71 @@ pub(super) fn is_gap_placeholder(text: &str) -> bool {
 /// wenn es dann immer noch nicht geht, ein Platzhalter mit Zeitraum statt
 /// eines Abbruchs. Vollstaendigkeit hat Vorrang: lieber eine markierte
 /// Luecke als ein halbes Transkript.
+///
+/// lva#544: `chunk` ist Ton der Besprechung `meeting_id`. JEDER Versuch ist ein eigener
+/// Modellaufruf hinter dem Einwilligungs-Tor ([`block_mit_wiederholung`]). `Err` gibt es nur,
+/// wenn das Tor ablehnt: dann folgt kein weiterer Versuch und es entsteht KEINE Luecke.
 pub(super) fn transcribe_chunk_resilient(
     app: &tauri::AppHandle,
     tm: &Arc<TranscriptionManager>,
+    store: &MeetingStore,
+    meeting_id: &str,
     chunk: &Chunk,
-) -> Vec<crate::managers::transcription::TimedSegment> {
+) -> Result<Vec<crate::managers::transcription::TimedSegment>, String> {
+    block_mit_wiederholung(
+        store,
+        meeting_id,
+        chunk,
+        &mut |frei, chunk| {
+            tm.transcribe_segments(frei, chunk.samples.clone())
+                .map_err(|e| e.to_string())
+        },
+        &mut || {
+            tm.initiate_meeting_model_load(&crate::settings::get_settings(app));
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        },
+    )
+}
+
+/// EIN Modellversuch fuer einen Block: genau eine Inferenz, mit der Freigabe des
+/// Einwilligungs-Tors fuer genau diesen Aufruf (`planning::modell_lauf`).
+pub(super) type EinVersuch<'a> = dyn FnMut(&crate::managers::planning::Freigabe, &Chunk) -> Result<Vec<TimedSegment>, String>
+    + 'a;
+
+/// Die Schleife von [`transcribe_chunk_resilient`] ohne Tauri und Modell-Manager: `einmal`
+/// rechnet GENAU EINEN Versuch mit der Freigabe dieses Versuchs (Tests zaehlen hier), und
+/// `vor_wiederholung` laeuft zwischen zwei Versuchen (Modell neu anfordern).
+///
+/// Jeder Versuch steht fuer sich hinter dem Einwilligungs-Tor (`planning::modell_versuch`:
+/// Pruefung davor und danach, auch nach einem Fehler des Versuchs). Gibt das Tor nicht frei (vor
+/// dem ersten Versuch, waehrend eines Versuchs oder zwischen zweien; Ablehnung ODER das Tor liess
+/// sich nicht pruefen, etwa ein Datenbankfehler), endet der Block mit `Err("nur_notizen: ...")`:
+/// kein weiterer Versuch, kein Platzhalter. Wiederholt und als Luecke vermerkt wird nur ein
+/// Fehler des Modells; die Unterscheidung ist der TYP des Fehlers (`planning::LaufFehler`).
+pub(super) fn block_mit_wiederholung(
+    store: &MeetingStore,
+    meeting_id: &str,
+    chunk: &Chunk,
+    einmal: &mut EinVersuch<'_>,
+    vor_wiederholung: &mut dyn FnMut(),
+) -> Result<Vec<crate::managers::transcription::TimedSegment>, String> {
     let mut last_error = String::new();
     for attempt in 1..=CHUNK_ATTEMPTS {
-        match tm.transcribe_segments(chunk.samples.clone()) {
-            Ok(timed) => return timed,
-            Err(e) => {
-                last_error = e.to_string();
+        use crate::managers::planning::LaufFehler;
+        let lauf = crate::managers::planning::modell_versuch(store, meeting_id, |frei| {
+            einmal(frei, chunk)
+        });
+        match lauf {
+            Ok(timed) => return Ok(timed),
+            Err(LaufFehler::Tor(tor)) => return Err(tor.code()),
+            Err(LaufFehler::Aufruf(e)) => {
+                last_error = e;
                 log::warn!(
                     "meetings: Block bei {} ms nicht transkribiert (Versuch {attempt} von {CHUNK_ATTEMPTS}): {last_error}",
                     chunk.offset_ms
                 );
                 if attempt < CHUNK_ATTEMPTS {
-                    tm.initiate_meeting_model_load(&crate::settings::get_settings(app));
-                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    vor_wiederholung();
                 }
             }
         }
@@ -681,12 +776,12 @@ pub(super) fn transcribe_chunk_resilient(
         mm_ss(start_ms),
         mm_ss(end_ms)
     );
-    vec![crate::managers::transcription::TimedSegment {
+    Ok(vec![crate::managers::transcription::TimedSegment {
         text: gap_placeholder(start_ms, end_ms),
         start_ms: 0,
         end_ms: chunk_ms,
         words: None,
-    }]
+    }])
 }
 
 /// STT-Ergebnis eines Blocks -> zu speichernde Segmente: Zeiten auf die
@@ -772,6 +867,7 @@ pub(super) fn drive_chunks(
 /// Spur ist ab `start_ms` geschnitten, ihre Segmente sollen aber die absoluten Zeiten
 /// der Aufnahme tragen). Er wird auf Segmente UND Woerter addiert. `base_ms` ist
 /// dagegen nur der Fortschritt auf der Achse des Auftrags - nicht zu verwechseln.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn drive_chunks_at(
     chunks: Vec<Chunk>,
@@ -781,6 +877,35 @@ pub(super) fn drive_chunks_at(
     channel: u8,
     first_index: u32,
     transcribe: &mut dyn FnMut(&Chunk) -> Vec<TimedSegment>,
+    store_batch: &mut dyn FnMut(Vec<StoredSegment>) -> Result<(), String>,
+    on_resume: &mut dyn FnMut(),
+) -> Result<TranscribeRun, String> {
+    drive_chunks_checked(
+        chunks,
+        job,
+        base_ms,
+        time_offset_ms,
+        channel,
+        first_index,
+        &mut |chunk| Ok(transcribe(chunk)),
+        store_batch,
+        on_resume,
+    )
+}
+
+/// Wie [`drive_chunks_at`], aber ein Block darf scheitern, ohne eine Luecke zu hinterlassen:
+/// liefert `transcribe` einen Fehler (lva#534: das Einwilligungs-Tor lehnt ab), endet der Lauf
+/// SOFORT mit diesem Fehler. Der Block wird nicht gespeichert, es folgt kein weiterer Aufruf; was
+/// vorher gespeichert wurde, bleibt.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn drive_chunks_checked(
+    chunks: Vec<Chunk>,
+    job: &JobHandle,
+    base_ms: u64,
+    time_offset_ms: u64,
+    channel: u8,
+    first_index: u32,
+    transcribe: &mut dyn FnMut(&Chunk) -> Result<Vec<TimedSegment>, String>,
     store_batch: &mut dyn FnMut(Vec<StoredSegment>) -> Result<(), String>,
     on_resume: &mut dyn FnMut(),
 ) -> Result<TranscribeRun, String> {
@@ -804,7 +929,7 @@ pub(super) fn drive_chunks_at(
         }
         let offset_ms = chunk.offset_ms;
         let chunk_ms = chunk.samples.len() as u64 / 16;
-        let timed = transcribe(&chunk);
+        let timed = transcribe(&chunk)?;
         let appended = stored_segments(timed, time_offset_ms + offset_ms, channel, &mut next_index);
         if !appended.is_empty() {
             store_batch(appended)?;
@@ -837,7 +962,55 @@ pub(super) fn transcribe_and_store(
     time_offset_ms: u64,
     on_resume: &mut dyn FnMut(),
 ) -> Result<TranscribeRun, String> {
-    drive_chunks_at(
+    transcribe_and_store_mit(
+        store,
+        meeting_id,
+        samples,
+        channel,
+        first_index,
+        job,
+        base_ms,
+        time_offset_ms,
+        &mut |frei, chunk| {
+            tm.transcribe_segments(frei, chunk.samples.clone())
+                .map_err(|e| e.to_string())
+        },
+        &mut || {
+            tm.initiate_meeting_model_load(&crate::settings::get_settings(app));
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        },
+        &mut |event| {
+            let _ = event.emit(app);
+        },
+        on_resume,
+    )
+}
+
+/// [`transcribe_and_store`] ohne Tauri und Modell-Manager (Import, Neu-Transkription; Tests
+/// fahren genau diesen Ablauf mit zaehlenden Attrappen): Bloecke bilden, jeden Versuch eines
+/// Blocks einzeln hinter dem Einwilligungs-Tor rechnen ([`block_mit_wiederholung`]), speichern
+/// (`append_delta`, mit dem Schreibschutz des Tors), melden.
+///
+/// lva#544: lehnt das Tor ab (Modellaufruf oder Schreiben), endet der Lauf SOFORT mit
+/// `nur_notizen: ...`: der Block wird nicht gespeichert, es entsteht keine Luecke, es folgt kein
+/// weiterer Aufruf; was vorher gespeichert wurde, bleibt.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn transcribe_and_store_mit(
+    store: &MeetingStore,
+    meeting_id: &str,
+    samples: &[i16],
+    channel: u8,
+    first_index: u32,
+    job: &JobHandle,
+    base_ms: u64,
+    time_offset_ms: u64,
+    einmal: &mut EinVersuch<'_>,
+    vor_wiederholung: &mut dyn FnMut(),
+    emit: &mut dyn FnMut(MeetingEvent),
+    on_resume: &mut dyn FnMut(),
+) -> Result<TranscribeRun, String> {
+    let _arbeit = crate::managers::planning::Modellarbeit::beginnen(meeting_id);
+    drive_chunks_checked(
         chunk_all(samples, IMPORT_CHUNK_TARGET_MS),
         job,
         base_ms,
@@ -846,7 +1019,7 @@ pub(super) fn transcribe_and_store(
         first_index,
         &mut |chunk| {
             if time_offset_ms == 0 {
-                return transcribe_chunk_resilient(app, tm, chunk);
+                return block_mit_wiederholung(store, meeting_id, chunk, einmal, vor_wiederholung);
             }
             // Der Luecken-Platzhalter nennt den Zeitraum im Text: auf der Achse der
             // Aufnahme, nicht des Ausschnitts.
@@ -854,7 +1027,7 @@ pub(super) fn transcribe_and_store(
                 samples: chunk.samples.clone(),
                 offset_ms: chunk.offset_ms + time_offset_ms,
             };
-            transcribe_chunk_resilient(app, tm, &shifted)
+            block_mit_wiederholung(store, meeting_id, &shifted, einmal, vor_wiederholung)
         },
         &mut |appended| {
             store
@@ -864,12 +1037,18 @@ pub(super) fn transcribe_and_store(
                         new_segments: appended.clone(),
                     },
                 )
-                .map_err(|e| format!("delta_store_failed: {e}"))?;
-            let _ = (MeetingEvent::Segments {
+                .map_err(|e| {
+                    let e = e.to_string();
+                    if crate::managers::planning::ist_ablehnung(&e) {
+                        e
+                    } else {
+                        format!("delta_store_failed: {e}")
+                    }
+                })?;
+            emit(MeetingEvent::Segments {
                 meeting_id: meeting_id.to_string(),
                 appended,
-            })
-            .emit(app);
+            });
             Ok(())
         },
         on_resume,
@@ -1782,5 +1961,258 @@ Guten Tag.
             import_subtitle_file(&store, "x", &bad, None).unwrap_err(),
             "subtitle_invalid"
         );
+    }
+
+    /// lva#534: lehnt das Einwilligungs-Tor einen Block ab (Widerruf), endet der Lauf SOFORT: der
+    /// Block wird nicht gespeichert, es folgt kein weiterer Aufruf, was vorher gespeichert wurde,
+    /// bleibt, und es entsteht keine Luecke.
+    #[test]
+    fn a_refused_block_ends_the_run_without_a_gap_and_without_further_calls() {
+        use crate::managers::planning::testhilfe as th;
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+        let m = store.create_empty_meeting("Import", None).unwrap();
+        let (p, _) = th::plan_fuer_besprechung(&store, &m.id, "u-i", true);
+        let (job, _events) = job_with_events();
+        job.begin_phase(JobPhase::Transcription, 180_000);
+        let mut aufrufe = 0;
+        let mut gespeichert = 0;
+        let _arbeit = crate::managers::planning::Modellarbeit::beginnen(&m.id);
+        let r = drive_chunks_checked(
+            vec![
+                block(0, 60_000),
+                block(60_000, 60_000),
+                block(120_000, 60_000),
+            ],
+            &job,
+            0,
+            0,
+            CHANNEL_MIXED,
+            0,
+            &mut |_chunk| {
+                crate::managers::planning::modell_lauf(&store, &m.id, |_frei| {
+                    aufrufe += 1;
+                    if aufrufe == 2 {
+                        // Widerruf WAEHREND des zweiten Blocks.
+                        crate::managers::planning::einwilligung_setzen(
+                            &store,
+                            &th::widerruf(&p.id, th::BERT),
+                            th::NOW + 9,
+                        )
+                        .unwrap();
+                    }
+                    Ok(vec![TimedSegment {
+                        text: "hallo".into(),
+                        start_ms: 0,
+                        end_ms: 1_000,
+                        words: None,
+                    }])
+                })
+            },
+            &mut |_| {
+                gespeichert += 1;
+                Ok(())
+            },
+            &mut || {},
+        );
+        assert_eq!(r.err(), Some("nur_notizen: abgelehnt".to_string()));
+        assert_eq!(aufrufe, 2, "nach der Ablehnung kein weiterer Aufruf");
+        assert_eq!(
+            gespeichert, 1,
+            "der verworfene Block wird nicht gespeichert"
+        );
+    }
+
+    // ---- lva#544, Fixrunde 5: jeder Versuch ein eigener Modellaufruf hinter dem Tor ----------
+
+    /// Der Ablauf von Import und Neu-Transkription (`transcribe_and_store_mit`, derselbe, den
+    /// `run_import` faehrt) mit einer zaehlenden Attrappe statt des Modells. `einmal(n)` ist der
+    /// n-te Modellaufruf. Gibt (Ergebnis, Modellaufrufe, Wiederholungs-Pausen) zurueck.
+    fn lauf_mit(
+        store: &MeetingStore,
+        meeting_id: &str,
+        sekunden: usize,
+        mut einmal: impl FnMut(usize) -> Result<Vec<TimedSegment>, String>,
+    ) -> (Result<TranscribeRun, String>, usize, usize) {
+        let (job, _events) = job_with_events();
+        job.begin_phase(JobPhase::Transcription, (sekunden * 1_000) as u64);
+        let samples = vec![7_000i16; 16_000 * sekunden];
+        let mut aufrufe = 0usize;
+        let mut pausen = 0usize;
+        let r = transcribe_and_store_mit(
+            store,
+            meeting_id,
+            &samples,
+            CHANNEL_MIXED,
+            0,
+            &job,
+            0,
+            0,
+            &mut |frei, _chunk| {
+                // Wie das echte Modell: die Freigabe gilt fuer genau diese Inferenz.
+                frei.einloesen()?;
+                aufrufe += 1;
+                einmal(aufrufe)
+            },
+            &mut || pausen += 1,
+            &mut |_event| {},
+            &mut || {},
+        );
+        (r, aufrufe, pausen)
+    }
+
+    fn platzhalter(store: &MeetingStore, meeting_id: &str) -> usize {
+        store
+            .get_segments(meeting_id)
+            .unwrap()
+            .iter()
+            .filter(|s| s.text.starts_with("[Nicht transkribiert"))
+            .count()
+    }
+
+    /// R4-2 (Import, drei Versuche je Block): der ERSTE echte Versuch wird widerrufen und endet
+    /// mit einem Fehler. Kein zweiter Versuch (Zaehler bleibt bei eins), keine Pause zum
+    /// Nachladen, keine Luecke, nichts gespeichert.
+    #[test]
+    fn a_revoked_and_failed_first_import_attempt_is_not_retried() {
+        use crate::managers::planning::testhilfe as th;
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+        let m = store.create_empty_meeting("Import", None).unwrap();
+        let (p, _) = th::plan_fuer_besprechung(&store, &m.id, "u-i2", true);
+        let (r, aufrufe, pausen) = lauf_mit(&store, &m.id, 130, |n| {
+            assert_eq!(n, 1, "es darf keinen zweiten Aufruf geben");
+            crate::managers::planning::einwilligung_setzen(
+                &store,
+                &th::widerruf(&p.id, th::BERT),
+                th::NOW + 9,
+            )
+            .unwrap();
+            Err("kein Modell geladen".into())
+        });
+        assert_eq!(r.err(), Some("nur_notizen: abgelehnt".to_string()));
+        assert_eq!(aufrufe, 1, "genau ein Modellaufruf");
+        assert_eq!(pausen, 0, "kein Nachladen fuer einen zweiten Versuch");
+        assert!(store.get_segments(&m.id).unwrap().is_empty());
+        assert_eq!(platzhalter(&store, &m.id), 0, "keine Luecke");
+    }
+
+    /// R5-3 (Import): das Tor laesst sich vor dem ersten Versuch nicht LESEN (Datenbankfehler,
+    /// injiziert fuer genau einen Lesevorgang). Das ist kein Modellfehler: kein Versuch, keine
+    /// Wiederholung, keine Pause zum Nachladen, kein Platzhalter, nichts gespeichert. Mit der
+    /// Datenbank wieder da laeuft derselbe Ablauf durch.
+    #[test]
+    fn a_gate_that_cannot_be_read_ends_the_import_without_retry_or_gap() {
+        use crate::managers::planning::{testhilfe as th, TOR_STOERUNG};
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+        let m = store.create_empty_meeting("Import", None).unwrap();
+        let _ = th::plan_fuer_besprechung(&store, &m.id, "u-i5", true);
+        TOR_STOERUNG.with(|c| c.set(1));
+        let (r, aufrufe, pausen) = lauf_mit(&store, &m.id, 130, |_| Ok(one_segment("hallo")));
+        assert_eq!(r.err(), Some("nur_notizen: tor_nicht_pruefbar".to_string()));
+        assert_eq!(TOR_STOERUNG.with(|c| c.get()), 0, "genau ein Lesevorgang");
+        assert_eq!(
+            (aufrufe, pausen),
+            (0, 0),
+            "kein Versuch, keine Wiederholung"
+        );
+        assert!(store.get_segments(&m.id).unwrap().is_empty());
+        assert_eq!(platzhalter(&store, &m.id), 0, "keine Luecke");
+
+        let (r, aufrufe, _) = lauf_mit(&store, &m.id, 130, |_| Ok(one_segment("hallo")));
+        assert!(r.is_ok());
+        assert!(aufrufe >= 1);
+        assert!(!store.get_segments(&m.id).unwrap().is_empty());
+        assert_eq!(platzhalter(&store, &m.id), 0);
+    }
+
+    /// R4-2, Gegenprobe: ohne Widerruf wird ein gescheiterter Versuch wiederholt (mit eigener
+    /// Freigabe), und drei gescheiterte Versuche ergeben wie bisher eine markierte Luecke.
+    #[test]
+    fn without_a_revocation_the_import_retries_and_marks_a_gap_after_three_failures() {
+        use crate::managers::planning::testhilfe as th;
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+        let m = store.create_empty_meeting("Import", None).unwrap();
+        let _ = th::plan_fuer_besprechung(&store, &m.id, "u-i3", true);
+        // 50 s = ein Block. Erster Versuch scheitert, zweiter gelingt.
+        let (r, aufrufe, pausen) = lauf_mit(&store, &m.id, 50, |n| {
+            if n == 1 {
+                Err("kein Modell geladen".into())
+            } else {
+                Ok(one_segment("hallo"))
+            }
+        });
+        assert!(r.is_ok(), "{:?}", r.err());
+        assert_eq!((aufrufe, pausen), (2, 1));
+        assert_eq!(platzhalter(&store, &m.id), 0);
+        assert_eq!(store.get_segments(&m.id).unwrap().len(), 1);
+
+        let n = store.create_empty_meeting("Import 2", None).unwrap();
+        let (r, aufrufe, pausen) = lauf_mit(&store, &n.id, 50, |_| Err("kaputt".into()));
+        assert!(r.is_ok());
+        assert_eq!((aufrufe, pausen), (CHUNK_ATTEMPTS as usize, 2));
+        assert_eq!(
+            platzhalter(&store, &n.id),
+            1,
+            "Luecke statt Abbruch (wie bisher)"
+        );
+    }
+
+    /// Der Widerruf faellt ZWISCHEN zwei Versuchen (in der Pause zum Nachladen): der zweite
+    /// Versuch beginnt nicht.
+    #[test]
+    fn a_revocation_between_two_attempts_stops_the_second() {
+        use crate::managers::planning::testhilfe as th;
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+        let m = store.create_empty_meeting("Import", None).unwrap();
+        let (p, _) = th::plan_fuer_besprechung(&store, &m.id, "u-i4", true);
+        let _arbeit = crate::managers::planning::Modellarbeit::beginnen(&m.id);
+        let mut aufrufe = 0;
+        let r = block_mit_wiederholung(
+            &store,
+            &m.id,
+            &block(0, 1_000),
+            &mut |frei, _chunk| {
+                frei.einloesen()?;
+                aufrufe += 1;
+                Err("kein Modell geladen".into())
+            },
+            &mut || {
+                crate::managers::planning::einwilligung_setzen(
+                    &store,
+                    &th::widerruf(&p.id, th::BERT),
+                    th::NOW + 9,
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(r.err(), Some("nur_notizen: abgelehnt".to_string()));
+        assert_eq!(aufrufe, 1);
+    }
+
+    /// Durchsetzungspunkt Modellebene: ohne laufende `Modellarbeit` gibt es keinen Modellaufruf
+    /// (ein neuer Pfad, der den Abschnitt vergisst, rechnet nichts, statt ungeschuetzt zu
+    /// schreiben), auch ganz ohne Planung.
+    #[test]
+    fn a_block_outside_of_model_work_never_reaches_the_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+        let m = store.create_empty_meeting("Import", None).unwrap();
+        let mut aufrufe = 0;
+        let r = block_mit_wiederholung(
+            &store,
+            &m.id,
+            &block(0, 1_000),
+            &mut |_frei, _chunk| {
+                aufrufe += 1;
+                Ok(one_segment("x"))
+            },
+            &mut || {},
+        );
+        assert_eq!(r.err(), Some("nur_notizen: ohne_modellarbeit".to_string()));
+        assert_eq!(aufrufe, 0);
     }
 }

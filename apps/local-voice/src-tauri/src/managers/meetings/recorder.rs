@@ -698,6 +698,10 @@ struct RecordingSession {
     write_flags: Arc<WriteFlags>,
     /// Beendet den Schreib-Waechter mit der Aufnahme.
     watch_stop: Arc<AtomicBool>,
+    /// lva#544: die Anmeldung dieser Aufnahme im [`FinalSlot`]. Solange sie lebt, beginnt kein
+    /// Enddurchlauf-/Recovery-Auftrag mit einem Modell. Sie faellt mit der Sitzung (nach der
+    /// Barriere) oder in `stop()`, sobald der Live-Worker leer ist (`SessionParts::live`).
+    live: Option<LiveHalter>,
 }
 
 /// Die Teile einer Sitzung, nachdem `stop()` oder das Loeschen sie uebernommen haben.
@@ -713,6 +717,7 @@ struct SessionParts {
     pipeline: Option<LivePipeline>,
     write_flags: Arc<WriteFlags>,
     watch_stop: Arc<AtomicBool>,
+    live: Option<LiveHalter>,
 }
 
 impl RecordingSession {
@@ -723,6 +728,7 @@ impl RecordingSession {
         system_sink: Option<Arc<Mutex<ChannelSink>>>,
         mic_path: Option<PathBuf>,
         system_path: Option<PathBuf>,
+        live: LiveHalter,
     ) -> Self {
         Self {
             meeting_id: meeting_id.to_string(),
@@ -737,6 +743,7 @@ impl RecordingSession {
             pipeline: None,
             write_flags: Arc::new(WriteFlags::default()),
             watch_stop: Arc::new(AtomicBool::new(false)),
+            live: Some(live),
         }
     }
 
@@ -754,6 +761,7 @@ impl RecordingSession {
             pipeline: self.pipeline.take(),
             write_flags: Arc::clone(&self.write_flags),
             watch_stop: Arc::clone(&self.watch_stop),
+            live: self.live.take(),
         }
     }
 }
@@ -798,6 +806,282 @@ struct FinalJobHandle {
     handle: std::thread::JoinHandle<()>,
 }
 
+/// Was der [`FinalSlot`] unter EINER Sperre haelt: den Thread und die Zahl der Aufnahmen, die
+/// gerade beginnen oder laufen.
+#[derive(Default)]
+struct SlotState {
+    job: Option<FinalJobHandle>,
+    /// Angemeldete Aufnahmen ([`LiveHalter`]). Solange > 0, wird jeder neue Auftrag mit gesetztem
+    /// Abbruch-Merker geboren.
+    live: u32,
+}
+
+/// So lange wartet der Start einer Aufnahme darauf, dass ein laufender Enddurchlauf nach dem
+/// Abbruch endet. Der Abbruch wirkt zwischen zwei Modellaufrufen (ein laufender Aufruf der
+/// Spracherkennung und ein laufendes Laden lassen sich nicht unterbrechen); endet der Auftrag in
+/// dieser Zeit nicht, scheitert der START (`job_busy`), statt unbegrenzt zu haengen.
+pub(crate) const CANCEL_WAIT: Duration = Duration::from_secs(90);
+
+/// Abstand, in dem der Start nach dem Ende des abgebrochenen Auftrags sieht.
+const CANCEL_POLL_SLOT: Duration = Duration::from_millis(10);
+
+/// Der Platz fuer den Enddurchlauf-/Recovery-Thread (hoechstens einer) UND die Anmeldung laufender
+/// Aufnahmen: beides unter derselben Sperre, damit zwischen "Aufnahme beginnt" und "Auftrag
+/// beginnt" keine Luecke bleibt (lva#544, Fixrunde 5). Ohne Tauri pruefbar.
+///
+/// Regel: ein Enddurchlauf-/Recovery-Auftrag laesst nie ein Modell neben einer Aufnahme laufen.
+/// - Eine Aufnahme meldet sich an ([`FinalSlot::live_beginnen`]), BEVOR sie das Tor betritt: der
+///   laufende Auftrag bekommt den Abbruch-Merker und wird (mit Frist) abgewartet.
+/// - Ein Auftrag, der waehrend einer angemeldeten Aufnahme entsteht ([`FinalSlot::spawn`]), traegt
+///   den Abbruch-Merker von Geburt an: `run_job` laedt und rechnet dann nichts
+///   (`FinalEnv::cancelled` vor jedem Laden und vor jedem Modellaufruf).
+pub(crate) struct FinalSlot {
+    inner: Arc<Mutex<SlotState>>,
+    cancel_wait: Duration,
+}
+
+impl Default for FinalSlot {
+    fn default() -> Self {
+        Self::mit_frist(CANCEL_WAIT)
+    }
+}
+
+/// Die Anmeldung EINER Aufnahme im [`FinalSlot`] (vom Beginn des Starts bis der Live-Worker nach
+/// dem Stopp leer ist). Faellt sie, zaehlt die Aufnahme nicht mehr (auch bei jedem Fehlerweg).
+pub(crate) struct LiveHalter {
+    inner: Arc<Mutex<SlotState>>,
+}
+
+impl Drop for LiveHalter {
+    fn drop(&mut self) {
+        let mut state = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        state.live = state.live.saturating_sub(1);
+    }
+}
+
+impl FinalSlot {
+    pub(crate) fn mit_frist(cancel_wait: Duration) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(SlotState::default())),
+            cancel_wait,
+        }
+    }
+
+    fn state(&self) -> std::sync::MutexGuard<'_, SlotState> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Startet `body` in einem neuen Thread. Laeuft noch ein frueherer, bekommt `body` dessen
+    /// Handle (zum Abwarten) und teilt seinen Abbruch-Merker (ein Abbruch trifft dann beide),
+    /// ausser der ist schon gesetzt: der Vorgaenger endet dann von selbst, und der neue Auftrag
+    /// soll nicht mit ihm sterben. Ist eine Aufnahme angemeldet, ist der Merker des neuen Auftrags
+    /// von Geburt an gesetzt.
+    ///
+    /// Entsteht der Thread nicht (Fehler), bleibt der Vorgaenger MIT seinem Merker im Platz: der
+    /// Start einer Aufnahme bricht ihn weiter ab und wartet ihn ab ([`FinalSlot::live_beginnen`]).
+    pub(crate) fn spawn(
+        &self,
+        body: impl FnOnce(Option<std::thread::JoinHandle<()>>, Arc<AtomicBool>) + Send + 'static,
+    ) -> std::io::Result<()> {
+        self.spawn_mit(body, |lauf| {
+            std::thread::Builder::new()
+                .name("meeting-final-pass".to_string())
+                .spawn(lauf)
+        })
+    }
+
+    /// [`FinalSlot::spawn`] mit dem Threadstart als Parameter (Tests lassen ihn scheitern).
+    fn spawn_mit(
+        &self,
+        body: impl FnOnce(Option<std::thread::JoinHandle<()>>, Arc<AtomicBool>) + Send + 'static,
+        starten: impl FnOnce(
+            Box<dyn FnOnce() + Send + 'static>,
+        ) -> std::io::Result<std::thread::JoinHandle<()>>,
+    ) -> std::io::Result<()> {
+        let mut slot = self.state();
+        let previous = slot.job.take().and_then(|p| {
+            if p.handle.is_finished() {
+                let _ = p.handle.join();
+                None
+            } else {
+                Some(p)
+            }
+        });
+        let live = slot.live > 0;
+        let cancel = match &previous {
+            Some(p) if !live && !p.cancel.load(Ordering::Acquire) => Arc::clone(&p.cancel),
+            _ => Arc::new(AtomicBool::new(live)),
+        };
+        if live {
+            info!("meetings: a recording is live - the new final pass job starts cancelled");
+        }
+        // Der Vorgaenger geht NICHT in die Closure des neuen Threads (scheiterte der Start, fiele
+        // er mit ihr und liefe unverfolgt weiter): sein Handle liegt in einer Uebergabe, aus der
+        // es der neue Thread als Erstes nimmt, und sein Merker bleibt hier.
+        let (previous_cancel, previous_handle) = match previous {
+            Some(p) => (Some(p.cancel), Some(p.handle)),
+            None => (None, None),
+        };
+        let uebergabe = Arc::new(Mutex::new(previous_handle));
+        let im_thread = Arc::clone(&uebergabe);
+        let job_cancel = Arc::clone(&cancel);
+        let gestartet = starten(Box::new(move || {
+            let vorher = im_thread.lock().unwrap_or_else(|e| e.into_inner()).take();
+            body(vorher, job_cancel)
+        }));
+        match gestartet {
+            Ok(handle) => {
+                slot.job = Some(FinalJobHandle { cancel, handle });
+                Ok(())
+            }
+            Err(e) => {
+                let vorher = uebergabe.lock().unwrap_or_else(|e| e.into_inner()).take();
+                if let (Some(handle), Some(cancel)) = (vorher, previous_cancel) {
+                    slot.job = Some(FinalJobHandle { cancel, handle });
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// Ein Thread laeuft (nicht nur: ein Handle liegt da).
+    pub(crate) fn active(&self) -> bool {
+        self.state()
+            .job
+            .as_ref()
+            .is_some_and(|job| !job.handle.is_finished())
+    }
+
+    /// Ist eine Aufnahme angemeldet (beginnt oder laeuft)?
+    pub(crate) fn live_aktiv(&self) -> bool {
+        self.state().live > 0
+    }
+
+    /// Meldet eine Aufnahme an: ab jetzt (unter der Sperre des Platzes) wird jeder neue Auftrag
+    /// abgebrochen geboren, und der laufende bekommt den Abbruch-Merker. Danach wird sein Ende
+    /// abgewartet, hoechstens die Frist des Platzes ([`CANCEL_WAIT`]): endet er nicht, gibt es
+    /// keinen Start (`job_busy`), die Anmeldung faellt, der Auftrag bleibt abgebrochen im Platz.
+    /// NIE unter der Tor-Sperre (Sperrordnung): der Auftrag nimmt sie selbst.
+    pub(crate) fn live_beginnen(&self) -> Result<LiveHalter, String> {
+        crate::managers::planning::ohne_tor_sperre("Abwarten des Enddurchlaufs");
+        {
+            let mut slot = self.state();
+            slot.live += 1;
+            if let Some(job) = &slot.job {
+                if !job.handle.is_finished() {
+                    info!("meetings: a new recording cancels the running final pass");
+                }
+                job.cancel.store(true, Ordering::Release);
+            }
+        }
+        let halter = LiveHalter {
+            inner: Arc::clone(&self.inner),
+        };
+        let frist = Instant::now() + self.cancel_wait;
+        loop {
+            let fertig = {
+                let mut slot = self.state();
+                match &slot.job {
+                    None => return Ok(halter),
+                    Some(job) if job.handle.is_finished() => slot.job.take(),
+                    Some(job) => {
+                        // Auch ein inzwischen neu entstandener Auftrag traegt den Merker schon.
+                        job.cancel.store(true, Ordering::Release);
+                        None
+                    }
+                }
+            };
+            if let Some(job) = fertig {
+                if job.handle.join().is_err() {
+                    error!("meetings: final pass thread panicked");
+                }
+                continue;
+            }
+            if Instant::now() >= frist {
+                warn!("meetings: the cancelled final pass did not end in time - no start");
+                return Err("job_busy: final_pass_not_cancelled".to_string());
+            }
+            std::thread::sleep(CANCEL_POLL_SLOT);
+        }
+    }
+
+    /// Wartet auf den Thread (Headless-Laeufe), ohne ihn abzubrechen.
+    pub(crate) fn wait(&self) {
+        crate::managers::planning::ohne_tor_sperre("join des Enddurchlaufs");
+        let job = self.state().job.take();
+        if let Some(job) = job {
+            if job.handle.join().is_err() {
+                error!("meetings: final pass thread panicked");
+            }
+        }
+    }
+
+    /// Beginnt eine Aufnahme unter dem Einwilligungs-Tor, in der Reihenfolge der Sperrordnung
+    /// (`managers::planning`): ERST die Aufnahme anmelden und den laufenden Auftrag abwarten
+    /// (ohne Tor-Sperre, mit Frist), DANN unter der Sperre die frische Pruefung und `start`.
+    /// Eine Wiederholungsschleife gibt es nicht mehr: seit der Anmeldung kann kein Auftrag mehr
+    /// mit einem Modell beginnen. `nach_abbruch` laeuft zwischen Abwarten und Tor (Testhaken).
+    /// Der [`LiveHalter`] gehoert der Aufnahme; faellt er, endet die Anmeldung.
+    pub(crate) fn start_unter_tor<T>(
+        &self,
+        store: &MeetingStore,
+        event: Option<&crate::managers::calendar::model::CalEvent>,
+        target_meeting_id: Option<&str>,
+        nach_abbruch: impl FnOnce(),
+        start: impl FnOnce(&crate::managers::planning::TorNachweis) -> Result<T, String>,
+    ) -> Result<(T, LiveHalter), String> {
+        let live = self.live_beginnen()?;
+        nach_abbruch();
+        let wert = crate::managers::planning::mit_tor(store, event, target_meeting_id, start)?;
+        Ok((wert, live))
+    }
+}
+
+/// Laesst `inner` erst arbeiten, wenn die Aufnahme WIRKSAM begonnen hat
+/// (`planning::Gebunden::wirksam`, unter der Tor-Sperre). Vorher fallen die Samples weg: bis zur
+/// letzten Pruefung des Tors wird nichts aufgenommen und nichts an die Transkription gegeben.
+fn erst_wenn_wirksam(
+    wirksam: Arc<AtomicBool>,
+    mut inner: impl FnMut(&[i16], Option<u64>) + Send + 'static,
+) -> impl FnMut(&[i16], Option<u64>) + Send + 'static {
+    move |samples: &[i16], qpc: Option<u64>| {
+        if wirksam.load(Ordering::Acquire) {
+            inner(samples, qpc);
+        }
+    }
+}
+
+/// EIN Block der Live-Transkription hinter dem Einwilligungs-Tor (lva#534, lva#544). `call`
+/// rechnet den Block; JEDER Modellversuch darin steht fuer sich hinter dem Tor
+/// (`import::transcribe_chunk_resilient` -> `planning::modell_lauf`) und meldet eine Ablehnung als
+/// `Err`. Dann liefert der Block KEINE Segmente (auch keine Luecken-Platzhalter); die Aufnahme
+/// selbst laeuft weiter. `abgelehnt` meldet das einmal je Aufnahme an die Oberflaeche.
+pub(crate) fn live_block_gated(
+    meeting_id: &str,
+    told: &AtomicBool,
+    call: impl FnOnce() -> Result<Vec<crate::managers::transcription::TimedSegment>, String>,
+    abgelehnt: impl FnOnce(),
+) -> Vec<crate::managers::transcription::TimedSegment> {
+    match call() {
+        Ok(segments) => segments,
+        Err(code) => {
+            warn!("meetings: Block nicht transkribiert ({meeting_id}, {code})");
+            if !told.swap(true, Ordering::Relaxed) {
+                abgelehnt();
+            }
+            Vec::new()
+        }
+    }
+}
+
+/// Was die Anlage der Zeile unter dem Einwilligungs-Tor ergab (lva#544): die Zeile samt Bindung
+/// der Planungen, oder die Zeile ohne Bindung (sie ist aufzuraeumen, und zwar AUSSERHALB der
+/// Tor-Sperre: das Aufraeumen meldet Ereignisse).
+enum Angelegt {
+    Gebunden(Meeting, crate::managers::planning::Gebunden),
+    BindungFehlt(Meeting, String),
+}
+
 // ---------------------------------------------------------------------------
 // Manager
 // ---------------------------------------------------------------------------
@@ -812,7 +1096,7 @@ pub struct MeetingRecorderManager {
     /// KI-Notizen neben der neuen Aufnahme).
     core: RunCore<RecordingSession>,
     /// M2-P2d: Enddurchlauf bzw. Recovery im Hintergrund (hoechstens einer).
-    final_job: Mutex<Option<FinalJobHandle>>,
+    finals: FinalSlot,
 }
 
 impl MeetingRecorderManager {
@@ -826,7 +1110,7 @@ impl MeetingRecorderManager {
             store,
             transcription,
             core: RunCore::new(),
-            final_job: Mutex::new(None),
+            finals: FinalSlot::default(),
         }
     }
 
@@ -845,70 +1129,41 @@ impl MeetingRecorderManager {
         if jobs.is_empty() {
             return;
         }
-        let mut slot = self.final_job.lock().unwrap_or_else(|e| e.into_inner());
-        let previous = slot.take();
-        let cancel = match &previous {
-            Some(p) if !p.handle.is_finished() => Arc::clone(&p.cancel),
-            _ => Arc::new(AtomicBool::new(false)),
-        };
         let app = self.app.clone();
         let store = Arc::clone(&self.store);
         let tm = Arc::clone(&self.transcription);
-        let job_cancel = Arc::clone(&cancel);
         let thread_jobs = jobs.clone();
-        let spawned = std::thread::Builder::new()
-            .name("meeting-final-pass".to_string())
-            .spawn(move || {
-                if let Some(previous) = previous {
-                    let _ = previous.handle.join();
-                }
-                let mut env =
-                    final_pass::AppEnv::new(&app, Arc::clone(&tm), Arc::clone(&job_cancel));
-                for job in &thread_jobs {
-                    final_pass::run_job(&store, job, &mut env);
-                }
-                if !job_cancel.load(Ordering::Relaxed) {
-                    let dictation_model = crate::settings::get_settings(&app).selected_model;
-                    tm.initiate_model_load_target(&dictation_model);
-                }
-            });
-        match spawned {
-            Ok(handle) => *slot = Some(FinalJobHandle { cancel, handle }),
-            Err(e) => {
-                drop(slot);
-                // Ohne Thread kein Enddurchlauf, aber auch kein haengendes
-                // `processing`: jede Besprechung wird hier abgeschlossen.
-                warn!("meetings: final pass thread not started ({e}) - live transcripts stay");
-                let mut env = final_pass::AppEnv::new(
-                    &self.app,
-                    Arc::clone(&self.transcription),
-                    Arc::new(AtomicBool::new(false)),
-                );
-                for mut job in jobs {
-                    job.plan = FinalPlan::Keep(KeepReason::LoadFailed);
-                    job.catch_up_model = None;
-                    final_pass::run_job(&self.store, &job, &mut env);
-                }
+        let spawned = self.finals.spawn(move |previous, job_cancel| {
+            if let Some(previous) = previous {
+                let _ = previous.join();
             }
-        }
-    }
-
-    /// M2-P2d: eine neue Aufnahme braucht die Engine. Der Enddurchlauf hoert
-    /// nach dem laufenden Segment auf (das Live-Transkript bleibt, die
-    /// Besprechung wird `ready`), und erst dann geht es weiter.
-    fn cancel_final_jobs(&self) {
-        let job = self
-            .final_job
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take();
-        if let Some(job) = job {
-            if !job.handle.is_finished() {
-                info!("meetings: a new recording cancels the running final pass");
+            let mut env = final_pass::AppEnv::new(&app, Arc::clone(&tm), Arc::clone(&job_cancel));
+            for job in &thread_jobs {
+                // Das Tor entscheidet `run_job` selbst (frisch, unter der Sperre).
+                final_pass::run_job(&store, job, &mut env);
             }
-            job.cancel.store(true, Ordering::Relaxed);
-            if job.handle.join().is_err() {
-                error!("meetings: final pass thread panicked");
+            if !job_cancel.load(Ordering::Relaxed) {
+                let dictation_model = crate::settings::get_settings(&app).selected_model;
+                tm.initiate_model_load_target(&dictation_model);
+            }
+        });
+        if let Err(e) = spawned {
+            // Ohne Thread kein Enddurchlauf, aber auch kein haengendes
+            // `processing`: jede Besprechung wird hier abgeschlossen.
+            warn!("meetings: final pass thread not started ({e}) - live transcripts stay");
+            // lva#544: dieser Notweg laeuft im Aufrufer und steht NICHT im `FinalSlot`: eine
+            // Aufnahme, die jetzt beginnt, koennte ihn weder abbrechen noch abwarten. Er rechnet
+            // deshalb nie ein Modell (Abbruch-Merker von Anfang an: kein Laden, keine
+            // Spracherkennung, kein Sprecher-Modell) und schliesst die Besprechungen nur ab.
+            let mut env = final_pass::AppEnv::new(
+                &self.app,
+                Arc::clone(&self.transcription),
+                Arc::new(AtomicBool::new(true)),
+            );
+            for mut job in jobs {
+                job.plan = FinalPlan::Keep(KeepReason::LoadFailed);
+                job.catch_up_model = None;
+                final_pass::run_job(&self.store, &job, &mut env);
             }
         }
     }
@@ -917,26 +1172,13 @@ impl MeetingRecorderManager {
     /// beginnt dann nicht auf der gemeinsamen Engine (auch nicht in der Luecke,
     /// bevor sein Auftrag im Verzeichnis steht).
     pub fn final_jobs_active(&self) -> bool {
-        self.final_job
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .as_ref()
-            .is_some_and(|job| !job.handle.is_finished())
+        self.finals.active()
     }
 
     /// M2-P2d: wartet auf den Enddurchlauf-/Recovery-Thread (Headless-Laeufe,
     /// deren Prozess sonst vor dem Ende des Auftrags endete).
     pub fn wait_final_jobs(&self) {
-        let job = self
-            .final_job
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take();
-        if let Some(job) = job {
-            if job.handle.join().is_err() {
-                error!("meetings: final pass thread panicked");
-            }
-        }
+        self.finals.wait();
     }
 
     /// Starts a live meeting: creates the row, the folder and both WAV
@@ -956,6 +1198,28 @@ impl MeetingRecorderManager {
         consent_confirmed: bool,
         capture_system: bool,
         target_meeting_id: Option<&str>,
+    ) -> Result<Meeting, String> {
+        self.start_for_event(
+            title,
+            consent_confirmed,
+            capture_system,
+            target_meeting_id,
+            None,
+        )
+    }
+
+    /// [`Self::start_into`] mit dem Termin, zu dem die Besprechung gehoert (`event`; sonst
+    /// wird er ueber die Verknuepfung des Zieleintrags gesucht). Gehoert der Termin zu einer
+    /// Planung (lva#534), entscheidet das Einwilligungs-Tor `planning::start_tor` hier,
+    /// unmittelbar vor dem Start, aus dem aktuellen Stand der Datenbank: ohne Zustimmung aller
+    /// Anwesenden startet weder Aufnahme noch Transkription (`nur_notizen: <grund>`).
+    pub fn start_for_event(
+        &self,
+        title: String,
+        consent_confirmed: bool,
+        capture_system: bool,
+        target_meeting_id: Option<&str>,
+        event: Option<&crate::managers::calendar::model::CalEvent>,
     ) -> Result<Meeting, String> {
         consent_gate(consent_confirmed)?;
         // Der Start registriert sich atomar im Lebenszyklus, bevor er irgendetwas anlegt: ein
@@ -978,35 +1242,80 @@ impl MeetingRecorderManager {
         }
         starting.check()?;
 
-        // M2-P2d: ein laufender Enddurchlauf gibt die Engine vorher frei.
-        self.cancel_final_jobs();
-
+        // Einwilligungs-Tor der Besprechungsplanung (lva#534, lva#544), in drei Schritten:
+        // 1. Die Aufnahme meldet sich im `FinalSlot` an (M2-P2d: ein laufender Enddurchlauf gibt
+        //    die Engine frei) - VOR dem Tor und ohne dessen Sperre; ab hier beginnt kein
+        //    Enddurchlauf-/Recovery-Auftrag mehr mit einem Modell.
+        // 2. Unter der Tor-Sperre, nur Datenbank: frische Pruefung, Zeile anlegen und die
+        //    geprueften Planungen an die Besprechung BINDEN (`meeting_plan_bindings`). Ab der
+        //    Bindung prueft jeder Modellaufruf und jedes Schreiben das Tor mit diesen Planungen,
+        //    auch wenn die Verknuepfung mit dem Termin erst spaeter entsteht oder ersetzt wird.
+        // 3. `start_row` baut Dateien, Pipeline und Captures OHNE Tor-Sperre auf (Sperrordnung:
+        //    keine Sperre von Recorder, Modell-Manager oder Audiotreiber unter dem Tor) und
+        //    schaltet die Aufnahme erst nach einer zweiten Pruefung unter der Sperre wirksam.
+        // Ohne Planung zum Termin bzw. zur Zielbesprechung: unveraendert.
         let consent_at = chrono::Utc::now().timestamp();
-        let meeting = begin_live_row(&self.store, &title, consent_at, target_meeting_id)?;
+        let (angelegt, live) = self.finals.start_unter_tor(
+            &self.store,
+            event,
+            target_meeting_id,
+            || {},
+            |tor| {
+                let meeting = begin_live_row(&self.store, &title, consent_at, target_meeting_id)?;
+                Ok(match tor.binden(&self.store, &meeting.id) {
+                    Ok(gebunden) => Angelegt::Gebunden(meeting, gebunden),
+                    Err(e) => Angelegt::BindungFehlt(meeting, e),
+                })
+            },
+        )?;
+        let (meeting, gebunden) = match angelegt {
+            Angelegt::Gebunden(meeting, gebunden) => (meeting, gebunden),
+            // Die Zeile steht, die Bindung nicht: aufraeumen, ausserhalb der Tor-Sperre
+            // (das Aufraeumen meldet Ereignisse).
+            Angelegt::BindungFehlt(meeting, e) => {
+                self.undo_live_start(target_meeting_id, &meeting.id, &e);
+                return Err(e);
+            }
+        };
         let meeting_id = meeting.id.clone();
         starting.set_target(&meeting_id)?;
         // `start_row` kehrt erst zurueck, wenn seine Sitzung die Barriere durchlaufen hat
         // (Captures, DSP und Worker sind zu): erst DANACH wird die Zeile zurueckgesetzt.
-        let started = self.start_row(meeting, CaptureMode::Meeting { capture_system }, &starting);
+        let started = self.start_row(
+            meeting,
+            CaptureMode::Meeting { capture_system },
+            &gebunden,
+            live,
+            &starting,
+        );
         if let Err(e) = &started {
-            match target_meeting_id {
-                Some(target) => self.undo_live_target_start(target, e),
-                // #15: eine neue Besprechung bleibt als `failed` stehen, ohne die
-                // Null-Header-WAVs und ohne dass der naechste App-Start sie als
-                // "Absturzrest" wiederbelebt.
-                None => match super::meetings_data_dir(&self.app) {
-                    Ok(base) => {
-                        info!("meetings: Start gescheitert ({e}), {meeting_id} wird aufgeraeumt");
-                        discard_failed_start(&self.store, &meeting_id, &base.join(&meeting_id));
-                    }
-                    Err(err) => {
-                        warn!("meetings: Start gescheitert, Datenordner unbekannt ({err})");
-                        let _ = self.store.set_status(&meeting_id, MeetingStatus::Failed);
-                    }
-                },
-            }
+            self.undo_live_start(target_meeting_id, &meeting_id, e);
+            // Nichts wurde aufgenommen: was DIESER Start gebunden hat, faellt wieder weg.
+            crate::managers::planning::bindung_verwerfen(&self.store, gebunden);
         }
         started
+    }
+
+    /// Ein Start einer Besprechung kam nicht zustande (nach dem Anlegen der Zeile): der Zieleintrag
+    /// wird wieder leer bzw. die neue Besprechung als `failed` aufgeraeumt. NIE unter der
+    /// Tor-Sperre (meldet Ereignisse).
+    fn undo_live_start(&self, target_meeting_id: Option<&str>, meeting_id: &str, e: &str) {
+        match target_meeting_id {
+            Some(target) => self.undo_live_target_start(target, e),
+            // #15: eine neue Besprechung bleibt als `failed` stehen, ohne die
+            // Null-Header-WAVs und ohne dass der naechste App-Start sie als
+            // "Absturzrest" wiederbelebt.
+            None => match super::meetings_data_dir(&self.app) {
+                Ok(base) => {
+                    info!("meetings: Start gescheitert ({e}), {meeting_id} wird aufgeraeumt");
+                    discard_failed_start(&self.store, meeting_id, &base.join(meeting_id));
+                }
+                Err(err) => {
+                    warn!("meetings: Start gescheitert, Datenordner unbekannt ({err})");
+                    let _ = self.store.set_status(meeting_id, MeetingStatus::Failed);
+                }
+            },
+        }
     }
 
     /// Der Start in einen leeren Eintrag kam nicht zustande: der Eintrag wird wieder leer, die
@@ -1049,7 +1358,8 @@ impl MeetingRecorderManager {
     /// (kein YouTube-Eintrag ohne Transkript und ohne Aufnahme: nichts startet, nichts
     /// aendert sich), `playback_capture_failed` / `playback_capture_timeout` (der
     /// Systemton liess sich nicht oeffnen), `start_cancelled` (ein Stopp oder Abbruch kam
-    /// dazwischen). Nach jedem Fehler nach der Umwandlung ist der Eintrag wieder wie
+    /// dazwischen), `nur_notizen: <grund>` (das Einwilligungs-Tor der Besprechungsplanung
+    /// sperrt, lva#544). Nach jedem Fehler nach der Umwandlung ist der Eintrag wieder wie
     /// vorher (`undo_playback_start`).
     pub fn start_playback_capture(
         &self,
@@ -1070,20 +1380,53 @@ impl MeetingRecorderManager {
         }
         starting.check()?;
 
-        // ERST die Zeile pruefen und umwandeln (atomar, samt Vorzustand), DANN den
-        // Enddurchlauf einer anderen Besprechung abbrechen: eine abgelehnte Anfrage soll
-        // nichts anrichten.
+        // Einwilligungs-Tor der Besprechungsplanung (lva#534, lva#544), dieselbe Reihenfolge wie bei
+        // `start_for_event` (Sperrordnung in `managers::planning`): ERST die Aufnahme im
+        // `FinalSlot` anmelden (ein laufender Enddurchlauf wird abgebrochen und abgewartet,
+        // ohne Tor-Sperre), DANN unter der Tor-Sperre das Tor frisch pruefen (die Planungen der
+        // YouTube-Besprechung, sofern sie einer zugeordnet ist), die Zeile atomar umwandeln
+        // (samt Vorzustand) und die geprueften Planungen BINDEN. Ohne Zustimmung aller
+        // Anwesenden bleibt der Eintrag unveraendert (`nur_notizen: <grund>`).
+        // Folge der Reihenfolge: auch eine Anfrage, die danach an der Zielpruefung scheitert
+        // (`target_not_empty`), hat den Enddurchlauf einer anderen Besprechung abgebrochen.
         let consent_at = chrono::Utc::now().timestamp();
-        let meeting = self
-            .store
-            .begin_playback_capture(meeting_id, consent_at)
-            .map_err(|e| coded_error("meeting_create_failed", &e))?;
-        self.cancel_final_jobs();
+        let (angelegt, live) = self.finals.start_unter_tor(
+            &self.store,
+            None,
+            Some(meeting_id),
+            || {},
+            |tor| {
+                let meeting = self
+                    .store
+                    .begin_playback_capture(meeting_id, consent_at)
+                    .map_err(|e| coded_error("meeting_create_failed", &e))?;
+                Ok(match tor.binden(&self.store, &meeting.id) {
+                    Ok(gebunden) => Angelegt::Gebunden(meeting, gebunden),
+                    Err(e) => Angelegt::BindungFehlt(meeting, e),
+                })
+            },
+        )?;
+        let (meeting, gebunden) = match angelegt {
+            Angelegt::Gebunden(meeting, gebunden) => (meeting, gebunden),
+            Angelegt::BindungFehlt(_, e) => {
+                info!("meetings: Mitschnitt gescheitert ({e}), {meeting_id} wird zurueckgesetzt");
+                self.undo_playback_start(meeting_id);
+                return Err(e);
+            }
+        };
 
-        let started = self.start_row(meeting, CaptureMode::PlaybackOnly, &starting);
+        let started = self.start_row(
+            meeting,
+            CaptureMode::PlaybackOnly,
+            &gebunden,
+            live,
+            &starting,
+        );
         if let Err(e) = &started {
             info!("meetings: Mitschnitt gescheitert ({e}), {meeting_id} wird zurueckgesetzt");
             self.undo_playback_start(meeting_id);
+            // Nichts wurde aufgenommen: was DIESER Start gebunden hat, faellt wieder weg.
+            crate::managers::planning::bindung_verwerfen(&self.store, gebunden);
         }
         started
     }
@@ -1157,13 +1500,24 @@ impl MeetingRecorderManager {
     /// FRUEH (mit den Sinks) und traegt die Barriere in ihrem `Drop`: jeder Fehler- und
     /// Abbruchweg schliesst Sinks, Captures, DSP und Worker, bevor diese Funktion
     /// zurueckkehrt. Der Aufrufer raeumt Zeile und Dateien erst danach auf.
+    ///
+    /// lva#544: laeuft OHNE Tor-Sperre. `gebunden` beweist, dass das Einwilligungs-Tor bestanden
+    /// und die Planungen an die Besprechung gebunden sind; der wirksame Beginn (ab dem Ton
+    /// gespeichert und transkribiert wird) ist die zweite Pruefung unter der Sperre
+    /// (`Gebunden::wirksam`), kurz vor der Veroeffentlichung. Bis dahin verwerfen die
+    /// Capture-Callbacks alles (`erst_wenn_wirksam`). `live` ist die Anmeldung der Aufnahme im
+    /// `FinalSlot`; sie gehoert ab der Sitzung der Aufnahme (und faellt mit jedem Fehlerweg).
     fn start_row(
         &self,
         meeting: Meeting,
         mode: CaptureMode,
+        gebunden: &crate::managers::planning::Gebunden,
+        live: LiveHalter,
         starting: &StartTicket<'_, RecordingSession>,
     ) -> Result<Meeting, String> {
+        crate::managers::planning::ohne_tor_sperre("Aufbau der Aufnahme (start_row)");
         let meeting_id = meeting.id.clone();
+        debug_assert_eq!(gebunden.meeting_id(), meeting_id);
         starting.check()?;
 
         let dir = super::meetings_data_dir(&self.app)
@@ -1199,6 +1553,7 @@ impl MeetingRecorderManager {
             system_sink,
             mic_path,
             system_path,
+            live,
         );
 
         // Written now, not at stop(): crash recovery can only repair WAVs whose
@@ -1217,7 +1572,9 @@ impl MeetingRecorderManager {
             )
             .map_err(|e| audio_paths_error(&e))?;
 
-        self.open_captures(&mut session, starting, &dir)?;
+        // lva#544: bis zum wirksamen Beginn (unten) verwerfen die Capture-Callbacks alles.
+        let wirksam = Arc::new(AtomicBool::new(false));
+        self.open_captures(&mut session, starting, &dir, &wirksam)?;
 
         // Der letzte Augenblick vor der Veroeffentlichung: abgebrochen, oder die Zeile ist
         // inzwischen geloescht? Dann wird nichts daraus (die Sitzung faellt durch die Barriere).
@@ -1226,6 +1583,17 @@ impl MeetingRecorderManager {
             .and_then(|()| self.ensure_present(&meeting_id))?;
         let write_flags = Arc::clone(&session.write_flags);
         let watch_stop = Arc::clone(&session.watch_stop);
+        // lva#544: der WIRKSAME Beginn. Unter der Tor-Sperre wird das Tor ein zweites Mal frisch
+        // geprueft (ein Widerruf seit der Bindung gewinnt) und nur der Merker umgelegt: erst ab
+        // jetzt speichern die Callbacks Ton und speisen die Transkription. Scheitert die Pruefung,
+        // wurde nichts aufgenommen: die Sitzung faellt durch die Barriere (Captures zu), der Start
+        // gilt als gescheitert und der Aufrufer raeumt auf.
+        if let Err(code) = gebunden.wirksam(&self.store, || {
+            wirksam.store(true, Ordering::Release);
+        }) {
+            info!("meetings: Start nicht wirksam ({meeting_id}, {code})");
+            return Err(code);
+        }
         // Zustand und Sitzung zusammen unter der Sperre des Lebenszyklus und erst jetzt, wo die
         // Captures laufen (#15). Ein Stopp, der zwischen der Pruefung und hier kam, hat den
         // Abbruchmerker gesetzt: die Sitzung kommt zurueck und faellt durch die Barriere.
@@ -1248,6 +1616,7 @@ impl MeetingRecorderManager {
         session: &mut RecordingSession,
         starting: &StartTicket<'_, RecordingSession>,
         dir: &std::path::Path,
+        wirksam: &Arc<AtomicBool>,
     ) -> Result<(), String> {
         let meeting_id = session.meeting_id.clone();
         let mode = session.mode;
@@ -1285,13 +1654,16 @@ impl MeetingRecorderManager {
         if let Some(sink) = session.mic_sink.clone() {
             let mic_feed = mic_feed.ok_or("dsp_thread_failed")?;
             starting.check()?;
-            let callback = channel_callback(
-                CHANNEL_MIC,
-                sink,
-                Arc::clone(&session.paused),
-                Arc::clone(&session.write_flags),
-                mic_feed,
-                Arc::clone(&levels),
+            let callback = erst_wenn_wirksam(
+                Arc::clone(wirksam),
+                channel_callback(
+                    CHANNEL_MIC,
+                    sink,
+                    Arc::clone(&session.paused),
+                    Arc::clone(&session.write_flags),
+                    mic_feed,
+                    Arc::clone(&levels),
+                ),
             );
             let capture = MeetingMicCapture::start(
                 crate::settings::get_settings(&self.app).selected_microphone,
@@ -1325,13 +1697,16 @@ impl MeetingRecorderManager {
             (_, Some(_), None) => None,
         };
         if let Some((sink, feed)) = loopback_parts {
-            let callback = channel_callback(
-                CHANNEL_SYSTEM,
-                Arc::clone(&sink),
-                Arc::clone(&session.paused),
-                Arc::clone(&session.write_flags),
-                feed,
-                Arc::clone(&levels),
+            let callback = erst_wenn_wirksam(
+                Arc::clone(wirksam),
+                channel_callback(
+                    CHANNEL_SYSTEM,
+                    Arc::clone(&sink),
+                    Arc::clone(&session.paused),
+                    Arc::clone(&session.write_flags),
+                    feed,
+                    Arc::clone(&levels),
+                ),
             );
             let started = self.start_loopback(
                 &meeting_id,
@@ -1387,6 +1762,7 @@ impl MeetingRecorderManager {
         callback: impl FnMut(&[i16], Option<u64>) + Send + 'static,
         dsp_control: Option<DspControl>,
     ) -> Result<LoopbackCapture, String> {
+        crate::managers::planning::ohne_tor_sperre("Start des Systemtons");
         let cancel = starting.cancel_flag();
         let started = start_bounded(
             "meeting-loopback-start",
@@ -1503,12 +1879,35 @@ impl MeetingRecorderManager {
             cfg = cfg.with_echo(echo);
         }
 
+        let gate_store = Arc::clone(&self.store);
+        let gate_meeting = meeting_id.to_string();
+        let refusal_told = AtomicBool::new(false);
+        let refusal_app = self.app.clone();
         LivePipeline::start(
             meeting_id.to_string(),
             Arc::clone(&self.store),
             cfg,
             move |chunk: &Chunk| {
-                super::import::transcribe_chunk_resilient(&app, &transcription, chunk)
+                live_block_gated(
+                    &gate_meeting,
+                    &refusal_told,
+                    || {
+                        super::import::transcribe_chunk_resilient(
+                            &app,
+                            &transcription,
+                            &gate_store,
+                            &gate_meeting,
+                            chunk,
+                        )
+                    },
+                    || {
+                        let _ = (MeetingEvent::Error {
+                            meeting_id: gate_meeting.clone(),
+                            message: "nur_notizen".to_string(),
+                        })
+                        .emit(&refusal_app);
+                    },
+                )
             },
             move |event| {
                 let _ = event.emit(&emit_app);
@@ -1598,6 +1997,7 @@ impl MeetingRecorderManager {
             pipeline,
             write_flags,
             watch_stop,
+            live,
         } = session.into_parts();
         watch_stop.store(true, Ordering::Release);
 
@@ -1632,6 +2032,9 @@ impl MeetingRecorderManager {
                 store_echo_summary(&self.store, &meeting_id, &summary);
             }
         }
+        // lva#544: der Live-Worker ist leer, diese Aufnahme laesst kein Modell mehr laufen: die
+        // Anmeldung im `FinalSlot` faellt, BEVOR der Enddurchlauf dieser Aufnahme entsteht.
+        drop(live);
 
         // The engine that produced the live transcript, read BEFORE the
         // dictation model is restored below.
@@ -1831,6 +2234,8 @@ impl MeetingRecorderManager {
             pipeline,
             write_flags,
             watch_stop,
+            // Die Anmeldung faellt erst am Ende: bis dahin laeuft kein Enddurchlauf mit Modell.
+            live: _live,
             ..
         } = session.into_parts();
         watch_stop.store(true, Ordering::Release);
@@ -1976,6 +2381,14 @@ impl MeetingRecorderManager {
             super::job::global().is_running(meeting_id),
             &|p| std::path::Path::new(p).exists(),
         )?;
+        // lva#544: neben einer Aufnahme laeuft kein Nachholen (der Auftrag wuerde abgebrochen
+        // geboren); der Nutzer erfaehrt es hier.
+        if self.finals.live_aktiv() {
+            return Err("already_recording".to_string());
+        }
+        // lva#534: ohne Zustimmung gibt es nichts fortzusetzen: der Nutzer erfaehrt es hier, der
+        // Auftrag (`run_job`) entscheidet das Tor selbst noch einmal.
+        crate::managers::planning::tor_pruefen_besprechung(&self.store, meeting_id)?;
         let settings = crate::settings::get_settings(&self.app);
         let catch_up_model = self.transcription.meeting_model_target(&settings);
         let plan = if runs_final_pass(&meeting) {
@@ -2089,6 +2502,7 @@ mod position_tests {
             None,
             None,
             None,
+            FinalSlot::default().live_beginnen().unwrap(),
         )
     }
 
@@ -3574,6 +3988,7 @@ mod tests {
             Some(sink),
             None,
             Some(path.clone()),
+            FinalSlot::default().live_beginnen().unwrap(),
         );
         session.pipeline = Some(pipeline);
         SessionRig {
@@ -4244,5 +4659,668 @@ mod tests {
             store.get_meeting(&meeting.id).unwrap().unwrap().status,
             "ready"
         );
+    }
+
+    // -- lva#534 Fixrunde 3: Reihenfolge von Abbruch, Tor und Beginn beim Start einer Aufnahme --
+
+    mod start {
+        use super::*;
+        use crate::managers::planning::testhilfe as th;
+        use std::sync::mpsc;
+
+        fn store() -> (tempfile::TempDir, Arc<MeetingStore>) {
+            let dir = tempfile::tempdir().unwrap();
+            let store = Arc::new(MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap());
+            (dir, store)
+        }
+
+        /// Ein "Enddurchlauf", der erst weitermacht, wenn der Start ihn abbricht (der Abbruch-Merker
+        /// ist gesetzt, der Start wartet also auf ihn), und DANN das Tor betritt (wie `run_job`).
+        /// Wartete der Start unter der Tor-Sperre, koennte er nie enden.
+        fn haengender_enddurchlauf(
+            slot: &FinalSlot,
+            store: &Arc<MeetingStore>,
+            meeting_id: &str,
+            log: &Arc<Mutex<Vec<&'static str>>>,
+        ) {
+            let (store, meeting_id, log) =
+                (Arc::clone(store), meeting_id.to_string(), Arc::clone(log));
+            slot.spawn(move |_previous, cancel| {
+                while !cancel.load(Ordering::Acquire) {
+                    std::thread::yield_now();
+                }
+                let _ = crate::managers::planning::tor_pruefen_besprechung(&store, &meeting_id);
+                log.lock().unwrap().push("enddurchlauf_fertig");
+            })
+            .unwrap();
+        }
+
+        /// Fuehrt einen Start in einem Thread aus und wartet (nur als Netz gegen ein Haengen) auf
+        /// sein Ende. Gibt das Ergebnis des Starts und das Protokoll zurueck.
+        fn starten(
+            slot: Arc<FinalSlot>,
+            store: Arc<MeetingStore>,
+            ziel: Option<String>,
+            log: Arc<Mutex<Vec<&'static str>>>,
+        ) -> Result<(), String> {
+            let (tx, rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                let (l1, l2) = (Arc::clone(&log), Arc::clone(&log));
+                let r = slot.start_unter_tor(
+                    &store,
+                    None,
+                    ziel.as_deref(),
+                    move || l1.lock().unwrap().push("abbruch_abgewartet"),
+                    move |_tor| {
+                        l2.lock().unwrap().push("start");
+                        Ok(())
+                    },
+                );
+                let _ = tx.send(r.map(|((), _live)| ()));
+            });
+            rx.recv_timeout(Duration::from_secs(60))
+                .expect("Deadlock: der Start endet nicht (Abbruch unter der Tor-Sperre?)")
+        }
+
+        /// Blocker 1, ohne Planung: Start einer Aufnahme, waehrend ein Enddurchlauf noch vor dem
+        /// Tor steht. Beide enden; erst der Enddurchlauf, dann der Start.
+        #[test]
+        fn a_live_start_does_not_deadlock_with_a_final_pass_before_the_gate() {
+            let (_dir, store) = store();
+            let slot = Arc::new(FinalSlot::default());
+            let log = Arc::new(Mutex::new(Vec::new()));
+            let m = store.create_empty_meeting("A", None).unwrap();
+            haengender_enddurchlauf(&slot, &store, &m.id, &log);
+            let r = starten(
+                Arc::clone(&slot),
+                Arc::clone(&store),
+                None,
+                Arc::clone(&log),
+            );
+            assert_eq!(r, Ok(()));
+            assert_eq!(
+                *log.lock().unwrap(),
+                ["enddurchlauf_fertig", "abbruch_abgewartet", "start"]
+            );
+            assert!(!slot.live_aktiv(), "die Anmeldung fiel mit dem Halter");
+        }
+
+        /// Blocker 1 mit Planung: Zustimmung liegt vor -> der Start laeuft; Ablehnung -> der Start
+        /// laeuft nie. In beiden Faellen endet auch der Enddurchlauf (kein Deadlock).
+        #[test]
+        fn the_same_holds_with_a_plan_that_allows_or_refuses() {
+            for zugestimmt in [true, false] {
+                let (_dir, store) = store();
+                let slot = Arc::new(FinalSlot::default());
+                let log = Arc::new(Mutex::new(Vec::new()));
+                let m = store.create_empty_meeting("B", None).unwrap();
+                th::plan_fuer_besprechung(&store, &m.id, "u-r", zugestimmt);
+                haengender_enddurchlauf(&slot, &store, &m.id, &log);
+                let r = starten(
+                    Arc::clone(&slot),
+                    Arc::clone(&store),
+                    Some(m.id.clone()),
+                    Arc::clone(&log),
+                );
+                let log = log.lock().unwrap().clone();
+                if zugestimmt {
+                    assert_eq!(r, Ok(()));
+                    assert_eq!(log, ["enddurchlauf_fertig", "abbruch_abgewartet", "start"]);
+                } else {
+                    assert_eq!(r, Err("nur_notizen: offen".to_string()));
+                    assert_eq!(log, ["enddurchlauf_fertig", "abbruch_abgewartet"]);
+                }
+                assert!(
+                    !slot.live_aktiv(),
+                    "auch ein abgelehnter Start meldet sich ab"
+                );
+            }
+        }
+
+        fn paniktext(f: impl FnOnce()) -> String {
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+            let text = r.expect_err("muss gemeldet werden");
+            text.downcast_ref::<String>()
+                .cloned()
+                .or_else(|| text.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_default()
+        }
+
+        /// Sperrordnung, in Debug-Laeufen geprueft: unter der Tor-Sperre wird weder auf den
+        /// Enddurchlauf gewartet noch der Zustand der Aufnahme (`RunCore`) angefasst noch ein
+        /// Audiotreiber gestartet. Jeder Verstoss meldet sich sofort, statt zu haengen.
+        #[test]
+        fn the_lock_order_check_covers_the_slot_the_run_state_and_the_microphone() {
+            let (_dir, store) = store();
+            let slot = FinalSlot::default();
+            let unter_tor = |was: &dyn Fn()| {
+                paniktext(|| {
+                    let _ = crate::managers::planning::mit_tor(&store, None, None, |_| {
+                        was();
+                        Ok(())
+                    });
+                })
+            };
+            let text = unter_tor(&|| {
+                let _ = slot.live_beginnen();
+            });
+            assert!(
+                text.contains("Abwarten des Enddurchlaufs unter der Tor-Sperre"),
+                "{text}"
+            );
+            assert!(!slot.live_aktiv(), "vor der Anmeldung gemeldet");
+            let text = unter_tor(&|| slot.wait());
+            assert!(
+                text.contains("join des Enddurchlaufs unter der Tor-Sperre"),
+                "{text}"
+            );
+
+            let core: RunCore<u8> = RunCore::new();
+            let starting = core.begin_start(None, Some("m")).unwrap();
+            let text = unter_tor(&|| {
+                let _ = core.publish_started(&starting, "m", 1);
+            });
+            assert!(text.contains("publish_started"), "{text}");
+            drop(starting);
+            assert!(core.is_idle(), "nichts veroeffentlicht");
+            let text = unter_tor(&|| {
+                let _ = core.begin_stop(None, std::time::Instant::now());
+            });
+            assert!(text.contains("begin_stop"), "{text}");
+            let text = unter_tor(&|| {
+                let _ = core.set_paused(true, |_| {});
+            });
+            assert!(text.contains("set_paused"), "{text}");
+
+            let text = unter_tor(&|| {
+                let _ = MeetingMicCapture::start(None, Arc::new(|_| {}), |_, _| {});
+            });
+            assert!(
+                text.contains("Start des Mikrofons unter der Tor-Sperre"),
+                "{text}"
+            );
+            assert!(!crate::managers::planning::unter_tor_sperre());
+        }
+
+        /// R4-1 (Platz): ab der Anmeldung einer Aufnahme wird jeder Auftrag mit gesetztem
+        /// Abbruch-Merker geboren, auch einer, der IM Start-Rueckruf unter dem Tor entsteht (also
+        /// nach jeder Pruefung des Starts). Nach dem Ende der Aufnahme nicht mehr.
+        #[test]
+        fn a_job_spawned_while_a_recording_is_registered_is_born_cancelled() {
+            let (_dir, store) = store();
+            let slot = FinalSlot::default();
+            let (tx, rx) = mpsc::channel::<bool>();
+            let auftrag = |tx: mpsc::Sender<bool>| {
+                move |vorher: Option<std::thread::JoinHandle<()>>, cancel: Arc<AtomicBool>| {
+                    if let Some(vorher) = vorher {
+                        let _ = vorher.join();
+                    }
+                    let _ = tx.send(cancel.load(Ordering::Acquire));
+                }
+            };
+            // Vor jeder Aufnahme: ein Auftrag laeuft normal.
+            slot.spawn(auftrag(tx.clone())).unwrap();
+            assert!(!rx.recv().unwrap());
+
+            let ((), live) = slot
+                .start_unter_tor(
+                    &store,
+                    None,
+                    None,
+                    || {},
+                    |_tor| {
+                        slot.spawn(auftrag(tx.clone())).unwrap();
+                        Ok(())
+                    },
+                )
+                .unwrap();
+            assert!(
+                rx.recv().unwrap(),
+                "im Start-Rueckruf entstanden: abgebrochen geboren"
+            );
+            assert!(slot.live_aktiv());
+            slot.spawn(auftrag(tx.clone())).unwrap();
+            assert!(
+                rx.recv().unwrap(),
+                "waehrend der Aufnahme entstanden: abgebrochen geboren"
+            );
+            slot.wait();
+
+            drop(live);
+            assert!(!slot.live_aktiv());
+            slot.spawn(auftrag(tx)).unwrap();
+            assert!(!rx.recv().unwrap(), "nach der Aufnahme: normal");
+            slot.wait();
+        }
+
+        /// Hinweis "cancel() wartet unbegrenzt": das Abwarten hat eine Frist. Endet der
+        /// abgebrochene Auftrag nicht, scheitert der START (`job_busy`), die Anmeldung faellt, und
+        /// der Auftrag bleibt abgebrochen. Ein spaeterer Auftrag erbt den gesetzten Merker nicht.
+        /// Ohne Zeitmessung: die Frist ist null, der Auftrag haengt an einem Kanal.
+        #[test]
+        fn waiting_for_a_cancelled_final_pass_is_bounded() {
+            let slot = FinalSlot::mit_frist(Duration::ZERO);
+            let (weiter_tx, weiter_rx) = mpsc::channel::<()>();
+            let (gesehen_tx, gesehen_rx) = mpsc::channel::<bool>();
+            let erster = gesehen_tx.clone();
+            slot.spawn(move |_vorher, cancel| {
+                // Ein Modellaufruf, der sich nicht unterbrechen laesst.
+                let _ = weiter_rx.recv();
+                let _ = erster.send(cancel.load(Ordering::Acquire));
+            })
+            .unwrap();
+            let r = slot.live_beginnen();
+            assert_eq!(
+                r.err(),
+                Some("job_busy: final_pass_not_cancelled".to_string())
+            );
+            assert!(
+                !slot.live_aktiv(),
+                "kein Start: die Anmeldung ist wieder weg"
+            );
+            assert!(slot.active(), "der Auftrag laeuft noch");
+
+            // Ein neuer Auftrag (keine Aufnahme angemeldet) wartet auf den alten und laeuft dann
+            // normal: er teilt den gesetzten Merker NICHT.
+            slot.spawn(move |vorher, cancel| {
+                if let Some(vorher) = vorher {
+                    let _ = vorher.join();
+                }
+                let _ = gesehen_tx.send(cancel.load(Ordering::Acquire));
+            })
+            .unwrap();
+            weiter_tx.send(()).unwrap();
+            assert!(
+                gesehen_rx.recv().unwrap(),
+                "der alte Auftrag sah den Abbruch"
+            );
+            assert!(!gesehen_rx.recv().unwrap(), "der neue nicht");
+            slot.wait();
+
+            // Mit einem Auftrag, der auf den Abbruch hoert, gelingt der Start.
+            let slot = FinalSlot::default();
+            slot.spawn(|_vorher, cancel| {
+                while !cancel.load(Ordering::Acquire) {
+                    std::thread::yield_now();
+                }
+            })
+            .unwrap();
+            let live = slot.live_beginnen().unwrap();
+            assert!(!slot.active() && slot.live_aktiv());
+            drop(live);
+        }
+
+        /// R5-1: scheitert der Threadstart eines neuen Auftrags, bleibt der laufende Vorgaenger im
+        /// Platz (mit seinem Abbruch-Merker). Der Start einer Aufnahme bricht ihn ab und wartet
+        /// sein Ende ab, bevor das Tor betreten wird und die Aufnahme beginnt; vorher laeuft
+        /// nichts von ihr. Der Vorgaenger haengt an einem Kanal (wie ein Modellaufruf, der sich
+        /// nicht unterbrechen laesst); die Reihenfolge steht im Protokoll, keine Zeitmessung.
+        #[test]
+        fn a_failed_thread_start_keeps_the_running_final_pass_tracked() {
+            let (_dir, store) = store();
+            let slot = Arc::new(FinalSlot::default());
+            let log: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+            let (weiter_tx, weiter_rx) = mpsc::channel::<()>();
+            let (merker_tx, merker_rx) = mpsc::channel::<Arc<AtomicBool>>();
+            let l = Arc::clone(&log);
+            slot.spawn(move |_vorher, cancel| {
+                let _ = merker_tx.send(Arc::clone(&cancel));
+                let _ = weiter_rx.recv();
+                l.lock().unwrap().push(if cancel.load(Ordering::Acquire) {
+                    "vorgaenger_abgebrochen_beendet"
+                } else {
+                    "vorgaenger_ohne_abbruch_beendet"
+                });
+            })
+            .unwrap();
+            let merker = merker_rx.recv().unwrap();
+
+            // Der naechste Auftrag entsteht nicht: der Threadstart scheitert.
+            let nie = Arc::new(AtomicBool::new(false));
+            let lief = Arc::clone(&nie);
+            let r = slot.spawn_mit(
+                move |_vorher, _cancel| lief.store(true, Ordering::Release),
+                |_lauf| Err(std::io::Error::other("kein Thread (injiziert)")),
+            );
+            assert!(r.is_err());
+            assert!(
+                slot.active(),
+                "der Vorgaenger steht weiter im Platz (sonst liefe er unverfolgt neben der Aufnahme)"
+            );
+            assert!(
+                !merker.load(Ordering::Acquire),
+                "der gescheiterte Start bricht nichts ab"
+            );
+
+            // Start einer Aufnahme: bricht den Vorgaenger ab und wartet auf sein Ende.
+            let (fertig_tx, fertig_rx) = mpsc::channel();
+            let (s2, st2, l1, l2) = (
+                Arc::clone(&slot),
+                Arc::clone(&store),
+                Arc::clone(&log),
+                Arc::clone(&log),
+            );
+            let start = std::thread::spawn(move || {
+                let r = s2.start_unter_tor(
+                    &st2,
+                    None,
+                    None,
+                    move || l1.lock().unwrap().push("abbruch_abgewartet"),
+                    move |_tor| {
+                        l2.lock().unwrap().push("aufnahme_beginnt");
+                        Ok(())
+                    },
+                );
+                let _ = fertig_tx.send(r.map(|((), live)| live));
+            });
+            // Der Start hat den Vorgaenger gefunden: dessen Merker ist gesetzt. (Die Frist ist nur
+            // ein Netz gegen ein Haengen, kein Beweis.)
+            let netz = Instant::now() + Duration::from_secs(60);
+            while !merker.load(Ordering::Acquire) {
+                assert!(
+                    Instant::now() < netz,
+                    "der Start sieht den Vorgaenger nicht"
+                );
+                std::thread::yield_now();
+            }
+            // Solange der Vorgaenger haengt, steht er im Platz und der Start wartet: nichts von
+            // der Aufnahme ist gelaufen.
+            assert!(slot.active());
+            assert!(log.lock().unwrap().is_empty(), "{:?}", log.lock().unwrap());
+
+            weiter_tx.send(()).unwrap();
+            let live = fertig_rx
+                .recv_timeout(Duration::from_secs(60))
+                .expect("der Start endet nicht")
+                .expect("der Start gelingt");
+            start.join().unwrap();
+            assert_eq!(
+                *log.lock().unwrap(),
+                [
+                    "vorgaenger_abgebrochen_beendet",
+                    "abbruch_abgewartet",
+                    "aufnahme_beginnt"
+                ]
+            );
+            assert!(
+                !nie.load(Ordering::Acquire),
+                "der gescheiterte Auftrag lief nie"
+            );
+            assert!(!slot.active() && slot.live_aktiv());
+            drop(live);
+        }
+
+        /// Bis zum wirksamen Beginn verwerfen die Capture-Callbacks alles.
+        #[test]
+        fn capture_callbacks_drop_everything_until_the_start_is_effective() {
+            let wirksam = Arc::new(AtomicBool::new(false));
+            let gesehen = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let zaehler = Arc::clone(&gesehen);
+            let mut callback = erst_wenn_wirksam(Arc::clone(&wirksam), move |samples, _qpc| {
+                zaehler.fetch_add(samples.len(), Ordering::SeqCst);
+            });
+            callback(&[1, 2, 3], None);
+            assert_eq!(gesehen.load(Ordering::SeqCst), 0);
+            wirksam.store(true, Ordering::Release);
+            callback(&[1, 2], Some(7));
+            assert_eq!(gesehen.load(Ordering::SeqCst), 2);
+        }
+
+        fn ein_segment() -> Vec<crate::managers::transcription::TimedSegment> {
+            vec![crate::managers::transcription::TimedSegment {
+                text: "hallo".into(),
+                start_ms: 0,
+                end_ms: 100,
+                words: None,
+            }]
+        }
+
+        /// Der echte Block des Live-Workers ohne Modell: `live_block_gated` um
+        /// `import::block_mit_wiederholung` (drei Versuche, jeder hinter dem Tor), im Abschnitt
+        /// `Modellarbeit` wie `dsp::run_worker`. Gibt die Segmente zurueck und zaehlt Aufrufe.
+        fn live_block(
+            store: &MeetingStore,
+            meeting_id: &str,
+            told: &AtomicBool,
+            aufrufe: &std::sync::atomic::AtomicUsize,
+            meldungen: &std::sync::atomic::AtomicUsize,
+        ) -> Vec<crate::managers::transcription::TimedSegment> {
+            let _arbeit = crate::managers::planning::Modellarbeit::beginnen(meeting_id);
+            let chunk = Chunk {
+                samples: vec![0.1; 16_000],
+                offset_ms: 0,
+            };
+            live_block_gated(
+                meeting_id,
+                told,
+                || {
+                    super::super::super::import::block_mit_wiederholung(
+                        store,
+                        meeting_id,
+                        &chunk,
+                        &mut |frei, _chunk| {
+                            frei.einloesen()?;
+                            aufrufe.fetch_add(1, Ordering::SeqCst);
+                            Ok(ein_segment())
+                        },
+                        &mut || {},
+                    )
+                },
+                || {
+                    meldungen.fetch_add(1, Ordering::SeqCst);
+                },
+            )
+        }
+
+        /// R4-6 (a): der Start hat geprueft und die Zeile angelegt, `finish_start` (Verknuepfung
+        /// mit dem Termin) lief noch NICHT. Der Widerruf faellt genau hierhin. Der Live-Block ruft
+        /// kein Modell, der wirksame Beginn wird verweigert, und der Speicher nimmt kein
+        /// Modell-Ergebnis an: die Planung haengt seit dem Start als Bindung an der Besprechung.
+        #[test]
+        fn a_revocation_before_finish_start_stops_the_live_block() {
+            let (_dir, store) = store();
+            let (p, termin) = th::plan_mit_termin(&store, "u-6a", true);
+            let slot = FinalSlot::default();
+            let ((meeting, gebunden), _live) = slot
+                .start_unter_tor(
+                    &store,
+                    Some(&termin),
+                    None,
+                    || {},
+                    |tor| {
+                        let meeting = begin_live_row(&store, "Abstimmung", 1, None)?;
+                        let gebunden = tor.binden(&store, &meeting.id)?;
+                        Ok((meeting, gebunden))
+                    },
+                )
+                .unwrap();
+            assert!(
+                store.meeting_calendar_link(&meeting.id).unwrap().is_none(),
+                "Voraussetzung: noch keine Verknuepfung mit dem Termin"
+            );
+            let (told, aufrufe, meldungen) = (
+                AtomicBool::new(false),
+                std::sync::atomic::AtomicUsize::new(0),
+                std::sync::atomic::AtomicUsize::new(0),
+            );
+            // Gegenprobe: vor dem Widerruf laeuft der Block.
+            assert_eq!(
+                live_block(&store, &meeting.id, &told, &aufrufe, &meldungen).len(),
+                1
+            );
+            assert_eq!(aufrufe.load(Ordering::SeqCst), 1);
+
+            crate::managers::planning::einwilligung_setzen(
+                &store,
+                &th::widerruf(&p.id, th::BERT),
+                th::NOW + 3,
+            )
+            .unwrap();
+            assert!(live_block(&store, &meeting.id, &told, &aufrufe, &meldungen).is_empty());
+            assert!(live_block(&store, &meeting.id, &told, &aufrufe, &meldungen).is_empty());
+            assert_eq!(
+                aufrufe.load(Ordering::SeqCst),
+                1,
+                "kein weiterer Modellaufruf"
+            );
+            assert_eq!(meldungen.load(Ordering::SeqCst), 1, "einmal gemeldet");
+            assert_eq!(
+                gebunden.wirksam(&store, || panic!("darf nie schalten")),
+                Err("nur_notizen: abgelehnt".to_string())
+            );
+            // Schreibebene: ein Ergebnis, das der Worker schon in der Hand haelt, wird verworfen.
+            let _arbeit = crate::managers::planning::Modellarbeit::beginnen(&meeting.id);
+            let delta = super::super::super::store::TranscriptDelta {
+                new_segments: vec![StoredSegment {
+                    segment_index: 0,
+                    text: "hallo".into(),
+                    start_ms: 0,
+                    end_ms: 100,
+                    channel: 0,
+                    speaker_index: None,
+                    words: None,
+                }],
+            };
+            assert!(store.append_delta(&meeting.id, &delta).is_err());
+            assert!(store.get_segments(&meeting.id).unwrap().is_empty());
+        }
+
+        /// R4-6 (b): ZWEI zunaechst erlaubte Quellen (uebergebener Termin mit Planung A, der
+        /// Zieleintrag ist mit dem Termin von Planung B verknuepft). Nach dem Start ersetzt
+        /// `finish_start` die Verknuepfung des Ziels durch den uebergebenen Termin (`INSERT OR
+        /// REPLACE`). Der Widerruf der URSPRUENGLICHEN Zielplanung B verhindert trotzdem jeden
+        /// weiteren Modellaufruf, der von A ebenso.
+        #[test]
+        fn both_sources_of_a_start_keep_blocking_after_finish_start_replaced_the_link() {
+            for widerrufen in ["ziel", "termin"] {
+                let (_dir, store) = store();
+                let ziel = store.create_empty_meeting("Ziel", None).unwrap();
+                let (b, termin_b) = th::plan_mit_termin(&store, "u-6b-ziel", true);
+                store
+                    .link_meeting_event(&ziel.id, &termin_b, "prompt", th::NOW)
+                    .unwrap();
+                let (a, termin_a) = th::plan_mit_termin(&store, "u-6b-termin", true);
+                let slot = FinalSlot::default();
+                let ((meeting, _gebunden), _live) = slot
+                    .start_unter_tor(
+                        &store,
+                        Some(&termin_a),
+                        Some(&ziel.id),
+                        || {},
+                        |tor| {
+                            let meeting = begin_live_row(&store, "Ziel", 1, Some(&ziel.id))?;
+                            let gebunden = tor.binden(&store, &meeting.id)?;
+                            Ok((meeting, gebunden))
+                        },
+                    )
+                    .unwrap();
+                assert_eq!(meeting.id, ziel.id);
+
+                let plan = crate::managers::calendar::service::StartPlan {
+                    title: "Ziel".into(),
+                    event: Some(termin_a.clone()),
+                    template_id: None,
+                };
+                let probleme = crate::managers::calendar::service::finish_start(
+                    &store,
+                    &meeting.id,
+                    &plan,
+                    "prompt",
+                    th::NOW + 1,
+                );
+                assert!(probleme.is_empty(), "{probleme:?}");
+                assert_eq!(
+                    store
+                        .meeting_calendar_link(&meeting.id)
+                        .unwrap()
+                        .unwrap()
+                        .uid,
+                    termin_a.uid,
+                    "die Verknuepfung des Ziels zeigt jetzt auf den uebergebenen Termin"
+                );
+
+                let (told, aufrufe, meldungen) = (
+                    AtomicBool::new(false),
+                    std::sync::atomic::AtomicUsize::new(0),
+                    std::sync::atomic::AtomicUsize::new(0),
+                );
+                assert_eq!(
+                    live_block(&store, &meeting.id, &told, &aufrufe, &meldungen).len(),
+                    1,
+                    "beide zugestimmt: der Block laeuft"
+                );
+                let plan_id = if widerrufen == "ziel" { &b.id } else { &a.id };
+                crate::managers::planning::einwilligung_setzen(
+                    &store,
+                    &th::widerruf(plan_id, th::BERT),
+                    th::NOW + 3,
+                )
+                .unwrap();
+                assert!(
+                    live_block(&store, &meeting.id, &told, &aufrufe, &meldungen).is_empty(),
+                    "Widerruf der Planung '{widerrufen}'"
+                );
+                assert_eq!(aufrufe.load(Ordering::SeqCst), 1, "{widerrufen}");
+                assert_eq!(meldungen.load(Ordering::SeqCst), 1);
+            }
+        }
+
+        /// Der Block der Live-Transkription: nach einer Ablehnung kein Modellaufruf, keine
+        /// Luecken-Platzhalter, die Meldung nur einmal; ein Widerruf WAEHREND des Blocks verwirft
+        /// ihn, und der Block versucht es danach kein zweites Mal (drei Versuche sind erlaubt).
+        #[test]
+        fn the_live_block_asks_the_gate_around_the_model_and_reports_a_refusal_once() {
+            let (_dir, store) = store();
+            let m = store.create_empty_meeting("L", None).unwrap();
+            let (p, _) = th::plan_fuer_besprechung(&store, &m.id, "u-l", true);
+            let told = AtomicBool::new(false);
+            let aufrufe = std::sync::atomic::AtomicUsize::new(0);
+            let meldungen = std::sync::atomic::AtomicUsize::new(0);
+            let _arbeit = crate::managers::planning::Modellarbeit::beginnen(&m.id);
+            let chunk = Chunk {
+                samples: vec![0.1; 16_000],
+                offset_ms: 0,
+            };
+            let block = |widerruf_im_aufruf: bool| {
+                live_block_gated(
+                    &m.id,
+                    &told,
+                    || {
+                        super::super::super::import::block_mit_wiederholung(
+                            &store,
+                            &m.id,
+                            &chunk,
+                            &mut |frei, _chunk| {
+                                frei.einloesen()?;
+                                aufrufe.fetch_add(1, Ordering::SeqCst);
+                                if widerruf_im_aufruf {
+                                    crate::managers::planning::einwilligung_setzen(
+                                        &store,
+                                        &th::widerruf(&p.id, th::BERT),
+                                        th::NOW + 3,
+                                    )
+                                    .unwrap();
+                                    // Der widerrufene Versuch scheitert auch noch: trotzdem
+                                    // kein zweiter Versuch und kein Platzhalter.
+                                    return Err("kein Modell geladen".into());
+                                }
+                                Ok(ein_segment())
+                            },
+                            &mut || {},
+                        )
+                    },
+                    || {
+                        meldungen.fetch_add(1, Ordering::SeqCst);
+                    },
+                )
+            };
+            assert_eq!(block(false).len(), 1, "erlaubt: Segmente");
+            assert!(block(true).is_empty(), "Widerruf im Aufruf: verworfen");
+            assert_eq!(aufrufe.load(Ordering::SeqCst), 2, "kein zweiter Versuch");
+            assert!(block(false).is_empty(), "danach kein Modellaufruf mehr");
+            assert!(block(false).is_empty());
+            assert_eq!(aufrufe.load(Ordering::SeqCst), 2, "kein weiterer Aufruf");
+            assert_eq!(meldungen.load(Ordering::SeqCst), 1, "einmal gemeldet");
+        }
     }
 }

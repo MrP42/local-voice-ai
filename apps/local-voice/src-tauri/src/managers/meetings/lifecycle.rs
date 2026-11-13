@@ -275,6 +275,7 @@ impl<S> RunCore<S> {
         meeting_id: &str,
         session: S,
     ) -> Result<(), S> {
+        crate::managers::planning::ohne_tor_sperre("Zustand der Aufnahme (publish_started)");
         let mut inner = self.lock();
         let ours = matches!(&inner.phase, Phase::Starting(s) if s.op == ticket.op);
         if !ours || ticket.cancel.load(Ordering::Acquire) {
@@ -338,6 +339,7 @@ impl<S> RunCore<S> {
         op: Option<&str>,
         deadline: Instant,
     ) -> Result<StopStep<'_, S>, String> {
+        crate::managers::planning::ohne_tor_sperre("Zustand der Aufnahme (begin_stop)");
         enum Next {
             NotRecording,
             Cancel(String),
@@ -469,6 +471,7 @@ impl<S> RunCore<S> {
         paused: bool,
         apply: impl FnOnce(&S),
     ) -> Result<String, String> {
+        crate::managers::planning::ohne_tor_sperre("Zustand der Aufnahme (set_paused)");
         let mut inner = self.lock();
         // Ohne Sitzung (Startfenster, Stopp laeuft) gibt es nichts zu pausieren; ein
         // Zustandsereignis "pausiert" ohne wirkende Pause waere falsch.
