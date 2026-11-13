@@ -3055,6 +3055,101 @@ test("Zusammenführen von Hand: Teile mit Transkript werden ein Text mit Zeitach
     .toEqual(["page_book_t2"]);
 });
 
+/**
+ * lva#568: Ein Teil, dessen Transkriptseite sich nicht lesen lässt (Lesefehler
+ * oder kaputtes JSON), bricht das Zusammenführen ab, bevor etwas geändert wird.
+ * Früher fiel der Teil still aus dem Text, danach wurde seine Seite gelöscht.
+ */
+const MERGE_TITLES = [2, 1].map(
+  (n) => `Robert Kiyosaki - Rich Dad Poor Dad Disc 3 - ${pad(n)} - Track ${pad(n)}`,
+);
+
+async function startManualMerge(page: Page, broken: "none" | "error" | "json") {
+  await addBooks(page, [
+    partWithTranscript("book_t2", MERGE_TITLES[0], 60_000),
+    partWithTranscript("book_t1", MERGE_TITLES[1], 30_000),
+  ]);
+  await page.addInitScript(
+    ([titles, broken]) => {
+      const w = window as unknown as Record<string, any>;
+      w.__pageText.page_book_t1 = `# ${titles[1]}\n\nAnfang des Buchs.`;
+      w.__pageText.page_book_t2 = `# ${titles[0]}\n\nZweiter Teil.`;
+      const internals = w.__TAURI_INTERNALS__;
+      const orig = internals.invoke;
+      internals.invoke = async (cmd: string, args: Record<string, any>) => {
+        if (cmd === "page_state_load" && args.id === "page_book_t2") {
+          if (broken === "error") throw "Seite nicht lesbar";
+          if (broken === "json") return "{kaputt";
+        }
+        return orig(cmd, args);
+      };
+    },
+    [MERGE_TITLES, broken] as const,
+  );
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByTestId("library-select-start").click();
+  for (const id of ["book_t1", "book_t2"])
+    await page.locator(`[data-drop-book="${id}"] [data-testid="library-select"]`).check();
+  await page.getByTestId("library-select-merge").click();
+  await page.getByTestId("library-merge-confirm").click();
+}
+
+for (const [broken, label] of [
+  ["error", "Lesefehler"],
+  ["json", "kaputtes JSON"],
+] as const)
+  test(`Zusammenführen: ${label} der Transkriptseite eines Teils bricht ab, nichts wird verändert`, async ({
+    page,
+  }) => {
+    await startManualMerge(page, broken);
+    const toast = page.locator("[data-sonner-toast]").first();
+    await expect(toast).toContainText("Das Transkript von „");
+    await expect(toast).toContainText(MERGE_TITLES[0]);
+    await expect(toast).toContainText("lässt sich nicht lesen");
+    await expect(toast).toContainText("Das Zusammenführen wurde abgebrochen");
+    await expect(toast).toContainText("Es wurde nichts verändert");
+    // Alle Bücher bleiben, nichts wurde gespeichert, zusammengeführt oder gelöscht.
+    await expect(
+      page.locator('[data-drop-book="book_t1"], [data-drop-book="book_t2"]'),
+    ).toHaveCount(2);
+    for (const cmd of [
+      "library_save",
+      "library_merge_audio",
+      "pages_delete",
+      "meetings_delete",
+      "page_state_save",
+      "pages_create",
+    ])
+      expect(await calls(page, cmd), cmd).toEqual([]);
+    const ids = await page.evaluate(() =>
+      (window as unknown as { __books: { id: string }[] }).__books
+        .map((b) => b.id)
+        .filter((id) => id.startsWith("book_t"))
+        .sort(),
+    );
+    expect(ids).toEqual(["book_t1", "book_t2"]);
+  });
+
+test("Zusammenführen ohne Lesefehler läuft wie bisher: Audio zusammen, Seite des zweiten Teils weg, kein Fehler", async ({
+  page,
+}) => {
+  await startManualMerge(page, "none");
+  await expect
+    .poll(async () => await calls(page, "library_merge_audio"))
+    .toEqual([{ targetId: "book_t1", sourceIds: ["book_t2"], replace: false }]);
+  await expect
+    .poll(async () => (await calls(page, "pages_delete")).map((a) => a.id))
+    .toEqual(["page_book_t2"]);
+  await expect(page.locator('[data-drop-book="book_t2"]')).toHaveCount(0);
+  await expect(page.locator('[data-drop-book="book_t1"]')).toHaveCount(1);
+  await expect(
+    page
+      .locator("[data-sonner-toast]")
+      .filter({ hasText: "lässt sich nicht lesen" }),
+  ).toHaveCount(0);
+});
+
 test("Titel bereinigen: Hinweis, alt → neu, Speichern ohne ASIN und Format", async ({ page }) => {
   await addBooks(page, [
     baseBook("book_g", "Genesis B0DD7W1VFS LC 128 44100 Stereo", legacyAudio("book_g")),
