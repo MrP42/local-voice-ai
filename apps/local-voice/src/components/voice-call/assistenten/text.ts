@@ -28,7 +28,11 @@ export type PlatzhalterWerte = {
   stunde: number;
   /** 0...59 */
   minute: number;
-  /** Weitere Platzhalter (für spätere Schnittstellen); die eingebauten gehen vor. */
+  /**
+   * Weitere Platzhalter (für spätere Schnittstellen); die eingebauten gehen vor. Schlüssel gelten genau (kein Normalisieren,
+   * `é` und `e` + U+0301 sind zwei Schlüssel); nur eigene Eigenschaften zählen (`__proto__`, `constructor`, `toString` liefern
+   * nichts Geerbtes).
+   */
   extra?: Readonly<Record<string, string>>;
 };
 
@@ -195,7 +199,7 @@ export function loesePlatzhalter(
       wert = eingebaut(schluessel, englisch, werte);
     } else if (
       werte.extra !== undefined &&
-      Object.prototype.hasOwnProperty.call(werte.extra, schluessel)
+      Object.hasOwn(werte.extra, schluessel)
     ) {
       bekannt = true;
       wert = werte.extra[schluessel];

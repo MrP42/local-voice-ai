@@ -76,8 +76,9 @@ Schlüssel, zwei Platzhalter. Das gilt für Platzhalter samt Zusatzwerten und de
 Schnittstellen, Feldnamen), JSON-Objektschlüssel und deren Dubletten, Ids, Vorlagen und Dateinamen. TypeScript vergleicht Zeichenketten
 mit `===` (Codeeinheiten, für wohlgeformte Texte dasselbe). Swift vergleicht `String` dagegen kanonisch (`==`, `Set<String>`,
 `Dictionary<String, _>`, `contains`; sogar U+212A ist dort gleich `K`); der Swift-Kern vergleicht darum über die UTF-8-Bytes
-(`AssistantExact`, `AssistantExactKey`), auch in den `Equatable`-Umsetzungen seiner öffentlichen Typen. Deren `==` zählt die Reihenfolge der Mitglieder eines JSON-Objekts nicht (geschrieben wird sortiert), die einer Liste schon. Ein Swift-`[String: String]`
-(Zusatzwerte) führt kanonisch gleiche Schlüssel schon beim Einfügen zusammen; das ist die Grenze des Typs, nicht des Kerns.
+(`AssistantExact`, `AssistantExactKey`), auch in den `Equatable`-Umsetzungen seiner öffentlichen Typen. Deren `==` zählt die Reihenfolge der Mitglieder eines JSON-Objekts nicht (geschrieben wird sortiert), die einer Liste schon. Weil ein
+Swift-`[String: String]` kanonisch gleiche Schlüssel schon beim Einfügen zusammenführte, tragen die Zusatzwerte der Platzhalter dort
+eine geordnete Paarliste (siehe „Platzhalter“); es gibt keine Typgrenze mehr, beide Schlüssel `é` bleiben getrennt.
 
 ## Gerätenamen und vorbehaltene Ids
 
@@ -87,7 +88,7 @@ mit `===` (Codeeinheiten, für wohlgeformte Texte dasselbe). Swift vergleicht `S
 - **Vorbehaltene Ids**: `aktiv` (der Dateiname `aktiv.json` gehört der aktiven Auswahl), die Ids der Vorlagen und alles mit dem
   Vorsatz `vorlage-`. Speichern, Löschen, Kopieren-Ziel und Auswählen mit einer vorbehaltenen Id schlagen fehl (Swift
   `reservedId`; das Auswählen nur für vorbehaltene Ids, die keine Vorlage sind). Eine vorhandene `aktiv.json` wird nie als Profil gelesen
-  und nie als Profil überschrieben.
+  und nie als Profil überschrieben; auch das Auswählen ersetzt sie nur, wenn sie ein Auswahldokument ist.
 
 ## Prüfung des Baums
 
@@ -146,6 +147,16 @@ Locale-Schnittstellen: Sprache `en` und `en-XX` → Englisch, alles andere (auch
 Eingabe sind Kalenderfelder (Jahr, Monat, Tag, Wochentag, Stunde, Minute); keine Zeitzonenlogik im Kern. Ein Wert außerhalb
 des Bereichs (Monat 13, Stunde 24 …) gilt als leer.
 
+**Zusatzwerte** (`extra`) sind verlustfrei und genau (UTF-8-Bytes): `{{é}}` mit U+00E9 und `{{e` + U+0301 + `}}` sind zwei
+Platzhalter mit je eigenem Zusatzwert; ein nur zerlegt vorhandener Schlüssel trifft den zusammengesetzten Platzhalter nicht (er ist
+unbekannt und wird entfernt). In Swift ist `extra` eine geordnete Liste von Paaren (`[AssistantPlaceholderExtra]`, Schlüssel und
+Wert), kein Dictionary; kommt derselbe Schlüssel (bytegleich) mehrfach vor, gilt der **letzte** Eintrag, wie bei doppelten
+Schlüsseln im JSON. Die Reihenfolge verschiedener Schlüssel ändert nichts, und `==` von `AssistantPlaceholderValues` vergleicht die
+wirksame Zuordnung bytegenau. In TypeScript ist `extra` ein Objekt; es zählen nur eigene Eigenschaften (`Object.hasOwn`), darum
+liefern `__proto__`, `constructor` und `toString` als Platzhalternamen ohne Zusatzwert nichts Geerbtes (unbekannt, entfernt) und mit
+Zusatzwert den übergebenen Wert. Die Fälle stehen im Abschnitt `platzhalter` von `pruefstaende.json`, Swift und Node lesen sie
+beide.
+
 **Erkennung**: `{{` + höchstens 40 Zeichen ohne `{`, `}` und Zeilenumbruch + `}}`; Leerzeichen am Rand des Namens zählen nicht
 (`{{ name }}`). Alles andere bleibt unverändert stehen (`{{name`, `{{{name}}}` → `{Anna}`).
 
@@ -199,25 +210,42 @@ Gilt gemeinsam für Swift (`AssistantProfileStore`) und den späteren Speicher a
   2 Leerzeichen, `\n` am Ende).
 - **Der Dateiname muss zur `id` im Inhalt passen**, sonst wird die Datei abgewiesen (Code `muster`, Pfad `id`). Eine Datei mit
   vorbehaltener Id (Vorlage, `vorlage-…`, `aktiv`) wird ebenfalls abgewiesen (`wert`, Pfad `id`).
-- **Die aktive Auswahl liegt in `aktiv.json`** als `{"id": "<id>"}` (gleiche Schreibweise). Fehlt die Datei, ist sie ungültig,
-  oder zeigt sie auf ein fehlendes oder gelöschtes Profil, gilt die Vorlage `alles`. `aktiv` ist deshalb als Id vorbehalten; das
-  Auswählen schreibt nur `aktiv.json`, nie ein Profil.
+- **Die aktive Auswahl liegt in `aktiv.json`** als `{"id": "<id>"}` (gleiche Schreibweise). Fehlt die Datei, ist sie kein
+  Auswahldokument, oder zeigt sie auf ein fehlendes, gelöschtes oder wegen `zu_viele` nicht vorhandenes Profil, gilt die Vorlage
+  `alles`. `aktiv` ist deshalb als Id vorbehalten; das Auswählen schreibt nur `aktiv.json`, nie ein Profil.
+- **Auswahldokument** heißt: reguläre Datei bis 256 KiB, gültiges JSON (strenger Leser), ein Objekt mit **genau einem** Mitglied
+  `id`, dessen Wert eine Zeichenkette ist (doppelte Schlüssel fasst der Leser zusammen, der letzte gilt). Alles andere in
+  `aktiv.json` ist **belegt**: ein vollständiges Profil (Altbestand, fremdes Programm), ein Objekt mit weiteren Schlüsseln, ein
+  falscher Typ, kaputtes JSON, eine zu große Datei, ein Symlink, ein Verzeichnis, jede andere nicht reguläre Datei. `setActive`
+  schreibt nur, wenn `aktiv.json` fehlt oder ein Auswahldokument ist (es wird ersetzt); sonst Fehler `occupied`, nichts wird
+  geschrieben, auch nicht bei wiederholtem Aufruf. Es gibt keine Migration. `activeId()` zählt nur ein Auswahldokument (sonst
+  Rückfall `alles`). `list()` zeigt eine belegte `aktiv.json` unter den Abgewiesenen (Dateiname `aktiv.json`, ein Eintrag mit Pfad
+  `""` und Code `wert`); ein Verzeichnis `aktiv.json` wird wie jedes Verzeichnis ignoriert (`setActive` ist dann trotzdem
+  `occupied`). Der Eintrag zählt nicht zur Grenze von 200 Dateien.
 - **Gelesen wird nur von regulären Dateien.** Die Art des Eintrags kommt von `attributesOfItem` (Symlinks werden nicht verfolgt,
   Typ `.typeRegular`). Ein Symlink `x.json` (auch ein hängender) und jede andere nicht reguläre Datei (FIFO, Gerät) gilt als
   abgewiesen: Code `json`, Pfad `""`; sie wird nicht geöffnet. Ein **Verzeichnis** `x.json` wird ignoriert. Das gilt für Auflisten
-  und direkten Abruf gleich; auch `aktiv.json` als Symlink ist ungültig (Rückfall `alles`).
-- **Obergrenzen**: 256 KiB je Datei (größere werden abgewiesen und nicht gelesen: `laenge`, Pfad `""`). Höchstens **200 Dateien**:
-  Die Grenze gilt für das **Auflisten** (über 200 Dateien hinaus, nach Dateiname sortiert, werden weitere abgewiesen: `zu_viele`,
-  Pfad `""`, ohne sie zu lesen) und für die **Neuanlage** (`tooMany`; das Überschreiben einer vorhandenen Datei bleibt möglich).
-  Der direkte Abruf per Id liest unabhängig davon.
-- **Andere Dateien im Verzeichnis werden ignoriert** (alles, was nicht auf `.json` endet, und `aktiv.json` selbst).
+  und direkten Abruf gleich; auch `aktiv.json` als Symlink ist belegt (Rückfall `alles`, nichts wird geschrieben).
+- **Obergrenzen**: 256 KiB je Datei (größere werden abgewiesen und nicht gelesen: `laenge`, Pfad `""`). Höchstens **200 Dateien**.
+  Es gilt eine einheitliche Regel: Die **Auswahl** sind die ersten 200 Dateinamen (nach Bytes sortiert, ohne `aktiv.json` und ohne
+  Verzeichnisse). Eine Datei jenseits der Auswahl wird beim **Auflisten** abgewiesen (`zu_viele`, Pfad `""`, ohne sie zu lesen) und
+  ist für den Speicher sonst **nicht vorhanden**: der Abruf per Id (`profile(id:)`) liefert `nil` (damit meldet das Auswählen
+  `notFound` und `activeId()` fällt auf `alles` zurück), **Speichern** und **Löschen** melden `occupied` und ändern nichts. Die
+  **Neuanlage** ab 200 Namen ist `tooMany`. Überschrieben wird nur ein gültiges eigenes Profil **innerhalb der Auswahl**. Wird eine
+  Datei der Auswahl gelöscht, rückt der nächste Name nach und gehört dann dazu (lesbar und überschreibbar). Die Prüfung liest nur die
+  Verzeichnisliste, keine Inhalte; bei höchstens 200 Namen ist sie sofort erfüllt. Vorlagen sind davon unberührt.
+- **Andere Dateien im Verzeichnis werden ignoriert** (alles, was nicht auf `.json` endet; `aktiv.json` ist keine Profildatei, eine
+  belegte steht aber unter den Abgewiesenen, siehe oben).
 - **Atomar schreiben**: in eine temporäre Datei im selben Verzeichnis, dann ersetzen; nie halb geschriebene Profile.
-- **Eine abgewiesene Datei wird nie verändert oder gelöscht**; sie erscheint in der Liste der Abgewiesenen mit Dateiname und
-  Fehlerliste. **Speichern** (`save`) schreibt nur, wenn die Zieldatei fehlt oder ein gültiges eigenes Profil mit genau dieser Id
-  ist; sonst Fehler `occupied` („belegt“: beschädigt, neueres Schema, falsche Id im Inhalt, zu groß, Symlink, Verzeichnis, keine
-  reguläre Datei) und es wird nichts geschrieben. **Löschen** (`delete`) entfernt nur ein gültiges eigenes Profil; eine abgewiesene
-  Datei ist `occupied`, ein Verzeichnis, Symlink oder anderes Nicht-Reguläres (und eine fehlende Datei) ist `notFound`, nichts wird
-  entfernt.
+- **Eine abgewiesene Datei wird nie verändert oder gelöscht, aus keinem Abweisungsgrund**: Inhalt (beschädigt, neueres Schema,
+  falsche Id im Inhalt, zu groß), Art des Eintrags (Symlink, Verzeichnis, nicht regulär), `zu_viele` (jenseits der Auswahl) und eine
+  belegte `aktiv.json`. Sie erscheint in der Liste der Abgewiesenen mit Dateiname und Fehlerliste. **Speichern** (`save`) schreibt
+  nur, wenn die Zieldatei fehlt (und noch Platz ist) oder ein gültiges eigenes Profil mit genau dieser Id innerhalb der Auswahl ist;
+  sonst Fehler `occupied` („belegt“) und es wird nichts geschrieben; das gilt auch, wenn ein Profil unter einer solchen Id aus einer
+  kopierten Vorlage entstand. **Löschen** (`delete`) entfernt nur ein gültiges eigenes Profil innerhalb der Auswahl; eine
+  abgewiesene Datei (auch eine jenseits der Auswahl) ist `occupied`, ein Verzeichnis, Symlink oder anderes Nicht-Reguläres (und eine
+  fehlende Datei) ist `notFound`, nichts wird entfernt. **Auswählen** (`setActive`) schreibt `aktiv.json` nur, wenn sie fehlt oder
+  ein Auswahldokument ist (siehe oben).
 - **Ein Schreiber je Verzeichnis.** Kapazitätsprüfung, die Prüfung der Zieldatei und `newOwnId` sind nicht atomar gegen parallele
   Prozesse; innerhalb der App läuft das Schreiben seriell. Zwei Prozesse, die dasselbe Verzeichnis beschreiben, sind nicht vorgesehen.
 - **Eigene Ids**: `eigen-` plus 12 Zeichen `[0-9a-z]` aus einem übergebenen Zufallserzeuger.
