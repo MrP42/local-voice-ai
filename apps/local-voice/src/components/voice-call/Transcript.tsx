@@ -219,6 +219,13 @@ export const Transcript: React.FC<{
     endRef.current?.scrollIntoView({ block: "end" });
   }, [lines, toolStatus, notice, denken]);
 
+  // „Denkt nach“ meldet die Live-Region je Denkprozess nur einmal: Nach einer Werkzeugzeile bleibt sie
+  // leer, statt „Denkt nach“ ein zweites Mal anzusagen.
+  const [werkzeugBei, setWerkzeugBei] = useState<number | null>(null);
+  useEffect(() => {
+    if (toolStatus && denken) setWerkzeugBei(denken.seit);
+  }, [toolStatus, denken]);
+
   // Die Live-Region ist immer da (leer), damit Ansagen zuverlässig ankommen; sie trägt nur die
   // Werkzeugzeile. Der Hinweis ist ein eigenes Element, ein gesperrtes Modell meldet sich als Alarm.
   const liveRegion = (
@@ -232,7 +239,7 @@ export const Transcript: React.FC<{
         ? t([`voiceCall.tool.${toolStatus}`, "voiceCall.tool.generic"], {
             name: toolStatus,
           })
-        : denken
+        : denken && werkzeugBei !== denken.seit
           ? t("voiceCall.denken.laeuft")
           : null}
     </div>

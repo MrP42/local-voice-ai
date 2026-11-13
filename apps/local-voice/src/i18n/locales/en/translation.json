@@ -7772,6 +7772,7 @@
       "modell": "Asking {{modell}}",
       "arbeitet": "Working on the answer …",
       "sofort": "Quick local reply with {{modell}}",
+      "auftrag": "Still running in the background: “{{frage}}”",
       "keineSchritte": "No intermediate steps",
       "kontext_one": "Found {{count}} matching passage in your own content",
       "kontext_other": "Found {{count}} matching passages in your own content"
