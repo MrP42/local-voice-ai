@@ -258,13 +258,49 @@ pub(crate) fn file_info(file: &File) -> io::Result<FileInfo> {
     })
 }
 
+/// Win32-Fehlercode in einem `HRESULT` der Form `HRESULT_FROM_WIN32` (`0x8007xxxx`);
+/// jeder andere `HRESULT` ist kein Win32-Fehler (`None`). Rein.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn win32_code(hresult: i32) -> Option<u32> {
+    let bits = hresult as u32;
+    (bits & 0xFFFF_0000 == 0x8007_0000).then_some(bits & 0xFFFF)
+}
+
+/// Heisst dieser Fehler der Abfrage `FileIdInfo` "das kann dieser Datentraeger (dieser
+/// Treiber) nicht"? Nur `ERROR_INVALID_FUNCTION` (1), `ERROR_NOT_SUPPORTED` (50) und
+/// `ERROR_INVALID_PARAMETER` (87) sagen das: so antworten Dateisysteme ohne 128-Bit-Kennung
+/// (FAT, je nach Treiber exFAT und Netzfreigaben). Alles andere (Zugriff verweigert,
+/// ungueltiges Handle, E/A-Fehler, zu wenig Speicher, ...) ist KEIN Befund ueber den
+/// Datentraeger und wird als gewoehnlicher Fehler weitergereicht; eine Platte mit
+/// Kennung wuerde sonst bei einem voruebergehenden Fehler als "nicht unterstuetzt"
+/// gemeldet. Rein; `hresult` ist der Fehler aus dem `windows`-Crate (`HRESULT`).
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn id_info_unsupported(hresult: i32) -> bool {
+    const ERROR_INVALID_FUNCTION: u32 = 1;
+    const ERROR_NOT_SUPPORTED: u32 = 50;
+    const ERROR_INVALID_PARAMETER: u32 = 87;
+    matches!(
+        win32_code(hresult),
+        Some(ERROR_INVALID_FUNCTION | ERROR_NOT_SUPPORTED | ERROR_INVALID_PARAMETER)
+    )
+}
+
+/// Der Fehler der Abfrage als `io::Error` mit richtigem Win32-Code (damit `kind()`
+/// stimmt); ein `HRESULT`, der kein Win32-Fehler ist, bleibt, wie er ist.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn id_info_error(hresult: i32) -> io::Error {
+    io::Error::from_raw_os_error(win32_code(hresult).map_or(hresult, |code| code as i32))
+}
+
 /// [`FileInfo`] des Handles `file`: Attribute und Zahl der Namen aus
 /// `GetFileInformationByHandle`, die Kennung aus `GetFileInformationByHandleEx`
-/// (`FileIdInfo`, 128 Bit). Scheitert die zweite Abfrage (Datentraeger ohne Datei-Kennung,
+/// (`FileIdInfo`, 128 Bit). Antwortet die zweite Abfrage mit einem der Fehler, die "nicht
+/// unterstuetzt" heissen ([`id_info_unsupported`]: Datentraeger ohne Datei-Kennung,
 /// typisch FAT), ist die Kennung unbekannt (`None`). Das ist kein stilles Weitermachen:
 /// jeder Vergleich lehnt eine unbekannte Kennung ab ([`same_identity`]), und der
 /// verankerte Ladeweg meldet sie als [`VolumeUnsupported`] (`volume_unsupported`),
-/// nicht als Link-Ablehnung.
+/// nicht als Link-Ablehnung. JEDER andere Fehler der Abfrage wird als `io::Error`
+/// weitergereicht, nicht als Befund ueber den Datentraeger gedeutet.
 #[cfg(windows)]
 pub(crate) fn file_info(file: &File) -> io::Result<FileInfo> {
     use std::os::windows::io::AsRawHandle;
@@ -282,15 +318,18 @@ pub(crate) fn file_info(file: &File) -> io::Result<FileInfo> {
     let mut id = FILE_ID_INFO::default();
     // SAFETY: gleiches Handle; `id` ist ein beschreibbarer Puffer genau in der Groesse
     // von `FILE_ID_INFO`, die Klasse `FileIdInfo` fuellt ihn.
-    let id_known = unsafe {
+    let id_known = match unsafe {
         GetFileInformationByHandleEx(
             handle,
             FileIdInfo,
             std::ptr::addr_of_mut!(id).cast(),
             std::mem::size_of::<FILE_ID_INFO>() as u32,
         )
-    }
-    .is_ok();
+    } {
+        Ok(()) => true,
+        Err(e) if id_info_unsupported(e.code().0) => false,
+        Err(e) => return Err(id_info_error(e.code().0)),
+    };
     let dir = raw.dwFileAttributes & DIRECTORY != 0;
     Ok(FileInfo {
         identity: if id_known {

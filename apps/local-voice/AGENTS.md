@@ -136,6 +136,23 @@ assumption is that a regular, singly linked `.partial` found in the model folder
 Any other consumer of these files, and any package export, must verify the bytes it actually
 uses itself. The UI flag `model_ready` only compares file sizes.
 
+The protection is deliberately loosened for publication (decided for lva#540): „Neu: Auch reguläre
+Dateien, die ein gleichberechtigter Prozess während des Vorgangs unter einen reservierten Namen im
+Modellordner schiebt, gelten als App-Dateiobjekte. Sie können beim Veröffentlichen umbenannt werden
+und dabei ihren Namen verlieren; ein vorhandenes Ziel unter dem Katalognamen kann ersetzt werden.
+Das wird erkannt (unsafe_path, kein Done) und nie geladen, aber nicht verhindert. Handle-gebundene
+Veröffentlichung: lva#570.“ Concretely: the publish step renames by name (`Anchor::rename_over`), so
+a peer that swaps the `.partial` between the name check and the rename gets its file moved to the
+catalog name and can replace an existing target. The write handle stays open across the rename and
+the catalog name must name exactly that handle afterwards; a mismatch is `unsafe_path`, no `Done`,
+and the error path removes and moves nothing further (no withdrawing of the graph, no unlink). A
+failed or cancelled fetch never deletes anything by name, not even an empty `.partial`: that name
+may by now hold someone else's file. Unchanged: nothing outside the model folder is touched, and
+the loader never receives unverified bytes. On Windows the write handle is opened with
+`FILE_SHARE_READ | WRITE | DELETE` so the app's own rename is not blocked; that is no protection
+against a swap. Tests that could hang (a FIFO slipped in under a name) run in a child process
+with a hard deadline (`download/childtest.rs`), never in a thread that cannot be stopped.
+
 ## Versioning and releases
 
 **Every change that ships gets a new version number.** Not "when it feels

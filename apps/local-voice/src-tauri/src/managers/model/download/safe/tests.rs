@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(unix)]
+use crate::managers::model::download::childtest;
 use crate::managers::model::download::linktest::{folder_link, is_link as is_a_link, symlink_file};
 use std::io::{Read, Write};
 use tempfile::TempDir;
@@ -72,6 +74,70 @@ fn ordinary_files_open_truncate_append_and_remove() {
 fn an_ordinary_error_is_not_a_refusal() {
     assert!(!is_refusal(&io::Error::from(io::ErrorKind::NotFound)));
     assert!(!is_refusal(&io::Error::other("x")));
+}
+
+/// Eine FIFO ohne Gegenseite am Namen: jeder Oeffner dieses Moduls lehnt sie ab, ohne am
+/// Oeffnen zu haengen (ohne `O_NONBLOCK` blockiert `open` zum Lesen, bis ein Schreiber
+/// kommt; die Pruefung der Art am Handle wuerde nie erreicht). Das Entfernen lehnt sie
+/// ebenfalls ab, und sie bleibt eine FIFO. Der Test laeuft in einem Kindprozess mit
+/// harter Frist ([`childtest`]): haengt ein Oeffner, wird das Kind nach der Frist
+/// beendet und eingesammelt, der Elternlauf haengt nie.
+#[cfg(unix)]
+#[test]
+fn a_fifo_without_a_peer_is_refused_by_every_opener_without_hanging() {
+    use std::os::unix::ffi::OsStrExt;
+    let Some(work) = childtest::child_dir() else {
+        return childtest::run(
+            module_path!(),
+            "a_fifo_without_a_peer_is_refused_by_every_opener_without_hanging",
+            std::time::Duration::from_secs(30),
+        );
+    };
+    let fifo = work.join("fifo.partial");
+    let raw = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+    // SAFETY: `raw` ist ein gueltiger, nullterminierter Pfad.
+    assert_eq!(unsafe { libc::mkfifo(raw.as_ptr(), 0o600) }, 0);
+
+    assert_refused(plain_len(&fifo));
+    assert_refused(open_read(&fifo));
+    assert_refused(open_append(&fifo));
+    assert_refused(open_truncated(&fifo));
+    assert_refused(remove(&fifo));
+
+    use std::os::unix::fs::FileTypeExt;
+    assert!(fs::symlink_metadata(&fifo).unwrap().file_type().is_fifo());
+    childtest::done(&work);
+}
+
+/// Die Einordnung der Fehler von `FileIdInfo` unter Windows, als reine Funktion (auf jedem
+/// System lauffaehig): nur "nicht unterstuetzt" (1, 50, 87 als `HRESULT_FROM_WIN32`) heisst
+/// Datentraeger ohne Kennung; jeder andere Fehler wird durchgereicht, mit richtigem Code.
+#[test]
+fn only_not_supported_errors_of_the_id_query_mean_a_volume_without_file_ids() {
+    let from_win32 = |code: u32| (0x8007_0000u32 | code) as i32;
+    for code in [1u32, 50, 87] {
+        assert!(id_info_unsupported(from_win32(code)), "Code {code}");
+    }
+    // Zugriff verweigert, ungueltiges Handle, E/A-Fehler, Platte voll, zu wenig Speicher,
+    // Sharing-Verletzung, Netzwerkfehler, Abbruch, Zeitueberschreitung.
+    for code in [5u32, 6, 8, 21, 23, 32, 39, 64, 112, 121, 995, 1117] {
+        assert!(!id_info_unsupported(from_win32(code)), "Code {code}");
+    }
+    // Kein Win32-HRESULT: E_FAIL, E_NOTIMPL, S_OK, eine rohe Zahl, die wie ein Win32-Code aussieht.
+    for hresult in [0x8000_4005u32 as i32, 0x8000_4001u32 as i32, 0, 87, 50, 1] {
+        assert!(!id_info_unsupported(hresult), "HRESULT {hresult:#x}");
+    }
+    // Die gleiche Zahl mit anderer Facility ist kein Win32-Fehler.
+    assert_eq!(win32_code(0x8007_0057u32 as i32), Some(87));
+    assert_eq!(win32_code(0x8008_0057u32 as i32), None);
+    assert_eq!(win32_code(0x0007_0057), None);
+
+    // Durchgereicht wird der Win32-Code, nicht der HRESULT (damit `kind()` stimmt).
+    let denied = id_info_error(from_win32(5));
+    assert_eq!(denied.raw_os_error(), Some(5));
+    assert!(!is_volume_unsupported(&denied) && !is_refusal(&denied));
+    let other = id_info_error(0x8000_4005u32 as i32);
+    assert_eq!(other.raw_os_error(), Some(0x8000_4005u32 as i32));
 }
 
 /// Ein Datentraeger ohne Datei-Kennung ist ein eigener Fehler, keine Link-Ablehnung: die

@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(unix)]
+use crate::managers::model::download::childtest;
 use crate::managers::model::download::linktest::{
     folder_link, is_link, swap_must_have_happened, symlink_dir, symlink_file,
 };
@@ -693,19 +695,27 @@ fn a_file_replaced_by_a_link_just_before_it_is_opened_is_refused_and_nothing_is_
 
 /// Die Datei wird UNMITTELBAR vor dem Oeffnen weg benannt, und an ihrem Namen liegt eine
 /// FIFO ohne Gegenseite. Ohne `O_NONBLOCK` haengt schon das Oeffnen, die Pruefung der Art
-/// wird nie erreicht. Erwartet: Ablehnung binnen kurzer Zeit, fuer Lesen und Schreiben.
-/// Der Aufruf laeuft in einem eigenen Thread mit Frist; haengt er, gibt der Test ihn
-/// frei (Gegenseite oeffnen) und schlaegt fehl.
+/// wird nie erreicht. Erwartet: Ablehnung, fuer Lesen und Schreiben. Der Test laeuft in
+/// einem Kindprozess mit harter Frist ([`childtest`]): haengt das Oeffnen, wird das Kind
+/// nach der Frist beendet und eingesammelt, der Elternlauf haengt nie und hinterlaesst
+/// keinen Thread.
 #[cfg(unix)]
 #[test]
 fn a_file_replaced_by_a_fifo_just_before_it_is_opened_is_refused_without_hanging() {
     use std::os::unix::ffi::OsStrExt;
-    use std::os::unix::fs::OpenOptionsExt;
     const NAME: &str = "model.onnx_data";
+    let Some(work) = childtest::child_dir() else {
+        return childtest::run(
+            module_path!(),
+            "a_file_replaced_by_a_fifo_just_before_it_is_opened_is_refused_without_hanging",
+            std::time::Duration::from_secs(30),
+        );
+    };
     for op in ["read", "partial"] {
-        let dir = TempDir::new().unwrap();
-        let anchor = Arc::new(open(dir.path(), &["m"]));
-        let folder = dir.path().join("m");
+        let base = work.join(op);
+        std::fs::create_dir(&base).unwrap();
+        let anchor = open(&base, &["m"]);
+        let folder = base.join("m");
         write(&folder.join(NAME), b"echt");
         let swapped = Arc::new(AtomicBool::new(false));
         let _hook = {
@@ -723,35 +733,79 @@ fn a_file_replaced_by_a_fifo_just_before_it_is_opened_is_refused_without_hanging
             })
         };
 
-        let (tx, rx) = std::sync::mpsc::channel();
-        let worker = {
-            let anchor = anchor.clone();
-            std::thread::spawn(move || {
-                let result = match op {
-                    "read" => anchor.open_read(NAME),
-                    _ => anchor.open_partial(NAME),
-                };
-                let _ = tx.send(result);
-            })
+        let result = match op {
+            "read" => anchor.open_read(NAME),
+            _ => anchor.open_partial(NAME),
         };
-        let result = match rx.recv_timeout(std::time::Duration::from_secs(10)) {
-            Ok(result) => result,
-            Err(_) => {
-                // Gegenseite oeffnen, damit der haengende Thread endet.
-                let _ = std::fs::OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .custom_flags(libc::O_NONBLOCK)
-                    .open(folder.join(NAME));
-                let _ = worker.join();
-                panic!("Oeffnen haengt an der FIFO (op={op})");
-            }
-        };
-        worker.join().unwrap();
 
         assert!(swapped.load(Ordering::SeqCst), "kein Tausch (op={op})");
         assert_refused(result);
         assert_eq!(read(&folder.join("echt.alt")), b"echt", "op={op}");
+    }
+    childtest::done(&work);
+}
+
+/// Umbenennen bei OFFENEM Schreibhandle gelingt auf jedem System (unter Windows
+/// braucht das `FILE_SHARE_DELETE` am Handle, `open_checked` setzt es fuer das
+/// Schreibhandle). Danach benennt der neue Name genau dieses Handle, der alte keines
+/// mehr, und das Handle schreibt weiter in dieselbe Datei. Ohne und mit vorhandenem Ziel.
+/// Das ist der Weg von `fetch_one`.
+#[test]
+fn renaming_with_the_write_handle_open_succeeds_and_the_new_name_names_it() {
+    for target_exists in [false, true] {
+        let dir = TempDir::new().unwrap();
+        let anchor = open(dir.path(), &["m"]);
+        let folder = dir.path().join("m");
+        if target_exists {
+            write(&folder.join("ziel"), b"alt");
+        }
+        let mut handle = anchor.open_partial("ziel.partial").unwrap();
+        handle.write_all(b"eins").unwrap();
+
+        anchor.rename_over("ziel.partial", "ziel").unwrap();
+
+        assert!(
+            anchor.names("ziel", &handle).unwrap(),
+            "target_exists={target_exists}"
+        );
+        assert!(!anchor.names("ziel.partial", &handle).unwrap());
+        handle.write_all(b"zwei").unwrap();
+        drop(handle);
+        assert_eq!(names_in(&folder), ["ziel"], "target_exists={target_exists}");
+        assert_eq!(read(&folder.join("ziel")), b"einszwei");
+    }
+}
+
+/// Der gelockerte Schutz auf Ankerebene, ehrlich: wird `.partial` zwischen dem Oeffnen
+/// und dem Umbenennen durch eine andere normale Datei ersetzt, VERHINDERT `rename_over`
+/// nichts. Die fremde Datei verliert ihren Namen und landet unter dem Ziel (ein vorhandenes
+/// Ziel wird ersetzt). Erkannt wird es danach: der neue Name benennt das Handle nicht.
+/// Aufrufer (`fetch_one`) lehnen dann ab und raeumen nichts weiter ab.
+#[test]
+fn renaming_a_swapped_partial_is_not_prevented_but_the_new_name_does_not_name_the_handle() {
+    for target_exists in [false, true] {
+        let dir = TempDir::new().unwrap();
+        let anchor = open(dir.path(), &["m"]);
+        let folder = dir.path().join("m");
+        if target_exists {
+            write(&folder.join("ziel"), b"alt");
+        }
+        let mut handle = anchor.open_partial("ziel.partial").unwrap();
+        handle.write_all(b"eigene-bytes").unwrap();
+        assert!(anchor.names("ziel.partial", &handle).unwrap());
+        if !replace_file(&folder, "ziel.partial", b"fremde-bytes") {
+            swap_must_have_happened();
+            continue;
+        }
+
+        anchor.rename_over("ziel.partial", "ziel").unwrap();
+
+        assert!(
+            !anchor.names("ziel", &handle).unwrap(),
+            "der neue Name benennt das Handle, obwohl getauscht wurde (target_exists={target_exists})"
+        );
+        assert_eq!(names_in(&folder), ["ziel"]);
+        assert_eq!(read(&folder.join("ziel")), b"fremde-bytes");
     }
 }
 

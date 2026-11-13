@@ -30,6 +30,10 @@ pub(crate) mod anchor;
 #[cfg(test)]
 pub(crate) mod linktest;
 
+/// Tests, die haengen koennten, laufen in einem Kindprozess mit harter Frist.
+#[cfg(all(test, unix))]
+pub(crate) mod childtest;
+
 /// Hat der Downloader die Datei als Link, Reparse-Punkt oder Nicht-Datei abgelehnt
 /// (und war es kein gewoehnlicher E/A-Fehler)?
 pub(crate) fn is_refused(err: &anyhow::Error) -> bool {

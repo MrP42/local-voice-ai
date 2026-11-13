@@ -102,14 +102,30 @@
 //!   verlinkte `.partial` im Modellordner gilt als App-Datei. Ein Hardlink, der erst
 //!   NACH der Pruefung auf unsere Teildatei gelegt wird, ist ein zusaetzlicher Name
 //!   und ausgeklammert; geschrieben wird weiter ueber das Handle in den urspruenglichen
-//!   Inode, und ein spaeter ueber den Namen untergeschobener Ersatz bleibt unveraendert
-//!   (die Pruefung Name gegen Handle vor dem Umbenennen lehnt ihn ab).
+//!   Inode.
+//! - Neu (gelockerter Schutz, bewusst): Auch reguläre Dateien, die ein gleichberechtigter
+//!   Prozess waehrend des Vorgangs unter einen reservierten Namen im Modellordner
+//!   schiebt (die `.partial`), gelten als App-Dateiobjekte. Sie koennen beim
+//!   Veroeffentlichen umbenannt werden und dabei ihren Namen verlieren; ein vorhandenes
+//!   Ziel unter dem Katalognamen kann ersetzt werden. Das wird erkannt (`unsafe_path`,
+//!   kein `Done`) und nie geladen, aber nicht verhindert: `Anchor::rename_over` benennt
+//!   ueber Namen um, nicht ueber das Handle, und die Pruefung Name gegen Handle vor dem
+//!   Umbenennen laesst ein Fenster. Darum haelt der Aufrufer das Schreibhandle ueber
+//!   das Umbenennen hinaus offen und prueft danach, dass der Katalogname genau dieses
+//!   Handle benennt ([`Anchor::names`]); sonst Ablehnung, und der Fehlerweg raeumt nichts
+//!   weiter ab (kein Loeschen, kein Verschieben). Handle-gebundene Veroeffentlichung
+//!   (`O_TMPFILE`/`linkat`, unter Windows Umbenennen ueber das Handle): lva#570.
+//!   Unveraendert: ausserhalb des Modellordners wird nichts angefasst, und der Lader
+//!   bekommt nie ungepruefte Bytes.
 //!
-//! Grenze, ehrlich: `cap-std` folgt einem Link INNERHALB des Ordners (zeigt er hinaus,
-//! ist es ein Fehler). Ein Eintrag, der im Fenster zwischen Namenspruefung und Oeffnen
-//! zu einem Link auf eine andere Datei desselben Ordners wird, wird durch den
-//! Vergleich Name gegen Handle abgelehnt, ehe geschrieben wird; was ueber den Namen
-//! umbenannt wird, prueft ohnehin der Hash beim Laden ([`check_set`]), nicht der Pfad.
+//! Grenze, ehrlich: Dateien werden ohne Link-Folgen geoeffnet (`FollowSymlinks::No`,
+//! [`no_follow`]; ein Link im letzten Namensstueck ist ein Fehler). Ordner oeffnet
+//! `open_dir` mit Link-Folgen INNERHALB des Elternordners (zeigt ein Link hinaus, ist es
+//! ein Fehler); ein im Fenster eingeschobener Link auf einen Nachbarordner wird durch
+//! Ursprungs- und Namensvergleich abgelehnt ([`step`]), ehe im Ordner etwas geschieht.
+//! [`check_set`] prueft waehrend der Bereitstellung (Groesse und SHA-256 ueber die Handles,
+//! Name gegen Handle); fuer die Bytes, die tatsaechlich verwendet werden, steht der Lader
+//! ein: er prueft seine eigenen Bytes, nicht den Pfad.
 
 use std::fs::File;
 use std::io::{self, Read};
@@ -573,11 +589,21 @@ impl Anchor {
         #[cfg(windows)]
         {
             use cap_std::fs::OpenOptionsExt;
-            if !write {
+            const FILE_SHARE_READ: u32 = 0x0000_0001;
+            const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+            const FILE_SHARE_DELETE: u32 = 0x0000_0004;
+            options.share_mode(if write {
+                // Das Schreibhandle bleibt ueber das eigene Umbenennen hinaus offen
+                // (`fetch_one`): ohne FILE_SHARE_DELETE scheiterte `rename_over` an
+                // unserem eigenen Handle. Das ist KEIN Schutz davor, dass ein anderer
+                // Prozess den Namen tauscht; das erkennt erst der Vergleich Name
+                // gegen Handle nach dem Umbenennen.
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
+            } else {
                 // FILE_SHARE_READ: waehrend wir lesen, schreibt, loescht und ersetzt
                 // niemand diese Datei.
-                options.share_mode(0x0000_0001);
-            }
+                FILE_SHARE_READ
+            });
         }
         let file = self
             .dir()
@@ -647,6 +673,13 @@ impl Anchor {
 
     /// Benennt `from` ueber `to` um, beide im Ordner. Beide Enden muessen normale
     /// Dateien sein (`to` darf fehlen); ein Link an einem Ende wird abgelehnt.
+    ///
+    /// Umbenannt wird ueber NAMEN, nicht ueber ein Handle: wer zwischen der Pruefung und
+    /// dem Umbenennen eine andere normale Datei unter `from` schiebt, sieht sie unter `to`
+    /// landen und ein vorhandenes `to` ersetzen. Das verhindert diese Funktion nicht
+    /// (gelockerter Schutz, siehe Modulkopf, lva#570); der Aufrufer prueft danach mit
+    /// [`Anchor::names`], ob `to` noch die Datei seines Handles ist, und das Handle darf
+    /// dafuer waehrend des Umbenennens offen bleiben.
     pub(crate) fn rename_over(&self, from: &str, to: &str) -> io::Result<()> {
         if self.plain_len(from)?.is_none() {
             return Err(io::Error::from(io::ErrorKind::NotFound));
@@ -687,6 +720,10 @@ pub(crate) enum Point {
     /// Unmittelbar vor dem Oeffnen einer Datei im Modellordner, nach der Namenspruefung
     /// (`symlink_metadata`): hier laesst sich der Name durch einen Link ersetzen.
     BeforeFile,
+    /// Eine fertig geladene Teildatei hat die Namenspruefung bestanden und wird gleich
+    /// umbenannt (`fetch_one`): hier laesst sich die Teildatei noch tauschen, ohne dass
+    /// die Pruefung davor es sieht.
+    BeforeRename,
     /// Alle Dateien sind geoeffnet, noch keine gelesen.
     Opened,
     /// Die Datei mit diesem Index ist gelesen und gehasht.

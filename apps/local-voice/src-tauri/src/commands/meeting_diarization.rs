@@ -16,7 +16,9 @@
 //! - Abbruch/Absturz mitten in einer Datei: sie liegt als `<name>.partial`
 //!   neben dem Ziel und wird beim naechsten Aufruf fortgesetzt; umbenannt wird
 //!   erst nach bestandener Groessen- und SHA-256-Pruefung, das Ziel ist also nie
-//!   halb geschrieben;
+//!   halb geschrieben. Nach einem Fehler oder Abbruch wird nichts ueber einen Namen
+//!   geloescht (auch keine leer gebliebene Teildatei): ein Loeschen nach Namen traefe
+//!   eine Datei, die ein anderer Prozess inzwischen unter diesen Namen geschoben hat;
 //! - vorhandene Dateien (abgeschnitten, beschaedigt, von Hand hineinkopiert):
 //!   das Bereitstellen ([`download_model`], damit auch `--provision`) prueft JEDE
 //!   Datei des Eintrags nach Groesse und SHA-256 und ersetzt jede ungueltige
@@ -81,6 +83,19 @@
 //!   hinausfuehren koennte (absoluter Pfad, `..`, Backslash, Laufwerksbuchstabe,
 //!   Windows-Geraetename, zwei Namen nur in der Schreibweise verschieden), ergibt
 //!   `catalog_invalid`;
+//! - Gelockerter Schutz beim Veroeffentlichen (bewusst, Folge: lva#570): Auch reguläre
+//!   Dateien, die ein gleichberechtigter Prozess waehrend des Vorgangs unter einen
+//!   reservierten Namen (die `.partial`) im Modellordner schiebt, gelten als
+//!   App-Dateiobjekte. Sie koennen beim Veroeffentlichen umbenannt werden und dabei ihren
+//!   Namen verlieren; ein vorhandenes Ziel unter dem Katalognamen kann ersetzt werden.
+//!   Das wird erkannt und nie geladen, aber nicht verhindert: das Umbenennen laeuft ueber
+//!   Namen. Das Schreibhandle bleibt ueber das Umbenennen offen, danach muss der
+//!   Katalogname genau dieses Handle benennen; sonst `unsafe_path`, kein `Done`, und der
+//!   Fehlerweg raeumt nichts weiter ab (kein Loeschen, kein Verschieben, auch nicht der
+//!   Graph). Geladen wird das Objekt nie: der Lader prueft die Bytes selbst. Unveraendert:
+//!   ausserhalb des Modellordners wird nichts angefasst. Die Wiederherstellung eines
+//!   Zustands vor dem Tausch gibt es nicht. Handle-gebundene Veroeffentlichung
+//!   (`O_TMPFILE`/`linkat`, unter Windows Umbenennen ueber das Handle): lva#570;
 //! - Datentraeger ohne Datei-Kennung: liefert er keine 128-Bit-Kennung fuer den
 //!   Modellordner (Windows `FileIdInfo`; typisch FAT, je nach Treiber exFAT und manche
 //!   Netzfreigaben), laesst sich weder ein Ordner- noch ein Namenstausch belegen. Das
@@ -382,8 +397,21 @@ async fn confirm(
 /// Laedt EINE Datei nach `<name>.partial` und benennt sie erst nach bestandener
 /// Pruefung ueber das Ziel um. Die Teildatei wird VOR der Anfrage ueber den Anker
 /// geoeffnet (Link, Hardlink und Nicht-Datei sind dann schon abgelehnt) und der
-/// Downloader schreibt in dieses Handle: er folgt keinem Pfad. Ein leer gebliebenes
-/// Handle (Fehler vor dem ersten Byte) raeumt die Teildatei wieder ab.
+/// Downloader schreibt in dieses Handle: er folgt keinem Pfad.
+///
+/// Nach einem Fehler oder Abbruch wird NICHTS ueber einen Namen geloescht: auch eine leer
+/// gebliebene Teildatei bleibt liegen (sie ist fortsetzbar und harmlos). Ein Loeschen nach
+/// Namen traefe eine Datei, die ein anderer Prozess inzwischen unter diesen Namen
+/// geschoben hat, und nicht die, die wir geoeffnet haben.
+///
+/// Umbenennen (gelockerter Schutz, siehe Modulkopf): geprueft wird, dass der Name die
+/// geschriebene Datei benennt, und das Schreibhandle bleibt ueber das Umbenennen hinaus
+/// offen. Unmittelbar danach muss der Katalogname genau dieses Handle benennen. Wurde die
+/// Teildatei im Fenster dazwischen getauscht, ist ein fremdes Objekt umbenannt worden
+/// (und hat ein vorhandenes Ziel ersetzt); das wird erkannt (`unsafe_path`, kein Erfolg),
+/// aber nicht verhindert, und der Fehlerweg raeumt nichts weiter ab: kein Loeschen, kein
+/// Verschieben, auch nicht der Graph ([`withdraw_graph`] laeuft hier nicht). Der Lader
+/// laedt das Objekt nie, er prueft die Bytes selbst.
 async fn fetch_one(
     anchor: &Anchor,
     model_id: &str,
@@ -403,32 +431,29 @@ async fn fetch_one(
         emit,
     )
     .await;
-    let remove_if_empty = |handle: std::fs::File| {
-        if handle.metadata().is_ok_and(|m| m.len() == 0) {
-            drop(handle);
-            let _ = anchor.remove(&partial);
-        }
-    };
     match outcome {
         Ok(HttpDownloadOutcome::Completed) => {
             // Der Name zeigt noch auf die Datei, in die geschrieben wurde.
             if !anchor.names(&partial, &handle).map_err(|e| io_msg(&e))? {
                 return Err("unsafe_path".into());
             }
-            drop(handle);
+            anchor::fire(anchor.root(), anchor::Point::BeforeRename);
             anchor
                 .rename_over(&partial, &file.filename)
                 .map_err(|e| io_msg(&e))?;
+            // Schadensbegrenzung, kein Schutz: das Handle ist noch offen, und der
+            // Katalogname muss genau diese Datei benennen. Sonst wurde ein fremdes
+            // Objekt umbenannt; kein Erfolg, und nichts wird weiter angefasst.
+            if !anchor
+                .names(&file.filename, &handle)
+                .map_err(|e| io_msg(&e))?
+            {
+                return Err("unsafe_path".into());
+            }
             Ok(Fetch::Done)
         }
-        Ok(HttpDownloadOutcome::Cancelled) => {
-            remove_if_empty(handle);
-            Ok(Fetch::Cancelled)
-        }
-        Err(e) => {
-            remove_if_empty(handle);
-            Err(net_msg(&e))
-        }
+        Ok(HttpDownloadOutcome::Cancelled) => Ok(Fetch::Cancelled),
+        Err(e) => Err(net_msg(&e)),
     }
 }
 
@@ -673,6 +698,40 @@ mod tests {
                     };
                     let _ = sock.write_all(&response).await;
                     let _ = sock.shutdown().await;
+                });
+            }
+        });
+        Server { base, requests }
+    }
+
+    /// Server, der die Anfrage annimmt, `on_request` laufen laesst und NIE antwortet (die
+    /// Verbindung bleibt offen, bis der Test endet): ein Abbruch mitten im Abruf ist damit
+    /// eindeutig, ohne Wettlauf zwischen einer Antwort und dem Abbruch.
+    async fn serve_silent(on_request: Arc<dyn Fn(&str) + Send + Sync>) -> Server {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let log = requests.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                let (log, on_request) = (log.clone(), on_request.clone());
+                tokio::spawn(async move {
+                    let mut head = Vec::new();
+                    let mut byte = [0u8; 1];
+                    while !head.ends_with(b"\r\n\r\n") {
+                        if sock.read_exact(&mut byte).await.is_err() {
+                            return;
+                        }
+                        head.push(byte[0]);
+                    }
+                    let head = String::from_utf8_lossy(&head).into_owned();
+                    let path = head.split_whitespace().nth(1).unwrap_or("").to_string();
+                    log.lock().unwrap().push(path.clone());
+                    on_request(&path);
+                    std::future::pending::<()>().await;
                 });
             }
         });
@@ -1754,14 +1813,16 @@ mod tests {
             }
         }
 
-        /// Die Teildatei wird waehrend des Abrufs durch eine andere Datei ersetzt (das
+        /// Die Teildatei wird WAEHREND des Abrufs durch eine andere Datei ersetzt (das
         /// Schreibhandle bleibt beim urspruenglichen Inode, der Name zeigt auf die neue
-        /// Datei), beim Abruf der Gewichte wie beim Abruf des Graphen. Das darf nie als
-        /// Erfolg gelten, die Ersatzdatei bleibt Byte fuer Byte unveraendert (es wird nie
-        /// in sie hineingeschrieben) und darf nicht unter dem Katalognamen landen.
+        /// Datei), beim Abruf der Gewichte wie beim Abruf des Graphen. Bewiesen wird nur:
+        /// dieser Tausch wird VOR dem Umbenennen erkannt (Name gegen Handle), also kein
+        /// Erfolg, es wird nie in die Ersatzdatei hineingeschrieben, und sie landet nicht
+        /// unter dem Katalognamen. Das sagt nichts ueber einen Tausch NACH dieser Pruefung
+        /// (zwischen Pruefung und Umbenennen): den decken die `BeforeRename`-Tests
+        /// unten ab, und dort ist das Umbenennen NICHT verhindert, nur erkannt.
         #[tokio::test]
-        async fn replacing_the_partial_file_mid_download_is_no_success_and_leaves_the_replacement_untouched(
-        ) {
+        async fn a_partial_swapped_during_the_fetch_is_detected_before_the_rename() {
             const REPLACEMENT: &[u8] = b"ersatz-statt-teildatei";
             for route in ["/model.onnx_data", "/model.onnx"] {
                 let dir = tempfile::tempdir().unwrap();
@@ -1805,6 +1866,294 @@ mod tests {
                     assert_eq!(out.unwrap(), Fetch::Done);
                 }
             }
+        }
+
+        /// Kennung (Datentraeger, Datei-ID) der Datei an `path`, ohne dass sie veraendert wird.
+        fn identity_of(path: &Path) -> safe::Identity {
+            let file = std::fs::File::open(path).unwrap();
+            safe::file_info(&file)
+                .unwrap()
+                .identity
+                .expect("Kennung bekannt")
+        }
+
+        /// Der Abruf scheitert (HTTP 500) oder wird abgebrochen (Abbruchmarke), und
+        /// MITTEN im Abruf ist die leere Teildatei weg benannt und eine fremde normale Datei
+        /// liegt unter ihrem Namen. Nach Fehler und Abbruch wird nichts ueber einen Namen
+        /// geloescht: die fremde Datei liegt danach unter demselben Namen, mit derselben
+        /// Kennung und denselben Bytes (frueher raeumte das Aufraeumen der "leeren"
+        /// Teildatei ueber den Namen genau sie weg). Beim Abruf der Gewichte wie beim
+        /// Abruf des Graphen; das ganze Verzeichnis hat danach genau den erwarteten Stand.
+        #[tokio::test]
+        async fn a_failed_or_aborted_fetch_never_removes_what_now_sits_under_the_partial_name() {
+            const REPLACEMENT: &[u8] = b"fremde-datei-unter-dem-namen";
+            for route in ["/model.onnx_data", "/model.onnx"] {
+                for abort in [false, true] {
+                    let what = format!("route={route} abort={abort}");
+                    let dir = tempfile::tempdir().unwrap();
+                    let name = route.trim_start_matches('/');
+                    let partial = dir.path().join(partial_name(name));
+                    let moved = dir.path().join("teildatei.alt");
+                    let cancel = CancellationToken::new();
+                    let seen: Arc<Mutex<Option<safe::Identity>>> = Arc::new(Mutex::new(None));
+                    let swapped = Arc::new(AtomicBool::new(false));
+                    let hook: Arc<dyn Fn(&str) + Send + Sync> = {
+                        let (partial, moved, cancel) =
+                            (partial.clone(), moved.clone(), cancel.clone());
+                        let (seen, swapped) = (seen.clone(), swapped.clone());
+                        Arc::new(move |path: &str| {
+                            if path != route {
+                                return;
+                            }
+                            let done = std::fs::rename(&partial, &moved).is_ok()
+                                && std::fs::write(&partial, REPLACEMENT).is_ok();
+                            if done {
+                                *seen.lock().unwrap() = Some(identity_of(&partial));
+                            }
+                            swapped.store(done, Ordering::SeqCst);
+                            if abort {
+                                cancel.cancel();
+                            }
+                        })
+                    };
+                    let server = if abort {
+                        serve_silent(hook).await
+                    } else {
+                        let routes = both_routes()
+                            .into_iter()
+                            .map(|(p, body)| (p, if p == route { None } else { body }))
+                            .collect();
+                        serve_with(routes, hook).await
+                    };
+                    let files = rebase(two_files(&server, None), dir.path());
+                    if route == "/model.onnx" {
+                        std::fs::write(&files[1].1, WEIGHTS).unwrap();
+                    }
+
+                    let out = provision(dir.path(), "t", &files, &cancel, &|_| {}).await;
+
+                    if !swapped.load(Ordering::SeqCst) {
+                        // Nur Windows darf den Tausch verwehren; dann gibt es ihn nicht.
+                        swap_must_have_happened();
+                        continue;
+                    }
+                    if abort {
+                        assert_eq!(out, Ok(Fetch::Cancelled), "{what}");
+                    } else {
+                        let err = out.unwrap_err();
+                        assert_ne!(err, "unsafe_path", "{what}");
+                        assert!(!err.is_empty(), "{what}");
+                    }
+                    assert_eq!(*server.requests.lock().unwrap(), [route], "{what}");
+                    let recorded = seen.lock().unwrap().expect("Haken lief");
+                    assert_eq!(
+                        identity_of(&partial),
+                        recorded,
+                        "die fremde Datei ist eine andere (geloescht und neu angelegt) ({what})"
+                    );
+                    let mut expected = vec![
+                        (partial_name(name), Some(REPLACEMENT.to_vec())),
+                        ("teildatei.alt".to_string(), Some(Vec::new())),
+                    ];
+                    if route == "/model.onnx" {
+                        expected.push(("model.onnx_data".to_string(), Some(WEIGHTS.to_vec())));
+                    }
+                    expected.sort();
+                    assert_eq!(tree(dir.path()), expected, "{what}");
+                }
+            }
+        }
+
+        /// Eine leer gebliebene Teildatei nach einem Fehler ist harmlos und fortsetzbar: der
+        /// naechste Lauf nimmt sie wieder auf und stellt das Paar fertig bereit.
+        #[tokio::test]
+        async fn an_empty_partial_left_by_a_failed_fetch_is_reused_by_the_next_run() {
+            let dir = tempfile::tempdir().unwrap();
+            let broken = serve(vec![
+                ("/model.onnx", Some(GRAPH.to_vec())),
+                ("/model.onnx_data", None),
+            ])
+            .await;
+            let files = rebase(two_files(&broken, None), dir.path());
+            assert!(
+                provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
+                    .await
+                    .is_err()
+            );
+            assert_eq!(
+                tree(dir.path()),
+                [("model.onnx_data.partial".to_string(), Some(Vec::new()))]
+            );
+            let recorded = identity_of(&dir.path().join("model.onnx_data.partial"));
+
+            let healthy = serve(both_routes()).await;
+            let files = rebase(two_files(&healthy, None), dir.path());
+            let out = provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
+                .await
+                .unwrap();
+            assert_eq!(out, Fetch::Done);
+            assert_eq!(leftovers(dir.path()), ["model.onnx", "model.onnx_data"]);
+            assert_eq!(
+                identity_of(&files[1].1),
+                recorded,
+                "die Teildatei wurde nicht wieder aufgenommen"
+            );
+        }
+
+        /// Gelockerter Schutz, ehrlich geprueft: die Teildatei wird NACH bestandener
+        /// Namenspruefung und unmittelbar VOR dem Umbenennen (`Point::BeforeRename`)
+        /// gegen eine fremde normale Datei getauscht. Das Umbenennen ist dann nicht
+        /// verhindert: die fremde Datei wandert unter den Katalognamen und ersetzt dort ein
+        /// vorhandenes Ziel. Es wird aber erkannt (das Schreibhandle ist noch offen, der
+        /// Katalogname benennt es nicht): `unsafe_path`, kein Erfolg, und der Lader
+        /// lehnt den Bestand ab. Der Fehlerweg raeumt nichts weiter ab: das Verzeichnis
+        /// hat danach GENAU den Stand nach dem fremden Umbenennen (kein Zurueckziehen des
+        /// Graphen, kein Loeschen, kein Verschieben). Gewichte und Graph, ohne und mit
+        /// vorhandenem (ungueltigem) Ziel.
+        #[tokio::test]
+        async fn a_partial_swapped_right_before_the_rename_is_detected_after_it_and_nothing_more_is_touched(
+        ) {
+            const REPLACEMENT: &[u8] = b"fremde-datei-statt-teildatei";
+            let wrong_graph = vec![b'y'; GRAPH.len()];
+            // (der Graph wird geholt, ein ungueltiges Ziel liegt schon)
+            for (graph, with_target) in [(false, false), (false, true), (true, false), (true, true)]
+            {
+                let what = format!("graph={graph} with_target={with_target}");
+                let dir = tempfile::tempdir().unwrap();
+                let server = serve(both_routes()).await;
+                let files = rebase(two_files(&server, None), dir.path());
+                match (graph, with_target) {
+                    (false, false) => {}
+                    // Der gueltige Graph wird vor dem Laden der Gewichte als Teildatei beiseite gelegt.
+                    (false, true) => {
+                        install(&files);
+                        std::fs::write(&files[1].1, same_size_wrong()).unwrap();
+                    }
+                    (true, false) => std::fs::write(&files[1].1, WEIGHTS).unwrap(),
+                    (true, true) => {
+                        install(&files);
+                        std::fs::write(&files[0].1, &wrong_graph).unwrap();
+                    }
+                }
+                let (name, route) = if graph {
+                    ("model.onnx", "/model.onnx")
+                } else {
+                    ("model.onnx_data", "/model.onnx_data")
+                };
+                let seen: Arc<Mutex<Option<safe::Identity>>> = Arc::new(Mutex::new(None));
+                let swapped = Arc::new(AtomicBool::new(false));
+                let fired = Arc::new(AtomicUsize::new(0));
+                let guard = anchor::hook::set(dir.path(), {
+                    let (dir, seen) = (dir.path().to_path_buf(), seen.clone());
+                    let (swapped, fired) = (swapped.clone(), fired.clone());
+                    move |point| {
+                        if point != anchor::Point::BeforeRename
+                            || fired.fetch_add(1, Ordering::SeqCst) != 0
+                        {
+                            return;
+                        }
+                        let spare = dir.join("ersatz.tmp");
+                        let partial = dir.join(format!("{name}.partial"));
+                        let done = std::fs::write(&spare, REPLACEMENT).is_ok()
+                            && std::fs::rename(&spare, &partial).is_ok();
+                        if done {
+                            *seen.lock().unwrap() = Some(identity_of(&partial));
+                        }
+                        swapped.store(done, Ordering::SeqCst);
+                    }
+                });
+
+                let out =
+                    provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {}).await;
+                drop(guard);
+
+                if !swapped.load(Ordering::SeqCst) {
+                    // Nur Windows darf den Tausch verwehren; dann gibt es ihn nicht.
+                    swap_must_have_happened();
+                    assert_eq!(out.unwrap(), Fetch::Done, "{what}");
+                    continue;
+                }
+                let err = out.unwrap_err();
+                assert_eq!(err, "unsafe_path", "{what}");
+                assert_eq!(*server.requests.lock().unwrap(), [route], "{what}");
+                let recorded = seen.lock().unwrap().expect("Haken lief");
+                assert_eq!(
+                    identity_of(&dir.path().join(name)),
+                    recorded,
+                    "unter dem Katalognamen liegt nicht die fremde Datei ({what})"
+                );
+                let mut expected = if graph {
+                    vec![
+                        ("model.onnx".to_string(), Some(REPLACEMENT.to_vec())),
+                        ("model.onnx_data".to_string(), Some(WEIGHTS.to_vec())),
+                    ]
+                } else {
+                    let mut weights =
+                        vec![("model.onnx_data".to_string(), Some(REPLACEMENT.to_vec()))];
+                    if with_target {
+                        weights.push(("model.onnx.partial".to_string(), Some(GRAPH.to_vec())));
+                    }
+                    weights
+                };
+                expected.sort();
+                assert_eq!(
+                    tree(dir.path()),
+                    expected,
+                    "der Fehlerweg hat etwas angefasst ({what})"
+                );
+                assert!(!looks_complete(&files), "{what}");
+                assert!(
+                    OnnxBlockModel::load_verified(
+                        &anchor_of(dir.path()),
+                        loader_wanted(&files),
+                        dir.path(),
+                        1
+                    )
+                    .is_err(),
+                    "der Lader haette ablehnen muessen ({what})"
+                );
+            }
+        }
+
+        /// Wird die Teildatei vor dem Umbenennen durch einen LINK ersetzt, lehnt schon das
+        /// Umbenennen ab, bevor etwas bewegt ist: `unsafe_path`, der Link bleibt, sein
+        /// Ziel ist unveraendert, unter dem Katalognamen liegt nichts.
+        #[tokio::test]
+        async fn a_link_slipped_in_right_before_the_rename_is_refused_and_nothing_moves() {
+            let dir = tempfile::tempdir().unwrap();
+            let outside = tempfile::tempdir().unwrap();
+            let target = foreign(outside.path(), FOREIGN);
+            let probe = outside.path().join("probe");
+            if !symlink_file(&probe, &target) {
+                return;
+            }
+            std::fs::remove_file(&probe).unwrap();
+            let server = serve(both_routes()).await;
+            let files = rebase(two_files(&server, None), dir.path());
+            let partial = dir.path().join("model.onnx_data.partial");
+            let fired = Arc::new(AtomicUsize::new(0));
+            let _guard = anchor::hook::set(dir.path(), {
+                let (partial, target, fired) = (partial.clone(), target.clone(), fired.clone());
+                move |point| {
+                    if point != anchor::Point::BeforeRename
+                        || fired.fetch_add(1, Ordering::SeqCst) != 0
+                    {
+                        return;
+                    }
+                    std::fs::remove_file(&partial).unwrap();
+                    assert!(symlink_file(&partial, &target));
+                }
+            });
+
+            let err = provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
+                .await
+                .unwrap_err();
+
+            assert_eq!(err, "unsafe_path");
+            assert!(is_link(&partial), "der Link wurde ersetzt oder entfernt");
+            assert_eq!(std::fs::read(&target).unwrap(), FOREIGN);
+            assert!(!files[0].1.exists() && !files[1].1.exists());
+            assert_eq!(leftovers(dir.path()), ["model.onnx_data.partial"]);
         }
 
         // ---- Datentraeger ohne Datei-Kennung ------------------------------------------

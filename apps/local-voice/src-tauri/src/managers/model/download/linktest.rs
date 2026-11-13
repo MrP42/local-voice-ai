@@ -10,8 +10,10 @@
 //!   `LVA_SKIP_SYMLINK_TESTS=1` ist gesetzt: dann meldet er `UEBERSPRUNGEN` auf
 //!   stderr, gibt `false` zurueck und der Aufrufer kehrt zurueck. Unter Unix
 //!   scheitert das Anlegen nie still.
-//! - Jeder Windows-Symlink-Fall hat einen Junction-Fall nebenan, der ohne Rechte
-//!   laeuft; so bleibt die Abdeckung auch dort, wo Symlinks uebersprungen werden.
+//! - Die Junction-Faelle (`folder_link`) decken Ordner-Links ab, auch dort, wo Symlinks
+//!   uebersprungen werden. Datei-Symlinks (`symlink_file`) haben keinen Gegenpart ohne
+//!   Rechte (Windows kennt keine Datei-Junction): mit `LVA_SKIP_SYMLINK_TESTS=1` bleiben
+//!   sie unter Windows ungeprueft, und der Lauf sagt es (`UEBERSPRUNGEN`).
 
 use std::path::Path;
 
