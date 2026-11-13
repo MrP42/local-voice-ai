@@ -2817,6 +2817,51 @@ async meetingsCreateEmpty(title: string, folderId: string | null) : Promise<Resu
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * #537: "Beim Abspielen mitschreiben". Nimmt NUR den Systemton (Loopback, kein
+ * Mikrofon) in die vorhandene YouTube-Besprechung `meeting_id` auf, waehrend der
+ * Nutzer das Video im eingebetteten Player abspielt; Live-Transkript, Stopp
+ * (`meetings_stop`) und Enddurchlauf wie bei jeder Aufnahme. Kein Download, der
+ * Player bleibt unveraendert. Eigener Befehl statt eines Parameters an
+ * `meetings_start`: dort ist das Ziel ein LEERER Eintrag und es gibt einen Titel,
+ * ein Mikrofon und einen Systemton-Schalter; hier ist das Ziel ein YouTube-Eintrag
+ * ohne Transkript, und es gibt nichts davon zu waehlen.
+ * 
+ * Die Einwilligung (`consent_confirmed`) gilt zuerst. Fehler (Codes, die die
+ * Oberflaeche uebersetzt): `consent_required`, `already_recording`,
+ * `dictation_active`, `meeting_not_found`, `target_not_empty` (kein YouTube-Eintrag
+ * ohne Transkript und Aufnahme), `playback_capture_failed`,
+ * `playback_capture_timeout` (der Systemton liess sich nicht oeffnen; der Eintrag
+ * ist danach wie vorher), `start_cancelled` (ein Abbruch oder Stopp kam dazwischen).
+ * 
+ * lva#538: `op_id` ist die Vorgangs-Id, die die Oberflaeche fuer diesen Start erzeugt. Mit
+ * ihr adressiert `meetings_cancel_start` genau diesen Start, auch wenn der Abbruch-Befehl den
+ * Start-Befehl ueberholt (der Abbruch wird vermerkt, der Start endet bei seiner
+ * Registrierung mit `start_cancelled`). Fehlt sie, erzeugt der Recorder eine eigene.
+ */
+async meetingsStartPlaybackCapture(meetingId: string, consentConfirmed: boolean, opId: string | null) : Promise<Result<Meeting, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_start_playback_capture", { meetingId, consentConfirmed, opId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * lva#538: "Start abbrechen" fuer genau den Start mit der Vorgangs-Id `op_id`. Geht nie
+ * verloren: kommt der Befehl vor der Registrierung des Starts, wird die Id vermerkt und der
+ * Start endet mit `start_cancelled`; laeuft er, kehrt der Befehl zurueck, wenn er aufgeraeumt
+ * hat (`start_busy`, wenn er in einem Treiber haengt); hat er schon veroeffentlicht, ist es
+ * ein Stopp dieser Aufnahme.
+ */
+async meetingsCancelStart(opId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_cancel_start", { opId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async meetingsPause() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meetings_pause") };
@@ -3007,6 +3052,15 @@ async meetingsGetDocuments(meetingId: string) : Promise<Result<MeetingDocument[]
 /**
  * Soft-deletes the meeting, then hard-deletes its audio files from disk
  * (Spec A2 — a tombstoned meeting must never leave an orphaned WAV behind).
+ * 
+ * lva#538: zuerst reserviert das Loeschen die Besprechung und bringt den Recorder in einen
+ * Zustand, in dem ihre Dateien weg duerfen: ein laufender Start in sie endet mit
+ * `meeting_not_found` und hat aufgeraeumt, die laufende Aufnahme ist beendet (ohne
+ * Enddurchlauf), ein laufender Stopp samt Abschluss ist abgewartet. Die Reservierung haelt bis
+ * zum Ende dieses Befehls, also NACH dem Tombstone und dem Entfernen der Dateien: bis dahin
+ * nimmt kein Start mehr in diese Besprechung auf. Faellt das Warten aus (`recording_busy`) oder
+ * laeuft schon ein Loeschen (`delete_in_progress`), wird NICHTS geloescht: ein Fehler, nie ein
+ * stiller Erfolg.
  */
 async meetingsDelete(meetingId: string) : Promise<Result<null, string>> {
     try {
@@ -4757,9 +4811,11 @@ async meetingDiarizationModelStatus() : Promise<Result<DiarizationModelStatus, s
 }
 },
 /**
- * Laedt das Modell, nur auf Knopfdruck (oder `--provision`). Fortschritt
- * ueber `model-download-progress`, Ende ueber `model-download-complete`.
- * Wirkt ab der naechsten Sprechertrennung (Stopp, Import, Neu-Transkription).
+ * Laedt das Standardmodell (Sortformer), nur auf Knopfdruck (oder
+ * `--provision`). Eine vorhandene Datei wird vorher nach Groesse und SHA-256
+ * geprueft und bei Abweichung ersetzt. Fortschritt ueber
+ * `model-download-progress`, Ende ueber `model-download-complete`. Wirkt ab der
+ * naechsten Sprechertrennung (Stopp, Import, Neu-Transkription).
  */
 async meetingDiarizationModelDownload() : Promise<Result<null, string>> {
     try {

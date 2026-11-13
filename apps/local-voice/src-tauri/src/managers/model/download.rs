@@ -9,15 +9,37 @@ use futures_util::StreamExt;
 use hf_hub::api::tokio::CancellationToken;
 use log::{info, warn};
 use sha2::{Digest, Sha256};
-use std::fs;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
 use tauri::Emitter;
 
 mod auth;
 pub(crate) use auth::{DownloadAuth, HttpStatusError, Origin, Secret};
+
+/// Dateisystemregeln: nur eigene, normale Dateien anfassen (kein Link, kein
+/// Reparse-Punkt), siehe das Moduldoku.
+pub(crate) mod safe;
+
+/// Verankerte Ordnerzugriffe (offenes Ordner-Handle statt Pfaden) fuer den Ladeweg
+/// des Nemotron-Modells, siehe das Moduldoku.
+pub(crate) mod anchor;
+
+/// Links fuer Tests, ehrlich statt still uebersprungen.
+#[cfg(test)]
+pub(crate) mod linktest;
+
+/// Tests, die haengen koennten, laufen in einem Kindprozess mit harter Frist.
+#[cfg(all(test, unix))]
+pub(crate) mod childtest;
+
+/// Hat der Downloader die Datei als Link, Reparse-Punkt oder Nicht-Datei abgelehnt
+/// (und war es kein gewoehnlicher E/A-Fehler)?
+pub(crate) fn is_refused(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<std::io::Error>()
+        .is_some_and(safe::is_refusal)
+}
 
 /// Bound on connection setup for direct HTTP downloads (mirror + URL models).
 const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -58,7 +80,131 @@ pub(crate) enum HttpDownloadEvent<'a> {
     VerificationCompleted,
 }
 
+/// Wohin der Downloader schreibt: in eine Datei, die er selbst ueber ihren Pfad
+/// oeffnet (die uebrigen Modelle), oder in eine bereits geoeffnete (der verankerte
+/// Ladeweg, [`anchor`]): dann folgt der Downloader keinem Pfad, die Laenge der
+/// Teildatei ist die des Handles, und Fortsetzen, Abschneiden und Pruefen laufen
+/// durch dasselbe Handle.
+enum Target<'a> {
+    Path(&'a Path),
+    Handle(&'a mut File),
+}
+
+impl Target<'_> {
+    /// Laenge der Teildatei; 0, wenn nichts da ist. Ein Link oder eine Nicht-Datei
+    /// am Pfad ist eine Ablehnung ([`safe::is_refusal`]).
+    fn len(&self) -> std::io::Result<u64> {
+        match self {
+            Target::Path(path) => Ok(safe::plain_len(path)?.unwrap_or(0)),
+            Target::Handle(file) => Ok(file.metadata()?.len()),
+        }
+    }
+
+    /// Verwirft den Inhalt (Pfad: Datei loeschen; Handle: auf 0 abschneiden). Ein
+    /// Fehler ist hier kein eigener Fehlschlag: jeder Aufrufer endet danach mit
+    /// einem Fehler oder faengt neu an (`writer(false)` schneidet mit `?` ab).
+    fn discard(&mut self) {
+        match self {
+            Target::Path(path) => safe::discard(path),
+            Target::Handle(file) => {
+                let _ = file.set_len(0);
+                let _ = file.seek(SeekFrom::Start(0));
+            }
+        }
+    }
+
+    /// Ein Schreibhandle, fortsetzend (am Ende) oder von vorn (leer). Beim Pfad
+    /// oeffnet das `safe`; beim Handle wird nur die Position gesetzt bzw. nach der
+    /// Pruefung des Handles abgeschnitten, das der Anker schon vor jeder Aenderung
+    /// geprueft hat.
+    fn writer(&mut self, resume: bool) -> std::io::Result<File> {
+        match self {
+            Target::Path(path) => {
+                if resume {
+                    safe::open_append(path)
+                } else {
+                    safe::open_truncated(path)
+                }
+            }
+            Target::Handle(file) => {
+                if resume {
+                    file.seek(SeekFrom::End(0))?;
+                } else {
+                    file.set_len(0)?;
+                    file.seek(SeekFrom::Start(0))?;
+                }
+                file.try_clone()
+            }
+        }
+    }
+
+    /// SHA-256 pruefen, mit Ereignissen (siehe [`ModelManager::verify_file_with_events`]).
+    /// Bei einem Handle: Inhalt von vorn durch dasselbe Handle lesen; bei Abweichung
+    /// wird die Teildatei geleert.
+    async fn verify(
+        &mut self,
+        model_id: &str,
+        expected_sha256: Option<&str>,
+        emit: &(dyn Fn(HttpDownloadEvent<'_>) + Send + Sync),
+    ) -> Result<()> {
+        match self {
+            Target::Path(path) => {
+                ModelManager::verify_file_with_events(model_id, path, expected_sha256, emit).await
+            }
+            Target::Handle(file) => {
+                emit(HttpDownloadEvent::VerificationStarted);
+                let clone = file.try_clone()?;
+                let expected = expected_sha256.map(str::to_string);
+                let id = model_id.to_string();
+                let outcome = tokio::task::spawn_blocking(move || {
+                    ModelManager::verify_handle(clone, expected.as_deref(), &id)
+                })
+                .await
+                .map_err(|e| anyhow::anyhow!("SHA256 task panicked: {}", e))?;
+                if outcome.is_err() {
+                    self.discard();
+                }
+                outcome?;
+                emit(HttpDownloadEvent::VerificationCompleted);
+                Ok(())
+            }
+        }
+    }
+}
+
 impl ModelManager {
+    /// [`Self::verify_sha256`] ueber ein geoeffnetes Handle statt eines Pfades: liest
+    /// den ganzen Inhalt von vorn. Die Teildatei zu leeren ist Sache des Aufrufers.
+    fn verify_handle(mut file: File, expected_sha256: Option<&str>, model_id: &str) -> Result<()> {
+        let Some(expected) = expected_sha256 else {
+            return Ok(());
+        };
+        file.seek(SeekFrom::Start(0))?;
+        let mut hasher = Sha256::new();
+        let mut buffer = [0u8; 65536];
+        loop {
+            let n = file.read(&mut buffer)?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buffer[..n]);
+        }
+        let actual = format!("{:x}", hasher.finalize());
+        if actual == expected {
+            info!("SHA256 verified for model {}", model_id);
+            Ok(())
+        } else {
+            warn!(
+                "SHA256 mismatch for model {}: expected {}, got {}",
+                model_id, expected, actual
+            );
+            Err(anyhow::anyhow!(
+                "Download verification failed for model {}: file is corrupt. Please retry.",
+                model_id
+            ))
+        }
+    }
+
     /// Verifies the SHA256 of `path` against `expected_sha256` (if provided).
     /// On mismatch or read error the partial file is deleted and an error is returned,
     /// so the next download attempt always starts from a clean state.
@@ -77,14 +223,14 @@ impl ModelManager {
                     "SHA256 mismatch for model {}: expected {}, got {}",
                     model_id, expected, actual
                 );
-                let _ = fs::remove_file(path);
+                safe::discard(path);
                 Err(anyhow::anyhow!(
                     "Download verification failed for model {}: file is corrupt. Please retry.",
                     model_id
                 ))
             }
             Err(e) => {
-                let _ = fs::remove_file(path);
+                safe::discard(path);
                 Err(anyhow::anyhow!(
                     "Failed to verify download for model {}: {}. Please retry.",
                     model_id,
@@ -96,7 +242,7 @@ impl ModelManager {
 
     /// Computes the SHA256 hex digest of a file, reading in 64KB chunks to handle large models.
     fn compute_sha256(path: &Path) -> Result<String> {
-        let mut file = File::open(path)?;
+        let mut file = safe::open_read(path)?;
         let mut hasher = Sha256::new();
         let mut buffer = [0u8; 65536];
         loop {
@@ -175,6 +321,13 @@ impl ModelManager {
     /// socket server.
     ///
     /// Robustness properties, in the order the failure modes appear:
+    /// - the partial must be a plain file of our own: a symlink, a Windows
+    ///   reparse point or anything that is not a regular file is refused
+    ///   (`safe::is_refusal`) before any request or write, and the file is then
+    ///   opened without following links (`safe`); it is never truncated through
+    ///   a link. The directory above is the caller's business; a caller that needs it
+    ///   pinned opens the file through a directory handle (`anchor`) and uses
+    ///   [`Self::download_http_into_file`]
     /// - a partial already at the expected size (crash between completion and
     ///   finalize) is verified and accepted instead of asking the server for
     ///   `Range: bytes=<EOF>-` and looping on 416 forever; an oversized one is
@@ -234,19 +387,74 @@ impl ModelManager {
         emit: &(dyn Fn(HttpDownloadEvent<'_>) + Send + Sync),
         auth: Option<&DownloadAuth>,
     ) -> Result<HttpDownloadOutcome> {
-        let mut resume_from = partial_path.metadata().map(|m| m.len()).unwrap_or(0);
+        Self::download_http_core(
+            model_id,
+            url,
+            Target::Path(partial_path),
+            expected_size,
+            expected_sha256,
+            cancel_token,
+            emit,
+            auth,
+        )
+        .await
+    }
+
+    /// [`Self::download_http_resumable_with_events`] in eine bereits geoeffnete
+    /// Teildatei: der Downloader folgt keinem Pfad. Die Fortsetzung beginnt bei der
+    /// Laenge des Handles, ein Neuanfang schneidet das Handle ab, die Pruefung liest
+    /// durch dasselbe Handle. Das Handle muss der Aufrufer VOR dem Aufruf geprueft
+    /// haben (normale Datei, nicht mehrfach verlinkt, siehe [`anchor::Anchor::open_partial`]);
+    /// es muss lesbar und schreibbar sein. Alles uebrige verhaelt sich wie bei der
+    /// Pfadvariante (gleicher Kern).
+    pub(crate) async fn download_http_into_file(
+        model_id: &str,
+        url: &str,
+        file: &mut File,
+        expected_size: Option<u64>,
+        expected_sha256: Option<&str>,
+        cancel_token: &CancellationToken,
+        emit: &(dyn Fn(HttpDownloadEvent<'_>) + Send + Sync),
+    ) -> Result<HttpDownloadOutcome> {
+        Self::download_http_core(
+            model_id,
+            url,
+            Target::Handle(file),
+            expected_size,
+            expected_sha256,
+            cancel_token,
+            emit,
+            None,
+        )
+        .await
+    }
+
+    /// Der gemeinsame Kern beider Varianten ([`Target`]).
+    #[allow(clippy::too_many_arguments)]
+    async fn download_http_core(
+        model_id: &str,
+        url: &str,
+        mut target: Target<'_>,
+        expected_size: Option<u64>,
+        expected_sha256: Option<&str>,
+        cancel_token: &CancellationToken,
+        emit: &(dyn Fn(HttpDownloadEvent<'_>) + Send + Sync),
+        auth: Option<&DownloadAuth>,
+    ) -> Result<HttpDownloadOutcome> {
+        // Ein Link oder Reparse-Punkt als Teildatei wird abgelehnt, bevor
+        // irgendetwas geschrieben oder das Netz gefragt wird.
+        let mut resume_from = target.len()?;
 
         if let Some(expected) = expected_size {
             if resume_from > expected {
-                let _ = fs::remove_file(partial_path);
+                target.discard();
                 resume_from = 0;
             } else if resume_from == expected && expected > 0 {
                 info!(
                     "Partial download of {} is already full-size; verifying",
                     model_id
                 );
-                Self::verify_file_with_events(model_id, partial_path, expected_sha256, emit)
-                    .await?;
+                target.verify(model_id, expected_sha256, emit).await?;
                 return Ok(HttpDownloadOutcome::Completed);
             }
         }
@@ -285,18 +493,18 @@ impl ModelManager {
         // just a broken server, which the generic status check below rejects.
         if resume_from > 0 && response.status() == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
             if expected_size.is_some() || expected_sha256.is_none() {
-                let _ = fs::remove_file(partial_path);
+                target.discard();
                 return Err(anyhow::anyhow!(
                     "server object ends before the expected size (HTTP 416)"
                 ));
             }
-            Self::verify_file_with_events(model_id, partial_path, expected_sha256, emit).await?;
+            target.verify(model_id, expected_sha256, emit).await?;
             return Ok(HttpDownloadOutcome::Completed);
         }
         // A 200 to a Range request means the server ignored it and is sending
         // the whole file; appending it to the partial would corrupt the model.
         if resume_from > 0 && response.status() == reqwest::StatusCode::OK {
-            let _ = fs::remove_file(partial_path);
+            target.discard();
             resume_from = 0;
         }
         if !response.status().is_success() {
@@ -311,7 +519,7 @@ impl ModelManager {
                 .and_then(|v| v.to_str().ok())
                 .and_then(content_range_start);
             if starts_at != Some(resume_from) {
-                let _ = fs::remove_file(partial_path);
+                target.discard();
                 return Err(anyhow::anyhow!(
                     "server returned Content-Range starting at {:?}, expected {}",
                     starts_at,
@@ -335,13 +543,7 @@ impl ModelManager {
             expected_size.or_else(|| response.content_length().map(|l| resume_from + l));
         let total_size = known_total.unwrap_or(0);
         let mut downloaded = resume_from;
-        let mut file = if resume_from > 0 {
-            std::fs::OpenOptions::new()
-                .append(true)
-                .open(partial_path)?
-        } else {
-            std::fs::File::create(partial_path)?
-        };
+        let mut file = target.writer(resume_from > 0)?;
 
         let emit_progress = |downloaded: u64| {
             emit(HttpDownloadEvent::Progress(&DownloadProgress {
@@ -384,7 +586,7 @@ impl ModelManager {
             if let Some(cap) = known_total {
                 if downloaded + chunk.len() as u64 > cap {
                     drop(file);
-                    let _ = fs::remove_file(partial_path);
+                    target.discard();
                     return Err(anyhow::anyhow!(
                         "server sent more than the expected {} bytes",
                         cap
@@ -403,9 +605,9 @@ impl ModelManager {
         emit_progress(downloaded);
 
         if let Some(expected) = known_total {
-            let actual = partial_path.metadata()?.len();
+            let actual = target.len()?;
             if actual != expected {
-                let _ = fs::remove_file(partial_path);
+                target.discard();
                 return Err(anyhow::anyhow!(
                     "download incomplete: expected {} bytes, got {}",
                     expected,
@@ -416,7 +618,7 @@ impl ModelManager {
 
         // The catalog hash is the trust anchor: for a mirror (an untrusted
         // host) this verification is what makes the fallback safe at all.
-        Self::verify_file_with_events(model_id, partial_path, expected_sha256, emit).await?;
+        target.verify(model_id, expected_sha256, emit).await?;
         Ok(HttpDownloadOutcome::Completed)
     }
 }

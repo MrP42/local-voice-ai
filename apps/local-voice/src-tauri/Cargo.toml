@@ -197,6 +197,15 @@ ulid = "1"
 # keine alten Dateien. Schon transitiv im Lock (4.0.3, ueber vendor/wai-storage), Lizenz
 # Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT.
 cap-std = "4.0.3"
+# lva#540 R5: nur fuer `FollowSymlinks::No` beim Oeffnen der letzten Namenskomponente
+# (`download/anchor.rs`); `cap-std` loest auf Windows, macOS und Linux ohne `openat2` von Hand
+# auf und folgt dort sonst einem Link im letzten Stueck, auch beim Anlegen. Die Option steht
+# oeffentlich nur in `cap-fs-ext` (`OpenOptionsFollowExt`, kein Lock-Eintrag); sie ruft den hier
+# erreichbaren Wrapper `OpenOptions::_cap_fs_ext_follow` auf. Schon im Lock (4.0.3, ueber
+# cap-std), kein neues Paket, Lizenz Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT.
+# Exakt gepinnt, weil der Wrapper nicht zur dokumentierten API gehoert: eine Anhebung ist eine
+# bewusste Entscheidung mit erneutem Lauf der no_follow-Tests.
+cap-primitives = "=4.0.3"
 # lva#522: Identitaet (Geraet und Inode, unter Windows Volume und Dateiindex) der neu geschriebenen
 # Dateien und Ordner gegen den Pfad, der gespeichert wird; vor dem Commit des Zuschneidens.
 # Schon transitiv im Lock (1.0.6), Lizenz Unlicense OR MIT.

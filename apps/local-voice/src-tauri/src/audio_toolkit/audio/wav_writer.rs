@@ -10,7 +10,8 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
-const HEADER_LEN: u64 = 44;
+/// Laenge des WAV-Kopfes (Bytes): eine Datei, die nicht laenger ist, hat keine Samples.
+pub const HEADER_LEN: u64 = 44;
 const BITS_PER_SAMPLE: u16 = 16;
 const CHANNELS: u16 = 1;
 const BYTES_PER_SAMPLE: u32 = (BITS_PER_SAMPLE / 8) as u32;
@@ -55,6 +56,18 @@ pub struct StreamingWavWriter {
     file: File,
     sample_rate: u32,
     frames_written: u64,
+    /// lva#538: ein I/O-Fehler (Schreiben, Kopf, Sync) macht den Writer unbrauchbar: die
+    /// Dateiposition ist danach unbekannt, ein weiteres Schreiben wuerde die Datei
+    /// verfaelschen. Ab dann liefern `append`, `flush_header` und `finalize` einen Fehler,
+    /// und der Aufrufer behandelt die Aufnahme als unvollstaendig.
+    failed: bool,
+    /// Test-only: der naechste Kopf-Flush scheitert (der Append davor ging durch).
+    #[cfg(test)]
+    header_fault: bool,
+}
+
+fn failed_earlier() -> io::Error {
+    io::Error::other("wav writer failed earlier")
 }
 
 impl StreamingWavWriter {
@@ -66,6 +79,9 @@ impl StreamingWavWriter {
             file,
             sample_rate,
             frames_written: 0,
+            failed: false,
+            #[cfg(test)]
+            header_fault: false,
         })
     }
 
@@ -75,6 +91,9 @@ impl StreamingWavWriter {
     /// chunk past `MAX_DATA_BYTES`, the RIFF/WAV `u32` size-field limit.
     /// Callers should end the recording cleanly on this error.
     pub fn append(&mut self, samples: &[i16]) -> io::Result<()> {
+        if self.failed {
+            return Err(failed_earlier());
+        }
         let additional_bytes = samples.len() as u64 * BYTES_PER_SAMPLE as u64;
         let current_bytes = self.frames_written * BYTES_PER_SAMPLE as u64;
         if current_bytes + additional_bytes > MAX_DATA_BYTES {
@@ -88,22 +107,59 @@ impl StreamingWavWriter {
         for s in samples {
             buf.extend_from_slice(&s.to_le_bytes());
         }
-        self.file.write_all(&buf)?;
+        if let Err(e) = self.file.write_all(&buf) {
+            self.failed = true;
+            return Err(e);
+        }
         self.frames_written += samples.len() as u64;
         Ok(())
+    }
+
+    /// Test-only: ersetzt die Datei durch ein schreibgeschuetztes Handle auf dieselbe Datei,
+    /// damit der naechste Schreib- oder Kopfzugriff mit einem ECHTEN I/O-Fehler scheitert.
+    #[cfg(test)]
+    pub(crate) fn break_file_for_test(&mut self, path: &Path) {
+        self.file = File::open(path).unwrap();
+    }
+
+    /// Test-only: der naechste Kopf-Flush scheitert, Appends davor gehen durch. So laesst sich
+    /// der Fehlerweg "Schreiben ok, Kopf nicht" des Callbacks ausloesen.
+    #[cfg(test)]
+    pub(crate) fn fail_header_for_test(&mut self) {
+        self.header_fault = true;
     }
 
     /// Test-only hook to move the internal frame counter near the RIFF
     /// size limit without actually writing gigabytes of samples to disk.
     #[cfg(test)]
-    fn set_frames_for_test(&mut self, frames: u64) {
+    pub(crate) fn set_frames_for_test(&mut self, frames: u64) {
         self.frames_written = frames;
     }
 
     /// Patches the RIFF and data size fields to reflect `frames_written` so
     /// far, then syncs to disk. Seeks back to the end afterwards so
     /// subsequent `append()` calls keep writing at the tail.
+    ///
+    /// lva#538: scheitert irgendein Schritt (Seek, Schreiben, Sync), ist der Writer
+    /// unbrauchbar (`failed`): die Position stuende sonst vor dem Dateiende und das
+    /// naechste `append` schriebe mitten in die Aufnahme. Der Fehler wird gemeldet, nie
+    /// verschluckt.
     pub fn flush_header(&mut self) -> io::Result<()> {
+        if self.failed {
+            return Err(failed_earlier());
+        }
+        let patched = self.patch_header();
+        if patched.is_err() {
+            self.failed = true;
+        }
+        patched
+    }
+
+    fn patch_header(&mut self) -> io::Result<()> {
+        #[cfg(test)]
+        if self.header_fault {
+            return Err(io::Error::other("test: header flush"));
+        }
         let data_len_u64 = self.frames_written * BYTES_PER_SAMPLE as u64;
         debug_assert!(
             data_len_u64 <= MAX_DATA_BYTES,
@@ -236,6 +292,34 @@ mod tests {
         let big_chunk = vec![0i16; 1_000];
         assert!(w.append(&big_chunk).is_err());
         assert_eq!(w.frames_written(), frames_near_limit);
+    }
+
+    /// lva#538 Befund 5: ein Fehler beim Kopf-Flush darf nicht im Callback versanden. Der
+    /// Writer meldet ihn und schreibt nie wieder (die Position waere unbekannt).
+    #[test]
+    fn a_failing_header_flush_is_an_error_and_poisons_the_writer() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("flush.wav");
+        let mut w = StreamingWavWriter::create(&p, 16_000).unwrap();
+        w.append(&vec![1i16; 1_600]).unwrap();
+        w.break_file_for_test(&p);
+        assert!(w.flush_header().is_err());
+        // Danach nichts mehr: weder Anhaengen noch Abschluss tun so, als ginge es.
+        assert!(w.append(&[1, 2, 3]).is_err());
+        assert!(w.flush_header().is_err());
+        assert!(w.finalize().is_err());
+    }
+
+    #[test]
+    fn a_failing_append_poisons_the_writer_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("append.wav");
+        let mut w = StreamingWavWriter::create(&p, 16_000).unwrap();
+        w.append(&vec![1i16; 1_600]).unwrap();
+        w.break_file_for_test(&p);
+        assert!(w.append(&vec![2i16; 1_600]).is_err());
+        assert_eq!(w.frames_written(), 1_600);
+        assert!(w.flush_header().is_err());
     }
 
     #[test]

@@ -369,7 +369,10 @@ pub struct CliArgs {
     // M3-P3a
     /// Measure speaker diarization (DER, acceptance AK7) on every pair
     /// <name>.wav + <name>.rttm in DIR and exit. --model picks the diarization
-    /// model (catalog id or GGUF path; default: the installed Sortformer).
+    /// model: a catalog id (diar-sortformer-4spk-v2.1-q8, diar-nemotron3-8spk-onnx-q8)
+    /// or a file path; the engine follows the file type (.gguf = Sortformer,
+    /// .onnx = Nemotron, whose .onnx_data must lie next to it). Default: the
+    /// installed Sortformer.
     /// Weighted DER per group by file prefix: ami_test_*, other ami_*, rest
     /// (German). Output via --json/--out. Exit 0 targets met, 3 missed,
     /// 1 error, 2 bad input or model missing.
@@ -638,4 +641,35 @@ pub struct CliArgs {
     /// 1 mindestens ein Eintrag fehlgeschlagen, 2 unbekannte Kennung.
     #[arg(long, value_name = "IDS", value_delimiter = ',')]
     pub provision: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn eval_diarization_takes_a_catalog_id_or_a_model_path_for_either_engine() {
+        let parse = |args: &[&str]| {
+            let mut all = vec!["local-voice-ai"];
+            all.extend_from_slice(args);
+            CliArgs::try_parse_from(all).unwrap()
+        };
+        let a = parse(&[
+            "--eval-diarization",
+            "korpus",
+            "--model",
+            "diar-nemotron3-8spk-onnx-q8",
+        ]);
+        assert_eq!(a.eval_diarization, Some(PathBuf::from("korpus")));
+        assert_eq!(a.model.as_deref(), Some("diar-nemotron3-8spk-onnx-q8"));
+        let b = parse(&[
+            "--eval-diarization",
+            "korpus",
+            "--model",
+            "D:/m/model_quantized.onnx",
+        ]);
+        assert_eq!(b.model.as_deref(), Some("D:/m/model_quantized.onnx"));
+        let c = parse(&["--eval-diarization", "korpus"]);
+        assert_eq!(c.model, None, "ohne --model gilt das Standardmodell");
+    }
 }
