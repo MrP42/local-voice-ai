@@ -70,7 +70,7 @@ private func profile(_ tree: AssistantJSON, file: StaticString = #filePath, line
     }
 }
 
-private func values(_ tree: AssistantJSON) -> AssistantPlaceholderValues {
+private func placeholderValues(_ tree: AssistantJSON) -> AssistantPlaceholderValues {
     var extra: [String: String] = [:]
     if case .object(let members)? = tree["extra"] {
         for member in members { extra[member.key] = member.value.string }
@@ -152,7 +152,7 @@ final class AssistantProfileTests: XCTestCase {
         let cases = shared["platzhalter"]?.items ?? []
         XCTAssertGreaterThan(cases.count, 30)
         for c in cases {
-            let r = AssistantProfileText.resolve(c["vorlage"]?.string ?? "", language: c["sprache"]?.string ?? "de", values: values(c["werte"] ?? .null))
+            let r = AssistantProfileText.resolve(c["vorlage"]?.string ?? "", language: c["sprache"]?.string ?? "de", values: placeholderValues(c["werte"] ?? .null))
             assertSameBytes(r.text, c["erwartet"]?.string, c["name"]?.string ?? "?")
             assertSameBytes(r.unknown, c["unbekannt"]?.strings, c["name"]?.string ?? "?")
         }
@@ -168,7 +168,7 @@ final class AssistantProfileTests: XCTestCase {
                 AssistantJSONMember("anweisungen", c["profil"]?["anweisungen"] ?? .null),
                 AssistantJSONMember("sprache", c["profil"]?["sprache"] ?? .null),
             ]))
-            let r = AssistantProfileText.roleBlock(p, values: values(c["werte"] ?? .null), budgetChars: c["budget"]?.int ?? 0)
+            let r = AssistantProfileText.roleBlock(p, values: placeholderValues(c["werte"] ?? .null), budgetChars: c["budget"]?.int ?? 0)
             assertSameBytes(r.text, c["erwartet"]?["text"]?.string, c["name"]?.string ?? "?")
             XCTAssertEqual(r.truncated, c["erwartet"]?["gekuerzt"]?.bool, c["name"]?.string ?? "?")
         }
@@ -318,16 +318,16 @@ final class AssistantProfileTests: XCTestCase {
         XCTAssertTrue(profile({ $0.name = composed }, { $0.name = composed }))
         // Platzhalterwerte und Ergebnisse
         let base = AssistantPlaceholderValues(year: 2026, month: 1, day: 2, weekday: 5, hour: 9, minute: 0)
-        func values(_ name: String?, _ extra: [String: String]) -> AssistantPlaceholderValues {
+        func sample(_ name: String?, _ extra: [String: String]) -> AssistantPlaceholderValues {
             var v = base
             v.name = name
             v.extra = extra
             return v
         }
-        XCTAssertNotEqual(values(composed, [:]), values(decomposed, [:]))
-        XCTAssertNotEqual(values(nil, [composed: "x"]), values(nil, [decomposed: "x"]))
-        XCTAssertNotEqual(values(nil, ["k": composed]), values(nil, ["k": decomposed]))
-        XCTAssertEqual(values(nil, [composed: "x"]), values(nil, [composed: "x"]))
+        XCTAssertNotEqual(sample(composed, [:]), sample(decomposed, [:]))
+        XCTAssertNotEqual(sample(nil, [composed: "x"]), sample(nil, [decomposed: "x"]))
+        XCTAssertNotEqual(sample(nil, ["k": composed]), sample(nil, ["k": decomposed]))
+        XCTAssertEqual(sample(nil, [composed: "x"]), sample(nil, [composed: "x"]))
         XCTAssertNotEqual(AssistantPlaceholderResult(text: composed, unknown: []), AssistantPlaceholderResult(text: decomposed, unknown: []))
         XCTAssertNotEqual(AssistantPlaceholderResult(text: "", unknown: [composed]), AssistantPlaceholderResult(text: "", unknown: [decomposed]))
         XCTAssertNotEqual(AssistantRoleBlock(text: composed, truncated: false), AssistantRoleBlock(text: decomposed, truncated: false))
