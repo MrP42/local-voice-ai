@@ -2318,11 +2318,7 @@ fn the_start_event_binding_survives_a_replaced_link_and_follows_a_failed_start_a
 
     // Zusammenfuehren: der Termin des Teils gilt danach fuer das Ziel.
     let ziel = f.store.create_empty_meeting("Ziel", None).unwrap().id;
-    {
-        let _sperre = tor_sperre();
-        let conn = f.store.get_connection().unwrap();
-        bindungen_uebertragen(&conn, &ziel, &[], std::slice::from_ref(&id)).unwrap();
-    }
+    uebertragen(&f, &ziel, &[], std::slice::from_ref(&id));
     assert_eq!(start_termin_zeilen(&f, &ziel), start_termin_zeilen(&f, &id));
     // Eine Planung, die Termin A spaeter bekommt, sperrt Teil UND Ziel.
     let (_p, e) = uebergeben(&f.store);
@@ -2336,6 +2332,21 @@ fn the_start_event_binding_survives_a_replaced_link_and_follows_a_failed_start_a
             Err("nur_notizen: offen".to_string())
         );
     }
+}
+
+/// [`bindungen_uebertragen`] wie beim Zusammenfuehren (`parts::apply_merge`): unter der Tor-Sperre
+/// und in der Transaktion des Aufrufers.
+fn uebertragen(f: &Fix, ziel: &str, quellen: &[Paar], teile: &[String]) {
+    let _sperre = tor_sperre();
+    uebertragen_unter_sperre(f, ziel, quellen, teile);
+}
+
+fn uebertragen_unter_sperre(f: &Fix, ziel: &str, quellen: &[Paar], teile: &[String]) {
+    assert!(unter_tor_sperre());
+    let conn = f.store.get_connection().unwrap();
+    let tx = conn.unchecked_transaction().unwrap();
+    bindungen_uebertragen(&tx, ziel, quellen, teile).unwrap();
+    tx.commit().unwrap();
 }
 
 /// Beim Zusammenfuehren geht der Bezug der Teile auf das Ziel ueber, auch der laufende (Termin
@@ -2358,8 +2369,7 @@ fn merging_carries_the_plans_of_the_parts_over_to_the_target() {
             1,
             "der laufende Bezug des Teils (nie gebunden)"
         );
-        let conn = f.store.get_connection().unwrap();
-        bindungen_uebertragen(&conn, &ziel, &quellen, std::slice::from_ref(&teil)).unwrap();
+        uebertragen_unter_sperre(&f, &ziel, &quellen, std::slice::from_ref(&teil));
     }
     assert_eq!(bindungs_zeilen(&f, &ziel).len(), 1);
     assert_eq!(
@@ -2373,15 +2383,11 @@ fn merging_carries_the_plans_of_the_parts_over_to_the_target() {
 
     // Eine Person ohne Identitaet bleibt als `unbekannt` stehen und sperrt.
     let ziel2 = f.store.create_empty_meeting("Ziel 2", None).unwrap().id;
-    {
-        let _sperre = tor_sperre();
-        let conn = f.store.get_connection().unwrap();
-        let quellen = vec![(
-            p.id.clone(),
-            vec!["anna@example.com".to_string(), "ohne adresse".to_string()],
-        )];
-        bindungen_uebertragen(&conn, &ziel2, &quellen, &[]).unwrap();
-    }
+    let quellen = vec![(
+        p.id.clone(),
+        vec!["anna@example.com".to_string(), "ohne adresse".to_string()],
+    )];
+    uebertragen(&f, &ziel2, &quellen, &[]);
     assert_eq!(
         bindungs_zeilen(&f, &ziel2)[0].1,
         r#"["anna@example.com","unbekannt"]"#
@@ -2464,6 +2470,273 @@ fn a_gate_that_cannot_be_checked_refuses_everywhere_and_is_never_a_model_error()
     assert_eq!(TOR_STOERUNG.with(|c| c.get()), 0);
     assert_eq!(modell_versuch(&f.store, &id, |_frei| Ok(7)), Ok(7));
     assert!(f.store.append_delta(&id, &delta()).is_ok());
+}
+
+/// Testhaken fuer R6: verweigert den ZWEITEN Schreibzugriff (INSERT oder UPDATE) auf die Tabelle
+/// der Bindungen, deterministisch per Trigger (`RAISE(ABORT)`), egal welche Planung zuerst
+/// geschrieben wird. Gezaehlt wird in einer Hilfstabelle: nimmt die Transaktion des Vorgangs den
+/// ersten Zugriff zurueck, steht der Zaehler wieder auf null, und JEDER Versuch scheitert erneut
+/// an seinem zweiten Zugriff.
+fn zweiten_bindungszugriff_verweigern(conn: &Connection) {
+    conn.execute_batch(
+        "CREATE TABLE test_bindungszugriffe (n INTEGER NOT NULL);
+         CREATE TRIGGER test_bindung_insert AFTER INSERT ON meeting_plan_bindings BEGIN
+             INSERT INTO test_bindungszugriffe VALUES (1);
+             SELECT RAISE(ABORT, 'zweiter Bindungszugriff verweigert (Test)')
+             WHERE (SELECT COUNT(*) FROM test_bindungszugriffe) >= 2;
+         END;
+         CREATE TRIGGER test_bindung_update AFTER UPDATE ON meeting_plan_bindings BEGIN
+             INSERT INTO test_bindungszugriffe VALUES (1);
+             SELECT RAISE(ABORT, 'zweiter Bindungszugriff verweigert (Test)')
+             WHERE (SELECT COUNT(*) FROM test_bindungszugriffe) >= 2;
+         END;",
+    )
+    .unwrap();
+}
+
+fn bindungszugriff_freigeben(conn: &Connection) {
+    conn.execute_batch(
+        "DROP TRIGGER test_bindung_insert;
+         DROP TRIGGER test_bindung_update;
+         DROP TABLE test_bindungszugriffe;",
+    )
+    .unwrap();
+}
+
+/// Stand beider Bindungstabellen, Zeile fuer Zeile.
+fn bindungs_stand(conn: &Connection) -> (Vec<String>, Vec<String>) {
+    (
+        dump(conn, "meeting_plan_bindings"),
+        dump(conn, "meeting_start_events"),
+    )
+}
+
+/// R6: alle Bindungsaenderungen EINES Tor-Vorgangs stehen in einer Transaktion. Zwei bestandene
+/// Planungen gelten fuer dieselbe Besprechung (eigene Verknuepfung und die des Anhaenge-Ziels);
+/// der ZWEITE Schreibzugriff auf die Bindungen wird von der Datenbank verweigert. Auf jedem Weg
+/// (Pruefung, Start, Modellaufruf, Schreibschutz) lehnt das Tor ab
+/// (`nur_notizen: tor_nicht_pruefbar`), kein Modell laeuft, nichts wird geschrieben, und KEINE
+/// Bindungszeile ist veraendert: auch die erste, schon geschriebene, ist zurueckgenommen. Ohne die
+/// Stoerung gelingt derselbe Vorgang. Erst fuer neue Zeilen (INSERT), dann fuer die Erweiterung
+/// der Anwesenden vorhandener Zeilen (UPDATE).
+#[test]
+fn a_binding_refused_halfway_is_taken_back_whole_and_the_gate_can_be_repeated() {
+    let f = fix();
+    let (b, ziel) = aufnahme_mit_planung(&f);
+    let (a, termin_a) = weitere_planung(&f, "termin-a");
+    let teil = f
+        .store
+        .queue_enqueue("Teil", "C:/synthetisch/teil.m4a", Some(1))
+        .unwrap()
+        .id;
+    f.store
+        .link_meeting_event(&teil, &termin_a, "prompt", NOW)
+        .unwrap();
+    f.store.append_pending_add(&teil, &ziel).unwrap();
+    for plan in [&a, &b] {
+        zustimmen(&f, &plan.id, "anna@example.com");
+        zustimmen(&f, &plan.id, "bert@example.org");
+    }
+    let conn = f.store.get_connection().unwrap();
+    let code = Err("nur_notizen: tor_nicht_pruefbar".to_string());
+    let _arbeit = Modellarbeit::beginnen(&teil);
+    let delta = || crate::managers::meetings::store::TranscriptDelta {
+        new_segments: vec![crate::managers::meetings::store::StoredSegment {
+            segment_index: 0,
+            text: "Guten Tag".into(),
+            start_ms: 0,
+            end_ms: 900,
+            channel: 0,
+            speaker_index: None,
+            words: None,
+        }],
+    };
+    let aufrufe = std::cell::Cell::new(0);
+    // Jeder Weg durch das Tor, der bindet; keiner darf etwas hinterlassen.
+    let alle_wege_abgelehnt = |vorher: &(Vec<String>, Vec<String>)| {
+        // Die Regel selbst besteht (nur Lesen): die Ablehnung kommt allein vom Schreiben.
+        assert_eq!(start_tor(&f.store, None, Some(&teil)), Ok(()));
+        assert_eq!(tor_pruefen_besprechung(&f.store, &teil), code);
+        assert_eq!(&bindungs_stand(&conn), vorher, "nach der Pruefung");
+        let mut gestartet = false;
+        let r = mit_tor_besprechung(&f.store, &teil, |_tor| {
+            gestartet = true;
+            Ok(())
+        });
+        assert_eq!(r, code);
+        assert!(!gestartet, "nichts startet");
+        assert_eq!(&bindungs_stand(&conn), vorher, "nach dem Startversuch");
+        let r = modell_versuch(&f.store, &teil, |_frei| {
+            aufrufe.set(aufrufe.get() + 1);
+            Ok(())
+        });
+        assert_eq!(r, Err(LaufFehler::Tor(TorFehler::NichtPruefbar)));
+        let r = modell_lauf(&f.store, &teil, |_frei| {
+            aufrufe.set(aufrufe.get() + 1);
+            Ok(())
+        });
+        assert_eq!(r, code);
+        assert_eq!(&bindungs_stand(&conn), vorher, "nach den Modellversuchen");
+        let geschrieben = f.store.append_delta(&teil, &delta());
+        assert!(ist_ablehnung(&geschrieben.unwrap_err().to_string()));
+        assert!(f.store.get_segments(&teil).unwrap().is_empty());
+        assert_eq!(&bindungs_stand(&conn), vorher, "nach dem Schreibversuch");
+        let zaehler: i64 = conn
+            .query_row("SELECT COUNT(*) FROM test_bindungszugriffe", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            zaehler, 0,
+            "auch der erste Schreibzugriff ist zurueckgenommen"
+        );
+    };
+    let gebunden = |meeting_id: &str| -> Vec<String> {
+        bindungs_zeilen(&f, meeting_id)
+            .into_iter()
+            .map(|z| z.0)
+            .collect()
+    };
+    let mut beide = vec![a.id.clone(), b.id.clone()];
+    beide.sort();
+
+    // 1. Neue Zeilen: zwei INSERT, der zweite wird verweigert.
+    let leer = bindungs_stand(&conn);
+    assert!(leer.0.is_empty() && leer.1.is_empty());
+    zweiten_bindungszugriff_verweigern(&conn);
+    alle_wege_abgelehnt(&leer);
+    assert_eq!(aufrufe.get(), 0, "kein Modell");
+    // Die Stoerung ist weg: DERSELBE Vorgang gelingt und bindet beide Planungen.
+    bindungszugriff_freigeben(&conn);
+    let r = modell_versuch(&f.store, &teil, |frei| {
+        frei.einloesen()?;
+        aufrufe.set(aufrufe.get() + 1);
+        Ok(7)
+    });
+    assert_eq!(r, Ok(7));
+    assert_eq!(aufrufe.get(), 1);
+    assert_eq!(gebunden(&teil), beide);
+    assert!(gebunden(&ziel).is_empty(), "nur der Teil wurde geprueft");
+
+    // 2. Vorhandene Zeilen: an beiden Terminen kommt eine Person dazu (mit Zustimmung), beide
+    //    Bindungen muessen erweitert werden (zwei UPDATE), das zweite wird verweigert.
+    let mut termine = f.store.calendar_events_between(0, i64::MAX, false).unwrap();
+    assert_eq!(termine.len(), 2);
+    for t in &mut termine {
+        t.attendees.push(person("carla@example.net"));
+    }
+    cache(&f.store, &termine);
+    lauf(&f.store);
+    for plan in [&a, &b] {
+        zustimmen(&f, &plan.id, "carla@example.net");
+    }
+    let vorher = bindungs_stand(&conn);
+    assert_eq!(vorher.0.len(), 2);
+    assert!(vorher.0.iter().all(|z| !z.contains("carla@example.net")));
+    zweiten_bindungszugriff_verweigern(&conn);
+    alle_wege_abgelehnt(&vorher);
+    assert_eq!(aufrufe.get(), 1, "kein weiterer Modellaufruf");
+    bindungszugriff_freigeben(&conn);
+    assert_eq!(tor_pruefen_besprechung(&f.store, &teil), Ok(()));
+    let danach = bindungs_zeilen(&f, &teil);
+    assert_eq!(danach.len(), 2);
+    for (_, anwesende) in &danach {
+        assert_eq!(
+            anwesende,
+            r#"["anna@example.com","bert@example.org","carla@example.net"]"#
+        );
+    }
+    assert!(f.store.append_delta(&teil, &delta()).is_ok());
+}
+
+/// R6, Startereignis: der Termin des Starts wird in DERSELBEN Transaktion gebunden wie die
+/// Planungen. Verweigert die Datenbank den Termin, ist auch die (zuvor geschriebene) Planung
+/// nicht gebunden, der Start laeuft nicht, und der Fehler ist der des Tors. Fuer den Start in
+/// einen vorhandenen Eintrag (gebunden wird VOR `start`) und in eine neue Besprechung (gebunden
+/// wird in [`TorNachweis::binden`]); ohne die Stoerung gelingt derselbe Start.
+#[test]
+fn the_start_event_is_bound_together_with_the_plans_or_not_at_all() {
+    let f = fix();
+    let (b, id) = aufnahme_mit_planung(&f);
+    let (a, termin_a) = weitere_planung(&f, "termin-a");
+    for plan in [&a, &b] {
+        zustimmen(&f, &plan.id, "anna@example.com");
+        zustimmen(&f, &plan.id, "bert@example.org");
+    }
+    // B ist schon gebunden (frueher bestandene Pruefung); A und der Termin kaemen neu dazu.
+    assert_eq!(tor_pruefen_besprechung(&f.store, &id), Ok(()));
+    let conn = f.store.get_connection().unwrap();
+    let vorher = bindungs_stand(&conn);
+    assert_eq!((vorher.0.len(), vorher.1.len()), (1, 0));
+    let code = "nur_notizen: tor_nicht_pruefbar".to_string();
+    conn.execute_batch(
+        "CREATE TRIGGER test_termin BEFORE INSERT ON meeting_start_events BEGIN
+             SELECT RAISE(ABORT, 'Termin verweigert (Test)');
+         END;",
+    )
+    .unwrap();
+
+    // Vorhandener Eintrag.
+    assert_eq!(start_tor(&f.store, Some(&termin_a), Some(&id)), Ok(()));
+    let mut gestartet = false;
+    let r = mit_tor(&f.store, Some(&termin_a), Some(&id), |tor| {
+        gestartet = true;
+        tor.binden(&f.store, &id).map(|_| ())
+    });
+    assert_eq!(r, Err(code.clone()));
+    assert!(!gestartet, "der Start laeuft nicht");
+    assert_eq!(bindungs_stand(&conn), vorher, "weder Planung A noch Termin");
+
+    // Neue Besprechung: die Bindung entsteht in `TorNachweis::binden`.
+    let mut neu_id = None;
+    let r = mit_tor(&f.store, Some(&termin_a), None, |tor| {
+        let m = f
+            .store
+            .create_empty_meeting("neu", None)
+            .map_err(|e| e.to_string())?;
+        neu_id = Some(m.id.clone());
+        tor.binden(&f.store, &m.id).map(|_| ())
+    });
+    assert_eq!(r, Err(code));
+    let neu_id = neu_id.expect("das Tor selbst besteht, der Start beginnt");
+    assert!(bindungs_zeilen(&f, &neu_id).is_empty());
+    assert_eq!(bindungs_stand(&conn), vorher, "nichts gebunden");
+
+    // Ohne die Stoerung: dieselben Starts gelingen, jeweils Planung UND Termin.
+    conn.execute_batch("DROP TRIGGER test_termin").unwrap();
+    let gebunden = mit_tor(&f.store, Some(&termin_a), Some(&id), |tor| {
+        tor.binden(&f.store, &id)
+    })
+    .unwrap();
+    assert_eq!(bindungs_zeilen(&f, &id).len(), 2);
+    assert_eq!(start_termin_zeilen(&f, &id).len(), 1);
+    mit_tor(&f.store, Some(&termin_a), None, |tor| {
+        tor.binden(&f.store, &neu_id).map(|_| ())
+    })
+    .unwrap();
+    assert_eq!(bindungs_zeilen(&f, &neu_id).len(), 1);
+    assert_eq!(start_termin_zeilen(&f, &neu_id).len(), 1);
+
+    // Verwerfen eines gescheiterten Starts: ebenfalls alles oder nichts. Laesst sich der Termin
+    // nicht loeschen, bleibt auch die Planung A gebunden (sperrend), nie nur eines von beiden.
+    let voll = bindungs_stand(&conn);
+    conn.execute_batch(
+        "CREATE TRIGGER test_termin_bleibt BEFORE DELETE ON meeting_start_events BEGIN
+             SELECT RAISE(ABORT, 'Loeschen verweigert (Test)');
+         END;",
+    )
+    .unwrap();
+    bindung_verwerfen(&f.store, gebunden);
+    assert_eq!(bindungs_stand(&conn), voll, "nichts verworfen");
+    conn.execute_batch("DROP TRIGGER test_termin_bleibt")
+        .unwrap();
+    // Mit einem neuen Nachweis desselben Starts ist nichts mehr NEU: das Verwerfen nimmt nichts.
+    let wieder = mit_tor(&f.store, Some(&termin_a), Some(&id), |tor| {
+        tor.binden(&f.store, &id)
+    })
+    .unwrap();
+    bindung_verwerfen(&f.store, wieder);
+    assert_eq!(bindungs_stand(&conn), voll);
 }
 
 /// R5-Hinweis Migration: eine BEFUELLTE Datenbank auf dem Stand vor den Bindungen (Index 0 bis

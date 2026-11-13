@@ -27,7 +27,9 @@
 //!    Besprechung gebunden (`meeting_plan_bindings`), und ebenso der TERMIN, unter dem eine
 //!    Aufnahme begann (`meeting_start_events`: eine Planung, die ihm erst spaeter zugeordnet
 //!    wird, gilt damit auch ohne Kalender-Verknuepfung). Beides entsteht unter der Tor-Sperre,
-//!    VOR dem wirksamen Beginn ([`TorNachweis::binden`], der Beginn verlangt [`Gebunden`]), und
+//!    VOR dem wirksamen Beginn ([`TorNachweis::binden`], der Beginn verlangt [`Gebunden`]), je
+//!    Vorgang des Tors in EINER Schreib-Transaktion ([`bindung_schreiben`]: alle Planungen und der
+//!    Termin oder nichts; ein Fehler mittendrin laesst keine halbe Zuordnung zurueck), und
 //!    geht nie mehr verloren: eine ersetzte Kalender-Verknuepfung (`INSERT OR REPLACE` in
 //!    `link_meeting_event`, erst nach dem Start geschrieben, ein Fehler dort nur eine Warnung),
 //!    ein entfernter Kalender oder ein Zusammenfuehren aendern es nicht. Das Tor prueft immer
@@ -738,8 +740,9 @@ type Paar = (String, Vec<String>);
 /// [`Gebunden`] oeffnet den wirksamen Beginn (Compiler statt Zeichenkettenpruefung).
 pub struct TorNachweis {
     paare: Vec<Paar>,
-    /// Die Zielbesprechung des Tors und was fuer sie in dieser Pruefung NEU gebunden wurde.
-    ziel: Option<(String, Vec<String>)>,
+    /// Die Zielbesprechung des Tors und was fuer sie in dieser Pruefung NEU gebunden wurde
+    /// (Planungen und Termin, schon geschrieben: [`tor_und_binden`]).
+    ziel: Option<(String, NeuGebunden)>,
     /// Der uebergebene Termin des Starts: er wird mit gebunden ([`START_TERMINE`]), damit auch
     /// eine Planung gilt, die ihm erst NACH dem Start zugeordnet wird.
     termin: Option<StartTerminZeile>,
@@ -747,23 +750,24 @@ pub struct TorNachweis {
 }
 
 impl TorNachweis {
-    /// Bindet die geprueften Planungen an die Besprechung dieses Starts (unter der noch gehaltenen
-    /// Sperre, VOR dem wirksamen Beginn). Ohne Planung entsteht keine Zeile; den Nachweis gibt es
-    /// trotzdem. Scheitert das Schreiben, gibt es keinen Nachweis und damit keinen Beginn.
+    /// Bindet die geprueften Planungen und den Termin des Starts an die Besprechung dieses Starts
+    /// (unter der noch gehaltenen Sperre, VOR dem wirksamen Beginn). Ohne Planung entsteht keine
+    /// Planungs-Zeile; den Nachweis gibt es trotzdem. Geschrieben wird in EINER Transaktion
+    /// ([`bindung_schreiben`]): scheitert etwas davon, steht NICHTS davon in der Datenbank, es
+    /// gibt keinen Nachweis und damit keinen Beginn (`nur_notizen: tor_nicht_pruefbar`). Fuer die
+    /// Zielbesprechung des Tors ist schon alles geschrieben ([`tor_und_binden`]): hier entsteht
+    /// nur noch der Nachweis.
     pub fn binden(&self, store: &MeetingStore, meeting_id: &str) -> Res<Gebunden> {
-        let conn = verbindung(store)?;
         let neu = match &self.ziel {
             Some((ziel, neu)) if ziel == meeting_id => neu.clone(),
-            _ => binden(&conn, meeting_id, &self.paare)?,
-        };
-        let termin_neu = match &self.termin {
-            Some(t) if termin_binden(&conn, meeting_id, t)? => Some(t.key.clone()),
-            _ => None,
+            // Ein Fehler beim Binden ist ein Fehler des Tors (wie in [`tor_und_binden`]).
+            _ => bindung_schreiben(store, meeting_id, &self.paare, self.termin.as_ref())
+                .map_err(|e| TorFehler::nicht_pruefbar(e).code())?,
         };
         Ok(Gebunden {
             meeting_id: meeting_id.to_string(),
-            neu,
-            termin_neu,
+            neu: neu.plaene,
+            termin_neu: neu.termin,
             _nur_hier: (),
         })
     }
@@ -802,24 +806,33 @@ impl Gebunden {
 }
 
 /// Der Start ist gescheitert, bevor Ton aufgenommen wurde: die Bindungen, die ER angelegt hat,
-/// fallen wieder weg (aeltere bleiben). Ein Fehler hier laesst die Bindung stehen (sperrend).
+/// fallen wieder weg (aeltere bleiben), alle in EINER Transaktion. Ein Fehler hier laesst ALLE
+/// stehen (sperrend), nie einen Teil davon.
 pub fn bindung_verwerfen(store: &MeetingStore, gebunden: Gebunden) {
     if gebunden.neu.is_empty() && gebunden.termin_neu.is_none() {
         return;
     }
     let _sperre = tor_sperre();
-    let Ok(conn) = verbindung(store) else { return };
-    for plan_id in &gebunden.neu {
-        let _ = conn.execute(
-            "DELETE FROM meeting_plan_bindings WHERE meeting_id = ?1 AND plan_id = ?2",
-            params![gebunden.meeting_id, plan_id],
-        );
-    }
-    if let Some(key) = &gebunden.termin_neu {
-        let _ = conn.execute(
-            "DELETE FROM meeting_start_events WHERE meeting_id = ?1 AND event_key = ?2",
-            params![gebunden.meeting_id, key],
-        );
+    let verworfen = in_tx(store, |tx| {
+        for plan_id in &gebunden.neu {
+            tx.execute(
+                "DELETE FROM meeting_plan_bindings WHERE meeting_id = ?1 AND plan_id = ?2",
+                params![gebunden.meeting_id, plan_id],
+            )
+            .map_err(sql)?;
+        }
+        if let Some(key) = &gebunden.termin_neu {
+            tx.execute(
+                "DELETE FROM meeting_start_events WHERE meeting_id = ?1 AND event_key = ?2",
+                params![gebunden.meeting_id, key],
+            )
+            .map_err(sql)?;
+        }
+        Ok(())
+    });
+    if let Err(e) = verworfen {
+        // Nur der Fehlertext der Datenbank, nie Inhalte.
+        log::warn!("planning: Bindung eines gescheiterten Starts bleibt stehen und sperrt ({e})");
     }
 }
 
@@ -864,9 +877,20 @@ struct StartTerminZeile {
     instanz: Option<i64>,
 }
 
+impl StartTerminZeile {
+    fn von(event: &crate::managers::calendar::model::CalEvent) -> Self {
+        Self {
+            key: event.key.clone(),
+            uid: event.uid.clone(),
+            instanz: event.instance_start,
+        }
+    }
+}
+
 /// Bindet den Termin des Starts an die Besprechung. `true`: die Zeile ist neu. Nur unter der
-/// Tor-Sperre.
+/// Tor-Sperre und in der Transaktion des Aufrufers ([`bindung_schreiben`]).
 fn termin_binden(conn: &Connection, meeting_id: &str, t: &StartTerminZeile) -> Res<bool> {
+    debug_assert!(!conn.is_autocommit(), "Bindung nur in einer Transaktion");
     let neu = conn
         .execute(
             "INSERT OR IGNORE INTO meeting_start_events
@@ -929,43 +953,68 @@ fn bindungen(conn: &Connection, meeting_id: &str) -> Res<Vec<Paar>> {
     Ok(out)
 }
 
-/// Schreibt die Bindung jeder Planung aus `paare` an die Besprechung. Die Anwesenden einer schon
+/// Was EIN Vorgang des Tors an einer Besprechung NEU gebunden hat (fuer [`bindung_verwerfen`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct NeuGebunden {
+    plaene: Vec<String>,
+    /// Schluessel des neu gebundenen Termins.
+    termin: Option<String>,
+}
+
+/// Die Zeile, die [`binden`] fuer EINE Planung schreiben muesste: die Anwesenden als JSON und ob
+/// die Bindung neu ist. `None`: die Bindung steht schon so da. Die Anwesenden einer schon
 /// gebundenen Planung werden VEREINIGT (wer einmal als anwesend geprueft wurde, bleibt es), als
 /// Identitaeten; eine Person OHNE Identitaet bleibt als `unbekannt` stehen und sperrt weiter (nach
-/// bestandenem Tor gibt es keine; beim Zusammenfuehren darf sie nicht still wegfallen). Gibt die
-/// NEU gebundenen Planungen zurueck. Nur unter der Tor-Sperre.
+/// bestandenem Tor gibt es keine; beim Zusammenfuehren darf sie nicht still wegfallen).
+fn bindungs_zeile(
+    conn: &Connection,
+    meeting_id: &str,
+    plan_id: &str,
+    anwesende: &[String],
+) -> Res<Option<(String, bool)>> {
+    let alt: Option<String> = {
+        use rusqlite::OptionalExtension;
+        conn.query_row(
+            "SELECT attendees_json FROM meeting_plan_bindings
+             WHERE meeting_id = ?1 AND plan_id = ?2",
+            params![meeting_id, plan_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(sql)?
+    };
+    let mut liste: Vec<String> = alt
+        .as_deref()
+        .and_then(|j| serde_json::from_str(j).ok())
+        .unwrap_or_default();
+    let vorher = liste.len();
+    for person in anwesende
+        .iter()
+        .map(|a| consent::identitaet(a).unwrap_or_else(|| consent::UNBEKANNT.to_string()))
+    {
+        if !liste.contains(&person) {
+            liste.push(person);
+        }
+    }
+    if alt.is_some() && liste.len() == vorher {
+        return Ok(None);
+    }
+    let json = serde_json::to_string(&liste).map_err(|e| format!("sql: {e}"))?;
+    Ok(Some((json, alt.is_none())))
+}
+
+/// Schreibt die Bindung jeder Planung aus `paare` an die Besprechung ([`bindungs_zeile`]). Gibt
+/// die NEU gebundenen Planungen zurueck. Nur unter der Tor-Sperre und NUR in der Transaktion des
+/// Aufrufers ([`bindung_schreiben`], Zusammenfuehren): jede Planung ist ein eigener
+/// Schreibzugriff, und scheitert einer, darf keiner der frueheren stehen bleiben.
 fn binden(conn: &Connection, meeting_id: &str, paare: &[Paar]) -> Res<Vec<String>> {
+    debug_assert!(!conn.is_autocommit(), "Bindung nur in einer Transaktion");
     let jetzt = chrono::Utc::now().timestamp_millis();
     let mut neu = Vec::new();
     for (plan_id, anwesende) in paare {
-        let alt: Option<String> = {
-            use rusqlite::OptionalExtension;
-            conn.query_row(
-                "SELECT attendees_json FROM meeting_plan_bindings
-                 WHERE meeting_id = ?1 AND plan_id = ?2",
-                params![meeting_id, plan_id],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(sql)?
-        };
-        let mut liste: Vec<String> = alt
-            .as_deref()
-            .and_then(|j| serde_json::from_str(j).ok())
-            .unwrap_or_default();
-        let vorher = liste.len();
-        for person in anwesende
-            .iter()
-            .map(|a| consent::identitaet(a).unwrap_or_else(|| consent::UNBEKANNT.to_string()))
-        {
-            if !liste.contains(&person) {
-                liste.push(person);
-            }
-        }
-        if alt.is_some() && liste.len() == vorher {
+        let Some((json, ist_neu)) = bindungs_zeile(conn, meeting_id, plan_id, anwesende)? else {
             continue;
-        }
-        let json = serde_json::to_string(&liste).map_err(|e| format!("sql: {e}"))?;
+        };
         conn.execute(
             "INSERT INTO meeting_plan_bindings (meeting_id, plan_id, attendees_json, created_at)
              VALUES (?1, ?2, ?3, ?4)
@@ -973,17 +1022,73 @@ fn binden(conn: &Connection, meeting_id: &str, paare: &[Paar]) -> Res<Vec<String
             params![meeting_id, plan_id, json, jetzt],
         )
         .map_err(sql)?;
-        if alt.is_none() && !neu.contains(plan_id) {
+        if ist_neu && !neu.contains(plan_id) {
             neu.push(plan_id.clone());
         }
     }
     Ok(neu)
 }
 
+/// Gibt es fuer diesen Vorgang ueberhaupt etwas zu schreiben? Nur Lesen: der Normalfall (alles
+/// schon gebunden, vor und nach JEDEM Modellaufruf) nimmt so keine Schreibsperre der Datenbank.
+fn bindung_offen(
+    conn: &Connection,
+    meeting_id: &str,
+    paare: &[Paar],
+    termin: Option<&StartTerminZeile>,
+) -> Res<bool> {
+    for (plan_id, anwesende) in paare {
+        if bindungs_zeile(conn, meeting_id, plan_id, anwesende)?.is_some() {
+            return Ok(true);
+        }
+    }
+    let Some(t) = termin else { return Ok(false) };
+    let gebunden: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM meeting_start_events
+                           WHERE meeting_id = ?1 AND event_key = ?2)",
+            params![meeting_id, t.key],
+            |r| r.get(0),
+        )
+        .map_err(sql)?;
+    Ok(!gebunden)
+}
+
+/// ALLE Bindungsaenderungen EINES Vorgangs des Tors an einer Besprechung (die geprueften Planungen
+/// und der Termin des Starts) in EINER Schreib-Transaktion: entweder steht danach alles oder
+/// nichts davon in der Datenbank. Ein Fehler mittendrin (zweite Planung, Termin, Abschluss)
+/// nimmt auch die schon geschriebenen Zeilen zurueck: wer es danach wiederholt, findet den Stand
+/// von vorher. Nur unter der Tor-Sperre (Sperrordnung: Tor-Sperre -> Datenbank); die Transaktion
+/// ist eine eigene auf einer eigenen Verbindung, kein Aufrufer haelt dabei schon eine.
+fn bindung_schreiben(
+    store: &MeetingStore,
+    meeting_id: &str,
+    paare: &[Paar],
+    termin: Option<&StartTerminZeile>,
+) -> Res<NeuGebunden> {
+    debug_assert!(unter_tor_sperre(), "Bindung nur unter der Tor-Sperre");
+    if paare.is_empty() && termin.is_none() {
+        return Ok(NeuGebunden::default());
+    }
+    let mut conn = verbindung(store)?;
+    if !bindung_offen(&conn, meeting_id, paare, termin)? {
+        return Ok(NeuGebunden::default());
+    }
+    let tx = schreib_tx(&mut conn)?;
+    let plaene = binden(&tx, meeting_id, paare)?;
+    let termin = match termin {
+        Some(t) if termin_binden(&tx, meeting_id, t)? => Some(t.key.clone()),
+        _ => None,
+    };
+    tx.commit().map_err(sql)?;
+    Ok(NeuGebunden { plaene, termin })
+}
+
 /// Zusammenfuehren mehrerer Besprechungen (`parts::apply_merge`): was fuer einen Teil gilt, gilt
 /// danach fuer das Ziel. `quellen` sind die Planungen jedes Teils, VOR der Transaktion gelesen
-/// ([`bezug_der_besprechung`]); geschrieben wird in der Transaktion der Zusammenfuehrung. Der
-/// Aufrufer haelt die Tor-Sperre.
+/// ([`bezug_der_besprechung`]); geschrieben wird in der Transaktion der Zusammenfuehrung (hier
+/// entsteht keine eigene und keine verschachtelte: scheitert etwas, nimmt der Aufrufer ALLES
+/// zurueck). Der Aufrufer haelt die Tor-Sperre.
 pub(crate) fn bindungen_uebertragen(
     conn: &Connection,
     ziel: &str,
@@ -1071,7 +1176,8 @@ fn anhaenge_ziel(conn: &Connection, meeting_id: &str) -> Res<Option<String>> {
 }
 
 /// Fuehrt `start` unter dem Einwilligungs-Tor aus: Sperre nehmen, Tor pruefen (alles frisch aus
-/// der Datenbank), bestandene Planungen an die Zielbesprechung binden, dann `start` AUSFUEHREN,
+/// der Datenbank), bestandene Planungen und den uebergebenen Termin an die Zielbesprechung binden
+/// (eine Transaktion: [`bindung_schreiben`]), dann `start` AUSFUEHREN,
 /// waehrend die Sperre noch gehalten wird. `start` schreibt nur in die Datenbank (Zeile anlegen,
 /// [`TorNachweis::binden`], Marke, Status): es darf nicht selbst Planungsfunktionen mit Sperre
 /// rufen (die Sperre ist nicht wiedereintrittsfaehig), nicht auf andere Threads warten, keine
@@ -1088,11 +1194,7 @@ pub fn mit_tor<T>(
     start(&TorNachweis {
         paare,
         ziel: target_meeting_id.map(|t| (t.to_string(), neu)),
-        termin: event.map(|e| StartTerminZeile {
-            key: e.key.clone(),
-            uid: e.uid.clone(),
-            instanz: e.instance_start,
-        }),
+        termin: event.map(StartTerminZeile::von),
         _nur_hier: (),
     })
 }
@@ -1119,24 +1221,29 @@ fn tor_pruefen_typ(store: &MeetingStore, meeting_id: &str) -> Result<(), TorFehl
     tor_und_binden(store, None, Some(meeting_id)).map(|_| ())
 }
 
-/// Tor pruefen und, wenn es besteht, die geprueften Planungen an die Zielbesprechung binden.
-/// Gibt die geprueften Paare und die NEU gebundenen Planungen zurueck. Nur unter der Tor-Sperre.
-/// Gebunden wird nur nach bestandenem Tor: eine Planung, unter der nie eine Aufnahme begann und
-/// nie ein Modell lief, haengt der Besprechung nicht dauerhaft an.
+/// Tor pruefen und, wenn es besteht, die geprueften Planungen und den uebergebenen Termin an die
+/// Zielbesprechung binden. Gibt die geprueften Paare und das NEU Gebundene zurueck. Nur unter der
+/// Tor-Sperre. Gebunden wird nur nach bestandenem Tor: eine Planung, unter der nie eine Aufnahme
+/// begann und nie ein Modell lief, haengt der Besprechung nicht dauerhaft an.
+///
+/// Alle Bindungsaenderungen dieses Vorgangs stehen in EINER Transaktion ([`bindung_schreiben`]).
+/// Laesst sich nicht ALLES binden, gilt das Tor als nicht bestanden (die Zuordnung waere sonst
+/// nicht dauerhaft), und von dem Versuch bleibt keine Zeile zurueck: die Ablehnung
+/// `nur_notizen: tor_nicht_pruefbar` hinterlaesst denselben Stand wie vor ihr.
 fn tor_und_binden(
     store: &MeetingStore,
     event: Option<&crate::managers::calendar::model::CalEvent>,
     target_meeting_id: Option<&str>,
-) -> Result<(Vec<Paar>, Vec<String>), TorFehler> {
+) -> Result<(Vec<Paar>, NeuGebunden), TorFehler> {
     debug_assert!(unter_tor_sperre(), "Bindung nur unter der Tor-Sperre");
     let paare = tor_paare(store, event, target_meeting_id)?;
     let neu = match target_meeting_id {
-        // Laesst sich nicht binden, gilt das Tor als nicht bestanden (die Zuordnung waere sonst
-        // nicht dauerhaft).
-        Some(target) if !paare.is_empty() => verbindung(store)
-            .and_then(|conn| binden(&conn, target, &paare))
-            .map_err(TorFehler::nicht_pruefbar)?,
-        _ => Vec::new(),
+        Some(target) => {
+            let termin = event.map(StartTerminZeile::von);
+            bindung_schreiben(store, target, &paare, termin.as_ref())
+                .map_err(TorFehler::nicht_pruefbar)?
+        }
+        None => NeuGebunden::default(),
     };
     Ok((paare, neu))
 }
