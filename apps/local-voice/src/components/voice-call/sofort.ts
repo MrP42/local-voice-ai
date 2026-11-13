@@ -7,6 +7,12 @@ import { istFloskel } from "./ueberbrueckung";
 // („WEITER:“), während das große Modell (Denker) im Hintergrund arbeitet. Wer zuerst Inhalt liefert,
 // gewinnt: Kommt der Denker vor der Entscheidung des Sprechers, wird der Sprecher verworfen.
 // Reine Logik ohne Tauri-Aufrufe (Test: scripts/sofort.test.mjs); die Aufrufe stehen in der Engine.
+//
+// Offener Auftrag (ADR-0028 E4.2c 7(e)): Hat der Sprecher „WEITER“ gesagt und liefert der Denker noch nichts,
+// beendet eine weitere Äußerung nur den Vordergrund; der Denker-Lauf bleibt ein offener Auftrag. Die neue
+// Äußerung geht dann zuerst allein an den Sprecher, mit dem Block „offener Suchauftrag“ (`auftragsBlock`):
+// „ANTWORT“ (Auftrag bleibt), „SUCHE“ (Auftrag ersetzt) oder „ABBRUCH“ (Auftrag verworfen). Der Block geht
+// nur an das lokale Modell, nie an einen Denker.
 
 /** Höchstwartezeit auf die Entscheidung des Sprechers; danach gilt nur der Denker. */
 export const SOFORT_MAX_MS = 4000;
@@ -56,28 +62,42 @@ export type SofortEntscheid =
   | { art: "antwort"; text: string }
   /** Kurz weitersprechen (`text` darf leer sein); der Denker liefert danach. */
   | { art: "weiter"; text: string }
+  /** Nur mit offenem Auftrag: Ergänzung, Korrektur oder neue Inhaltsfrage (`text` darf leer sein). */
+  | { art: "suche"; text: string }
+  /** Nur mit offenem Auftrag: die Suche ist nicht mehr gewollt (`text` darf leer sein). */
+  | { art: "abbruch"; text: string }
   /** Unbrauchbar (leer, Format verfehlt, zu lang): nur der Denker gilt. */
   | { art: "nichts" };
 
 const MARKE =
-  /^\s*[*_"„“'`]*\s*(ANTWORT|WEITER)\s*[*_"“”'`]*\s*[:：]\s*[*_"“”'`]*\s*/i;
+  /^\s*[*_"„“'`]*\s*(ANTWORT|WEITER|SUCHE|ABBRUCH)\s*[*_"“”'`]*\s*[:：]\s*[*_"“”'`]*\s*/i;
 
-/** Liest die Zeile des Sprechers. Ohne Marke gilt sie nicht (lieber Stille als ein falscher Ton). */
-export function liesSofort(roh: string): SofortEntscheid {
+/**
+ * Liest die Zeile des Sprechers. Ohne Marke gilt sie nicht (lieber Stille als ein falscher Ton).
+ * `auftragOffen`: „SUCHE“ und „ABBRUCH“ gelten nur, wenn ein Auftrag offen ist (sonst `nichts`); dann
+ * gilt „WEITER“ nicht (der Sprecher kennt es in diesem Fall nicht).
+ */
+export function liesSofort(roh: string, auftragOffen = false): SofortEntscheid {
   const zeile = roh.replace(/\s+/g, " ").trim();
   const m = MARKE.exec(zeile);
   if (!m) return { art: "nichts" };
+  const marke = m[1].toUpperCase();
+  const auftragsMarke = marke === "SUCHE" || marke === "ABBRUCH";
+  if (auftragsMarke && !auftragOffen) return { art: "nichts" };
+  if (marke === "WEITER" && auftragOffen) return { art: "nichts" };
   const text = zeile
     .slice(m[0].length)
     // Eine zweite Marke (das Modell hat beide Fälle geschrieben) schneidet ab: nur in Großbuchstaben
     // und am Satzanfang, damit „Es heißt Weiter: …“ im Inhalt ganz bleibt.
-    .split(/(?:^|(?<=[.!?…])\s+)(?:ANTWORT|WEITER)\s*[:：]/)[0]
+    .split(/(?:^|(?<=[.!?…])\s+)(?:ANTWORT|WEITER|SUCHE|ABBRUCH)\s*[:：]/)[0]
     .trim();
   if (text.length > SOFORT_MAX_ZEICHEN) return { art: "nichts" };
   // Feste Floskeln („Ich denke kurz nach.“) sind nie eine Reaktion: lieber Stille.
   if (text && istFloskel(text)) return { art: "nichts" };
-  if (m[1].toUpperCase() === "ANTWORT")
+  if (marke === "ANTWORT")
     return text ? { art: "antwort", text } : { art: "nichts" };
+  if (marke === "SUCHE") return { art: "suche", text };
+  if (marke === "ABBRUCH") return { art: "abbruch", text };
   return { art: "weiter", text };
 }
 
@@ -111,6 +131,85 @@ export function wendeAn(
       denkerAbbrechen: false,
     };
   return { zustand: "denker", sagen: "", denkerAbbrechen: false };
+}
+
+/** Höchstlänge der ursprünglichen Frage im Block „offener Suchauftrag“ (Zeichen). */
+export const AUFTRAG_FRAGE_MAX = 400;
+
+const BLOCK: Record<Sprache, (frage: string, ergebnis: string) => string> = {
+  de: (frage, ergebnis) =>
+    [
+      `Offener Suchauftrag: Das gründlichere Modell sucht noch zu dieser Frage: „${frage}“. Ergebnis liegt vor: ${ergebnis}.`,
+      "Die neue Äußerung des Gesprächspartners kann damit zusammenhängen. Schreibe genau eine Zeile ohne Markdown",
+      "und beginne mit genau einer Marke („WEITER:“ gibt es hier nicht):",
+      "- „ANTWORT:“ und eine kurze Antwort in höchstens zwei gesprochenen Sätzen, wenn die Äußerung etwas",
+      "  Eigenständiges ist, das du sicher ohne Nachschlagen beantworten kannst (Begrüßung, Dank, Smalltalk,",
+      "  Frage nach dem Stand). Die Suche läuft weiter.",
+      "- „SUCHE:“ (optional ein kurzer, natürlicher Satz dahinter), wenn die Äußerung die Frage ergänzt oder",
+      "  korrigiert oder eine neue Frage zu den eigenen Inhalten, aktuellen Daten oder Fakten stellt, bei denen",
+      "  du unsicher bist. Die alte Suche wird dann verworfen und neu gesucht.",
+      "- „ABBRUCH:“ (optional eine kurze Bestätigung dahinter), wenn der Gesprächspartner die Suche nicht mehr will.",
+      "Du kennst das Ergebnis nicht: sage nichts darüber und erfinde nichts. Keine Floskeln wie „Moment“ oder",
+      "„Ich schaue nach“.",
+    ].join("\n"),
+  en: (frage, ergebnis) =>
+    [
+      `Open search job: The more thorough model is still searching for this question: “${frage}”. Result available: ${ergebnis}.`,
+      "The other person's new utterance may be related. Write exactly one line without markdown and start with",
+      "exactly one marker (“WEITER:” does not exist here):",
+      "- “ANTWORT:” and a short answer in at most two spoken sentences if the utterance is something",
+      "  self-contained that you can answer reliably without looking anything up (greeting, thanks, small talk,",
+      "  asking for the status). The search keeps running.",
+      "- “SUCHE:” (optionally one short, natural sentence after it) if the utterance adds to or corrects the",
+      "  question or asks a new question about the user's own content, current data or facts you are unsure of.",
+      "  The old search is then dropped and started again.",
+      "- “ABBRUCH:” (optionally a short confirmation after it) if the other person no longer wants the search.",
+      "You do not know the result: say nothing about it and invent nothing. No filler such as “one moment” or",
+      "“let me check”.",
+    ].join("\n"),
+};
+
+/**
+ * Systemblock „offener Suchauftrag“ für den Sprecher: ursprüngliche Frage und ob ein Ergebnis da ist
+ * (ja/nein, nie dessen Inhalt). Er geht nur an das lokale Modell.
+ */
+export function auftragsBlock(
+  frage: string,
+  ergebnisDa: boolean,
+  sprache: Sprache,
+): string {
+  const f = frage.replace(/\s+/g, " ").trim();
+  const kurz =
+    f.length > AUFTRAG_FRAGE_MAX ? `${f.slice(0, AUFTRAG_FRAGE_MAX)}…` : f;
+  const ja = sprache === "de" ? "ja" : "yes";
+  const nein = sprache === "de" ? "nein" : "no";
+  return BLOCK[sprache](kurz, ergebnisDa ? ja : nein);
+}
+
+/** Entscheidung des Sprechers bei offenem Auftrag, bereinigt um die Datenabsicht. */
+export type AuftragEntscheid =
+  /** Kurze Antwort auf die neue Äußerung; der Auftrag bleibt. */
+  | { art: "antwort"; sagen: string }
+  /** Der Auftrag wird verworfen, für die neue Äußerung startet ein neuer Denker (`sagen` darf leer sein). */
+  | { art: "suche"; sagen: string }
+  /** Der Auftrag wird verworfen, nichts Neues startet (`sagen`: Bestätigung, darf leer sein). */
+  | { art: "abbruch"; sagen: string };
+
+/**
+ * Entscheidung des Sprechers bei offenem Auftrag anwenden (keine Heuristik, die Marke entscheidet).
+ * Unbrauchbare Zeile, Floskel, Fehler und Zeitüberschreitung (`nichts`) gelten wie „SUCHE“. Bei
+ * Datenabsicht der Einstufung gilt jede Marke wie „SUCHE“ ohne Text (der Sprecher sagt bei Datenabsicht
+ * nichts, wie bei `wendeAn`): die neue Äußerung ist eine Datenfrage und gehört dem Denker.
+ */
+export function wendeAuftragAn(
+  e: SofortEntscheid,
+  datenAbsicht: boolean,
+): AuftragEntscheid {
+  if (datenAbsicht) return { art: "suche", sagen: "" };
+  if (e.art === "antwort") return { art: "antwort", sagen: e.text };
+  if (e.art === "abbruch") return { art: "abbruch", sagen: e.text };
+  if (e.art === "suche") return { art: "suche", sagen: e.text };
+  return { art: "suche", sagen: "" };
 }
 
 /** Modell, wie die Orchestrierung es beschreibt (nur die hier nötigen Felder). */
