@@ -5219,6 +5219,123 @@
       "unbekannt": [
         "K"
       ]
+    },
+    {
+      "name": "Unicode: zwei kanonisch gleiche Zusatzschluessel tragen beide ihren Wert",
+      "vorlage": "{{\u00e9}}|{{e\u0301}}",
+      "sprache": "de",
+      "werte": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13,
+        "wochentag": 5,
+        "stunde": 20,
+        "minute": 5,
+        "extra": {
+          "\u00e9": "A",
+          "e\u0301": "B"
+        }
+      },
+      "erwartet": "A|B",
+      "unbekannt": []
+    },
+    {
+      "name": "Unicode: Zusatzschluessel in umgekehrter Reihenfolge, gleiches Ergebnis",
+      "vorlage": "{{\u00e9}}|{{e\u0301}}",
+      "sprache": "de",
+      "werte": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13,
+        "wochentag": 5,
+        "stunde": 20,
+        "minute": 5,
+        "extra": {
+          "e\u0301": "B",
+          "\u00e9": "A"
+        }
+      },
+      "erwartet": "A|B",
+      "unbekannt": []
+    },
+    {
+      "name": "Unicode: nur der zerlegte Zusatzschluessel, der zusammengesetzte Platzhalter ist unbekannt",
+      "vorlage": "x {{\u00e9}}!",
+      "sprache": "de",
+      "werte": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13,
+        "wochentag": 5,
+        "stunde": 20,
+        "minute": 5,
+        "extra": {
+          "e\u0301": "B"
+        }
+      },
+      "erwartet": "x!",
+      "unbekannt": [
+        "\u00e9"
+      ]
+    },
+    {
+      "name": "Unicode: nur der zusammengesetzte Zusatzschluessel, der zerlegte Platzhalter ist unbekannt",
+      "vorlage": "x {{e\u0301}}!",
+      "sprache": "de",
+      "werte": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13,
+        "wochentag": 5,
+        "stunde": 20,
+        "minute": 5,
+        "extra": {
+          "\u00e9": "A"
+        }
+      },
+      "erwartet": "x!",
+      "unbekannt": [
+        "e\u0301"
+      ]
+    },
+    {
+      "name": "Platzhaltername __proto__, constructor, toString ohne Zusatzwert ist unbekannt",
+      "vorlage": "a {{__proto__}} b {{constructor}} c {{toString}}.",
+      "sprache": "de",
+      "werte": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13,
+        "wochentag": 5,
+        "stunde": 20,
+        "minute": 5
+      },
+      "erwartet": "a b c.",
+      "unbekannt": [
+        "__proto__",
+        "constructor",
+        "toString"
+      ]
+    },
+    {
+      "name": "Platzhaltername __proto__, constructor, toString mit Zusatzwert wird ersetzt",
+      "vorlage": "a {{__proto__}} b {{constructor}} c {{toString}}.",
+      "sprache": "de",
+      "werte": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13,
+        "wochentag": 5,
+        "stunde": 20,
+        "minute": 5,
+        "extra": {
+          "__proto__": "P",
+          "constructor": "C",
+          "toString": "T"
+        }
+      },
+      "erwartet": "a P b C c T.",
+      "unbekannt": []
     }
   ],
   "rollenblock": [

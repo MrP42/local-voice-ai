@@ -5,6 +5,22 @@ import Foundation
 // Rollenblocks in die vorhandenen Prompts kommt in einem späteren Paket. Alle Vergleiche von Nutzertext sind genau (UTF-8-Bytes,
 // siehe `AssistantExact`): `{{é}}` (ein Codepunkt) trifft keinen Zusatzwert mit dem Schlüssel `é` (e + U+0301).
 
+/// Ein Zusatzwert für einen Platzhalter. Schlüssel und Wert gelten genau (UTF-8-Bytes); zwei kanonisch gleiche Schlüssel
+/// (`é` und `e` + U+0301) sind zwei Schlüssel.
+public struct AssistantPlaceholderExtra: Equatable, Sendable {
+    public let key: String
+    public let value: String
+
+    public init(key: String, value: String) {
+        self.key = key
+        self.value = value
+    }
+
+    public static func == (a: AssistantPlaceholderExtra, b: AssistantPlaceholderExtra) -> Bool {
+        AssistantExact.equal(a.key, b.key) && AssistantExact.equal(a.value, b.value)
+    }
+}
+
 /// Kalenderfelder und Werte für die Platzhalter. Keine Zeitzonenlogik: der Aufrufer liefert die Ortszeit des Nutzers.
 public struct AssistantPlaceholderValues: Equatable, Sendable {
     /// Name des Nutzers; leer oder `nil` heißt: kein Name (es wird nie ein Ersatzname eingesetzt).
@@ -20,18 +36,28 @@ public struct AssistantPlaceholderValues: Equatable, Sendable {
     public var hour: Int
     /// 0...59
     public var minute: Int
-    /// Weitere Platzhalter (für spätere Schnittstellen); die eingebauten gehen vor.
-    public var extra: [String: String]
+    /// Weitere Platzhalter (für spätere Schnittstellen); die eingebauten gehen vor. Eine geordnete Liste von Paaren, kein
+    /// `[String: String]`: ein Swift-Dictionary führt kanonisch gleiche Schlüssel schon beim Einfügen zusammen. Bei bytegleichem
+    /// Schlüssel mehrfach gilt der letzte Eintrag (wie bei doppelten Schlüsseln im JSON).
+    public var extra: [AssistantPlaceholderExtra]
 
-    /// Gleichheit mit genauem Textvergleich (UTF-8-Bytes) für Name, Zusatzschlüssel und Zusatzwerte.
-    public static func == (a: AssistantPlaceholderValues, b: AssistantPlaceholderValues) -> Bool {
-        guard AssistantExact.equal(a.name, b.name), a.year == b.year, a.month == b.month, a.day == b.day, a.weekday == b.weekday,
-              a.hour == b.hour, a.minute == b.minute, a.extra.count == b.extra.count else { return false }
-        let other = Dictionary(b.extra.map { (AssistantExactKey($0.key), $0.value) }, uniquingKeysWith: { first, _ in first })
-        return a.extra.allSatisfy { entry in other[AssistantExactKey(entry.key)].map { AssistantExact.equal($0, entry.value) } ?? false }
+    /// Die wirksame Zuordnung der Zusatzwerte (bytegenauer Schlüssel, bei Dubletten der letzte Eintrag).
+    func effectiveExtra() -> [AssistantExactKey: String] {
+        Dictionary(extra.map { (AssistantExactKey($0.key), $0.value) }, uniquingKeysWith: { _, last in last })
     }
 
-    public init(name: String? = nil, year: Int, month: Int, day: Int, weekday: Int, hour: Int, minute: Int, extra: [String: String] = [:]) {
+    /// Gleichheit mit genauem Textvergleich (UTF-8-Bytes) für Name und die wirksame Zuordnung der Zusatzwerte (Reihenfolge und
+    /// überholte Dubletten zählen nicht).
+    public static func == (a: AssistantPlaceholderValues, b: AssistantPlaceholderValues) -> Bool {
+        guard AssistantExact.equal(a.name, b.name), a.year == b.year, a.month == b.month, a.day == b.day, a.weekday == b.weekday,
+              a.hour == b.hour, a.minute == b.minute else { return false }
+        let mine = a.effectiveExtra()
+        let other = b.effectiveExtra()
+        guard mine.count == other.count else { return false }
+        return mine.allSatisfy { entry in other[entry.key].map { AssistantExact.equal($0, entry.value) } ?? false }
+    }
+
+    public init(name: String? = nil, year: Int, month: Int, day: Int, weekday: Int, hour: Int, minute: Int, extra: [AssistantPlaceholderExtra] = []) {
         self.name = name
         self.year = year
         self.month = month
@@ -150,7 +176,7 @@ public enum AssistantProfileText {
         var out: [Int] = []
         var unknown: [String] = []
         var unknownSeen = Set<AssistantExactKey>()
-        let extras = Dictionary(values.extra.map { (AssistantExactKey($0.key), $0.value) }, uniquingKeysWith: { first, _ in first })
+        let extras = values.effectiveExtra()
         var removed = false
         var i = 0
         while i < s.count {
