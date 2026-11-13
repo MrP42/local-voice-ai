@@ -246,21 +246,31 @@ fn cache_schluessel(url: &str) -> String {
 /// Der Weg für `url`. Blockiert ggf. (PAC-Auswertung); aus async-Code
 /// [`weg_fuer_async`] nehmen.
 pub fn weg_fuer(url: &str) -> Weg {
-    // Lokale Ziele (Tests, lokale Dienste) gehen nie über einen Proxy, auch
-    // nicht über einen aus der Umgebung.
+    vorentscheidung(url).unwrap_or_else(|| systemweg_gecacht(url))
+}
+
+/// Was ohne Systemauflösung feststeht, und zwar verbindlich: lokale Ziele nie
+/// über einen Proxy (auch nicht aus der Umgebung), dann die eigene Einstellung,
+/// dann die Umgebungsvariablen. `None` = der Systemresolver entscheidet.
+fn vorentscheidung(url: &str) -> Option<Weg> {
     if ist_lokal(url) {
-        return Weg::Direkt;
+        return Some(Weg::Direkt);
     }
     if let Some(p) = eigener() {
-        return if p == "direkt" {
+        return Some(if p == "direkt" {
             Weg::Direkt
         } else {
             Weg::Ueber(p)
-        };
+        });
     }
     if umgebung_gesetzt(|k| std::env::var(k).ok()) {
-        return Weg::Standard;
+        return Some(Weg::Standard);
     }
+    None
+}
+
+/// PAC/WPAD über den Cache; nur aufrufen, wenn [`vorentscheidung`] `None` ist.
+fn systemweg_gecacht(url: &str) -> Weg {
     let schluessel = cache_schluessel(url);
     let generation = GENERATION.load(Ordering::SeqCst);
     if let Ok(cache) = CACHE.lock() {
@@ -285,26 +295,89 @@ pub fn weg_fuer(url: &str) -> Weg {
     weg.unwrap_or(Weg::Standard)
 }
 
-/// [`weg_fuer`] ohne den async-Laufzeitfaden zu blockieren, mit Gesamtfrist
-/// [`SYSTEM_FRIST`] (hängt die PAC-Auswertung, gilt der Standardweg).
+/// [`weg_fuer`] ohne den async-Laufzeitfaden zu blockieren. Die
+/// verbindlichen Entscheidungen (lokal, eigene Einstellung, Umgebung) fallen
+/// vorher und ohne Frist; nur die PAC-/WPAD-Auswertung läuft im
+/// Blocking-Pool mit Gesamtfrist [`SYSTEM_FRIST`] (danach Standardweg).
 pub async fn weg_fuer_async(url: &str) -> Weg {
+    weg_mit(url, SYSTEM_FRIST, systemweg_gecacht).await
+}
+
+async fn weg_mit(url: &str, frist: Duration, system: fn(&str) -> Weg) -> Weg {
+    if let Some(weg) = vorentscheidung(url) {
+        return weg;
+    }
     let url = url.to_string();
-    match tokio::time::timeout(
-        SYSTEM_FRIST,
-        tokio::task::spawn_blocking(move || weg_fuer(&url)),
-    )
-    .await
-    {
+    match tokio::time::timeout(frist, tokio::task::spawn_blocking(move || system(&url))).await {
         Ok(Ok(weg)) => weg,
         Ok(Err(_)) => Weg::Standard,
         Err(_) => {
+            // Der Auftrag läuft weiter und trägt sein Ergebnis in den Cache ein;
+            // WinHTTP bietet keinen Abbruch einer laufenden PAC-Auswertung.
             log::warn!(
                 "Proxy-Auswertung dauert über {}s; Standardweg",
-                SYSTEM_FRIST.as_secs()
+                frist.as_secs()
             );
             Weg::Standard
         }
     }
+}
+
+/// Folgt Weiterleitungen per `HEAD` selbst, mit dem für jedes Ziel eigens
+/// bestimmten Weg (PAC kann für Start- und CDN-Adresse verschiedene Proxys
+/// oder DIRECT vorgeben), und liefert die Adresse, die den Inhalt ausliefert.
+/// Endet bei der ersten Antwort ohne Weiterleitung (auch 403/405: signierte
+/// CDN-Adressen erlauben oft nur GET). Netzfehler gehen zurück.
+///
+/// Lokale Startadressen (lokale Dienste, Tests) bleiben unverändert: sie gehen
+/// ohnehin direkt, und ihre Weiterleitungen regelt [`weiterleitungen`].
+pub async fn endziel(url: &str) -> anyhow::Result<String> {
+    if ist_lokal(url) {
+        return Ok(url.to_string());
+    }
+    endziel_mit(url, |u| Box::pin(weg_fuer_async_owned(u))).await
+}
+
+async fn weg_fuer_async_owned(url: String) -> Weg {
+    weg_fuer_async(&url).await
+}
+
+type WegFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Weg> + Send>>;
+
+async fn endziel_mit(url: &str, weg: impl Fn(String) -> WegFuture) -> anyhow::Result<String> {
+    let mut aktuell = url::Url::parse(url)?;
+    let mut bisher: Vec<String> = Vec::new();
+    for _ in 0..10 {
+        let w = weg(aktuell.to_string()).await;
+        let client = anwenden(reqwest::Client::builder(), &w)
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(30))
+            .build()?;
+        let antwort = client.head(aktuell.clone()).send().await?;
+        if !antwort.status().is_redirection() {
+            return Ok(aktuell.to_string());
+        }
+        let Some(ort) = antwort
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+        else {
+            return Ok(aktuell.to_string());
+        };
+        let naechste = aktuell.join(ort)?;
+        if !matches!(naechste.scheme(), "http" | "https")
+            || (aktuell.scheme() == "https" && naechste.scheme() == "http")
+        {
+            anyhow::bail!("Weiterleitung auf ein unzulässiges Schema abgelehnt");
+        }
+        bisher.push(aktuell.to_string());
+        if !weiterleitung_erlaubt(bisher.iter().map(String::as_str), naechste.as_str()) {
+            anyhow::bail!("Weiterleitung auf ein lokales Ziel abgelehnt");
+        }
+        aktuell = naechste;
+    }
+    anyhow::bail!("zu viele Weiterleitungen")
 }
 
 /// Wendet `weg` auf einen Client-Bauplan an. Eine Adresse, die reqwest nicht
@@ -577,72 +650,183 @@ mod tests {
         );
     }
 
-    /// Ein Mini-Proxy, der die erste Anfragezeile zurückmeldet und 502 antwortet.
-    async fn mini_proxy() -> (String, tokio::sync::oneshot::Receiver<String>) {
+    /// Testserver (auch als Proxy nutzbar): merkt sich die erste Zeile jeder
+    /// Anfrage und antwortet immer mit `antwort` (vollständige HTTP-Antwort).
+    async fn testserver(antwort: String) -> (String, std::sync::Arc<Mutex<Vec<String>>>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let adresse = format!("http://{}", listener.local_addr().unwrap());
-        let (tx, rx) = tokio::sync::oneshot::channel();
+        let gesehen = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let log = gesehen.clone();
         tokio::spawn(async move {
-            if let Ok((mut sock, _)) = listener.accept().await {
-                let mut buf = vec![0u8; 2048];
+            while let Ok((mut sock, _)) = listener.accept().await {
+                let mut buf = vec![0u8; 4096];
                 let n = sock.read(&mut buf).await.unwrap_or(0);
                 let zeile = String::from_utf8_lossy(&buf[..n])
                     .lines()
                     .next()
                     .unwrap_or("")
                     .to_string();
-                let _ = tx.send(zeile);
-                let _ = sock
-                    .write_all(b"HTTP/1.1 502 Bad Gateway\r\ncontent-length: 0\r\n\r\n")
-                    .await;
+                log.lock().unwrap().push(zeile);
+                let _ = sock.write_all(antwort.as_bytes()).await;
             }
         });
-        (adresse, rx)
+        (adresse, gesehen)
     }
+
+    fn antwort(status: &str, kopf: &str) -> String {
+        format!("HTTP/1.1 {status}\r\n{kopf}content-length: 0\r\nconnection: close\r\n\r\n")
+    }
+
+    fn gesehen(log: &std::sync::Arc<Mutex<Vec<String>>>) -> Vec<String> {
+        log.lock().unwrap().clone()
+    }
+
+    const FRIST: Duration = Duration::from_secs(10);
 
     #[tokio::test]
     async fn ueber_proxy_geht_entfernt_ueber_proxy() {
-        let (proxy, zeile) = mini_proxy().await;
+        let (proxy, log) = testserver(antwort("502 Bad Gateway", "")).await;
         let client = anwenden(reqwest::Client::builder(), &Weg::Ueber(proxy))
             .build()
             .unwrap();
-        let antwort = client
-            .get("http://modell.example.org/datei")
-            .send()
+        let r = tokio::time::timeout(FRIST, client.get("http://modell.example.org/datei").send())
             .await
+            .unwrap()
             .unwrap();
-        assert_eq!(antwort.status().as_u16(), 502);
+        assert_eq!(r.status().as_u16(), 502);
         assert_eq!(
-            zeile.await.unwrap(),
-            "GET http://modell.example.org/datei HTTP/1.1"
+            gesehen(&log),
+            ["GET http://modell.example.org/datei HTTP/1.1"]
         );
     }
 
     #[tokio::test]
     async fn ueber_proxy_laesst_lokale_ziele_direkt() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let (proxy, mut zeile) = mini_proxy().await;
-        let ziel = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let ziel_url = format!("http://{}/lokal", ziel.local_addr().unwrap());
-        tokio::spawn(async move {
-            if let Ok((mut sock, _)) = ziel.accept().await {
-                let mut buf = vec![0u8; 2048];
-                let _ = sock.read(&mut buf).await;
-                let _ = sock
-                    .write_all(b"HTTP/1.1 204 No Content\r\ncontent-length: 0\r\n\r\n")
-                    .await;
-            }
-        });
+        let (proxy, proxy_log) = testserver(antwort("502 Bad Gateway", "")).await;
+        let (ziel, ziel_log) = testserver(antwort("204 No Content", "")).await;
         let client = anwenden(reqwest::Client::builder(), &Weg::Ueber(proxy))
             .build()
             .unwrap();
-        let antwort = client.get(&ziel_url).send().await.unwrap();
-        assert_eq!(antwort.status().as_u16(), 204);
+        let r = tokio::time::timeout(FRIST, client.get(format!("{ziel}/lokal")).send())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 204);
+        assert_eq!(gesehen(&ziel_log), ["GET /lokal HTTP/1.1"]);
         assert!(
-            zeile.try_recv().is_err(),
-            "der Proxy darf nichts gesehen haben"
+            gesehen(&proxy_log).is_empty(),
+            "der Proxy darf nichts sehen"
         );
+    }
+
+    fn langsamer_resolver(_: &str) -> Weg {
+        std::thread::sleep(Duration::from_millis(500));
+        Weg::Ueber("http://falsch.example.org:1".into())
+    }
+
+    /// R2-B1: Hängt der Systemresolver, bleiben lokal und „direkt“ verbindlich.
+    #[tokio::test]
+    // Die Sperre ordnet nur Tests nacheinander; `weg_mit` kehrt bei „direkt“
+    // ohne Warten zurück.
+    #[allow(clippy::await_holding_lock)]
+    async fn resolverfrist_hebt_lokal_und_direkt_nicht_auf() {
+        let kurz = Duration::from_millis(20);
+        for lokal in [
+            "http://127.0.0.1:9/",
+            "http://[::1]/",
+            "http://169.254.1.1/",
+        ] {
+            assert_eq!(weg_mit(lokal, kurz, langsamer_resolver).await, Weg::Direkt);
+        }
+        {
+            let _sperre = EIGENER_SPERRE.lock().unwrap_or_else(|e| e.into_inner());
+            setze_eigenen(Some("direkt"));
+            let weg = weg_mit("https://huggingface.co/x", kurz, langsamer_resolver).await;
+            setze_eigenen(None);
+            assert_eq!(weg, Weg::Direkt);
+        }
+    }
+
+    /// R2-B3: Jeder Schritt einer Weiterleitung bekommt seinen eigenen Weg.
+    #[tokio::test]
+    async fn endziel_nimmt_je_ziel_den_eigenen_weg() {
+        let (proxy_b, log_b) = testserver(antwort("200 OK", "")).await;
+        let (proxy_a, log_a) = testserver(antwort(
+            "302 Found",
+            "location: http://cdn.example.org/x?sig=1\r\n",
+        ))
+        .await;
+        let (a, b) = (proxy_a.clone(), proxy_b.clone());
+        let weg = move |u: String| -> WegFuture {
+            let w = if u.starts_with("http://start.example.org/") {
+                Weg::Ueber(a.clone())
+            } else {
+                Weg::Ueber(b.clone())
+            };
+            Box::pin(async move { w })
+        };
+        let ende = tokio::time::timeout(FRIST, endziel_mit("http://start.example.org/m", weg))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(ende, "http://cdn.example.org/x?sig=1");
+        assert_eq!(
+            gesehen(&log_a),
+            ["HEAD http://start.example.org/m HTTP/1.1"]
+        );
+        assert_eq!(
+            gesehen(&log_b),
+            ["HEAD http://cdn.example.org/x?sig=1 HTTP/1.1"]
+        );
+    }
+
+    /// Start DIRECT (hier: lokaler Server), CDN nur über Proxy erreichbar.
+    #[tokio::test]
+    async fn endziel_start_direkt_cdn_ueber_proxy() {
+        let (proxy, proxy_log) = testserver(antwort("200 OK", "")).await;
+        let (start, start_log) = testserver(antwort(
+            "302 Found",
+            "location: http://cdn.example.org/y\r\n",
+        ))
+        .await;
+        let p = proxy.clone();
+        let weg = move |u: String| -> WegFuture {
+            let w = if ist_lokal(&u) {
+                Weg::Direkt
+            } else {
+                Weg::Ueber(p.clone())
+            };
+            Box::pin(async move { w })
+        };
+        let ende = tokio::time::timeout(FRIST, endziel_mit(&format!("{start}/m"), weg))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(ende, "http://cdn.example.org/y");
+        assert_eq!(gesehen(&start_log), ["HEAD /m HTTP/1.1"]);
+        assert_eq!(
+            gesehen(&proxy_log),
+            ["HEAD http://cdn.example.org/y HTTP/1.1"]
+        );
+    }
+
+    #[tokio::test]
+    async fn endziel_lehnt_entfernt_nach_lokal_ab() {
+        let (proxy, _) = testserver(antwort(
+            "302 Found",
+            "location: http://127.0.0.1:1/geheim\r\n",
+        ))
+        .await;
+        let weg = move |_u: String| -> WegFuture {
+            let w = Weg::Ueber(proxy.clone());
+            Box::pin(async move { w })
+        };
+        let fehler = tokio::time::timeout(FRIST, endziel_mit("http://start.example.org/m", weg))
+            .await
+            .unwrap()
+            .unwrap_err();
+        assert!(fehler.to_string().contains("lokales Ziel"), "{fehler}");
     }
 
     #[test]

@@ -408,9 +408,12 @@ export const useModelStore = create<ModelsStore>()(
         );
         stopWaitingCountdown(p.model_id);
         const id = waitingToastId(p.model_id);
-        const title = i18n.t(`modelSelector.download.fault.${p.kind}`, {
-          defaultValue: p.message,
-        });
+        // Während des Wartens kein „bitte neu starten“: eigener Wartetitel.
+        const title = i18n.t(
+          p.kind === "dns"
+            ? "modelSelector.download.waitingTitleDns"
+            : "modelSelector.download.waitingTitle",
+        );
         const until = Date.now() + p.retry_in_secs * 1000;
         const show = () => {
           const seconds = Math.max(0, Math.ceil((until - Date.now()) / 1000));

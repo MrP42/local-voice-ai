@@ -2221,7 +2221,11 @@ impl ModelManager {
             }
             let mut completed = false;
             for mirror in &mirrors {
-                info!("Falling back to mirror for {}: {}", model_id, mirror.url);
+                info!(
+                    "Falling back to mirror for {}: {}",
+                    model_id,
+                    crate::netz::fehler::schwaerzen(&mirror.url)
+                );
                 match self
                     .download_from_mirror(&model_id, &filename, mirror, cancel_token.clone())
                     .await
@@ -2238,7 +2242,7 @@ impl ModelManager {
                         warn!(
                             "Mirror download failed for {} from {}: {}",
                             model_id,
-                            mirror.url,
+                            crate::netz::fehler::schwaerzen(&mirror.url),
                             crate::netz::fehler::schwaerzen(&format!("{:?}", e))
                         );
                     }

@@ -43,37 +43,26 @@ pub async fn download_model(
     model_manager: State<'_, Arc<ModelManager>>,
     model_id: String,
 ) -> Result<(), String> {
-    let result = model_manager
-        .download_model_mit_warten(&model_id)
-        .await
-        // lva#573: nie Zugangsdaten oder URL-Token in Log, Event oder Befehlsfehler.
-        .map_err(|e| crate::netz::fehler::schwaerzen(&format!("{:#}", e)));
-
-    match result {
-        Ok(()) => Ok(()),
-        Err(detail) => {
-            // Log as well as emit: the toast is transient, and failed downloads have
-            // historically been undiagnosable because logs showed nothing (#1579).
-            error!("Model download failed for {}: {}", model_id, detail);
-            // lva#573: verständliche Meldung statt Rohfehler; Rohtext nur als Details.
-            let art = crate::netz::fehler::einordnen(&detail);
-            let meldung = if art.ist_netz() {
-                art.meldung().to_string()
-            } else {
-                detail.clone()
-            };
-            let _ = app_handle.emit(
-                "model-download-failed",
-                serde_json::json!({
-                    "model_id": &model_id,
-                    "error": &meldung,
-                    "kind": art.code(),
-                    "detail": &detail,
-                }),
-            );
-            Err(meldung)
-        }
-    }
+    let result = model_manager.download_model_mit_warten(&model_id).await;
+    let Err(fehler) = result else {
+        return Ok(());
+    };
+    // lva#573: Alles, was nach außen geht (Log, Event, Befehlsfehler), stammt
+    // aus dem geschwärzten Text; Netzfehler bekommen eine deutsche Meldung.
+    let a = crate::netz::fehler::ausgabe(&format!("{:#}", fehler));
+    // Log as well as emit: the toast is transient, and failed downloads have
+    // historically been undiagnosable because logs showed nothing (#1579).
+    error!("Model download failed for {}: {}", model_id, a.detail);
+    let _ = app_handle.emit(
+        "model-download-failed",
+        serde_json::json!({
+            "model_id": &model_id,
+            "error": &a.meldung,
+            "kind": a.code,
+            "detail": &a.detail,
+        }),
+    );
+    Err(a.meldung)
 }
 
 #[tauri::command]

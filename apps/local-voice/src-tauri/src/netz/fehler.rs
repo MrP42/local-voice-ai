@@ -98,11 +98,11 @@ pub fn schwaerzen(text: &str) -> String {
     use regex::Regex;
     use std::sync::LazyLock;
     static URL: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"(?i)\b([a-z][a-z0-9+.-]*://)([^\s"'<>()\[\]{}]+)"#).expect("URL-Muster")
+        Regex::new(r#"(?i)\b([a-z][a-z0-9+.-]*://)([^\s"'<>(){}]+)"#).expect("URL-Muster")
     });
     static PAAR: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
-            r#"(?i)\b((?:access_|auth_|api_|refresh_|id_)?token|signature|sig|x-amz-signature|x-amz-credential|key|api_key|apikey|password|passwort|secret|credential)(\s*[=:]\s*)("?)[^\s"&,;)]+"#,
+            r#"(?i)\b((?:access_|auth_|api_|refresh_|id_)?token|signature|sig|x-amz-signature|x-amz-credential|key|api_key|apikey|password|passwort|secret|client_secret|private_key|credential|auth|authorization|proxy-authorization|cookie|session(?:_?id)?)(\s*[=:]\s*)("?)[^\s"&,;)]+"#,
         )
         .expect("Paar-Muster")
     });
@@ -127,8 +127,38 @@ pub fn schwaerzen(text: &str) -> String {
         };
         format!("{schema}{authority}{pfad}")
     });
-    let ohne_paare = PAAR.replace_all(&ohne_urls, "$1$2$3…");
-    BEARER.replace_all(&ohne_paare, "$1$2 …").into_owned()
+    // Erst Bearer/Basic (sonst bliebe nach „Authorization: …“ der Wert stehen),
+    // dann die Paare.
+    let ohne_bearer = BEARER.replace_all(&ohne_urls, "$1$2 …");
+    PAAR.replace_all(&ohne_bearer, "$1$2$3…").into_owned()
+}
+
+/// Was ein gescheiterter Download nach außen gibt (Log, Event, Befehlsfehler):
+/// alles aus dem geschwärzten Rohtext, nie aus dem ungeschwärzten.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ausgabe {
+    /// Meldung für den Nutzer (bei Netzfehlern deutsch, sonst der geschwärzte Text).
+    pub meldung: String,
+    /// [`Netzfehler::code`].
+    pub code: &'static str,
+    /// Geschwärzter Rohtext für „Details“ und Log.
+    pub detail: String,
+}
+
+/// Baut die [`Ausgabe`] aus dem Rohtext einer Fehlerkette (`{:#}`).
+pub fn ausgabe(roh: &str) -> Ausgabe {
+    let detail = schwaerzen(roh);
+    let art = einordnen(&detail);
+    let meldung = if art.ist_netz() {
+        art.meldung().to_string()
+    } else {
+        detail.clone()
+    };
+    Ausgabe {
+        meldung,
+        code: art.code(),
+        detail,
+    }
 }
 
 /// Ordnet einen Fehlertext (am besten `format!("{:#}", err)` bzw. `{:?}`) ein.
@@ -285,6 +315,41 @@ mod tests {
             Netzfehler::NameNichtAufloesbar
         );
         assert!(schwaerzen(BEFUND).contains("https://huggingface.co/handy-computer/"));
+    }
+
+    /// R2-B2: IPv6-Adressen, `auth=` und Kopfzeilen dürfen in keinem
+    /// Ausgabefeld landen – auch nicht bei Fehlern ohne Netzbezug.
+    #[test]
+    fn ausgabe_ist_in_allen_feldern_geheimnisfrei() {
+        let roh = concat!(
+            "Mirror download failed: error sending request for url ",
+            "(http://[::1]:8080/m.gguf?auth=GEHEIM1): verification failed; ",
+            "file is corrupt; url=http://[fe80::1%25eth0]/x?token=GEHEIM2 ",
+            "auth=GEHEIM3 Authorization: Bearer GEHEIM4 ",
+            "Proxy-Authorization: Basic R0VIRUlNNTpwdw== cookie=GEHEIM6"
+        );
+        let a = ausgabe(roh);
+        for feld in [&a.meldung, &a.detail] {
+            for geheim in [
+                "GEHEIM1",
+                "GEHEIM2",
+                "GEHEIM3",
+                "GEHEIM4",
+                "R0VIRUlNNTpwdw",
+                "GEHEIM6",
+            ] {
+                assert!(!feld.contains(geheim), "{geheim} in {feld}");
+            }
+        }
+        assert!(
+            a.detail.contains("http://[::1]:8080/m.gguf?…"),
+            "{}",
+            a.detail
+        );
+        // Netzfehler: deutsche Meldung, Detail geschwärzt.
+        let b = ausgabe(&format!("{BEFUND} http://[::1]/m?auth=GEHEIM7"));
+        assert_eq!(b.code, "dns");
+        assert!(!b.detail.contains("GEHEIM7") && !b.meldung.contains("GEHEIM7"));
     }
 
     #[test]

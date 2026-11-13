@@ -257,9 +257,27 @@ impl ModelManager {
                 model_id, resume_from
             );
         } else {
-            info!("Starting fresh download of {} from {}", model_id, url);
+            info!(
+                "Starting fresh download of {} from {}",
+                model_id,
+                crate::netz::fehler::schwaerzen(url)
+            );
         }
 
+        // lva#573: Ohne Zugang die Weiterleitungen (z. B. HF -> CDN) vorab
+        // selbst aufloesen, je Ziel mit eigenem Proxyweg (PAC kann fuer Start
+        // und CDN verschiedenes vorgeben); mit Zugang folgt `auth` selbst.
+        let aufgeloest;
+        let url = match auth {
+            Some(_) => url,
+            None => {
+                aufgeloest = tokio::select! {
+                    r = crate::netz::proxy::endziel(url) => r.unwrap_or_else(|_| url.to_string()),
+                    _ = cancel_token.cancelled() => return Ok(HttpDownloadOutcome::Cancelled),
+                };
+                aufgeloest.as_str()
+            }
+        };
         // Proxy wie Windows (PAC/Auto-Erkennung, eigene Einstellung), lva#573.
         let client = crate::netz::proxy::client_fuer(url)
             .await
@@ -286,7 +304,7 @@ impl ModelManager {
             r = tokio::time::timeout(DOWNLOAD_STALL_TIMEOUT, send) => r
                 .map_err(|_| anyhow::anyhow!(
                     "no response within {}s from {}",
-                    DOWNLOAD_STALL_TIMEOUT.as_secs(), url
+                    DOWNLOAD_STALL_TIMEOUT.as_secs(), crate::netz::fehler::schwaerzen(url)
                 ))??,
             _ = cancel_token.cancelled() => return Ok(HttpDownloadOutcome::Cancelled),
         };

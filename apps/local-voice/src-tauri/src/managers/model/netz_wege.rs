@@ -253,7 +253,9 @@ impl ModelManager {
             };
             // Je Modell läuft nur diese Schleife ([`Laufend`]); das Token ist unseres.
             self.cancel_flags.lock().unwrap().remove(model_id);
-            if abgebrochen {
+            // Auch ein Abbruch, der zwischen Warteende und neuem Versuch kam
+            // (Token schon entfernt), beendet die Schleife.
+            if abgebrochen || abbrueche(model_id) != abbrueche_beim_start {
                 info!("Warten auf das Netz für {} abgebrochen", model_id);
                 return Ok(());
             }

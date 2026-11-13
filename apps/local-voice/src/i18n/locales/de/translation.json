@@ -616,6 +616,8 @@
           "phase": {
             "uploading": "Die Aufnahme wird an Gradium übertragen …",
             "waiting": "Gradium erstellt die Stimme …",
+      "waitingTitle": "Keine Verbindung zum Download-Server. Local Voice wartet und versucht es erneut.",
+      "waitingTitleDns": "Hugging Face ist nicht erreichbar (Servername nicht auflösbar). Local Voice wartet und versucht es erneut. Im Firmennetz ggf. Proxy unter Einstellungen › Allgemein eintragen.",
             "downloading": "Die Stimmdatei wird geladen …"
           },
           "overwrite": "Es gibt schon eine eigene Stimme „{{name}}“. Mit „Ersetzen und erstellen“ wird sie überschrieben.",
