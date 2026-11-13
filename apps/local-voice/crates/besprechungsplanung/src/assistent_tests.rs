@@ -997,3 +997,21 @@ fn fingerabdruck_version_passt_zum_praefix() {
     let a = fingerabdruck(&liste(&["a@example.org"]), &eigene(), true);
     assert_eq!(a.len(), 64);
 }
+
+#[test]
+fn ersetzen_einer_person_ohne_adresse_pausiert_nur_ueber_die_revision() {
+    // „Gast A“ → „Gast B“: Unbekannte zählen nur als Anzahl, der Fingerabdruck bleibt gleich.
+    let mut a = offen_intern(Quelle::Lokal);
+    a.teilnehmende = liste(&["a@example.org", "Gast A"]);
+    neu_freigeben(&mut a);
+    let vorher = fp(&a);
+    a.teilnehmende = liste(&["a@example.org", "Gast B"]);
+    assert_eq!(fp(&a), vorher);
+    assert!(
+        pruefen(&a).erlaubt(),
+        "ohne Revision keine Änderung erkennbar"
+    );
+    // Die App erhöht bei jeder beobachteten Änderung die Revision: Pause.
+    a.teilnehmer_revision += 1;
+    assert_eq!(gruende(&pruefen(&a)), vec![Sperrgrund::FreigabeVeraltet]);
+}

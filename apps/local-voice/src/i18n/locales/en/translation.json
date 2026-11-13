@@ -5131,7 +5131,7 @@
         "title": "Release for AI clients",
         "description": "AI clients (MCP server, agents, voice call) only see meetings you release here. The basis is the attendee list of the linked calendar event and your own domains. Older meetings are therefore hidden at first.",
         "ownDomains": "Own domains",
-        "ownDomainsDescription": "Addresses in these domains count as internal. \"example.org\" matches exactly, \"*.example.org\" also matches subdomains. Public mail services and country suffixes such as \"co.at\" are never accepted. Every change revokes existing releases.",
+        "ownDomainsDescription": "Addresses in these domains count as internal. \"example.org\" matches exactly, \"*.example.org\" also matches subdomains. Known public mail services and country suffixes such as \"co.at\" are rejected; the list is not complete, so check your entry. Every change deletes all existing releases.",
         "ownDomainsPlaceholder": "example.org, *.example.org",
         "ownDomainsSave": "Save",
         "ownDomainsSaved": "Saved.",
@@ -5168,9 +5168,12 @@
         "confirmIntern": "Release as internal",
         "confirmExtern": "Confirm with external participants",
         "revoke": "Revoke release",
+        "informed": "The participants have been informed that content of this meeting may go to AI clients.",
+        "loadFailed": "The release state could not be loaded. The meeting stays blocked for AI clients.",
         "errors": {
           "ki_freigabe_veraltet": "The attendees just changed. Please check again.",
           "ki_freigabe_nicht_intern": "Not all attendees are internal.",
+          "ki_freigabe_ohne_information": "Please confirm first that the participants have been informed.",
           "generic": "The release could not be saved."
         }
       }

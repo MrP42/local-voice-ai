@@ -5515,11 +5515,13 @@ async meetingAiReleaseStatus(meetingId: string) : Promise<Result<KiFreigabeStand
 /**
  * Bestaetigt die Einstufung fuer GENAU diese Besprechung und diese Teilnehmerliste. Fehler
  * `ki_freigabe_veraltet` (Liste oder Domaenen haben sich geaendert, neu laden) oder
- * `ki_freigabe_nicht_intern` (die Liste ist nicht intern). Wird sofort gespeichert.
+ * `ki_freigabe_nicht_intern` (die Liste ist nicht intern). `informiert`: Der Nutzer bestätigt,
+ * dass die Teilnehmenden über die Weitergabe an KI-Clients informiert sind; ohne das Fehler
+ * `ki_freigabe_ohne_information`. Wird sofort gespeichert.
  */
-async meetingAiReleaseConfirm(meetingId: string, einstufung: Einstufung, fingerabdruck: string) : Promise<Result<KiFreigabeStand, string>> {
+async meetingAiReleaseConfirm(meetingId: string, einstufung: Einstufung, fingerabdruck: string, informiert: boolean) : Promise<Result<KiFreigabeStand, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meeting_ai_release_confirm", { meetingId, einstufung, fingerabdruck }) };
+    return { status: "ok", data: await TAURI_INVOKE("meeting_ai_release_confirm", { meetingId, einstufung, fingerabdruck, informiert }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -5538,7 +5540,8 @@ async meetingAiReleaseRevoke(meetingId: string) : Promise<Result<KiFreigabeStand
 },
 /**
  * „Eigene Domänen“ speichern: nur die wirksamen Eintraege; die abgelehnten gehen zur Anzeige
- * zurueck. Jede Aenderung macht vorhandene Bestaetigungen ungueltig (Fingerabdruck).
+ * zurueck. Jede wirksame Aenderung LOESCHT alle Bestaetigungen (vor dem Speichern), damit eine
+ * Rueckkehr zu den alten Domaenen keine alte Freigabe reaktiviert (Codex #583).
  */
 async changeMeetingOwnDomainsSetting(domains: string[]) : Promise<Result<EigeneDomaenenBereinigt, string>> {
     try {

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { commands, type KiFreigabeStand } from "@/bindings";
 import { Button } from "../../ui/Button";
@@ -7,7 +7,11 @@ import { Button } from "../../ui/Button";
  * G9a-2 (lva#578, ADR-0031 E2.6–E2.8): Freigabe EINER Besprechung für KI-Clients in den
  * Details. Zeigt die Einstufung laut Termin und die Gründe einer Sperre; bestätigt wird nur
  * diese Besprechung mit dieser Teilnehmerliste (keine Sammelbestätigung). „Als intern
- * freigeben“ gibt es nur, wenn die Liste intern ist.
+ * freigeben“ gibt es nur, wenn die Liste intern ist. Bestätigen setzt die Erklärung voraus,
+ * dass die Teilnehmenden über die Weitergabe an KI-Clients informiert sind.
+ *
+ * Nebenläufigkeit (Codex #583): Beim Wechsel der Besprechung wird der alte Stand verworfen;
+ * eine verspätete Antwort einer früheren Anfrage überschreibt nie den neuen Stand.
  */
 export const MeetingAiRelease: React.FC<{ meetingId: string }> = ({
   meetingId,
@@ -15,17 +19,50 @@ export const MeetingAiRelease: React.FC<{ meetingId: string }> = ({
   const { t } = useTranslation();
   const [stand, setStand] = useState<KiFreigabeStand | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [informed, setInformed] = useState(false);
+  // Jede Anfrage bekommt eine Nummer; nur die Antwort der jüngsten gilt.
+  const generation = useRef(0);
 
   const load = useCallback(async () => {
-    const result = await commands.meetingAiReleaseStatus(meetingId);
-    if (result.status === "ok") setStand(result.data);
+    const mine = ++generation.current;
+    try {
+      const result = await commands.meetingAiReleaseStatus(meetingId);
+      if (mine !== generation.current) return;
+      if (result.status === "ok") {
+        setStand(result.data);
+        setLoadFailed(false);
+      } else {
+        setStand(null);
+        setLoadFailed(true);
+      }
+    } catch {
+      if (mine !== generation.current) return;
+      setStand(null);
+      setLoadFailed(true);
+    }
   }, [meetingId]);
 
   useEffect(() => {
+    setStand(null);
+    setError(null);
+    setLoadFailed(false);
+    setInformed(false);
     void load();
   }, [load]);
 
+  if (loadFailed) {
+    return (
+      <p
+        className="text-amber-700 dark:text-amber-400"
+        role="alert"
+        data-testid="ai-release-load-failed"
+      >
+        {t("meetings.mcp.release.loadFailed")}
+      </p>
+    );
+  }
   if (!stand) return null;
 
   const { ergebnis, entscheidung, bestaetigung } = stand;
@@ -34,7 +71,9 @@ export const MeetingAiRelease: React.FC<{ meetingId: string }> = ({
     entscheidung.ergebnis === "gesperrt" ? entscheidung.gruende : [];
 
   const errorText = (code: string) =>
-    code === "ki_freigabe_veraltet" || code === "ki_freigabe_nicht_intern"
+    code === "ki_freigabe_veraltet" ||
+    code === "ki_freigabe_nicht_intern" ||
+    code === "ki_freigabe_ohne_information"
       ? t(`meetings.mcp.release.errors.${code}`)
       : t("meetings.mcp.release.errors.generic");
 
@@ -44,15 +83,21 @@ export const MeetingAiRelease: React.FC<{ meetingId: string }> = ({
       | { status: "error"; error: string }
     >,
   ) => {
+    const mine = ++generation.current;
     setBusy(true);
     setError(null);
     try {
       const result = await action();
+      if (mine !== generation.current) return;
       if (result.status === "ok") {
         setStand(result.data);
       } else {
         setError(errorText(result.error));
         await load();
+      }
+    } catch {
+      if (mine === generation.current) {
+        setError(t("meetings.mcp.release.errors.generic"));
       }
     } finally {
       setBusy(false);
@@ -65,8 +110,12 @@ export const MeetingAiRelease: React.FC<{ meetingId: string }> = ({
         meetingId,
         einstufung,
         ergebnis.fingerabdruck,
+        informed,
       ),
     );
+  const canConfirm =
+    ergebnis.aus_termin &&
+    (ergebnis.einstufung === "intern" || ergebnis.einstufung === "extern");
 
   let listText: string;
   if (!ergebnis.aus_termin) {
@@ -93,7 +142,7 @@ export const MeetingAiRelease: React.FC<{ meetingId: string }> = ({
 
   return (
     <div className="space-y-1.5" data-testid="ai-release">
-      <p>
+      <p aria-live="polite" aria-atomic="true">
         <span
           className={
             allowed
@@ -116,12 +165,24 @@ export const MeetingAiRelease: React.FC<{ meetingId: string }> = ({
       <p className="text-text/70" data-testid="ai-release-list">
         {listText}
       </p>
+      {canConfirm && (
+        <label className="flex items-start gap-2 text-text/80">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={informed}
+            onChange={(e) => setInformed(e.target.checked)}
+            data-testid="ai-release-informed"
+          />
+          <span>{t("meetings.mcp.release.informed")}</span>
+        </label>
+      )}
       <div className="flex flex-wrap gap-2">
         {ergebnis.aus_termin && ergebnis.einstufung === "intern" && (
           <Button
             size="sm"
             variant="secondary"
-            disabled={busy}
+            disabled={busy || !informed}
             onClick={() => void confirm("intern")}
             data-testid="ai-release-confirm-intern"
           >
@@ -132,7 +193,7 @@ export const MeetingAiRelease: React.FC<{ meetingId: string }> = ({
           <Button
             size="sm"
             variant="secondary"
-            disabled={busy}
+            disabled={busy || !informed}
             onClick={() => void confirm("extern")}
             data-testid="ai-release-confirm-extern"
           >

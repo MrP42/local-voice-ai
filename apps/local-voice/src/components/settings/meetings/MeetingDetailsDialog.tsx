@@ -112,7 +112,6 @@ export const MeetingDetailsDialog: React.FC<MeetingDetailsDialogProps> = ({
 
   const file = meeting.source_path ?? meeting.mic_audio_path;
   const modelId = getSetting("meeting_model") ?? null;
-  const mcpEnabled = getSetting("meeting_mcp_enabled") ?? false;
   const modelName = modelId
     ? (models.find((m) => m.id === modelId)?.name ?? modelId)
     : null;
@@ -317,8 +316,9 @@ export const MeetingDetailsDialog: React.FC<MeetingDetailsDialogProps> = ({
       label: t("meetings.meta.segments"),
       value: segmentCount,
     },
-    // G9a-2 (lva#578): nur bei eingeschaltetem MCP-Server; sonst gibt es keinen KI-Client.
-    ...(mcpEnabled && meeting.status === "ready"
+    // G9a-2 (lva#578): immer bei fertigen Besprechungen, auch ohne MCP-Server: Agentenbrücke
+    // und Sprachgespräch sind ebenfalls KI-Clients, und eine Freigabe muss rücknehmbar bleiben.
+    ...(meeting.status === "ready"
       ? [
           {
             key: "ai-release",

@@ -50,6 +50,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
+use crate::managers::compliance::ComplianceProfile;
 use crate::managers::meetings::ki_freigabe::KiSperre;
 use link::{BridgeLink, LinkReply};
 use protocol::{
@@ -74,7 +75,6 @@ const KEY_INCLUDE_TRANSCRIPT: &str = "meeting_mcp_include_transcript";
 const KEY_OWN_DOMAINS: &str = "meeting_own_domains";
 const KEY_CLOUD_WITH_EXTERNALS: &str = "meeting_cloud_with_externals";
 const KEY_COMPLIANCE_PROFILE: &str = "compliance_profile";
-const COMPLIANCE_LOCAL_ONLY: &str = "local_only";
 
 const DISABLED_HINT: &str = "Der lokale MCP-Server ist in Local Voice AI ausgeschaltet. \
     Der Nutzer kann ihn unter Einstellungen > Besprechungen > „Lokaler MCP-Server (nur lesend)“ \
@@ -145,11 +145,14 @@ pub fn read_ki_sperre(path: &Path) -> KiSperre {
             eigene_domaenen: Vec::new(),
         };
     };
-    let profil = &settings[KEY_COMPLIANCE_PROFILE];
-    let kundenprofil_nur_lokal = match profil {
-        Value::Null => false, // Standard der App: `eu`
-        Value::String(p) => p == COMPLIANCE_LOCAL_ONLY,
-        _ => true,
+    // Nur ein bekanntes Profil lockert; ein unbekannter Wert und ein ausdrückliches `null`
+    // sperren. Ein fehlender Schlüssel (Altbestand) erhält den Standard der App (`eu`).
+    let kundenprofil_nur_lokal = match settings.get(KEY_COMPLIANCE_PROFILE) {
+        None => false,
+        Some(v) => !matches!(
+            serde_json::from_value::<ComplianceProfile>(v.clone()),
+            Ok(ComplianceProfile::Eu | ComplianceProfile::None)
+        ),
     };
     let eigene_domaenen = match &settings[KEY_OWN_DOMAINS] {
         Value::Array(items) if items.iter().all(Value::is_string) => items

@@ -95,7 +95,9 @@ pub fn meeting_ai_release_status(
 
 /// Bestaetigt die Einstufung fuer GENAU diese Besprechung und diese Teilnehmerliste. Fehler
 /// `ki_freigabe_veraltet` (Liste oder Domaenen haben sich geaendert, neu laden) oder
-/// `ki_freigabe_nicht_intern` (die Liste ist nicht intern). Wird sofort gespeichert.
+/// `ki_freigabe_nicht_intern` (die Liste ist nicht intern). `informiert`: Der Nutzer bestätigt,
+/// dass die Teilnehmenden über die Weitergabe an KI-Clients informiert sind; ohne das Fehler
+/// `ki_freigabe_ohne_information`. Wird sofort gespeichert.
 #[tauri::command]
 #[specta::specta]
 pub fn meeting_ai_release_confirm(
@@ -103,6 +105,7 @@ pub fn meeting_ai_release_confirm(
     meeting_id: String,
     einstufung: Einstufung,
     fingerabdruck: String,
+    informiert: bool,
 ) -> Result<KiFreigabeStand, String> {
     let store = store_of(&app)?;
     ki_freigabe::bestaetigen(
@@ -111,6 +114,7 @@ pub fn meeting_ai_release_confirm(
         &meeting_id,
         einstufung,
         &fingerabdruck,
+        informiert,
         chrono::Utc::now().timestamp_millis(),
     )
     .map_err(|e| e.to_string())
@@ -131,7 +135,8 @@ pub fn meeting_ai_release_revoke(
 }
 
 /// „Eigene Domänen“ speichern: nur die wirksamen Eintraege; die abgelehnten gehen zur Anzeige
-/// zurueck. Jede Aenderung macht vorhandene Bestaetigungen ungueltig (Fingerabdruck).
+/// zurueck. Jede wirksame Aenderung LOESCHT alle Bestaetigungen (vor dem Speichern), damit eine
+/// Rueckkehr zu den alten Domaenen keine alte Freigabe reaktiviert (Codex #583).
 #[tauri::command]
 #[specta::specta]
 pub fn change_meeting_own_domains_setting(
@@ -140,6 +145,11 @@ pub fn change_meeting_own_domains_setting(
 ) -> Result<EigeneDomaenenBereinigt, String> {
     let bereinigt = eigene_domaenen_bereinigen(&domains);
     let mut s = settings::get_settings(&app);
+    if s.meeting_own_domains != bereinigt.gueltig {
+        store_of(&app)?
+            .ki_bestaetigungen_alle_entfernen()
+            .map_err(|e| e.to_string())?;
+    }
     s.meeting_own_domains = bereinigt.gueltig.clone();
     settings::write_settings(&app, s);
     Ok(bereinigt)

@@ -32,7 +32,7 @@ use serde_json::{json, Value};
 use crate::managers::meetings::export::{
     build_bundle, bundle_to_markdown, ExportParticipant, ExportParts,
 };
-use crate::managers::meetings::ki_freigabe::KiSperre;
+use crate::managers::meetings::ki_freigabe::{KiLage, KiSperre};
 use crate::managers::meetings::llm_call::duration_label;
 use crate::managers::meetings::notes::model::{ActionItem, STATUS_DONE};
 use crate::managers::meetings::search::chunking::{query_terms, ChunkSource};
@@ -256,12 +256,35 @@ pub fn call(name: &str, args: &Value, backend: &Backend) -> ToolOutcome {
     let outcome = match name {
         "list_meetings" => list_meetings(args, backend),
         "search_meetings" => search_meetings(args, backend),
-        "get_meeting" => get_meeting(args, backend),
-        "get_transcript" => get_transcript(args, backend),
-        "get_provenance" => get_provenance(args, backend),
+        "get_meeting" => single(args, backend, get_meeting),
+        "get_transcript" => single(args, backend, get_transcript),
+        "get_provenance" => single(args, backend, get_provenance),
         other => Err(ToolOutcome::error(format!("Unbekanntes Werkzeug: {other}"))),
     };
     outcome.unwrap_or_else(|e| e)
+}
+
+/// Werkzeug für EINE Besprechung: Stand vor dem Lesen festhalten, nach dem Lesen der Inhalte
+/// nachprüfen (Codex #583, Blocker 2). Ändert sich zwischendurch die Teilnehmerliste, die
+/// Bestätigung oder die Freigabe, geht die gelesene Ausgabe nicht hinaus.
+fn single(
+    args: &Value,
+    backend: &Backend,
+    tool: fn(&Value, &Backend) -> Res<ToolOutcome>,
+) -> Res<ToolOutcome> {
+    let id = req_id(args)?;
+    let Some(store) = open(backend)? else {
+        return tool(args, backend);
+    };
+    let Some(vorher) = backend.ki_sperre.freigegeben(&store, id) else {
+        return Err(not_found(id));
+    };
+    let out = tool(args, backend)?;
+    if out.is_error || backend.ki_sperre.unveraendert(&store, id, &vorher) {
+        Ok(out)
+    } else {
+        Err(not_found(id))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -566,15 +589,24 @@ fn list_meetings(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
             event_uid: None,
         })
         .map_err(|e| store_error(&e))?;
-    let ids: Vec<&String> = ids
+    let ids: Vec<(&String, KiLage)> = ids
         .iter()
-        .filter(|id| backend.ki_sperre.sichtbar(&store, id))
+        .filter_map(|id| backend.ki_sperre.freigegeben(&store, id).map(|l| (id, l)))
         .collect();
-    let total = ids.len();
-    let mut meetings = Vec::new();
-    for id in ids.iter().take(limit as usize) {
+    let mut total = ids.len();
+    let mut gelesen = Vec::new();
+    for (id, vorher) in ids.iter().take(limit as usize) {
         if let Some(meeting) = store.get_meeting(id).map_err(|e| store_error(&e))? {
-            meetings.push(meeting_json(&meeting));
+            gelesen.push((*id, vorher, meeting_json(&meeting)));
+        }
+    }
+    // Nachprüfung nach dem Lesen: geänderte oder widerrufene Besprechungen fallen heraus.
+    let mut meetings = Vec::new();
+    for (id, vorher, value) in gelesen {
+        if backend.ki_sperre.unveraendert(&store, id, vorher) {
+            meetings.push(value);
+        } else {
+            total -= 1;
         }
     }
     let mut out = json!({
@@ -636,10 +668,15 @@ fn search_meetings(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
         .items
         .iter()
         .filter(|item| item.meeting.status == "ready")
-        .filter(|item| backend.ki_sperre.sichtbar(&store, &item.meeting.id))
+        .filter_map(|item| {
+            backend
+                .ki_sperre
+                .freigegeben(&store, &item.meeting.id)
+                .map(|l| (item, l))
+        })
         // Ohne Transkript-Freigabe kein Treffer, dessen bester Chunk das Transkript ist
         // (D5: auch nicht der Text einer Folie, er stammt aus derselben Aufnahme).
-        .filter(|item| {
+        .filter(|(item, _)| {
             backend.include_transcript
                 || !matches!(
                     item.hit_source,
@@ -648,15 +685,21 @@ fn search_meetings(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
         })
         .collect();
     let more = visible.len() > limit;
-    let meetings: Vec<Value> = visible
+    let gelesen: Vec<(&str, &KiLage, Value)> = visible
         .iter()
         .take(limit)
-        .map(|item| {
+        .map(|(item, l)| {
             let mut value = meeting_json(&item.meeting);
             value["snippet"] = json!(item.snippet.as_deref().map(plain_snippet));
             value["hit_source"] = json!(item.hit_source.map(ChunkSource::as_str));
-            value
+            (item.meeting.id.as_str(), l, value)
         })
+        .collect();
+    // Nachprüfung nach dem Lesen (wie list_meetings).
+    let meetings: Vec<Value> = gelesen
+        .into_iter()
+        .filter(|(id, l, _)| backend.ki_sperre.unveraendert(&store, id, l))
+        .map(|(_, _, v)| v)
         .collect();
     let mut notes: Vec<String> = Vec::new();
     if backend.ki_sperre.prueft() {

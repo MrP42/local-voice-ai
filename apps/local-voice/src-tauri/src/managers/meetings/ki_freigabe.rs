@@ -7,6 +7,11 @@
 //! für GENAU diese Besprechung und diese Liste bestätigt. Das gilt unabhängig vom Schalter
 //! „Assistent in der Besprechung“ (Auflage B1) und auch für Altbestand (B2).
 //!
+//! Nachweis der Information (Codex #583): Eine Bestätigung setzt voraus, dass der Nutzer
+//! erklärt, die Teilnehmenden über die Weitergabe an KI-Clients informiert zu haben
+//! (`informiert = 1`, sonst `ki_freigabe_ohne_information`). Die Rechtsgrundlage selbst
+//! bleibt beim Nutzer; die App hält nur diese Erklärung je Besprechung fest.
+//!
 //! Speicherung (Auflage B3): eine Zeile je Besprechung in `meeting_ai_confirmations`. Keine
 //! Zeile heißt unbestätigt, also gesperrt; es gibt keine Rückfüllung. Gespeichert werden
 //! Einstufung, Fingerabdruck, dessen Schemaversion und Zeitpunkt, aber keine Kopie der
@@ -38,6 +43,7 @@ pub(crate) const KI_FREIGABE_MIGRATION: &str =
       einstufung TEXT NOT NULL CHECK (einstufung IN ('intern', 'unbekannt', 'extern')),
       fingerabdruck TEXT NOT NULL,
       fp_version INTEGER NOT NULL,
+      informiert INTEGER NOT NULL CHECK (informiert = 1),
       confirmed_at INTEGER NOT NULL);";
 
 /// Importgrenze der Teilnehmerliste je Termin (`calendar::ics` und `calendar::graph`). Eine
@@ -47,14 +53,29 @@ const TEILNEHMER_IMPORTGRENZE: usize = 500;
 /// Teilnehmerliste einer Besprechung und ob sie aus einem Kalendertermin stammt.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Teilnehmerlage {
-    /// Je teilnehmender Person GENAU eine Angabe: die Adresse, sonst der Name, sonst `?`.
-    /// Name und Adresse werden nie zu einem Text zusammengefügt (sonst könnte ein Name eine
-    /// zweite Adresse einschmuggeln).
+    /// Je teilnehmender Person GENAU eine Angabe: die gelieferte Adresse, sonst `?`. Ein
+    /// Anzeigename zählt NIE als Adresse, auch nicht, wenn er wie eine aussieht (Codex #583,
+    /// Blocker 1); er geht darum gar nicht in die Prüfung ein.
     pub teilnehmende: Vec<String>,
     /// Verknüpfter Termin mit Teilnehmerdaten aus einer nicht entfernten Quelle.
     pub liste_aus_termin: bool,
     /// Aktualität und Vollständigkeit der Liste (ohne Termin: unbekannt).
     pub teilnehmerinfo: Teilnehmerinfo,
+}
+
+/// Alles, was die Prüfung einer Besprechung aus der Datenbank braucht, gelesen in EINER
+/// Lesetransaktion (ein Datenbankstand): Teilnehmerlage und gespeicherte Bestätigung.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KiLage {
+    pub lage: Teilnehmerlage,
+    pub bestaetigung: Option<Bestaetigung>,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Testbarriere: läuft in [`KiSperre::unveraendert`] zwischen Ausgabe und Nachprüfung.
+    pub(crate) static VOR_NACHPRUEFUNG: std::cell::RefCell<Option<Box<dyn Fn()>>> =
+        std::cell::RefCell::new(None);
 }
 
 fn einstufung_text(e: Einstufung) -> &'static str {
@@ -79,7 +100,24 @@ impl MeetingStore {
     /// einer entfernten Quelle oder einer Quelle ohne Teilnehmerdaten: leer und nicht aus
     /// einem Termin (zählt wie Ad-hoc).
     pub fn ki_teilnehmerlage(&self, meeting_id: &str) -> Result<Teilnehmerlage> {
+        Ok(self.ki_lage(meeting_id)?.lage)
+    }
+
+    /// Teilnehmerlage und Bestätigung aus EINEM Datenbankstand (Lesetransaktion), damit die
+    /// Prüfung nie eine Liste mit der Bestätigung eines anderen Stands mischt.
+    pub fn ki_lage(&self, meeting_id: &str) -> Result<KiLage> {
         let conn = self.get_connection()?;
+        let tx = conn.unchecked_transaction()?;
+        let lage = Self::ki_teilnehmerlage_in(&tx, meeting_id)?;
+        let bestaetigung = Self::ki_bestaetigung_in(&tx, meeting_id)?;
+        tx.commit()?;
+        Ok(KiLage { lage, bestaetigung })
+    }
+
+    fn ki_teilnehmerlage_in(
+        conn: &rusqlite::Connection,
+        meeting_id: &str,
+    ) -> Result<Teilnehmerlage> {
         let termin: Option<(String, i64, Option<i64>)> = conn
             .query_row(
                 "SELECT e.key, e.ends_at, s.last_ok_at FROM meeting_calendar_links l
@@ -98,17 +136,15 @@ impl MeetingStore {
             });
         };
         let mut stmt = conn.prepare(
-            "SELECT email, name FROM calendar_event_attendees WHERE event_key = ?1 ORDER BY rowid",
+            "SELECT email FROM calendar_event_attendees WHERE event_key = ?1 ORDER BY rowid",
         )?;
         let teilnehmende = stmt
             .query_map(params![key], |r| {
                 let email: Option<String> = r.get(0)?;
-                let name: Option<String> = r.get(1)?;
-                let email = email
+                Ok(email
                     .map(|e| e.trim().to_string())
-                    .filter(|e| !e.is_empty());
-                let name = name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
-                Ok(email.or(name).unwrap_or_else(|| "?".to_string()))
+                    .filter(|e| !e.is_empty())
+                    .unwrap_or_else(|| "?".to_string()))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         let teilnehmerinfo = if last_ok_at.is_none_or(|ok| ok < ends_at) {
@@ -128,7 +164,13 @@ impl MeetingStore {
     /// Gespeicherte Bestätigung der Besprechung; ein unlesbarer Wert oder eine andere
     /// Schemaversion des Fingerabdrucks zählt als keine.
     pub fn ki_bestaetigung(&self, meeting_id: &str) -> Result<Option<Bestaetigung>> {
-        let conn = self.get_connection()?;
+        Ok(self.ki_lage(meeting_id)?.bestaetigung)
+    }
+
+    fn ki_bestaetigung_in(
+        conn: &rusqlite::Connection,
+        meeting_id: &str,
+    ) -> Result<Option<Bestaetigung>> {
         let row: Option<(String, String, i64)> = conn
             .query_row(
                 "SELECT einstufung, fingerabdruck, fp_version FROM meeting_ai_confirmations
@@ -158,8 +200,8 @@ impl MeetingStore {
         Self::ensure_meeting_is_live(&tx, meeting_id)?;
         tx.execute(
             "INSERT OR REPLACE INTO meeting_ai_confirmations
-               (meeting_id, einstufung, fingerabdruck, fp_version, confirmed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+               (meeting_id, einstufung, fingerabdruck, fp_version, informiert, confirmed_at)
+             VALUES (?1, ?2, ?3, ?4, 1, ?5)",
             params![
                 meeting_id,
                 einstufung_text(bestaetigung.einstufung),
@@ -170,6 +212,13 @@ impl MeetingStore {
         )?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// Hebt ALLE Bestätigungen auf (nach einer Änderung der eigenen Domänen): Sie werden
+    /// gelöscht, nicht nur unpassend, damit eine Rückkehr zu alten Domänen nichts reaktiviert.
+    pub fn ki_bestaetigungen_alle_entfernen(&self) -> Result<usize> {
+        let conn = self.get_connection()?;
+        Ok(conn.execute("DELETE FROM meeting_ai_confirmations", [])?)
     }
 
     /// Nimmt die Bestätigung zurück (Besprechung wieder gesperrt).
@@ -226,37 +275,57 @@ impl KiSperre {
         }
     }
 
-    /// Prüft eine Besprechung bei JEDEM Abruf neu (Liste, Domänen, Bestätigung).
-    pub fn pruefen(&self, store: &MeetingStore, meeting_id: &str) -> Result<Entscheidung> {
+    /// Entscheidung über einen gelesenen Stand (rein, ohne Datenbank).
+    pub fn entscheiden(&self, l: &KiLage) -> Entscheidung {
         match self {
             KiSperre::Pruefen {
                 kundenprofil_nur_lokal,
                 cloud_bei_externen,
                 eigene_domaenen,
-            } => {
-                let lage = store.ki_teilnehmerlage(meeting_id)?;
-                Ok(pruefen_mcp_ausgabe(&McpAnfrage {
-                    kundenprofil_nur_lokal: *kundenprofil_nur_lokal,
-                    cloud_bei_externen: *cloud_bei_externen,
-                    teilnehmende: lage.teilnehmende,
-                    liste_aus_termin: lage.liste_aus_termin,
-                    teilnehmerinfo: lage.teilnehmerinfo,
-                    eigene_domaenen: eigene_domaenen.clone(),
-                    bestaetigung: store.ki_bestaetigung(meeting_id)?,
-                }))
-            }
-            #[cfg(test)]
-            KiSperre::Offen => Ok(Entscheidung::Erlaubt {
-                einstufung: Einstufung::Intern,
+            } => pruefen_mcp_ausgabe(&McpAnfrage {
+                kundenprofil_nur_lokal: *kundenprofil_nur_lokal,
+                cloud_bei_externen: *cloud_bei_externen,
+                teilnehmende: l.lage.teilnehmende.clone(),
+                liste_aus_termin: l.lage.liste_aus_termin,
+                teilnehmerinfo: l.lage.teilnehmerinfo,
+                eigene_domaenen: eigene_domaenen.clone(),
+                bestaetigung: l.bestaetigung.clone(),
             }),
+            #[cfg(test)]
+            KiSperre::Offen => Entscheidung::Erlaubt {
+                einstufung: Einstufung::Intern,
+            },
         }
+    }
+
+    /// Prüft eine Besprechung bei JEDEM Abruf neu (Liste, Domänen, Bestätigung).
+    pub fn pruefen(&self, store: &MeetingStore, meeting_id: &str) -> Result<Entscheidung> {
+        Ok(self.entscheiden(&store.ki_lage(meeting_id)?))
+    }
+
+    /// Der geprüfte Stand, wenn ein KI-Client die Besprechung sehen darf; ein Lesefehler
+    /// sperrt. Den Stand braucht [`Self::unveraendert`] nach dem Lesen der Inhalte.
+    pub fn freigegeben(&self, store: &MeetingStore, meeting_id: &str) -> Option<KiLage> {
+        let l = store.ki_lage(meeting_id).ok()?;
+        self.entscheiden(&l).erlaubt().then_some(l)
     }
 
     /// `true`, wenn ein KI-Client die Besprechung sehen darf; ein Lesefehler sperrt.
     pub fn sichtbar(&self, store: &MeetingStore, meeting_id: &str) -> bool {
-        self.pruefen(store, meeting_id)
-            .map(|e| e.erlaubt())
-            .unwrap_or(false)
+        self.freigegeben(store, meeting_id).is_some()
+    }
+
+    /// Nachprüfung NACH dem Lesen der Inhalte (Codex #583, Blocker 2): Nur wenn der Stand
+    /// unverändert und weiter freigegeben ist, darf die Ausgabe hinaus. Eine Kalenderänderung
+    /// oder ein Widerruf zwischen Prüfung und Ausgabe sperrt so die bereits gelesene Ausgabe.
+    pub fn unveraendert(&self, store: &MeetingStore, meeting_id: &str, vorher: &KiLage) -> bool {
+        #[cfg(test)]
+        VOR_NACHPRUEFUNG.with(|h| {
+            if let Some(f) = h.borrow().as_ref() {
+                f()
+            }
+        });
+        self.freigegeben(store, meeting_id).as_ref() == Some(vorher)
     }
 }
 
@@ -271,7 +340,8 @@ pub struct KiFreigabeStand {
 
 /// Stand einer Besprechung für die Oberfläche.
 pub fn stand(store: &MeetingStore, sperre: &KiSperre, meeting_id: &str) -> Result<KiFreigabeStand> {
-    let lage = store.ki_teilnehmerlage(meeting_id)?;
+    let l = store.ki_lage(meeting_id)?;
+    let lage = &l.lage;
     let eigene = match sperre {
         KiSperre::Pruefen {
             eigene_domaenen, ..
@@ -281,8 +351,8 @@ pub fn stand(store: &MeetingStore, sperre: &KiSperre, meeting_id: &str) -> Resul
     };
     Ok(KiFreigabeStand {
         ergebnis: einstufen(&lage.teilnehmende, &eigene, lage.liste_aus_termin),
-        bestaetigung: store.ki_bestaetigung(meeting_id)?,
-        entscheidung: sperre.pruefen(store, meeting_id)?,
+        entscheidung: sperre.entscheiden(&l),
+        bestaetigung: l.bestaetigung,
     })
 }
 
@@ -294,8 +364,12 @@ pub fn bestaetigen(
     meeting_id: &str,
     einstufung: Einstufung,
     fingerabdruck: &str,
+    informiert: bool,
     now_ms: i64,
 ) -> Result<KiFreigabeStand> {
+    if !informiert {
+        return Err(anyhow!("ki_freigabe_ohne_information"));
+    }
     let aktuell = stand(store, sperre, meeting_id)?;
     if aktuell.ergebnis.fingerabdruck != fingerabdruck {
         return Err(anyhow!("ki_freigabe_veraltet"));

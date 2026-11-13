@@ -101,7 +101,7 @@ fn liste_kommt_aus_dem_termin_und_name_wird_nie_mit_adresse_verbunden() {
     assert!(lage.liste_aus_termin);
     assert_eq!(
         lage.teilnehmende,
-        vec!["a@example.org", "Ohne Adresse", "?"]
+        vec!["a@example.org", "?", "?"]
     );
 }
 
@@ -132,6 +132,7 @@ fn ohne_bestaetigung_gesperrt_mit_bestaetigung_sichtbar() {
         &id,
         Einstufung::Intern,
         &st.ergebnis.fingerabdruck,
+        true,
         5_000,
     )
     .unwrap();
@@ -150,7 +151,7 @@ fn veralteter_fingerabdruck_und_zu_lockere_einstufung_werden_abgelehnt() {
     );
     let st = stand(&s, &sperre(), &id).unwrap();
     assert_eq!(st.ergebnis.einstufung, Einstufung::Extern);
-    let e = bestaetigen(&s, &sperre(), &id, Einstufung::Extern, "0", 5_000).unwrap_err();
+    let e = bestaetigen(&s, &sperre(), &id, Einstufung::Extern, "0", true, 5_000).unwrap_err();
     assert_eq!(e.to_string(), "ki_freigabe_veraltet");
     let e = bestaetigen(
         &s,
@@ -158,6 +159,7 @@ fn veralteter_fingerabdruck_und_zu_lockere_einstufung_werden_abgelehnt() {
         &id,
         Einstufung::Intern,
         &st.ergebnis.fingerabdruck,
+        true,
         5_000,
     )
     .unwrap_err();
@@ -175,7 +177,7 @@ fn extern_bestaetigt_nur_mit_einstellung_sichtbar() {
         true,
     );
     let fp = stand(&s, &sperre(), &id).unwrap().ergebnis.fingerabdruck;
-    bestaetigen(&s, &sperre(), &id, Einstufung::Extern, &fp, 5_000).unwrap();
+    bestaetigen(&s, &sperre(), &id, Einstufung::Extern, &fp, true, 5_000).unwrap();
     assert!(!sperre().sichtbar(&s, &id));
     let mit_externen = KiSperre::Pruefen {
         kundenprofil_nur_lokal: false,
@@ -189,7 +191,7 @@ fn extern_bestaetigt_nur_mit_einstellung_sichtbar() {
 fn neue_teilnehmende_im_termin_machen_die_bestaetigung_ungueltig() {
     let (_d, s, id) = besprechung(intern_liste(), true);
     let fp = stand(&s, &sperre(), &id).unwrap().ergebnis.fingerabdruck;
-    bestaetigen(&s, &sperre(), &id, Einstufung::Intern, &fp, 5_000).unwrap();
+    bestaetigen(&s, &sperre(), &id, Einstufung::Intern, &fp, true, 5_000).unwrap();
     assert!(sperre().sichtbar(&s, &id));
     let mut neu = intern_liste();
     neu.push(teilnehmer(Some("c@example.org"), None));
@@ -202,7 +204,7 @@ fn neue_teilnehmende_im_termin_machen_die_bestaetigung_ungueltig() {
 fn geaenderte_eigene_domaenen_und_kundenprofil_sperren() {
     let (_d, s, id) = besprechung(intern_liste(), true);
     let fp = stand(&s, &sperre(), &id).unwrap().ergebnis.fingerabdruck;
-    bestaetigen(&s, &sperre(), &id, Einstufung::Intern, &fp, 5_000).unwrap();
+    bestaetigen(&s, &sperre(), &id, Einstufung::Intern, &fp, true, 5_000).unwrap();
     let andere = KiSperre::Pruefen {
         kundenprofil_nur_lokal: false,
         cloud_bei_externen: false,
@@ -222,7 +224,7 @@ fn geaenderte_eigene_domaenen_und_kundenprofil_sperren() {
 fn bestaetigung_gehoert_zur_besprechung_und_geht_mit_ihr() {
     let (_d, s, id) = besprechung(intern_liste(), true);
     let fp = stand(&s, &sperre(), &id).unwrap().ergebnis.fingerabdruck;
-    bestaetigen(&s, &sperre(), &id, Einstufung::Intern, &fp, 5_000).unwrap();
+    bestaetigen(&s, &sperre(), &id, Einstufung::Intern, &fp, true, 5_000).unwrap();
     // Zweite Besprechung am selben Termin: eigene, noch fehlende Bestätigung.
     let ev = termin(intern_liste());
     let m2 = s
@@ -238,7 +240,7 @@ fn bestaetigung_gehoert_zur_besprechung_und_geht_mit_ihr() {
 fn zuruecknehmen_sperrt_sofort() {
     let (_d, s, id) = besprechung(intern_liste(), true);
     let fp = stand(&s, &sperre(), &id).unwrap().ergebnis.fingerabdruck;
-    bestaetigen(&s, &sperre(), &id, Einstufung::Intern, &fp, 5_000).unwrap();
+    bestaetigen(&s, &sperre(), &id, Einstufung::Intern, &fp, true, 5_000).unwrap();
     s.ki_bestaetigung_entfernen(&id).unwrap();
     assert!(!sperre().sichtbar(&s, &id));
 }
@@ -250,7 +252,7 @@ fn unlesbarer_wert_zaehlt_als_keine_bestaetigung() {
     let conn = s.get_connection().unwrap();
     assert!(conn
         .execute(
-            "INSERT INTO meeting_ai_confirmations VALUES (?1, 'irgendwas', 'x', 2, 1)",
+            "INSERT INTO meeting_ai_confirmations VALUES (?1, 'irgendwas', 'x', 2, 1, 1)",
             params![id],
         )
         .is_err());
@@ -260,7 +262,7 @@ fn unlesbarer_wert_zaehlt_als_keine_bestaetigung() {
 fn liste_ohne_abgleich_nach_dem_ende_ist_veraltet_und_gesperrt() {
     let (_d, s, id) = besprechung(intern_liste(), true);
     let fp = stand(&s, &sperre(), &id).unwrap().ergebnis.fingerabdruck;
-    bestaetigen(&s, &sperre(), &id, Einstufung::Intern, &fp, 5_000).unwrap();
+    bestaetigen(&s, &sperre(), &id, Einstufung::Intern, &fp, true, 5_000).unwrap();
     assert!(sperre().sichtbar(&s, &id));
     // Letzter erfolgreicher Abgleich VOR dem Ende des Termins: Stand nicht belegt.
     s.calendar_replace_events("src1", &[termin(intern_liste())], &meta_um(true, T1))
@@ -289,7 +291,7 @@ fn liste_an_der_importgrenze_ist_unvollstaendig() {
         Teilnehmerinfo::Unvollstaendig
     );
     let fp = stand(&s, &sperre(), &id).unwrap().ergebnis.fingerabdruck;
-    bestaetigen(&s, &sperre(), &id, Einstufung::Intern, &fp, 5_000).unwrap();
+    bestaetigen(&s, &sperre(), &id, Einstufung::Intern, &fp, true, 5_000).unwrap();
     assert!(!sperre().sichtbar(&s, &id));
 }
 
@@ -309,7 +311,7 @@ fn ohne_termin_ist_der_teilnehmerstand_unbekannt() {
 fn bestaetigung_mit_anderer_schemaversion_zaehlt_nicht() {
     let (_d, s, id) = besprechung(intern_liste(), true);
     let fp = stand(&s, &sperre(), &id).unwrap().ergebnis.fingerabdruck;
-    bestaetigen(&s, &sperre(), &id, Einstufung::Intern, &fp, 5_000).unwrap();
+    bestaetigen(&s, &sperre(), &id, Einstufung::Intern, &fp, true, 5_000).unwrap();
     assert!(sperre().sichtbar(&s, &id));
     let conn = s.get_connection().unwrap();
     conn.execute(
@@ -318,5 +320,84 @@ fn bestaetigung_mit_anderer_schemaversion_zaehlt_nicht() {
     )
     .unwrap();
     assert!(s.ki_bestaetigung(&id).unwrap().is_none());
+    assert!(!sperre().sichtbar(&s, &id));
+}
+
+#[test]
+fn adressfoermiger_name_ersetzt_nie_die_fehlende_adresse() {
+    // Bestätigte interne Liste …
+    let (_d, s, id) = besprechung(intern_liste(), true);
+    let fp = stand(&s, &sperre(), &id).unwrap().ergebnis.fingerabdruck;
+    bestaetigen(&s, &sperre(), &id, Einstufung::Intern, &fp, true, 5_000).unwrap();
+    assert!(sperre().sichtbar(&s, &id));
+    // … die Adresse fällt weg, derselbe Wert steht nur noch als Name da.
+    s.calendar_replace_events(
+        "src1",
+        &[termin(vec![
+            teilnehmer(None, Some("a@example.org")),
+            teilnehmer(Some("b@example.org"), None),
+        ])],
+        &meta(true),
+    )
+    .unwrap();
+    let lage = s.ki_teilnehmerlage(&id).unwrap();
+    assert_eq!(lage.teilnehmende, vec!["?", "b@example.org"]);
+    let st = stand(&s, &sperre(), &id).unwrap();
+    assert_eq!(st.ergebnis.einstufung, Einstufung::Unbekannt);
+    assert_ne!(st.ergebnis.fingerabdruck, fp);
+    assert!(!sperre().sichtbar(&s, &id));
+    let mit_externen = KiSperre::Pruefen {
+        kundenprofil_nur_lokal: false,
+        cloud_bei_externen: true,
+        eigene_domaenen: vec!["example.org".into()],
+    };
+    assert!(!mit_externen.sichtbar(&s, &id));
+}
+
+#[test]
+fn nachpruefung_erkennt_widerruf_und_kalenderaenderung_nach_der_pruefung() {
+    let (_d, s, id) = besprechung(intern_liste(), true);
+    let fp = stand(&s, &sperre(), &id).unwrap().ergebnis.fingerabdruck;
+    bestaetigen(&s, &sperre(), &id, Einstufung::Intern, &fp, true, 5_000).unwrap();
+    let vorher = sperre().freigegeben(&s, &id).expect("freigegeben");
+    assert!(sperre().unveraendert(&s, &id, &vorher));
+    // Kalender ändert sich zwischen Prüfung und Ausgabe: gesperrt.
+    let mut neu = intern_liste();
+    neu.push(teilnehmer(Some("c@example.org"), None));
+    s.calendar_replace_events("src1", &[termin(neu)], &meta(true))
+        .unwrap();
+    assert!(!sperre().unveraendert(&s, &id, &vorher));
+    // Widerruf zwischen Prüfung und Ausgabe: gesperrt.
+    let (_d2, s2, id2) = besprechung(intern_liste(), true);
+    let fp2 = stand(&s2, &sperre(), &id2).unwrap().ergebnis.fingerabdruck;
+    bestaetigen(&s2, &sperre(), &id2, Einstufung::Intern, &fp2, true, 5_000).unwrap();
+    let vorher2 = sperre().freigegeben(&s2, &id2).unwrap();
+    s2.ki_bestaetigung_entfernen(&id2).unwrap();
+    assert!(!sperre().unveraendert(&s2, &id2, &vorher2));
+}
+
+#[test]
+fn ohne_erklaerung_zur_information_keine_bestaetigung() {
+    let (_d, s, id) = besprechung(intern_liste(), true);
+    let fp = stand(&s, &sperre(), &id).unwrap().ergebnis.fingerabdruck;
+    let e = bestaetigen(&s, &sperre(), &id, Einstufung::Intern, &fp, false, 5_000).unwrap_err();
+    assert_eq!(e.to_string(), "ki_freigabe_ohne_information");
+    assert!(s.ki_bestaetigung(&id).unwrap().is_none());
+    let conn = s.get_connection().unwrap();
+    assert!(conn
+        .execute(
+            "INSERT INTO meeting_ai_confirmations VALUES (?1, 'intern', 'x', 2, 0, 1)",
+            params![id],
+        )
+        .is_err());
+}
+
+#[test]
+fn alle_bestaetigungen_entfernen_reaktiviert_nichts() {
+    let (_d, s, id) = besprechung(intern_liste(), true);
+    let fp = stand(&s, &sperre(), &id).unwrap().ergebnis.fingerabdruck;
+    bestaetigen(&s, &sperre(), &id, Einstufung::Intern, &fp, true, 5_000).unwrap();
+    // Domänen A → B (alle Bestätigungen gelöscht) → A: alte Freigabe kommt nicht zurück.
+    assert_eq!(s.ki_bestaetigungen_alle_entfernen().unwrap(), 1);
     assert!(!sperre().sichtbar(&s, &id));
 }

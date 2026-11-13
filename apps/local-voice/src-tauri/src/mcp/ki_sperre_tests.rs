@@ -97,7 +97,7 @@ fn verknuepfen(fx: &Fx, meeting: &str, uid: &str, emails: &[&str], bestaetigt: O
             .unwrap()
             .ergebnis
             .fingerabdruck;
-        ki_freigabe::bestaetigen(&fx.store, &sperre, meeting, e, &fp, 4_000).unwrap();
+        ki_freigabe::bestaetigen(&fx.store, &sperre, meeting, e, &fp, true, 4_000).unwrap();
     }
 }
 
@@ -220,6 +220,30 @@ fn einstellungen_im_zweifel_streng() {
 }
 
 #[test]
+fn unbekanntes_oder_null_kundenprofil_sperrt_fehlendes_nicht() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings_store.json");
+    for (profil, gesperrt) in [
+        (json!("eu"), false),
+        (json!("none"), false),
+        (json!("local_only"), true),
+        (json!("strenger_als_lokal"), true),
+        (json!("EU"), true),
+        (Value::Null, true),
+    ] {
+        std::fs::write(
+            &path,
+            json!({ "settings": { KEY_COMPLIANCE_PROFILE: profil } }).to_string(),
+        )
+        .unwrap();
+        assert_eq!(read_ki_sperre(&path).ganz_gesperrt(), gesperrt, "{profil}");
+    }
+    // Schlüssel fehlt (Altbestand): Standard der App, `eu`.
+    std::fs::write(&path, r#"{"settings":{}}"#).unwrap();
+    assert!(!read_ki_sperre(&path).ganz_gesperrt());
+}
+
+#[test]
 fn die_namen_der_freigabe_einstellungen_passen_zur_app() {
     let mut defaults = serde_json::to_value(crate::settings::get_default_settings()).unwrap();
     assert_eq!(defaults[KEY_OWN_DOMAINS], json!([]));
@@ -241,4 +265,88 @@ fn die_namen_der_freigabe_einstellungen_passen_zur_app() {
             eigene_domaenen: vec!["example.org".into()],
         }
     );
+}
+
+/// Setzt die Testbarriere zwischen Ausgabe und Nachprüfung und entfernt sie am Ende.
+struct Barriere;
+impl Barriere {
+    fn setzen(f: impl Fn() + 'static) -> Self {
+        ki_freigabe::VOR_NACHPRUEFUNG.with(|h| *h.borrow_mut() = Some(Box::new(f)));
+        Barriere
+    }
+}
+impl Drop for Barriere {
+    fn drop(&mut self) {
+        ki_freigabe::VOR_NACHPRUEFUNG.with(|h| *h.borrow_mut() = None);
+    }
+}
+
+/// Codex #583, Blocker 2: Ein Widerruf oder eine Kalenderänderung zwischen Prüfung und
+/// Ausgabe hält die bereits gelesene Ausgabe in JEDEM Werkzeug zurück.
+#[test]
+fn aenderung_zwischen_pruefung_und_ausgabe_sperrt_jedes_werkzeug() {
+    for aenderung in ["widerruf", "kalender"] {
+        let fx = fx_mit_sperre(json!({}));
+        verknuepfen(
+            &fx,
+            &fx.a,
+            "u-a",
+            &["a@example.org", "b@example.org"],
+            Some(Einstufung::Intern),
+        );
+        assert!(
+            !fx.tool("get_meeting", json!({ "id": fx.a })).1,
+            "ohne Barriere sichtbar"
+        );
+        let db = config_in(fx.dir.path()).db_path;
+        let _b = Barriere::setzen(move || {
+            let sql = rusqlite::Connection::open(&db).unwrap();
+            match aenderung {
+                "widerruf" => {
+                    sql.execute("DELETE FROM meeting_ai_confirmations", [])
+                        .unwrap();
+                }
+                _ => {
+                    sql.execute(
+                        "INSERT INTO calendar_event_attendees (event_key, email, name)
+                         SELECT key, 'neu@example.org', '' FROM calendar_events WHERE uid = 'u-a'",
+                        [],
+                    )
+                    .unwrap();
+                }
+            }
+        });
+        for tool in ["get_meeting", "get_transcript", "get_provenance"] {
+            let (text, is_error) = fx.tool(tool, json!({ "id": fx.a }));
+            assert!(is_error, "{aenderung}/{tool}: {text}");
+            assert!(
+                !text.contains("Umsatz") && !text.contains("Jour fixe"),
+                "{text}"
+            );
+        }
+        let list = fx.tool_json("list_meetings", json!({}));
+        assert_eq!(ids(&list), Vec::<String>::new(), "{aenderung}");
+        assert_eq!(list["total"], 0);
+        let search = fx.tool_json("search_meetings", json!({ "query": "Umsatz" }));
+        assert_eq!(ids(&search), Vec::<String>::new(), "{aenderung}");
+    }
+}
+
+#[test]
+fn freigegebene_besprechung_enthaelt_nichts_aus_einer_gesperrten() {
+    let fx = fx_mit_sperre(json!({}));
+    verknuepfen(
+        &fx,
+        &fx.a,
+        "u-a",
+        &["a@example.org"],
+        Some(Einstufung::Intern),
+    );
+    verknuepfen(&fx, &fx.d, "u-d", &["a@example.org"], None);
+    let (text, is_error) = fx.tool("get_meeting", json!({ "id": fx.a }));
+    assert!(!is_error, "{text}");
+    assert!(text.contains("Jour fixe"));
+    assert!(!text.contains("Workshop Einkauf"), "{text}");
+    let (text, _) = fx.tool("get_transcript", json!({ "id": fx.a }));
+    assert!(!text.contains("Workshop Einkauf"), "{text}");
 }

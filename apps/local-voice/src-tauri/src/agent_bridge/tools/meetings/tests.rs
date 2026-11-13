@@ -18,6 +18,8 @@ use crate::managers::youtube::source::AddOptions;
 struct MeetHost {
     transcript: bool,
     voice_transcript: bool,
+    /// `true`: echte Freigabeprüfung (eigene Domäne `example.org`) statt `Offen`.
+    echte_sperre: bool,
 }
 
 impl Host for MeetHost {
@@ -54,7 +56,15 @@ impl Host for MeetHost {
     }
 
     fn ki_sperre(&self) -> crate::managers::meetings::ki_freigabe::KiSperre {
-        crate::managers::meetings::ki_freigabe::KiSperre::Offen
+        use crate::managers::meetings::ki_freigabe::KiSperre;
+        if self.echte_sperre {
+            return KiSperre::Pruefen {
+                kundenprofil_nur_lokal: false,
+                cloud_bei_externen: false,
+                eigene_domaenen: vec!["example.org".into()],
+            };
+        }
+        KiSperre::Offen
     }
 }
 
@@ -113,6 +123,7 @@ fn rig_with(transcript: bool, voice_transcript: bool, lines: u32) -> Rig {
             Arc::new(MeetHost {
                 transcript,
                 voice_transcript,
+                echte_sperre: false,
             }),
         ),
         meeting,
@@ -315,4 +326,54 @@ fn the_voice_reads_a_long_transcript_in_small_complete_pages() {
         assert!(pages < 100, "kein Fortschritt");
     }
     assert!(pages >= 10, "{pages} Seiten");
+}
+
+/// Codex #583: Mit echter Sperre sieht die Brücke eine unbestätigte Besprechung nicht.
+#[test]
+fn with_the_real_gate_an_unconfirmed_meeting_stays_hidden() {
+    let r = rig(true);
+    let tools = AppTools::new(
+        Arc::clone(&r.tools.store),
+        Arc::new(MeetHost {
+            transcript: true,
+            voice_transcript: true,
+            echte_sperre: true,
+        }),
+    );
+    let ctx = ctx_of("agent-1");
+    let list = tools.call(&ctx, "meetings_list", &json!({})).unwrap();
+    assert_eq!(list["meetings"], json!([]));
+    assert_eq!(list["total"], 0);
+    let e = tools
+        .call(
+            &ctx,
+            "meeting_transcript",
+            &json!({ "meeting_id": r.meeting }),
+        )
+        .unwrap_err();
+    assert!(e.contains("nicht für KI-Clients freigegeben"), "{e}");
+    assert!(!e.contains("Umsatz"), "{e}");
+}
+
+/// Codex #583, Schreibpfade: Kein schreibendes Werkzeug der Brücke nimmt die Kennung einer
+/// vorhandenen Besprechung entgegen; ihre Inhalte erreicht nur das gesperrte Lesen.
+#[test]
+fn no_writing_tool_takes_an_existing_meeting() {
+    for spec in crate::agent_bridge::tools::all_specs() {
+        let entry = catalog::find(&spec.name).expect("im Katalog");
+        if entry.capability.access() == Access::Read {
+            continue;
+        }
+        let props = spec.input_schema["properties"]
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+        for key in props.keys() {
+            assert!(
+                !matches!(key.as_str(), "meeting_id" | "meeting" | "meetings" | "meeting_ids"),
+                "{}: {key}",
+                spec.name
+            );
+        }
+    }
 }
