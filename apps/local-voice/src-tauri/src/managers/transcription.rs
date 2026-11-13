@@ -725,9 +725,20 @@ impl TranscriptionManager {
             .and_then(|id| self.model_manager.get_model_info(&id))
             .map(|m| m.size_mb)
             .unwrap_or(0);
+        // lva#579: dieser Ladevorgang steht im gemeinsamen Buch, bis er zu Ende ist;
+        // andere Speicher-Tore ziehen ihn ab. Umgekehrt zaehlt hier mit, was
+        // gerade sonst laedt (genauer Lauf, eigene Engine der Warteschlange) und
+        // in der Messung noch nicht steckt. Erst eintragen, dann pruefen: so sieht
+        // immer mindestens eine Seite die andere.
+        let ledger = crate::managers::engine_ledger::global();
+        let _pending_load = ledger.announce(
+            model_info.size_mb,
+            matches!(model_info.engine_type, EngineType::TranscribeCpp),
+        );
+        let loading_elsewhere_mb = ledger.pending_mb().0.saturating_sub(model_info.size_mb);
         if let Err(message) = crate::memory_guard::check_before_load_blocking(
             &self.app_handle,
-            model_info.size_mb,
+            model_info.size_mb.saturating_add(loading_elsewhere_mb),
             credit_mb,
             &model_info.name,
         ) {
@@ -979,6 +990,42 @@ impl TranscriptionManager {
     /// (transcribe-cpp). Blockiert bis zum Ende des Ladens, der Aufrufer prueft
     /// vorher das Speicher-Tor.
     pub fn load_extra_engine(&self, model_id: &str, n_threads: i32) -> Result<ExtraEngine> {
+        // lva#579: der Ladevorgang steht im gemeinsamen Buch; solange ein genauer
+        // Lauf seinen Platz haelt, laedt die Warteschlange nichts dazu (der Auftrag
+        // wartet wieder an seiner Stelle).
+        let (size_mb, gpu_model) = self.load_footprint(model_id);
+        let _pending_load = crate::managers::engine_ledger::global()
+            .announce_unless(size_mb, gpu_model, crate::managers::accurate_run::active)
+            .ok_or_else(|| anyhow::anyhow!("an accurate run holds the extra engine slot"))?;
+        self.load_extra_engine_unreserved(model_id, n_threads)
+    }
+
+    /// Groesse (MB) und GPU-Faehigkeit eines Modells fuer Speicher-Tor und Buch.
+    /// Eigene Dateien haben keine Kataloggroesse: dann die Datei selbst. 0 =
+    /// unbekannt.
+    fn load_footprint(&self, model_id: &str) -> (u64, bool) {
+        let Some(info) = self.model_manager.get_model_info(model_id) else {
+            return (0, false);
+        };
+        let size_mb = if info.size_mb > 0 {
+            info.size_mb
+        } else {
+            self.model_manager
+                .get_model_path(model_id)
+                .ok()
+                .and_then(|p| std::fs::metadata(p).ok())
+                .filter(|m| m.is_file())
+                .map_or(0, |m| m.len().div_ceil(1024 * 1024))
+        };
+        (
+            size_mb,
+            matches!(info.engine_type, EngineType::TranscribeCpp),
+        )
+    }
+
+    /// Der Ladeschritt von [`Self::load_extra_engine`]; der Aufrufer hat den
+    /// Ladevorgang schon im gemeinsamen Buch eingetragen.
+    fn load_extra_engine_unreserved(&self, model_id: &str, n_threads: i32) -> Result<ExtraEngine> {
         let model_info = self
             .model_manager
             .get_model_info(model_id)
@@ -1012,8 +1059,10 @@ impl TranscriptionManager {
     /// `audio` einmal mit `model_id` auf einer EIGENEN Engine. Die gemeinsame Engine
     /// (Diktat) wird weder benutzt noch entladen, ihre Leerlauf-Frist nicht
     /// verlaengert; auch dann nicht, wenn sie dasselbe Modell haelt. `live` ist der
-    /// Stand ausserhalb dieses Managers (Aufnahmen, Besprechungsarbeit); Laden und
-    /// Live-Transkription ergaenzt die Funktion selbst. Fehler als Codes
+    /// Stand ausserhalb dieses Managers (Aufnahmen, Besprechungsarbeit) und wird
+    /// zweimal gefragt: am Anfang und unmittelbar vor dem Laden; Laden und
+    /// Live-Transkription ergaenzt die Funktion selbst. Beides sind Zustandspruefungen,
+    /// keine Sperre: beginnt Live-Arbeit danach, laeuft der Lauf trotzdem. Fehler als Codes
     /// (`accurate_run::ERR_*`): `accurate_model_live`, `accurate_model_busy`,
     /// `accurate_model_missing`, `accurate_model_memory`, `accurate_model_load_failed`.
     /// Blockiert; der Aufrufer ruft es in einem eigenen Arbeitsthread. Laden, Binden,
@@ -1022,53 +1071,61 @@ impl TranscriptionManager {
         &self,
         model_id: &str,
         audio: Vec<f32>,
-        live: crate::managers::accurate_run::LiveState,
+        live: &dyn Fn() -> crate::managers::accurate_run::LiveState,
     ) -> Result<String> {
         use crate::managers::accurate_run as run;
         let code = |c: &'static str| anyhow::anyhow!(c);
-        let live = run::LiveState {
-            streaming: live.streaming || self.is_streaming(),
-            model_loading: live.model_loading
-                || *self.is_loading.lock().unwrap_or_else(|e| e.into_inner()),
-            ..live
+        let admit = || {
+            let outside = live();
+            run::admit(&run::LiveState {
+                streaming: outside.streaming || self.is_streaming(),
+                model_loading: outside.model_loading
+                    || *self.is_loading.lock().unwrap_or_else(|e| e.into_inner()),
+                ..outside
+            })
         };
-        run::admit(&live).map_err(code)?;
+        admit().map_err(code)?;
         let _slot = run::Slot::try_take().ok_or_else(|| code(run::ERR_BUSY))?;
 
-        let info = self
-            .model_manager
+        self.model_manager
             .get_model_info(model_id)
             .filter(|m| m.is_downloaded)
             .ok_or_else(|| code(run::ERR_MISSING))?;
-        let path = self
-            .model_manager
+        self.model_manager
             .get_model_path(model_id)
             .ok()
             .filter(|p| p.exists())
             .ok_or_else(|| code(run::ERR_MISSING))?;
-        // Eigene Dateien haben keine Kataloggroesse: dann die Datei selbst.
-        let size_mb = if info.size_mb > 0 {
-            info.size_mb
-        } else {
-            std::fs::metadata(&path)
-                .ok()
-                .filter(|m| m.is_file())
-                .map_or(0, |m| m.len().div_ceil(1024 * 1024))
-        };
-        let gpu_model = matches!(info.engine_type, EngineType::TranscribeCpp);
-        let hw = run::measure(&self.app_handle);
-        if let Err(c) = run::memory_gate(size_mb, gpu_model, &hw) {
-            warn!(
-                "accurate run '{model_id}': memory gate shut (model {size_mb} MB, free RAM {:?} MB, free VRAM {:?} MB)",
-                hw.free_ram_mb, hw.free_vram_mb
-            );
-            return Err(code(c));
-        }
+        let (size_mb, gpu_model) = self.load_footprint(model_id);
+        // Messen, laufende Ladevorgaenge abziehen, Tor fragen, eintragen: unter
+        // einer Sperre des gemeinsamen Buchs.
+        let pending_load = crate::managers::engine_ledger::global()
+            .reserve(
+                size_mb,
+                gpu_model,
+                || run::measure(&self.app_handle),
+                |hw| {
+                    run::memory_gate(size_mb, gpu_model, hw).inspect_err(|_| {
+                        warn!(
+                            "accurate run '{model_id}': memory gate shut (model {size_mb} MB, free RAM {:?} MB, free VRAM {:?} MB, other loads deducted)",
+                            hw.free_ram_mb, hw.free_vram_mb
+                        )
+                    })
+                },
+            )
+            .map_err(code)?;
+        // Zweite Zustandspruefung unmittelbar vor dem Laden. Auch sie ist eine
+        // Momentaufnahme, keine Sperre gegen den Start von Live-Arbeit.
+        admit().map_err(code)?;
         let threads = (crate::process_guard::logical_cpus() / 2).max(1) as i32;
-        let engine = self.load_extra_engine(model_id, threads).map_err(|e| {
-            warn!("accurate run '{model_id}': load failed: {e}");
-            code(run::ERR_LOAD)
-        })?;
+        let engine = self
+            .load_extra_engine_unreserved(model_id, threads)
+            .map_err(|e| {
+                warn!("accurate run '{model_id}': load failed: {e}");
+                code(run::ERR_LOAD)
+            })?;
+        // Geladen: das Modell steckt jetzt im gemessenen Verbrauch.
+        drop(pending_load);
         // Dieser Thread darf noch keine eigene Engine halten (keine Verschachtelung).
         let _binding = bind_extra_engine(engine).map_err(|_| code(run::ERR_BUSY))?;
         self.transcribe(audio)

@@ -7,18 +7,20 @@
 //!   veraendert weder deren Ladezustand noch deren Leerlauf-Frist.
 //! - Hoechstens ein genauer Lauf zur Zeit ([`Slot`]); solange er laeuft, bekommt die
 //!   Import-Warteschlange keine weitere eigene Engine ([`active`]).
-//! - Live-Arbeit geht vor: waehrend Diktat, Besprechungsaufnahme, Live-Transkription,
-//!   Modellwechsel oder Besprechungsverarbeitung beginnt kein genauer Lauf ([`admit`]).
-//!   Beginnt die Live-Arbeit erst WAEHREND des Laufs, laeuft er zu Ende und teilt sich
-//!   Rechenzeit mit ihr; er wird nicht abgebrochen. Die Oberflaeche sagt das so.
+//! - Live-Arbeit geht vor, soweit eine Zustandspruefung das leisten kann: laeuft beim
+//!   Start oder unmittelbar vor dem Laden ein Diktat, eine Besprechungsaufnahme, eine
+//!   Live-Transkription, ein Modellwechsel oder eine Besprechungsverarbeitung, beginnt
+//!   der genaue Lauf nicht ([`admit`]). Das ist KEINE Sperre: Live-Arbeit, die nach der
+//!   letzten Pruefung beginnt (auch noch waehrend des Ladens), trifft auf einen
+//!   laufenden genauen Lauf. Er wird nicht abgebrochen und teilt sich Rechenzeit mit
+//!   ihr. Die Oberflaeche sagt das so.
 //! - Das Speicher-Tor ist streng ([`memory_gate`]): unbekannte Modellgroesse oder nicht
 //!   messbarer Speicher oeffnen es nicht, und beim Grafikspeicher zaehlt die Karte mit
 //!   dem WENIGSTEN freien Speicher (welche Karte der Lader nimmt, ist hier nicht
 //!   bekannt).
-//!
-//! Grenze, ehrlich: ein Wechsel des Diktatmodells WAEHREND eines genauen Laufs prueft
-//! keinen Speicher (das tut er auch ohne diesen Lauf nicht); der Lauf haelt sein Modell
-//! dann zusaetzlich im Speicher, bis er endet.
+//! - Der freie Speicher wird nicht zweimal zugesagt: Messen, Abziehen aller laufenden
+//!   Ladevorgaenge (Modellwechsel, eigene Engine der Warteschlange), Entscheiden und
+//!   Eintragen geschehen unter einer Sperre ([`crate::managers::engine_ledger`]).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 

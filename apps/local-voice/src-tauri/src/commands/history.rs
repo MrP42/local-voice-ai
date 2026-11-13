@@ -1,7 +1,7 @@
 use crate::actions::process_transcription_output_for_model;
 use crate::managers::{
     accurate_run::LiveState,
-    history::{HistoryEntry, HistoryManager, PaginatedHistory},
+    history::{HistoryManager, PaginatedHistory},
     transcription::TranscriptionManager,
 };
 use std::collections::BTreeSet;
@@ -82,8 +82,8 @@ fn accurate_model_of(settings: &crate::settings::AppSettings) -> Result<String, 
 
 /// Fehlercode: fuer diesen Eintrag laeuft schon eine Wiederholung.
 const ERR_RETRY_BUSY: &str = "retry_busy";
-/// Fehlercode: die Nachbearbeitung des genauen Laufs schlug fehl; der Eintrag
-/// (samt bisherigem nachbearbeitetem Text) blieb unveraendert.
+/// Fehlercode: die Nachbearbeitung des genauen Laufs war verlangt und eingerichtet,
+/// schlug aber fehl; der Eintrag blieb vollstaendig unveraendert.
 const ERR_POST_PROCESS: &str = "accurate_post_process_failed";
 
 static RETRYING: Mutex<BTreeSet<i64>> = Mutex::new(BTreeSet::new());
@@ -132,16 +132,6 @@ fn live_state(app: &AppHandle) -> LiveState {
     }
 }
 
-/// Wuerde das Schreiben einen vorhandenen nachbearbeiteten Text ersatzlos
-/// loeschen? Das ist so, wenn der Eintrag Nachbearbeitung verlangt, bisher einen
-/// nachbearbeiteten Text hat und der neue Lauf keinen liefert (die Nachbearbeitung
-/// schlug fehl oder ist nicht mehr eingerichtet).
-fn would_lose_post_processing(seen: &HistoryEntry, new_post_processed: Option<&str>) -> bool {
-    seen.post_process_requested
-        && seen.post_processed_text.is_some()
-        && new_post_processed.is_none()
-}
-
 async fn retry_entry(
     app: AppHandle,
     history_manager: &Arc<HistoryManager>,
@@ -169,14 +159,15 @@ async fn retry_entry(
             transcription_manager.initiate_model_load();
             None
         }
-        RetryModel::Explicit(model_id) => Some((model_id.clone(), live_state(&app))),
+        RetryModel::Explicit(model_id) => Some(model_id.clone()),
     };
 
     let tm = Arc::clone(transcription_manager);
     let run = accurate.clone();
+    let live_app = app.clone();
     let transcription = tauri::async_runtime::spawn_blocking(move || match run {
         None => tm.transcribe(samples),
-        Some((model_id, live)) => tm.transcribe_accurate(&model_id, samples, live),
+        Some(model_id) => tm.transcribe_accurate(&model_id, samples, &|| live_state(&live_app)),
     })
     .await
     .map_err(|e| format!("Transcription task panicked: {}", e))?
@@ -186,18 +177,17 @@ async fn retry_entry(
         return Err("Recording contains no speech".to_string());
     }
 
-    let ran_with = accurate.as_ref().map(|(model_id, _)| model_id.as_str());
     let processed = process_transcription_output_for_model(
         &app,
         &transcription,
         entry.post_process_requested,
-        ran_with,
+        accurate.as_deref(),
     )
     .await;
     // Nur der genaue Lauf: der bisherige Weg (Diktatmodell) bleibt, wie er war.
-    if ran_with.is_some()
-        && would_lose_post_processing(&entry, processed.post_processed_text.as_deref())
-    {
+    // Scheitert die Nachbearbeitung, wird nichts geschrieben, gleich ob der
+    // Eintrag schon einen nachbearbeiteten Text hatte.
+    if accurate.is_some() && processed.post_process_failed {
         return Err(ERR_POST_PROCESS.to_string());
     }
     history_manager
@@ -302,38 +292,8 @@ pub async fn update_recording_retention_period(
 
 #[cfg(test)]
 mod tests {
-    use super::{accurate_model_of, would_lose_post_processing, RetryClaim, ERR_RETRY_BUSY};
-    use crate::managers::history::HistoryEntry;
+    use super::{accurate_model_of, RetryClaim, ERR_RETRY_BUSY};
     use crate::settings::get_default_settings;
-
-    fn entry(requested: bool, post_processed: Option<&str>) -> HistoryEntry {
-        HistoryEntry {
-            id: 1,
-            file_name: "a.wav".into(),
-            timestamp: 0,
-            saved: false,
-            title: String::new(),
-            transcription_text: "alt".into(),
-            post_processed_text: post_processed.map(str::to_string),
-            post_process_prompt: None,
-            post_process_requested: requested,
-        }
-    }
-
-    #[test]
-    fn a_failed_post_processing_never_erases_an_existing_processed_text() {
-        // Verlangt, vorhanden, neuer Lauf liefert nichts: nicht schreiben.
-        assert!(would_lose_post_processing(&entry(true, Some("x")), None));
-        // Neuer Lauf liefert einen Text: schreiben.
-        assert!(!would_lose_post_processing(
-            &entry(true, Some("x")),
-            Some("y")
-        ));
-        // Es gab nie einen nachbearbeiteten Text: nichts zu verlieren.
-        assert!(!would_lose_post_processing(&entry(true, None), None));
-        // Nachbearbeitung nicht verlangt (z. B. nur Schriftumwandlung).
-        assert!(!would_lose_post_processing(&entry(false, Some("x")), None));
-    }
 
     #[test]
     fn one_entry_is_retried_by_one_run_at_a_time() {

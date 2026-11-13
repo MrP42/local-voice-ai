@@ -2808,7 +2808,7 @@
     },
     "accurateModel": {
       "title": "Genaues Modell für schwierige Aufnahmen",
-      "description": "Ein zweites Modell für einzelne Aufnahmen, die das Diktatmodell falsch verstanden hat. Im Verlauf lässt sich eine Aufnahme damit erneut transkribieren. Dafür wird das Modell zusätzlich zum Diktatmodell geladen und danach wieder freigegeben; das Diktatmodell bleibt, wie es ist. Der Lauf startet nicht, solange diktiert, aufgenommen oder eine Besprechung verarbeitet wird. Diktierst du, während er läuft, kann das Diktat langsamer reagieren. Wählbar ist jedes installierte Modell, auch eigene Whisper-Dateien (.bin oder .gguf) im Modellordner.",
+      "description": "Ein zweites Modell für einzelne Aufnahmen, die das Diktatmodell falsch verstanden hat. Im Verlauf lässt sich eine Aufnahme damit erneut transkribieren. Dafür wird das Modell zusätzlich zum Diktatmodell geladen und danach wieder freigegeben; das Diktatmodell bleibt, wie es ist. Vor dem Start wird geprüft, ob gerade diktiert, aufgenommen oder eine Besprechung verarbeitet wird; dann startet der Lauf nicht. Das ist eine Prüfung, keine Sperre: Beginnst du kurz danach oder während des Laufs zu diktieren, läuft er weiter, und das Diktat kann langsamer reagieren. Wählbar ist jedes installierte Modell, auch eigene Whisper-Dateien (.bin oder .gguf) im Modellordner.",
       "none": "Keines",
       "notInstalled": "{{model}} (nicht installiert)"
     },
@@ -2828,10 +2828,10 @@
       "accurateUnset": "Es ist kein genaues Modell eingerichtet. Wähle eines unter Einstellungen > Eingabe.",
       "accurateMissing": "Das genaue Modell ist nicht mehr installiert. Wähle unter Einstellungen > Eingabe ein anderes.",
       "accurateMemory": "Zu wenig freier Speicher, um das genaue Modell neben dem Diktatmodell zu laden. Schließe andere Programme oder wähle ein kleineres Modell.",
-      "accurateLive": "Gerade wird diktiert, aufgenommen, ein Modell geladen oder eine Besprechung verarbeitet. Das genaue Modell startet erst, wenn das beendet ist. Bitte danach erneut versuchen.",
+      "accurateLive": "Gerade wird diktiert, aufgenommen, ein Modell geladen oder eine Besprechung verarbeitet. Das genaue Modell wurde deshalb nicht gestartet. Bitte danach erneut versuchen.",
       "accurateBusy": "Das genaue Modell arbeitet gerade an einer anderen Aufnahme. Bitte warten, bis sie fertig ist.",
       "accurateLoadFailed": "Das genaue Modell ließ sich nicht laden. Die Aufnahme blieb unverändert. Die Ursache steht in der Protokolldatei.",
-      "accuratePostProcessFailed": "Die Nachbearbeitung ist fehlgeschlagen. Der bisherige Text blieb unverändert.",
+      "accuratePostProcessFailed": "Die Nachbearbeitung ist fehlgeschlagen. Die Aufnahme blieb unverändert.",
       "retryBusy": "Diese Aufnahme wird bereits erneut transkribiert.",
       "entryChanged": "Die Aufnahme wurde inzwischen geändert oder gelöscht. Das Ergebnis wurde verworfen.",
       "transcribing": "Transkribiere...",
