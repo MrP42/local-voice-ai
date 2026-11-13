@@ -8,7 +8,15 @@
 //! - MCP-Ausgabe ([`Pfad::Mcp`]) gilt immer als Cloud: der MCP-Client ist kein Nachweis
 //!   lokaler Verarbeitung (E2.8), auch wenn die App ihn als `Quelle::Lokal` anfragt.
 //! - Ohne eingeschalteten Assistenten, ohne festgelegte Aufbewahrung oder ohne
-//!   dokumentierte Freigabe keine Verarbeitung, auch nicht lokal.
+//!   dokumentierte Freigabe keine Verarbeitung, auch nicht lokal. Die Freigabe gilt nur für
+//!   die Runde, für die sie erteilt wurde: Sie ist an Besprechung, Teilnehmerliste und
+//!   Teilnehmer-Revision gebunden ([`freigabe_bindung`]); jede Änderung der Runde (auch eine
+//!   eingeladene Person, die später eintritt) pausiert jede Verarbeitung, auch lokal, bis zur
+//!   erneuten Freigabe. Diese Prüfung liegt VOR der Unterscheidung lokal/Cloud.
+//! - Cloud und MCP nur mit aktuellem, vollständigem Teilnehmerstand
+//!   ([`Teilnehmerinfo::AktuellVollstaendig`]); veraltet, unvollständig oder unbekannt sperrt
+//!   immer, auch mit „Cloud bei Externen“. Den Stand belegt der Aufrufer (diese Logik hat
+//!   keine Uhr).
 //! - Cloud nur, wenn Kundenprofil und Assistentenprofil sie nicht sperren, der Anbieter
 //!   freigegeben ist UND die Cloud für diese Besprechung ausdrücklich gewählt wurde.
 //! - Einstufung der Teilnehmenden: Extern vor Unbekannt vor Intern. Unbekannt sperrt die
@@ -22,8 +30,13 @@
 //! - Unbekannte Teilnehmende sperren die Cloud auch dann, wenn zugleich Externe dabei sind
 //!   und „Cloud bei Externen“ an ist; die Einstellung lockert nur bestätigtes „extern“.
 //! - Eigene Domänen gelten genau; Subdomänen nur mit Eintrag `*.example.org`. Ungültige
-//!   Domänen, öffentliche Mail-/Hosting-Domänen und Länder-Suffixe (`co.at`, `com.au`)
-//!   zählen nie als eigen, auch nicht mit Stern.
+//!   Domänen zählen nie als eigen. Öffentliche Mail-/Hosting-Domänen und Länder-Suffixe
+//!   (`co.at`, `com.au`) weist eine HEURISTIK ab: Beide Listen sind ausdrücklich
+//!   unvollständig (keine Public-Suffix-Liste), es gibt keine Eigentumsprüfung. Eine vom
+//!   Nutzer eingetragene eigene Domäne bleibt eine Vertrauensannahme; die Oberfläche warnt
+//!   beim Übernehmen.
+//! - Bestätigungen speichert die App strikt je Besprechung; der Fingerabdruck allein ist
+//!   besprechungsübergreifend gleich und kein Nachweis „je Besprechung“.
 //! - Eine Bestätigung kann die berechnete Einstufung nur verschärfen, nie lockern
 //!   (Unbekannt lässt sich nicht als „intern“ bestätigen).
 //! - Es gibt keinen automatischen Wechsel in die Cloud: fehlt eine zulässige Quelle,
@@ -363,11 +376,11 @@ pub fn einstufen(
             domaene_normalisieren(&d).map(|d| (p.clone(), d))
         });
         match adresse {
-            None => ohne_adresse += 1,
+            None => ohne_adresse = ohne_adresse.saturating_add(1),
             Some((p, d)) => {
                 if eigene.is_empty() {
                     // Ohne eigene Domänen ist keine Adresse als intern belegbar.
-                    ohne_adresse += 1;
+                    ohne_adresse = ohne_adresse.saturating_add(1);
                 } else if ist_eigen(&d, &eigene) {
                     intern_gesehen = true;
                 } else if !externe.contains(&p) {
@@ -414,6 +427,38 @@ pub enum Freigabe {
     Abgelehnt,
 }
 
+/// Wie verlässlich die Teilnehmerliste ist. Belegt vom Aufrufer (Kalenderabgleich), weil
+/// diese Logik keine Uhr hat. Nur [`Teilnehmerinfo::AktuellVollstaendig`] lässt Cloud und
+/// MCP zu.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[serde(rename_all = "snake_case")]
+pub enum Teilnehmerinfo {
+    /// Liste vollständig geladen und nach dem maßgeblichen Zeitpunkt erfolgreich abgeglichen.
+    AktuellVollstaendig,
+    /// Liste gekürzt oder nur teilweise geladen.
+    Unvollstaendig,
+    /// Letzter erfolgreicher Abgleich zu alt oder letzter Abgleich fehlgeschlagen.
+    Veraltet,
+    /// Kein Nachweis vorhanden (strenger Standard).
+    Unbekannt,
+}
+
+/// Bindung einer dokumentierten Freigabe an genau eine Runde: Besprechung, Teilnehmerliste
+/// (Fingerabdruck aus [`einstufen`]) und Teilnehmer-Revision. Die App speichert diesen Wert
+/// beim Erteilen und übergibt ihn in [`Anfrage::freigabe_bindung`].
+pub fn freigabe_bindung(besprechung_id: &str, fingerabdruck: &str, revision: u64) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"lva-g9-freigabe-v1\n");
+    h.update((besprechung_id.len() as u64).to_le_bytes());
+    h.update(besprechung_id.as_bytes());
+    h.update((fingerabdruck.len() as u64).to_le_bytes());
+    h.update(fingerabdruck.as_bytes());
+    h.update(revision.to_le_bytes());
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// Wohin der Inhalt gehen soll.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "specta", derive(specta::Type))]
@@ -438,34 +483,47 @@ pub enum Pfad {
     Mcp,
 }
 
-/// Alles, was die App für eine Prüfung zusammenträgt. Fehlende Angaben setzt die App
-/// auf den strengen Wert (`false`, `Offen`, `None`).
+/// Alles, was die App für eine Prüfung zusammenträgt. Ist eine Angabe nicht belegbar, setzt
+/// die App den STRENGEN Wert des Feldes; er steht je Feld dabei. Achtung: Bei
+/// `kundenprofil_nur_lokal` und `profil_nur_lokal` ist `true` streng, ein unbekanntes Profil
+/// zählt als „nur lokal“.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct Anfrage {
-    /// Schalter „Assistent in der Besprechung“.
+    /// Kennung der Besprechung (für die Bindung der Freigabe). Leer sperrt.
+    pub besprechung_id: String,
+    /// Schalter „Assistent in der Besprechung“. Streng: `false`.
     pub assistent_an: bool,
-    /// Aufbewahrungsregel für alle Datenarten festgelegt (lva#536).
+    /// Aufbewahrungsregel für alle Datenarten festgelegt (lva#536). Streng: `false`.
     pub aufbewahrung_festgelegt: bool,
+    /// Dokumentierte Freigabe. Streng: `Offen`.
     pub freigabe: Freigabe,
+    /// Gespeicherte Bindung der erteilten Freigabe ([`freigabe_bindung`]). Streng: `None`.
+    pub freigabe_bindung: Option<String>,
+    /// Zähler der App, der bei JEDER beobachteten Änderung der Runde steigt, auch wenn eine
+    /// bereits eingeladene Person später eintritt (unveränderte Einladung). Nie sinkend.
+    pub teilnehmer_revision: u64,
     pub quelle: Quelle,
     pub pfad: Pfad,
-    /// Kundenprofil sperrt Cloud-Quellen.
+    /// Kundenprofil sperrt Cloud-Quellen. Streng: `true` (auch bei unbekanntem Profil).
     pub kundenprofil_nur_lokal: bool,
-    /// Gewähltes Assistentenprofil ist „nur lokal“ (z. B. Personalbezug).
+    /// Gewähltes Assistentenprofil ist „nur lokal“ (z. B. Personalbezug). Streng: `true`.
     pub profil_nur_lokal: bool,
-    /// Anbieter freigegeben und regelkonform (Freigabe je Anbieter, ADR-0028).
+    /// Anbieter freigegeben und regelkonform (Freigabe je Anbieter, ADR-0028). Streng: `false`.
     pub anbieter_freigegeben: bool,
-    /// Cloud für DIESE Besprechung ausdrücklich gewählt.
+    /// Cloud für DIESE Besprechung ausdrücklich gewählt. Streng: `false`.
     pub cloud_fuer_besprechung: bool,
-    /// Einstellung „Cloud-Modelle in Besprechungen mit Externen“ (Standard aus).
+    /// Einstellung „Cloud-Modelle in Besprechungen mit Externen“. Streng: `false`.
     pub cloud_bei_externen: bool,
     /// Aktuelle Teilnehmerliste (laut Einladung oder Planung); [`pruefen`] stuft selbst ein.
     pub teilnehmende: Vec<String>,
-    /// Die Liste stammt aus dem Kalendertermin (nicht getippt, nicht Ad-hoc).
+    /// Die Liste stammt aus dem Kalendertermin (nicht getippt, nicht Ad-hoc). Streng: `false`.
     pub liste_aus_termin: bool,
+    /// Aktualität und Vollständigkeit der Liste. Streng: `Unbekannt`.
+    pub teilnehmerinfo: Teilnehmerinfo,
     /// Einstellung „Eigene Domänen“ (`example.org` genau, `*.example.org` mit Subdomänen).
     pub eigene_domaenen: Vec<String>,
+    /// Gespeicherte Bestätigung DIESER Besprechung. Streng: `None`.
     pub bestaetigung: Option<Bestaetigung>,
 }
 
@@ -478,6 +536,9 @@ pub enum Sperrgrund {
     AufbewahrungOffen,
     FreigabeOffen,
     FreigabeAbgelehnt,
+    /// Freigabe für eine frühere Runde erteilt (Person hinzu, entfernt, ersetzt oder später
+    /// eingetreten): Pause bis zur erneuten Freigabe, auch lokal.
+    FreigabeVeraltet,
     KundenprofilNurLokal,
     ProfilNurLokal,
     AnbieterNichtFreigegeben,
@@ -488,6 +549,9 @@ pub enum Sperrgrund {
     /// Liste nicht aus einem Termin (Ad-hoc): sperrt die Cloud immer.
     ListeOhneTermin,
     TeilnehmendeExtern,
+    TeilnehmerinfoUnvollstaendig,
+    TeilnehmerinfoVeraltet,
+    TeilnehmerinfoUnbekannt,
 }
 
 /// Ergebnis von [`pruefen`].
@@ -495,7 +559,11 @@ pub enum Sperrgrund {
 #[cfg_attr(feature = "specta", derive(specta::Type))]
 // Der Typname ist in den TS-Bindungen schon vergeben (`sprachdienst`); `rename` ändert am JSON
 // nichts (intern getaggtes Enum).
-#[serde(tag = "ergebnis", rename_all = "snake_case", rename = "AssistentEntscheidung")]
+#[serde(
+    tag = "ergebnis",
+    rename_all = "snake_case",
+    rename = "AssistentEntscheidung"
+)]
 pub enum Entscheidung {
     Erlaubt {
         /// Wirksame Einstufung (die strengere aus Berechnung und Bestätigung).
@@ -532,9 +600,17 @@ fn teilnehmer_gruende(
     einstufung: &EinstufungsErgebnis,
     wirksam: Einstufung,
     bestaetigung: Option<&Bestaetigung>,
+    teilnehmerinfo: Teilnehmerinfo,
     cloud_bei_externen: bool,
     gruende: &mut Vec<Sperrgrund>,
 ) {
+    // Ohne aktuellen, vollständigen Stand trägt keine Einstufung und keine Bestätigung.
+    match teilnehmerinfo {
+        Teilnehmerinfo::AktuellVollstaendig => {}
+        Teilnehmerinfo::Unvollstaendig => gruende.push(Sperrgrund::TeilnehmerinfoUnvollstaendig),
+        Teilnehmerinfo::Veraltet => gruende.push(Sperrgrund::TeilnehmerinfoVeraltet),
+        Teilnehmerinfo::Unbekannt => gruende.push(Sperrgrund::TeilnehmerinfoUnbekannt),
+    }
     // Eine Bestätigung muss zur aktuellen Liste passen und darf nicht lockerer sein als
     // die berechnete Einstufung; eine Bestätigung „unbekannt“ sperrt wie eine berechnete.
     let mut unbekannt_bestaetigt = false;
@@ -576,12 +652,23 @@ pub fn pruefen(a: &Anfrage) -> Entscheidung {
     if !a.aufbewahrung_festgelegt {
         gruende.push(Sperrgrund::AufbewahrungOffen);
     }
+    let einstufung = einstufen(&a.teilnehmende, &a.eigene_domaenen, a.liste_aus_termin);
+    // Die Freigabe gilt nur für die Runde, für die sie erteilt wurde; geprüft VOR der
+    // Quellenwahl, damit eine Änderung der Runde auch die lokale Verarbeitung pausiert.
     match a.freigabe {
-        Freigabe::Erteilt => {}
+        Freigabe::Erteilt => {
+            let aktuell = freigabe_bindung(
+                &a.besprechung_id,
+                &einstufung.fingerabdruck,
+                a.teilnehmer_revision,
+            );
+            if a.besprechung_id.is_empty() || a.freigabe_bindung.as_deref() != Some(&aktuell) {
+                gruende.push(Sperrgrund::FreigabeVeraltet);
+            }
+        }
         Freigabe::Offen => gruende.push(Sperrgrund::FreigabeOffen),
         Freigabe::Abgelehnt => gruende.push(Sperrgrund::FreigabeAbgelehnt),
     }
-    let einstufung = einstufen(&a.teilnehmende, &a.eigene_domaenen, a.liste_aus_termin);
     let wirksam = wirksame_einstufung(&einstufung, a.bestaetigung.as_ref());
     if a.quelle == Quelle::Cloud || a.pfad == Pfad::Mcp {
         if a.kundenprofil_nur_lokal {
@@ -600,6 +687,7 @@ pub fn pruefen(a: &Anfrage) -> Entscheidung {
             &einstufung,
             wirksam,
             a.bestaetigung.as_ref(),
+            a.teilnehmerinfo,
             a.cloud_bei_externen,
             &mut gruende,
         );
@@ -627,6 +715,8 @@ pub struct McpAnfrage {
     pub cloud_bei_externen: bool,
     pub teilnehmende: Vec<String>,
     pub liste_aus_termin: bool,
+    /// Aktualität und Vollständigkeit der Liste (streng: `Unbekannt`).
+    pub teilnehmerinfo: Teilnehmerinfo,
     pub eigene_domaenen: Vec<String>,
     /// Gespeicherte Bestätigung DIESER Besprechung (`None`: keine, also gesperrt).
     pub bestaetigung: Option<Bestaetigung>,
@@ -644,6 +734,7 @@ pub fn pruefen_mcp_ausgabe(a: &McpAnfrage) -> Entscheidung {
         &einstufung,
         wirksam,
         a.bestaetigung.as_ref(),
+        a.teilnehmerinfo,
         a.cloud_bei_externen,
         &mut gruende,
     );
