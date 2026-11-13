@@ -161,6 +161,11 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 !define MUI_LANGDLL_REGISTRY_KEY "${MANUPRODUCTKEY}"
 !define MUI_LANGDLL_REGISTRY_VALUENAME "Installer Language"
 
+; --- VORINSTALLIERT --- Interface-Einstellung, muss vor der ersten MUI-Seite stehen
+!ifdef VORINSTALLIERT
+  !define MUI_COMPONENTSPAGE_SMALLDESC
+!endif
+
 ; Installer pages, must be ordered as they appear
 ; 1. Welcome Page
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
@@ -539,7 +544,6 @@ Page custom PageDiktat PageLeaveDiktat
 ; --- VORINSTALLIERT --- 6c. Komponenten: Modelle einzeln abwählbar, alle vorausgewählt
 !ifdef VORINSTALLIERT
   !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
-  !define MUI_COMPONENTSPAGE_SMALLDESC
   !define MUI_PAGE_HEADER_TEXT "Modelle auswählen"
   !define MUI_PAGE_HEADER_SUBTEXT "Diese Modelle werden ohne Download mitinstalliert."
   !define MUI_COMPONENTSPAGE_TEXT_TOP "Alle Modelle laufen lokal. Abgewählte Modelle lassen sich später unter Modelle laden."
@@ -964,10 +968,11 @@ Function VorinstZiele
     StrCpy $VorinstTts "$INSTDIR\Data"
   ${Else}
     ; Datenordner gehören dem angemeldeten Benutzer, auch bei einer Installation für alle.
-    SetShellVarContext current
-    StrCpy $VorinstAsr "$APPDATA\${BUNDLEID}"
-    StrCpy $VorinstTts "$LOCALAPPDATA\${BUNDLEID}"
-    !insertmacro SetContext
+    ; Aus der Umgebung gelesen, damit der Shell-Kontext des Installers unverändert bleibt.
+    ReadEnvStr $0 APPDATA
+    ReadEnvStr $1 LOCALAPPDATA
+    StrCpy $VorinstAsr "$0\${BUNDLEID}"
+    StrCpy $VorinstTts "$1\${BUNDLEID}"
   ${EndIf}
 FunctionEnd
 
@@ -999,7 +1004,7 @@ Section "Spracherkennung Parakeet V3" SEC_PARAKEET
   SetOutPath $INSTDIR
 SectionEnd
 
-Section "Vorlesen Phonon (Deutsch und Englisch, alle Stimmen)" SEC_PHONON
+Section "${VORINST_PHONON_NAME}" SEC_PHONON
   Call VorinstZiele
   SetOverwrite off
   SetOutPath "$VorinstTts\tts"
@@ -1011,6 +1016,8 @@ SectionEnd
 Section -VorinstLizenzen
   SetOutPath $INSTDIR
   File "/oname=LIZENZEN-MODELLE.txt" "${VORINSTALLIERT}\LIZENZEN-MODELLE.txt"
+  ; Beide Spracherkennungen abgewählt: beim ersten Start nichts laden, die Person wählt selbst.
+  !insertmacro VORINST_DIKTAT "aus"
 SectionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN

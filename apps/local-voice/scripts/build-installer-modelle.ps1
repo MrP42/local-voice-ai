@@ -151,7 +151,9 @@ try {
             # Spracherkennungsmodell ein. Genau diese Kennung schreibt der Installer in erststart.ini.
             $store = Join-Path $data 'settings_store.json'
             if (-not (Test-Path $store)) { throw "${name}: --provision hat keine Voreinstellung geschrieben" }
-            $sel = (Get-Content $store -Raw | ConvertFrom-Json).settings.selected_model
+            $settings = (Get-Content $store -Raw | ConvertFrom-Json).PSObject.Properties['settings']
+            $selProp = if ($settings) { $settings.Value.PSObject.Properties['selected_model'] } else { $null }
+            $sel = if ($selProp) { $selProp.Value } else { $null }
             if (-not $sel) { throw "${name}: keine Spracherkennung voreingestellt" }
             if ($sel -match '["$`]') { throw "${name}: unerwartete Kennung '$sel'" }
             $selected[$name] = [string]$sel
@@ -181,6 +183,14 @@ try {
         throw 'Nemotron 3.5 ASR fehlt in der Nutzlast'
     }
     if (-not (Test-Path (Join-Path $outFull 'phonon/tts/phonon'))) { throw 'Phonon fehlt in der Nutzlast (tts\phonon)' }
+    # Je installiertem Phonon-Teil (Programm, je Sprachmodell) schreibt phonon_models.rs zuletzt
+    # die Marke .lva-install.json; ohne sie gilt der Teil in der App als nicht installiert.
+    $markers = @(Get-ChildItem (Join-Path $outFull 'phonon/tts/phonon') -Recurse -File -Force -Filter '.lva-install.json')
+    foreach ($id in @('phonon-31m-en') + @(if ($phononDe) { 'phonon-40m-de' })) {
+        if (-not ($markers | Where-Object { (Get-Content $_.FullName -Raw) -match [regex]::Escape("`"$id`"") })) {
+            throw "Phonon: keine Installationsmarke fuer $id"
+        }
+    }
 
     Copy-Item $licenses (Join-Path $outFull 'LIZENZEN-MODELLE.txt')
 
@@ -189,8 +199,10 @@ try {
     } else {
         'Programm und Englisch mit allen Stimmen (Apache-2.0). Das deutsche Modell ist in diesem Installer nicht enthalten. Einschalten unter Einstellungen > Ausgabe.'
     }
+    $phononName = if ($phononDe) { 'Vorlesen Phonon (Deutsch und Englisch, alle Stimmen)' } else { 'Vorlesen Phonon (Englisch, alle Stimmen)' }
     $nsh = @(
         '; Erzeugt von scripts/build-installer-modelle.ps1, nicht von Hand aendern.'
+        ('!define VORINST_PHONON_NAME "{0}"' -f $phononName)
         ('!define VORINST_NEMOTRON_ID "{0}"' -f $selected['nemotron'])
         ('!define VORINST_PARAKEET_ID "{0}"' -f $selected['parakeet'])
         ('!define VORINST_PHONON_TEXT "{0}"' -f $phononText)

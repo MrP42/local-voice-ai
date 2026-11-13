@@ -291,11 +291,21 @@ jobs:
         continue-on-error: ${{ inputs.repack_tag == '' }}
         shell: pwsh
         run: |
+          # Nachpacken eines Tags vor lva#574: dessen Erststart stellt bei zwei installierten
+          # Spracherkennungen nichts ein (firstRunSetup.ts). Dann keinen Installer mit Modellen.
+          if (-not (Select-String -Path src/components/intro-tour/firstRunSetup.ts -Pattern 'lva#574' -Quiet)) {
+            Write-Host '::notice::Release-Stand ohne lva#574: Installer mit Modellen wird nicht gebaut.'
+            exit 0
+          }
           $env:TMP = $env:RUNNER_TEMP; $env:TEMP = $env:RUNNER_TEMP
           $payload = Join-Path $env:RUNNER_TEMP 'vorinstalliert'
           ./scripts/build-installer-modelle.ps1 -RequireHfToken -SmokeTest -OutDir $payload
           $conf = Join-Path $env:RUNNER_TEMP 'ohne-updater.conf.json'
           [System.IO.File]::WriteAllText($conf, '{"bundle":{"createUpdaterArtifacts":false}}')
+          $payloadBytes = (Get-ChildItem $payload -Recurse -File | Measure-Object Length -Sum).Sum
+          # Den schlanken Installer von tauri-action wegraeumen: sonst fiele ein Bau, der die
+          # Nutzlast still nicht einbindet, unter dem alten Dateinamen nicht auf.
+          Remove-Item src-tauri/target/release/bundle/nsis -Recurse -Force -ErrorAction SilentlyContinue
           $env:LVA_VORINSTALLIERT = $payload
           pnpm tauri build --features gpu-vulkan --bundles nsis --config $conf
           if ($LASTEXITCODE -ne 0) { throw "tauri build (Installer mit Modellen) fehlgeschlagen" }
@@ -304,6 +314,8 @@ jobs:
           if (-not $setup) { throw "Installer mit Modellen nicht gefunden" }
           # NSIS-Grenze 2 GB, GitHub 2 GiB je Datei: mit Reserve pruefen.
           if ($setup.Length -ge [int64](1.95 * 1GB)) { throw ("Installer mit Modellen zu gross: {0:N0} MB" -f ($setup.Length / 1MB)) }
+          # Modellgewichte komprimieren kaum: deutlich kleiner heisst, die Nutzlast fehlt.
+          if ($setup.Length -lt [int64](0.7 * $payloadBytes)) { throw ("Installer mit Modellen nur {0:N0} MB, Nutzlast {1:N0} MB: Modelle nicht eingebunden" -f ($setup.Length / 1MB), ($payloadBytes / 1MB)) }
           $out = Join-Path $env:RUNNER_TEMP 'installer-modelle'
           New-Item -ItemType Directory -Force $out | Out-Null
           $name = "LocalVoiceAI_${version}_x64-setup-mit-modellen.exe"
