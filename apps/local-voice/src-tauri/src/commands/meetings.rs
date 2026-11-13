@@ -97,6 +97,68 @@ pub async fn meetings_start(
     .map_err(|e| format!("meetings_start panicked: {e}"))?
 }
 
+/// #537: "Beim Abspielen mitschreiben". Nimmt NUR den Systemton (Loopback, kein
+/// Mikrofon) in die vorhandene YouTube-Besprechung `meeting_id` auf, waehrend der
+/// Nutzer das Video im eingebetteten Player abspielt; Live-Transkript, Stopp
+/// (`meetings_stop`) und Enddurchlauf wie bei jeder Aufnahme. Kein Download, der
+/// Player bleibt unveraendert. Eigener Befehl statt eines Parameters an
+/// `meetings_start`: dort ist das Ziel ein LEERER Eintrag und es gibt einen Titel,
+/// ein Mikrofon und einen Systemton-Schalter; hier ist das Ziel ein YouTube-Eintrag
+/// ohne Transkript, und es gibt nichts davon zu waehlen.
+///
+/// Die Einwilligung (`consent_confirmed`) gilt zuerst. Fehler (Codes, die die
+/// Oberflaeche uebersetzt): `consent_required`, `already_recording`,
+/// `dictation_active`, `meeting_not_found`, `target_not_empty` (kein YouTube-Eintrag
+/// ohne Transkript und Aufnahme), `playback_capture_failed`,
+/// `playback_capture_timeout` (der Systemton liess sich nicht oeffnen; der Eintrag
+/// ist danach wie vorher), `start_cancelled` (ein Abbruch oder Stopp kam dazwischen).
+///
+/// lva#538: `op_id` ist die Vorgangs-Id, die die Oberflaeche fuer diesen Start erzeugt. Mit
+/// ihr adressiert `meetings_cancel_start` genau diesen Start, auch wenn der Abbruch-Befehl den
+/// Start-Befehl ueberholt (der Abbruch wird vermerkt, der Start endet bei seiner
+/// Registrierung mit `start_cancelled`). Fehlt sie, erzeugt der Recorder eine eigene.
+#[tauri::command]
+#[specta::specta]
+pub async fn meetings_start_playback_capture(
+    app: tauri::AppHandle,
+    meeting_id: String,
+    consent_confirmed: bool,
+    op_id: Option<String>,
+) -> Result<Meeting, String> {
+    if let Some(op) = op_id.as_deref() {
+        check_op_id(op)?;
+    }
+    let recorder = recorder_of(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        recorder.start_playback_capture(&meeting_id, consent_confirmed, op_id.as_deref())
+    })
+    .await
+    .map_err(|e| format!("meetings_start_playback_capture panicked: {e}"))?
+}
+
+/// lva#538: "Start abbrechen" fuer genau den Start mit der Vorgangs-Id `op_id`. Geht nie
+/// verloren: kommt der Befehl vor der Registrierung des Starts, wird die Id vermerkt und der
+/// Start endet mit `start_cancelled`; laeuft er, kehrt der Befehl zurueck, wenn er aufgeraeumt
+/// hat (`start_busy`, wenn er in einem Treiber haengt); hat er schon veroeffentlicht, ist es
+/// ein Stopp dieser Aufnahme.
+#[tauri::command]
+#[specta::specta]
+pub async fn meetings_cancel_start(app: tauri::AppHandle, op_id: String) -> Result<(), String> {
+    check_op_id(&op_id)?;
+    let recorder = recorder_of(&app)?;
+    tauri::async_runtime::spawn_blocking(move || recorder.cancel_start(&op_id))
+        .await
+        .map_err(|e| format!("meetings_cancel_start panicked: {e}"))?
+}
+
+/// Eine Vorgangs-Id ist kurz und nicht leer (die Oberflaeche erzeugt eine UUID).
+fn check_op_id(op: &str) -> Result<(), String> {
+    if op.is_empty() || op.len() > 128 {
+        return Err("invalid_operation".to_string());
+    }
+    Ok(())
+}
+
 /// G1 (#70): legt einen leeren Eintrag an, ein Notizblock ohne Audio und ohne
 /// Quelle, auf Wunsch gleich im Projekt `folder_id`. `title` ist der
 /// vorgeschlagene Titel (die Oberflaeche liefert den lokalisierten). Aufnahme,
@@ -290,11 +352,32 @@ pub async fn meetings_get_documents(
 
 /// Soft-deletes the meeting, then hard-deletes its audio files from disk
 /// (Spec A2 — a tombstoned meeting must never leave an orphaned WAV behind).
+///
+/// lva#538: zuerst reserviert das Loeschen die Besprechung und bringt den Recorder in einen
+/// Zustand, in dem ihre Dateien weg duerfen: ein laufender Start in sie endet mit
+/// `meeting_not_found` und hat aufgeraeumt, die laufende Aufnahme ist beendet (ohne
+/// Enddurchlauf), ein laufender Stopp samt Abschluss ist abgewartet. Die Reservierung haelt bis
+/// zum Ende dieses Befehls, also NACH dem Tombstone und dem Entfernen der Dateien: bis dahin
+/// nimmt kein Start mehr in diese Besprechung auf. Faellt das Warten aus (`recording_busy`) oder
+/// laeuft schon ein Loeschen (`delete_in_progress`), wird NICHTS geloescht: ein Fehler, nie ein
+/// stiller Erfolg.
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_delete(app: tauri::AppHandle, meeting_id: String) -> Result<(), String> {
     let store = store_of(&app)?;
     let queue = queue_of(&app)?;
+    let _reservation = match app.try_state::<Arc<MeetingRecorderManager>>() {
+        Some(recorder) => {
+            let recorder = Arc::clone(&recorder);
+            let id = meeting_id.clone();
+            Some(
+                tauri::async_runtime::spawn_blocking(move || recorder.reserve_delete(&id))
+                    .await
+                    .map_err(|e| format!("meetings_delete panicked: {e}"))??,
+            )
+        }
+        None => None,
+    };
     // P8a: eine laufende Verarbeitung (Import, Enddurchlauf, Notizen ...) endet,
     // bevor ihre Audiodateien verschwinden. Ohne Auftrag ist das ein leerer Aufruf.
     let _ = job::global().stop(&meeting_id);
