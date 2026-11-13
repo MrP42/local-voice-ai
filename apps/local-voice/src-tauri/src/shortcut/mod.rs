@@ -473,6 +473,18 @@ pub fn change_ptt_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// lva#573: Proxy für Modell-Downloads setzen (leer = wie Windows).
+#[tauri::command]
+#[specta::specta]
+pub fn change_download_proxy_setting(app: AppHandle, proxy: Option<String>) -> Result<(), String> {
+    let wert = crate::netz::proxy::normalisiere(proxy.as_deref().unwrap_or(""))?;
+    let mut settings = settings::get_settings(&app);
+    settings.download_proxy = wert.clone();
+    settings::write_settings(&app, settings);
+    crate::netz::proxy::setze_eigenen(wert.as_deref());
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn change_audio_feedback_setting(app: AppHandle, enabled: bool) -> Result<(), String> {

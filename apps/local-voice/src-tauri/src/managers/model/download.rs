@@ -465,34 +465,21 @@ impl ModelManager {
                 model_id, resume_from
             );
         } else {
-            info!("Starting fresh download of {} from {}", model_id, url);
+            info!(
+                "Starting fresh download of {} from {}",
+                model_id,
+                crate::netz::fehler::schwaerzen(url)
+            );
         }
 
-        let client = reqwest::Client::builder()
-            .connect_timeout(HTTP_CONNECT_TIMEOUT)
-            .redirect(if auth.is_some() {
-                reqwest::redirect::Policy::none()
-            } else {
-                reqwest::redirect::Policy::default()
-            })
-            .build()?;
-        let send = async {
-            match auth {
-                Some(auth) => auth::send_following(&client, url, resume_from, auth).await,
-                None => {
-                    let mut request = client.get(url);
-                    if resume_from > 0 {
-                        request = request.header("Range", format!("bytes={}-", resume_from));
-                    }
-                    Ok(request.send().await?)
-                }
-            }
-        };
+        // lva#573: Weiterleitungen folgt `send_following` selbst, je Schritt mit
+        // dem Proxyweg seines Ziels (PAC, eigene Einstellung), mit oder ohne Zugang.
+        let send = auth::send_following(url, resume_from, auth, HTTP_CONNECT_TIMEOUT);
         let response = tokio::select! {
             r = tokio::time::timeout(DOWNLOAD_STALL_TIMEOUT, send) => r
                 .map_err(|_| anyhow::anyhow!(
                     "no response within {}s from {}",
-                    DOWNLOAD_STALL_TIMEOUT.as_secs(), url
+                    DOWNLOAD_STALL_TIMEOUT.as_secs(), crate::netz::fehler::schwaerzen(url)
                 ))??,
             _ = cancel_token.cancelled() => return Ok(HttpDownloadOutcome::Cancelled),
         };

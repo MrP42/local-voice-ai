@@ -228,6 +228,8 @@ const settingUpdaters: {
     commands.changeLazyStreamCloseSetting(value as boolean),
   local_update_dir: (value) =>
     commands.changeLocalUpdateDirSetting((value as string | null) ?? null),
+  download_proxy: (value) =>
+    commands.changeDownloadProxySetting((value as string | null) ?? null),
   overlay_style: (value) => commands.changeOverlayStyleSetting(value as string),
   vad_enabled: (value) => commands.changeVadEnabledSetting(value as boolean),
   show_tray_icon: (value) =>

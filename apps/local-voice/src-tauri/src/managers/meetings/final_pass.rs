@@ -38,6 +38,19 @@
 //! ein Stopp im Nachholen beendet die Besprechung als `cancelled`, ohne
 //! Luecken-Platzhalter: "Fortsetzen" holt dann den Rest nach.
 //!
+//! lva#538: Schreibfehler (Platte voll, RIFF-Grenze) lassen das Live-Transkript
+//! unveraendert. Der Recorder markiert eine unvollstaendige Aufnahme DAUERHAFT
+//! (`metadata_json.audio_incomplete`, `AUDIO_INCOMPLETE_KEY`); der Enddurchlauf ersetzt
+//! das Transkript dann nie aus ihr (`KeepReason::AudioIncomplete`), auch nicht, wenn
+//! spaeter wieder Platz da ist. Dasselbe gilt ohne Marker (Absturz vor dem Schreiben des
+//! Markers), wenn die Aufnahme eines Kanals kuerzer ist als dessen Live-Transkript
+//! (`audio_shorter_than_transcript`): "nicht leer" allein belegt keine vollstaendige
+//! Abdeckung. Gemeinsamer Pfad: Live-Aufnahmen und Mitschnitt profitieren gleich.
+//! Fail-closed: auch ein Kanal mit Live-Saetzen, dessen Spur fehlt oder nicht lesbar ist,
+//! und ein Lesefehler der Metadaten (Marker unbekannt) lassen das Live-Transkript stehen.
+//! Ein Schreibfehler, den der Recorder im selben Lauf kennt, sperrt den Ersatz unabhaengig vom
+//! gespeicherten Marker (`Keep(AudioIncomplete)` im Plan, `recorder.rs`).
+//!
 //! Alles, was Tauri, das Modell oder die Hardware braucht, steckt hinter
 //! [`FinalEnv`]; die Ablaeufe selbst sind ohne Geraet und ohne Modell testbar.
 
@@ -82,6 +95,12 @@ pub const REPORT_KEY: &str = "final_pass";
 pub const SKIPPED_CODE: &str = "final_pass_skipped";
 /// P8a: Hinweis-Code, wenn der Nutzer die Nachbearbeitung gestoppt hat.
 pub const STOPPED_CODE: &str = "final_pass_stopped";
+/// `metadata_json`-Schluessel: die Aufnahme ist unvollstaendig (ein WAV-Schreibfehler),
+/// geschrieben vom Recorder (`mark_audio_incomplete`).
+pub const AUDIO_INCOMPLETE_KEY: &str = "audio_incomplete";
+/// So viel laenger darf das Live-Transkript eines Kanals sein als seine Aufnahme (Zeitachse
+/// der Kanaele, Rundung des WAV-Kopfes), bevor die Aufnahme als unvollstaendig gilt.
+const COVERAGE_SLACK_MS: u64 = 5_000;
 /// Import-Spur ohne Kanaltrennung (wie `retranscribe.rs`).
 const CHANNEL_MIXED: u8 = 2;
 /// `remap_sources`: ohne Ueberlappung zaehlt das naechste Segment, wenn es
@@ -182,6 +201,9 @@ pub enum KeepReason {
     /// lva#523: „Fortsetzen“ einer gestoppten Neu-Transkription: nur der Rest wird
     /// mit dem Modell des Laufs nachgeholt, kein Enddurchlauf ueber alles.
     PartialRerun,
+    /// lva#538: die Aufnahme ist unvollstaendig (WAV-Schreibfehler, Marker oder kuerzer
+    /// als das Live-Transkript): kein Ersatz des Transkripts aus ihr.
+    AudioIncomplete,
     /// lva#534: das Einwilligungs-Tor der Besprechungsplanung sperrt weitere Transkription
     /// (Ablehnung oder fehlende Zustimmung); das Live-Transkript bleibt, wie es ist.
     NoConsent,
@@ -1025,6 +1047,37 @@ fn catch_up(
     CatchUp::Finished
 }
 
+/// lva#538: belegt die Aufnahme, dass sie das Live-Transkript VOLLSTAENDIG abdeckt? Nur dann darf
+/// der Enddurchlauf es aus ihr ersetzen. Fail-closed, je Kanal mit Live-Saetzen:
+/// - Der Kanal hat keine Spur (die Datei fehlt): der Ersatz aus der anderen Spur liesse seine
+///   Saetze verschwinden. Unvollstaendig.
+/// - Die Spur ist nicht lesbar (kaputter Kopf): nichts belegt ihre Laenge. Unvollstaendig.
+/// - Die Spur ist kuerzer als das Transkript des Kanals (mehr als [`COVERAGE_SLACK_MS`], Zeitachse
+///   der Kanaele, Rundung des WAV-Kopfes): ein Schreibfehler hat ihr einen Teil genommen.
+///
+/// Ein Kanal ohne Live-Saetze zaehlt nicht (nichts, was ein Ersatz kuerzen koennte).
+fn audio_shorter_than_transcript(tracks: &[Track], segments: &[StoredSegment]) -> bool {
+    let mut said: Vec<(u8, u64)> = Vec::new();
+    for segment in segments {
+        match said
+            .iter_mut()
+            .find(|(channel, _)| *channel == segment.channel)
+        {
+            Some((_, end)) => *end = (*end).max(segment.end_ms),
+            None => said.push((segment.channel, segment.end_ms)),
+        }
+    }
+    said.into_iter().any(|(channel, said_ms)| {
+        let Some(track) = tracks.iter().find(|t| t.channel == channel) else {
+            return true;
+        };
+        match wav_duration_ms(&track.path) {
+            None => true,
+            Some(audio_ms) => said_ms > audio_ms.saturating_add(COVERAGE_SLACK_MS),
+        }
+    })
+}
+
 /// Der eigentliche Enddurchlauf. `Ok(epoch)` = ersetzt; `Err` = das
 /// Live-Transkript bleibt unveraendert.
 fn final_pass(
@@ -1038,11 +1091,31 @@ fn final_pass(
 ) -> Result<u32, KeepReason> {
     // lva#544: Modellarbeit ueber Ton dieser Besprechung; jedes Schreiben prueft das Tor.
     let _arbeit = crate::managers::planning::Modellarbeit::beginnen(&meeting.id);
-    let metadata = store.metadata_json(&meeting.id).ok().flatten();
+    // lva#538, fail-closed: ein Lesefehler der Metadaten belegt nicht, dass kein Marker
+    // `audio_incomplete` steht. Ohne ihn zu kennen, ersetzt der Enddurchlauf nichts.
+    let metadata = match store.metadata_json(&meeting.id) {
+        Ok(metadata) => metadata,
+        Err(e) => {
+            warn!(
+                "meetings: metadata of {} not readable ({e}) - live transcript kept",
+                meeting.id
+            );
+            return Err(KeepReason::StoreFailed);
+        }
+    };
     let tracks = final_tracks(meeting, metadata.as_ref());
     let dir = meeting_dir(meeting).ok_or(KeepReason::NoAudio)?;
     if tracks.is_empty() {
         return Err(KeepReason::NoAudio);
+    }
+    // lva#538: eine Aufnahme mit Schreibfehler ersetzt das Live-Transkript nie, und eine, die
+    // nie sauber geschlossen wurde (Marker `capture_open` steht noch: Absturz, oder der Abschluss
+    // konnte ihn nicht entfernen), ebenso wenig. Das gilt unabhaengig von der Abdeckung unten:
+    // sie laesst fuenf Sekunden Unterdeckung zu.
+    if metadata.as_ref().is_some_and(|m| {
+        m.get(AUDIO_INCOMPLETE_KEY).is_some() || m.get(super::store::CAPTURE_OPEN_KEY).is_some()
+    }) {
+        return Err(KeepReason::AudioIncomplete);
     }
     let snapshot = store
         .transcript_snapshot(&meeting.id)
@@ -1054,6 +1127,15 @@ fn final_pass(
     // ueberschreiben.
     if live_copy_epoch(&dir).is_some_and(|e| e < snapshot.epoch) {
         return Err(KeepReason::AlreadyFinal);
+    }
+    // lva#538: auch ohne Marker (Absturz, bevor er geschrieben war): kuerzer als das, was
+    // das Live-Transkript schon abdeckt, heisst, dass die WAV nicht vollstaendig ist.
+    if audio_shorter_than_transcript(&tracks, &snapshot.segments) {
+        warn!(
+            "meetings: recording of {} is shorter than its live transcript - live transcript kept",
+            meeting.id
+        );
+        return Err(KeepReason::AudioIncomplete);
     }
     if env.cancelled() {
         return Err(KeepReason::Cancelled);
@@ -3591,6 +3673,588 @@ mod tests {
         assert_kept(&f, &env, &out, KeepReason::NoAudio);
     }
 
+    // ---- lva#538: Schreibfehler der Aufnahme lassen das Live-Transkript stehen -------
+
+    fn assert_live_untouched(f: &Fixture, env: &FakeEnv, out: &JobOutcome, texts: &[&str]) {
+        assert_eq!(out.report.kept, Some(KeepReason::AudioIncomplete));
+        let snap = f.store.transcript_snapshot(&f.id).unwrap();
+        assert_eq!(snap.epoch, 0, "keine neue Epoche");
+        let live: Vec<&str> = snap.segments.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(live, texts, "Live-Transkript unveraendert");
+        assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
+        assert!(env.kinds().contains(&"error"), "Hinweis final_pass_skipped");
+        assert!(!env.kinds().contains(&"reset"), "nichts ersetzt");
+        assert_eq!(
+            env.calls, 0,
+            "die Aufnahme wurde gar nicht erst transkribiert"
+        );
+        assert!(env.loads.is_empty(), "auch kein Modell geladen");
+        assert!(!f.meeting_dir.join(LIVE_TRANSCRIPT_FILE).exists());
+        assert_eq!(env.final_event(), (0, None));
+    }
+
+    /// Der Recorder hat den Schreibfehler dauerhaft markiert: der Enddurchlauf ersetzt
+    /// das Live-Transkript nicht, auch wenn die WAV lesbar ist und jetzt wieder Platz da
+    /// waere.
+    #[test]
+    fn a_marked_incomplete_recording_never_replaces_the_live_transcript() {
+        let f = fixture(true, MeetingStatus::Processing);
+        f.store
+            .set_metadata_key(
+                &f.id,
+                AUDIO_INCOMPLETE_KEY,
+                serde_json::json!({"channels": [1], "at": 5}),
+            )
+            .unwrap();
+        let mut env = FakeEnv::new();
+        let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        assert_live_untouched(&f, &env, &out, &["s0", "s1"]);
+    }
+
+    /// Absturz, bevor der Marker geschrieben war: die WAV ist nach dem Schreibfehler am
+    /// letzten Kopf-Flush stehengeblieben (6 s), das Live-Transkript lief weiter (bis 14 s).
+    /// Es gibt keinen Marker; "nicht leer" belegt keine Abdeckung, also bleibt das
+    /// laengere Live-Transkript.
+    #[test]
+    fn a_truncated_wav_with_a_longer_live_transcript_keeps_the_live_transcript() {
+        let f = fixture(true, MeetingStatus::Processing);
+        f.store
+            .append_delta(
+                &f.id,
+                &TranscriptDelta {
+                    new_segments: vec![seg(2, 0, 9_000, 14_000)],
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            wav_duration_ms(&f.meeting_dir.join("mic.wav")),
+            Some(6_000),
+            "Voraussetzung: die WAV ist kuerzer als das Transkript"
+        );
+        let marker = f
+            .store
+            .metadata_json(&f.id)
+            .unwrap()
+            .and_then(|m| m.get(AUDIO_INCOMPLETE_KEY).cloned());
+        assert!(marker.is_none());
+
+        let mut env = FakeEnv::new();
+        let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        assert_live_untouched(&f, &env, &out, &["s0", "s1", "s2"]);
+    }
+
+    /// lva#538 Befund 6: fehlt die Spur eines ganzen Kanals (die Datei ist weg), haben dessen
+    /// Live-Saetze keine Abdeckung: der Ersatz aus der anderen Spur liesse sie verschwinden.
+    #[test]
+    fn a_missing_channel_file_keeps_the_live_transcript() {
+        let f = fixture(true, MeetingStatus::Processing);
+        std::fs::remove_file(f.meeting_dir.join("system.wav")).unwrap();
+        let mut env = FakeEnv::new();
+        let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        assert_live_untouched(&f, &env, &out, &["s0", "s1"]);
+    }
+
+    /// lva#538 Befund B (Runde 3): der Absturz nach einem Schreibfehler, bei dem der Marker
+    /// `audio_incomplete` nie geschrieben wurde (die Datenbank verweigert ihn, wie ein voller
+    /// Datentraeger). Die WAV steht bei 6 s, das Live-Transkript lief bis 9 s: 3 s Unterdeckung
+    /// liegen innerhalb der Abdeckungs-Toleranz, die Abdeckung allein liesse den Ersatz zu. Der
+    /// pessimistische Marker `capture_open` aus dem START schuetzt: nach dem "Neustart" (der Store
+    /// wird neu geoeffnet) bleiben Epoche und Live-Transkript unveraendert.
+    #[test]
+    fn a_crash_with_an_unwritable_marker_never_lets_the_final_pass_cut_the_live_transcript() {
+        let f = fixture(true, MeetingStatus::Processing);
+        let mic = f.meeting_dir.join("mic.wav");
+        let system = f.meeting_dir.join("system.wav");
+        // Der Start: Pfade und Marker in EINER Transaktion.
+        f.store
+            .begin_capture(&f.id, mic.to_str(), system.to_str())
+            .unwrap();
+        f.store
+            .append_delta(
+                &f.id,
+                &TranscriptDelta {
+                    new_segments: vec![seg(2, 0, 6_000, 9_000)],
+                },
+            )
+            .unwrap();
+        // Die Datenbank verweigert den spaeten Marker (voller Datentraeger).
+        f.store
+            .get_connection()
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER refuse_marker BEFORE UPDATE OF metadata_json ON meetings
+                 WHEN NEW.metadata_json LIKE '%audio_incomplete%'
+                 BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END;",
+            )
+            .unwrap();
+        // Der Stopp sieht den Schreibfehler auf dem Systemkanal: Marker nicht speicherbar, der
+        // Plan dieses Laufs bleibt `Keep`.
+        let plan = super::super::recorder::plan_after_write_failures(
+            &f.store,
+            &f.id,
+            &[1],
+            run_plan(LARGE),
+            1,
+        );
+        assert!(matches!(plan, FinalPlan::Keep(KeepReason::AudioIncomplete)));
+        let meta = f.store.metadata_json(&f.id).unwrap().unwrap();
+        assert!(
+            meta.get(AUDIO_INCOMPLETE_KEY).is_none(),
+            "Voraussetzung: nie geschrieben"
+        );
+        assert!(meta.get(super::super::store::CAPTURE_OPEN_KEY).is_some());
+        assert_eq!(wav_duration_ms(&mic), Some(6_000));
+
+        // Absturz und Neustart: ein neuer Store auf derselben Datenbank, die Wiederherstellung
+        // laeuft den Enddurchlauf mit dem urspruenglichen Plan (`Run`).
+        let restarted = MeetingStore::open_at(&f._dir.path().join("meetings.db")).unwrap();
+        let mut env = FakeEnv::new();
+        let out = run_job(&restarted, &job(&f, run_plan(LARGE)), &mut env);
+        assert_live_untouched(&f, &env, &out, &["s0", "s1", "s2"]);
+        let snap = restarted.transcript_snapshot(&f.id).unwrap();
+        assert_eq!(snap.epoch, 0, "die Epoche blieb");
+        assert_eq!(snap.segments.iter().map(|s| s.end_ms).max(), Some(9_000));
+    }
+
+    // -- lva#538 Runde 5: die Kette vom Capture-Thread bis zum Neustart ------------
+
+    use crate::audio_toolkit::audio::loopback::{OwnedPacket, Script};
+    use crate::audio_toolkit::audio::CaptureEnd;
+
+    /// Ein Paket Ton (16 kHz Mono, `millis` lang), gestempelt `offset_ms` nach dem Stream-Start
+    /// der Nachbildung (1 ms = 10 000 Einheiten zu 100 ns); ohne Stempel, wenn `stamped` fehlt.
+    fn tone(offset_ms: u64, millis: usize, stamped: bool) -> OwnedPacket {
+        OwnedPacket {
+            interleaved: vec![0.5; millis * 16],
+            device_position: 0,
+            qpc: stamped.then_some(Script::ORIGIN + offset_ms * 10_000),
+        }
+    }
+
+    /// Die Aufnahme beginnt (Marker `capture_open` aus dem Start), das Live-Transkript lief bis
+    /// 9 s, die WAV ist 6 s lang: die Unterdeckung liegt innerhalb der Toleranz, die Abdeckung
+    /// allein liesse den Ersatz zu.
+    fn started_capture(f: &Fixture) {
+        let mic = f.meeting_dir.join("mic.wav");
+        let system = f.meeting_dir.join("system.wav");
+        f.store
+            .begin_capture(&f.id, mic.to_str(), system.to_str())
+            .unwrap();
+        f.store
+            .append_delta(
+                &f.id,
+                &TranscriptDelta {
+                    new_segments: vec![seg(2, 0, 6_000, 9_000)],
+                },
+            )
+            .unwrap();
+    }
+
+    /// Die ganze Kette fuer einen NICHT sauberen Abschluss des Loopbacks, ueber die echte
+    /// Stopp-Auswertung: ein Capture-Thread mit der Nachbildung `script`, beendet von
+    /// `recorder::stop_loopback` (wie in `Recorder::stop`), das Ergebnis in `settle_after_stop`,
+    /// dann der "Neustart" (der Store wird neu geoeffnet) und der Enddurchlauf. `precondition`
+    /// prueft, was die Nachbildung ausloeste; `reason` ist der Name im Marker.
+    fn chain_keeps_the_live_transcript(
+        script: Script,
+        precondition: impl FnOnce(&CaptureEnd),
+        reason: &str,
+    ) {
+        let f = fixture(true, MeetingStatus::Processing);
+        started_capture(&f);
+
+        let end = super::super::recorder::stop_loopback(&f.id, script.capture());
+        precondition(&end);
+        assert!(!end.is_clean(), "Voraussetzung: kein sauberer Abschluss");
+
+        // Der Stopp: keine Schreibfehler der WAV, nur das Ende des Loopbacks.
+        let (failed, _plan) = super::super::recorder::settle_after_stop(
+            &f.store,
+            &f.id,
+            Vec::new(),
+            &end,
+            run_plan(LARGE),
+            1,
+        );
+        assert_eq!(failed, vec![1], "der Systemkanal ist unvollstaendig");
+        let meta = f.store.metadata_json(&f.id).unwrap().unwrap();
+        assert_eq!(
+            meta[AUDIO_INCOMPLETE_KEY]["channels"],
+            serde_json::json!([1]),
+            "{meta}"
+        );
+        let stored = meta[AUDIO_INCOMPLETE_KEY]["reason"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(stored.contains(reason), "Grund {reason} fehlt: {meta}");
+        assert!(
+            meta.get(super::super::store::CAPTURE_OPEN_KEY).is_some(),
+            "der Marker bleibt: die Aufnahme gilt nicht als sauber geschlossen"
+        );
+
+        // Neustart: ein neuer Store auf derselben Datenbank. Beide Marker stehen weiter, und der
+        // Enddurchlauf ersetzt nichts.
+        let restarted = MeetingStore::open_at(&f._dir.path().join("meetings.db")).unwrap();
+        let meta = restarted.metadata_json(&f.id).unwrap().unwrap();
+        assert!(meta.get(AUDIO_INCOMPLETE_KEY).is_some(), "{meta}");
+        assert!(meta.get(super::super::store::CAPTURE_OPEN_KEY).is_some());
+        let mut env = FakeEnv::new();
+        let out = run_job(&restarted, &job(&f, run_plan(LARGE)), &mut env);
+        assert_live_untouched(&f, &env, &out, &["s0", "s1", "s2"]);
+        let snap = restarted.transcript_snapshot(&f.id).unwrap();
+        assert_eq!(snap.epoch, 0, "die Epoche blieb");
+        assert_eq!(snap.segments.iter().map(|s| s.end_ms).max(), Some(9_000));
+    }
+
+    /// Befund 4 (Runde 4/5): ein Verlust beim Stopp des Loopbacks bleibt nicht auf der
+    /// Capture-Seite stehen. Ein uebergrosses Paket (20 s) liegt beim Stopp in der Schlange.
+    #[test]
+    fn a_loss_at_loopback_stop_keeps_the_live_transcript_after_a_restart() {
+        chain_keeps_the_live_transcript(
+            Script {
+                packets: vec![tone(0, 20_000, true)],
+                stop_at_first_block: true,
+                ..Script::default()
+            },
+            |end| {
+                assert!(end.lost, "{end:?}");
+                assert!(!end.error && !end.panicked, "{end:?}");
+            },
+            "capture_lost",
+        );
+    }
+
+    /// Befund 4 (Runde 5): eine Panik des Capture-Threads mit ausstehendem PCM. Das `join`
+    /// schlaegt fehl; frueher kam daraus `false`/nichts, jetzt ein unvollstaendiger Systemkanal.
+    #[test]
+    fn a_capture_thread_panic_keeps_the_live_transcript_after_a_restart() {
+        chain_keeps_the_live_transcript(
+            Script {
+                packets: vec![tone(0, 2_000, true)],
+                panic_at_first_block: true,
+                ..Script::default()
+            },
+            |end| assert!(end.panicked, "{end:?}"),
+            "capture_panicked",
+        );
+    }
+
+    /// Befund 4 (Runde 5): ein Geraetefehler waehrend der laufenden Aufnahme, OHNE Verlust beim
+    /// Abschluss (alles Gelesene ist geschrieben). Danach fehlt Systemton: der Marker steht.
+    #[test]
+    fn a_device_error_keeps_the_live_transcript_after_a_restart() {
+        chain_keeps_the_live_transcript(
+            Script {
+                packets: vec![tone(0, 1_000, true)],
+                error_after: Some(1),
+                ..Script::default()
+            },
+            |end| {
+                assert!(end.error, "{end:?}");
+                assert!(!end.lost && !end.panicked, "{end:?}");
+            },
+            "capture_error",
+        );
+    }
+
+    /// Befund 3 (Runde 5): eine echte Pause am ANFANG, laenger als die Obergrenze. Das Kuerzen
+    /// ist erlaubt, aber nicht unsichtbar: der Marker steht auch nach dem Neuoeffnen.
+    #[test]
+    fn a_truncated_initial_pause_keeps_the_live_transcript_after_a_restart() {
+        chain_keeps_the_live_transcript(
+            Script {
+                packets: vec![tone(6_000, 1_000, true), tone(7_000, 1_000, true)],
+                max_gap: Some(std::time::Duration::from_secs(2)),
+                ..Script::default()
+            },
+            |end| {
+                assert!(end.timeline_uncertain, "{end:?}");
+                assert!(!end.lost && !end.error && !end.panicked, "{end:?}");
+            },
+            "timeline_uncertain",
+        );
+    }
+
+    /// Befund 3 (Runde 5): eine echte Pause ZWISCHEN zwei Paketen, laenger als die Obergrenze.
+    #[test]
+    fn a_truncated_inner_pause_keeps_the_live_transcript_after_a_restart() {
+        chain_keeps_the_live_transcript(
+            Script {
+                packets: vec![tone(0, 1_000, true), tone(6_000, 1_000, true)],
+                max_gap: Some(std::time::Duration::from_secs(2)),
+                ..Script::default()
+            },
+            |end| {
+                assert!(end.timeline_uncertain, "{end:?}");
+                assert!(!end.lost && !end.error && !end.panicked, "{end:?}");
+            },
+            "timeline_uncertain",
+        );
+    }
+
+    /// Befund 1/2 (Runde 5): ein Paket ohne Stempel haengt lueckenlos an, aber die Zeitachse
+    /// ist danach nicht mehr sicher: dauerhaft unvollstaendig.
+    #[test]
+    fn a_packet_without_a_stamp_keeps_the_live_transcript_after_a_restart() {
+        chain_keeps_the_live_transcript(
+            Script {
+                packets: vec![
+                    tone(0, 10, false),
+                    tone(3_010, 10, true),
+                    tone(3_020, 1_000, true),
+                ],
+                ..Script::default()
+            },
+            |end| {
+                assert!(end.timeline_uncertain, "{end:?}");
+                assert!(!end.lost && !end.error && !end.panicked, "{end:?}");
+            },
+            "timeline_uncertain",
+        );
+    }
+
+    /// Befund 2 (Runde 5): ein Stempel weit hinter dem Stand der Zeitachse wird ignoriert (kein
+    /// Neuverankern, keine erfundene Stille), und die Unsicherheit bleibt dauerhaft stehen.
+    #[test]
+    fn a_stamp_far_behind_keeps_the_live_transcript_after_a_restart() {
+        chain_keeps_the_live_transcript(
+            Script {
+                packets: vec![tone(0, 1_000, true), tone(100, 1_000, true)],
+                ..Script::default()
+            },
+            |end| {
+                assert!(end.timeline_uncertain, "{end:?}");
+                assert!(!end.lost && !end.error && !end.panicked, "{end:?}");
+            },
+            "timeline_uncertain",
+        );
+    }
+
+    /// Das Gegenstueck zu allen Ketten oben: ein sauberer Abschluss (gestempelte, lueckenlose
+    /// Pakete) laesst den Marker fallen, und der Enddurchlauf ersetzt. Sonst bewiesen die Tests
+    /// oben nichts (und die normale Live-Aufnahme verlore den Enddurchlauf).
+    #[test]
+    fn a_clean_loopback_stop_closes_the_marker_and_the_final_pass_replaces() {
+        let f = fixture(true, MeetingStatus::Processing);
+        let mic = f.meeting_dir.join("mic.wav");
+        let system = f.meeting_dir.join("system.wav");
+        f.store
+            .begin_capture(&f.id, mic.to_str(), system.to_str())
+            .unwrap();
+        let script = Script {
+            packets: (0..100).map(|k| tone(10 * k, 10, true)).collect(),
+            ..Script::default()
+        };
+        let end = super::super::recorder::stop_loopback(&f.id, script.capture());
+        assert!(end.is_clean(), "{end:?}");
+        let (failed, _plan) = super::super::recorder::settle_after_stop(
+            &f.store,
+            &f.id,
+            Vec::new(),
+            &end,
+            run_plan(LARGE),
+            1,
+        );
+        assert!(failed.is_empty());
+        let restarted = MeetingStore::open_at(&f._dir.path().join("meetings.db")).unwrap();
+        let meta = restarted.metadata_json(&f.id).unwrap().unwrap();
+        assert!(meta.get(AUDIO_INCOMPLETE_KEY).is_none(), "{meta}");
+        assert!(meta.get(super::super::store::CAPTURE_OPEN_KEY).is_none());
+        let mut env = FakeEnv::new();
+        let _ = run_job(&restarted, &job(&f, run_plan(LARGE)), &mut env);
+        assert!(env.kinds().contains(&"reset"), "der Enddurchlauf ersetzt");
+    }
+
+    /// Das Gegenstueck: eine sauber geschlossene Aufnahme laesst den Marker fallen, und der
+    /// Enddurchlauf ersetzt wie bisher. Sonst bewiese der Test oben nichts (und die normale
+    /// Live-Aufnahme verlore den Enddurchlauf).
+    #[test]
+    fn a_cleanly_closed_capture_drops_the_marker_and_the_final_pass_replaces() {
+        let f = fixture(true, MeetingStatus::Processing);
+        let mic = f.meeting_dir.join("mic.wav");
+        let system = f.meeting_dir.join("system.wav");
+        f.store
+            .begin_capture(&f.id, mic.to_str(), system.to_str())
+            .unwrap();
+        // Waehrend der Aufnahme (Marker steht): kein Ersatz.
+        let mut env = FakeEnv::new();
+        let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        assert_live_untouched(&f, &env, &out, &["s0", "s1"]);
+        // Alle Writer sauber zu: der Marker faellt, der Ersatz laeuft.
+        assert!(f.store.end_capture(&f.id).unwrap());
+        assert!(
+            !f.store.end_capture(&f.id).unwrap(),
+            "zweimal ist unschaedlich"
+        );
+        let mut env = FakeEnv::new();
+        let _ = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        assert!(env.kinds().contains(&"reset"), "der Enddurchlauf ersetzt");
+    }
+
+    /// Die Fortsetzung vergisst keinen Absturz: steht der Marker eines frueheren, nie
+    /// geschlossenen Laufs noch, wird er beim naechsten Start zum dauerhaften
+    /// `audio_incomplete`, und das saubere Ende des neuen Laufs entfernt nur seinen eigenen.
+    #[test]
+    fn a_new_start_turns_the_marker_of_an_unclosed_run_into_the_permanent_one() {
+        let f = fixture(true, MeetingStatus::Processing);
+        let mic = f.meeting_dir.join("mic.wav");
+        f.store.begin_capture(&f.id, mic.to_str(), None).unwrap();
+        // Absturz: kein end_capture. Der naechste Start:
+        f.store.begin_capture(&f.id, mic.to_str(), None).unwrap();
+        let meta = f.store.metadata_json(&f.id).unwrap().unwrap();
+        assert_eq!(
+            meta[AUDIO_INCOMPLETE_KEY]["reason"], "capture_not_closed",
+            "{meta}"
+        );
+        assert!(f.store.end_capture(&f.id).unwrap());
+        let meta = f.store.metadata_json(&f.id).unwrap().unwrap();
+        assert!(meta.get(super::super::store::CAPTURE_OPEN_KEY).is_none());
+        assert!(
+            meta.get(AUDIO_INCOMPLETE_KEY).is_some(),
+            "der fruehere Absturz bleibt dauerhaft vermerkt"
+        );
+    }
+
+    /// lva#538 Befund 6: ein Lesefehler der Metadaten belegt nicht, dass es keinen Marker gibt.
+    /// Der Enddurchlauf weiss dann nicht, ob die Aufnahme vollstaendig ist, und ersetzt nichts.
+    #[test]
+    fn unreadable_metadata_never_proves_a_complete_recording() {
+        let f = fixture(true, MeetingStatus::Processing);
+        f.store
+            .get_connection()
+            .unwrap()
+            .execute(
+                "UPDATE meetings SET metadata_json = '{kaputt' WHERE id = ?1",
+                rusqlite::params![f.id],
+            )
+            .unwrap();
+        // Der Enddurchlauf selbst: ohne den Marker zu kennen, ersetzt er nichts.
+        let meeting = f.store.get_meeting(&f.id).unwrap().unwrap();
+        let mut env = FakeEnv::new();
+        let mut report = FinalReport::default();
+        let result = final_pass(
+            &f.store,
+            &meeting,
+            LARGE,
+            25_000,
+            &mut env,
+            &mut report,
+            None,
+        );
+        assert_eq!(result, Err(KeepReason::StoreFailed));
+        assert_eq!(env.calls, 0, "nichts wurde transkribiert");
+        assert!(env.loads.is_empty(), "auch kein Modell geladen");
+
+        // Und der ganze Auftrag (auch vor dem Enddurchlauf, bei der Pruefung einer offenen
+        // Neu-Transkription, scheitert das Lesen): das Live-Transkript bleibt, nichts ersetzt.
+        let mut env = FakeEnv::new();
+        let _ = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        let snap = f.store.transcript_snapshot(&f.id).unwrap();
+        assert_eq!(snap.epoch, 0, "keine neue Epoche");
+        let live: Vec<&str> = snap.segments.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(live, ["s0", "s1"], "Live-Transkript unveraendert");
+        assert_eq!(env.calls, 0, "nichts wurde transkribiert");
+        assert!(!env.kinds().contains(&"reset"), "nichts ersetzt");
+    }
+
+    /// Die Pruefung ist je Kanal: ein kurzer Systemton mit langem Mikrofon-Transkript
+    /// (der Systemton lief laenger als seine WAV) haelt das Live-Transkript genauso.
+    #[test]
+    fn the_coverage_check_is_per_channel() {
+        let f = fixture(true, MeetingStatus::Processing);
+        write_wav(&f.meeting_dir.join("system.wav"), &speech()[..32_000]); // 2 s
+        f.store
+            .append_delta(
+                &f.id,
+                &TranscriptDelta {
+                    new_segments: vec![seg(2, 1, 6_000, 9_000)],
+                },
+            )
+            .unwrap();
+        let mut env = FakeEnv::new();
+        let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        assert_live_untouched(&f, &env, &out, &["s0", "s1", "s2"]);
+    }
+
+    /// Kein falscher Alarm: Rundung und Zeitachse duerfen das Transkript ein Stueck ueber
+    /// die Aufnahme hinausragen lassen (Toleranz), und eine vollstaendige Aufnahme laeuft
+    /// wie bisher durch den Enddurchlauf.
+    #[test]
+    fn a_complete_recording_still_gets_its_final_pass() {
+        let f = fixture(true, MeetingStatus::Processing);
+        // Das Transkript endet 3 s nach der 6-s-Aufnahme: innerhalb der Toleranz.
+        f.store
+            .append_delta(
+                &f.id,
+                &TranscriptDelta {
+                    new_segments: vec![seg(2, 0, 7_000, 9_000)],
+                },
+            )
+            .unwrap();
+        let mut env = FakeEnv::new();
+        let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        assert_eq!(out.report.kept, None, "der Enddurchlauf lief");
+        assert!(env.calls > 0);
+        assert_eq!(f.store.transcript_snapshot(&f.id).unwrap().epoch, 1);
+    }
+
+    /// Die Pruefung ist rein und fail-closed (lva#538 Befund 6): ohne Live-Saetze gibt es nichts
+    /// zu kuerzen; ein Kanal MIT Saetzen braucht eine lesbare, lange genug Spur.
+    #[test]
+    fn coverage_needs_a_readable_long_enough_track_for_every_channel_with_sentences() {
+        let dir = tempfile::tempdir().unwrap();
+        let wav = dir.path().join("a.wav");
+        write_wav(&wav, &speech());
+        let track = |path: PathBuf, channel| Track { path, channel };
+        // Kein Transkript: nichts zu kuerzen.
+        assert!(!audio_shorter_than_transcript(
+            &[track(wav.clone(), 0)],
+            &[]
+        ));
+        // Die Spur ist 6 s lang; 5 s Toleranz.
+        assert!(audio_shorter_than_transcript(
+            &[track(wav.clone(), 0)],
+            &[seg(0, 0, 0, 11_001)]
+        ));
+        assert!(!audio_shorter_than_transcript(
+            &[track(wav.clone(), 0)],
+            &[seg(0, 0, 0, 11_000)]
+        ));
+        // Befund 6: der Kanal hat Saetze, aber keine Spur (die Datei fehlt): der Ersatz aus der
+        // anderen Spur liesse sie verschwinden.
+        assert!(audio_shorter_than_transcript(
+            &[track(wav.clone(), 0)],
+            &[seg(0, 0, 0, 1_000), seg(1, 1, 0, 1_000)]
+        ));
+        assert!(audio_shorter_than_transcript(&[], &[seg(0, 1, 0, 1_000)]));
+        // Eine Spur, die nicht zu lesen ist (Pfad fehlt, kaputter Kopf), belegt keine Laenge.
+        assert!(audio_shorter_than_transcript(
+            &[track(dir.path().join("weg.wav"), 0)],
+            &[seg(0, 0, 0, 1_000)]
+        ));
+        let junk = dir.path().join("junk.wav");
+        std::fs::write(&junk, b"kein wav").unwrap();
+        assert!(audio_shorter_than_transcript(
+            &[track(junk, 0)],
+            &[seg(0, 0, 0, 1_000)]
+        ));
+        // Ein Kanal ohne Saetze zaehlt nicht, auch wenn seine Spur fehlt.
+        assert!(!audio_shorter_than_transcript(
+            &[track(wav.clone(), 0)],
+            &[seg(0, 0, 0, 5_000)]
+        ));
+        // Beide Kanaele, beide gedeckt; der zweite zu lang: unvollstaendig.
+        let two = [track(wav.clone(), 0), track(wav, 1)];
+        assert!(!audio_shorter_than_transcript(
+            &two,
+            &[seg(0, 0, 0, 5_000), seg(1, 1, 0, 6_000)]
+        ));
+        assert!(audio_shorter_than_transcript(
+            &two,
+            &[seg(0, 0, 0, 5_000), seg(1, 1, 0, 12_000)]
+        ));
+    }
+
     #[test]
     fn a_second_run_after_a_crash_never_overwrites_the_live_copy() {
         let f = fixture(true, MeetingStatus::Processing);
@@ -4438,6 +5102,110 @@ mod tests {
         );
         assert_eq!(store.get_meeting(&m.id).unwrap().unwrap().status, "ready");
         assert_eq!(env.kinds().last(), Some(&"final"));
+    }
+
+    /// #537: ein Mitschnitt des Systemtons in eine YouTube-Besprechung hat NUR
+    /// `system.wav`. Absturz mitten in der Aufnahme: Kopf repariert, Rest auf
+    /// Kanal 1 nachgeholt, Besprechung `ready`; es entsteht keine Mikrofonspur und
+    /// nichts wartet auf sie.
+    #[test]
+    fn a_system_only_playback_capture_survives_a_crash_and_is_caught_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+        let m = store
+            .create_meeting("Vortrag", MeetingSource::Youtube, None)
+            .unwrap();
+        let meeting_dir = dir.path().join(&m.id);
+        std::fs::create_dir_all(&meeting_dir).unwrap();
+        let system = meeting_dir.join("system.wav");
+        {
+            // Absturz: geschrieben, nie finalisiert (Header sagt 0).
+            let mut w = StreamingWavWriter::create(&system, 16_000).unwrap();
+            w.append(&speech()).unwrap();
+        }
+        store
+            .set_audio_paths(&m.id, None, system.to_str(), None)
+            .unwrap();
+        store
+            .append_delta(
+                &m.id,
+                &TranscriptDelta {
+                    new_segments: vec![seg(0, 1, 0, 2_400)],
+                },
+            )
+            .unwrap();
+        store.set_status(&m.id, MeetingStatus::Recording).unwrap();
+        let meeting = store.get_meeting(&m.id).unwrap().unwrap();
+        assert!(
+            crate::managers::meetings::recorder::runs_final_pass(&meeting),
+            "eine YouTube-Besprechung mit eigener Aufnahme bekommt den Plan der Aufnahme"
+        );
+        assert_eq!(prepare_orphan(&store, &meeting).unwrap(), Some(6_000));
+
+        let mut env = FakeEnv::new();
+        let spec = JobSpec {
+            meeting_id: m.id.clone(),
+            catch_up_model: Some("meeting-model".into()),
+            plan: FinalPlan::Keep(KeepReason::CpuOnly),
+            live_model: None,
+            recover_from: None,
+        };
+        let out = run_job(&store, &spec, &mut env);
+
+        assert!(out.report.catch_up_segments >= 1);
+        let segs = store.get_segments(&m.id).unwrap();
+        assert!(segs.iter().all(|s| s.channel == 1), "nur der Systemton");
+        assert!(segs.iter().map(|s| s.end_ms).max().unwrap() >= 5_000);
+        let after = store.get_meeting(&m.id).unwrap().unwrap();
+        assert_eq!(after.status, "ready");
+        assert_eq!(after.source, "youtube");
+        assert_eq!(after.mic_audio_path, None, "keine Mikrofonspur entstanden");
+        assert!(!meeting_dir.join("mic.wav").exists());
+        assert_eq!(env.kinds().last(), Some(&"final"));
+    }
+
+    /// #537: der Enddurchlauf ueber die einzige Spur (Systemton): das Ergebnis
+    /// ersetzt das Live-Transkript auf Kanal 1, die Besprechung wird `ready`.
+    #[test]
+    fn the_final_pass_of_a_system_only_capture_replaces_the_live_transcript() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+        let m = store
+            .create_meeting("Vortrag", MeetingSource::Youtube, None)
+            .unwrap();
+        let meeting_dir = dir.path().join(&m.id);
+        std::fs::create_dir_all(&meeting_dir).unwrap();
+        let system = meeting_dir.join("system.wav");
+        write_wav(&system, &speech());
+        store
+            .set_audio_paths(&m.id, None, system.to_str(), Some(6_000))
+            .unwrap();
+        store
+            .append_delta(
+                &m.id,
+                &TranscriptDelta {
+                    new_segments: vec![seg(0, 1, 0, 2_400)],
+                },
+            )
+            .unwrap();
+        store.set_status(&m.id, MeetingStatus::Processing).unwrap();
+
+        let mut env = FakeEnv::new();
+        let spec = JobSpec {
+            meeting_id: m.id.clone(),
+            catch_up_model: None,
+            plan: run_plan("final-model"),
+            live_model: Some("live-model".into()),
+            recover_from: None,
+        };
+        run_job(&store, &spec, &mut env);
+
+        let segs = store.get_segments(&m.id).unwrap();
+        assert!(segs.len() >= 2, "beide Aeusserungen: {}", segs.len());
+        assert!(segs.iter().all(|s| s.channel == 1));
+        assert!(segs.iter().all(|s| s.text.contains("final-model")));
+        assert_eq!(store.get_meeting(&m.id).unwrap().unwrap().status, "ready");
+        assert_eq!(env.final_event().1.as_deref(), Some("final-model"));
     }
 
     /// Ein gestoppter Import ist beim Start kein Wiederherstellungsfall: die

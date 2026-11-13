@@ -616,6 +616,8 @@
           "phase": {
             "uploading": "Sending the recording to Gradium …",
             "waiting": "Gradium is creating the voice …",
+      "waitingTitle": "No connection to the download server. Local Voice is waiting and will try again.",
+      "waitingTitleDns": "Hugging Face is unreachable (server name cannot be resolved). Local Voice is waiting and will try again. On a corporate network, set a proxy under Settings › General if needed.",
             "downloading": "Loading the voice file …"
           },
           "overwrite": "An own voice “{{name}}” already exists. “Replace and create” overwrites it.",
@@ -1989,6 +1991,20 @@
     }
   },
   "modelSelector": {
+    "download": {
+      "details": "Details",
+      "detailsTitle": "Technical details",
+      "waiting": "Retrying in {{seconds}} s ({{attempt}}/{{max}})",
+      "fault": {
+        "dns": "Cannot reach Hugging Face: this computer cannot resolve the server name. Either the internet is down right now, or the corporate network only allows access through a proxy (Settings › General › Proxy for downloads).",
+        "proxyAuth": "The proxy requires a login Local Voice cannot provide. Ask your IT whether huggingface.co can be allowed without login.",
+        "proxy": "The proxy is unreachable or refuses the connection. Please check the proxy setting under Settings › General.",
+        "offline": "No connection to the download server. Please check the network connection and start the download again.",
+        "timeout": "The download server does not respond. Please try again later.",
+        "certificate": "The secure connection was refused (certificate). A corporate proxy often inspects traffic; IT then needs to install its certificate on this computer.",
+        "blocked": "The network blocks the download (access denied). Ask your IT to allow huggingface.co."
+      }
+    },
     "custom": "Custom",
     "legacy": "Legacy",
     "nonCommercial": "Non-commercial only",
@@ -3067,6 +3083,13 @@
         "choose": "Choose folder…",
         "clear": "Remove",
         "none": "No folder set"
+      },
+      "downloadProxy": {
+        "title": "Proxy for downloads",
+        "description": "Leave empty: Local Voice uses the proxy the way Windows does (proxy script or PAC file, automatic detection, system proxy). Only fill in if downloads still fail on a corporate network, e.g. proxy.example.org:8080. \"direct\" downloads without a proxy.",
+        "placeholder": "Like Windows (automatic)",
+        "save": "Apply",
+        "reset": "Reset"
       }
     },
     "llm": {
@@ -3727,6 +3750,9 @@
     },
     "live": {
       "empty": "No segments yet — the first one appears after ~20 seconds.",
+      "emptyYoutube": "No transcript yet. Start “Transcribe while playing” above.",
+      "emptyProcessing": "The transcript appears here as soon as the first sections are done.",
+      "emptyNeutral": "No transcript yet.",
       "me": "Me",
       "remote": "Other party",
       "mixed": "Recording"
@@ -3841,6 +3867,15 @@
       "loopbackStartTimeout": "System audio could not be started — the recording continues with the microphone only.",
       "loopbackStartFailed": "System audio failed to start — the recording continues with the microphone only.",
       "loopbackDied": "System audio failed during the recording — the meeting continues with the microphone only.",
+      "playbackCaptureFailed": "The system sound could not be recorded. Is an output device connected and selected in Windows?",
+      "playbackCaptureTimeout": "The system sound does not respond. Please check the output device and driver and try again.",
+      "playbackCaptureDied": "The system sound failed while transcribing. Stop the recording; what was transcribed so far is kept.",
+      "startCancelled": "The start was cancelled.",
+      "startBusy": "The recording is still starting. Please try again in a moment.",
+      "recordingBusy": "This meeting's recording is still being finished. Nothing was deleted. Please try again in a moment.",
+      "deleteInProgress": "This meeting is already being deleted.",
+      "invalidOperation": "The operation could not be matched. Please try again.",
+      "audioWriteFailed": "The recording could no longer be written to disk (disk full?). The live transcript keeps running, but the sound is no longer saved; no final pass runs from this recording.",
       "micStreamError": "The microphone stream reported an error during recording — some audio may be missing.",
       "importFailed": "The file could not be imported.",
       "alreadyRecording": "A recording is already running.",
@@ -3863,7 +3898,7 @@
       "wavUnreadable": "The audio file cannot be read.",
       "wavWriteFailed": "The trimmed recording could not be written (disk space?). Nothing was changed.",
       "retranscribeFailed": "Re-transcription failed. The transcript was left unchanged.",
-      "finalPassSkipped": "Final pass skipped – the live transcript stays valid (model missing, not enough memory, or cancelled).",
+      "finalPassSkipped": "Final pass skipped – the live transcript stays valid (model missing, not enough memory, cancelled, or the recording is incomplete).",
       "finalPassStopped": "Post-processing stopped – the live transcript stays valid.",
       "meetingBusy": "This meeting is being processed right now.",
       "meetingsUnavailable": "Meetings are not available right now: the database could not be opened at start-up. Please restart the app; if that does not help, the log file names the cause.",
@@ -4225,7 +4260,7 @@
         "minutes_cancelled": "Generation was cancelled.",
         "meeting_not_found": "The meeting no longer exists.",
         "meeting_not_finished": "The recording is still running. Minutes can only be generated after it has stopped.",
-        "no_transcript": "There is no transcript yet to write minutes from.",
+        "no_transcript": "Minutes need a transcript first. In the “Transcript” tab, start a recording or transcribe the video while it plays.",
         "template_not_found": "This template no longer exists. Please choose another one.",
         "no_provider": "No language model set up (Settings → Post-processing).",
         "no_model": "No model entered for the provider (Settings → Post-processing → Model).",
@@ -5277,7 +5312,7 @@
         "region": "Differences per line"
       },
       "youtube": {
-        "needTool": "For subtitles and transcription, install yt-dlp yourself and switch on “private” in the settings.",
+        "needTool": "Faster with subtitles: install yt-dlp yourself and switch on “private” in the settings (optional).",
         "subtitles": "Load subtitles",
         "subtitlesBusy": "Looking for subtitles …",
         "pick": "Subtitle language",
@@ -5289,7 +5324,25 @@
         "ownDone": "The own transcription is done.",
         "trackManual": "{{name}} (uploaded)",
         "trackAuto": "{{name}} (automatic)",
-        "tools": "Subtitles and transcription"
+        "tools": "Subtitles and transcription",
+        "capture": {
+          "button": "Transcribe while playing",
+          "starting": "Starting …",
+          "explain": "The system sound is transcribed in real time while the embedded player plays. Play the video from start to end, keep the volume on and mute other sounds.",
+          "running": "Transcribing as long as the sound plays. Play the video from start to end. Use “Stop” in the recording controls to finish.",
+          "playHint": "Now play the video.",
+          "quiet": "No sound has arrived for a while. Is the video playing, is the volume on and is the player not muted? Or is the sound going to a different audio output, for example because you switched to headphones? Only the output that was selected at the start is recorded.",
+          "elsewhere": "Another recording is already running.",
+          "dialog": {
+            "title": "Transcribe while playing",
+            "body": "The app records the sound that comes out of your speakers or headphones while the video plays (system sound only, not the microphone) and transcribes it. The video is not downloaded.\n\nNote: everything that plays on the selected output device is recorded, including notification sounds, calls and anything else you can hear. Close other programs or mute their sounds before you start.\n\nConfirm that you have the permission required for this recording and transcription. Observe copyright and the platform's terms of use. A video being publicly available is not enough for that.",
+            "abort": "Cancel start",
+            "confirm": "Start transcribing"
+          },
+          "errors": {
+            "notReady": "This entry already has a transcript or a recording. Transcribing while playing only works for a YouTube meeting with neither."
+          }
+        }
       }
     },
     "slides": {

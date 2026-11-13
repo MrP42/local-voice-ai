@@ -616,6 +616,8 @@
           "phase": {
             "uploading": "Die Aufnahme wird an Gradium übertragen …",
             "waiting": "Gradium erstellt die Stimme …",
+      "waitingTitle": "Keine Verbindung zum Download-Server. Local Voice wartet und versucht es erneut.",
+      "waitingTitleDns": "Hugging Face ist nicht erreichbar (Servername nicht auflösbar). Local Voice wartet und versucht es erneut. Im Firmennetz ggf. Proxy unter Einstellungen › Allgemein eintragen.",
             "downloading": "Die Stimmdatei wird geladen …"
           },
           "overwrite": "Es gibt schon eine eigene Stimme „{{name}}“. Mit „Ersetzen und erstellen“ wird sie überschrieben.",
@@ -1989,6 +1991,20 @@
     }
   },
   "modelSelector": {
+    "download": {
+      "details": "Details",
+      "detailsTitle": "Technische Details",
+      "waiting": "Neuer Versuch in {{seconds}} s ({{attempt}}/{{max}})",
+      "fault": {
+        "dns": "Keine Verbindung zu Hugging Face: Dieser Rechner kann den Servernamen nicht auflösen. Entweder fehlt gerade das Internet, oder das Firmennetz lässt den Zugang nur über einen Proxy zu (Einstellungen › Allgemein › Proxy für Downloads).",
+        "proxyAuth": "Der Proxy verlangt eine Anmeldung, die Local Voice nicht leisten kann. Bitte die IT fragen, ob huggingface.co ohne Anmeldung freigegeben werden kann.",
+        "proxy": "Der Proxy ist nicht erreichbar oder lehnt die Verbindung ab. Bitte die Proxy-Einstellung unter Einstellungen › Allgemein prüfen.",
+        "offline": "Keine Verbindung zum Download-Server. Bitte die Netzwerkverbindung prüfen und den Download erneut starten.",
+        "timeout": "Der Download-Server antwortet nicht. Bitte später erneut versuchen.",
+        "certificate": "Die sichere Verbindung wurde abgelehnt (Zertifikat). Häufig prüft ein Firmenproxy den Datenverkehr; dann muss die IT das Zertifikat auf diesem Rechner hinterlegen.",
+        "blocked": "Das Netzwerk sperrt den Download (Zugriff verweigert). Bitte die IT bitten, huggingface.co freizugeben."
+      }
+    },
     "custom": "Benutzerdefiniert",
     "streaming": "Streaming",
     "active": "Aktiv",
@@ -3067,6 +3083,13 @@
         "choose": "Ordner wählen…",
         "clear": "Entfernen",
         "none": "Kein Ordner gesetzt"
+      },
+      "downloadProxy": {
+        "title": "Proxy für Downloads",
+        "description": "Leer lassen: Local Voice nimmt den Proxy wie Windows (Proxy-Skript bzw. PAC-Datei, automatische Erkennung, Systemproxy). Nur eintragen, wenn Downloads im Firmennetz trotzdem scheitern, z. B. proxy.example.org:8080. „direkt“ lädt ohne Proxy.",
+        "placeholder": "Wie Windows (automatisch)",
+        "save": "Übernehmen",
+        "reset": "Zurücksetzen"
       }
     },
     "llm": {
@@ -3727,6 +3750,9 @@
     },
     "live": {
       "empty": "Noch keine Segmente — das erste erscheint nach ~20 Sekunden.",
+      "emptyYoutube": "Noch kein Transkript. Starte oben „Beim Abspielen mitschreiben“.",
+      "emptyProcessing": "Das Transkript erscheint hier, sobald die ersten Abschnitte fertig sind.",
+      "emptyNeutral": "Noch kein Transkript.",
       "me": "Ich",
       "remote": "Gegenseite",
       "mixed": "Aufnahme"
@@ -3841,6 +3867,15 @@
       "loopbackStartTimeout": "System-Audio konnte nicht gestartet werden — die Aufnahme läuft nur mit dem Mikrofon weiter.",
       "loopbackStartFailed": "System-Audio ist beim Start fehlgeschlagen — die Aufnahme läuft nur mit dem Mikrofon weiter.",
       "loopbackDied": "Der System-Ton ist während der Aufnahme ausgefallen — die Besprechung läuft nur mit dem Mikrofon weiter.",
+      "playbackCaptureFailed": "Der Systemton ließ sich nicht aufnehmen. Ist ein Ausgabegerät angeschlossen und in Windows eingestellt?",
+      "playbackCaptureTimeout": "Der Systemton antwortet nicht. Bitte Ausgabegerät und Treiber prüfen und noch einmal versuchen.",
+      "playbackCaptureDied": "Der Systemton ist beim Mitschreiben ausgefallen. Beende die Aufnahme; was bis dahin mitgeschrieben wurde, bleibt erhalten.",
+      "startCancelled": "Der Start wurde abgebrochen.",
+      "startBusy": "Der Start der Aufnahme läuft noch. Bitte gleich noch einmal versuchen.",
+      "recordingBusy": "Die Aufnahme dieser Besprechung wird noch beendet. Es wurde nichts gelöscht. Bitte gleich noch einmal versuchen.",
+      "deleteInProgress": "Diese Besprechung wird gerade gelöscht.",
+      "invalidOperation": "Der Vorgang konnte nicht zugeordnet werden. Bitte noch einmal versuchen.",
+      "audioWriteFailed": "Die Aufnahme konnte nicht mehr auf den Datenträger geschrieben werden (Datenträger voll?). Das Live-Transkript läuft weiter, der Ton wird aber nicht mehr gesichert; ein Enddurchlauf aus dieser Aufnahme findet nicht statt.",
       "micStreamError": "Der Mikrofon-Stream hat während der Aufnahme einen Fehler gemeldet — es können Teile der Aufnahme fehlen.",
       "importFailed": "Die Datei konnte nicht importiert werden.",
       "alreadyRecording": "Es läuft bereits eine Aufnahme.",
@@ -3863,7 +3898,7 @@
       "wavUnreadable": "Die Audiodatei lässt sich nicht lesen.",
       "wavWriteFailed": "Die zugeschnittene Aufnahme konnte nicht geschrieben werden (Platz auf der Platte?). Es wurde nichts geändert.",
       "retranscribeFailed": "Die Neu-Transkription ist fehlgeschlagen. Das Transkript blieb unverändert.",
-      "finalPassSkipped": "Enddurchlauf übersprungen – das Live-Transkript bleibt gültig (Modell fehlt, zu wenig Speicher oder abgebrochen).",
+      "finalPassSkipped": "Enddurchlauf übersprungen – das Live-Transkript bleibt gültig (Modell fehlt, zu wenig Speicher, abgebrochen oder die Aufnahme ist unvollständig).",
       "finalPassStopped": "Nachbearbeitung gestoppt – das Live-Transkript bleibt gültig.",
       "meetingBusy": "Diese Besprechung wird gerade verarbeitet.",
       "meetingsUnavailable": "Besprechungen sind gerade nicht verfügbar: Die Datenbank ließ sich beim Start nicht öffnen. Bitte die App neu starten; hilft das nicht, steht die Ursache in der Protokolldatei.",
@@ -4225,7 +4260,7 @@
         "minutes_cancelled": "Die Erzeugung wurde abgebrochen.",
         "meeting_not_found": "Die Besprechung gibt es nicht mehr.",
         "meeting_not_finished": "Die Aufnahme läuft noch. Das Protokoll kann erst nach dem Stopp erzeugt werden.",
-        "no_transcript": "Es gibt noch kein Transkript, aus dem ein Protokoll entstehen könnte.",
+        "no_transcript": "Für ein Protokoll braucht es zuerst ein Transkript. Im Reiter „Transkript“ eine Aufnahme starten oder das Video mitschreiben.",
         "template_not_found": "Diese Vorlage gibt es nicht mehr. Bitte eine andere wählen.",
         "no_provider": "Kein Sprachmodell eingerichtet (Einstellungen → Nachbearbeitung).",
         "no_model": "Für den Anbieter ist kein Modell eingetragen (Einstellungen → Nachbearbeitung → Modell).",
@@ -5277,7 +5312,7 @@
         "region": "Unterschiede je Zeile"
       },
       "youtube": {
-        "needTool": "Für Untertitel und Transkription yt-dlp selbst installieren und in den Einstellungen „privat“ einschalten.",
+        "needTool": "Schneller mit Untertiteln: yt-dlp selbst installieren und unter Einstellungen „privat“ einschalten (optional).",
         "subtitles": "Untertitel laden",
         "subtitlesBusy": "Suche Untertitel …",
         "pick": "Sprache der Untertitel",
@@ -5289,7 +5324,25 @@
         "ownDone": "Die eigene Transkription ist fertig.",
         "trackManual": "{{name}} (hochgeladen)",
         "trackAuto": "{{name}} (automatisch)",
-        "tools": "Untertitel und Transkription"
+        "tools": "Untertitel und Transkription",
+        "capture": {
+          "button": "Beim Abspielen mitschreiben",
+          "starting": "Starte …",
+          "explain": "Der Systemton wird beim Abspielen im eingebetteten Player in Echtzeit transkribiert. Spiele das Video von Anfang bis Ende ab, lass die Lautstärke an und schalte andere Töne stumm.",
+          "running": "Es wird mitgeschrieben, solange der Ton läuft. Spiele das Video von Anfang bis Ende ab. Mit „Beenden“ in der Aufnahmesteuerung hörst du auf.",
+          "playHint": "Jetzt das Video abspielen.",
+          "quiet": "Seit einiger Zeit kommt kein Ton an. Läuft das Video, ist die Lautstärke an und ist der Player nicht stummgeschaltet? Oder geht der Ton an einen anderen Audioausgang, zum Beispiel weil auf Kopfhörer gewechselt wurde? Aufgenommen wird nur der Ausgang, der beim Start eingestellt war.",
+          "elsewhere": "Es läuft schon eine andere Aufnahme.",
+          "dialog": {
+            "title": "Beim Abspielen mitschreiben",
+            "body": "Die App nimmt den Ton auf, der beim Abspielen aus deinen Lautsprechern oder Kopfhörern kommt (nur den Systemton, nicht das Mikrofon), und schreibt ihn mit. Das Video wird nicht heruntergeladen.\n\nAchtung: Aufgenommen wird der gesamte Ton des gewählten Ausgabegeräts, also auch Benachrichtigungstöne, Anrufe und alles andere, was gerade zu hören ist. Beende andere Programme oder schalte ihre Töne stumm, bevor du startest.\n\nBestätige, dass du die erforderliche Berechtigung für diese Aufnahme und Transkription hast. Beachte dabei das Urheberrecht und die Nutzungsbedingungen der Plattform. Dass das Video öffentlich zugänglich ist, reicht dafür nicht aus.",
+            "abort": "Start abbrechen",
+            "confirm": "Mitschreiben starten"
+          },
+          "errors": {
+            "notReady": "Dieser Eintrag hat schon ein Transkript oder eine Aufnahme. Mitschreiben geht nur bei einer YouTube-Besprechung ohne beides."
+          }
+        }
       }
     },
     "slides": {

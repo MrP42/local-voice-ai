@@ -165,6 +165,10 @@ pub(crate) fn redirect_target(current: &Url, location: &str) -> Result<Url> {
     let next = current
         .join(location)
         .map_err(|_| anyhow!("redirect to an invalid address"))?;
+    // lva#573: nie von einem entfernten auf ein lokales Ziel weiterleiten.
+    if !crate::netz::proxy::weiterleitung_erlaubt([current.as_str()], next.as_str()) {
+        return Err(anyhow!("redirect to a local address refused"));
+    }
     match next.scheme() {
         "https" => {}
         "http" if current.scheme() == "http" => {}
@@ -188,22 +192,46 @@ fn is_followed_redirect(status: StatusCode) -> bool {
     )
 }
 
-/// GET mit `Range` ab `range_from` (0 = ganz). Folgt Weiterleitungen selbst; das Token geht nur
-/// an Adressen des freigegebenen Ursprungs. `client` muss mit `redirect::Policy::none()`
-/// gebaut sein, sonst folgte er selbst.
+/// GET mit `Range` ab `range_from` (0 = ganz). Folgt Weiterleitungen selbst, mit oder ohne
+/// Zugang; das Token geht nur an Adressen des freigegebenen Ursprungs. lva#573: Jeder Schritt
+/// bekommt einen eigenen Client mit dem Proxyweg seines Ziels (PAC kann für Start- und
+/// CDN-Adresse verschiedene Proxys oder DIRECT vorgeben); Weiterleitungen auf lokale Ziele oder
+/// von https auf http lehnt [`redirect_target`] ab.
 pub(crate) async fn send_following(
-    client: &reqwest::Client,
     url: &str,
     range_from: u64,
-    auth: &DownloadAuth,
+    auth: Option<&DownloadAuth>,
+    connect_timeout: std::time::Duration,
+) -> Result<reqwest::Response> {
+    send_following_mit(
+        url,
+        range_from,
+        auth,
+        connect_timeout,
+        crate::netz::proxy::weg_future,
+    )
+    .await
+}
+
+pub(crate) async fn send_following_mit(
+    url: &str,
+    range_from: u64,
+    auth: Option<&DownloadAuth>,
+    connect_timeout: std::time::Duration,
+    weg: impl Fn(String) -> crate::netz::proxy::WegFuture,
 ) -> Result<reqwest::Response> {
     let mut current = Url::parse(url).map_err(|_| anyhow!("invalid download address"))?;
     for _ in 0..=MAX_REDIRECTS {
+        let schritt_weg = weg(current.to_string()).await;
+        let client = crate::netz::proxy::anwenden(reqwest::Client::builder(), &schritt_weg)
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(connect_timeout)
+            .build()?;
         let mut request = client.get(current.clone());
         if range_from > 0 {
             request = request.header(RANGE, format!("bytes={range_from}-"));
         }
-        if auth.applies_to(&current) {
+        if let Some(auth) = auth.filter(|a| a.applies_to(&current)) {
             if let Some(value) = auth.token.bearer() {
                 request = request.header(AUTHORIZATION, value);
             }
@@ -222,4 +250,95 @@ pub(crate) async fn send_following(
         current = redirect_target(&current, location)?;
     }
     Err(anyhow!("too many redirects"))
+}
+
+/// lva#573: Wegwahl je tatsächlichem GET-Schritt, mit echten Test-Proxys.
+#[cfg(test)]
+mod netz_tests {
+    use super::*;
+    use crate::netz::proxy::tests::{antwort, gesehen, testserver};
+    use crate::netz::proxy::{ist_lokal, Weg, WegFuture};
+    use std::time::Duration;
+
+    const FRIST: Duration = Duration::from_secs(10);
+
+    fn fest(w: Weg) -> WegFuture {
+        Box::pin(async move { w })
+    }
+
+    async fn holen(url: &str, weg: impl Fn(String) -> WegFuture) -> Result<reqwest::Response> {
+        tokio::time::timeout(
+            FRIST,
+            send_following_mit(url, 0, None, Duration::from_secs(5), weg),
+        )
+        .await
+        .expect("Frist")
+    }
+
+    /// Start über Proxy A, CDN über Proxy B; HEAD spielt keine Rolle, nur GETs.
+    #[tokio::test]
+    async fn jeder_get_schritt_mit_eigenem_proxy() {
+        let (proxy_b, log_b) = testserver(antwort("200 OK", "")).await;
+        let (proxy_a, log_a) = testserver(antwort(
+            "302 Found",
+            "location: http://cdn.example.org/x?sig=1\r\n",
+        ))
+        .await;
+        let r = holen("http://start.example.org/m", move |u: String| {
+            fest(if u.starts_with("http://start.example.org/") {
+                Weg::Ueber(proxy_a.clone())
+            } else {
+                Weg::Ueber(proxy_b.clone())
+            })
+        })
+        .await
+        .unwrap();
+        assert_eq!(r.status().as_u16(), 200);
+        assert_eq!(gesehen(&log_a), ["GET http://start.example.org/m HTTP/1.1"]);
+        assert_eq!(
+            gesehen(&log_b),
+            ["GET http://cdn.example.org/x?sig=1 HTTP/1.1"]
+        );
+    }
+
+    /// Start DIRECT (lokaler Server), CDN nur über Proxy.
+    #[tokio::test]
+    async fn start_direkt_cdn_ueber_proxy() {
+        let (proxy, proxy_log) = testserver(antwort("200 OK", "")).await;
+        let (start, start_log) = testserver(antwort(
+            "302 Found",
+            "location: http://cdn.example.org/y\r\n",
+        ))
+        .await;
+        let r = holen(&format!("{start}/m"), move |u: String| {
+            fest(if ist_lokal(&u) {
+                Weg::Direkt
+            } else {
+                Weg::Ueber(proxy.clone())
+            })
+        })
+        .await
+        .unwrap();
+        assert_eq!(r.status().as_u16(), 200);
+        assert_eq!(gesehen(&start_log), ["GET /m HTTP/1.1"]);
+        assert_eq!(
+            gesehen(&proxy_log),
+            ["GET http://cdn.example.org/y HTTP/1.1"]
+        );
+    }
+
+    #[tokio::test]
+    async fn entfernt_nach_lokal_wird_abgelehnt() {
+        let (proxy, _) = testserver(antwort(
+            "302 Found",
+            "location: http://127.0.0.1:1/geheim\r\n",
+        ))
+        .await;
+        let fehler = holen("http://start.example.org/m", move |_u: String| {
+            fest(Weg::Ueber(proxy.clone()))
+        })
+        .await
+        .unwrap_err();
+        assert!(fehler.to_string().contains("local address"), "{fehler}");
+    }
 }
