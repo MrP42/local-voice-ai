@@ -23,6 +23,7 @@ import {
   PASTE_LOG_MAX_BYTES,
   PASTE_LOG_MAX_ENTRIES,
   appendPasteEntry,
+  logBytes,
   entryBytes,
   fitsEntry,
   isIsoTime,
@@ -1359,14 +1360,51 @@ test("pasteLog: sha256 stimmt mit node:crypto überein, Eintrag trägt Roh- und 
   );
 });
 
-test("pasteLog: höchstens 20 Einträge, die ältesten fallen zuerst", async () => {
+/** Anhängen, das gelingen muss (Protokoll danach um den Eintrag länger). */
+const appended = (log, entry) => {
+  const result = appendPasteEntry(log, entry);
+  assert.equal(result.ok, true, `anhängen gescheitert: ${result.reason}`);
+  return result.log;
+};
+
+test("pasteLog: höchstens 20 Einträge; die 21. Einfügung verdrängt nichts, anhängen meldet „voll“ (lva#548)", async () => {
   let log = [];
-  for (let i = 0; i < 25; i += 1) {
-    log = appendPasteEntry(log, { zeit: String(i), sha256: "x", regeln: [] });
+  for (let i = 0; i < PASTE_LOG_MAX_ENTRIES; i += 1) {
+    log = appended(log, { zeit: String(i), sha256: "x", regeln: [] });
   }
   assert.equal(log.length, PASTE_LOG_MAX_ENTRIES);
-  assert.equal(log[0].zeit, "5");
-  assert.equal(log[19].zeit, "24");
+  const before = JSON.stringify(log);
+  const result = appendPasteEntry(log, {
+    zeit: "neu",
+    sha256: "x",
+    regeln: [],
+  });
+  assert.deepEqual(result, { ok: false, reason: "full" });
+  assert.equal(
+    JSON.stringify(log),
+    before,
+    "nichts verdrängt, nichts geändert",
+  );
+  assert.equal(log[0].zeit, "0");
+  assert.equal(log[19].zeit, "19");
+});
+
+test("pasteLog: nach dem Löschen eines Eintrags geht anhängen wieder (lva#548)", () => {
+  let log = [];
+  for (let i = 0; i < PASTE_LOG_MAX_ENTRIES; i += 1) {
+    log = appended(log, eintrag(iso(i), `roh ${i}`));
+  }
+  assert.equal(appendPasteEntry(log, eintrag(iso(30), "neu")).ok, false);
+  log = removePasteEntry(log, pasteEntryKey(log[3]));
+  assert.equal(log.length, PASTE_LOG_MAX_ENTRIES - 1);
+  const after = appended(log, eintrag(iso(30), "neu"));
+  assert.equal(after.length, PASTE_LOG_MAX_ENTRIES);
+  assert.equal(after[after.length - 1].roh, "neu");
+  assert.equal(after[0].roh, "roh 0");
+  assert.equal(
+    appendPasteEntry(after, eintrag(iso(31), "noch einer")).ok,
+    false,
+  );
 });
 
 /** Gültiger Zeitstempel für den n-ten Eintrag. */
@@ -1380,29 +1418,50 @@ const eintrag = (zeit, roh, bereinigt = roh) => ({
   regeln: [{ rule: "spaces", count: 1 }],
 });
 
-test("pasteLog: Gesamtumfang in Bytes begrenzt, der neueste Eintrag bleibt immer", () => {
+test("pasteLog: Gesamtumfang in Bytes begrenzt: ein Eintrag über der Gesamtgrenze meldet „voll“, nichts fällt weg (lva#548)", () => {
   const big = "x".repeat(900_000);
   let log = [];
+  let refused = null;
   for (let i = 0; i < 12; i += 1) {
-    log = appendPasteEntry(log, eintrag(String(i), big));
+    const result = appendPasteEntry(log, eintrag(String(i), big));
+    if (!result.ok) {
+      refused = i;
+      assert.equal(result.reason, "full");
+      break;
+    }
+    log = result.log;
   }
-  const total = log.reduce((sum, e) => sum + entryBytes(e), 0);
-  assert.ok(total <= PASTE_LOG_MAX_BYTES, `${total}`);
-  assert.ok(log.length < 12);
-  assert.equal(log[log.length - 1].zeit, "11");
+  assert.ok(
+    refused !== null && refused < 12,
+    "irgendwann ist die Grenze erreicht",
+  );
+  assert.equal(log.length, refused);
+  assert.ok(logBytes(log) <= PASTE_LOG_MAX_BYTES, `${logBytes(log)}`);
+  assert.deepEqual(
+    log.map((e) => e.zeit),
+    Array.from({ length: refused }, (_, i) => String(i)),
+    "alle bisherigen Einträge unverändert, die ältesten nicht verdrängt",
+  );
+  // Ein kleiner Eintrag passt noch, solange er in den Rest passt.
+  const room = PASTE_LOG_MAX_BYTES - logBytes(log);
+  assert.ok(room > 0);
+  assert.equal(appendPasteEntry(log, eintrag("klein", "x")).ok, true);
+  // Löschen schafft Platz.
+  const freed = removePasteEntry(log, pasteEntryKey(log[0]));
+  assert.equal(appendPasteEntry(freed, eintrag("neu", big)).ok, true);
 });
 
 test("pasteLog: Einzelgrenze zählt Bytes, nicht Zeichen („ä“ hat zwei)", () => {
   const ae = "ä".repeat(600_000);
   assert.ok(ae.length * 2 < PASTE_ENTRY_MAX_BYTES);
-  const [viele] = appendPasteEntry([], eintrag("a", ae));
+  const [viele] = appended([], eintrag("a", ae));
   assert.equal(viele.zuGross, true);
   assert.equal(viele.roh, undefined);
   assert.equal(viele.bereinigt, undefined);
   assert.equal(viele.zeichen, 600_000);
   assert.equal(viele.bytes, 1_200_000);
   const ascii = "a".repeat(600_000);
-  const [klein] = appendPasteEntry([], eintrag("b", ascii));
+  const [klein] = appended([], eintrag("b", ascii));
   assert.equal(klein.zuGross, undefined);
   assert.equal(klein.roh, ascii);
 });
@@ -1437,15 +1496,42 @@ test("pasteLog: beim Laden verlieren übergroße Einträge Roh- und bereinigte F
   assert.equal(b.roh, "kurz");
 });
 
-test("pasteLog: beim Laden gilt danach die Gesamtgrenze, die ältesten fallen", () => {
+test("pasteLog: Altbestand über der Gesamtgrenze wird beim Laden nicht gekürzt, neue Einfügungen gelten als voll (lva#548)", () => {
   const roh = "x".repeat(900_000);
   const geladen = parsePasteLog(
     Array.from({ length: 20 }, (_, i) => eintrag(iso(i), roh)),
   );
-  const total = geladen.reduce((sum, e) => sum + entryBytes(e), 0);
-  assert.ok(total <= PASTE_LOG_MAX_BYTES);
-  assert.ok(geladen.length < 20);
-  assert.equal(geladen[geladen.length - 1].zeit, iso(19));
+  assert.equal(geladen.length, 20);
+  assert.ok(logBytes(geladen) > PASTE_LOG_MAX_BYTES);
+  assert.deepEqual(
+    geladen.map((e) => e.zeit),
+    Array.from({ length: 20 }, (_, i) => iso(i)),
+  );
+  assert.deepEqual(appendPasteEntry(geladen, eintrag(iso(30), "klein")), {
+    ok: false,
+    reason: "full",
+  });
+});
+
+test("pasteLog: Altbestand mit mehr als 20 Einträgen wird beim Laden nicht gekürzt (lva#548)", () => {
+  const alt = Array.from({ length: 27 }, (_, i) => eintrag(iso(i), `roh ${i}`));
+  const geladen = parsePasteLog(alt);
+  assert.equal(geladen.length, 27);
+  assert.equal(geladen[0].roh, "roh 0");
+  assert.equal(geladen[26].roh, "roh 26");
+  assert.equal(appendPasteEntry(geladen, eintrag(iso(40), "neu")).ok, false);
+  // Ungültiges darf weiter wegfallen; Gültiges bleibt.
+  const gemischt = parsePasteLog([
+    ...alt,
+    { ...eintrag(iso(50), "x"), zeit: "gestern" },
+  ]);
+  assert.equal(gemischt.length, 27);
+  // Erst unter 20 geht wieder etwas hinein.
+  let log = geladen;
+  for (let i = 0; i < 8; i += 1)
+    log = removePasteEntry(log, pasteEntryKey(log[0]));
+  assert.equal(log.length, 19);
+  assert.equal(appendPasteEntry(log, eintrag(iso(40), "neu")).ok, true);
 });
 
 test("pasteLog: Prüfsumme passt nicht zur Rohfassung: beschädigt, Wiederherstellen gesperrt", async () => {
@@ -1874,32 +1960,33 @@ test("pasteLog: regeln begrenzt (je Regel einmal, ganze Zahlen, nicht negativ)",
   assert.ok(g.regeln.length <= 1);
 });
 
-test("pasteLog: Gesamtgrenze gilt nach dem Kürzen; Metadaten zählen mit, nichts bleibt darüber", () => {
+test("pasteLog: beim Laden gilt die Einzelgrenze weiter, Metadaten zählen mit; Anzahl und Gesamtgrenze kürzen nichts (lva#548)", () => {
   const gross = (n) => ({
     ...eintrag(iso(n), "ä".repeat(1_100_000)),
     bereinigt: "x",
   });
-  const mittel = (n) => eintrag(iso(n), "x".repeat(1_900_000));
+  const mittel = (n) => ({
+    ...eintrag(iso(n), "x".repeat(1_900_000)),
+    bereinigt: "x",
+  });
   const log = parsePasteLog([
     ...Array.from({ length: 6 }, (_, i) => gross(i)),
     ...Array.from({ length: 14 }, (_, i) => mittel(10 + i)),
   ]);
-  const total = log.reduce((sum, e) => sum + entryBytes(e), 0);
-  assert.ok(total <= PASTE_LOG_MAX_BYTES, `${total}`);
+  assert.equal(log.length, 20, "nichts fällt weg");
   assert.ok(log.every((e) => entryBytes(e) <= PASTE_ENTRY_MAX_BYTES));
-  assert.ok(log.length >= 1);
+  assert.equal(log.filter((e) => e.zuGross).length, 6, "übergroße nur gekürzt");
   assert.equal(log[log.length - 1].zeit, iso(23));
 });
 
-test("pasteLog: ein einzelner Eintrag, der auch gekürzt über der Grenze liegt, wird verworfen", () => {
+test("pasteLog: ein einzelner Eintrag, der auch gekürzt über der Grenze liegt, wird nicht angehängt (unfit)", () => {
   const unmoeglich = {
     ...eintrag(iso(1), "x"),
     // Nur von Hand möglich: die Metadaten allein sprengen die Einzelgrenze.
     zeit: "z".repeat(PASTE_ENTRY_MAX_BYTES),
   };
-  const log = appendPasteEntry([eintrag(iso(0), "alt")], unmoeglich);
-  assert.equal(log.length, 1);
-  assert.equal(log[0].roh, "alt");
+  const result = appendPasteEntry([eintrag(iso(0), "alt")], unmoeglich);
+  assert.deepEqual(result, { ok: false, reason: "unfit" });
 });
 
 // ---------------------------------------------------------------------------
@@ -2120,27 +2207,55 @@ function harness(files = {}) {
     holdSave: null,
     holdLoad: null,
     failNextSave: false,
+    /** Anzahl der noch scheiternden Schreibaufträge (zusätzlich zu `failNextSave`). */
+    failSaves: 0,
+    /** Anzahl der noch mit „nicht lesbar“ (null) antwortenden Leseaufträge. */
+    nullLoads: 0,
+    /** Als eigene Fassung gesicherte Texte (`saveCopy`) und gemeldete Rettungen. */
+    copies: [],
+    rescues: [],
+    /** Anzahl gehaltener Texte der Seite zum Zeitpunkt jeder Rettungsmeldung. */
+    heldAtRescue: [],
+    failCopy: false,
+    /** Hält `saveCopy` an (wie `holdSave`): die Fassung entsteht erst danach. */
+    holdCopy: null,
   };
   const io = {
     async load(page) {
       const text = h.files.get(page) ?? "";
       if (h.holdLoad) await h.holdLoad(page);
+      if (h.nullLoads > 0) {
+        h.nullLoads -= 1;
+        return null;
+      }
       return text;
     },
     async save(page, json) {
       if (h.holdSave) await h.holdSave(page, json);
-      if (h.failNextSave) {
-        h.failNextSave = false;
+      if (h.failNextSave || h.failSaves > 0) {
+        if (h.failNextSave) h.failNextSave = false;
+        else h.failSaves -= 1;
         return false;
       }
       h.files.set(page, json);
       h.writes.push([page, json]);
       return true;
     },
+    async saveCopy(page, text) {
+      if (h.holdCopy) await h.holdCopy(page, text);
+      if (h.failCopy) return false;
+      h.copies.push([page, text]);
+      return true;
+    },
   };
+  h.io = io;
   h.committedEvents = [];
   h.store = createPageStateStore({
     io,
+    onRescue: (page, kind) => {
+      h.rescues.push([page, kind]);
+      h.heldAtRescue.push(h.store.held(page).length);
+    },
     live: {
       // `isActive` kennt nur der alte Store (Gegenprobe); der neue ignoriert es.
       isActive: (page) => h.active === page,
@@ -2159,7 +2274,10 @@ const E0 = eintrag(iso(0), "null");
 const E1 = eintrag(iso(1), "eins");
 const E2 = eintrag(iso(2), "zwei");
 const stateWith = (extra) => JSON.stringify({ text: "alt", ...extra });
-const add = (entry) => (log) => parsePasteLog([...log, entry]);
+const add = (entry) => (log) => {
+  const added = appendPasteEntry(log, entry);
+  return added.ok ? added.log : added;
+};
 const drop = (entry) => (log) => removePasteEntry(log, pasteEntryKey(entry));
 
 test("pageState: Seite verlassen, Schreiben angehalten, Seite erneut geöffnet: der Autosave erhält den Eintrag", async () => {
@@ -2461,4 +2579,1035 @@ test("pageState: Protokollschreiben und Fremdschreiber in der Kette: beide Ände
   assert.deepEqual(await Promise.all([commit, foreign]), [true, true]);
   assert.equal(h.fileState("A").summary, "Fremd");
   assert.deepEqual(h.rohs("A"), ["eins"]);
+});
+
+// ---------------------------------------------------------------------------
+// lva#548: Grenzverhalten in der Kette (atomar mit dem Hinzufügen)
+// ---------------------------------------------------------------------------
+
+const voll = () =>
+  Array.from({ length: PASTE_LOG_MAX_ENTRIES }, (_, i) =>
+    eintrag(iso(i), `alt ${i}`),
+  );
+
+test("pageState: die 21. Einfügung verdrängt nichts, addLogEntry meldet „full“ und schreibt nicht (lva#548)", async () => {
+  const h = harness({ A: stateWith({ einfuegungen: voll() }) });
+  const before = h.files.get("A");
+  assert.equal(await h.store.addLogEntry("A", E1), "full");
+  assert.equal(h.files.get("A"), before, "Datei unberührt");
+  assert.equal(h.writes.length, 0);
+  assert.deepEqual(h.committedEvents, []);
+  assert.deepEqual(
+    h.rohs("A"),
+    Array.from({ length: PASTE_LOG_MAX_ENTRIES }, (_, i) => `alt ${i}`),
+  );
+});
+
+test("pageState: Einfügung über der Gesamtgrenze meldet „full“, die alten Einträge bleiben (lva#548)", async () => {
+  const roh = "x".repeat(1_900_000);
+  const gross = (n) => ({ ...eintrag(iso(n), roh), bereinigt: "x" });
+  const log = Array.from({ length: 8 }, (_, i) => gross(i));
+  assert.ok(logBytes(log) < PASTE_LOG_MAX_BYTES);
+  assert.ok(logBytes(log) + 1_900_000 > PASTE_LOG_MAX_BYTES);
+  const h = harness({ A: stateWith({ einfuegungen: log }) });
+  assert.equal(await h.store.addLogEntry("A", gross(9)), "full");
+  assert.equal(h.writes.length, 0);
+  assert.equal(h.fileState("A").einfuegungen.length, 8);
+  assert.equal(
+    await h.store.addLogEntry("A", eintrag(iso(10), "klein")),
+    "saved",
+  );
+  assert.equal(h.fileState("A").einfuegungen.length, 9);
+});
+
+test("pageState: Altbestand mit mehr als 20 Einträgen bleibt beim Laden und beim Schreiben vollständig, neue gelten als voll (lva#548)", async () => {
+  const alt = Array.from({ length: 25 }, (_, i) => eintrag(iso(i), `alt ${i}`));
+  const h = harness({ A: stateWith({ einfuegungen: alt }) });
+  assert.equal(await h.store.addLogEntry("A", E1), "full");
+  // Ein anderer Auftrag (löschen) schreibt die Datei: nichts wird gekürzt.
+  assert.equal(await h.store.commitLog("A", drop(alt[0])), true);
+  assert.equal(h.fileState("A").einfuegungen.length, 24);
+  assert.equal(h.rohs("A")[0], "alt 1");
+});
+
+test("pageState: nach dem Löschen eines Eintrags geht addLogEntry wieder (lva#548)", async () => {
+  const log = voll();
+  const h = harness({ A: stateWith({ einfuegungen: log }) });
+  assert.equal(await h.store.addLogEntry("A", E1), "full");
+  assert.equal(await h.store.commitLog("A", drop(log[5])), true);
+  assert.equal(await h.store.addLogEntry("A", E1), "saved");
+  assert.equal(h.fileState("A").einfuegungen.length, PASTE_LOG_MAX_ENTRIES);
+  assert.equal(h.rohs("A").at(-1), "eins");
+  assert.equal(await h.store.addLogEntry("A", E2), "full");
+  // Alle löschen: wieder Platz.
+  assert.equal(await h.store.commitLog("A", () => []), true);
+  assert.equal(await h.store.addLogEntry("A", E2), "saved");
+});
+
+test("pageState: die Prüfung auf Platz ist atomar mit dem Hinzufügen: zwei gleichzeitige Einfügungen bei 19 Einträgen, nur eine kommt hinein (lva#548)", async () => {
+  const log = voll().slice(0, PASTE_LOG_MAX_ENTRIES - 1);
+  const h = harness({ A: stateWith({ einfuegungen: log }) });
+  const held = gate();
+  h.holdSave = () => held.promise;
+  const first = h.store.addLogEntry("A", E1);
+  const second = h.store.addLogEntry("A", E2);
+  await tick();
+  held.release();
+  assert.deepEqual(await Promise.all([first, second]), ["saved", "full"]);
+  assert.equal(h.fileState("A").einfuegungen.length, PASTE_LOG_MAX_ENTRIES);
+  assert.equal(h.rohs("A").at(-1), "eins");
+});
+
+test("pageState: Schreibfehler bleibt „failed“, nicht „full“ (lva#548)", async () => {
+  const h = harness({ A: stateWith({}) });
+  h.failNextSave = true;
+  assert.equal(await h.store.addLogEntry("A", E1), "failed");
+  assert.equal(await h.store.addLogEntry("A", E1), "saved");
+});
+
+// ---------------------------------------------------------------------------
+// lva#548 Fixrunde 2: Laden über die Kette, Snapshot beim Einreihen, Wiederholen
+// ---------------------------------------------------------------------------
+
+test("pageState: Laden hinter dem Schreiben: Einfügen bei 20 Einträgen, Abfrage hängt, Seite verlassen und wieder öffnen, freigeben: der Text der Einfügung bleibt (Dokument und Datei)", async () => {
+  const h = harness({ A: stateWith({ einfuegungen: voll() }) });
+  h.active = "A";
+  h.loaded = true;
+  h.uiText = "alt + Einfügung";
+  // 1. Die Dateiabfrage des Protokollschreibens hängt (einmalig).
+  const held = gate();
+  h.holdLoad = async () => {
+    h.holdLoad = null;
+    await held.promise;
+  };
+  const added = h.store.addLogEntry("A", E1);
+  await tick();
+  // 2. Seite verlassen: der Autosave reiht den Snapshot ein.
+  h.active = null;
+  h.loaded = false;
+  const flush = h.store.save("A", stateWith({ text: "alt + Einfügung" }));
+  // 3. Seite wieder öffnen: die Oberfläche lädt erst, ist noch nicht „live“.
+  h.active = "A";
+  h.uiText = "alt";
+  const reopened = h.store.read("A");
+  await tick();
+  // 4. Freigeben: full, dann der Snapshot, dann erst das Lesen.
+  held.release();
+  assert.equal(await added, "full");
+  await flush;
+  const read = await reopened;
+  assert.equal(JSON.parse(read.text).text, "alt + Einfügung");
+  // Die Oberfläche ist jetzt fertig geladen: der nächste Autosave behält den Text.
+  h.loaded = true;
+  h.uiText = JSON.parse(read.text).text;
+  await h.store.save("A", stateWith({ text: h.uiText }));
+  assert.equal(h.fileState("A").text, "alt + Einfügung");
+  assert.equal(h.fileState("A").einfuegungen.length, PASTE_LOG_MAX_ENTRIES);
+});
+
+test("pageState: ein für die verlassene Seite eingereihter save schreibt immer seinen Snapshot, auch wenn die Seite bis zur Ausführung wieder offen ist", async () => {
+  const h = harness({ A: stateWith({}) });
+  const held = gate();
+  h.holdLoad = async () => {
+    h.holdLoad = null;
+    await held.promise;
+  };
+  const flush = h.store.save(
+    "A",
+    stateWith({ text: "Snapshot beim Verlassen" }),
+  );
+  await tick();
+  h.active = "A";
+  h.loaded = true;
+  h.uiText = "älterer Stand der Oberfläche";
+  held.release();
+  await flush;
+  assert.equal(h.fileState("A").text, "Snapshot beim Verlassen");
+});
+
+test("pageState: ein für die offene Seite eingereihter save nimmt weiter den neuesten Text der Oberfläche", async () => {
+  const h = harness({ A: stateWith({}) });
+  h.active = "A";
+  h.loaded = true;
+  h.uiText = "alt";
+  const held = gate();
+  h.holdLoad = async () => {
+    h.holdLoad = null;
+    await held.promise;
+  };
+  const saved = h.store.save("A", stateWith({ text: "alt" }));
+  await tick();
+  h.uiText = "neuer, während es wartete";
+  held.release();
+  await saved;
+  assert.equal(h.fileState("A").text, "neuer, während es wartete");
+});
+
+test("pageState: Tippen, verlassen, wieder öffnen, während ein Schreibvorgang hängt: das Laden zeigt den getippten Text", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.active = "A";
+  h.loaded = true;
+  const held = gate();
+  h.holdSave = async () => {
+    h.holdSave = null;
+    await held.promise;
+  };
+  const first = h.store.save("A", stateWith({ text: "alt X" }));
+  h.uiText = "alt X";
+  await tick();
+  h.active = null;
+  h.loaded = false;
+  const flush = h.store.save("A", stateWith({ text: "alt XY" }));
+  h.active = "A";
+  const reopened = h.store.read("A");
+  await tick();
+  held.release();
+  await first;
+  await flush;
+  assert.equal(JSON.parse((await reopened).text).text, "alt XY");
+});
+
+test("pageState: read liefert die Marke vor dem Lesen und nur diese Seite wartet auf ihre Aufträge", async () => {
+  const h = harness({
+    A: stateWith({ text: "a" }),
+    B: stateWith({ text: "b" }),
+  });
+  const held = gate();
+  h.holdSave = async (page) => {
+    if (page !== "A") return;
+    h.holdSave = null;
+    await held.promise;
+  };
+  const writing = h.store.save("A", stateWith({ text: "a2" }));
+  await tick();
+  // Eine andere Seite wartet nicht auf den hängenden Auftrag von A.
+  const other = await h.store.read("B");
+  assert.equal(JSON.parse(other.text).text, "b");
+  let done = false;
+  const waiting = h.store.read("A").then((r) => {
+    done = true;
+    return r;
+  });
+  await tick();
+  assert.equal(done, false);
+  held.release();
+  await writing;
+  const r = await waiting;
+  assert.equal(JSON.parse(r.text).text, "a2");
+  assert.equal(r.mark, h.store.mark("A"));
+  assert.equal(await h.store.read("fehlt").then((x) => x?.text), "");
+});
+
+test("pageState: gescheitertes Sichern einer verlassenen Seite: der Snapshot bleibt und wird beim nächsten Öffnen erneut versucht", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failNextSave = true;
+  await assert.rejects(
+    h.store.save("A", stateWith({ text: "neu beim Verlassen" })),
+  );
+  assert.equal(h.store.hasFailedSave("A"), true);
+  assert.equal(h.fileState("A").text, "alt");
+  const read = await h.store.read("A");
+  assert.equal(JSON.parse(read.text).text, "neu beim Verlassen");
+  assert.equal(read.unsaved, false, "der Retry hat geschrieben");
+  assert.equal(h.store.hasFailedSave("A"), false);
+  assert.equal(h.fileState("A").text, "neu beim Verlassen");
+});
+
+test("pageState: scheitert auch der erneute Versuch, liefert read den Snapshot als ungespeicherten Stand (nicht die alte Datei); erst ein echter Lade-Autosave löscht ihn", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failNextSave = true;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  h.failNextSave = true;
+  const first = await h.store.read("A");
+  assert.equal(
+    JSON.parse(first.text).text,
+    "v1",
+    "der Snapshot, nicht die Datei",
+  );
+  assert.equal(first.unsaved, true);
+  assert.equal(JSON.parse(h.files.get("A")).text, "alt", "Datei unverändert");
+  assert.equal(
+    h.store.hasFailedSave("A"),
+    true,
+    "read allein löscht ihn nicht",
+  );
+  // Die Oberfläche übernimmt den Stand, ist fertig geladen, der Lade-Autosave schreibt.
+  h.active = "A";
+  h.loaded = true;
+  h.uiText = JSON.parse(first.text).text;
+  await h.store.save("A", stateWith({ text: h.uiText }));
+  assert.equal(h.store.hasFailedSave("A"), false);
+  assert.equal(h.fileState("A").text, "v1");
+  const second = await h.store.read("A");
+  assert.equal(JSON.parse(second.text).text, "v1");
+  assert.equal(second.unsaved, false);
+});
+
+test("pageState: scheitert das Sichern der OFFENEN Seite, bleibt kein Snapshot (die Oberfläche hält den Stand)", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.active = "A";
+  h.loaded = true;
+  h.failNextSave = true;
+  await assert.rejects(h.store.save("A", stateWith({ text: "x" })));
+  assert.equal(h.store.hasFailedSave("A"), false);
+});
+
+// ---------------------------------------------------------------------------
+// lva#548 Fixrunde 3: Retry-Pfad (failedSaves) – Reihenfolge, Laufnummern, eigener Stand
+// ---------------------------------------------------------------------------
+
+const textOf = (json) => JSON.parse(json).text;
+const einmalHalten = (h, kind) => {
+  const held = gate();
+  h[kind] = async () => {
+    h[kind] = null;
+    await held.promise;
+  };
+  return held;
+};
+
+test("pageState B1: Flush scheitert NACH Beginn von read: read wartet zuerst und versucht danach erneut (Datei = Stand des Flush)", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  const held = einmalHalten(h, "holdSave");
+  const flush = h.store.save("A", stateWith({ text: "v1" }));
+  await tick();
+  // Seite wieder öffnen, während der Flush noch hängt: noch kein Fehler bekannt.
+  let reopened = null;
+  const reading = h.store.read("A").then((r) => (reopened = r));
+  await tick();
+  assert.equal(reopened, null, "read wartet auf die Kette der Seite");
+  h.failNextSave = true;
+  held.release();
+  await assert.rejects(flush);
+  const read = await reading;
+  assert.equal(textOf(read.text), "v1", "nicht die alte Datei");
+  assert.equal(read.unsaved, false, "der Retry hat geschrieben");
+  assert.equal(h.fileState("A").text, "v1");
+  assert.equal(h.store.hasFailedSave("A"), false);
+});
+
+test("pageState B1: Flush scheitert nach Beginn von read und auch der Retry: read liefert den Snapshot als ungespeichert", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  const held = einmalHalten(h, "holdSave");
+  const flush = h.store.save("A", stateWith({ text: "v1" }));
+  await tick();
+  const reading = h.store.read("A");
+  await tick();
+  h.failSaves = 2;
+  held.release();
+  await assert.rejects(flush);
+  const read = await reading;
+  assert.equal(textOf(read.text), "v1");
+  assert.equal(read.unsaved, true);
+  assert.equal(h.fileState("A").text, "alt", "Datei unberührt");
+  assert.equal(h.store.hasFailedSave("A"), true);
+});
+
+test("pageState B1: voller Rohfassungsspeicher, Flush und Retry scheitern, Lade-Autosave: der eingefügte Text bleibt in der Datei, die Rohfassungen auch", async () => {
+  const h = harness({ A: stateWith({ einfuegungen: voll() }) });
+  const held = einmalHalten(h, "holdSave");
+  const flush = h.store.save("A", stateWith({ text: "alt + Einfügung" }));
+  await tick();
+  const reading = h.store.read("A");
+  await tick();
+  h.failSaves = 2;
+  held.release();
+  await assert.rejects(flush);
+  const read = await reading;
+  // Die Oberfläche übernimmt, was read liefert; der Lade-Autosave läuft über die Kette.
+  h.active = "A";
+  h.loaded = true;
+  h.uiText = textOf(read.text);
+  await h.store.save("A", stateWith({ text: h.uiText }));
+  assert.equal(h.fileState("A").text, "alt + Einfügung", "Text erhalten");
+  assert.equal(h.fileState("A").einfuegungen.length, PASTE_LOG_MAX_ENTRIES);
+  assert.equal(h.store.hasFailedSave("A"), false);
+  assert.equal(read.unsaved, true);
+  assert.equal(
+    JSON.parse(read.text).einfuegungen.length,
+    PASTE_LOG_MAX_ENTRIES,
+    "die Anzeige zeigt das Protokoll der Datei",
+  );
+});
+
+test("pageState B1: scheitert der Lade-Autosave, bleibt der Snapshot im Speicher, erst das gelungene Schreiben löscht ihn", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failSaves = 2;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  const read = await h.store.read("A");
+  assert.equal(read.unsaved, true);
+  h.active = "A";
+  h.loaded = true;
+  h.uiText = "v1";
+  h.failNextSave = true;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  assert.equal(h.store.hasFailedSave("A"), true, "Fehlschlag löscht nicht");
+  // Seite wieder verlassen und öffnen: der Snapshot wird erneut angeboten.
+  h.active = null;
+  h.loaded = false;
+  const again = await h.store.read("A");
+  assert.equal(again.unsaved, false, "der Retry konnte jetzt schreiben");
+  assert.equal(h.fileState("A").text, "v1");
+  assert.equal(h.store.hasFailedSave("A"), false);
+});
+
+test("pageState B1 (R4): read auf der geladenen Seite (KeepAlive) liefert den ausgehändigten Snapshot weiter als ungespeichert, nie die ältere Datei, und schreibt ihn nicht über die Oberfläche", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failSaves = 2;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  const handed = await h.store.read("A");
+  assert.equal(handed.unsaved, true);
+  h.active = "A";
+  h.loaded = true;
+  h.uiText = "v1 plus getippt";
+  const keep = await h.store.read("A");
+  assert.equal(keep.unsaved, true, "Snapshot behält Vorrang vor der Datei");
+  assert.equal(textOf(keep.text), "v1");
+  assert.equal(h.writes.length, 0, "nichts geschrieben");
+  assert.equal(h.store.hasFailedSave("A"), true);
+});
+
+test("pageState B1 (R4): Lade-Autosave scheitert, KeepAlive-read, dann gelingt der Autosave: v1 bleibt in der Datei, der Snapshot fällt erst dann weg (nie „alt“)", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  // Flush und Retry von v1 scheitern.
+  h.failSaves = 2;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  const handed = await h.store.read("A");
+  assert.equal(textOf(handed.text), "v1");
+  assert.equal(handed.unsaved, true);
+  // Oberfläche zeigt v1; der Lade-Autosave scheitert ebenfalls.
+  h.active = "A";
+  h.loaded = true;
+  h.uiText = textOf(handed.text);
+  h.failNextSave = true;
+  await assert.rejects(h.store.save("A", stateWith({ text: h.uiText })));
+  assert.equal(h.store.hasFailedSave("A"), true);
+  // App-Bereich wechseln und zurück: KeepAlive liest. Die Oberfläche übernimmt
+  // bei `unsaved` nichts (hier: sie bleibt bei v1).
+  const keep = await h.store.read("A");
+  assert.equal(keep.unsaved, true);
+  assert.equal(textOf(keep.text), "v1");
+  // Der nächste Autosave gelingt: Datei v1, Snapshot weg, keine Fassung nötig.
+  await h.store.save("A", stateWith({ text: h.uiText }));
+  assert.equal(h.fileState("A").text, "v1");
+  assert.equal(h.store.hasFailedSave("A"), false);
+  assert.deepEqual(h.copies, []);
+  assert.equal(textOf((await h.store.read("A")).text), "v1");
+});
+
+test("pageState B1: Retry kann die Datei nicht lesen: read meldet den Lesefehler, der Snapshot bleibt und wird beim nächsten read geschrieben", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failNextSave = true;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  h.nullLoads = 2;
+  assert.equal(await h.store.read("A"), null);
+  assert.equal(h.store.hasFailedSave("A"), true);
+  assert.equal(h.fileState("A").text, "alt");
+  const read = await h.store.read("A");
+  assert.equal(textOf(read.text), "v1");
+  assert.equal(h.fileState("A").text, "v1");
+});
+
+test("pageState B1: read endet auch bei dauerhaftem Schreibfehler (keine Endlosschleife) und liefert jedes Mal den Snapshot", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failSaves = 1000;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  for (let i = 0; i < 3; i += 1) {
+    const read = await h.store.read("A");
+    assert.equal(read.unsaved, true);
+    assert.equal(textOf(read.text), "v1");
+  }
+  assert.equal(h.writes.length, 0);
+});
+
+test("pageState B2: save(v1) scheitert, mutate(v2) gelingt, Wiederöffnen: v2 bleibt in der Datei, v1 wird als eigene Fassung gesichert (kein blindes Zurückschreiben)", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failNextSave = true;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  assert.equal(
+    await h.store.mutate("A", (state) => {
+      state.text = "v2";
+      return true;
+    }),
+    true,
+  );
+  const read = await h.store.read("A");
+  assert.equal(textOf(read.text), "v2");
+  assert.equal(read.unsaved, false);
+  assert.equal(h.fileState("A").text, "v2");
+  assert.deepEqual(h.copies, [["A", "v1"]]);
+  assert.deepEqual(h.rescues, [["A", "copy"]]);
+  assert.equal(h.store.hasFailedSave("A"), false);
+  assert.deepEqual(
+    h.writes.map(([, json]) => textOf(json)),
+    ["v2"],
+    "v1 wurde nie geschrieben",
+  );
+});
+
+test("pageState B2: noch wartendes save(v2) vor dem Öffnen: v2 bleibt, v1 wird gesichert, nicht dahinter eingereiht", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failNextSave = true;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  const held = einmalHalten(h, "holdSave");
+  const second = h.store.save("A", stateWith({ text: "v2" }));
+  await tick();
+  const reading = h.store.read("A");
+  await tick();
+  held.release();
+  await second;
+  const read = await reading;
+  assert.equal(textOf(read.text), "v2");
+  assert.equal(h.fileState("A").text, "v2");
+  assert.deepEqual(h.copies, [["A", "v1"]]);
+  assert.deepEqual(
+    h.writes.map(([, json]) => textOf(json)),
+    ["v2"],
+  );
+});
+
+test("pageState B2: ohne Fassungs-Schreiber bleibt der ältere Stand im Speicher und wird als Konflikt gemeldet; ein späteres read sichert ihn", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  delete h.io.saveCopy;
+  h.failNextSave = true;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  await h.store.mutate("A", (state) => {
+    state.text = "v2";
+    return true;
+  });
+  assert.deepEqual(h.rescues, [["A", "held"]]);
+  assert.deepEqual(h.store.held("A"), ["v1"]);
+  assert.equal(h.fileState("A").text, "v2");
+  // Der Schreiber ist wieder da: das nächste read sichert den gehaltenen Stand.
+  h.io.saveCopy = async (page, text) => {
+    h.copies.push([page, text]);
+    return true;
+  };
+  const read = await h.store.read("A");
+  assert.equal(textOf(read.text), "v2");
+  assert.deepEqual(h.copies, [["A", "v1"]]);
+  assert.deepEqual(h.store.held("A"), []);
+  assert.deepEqual(h.rescues.at(-1), ["A", "copy"]);
+});
+
+test("pageState B2: scheitert das Sichern der Fassung, bleibt der Text im Speicher (held) und die Datei unverändert", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failCopy = true;
+  h.failNextSave = true;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  await h.store.mutate("A", (state) => {
+    state.text = "v2";
+    return true;
+  });
+  assert.deepEqual(h.store.held("A"), ["v1"]);
+  assert.deepEqual(h.copies, []);
+  const read = await h.store.read("A");
+  assert.equal(textOf(read.text), "v2");
+  assert.deepEqual(
+    h.store.held("A"),
+    ["v1"],
+    "bleibt, solange das Sichern scheitert",
+  );
+  h.failCopy = false;
+  await h.store.read("A");
+  assert.deepEqual(h.copies, [["A", "v1"]]);
+  assert.deepEqual(h.store.held("A"), []);
+});
+
+test("pageState B2: ein Snapshot mit demselben Text wie die Datei (oder leer) braucht keine Fassung", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failNextSave = true;
+  await assert.rejects(
+    h.store.save("A", JSON.stringify({ text: "alt", tab: "summary" })),
+  );
+  await h.store.mutate("A", (state) => {
+    state.sourceUrl = "https://example.org";
+    return true;
+  });
+  assert.deepEqual(h.copies, []);
+  assert.deepEqual(h.rescues, []);
+  assert.equal(h.store.hasFailedSave("A"), false);
+  assert.equal(textOf(JSON.stringify(h.fileState("A"))), "alt");
+});
+
+test("pageState B2: ein Protokollschreiben (commitLog) macht den Snapshot nicht veraltet: der Retry schreibt ihn mit dem Protokoll der Datei", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failNextSave = true;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  assert.equal(await h.store.commitLog("A", add(E1)), true);
+  const read = await h.store.read("A");
+  assert.equal(textOf(read.text), "v1");
+  assert.equal(read.unsaved, false);
+  assert.deepEqual(h.rohs("A"), ["eins"]);
+  assert.deepEqual(h.copies, []);
+});
+
+test("pageState B2: ein erfolgreicher save der Oberfläche, die den Snapshot erhalten hat, ersetzt ihn ohne Fassung", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failSaves = 2;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  const handed = await h.store.read("A");
+  assert.equal(handed.unsaved, true);
+  // Oberfläche zeigt v1, der Nutzer tippt weiter, verlässt die Seite: Flush gelingt.
+  await h.store.save("A", stateWith({ text: "v1 und mehr" }));
+  assert.equal(h.fileState("A").text, "v1 und mehr");
+  assert.equal(h.store.hasFailedSave("A"), false);
+  assert.deepEqual(h.copies, []);
+});
+
+test("pageState B2: zwei Flush-Fehler ohne read dazwischen: der ältere Text geht nicht verloren (wird als Fassung gesichert)", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failSaves = 2;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  await assert.rejects(h.store.save("A", stateWith({ text: "v2" })));
+  assert.deepEqual(h.store.held("A"), ["v1"]);
+  assert.deepEqual(h.rescues, [["A", "held"]], "das Halten wird gemeldet");
+  const read = await h.store.read("A");
+  assert.equal(textOf(read.text), "v2");
+  assert.equal(h.fileState("A").text, "v2");
+  assert.deepEqual(h.copies, [["A", "v1"]]);
+  assert.deepEqual(h.rescues.at(-1), ["A", "copy"]);
+});
+
+test("pageState B2 (R4): zwei Save-Fehler, Kopierettung scheitert, Retry von v2 gelingt: v1 bleibt im Speicher und wird bei jedem Versuch als „nur im Speicher“ gemeldet, erst die gelungene Kopie gibt es frei", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failCopy = true;
+  h.failSaves = 2;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  await assert.rejects(h.store.save("A", stateWith({ text: "v2" })));
+  assert.deepEqual(h.store.held("A"), ["v1"]);
+  assert.deepEqual(h.rescues, [["A", "held"]], "beim Verdrängen gemeldet");
+  // Öffnen: die Kopie scheitert erneut (erneut gemeldet), der Retry von v2 gelingt.
+  const read = await h.store.read("A");
+  assert.equal(textOf(read.text), "v2");
+  assert.equal(h.fileState("A").text, "v2");
+  assert.deepEqual(h.store.held("A"), ["v1"], "v1 nur im Speicher");
+  assert.deepEqual(h.rescues, [
+    ["A", "held"],
+    ["A", "held"],
+  ]);
+  assert.deepEqual(h.copies, []);
+  // Ohne Fassungs-Schreiber ebenso: gehalten und gemeldet.
+  delete h.io.saveCopy;
+  await h.store.read("A");
+  assert.deepEqual(h.store.held("A"), ["v1"]);
+  assert.equal(h.rescues.length, 3);
+  // Das Sichern gelingt wieder: Kopie, frei, gemeldet als „copy“.
+  h.io.saveCopy = async (page, text) => {
+    h.copies.push([page, text]);
+    return true;
+  };
+  await h.store.read("A");
+  assert.deepEqual(h.copies, [["A", "v1"]]);
+  assert.deepEqual(h.store.held("A"), []);
+  assert.deepEqual(h.rescues.at(-1), ["A", "copy"]);
+});
+
+test("pageState B3: Autosave der offenen Seite läuft, Seite wird verlassen, das Schreiben scheitert: der eigene Stand wird Snapshot, die Seite meldet ihn, Wiederöffnen stellt ihn her", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.active = "A";
+  h.loaded = true;
+  h.uiText = "alt + Einfügung";
+  const held = einmalHalten(h, "holdSave");
+  const autosave = h.store.save("A", stateWith({ text: "alt + Einfügung" }));
+  await tick();
+  // Seite verlassen, während das Schreiben hängt.
+  h.active = null;
+  h.loaded = false;
+  held.release();
+  h.failNextSave = true;
+  const error = await autosave.then(
+    () => null,
+    (e) => e,
+  );
+  assert.ok(error, "scheitert");
+  assert.equal(error.kept, true, "ein Snapshot wurde hinterlegt");
+  assert.equal(h.store.hasFailedSave("A"), true);
+  assert.equal(h.fileState("A").text, "alt");
+  h.active = "A";
+  const read = await h.store.read("A");
+  assert.equal(textOf(read.text), "alt + Einfügung");
+  assert.equal(h.fileState("A").text, "alt + Einfügung");
+});
+
+test("pageState B3: der Snapshot ist der eigene geschriebene Stand des Auftrags, nicht der später eingereihte", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.active = "A";
+  h.loaded = true;
+  h.uiText = "Stand des Auftrags";
+  const held = einmalHalten(h, "holdSave");
+  const autosave = h.store.save("A", stateWith({ text: "ignoriert" }));
+  await tick();
+  h.uiText = "später getippt";
+  h.active = null;
+  h.loaded = false;
+  h.failNextSave = true;
+  held.release();
+  await assert.rejects(autosave);
+  const read = await h.store.read("A");
+  assert.equal(textOf(read.text), "Stand des Auftrags");
+});
+
+test("pageState B3: scheitert der Auftrag, während die Seite noch offen ist, bleibt kein Snapshot und keine Zusage (kept: false)", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.active = "A";
+  h.loaded = true;
+  h.failNextSave = true;
+  const error = await h.store.save("A", stateWith({ text: "x" })).then(
+    () => null,
+    (e) => e,
+  );
+  assert.ok(error);
+  assert.equal(error.kept, false);
+  assert.equal(h.store.hasFailedSave("A"), false);
+});
+
+test("pageState B3: Lesefehler im Schreibauftrag einer verlassenen Seite: Snapshot bleibt, Zusage stimmt (kept)", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.nullLoads = 1;
+  const error = await h.store.save("A", stateWith({ text: "v1" })).then(
+    () => null,
+    (e) => e,
+  );
+  assert.equal(error.kept, true);
+  assert.equal(h.store.hasFailedSave("A"), true);
+  const read = await h.store.read("A");
+  assert.equal(textOf(read.text), "v1");
+});
+
+// ---------------------------------------------------------------------------
+// lva#548 Fixrunde 5: neuerer Dateistand nach ausgehändigtem Snapshot (mutate)
+// ---------------------------------------------------------------------------
+
+/** Snapshot v1 ausgehändigt (Flush und Retry scheitern), Oberfläche zeigt v1 und
+ *  ist geladen. Datei: „alt“. */
+async function snapshotHandedOut(h) {
+  h.failSaves = 2;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  const handed = await h.store.read("A");
+  assert.equal(handed.unsaved, true);
+  assert.equal(textOf(handed.text), "v1");
+  h.active = "A";
+  h.loaded = true;
+  h.uiText = "v1";
+  return handed;
+}
+
+const setText = (text) => (state) => {
+  state.text = text;
+  return true;
+};
+
+test("pageState R5: mutate(v2) NACH der Ausgabe, Lade-Autosave scheitert, KeepAlive, erfolgreicher Autosave, Neuöffnen: beide Texte bleiben (Datei v1, Fassung v2)", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  await snapshotHandedOut(h);
+  // Der Lade-Autosave der Oberfläche scheitert.
+  h.failNextSave = true;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  // Fremdschreiber (Bibliothek) schreibt erfolgreich v2.
+  assert.equal(await h.store.mutate("A", setText("v2")), true);
+  assert.equal(h.fileState("A").text, "v2");
+  // KeepAlive: der Snapshot bleibt Stand der Oberfläche, die Datei bleibt v2.
+  const keep = await h.store.read("A");
+  assert.equal(keep.unsaved, true);
+  assert.equal(textOf(keep.text), "v1");
+  assert.equal(h.fileState("A").text, "v2", "read schreibt nichts");
+  assert.deepEqual(h.copies, []);
+  // Der angestoßene Autosave gelingt: v1 in der Datei, v2 vorher als Fassung gesichert.
+  await h.store.save("A", stateWith({ text: "v1" }));
+  assert.equal(h.fileState("A").text, "v1");
+  assert.deepEqual(h.copies, [["A", "v2"]]);
+  assert.deepEqual(h.rescues, [["A", "copy"]]);
+  assert.equal(h.store.hasFailedSave("A"), false);
+  // Neuöffnen: v1; v2 nicht noch einmal gesichert.
+  h.active = null;
+  h.loaded = false;
+  const reopened = await h.store.read("A");
+  assert.equal(reopened.unsaved, false);
+  assert.equal(textOf(reopened.text), "v1");
+  assert.deepEqual(h.copies, [["A", "v2"]]);
+});
+
+test("pageState R5: dieselbe Reihenfolge mit Gates (Lade-Autosave hängt, mutate(v2) steht dahinter, Autosave scheitert, mutate gelingt): beide Texte bleiben", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  await snapshotHandedOut(h);
+  const held = einmalHalten(h, "holdSave");
+  const autosave = h.store.save("A", stateWith({ text: "v1" }));
+  await tick();
+  const mutating = h.store.mutate("A", setText("v2"));
+  await tick();
+  h.failNextSave = true;
+  held.release();
+  await assert.rejects(autosave);
+  assert.equal(await mutating, true);
+  assert.equal(h.fileState("A").text, "v2");
+  const keep = await h.store.read("A");
+  assert.equal(textOf(keep.text), "v1");
+  assert.equal(keep.unsaved, true);
+  await h.store.save("A", stateWith({ text: "v1" }));
+  assert.equal(h.fileState("A").text, "v1");
+  assert.deepEqual(h.copies, [["A", "v2"]]);
+  const reopened = await h.store.read("A");
+  assert.equal(textOf(reopened.text), "v1");
+  assert.equal(h.store.hasFailedSave("A"), false);
+});
+
+test("pageState R5: auch der direkte Autosave ohne Bereichswechsel verdrängt v2 nicht still", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  await snapshotHandedOut(h);
+  assert.equal(await h.store.mutate("A", setText("v2")), true);
+  h.uiText = "v1 plus getippt";
+  await h.store.save("A", stateWith({ text: h.uiText }));
+  assert.equal(h.fileState("A").text, "v1 plus getippt");
+  assert.deepEqual(h.copies, [["A", "v2"]]);
+});
+
+test("pageState R5: scheitert das Sichern der Fassung für v2, bleibt v2 im Speicher und wird gemeldet; die Datei bekommt trotzdem den Oberflächentext", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  await snapshotHandedOut(h);
+  assert.equal(await h.store.mutate("A", setText("v2")), true);
+  h.failCopy = true;
+  await h.store.save("A", stateWith({ text: "v1" }));
+  assert.equal(h.fileState("A").text, "v1");
+  assert.deepEqual(h.store.held("A"), ["v2"]);
+  assert.deepEqual(h.rescues, [["A", "held"]]);
+});
+
+test("pageState R5: ein mutate, das den Text nicht ändert (nur Nebenfeld), braucht keine Fassung", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  await snapshotHandedOut(h);
+  assert.equal(
+    await h.store.mutate("A", (state) => {
+      state.sourceUrl = "https://example.org";
+      return true;
+    }),
+    true,
+  );
+  await h.store.save("A", stateWith({ text: "v1" }));
+  assert.equal(h.fileState("A").text, "v1");
+  assert.deepEqual(h.copies, []);
+  assert.deepEqual(h.rescues, []);
+});
+
+test("pageState R5: Datei war beim Scheitern nicht lesbar (Basis unbekannt): ein abweichender Dateitext wird vorsichtshalber gesichert", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.nullLoads = 1;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  h.failNextSave = true;
+  const handed = await h.store.read("A");
+  assert.equal(handed.unsaved, true);
+  h.active = "A";
+  h.loaded = true;
+  h.uiText = "v1";
+  assert.equal(await h.store.mutate("A", setText("v2")), true);
+  await h.store.save("A", stateWith({ text: "v1" }));
+  assert.equal(h.fileState("A").text, "v1");
+  assert.deepEqual(h.copies, [["A", "v2"]]);
+});
+
+test("pageState R5: die Meldung sieht den Endstand: eine gelungene Kopie neben einem weiter gehaltenen Text meldet zuletzt „held“, mit dem Bestand nach dem Sichern", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failSaves = 3;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  await assert.rejects(h.store.save("A", stateWith({ text: "v2" })));
+  await assert.rejects(h.store.save("A", stateWith({ text: "v3" })));
+  assert.deepEqual(h.store.held("A"), ["v1", "v2"]);
+  h.rescues.length = 0;
+  h.heldAtRescue.length = 0;
+  // Nur v1 lässt sich sichern, v2 nicht.
+  h.io.saveCopy = async (page, text) => {
+    if (text === "v2") return false;
+    h.copies.push([page, text]);
+    return true;
+  };
+  const read = await h.store.read("A");
+  assert.equal(textOf(read.text), "v3");
+  assert.deepEqual(h.copies, [["A", "v1"]]);
+  assert.deepEqual(h.rescues, [
+    ["A", "copy"],
+    ["A", "held"],
+  ]);
+  assert.deepEqual(h.heldAtRescue, [1, 1], "Bestand nach dem Sichern");
+  assert.deepEqual(h.store.held("A"), ["v2"]);
+});
+
+// ---------------------------------------------------------------------------
+// lva#548 Fixrunde 6: ein offener Konflikt überlebt jede Ersetzung des Snapshots
+// ---------------------------------------------------------------------------
+
+/** Ausgehändigt (v1), dann schreibt ein Fremdschreiber v2, die Oberfläche
+ *  verlässt die Seite. Datei: v2, Basis des Snapshots: „alt“. */
+async function handedOutThenForeignWrite(h) {
+  await snapshotHandedOut(h);
+  assert.equal(await h.store.mutate("A", setText("v2")), true);
+  h.active = null;
+  h.loaded = false;
+}
+
+test("pageState R6: ausgehändigt, mutate(v2), Verlassen-Save scheitert mit Lesefehler, Neuöffnen: Datei v1, v2 als Fassung (Codex-Fall)", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  await snapshotHandedOut(h);
+  await h.store.mutate("A", setText("v2"));
+  h.active = null;
+  h.loaded = false;
+  h.nullLoads = 1;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  await h.store.read("A");
+  assert.equal(h.fileState("A").text, "v1");
+  assert.deepEqual(h.copies, [["A", "v2"]]);
+  assert.deepEqual(h.rescues, [["A", "copy"]]);
+  assert.equal(h.store.hasFailedSave("A"), false);
+  // Ein weiteres Öffnen sichert nichts noch einmal.
+  const again = await h.store.read("A");
+  assert.equal(again.unsaved, false);
+  assert.equal(textOf(again.text), "v1");
+  assert.deepEqual(h.copies, [["A", "v2"]]);
+});
+
+test("pageState R6: während die Fassung für v2 entsteht, bleibt die Datei v2 (erst Sichern, dann Überschreiben)", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  await handedOutThenForeignWrite(h);
+  h.nullLoads = 1;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  const reached = gate();
+  const finish = gate();
+  let fileDuringCopy = null;
+  h.holdCopy = async () => {
+    h.holdCopy = null;
+    fileDuringCopy = h.fileState("A").text;
+    reached.release();
+    await finish.promise;
+  };
+  const reading = h.store.read("A");
+  await Promise.race([reached.promise, reading]);
+  assert.equal(
+    fileDuringCopy,
+    "v2",
+    "Datei weiterhin v2, solange die Fassung entsteht",
+  );
+  assert.deepEqual(h.copies, []);
+  finish.release();
+  const read = await reading;
+  assert.equal(read.unsaved, false);
+  assert.equal(h.fileState("A").text, "v1");
+  assert.deepEqual(h.copies, [["A", "v2"]]);
+});
+
+test("pageState R6: Lesefehler im Retry beim Öffnen: v1 bleibt ausgehändigter Stand, der Rettungs-Autosave sichert v2 und schreibt v1", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  await handedOutThenForeignWrite(h);
+  // Der Verlassen-Save scheitert mit Lesefehler; die Ersetzung erbt den Konflikt.
+  h.nullLoads = 1;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  // Beim Öffnen scheitert auch der Retry beim Lesen: nichts darf verloren gehen.
+  h.nullLoads = 1;
+  const read = await h.store.read("A");
+  assert.equal(read.unsaved, true);
+  assert.equal(textOf(read.text), "v1");
+  assert.equal(h.fileState("A").text, "v2", "read schreibt nichts");
+  assert.deepEqual(h.copies, []);
+  assert.equal(h.store.hasFailedSave("A"), true);
+  // Oberfläche geladen, Rettungs-Autosave gelingt.
+  h.active = "A";
+  h.loaded = true;
+  h.uiText = "v1";
+  await h.store.save("A", stateWith({ text: "v1" }));
+  assert.equal(h.fileState("A").text, "v1");
+  assert.deepEqual(h.copies, [["A", "v2"]]);
+  assert.equal(h.store.hasFailedSave("A"), false);
+});
+
+test("pageState R6: zweiter Save-Fehler mit lesbarer Datei, danach mutate(v3): v2 und v3 werden je einmal gesichert, die Datei bekommt v1", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  await handedOutThenForeignWrite(h);
+  // Zweiter Fehler: Datei lesbar (v2 wird gesichert), das Schreiben scheitert.
+  h.failNextSave = true;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  assert.deepEqual(h.copies, [["A", "v2"]]);
+  assert.equal(h.fileState("A").text, "v2");
+  // Noch vor dem Neuöffnen schreibt der Fremdschreiber v3.
+  assert.equal(await h.store.mutate("A", setText("v3")), true);
+  const read = await h.store.read("A");
+  assert.equal(read.unsaved, false);
+  assert.equal(textOf(read.text), "v1");
+  assert.deepEqual(h.copies, [
+    ["A", "v2"],
+    ["A", "v3"],
+  ]);
+  assert.equal(h.store.hasFailedSave("A"), false);
+});
+
+test("pageState R6: zweiter Save-Fehler mit Lesefehler und Retry-Schreibfehler: der berücksichtigte Dateitext wandert mit, kein Text wird doppelt oder gar nicht gesichert", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  await handedOutThenForeignWrite(h);
+  h.nullLoads = 1;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  // Retry beim Öffnen: v2 wird gesichert, das Schreiben scheitert.
+  h.failNextSave = true;
+  const first = await h.store.read("A");
+  assert.equal(first.unsaved, true);
+  assert.deepEqual(h.copies, [["A", "v2"]]);
+  assert.equal(h.fileState("A").text, "v2");
+  // Zwischen den Versuchen: v3. Der nächste Retry sichert nur v3.
+  assert.equal(await h.store.mutate("A", setText("v3")), true);
+  const second = await h.store.read("A");
+  assert.equal(second.unsaved, false);
+  assert.equal(h.fileState("A").text, "v1");
+  assert.deepEqual(h.copies, [
+    ["A", "v2"],
+    ["A", "v3"],
+  ]);
+});
+
+test("pageState R6: zweimal ersetzt (zwei Lesefehler, zwei Fremdschreiber): der letzte Dateitext wird gesichert, die Datei bekommt den letzten Oberflächenstand", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  await handedOutThenForeignWrite(h);
+  h.nullLoads = 1;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  assert.equal(await h.store.mutate("A", setText("v3")), true);
+  h.nullLoads = 1;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1b" })));
+  await h.store.read("A");
+  assert.equal(h.fileState("A").text, "v1b");
+  assert.deepEqual(h.copies, [["A", "v3"]]);
+  assert.equal(h.store.hasFailedSave("A"), false);
+});
+
+test("pageState R6: ohne Fremdschreiber erzeugt auch die Ersetzung keine Fassung (kein Konflikt, keine Kopie)", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  await snapshotHandedOut(h);
+  h.active = null;
+  h.loaded = false;
+  h.nullLoads = 1;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1b" })));
+  await h.store.read("A");
+  assert.equal(h.fileState("A").text, "v1b");
+  assert.deepEqual(h.copies, []);
+  assert.deepEqual(h.rescues, []);
+});
+
+test("pageState R6: ein nicht ausgehändigter Snapshot behält die Dateivorrang-Zusage, auch nach einer Ersetzung (Datei v2, Snapshot als Fassung)", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failNextSave = true;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  h.nullLoads = 1;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1b" })));
+  // v1 wurde nie angezeigt: beim Ersetzen gehalten, beim Öffnen gesichert.
+  assert.equal(await h.store.mutate("A", setText("v2")), true);
+  const read = await h.store.read("A");
+  assert.equal(read.unsaved, false);
+  assert.equal(textOf(read.text), "v2");
+  assert.deepEqual(h.copies.map(([, text]) => text).sort(), ["v1", "v1b"]);
+});
+
+test("pageState R6: scheitert das Sichern der Fassung für den Dateitext beim Retry, bleibt er im Speicher und wird gemeldet, die Datei bekommt v1", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  await handedOutThenForeignWrite(h);
+  h.nullLoads = 1;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  h.failCopy = true;
+  await h.store.read("A");
+  assert.equal(h.fileState("A").text, "v1");
+  assert.deepEqual(h.store.held("A"), ["v2"]);
+  assert.deepEqual(h.rescues, [["A", "held"]]);
 });
