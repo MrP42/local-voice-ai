@@ -2783,8 +2783,10 @@ async retryHistoryEntryTranscription(id: number) : Promise<Result<null, string>>
 },
 /**
  * Wie [`retry_history_entry_transcription`], aber mit dem genauen Modell
- * (`accurate_model`). Das Diktatmodell bleibt geladen. Fehlercodes:
- * `accurate_model_unset`, `accurate_model_missing`, `accurate_model_memory`.
+ * (`accurate_model`). Der Lauf rechnet mit einer eigenen Engine; das Diktatmodell
+ * bleibt, wie es ist. Fehlercodes: `accurate_model_unset`, die Codes aus
+ * `managers::accurate_run` (`accurate_model_live`, `_busy`, `_missing`, `_memory`,
+ * `_load_failed`), `accurate_post_process_failed`, `retry_busy`, `entry_changed`.
  */
 async retryHistoryEntryWithAccurateModel(id: number) : Promise<Result<null, string>> {
     try {

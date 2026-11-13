@@ -265,12 +265,21 @@ pub struct ExtraEngineBinding {
     _not_send: std::marker::PhantomData<*const ()>,
 }
 
-/// Bindet `engine` an den aktuellen Thread, bis die Rueckgabe faellt.
-pub fn bind_extra_engine(engine: ExtraEngine) -> ExtraEngineBinding {
-    BOUND_ENGINE.with(|bound| *bound.borrow_mut() = Some(engine));
-    ExtraEngineBinding {
-        _not_send: std::marker::PhantomData,
-    }
+/// Bindet `engine` an den aktuellen Thread, bis die Rueckgabe faellt. Haelt der
+/// Thread schon eine eigene Engine, wird NICHT ersetzt: `engine` kommt als Fehler
+/// zurueck (und faellt beim Aufrufer). Sonst entfernte der Guard der zweiten Bindung
+/// beim Fallen die Engine der ersten, deren Lauf dann ohne Engine dastuende.
+pub fn bind_extra_engine(engine: ExtraEngine) -> Result<ExtraEngineBinding, ExtraEngine> {
+    BOUND_ENGINE.with(|bound| {
+        let mut bound = bound.borrow_mut();
+        if bound.is_some() {
+            return Err(engine);
+        }
+        *bound = Some(engine);
+        Ok(ExtraEngineBinding {
+            _not_send: std::marker::PhantomData,
+        })
+    })
 }
 
 impl Drop for ExtraEngineBinding {
@@ -301,25 +310,6 @@ fn put_back_bound_engine(engine: LoadedEngine) {
 
 fn bound_model_id() -> Option<String> {
     BOUND_ENGINE.with(|bound| bound.borrow().as_ref().map(|e| e.model_id.clone()))
-}
-
-/// Womit ein Lauf mit ausdruecklich gewaehltem Modell rechnet
-/// ([`TranscriptionManager::transcribe_with_model`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ModelRunPlan {
-    /// Das gewuenschte Modell ist schon das geladene: die gemeinsame Engine.
-    Shared,
-    /// Ein anderes Modell (oder gar keines) ist geladen: eine eigene Engine, die
-    /// gemeinsame bleibt unberuehrt.
-    Extra,
-}
-
-pub fn plan_model_run(target: &str, loaded: Option<&str>) -> ModelRunPlan {
-    if loaded == Some(target) {
-        ModelRunPlan::Shared
-    } else {
-        ModelRunPlan::Extra
-    }
 }
 
 /// RAII guard that clears the `is_loading` flag and notifies waiters on drop.
@@ -1018,35 +1008,69 @@ impl TranscriptionManager {
         })
     }
 
-    /// Rechnet `audio` einmal mit `model_id`, ohne das geladene Diktatmodell zu
-    /// entladen. Ist `model_id` schon das geladene Modell, rechnet die gemeinsame
-    /// Engine. Sonst wird das Modell als eigene Engine geladen (ein zweites Mal im
-    /// Speicher, darum zuerst das Speicher-Tor der Warteschlange), an diesen Thread
-    /// gebunden und nach dem Lauf wieder freigegeben. Fehler als Codes:
-    /// `accurate_model_missing` (unbekannt oder nicht installiert),
-    /// `accurate_model_memory` (zu wenig Arbeits- oder Grafikspeicher).
-    /// Blockiert; der Aufrufer ruft es in einem eigenen Arbeitsthread.
-    pub fn transcribe_with_model(&self, model_id: &str, audio: Vec<f32>) -> Result<String> {
-        let loaded = self.get_current_model();
-        if plan_model_run(model_id, loaded.as_deref()) == ModelRunPlan::Shared {
-            return self.transcribe(audio);
-        }
+    /// Genauer Lauf (lva#579, Regeln in [`crate::managers::accurate_run`]): rechnet
+    /// `audio` einmal mit `model_id` auf einer EIGENEN Engine. Die gemeinsame Engine
+    /// (Diktat) wird weder benutzt noch entladen, ihre Leerlauf-Frist nicht
+    /// verlaengert; auch dann nicht, wenn sie dasselbe Modell haelt. `live` ist der
+    /// Stand ausserhalb dieses Managers (Aufnahmen, Besprechungsarbeit); Laden und
+    /// Live-Transkription ergaenzt die Funktion selbst. Fehler als Codes
+    /// (`accurate_run::ERR_*`): `accurate_model_live`, `accurate_model_busy`,
+    /// `accurate_model_missing`, `accurate_model_memory`, `accurate_model_load_failed`.
+    /// Blockiert; der Aufrufer ruft es in einem eigenen Arbeitsthread. Laden, Binden,
+    /// Rechnen und Freigeben liegen in diesem einen Aufruf.
+    pub fn transcribe_accurate(
+        &self,
+        model_id: &str,
+        audio: Vec<f32>,
+        live: crate::managers::accurate_run::LiveState,
+    ) -> Result<String> {
+        use crate::managers::accurate_run as run;
+        let code = |c: &'static str| anyhow::anyhow!(c);
+        let live = run::LiveState {
+            streaming: live.streaming || self.is_streaming(),
+            model_loading: live.model_loading
+                || *self.is_loading.lock().unwrap_or_else(|e| e.into_inner()),
+            ..live
+        };
+        run::admit(&live).map_err(code)?;
+        let _slot = run::Slot::try_take().ok_or_else(|| code(run::ERR_BUSY))?;
+
         let info = self
             .model_manager
             .get_model_info(model_id)
             .filter(|m| m.is_downloaded)
-            .ok_or_else(|| anyhow::anyhow!("accurate_model_missing"))?;
+            .ok_or_else(|| code(run::ERR_MISSING))?;
+        let path = self
+            .model_manager
+            .get_model_path(model_id)
+            .ok()
+            .filter(|p| p.exists())
+            .ok_or_else(|| code(run::ERR_MISSING))?;
+        // Eigene Dateien haben keine Kataloggroesse: dann die Datei selbst.
+        let size_mb = if info.size_mb > 0 {
+            info.size_mb
+        } else {
+            std::fs::metadata(&path)
+                .ok()
+                .filter(|m| m.is_file())
+                .map_or(0, |m| m.len().div_ceil(1024 * 1024))
+        };
         let gpu_model = matches!(info.engine_type, EngineType::TranscribeCpp);
-        let hw = crate::managers::meetings::final_pass::probe_hardware(&self.app_handle);
-        if let Err(block) =
-            crate::managers::meetings::queue::plan_extra_slot(info.size_mb, gpu_model, &hw)
-        {
-            warn!("accurate model '{model_id}': not enough memory ({block:?})");
-            return Err(anyhow::anyhow!("accurate_model_memory"));
+        let hw = run::measure(&self.app_handle);
+        if let Err(c) = run::memory_gate(size_mb, gpu_model, &hw) {
+            warn!(
+                "accurate run '{model_id}': memory gate shut (model {size_mb} MB, free RAM {:?} MB, free VRAM {:?} MB)",
+                hw.free_ram_mb, hw.free_vram_mb
+            );
+            return Err(code(c));
         }
         let threads = (crate::process_guard::logical_cpus() / 2).max(1) as i32;
-        let engine = self.load_extra_engine(model_id, threads)?;
-        let _binding = bind_extra_engine(engine);
+        let engine = self.load_extra_engine(model_id, threads).map_err(|e| {
+            warn!("accurate run '{model_id}': load failed: {e}");
+            code(run::ERR_LOAD)
+        })?;
+        // Dieser Thread darf noch keine eigene Engine halten (keine Verschachtelung).
+        let _binding = bind_extra_engine(engine).map_err(|_| code(run::ERR_BUSY))?;
         self.transcribe(audio)
     }
 
@@ -2020,8 +2044,16 @@ impl TranscriptionManager {
             ));
         }
 
+        // Ein Lauf mit eigener Engine (genaues Modell fuer eine einzelne Aufnahme,
+        // lva#579) rechnet mit ihr. Die gemeinsame Engine bleibt geladen und frei, und
+        // nichts an ihr aendert sich: keine verlaengerte Leerlauf-Frist, kein
+        // Entladen, keine Modell-Ereignisse.
+        let bound = extra_engine_bound();
+
         // Update last activity timestamp
-        self.touch_activity();
+        if !bound {
+            self.touch_activity();
+        }
 
         let st = std::time::Instant::now();
         let audio_len = audio.len();
@@ -2030,13 +2062,11 @@ impl TranscriptionManager {
 
         if audio.is_empty() {
             debug!("Empty audio vector");
-            self.maybe_unload_immediately("empty audio");
+            if !bound {
+                self.maybe_unload_immediately("empty audio");
+            }
             return Ok(String::new());
         }
-
-        // Ein Lauf mit eigener Engine (genaues Modell fuer eine einzelne
-        // Aufnahme) rechnet mit ihr; die gemeinsame Engine bleibt geladen und frei.
-        let bound = extra_engine_bound();
 
         // Check if model is loaded, if not try to load it
         if !bound {
@@ -3591,25 +3621,6 @@ pub fn get_available_accelerators() -> AvailableAccelerators {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn a_run_with_an_explicit_model_uses_the_shared_engine_only_when_it_holds_that_model() {
-        use super::{plan_model_run, ModelRunPlan};
-        assert_eq!(
-            plan_model_run("whisper-large-v3", Some("whisper-large-v3")),
-            ModelRunPlan::Shared
-        );
-        // Ein anderes Modell ist geladen: es bleibt geladen, der Lauf bekommt eine eigene Engine.
-        assert_eq!(
-            plan_model_run("whisper-large-v3", Some("parakeet-tdt-0.6b-v3")),
-            ModelRunPlan::Extra
-        );
-        // Nichts geladen: ebenfalls eine eigene Engine, das Diktatmodell wird nicht angefasst.
-        assert_eq!(
-            plan_model_run("whisper-large-v3", None),
-            ModelRunPlan::Extra
-        );
-    }
-
     use super::*;
 
     fn languages(codes: &[&str]) -> Vec<String> {
@@ -3828,7 +3839,9 @@ mod tests {
         let binding = bind_extra_engine(ExtraEngine {
             engine: None,
             model_id: "eigenes-modell".into(),
-        });
+        })
+        .ok()
+        .expect("frei");
         assert!(extra_engine_bound());
         assert_eq!(bound_model_id().as_deref(), Some("eigenes-modell"));
         // Ein anderer Thread (Diktat, Aufnahme, der erste Import) sieht nichts davon.
@@ -3846,20 +3859,49 @@ mod tests {
     }
 
     #[test]
-    fn rebinding_replaces_the_previous_engine() {
-        let first = bind_extra_engine(ExtraEngine {
+    fn a_second_binding_on_the_same_thread_is_refused_and_the_first_stays() {
+        let extra = |id: &str| ExtraEngine {
             engine: None,
-            model_id: "a".into(),
-        });
-        let second = bind_extra_engine(ExtraEngine {
-            engine: None,
-            model_id: "b".into(),
-        });
-        assert_eq!(bound_model_id().as_deref(), Some("b"));
-        drop(second);
-        assert!(!extra_engine_bound());
+            model_id: id.into(),
+        };
+        let first = bind_extra_engine(extra("a")).ok().expect("frei");
+        let refused = bind_extra_engine(extra("b"));
+        assert_eq!(
+            refused.err().map(|e| e.model_id).as_deref(),
+            Some("b"),
+            "die zweite Engine kommt zurueck, statt die erste zu ersetzen"
+        );
+        // Die erste Bindung ist unberuehrt, auch nachdem die abgelehnte gefallen ist.
+        assert_eq!(bound_model_id().as_deref(), Some("a"));
         drop(first);
         assert!(!extra_engine_bound());
+        // Danach ist der Thread wieder frei.
+        let again = bind_extra_engine(extra("c")).ok().expect("frei");
+        assert_eq!(bound_model_id().as_deref(), Some("c"));
+        drop(again);
+        assert!(!extra_engine_bound());
+    }
+
+    /// Nach einer Panik im Lauf ist die eigene Engine verworfen. Ein weiterer Aufruf
+    /// in derselben Bindung bekommt keine Engine: der Lauf scheitert, statt auf die
+    /// gemeinsame Engine auszuweichen (`transcribe` prueft `extra_engine_bound` und
+    /// nimmt dann nur `take_bound_engine`).
+    #[test]
+    fn a_binding_whose_engine_is_gone_never_hands_out_another_one() {
+        let binding = bind_extra_engine(ExtraEngine {
+            engine: None,
+            model_id: "verworfen".into(),
+        })
+        .ok()
+        .expect("frei");
+        assert!(
+            extra_engine_bound(),
+            "der Lauf bleibt an seine Bindung gebunden"
+        );
+        assert!(take_bound_engine().is_none());
+        assert!(take_bound_engine().is_none());
+        assert!(extra_engine_bound());
+        drop(binding);
     }
 
     #[test]

@@ -10,8 +10,10 @@ import { useModelStore } from "../../stores/modelStore";
  * eingerichtet. Der Verlauf bietet damit „Mit genauem Modell erneut
  * transkribieren“ an: das Backend lädt dieses Modell als eigene Engine neben
  * dem Diktatmodell und gibt es nach dem Lauf wieder frei
- * (TranscriptionManager::transcribe_with_model). Wählbar ist jedes installierte
- * Transkriptionsmodell, auch eigene Whisper-Dateien aus dem Modellordner.
+ * (TranscriptionManager::transcribe_accurate). Wählbar ist jedes installierte
+ * Transkriptionsmodell, auch eigene Whisper-Dateien aus dem Modellordner. Ein
+ * gespeichertes Modell, das nicht mehr installiert ist, bleibt als eigene
+ * Zeile sichtbar, statt wie „Keines“ auszusehen.
  */
 export const AccurateModelSetting: React.FC = () => {
   const { t } = useTranslation();
@@ -23,11 +25,21 @@ export const AccurateModelSetting: React.FC = () => {
   }, [models.length, loadModels]);
 
   const value = getSetting("accurate_model") ?? "";
+  const installed = models.filter((m) => m.is_downloaded);
+  // Erst urteilen, wenn die Modellliste da ist.
+  const missing =
+    value !== "" && models.length > 0 && !installed.some((m) => m.id === value);
   const options = [
     { value: "", label: t("settings.accurateModel.none") },
-    ...models
-      .filter((m) => m.is_downloaded)
-      .map((m) => ({ value: m.id, label: m.name })),
+    ...(missing
+      ? [
+          {
+            value,
+            label: t("settings.accurateModel.notInstalled", { model: value }),
+          },
+        ]
+      : []),
+    ...installed.map((m) => ({ value: m.id, label: m.name })),
   ];
 
   return (

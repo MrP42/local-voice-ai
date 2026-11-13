@@ -2808,8 +2808,9 @@
     },
     "accurateModel": {
       "title": "Accurate model for difficult recordings",
-      "description": "A second model for single recordings the dictation model got wrong. In the history, a recording can be transcribed again with it. The dictation model stays loaded, so dictation remains ready at once. Any installed model can be chosen, including your own Whisper files (.bin or .gguf) in the model folder.",
-      "none": "None"
+      "description": "A second model for single recordings the dictation model got wrong. In the history, a recording can be transcribed again with it. The model is loaded in addition to the dictation model and released afterwards; the dictation model stays as it is. The run does not start while you dictate, record, or a meeting is being processed. If you dictate while it runs, dictation may respond more slowly. Any installed model can be chosen, including your own Whisper files (.bin or .gguf) in the model folder.",
+      "none": "None",
+      "notInstalled": "{{model}} (not installed)"
     },
     "history": {
       "title": "History",
@@ -2827,6 +2828,12 @@
       "accurateUnset": "No accurate model is set. Choose one under Settings > Input.",
       "accurateMissing": "The accurate model is not installed any more. Choose another one under Settings > Input.",
       "accurateMemory": "Not enough free memory to load the accurate model next to the dictation model. Close other programs or pick a smaller model.",
+      "accurateLive": "Dictation, a recording, a model load or meeting processing is in progress. The accurate model only starts once that has finished. Please try again afterwards.",
+      "accurateBusy": "The accurate model is working on another recording. Please wait until it has finished.",
+      "accurateLoadFailed": "The accurate model could not be loaded. The recording was left unchanged. The log file has the cause.",
+      "accuratePostProcessFailed": "Post-processing failed. The existing text was left unchanged.",
+      "retryBusy": "This recording is already being transcribed again.",
+      "entryChanged": "The recording was changed or deleted in the meantime. The result was discarded.",
       "transcribing": "Transcribing...",
       "transcriptionFailed": "Transcription failed. You can re-transcribe using the retry icon."
     },

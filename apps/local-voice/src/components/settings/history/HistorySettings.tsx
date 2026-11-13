@@ -238,7 +238,7 @@ export const HistorySettings: React.FC = () => {
     }
   };
 
-  // Mit dem genauen Modell (`accurate_model`); das Diktatmodell bleibt geladen.
+  // Mit dem genauen Modell (`accurate_model`), als eigene Engine neben dem Diktatmodell.
   const retryHistoryEntryAccurate = async (id: number) => {
     const result = await commands.retryHistoryEntryWithAccurateModel(id);
     if (result.status !== "ok") {
@@ -352,12 +352,25 @@ interface HistoryEntryProps {
   retryAccurate?: (id: number) => Promise<void>;
 }
 
-/** Fehlercodes von `retry_history_entry_with_accurate_model` mit eigenem Text. */
-const ACCURATE_ERRORS: Record<string, string> = {
+/**
+ * Fehlercodes der beiden Wiederholungen mit eigenem Text. `retry_busy` und
+ * `entry_changed` kommen auch vom Weg mit dem Diktatmodell.
+ */
+const RETRY_ERRORS: Record<string, string> = {
   accurate_model_unset: "settings.history.accurateUnset",
   accurate_model_missing: "settings.history.accurateMissing",
   accurate_model_memory: "settings.history.accurateMemory",
+  accurate_model_live: "settings.history.accurateLive",
+  accurate_model_busy: "settings.history.accurateBusy",
+  accurate_model_load_failed: "settings.history.accurateLoadFailed",
+  accurate_post_process_failed: "settings.history.accuratePostProcessFailed",
+  retry_busy: "settings.history.retryBusy",
+  entry_changed: "settings.history.entryChanged",
 };
+
+const retryErrorKey = (error: unknown): string =>
+  RETRY_ERRORS[error instanceof Error ? error.message : ""] ??
+  "settings.history.retranscribeError";
 
 const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
   entry,
@@ -404,7 +417,7 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
       await retryTranscription(entry.id);
     } catch (error) {
       console.error("Failed to re-transcribe:", error);
-      toast.error(t("settings.history.retranscribeError"));
+      toast.error(t(retryErrorKey(error)));
     } finally {
       setRetrying(false);
     }
@@ -417,10 +430,7 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
       await retryAccurate(entry.id);
     } catch (error) {
       console.error("Failed to re-transcribe with the accurate model:", error);
-      const code = error instanceof Error ? error.message : "";
-      toast.error(
-        t(ACCURATE_ERRORS[code] ?? "settings.history.retranscribeError"),
-      );
+      toast.error(t(retryErrorKey(error)));
     } finally {
       setRetrying(false);
     }

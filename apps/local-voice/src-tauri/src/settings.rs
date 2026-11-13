@@ -3821,6 +3821,17 @@ mod tests {
     }
 
     #[test]
+    fn an_old_settings_file_has_no_accurate_model() {
+        // lva#579: aeltere Dateien kennen den Schluessel nicht; das heisst "nicht
+        // eingerichtet", nie ein Ladefehler.
+        let parsed: AppSettings = serde_json::from_str(r#"{"tts_voice": null}"#).unwrap();
+        assert_eq!(parsed.accurate_model, None);
+        let set: AppSettings =
+            serde_json::from_str(r#"{"accurate_model": "whisper-large-v3"}"#).unwrap();
+        assert_eq!(set.accurate_model.as_deref(), Some("whisper-large-v3"));
+    }
+
+    #[test]
     fn reference_auto_transcribe_survives_an_old_settings_file() {
         // Eine Datei aus einer aelteren Fassung kennt das Feld nicht. Ohne
         // `serde(default)` waere es dann `false` — die Vorgabe waere fuer

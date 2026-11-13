@@ -1,9 +1,11 @@
-use crate::actions::process_transcription_output;
+use crate::actions::process_transcription_output_for_model;
 use crate::managers::{
-    history::{HistoryManager, PaginatedHistory},
+    accurate_run::LiveState,
+    history::{HistoryEntry, HistoryManager, PaginatedHistory},
     transcription::TranscriptionManager,
 };
-use std::sync::Arc;
+use std::collections::BTreeSet;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, State};
 
 #[tauri::command]
@@ -78,6 +80,68 @@ fn accurate_model_of(settings: &crate::settings::AppSettings) -> Result<String, 
         .ok_or_else(|| "accurate_model_unset".to_string())
 }
 
+/// Fehlercode: fuer diesen Eintrag laeuft schon eine Wiederholung.
+const ERR_RETRY_BUSY: &str = "retry_busy";
+/// Fehlercode: die Nachbearbeitung des genauen Laufs schlug fehl; der Eintrag
+/// (samt bisherigem nachbearbeitetem Text) blieb unveraendert.
+const ERR_POST_PROCESS: &str = "accurate_post_process_failed";
+
+static RETRYING: Mutex<BTreeSet<i64>> = Mutex::new(BTreeSet::new());
+
+/// Je Verlaufseintrag hoechstens eine Wiederholung zur Zeit, gleich mit welchem
+/// Modell. Faellt mit dem Wert (auch bei Fehler oder Abbruch des Kommandos).
+#[derive(Debug)]
+struct RetryClaim(i64);
+
+impl RetryClaim {
+    fn take(id: i64) -> Result<Self, String> {
+        let mut running = RETRYING.lock().unwrap_or_else(|e| e.into_inner());
+        if !running.insert(id) {
+            return Err(ERR_RETRY_BUSY.to_string());
+        }
+        Ok(Self(id))
+    }
+}
+
+impl Drop for RetryClaim {
+    fn drop(&mut self) {
+        RETRYING
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.0);
+    }
+}
+
+/// Was ausserhalb des `TranscriptionManager` gerade live arbeitet (Aufnahmen,
+/// Besprechungsverarbeitung); Laden und Live-Transkription ergaenzt dieser selbst.
+fn live_state(app: &AppHandle) -> LiveState {
+    use crate::managers::audio::AudioRecordingManager;
+    use crate::managers::meetings::recorder::MeetingRecorderManager;
+    use tauri::Manager;
+    LiveState {
+        dictation_recording: app
+            .try_state::<Arc<AudioRecordingManager>>()
+            .is_some_and(|a| a.is_recording()),
+        meeting_recording: app
+            .try_state::<Arc<MeetingRecorderManager>>()
+            .is_some_and(|r| r.is_recording()),
+        meeting_work: !crate::managers::meetings::job::global()
+            .snapshots()
+            .is_empty(),
+        ..LiveState::default()
+    }
+}
+
+/// Wuerde das Schreiben einen vorhandenen nachbearbeiteten Text ersatzlos
+/// loeschen? Das ist so, wenn der Eintrag Nachbearbeitung verlangt, bisher einen
+/// nachbearbeiteten Text hat und der neue Lauf keinen liefert (die Nachbearbeitung
+/// schlug fehl oder ist nicht mehr eingerichtet).
+fn would_lose_post_processing(seen: &HistoryEntry, new_post_processed: Option<&str>) -> bool {
+    seen.post_process_requested
+        && seen.post_processed_text.is_some()
+        && new_post_processed.is_none()
+}
+
 async fn retry_entry(
     app: AppHandle,
     history_manager: &Arc<HistoryManager>,
@@ -85,6 +149,7 @@ async fn retry_entry(
     id: i64,
     model: RetryModel,
 ) -> Result<(), String> {
+    let _claim = RetryClaim::take(id)?;
     let entry = history_manager
         .get_entry_by_id(id)
         .await
@@ -99,14 +164,19 @@ async fn retry_entry(
         return Err("Recording has no audio samples".to_string());
     }
 
-    if matches!(model, RetryModel::Dictation) {
-        transcription_manager.initiate_model_load();
-    }
+    let accurate = match &model {
+        RetryModel::Dictation => {
+            transcription_manager.initiate_model_load();
+            None
+        }
+        RetryModel::Explicit(model_id) => Some((model_id.clone(), live_state(&app))),
+    };
 
     let tm = Arc::clone(transcription_manager);
-    let transcription = tauri::async_runtime::spawn_blocking(move || match model {
-        RetryModel::Dictation => tm.transcribe(samples),
-        RetryModel::Explicit(id) => tm.transcribe_with_model(&id, samples),
+    let run = accurate.clone();
+    let transcription = tauri::async_runtime::spawn_blocking(move || match run {
+        None => tm.transcribe(samples),
+        Some((model_id, live)) => tm.transcribe_accurate(&model_id, samples, live),
     })
     .await
     .map_err(|e| format!("Transcription task panicked: {}", e))?
@@ -116,11 +186,23 @@ async fn retry_entry(
         return Err("Recording contains no speech".to_string());
     }
 
-    let processed =
-        process_transcription_output(&app, &transcription, entry.post_process_requested).await;
+    let ran_with = accurate.as_ref().map(|(model_id, _)| model_id.as_str());
+    let processed = process_transcription_output_for_model(
+        &app,
+        &transcription,
+        entry.post_process_requested,
+        ran_with,
+    )
+    .await;
+    // Nur der genaue Lauf: der bisherige Weg (Diktatmodell) bleibt, wie er war.
+    if ran_with.is_some()
+        && would_lose_post_processing(&entry, processed.post_processed_text.as_deref())
+    {
+        return Err(ERR_POST_PROCESS.to_string());
+    }
     history_manager
-        .update_transcription(
-            id,
+        .update_transcription_if_unchanged(
+            &entry,
             transcription,
             processed.post_processed_text,
             processed.post_process_prompt,
@@ -148,8 +230,10 @@ pub async fn retry_history_entry_transcription(
 }
 
 /// Wie [`retry_history_entry_transcription`], aber mit dem genauen Modell
-/// (`accurate_model`). Das Diktatmodell bleibt geladen. Fehlercodes:
-/// `accurate_model_unset`, `accurate_model_missing`, `accurate_model_memory`.
+/// (`accurate_model`). Der Lauf rechnet mit einer eigenen Engine; das Diktatmodell
+/// bleibt, wie es ist. Fehlercodes: `accurate_model_unset`, die Codes aus
+/// `managers::accurate_run` (`accurate_model_live`, `_busy`, `_missing`, `_memory`,
+/// `_load_failed`), `accurate_post_process_failed`, `retry_busy`, `entry_changed`.
 #[tauri::command]
 #[specta::specta]
 pub async fn retry_history_entry_with_accurate_model(
@@ -218,8 +302,55 @@ pub async fn update_recording_retention_period(
 
 #[cfg(test)]
 mod tests {
-    use super::accurate_model_of;
+    use super::{accurate_model_of, would_lose_post_processing, RetryClaim, ERR_RETRY_BUSY};
+    use crate::managers::history::HistoryEntry;
     use crate::settings::get_default_settings;
+
+    fn entry(requested: bool, post_processed: Option<&str>) -> HistoryEntry {
+        HistoryEntry {
+            id: 1,
+            file_name: "a.wav".into(),
+            timestamp: 0,
+            saved: false,
+            title: String::new(),
+            transcription_text: "alt".into(),
+            post_processed_text: post_processed.map(str::to_string),
+            post_process_prompt: None,
+            post_process_requested: requested,
+        }
+    }
+
+    #[test]
+    fn a_failed_post_processing_never_erases_an_existing_processed_text() {
+        // Verlangt, vorhanden, neuer Lauf liefert nichts: nicht schreiben.
+        assert!(would_lose_post_processing(&entry(true, Some("x")), None));
+        // Neuer Lauf liefert einen Text: schreiben.
+        assert!(!would_lose_post_processing(
+            &entry(true, Some("x")),
+            Some("y")
+        ));
+        // Es gab nie einen nachbearbeiteten Text: nichts zu verlieren.
+        assert!(!would_lose_post_processing(&entry(true, None), None));
+        // Nachbearbeitung nicht verlangt (z. B. nur Schriftumwandlung).
+        assert!(!would_lose_post_processing(&entry(false, Some("x")), None));
+    }
+
+    #[test]
+    fn one_entry_is_retried_by_one_run_at_a_time() {
+        let id = -4711; // kein echter Eintrag, kein anderer Test nutzt ihn
+        let first = RetryClaim::take(id).expect("frei");
+        assert_eq!(RetryClaim::take(id).unwrap_err(), ERR_RETRY_BUSY);
+        // Ein anderer Eintrag ist unabhaengig.
+        drop(RetryClaim::take(id - 1).expect("anderer Eintrag"));
+        drop(first);
+        // Fehlerweg gibt frei.
+        let failing = || -> Result<(), String> {
+            let _claim = RetryClaim::take(id)?;
+            Err("x".into())
+        };
+        assert!(failing().is_err());
+        drop(RetryClaim::take(id).expect("wieder frei"));
+    }
 
     #[test]
     fn without_an_accurate_model_the_retry_reports_that_it_is_unset() {

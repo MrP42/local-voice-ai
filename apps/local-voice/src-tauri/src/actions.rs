@@ -532,12 +532,21 @@ pub(crate) struct ProcessedTranscription {
 /// paths apply (see [`crate::managers::model::effective_language`]). Post-processing
 /// resolves it independently so it agrees with the language the transcription ran
 /// in, without threading a value through the pipeline.
-fn resolve_effective_language(app: &AppHandle, settings: &AppSettings) -> String {
+fn resolve_effective_language(
+    app: &AppHandle,
+    settings: &AppSettings,
+    ran_with: Option<&str>,
+) -> String {
     let tm = app.state::<Arc<TranscriptionManager>>();
     let model_manager = app.state::<Arc<ModelManager>>();
-    let active_model = tm
-        .get_current_model()
-        .unwrap_or_else(|| settings.selected_model.clone());
+    // `ran_with`: der Lauf rechnete mit einer eigenen Engine (genaues Modell,
+    // lva#579); dann zaehlt deren Modell, nicht das gerade geladene Diktatmodell.
+    let active_model = match ran_with {
+        Some(id) => id.to_string(),
+        None => tm
+            .get_current_model()
+            .unwrap_or_else(|| settings.selected_model.clone()),
+    };
     match model_manager.get_model_info(&active_model) {
         Some(info) => crate::managers::model::effective_language(
             &settings.selected_language,
@@ -553,6 +562,17 @@ pub(crate) async fn process_transcription_output(
     transcription: &str,
     post_process: bool,
 ) -> ProcessedTranscription {
+    process_transcription_output_for_model(app, transcription, post_process, None).await
+}
+
+/// Wie [`process_transcription_output`]; `ran_with` nennt das Modell, mit dem die
+/// Transkription tatsaechlich lief, wenn es nicht das geladene Diktatmodell war.
+pub(crate) async fn process_transcription_output_for_model(
+    app: &AppHandle,
+    transcription: &str,
+    post_process: bool,
+    ran_with: Option<&str>,
+) -> ProcessedTranscription {
     let settings = get_settings(app);
     let mut final_text = transcription.to_string();
     let mut post_processed_text: Option<String> = None;
@@ -561,7 +581,7 @@ pub(crate) async fn process_transcription_output(
     // Resolve the language the transcription actually ran in (the persisted
     // intent coerced against the loaded model's capabilities) so OpenCC keys off
     // the effective language rather than a possibly-stale intent.
-    let effective_language = resolve_effective_language(app, &settings);
+    let effective_language = resolve_effective_language(app, &settings, ran_with);
     if let Some(converted_text) =
         maybe_convert_chinese_variant(&effective_language, transcription).await
     {
