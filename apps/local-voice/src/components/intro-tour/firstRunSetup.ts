@@ -60,15 +60,36 @@ const setupDictation = async (): Promise<boolean> => {
     await useModelStore.getState().loadModels();
   }
   const models = useModelStore.getState().models;
-  const model = models.find((m) => m.id === id);
+  const model = findFirstRunModel(models, id);
   if (!model) return false;
   // Liegt schon ein anderes Diktatmodell vor (z. B. Einstellungen nicht lesbar, Onboarding
-  // abgebrochen), nichts erzwingen: der Nutzer wählt selbst.
-  if (models.some((m) => m.is_downloaded && m.id !== id)) return false;
+  // abgebrochen), nichts erzwingen: der Nutzer wählt selbst. Ist das gewünschte Modell selbst
+  // schon da (Installer mit Modellen, lva#574, bringt neben Nemotron auch Parakeet mit), wird
+  // es ohne Download eingestellt.
+  if (
+    !model.is_downloaded &&
+    models.some((m) => m.is_downloaded && m.id !== model.id)
+  )
+    return false;
 
-  useIntroTourStore.getState().setPendingModel(id);
-  if (!model.is_downloaded) download(id);
+  useIntroTourStore.getState().setPendingModel(model.id);
+  if (!model.is_downloaded) download(model.id);
   return true;
+};
+
+/**
+ * Katalogmodelle führen die Kennung `<repo>/<datei>` (catalog/mod.rs), Installer und
+ * Vorgabe nennen nur das Repo. Exakte Kennung zuerst, sonst ein Eintrag dieses Repos,
+ * ein schon installierter vor dem zum Download angebotenen Standard.
+ */
+const findFirstRunModel = <T extends { id: string; is_downloaded: boolean }>(
+  models: T[],
+  id: string,
+): T | undefined => {
+  const exact = models.find((m) => m.id === id);
+  if (exact) return exact;
+  const inRepo = models.filter((m) => m.id.startsWith(`${id}/`));
+  return inRepo.find((m) => m.is_downloaded) ?? inRepo[0];
 };
 
 /**

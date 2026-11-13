@@ -1,0 +1,50 @@
+Lizenzen der mitinstallierten Modelle (Installer mit Modellen)
+==============================================================
+
+Der Installer legt die gewählten Modelle unverändert in den Datenordner der App:
+Spracherkennung unter %APPDATA%\de.wolffappliedai.localvoiceai\models, Vorlesen
+unter %LOCALAPPDATA%\de.wolffappliedai.localvoiceai\tts (portabel: Ordner "Data"
+neben der EXE). Programmlizenzen der App: resources\THIRD-PARTY-NOTICES.md. Je
+Phonon-Modell liegt zusätzlich voices\SOURCE.json mit Quelle und Lizenz im
+Modellordner.
+
+Spracherkennung
+  Nemotron 3.5 ASR Streaming 0.6B (GGUF Q8_0)
+  Urheber: NVIDIA (Basismodell nvidia/nemotron-3.5-asr-streaming-0.6b),
+           GGUF-Umwandlung handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf
+  Lizenz:  OpenMDW-1.1 – https://openmdw.ai/license/1-1/
+
+  Parakeet TDT 0.6B V3 (ONNX int8), unverändert
+  Urheber: NVIDIA (nvidia/parakeet-tdt-0.6b-v3), int8-Fassung von handy.computer
+  Lizenz:  Creative Commons Namensnennung 4.0 International (CC BY 4.0)
+           https://creativecommons.org/licenses/by/4.0/legalcode.de
+
+Sprachausgabe Phonon
+  Programm ptts 0.4.2 – gradium-ai/xn-ptts
+  Lizenz:  MIT OR Apache-2.0 (LICENSE-MIT, LICENSE-APACHE im Programmordner)
+
+  Phonon 31m Englisch (gradium/phonon-31m-en) und alle Stimmen
+  Lizenz:  Apache License 2.0
+
+  Phonon 40m Deutsch (gradium/phonon-40m-de), unverändert
+  Urheber: gradium – https://huggingface.co/gradium/phonon-40m-de
+  Lizenz:  Creative Commons Namensnennung – Nicht kommerziell 4.0
+           International (CC BY-NC 4.0)
+           https://creativecommons.org/licenses/by-nc/4.0/legalcode.de
+  WICHTIG: Dieses Modell darf nur für nicht-kommerzielle Zwecke genutzt,
+  vervielfältigt und weitergegeben werden. Enthält dieser Installer die
+  Komponente mit dem deutschen Modell (siehe Komponentenseite), gilt: Wer
+  den Installer zu geschäftlichen Zwecken weitergibt, gibt auch das Modell
+  weiter, auch wenn der Empfänger es abwählt. Dafür einen Installer
+  ohne das deutsche Modell verwenden oder eine Erlaubnis von gradium
+  einholen. Für die eigene kommerzielle Nutzung das deutsche Modell
+  unter Modelle entfernen; das englische Modell und seine Stimmen bleiben
+  dann installiert. Wer bei der Installation die ganze Komponente
+  "Vorlesen Phonon" abwählt, erhält auch Englisch nicht; es lässt sich
+  später unter Modelle laden. Die Windows-Stimmen kommen von Windows.
+  Bei einer Neueinrichtung ist Phonon nach der Installation ausgeschaltet;
+  beim Einschalten zeigt die App den Lizenzhinweis zur Bestätigung. Bei
+  einer Aktualisierung bleiben vorhandene Einstellungen erhalten.
+
+Windows-Stimmen
+  Werden nicht mitgeliefert, sondern von Windows bereitgestellt.
