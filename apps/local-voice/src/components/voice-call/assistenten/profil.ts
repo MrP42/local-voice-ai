@@ -7,6 +7,10 @@
  * Schlüssel, Zahlen als Originaltext) und unbekannte Felder unverändert erhalten bleiben. Das typisierte Modell hält je Ebene
  * nur die unbekannten Felder (`extra`); beim Schreiben liegen die typisierten Felder darüber. Muster von Hand (kein Regex),
  * Längen in Unicode-Codepunkten. Reine Logik ohne Abhängigkeiten außer den Bereichslisten.
+ *
+ * Vergleichsregel: Vergleiche und Schlüssel sind überall genau (Folge der Unicode-Skalare, keine Normalisierung); in TypeScript
+ * ist `===` auf Zeichenketten das schon (Swift braucht dafür `AssistantExact`). Aufrufe mit `push(...feld)` über datenabhängig
+ * lange Felder sind verboten (`RangeError`); hier und in `text.ts` laufen solche Anhänge über Schleifen oder `concat`.
  */
 import { ALL_AREAS } from "../bereiche";
 
@@ -55,13 +59,74 @@ export function setzeMitglied(
   else objekt.push({ schluessel, wert });
 }
 
-function unbekannte(
-  objekt: JsonMitglied[],
-  bekannt: readonly string[],
-): JsonMitglied[] {
-  return objekt
-    .filter((m) => !bekannt.includes(m.schluessel))
-    .map((m) => ({ ...m }));
+/** Tiefe, unabhängige Kopie eines JSON-Werts (ein Profil teilt keine Knoten mit seiner Quelle, auch nicht mit eingefrorenen). */
+function klone(wert: JsonWert): JsonWert {
+  switch (wert.art) {
+    case "liste":
+      return { art: "liste", wert: wert.wert.map(klone) };
+    case "objekt":
+      return {
+        art: "objekt",
+        wert: wert.wert.map((m) => ({
+          schluessel: m.schluessel,
+          wert: klone(m.wert),
+        })),
+      };
+    default:
+      return { ...wert };
+  }
+}
+
+/** Flache Kopie der Mitglieder (die Werte bleiben geteilt; für den kurzlebigen Baum von `profilBaum`). */
+const kopiereMitglieder = (objekt: JsonMitglied[]): JsonMitglied[] =>
+  objekt.map((m) => ({ ...m }));
+
+/**
+ * `true`, wenn der Leser den Wert in dieser Tiefe wieder läse: Tiefengrenze (Wurzel 0, wie `JsonLeser`), Zahlen nach
+ * JSON-Grammatik, keine doppelten Schlüssel, keine einzelnen Surrogate in Zeichenketten und Schlüsseln.
+ */
+function lesbar(wert: JsonWert, tiefe: number): boolean {
+  if (tiefe > JSON_MAX_TIEFE) return false;
+  switch (wert.art) {
+    case "null":
+    case "bool":
+      return true;
+    case "zahl": {
+      const gelesen = parseJson(wert.roh);
+      return (
+        gelesen !== null && gelesen.art === "zahl" && gelesen.roh === wert.roh
+      );
+    }
+    case "text":
+      return !hatEinzelnesSurrogat(wert.wert);
+    case "liste":
+      return wert.wert.every((e) => lesbar(e, tiefe + 1));
+    case "objekt": {
+      const gesehen = new Set<string>();
+      for (const m of wert.wert) {
+        if (gesehen.has(m.schluessel) || hatEinzelnesSurrogat(m.schluessel))
+          return false;
+        gesehen.add(m.schluessel);
+        if (!lesbar(m.wert, tiefe + 1)) return false;
+      }
+      return true;
+    }
+  }
+}
+
+/** Ein einzelnes Surrogat (ohne Partner) in der Zeichenkette: sie ließe sich nicht als UTF-8 schreiben und wieder lesen. */
+function hatEinzelnesSurrogat(s: string): boolean {
+  for (let i = 0; i < s.length; i += 1) {
+    const c = s.charCodeAt(i);
+    if (c >= 0xd800 && c <= 0xdbff) {
+      const n = i + 1 < s.length ? s.charCodeAt(i + 1) : -1;
+      if (n < 0xdc00 || n > 0xdfff) return true;
+      i += 1;
+    } else if (c >= 0xdc00 && c <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
 }
 
 class JsonLeser {
@@ -317,9 +382,9 @@ function schreibe(wert: JsonWert, ebene: number): string {
         .join(",\n")}\n${einzug(ebene)}]`;
     case "objekt": {
       if (wert.wert.length === 0) return "{}";
-      const sortiert = [...wert.wert].sort((a, b) =>
-        vergleicheCodepunkte(a.schluessel, b.schluessel),
-      );
+      const sortiert = wert.wert
+        .slice()
+        .sort((a, b) => vergleicheCodepunkte(a.schluessel, b.schluessel));
       return `{\n${sortiert
         .map(
           (m) =>
@@ -542,6 +607,13 @@ export function istProfilId(s: string): boolean {
     (c) => klein(c) || ziffer(c) || c === 0x2d,
   );
 }
+/**
+ * Gerätenamen von Windows, die als Dateiname nicht taugen: `con`, `prn`, `aux`, `nul`, `com0`...`com9`, `lpt0`...`lpt9`.
+ * Gilt für Ids, die das Id-Muster schon erfüllen (nur ASCII).
+ */
+export function istGeraetename(s: string): boolean {
+  return /^(con|prn|aux|nul|(com|lpt)[0-9])$/.test(s);
+}
 /** `^[a-z][a-z0-9_]{0,39}$` (Bereichsschlüssel und Feldnamen) */
 export function istSchluessel(s: string): boolean {
   return passt(s, 40, klein, (c) => klein(c) || ziffer(c) || c === 0x5f);
@@ -596,7 +668,7 @@ function leseGanzzahl(
 ): "keine" | "ausserhalb" | { zahl: number } {
   if (wert.art !== "zahl") return "keine";
   const ziffern = wert.roh.startsWith("-") ? wert.roh.slice(1) : wert.roh;
-  if (!/^[0-9]+$/.test(ziffern)) return "keine";
+  if (!/^(0|[1-9][0-9]*)$/.test(ziffern)) return "keine";
   if (ziffern.length > 15) return "ausserhalb";
   return { zahl: Number(wert.roh) };
 }
@@ -625,7 +697,52 @@ class Pruefer {
       this.melde(pfad, "typ");
       return undefined;
     }
+    this.wohlgeformt(w.wert, pfad);
     return w.wert;
+  }
+
+  /** Einzelne Surrogate in einer Zeichenkette: `json` am Pfad des Feldes. */
+  wohlgeformt(s: string, pfad: string): void {
+    if (hatEinzelnesSurrogat(s)) this.melde(pfad, "json");
+  }
+
+  /** Doppelte Schlüssel in einem Objekt: `json` am Pfad des Objekts. */
+  pruefeSchluessel(o: JsonMitglied[], pfad: string): void {
+    const gesehen = new Set<string>();
+    for (const m of o) {
+      if (gesehen.has(m.schluessel)) {
+        this.melde(pfad, "json");
+        return;
+      }
+      gesehen.add(m.schluessel);
+    }
+  }
+
+  /**
+   * Die unbekannten Mitglieder eines Objekts als Kopie; jedes wird vollständig geprüft (Befund `json` am Pfad des Feldes):
+   * Tiefengrenze des Lesers, Zahlen nach JSON-Grammatik, keine doppelten Schlüssel, keine einzelnen Surrogate.
+   * `tiefe` ist die Tiefe der Werte dieses Objekts (Wurzel: 1).
+   */
+  unbekannte(
+    o: JsonMitglied[],
+    bekannt: readonly string[],
+    pfad: string,
+    tiefe: number,
+  ): JsonMitglied[] {
+    const rest: JsonMitglied[] = [];
+    for (const m of o) {
+      if (bekannt.includes(m.schluessel)) continue;
+      if (lesbar(m.wert, tiefe) && !hatEinzelnesSurrogat(m.schluessel)) {
+        rest.push({ schluessel: m.schluessel, wert: klone(m.wert) });
+        continue;
+      }
+      this.melde(
+        pfad === "" ? m.schluessel : `${pfad}.${m.schluessel}`,
+        "json",
+      );
+      rest.push({ ...m });
+    }
+    return rest;
   }
 
   flagge(o: JsonMitglied[], schluessel: string, pfad: string) {
@@ -678,6 +795,7 @@ class Pruefer {
       }
       const n = zaehle(e.wert);
       if (n < min || n > max) this.melde(`${pfad}[${i}]`, "laenge");
+      this.wohlgeformt(e.wert, `${pfad}[${i}]`);
       aus.push(e.wert);
     });
     return aus;
@@ -691,9 +809,13 @@ class Pruefer {
       this.fehler = [{ pfad: "schema", code: schemaCode(schema.wert) }];
       return null;
     }
+    this.pruefeSchluessel(wurzel, "");
 
     const id = this.text(wurzel, "id", "id", true);
-    if (id !== undefined && !istProfilId(id)) this.melde("id", "muster");
+    if (id !== undefined) {
+      if (!istProfilId(id)) this.melde("id", "muster");
+      else if (istGeraetename(id)) this.melde("id", "wert");
+    }
     const rohName = this.text(wurzel, "name", "name", true);
     const name = rohName === undefined ? undefined : kappeLeerzeichen(rohName);
     if (name !== undefined) {
@@ -731,9 +853,10 @@ class Pruefer {
     }
     const stimme = mitglied(wurzel, "stimme");
     if (stimme !== undefined && stimme.art !== "null") {
-      if (stimme.art === "text")
+      if (stimme.art === "text") {
+        this.wohlgeformt(stimme.wert, "stimme");
         profil.stimme = this.begrenzt(stimme.wert, "stimme", 1, 120) ?? null;
-      else this.melde("stimme", "typ");
+      } else this.melde("stimme", "typ");
     }
 
     const verhalten = this.objekt(wurzel, "verhalten", "verhalten");
@@ -750,25 +873,31 @@ class Pruefer {
     const auswertung = this.objekt(wurzel, "auswertung", "auswertung");
     if (auswertung) profil.auswertung = this.auswertung(auswertung);
 
-    profil.extra = unbekannte(wurzel, [
-      "schema",
-      "id",
-      "name",
-      "beschreibung",
-      "anweisungen",
-      "begruessung",
-      "sprache",
-      "stimme",
-      "verhalten",
-      "wissen",
-      "schnittstellen",
-      "auswertung",
-    ]);
+    profil.extra = this.unbekannte(
+      wurzel,
+      [
+        "schema",
+        "id",
+        "name",
+        "beschreibung",
+        "anweisungen",
+        "begruessung",
+        "sprache",
+        "stimme",
+        "verhalten",
+        "wissen",
+        "schnittstellen",
+        "auswertung",
+      ],
+      "",
+      1,
+    );
     return profil;
   }
 
   verhalten(o: JsonMitglied[]): Verhalten {
     const v = neuesVerhalten();
+    this.pruefeSchluessel(o, "verhalten");
     const stil = this.text(o, "stil", "verhalten.stil");
     if (stil !== undefined) {
       const treffer = STILE.find((s) => s === stil);
@@ -797,17 +926,18 @@ class Pruefer {
         v.nachfrageStilleS = n.zahl;
       else this.melde(pfad, "wert");
     }
-    v.extra = unbekannte(o, [
-      "stil",
-      "sprechpause",
-      "unterbrechen",
-      "nachfrage_stille_s",
-    ]);
+    v.extra = this.unbekannte(
+      o,
+      ["stil", "sprechpause", "unterbrechen", "nachfrage_stille_s"],
+      "verhalten",
+      2,
+    );
     return v;
   }
 
   wissen(o: JsonMitglied[]): Wissen {
     const k = neuesWissen();
+    this.pruefeSchluessel(o, "wissen");
     const alle = this.flagge(o, "alle_bereiche", "wissen.alle_bereiche");
     if (alle !== undefined) k.alleBereiche = alle;
     const bereiche = this.liste(o, "bereiche", "wissen.bereiche");
@@ -819,6 +949,7 @@ class Pruefer {
           this.melde(pfad, "typ");
           return;
         }
+        this.wohlgeformt(b.wert, pfad);
         if (!istSchluessel(b.wert)) this.melde(pfad, "muster");
         else if (gesehen.has(b.wert)) this.melde(pfad, "doppelt");
         gesehen.add(b.wert);
@@ -841,6 +972,7 @@ class Pruefer {
           return;
         }
         const c = e.wert;
+        this.pruefeSchluessel(c, pfad);
         const artText = this.text(c, "art", `${pfad}.art`, true);
         let art: Kontext["art"] = "buch";
         if (artText !== undefined) {
@@ -866,11 +998,16 @@ class Pruefer {
           art,
           id,
           titel,
-          extra: unbekannte(c, ["art", "id", "titel"]),
+          extra: this.unbekannte(c, ["art", "id", "titel"], pfad, 4),
         });
       });
     }
-    k.extra = unbekannte(o, ["alle_bereiche", "bereiche", "modus", "kontexte"]);
+    k.extra = this.unbekannte(
+      o,
+      ["alle_bereiche", "bereiche", "modus", "kontexte"],
+      "wissen",
+      2,
+    );
     return k;
   }
 
@@ -884,6 +1021,7 @@ class Pruefer {
         this.melde(pfad, "typ");
         return;
       }
+      this.wohlgeformt(e.wert, pfad);
       if (!istSchnittstelle(e.wert)) this.melde(pfad, "muster");
       else if (gesehen.has(e.wert)) this.melde(pfad, "doppelt");
       gesehen.add(e.wert);
@@ -894,6 +1032,7 @@ class Pruefer {
 
   auswertung(o: JsonMitglied[]): Auswertung {
     const a = neueAuswertung();
+    this.pruefeSchluessel(o, "auswertung");
     const zusammenfassung = this.flagge(
       o,
       "zusammenfassung",
@@ -913,6 +1052,7 @@ class Pruefer {
           return;
         }
         const f = e.wert;
+        this.pruefeSchluessel(f, pfad);
         const feld: AuswertungFeld = {
           name: "",
           beschreibung: "",
@@ -954,11 +1094,21 @@ class Pruefer {
           }
           feld.optionen = this.texte(optionen, optionenPfad, 1, 60);
         }
-        feld.extra = unbekannte(f, ["name", "beschreibung", "typ", "optionen"]);
+        feld.extra = this.unbekannte(
+          f,
+          ["name", "beschreibung", "typ", "optionen"],
+          pfad,
+          4,
+        );
         a.felder.push(feld);
       });
     }
-    a.extra = unbekannte(o, ["zusammenfassung", "aufgaben", "felder"]);
+    a.extra = this.unbekannte(
+      o,
+      ["zusammenfassung", "aufgaben", "felder"],
+      "auswertung",
+      2,
+    );
     return a;
   }
 }
@@ -982,7 +1132,7 @@ export function parseProfil(text: string): ProfilErgebnis {
 
 /** Der JSON-Baum des Profils: unbekannte Felder, darüber die typisierten. */
 export function profilBaum(p: Profil): JsonWert {
-  const wurzel = p.extra.map((m) => ({ ...m }));
+  const wurzel = kopiereMitglieder(p.extra);
   setzeMitglied(wurzel, "schema", jsonText(PROFIL_SCHEMA));
   setzeMitglied(wurzel, "id", jsonText(p.id));
   setzeMitglied(wurzel, "name", jsonText(p.name));
@@ -996,7 +1146,7 @@ export function profilBaum(p: Profil): JsonWert {
     p.stimme === null ? { art: "null" } : jsonText(p.stimme),
   );
 
-  const v = p.verhalten.extra.map((m) => ({ ...m }));
+  const v = kopiereMitglieder(p.verhalten.extra);
   setzeMitglied(v, "stil", jsonText(p.verhalten.stil));
   setzeMitglied(v, "sprechpause", jsonText(p.verhalten.sprechpause));
   setzeMitglied(v, "unterbrechen", jsonBool(p.verhalten.unterbrechen));
@@ -1007,7 +1157,7 @@ export function profilBaum(p: Profil): JsonWert {
   );
   setzeMitglied(wurzel, "verhalten", jsonObjekt(v));
 
-  const k = p.wissen.extra.map((m) => ({ ...m }));
+  const k = kopiereMitglieder(p.wissen.extra);
   setzeMitglied(k, "alle_bereiche", jsonBool(p.wissen.alleBereiche));
   setzeMitglied(k, "bereiche", jsonTexte(p.wissen.bereiche));
   setzeMitglied(k, "modus", jsonText(p.wissen.modus));
@@ -1016,7 +1166,7 @@ export function profilBaum(p: Profil): JsonWert {
     "kontexte",
     jsonListe(
       p.wissen.kontexte.map((c) => {
-        const o = c.extra.map((m) => ({ ...m }));
+        const o = kopiereMitglieder(c.extra);
         setzeMitglied(o, "art", jsonText(c.art));
         setzeMitglied(o, "id", jsonText(c.id));
         setzeMitglied(o, "titel", jsonText(c.titel));
@@ -1028,7 +1178,7 @@ export function profilBaum(p: Profil): JsonWert {
 
   setzeMitglied(wurzel, "schnittstellen", jsonTexte(p.schnittstellen));
 
-  const e = p.auswertung.extra.map((m) => ({ ...m }));
+  const e = kopiereMitglieder(p.auswertung.extra);
   setzeMitglied(e, "zusammenfassung", jsonBool(p.auswertung.zusammenfassung));
   setzeMitglied(e, "aufgaben", jsonBool(p.auswertung.aufgaben));
   setzeMitglied(
@@ -1036,7 +1186,7 @@ export function profilBaum(p: Profil): JsonWert {
     "felder",
     jsonListe(
       p.auswertung.felder.map((f) => {
-        const o = f.extra.map((m) => ({ ...m }));
+        const o = kopiereMitglieder(f.extra);
         setzeMitglied(o, "name", jsonText(f.name));
         setzeMitglied(o, "beschreibung", jsonText(f.beschreibung));
         setzeMitglied(o, "typ", jsonText(f.typ));

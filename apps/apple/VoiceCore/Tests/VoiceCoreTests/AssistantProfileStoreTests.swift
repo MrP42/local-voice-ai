@@ -36,12 +36,29 @@ final class AssistantProfileStoreTests: XCTestCase {
         ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).sorted()
     }
 
+    /// Alle Einträge des Verzeichnisses mit ihrem Inhalt (reguläre Dateien), ihrer Art (Verzeichnis) oder ihrem Ziel (Symlink).
+    private func snapshot(_ directory: URL? = nil) throws -> [String: String] {
+        let base = directory ?? dir!
+        let fm = FileManager.default
+        var out: [String: String] = [:]
+        for name in try fm.contentsOfDirectory(atPath: base.path).sorted() {
+            let path = base.appendingPathComponent(name).path
+            let type = try fm.attributesOfItem(atPath: path)[.type] as? FileAttributeType
+            switch type {
+            case .typeSymbolicLink?: out[name] = "symlink:" + (try fm.destinationOfSymbolicLink(atPath: path))
+            case .typeDirectory?: out[name] = "dir:" + (try fm.contentsOfDirectory(atPath: path).sorted().joined(separator: ","))
+            default: out[name] = "file:" + (try Data(contentsOf: URL(fileURLWithPath: path))).base64EncodedString()
+            }
+        }
+        return out
+    }
+
     func testSaveWritesExactEncodeOutputAndListReadsItBack() throws {
         let s = store()
         let saved = try s.save(own("eigen-aaaaaaaaaaaa", "  Mein Assistent  "))
         XCTAssertEqual(saved.name, "Mein Assistent")
         let data = try Data(contentsOf: dir.appendingPathComponent("eigen-aaaaaaaaaaaa.json"))
-        XCTAssertEqual(String(decoding: data, as: UTF8.self), saved.encode())
+        XCTAssertEqual(Array(data), Array(saved.encode().utf8))
         XCTAssertNotEqual(Array(data.prefix(3)), [0xEF, 0xBB, 0xBF], "kein BOM")
         let listing = s.list()
         XCTAssertEqual(listing.profiles, [saved])
@@ -201,7 +218,7 @@ final class AssistantProfileStoreTests: XCTestCase {
         try s.save(changed)
         let second = try Data(contentsOf: dir.appendingPathComponent(id + ".json"))
         XCTAssertNotEqual(first, second)
-        XCTAssertEqual(String(decoding: second, as: UTF8.self), changed.encode())
+        XCTAssertEqual(Array(second), Array(changed.encode().utf8))
         XCTAssertEqual(names(), [id + ".json"], "keine Reste einer temporären Datei")
         XCTAssertEqual(s.list().profiles.map(\.name), ["Zweite Fassung"])
         // Viele Ersetzungen hintereinander (auch aus mehreren Threads) hinterlassen immer ein ganzes, gültiges Profil.
@@ -213,6 +230,195 @@ final class AssistantProfileStoreTests: XCTestCase {
         XCTAssertEqual(s.list().rejected, [])
         XCTAssertEqual(s.list().profiles.count, 1)
         XCTAssertEqual(names(), [id + ".json"])
+    }
+
+    // MARK: `aktiv` ist vorbehalten
+
+    func testAktivIsReservedForSaveDeleteAndSelection() throws {
+        let s = store()
+        try s.save(own("eigen-aaaaaaaaaaaa"))
+        try s.setActive("eigen-aaaaaaaaaaaa")
+        let before = try snapshot()
+        XCTAssertEqual(Set(before.keys), ["aktiv.json", "eigen-aaaaaaaaaaaa.json"])
+        XCTAssertThrowsError(try s.save(own("aktiv"))) { XCTAssertEqual($0 as? AssistantProfileStoreError, .reservedId) }
+        XCTAssertThrowsError(try s.delete(id: "aktiv")) { XCTAssertEqual($0 as? AssistantProfileStoreError, .reservedId) }
+        XCTAssertThrowsError(try s.setActive("aktiv")) { XCTAssertEqual($0 as? AssistantProfileStoreError, .reservedId) }
+        XCTAssertThrowsError(try s.setActive("vorlage-gibt-es-nicht")) { XCTAssertEqual($0 as? AssistantProfileStoreError, .reservedId) }
+        XCTAssertNil(s.profile(id: "aktiv"))
+        XCTAssertEqual(try snapshot(), before, "nichts verändert")
+        XCTAssertEqual(s.activeId(), "eigen-aaaaaaaaaaaa")
+        // Auch die Vorlagen bleiben wählbar.
+        try s.setActive("alles")
+        XCTAssertEqual(s.activeId(), "alles")
+    }
+
+    func testAktivJsonIsNeverReadAsAProfileNorOverwrittenByOne() throws {
+        let s = store()
+        // aktiv.json hält zufällig ein vollständiges Profil mit der Id `aktiv`.
+        var profile = AssistantProfile(id: "aktiv", name: "Falsch")
+        profile.instructions = "Ich bin kein Profil."
+        let bytes = profile.encode()
+        try put("aktiv.json", bytes)
+        XCTAssertEqual(s.list(), AssistantProfileListing(profiles: [], rejected: []), "aktiv.json zählt nicht als Profildatei")
+        XCTAssertNil(s.profile(id: "aktiv"))
+        XCTAssertEqual(s.activeId(), "alles")
+        XCTAssertEqual(s.active().id, "alles")
+        XCTAssertThrowsError(try s.save(profile)) { XCTAssertEqual($0 as? AssistantProfileStoreError, .reservedId) }
+        XCTAssertThrowsError(try s.delete(id: "aktiv")) { XCTAssertEqual($0 as? AssistantProfileStoreError, .reservedId) }
+        XCTAssertEqual(Array(try Data(contentsOf: dir.appendingPathComponent("aktiv.json"))), Array(bytes.utf8))
+        // Ein Auswahlwechsel schreibt nur aktiv.json und fasst kein Profil an.
+        try s.save(own("eigen-aaaaaaaaaaaa"))
+        try s.save(own("eigen-bbbbbbbbbbbb"))
+        let profiles = try snapshot().filter { $0.key != "aktiv.json" }
+        try s.setActive("eigen-aaaaaaaaaaaa")
+        try s.setActive("eigen-bbbbbbbbbbbb")
+        try s.setActive("vorlage-lernpartner")
+        XCTAssertEqual(try snapshot().filter { $0.key != "aktiv.json" }, profiles)
+        XCTAssertEqual(s.activeId(), "vorlage-lernpartner")
+    }
+
+    // MARK: Abgewiesene Dateien bleiben unberührt
+
+    private func rejectedFiles() -> [(name: String, text: String)] {
+        let tooBig = #"{"schema":"lva.assistent/1","id":"eigen-ffffffffffff","name":"G","x":""# + String(repeating: "x", count: AssistantProfileStore.maxFileBytes) + #""}"#
+        return [
+            ("eigen-aaaaaaaaaaaa.json", "{ nicht json"),
+            ("eigen-bbbbbbbbbbbb.json", #"{"schema":"lva.assistent/2","id":"eigen-bbbbbbbbbbbb","name":"N"}"#),
+            ("eigen-cccccccccccc.json", #"{"schema":"lva.assistent/1","id":"eigen-dddddddddddd","name":"N"}"#),
+            ("eigen-eeeeeeeeeeee.json", #"{"schema":"lva.assistent/1","id":"eigen-eeeeeeeeeeee","name":""}"#),
+            ("eigen-ffffffffffff.json", tooBig),
+            ("eigen-gggggggggggg.json", #"{"schema":"lva.assistent/1","id":"alles","name":"Geschummelt"}"#),
+            ("eigen-hhhhhhhhhhhh.json", ""),
+        ]
+    }
+
+    func testSaveAndDeleteNeverTouchRejectedFiles() throws {
+        let s = store()
+        for (name, text) in rejectedFiles() { try put(name, text) }
+        let before = try snapshot()
+        for (name, _) in rejectedFiles() {
+            let id = String(name.dropLast(5))
+            XCTAssertThrowsError(try s.save(own(id)), name) { XCTAssertEqual($0 as? AssistantProfileStoreError, .occupied, name) }
+            XCTAssertThrowsError(try s.delete(id: id), name) { XCTAssertEqual($0 as? AssistantProfileStoreError, .occupied, name) }
+            XCTAssertEqual(try snapshot(), before, "\(name): Bytes und Verzeichnis unverändert")
+        }
+        XCTAssertEqual(s.list().profiles, [])
+        XCTAssertEqual(s.list().rejected.count, rejectedFiles().count)
+        // Neben den belegten Namen lässt sich weiter speichern, und ein gültiges Profil unter dem Namen der Falschen-Id-Datei.
+        XCTAssertNoThrow(try s.save(own("eigen-dddddddddddd")))
+        XCTAssertEqual(s.list().profiles.map(\.id), ["eigen-dddddddddddd"])
+    }
+
+    func testSaveAndDeleteNeverFollowOrReplaceSymlinks() throws {
+        let s = store()
+        let outside = FileManager.default.temporaryDirectory.appendingPathComponent("lva-g1-outside-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outside) }
+        var other = AssistantProfile(id: "eigen-aaaaaaaaaaaa", name: "Fremd")
+        other.instructions = "Gehört mir."
+        let target = outside.appendingPathComponent("ziel.json")
+        try Data(other.encode().utf8).write(to: target)
+        let link = dir.appendingPathComponent("eigen-aaaaaaaaaaaa.json")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+        let dangling = dir.appendingPathComponent("eigen-bbbbbbbbbbbb.json")
+        try FileManager.default.createSymbolicLink(at: dangling, withDestinationURL: outside.appendingPathComponent("gibt-es-nicht.json"))
+        let directoryLink = dir.appendingPathComponent("eigen-cccccccccccc.json")
+        try FileManager.default.createSymbolicLink(at: directoryLink, withDestinationURL: outside)
+        let before = try snapshot()
+        let targetBefore = try Data(contentsOf: target)
+
+        // Ein Symlink gilt als abgewiesen (json) — auch einer auf ein gültiges Profil.
+        let rejected = Dictionary(uniqueKeysWithValues: s.list().rejected.map { ($0.fileName, $0.issues.map { "\($0.path):\($0.code.rawValue)" }) })
+        XCTAssertEqual(rejected["eigen-aaaaaaaaaaaa.json"], [":json"])
+        XCTAssertEqual(rejected["eigen-bbbbbbbbbbbb.json"], [":json"])
+        XCTAssertEqual(rejected["eigen-cccccccccccc.json"], [":json"])
+        XCTAssertEqual(s.list().profiles, [])
+        XCTAssertNil(s.profile(id: "eigen-aaaaaaaaaaaa"))
+
+        for id in ["eigen-aaaaaaaaaaaa", "eigen-bbbbbbbbbbbb", "eigen-cccccccccccc"] {
+            XCTAssertThrowsError(try s.save(own(id)), id) { XCTAssertEqual($0 as? AssistantProfileStoreError, .occupied, id) }
+            XCTAssertThrowsError(try s.delete(id: id), id) { XCTAssertEqual($0 as? AssistantProfileStoreError, .notFound, id) }
+            XCTAssertThrowsError(try s.setActive(id), id) { XCTAssertEqual($0 as? AssistantProfileStoreError, .notFound, id) }
+        }
+        XCTAssertEqual(try snapshot(), before, "Links und Verzeichnis unverändert")
+        XCTAssertEqual(try Data(contentsOf: target), targetBefore, "das Ziel des Links bleibt, wie es war")
+        XCTAssertEqual(try snapshot(outside).keys.sorted(), ["ziel.json"], "nichts draußen angelegt")
+    }
+
+    func testSaveAndDeleteNeverTouchADirectoryNamedLikeAProfile() throws {
+        let s = store()
+        let folder = dir.appendingPathComponent("eigen-aaaaaaaaaaaa.json")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        try Data("Inhalt".utf8).write(to: folder.appendingPathComponent("datei.txt"))
+        let before = try snapshot()
+        XCTAssertThrowsError(try s.save(own("eigen-aaaaaaaaaaaa"))) { XCTAssertEqual($0 as? AssistantProfileStoreError, .occupied) }
+        XCTAssertThrowsError(try s.delete(id: "eigen-aaaaaaaaaaaa")) { XCTAssertEqual($0 as? AssistantProfileStoreError, .notFound) }
+        XCTAssertNil(s.profile(id: "eigen-aaaaaaaaaaaa"))
+        XCTAssertEqual(s.list(), AssistantProfileListing(profiles: [], rejected: []), "ein Verzeichnis wird ignoriert")
+        XCTAssertEqual(try snapshot(), before)
+    }
+
+    func testValidOwnFilesStayReplaceableAndDeletable() throws {
+        let s = store()
+        try s.save(own("eigen-aaaaaaaaaaaa", "Eins"))
+        try s.save(own("eigen-aaaaaaaaaaaa", "Zwei"))
+        XCTAssertEqual(s.profile(id: "eigen-aaaaaaaaaaaa")?.name, "Zwei")
+        try s.delete(id: "eigen-aaaaaaaaaaaa")
+        XCTAssertEqual(try snapshot(), [:])
+    }
+
+    func testNewOwnIdSkipsDanglingSymlinks() throws {
+        let counter = Counter()
+        let s = store { counter.next() }
+        try FileManager.default.createSymbolicLink(at: dir.appendingPathComponent("eigen-0123456789ab.json"), withDestinationURL: dir.appendingPathComponent("gibt-es-nicht"))
+        let id = try s.newOwnId()
+        XCTAssertNotEqual(id, "eigen-0123456789ab")
+        XCTAssertTrue(id.hasPrefix("eigen-"))
+    }
+
+    // MARK: Nur speicherbare Profile werden gespeichert (Prüfung des Baums)
+
+    func testUnreadableExtrasAreNotSavedAndLeaveTheFileUntouched() throws {
+        let s = store()
+        let id = "eigen-aaaaaaaaaaaa"
+        try s.save(own(id, "Gut"))
+        let before = try snapshot()
+        var nan = own(id, "Schlecht")
+        nan.extra = [AssistantJSONMember("x", .number("NaN"))]
+        XCTAssertThrowsError(try s.save(nan)) { XCTAssertEqual($0 as? AssistantProfileStoreError, .invalid([AssistantProfileIssue(path: "x", code: .json)])) }
+        var deep = AssistantJSON.array([])
+        for _ in 0..<70 { deep = .array([deep]) }
+        var tooDeep = own(id, "Zu tief")
+        tooDeep.extra = [AssistantJSONMember("tief", deep)]
+        XCTAssertThrowsError(try s.save(tooDeep)) { XCTAssertEqual($0 as? AssistantProfileStoreError, .invalid([AssistantProfileIssue(path: "tief", code: .json)])) }
+        var duplicate = own(id, "Doppelt")
+        duplicate.extra = [AssistantJSONMember("k", .null), AssistantJSONMember("k", .bool(true))]
+        XCTAssertThrowsError(try s.save(duplicate)) { XCTAssertEqual($0 as? AssistantProfileStoreError, .invalid([AssistantProfileIssue(path: "", code: .json)])) }
+        var nested = own(id, "Verschachtelt")
+        nested.knowledge.extra = [AssistantJSONMember("neu", .array([.number("1.")]))]
+        XCTAssertThrowsError(try s.save(nested)) { XCTAssertEqual($0 as? AssistantProfileStoreError, .invalid([AssistantProfileIssue(path: "wissen.neu", code: .json)])) }
+        XCTAssertEqual(try snapshot(), before, "die vorhandene Datei bleibt unverändert")
+        XCTAssertEqual(s.profile(id: id)?.name, "Gut")
+        // Ein neues Profil mit solchem Feld legt keine Datei an.
+        var fresh = own("eigen-bbbbbbbbbbbb")
+        fresh.extra = [AssistantJSONMember("x", .number("NaN"))]
+        XCTAssertThrowsError(try s.save(fresh))
+        XCTAssertEqual(try snapshot(), before)
+    }
+
+    /// Grundsatz: Was `save` annimmt, liest `list` wieder, und die Datei ist die bytegleiche zweite Ausgabe.
+    func testWhatSaveAcceptsIsReadBackByteIdentical() throws {
+        let s = store()
+        var p = own("eigen-aaaaaaaaaaaa", "Rund")
+        p.extra = [AssistantJSONMember("zahlen", .array([.number("-0.5e+10"), .number("1.50"), .number("0")]))]
+        p.behavior.extra = [AssistantJSONMember("neu", .object([AssistantJSONMember("\u{00e9}", .number("1")), AssistantJSONMember("e\u{0301}", .number("2"))]))]
+        let saved = try s.save(p)
+        let listing = s.list()
+        XCTAssertEqual(listing.rejected, [])
+        XCTAssertEqual(listing.profiles, [saved])
+        let data = try Data(contentsOf: dir.appendingPathComponent("eigen-aaaaaaaaaaaa.json"))
+        XCTAssertEqual(Array(data), Array(listing.profiles[0].encode().utf8))
+        XCTAssertEqual(Array(data), Array(saved.encode().utf8))
     }
 
     func testNewOwnIdUsesTheGivenSourceAndSkipsTakenIds() throws {

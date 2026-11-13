@@ -14,18 +14,30 @@ import {
   type ProfilErgebnis,
 } from "./profil";
 
+/** Friert ein Objekt samt allen Unterobjekten und Listen ein (rekursiv); gibt es zurück. */
+function friereTiefEin<T>(wert: T): T {
+  if (typeof wert === "object" && wert !== null && !Object.isFrozen(wert)) {
+    Object.freeze(wert);
+    for (const kind of Object.values(wert)) friereTiefEin(kind);
+  }
+  return wert;
+}
+
 function ladeVorlagen(): Profil[] {
   const baum = parseJson(VORLAGEN_JSON);
   if (baum === null || baum.art !== "liste") return [];
   const profile: Profil[] = [];
   for (const eintrag of baum.wert) {
     const ergebnis = profilAusBaum(eintrag);
-    if (ergebnis.ok) profile.push(ergebnis.profil);
+    if (ergebnis.ok) profile.push(friereTiefEin(ergebnis.profil));
   }
-  return profile;
+  return friereTiefEin(profile);
 }
 
-/** Alle Vorlagen in der Reihenfolge der Datei; die erste ist `alles`. */
+/**
+ * Alle Vorlagen in der Reihenfolge der Datei; die erste ist `alles`. Die Liste und jede Vorlage sind tief eingefroren (ein
+ * Schreibversuch wirft im Strict-Modus); `alsEigenenKopieren` liefert davon unabhängige, veränderliche Kopien.
+ */
 export const VORLAGEN: readonly Profil[] = ladeVorlagen();
 /** Id der Vorlage `alles` (Standard, wenn nichts anderes gewählt ist). */
 export const ALLES_ID = "alles";
@@ -38,12 +50,18 @@ export function istVorlage(id: string): boolean {
   return vorlage(id) !== undefined;
 }
 
-/** Vorbehalten für Vorlagen: ihre Ids und alles mit dem Vorsatz `vorlage-`. */
+/**
+ * Vorbehalten: die Ids der Vorlagen, alles mit dem Vorsatz `vorlage-` und `aktiv` (der Name der Datei `aktiv.json`, die die aktive
+ * Auswahl hält, würde sonst mit einem Profil dieser Id zusammenfallen).
+ */
 export function istVorbehalteneId(id: string): boolean {
-  return istVorlage(id) || id.startsWith("vorlage-");
+  return istVorlage(id) || id.startsWith("vorlage-") || id === "aktiv";
 }
 
-/** Eigene Kopie einer Vorlage mit neuer Id und neuem Namen; geprüft wie jede Eingabe. Eine vorbehaltene Id wird abgewiesen. */
+/**
+ * Eigene Kopie einer Vorlage mit neuer Id und neuem Namen; geprüft wie jede Eingabe. Eine vorbehaltene Id (Vorlagen, `vorlage-…`,
+ * `aktiv`) wird abgewiesen. Die Kopie teilt keine Knoten mit der Vorlage und ist veränderlich.
+ */
 export function alsEigenenKopieren(
   vorlageProfil: Profil,
   neueId: string,
@@ -56,6 +74,6 @@ export function alsEigenenKopieren(
   const fehler = kopie.ok ? [] : kopie.fehler;
   return {
     ok: false,
-    fehler: ordneFehler([...fehler, { pfad: "id", code: "wert" }]),
+    fehler: ordneFehler(fehler.concat({ pfad: "id", code: "wert" })),
   };
 }

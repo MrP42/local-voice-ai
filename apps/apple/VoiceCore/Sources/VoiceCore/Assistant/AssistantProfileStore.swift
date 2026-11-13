@@ -7,14 +7,24 @@ import Foundation
 // - die aktive Auswahl steht in `aktiv.json` als `{"id": "<id>"}`; fehlt sie, ist sie ungültig oder zeigt sie auf ein fehlendes
 //   Profil, gilt die Vorlage `alles`;
 // - Vorlagen liegen nie im Verzeichnis und lassen sich weder überschreiben noch löschen;
-// - Obergrenzen: 200 Dateien, 256 KiB je Datei (größere werden abgewiesen und nicht gelesen);
-// - andere Dateien im Verzeichnis werden ignoriert; geschrieben wird atomar (`Data.write(options: .atomic)`).
-// Eine abgewiesene Datei wird nie verändert oder gelöscht.
+// - Obergrenzen: 200 Dateien beim Auflisten und bei der Neuanlage, 256 KiB je Datei (größere werden abgewiesen und nicht gelesen);
+//   ein direkter Abruf per Id liest unabhängig von der 200er-Grenze;
+// - gelesen werden nur reguläre Dateien (Typ über `attributesOfItem`, Symlinks werden nicht verfolgt); ein Symlink `x.json` oder
+//   eine andere nicht reguläre Datei gilt als abgewiesen (`json`, Pfad ""), ein Verzeichnis `x.json` wird ignoriert;
+// - andere Dateien im Verzeichnis werden ignoriert; geschrieben wird atomar (`Data.write(options: .atomic)`);
+// - `aktiv` ist als Id vorbehalten (der Dateiname `aktiv.json` gehört der aktiven Auswahl);
+// - ein Schreiber je Verzeichnis: die Kapazitätsprüfung und `newOwnId` sind nicht atomar gegen parallele Prozesse.
+// Eine abgewiesene Datei wird nie verändert oder gelöscht: `save` und `delete` fassen eine vorhandene Datei nur an, wenn sie ein
+// gültiges eigenes Profil mit genau dieser Id ist (sonst `occupied`, bei `delete` für Nicht-Reguläres `notFound`).
 
 /// Eine Datei, die nicht als Assistent gelesen werden konnte, mit der Fehlerliste.
 public struct AssistantRejectedFile: Equatable, Sendable {
     public let fileName: String
     public let issues: [AssistantProfileIssue]
+
+    public static func == (a: AssistantRejectedFile, b: AssistantRejectedFile) -> Bool {
+        AssistantExact.equal(a.fileName, b.fileName) && a.issues == b.issues
+    }
 }
 
 public struct AssistantProfileListing: Equatable, Sendable {
@@ -26,13 +36,16 @@ public struct AssistantProfileListing: Equatable, Sendable {
 public enum AssistantProfileStoreError: Error, Equatable, Sendable {
     /// Das Profil ist ungültig (Fehlerliste der Prüfung).
     case invalid([AssistantProfileIssue])
-    /// Vorlagen (und vorbehaltene Ids) lassen sich weder speichern noch löschen.
+    /// Vorlagen (und vorbehaltene Ids, auch `aktiv`) lassen sich weder speichern, löschen noch auswählen.
     case reservedId
     case notFound
     case tooLarge
     /// Schon 200 Dateien im Verzeichnis.
     case tooMany
     case writeFailed
+    /// Unter dieser Id liegt eine Datei, die kein gültiges eigenes Profil mit genau dieser Id ist (beschädigt, neueres Schema,
+    /// falsche Id im Inhalt, zu groß, keine reguläre Datei): belegt. Sie wird weder überschrieben noch gelöscht.
+    case occupied
 }
 
 /// Liefert Zufallsbytes für neue Ids (im Test ein fester Erzeuger).
@@ -56,24 +69,54 @@ public struct AssistantProfileStore: Sendable {
 
     private func fileURL(_ id: String) -> URL { directory.appendingPathComponent(id + ".json") }
 
-    /// Dateinamen der Profile (ohne `aktiv.json`, ohne Verzeichnisse), nach Bytes sortiert.
+    private enum EntryKind { case absent, regular, directory, other }
+
+    /// Art des Eintrags, ohne Symlinks zu verfolgen (`attributesOfItem` meldet bei einem Symlink den Link selbst).
+    private func kind(of url: URL) -> EntryKind {
+        do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            switch attributes[.type] as? FileAttributeType {
+            case .typeRegular?: return .regular
+            case .typeDirectory?: return .directory
+            default: return .other
+            }
+        } catch {
+            return AssistantProfileStore.isMissing(error) ? .absent : .other
+        }
+    }
+
+    private static func isMissing(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.domain == NSCocoaErrorDomain, nsError.code == NSFileNoSuchFileError || nsError.code == NSFileReadNoSuchFileError {
+            return true
+        }
+        if let posix = nsError.userInfo[NSUnderlyingErrorKey] as? NSError, posix.domain == NSPOSIXErrorDomain {
+            return posix.code == Int(ENOENT) || posix.code == Int(ENOTDIR)
+        }
+        return nsError.domain == NSPOSIXErrorDomain && (nsError.code == Int(ENOENT) || nsError.code == Int(ENOTDIR))
+    }
+
+    /// Dateinamen der Profile (ohne `aktiv.json`, ohne Verzeichnisse), nach Bytes sortiert. Symlinks und andere nicht reguläre
+    /// Einträge zählen mit (sie erscheinen als abgewiesen), Verzeichnisse nicht.
     private func profileFileNames() -> [String] {
-        let fm = FileManager.default
-        let names = (try? fm.contentsOfDirectory(atPath: directory.path)) ?? []
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
         return names
             .filter { name in
                 guard name.utf8.count > 5, name.utf8.reversed().starts(with: ".json".utf8.reversed()) else { return false }
                 if name.utf8.elementsEqual(AssistantProfileStore.activeFileName.utf8) { return false }
-                var isDirectory: ObjCBool = false
-                return fm.fileExists(atPath: directory.appendingPathComponent(name).path, isDirectory: &isDirectory) && !isDirectory.boolValue
+                switch kind(of: directory.appendingPathComponent(name)) {
+                case .regular, .other: return true
+                case .absent, .directory: return false
+                }
             }
             .sorted { $0.utf8.lexicographicallyPrecedes($1.utf8) }
     }
 
-    /// Liest eine Datei mit Größenprüfung vor dem Lesen.
+    /// Liest eine reguläre Datei mit Größenprüfung vor dem Lesen. Alles andere (Symlink, Gerät, FIFO) ist `json`; es wird nicht geöffnet.
     private func read(_ url: URL) -> Result<Data, AssistantProfileFailure> {
         let fail = { (code: AssistantProfileIssue.Code) in Result<Data, AssistantProfileFailure>.failure(AssistantProfileFailure([AssistantProfileIssue(path: "", code: code)])) }
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+        guard kind(of: url) == .regular,
+              let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
               let size = (attributes[.size] as? NSNumber)?.intValue else { return fail(.json) }
         if size > AssistantProfileStore.maxFileBytes { return fail(.length) }
         guard let data = try? Data(contentsOf: url) else { return fail(.json) }
@@ -124,7 +167,7 @@ public struct AssistantProfileStore: Sendable {
     /// Ein Profil nach Id: Vorlage oder gültige eigene Datei.
     public func profile(id: String) -> AssistantProfile? {
         if let template = AssistantProfileTemplates.template(id: id) { return template }
-        guard AssistantProfilePatterns.id(id), case .success(let profile) = load(fileName: id + ".json") else { return nil }
+        guard !AssistantProfileTemplates.isReservedId(id), AssistantProfilePatterns.id(id), case .success(let profile) = load(fileName: id + ".json") else { return nil }
         return profile
     }
 
@@ -141,21 +184,26 @@ public struct AssistantProfileStore: Sendable {
         if AssistantProfileTemplates.isReservedId(checked.id) { throw AssistantProfileStoreError.reservedId }
         let data = Data(checked.encode().utf8)
         if data.count > AssistantProfileStore.maxFileBytes { throw AssistantProfileStoreError.tooLarge }
-        let fm = FileManager.default
         let target = fileURL(checked.id)
-        if !fm.fileExists(atPath: target.path), profileFileNames().count >= AssistantProfileStore.maxFiles {
-            throw AssistantProfileStoreError.tooMany
+        switch kind(of: target) {
+        case .absent:
+            if profileFileNames().count >= AssistantProfileStore.maxFiles { throw AssistantProfileStoreError.tooMany }
+        case .regular:
+            guard case .success = load(fileName: checked.id + ".json") else { throw AssistantProfileStoreError.occupied }
+        case .directory, .other:
+            throw AssistantProfileStoreError.occupied
         }
         try write(data, to: target)
         return checked
     }
 
-    /// Löscht ein eigenes Profil. Die aktive Auswahl bleibt, wie sie ist (der Rückfall greift beim Lesen).
+    /// Löscht ein eigenes, gültiges Profil. Eine abgewiesene Datei (beschädigt, neueres Schema, falsche Id im Inhalt, zu groß) wird
+    /// nicht gelöscht (`occupied`); ein Verzeichnis, Symlink oder anderes Nicht-Reguläres ist `notFound`, ebenso eine fehlende Datei.
+    /// Die aktive Auswahl bleibt, wie sie ist (der Rückfall greift beim Lesen).
     public func delete(id: String) throws {
         if AssistantProfileTemplates.isReservedId(id) { throw AssistantProfileStoreError.reservedId }
-        guard AssistantProfilePatterns.id(id), FileManager.default.fileExists(atPath: fileURL(id).path) else {
-            throw AssistantProfileStoreError.notFound
-        }
+        guard AssistantProfilePatterns.id(id), kind(of: fileURL(id)) == .regular else { throw AssistantProfileStoreError.notFound }
+        guard case .success = load(fileName: id + ".json") else { throw AssistantProfileStoreError.occupied }
         do { try FileManager.default.removeItem(at: fileURL(id)) } catch { throw AssistantProfileStoreError.writeFailed }
     }
 
@@ -164,7 +212,7 @@ public struct AssistantProfileStore: Sendable {
         for _ in 0..<32 {
             let tail = (0..<12).map { _ in AssistantProfileStore.idAlphabet[Int(idSource()) % AssistantProfileStore.idAlphabet.count] }
             let id = "eigen-" + String(decoding: tail, as: UTF8.self)
-            if !FileManager.default.fileExists(atPath: fileURL(id).path) { return id }
+            if kind(of: fileURL(id)) == .absent { return id }
         }
         throw AssistantProfileStoreError.writeFailed
     }
@@ -197,8 +245,10 @@ public struct AssistantProfileStore: Sendable {
         profile(id: activeId()) ?? AssistantProfileTemplates.everything
     }
 
-    /// Wählt ein vorhandenes Profil (Vorlage oder gültige eigene Datei) als aktiv.
+    /// Wählt ein vorhandenes Profil (Vorlage oder gültige eigene Datei) als aktiv. Vorbehaltene Ids, die keine Vorlage sind
+    /// (`aktiv`, `vorlage-…`), lassen sich nicht wählen (`reservedId`); geschrieben wird nur `aktiv.json`, nie ein Profil.
     public func setActive(_ id: String) throws {
+        if AssistantProfileTemplates.isReservedId(id), !AssistantProfileTemplates.isTemplate(id) { throw AssistantProfileStoreError.reservedId }
         guard profile(id: id) != nil else { throw AssistantProfileStoreError.notFound }
         let text = AssistantJSON.object([AssistantJSONMember("id", .string(id))]).encoded()
         try write(Data(text.utf8), to: activeURL)

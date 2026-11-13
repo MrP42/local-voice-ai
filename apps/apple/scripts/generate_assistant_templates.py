@@ -48,9 +48,10 @@ public enum AssistantProfileTemplates {{
         all.contains {{ $0.id.utf8.elementsEqual(id.utf8) }}
     }}
 
-    /// Vorbehalten für Vorlagen: ihre Ids und alles mit dem Vorsatz `vorlage-`.
+    /// Vorbehalten: die Ids der Vorlagen, alles mit dem Vorsatz `vorlage-` und `aktiv` (der Name der Datei `aktiv.json`, die die
+    /// aktive Auswahl hält, würde sonst mit einem Profil dieser Id zusammenfallen). Der Vergleich ist genau (UTF-8-Bytes).
     public static func isReservedId(_ id: String) -> Bool {{
-        isTemplate(id) || id.utf8.starts(with: "vorlage-".utf8)
+        isTemplate(id) || id.utf8.starts(with: "vorlage-".utf8) || id.utf8.elementsEqual("aktiv".utf8)
     }}
 
     public static func template(id: String) -> AssistantProfile? {{

@@ -41,6 +41,7 @@ const {
   VORLAGEN,
   istVorlage,
   istVorbehalteneId,
+  istGeraetename,
   alsEigenenKopieren,
   BEKANNTE_BEREICHE,
   FEHLER_CODES,
@@ -441,6 +442,11 @@ test("Schema-Datei: gültiges JSON mit allen Feldern des Profils", () => {
     ["aufgaben", "felder", "zusammenfassung"],
   );
   assert.equal(schema.properties.schema.const, "lva.assistent/1");
+  // Gerätenamen von Windows sind als Id ausgeschlossen (`not`), dieselbe Menge wie die Prüfung im Kern.
+  const nicht = new RegExp(schema.properties.id.not.pattern);
+  for (const f of stand.ids)
+    if (/^[a-z0-9][a-z0-9-]{0,63}$/.test(f.id))
+      assert.equal(nicht.test(f.id), f.erwartet === "wert", f.id);
 });
 
 test("README nennt Schema, Speicherformat und Auslegungen", () => {
@@ -450,6 +456,447 @@ test("README nennt Schema, Speicherformat und Auslegungen", () => {
     "Speicherformat",
     "aktiv.json",
     "Auslegung",
+    "vorbehalten",
+    "belegt",
+    "regulären Dateien",
+    "Schreiber je Verzeichnis",
+    "Gerätenamen",
+    "genau",
   ])
     assert.ok(readme.includes(stichwort), stichwort);
+});
+
+// ------------------------------------------------------------------ Ids: Muster, Gerätenamen, vorbehaltene Ids
+
+for (const f of stand.ids) {
+  test(`Id ${JSON.stringify(f.id)}: ${f.erwartet}, vorbehalten ${f.vorbehalten}`, () => {
+    const r = parseProfil(
+      JSON.stringify({ schema: "lva.assistent/1", id: f.id, name: "N" }),
+    );
+    if (f.erwartet === "ok") assert.equal(r.ok, true, JSON.stringify(r.fehler));
+    else
+      assert.deepEqual(ergebnisFehler(r), [{ pfad: "id", code: f.erwartet }]);
+    assert.equal(istVorbehalteneId(f.id), f.vorbehalten);
+    const kopie = alsEigenenKopieren(VORLAGEN[1], f.id, "Kopie");
+    if (f.erwartet === "ok" && !f.vorbehalten) assert.equal(kopie.ok, true);
+    else assert.ok(ergebnisFehler(kopie).some((e) => e.pfad === "id"));
+    if (f.erwartet === "ok" && f.vorbehalten)
+      assert.deepEqual(ergebnisFehler(kopie), [{ pfad: "id", code: "wert" }]);
+  });
+}
+
+test("Gerätenamen: genau con, prn, aux, nul, com0-9, lpt0-9", () => {
+  const erwartet = new Set([
+    "con",
+    "prn",
+    "aux",
+    "nul",
+    ...Array.from({ length: 10 }, (_, i) => `com${i}`),
+    ...Array.from({ length: 10 }, (_, i) => `lpt${i}`),
+  ]);
+  const alphabet = "conprauxnlmt019-";
+  const kandidaten = [
+    ...erwartet,
+    "con1",
+    "com10",
+    "nul-1",
+    "console",
+    "co",
+    "",
+  ];
+  for (const a of alphabet)
+    for (const b of alphabet)
+      for (const c of alphabet) {
+        kandidaten.push(a + b + c, a + b + c + "0", a + b + c + "9");
+      }
+  for (const k of kandidaten)
+    assert.equal(istGeraetename(k), erwartet.has(k), k);
+});
+
+test("Vorbehaltene Ids: aktiv, Vorlagen und vorlage-…; Kopieren auf aktiv scheitert", () => {
+  for (const id of ["aktiv", "alles", "vorlage-x", "vorlage-buchgespraech"])
+    assert.equal(istVorbehalteneId(id), true, id);
+  for (const id of [
+    "aktiv-2",
+    "aktiva",
+    "Aktiv",
+    "vorlage",
+    "eigen-abc123def456",
+  ])
+    assert.equal(istVorbehalteneId(id), false, id);
+  assert.deepEqual(
+    ergebnisFehler(alsEigenenKopieren(VORLAGEN[1], "aktiv", "X")),
+    [{ pfad: "id", code: "wert" }],
+  );
+});
+
+// ------------------------------------------------------------------ handgebaute Bäume (Prüfung des Baums)
+
+/** Wandelt die Sonderformen der Prüfstände (`$zahl`, `$paare`, `$tief`) in einen JSON-Baum. */
+function baumAus(k) {
+  if (k === null) return { art: "null" };
+  if (typeof k === "boolean") return { art: "bool", wert: k };
+  if (typeof k === "number") return { art: "zahl", roh: String(k) };
+  if (typeof k === "string") return { art: "text", wert: k };
+  if (Array.isArray(k)) return { art: "liste", wert: k.map(baumAus) };
+  const schluessel = Object.keys(k);
+  if (schluessel.length === 1 && schluessel[0] === "$zahl")
+    return { art: "zahl", roh: k.$zahl };
+  if (schluessel.length === 1 && schluessel[0] === "$paare")
+    return {
+      art: "objekt",
+      wert: k.$paare.map(([name, wert]) => ({
+        schluessel: name,
+        wert: baumAus(wert),
+      })),
+    };
+  if (schluessel.length === 1 && schluessel[0] === "$tief") {
+    let aus = { art: "liste", wert: [] };
+    for (let i = 1; i < k.$tief; i += 1) aus = { art: "liste", wert: [aus] };
+    return aus;
+  }
+  return {
+    art: "objekt",
+    wert: schluessel.map((name) => ({
+      schluessel: name,
+      wert: baumAus(k[name]),
+    })),
+  };
+}
+
+/** Grundsatz: Was die Prüfung besteht, schreibt `kodiereProfil` und liest `parseProfil` wieder, bytegleich. */
+function pruefeRundreise(ergebnis, beschreibung) {
+  assert.equal(ergebnis.ok, true, beschreibung);
+  const text = kodiereProfil(ergebnis.profil);
+  const zweites = parseProfil(text);
+  assert.equal(zweites.ok, true, `${beschreibung}: nicht lesbar`);
+  assert.equal(kodiereProfil(zweites.profil), text, beschreibung);
+  assert.deepEqual(pruefeProfil(ergebnis.profil), [], beschreibung);
+  return text;
+}
+
+for (const fall of stand.baeume) {
+  test(`Baum: ${fall.name}`, () => {
+    const r = profilAusBaum(baumAus(fall.baum));
+    if (fall.erwartet.ok) {
+      assert.equal(pruefeRundreise(r, fall.name), fall.erwartet.kodiert);
+    } else {
+      assert.deepEqual(ergebnisFehler(r), fall.erwartet.fehler);
+    }
+  });
+}
+
+test("Baum: jeder Zahlentext bis Länge 5 über einem kleinen Alphabet — bestanden heißt lesbar und stabil", () => {
+  const grammatik = /^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$/;
+  const alphabet = ["0", "1", "-", "+", ".", "e", "E", "x", " "];
+  const texte = [""];
+  for (let laenge = 1; laenge <= 5; laenge += 1) {
+    const vorher = texte.filter((t) => t.length === laenge - 1);
+    for (const t of vorher) for (const z of alphabet) texte.push(t + z);
+  }
+  assert.ok(texte.length > 60000);
+  for (const roh of texte) {
+    const baum = {
+      art: "objekt",
+      wert: [
+        {
+          schluessel: "schema",
+          wert: { art: "text", wert: "lva.assistent/1" },
+        },
+        { schluessel: "id", wert: { art: "text", wert: "a" } },
+        { schluessel: "name", wert: { art: "text", wert: "A" } },
+        {
+          schluessel: "x",
+          wert: { art: "liste", wert: [{ art: "zahl", roh }] },
+        },
+      ],
+    };
+    const r = profilAusBaum(baum);
+    assert.equal(r.ok, grammatik.test(roh), JSON.stringify(roh));
+    if (r.ok) pruefeRundreise(r, JSON.stringify(roh));
+    else assert.deepEqual(r.fehler, [{ pfad: "x", code: "json" }]);
+  }
+});
+
+test("Baum: einzelne Surrogate in Zeichenketten und Schlüsseln sind json am Pfad des Feldes", () => {
+  const einzeln = "A\ud800B";
+  const kopf = [
+    { schluessel: "schema", wert: { art: "text", wert: "lva.assistent/1" } },
+    { schluessel: "id", wert: { art: "text", wert: "a" } },
+    { schluessel: "name", wert: { art: "text", wert: "A" } },
+  ];
+  const text = (wert) => ({ art: "text", wert });
+  const liste = (...w) => ({ art: "liste", wert: w });
+  const objekt = (...m) => ({
+    art: "objekt",
+    wert: m.map(([schluessel, wert]) => ({ schluessel, wert })),
+  });
+  const faelle = [
+    ["unbekanntes Feld, Wert", [["x", text(einzeln)]], "x"],
+    ["unbekanntes Feld, Schlüssel", [[einzeln, text("a")]], einzeln],
+    [
+      "unbekanntes Feld, tief in Liste",
+      [["x", liste(liste(text("\udc00")))]],
+      "x",
+    ],
+    [
+      "unbekanntes Feld, Schlüssel tief",
+      [["x", liste(objekt([einzeln, text("a")]))]],
+      "x",
+    ],
+    ["Name", [["name", text(einzeln)]], "name"],
+    ["Beschreibung", [["beschreibung", text(einzeln)]], "beschreibung"],
+    ["Anweisungen", [["anweisungen", text(einzeln)]], "anweisungen"],
+    ["Begrüßung", [["begruessung", text(einzeln)]], "begruessung"],
+    ["Stimme", [["stimme", text(einzeln)]], "stimme"],
+    [
+      "Bereich",
+      [["wissen", objekt(["bereiche", liste(text("ok"), text(einzeln))])]],
+      "wissen.bereiche[1]",
+    ],
+    [
+      "Schnittstelle",
+      [["schnittstellen", liste(text(einzeln))]],
+      "schnittstellen[0]",
+    ],
+    [
+      "Kontext-Titel",
+      [
+        [
+          "wissen",
+          objekt([
+            "kontexte",
+            liste(
+              objekt(
+                ["art", text("buch")],
+                ["id", text("k")],
+                ["titel", text(einzeln)],
+              ),
+            ),
+          ]),
+        ],
+      ],
+      "wissen.kontexte[0].titel",
+    ],
+    [
+      "Feld-Beschreibung",
+      [
+        [
+          "auswertung",
+          objekt([
+            "felder",
+            liste(
+              objekt(
+                ["name", text("f")],
+                ["typ", text("text")],
+                ["beschreibung", text(einzeln)],
+              ),
+            ),
+          ]),
+        ],
+      ],
+      "auswertung.felder[0].beschreibung",
+    ],
+    [
+      "Option",
+      [
+        [
+          "auswertung",
+          objekt([
+            "felder",
+            liste(
+              objekt(
+                ["name", text("f")],
+                ["typ", text("auswahl")],
+                ["optionen", liste(text("a"), text(einzeln))],
+              ),
+            ),
+          ]),
+        ],
+      ],
+      "auswertung.felder[0].optionen[1]",
+    ],
+    [
+      "unbekanntes Feld in verhalten",
+      [["verhalten", objekt(["neu", text(einzeln)])]],
+      "verhalten.neu",
+    ],
+  ];
+  for (const [name, zusatz, pfad] of faelle) {
+    const mitZusatz = kopf.filter(
+      (m) => !zusatz.some(([s]) => s === m.schluessel),
+    );
+    const baum = {
+      art: "objekt",
+      wert: mitZusatz.concat(
+        zusatz.map(([schluessel, wert]) => ({ schluessel, wert })),
+      ),
+    };
+    const f = ergebnisFehler(profilAusBaum(baum));
+    assert.ok(
+      f.some((e) => e.pfad === pfad && e.code === "json"),
+      `${name}: ${JSON.stringify(f)}`,
+    );
+  }
+  // Als Profil: dasselbe über die typisierten Felder.
+  const p = neuesProfil("a", "A");
+  p.anweisungen = einzeln;
+  p.wissen.kontexte.push({ art: "buch", id: "k", titel: "", extra: [] });
+  p.wissen.kontexte[0].extra.push({ schluessel: "neu", wert: text("\udfff") });
+  assert.deepEqual(
+    pruefeProfil(p).map((e) => `${e.pfad}:${e.code}`),
+    ["anweisungen:json", "wissen.kontexte[0].neu:json"],
+  );
+  // Gepaarte Surrogate (Emoji) sind in Ordnung.
+  const q = neuesProfil("a", "A");
+  q.anweisungen = "😀";
+  assert.deepEqual(pruefeProfil(q), []);
+});
+
+test("Baum: Profil mit unbekanntem Feld NaN oder übertiefem Baum besteht die Prüfung nicht", () => {
+  const p = neuesProfil("a", "A");
+  p.extra.push({ schluessel: "x", wert: { art: "zahl", roh: "NaN" } });
+  assert.deepEqual(pruefeProfil(p), [{ pfad: "x", code: "json" }]);
+  let tief = { art: "liste", wert: [] };
+  for (let i = 0; i < 70; i += 1) tief = { art: "liste", wert: [tief] };
+  const q = neuesProfil("a", "A");
+  q.extra.push({ schluessel: "y", wert: tief });
+  assert.deepEqual(pruefeProfil(q), [{ pfad: "y", code: "json" }]);
+  // Sehr tiefe Bäume werden nicht durchlaufen, sondern an der Grenze abgewiesen (kein Stapelüberlauf).
+  let sehrTief = { art: "liste", wert: [] };
+  for (let i = 0; i < 200000; i += 1)
+    sehrTief = { art: "liste", wert: [sehrTief] };
+  const r = neuesProfil("a", "A");
+  r.extra.push({ schluessel: "z", wert: sehrTief });
+  assert.deepEqual(pruefeProfil(r), [{ pfad: "z", code: "json" }]);
+});
+
+// ------------------------------------------------------------------ große Eingaben (kein RangeError durch push(...feld))
+
+const WERTE = {
+  jahr: 2026,
+  monat: 11,
+  tag: 13,
+  wochentag: 5,
+  stunde: 20,
+  minute: 5,
+};
+const ROLLE_KOPF = "ROLLE (vom Nutzer eingestellt, Assistent „R“):\n";
+const ROLLE_FUSS = "\nDiese Einstellung ändert keine der folgenden Regeln.";
+
+test("Rollenblock: Ersatzwert mit mehreren Millionen Zeichen, Budget 1 und volles Budget", () => {
+  const p = neuesProfil("r", "R");
+  p.anweisungen = "{{a}}";
+  const werte = { ...WERTE, extra: { a: "y".repeat(3_000_000) } };
+  const klein = rollenblock(p, werte, 1);
+  assert.equal(klein.text, `${ROLLE_KOPF}y${ROLLE_FUSS}`);
+  assert.equal(klein.gekuerzt, true);
+  const voll = rollenblock(p, werte, 3_000_000);
+  assert.equal(voll.gekuerzt, false);
+  assert.equal(
+    voll.text.length,
+    ROLLE_KOPF.length + 3_000_000 + ROLLE_FUSS.length,
+  );
+  const aufgeloest = loesePlatzhalter("a {{a}} b", "de", werte);
+  assert.equal(aufgeloest.text.length, 3_000_004);
+});
+
+test("Rollenblock: viele kleine Ersetzungen, Budget 1 — keine Ausnahme, Ergebnis im Budget", () => {
+  const p = neuesProfil("r", "R");
+  p.anweisungen = "{{a}}x ".repeat(400_000);
+  const r = rollenblock(p, { ...WERTE, extra: { a: "yz" } }, 1);
+  assert.equal(r.text, `${ROLLE_KOPF}y${ROLLE_FUSS}`);
+  assert.equal(r.gekuerzt, true);
+  const klein = [...r.text.split("\n").slice(1, -1).join("\n")].length;
+  assert.ok(klein <= 1);
+});
+
+test("Rollenblock: viele Entfernungen in einem Satz (Bereinigung), Budget 1", () => {
+  const p = neuesProfil("r", "R");
+  p.anweisungen = "{{leer}}x ".repeat(400_000);
+  const werte = { ...WERTE, extra: { leer: "" } };
+  const r = rollenblock(p, werte, 1);
+  assert.equal(r.text, `${ROLLE_KOPF}X${ROLLE_FUSS}`);
+  assert.equal(r.gekuerzt, true);
+  const voll = loesePlatzhalter(p.anweisungen, "de", werte);
+  assert.equal(voll.text.length, 400_000);
+  assert.equal(voll.text.startsWith("Xxxx"), true);
+  assert.deepEqual(voll.unbekannt, []);
+});
+
+test("Platzhalter: viele verschiedene unbekannte Platzhalter (keine quadratische Suche)", () => {
+  const vorlage = Array.from({ length: 50_000 }, (_, i) => `{{u${i}}}`).join(
+    " ",
+  );
+  const r = loesePlatzhalter(vorlage, "de", WERTE);
+  assert.equal(r.unbekannt.length, 50_000);
+  assert.equal(r.unbekannt[0], "u0");
+  assert.equal(r.unbekannt[49_999], "u49999");
+  assert.equal(r.text, "");
+});
+
+// ------------------------------------------------------------------ Vorlagen: tief eingefroren, Kopien unabhängig
+
+function alleEingefroren(wert, pfad = "") {
+  if (typeof wert !== "object" || wert === null) return;
+  assert.equal(Object.isFrozen(wert), true, `nicht eingefroren: ${pfad}`);
+  for (const [k, v] of Object.entries(wert)) alleEingefroren(v, `${pfad}.${k}`);
+}
+function keinerEingefroren(wert, pfad = "") {
+  if (typeof wert !== "object" || wert === null) return;
+  assert.equal(Object.isFrozen(wert), false, `eingefroren: ${pfad}`);
+  for (const [k, v] of Object.entries(wert))
+    keinerEingefroren(v, `${pfad}.${k}`);
+}
+
+test("Vorlagen sind tief eingefroren; Schreibversuche werfen", () => {
+  alleEingefroren(VORLAGEN, "VORLAGEN");
+  assert.throws(() => VORLAGEN.push(neuesProfil("a", "A")), TypeError);
+  assert.throws(() => {
+    VORLAGEN[1].name = "Anders";
+  }, TypeError);
+  assert.throws(() => VORLAGEN[1].wissen.bereiche.push("x"), TypeError);
+  assert.throws(() => VORLAGEN[1].verhalten.extra.push({}), TypeError);
+  assert.throws(() => {
+    VORLAGEN[14].auswertung.felder[3].optionen[0] = "x";
+  }, TypeError);
+  assert.equal(VORLAGEN[1].name, "Buchgespräch");
+});
+
+test("alsEigenenKopieren liefert unabhängige, veränderliche Kopien (auch mit unbekannten Feldern)", () => {
+  const kopie = alsEigenenKopieren(VORLAGEN[14], "eigen-abc123def456", "Meine");
+  assert.equal(kopie.ok, true);
+  keinerEingefroren(kopie.profil, "kopie");
+  kopie.profil.name = "Geändert";
+  kopie.profil.auswertung.felder[3].optionen.push("neu");
+  kopie.profil.wissen.bereiche.push("buecher");
+  assert.equal(VORLAGEN[14].name, "Anliegen aufnehmen");
+  assert.ok(!VORLAGEN[14].auswertung.felder[3].optionen.includes("neu"));
+  assert.deepEqual(VORLAGEN[14].wissen.bereiche, []);
+  // Eine Quelle mit unbekannten Feldern, selbst tief eingefroren: die Kopie teilt keine Knoten.
+  const quelle = profilAus({
+    schema: "lva.assistent/1",
+    id: "quelle",
+    name: "Quelle",
+    zukunft: { a: [1, { b: "t" }] },
+    verhalten: { neu: [1] },
+  });
+  const einfrieren = (w) => {
+    if (typeof w === "object" && w !== null && !Object.isFrozen(w)) {
+      Object.freeze(w);
+      Object.values(w).forEach(einfrieren);
+    }
+  };
+  einfrieren(quelle);
+  const k2 = alsEigenenKopieren(quelle, "eigen-zzzzzzzzzzzz", "K");
+  assert.equal(k2.ok, true);
+  keinerEingefroren(k2.profil, "k2");
+  const zukunft = k2.profil.extra.find((m) => m.schluessel === "zukunft");
+  zukunft.wert.wert[0].wert.wert.push({ art: "null" });
+  k2.profil.verhalten.extra[0].wert.wert.push({ art: "null" });
+  assert.equal(quelle.extra[0].wert.wert[0].wert.wert.length, 2);
+  assert.equal(quelle.verhalten.extra[0].wert.wert.length, 1);
+  // Zwei Kopien sind voneinander unabhängig.
+  const k3 = alsEigenenKopieren(quelle, "eigen-yyyyyyyyyyyy", "K");
+  assert.equal(k3.profil.extra[0].wert.wert[0].wert.wert.length, 2);
 });
