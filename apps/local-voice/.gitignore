@@ -53,3 +53,6 @@ __pycache__/
 src-tauri/tests/fixtures/*
 # Buchimport (lva#476): kleine synthetische PDFs und Skripte, eingecheckt.
 !src-tauri/tests/fixtures/buchimport/
+# Nemotron-Diarisierung (N1): kleine Referenzdaten aus
+# koordination/nvidia-speech/tools/make_reference.py, eingecheckt (< 300 KB).
+!src-tauri/tests/fixtures/nemotron/

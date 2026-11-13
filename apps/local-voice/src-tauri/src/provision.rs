@@ -7,12 +7,20 @@
 //! Ergebnis unter `Data\` genau das, was die App selbst als installiert erkennt;
 //! eine zweite, nachgebaute Ablage-Logik im Bauskript gibt es nicht.
 //!
+//! Grenze: Exit 0 heisst, dass die Bereitstellung abgeschlossen ist und ihre
+//! Lesepruefungen bestanden hat (bei der Sprechertrennung `Fetch::Done`, siehe
+//! `commands::meeting_diarization`). Das ist ein Hinweis, keine Integritaetszusage fuer
+//! die Dateien, wie sie spaeter im Paket liegen; ein Paketexport (Packen, Signieren)
+//! muss die Bytes, die er tatsaechlich verwendet, selbst verifizieren.
+//!
 //! Zuordnung der Kennung zum Manager:
 //! * `llm-…`, `emb-…` → [`LlmRuntimeManager`] (Laufzeit und Sprachmodelle),
 //! * Phonon/Piper (`phonon-runtime`, `phonon-40m-de`, Stimmen, `piper-runtime`)
 //!   → [`TtsModelManager`],
 //! * `spk-campplus-voxceleb-16k` (Stimmabdruck CAM++ fuer Sprecher-Vorschlaege)
 //!   → derselbe Ladeweg wie der Knopf in den Besprechungs-Einstellungen,
+//! * `diar-…` (Sprechertrennung: Sortformer, Nemotron mit zwei Dateien) → der Ladeweg
+//!   von `commands::meeting_diarization`, je Kennung,
 //! * alles andere → [`ModelManager`] (Spracherkennung, Kennung wie `--list-models`).
 
 use std::sync::Arc;
@@ -40,7 +48,8 @@ fn kind_of(id: &str) -> Kind {
         Kind::Tts
     } else if id == crate::managers::meetings::voiceprint::MODEL_ID {
         Kind::Voiceprint
-    } else if id == crate::managers::meetings::diarize::DEFAULT_MODEL_ID {
+    } else if crate::managers::meetings::diarize::is_catalog_model(id) {
+        // Sortformer und Nemotron (N1): jede Kennung des Katalogzwecks Sprechertrennung.
         Kind::Diarization
     } else {
         Kind::Asr
@@ -109,13 +118,10 @@ pub fn run(app: &AppHandle, ids: &[String]) -> i32 {
                     .map(|s| s.model_ready)
             }),
             Kind::Diarization => tauri::async_runtime::block_on(
-                crate::commands::meeting_diarization::meeting_diarization_model_download(
-                    app.clone(),
-                ),
+                crate::commands::meeting_diarization::download_model(app, id),
             )
             .and_then(|()| {
-                crate::commands::meeting_diarization::meeting_diarization_model_status(app.clone())
-                    .map(|s| s.model_ready)
+                crate::commands::meeting_diarization::model_status(app, id).map(|s| s.model_ready)
             }),
             Kind::Asr => {
                 if asr.is_none() {
@@ -260,6 +266,7 @@ mod tests {
         assert_eq!(kind_of("piper-runtime"), Kind::Tts);
         assert_eq!(kind_of("spk-campplus-voxceleb-16k"), Kind::Voiceprint);
         assert_eq!(kind_of("diar-sortformer-4spk-v2.1-q8"), Kind::Diarization);
+        assert_eq!(kind_of("diar-nemotron3-8spk-onnx-q8"), Kind::Diarization);
         assert_eq!(
             kind_of("handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf"),
             Kind::Asr

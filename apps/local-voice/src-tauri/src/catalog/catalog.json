@@ -197,7 +197,7 @@
       "parameters": "0.6B",
       "description": "Fast, accurate live English transcription",
       "base_model": "nvidia/parakeet-unified-en-0.6b",
-      "license": "cc-by-4.0",
+      "license": "NVIDIA Open Model License",
       "language_count": 1,
       "languages": [
         "en"
@@ -5868,6 +5868,38 @@
           "size_bytes": 139310336,
           "sha256": "a5dacdc650790266c7a362e54e6bf51952015487edaa606c4e11632bc32442a9",
           "url": "https://huggingface.co/handy-computer/diar_streaming_sortformer_4spk-v2.1-gguf/resolve/ae4afbb5c3d33b71cf2dbf600022b655ee706dd0/diar_streaming_sortformer_4spk-v2.1-Q8_0.gguf"
+        }
+      ]
+    },
+    {
+      "id": "diar-nemotron3-8spk-onnx-q8",
+      "name": "Nemotron 3 Diarization 8spk (Sprechertrennung)",
+      "description": "Sprechertrennung für Besprechungen: erkennt bis zu acht Sprecher je Kanal (NVIDIA Nemotron-3-Diarization, ONNX int8, rechnet auf der CPU). Lizenz: OpenMDW-1.1, das Modell wird geladen, nicht mitgeliefert.",
+      "purpose": "diarization",
+      "category": "Sprechertrennung",
+      "license": "OpenMDW-1.1",
+      "license_url": "https://openmdw.ai/license/1-1/",
+      "license_note": "Gewichte nvidia/Nemotron-3-Diarization (Lizenz OpenMDW-1.1), ONNX-Export onnx-community/Nemotron-3-Diarization-ONNX. Zwei Dateien, die nebeneinander liegen müssen (Graph und Gewichte). Wird geladen, nicht mitgeliefert.",
+      "revision": "353b6f8ad2cac3580e982d7fbdf0a010786b0406",
+      "license_verified_on": "2026-11-12",
+      "source": "hf://onnx-community/Nemotron-3-Diarization-ONNX@353b6f8ad2cac3580e982d7fbdf0a010786b0406",
+      "tags": [
+        "sprechertrennung"
+      ],
+      "files": [
+        {
+          "filename": "model_quantized.onnx",
+          "quant": "int8",
+          "size_bytes": 364375,
+          "sha256": "fff7d18c7439c9fdc1c6c4dfec924cb42d3344264ca879780dfaf7ee886e6c1e",
+          "url": "https://huggingface.co/onnx-community/Nemotron-3-Diarization-ONNX/resolve/353b6f8ad2cac3580e982d7fbdf0a010786b0406/onnx/model_quantized.onnx"
+        },
+        {
+          "filename": "model_quantized.onnx_data",
+          "quant": "int8",
+          "size_bytes": 120479872,
+          "sha256": "002d7483e1c865c35c82220fdb378f185ff213c6d35922b38ae421c8ec72c338",
+          "url": "https://huggingface.co/onnx-community/Nemotron-3-Diarization-ONNX/resolve/353b6f8ad2cac3580e982d7fbdf0a010786b0406/onnx/model_quantized.onnx_data"
         }
       ]
     },

@@ -45,6 +45,7 @@ pub mod mcp; // M6-P6e
 mod media;
 mod meeting_prompt; // M5-P5b
 mod memory_guard;
+mod netz; // lva#573: Proxy wie Windows, verständliche Netzfehler
 mod overlay;
 mod paste_guard;
 mod paste_session;
@@ -280,6 +281,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         managers::llm::LlmRuntimeManager::new(app_handle)
             .expect("Failed to initialize LLM runtime manager"),
     );
+    // lva#573: eigener Download-Proxy aus den Einstellungen.
+    netz::proxy::setze_eigenen(settings::get_settings(app_handle).download_proxy.as_deref());
     llm_runtime.set_model_dirs(settings::get_settings(app_handle).llm_model_dirs);
     let llm_server = Arc::new(managers::llm::LocalLlmServer::new());
     managers::llm::install_globals(llm_runtime.clone(), llm_server.clone());
@@ -2162,6 +2165,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             shortcut::change_dictation_audio_setting,
             shortcut::change_dictation_audio_duck_percent_setting,
             shortcut::change_local_update_dir_setting,
+            shortcut::change_download_proxy_setting,
             local_update::local_update_check,
             local_update::local_update_install,
             shortcut::change_append_trailing_space_setting,
@@ -2247,6 +2251,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::history::update_recording_retention_period,
             commands::meetings::meetings_start,
             commands::meetings::meetings_create_empty, // G1 (#70)
+            commands::meetings::meetings_start_playback_capture, // #537
+            commands::meetings::meetings_cancel_start, // lva#538
             commands::meetings::meetings_pause,
             commands::meetings::meetings_resume,
             commands::meetings::meetings_stop,
@@ -4966,8 +4972,10 @@ fn run_headless_eval_diarization(app: &AppHandle, args: &CliArgs, dir: &std::pat
     managers::transcription::init_transcribe_backend();
     let params = diarize::DiarizeParams::new(&model_path);
     eprintln!(
-        "eval-diarization: Modell {} ({} Threads)",
+        "eval-diarization: Modell {} ({}, {} Threads)",
         model_path.display(),
+        diarize::engine::EngineKind::of_path(&model_path)
+            .map_or("unbekannter Dateityp", |k| k.label()),
         params.threads
     );
     let (code, payload) = match diarize::Diarizer::load(&model_path, params.threads) {

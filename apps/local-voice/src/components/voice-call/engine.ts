@@ -411,10 +411,21 @@ interface Turn {
    */
   quellenMelden?: () => void;
   /**
-   * Nachreichen: Wartezeit auf das nächste Stück, seit der Player leer lief, ohne dass die Antwort fertig erzeugt
-   * ist (`warteAufStueck`). Läuft sie ab, endet der Schritt wie bei einem Abbruch.
+   * Stücke, die schon als Satz vorliegen, aber noch nicht im Player sind (Synthese läuft oder steht hinter einer
+   * anderen an). Nur solange etwas offen ist, kann der Player auf ein Stück warten, das ausbleibt (`stueckFrist`);
+   * wartet der Schritt auf das Modell, ist nichts offen, und die Fristen des Modells gelten.
+   */
+  synthOffen: number;
+  /**
+   * Wartezeit auf das nächste Stück (`warteAufStueck`), seit der Player leer lief, obwohl noch ein Stück offen ist.
+   * Läuft sie ab, endet der Schritt wie bei einem Abbruch.
    */
   stueckTimer?: ReturnType<typeof setTimeout>;
+  /**
+   * Die Wartegrenze (`stueckFrist`) hat den Schritt beendet, nicht der Nutzer. Eine Erkennung, die danach noch
+   * eintrifft, bleibt gültig (`aeusserungGilt`): ein Timeout überholt keine Äußerung.
+   */
+  abgelaufen?: boolean;
 }
 
 const PREROLL_FRAMES = 15;
@@ -443,10 +454,12 @@ export const TUNING = {
   /** Deckel für den Satzpuffer eines Auftrags (Zeichen); was darüber liegt, wird gezählt und verworfen. */
   auftragMaxZeichen: 20_000,
   /**
-   * Nachreichen: so lange darf die Synthese des nächsten Stücks ausbleiben, nachdem der Player leer lief (ms). Was
-   * schon klingt, wird nie abgeschnitten; ein Stück, das danach nicht kommt, beendet den Schritt wie ein Abbruch.
+   * So lange darf die Synthese eines schon vorliegenden Stücks ausbleiben, nachdem der Player leer lief (ms), beim
+   * gewöhnlichen Schritt wie beim Nachreichen: dieselbe Störung (die Synthese antwortet nicht), dieselbe Lücke im Ton,
+   * darum ein Wert. Was schon klingt, wird nie abgeschnitten; ein Stück, das danach nicht kommt, beendet den Schritt
+   * wie ein Abbruch.
    */
-  nachreichenStueckMaxMs: 10_000,
+  stueckMaxMs: 10_000,
 };
 /** Was ein Häppchen ist: Inhalt (Modell, S0-Antwort), Ansage (Ab S1, Überbrückung) oder feste Vorlage. */
 /** `sofort`: Weitersprechen des Sofort-Sprechers (keine Antwort, schließt keinen ersten Satz). */
@@ -615,9 +628,9 @@ export class VoiceCallEngine {
   /** Zählt Erkennungen im Anhalten: nur die jüngste darf entscheiden. */
   private holdRun = 0;
   /**
-   * Zählt jede neue Lage: eine neue Äußerung (`onSpeechStart`), einen neuen Schritt (`newTurn`) und
-   * jede Erkennung bei angehaltener Antwort (`decideHeld`). Ein spätes Erkennungsergebnis nach der
-   * Frist gilt nur, wenn der Zähler seit dem Start seiner Erkennung gleich geblieben ist (lva#509).
+   * Zählt jede neue Lage: eine neue Äußerung (`onSpeechStart`), einen neuen Schritt (`newTurn`), Esc
+   * (`interrupt`) und jede Erkennung bei angehaltener Antwort (`decideHeld`). Ein Erkennungsergebnis bei
+   * angehaltener Antwort gilt nur, wenn der Zähler seit dem Start seiner Erkennung gleich geblieben ist (lva#509).
    */
   private lage = 0;
   /** Eine Erkennung im Anhalten läuft. */
@@ -1240,9 +1253,10 @@ export class VoiceCallEngine {
     this.holdBusy = false;
     this.zaehleHaltezeit(turn);
     this.player?.resume();
-    // Setzt die Wiedergabe leer fort (nichts mehr zu spielen), läuft die Wartezeit auf das nächste Stück von neuem:
-    // in der Pause war sie ausgesetzt, und das Fortsetzen meldet nicht in jedem Fall einen Leerlauf.
-    this.pruefeStueckwartezeit(turn);
+    // Setzt die Wiedergabe leer fort (nichts mehr zu spielen), gilt das wie ein Leerlauf des Players: der fertige
+    // Schritt endet, sonst läuft die Wartezeit auf das nächste Stück von neuem. In der Pause war sie ausgesetzt, und
+    // das Fortsetzen meldet nicht in jedem Fall einen Leerlauf (`resume` ohne `onIdle`).
+    if (this.turn === turn && !this.player?.active) this.playerLeer();
     this.setState(this.player?.active ? "speaking" : "listening");
   }
 
@@ -1295,6 +1309,9 @@ export class VoiceCallEngine {
     if (!turn) return;
     const run = ++this.holdRun;
     const meineLage = ++this.lage;
+    // Anruf und Gespräch, zu denen diese Erkennung gehört: Auflegen, Neustart und Gesprächswechsel entwerten sie.
+    const gespraech = this.generation;
+    const anruf = this.startGen;
     this.holdBusy = true;
     const t0 = performance.now();
     type Erg = { text: string } | { fehler: unknown };
@@ -1321,10 +1338,18 @@ export class VoiceCallEngine {
         spaet = true;
       }
       erg = await ergebnis;
-      // Das späte Ergebnis gehört zur Lage von damals: hat sich seither etwas getan (neue Äußerung,
-      // neuer Schritt, neue Erkennung), wird es verworfen und bricht nichts ab.
-      if (this.lage !== meineLage) return;
     } else erg = erstes;
+    // Das Ergebnis gehört zur Lage von damals, vor wie nach der Frist: hat sich seither etwas getan (neue
+    // Äußerung, neuer Schritt, Esc), wird es verworfen und bricht nichts ab. Nach dem Auflegen, bei einem Neustart
+    // des Anrufs oder einem Gesprächswechsel gilt es erst recht nicht. Ein Timeout oder ein Fehlerende des Schritts
+    // (`dropTurn`) hebt die Erkennung nicht auf, das Ende des Anrufs oder des Gesprächs schon.
+    if (
+      this.lage !== meineLage ||
+      gespraech !== this.generation ||
+      anruf !== this.startGen ||
+      !this.inCall
+    )
+      return;
 
     if (!spaet) {
       // Überholt (der Nutzer sprach weiter) oder abgebrochen: nichts davon gilt mehr. Nur ein vom
@@ -1345,18 +1370,12 @@ export class VoiceCallEngine {
     // Läuft der Schritt (noch), entscheidet die Logik. Ist er weg, ohne abgebrochen zu sein (Fehler,
     // zu Ende gelaufen), ist die Äußerung ein gewöhnlicher neuer Beitrag; sonst gilt sie nicht mehr.
     const laeuft = this.turn === turn && !turn.cancelled;
-    if (!laeuft && (turn.cancelled || this.turn !== null)) return;
-    const inhalt = (laeuft ? this.gehoert(turn) : []).filter(
+    if (!this.aeusserungGilt(turn, laeuft)) return;
+    const stand = this.entscheidungsStand(turn, laeuft, spaet);
+    const inhalt = (stand ? this.gehoert(turn) : []).filter(
       (p) => p.kind === "inhalt",
     );
     const satz = inhalt.length > 0 ? inhalt[inhalt.length - 1].text : "";
-    // Nach der Frist ist die Antwort schon wieder zu hören: wie ein spätes Unterbrechen behandeln.
-    const stand: TurnStand | null = laeuft
-      ? {
-          ...this.stand(turn),
-          ersterSatzFertig: this.stand(turn).ersterSatzFertig || spaet,
-        }
-      : null;
     const d = entscheide(text, stand, turn.userText, satz);
     if (d.art === "weiter") {
       if (!spaet) this.releaseHold();
@@ -1383,6 +1402,36 @@ export class VoiceCallEngine {
       lastSpeechWall,
       performance.now() - t0,
     );
+  }
+
+  /**
+   * Gilt eine erkannte Äußerung noch, deren Schritt `turn` ist? Ja, solange er läuft; ist er weg, nur wenn nichts
+   * Neues begonnen hat und er von selbst zu Ende lief (Fehler, ausgesprochen) oder die Wartegrenze ihn beendet hat
+   * (`stueckFrist`): ein Timeout überholt keine Äußerung, die Erkennung durfte nur länger dauern. Nach Abbruch durch
+   * den Nutzer, Esc oder einen anderen Schritt gilt sie nicht mehr.
+   */
+  private aeusserungGilt(turn: Turn, laeuft: boolean): boolean {
+    if (laeuft) return true;
+    return this.turn === null && (!turn.cancelled || !!turn.abgelaufen);
+  }
+
+  /**
+   * Stand für die Entscheidung über eine erkannte Äußerung (`entscheide`). Läuft der Schritt, gilt sein Stand
+   * (`spaet`: die Antwort ist schon wieder zu hören, nichts mehr zusammenzuführen). Hat ihn die Wartegrenze
+   * beendet, gilt er als schon gehört: zusammengeführt wird nie, Rückmeldelaut und Stoppwort wirken wie sonst.
+   * Sonst ist die Äußerung ein gewöhnlicher neuer Beitrag (`null`).
+   */
+  private entscheidungsStand(
+    turn: Turn,
+    laeuft: boolean,
+    spaet: boolean,
+  ): TurnStand | null {
+    if (!laeuft && !turn.abgelaufen) return null;
+    const stand = this.stand(turn);
+    return {
+      ...stand,
+      ersterSatzFertig: stand.ersterSatzFertig || spaet || !laeuft,
+    };
   }
 
   /**
@@ -1468,13 +1517,26 @@ export class VoiceCallEngine {
   private sendeAntwort(turn: Turn): void {
     if (turn.finalSent || turn.finalText === undefined || turn.cancelled)
       return;
-    // Das Ergebnis eines Auftrags wird erst gemeldet (und damit gespeichert), wenn sein Ton wirklich begonnen
-    // hat: bis dahin lässt sich das Nachreichen noch zurückstellen, und die Zeile wäre nicht mehr zurückzunehmen.
-    if (turn.nachreichen && !this.warZuHoeren(turn)) return;
+    // Eine endgültige Zeile wird gespeichert und ist nicht mehr zurückzunehmen: sie geht erst hinaus, wenn von der
+    // Antwort wirklich etwas zu hören war. Bis dahin lässt sich der Schritt noch ohne Spur beenden (Nutzer spricht,
+    // Stopp, Wechsel), ein Nachreichen sogar zurückstellen. Ganz eingereihte, aber stumme Antworten (zurückgehaltener
+    // Start, ausgebliebener Ton) hinterlassen nichts.
+    if (!this.warZuHoeren(turn)) return;
     // `warZuHoeren` kann den Beginn melden, und der meldet die Antwort bereits.
     if (turn.finalSent) return;
     turn.finalSent = true;
     this.cb.onAssistant(turn.finalText, true, false, turn.nachreichen?.turnId);
+  }
+
+  /**
+   * Ein Stück des Schritts klingt wirklich: eine fertige, bisher stumm gewartete Antwortzeile geht jetzt hinaus
+   * (Vorlage, Wiederholen, kurze Antwort). Eine Antwort, die noch durch eine Ergänzung ersetzt werden kann, wartet
+   * weiter auf das Ende des ersten Satzes (`ersterSatzFertig`).
+   */
+  private beginnGehoert(turn: Turn): void {
+    if (turn.finalText === undefined || darfZusammenfuehren(this.stand(turn)))
+      return;
+    this.sendeAntwort(turn);
   }
 
   /** Der erste Inhaltssatz ist zu Ende gesprochen: eine wartende Antwortzeile geht jetzt raus. */
@@ -1517,6 +1579,7 @@ export class VoiceCallEngine {
       userText: "",
       pieces: [],
       heard: 0,
+      synthOffen: 0,
       lastSpeechWall,
       startFrame,
     };
@@ -1644,11 +1707,12 @@ export class VoiceCallEngine {
     const laeuft = this.turn === kandidat && !kandidat.cancelled;
     // Der Schritt ist weg, weil ihn etwas anderes beendet hat (getippter Text, Esc, Widerruf): die Äußerung
     // gilt nicht mehr und darf weder den neuen Schritt abbrechen noch einen eigenen beginnen. Nur ein Schritt,
-    // der von selbst zu Ende lief (Fehler, ausgesprochen), lässt sie als gewöhnlichen Beitrag gelten.
-    if (!laeuft && (kandidat.cancelled || this.turn !== null)) return;
+    // der von selbst zu Ende lief (Fehler, ausgesprochen) oder dem die Wartegrenze ein Ende setzte, lässt sie
+    // gelten (`aeusserungGilt`).
+    if (!this.aeusserungGilt(kandidat, laeuft)) return;
     const d = entscheide(
       erkannt,
-      laeuft ? this.stand(kandidat) : null,
+      this.entscheidungsStand(kandidat, laeuft, false),
       kandidat.userText,
     );
     if (d.art === "weiter") {
@@ -2418,7 +2482,8 @@ export class VoiceCallEngine {
       assistantText += (assistantText ? " " : "") + piece;
       turn.angezeigt = true;
       this.cb.onAssistant(assistantText, false, false);
-      chain = chain.then(async () => {
+      turn.synthOffen++;
+      const schritt = async () => {
         if (dead()) return;
         let wav: string;
         try {
@@ -2436,6 +2501,9 @@ export class VoiceCallEngine {
         if (!ansage && !firstAudioAt) firstAudioAt = performance.now();
         await turn.committedP;
         if (dead()) return;
+        // Das Stück ist da: die Wartezeit auf es (`warteAufStueck`) ist vorbei.
+        clearTimeout(turn.stueckTimer);
+        turn.stueckTimer = undefined;
         if (!turn.audible) {
           turn.audible = true;
           this.player?.rearm();
@@ -2475,12 +2543,16 @@ export class VoiceCallEngine {
           },
           () => {
             rec.started = true;
+            this.beginnGehoert(turn);
             // Der Inhalt beginnt zu klingen: jetzt melden die Quellen (falls sie darauf gewartet haben).
             if (kind === "inhalt") this.quellenMeldenJetzt(turn);
           },
         );
         rec.queued = true;
-      });
+      };
+      chain = chain.then(schritt).finally(() => this.stueckFertig(turn));
+      // Ist der Player schon leer (das Modell lieferte später), beginnt die Wartezeit auf dieses Stück jetzt.
+      this.pruefeStueckwartezeit(turn, true);
     };
     // E9: `fertig_ms` erst, wenn der Schritt zu Ende gesprochen ist (`finishTurn`).
     const messenBeiEnde = (stufe: StufeDto | null, modell: boolean) => {
@@ -3197,8 +3269,9 @@ export class VoiceCallEngine {
     const dead = () => turn.cancelled || this.turn !== turn;
     let text = "";
     let kette: Promise<void> = Promise.resolve();
+    turn.synthOffen = a.saetze.length;
     for (const piece of a.saetze) {
-      kette = kette.then(async () => {
+      const schritt = async () => {
         if (dead()) return;
         let wav: string;
         try {
@@ -3248,12 +3321,11 @@ export class VoiceCallEngine {
           },
         );
         rec.queued = true;
-      });
+      };
+      kette = kette.then(schritt).finally(() => this.stueckFertig(turn));
     }
     await kette;
     if (dead()) return;
-    clearTimeout(turn.stueckTimer);
-    turn.stueckTimer = undefined;
     turn.done = true;
     this.pruefeSatzende(turn);
     if (turn.heard === 0) {
@@ -3299,8 +3371,9 @@ export class VoiceCallEngine {
   }
 
   /**
-   * Der Player ist leer gelaufen. Ist die Antwort fertig erzeugt, endet der Schritt. Beim Nachreichen fehlt sonst noch
-   * ein Stück (seine Synthese läuft): länger als `nachreichenStueckMaxMs` wartet der Schritt nicht darauf.
+   * Der Player ist leer (gemeldet oder festgestellt). Ist die Antwort fertig erzeugt, endet der Schritt. Sonst
+   * fehlt noch etwas: liegt ein Stück schon vor (seine Synthese läuft), wartet der Schritt höchstens
+   * `stueckMaxMs` darauf; wartet er nur auf das Modell, gelten dessen Fristen.
    */
   private playerLeer(): void {
     const turn = this.turn;
@@ -3310,34 +3383,48 @@ export class VoiceCallEngine {
   }
 
   /**
-   * Nachreichen mit leerem Player und fehlendem Stück: die Wartezeit läuft (von neuem). Nicht in der Pause
-   * (`held`: die Entscheidung läuft, `releaseHold` nimmt sie danach wieder auf) und nicht bei klingendem Ton.
+   * Läuft die Wartezeit auf das nächste Stück? Nur bei hörbarem Schritt, leerem Player und mindestens einem
+   * offenen Stück; nicht in der Pause (`held`: die Entscheidung läuft, `releaseHold` nimmt sie danach wieder auf) und
+   * nicht bei klingendem Ton. `behalten`: eine schon laufende Wartezeit nicht neu beginnen (ein weiteres Stück
+   * kam hinzu, ohne dass der Player etwas gespielt hat), sonst beginnt sie von neuem.
    */
-  private pruefeStueckwartezeit(turn: Turn): void {
-    if (!turn.nachreichen || !turn.audible || turn.done || turn.cancelled)
+  private pruefeStueckwartezeit(turn: Turn, behalten = false): void {
+    if (!turn.audible || turn.done || turn.cancelled || turn.synthOffen <= 0)
       return;
     if (this.turn !== turn || this.held === turn || this.player?.active) return;
+    if (behalten && turn.stueckTimer !== undefined) return;
     this.warteAufStueck(turn);
+  }
+
+  /** Ein Stück ist erledigt (eingereiht, übersprungen, gescheitert oder verworfen): ohne offenes Stück keine Wartezeit. */
+  private stueckFertig(turn: Turn): void {
+    turn.synthOffen--;
+    if (turn.synthOffen > 0) return;
+    clearTimeout(turn.stueckTimer);
+    turn.stueckTimer = undefined;
   }
 
   private warteAufStueck(turn: Turn): void {
     clearTimeout(turn.stueckTimer);
     turn.stueckTimer = setTimeout(
       () => this.stueckFrist(turn),
-      TUNING.nachreichenStueckMaxMs,
+      TUNING.stueckMaxMs,
     );
   }
 
   /**
-   * Das nächste Stück kam nicht: das Nachreichen endet wie ein Abbruch durch den Nutzer. Das Gehörte bleibt als
-   * unterbrochene Zeile des Auftrags, der Rest ist verworfen, Schritt und Auftrag sind frei; eine späte Synthese
-   * bleibt ohne Wirkung. Bei angehaltener Wiedergabe (Entscheidung läuft) oder neuem Ton läuft nichts ab; die
-   * Pause verbraucht die Wartezeit nur, `releaseHold` und der nächste Leerlauf setzen sie neu an.
+   * Das nächste Stück kam nicht: der Schritt endet wie ein Abbruch durch den Nutzer. Das Gehörte bleibt als
+   * unterbrochene Zeile (beim Nachreichen mit der Kennung des Auftrags), der Rest ist verworfen, der Schritt ist
+   * frei (das Modell wird abgebrochen), eine späte Synthese bleibt ohne Wirkung. Bei angehaltener Wiedergabe
+   * (Entscheidung läuft) oder neuem Ton läuft nichts ab; die Pause verbraucht die Wartezeit nur, `releaseHold` und
+   * der nächste Leerlauf setzen sie neu an.
    */
   private stueckFrist(turn: Turn): void {
     turn.stueckTimer = undefined;
     if (turn.cancelled || turn.done || this.turn !== turn) return;
-    if (this.held === turn || this.player?.active) return;
+    if (turn.synthOffen <= 0 || this.held === turn || this.player?.active)
+      return;
+    turn.abgelaufen = true;
     this.cancelTurn(true);
     if (!this.utt && this.inCall) this.setState("listening");
   }
@@ -3456,9 +3543,30 @@ export class VoiceCallEngine {
         interrupted: true,
         ...(turn.withContext ? { ctx: true } : {}),
       });
-      this.cb.onAssistant(heard, true, true, turn.nachreichen?.turnId);
+      // Die Zeile zeigt alles Gehörte (auch das Weitersprechen davor), der Verlauf der KI nur den Inhalt.
+      const angezeigt = this.gehoert(turn)
+        .map((p) => p.text)
+        .join(" ");
+      this.cb.onAssistant(angezeigt, true, true, turn.nachreichen?.turnId);
+    } else if (interrupted && !turn.nachreichen) {
+      this.kuerzeAnzeige(turn);
     }
     this.player?.stop();
+  }
+
+  /**
+   * Der Schritt endet unterbrochen, ohne dass Inhalt zu hören war (Vorlage wie „Ich wiederhole.“, Weitersprechen
+   * des Sprechers, Ansage oder gar nichts): die angezeigte Zeile darf nichts Ungesprochenes behalten. Das Gehörte
+   * bleibt als unterbrochene Zeile stehen; war nichts zu hören, verschwindet die noch offene Zeile. Eine schon
+   * endgültige Zeile lässt sich nur kürzen, nicht zurücknehmen. (Mit Inhalt kürzt `cancelTurn` auf diesen.)
+   */
+  private kuerzeAnzeige(turn: Turn): void {
+    if (!turn.angezeigt) return;
+    const gehoert = this.gehoert(turn)
+      .map((p) => p.text)
+      .join(" ");
+    if (gehoert) this.cb.onAssistant(gehoert, true, true);
+    else if (!turn.finalSent) this.cb.onVerwerfen?.();
   }
 }
 

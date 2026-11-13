@@ -3,9 +3,102 @@
 //! chunk -> transcription -> delta pipeline, the consent gate, crash
 //! recovery and the recording indicator (tray + overlay).
 //!
-//! Everything that can be decided without I/O lives in the free functions at
-//! the top (`consent_gate`, `may_start`, `apply_pause`) so the state rules are
-//! testable without Tauri, audio hardware or a model.
+//! Everything that can be decided without I/O lives in free functions (`consent_gate`,
+//! `settle_after_stop`, ...) and in `lifecycle.rs` (der Lebenszyklus), so the state
+//! rules are testable without Tauri, audio hardware or a model.
+//!
+//! #537: `start_playback_capture` nimmt NUR den Systemton auf (kein Mikrofon) und
+//! schreibt ihn in eine vorhandene YouTube-Besprechung (`playback.rs`): der Nutzer
+//! spielt das Video im eingebetteten Player ab, die Aufnahme laeuft wie jede andere
+//! (`system.wav`, Live-Transkript, Stopp, Enddurchlauf). Dasselbe Geruest wie die
+//! Besprechung, nur mit [`CaptureMode::PlaybackOnly`]: kein `mic.wav`, kein
+//! Mikrofon-Capture, kein Echo, `RecordingSession.mic_*` leer.
+//!
+//! lva#538, die Architektur: EIN Lebenszyklus-Zustand unter EINER Sperre (`lifecycle::RunCore`:
+//! Idle -> Starting{op_id, meeting_id, cancel} -> Recording -> Stopping, danach `Finalizing`).
+//! Der Start registriert sich mit seiner `op_id` atomar, bevor er etwas anderes tut; Stopp und
+//! Loeschen sprechen genau diesen Vorgang an, und ein Stopp, der VOR der Registrierung kommt,
+//! wird als Grabstein gemerkt und gilt verbindlich. Abbruch und Teardown sind eine BARRIERE
+//! (`RecordingSession::drop`): Sinks schliessen (Callback-Sperre), Captures stoppen und joinen,
+//! DSP-Thread und Live-Worker beenden und JOINEN; erst danach folgen Rollback und Dateiloeschung.
+//! Danach gibt es keine Nebenwirkung mehr (kein WAV, kein DSP, kein Pegel, kein Segment).
+//!
+//! Fehlerfaelle und ihre Absicherung (Stand lva#538, Fixrunde 2):
+//! - **Nebenlaeufigkeit (Start, Stopp, Abbruch, Loeschen)**: ein Zustand, eine Sperre, kein
+//!   Atomic daneben. Start/Stopp-Wettlauf, Abbruch vor/waehrend/nach der Registrierung, Loeschen
+//!   waehrend eines Stopps: Tests in `lifecycle.rs` (`a_cancel_racing_the_registration_never_
+//!   gets_lost`, `a_delete_waits_for_the_stop_to_finish_closing_the_recording`, ...). Ein Warten,
+//!   das ablaeuft, ist ein FEHLER (`start_busy`, `recording_busy`), nie ein stiller Erfolg.
+//! - **Abbruch mitten im Start (Frist, Stopp, Loeschen)**: `start_bounded` ruft `abandon`
+//!   (= `close_sink`) auf, BEVOR es zurueckkehrt. Der Sink ist unter seiner Sperre geschlossen:
+//!   ein laufender Callback ist fertig, ein spaeterer ruft weder WAV noch DSP noch Pegel.
+//!   Tests: `a_wedged_start_times_out_abandons_the_sink_...`, `a_running_callback_is_finished_
+//!   when_the_barrier_returns`, `a_late_callback_after_the_timeout_writes_nothing`.
+//! - **Veroeffentlichung eines abgebrochenen Starts**: die Sitzung wird im Start frueh
+//!   angelegt; faellt sie ohne Stopp (Abbruch, Fehler, Panik), laeuft ihr `Drop` durch die
+//!   Barriere (`DSP/Worker: LivePipeline::abort`, gejoint). Danach steht kein Segment in der
+//!   Datenbank, und es kommt kein Ereignis. Der Rollback der Zeile (`rollback_playback_capture`:
+//!   Saetze verwerfen und zuruecksetzen in EINER Transaktion) und das Loeschen der Dateien
+//!   kommen erst danach; scheitert der Rollback, bleibt die Datei stehen (Status `failed`).
+//!   Tests: `a_dropped_session_leaves_no_segment_event_or_callback_effect`, `dsp.rs`
+//!   (`an_abort_returns_only_when_the_worker_is_done_...`), `playback.rs` (`a_rollback_...`).
+//! - **Loeschen waehrend Start, Aufnahme oder Abschluss**: `reserve_delete` haelt die Besprechung
+//!   gesperrt (`delete_in_progress`, kein Start mehr in sie), beendet einen laufenden Start
+//!   (`meeting_not_found`) und eine laufende Aufnahme (ohne Enddurchlauf) und wartet den
+//!   Abschluss eines Stopps ab (Pipeline leeren, Writer schliessen: `Finalizing`). Die
+//!   Reservierung faellt erst nach Grabstein und Dateiloeschung. Tests: `lifecycle.rs`.
+//! - **Voller Datentraeger, Schreibfehler, Kopf-Flush** (gemeinsamer Pfad, auch Live-Aufnahmen):
+//!   der Callback verwirft den WAV-Writer (auch bei einem Fehler des Kopf-Flush) und setzt ein
+//!   Merkzeichen (`WriteFlags`, nur Atomics); ein Waechter-Thread und `stop()` schreiben es
+//!   DAUERHAFT als `metadata_json.audio_incomplete` und melden `audio_write_failed`. Laesst sich
+//!   der Marker nicht speichern, versucht es der Waechter weiter, und `stop()` weicht fail-closed
+//!   auf `Keep(AudioIncomplete)` aus (`settle_after_stop`). Tests: `a_write_error_...`,
+//!   `a_header_flush_error_...`, `a_marker_that_cannot_be_stored_keeps_the_live_transcript`,
+//!   `wav_writer.rs`, `final_pass.rs` (Abdeckung je Spur).
+//! - **Nicht sauberer Abschluss des Loopbacks (lva#538 Runde 5)**: `LoopbackCapture::stop`
+//!   liefert `CaptureEnd {lost, error, panicked, timeline_uncertain}` (nie ein `bool`). Jedes Feld
+//!   (Verlust beim Abschluss, Geraetefehler, Panik des Capture-Threads, deren `join` fehlschlaegt,
+//!   unsichere Zeitachse durch ein Paket ohne Stempel, einen ignorierten Stempel oder eine ueber
+//!   `MAX_GAP` gekuerzte Pause) macht den Systemkanal dauerhaft unvollstaendig:
+//!   `settle_after_stop` schreibt `audio_incomplete` mit Grund, laesst `capture_open` stehen, und
+//!   der Enddurchlauf ersetzt nichts. Tests: die
+//!   `..._keeps_the_live_transcript_after_a_restart` in `final_pass.rs` (echter Capture-Thread ->
+//!   `stop_loopback` -> `settle_after_stop` -> Store neu geoeffnet -> `run_job`).
+//! - **Kein Ausgabegeraet / Loopback scheitert**: der Start schlaegt mit
+//!   `playback_capture_failed` fehl, nie still "nur Mikrofon" (es gibt keins); das Ziel wird
+//!   aus dem gespeicherten Vorzustand zurueckgesetzt. Test: `a_failing_start_reports_its_error_at_once`.
+//! - **Treiber haengt (Frist) oder stirbt**: `playback_capture_timeout`; stirbt die Capture
+//!   mitten in der Aufnahme, meldet der Waechter `playback_capture_died`, die Aufnahme bleibt
+//!   stehen, der Nutzer stoppt, das bis dahin Gehoerte bleibt. Ein Treiber, der im Start
+//!   abstuerzt, ist ein Fehler, kein Haenger (`a_panicking_start_is_a_failure_not_a_hang`).
+//! - **Absturz eines Kindthreads (DSP, Worker)**: der Join meldet es im Log (`join_all`), die
+//!   Barriere kehrt trotzdem zurueck; der Rest der Aufnahme (WAV) ist unabhaengig davon.
+//! - **Absturz der App**: die Pfade stehen ab dem Start in der Datenbank, `recover_orphans`
+//!   repariert `system.wav` und holt den Rest nach. Fail-closed: ein Mitschnitt wird nur
+//!   zurueckgesetzt, wenn er NACHWEISLICH nie aufgenommen hat (`playback::audio_state`:
+//!   `NotFound` oder nur der WAV-Kopf); ein Dateizustand, der sich nicht lesen laesst, ist
+//!   `Unknown` und laesst alles stehen. Tests: `the_recovery_...`, `playback.rs`.
+//! - **Warten auf den Mikrofonkanal**: der DSP-Thread, `drain()` und der
+//!   Enddurchlauf behandeln jede Spur einzeln; ein nie beschickter Kanal blockiert
+//!   nichts. Stille am Systemton fragt der Waechter nach 30 s nach (`WatchConfig::playback()`).
+//! - **Null-WAV-Leichen**: es wird nur `system.wav` angelegt; ein Mitschnitt, der ohne einen
+//!   Ton endet, setzt den Eintrag zurueck (`stop`); ein gescheiterter Start entfernt nur, was
+//!   er selbst angelegt hat (`remove_capture_files`), und nur, wenn kein Satz gespeichert ist
+//!   (`discard_failed_start` behaelt sonst Transkript UND Audio).
+//! - **Rueckfall eines gescheiterten Starts und die Tor-Bindungen (lva#538, B1)**: jeder
+//!   Rueckfall (`discard_failed_start`, `undo_live_target_start`, `undo_playback_start`) meldet als
+//!   [`Rueckfall`], ob er NACHWEISLICH vollstaendig war; `start_hinter_tor` verwirft die Bindungen
+//!   des Starts (`planning::bindung_verwerfen`) nur dann. Bleiben Audio oder Transkript, scheitert
+//!   ein Schritt oder ist er nicht zu belegen, bleiben die Bindungen: die Planung gilt weiter fuer
+//!   den behaltenen Ton (fail-closed). Tests: `start::a_start_cancelled_after_it_became_effective_
+//!   keeps_audio_transcript_and_bindings`, `start::a_playback_start_whose_rollback_is_refused_...`,
+//!   `start::a_binding_that_cannot_be_written_...`.
+//! - **Echtzeit**: der Callback laeuft ganz unter der Sperre seines Sinks (`closed`-Pruefung,
+//!   WAV-Append, Kopf-Flush, `try_send` an den DSP, Pegel): keine Datenbank, kein Warten auf
+//!   etwas anderes. Ein Ueberlauf der DSP-Queue wird gezaehlt und als
+//!   `Health { QueueOverflow }` gemeldet (nicht verschluckt). Vorbestehend und unveraendert:
+//!   das WAV-Append selbst (Datei-I/O), die Allokation seines Byte-Puffers und die Sperre des
+//!   Sinks laufen im Callback-Thread; die Sperre wird nur kurz vom Abbruch/Stopp gehalten.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -25,10 +118,15 @@ use super::dsp::{
 };
 use super::empty::{coded_error, EmptyFill};
 use super::final_pass::{self, FinalChoice, FinalPlan, JobSpec, KeepReason};
+pub use super::lifecycle::START_CANCELLED;
+use super::lifecycle::{
+    lock_recovering, CancelOp, DeleteStep, RunCore, StartTicket, StopStep, StopTicket,
+    MEETING_NOT_FOUND, START_BUSY,
+};
 use super::mic_capture::MeetingMicCapture;
 use super::signal_watch::HealthState;
 use super::store::{Meeting, MeetingSource, MeetingStatus, MeetingStore, StoredSegment};
-use crate::audio_toolkit::audio::{LoopbackCapture, StreamingWavWriter};
+use crate::audio_toolkit::audio::{CaptureEnd, LoopbackCapture, StreamingWavWriter};
 use crate::managers::transcription::TranscriptionManager;
 
 /// Sample rate of the whole meetings pipeline (mic capture and loopback both
@@ -51,22 +149,178 @@ const LOOPBACK_START_TIMEOUT: Duration = Duration::from_secs(5);
 const LOOPBACK_WATCH_INTERVAL: Duration = Duration::from_millis(500);
 /// How many meetings `recover_orphans` scans per page.
 const RECOVERY_PAGE: u32 = 100;
+/// Wie oft das Warten auf den Capture-Start den Abbruchmerker prueft.
+const START_POLL: Duration = Duration::from_millis(25);
+/// Wie lange ein Stopp auf das Ende eines abgebrochenen Starts (oder einer laufenden
+/// Aufnahme-Anzeige) wartet. Danach `start_busy`: ein Fehler, kein stiller Erfolg.
+const START_CANCEL_WAIT: Duration = Duration::from_secs(12);
+/// Wie lange das Loeschen auf eine laufende Aufnahme, einen laufenden Start oder den
+/// Abschluss eines Stopps (Pipeline leeren, Writer schliessen) wartet. Danach
+/// `recording_busy`: nichts wurde geloescht, ein neuer Versuch ist moeglich.
+const DELETE_WAIT: Duration = Duration::from_secs(60);
+/// Wie oft der Schreib-Waechter die Merkzeichen der WAV-Writer liest (und einen noch nicht
+/// gespeicherten Marker erneut zu speichern versucht).
+const WRITE_WATCH_INTERVAL: Duration = Duration::from_millis(500);
+/// So oft versucht `stop()`, den Marker `audio_incomplete` zu speichern, bevor es
+/// fail-closed auf `Keep(AudioIncomplete)` ausweicht.
+const MARKER_TRIES: u32 = 3;
+/// Fehlercode (Ereignis): die WAV liess sich nicht weiter schreiben.
+pub const AUDIO_WRITE_FAILED: &str = "audio_write_failed";
 
 /// Transcript channel ids (mirror `StoredSegment::channel`).
 pub const CHANNEL_MIC: u8 = 0;
 pub const CHANNEL_SYSTEM: u8 = 1;
 
-// ---------------------------------------------------------------------------
-// Pure state logic
-// ---------------------------------------------------------------------------
-
-/// What the recorder is doing right now. Deliberately tiny: everything that
-/// needs cleanup lives in `RecordingSession`, this is only the rule surface.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum MeetingRunState {
-    Idle,
-    Recording { meeting_id: String, paused: bool },
+/// Was eine Aufnahme aufnimmt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CaptureMode {
+    /// Die gewohnte Besprechung: Mikrofon, auf Wunsch dazu der Systemton.
+    Meeting { capture_system: bool },
+    /// #537: NUR der Systemton, in eine YouTube-Besprechung. Ohne Systemton gibt es
+    /// nichts aufzunehmen, darum ist sein Start Pflicht (kein stilles "nur Mikrofon").
+    PlaybackOnly,
 }
+
+impl CaptureMode {
+    /// Gibt es einen Mikrofonkanal (Capture, `mic.wav`, Echo-Unterdrueckung)?
+    pub(crate) fn mic(self) -> bool {
+        matches!(self, CaptureMode::Meeting { .. })
+    }
+
+    /// Gibt es einen Systemton-Kanal (`system.wav`)?
+    pub(crate) fn system(self) -> bool {
+        match self {
+            CaptureMode::Meeting { capture_system } => capture_system,
+            CaptureMode::PlaybackOnly => true,
+        }
+    }
+
+    /// Fehlercode fuer die Oberflaeche, wenn der Systemton nicht startete. In der
+    /// Besprechung geht es mit dem Mikrofon weiter (die Texte sagen das), beim
+    /// Mitschnitt scheitert der Start.
+    fn loopback_start_code(self, failure: &LoopbackStartError) -> &'static str {
+        match (self, failure) {
+            (_, LoopbackStartError::Cancelled) => START_CANCELLED,
+            (CaptureMode::PlaybackOnly, LoopbackStartError::Timeout) => "playback_capture_timeout",
+            (CaptureMode::PlaybackOnly, _) => "playback_capture_failed",
+            (_, LoopbackStartError::Timeout) => "loopback_start_timeout",
+            (_, _) => "loopback_start_failed",
+        }
+    }
+
+    /// Die Meldungen, wenn der Loopback NACH erfolgreichem Start stirbt. In der
+    /// Besprechung: Kanalzustand plus Fehler ("laeuft nur mit dem Mikrofon weiter");
+    /// beim Mitschnitt nur der eigene Fehler, denn der Mikrofon-Text waere falsch.
+    fn loopback_died_events(self, meeting_id: &str) -> Vec<MeetingEvent> {
+        let error = |message: &str| MeetingEvent::Error {
+            meeting_id: meeting_id.to_string(),
+            message: message.to_string(),
+        };
+        match self {
+            CaptureMode::PlaybackOnly => vec![error("playback_capture_died")],
+            CaptureMode::Meeting { .. } => vec![
+                MeetingEvent::Health {
+                    meeting_id: meeting_id.to_string(),
+                    channel: CHANNEL_SYSTEM,
+                    state: HealthState::LoopbackDied,
+                },
+                error("loopback_died"),
+            ],
+        }
+    }
+}
+
+/// Warum ein Capture-Start nicht zustande kam.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum LoopbackStartError {
+    /// Der Start meldete einen Fehler (kein Geraet, Treiber).
+    Failed(String),
+    /// Der Treiber antwortete nicht innerhalb der Frist.
+    Timeout,
+    /// Stopp oder Loeschen waehrend des Starts.
+    Cancelled,
+}
+
+/// Fuehrt `start` auf einem Wegwerf-Thread aus und wartet hoechstens `timeout`:
+/// ein haengender Treiber (bekannter Befund aus Task 4) darf den Start nicht
+/// ewig blockieren. Das Warten prueft alle [`START_POLL`] den Abbruchmerker `cancel`
+/// des ganzen Starts (Stopp, Loeschen).
+///
+/// lva#538: Endet das Warten OHNE Capture (Frist, Abbruch), ruft es `abandon` auf, BEVOR
+/// es zurueckkehrt. `abandon` schliesst den Sink dieser Capture (`close_sink`): das ist die
+/// Callback-Sperre, die unter derselben Sperre wie jeder Schreibzugriff liegt. Ein
+/// Callback, der gerade laeuft, ist damit fertig; ein spaeterer schreibt, speist und
+/// meldet nichts mehr, auch wenn der Treiber nach der Frist doch noch zurueckkehrt. Die
+/// Capture selbst, die dann aus dem Kanal faellt, stoppt ihr `Drop`.
+pub(crate) fn start_bounded<T: Send + 'static>(
+    thread_name: &str,
+    timeout: Duration,
+    cancel: &AtomicBool,
+    abandon: impl FnOnce(),
+    start: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, LoopbackStartError> {
+    if cancel.load(Ordering::Acquire) {
+        abandon();
+        return Err(LoopbackStartError::Cancelled);
+    }
+    let (tx, rx) = mpsc::channel::<Result<T, String>>();
+    std::thread::Builder::new()
+        .name(thread_name.to_string())
+        .spawn(move || {
+            let _ = tx.send(start());
+        })
+        .map_err(|e| LoopbackStartError::Failed(format!("start thread: {e}")))?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        let wait = deadline
+            .saturating_duration_since(Instant::now())
+            .min(START_POLL);
+        match rx.recv_timeout(wait) {
+            Ok(Ok(started)) => {
+                // Ein Abbruch, der gleichzeitig kam: erst die Sperre, dann faellt die Capture
+                // (`Drop` stoppt sie), nie umgekehrt.
+                if cancel.load(Ordering::Acquire) {
+                    abandon();
+                    return Err(LoopbackStartError::Cancelled);
+                }
+                return Ok(started);
+            }
+            Ok(Err(e)) => return Err(LoopbackStartError::Failed(e)),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if cancel.load(Ordering::Acquire) {
+                    abandon();
+                    return Err(LoopbackStartError::Cancelled);
+                }
+                if Instant::now() >= deadline {
+                    abandon();
+                    return Err(LoopbackStartError::Timeout);
+                }
+            }
+            // Der Start-Thread ist ohne Ergebnis zu Ende (Panik im Treiber).
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(LoopbackStartError::Failed(
+                    "start thread ended without a result".to_string(),
+                ))
+            }
+        }
+    }
+}
+
+/// Gilt fuer diese Besprechung der Plan des Enddurchlaufs (Recovery, "Fortsetzen")?
+/// Eine Live-Aufnahme immer; eine YouTube-Besprechung nur, wenn sie eine eigene
+/// Aufnahme hat (#537, Systemton): ohne Aufnahme gibt es nichts zu verarbeiten.
+/// Import und Untertitel bekommen keinen Enddurchlauf (`KeepReason::NotLive`).
+pub(crate) fn runs_final_pass(meeting: &Meeting) -> bool {
+    match meeting.source.as_str() {
+        "live" => true,
+        "youtube" => meeting.mic_audio_path.is_some() || meeting.system_audio_path.is_some(),
+        _ => false,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pure rules
+// ---------------------------------------------------------------------------
 
 /// Recording a meeting without a confirmed consent hint is refused outright —
 /// the consent confirmation is a product requirement (Spec A1), not a UI nicety.
@@ -76,11 +330,6 @@ pub fn consent_gate(consent_confirmed: bool) -> Result<(), String> {
     } else {
         Err("consent_required".to_string())
     }
-}
-
-/// Only one meeting records at a time (one WAV pair, one worker, one indicator).
-pub fn may_start(state: &MeetingRunState) -> bool {
-    matches!(state, MeetingRunState::Idle)
 }
 
 /// Recovery beim Start: nur `recording` und `processing` sind Reste eines
@@ -140,6 +389,32 @@ pub fn begin_live_row(
     }
 }
 
+/// Wie weit der Rueckfall eines gescheiterten Starts NACHWEISLICH gelang (lva#538, B1).
+///
+/// Nur [`Rueckfall::Vollstaendig`] erlaubt, die Tor-Bindungen des Starts zu verwerfen
+/// (`planning::bindung_verwerfen`): die Zeile ist zurueckgesetzt bzw. als leer aufgeraeumt, die
+/// Aufnahmedateien sind weg, kein Satz ist uebrig, und JEDER Schritt hat Erfolg gemeldet. Alles
+/// andere ist `Unvollstaendig`: Audio oder Transkript bleiben, ein Schritt scheiterte, oder der
+/// Stand liess sich nicht pruefen. Dann BLEIBEN die Bindungen, damit die urspruengliche Planung
+/// fuer den behaltenen Ton weiter gilt (fail-closed: im Zweifel keine Transkription ohne
+/// Einwilligung).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[must_use]
+pub(crate) enum Rueckfall {
+    Vollstaendig,
+    Unvollstaendig,
+}
+
+impl Rueckfall {
+    fn wenn(vollstaendig: bool) -> Self {
+        if vollstaendig {
+            Self::Vollstaendig
+        } else {
+            Self::Unvollstaendig
+        }
+    }
+}
+
 /// Aufraeumen nach einem Start, der nicht zustande kam (#15): die Aufnahmedateien
 /// (`mic.wav`, `system.wav`, `mic_aec.wav` mit Null-Laenge im Kopf) bleiben sonst
 /// als Debris liegen, die DB zeigt auf sie, und die Zeile bliebe `recording` und
@@ -147,174 +422,67 @@ pub fn begin_live_row(
 /// `failed`, Dateien weg, Pfade geleert, Ordner weg, wenn danach leer. Fremde
 /// Dateien im Ordner bleiben. Best effort: was sich nicht loeschen laesst (noch
 /// offen), steht im Log.
-pub(crate) fn discard_failed_start(store: &MeetingStore, meeting_id: &str, dir: &std::path::Path) {
+///
+/// lva#538, B1: der Rueckgabewert sagt, ob ALLES gelang ([`Rueckfall`]). Bleiben Saetze (oder
+/// laesst sich das nicht pruefen), Audio, Pfade oder der Marker der Aufnahme stehen, oder
+/// scheitert irgendein Schritt, ist er `Unvollstaendig`.
+pub(crate) fn discard_failed_start(
+    store: &MeetingStore,
+    meeting_id: &str,
+    dir: &std::path::Path,
+) -> Rueckfall {
+    let mut vollstaendig = true;
     if let Err(e) = store.set_status(meeting_id, MeetingStatus::Failed) {
         warn!("meetings: failed start of {meeting_id}: status not stored: {e}");
+        vollstaendig = false;
     }
+    // lva#538, fail-closed: hat die Pipeline vor dem Abbruch schon Saetze gespeichert (oder
+    // laesst sich das nicht pruefen), bleiben Transkript UND Audio stehen. Geloescht wird
+    // nur, was nachweislich leer ist.
+    match store.get_segments(meeting_id) {
+        Ok(segments) if segments.is_empty() => {}
+        Ok(_) | Err(_) => {
+            warn!("meetings: failed start of {meeting_id}: a transcript exists or is unreadable - audio kept");
+            return Rueckfall::Unvollstaendig;
+        }
+    }
+    vollstaendig &= remove_capture_files(dir);
+    if let Err(e) = store.set_audio_paths(meeting_id, None, None, None) {
+        warn!("meetings: failed start of {meeting_id}: audio paths not cleared: {e}");
+        vollstaendig = false;
+    }
+    // Es gibt kein Audio mehr, das der Marker schuetzen koennte.
+    if let Err(e) = store.end_capture(meeting_id) {
+        warn!("meetings: failed start of {meeting_id}: capture marker not cleared: {e}");
+        vollstaendig = false;
+    }
+    Rueckfall::wenn(vollstaendig)
+}
+
+/// Entfernt, was ein Aufnahmestart im Ordner angelegt haben kann (`mic.wav`,
+/// `system.wav`, `mic_aec.wav`), und den Ordner, wenn er danach leer ist. Fremdes
+/// (Folien, Notizen einer YouTube-Besprechung) bleibt. Best effort: was sich nicht
+/// loeschen laesst, steht im Log.
+///
+/// Rueckgabe (lva#538, B1): `true`, wenn keine der drei Dateien mehr da ist (geloescht oder nie
+/// angelegt); `false`, sobald eine sich nicht entfernen liess. Der Ordner zaehlt nicht dazu.
+pub(crate) fn remove_capture_files(dir: &std::path::Path) -> bool {
+    let mut alle_weg = true;
     for name in ["mic.wav", "system.wav", super::MIC_AEC_FILE] {
         let path = dir.join(name);
         match std::fs::remove_file(&path) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             // Pfad nur, nie Inhalt (Log-Datenschutz).
-            Err(e) => warn!("meetings: could not remove {path:?} after a failed start: {e}"),
+            Err(e) => {
+                warn!("meetings: could not remove {path:?} after a failed start: {e}");
+                alle_weg = false;
+            }
         }
     }
     // `remove_dir` entfernt nur einen leeren Ordner: Fremdes bleibt.
     let _ = std::fs::remove_dir(dir);
-    if let Err(e) = store.set_audio_paths(meeting_id, None, None, None) {
-        warn!("meetings: failed start of {meeting_id}: audio paths not cleared: {e}");
-    }
-}
-
-/// Pause/resume only mean something while recording.
-pub fn apply_pause(state: &mut MeetingRunState, paused: bool) -> Result<(), String> {
-    match state {
-        MeetingRunState::Recording { paused: p, .. } => {
-            *p = paused;
-            Ok(())
-        }
-        MeetingRunState::Idle => Err("not_recording".to_string()),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Lauf-Kern: Zustand + Sitzung ohne Tauri
-// ---------------------------------------------------------------------------
-
-/// Sperre nehmen, auch wenn ein anderer Thread mit ihr abgestuerzt ist. Der
-/// Zustand hier ist ein kleines Enum bzw. ein Option: ein "vergifteter" Wert ist
-/// nie halb geschrieben. Wer auf dem Hotkey-Pfad `lock().unwrap()` ruft, nimmt
-/// sonst das Diktat mit in die Panik (#15).
-fn lock_recovering<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-/// Die Zustandsregeln des Recorders mit der Sitzung als Typparameter, damit sie
-/// ohne Mikrofon, Modell und `AppHandle` pruefbar sind. Reihenfolge der Sperren
-/// ueberall: erst `state`, dann `session`.
-///
-/// Der Zustand wechselt NACH dem Capture-Start auf `Recording` und erst NACH dem
-/// Capture-Stopp zurueck auf `Idle` (#15): solange ein Mikrofon offen ist, gilt
-/// die Aufnahme als laufend, fuer Diktat-Hotkey, neuen Start und Pause.
-pub(crate) struct RunCore<S> {
-    state: Mutex<MeetingRunState>,
-    session: Mutex<Option<S>>,
-    starting: AtomicBool,
-}
-
-impl<S> RunCore<S> {
-    pub(crate) fn new() -> Self {
-        Self {
-            state: Mutex::new(MeetingRunState::Idle),
-            session: Mutex::new(None),
-            starting: AtomicBool::new(false),
-        }
-    }
-
-    /// Laeuft eine Aufnahme oder gerade ein Start/Stopp? Hotkey-Pfad: darf nie
-    /// panikieren.
-    pub(crate) fn is_recording(&self) -> bool {
-        self.starting.load(Ordering::Acquire) || !self.is_idle()
-    }
-
-    /// Nur `Idle` darf starten.
-    pub(crate) fn is_idle(&self) -> bool {
-        may_start(&lock_recovering(&self.state))
-    }
-
-    /// Beginnt einen Start: `already_recording`, wenn schon einer laeuft oder
-    /// aufgenommen wird. Das Ticket meldet "starting" bis zum Ende (auch bei jedem
-    /// Fehlerweg).
-    pub(crate) fn begin_start(&self) -> Result<StartingFlag<'_>, String> {
-        if !self.is_idle() {
-            return Err("already_recording".to_string());
-        }
-        // Ein zweiter Start waehrend des ersten (der Start haelt die Sperre lange:
-        // Mikrofon, Loopback-Timeout) wird abgewiesen, nicht ueberholt.
-        if self
-            .starting
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            return Err("already_recording".to_string());
-        }
-        Ok(StartingFlag::set(&self.starting))
-    }
-
-    /// Die Capture laeuft: Zustand UND Sitzung unter beiden Sperren setzen.
-    pub(crate) fn publish_started(&self, meeting_id: &str, session: S) {
-        crate::managers::planning::ohne_tor_sperre("Zustand der Aufnahme (publish_started)");
-        // Beide Sperren zusammen: ein Stopp dazwischen sah vorher die Sitzung, aber
-        // noch `Idle`, stellte `Idle` ein, und der Start setzte danach `Recording`
-        // ohne Sitzung (Geisteraufnahme).
-        let mut state = lock_recovering(&self.state);
-        let mut slot = lock_recovering(&self.session);
-        *state = MeetingRunState::Recording {
-            meeting_id: meeting_id.to_string(),
-            paused: false,
-        };
-        *slot = Some(session);
-    }
-
-    /// Stopp beginnen: die Sitzung herausnehmen. Der Zustand bleibt `Recording`,
-    /// bis das Ticket beendet wird (`finish`) oder faellt (auch bei Panik).
-    pub(crate) fn begin_stop(&self) -> Result<(S, StopTicket<'_, S>), String> {
-        crate::managers::planning::ohne_tor_sperre("Zustand der Aufnahme (begin_stop)");
-        let _state = lock_recovering(&self.state);
-        let mut slot = lock_recovering(&self.session);
-        let session = slot.take().ok_or_else(|| "not_recording".to_string())?;
-        Ok((session, StopTicket { core: self }))
-    }
-
-    /// Pause/Weiter: nur mit laufender Sitzung. `apply` setzt das Merkzeichen der
-    /// Capture-Callbacks unter denselben Sperren.
-    pub(crate) fn set_paused(
-        &self,
-        paused: bool,
-        apply: impl FnOnce(&S),
-    ) -> Result<String, String> {
-        crate::managers::planning::ohne_tor_sperre("Zustand der Aufnahme (set_paused)");
-        let mut state = lock_recovering(&self.state);
-        let slot = lock_recovering(&self.session);
-        // Ohne Sitzung (Startfenster, Stopp laeuft) gibt es nichts zu pausieren; ein
-        // Zustandsereignis "pausiert" ohne wirkende Pause waere falsch.
-        let session = slot.as_ref().ok_or_else(|| "not_recording".to_string())?;
-        apply_pause(&mut state, paused)?;
-        apply(session);
-        match &*state {
-            MeetingRunState::Recording { meeting_id, .. } => Ok(meeting_id.clone()),
-            MeetingRunState::Idle => Err("not_recording".to_string()),
-        }
-    }
-
-    /// Lesezugriff auf die Sitzung (Audioposition fuer den Notizblock).
-    pub(crate) fn with_session<R>(&self, f: impl FnOnce(Option<&S>) -> R) -> R {
-        let slot = lock_recovering(&self.session);
-        f(slot.as_ref())
-    }
-}
-
-/// Haelt den Zustand `Recording`, bis der Stopp die Capture wirklich beendet hat.
-/// Faellt es (Panik im Stopp), wird der Zustand trotzdem frei: sonst bliebe eine
-/// "Geisteraufnahme" zurueck, die Diktat und Neustart bis zum App-Neustart sperrt.
-pub(crate) struct StopTicket<'a, S> {
-    core: &'a RunCore<S>,
-}
-
-impl<S> StopTicket<'_, S> {
-    /// Die Capture ist zu: der Zustand wird `Idle`.
-    pub(crate) fn finish(self) {
-        drop(self);
-    }
-}
-
-impl<S> Drop for StopTicket<'_, S> {
-    fn drop(&mut self) {
-        *lock_recovering(&self.core.state) = MeetingRunState::Idle;
-    }
+    alle_weg
 }
 
 // ---------------------------------------------------------------------------
@@ -422,6 +590,11 @@ pub fn health_event(meeting_id: &str, notice: &DspNotice) -> Option<MeetingEvent
 struct ChannelSink {
     writer: Option<StreamingWavWriter>,
     samples_since_flush: usize,
+    /// lva#538: die Callback-Sperre. Gesetzt unter der Sperre dieses Sinks (`close_sink`,
+    /// `finalize_sink`), gelesen vom Callback unter derselben Sperre: ein laufender Callback
+    /// ist damit fertig, ein spaeterer tut nichts mehr (kein WAV, keine DSP-Queue, kein
+    /// Pegel). Dauerhaft: ein geschlossener Sink oeffnet nie wieder.
+    closed: bool,
 }
 
 impl ChannelSink {
@@ -429,7 +602,53 @@ impl ChannelSink {
         Self {
             writer: Some(writer),
             samples_since_flush: 0,
+            closed: false,
         }
+    }
+}
+
+/// Wohin die Pegel der Capture-Callbacks gehen (die App sendet Ereignisse, ein Test
+/// zaehlt mit). Nur `&self`: der Callback ruft es ohne Sperre mit Wartezeit.
+trait LevelSink: Send + Sync {
+    fn level(&self, channel: u8, rms: f32);
+}
+
+impl LevelSink for LevelEmitter {
+    fn level(&self, channel: u8, rms: f32) {
+        self.record(channel, rms);
+    }
+}
+
+/// lva#538: ein Schreibfehler der WAV je Kanal. Der Capture-Callback setzt nur das
+/// Merkzeichen (Atomic, keine Allokation, kein Lock); der Schreib-Waechter und `stop()`
+/// machen daraus den dauerhaften Marker `metadata_json.audio_incomplete` und die Meldung.
+#[derive(Default)]
+struct WriteFlags {
+    mic: AtomicBool,
+    system: AtomicBool,
+    reported: AtomicBool,
+}
+
+impl WriteFlags {
+    fn flag(&self, channel: u8) -> &AtomicBool {
+        if channel == CHANNEL_MIC {
+            &self.mic
+        } else {
+            &self.system
+        }
+    }
+
+    /// Die Kanaele, deren WAV nicht vollstaendig geschrieben wurde.
+    fn failed_channels(&self) -> Vec<u8> {
+        [CHANNEL_MIC, CHANNEL_SYSTEM]
+            .into_iter()
+            .filter(|c| self.flag(*c).load(Ordering::Acquire))
+            .collect()
+    }
+
+    /// `true` fuer den ersten Aufruf: die Meldung an die Oberflaeche geht nur einmal raus.
+    fn first_report(&self) -> bool {
+        !self.reported.swap(true, Ordering::AcqRel)
     }
 }
 
@@ -508,22 +727,132 @@ fn rms(samples: &[i16]) -> f32 {
     (sum / samples.len() as f64).sqrt() as f32
 }
 
-/// Everything a running meeting owns. Dropped as a unit by `stop()`.
+/// Everything a running meeting owns.
+///
+/// lva#538: das Fallenlassen ist die BARRIERE (`Drop`): Sinks schliessen (Callback-Sperre),
+/// Captures stoppen und joinen, DSP-Thread und Live-Worker beenden und joinen. Danach hat die
+/// Sitzung keine Nebenwirkung mehr (kein WAV, kein DSP, kein Pegel, kein Segment). Jeder
+/// Weg ohne ordentlichen Stopp (Abbruch des Starts, Fehler, Panik) laeuft hier durch; der
+/// Aufrufer raeumt Zeile und Dateien erst DANACH auf. `stop()` und das Loeschen nehmen die
+/// Teile mit [`RecordingSession::into_parts`] heraus und schliessen sie selbst, in ihrer
+/// Reihenfolge.
 struct RecordingSession {
     meeting_id: String,
+    mode: CaptureMode,
     paused: Arc<AtomicBool>,
     mic_capture: Option<MeetingMicCapture>,
     loopback: Option<LoopbackCapture>,
-    mic_sink: Arc<Mutex<ChannelSink>>,
+    /// `None` nur beim Mitschnitt des Systemtons (#537): dann gibt es kein Mikrofon.
+    mic_sink: Option<Arc<Mutex<ChannelSink>>>,
     system_sink: Option<Arc<Mutex<ChannelSink>>>,
-    mic_path: PathBuf,
+    mic_path: Option<PathBuf>,
     system_path: Option<PathBuf>,
     /// DSP thread + transcription worker of this meeting.
     pipeline: Option<LivePipeline>,
+    /// Schreibfehler der WAV-Writer (lva#538), vom Callback gesetzt.
+    write_flags: Arc<WriteFlags>,
+    /// Beendet den Schreib-Waechter mit der Aufnahme.
+    watch_stop: Arc<AtomicBool>,
     /// lva#544: die Anmeldung dieser Aufnahme im [`FinalSlot`]. Solange sie lebt, beginnt kein
-    /// Enddurchlauf-/Recovery-Auftrag mit einem Modell. `stop()` gibt sie frei, sobald der
-    /// Live-Worker leer ist, und erst danach startet der Enddurchlauf dieser Aufnahme.
-    live: LiveHalter,
+    /// Enddurchlauf-/Recovery-Auftrag mit einem Modell. Sie faellt mit der Sitzung (nach der
+    /// Barriere) oder in `stop()`, sobald der Live-Worker leer ist (`SessionParts::live`).
+    live: Option<LiveHalter>,
+}
+
+/// Die Teile einer Sitzung, nachdem `stop()` oder das Loeschen sie uebernommen haben.
+struct SessionParts {
+    meeting_id: String,
+    mode: CaptureMode,
+    mic_capture: Option<MeetingMicCapture>,
+    loopback: Option<LoopbackCapture>,
+    mic_sink: Option<Arc<Mutex<ChannelSink>>>,
+    system_sink: Option<Arc<Mutex<ChannelSink>>>,
+    mic_path: Option<PathBuf>,
+    system_path: Option<PathBuf>,
+    pipeline: Option<LivePipeline>,
+    write_flags: Arc<WriteFlags>,
+    watch_stop: Arc<AtomicBool>,
+    live: Option<LiveHalter>,
+}
+
+impl RecordingSession {
+    fn new(
+        meeting_id: &str,
+        mode: CaptureMode,
+        mic_sink: Option<Arc<Mutex<ChannelSink>>>,
+        system_sink: Option<Arc<Mutex<ChannelSink>>>,
+        mic_path: Option<PathBuf>,
+        system_path: Option<PathBuf>,
+        live: LiveHalter,
+    ) -> Self {
+        Self {
+            meeting_id: meeting_id.to_string(),
+            mode,
+            paused: Arc::new(AtomicBool::new(false)),
+            mic_capture: None,
+            loopback: None,
+            mic_sink,
+            system_sink,
+            mic_path,
+            system_path,
+            pipeline: None,
+            write_flags: Arc::new(WriteFlags::default()),
+            watch_stop: Arc::new(AtomicBool::new(false)),
+            live: Some(live),
+        }
+    }
+
+    /// Gibt die Teile ab; was in `self` zurueckbleibt, ist leer (das `Drop` tut dann nichts).
+    fn into_parts(mut self) -> SessionParts {
+        SessionParts {
+            meeting_id: std::mem::take(&mut self.meeting_id),
+            mode: self.mode,
+            mic_capture: self.mic_capture.take(),
+            loopback: self.loopback.take(),
+            mic_sink: self.mic_sink.take(),
+            system_sink: self.system_sink.take(),
+            mic_path: self.mic_path.take(),
+            system_path: self.system_path.take(),
+            pipeline: self.pipeline.take(),
+            write_flags: Arc::clone(&self.write_flags),
+            watch_stop: Arc::clone(&self.watch_stop),
+            live: self.live.take(),
+        }
+    }
+}
+
+impl Drop for RecordingSession {
+    fn drop(&mut self) {
+        self.watch_stop.store(true, Ordering::Release);
+        // 1. Callback-Sperre: ab hier schreibt, speist und meldet kein Callback mehr.
+        close_sink(self.mic_sink.as_ref());
+        close_sink(self.system_sink.as_ref());
+        // 2. Die Captures: stoppen und joinen.
+        if let Some(capture) = self.mic_capture.take() {
+            capture.stop();
+        }
+        if let Some(capture) = self.loopback.take() {
+            capture.stop();
+        }
+        // 3. DSP-Thread und Worker: beenden und joinen, den Rest abwerfen.
+        if let Some(pipeline) = self.pipeline.take() {
+            pipeline.abort();
+        }
+    }
+}
+
+/// lva#538: die Reservierung zum Loeschen einer Besprechung (`reserve_delete`). Solange sie
+/// lebt, nimmt kein Start in diese Besprechung auf. Der Aufrufer laesst sie erst fallen,
+/// wenn Tombstone und Dateien weg sind (oder das Loeschen scheiterte).
+pub struct DeleteReservation {
+    recorder: Arc<MeetingRecorderManager>,
+    meeting_id: String,
+}
+
+impl Drop for DeleteReservation {
+    fn drop(&mut self) {
+        self.recorder.core.release_delete(&self.meeting_id);
+    }
 }
 
 /// M2-P2d: der laufende Enddurchlauf-/Recovery-Thread.
@@ -748,6 +1077,13 @@ impl FinalSlot {
     /// Eine Wiederholungsschleife gibt es nicht mehr: seit der Anmeldung kann kein Auftrag mehr
     /// mit einem Modell beginnen. `nach_abbruch` laeuft zwischen Abwarten und Tor (Testhaken).
     /// Der [`LiveHalter`] gehoert der Aufnahme; faellt er, endet die Anmeldung.
+    ///
+    /// Folge der Reihenfolge (dokumentiert, von #544 uebernommen, kein Fehler): der Abbruch trifft
+    /// den Enddurchlauf JEDER anderen Besprechung, auch wenn der Start danach vom Tor abgewiesen
+    /// wird (`nur_notizen: <grund>`) oder an der Zielpruefung scheitert (`target_not_empty`).
+    /// Dann ist die Aufnahme zwar wieder abgemeldet, der abgebrochene Auftrag aber nicht
+    /// zurueckgegeben und nicht neu gestartet; er endet wie bei jedem Abbruch durch eine neue
+    /// Aufnahme. Test: `a_refused_start_still_cancels_the_final_pass_of_another_meeting`.
     pub(crate) fn start_unter_tor<T>(
         &self,
         store: &MeetingStore,
@@ -760,22 +1096,6 @@ impl FinalSlot {
         nach_abbruch();
         let wert = crate::managers::planning::mit_tor(store, event, target_meeting_id, start)?;
         Ok((wert, live))
-    }
-}
-
-/// Setzt `starting` fuer die Dauer von `start()` (auch bei jedem Fehlerweg).
-pub(crate) struct StartingFlag<'a>(&'a AtomicBool);
-
-impl<'a> StartingFlag<'a> {
-    fn set(flag: &'a AtomicBool) -> Self {
-        flag.store(true, Ordering::Release);
-        Self(flag)
-    }
-}
-
-impl Drop for StartingFlag<'_> {
-    fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
     }
 }
 
@@ -816,6 +1136,248 @@ pub(crate) fn live_block_gated(
     }
 }
 
+/// Was die Anlage der Zeile unter dem Einwilligungs-Tor ergab (lva#544): die Zeile samt Bindung
+/// der Planungen, oder die Zeile ohne Bindung (sie ist aufzuraeumen, und zwar AUSSERHALB der
+/// Tor-Sperre: das Aufraeumen meldet Ereignisse).
+enum Angelegt {
+    Gebunden(Meeting, crate::managers::planning::Gebunden),
+    BindungFehlt(Meeting, String),
+}
+
+/// Was der Ablauf eines Starts von seinem Umfeld braucht: im Betrieb der Recorder mit seinem
+/// `AppHandle`, im Test ein Verzeichnis und ein Protokoll (lva#538, B1). So laesst sich die
+/// Verkettung aus Tor, Aufbau, Abbruch, Rueckfall und Bindung ohne App pruefen.
+trait StartUmfeld {
+    fn store(&self) -> &MeetingStore;
+    fn finals(&self) -> &FinalSlot;
+    /// Der Ordner der Besprechungen (`Err`: unbekannt).
+    fn daten_ordner(&self) -> Result<PathBuf, String>;
+    /// Die Zeile ist wieder wie vor dem Start: die Oberflaeche laedt sie neu.
+    fn zeile_wiederhergestellt(&self, meeting_id: &str);
+    /// Die Zeile steht auf `failed` (mit dem, was sie an Ton und Saetzen hat).
+    fn zeile_gescheitert(&self, meeting_id: &str);
+}
+
+/// Der Ablauf eines Starts hinter dem Einwilligungs-Tor, OHNE AppHandle (lva#538, B1), fuer
+/// Live-Aufnahme und Mitschnitt:
+///
+/// 1. `start_unter_tor`: anmelden, Enddurchlauf abwarten, Tor pruefen; unter der Sperre legt
+///    `anlegen` die Zeile an und die geprueften Planungen werden an sie gebunden.
+/// 2. Bindung gescheitert (`BindungFehlt`): `zuruecksetzen`, AUSSERHALB der Tor-Sperre (es meldet
+///    Ereignisse). Es steht nichts gebunden (die Bindung ist EINE Transaktion), also gibt es
+///    nichts zu verwerfen.
+/// 3. `vor_aufbau` (Ziel merken), dann `aufbauen` (`start_row`): kehrt erst zurueck, wenn die
+///    Sitzung die Barriere durchlaufen hat.
+/// 4. Scheitert der Aufbau: `zuruecksetzen` meldet, wie weit der Rueckfall NACHWEISLICH gelang.
+///    NUR bei [`Rueckfall::Vollstaendig`] faellt die Bindung dieses Starts weg. Bleiben Ton oder
+///    Saetze (oder ist das nicht zu belegen), bleibt sie: die urspruengliche Planung gilt dann
+///    weiter fuer das, was die Besprechung behalten hat.
+///
+/// Scheitert `vor_aufbau`, kehrt der Ablauf ohne Rueckfall zurueck (die Besprechung wird gerade
+/// geloescht, das Loeschen uebernimmt die Zeile; die Bindung bleibt, fail-closed).
+fn start_hinter_tor(
+    umfeld: &dyn StartUmfeld,
+    event: Option<&crate::managers::calendar::model::CalEvent>,
+    target_meeting_id: Option<&str>,
+    anlegen: impl FnOnce() -> Result<Meeting, String>,
+    vor_aufbau: impl FnOnce(&str) -> Result<(), String>,
+    aufbauen: impl FnOnce(
+        Meeting,
+        &crate::managers::planning::Gebunden,
+        LiveHalter,
+    ) -> Result<Meeting, String>,
+    zuruecksetzen: impl FnOnce(&str, &str) -> Rueckfall,
+) -> Result<Meeting, String> {
+    let store = umfeld.store();
+    let (angelegt, live) = umfeld.finals().start_unter_tor(
+        store,
+        event,
+        target_meeting_id,
+        || {},
+        |tor| {
+            let meeting = anlegen()?;
+            Ok(match tor.binden(store, &meeting.id) {
+                Ok(gebunden) => Angelegt::Gebunden(meeting, gebunden),
+                Err(e) => Angelegt::BindungFehlt(meeting, e),
+            })
+        },
+    )?;
+    let (meeting, gebunden) = match angelegt {
+        Angelegt::Gebunden(meeting, gebunden) => (meeting, gebunden),
+        // Die Zeile steht, die Bindung nicht: aufraeumen, ausserhalb der Tor-Sperre. Der
+        // Rueckfall ist hier ohne Folge fuer Bindungen (es gibt keine neue).
+        Angelegt::BindungFehlt(meeting, e) => {
+            let _ = zuruecksetzen(&meeting.id, &e);
+            return Err(e);
+        }
+    };
+    let meeting_id = meeting.id.clone();
+    vor_aufbau(&meeting_id)?;
+    let started = aufbauen(meeting, &gebunden, live);
+    let Err(e) = &started else { return started };
+    match zuruecksetzen(&meeting_id, e) {
+        Rueckfall::Vollstaendig => {
+            // Nichts wurde aufgenommen und nichts blieb: was DIESER Start gebunden hat, faellt
+            // wieder weg.
+            crate::managers::planning::bindung_verwerfen(store, gebunden);
+        }
+        Rueckfall::Unvollstaendig => {
+            info!(
+                "meetings: Start von {meeting_id} gescheitert, Rueckfall unvollstaendig: Ton oder Saetze bleiben, die Bindungen an die Planung auch"
+            );
+        }
+    }
+    started
+}
+
+/// Ein Start in eine Besprechung kam nicht zustande (nach dem Anlegen der Zeile): der Zieleintrag
+/// wird wieder leer bzw. die neue Besprechung als `failed` aufgeraeumt. NIE unter der
+/// Tor-Sperre (meldet Ereignisse). Rueckgabe: wie weit der Rueckfall nachweislich gelang.
+fn undo_live_start(
+    umfeld: &dyn StartUmfeld,
+    target_meeting_id: Option<&str>,
+    meeting_id: &str,
+    e: &str,
+) -> Rueckfall {
+    match target_meeting_id {
+        Some(target) => undo_live_target_start(umfeld, target, e),
+        // #15: eine neue Besprechung bleibt als `failed` stehen, ohne die
+        // Null-Header-WAVs und ohne dass der naechste App-Start sie als
+        // "Absturzrest" wiederbelebt.
+        None => match umfeld.daten_ordner() {
+            Ok(base) => {
+                info!("meetings: Start gescheitert ({e}), {meeting_id} wird aufgeraeumt");
+                discard_failed_start(umfeld.store(), meeting_id, &base.join(meeting_id))
+            }
+            Err(err) => {
+                warn!("meetings: Start gescheitert, Datenordner unbekannt ({err})");
+                let _ = umfeld.store().set_status(meeting_id, MeetingStatus::Failed);
+                Rueckfall::Unvollstaendig
+            }
+        },
+    }
+}
+
+/// Der Start in einen leeren Eintrag kam nicht zustande: der Eintrag wird wieder leer, die
+/// Aufnahmedateien erst danach entfernt. Fail-closed: laesst er sich nicht zuruecksetzen
+/// (die Pipeline hat schon Saetze gespeichert, die Datenbank antwortet nicht), steht er auf
+/// `failed`, mit Transkript und Audio. `Vollstaendig` nur, wenn der Eintrag leer ist UND der
+/// Ordner der Aufnahme weg ist.
+fn undo_live_target_start(umfeld: &dyn StartUmfeld, target: &str, error: &str) -> Rueckfall {
+    let store = umfeld.store();
+    match store.restore_empty_meeting(target) {
+        Ok(true) => {
+            info!("meetings: Start gescheitert ({error}), Eintrag {target} ist wieder leer");
+            let entfernt = match umfeld.daten_ordner() {
+                Ok(dir) => match std::fs::remove_dir_all(dir.join(target)) {
+                    Ok(()) => true,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+                    Err(e) => {
+                        warn!("meetings: Aufnahmeordner von {target} nicht entfernt: {e}");
+                        false
+                    }
+                },
+                Err(err) => {
+                    warn!("meetings: Datenordner unbekannt, Aufnahme von {target} bleibt ({err})");
+                    false
+                }
+            };
+            umfeld.zeile_wiederhergestellt(target);
+            Rueckfall::wenn(entfernt)
+        }
+        Ok(false) => {
+            warn!(
+                "meetings: Eintrag {target} nicht wiederherstellbar, wird `failed` (Audio bleibt)"
+            );
+            let _ = store.set_status(target, MeetingStatus::Failed);
+            umfeld.zeile_gescheitert(target);
+            Rueckfall::Unvollstaendig
+        }
+        Err(err) => {
+            warn!("meetings: Eintrag {target} nicht wiederhergestellt: {err}");
+            let _ = store.set_status(target, MeetingStatus::Failed);
+            umfeld.zeile_gescheitert(target);
+            Rueckfall::Unvollstaendig
+        }
+    }
+}
+
+/// Der Mitschnitt kam nicht zustande: die Zeile ist wieder die YouTube-Besprechung von
+/// vorher (aus dem gespeicherten Vorzustand), danach erst werden die Dateien entfernt.
+/// Voraussetzung: die Barriere der Sitzung ist durchlaufen (nichts schreibt mehr).
+///
+/// Saetze, die die Pipeline vor dem Abbruch gespeichert hat, gehoeren zu diesem nie
+/// veroeffentlichten Start (vorher hatte der Eintrag keine, `begin_playback_capture`
+/// prueft das): `rollback_playback_capture` verwirft sie in DERSELBEN Transaktion wie das
+/// Zuruecksetzen. Fail-closed: laesst sich die Zeile nicht zuruecksetzen, bleiben Dateien
+/// und Transkript, die Zeile steht auf `failed` (mit dem Merker; der naechste App-Start
+/// setzt sie zurueck, sofern nachweislich nichts aufgenommen wurde), nie auf `recording`
+/// (er belebt sie sonst als Absturzrest).
+///
+/// Rueckgabe (lva#538, B1): `Vollstaendig` nur, wenn der Rollback bestaetigt ist UND die
+/// Aufnahmedateien weg sind; sonst `Unvollstaendig`, und die Bindungen des Starts bleiben.
+fn undo_playback_start(umfeld: &dyn StartUmfeld, meeting_id: &str) -> Rueckfall {
+    let store = umfeld.store();
+    match store.rollback_playback_capture(meeting_id) {
+        Ok(true) => {
+            let entfernt = match umfeld.daten_ordner() {
+                Ok(base) => remove_capture_files(&base.join(meeting_id)),
+                Err(err) => {
+                    warn!("meetings: Mitschnitt gescheitert, Datenordner unbekannt ({err})");
+                    false
+                }
+            };
+            umfeld.zeile_wiederhergestellt(meeting_id);
+            Rueckfall::wenn(entfernt)
+        }
+        Ok(false) | Err(_) => {
+            warn!("meetings: Eintrag {meeting_id} nicht wiederhergestellt, wird `failed`");
+            let _ = store.set_status(meeting_id, MeetingStatus::Failed);
+            umfeld.zeile_gescheitert(meeting_id);
+            Rueckfall::Unvollstaendig
+        }
+    }
+}
+
+/// Das Ende von `start_row`, ohne AppHandle: der WIRKSAME Beginn (zweite Pruefung des Tors unter
+/// der Sperre, dann erst speichern die Capture-Callbacks) und die Veroeffentlichung der Sitzung
+/// im Lebenszyklus. Scheitert eines davon, faellt die Sitzung durch die Barriere (Captures, DSP
+/// und Worker zu), bevor diese Funktion zurueckkehrt. `nach_wirksam` laeuft zwischen beiden
+/// Schritten (im Betrieb leer; Testhaken: ab hier duerfen die Callbacks schon liefern, und ein
+/// Abbruch kann die Veroeffentlichung noch verhindern).
+fn wirksam_veroeffentlichen(
+    core: &RunCore<RecordingSession>,
+    store: &MeetingStore,
+    starting: &StartTicket<'_, RecordingSession>,
+    gebunden: &crate::managers::planning::Gebunden,
+    wirksam: &AtomicBool,
+    session: RecordingSession,
+    nach_wirksam: impl FnOnce(),
+) -> Result<(), String> {
+    // lva#544: Unter der Tor-Sperre wird das Tor ein zweites Mal frisch geprueft (ein Widerruf
+    // seit der Bindung gewinnt) und nur der Merker umgelegt. Scheitert die Pruefung, wurde nichts
+    // aufgenommen: die Sitzung faellt durch die Barriere, der Start gilt als gescheitert und der
+    // Aufrufer raeumt auf.
+    if let Err(code) = gebunden.wirksam(store, || {
+        wirksam.store(true, Ordering::Release);
+    }) {
+        info!(
+            "meetings: Start nicht wirksam ({}, {code})",
+            gebunden.meeting_id()
+        );
+        return Err(code);
+    }
+    nach_wirksam();
+    // Zustand und Sitzung zusammen unter der Sperre des Lebenszyklus und erst jetzt, wo die
+    // Captures laufen (#15). Ein Stopp, der zwischen der Pruefung und hier kam, hat den
+    // Abbruchmerker gesetzt: die Sitzung kommt zurueck und faellt durch die Barriere.
+    if let Err(session) = core.publish_started(starting, gebunden.meeting_id(), session) {
+        drop(session);
+        return Err(starting.cancel_code().to_string());
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Manager
 // ---------------------------------------------------------------------------
@@ -824,17 +1386,35 @@ pub struct MeetingRecorderManager {
     app: AppHandle,
     store: Arc<MeetingStore>,
     transcription: Arc<TranscriptionManager>,
-    /// Zustand, Sitzung und "Start laeuft" (M2-P2d: zaehlt als "Aufnahme aktiv",
-    /// damit ein `TranscriptFinal` des eben abgebrochenen Enddurchlaufs keine
-    /// lokalen KI-Notizen neben der neuen Aufnahme startet) samt der Regeln, wie
-    /// sie wechseln (#15, `RunCore`).
+    /// Der Lebenszyklus (Start, Abbruch, Stopp, Loeschen) als EIN Zustand unter EINER Sperre
+    /// (lva#538, `lifecycle.rs`). Ein laufender Start zaehlt als "Aufnahme aktiv" (M2-P2d:
+    /// ein `TranscriptFinal` des eben abgebrochenen Enddurchlaufs startet keine lokalen
+    /// KI-Notizen neben der neuen Aufnahme).
     core: RunCore<RecordingSession>,
-    /// Held for the whole of `start()`. The run state only flips to
-    /// `Recording` once the captures are up, so without this a double-click
-    /// could get two starts past `may_start` and leave one orphaned.
-    start_guard: Mutex<()>,
     /// M2-P2d: Enddurchlauf bzw. Recovery im Hintergrund (hoechstens einer).
     finals: FinalSlot,
+}
+
+impl StartUmfeld for MeetingRecorderManager {
+    fn store(&self) -> &MeetingStore {
+        &self.store
+    }
+
+    fn finals(&self) -> &FinalSlot {
+        &self.finals
+    }
+
+    fn daten_ordner(&self) -> Result<PathBuf, String> {
+        super::meetings_data_dir(&self.app).map_err(|e| e.to_string())
+    }
+
+    fn zeile_wiederhergestellt(&self, meeting_id: &str) {
+        self.emit_restored(meeting_id);
+    }
+
+    fn zeile_gescheitert(&self, meeting_id: &str) {
+        self.emit_state(meeting_id, "failed", false);
+    }
 }
 
 impl MeetingRecorderManager {
@@ -848,7 +1428,6 @@ impl MeetingRecorderManager {
             store,
             transcription,
             core: RunCore::new(),
-            start_guard: Mutex::new(()),
             finals: FinalSlot::default(),
         }
     }
@@ -961,10 +1540,12 @@ impl MeetingRecorderManager {
         event: Option<&crate::managers::calendar::model::CalEvent>,
     ) -> Result<Meeting, String> {
         consent_gate(consent_confirmed)?;
-        // `Mutex<()>` traegt keine Daten: eine Vergiftung hiesse sonst, dass nie
-        // wieder eine Aufnahme startet.
-        let _start_guard = lock_recovering(&self.start_guard);
-        let _starting = self.core.begin_start()?;
+        // Der Start registriert sich atomar im Lebenszyklus, bevor er irgendetwas anlegt: ein
+        // zweiter Start, ein Stopp und ein Loeschen sehen ihn (lva#538).
+        let starting = self.core.begin_start(None, target_meeting_id)?;
+        if let Some(target) = target_meeting_id {
+            starting.set_target(target)?;
+        }
 
         // A dictation and a meeting would fight over the microphone and the
         // overlay; the meeting yields to the dictation already in progress
@@ -977,6 +1558,7 @@ impl MeetingRecorderManager {
                 return Err("dictation_active".to_string());
             }
         }
+        starting.check()?;
 
         // Einwilligungs-Tor der Besprechungsplanung (lva#534, lva#544), in drei Schritten:
         // 1. Die Aufnahme meldet sich im `FinalSlot` an (M2-P2d: ein laufender Enddurchlauf gibt
@@ -991,266 +1573,440 @@ impl MeetingRecorderManager {
         //    schaltet die Aufnahme erst nach einer zweiten Pruefung unter der Sperre wirksam.
         // Ohne Planung zum Termin bzw. zur Zielbesprechung: unveraendert.
         let consent_at = chrono::Utc::now().timestamp();
-        let ((meeting, gebunden), live) = self.finals.start_unter_tor(
-            &self.store,
+        // Der Ablauf selbst (Tor, Anlegen, Binden, Aufbau, Rueckfall, Bindungen) steht in
+        // `start_hinter_tor`, ohne AppHandle und deshalb im Test pruefbar (lva#538, B1).
+        start_hinter_tor(
+            self,
             event,
             target_meeting_id,
-            || {},
-            |tor| {
-                let meeting = begin_live_row(&self.store, &title, consent_at, target_meeting_id)?;
-                match tor.binden(&self.store, &meeting.id) {
-                    Ok(gebunden) => Ok((meeting, gebunden)),
-                    Err(e) => {
-                        self.failed_start_cleanup(target_meeting_id, &meeting.id, &e);
-                        Err(e)
-                    }
-                }
+            || begin_live_row(&self.store, &title, consent_at, target_meeting_id),
+            // Scheitert das (die Besprechung wird gerade geloescht), uebernimmt das Loeschen die
+            // Zeile: kein Rueckfall hier.
+            |meeting_id| starting.set_target(meeting_id),
+            // `start_row` kehrt erst zurueck, wenn seine Sitzung die Barriere durchlaufen hat
+            // (Captures, DSP und Worker sind zu): erst DANACH wird die Zeile zurueckgesetzt.
+            |meeting, gebunden, live| {
+                self.start_row(
+                    meeting,
+                    CaptureMode::Meeting { capture_system },
+                    gebunden,
+                    live,
+                    &starting,
+                )
             },
-        )?;
-        let meeting_id = meeting.id.clone();
-        let started = self.start_row(meeting, capture_system, &gebunden, live);
-        if let Err(e) = &started {
-            self.failed_start_cleanup(target_meeting_id, &meeting_id, e);
-            // Nichts wurde aufgenommen: was DIESER Start gebunden hat, faellt wieder weg.
-            crate::managers::planning::bindung_verwerfen(&self.store, gebunden);
-        }
-        started
+            |meeting_id, e| undo_live_start(self, target_meeting_id, meeting_id, e),
+        )
     }
 
-    /// Ein Start kam nicht zustande: der Zieleintrag wird wieder leer bzw. die neue Besprechung
-    /// als `failed` aufgeraeumt. Nur Datenbank und Dateien (darf unter der Tor-Sperre laufen).
-    fn failed_start_cleanup(&self, target_meeting_id: Option<&str>, meeting_id: &str, e: &str) {
-        match target_meeting_id {
-            Some(target) => {
-                // Nichts wurde aufgenommen: der Eintrag wird wieder leer.
-                match self.store.restore_empty_meeting(target) {
-                    Ok(true) => {
-                        info!(
-                            "meetings: Start gescheitert ({e}), Eintrag {target} ist wieder leer"
-                        );
-                        if let Ok(dir) = super::meetings_data_dir(&self.app) {
-                            let _ = std::fs::remove_dir_all(dir.join(target));
-                        }
-                    }
-                    Ok(false) => {}
-                    Err(err) => {
-                        warn!("meetings: Eintrag {target} nicht wiederhergestellt: {err}")
-                    }
+    /// #537: nimmt den Systemton (NUR den, kein Mikrofon) in die vorhandene
+    /// YouTube-Besprechung `meeting_id` auf, solange der Nutzer das Video im
+    /// eingebetteten Player abspielt. Titel, Quelle, Notizen und Projekte bleiben;
+    /// Transkript, Zeitachse und Stopp wie bei jeder Aufnahme. Die Einwilligung gilt
+    /// zuerst (der Nutzer bestaetigt im Dialog, dass er das Video mitschneiden darf).
+    ///
+    /// `op` ist die Vorgangs-Id des Frontends: `cancel_start(op)` adressiert genau diesen
+    /// Start, auch wenn der Abbruch-Befehl den Start-Befehl ueberholt (lva#538).
+    ///
+    /// Fehler: `consent_required`, `already_recording`, `dictation_active`,
+    /// `meeting_not_found` (auch: waehrend des Starts geloescht), `target_not_empty`
+    /// (kein YouTube-Eintrag ohne Transkript und ohne Aufnahme: nichts startet, nichts
+    /// aendert sich), `playback_capture_failed` / `playback_capture_timeout` (der
+    /// Systemton liess sich nicht oeffnen), `start_cancelled` (ein Stopp oder Abbruch kam
+    /// dazwischen), `nur_notizen: <grund>` (das Einwilligungs-Tor der Besprechungsplanung
+    /// sperrt, lva#544). Nach jedem Fehler nach der Umwandlung ist der Eintrag wieder wie
+    /// vorher (`undo_playback_start`). Gelingt der Rueckfall nicht nachweislich vollstaendig
+    /// (Zeile nicht zurueckgesetzt, Datei nicht entfernt, Saetze uebrig), bleibt der Eintrag
+    /// `failed` mit dem, was er hat, UND die Bindungen an die Planung bleiben (lva#538, B1).
+    pub fn start_playback_capture(
+        &self,
+        meeting_id: &str,
+        consent_confirmed: bool,
+        op: Option<&str>,
+    ) -> Result<Meeting, String> {
+        consent_gate(consent_confirmed)?;
+        let starting = self.core.begin_start(op, Some(meeting_id))?;
+
+        if let Some(rm) = self
+            .app
+            .try_state::<Arc<crate::managers::audio::AudioRecordingManager>>()
+        {
+            if rm.is_recording() {
+                return Err("dictation_active".to_string());
+            }
+        }
+        starting.check()?;
+
+        // Einwilligungs-Tor der Besprechungsplanung (lva#534, lva#544), dieselbe Reihenfolge wie bei
+        // `start_for_event` (Sperrordnung in `managers::planning`): ERST die Aufnahme im
+        // `FinalSlot` anmelden (ein laufender Enddurchlauf wird abgebrochen und abgewartet,
+        // ohne Tor-Sperre), DANN unter der Tor-Sperre das Tor frisch pruefen (die Planungen der
+        // YouTube-Besprechung, sofern sie einer zugeordnet ist), die Zeile atomar umwandeln
+        // (samt Vorzustand) und die geprueften Planungen BINDEN. Ohne Zustimmung aller
+        // Anwesenden bleibt der Eintrag unveraendert (`nur_notizen: <grund>`).
+        // Folge der Reihenfolge (dokumentiert, von #544 uebernommen): auch eine Anfrage, die
+        // danach an der Zielpruefung scheitert (`target_not_empty`) oder vom Tor abgewiesen wird
+        // (`nur_notizen: <grund>`), hat den Enddurchlauf einer ANDEREN Besprechung abgebrochen
+        // und abgewartet. Er wird nicht neu gestartet. Test:
+        // `a_refused_start_still_cancels_the_final_pass_of_another_meeting`.
+        let consent_at = chrono::Utc::now().timestamp();
+        start_hinter_tor(
+            self,
+            None,
+            Some(meeting_id),
+            || {
+                self.store
+                    .begin_playback_capture(meeting_id, consent_at)
+                    .map_err(|e| coded_error("meeting_create_failed", &e))
+            },
+            // Das Ziel steht seit `begin_start` fest: nichts mehr zu merken.
+            |_| Ok(()),
+            |meeting, gebunden, live| {
+                self.start_row(
+                    meeting,
+                    CaptureMode::PlaybackOnly,
+                    gebunden,
+                    live,
+                    &starting,
+                )
+            },
+            |meeting_id, e| {
+                info!("meetings: Mitschnitt gescheitert ({e}), {meeting_id} wird zurueckgesetzt");
+                undo_playback_start(self, meeting_id)
+            },
+        )
+    }
+
+    /// lva#538: der Befehl "Start abbrechen" mit der Vorgangs-Id des Frontends. Der Abbruch geht
+    /// nie verloren: kommt er VOR der Registrierung des Starts (der Befehl ueberholt den
+    /// Start-Befehl), wird die Id vermerkt, und der Start endet bei der Registrierung mit
+    /// `start_cancelled`. Laeuft der Start, kehrt dieser Aufruf erst zurueck, wenn er
+    /// aufgeraeumt hat (`start_busy`, wenn er in einem Treiber haengt). Hat er schon
+    /// veroeffentlicht, ist der Abbruch ein Stopp genau dieser Aufnahme. Blockierend.
+    pub fn cancel_start(&self, op: &str) -> Result<(), String> {
+        match self.core.cancel_op(op) {
+            CancelOp::Remembered | CancelOp::Finished => Ok(()),
+            // Zu viele Abbrueche warten: dieser ist NICHT bestaetigt. Wie ein haengender Abbruch
+            // ein Fehler mit neuem Versuch, nie ein stiller Erfolg.
+            CancelOp::Refused => Err(START_BUSY.to_string()),
+            CancelOp::Starting => {
+                if self
+                    .core
+                    .wait_start_end(op, Instant::now() + START_CANCEL_WAIT)
+                {
+                    Ok(())
+                } else {
+                    Err(START_BUSY.to_string())
                 }
             }
-            // #15: eine neue Besprechung bleibt als `failed` stehen, ohne die
-            // Null-Header-WAVs und ohne dass der naechste App-Start sie als
-            // "Absturzrest" wiederbelebt.
-            None => match super::meetings_data_dir(&self.app) {
-                Ok(base) => {
-                    info!("meetings: Start gescheitert ({e}), {meeting_id} wird aufgeraeumt");
-                    discard_failed_start(&self.store, meeting_id, &base.join(meeting_id));
-                }
-                Err(err) => {
-                    warn!("meetings: Start gescheitert, Datenordner unbekannt ({err})");
-                    let _ = self.store.set_status(meeting_id, MeetingStatus::Failed);
-                }
+            CancelOp::Running => match self.stop_op(Some(op)) {
+                Ok(_) => Ok(()),
+                // Inzwischen von jemand anderem gestoppt: das Ziel ist erreicht.
+                Err(e) if e == "not_recording" => Ok(()),
+                Err(e) => Err(e),
             },
         }
     }
 
-    /// Der Teil des Starts nach dem Anlegen der Zeile und der Bindung der Planungen. Laeuft OHNE
-    /// Tor-Sperre; der wirksame Beginn (ab dem Ton gespeichert und transkribiert wird) ist die
-    /// zweite Pruefung unter der Sperre (`Gebunden::wirksam`). `gebunden` beweist, dass das Tor
-    /// bestanden und die Planungen an die Besprechung gebunden sind (Compiler statt Absprache).
+    /// Der Teil des Starts nach dem Anlegen bzw. Umwandeln der Zeile.
+    ///
+    /// lva#538: der Start ist abbrechbar. Er prueft den Abbruchmerker (Stopp, Loeschen) vor
+    /// jedem Schritt, der etwas anlegt; das Warten auf den Treiber prueft ihn im Takt;
+    /// `publish_started` entscheidet unter der Sperre des Lebenszyklus. Die Sitzung entsteht
+    /// FRUEH (mit den Sinks) und traegt die Barriere in ihrem `Drop`: jeder Fehler- und
+    /// Abbruchweg schliesst Sinks, Captures, DSP und Worker, bevor diese Funktion
+    /// zurueckkehrt. Der Aufrufer raeumt Zeile und Dateien erst danach auf.
+    ///
+    /// lva#544: laeuft OHNE Tor-Sperre. `gebunden` beweist, dass das Einwilligungs-Tor bestanden
+    /// und die Planungen an die Besprechung gebunden sind; der wirksame Beginn (ab dem Ton
+    /// gespeichert und transkribiert wird) ist die zweite Pruefung unter der Sperre
+    /// (`Gebunden::wirksam`), kurz vor der Veroeffentlichung. Bis dahin verwerfen die
+    /// Capture-Callbacks alles (`erst_wenn_wirksam`). `live` ist die Anmeldung der Aufnahme im
+    /// `FinalSlot`; sie gehoert ab der Sitzung der Aufnahme (und faellt mit jedem Fehlerweg).
     fn start_row(
         &self,
         meeting: Meeting,
-        capture_system: bool,
+        mode: CaptureMode,
         gebunden: &crate::managers::planning::Gebunden,
         live: LiveHalter,
+        starting: &StartTicket<'_, RecordingSession>,
     ) -> Result<Meeting, String> {
         crate::managers::planning::ohne_tor_sperre("Aufbau der Aufnahme (start_row)");
         let meeting_id = meeting.id.clone();
         debug_assert_eq!(gebunden.meeting_id(), meeting_id);
+        starting.check()?;
 
         let dir = super::meetings_data_dir(&self.app)
             .map_err(|e| format!("app_data_dir_failed: {e}"))?
             .join(&meeting_id);
         std::fs::create_dir_all(&dir).map_err(|e| format!("meeting_dir_failed: {e}"))?;
 
-        let mic_path = dir.join("mic.wav");
-        let mic_writer = StreamingWavWriter::create(&mic_path, SAMPLE_RATE)
-            .map_err(|e| format!("mic_wav_failed: {e}"))?;
-        let system_path = capture_system.then(|| dir.join("system.wav"));
-        let system_writer = match &system_path {
-            Some(path) => Some(
+        // Nur die Dateien des Modus: beim Mitschnitt entsteht keine `mic.wav`
+        // (sonst bliebe eine Null-Spur liegen, auf die der Enddurchlauf wartet).
+        let mic_path = mode.mic().then(|| dir.join("mic.wav"));
+        let mic_writer = mic_path
+            .as_ref()
+            .map(|path| {
                 StreamingWavWriter::create(path, SAMPLE_RATE)
-                    .map_err(|e| format!("system_wav_failed: {e}"))?,
-            ),
-            None => None,
-        };
+                    .map_err(|e| format!("mic_wav_failed: {e}"))
+            })
+            .transpose()?;
+        let system_path = mode.system().then(|| dir.join("system.wav"));
+        let system_writer = system_path
+            .as_ref()
+            .map(|path| {
+                StreamingWavWriter::create(path, SAMPLE_RATE)
+                    .map_err(|e| format!("system_wav_failed: {e}"))
+            })
+            .transpose()?;
+        let mic_sink = mic_writer.map(|w| Arc::new(Mutex::new(ChannelSink::new(w))));
+        let system_sink = system_writer.map(|w| Arc::new(Mutex::new(ChannelSink::new(w))));
+        // Ab hier traegt die Sitzung die Barriere (`Drop`).
+        let mut session = RecordingSession::new(
+            &meeting_id,
+            mode,
+            mic_sink,
+            system_sink,
+            mic_path,
+            system_path,
+            live,
+        );
 
         // Written now, not at stop(): crash recovery can only repair WAVs whose
         // paths it knows, and a crash is exactly the case where stop() never ran.
-        if let Err(e) = self.store.set_audio_paths(
-            &meeting_id,
-            mic_path.to_str(),
-            system_path.as_ref().and_then(|p| p.to_str()),
-            None,
-        ) {
-            warn!("meetings: could not persist audio paths: {e}");
-        }
+        // lva#538: ein Fehler hier ist ein Fehler des Starts (nicht mehr "nur loggen"):
+        // ohne Pfade repariert die Wiederherstellung nichts, und fuer eine inzwischen
+        // geloeschte Zeile gibt es keine Aufnahme.
+        // lva#538 (Runde 3): die Pfade und der pessimistische Marker `capture_open` stehen in
+        // DERSELBEN Transaktion. Er faellt erst, wenn alle Writer sauber zu sind (`stop`); ein
+        // Absturz laesst ihn stehen, und das Audio gilt dann als unvollstaendig.
+        self.store
+            .begin_capture(
+                &meeting_id,
+                session.mic_path.as_deref().and_then(|p| p.to_str()),
+                session.system_path.as_deref().and_then(|p| p.to_str()),
+            )
+            .map_err(|e| audio_paths_error(&e))?;
 
-        let mic_sink = Arc::new(Mutex::new(ChannelSink::new(mic_writer)));
-        let system_sink = system_writer.map(|w| Arc::new(Mutex::new(ChannelSink::new(w))));
-        let paused = Arc::new(AtomicBool::new(false));
         // lva#544: bis zum wirksamen Beginn (unten) verwerfen die Capture-Callbacks alles.
         let wirksam = Arc::new(AtomicBool::new(false));
-        let levels = Arc::new(LevelEmitter::new(self.app.clone()));
+        self.open_captures(&mut session, starting, &dir, &wirksam)?;
 
+        // Der letzte Augenblick vor der Veroeffentlichung: abgebrochen, oder die Zeile ist
+        // inzwischen geloescht? Dann wird nichts daraus (die Sitzung faellt durch die Barriere).
+        starting
+            .check()
+            .and_then(|()| self.ensure_present(&meeting_id))?;
+        let write_flags = Arc::clone(&session.write_flags);
+        let watch_stop = Arc::clone(&session.watch_stop);
+        // lva#544: der WIRKSAME Beginn und die Veroeffentlichung (siehe dort).
+        wirksam_veroeffentlichen(
+            &self.core,
+            &self.store,
+            starting,
+            gebunden,
+            &wirksam,
+            session,
+            || {},
+        )?;
+
+        self.set_indicator(true);
+        self.emit_state(&meeting_id, "recording", false);
+        self.watch_writes(&meeting_id, &write_flags, &watch_stop);
+        info!("meetings: recording started ({meeting_id})");
+        Ok(meeting)
+    }
+
+    /// Pipeline und Captures einer Sitzung; jeder Teil kommt sofort in `session` (dort faengt
+    /// ihn die Barriere ab), nie in eine lokale Variable, die bei einem Fehler verloren ginge.
+    fn open_captures(
+        &self,
+        session: &mut RecordingSession,
+        starting: &StartTicket<'_, RecordingSession>,
+        dir: &std::path::Path,
+        wirksam: &Arc<AtomicBool>,
+    ) -> Result<(), String> {
+        let meeting_id = session.meeting_id.clone();
+        let mode = session.mode;
+        starting.check()?;
         // M2-P2c2: Echo-Unterdrueckung der Ich-Spur (braucht den Systemton als
         // Referenz). Das Ergebnis geht an die Transkription und nach
-        // mic_aec.wav; mic.wav bleibt roh.
+        // mic_aec.wav; mic.wav bleibt roh. Ohne Mikrofon (#537) gibt es kein Echo.
         let echo_mode = crate::settings::get_settings(&self.app).meeting_echo_cancellation;
-        let echo = echo_mode
-            .enabled(capture_system)
+        let echo = (mode.mic() && echo_mode.enabled(mode.system()))
             .then(|| self.echo_setup(&meeting_id, &dir.join(super::MIC_AEC_FILE)));
 
-        let pipeline = self.start_pipeline(&meeting_id, echo).inspect_err(|_| {
-            let _ = self.store.set_status(&meeting_id, MeetingStatus::Failed);
-        })?;
-        let mic_feed = pipeline.feed(CHANNEL_MIC).ok_or("dsp_thread_failed")?;
+        let pipeline = self
+            .start_pipeline(&meeting_id, echo, mode)
+            .inspect_err(|_| {
+                let _ = self.store.set_status(&meeting_id, MeetingStatus::Failed);
+            })?;
         let system_feed = pipeline.feed(CHANNEL_SYSTEM);
+        let mic_feed = pipeline.feed(CHANNEL_MIC);
         let dsp_control = pipeline.control();
+        let overflow_stats = pipeline.stats();
+        session.pipeline = Some(pipeline);
 
         // Load the meeting model (dedicated `meeting_model` or the dictation
         // model as fallback); transcribe_segments waits on the load condvar.
         self.transcription
             .initiate_meeting_model_load(&crate::settings::get_settings(&self.app));
 
+        let levels: Arc<dyn LevelSink> = Arc::new(LevelEmitter::new(self.app.clone()));
         // #15: was die begrenzte Queue des Mikrofons verwirft, zaehlt auf demselben
         // Zaehler wie der Ueberlauf der DSP-Queue (`overflow_ms[mic=..]` im Log).
-        let overflow_stats = pipeline.stats();
         let mic_overflow: Arc<dyn Fn(u64) + Send + Sync> = Arc::new(move |samples| {
             overflow_stats.overflow_samples[CHANNEL_MIC as usize]
                 .fetch_add(samples, Ordering::Relaxed);
         });
-        let mic_capture = MeetingMicCapture::start(
-            crate::settings::get_settings(&self.app).selected_microphone,
-            mic_overflow,
-            erst_wenn_wirksam(
-                Arc::clone(&wirksam),
+        if let Some(sink) = session.mic_sink.clone() {
+            let mic_feed = mic_feed.ok_or("dsp_thread_failed")?;
+            starting.check()?;
+            let callback = erst_wenn_wirksam(
+                Arc::clone(wirksam),
                 channel_callback(
                     CHANNEL_MIC,
-                    Arc::clone(&mic_sink),
-                    Arc::clone(&paused),
+                    sink,
+                    Arc::clone(&session.paused),
+                    Arc::clone(&session.write_flags),
                     mic_feed,
                     Arc::clone(&levels),
                 ),
-            ),
-        )
-        .map_err(|e| {
-            // The meeting row exists but nothing was captured — mark it failed
-            // rather than leaving a phantom "recording" row behind.
-            let _ = self.store.set_status(&meeting_id, MeetingStatus::Failed);
-            format!("mic_start_failed: {e}")
-        })?;
+            );
+            let capture = MeetingMicCapture::start(
+                crate::settings::get_settings(&self.app).selected_microphone,
+                mic_overflow,
+                callback,
+            )
+            .map_err(|e| {
+                // The meeting row exists but nothing was captured — mark it failed
+                // rather than leaving a phantom "recording" row behind.
+                let _ = self.store.set_status(&meeting_id, MeetingStatus::Failed);
+                format!("mic_start_failed: {e}")
+            })?;
+            session.mic_capture = Some(capture);
+        }
+        starting.check()?;
 
-        let loopback = match (&system_sink, system_feed, capture_system) {
-            (Some(sink), Some(feed), true) => self.start_loopback(
-                &meeting_id,
-                erst_wenn_wirksam(
-                    Arc::clone(&wirksam),
-                    channel_callback(
-                        CHANNEL_SYSTEM,
-                        Arc::clone(sink),
-                        Arc::clone(&paused),
-                        feed,
-                        Arc::clone(&levels),
-                    ),
-                ),
-                dsp_control.clone(),
-            ),
-            _ => None,
+        let loopback_parts = match (mode, session.system_sink.clone(), system_feed) {
+            (
+                CaptureMode::Meeting {
+                    capture_system: false,
+                },
+                _,
+                _,
+            ) => None,
+            (CaptureMode::Meeting { .. }, None, _) => None,
+            // Mitschnitt: der Systemton ist alles, was es gibt.
+            (CaptureMode::PlaybackOnly, None, _) | (CaptureMode::PlaybackOnly, _, None) => {
+                return Err("dsp_thread_failed".to_string())
+            }
+            (_, Some(sink), Some(feed)) => Some((sink, feed)),
+            (_, Some(_), None) => None,
         };
-        if loopback.is_none() {
+        if let Some((sink, feed)) = loopback_parts {
+            let callback = erst_wenn_wirksam(
+                Arc::clone(wirksam),
+                channel_callback(
+                    CHANNEL_SYSTEM,
+                    Arc::clone(&sink),
+                    Arc::clone(&session.paused),
+                    Arc::clone(&session.write_flags),
+                    feed,
+                    Arc::clone(&levels),
+                ),
+            );
+            let started = self.start_loopback(
+                &meeting_id,
+                mode,
+                starting,
+                &sink,
+                callback,
+                dsp_control.clone(),
+            );
+            match (mode, started) {
+                (_, Ok(capture)) => session.loopback = Some(capture),
+                // Mitschnitt: scheitert der Systemton, scheitert der Start (der Aufrufer
+                // setzt den Eintrag zurueck).
+                (CaptureMode::PlaybackOnly, Err(e)) => return Err(e),
+                // Besprechung: es geht mit dem Mikrofon weiter. Ein Abbruch des Starts bleibt
+                // aber ein Abbruch.
+                (_, Err(e)) if starting.cancelled() => return Err(e),
+                (_, Err(_)) => {}
+            }
+        }
+        if session.loopback.is_none() {
             // Ohne Referenz keine Echo-Unterdrueckung (No-op, wenn sie aus ist).
             if let Some(control) = &dsp_control {
                 control.reference_lost();
             }
         }
-
-        // lva#544: der WIRKSAME Beginn. Unter der Tor-Sperre wird das Tor ein zweites Mal frisch
-        // geprueft (ein Widerruf seit der Bindung gewinnt) und nur der Merker umgelegt: erst ab
-        // jetzt speichern die Callbacks Ton und speisen die Transkription. Scheitert die Pruefung,
-        // wurde nichts aufgenommen: Captures zu, der Start gilt als gescheitert.
-        if let Err(code) = gebunden.wirksam(&self.store, || {
-            wirksam.store(true, Ordering::Release);
-        }) {
-            info!("meetings: Start nicht wirksam ({meeting_id}, {code})");
-            mic_capture.stop();
-            if let Some(capture) = loopback {
-                capture.stop();
-            }
-            drop(pipeline);
-            let _ = self.store.set_status(&meeting_id, MeetingStatus::Failed);
-            return Err(code);
-        }
-
-        // Zustand und Sitzung zusammen und erst jetzt, wo die Captures laufen (#15).
-        self.core.publish_started(
-            &meeting_id,
-            RecordingSession {
-                meeting_id: meeting_id.clone(),
-                paused,
-                mic_capture: Some(mic_capture),
-                loopback,
-                mic_sink,
-                system_sink,
-                mic_path,
-                system_path,
-                pipeline: Some(pipeline),
-                live,
-            },
-        );
-
-        self.set_indicator(true);
-        self.emit_state(&meeting_id, "recording", false);
-        info!("meetings: recording started ({meeting_id})");
-        Ok(meeting)
+        Ok(())
     }
 
-    /// Runs `LoopbackCapture::start` on a throwaway thread with a bounded
-    /// wait: a wedged audio driver must cost the meeting its system channel,
-    /// not the whole recording (known Task-4 finding). On timeout the started
-    /// capture — if it ever arrives — is dropped by the send error, which
-    /// stops it.
+    /// Ist die Zeile noch da? (Geloescht waehrend des Starts: `meeting_not_found`.)
+    fn ensure_present(&self, meeting_id: &str) -> Result<(), String> {
+        match self.store.get_meeting(meeting_id) {
+            Ok(None) => Err(MEETING_NOT_FOUND.to_string()),
+            Ok(Some(_)) | Err(_) => Ok(()),
+        }
+    }
+
+    /// Starts the loopback capture with a bounded wait (`start_bounded`): a wedged
+    /// audio driver must not block the start forever (known Task-4 finding).
+    ///
+    /// Besprechung: scheitert er, laeuft die Aufnahme mit dem Mikrofon weiter
+    /// (Warnung im Log, Fehlerereignis `loopback_start_failed`/`_timeout`; der
+    /// Aufrufer verwirft das `Err`). Mitschnitt (#537): scheitert er, scheitert der
+    /// Start mit `playback_capture_failed`/`_timeout` (kein Ereignis, der Befehl
+    /// meldet den Fehler selbst). Das `Err` traegt immer den Code. Ein Abbruch des Starts
+    /// (Stopp, Loeschen) gibt den Code des Abbruchs zurueck, ohne Ereignis.
     fn start_loopback(
         &self,
         meeting_id: &str,
+        mode: CaptureMode,
+        starting: &StartTicket<'_, RecordingSession>,
+        sink: &Arc<Mutex<ChannelSink>>,
         callback: impl FnMut(&[i16], Option<u64>) + Send + 'static,
         dsp_control: Option<DspControl>,
-    ) -> Option<LoopbackCapture> {
+    ) -> Result<LoopbackCapture, String> {
         crate::managers::planning::ohne_tor_sperre("Start des Systemtons");
-        let (tx, rx) = mpsc::channel::<Result<LoopbackCapture, String>>();
-        std::thread::Builder::new()
-            .name("meeting-loopback-start".to_string())
-            .spawn(move || {
-                let result = LoopbackCapture::start(callback).map_err(|e| format!("{e:#}"));
-                let _ = tx.send(result);
-            })
-            .ok()?;
-
-        match rx.recv_timeout(LOOPBACK_START_TIMEOUT) {
-            Ok(Ok(capture)) => {
-                self.watch_loopback(meeting_id, &capture, dsp_control);
-                Some(capture)
+        let cancel = starting.cancel_flag();
+        let started = start_bounded(
+            "meeting-loopback-start",
+            LOOPBACK_START_TIMEOUT,
+            &cancel,
+            || close_sink(Some(sink)),
+            move || LoopbackCapture::start(callback).map_err(|e| format!("{e:#}")),
+        );
+        match started {
+            Ok(capture) => {
+                self.watch_loopback(meeting_id, &capture, mode, dsp_control);
+                Ok(capture)
             }
-            Ok(Err(e)) => {
-                warn!("meetings: loopback start failed ({e}) — continuing mic-only");
-                self.emit_error(meeting_id, "loopback_start_failed");
-                None
-            }
-            Err(_) => {
-                warn!("meetings: loopback start timed out — continuing mic-only");
-                self.emit_error(meeting_id, "loopback_start_timeout");
-                None
+            Err(LoopbackStartError::Cancelled) => Err(starting.cancel_code().to_string()),
+            Err(failure) => {
+                let code = mode.loopback_start_code(&failure);
+                match (&failure, mode) {
+                    // Nur der Code und die Art des Fehlers, nie Inhalt.
+                    (LoopbackStartError::Failed(e), CaptureMode::PlaybackOnly) => {
+                        warn!("meetings: playback capture could not start ({e})");
+                        Err(format!("{code}: {e}"))
+                    }
+                    (_, CaptureMode::PlaybackOnly) => {
+                        warn!("meetings: playback capture start timed out");
+                        Err(code.to_string())
+                    }
+                    (LoopbackStartError::Failed(e), _) => {
+                        warn!("meetings: loopback start failed ({e}) - continuing mic-only");
+                        self.emit_error(meeting_id, code);
+                        Err(code.to_string())
+                    }
+                    (_, _) => {
+                        warn!("meetings: loopback start timed out - continuing mic-only");
+                        self.emit_error(meeting_id, code);
+                        Err(code.to_string())
+                    }
+                }
             }
         }
     }
@@ -1260,11 +2016,13 @@ impl MeetingRecorderManager {
     /// simply goes quiet, the meeting keeps recording and half the minutes are
     /// missing without anyone noticing. This watchdog turns that silence into
     /// an error event; it ends with the capture (stop flag) or right after it
-    /// reported the failure.
+    /// reported the failure. Welche Ereignisse das sind, haengt vom Modus ab
+    /// (`CaptureMode::loopback_died_events`).
     fn watch_loopback(
         &self,
         meeting_id: &str,
         capture: &LoopbackCapture,
+        mode: CaptureMode,
         dsp_control: Option<DspControl>,
     ) {
         let (stopped, failed) = capture.watch_flags();
@@ -1276,23 +2034,15 @@ impl MeetingRecorderManager {
                 while !stopped.load(Ordering::Relaxed) {
                     if failed.load(Ordering::Relaxed) {
                         warn!(
-                            "meetings: loopback capture died mid-meeting ({meeting_id})                              - system audio is gone, the meeting continues mic-only"
+                            "meetings: loopback capture died mid-recording ({meeting_id}) - system audio is gone"
                         );
                         // M2-P2c2: ohne Referenz Echo-Unterdrueckung aus.
                         if let Some(control) = &dsp_control {
                             control.reference_lost();
                         }
-                        let _ = (MeetingEvent::Health {
-                            meeting_id: meeting_id.clone(),
-                            channel: CHANNEL_SYSTEM,
-                            state: HealthState::LoopbackDied,
-                        })
-                        .emit(&app);
-                        let _ = (MeetingEvent::Error {
-                            meeting_id,
-                            message: "loopback_died".to_string(),
-                        })
-                        .emit(&app);
+                        for event in mode.loopback_died_events(&meeting_id) {
+                            let _ = event.emit(&app);
+                        }
                         return;
                     }
                     std::thread::sleep(LOOPBACK_WATCH_INTERVAL);
@@ -1307,6 +2057,7 @@ impl MeetingRecorderManager {
         &self,
         meeting_id: &str,
         echo: Option<EchoSetup>,
+        mode: CaptureMode,
     ) -> Result<LivePipeline, String> {
         let app = self.app.clone();
         let transcription = Arc::clone(&self.transcription);
@@ -1328,7 +2079,10 @@ impl MeetingRecorderManager {
         });
 
         let mut cfg = DspConfig::new(vad_factory, notice);
-        if let Some(echo) = echo {
+        if mode == CaptureMode::PlaybackOnly {
+            // Ohne Mikrofon: kein Echo, kein Mikrofon-Waechter (#537).
+            cfg = cfg.playback_only();
+        } else if let Some(echo) = echo {
             cfg = cfg.with_echo(echo);
         }
 
@@ -1414,13 +2168,33 @@ impl MeetingRecorderManager {
     /// that happens here at once. Returns as soon as the live worker is empty.
     /// Blocking — call it off the UI thread.
     pub fn stop(&self) -> Result<String, String> {
-        // #15: der Zustand bleibt `Recording`, bis die Captures wirklich zu sind
-        // (das Ticket stellt ihn auf `Idle`, auch bei einer Panik): vorher galt die
-        // Aufnahme schon als beendet, waehrend das Mikrofon noch offen war, und ein
-        // Diktat-Hotkey oder ein neuer Start konnte dazwischen greifen.
-        let (session, stopping) = self.core.begin_stop()?;
-        let RecordingSession {
+        self.stop_op(None)
+    }
+
+    /// `stop`, mit `op` nur fuer genau diesen Vorgang (`cancel_start`).
+    fn stop_op(&self, op: Option<&str>) -> Result<String, String> {
+        // #15: der Zustand bleibt `Stopping`, bis die Captures wirklich zu sind (das Ticket
+        // stellt ihn auf `Idle`, auch bei einer Panik): vorher galt die Aufnahme schon als
+        // beendet, waehrend das Mikrofon noch offen war, und ein Diktat-Hotkey oder ein neuer
+        // Start konnte dazwischen greifen.
+        let deadline = Instant::now() + START_CANCEL_WAIT;
+        let (session, stopping) = match self.core.begin_stop(op, deadline)? {
+            StopStep::Running(session, ticket) => (session, ticket),
+            // lva#538: ein Stopp WAEHREND des Starts bricht ihn ab (verbindlich); zurueck kehrt er
+            // erst, wenn der Start aufgeraeumt hat (der Eintrag ist dann wie vorher). Haengt der
+            // Start noch in einem Treiber, ist das ein Fehler, kein stiller Erfolg.
+            StopStep::CancelledStart(start_op) => {
+                return if self.core.wait_start_end(&start_op, deadline) {
+                    Ok(String::new())
+                } else {
+                    warn!("meetings: the cancelled start did not end in time");
+                    Err(START_BUSY.to_string())
+                };
+            }
+        };
+        let SessionParts {
             meeting_id,
+            mode,
             mic_capture,
             loopback,
             mic_sink,
@@ -1428,32 +2202,23 @@ impl MeetingRecorderManager {
             mic_path,
             system_path,
             pipeline,
+            write_flags,
+            watch_stop,
             live,
-            ..
-        } = session;
+        } = session.into_parts();
+        watch_stop.store(true, Ordering::Release);
 
         // Captures first: once they are stopped no callback can touch the
         // sinks or the DSP queue any more, so draining and finalizing below is
         // race-free.
-        if let Some(capture) = mic_capture {
-            if capture.had_error() {
-                self.emit_error(&meeting_id, "mic_stream_error");
-            }
-            capture.stop();
-        }
-        if let Some(capture) = loopback {
-            // The watchdog above has already reported this while the meeting
-            // was running; the log line here is what makes it visible in the
-            // evidence of a finished meeting.
-            if capture.had_error() {
-                warn!("meetings: loopback capture had ended with an error ({meeting_id})");
-            }
-            capture.stop();
-        }
+        let capture_end = self.stop_captures(&meeting_id, mic_capture, loopback);
         // Mikrofon und Loopback sind zu: jetzt ist die Maschine nicht mehr in
         // Aufnahme. ZUERST der Zustand, DANACH der Indikator: `hide_recording_overlay`
-        // fragt den Zustand und stellte den Indikator sonst wieder auf.
-        stopping.finish();
+        // fragt den Zustand und stellte den Indikator sonst wieder auf. Der Abschluss
+        // (Pipeline leeren, Writer schliessen) laeuft weiter und haelt `Finalizing` bis zum
+        // Ende dieser Funktion (alle Rueckgabewege): ein Loeschen dieser Besprechung wartet
+        // darauf, statt Dateien unter einem offenen Writer zu loeschen (lva#538).
+        let _finalizing = stopping.finish();
         self.set_indicator(false);
 
         if let Err(e) = self
@@ -1497,13 +2262,52 @@ impl MeetingRecorderManager {
                 .initiate_model_load_target(&settings.selected_model);
         }
 
-        let mic_ms = finalize_sink(&mic_sink).unwrap_or(0);
-        let system_ms = system_sink.as_ref().and_then(finalize_sink).unwrap_or(0);
+        let mic_ms = mic_sink
+            .as_ref()
+            .and_then(|sink| finalize_sink(sink, write_flags.flag(CHANNEL_MIC)))
+            .unwrap_or(0);
+        let system_ms = system_sink
+            .as_ref()
+            .and_then(|sink| finalize_sink(sink, write_flags.flag(CHANNEL_SYSTEM)))
+            .unwrap_or(0);
         let duration_ms = mic_ms.max(system_ms);
+
+        // lva#538: ein Schreibfehler (auch ein Fehler beim Kopf-Flush oder beim Abschluss) und
+        // jeder nicht saubere Abschluss des Loopbacks (Runde 5: Verlust, Geraetefehler, Panik,
+        // unsichere Zeitachse) machen die Aufnahme unvollstaendig.
+        let (failed, plan) = settle_after_stop(
+            &self.store,
+            &meeting_id,
+            write_flags.failed_channels(),
+            &capture_end,
+            plan,
+            MARKER_TRIES,
+        );
+        if !failed.is_empty() && write_flags.first_report() {
+            self.emit_error(&meeting_id, AUDIO_WRITE_FAILED);
+        }
+
+        // #537: ein Mitschnitt ohne einen einzigen Ton (das Video stumm, der Treiber
+        // lieferte nichts) laesst keine leere Aufnahme zurueck, die einen neuen Mitschnitt
+        // fuer immer verhindert: der Eintrag ist wieder wie vorher (nur ohne Saetze, das
+        // prueft der Rueckfall selbst).
+        if mode == CaptureMode::PlaybackOnly
+            && duration_ms == 0
+            && failed.is_empty()
+            && self.undo_empty_capture(&meeting_id, system_path.as_deref())
+        {
+            self.transcription
+                .initiate_model_load_target(&settings.selected_model);
+            self.emit_state(&meeting_id, "ready", false);
+            return Ok(meeting_id);
+        }
+        if mode == CaptureMode::PlaybackOnly && duration_ms > 0 {
+            let _ = self.store.discard_playback_prior(&meeting_id);
+        }
 
         if let Err(e) = self.store.set_audio_paths(
             &meeting_id,
-            mic_path.to_str(),
+            mic_path.as_ref().and_then(|p| p.to_str()),
             system_path.as_ref().and_then(|p| p.to_str()),
             Some(duration_ms),
         ) {
@@ -1550,6 +2354,153 @@ impl MeetingRecorderManager {
         Ok(meeting_id)
     }
 
+    /// Beendet die Captures einer Aufnahme (Mikrofon, Loopback) und meldet, was sie
+    /// unterwegs zu sagen hatten. Danach ruft kein Callback mehr in Sinks oder DSP-Queue.
+    /// Rueckgabe: wie der Loopback endete (lva#538 Runde 5): jeder nicht saubere Abschluss macht
+    /// den Systemkanal unvollstaendig.
+    fn stop_captures(
+        &self,
+        meeting_id: &str,
+        mic_capture: Option<MeetingMicCapture>,
+        loopback: Option<LoopbackCapture>,
+    ) -> CaptureEnd {
+        if let Some(capture) = mic_capture {
+            if capture.had_error() {
+                self.emit_error(meeting_id, "mic_stream_error");
+            }
+            capture.stop();
+        }
+        loopback
+            .map(|capture| stop_loopback(meeting_id, capture))
+            .unwrap_or_default()
+    }
+
+    /// Der Mitschnitt hat keinen einzigen Ton aufgenommen: Eintrag wie vorher, leere
+    /// Capture-Dateien weg. `true`, wenn zurueckgesetzt.
+    fn undo_empty_capture(&self, meeting_id: &str, system_path: Option<&std::path::Path>) -> bool {
+        match self.store.restore_playback_target(meeting_id) {
+            Ok(true) => {
+                if let Some(dir) = system_path.and_then(std::path::Path::parent) {
+                    remove_capture_files(dir);
+                }
+                info!(
+                    "meetings: playback capture without any audio ({meeting_id}) - entry restored"
+                );
+                true
+            }
+            Ok(false) => false,
+            Err(e) => {
+                warn!("meetings: empty playback capture not reset ({meeting_id}): {e}");
+                false
+            }
+        }
+    }
+
+    /// lva#538: VOR dem Loeschen der Besprechung `meeting_id` (`meetings_delete`). Reserviert das
+    /// Loeschen und bringt die Besprechung in einen Zustand, in dem ihre Dateien weg duerfen:
+    /// ein laufender Start in sie endet mit `meeting_not_found` und hat aufgeraeumt, eine
+    /// laufende Aufnahme wird beendet (ohne Enddurchlauf), ein laufender Stopp samt Abschluss
+    /// (Pipeline leeren, Writer schliessen) wird abgewartet. Die Reservierung haelt bis der
+    /// Aufrufer sie fallen laesst, also NACH dem Tombstone und dem Entfernen der Dateien: bis
+    /// dahin nimmt kein Start mehr in diese Besprechung auf.
+    ///
+    /// Fehler: `delete_in_progress` (schon ein Loeschen), `recording_busy` (das Warten lief ab:
+    /// nichts wurde geloescht, ein neuer Versuch ist moeglich) - nie ein stiller Erfolg.
+    /// Blockierend.
+    pub fn reserve_delete(self: &Arc<Self>, meeting_id: &str) -> Result<DeleteReservation, String> {
+        self.core.reserve_delete(meeting_id)?;
+        // Faellt die Reservierung (auch bei jedem Fehler unten), gibt sie sich frei.
+        let reservation = DeleteReservation {
+            recorder: Arc::clone(self),
+            meeting_id: meeting_id.to_string(),
+        };
+        let deadline = Instant::now() + DELETE_WAIT;
+        loop {
+            match self.core.delete_step(meeting_id, deadline)? {
+                DeleteStep::Free => return Ok(reservation),
+                DeleteStep::Running(session, ticket) => self.discard_running(session, ticket),
+            }
+        }
+    }
+
+    /// Beendet eine laufende Aufnahme, deren Besprechung geloescht wird: Captures zu, DSP und
+    /// Worker beenden und JOINEN (der Rest der Warteschlange wird abgeworfen, nichts mehr
+    /// gespeichert), WAV-Writer zu, kein Status, kein Enddurchlauf. Die Dateien loescht der
+    /// Aufrufer danach; `Finalizing` haelt das Loeschen bis hierher zurueck.
+    fn discard_running(
+        &self,
+        session: RecordingSession,
+        stopping: StopTicket<'_, RecordingSession>,
+    ) {
+        let SessionParts {
+            meeting_id,
+            mic_capture,
+            loopback,
+            mic_sink,
+            system_sink,
+            pipeline,
+            write_flags,
+            watch_stop,
+            // Die Anmeldung faellt erst am Ende: bis dahin laeuft kein Enddurchlauf mit Modell.
+            live: _live,
+            ..
+        } = session.into_parts();
+        watch_stop.store(true, Ordering::Release);
+        self.stop_captures(&meeting_id, mic_capture, loopback);
+        let _finalizing = stopping.finish();
+        self.set_indicator(false);
+        if let Some(pipeline) = pipeline {
+            pipeline.abort();
+        }
+        if let Some(sink) = &mic_sink {
+            finalize_sink(sink, write_flags.flag(CHANNEL_MIC));
+        }
+        if let Some(sink) = &system_sink {
+            finalize_sink(sink, write_flags.flag(CHANNEL_SYSTEM));
+        }
+        let selected = crate::settings::get_settings(&self.app).selected_model;
+        self.transcription.initiate_model_load_target(&selected);
+        self.emit_state(&meeting_id, "cancelled", false);
+        info!("meetings: recording ended because its meeting is deleted ({meeting_id})");
+    }
+
+    /// lva#538: der Waechter der WAV-Writer. Ein Schreibfehler (Platte voll, RIFF-Grenze,
+    /// Kopf-Flush) setzt im Callback nur ein Merkzeichen; hier wird daraus, noch waehrend der
+    /// Aufnahme, der dauerhafte Marker `audio_incomplete` (ein Absturz danach verliert ihn
+    /// nicht) und eine Meldung an den Nutzer. Laesst sich der Marker nicht speichern, versucht
+    /// der Waechter es im Takt weiter (die Meldung geht trotzdem sofort raus). Endet mit der
+    /// Aufnahme (`stop`) oder, wenn Marker und Meldung stehen.
+    fn watch_writes(&self, meeting_id: &str, flags: &Arc<WriteFlags>, stop: &Arc<AtomicBool>) {
+        let store = Arc::clone(&self.store);
+        let app = self.app.clone();
+        let flags = Arc::clone(flags);
+        let stop = Arc::clone(stop);
+        let meeting_id = meeting_id.to_string();
+        let _ = std::thread::Builder::new()
+            .name("meeting-write-watch".to_string())
+            .spawn(move || {
+                while !stop.load(Ordering::Acquire) {
+                    let failed = flags.failed_channels();
+                    if !failed.is_empty() {
+                        warn!(
+                            "meetings: the recording could not be written any more ({meeting_id})"
+                        );
+                        if flags.first_report() {
+                            let _ = (MeetingEvent::Error {
+                                meeting_id: meeting_id.clone(),
+                                message: AUDIO_WRITE_FAILED.to_string(),
+                            })
+                            .emit(&app);
+                        }
+                        if persist_audio_incomplete(&store, &meeting_id, &failed, 1) {
+                            return;
+                        }
+                    }
+                    std::thread::sleep(WRITE_WATCH_INTERVAL);
+                }
+            });
+    }
+
     /// App start: a meeting still marked `recording` or `processing` means the
     /// app died mid recording or mid final pass. Its WAV headers may claim
     /// zero length, so repair them from the file size, store the real
@@ -1562,6 +2513,7 @@ impl MeetingRecorderManager {
         let settings = crate::settings::get_settings(&self.app);
         let choice = FinalChoice::parse(&settings.meeting_final_model);
         let catch_up_model = self.transcription.meeting_model_target(&settings);
+        let data_dir = super::meetings_data_dir(&self.app).ok();
         let mut jobs: Vec<JobSpec> = Vec::new();
         let mut offset = 0u32;
         let mut recovered: Vec<String> = Vec::new();
@@ -1575,12 +2527,22 @@ impl MeetingRecorderManager {
             };
             let page_len = page.len() as u32;
             for meeting in page {
+                // lva#538: ein Mitschnitt, der nie etwas aufgenommen hat (Absturz im Start),
+                // wird wieder die YouTube-Besprechung von vorher, statt als leere
+                // Aufnahme stehenzubleiben. Auch eine `failed`-Zeile mit dem Merker.
+                if reset_unrecorded_capture(&self.store, &meeting, data_dir.as_deref()) {
+                    info!(
+                        "meetings: unrecorded playback capture reset ({})",
+                        meeting.id
+                    );
+                    continue;
+                }
                 if !is_orphan_status(&meeting.status) {
                     continue;
                 }
                 // lva#523: WAV-Header, Dauer und `processing` erst unter dem Auftrag
                 // (`run_job`, `recover_from`): eine Ablehnung aendert nichts.
-                let plan = if meeting.source == "live" {
+                let plan = if runs_final_pass(&meeting) {
                     final_pass::plan_for_app(&self.app, &choice)
                 } else {
                     FinalPlan::Keep(KeepReason::NotLive)
@@ -1636,7 +2598,7 @@ impl MeetingRecorderManager {
         crate::managers::planning::tor_pruefen_besprechung(&self.store, meeting_id)?;
         let settings = crate::settings::get_settings(&self.app);
         let catch_up_model = self.transcription.meeting_model_target(&settings);
-        let plan = if meeting.source == "live" {
+        let plan = if runs_final_pass(&meeting) {
             final_pass::plan_for_app(
                 &self.app,
                 &FinalChoice::parse(&settings.meeting_final_model),
@@ -1689,10 +2651,31 @@ impl MeetingRecorderManager {
         .emit(&self.app);
     }
 
+    /// lva#538 (Runde 3): ein abgebrochener oder gescheiterter Start hat die Zeile zurueckgesetzt
+    /// (Eintrag wieder wie vorher, Saetze verworfen). Die Oberflaeche hat die Saetze, die die
+    /// Pipeline VOR dem Abbruch schon gemeldet hatte, als Ereignisse uebernommen: `Reset` leert
+    /// ihre Liste, der Zustand danach (aus der Zeile gelesen) laesst sie Segmente und Eintrag neu
+    /// laden. Ohne das blieben Phantomsaetze stehen und der erneute Mitschnitt verschwaende.
+    fn emit_restored(&self, meeting_id: &str) {
+        let status = self
+            .store
+            .get_meeting(meeting_id)
+            .ok()
+            .flatten()
+            .map(|m| m.status)
+            .unwrap_or_else(|| "ready".to_string());
+        let _ = (MeetingEvent::Reset {
+            meeting_id: meeting_id.to_string(),
+        })
+        .emit(&self.app);
+        self.emit_state(meeting_id, &status, false);
+    }
+
     // M1-P1c (Beruehrpunkt B2): Audioposition fuer den Notizblock.
     /// The running meeting's id and the microphone audio position in
     /// milliseconds, or `None` when nothing is being recorded. Same timeline
-    /// as `StoredSegment.start_ms` (paused stretches are compressed).
+    /// as `StoredSegment.start_ms` (paused stretches are compressed). Beim
+    /// Mitschnitt des Systemtons (#537) ohne Mikrofon zaehlt die Systemton-Datei.
     pub fn position_ms(&self) -> Option<(String, u64)> {
         self.core
             .with_session(|session| session.and_then(Self::session_position))
@@ -1701,7 +2684,8 @@ impl MeetingRecorderManager {
     /// `None` once the mic WAV writer is gone (RIFF limit reached): a wrong
     /// position would be worse than none, the notepad then stores no timestamp.
     fn session_position(session: &RecordingSession) -> Option<(String, u64)> {
-        let sink = session.mic_sink.lock().ok()?;
+        let sink = session.mic_sink.as_ref().or(session.system_sink.as_ref())?;
+        let sink = sink.lock().ok()?;
         let ms = sink.writer.as_ref()?.position_ms();
         Some((session.meeting_id.clone(), ms))
     }
@@ -1716,18 +2700,17 @@ mod position_tests {
             StreamingWavWriter::create(&dir.join("placeholder.wav"), 16_000).unwrap(),
         );
         sink.writer = writer;
-        RecordingSession {
-            meeting_id: "m-pos".to_string(),
-            paused: Arc::new(AtomicBool::new(false)),
-            mic_capture: None,
-            loopback: None,
-            mic_sink: Arc::new(Mutex::new(sink)),
-            system_sink: None,
-            mic_path: PathBuf::new(),
-            system_path: None,
-            pipeline: None,
-            live: FinalSlot::default().live_beginnen().unwrap(),
-        }
+        RecordingSession::new(
+            "m-pos",
+            CaptureMode::Meeting {
+                capture_system: false,
+            },
+            Some(Arc::new(Mutex::new(sink))),
+            None,
+            None,
+            None,
+            FinalSlot::default().live_beginnen().unwrap(),
+        )
     }
 
     #[test]
@@ -1743,6 +2726,8 @@ mod position_tests {
         // Weiterschreiben ueber den Sink: die Position laeuft mit.
         session
             .mic_sink
+            .as_ref()
+            .unwrap()
             .lock()
             .unwrap()
             .writer
@@ -1760,6 +2745,28 @@ mod position_tests {
     fn position_is_none_without_a_mic_writer() {
         let dir = tempfile::tempdir().unwrap();
         let session = session_with(dir.path(), None);
+        assert_eq!(MeetingRecorderManager::session_position(&session), None);
+    }
+
+    /// #537: ohne Mikrofon (Mitschnitt des Systemtons) zaehlt die Systemton-Datei:
+    /// der Notizblock bekommt die Position, an der das Transkript wirklich steht.
+    #[test]
+    fn position_follows_the_system_writer_when_there_is_no_microphone() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut w = StreamingWavWriter::create(&dir.path().join("system.wav"), 16_000).unwrap();
+        w.append(&vec![0i16; 32_000]).unwrap(); // 2 s
+        let mut session = session_with(dir.path(), None);
+        session.mic_sink = None;
+        session.system_sink = Some(Arc::new(Mutex::new(ChannelSink::new(w))));
+        assert_eq!(
+            MeetingRecorderManager::session_position(&session),
+            Some(("m-pos".to_string(), 2_000))
+        );
+        // Kein Writer mehr (Platte voll, RIFF-Grenze): lieber keine als eine falsche Zeit.
+        session.system_sink.as_ref().unwrap().lock().unwrap().writer = None;
+        assert_eq!(MeetingRecorderManager::session_position(&session), None);
+        // Gar keine Spur: ebenfalls keine Position.
+        session.system_sink = None;
         assert_eq!(MeetingRecorderManager::session_position(&session), None);
     }
 }
@@ -1814,61 +2821,337 @@ pub(crate) fn store_echo_summary(
     }
 }
 
+/// Die Meldung zu einem Fehler beim Speichern der Audiopfade: eine geloeschte Zeile
+/// heisst `meeting_not_found`, alles andere ein Fehler des Starts.
+fn audio_paths_error(error: &anyhow::Error) -> String {
+    let text = error.to_string();
+    if text.ends_with("not found") {
+        MEETING_NOT_FOUND.to_string()
+    } else {
+        format!("audio_paths_failed: {text}")
+    }
+}
+
 /// The per-channel capture callback: WAV append (with 1-s header flush), hand-off
 /// to the DSP thread, and the throttled level readout. The hand-off is a
 /// non-blocking `try_send` (see `dsp::ChannelFeed`); segmentation and VAD never
 /// run here. The second argument is the QPC stamp of the block's first sample
 /// (P2c2), passed through untouched.
+///
+/// lva#538: der GANZE Callback laeuft unter der Sperre seines Sinks (WAV, DSP-Queue, Pegel,
+/// Pause). `closed` (`close_sink`, `finalize_sink`) wird unter derselben Sperre gesetzt: ein
+/// Callback, der gerade laeuft, ist fertig, wenn das Schliessen zurueckkehrt, und jeder spaetere
+/// ruft nichts mehr an, auch wenn der Treiber nach einer Frist oder einem Abbruch doch noch
+/// zurueckkehrt. Ein Frist-Merkzeichen nur fuer das WAV (wie vorher) liess DSP und Pegel
+/// durch. Ein Schreibfehler der WAV, auch beim Kopf-Flush, setzt das Merkzeichen in
+/// `write_flags` (Atomic) und verwirft den Writer; Aufnahme und Transkription laufen weiter,
+/// der Fehler wird gemeldet und dauerhaft markiert, nicht verschluckt.
 fn channel_callback(
     channel: u8,
     sink: Arc<Mutex<ChannelSink>>,
     paused: Arc<AtomicBool>,
+    write_flags: Arc<WriteFlags>,
     mut feed: ChannelFeed,
-    levels: Arc<LevelEmitter>,
+    levels: Arc<dyn LevelSink>,
 ) -> impl FnMut(&[i16], Option<u64>) + Send + 'static {
     move |samples: &[i16], qpc: Option<u64>| {
+        let mut guard = lock_recovering(&sink);
+        let sink = &mut *guard;
+        if sink.closed {
+            return;
+        }
         if paused.load(Ordering::Relaxed) {
             feed.pause();
             return;
         }
-        {
-            let Ok(mut sink) = sink.lock() else {
-                return;
-            };
-            let mut writer_failed = false;
-            if let Some(writer) = sink.writer.as_mut() {
-                if let Err(e) = writer.append(samples) {
-                    // Also the RIFF 4-GB limit: stop writing this file rather
-                    // than corrupting it; capture and transcription continue.
+        let mut writer_failed = false;
+        if let Some(writer) = sink.writer.as_mut() {
+            match writer.append(samples) {
+                // Also the RIFF 4-GB limit: stop writing this file rather
+                // than corrupting it; capture and transcription continue.
+                Err(e) => {
                     warn!("meetings: wav append stopped on channel {channel}: {e}");
                     writer_failed = true;
                 }
-            }
-            if writer_failed {
-                sink.writer = None;
-            } else {
-                sink.samples_since_flush += samples.len();
-                if sink.samples_since_flush >= FLUSH_EVERY_SAMPLES {
-                    sink.samples_since_flush = 0;
-                    if let Some(writer) = sink.writer.as_mut() {
-                        let _ = writer.flush_header();
+                Ok(()) => {
+                    sink.samples_since_flush += samples.len();
+                    if sink.samples_since_flush >= FLUSH_EVERY_SAMPLES {
+                        sink.samples_since_flush = 0;
+                        // Ein Fehler des Kopf-Flush ist ein Schreibfehler: die Datei laesst sich
+                        // nach einem Absturz nicht mehr reparieren, und der Writer ist danach
+                        // unbrauchbar (Position unbekannt).
+                        if let Err(e) = writer.flush_header() {
+                            warn!("meetings: wav header flush failed on channel {channel}: {e}");
+                            writer_failed = true;
+                        }
                     }
                 }
             }
         }
+        if writer_failed {
+            sink.writer = None;
+            write_flags.flag(channel).store(true, Ordering::Release);
+        }
         feed.push_stamped(samples, qpc);
-        levels.record(channel, rms(samples));
+        levels.level(channel, rms(samples));
     }
 }
 
-/// Finalizes a channel's WAV and returns its duration in milliseconds.
-fn finalize_sink(sink: &Arc<Mutex<ChannelSink>>) -> Option<u64> {
-    let writer = sink.lock().ok()?.writer.take()?;
+/// Die Callback-Sperre fuer einen Sink, dessen Datei nicht mehr gebraucht wird (Abbruch des
+/// Starts, Loeschen): ab hier ruft kein Callback mehr etwas an, ein laufender ist fertig. Der
+/// Writer wird dabei abgeschlossen, damit eine Datei, die ein Fehlerweg behaelt (Fail-closed),
+/// ein gueltiger Kopf hat und nicht auf "0 Laenge" steht.
+fn close_sink(sink: Option<&Arc<Mutex<ChannelSink>>>) {
+    if let Some(sink) = sink {
+        let unused = AtomicBool::new(false);
+        let _ = finalize_sink(sink, &unused);
+    }
+}
+
+/// Schliesst einen Kanal fuer immer (Callback-Sperre) und liefert seine Dauer in
+/// Millisekunden. Ein Fehler beim Abschluss setzt dasselbe Merkzeichen wie ein Schreibfehler
+/// (die Aufnahme ist dann nicht vollstaendig).
+fn finalize_sink(sink: &Arc<Mutex<ChannelSink>>, failed: &AtomicBool) -> Option<u64> {
+    let writer = {
+        let mut sink = lock_recovering(sink);
+        sink.closed = true;
+        sink.writer.take()?
+    };
     match writer.finalize() {
         Ok(ms) => Some(ms),
         Err(e) => {
             warn!("meetings: wav finalize failed: {e}");
+            failed.store(true, Ordering::Release);
             None
+        }
+    }
+}
+
+/// lva#538: macht aus dem Merkzeichen einen dauerhaften Marker (`metadata_json.
+/// audio_incomplete`). Ab dann ersetzt der Enddurchlauf das Live-Transkript nie mehr aus
+/// dieser Aufnahme, auch nach einem Absturz oder wenn spaeter wieder Platz da ist.
+/// Mehrfaches Schreiben ist unschaedlich (derselbe Schluessel). Ein Fehler wird gemeldet,
+/// nicht nur geloggt: der Aufrufer weicht darauf fail-closed aus.
+#[cfg(test)]
+pub(crate) fn mark_audio_incomplete(
+    store: &MeetingStore,
+    meeting_id: &str,
+    channels: &[u8],
+) -> Result<(), String> {
+    mark_audio_incomplete_because(store, meeting_id, channels, "write_failed")
+}
+
+/// Wie [`mark_audio_incomplete`], mit dem Grund (`reason`: `write_failed`, `capture_lost`,
+/// `capture_error`, `capture_panicked`, `timeline_uncertain`, kommagetrennt bei mehreren).
+pub(crate) fn mark_audio_incomplete_because(
+    store: &MeetingStore,
+    meeting_id: &str,
+    channels: &[u8],
+    reason: &str,
+) -> Result<(), String> {
+    let value = serde_json::json!({
+        "channels": channels,
+        "reason": reason,
+        "at": chrono::Utc::now().timestamp(),
+    });
+    store
+        .set_metadata_key(meeting_id, final_pass::AUDIO_INCOMPLETE_KEY, value)
+        .map_err(|e| {
+            error!("meetings: audio_incomplete marker not stored ({meeting_id}): {e}");
+            e.to_string()
+        })
+}
+
+/// Speichert den Marker mit bis zu `tries` Versuchen; `true`, wenn er steht.
+fn persist_audio_incomplete(
+    store: &MeetingStore,
+    meeting_id: &str,
+    channels: &[u8],
+    tries: u32,
+) -> bool {
+    persist_audio_incomplete_because(store, meeting_id, channels, "write_failed", tries)
+}
+
+fn persist_audio_incomplete_because(
+    store: &MeetingStore,
+    meeting_id: &str,
+    channels: &[u8],
+    reason: &str,
+    tries: u32,
+) -> bool {
+    for attempt in 0..tries.max(1) {
+        if attempt > 0 {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        if mark_audio_incomplete_because(store, meeting_id, channels, reason).is_ok() {
+            return true;
+        }
+    }
+    false
+}
+
+/// lva#538 (Runde 3): laesst den Marker `capture_open` fallen, mit bis zu `tries` Versuchen.
+/// `true`, wenn er nicht (mehr) steht. Scheitert es, bleibt der Marker (fail-closed): das Audio
+/// gilt weiter als unvollstaendig und der Enddurchlauf ersetzt das Live-Transkript nicht.
+pub(crate) fn close_capture_marker(store: &MeetingStore, meeting_id: &str, tries: u32) -> bool {
+    for attempt in 0..tries.max(1) {
+        if attempt > 0 {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        match store.end_capture(meeting_id) {
+            Ok(_) => return true,
+            Err(e) => warn!("meetings: capture marker of {meeting_id} not cleared: {e}"),
+        }
+    }
+    false
+}
+
+/// lva#538 (Runde 5): beendet den Loopback und wertet aus, wie er endete. Die Auswertung ist
+/// `LoopbackCapture::stop`: Verlust beim Abschluss, Gerätefehler, Panik des Threads (das `join`
+/// schlug fehl) und unsichere Zeitachse. Nichts davon wird nur protokolliert.
+pub(crate) fn stop_loopback(meeting_id: &str, capture: LoopbackCapture) -> CaptureEnd {
+    // The watchdog above has already reported an error while the meeting was running; the log
+    // line here is what makes it visible in the evidence of a finished meeting.
+    if capture.had_error() {
+        warn!("meetings: loopback capture had ended with an error ({meeting_id})");
+    }
+    let end = capture.stop();
+    if !end.is_clean() {
+        warn!(
+            "meetings: loopback capture did not end cleanly ({meeting_id}): {}",
+            end.reasons().join(",")
+        );
+    }
+    end
+}
+
+/// lva#538: das Ende des Stopps am Marker. Unvollstaendig ist ein Kanal, dessen WAV nicht
+/// vollstaendig geschrieben wurde (`write_failed`), und der Systemkanal bei JEDEM nicht sauberen
+/// Abschluss des Loopbacks (`end`, Runde 5). Der Marker `audio_incomplete` steht VOR dem Auftrag,
+/// mit Grund (`reason`), damit der Enddurchlauf das Live-Transkript nicht aus der WAV ersetzt
+/// (fail-closed: laesst er sich nicht speichern, gilt fuer DIESEN Lauf trotzdem
+/// `Keep(AudioIncomplete)`). Nur eine sauber geschlossene Aufnahme ohne jeden Verlust laesst den
+/// pessimistischen Marker `capture_open` fallen; bei einem Fehler bleibt er (zusaetzlich zu
+/// `audio_incomplete`), laesst er sich nicht entfernen, bleibt er ebenfalls: das ist die sichere
+/// Seite. Rueckgabe: die unvollstaendigen Kanaele und der Plan.
+pub(crate) fn settle_after_stop(
+    store: &MeetingStore,
+    meeting_id: &str,
+    write_failed: Vec<u8>,
+    end: &CaptureEnd,
+    plan: FinalPlan,
+    tries: u32,
+) -> (Vec<u8>, FinalPlan) {
+    let mut failed = write_failed;
+    let mut reasons: Vec<&str> = Vec::new();
+    if !failed.is_empty() {
+        reasons.push("write_failed");
+    }
+    reasons.extend(end.reasons());
+    if !end.is_clean() && !failed.contains(&CHANNEL_SYSTEM) {
+        failed.push(CHANNEL_SYSTEM);
+    }
+    let plan = plan_after_incomplete(store, meeting_id, &failed, &reasons.join(","), plan, tries);
+    if failed.is_empty() {
+        close_capture_marker(store, meeting_id, tries);
+    }
+    (failed, plan)
+}
+
+/// lva#538, fail-closed: der Plan des Enddurchlaufs nach den Schreibfehlern (`failed` = die
+/// Kanaele, deren WAV nicht vollstaendig geschrieben wurde). Ohne Fehler bleibt der Plan. Mit
+/// Fehler steht der Marker VOR dem Auftrag; laesst er sich nicht speichern, gilt fuer diesen
+/// Lauf trotzdem `Keep(AudioIncomplete)`: das Live-Transkript bleibt, auch wenn die Datenbank
+/// den Marker verweigert. (Ein spaeterer Lauf ohne Marker faengt `final_pass` ueber die
+/// Abdeckung der Spuren ab.)
+#[cfg(test)]
+pub(crate) fn plan_after_write_failures(
+    store: &MeetingStore,
+    meeting_id: &str,
+    failed: &[u8],
+    plan: FinalPlan,
+    tries: u32,
+) -> FinalPlan {
+    plan_after_incomplete(store, meeting_id, failed, "write_failed", plan, tries)
+}
+
+/// Wie [`plan_after_write_failures`], mit dem Grund, der im Marker steht.
+pub(crate) fn plan_after_incomplete(
+    store: &MeetingStore,
+    meeting_id: &str,
+    failed: &[u8],
+    reason: &str,
+    plan: FinalPlan,
+    tries: u32,
+) -> FinalPlan {
+    if failed.is_empty()
+        || persist_audio_incomplete_because(store, meeting_id, failed, reason, tries)
+    {
+        return plan;
+    }
+    FinalPlan::Keep(KeepReason::AudioIncomplete)
+}
+
+/// lva#538: nach einem Absturz oder Abbruch des Mitschnitts. Ein YouTube-Eintrag, der
+/// nie etwas aufgenommen hat (Start bis `recording` gekommen, WAV leer oder fehlt, keine
+/// Saetze), wird wieder die YouTube-Besprechung von vorher: Status, Einwilligung und
+/// Dauer aus dem gespeicherten Vorzustand, keine Audiopfade, die leeren Capture-Dateien
+/// weg. `true`, wenn zurueckgesetzt (dann gibt es nichts wiederherzustellen). Mit Ton
+/// (auch ohne erkannte Sprache) bleibt es bei der normalen Wiederherstellung; der Merker
+/// des Vorzustands wird dann nicht mehr gebraucht.
+pub(crate) fn reset_unrecorded_capture(
+    store: &MeetingStore,
+    meeting: &Meeting,
+    data_dir: Option<&std::path::Path>,
+) -> bool {
+    reset_unrecorded_capture_with(store, meeting, data_dir, super::playback::audio_state)
+}
+
+/// Wie [`reset_unrecorded_capture`], mit dem Dateizustand als Parameter (Test: ein Zugriffsfehler
+/// laesst sich einspielen, ohne die Platte zu bemuehen).
+fn reset_unrecorded_capture_with(
+    store: &MeetingStore,
+    meeting: &Meeting,
+    data_dir: Option<&std::path::Path>,
+    audio_state: impl Fn(&Meeting) -> super::playback::AudioState,
+) -> bool {
+    let reachable = is_orphan_status(&meeting.status) || meeting.status == "failed";
+    if meeting.source != super::playback::SOURCE_YOUTUBE || !reachable {
+        return false;
+    }
+    let has_prior = store.playback_prior(&meeting.id).ok().flatten().is_some();
+    let state = audio_state(meeting);
+    if !(has_prior && state == super::playback::AudioState::Empty) {
+        // Nur NACHGEWIESENER Ton erledigt den Vorzustand. Laesst sich der Dateizustand nicht
+        // lesen, bleibt der Merker (und alles andere) stehen: im Zweifel behalten.
+        if has_prior
+            && is_orphan_status(&meeting.status)
+            && state == super::playback::AudioState::Present
+        {
+            let _ = store.discard_playback_prior(&meeting.id);
+        }
+        return false;
+    }
+    match store.restore_playback_target(&meeting.id) {
+        Ok(true) => {
+            let mut dirs: Vec<PathBuf> =
+                data_dir.map(|d| d.join(&meeting.id)).into_iter().collect();
+            dirs.extend(
+                [&meeting.mic_audio_path, &meeting.system_audio_path]
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|p| std::path::Path::new(p).parent().map(PathBuf::from)),
+            );
+            dirs.dedup();
+            for dir in dirs {
+                remove_capture_files(&dir);
+            }
+            true
+        }
+        Ok(false) => false,
+        Err(e) => {
+            warn!("meetings: unrecorded capture {} not reset: {e}", meeting.id);
+            false
         }
     }
 }
@@ -1932,44 +3215,6 @@ mod tests {
     fn start_without_consent_is_refused() {
         assert_eq!(consent_gate(false), Err("consent_required".to_string()));
         assert!(consent_gate(true).is_ok());
-    }
-
-    #[test]
-    fn only_one_meeting_records_at_a_time() {
-        let s = MeetingRunState::Recording {
-            meeting_id: "m1".into(),
-            paused: false,
-        };
-        assert!(!may_start(&s));
-        assert!(may_start(&MeetingRunState::Idle));
-    }
-
-    #[test]
-    fn pause_and_resume_toggle_only_in_recording() {
-        let mut s = MeetingRunState::Recording {
-            meeting_id: "m".into(),
-            paused: false,
-        };
-        assert!(apply_pause(&mut s, true).is_ok());
-        assert!(matches!(
-            &s,
-            MeetingRunState::Recording { paused: true, .. }
-        ));
-        let mut idle = MeetingRunState::Idle;
-        assert!(apply_pause(&mut idle, true).is_err());
-    }
-
-    #[test]
-    fn resume_clears_the_pause_flag() {
-        let mut s = MeetingRunState::Recording {
-            meeting_id: "m".into(),
-            paused: true,
-        };
-        assert!(apply_pause(&mut s, false).is_ok());
-        assert!(matches!(
-            &s,
-            MeetingRunState::Recording { paused: false, .. }
-        ));
     }
 
     #[test]
@@ -2095,169 +3340,6 @@ mod tests {
         );
     }
 
-    // ---- #15: Zustandsfenster, Vergiftung, Geisteraufnahme ---------------------------
-
-    type Core = RunCore<&'static str>;
-
-    #[test]
-    fn a_poisoned_state_lock_does_not_take_the_hotkey_path_down() {
-        let core = Arc::new(Core::new());
-        let poisoner = Arc::clone(&core);
-        let _ = std::thread::spawn(move || {
-            let _guard = poisoner.state.lock().unwrap();
-            panic!("Absturz mit gehaltener Sperre");
-        })
-        .join();
-        assert!(core.state.is_poisoned(), "Voraussetzung des Tests");
-        // Der Diktat-Hotkey fragt genau das: keine Panik, richtige Antwort.
-        assert!(!core.is_recording());
-        assert!(core.is_idle());
-        assert!(core.begin_start().is_ok(), "ein Start bleibt moeglich");
-    }
-
-    #[test]
-    fn a_poisoned_session_lock_does_not_break_pause_or_position() {
-        let core = Arc::new(Core::new());
-        core.publish_started("m1", "sitzung");
-        let poisoner = Arc::clone(&core);
-        let _ = std::thread::spawn(move || {
-            let _guard = poisoner.session.lock().unwrap();
-            panic!("Absturz mit gehaltener Sperre");
-        })
-        .join();
-        assert_eq!(core.with_session(|s| s.copied()), Some("sitzung"));
-        assert_eq!(core.set_paused(true, |_| {}), Ok("m1".to_string()));
-    }
-
-    #[test]
-    fn the_state_stays_recording_until_the_stop_has_closed_the_capture() {
-        let core = Core::new();
-        core.publish_started("m1", "sitzung");
-        let (session, ticket) = core.begin_stop().unwrap();
-        assert_eq!(session, "sitzung");
-        // Das Mikrofon ist noch offen: Diktat-Hotkey und neuer Start sehen es.
-        assert!(
-            core.is_recording(),
-            "Fenster 'Zustand Idle vor Capture-Stopp' ist zu"
-        );
-        assert_eq!(
-            core.begin_start().err(),
-            Some("already_recording".to_string())
-        );
-        // Ein zweiter Stopp hat nichts mehr zu stoppen.
-        assert_eq!(core.begin_stop().err(), Some("not_recording".to_string()));
-        ticket.finish();
-        assert!(!core.is_recording());
-        assert!(core.begin_start().is_ok());
-    }
-
-    #[test]
-    fn a_panic_while_stopping_still_frees_the_state() {
-        let core = Core::new();
-        core.publish_started("m1", "sitzung");
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let (_session, _ticket) = core.begin_stop().unwrap();
-            panic!("Capture-Stopp stuerzt ab");
-        }));
-        assert!(result.is_err());
-        assert!(
-            !core.is_recording(),
-            "keine Geisteraufnahme, die Diktat und Neustart sperrt"
-        );
-    }
-
-    #[test]
-    fn a_start_in_progress_counts_as_recording_and_refuses_a_second_start() {
-        let core = Core::new();
-        let ticket = core.begin_start().unwrap();
-        assert!(
-            core.is_recording(),
-            "waehrend des Starts gilt es schon als Aufnahme"
-        );
-        assert_eq!(
-            core.begin_start().err(),
-            Some("already_recording".to_string())
-        );
-        drop(ticket);
-        assert!(
-            !core.is_recording(),
-            "auch ein gescheiterter Start gibt es frei"
-        );
-    }
-
-    #[test]
-    fn pause_needs_a_running_session_not_just_a_state() {
-        let core = Core::new();
-        // Weder vor dem Start noch im Startfenster (Capture laeuft, Sitzung fehlt noch).
-        assert_eq!(
-            core.set_paused(true, |_| {}),
-            Err("not_recording".to_string())
-        );
-        let _starting = core.begin_start().unwrap();
-        assert_eq!(
-            core.set_paused(true, |_| {}),
-            Err("not_recording".to_string())
-        );
-        core.publish_started("m1", "sitzung");
-        let applied = std::cell::Cell::new(false);
-        assert_eq!(
-            core.set_paused(true, |s| {
-                assert_eq!(*s, "sitzung");
-                applied.set(true);
-            }),
-            Ok("m1".to_string())
-        );
-        assert!(applied.get());
-        assert!(matches!(
-            &*lock_recovering(&core.state),
-            MeetingRunState::Recording { paused: true, .. }
-        ));
-        // Nach dem Stopp-Beginn gibt es nichts mehr zu pausieren (kein falsches Ereignis).
-        let (_s, ticket) = core.begin_stop().unwrap();
-        assert_eq!(
-            core.set_paused(false, |_| {}),
-            Err("not_recording".to_string())
-        );
-        ticket.finish();
-    }
-
-    /// Start und Stopp im Wettlauf: nie darf `Recording` ohne Sitzung zurueckbleiben
-    /// (die Reihenfolge "Sitzung setzen, dann Zustand" liess einen Stopp dazwischen
-    /// den Zustand auf `Idle` setzen, bevor der Start ihn auf `Recording` stellte).
-    #[test]
-    fn start_and_stop_racing_never_leave_a_ghost_recording() {
-        for round in 0..200 {
-            let core = Arc::new(Core::new());
-            let starter = Arc::clone(&core);
-            let stopper = Arc::clone(&core);
-            let start = std::thread::spawn(move || {
-                starter.publish_started("m1", "sitzung");
-            });
-            let stop = std::thread::spawn(move || {
-                // Mehrere Versuche, damit mindestens einer nach dem Start liegt.
-                for _ in 0..50 {
-                    if let Ok((_s, ticket)) = stopper.begin_stop() {
-                        ticket.finish();
-                        return true;
-                    }
-                    std::thread::yield_now();
-                }
-                false
-            });
-            start.join().unwrap();
-            let stopped = stop.join().unwrap();
-            if !stopped {
-                // Der Stopp kam nie dazwischen: aufraeumen wie der echte Stopp.
-                let (_s, ticket) = core.begin_stop().unwrap();
-                ticket.finish();
-            }
-            assert!(
-                !core.is_recording(),
-                "Runde {round}: Zustand Recording ohne Sitzung (Geisteraufnahme)"
-            );
-        }
-    }
-
     // ---- #15: gescheiterter Start hinterlaesst keine Debris ---------------------------
 
     fn failed_start_fixture() -> (tempfile::TempDir, MeetingStore, String, PathBuf) {
@@ -2287,7 +3369,10 @@ mod tests {
             "Voraussetzung: Debris liegt da"
         );
 
-        discard_failed_start(&store, &id, &folder);
+        assert_eq!(
+            discard_failed_start(&store, &id, &folder),
+            Rueckfall::Vollstaendig
+        );
 
         assert!(!folder.exists(), "Ordner weg, wenn er danach leer ist");
         let meeting = store.get_meeting(&id).unwrap().unwrap();
@@ -2313,7 +3398,11 @@ mod tests {
         )
         .unwrap();
 
-        discard_failed_start(&store, &id, &folder);
+        assert_eq!(
+            discard_failed_start(&store, &id, &folder),
+            Rueckfall::Vollstaendig,
+            "Fremdes im Ordner ist kein Audio: der Rueckfall gilt als vollstaendig"
+        );
 
         assert!(folder.join("notizen.txt").exists(), "Fremdes bleibt");
         assert!(!folder.join("mic.wav").exists());
@@ -2335,13 +3424,1462 @@ mod tests {
             .create_meeting("Leer", MeetingSource::Live, Some(1))
             .unwrap();
         // Der Ordner wurde nie angelegt (z. B. `meeting_dir_failed`).
-        discard_failed_start(&store, &meeting.id, &dir.path().join("gibt-es-nicht"));
+        assert_eq!(
+            discard_failed_start(&store, &meeting.id, &dir.path().join("gibt-es-nicht")),
+            Rueckfall::Vollstaendig
+        );
         assert_eq!(
             store.get_meeting(&meeting.id).unwrap().unwrap().status,
             "failed"
         );
         // Und eine unbekannte Besprechung bringt nichts zum Absturz.
-        discard_failed_start(&store, "gibt-es-nicht", &dir.path().join("x"));
+        let _ = discard_failed_start(&store, "gibt-es-nicht", &dir.path().join("x"));
+    }
+
+    /// lva#538, fail-closed: hat die Pipeline vor dem Fehler schon Saetze gespeichert, bleiben
+    /// Transkript UND Audio stehen (nur der Status ist `failed`). Geloescht wird nur, was
+    /// nachweislich leer ist.
+    #[test]
+    fn a_failed_start_keeps_the_audio_when_the_transcript_already_has_segments() {
+        let (_dir, store, id, folder) = failed_start_fixture();
+        store
+            .append_delta(
+                &id,
+                &crate::managers::meetings::store::TranscriptDelta {
+                    new_segments: vec![StoredSegment {
+                        segment_index: 0,
+                        start_ms: 0,
+                        end_ms: 1_000,
+                        text: "Schon gesagt".to_string(),
+                        channel: 0,
+                        speaker_index: None,
+                        words: None,
+                    }],
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            discard_failed_start(&store, &id, &folder),
+            Rueckfall::Unvollstaendig,
+            "Audio und Transkript bleiben: nicht vollstaendig (B1)"
+        );
+
+        assert!(folder.join("mic.wav").exists(), "das Audio blieb");
+        assert!(folder.join("system.wav").exists());
+        let meeting = store.get_meeting(&id).unwrap().unwrap();
+        assert_eq!(meeting.status, "failed");
+        assert!(
+            meeting.mic_audio_path.is_some() && meeting.system_audio_path.is_some(),
+            "die Pfade bleiben, das Audio gehoert zum Transkript"
+        );
+        assert_eq!(store.get_segments(&id).unwrap().len(), 1);
+    }
+
+    // ---- #537: Mitschnitt des Systemtons -----------------------------------------
+
+    #[test]
+    fn a_playback_capture_has_a_system_channel_and_no_microphone() {
+        let meeting = CaptureMode::Meeting {
+            capture_system: true,
+        };
+        let mic_only = CaptureMode::Meeting {
+            capture_system: false,
+        };
+        assert!(meeting.mic() && meeting.system());
+        assert!(mic_only.mic() && !mic_only.system());
+        let playback = CaptureMode::PlaybackOnly;
+        assert!(!playback.mic(), "kein Mikrofon, kein mic.wav, kein Echo");
+        assert!(playback.system());
+    }
+
+    /// Der Mitschnitt scheitert laut, wenn der Systemton nicht startet (er ist die
+    /// einzige Quelle); die Besprechung sagt weiterhin "nur Mikrofon".
+    #[test]
+    fn a_loopback_that_does_not_start_has_its_own_code_per_mode() {
+        let failed = LoopbackStartError::Failed("kein Geraet".into());
+        let timeout = LoopbackStartError::Timeout;
+        let playback = CaptureMode::PlaybackOnly;
+        assert_eq!(
+            playback.loopback_start_code(&failed),
+            "playback_capture_failed"
+        );
+        assert_eq!(
+            playback.loopback_start_code(&timeout),
+            "playback_capture_timeout"
+        );
+        let meeting = CaptureMode::Meeting {
+            capture_system: true,
+        };
+        assert_eq!(
+            meeting.loopback_start_code(&failed),
+            "loopback_start_failed"
+        );
+        assert_eq!(
+            meeting.loopback_start_code(&timeout),
+            "loopback_start_timeout"
+        );
+    }
+
+    /// Stirbt der Systemton mitten im Mitschnitt, ist der Mikrofon-Text der
+    /// Besprechung ("laeuft nur mit dem Mikrofon weiter") falsch: es kommt nur der
+    /// eigene Fehler, kein Kanalzustand `loopback_died`.
+    #[test]
+    fn a_dead_loopback_is_reported_with_the_text_of_its_mode() {
+        let json = |events: Vec<MeetingEvent>| {
+            events
+                .iter()
+                .map(|e| serde_json::to_value(e).unwrap())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            json(CaptureMode::PlaybackOnly.loopback_died_events("m1")),
+            vec![serde_json::json!({
+                "kind": "error", "meeting_id": "m1", "message": "playback_capture_died"
+            })]
+        );
+        let meeting = CaptureMode::Meeting {
+            capture_system: true,
+        };
+        assert_eq!(
+            json(meeting.loopback_died_events("m1")),
+            vec![
+                serde_json::json!({
+                    "kind": "health", "meeting_id": "m1", "channel": 1, "state": "loopback_died"
+                }),
+                serde_json::json!({
+                    "kind": "error", "meeting_id": "m1", "message": "loopback_died"
+                }),
+            ]
+        );
+    }
+
+    use std::sync::atomic::AtomicUsize;
+
+    /// Frischer Abbruchmerker eines Starts.
+    fn cancel_flag() -> Arc<AtomicBool> {
+        Arc::new(AtomicBool::new(false))
+    }
+
+    /// Ein `abandon` fuer `start_bounded`, das mitzaehlt, wie oft es lief.
+    fn abandon_counter() -> (Arc<AtomicUsize>, impl FnOnce()) {
+        let count = Arc::new(AtomicUsize::new(0));
+        let hit = Arc::clone(&count);
+        (count, move || {
+            hit.fetch_add(1, Ordering::SeqCst);
+        })
+    }
+
+    #[test]
+    fn a_bounded_start_returns_the_started_capture() {
+        let cancel = cancel_flag();
+        let (abandoned, abandon) = abandon_counter();
+        let got = start_bounded("t-ok", Duration::from_secs(5), &cancel, abandon, || {
+            Ok::<_, String>(42u8)
+        });
+        assert_eq!(got, Ok(42));
+        assert_eq!(
+            abandoned.load(Ordering::SeqCst),
+            0,
+            "ein Erfolg gibt den Kanal nicht auf"
+        );
+    }
+
+    /// Kein Ausgabegeraet (oder es laesst sich nicht oeffnen): der Fehler des
+    /// Treibers kommt an, nicht nach einer Frist, sondern sofort.
+    #[test]
+    fn a_failing_start_reports_its_error_at_once() {
+        let cancel = cancel_flag();
+        let started = Instant::now();
+        let got = start_bounded(
+            "t-err",
+            Duration::from_secs(30),
+            &cancel,
+            || {},
+            || Err::<u8, _>("kein Wiedergabegeraet".to_string()),
+        );
+        assert_eq!(
+            got,
+            Err(LoopbackStartError::Failed("kein Wiedergabegeraet".into()))
+        );
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    /// Haengt der Treiber, endet das Warten nach der Frist, und eine Capture, die
+    /// spaeter doch noch aufgeht, wird verworfen (ihr `Drop` stoppt sie): sie laeuft
+    /// nie unbemerkt weiter. Der Kanal ist ab der Frist gesperrt (lva#538): `abandon` lief,
+    /// BEVOR das Warten zurueckkehrte.
+    #[test]
+    fn a_wedged_start_times_out_abandons_the_sink_and_drops_the_late_capture() {
+        struct Capture(mpsc::Sender<()>);
+        impl Drop for Capture {
+            fn drop(&mut self) {
+                let _ = self.0.send(());
+            }
+        }
+        let cancel = cancel_flag();
+        let (abandoned, abandon) = abandon_counter();
+        let (dropped_tx, dropped_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let got = start_bounded(
+            "t-wedged",
+            Duration::from_millis(50),
+            &cancel,
+            abandon,
+            move || {
+                // Der Treiber haengt, bis der Test ihn freigibt: die Frist laeuft sicher ab.
+                let _ = release_rx.recv();
+                Ok::<_, String>(Capture(dropped_tx))
+            },
+        );
+        assert!(matches!(got, Err(LoopbackStartError::Timeout)));
+        assert_eq!(
+            abandoned.load(Ordering::SeqCst),
+            1,
+            "nach der Frist darf der Callback nichts mehr anrufen"
+        );
+        release_tx.send(()).unwrap();
+        dropped_rx
+            .recv_timeout(Duration::from_secs(60))
+            .expect("die spaete Capture lief weiter");
+    }
+
+    /// lva#538: ein Stopp waehrend des Wartens beendet es sofort (nicht erst nach der
+    /// Frist von dreissig Sekunden) und sperrt den Kanal; die spaete Capture wird verworfen.
+    /// Der Abbruch kommt erst, wenn der Start-Thread nachweislich im Treiber steht.
+    #[test]
+    fn a_cancel_ends_the_wait_at_once_and_abandons_the_sink() {
+        let cancel = cancel_flag();
+        let (abandoned, abandon) = abandon_counter();
+        let (entered_tx, entered_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let canceller = Arc::clone(&cancel);
+        let cancel_thread = std::thread::spawn(move || {
+            entered_rx.recv().unwrap();
+            canceller.store(true, Ordering::SeqCst);
+        });
+        let got = start_bounded(
+            "t-cancel",
+            Duration::from_secs(300),
+            &cancel,
+            abandon,
+            move || {
+                entered_tx.send(()).unwrap();
+                let _ = release_rx.recv();
+                Ok::<_, String>(1u8)
+            },
+        );
+        // Ohne den Abbruch laege hier erst nach 300 s `Timeout`: der Test belegt die Reihenfolge,
+        // nicht die Zeit.
+        assert_eq!(got, Err(LoopbackStartError::Cancelled));
+        assert_eq!(abandoned.load(Ordering::SeqCst), 1);
+        cancel_thread.join().unwrap();
+        release_tx.send(()).unwrap();
+    }
+
+    /// Schon abgebrochen, bevor das Warten beginnt: es startet nicht einmal den Treiber.
+    #[test]
+    fn a_start_that_was_cancelled_before_it_began_never_touches_the_driver() {
+        let cancel = cancel_flag();
+        cancel.store(true, Ordering::SeqCst);
+        let (abandoned, abandon) = abandon_counter();
+        let touched = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&touched);
+        // Der Wachposten meldet, wann der Start-Aufruf verbraucht oder verworfen ist.
+        struct Sentinel(mpsc::Sender<()>);
+        impl Drop for Sentinel {
+            fn drop(&mut self) {
+                let _ = self.0.send(());
+            }
+        }
+        let (gone_tx, gone_rx) = mpsc::channel::<()>();
+        let sentinel = Sentinel(gone_tx);
+        let got = start_bounded(
+            "t-early",
+            Duration::from_secs(5),
+            &cancel,
+            abandon,
+            move || {
+                let _keep = &sentinel;
+                flag.store(true, Ordering::SeqCst);
+                Ok::<_, String>(())
+            },
+        );
+        assert_eq!(got, Err(LoopbackStartError::Cancelled));
+        gone_rx
+            .recv_timeout(Duration::from_secs(60))
+            .expect("der Start-Aufruf wurde nie verworfen");
+        assert!(!touched.load(Ordering::SeqCst));
+        assert_eq!(abandoned.load(Ordering::SeqCst), 1);
+    }
+
+    /// Ein Start, der GLEICHZEITIG mit dem Abbruch fertig wird, liefert keine Capture mehr aus:
+    /// der Kanal ist gesperrt, bevor die Capture faellt, und der Start meldet den Abbruch.
+    #[test]
+    fn a_capture_that_arrives_together_with_the_cancel_is_abandoned_not_published() {
+        let cancel = cancel_flag();
+        let (abandoned, abandon) = abandon_counter();
+        let racing = Arc::clone(&cancel);
+        let got = start_bounded(
+            "t-race",
+            Duration::from_secs(5),
+            &cancel,
+            abandon,
+            move || {
+                racing.store(true, Ordering::SeqCst);
+                Ok::<_, String>(7u8)
+            },
+        );
+        assert_eq!(got, Err(LoopbackStartError::Cancelled));
+        assert_eq!(abandoned.load(Ordering::SeqCst), 1);
+    }
+
+    /// Ein Treiber, der im Start abstuerzt, ist ein Fehler, kein Haenger.
+    #[test]
+    fn a_panicking_start_is_a_failure_not_a_hang() {
+        let cancel = cancel_flag();
+        let started = Instant::now();
+        let got = start_bounded(
+            "t-panic",
+            Duration::from_secs(30),
+            &cancel,
+            || {},
+            || -> Result<u8, String> { panic!("treiber") },
+        );
+        assert!(matches!(got, Err(LoopbackStartError::Failed(_))));
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    // ---- lva#538: der echte Callback hinter der Sperre, Schreibfehler ------------------------
+
+    /// lva#538 (Runde 3): ein Tor haelt einen Test-Thread an einer Stelle fest, bis der Test es
+    /// oeffnet. `wait_entered` kehrt erst zurueck, wenn der Thread DA ist: keine Schlafzeit,
+    /// kein Raten. Die Frist ist nur ein Netz gegen ein Haengen im Fehlerfall.
+    #[derive(Default)]
+    struct Gate {
+        state: Mutex<(bool, bool)>,
+        changed: std::sync::Condvar,
+    }
+
+    impl Gate {
+        /// Vom festgehaltenen Thread: ich bin da, jetzt warte ich auf das Oeffnen.
+        fn pass(&self) {
+            let mut state = self.state.lock().unwrap();
+            state.0 = true;
+            self.changed.notify_all();
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while !state.1 {
+                let left = deadline.saturating_duration_since(Instant::now());
+                assert!(!left.is_zero(), "das Tor wurde nie geoeffnet");
+                state = self.changed.wait_timeout(state, left).unwrap().0;
+            }
+        }
+
+        /// Vom Test: wartet, bis ein Thread am Tor steht.
+        fn wait_entered(&self) {
+            let mut state = self.state.lock().unwrap();
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while !state.0 {
+                let left = deadline.saturating_duration_since(Instant::now());
+                assert!(!left.is_zero(), "niemand kam ans Tor");
+                state = self.changed.wait_timeout(state, left).unwrap().0;
+            }
+        }
+
+        fn open(&self) {
+            self.state.lock().unwrap().1 = true;
+            self.changed.notify_all();
+        }
+    }
+
+    /// Wartet (ohne Schlafzeit, nur mit Yield) auf eine Bedingung, die ein anderer Thread
+    /// herstellt; die Frist ist ein Netz gegen ein Haengen.
+    fn until(what: &str, condition: impl Fn() -> bool) {
+        let started = Instant::now();
+        while !condition() {
+            assert!(
+                started.elapsed() < Duration::from_secs(60),
+                "nie eingetreten: {what}"
+            );
+            std::thread::yield_now();
+        }
+    }
+
+    /// Der Haken fuer den Schliessversuch: meldet, dass er gleich die Sperre des Sinks nimmt.
+    fn close_sink_hooked(sink: Option<&Arc<Mutex<ChannelSink>>>, on_attempt: impl FnOnce()) {
+        on_attempt();
+        close_sink(sink);
+    }
+
+    /// Pegel, die ein Test mitzaehlt statt ein Ereignis zu senden. Mit einem `gate` bleibt der
+    /// Callback im Pegelpfad (also unter der Sperre seines Sinks) stehen, bis der Test es oeffnet.
+    #[derive(Default)]
+    struct CountingLevels {
+        calls: AtomicUsize,
+        finished: AtomicUsize,
+        gate: Mutex<Option<Arc<Gate>>>,
+    }
+
+    impl LevelSink for CountingLevels {
+        fn level(&self, _channel: u8, _rms: f32) {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let gate = self.gate.lock().unwrap().clone();
+            if let Some(gate) = gate {
+                gate.pass();
+            }
+            self.finished.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    type RigCallback = Box<dyn FnMut(&[i16], Option<u64>) + Send>;
+
+    struct CallbackRig {
+        _dir: tempfile::TempDir,
+        path: PathBuf,
+        sink: Arc<Mutex<ChannelSink>>,
+        flags: Arc<WriteFlags>,
+        levels: Arc<CountingLevels>,
+        pipeline: LivePipeline,
+        callback: RigCallback,
+    }
+
+    fn callback_rig() -> CallbackRig {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("system.wav");
+        let sink = Arc::new(Mutex::new(ChannelSink::new(
+            StreamingWavWriter::create(&path, SAMPLE_RATE).unwrap(),
+        )));
+        let store = Arc::new(MeetingStore::open_at(&dir.path().join("m.db")).unwrap());
+        let pipeline = LivePipeline::start(
+            "m-rig".to_string(),
+            store,
+            DspConfig::new(None, Arc::new(|_| {})).playback_only(),
+            |_chunk: &Chunk| Vec::new(),
+            |_event| {},
+        )
+        .unwrap();
+        let flags = Arc::new(WriteFlags::default());
+        let levels = Arc::new(CountingLevels::default());
+        let callback = channel_callback(
+            CHANNEL_SYSTEM,
+            Arc::clone(&sink),
+            Arc::new(AtomicBool::new(false)),
+            Arc::clone(&flags),
+            pipeline.feed(CHANNEL_SYSTEM).unwrap(),
+            Arc::clone(&levels) as Arc<dyn LevelSink>,
+        );
+        CallbackRig {
+            _dir: dir,
+            path,
+            sink,
+            flags,
+            levels,
+            pipeline,
+            callback: Box::new(callback),
+        }
+    }
+
+    fn written_samples(rig: &CallbackRig) -> Option<u64> {
+        lock_recovering(&rig.sink)
+            .writer
+            .as_ref()
+            .map(StreamingWavWriter::frames_written)
+    }
+
+    /// lva#538, "verspaetete echte Callback-Aktivitaet nach Timeout": der Treiber haengt
+    /// ueber die Frist, kehrt dann zurueck und beginnt, den ECHTEN Callback zu rufen. Der
+    /// Start hat laengst gemeldet, dass er gescheitert ist; es darf nichts mehr geschrieben
+    /// werden (weder in die WAV noch an den DSP noch als Pegel), und der Start kann die
+    /// Datei danach schliessen und entfernen.
+    #[test]
+    fn a_late_callback_after_the_timeout_writes_nothing() {
+        let mut rig = callback_rig();
+        let cancel = cancel_flag();
+        let mut callback = std::mem::replace(&mut rig.callback, Box::new(|_, _| {}));
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let (done_tx, done_rx) = mpsc::channel::<()>();
+        let barrier_sink = Arc::clone(&rig.sink);
+        let got = start_bounded(
+            "t-late-callback",
+            Duration::from_millis(50),
+            &cancel,
+            move || close_sink(Some(&barrier_sink)),
+            move || {
+                // Der Treiber haengt, bis der Test ihn freigibt; dann liefert er, wie ein
+                // laufender Strom, Bloecke.
+                let _ = release_rx.recv();
+                for _ in 0..5 {
+                    callback(&vec![500i16; 1_600], Some(1));
+                }
+                let _ = done_tx.send(());
+                Ok::<_, String>(())
+            },
+        );
+        assert!(matches!(got, Err(LoopbackStartError::Timeout)));
+        release_tx.send(()).unwrap();
+        done_rx
+            .recv_timeout(Duration::from_secs(60))
+            .expect("Voraussetzung: der Callback lief");
+
+        assert_eq!(
+            written_samples(&rig),
+            None,
+            "nach der Frist ist der Writer zu und es wurde nichts geschrieben"
+        );
+        assert_eq!(
+            rig.levels.calls.load(Ordering::SeqCst),
+            0,
+            "auch kein Pegel"
+        );
+        assert!(rig.flags.failed_channels().is_empty());
+        let stats = rig.pipeline.stats();
+        assert_eq!(
+            stats.overflow_samples[CHANNEL_SYSTEM as usize].load(Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            std::fs::metadata(&rig.path).unwrap().len(),
+            wav_header_len(),
+            "die WAV enthaelt keinen einzigen Ton"
+        );
+
+        // Der Start kann die Datei danach entfernen.
+        remove_capture_files(rig.path.parent().unwrap());
+        assert!(!rig.path.exists(), "die Datei liess sich entfernen");
+    }
+
+    /// Laenge des WAV-Kopfes (44 Byte, `wav_writer::HEADER_LEN`).
+    fn wav_header_len() -> u64 {
+        44
+    }
+
+    /// Das Gegenstueck: solange der Sink offen ist, schreibt derselbe Callback, zaehlt Pegel
+    /// und erzeugt keinen Fehler. (Sonst bewiese der Test oben nichts.)
+    #[test]
+    fn the_same_callback_writes_while_the_sink_is_open() {
+        let mut rig = callback_rig();
+        (rig.callback)(&vec![500i16; 1_600], Some(1));
+        assert_eq!(written_samples(&rig), Some(1_600));
+        assert_eq!(rig.levels.calls.load(Ordering::SeqCst), 1);
+        assert!(rig.flags.failed_channels().is_empty());
+        close_sink(Some(&rig.sink));
+        (rig.callback)(&vec![500i16; 1_600], Some(2));
+        assert_eq!(
+            rig.levels.calls.load(Ordering::SeqCst),
+            1,
+            "geschlossen = nichts mehr, auch kein Pegel"
+        );
+        assert_eq!(written_samples(&rig), None);
+    }
+
+    /// lva#538 Befund 1: der Abbruch ist eine BARRIERE. Ein Callback, der gerade laeuft (hier:
+    /// im Pegelpfad, unter der Sperre seines Sinks), ist fertig, wenn `close_sink` zurueckkehrt;
+    /// jeder spaetere tut nichts. Zwei Kanaele: der zweite wird unabhaengig vom ersten
+    /// geschlossen. Deterministisch: der Callback steht nachweislich im Pegelpfad (Tor), der
+    /// Schliessversuch laeuft nachweislich (Haken), erst dann wird der Callback freigegeben;
+    /// danach WAV, DSP und Pegel unveraendert.
+    #[test]
+    fn a_running_callback_is_finished_when_the_barrier_returns() {
+        let mut held = callback_rig();
+        let mut other = callback_rig();
+        let gate = Arc::new(Gate::default());
+        *held.levels.gate.lock().unwrap() = Some(Arc::clone(&gate));
+        let mut callback = std::mem::replace(&mut held.callback, Box::new(|_, _| {}));
+        let in_flight = std::thread::spawn(move || {
+            callback(&vec![500i16; 1_600], Some(1));
+            callback
+        });
+        gate.wait_entered();
+        assert!(
+            held.sink.try_lock().is_err(),
+            "Voraussetzung: der Callback haelt die Sperre seines Sinks"
+        );
+        assert_eq!(
+            held.levels.finished.load(Ordering::SeqCst),
+            0,
+            "Voraussetzung: er ist noch nicht fertig"
+        );
+
+        // Der andere Kanal laesst sich unabhaengig schliessen (die Sperren sind je Kanal).
+        close_sink(Some(&other.sink));
+        assert_eq!(written_samples(&other), None);
+
+        let (attempt_tx, attempt_rx) = mpsc::channel::<()>();
+        let closing_sink = Arc::clone(&held.sink);
+        let closing_levels = Arc::clone(&held.levels);
+        let closer = std::thread::spawn(move || {
+            close_sink_hooked(Some(&closing_sink), || attempt_tx.send(()).unwrap());
+            // Was der Callback bei der Rueckkehr der Barriere geschafft hat.
+            closing_levels.finished.load(Ordering::SeqCst)
+        });
+        attempt_rx.recv().unwrap();
+        gate.open();
+        let finished_at_return = closer.join().unwrap();
+        assert_eq!(
+            finished_at_return, 1,
+            "die Barriere kehrte zurueck, waehrend ein Callback noch lief"
+        );
+        let mut callback = in_flight.join().unwrap();
+        let stats = held.pipeline.stats();
+        let overflow = stats.overflow_samples[CHANNEL_SYSTEM as usize].load(Ordering::Relaxed);
+        callback(&vec![500i16; 1_600], Some(2));
+        let mut other_callback = std::mem::replace(&mut other.callback, Box::new(|_, _| {}));
+        other_callback(&vec![500i16; 1_600], Some(3));
+        assert_eq!(held.levels.calls.load(Ordering::SeqCst), 1, "danach nichts");
+        assert_eq!(
+            other.levels.calls.load(Ordering::SeqCst),
+            0,
+            "auch der andere nicht"
+        );
+        assert_eq!(
+            stats.overflow_samples[CHANNEL_SYSTEM as usize].load(Ordering::Relaxed),
+            overflow,
+            "und nichts mehr an den DSP"
+        );
+        assert_eq!(written_samples(&held), None);
+        assert_eq!(written_samples(&other), None);
+
+        let bytes = std::fs::read(&held.path).unwrap();
+        assert_eq!(bytes.len() as u64, wav_header_len() + 1_600 * 2);
+        let data_len = u32::from_le_bytes(bytes[40..44].try_into().unwrap());
+        assert_eq!(data_len, 1_600 * 2, "der Kopf der behaltenen Datei stimmt");
+        assert_eq!(
+            std::fs::metadata(&other.path).unwrap().len(),
+            wav_header_len(),
+            "der zweite Kanal bekam keinen Ton"
+        );
+    }
+
+    /// lva#538, Schreibfehler: der Callback setzt NUR das Merkzeichen (Atomic), verwirft den
+    /// Writer und liefert weiter an den DSP (Transkription laeuft). Hier ueber die
+    /// RIFF-Grenze, den deterministischen Schreibfehler.
+    #[test]
+    fn a_write_error_sets_the_flag_and_the_transcription_keeps_its_feed() {
+        let mut rig = callback_rig();
+        lock_recovering(&rig.sink)
+            .writer
+            .as_mut()
+            .unwrap()
+            .set_frames_for_test(u32::MAX as u64 / 2);
+
+        (rig.callback)(&vec![500i16; 1_600], Some(1));
+
+        assert_eq!(rig.flags.failed_channels(), vec![CHANNEL_SYSTEM]);
+        assert!(
+            lock_recovering(&rig.sink).writer.is_none(),
+            "der Writer ist verworfen"
+        );
+        assert_eq!(
+            rig.levels.calls.load(Ordering::SeqCst),
+            1,
+            "die Aufnahme laeuft fuer die Transkription weiter"
+        );
+        // Weitere Bloecke bleiben ohne neuen Fehler und ohne Schreiben.
+        (rig.callback)(&vec![500i16; 1_600], Some(2));
+        assert_eq!(rig.levels.calls.load(Ordering::SeqCst), 2);
+        // Das Merkzeichen meldet nur einmal.
+        assert!(rig.flags.first_report());
+        assert!(!rig.flags.first_report());
+    }
+
+    /// lva#538 Befund 5: ein Fehler beim Kopf-Flush ist ein Schreibfehler wie jeder andere. Der
+    /// Append davor ging durch, der Kopf nicht: die Datei laesst sich nach einem Absturz nicht
+    /// mehr reparieren. Das Merkzeichen steht, der Writer ist verworfen, die Transkription
+    /// laeuft weiter.
+    #[test]
+    fn a_header_flush_error_sets_the_flag_and_drops_the_writer() {
+        let mut rig = callback_rig();
+        lock_recovering(&rig.sink)
+            .writer
+            .as_mut()
+            .unwrap()
+            .fail_header_for_test();
+
+        // Eine Sekunde Audio loest den Kopf-Flush aus.
+        (rig.callback)(&vec![500i16; FLUSH_EVERY_SAMPLES], Some(1));
+
+        assert_eq!(
+            rig.flags.failed_channels(),
+            vec![CHANNEL_SYSTEM],
+            "der Fehler des Kopf-Flush versandete im Callback"
+        );
+        assert!(lock_recovering(&rig.sink).writer.is_none());
+        assert_eq!(rig.levels.calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// Ohne Fehler bleibt das Merkzeichen leer, auch ueber einen Kopf-Flush hinweg.
+    #[test]
+    fn a_healthy_header_flush_sets_no_flag() {
+        let mut rig = callback_rig();
+        (rig.callback)(&vec![500i16; FLUSH_EVERY_SAMPLES], Some(1));
+        assert!(rig.flags.failed_channels().is_empty());
+        assert_eq!(written_samples(&rig), Some(FLUSH_EVERY_SAMPLES as u64));
+    }
+
+    /// Ein Schreiben mit einem ECHTEN I/O-Fehler (die Datei laesst sich nicht mehr beschreiben,
+    /// wie bei einem vollen Datentraeger): Merkzeichen und verworfener Writer, die Aufnahme
+    /// laeuft fuer die Transkription weiter.
+    #[test]
+    fn a_real_io_error_is_flagged_and_does_not_stop_the_feed() {
+        let mut rig = callback_rig();
+        lock_recovering(&rig.sink)
+            .writer
+            .as_mut()
+            .unwrap()
+            .break_file_for_test(&rig.path);
+        (rig.callback)(&vec![500i16; 1_600], Some(1));
+        assert_eq!(rig.flags.failed_channels(), vec![CHANNEL_SYSTEM]);
+        assert_eq!(rig.levels.calls.load(Ordering::SeqCst), 1);
+    }
+
+    // ---- lva#538: die Sitzung faellt = Barriere ---------------------------------------------
+
+    /// Eine Sitzung mit echter Pipeline (langsame Engine) und dem echten Callback, ohne
+    /// Capture-Geraet: der Test spielt den Treiber.
+    struct SessionRig {
+        _dir: tempfile::TempDir,
+        store: Arc<MeetingStore>,
+        meeting_id: String,
+        path: PathBuf,
+        session: Option<RecordingSession>,
+        callback: RigCallback,
+        levels: Arc<CountingLevels>,
+        events: Arc<Mutex<Vec<MeetingEvent>>>,
+        flags: Arc<WriteFlags>,
+        calls: Arc<AtomicUsize>,
+        witness: Arc<()>,
+    }
+
+    /// Die Engine der Sitzung bleibt am Tor `gate` stehen (mitten in einem Block), bis der Test es
+    /// oeffnet: kein Warten auf Zeit, die Reihenfolge entscheidet.
+    fn session_rig(gate: Arc<Gate>) -> SessionRig {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(MeetingStore::open_at(&dir.path().join("m.db")).unwrap());
+        let meeting = store
+            .create_meeting("Abbruch", MeetingSource::Youtube, None)
+            .unwrap();
+        let path = dir.path().join("system.wav");
+        let sink = Arc::new(Mutex::new(ChannelSink::new(
+            StreamingWavWriter::create(&path, SAMPLE_RATE).unwrap(),
+        )));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let event_sink = Arc::clone(&events);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let call_count = Arc::clone(&calls);
+        let witness = Arc::new(());
+        let held = Arc::clone(&witness);
+        let pipeline = LivePipeline::start(
+            meeting.id.clone(),
+            Arc::clone(&store),
+            DspConfig::new(None, Arc::new(|_| {})).playback_only(),
+            move |chunk: &Chunk| {
+                let _keep = &held;
+                call_count.fetch_add(1, Ordering::SeqCst);
+                gate.pass();
+                // Ein Wort je Sekunde Audio, damit weder Dichte noch Wiederholung greift.
+                let secs = (chunk.samples.len() / 16_000).max(1);
+                let text = (0..secs)
+                    .map(|i| format!("wort{}", i as u64 + chunk.offset_ms))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                vec![crate::managers::transcription::TimedSegment {
+                    text,
+                    start_ms: 0,
+                    end_ms: chunk.samples.len() as u64 / 16,
+                    words: None,
+                }]
+            },
+            move |event| event_sink.lock().unwrap().push(event),
+        )
+        .unwrap();
+        let levels = Arc::new(CountingLevels::default());
+        let flags = Arc::new(WriteFlags::default());
+        let callback = channel_callback(
+            CHANNEL_SYSTEM,
+            Arc::clone(&sink),
+            Arc::new(AtomicBool::new(false)),
+            Arc::clone(&flags),
+            pipeline.feed(CHANNEL_SYSTEM).unwrap(),
+            Arc::clone(&levels) as Arc<dyn LevelSink>,
+        );
+        let mut session = RecordingSession::new(
+            &meeting.id,
+            CaptureMode::PlaybackOnly,
+            None,
+            Some(sink),
+            None,
+            Some(path.clone()),
+            FinalSlot::default().live_beginnen().unwrap(),
+        );
+        session.pipeline = Some(pipeline);
+        SessionRig {
+            _dir: dir,
+            store,
+            meeting_id: meeting.id,
+            path,
+            session: Some(session),
+            callback: Box::new(callback),
+            levels,
+            events,
+            flags,
+            calls,
+            witness,
+        }
+    }
+
+    /// Spielt `seconds` Sekunden Ton durch den Callback (wie ein Treiber, 100-ms-Bloecke).
+    fn drive(rig: &mut SessionRig, seconds: usize) {
+        for _ in 0..seconds * 10 {
+            (rig.callback)(&vec![3_000i16; 1_600], Some(1));
+        }
+    }
+
+    /// lva#538 Befund 3: ein abgebrochener Start veroeffentlicht kein Transkript mehr. Die
+    /// Engine steht mitten in einem Block (Tor), als die Sitzung faellt. Reihenfolge, nicht
+    /// Zeit: der Abbruch ist gesetzt, das Fallenlassen haengt am Join des Workers; erst wenn die
+    /// Engine freigegeben ist, kehrt es zurueck (der Zeuge ist weg). Dann steht kein Segment in der
+    /// Datenbank, es kam kein Ereignis, der Rollback stellt den Eintrag wieder her, und ein
+    /// Treiber, der danach noch Callbacks ruft, bewirkt nichts mehr (DB, Ereignisse, WAV, Pegel).
+    #[test]
+    fn a_dropped_session_leaves_no_segment_event_or_callback_effect() {
+        let gate = Arc::new(Gate::default());
+        let mut rig = session_rig(Arc::clone(&gate));
+        let before = rig.store.get_meeting(&rig.meeting_id).unwrap().unwrap();
+        rig.store
+            .begin_playback_capture(&rig.meeting_id, 1)
+            .unwrap();
+        // 20 s Ton fuellen den ersten Block des Notfall-Chunkers; die Engine beginnt.
+        drive(&mut rig, 21);
+        gate.wait_entered();
+        assert_eq!(
+            Arc::strong_count(&rig.witness),
+            2,
+            "Voraussetzung: Worker lebt"
+        );
+
+        let discard = rig
+            .session
+            .as_ref()
+            .unwrap()
+            .pipeline
+            .as_ref()
+            .unwrap()
+            .discard_handle();
+        let session = rig.session.take().unwrap();
+        let dropper = std::thread::spawn(move || drop(session));
+        until("Abbruch gesetzt", || discard.load(Ordering::Acquire));
+        assert!(
+            !dropper.is_finished(),
+            "das Fallenlassen kehrte zurueck, waehrend die Engine noch mitten im Block stand"
+        );
+        assert_eq!(
+            Arc::strong_count(&rig.witness),
+            2,
+            "der Worker ist noch nicht gejoint"
+        );
+
+        gate.open();
+        dropper.join().unwrap();
+        assert_eq!(
+            Arc::strong_count(&rig.witness),
+            1,
+            "das Fallenlassen kehrte zurueck, bevor der Worker gejoint war"
+        );
+        assert!(
+            rig.store.get_segments(&rig.meeting_id).unwrap().is_empty(),
+            "nach dem Abbruch steht ein Segment in der Datenbank"
+        );
+        let event_count = rig.events.lock().unwrap().len();
+        assert!(
+            !rig.events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|e| matches!(e, MeetingEvent::Segments { .. })),
+            "nach dem Abbruch kam ein Segmente-Ereignis"
+        );
+
+        // Erst NACH dem Join: der Rollback stellt den Eintrag her.
+        assert!(rig
+            .store
+            .rollback_playback_capture(&rig.meeting_id)
+            .unwrap());
+        let restored = rig.store.get_meeting(&rig.meeting_id).unwrap().unwrap();
+        assert_eq!(restored.status, before.status);
+        assert!(restored.system_audio_path.is_none());
+        let calls = rig.calls.load(Ordering::SeqCst);
+        let levels = rig.levels.calls.load(Ordering::SeqCst);
+        let size = std::fs::metadata(&rig.path).unwrap().len();
+
+        // Ein spaeter Treiber: nichts davon darf noch eine Wirkung haben.
+        drive(&mut rig, 3);
+        assert_eq!(
+            rig.levels.calls.load(Ordering::SeqCst),
+            levels,
+            "kein Pegel"
+        );
+        assert_eq!(rig.calls.load(Ordering::SeqCst), calls, "keine Engine");
+        assert_eq!(
+            std::fs::metadata(&rig.path).unwrap().len(),
+            size,
+            "kein WAV"
+        );
+        assert!(rig.store.get_segments(&rig.meeting_id).unwrap().is_empty());
+        assert_eq!(
+            rig.events.lock().unwrap().len(),
+            event_count,
+            "kein Ereignis mehr nach dem Rollback"
+        );
+    }
+
+    /// Das Gegenstueck: ohne Abbruch landet derselbe Block als Segment in der Datenbank
+    /// (`drain` statt `abort`). Sonst bewiese der Test oben nichts.
+    #[test]
+    fn the_same_session_stores_its_segment_when_it_is_drained_not_aborted() {
+        let gate = Arc::new(Gate::default());
+        gate.open();
+        let mut rig = session_rig(Arc::clone(&gate));
+        drive(&mut rig, 21);
+        gate.wait_entered();
+        let parts = rig.session.take().unwrap().into_parts();
+        close_sink(parts.system_sink.as_ref());
+        parts.pipeline.unwrap().drain();
+        assert!(
+            !rig.store.get_segments(&rig.meeting_id).unwrap().is_empty(),
+            "Voraussetzung: der Block wurde transkribiert"
+        );
+    }
+
+    /// lva#538 Befund 5, Runde 3: der Zugriff auf den Kopf scheitert gezielt NACH einem
+    /// erfolgreichen Append. Das Merkzeichen steht, der Writer ist verworfen, weitere Appends
+    /// werden abgelehnt (die Datei waechst nicht mehr), und der DSP wird weiter beschickt (die
+    /// Engine bekommt noch ihren Block).
+    #[test]
+    fn a_failing_header_after_a_good_append_stops_the_writes_but_not_the_dsp_feed() {
+        let gate = Arc::new(Gate::default());
+        gate.open();
+        let mut rig = session_rig(Arc::clone(&gate));
+        let sink = Arc::clone(rig.session.as_ref().unwrap().system_sink.as_ref().unwrap());
+        (rig.callback)(&vec![3_000i16; 1_600], Some(1));
+        assert_eq!(
+            lock_recovering(&sink)
+                .writer
+                .as_ref()
+                .map(StreamingWavWriter::frames_written),
+            Some(1_600),
+            "Voraussetzung: der Append davor ging durch"
+        );
+        lock_recovering(&sink)
+            .writer
+            .as_mut()
+            .unwrap()
+            .fail_header_for_test();
+        (rig.callback)(&vec![3_000i16; FLUSH_EVERY_SAMPLES], Some(2));
+        assert_eq!(rig.flags.failed_channels(), vec![CHANNEL_SYSTEM]);
+        assert!(lock_recovering(&sink).writer.is_none());
+        let size = std::fs::metadata(&rig.path).unwrap().len();
+
+        // Weiter: 21 s Ton. Die WAV waechst nicht mehr, die Engine kommt trotzdem dran.
+        drive(&mut rig, 21);
+        gate.wait_entered();
+        assert!(
+            rig.calls.load(Ordering::SeqCst) >= 1,
+            "der DSP wurde beschickt"
+        );
+        assert_eq!(
+            std::fs::metadata(&rig.path).unwrap().len(),
+            size,
+            "weitere Appends wurden abgelehnt"
+        );
+    }
+
+    // ---- lva#538 Befund 6: der Marker und der Plan, fail-closed ---------------------------------
+
+    /// Das dauerhafte Merkzeichen: einmal geschrieben, bleibt es (auch nach einem Absturz);
+    /// zweimal schreiben schadet nicht; andere Schluessel bleiben.
+    #[test]
+    fn the_incomplete_audio_marker_is_durable_and_leaves_other_keys_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("m.db")).unwrap();
+        let meeting = store
+            .create_meeting("Montag", MeetingSource::Live, Some(1))
+            .unwrap();
+        store
+            .set_metadata_key(&meeting.id, "timeline", serde_json::json!({"basis": "qpc"}))
+            .unwrap();
+
+        mark_audio_incomplete(&store, &meeting.id, &[CHANNEL_SYSTEM]).unwrap();
+        mark_audio_incomplete(&store, &meeting.id, &[CHANNEL_MIC, CHANNEL_SYSTEM]).unwrap();
+
+        let meta = store.metadata_json(&meeting.id).unwrap().unwrap();
+        assert_eq!(
+            meta[final_pass::AUDIO_INCOMPLETE_KEY]["channels"],
+            serde_json::json!([0, 1])
+        );
+        assert_eq!(meta["timeline"]["basis"], "qpc");
+    }
+
+    /// Ein Marker, der sich nicht speichern laesst, ist ein FEHLER (nicht nur ein Logeintrag):
+    /// der Aufrufer weicht darauf fail-closed aus.
+    #[test]
+    fn a_marker_that_cannot_be_stored_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("m.db")).unwrap();
+        // Eine Zeile, die es nicht gibt (geloescht).
+        assert!(mark_audio_incomplete(&store, "gibt-es-nicht", &[CHANNEL_MIC]).is_err());
+        assert!(!persist_audio_incomplete(
+            &store,
+            "gibt-es-nicht",
+            &[CHANNEL_MIC],
+            2
+        ));
+        let meeting = store
+            .create_meeting("Da", MeetingSource::Live, Some(1))
+            .unwrap();
+        assert!(persist_audio_incomplete(
+            &store,
+            &meeting.id,
+            &[CHANNEL_MIC],
+            1
+        ));
+    }
+
+    /// lva#538 Befund 6, fail-closed: laesst sich der Marker nicht speichern, bleibt das
+    /// Live-Transkript trotzdem (`Keep(AudioIncomplete)`), egal was der Plan vorher war. Steht er,
+    /// bleibt der Plan unberuehrt; ohne Schreibfehler wird der Marker gar nicht erst angefasst.
+    #[test]
+    fn a_marker_that_cannot_be_stored_keeps_the_live_transcript() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("m.db")).unwrap();
+        let meeting = store
+            .create_meeting("Da", MeetingSource::Live, Some(1))
+            .unwrap();
+        // Ein Plan, der das Live-Transkript ersetzen wuerde.
+        let replace = || FinalPlan::Run {
+            model_id: "endmodell".to_string(),
+            max_segment_ms: 30_000,
+        };
+
+        // Kein Fehler: der Plan bleibt, kein Marker.
+        let plan = plan_after_write_failures(&store, &meeting.id, &[], replace(), 1);
+        assert_eq!(plan, replace());
+        assert!(store
+            .metadata_json(&meeting.id)
+            .unwrap()
+            .is_none_or(|m| m.get(final_pass::AUDIO_INCOMPLETE_KEY).is_none()));
+
+        // Fehler, Marker steht: der Plan bleibt, der Marker ist da.
+        let plan = plan_after_write_failures(&store, &meeting.id, &[CHANNEL_SYSTEM], replace(), 1);
+        assert_eq!(plan, replace());
+        let meta = store.metadata_json(&meeting.id).unwrap().unwrap();
+        assert!(meta.get(final_pass::AUDIO_INCOMPLETE_KEY).is_some());
+
+        // Fehler, Marker laesst sich nicht speichern: fail-closed.
+        let plan =
+            plan_after_write_failures(&store, "gibt-es-nicht", &[CHANNEL_SYSTEM], replace(), 2);
+        assert_eq!(
+            plan,
+            FinalPlan::Keep(KeepReason::AudioIncomplete),
+            "ohne Marker darf der Enddurchlauf das Transkript nicht ersetzen"
+        );
+    }
+
+    /// Das Speichern der Audiopfade ist ein Fehler des Starts: fuer eine geloeschte Zeile
+    /// `meeting_not_found` (keine Aufnahme fuer einen geloeschten Eintrag).
+    #[test]
+    fn failing_to_store_the_audio_paths_fails_the_start_with_the_right_code() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("m.db")).unwrap();
+        let meeting = store
+            .create_meeting("Weg", MeetingSource::Youtube, None)
+            .unwrap();
+        store.soft_delete_meeting(&meeting.id).unwrap();
+        let error = store
+            .set_audio_paths(&meeting.id, None, Some("C:/m/system.wav"), None)
+            .unwrap_err();
+        assert_eq!(audio_paths_error(&error), "meeting_not_found");
+        let other = anyhow::anyhow!("database is locked");
+        assert_eq!(
+            audio_paths_error(&other),
+            "audio_paths_failed: database is locked"
+        );
+    }
+
+    fn with_source(source: &str, mic: Option<&str>, system: Option<&str>) -> Meeting {
+        let mut m = meeting_with("recording", mic, system);
+        m.source = source.into();
+        m
+    }
+
+    /// Recovery und "Fortsetzen": Live immer, YouTube nur mit eigener Aufnahme.
+    #[test]
+    fn only_recordings_get_the_plan_of_the_final_pass() {
+        assert!(runs_final_pass(&with_source("live", Some("m.wav"), None)));
+        assert!(runs_final_pass(&with_source(
+            "youtube",
+            None,
+            Some("system.wav")
+        )));
+        assert!(
+            !runs_final_pass(&with_source("youtube", None, None)),
+            "ohne Aufnahme gibt es nichts zu verarbeiten"
+        );
+        for source in ["import", "subtitle", "empty"] {
+            assert!(
+                !runs_final_pass(&with_source(source, Some("a.wav"), None)),
+                "{source}"
+            );
+        }
+    }
+
+    /// Ein gescheiterter Mitschnitt entfernt nur `system.wav` und was er sonst
+    /// angelegt hat; die Folien der YouTube-Besprechung bleiben samt Ordner.
+    #[test]
+    fn a_failed_playback_start_removes_only_its_own_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("m1");
+        std::fs::create_dir_all(&folder).unwrap();
+        drop(StreamingWavWriter::create(&folder.join("system.wav"), SAMPLE_RATE).unwrap());
+        std::fs::write(folder.join("folien.pdf"), b"gehoert dem Nutzer").unwrap();
+
+        remove_capture_files(&folder);
+
+        assert!(!folder.join("system.wav").exists());
+        assert!(folder.join("folien.pdf").exists(), "Fremdes bleibt");
+        assert!(folder.exists());
+        assert!(
+            !folder.join("mic.wav").exists(),
+            "beim Mitschnitt entsteht nie eine Mikrofonspur"
+        );
+    }
+
+    #[test]
+    fn a_failed_playback_start_removes_the_folder_when_nothing_else_is_in_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("m2");
+        std::fs::create_dir_all(&folder).unwrap();
+        drop(StreamingWavWriter::create(&folder.join("system.wav"), SAMPLE_RATE).unwrap());
+        remove_capture_files(&folder);
+        assert!(!folder.exists());
+        // Ein nie angelegter Ordner ist kein Fehler.
+        remove_capture_files(&dir.path().join("gibt-es-nicht"));
+    }
+
+    /// Das Zusammenspiel von Zielpruefung und Rueckfall wie `start_playback_capture` es
+    /// nutzt: Start scheitert nach der Umwandlung -> Eintrag wie vorher, Dateien weg,
+    /// nichts, was der naechste App-Start als Absturz belebt.
+    #[test]
+    fn a_playback_start_that_fails_leaves_the_entry_as_it_was() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+        let entry = store
+            .create_meeting("Vortrag", MeetingSource::Youtube, None)
+            .unwrap();
+        let folder = dir.path().join("meetings").join(&entry.id);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("folien.pdf"), b"x").unwrap();
+
+        let started = store.begin_playback_capture(&entry.id, 7).unwrap();
+        assert_eq!(started.status, "recording");
+        // `start_row`: Datei und Pfad stehen, dann scheitert der Systemton.
+        let system = folder.join("system.wav");
+        drop(StreamingWavWriter::create(&system, SAMPLE_RATE).unwrap());
+        store
+            .set_audio_paths(&entry.id, None, system.to_str(), None)
+            .unwrap();
+
+        remove_capture_files(&folder);
+        assert!(store.restore_playback_target(&entry.id).unwrap());
+
+        let after = store.get_meeting(&entry.id).unwrap().unwrap();
+        assert_eq!(
+            (after.source.as_str(), after.status.as_str()),
+            ("youtube", "ready")
+        );
+        assert_eq!(after.system_audio_path, None);
+        assert!(!is_orphan_status(&after.status));
+        assert!(folder.join("folien.pdf").exists());
+        assert!(!system.exists());
+    }
+
+    // ---- lva#538: Recovery eines Mitschnitts, der nie etwas aufgenommen hat -------------
+
+    fn crashed_capture(
+        dir: &std::path::Path,
+        with_audio: bool,
+        write_paths: bool,
+    ) -> (MeetingStore, Meeting, PathBuf) {
+        let store = MeetingStore::open_at(&dir.join("meetings.db")).unwrap();
+        let entry = store
+            .create_meeting("Vortrag", MeetingSource::Youtube, None)
+            .unwrap();
+        store
+            .get_connection()
+            .unwrap()
+            .execute(
+                "UPDATE meetings SET status = 'ready', duration_ms = 1805000 WHERE id = ?1",
+                rusqlite::params![entry.id],
+            )
+            .unwrap();
+        let folder = dir.join("meetings").join(&entry.id);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("folien.pdf"), b"x").unwrap();
+        store.begin_playback_capture(&entry.id, 7).unwrap();
+        let system = folder.join("system.wav");
+        let mut writer = StreamingWavWriter::create(&system, SAMPLE_RATE).unwrap();
+        if with_audio {
+            writer.append(&vec![300i16; 32_000]).unwrap();
+        }
+        drop(writer); // Absturz: weder finalize noch Kopfaktualisierung
+        if write_paths {
+            store
+                .set_audio_paths(&entry.id, None, system.to_str(), None)
+                .unwrap();
+        }
+        let meeting = store.get_meeting(&entry.id).unwrap().unwrap();
+        (store, meeting, system)
+    }
+
+    /// Crash NACH dem Speichern der Pfade, vor dem ersten Ton: der naechste App-Start
+    /// setzt den Eintrag zurueck (Dauer des Players, `ready`, keine Pfade), entfernt die
+    /// leere WAV und laesst die Folien des Nutzers stehen. Danach ist er erneut startbar.
+    #[test]
+    fn the_recovery_resets_a_capture_that_crashed_before_any_audio() {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, meeting, system) = crashed_capture(dir.path(), false, true);
+        assert_eq!(meeting.status, "recording", "Voraussetzung: Absturzrest");
+        assert!(system.exists());
+
+        assert!(reset_unrecorded_capture(
+            &store,
+            &meeting,
+            Some(&dir.path().join("meetings"))
+        ));
+
+        let after = store.get_meeting(&meeting.id).unwrap().unwrap();
+        assert_eq!(
+            (
+                after.status.as_str(),
+                after.duration_ms,
+                after.consent_confirmed_at
+            ),
+            ("ready", Some(1_805_000), None)
+        );
+        assert_eq!(after.system_audio_path, None);
+        assert!(!system.exists(), "die leere WAV ist weg");
+        assert!(system.parent().unwrap().join("folien.pdf").exists());
+        assert!(
+            store.begin_playback_capture(&meeting.id, 8).is_ok(),
+            "kein target_not_empty"
+        );
+    }
+
+    /// Crash VOR dem Speichern der Pfade (Datei angelegt, Zeile steht auf `recording`).
+    #[test]
+    fn the_recovery_resets_a_capture_that_crashed_before_the_paths_were_stored() {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, meeting, system) = crashed_capture(dir.path(), false, false);
+        assert_eq!(meeting.system_audio_path, None);
+        assert!(system.exists());
+
+        assert!(reset_unrecorded_capture(
+            &store,
+            &meeting,
+            Some(&dir.path().join("meetings"))
+        ));
+
+        let after = store.get_meeting(&meeting.id).unwrap().unwrap();
+        assert_eq!(
+            (after.status.as_str(), after.duration_ms),
+            ("ready", Some(1_805_000))
+        );
+        assert!(
+            !system.exists(),
+            "auch die Datei ohne Pfad in der Datenbank"
+        );
+    }
+
+    /// lva#538 Runde 4: der echte Start setzt den Marker `capture_open` (`begin_capture`), BEVOR
+    /// die erste Probe geschrieben ist. Ein Absturz vor dem ersten Ton laesst ihn stehen; das
+    /// Zuruecksetzen nimmt ihn mit. Sonst machte der naechste, echte Mitschnitt daraus ein
+    /// dauerhaftes `audio_incomplete` (`capture_not_closed`) und der Enddurchlauf ersetzte nie.
+    #[test]
+    fn the_recovery_drops_the_capture_marker_that_was_set_before_the_first_audio() {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, meeting, system) = crashed_capture(dir.path(), false, false);
+        store
+            .begin_capture(&meeting.id, None, system.to_str())
+            .unwrap();
+        let meeting = store.get_meeting(&meeting.id).unwrap().unwrap();
+        let meta = store.metadata_json(&meeting.id).unwrap().unwrap();
+        assert!(
+            meta.get(super::super::store::CAPTURE_OPEN_KEY).is_some(),
+            "Voraussetzung: der Marker steht vor dem ersten Ton"
+        );
+
+        assert!(reset_unrecorded_capture(
+            &store,
+            &meeting,
+            Some(&dir.path().join("meetings"))
+        ));
+
+        let meta = store.metadata_json(&meeting.id).unwrap().unwrap();
+        assert!(
+            meta.get(super::super::store::CAPTURE_OPEN_KEY).is_none()
+                && meta.get(final_pass::AUDIO_INCOMPLETE_KEY).is_none(),
+            "{meta}"
+        );
+        // Der naechste Start erbt nichts.
+        store.begin_playback_capture(&meeting.id, 8).unwrap();
+        store
+            .begin_capture(&meeting.id, None, system.to_str())
+            .unwrap();
+        let meta = store.metadata_json(&meeting.id).unwrap().unwrap();
+        assert!(
+            meta.get(final_pass::AUDIO_INCOMPLETE_KEY).is_none(),
+            "{meta}"
+        );
+    }
+
+    /// Mit Ton auf der Platte laeuft die normale Wiederherstellung: nichts wird
+    /// zurueckgesetzt, die Datei bleibt, der Vorzustand ist erledigt.
+    #[test]
+    fn the_recovery_keeps_a_capture_that_has_audio() {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, meeting, system) = crashed_capture(dir.path(), true, true);
+
+        assert!(!reset_unrecorded_capture(
+            &store,
+            &meeting,
+            Some(&dir.path().join("meetings"))
+        ));
+
+        let after = store.get_meeting(&meeting.id).unwrap().unwrap();
+        assert_eq!(
+            after.status, "recording",
+            "die Wiederherstellung uebernimmt"
+        );
+        assert!(after.system_audio_path.is_some());
+        assert!(system.exists(), "der Ton bleibt");
+        assert_eq!(store.playback_prior(&meeting.id).unwrap(), None);
+        assert!(
+            runs_final_pass(&after),
+            "und sie bekommt ihren Enddurchlauf"
+        );
+    }
+
+    /// lva#538 Befund 7, fail-closed: laesst sich der Dateizustand nicht lesen (hier ein Pfad,
+    /// den das Dateisystem ablehnt), setzt die Wiederherstellung nichts zurueck und loescht
+    /// nichts, auch den Merker des Vorzustands nicht.
+    #[test]
+    fn the_recovery_keeps_a_capture_whose_audio_state_cannot_be_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, meeting, system) = crashed_capture(dir.path(), false, true);
+        let mut unreadable = meeting.clone();
+        unreadable.system_audio_path = Some("C:/m/sys\0tem.wav".to_string());
+
+        assert!(!reset_unrecorded_capture(
+            &store,
+            &unreadable,
+            Some(&dir.path().join("meetings"))
+        ));
+
+        let after = store.get_meeting(&meeting.id).unwrap().unwrap();
+        assert_eq!(after.status, "recording", "nichts zurueckgesetzt");
+        assert!(after.system_audio_path.is_some());
+        assert!(system.exists(), "nichts geloescht");
+        assert!(
+            store.playback_prior(&meeting.id).unwrap().is_some(),
+            "der Weg zurueck bleibt"
+        );
+    }
+
+    /// lva#538 Befund 7, Runde 3: ein EINGESPIELTER Zugriffsfehler (Zugriff verweigert, E/A-Fehler,
+    /// Zeitueberschreitung) ist nicht "leer": die Wiederherstellung aendert weder die Pfade noch
+    /// den Merker des Vorzustands noch das Audio. Ein bestaetigtes `NotFound` dagegen setzt zurueck.
+    #[test]
+    fn an_injected_access_error_keeps_paths_prior_marker_and_audio() {
+        use super::super::playback::{audio_state_of, AudioState};
+        use std::io::{Error, ErrorKind};
+        for kind in [
+            ErrorKind::PermissionDenied,
+            ErrorKind::Other,
+            ErrorKind::TimedOut,
+            ErrorKind::Interrupted,
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let (store, meeting, system) = crashed_capture(dir.path(), false, true);
+            let size = std::fs::metadata(&system).unwrap().len();
+            let reset = reset_unrecorded_capture_with(
+                &store,
+                &meeting,
+                Some(&dir.path().join("meetings")),
+                |_| audio_state_of([Err(Error::from(kind))]),
+            );
+            assert!(!reset, "{kind:?}: ein unlesbarer Zustand ist nicht leer");
+            let after = store.get_meeting(&meeting.id).unwrap().unwrap();
+            assert_eq!(after.status, "recording", "{kind:?}: nichts zurueckgesetzt");
+            assert_eq!(
+                after.system_audio_path, meeting.system_audio_path,
+                "{kind:?}"
+            );
+            assert_eq!(std::fs::metadata(&system).unwrap().len(), size, "{kind:?}");
+            assert!(
+                store.playback_prior(&meeting.id).unwrap().is_some(),
+                "{kind:?}: der Weg zurueck bleibt"
+            );
+        }
+        // Gegenprobe: ein bestaetigtes Fehlen (NotFound) setzt zurueck.
+        let dir = tempfile::tempdir().unwrap();
+        let (store, meeting, system) = crashed_capture(dir.path(), false, true);
+        assert!(reset_unrecorded_capture_with(
+            &store,
+            &meeting,
+            Some(&dir.path().join("meetings")),
+            |_| audio_state_of([Err(Error::from(ErrorKind::NotFound))]),
+        ));
+        assert!(!system.exists());
+        assert_eq!(
+            audio_state_of([Err(Error::from(ErrorKind::NotFound))]),
+            AudioState::Empty
+        );
+    }
+
+    /// Altdaten: ein Absturzrest OHNE Merker (Zeile aus der ersten Fassung) und Zeilen
+    /// anderer Quellen oder Zustaende bleiben unangetastet.
+    #[test]
+    fn the_recovery_leaves_rows_without_the_marker_and_other_sources_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, meeting, _) = crashed_capture(dir.path(), false, true);
+        store.discard_playback_prior(&meeting.id).unwrap();
+        assert!(!reset_unrecorded_capture(&store, &meeting, None));
+        assert_eq!(
+            store.get_meeting(&meeting.id).unwrap().unwrap().status,
+            "recording"
+        );
+        let mut live = meeting.clone();
+        live.source = "live".into();
+        assert!(!reset_unrecorded_capture(&store, &live, None));
+        let mut ready = meeting.clone();
+        ready.status = "ready".into();
+        assert!(!reset_unrecorded_capture(&store, &ready, None));
+    }
+
+    /// Der Rueckfall des Starts selbst scheiterte (Zeile `failed` mit Merker): der naechste
+    /// App-Start setzt auch sie zurueck.
+    #[test]
+    fn the_recovery_resets_a_failed_row_that_still_has_the_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, meeting, _) = crashed_capture(dir.path(), false, true);
+        store
+            .set_status(&meeting.id, MeetingStatus::Failed)
+            .unwrap();
+        let failed = store.get_meeting(&meeting.id).unwrap().unwrap();
+        assert!(reset_unrecorded_capture(&store, &failed, None));
+        assert_eq!(
+            store.get_meeting(&meeting.id).unwrap().unwrap().status,
+            "ready"
+        );
     }
 
     // -- lva#534 Fixrunde 3: Reihenfolge von Abbruch, Tor und Beginn beim Start einer Aufnahme --
@@ -2499,11 +5037,15 @@ mod tests {
             );
 
             let core: RunCore<u8> = RunCore::new();
-            let text = unter_tor(&|| core.publish_started("m", 1));
+            let starting = core.begin_start(None, Some("m")).unwrap();
+            let text = unter_tor(&|| {
+                let _ = core.publish_started(&starting, "m", 1);
+            });
             assert!(text.contains("publish_started"), "{text}");
+            drop(starting);
             assert!(core.is_idle(), "nichts veroeffentlicht");
             let text = unter_tor(&|| {
-                let _ = core.begin_stop();
+                let _ = core.begin_stop(None, std::time::Instant::now());
             });
             assert!(text.contains("begin_stop"), "{text}");
             let text = unter_tor(&|| {
@@ -3000,6 +5542,652 @@ mod tests {
             assert!(block(false).is_empty());
             assert_eq!(aufrufe.load(Ordering::SeqCst), 2, "kein weiterer Aufruf");
             assert_eq!(meldungen.load(Ordering::SeqCst), 1, "einmal gemeldet");
+        }
+
+        // -- lva#538, B1 (Codex R7): Rueckfall eines gescheiterten Starts und Tor-Bindungen -------
+        //
+        // Die Verkettung laeuft durch den ECHTEN Ablauf (`start_hinter_tor`, `wirksam_veroeffentlichen`,
+        // die echten Rueckfaelle `undo_*`, die echte Pipeline und der echte Callback); nur der
+        // Treiber (Mikrofon, Systemton) und der AppHandle fehlen. Die Reihenfolge entscheiden
+        // Haken und Barrieren, keine Zeiten.
+
+        use std::sync::atomic::AtomicUsize;
+
+        /// Das Umfeld eines Starts ohne App: Ordner, Store, Platz der Anmeldung und ein Protokoll
+        /// der Meldungen mit dem Stand der Tor-Sperre im Augenblick der Meldung.
+        struct TestUmfeld {
+            dir: tempfile::TempDir,
+            store: Arc<MeetingStore>,
+            finals: FinalSlot,
+            daten_bekannt: bool,
+            meldungen: Mutex<Vec<(&'static str, String, bool)>>,
+        }
+
+        impl TestUmfeld {
+            fn neu() -> Self {
+                let (dir, store) = store();
+                Self {
+                    dir,
+                    store,
+                    finals: FinalSlot::default(),
+                    daten_bekannt: true,
+                    meldungen: Mutex::new(Vec::new()),
+                }
+            }
+
+            fn ohne_datenordner() -> Self {
+                Self {
+                    daten_bekannt: false,
+                    ..Self::neu()
+                }
+            }
+
+            fn ordner(&self) -> PathBuf {
+                self.dir.path().join("meetings")
+            }
+
+            fn gemeldet(&self) -> Vec<(&'static str, String, bool)> {
+                self.meldungen.lock().unwrap().clone()
+            }
+
+            fn melden(&self, was: &'static str, meeting_id: &str) {
+                self.meldungen.lock().unwrap().push((
+                    was,
+                    meeting_id.to_string(),
+                    crate::managers::planning::unter_tor_sperre(),
+                ));
+            }
+        }
+
+        impl StartUmfeld for TestUmfeld {
+            fn store(&self) -> &MeetingStore {
+                &self.store
+            }
+
+            fn finals(&self) -> &FinalSlot {
+                &self.finals
+            }
+
+            fn daten_ordner(&self) -> Result<PathBuf, String> {
+                if self.daten_bekannt {
+                    Ok(self.ordner())
+                } else {
+                    Err("Datenordner unbekannt (Test)".to_string())
+                }
+            }
+
+            fn zeile_wiederhergestellt(&self, meeting_id: &str) {
+                self.melden("wiederhergestellt", meeting_id);
+            }
+
+            fn zeile_gescheitert(&self, meeting_id: &str) {
+                self.melden("gescheitert", meeting_id);
+            }
+        }
+
+        /// Eine aufgebaute Aufnahme ohne Treiber: die Sitzung und der echte Capture-Callback.
+        struct Aufnahme {
+            session: RecordingSession,
+            callback: RigCallback,
+        }
+
+        /// Baut auf, was `start_row` nach dem Anlegen der Zeile baut: Ordner, WAV mit Kopf, Pfade
+        /// und Marker der Aufnahme in der Datenbank (`begin_capture`), die Pipeline mit einer
+        /// Engine, die ihre Aufrufe zaehlt, und den echten Callback hinter `erst_wenn_wirksam`.
+        /// Den Treiber spielt der Test: er ruft den Callback selbst.
+        fn aufnahme_aufbauen(
+            umfeld: &TestUmfeld,
+            meeting_id: &str,
+            live: LiveHalter,
+            wirksam: &Arc<AtomicBool>,
+            engine: &Arc<AtomicUsize>,
+        ) -> Aufnahme {
+            let dir = umfeld.ordner().join(meeting_id);
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("system.wav");
+            let sink = Arc::new(Mutex::new(ChannelSink::new(
+                StreamingWavWriter::create(&path, SAMPLE_RATE).unwrap(),
+            )));
+            let mut session = RecordingSession::new(
+                meeting_id,
+                CaptureMode::Meeting {
+                    capture_system: true,
+                },
+                None,
+                Some(Arc::clone(&sink)),
+                None,
+                Some(path.clone()),
+                live,
+            );
+            umfeld
+                .store
+                .begin_capture(meeting_id, None, path.to_str())
+                .unwrap();
+            let aufrufe = Arc::clone(engine);
+            let pipeline = LivePipeline::start(
+                meeting_id.to_string(),
+                Arc::clone(&umfeld.store),
+                DspConfig::new(None, Arc::new(|_| {})).playback_only(),
+                move |chunk: &Chunk| {
+                    aufrufe.fetch_add(1, Ordering::SeqCst);
+                    // Ein Wort je Sekunde Audio, damit weder Dichte noch Wiederholung greift.
+                    let secs = (chunk.samples.len() / 16_000).max(1);
+                    let text = (0..secs)
+                        .map(|i| format!("wort{}", i as u64 + chunk.offset_ms))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    vec![crate::managers::transcription::TimedSegment {
+                        text,
+                        start_ms: 0,
+                        end_ms: chunk.samples.len() as u64 / 16,
+                        words: None,
+                    }]
+                },
+                |_event| {},
+            )
+            .unwrap();
+            let callback = erst_wenn_wirksam(
+                Arc::clone(wirksam),
+                channel_callback(
+                    CHANNEL_SYSTEM,
+                    sink,
+                    Arc::clone(&session.paused),
+                    Arc::clone(&session.write_flags),
+                    pipeline.feed(CHANNEL_SYSTEM).unwrap(),
+                    Arc::new(CountingLevels::default()) as Arc<dyn LevelSink>,
+                ),
+            );
+            session.pipeline = Some(pipeline);
+            Aufnahme {
+                session,
+                callback: Box::new(callback),
+            }
+        }
+
+        /// Spielt `seconds` Sekunden Ton durch den Callback (wie ein Treiber, 100-ms-Bloecke).
+        fn speisen(callback: &mut RigCallback, seconds: usize) {
+            for _ in 0..seconds * 10 {
+                callback(&vec![3_000i16; 1_600], Some(1));
+            }
+        }
+
+        /// Die Bindungen einer Besprechung: Planungen und Schluessel der Start-Termine.
+        fn bindungen_von(store: &MeetingStore, meeting_id: &str) -> (Vec<String>, Vec<String>) {
+            let conn = store.get_connection().unwrap();
+            let lesen = |sql: &str| -> Vec<String> {
+                let mut st = conn.prepare(sql).unwrap();
+                let rows = st
+                    .query_map([meeting_id], |r| r.get::<_, String>(0))
+                    .unwrap();
+                rows.collect::<Result<Vec<_>, _>>().unwrap()
+            };
+            (
+                lesen("SELECT plan_id FROM meeting_plan_bindings WHERE meeting_id = ?1 ORDER BY 1"),
+                lesen(
+                    "SELECT event_key FROM meeting_start_events WHERE meeting_id = ?1 ORDER BY 1",
+                ),
+            )
+        }
+
+        /// B1, die Verkettung: ein Live-Start aus einem geplanten Termin wird WIRKSAM (Tor zum
+        /// zweiten Mal bestanden, Callbacks liefern), ein Live-Block wird vollstaendig gespeichert,
+        /// DANN bricht der Start ab (vor `publish_started`). Audio und Transkript bleiben
+        /// (`discard_failed_start` behaelt sie), und deshalb bleiben die Bindungen: ein Widerruf
+        /// der Planung erreicht die Besprechung weiter, ein erneuter Modellversuch wird abgelehnt.
+        /// Vor der Korrektur verwarf der Start die Bindungen trotzdem, und der Versuch lief durch.
+        #[test]
+        fn a_start_cancelled_after_it_became_effective_keeps_audio_transcript_and_bindings() {
+            let umfeld = TestUmfeld::neu();
+            let store = Arc::clone(&umfeld.store);
+            let (plan, termin) = th::plan_mit_termin(&store, "u-b1-live", true);
+            let core: RunCore<RecordingSession> = RunCore::new();
+            let starting = core.begin_start(Some("op-b1"), None).unwrap();
+            let wirksam = Arc::new(AtomicBool::new(false));
+            let engine = Arc::new(AtomicUsize::new(0));
+            let neue_id = Mutex::new(String::new());
+
+            let ergebnis = start_hinter_tor(
+                &umfeld,
+                Some(&termin),
+                None,
+                || {
+                    let meeting = begin_live_row(&store, "Abstimmung", 1, None)?;
+                    *neue_id.lock().unwrap() = meeting.id.clone();
+                    Ok(meeting)
+                },
+                |id| starting.set_target(id),
+                |meeting, gebunden, live| {
+                    let id = meeting.id.clone();
+                    let Aufnahme {
+                        session,
+                        mut callback,
+                    } = aufnahme_aufbauen(&umfeld, &id, live, &wirksam, &engine);
+                    // Vor dem wirksamen Beginn verwirft der Callback alles.
+                    speisen(&mut callback, 1);
+                    assert!(store.get_segments(&id).unwrap().is_empty());
+                    wirksam_veroeffentlichen(
+                        &core,
+                        &store,
+                        &starting,
+                        gebunden,
+                        &wirksam,
+                        session,
+                        || {
+                            // Der Start ist wirksam, noch nicht veroeffentlicht: der Treiber
+                            // liefert, der Block wird gerechnet und gespeichert ...
+                            speisen(&mut callback, 21);
+                            until("der Live-Block ist gespeichert", || {
+                                !store.get_segments(&id).unwrap().is_empty()
+                            });
+                            // ... und DANN kommt der Abbruch.
+                            assert_eq!(core.cancel_op("op-b1"), CancelOp::Starting);
+                        },
+                    )?;
+                    Ok(meeting)
+                },
+                |id, e| undo_live_start(&umfeld, None, id, e),
+            );
+            assert_eq!(ergebnis.err(), Some(START_CANCELLED.to_string()));
+            assert_eq!(
+                engine.load(Ordering::SeqCst),
+                1,
+                "genau ein Block gerechnet"
+            );
+
+            let id = neue_id.lock().unwrap().clone();
+            let segmente = store.get_segments(&id).unwrap();
+            assert_eq!(segmente.len(), 1, "das Transkript bleibt");
+            let zeile = store.get_meeting(&id).unwrap().unwrap();
+            assert_eq!(zeile.status, "failed");
+            assert!(
+                zeile.system_audio_path.is_some(),
+                "die Pfade bleiben, das Audio gehoert zum Transkript"
+            );
+            assert!(umfeld.ordner().join(&id).join("system.wav").exists());
+            assert!(!umfeld.finals.live_aktiv(), "die Anmeldung fiel");
+            assert_eq!(
+                bindungen_von(&store, &id),
+                (vec![plan.id.clone()], vec![termin.key.clone()]),
+                "die Bindungen bleiben: der Ton wurde behalten"
+            );
+
+            // Widerruf der Planung, danach ein erneuter Modellversuch.
+            crate::managers::planning::einwilligung_setzen(
+                &store,
+                &th::widerruf(&plan.id, th::BERT),
+                th::NOW + 3,
+            )
+            .unwrap();
+            let (told, aufrufe, meldungen) = (
+                AtomicBool::new(false),
+                AtomicUsize::new(0),
+                AtomicUsize::new(0),
+            );
+            assert!(live_block(&store, &id, &told, &aufrufe, &meldungen).is_empty());
+            assert_eq!(meldungen.load(Ordering::SeqCst), 1, "einmal gemeldet");
+            let _arbeit = crate::managers::planning::Modellarbeit::beginnen(&id);
+            let versuch = crate::managers::planning::modell_lauf(&store, &id, |frei| {
+                frei.einloesen()?;
+                aufrufe.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            });
+            assert_eq!(versuch, Err("nur_notizen: abgelehnt".to_string()));
+            assert_eq!(aufrufe.load(Ordering::SeqCst), 0, "null Modellaufrufe");
+            assert_eq!(
+                store.get_segments(&id).unwrap(),
+                segmente,
+                "die Saetze sind unveraendert"
+            );
+        }
+
+        /// Gegenprobe zu B1: ist NICHTS geblieben (kein Satz, die Dateien weg, die Pfade und der
+        /// Marker geleert), faellt die Bindung dieses Starts weiter weg (unveraendert).
+        #[test]
+        fn a_start_that_kept_nothing_still_drops_its_bindings() {
+            let umfeld = TestUmfeld::neu();
+            let store = Arc::clone(&umfeld.store);
+            let (_plan, termin) = th::plan_mit_termin(&store, "u-b1-leer", true);
+            let wirksam = Arc::new(AtomicBool::new(false));
+            let engine = Arc::new(AtomicUsize::new(0));
+            let neue_id = Mutex::new(String::new());
+            let ergebnis = start_hinter_tor(
+                &umfeld,
+                Some(&termin),
+                None,
+                || {
+                    let meeting = begin_live_row(&store, "Abstimmung", 1, None)?;
+                    *neue_id.lock().unwrap() = meeting.id.clone();
+                    Ok(meeting)
+                },
+                |_| Ok(()),
+                |meeting, _gebunden, live| {
+                    let aufnahme = aufnahme_aufbauen(&umfeld, &meeting.id, live, &wirksam, &engine);
+                    // Das Mikrofon scheitert nach dem Aufbau der Dateien: die Sitzung faellt.
+                    drop(aufnahme.session);
+                    Err("mic_start_failed: kein Geraet (Test)".to_string())
+                },
+                |id, e| undo_live_start(&umfeld, None, id, e),
+            );
+            assert_eq!(
+                ergebnis.err(),
+                Some("mic_start_failed: kein Geraet (Test)".to_string())
+            );
+            let id = neue_id.lock().unwrap().clone();
+            let zeile = store.get_meeting(&id).unwrap().unwrap();
+            assert_eq!(zeile.status, "failed");
+            assert!(zeile.system_audio_path.is_none() && zeile.mic_audio_path.is_none());
+            assert!(!umfeld.ordner().join(&id).join("system.wav").exists());
+            assert_eq!(bindungen_von(&store, &id), (vec![], vec![]));
+        }
+
+        /// B1, Wiedergabe: laesst sich der Rollback nicht ausfuehren (hier: ein SQL-Trigger
+        /// verweigert das Zuruecksetzen der YouTube-Zeile), bleibt die Zeile `failed` und die
+        /// Bindungen bleiben; ein Widerruf wirkt dann weiter. Ohne den Trigger (Gegenprobe)
+        /// stellt der Rollback die Zeile her, und die Bindungen dieses Starts fallen weg.
+        #[test]
+        fn a_playback_start_whose_rollback_is_refused_keeps_the_bindings() {
+            for rollback_verweigert in [false, true] {
+                let umfeld = TestUmfeld::neu();
+                let store = Arc::clone(&umfeld.store);
+                let youtube = store
+                    .create_meeting("Vortrag", MeetingSource::Youtube, None)
+                    .unwrap();
+                store
+                    .get_connection()
+                    .unwrap()
+                    .execute(
+                        "UPDATE meetings SET status = 'ready' WHERE id = ?1",
+                        [&youtube.id],
+                    )
+                    .unwrap();
+                let (plan, termin) = th::plan_mit_termin(&store, "u-b1-wdg", true);
+                if rollback_verweigert {
+                    store
+                        .get_connection()
+                        .unwrap()
+                        .execute_batch(
+                            "CREATE TRIGGER test_rollback_verweigert
+                                 BEFORE UPDATE ON meetings
+                                 WHEN NEW.source = 'youtube' AND NEW.status = 'ready'
+                             BEGIN
+                                 SELECT RAISE(ABORT, 'Zuruecksetzen verweigert (Test)');
+                             END;",
+                        )
+                        .unwrap();
+                }
+                let ergebnis = start_hinter_tor(
+                    &umfeld,
+                    Some(&termin),
+                    Some(&youtube.id),
+                    || {
+                        store
+                            .begin_playback_capture(&youtube.id, 1)
+                            .map_err(|e| coded_error("meeting_create_failed", &e))
+                    },
+                    |_| Ok(()),
+                    |_meeting, _gebunden, _live| Err("playback_capture_failed".to_string()),
+                    |id, _e| undo_playback_start(&umfeld, id),
+                );
+                assert_eq!(ergebnis.err(), Some("playback_capture_failed".to_string()));
+                assert!(!umfeld.finals.live_aktiv());
+                let zeile = store.get_meeting(&youtube.id).unwrap().unwrap();
+                let gebunden = bindungen_von(&store, &youtube.id);
+                let widerruf = |store: &MeetingStore| {
+                    crate::managers::planning::einwilligung_setzen(
+                        store,
+                        &th::widerruf(&plan.id, th::BERT),
+                        th::NOW + 3,
+                    )
+                    .unwrap();
+                    crate::managers::planning::tor_pruefen_besprechung(store, &youtube.id)
+                };
+                if rollback_verweigert {
+                    assert_eq!(zeile.status, "failed", "nicht zurueckgesetzt");
+                    assert_eq!(
+                        gebunden,
+                        (vec![plan.id.clone()], vec![termin.key.clone()]),
+                        "die Bindungen bleiben"
+                    );
+                    assert_eq!(
+                        umfeld.gemeldet(),
+                        [("gescheitert", youtube.id.clone(), false)]
+                    );
+                    assert_eq!(widerruf(&store), Err("nur_notizen: abgelehnt".to_string()));
+                } else {
+                    assert_eq!(zeile.status, "ready", "zurueckgesetzt");
+                    assert_eq!(gebunden, (vec![], vec![]), "nichts blieb: Bindung weg");
+                    assert_eq!(
+                        umfeld.gemeldet(),
+                        [("wiederhergestellt", youtube.id.clone(), false)]
+                    );
+                }
+            }
+        }
+
+        /// Hinweis 6 (`BindungFehlt`): die Bindung der neuen Live-Zeile laesst sich nicht
+        /// schreiben (ein SQL-Trigger verweigert sie). Die Zeile wird AUSSERHALB der Tor-Sperre
+        /// aufgeraeumt, der Aufbau laeuft nie, es steht nichts gebunden, der Fehler ist ein Fehler
+        /// des Tors (`tor_nicht_pruefbar`), und die Anmeldung faellt.
+        #[test]
+        fn a_binding_that_cannot_be_written_is_cleaned_up_outside_the_gate() {
+            let umfeld = TestUmfeld::neu();
+            let store = Arc::clone(&umfeld.store);
+            let (_plan, termin) = th::plan_mit_termin(&store, "u-b1-bf", true);
+            store
+                .get_connection()
+                .unwrap()
+                .execute_batch(
+                    "CREATE TRIGGER test_bindung_verweigert BEFORE INSERT ON meeting_plan_bindings
+                     BEGIN
+                         SELECT RAISE(ABORT, 'Bindung verweigert (Test)');
+                     END;",
+                )
+                .unwrap();
+            let aufgebaut = AtomicUsize::new(0);
+            let aufgeraeumt = Mutex::new(Vec::<(String, bool)>::new());
+            let neue_id = Mutex::new(String::new());
+            let ergebnis = start_hinter_tor(
+                &umfeld,
+                Some(&termin),
+                None,
+                || {
+                    let meeting = begin_live_row(&store, "Abstimmung", 1, None)?;
+                    *neue_id.lock().unwrap() = meeting.id.clone();
+                    Ok(meeting)
+                },
+                |_| Ok(()),
+                |_meeting, _gebunden, _live| {
+                    aufgebaut.fetch_add(1, Ordering::SeqCst);
+                    Err("darf nie laufen".to_string())
+                },
+                |id, e| {
+                    aufgeraeumt.lock().unwrap().push((
+                        id.to_string(),
+                        crate::managers::planning::unter_tor_sperre(),
+                    ));
+                    undo_live_start(&umfeld, None, id, e)
+                },
+            );
+            assert_eq!(
+                ergebnis.err(),
+                Some("nur_notizen: tor_nicht_pruefbar".to_string())
+            );
+            assert_eq!(aufgebaut.load(Ordering::SeqCst), 0, "kein Aufbau");
+            let id = neue_id.lock().unwrap().clone();
+            assert_eq!(
+                *aufgeraeumt.lock().unwrap(),
+                [(id.clone(), false)],
+                "genau einmal, ausserhalb der Tor-Sperre"
+            );
+            assert!(umfeld.gemeldet().iter().all(|(_, _, unter_tor)| !unter_tor));
+            assert_eq!(
+                store.get_meeting(&id).unwrap().unwrap().status,
+                "failed",
+                "die Zeile ist aufgeraeumt"
+            );
+            assert_eq!(bindungen_von(&store, &id), (vec![], vec![]));
+            assert!(!umfeld.finals.live_aktiv());
+            assert!(!crate::managers::planning::unter_tor_sperre());
+        }
+
+        /// Auflage Punkt 5: ein Start fuer die Besprechung B, den das Tor oder die Zielpruefung
+        /// abweist, hat den laufenden Enddurchlauf einer ANDEREN Besprechung A trotzdem
+        /// abgebrochen und abgewartet (dokumentiert in `start_unter_tor` und
+        /// `start_playback_capture`). Danach laeuft nichts mehr, und B ist unveraendert.
+        #[test]
+        fn a_refused_start_still_cancels_the_final_pass_of_another_meeting() {
+            for grund in ["tor", "ziel"] {
+                let umfeld = TestUmfeld::neu();
+                let store = Arc::clone(&umfeld.store);
+                let a = store.create_empty_meeting("A", None).unwrap();
+                let ziel = if grund == "tor" {
+                    let b = store.create_empty_meeting("B", None).unwrap();
+                    th::plan_fuer_besprechung(&store, &b.id, "u-b1-zwei", false);
+                    b.id
+                } else {
+                    // Kein leerer Eintrag mehr: `fill_empty_meeting` verweigert (`target_not_empty`).
+                    store
+                        .create_meeting("B", MeetingSource::Live, Some(1))
+                        .unwrap()
+                        .id
+                };
+                let zustand = |id: &str| {
+                    serde_json::to_value(store.get_meeting(id).unwrap().unwrap()).unwrap()
+                };
+                let vorher = zustand(&ziel);
+                let log = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+                let eintrag = Arc::clone(&log);
+                umfeld
+                    .finals
+                    .spawn(move |_vorher, cancel| {
+                        while !cancel.load(Ordering::Acquire) {
+                            std::thread::yield_now();
+                        }
+                        eintrag.lock().unwrap().push("enddurchlauf_a_abgebrochen");
+                    })
+                    .unwrap();
+                assert!(umfeld.finals.active(), "Voraussetzung: A laeuft");
+
+                let ergebnis = start_hinter_tor(
+                    &umfeld,
+                    None,
+                    Some(&ziel),
+                    || begin_live_row(&store, "B", 1, Some(&ziel)),
+                    |_| Ok(()),
+                    |_meeting, _gebunden, _live| -> Result<Meeting, String> {
+                        panic!("ein abgewiesener Start baut nichts auf")
+                    },
+                    |_, _| Rueckfall::Vollstaendig,
+                );
+                let fehler = ergebnis.expect_err("der Start wird abgewiesen");
+                if grund == "tor" {
+                    assert_eq!(fehler, "nur_notizen: offen");
+                } else {
+                    assert_eq!(fehler, "target_not_empty");
+                }
+                assert_eq!(
+                    *log.lock().unwrap(),
+                    ["enddurchlauf_a_abgebrochen"],
+                    "{grund}: A wurde abgebrochen UND abgewartet, bevor der Start endete"
+                );
+                assert!(!umfeld.finals.active(), "{grund}: A laeuft nicht mehr");
+                assert!(!umfeld.finals.live_aktiv(), "{grund}: keine Anmeldung");
+                assert_eq!(zustand(&ziel), vorher, "{grund}: B ist unveraendert");
+                assert_eq!(bindungen_von(&store, &ziel).0, Vec::<String>::new());
+                assert_eq!(
+                    store.get_meeting(&a.id).unwrap().unwrap().status,
+                    "ready",
+                    "{grund}: A ist nicht angefasst"
+                );
+            }
+        }
+
+        /// Der Rueckfall eines Starts in einen leeren Eintrag und eines Mitschnitts meldet
+        /// `Vollstaendig` nur bei nachgewiesenem Erfolg: hat der Eintrag Saetze, laesst er sich
+        /// nicht zuruecksetzen, und ohne bekannten Datenordner bleibt unbewiesen, ob die Dateien weg
+        /// sind.
+        #[test]
+        fn the_rollback_of_a_target_start_is_complete_only_when_it_is_proven() {
+            // 1. Zuruecksetzen und Ordner weg: vollstaendig.
+            let umfeld = TestUmfeld::neu();
+            let ziel = umfeld.store.create_empty_meeting("Ziel", None).unwrap();
+            begin_live_row(&umfeld.store, "Ziel", 1, Some(&ziel.id)).unwrap();
+            let ordner = umfeld.ordner().join(&ziel.id);
+            std::fs::create_dir_all(&ordner).unwrap();
+            std::fs::write(ordner.join("system.wav"), b"RIFF").unwrap();
+            assert_eq!(
+                undo_live_target_start(&umfeld, &ziel.id, "x"),
+                Rueckfall::Vollstaendig
+            );
+            assert!(!ordner.exists());
+            assert!(umfeld.store.is_empty_meeting(&ziel.id).unwrap());
+            assert_eq!(
+                umfeld.gemeldet(),
+                [("wiederhergestellt", ziel.id.clone(), false)]
+            );
+
+            // 2. Die Pipeline hat schon einen Satz gespeichert: nicht wiederherstellbar.
+            let umfeld = TestUmfeld::neu();
+            let ziel = umfeld.store.create_empty_meeting("Ziel", None).unwrap();
+            begin_live_row(&umfeld.store, "Ziel", 1, Some(&ziel.id)).unwrap();
+            umfeld
+                .store
+                .append_delta(
+                    &ziel.id,
+                    &crate::managers::meetings::store::TranscriptDelta {
+                        new_segments: vec![StoredSegment {
+                            segment_index: 0,
+                            start_ms: 0,
+                            end_ms: 1_000,
+                            text: "Schon gesagt".to_string(),
+                            channel: 0,
+                            speaker_index: None,
+                            words: None,
+                        }],
+                    },
+                )
+                .unwrap();
+            assert_eq!(
+                undo_live_target_start(&umfeld, &ziel.id, "x"),
+                Rueckfall::Unvollstaendig
+            );
+            assert_eq!(umfeld.store.get_segments(&ziel.id).unwrap().len(), 1);
+            assert_eq!(umfeld.gemeldet(), [("gescheitert", ziel.id.clone(), false)]);
+
+            // 3. Zuruecksetzen gelingt, aber der Datenordner ist unbekannt: unbewiesen.
+            let umfeld = TestUmfeld::ohne_datenordner();
+            let ziel = umfeld.store.create_empty_meeting("Ziel", None).unwrap();
+            begin_live_row(&umfeld.store, "Ziel", 1, Some(&ziel.id)).unwrap();
+            assert_eq!(
+                undo_live_target_start(&umfeld, &ziel.id, "x"),
+                Rueckfall::Unvollstaendig
+            );
+            // Dasselbe fuer eine neue Zeile ohne Ziel.
+            let neu = begin_live_row(&umfeld.store, "Neu", 1, None).unwrap();
+            assert_eq!(
+                undo_live_start(&umfeld, None, &neu.id, "x"),
+                Rueckfall::Unvollstaendig
+            );
+        }
+
+        /// `discard_failed_start` und `remove_capture_files` melden, wenn sich eine Aufnahmedatei
+        /// nicht entfernen laesst (hier: ein Ordner traegt den Namen `mic.wav`): nicht
+        /// vollstaendig, die Bindungen blieben stehen.
+        #[test]
+        fn a_capture_file_that_cannot_be_removed_makes_the_rollback_incomplete() {
+            let (_dir, store, id, folder) = failed_start_fixture();
+            std::fs::remove_file(folder.join("mic.wav")).unwrap();
+            std::fs::create_dir_all(folder.join("mic.wav")).unwrap();
+            std::fs::write(folder.join("mic.wav").join("x"), b"x").unwrap();
+            assert_eq!(
+                discard_failed_start(&store, &id, &folder),
+                Rueckfall::Unvollstaendig
+            );
+            assert!(!remove_capture_files(&folder));
+            assert!(
+                !folder.join("system.wav").exists(),
+                "was sich entfernen liess, ist weg"
+            );
         }
     }
 }

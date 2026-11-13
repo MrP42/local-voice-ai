@@ -1,0 +1,225 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-voice.invalid/schemas/lva.auswertung/1.json",
+  "title": "Auswertung am Gesprächsende",
+  "description": "Dokumentation des Ergebnisses lva.auswertung/1. Die beiden Kerne (Swift und TypeScript) prüfen von Hand und liefern Fehler mit Pfad und Code; dieses Schema beschreibt dasselbe und wird nicht zur Laufzeit ausgewertet. Der Leser der Kerne ist strenger als dieses Schema: Er prüft zusätzlich gültige Kalendertage (frist, datum, erstellt), eindeutige Feldnamen, kanonische Zahlen bis 500 Zeichen und Beitragsnummern von 1 bis 999999999. Dass eine Beitragsnummer im Gespräch liegt, prüft der Leser nicht: Er kennt das Gespräch nicht, das ist die Prüfung des Aufrufers, der Ergebnis und Gespräch hat. Die Auswertung selbst (auswerten) liefert nur Nummern innerhalb des Gesprächs. maxLength zählt wie in den Kernen Unicode-Codepunkte, nicht UTF-16-Einheiten. Unbekannte Schlüssel werden beim Lesen verworfen.",
+  "type": "object",
+  "required": [
+    "schema",
+    "assistent",
+    "erstellt",
+    "gekuerzt",
+    "zusammenfassung",
+    "felder",
+    "aufgaben",
+    "offene_fragen"
+  ],
+  "properties": {
+    "schema": { "const": "lva.auswertung/1" },
+    "assistent": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+      "description": "Id des Assistenten-Profils, mit dem ausgewertet wurde."
+    },
+    "erstellt": {
+      "type": "string",
+      "pattern": "^$|^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+      "description": "ISO-8601 UTC, vom Aufrufer gesetzt; leer, solange er nichts gesetzt hat oder wenn der gesetzte Wert kein gültiger Zeitstempel ist. Der Kern kennt keine Uhr. Der Leser prüft zusätzlich den Kalendertag und die Uhrzeit."
+    },
+    "gekuerzt": {
+      "type": "boolean",
+      "description": "Wahr, wenn der Prompt das Gespräch kürzen musste (Beiträge ausgelassen)."
+    },
+    "zusammenfassung": {
+      "type": "string",
+      "maxLength": 1200,
+      "description": "Leer, wenn das Profil keine Zusammenfassung will. Formulierung des Modells, vom Kern nicht gegen das Gespräch geprüft."
+    },
+    "felder": {
+      "type": "array",
+      "maxItems": 30,
+      "description": "Alle Felder des Profils in dessen Reihenfolge; fehlende sind nicht_genannt. Feldnamen sind eindeutig (das Schema kann das nicht ausdrücken, der Leser prüft es).",
+      "items": {
+        "type": "object",
+        "required": ["name", "typ", "status", "wert", "beleg", "beitrag"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,39}$" },
+          "typ": { "enum": ["text", "zahl", "datum", "auswahl"] },
+          "status": { "enum": ["klar", "unklar", "nicht_genannt"] },
+          "wert": {
+            "type": ["string", "null"],
+            "maxLength": 500,
+            "description": "Kanonisch als Text: zahl ohne führende Nullen (außer der Null selbst), mit Punkt als Dezimaltrenner und ohne Tausenderzeichen, datum JJJJ-MM-TT (gültiger Kalendertag), auswahl genau eine der Optionen des Profils (die kennt der Leser nicht, der Prüfer des Aufrufers schon)."
+          },
+          "beleg": {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "Wörtliches Zitat aus dem Gespräch."
+          },
+          "beitrag": {
+            "type": ["integer", "null"],
+            "minimum": 1,
+            "maximum": 999999999,
+            "description": "Nummer des Beitrags (ab 1), in dem der Beleg steht. Dass sie im Gespräch vorkommt, prüft der Aufrufer, nicht das Schema."
+          }
+        },
+        "allOf": [
+          {
+            "description": "Beleg und Beitrag stehen zusammen oder fehlen zusammen.",
+            "anyOf": [
+              {
+                "properties": {
+                  "beleg": { "type": "null" },
+                  "beitrag": { "type": "null" }
+                }
+              },
+              {
+                "properties": {
+                  "beleg": { "type": "string" },
+                  "beitrag": { "type": "integer" }
+                }
+              }
+            ]
+          },
+          {
+            "description": "nicht_genannt: wert, beleg und beitrag sind null.",
+            "if": { "properties": { "status": { "const": "nicht_genannt" } } },
+            "then": {
+              "properties": {
+                "wert": { "type": "null" },
+                "beleg": { "type": "null" },
+                "beitrag": { "type": "null" }
+              }
+            }
+          },
+          {
+            "description": "klar und unklar mit Wert haben einen Beleg.",
+            "if": {
+              "properties": {
+                "status": { "enum": ["klar", "unklar"] },
+                "wert": { "type": "string" }
+              },
+              "required": ["status", "wert"]
+            },
+            "then": { "properties": { "beleg": { "type": "string" } } }
+          },
+          {
+            "description": "klar hat einen Wert; text und auswahl nicht leer.",
+            "if": { "properties": { "status": { "const": "klar" } } },
+            "then": { "properties": { "wert": { "type": "string" } } }
+          },
+          {
+            "description": "klar bei text und auswahl: nicht leer.",
+            "if": {
+              "properties": {
+                "status": { "const": "klar" },
+                "typ": { "enum": ["text", "auswahl"] }
+              }
+            },
+            "then": {
+              "properties": { "wert": { "type": "string", "minLength": 1 } }
+            }
+          },
+          {
+            "description": "klar bei datum: JJJJ-MM-TT (der Leser prüft zusätzlich den Kalendertag).",
+            "if": {
+              "properties": {
+                "status": { "const": "klar" },
+                "typ": { "const": "datum" }
+              }
+            },
+            "then": {
+              "properties": {
+                "wert": {
+                  "type": "string",
+                  "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+                }
+              }
+            }
+          },
+          {
+            "description": "klar bei zahl: kanonisch (kein führendes +, keine führenden Nullen, kein -0, Punkt als Dezimaltrenner).",
+            "if": {
+              "properties": {
+                "status": { "const": "klar" },
+                "typ": { "const": "zahl" }
+              }
+            },
+            "then": {
+              "properties": {
+                "wert": {
+                  "type": "string",
+                  "pattern": "^(?!-0(\\.0*)?$)-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "aufgaben": {
+      "type": "array",
+      "maxItems": 20,
+      "description": "Aufgaben, die das Modell im Gespräch fand. Vom Kern geprüft: der Beleg steht im Gespräch, ein Datum steht dort als ganzer Fristausdruck. Nicht vom Kern geprüft: ob der Aufgabentext das Gesagte trifft und ob die Frist zu dieser Aufgabe gehört; beides ist Modelltext und gehört in der Oberfläche als solcher gekennzeichnet, mit Beleg und Fristquelle.",
+      "items": {
+        "type": "object",
+        "required": [
+          "text",
+          "frist",
+          "frist_text",
+          "frist_beitrag",
+          "beleg",
+          "beitrag"
+        ],
+        "properties": {
+          "text": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "frist": {
+            "type": ["string", "null"],
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+            "description": "Gültiger Kalendertag, nur wenn die Fristauflösung frist_text als ganzen Ausdruck auflöst."
+          },
+          "frist_text": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "Wörtlicher Ausdruck aus dem Gespräch; leer, wenn keine Frist genannt wurde."
+          },
+          "frist_beitrag": {
+            "type": ["integer", "null"],
+            "minimum": 1,
+            "maximum": 999999999,
+            "description": "Beitrag, in dem frist_text steht; weicht er von beitrag ab, hat der Auswerter den Hinweis frist_fremder_beitrag gesetzt. null, wenn frist null ist."
+          },
+          "beleg": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "beitrag": { "type": "integer", "minimum": 1, "maximum": 999999999 }
+        },
+        "allOf": [
+          {
+            "description": "frist und frist_beitrag stehen zusammen oder fehlen zusammen; mit frist ist frist_text nicht leer.",
+            "anyOf": [
+              {
+                "properties": {
+                  "frist": { "type": "null" },
+                  "frist_beitrag": { "type": "null" }
+                }
+              },
+              {
+                "properties": {
+                  "frist": { "type": "string" },
+                  "frist_text": { "minLength": 1 },
+                  "frist_beitrag": { "type": "integer" }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "offene_fragen": {
+      "type": "array",
+      "maxItems": 10,
+      "description": "Formulierungen des Modells, vom Kern nicht gegen das Gespräch geprüft.",
+      "items": { "type": "string", "minLength": 1, "maxLength": 300 }
+    }
+  }
+}
