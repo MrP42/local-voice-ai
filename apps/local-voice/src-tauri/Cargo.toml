@@ -285,6 +285,8 @@ windows = { version = "0.61.3", features = [
   "Win32_System_Power",
   "Win32_System_Variant",
   "Win32_Foundation",
+  # lva#573: Proxy fuer Downloads aus PAC-Datei/Auto-Erkennung (WinHTTP).
+  "Win32_Networking_WinHttp",
   "Win32_Graphics_Dxgi",
   "Win32_Graphics_Dxgi_Common",
   "Win32_UI_Input_KeyboardAndMouse",
