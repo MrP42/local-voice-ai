@@ -989,3 +989,11 @@ fn mcp_ausgabe_braucht_aktuellen_teilnehmerstand() {
         assert!(!pruefen_mcp_ausgabe(&m).erlaubt(), "{info:?}");
     }
 }
+
+#[test]
+fn fingerabdruck_version_passt_zum_praefix() {
+    // Ändert sich das Schema, müssen Präfix und Version gemeinsam steigen.
+    assert_eq!(FINGERABDRUCK_VERSION, 2);
+    let a = fingerabdruck(&liste(&["a@example.org"]), &eigene(), true);
+    assert_eq!(a.len(), 64);
+}
