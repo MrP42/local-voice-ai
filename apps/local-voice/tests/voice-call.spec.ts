@@ -199,6 +199,9 @@ async function install(
             }
             case "voice_call_start":
               return w.__startHang ? new Promise(() => {}) : null;
+            // Einstufung (ADR-0028 A2): ohne Vorgabe keine (Ansagen aus).
+            case "assistent_einstufen":
+              return w.__einstufung ?? null;
             case "voice_call_chat":
               return new Promise((resolve) => {
                 w.__chat = { args, resolve };
@@ -519,9 +522,7 @@ async function goTo(page: Page, name: string) {
 async function openPage(page: Page) {
   await page.goto("/");
   await goTo(page, "Start");
-  await expect(
-    page.getByTestId("chat-greeting"),
-  ).toBeVisible();
+  await expect(page.getByTestId("chat-greeting")).toBeVisible();
 }
 
 /** Kontextmenü „Gesprächsoptionen“ rechts in der Infozeile. */
@@ -556,8 +557,7 @@ const historyToggleSelector =
   "button[aria-controls][aria-label='Gesprächsverlauf']";
 const newChat = (page: Page) =>
   page.getByRole("button", { name: "Neues Gespräch", exact: true });
-const emptyTitle = (page: Page) =>
-  page.getByTestId("chat-greeting");
+const emptyTitle = (page: Page) => page.getByTestId("chat-greeting");
 
 /** Schickt eine Nachricht und beantwortet sie mit den gegebenen Saetzen. */
 async function exchange(
@@ -632,6 +632,97 @@ test.describe("Sprachgespraech", () => {
     await expect(page.getByText("Hallo KI").first()).toBeVisible();
     await expect(page.getByText("150 Token")).toBeVisible();
     await expect(page.getByText("Abo · keine API-Kosten")).toBeVisible();
+  });
+
+  test("Denk-Anzeige statt Ansage: grau unter der letzten Nachricht, Klick zeigt den Denkprozess", async ({
+    page,
+  }) => {
+    await openPage(page);
+    await page.evaluate(
+      () =>
+        ((window as any).__einstufung = {
+          stufe: "S2",
+          absicht: "mails",
+          ansage: "Ich schaue in deine Mails.",
+          antwort: null,
+        }),
+    );
+    await page.evaluate(() => ((window as any).__chat = null));
+    await message(page).fill("Was steht in meinen Mails?");
+    await message(page).press("Enter");
+    const anzeige = page.getByTestId("denkanzeige");
+    await expect(anzeige).toBeVisible();
+    await expect(page.getByTestId("denkanzeige-label")).toHaveText(
+      "Denkt nach",
+    );
+    // Die Ansage steht nie im Chat, nur im aufgeklappten Denkprozess.
+    const log = page.getByRole("log");
+    await expect(
+      log.locator(".rounded-xl", { hasText: "Ich schaue" }),
+    ).toHaveCount(0);
+    await anzeige.getByRole("button").click();
+    const liste = page.getByTestId("denkprozess-liste");
+    await expect(liste).toContainText("Ich schaue in deine Mails.");
+    await expect(liste).toContainText("Arbeitet an der Antwort");
+
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__chat !== null))
+      .toBe(true);
+    const requestId = await page.evaluate(
+      () => (window as any).__chat.args.requestId as string,
+    );
+    // Gestreamter Denktext des Modells erscheint live im aufgeklappten Prozess, nie im Chat.
+    await page.evaluate((id) => {
+      const w = window as any;
+      w.__emit("voice-call", {
+        kind: "reasoning",
+        request_id: id,
+        text: "Zuerst die ungelesenen ",
+      });
+      w.__emit("voice-call", {
+        kind: "reasoning",
+        request_id: id,
+        text: "Mails zählen.",
+      });
+    }, requestId);
+    await expect(page.getByTestId("denkprozess-gedanken")).toHaveText(
+      "Zuerst die ungelesenen Mails zählen.",
+    );
+    await expect(
+      log.locator(".rounded-xl", { hasText: "ungelesenen" }),
+    ).toHaveCount(0);
+    // Der Fokus liegt auf dem Aufklappknopf, wenn die Antwort kommt.
+    await anzeige.getByRole("button").focus();
+    await page.evaluate((id) => {
+      const w = window as any;
+      w.__emit("voice-call", {
+        kind: "sentence",
+        request_id: id,
+        index: 0,
+        text: "Zwei neue Mails.",
+      });
+      w.__emit("voice-call", { kind: "done", request_id: id });
+      w.__chat.resolve("Zwei neue Mails.");
+    }, requestId);
+    await expect(log.getByText("Zwei neue Mails.")).toBeVisible();
+    await expect(anzeige).toHaveCount(0);
+    // Die Antwort enthält nur den Inhalt; der Denkprozess hängt an ihr, bleibt aufgeklappt und
+    // übernimmt den Fokus.
+    await expect(
+      log.locator(".rounded-xl", { hasText: "Ich schaue" }),
+    ).toHaveCount(0);
+    const prozess = page.getByTestId("denkprozess");
+    await expect(prozess).toContainText("Nachgedacht");
+    const knopf = prozess.getByRole("button");
+    await expect(knopf).toHaveAttribute("aria-expanded", "true");
+    await expect(knopf).toBeFocused();
+    const fertigListe = prozess.getByTestId("denkprozess-liste");
+    await expect(fertigListe).toContainText("Ich schaue in deine Mails.");
+    await expect(fertigListe).toContainText(
+      "Zuerst die ungelesenen Mails zählen.",
+    );
+    await knopf.click();
+    await expect(knopf).toHaveAttribute("aria-expanded", "false");
   });
 
   test("Fußleiste: Telefon immer sichtbar, Gesprächsmenü nur auf dieser Seite", async ({
@@ -718,9 +809,7 @@ test.describe("Sprachgespraech", () => {
       },
       [requestId] as const,
     );
-    await expect(
-      page.getByTestId("chat-greeting"),
-    ).toBeVisible();
+    await expect(page.getByTestId("chat-greeting")).toBeVisible();
     await expect(page.getByText("Späte Antwort.")).toHaveCount(0);
     await expect(page.getByText("55 Token")).toHaveCount(0);
   });
@@ -874,6 +963,96 @@ test.describe("Sprachgespraech", () => {
     await newChat(page).click();
     await historyItem(page, "Erzähl mir etwas").click();
     await expect(log.getByText("Volle Antwort")).toHaveCount(1);
+  });
+
+  /** Ein offener Auftrag A im Hintergrund; der Sprecher hat die nächste Frage B kurz beantwortet. */
+  async function auftragImHintergrund(page: Page): Promise<void> {
+    // Legt die Engine an; ihre Rückrufe sind die des Stores (nur in der Entwicklung erreichbar).
+    await exchange(page, "Hallo KI", "Hallo zurück.");
+    await page.evaluate(() => {
+      const cb = (window as any).__voiceCallEngine.cb;
+      cb.onState("listening");
+      cb.onUser("Was steht in meinen Mails?", "A");
+      cb.onDenken({ art: "start", turnId: "A" });
+      cb.onDenken({
+        art: "auftrag",
+        turnId: "A",
+        frage: "Was steht in meinen Mails?",
+      });
+      cb.onUser("Wie spät ist es?", "B");
+      cb.onAssistant("Es ist kurz nach drei.", true, false);
+    });
+  }
+
+  test("Auftrag im Hintergrund: die Anzeige lässt sich auf- und zuklappen", async ({
+    page,
+  }) => {
+    await openPage(page);
+    await auftragImHintergrund(page);
+    const anzeige = page.getByTestId("denkanzeige");
+    await expect(anzeige).toBeVisible();
+    const knopf = anzeige.getByRole("button");
+    await expect(knopf).toHaveAttribute("aria-expanded", "false");
+    await knopf.click();
+    await expect(knopf).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByTestId("denkprozess-liste")).toContainText(
+      "Läuft im Hintergrund weiter: „Was steht in meinen Mails?“",
+    );
+    await knopf.click();
+    await expect(knopf).toHaveAttribute("aria-expanded", "false");
+    await expect(page.getByTestId("denkprozess-liste")).toHaveCount(0);
+  });
+
+  test("Nachgereichtes Ergebnis: die Quellen stehen an der Zeile des Auftrags, nicht an der letzten", async ({
+    page,
+  }) => {
+    await openPage(page);
+    await auftragImHintergrund(page);
+    const log = page.getByRole("log");
+    // Das Ergebnis wird nachgereicht; bevor die Prüfung der Belege fertig ist, steht eine spätere Antwort
+    // als letzte Zeile da.
+    await page.evaluate(() => {
+      const cb = (window as any).__voiceCallEngine.cb;
+      cb.onDenken({ art: "vordergrund", turnId: "A" });
+      cb.onAssistant("Zwei neue Mails.", false, false, "A");
+      cb.onAssistant("Zwei neue Mails.", true, false, "A");
+      cb.onUser("Und morgen?", "C");
+      cb.onAssistant("Morgen ist nichts geplant.", true, false);
+      cb.onCitations(
+        "A",
+        [
+          {
+            k: 1,
+            kind: "meeting",
+            title: "Runde",
+            chapter: null,
+            at_ms: 0,
+            excerpt: "Auszug",
+            jump: {
+              kind: "meeting",
+              id: "m1",
+              offset: 0,
+              page: null,
+              book_id: null,
+            },
+            score: 1,
+            version: "00",
+          },
+        ],
+        true,
+      );
+    });
+    await expect(
+      log
+        .locator(".rounded-xl", { hasText: "Zwei neue Mails." })
+        .getByTestId("voice-sources"),
+    ).toHaveCount(1);
+    await expect(
+      log
+        .locator(".rounded-xl", { hasText: "Morgen ist nichts geplant." })
+        .getByTestId("voice-sources"),
+    ).toHaveCount(0);
+    await expect(log.getByTestId("voice-source")).toHaveCount(1);
   });
 
   test("Anhänge werden als Vertragsfeld gespeichert, ohne Dateiinhalt", async ({
@@ -1224,6 +1403,8 @@ test.describe("Sprachgespraech Orchestrator", () => {
         JSON.stringify({ meetings: [{ title: "Wochenplanung" }] }),
       ),
     );
+    // Nach dem Werkzeug meldet die Region „Denkt nach“ nicht ein zweites Mal.
+    await expect(status).not.toHaveText(/Denkt nach/);
     await expect(
       page.getByRole("log").getByText("Gestern gab es zwei Besprechungen."),
     ).toBeVisible();

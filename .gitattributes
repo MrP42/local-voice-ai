@@ -1,3 +1,4 @@
 apps/local-voice/src-tauri/tests/fixtures/export/** -text
 apps/local-voice/src-tauri/tests/fixtures/calendar/** -text
 apps/local-voice/src-tauri/tests/fixtures/buchimport/*.pdf binary
+apps/shared/assistenten/** text eol=lf

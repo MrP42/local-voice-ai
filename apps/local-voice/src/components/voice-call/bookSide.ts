@@ -215,7 +215,8 @@ export function createBookSide(
       stopFiller();
       if ("cancelled" in outcome || run.cancelled) return spoken.join(" ");
       if ("error" in outcome) {
-        if (String(outcome.error).includes("cancelled")) return spoken.join(" ");
+        if (String(outcome.error).includes("cancelled"))
+          return spoken.join(" ");
         throw outcome.error instanceof Error
           ? outcome.error
           : new Error(String(outcome.error));
@@ -234,8 +235,10 @@ export function createBookSide(
   return {
     async chat(requestId, messages, onSentence) {
       const question =
-        [...messages].reverse().find((m) => m.role === "user")?.content.trim() ??
-        "";
+        [...messages]
+          .reverse()
+          .find((m) => m.role === "user")
+          ?.content.trim() ?? "";
       if (!question) return "";
       // Die Antwort auf die Rückfrage „Auch spätere Kapitel einbeziehen?“ gilt
       // zuerst: ein „Ja“ ist hier die Bestätigung, kein anderer Befehl.
@@ -243,7 +246,9 @@ export function createBookSide(
         awaitingScope = false;
         return confirmScope(ctx, onSentence);
       }
-      const command = await port.command(ctx.bookId, question).catch(() => null);
+      const command = await port
+        .command(ctx.bookId, question)
+        .catch(() => null);
       if (command) return runCommand(command.kind, question, onSentence);
       awaitingScope = false;
       return ask(requestId, question, onSentence);

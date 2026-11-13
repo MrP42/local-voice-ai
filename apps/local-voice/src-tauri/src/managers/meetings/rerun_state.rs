@@ -267,8 +267,7 @@ fn in_tx<T>(
     Ok(out)
 }
 
-/// Lesen ohne Aenderung (Anzeige, Tests).
-#[cfg(test)]
+/// Lesen ohne Aenderung (Anzeige, Tests, Einwilligungs-Tor beim Fortsetzen).
 pub fn read(store: &MeetingStore, meeting_id: &str) -> Result<Option<Marker>, String> {
     let conn = store.get_connection().map_err(|e| e.to_string())?;
     read_tx(&conn, meeting_id)

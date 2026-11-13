@@ -1501,6 +1501,7 @@ pub fn parse_event(item: &Value, source_id: &str, me: Option<&str>) -> Result<Ca
         location,
         join_url,
         description: preview.map(|d| ics::cap_chars(d, ics::MAX_DESCRIPTION_CHARS)),
+        instance_start: None,
         attendees: build_attendees(item, me),
     })
 }

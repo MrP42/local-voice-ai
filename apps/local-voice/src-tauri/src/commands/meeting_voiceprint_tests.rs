@@ -96,14 +96,17 @@ fn run(f: &Fixture, loads: &Rc<Cell<u32>>, embeds: &Rc<Cell<u32>>) -> VoiceMatch
     let mut load = move || -> Result<EmbedFn, String> {
         loads.set(loads.get() + 1);
         let embeds = Rc::clone(&embeds);
-        Ok(Box::new(move |pcm: &[f32]| {
-            embeds.set(embeds.get() + 1);
-            Ok(if pcm[0] > 0.0 {
-                vec![1.0, 0.1]
-            } else {
-                vec![0.1, 1.0]
-            })
-        }))
+        Ok(Box::new(
+            move |frei: &crate::managers::planning::Freigabe, pcm: &[f32]| {
+                frei.einloesen()?;
+                embeds.set(embeds.get() + 1);
+                Ok(if pcm[0] > 0.0 {
+                    vec![1.0, 0.1]
+                } else {
+                    vec![0.1, 1.0]
+                })
+            },
+        ))
     };
     voice_matches(&f.store, &f.id, &mut load).unwrap()
 }
@@ -209,4 +212,70 @@ fn without_turns_or_audio_there_is_nothing_to_compare() {
         voice_matches(&f.store, "fehlt", &mut load),
         Err("meeting_not_found".into())
     );
+}
+
+// ---- lva#544, Fixrunde 5: der Stimmvergleich steht hinter dem Einwilligungs-Tor ---------------
+
+/// Ohne Zustimmung: kein Modell, keine Vorschlaege (Zustand `no_consent`).
+#[test]
+fn without_consent_no_voiceprint_model_is_loaded() {
+    use crate::managers::planning::testhilfe as th;
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    forget_all();
+    let f = fixture();
+    let _ = th::plan_fuer_besprechung(&f.store, &f.id, "u-v1", false);
+    let (loads, embeds) = (Rc::new(Cell::new(0)), Rc::new(Cell::new(0)));
+    let r = run(&f, &loads, &embeds);
+    assert_eq!(r.state, "no_consent");
+    assert!(r.matches.is_empty());
+    assert_eq!((loads.get(), embeds.get()), (0, 0));
+}
+
+/// Widerruf WAEHREND des ersten Abdrucks: der Abdruck wird verworfen, es folgt kein weiterer,
+/// nichts landet im Zwischenspeicher (nach erneuter Zustimmung wird alles neu gerechnet).
+#[test]
+fn a_revocation_during_the_first_voiceprint_stops_the_comparison() {
+    use crate::managers::planning::testhilfe as th;
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    forget_all();
+    let f = fixture();
+    let (p, _) = th::plan_fuer_besprechung(&f.store, &f.id, "u-v2", true);
+    let embeds = Rc::new(Cell::new(0u32));
+    let zaehler = Rc::clone(&embeds);
+    let db = f._dir.path().join("meetings.db");
+    let plan_id = p.id.clone();
+    let mut load = move || -> Result<EmbedFn, String> {
+        let (zaehler, db, plan_id) = (Rc::clone(&zaehler), db.clone(), plan_id.clone());
+        Ok(Box::new(
+            move |frei: &crate::managers::planning::Freigabe, _pcm: &[f32]| {
+                frei.einloesen()?;
+                zaehler.set(zaehler.get() + 1);
+                let andere = MeetingStore::open_at(&db).unwrap();
+                crate::managers::planning::einwilligung_setzen(
+                    &andere,
+                    &th::widerruf(&plan_id, th::BERT),
+                    th::NOW + 5,
+                )
+                .unwrap();
+                Ok(vec![1.0, 0.1])
+            },
+        ))
+    };
+    let r = voice_matches(&f.store, &f.id, &mut load).unwrap();
+    assert_eq!(r.state, "no_consent");
+    assert!(r.matches.is_empty());
+    assert_eq!(embeds.get(), 1, "kein zweiter Abdruck");
+
+    // Wieder zugestimmt: nichts stand im Zwischenspeicher, das Modell rechnet alles neu.
+    crate::managers::planning::einwilligung_setzen(
+        &f.store,
+        &th::zustimmung(&p.id, th::BERT),
+        th::NOW + 6,
+    )
+    .unwrap();
+    let (loads, neu) = (Rc::new(Cell::new(0)), Rc::new(Cell::new(0)));
+    let r = run(&f, &loads, &neu);
+    assert_eq!(r.state, "ready");
+    assert_eq!(loads.get(), 1);
+    assert!(neu.get() >= 3, "{}", neu.get());
 }

@@ -4411,9 +4411,9 @@ async voiceCallChat(requestId: string, messages: VoiceCallMessage[], context: Sp
 /**
  * Ein Durchgang eines Modells als roher Textstrom (Ereignisse `delta`, am Ende `usage`).
  */
-async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: string, stufe: string, forFunction: string | null, conversationId: string | null, expectedStand: string | null) : Promise<Result<string, string>> {
+async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: string, stufe: string, forFunction: string | null, conversationId: string | null, expectedStand: string | null, nurSprecher: boolean | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("voice_call_turn", { requestId, messages, modelId, stufe, forFunction, conversationId, expectedStand }) };
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_turn", { requestId, messages, modelId, stufe, forFunction, conversationId, expectedStand, nurSprecher }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4934,6 +4934,173 @@ async meetingFollowupOpen(draft: MailDraft, mode: FollowupMode, path: string | n
 async changeMeetingSelfEmailsSetting(emails: string[]) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_meeting_self_emails_setting", { emails }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async besprechungsplanungAnlegen(input: PlanInput) : Promise<Result<Plan, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_anlegen", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async besprechungsplanungAendern(id: string, input: PlanInput) : Promise<Result<Plan, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_aendern", { id, input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async besprechungsplanungLaden(id: string) : Promise<Result<Plan | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_laden", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async besprechungsplanungListe() : Promise<Result<Plan[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_liste") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Weiches Loeschen (Papierkorb).
+ */
+async besprechungsplanungLoeschen(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_loeschen", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Status von Hand setzen. `verknuepft`, `verschoben` und `abgesagt` setzt nur der Abgleich mit
+ * dem Kalender (`status_nur_durch_abgleich`).
+ */
+async besprechungsplanungStatusSetzen(id: string, status: PlanStatus) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_status_setzen", { id, status }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einladungstext (HTML und Text, Marke `lva-plan:<id>`) der gespeicherten Planung und Vermerk der
+ * Uebergabe an Outlook: die Planung wird `uebergeben`, der Abgleich sucht danach die Marke im
+ * Kalender. Ohne `gestaltung` gilt die neutrale.
+ */
+async besprechungsplanungEinladung(id: string, gestaltung: Gestaltung | null) : Promise<Result<Einladung, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_einladung", { id, gestaltung }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die Verknuepfung der Planung mit ihrem Termin (`None`, solange nichts uebergeben wurde).
+ */
+async besprechungsplanungVerknuepfung(id: string) : Promise<Result<PlanLink | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_verknuepfung", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einwilligung einer Person setzen (Zustimmung und Ablehnung nur mit Zeitpunkt und Kanal).
+ */
+async besprechungsplanungEinwilligungSetzen(einwilligung: Consent) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_einwilligung_setzen", { einwilligung }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async besprechungsplanungEinwilligungen(id: string) : Promise<Result<Consent[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_einwilligungen", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Verlauf der Einwilligungen (aelteste zuerst), als Nachweis.
+ */
+async besprechungsplanungEinwilligungsVerlauf(id: string) : Promise<Result<EinwilligungsEintrag[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_einwilligungs_verlauf", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Wie die Besprechung startet: mit Transkription nur, wenn sie geplant ist und alle Anwesenden
+ * nachweislich zugestimmt haben; sonst nur Notizen (mit den offenen und abgelehnten Personen).
+ */
+async besprechungsplanungStartModus(id: string, anwesende: string[]) : Promise<Result<StartModus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_start_modus", { id, anwesende }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die Verschiebung zur Kenntnis genommen: der Merker faellt, `verschoben` wird `verknuepft`.
+ */
+async besprechungsplanungVerschiebungBestaetigen(id: string) : Promise<Result<PlanLink, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_verschiebung_bestaetigen", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Loest die Bindung an den bisherigen Termin (nur auf ausdrueckliche Auswahl der Nutzerin bzw. des
+ * Nutzers): der naechste Abgleich verknuepft ueber die Marke neu.
+ */
+async besprechungsplanungIdentitaetLoesen(id: string) : Promise<Result<PlanLink, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_identitaet_loesen", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bestaetigte Auswahl eines Termins aus dem Kalender-Cache (`event_key`): fuer mehrdeutige
+ * Marken (Serien) und den Wechsel des Termins. Der Termin muss die Marke der Planung tragen.
+ */
+async besprechungsplanungTerminWaehlen(id: string, eventKey: string) : Promise<Result<Ereignis[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_termin_waehlen", { id, eventKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Gleicht alle offenen Planungen jetzt mit dem Kalender-Cache ab (sonst nach jedem Abruf).
+ */
+async besprechungsplanungAbgleichen() : Promise<Result<AbgleichBericht, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("besprechungsplanung_abgleichen") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -8636,6 +8803,26 @@ ttsProviderVoiceSample: "tts-provider-voice-sample"
 /** user-defined types **/
 
 /**
+ * Ergebnis eines Abgleich-Laufs. Enthaelt nur Ids, Codes und Zahlen, keine Inhalte.
+ */
+export type AbgleichBericht = { 
+/**
+ * Offene Verknuepfungen dieses Adapters.
+ */
+geprueft: number; 
+/**
+ * Planungen, bei denen sich etwas geaendert hat (gespeichert).
+ */
+geaendert: number; ereignisse: PlanEreignis[]; 
+/**
+ * Die Marke steht auf mehreren Terminen: nichts verknuepft, Auswahl noetig.
+ */
+mehrdeutig: string[]; 
+/**
+ * Termin nicht im Cache, aber ohne Aussage dazu (ausserhalb des Fensters, Quelle weg).
+ */
+uebersprungen: number; fehler: PlanFehler[] }
+/**
  * Eine Anbieterart für Cloud-Ausnahmen (D7-Rest): konfigurierte Verbindung, gefiltert nach Regelwerk und
  * Datenklasse.
  */
@@ -8973,6 +9160,30 @@ export type ActorKind =
  * Die App von selbst (Enddurchlauf, Automatik nach der Aufnahme).
  */
 "auto" | "workflow" | "agent_external" | "agent_local"
+/**
+ * Ueber welchen Weg der Termin mit Outlook verbunden ist (Konzept 3.3).
+ */
+export type AdapterKind = 
+/**
+ * A: Microsoft Graph.
+ */
+"graph" | 
+/**
+ * B: Outlook lokal ueber COM (Windows).
+ */
+"outlook_com" | 
+/**
+ * C: Text ueber die Zwischenablage, Zuordnung ueber die Marke im ICS-Feed.
+ */
+"ics_marker"
+/**
+ * Ein Agendapunkt mit Zeitbox.
+ */
+export type AgendaItem = { minutes: number; topic: string; 
+/**
+ * Verantwortliche Person (Anzeigename), frei.
+ */
+owner?: string | null }
 /**
  * Ein Zugang (ohne Token).
  */
@@ -10549,6 +10760,19 @@ export type ComplianceProfile =
  */
 "none"
 /**
+ * Einwilligung einer Person. `person` ist die normalisierte E-Mail-Adresse
+ * (klein, ohne `mailto:`) oder, ohne Adresse, die Personen-Id der App.
+ */
+export type Consent = { plan_id: string; person: string; state: ConsentState; channel: ConsentChannel | null; recorded_at: number | null }
+/**
+ * Auf welchem Weg eine Einwilligung kam.
+ */
+export type ConsentChannel = "einladung" | "muendlich_bei_start" | "mail"
+/**
+ * Einwilligung einer Person zur Transkription, je Planung.
+ */
+export type ConsentState = "offen" | "zugestimmt" | "abgelehnt"
+/**
  * Ein Treffer für Prompt und Verlauf.
  */
 export type ContextHit = { 
@@ -10882,6 +11106,14 @@ audio_paths: string[] }
  */
 export type EditionTombstone = { id: string; removed_ms: number }
 /**
+ * Der fertige Einladungstext.
+ */
+export type Einladung = { html: string; text: string; 
+/**
+ * Pruefsumme des Blocks (aus `text`), fuer `meeting_plan_links.body_hash`.
+ */
+block_hash: string }
+/**
  * Ergebnis der Einstufung (Vertragstyp `Einstufung` des Kerns).
  */
 export type EinstufungDto = { stufe: StufeDto; 
@@ -10909,6 +11141,14 @@ assignedBy: string | null;
  * Verweis auf die Herkunft (`wai://lva/...`), nur bei lesbaren Eintraegen.
  */
 link: string | null }
+/**
+ * Eine Zeile im Verlauf der Einwilligungen: der damalige Stand und wann er festgehalten wurde.
+ */
+export type EinwilligungsEintrag = { einwilligung: Consent; 
+/**
+ * Zeitpunkt des Eintrags in ms (Nachweis; `recorded_at` der Einwilligung ist der der Zusage).
+ */
+festgehalten_am: number }
 export type EngineType = 
 /**
  * Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,
@@ -10968,6 +11208,20 @@ vorher_konto: string | null; seiten: number; buecher: number; fortschritte: numb
  * Größe der Sicherung in Bytes (geschätzt aus dem lokalen Bestand).
  */
 sicherung_bytes: number; kollisionen: Kollision[] }
+/**
+ * Was sich beim Abgleich ergeben hat (fuer Liste, Hinweise und Audit).
+ */
+export type Ereignis = { art: "verknuepft" } | { art: "verschoben"; alt_beginn: number | null; neu_beginn: number } | { art: "ort_geaendert" } | { art: "abgesagt" } | { art: "wiederhergestellt" } | { art: "konflikt" } | { art: "konflikt_aufgeloest" } | { art: "verwaist" } | 
+/**
+ * Ein verwaister Termin ist wieder auffindbar.
+ */
+{ art: "wiederverknuepft" } | 
+/**
+ * Die Beobachtung gehoert zu einem anderen Termin bzw. einer anderen Instanz
+ * der Serie und wurde verworfen. Entsteht einmal je Abweichung; erst eine
+ * passende Beobachtung setzt den Merker zurueck.
+ */
+{ art: "anderer_termin"; erwartet: number | null; gesehen: number | null }
 /**
  * Welche Teile in den Export kommen (`meetings_export`, Zwischenablage).
  * Fehlende Felder gelten als „an“: ein Aufruf ohne Auswahl exportiert alles.
@@ -11150,6 +11404,23 @@ export type GenerateOptions = { book_id: string | null; template_id: string; pro
  */
 character_names: string[] }
 export type GeneratedScript = { title: string; script: string; memory: MemoryProposal }
+/**
+ * Erscheinungsbild der Einladung. Die App fuellt es aus dem gewaehlten Briefkopf
+ * (Vorgabe `neutral`); das Crate kennt keine Marken oder Organisationen.
+ */
+export type Gestaltung = { 
+/**
+ * Name der einladenden Organisationseinheit, optional.
+ */
+absender: string | null; 
+/**
+ * Akzentfarbe `#RRGGBB`; ungueltige Werte fallen auf [`AKZENT_NEUTRAL`] zurueck.
+ */
+akzentfarbe: string }
+/**
+ * Art des Ziels einer Besprechung. Bestimmt den Satzanfang des Zielsatzes.
+ */
+export type GoalType = "klaeren" | "feedback" | "entscheiden" | "information"
 export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number }
 export type GpuMemory = { name: string; 
 /**
@@ -11219,6 +11490,18 @@ export type HfAccessStatus = { present: boolean; source: HfAccessSource | null;
  * Ein abgelegter Zugang ist nicht lesbar (anderes Konto, beschädigt).
  */
 problem: string | null }
+/**
+ * Hinweise im Fuss der Einladung.
+ */
+export type Hints = { 
+/**
+ * Darf die Einladung weitergeleitet werden?
+ */
+weiterleiten_erlaubt?: boolean | null; barrierefreiheit?: string | null; 
+/**
+ * Bis wann das Ergebnis vorliegt, frei.
+ */
+ergebnisfrist?: string | null; ablageort?: string | null }
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
 export type HubDevice = { device: string; last_push?: string | null }
@@ -11998,6 +12281,14 @@ secret: string; signing_in: boolean }
  * hinter einer alten HTML-Fassung zurückbleiben.
  */
 export type MailDraft = { to: string[]; subject: string; body_text: string; body_html: string }
+/**
+ * Eine Unterlage, als Link (Datenminimierung: Links statt Anhaenge).
+ */
+export type Material = { label: string; url?: string | null; 
+/**
+ * Bis wann lesen, `YYYY-MM-DD` (frei, nur angezeigt).
+ */
+due_date?: string | null }
 /**
  * Angaben fuer die Konfig-Schnipsel (`claude mcp add ...`, Claude Desktop, Codex).
  */
@@ -12915,6 +13206,78 @@ export type PhononVoiceErrorKind = "consent_required" | "no_key" | "key_store" |
  * Wohin der Export kam (Pfad relativ zum Ordner).
  */
 export type PlacedInfo = { rel: string; bytes: number }
+/**
+ * Eine Planung, wie Oberflaeche und Befehle sie sehen.
+ */
+export type Plan = { 
+/**
+ * ULID/UUID der App; zugleich die Marke im Termin (`lva-plan:<id>`).
+ */
+id: string; 
+/**
+ * Die Besprechung (leerer Eintrag), sobald angelegt.
+ */
+meeting_id: string | null; title: string; goal_type: GoalType; goal_text: string; expected_result: string | null; duration_min: number; classification: string; agenda: AgendaItem[]; roles: Roles; materials: Material[]; hints: Hints; transcription_planned: boolean; minutes_template_id: string | null; status: PlanStatus; created_at: number; updated_at: number }
+/**
+ * Ein Ereignis des Abgleichs, einer Planung zugeordnet (fuer Meldungen der Oberflaeche).
+ */
+export type PlanEreignis = { plan_id: string; ereignis: Ereignis }
+/**
+ * Eine Planung, deren Abgleich scheiterte (Code des Crates oder `sql: ...`); nichts davon ist
+ * geschrieben.
+ */
+export type PlanFehler = { plan_id: string; code: string }
+/**
+ * Was die Oberflaeche zum Anlegen oder Aendern schickt (ohne Status und Zeiten).
+ */
+export type PlanInput = { title: string; goal_type: GoalType; goal_text: string; expected_result?: string | null; duration_min: number; classification?: string; agenda?: AgendaItem[]; roles?: Roles; materials?: Material[]; hints?: Hints; transcription_planned?: boolean; minutes_template_id?: string | null }
+/**
+ * Die Verknuepfung einer Planung mit einem Kalendertermin.
+ */
+export type PlanLink = { plan_id: string; adapter: AdapterKind; 
+/**
+ * Kalenderquelle der App (`calendar_sources.id`), falls ueber den Feed gefunden.
+ */
+source_id: string | null; 
+/**
+ * Graph ImmutableId bzw. COM GlobalAppointmentID.
+ */
+remote_id: string | null; ical_uid: string | null; change_key: string | null; starts_at: number | null; ends_at: number | null; location: string | null; join_url: string | null; 
+/**
+ * Pruefsumme des Blocks, den die App zuletzt geschrieben hat.
+ */
+body_hash: string | null; last_seen_at: number | null; last_change_at: number | null; 
+/**
+ * Verdichteter Zustand fuer Liste und Status (Vorrang siehe `sync`).
+ */
+sync_state: SyncState; 
+/**
+ * Eine Verschiebung ist noch nicht bestaetigt. Getrennt vom `sync_state`
+ * gefuehrt, damit sie unter Konflikt oder Absage nicht verloren geht.
+ */
+verschiebung_offen?: boolean; 
+/**
+ * Der App-Block weicht von der zuletzt geschriebenen Fassung ab.
+ */
+block_konflikt?: boolean; 
+/**
+ * Der Termin ist abgesagt (bleibt auch unter `verwaist` erhalten).
+ */
+abgesagt?: boolean; 
+/**
+ * Serientermin: urspruenglicher Beginn der Instanz (UTC-ms), sonst `None`.
+ */
+instanz?: number | null; 
+/**
+ * Zuletzt wurde ein anderer Termin bzw. eine andere Instanz beobachtet und
+ * verworfen. Merker, damit die Meldung nur einmal entsteht.
+ */
+fremd_beobachtet?: boolean }
+/**
+ * Lebenslauf einer Planung. Die Reihenfolge ist die des Ablaufs; `Verschoben`
+ * und `Abgesagt` setzt nur der Abgleich mit dem Kalender.
+ */
+export type PlanStatus = "entwurf" | "uebergeben" | "verknuepft" | "verschoben" | "abgesagt" | "durchgefuehrt" | "protokolliert" | "versendet"
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
 /**
  * Das Tupel, an das die Freigabe gebunden ist. Aendert sich eines der Felder,
@@ -13368,6 +13731,10 @@ export type RelayModelInfo = { id: string; label: string; provider: string }
  */
 export type RelayPairing = { code: string; qr_svg: string; code_expires_at_ms: number; grant_expires_at_ms: number }
 /**
+ * Rollen in der Besprechung (frei, Anzeigenamen).
+ */
+export type Roles = { moderation?: string | null; ergebnissicherung?: string | null; entscheidung?: string | null }
+/**
  * Zustand eines Laufs (Spalte `workflow_runs.state`, CHECK in der Migration).
  */
 export type RunState = 
@@ -13647,6 +14014,10 @@ endpunkt: string | null; fehler: string | null }
  */
 export type Stamp = { edition: string; updated: number; device?: string }
 /**
+ * Wie die Besprechung startet.
+ */
+export type StartModus = { modus: "mit_transkription" } | { modus: "nur_notizen"; nicht_geplant: boolean; offen: string[]; abgelehnt: string[] }
+/**
  * Zustand eines Schrittversuchs (Spalte `workflow_run_steps.state`).
  */
 export type StepState = 
@@ -13877,6 +14248,18 @@ entfernt: number }
  * Hörbuch bei `ms` (Millisekunden ab Beginn des ersten Teils).
  */
 export type SyncPoint = { chars: number; ms: number }
+/**
+ * Zustand der Verknuepfung Planung <-> Termin.
+ */
+export type SyncState = "ok" | "verschoben" | "abgesagt" | 
+/**
+ * Der App-Block wurde in Outlook geaendert; die App schreibt nicht mehr.
+ */
+"konflikt" | 
+/**
+ * Termin geloescht oder Marke entfernt.
+ */
+"verwaist"
 export type SyncStatus = { connected: boolean; user_email: string | null; device_name: string | null; hub_url: string | null; running: boolean; last_success_ms: number | null; last_error: string | null; 
 /**
  * Objekte, die lokal geändert und noch nicht bestätigt sind.
