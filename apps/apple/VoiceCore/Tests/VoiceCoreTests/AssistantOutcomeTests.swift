@@ -329,6 +329,20 @@ final class AssistantOutcomeTests: XCTestCase {
         XCTAssertFalse(outcomeContains(dump, "geheim"))
     }
 
+    func testDeadlineBoundaryMatrixAroundWord1024() {
+        let long = "spätestens bis zum Ende der Woche und den zwei Tagen danach"
+        let behind = String(repeating: " neutral", count: 20)
+        for start in 1019...1029 {
+            let before = String(repeating: "wort ", count: start - 1)
+            let expected = start <= 1024 ? ["2026-11-20"] : []
+            let place = "Beginn im \(start). Wort"
+            assertSameBytes(AssistantOutcomeDates.deadlines(in: before + "bis Freitag", today: today), expected, place)
+            assertSameBytes(AssistantOutcomeDates.deadlines(in: before + "bis Freitag" + behind, today: today), expected, place)
+            assertSameBytes(AssistantOutcomeDates.deadlines(in: before + long, today: today), [], place)
+            assertSameBytes(AssistantOutcomeDates.deadlines(in: before + long + behind, today: today), [], place)
+        }
+    }
+
     func testDeadlinesInSentences() {
         assertSameBytes(AssistantOutcomeDates.deadlines(in: "Machen wir am 14.11., dann melde ich mich übermorgen.", today: today), ["2026-11-14", "2026-11-15"])
     }

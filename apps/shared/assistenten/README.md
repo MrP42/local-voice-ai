@@ -627,8 +627,8 @@ untersucht wird, gilt:
 - **Strenge Mehrtagsregel.** Beleg und Kontext decken einen Tag nur, wenn es mindestens einen maximalen Ausdruck gibt, keiner unsicher ist und alle
   auf denselben Tag auflösen (`Montag und Dienstag`, `14.11. oder 15.11.` decken keinen Tag, auch nicht den ersten; bei `Montag und Dienstag` greift schon die Brückenregel).
 - **Grenze von 1024 Wörtern (nur `fristenIn` / `AssistantOutcomeDates.deadlines(in:today:)`).** Untersucht werden Ausdrücke, die in den ersten
-  `MAX_FRIST_WOERTER` = 1024 Wörtern beginnen. Gelesen werden höchstens **1034** Wörter (1024 + 5 + `FRIST_RAND` 5: ein Fenster beginnt im
-  1024. Wort, reicht höchstens 5 weiter und hat dahinter 5 Wörter Rand). Geht der Text über das Gelesene hinaus, gilt die Rand-Regel (hinter dem
+  `MAX_FRIST_WOERTER` = 1024 Wörtern beginnen. Die untersuchte Wortliste umfasst höchstens **1034** Wörter (1024 + 5 + `FRIST_RAND` 5: ein Fenster beginnt im
+  1024. Wort, reicht höchstens 5 weiter und hat dahinter 5 Wörter Rand). Das 1035. Wort wird nur gelesen, um zu erkennen, dass der Text weitergeht; es geht in keine Prüfung ein. Geht der Text über das Gelesene hinaus, gilt die Rand-Regel (hinter dem
   Fenster mindestens 5 gelesene Wörter, sonst unsicher; bei dieser Lesegrenze trifft das kein Fenster, das in den ersten 1024 Wörtern beginnt);
   endet der Text, gelten die normalen Regeln. Ein Treffer an der Grenze gilt also nie stillschweigend als sicher: 1023 Füllwörter, dann
   `spätestens bis zum Ende der Woche und den zwei Tagen danach`: kein Ergebnis (`Tagen` ist gelesen); 1023 Füllwörter und `bis Freitag`, mit oder

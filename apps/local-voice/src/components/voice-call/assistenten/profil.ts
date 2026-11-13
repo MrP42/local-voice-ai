@@ -528,9 +528,9 @@ export type Profil = {
   extra: JsonMitglied[];
 };
 
-export type ProfilErgebnis =
-  | { ok: true; profil: Profil }
-  | { ok: false; fehler: ProfilFehler[] };
+type ProfilGelesen = { ok: true; profil: Profil };
+type ProfilAbgewiesen = { ok: false; fehler: ProfilFehler[] };
+export type ProfilErgebnis = ProfilGelesen | ProfilAbgewiesen;
 
 export function neuesVerhalten(): Verhalten {
   return {
