@@ -8,6 +8,35 @@ import Foundation
 // bytegleich ist (sortierte Schlüssel, Zahlen als Originaltext) und unbekannte Felder unverändert erhalten bleiben. Das typisierte
 // Modell hält je Ebene nur die unbekannten Felder (`extra`) und legt beim Schreiben die typisierten Felder darüber. Alle Muster
 // sind von Hand geprüft (kein Regex), Längen zählen in Unicode-Codepunkten (`unicodeScalars`).
+//
+// Vergleichsregel: Text des Nutzers wird überall GENAU verglichen, als Folge der Unicode-Skalare (UTF-8-Bytes), ohne
+// Normalisierung. Swifts `String ==`, `Set<String>`, `Dictionary<String, _>`, `contains` und `firstIndex(of:)` vergleichen
+// dagegen kanonisch (`é` gleich `e` + U+0301, sogar U+212A gleich `K`); der PC vergleicht Codeeinheiten. Darum läuft in diesem Kern
+// jeder Vergleich von Nutzertext über `AssistantExact` und `AssistantExactKey`, und die `Equatable`-Umsetzungen der öffentlichen
+// Typen vergleichen ihre Zeichenketten genau.
+
+/// Genauer Textvergleich (UTF-8-Bytes, keine kanonische Gleichheit).
+enum AssistantExact {
+    static func equal(_ a: String, _ b: String) -> Bool { a.utf8.elementsEqual(b.utf8) }
+
+    static func equal(_ a: String?, _ b: String?) -> Bool {
+        switch (a, b) {
+        case (nil, nil): return true
+        case (let x?, let y?): return equal(x, y)
+        default: return false
+        }
+    }
+
+    static func equal(_ a: [String], _ b: [String]) -> Bool {
+        a.count == b.count && zip(a, b).allSatisfy { equal($0, $1) }
+    }
+}
+
+/// Schlüssel für `Set` und `Dictionary` mit genauem Vergleich: die Folge der UTF-8-Bytes.
+struct AssistantExactKey: Hashable, Sendable {
+    let bytes: [UInt8]
+    init(_ text: String) { bytes = Array(text.utf8) }
+}
 
 // MARK: - JSON-Baum
 
@@ -20,6 +49,10 @@ public struct AssistantJSONMember: Equatable, Sendable {
         self.key = key
         self.value = value
     }
+
+    public static func == (a: AssistantJSONMember, b: AssistantJSONMember) -> Bool {
+        AssistantExact.equal(a.key, b.key) && a.value == b.value
+    }
 }
 
 /// JSON-Wert mit Zahlen als Originaltext (so gehen fremde Zahlen unverändert durch).
@@ -30,6 +63,20 @@ public enum AssistantJSON: Equatable, Sendable {
     case string(String)
     case array([AssistantJSON])
     case object([AssistantJSONMember])
+
+    /// Gleichheit mit genauem Textvergleich (UTF-8-Bytes). Listen zählen in ihrer Reihenfolge, die Mitglieder eines Objekts nicht
+    /// (geschrieben wird nach Schlüsseln sortiert).
+    public static func == (a: AssistantJSON, b: AssistantJSON) -> Bool {
+        switch (a, b) {
+        case (.null, .null): return true
+        case (.bool(let x), .bool(let y)): return x == y
+        case (.number(let x), .number(let y)): return AssistantExact.equal(x, y)
+        case (.string(let x), .string(let y)): return AssistantExact.equal(x, y)
+        case (.array(let x), .array(let y)): return x == y
+        case (.object(let x), .object(let y)): return x.sameMembers(as: y)
+        default: return false
+        }
+    }
 
     /// Ganzzahl als Wert (für typisierte Felder).
     public static func integer(_ value: Int) -> AssistantJSON { .number(String(value)) }
@@ -110,6 +157,15 @@ public enum AssistantJSON: Equatable, Sendable {
 }
 
 extension Array where Element == AssistantJSONMember {
+    /// Gleiche Mitglieder, unabhängig von der Reihenfolge (genauer Schlüsselvergleich, Werte mit `AssistantJSON ==`).
+    func sameMembers(as other: [AssistantJSONMember]) -> Bool {
+        guard count == other.count else { return false }
+        func ordered(_ members: [AssistantJSONMember]) -> [AssistantJSONMember] {
+            members.sorted { $0.key.utf8.lexicographicallyPrecedes($1.key.utf8) }
+        }
+        return zip(ordered(self), ordered(other)).allSatisfy { $0 == $1 }
+    }
+
     /// Wert zu einem Schlüssel (Vergleich auf UTF-8-Bytes, nicht auf kanonische Gleichheit).
     func value(_ key: String) -> AssistantJSON? {
         first { $0.key.utf8.elementsEqual(key.utf8) }?.value
@@ -325,6 +381,10 @@ public struct AssistantProfileIssue: Equatable, Sendable {
         self.path = path
         self.code = code
     }
+
+    public static func == (a: AssistantProfileIssue, b: AssistantProfileIssue) -> Bool {
+        a.code == b.code && AssistantExact.equal(a.path, b.path)
+    }
 }
 
 /// Die Fehlerliste einer abgewiesenen Eingabe, nach Pfad, dann Code sortiert (UTF-8-Reihenfolge), ohne Wiederholungen.
@@ -332,12 +392,11 @@ public struct AssistantProfileFailure: Error, Equatable, Sendable {
     public let issues: [AssistantProfileIssue]
 
     public init(_ issues: [AssistantProfileIssue]) {
-        var seen: [String] = []
+        var seen = Set<AssistantExactKey>()
         var unique: [AssistantProfileIssue] = []
         for issue in issues {
-            let key = issue.path + "\u{0}" + issue.code.rawValue
-            if seen.contains(key) { continue }
-            seen.append(key)
+            let key = AssistantExactKey(issue.path + "\u{0}" + issue.code.rawValue)
+            if !seen.insert(key).inserted { continue }
             unique.append(issue)
         }
         self.issues = unique.sorted { a, b in
@@ -358,8 +417,8 @@ public struct AssistantProfile: Equatable, Sendable {
     ]
 
     public struct Behavior: Equatable, Sendable {
-        public enum Style: String, Sendable { case natural = "natuerlich", literal = "woertlich" }
-        public enum Pause: String, Sendable { case short = "kurz", normal = "normal", long = "lang" }
+        public enum Style: String, Sendable, CaseIterable { case natural = "natuerlich", literal = "woertlich" }
+        public enum Pause: String, Sendable, CaseIterable { case short = "kurz", normal = "normal", long = "lang" }
         public var style: Style = .natural
         public var pause: Pause = .normal
         public var interruptible = true
@@ -367,6 +426,11 @@ public struct AssistantProfile: Equatable, Sendable {
         public var silenceFollowUpSeconds = 0
         public var extra: [AssistantJSONMember] = []
         public init() {}
+
+        public static func == (a: Behavior, b: Behavior) -> Bool {
+            a.style == b.style && a.pause == b.pause && a.interruptible == b.interruptible
+                && a.silenceFollowUpSeconds == b.silenceFollowUpSeconds && a.extra.sameMembers(as: b.extra)
+        }
     }
 
     public struct Context: Equatable, Sendable {
@@ -383,20 +447,29 @@ public struct AssistantProfile: Equatable, Sendable {
             self.id = id
             self.title = title
         }
+
+        public static func == (a: Context, b: Context) -> Bool {
+            a.kind == b.kind && AssistantExact.equal(a.id, b.id) && AssistantExact.equal(a.title, b.title) && a.extra.sameMembers(as: b.extra)
+        }
     }
 
     public struct Knowledge: Equatable, Sendable {
-        public enum Mode: String, Sendable { case all = "alles", first = "zuerst", only = "nur" }
+        public enum Mode: String, Sendable, CaseIterable { case all = "alles", first = "zuerst", only = "nur" }
         public var allAreas = false
         public var areas: [String] = []
         public var mode: Mode = .all
         public var contexts: [Context] = []
         public var extra: [AssistantJSONMember] = []
         public init() {}
+
+        public static func == (a: Knowledge, b: Knowledge) -> Bool {
+            a.allAreas == b.allAreas && AssistantExact.equal(a.areas, b.areas) && a.mode == b.mode
+                && a.contexts == b.contexts && a.extra.sameMembers(as: b.extra)
+        }
     }
 
     public struct Field: Equatable, Sendable {
-        public enum Kind: String, Sendable { case text = "text", number = "zahl", date = "datum", choice = "auswahl" }
+        public enum Kind: String, Sendable, CaseIterable { case text = "text", number = "zahl", date = "datum", choice = "auswahl" }
         public var name: String
         public var descriptionText: String = ""
         public var kind: Kind = .text
@@ -408,6 +481,11 @@ public struct AssistantProfile: Equatable, Sendable {
             self.kind = kind
             self.options = options
         }
+
+        public static func == (a: Field, b: Field) -> Bool {
+            AssistantExact.equal(a.name, b.name) && AssistantExact.equal(a.descriptionText, b.descriptionText) && a.kind == b.kind
+                && AssistantExact.equal(a.options, b.options) && a.extra.sameMembers(as: b.extra)
+        }
     }
 
     public struct Evaluation: Equatable, Sendable {
@@ -416,6 +494,10 @@ public struct AssistantProfile: Equatable, Sendable {
         public var fields: [Field] = []
         public var extra: [AssistantJSONMember] = []
         public init() {}
+
+        public static func == (a: Evaluation, b: Evaluation) -> Bool {
+            a.summary == b.summary && a.tasks == b.tasks && a.fields == b.fields && a.extra.sameMembers(as: b.extra)
+        }
     }
 
     public var id: String
@@ -435,6 +517,15 @@ public struct AssistantProfile: Equatable, Sendable {
     public init(id: String, name: String) {
         self.id = id
         self.name = name
+    }
+
+    /// Gleichheit mit genauem Textvergleich (UTF-8-Bytes): kanonisch gleiche, aber byteverschiedene Texte sind verschieden.
+    public static func == (a: AssistantProfile, b: AssistantProfile) -> Bool {
+        AssistantExact.equal(a.id, b.id) && AssistantExact.equal(a.name, b.name)
+            && AssistantExact.equal(a.descriptionText, b.descriptionText) && AssistantExact.equal(a.instructions, b.instructions)
+            && AssistantExact.equal(a.greeting, b.greeting) && AssistantExact.equal(a.language, b.language)
+            && AssistantExact.equal(a.voice, b.voice) && a.behavior == b.behavior && a.knowledge == b.knowledge
+            && AssistantExact.equal(a.interfaces, b.interfaces) && a.evaluation == b.evaluation && a.extra.sameMembers(as: b.extra)
     }
 
     // MARK: Lesen
@@ -568,6 +659,16 @@ enum AssistantProfilePatterns {
         matches(s, maxLength: 64, first: { lower($0) || digit($0) }, rest: { lower($0) || digit($0) || $0 == 0x2D })
     }
 
+    /// Gerätenamen von Windows, die als Dateiname nicht taugen: `con`, `prn`, `aux`, `nul`, `com0`...`com9`, `lpt0`...`lpt9`.
+    /// Gilt für Ids, die das Id-Muster schon erfüllen (nur ASCII).
+    static func isDeviceName(_ s: String) -> Bool {
+        let b = Array(s.utf8)
+        func word(_ w: String) -> Bool { b.elementsEqual(w.utf8) }
+        if word("con") || word("prn") || word("aux") || word("nul") { return true }
+        guard b.count == 4, let last = b.last, (0x30...0x39).contains(last) else { return false }
+        return b.starts(with: "com".utf8) || b.starts(with: "lpt".utf8)
+    }
+
     /// `^[a-z][a-z0-9_]{0,39}$` (Bereichsschlüssel und Feldnamen)
     static func key(_ s: String) -> Bool {
         matches(s, maxLength: 40, first: { lower($0) }, rest: { lower($0) || digit($0) || $0 == 0x5F })
@@ -580,7 +681,7 @@ enum AssistantProfilePatterns {
 
     /// `"auto"` oder `^[a-z]{2}(-[A-Z]{2})?$`
     static func language(_ s: String) -> Bool {
-        if s == "auto" { return true }
+        if AssistantExact.equal(s, "auto") { return true }
         let c = s.unicodeScalars.map(\.value)
         if c.count == 2 { return lower(c[0]) && lower(c[1]) }
         return c.count == 5 && lower(c[0]) && lower(c[1]) && c[2] == 0x2D && upper(c[3]) && upper(c[4])
@@ -662,19 +763,67 @@ struct AssistantProfileChecker {
         return out
     }
 
+    // Grundsatz: Was die Prüfung besteht, schreibt `encode` und liest `parse` wieder, mit bytegleicher zweiter Ausgabe. Darum
+    // prüft sie auch die übernommenen unbekannten Felder vollständig und die Objekte auf doppelte Schlüssel.
+
+    /// Doppelte Schlüssel in einem Objekt (genauer Vergleich): `json` am Pfad des Objekts.
+    mutating func checkKeys(_ members: [Member], _ path: String) {
+        var seen = Set<AssistantExactKey>()
+        for member in members where !seen.insert(AssistantExactKey(member.key)).inserted {
+            add(path, .json)
+            return
+        }
+    }
+
+    /// `true`, wenn der Leser den Wert in dieser Tiefe wieder läse: Tiefengrenze, Zahlen nach JSON-Grammatik, keine doppelten Schlüssel.
+    static func isReadable(_ value: AssistantJSON, depth: Int) -> Bool {
+        if depth > AssistantJSONParser.maxDepth { return false }
+        switch value {
+        case .null, .bool, .string: return true
+        case .number(let raw):
+            guard case .number(let read)? = AssistantJSON.parse(raw) else { return false }
+            return AssistantExact.equal(read, raw)
+        case .array(let items): return items.allSatisfy { isReadable($0, depth: depth + 1) }
+        case .object(let members):
+            var seen = Set<AssistantExactKey>()
+            for member in members {
+                guard seen.insert(AssistantExactKey(member.key)).inserted, isReadable(member.value, depth: depth + 1) else { return false }
+            }
+            return true
+        }
+    }
+
+    /// Die unbekannten Mitglieder eines Objekts; jedes wird vollständig geprüft (Befund `json` am Pfad des Feldes).
+    /// `depth` ist die Tiefe der Werte dieses Objekts (Wurzel: 1).
+    mutating func unknownMembers(_ o: [Member], excluding known: [String], path: String, depth: Int) -> [Member] {
+        let unknown = o.unknown(excluding: known)
+        for member in unknown where !AssistantProfileChecker.isReadable(member.value, depth: depth) {
+            add(path.isEmpty ? member.key : path + "." + member.key, .json)
+        }
+        return unknown
+    }
+
+    /// Eine Aufzählung nach ihrem Rohwert, genau verglichen.
+    static func enumCase<E: RawRepresentable & CaseIterable>(_ text: String) -> E? where E.RawValue == String {
+        E.allCases.first { AssistantExact.equal($0.rawValue, text) }
+    }
+
     mutating func profile(_ root: [Member]) -> AssistantProfile? {
         switch root.value("schema") {
         case nil: add("schema", .missing)
         case .string(let s)?:
-            if s != AssistantProfile.schema {
+            if !AssistantExact.equal(s, AssistantProfile.schema) {
                 issues = [AssistantProfileIssue(path: "schema", code: AssistantProfileChecker.schemaCode(s))]
                 return nil
             }
         default: add("schema", .type)
         }
 
+        checkKeys(root, "")
         let idText = text(root, "id", "id", required: true)
-        if let idText, !P.id(idText) { add("id", .pattern) }
+        if let idText {
+            if !P.id(idText) { add("id", .pattern) } else if P.isDeviceName(idText) { add("id", .value) }
+        }
         let nameText = text(root, "name", "name", required: true).map { P.trimSpaces($0) }
         if let nameText {
             if !(1...60).contains(P.count(nameText)) { add("name", .length) }
@@ -701,10 +850,10 @@ struct AssistantProfileChecker {
         if let items = list(root, "schnittstellen", "schnittstellen") { profile.interfaces = interfaces(items) }
         if let o = object(root, "auswertung", "auswertung") { profile.evaluation = evaluation(o) }
 
-        profile.extra = root.unknown(excluding: [
+        profile.extra = unknownMembers(root, excluding: [
             "schema", "id", "name", "beschreibung", "anweisungen", "begruessung", "sprache", "stimme",
             "verhalten", "wissen", "schnittstellen", "auswertung",
-        ])
+        ], path: "", depth: 1)
         return profile
     }
 
@@ -720,11 +869,12 @@ struct AssistantProfileChecker {
 
     mutating func behavior(_ o: [Member]) -> AssistantProfile.Behavior {
         var b = AssistantProfile.Behavior()
+        checkKeys(o, "verhalten")
         if let s = text(o, "stil", "verhalten.stil") {
-            if let v = AssistantProfile.Behavior.Style(rawValue: s) { b.style = v } else { add("verhalten.stil", .value) }
+            if let v: AssistantProfile.Behavior.Style = AssistantProfileChecker.enumCase(s) { b.style = v } else { add("verhalten.stil", .value) }
         }
         if let s = text(o, "sprechpause", "verhalten.sprechpause") {
-            if let v = AssistantProfile.Behavior.Pause(rawValue: s) { b.pause = v } else { add("verhalten.sprechpause", .value) }
+            if let v: AssistantProfile.Behavior.Pause = AssistantProfileChecker.enumCase(s) { b.pause = v } else { add("verhalten.sprechpause", .value) }
         }
         if let v = flag(o, "unterbrechen", "verhalten.unterbrechen") { b.interruptible = v }
         if let v = o.value("nachfrage_stille_s") {
@@ -736,7 +886,7 @@ struct AssistantProfileChecker {
                 if n == 0 || (5...120).contains(n) { b.silenceFollowUpSeconds = n } else { add(path, .value) }
             }
         }
-        b.extra = o.unknown(excluding: ["stil", "sprechpause", "unterbrechen", "nachfrage_stille_s"])
+        b.extra = unknownMembers(o, excluding: ["stil", "sprechpause", "unterbrechen", "nachfrage_stille_s"], path: "verhalten", depth: 2)
         return b
     }
 
@@ -747,59 +897,63 @@ struct AssistantProfileChecker {
         guard case .number(let raw) = v else { return .notInteger }
         let b = Array(raw.utf8)
         let digits = b.first == 0x2D ? Array(b.dropFirst()) : b
-        guard !digits.isEmpty, digits.allSatisfy({ (0x30...0x39).contains($0) }) else { return .notInteger }
+        guard !digits.isEmpty, digits.allSatisfy({ (0x30...0x39).contains($0) }), digits.count == 1 || digits[0] != 0x30 else {
+            return .notInteger
+        }
         guard digits.count <= 15, let n = Int(raw) else { return .outOfRange }
         return .value(n)
     }
 
     mutating func knowledge(_ o: [Member]) -> AssistantProfile.Knowledge {
         var k = AssistantProfile.Knowledge()
+        checkKeys(o, "wissen")
         if let v = flag(o, "alle_bereiche", "wissen.alle_bereiche") { k.allAreas = v }
         if let items = list(o, "bereiche", "wissen.bereiche") {
-            var seen: [String] = []
+            var seen = Set<AssistantExactKey>()
             for (i, item) in items.enumerated() {
                 let path = "wissen.bereiche[\(i)]"
                 guard case .string(let s) = item else { add(path, .type); continue }
                 if !P.key(s) { add(path, .pattern) }
-                else if seen.contains(s) { add(path, .duplicate) }
-                seen.append(s)
+                else if seen.contains(AssistantExactKey(s)) { add(path, .duplicate) }
+                seen.insert(AssistantExactKey(s))
                 k.areas.append(s)
             }
         }
         if let s = text(o, "modus", "wissen.modus") {
-            if let v = AssistantProfile.Knowledge.Mode(rawValue: s) { k.mode = v } else { add("wissen.modus", .value) }
+            if let v: AssistantProfile.Knowledge.Mode = AssistantProfileChecker.enumCase(s) { k.mode = v } else { add("wissen.modus", .value) }
         }
         if let items = list(o, "kontexte", "wissen.kontexte") {
             if items.count > 50 { add("wissen.kontexte", .tooMany) }
             for (i, item) in items.enumerated() {
                 let path = "wissen.kontexte[\(i)]"
                 guard case .object(let c) = item else { add(path, .type); continue }
+                checkKeys(c, path)
                 let kindText = text(c, "art", path + ".art", required: true)
                 var kind = AssistantProfile.Context.Kind.book
                 if let kindText {
-                    if let v = AssistantProfile.Context.Kind(rawValue: kindText) { kind = v } else { add(path + ".art", .value) }
+                    if let v: AssistantProfile.Context.Kind = AssistantProfileChecker.enumCase(kindText) { kind = v } else { add(path + ".art", .value) }
                 }
                 let idText = bounded(text(c, "id", path + ".id", required: true), path + ".id", 1...200) ?? ""
                 let title = bounded(text(c, "titel", path + ".titel"), path + ".titel", 0...200) ?? ""
                 var context = AssistantProfile.Context(kind: kind, id: idText, title: title)
-                context.extra = c.unknown(excluding: ["art", "id", "titel"])
+                context.extra = unknownMembers(c, excluding: ["art", "id", "titel"], path: path, depth: 4)
                 k.contexts.append(context)
             }
         }
-        k.extra = o.unknown(excluding: ["alle_bereiche", "bereiche", "modus", "kontexte"])
+        k.extra = unknownMembers(o, excluding: ["alle_bereiche", "bereiche", "modus", "kontexte"], path: "wissen", depth: 2)
         return k
     }
 
     mutating func interfaces(_ items: [AssistantJSON]) -> [String] {
         if items.count > 32 { add("schnittstellen", .tooMany) }
-        var seen: [String] = []
+        var seen = Set<AssistantExactKey>()
         var out: [String] = []
         for (i, item) in items.enumerated() {
             let path = "schnittstellen[\(i)]"
             guard case .string(let s) = item else { add(path, .type); continue }
             if !P.interface(s) { add(path, .pattern) }
-            else if seen.contains(s) { add(path, .duplicate) }
-            seen.append(s)
+            else if seen.contains(AssistantExactKey(s)) { add(path, .duplicate) }
+            seen.insert(AssistantExactKey(s))
             out.append(s)
         }
         return out
@@ -807,25 +961,27 @@ struct AssistantProfileChecker {
 
     mutating func evaluation(_ o: [Member]) -> AssistantProfile.Evaluation {
         var e = AssistantProfile.Evaluation()
+        checkKeys(o, "auswertung")
         if let v = flag(o, "zusammenfassung", "auswertung.zusammenfassung") { e.summary = v }
         if let v = flag(o, "aufgaben", "auswertung.aufgaben") { e.tasks = v }
         if let items = list(o, "felder", "auswertung.felder") {
             if items.count > 30 { add("auswertung.felder", .tooMany) }
-            var names: [String] = []
+            var names = Set<AssistantExactKey>()
             for (i, item) in items.enumerated() {
                 let path = "auswertung.felder[\(i)]"
                 guard case .object(let f) = item else { add(path, .type); continue }
+                checkKeys(f, path)
                 var field = AssistantProfile.Field(name: "")
                 if let name = text(f, "name", path + ".name", required: true) {
                     if !P.key(name) { add(path + ".name", .pattern) }
-                    else if names.contains(name) { add(path + ".name", .duplicate) }
-                    names.append(name)
+                    else if names.contains(AssistantExactKey(name)) { add(path + ".name", .duplicate) }
+                    names.insert(AssistantExactKey(name))
                     field.name = name
                 }
                 field.descriptionText = bounded(text(f, "beschreibung", path + ".beschreibung"), path + ".beschreibung", 0...200) ?? ""
                 var isChoice = false
                 if let t = text(f, "typ", path + ".typ", required: true) {
-                    if let v = AssistantProfile.Field.Kind(rawValue: t) {
+                    if let v: AssistantProfile.Field.Kind = AssistantProfileChecker.enumCase(t) {
                         field.kind = v
                         isChoice = v == .choice
                     } else {
@@ -840,11 +996,11 @@ struct AssistantProfileChecker {
                     }
                     field.options = texts(items, optionsPath, 1...60)
                 }
-                field.extra = f.unknown(excluding: ["name", "beschreibung", "typ", "optionen"])
+                field.extra = unknownMembers(f, excluding: ["name", "beschreibung", "typ", "optionen"], path: path, depth: 4)
                 e.fields.append(field)
             }
         }
-        e.extra = o.unknown(excluding: ["zusammenfassung", "aufgaben", "felder"])
+        e.extra = unknownMembers(o, excluding: ["zusammenfassung", "aufgaben", "felder"], path: "auswertung", depth: 2)
         return e
     }
 }

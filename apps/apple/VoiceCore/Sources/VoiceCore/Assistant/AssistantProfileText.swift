@@ -2,7 +2,8 @@ import Foundation
 
 // Assistenten-Profil (lva#555, Paket G1): Platzhalter in Begrüßung und Anweisungen sowie der Rollenblock für den Prompt.
 // Reiner Text, ohne Locale-Schnittstellen (feste Listen), damit iPhone und PC dieselben Ergebnisse liefern. Das Einhängen des
-// Rollenblocks in die vorhandenen Prompts kommt in einem späteren Paket.
+// Rollenblocks in die vorhandenen Prompts kommt in einem späteren Paket. Alle Vergleiche von Nutzertext sind genau (UTF-8-Bytes,
+// siehe `AssistantExact`): `{{é}}` (ein Codepunkt) trifft keinen Zusatzwert mit dem Schlüssel `é` (e + U+0301).
 
 /// Kalenderfelder und Werte für die Platzhalter. Keine Zeitzonenlogik: der Aufrufer liefert die Ortszeit des Nutzers.
 public struct AssistantPlaceholderValues: Equatable, Sendable {
@@ -22,6 +23,14 @@ public struct AssistantPlaceholderValues: Equatable, Sendable {
     /// Weitere Platzhalter (für spätere Schnittstellen); die eingebauten gehen vor.
     public var extra: [String: String]
 
+    /// Gleichheit mit genauem Textvergleich (UTF-8-Bytes) für Name, Zusatzschlüssel und Zusatzwerte.
+    public static func == (a: AssistantPlaceholderValues, b: AssistantPlaceholderValues) -> Bool {
+        guard AssistantExact.equal(a.name, b.name), a.year == b.year, a.month == b.month, a.day == b.day, a.weekday == b.weekday,
+              a.hour == b.hour, a.minute == b.minute, a.extra.count == b.extra.count else { return false }
+        let other = Dictionary(b.extra.map { (AssistantExactKey($0.key), $0.value) }, uniquingKeysWith: { first, _ in first })
+        return a.extra.allSatisfy { entry in other[AssistantExactKey(entry.key)].map { AssistantExact.equal($0, entry.value) } ?? false }
+    }
+
     public init(name: String? = nil, year: Int, month: Int, day: Int, weekday: Int, hour: Int, minute: Int, extra: [String: String] = [:]) {
         self.name = name
         self.year = year
@@ -38,11 +47,19 @@ public struct AssistantPlaceholderResult: Equatable, Sendable {
     public let text: String
     /// Unbekannte, nicht leere Platzhalter in der Reihenfolge des ersten Vorkommens (Hinweis für den Editor, kein Fehler).
     public let unknown: [String]
+
+    public static func == (a: AssistantPlaceholderResult, b: AssistantPlaceholderResult) -> Bool {
+        AssistantExact.equal(a.text, b.text) && AssistantExact.equal(a.unknown, b.unknown)
+    }
 }
 
 public struct AssistantRoleBlock: Equatable, Sendable {
     public let text: String
     public let truncated: Bool
+
+    public static func == (a: AssistantRoleBlock, b: AssistantRoleBlock) -> Bool {
+        AssistantExact.equal(a.text, b.text) && a.truncated == b.truncated
+    }
 }
 
 public enum AssistantProfileText {
@@ -53,11 +70,12 @@ public enum AssistantProfileText {
 
     /// `en` und `en-XX` sprechen Englisch, alles andere (auch `auto`) Deutsch.
     static func isEnglish(_ language: String) -> Bool {
-        language == "en" || language.utf8.starts(with: "en-".utf8)
+        AssistantExact.equal(language, "en") || language.utf8.starts(with: "en-".utf8)
     }
 
     private static func two(_ n: Int) -> String { n < 10 ? "0\(n)" : "\(n)" }
 
+    /// Wert eines eingebauten Platzhalters; `key` ist einer der Namen aus `builtInKeys` (Aufrufer prüfen vorher genau).
     static func builtIn(_ key: String, english: Bool, values v: AssistantPlaceholderValues) -> String? {
         switch key {
         case "name":
@@ -131,6 +149,8 @@ public enum AssistantProfileText {
         let s = template.unicodeScalars.map { Int($0.value) }
         var out: [Int] = []
         var unknown: [String] = []
+        var unknownSeen = Set<AssistantExactKey>()
+        let extras = Dictionary(values.extra.map { (AssistantExactKey($0.key), $0.value) }, uniquingKeysWith: { first, _ in first })
         var removed = false
         var i = 0
         while i < s.count {
@@ -141,10 +161,11 @@ public enum AssistantProfileText {
             }
             let key = AssistantProfilePatterns.trimSpaces(string(Array(s[(i + 2)..<end])))
             var value: String?
-            var known = builtInKeys.contains(key)
-            if known {
-                value = builtIn(key, english: english, values: values)
-            } else if let extra = values.extra[key] {
+            var known = false
+            if let builtInKey = builtInKeys.first(where: { AssistantExact.equal($0, key) }) {
+                known = true
+                value = builtIn(builtInKey, english: english, values: values)
+            } else if let extra = extras[AssistantExactKey(key)] {
                 known = true
                 value = extra
             }
@@ -155,7 +176,7 @@ public enum AssistantProfileText {
                 dropSeparators(&out)
                 out.append(marker)
                 removed = true
-                if !known, !key.isEmpty, !unknown.contains(key) { unknown.append(key) }
+                if !known, !key.isEmpty, unknownSeen.insert(AssistantExactKey(key)).inserted { unknown.append(key) }
             }
             i = end + 2
         }
