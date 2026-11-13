@@ -87,6 +87,9 @@ interface EditorMenuProps {
   pasteLog?: readonly PasteLogEntry[];
   /** Prüfsummen des Protokolls werden noch geprüft (Wiederherstellen gesperrt). */
   pasteChecking?: boolean;
+  /** Zähler: jede Erhöhung öffnet den Dialog „Letzte Einfügungen“ (Aktion im
+   *  Hinweis „Rohfassungen voll“ des Editors). */
+  pasteLogRequest?: number;
   /** Protokoll ändern (löschen); gesichert und mit anderen Schreibvorgängen
    *  der Seite nacheinander. `true`, wenn es gesichert wurde. */
   onPasteLogChange?(
@@ -144,6 +147,7 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
   onPasteCleanup,
   pasteLog = [],
   pasteChecking = false,
+  pasteLogRequest = 0,
   onPasteLogChange,
   onTidy,
   tidying = false,
@@ -155,6 +159,12 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
   const [findFocus, setFindFocus] = useState(0);
   const [replaceOpen, setReplaceOpen] = useState(false);
   const [pasteLogOpen, setPasteLogOpen] = useState(false);
+  const seenPasteLogRequest = useRef(pasteLogRequest);
+  useEffect(() => {
+    if (pasteLogRequest === seenPasteLogRequest.current) return;
+    seenPasteLogRequest.current = pasteLogRequest;
+    setPasteLogOpen(true);
+  }, [pasteLogRequest]);
   const [busy, setBusy] = useState<AssistTask | null>(null);
   const [progress, setProgress] = useState<{
     done: number;

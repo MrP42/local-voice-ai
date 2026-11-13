@@ -40,6 +40,9 @@ import { ReplaceAllDialog } from "./ReplaceAllDialog";
 
 /** Ein Fund eines Providers im Text. `start`/`end` sind UTF-16-Offsets
  *  (String-Indizes, wie `slice` sie nimmt), `raw` der exakte Ausschnitt. */
+/** Ergebnis von `onPasteRecord`: gesichert, gescheitert oder Protokoll voll. */
+export type PasteRecordResult = "saved" | "failed" | "full";
+
 export interface ChipMatch {
   start: number;
   end: number;
@@ -181,8 +184,11 @@ interface TtsChipEditorProps {
    *  Original-Editor einer Vorlesen-Seite setzt das. */
   cleanPaste?: boolean;
   /** Rohfassung einer Einfügung sichern, BEVOR bereinigt wird (Seitenzustand).
-   *  `false`: Sichern gescheitert, der Text wird dann unverändert eingefügt. */
-  onPasteRecord?: (entry: PasteLogEntry) => Promise<boolean>;
+   *  `failed`: Sichern gescheitert; `full`: Grenze der Rohfassungen erreicht
+   *  (es wird nichts verdrängt). Der Text wird dann unverändert eingefügt. */
+  onPasteRecord?: (entry: PasteLogEntry) => Promise<PasteRecordResult>;
+  /** Öffnet den Dialog „Letzte Einfügungen“ (Aktion im Hinweis „Rohfassungen voll“). */
+  onOpenPasteLog?: () => void;
   /** Kennung des Dokuments (Seiten-ID): eine ausstehende Einfügung ändert
    *  nur das Dokument, in dem sie begonnen hat. */
   docKey?: string;
@@ -409,6 +415,7 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
   spellCheck = true,
   cleanPaste = false,
   onPasteRecord,
+  onOpenPasteLog,
   docKey,
 }) => {
   const { t } = useTranslation();
@@ -562,6 +569,23 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
     [execInsert],
   );
 
+  /** Rohfassungen voll: der Text kommt unverändert ins Dokument, der Hinweis
+   *  führt zum Aufräumen („Letzte Einfügungen“). Nichts wird verdrängt. */
+  const noteFull = useCallback(
+    () =>
+      toast(t("tts.editorMenu.pasteFull"), {
+        id: "paste-cleanup",
+        duration: 15000,
+        action: onOpenPasteLog
+          ? {
+              label: t("tts.editorMenu.pasteFullAction"),
+              onClick: onOpenPasteLog,
+            }
+          : undefined,
+      }),
+    [onOpenPasteLog, t],
+  );
+
   /**
    * Eingefügten Text bereinigen: sichert vorher die Rohfassung (Seitenzustand,
    * `onPasteRecord`), ersetzt dann `[start, end)` durch die bereinigte Fassung
@@ -571,8 +595,10 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
    * Editor und Textstand noch dieselben sein, sonst wird nichts eingefügt
    * (Hinweis; die Rohfassung bleibt gesichert). Der Rückgängig-Hinweis gilt nur
    * für diese Einfügung und nur, solange der Editor GENAU den Text von direkt
-   * nach dem Einfügen enthält. Ist der Eintrag zu groß oder lässt sich die
-   * Rohfassung nicht sichern, wird der Rohtext unverändert eingefügt.
+   * nach dem Einfügen enthält. Ist der Eintrag zu groß, lässt sich die
+   * Rohfassung nicht sichern oder ist die Grenze der Rohfassungen erreicht
+   * (`full`, Hinweis mit Weg zum Aufräumen, nichts wird verdrängt), wird der
+   * Rohtext unverändert eingefügt.
    */
   const insertCleaned = useCallback(
     async (
@@ -590,21 +616,21 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
       // Rohfassung als nicht gesichert: das Einfügen ist schon abgefangen, also
       // kommt der Rohtext unverändert hinein, mit Hinweis (nie stilles Nichts).
       let tooLarge = false;
-      let saved = false;
+      let recorded: PasteRecordResult = "failed";
       try {
         let entry = await makePasteEntry(original, cleaned, result.items);
         tooLarge = !fitsEntry(entry);
         if (tooLarge) entry = await makeOversizedEntry(original);
         // Ohne Prüfsumme (kein WebCrypto) ließe sich die Rohfassung später nicht
         // prüfen, also nicht gesichert.
-        saved =
+        recorded =
           entry.sha256 === ""
-            ? false
+            ? "failed"
             : onPasteRecord
               ? await onPasteRecord(entry)
-              : true;
+              : "saved";
       } catch {
-        saved = false;
+        recorded = "failed";
       }
       if (taRef.current !== ta || docKeyRef.current !== doc) {
         toast(t("tts.editorMenu.pasteAbortedPage"));
@@ -614,9 +640,10 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
         toast(t("tts.editorMenu.pasteAbortedChanged"));
         return;
       }
-      if (tooLarge || !saved) {
+      if (tooLarge || recorded !== "saved") {
         execInsert(ta, start, end, original);
         if (tooLarge) toast(t("tts.editorMenu.pasteTooLarge"));
+        else if (recorded === "full") noteFull();
         else toast.error(t("tts.editorMenu.pasteNotSaved"));
         return;
       }
@@ -645,10 +672,11 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
         },
       });
     },
-    [execInsert, onPasteRecord, t],
+    [execInsert, noteFull, onPasteRecord, t],
   );
 
-  /** Zu großen Text nicht bereinigen: unverändert einfügen, Prüfsumme vermerken. */
+  /** Zu großen Text nicht bereinigen: unverändert einfügen, Prüfsumme vermerken
+   *  (ist das Protokoll voll, bleibt der Vermerk weg; es wird nichts verdrängt). */
   const noteOversized = useCallback(
     async (raw: string) => {
       toast(t("tts.editorMenu.pasteTooLarge"));

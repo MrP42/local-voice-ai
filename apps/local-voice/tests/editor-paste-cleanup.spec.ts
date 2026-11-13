@@ -794,7 +794,7 @@ test("the dialog tells how long raw texts are kept; the switch item says it too"
     einfuegungen: [entryFor(1)],
   });
   const sentence =
-    "Rohfassungen der letzten 20 Einfügungen werden mit der Seite auf diesem Gerät gespeichert, bis du sie löschst.";
+    "Rohfassungen der letzten Einfügungen (bis zu 20, zusammen höchstens 16 MB) werden mit der Seite auf diesem Gerät gespeichert, bis du sie löschst. Ist die Grenze erreicht, wird die nächste Einfügung nicht bereinigt, sondern unverändert eingefügt.";
   await page.getByTestId("editor-menu-cleanup").click();
   await expect(page.getByTestId("editor-cleanup-paste")).toContainText(
     sentence,
@@ -1825,4 +1825,101 @@ test("a foreign text change during a page load survives the autosave of the load
   expect(((await savedState(page)) as { text: string }).text).toBe(
     "Fremd geändert. ",
   );
+});
+
+// -- Grenze der Rohfassungen (lva#548): nichts wird still verdrängt ---------------
+
+const FULL_NOTICE = "Rohfassungen voll – unverändert eingefügt.";
+
+/** Seite mit 20 gesicherten Einfügungen (Grenze erreicht), Text „Vorher. “. */
+async function openFullLog(page: Page) {
+  const many = Array.from({ length: 20 }, (_, i) => entryFor(i + 1));
+  const editor = await openSeeded(page, {
+    text: "Vorher. ",
+    tab: "original",
+    einfuegungen: many,
+  });
+  await expect(editor).toHaveValue("Vorher. ");
+  return { editor, many };
+}
+
+/** Die gespeicherten Rohfassungen (Rohtexte) der Seite „p1“. */
+const savedRohs = async (page: Page) =>
+  (
+    ((await savedState(page)) as { einfuegungen?: { roh?: string }[] } | null)
+      ?.einfuegungen ?? []
+  ).map((e) => e.roh);
+
+async function expectFullNoticeAndDialog(
+  page: Page,
+  many: { roh: string }[],
+  editor: ReturnType<Page["locator"]>,
+) {
+  await expect(editor).toHaveValue(`Vorher. ${DIRTY}`);
+  const notice = toast(page);
+  await expect(notice).toContainText(FULL_NOTICE);
+  await expect(notice).not.toContainText("Beim Einfügen bereinigt");
+  // Die Aktion öffnet den Dialog „Letzte Einfügungen“ mit den alten 20 Einträgen.
+  await notice
+    .getByRole("button", { name: "Letzte Einfügungen aufräumen" })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "Letzte Einfügungen" }),
+  ).toBeVisible();
+  await expect(page.getByTestId("paste-log-entry")).toHaveCount(20);
+  // Nichts verdrängt: die Datei hält weiter genau die alten 20 Rohtexte.
+  expect(await savedRohs(page)).toEqual(many.map((e) => e.roh));
+}
+
+test("with 20 entries the 21st paste (ctrl+v) goes in unchanged with a notice; nothing is pushed out", async ({
+  page,
+}) => {
+  const { editor, many } = await openFullLog(page);
+  expect(await paste(editor, DIRTY)).toBe(true);
+  await expectFullNoticeAndDialog(page, many, editor);
+});
+
+test("with 20 entries the 21st paste via the context menu goes in unchanged with a notice; nothing is pushed out", async ({
+  page,
+}) => {
+  const { editor, many } = await openFullLog(page);
+  await page.evaluate((text) => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { readText: async () => text, writeText: async () => undefined },
+    });
+  }, DIRTY);
+  await editor.click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Einfügen", exact: true })
+    .evaluate((el: HTMLElement) => el.click());
+  await expectFullNoticeAndDialog(page, many, editor);
+});
+
+test("a full log does not block pasting text that needs no cleanup, and deleting one entry makes room again", async ({
+  page,
+}) => {
+  const { editor, many } = await openFullLog(page);
+  expect(await paste(editor, "Nur ein sauberer Satz.")).toBe(false);
+  await expect(toast(page)).toHaveCount(0);
+  // Aufräumen über den Dialog: ein Eintrag weg, die nächste Einfügung wird wieder bereinigt.
+  await openLog(page);
+  await page
+    .getByTestId("paste-log-entry")
+    .first()
+    .getByTestId("paste-log-delete")
+    .click();
+  await expect(page.getByTestId("paste-log-entry")).toHaveCount(19);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toBeHidden();
+  const before = (await editor.inputValue()).length;
+  expect(await paste(editor, DIRTY)).toBe(true);
+  await expect
+    .poll(async () => (await editor.inputValue()).length)
+    .toBeGreaterThan(before);
+  await expect(toast(page).last()).toContainText("Beim Einfügen bereinigt:");
+  await expect.poll(async () => (await savedRohs(page)).length).toBe(20);
+  const rohs = await savedRohs(page);
+  expect(rohs.slice(0, 19)).toEqual(many.slice(0, 19).map((e) => e.roh));
+  expect(rohs[19]).toBe(DIRTY);
 });

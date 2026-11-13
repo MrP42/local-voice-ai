@@ -13,6 +13,8 @@
  * - Protokolländerungen (`commitLog`) sind Operationen auf dem frisch gelesenen
  *   Protokoll (hinzufügen, löschen, alle löschen). Sie ändern nur dieses Feld:
  *   alles andere (Text usw.) bleibt der Dateistand, nie der der Oberfläche.
+ *   Das Hinzufügen (`addLogEntry`) prüft den Platz in derselben Kette und
+ *   meldet „voll“, statt etwas zu verdrängen.
  * - `save` (Autosave, Export, KI-Dokument) baut den Zustand wie bisher, setzt
  *   aber `einfuegungen` aus der frisch gelesenen Datei ein.
  * - `mutate` ändert Felder der Datei; `einfuegungen` bleibt der Dateiwert.
@@ -26,7 +28,11 @@
  * Seite kommen von außen (`io`, `live`), damit die Rennen in Tests
  * deterministisch nachgestellt werden können. Inhalte gehen nie ins Log.
  */
-import { parsePasteLog, type PasteLogEntry } from "./pasteLog.ts";
+import {
+  appendPasteEntry,
+  parsePasteLog,
+  type PasteLogEntry,
+} from "./pasteLog.ts";
 
 export interface PageStateIo {
   /** Rohtext von `state.json` (leer, wenn die Seite noch keinen hat); `null` bei Fehler. */
@@ -42,8 +48,18 @@ export interface PageStateLive {
   build(): string;
 }
 
-/** Operation auf dem frisch gelesenen Protokoll: hinzufügen, löschen, alle löschen. */
-export type LogOp = (log: PasteLogEntry[]) => PasteLogEntry[];
+/** Die Operation verweigert die Änderung (z. B. Protokoll voll): nichts wird geschrieben. */
+export interface LogRefusal {
+  ok: false;
+  reason: "full" | "unfit";
+}
+
+/** Operation auf dem frisch gelesenen Protokoll: hinzufügen, löschen, alle
+ *  löschen. Eine Verweigerung ändert nichts und schreibt nichts. */
+export type LogOp = (log: PasteLogEntry[]) => PasteLogEntry[] | LogRefusal;
+
+/** Ausgang eines Protokollauftrags: gesichert, Lese-/Schreibfehler oder verweigert. */
+export type LogOutcome = "saved" | "failed" | LogRefusal["reason"];
 
 export interface PageStateStoreOptions {
   io: PageStateIo;
@@ -86,24 +102,44 @@ export function createPageStateStore(options: PageStateStoreOptions) {
   }
 
   /**
-   * Protokoll der Seite ändern und sichern; `true`, wenn gesichert. `op` wird
-   * auf das frisch gelesene Protokoll der Datei angewendet; geschrieben wird die
-   * frisch gelesene Datei mit ersetztem Feld `einfuegungen`, sonst nichts.
+   * Protokoll der Seite ändern und sichern. `op` wird auf das frisch gelesene
+   * Protokoll der Datei angewendet; geschrieben wird die frisch gelesene Datei
+   * mit ersetztem Feld `einfuegungen`, sonst nichts. Verweigert `op` (Protokoll
+   * voll), bleibt die Datei unberührt und der Grund geht an den Aufrufer.
    */
-  function commitLog(page: string, op: LogOp): Promise<boolean> {
+  function commitLogOutcome(page: string, op: LogOp): Promise<LogOutcome> {
     return enqueue(async () => {
       const text = await io.load(page);
-      if (text === null) return false;
+      if (text === null) return "failed";
       const state = parseState(text);
-      if (!state) return false;
+      if (!state) return "failed";
       const next = op(parsePasteLog(state.einfuegungen));
+      if (!Array.isArray(next)) return next.reason;
       state.einfuegungen = next.length > 0 ? next : undefined;
-      if (!(await io.save(page, JSON.stringify(state)))) return false;
+      if (!(await io.save(page, JSON.stringify(state)))) return "failed";
       writes.set(page, (writes.get(page) ?? 0) + 1);
       options.onCommit?.(page, next);
-      return true;
+      return "saved";
     });
   }
+
+  /** Wie {@link commitLogOutcome}; `true`, wenn gesichert. */
+  const commitLog = async (page: string, op: LogOp): Promise<boolean> =>
+    (await commitLogOutcome(page, op)) === "saved";
+
+  /**
+   * Rohfassung anhängen, atomar mit der Prüfung auf Platz: ist die Grenze
+   * erreicht, meldet der Auftrag `full`, statt etwas zu verdrängen. Der Editor
+   * setzt den Text erst ein, wenn dieses Ergebnis vorliegt.
+   */
+  const addLogEntry = (
+    page: string,
+    entry: PasteLogEntry,
+  ): Promise<LogOutcome> =>
+    commitLogOutcome(page, (log) => {
+      const added = appendPasteEntry(log, entry);
+      return added.ok ? added.log : added;
+    });
 
   /**
    * Seitenstand sichern (Autosave, Export, KI-Dokument). `snapshot` ist der
@@ -163,6 +199,8 @@ export function createPageStateStore(options: PageStateStoreOptions) {
 
   return {
     commitLog,
+    commitLogOutcome,
+    addLogEntry,
     save,
     mutate,
     /** Marke der Anzeige: vor dem Lesen einer Seite holen. */

@@ -23,6 +23,7 @@ import {
   PASTE_LOG_MAX_BYTES,
   PASTE_LOG_MAX_ENTRIES,
   appendPasteEntry,
+  logBytes,
   entryBytes,
   fitsEntry,
   isIsoTime,
@@ -1359,14 +1360,51 @@ test("pasteLog: sha256 stimmt mit node:crypto überein, Eintrag trägt Roh- und 
   );
 });
 
-test("pasteLog: höchstens 20 Einträge, die ältesten fallen zuerst", async () => {
+/** Anhängen, das gelingen muss (Protokoll danach um den Eintrag länger). */
+const appended = (log, entry) => {
+  const result = appendPasteEntry(log, entry);
+  assert.equal(result.ok, true, `anhängen gescheitert: ${result.reason}`);
+  return result.log;
+};
+
+test("pasteLog: höchstens 20 Einträge; die 21. Einfügung verdrängt nichts, anhängen meldet „voll“ (lva#548)", async () => {
   let log = [];
-  for (let i = 0; i < 25; i += 1) {
-    log = appendPasteEntry(log, { zeit: String(i), sha256: "x", regeln: [] });
+  for (let i = 0; i < PASTE_LOG_MAX_ENTRIES; i += 1) {
+    log = appended(log, { zeit: String(i), sha256: "x", regeln: [] });
   }
   assert.equal(log.length, PASTE_LOG_MAX_ENTRIES);
-  assert.equal(log[0].zeit, "5");
-  assert.equal(log[19].zeit, "24");
+  const before = JSON.stringify(log);
+  const result = appendPasteEntry(log, {
+    zeit: "neu",
+    sha256: "x",
+    regeln: [],
+  });
+  assert.deepEqual(result, { ok: false, reason: "full" });
+  assert.equal(
+    JSON.stringify(log),
+    before,
+    "nichts verdrängt, nichts geändert",
+  );
+  assert.equal(log[0].zeit, "0");
+  assert.equal(log[19].zeit, "19");
+});
+
+test("pasteLog: nach dem Löschen eines Eintrags geht anhängen wieder (lva#548)", () => {
+  let log = [];
+  for (let i = 0; i < PASTE_LOG_MAX_ENTRIES; i += 1) {
+    log = appended(log, eintrag(iso(i), `roh ${i}`));
+  }
+  assert.equal(appendPasteEntry(log, eintrag(iso(30), "neu")).ok, false);
+  log = removePasteEntry(log, pasteEntryKey(log[3]));
+  assert.equal(log.length, PASTE_LOG_MAX_ENTRIES - 1);
+  const after = appended(log, eintrag(iso(30), "neu"));
+  assert.equal(after.length, PASTE_LOG_MAX_ENTRIES);
+  assert.equal(after[after.length - 1].roh, "neu");
+  assert.equal(after[0].roh, "roh 0");
+  assert.equal(
+    appendPasteEntry(after, eintrag(iso(31), "noch einer")).ok,
+    false,
+  );
 });
 
 /** Gültiger Zeitstempel für den n-ten Eintrag. */
@@ -1380,29 +1418,50 @@ const eintrag = (zeit, roh, bereinigt = roh) => ({
   regeln: [{ rule: "spaces", count: 1 }],
 });
 
-test("pasteLog: Gesamtumfang in Bytes begrenzt, der neueste Eintrag bleibt immer", () => {
+test("pasteLog: Gesamtumfang in Bytes begrenzt: ein Eintrag über der Gesamtgrenze meldet „voll“, nichts fällt weg (lva#548)", () => {
   const big = "x".repeat(900_000);
   let log = [];
+  let refused = null;
   for (let i = 0; i < 12; i += 1) {
-    log = appendPasteEntry(log, eintrag(String(i), big));
+    const result = appendPasteEntry(log, eintrag(String(i), big));
+    if (!result.ok) {
+      refused = i;
+      assert.equal(result.reason, "full");
+      break;
+    }
+    log = result.log;
   }
-  const total = log.reduce((sum, e) => sum + entryBytes(e), 0);
-  assert.ok(total <= PASTE_LOG_MAX_BYTES, `${total}`);
-  assert.ok(log.length < 12);
-  assert.equal(log[log.length - 1].zeit, "11");
+  assert.ok(
+    refused !== null && refused < 12,
+    "irgendwann ist die Grenze erreicht",
+  );
+  assert.equal(log.length, refused);
+  assert.ok(logBytes(log) <= PASTE_LOG_MAX_BYTES, `${logBytes(log)}`);
+  assert.deepEqual(
+    log.map((e) => e.zeit),
+    Array.from({ length: refused }, (_, i) => String(i)),
+    "alle bisherigen Einträge unverändert, die ältesten nicht verdrängt",
+  );
+  // Ein kleiner Eintrag passt noch, solange er in den Rest passt.
+  const room = PASTE_LOG_MAX_BYTES - logBytes(log);
+  assert.ok(room > 0);
+  assert.equal(appendPasteEntry(log, eintrag("klein", "x")).ok, true);
+  // Löschen schafft Platz.
+  const freed = removePasteEntry(log, pasteEntryKey(log[0]));
+  assert.equal(appendPasteEntry(freed, eintrag("neu", big)).ok, true);
 });
 
 test("pasteLog: Einzelgrenze zählt Bytes, nicht Zeichen („ä“ hat zwei)", () => {
   const ae = "ä".repeat(600_000);
   assert.ok(ae.length * 2 < PASTE_ENTRY_MAX_BYTES);
-  const [viele] = appendPasteEntry([], eintrag("a", ae));
+  const [viele] = appended([], eintrag("a", ae));
   assert.equal(viele.zuGross, true);
   assert.equal(viele.roh, undefined);
   assert.equal(viele.bereinigt, undefined);
   assert.equal(viele.zeichen, 600_000);
   assert.equal(viele.bytes, 1_200_000);
   const ascii = "a".repeat(600_000);
-  const [klein] = appendPasteEntry([], eintrag("b", ascii));
+  const [klein] = appended([], eintrag("b", ascii));
   assert.equal(klein.zuGross, undefined);
   assert.equal(klein.roh, ascii);
 });
@@ -1437,15 +1496,42 @@ test("pasteLog: beim Laden verlieren übergroße Einträge Roh- und bereinigte F
   assert.equal(b.roh, "kurz");
 });
 
-test("pasteLog: beim Laden gilt danach die Gesamtgrenze, die ältesten fallen", () => {
+test("pasteLog: Altbestand über der Gesamtgrenze wird beim Laden nicht gekürzt, neue Einfügungen gelten als voll (lva#548)", () => {
   const roh = "x".repeat(900_000);
   const geladen = parsePasteLog(
     Array.from({ length: 20 }, (_, i) => eintrag(iso(i), roh)),
   );
-  const total = geladen.reduce((sum, e) => sum + entryBytes(e), 0);
-  assert.ok(total <= PASTE_LOG_MAX_BYTES);
-  assert.ok(geladen.length < 20);
-  assert.equal(geladen[geladen.length - 1].zeit, iso(19));
+  assert.equal(geladen.length, 20);
+  assert.ok(logBytes(geladen) > PASTE_LOG_MAX_BYTES);
+  assert.deepEqual(
+    geladen.map((e) => e.zeit),
+    Array.from({ length: 20 }, (_, i) => iso(i)),
+  );
+  assert.deepEqual(appendPasteEntry(geladen, eintrag(iso(30), "klein")), {
+    ok: false,
+    reason: "full",
+  });
+});
+
+test("pasteLog: Altbestand mit mehr als 20 Einträgen wird beim Laden nicht gekürzt (lva#548)", () => {
+  const alt = Array.from({ length: 27 }, (_, i) => eintrag(iso(i), `roh ${i}`));
+  const geladen = parsePasteLog(alt);
+  assert.equal(geladen.length, 27);
+  assert.equal(geladen[0].roh, "roh 0");
+  assert.equal(geladen[26].roh, "roh 26");
+  assert.equal(appendPasteEntry(geladen, eintrag(iso(40), "neu")).ok, false);
+  // Ungültiges darf weiter wegfallen; Gültiges bleibt.
+  const gemischt = parsePasteLog([
+    ...alt,
+    { ...eintrag(iso(50), "x"), zeit: "gestern" },
+  ]);
+  assert.equal(gemischt.length, 27);
+  // Erst unter 20 geht wieder etwas hinein.
+  let log = geladen;
+  for (let i = 0; i < 8; i += 1)
+    log = removePasteEntry(log, pasteEntryKey(log[0]));
+  assert.equal(log.length, 19);
+  assert.equal(appendPasteEntry(log, eintrag(iso(40), "neu")).ok, true);
 });
 
 test("pasteLog: Prüfsumme passt nicht zur Rohfassung: beschädigt, Wiederherstellen gesperrt", async () => {
@@ -1874,32 +1960,33 @@ test("pasteLog: regeln begrenzt (je Regel einmal, ganze Zahlen, nicht negativ)",
   assert.ok(g.regeln.length <= 1);
 });
 
-test("pasteLog: Gesamtgrenze gilt nach dem Kürzen; Metadaten zählen mit, nichts bleibt darüber", () => {
+test("pasteLog: beim Laden gilt die Einzelgrenze weiter, Metadaten zählen mit; Anzahl und Gesamtgrenze kürzen nichts (lva#548)", () => {
   const gross = (n) => ({
     ...eintrag(iso(n), "ä".repeat(1_100_000)),
     bereinigt: "x",
   });
-  const mittel = (n) => eintrag(iso(n), "x".repeat(1_900_000));
+  const mittel = (n) => ({
+    ...eintrag(iso(n), "x".repeat(1_900_000)),
+    bereinigt: "x",
+  });
   const log = parsePasteLog([
     ...Array.from({ length: 6 }, (_, i) => gross(i)),
     ...Array.from({ length: 14 }, (_, i) => mittel(10 + i)),
   ]);
-  const total = log.reduce((sum, e) => sum + entryBytes(e), 0);
-  assert.ok(total <= PASTE_LOG_MAX_BYTES, `${total}`);
+  assert.equal(log.length, 20, "nichts fällt weg");
   assert.ok(log.every((e) => entryBytes(e) <= PASTE_ENTRY_MAX_BYTES));
-  assert.ok(log.length >= 1);
+  assert.equal(log.filter((e) => e.zuGross).length, 6, "übergroße nur gekürzt");
   assert.equal(log[log.length - 1].zeit, iso(23));
 });
 
-test("pasteLog: ein einzelner Eintrag, der auch gekürzt über der Grenze liegt, wird verworfen", () => {
+test("pasteLog: ein einzelner Eintrag, der auch gekürzt über der Grenze liegt, wird nicht angehängt (unfit)", () => {
   const unmoeglich = {
     ...eintrag(iso(1), "x"),
     // Nur von Hand möglich: die Metadaten allein sprengen die Einzelgrenze.
     zeit: "z".repeat(PASTE_ENTRY_MAX_BYTES),
   };
-  const log = appendPasteEntry([eintrag(iso(0), "alt")], unmoeglich);
-  assert.equal(log.length, 1);
-  assert.equal(log[0].roh, "alt");
+  const result = appendPasteEntry([eintrag(iso(0), "alt")], unmoeglich);
+  assert.deepEqual(result, { ok: false, reason: "unfit" });
 });
 
 // ---------------------------------------------------------------------------
@@ -2159,7 +2246,10 @@ const E0 = eintrag(iso(0), "null");
 const E1 = eintrag(iso(1), "eins");
 const E2 = eintrag(iso(2), "zwei");
 const stateWith = (extra) => JSON.stringify({ text: "alt", ...extra });
-const add = (entry) => (log) => parsePasteLog([...log, entry]);
+const add = (entry) => (log) => {
+  const added = appendPasteEntry(log, entry);
+  return added.ok ? added.log : added;
+};
 const drop = (entry) => (log) => removePasteEntry(log, pasteEntryKey(entry));
 
 test("pageState: Seite verlassen, Schreiben angehalten, Seite erneut geöffnet: der Autosave erhält den Eintrag", async () => {
@@ -2461,4 +2551,88 @@ test("pageState: Protokollschreiben und Fremdschreiber in der Kette: beide Ände
   assert.deepEqual(await Promise.all([commit, foreign]), [true, true]);
   assert.equal(h.fileState("A").summary, "Fremd");
   assert.deepEqual(h.rohs("A"), ["eins"]);
+});
+
+// ---------------------------------------------------------------------------
+// lva#548: Grenzverhalten in der Kette (atomar mit dem Hinzufügen)
+// ---------------------------------------------------------------------------
+
+const voll = () =>
+  Array.from({ length: PASTE_LOG_MAX_ENTRIES }, (_, i) =>
+    eintrag(iso(i), `alt ${i}`),
+  );
+
+test("pageState: die 21. Einfügung verdrängt nichts, addLogEntry meldet „full“ und schreibt nicht (lva#548)", async () => {
+  const h = harness({ A: stateWith({ einfuegungen: voll() }) });
+  const before = h.files.get("A");
+  assert.equal(await h.store.addLogEntry("A", E1), "full");
+  assert.equal(h.files.get("A"), before, "Datei unberührt");
+  assert.equal(h.writes.length, 0);
+  assert.deepEqual(h.committedEvents, []);
+  assert.deepEqual(
+    h.rohs("A"),
+    Array.from({ length: PASTE_LOG_MAX_ENTRIES }, (_, i) => `alt ${i}`),
+  );
+});
+
+test("pageState: Einfügung über der Gesamtgrenze meldet „full“, die alten Einträge bleiben (lva#548)", async () => {
+  const roh = "x".repeat(1_900_000);
+  const gross = (n) => ({ ...eintrag(iso(n), roh), bereinigt: "x" });
+  const log = Array.from({ length: 8 }, (_, i) => gross(i));
+  assert.ok(logBytes(log) < PASTE_LOG_MAX_BYTES);
+  assert.ok(logBytes(log) + 1_900_000 > PASTE_LOG_MAX_BYTES);
+  const h = harness({ A: stateWith({ einfuegungen: log }) });
+  assert.equal(await h.store.addLogEntry("A", gross(9)), "full");
+  assert.equal(h.writes.length, 0);
+  assert.equal(h.fileState("A").einfuegungen.length, 8);
+  assert.equal(
+    await h.store.addLogEntry("A", eintrag(iso(10), "klein")),
+    "saved",
+  );
+  assert.equal(h.fileState("A").einfuegungen.length, 9);
+});
+
+test("pageState: Altbestand mit mehr als 20 Einträgen bleibt beim Laden und beim Schreiben vollständig, neue gelten als voll (lva#548)", async () => {
+  const alt = Array.from({ length: 25 }, (_, i) => eintrag(iso(i), `alt ${i}`));
+  const h = harness({ A: stateWith({ einfuegungen: alt }) });
+  assert.equal(await h.store.addLogEntry("A", E1), "full");
+  // Ein anderer Auftrag (löschen) schreibt die Datei: nichts wird gekürzt.
+  assert.equal(await h.store.commitLog("A", drop(alt[0])), true);
+  assert.equal(h.fileState("A").einfuegungen.length, 24);
+  assert.equal(h.rohs("A")[0], "alt 1");
+});
+
+test("pageState: nach dem Löschen eines Eintrags geht addLogEntry wieder (lva#548)", async () => {
+  const log = voll();
+  const h = harness({ A: stateWith({ einfuegungen: log }) });
+  assert.equal(await h.store.addLogEntry("A", E1), "full");
+  assert.equal(await h.store.commitLog("A", drop(log[5])), true);
+  assert.equal(await h.store.addLogEntry("A", E1), "saved");
+  assert.equal(h.fileState("A").einfuegungen.length, PASTE_LOG_MAX_ENTRIES);
+  assert.equal(h.rohs("A").at(-1), "eins");
+  assert.equal(await h.store.addLogEntry("A", E2), "full");
+  // Alle löschen: wieder Platz.
+  assert.equal(await h.store.commitLog("A", () => []), true);
+  assert.equal(await h.store.addLogEntry("A", E2), "saved");
+});
+
+test("pageState: die Prüfung auf Platz ist atomar mit dem Hinzufügen: zwei gleichzeitige Einfügungen bei 19 Einträgen, nur eine kommt hinein (lva#548)", async () => {
+  const log = voll().slice(0, PASTE_LOG_MAX_ENTRIES - 1);
+  const h = harness({ A: stateWith({ einfuegungen: log }) });
+  const held = gate();
+  h.holdSave = () => held.promise;
+  const first = h.store.addLogEntry("A", E1);
+  const second = h.store.addLogEntry("A", E2);
+  await tick();
+  held.release();
+  assert.deepEqual(await Promise.all([first, second]), ["saved", "full"]);
+  assert.equal(h.fileState("A").einfuegungen.length, PASTE_LOG_MAX_ENTRIES);
+  assert.equal(h.rohs("A").at(-1), "eins");
+});
+
+test("pageState: Schreibfehler bleibt „failed“, nicht „full“ (lva#548)", async () => {
+  const h = harness({ A: stateWith({}) });
+  h.failNextSave = true;
+  assert.equal(await h.store.addLogEntry("A", E1), "failed");
+  assert.equal(await h.store.addLogEntry("A", E1), "saved");
 });

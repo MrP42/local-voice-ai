@@ -12,12 +12,14 @@
  */
 import type { PasteRule } from "./pasteCleanup.ts";
 
-/** Höchstens so viele Einfügungen je Seite (die ältesten fallen zuerst). */
+/** Höchstens so viele Einfügungen je Seite. Ist die Grenze erreicht, wird die
+ *  nächste Einfügung nicht bereinigt (nichts wird verdrängt). */
 export const PASTE_LOG_MAX_ENTRIES = 20;
 /** Größter Eintrag (UTF-8-Bytes des JSON): Roh- plus bereinigte Fassung. */
 export const PASTE_ENTRY_MAX_BYTES = 2 * 1024 * 1024;
 /** Obergrenze für alle Einträge zusammen (state.json wird bei jeder Änderung
- *  ganz geschrieben und synchronisiert). */
+ *  ganz geschrieben und synchronisiert). Wie die Anzahl gilt sie nur beim
+ *  Hinzufügen, nie beim Laden. */
 export const PASTE_LOG_MAX_BYTES = 16 * 1024 * 1024;
 
 export interface PasteLogRule {
@@ -144,28 +146,37 @@ function limitEntry(entry: PasteLogEntry): PasteLogEntry | null {
   return fitsEntry(small) ? small : null;
 }
 
-/** Anzahl und Gesamtumfang begrenzen (Metadaten zählen mit): die ältesten
- *  Einträge fallen zuerst. Jeder Eintrag ist schon höchstens
- *  {@link PASTE_ENTRY_MAX_BYTES} groß, so bleibt immer der neueste stehen. */
-function limitLog(entries: PasteLogEntry[]): PasteLogEntry[] {
-  const next = entries.slice(-PASTE_LOG_MAX_ENTRIES);
-  const sizes = next.map(entryBytes);
-  let total = sizes.reduce((sum, n) => sum + n, 0);
-  let from = 0;
-  while (from < next.length && total > PASTE_LOG_MAX_BYTES) {
-    total -= sizes[from];
-    from += 1;
-  }
-  return next.slice(from);
-}
+/** Gesamtgröße aller Einträge in Bytes (Metadaten zählen mit). */
+export const logBytes = (log: readonly PasteLogEntry[]): number =>
+  log.reduce((sum, e) => sum + entryBytes(e), 0);
 
-/** Neuen Eintrag anhängen (neueste zuletzt); Grenzen für Anzahl und Umfang einhalten. */
+/**
+ * Ergebnis von {@link appendPasteEntry}. `full`: die Grenze für Anzahl oder
+ * Gesamtumfang ist erreicht, nichts wurde verdrängt. `unfit`: der Eintrag passt
+ * auch gekürzt nicht in die Einzelgrenze (nur von Hand möglich).
+ */
+export type PasteAppend =
+  { ok: true; log: PasteLogEntry[] } | { ok: false; reason: "full" | "unfit" };
+
+/**
+ * Neuen Eintrag anhängen (neueste zuletzt), aber NIE etwas verdrängen: Hat das
+ * Protokoll schon {@link PASTE_LOG_MAX_ENTRIES} Einträge oder passt der neue
+ * Eintrag nicht mehr in {@link PASTE_LOG_MAX_BYTES}, kommt `full` zurück und
+ * das Protokoll bleibt, wie es ist. Ein Altbestand über den Grenzen gilt
+ * ebenfalls als voll, bis genug gelöscht ist.
+ */
 export function appendPasteEntry(
   log: readonly PasteLogEntry[],
   entry: PasteLogEntry,
-): PasteLogEntry[] {
+): PasteAppend {
   const fitted = limitEntry(entry);
-  return limitLog(fitted ? [...log, fitted] : [...log]);
+  if (!fitted) return { ok: false, reason: "unfit" };
+  if (
+    log.length >= PASTE_LOG_MAX_ENTRIES ||
+    logBytes(log) + entryBytes(fitted) > PASTE_LOG_MAX_BYTES
+  )
+    return { ok: false, reason: "full" };
+  return { ok: true, log: [...log, fitted] };
 }
 
 /** Schlüssel zum Löschen eines Eintrags. */
@@ -271,7 +282,7 @@ export function parsePasteLog(value: unknown): PasteLogEntry[] {
     const fitted = entry ? limitEntry(entry) : null;
     if (fitted) entries.push(fitted);
   }
-  return limitLog(entries);
+  return entries;
 }
 
 /**

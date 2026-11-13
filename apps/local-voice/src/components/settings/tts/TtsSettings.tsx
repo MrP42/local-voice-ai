@@ -72,6 +72,7 @@ import {
   type ChipEditorFinding,
   type ChipEditorInsertApi,
   type ChipEditorSuggestion,
+  type PasteRecordResult,
 } from "./editor/TtsChipEditor";
 import { ScriptCheckPanel } from "./editor/ScriptCheckPanel";
 import { EditorMenu } from "./editor/EditorMenu";
@@ -215,7 +216,6 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { IsbnDialog } from "./reader/IsbnDialog";
 import { applyBookTitle, findIsbn } from "@/lib/reader/isbn";
 import {
-  appendPasteEntry,
   markUnverifiable,
   parsePasteLog,
   verifyPasteLog,
@@ -587,6 +587,8 @@ export const TtsSettings = () => {
    *  Schreiben (state.json `einfuegungen`, älteste zuerst). */
   const [pasteLog, setPasteLogState] = useState<PasteLogEntry[]>([]);
   const shownLogRef = useRef<PasteLogEntry[]>([]);
+  /** Zähler: jede Erhöhung öffnet den Dialog „Letzte Einfügungen“ (Hinweis „voll“). */
+  const [pasteLogRequest, setPasteLogRequest] = useState(0);
   /** Die Prüfsummen des gezeigten Protokolls sind noch nicht gegen die
    *  Rohfassungen gehalten: Wiederherstellen und Kopieren bleiben gesperrt. */
   const [pasteChecking, setPasteChecking] = useState(false);
@@ -1290,14 +1292,20 @@ export const TtsSettings = () => {
 
   /**
    * Rohfassung einer Einfügung in state.json sichern, bevor der Editor den Text
-   * bereinigt. `false`, wenn das Schreiben scheitert: der Editor fügt dann den
-   * Rohtext unverändert ein. Wird mit der Seite des Einfügens aufgerufen, auch
-   * wenn die Ansicht währenddessen wechselt.
+   * bereinigt. `failed`, wenn das Schreiben scheitert, `full`, wenn die Grenze
+   * erreicht ist (nichts wird verdrängt): der Editor fügt dann den Rohtext
+   * unverändert ein. Das Prüfen auf Platz geschieht atomar mit dem Hinzufügen
+   * in der Schreibkette der Datei. Wird mit der Seite des Einfügens aufgerufen,
+   * auch wenn die Ansicht währenddessen wechselt.
    */
-  const recordPaste = (entry: PasteLogEntry): Promise<boolean> =>
-    activePage
-      ? writePasteLog(activePage, (log) => appendPasteEntry(log, entry))
-      : Promise.resolve(false);
+  const recordPaste = async (
+    entry: PasteLogEntry,
+  ): Promise<PasteRecordResult> => {
+    if (!activePage) return "failed";
+    const outcome = await store.addLogEntry(activePage, entry);
+    if (outcome === "saved" || outcome === "full") return outcome;
+    return "failed";
+  };
 
   /** Ein Sichern des Seitenstands steht noch aus (siehe unten). */
   const savePending = useRef(false);
@@ -4766,6 +4774,7 @@ export const TtsSettings = () => {
                 pasteCleanup={pasteStored === "1"}
                 pasteLog={pasteLog}
                 pasteChecking={pasteChecking}
+                pasteLogRequest={pasteLogRequest}
                 onPasteLogChange={(change) =>
                   activePage
                     ? writePasteLog(activePage, change)
@@ -4791,6 +4800,7 @@ export const TtsSettings = () => {
                     spellCheck={spellStored === "1"}
                     cleanPaste={pasteStored === "1"}
                     onPasteRecord={recordPaste}
+                    onOpenPasteLog={() => setPasteLogRequest((n) => n + 1)}
                     docKey={activePage}
                     placeholder={t("tts.inputPlaceholder")}
                     className="w-full"
