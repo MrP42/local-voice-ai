@@ -965,6 +965,96 @@ test.describe("Sprachgespraech", () => {
     await expect(log.getByText("Volle Antwort")).toHaveCount(1);
   });
 
+  /** Ein offener Auftrag A im Hintergrund; der Sprecher hat die nächste Frage B kurz beantwortet. */
+  async function auftragImHintergrund(page: Page): Promise<void> {
+    // Legt die Engine an; ihre Rückrufe sind die des Stores (nur in der Entwicklung erreichbar).
+    await exchange(page, "Hallo KI", "Hallo zurück.");
+    await page.evaluate(() => {
+      const cb = (window as any).__voiceCallEngine.cb;
+      cb.onState("listening");
+      cb.onUser("Was steht in meinen Mails?", "A");
+      cb.onDenken({ art: "start", turnId: "A" });
+      cb.onDenken({
+        art: "auftrag",
+        turnId: "A",
+        frage: "Was steht in meinen Mails?",
+      });
+      cb.onUser("Wie spät ist es?", "B");
+      cb.onAssistant("Es ist kurz nach drei.", true, false);
+    });
+  }
+
+  test("Auftrag im Hintergrund: die Anzeige lässt sich auf- und zuklappen", async ({
+    page,
+  }) => {
+    await openPage(page);
+    await auftragImHintergrund(page);
+    const anzeige = page.getByTestId("denkanzeige");
+    await expect(anzeige).toBeVisible();
+    const knopf = anzeige.getByRole("button");
+    await expect(knopf).toHaveAttribute("aria-expanded", "false");
+    await knopf.click();
+    await expect(knopf).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByTestId("denkprozess-liste")).toContainText(
+      "Läuft im Hintergrund weiter: „Was steht in meinen Mails?“",
+    );
+    await knopf.click();
+    await expect(knopf).toHaveAttribute("aria-expanded", "false");
+    await expect(page.getByTestId("denkprozess-liste")).toHaveCount(0);
+  });
+
+  test("Nachgereichtes Ergebnis: die Quellen stehen an der Zeile des Auftrags, nicht an der letzten", async ({
+    page,
+  }) => {
+    await openPage(page);
+    await auftragImHintergrund(page);
+    const log = page.getByRole("log");
+    // Das Ergebnis wird nachgereicht; bevor die Prüfung der Belege fertig ist, steht eine spätere Antwort
+    // als letzte Zeile da.
+    await page.evaluate(() => {
+      const cb = (window as any).__voiceCallEngine.cb;
+      cb.onDenken({ art: "vordergrund", turnId: "A" });
+      cb.onAssistant("Zwei neue Mails.", false, false, "A");
+      cb.onAssistant("Zwei neue Mails.", true, false, "A");
+      cb.onUser("Und morgen?", "C");
+      cb.onAssistant("Morgen ist nichts geplant.", true, false);
+      cb.onCitations(
+        "A",
+        [
+          {
+            k: 1,
+            kind: "meeting",
+            title: "Runde",
+            chapter: null,
+            at_ms: 0,
+            excerpt: "Auszug",
+            jump: {
+              kind: "meeting",
+              id: "m1",
+              offset: 0,
+              page: null,
+              book_id: null,
+            },
+            score: 1,
+            version: "00",
+          },
+        ],
+        true,
+      );
+    });
+    await expect(
+      log
+        .locator(".rounded-xl", { hasText: "Zwei neue Mails." })
+        .getByTestId("voice-sources"),
+    ).toHaveCount(1);
+    await expect(
+      log
+        .locator(".rounded-xl", { hasText: "Morgen ist nichts geplant." })
+        .getByTestId("voice-sources"),
+    ).toHaveCount(0);
+    await expect(log.getByTestId("voice-source")).toHaveCount(1);
+  });
+
   test("Anhänge werden als Vertragsfeld gespeichert, ohne Dateiinhalt", async ({
     page,
   }) => {

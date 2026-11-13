@@ -25,6 +25,7 @@ import {
   type ProjektBindung,
   type ProjektHinweis,
 } from "@/components/voice-call/projekt";
+import { denkOffenSetzen, mitQuellen } from "@/stores/voiceLines";
 import {
   LOCAL_USER_ID,
   MAX_ENTRY_CHARS,
@@ -136,6 +137,11 @@ export interface VoiceLine {
    * ersetzt sie nicht (nur in der laufenden Sitzung, nicht gespeichert).
    */
   fest?: boolean;
+  /**
+   * Die Zeile ist das Ergebnis eines Auftrags (Kennung des Auftrags in der Engine): Quellen und spätere
+   * Meldungen finden sie darüber, nicht über ihre Lage (nur in der laufenden Sitzung, nicht gespeichert).
+   */
+  auftragVon?: string;
 }
 
 /**
@@ -570,7 +576,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
             };
           });
         },
-        onAssistant: (text, final, interrupted) => {
+        onAssistant: (text, final, interrupted, auftragVon) => {
           const last = get().lines[get().lines.length - 1];
           if (
             final &&
@@ -616,6 +622,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
                     text,
                     final,
                     interrupted,
+                    ...(auftragVon ? { auftragVon } : {}),
                     ...(denken ? { denken } : {}),
                   },
                 ],
@@ -632,6 +639,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
                   interrupted,
                   at: Date.now(),
                   mode: callRunning(s.state) ? "spoken" : "typed",
+                  ...(auftragVon ? { auftragVon } : {}),
                   ...(denken ? { denken } : {}),
                 },
               ],
@@ -655,36 +663,11 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
           set((s) => ({
             metrics: s.metrics.filter((m) => m.turnId !== turnId),
           })),
+        // Das Ergebnis eines Auftrags findet seine Zeile über `auftragVon` (stabile Kennung), nicht über ihre Lage.
         onCitations: (turnId, hits, nachgereicht) =>
           set((s) => {
-            if (hits.length === 0) return {};
-            const at = s.lines.findIndex(
-              (l) => l.role === "user" && l.turnId === turnId,
-            );
-            if (at < 0) return {};
-            // Das Ergebnis eines Auftrags steht in der letzten Antwortzeile (nicht gleich nach der Frage).
-            let i = -1;
-            if (nachgereicht) {
-              for (let j = s.lines.length - 1; j > at; j--)
-                if (s.lines[j].role === "assistant") {
-                  i = j;
-                  break;
-                }
-            } else
-              i = s.lines.findIndex((l, j) => j > at && l.role === "assistant");
-            if (i < 0) return {};
-            const lines = [...s.lines];
-            lines[i] = {
-              ...lines[i],
-              sources: hits.map((h) => ({
-                k: h.k,
-                kind: h.kind,
-                title: h.title,
-                page: h.jump.page,
-                jump: h.jump,
-              })),
-            };
-            return { lines };
+            const lines = mitQuellen(s.lines, turnId, hits, nachgereicht);
+            return lines ? { lines } : {};
           }),
         onError: (error) => set({ error, denken: null }),
         projekt: (): ProjektBindung | null => {
@@ -1190,17 +1173,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
       await sendFeedback(heard, next);
     },
 
-    denkOffen: (seit, offen) =>
-      set((s) => ({
-        denken: s.denken?.seit === seit ? { ...s.denken, offen } : s.denken,
-        lines: s.lines.some((l) => l.denken?.seit === seit)
-          ? s.lines.map((l) =>
-              l.denken?.seit === seit
-                ? { ...l, denken: { ...l.denken, offen } }
-                : l,
-            )
-          : s.lines,
-      })),
+    denkOffen: (seit, offen) => set((s) => denkOffenSetzen(s, seit, offen)),
     denkModell: (modell) =>
       set((s) =>
         s.denken && s.denken.modell !== modell
