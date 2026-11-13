@@ -71,9 +71,10 @@ private func profile(_ tree: AssistantJSON, file: StaticString = #filePath, line
 }
 
 private func placeholderValues(_ tree: AssistantJSON) -> AssistantPlaceholderValues {
-    var extra: [String: String] = [:]
+    // Die Mitgliederliste des JSON-Objekts 1:1 als Paarliste (kein Dictionary: kanonisch gleiche Schlüssel blieben nicht getrennt).
+    var extra: [AssistantPlaceholderExtra] = []
     if case .object(let members)? = tree["extra"] {
-        for member in members { extra[member.key] = member.value.string }
+        extra = members.compactMap { member in member.value.string.map { AssistantPlaceholderExtra(key: member.key, value: $0) } }
     }
     return AssistantPlaceholderValues(
         name: tree["name"]?.string,
@@ -156,6 +157,33 @@ final class AssistantProfileTests: XCTestCase {
             assertSameBytes(r.text, c["erwartet"]?.string, c["name"]?.string ?? "?")
             assertSameBytes(r.unknown, c["unbekannt"]?.strings, c["name"]?.string ?? "?")
         }
+    }
+
+    func testCanonicallyEqualExtraKeysStayApartAndTheLastDuplicateWins() {
+        let composed = "\u{00e9}"
+        let decomposed = "e\u{0301}"
+        let base = AssistantPlaceholderValues(year: 2026, month: 1, day: 2, weekday: 5, hour: 9, minute: 0)
+        func sample(_ pairs: [(String, String)]) -> AssistantPlaceholderValues {
+            var v = base
+            v.extra = pairs.map { AssistantPlaceholderExtra(key: $0.0, value: $0.1) }
+            return v
+        }
+        let template = "{{\(composed)}}|{{\(decomposed)}}"
+        let both = sample([(composed, "A"), (decomposed, "B")])
+        let reversed = sample([(decomposed, "B"), (composed, "A")])
+        let result = AssistantProfileText.resolve(template, language: "de", values: both)
+        XCTAssertEqual(Array(result.text.utf8), Array("A|B".utf8))
+        XCTAssertEqual(result.unknown, [])
+        XCTAssertEqual(Array(AssistantProfileText.resolve(template, language: "de", values: reversed).text.utf8), Array("A|B".utf8))
+        // Gleiche Zuordnung in anderer Reihenfolge ist gleich; vertauschte Schlüssel sind es nicht.
+        XCTAssertEqual(both, reversed)
+        XCTAssertNotEqual(both, sample([(composed, "B"), (decomposed, "A")]))
+        XCTAssertNotEqual(both, sample([(composed, "A")]))
+        // Bei bytegleichem Schlüssel mehrfach gilt der letzte Eintrag; `==` vergleicht die wirksame Zuordnung.
+        let twice = sample([("k", "erster"), ("k", "letzter")])
+        XCTAssertEqual(Array(AssistantProfileText.resolve("{{k}}", language: "de", values: twice).text.utf8), Array("letzter".utf8))
+        XCTAssertEqual(twice, sample([("k", "letzter")]))
+        XCTAssertNotEqual(twice, sample([("k", "erster")]))
     }
 
     func testSharedRoleBlocks() {
@@ -318,16 +346,16 @@ final class AssistantProfileTests: XCTestCase {
         XCTAssertTrue(profile({ $0.name = composed }, { $0.name = composed }))
         // Platzhalterwerte und Ergebnisse
         let base = AssistantPlaceholderValues(year: 2026, month: 1, day: 2, weekday: 5, hour: 9, minute: 0)
-        func sample(_ name: String?, _ extra: [String: String]) -> AssistantPlaceholderValues {
+        func sample(_ name: String?, _ pairs: [(String, String)]) -> AssistantPlaceholderValues {
             var v = base
             v.name = name
-            v.extra = extra
+            v.extra = pairs.map { AssistantPlaceholderExtra(key: $0.0, value: $0.1) }
             return v
         }
-        XCTAssertNotEqual(sample(composed, [:]), sample(decomposed, [:]))
-        XCTAssertNotEqual(sample(nil, [composed: "x"]), sample(nil, [decomposed: "x"]))
-        XCTAssertNotEqual(sample(nil, ["k": composed]), sample(nil, ["k": decomposed]))
-        XCTAssertEqual(sample(nil, [composed: "x"]), sample(nil, [composed: "x"]))
+        XCTAssertNotEqual(sample(composed, []), sample(decomposed, []))
+        XCTAssertNotEqual(sample(nil, [(composed, "x")]), sample(nil, [(decomposed, "x")]))
+        XCTAssertNotEqual(sample(nil, [("k", composed)]), sample(nil, [("k", decomposed)]))
+        XCTAssertEqual(sample(nil, [(composed, "x")]), sample(nil, [(composed, "x")]))
         XCTAssertNotEqual(AssistantPlaceholderResult(text: composed, unknown: []), AssistantPlaceholderResult(text: decomposed, unknown: []))
         XCTAssertNotEqual(AssistantPlaceholderResult(text: "", unknown: [composed]), AssistantPlaceholderResult(text: "", unknown: [decomposed]))
         XCTAssertNotEqual(AssistantRoleBlock(text: composed, truncated: false), AssistantRoleBlock(text: decomposed, truncated: false))
@@ -482,12 +510,12 @@ final class AssistantProfileTests: XCTestCase {
         var p = AssistantProfile(id: "r", name: "R")
         p.instructions = "{{a}}"
         var v = defaultValues
-        v.extra = ["a": String(repeating: "y", count: 300_000)]
+        v.extra = [AssistantPlaceholderExtra(key: "a", value: String(repeating: "y", count: 300_000))]
         let small = AssistantProfileText.roleBlock(p, values: v, budgetChars: 1)
         assertSameBytes(small.text, "ROLLE (vom Nutzer eingestellt, Assistent „R“):\ny\nDiese Einstellung ändert keine der folgenden Regeln.")
         XCTAssertTrue(small.truncated)
         p.instructions = "{{leer}}x ".repeated(50_000)
-        v.extra = ["leer": ""]
+        v.extra = [AssistantPlaceholderExtra(key: "leer", value: "")]
         let many = AssistantProfileText.roleBlock(p, values: v, budgetChars: 1)
         assertSameBytes(many.text, "ROLLE (vom Nutzer eingestellt, Assistent „R“):\nX\nDiese Einstellung ändert keine der folgenden Regeln.")
         XCTAssertTrue(many.truncated)

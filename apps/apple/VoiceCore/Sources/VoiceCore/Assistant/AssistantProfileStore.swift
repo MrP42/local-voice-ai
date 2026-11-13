@@ -5,17 +5,26 @@ import Foundation
 // - je eigenem Assistenten eine Datei `<id>.json` mit exakt der Ausgabe von `encode` (UTF-8, ohne BOM);
 // - der Dateiname muss zur `id` im Inhalt passen, sonst wird die Datei abgewiesen (`muster`, Pfad `id`);
 // - die aktive Auswahl steht in `aktiv.json` als `{"id": "<id>"}`; fehlt sie, ist sie ungültig oder zeigt sie auf ein fehlendes
-//   Profil, gilt die Vorlage `alles`;
+//   Profil, gilt die Vorlage `alles`. Auswahldokument heißt: reguläre Datei bis 256 KiB, strenges JSON, ein Objekt mit genau einem
+//   Mitglied `id` (Zeichenkette). Alles andere in `aktiv.json` (ein Profil, mehr Schlüssel, falscher Typ, kaputtes JSON, zu
+//   groß, Symlink, Verzeichnis, Nicht-Reguläres) ist belegt: `setActive` meldet `occupied` und schreibt nichts, `activeId()`
+//   fällt auf `alles` zurück, `list()` zeigt die Datei als abgewiesen (`aktiv.json`, Pfad "", Code `wert`; ein Verzeichnis
+//   `aktiv.json` wird wie jedes Verzeichnis ignoriert); es gibt keine Migration;
 // - Vorlagen liegen nie im Verzeichnis und lassen sich weder überschreiben noch löschen;
-// - Obergrenzen: 200 Dateien beim Auflisten und bei der Neuanlage, 256 KiB je Datei (größere werden abgewiesen und nicht gelesen);
-//   ein direkter Abruf per Id liest unabhängig von der 200er-Grenze;
+// - Obergrenzen: 256 KiB je Datei (größere werden abgewiesen und nicht gelesen) und 200 Dateien. Die Auswahl sind die ersten
+//   200 Namen aus `profileFileNames()` (nach Bytes sortiert); eine Datei außerhalb davon ist für den Speicher nicht vorhanden:
+//   `list()` weist sie ab (`zu_viele`), `profile(id:)` liefert `nil` (damit `setActive` `notFound`, `activeId()` Rückfall),
+//   `save` und `delete` melden `occupied`. Eine Neuanlage ab 200 Namen ist `tooMany`; überschrieben wird nur ein gültiges
+//   eigenes Profil innerhalb der Auswahl;
 // - gelesen werden nur reguläre Dateien (Typ über `attributesOfItem`, Symlinks werden nicht verfolgt); ein Symlink `x.json` oder
 //   eine andere nicht reguläre Datei gilt als abgewiesen (`json`, Pfad ""), ein Verzeichnis `x.json` wird ignoriert;
 // - andere Dateien im Verzeichnis werden ignoriert; geschrieben wird atomar (`Data.write(options: .atomic)`);
 // - `aktiv` ist als Id vorbehalten (der Dateiname `aktiv.json` gehört der aktiven Auswahl);
 // - ein Schreiber je Verzeichnis: die Kapazitätsprüfung und `newOwnId` sind nicht atomar gegen parallele Prozesse.
-// Eine abgewiesene Datei wird nie verändert oder gelöscht: `save` und `delete` fassen eine vorhandene Datei nur an, wenn sie ein
-// gültiges eigenes Profil mit genau dieser Id ist (sonst `occupied`, bei `delete` für Nicht-Reguläres `notFound`).
+// Eine abgewiesene Datei wird nie verändert oder gelöscht, aus jedem Grund (Inhalt, Art des Eintrags, `zu_viele`, belegte
+// `aktiv.json`): `save` und `delete` fassen eine vorhandene Datei nur an, wenn sie ein gültiges eigenes Profil mit genau dieser
+// Id innerhalb der Auswahl ist (sonst `occupied`, bei `delete` für Nicht-Reguläres `notFound`); `setActive` überschreibt
+// `aktiv.json` nur, wenn sie fehlt oder ein Auswahldokument ist.
 
 /// Eine Datei, die nicht als Assistent gelesen werden konnte, mit der Fehlerliste.
 public struct AssistantRejectedFile: Equatable, Sendable {
@@ -43,8 +52,10 @@ public enum AssistantProfileStoreError: Error, Equatable, Sendable {
     /// Schon 200 Dateien im Verzeichnis.
     case tooMany
     case writeFailed
-    /// Unter dieser Id liegt eine Datei, die kein gültiges eigenes Profil mit genau dieser Id ist (beschädigt, neueres Schema,
-    /// falsche Id im Inhalt, zu groß, keine reguläre Datei): belegt. Sie wird weder überschrieben noch gelöscht.
+    /// Unter dieser Id liegt eine Datei, die kein gültiges eigenes Profil mit genau dieser Id innerhalb der Auswahl ist
+    /// (beschädigt, neueres Schema, falsche Id im Inhalt, zu groß, keine reguläre Datei, jenseits der ersten 200 Namen, wegen
+    /// `zu_viele` abgewiesen): belegt. Sie wird weder überschrieben noch gelöscht. Bei `setActive`: `aktiv.json` ist kein
+    /// Auswahldokument (zum Beispiel ein fremdes Profil), es wird nichts geschrieben.
     case occupied
 }
 
@@ -144,7 +155,8 @@ public struct AssistantProfileStore: Sendable {
         }
     }
 
-    /// Alle gültigen eigenen Profile und die abgewiesenen Dateien. Über 200 Dateien hinaus wird nichts gelesen.
+    /// Alle gültigen eigenen Profile und die abgewiesenen Dateien. Über 200 Dateien hinaus wird nichts gelesen. Eine belegte
+    /// `aktiv.json` steht am Ende der Abgewiesenen (Pfad "", Code `wert`) und zählt nicht zur 200er-Grenze.
     public func list() -> AssistantProfileListing {
         var profiles: [AssistantProfile] = []
         var rejected: [AssistantRejectedFile] = []
@@ -158,17 +170,35 @@ public struct AssistantProfileStore: Sendable {
             case .failure(let failure): rejected.append(AssistantRejectedFile(fileName: name, issues: failure.issues))
             }
         }
+        if case .occupied = activeState(), kind(of: activeURL) != .directory {
+            rejected.append(AssistantRejectedFile(fileName: AssistantProfileStore.activeFileName, issues: [AssistantProfileIssue(path: "", code: .value)]))
+        }
         return AssistantProfileListing(profiles: profiles, rejected: rejected)
     }
 
     /// Die Vorlagen, dann die eigenen Profile.
     public func allProfiles() -> [AssistantProfile] { AssistantProfileTemplates.all + list().profiles }
 
-    /// Ein Profil nach Id: Vorlage oder gültige eigene Datei.
+    /// Ob die Datei zur Auswahl gehört: zu den ersten 200 Namen aus `profileFileNames()`. Liest keine Inhalte; bei höchstens 200
+    /// Namen ist die Antwort sofort ja.
+    private func isWithinSelection(fileName: String) -> Bool {
+        let names = profileFileNames()
+        if names.count <= AssistantProfileStore.maxFiles { return true }
+        return names.prefix(AssistantProfileStore.maxFiles).contains { $0.utf8.elementsEqual(fileName.utf8) }
+    }
+
+    /// Eine gültige eigene Datei innerhalb der Auswahl; jede andere (auch jenseits der ersten 200 Namen) ist nicht vorhanden.
+    private func loadOwn(id: String) -> AssistantProfile? {
+        let fileName = id + ".json"
+        guard case .success(let profile) = load(fileName: fileName), isWithinSelection(fileName: fileName) else { return nil }
+        return profile
+    }
+
+    /// Ein Profil nach Id: Vorlage oder gültige eigene Datei innerhalb der Auswahl (siehe `isWithinSelection`).
     public func profile(id: String) -> AssistantProfile? {
         if let template = AssistantProfileTemplates.template(id: id) { return template }
-        guard !AssistantProfileTemplates.isReservedId(id), AssistantProfilePatterns.id(id), case .success(let profile) = load(fileName: id + ".json") else { return nil }
-        return profile
+        guard !AssistantProfileTemplates.isReservedId(id), AssistantProfilePatterns.id(id) else { return nil }
+        return loadOwn(id: id)
     }
 
     // MARK: Schreiben
@@ -189,7 +219,7 @@ public struct AssistantProfileStore: Sendable {
         case .absent:
             if profileFileNames().count >= AssistantProfileStore.maxFiles { throw AssistantProfileStoreError.tooMany }
         case .regular:
-            guard case .success = load(fileName: checked.id + ".json") else { throw AssistantProfileStoreError.occupied }
+            guard loadOwn(id: checked.id) != nil else { throw AssistantProfileStoreError.occupied }
         case .directory, .other:
             throw AssistantProfileStoreError.occupied
         }
@@ -197,13 +227,14 @@ public struct AssistantProfileStore: Sendable {
         return checked
     }
 
-    /// Löscht ein eigenes, gültiges Profil. Eine abgewiesene Datei (beschädigt, neueres Schema, falsche Id im Inhalt, zu groß) wird
-    /// nicht gelöscht (`occupied`); ein Verzeichnis, Symlink oder anderes Nicht-Reguläres ist `notFound`, ebenso eine fehlende Datei.
-    /// Die aktive Auswahl bleibt, wie sie ist (der Rückfall greift beim Lesen).
+    /// Löscht ein eigenes, gültiges Profil innerhalb der Auswahl. Eine abgewiesene Datei (beschädigt, neueres Schema, falsche Id im
+    /// Inhalt, zu groß, jenseits der ersten 200 Namen) wird nicht gelöscht (`occupied`); ein Verzeichnis, Symlink oder anderes
+    /// Nicht-Reguläres ist `notFound`, ebenso eine fehlende Datei. Die aktive Auswahl bleibt, wie sie ist (der Rückfall greift
+    /// beim Lesen).
     public func delete(id: String) throws {
         if AssistantProfileTemplates.isReservedId(id) { throw AssistantProfileStoreError.reservedId }
         guard AssistantProfilePatterns.id(id), kind(of: fileURL(id)) == .regular else { throw AssistantProfileStoreError.notFound }
-        guard case .success = load(fileName: id + ".json") else { throw AssistantProfileStoreError.occupied }
+        guard loadOwn(id: id) != nil else { throw AssistantProfileStoreError.occupied }
         do { try FileManager.default.removeItem(at: fileURL(id)) } catch { throw AssistantProfileStoreError.writeFailed }
     }
 
@@ -230,13 +261,32 @@ public struct AssistantProfileStore: Sendable {
 
     private var activeURL: URL { directory.appendingPathComponent(AssistantProfileStore.activeFileName) }
 
-    /// Die Id der aktiven Auswahl; `alles`, wenn die Datei fehlt, ungültig ist oder auf ein fehlendes Profil zeigt.
-    public func activeId() -> String {
-        let fallback = AssistantProfileTemplates.everything.id
+    private enum ActiveState {
+        case absent
+        case selection(String)
+        case occupied
+    }
+
+    /// Zustand von `aktiv.json`: fehlt, ist ein Auswahldokument (reguläre Datei bis 256 KiB, strenges JSON, ein Objekt mit genau
+    /// einem Mitglied `id`, Zeichenkette) oder ist belegt (alles andere).
+    private func activeState() -> ActiveState {
+        switch kind(of: activeURL) {
+        case .absent: return .absent
+        case .directory, .other: return .occupied
+        case .regular: break
+        }
         guard case .success(let data) = read(activeURL),
               let text = String(data: data, encoding: .utf8),
-              case .string(let id)? = AssistantJSON.parse(text)?.member("id"),
-              profile(id: id) != nil else { return fallback }
+              case .object(let members)? = AssistantJSON.parse(text),
+              members.count == 1,
+              AssistantExact.equal(members[0].key, "id"),
+              case .string(let id) = members[0].value else { return .occupied }
+        return .selection(id)
+    }
+
+    /// Die Id der aktiven Auswahl; `alles`, wenn die Datei fehlt, kein Auswahldokument ist oder auf ein fehlendes Profil zeigt.
+    public func activeId() -> String {
+        guard case .selection(let id) = activeState(), profile(id: id) != nil else { return AssistantProfileTemplates.everything.id }
         return id
     }
 
@@ -245,11 +295,13 @@ public struct AssistantProfileStore: Sendable {
         profile(id: activeId()) ?? AssistantProfileTemplates.everything
     }
 
-    /// Wählt ein vorhandenes Profil (Vorlage oder gültige eigene Datei) als aktiv. Vorbehaltene Ids, die keine Vorlage sind
-    /// (`aktiv`, `vorlage-…`), lassen sich nicht wählen (`reservedId`); geschrieben wird nur `aktiv.json`, nie ein Profil.
+    /// Wählt ein vorhandenes Profil (Vorlage oder gültige eigene Datei innerhalb der Auswahl) als aktiv. Vorbehaltene Ids, die
+    /// keine Vorlage sind (`aktiv`, `vorlage-…`), lassen sich nicht wählen (`reservedId`). Geschrieben wird nur `aktiv.json`, nie
+    /// ein Profil, und nur, wenn sie fehlt oder ein Auswahldokument ist; sonst `occupied` und nichts wird verändert.
     public func setActive(_ id: String) throws {
         if AssistantProfileTemplates.isReservedId(id), !AssistantProfileTemplates.isTemplate(id) { throw AssistantProfileStoreError.reservedId }
         guard profile(id: id) != nil else { throw AssistantProfileStoreError.notFound }
+        if case .occupied = activeState() { throw AssistantProfileStoreError.occupied }
         let text = AssistantJSON.object([AssistantJSONMember("id", .string(id))]).encoded()
         try write(Data(text.utf8), to: activeURL)
     }
