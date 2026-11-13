@@ -730,12 +730,13 @@ impl TranscriptionManager {
         // gerade sonst laedt (genauer Lauf, eigene Engine der Warteschlange) und
         // in der Messung noch nicht steckt. Erst eintragen, dann pruefen: so sieht
         // immer mindestens eine Seite die andere.
+        // Eigene Dateien haben keine Kataloggroesse: dann zaehlt die Datei; bleibt die
+        // Groesse unbekannt (0), haelt das Buch den freien Speicher fuer andere Tore
+        // so lange fuer unbekannt.
         let ledger = crate::managers::engine_ledger::global();
-        let _pending_load = ledger.announce(
-            model_info.size_mb,
-            matches!(model_info.engine_type, EngineType::TranscribeCpp),
-        );
-        let loading_elsewhere_mb = ledger.pending_mb().0.saturating_sub(model_info.size_mb);
+        let (ledger_mb, gpu_model) = self.load_footprint(model_id);
+        let _pending_load = ledger.announce(ledger_mb, gpu_model);
+        let loading_elsewhere_mb = ledger.pending_mb().0.saturating_sub(ledger_mb);
         if let Err(message) = crate::memory_guard::check_before_load_blocking(
             &self.app_handle,
             model_info.size_mb.saturating_add(loading_elsewhere_mb),

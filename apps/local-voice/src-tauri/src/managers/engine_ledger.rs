@@ -10,7 +10,8 @@
 //! - der genaue Lauf ([`Ledger::reserve`], mit Tor).
 //!
 //! Wer ein Tor fragt, bekommt den gemessenen freien Speicher ABZUEGLICH aller
-//! laufenden Ladevorgaenge. Messen, Entscheiden und Eintragen geschehen unter
+//! laufenden Ladevorgaenge; laedt etwas unbekannter Groesse, ist der freie Speicher
+//! fuer das Tor unbekannt. Messen, Entscheiden und Eintragen geschehen unter
 //! einer Sperre: derselbe freie Speicher wird nicht zweimal zugesagt. Der Eintrag
 //! faellt mit der [`Reservation`], also wenn das Laden zu Ende ist (dann steckt
 //! das Modell im gemessenen Verbrauch) oder gescheitert ist.
@@ -25,6 +26,8 @@ use crate::managers::meetings::final_pass::Hardware;
 struct Pending {
     ram_mb: u64,
     vram_mb: u64,
+    /// Laufende Ladevorgaenge, deren Groesse nicht bekannt ist.
+    unknown: u32,
 }
 
 #[derive(Debug, Default)]
@@ -44,6 +47,7 @@ impl Drop for Reservation<'_> {
         let mut p = self.ledger.lock();
         p.ram_mb = p.ram_mb.saturating_sub(self.held.ram_mb);
         p.vram_mb = p.vram_mb.saturating_sub(self.held.vram_mb);
+        p.unknown = p.unknown.saturating_sub(self.held.unknown);
     }
 }
 
@@ -53,6 +57,7 @@ impl Ledger {
             pending: Mutex::new(Pending {
                 ram_mb: 0,
                 vram_mb: 0,
+                unknown: 0,
             }),
         }
     }
@@ -64,12 +69,16 @@ impl Ledger {
     fn enter(&self, p: &mut Pending, size_mb: u64, gpu_model: bool) -> Reservation<'_> {
         // Ein GPU-faehiges Modell zaehlt in beiden Speichern: wohin der Lader es
         // legt, ist hier nicht bekannt.
+        // Groesse 0 heisst unbekannt, nicht "kein Bedarf": so ein Ladevorgang macht
+        // den freien Speicher fuer alle, die ein Tor fragen, unbekannt.
         let held = Pending {
             ram_mb: size_mb,
             vram_mb: if gpu_model { size_mb } else { 0 },
+            unknown: u32::from(size_mb == 0),
         };
         p.ram_mb = p.ram_mb.saturating_add(held.ram_mb);
         p.vram_mb = p.vram_mb.saturating_add(held.vram_mb);
+        p.unknown = p.unknown.saturating_add(held.unknown);
         Reservation { ledger: self, held }
     }
 
@@ -109,14 +118,29 @@ impl Ledger {
         Ok(self.enter(&mut p, size_mb, gpu_model))
     }
 
-    /// Was gerade laedt: (Arbeitsspeicher, Grafikspeicher) in MB.
+    /// Was gerade laedt: (Arbeitsspeicher, Grafikspeicher) in MB, ohne Ladevorgaenge
+    /// unbekannter Groesse ([`Self::pending_unknown`]).
     pub fn pending_mb(&self) -> (u64, u64) {
         let p = self.lock();
         (p.ram_mb, p.vram_mb)
     }
+
+    /// Laedt gerade etwas, dessen Groesse nicht bekannt ist?
+    pub fn pending_unknown(&self) -> bool {
+        self.lock().unknown > 0
+    }
 }
 
 fn less_pending(hw: Hardware, p: Pending) -> Hardware {
+    if p.unknown > 0 {
+        // Von einem gemessenen Wert laesst sich nichts Unbekanntes abziehen: der
+        // freie Speicher ist dann selbst unbekannt (das strenge Tor schliesst).
+        return Hardware {
+            gpu: hw.gpu,
+            free_ram_mb: None,
+            free_vram_mb: None,
+        };
+    }
     Hardware {
         gpu: hw.gpu,
         free_ram_mb: hw.free_ram_mb.map(|f| f.saturating_sub(p.ram_mb)),
@@ -221,6 +245,64 @@ mod tests {
         drop(switch);
         drop(accurate);
         assert_eq!(ledger.pending_mb(), (0, 0));
+    }
+
+    #[test]
+    fn a_load_of_unknown_size_is_never_taken_for_no_demand() {
+        let plenty = || Hardware {
+            gpu: true,
+            free_ram_mb: Some(512_000),
+            free_vram_mb: Some(512_000),
+        };
+        let gate = |hw: &Hardware| memory_gate(SIZE, true, hw);
+        let cpu_gate = |hw: &Hardware| memory_gate(SIZE, false, hw);
+
+        // Modellwechsel mit eigener Datei ohne Groesse, vor der Allokation.
+        let ledger = Ledger::new();
+        let switch = ledger.announce(0, true);
+        assert!(ledger.pending_unknown());
+        assert_eq!(
+            ledger.reserve(SIZE, true, plenty, gate).unwrap_err(),
+            ERR_MEMORY
+        );
+        // Auch ein reines CPU-Modell bekommt keine Zusage: der Arbeitsspeicher ist
+        // genauso unbekannt.
+        assert_eq!(
+            ledger.reserve(SIZE, false, plenty, cpu_gate).unwrap_err(),
+            ERR_MEMORY
+        );
+        drop(switch);
+        assert!(!ledger.pending_unknown());
+        drop(
+            ledger
+                .reserve(SIZE, true, plenty, gate)
+                .expect("wieder messbar"),
+        );
+
+        // Eigene Engine der Warteschlange ohne Groesse.
+        let queue = ledger
+            .announce_unless(0, false, || false)
+            .expect("kein genauer Lauf");
+        assert_eq!(
+            ledger.reserve(SIZE, true, plenty, gate).unwrap_err(),
+            ERR_MEMORY
+        );
+        // Neben einem bekannten Ladevorgang bleibt es unbekannt, bis der
+        // unbekannte zu Ende ist.
+        let known = ledger.announce(SIZE, false);
+        assert_eq!(
+            ledger.reserve(SIZE, true, plenty, gate).unwrap_err(),
+            ERR_MEMORY
+        );
+        drop(queue);
+        drop(
+            ledger
+                .reserve(SIZE, true, plenty, gate)
+                .expect("nur noch Bekanntes"),
+        );
+        drop(known);
+        assert_eq!(ledger.pending_mb(), (0, 0));
+        assert!(!ledger.pending_unknown());
     }
 
     #[test]
