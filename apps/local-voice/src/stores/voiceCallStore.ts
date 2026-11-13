@@ -129,6 +129,56 @@ export interface VoiceLine {
   persisted?: boolean;
   /** Dateien, die der Nutzer mitgeschickt hat (nur Name, Typ, Größe; kein Inhalt). */
   attachments?: HistoryAttachment[];
+  /** Denkprozess vor dieser Antwort (nur in der laufenden Sitzung, nicht gespeichert). */
+  denken?: Denkprozess;
+}
+
+/**
+ * Ein Schritt der Denk-Anzeige: Ansage oder Überbrückung (Text, schon in der Sprache der App),
+ * ein Werkzeug (Name) oder der Abruf eigener Inhalte (Zahl der Treffer).
+ */
+export type DenkSchritt =
+  | { art: "text"; text: string }
+  | { art: "sofort"; modell: string }
+  | { art: "werkzeug"; name: string }
+  | { art: "kontext"; treffer: number };
+
+/** Denkprozess einer Antwort (nur Anzeige: nie gesprochen, nie gespeichert, nie an ein Modell). */
+export interface Denkprozess {
+  /** Äußerung, zu der der Prozess gehört; Schritte eines anderen Schritts werden verworfen. */
+  turnId?: string;
+  /** Beginn (ms seit Epoche). */
+  seit: number;
+  /** Dauer bis zur ersten Antwort (ms); fehlt, solange gedacht wird. */
+  ms?: number;
+  /** Der nächste Text ist der Sofort-Sprecher, der weiterspricht: die Anzeige endet damit nicht. */
+  zwischen?: boolean;
+  /** Der Sofort-Sprecher hat weitergesprochen; die Anzeige läuft unter seiner Zeile, bis der Denker liefert. */
+  weiter?: boolean;
+  schritte: DenkSchritt[];
+  /** Gestreamter Denktext des Modells (Reasoning), höchstens `DENKTEXT_MAX` Zeichen. */
+  gedanken?: string;
+  /** Modell, das gedacht hat (bleibt nach der Antwort sichtbar). */
+  modell?: string;
+  /** Aufgeklappt: geht beim Übergang von der laufenden Anzeige an die Antwort mit. */
+  offen?: boolean;
+}
+
+/** Höchstlänge des angezeigten Denktexts (Zeichen). */
+export const DENKTEXT_MAX = 16_000;
+
+/** Hängt Denktext an (bis `DENKTEXT_MAX`). */
+export function denkText(d: Denkprozess, text: string): Denkprozess {
+  const bisher = d.gedanken ?? "";
+  if (bisher.length >= DENKTEXT_MAX) return d;
+  return { ...d, gedanken: (bisher + text).slice(0, DENKTEXT_MAX) };
+}
+
+/** Hängt einen Schritt an; derselbe Schritt direkt hintereinander zählt einmal. */
+export function denkSchritt(d: Denkprozess, s: DenkSchritt): Denkprozess {
+  const last = d.schritte[d.schritte.length - 1];
+  if (last && JSON.stringify(last) === JSON.stringify(s)) return d;
+  return { ...d, schritte: [...d.schritte, s] };
 }
 
 /** Verbrauch des Gesprächs seit „Neues Gespräch“. */
@@ -305,6 +355,8 @@ interface VoiceCallStore {
   toolStatus: string | null;
   /** Hinweis des Orchestrators (z. B. Cloud-Modell bei „nur lokal“ gesperrt). */
   notice: Extract<CallStatus, { kind: "notice" }>["code"] | null;
+  /** Laufender Denkprozess bis zur ersten Antwort (graue Denk-Anzeige unter der letzten Nachricht). */
+  denken: Denkprozess | null;
   metrics: TurnMetrics[];
   lines: VoiceLine[];
   usage: CallUsage;
@@ -384,6 +436,10 @@ interface VoiceCallStore {
   setShowArchived: (show: boolean) => Promise<void>;
   /** Laufende Text-Antwort abbrechen (Stopp-Knopf). */
   stopText: () => void;
+  /** Denkprozess (laufend oder an einer Antwort, erkannt an `seit`) auf- oder zuklappen. */
+  denkOffen: (seit: number, offen: boolean) => void;
+  /** Modell des laufenden Denkprozesses festhalten (bleibt an der Antwort). */
+  denkModell: (modell: string) => void;
   /** Seite verlassen: Anruf beenden, Verlauf bleibt. */
   leave: () => Promise<void>;
   /**
@@ -459,7 +515,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
           }
           // Endet ein Hauptgespräch (auch durch einen Fehler), die letzte Zeile mitspeichern.
           const wasMain = get().mainCall;
-          set({ state, mainCall: false });
+          set({ state, mainCall: false, denken: null });
           if (wasMain) flushLines(true);
         },
         // Der Pegel läuft am Store vorbei: 50 Bilder je Sekunde gehören nicht in den Zustand.
@@ -517,6 +573,21 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
             enqueueUpdate(last.id, text);
             return;
           }
+          // Mit dem ersten Text endet die Denk-Anzeige; der Denkprozess hängt an der Antwort. Spricht
+          // der Sofort-Sprecher nur weiter, läuft sie unter seiner Zeile weiter, bis der Denker liefert.
+          const live = get().denken;
+          if (live?.zwischen && !final && text.trim())
+            set({ denken: { ...live, zwischen: false, weiter: true } });
+          const denken =
+            live && !(live.zwischen && !final) && (text.trim() || final)
+              ? {
+                  ...live,
+                  zwischen: false,
+                  weiter: false,
+                  ms: Date.now() - live.seit,
+                }
+              : undefined;
+          if (denken) set({ denken: null });
           set((s) => {
             const l = s.lines;
             const last = l[l.length - 1];
@@ -524,7 +595,13 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
               return {
                 lines: [
                   ...l.slice(0, -1),
-                  { ...last, text, final, interrupted },
+                  {
+                    ...last,
+                    text,
+                    final,
+                    interrupted,
+                    ...(denken ? { denken } : {}),
+                  },
                 ],
               };
             }
@@ -539,6 +616,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
                   interrupted,
                   at: Date.now(),
                   mode: callRunning(s.state) ? "spoken" : "typed",
+                  ...(denken ? { denken } : {}),
                 },
               ],
             };
@@ -585,7 +663,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
             };
             return { lines };
           }),
-        onError: (error) => set({ error }),
+        onError: (error) => set({ error, denken: null }),
         projekt: (): ProjektBindung | null => {
           const id = get().projectId;
           return id ? { id, stand: get().projektStand } : null;
@@ -595,8 +673,9 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
         onVerwerfen: () =>
           set((s) => {
             const last = s.lines[s.lines.length - 1];
-            if (!last || last.role !== "assistant" || last.final) return {};
-            return { lines: s.lines.slice(0, -1) };
+            if (!last || last.role !== "assistant" || last.final)
+              return { denken: null };
+            return { lines: s.lines.slice(0, -1), denken: null };
           }),
         conversationId: async () => {
           // Erst fertig speichern lassen: so kennt der Aufruf das laufende Gespräch,
@@ -606,9 +685,65 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
         },
         onStatus: (status) => {
           if (status === null) set({ toolStatus: null });
-          else if (status.kind === "tool") set({ toolStatus: status.tool });
+          else if (status.kind === "tool")
+            set((s) => ({
+              toolStatus: status.tool,
+              denken: s.denken
+                ? denkSchritt(s.denken, { art: "werkzeug", name: status.tool })
+                : null,
+            }));
           else set({ notice: status.code });
         },
+        onDenken: (e) => {
+          if (e.art === "start") {
+            set({
+              denken: { turnId: e.turnId, seit: Date.now(), schritte: [] },
+            });
+            return;
+          }
+          if (e.art === "zwischen") {
+            set((s) =>
+              s.denken ? { denken: { ...s.denken, zwischen: true } } : {},
+            );
+            return;
+          }
+          if (e.art === "ende") {
+            set((s) => (s.denken?.turnId === e.turnId ? { denken: null } : {}));
+            return;
+          }
+          if (e.art === "gedanke") {
+            // Denktext läuft auch nach der ersten Antwortzeile weiter (Werkzeugrunden): dann an den
+            // Denkprozess der letzten Antwort.
+            set((s) => {
+              if (s.denken) return { denken: denkText(s.denken, e.text) };
+              const i = s.lines.length - 1;
+              const last = s.lines[i];
+              if (!last || last.role !== "assistant" || !last.denken) return {};
+              const lines = [...s.lines];
+              lines[i] = { ...last, denken: denkText(last.denken, e.text) };
+              return { lines };
+            });
+            return;
+          }
+          const schritt: DenkSchritt =
+            e.art === "sofort"
+              ? { art: "sofort", modell: e.modell }
+              : { art: "text", text: e.text };
+          set((s) =>
+            s.denken ? { denken: denkSchritt(s.denken, schritt) } : {},
+          );
+        },
+        onContextTiming: (turnId, _retrieveMs, _promptMs, hits) =>
+          set((s) =>
+            s.denken && s.denken.turnId === turnId && hits > 0
+              ? {
+                  denken: denkSchritt(s.denken, {
+                    art: "kontext",
+                    treffer: hits,
+                  }),
+                }
+              : {},
+          ),
         onUsage: (u: CallUsageEvent) => {
           pendingUsage = mergeUsage(pendingUsage, u);
           set((s) => ({ usage: addUsage(s.usage, u) }));
@@ -768,6 +903,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
       error: null,
       toolStatus: null,
       notice: null,
+      denken: null,
       ready: get().state === "idle" ? null : get().ready,
     });
   };
@@ -836,6 +972,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
     error: null,
     toolStatus: null,
     notice: null,
+    denken: null,
     metrics: [],
     lines: [],
     usage: EMPTY_USAGE,
@@ -920,7 +1057,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
         typedNext = false;
         attachmentsNext = undefined;
         // Eine abgebrochene, ältere Anfrage darf die neue nicht „fertig“ melden.
-        if (run === textRun) set({ textBusy: false });
+        if (run === textRun) set({ textBusy: false, denken: null });
       }
     },
 
@@ -957,10 +1094,27 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
       await sendFeedback(heard, next);
     },
 
+    denkOffen: (seit, offen) =>
+      set((s) => ({
+        denken: s.denken?.seit === seit ? { ...s.denken, offen } : s.denken,
+        lines: s.lines.some((l) => l.denken?.seit === seit)
+          ? s.lines.map((l) =>
+              l.denken?.seit === seit
+                ? { ...l, denken: { ...l.denken, offen } }
+                : l,
+            )
+          : s.lines,
+      })),
+    denkModell: (modell) =>
+      set((s) =>
+        s.denken && s.denken.modell !== modell
+          ? { denken: { ...s.denken, modell } }
+          : {},
+      ),
     stopText: () => {
       engine?.cancelText(true);
       textRun++;
-      set({ textBusy: false });
+      set({ textBusy: false, denken: null });
     },
 
     newConversation: async () => {

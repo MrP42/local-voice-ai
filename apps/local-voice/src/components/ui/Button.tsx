@@ -26,6 +26,9 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   size?: "sm" | "md" | "lg";
   /** Symbol vor dem Text; ohne Kinder entsteht ein quadratischer Icon-Button. */
   icon?: React.ReactNode;
+  /** Wirkt gesperrt (aria-disabled), bleibt aber per Tab erreichbar, damit ein
+   *  Grund per aria-describedby vorgelesen werden kann. Klicks tun nichts. */
+  disabledFocusable?: boolean;
 }
 
 const APPEARANCE: Record<

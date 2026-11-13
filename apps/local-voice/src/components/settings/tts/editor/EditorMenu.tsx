@@ -13,11 +13,13 @@ import {
   CaseSensitive,
   ChevronDown,
   ChevronUp,
+  ClipboardCheck,
   Clock,
   Eraser,
   Heading1,
   Heading2,
   Heading3,
+  History,
   Italic,
   List,
   ListChecks,
@@ -44,6 +46,7 @@ import { IconAction } from "../../../ui/IconAction";
 import { ActionMenu } from "../../../ui/ActionMenu";
 import { Button } from "../../../ui/Button";
 import type { ChipEditorInsertApi } from "./TtsChipEditor";
+import { PasteLogDialog } from "./PasteLogDialog";
 import {
   applyFormat,
   findAll,
@@ -52,6 +55,7 @@ import {
   type FindOptions,
   type FormatKind,
 } from "@/lib/reader/editorOps";
+import type { PasteLogEntry } from "@/lib/reader/pasteLog";
 import {
   applyCleanupInRange,
   CLEANUP_RULES,
@@ -74,6 +78,20 @@ interface EditorMenuProps {
   apiRef: React.RefObject<ChipEditorInsertApi | null>;
   spellCheck: boolean;
   onSpellCheck(on: boolean): void;
+  /** Beim Einfügen automatisch bereinigen (nur der Original-Editor kennt
+   *  den Schalter; ohne `onPasteCleanup` erscheint der Eintrag nicht). */
+  pasteCleanup?: boolean;
+  onPasteCleanup?(on: boolean): void;
+  /** Gesicherte Rohfassungen eingefügter Texte der Seite (älteste zuerst);
+   *  Menüeintrag „Letzte Einfügungen …“. */
+  pasteLog?: readonly PasteLogEntry[];
+  /** Prüfsummen des Protokolls werden noch geprüft (Wiederherstellen gesperrt). */
+  pasteChecking?: boolean;
+  /** Protokoll ändern (löschen); gesichert und mit anderen Schreibvorgängen
+   *  der Seite nacheinander. `true`, wenn es gesichert wurde. */
+  onPasteLogChange?(
+    change: (log: PasteLogEntry[]) => PasteLogEntry[],
+  ): Promise<boolean>;
   /** Bestehendes „Text aufbereiten" (ganzer Text über das LLM). */
   onTidy?: () => void;
   tidying?: boolean;
@@ -122,6 +140,11 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
   apiRef,
   spellCheck,
   onSpellCheck,
+  pasteCleanup = true,
+  onPasteCleanup,
+  pasteLog = [],
+  pasteChecking = false,
+  onPasteLogChange,
   onTidy,
   tidying = false,
   labeled = false,
@@ -131,6 +154,7 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
   // Strg+F bei offener Leiste: Suchfeld erneut fokussieren.
   const [findFocus, setFindFocus] = useState(0);
   const [replaceOpen, setReplaceOpen] = useState(false);
+  const [pasteLogOpen, setPasteLogOpen] = useState(false);
   const [busy, setBusy] = useState<AssistTask | null>(null);
   const [progress, setProgress] = useState<{
     done: number;
@@ -371,7 +395,9 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
             label: t("tts.editorMenu.cleanup"),
             description: t("tts.editorMenu.cleanupHint"),
             testId: "editor-menu-cleanup",
-            disabled: readOnly || empty,
+            // Mit Schalter „Beim Einfügen bereinigen“ bleibt das Menü auch bei
+            // leerem Text erreichbar; die Regeln sind dann einzeln gesperrt.
+            disabled: readOnly || (empty && !onPasteCleanup),
           }}
           items={[
             {
@@ -380,6 +406,7 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
               title: t("tts.editorMenu.rules.allHint"),
               icon: ListChecks,
               testId: "editor-cleanup-all",
+              disabled: empty,
               onSelect: () => cleanup(CLEANUP_RULES),
             },
             ...CLEANUP_RULES.map((rule) => ({
@@ -388,8 +415,33 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
               title: t(`tts.editorMenu.rules.${rule}Hint`),
               icon: RULE_ICONS[rule],
               testId: `editor-cleanup-${rule}`,
+              disabled: empty,
               onSelect: () => cleanup([rule]),
             })),
+            ...(onPasteCleanup
+              ? [
+                  {
+                    id: "paste",
+                    label: t("tts.editorMenu.pasteCleanup"),
+                    title: t("tts.editorMenu.pasteCleanupHint"),
+                    description: t("tts.editorMenu.pasteKeep"),
+                    icon: ClipboardCheck,
+                    testId: "editor-cleanup-paste",
+                    checked: pasteCleanup,
+                    dividerBefore: true,
+                    onSelect: () => onPasteCleanup(!pasteCleanup),
+                  },
+                  {
+                    id: "pastelog",
+                    label: t("tts.editorMenu.pasteLogItem"),
+                    title: t("tts.editorMenu.pasteLogItemHint"),
+                    icon: History,
+                    testId: "editor-cleanup-pastelog",
+                    disabled: readOnly,
+                    onSelect: () => setPasteLogOpen(true),
+                  },
+                ]
+              : []),
           ]}
         />
         <ActionMenu
@@ -474,6 +526,17 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
             setFindOpen(false);
             setReplaceOpen(false);
           }}
+        />
+      )}
+      {onPasteCleanup && (
+        <PasteLogDialog
+          open={pasteLogOpen}
+          onOpenChange={setPasteLogOpen}
+          entries={pasteLog}
+          checking={pasteChecking}
+          text={value}
+          onRestore={onChange}
+          onChange={onPasteLogChange ?? (async () => false)}
         />
       )}
     </div>

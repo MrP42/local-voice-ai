@@ -10,6 +10,7 @@
 import { commands, type KiDocument, type LibraryBook } from "@/bindings";
 import { TTS_TARGET_LANGS } from "@/lib/constants/languages";
 import { KURZBUCH_TEMPLATE_ID } from "@/lib/kurzbuch/kurzbuch";
+import { getPageStateStore } from "@/lib/reader/pageStore";
 import { tracksOf } from "./names";
 
 export type VersionKind =
@@ -218,21 +219,22 @@ export async function markTranslated(pageId: string, target: string) {
         detail: { page: pageId, lang: target },
       }),
     );
-  const result = await commands.pageStateLoad(pageId);
-  if (result.status !== "ok" || !result.data) return notify();
-  try {
-    const state = JSON.parse(result.data) as Record<string, unknown>;
-    const langs = Array.isArray(state.translatedLangs)
-      ? (state.translatedLangs as unknown[]).filter(
-          (x) => typeof x === "string",
-        )
-      : [];
-    if (!langs.includes(target)) {
+  // Wie bisher in die Datei, nur über den einen Schreibpfad (Kette, frisch
+  // gelesen), damit eine gesicherte Rohfassung der Seite erhalten bleibt.
+  // Eine Seite ohne Stand (oder im Altformat) bleibt unberührt: Vorlesen findet
+  // die Übersetzung über den Zwischenspeicher.
+  await getPageStateStore()
+    .mutate(pageId, (state, raw) => {
+      if (raw.trim() === "") return false;
+      const langs = Array.isArray(state.translatedLangs)
+        ? (state.translatedLangs as unknown[]).filter(
+            (x): x is string => typeof x === "string",
+          )
+        : [];
+      if (langs.includes(target)) return false;
       state.translatedLangs = [...langs, target];
-      await commands.pageStateSave(pageId, JSON.stringify(state));
-    }
-  } catch {
-    /* Seite im Altformat: Vorlesen findet die Übersetzung über den Zwischenspeicher */
-  }
+      return true;
+    })
+    .catch(() => false);
   notify();
 }
