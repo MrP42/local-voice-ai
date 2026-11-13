@@ -154,7 +154,7 @@ public actor AblageSuchdienst {
         return AblageAnsicht(uebersicht: AblageAnzeige.uebersicht(z, vorhanden: speicher.vorhanden(z.bestand)), abdeckung: ab)
     }
 
-    public func suche(_ frage: String) -> [AblageTreffer] { index.suche(frage) }
+    public func suche(_ frage: String, nur: Set<String>? = nil) -> [AblageTreffer] { index.suche(frage, nur: nur) }
 
     /// Beim Abmelden: nichts behalten.
     public func leeren() {

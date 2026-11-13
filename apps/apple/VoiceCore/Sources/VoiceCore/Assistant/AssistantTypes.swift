@@ -86,14 +86,20 @@ public struct AssistantItem: Sendable, Equatable, Codable {
     public let title: String
     public let detail: String?      // „Autor · 42 % gelesen“, „12.10.2026 · 48 min“
     public let updated: Date?
+    /// Kennungen der Ordner, in denen das Element liegt: der eigene Ordner zuerst, dann die Eltern bis zur Wurzel (nur die Ablage
+    /// trägt Ordner; leer bei allen übrigen). Dient allein dem Filter verknüpfter Kontexte (`AssistantScope`) und wird nicht gespeichert.
+    public var folders: [String] = []
 
-    public init(area: AssistantArea, id: String, title: String, detail: String? = nil, updated: Date? = nil) {
+    public init(area: AssistantArea, id: String, title: String, detail: String? = nil, updated: Date? = nil, folders: [String] = []) {
         self.area = area
         self.id = id
         self.title = title
         self.detail = detail
         self.updated = updated
+        self.folders = folders
     }
+
+    private enum CodingKeys: String, CodingKey { case area, id, title, detail, updated }
 }
 
 public struct AssistantPassage: Sendable, Equatable, Codable {
@@ -195,6 +201,22 @@ public protocol AssistantSource: Sendable {
     var area: AssistantArea { get }
     func items() async -> [AssistantItem]
     func search(_ question: String, limit: Int) async -> [AssistantPassage]
+    /// Wie `search`, aber nur in den Elementen mit diesen Kennungen (`nil`: alle). Der Filter MUSS vor der Begrenzung auf `limit`
+    /// wirken (verknüpfte Kontexte, `AssistantScope`). Die Vorgabe sucht mit einem großen Fenster und filtert danach; eine Quelle mit
+    /// eigenem Index überschreibt sie und filtert im Index.
+    func search(_ question: String, limit: Int, only itemIds: Set<String>?) async -> [AssistantPassage]
+}
+
+extension AssistantSource {
+    /// Größe des Fensters, das die Vorgabe vor dem Filtern abruft.
+    static var filterWindow: Int { 400 }
+
+    public func search(_ question: String, limit: Int, only itemIds: Set<String>?) async -> [AssistantPassage] {
+        guard let itemIds else { return await search(question, limit: limit) }
+        guard limit > 0, !itemIds.isEmpty else { return [] }
+        let window = await search(question, limit: Swift.max(limit, Self.filterWindow))
+        return Array(window.filter { itemIds.contains($0.itemId) }.prefix(limit))
+    }
 }
 
 /// Dokument für den eingebauten Index (Bücher, Transkripte, Notizen).

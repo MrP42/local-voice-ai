@@ -164,12 +164,14 @@ final class AssistantProfiles: ObservableObject {
     #if DEBUG
     // MARK: Beispielzustand (nur DEBUG)
 
-    /// `--assistant-demo-profiles`, `--assistant-demo-profile-editor`, `--assistant-demo-greeting`: zwei eigene, erfundene Assistenten
+    /// `--assistant-demo-profiles`, `--assistant-demo-profile-editor`, `--assistant-demo-greeting`, `--assistant-demo-contexts`,
+    /// `--assistant-demo-context-picker`: zwei eigene, erfundene Assistenten
     /// neben den Vorlagen, einer davon aktiv. Nichts wird gelesen oder geschrieben (`store == nil`).
     static let demo: Bool = {
         let arguments = ProcessInfo.processInfo.arguments
         return arguments.contains("--assistant-demo-profiles") || arguments.contains("--assistant-demo-profile-editor")
-            || arguments.contains("--assistant-demo-greeting")
+            || arguments.contains("--assistant-demo-greeting") || arguments.contains("--assistant-demo-contexts")
+            || arguments.contains("--assistant-demo-context-picker")
     }()
 
     /// Erster eigener Assistent der Beispielzustände (aktiv): mit Anweisung, Begrüßung mit Platzhaltern, Wissen und Verhalten.
@@ -181,6 +183,9 @@ final class AssistantProfiles: ObservableObject {
         profile.greeting = "Guten {{tageszeit}}, hier ist der Empfang des Beispielbüros. Wie kann ich helfen?"
         profile.knowledge.allAreas = false
         profile.knowledge.areas = ["besprechungen", "ablage"]
+        // Verknüpfte Inhalte (lva#557): eine Besprechung vom Assistenten, im Modus „Zuerst“.
+        profile.knowledge.mode = .first
+        profile.knowledge.contexts = [AssistantProfile.Context(kind: .meeting, id: "demo-besprechung", title: "Besprechung Nordlicht")]
         profile.behavior.style = .natural
         profile.behavior.pause = .long
         profile.behavior.interruptible = true
