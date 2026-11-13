@@ -923,6 +923,11 @@ pub struct AppSettings {
     /// profitieren von Batch-Modellen (z. B. Parakeet V3).
     #[serde(default)]
     pub meeting_model: Option<String>,
+    /// Genaues Modell fuer schwierige Aufnahmen: damit laesst sich ein einzelner
+    /// Verlaufseintrag erneut transkribieren, waehrend das Diktatmodell
+    /// (`selected_model`) geladen bleibt. None/leer = nicht eingerichtet.
+    #[serde(default)]
+    pub accurate_model: Option<String>,
     /// M1-P1f: Systemton (Loopback) ist beim Start einer Besprechung
     /// vorangehakt. Die Oberflaeche merkt sich die letzte Wahl hier; ohne den
     /// Schluessel (aeltere settings.json) gilt `true`.
@@ -1995,6 +2000,7 @@ pub fn get_default_settings() -> AppSettings {
         meeting_audio_retention: default_meeting_audio_retention(),
         meeting_language: default_meeting_language(),
         meeting_model: None,
+        accurate_model: None,
         meeting_capture_system: true,
         meeting_auto_enhance: true,
         meeting_default_template_id: None,

@@ -1,7 +1,15 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { readFile } from "@tauri-apps/plugin-fs";
-import { Check, Copy, FolderOpen, RotateCcw, Star, Trash2 } from "lucide-react";
+import {
+  Check,
+  Copy,
+  FolderOpen,
+  RotateCcw,
+  ScanSearch,
+  Star,
+  Trash2,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { PageShell } from "../../ui/PageShell";
 import { toast } from "sonner";
@@ -12,6 +20,7 @@ import {
   type HistoryUpdatePayload,
 } from "@/bindings";
 import { useOsType } from "@/hooks/useOsType";
+import { useSettings } from "@/hooks/useSettings";
 import { formatDateTime } from "@/utils/dateFormat";
 import { AudioPlayer, AudioPlayerGroup } from "../../ui/AudioPlayer";
 import { Button } from "../../ui/Button";
@@ -61,6 +70,8 @@ const OpenRecordingsButton: React.FC<OpenRecordingsButtonProps> = ({
 
 export const HistorySettings: React.FC = () => {
   const { t } = useTranslation();
+  const { getSetting } = useSettings();
+  const accurateModel = getSetting("accurate_model");
   const osType = useOsType();
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   // Suche im Modulkopf (ADR-0027 E5): filtert die geladenen Einträge.
@@ -227,6 +238,14 @@ export const HistorySettings: React.FC = () => {
     }
   };
 
+  // Mit dem genauen Modell (`accurate_model`); das Diktatmodell bleibt geladen.
+  const retryHistoryEntryAccurate = async (id: number) => {
+    const result = await commands.retryHistoryEntryWithAccurateModel(id);
+    if (result.status !== "ok") {
+      throw new Error(String(result.error));
+    }
+  };
+
   const openRecordingsFolder = async () => {
     try {
       const result = await commands.openRecordingsFolder();
@@ -283,6 +302,9 @@ export const HistorySettings: React.FC = () => {
                 getAudioUrl={getAudioUrl}
                 deleteAudio={deleteAudioEntry}
                 retryTranscription={retryHistoryEntry}
+                retryAccurate={
+                  accurateModel ? retryHistoryEntryAccurate : undefined
+                }
               />
             ))}
           </div>
@@ -326,7 +348,16 @@ interface HistoryEntryProps {
   getAudioUrl: (fileName: string) => Promise<string | null>;
   deleteAudio: (id: number) => Promise<void>;
   retryTranscription: (id: number) => Promise<void>;
+  /** Nur gesetzt, wenn ein genaues Modell eingerichtet ist. */
+  retryAccurate?: (id: number) => Promise<void>;
 }
+
+/** Fehlercodes von `retry_history_entry_with_accurate_model` mit eigenem Text. */
+const ACCURATE_ERRORS: Record<string, string> = {
+  accurate_model_unset: "settings.history.accurateUnset",
+  accurate_model_missing: "settings.history.accurateMissing",
+  accurate_model_memory: "settings.history.accurateMemory",
+};
 
 const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
   entry,
@@ -335,6 +366,7 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
   getAudioUrl,
   deleteAudio,
   retryTranscription,
+  retryAccurate,
 }) => {
   const { t, i18n } = useTranslation();
   const [showCopied, setShowCopied] = useState(false);
@@ -373,6 +405,22 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
     } catch (error) {
       console.error("Failed to re-transcribe:", error);
       toast.error(t("settings.history.retranscribeError"));
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  const handleRetranscribeAccurate = async () => {
+    if (!retryAccurate) return;
+    try {
+      setRetrying(true);
+      await retryAccurate(entry.id);
+    } catch (error) {
+      console.error("Failed to re-transcribe with the accurate model:", error);
+      const code = error instanceof Error ? error.message : "";
+      toast.error(
+        t(ACCURATE_ERRORS[code] ?? "settings.history.retranscribeError"),
+      );
     } finally {
       setRetrying(false);
     }
@@ -427,6 +475,15 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
               }
             />
           </HistoryIconButton>
+          {retryAccurate && (
+            <HistoryIconButton
+              onClick={handleRetranscribeAccurate}
+              disabled={retrying}
+              title={t("settings.history.retranscribeAccurate")}
+            >
+              <ScanSearch width={16} height={16} />
+            </HistoryIconButton>
+          )}
           <HistoryIconButton
             onClick={handleDeleteEntry}
             disabled={retrying}

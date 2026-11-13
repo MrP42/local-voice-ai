@@ -2790,6 +2790,11 @@
       },
       "disabledHint": "Die Nachbearbeitung ist aus. Einschalten, damit ein Sprachmodell diktierten Text aufräumt — und um den Anbieter zu wählen, den auch die Besprechungsprotokolle nutzen."
     },
+    "accurateModel": {
+      "title": "Genaues Modell für schwierige Aufnahmen",
+      "description": "Ein zweites Modell für einzelne Aufnahmen, die das Diktatmodell falsch verstanden hat. Im Verlauf lässt sich eine Aufnahme damit erneut transkribieren. Das Diktatmodell bleibt geladen, das Diktat ist also sofort wieder bereit. Wählbar ist jedes installierte Modell, auch eigene Whisper-Dateien (.bin oder .gguf) im Modellordner.",
+      "none": "Keines"
+    },
     "history": {
       "title": "Verlauf",
       "openFolder": "Aufnahmeordner öffnen",
@@ -2802,6 +2807,10 @@
       "deleteError": "Eintrag konnte nicht gelöscht werden. Bitte versuche es erneut.",
       "retranscribe": "Erneut transkribieren",
       "retranscribeError": "Erneute Transkription fehlgeschlagen. Bitte versuche es erneut.",
+      "retranscribeAccurate": "Mit genauem Modell erneut transkribieren",
+      "accurateUnset": "Es ist kein genaues Modell eingerichtet. Wähle eines unter Einstellungen > Eingabe.",
+      "accurateMissing": "Das genaue Modell ist nicht mehr installiert. Wähle unter Einstellungen > Eingabe ein anderes.",
+      "accurateMemory": "Zu wenig freier Speicher, um das genaue Modell neben dem Diktatmodell zu laden. Schließe andere Programme oder wähle ein kleineres Modell.",
       "transcribing": "Transkribiere...",
       "transcriptionFailed": "Transkription fehlgeschlagen. Du kannst über das Wiederholen-Symbol erneut transkribieren."
     },

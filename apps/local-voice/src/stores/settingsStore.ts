@@ -248,6 +248,8 @@ const settingUpdaters: {
     commands.changeMeetingLanguageSetting(value as string),
   meeting_model: (value) =>
     commands.changeMeetingModelSetting((value as string | null) ?? null),
+  accurate_model: (value) =>
+    commands.changeAccurateModelSetting((value as string | null) ?? null),
   // M1-P1f
   meeting_capture_system: (value) =>
     commands.changeMeetingCaptureSystemSetting(value as boolean),

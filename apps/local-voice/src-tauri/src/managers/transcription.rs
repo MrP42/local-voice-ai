@@ -303,6 +303,25 @@ fn bound_model_id() -> Option<String> {
     BOUND_ENGINE.with(|bound| bound.borrow().as_ref().map(|e| e.model_id.clone()))
 }
 
+/// Womit ein Lauf mit ausdruecklich gewaehltem Modell rechnet
+/// ([`TranscriptionManager::transcribe_with_model`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModelRunPlan {
+    /// Das gewuenschte Modell ist schon das geladene: die gemeinsame Engine.
+    Shared,
+    /// Ein anderes Modell (oder gar keines) ist geladen: eine eigene Engine, die
+    /// gemeinsame bleibt unberuehrt.
+    Extra,
+}
+
+pub fn plan_model_run(target: &str, loaded: Option<&str>) -> ModelRunPlan {
+    if loaded == Some(target) {
+        ModelRunPlan::Shared
+    } else {
+        ModelRunPlan::Extra
+    }
+}
+
 /// RAII guard that clears the `is_loading` flag and notifies waiters on drop.
 /// Ensures the loading flag is always reset, even on early returns or panics.
 pub struct LoadingGuard {
@@ -997,6 +1016,38 @@ impl TranscriptionManager {
             engine: Some(engine),
             model_id: model_id.to_string(),
         })
+    }
+
+    /// Rechnet `audio` einmal mit `model_id`, ohne das geladene Diktatmodell zu
+    /// entladen. Ist `model_id` schon das geladene Modell, rechnet die gemeinsame
+    /// Engine. Sonst wird das Modell als eigene Engine geladen (ein zweites Mal im
+    /// Speicher, darum zuerst das Speicher-Tor der Warteschlange), an diesen Thread
+    /// gebunden und nach dem Lauf wieder freigegeben. Fehler als Codes:
+    /// `accurate_model_missing` (unbekannt oder nicht installiert),
+    /// `accurate_model_memory` (zu wenig Arbeits- oder Grafikspeicher).
+    /// Blockiert; der Aufrufer ruft es in einem eigenen Arbeitsthread.
+    pub fn transcribe_with_model(&self, model_id: &str, audio: Vec<f32>) -> Result<String> {
+        let loaded = self.get_current_model();
+        if plan_model_run(model_id, loaded.as_deref()) == ModelRunPlan::Shared {
+            return self.transcribe(audio);
+        }
+        let info = self
+            .model_manager
+            .get_model_info(model_id)
+            .filter(|m| m.is_downloaded)
+            .ok_or_else(|| anyhow::anyhow!("accurate_model_missing"))?;
+        let gpu_model = matches!(info.engine_type, EngineType::TranscribeCpp);
+        let hw = crate::managers::meetings::final_pass::probe_hardware(&self.app_handle);
+        if let Err(block) =
+            crate::managers::meetings::queue::plan_extra_slot(info.size_mb, gpu_model, &hw)
+        {
+            warn!("accurate model '{model_id}': not enough memory ({block:?})");
+            return Err(anyhow::anyhow!("accurate_model_memory"));
+        }
+        let threads = (crate::process_guard::logical_cpus() / 2).max(1) as i32;
+        let engine = self.load_extra_engine(model_id, threads)?;
+        let _binding = bind_extra_engine(engine);
+        self.transcribe(audio)
     }
 
     /// U7: Groesse (MB, Katalog) des Besprechungsmodells und ob es auf der GPU
@@ -1983,8 +2034,12 @@ impl TranscriptionManager {
             return Ok(String::new());
         }
 
+        // Ein Lauf mit eigener Engine (genaues Modell fuer eine einzelne
+        // Aufnahme) rechnet mit ihr; die gemeinsame Engine bleibt geladen und frei.
+        let bound = extra_engine_bound();
+
         // Check if model is loaded, if not try to load it
-        {
+        if !bound {
             // If the model is loading, wait for it to complete.
             let mut is_loading = self.is_loading.lock().unwrap();
             while *is_loading {
@@ -2006,9 +2061,12 @@ impl TranscriptionManager {
         // from settings.selected_model when a caller loaded a specific model —
         // e.g. the --transcribe-file path's --model), not the persisted
         // selection.
-        let active_model = self
-            .get_current_model()
-            .unwrap_or_else(|| settings.selected_model.clone());
+        let active_model = if bound {
+            bound_model_id().unwrap_or_else(|| settings.selected_model.clone())
+        } else {
+            self.get_current_model()
+                .unwrap_or_else(|| settings.selected_model.clone())
+        };
         // Resolve the persisted language *intent* into the language this model
         // will actually use. The coercion is capability-aware (a must-pick model
         // never receives "auto") and computed fresh here — it is never written
@@ -2039,22 +2097,33 @@ impl TranscriptionManager {
         // We use catch_unwind to prevent engine panics from poisoning the mutex,
         // which would make the app hang indefinitely on subsequent operations.
         let result = {
-            let mut engine_guard = self.lock_engine();
-
             // Take the engine out so we own it during transcription.
             // If the engine panics, we simply don't put it back (effectively unloading it)
             // instead of poisoning the mutex.
-            let mut engine = match engine_guard.take() {
-                Some(e) => e,
-                None => {
-                    return Err(anyhow::anyhow!(
-                        "Model failed to load after auto-load attempt. Please check your model settings."
-                    ));
+            let mut engine = if bound {
+                // Die eigene Engine dieses Threads (kein Mutex, nur ein Nutzer).
+                match take_bound_engine() {
+                    Some(e) => e,
+                    None => {
+                        return Err(anyhow::anyhow!(
+                            "The extra transcription engine is gone (an earlier run crashed it)."
+                        ));
+                    }
                 }
+            } else {
+                let mut engine_guard = self.lock_engine();
+                let engine = match engine_guard.take() {
+                    Some(e) => e,
+                    None => {
+                        return Err(anyhow::anyhow!(
+                            "Model failed to load after auto-load attempt. Please check your model settings."
+                        ));
+                    }
+                };
+                // Release the lock before transcribing — no mutex held during the engine call
+                drop(engine_guard);
+                engine
             };
-
-            // Release the lock before transcribing — no mutex held during the engine call
-            drop(engine_guard);
 
             // Probe live transcribe-cpp capabilities once (cheap GGUF-metadata
             // reads); the loaded session is the source of truth, not the
@@ -2072,7 +2141,7 @@ impl TranscriptionManager {
                 model_languages = caps.languages;
                 debug!(
                     "transcribe-cpp model '{}' on '{}': initial_prompt={}, translate={}, languages={:?}",
-                    settings.selected_model,
+                    active_model,
                     model.backend(),
                     model_takes_initial_prompt,
                     model_supports_translate,
@@ -2206,13 +2275,26 @@ impl TranscriptionManager {
                 Ok(inner_result) => {
                     // Success or normal error: return the engine unless a model
                     // switch/unload invalidated it while it was in use.
-                    self.return_engine(engine, &active_model);
+                    if bound {
+                        put_back_bound_engine(engine);
+                    } else {
+                        self.return_engine(engine, &active_model);
+                    }
                     inner_result?
                 }
                 Err(panic_payload) => {
                     // Engine panicked — do NOT put it back (it's in an unknown state).
                     // The engine is dropped here, effectively unloading it.
                     let panic_msg = panic_payload_message(panic_payload.as_ref());
+                    if bound {
+                        // Die eigene Engine ist verworfen; die gemeinsame Engine und
+                        // ihre Anzeige sind nicht betroffen.
+                        error!("Extra transcription engine panicked: {}", panic_msg);
+                        return Err(anyhow::anyhow!(
+                            "Transcription engine panicked: {}.",
+                            panic_msg
+                        ));
+                    }
                     error!(
                         "Transcription engine panicked: {}. Model has been unloaded.",
                         panic_msg
@@ -2285,7 +2367,9 @@ impl TranscriptionManager {
             );
         }
 
-        self.maybe_unload_immediately("transcription");
+        if !bound {
+            self.maybe_unload_immediately("transcription");
+        }
 
         Ok(final_result)
     }
@@ -3507,6 +3591,25 @@ pub fn get_available_accelerators() -> AvailableAccelerators {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_run_with_an_explicit_model_uses_the_shared_engine_only_when_it_holds_that_model() {
+        use super::{plan_model_run, ModelRunPlan};
+        assert_eq!(
+            plan_model_run("whisper-large-v3", Some("whisper-large-v3")),
+            ModelRunPlan::Shared
+        );
+        // Ein anderes Modell ist geladen: es bleibt geladen, der Lauf bekommt eine eigene Engine.
+        assert_eq!(
+            plan_model_run("whisper-large-v3", Some("parakeet-tdt-0.6b-v3")),
+            ModelRunPlan::Extra
+        );
+        // Nichts geladen: ebenfalls eine eigene Engine, das Diktatmodell wird nicht angefasst.
+        assert_eq!(
+            plan_model_run("whisper-large-v3", None),
+            ModelRunPlan::Extra
+        );
+    }
+
     use super::*;
 
     fn languages(codes: &[&str]) -> Vec<String> {

@@ -2182,6 +2182,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             shortcut::change_meeting_audio_retention_setting,
             shortcut::change_meeting_language_setting,
             shortcut::change_meeting_model_setting,
+            shortcut::change_accurate_model_setting,
             // M1-P1f
             shortcut::change_meeting_capture_system_setting,
             shortcut::change_meeting_auto_enhance_setting,
@@ -2243,6 +2244,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::history::get_audio_file_path,
             commands::history::delete_history_entry,
             commands::history::retry_history_entry_transcription,
+            commands::history::retry_history_entry_with_accurate_model,
             commands::history::update_history_limit,
             commands::history::update_recording_retention_period,
             commands::meetings::meetings_start,

@@ -59,13 +59,31 @@ pub async fn delete_history_entry(
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn retry_history_entry_transcription(
+/// Welches Modell eine Wiederholung aus dem Verlauf nimmt.
+enum RetryModel {
+    /// Das Diktatmodell (wird bei Bedarf geladen).
+    Dictation,
+    /// Dieses Modell, ohne das Diktatmodell zu entladen.
+    Explicit(String),
+}
+
+/// Das eingerichtete genaue Modell, oder der Fehlercode `accurate_model_unset`.
+fn accurate_model_of(settings: &crate::settings::AppSettings) -> Result<String, String> {
+    settings
+        .accurate_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| "accurate_model_unset".to_string())
+}
+
+async fn retry_entry(
     app: AppHandle,
-    history_manager: State<'_, Arc<HistoryManager>>,
-    transcription_manager: State<'_, Arc<TranscriptionManager>>,
+    history_manager: &Arc<HistoryManager>,
+    transcription_manager: &Arc<TranscriptionManager>,
     id: i64,
+    model: RetryModel,
 ) -> Result<(), String> {
     let entry = history_manager
         .get_entry_by_id(id)
@@ -81,13 +99,18 @@ pub async fn retry_history_entry_transcription(
         return Err("Recording has no audio samples".to_string());
     }
 
-    transcription_manager.initiate_model_load();
+    if matches!(model, RetryModel::Dictation) {
+        transcription_manager.initiate_model_load();
+    }
 
-    let tm = Arc::clone(&transcription_manager);
-    let transcription = tauri::async_runtime::spawn_blocking(move || tm.transcribe(samples))
-        .await
-        .map_err(|e| format!("Transcription task panicked: {}", e))?
-        .map_err(|e| e.to_string())?;
+    let tm = Arc::clone(transcription_manager);
+    let transcription = tauri::async_runtime::spawn_blocking(move || match model {
+        RetryModel::Dictation => tm.transcribe(samples),
+        RetryModel::Explicit(id) => tm.transcribe_with_model(&id, samples),
+    })
+    .await
+    .map_err(|e| format!("Transcription task panicked: {}", e))?
+    .map_err(|e| e.to_string())?;
 
     if transcription.is_empty() {
         return Err("Recording contains no speech".to_string());
@@ -104,6 +127,46 @@ pub async fn retry_history_entry_transcription(
         )
         .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn retry_history_entry_transcription(
+    app: AppHandle,
+    history_manager: State<'_, Arc<HistoryManager>>,
+    transcription_manager: State<'_, Arc<TranscriptionManager>>,
+    id: i64,
+) -> Result<(), String> {
+    retry_entry(
+        app,
+        &history_manager,
+        &transcription_manager,
+        id,
+        RetryModel::Dictation,
+    )
+    .await
+}
+
+/// Wie [`retry_history_entry_transcription`], aber mit dem genauen Modell
+/// (`accurate_model`). Das Diktatmodell bleibt geladen. Fehlercodes:
+/// `accurate_model_unset`, `accurate_model_missing`, `accurate_model_memory`.
+#[tauri::command]
+#[specta::specta]
+pub async fn retry_history_entry_with_accurate_model(
+    app: AppHandle,
+    history_manager: State<'_, Arc<HistoryManager>>,
+    transcription_manager: State<'_, Arc<TranscriptionManager>>,
+    id: i64,
+) -> Result<(), String> {
+    let model = accurate_model_of(&crate::settings::get_settings(&app))?;
+    retry_entry(
+        app,
+        &history_manager,
+        &transcription_manager,
+        id,
+        RetryModel::Explicit(model),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -151,4 +214,26 @@ pub async fn update_recording_retention_period(
         .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::accurate_model_of;
+    use crate::settings::get_default_settings;
+
+    #[test]
+    fn without_an_accurate_model_the_retry_reports_that_it_is_unset() {
+        let mut settings = get_default_settings();
+        assert_eq!(
+            accurate_model_of(&settings).unwrap_err(),
+            "accurate_model_unset"
+        );
+        settings.accurate_model = Some("  ".into());
+        assert_eq!(
+            accurate_model_of(&settings).unwrap_err(),
+            "accurate_model_unset"
+        );
+        settings.accurate_model = Some(" whisper-large-v3 ".into());
+        assert_eq!(accurate_model_of(&settings).unwrap(), "whisper-large-v3");
+    }
 }
