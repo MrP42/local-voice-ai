@@ -44,7 +44,7 @@ if (-not $OutDir) { $OutDir = Join-Path $tauriDir 'target/release/bundle/vorinst
 
 # Das Skript ersetzt -OutDir vollstaendig. Damit nie fremde Dateien verloren gehen:
 # - Ziel relativ zum PowerShell-Arbeitsverzeichnis absolut aufloesen (nicht zum Prozessverzeichnis),
-# - Platzhalter (* ? [ ]) ablehnen; alle Dateioperationen auf das Ziel laufen mit -LiteralPath,
+# - Platzhalter (* ? [ ]) ablehnen; Pruefen, Loeschen und Anlegen des Ziels laufen literal,
 # - Laufwerkswurzeln und Ordner ablehnen, die Quellen, Arbeitsverzeichnis oder Profil enthalten,
 # - Verknuepfungen (Junction/Symlink) im Ziel oder einem seiner Elternordner ablehnen, weil der
 #   lexikalische Vergleich sie nicht aufloest,

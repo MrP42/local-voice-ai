@@ -1,7 +1,8 @@
 # Tests zu scripts/build-installer-modelle.ps1 (lva#574): -OutDir darf nie fremde Dateien loeschen.
 #
-# Faelle mit Zielen unter einem eigenen Temp-Ordner laufen mit einer VORHANDENEN Platzhalter-EXE:
-# Fehlte der Schutz, kaeme das Skript bis zur Loeschung und der Test wuerde rot. Faelle mit dem
+# Faelle mit Zielen unter einem eigenen Temp-Ordner laufen mit einer VORHANDENEN Platzhalter-EXE.
+# Fehlte der Schutz, kaeme das Skript in einem gebauten Baum (src-tauri/transcribe-libs vorhanden)
+# bis zur Loeschung; in jedem Baum werden die Faelle ueber die erwarteten Meldungen rot. Faelle mit dem
 # App-Verzeichnis oder der Laufwerkswurzel laufen absichtlich mit fehlender EXE, damit ein
 # fehlerhafter Stand dort nie etwas loeschen kann. Es wird nichts heruntergeladen: mit der
 # Platzhalter-EXE scheitert das Skript spaetestens beim ersten Programmstart.
@@ -66,21 +67,26 @@ try {
     Check 'Arbeitsverzeichnis: Datei bleibt' (Test-Path -LiteralPath (Join-Path $tmp 'arbeit/arbeitsordner.txt')) 'Sentinel geloescht'
 
     # 4. Relativer Pfad: aufgeloest gegen das PowerShell-Arbeitsverzeichnis, nicht gegen das
-    #    Prozessverzeichnis. Im Prozessverzeichnis liegt ein fremder Ordner gleichen Namens.
+    #    Prozessverzeichnis. Unter dem PS-Verzeichnis liegt ein fremder Ordner `rel`, unter dem
+    #    Prozessverzeichnis ein eigener mit Marke. Richtig: Abbruch an der Marke mit dem PS-Pfad.
+    #    Falsch aufgeloest (GetFullPath) ginge die Pruefung am eigenen Ordner durch und scheiterte
+    #    erst an der fehlenden EXE: rot. Fehlende EXE, damit in keinem Stand etwas geloescht wird.
     $psDir = Join-Path $tmp 'ps-ort'
     $procDir = Join-Path $tmp 'prozess-ort'
-    New-Dir (Join-Path $psDir 'rel') -Own
-    New-Dir (Join-Path $procDir 'rel') 'fremd-rel.txt'
+    New-Dir (Join-Path $psDir 'rel') 'fremd-rel.txt'
+    New-Dir (Join-Path $procDir 'rel') -Own
     $savedCwd = [Environment]::CurrentDirectory
     Push-Location -LiteralPath $psDir
     [Environment]::CurrentDirectory = $procDir
+    $msg = ''
     try {
-        try { & $script -OutDir 'rel' -Exe $dummyExe *> $null } catch { }
+        try { & $script -OutDir 'rel' -Exe $missingExe *> $null } catch { $msg = "$_" }
     } finally {
         [Environment]::CurrentDirectory = $savedCwd
         Pop-Location
     }
-    Check 'relativer Pfad: fremder Ordner im Prozessverzeichnis unversehrt' (Test-Path -LiteralPath (Join-Path $procDir 'rel/fremd-rel.txt')) 'geloescht'
+    Check 'relativer Pfad: Pruefung am Ordner unter dem PS-Arbeitsverzeichnis' ($msg -match 'Marke' -and $msg -match [regex]::Escape((Join-Path $psDir 'rel'))) $msg
+    Check 'relativer Pfad: fremder Ordner unversehrt' (Test-Path -LiteralPath (Join-Path $psDir 'rel/fremd-rel.txt')) 'geloescht'
 
     # 5. Verknuepfung als Ziel: Abbruch, Ziel der Verknuepfung unversehrt.
     $linkTarget = Join-Path $tmp 'verknuepft-ziel'

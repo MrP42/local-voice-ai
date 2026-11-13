@@ -20,6 +20,7 @@ import { randomUUID } from "node:crypto";
 const here = dirname(fileURLToPath(import.meta.url));
 const nsi = readFileSync(join(here, "../src-tauri/nsis/installer.nsi"), "utf8");
 const doc = readFileSync(join(here, "../../../docs/INSTALLER-MODELLE.md"), "utf8");
+const portable = readFileSync(join(here, "../../../docs/PORTABLE.md"), "utf8");
 
 const findMakensis = () => {
   const candidates = ["makensis"];
@@ -110,7 +111,11 @@ test("gesetzte Variable mit Nutzlast aktiviert den Modellzweig", { skip }, () =>
 });
 
 test("Lizenzaussage: kostenlos ist keine Freigabe für CC BY-NC", () => {
-  assert.doesNotMatch(doc, /kostenlosen öffentlichen Release ist durch CC BY-NC 4\.0 gedeckt/);
+  for (const text of [doc, portable]) {
+    assert.doesNotMatch(text, /kostenlose[n]? Weitergabe im öffentlichen GitHub-Release ist dadurch gedeckt/);
+    assert.doesNotMatch(text, /kostenlosen öffentlichen Release ist durch CC BY-NC 4\.0 gedeckt/);
+  }
+  assert.match(portable, /kostenlos ist, genügt dafür allein nicht/);
   assert.match(doc, /nur zu nicht-kommerziellen Zwecken/);
   assert.match(doc, /kostenlos ist, genügt dafür allein nicht/);
   assert.match(doc, /kostenlose, aber geschäftlich motivierte Weitergabe[^.]*ist nicht gedeckt/);
