@@ -31,11 +31,11 @@
   },
   "tts": {
     "pageSaveFailed": "Die Seite konnte nicht gespeichert werden. Die Aktion wurde nicht ausgeführt.",
-    "pageSaveFailedLeft": "Die Seite „{{title}}“ konnte nicht gespeichert werden. Beim nächsten Öffnen der Seite wird es erneut versucht.",
-    "pageSaveFailedLost": "Die Seite „{{title}}“ konnte nicht gespeichert werden. Ihr letzter Stand ist nicht gesichert.",
-    "pageRestoredUnsaved": "Der Stand der Seite „{{title}}“ war noch nicht gespeichert. Er wurde wiederhergestellt und wird jetzt gespeichert.",
-    "pageRescuedCopy": "Ein älterer, nicht gespeicherter Stand der Seite „{{title}}“ wurde als Fassung „{{copy}}“ gesichert.",
-    "pageRescuedHeld": "Ein älterer, nicht gespeicherter Stand der Seite „{{title}}“ konnte nicht gesichert werden. Er liegt nur im Speicher und geht beim Beenden der App verloren.",
+    "pageSaveFailedLeft": "Die Seite „{{title}}“ konnte nicht gespeichert werden. Ihr Text liegt vorerst nur im Speicher; beim nächsten Öffnen der Seite wird das Speichern erneut versucht.",
+    "pageSaveFailedLost": "Die Seite „{{title}}“ konnte nicht gespeichert werden. Ihr letzter Text ist nicht gesichert.",
+    "pageRestoredUnsaved": "Der Text der Seite „{{title}}“ war noch nicht gespeichert. Er wurde wiederhergestellt und wird jetzt gespeichert.",
+    "pageRescuedCopy": "Ein älterer, nicht gespeicherter Text der Seite „{{title}}“ wurde als Fassung „{{copy}}“ gesichert.",
+    "pageRescuedHeld": "Ein älterer, nicht gespeicherter Text der Seite „{{title}}“ konnte nicht als Fassung gesichert werden. Er liegt nur im Speicher und geht beim Beenden der App verloren.",
     "pageUnsavedCopyTitle": "Nicht gespeicherter Stand",
     "editorMenu": {
       "label": "Editor-Menü",

@@ -31,11 +31,11 @@
   },
   "tts": {
     "pageSaveFailed": "The page could not be saved. The action was not carried out.",
-    "pageSaveFailedLeft": "The page “{{title}}” could not be saved. It will be tried again the next time the page is opened.",
-    "pageSaveFailedLost": "The page “{{title}}” could not be saved. Its latest state is not secured.",
-    "pageRestoredUnsaved": "The state of the page “{{title}}” had not been saved yet. It was restored and is being saved now.",
-    "pageRescuedCopy": "An older, unsaved state of the page “{{title}}” was secured as the version “{{copy}}”.",
-    "pageRescuedHeld": "An older, unsaved state of the page “{{title}}” could not be secured. It only exists in memory and is lost when the app quits.",
+    "pageSaveFailedLeft": "The page “{{title}}” could not be saved. Its text only exists in memory for now; saving will be tried again the next time the page is opened.",
+    "pageSaveFailedLost": "The page “{{title}}” could not be saved. Its latest text is not secured.",
+    "pageRestoredUnsaved": "The text of the page “{{title}}” had not been saved yet. It was restored and is being saved now.",
+    "pageRescuedCopy": "An older, unsaved text of the page “{{title}}” was secured as the version “{{copy}}”.",
+    "pageRescuedHeld": "An older, unsaved text of the page “{{title}}” could not be secured as a version. It only exists in memory and is lost when the app quits.",
     "pageUnsavedCopyTitle": "Unsaved state",
     "editorMenu": {
       "label": "Editor menu",

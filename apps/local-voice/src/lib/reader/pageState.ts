@@ -249,24 +249,35 @@ export function createPageStateStore(options: PageStateStoreOptions) {
       return added.ok ? added.log : added;
     });
 
-  /** Text eines verdrängten Stands für später merken (gehalten, nur im Speicher). */
+  /** Verdrängten Text nur im Speicher halten UND melden: jeder verdrängte Text
+   *  wird entweder dauerhaft gesichert oder ausdrücklich als „nur im Speicher“
+   *  gemeldet, nie stillschweigend gehalten. */
   function hold(page: string, text: string): void {
     const list = heldTexts.get(page) ?? [];
     if (!list.includes(text)) heldTexts.set(page, [...list, text]);
+    options.onRescue?.(page, "held");
   }
 
-  /** Gehaltene Texte der Seite als Fassung sichern; was gelingt, wird frei. */
+  /** Gehaltene Texte der Seite als Fassung sichern; was gelingt, wird frei. Bleibt
+   *  etwas übrig (Sichern scheitert oder es gibt keinen Schreiber), wird das
+   *  erneut gemeldet: der Nutzer erfährt beim Öffnen, dass es nur im Speicher liegt. */
   async function flushHeld(page: string): Promise<void> {
     const list = heldTexts.get(page);
-    if (!list || !io.saveCopy) return;
+    if (!list) return;
     const left: string[] = [];
     for (const text of list) {
-      const ok = await io.saveCopy(page, text).catch(() => false);
+      const ok = io.saveCopy
+        ? await io.saveCopy(page, text).catch(() => false)
+        : false;
       if (ok) options.onRescue?.(page, "copy");
       else left.push(text);
     }
-    if (left.length > 0) heldTexts.set(page, left);
-    else heldTexts.delete(page);
+    if (left.length === 0) {
+      heldTexts.delete(page);
+      return;
+    }
+    heldTexts.set(page, left);
+    options.onRescue?.(page, "held");
   }
 
   /**
@@ -291,7 +302,6 @@ export function createPageStateStore(options: PageStateStoreOptions) {
       return;
     }
     hold(page, own);
-    options.onRescue?.(page, "held");
   }
 
   /** Rettungssnapshot für `page` hinterlegen. Ein noch nicht angezeigter älterer
@@ -405,8 +415,10 @@ export function createPageStateStore(options: PageStateStoreOptions) {
    * dieses Lesens scheitern); er wird entschieden (siehe `resolveFailed`),
    * jeder Snapshot höchstens einmal je Lesen. Bleibt er ausstehend (erneut
    * gescheitert), liefert `read` ihn als ungespeicherten Stand statt der älteren
-   * Datei. Auf der bereits geladenen (offenen) Seite, die ihn schon erhalten hat,
-   * ändert ein Lesen nichts: ihr Stand gehört der Oberfläche.
+   * Datei, auch auf der bereits geladenen (offenen) Seite, die ihn schon erhalten
+   * hat (KeepAlive): er behält Vorrang vor der Datei, solange er nicht gespeichert
+   * ist. Dort schreibt `read` ihn nicht (der Stand gehört der Oberfläche); wer
+   * `unsaved` bekommt, ersetzt den Stand der Oberfläche nicht.
    * `mark` ist die Marke der Anzeige VOR dem Lesen (siehe `changedSince`);
    * `null` bei Lesefehler.
    */
@@ -419,10 +431,10 @@ export function createPageStateStore(options: PageStateStoreOptions) {
     for (let round = 0; ; round += 1) {
       await settle(page);
       pending = failedSaves.get(page);
-      if (!pending || (pending.handedOut && live.isLive(page))) {
-        pending = undefined;
-        break;
-      }
+      if (!pending) break;
+      // Auf der geladenen Seite gehört der Stand der Oberfläche: kein erneutes
+      // Schreiben, der Snapshot bleibt aber maßgeblich (unten).
+      if (pending.handedOut && live.isLive(page)) break;
       if (tried.has(pending) || round >= MAX_READ_ROUNDS) break;
       tried.add(pending);
       await resolveFailed(page).catch(() => undefined);

@@ -3062,6 +3062,13 @@ export const TtsSettings = () => {
     void store.read(page).then((read) => {
       if (!read || !read.text) return;
       if (savePending.current || storedActivePage() !== page) return;
+      // Ein wiederhergestellter, noch nicht gespeicherter Stand behält Vorrang:
+      // die Oberfläche hält ihn schon, die Datei ist älter. Nichts übernehmen,
+      // das Sichern erneut anstoßen.
+      if (read.unsaved) {
+        setRescueTick((n) => n + 1);
+        return;
+      }
       try {
         const state = JSON.parse(read.text) as { text?: unknown };
         if (typeof state.text === "string" && state.text !== textRef.current)

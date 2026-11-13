@@ -2352,6 +2352,58 @@ test("the flush of a left page only fails after it is opened again, the retry fa
   expect(await savedRohs(page)).toEqual(many.map((e) => e.roh));
 });
 
+test("a restored unsaved text survives an app-section round trip (KeepAlive): the older file does not replace it, the next autosave writes it, and it is still there after reopening (R4 B1)", async ({
+  page,
+}) => {
+  const { editor } = await openTwoPages(page, "Vorher. ", 0);
+  await expect.poll(() => saveCalls(page)).toBeGreaterThan(0);
+  await holdNextSave(page);
+  await editor.focus();
+  await editor.press("Control+End");
+  await page.keyboard.type("Z");
+  // Verlassen (der Flush hängt) und wieder öffnen; Flush und erneuter Versuch scheitern.
+  await gotoPage(page, "Das Wintermärchen");
+  await gotoPage(page, "Der Sturm");
+  await setFailSave(page, true, true);
+  await expect(editor).toHaveValue("Vorher. Z");
+  await expect(
+    toast(page).filter({ hasText: "war noch nicht gespeichert" }),
+  ).toBeVisible();
+  // Auch der Lade-Autosave scheitert (die Seite bleibt offen, Datei = „Vorher. “).
+  await page.waitForTimeout(1500);
+  expect(((await savedState(page)) as { text: string }).text).toBe("Vorher. ");
+  // App-Bereich wechseln und zurück: Vorlesen bleibt eingehängt (KeepAlive).
+  const nav = page.getByRole("navigation");
+  const roundTrip = async () => {
+    await nav.getByRole("button", { name: "Verlauf", exact: true }).click();
+    await nav.getByRole("button", { name: "Vorlesen", exact: true }).click();
+    await expect(editor).toBeVisible();
+  };
+  await roundTrip();
+  // Nicht die ältere Datei: der wiederhergestellte Text bleibt (auch nach dem
+  // angestoßenen, wieder scheiternden Autosave).
+  await expect(editor).toHaveValue("Vorher. Z");
+  await page.waitForTimeout(800);
+  await expect(editor).toHaveValue("Vorher. Z");
+  expect(((await savedState(page)) as { text: string }).text).toBe("Vorher. ");
+  // Der Speicher ist wieder da: der nächste Wechsel stößt den Autosave an, er schreibt den Text.
+  await setFailSave(page, false);
+  await roundTrip();
+  await expect(editor).toHaveValue("Vorher. Z");
+  await expect
+    .poll(async () => ((await savedState(page)) as { text: string }).text)
+    .toBe("Vorher. Z");
+  // Später ein weiterer erfolgreicher Autosave ändert daran nichts, Neuöffnen zeigt v1.
+  await editor.focus();
+  await editor.press("Control+End");
+  await page.keyboard.type("Y");
+  await expect
+    .poll(async () => ((await savedState(page)) as { text: string }).text)
+    .toBe("Vorher. ZY");
+  const reloaded = await reopenEditor(page);
+  await expect(reloaded).toHaveValue("Vorher. ZY");
+});
+
 // -- Bereinigen nach dem Warten: IME, Fokus, Auswahl ---------------------------------
 
 test("an IME composition that is active when the wait ends: not cleaned, the raw text stays", async ({
