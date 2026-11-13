@@ -17,6 +17,8 @@
 //! kein Geheimnisspeicher, und Adressen landen im Log.
 
 use std::collections::HashMap;
+use std::net::{Ipv4Addr, Ipv6Addr};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -49,8 +51,14 @@ const DIREKT_WOERTER: [&str; 2] = ["direkt", "direct"];
 /// Wie lange ein aufgelöster Systemweg gilt (PAC-Auswertung kann Sekunden dauern).
 const CACHE_DAUER: Duration = Duration::from_secs(300);
 
+/// Gesamtfrist für eine PAC-/WPAD-Auswertung; danach gilt der Standardweg.
+const SYSTEM_FRIST: Duration = Duration::from_secs(20);
+
 static EIGENER: RwLock<Option<String>> = RwLock::new(None);
-/// Aufgelöster Systemweg je `schema://host` mit Zeitpunkt; `None` = kein Systemproxy.
+/// Erhöht bei jedem Zurücksetzen; eine Auflösung, die vor dem Zurücksetzen
+/// begann, trägt ihr Ergebnis danach nicht mehr ein.
+static GENERATION: AtomicU64 = AtomicU64::new(0);
+/// Aufgelöster Systemweg je Ziel-URL (ohne Query) mit Zeitpunkt; `None` = kein Systemproxy.
 type WegCache = HashMap<String, (Instant, Option<Weg>)>;
 
 static CACHE: Mutex<Option<WegCache>> = Mutex::new(None);
@@ -101,6 +109,7 @@ pub fn setze_eigenen(einstellung: Option<&str>) {
         *eigener = wert;
     }
     if let Ok(mut cache) = CACHE.lock() {
+        GENERATION.fetch_add(1, Ordering::SeqCst);
         *cache = None;
     }
 }
@@ -167,32 +176,80 @@ pub fn lies_proxy_liste(liste: &str) -> Option<Weg> {
     allgemein
 }
 
-/// Ziele auf diesem Rechner (Tests, lokale Server): nie Proxy, nie PAC/WPAD.
-fn ist_lokal(url: &str) -> bool {
+/// Ziele auf diesem Rechner oder im lokalen Segment (Loopback, Link-Local,
+/// `localhost`): nie über einen Proxy, nie PAC/WPAD.
+pub fn ist_lokal(url: &str) -> bool {
     let Ok(u) = url::Url::parse(url) else {
         return false;
     };
     match u.host() {
-        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
-        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        Some(url::Host::Domain(d)) => {
+            let d = d.trim_end_matches('.').to_ascii_lowercase();
+            d == "localhost" || d.ends_with(".localhost")
+        }
+        Some(url::Host::Ipv4(ip)) => v4_lokal(ip),
+        Some(url::Host::Ipv6(ip)) => v6_lokal(ip),
         None => false,
     }
 }
 
+fn v4_lokal(ip: Ipv4Addr) -> bool {
+    ip.is_loopback() || ip.is_link_local() || ip.is_unspecified()
+}
+
+fn v6_lokal(ip: Ipv6Addr) -> bool {
+    if let Some(v4) = ip.to_ipv4_mapped() {
+        return v4_lokal(v4);
+    }
+    ip.is_loopback() || ip.is_unspecified() || (ip.segments()[0] & 0xffc0) == 0xfe80
+}
+
+/// Darf eine Weiterleitung von `bisher` (alle vorherigen Ziele) nach `ziel`
+/// gehen? Nie von einem entfernten auf ein lokales Ziel (sonst könnte ein
+/// fremder Server die App über ihren Proxy oder direkt auf lokale Dienste lenken).
+pub fn weiterleitung_erlaubt<'a>(bisher: impl IntoIterator<Item = &'a str>, ziel: &str) -> bool {
+    !ist_lokal(ziel) || bisher.into_iter().all(ist_lokal)
+}
+
+/// Weiterleitungsregel für Downloads: höchstens 10 Schritte, nie von entfernt
+/// auf lokal.
+pub fn weiterleitungen() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|versuch| {
+        if versuch.previous().len() >= 10 {
+            return versuch.error("zu viele Weiterleitungen");
+        }
+        let erlaubt = weiterleitung_erlaubt(
+            versuch.previous().iter().map(|u| u.as_str()),
+            versuch.url().as_str(),
+        );
+        if erlaubt {
+            versuch.follow()
+        } else {
+            versuch.error("Weiterleitung auf ein lokales Ziel abgelehnt")
+        }
+    })
+}
+
+/// PAC-Regeln dürfen nach Pfad und Port unterscheiden (WinHTTP wertet je URL
+/// aus): Schlüssel ist die URL ohne Query und Fragment.
 fn cache_schluessel(url: &str) -> String {
-    url::Url::parse(url)
-        .ok()
-        .map(|u| format!("{}://{}", u.scheme(), u.host_str().unwrap_or("")))
-        .unwrap_or_else(|| url.to_string())
+    match url::Url::parse(url) {
+        Ok(mut u) => {
+            u.set_query(None);
+            u.set_fragment(None);
+            u.to_string()
+        }
+        Err(_) => url.to_string(),
+    }
 }
 
 /// Der Weg für `url`. Blockiert ggf. (PAC-Auswertung); aus async-Code
 /// [`weg_fuer_async`] nehmen.
 pub fn weg_fuer(url: &str) -> Weg {
-    // Lokale Ziele (Tests, lokale Dienste) gehen nie über einen Proxy.
+    // Lokale Ziele (Tests, lokale Dienste) gehen nie über einen Proxy, auch
+    // nicht über einen aus der Umgebung.
     if ist_lokal(url) {
-        return Weg::Standard;
+        return Weg::Direkt;
     }
     if let Some(p) = eigener() {
         return if p == "direkt" {
@@ -205,6 +262,7 @@ pub fn weg_fuer(url: &str) -> Weg {
         return Weg::Standard;
     }
     let schluessel = cache_schluessel(url);
+    let generation = GENERATION.load(Ordering::SeqCst);
     if let Ok(cache) = CACHE.lock() {
         if let Some((zeit, weg)) = cache.as_ref().and_then(|c| c.get(&schluessel)) {
             if zeit.elapsed() < CACHE_DAUER {
@@ -214,22 +272,39 @@ pub fn weg_fuer(url: &str) -> Weg {
     }
     let weg = system_weg(url);
     if let Some(w) = &weg {
-        log::info!("Systemproxy für {}: {}", schluessel, w.beschreibung());
+        log::info!("Systemproxy: {}", w.beschreibung());
     }
     if let Ok(mut cache) = CACHE.lock() {
-        cache
-            .get_or_insert_with(HashMap::new)
-            .insert(schluessel, (Instant::now(), weg.clone()));
+        // Nach einem Zurücksetzen während der Auflösung nichts Altes eintragen.
+        if GENERATION.load(Ordering::SeqCst) == generation {
+            let c = cache.get_or_insert_with(HashMap::new);
+            c.retain(|_, (zeit, _)| zeit.elapsed() < CACHE_DAUER);
+            c.insert(schluessel, (Instant::now(), weg.clone()));
+        }
     }
     weg.unwrap_or(Weg::Standard)
 }
 
-/// [`weg_fuer`] ohne den async-Laufzeitfaden zu blockieren.
+/// [`weg_fuer`] ohne den async-Laufzeitfaden zu blockieren, mit Gesamtfrist
+/// [`SYSTEM_FRIST`] (hängt die PAC-Auswertung, gilt der Standardweg).
 pub async fn weg_fuer_async(url: &str) -> Weg {
     let url = url.to_string();
-    tokio::task::spawn_blocking(move || weg_fuer(&url))
-        .await
-        .unwrap_or(Weg::Standard)
+    match tokio::time::timeout(
+        SYSTEM_FRIST,
+        tokio::task::spawn_blocking(move || weg_fuer(&url)),
+    )
+    .await
+    {
+        Ok(Ok(weg)) => weg,
+        Ok(Err(_)) => Weg::Standard,
+        Err(_) => {
+            log::warn!(
+                "Proxy-Auswertung dauert über {}s; Standardweg",
+                SYSTEM_FRIST.as_secs()
+            );
+            Weg::Standard
+        }
+    }
 }
 
 /// Wendet `weg` auf einen Client-Bauplan an. Eine Adresse, die reqwest nicht
@@ -239,10 +314,15 @@ pub fn anwenden(builder: reqwest::ClientBuilder, weg: &Weg) -> reqwest::ClientBu
     match weg {
         Weg::Standard => builder,
         Weg::Direkt => builder.no_proxy(),
-        Weg::Ueber(p) => match reqwest::Proxy::all(p.as_str()) {
-            Ok(proxy) => builder.proxy(proxy),
-            Err(e) => {
-                log::warn!("Proxy {} nicht verwendbar: {}", p, e);
+        // Je Anfrage (auch nach Weiterleitungen) prüfen: lokale Ziele nie über den Proxy.
+        Weg::Ueber(p) => match url::Url::parse(p) {
+            Ok(proxy_url) if reqwest::Proxy::all(proxy_url.as_str()).is_ok() => {
+                builder.proxy(reqwest::Proxy::custom(move |ziel| {
+                    (!ist_lokal(ziel.as_str())).then(|| proxy_url.clone())
+                }))
+            }
+            _ => {
+                log::warn!("Proxy {} nicht verwendbar", p);
                 builder
             }
         },
@@ -312,9 +392,18 @@ fn system_weg(url: &str) -> Option<Weg> {
     if sitzung.is_null() {
         return None;
     }
+    /// Schließt das WinHTTP-Handle auf jedem Weg (auch beim Abwickeln).
+    struct Sitzung(*mut core::ffi::c_void);
+    impl Drop for Sitzung {
+        fn drop(&mut self) {
+            // SAFETY: gültiges, genau einmal geschlossenes Handle aus WinHttpOpen.
+            let _ = unsafe { WinHttpCloseHandle(self.0) };
+        }
+    }
+    let sitzung = Sitzung(sitzung);
     // Auflösung, Verbindung, Senden, Empfangen je 10 s: die PAC-Datei liegt im
     // Intranet; hängt sie, soll der Download nicht ewig warten.
-    let _ = unsafe { WinHttpSetTimeouts(sitzung, 10_000, 10_000, 10_000, 10_000) };
+    let _ = unsafe { WinHttpSetTimeouts(sitzung.0, 10_000, 10_000, 10_000, 10_000) };
 
     let pac_w = pac.as_deref().map(HSTRING::from);
     let mut optionen = WINHTTP_AUTOPROXY_OPTIONS {
@@ -332,8 +421,8 @@ fn system_weg(url: &str) -> Option<Weg> {
     let mut info = WINHTTP_PROXY_INFO::default();
     let ziel = HSTRING::from(url);
     // SAFETY: Sitzung gültig, Strukturen leben bis nach dem Aufruf.
-    let ergebnis = unsafe { WinHttpGetProxyForUrl(sitzung, &ziel, &mut optionen, &mut info) };
-    let _ = unsafe { WinHttpCloseHandle(sitzung) };
+    let ergebnis = unsafe { WinHttpGetProxyForUrl(sitzung.0, &ziel, &mut optionen, &mut info) };
+    drop(sitzung);
     if let Err(e) = ergebnis {
         log::warn!("PAC/Auto-Erkennung nicht auswertbar: {}", e);
         return None;
@@ -350,6 +439,9 @@ fn system_weg(url: &str) -> Option<Weg> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Tests, die den eigenen Proxy (globaler Zustand) setzen, laufen nacheinander.
+    static EIGENER_SPERRE: Mutex<()> = Mutex::new(());
 
     #[test]
     fn normalisiere_ergaenzt_schema_und_lehnt_zugangsdaten_ab() {
@@ -401,6 +493,7 @@ mod tests {
 
     #[test]
     fn eigener_proxy_hat_vorrang_und_direkt_erzwingt_ohne() {
+        let _sperre = EIGENER_SPERRE.lock().unwrap_or_else(|e| e.into_inner());
         setze_eigenen(Some("proxy.example.org:8080"));
         assert_eq!(
             weg_fuer("https://huggingface.co/x"),
@@ -408,17 +501,148 @@ mod tests {
         );
         setze_eigenen(Some("direkt"));
         assert_eq!(weg_fuer("https://huggingface.co/x"), Weg::Direkt);
-        setze_eigenen(Some("nutzer:pw@kaputt"));
-        assert_ne!(weg_fuer("https://huggingface.co/x"), Weg::Direkt);
+        setze_eigenen(Some("http://nutzer:pw@kaputt.example.org:1"));
+        assert_eq!(eigener(), None, "Zugangsdaten werden nie übernommen");
         setze_eigenen(None);
     }
 
     #[test]
     fn lokale_ziele_ohne_systemproxy() {
-        assert!(ist_lokal("http://127.0.0.1:4000/x"));
-        assert!(ist_lokal("http://localhost/x"));
-        assert!(ist_lokal("http://[::1]:80/"));
-        assert!(!ist_lokal("https://huggingface.co/x"));
+        for lokal in [
+            "http://127.0.0.1:4000/x",
+            "http://127.8.0.1/",
+            "http://localhost/x",
+            "http://LOCALHOST./x",
+            "http://dienst.localhost/",
+            "http://[::1]:80/",
+            "http://[::ffff:127.0.0.1]/",
+            "http://169.254.169.254/latest",
+            "http://[fe80::1]/",
+            "http://0.0.0.0/",
+        ] {
+            assert!(ist_lokal(lokal), "{lokal}");
+            assert_eq!(weg_fuer(lokal), Weg::Direkt, "{lokal}");
+        }
+        for entfernt in [
+            "https://huggingface.co/x",
+            "https://localhost.example.org/",
+            "http://10.0.0.1/",
+            "http://[2001:db8::1]/",
+        ] {
+            assert!(!ist_lokal(entfernt), "{entfernt}");
+        }
+    }
+
+    #[test]
+    fn eigener_proxy_gilt_nie_fuer_lokale_ziele() {
+        let _sperre = EIGENER_SPERRE.lock().unwrap_or_else(|e| e.into_inner());
+        setze_eigenen(Some("proxy.example.org:8080"));
+        assert_eq!(weg_fuer("http://127.0.0.1:9/"), Weg::Direkt);
+        setze_eigenen(None);
+    }
+
+    #[test]
+    fn keine_weiterleitung_von_entfernt_auf_lokal() {
+        assert!(!weiterleitung_erlaubt(
+            ["https://huggingface.co/a"],
+            "http://127.0.0.1:8080/"
+        ));
+        assert!(!weiterleitung_erlaubt(
+            ["https://huggingface.co/a"],
+            "http://169.254.169.254/"
+        ));
+        assert!(weiterleitung_erlaubt(
+            ["https://huggingface.co/a"],
+            "https://cdn-lfs.hf.co/b"
+        ));
+        assert!(weiterleitung_erlaubt(
+            ["http://127.0.0.1:1/a"],
+            "http://127.0.0.1:1/b"
+        ));
+    }
+
+    #[test]
+    fn cache_unterscheidet_pfad_und_port_nicht_query() {
+        assert_ne!(
+            cache_schluessel("https://h.example.org/a"),
+            cache_schluessel("https://h.example.org/b")
+        );
+        assert_ne!(
+            cache_schluessel("https://h.example.org:444/a"),
+            cache_schluessel("https://h.example.org/a")
+        );
+        assert_eq!(
+            cache_schluessel("https://h.example.org/a?token=x"),
+            cache_schluessel("https://h.example.org/a")
+        );
+    }
+
+    /// Ein Mini-Proxy, der die erste Anfragezeile zurückmeldet und 502 antwortet.
+    async fn mini_proxy() -> (String, tokio::sync::oneshot::Receiver<String>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let adresse = format!("http://{}", listener.local_addr().unwrap());
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                let mut buf = vec![0u8; 2048];
+                let n = sock.read(&mut buf).await.unwrap_or(0);
+                let zeile = String::from_utf8_lossy(&buf[..n])
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .to_string();
+                let _ = tx.send(zeile);
+                let _ = sock
+                    .write_all(b"HTTP/1.1 502 Bad Gateway\r\ncontent-length: 0\r\n\r\n")
+                    .await;
+            }
+        });
+        (adresse, rx)
+    }
+
+    #[tokio::test]
+    async fn ueber_proxy_geht_entfernt_ueber_proxy() {
+        let (proxy, zeile) = mini_proxy().await;
+        let client = anwenden(reqwest::Client::builder(), &Weg::Ueber(proxy))
+            .build()
+            .unwrap();
+        let antwort = client
+            .get("http://modell.example.org/datei")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(antwort.status().as_u16(), 502);
+        assert_eq!(
+            zeile.await.unwrap(),
+            "GET http://modell.example.org/datei HTTP/1.1"
+        );
+    }
+
+    #[tokio::test]
+    async fn ueber_proxy_laesst_lokale_ziele_direkt() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let (proxy, mut zeile) = mini_proxy().await;
+        let ziel = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let ziel_url = format!("http://{}/lokal", ziel.local_addr().unwrap());
+        tokio::spawn(async move {
+            if let Ok((mut sock, _)) = ziel.accept().await {
+                let mut buf = vec![0u8; 2048];
+                let _ = sock.read(&mut buf).await;
+                let _ = sock
+                    .write_all(b"HTTP/1.1 204 No Content\r\ncontent-length: 0\r\n\r\n")
+                    .await;
+            }
+        });
+        let client = anwenden(reqwest::Client::builder(), &Weg::Ueber(proxy))
+            .build()
+            .unwrap();
+        let antwort = client.get(&ziel_url).send().await.unwrap();
+        assert_eq!(antwort.status().as_u16(), 204);
+        assert!(
+            zeile.try_recv().is_err(),
+            "der Proxy darf nichts gesehen haben"
+        );
     }
 
     #[test]

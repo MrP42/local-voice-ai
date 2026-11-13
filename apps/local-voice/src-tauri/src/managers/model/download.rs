@@ -267,7 +267,7 @@ impl ModelManager {
             .redirect(if auth.is_some() {
                 reqwest::redirect::Policy::none()
             } else {
-                reqwest::redirect::Policy::default()
+                crate::netz::proxy::weiterleitungen()
             })
             .build()?;
         let send = async {

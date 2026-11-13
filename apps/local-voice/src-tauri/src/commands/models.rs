@@ -46,7 +46,8 @@ pub async fn download_model(
     let result = model_manager
         .download_model_mit_warten(&model_id)
         .await
-        .map_err(|e| format!("{:#}", e));
+        // lva#573: nie Zugangsdaten oder URL-Token in Log, Event oder Befehlsfehler.
+        .map_err(|e| crate::netz::fehler::schwaerzen(&format!("{:#}", e)));
 
     match result {
         Ok(()) => Ok(()),

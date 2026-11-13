@@ -6,6 +6,20 @@ import { commands, type ModelInfo } from "@/bindings";
 import { toast } from "sonner";
 import i18n from "@/i18n";
 
+/** lva#573: laufende Countdowns der Warte-Hinweise je Modell. */
+const waitingCountdowns = new Map<string, ReturnType<typeof setInterval>>();
+const waitingToastId = (modelId: string) => `model-download-waiting-${modelId}`;
+const stopWaitingCountdown = (modelId: string) => {
+  const timer = waitingCountdowns.get(modelId);
+  if (timer !== undefined) clearInterval(timer);
+  waitingCountdowns.delete(modelId);
+};
+const waitingShown = new Set<string>();
+const clearWaiting = (modelId: string) => {
+  stopWaitingCountdown(modelId);
+  if (waitingShown.delete(modelId)) toast.dismiss(waitingToastId(modelId));
+};
+
 interface DownloadProgress {
   model_id: string;
   downloaded: number;
@@ -277,6 +291,7 @@ export const useModelStore = create<ModelsStore>()(
       // Set up event listeners
       listen<DownloadProgress>("model-download-progress", (event) => {
         const progress = event.payload;
+        clearWaiting(progress.model_id);
         set(
           produce((state) => {
             state.downloadProgress[progress.model_id] = progress;
@@ -322,7 +337,7 @@ export const useModelStore = create<ModelsStore>()(
 
       listen<string>("model-download-complete", (event) => {
         const modelId = event.payload;
-        toast.dismiss(`model-download-waiting-${modelId}`);
+        clearWaiting(modelId);
         set(
           produce((state) => {
             delete state.downloadingModels[modelId];
@@ -350,7 +365,7 @@ export const useModelStore = create<ModelsStore>()(
             state.error = error;
           }),
         );
-        toast.dismiss(`model-download-waiting-${modelId}`);
+        clearWaiting(modelId);
         // lva#573: verständliche Meldung; den Rohfehler nur auf Klick.
         const message =
           kind && kind !== "other"
@@ -375,6 +390,7 @@ export const useModelStore = create<ModelsStore>()(
       });
 
       // lva#573: Netz weg — der Download wartet und versucht es selbst erneut.
+      // Der Hinweis zählt die Sekunden bis zum nächsten Versuch herunter.
       listen<{
         model_id: string;
         kind: string;
@@ -390,20 +406,28 @@ export const useModelStore = create<ModelsStore>()(
             delete state.verifyingModels[p.model_id];
           }),
         );
-        toast.warning(
-          i18n.t(`modelSelector.download.fault.${p.kind}`, {
-            defaultValue: p.message,
-          }),
-          {
-            id: `model-download-waiting-${p.model_id}`,
+        stopWaitingCountdown(p.model_id);
+        const id = waitingToastId(p.model_id);
+        const title = i18n.t(`modelSelector.download.fault.${p.kind}`, {
+          defaultValue: p.message,
+        });
+        const until = Date.now() + p.retry_in_secs * 1000;
+        const show = () => {
+          const seconds = Math.max(0, Math.ceil((until - Date.now()) / 1000));
+          toast.warning(title, {
+            id,
             description: i18n.t("modelSelector.download.waiting", {
-              seconds: p.retry_in_secs,
+              seconds,
               attempt: p.attempt,
               max: p.max_attempts,
             }),
-            duration: (p.retry_in_secs + 5) * 1000,
-          },
-        );
+            duration: Infinity,
+          });
+          if (seconds === 0) stopWaitingCountdown(p.model_id);
+        };
+        show();
+        waitingShown.add(p.model_id);
+        waitingCountdowns.set(p.model_id, setInterval(show, 1000));
       });
 
       listen<string>("model-verification-started", (event) => {
@@ -458,7 +482,7 @@ export const useModelStore = create<ModelsStore>()(
 
       listen<string>("model-download-cancelled", (event) => {
         const modelId = event.payload;
-        toast.dismiss(`model-download-waiting-${modelId}`);
+        clearWaiting(modelId);
         set(
           produce((state) => {
             delete state.downloadingModels[modelId];

@@ -165,6 +165,10 @@ pub(crate) fn redirect_target(current: &Url, location: &str) -> Result<Url> {
     let next = current
         .join(location)
         .map_err(|_| anyhow!("redirect to an invalid address"))?;
+    // lva#573: nie von einem entfernten auf ein lokales Ziel weiterleiten.
+    if !crate::netz::proxy::weiterleitung_erlaubt([current.as_str()], next.as_str()) {
+        return Err(anyhow!("redirect to a local address refused"));
+    }
     match next.scheme() {
         "https" => {}
         "http" if current.scheme() == "http" => {}

@@ -535,7 +535,7 @@
         "invalid_config": "Invalid setting: {{message}}",
         "license_blocked": "License or approval missing: {{message}}",
         "privacy_blocked": "Remote access not allowed: {{message}}",
-        "timeout": "The download server does not respond. Already downloaded parts are kept; a new start resumes there.",
+        "timeout": "Timeout: {{message}}",
         "cancelled": "Cancelled: {{message}}",
         "bad_request": "Request rejected: {{message}}",
         "backend": "Provider error: {{message}}",
@@ -1997,8 +1997,8 @@
         "dns": "Cannot reach Hugging Face: this computer cannot resolve the server name. Either the internet is down right now, or the corporate network only allows access through a proxy (Settings › General › Proxy for downloads).",
         "proxyAuth": "The proxy requires a login Local Voice cannot provide. Ask your IT whether huggingface.co can be allowed without login.",
         "proxy": "The proxy is unreachable or refuses the connection. Please check the proxy setting under Settings › General.",
-        "offline": "No connection to the download server. Please check the network connection; already downloaded parts are kept.",
-        "timeout": "The download server does not respond. Local Voice retries automatically; already downloaded parts are kept.",
+        "offline": "No connection to the download server. Please check the network connection and start the download again.",
+        "timeout": "The download server does not respond. Please try again later.",
         "certificate": "The secure connection was refused (certificate). A corporate proxy often inspects traffic; IT then needs to install its certificate on this computer.",
         "blocked": "The network blocks the download (access denied). Ask your IT to allow huggingface.co."
       }

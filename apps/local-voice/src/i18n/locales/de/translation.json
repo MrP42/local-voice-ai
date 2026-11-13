@@ -535,7 +535,7 @@
         "invalid_config": "Einstellung ungültig: {{message}}",
         "license_blocked": "Lizenz oder Freigabe fehlt: {{message}}",
         "privacy_blocked": "Fernzugriff nicht freigegeben: {{message}}",
-        "timeout": "Der Download-Server antwortet nicht. Bereits geladene Teile bleiben erhalten; ein neuer Start setzt dort fort.",
+        "timeout": "Zeitüberschreitung: {{message}}",
         "cancelled": "Abgebrochen: {{message}}",
         "bad_request": "Anfrage abgelehnt: {{message}}",
         "backend": "Fehler beim Anbieter: {{message}}",
@@ -1997,8 +1997,8 @@
         "dns": "Keine Verbindung zu Hugging Face: Dieser Rechner kann den Servernamen nicht auflösen. Entweder fehlt gerade das Internet, oder das Firmennetz lässt den Zugang nur über einen Proxy zu (Einstellungen › Allgemein › Proxy für Downloads).",
         "proxyAuth": "Der Proxy verlangt eine Anmeldung, die Local Voice nicht leisten kann. Bitte die IT fragen, ob huggingface.co ohne Anmeldung freigegeben werden kann.",
         "proxy": "Der Proxy ist nicht erreichbar oder lehnt die Verbindung ab. Bitte die Proxy-Einstellung unter Einstellungen › Allgemein prüfen.",
-        "offline": "Keine Verbindung zum Download-Server. Bitte die Netzwerkverbindung prüfen; bereits geladene Teile bleiben erhalten.",
-        "timeout": "Der Download-Server antwortet nicht. Local Voice versucht es automatisch erneut; bereits geladene Teile bleiben erhalten.",
+        "offline": "Keine Verbindung zum Download-Server. Bitte die Netzwerkverbindung prüfen und den Download erneut starten.",
+        "timeout": "Der Download-Server antwortet nicht. Bitte später erneut versuchen.",
         "certificate": "Die sichere Verbindung wurde abgelehnt (Zertifikat). Häufig prüft ein Firmenproxy den Datenverkehr; dann muss die IT das Zertifikat auf diesem Rechner hinterlegen.",
         "blocked": "Das Netzwerk sperrt den Download (Zugriff verweigert). Bitte die IT bitten, huggingface.co freizugeben."
       }
