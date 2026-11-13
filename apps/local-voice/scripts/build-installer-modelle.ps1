@@ -46,8 +46,9 @@ if (-not $OutDir) { $OutDir = Join-Path $tauriDir 'target/release/bundle/vorinst
 # - Ziel relativ zum PowerShell-Arbeitsverzeichnis absolut aufloesen (nicht zum Prozessverzeichnis),
 # - Platzhalter (* ? [ ]) ablehnen; Pruefen, Loeschen und Anlegen des Ziels laufen literal,
 # - Laufwerkswurzeln und Ordner ablehnen, die Quellen, Arbeitsverzeichnis oder Profil enthalten,
-# - Verknuepfungen (Junction/Symlink) im Ziel oder einem seiner Elternordner ablehnen, weil der
-#   lexikalische Vergleich sie nicht aufloest,
+# - Verknuepfungen (Junction/Symlink) im Ziel oder einem seiner Elternordner ablehnen; die
+#   geschuetzten Ordner zusaetzlich physisch aufloesen (ein Arbeitsverzeichnis unter einer
+#   Junction auf das Ziel ist sonst lexikalisch nicht als dasselbe Verzeichnis erkennbar),
 # - einen vorhandenen Ordner nur ersetzen, wenn er leer ist oder die Marke dieses Skripts traegt.
 $OutMarker = '.lva-vorinstalliert-nutzlast'
 if ($OutDir.IndexOfAny([char[]]'*?[]') -ge 0) { throw "-OutDir enthaelt Platzhalter (* ? [ ]): $OutDir; bitte einen konkreten Ordner angeben" }
@@ -60,10 +61,41 @@ function Test-IsSameOrAncestor([string]$Ancestor, [string]$Path) {
         $p.StartsWith($a + [System.IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
         $p.StartsWith($a + '/', [StringComparison]::OrdinalIgnoreCase)
 }
+# Physischer Pfad: jede vorhandene Verknuepfung im Pfad (Junction/Symlink, auch verkettet) durch
+# ihr endgueltiges Ziel ersetzen. Nicht aufloesbare Reparse-Punkte bleiben lexikalisch stehen.
+function Resolve-PhysicalPath([string]$Path) {
+    $full = [System.IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
+    for ($round = 0; $round -lt 64; $round++) {
+        $root = [System.IO.Path]::GetPathRoot($full)
+        $parts = @($full.Substring($root.Length).Split([char[]]'\/', [StringSplitOptions]::RemoveEmptyEntries))
+        $cur = $root
+        $changed = $false
+        for ($i = 0; $i -lt $parts.Count; $i++) {
+            $cur = Join-Path $cur $parts[$i]
+            $item = Get-Item -LiteralPath $cur -Force -ErrorAction SilentlyContinue
+            if (-not $item -or -not ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { continue }
+            $target = $null
+            try { $target = [System.IO.Directory]::ResolveLinkTarget($cur, $true) } catch { $target = $null }
+            if (-not $target) { continue }
+            $next = $target.FullName.TrimEnd('\', '/')
+            for ($k = $i + 1; $k -lt $parts.Count; $k++) { $next = Join-Path $next $parts[$k] }
+            $full = [System.IO.Path]::GetFullPath($next).TrimEnd('\', '/')
+            $changed = $true
+            break
+        }
+        if (-not $changed) { return $full }
+    }
+    throw "Verknuepfungen in $Path lassen sich nicht aufloesen (Schleife?)"
+}
 $protected = @($appDir, (Get-Location).ProviderPath, $PSScriptRoot, [Environment]::GetFolderPath('UserProfile'))
 if ([System.IO.Path]::GetPathRoot($outFull).TrimEnd('\', '/') -eq $outFull) { throw "-OutDir ist eine Laufwerkswurzel: $outFull" }
+$outPhysical = Resolve-PhysicalPath $outFull
 foreach ($p in $protected) {
-    if ($p -and (Test-IsSameOrAncestor $outFull $p)) { throw "-OutDir $outFull enthaelt $p; bitte einen eigenen Ausgabeordner angeben" }
+    if (-not $p) { continue }
+    $pPhysical = Resolve-PhysicalPath $p
+    if ((Test-IsSameOrAncestor $outFull $p) -or (Test-IsSameOrAncestor $outPhysical $pPhysical)) {
+        throw "-OutDir $outFull enthaelt $p ($pPhysical); bitte einen eigenen Ausgabeordner angeben"
+    }
 }
 $walk = $outFull
 while ($walk) {

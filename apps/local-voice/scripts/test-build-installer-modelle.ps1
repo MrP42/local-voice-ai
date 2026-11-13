@@ -94,13 +94,56 @@ try {
     $link = Join-Path $tmp 'verknuepfung'
     $linkType = if ($IsWindows) { 'Junction' } else { 'SymbolicLink' }
     $linkOk = $true
-    try { $null = New-Item -ItemType $linkType -Path $link -Target $linkTarget } catch { $linkOk = $false; Write-Host "skip Verknuepfung: $_" }
+    try { $null = New-Item -ItemType $linkType -Path $link -Target $linkTarget } catch {
+        $linkOk = $false
+        # Unter Windows braucht eine Junction keine Sonderrechte: Scheitern ist ein Fehler, kein Skip.
+        if ($IsWindows) { Check 'Verknuepfung anlegen' $false "$_" } else { Write-Host "skip Verknuepfung: $_" }
+    }
     if ($linkOk) {
         $r = Invoke-Build $link $tmp $dummyExe
         Check 'Verknuepfung: Abbruch' ($r.Code -ne 0 -and $r.Err -match 'Verknuepfung') $r.Err
         $r = Invoke-Build (Join-Path $link 'unter') $tmp $dummyExe
         Check 'Verknuepfung im Elternpfad: Abbruch' ($r.Code -ne 0 -and $r.Err -match 'Verknuepfung') $r.Err
         Check 'Verknuepfung: Ziel unversehrt' (Test-Path -LiteralPath (Join-Path $linkTarget 'hinter-link.txt')) 'geloescht'
+    }
+
+    # 5b. Arbeitsverzeichnis unter einer Junction auf das Ziel (Codex R3): Das echte Ziel enthaelt
+    #     die Marke und einen Sentinel; PowerShell steht unter dem Alias, das Prozessverzeichnis
+    #     liegt ausserhalb. Ein isolierter App-Baum (Kopie des Skripts mit transcribe-libs,
+    #     resources, Lizenzdatei) und die Platzhalter-EXE erfuellen alle Voraussetzungen, damit ein
+    #     Stand ohne physischen Vergleich deterministisch bis zur Loeschung kaeme: dann rot.
+    $fixApp = Join-Path $tmp 'fixture-app'
+    $null = [System.IO.Directory]::CreateDirectory((Join-Path $fixApp 'scripts'))
+    foreach ($d in @('src-tauri/transcribe-libs', 'src-tauri/resources', 'src-tauri/nsis')) {
+        $null = [System.IO.Directory]::CreateDirectory((Join-Path $fixApp $d))
+    }
+    [System.IO.File]::WriteAllText((Join-Path $fixApp 'src-tauri/nsis/LIZENZEN-MODELLE.txt'), 'x')
+    Copy-Item -LiteralPath $script -Destination (Join-Path $fixApp 'scripts/build-installer-modelle.ps1')
+    $fixScript = Join-Path $fixApp 'scripts/build-installer-modelle.ps1'
+    $aliasTarget = Join-Path $tmp 'alias-ziel'
+    New-Dir $aliasTarget 'alias-sentinel.txt' -Own
+    $alias = Join-Path $tmp 'alias'
+    $aliasOk = $true
+    try { $null = New-Item -ItemType $linkType -Path $alias -Target $aliasTarget } catch {
+        $aliasOk = $false
+        if ($IsWindows) { Check 'Alias-Junction anlegen' $false "$_" } else { Write-Host "skip Alias: $_" }
+    }
+    if ($aliasOk) {
+        $savedCwd = [Environment]::CurrentDirectory
+        $savedHf = $env:HF_TOKEN
+        $env:HF_TOKEN = $null
+        Push-Location -LiteralPath $alias
+        [Environment]::CurrentDirectory = $tmp
+        $msg = ''
+        try {
+            try { & $fixScript -OutDir $aliasTarget -Exe $dummyExe *> $null } catch { $msg = "$_" }
+        } finally {
+            [Environment]::CurrentDirectory = $savedCwd
+            Pop-Location
+            $env:HF_TOKEN = $savedHf
+        }
+        Check 'Junction-Arbeitsverzeichnis: Abbruch vor Loeschung' ($msg -match 'enthaelt') $msg
+        Check 'Junction-Arbeitsverzeichnis: Sentinel unversehrt' (Test-Path -LiteralPath (Join-Path $aliasTarget 'alias-sentinel.txt')) 'Sentinel geloescht'
     }
 
     # 6. App-Verzeichnis, ein Vorfahr davon und die Laufwerkswurzel: Abbruch (fehlende EXE als Netz).
@@ -122,7 +165,9 @@ try {
     Check 'leerer Ordner: Pruefung bestanden' ($r.Code -ne 0 -and $r.Err -match 'EXE nicht gefunden') $r.Err
 }
 finally {
-    if (Test-Path -LiteralPath (Join-Path $tmp 'verknuepfung')) { (Get-Item -LiteralPath (Join-Path $tmp 'verknuepfung') -Force).Delete() }
+    foreach ($l in @('verknuepfung', 'alias')) {
+        if (Test-Path -LiteralPath (Join-Path $tmp $l)) { (Get-Item -LiteralPath (Join-Path $tmp $l) -Force).Delete() }
+    }
     Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 }
 
