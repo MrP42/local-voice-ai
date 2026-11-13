@@ -279,6 +279,11 @@ fn eindeutige_identitaet(t: &str) -> Option<String> {
     identitaet(t)
 }
 
+/// Version des Fingerabdruck-Schemas. Die App speichert sie mit jeder Bestätigung; eine
+/// Bestätigung mit anderer Version zählt nicht (Altbestand startet unbestätigt).
+pub const FINGERABDRUCK_VERSION: u32 = 2;
+const FINGERABDRUCK_PRAEFIX: &[u8] = b"lva-g9-teilnehmende-v2\n";
+
 /// Fingerabdruck (SHA-256, Hex) einer Teilnehmerliste zusammen mit den wirksamen eigenen
 /// Domänen: Reihenfolge und Schreibweise egal; jede hinzugekommene oder entfernte Person
 /// und jede Änderung der eigenen Domänen ändert ihn. Personen ohne Identität zählen
@@ -311,7 +316,7 @@ pub fn fingerabdruck(
         })
         .collect();
     let mut h = Sha256::new();
-    h.update(b"lva-g9-teilnehmende-v2\n");
+    h.update(FINGERABDRUCK_PRAEFIX);
     h.update(if liste_aus_termin {
         "termin\n"
     } else {
@@ -409,7 +414,8 @@ pub enum Teilnehmerinfo {
     AktuellVollstaendig,
     /// Liste gekürzt oder nur teilweise geladen.
     Unvollstaendig,
-    /// Letzter erfolgreicher Abgleich zu alt oder letzter Abgleich fehlgeschlagen.
+    /// Kein erfolgreicher Abgleich nach dem maßgeblichen Zeitpunkt (z. B. Ende der
+    /// Besprechung), oder der Abgleich steht ganz aus.
     Veraltet,
     /// Kein Nachweis vorhanden (strenger Standard).
     Unbekannt,
