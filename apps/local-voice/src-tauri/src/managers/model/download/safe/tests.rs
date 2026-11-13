@@ -184,3 +184,92 @@ fn a_hard_linked_file_keeps_its_bytes_when_truncation_is_refused() {
     assert_eq!(fs::metadata(&outside).unwrap().len(), SENTINEL.len() as u64);
     assert_eq!(fs::read(&outside).unwrap(), SENTINEL);
 }
+
+// ---- Kennung (128 Bit, fail closed) -------------------------------------------
+
+fn info_with(identity: Option<Identity>) -> FileInfo {
+    FileInfo {
+        identity,
+        links: 1,
+        is_file: true,
+        is_dir: false,
+        reparse: false,
+    }
+}
+
+fn identity(volume: u64, id: u128) -> Option<Identity> {
+    Some(Identity { volume, id })
+}
+
+/// Gleicher Datentraeger, gleiche unteren 64 Bit, verschiedene obere: das sind zwei
+/// Dateien (ReFS vergibt 128-Bit-IDs). Ein Vergleich nur der unteren 64 Bit, wie ihn
+/// `nFileIndexHigh`/`nFileIndexLow` hergeben, haelt sie faelschlich fuer eine.
+#[test]
+fn ids_that_differ_only_in_the_upper_64_bits_are_two_files() {
+    let low = 0x1122_3344_5566_7788_u128;
+    let a = info_with(identity(7, low));
+    let b = info_with(identity(7, (1u128 << 64) | low));
+    assert!(!a.same_file_as(&b));
+    assert!(!b.same_file_as(&a));
+    assert!(a.same_file_as(&info_with(identity(7, low))));
+}
+
+#[test]
+fn another_volume_with_the_same_id_is_another_file() {
+    let a = info_with(identity(1, 42));
+    assert!(!a.same_file_as(&info_with(identity(2, 42))));
+    assert!(a.same_file_as(&info_with(identity(1, 42))));
+}
+
+/// Unbekannt ist nie gleich: weder mit einer bekannten Kennung noch mit einer anderen
+/// unbekannten noch mit sich selbst. Es gibt keinen Rueckfall auf etwas Schwaecheres.
+#[test]
+fn an_unknown_identity_is_never_the_same_file() {
+    let known = info_with(identity(1, 42));
+    let unknown = info_with(None);
+    assert!(!unknown.same_file_as(&known));
+    assert!(!known.same_file_as(&unknown));
+    assert!(!unknown.same_file_as(&unknown));
+    assert!(!same_identity(None, None));
+    assert!(!same_identity(None, identity(1, 42)));
+    assert!(!same_identity(identity(1, 42), None));
+    assert!(same_identity(identity(1, 42), identity(1, 42)));
+}
+
+/// Die Rohwerte von `FileIdInfo`: nur Nullen und nur `0xFF` sind keine Kennung.
+#[test]
+fn an_all_zero_or_all_ones_id_is_no_identity() {
+    assert_eq!(identity_from_raw(5, [0; 16]), None);
+    assert_eq!(identity_from_raw(5, [0xFF; 16]), None);
+    assert_eq!(identity_from_raw(0, [0; 16]), None);
+
+    let mut one_bit = [0u8; 16];
+    one_bit[15] = 1;
+    assert_eq!(identity_from_raw(5, one_bit), identity(5, 1u128 << 120));
+    let mut almost = [0xFFu8; 16];
+    almost[0] = 0xFE;
+    assert_eq!(identity_from_raw(5, almost), identity(5, u128::MAX - 1));
+    let mut low = [0u8; 16];
+    low[0] = 9;
+    assert_eq!(identity_from_raw(5, low), identity(5, 9));
+}
+
+/// Unter Unix kennt jedes Handle seine Kennung; dieselbe Datei ueber zwei Handles ist
+/// dieselbe, zwei Dateien sind es nicht, ein Hardlink ist dieselbe Datei.
+#[cfg(unix)]
+#[test]
+fn handles_report_one_identity_per_file() {
+    let dir = TempDir::new().unwrap();
+    let a = dir.path().join("a");
+    let b = dir.path().join("b");
+    let c = dir.path().join("c");
+    fs::write(&a, b"1").unwrap();
+    fs::write(&b, b"1").unwrap();
+    fs::hard_link(&a, &c).unwrap();
+    let info = |p: &Path| file_info(&File::open(p).unwrap()).unwrap();
+    assert!(info(&a).identity.is_some());
+    assert!(info(&a).same_file_as(&info(&a)));
+    assert!(!info(&a).same_file_as(&info(&b)));
+    assert!(info(&a).same_file_as(&info(&c)));
+    assert_eq!(info(&a).links, 2);
+}

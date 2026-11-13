@@ -24,10 +24,17 @@ fn skip_requested() -> bool {
     std::env::var(SKIP_VAR).is_ok_and(|v| v == "1")
 }
 
-/// Meldet ein erlaubtes Ueberspringen (sichtbar auch ohne `--nocapture`).
+/// Meldet ein erlaubtes Ueberspringen auf dem echten stderr: `eprintln!` wuerde von
+/// libtest bei bestandenen Tests verschluckt (nur mit `--nocapture` sichtbar), ein
+/// uebersprungener Nachweis soll aber immer sichtbar sein (gleicher Weg wie `report`
+/// in `nemotron::engine::model_tests`).
 #[cfg(windows)]
 fn skipped(what: &str, why: &std::io::Error) {
-    eprintln!("UEBERSPRUNGEN: {what} nicht anlegbar ({why}); {SKIP_VAR}=1 ist gesetzt");
+    use std::io::Write;
+    let _ = writeln!(
+        std::io::stderr(),
+        "UEBERSPRUNGEN: {what} nicht anlegbar ({why}); {SKIP_VAR}=1 ist gesetzt"
+    );
 }
 
 /// Ein Link auf einen Ordner, der keine Rechte braucht: unter Unix ein Symlink,

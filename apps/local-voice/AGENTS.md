@@ -110,9 +110,22 @@ of one entry that differ only in case); a test in `catalog/mod.rs` enforces it. 
 only writes plain files inside the model folder (links, junctions, files with several names and
 foreign files are refused, error `unsafe_path`). Models with several files (Nemotron
 diarization) go further: provisioning and loading work through a directory handle of the model
-folder opened before the first network access (`download/anchor.rs`), and the loader builds the
-ONNX session from the very bytes it hashed (graph and weights read once each, session created
-from memory), so a swap between check and use cannot change what runs.
+folder opened before the first network access (`download/anchor.rs`; every folder of the chain
+is opened without following links and compared with its name by a 128-bit file ID, and an
+unknown ID counts as a mismatch), and the loader builds the ONNX session from the very bytes it
+hashed (graph and weights read once each, session created from memory), so a swap between check
+and use cannot change what runs.
+
+Threat model of that path. Integrity is guaranteed only by the loader
+(`OnnxBlockModel::load_verified`). A provisioning `Done` is a hint, not a promise: a finished
+provisioning attempt whose read checks succeeded, with no guarantee for what is on disk
+afterwards and no joint snapshot of the pair. The boundary, in these words: „Keine Umlenkung von
+App-Operationen auf unabhängige fremde Dateiobjekte. Zusätzliche Namen und
+Inhaltsmanipulationen an App-Dateiobjekten durch gleichberechtigte Prozesse desselben Benutzers
+sind ausgeklammert.“ Link-count checks are point-in-time checks, no proof of origin; the trust
+assumption is that a regular, singly linked `.partial` found in the model folder is an app file.
+Any other consumer of these files, and any package export, must verify the bytes it actually
+uses itself. The UI flag `model_ready` only compares file sizes.
 
 ## Versioning and releases
 

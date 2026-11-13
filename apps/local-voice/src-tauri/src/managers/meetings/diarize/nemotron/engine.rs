@@ -111,11 +111,12 @@ fn size_message(path: &Path, actual: u64, expected: u64) -> String {
     )
 }
 
-/// Ein Puffer, den ONNX Runtime fuer die Lebensdauer der Sitzung referenziert (die
-/// Gewichte als externe Initialisierer im Speicher; `commit_from_memory` behaelt sie
-/// nicht, ONNX Runtime haelt nur den Zeiger). Der Puffer gehoert diesem Wert allein
-/// und wird nie veraendert; er wird erst nach der Sitzung freigegeben (siehe die
-/// Feldreihenfolge in [`OnnxBlockModel`]).
+/// Der Puffer mit den geprueften Gewichten, aus dem die Sitzung entsteht (externe
+/// Initialisierer im Speicher). ONNX Runtime kopiert die Daten beim Sitzungsbau. Der
+/// Puffer bleibt trotzdem bis zum Ende der Sitzung liegen (vorsichtshalber, falls eine
+/// Referenz bleibt) und haelt damit zusaetzlich rund 121 MB (die Gewichte von
+/// Nemotron) im Speicher. Er gehoert diesem Wert allein, wird nie veraendert und wird
+/// erst nach der Sitzung freigegeben (siehe die Feldreihenfolge in [`OnnxBlockModel`]).
 struct Pinned {
     ptr: *mut [u8],
 }

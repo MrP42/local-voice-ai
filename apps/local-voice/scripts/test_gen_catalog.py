@@ -303,6 +303,9 @@ CARD = {
 }
 
 
+_ABSENT = object()
+
+
 class FakeHub:
     """Repo list, listings and header reads of a Hugging Face org, all in memory."""
 
@@ -313,6 +316,8 @@ class FakeHub:
         self.model_info_calls = []
         self.file_sha = {}      # filename -> value the listing reports instead of the real hash
         self.file_size = {}     # filename -> value the listing reports instead of the real size
+        self.card_caps = {}     # `transcribe_cpp` fields the card carries instead of CARD's;
+                                # a key mapped to `_ABSENT` is left out of the card
 
     def add(self, name, sha, modified, header=None, files=None):
         header = header if header is not None else asr_gguf()
@@ -323,6 +328,15 @@ class FakeHub:
         repo = f"{gc.ORG}/{name}-gguf"
         self.repos[repo] = types.SimpleNamespace(sha=sha, modified=modified, files=files)
         return repo
+
+    def card(self):
+        card = copy.deepcopy(CARD)
+        for key, value in self.card_caps.items():
+            if value is _ABSENT:
+                card["transcribe_cpp"].pop(key, None)
+            else:
+                card["transcribe_cpp"][key] = value
+        return card
 
     def api(self):
         import hashlib
@@ -341,7 +355,7 @@ class FakeHub:
             ]
             return types.SimpleNamespace(
                 sha=r.sha,
-                card_data=types.SimpleNamespace(to_dict=lambda: copy.deepcopy(CARD)),
+                card_data=types.SimpleNamespace(to_dict=self.card),
                 siblings=siblings, tags=[], last_modified=r.modified)
 
         return types.SimpleNamespace(list_models=list_models, model_info=model_info)
@@ -740,6 +754,42 @@ class HubRuns(unittest.TestCase):
                 self.hub.file_size = {name: size}
                 self.assert_aborts_without_touching_the_file()
 
+    def test_a_file_size_beyond_u64_stops_the_run_even_with_a_long_enough_header(self):
+        # `fakeasr` has a 100000-byte header and is the file whose header is probed: the
+        # header read would be fine, only the size is wrong. 2**64-1 is the last valid one.
+        name = "fakeasr-Q8_0.gguf"
+        self.hub.file_size = {name: gc.U64_MAX}
+        self.run_main()
+        sizes = {f["filename"]: f["size_bytes"]
+                 for m in json.loads(self.read())["models"] if gc.is_generated(m) for f in m["files"]}
+        self.assertEqual(sizes[name], 2**64 - 1)
+        for size in (2**64, 2**64 + 1, 2**100):
+            with self.subTest(size=size):
+                self.hub.file_size = {name: size}
+                self.assert_aborts_without_touching_the_file(sentinel=b"SENTINEL-BYTES")
+
+    def test_a_capability_flag_that_is_not_a_bool_stops_the_run(self):
+        for flag in gc.CAPABILITY_FLAGS:
+            for value in ("false", "true", "", "0", 0, 1, 1.0, None, [], {}):
+                with self.subTest(flag=flag, value=value):
+                    self.hub.card_caps = {flag: value}
+                    self.assert_aborts_without_touching_the_file(sentinel=b"SENTINEL-BYTES")
+
+    def test_a_timestamps_field_that_is_not_text_stops_the_run(self):
+        for value in (5, True, None, "", [], {}):
+            with self.subTest(value=value):
+                self.hub.card_caps = {"timestamps": value}
+                self.assert_aborts_without_touching_the_file(sentinel=b"SENTINEL-BYTES")
+
+    def test_real_bools_and_absent_flags_pass_and_land_in_the_output_as_they_are(self):
+        self.hub.card_caps = {"streaming": False, "translate": True, "lang_detect": _ABSENT,
+                              "timestamps": _ABSENT}
+        self.run_main()
+        caps = by_id(json.loads(self.read())["models"])[f"{gc.ORG}/other-gguf"]["capabilities"]
+        self.assertEqual(caps, {"streaming": False, "translate": True, "lang_detect": False,
+                                "timestamps": "none"})
+        self.assertTrue(all(type(caps[k]) is bool for k in gc.CAPABILITY_FLAGS))
+
     def test_a_valid_run_still_passes_all_the_gates(self):
         self.run_main()
         for m in json.loads(self.read())["models"]:
@@ -778,6 +828,26 @@ class Forms(unittest.TestCase):
         for v in (0, -3, True, False, 1.0, "1", None):
             self.assertFalse(gc.is_size(v), repr(v))
 
+    def test_a_size_is_at_most_the_largest_u64(self):
+        self.assertTrue(gc.is_size(2**64 - 1))
+        for v in (2**64, 2**64 + 1, 10**30):
+            self.assertFalse(gc.is_size(v), repr(v))
+
+    def test_capability_fields_take_real_bools_only(self):
+        ok = gc.capability_fields({"streaming": True, "translate": False}, "r")
+        self.assertEqual(ok, {"streaming": True, "translate": False, "lang_detect": False,
+                              "timestamps": "none"})
+        self.assertEqual(list(ok), ["streaming", "translate", "lang_detect", "timestamps"])
+        for card in ({"streaming": "false"}, {"translate": 1}, {"lang_detect": None},
+                     {"streaming": 0, "translate": "x"}, {"timestamps": 3}, {"timestamps": ""}):
+            with self.subTest(card=card), self.assertRaises(ValueError) as ctx:
+                gc.capability_fields(card, "org/r")
+            self.assertIn("org/r", str(ctx.exception))
+        with self.assertRaises(ValueError) as ctx:
+            gc.capability_fields({"streaming": "false", "translate": 1}, "r")
+        self.assertIn("streaming", str(ctx.exception))
+        self.assertIn("translate", str(ctx.exception))
+
     def test_check_header_wants_both_labels_as_text(self):
         ok = {"general.architecture": "whisper", "general.size_label": "0.6B"}
         gc.check_header(ok)
@@ -800,6 +870,26 @@ class Forms(unittest.TestCase):
             gc.check_entry(entry)
         for part in ("revision", "architecture", "parameters", "sha256", "default_quant"):
             self.assertIn(part, str(ctx.exception))
+
+    def test_check_entry_checks_sizes_up_to_u64_and_the_capability_fields(self):
+        base = [m for m in checked_in()["models"] if gc.is_generated(m)][0]
+        for mutate, part in (
+            (lambda e: e["files"][0].update(size_bytes=2**64), "size_bytes"),
+            (lambda e: e["capabilities"].update(streaming="false"), "capabilities.streaming"),
+            (lambda e: e["capabilities"].update(translate=1), "capabilities.translate"),
+            (lambda e: e["capabilities"].update(lang_detect=None), "capabilities.lang_detect"),
+            (lambda e: e["capabilities"].update(timestamps=5), "capabilities.timestamps"),
+            (lambda e: e["capabilities"].pop("streaming"), "capabilities.streaming"),
+            (lambda e: e.update(capabilities=None), "capabilities"),
+        ):
+            entry = copy.deepcopy(base)
+            mutate(entry)
+            with self.subTest(part=part), self.assertRaises(ValueError) as ctx:
+                gc.check_entry(entry)
+            self.assertIn(part, str(ctx.exception))
+        edge = copy.deepcopy(base)
+        edge["files"][0]["size_bytes"] = 2**64 - 1
+        gc.check_entry(edge)
 
     def test_every_generated_entry_of_the_checked_in_catalog_passes(self):
         generated = [m for m in checked_in()["models"] if gc.is_generated(m)]

@@ -29,7 +29,8 @@
 //!   dieselbe Luecke (sie belegt nur, dass die Datei einmal gut war) und liesse
 //!   Altbestaende ohne Marke als „nicht installiert“ erscheinen;
 //! - Reihenfolge: die Datei, die der Motor oeffnet (die erste des Eintrags),
-//!   kommt zuletzt; sie liegt nur da, wenn alle anderen verifiziert liegen. Muss
+//!   kommt zuletzt; sie liegt nur da, wenn alle anderen zuvor erfolgreich geprueft
+//!   wurden. Muss
 //!   eine andere Datei ersetzt werden, wird sie vorher zurueckgezogen (nicht
 //!   geloescht, sondern als `.partial` abgelegt, damit eine gueltige Datei nicht
 //!   neu geladen werden muss), der Motor bekommt also nie einen Graphen neben
@@ -37,19 +38,25 @@
 //!   scheitert. Die Reihenfolge der Umbenennungen ist keine Sicherheitsgrenze
 //!   mehr (das ist die Pruefung beim Laden, siehe unten), sie haelt nur den
 //!   Normalfall sauber;
-//! - Erfolg nur nach genau dem Weg, den der Lader geht: die Pruefung vor dem
-//!   Erfolg ([`confirm`], und ebenso die der vorhandenen Dateien am Anfang) ist
-//!   `anchor::check_set`, dieselbe Funktion, aus der der Lader seine Bytes bezieht:
-//!   alle Dateien des Eintrags zugleich als Handle offen, Groesse und SHA-256 ueber
-//!   die Handles, danach Name gegen Handle verglichen (ein Tausch durch eine andere
-//!   Datei gleicher Groesse ist `Changed`, nie Erfolg). Mismatch, Abbruch oder
-//!   Lesefehler: kein Erfolg, Fehler `verification_failed` bzw. der Grund, der Graph
-//!   wird zurueckgezogen. Zuletzt liegt der Ordner noch dort, wohin der Pfad fuehrt
-//!   (`Anchor::still_at`), sonst `unsafe_path`. Ein Tausch NACH dem Erfolg
-//!   (zwischen Bereitstellen und Laden) bleibt moeglich und ist unschaedlich: der
-//!   Lader (`nemotron::engine::OnnxBlockModel::load_verified`) liest die Bytes selbst
-//!   ueber Handles, prueft sie gegen den Katalog und baut die Sitzung aus genau diesen
-//!   Bytes im Speicher, ohne einen Pfad ein zweites Mal zu oeffnen;
+//! - Bedeutung von `Done` ([`Fetch::Done`]): ein abgeschlossener Bereitstellungsversuch
+//!   mit erfolgreichen Lesepruefungen. Das ist ein Hinweis und KEINE Integritaetszusage
+//!   fuer den Plattenbestand danach und keine gemeinsame Momentaufnahme des Paars (die
+//!   Dateien werden nacheinander gelesen). Die Pruefung vor dem Erfolg ([`confirm`], und
+//!   ebenso die der vorhandenen Dateien am Anfang) ist `anchor::check_set`: alle Dateien
+//!   des Eintrags zugleich als Handle offen, Groesse und SHA-256 ueber die Handles,
+//!   danach Name gegen Handle verglichen (ein Tausch durch eine andere Datei gleicher
+//!   Groesse ist `Changed`, nie Erfolg). Mismatch, Abbruch oder Lesefehler: kein Erfolg,
+//!   Fehler `verification_failed` bzw. der Grund, der Graph wird zurueckgezogen. Zuletzt
+//!   liegt der Ordner noch dort, wohin der Pfad fuehrt (`Anchor::still_at`), sonst
+//!   `unsafe_path`. Nicht erkannt wird, was `check_set` nicht sehen kann: eine
+//!   In-place-Aenderung einer schon gelesenen Datei (gleicher Inode, gleiche Groesse)
+//!   und jede Aenderung NACH dem Erfolg (zwischen Bereitstellen und Laden);
+//! - Integritaet garantiert ausschliesslich der Lader
+//!   (`nemotron::engine::OnnxBlockModel::load_verified`): er liest die Bytes selbst ueber
+//!   Handles, prueft sie gegen den Katalog und baut die Sitzung aus genau diesen Bytes im
+//!   Speicher, ohne einen Pfad ein zweites Mal zu oeffnen. Jeder weitere Verbraucher der
+//!   Dateien und jeder Paketexport muss die Bytes, die er tatsaechlich verwendet, selbst
+//!   verifizieren;
 //! - Verknuepfungen und Ordnertausch: das Bereitstellen oeffnet VOR dem ersten
 //!   Netzzugriff die Kette Datenwurzel -> Modellordner Komponente fuer Komponente
 //!   ohne Link-Folgen und haelt den Modellordner als offenes Handle bis zum Ende;
@@ -57,14 +64,21 @@
 //!   ueber dieses Handle und einen Dateinamen (`download::anchor`), nie ueber einen
 //!   Pfad. Wird der Ordner im Dateisystem durch einen Link auf einen fremden Ordner
 //!   ersetzt, landen alle Operationen weiter im alten Ordner (unter Windows laesst
-//!   sich der Ordner nicht ersetzen, solange das Handle offen ist), im fremden
-//!   Ordner entsteht, aendert und verschwindet nichts. Ein Symlink (unter Windows
-//!   jeder Reparse-Punkt, also auch Junctions) als Ziel oder als `.partial`, ein
+//!   sich der Ordner nicht ersetzen, solange das Handle offen ist). Jeder Ordner der
+//!   Kette wird nach dem Oeffnen gegen seinen Namen verglichen (Kennung), ein im
+//!   letzten Moment durch einen Link ersetzter Ordner ist abgelehnt. Ein Symlink (unter
+//!   Windows jeder Reparse-Punkt, also auch Junctions) als Ziel oder als `.partial`, ein
 //!   Ordner dazwischen, der ein Link ist, eine Datei mit mehreren Namen (Hardlink,
 //!   unter Windows `nNumberOfLinks`) als Teildatei oder etwas, das keine normale
 //!   Datei ist, wird mit dem Fehler `unsafe_path` abgelehnt, bevor geschrieben,
 //!   abgeschnitten, umbenannt oder geloescht wird. Die Wurzel selbst darf ein Link
-//!   sein (verschobener Datenordner). Ein Katalogwert, der aus dem Modellordner
+//!   sein (verschobener Datenordner). Die Grenze, in diesen Worten: „Keine Umlenkung
+//!   von App-Operationen auf unabhängige fremde Dateiobjekte. Zusätzliche Namen und
+//!   Inhaltsmanipulationen an App-Dateiobjekten durch gleichberechtigte Prozesse
+//!   desselben Benutzers sind ausgeklammert.“ Linkzahlpruefungen sind Momentpruefungen,
+//!   kein Herkunftsnachweis; Vertrauensannahme: eine vorgefundene reguläre, einfach
+//!   verlinkte `.partial` im Modellordner gilt als App-Datei (Genaueres im Kopf von
+//!   `download::anchor`). Ein Katalogwert, der aus dem Modellordner
 //!   hinausfuehren koennte (absoluter Pfad, `..`, Backslash, Laufwerksbuchstabe,
 //!   Windows-Geraetename, zwei Namen nur in der Schreibweise verschieden), ergibt
 //!   `catalog_invalid`;
@@ -91,6 +105,9 @@ use crate::managers::model::ModelManager;
 pub struct DiarizationModelStatus {
     /// Katalogkennung (fuer die Fortschrittsereignisse `model-download-*`).
     pub model_id: String,
+    // Nur Anzeige: alle Dateien liegen mit der Groesse aus dem Katalog da. Es wurde
+    // nichts gelesen; das ist kein Integritaetsnachweis. (Bewusst kein Doc-Kommentar:
+    // der landet in `bindings.ts`.)
     pub model_ready: bool,
     pub downloading: bool,
     pub size_mb: u32,
@@ -163,8 +180,9 @@ fn net_msg(e: &anyhow::Error) -> String {
 
 /// Bereit (fuer die Anzeige) heisst: alle Dateien des Eintrags liegen an ihrem
 /// Platz als normale Dateien (kein Link) und haben genau die Groesse aus dem
-/// Katalog. Nur `stat`, kein Lesen der Inhalte; die volle Pruefung (SHA-256)
-/// macht [`provision`].
+/// Katalog. Nur `stat`, kein Lesen der Inhalte, also KEIN Integritaetsnachweis; die
+/// Pruefung mit SHA-256 macht [`provision`] (selbst nur ein Hinweis, siehe
+/// [`Fetch::Done`]), die Integritaetszusage der Lader.
 fn looks_complete(targets: &[(TtsCatalogFile, PathBuf)]) -> bool {
     !targets.is_empty()
         && targets
@@ -198,6 +216,10 @@ pub fn meeting_diarization_model_status(app: AppHandle) -> Result<DiarizationMod
 /// Teildatei bleibt fuer die Fortsetzung).
 #[derive(Debug, PartialEq, Eq)]
 enum Fetch {
+    /// Ein abgeschlossener Bereitstellungsversuch mit erfolgreichen Lesepruefungen
+    /// (`confirm`, `Anchor::still_at`). Ein Hinweis, keine Integritaetszusage fuer den
+    /// Plattenbestand danach und keine gemeinsame Momentaufnahme des Paars; den
+    /// Nachweis fuehrt der Lader.
     Done,
     Cancelled,
 }
@@ -401,7 +423,9 @@ async fn fetch_one(
     }
 }
 
-/// Stellt alle Dateien des Eintrags verifiziert bereit.
+/// Stellt alle Dateien des Eintrags bereit: jede Datei wird vor dem Umbenennen ueber
+/// das Ziel nach Groesse und SHA-256 geprueft. Der Erfolg ([`Fetch::Done`]) ist ein
+/// Hinweis, keine Integritaetszusage fuer den Bestand danach (siehe Modulkopf).
 ///
 /// 0. Die Kette von `root` bis zum Ordner der Ziele wird VOR dem ersten Netzzugriff
 ///    Komponente fuer Komponente ohne Link-Folgen geoeffnet (fehlende Ordner werden
@@ -417,7 +441,8 @@ async fn fetch_one(
 ///    (fortsetzbar, Groesse und SHA-256 aus dem Katalog geprueft) und erst
 ///    dann ueber das Ziel umbenannt; die erste Datei kommt zuletzt.
 /// 4. Zuletzt pruefen alle Dateien noch einmal ([`confirm`]); nur dann Erfolg, und
-///    nur wenn der Ordner noch dort liegt, wohin der Pfad fuehrt.
+///    nur wenn der Ordner noch dort liegt, wohin der Pfad fuehrt. Das belegt die
+///    Lesepruefungen dieses Versuchs, nicht den Bestand danach.
 async fn provision(
     root: &Path,
     model_id: &str,
@@ -1048,7 +1073,7 @@ mod tests {
         assert_eq!(std::fs::read(&files[0].1).unwrap(), GRAPH);
         assert_eq!(std::fs::read(&files[1].1).unwrap(), &WEIGHTS[..5]);
     }
-    // ---- Ende nur mit verifiziertem Paar ------------------------------------
+    // ---- Ende nur nach bestandener Paarpruefung (ein Hinweis, kein Nachweis) ----
 
     /// Gewichte gleicher Groesse mit falschen Bytes: nur die SHA-256 sieht es.
     fn same_size_wrong() -> Vec<u8> {
@@ -1327,6 +1352,8 @@ mod tests {
 
     mod links {
         use super::*;
+        use crate::managers::meetings::diarize::nemotron::engine::OnnxBlockModel;
+        use crate::managers::meetings::diarize::DiarizeError;
         use crate::managers::model::download::linktest::{
             folder_link, is_link, swap_must_have_happened, symlink_dir, symlink_file,
         };
@@ -1714,11 +1741,13 @@ mod tests {
         }
 
         /// Die Teildatei wird waehrend des Abrufs durch eine andere Datei ersetzt (das
-        /// Handle haelt die alte, der Name zeigt auf die neue), beim Abruf der Gewichte
-        /// wie beim Abruf des Graphen. Das darf nie als Erfolg gelten, und die fremde Datei
-        /// darf nicht unter dem Katalognamen landen.
+        /// Schreibhandle bleibt beim urspruenglichen Inode, der Name zeigt auf die neue
+        /// Datei), beim Abruf der Gewichte wie beim Abruf des Graphen. Das darf nie als
+        /// Erfolg gelten, die Ersatzdatei bleibt Byte fuer Byte unveraendert (es wird nie
+        /// in sie hineingeschrieben) und darf nicht unter dem Katalognamen landen.
         #[tokio::test]
-        async fn replacing_the_partial_file_mid_download_is_no_success() {
+        async fn replacing_the_partial_file_mid_download_is_no_success_and_leaves_the_replacement_untouched(
+        ) {
             const REPLACEMENT: &[u8] = b"ersatz-statt-teildatei";
             for route in ["/model.onnx_data", "/model.onnx"] {
                 let dir = tempfile::tempdir().unwrap();
@@ -1848,14 +1877,16 @@ mod tests {
 
         // ---- Die letzte Pruefung ist genau der Weg des Laders -----------------------
 
-        /// Sperre nach der Pruefung des Graphen (`Point::Checked(0)`): getauscht wird
-        /// einmal in die Datei hinein (gleich grosse falsche Bytes), einmal durch eine
-        /// andere Datei unter demselben Namen. Beides ist kein Erfolg: der Graph liegt
-        /// nicht am Ziel, die Anzeige sagt "nicht bereit". Unter Windows laesst sich eine
-        /// geoeffnete Datei nicht tauschen; dann gibt es den Tausch nicht und die
+        /// Nach der Pruefung des Graphen (`Point::Checked(0)`) werden die noch
+        /// UNGEPRUEFTEN Gewichte getauscht: einmal in die Datei hinein (gleich grosse
+        /// falsche Bytes), einmal durch eine andere Datei unter demselben Namen. Beides
+        /// ist kein Erfolg: der Graph liegt nicht am Ziel, die Anzeige sagt "nicht
+        /// bereit". (Den bereits GEPRUEFTEN Graphen tauscht
+        /// `an_in_place_overwrite_of_the_checked_graph_...`.) Unter Windows laesst sich
+        /// eine geoeffnete Datei nicht tauschen; dann gibt es den Tausch nicht und die
         /// Bereitstellung gelingt.
         #[tokio::test]
-        async fn a_same_size_swap_after_the_graph_check_is_no_success() {
+        async fn a_same_size_swap_of_the_not_yet_checked_weights_is_no_success() {
             for by_rename in [false, true] {
                 let dir = tempfile::tempdir().unwrap();
                 let server = serve(both_routes()).await;
@@ -1902,6 +1933,124 @@ mod tests {
                 } else {
                     swap_must_have_happened();
                     assert_eq!(out.unwrap(), Fetch::Done);
+                }
+            }
+        }
+
+        /// Die Wanted-Liste des Laders fuer ein Paar aus Graph und Gewichten.
+        fn loader_wanted(files: &[(TtsCatalogFile, PathBuf)]) -> [Wanted<'_>; 2] {
+            fn one(target: &(TtsCatalogFile, PathBuf)) -> Wanted<'_> {
+                Wanted {
+                    name: &target.0.filename,
+                    size: target.0.size_bytes,
+                    sha256: target.0.sha256.as_deref(),
+                }
+            }
+            [one(&files[0]), one(&files[1])]
+        }
+
+        /// Der Lader (Speicherweg) auf dem Ordner; die Fehlermeldung, wenn er ablehnt.
+        /// Er lehnt vor dem Sitzungsbau ab (die Fake-Bytes sind kein ONNX), die Meldung
+        /// nennt eine Datei, aber nie einen Pfad.
+        fn loader_refusal(dir: &Path, files: &[(TtsCatalogFile, PathBuf)]) -> String {
+            let anchor = anchor_of(dir);
+            match OnnxBlockModel::load_verified(&anchor, loader_wanted(files), dir, 1) {
+                Err(DiarizeError::Load(msg)) => {
+                    assert!(
+                        !msg.contains(dir.to_str().unwrap()),
+                        "Pfad in der Meldung: {msg}"
+                    );
+                    msg
+                }
+                Err(other) => panic!("falscher Fehler: {other:?}"),
+                Ok(_) => panic!("der Lader haette ablehnen muessen"),
+            }
+        }
+
+        /// Beleg der Loader-Garantie: ein gueltiges Paar wird bereitgestellt (`Done`),
+        /// danach wird eine der Dateien IN PLACE gleich gross ueberschrieben. Das merkt
+        /// die Bereitstellung nicht mehr (sie ist vorbei), der naechste Lader aber lehnt
+        /// ab, vor dem Sitzungsbau, per SHA-256 ueber die Bytes, die er selbst gelesen hat.
+        #[tokio::test]
+        async fn after_done_an_in_place_overwrite_is_refused_by_the_next_loader() {
+            for victim in [0usize, 1] {
+                let dir = tempfile::tempdir().unwrap();
+                let server = serve(both_routes()).await;
+                let files = rebase(two_files(&server, None), dir.path());
+
+                let out = provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
+                    .await
+                    .unwrap();
+                assert_eq!(out, Fetch::Done);
+                assert!(looks_complete(&files));
+
+                let same_size = vec![b'y'; files[victim].0.size_bytes as usize];
+                std::fs::write(&files[victim].1, &same_size).unwrap();
+                assert!(
+                    looks_complete(&files),
+                    "die Anzeige sieht nur die Groesse und bleibt auf bereit"
+                );
+
+                let msg = loader_refusal(dir.path(), &files);
+                assert!(msg.contains("SHA-256"), "{msg}");
+                assert!(msg.contains(&files[victim].0.filename), "{msg}");
+            }
+        }
+
+        /// Dokumentiertes Verhalten der Bereitstellung, ehrlich festgehalten: die Datei
+        /// wird IN PLACE (gleicher Inode, gleiche Groesse) ueberschrieben, NACHDEM die
+        /// Pruefung sie gelesen hat (`Point::Checked(0)`, der Graph). Die Pruefung kann
+        /// das nicht sehen (Handle und Name zeigen auf dieselbe Datei), die Bereitstellung
+        /// meldet `Done`: ein Hinweis, keine Integritaetszusage. Der naechste Lader
+        /// lehnt den Graphen ab. Einmal im Bestandsweg (alle Dateien liegen schon da, die
+        /// Pruefung am Anfang), einmal in der Abschlusspruefung nach einer frischen
+        /// Installation. Unter Windows scheitert das Schreiben (die Pruefung haelt die
+        /// Datei mit `FILE_SHARE_READ` allein offen); dann gibt es die Aenderung nicht.
+        #[tokio::test]
+        async fn an_in_place_overwrite_of_the_checked_graph_is_done_here_but_refused_by_the_loader()
+        {
+            for existing in [true, false] {
+                let dir = tempfile::tempdir().unwrap();
+                let server = serve(both_routes()).await;
+                let files = rebase(two_files(&server, None), dir.path());
+                if existing {
+                    install(&files);
+                }
+                let graph = files[0].1.clone();
+                let changed = Arc::new(AtomicBool::new(false));
+                let seen = Arc::new(AtomicUsize::new(0));
+                let guard = anchor::hook::set(dir.path(), {
+                    let (changed, seen) = (changed.clone(), seen.clone());
+                    move |point| {
+                        if point != anchor::Point::Checked(0) {
+                            return;
+                        }
+                        if seen.fetch_add(1, Ordering::SeqCst) != 0 {
+                            return;
+                        }
+                        let done = std::fs::write(&graph, vec![b'y'; GRAPH.len()]);
+                        changed.store(done.is_ok(), Ordering::SeqCst);
+                    }
+                });
+
+                let out = provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {})
+                    .await
+                    .unwrap();
+                drop(guard);
+
+                assert_eq!(out, Fetch::Done, "existing={existing}");
+                assert_eq!(
+                    seen.load(Ordering::SeqCst),
+                    1,
+                    "der Graph wird genau einmal gelesen (existing={existing})"
+                );
+                if changed.load(Ordering::SeqCst) {
+                    assert_eq!(std::fs::read(&files[0].1).unwrap(), vec![b'y'; GRAPH.len()]);
+                    let msg = loader_refusal(dir.path(), &files);
+                    assert!(msg.contains("SHA-256"), "{msg}");
+                    assert!(msg.contains("model.onnx"), "{msg}");
+                } else {
+                    swap_must_have_happened();
                 }
             }
         }

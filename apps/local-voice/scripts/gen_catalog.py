@@ -187,9 +187,26 @@ def _matches(rx, value):
     return type(value) is str and rx.fullmatch(value) is not None
 def is_commit(value): return _matches(COMMIT_RE, value)
 def is_sha256(value): return _matches(SHA256_RE, value)
+# `QuantFile.size_bytes` is a `u64` in Rust: a larger number would not load at all.
+U64_MAX = 2**64 - 1
 def is_size(value):
-    """An int above zero; `type(...) is int` keeps True/False out."""
-    return type(value) is int and value > 0
+    """An int in 1..=2**64-1 (the `u64` it is read into, never 0); `type(...) is int` keeps
+    True/False out."""
+    return type(value) is int and 0 < value <= U64_MAX
+
+# Capability flags are exactly `bool` on the card; anything else (`"false"`, 0, 1, None) is
+# a broken card, not a value to coerce. An absent flag means False. `timestamps` is text.
+CAPABILITY_FLAGS = ("streaming", "translate", "lang_detect")
+def capability_fields(card, repo):
+    """The `capabilities` dict of an entry from the card's `transcribe_cpp` block (plus the
+    OVERRIDES). Pure; raises ValueError naming each field of the wrong type."""
+    bad = [k for k in CAPABILITY_FLAGS if k in card and type(card[k]) is not bool]
+    stamps = card.get("timestamps", "none")
+    if type(stamps) is not str or not stamps:
+        bad.append("timestamps")
+    if bad:
+        raise ValueError(f"{repo}: capability field(s) of the wrong type: {', '.join(bad)}")
+    return {**{k: card.get(k, False) for k in CAPABILITY_FLAGS}, "timestamps": stamps}
 
 class _WindowEnd(Exception):
     """The metadata section runs past the bytes that were read (tokenizer arrays): normal."""
@@ -363,8 +380,7 @@ def build(repo):
     q8 = next((f for f in files if "Q8" in f["quant"]), files[-1])
     gg = probe_header(repo, info.sha, q8["filename"], q8["size_bytes"])
 
-    caps = {"streaming": bool(b.get("streaming")), "translate": bool(b.get("translate")),
-            "lang_detect": bool(b.get("lang_detect")), "timestamps": b.get("timestamps", "none")}
+    caps = capability_fields(b, repo)
     ryz = b.get("rtf_ryzen_4750u") or {};  rtf = ryz.get("vulkan", ryz.get("cpu"))
     eval_set, werd = pick_wer(b);  hw, hwq = headline_wer(werd)
 
@@ -430,6 +446,13 @@ def check_entry(entry):
         bad.append("architecture")
     if not _matches(SIZE_LABEL_RE, entry.get("parameters")):
         bad.append("parameters")
+    caps = entry.get("capabilities")
+    if not isinstance(caps, dict):
+        bad.append("capabilities")
+    else:
+        bad.extend(f"capabilities.{k}" for k in CAPABILITY_FLAGS if type(caps.get(k)) is not bool)
+        if type(caps.get("timestamps")) is not str or not caps["timestamps"]:
+            bad.append("capabilities.timestamps")
     files = entry.get("files")
     if not isinstance(files, list) or not files:
         bad.append("files")

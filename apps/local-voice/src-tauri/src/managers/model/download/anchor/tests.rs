@@ -1,5 +1,7 @@
 use super::*;
-use crate::managers::model::download::linktest::{folder_link, is_link, symlink_dir, symlink_file};
+use crate::managers::model::download::linktest::{
+    folder_link, is_link, swap_must_have_happened, symlink_dir, symlink_file,
+};
 use std::fmt::Debug;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -410,6 +412,128 @@ fn still_at_notices_another_folder_with_the_same_name() {
     assert_refused(anchor.still_at());
 }
 
+// ---- Ordner im Fenster vor dem Oeffnen durch einen Link ersetzt --------------------
+
+/// Ein Ordner-Link in beiden Formen: ohne Rechte (Unix: Symlink, Windows: Junction)
+/// und, nur unter Windows, als echter Symlink (rot ohne Rechte, ausser
+/// `LVA_SKIP_SYMLINK_TESTS=1`). `false`: nicht angelegt (erlaubtes Ueberspringen).
+fn link_dir(real_symlink: bool, link: &Path, target: &Path) -> bool {
+    if real_symlink {
+        symlink_dir(link, target)
+    } else {
+        folder_link(link, target);
+        true
+    }
+}
+
+/// Die Formen, die dieses System kennt: unter Unix ist beides derselbe Symlink.
+fn link_forms() -> &'static [bool] {
+    if cfg!(windows) {
+        &[false, true]
+    } else {
+        &[false]
+    }
+}
+
+/// Alle Dateien unter `dir` mit Inhalt, sortiert (Ordner mit `None`): ein Abbild, das
+/// jede angelegte, geaenderte oder geloeschte Datei verraet.
+fn snapshot(dir: &Path) -> Vec<(String, Option<Vec<u8>>)> {
+    fn walk(base: &Path, dir: &Path, out: &mut Vec<(String, Option<Vec<u8>>)>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let rel = path
+                .strip_prefix(base)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            if path.is_dir() {
+                out.push((rel, None));
+                walk(base, &path, out);
+            } else {
+                out.push((rel, Some(std::fs::read(&path).unwrap())));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, dir, &mut out);
+    out.sort();
+    out
+}
+
+/// Der Ordner wird UNMITTELBAR vor `open_dir` (nach der Namenspruefung) durch einen
+/// Link auf einen Nachbarordner im selben Elternordner ersetzt. Ein relativer Link
+/// innerhalb des Elternordners ist fuer `cap-std` kein Ausbruch, `open_dir` folgt ihm
+/// also, und das Handle waere der Nachbar. Erwartung: Ablehnung, bevor irgendetwas im
+/// Ordner getan wird; der Nachbarbaum samt fremder `.partial` und Sentinel bleibt Byte
+/// fuer Byte gleich. Der Fall `index` 1 ersetzt den letzten Ordner der Kette, der Fall
+/// 0 den ersten. Unter Windows zusaetzlich als Junction und als Symlink (Skip-Regel
+/// aus `linktest`); lassen sich Ordner dort nicht tauschen, gibt es den Tausch nicht.
+#[test]
+fn a_folder_replaced_by_a_link_just_before_it_is_opened_is_refused_and_the_sibling_stays() {
+    for &real_symlink in link_forms() {
+        for (index, victim, target, sibling) in [(1usize, "w/a", "b", "w/b"), (0, "w", "x", "x")] {
+            for create in [false, true] {
+                let dir = TempDir::new().unwrap();
+                let root = dir.path().join("root");
+                for tree in ["w/b", "x"] {
+                    let tree = root.join(tree);
+                    std::fs::create_dir_all(&tree).unwrap();
+                    write(&tree.join("fremd.bin"), SENTINEL);
+                    write(&tree.join("model.onnx_data.partial"), SENTINEL);
+                }
+                std::fs::create_dir_all(root.join("w").join("a")).unwrap();
+                let sibling_path = root.join(sibling);
+                let before = snapshot(&sibling_path);
+
+                let victim_path = root.join(victim);
+                let moved = victim_path.with_extension("alt");
+                // Unix: relativer Link im Elternordner; Windows: die Junction braucht
+                // einen absoluten Pfad.
+                let link_to = if cfg!(windows) {
+                    victim_path.parent().unwrap().join(target)
+                } else {
+                    PathBuf::from(target)
+                };
+                let swapped = Arc::new(AtomicBool::new(false));
+                let _hook = {
+                    let swapped = swapped.clone();
+                    let (victim_path, moved) = (victim_path.clone(), moved.clone());
+                    hook::set(&root, move |point| {
+                        if point != Point::BeforeDir(index) || swapped.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        if std::fs::rename(&victim_path, &moved).is_err() {
+                            return;
+                        }
+                        if link_dir(real_symlink, &victim_path, &link_to) {
+                            swapped.store(true, Ordering::SeqCst);
+                        }
+                    })
+                };
+
+                let result = Anchor::open(&root, &["w", "a"], create);
+
+                let what = format!("index={index} create={create} symlink={real_symlink}");
+                if swapped.load(Ordering::SeqCst) {
+                    assert_refused(result);
+                    assert_eq!(
+                        snapshot(&sibling_path),
+                        before,
+                        "Nachbarbaum veraendert ({what})"
+                    );
+                    assert_eq!(
+                        read(&sibling_path.join("model.onnx_data.partial")),
+                        SENTINEL
+                    );
+                } else {
+                    swap_must_have_happened();
+                    assert!(result.unwrap().is_some(), "{what}");
+                }
+            }
+        }
+    }
+}
+
 // ---- check_set -----------------------------------------------------------------
 
 fn sha(bytes: &[u8]) -> String {
@@ -543,13 +667,14 @@ fn a_folder_link_in_place_of_a_file_is_an_error_not_a_state() {
     assert_refused(run(&p, None));
 }
 
-/// Der Tausch einer Datei gleicher Groesse nach der Pruefung des Graphen (mitten in
-/// der Pruefung) ist kein `Valid`: das Handle der Gewichte hat noch die alten Bytes,
-/// der Name zeigt aber auf eine andere Datei. Unter Windows scheitert der Tausch, weil
-/// die Datei ohne `FILE_SHARE_DELETE` offen ist; dann ist nichts getauscht und `Valid`
-/// richtig.
+/// Die noch UNGEPRUEFTEN Gewichte werden nach der Pruefung des Graphen (mitten in der
+/// Pruefung) durch eine andere Datei gleicher Groesse ersetzt: kein `Valid`, das Handle
+/// der Gewichte hat noch die alten Bytes, der Name zeigt aber auf eine andere Datei.
+/// Unter Windows scheitert der Tausch, weil die Datei ohne `FILE_SHARE_DELETE` offen
+/// ist; dann ist nichts getauscht und `Valid` richtig. (Der bereits GEPRUEFTE Graph ist
+/// ein anderer Fall: `an_in_place_change_of_the_already_checked_graph_...`.)
 #[test]
-fn a_same_size_swap_after_the_graph_check_is_no_valid_pair() {
+fn a_same_size_swap_of_the_not_yet_checked_weights_is_no_valid_pair() {
     let p = pair();
     let swapped = Arc::new(AtomicBool::new(false));
     let _hook = {
@@ -574,6 +699,50 @@ fn a_same_size_swap_after_the_graph_check_is_no_valid_pair() {
         panic!("Unix: der Tausch muss gehen");
         #[cfg(not(unix))]
         assert_eq!(states, [Check::Valid, Check::Valid]);
+    }
+}
+
+/// Grenze, ehrlich festgehalten: der schon gelesene Graph wird IN PLACE (gleicher Inode,
+/// gleiche Groesse) ueberschrieben, nachdem er gelesen und gehasht wurde (`Checked(0)`).
+/// Dieselbe Pruefung sieht das nicht: Handle und Name zeigen weiter auf dieselbe Datei,
+/// das Ergebnis ist `Valid`, und der Sammler (`sink`) hat die ALTEN, geprueften Bytes
+/// (eine Sitzung, daraus gebaut, ist unberuehrt). Der naechste Lauf sieht die neuen
+/// Bytes am Hash. Deshalb ist `Valid` ein Hinweis und keine Zusage fuer den Bestand
+/// danach: wer die Datei spaeter verwendet, muss sie selbst pruefen. Unter Windows
+/// scheitert das Schreiben, weil die Pruefung die Datei mit `FILE_SHARE_READ` allein
+/// offen haelt; dann gibt es die Aenderung nicht.
+#[test]
+fn an_in_place_change_of_the_already_checked_graph_is_not_seen_by_this_run_but_by_the_next() {
+    let p = pair();
+    let changed = Arc::new(AtomicBool::new(false));
+    let mut got: [Vec<u8>; 2] = [Vec::new(), Vec::new()];
+    let first = {
+        let _hook = {
+            let (folder, changed) = (p.folder.clone(), changed.clone());
+            hook::set(p.anchor.root(), move |point| {
+                if point == Point::Checked(0) {
+                    let done = std::fs::write(folder.join("model.onnx"), vec![b'y'; GRAPH.len()]);
+                    changed.store(done.is_ok(), Ordering::SeqCst);
+                }
+            })
+        };
+        let mut sink = |i: usize, block: &[u8]| got[i].extend_from_slice(block);
+        run(&p, Some(&mut sink)).unwrap().unwrap()
+    };
+    let next = run(&p, None).unwrap().unwrap();
+
+    if changed.load(Ordering::SeqCst) {
+        assert_eq!(first, [Check::Valid, Check::Valid], "dokumentierte Grenze");
+        assert_eq!(got[0], GRAPH, "der Sammler haelt die geprueften Bytes");
+        assert_eq!(got[1], WEIGHTS);
+        assert_eq!(
+            next,
+            [Check::Hash, Check::Valid],
+            "der naechste Lauf sieht es"
+        );
+    } else {
+        swap_must_have_happened();
+        assert_eq!(next, [Check::Valid, Check::Valid]);
     }
 }
 

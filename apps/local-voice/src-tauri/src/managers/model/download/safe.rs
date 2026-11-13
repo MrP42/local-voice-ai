@@ -119,12 +119,45 @@ fn opened(result: io::Result<File>, path: &Path) -> io::Result<File> {
     })
 }
 
+/// Kennung einer Datei: Datentraeger und 128-Bit-Kennung auf ihm. Unter Unix
+/// (Geraet, Inode, auf 128 Bit erweitert), unter Windows (`VolumeSerialNumber`,
+/// `FileId` aus `FileIdInfo`). Eine 64-Bit-Kennung (`nFileIndex` aus
+/// `GetFileInformationByHandle`) gibt es hier bewusst nicht: ReFS vergibt 128-Bit-IDs,
+/// deren untere 64 Bit zusammenfallen koennen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Identity {
+    pub(crate) volume: u64,
+    pub(crate) id: u128,
+}
+
+/// Die Kennung aus den Rohwerten von `FileIdInfo`. Nur Nullen und nur `0xFF` sind
+/// keine Kennung (so antworten Dateisysteme, die keine vergeben), dann ist sie
+/// unbekannt (`None`). Rein; die Windows-Abfrage reicht ihre Werte hierher.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+pub(crate) fn identity_from_raw(volume: u64, id: [u8; 16]) -> Option<Identity> {
+    if id.iter().all(|b| *b == 0) || id.iter().all(|b| *b == 0xFF) {
+        return None;
+    }
+    Some(Identity {
+        volume,
+        id: u128::from_le_bytes(id),
+    })
+}
+
+/// Sind das dieselben Dateien? Nur wenn BEIDE Kennungen bekannt und gleich sind.
+/// Eine unbekannte Kennung ist nie gleich (auch nicht mit sich selbst): ein
+/// Vergleich, der nichts belegen kann, lehnt ab, statt auf eine schwaechere
+/// Kennung zurueckzufallen.
+pub(crate) fn same_identity(a: Option<Identity>, b: Option<Identity>) -> bool {
+    matches!((a, b), (Some(x), Some(y)) if x == y)
+}
+
 /// Was ein geoeffnetes Handle ueber seine Datei sagt (nicht der Pfad, den man
-/// zum Oeffnen nahm): Kennung (Laufwerk, Index), Zahl der Namen, Art.
+/// zum Oeffnen nahm): Kennung, Zahl der Namen, Art.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct FileInfo {
-    pub(crate) volume: u64,
-    pub(crate) index: u64,
+    /// `None`: unbekannt (Windows: `FileIdInfo` nicht lesbar oder keine Kennung).
+    pub(crate) identity: Option<Identity>,
     /// Zahl der Verzeichniseintraege der Datei (Hardlinks); 1 bei einer gewoehnlichen.
     pub(crate) links: u64,
     pub(crate) is_file: bool,
@@ -133,14 +166,24 @@ pub(crate) struct FileInfo {
     pub(crate) reparse: bool,
 }
 
+impl FileInfo {
+    /// Dieselbe Datei wie `other` ([`same_identity`]); unbekannt ist nie gleich.
+    #[cfg_attr(not(any(windows, test)), allow(dead_code))]
+    pub(crate) fn same_file_as(&self, other: &FileInfo) -> bool {
+        same_identity(self.identity, other.identity)
+    }
+}
+
 /// [`FileInfo`] des Handles `file`.
 #[cfg(unix)]
 pub(crate) fn file_info(file: &File) -> io::Result<FileInfo> {
     use std::os::unix::fs::MetadataExt;
     let meta = file.metadata()?;
     Ok(FileInfo {
-        volume: meta.dev(),
-        index: meta.ino(),
+        identity: Some(Identity {
+            volume: meta.dev(),
+            id: u128::from(meta.ino()),
+        }),
         links: meta.nlink(),
         is_file: meta.is_file(),
         is_dir: meta.is_dir(),
@@ -148,24 +191,42 @@ pub(crate) fn file_info(file: &File) -> io::Result<FileInfo> {
     })
 }
 
-/// [`FileInfo`] des Handles `file` (`GetFileInformationByHandle`).
+/// [`FileInfo`] des Handles `file`: Attribute und Zahl der Namen aus
+/// `GetFileInformationByHandle`, die Kennung aus `GetFileInformationByHandleEx`
+/// (`FileIdInfo`, 128 Bit). Scheitert die zweite Abfrage, ist die Kennung unbekannt.
 #[cfg(windows)]
 pub(crate) fn file_info(file: &File) -> io::Result<FileInfo> {
     use std::os::windows::io::AsRawHandle;
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::Storage::FileSystem::{
-        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+        FileIdInfo, GetFileInformationByHandle, GetFileInformationByHandleEx,
+        BY_HANDLE_FILE_INFORMATION, FILE_ID_INFO,
     };
     const DIRECTORY: u32 = 0x0000_0010;
+    let handle = HANDLE(file.as_raw_handle());
     let mut raw = BY_HANDLE_FILE_INFORMATION::default();
     // SAFETY: `file` haelt ein gueltiges Handle fuer die Dauer des Aufrufs, `raw` ist
     // ein beschreibbarer Zielpuffer der verlangten Groesse.
-    unsafe { GetFileInformationByHandle(HANDLE(file.as_raw_handle()), &mut raw) }
-        .map_err(io::Error::from)?;
+    unsafe { GetFileInformationByHandle(handle, &mut raw) }.map_err(io::Error::from)?;
+    let mut id = FILE_ID_INFO::default();
+    // SAFETY: gleiches Handle; `id` ist ein beschreibbarer Puffer genau in der Groesse
+    // von `FILE_ID_INFO`, die Klasse `FileIdInfo` fuellt ihn.
+    let id_known = unsafe {
+        GetFileInformationByHandleEx(
+            handle,
+            FileIdInfo,
+            std::ptr::addr_of_mut!(id).cast(),
+            std::mem::size_of::<FILE_ID_INFO>() as u32,
+        )
+    }
+    .is_ok();
     let dir = raw.dwFileAttributes & DIRECTORY != 0;
     Ok(FileInfo {
-        volume: u64::from(raw.dwVolumeSerialNumber),
-        index: u64::from(raw.nFileIndexHigh) << 32 | u64::from(raw.nFileIndexLow),
+        identity: if id_known {
+            identity_from_raw(id.VolumeSerialNumber, id.FileId.Identifier)
+        } else {
+            None
+        },
         links: u64::from(raw.nNumberOfLinks),
         is_file: !dir,
         is_dir: dir,

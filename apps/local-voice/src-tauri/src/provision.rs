@@ -7,6 +7,12 @@
 //! Ergebnis unter `Data\` genau das, was die App selbst als installiert erkennt;
 //! eine zweite, nachgebaute Ablage-Logik im Bauskript gibt es nicht.
 //!
+//! Grenze: Exit 0 heisst, dass die Bereitstellung abgeschlossen ist und ihre
+//! Lesepruefungen bestanden hat (bei der Sprechertrennung `Fetch::Done`, siehe
+//! `commands::meeting_diarization`). Das ist ein Hinweis, keine Integritaetszusage fuer
+//! die Dateien, wie sie spaeter im Paket liegen; ein Paketexport (Packen, Signieren)
+//! muss die Bytes, die er tatsaechlich verwendet, selbst verifizieren.
+//!
 //! Zuordnung der Kennung zum Manager:
 //! * `llm-…`, `emb-…` → [`LlmRuntimeManager`] (Laufzeit und Sprachmodelle),
 //! * Phonon/Piper (`phonon-runtime`, `phonon-40m-de`, Stimmen, `piper-runtime`)
