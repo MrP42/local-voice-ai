@@ -8825,6 +8825,7 @@
       "needTwo": "Select at least two entries to merge.",
       "twoTexts": "“{{a}}” and “{{b}}” both have a book text. Merging allows at most one book text; the other entries need an audiobook.",
       "noAudio": "“{{title}}” has neither an audiobook nor a book text to contribute.",
+      "unreadable": "The transcript of “{{title}}” cannot be read. The merge was cancelled. Nothing was changed.",
       "partHeading": "Part {{n}}",
       "hasTranscript": "with transcript",
       "up": "Move “{{title}}” up",

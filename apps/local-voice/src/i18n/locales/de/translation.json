@@ -8825,6 +8825,7 @@
       "needTwo": "Wähle mindestens zwei Einträge zum Zusammenführen.",
       "twoTexts": "„{{a}}“ und „{{b}}“ haben beide einen Buchtext. Zusammenführen geht nur mit höchstens einem Buchtext; die anderen Einträge brauchen ein Hörbuch.",
       "noAudio": "„{{title}}“ hat weder Hörbuch noch Buchtext, den es beitragen könnte.",
+      "unreadable": "Das Transkript von „{{title}}“ lässt sich nicht lesen. Das Zusammenführen wurde abgebrochen. Es wurde nichts verändert.",
       "partHeading": "Teil {{n}}",
       "hasTranscript": "mit Transkript",
       "up": "„{{title}}“ nach oben",
