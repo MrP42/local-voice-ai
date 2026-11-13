@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-voice.invalid/schemas/lva.auswertung/1.json",
+  "title": "Auswertung am Gesprächsende",
+  "description": "Dokumentation des Ergebnisses lva.auswertung/1. Die beiden Kerne (Swift und TypeScript) prüfen von Hand und liefern Fehler mit Pfad und Code; dieses Schema beschreibt dasselbe und wird nicht zur Laufzeit ausgewertet. Längen zählen in Unicode-Codepunkten. Unbekannte Schlüssel werden beim Lesen verworfen.",
+  "type": "object",
+  "required": [
+    "schema",
+    "assistent",
+    "erstellt",
+    "gekuerzt",
+    "zusammenfassung",
+    "felder",
+    "aufgaben",
+    "offene_fragen"
+  ],
+  "properties": {
+    "schema": { "const": "lva.auswertung/1" },
+    "assistent": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+      "description": "Id des Assistenten-Profils, mit dem ausgewertet wurde."
+    },
+    "erstellt": {
+      "type": "string",
+      "pattern": "^$|^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+      "description": "ISO-8601 UTC, vom Aufrufer gesetzt; leer, solange er nichts gesetzt hat. Der Kern kennt keine Uhr."
+    },
+    "gekuerzt": {
+      "type": "boolean",
+      "description": "Wahr, wenn der Prompt das Gespräch kürzen musste (Beiträge ausgelassen)."
+    },
+    "zusammenfassung": {
+      "type": "string",
+      "maxLength": 1200,
+      "description": "Leer, wenn das Profil keine Zusammenfassung will."
+    },
+    "felder": {
+      "type": "array",
+      "maxItems": 30,
+      "description": "Alle Felder des Profils in dessen Reihenfolge; fehlende sind nicht_genannt.",
+      "items": {
+        "type": "object",
+        "required": ["name", "typ", "status", "wert", "beleg", "beitrag"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,39}$" },
+          "typ": { "enum": ["text", "zahl", "datum", "auswahl"] },
+          "status": { "enum": ["klar", "unklar", "nicht_genannt"] },
+          "wert": {
+            "type": ["string", "null"],
+            "maxLength": 500,
+            "description": "Kanonisch als Text: zahl mit Punkt als Dezimaltrenner ohne Tausenderzeichen, datum JJJJ-MM-TT, auswahl genau eine der Optionen."
+          },
+          "beleg": {
+            "type": ["string", "null"],
+            "maxLength": 500,
+            "description": "Wörtliches Zitat aus dem Gespräch."
+          },
+          "beitrag": {
+            "type": ["integer", "null"],
+            "minimum": 1,
+            "description": "Nummer des Beitrags (ab 1), in dem der Beleg steht."
+          }
+        },
+        "description": "nicht_genannt: wert, beleg und beitrag sind null. klar: wert ist nicht null."
+      }
+    },
+    "aufgaben": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "required": ["text", "frist", "frist_text", "beleg", "beitrag"],
+        "properties": {
+          "text": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "frist": {
+            "type": ["string", "null"],
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+            "description": "Gültiger Kalendertag, nur wenn die Fristauflösung frist_text auflöst."
+          },
+          "frist_text": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "Wörtlicher Ausdruck aus dem Gespräch; leer, wenn keine Frist genannt wurde."
+          },
+          "beleg": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "beitrag": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "offene_fragen": {
+      "type": "array",
+      "maxItems": 10,
+      "items": { "type": "string", "maxLength": 300 }
+    }
+  }
+}

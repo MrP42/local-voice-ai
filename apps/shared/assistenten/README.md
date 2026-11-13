@@ -9,6 +9,8 @@ Werkzeuge, Variablen-Extraktion. Dieses Verzeichnis ist die gemeinsame Quelle de
 | `assistent.schema.json` | JSON Schema (Draft 2020-12), nur Dokumentation; die Kerne prüfen von Hand |
 | `vorlagen.json` | die 15 eingebauten Vorlagen (Liste von Profilen, kanonisch geschrieben) |
 | `pruefstaende.json` | gemeinsame Fälle, die **beide** Kerne mit identischem Ergebnis bestehen |
+| `auswertung.schema.json` | JSON Schema des Ergebnisses `lva.auswertung/1` (Dokumentation), siehe Abschnitt „Auswertung“ |
+| `auswertung-pruefstaende.json` | gemeinsame Fälle der Auswertung (Erdung, Fristauflösung, Prompt) |
 | `README.md` | diese Beschreibung |
 
 Kerne: `apps/apple/VoiceCore/Sources/VoiceCore/Assistant/AssistantProfile*.swift` und
@@ -181,3 +183,188 @@ Gilt gemeinsam für Swift (`AssistantProfileStore`) und den späteren Speicher a
 `eingabe` ist Rohtext, jeder andere Wert ein JSON-Wert), `platzhalter`, `rollenblock`, `bereiche_iphone`, `bereiche_pc` und
 `kontextmodus`. Die erwarteten Ausgaben der gültigen Fälle stammen aus Pythons `json`-Modul, nicht aus einem der Kerne.
 Neu erzeugen ist nicht vorgesehen; ein neuer Fall kommt von Hand hinzu und muss in beiden Kernen grün sein.
+
+## Auswertung (`lva.auswertung/1`)
+
+Am Gesprächsende wertet ein Modell das Gespräch nach dem Profil (`auswertung`) aus. Der gemeinsame Kern (Paket G5, #559) ist
+**reine Logik ohne Oberfläche, ohne Modellaufruf, ohne Speicher und ohne Folgeaktionen**: Er baut den Prompt, liest die Rohantwort
+tolerant, **erdet jede Angabe im Gespräch** und kodiert das Ergebnis. Kerne: `apps/apple/VoiceCore/Sources/VoiceCore/Assistant/
+AssistantOutcome.swift` (Typen, Kodierung, Prüfung, Erdung), `AssistantOutcomePrompt.swift` (Prompt, Gesprächsfassung),
+`AssistantOutcomeDates.swift` (Normalisierung, Zahlen, Fristauflösung) und am PC `assistenten/auswertung.ts`,
+`auswertungFrist.ts`. Dateien dieses Verzeichnisses dazu: `auswertung.schema.json` (Dokumentation) und
+`auswertung-pruefstaende.json` (gemeinsame Fälle; beide Kerne vergleichen bytegenau).
+
+### Ablauf (drei reine Funktionen)
+
+| Schritt | Swift | TypeScript |
+|---|---|---|
+| Prompt | `AssistantOutcome.prompt(profile:turns:today:budgetChars:)` → `{text, truncated}` | `auswertungPrompt(profil, verlauf, heute, budgetZeichen)` → `{text, gekuerzt}` |
+| Auswerten | `AssistantOutcome.evaluate(profile:turns:raw:today:created:truncated:)` → `Result<{outcome, hints}, .json>` | `auswerten(profil, verlauf, rohantwort, heute, {erstellt, gekuerzt})` → `{ok, ergebnis, hinweise}` oder `{ok: false, fehler: "json"}` |
+| Kodieren / Lesen | `outcome.encode()` / `AssistantOutcome.parse(json:)` | `kodiereAuswertung(e)` / `parseAuswertung(text)` |
+| Frist | `AssistantOutcomeDates.deadline(_:today:)` | `frist(ausdruck, heute)` |
+
+`verlauf` ist die Liste der Beiträge `{rolle: nutzer|assistent, text}`; die Nummer eines Beitrags ist seine Position ab 1. `heute`
+sind Jahr, Monat, Tag des Gesprächs (keine Zeitzonenlogik). `erstellt` (ISO-8601 UTC `JJJJ-MM-TTThh:mm:ssZ`) und `gekuerzt` (aus
+dem Prompt) setzt der Aufrufer, der Kern kennt weder Uhr noch Prompt-Aufruf; ohne Angabe bleibt `erstellt` leer und `gekuerzt`
+falsch. Kein auffindbares JSON-Objekt in der Rohantwort ist der Fehler `json` (der Aufrufer kann einmal neu fragen).
+
+### Prompt
+
+Eine Zeichenkette für EIN Modell: Anweisung, dann `Gespräch:` und die Beiträge als `[1] Nutzer: …`, `[2] Assistent: …` (Leerraum
+zu einem Leerzeichen zusammengefasst, ein Beitrag je Zeile). Die Anweisung verlangt genau ein JSON-Objekt, nur für das, was das
+Profil einschaltet (`felder`, `zusammenfassung`, `aufgaben`), dazu immer `offene_fragen`. Ihre Regeln: nichts erfinden; je Feld
+Status `klar`, `unklar` oder `nicht_genannt`; bei widersprüchlichen oder später korrigierten Angaben gilt die letzte eindeutige,
+sonst `unklar`; Beleg ist ein wörtliches Zitat mit Beitragsnummer; Fristen als wörtlicher Ausdruck (`frist_text`), nicht als
+errechnetes Datum; Zusammenfassung zwei bis fünf Sätze; nur Namen aus dem Gespräch, keine Floskeln. Das heutige Datum steht mit
+Wochentag in der Anweisung (fehlt bei ungültigem `heute`). Der Wortlaut ist in den Prompt-Fällen der Prüfstände festgehalten.
+
+**Kürzung**: `budgetZeichen` zählt Codepunkte des ganzen Textes. Passt er nicht, bleiben die ersten zwei Beiträge und so viele
+der neuesten wie möglich; dazwischen steht eine Zeile `[… n Beiträge ausgelassen …]` (bei n = 1 `[… 1 Beitrag ausgelassen …]`),
+`gekuerzt` ist wahr. Die Nummern bleiben die des ungekürzten Gesprächs. Ein Beitrag wird nie geschnitten; das Mindeste (zwei
+erste Beiträge und die Auslassung) bleibt auch über dem Budget stehen. Mit höchstens zwei Beiträgen ist nichts auszulassen
+(`gekuerzt` falsch). Ein negatives Budget zählt als 0.
+
+### Ergebnis
+
+Schlüssel deutsch, kanonisch kodiert wie das Profil (sortiert, 2 Leerzeichen, `\n` am Ende, bytegleich in beiden Kernen).
+
+| Feld | Regel |
+|---|---|
+| `schema` | genau `"lva.auswertung/1"` (sonst `schema_unbekannt` / `schema_neuer`) |
+| `assistent` | Id des Profils |
+| `erstellt` | `""` oder `JJJJ-MM-TTThh:mm:ssZ` |
+| `gekuerzt` | bool |
+| `zusammenfassung` | 0..1200; leer, wenn das Profil keine will |
+| `felder` | alle Felder des Profils in dessen Reihenfolge: `{name, typ, status, wert, beleg, beitrag}`; `wert`, `beleg` Text oder `null` (je ≤ 500), `beitrag` Zahl ab 1 oder `null` |
+| `aufgaben` | höchstens 20: `{text 1..300, frist, frist_text ≤ 100, beleg 1..500, beitrag}`; `frist` `JJJJ-MM-TT` oder `null` |
+| `offene_fragen` | höchstens 10 Texte je ≤ 300 |
+
+Werte stehen kanonisch als Text: `zahl` mit Punkt als Dezimaltrenner ohne Tausenderzeichen, `datum` als `JJJJ-MM-TT`, `auswahl` als
+genau eine der `optionen`, `text` höchstens 500. `nicht_genannt` hat `wert`, `beleg` und `beitrag` `null`; `klar` hat einen `wert`.
+`parse` prüft dieses Format mit Pfad und Code wie das Profil (`fehlt`, `typ`, `laenge`, `muster`, `wert`, `zu_viele`, `doppelt`,
+`schema_unbekannt`, `schema_neuer`, `json`); unbekannte Schlüssel werden verworfen, nichts wird repariert.
+
+### Normalisierung für Vergleiche
+
+Alle Vergleiche mit dem Gespräch laufen auf dem **normalisierten** Text, gemeinsam festgelegt:
+
+1. Kleinschreibung, je Codepunkt (`ΑΣ` wird `ασ`, `İ` wird `i̇`; keine Kontextregeln).
+2. Anführungszeichen überall entfernen: `" ' ` ´ „ “ ” ‚ ‘ ’ « » ‹ ›`.
+3. Leerraum (U+0009–U+000D, U+0020, U+00A0) zu einem Leerzeichen zusammenfassen.
+4. Leerraum und Satzzeichen an den Rändern entfernen: `. , ; : ! ? … ( ) [ ] { } - – —`. Innen bleiben Satzzeichen stehen.
+
+„Steht im Beitrag“ heißt: Der normalisierte Beleg ist ein zusammenhängender Teil (Codepunkte) des normalisierten Beitrags. Ein
+Beleg, der normalisiert leer ist, steht nirgends.
+
+**Unicode: kein Zusammensetzen, keine kanonische Gleichheit.** Verglichen wird immer Codepunkt für Codepunkt (Swift: UTF-8-Bytes
+bzw. Skalar-Folgen, nie `String ==`, das kanonisch äquivalente Texte gleichsetzt). `é` (U+00E9) und `e` + U+0301 sind **verschiedene**
+Texte: Ein Beleg in der einen Form steht nicht in einem Beitrag in der anderen, ein Feldname oder eine Auswahloption in der einen
+Form ist nicht die der anderen Form (Feld: `unbekannt`, Auswahl außerhalb der Optionen: `unklar`, Hinweis `wert`), ebenso `ü` und `u` + U+0308
+in der Fristauflösung (`übermorgen` gilt, `u` + U+0308 + `bermorgen` nicht). Das ist gewollt: Ein Beleg, der nicht bytegleich im
+Gespräch steht, ist kein Beleg. Fälle in `auswertung-pruefstaende.json` (Profil P7, Gespräch C7, `normalisierung`, `frist`).
+
+### Rohantwort lesen
+
+Das **erste ausbalancierte, gültige JSON-Objekt** im Text zählt, auch in Code-Zäunen oder mit Text davor und danach. Von jedem `{`
+aus wird die schließende Klammer gesucht (Zeichenketten und Escapes beachtet). Gibt es keine, geht die Suche beim nächsten `{`
+weiter. Gibt es eine, der Text dazwischen ist aber kein gültiges JSON (strenger Leser wie beim Profil), geht die Suche **hinter**
+der Klammer weiter (innere Objekte eines kaputten äußeren zählen nicht). Nichts gefunden: Fehler `json`.
+
+**Obergrenzen gegen manipulierte Rohantworten** (gleich in beiden Kernen):
+
+- Eine Rohantwort mit mehr als **262144 Codepunkten** (`MAX_ROHANTWORT` / `AssistantOutcome.maxRaw`; gezählt in Codepunkten, nicht in
+  UTF-16-Einheiten) ist der Fehler `json`, ohne dass weiter gesucht oder gelesen wird. Genau 262144 werden gelesen.
+- **Tiefe:** der strenge Leser (wie beim Profil) erlaubt höchstens 64 Ebenen; ein Objekt mit 65 ist ungültig, die Suche geht
+  dahinter weiter.
+- **Nicht quadratisch:** Ein `{`, zu dem es keine schließende Klammer gibt, zählt als offener Start. Der 17. offene Start beendet die
+  Suche mit `json` (`MAX_OFFENE_STARTS` / `AssistantOutcome.maxOpenStarts` = 16 sind erlaubt). Ausbalancierte, aber ungültige Objekte
+  werden überlesen, die Suche geht hinter ihnen weiter. 200000 `{` oder 80000 mal `{,}` enden unter 2 Sekunden als `json`
+  (Test in beiden Kernen); mit echtem Objekt dahinter wird das echte gefunden.
+- Große Gespräche und lange Zeichenketten lösen keine Ausnahme aus: Ketten werden in Blöcken zu Texten zusammengesetzt
+  (`ausCodepunkten`, 8192 je Block), nie über `fromCodePoint(...x)` oder `push(...x)` mit datenabhängiger Länge. Belege, Werte,
+  Aufgabentexte usw. halten ihre Längenregeln auch bei Millionen Zeichen im Gespräch oder 500000 Beiträgen ein.
+
+### Erdung im Code (Abnahme: erfundene Werte = 0)
+
+Gelesen werden je Feld `name`, `status`, `wert` (Text oder Zahl als Originaltext, an den Enden von Leerraum befreit),
+`beleg`, `beitrag` (Zahl oder Ziffernfolge). Dann, in dieser Reihenfolge:
+
+1. **Status.** Fehlt er oder ist er ungültig, gilt `klar` mit Wert, sonst `nicht_genannt` (Hinweis `fehlt` bzw. `wert`/`typ`).
+   `nicht_genannt` verwirft Wert und Beleg. `klar` ohne Wert wird `nicht_genannt`. `unklar` ohne Wert und ohne Beleg bleibt `unklar`.
+2. **Beleg.** Jeder Wert braucht einen Beleg. Ein **Beitragspräfix** am Anfang des Belegs wird vor dem Vergleich abgestreift und
+   nicht gespeichert: optional `[N]` (1 bis 6 Ziffern), optional ein Rollenwort `Nutzer`, `Assistent`, `User`, `Assistant` (Groß-/Kleinschreibung
+   gleich) mit Doppelpunkt, Leerraum dazwischen frei (`[3] Nutzer: …`, `Nutzer: …`, `[3] …`, `Assistant: …`). Ein anderes Wort vor dem
+   Doppelpunkt (`Chef: …`) ist kein Präfix. Nennt die Antwort keinen `beitrag`, gilt die Nummer des Präfixes. Steht der Beleg nicht (normalisiert) im angegebenen Beitrag, wird der erste Beitrag
+   gesucht, der ihn enthält, und `beitrag` korrigiert (kein Hinweis). Steht er in keinem Beitrag des **ungekürzten** Gesprächs
+   oder fehlt er: Feld `nicht_genannt`, `wert`, `beleg`, `beitrag` `null`, Hinweis `beleg_fehlt`. Belege länger als 500
+   Codepunkte werden hart gekürzt (Hinweis `laenge`; ein Anfang bleibt ein Teil des Originals).
+3. **Typ.** `zahl`: `-?\d+`, `-?\d+[.,]\d+`, `1.250,50`, `1,250.50` oder ein Zahlwort null bis zwölf; kanonisch mit Punkt, ohne
+   Tausenderzeichen. `datum`: `JJJJ-MM-TT` mit gültigem Kalendertag, sonst wird der Wert als Ausdruck durch die Fristauflösung
+   gelesen. `auswahl`: genau eine Option, sonst gleich nach Normalisierung (die Option in ihrer Schreibweise gilt). `text`: höchstens
+   500 Codepunkte (sonst hart gekürzt, Hinweis `laenge`). Nicht lesbare Zahl oder ungültiges Datum: Status `unklar`, Wert als Text
+   erhalten (≤ 500), Hinweis `typ`. Auswahl außerhalb der Optionen: `unklar`, Wert erhalten, Hinweis `wert`.
+4. **Deckung.** Ist der Wert durch den Beleg nicht gedeckt, wird der Status `unklar` (Wert bleibt, Hinweis
+   `wert_nicht_im_beleg`). Gedeckt heißt: `text` der normalisierte Wert ist Teil des normalisierten Belegs; `zahl` der Beleg
+   enthält diese Zahl (Ziffernfolgen, durch ein einzelnes `.` oder `,` zwischen Ziffern verbunden, als Dezimalzahl oder mit
+   Tausenderpunkt gelesen; Vorzeichen zählen nicht; `1.250,50` deckt `1250.5`) **oder** ein Zahlwort null bis zwölf (de/en, die
+   `ein`-Formen als 1) steht für genau diesen Wert; `datum` eine Folge von bis zu 6 Wörtern des Belegs löst die Fristauflösung auf
+   genau diesen Tag auf; `auswahl` die Option (normalisiert) steht im Beleg.
+5. **Status am Ende.** `klar` nur, wenn das Modell `klar` meldete und Typ und Deckung stimmen; sonst `unklar`.
+
+**Felder der Antwort.** Nur Felder des Profils zählen; der erste Eintrag je Name gilt (weitere: `doppelt`, unbekannte
+Namen: `unbekannt`). Fehlende Felder sind `nicht_genannt` (kein Hinweis). Das Ergebnis hat immer alle Felder in Profilreihenfolge.
+
+**Aufgaben.** Nur wenn das Profil sie will (sonst Hinweis `unbekannt` am Schlüssel, falls die Liste nicht leer ist). Eine Aufgabe
+ohne Text (`fehlt`) oder ohne Beleg im Gespräch (`beleg_fehlt`) wird verworfen; `beitrag` wird wie bei Feldern korrigiert. Der
+`frist_text` (≤ 100) muss normalisiert im Gespräch stehen, sonst wird er geleert (Hinweis `beleg_fehlt` am `frist_text`; die Aufgabe
+bleibt). `frist` ist das Ergebnis der Fristauflösung für `frist_text`, sonst `null`. Mehr als 20: die ersten 20, Hinweis `zu_viele`.
+Text über 300: am Satzende gekürzt, sonst hart (`laenge`).
+
+**Zusammenfassung** nur, wenn das Profil sie will (sonst `unbekannt`); über 1200 Codepunkte am letzten Satzende (`.`, `!`, `?` vor
+Leerraum oder Textende) gekürzt, sonst hart (`laenge`). **Offene Fragen:** leere entfallen, über 300 gekürzt wie oben, mehr als 10
+(`zu_viele`) abgeschnitten.
+
+**Hinweise** sind `[{pfad, code}]`, nach Pfad und Code sortiert (Codepunkte), ohne Wiederholung, Codes `beleg_fehlt`,
+`wert_nicht_im_beleg`, `typ`, `wert`, `unbekannt`, `doppelt`, `laenge`, `fehlt`, `zu_viele`. Pfade: `felder[2].wert`,
+`aufgaben[1].beleg`, `offene_fragen`; Indizes bei Feldern des Profils sind die des Profils, bei `unbekannt`/`doppelt`/`typ` eines
+Roheintrags die der Rohliste. Unbekannte Schlüssel der Antwort (oberste Ebene, Feld- und Aufgabeneinträge) werden verworfen
+(`unbekannt`). Ein Schlüssel, der nicht `^[a-z][a-z0-9_]{0,39}$` entspricht, erscheint nie im Pfad (Inhalt des Modells). Die
+Auswertung schreibt **nie in Logs**; Hinweise tragen nur Pfad und Code.
+
+### Fristauflösung
+
+`frist(ausdruck, heute)` → `JJJJ-MM-TT` oder `null`, aus einer festen Liste, deutsch und englisch. Der Ausdruck wird normalisiert;
+führende Vorsätze `am`, `bis`, `zum`, `zur`, `spätestens`, `by`, `until`, `on` entfallen (solange mehr als ein Wort bleibt).
+`heute` muss ein gültiger Kalendertag der Jahre 1000–9999 sein, sonst `null`. Wochentag zählt Montag = 1 wie bei den Platzhaltern.
+
+| Ausdruck | Ergebnis |
+|---|---|
+| `heute`, `today` / `morgen`, `tomorrow` / `übermorgen` (`uebermorgen`), `day after tomorrow` | heute / +1 / +2 Tage |
+| Wochentag allein, `nächsten`/`nächster`/`kommenden`/`next` + Wochentag | der nächste solche Tag **nach** heute (1–7 Tage) |
+| `übernächsten`/`übernächster` + Wochentag | eine Woche später |
+| `in N Tagen/Wochen`, `in N days/weeks` | N Zahl (höchstens 3 Ziffern) oder Zahlwort null bis zwölf (`ein`-Formen = 1) |
+| `nächste Woche`, `next week` | Montag der Folgewoche |
+| `Ende der Woche`, `end of the week` (auch `dieser`/`this`) | Freitag der laufenden Woche; am Samstag und Sonntag der der folgenden |
+| `Ende des Monats`, `end of the month` (auch `dieses`/`this`) | letzter Tag des Monats von heute |
+| `14.11.`, `14.11`, `14.11.2026` | Tag.Monat ohne Jahr: nächstes Vorkommen ab heute (heute zählt); mit vierstelligem Jahr genau dieser Tag |
+| `14. November`, `14 November [2026]`, `14th of November`, `November 14[th][, 2026]` | wie oben, Monatsnamen deutsch und englisch (ausgeschrieben, auch `maerz`) |
+| `2026-11-14` | genau dieser Tag |
+
+Alles andere ist `null` (`gestern`, `nächsten Monat`, `Nov 14`, `in dreizehn Tagen`, zweistellige Jahre …); dann bleibt `frist_text`
+stehen und `frist` ist `null`. Ungültige Tage (`31.4.`, `29.2.2027`) sind `null`; `29.2.` ohne Jahr sucht das nächste Schaltjahr
+(höchstens 8 Jahre voraus). Bleiben nach den Vorsätzen mehr als 6 Wörter, ist das Ergebnis `null`. `fristenIn(text, heute)` /
+`AssistantOutcomeDates.deadlines(in:today:)` löst jede Folge von bis zu 6 Wörtern eines Textes auf (für die Deckung bei `datum`),
+und zwar nur in den ersten 1024 Wörtern (`MAX_FRIST_WOERTER`). Datumsangaben ohne Jahr meinen „ab heute“; `heute` sollte darum der Tag
+des Gesprächs sein.
+
+### Prüfstände
+
+`auswertung-pruefstaende.json` hat die Abschnitte `auswerten` (Profil, Verlauf, `heute`, Rohantwort, optional `erstellt` und
+`gekuerzt`; erwartet `{ok, kodiert, hinweise}` oder `{ok: false, fehler: "json"}`; statt `roh` darf `roh_teile` stehen, eine Liste
+aus `{text, anzahl}`, deren Teile `anzahl`-mal wiederholt und hintereinandergesetzt die Rohantwort ergeben, damit Fälle an den Grenzen
+klein bleiben), `frist` (Ausdruck, `heute`, erwartet Datum oder
+`null`), `normalisierung`, `lesen_fehler` (Eingabe für `parse`, erwartete Fehlerliste) und `prompt` (Profil, Verlauf, `heute`,
+Budget, erwartet Text und `gekuerzt`, bytegleich). Alle Gespräche sind erfunden. Die erwarteten `kodiert`-Texte der
+`auswerten`-Fälle stammen aus Pythons `json`-Modul (die Erwartungen sind von Hand als Daten geschrieben); die Prompt-Texte stammen
+aus der TypeScript-Fassung und wurden von der Swift-Fassung unabhängig bestätigt. Ein neuer Fall kommt von Hand hinzu und muss in
+beiden Kernen grün sein.

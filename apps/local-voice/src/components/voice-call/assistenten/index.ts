@@ -46,3 +46,43 @@ export {
   istVorlage,
   vorlage,
 } from "./vorlagen";
+export {
+  AUSWERTUNG_SCHEMA,
+  FELD_STATI,
+  HINWEIS_CODES,
+  MAX_OFFENE_STARTS,
+  MAX_ROHANTWORT,
+  auswerten,
+  auswertungBaum,
+  auswertungPrompt,
+  entfernePraefix,
+  ersterObjektBaum,
+  gespraechZeilen,
+  kodiereAuswertung,
+  parseAuswertung,
+} from "./auswertung";
+export type {
+  AufgabeErgebnis,
+  AuswertenErgebnis,
+  AuswertenOptionen,
+  AuswertungErgebnis,
+  AuswertungHinweis,
+  AuswertungLesen,
+  AuswertungPrompt,
+  Beitrag,
+  FeldErgebnis,
+  FeldStatus,
+  FeldTyp,
+  HinweisCode,
+  Rolle,
+} from "./auswertung";
+export {
+  MAX_FRIST_WOERTER,
+  ausCodepunkten,
+  formatiereDatum,
+  frist,
+  fristenIn,
+  normalisiere,
+  wochentag,
+} from "./auswertungFrist";
+export type { Datum } from "./auswertungFrist";
