@@ -35,11 +35,20 @@ ${StrLoc}
 ; --- VORINSTALLIERT --- Installer mit Modellen (lva#574)
 ; Nur wenn beim Bau die Umgebungsvariable LVA_VORINSTALLIERT auf eine Nutzlast zeigt, die
 ; scripts/build-installer-modelle.ps1 vorbereitet hat (Ordner nemotron\, parakeet\, phonon\ und
-; vorinstalliert.nsh). Ohne sie entsteht der gewohnte schlanke Installer: keine Komponentenseite,
-; gleicher Inhalt. Der schlanke Installer bleibt Quelle des In-App-Updates (latest.json).
-!if /FileExists "$%LVA_VORINSTALLIERT%\vorinstalliert.nsh"
-  !define VORINSTALLIERT "$%LVA_VORINSTALLIERT%"
-  !include "${VORINSTALLIERT}\vorinstalliert.nsh"
+; vorinstalliert.nsh). Ist sie nicht gesetzt (oder leer), entsteht der gewohnte schlanke
+; Installer: keine Komponentenseite, gleicher Inhalt. Ist sie gesetzt, die Nutzlast aber nicht da,
+; bricht der Bau ab, statt still einen Installer ohne Modelle zu erzeugen. Eine ungesetzte
+; Variable bleibt in makensis als Text stehen, daher der Vergleich mit ${U+24}%…%.
+; Der schlanke Installer bleibt Quelle des In-App-Updates (latest.json).
+!if "$%LVA_VORINSTALLIERT%" != "${U+24}%LVA_VORINSTALLIERT%"
+!if "$%LVA_VORINSTALLIERT%" != ""
+  !if /FileExists "$%LVA_VORINSTALLIERT%\vorinstalliert.nsh"
+    !define VORINSTALLIERT "$%LVA_VORINSTALLIERT%"
+    !include "${VORINSTALLIERT}\vorinstalliert.nsh"
+  !else
+    !error "LVA_VORINSTALLIERT ist gesetzt ($%LVA_VORINSTALLIERT%), aber vorinstalliert.nsh fehlt dort. Erst scripts/build-installer-modelle.ps1 laufen lassen oder die Variable entfernen."
+  !endif
+!endif
 !endif
 ; --- END VORINSTALLIERT ---
 
@@ -967,8 +976,10 @@ Function VorinstZiele
     StrCpy $VorinstAsr "$INSTDIR\Data"
     StrCpy $VorinstTts "$INSTDIR\Data"
   ${Else}
-    ; Datenordner gehören dem angemeldeten Benutzer, auch bei einer Installation für alle.
-    ; Aus der Umgebung gelesen, damit der Shell-Kontext des Installers unverändert bleibt.
+    ; Datenordner des Kontos, unter dem der Installer läuft (Umgebung des Prozesses), damit
+    ; der Shell-Kontext unverändert bleibt. Wer mit fremden Administrator-Anmeldedaten
+    ; installiert, legt die Modelle in dessen Profil ab; die App lädt sie dann bei Bedarf.
+    ; Bei installMode currentUser (Vorgabe) läuft der Installer ohne Erhöhung als Nutzer.
     ReadEnvStr $0 APPDATA
     ReadEnvStr $1 LOCALAPPDATA
     StrCpy $VorinstAsr "$0\${BUNDLEID}"

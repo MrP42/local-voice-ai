@@ -16,6 +16,7 @@
     "format:backend": "cd src-tauri && cargo fmt",
     "test:ablage": "node --test scripts/ablage-logik.test.mjs",
     "test:paste": "node --test scripts/paste-cleanup.test.mjs",
+    "test:installer": "node --test scripts/installer-vorinstalliert.test.mjs",
     "test:assistent": "node --test scripts/sofort.test.mjs scripts/assistent-plan.test.mjs scripts/assistent-engine.test.mjs scripts/notizbuch-auswahl.test.mjs scripts/ergaenzen.test.mjs scripts/ergaenzen-engine.test.mjs scripts/ergaenzen-player.test.mjs scripts/alle-bereiche.test.mjs scripts/global-context.test.mjs scripts/global-context-engine.test.mjs scripts/log-hygiene.test.mjs",
     "test:playwright": "playwright test",
     "test:playwright:ui": "playwright test --ui",

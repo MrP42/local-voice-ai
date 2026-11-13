@@ -37,12 +37,38 @@ Set-StrictMode -Version Latest
 $appDir = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $tauriDir = Join-Path $appDir 'src-tauri'
 
+if (-not $OutDir) { $OutDir = Join-Path $tauriDir 'target/release/bundle/vorinstalliert' }
+
+# Das Skript ersetzt -OutDir vollstaendig. Damit nie fremde Dateien verloren gehen: Ziel absolut
+# aufloesen, Wurzeln und Ordner, die Quellen oder das Heimatverzeichnis enthalten, ablehnen, und
+# einen vorhandenen Ordner nur ersetzen, wenn er leer ist oder die Marke dieses Skripts traegt.
+$OutMarker = '.lva-vorinstalliert-nutzlast'
+$outFull = [System.IO.Path]::GetFullPath($OutDir).TrimEnd('\', '/')
+function Test-IsSameOrAncestor([string]$Ancestor, [string]$Path) {
+    $a = [System.IO.Path]::GetFullPath($Ancestor).TrimEnd('\', '/')
+    $p = [System.IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
+    return $p.Equals($a, [StringComparison]::OrdinalIgnoreCase) -or
+        $p.StartsWith($a + [System.IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
+        $p.StartsWith($a + '/', [StringComparison]::OrdinalIgnoreCase)
+}
+$protected = @($appDir, (Get-Location).Path, $PSScriptRoot, [Environment]::GetFolderPath('UserProfile'))
+if ([System.IO.Path]::GetPathRoot($outFull).TrimEnd('\', '/') -eq $outFull) { throw "-OutDir ist eine Laufwerkswurzel: $outFull" }
+foreach ($p in $protected) {
+    if ($p -and (Test-IsSameOrAncestor $outFull $p)) { throw "-OutDir $outFull enthaelt $p; bitte einen eigenen Ausgabeordner angeben" }
+}
+if (Test-Path $outFull) {
+    if (-not (Test-Path $outFull -PathType Container)) { throw "-OutDir ist eine Datei: $outFull" }
+    $existing = @(Get-ChildItem $outFull -Force)
+    if ($existing.Count -gt 0 -and -not (Test-Path (Join-Path $outFull $OutMarker) -PathType Leaf)) {
+        throw "-OutDir $outFull ist nicht leer und stammt nicht von diesem Skript (Marke $OutMarker fehlt); nichts geloescht"
+    }
+}
+
 if (-not $Exe) {
     $targetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $tauriDir 'target' }
     $Exe = Join-Path $targetDir 'release/local-voice-ai.exe'
 }
 if (-not (Test-Path $Exe -PathType Leaf)) { throw "EXE nicht gefunden: $Exe (erst 'npx tauri build' ausführen)" }
-if (-not $OutDir) { $OutDir = Join-Path $tauriDir 'target/release/bundle/vorinstalliert' }
 
 $libsDir = Join-Path $tauriDir 'transcribe-libs'
 $resDir = Join-Path $tauriDir 'resources'
@@ -115,9 +141,10 @@ function Get-DirBytes([string]$Dir) {
 }
 
 try {
-    if (Test-Path $OutDir) { Remove-Item $OutDir -Recurse -Force }
-    New-Item -ItemType Directory -Force $OutDir | Out-Null
-    $outFull = (Resolve-Path $OutDir).Path
+    # Oben geprueft: leer oder eine fruehere Nutzlast dieses Skripts.
+    if (Test-Path $outFull) { Remove-Item $outFull -Recurse -Force }
+    New-Item -ItemType Directory -Force $outFull | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $outFull $OutMarker), "Nutzlast von scripts/build-installer-modelle.ps1`n")
     $selected = @{}
     $summary = [ordered]@{}
 

@@ -42,11 +42,11 @@ Die Modelle liegen nach der Installation im Datenordner der App, nicht im Progra
 
 Vorhandene Dateien überschreibt der Installer nicht. Er schreibt `erststart.ini` mit dem ersten gewählten Spracherkennungsmodell (Nemotron vor Parakeet), sofern die Datei noch fehlt. Beim ersten Start stellt die App dieses Modell ohne Download ein (`firstRunSetup.ts`), auch wenn daneben Parakeet installiert ist. Die Seite „Diktat“ des schlanken Installers entfällt in diesem Installer.
 
-Phonon ist installiert, aber nicht eingeschaltet. Einschalten unter Einstellungen › Ausgabe › Vorlesen, dabei bestätigt die Person den Lizenzhinweis (CC BY-NC beim deutschen Modell). Das geht offline.
+Bei einer Neueinrichtung ist Phonon installiert, aber nicht eingeschaltet. Bei einer Aktualisierung bleiben vorhandene Einstellungen erhalten, ein schon eingeschaltetes Phonon bleibt also an. Einschalten unter Einstellungen › Ausgabe › Vorlesen, dabei bestätigt die Person den Lizenzhinweis (CC BY-NC beim deutschen Modell). Das geht offline.
 
 ## Lizenzen
 
-Befund zu Phonon DE siehe [PORTABLE.md](PORTABLE.md#lizenzbefund-phonon-prüfung-04112026). Kurz: Die Weitergabe im kostenlosen öffentlichen Release ist durch CC BY-NC 4.0 gedeckt (Namensnennung über `LIZENZEN-MODELLE.txt` neben der EXE und `voices\SOURCE.json`). Kommerzieller Einsatz, etwa als bezahlte Leistung, ist nicht gedeckt: dann die Komponente „Vorlesen Phonon“ abwählen oder das Modell entfernen. Parakeet V3 (CC BY 4.0) verlangt Namensnennung, ebenfalls in `LIZENZEN-MODELLE.txt`. Fehlt beim Bau `HF_TOKEN`, bricht der Release-Schritt ab (`-RequireHfToken`); lokal lässt das Skript das deutsche Modell mit Warnung aus.
+Befund zu Phonon DE siehe [PORTABLE.md](PORTABLE.md#lizenzbefund-phonon-prüfung-04112026). Kurz: CC BY-NC 4.0 erlaubt Vervielfältigung und Weitergabe nur zu nicht-kommerziellen Zwecken (Begriff „nicht kommerziell“ in Abschnitt 1, Lizenzgewährung in Abschnitt 2(a)(1)) und unter Einhaltung der Lizenzbedingungen (Namensnennung über `LIZENZEN-MODELLE.txt` neben der EXE und `voices\SOURCE.json`, Lizenz unverändert, keine zusätzlichen Beschränkungen). Dass der Installer kostenlos ist, genügt dafür allein nicht: Maßgeblich ist, ob die Weitergabe oder Nutzung vorrangig auf einen geschäftlichen Vorteil oder eine Vergütung zielt. Eine kostenlose, aber geschäftlich motivierte Weitergabe, etwa als Beigabe zu einer bezahlten Beratung oder zur Kundengewinnung, ist nicht gedeckt. Für solche Fälle das deutsche Modell nach der Installation entfernen oder die Komponente „Vorlesen Phonon“ abwählen (dann fehlt auch Englisch, es lässt sich später laden). Ob ein konkreter Einsatz, etwa in der Verwaltung, nicht-kommerziell ist, ist keine Frage dieses Dokuments; siehe den Hinweis in PORTABLE.md. Parakeet V3 (CC BY 4.0) verlangt Namensnennung, ebenfalls in `LIZENZEN-MODELLE.txt`. Fehlt beim Bau `HF_TOKEN`, bricht der Release-Schritt ab (`-RequireHfToken`); lokal lässt das Skript das deutsche Modell mit Warnung aus.
 
 ## Bauen
 
@@ -58,5 +58,7 @@ $env:LVA_VORINSTALLIERT = 'D:/lv-build/vorinstalliert'
 '{"bundle":{"createUpdaterArtifacts":false}}' | Set-Content $env:TEMP/ohne-updater.json
 pnpm tauri build --features gpu-vulkan --bundles nsis --config $env:TEMP/ohne-updater.json
 ```
+
+Tests: `node --test scripts/installer-vorinstalliert.test.mjs` (Wächter in der Vorlage, braucht makensis, sonst übersprungen; Lizenzaussage) und `pwsh scripts/test-build-installer-modelle.ps1` (`-OutDir` löscht nie fremde Dateien: ein vorhandener Ordner wird nur ersetzt, wenn er leer ist oder die Marke `.lva-vorinstalliert-nutzlast` trägt). Ist `LVA_VORINSTALLIERT` gesetzt, die Nutzlast aber nicht vorhanden, bricht makensis ab.
 
 Das Skript lädt jede Komponente einzeln über `--provision` in einen portablen Probeordner, derselbe Ladeweg wie die Modellseite. Der Rauchtest legt alles zusammen und prüft ohne HF-Cache mit `--list-models`, dass Nemotron und Parakeet als installiert gelten. Im Release-Workflow (`.github/workflows/release-windows.yml`, Schritt „Build installer with models“) läuft das nach den portablen ZIPs, auch beim Nachpacken (`repack_tag`).

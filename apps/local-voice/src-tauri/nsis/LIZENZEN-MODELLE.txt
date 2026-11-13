@@ -32,11 +32,14 @@ Sprachausgabe Phonon
            International (CC BY-NC 4.0)
            https://creativecommons.org/licenses/by-nc/4.0/legalcode.de
   WICHTIG: Dieses Modell darf nur für nicht-kommerzielle Zwecke genutzt
-  und weitergegeben werden. Für kommerzielle Nutzung die Komponente
-  "Vorlesen Phonon" bei der Installation abwählen oder das Modell unter
-  Modelle entfernen; Englisch und die Windows-Stimmen bleiben verfügbar.
-  Phonon ist nach der Installation ausgeschaltet; beim Einschalten zeigt
-  die App den Lizenzhinweis zur Bestätigung.
+  und weitergegeben werden. Für kommerzielle Nutzung das deutsche Modell
+  unter Modelle entfernen; das englische Modell und seine Stimmen bleiben
+  dann installiert. Wer bei der Installation die ganze Komponente
+  "Vorlesen Phonon" abwählt, erhält auch Englisch nicht; es lässt sich
+  später unter Modelle laden. Die Windows-Stimmen kommen von Windows.
+  Bei einer Neueinrichtung ist Phonon nach der Installation ausgeschaltet;
+  beim Einschalten zeigt die App den Lizenzhinweis zur Bestätigung. Bei
+  einer Aktualisierung bleiben vorhandene Einstellungen erhalten.
 
 Windows-Stimmen
   Werden nicht mitgeliefert, sondern von Windows bereitgestellt.
