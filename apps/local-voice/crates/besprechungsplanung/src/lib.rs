@@ -7,11 +7,13 @@
 //! - [`invitation`]: Einladungstext (HTML + Text) mit Marke `lva-plan:<id>`;
 //! - [`sync`]: Abgleich mit dem Kalender (Outlook fuehrt Zeit, Ort, Teilnehmende);
 //! - [`consent`]: Einwilligungs-Tor vor der Transkription;
+//! - [`assistent`]: Sperren des Besprechungsassistenten (G9a, lva#578, ADR-0031);
 //! - [`store`]: SQLite-Schema und Zugriffe.
 //!
 //! Die Outlook-Adapter (Datei/ICS, Outlook lokal, Microsoft Graph) leben in der App
 //! und liefern dem Abgleich eine [`sync::Beobachtung`].
 
+pub mod assistent;
 pub mod consent;
 pub mod invitation;
 pub mod model;
@@ -19,5 +21,7 @@ pub mod rules;
 pub mod store;
 pub mod sync;
 
+#[cfg(test)]
+mod assistent_tests;
 #[cfg(test)]
 mod tests;
