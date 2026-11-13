@@ -19,10 +19,14 @@ fn offen_intern(quelle: Quelle) -> Anfrage {
         einstufung: Einstufung::Intern,
         fingerabdruck: einstufung.fingerabdruck.clone(),
     });
+    let freigabe = Some(freigabe_bindung(ID, &einstufung.fingerabdruck, 0));
     Anfrage {
+        besprechung_id: ID.into(),
         assistent_an: true,
         aufbewahrung_festgelegt: true,
         freigabe: Freigabe::Erteilt,
+        freigabe_bindung: freigabe,
+        teilnehmer_revision: 0,
         quelle,
         pfad: Pfad::LiveChat,
         kundenprofil_nur_lokal: false,
@@ -32,9 +36,22 @@ fn offen_intern(quelle: Quelle) -> Anfrage {
         cloud_bei_externen: false,
         teilnehmende,
         liste_aus_termin: true,
+        teilnehmerinfo: Teilnehmerinfo::AktuellVollstaendig,
         eigene_domaenen: eigene(),
         bestaetigung,
     }
+}
+
+const ID: &str = "m-1";
+
+/// Der Nutzer erteilt die Freigabe für die aktuelle Runde neu (nach einer Änderung).
+fn neu_freigeben(a: &mut Anfrage) {
+    let fp = einstufen(&a.teilnehmende, &a.eigene_domaenen, a.liste_aus_termin).fingerabdruck;
+    a.freigabe_bindung = Some(freigabe_bindung(
+        &a.besprechung_id,
+        &fp,
+        a.teilnehmer_revision,
+    ));
 }
 
 /// Fingerabdruck der Liste in `a` (wie die App ihn bei der Bestätigung speichert).
@@ -198,6 +215,7 @@ fn grundsperren_gelten_auch_lokal_und_werden_alle_genannt() {
 fn lokal_braucht_keine_einstufung() {
     let mut a = offen_intern(Quelle::Lokal);
     a.teilnehmende = liste(&["x@example.com"]);
+    neu_freigeben(&mut a);
     a.bestaetigung = None;
     a.anbieter_freigegeben = false;
     a.kundenprofil_nur_lokal = true;
@@ -239,9 +257,11 @@ fn nachzuegler_macht_bestaetigung_ungueltig_und_sperrt_cloud() {
     let mut a = offen_intern(Quelle::Cloud);
     // Eine weitere interne Person kommt hinzu: Liste geändert, Bestätigung veraltet.
     a.teilnehmende = liste(&["a@example.org", "b@example.org", "c@example.org"]);
+    neu_freigeben(&mut a);
     assert_eq!(gruende(&pruefen(&a)), vec![Sperrgrund::EinstufungVeraltet]);
     // Eine externe Person kommt hinzu: zusätzlich extern.
     a.teilnehmende = liste(&["a@example.org", "b@example.org", "x@example.com"]);
+    neu_freigeben(&mut a);
     assert_eq!(
         gruende(&pruefen(&a)),
         vec![
@@ -256,6 +276,7 @@ fn unbekannt_sperrt_cloud_auch_mit_einstellung_fuer_externe() {
     let mut a = offen_intern(Quelle::Cloud);
     a.cloud_bei_externen = true;
     a.teilnehmende = liste(&["a@example.org", "Gast"]);
+    neu_freigeben(&mut a);
     // Der Nutzer versucht, „intern“ zu bestätigen: zählt nicht (nur verschärfen).
     a.bestaetigung = Some(Bestaetigung {
         einstufung: Einstufung::Intern,
@@ -274,6 +295,7 @@ fn unbekannt_sperrt_cloud_auch_mit_einstellung_fuer_externe() {
 fn extern_nur_mit_einstellung_und_bestaetigung() {
     let mut a = offen_intern(Quelle::Cloud);
     a.teilnehmende = liste(&["a@example.org", "x@example.com"]);
+    neu_freigeben(&mut a);
     a.bestaetigung = Some(Bestaetigung {
         einstufung: Einstufung::Extern,
         fingerabdruck: fp(&a),
@@ -313,6 +335,7 @@ fn veraltete_bestaetigung_zaehlt_nicht() {
 fn geaenderte_eigene_domaenen_machen_bestaetigung_ungueltig() {
     let mut a = offen_intern(Quelle::Cloud);
     a.eigene_domaenen = liste(&["example.org", "*.example.org"]);
+    neu_freigeben(&mut a);
     assert_eq!(gruende(&pruefen(&a)), vec![Sperrgrund::EinstufungVeraltet]);
 }
 
@@ -408,6 +431,7 @@ fn mehrere_adressen_in_einem_eintrag_sind_unbekannt() {
 fn mehrfachadresse_sperrt_cloud_trotz_bestaetigung() {
     let mut a = offen_intern(Quelle::Cloud);
     a.teilnehmende = liste(&["Anna <a@example.org>; x@example.com"]);
+    neu_freigeben(&mut a);
     a.bestaetigung = Some(Bestaetigung {
         einstufung: Einstufung::Intern,
         fingerabdruck: fp(&a),
@@ -440,6 +464,7 @@ fn ad_hoc_liste_ist_nie_intern_und_sperrt_cloud() {
     assert_eq!(e.einstufung, Einstufung::Unbekannt);
     let mut a = offen_intern(Quelle::Cloud);
     a.liste_aus_termin = false;
+    neu_freigeben(&mut a);
     a.bestaetigung = Some(Bestaetigung {
         einstufung: Einstufung::Intern,
         fingerabdruck: fp(&a),
@@ -454,6 +479,7 @@ fn ad_hoc_liste_ist_nie_intern_und_sperrt_cloud() {
     // Auch mit „Cloud bei Externen“ und Externen in der Ad-hoc-Liste.
     a.cloud_bei_externen = true;
     a.teilnehmende = liste(&["a@example.org", "x@example.com"]);
+    neu_freigeben(&mut a);
     a.bestaetigung = Some(Bestaetigung {
         einstufung: Einstufung::Extern,
         fingerabdruck: fp(&a),
@@ -478,6 +504,7 @@ fn mcp_wird_immer_wie_cloud_geprueft() {
     let mut a = offen_intern(Quelle::Lokal);
     a.pfad = Pfad::Mcp;
     a.teilnehmende = liste(&["x@example.com"]);
+    neu_freigeben(&mut a);
     a.bestaetigung = None;
     assert_eq!(
         gruende(&pruefen(&a)),
@@ -499,6 +526,7 @@ fn mcp_wird_immer_wie_cloud_geprueft() {
         let mut c = offen_intern(Quelle::Lokal);
         c.pfad = pfad;
         c.teilnehmende = liste(&["x@example.com"]);
+        neu_freigeben(&mut c);
         assert!(pruefen(&c).erlaubt(), "{pfad:?}");
     }
 }
@@ -508,6 +536,7 @@ fn extern_und_unbekannt_gemischt_sperrt_trotz_einstellung() {
     let mut a = offen_intern(Quelle::Cloud);
     a.cloud_bei_externen = true;
     a.teilnehmende = liste(&["x@example.com", "Alex"]);
+    neu_freigeben(&mut a);
     a.bestaetigung = Some(Bestaetigung {
         einstufung: Einstufung::Extern,
         fingerabdruck: fp(&a),
@@ -517,6 +546,7 @@ fn extern_und_unbekannt_gemischt_sperrt_trotz_einstellung() {
         vec![Sperrgrund::TeilnehmendeUnbekannt]
     );
     a.teilnehmende = liste(&["Alex"]);
+    neu_freigeben(&mut a);
     a.bestaetigung = Some(Bestaetigung {
         einstufung: Einstufung::Extern,
         fingerabdruck: fp(&a),
@@ -532,6 +562,7 @@ fn leere_liste_auf_extern_bestaetigt_bleibt_gesperrt() {
     let mut a = offen_intern(Quelle::Cloud);
     a.cloud_bei_externen = true;
     a.teilnehmende = Vec::new();
+    neu_freigeben(&mut a);
     a.bestaetigung = Some(Bestaetigung {
         einstufung: Einstufung::Extern,
         fingerabdruck: fp(&a),
@@ -600,6 +631,7 @@ fn stern_eintrag_gilt_auch_fuer_die_basisdomaene() {
 fn bestaetigung_unbekannt_sperrt_cloud_und_mcp() {
     let mut a = offen_intern(Quelle::Cloud);
     a.teilnehmende = liste(&["a@example.org"]);
+    neu_freigeben(&mut a);
     a.bestaetigung = Some(Bestaetigung {
         einstufung: Einstufung::Unbekannt,
         fingerabdruck: fp(&a),
@@ -618,6 +650,7 @@ fn bestaetigung_unbekannt_sperrt_cloud_und_mcp() {
     let mut b = offen_intern(Quelle::Cloud);
     b.cloud_bei_externen = true;
     b.teilnehmende = liste(&["a@example.org", "x@example.com"]);
+    neu_freigeben(&mut b);
     b.bestaetigung = Some(Bestaetigung {
         einstufung: Einstufung::Unbekannt,
         fingerabdruck: fp(&b),
@@ -633,6 +666,7 @@ fn bestaetigung_lockerer_als_berechnet_gilt_als_unbestaetigt() {
     let mut a = offen_intern(Quelle::Cloud);
     a.cloud_bei_externen = true;
     a.teilnehmende = liste(&["a@example.org", "x@example.com"]);
+    neu_freigeben(&mut a);
     a.bestaetigung = Some(Bestaetigung {
         einstufung: Einstufung::Intern,
         fingerabdruck: fp(&a),
@@ -670,4 +704,151 @@ fn weitere_oeffentliche_domaenen_und_suffixe_sind_nie_eigen() {
 #[test]
 fn nicht_ascii_in_eigenen_domaenen_ist_ungueltig() {
     assert_eq!(domaene_normalisieren("\u{212A}example.org"), None);
+}
+
+// -- Fixrunde 4 (Codex) --------------------------------------------------------
+
+#[test]
+fn nicht_aktuelle_teilnehmerinfo_sperrt_cloud_und_mcp_trotz_bestaetigung() {
+    let faelle = [
+        (
+            Teilnehmerinfo::Unvollstaendig,
+            Sperrgrund::TeilnehmerinfoUnvollstaendig,
+        ),
+        (Teilnehmerinfo::Veraltet, Sperrgrund::TeilnehmerinfoVeraltet),
+        (
+            Teilnehmerinfo::Unbekannt,
+            Sperrgrund::TeilnehmerinfoUnbekannt,
+        ),
+    ];
+    for (info, grund) in faelle {
+        // Gleiche interne Liste, gültige Bestätigung, auch „Cloud bei Externen“ an.
+        let mut a = offen_intern(Quelle::Cloud);
+        a.cloud_bei_externen = true;
+        a.teilnehmerinfo = info;
+        assert_eq!(gruende(&pruefen(&a)), vec![grund], "Cloud {info:?}");
+        a.quelle = Quelle::Lokal;
+        a.pfad = Pfad::Mcp;
+        assert_eq!(gruende(&pruefen(&a)), vec![grund], "MCP {info:?}");
+        // Lokal (ohne MCP) braucht keinen Teilnehmerstand.
+        a.pfad = Pfad::LiveChat;
+        assert!(pruefen(&a).erlaubt(), "lokal {info:?}");
+    }
+}
+
+#[test]
+fn nachzuegler_pausiert_auch_lokal_bis_zur_neuen_freigabe() {
+    for neu in ["c@example.org", "x@example.com", "Gast ohne Adresse"] {
+        let mut a = offen_intern(Quelle::Lokal);
+        a.teilnehmende.push(neu.to_string());
+        assert_eq!(
+            gruende(&pruefen(&a)),
+            vec![Sperrgrund::FreigabeVeraltet],
+            "{neu}"
+        );
+        neu_freigeben(&mut a);
+        assert!(pruefen(&a).erlaubt(), "{neu} nach neuer Freigabe");
+    }
+}
+
+#[test]
+fn spaeter_eintretende_eingeladene_person_pausiert_ueber_die_revision() {
+    // Einladung unverändert, aber jemand Eingeladenes tritt später ein: die App erhöht
+    // die Revision; die Freigabe der bisherigen Runde trägt nicht mehr.
+    let mut a = offen_intern(Quelle::Lokal);
+    a.teilnehmer_revision = 1;
+    assert_eq!(gruende(&pruefen(&a)), vec![Sperrgrund::FreigabeVeraltet]);
+    neu_freigeben(&mut a);
+    assert!(pruefen(&a).erlaubt());
+}
+
+#[test]
+fn entfernen_oder_ersetzen_einer_person_pausiert_und_macht_bestaetigung_ungueltig() {
+    let mut a = offen_intern(Quelle::Cloud);
+    a.teilnehmende = liste(&["a@example.org"]);
+    assert_eq!(
+        gruende(&pruefen(&a)),
+        vec![Sperrgrund::FreigabeVeraltet, Sperrgrund::EinstufungVeraltet]
+    );
+    let mut b = offen_intern(Quelle::Cloud);
+    b.teilnehmende = liste(&["a@example.org", "c@example.org"]);
+    assert_eq!(
+        gruende(&pruefen(&b)),
+        vec![Sperrgrund::FreigabeVeraltet, Sperrgrund::EinstufungVeraltet]
+    );
+}
+
+#[test]
+fn freigabe_gilt_nicht_fuer_eine_andere_besprechung() {
+    let mut a = offen_intern(Quelle::Lokal);
+    a.besprechung_id = "m-2".into();
+    assert_eq!(gruende(&pruefen(&a)), vec![Sperrgrund::FreigabeVeraltet]);
+    // Gleiche Liste: der Fingerabdruck der Einstufung ist gleich, die Freigabe nicht.
+    let fp = fp(&a);
+    assert_ne!(
+        freigabe_bindung("m-1", &fp, 0),
+        freigabe_bindung("m-2", &fp, 0)
+    );
+    // Ohne Kennung nie freigegeben.
+    a.besprechung_id = String::new();
+    neu_freigeben(&mut a);
+    assert_eq!(gruende(&pruefen(&a)), vec![Sperrgrund::FreigabeVeraltet]);
+    // Erteilt ohne gespeicherte Bindung: gesperrt.
+    let mut b = offen_intern(Quelle::Lokal);
+    b.freigabe_bindung = None;
+    assert_eq!(gruende(&pruefen(&b)), vec![Sperrgrund::FreigabeVeraltet]);
+}
+
+#[test]
+fn freigabe_bindung_ist_eindeutig_getrennt() {
+    // Längenpräfixe: Verschieben zwischen Kennung und Fingerabdruck ergibt etwas anderes.
+    assert_ne!(
+        freigabe_bindung("ab", "c", 0),
+        freigabe_bindung("a", "bc", 0)
+    );
+    assert_ne!(freigabe_bindung("a", "b", 0), freigabe_bindung("a", "b", 1));
+}
+
+#[test]
+fn plus_adressen_folgen_ihrer_domaene() {
+    let e = einstufen(
+        &liste(&["a+projekt@example.org", "b@example.org"]),
+        &eigene(),
+        true,
+    );
+    assert_eq!(e.einstufung, Einstufung::Intern);
+    let e = einstufen(
+        &liste(&["a@example.org", "x+example.org@example.com"]),
+        &eigene(),
+        true,
+    );
+    assert_eq!(e.einstufung, Einstufung::Extern);
+}
+
+#[test]
+fn punycode_zaehlt_als_domaene_unicode_nicht() {
+    let eigene = vec!["xn--mnchen-3ya.example".to_string()];
+    let e = einstufen(&liste(&["a@xn--mnchen-3ya.example"]), &eigene, true);
+    assert_eq!(e.einstufung, Einstufung::Intern);
+    // Dieselbe Domäne in Unicode-Schreibweise: konservativ ohne Adresse.
+    let e = einstufen(&liste(&["a@münchen.example"]), &eigene, true);
+    assert_eq!(e.einstufung, Einstufung::Unbekannt);
+    assert_eq!(e.ohne_adresse, 1);
+}
+
+#[test]
+fn wechsel_der_stern_berechtigung_macht_bestaetigung_ungueltig() {
+    let mut a = offen_intern(Quelle::Cloud);
+    a.eigene_domaenen = vec!["*.example.org".into()];
+    assert!(gruende(&pruefen(&a)).contains(&Sperrgrund::EinstufungVeraltet));
+    // Subdomäne nur mit Stern intern.
+    let sub = liste(&["a@team.example.org"]);
+    assert_eq!(
+        einstufen(&sub, &["*.example.org".into()], true).einstufung,
+        Einstufung::Intern
+    );
+    assert_eq!(
+        einstufen(&sub, &["example.org".into()], true).einstufung,
+        Einstufung::Extern
+    );
 }
