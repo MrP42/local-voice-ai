@@ -85,6 +85,14 @@
 //!   Ton endet, setzt den Eintrag zurueck (`stop`); ein gescheiterter Start entfernt nur, was
 //!   er selbst angelegt hat (`remove_capture_files`), und nur, wenn kein Satz gespeichert ist
 //!   (`discard_failed_start` behaelt sonst Transkript UND Audio).
+//! - **Rueckfall eines gescheiterten Starts und die Tor-Bindungen (lva#538, B1)**: jeder
+//!   Rueckfall (`discard_failed_start`, `undo_live_target_start`, `undo_playback_start`) meldet als
+//!   [`Rueckfall`], ob er NACHWEISLICH vollstaendig war; `start_hinter_tor` verwirft die Bindungen
+//!   des Starts (`planning::bindung_verwerfen`) nur dann. Bleiben Audio oder Transkript, scheitert
+//!   ein Schritt oder ist er nicht zu belegen, bleiben die Bindungen: die Planung gilt weiter fuer
+//!   den behaltenen Ton (fail-closed). Tests: `start::a_start_cancelled_after_it_became_effective_
+//!   keeps_audio_transcript_and_bindings`, `start::a_playback_start_whose_rollback_is_refused_...`,
+//!   `start::a_binding_that_cannot_be_written_...`.
 //! - **Echtzeit**: der Callback laeuft ganz unter der Sperre seines Sinks (`closed`-Pruefung,
 //!   WAV-Append, Kopf-Flush, `try_send` an den DSP, Pegel): keine Datenbank, kein Warten auf
 //!   etwas anderes. Ein Ueberlauf der DSP-Queue wird gezaehlt und als
@@ -381,6 +389,32 @@ pub fn begin_live_row(
     }
 }
 
+/// Wie weit der Rueckfall eines gescheiterten Starts NACHWEISLICH gelang (lva#538, B1).
+///
+/// Nur [`Rueckfall::Vollstaendig`] erlaubt, die Tor-Bindungen des Starts zu verwerfen
+/// (`planning::bindung_verwerfen`): die Zeile ist zurueckgesetzt bzw. als leer aufgeraeumt, die
+/// Aufnahmedateien sind weg, kein Satz ist uebrig, und JEDER Schritt hat Erfolg gemeldet. Alles
+/// andere ist `Unvollstaendig`: Audio oder Transkript bleiben, ein Schritt scheiterte, oder der
+/// Stand liess sich nicht pruefen. Dann BLEIBEN die Bindungen, damit die urspruengliche Planung
+/// fuer den behaltenen Ton weiter gilt (fail-closed: im Zweifel keine Transkription ohne
+/// Einwilligung).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[must_use]
+pub(crate) enum Rueckfall {
+    Vollstaendig,
+    Unvollstaendig,
+}
+
+impl Rueckfall {
+    fn wenn(vollstaendig: bool) -> Self {
+        if vollstaendig {
+            Self::Vollstaendig
+        } else {
+            Self::Unvollstaendig
+        }
+    }
+}
+
 /// Aufraeumen nach einem Start, der nicht zustande kam (#15): die Aufnahmedateien
 /// (`mic.wav`, `system.wav`, `mic_aec.wav` mit Null-Laenge im Kopf) bleiben sonst
 /// als Debris liegen, die DB zeigt auf sie, und die Zeile bliebe `recording` und
@@ -388,9 +422,19 @@ pub fn begin_live_row(
 /// `failed`, Dateien weg, Pfade geleert, Ordner weg, wenn danach leer. Fremde
 /// Dateien im Ordner bleiben. Best effort: was sich nicht loeschen laesst (noch
 /// offen), steht im Log.
-pub(crate) fn discard_failed_start(store: &MeetingStore, meeting_id: &str, dir: &std::path::Path) {
+///
+/// lva#538, B1: der Rueckgabewert sagt, ob ALLES gelang ([`Rueckfall`]). Bleiben Saetze (oder
+/// laesst sich das nicht pruefen), Audio, Pfade oder der Marker der Aufnahme stehen, oder
+/// scheitert irgendein Schritt, ist er `Unvollstaendig`.
+pub(crate) fn discard_failed_start(
+    store: &MeetingStore,
+    meeting_id: &str,
+    dir: &std::path::Path,
+) -> Rueckfall {
+    let mut vollstaendig = true;
     if let Err(e) = store.set_status(meeting_id, MeetingStatus::Failed) {
         warn!("meetings: failed start of {meeting_id}: status not stored: {e}");
+        vollstaendig = false;
     }
     // lva#538, fail-closed: hat die Pipeline vor dem Abbruch schon Saetze gespeichert (oder
     // laesst sich das nicht pruefen), bleiben Transkript UND Audio stehen. Geloescht wird
@@ -399,35 +443,46 @@ pub(crate) fn discard_failed_start(store: &MeetingStore, meeting_id: &str, dir: 
         Ok(segments) if segments.is_empty() => {}
         Ok(_) | Err(_) => {
             warn!("meetings: failed start of {meeting_id}: a transcript exists or is unreadable - audio kept");
-            return;
+            return Rueckfall::Unvollstaendig;
         }
     }
-    remove_capture_files(dir);
+    vollstaendig &= remove_capture_files(dir);
     if let Err(e) = store.set_audio_paths(meeting_id, None, None, None) {
         warn!("meetings: failed start of {meeting_id}: audio paths not cleared: {e}");
+        vollstaendig = false;
     }
     // Es gibt kein Audio mehr, das der Marker schuetzen koennte.
     if let Err(e) = store.end_capture(meeting_id) {
         warn!("meetings: failed start of {meeting_id}: capture marker not cleared: {e}");
+        vollstaendig = false;
     }
+    Rueckfall::wenn(vollstaendig)
 }
 
 /// Entfernt, was ein Aufnahmestart im Ordner angelegt haben kann (`mic.wav`,
 /// `system.wav`, `mic_aec.wav`), und den Ordner, wenn er danach leer ist. Fremdes
 /// (Folien, Notizen einer YouTube-Besprechung) bleibt. Best effort: was sich nicht
 /// loeschen laesst, steht im Log.
-pub(crate) fn remove_capture_files(dir: &std::path::Path) {
+///
+/// Rueckgabe (lva#538, B1): `true`, wenn keine der drei Dateien mehr da ist (geloescht oder nie
+/// angelegt); `false`, sobald eine sich nicht entfernen liess. Der Ordner zaehlt nicht dazu.
+pub(crate) fn remove_capture_files(dir: &std::path::Path) -> bool {
+    let mut alle_weg = true;
     for name in ["mic.wav", "system.wav", super::MIC_AEC_FILE] {
         let path = dir.join(name);
         match std::fs::remove_file(&path) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             // Pfad nur, nie Inhalt (Log-Datenschutz).
-            Err(e) => warn!("meetings: could not remove {path:?} after a failed start: {e}"),
+            Err(e) => {
+                warn!("meetings: could not remove {path:?} after a failed start: {e}");
+                alle_weg = false;
+            }
         }
     }
     // `remove_dir` entfernt nur einen leeren Ordner: Fremdes bleibt.
     let _ = std::fs::remove_dir(dir);
+    alle_weg
 }
 
 // ---------------------------------------------------------------------------
@@ -1022,6 +1077,13 @@ impl FinalSlot {
     /// Eine Wiederholungsschleife gibt es nicht mehr: seit der Anmeldung kann kein Auftrag mehr
     /// mit einem Modell beginnen. `nach_abbruch` laeuft zwischen Abwarten und Tor (Testhaken).
     /// Der [`LiveHalter`] gehoert der Aufnahme; faellt er, endet die Anmeldung.
+    ///
+    /// Folge der Reihenfolge (dokumentiert, von #544 uebernommen, kein Fehler): der Abbruch trifft
+    /// den Enddurchlauf JEDER anderen Besprechung, auch wenn der Start danach vom Tor abgewiesen
+    /// wird (`nur_notizen: <grund>`) oder an der Zielpruefung scheitert (`target_not_empty`).
+    /// Dann ist die Aufnahme zwar wieder abgemeldet, der abgebrochene Auftrag aber nicht
+    /// zurueckgegeben und nicht neu gestartet; er endet wie bei jedem Abbruch durch eine neue
+    /// Aufnahme. Test: `a_refused_start_still_cancels_the_final_pass_of_another_meeting`.
     pub(crate) fn start_unter_tor<T>(
         &self,
         store: &MeetingStore,
@@ -1082,6 +1144,240 @@ enum Angelegt {
     BindungFehlt(Meeting, String),
 }
 
+/// Was der Ablauf eines Starts von seinem Umfeld braucht: im Betrieb der Recorder mit seinem
+/// `AppHandle`, im Test ein Verzeichnis und ein Protokoll (lva#538, B1). So laesst sich die
+/// Verkettung aus Tor, Aufbau, Abbruch, Rueckfall und Bindung ohne App pruefen.
+trait StartUmfeld {
+    fn store(&self) -> &MeetingStore;
+    fn finals(&self) -> &FinalSlot;
+    /// Der Ordner der Besprechungen (`Err`: unbekannt).
+    fn daten_ordner(&self) -> Result<PathBuf, String>;
+    /// Die Zeile ist wieder wie vor dem Start: die Oberflaeche laedt sie neu.
+    fn zeile_wiederhergestellt(&self, meeting_id: &str);
+    /// Die Zeile steht auf `failed` (mit dem, was sie an Ton und Saetzen hat).
+    fn zeile_gescheitert(&self, meeting_id: &str);
+}
+
+/// Der Ablauf eines Starts hinter dem Einwilligungs-Tor, OHNE AppHandle (lva#538, B1), fuer
+/// Live-Aufnahme und Mitschnitt:
+///
+/// 1. `start_unter_tor`: anmelden, Enddurchlauf abwarten, Tor pruefen; unter der Sperre legt
+///    `anlegen` die Zeile an und die geprueften Planungen werden an sie gebunden.
+/// 2. Bindung gescheitert (`BindungFehlt`): `zuruecksetzen`, AUSSERHALB der Tor-Sperre (es meldet
+///    Ereignisse). Es steht nichts gebunden (die Bindung ist EINE Transaktion), also gibt es
+///    nichts zu verwerfen.
+/// 3. `vor_aufbau` (Ziel merken), dann `aufbauen` (`start_row`): kehrt erst zurueck, wenn die
+///    Sitzung die Barriere durchlaufen hat.
+/// 4. Scheitert der Aufbau: `zuruecksetzen` meldet, wie weit der Rueckfall NACHWEISLICH gelang.
+///    NUR bei [`Rueckfall::Vollstaendig`] faellt die Bindung dieses Starts weg. Bleiben Ton oder
+///    Saetze (oder ist das nicht zu belegen), bleibt sie: die urspruengliche Planung gilt dann
+///    weiter fuer das, was die Besprechung behalten hat.
+///
+/// Scheitert `vor_aufbau`, kehrt der Ablauf ohne Rueckfall zurueck (die Besprechung wird gerade
+/// geloescht, das Loeschen uebernimmt die Zeile; die Bindung bleibt, fail-closed).
+fn start_hinter_tor(
+    umfeld: &dyn StartUmfeld,
+    event: Option<&crate::managers::calendar::model::CalEvent>,
+    target_meeting_id: Option<&str>,
+    anlegen: impl FnOnce() -> Result<Meeting, String>,
+    vor_aufbau: impl FnOnce(&str) -> Result<(), String>,
+    aufbauen: impl FnOnce(
+        Meeting,
+        &crate::managers::planning::Gebunden,
+        LiveHalter,
+    ) -> Result<Meeting, String>,
+    zuruecksetzen: impl FnOnce(&str, &str) -> Rueckfall,
+) -> Result<Meeting, String> {
+    let store = umfeld.store();
+    let (angelegt, live) = umfeld.finals().start_unter_tor(
+        store,
+        event,
+        target_meeting_id,
+        || {},
+        |tor| {
+            let meeting = anlegen()?;
+            Ok(match tor.binden(store, &meeting.id) {
+                Ok(gebunden) => Angelegt::Gebunden(meeting, gebunden),
+                Err(e) => Angelegt::BindungFehlt(meeting, e),
+            })
+        },
+    )?;
+    let (meeting, gebunden) = match angelegt {
+        Angelegt::Gebunden(meeting, gebunden) => (meeting, gebunden),
+        // Die Zeile steht, die Bindung nicht: aufraeumen, ausserhalb der Tor-Sperre. Der
+        // Rueckfall ist hier ohne Folge fuer Bindungen (es gibt keine neue).
+        Angelegt::BindungFehlt(meeting, e) => {
+            let _ = zuruecksetzen(&meeting.id, &e);
+            return Err(e);
+        }
+    };
+    let meeting_id = meeting.id.clone();
+    vor_aufbau(&meeting_id)?;
+    let started = aufbauen(meeting, &gebunden, live);
+    let Err(e) = &started else { return started };
+    match zuruecksetzen(&meeting_id, e) {
+        Rueckfall::Vollstaendig => {
+            // Nichts wurde aufgenommen und nichts blieb: was DIESER Start gebunden hat, faellt
+            // wieder weg.
+            crate::managers::planning::bindung_verwerfen(store, gebunden);
+        }
+        Rueckfall::Unvollstaendig => {
+            info!(
+                "meetings: Start von {meeting_id} gescheitert, Rueckfall unvollstaendig: Ton oder Saetze bleiben, die Bindungen an die Planung auch"
+            );
+        }
+    }
+    started
+}
+
+/// Ein Start in eine Besprechung kam nicht zustande (nach dem Anlegen der Zeile): der Zieleintrag
+/// wird wieder leer bzw. die neue Besprechung als `failed` aufgeraeumt. NIE unter der
+/// Tor-Sperre (meldet Ereignisse). Rueckgabe: wie weit der Rueckfall nachweislich gelang.
+fn undo_live_start(
+    umfeld: &dyn StartUmfeld,
+    target_meeting_id: Option<&str>,
+    meeting_id: &str,
+    e: &str,
+) -> Rueckfall {
+    match target_meeting_id {
+        Some(target) => undo_live_target_start(umfeld, target, e),
+        // #15: eine neue Besprechung bleibt als `failed` stehen, ohne die
+        // Null-Header-WAVs und ohne dass der naechste App-Start sie als
+        // "Absturzrest" wiederbelebt.
+        None => match umfeld.daten_ordner() {
+            Ok(base) => {
+                info!("meetings: Start gescheitert ({e}), {meeting_id} wird aufgeraeumt");
+                discard_failed_start(umfeld.store(), meeting_id, &base.join(meeting_id))
+            }
+            Err(err) => {
+                warn!("meetings: Start gescheitert, Datenordner unbekannt ({err})");
+                let _ = umfeld.store().set_status(meeting_id, MeetingStatus::Failed);
+                Rueckfall::Unvollstaendig
+            }
+        },
+    }
+}
+
+/// Der Start in einen leeren Eintrag kam nicht zustande: der Eintrag wird wieder leer, die
+/// Aufnahmedateien erst danach entfernt. Fail-closed: laesst er sich nicht zuruecksetzen
+/// (die Pipeline hat schon Saetze gespeichert, die Datenbank antwortet nicht), steht er auf
+/// `failed`, mit Transkript und Audio. `Vollstaendig` nur, wenn der Eintrag leer ist UND der
+/// Ordner der Aufnahme weg ist.
+fn undo_live_target_start(umfeld: &dyn StartUmfeld, target: &str, error: &str) -> Rueckfall {
+    let store = umfeld.store();
+    match store.restore_empty_meeting(target) {
+        Ok(true) => {
+            info!("meetings: Start gescheitert ({error}), Eintrag {target} ist wieder leer");
+            let entfernt = match umfeld.daten_ordner() {
+                Ok(dir) => match std::fs::remove_dir_all(dir.join(target)) {
+                    Ok(()) => true,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+                    Err(e) => {
+                        warn!("meetings: Aufnahmeordner von {target} nicht entfernt: {e}");
+                        false
+                    }
+                },
+                Err(err) => {
+                    warn!("meetings: Datenordner unbekannt, Aufnahme von {target} bleibt ({err})");
+                    false
+                }
+            };
+            umfeld.zeile_wiederhergestellt(target);
+            Rueckfall::wenn(entfernt)
+        }
+        Ok(false) => {
+            warn!(
+                "meetings: Eintrag {target} nicht wiederherstellbar, wird `failed` (Audio bleibt)"
+            );
+            let _ = store.set_status(target, MeetingStatus::Failed);
+            umfeld.zeile_gescheitert(target);
+            Rueckfall::Unvollstaendig
+        }
+        Err(err) => {
+            warn!("meetings: Eintrag {target} nicht wiederhergestellt: {err}");
+            let _ = store.set_status(target, MeetingStatus::Failed);
+            umfeld.zeile_gescheitert(target);
+            Rueckfall::Unvollstaendig
+        }
+    }
+}
+
+/// Der Mitschnitt kam nicht zustande: die Zeile ist wieder die YouTube-Besprechung von
+/// vorher (aus dem gespeicherten Vorzustand), danach erst werden die Dateien entfernt.
+/// Voraussetzung: die Barriere der Sitzung ist durchlaufen (nichts schreibt mehr).
+///
+/// Saetze, die die Pipeline vor dem Abbruch gespeichert hat, gehoeren zu diesem nie
+/// veroeffentlichten Start (vorher hatte der Eintrag keine, `begin_playback_capture`
+/// prueft das): `rollback_playback_capture` verwirft sie in DERSELBEN Transaktion wie das
+/// Zuruecksetzen. Fail-closed: laesst sich die Zeile nicht zuruecksetzen, bleiben Dateien
+/// und Transkript, die Zeile steht auf `failed` (mit dem Merker; der naechste App-Start
+/// setzt sie zurueck, sofern nachweislich nichts aufgenommen wurde), nie auf `recording`
+/// (er belebt sie sonst als Absturzrest).
+///
+/// Rueckgabe (lva#538, B1): `Vollstaendig` nur, wenn der Rollback bestaetigt ist UND die
+/// Aufnahmedateien weg sind; sonst `Unvollstaendig`, und die Bindungen des Starts bleiben.
+fn undo_playback_start(umfeld: &dyn StartUmfeld, meeting_id: &str) -> Rueckfall {
+    let store = umfeld.store();
+    match store.rollback_playback_capture(meeting_id) {
+        Ok(true) => {
+            let entfernt = match umfeld.daten_ordner() {
+                Ok(base) => remove_capture_files(&base.join(meeting_id)),
+                Err(err) => {
+                    warn!("meetings: Mitschnitt gescheitert, Datenordner unbekannt ({err})");
+                    false
+                }
+            };
+            umfeld.zeile_wiederhergestellt(meeting_id);
+            Rueckfall::wenn(entfernt)
+        }
+        Ok(false) | Err(_) => {
+            warn!("meetings: Eintrag {meeting_id} nicht wiederhergestellt, wird `failed`");
+            let _ = store.set_status(meeting_id, MeetingStatus::Failed);
+            umfeld.zeile_gescheitert(meeting_id);
+            Rueckfall::Unvollstaendig
+        }
+    }
+}
+
+/// Das Ende von `start_row`, ohne AppHandle: der WIRKSAME Beginn (zweite Pruefung des Tors unter
+/// der Sperre, dann erst speichern die Capture-Callbacks) und die Veroeffentlichung der Sitzung
+/// im Lebenszyklus. Scheitert eines davon, faellt die Sitzung durch die Barriere (Captures, DSP
+/// und Worker zu), bevor diese Funktion zurueckkehrt. `nach_wirksam` laeuft zwischen beiden
+/// Schritten (im Betrieb leer; Testhaken: ab hier duerfen die Callbacks schon liefern, und ein
+/// Abbruch kann die Veroeffentlichung noch verhindern).
+fn wirksam_veroeffentlichen(
+    core: &RunCore<RecordingSession>,
+    store: &MeetingStore,
+    starting: &StartTicket<'_, RecordingSession>,
+    gebunden: &crate::managers::planning::Gebunden,
+    wirksam: &AtomicBool,
+    session: RecordingSession,
+    nach_wirksam: impl FnOnce(),
+) -> Result<(), String> {
+    // lva#544: Unter der Tor-Sperre wird das Tor ein zweites Mal frisch geprueft (ein Widerruf
+    // seit der Bindung gewinnt) und nur der Merker umgelegt. Scheitert die Pruefung, wurde nichts
+    // aufgenommen: die Sitzung faellt durch die Barriere, der Start gilt als gescheitert und der
+    // Aufrufer raeumt auf.
+    if let Err(code) = gebunden.wirksam(store, || {
+        wirksam.store(true, Ordering::Release);
+    }) {
+        info!(
+            "meetings: Start nicht wirksam ({}, {code})",
+            gebunden.meeting_id()
+        );
+        return Err(code);
+    }
+    nach_wirksam();
+    // Zustand und Sitzung zusammen unter der Sperre des Lebenszyklus und erst jetzt, wo die
+    // Captures laufen (#15). Ein Stopp, der zwischen der Pruefung und hier kam, hat den
+    // Abbruchmerker gesetzt: die Sitzung kommt zurueck und faellt durch die Barriere.
+    if let Err(session) = core.publish_started(starting, gebunden.meeting_id(), session) {
+        drop(session);
+        return Err(starting.cancel_code().to_string());
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Manager
 // ---------------------------------------------------------------------------
@@ -1097,6 +1393,28 @@ pub struct MeetingRecorderManager {
     core: RunCore<RecordingSession>,
     /// M2-P2d: Enddurchlauf bzw. Recovery im Hintergrund (hoechstens einer).
     finals: FinalSlot,
+}
+
+impl StartUmfeld for MeetingRecorderManager {
+    fn store(&self) -> &MeetingStore {
+        &self.store
+    }
+
+    fn finals(&self) -> &FinalSlot {
+        &self.finals
+    }
+
+    fn daten_ordner(&self) -> Result<PathBuf, String> {
+        super::meetings_data_dir(&self.app).map_err(|e| e.to_string())
+    }
+
+    fn zeile_wiederhergestellt(&self, meeting_id: &str) {
+        self.emit_restored(meeting_id);
+    }
+
+    fn zeile_gescheitert(&self, meeting_id: &str) {
+        self.emit_state(meeting_id, "failed", false);
+    }
 }
 
 impl MeetingRecorderManager {
@@ -1255,93 +1573,29 @@ impl MeetingRecorderManager {
         //    schaltet die Aufnahme erst nach einer zweiten Pruefung unter der Sperre wirksam.
         // Ohne Planung zum Termin bzw. zur Zielbesprechung: unveraendert.
         let consent_at = chrono::Utc::now().timestamp();
-        let (angelegt, live) = self.finals.start_unter_tor(
-            &self.store,
+        // Der Ablauf selbst (Tor, Anlegen, Binden, Aufbau, Rueckfall, Bindungen) steht in
+        // `start_hinter_tor`, ohne AppHandle und deshalb im Test pruefbar (lva#538, B1).
+        start_hinter_tor(
+            self,
             event,
             target_meeting_id,
-            || {},
-            |tor| {
-                let meeting = begin_live_row(&self.store, &title, consent_at, target_meeting_id)?;
-                Ok(match tor.binden(&self.store, &meeting.id) {
-                    Ok(gebunden) => Angelegt::Gebunden(meeting, gebunden),
-                    Err(e) => Angelegt::BindungFehlt(meeting, e),
-                })
+            || begin_live_row(&self.store, &title, consent_at, target_meeting_id),
+            // Scheitert das (die Besprechung wird gerade geloescht), uebernimmt das Loeschen die
+            // Zeile: kein Rueckfall hier.
+            |meeting_id| starting.set_target(meeting_id),
+            // `start_row` kehrt erst zurueck, wenn seine Sitzung die Barriere durchlaufen hat
+            // (Captures, DSP und Worker sind zu): erst DANACH wird die Zeile zurueckgesetzt.
+            |meeting, gebunden, live| {
+                self.start_row(
+                    meeting,
+                    CaptureMode::Meeting { capture_system },
+                    gebunden,
+                    live,
+                    &starting,
+                )
             },
-        )?;
-        let (meeting, gebunden) = match angelegt {
-            Angelegt::Gebunden(meeting, gebunden) => (meeting, gebunden),
-            // Die Zeile steht, die Bindung nicht: aufraeumen, ausserhalb der Tor-Sperre
-            // (das Aufraeumen meldet Ereignisse).
-            Angelegt::BindungFehlt(meeting, e) => {
-                self.undo_live_start(target_meeting_id, &meeting.id, &e);
-                return Err(e);
-            }
-        };
-        let meeting_id = meeting.id.clone();
-        starting.set_target(&meeting_id)?;
-        // `start_row` kehrt erst zurueck, wenn seine Sitzung die Barriere durchlaufen hat
-        // (Captures, DSP und Worker sind zu): erst DANACH wird die Zeile zurueckgesetzt.
-        let started = self.start_row(
-            meeting,
-            CaptureMode::Meeting { capture_system },
-            &gebunden,
-            live,
-            &starting,
-        );
-        if let Err(e) = &started {
-            self.undo_live_start(target_meeting_id, &meeting_id, e);
-            // Nichts wurde aufgenommen: was DIESER Start gebunden hat, faellt wieder weg.
-            crate::managers::planning::bindung_verwerfen(&self.store, gebunden);
-        }
-        started
-    }
-
-    /// Ein Start einer Besprechung kam nicht zustande (nach dem Anlegen der Zeile): der Zieleintrag
-    /// wird wieder leer bzw. die neue Besprechung als `failed` aufgeraeumt. NIE unter der
-    /// Tor-Sperre (meldet Ereignisse).
-    fn undo_live_start(&self, target_meeting_id: Option<&str>, meeting_id: &str, e: &str) {
-        match target_meeting_id {
-            Some(target) => self.undo_live_target_start(target, e),
-            // #15: eine neue Besprechung bleibt als `failed` stehen, ohne die
-            // Null-Header-WAVs und ohne dass der naechste App-Start sie als
-            // "Absturzrest" wiederbelebt.
-            None => match super::meetings_data_dir(&self.app) {
-                Ok(base) => {
-                    info!("meetings: Start gescheitert ({e}), {meeting_id} wird aufgeraeumt");
-                    discard_failed_start(&self.store, meeting_id, &base.join(meeting_id));
-                }
-                Err(err) => {
-                    warn!("meetings: Start gescheitert, Datenordner unbekannt ({err})");
-                    let _ = self.store.set_status(meeting_id, MeetingStatus::Failed);
-                }
-            },
-        }
-    }
-
-    /// Der Start in einen leeren Eintrag kam nicht zustande: der Eintrag wird wieder leer, die
-    /// Aufnahmedateien erst danach entfernt. Fail-closed: laesst er sich nicht zuruecksetzen
-    /// (die Pipeline hat schon Saetze gespeichert, die Datenbank antwortet nicht), steht er auf
-    /// `failed`, mit Transkript und Audio.
-    fn undo_live_target_start(&self, target: &str, error: &str) {
-        match self.store.restore_empty_meeting(target) {
-            Ok(true) => {
-                info!("meetings: Start gescheitert ({error}), Eintrag {target} ist wieder leer");
-                if let Ok(dir) = super::meetings_data_dir(&self.app) {
-                    let _ = std::fs::remove_dir_all(dir.join(target));
-                }
-                self.emit_restored(target);
-            }
-            Ok(false) => {
-                warn!("meetings: Eintrag {target} nicht wiederherstellbar, wird `failed` (Audio bleibt)");
-                let _ = self.store.set_status(target, MeetingStatus::Failed);
-                self.emit_state(target, "failed", false);
-            }
-            Err(err) => {
-                warn!("meetings: Eintrag {target} nicht wiederhergestellt: {err}");
-                let _ = self.store.set_status(target, MeetingStatus::Failed);
-                self.emit_state(target, "failed", false);
-            }
-        }
+            |meeting_id, e| undo_live_start(self, target_meeting_id, meeting_id, e),
+        )
     }
 
     /// #537: nimmt den Systemton (NUR den, kein Mikrofon) in die vorhandene
@@ -1360,7 +1614,9 @@ impl MeetingRecorderManager {
     /// Systemton liess sich nicht oeffnen), `start_cancelled` (ein Stopp oder Abbruch kam
     /// dazwischen), `nur_notizen: <grund>` (das Einwilligungs-Tor der Besprechungsplanung
     /// sperrt, lva#544). Nach jedem Fehler nach der Umwandlung ist der Eintrag wieder wie
-    /// vorher (`undo_playback_start`).
+    /// vorher (`undo_playback_start`). Gelingt der Rueckfall nicht nachweislich vollstaendig
+    /// (Zeile nicht zurueckgesetzt, Datei nicht entfernt, Saetze uebrig), bleibt der Eintrag
+    /// `failed` mit dem, was er hat, UND die Bindungen an die Planung bleiben (lva#538, B1).
     pub fn start_playback_capture(
         &self,
         meeting_id: &str,
@@ -1387,78 +1643,37 @@ impl MeetingRecorderManager {
         // YouTube-Besprechung, sofern sie einer zugeordnet ist), die Zeile atomar umwandeln
         // (samt Vorzustand) und die geprueften Planungen BINDEN. Ohne Zustimmung aller
         // Anwesenden bleibt der Eintrag unveraendert (`nur_notizen: <grund>`).
-        // Folge der Reihenfolge: auch eine Anfrage, die danach an der Zielpruefung scheitert
-        // (`target_not_empty`), hat den Enddurchlauf einer anderen Besprechung abgebrochen.
+        // Folge der Reihenfolge (dokumentiert, von #544 uebernommen): auch eine Anfrage, die
+        // danach an der Zielpruefung scheitert (`target_not_empty`) oder vom Tor abgewiesen wird
+        // (`nur_notizen: <grund>`), hat den Enddurchlauf einer ANDEREN Besprechung abgebrochen
+        // und abgewartet. Er wird nicht neu gestartet. Test:
+        // `a_refused_start_still_cancels_the_final_pass_of_another_meeting`.
         let consent_at = chrono::Utc::now().timestamp();
-        let (angelegt, live) = self.finals.start_unter_tor(
-            &self.store,
+        start_hinter_tor(
+            self,
             None,
             Some(meeting_id),
-            || {},
-            |tor| {
-                let meeting = self
-                    .store
+            || {
+                self.store
                     .begin_playback_capture(meeting_id, consent_at)
-                    .map_err(|e| coded_error("meeting_create_failed", &e))?;
-                Ok(match tor.binden(&self.store, &meeting.id) {
-                    Ok(gebunden) => Angelegt::Gebunden(meeting, gebunden),
-                    Err(e) => Angelegt::BindungFehlt(meeting, e),
-                })
+                    .map_err(|e| coded_error("meeting_create_failed", &e))
             },
-        )?;
-        let (meeting, gebunden) = match angelegt {
-            Angelegt::Gebunden(meeting, gebunden) => (meeting, gebunden),
-            Angelegt::BindungFehlt(_, e) => {
+            // Das Ziel steht seit `begin_start` fest: nichts mehr zu merken.
+            |_| Ok(()),
+            |meeting, gebunden, live| {
+                self.start_row(
+                    meeting,
+                    CaptureMode::PlaybackOnly,
+                    gebunden,
+                    live,
+                    &starting,
+                )
+            },
+            |meeting_id, e| {
                 info!("meetings: Mitschnitt gescheitert ({e}), {meeting_id} wird zurueckgesetzt");
-                self.undo_playback_start(meeting_id);
-                return Err(e);
-            }
-        };
-
-        let started = self.start_row(
-            meeting,
-            CaptureMode::PlaybackOnly,
-            &gebunden,
-            live,
-            &starting,
-        );
-        if let Err(e) = &started {
-            info!("meetings: Mitschnitt gescheitert ({e}), {meeting_id} wird zurueckgesetzt");
-            self.undo_playback_start(meeting_id);
-            // Nichts wurde aufgenommen: was DIESER Start gebunden hat, faellt wieder weg.
-            crate::managers::planning::bindung_verwerfen(&self.store, gebunden);
-        }
-        started
-    }
-
-    /// Der Mitschnitt kam nicht zustande: die Zeile ist wieder die YouTube-Besprechung von
-    /// vorher (aus dem gespeicherten Vorzustand), danach erst werden die Dateien entfernt.
-    /// Voraussetzung: die Barriere der Sitzung ist durchlaufen (nichts schreibt mehr).
-    ///
-    /// Saetze, die die Pipeline vor dem Abbruch gespeichert hat, gehoeren zu diesem nie
-    /// veroeffentlichten Start (vorher hatte der Eintrag keine, `begin_playback_capture`
-    /// prueft das): `rollback_playback_capture` verwirft sie in DERSELBEN Transaktion wie das
-    /// Zuruecksetzen. Fail-closed: laesst sich die Zeile nicht zuruecksetzen, bleiben Dateien
-    /// und Transkript, die Zeile steht auf `failed` (mit dem Merker; der naechste App-Start
-    /// setzt sie zurueck, sofern nachweislich nichts aufgenommen wurde), nie auf `recording`
-    /// (er belebt sie sonst als Absturzrest).
-    fn undo_playback_start(&self, meeting_id: &str) {
-        match self.store.rollback_playback_capture(meeting_id) {
-            Ok(true) => {
-                match super::meetings_data_dir(&self.app) {
-                    Ok(base) => remove_capture_files(&base.join(meeting_id)),
-                    Err(err) => {
-                        warn!("meetings: Mitschnitt gescheitert, Datenordner unbekannt ({err})")
-                    }
-                }
-                self.emit_restored(meeting_id);
-            }
-            Ok(false) | Err(_) => {
-                warn!("meetings: Eintrag {meeting_id} nicht wiederhergestellt, wird `failed`");
-                let _ = self.store.set_status(meeting_id, MeetingStatus::Failed);
-                self.emit_state(meeting_id, "failed", false);
-            }
-        }
+                undo_playback_start(self, meeting_id)
+            },
+        )
     }
 
     /// lva#538: der Befehl "Start abbrechen" mit der Vorgangs-Id des Frontends. Der Abbruch geht
@@ -1583,24 +1798,16 @@ impl MeetingRecorderManager {
             .and_then(|()| self.ensure_present(&meeting_id))?;
         let write_flags = Arc::clone(&session.write_flags);
         let watch_stop = Arc::clone(&session.watch_stop);
-        // lva#544: der WIRKSAME Beginn. Unter der Tor-Sperre wird das Tor ein zweites Mal frisch
-        // geprueft (ein Widerruf seit der Bindung gewinnt) und nur der Merker umgelegt: erst ab
-        // jetzt speichern die Callbacks Ton und speisen die Transkription. Scheitert die Pruefung,
-        // wurde nichts aufgenommen: die Sitzung faellt durch die Barriere (Captures zu), der Start
-        // gilt als gescheitert und der Aufrufer raeumt auf.
-        if let Err(code) = gebunden.wirksam(&self.store, || {
-            wirksam.store(true, Ordering::Release);
-        }) {
-            info!("meetings: Start nicht wirksam ({meeting_id}, {code})");
-            return Err(code);
-        }
-        // Zustand und Sitzung zusammen unter der Sperre des Lebenszyklus und erst jetzt, wo die
-        // Captures laufen (#15). Ein Stopp, der zwischen der Pruefung und hier kam, hat den
-        // Abbruchmerker gesetzt: die Sitzung kommt zurueck und faellt durch die Barriere.
-        if let Err(session) = self.core.publish_started(starting, &meeting_id, session) {
-            drop(session);
-            return Err(starting.cancel_code().to_string());
-        }
+        // lva#544: der WIRKSAME Beginn und die Veroeffentlichung (siehe dort).
+        wirksam_veroeffentlichen(
+            &self.core,
+            &self.store,
+            starting,
+            gebunden,
+            &wirksam,
+            session,
+            || {},
+        )?;
 
         self.set_indicator(true);
         self.emit_state(&meeting_id, "recording", false);
@@ -3162,7 +3369,10 @@ mod tests {
             "Voraussetzung: Debris liegt da"
         );
 
-        discard_failed_start(&store, &id, &folder);
+        assert_eq!(
+            discard_failed_start(&store, &id, &folder),
+            Rueckfall::Vollstaendig
+        );
 
         assert!(!folder.exists(), "Ordner weg, wenn er danach leer ist");
         let meeting = store.get_meeting(&id).unwrap().unwrap();
@@ -3188,7 +3398,11 @@ mod tests {
         )
         .unwrap();
 
-        discard_failed_start(&store, &id, &folder);
+        assert_eq!(
+            discard_failed_start(&store, &id, &folder),
+            Rueckfall::Vollstaendig,
+            "Fremdes im Ordner ist kein Audio: der Rueckfall gilt als vollstaendig"
+        );
 
         assert!(folder.join("notizen.txt").exists(), "Fremdes bleibt");
         assert!(!folder.join("mic.wav").exists());
@@ -3210,13 +3424,16 @@ mod tests {
             .create_meeting("Leer", MeetingSource::Live, Some(1))
             .unwrap();
         // Der Ordner wurde nie angelegt (z. B. `meeting_dir_failed`).
-        discard_failed_start(&store, &meeting.id, &dir.path().join("gibt-es-nicht"));
+        assert_eq!(
+            discard_failed_start(&store, &meeting.id, &dir.path().join("gibt-es-nicht")),
+            Rueckfall::Vollstaendig
+        );
         assert_eq!(
             store.get_meeting(&meeting.id).unwrap().unwrap().status,
             "failed"
         );
         // Und eine unbekannte Besprechung bringt nichts zum Absturz.
-        discard_failed_start(&store, "gibt-es-nicht", &dir.path().join("x"));
+        let _ = discard_failed_start(&store, "gibt-es-nicht", &dir.path().join("x"));
     }
 
     /// lva#538, fail-closed: hat die Pipeline vor dem Fehler schon Saetze gespeichert, bleiben
@@ -3242,7 +3459,11 @@ mod tests {
             )
             .unwrap();
 
-        discard_failed_start(&store, &id, &folder);
+        assert_eq!(
+            discard_failed_start(&store, &id, &folder),
+            Rueckfall::Unvollstaendig,
+            "Audio und Transkript bleiben: nicht vollstaendig (B1)"
+        );
 
         assert!(folder.join("mic.wav").exists(), "das Audio blieb");
         assert!(folder.join("system.wav").exists());
@@ -5321,6 +5542,652 @@ mod tests {
             assert!(block(false).is_empty());
             assert_eq!(aufrufe.load(Ordering::SeqCst), 2, "kein weiterer Aufruf");
             assert_eq!(meldungen.load(Ordering::SeqCst), 1, "einmal gemeldet");
+        }
+
+        // -- lva#538, B1 (Codex R7): Rueckfall eines gescheiterten Starts und Tor-Bindungen -------
+        //
+        // Die Verkettung laeuft durch den ECHTEN Ablauf (`start_hinter_tor`, `wirksam_veroeffentlichen`,
+        // die echten Rueckfaelle `undo_*`, die echte Pipeline und der echte Callback); nur der
+        // Treiber (Mikrofon, Systemton) und der AppHandle fehlen. Die Reihenfolge entscheiden
+        // Haken und Barrieren, keine Zeiten.
+
+        use std::sync::atomic::AtomicUsize;
+
+        /// Das Umfeld eines Starts ohne App: Ordner, Store, Platz der Anmeldung und ein Protokoll
+        /// der Meldungen mit dem Stand der Tor-Sperre im Augenblick der Meldung.
+        struct TestUmfeld {
+            dir: tempfile::TempDir,
+            store: Arc<MeetingStore>,
+            finals: FinalSlot,
+            daten_bekannt: bool,
+            meldungen: Mutex<Vec<(&'static str, String, bool)>>,
+        }
+
+        impl TestUmfeld {
+            fn neu() -> Self {
+                let (dir, store) = store();
+                Self {
+                    dir,
+                    store,
+                    finals: FinalSlot::default(),
+                    daten_bekannt: true,
+                    meldungen: Mutex::new(Vec::new()),
+                }
+            }
+
+            fn ohne_datenordner() -> Self {
+                Self {
+                    daten_bekannt: false,
+                    ..Self::neu()
+                }
+            }
+
+            fn ordner(&self) -> PathBuf {
+                self.dir.path().join("meetings")
+            }
+
+            fn gemeldet(&self) -> Vec<(&'static str, String, bool)> {
+                self.meldungen.lock().unwrap().clone()
+            }
+
+            fn melden(&self, was: &'static str, meeting_id: &str) {
+                self.meldungen.lock().unwrap().push((
+                    was,
+                    meeting_id.to_string(),
+                    crate::managers::planning::unter_tor_sperre(),
+                ));
+            }
+        }
+
+        impl StartUmfeld for TestUmfeld {
+            fn store(&self) -> &MeetingStore {
+                &self.store
+            }
+
+            fn finals(&self) -> &FinalSlot {
+                &self.finals
+            }
+
+            fn daten_ordner(&self) -> Result<PathBuf, String> {
+                if self.daten_bekannt {
+                    Ok(self.ordner())
+                } else {
+                    Err("Datenordner unbekannt (Test)".to_string())
+                }
+            }
+
+            fn zeile_wiederhergestellt(&self, meeting_id: &str) {
+                self.melden("wiederhergestellt", meeting_id);
+            }
+
+            fn zeile_gescheitert(&self, meeting_id: &str) {
+                self.melden("gescheitert", meeting_id);
+            }
+        }
+
+        /// Eine aufgebaute Aufnahme ohne Treiber: die Sitzung und der echte Capture-Callback.
+        struct Aufnahme {
+            session: RecordingSession,
+            callback: RigCallback,
+        }
+
+        /// Baut auf, was `start_row` nach dem Anlegen der Zeile baut: Ordner, WAV mit Kopf, Pfade
+        /// und Marker der Aufnahme in der Datenbank (`begin_capture`), die Pipeline mit einer
+        /// Engine, die ihre Aufrufe zaehlt, und den echten Callback hinter `erst_wenn_wirksam`.
+        /// Den Treiber spielt der Test: er ruft den Callback selbst.
+        fn aufnahme_aufbauen(
+            umfeld: &TestUmfeld,
+            meeting_id: &str,
+            live: LiveHalter,
+            wirksam: &Arc<AtomicBool>,
+            engine: &Arc<AtomicUsize>,
+        ) -> Aufnahme {
+            let dir = umfeld.ordner().join(meeting_id);
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("system.wav");
+            let sink = Arc::new(Mutex::new(ChannelSink::new(
+                StreamingWavWriter::create(&path, SAMPLE_RATE).unwrap(),
+            )));
+            let mut session = RecordingSession::new(
+                meeting_id,
+                CaptureMode::Meeting {
+                    capture_system: true,
+                },
+                None,
+                Some(Arc::clone(&sink)),
+                None,
+                Some(path.clone()),
+                live,
+            );
+            umfeld
+                .store
+                .begin_capture(meeting_id, None, path.to_str())
+                .unwrap();
+            let aufrufe = Arc::clone(engine);
+            let pipeline = LivePipeline::start(
+                meeting_id.to_string(),
+                Arc::clone(&umfeld.store),
+                DspConfig::new(None, Arc::new(|_| {})).playback_only(),
+                move |chunk: &Chunk| {
+                    aufrufe.fetch_add(1, Ordering::SeqCst);
+                    // Ein Wort je Sekunde Audio, damit weder Dichte noch Wiederholung greift.
+                    let secs = (chunk.samples.len() / 16_000).max(1);
+                    let text = (0..secs)
+                        .map(|i| format!("wort{}", i as u64 + chunk.offset_ms))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    vec![crate::managers::transcription::TimedSegment {
+                        text,
+                        start_ms: 0,
+                        end_ms: chunk.samples.len() as u64 / 16,
+                        words: None,
+                    }]
+                },
+                |_event| {},
+            )
+            .unwrap();
+            let callback = erst_wenn_wirksam(
+                Arc::clone(wirksam),
+                channel_callback(
+                    CHANNEL_SYSTEM,
+                    sink,
+                    Arc::clone(&session.paused),
+                    Arc::clone(&session.write_flags),
+                    pipeline.feed(CHANNEL_SYSTEM).unwrap(),
+                    Arc::new(CountingLevels::default()) as Arc<dyn LevelSink>,
+                ),
+            );
+            session.pipeline = Some(pipeline);
+            Aufnahme {
+                session,
+                callback: Box::new(callback),
+            }
+        }
+
+        /// Spielt `seconds` Sekunden Ton durch den Callback (wie ein Treiber, 100-ms-Bloecke).
+        fn speisen(callback: &mut RigCallback, seconds: usize) {
+            for _ in 0..seconds * 10 {
+                callback(&vec![3_000i16; 1_600], Some(1));
+            }
+        }
+
+        /// Die Bindungen einer Besprechung: Planungen und Schluessel der Start-Termine.
+        fn bindungen_von(store: &MeetingStore, meeting_id: &str) -> (Vec<String>, Vec<String>) {
+            let conn = store.get_connection().unwrap();
+            let lesen = |sql: &str| -> Vec<String> {
+                let mut st = conn.prepare(sql).unwrap();
+                let rows = st
+                    .query_map([meeting_id], |r| r.get::<_, String>(0))
+                    .unwrap();
+                rows.collect::<Result<Vec<_>, _>>().unwrap()
+            };
+            (
+                lesen("SELECT plan_id FROM meeting_plan_bindings WHERE meeting_id = ?1 ORDER BY 1"),
+                lesen(
+                    "SELECT event_key FROM meeting_start_events WHERE meeting_id = ?1 ORDER BY 1",
+                ),
+            )
+        }
+
+        /// B1, die Verkettung: ein Live-Start aus einem geplanten Termin wird WIRKSAM (Tor zum
+        /// zweiten Mal bestanden, Callbacks liefern), ein Live-Block wird vollstaendig gespeichert,
+        /// DANN bricht der Start ab (vor `publish_started`). Audio und Transkript bleiben
+        /// (`discard_failed_start` behaelt sie), und deshalb bleiben die Bindungen: ein Widerruf
+        /// der Planung erreicht die Besprechung weiter, ein erneuter Modellversuch wird abgelehnt.
+        /// Vor der Korrektur verwarf der Start die Bindungen trotzdem, und der Versuch lief durch.
+        #[test]
+        fn a_start_cancelled_after_it_became_effective_keeps_audio_transcript_and_bindings() {
+            let umfeld = TestUmfeld::neu();
+            let store = Arc::clone(&umfeld.store);
+            let (plan, termin) = th::plan_mit_termin(&store, "u-b1-live", true);
+            let core: RunCore<RecordingSession> = RunCore::new();
+            let starting = core.begin_start(Some("op-b1"), None).unwrap();
+            let wirksam = Arc::new(AtomicBool::new(false));
+            let engine = Arc::new(AtomicUsize::new(0));
+            let neue_id = Mutex::new(String::new());
+
+            let ergebnis = start_hinter_tor(
+                &umfeld,
+                Some(&termin),
+                None,
+                || {
+                    let meeting = begin_live_row(&store, "Abstimmung", 1, None)?;
+                    *neue_id.lock().unwrap() = meeting.id.clone();
+                    Ok(meeting)
+                },
+                |id| starting.set_target(id),
+                |meeting, gebunden, live| {
+                    let id = meeting.id.clone();
+                    let Aufnahme {
+                        session,
+                        mut callback,
+                    } = aufnahme_aufbauen(&umfeld, &id, live, &wirksam, &engine);
+                    // Vor dem wirksamen Beginn verwirft der Callback alles.
+                    speisen(&mut callback, 1);
+                    assert!(store.get_segments(&id).unwrap().is_empty());
+                    wirksam_veroeffentlichen(
+                        &core,
+                        &store,
+                        &starting,
+                        gebunden,
+                        &wirksam,
+                        session,
+                        || {
+                            // Der Start ist wirksam, noch nicht veroeffentlicht: der Treiber
+                            // liefert, der Block wird gerechnet und gespeichert ...
+                            speisen(&mut callback, 21);
+                            until("der Live-Block ist gespeichert", || {
+                                !store.get_segments(&id).unwrap().is_empty()
+                            });
+                            // ... und DANN kommt der Abbruch.
+                            assert_eq!(core.cancel_op("op-b1"), CancelOp::Starting);
+                        },
+                    )?;
+                    Ok(meeting)
+                },
+                |id, e| undo_live_start(&umfeld, None, id, e),
+            );
+            assert_eq!(ergebnis.err(), Some(START_CANCELLED.to_string()));
+            assert_eq!(
+                engine.load(Ordering::SeqCst),
+                1,
+                "genau ein Block gerechnet"
+            );
+
+            let id = neue_id.lock().unwrap().clone();
+            let segmente = store.get_segments(&id).unwrap();
+            assert_eq!(segmente.len(), 1, "das Transkript bleibt");
+            let zeile = store.get_meeting(&id).unwrap().unwrap();
+            assert_eq!(zeile.status, "failed");
+            assert!(
+                zeile.system_audio_path.is_some(),
+                "die Pfade bleiben, das Audio gehoert zum Transkript"
+            );
+            assert!(umfeld.ordner().join(&id).join("system.wav").exists());
+            assert!(!umfeld.finals.live_aktiv(), "die Anmeldung fiel");
+            assert_eq!(
+                bindungen_von(&store, &id),
+                (vec![plan.id.clone()], vec![termin.key.clone()]),
+                "die Bindungen bleiben: der Ton wurde behalten"
+            );
+
+            // Widerruf der Planung, danach ein erneuter Modellversuch.
+            crate::managers::planning::einwilligung_setzen(
+                &store,
+                &th::widerruf(&plan.id, th::BERT),
+                th::NOW + 3,
+            )
+            .unwrap();
+            let (told, aufrufe, meldungen) = (
+                AtomicBool::new(false),
+                AtomicUsize::new(0),
+                AtomicUsize::new(0),
+            );
+            assert!(live_block(&store, &id, &told, &aufrufe, &meldungen).is_empty());
+            assert_eq!(meldungen.load(Ordering::SeqCst), 1, "einmal gemeldet");
+            let _arbeit = crate::managers::planning::Modellarbeit::beginnen(&id);
+            let versuch = crate::managers::planning::modell_lauf(&store, &id, |frei| {
+                frei.einloesen()?;
+                aufrufe.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            });
+            assert_eq!(versuch, Err("nur_notizen: abgelehnt".to_string()));
+            assert_eq!(aufrufe.load(Ordering::SeqCst), 0, "null Modellaufrufe");
+            assert_eq!(
+                store.get_segments(&id).unwrap(),
+                segmente,
+                "die Saetze sind unveraendert"
+            );
+        }
+
+        /// Gegenprobe zu B1: ist NICHTS geblieben (kein Satz, die Dateien weg, die Pfade und der
+        /// Marker geleert), faellt die Bindung dieses Starts weiter weg (unveraendert).
+        #[test]
+        fn a_start_that_kept_nothing_still_drops_its_bindings() {
+            let umfeld = TestUmfeld::neu();
+            let store = Arc::clone(&umfeld.store);
+            let (_plan, termin) = th::plan_mit_termin(&store, "u-b1-leer", true);
+            let wirksam = Arc::new(AtomicBool::new(false));
+            let engine = Arc::new(AtomicUsize::new(0));
+            let neue_id = Mutex::new(String::new());
+            let ergebnis = start_hinter_tor(
+                &umfeld,
+                Some(&termin),
+                None,
+                || {
+                    let meeting = begin_live_row(&store, "Abstimmung", 1, None)?;
+                    *neue_id.lock().unwrap() = meeting.id.clone();
+                    Ok(meeting)
+                },
+                |_| Ok(()),
+                |meeting, _gebunden, live| {
+                    let aufnahme = aufnahme_aufbauen(&umfeld, &meeting.id, live, &wirksam, &engine);
+                    // Das Mikrofon scheitert nach dem Aufbau der Dateien: die Sitzung faellt.
+                    drop(aufnahme.session);
+                    Err("mic_start_failed: kein Geraet (Test)".to_string())
+                },
+                |id, e| undo_live_start(&umfeld, None, id, e),
+            );
+            assert_eq!(
+                ergebnis.err(),
+                Some("mic_start_failed: kein Geraet (Test)".to_string())
+            );
+            let id = neue_id.lock().unwrap().clone();
+            let zeile = store.get_meeting(&id).unwrap().unwrap();
+            assert_eq!(zeile.status, "failed");
+            assert!(zeile.system_audio_path.is_none() && zeile.mic_audio_path.is_none());
+            assert!(!umfeld.ordner().join(&id).join("system.wav").exists());
+            assert_eq!(bindungen_von(&store, &id), (vec![], vec![]));
+        }
+
+        /// B1, Wiedergabe: laesst sich der Rollback nicht ausfuehren (hier: ein SQL-Trigger
+        /// verweigert das Zuruecksetzen der YouTube-Zeile), bleibt die Zeile `failed` und die
+        /// Bindungen bleiben; ein Widerruf wirkt dann weiter. Ohne den Trigger (Gegenprobe)
+        /// stellt der Rollback die Zeile her, und die Bindungen dieses Starts fallen weg.
+        #[test]
+        fn a_playback_start_whose_rollback_is_refused_keeps_the_bindings() {
+            for rollback_verweigert in [false, true] {
+                let umfeld = TestUmfeld::neu();
+                let store = Arc::clone(&umfeld.store);
+                let youtube = store
+                    .create_meeting("Vortrag", MeetingSource::Youtube, None)
+                    .unwrap();
+                store
+                    .get_connection()
+                    .unwrap()
+                    .execute(
+                        "UPDATE meetings SET status = 'ready' WHERE id = ?1",
+                        [&youtube.id],
+                    )
+                    .unwrap();
+                let (plan, termin) = th::plan_mit_termin(&store, "u-b1-wdg", true);
+                if rollback_verweigert {
+                    store
+                        .get_connection()
+                        .unwrap()
+                        .execute_batch(
+                            "CREATE TRIGGER test_rollback_verweigert
+                                 BEFORE UPDATE ON meetings
+                                 WHEN NEW.source = 'youtube' AND NEW.status = 'ready'
+                             BEGIN
+                                 SELECT RAISE(ABORT, 'Zuruecksetzen verweigert (Test)');
+                             END;",
+                        )
+                        .unwrap();
+                }
+                let ergebnis = start_hinter_tor(
+                    &umfeld,
+                    Some(&termin),
+                    Some(&youtube.id),
+                    || {
+                        store
+                            .begin_playback_capture(&youtube.id, 1)
+                            .map_err(|e| coded_error("meeting_create_failed", &e))
+                    },
+                    |_| Ok(()),
+                    |_meeting, _gebunden, _live| Err("playback_capture_failed".to_string()),
+                    |id, _e| undo_playback_start(&umfeld, id),
+                );
+                assert_eq!(ergebnis.err(), Some("playback_capture_failed".to_string()));
+                assert!(!umfeld.finals.live_aktiv());
+                let zeile = store.get_meeting(&youtube.id).unwrap().unwrap();
+                let gebunden = bindungen_von(&store, &youtube.id);
+                let widerruf = |store: &MeetingStore| {
+                    crate::managers::planning::einwilligung_setzen(
+                        store,
+                        &th::widerruf(&plan.id, th::BERT),
+                        th::NOW + 3,
+                    )
+                    .unwrap();
+                    crate::managers::planning::tor_pruefen_besprechung(store, &youtube.id)
+                };
+                if rollback_verweigert {
+                    assert_eq!(zeile.status, "failed", "nicht zurueckgesetzt");
+                    assert_eq!(
+                        gebunden,
+                        (vec![plan.id.clone()], vec![termin.key.clone()]),
+                        "die Bindungen bleiben"
+                    );
+                    assert_eq!(
+                        umfeld.gemeldet(),
+                        [("gescheitert", youtube.id.clone(), false)]
+                    );
+                    assert_eq!(widerruf(&store), Err("nur_notizen: abgelehnt".to_string()));
+                } else {
+                    assert_eq!(zeile.status, "ready", "zurueckgesetzt");
+                    assert_eq!(gebunden, (vec![], vec![]), "nichts blieb: Bindung weg");
+                    assert_eq!(
+                        umfeld.gemeldet(),
+                        [("wiederhergestellt", youtube.id.clone(), false)]
+                    );
+                }
+            }
+        }
+
+        /// Hinweis 6 (`BindungFehlt`): die Bindung der neuen Live-Zeile laesst sich nicht
+        /// schreiben (ein SQL-Trigger verweigert sie). Die Zeile wird AUSSERHALB der Tor-Sperre
+        /// aufgeraeumt, der Aufbau laeuft nie, es steht nichts gebunden, der Fehler ist ein Fehler
+        /// des Tors (`tor_nicht_pruefbar`), und die Anmeldung faellt.
+        #[test]
+        fn a_binding_that_cannot_be_written_is_cleaned_up_outside_the_gate() {
+            let umfeld = TestUmfeld::neu();
+            let store = Arc::clone(&umfeld.store);
+            let (_plan, termin) = th::plan_mit_termin(&store, "u-b1-bf", true);
+            store
+                .get_connection()
+                .unwrap()
+                .execute_batch(
+                    "CREATE TRIGGER test_bindung_verweigert BEFORE INSERT ON meeting_plan_bindings
+                     BEGIN
+                         SELECT RAISE(ABORT, 'Bindung verweigert (Test)');
+                     END;",
+                )
+                .unwrap();
+            let aufgebaut = AtomicUsize::new(0);
+            let aufgeraeumt = Mutex::new(Vec::<(String, bool)>::new());
+            let neue_id = Mutex::new(String::new());
+            let ergebnis = start_hinter_tor(
+                &umfeld,
+                Some(&termin),
+                None,
+                || {
+                    let meeting = begin_live_row(&store, "Abstimmung", 1, None)?;
+                    *neue_id.lock().unwrap() = meeting.id.clone();
+                    Ok(meeting)
+                },
+                |_| Ok(()),
+                |_meeting, _gebunden, _live| {
+                    aufgebaut.fetch_add(1, Ordering::SeqCst);
+                    Err("darf nie laufen".to_string())
+                },
+                |id, e| {
+                    aufgeraeumt.lock().unwrap().push((
+                        id.to_string(),
+                        crate::managers::planning::unter_tor_sperre(),
+                    ));
+                    undo_live_start(&umfeld, None, id, e)
+                },
+            );
+            assert_eq!(
+                ergebnis.err(),
+                Some("nur_notizen: tor_nicht_pruefbar".to_string())
+            );
+            assert_eq!(aufgebaut.load(Ordering::SeqCst), 0, "kein Aufbau");
+            let id = neue_id.lock().unwrap().clone();
+            assert_eq!(
+                *aufgeraeumt.lock().unwrap(),
+                [(id.clone(), false)],
+                "genau einmal, ausserhalb der Tor-Sperre"
+            );
+            assert!(umfeld.gemeldet().iter().all(|(_, _, unter_tor)| !unter_tor));
+            assert_eq!(
+                store.get_meeting(&id).unwrap().unwrap().status,
+                "failed",
+                "die Zeile ist aufgeraeumt"
+            );
+            assert_eq!(bindungen_von(&store, &id), (vec![], vec![]));
+            assert!(!umfeld.finals.live_aktiv());
+            assert!(!crate::managers::planning::unter_tor_sperre());
+        }
+
+        /// Auflage Punkt 5: ein Start fuer die Besprechung B, den das Tor oder die Zielpruefung
+        /// abweist, hat den laufenden Enddurchlauf einer ANDEREN Besprechung A trotzdem
+        /// abgebrochen und abgewartet (dokumentiert in `start_unter_tor` und
+        /// `start_playback_capture`). Danach laeuft nichts mehr, und B ist unveraendert.
+        #[test]
+        fn a_refused_start_still_cancels_the_final_pass_of_another_meeting() {
+            for grund in ["tor", "ziel"] {
+                let umfeld = TestUmfeld::neu();
+                let store = Arc::clone(&umfeld.store);
+                let a = store.create_empty_meeting("A", None).unwrap();
+                let ziel = if grund == "tor" {
+                    let b = store.create_empty_meeting("B", None).unwrap();
+                    th::plan_fuer_besprechung(&store, &b.id, "u-b1-zwei", false);
+                    b.id
+                } else {
+                    // Kein leerer Eintrag mehr: `fill_empty_meeting` verweigert (`target_not_empty`).
+                    store
+                        .create_meeting("B", MeetingSource::Live, Some(1))
+                        .unwrap()
+                        .id
+                };
+                let zustand = |id: &str| {
+                    serde_json::to_value(store.get_meeting(id).unwrap().unwrap()).unwrap()
+                };
+                let vorher = zustand(&ziel);
+                let log = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+                let eintrag = Arc::clone(&log);
+                umfeld
+                    .finals
+                    .spawn(move |_vorher, cancel| {
+                        while !cancel.load(Ordering::Acquire) {
+                            std::thread::yield_now();
+                        }
+                        eintrag.lock().unwrap().push("enddurchlauf_a_abgebrochen");
+                    })
+                    .unwrap();
+                assert!(umfeld.finals.active(), "Voraussetzung: A laeuft");
+
+                let ergebnis = start_hinter_tor(
+                    &umfeld,
+                    None,
+                    Some(&ziel),
+                    || begin_live_row(&store, "B", 1, Some(&ziel)),
+                    |_| Ok(()),
+                    |_meeting, _gebunden, _live| -> Result<Meeting, String> {
+                        panic!("ein abgewiesener Start baut nichts auf")
+                    },
+                    |_, _| Rueckfall::Vollstaendig,
+                );
+                let fehler = ergebnis.expect_err("der Start wird abgewiesen");
+                if grund == "tor" {
+                    assert_eq!(fehler, "nur_notizen: offen");
+                } else {
+                    assert_eq!(fehler, "target_not_empty");
+                }
+                assert_eq!(
+                    *log.lock().unwrap(),
+                    ["enddurchlauf_a_abgebrochen"],
+                    "{grund}: A wurde abgebrochen UND abgewartet, bevor der Start endete"
+                );
+                assert!(!umfeld.finals.active(), "{grund}: A laeuft nicht mehr");
+                assert!(!umfeld.finals.live_aktiv(), "{grund}: keine Anmeldung");
+                assert_eq!(zustand(&ziel), vorher, "{grund}: B ist unveraendert");
+                assert_eq!(bindungen_von(&store, &ziel).0, Vec::<String>::new());
+                assert_eq!(
+                    store.get_meeting(&a.id).unwrap().unwrap().status,
+                    "ready",
+                    "{grund}: A ist nicht angefasst"
+                );
+            }
+        }
+
+        /// Der Rueckfall eines Starts in einen leeren Eintrag und eines Mitschnitts meldet
+        /// `Vollstaendig` nur bei nachgewiesenem Erfolg: hat der Eintrag Saetze, laesst er sich
+        /// nicht zuruecksetzen, und ohne bekannten Datenordner bleibt unbewiesen, ob die Dateien weg
+        /// sind.
+        #[test]
+        fn the_rollback_of_a_target_start_is_complete_only_when_it_is_proven() {
+            // 1. Zuruecksetzen und Ordner weg: vollstaendig.
+            let umfeld = TestUmfeld::neu();
+            let ziel = umfeld.store.create_empty_meeting("Ziel", None).unwrap();
+            begin_live_row(&umfeld.store, "Ziel", 1, Some(&ziel.id)).unwrap();
+            let ordner = umfeld.ordner().join(&ziel.id);
+            std::fs::create_dir_all(&ordner).unwrap();
+            std::fs::write(ordner.join("system.wav"), b"RIFF").unwrap();
+            assert_eq!(
+                undo_live_target_start(&umfeld, &ziel.id, "x"),
+                Rueckfall::Vollstaendig
+            );
+            assert!(!ordner.exists());
+            assert!(umfeld.store.is_empty_meeting(&ziel.id).unwrap());
+            assert_eq!(
+                umfeld.gemeldet(),
+                [("wiederhergestellt", ziel.id.clone(), false)]
+            );
+
+            // 2. Die Pipeline hat schon einen Satz gespeichert: nicht wiederherstellbar.
+            let umfeld = TestUmfeld::neu();
+            let ziel = umfeld.store.create_empty_meeting("Ziel", None).unwrap();
+            begin_live_row(&umfeld.store, "Ziel", 1, Some(&ziel.id)).unwrap();
+            umfeld
+                .store
+                .append_delta(
+                    &ziel.id,
+                    &crate::managers::meetings::store::TranscriptDelta {
+                        new_segments: vec![StoredSegment {
+                            segment_index: 0,
+                            start_ms: 0,
+                            end_ms: 1_000,
+                            text: "Schon gesagt".to_string(),
+                            channel: 0,
+                            speaker_index: None,
+                            words: None,
+                        }],
+                    },
+                )
+                .unwrap();
+            assert_eq!(
+                undo_live_target_start(&umfeld, &ziel.id, "x"),
+                Rueckfall::Unvollstaendig
+            );
+            assert_eq!(umfeld.store.get_segments(&ziel.id).unwrap().len(), 1);
+            assert_eq!(umfeld.gemeldet(), [("gescheitert", ziel.id.clone(), false)]);
+
+            // 3. Zuruecksetzen gelingt, aber der Datenordner ist unbekannt: unbewiesen.
+            let umfeld = TestUmfeld::ohne_datenordner();
+            let ziel = umfeld.store.create_empty_meeting("Ziel", None).unwrap();
+            begin_live_row(&umfeld.store, "Ziel", 1, Some(&ziel.id)).unwrap();
+            assert_eq!(
+                undo_live_target_start(&umfeld, &ziel.id, "x"),
+                Rueckfall::Unvollstaendig
+            );
+            // Dasselbe fuer eine neue Zeile ohne Ziel.
+            let neu = begin_live_row(&umfeld.store, "Neu", 1, None).unwrap();
+            assert_eq!(
+                undo_live_start(&umfeld, None, &neu.id, "x"),
+                Rueckfall::Unvollstaendig
+            );
+        }
+
+        /// `discard_failed_start` und `remove_capture_files` melden, wenn sich eine Aufnahmedatei
+        /// nicht entfernen laesst (hier: ein Ordner traegt den Namen `mic.wav`): nicht
+        /// vollstaendig, die Bindungen blieben stehen.
+        #[test]
+        fn a_capture_file_that_cannot_be_removed_makes_the_rollback_incomplete() {
+            let (_dir, store, id, folder) = failed_start_fixture();
+            std::fs::remove_file(folder.join("mic.wav")).unwrap();
+            std::fs::create_dir_all(folder.join("mic.wav")).unwrap();
+            std::fs::write(folder.join("mic.wav").join("x"), b"x").unwrap();
+            assert_eq!(
+                discard_failed_start(&store, &id, &folder),
+                Rueckfall::Unvollstaendig
+            );
+            assert!(!remove_capture_files(&folder));
+            assert!(
+                !folder.join("system.wav").exists(),
+                "was sich entfernen liess, ist weg"
+            );
         }
     }
 }
