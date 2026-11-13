@@ -6,7 +6,7 @@ Werkzeuge, Variablen-Extraktion. Dieses Verzeichnis ist die gemeinsame Quelle de
 
 | Datei | Inhalt |
 |---|---|
-| `assistent.schema.json` | JSON Schema (Draft 2020-12), nur Dokumentation; die Kerne prüfen von Hand |
+| `assistent.schema.json` | JSON Schema (Draft 2020-12): beschreibt die **Struktur**, nur Dokumentation. Maßgeblich ist die Prüfung im Kern (von Hand); sie verlangt zusätzlich: keine Steuerzeichen im Namen, Trimmen des Namens, ganzzahlige Darstellung (`5.0` wird abgewiesen), vorbehaltene Ids, Gerätenamen als Id, vollständig lesbare unbekannte Felder |
 | `vorlagen.json` | die 15 eingebauten Vorlagen (Liste von Profilen, kanonisch geschrieben) |
 | `pruefstaende.json` | gemeinsame Fälle, die **beide** Kerne mit identischem Ergebnis bestehen |
 | `auswertung.schema.json` | JSON Schema des Ergebnisses `lva.auswertung/1` (Dokumentation), siehe Abschnitt „Auswertung“ |
@@ -27,7 +27,7 @@ und werden beim Schreiben ausgegeben. Längen zählen in **Unicode-Codepunkten**
 | Feld | Regel | Standard |
 |---|---|---|
 | `schema` | genau `"lva.assistent/1"` | – |
-| `id` | `^[a-z0-9][a-z0-9-]{0,63}$` | – |
+| `id` | `^[a-z0-9][a-z0-9-]{0,63}$`, kein Gerätename von Windows (siehe unten) | – |
 | `name` | nach Entfernen von Leerzeichen an den Enden 1..60 Codepunkte, kein Steuerzeichen/Zeilenumbruch | – |
 | `beschreibung` | 0..200 | `""` |
 | `anweisungen` | 0..8000, Zeilenumbrüche erlaubt | `""` |
@@ -63,12 +63,45 @@ Pfade: `name`, `wissen.kontexte[3].art`, `auswertung.felder[0].optionen`.
 | `typ` | falscher JSON-Typ (auch `null` für Felder außer `stimme`) |
 | `laenge` | Länge außerhalb der Grenzen (Codepunkte); bei `optionen` einer Auswahl: weniger als 2 |
 | `muster` | passt nicht zum Muster (bei `name`: Steuerzeichen) |
-| `wert` | nicht in der Menge der erlaubten Werte (Enums, `nachfrage_stille_s`, vorbehaltene Id beim Kopieren) |
+| `wert` | nicht in der Menge der erlaubten Werte (Enums, `nachfrage_stille_s`, Gerätename als `id`, vorbehaltene Id beim Kopieren) |
 | `zu_viele` | mehr Einträge als erlaubt (Kontexte 50, Schnittstellen 32, Felder 30, Optionen 20) |
 | `doppelt` | Dublette (Bereiche, Schnittstellen, Feldnamen) |
 | `schema_unbekannt` | `schema` ist weder die Fassung 1 noch eine neuere |
 | `schema_neuer` | `lva.assistent/<n>` mit n>1 |
-| `json` | kein gültiges JSON oder kein Objekt (ein Fehler mit Pfad `""`) |
+| `json` | kein gültiges JSON oder kein Objekt (ein Fehler mit Pfad `""`); bei einem Baum: ein Wert, den der Leser nicht wieder läse (siehe „Prüfung des Baums“); bei einer Datei: nicht lesbar, Symlink oder andere nicht reguläre Datei (Pfad `""`) |
+
+## Vergleichsregel: genau
+
+Alle Vergleiche und Schlüssel sind **genau**: Zwei Texte sind gleich, wenn ihre Folge der Unicode-Skalare (UTF-8-Bytes) gleich ist.
+Es gibt keine Normalisierung und keine kanonische Gleichheit: `é` (U+00E9) und `e` + U+0301 sind zwei verschiedene Texte, zwei
+Schlüssel, zwei Platzhalter. Das gilt für Platzhalter samt Zusatzwerten und der Liste der Unbekannten, Dubletten (Bereiche,
+Schnittstellen, Feldnamen), JSON-Objektschlüssel und deren Dubletten, Ids, Vorlagen und Dateinamen. TypeScript vergleicht Zeichenketten
+mit `===` (Codeeinheiten, für wohlgeformte Texte dasselbe). Swift vergleicht `String` dagegen kanonisch (`==`, `Set<String>`,
+`Dictionary<String, _>`, `contains`; sogar U+212A ist dort gleich `K`); der Swift-Kern vergleicht darum über die UTF-8-Bytes
+(`AssistantExact`, `AssistantExactKey`), auch in den `Equatable`-Umsetzungen seiner öffentlichen Typen. Deren `==` zählt die Reihenfolge der Mitglieder eines JSON-Objekts nicht (geschrieben wird sortiert), die einer Liste schon. Ein Swift-`[String: String]`
+(Zusatzwerte) führt kanonisch gleiche Schlüssel schon beim Einfügen zusammen; das ist die Grenze des Typs, nicht des Kerns.
+
+## Gerätenamen und vorbehaltene Ids
+
+- **Gerätenamen von Windows** taugen nicht als Dateiname und sind als `id` abgewiesen (Pfad `id`, Code `wert`): `con`, `prn`, `aux`,
+  `nul`, `com0` bis `com9`, `lpt0` bis `lpt9`. Mit Nummer oder Zusatz bleiben andere Ids gültig (`con1`, `com10`, `nul-1`, `console`).
+  Im Schema steht das als `not`.
+- **Vorbehaltene Ids**: `aktiv` (der Dateiname `aktiv.json` gehört der aktiven Auswahl), die Ids der Vorlagen und alles mit dem
+  Vorsatz `vorlage-`. Speichern, Löschen, Kopieren-Ziel und Auswählen mit einer vorbehaltenen Id schlagen fehl (Swift
+  `reservedId`; das Auswählen nur für vorbehaltene Ids, die keine Vorlage sind). Eine vorhandene `aktiv.json` wird nie als Profil gelesen
+  und nie als Profil überschrieben.
+
+## Prüfung des Baums
+
+Grundsatz: **Was die Prüfung besteht, schreibt `encode`/`kodiere` und liest `parse` wieder, mit bytegleicher zweiter Ausgabe.**
+Darum prüft `parse(tree:)`/`profilAusBaum`/`pruefeProfil` (also auch alles, was nicht aus Text, sondern von Hand gebaut wurde) die
+übernommenen unbekannten Felder vollständig: Zahlentext nach der JSON-Grammatik (`-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?`),
+dieselbe Tiefengrenze wie der Leser (die Wurzel liegt bei Tiefe 0, Werte bis Tiefe 64 sind lesbar), doppelte Schlüssel in
+jedem Objekt (auch in den typisierten Ebenen), in TypeScript zusätzlich einzelne Surrogate in Zeichenketten und Schlüsseln (typisierte
+Felder eingeschlossen; Swift-Strings können keine enthalten). Befund: Code `json`, Pfad des Feldes. Bei unbekannten Feldern ist das
+der Pfad des obersten unbekannten Feldes, nie tiefer (`x`, `verhalten.neu`, `wissen.kontexte[0].neu`, `auswertung.felder[1].neu`); bei
+doppelten Schlüsseln in einer typisierten Ebene der Pfad des Objekts (`""`, `verhalten`, `wissen.kontexte[0]`). Ein Wert in zu großer
+Tiefe wird nicht weiter durchlaufen. Ein typisiertes Ganzzahlfeld nimmt nur `-?(0|[1-9][0-9]*)` (`007` ist `typ`).
 
 ## Auslegungen (wo die Vorgabe mehrdeutig war, gilt die einfachste)
 
@@ -95,8 +128,9 @@ Jede Auslegung ist durch mindestens einen Fall in `pruefstaende.json` festgehalt
   `besprechungen`→`meetings`, `sprachnotizen`→`dictations`, `gespraeche`→`conversations`, `kalender`→`calendar`,
   `vorlesen`→`tts`, `notizbuch`→`notebook`; `ablage` hat am PC noch keine Wirkung. Das Ergebnis steht in der Reihenfolge der
   Plattformliste (`AssistantArea.allCases` bzw. `ALL_AREAS`), ohne Wiederholung.
-- **Vorbehaltene Ids**: die Ids der Vorlagen und alles mit dem Vorsatz `vorlage-`. Sie lassen sich nicht speichern und beim
-  Kopieren nicht vergeben (`alsEigenenKopieren` / `copyAsOwn` meldet `id`/`wert`).
+- **Vorbehaltene Ids**: `aktiv`, die Ids der Vorlagen und alles mit dem Vorsatz `vorlage-` (siehe oben). Sie lassen sich nicht
+  speichern und beim Kopieren nicht vergeben (`alsEigenenKopieren` / `copyAsOwn` meldet `id`/`wert`); die Profilprüfung selbst
+  lässt sie zu.
 
 ## Platzhalter
 
@@ -166,23 +200,41 @@ Gilt gemeinsam für Swift (`AssistantProfileStore`) und den späteren Speicher a
 - **Je eigenem Assistenten eine Datei `<id>.json`** mit exakt der Ausgabe von `encode` (UTF-8, ohne BOM, sortierte Schlüssel,
   2 Leerzeichen, `\n` am Ende).
 - **Der Dateiname muss zur `id` im Inhalt passen**, sonst wird die Datei abgewiesen (Code `muster`, Pfad `id`). Eine Datei mit
-  vorbehaltener Id (Vorlage) wird ebenfalls abgewiesen (`wert`, Pfad `id`).
+  vorbehaltener Id (Vorlage, `vorlage-…`, `aktiv`) wird ebenfalls abgewiesen (`wert`, Pfad `id`).
 - **Die aktive Auswahl liegt in `aktiv.json`** als `{"id": "<id>"}` (gleiche Schreibweise). Fehlt die Datei, ist sie ungültig,
-  oder zeigt sie auf ein fehlendes oder gelöschtes Profil, gilt die Vorlage `alles`.
-- **Obergrenzen**: 200 Dateien und 256 KiB je Datei. Größere Dateien werden abgewiesen und nicht gelesen (`laenge`, Pfad `""`);
-  über 200 Dateien hinaus (nach Dateiname sortiert) werden weitere abgewiesen (`zu_viele`, Pfad `""`).
+  oder zeigt sie auf ein fehlendes oder gelöschtes Profil, gilt die Vorlage `alles`. `aktiv` ist deshalb als Id vorbehalten; das
+  Auswählen schreibt nur `aktiv.json`, nie ein Profil.
+- **Gelesen wird nur von regulären Dateien.** Die Art des Eintrags kommt von `attributesOfItem` (Symlinks werden nicht verfolgt,
+  Typ `.typeRegular`). Ein Symlink `x.json` (auch ein hängender) und jede andere nicht reguläre Datei (FIFO, Gerät) gilt als
+  abgewiesen: Code `json`, Pfad `""`; sie wird nicht geöffnet. Ein **Verzeichnis** `x.json` wird ignoriert. Das gilt für Auflisten
+  und direkten Abruf gleich; auch `aktiv.json` als Symlink ist ungültig (Rückfall `alles`).
+- **Obergrenzen**: 256 KiB je Datei (größere werden abgewiesen und nicht gelesen: `laenge`, Pfad `""`). Höchstens **200 Dateien**:
+  Die Grenze gilt für das **Auflisten** (über 200 Dateien hinaus, nach Dateiname sortiert, werden weitere abgewiesen: `zu_viele`,
+  Pfad `""`, ohne sie zu lesen) und für die **Neuanlage** (`tooMany`; das Überschreiben einer vorhandenen Datei bleibt möglich).
+  Der direkte Abruf per Id liest unabhängig davon.
 - **Andere Dateien im Verzeichnis werden ignoriert** (alles, was nicht auf `.json` endet, und `aktiv.json` selbst).
 - **Atomar schreiben**: in eine temporäre Datei im selben Verzeichnis, dann ersetzen; nie halb geschriebene Profile.
+- **Eine abgewiesene Datei wird nie verändert oder gelöscht**; sie erscheint in der Liste der Abgewiesenen mit Dateiname und
+  Fehlerliste. **Speichern** (`save`) schreibt nur, wenn die Zieldatei fehlt oder ein gültiges eigenes Profil mit genau dieser Id
+  ist; sonst Fehler `occupied` („belegt“: beschädigt, neueres Schema, falsche Id im Inhalt, zu groß, Symlink, Verzeichnis, keine
+  reguläre Datei) und es wird nichts geschrieben. **Löschen** (`delete`) entfernt nur ein gültiges eigenes Profil; eine abgewiesene
+  Datei ist `occupied`, ein Verzeichnis, Symlink oder anderes Nicht-Reguläres (und eine fehlende Datei) ist `notFound`, nichts wird
+  entfernt.
+- **Ein Schreiber je Verzeichnis.** Kapazitätsprüfung, die Prüfung der Zieldatei und `newOwnId` sind nicht atomar gegen parallele
+  Prozesse; innerhalb der App läuft das Schreiben seriell. Zwei Prozesse, die dasselbe Verzeichnis beschreiben, sind nicht vorgesehen.
 - **Eigene Ids**: `eigen-` plus 12 Zeichen `[0-9a-z]` aus einem übergebenen Zufallserzeuger.
-- Eine abgewiesene Datei wird nie verändert oder gelöscht; sie erscheint in der Liste der Abgewiesenen mit Dateiname und
-  Fehlerliste.
 
 ## Prüfstände
 
 `pruefstaende.json` hat die Abschnitte `faelle` (Eingabe, erwartet `{ok, kodiert}` oder `{fehler}`; eine Zeichenkette als
-`eingabe` ist Rohtext, jeder andere Wert ein JSON-Wert), `platzhalter`, `rollenblock`, `bereiche_iphone`, `bereiche_pc` und
-`kontextmodus`. Die erwarteten Ausgaben der gültigen Fälle stammen aus Pythons `json`-Modul, nicht aus einem der Kerne.
-Neu erzeugen ist nicht vorgesehen; ein neuer Fall kommt von Hand hinzu und muss in beiden Kernen grün sein.
+`eingabe` ist Rohtext, jeder andere Wert ein JSON-Wert), `ids` (je Id: Ergebnis der Profilprüfung `ok`/`muster`/`wert` und ob sie
+vorbehalten ist), `baeume` (von Hand gebaute Profilbäume mit den Sonderformen `{"$zahl": Rohtext}`, `{"$paare": [[Schlüssel,
+Wert], …]}` für doppelte Schlüssel und `{"$tief": n}` für Tiefe; erwartet wie bei `faelle`), `platzhalter`, `rollenblock`,
+`bereiche_iphone`, `bereiche_pc` und `kontextmodus`. Die erwarteten Ausgaben der gültigen Fälle stammen aus Pythons `json`-Modul,
+nicht aus einem der Kerne. Der Swift-Test und der Node-Test lesen **dieselbe Datei** und prüfen dieselben erwarteten Bytes (Swift
+vergleicht über `Array(text.utf8)`, nicht über `String ==`). Neu erzeugen ist nicht vorgesehen; ein neuer Fall kommt von Hand
+hinzu und muss in beiden Kernen grün sein. Nur in TypeScript prüfbar (Swift-Strings kennen keine einzelnen Surrogate und das
+JSON hier keine ungültigen Zahlen): einzelne Surrogate und sehr große Eingaben (`push(...feld)`) stehen im Node-Test.
 
 ## Auswertung (`lva.auswertung/1`)
 

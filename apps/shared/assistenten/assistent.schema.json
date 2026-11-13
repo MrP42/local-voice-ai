@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://local-voice.invalid/schemas/lva.assistent/1.json",
   "title": "Assistenten-Profil",
-  "description": "Dokumentation des Assistenten-Profils lva.assistent/1. Die beiden Kerne (Swift und TypeScript) prüfen von Hand und liefern Fehler mit Pfad und Code; dieses Schema beschreibt dasselbe und wird nicht zur Laufzeit ausgewertet. Längen zählen in Unicode-Codepunkten, nicht in UTF-16-Einheiten. Unbekannte Felder sind überall erlaubt und bleiben erhalten.",
+  "description": "Dokumentation der STRUKTUR des Assistenten-Profils lva.assistent/1; es wird nicht zur Laufzeit ausgewertet. Maßgeblich ist die Prüfung in den beiden Kernen (Swift und TypeScript), die von Hand prüft, Fehler mit Pfad und Code liefert und zusätzlich verlangt: keine Steuerzeichen im Namen, Trimmen des Namens, ganzzahlige Darstellung (nachfrage_stille_s: 5.0 wird abgewiesen), vorbehaltene Ids (aktiv, alles, vorlage-…) beim Speichern und Kopieren, vollständig lesbare unbekannte Felder (JSON-Zahlengrammatik, höchstens 64 Ebenen, keine doppelten Schlüssel). Längen zählen in Unicode-Codepunkten, nicht in UTF-16-Einheiten. Vergleiche sind genau (Folge der Unicode-Skalare, keine Normalisierung). Unbekannte Felder sind überall erlaubt und bleiben erhalten.",
   "type": "object",
   "required": ["schema", "id", "name"],
   "properties": {
@@ -13,7 +13,8 @@
     "id": {
       "type": "string",
       "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
-      "description": "Eigene Assistenten: eigen- und 12 Zeichen. Vorlagen: alles und vorlage-…"
+      "not": { "pattern": "^(con|prn|aux|nul|(com|lpt)[0-9])$" },
+      "description": "Eigene Assistenten: eigen- und 12 Zeichen. Vorlagen: alles und vorlage-… Ausgeschlossen als Id (Gerätenamen von Windows, die als Dateiname nicht taugen): con, prn, aux, nul, com0 bis com9, lpt0 bis lpt9 (Fehler wert). Beim Speichern und Kopieren zusätzlich vorbehalten: aktiv (Dateiname der aktiven Auswahl), alles und alles mit dem Vorsatz vorlage-."
     },
     "name": {
       "type": "string",

@@ -2,6 +2,7 @@ export {
   BEKANNTE_BEREICHE,
   FEHLER_CODES,
   PROFIL_SCHEMA,
+  istGeraetename,
   kodiereJson,
   kodiereProfil,
   kontextModusWirksam,
