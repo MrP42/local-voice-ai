@@ -1,16 +1,20 @@
 //! M3-P3a: Sprechertrennung (Diarisierung) einer Besprechungsspur.
 //!
 //! `diarize(pcm, params)` -> Turns `{start_ms, end_ms, speaker}` (Sprecher
-//! 1-basiert in Ankunftsreihenfolge, Ueberlappung erlaubt). Modell:
-//! Sortformer 4spk-v2.1 (GGUF Q8) ueber transcribe-cpp; die Nachbearbeitung
-//! (Luecken <= 1 s schliessen, 100 ms Pad) ist Pflicht und Teil des Moduls
-//! (Entwurf `m3-sprecher.md` §2.2, §3.1).
+//! 1-basiert in Ankunftsreihenfolge, Ueberlappung erlaubt). Standardmodell:
+//! Sortformer 4spk-v2.1 (GGUF Q8) ueber transcribe-cpp; zweiter Motor (N1,
+//! Issue #539): Nemotron-3-Diarization bis 8 Sprecher ueber ONNX Runtime
+//! ([`nemotron`]), gewaehlt nach der Modelldatei (`.gguf` / `.onnx`, siehe
+//! [`engine::EngineKind`]). Die Nachbearbeitung (Luecken <= 1 s schliessen,
+//! 100 ms Pad) ist Pflicht und Teil des Moduls (Entwurf `m3-sprecher.md`
+//! §2.2, §3.1) und gilt fuer beide Motoren.
 //!
 //! Fehlerfaelle und ihre Absicherung:
 //! - zwei Aufrufe gleichzeitig: [`engine::ExclusiveSlot`], nie zwei Modelle;
 //! - wenig RAM: Start-Gate vor dem Laden ([`DiarizeError::LowMemory`]);
 //! - Modell fehlt/falsches Modell: [`DiarizeError::ModelMissing`] /
-//!   [`DiarizeError::WrongModel`], ohne Panik;
+//!   [`DiarizeError::WrongModel`], ohne Panik (Nemotron: auch fehlende
+//!   `.onnx_data` neben dem Graphen);
 //! - Abbruch: `cancel` wird vor und nach dem Lauf geprueft und an
 //!   transcribe-cpp weitergereicht; ein abgebrochener Lauf liefert KEINE
 //!   Teil-Turns ([`DiarizeError::Cancelled`]);
@@ -24,6 +28,7 @@
 pub mod assign; // M3-P3b
 pub mod der;
 pub mod engine;
+pub mod nemotron; // N1
 pub mod postproc;
 
 use std::borrow::Cow;
@@ -124,7 +129,7 @@ impl fmt::Display for DiarizeError {
             ),
             Self::WrongModel(arch) => write!(
                 f,
-                "Kein Sprechertrennungs-Modell (Architektur '{arch}', erwartet sortformer)"
+                "Kein Sprechertrennungs-Modell ('{arch}'; erwartet Sortformer (.gguf) oder Nemotron (.onnx))"
             ),
             Self::LowMemory(msg) => write!(f, "{msg}"),
             Self::Load(msg) => write!(f, "Sprechertrennung konnte nicht laden: {msg}"),
@@ -201,21 +206,135 @@ pub fn resolve_model_path(models_root: &Path, spec: Option<&str>) -> PathBuf {
     }
 }
 
-/// Pfad des installierten Katalogmodells `model_id` unter `models_root`
-/// (`<app_data>/models`): `<models_root>/diarization/<datei>`. `None`, wenn
-/// die ID nicht im Katalog steht. Eigener Unterordner, weil der Modell-Scan
-/// des `ModelManager` nur die oberste Ebene liest: so erscheint der
-/// Diarisierer nie als Transkriptionsmodell.
-pub fn catalog_model_path(models_root: &Path, model_id: &str) -> Option<PathBuf> {
+/// Ordner, in dem die Dateien des Katalogmodells `entry` liegen. Ein Eintrag
+/// mit einer Datei (Sortformer) liegt wie bisher direkt in `diarization/`
+/// (Altbestand bleibt gueltig). Ein Eintrag mit mehreren Dateien (Nemotron:
+/// Graph und Gewichte muessen nebeneinander liegen und tragen allgemeine
+/// Namen) bekommt einen eigenen Ordner `diarization/<id>/`.
+///
+/// `None`, wenn der Eintrag nicht sicher abzulegen ist: ein Dateiname (und bei
+/// mehreren Dateien die Kennung) muss ein einzelner, harmloser Pfadbestandteil
+/// sein ([`crate::catalog::is_plain_name`]); sonst koennte ein Katalogwert aus dem
+/// Modellordner hinausfuehren. Zwei Dateinamen, die sich nur in der Schreibweise
+/// unterscheiden, sind auch unsicher ([`crate::catalog::names_collide`]).
+pub fn catalog_model_dir(
+    models_root: &Path,
+    entry: &crate::catalog::TtsCatalogEntry,
+) -> Option<PathBuf> {
+    use crate::catalog::{is_plain_name, names_collide};
+    if !entry.files.iter().all(|f| is_plain_name(&f.filename))
+        || names_collide(entry.files.iter().map(|f| f.filename.as_str()))
+    {
+        return None;
+    }
+    let base = models_root.join("diarization");
+    if entry.files.len() > 1 {
+        is_plain_name(&entry.id).then(|| base.join(&entry.id))
+    } else {
+        Some(base)
+    }
+}
+
+/// Alle Dateien des installierten Katalogmodells in der Reihenfolge des
+/// Katalogs (die erste ist die, die der Motor laedt). `None`, wenn die ID nicht
+/// im Katalog steht oder der Eintrag nicht sicher abzulegen ist
+/// ([`catalog_model_dir`]).
+pub fn catalog_model_files(models_root: &Path, model_id: &str) -> Option<Vec<PathBuf>> {
     let entry = crate::catalog::tts_entries(crate::catalog::Purpose::Diarization)
         .into_iter()
         .find(|e| e.id == model_id)?;
-    let file = entry.files.first()?;
-    Some(models_root.join("diarization").join(&file.filename))
+    if entry.files.is_empty() {
+        return None;
+    }
+    let dir = catalog_model_dir(models_root, &entry)?;
+    Some(entry.files.iter().map(|f| dir.join(&f.filename)).collect())
+}
+
+/// Wo ein Katalogmodell liegt, wenn man von seiner Hauptdatei ausgeht: der Eintrag,
+/// die Wurzel (`<app_data>/models`), der Ordner mit den Dateien und die Namen der
+/// Ordner von der Wurzel dorthin (`diarization` und bei mehreren Dateien die
+/// Kennung). Damit oeffnet der Lader die Kette ohne Link-Folgen
+/// (`download::anchor::Anchor`), statt Pfade zu benutzen.
+#[derive(Debug, Clone)]
+pub struct CatalogPlace {
+    pub entry: crate::catalog::TtsCatalogEntry,
+    pub root: PathBuf,
+    pub dir: PathBuf,
+    pub parts: Vec<String>,
+}
+
+/// Ist `model_path` die Hauptdatei (die der Motor oeffnet) eines Katalogmodells an
+/// seinem Platz `.../diarization[/<id>]/<datei>`? Erkannt wird am Pfadende, nicht an
+/// einer Wurzel; ein Pfad von Hand (anderer Ordner, anderer Name) ist kein
+/// Katalogmodell.
+pub fn catalog_place(model_path: &Path) -> Option<CatalogPlace> {
+    let dir = model_path.parent()?;
+    crate::catalog::tts_entries(crate::catalog::Purpose::Diarization)
+        .into_iter()
+        .find_map(|entry| {
+            let first = entry.files.first()?;
+            let diarization_dir = if entry.files.len() > 1 {
+                dir.parent()?
+            } else {
+                dir
+            };
+            let root = diarization_dir.parent()?;
+            // `catalog_model_dir` legt fest, wo der Eintrag liegt; vom Pfad aus
+            // zurueckgerechnet, muss es genau dieser Ordner sein.
+            let expected = catalog_model_dir(root, &entry)?;
+            if expected != dir || model_path.file_name()? != first.filename.as_str() {
+                return None;
+            }
+            let mut parts = vec!["diarization".to_string()];
+            if entry.files.len() > 1 {
+                parts.push(entry.id.clone());
+            }
+            Some(CatalogPlace {
+                root: root.to_path_buf(),
+                dir: dir.to_path_buf(),
+                parts,
+                entry,
+            })
+        })
+}
+
+/// Ist `model_path` die Hauptdatei eines Katalogmodells an seinem Platz
+/// ([`catalog_place`])? Dann: alle Dateien des Eintrags mit der Groesse laut Katalog.
+pub fn catalog_file_sizes(model_path: &Path) -> Option<Vec<(PathBuf, u64)>> {
+    let place = catalog_place(model_path)?;
+    Some(
+        place
+            .entry
+            .files
+            .iter()
+            .map(|f| (place.dir.join(&f.filename), f.size_bytes))
+            .collect(),
+    )
+}
+
+/// Pfad des installierten Katalogmodells `model_id` unter `models_root`
+/// (`<app_data>/models`): `<models_root>/diarization/<datei>` bzw. bei
+/// mehreren Dateien `<models_root>/diarization/<id>/<datei>` (die erste Datei
+/// des Eintrags, bei Nemotron der Graph). `None`, wenn die ID nicht im
+/// Katalog steht. Eigener Unterordner, weil der Modell-Scan des `ModelManager`
+/// nur die oberste Ebene liest: so erscheint der Diarisierer nie als
+/// Transkriptionsmodell.
+pub fn catalog_model_path(models_root: &Path, model_id: &str) -> Option<PathBuf> {
+    catalog_model_files(models_root, model_id)?
+        .into_iter()
+        .next()
+}
+
+/// Ist `id` ein Diarisierungsmodell des Katalogs (egal welcher Motor)?
+pub fn is_catalog_model(id: &str) -> bool {
+    crate::catalog::tts_entries(crate::catalog::Purpose::Diarization)
+        .iter()
+        .any(|e| e.id == id)
 }
 
 #[cfg(test)]
 mod tests {
+    use super::engine::EngineKind;
     use super::postproc::RawTurn;
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -420,5 +539,161 @@ mod tests {
         assert!(!crate::catalog::CATALOG
             .iter()
             .any(|d| d.id.contains("sortformer")));
+    }
+
+    /// N1: Nemotron ist ein Katalogeintrag mit zwei Dateien, fester Revision
+    /// und Pruefsummen; die Sprechertrennung findet den Graphen, die Gewichte
+    /// liegen im selben Ordner unter dem Namen, den ONNX Runtime erwartet.
+    #[test]
+    fn the_catalog_knows_nemotron_with_both_files_in_one_folder() {
+        let root = Path::new("C:/data/models");
+        let id = nemotron::MODEL_ID;
+        assert!(is_catalog_model(id));
+        assert!(is_catalog_model(DEFAULT_MODEL_ID));
+        assert!(!is_catalog_model("llm-qwen3.5-4b-q4"));
+
+        let files = catalog_model_files(root, id).expect("Katalogeintrag fehlt");
+        assert_eq!(files.len(), 2);
+        assert!(files[0].ends_with(format!("diarization/{id}/model_quantized.onnx")));
+        assert_eq!(catalog_model_path(root, id).as_ref(), Some(&files[0]));
+        assert_eq!(nemotron::engine::external_data_path(&files[0]), files[1]);
+        assert_eq!(resolve_model_path(root, Some(id)), files[0]);
+        assert_eq!(
+            EngineKind::of_path(&files[0]),
+            Some(EngineKind::Nemotron),
+            "der Graph waehlt den Nemotron-Motor"
+        );
+
+        let entry = crate::catalog::tts_entries(crate::catalog::Purpose::Diarization)
+            .into_iter()
+            .find(|e| e.id == id)
+            .unwrap();
+        let rev = entry.revision.as_deref().expect("feste Revision");
+        assert_eq!(rev.len(), 40, "Commit, kein Zweigname");
+        for f in &entry.files {
+            assert_eq!(
+                f.sha256.as_deref().map(str::len),
+                Some(64),
+                "{}",
+                f.filename
+            );
+            assert!(f.size_bytes > 0);
+            assert!(
+                f.url.starts_with("https://huggingface.co/onnx-community/") && f.url.contains(rev),
+                "{}",
+                f.url
+            );
+        }
+        assert_eq!(entry.license.as_deref(), Some("OpenMDW-1.1"));
+        assert!(!entry.license_non_commercial);
+        assert!(
+            entry.description.contains("bis zu acht Sprecher je Kanal"),
+            "{}",
+            entry.description
+        );
+        // Weder ein Transkriptionsmodell noch das Standardmodell.
+        assert!(!crate::catalog::CATALOG.iter().any(|d| d.id == id));
+        assert_ne!(DEFAULT_MODEL_ID, id);
+    }
+
+    #[test]
+    fn single_file_models_keep_their_old_place() {
+        let root = Path::new("C:/data/models");
+        let files = catalog_model_files(root, DEFAULT_MODEL_ID).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(
+            files[0],
+            root.join("diarization")
+                .join("diar_streaming_sortformer_4spk-v2.1-Q8_0.gguf")
+        );
+        assert_eq!(EngineKind::of_path(&files[0]), Some(EngineKind::Sortformer));
+    }
+    fn nemotron_entry() -> crate::catalog::TtsCatalogEntry {
+        crate::catalog::tts_entries(crate::catalog::Purpose::Diarization)
+            .into_iter()
+            .find(|e| e.id == nemotron::MODEL_ID)
+            .unwrap()
+    }
+
+    /// Ein Katalogwert, der aus dem Modellordner hinausfuehrt (absoluter Pfad,
+    /// `..`, Backslash, Laufwerksbuchstabe, Trenner), gibt keinen Ordner und
+    /// keine Zielpfade; der unveraenderte Eintrag schon.
+    #[test]
+    fn a_catalog_entry_that_could_leave_the_model_folder_has_no_directory() {
+        let root = Path::new("models");
+        assert!(catalog_model_dir(root, &nemotron_entry()).is_some());
+        let bad = [
+            "..", "../x", "a/b", "/etc/x", "\\x", "a\\b", "C:", "C:\\x", "", ".", "nul",
+            "NUL.onnx", "COM1", "x.", "x ", "a:strom",
+        ];
+        for name in bad {
+            let mut id = nemotron_entry();
+            id.id = name.to_string();
+            assert!(
+                catalog_model_dir(root, &id).is_none(),
+                "Kennung {name:?} angenommen"
+            );
+            for i in 0..2 {
+                let mut file = nemotron_entry();
+                file.files[i].filename = name.to_string();
+                assert!(
+                    catalog_model_dir(root, &file).is_none(),
+                    "Dateiname {name:?} an Stelle {i} angenommen"
+                );
+            }
+            // Einzeldatei-Eintrag: die Kennung wird nicht zum Ordner, der Dateiname schon.
+            let mut single = crate::catalog::tts_entries(crate::catalog::Purpose::Diarization)
+                .into_iter()
+                .find(|e| e.id == DEFAULT_MODEL_ID)
+                .unwrap();
+            single.files[0].filename = name.to_string();
+            assert!(catalog_model_dir(root, &single).is_none(), "{name:?}");
+        }
+    }
+
+    /// Zwei Dateien eines Eintrags, die sich nur in der Schreibweise unterscheiden,
+    /// waeren auf Windows und macOS dieselbe Datei: kein Ordner, keine Zielpfade.
+    #[test]
+    fn two_files_that_differ_only_in_case_have_no_directory() {
+        let root = Path::new("models");
+        let mut entry = nemotron_entry();
+        let upper = entry.files[0].filename.to_uppercase();
+        entry.files[1].filename = upper;
+        assert!(catalog_model_dir(root, &entry).is_none());
+    }
+
+    /// Wo der Eintrag liegt, erkennt man ihn am Pfadende; alles andere (Pfad von
+    /// Hand, fremder Ordner, falscher Name, die Gewichte statt des Graphen) ist
+    /// kein Katalogmodell und bekommt keine Katalog-Groessen.
+    #[test]
+    fn catalog_sizes_are_known_for_the_main_file_of_a_catalog_model_only() {
+        let root = Path::new("C:/data/models");
+        let id = nemotron::MODEL_ID;
+        let files = catalog_model_files(root, id).unwrap();
+        let entry = nemotron_entry();
+        let sizes = catalog_file_sizes(&files[0]).expect("Graph am Katalogplatz");
+        assert_eq!(sizes.len(), 2);
+        for (i, (path, size)) in sizes.iter().enumerate() {
+            assert_eq!(path, &files[i]);
+            assert_eq!(*size, entry.files[i].size_bytes);
+        }
+        let sorm = catalog_model_files(root, DEFAULT_MODEL_ID).unwrap();
+        let one = catalog_file_sizes(&sorm[0]).expect("Sortformer am Katalogplatz");
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].0, sorm[0]);
+
+        assert!(
+            catalog_file_sizes(&files[1]).is_none(),
+            "Gewichte sind nicht die Hauptdatei"
+        );
+        for other in [
+            "C:/x/model_quantized.onnx",
+            "C:/data/models/diarization/anderer-ordner/model_quantized.onnx",
+            "C:/data/models/diarization/model_quantized.onnx",
+            "C:/data/models/andere-ablage/diar-nemotron3-8spk-onnx-q8/model_quantized.onnx",
+            "model_quantized.onnx",
+        ] {
+            assert!(catalog_file_sizes(Path::new(other)).is_none(), "{other}");
+        }
     }
 }

@@ -1,0 +1,484 @@
+{
+ "config": {
+  "chunk_length": 340,
+  "chunk_right_context": 40,
+  "fifo_length": 40,
+  "speaker_cache_update_period": 300
+ },
+ "onnx_sha256": "fff7d18c7439c9fdc1c6c4dfec924cb42d3344264ca879780dfaf7ee886e6c1e",
+ "cases": [
+  {
+   "name": "concat",
+   "torch_default_topk": {
+    "note": "Abweichung der Referenz mit torch.topk-Standardauswahl von dieser (nur zur Information)",
+    "frame_agreement": 1.0,
+    "max_logit_diff": 0.0
+   },
+   "recipe": [
+    {
+     "layers": [
+      {
+       "file": "g5/en_interview_zira.wav"
+      }
+     ]
+    },
+    {
+     "layers": [
+      {
+       "file": "m2_echo_mic.wav"
+      }
+     ]
+    },
+    {
+     "layers": [
+      {
+       "file": "m2_echo_render.wav"
+      }
+     ]
+    }
+   ],
+   "audio": {
+    "samples": 1174960,
+    "seconds": 73.435,
+    "frames": 7343
+   },
+   "blocks": 3,
+   "active_frames_per_speaker": [
+    3235,
+    2286,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "turns": [
+    {
+     "start_ms": 40,
+     "end_ms": 1230,
+     "speaker": 1
+    },
+    {
+     "start_ms": 1550,
+     "end_ms": 3300,
+     "speaker": 1
+    },
+    {
+     "start_ms": 4090,
+     "end_ms": 7510,
+     "speaker": 1
+    },
+    {
+     "start_ms": 8280,
+     "end_ms": 10660,
+     "speaker": 1
+    },
+    {
+     "start_ms": 11440,
+     "end_ms": 15150,
+     "speaker": 1
+    },
+    {
+     "start_ms": 15940,
+     "end_ms": 19520,
+     "speaker": 1
+    },
+    {
+     "start_ms": 20300,
+     "end_ms": 23130,
+     "speaker": 1
+    },
+    {
+     "start_ms": 23910,
+     "end_ms": 25780,
+     "speaker": 1
+    },
+    {
+     "start_ms": 26090,
+     "end_ms": 29500,
+     "speaker": 1
+    },
+    {
+     "start_ms": 30290,
+     "end_ms": 32700,
+     "speaker": 1
+    },
+    {
+     "start_ms": 34050,
+     "end_ms": 37730,
+     "speaker": 2
+    },
+    {
+     "start_ms": 39050,
+     "end_ms": 43480,
+     "speaker": 2
+    },
+    {
+     "start_ms": 44710,
+     "end_ms": 47410,
+     "speaker": 1
+    },
+    {
+     "start_ms": 48750,
+     "end_ms": 52120,
+     "speaker": 2
+    },
+    {
+     "start_ms": 49330,
+     "end_ms": 52430,
+     "speaker": 1
+    },
+    {
+     "start_ms": 53990,
+     "end_ms": 57650,
+     "speaker": 2
+    },
+    {
+     "start_ms": 58990,
+     "end_ms": 63370,
+     "speaker": 2
+    },
+    {
+     "start_ms": 68700,
+     "end_ms": 72040,
+     "speaker": 2
+    }
+   ]
+  },
+  {
+   "name": "overlap",
+   "torch_default_topk": {
+    "note": "Abweichung der Referenz mit torch.topk-Standardauswahl von dieser (nur zur Information)",
+    "frame_agreement": 0.97624,
+    "max_logit_diff": 0.7834
+   },
+   "recipe": [
+    {
+     "layers": [
+      {
+       "file": "g5/en_interview_zira.wav"
+      }
+     ]
+    },
+    {
+     "layers": [
+      {
+       "file": "m2_echo_mic.wav"
+      },
+      {
+       "file": "g5/en_interview_zira.wav",
+       "reverse": true,
+       "gain": 0.8,
+       "offset": 48000,
+       "take": 256000
+      }
+     ]
+    },
+    {
+     "layers": [
+      {
+       "file": "m2_echo_render.wav",
+       "reverse": true
+      }
+     ]
+    },
+    {
+     "layers": [
+      {
+       "file": "m2_echo_render.wav"
+      },
+      {
+       "file": "m2_echo_mic.wav",
+       "gain": 0.6,
+       "offset": 128000
+      }
+     ]
+    }
+   ],
+   "audio": {
+    "samples": 1622960,
+    "seconds": 101.435,
+    "frames": 10143
+   },
+   "blocks": 4,
+   "active_frames_per_speaker": [
+    3909,
+    3896,
+    1164,
+    720,
+    0,
+    0,
+    0,
+    0
+   ],
+   "turns": [
+    {
+     "start_ms": 40,
+     "end_ms": 1230,
+     "speaker": 1
+    },
+    {
+     "start_ms": 1550,
+     "end_ms": 3300,
+     "speaker": 1
+    },
+    {
+     "start_ms": 4090,
+     "end_ms": 7510,
+     "speaker": 1
+    },
+    {
+     "start_ms": 8280,
+     "end_ms": 10660,
+     "speaker": 1
+    },
+    {
+     "start_ms": 11440,
+     "end_ms": 15150,
+     "speaker": 1
+    },
+    {
+     "start_ms": 15940,
+     "end_ms": 19520,
+     "speaker": 1
+    },
+    {
+     "start_ms": 20300,
+     "end_ms": 23130,
+     "speaker": 1
+    },
+    {
+     "start_ms": 23910,
+     "end_ms": 25780,
+     "speaker": 1
+    },
+    {
+     "start_ms": 26090,
+     "end_ms": 29500,
+     "speaker": 1
+    },
+    {
+     "start_ms": 30290,
+     "end_ms": 32700,
+     "speaker": 1
+    },
+    {
+     "start_ms": 34050,
+     "end_ms": 37640,
+     "speaker": 2
+    },
+    {
+     "start_ms": 37140,
+     "end_ms": 39530,
+     "speaker": 1
+    },
+    {
+     "start_ms": 39040,
+     "end_ms": 43460,
+     "speaker": 2
+    },
+    {
+     "start_ms": 40460,
+     "end_ms": 43730,
+     "speaker": 1
+    },
+    {
+     "start_ms": 44080,
+     "end_ms": 46030,
+     "speaker": 1
+    },
+    {
+     "start_ms": 44690,
+     "end_ms": 47390,
+     "speaker": 3
+    },
+    {
+     "start_ms": 46720,
+     "end_ms": 49630,
+     "speaker": 1
+    },
+    {
+     "start_ms": 48760,
+     "end_ms": 52100,
+     "speaker": 2
+    },
+    {
+     "start_ms": 49310,
+     "end_ms": 52430,
+     "speaker": 3
+    },
+    {
+     "start_ms": 50390,
+     "end_ms": 52410,
+     "speaker": 1
+    },
+    {
+     "start_ms": 54820,
+     "end_ms": 58120,
+     "speaker": 2
+    },
+    {
+     "start_ms": 63490,
+     "end_ms": 67840,
+     "speaker": 2
+    },
+    {
+     "start_ms": 69200,
+     "end_ms": 72820,
+     "speaker": 2
+    },
+    {
+     "start_ms": 73990,
+     "end_ms": 77650,
+     "speaker": 2
+    },
+    {
+     "start_ms": 79000,
+     "end_ms": 81600,
+     "speaker": 2
+    },
+    {
+     "start_ms": 81600,
+     "end_ms": 83430,
+     "speaker": 4
+    },
+    {
+     "start_ms": 82040,
+     "end_ms": 83600,
+     "speaker": 2
+    },
+    {
+     "start_ms": 83630,
+     "end_ms": 83680,
+     "speaker": 2
+    },
+    {
+     "start_ms": 83680,
+     "end_ms": 83970,
+     "speaker": 4
+    },
+    {
+     "start_ms": 83990,
+     "end_ms": 84000,
+     "speaker": 4
+    },
+    {
+     "start_ms": 84030,
+     "end_ms": 84460,
+     "speaker": 2
+    },
+    {
+     "start_ms": 84430,
+     "end_ms": 84560,
+     "speaker": 4
+    },
+    {
+     "start_ms": 84480,
+     "end_ms": 84790,
+     "speaker": 2
+    },
+    {
+     "start_ms": 84720,
+     "end_ms": 84880,
+     "speaker": 4
+    },
+    {
+     "start_ms": 84880,
+     "end_ms": 85270,
+     "speaker": 2
+    },
+    {
+     "start_ms": 85270,
+     "end_ms": 85360,
+     "speaker": 4
+    },
+    {
+     "start_ms": 85280,
+     "end_ms": 85300,
+     "speaker": 2
+    },
+    {
+     "start_ms": 85320,
+     "end_ms": 85330,
+     "speaker": 2
+    },
+    {
+     "start_ms": 85340,
+     "end_ms": 85350,
+     "speaker": 2
+    },
+    {
+     "start_ms": 85360,
+     "end_ms": 85690,
+     "speaker": 2
+    },
+    {
+     "start_ms": 85520,
+     "end_ms": 85690,
+     "speaker": 4
+    },
+    {
+     "start_ms": 87070,
+     "end_ms": 87330,
+     "speaker": 2
+    },
+    {
+     "start_ms": 87320,
+     "end_ms": 87600,
+     "speaker": 4
+    },
+    {
+     "start_ms": 87610,
+     "end_ms": 87720,
+     "speaker": 2
+    },
+    {
+     "start_ms": 87710,
+     "end_ms": 88160,
+     "speaker": 4
+    },
+    {
+     "start_ms": 87790,
+     "end_ms": 87880,
+     "speaker": 2
+    },
+    {
+     "start_ms": 87890,
+     "end_ms": 87950,
+     "speaker": 2
+    },
+    {
+     "start_ms": 88130,
+     "end_ms": 88260,
+     "speaker": 2
+    },
+    {
+     "start_ms": 88240,
+     "end_ms": 92030,
+     "speaker": 4
+    },
+    {
+     "start_ms": 88510,
+     "end_ms": 91490,
+     "speaker": 2
+    },
+    {
+     "start_ms": 92700,
+     "end_ms": 95420,
+     "speaker": 3
+    },
+    {
+     "start_ms": 96760,
+     "end_ms": 100100,
+     "speaker": 2
+    },
+    {
+     "start_ms": 97340,
+     "end_ms": 100440,
+     "speaker": 3
+    }
+   ]
+  }
+ ]
+}

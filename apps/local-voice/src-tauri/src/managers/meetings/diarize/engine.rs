@@ -1,4 +1,6 @@
-//! M3-P3a: Sortformer 4spk-v2.1 (GGUF) ueber transcribe-cpp 0.2.4.
+//! M3-P3a: Sortformer 4spk-v2.1 (GGUF) ueber transcribe-cpp 0.2.4, dazu (N1)
+//! die Wahl des Motors nach der Modelldatei: `.gguf` -> Sortformer,
+//! `.onnx` -> Nemotron-3-Diarization ([`super::nemotron`]).
 //!
 //! Schutz: Es laeuft immer hoechstens EIN Diarisierer im Prozess
 //! ([`ExclusiveSlot`]); vor dem Laden prueft das RAM-Start-Gate
@@ -20,11 +22,15 @@ use transcribe_cpp::{
     SessionOptions, SortformerPreset, SortformerStreamOptions,
 };
 
+use super::nemotron::NemotronOnnxEngine;
 use super::postproc::RawTurn;
 use super::{diarize_with, DiarizeError, DiarizeParams, Preset, Turn};
 
 /// RAM-Bedarf des Diarisierers (MB) fuer das Start-Gate. Gemessen 0,6-0,7 GB
-/// Spitze (Q8, 10 min Audio); die Reserve von `process_guard` kommt dazu.
+/// Spitze (Sortformer Q8, 10 min Audio); Nemotron (ONNX int8) 0,32 GB Spitze des
+/// Testprozesses bei 100 s Audio (davon 63 MB Grundlast des Testprogramms; je
+/// Block nur der Speicher des Blocks, die Merkmale entstehen blockweise), also
+/// unter derselben Grenze. Die Reserve von `process_guard` kommt dazu.
 pub const DIARIZE_RAM_NEED_MB: u64 = 1024;
 
 /// Was ein Diarisierer koennen muss. Die echte Umsetzung ist
@@ -192,20 +198,107 @@ impl DiarizeEngine for SortformerEngine {
     }
 }
 
+/// Welcher Motor zu einer Modelldatei gehoert (nach der Endung).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EngineKind {
+    /// `.gguf`: Sortformer ueber transcribe-cpp.
+    Sortformer,
+    /// `.onnx`: Nemotron-3-Diarization ueber ONNX Runtime.
+    Nemotron,
+}
+
+impl EngineKind {
+    /// Name fuer Meldungen.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Sortformer => "Sortformer (GGUF)",
+            Self::Nemotron => "Nemotron-3-Diarization (ONNX)",
+        }
+    }
+
+    /// `None` fuer jede andere Endung (kein Raten am Dateiinhalt).
+    pub fn of_path(path: &Path) -> Option<Self> {
+        let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+        match ext.as_str() {
+            "gguf" => Some(Self::Sortformer),
+            "onnx" => Some(Self::Nemotron),
+            _ => None,
+        }
+    }
+}
+
+/// Der Motor, den [`Diarizer`] standardmaessig haelt: je nach Modelldatei
+/// Sortformer oder Nemotron. Aufrufer aendern sich dadurch nicht.
+pub enum AnyEngine {
+    Sortformer(SortformerEngine),
+    Nemotron(NemotronOnnxEngine),
+}
+
+impl AnyEngine {
+    /// Waehlt den Motor nach der Dateiendung. Eine fremde Endung ist ein
+    /// Bedienfehler ([`DiarizeError::WrongModel`]), kein Ladeversuch.
+    pub fn load(model_path: &Path, threads: usize) -> Result<Self, DiarizeError> {
+        match EngineKind::of_path(model_path) {
+            Some(EngineKind::Sortformer) => {
+                SortformerEngine::load(model_path, threads).map(Self::Sortformer)
+            }
+            Some(EngineKind::Nemotron) => {
+                NemotronOnnxEngine::load(model_path, threads).map(Self::Nemotron)
+            }
+            None => Err(DiarizeError::WrongModel(format!(
+                "Dateityp '{}'",
+                model_path
+                    .extension()
+                    .map(|e| e.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            ))),
+        }
+    }
+
+    pub fn kind(&self) -> EngineKind {
+        match self {
+            Self::Sortformer(_) => EngineKind::Sortformer,
+            Self::Nemotron(_) => EngineKind::Nemotron,
+        }
+    }
+}
+
+impl DiarizeEngine for AnyEngine {
+    fn raw_turns(
+        &mut self,
+        pcm: &[f32],
+        preset: Preset,
+        cancel: Option<&CancelToken>,
+    ) -> Result<Vec<RawTurn>, DiarizeError> {
+        match self {
+            Self::Sortformer(e) => e.raw_turns(pcm, preset, cancel),
+            Self::Nemotron(e) => e.raw_turns(pcm, preset, cancel),
+        }
+    }
+
+    fn describe(&self) -> String {
+        match self {
+            Self::Sortformer(e) => e.describe(),
+            Self::Nemotron(e) => e.describe(),
+        }
+    }
+}
+
 /// Ein geladener Diarisierer, der den Prozess-Platz haelt, bis er faellt.
-pub struct Diarizer<E: DiarizeEngine = SortformerEngine> {
+pub struct Diarizer<E: DiarizeEngine = AnyEngine> {
     engine: E,
     _slot: SlotGuard<'static>,
 }
 
-impl Diarizer<SortformerEngine> {
-    /// Wartet auf den Platz, prueft Modelldatei und RAM, laedt dann.
+impl Diarizer<AnyEngine> {
+    /// Wartet auf den Platz, prueft Modelldatei und RAM, laedt dann den Motor,
+    /// der zur Dateiendung gehoert.
     pub fn load(model_path: &Path, threads: usize) -> Result<Self, DiarizeError> {
         Self::load_with(
             &DIARIZER_SLOT,
             model_path,
             crate::process_guard::check_ram_for_start,
-            |path| SortformerEngine::load(path, threads),
+            |path| AnyEngine::load(path, threads),
         )
     }
 }
@@ -367,5 +460,54 @@ mod tests {
         rx.recv_timeout(Duration::from_secs(5))
             .expect("Platz nach dem Entladen nicht frei");
         waiter.join().unwrap();
+    }
+
+    #[test]
+    fn the_engine_follows_the_model_file_extension() {
+        let kind = |p: &str| EngineKind::of_path(Path::new(p));
+        assert_eq!(
+            kind("a/b/sortformer-Q8_0.gguf"),
+            Some(EngineKind::Sortformer)
+        );
+        assert_eq!(kind("a/b/SORTFORMER.GGUF"), Some(EngineKind::Sortformer));
+        assert_eq!(kind("a/b/model_quantized.onnx"), Some(EngineKind::Nemotron));
+        assert_eq!(kind("a/b/model.ONNX"), Some(EngineKind::Nemotron));
+        // Die Gewichte-Datei ist kein Modell, das man laedt.
+        assert_eq!(kind("a/b/model_quantized.onnx_data"), None);
+        assert_eq!(kind("a/b/model.bin"), None);
+        assert_eq!(kind("a/b/ohne-endung"), None);
+    }
+
+    #[test]
+    fn an_unknown_file_type_is_wrong_model_not_a_load_attempt() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("model.bin");
+        std::fs::write(&path, b"x").unwrap();
+        match AnyEngine::load(&path, 1) {
+            Err(DiarizeError::WrongModel(what)) => assert!(what.contains("bin"), "{what}"),
+            other => panic!("erwartet WrongModel, bekam {:?}", other.err()),
+        }
+    }
+
+    /// Ueber den Platz und das RAM-Gate geladen waehlt `.onnx` den Nemotron-
+    /// Motor: ohne `.onnx_data` meldet er `ModelMissing` mit der Gewichte-Datei,
+    /// und der Platz ist danach wieder frei.
+    #[test]
+    fn an_onnx_file_goes_to_the_nemotron_engine_and_frees_the_slot_on_error() {
+        let slot = leak_slot();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("model_quantized.onnx");
+        std::fs::write(&path, b"graph").unwrap();
+        let err =
+            Diarizer::<AnyEngine>::load_with(slot, &path, |_| Ok(0), |p| AnyEngine::load(p, 1))
+                .err()
+                .expect("ohne Gewichte muss das Laden scheitern");
+        match err {
+            DiarizeError::ModelMissing(p) => {
+                assert!(p.ends_with("model_quantized.onnx_data"), "{}", p.display())
+            }
+            other => panic!("erwartet ModelMissing, bekam {other}"),
+        }
+        drop(slot.acquire());
     }
 }

@@ -40,6 +40,9 @@ import { ReplaceAllDialog } from "./ReplaceAllDialog";
 
 /** Ein Fund eines Providers im Text. `start`/`end` sind UTF-16-Offsets
  *  (String-Indizes, wie `slice` sie nimmt), `raw` der exakte Ausschnitt. */
+/** Ergebnis von `onPasteRecord`: gesichert, gescheitert oder Protokoll voll. */
+export type PasteRecordResult = "saved" | "failed" | "full";
+
 export interface ChipMatch {
   start: number;
   end: number;
@@ -181,8 +184,11 @@ interface TtsChipEditorProps {
    *  Original-Editor einer Vorlesen-Seite setzt das. */
   cleanPaste?: boolean;
   /** Rohfassung einer Einfügung sichern, BEVOR bereinigt wird (Seitenzustand).
-   *  `false`: Sichern gescheitert, der Text wird dann unverändert eingefügt. */
-  onPasteRecord?: (entry: PasteLogEntry) => Promise<boolean>;
+   *  `failed`: Sichern gescheitert; `full`: Grenze der Rohfassungen erreicht
+   *  (es wird nichts verdrängt). Der Text wird dann unverändert eingefügt. */
+  onPasteRecord?: (entry: PasteLogEntry) => Promise<PasteRecordResult>;
+  /** Öffnet den Dialog „Letzte Einfügungen“ (Aktion im Hinweis „Rohfassungen voll“). */
+  onOpenPasteLog?: () => void;
   /** Kennung des Dokuments (Seiten-ID): eine ausstehende Einfügung ändert
    *  nur das Dokument, in dem sie begonnen hat. */
   docKey?: string;
@@ -409,6 +415,7 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
   spellCheck = true,
   cleanPaste = false,
   onPasteRecord,
+  onOpenPasteLog,
   docKey,
 }) => {
   const { t } = useTranslation();
@@ -562,17 +569,41 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
     [execInsert],
   );
 
+  /** Rohfassungen voll: der Text kommt unverändert ins Dokument, der Hinweis
+   *  führt zum Aufräumen („Letzte Einfügungen“). Nichts wird verdrängt. */
+  const noteFull = useCallback(
+    () =>
+      toast(t("tts.editorMenu.pasteFull"), {
+        id: "paste-cleanup",
+        duration: 15000,
+        action: onOpenPasteLog
+          ? {
+              label: t("tts.editorMenu.pasteFullAction"),
+              onClick: onOpenPasteLog,
+            }
+          : undefined,
+      }),
+    [onOpenPasteLog, t],
+  );
+
   /**
-   * Eingefügten Text bereinigen: sichert vorher die Rohfassung (Seitenzustand,
-   * `onPasteRecord`), ersetzt dann `[start, end)` durch die bereinigte Fassung
-   * (über `execInsert`, Strg+Z bleibt ein Schritt) und meldet die Anzahl der
-   * Änderungen mit „Rückgängig“. Eine ausstehende Einfügung verändert nur ihr
-   * ursprüngliches Dokument: nach dem Sichern müssen Dokument (`docKey`),
-   * Editor und Textstand noch dieselben sein, sonst wird nichts eingefügt
-   * (Hinweis; die Rohfassung bleibt gesichert). Der Rückgängig-Hinweis gilt nur
-   * für diese Einfügung und nur, solange der Editor GENAU den Text von direkt
-   * nach dem Einfügen enthält. Ist der Eintrag zu groß oder lässt sich die
-   * Rohfassung nicht sichern, wird der Rohtext unverändert eingefügt.
+   * Eingefügten Text bereinigen. Ein abgefangenes Einfügen endet nie ohne
+   * eingefügten Text UND ohne gesicherte Rohfassung, deshalb in dieser Reihenfolge:
+   * 1. Sofort (noch im Ereignis) kommt der ROHTEXT nach `[start, end)`. Er steht
+   *    damit im Ursprungsdokument und geht mit dessen Autosave nie verloren,
+   *    auch nicht bei Seitenwechsel, Tippen oder Fehlern.
+   * 2. Danach wird die Rohfassung gesichert (Seitenzustand, `onPasteRecord`).
+   * 3. Nur bei `saved`, gleichem Dokument und gleicher textarea und wenn an
+   *    `[start, start + Rohtext.length)` noch GENAU der Rohtext steht, ersetzt
+   *    `execInsert` ihn durch die bereinigte Fassung (Hinweis mit „Rückgängig“;
+   *    Strg+Z macht zuerst die Bereinigung rückgängig). Der Rückgängig-Hinweis
+   *    gilt nur für diese Einfügung und nur, solange der Editor GENAU den Text
+   *    von direkt nach dem Bereinigen enthält.
+   * 4. Sonst bleibt der Rohtext stehen, mit Hinweis: zu groß, Grenze der
+   *    Rohfassungen erreicht (`full`, mit Weg zum Aufräumen, nichts wird
+   *    verdrängt), Sichern gescheitert, oder gesichert, aber nicht bereinigt,
+   *    mit dem jeweiligen Grund: Text inzwischen geändert, Eingabekomposition
+   *    (IME) läuft, Fokus verloren.
    */
   const insertCleaned = useCallback(
     async (
@@ -582,45 +613,105 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
       raw: string,
       result: PasteCleanResult,
     ) => {
-      const base = valueRef.current;
       const doc = docKeyRef.current;
       const original = raw.replace(/\r\n?/g, "\n");
       const cleaned = result.text;
+      const rawEnd = start + original.length;
+      execInsert(ta, start, end, original);
       // Scheitert irgendein Schritt der Sicherung (Prüfsumme, Schreiben), gilt die
-      // Rohfassung als nicht gesichert: das Einfügen ist schon abgefangen, also
-      // kommt der Rohtext unverändert hinein, mit Hinweis (nie stilles Nichts).
+      // Rohfassung als nicht gesichert: der Rohtext steht schon im Dokument, mit
+      // Hinweis (nie stilles Nichts).
       let tooLarge = false;
-      let saved = false;
+      let recorded: PasteRecordResult = "failed";
       try {
         let entry = await makePasteEntry(original, cleaned, result.items);
         tooLarge = !fitsEntry(entry);
         if (tooLarge) entry = await makeOversizedEntry(original);
         // Ohne Prüfsumme (kein WebCrypto) ließe sich die Rohfassung später nicht
         // prüfen, also nicht gesichert.
-        saved =
+        recorded =
           entry.sha256 === ""
-            ? false
+            ? "failed"
             : onPasteRecord
               ? await onPasteRecord(entry)
-              : true;
+              : "saved";
       } catch {
-        saved = false;
+        recorded = "failed";
       }
-      if (taRef.current !== ta || docKeyRef.current !== doc) {
-        toast(t("tts.editorMenu.pasteAbortedPage"));
+      if (tooLarge) {
+        toast(t("tts.editorMenu.pasteTooLarge"));
         return;
       }
-      if (valueRef.current !== base) {
-        toast(t("tts.editorMenu.pasteAbortedChanged"));
+      if (recorded === "full") {
+        noteFull();
         return;
       }
-      if (tooLarge || !saved) {
-        execInsert(ta, start, end, original);
-        if (tooLarge) toast(t("tts.editorMenu.pasteTooLarge"));
-        else toast.error(t("tts.editorMenu.pasteNotSaved"));
+      if (recorded !== "saved") {
+        toast.error(t("tts.editorMenu.pasteNotSaved"));
         return;
       }
-      execInsert(ta, start, end, cleaned);
+      // Nur bereinigen, wenn der Nutzer inzwischen nichts am Einfügen vorbei
+      // getan hat: andere Seite oder Textarea, geänderter Text, laufende
+      // IME-Komposition oder verlorener Fokus (execInsert würde ihn holen)
+      // lassen den Rohtext stehen.
+      const sameText =
+        taRef.current === ta &&
+        docKeyRef.current === doc &&
+        valueRef.current.slice(start, rawEnd) === original;
+      if (!sameText) {
+        toast(t("tts.editorMenu.pasteNotCleaned"));
+        return;
+      }
+      if (composingRef.current) {
+        toast(t("tts.editorMenu.pasteNotCleanedComposing"));
+        return;
+      }
+      if (document.activeElement !== ta) {
+        toast(t("tts.editorMenu.pasteNotCleanedFocus"));
+        return;
+      }
+      // Auswahl des Nutzers beibehalten: davor bleibt sie, dahinter rückt sie um
+      // den Längenunterschied nach, im ersetzten Bereich endet sie hinter dem Ergebnis.
+      const { selectionStart, selectionEnd, selectionDirection } = ta;
+      const shift = cleaned.length - original.length;
+      const mapPos = (pos: number) =>
+        pos <= start
+          ? pos
+          : pos >= rawEnd
+            ? pos + shift
+            : start + Math.min(pos - start, cleaned.length);
+      execInsert(ta, start, rawEnd, cleaned);
+      const restoreSelection = () =>
+        ta.setSelectionRange(
+          mapPos(selectionStart),
+          mapPos(selectionEnd),
+          selectionDirection ?? undefined,
+        );
+      restoreSelection();
+      const cleanedValue = valueRef.current;
+      // Das Neuzeichnen kann die Auswahl zurücksetzen; im nächsten Bild wird sie
+      // deshalb noch einmal gesetzt, aber nur, wenn der Nutzer sie seit dem
+      // Einfügen nicht selbst bewegt hat (Taste, Zeiger, Eingabe) und der Fokus
+      // noch im Editor liegt.
+      let userMoved = false;
+      const noteUserMove = () => {
+        userMoved = true;
+      };
+      const moveEvents = ["keydown", "pointerdown", "beforeinput"] as const;
+      for (const type of moveEvents)
+        ta.addEventListener(type, noteUserMove, { capture: true, once: true });
+      window.requestAnimationFrame(() => {
+        for (const type of moveEvents)
+          ta.removeEventListener(type, noteUserMove, { capture: true });
+        if (
+          !userMoved &&
+          taRef.current === ta &&
+          document.activeElement === ta &&
+          valueRef.current === cleanedValue &&
+          !composingRef.current
+        )
+          restoreSelection();
+      });
       // Stand direkt nach dem Einfügen (valueRef folgt dem input-Ereignis sofort).
       const after = valueRef.current;
       const to = start + cleaned.length;
@@ -645,10 +736,11 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
         },
       });
     },
-    [execInsert, onPasteRecord, t],
+    [execInsert, noteFull, onPasteRecord, t],
   );
 
-  /** Zu großen Text nicht bereinigen: unverändert einfügen, Prüfsumme vermerken. */
+  /** Zu großen Text nicht bereinigen: unverändert einfügen, Prüfsumme vermerken
+   *  (ist das Protokoll voll, bleibt der Vermerk weg; es wird nichts verdrängt). */
   const noteOversized = useCallback(
     async (raw: string) => {
       toast(t("tts.editorMenu.pasteTooLarge"));
@@ -662,8 +754,9 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
   );
 
   /**
-   * Einfügen übernehmen: `true`, wenn der Editor es selbst erledigt (bereinigt,
-   * asynchron nach dem Sichern der Rohfassung), `false`, wenn der Aufrufer den
+   * Einfügen übernehmen: `true`, wenn der Editor es selbst erledigt (fügt den
+   * Rohtext sofort ein und bereinigt ihn nach dem Sichern der Rohfassung),
+   * `false`, wenn der Aufrufer den
    * Text unverändert einfügen soll (nichts zu bereinigen, Schalter aus, zu groß).
    * Bereinigt wird genau einmal je Einfügung.
    */

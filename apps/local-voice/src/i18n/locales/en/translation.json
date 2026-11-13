@@ -31,6 +31,12 @@
   },
   "tts": {
     "pageSaveFailed": "The page could not be saved. The action was not carried out.",
+    "pageSaveFailedLeft": "The page “{{title}}” could not be saved. Its text only exists in memory for now; saving will be tried again the next time the page is opened.",
+    "pageSaveFailedLost": "The page “{{title}}” could not be saved. Its latest text is not secured.",
+    "pageRestoredUnsaved": "The text of the page “{{title}}” had not been saved yet. It was restored and is being saved now.",
+    "pageRescuedCopy": "An older, unsaved text of the page “{{title}}” was secured as the version “{{copy}}”.",
+    "pageRescuedHeld": "An older, unsaved text of the page “{{title}}” could not be secured as a version. It only exists in memory and is lost when the app quits.",
+    "pageUnsavedCopyTitle": "Unsaved state",
     "editorMenu": {
       "label": "Editor menu",
       "find": "Find and replace",
@@ -68,10 +74,15 @@
       "pasteCleaned_other": "Cleaned up while pasting: {{count}} changes",
       "pasteUndo": "Undo",
       "pasteUndoStale": "Undo is no longer possible: the text has changed since.",
-      "pasteKeep": "The originals of the last 20 pastes are saved with the page on this device until you delete them.",
+      "pasteKeep": "The originals of the last pastes (up to 20, at most 16 MB together) are saved with the page on this device until you delete them. Once the limit is reached, the next paste is not cleaned up but pasted unchanged.",
       "pasteTooLarge": "Text too large to clean up (over 2 MB): pasted unchanged, without original.",
+      "pasteFull": "Originals full – pasted unchanged.",
+      "pasteFullAction": "Clean up recent pastes",
       "pasteAbortedPage": "Paste cancelled: page changed.",
-      "pasteAbortedChanged": "Paste cancelled: the text changed in the meantime. The original is under Clean up > Recent pastes.",
+      "pasteAbortedChanged": "Paste cancelled: the text changed in the meantime. The clipboard is unchanged.",
+      "pasteNotCleaned": "The original is saved. Cleanup was skipped because the text has changed in the meantime.",
+      "pasteNotCleanedFocus": "The original is saved. Cleanup was skipped because the editor lost focus in the meantime.",
+      "pasteNotCleanedComposing": "The original is saved. Cleanup was skipped because an input composition is in progress.",
       "pasteNotSaved": "The original could not be saved: text pasted unchanged.",
       "pasteLogItem": "Recent pastes …",
       "pasteLogItemHint": "View, restore or copy the original of earlier pastes",
@@ -3707,6 +3718,9 @@
     },
     "live": {
       "empty": "No segments yet — the first one appears after ~20 seconds.",
+      "emptyYoutube": "No transcript yet. Start “Transcribe while playing” above.",
+      "emptyProcessing": "The transcript appears here as soon as the first sections are done.",
+      "emptyNeutral": "No transcript yet.",
       "me": "Me",
       "remote": "Other party",
       "mixed": "Recording"
@@ -3821,6 +3835,15 @@
       "loopbackStartTimeout": "System audio could not be started — the recording continues with the microphone only.",
       "loopbackStartFailed": "System audio failed to start — the recording continues with the microphone only.",
       "loopbackDied": "System audio failed during the recording — the meeting continues with the microphone only.",
+      "playbackCaptureFailed": "The system sound could not be recorded. Is an output device connected and selected in Windows?",
+      "playbackCaptureTimeout": "The system sound does not respond. Please check the output device and driver and try again.",
+      "playbackCaptureDied": "The system sound failed while transcribing. Stop the recording; what was transcribed so far is kept.",
+      "startCancelled": "The start was cancelled.",
+      "startBusy": "The recording is still starting. Please try again in a moment.",
+      "recordingBusy": "This meeting's recording is still being finished. Nothing was deleted. Please try again in a moment.",
+      "deleteInProgress": "This meeting is already being deleted.",
+      "invalidOperation": "The operation could not be matched. Please try again.",
+      "audioWriteFailed": "The recording could no longer be written to disk (disk full?). The live transcript keeps running, but the sound is no longer saved; no final pass runs from this recording.",
       "micStreamError": "The microphone stream reported an error during recording — some audio may be missing.",
       "importFailed": "The file could not be imported.",
       "alreadyRecording": "A recording is already running.",
@@ -3843,7 +3866,7 @@
       "wavUnreadable": "The audio file cannot be read.",
       "wavWriteFailed": "The trimmed recording could not be written (disk space?). Nothing was changed.",
       "retranscribeFailed": "Re-transcription failed. The transcript was left unchanged.",
-      "finalPassSkipped": "Final pass skipped – the live transcript stays valid (model missing, not enough memory, or cancelled).",
+      "finalPassSkipped": "Final pass skipped – the live transcript stays valid (model missing, not enough memory, cancelled, or the recording is incomplete).",
       "finalPassStopped": "Post-processing stopped – the live transcript stays valid.",
       "meetingBusy": "This meeting is being processed right now.",
       "meetingsUnavailable": "Meetings are not available right now: the database could not be opened at start-up. Please restart the app; if that does not help, the log file names the cause.",
@@ -4205,7 +4228,7 @@
         "minutes_cancelled": "Generation was cancelled.",
         "meeting_not_found": "The meeting no longer exists.",
         "meeting_not_finished": "The recording is still running. Minutes can only be generated after it has stopped.",
-        "no_transcript": "There is no transcript yet to write minutes from.",
+        "no_transcript": "Minutes need a transcript first. In the “Transcript” tab, start a recording or transcribe the video while it plays.",
         "template_not_found": "This template no longer exists. Please choose another one.",
         "no_provider": "No language model set up (Settings → Post-processing).",
         "no_model": "No model entered for the provider (Settings → Post-processing → Model).",
@@ -5257,7 +5280,7 @@
         "region": "Differences per line"
       },
       "youtube": {
-        "needTool": "For subtitles and transcription, install yt-dlp yourself and switch on “private” in the settings.",
+        "needTool": "Faster with subtitles: install yt-dlp yourself and switch on “private” in the settings (optional).",
         "subtitles": "Load subtitles",
         "subtitlesBusy": "Looking for subtitles …",
         "pick": "Subtitle language",
@@ -5269,7 +5292,25 @@
         "ownDone": "The own transcription is done.",
         "trackManual": "{{name}} (uploaded)",
         "trackAuto": "{{name}} (automatic)",
-        "tools": "Subtitles and transcription"
+        "tools": "Subtitles and transcription",
+        "capture": {
+          "button": "Transcribe while playing",
+          "starting": "Starting …",
+          "explain": "The system sound is transcribed in real time while the embedded player plays. Play the video from start to end, keep the volume on and mute other sounds.",
+          "running": "Transcribing as long as the sound plays. Play the video from start to end. Use “Stop” in the recording controls to finish.",
+          "playHint": "Now play the video.",
+          "quiet": "No sound has arrived for a while. Is the video playing, is the volume on and is the player not muted? Or is the sound going to a different audio output, for example because you switched to headphones? Only the output that was selected at the start is recorded.",
+          "elsewhere": "Another recording is already running.",
+          "dialog": {
+            "title": "Transcribe while playing",
+            "body": "The app records the sound that comes out of your speakers or headphones while the video plays (system sound only, not the microphone) and transcribes it. The video is not downloaded.\n\nNote: everything that plays on the selected output device is recorded, including notification sounds, calls and anything else you can hear. Close other programs or mute their sounds before you start.\n\nConfirm that you have the permission required for this recording and transcription. Observe copyright and the platform's terms of use. A video being publicly available is not enough for that.",
+            "abort": "Cancel start",
+            "confirm": "Start transcribing"
+          },
+          "errors": {
+            "notReady": "This entry already has a transcript or a recording. Transcribing while playing only works for a YouTube meeting with neither."
+          }
+        }
       }
     },
     "slides": {
@@ -8793,6 +8834,7 @@
       "needTwo": "Select at least two entries to merge.",
       "twoTexts": "“{{a}}” and “{{b}}” both have a book text. Merging allows at most one book text; the other entries need an audiobook.",
       "noAudio": "“{{title}}” has neither an audiobook nor a book text to contribute.",
+      "unreadable": "The transcript of “{{title}}” cannot be read. The merge was cancelled. Nothing was changed.",
       "partHeading": "Part {{n}}",
       "hasTranscript": "with transcript",
       "up": "Move “{{title}}” up",
