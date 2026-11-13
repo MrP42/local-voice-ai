@@ -1309,6 +1309,9 @@ export class VoiceCallEngine {
     if (!turn) return;
     const run = ++this.holdRun;
     const meineLage = ++this.lage;
+    // Anruf und Gespräch, zu denen diese Erkennung gehört: Auflegen, Neustart und Gesprächswechsel entwerten sie.
+    const gespraech = this.generation;
+    const anruf = this.startGen;
     this.holdBusy = true;
     const t0 = performance.now();
     type Erg = { text: string } | { fehler: unknown };
@@ -1336,8 +1339,16 @@ export class VoiceCallEngine {
       }
       erg = await ergebnis;
       // Das späte Ergebnis gehört zur Lage von damals: hat sich seither etwas getan (neue Äußerung,
-      // neuer Schritt, neue Erkennung), wird es verworfen und bricht nichts ab.
-      if (this.lage !== meineLage) return;
+      // neuer Schritt, neue Erkennung), wird es verworfen und bricht nichts ab. Nach dem Auflegen, bei einem Neustart
+      // des Anrufs oder einem Gesprächswechsel gilt es erst recht nicht: ein Timeout hebt die Erkennung auf, das
+      // Ende des Anrufs nicht.
+      if (
+        this.lage !== meineLage ||
+        gespraech !== this.generation ||
+        anruf !== this.startGen ||
+        !this.inCall
+      )
+        return;
     } else erg = erstes;
 
     if (!spaet) {
@@ -1506,13 +1517,26 @@ export class VoiceCallEngine {
   private sendeAntwort(turn: Turn): void {
     if (turn.finalSent || turn.finalText === undefined || turn.cancelled)
       return;
-    // Das Ergebnis eines Auftrags wird erst gemeldet (und damit gespeichert), wenn sein Ton wirklich begonnen
-    // hat: bis dahin lässt sich das Nachreichen noch zurückstellen, und die Zeile wäre nicht mehr zurückzunehmen.
-    if (turn.nachreichen && !this.warZuHoeren(turn)) return;
+    // Eine endgültige Zeile wird gespeichert und ist nicht mehr zurückzunehmen: sie geht erst hinaus, wenn von der
+    // Antwort wirklich etwas zu hören war. Bis dahin lässt sich der Schritt noch ohne Spur beenden (Nutzer spricht,
+    // Stopp, Wechsel), ein Nachreichen sogar zurückstellen. Ganz eingereihte, aber stumme Antworten (zurückgehaltener
+    // Start, ausgebliebener Ton) hinterlassen nichts.
+    if (!this.warZuHoeren(turn)) return;
     // `warZuHoeren` kann den Beginn melden, und der meldet die Antwort bereits.
     if (turn.finalSent) return;
     turn.finalSent = true;
     this.cb.onAssistant(turn.finalText, true, false, turn.nachreichen?.turnId);
+  }
+
+  /**
+   * Ein Stück des Schritts klingt wirklich: eine fertige, bisher stumm gewartete Antwortzeile geht jetzt hinaus
+   * (Vorlage, Wiederholen, kurze Antwort). Eine Antwort, die noch durch eine Ergänzung ersetzt werden kann, wartet
+   * weiter auf das Ende des ersten Satzes (`ersterSatzFertig`).
+   */
+  private beginnGehoert(turn: Turn): void {
+    if (turn.finalText === undefined || darfZusammenfuehren(this.stand(turn)))
+      return;
+    this.sendeAntwort(turn);
   }
 
   /** Der erste Inhaltssatz ist zu Ende gesprochen: eine wartende Antwortzeile geht jetzt raus. */
@@ -2519,6 +2543,7 @@ export class VoiceCallEngine {
           },
           () => {
             rec.started = true;
+            this.beginnGehoert(turn);
             // Der Inhalt beginnt zu klingen: jetzt melden die Quellen (falls sie darauf gewartet haben).
             if (kind === "inhalt") this.quellenMeldenJetzt(turn);
           },
@@ -3518,7 +3543,11 @@ export class VoiceCallEngine {
         interrupted: true,
         ...(turn.withContext ? { ctx: true } : {}),
       });
-      this.cb.onAssistant(heard, true, true, turn.nachreichen?.turnId);
+      // Die Zeile zeigt alles Gehörte (auch das Weitersprechen davor), der Verlauf der KI nur den Inhalt.
+      const angezeigt = this.gehoert(turn)
+        .map((p) => p.text)
+        .join(" ");
+      this.cb.onAssistant(angezeigt, true, true, turn.nachreichen?.turnId);
     } else if (interrupted && !turn.nachreichen) {
       this.kuerzeAnzeige(turn);
     }

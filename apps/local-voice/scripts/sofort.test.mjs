@@ -5087,3 +5087,268 @@ test("H10 nichts angezeigt (der Denker antwortet noch nicht): eine Unterbrechung
     assert.equal(t.log.verworfen, verworfen, "nichts war angezeigt");
     assert.equal(t.abgebrochen(d.laeufe[0].requestId), 1);
   }));
+
+// -- Runde 9 (Codex R2 zu lva#564) --------------------------------------------------------------------------
+//
+// Fehlerfälle dieser Runde (vor dem Code aufgeschrieben, Status im Bericht):
+//  K1 Zeitpunkt der endgültigen Meldung: die Antwort ist ganz synthetisiert und eingereiht, der Start des Players
+//     wird zurückgehalten (Vorlage, kein Zusammenführen): endgültig (und gespeichert) wird sie erst, wenn etwas zu
+//     hören war. Bricht der Nutzer vorher ab (getippter Text, Stoppwort), bleibt weder Anzeige noch Speicherbeitrag.
+//     Beginnt der Ton später, geht die Zeile dann hinaus (nie für immer zurückgehalten).
+//  K2 Anrufende (`stop`), Gesprächswechsel (`resetHistory`) und Neustart des Anrufs zwischen Wartegrenze und später
+//     Erkennung: die Erkennung wirkt nicht mehr (keine Nutzerzeile, keine Modellanfrage, keine Zustandsänderung, nach
+//     `stop` bleibt der Zustand idle); auf dem Weg des Auftragskandidaten ebenso.
+//  K3 Weitersprechen gehört, danach Inhalt gehört, das Folgestück hängt: die unterbrochene Zeile zeigt alles Gehörte,
+//     nur der Verlauf der KI kennt den Inhalt allein. Anzeige und Speicherbeitrag wie beim regulären Abschluss.
+//  Zeit: gesteuerte Uhr, kein abschließendes `interrupt()`, keine begrenzten Wartezeiten für negative Nachweise.
+
+/** Mit dem echten Speicher (`echt`) oder nur dem Protokoll: der Aufbau eines Tests (`bau` bekommt Optionen und Handler). */
+async function aufbauenMit(echt, bau) {
+  if (!echt) return { ...(await bau({})), store: null, gespeichert: [] };
+  const { store, engine, gespeichert, handlers } = await mitEchtemSpeicher();
+  return {
+    ...(await bau({ optionen: { engine }, handlers })),
+    store,
+    gespeichert,
+  };
+}
+
+/** „Wiederholen“ ganz synthetisiert und eingereiht, der Start des Players wird zurückgehalten: nichts war zu hören. */
+async function wiederholenOhneTon({ optionen, handlers } = {}) {
+  const r = await gewoehnlich({
+    frage: WIEDERHOLEN,
+    ohneDenker: true,
+    haengt: [],
+    handlers: {
+      assistent_einstufen: einstufungWiederholen,
+      assistent_letzte_ausgabe: () => "Eine ältere Ausgabe.",
+      ...handlers,
+    },
+    optionen,
+    vorbereiten: (t) => {
+      t.engine.ausgabeKey = { id: "c1" };
+      t.player.deferStart = true;
+    },
+  });
+  assert.equal(
+    await bis(() => r.t.engine.turn?.done === true),
+    true,
+    "die Antwort ist ganz erzeugt und eingereiht",
+  );
+  assert.equal(r.t.player.enqueued.length, 2);
+  assert.equal(r.t.player.gespielt.length, 0, "es war nichts zu hören");
+  return r;
+}
+
+for (const echt of [false, true]) {
+  const art = echt ? "echter Speicher" : "Protokoll";
+
+  test(`H11 ganz eingereiht, aber nichts zu hören (${art}): die Zeile wird nicht endgültig, und der Abbruch durch getippten Text hinterlässt weder Anzeige noch Speicherbeitrag`, () =>
+    mitUhr(async () => {
+      const { d, t, store, gespeichert } = await aufbauenMit(
+        echt,
+        wiederholenOhneTon,
+      );
+      assert.equal(!!t.engine.turn.finalSent, false, "noch nichts endgültig");
+      assert.deepEqual(
+        t.log.zeilen.filter((z) => z.final),
+        [],
+      );
+      void t.engine.sendText(FOLGE);
+      assert.equal(await bis(() => d.laeufe.length === 1), true);
+      assert.deepEqual(
+        t.log.zeilen.filter((z) => z.final),
+        [],
+        "keine endgültige Zeile",
+      );
+      assert.equal(t.log.verworfen, 1, "die offene Zeile ist zurück");
+      if (!echt) return;
+      assert.equal(
+        store.getState().lines.some((l) => l.text.includes("ältere")),
+        false,
+        "nichts Ungesprochenes in der Anzeige",
+      );
+      await settle(80);
+      assert.equal(
+        gespeichert.some((e) => e.text.includes("ältere")),
+        false,
+        "nichts Ungesprochenes gespeichert",
+      );
+    }));
+
+  test(`H11 weiter hat der Ton nicht begonnen (${art}): ein Stoppwort beendet den Schritt ohne Anzeige und ohne Speicherbeitrag`, () =>
+    mitUhr(async () => {
+      const { t, store, gespeichert } = await aufbauenMit(
+        echt,
+        wiederholenOhneTon,
+      );
+      t.aeussere("Stopp.");
+      assert.equal(await bis(() => t.engine.turn === null), true);
+      assert.deepEqual(
+        t.log.zeilen.filter((z) => z.final),
+        [],
+      );
+      if (!echt) return;
+      assert.equal(
+        store.getState().lines.some((l) => l.text.includes("ältere")),
+        false,
+      );
+      await settle(80);
+      assert.equal(
+        gespeichert.some((e) => e.text.includes("ältere")),
+        false,
+      );
+    }));
+}
+
+test("H11 der zurückgehaltene Start kommt doch: die Zeile geht jetzt endgültig hinaus, der Schritt endet regulär", () =>
+  mitUhr(async () => {
+    const { t } = await wiederholenOhneTon();
+    t.player.deferStart = false;
+    t.player.audioStart();
+    assert.equal(t.player.gespielt.includes("wav:Ich wiederhole."), true);
+    assert.equal(
+      await bis(() => t.engine.turn?.finalSent === true),
+      true,
+      "mit dem ersten Ton geht die Antwort hinaus",
+    );
+    assert.deepEqual(t.log.zeilen.at(-1), {
+      t: "Ich wiederhole. Eine ältere Ausgabe.",
+      final: true,
+      interrupted: false,
+      auftragVon: undefined,
+    });
+    t.player.finish();
+    assert.equal(t.engine.turn, null);
+    assert.equal(t.log.zeilen.filter((z) => z.final).length, 1);
+    assert.equal(t.log.verworfen, 0);
+  }));
+
+/** Weitersprechen und erstes Inhaltsstück klingen, die Synthese des zweiten Inhaltsstücks hängt, der Player ist leer. */
+async function weiterInhaltHaengt({ optionen, handlers } = {}) {
+  const r = await gewoehnlich({
+    sprecher: lokalFolge([WEITER_ZEILE, ZWEITE_ZEILE]),
+    haengt: ["Satz zwei."],
+    handlers,
+    optionen,
+  });
+  assert.equal(
+    await bis(() => r.t.player.gespielt.includes(WEITER_SATZ)),
+    true,
+  );
+  r.d.liefere(0, "Satz eins.", "Satz zwei.");
+  r.t.player.finishPiece();
+  assert.equal(
+    await bis(() => r.t.player.gespielt.includes("wav:Satz eins.")),
+    true,
+    "das Weitersprechen ist gehört, der erste Inhalt klingt",
+  );
+  r.t.player.finishPiece();
+  return r;
+}
+
+for (const echt of [false, true]) {
+  const art = echt ? "echter Speicher" : "Protokoll";
+
+  test(`H11 Weitersprechen und erster Inhalt gehört, das Folgestück hängt (${art}): die unterbrochene Zeile zeigt alles Gehörte, der Verlauf der KI nur den Inhalt`, () =>
+    mitUhr(async (tick) => {
+      const { d, t, frei, store, gespeichert } = await aufbauenMit(
+        echt,
+        weiterInhaltHaengt,
+      );
+      tick(TUNING.stueckMaxMs - 1);
+      assert.ok(t.engine.turn, "noch geduldig");
+      tick(1);
+      assert.equal(t.engine.turn, null, "Schritt frei");
+      assert.deepEqual(t.log.zeilen.at(-1), {
+        t: `${WEITER_TEXT} Satz eins.`,
+        final: true,
+        interrupted: true,
+        auftragVon: undefined,
+      });
+      assert.deepEqual(t.verlauf(), [
+        `user:${FRAGE}`,
+        "assistant:Satz eins. …",
+      ]);
+      assert.equal(t.abgebrochen(d.laeufe[0].requestId), 1);
+      await spaeteSynthese(t, frei, "Satz zwei.");
+      if (!echt) return;
+      assert.deepEqual(assistentZeilen(store), [
+        ["assistant", `${WEITER_TEXT} Satz eins.`, true, true],
+      ]);
+      await settle(80);
+      assert.equal(
+        gespeichert.filter((e) => e.text === `${WEITER_TEXT} Satz eins.`)
+          .length,
+        1,
+        "ein Speicherbeitrag mit allem Gehörten",
+      );
+      assert.equal(
+        gespeichert.some((e) => e.text.includes("Satz zwei")),
+        false,
+      );
+    }));
+}
+
+/** Eine späte Erkennung wirkt nicht: keine Nutzerzeile, kein Modellaufruf, der Zustand bleibt `zustand`. */
+async function ohneWirkung(t, d, nutzer, zustand) {
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(t.log.user, nutzer, "keine neue Nutzerzeile");
+  assert.equal(d.laeufe.length, 1, "keine Modellanfrage");
+  assert.equal(t.engine.turn, null);
+  assert.equal(t.engine.state, zustand);
+  assert.equal(t.log.errors.length, 0);
+}
+
+test("H11 Anrufende zwischen Wartegrenze und später Erkennung: die Erkennung beginnt nichts mehr, der Zustand bleibt idle", () =>
+  mitUhr(async (tick) => {
+    const { d, t, erkannt } = await spaeteErkennung(WETTER);
+    await bisZumAblauf(t, tick);
+    await t.engine.stop();
+    erkannt();
+    await ohneWirkung(t, d, [FRAGE], "idle");
+  }));
+
+test("H11 Gesprächswechsel (resetHistory) zwischen Wartegrenze und später Erkennung: die Erkennung beginnt nichts mehr", () =>
+  mitUhr(async (tick) => {
+    const { d, t, erkannt } = await spaeteErkennung(WETTER);
+    await bisZumAblauf(t, tick);
+    t.engine.resetHistory();
+    erkannt();
+    await ohneWirkung(t, d, [FRAGE], "listening");
+    assert.deepEqual(t.verlauf(), []);
+  }));
+
+test("H11 Neustart des Anrufs zwischen Wartegrenze und später Erkennung: die alte Erkennung beginnt nichts mehr", () =>
+  mitUhr(async (tick) => {
+    const { d, t, erkannt } = await spaeteErkennung(WETTER);
+    await bisZumAblauf(t, tick);
+    neustart(t);
+    erkannt();
+    await ohneWirkung(t, d, [FRAGE], "listening");
+  }));
+
+test("H11 Auftragskandidat: Anrufende zwischen Wartegrenze und später Erkennung: die Erkennung beginnt nichts mehr", () =>
+  mitUhr(async (tick) => {
+    const { d, t } = await weiterHaengt();
+    t.player.finishPiece();
+    const erkannt = erkennungMitTor(WETTER);
+    t.redeLos();
+    t.fruehEnde();
+    t.ende();
+    assert.equal(
+      await bis(() => t.aufrufe("voice_call_transcribe").length === 1),
+      true,
+    );
+    tick(TUNING.stueckMaxMs);
+    assert.equal(t.engine.turn, null, "Wartegrenze: der Schritt ist zu Ende");
+    await t.engine.stop();
+    const nutzer = [...t.log.user];
+    erkannt();
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(t.log.user, nutzer);
+    assert.equal(d.laeufe.length, 1);
+    assert.equal(t.engine.state, "idle");
+  }));
