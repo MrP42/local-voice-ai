@@ -113,13 +113,24 @@ export class PageSaveError extends Error {
   }
 }
 
-/** Rettungssnapshot: der Zustand, den ein gescheiterter Auftrag schreiben wollte. */
+/**
+ * Rettungssnapshot: der Zustand, den ein gescheiterter Auftrag schreiben wollte.
+ *
+ * `seq`, `handedOut` und `known` beschreiben den UNENTSCHIEDENEN Konflikt der
+ * Seite, nicht den einzelnen Auftrag: ersetzt ein neuer Snapshot einen
+ * älteren, erbt er diese drei Felder (siehe `keep`). Ein später Lese- oder
+ * Schreibfehler darf nie vergessen machen, dass seit der Basis ein anderer Stand
+ * geschrieben wurde, den noch niemand gesichert hat.
+ */
 interface FailedSave {
   /** Gebauter Zustand (ohne `einfuegungen`, die kommen aus der Datei). */
   snapshot: string;
-  /** Laufnummer des gescheiterten Auftrags: jeder spätere Schreibauftrag ist neuer. */
+  /** Basis-Laufnummer: Lauf des ÄLTESTEN noch unentschiedenen Stands. Jeder
+   *  spätere erfolgreiche Schreibauftrag der Seite (`lastWrite`) ist ein neuerer
+   *  Dateistand, den der Snapshot nicht kennt. */
   seq: number;
-  /** `read` hat ihn der Oberfläche als ungespeicherten Stand geliefert. */
+  /** `read` hat ihn der Oberfläche als ungespeicherten Stand geliefert (gilt für
+   *  die ganze Nachfolge: die Oberfläche hat den Text gesehen und bearbeitet). */
   handedOut: boolean;
   /** Text der Datei, der berücksichtigt ist: der, auf dem der Snapshot beruht
    *  (beim Scheitern gelesen; `null`, wenn die Datei nicht lesbar war), oder ein
@@ -295,6 +306,11 @@ export function createPageStateStore(options: PageStateStoreOptions) {
     else hold(page, text);
   }
 
+  /** Hat seit der Basis des Snapshots ein erfolgreicher Auftrag den Seiteninhalt
+   *  geschrieben? Dann kennt der Snapshot den Dateistand nicht. */
+  const newerWrite = (page: string, entry: FailedSave): boolean =>
+    (lastWrite.get(page) ?? 0) > entry.seq;
+
   /**
    * Ein Snapshot, der nicht mehr geschrieben werden darf, weil die Datei einen
    * neueren Stand hat (`fileText`): sein Text wird als eigene Fassung gesichert
@@ -329,7 +345,7 @@ export function createPageStateStore(options: PageStateStoreOptions) {
   ): Promise<void> {
     const entry = failedSaves.get(page);
     if (!entry?.handedOut) return;
-    if ((lastWrite.get(page) ?? 0) <= entry.seq) return;
+    if (!newerWrite(page, entry)) return;
     const onFile = textField(fileText);
     if (
       onFile.trim() === "" ||
@@ -341,8 +357,17 @@ export function createPageStateStore(options: PageStateStoreOptions) {
     await secureText(page, onFile);
   }
 
-  /** Rettungssnapshot für `page` hinterlegen. Ein noch nicht angezeigter älterer
-   *  Snapshot mit anderem Text wird dabei nicht verdrängt, sondern gehalten. */
+  /**
+   * Rettungssnapshot für `page` hinterlegen. Ein noch nicht angezeigter älterer
+   * Snapshot mit anderem Text wird dabei nicht verdrängt, sondern gehalten. Der
+   * neue Snapshot ERBT den Konflikt des älteren (Basis-Laufnummer, Ausgabe,
+   * berücksichtigter Dateitext), statt ihn neu zu setzen: sonst läge die eigene
+   * Laufnummer hinter einem zwischenzeitlich gelungenen Schreiben, und dieser
+   * Dateistand ginge unbemerkt verloren. Ist der Dateitext des älteren Stands
+   * unbekannt und seither etwas geschrieben worden, bleibt er unbekannt (der
+   * Dateitext wird dann vorsichtshalber gesichert), er wird nicht aus dem
+   * jetzigen Lesen übernommen.
+   */
   function keep(
     page: string,
     built: string,
@@ -350,16 +375,25 @@ export function createPageStateStore(options: PageStateStoreOptions) {
     base: string | null,
   ): void {
     const older = failedSaves.get(page);
-    if (older && !older.handedOut) {
+    if (!older) {
+      failedSaves.set(page, {
+        snapshot: built,
+        seq,
+        handedOut: false,
+        known: base,
+      });
+      return;
+    }
+    if (!older.handedOut) {
       const olderText = textField(older.snapshot);
       if (olderText.trim() !== "" && olderText !== textField(built))
         hold(page, olderText);
     }
     failedSaves.set(page, {
       snapshot: built,
-      seq,
-      handedOut: false,
-      known: base,
+      seq: older.seq,
+      handedOut: older.handedOut,
+      known: older.known ?? (newerWrite(page, older) ? null : base),
     });
   }
 
@@ -438,9 +472,13 @@ export function createPageStateStore(options: PageStateStoreOptions) {
   const hasFailedSave = (page: string): boolean => failedSaves.has(page);
 
   /**
-   * Ausstehenden Snapshot der Seite entscheiden (in der Kette): ist seither kein
-   * Seiteninhalt geschrieben worden, erneut schreiben (`einfuegungen` aus der
-   * Datei); sonst als Fassung sichern. Scheitern lässt ihn stehen.
+   * Ausstehenden Snapshot der Seite entscheiden (in der Kette).
+   * - Nicht ausgehändigt und seither ein neuerer Dateistand geschrieben: der
+   *   Snapshot wird als Fassung gesichert, die Datei gewinnt.
+   * - Sonst wird er erneut geschrieben (`einfuegungen` aus der Datei). Ist er
+   *   ausgehändigt, wird ein neuerer, unbekannter Dateitext vorher gesichert
+   *   (Vorrang der Oberfläche, siehe `secureOverwrittenFile`).
+   * Lese- oder Schreibfehler lassen den Snapshot samt Konflikt stehen.
    */
   function resolveFailed(page: string): Promise<void> {
     return enqueue(async (seq) => {
@@ -448,7 +486,13 @@ export function createPageStateStore(options: PageStateStoreOptions) {
       if (!entry) return;
       const text = await io.load(page);
       if (text === null) return;
-      if ((lastWrite.get(page) ?? 0) > entry.seq) {
+      if (entry.handedOut) {
+        // Die Oberfläche hat den Text gesehen: er behält Vorrang, ein neuerer,
+        // unbekannter Dateitext wird vor dem Überschreiben gesichert.
+        await secureOverwrittenFile(page, text, entry.snapshot).catch(
+          () => undefined,
+        );
+      } else if (newerWrite(page, entry)) {
         await rescue(page, entry, text);
         return;
       }

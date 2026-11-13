@@ -2217,6 +2217,8 @@ function harness(files = {}) {
     /** Anzahl gehaltener Texte der Seite zum Zeitpunkt jeder Rettungsmeldung. */
     heldAtRescue: [],
     failCopy: false,
+    /** Hält `saveCopy` an (wie `holdSave`): die Fassung entsteht erst danach. */
+    holdCopy: null,
   };
   const io = {
     async load(page) {
@@ -2240,6 +2242,7 @@ function harness(files = {}) {
       return true;
     },
     async saveCopy(page, text) {
+      if (h.holdCopy) await h.holdCopy(page, text);
       if (h.failCopy) return false;
       h.copies.push([page, text]);
       return true;
@@ -3426,4 +3429,185 @@ test("pageState R5: die Meldung sieht den Endstand: eine gelungene Kopie neben e
   ]);
   assert.deepEqual(h.heldAtRescue, [1, 1], "Bestand nach dem Sichern");
   assert.deepEqual(h.store.held("A"), ["v2"]);
+});
+
+// ---------------------------------------------------------------------------
+// lva#548 Fixrunde 6: ein offener Konflikt überlebt jede Ersetzung des Snapshots
+// ---------------------------------------------------------------------------
+
+/** Ausgehändigt (v1), dann schreibt ein Fremdschreiber v2, die Oberfläche
+ *  verlässt die Seite. Datei: v2, Basis des Snapshots: „alt“. */
+async function handedOutThenForeignWrite(h) {
+  await snapshotHandedOut(h);
+  assert.equal(await h.store.mutate("A", setText("v2")), true);
+  h.active = null;
+  h.loaded = false;
+}
+
+test("pageState R6: ausgehändigt, mutate(v2), Verlassen-Save scheitert mit Lesefehler, Neuöffnen: Datei v1, v2 als Fassung (Codex-Fall)", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  await snapshotHandedOut(h);
+  await h.store.mutate("A", setText("v2"));
+  h.active = null;
+  h.loaded = false;
+  h.nullLoads = 1;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  await h.store.read("A");
+  assert.equal(h.fileState("A").text, "v1");
+  assert.deepEqual(h.copies, [["A", "v2"]]);
+  assert.deepEqual(h.rescues, [["A", "copy"]]);
+  assert.equal(h.store.hasFailedSave("A"), false);
+  // Ein weiteres Öffnen sichert nichts noch einmal.
+  const again = await h.store.read("A");
+  assert.equal(again.unsaved, false);
+  assert.equal(textOf(again.text), "v1");
+  assert.deepEqual(h.copies, [["A", "v2"]]);
+});
+
+test("pageState R6: während die Fassung für v2 entsteht, bleibt die Datei v2 (erst Sichern, dann Überschreiben)", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  await handedOutThenForeignWrite(h);
+  h.nullLoads = 1;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  const reached = gate();
+  const finish = gate();
+  let fileDuringCopy = null;
+  h.holdCopy = async () => {
+    h.holdCopy = null;
+    fileDuringCopy = h.fileState("A").text;
+    reached.release();
+    await finish.promise;
+  };
+  const reading = h.store.read("A");
+  await Promise.race([reached.promise, reading]);
+  assert.equal(
+    fileDuringCopy,
+    "v2",
+    "Datei weiterhin v2, solange die Fassung entsteht",
+  );
+  assert.deepEqual(h.copies, []);
+  finish.release();
+  const read = await reading;
+  assert.equal(read.unsaved, false);
+  assert.equal(h.fileState("A").text, "v1");
+  assert.deepEqual(h.copies, [["A", "v2"]]);
+});
+
+test("pageState R6: Lesefehler im Retry beim Öffnen: v1 bleibt ausgehändigter Stand, der Rettungs-Autosave sichert v2 und schreibt v1", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  await handedOutThenForeignWrite(h);
+  // Der Verlassen-Save scheitert mit Lesefehler; die Ersetzung erbt den Konflikt.
+  h.nullLoads = 1;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  // Beim Öffnen scheitert auch der Retry beim Lesen: nichts darf verloren gehen.
+  h.nullLoads = 1;
+  const read = await h.store.read("A");
+  assert.equal(read.unsaved, true);
+  assert.equal(textOf(read.text), "v1");
+  assert.equal(h.fileState("A").text, "v2", "read schreibt nichts");
+  assert.deepEqual(h.copies, []);
+  assert.equal(h.store.hasFailedSave("A"), true);
+  // Oberfläche geladen, Rettungs-Autosave gelingt.
+  h.active = "A";
+  h.loaded = true;
+  h.uiText = "v1";
+  await h.store.save("A", stateWith({ text: "v1" }));
+  assert.equal(h.fileState("A").text, "v1");
+  assert.deepEqual(h.copies, [["A", "v2"]]);
+  assert.equal(h.store.hasFailedSave("A"), false);
+});
+
+test("pageState R6: zweiter Save-Fehler mit lesbarer Datei, danach mutate(v3): v2 und v3 werden je einmal gesichert, die Datei bekommt v1", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  await handedOutThenForeignWrite(h);
+  // Zweiter Fehler: Datei lesbar (v2 wird gesichert), das Schreiben scheitert.
+  h.failNextSave = true;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  assert.deepEqual(h.copies, [["A", "v2"]]);
+  assert.equal(h.fileState("A").text, "v2");
+  // Noch vor dem Neuöffnen schreibt der Fremdschreiber v3.
+  assert.equal(await h.store.mutate("A", setText("v3")), true);
+  const read = await h.store.read("A");
+  assert.equal(read.unsaved, false);
+  assert.equal(textOf(read.text), "v1");
+  assert.deepEqual(h.copies, [
+    ["A", "v2"],
+    ["A", "v3"],
+  ]);
+  assert.equal(h.store.hasFailedSave("A"), false);
+});
+
+test("pageState R6: zweiter Save-Fehler mit Lesefehler und Retry-Schreibfehler: der berücksichtigte Dateitext wandert mit, kein Text wird doppelt oder gar nicht gesichert", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  await handedOutThenForeignWrite(h);
+  h.nullLoads = 1;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  // Retry beim Öffnen: v2 wird gesichert, das Schreiben scheitert.
+  h.failNextSave = true;
+  const first = await h.store.read("A");
+  assert.equal(first.unsaved, true);
+  assert.deepEqual(h.copies, [["A", "v2"]]);
+  assert.equal(h.fileState("A").text, "v2");
+  // Zwischen den Versuchen: v3. Der nächste Retry sichert nur v3.
+  assert.equal(await h.store.mutate("A", setText("v3")), true);
+  const second = await h.store.read("A");
+  assert.equal(second.unsaved, false);
+  assert.equal(h.fileState("A").text, "v1");
+  assert.deepEqual(h.copies, [
+    ["A", "v2"],
+    ["A", "v3"],
+  ]);
+});
+
+test("pageState R6: zweimal ersetzt (zwei Lesefehler, zwei Fremdschreiber): der letzte Dateitext wird gesichert, die Datei bekommt den letzten Oberflächenstand", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  await handedOutThenForeignWrite(h);
+  h.nullLoads = 1;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  assert.equal(await h.store.mutate("A", setText("v3")), true);
+  h.nullLoads = 1;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1b" })));
+  await h.store.read("A");
+  assert.equal(h.fileState("A").text, "v1b");
+  assert.deepEqual(h.copies, [["A", "v3"]]);
+  assert.equal(h.store.hasFailedSave("A"), false);
+});
+
+test("pageState R6: ohne Fremdschreiber erzeugt auch die Ersetzung keine Fassung (kein Konflikt, keine Kopie)", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  await snapshotHandedOut(h);
+  h.active = null;
+  h.loaded = false;
+  h.nullLoads = 1;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1b" })));
+  await h.store.read("A");
+  assert.equal(h.fileState("A").text, "v1b");
+  assert.deepEqual(h.copies, []);
+  assert.deepEqual(h.rescues, []);
+});
+
+test("pageState R6: ein nicht ausgehändigter Snapshot behält die Dateivorrang-Zusage, auch nach einer Ersetzung (Datei v2, Snapshot als Fassung)", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failNextSave = true;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  h.nullLoads = 1;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1b" })));
+  // v1 wurde nie angezeigt: beim Ersetzen gehalten, beim Öffnen gesichert.
+  assert.equal(await h.store.mutate("A", setText("v2")), true);
+  const read = await h.store.read("A");
+  assert.equal(read.unsaved, false);
+  assert.equal(textOf(read.text), "v2");
+  assert.deepEqual(h.copies.map(([, text]) => text).sort(), ["v1", "v1b"]);
+});
+
+test("pageState R6: scheitert das Sichern der Fassung für den Dateitext beim Retry, bleibt er im Speicher und wird gemeldet, die Datei bekommt v1", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  await handedOutThenForeignWrite(h);
+  h.nullLoads = 1;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  h.failCopy = true;
+  await h.store.read("A");
+  assert.equal(h.fileState("A").text, "v1");
+  assert.deepEqual(h.store.held("A"), ["v2"]);
+  assert.deepEqual(h.rescues, [["A", "held"]]);
 });
