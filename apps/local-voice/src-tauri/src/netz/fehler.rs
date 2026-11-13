@@ -98,15 +98,15 @@ pub fn schwaerzen(text: &str) -> String {
     use regex::Regex;
     use std::sync::LazyLock;
     static URL: LazyLock<Regex> = LazyLock::new(|| {
-        // Authority und Pfad enden an Klammern (URL in Klammern), Query und
-        // Fragment reichen bis zum naechsten Leerraum/Anfuehrungszeichen:
-        // `?token=a(GEHEIM)` gehoert ganz zur Query.
-        Regex::new(r#"(?i)\b([a-z][a-z0-9+.-]*://)([^\s"'<>(){}?#]+)([?#][^\s"'<>]*)?"#)
-            .expect("URL-Muster")
+        // Die ganze Adresse bis zum naechsten Leerraum/Anfuehrungszeichen:
+        // Klammern duerfen in Userinfo, Pfad, Query und Fragment stehen
+        // (`u:a(GEHEIM)@host`, `/m(v1)?sig=a(x)GEHEIM`). Eine schliessende
+        // Klammer dahinter geht im Zweifel mit, das kostet nur Lesbarkeit.
+        Regex::new(r#"(?i)\b([a-z][a-z0-9+.-]*://)([^\s"'<>`]+)"#).expect("URL-Muster")
     });
     static PAAR: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
-            r#"(?i)\b((?:access_|auth_|api_|refresh_|id_)?token|signature|sig|x-amz-signature|x-amz-credential|key|api_key|apikey|password|passwort|secret|client_secret|private_key|credential|auth|authorization|proxy-authorization|cookie|session(?:_?id)?)(\s*[=:]\s*)("?)[^\s"&,;)]+"#,
+            r#"(?i)\b((?:access_|auth_|api_|refresh_|id_)?token|signature|sig|x-amz-signature|x-amz-credential|key|api_key|apikey|password|passwort|secret|client_secret|private_key|credential|auth|authorization|proxy-authorization|cookie|session(?:_?id)?)(\s*[=:]\s*)("?)[^\s"&,;]+"#,
         )
         .expect("Paar-Muster")
     });
@@ -118,14 +118,18 @@ pub fn schwaerzen(text: &str) -> String {
     let ohne_urls = URL.replace_all(text, |c: &regex::Captures| {
         let schema = &c[1];
         let rest = &c[2];
-        // Authority endet am ersten '/'.
-        let ende = rest.find('/').unwrap_or(rest.len());
-        let (authority, pfad) = rest.split_at(ende);
+        // Query und Fragment fallen ganz weg (signierte CDN-Adressen).
+        let (vorne, query) = match rest.find(['?', '#']) {
+            Some(i) => (&rest[..i], "?…"),
+            None => (rest, ""),
+        };
+        // Authority endet am ersten '/'; Userinfo bis zum letzten '@' darin.
+        let ende = vorne.find('/').unwrap_or(vorne.len());
+        let (authority, pfad) = vorne.split_at(ende);
         let authority = match authority.rfind('@') {
             Some(i) => format!("…@{}", &authority[i + 1..]),
             None => authority.to_string(),
         };
-        let query = if c.get(3).is_some() { "?…" } else { "" };
         format!("{schema}{authority}{pfad}{query}")
     });
     // Erst Bearer/Basic (sonst bliebe nach „Authorization: …“ der Wert stehen),
@@ -371,6 +375,45 @@ mod tests {
         assert_eq!(
             schwaerzen("(https://huggingface.co/a/b.gguf)"),
             "(https://huggingface.co/a/b.gguf)"
+        );
+    }
+
+    /// Codex R4: Klammern vor Query, Fragment oder `@` beenden die Adresse nicht.
+    /// Alle Senken (Log, Event `model-download-failed`, Command-Fehler) bekommen
+    /// ihren Text nur über `schwaerzen` bzw. `ausgabe`; geprüft wird jedes Feld,
+    /// auch eingebettet wie in `format!("{:#}", anyhow-Kette)` und Debug-Ausgaben.
+    #[test]
+    fn klammern_vor_query_fragment_und_userinfo() {
+        let adressen = [
+            "https://spiegel.example/m(v1)?sig=a(x)GEHEIM1",
+            "https://[2001:db8::1]/m(v1)#GEHEIM2",
+            "https://u:prefix(GEHEIM3)@spiegel.example/m",
+            "http://u(GEHEIM4):p@[::1]:8080/(a)/b?x=(GEHEIM5)",
+        ];
+        for adresse in adressen {
+            let einbettungen = [
+                adresse.to_string(),
+                format!("Download failed: error sending request for url ({adresse}): timed out"),
+                format!("RequestError(reqwest::Error {{ url: \"{adresse}\", source: x }})"),
+                format!("mirror {adresse}; token=a(b)GEHEIM6 sig=(GEHEIM7)"),
+                format!("{BEFUND} {adresse}"),
+            ];
+            for roh in einbettungen {
+                let a = ausgabe(&roh);
+                for feld in [schwaerzen(&roh), a.meldung, a.code.to_string(), a.detail] {
+                    for teil in ["GEHEIM", "prefix(", "u(", "a(x)", ":p@"] {
+                        assert!(!feld.contains(teil), "{teil} in {feld}");
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            schwaerzen("https://spiegel.example/m(v1)?sig=a(x)GEHEIM"),
+            "https://spiegel.example/m(v1)?…"
+        );
+        assert_eq!(
+            schwaerzen("https://u:prefix(GEHEIM)@spiegel.example/m"),
+            "https://…@spiegel.example/m"
         );
     }
 
