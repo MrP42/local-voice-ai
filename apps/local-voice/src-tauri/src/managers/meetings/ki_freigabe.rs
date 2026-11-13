@@ -9,14 +9,21 @@
 //!
 //! Speicherung (Auflage B3): eine Zeile je Besprechung in `meeting_ai_confirmations`. Keine
 //! Zeile heißt unbestätigt, also gesperrt; es gibt keine Rückfüllung. Gespeichert werden
-//! Einstufung, Fingerabdruck (mit Versionspräfix im Hash) und Zeitpunkt; die Einstufung wird
-//! bei jedem Abruf neu berechnet und nur zusammen mit einem passenden Fingerabdruck genutzt.
-//! Die Zeile geht mit der Besprechung (hartes Löschen in `store.rs`).
+//! Einstufung, Fingerabdruck, dessen Schemaversion und Zeitpunkt, aber keine Kopie der
+//! Teilnehmenden (der Hash ist bei erratbaren Listen nicht anonym, darum nur hier lokal).
+//! Eine Zeile mit anderer Schemaversion zählt nicht. Die Einstufung wird bei jedem Abruf neu
+//! berechnet und nur zusammen mit einem passenden Fingerabdruck genutzt. Die Zeile geht mit
+//! der Besprechung (Löschen in `store.rs`; die Aufbewahrung löscht nur Audio, Transkript und
+//! Bestätigung bleiben zusammen).
+//!
+//! Teilnehmerstand (Codex-Blocker 1 zu #582): Die Liste gilt nur als aktuell und vollständig,
+//! wenn die Kalenderquelle NACH dem Ende des Termins erfolgreich abgeglichen hat und die
+//! Liste nicht an der Importgrenze gekürzt sein kann. Sonst sieht kein Client die Besprechung.
 
 use anyhow::{anyhow, Result};
 use besprechungsplanung::assistent::{
     einstufen, pruefen_mcp_ausgabe, Bestaetigung, Einstufung, EinstufungsErgebnis, Entscheidung,
-    McpAnfrage,
+    McpAnfrage, Teilnehmerinfo, FINGERABDRUCK_VERSION,
 };
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -30,7 +37,12 @@ pub(crate) const KI_FREIGABE_MIGRATION: &str =
       meeting_id TEXT PRIMARY KEY,
       einstufung TEXT NOT NULL CHECK (einstufung IN ('intern', 'unbekannt', 'extern')),
       fingerabdruck TEXT NOT NULL,
+      fp_version INTEGER NOT NULL,
       confirmed_at INTEGER NOT NULL);";
+
+/// Importgrenze der Teilnehmerliste je Termin (`calendar::ics` und `calendar::graph`). Eine
+/// Liste dieser Länge kann gekürzt sein und gilt als unvollständig.
+const TEILNEHMER_IMPORTGRENZE: usize = 500;
 
 /// Teilnehmerliste einer Besprechung und ob sie aus einem Kalendertermin stammt.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,6 +53,8 @@ pub struct Teilnehmerlage {
     pub teilnehmende: Vec<String>,
     /// Verknüpfter Termin mit Teilnehmerdaten aus einer nicht entfernten Quelle.
     pub liste_aus_termin: bool,
+    /// Aktualität und Vollständigkeit der Liste (ohne Termin: unbekannt).
+    pub teilnehmerinfo: Teilnehmerinfo,
 }
 
 fn einstufung_text(e: Einstufung) -> &'static str {
@@ -66,20 +80,21 @@ impl MeetingStore {
     /// einem Termin (zählt wie Ad-hoc).
     pub fn ki_teilnehmerlage(&self, meeting_id: &str) -> Result<Teilnehmerlage> {
         let conn = self.get_connection()?;
-        let event_key: Option<String> = conn
+        let termin: Option<(String, i64, Option<i64>)> = conn
             .query_row(
-                "SELECT e.key FROM meeting_calendar_links l
+                "SELECT e.key, e.ends_at, s.last_ok_at FROM meeting_calendar_links l
                    JOIN calendar_events e ON e.key = l.event_key
                    JOIN calendar_sources s ON s.id = e.source_id
                   WHERE l.meeting_id = ?1 AND s.deleted_at IS NULL AND s.has_attendee_data = 1",
                 params![meeting_id],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()?;
-        let Some(key) = event_key else {
+        let Some((key, ends_at, last_ok_at)) = termin else {
             return Ok(Teilnehmerlage {
                 teilnehmende: Vec::new(),
                 liste_aus_termin: false,
+                teilnehmerinfo: Teilnehmerinfo::Unbekannt,
             });
         };
         let mut stmt = conn.prepare(
@@ -96,23 +111,34 @@ impl MeetingStore {
                 Ok(email.or(name).unwrap_or_else(|| "?".to_string()))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
+        let teilnehmerinfo = if last_ok_at.is_none_or(|ok| ok < ends_at) {
+            Teilnehmerinfo::Veraltet
+        } else if teilnehmende.len() >= TEILNEHMER_IMPORTGRENZE {
+            Teilnehmerinfo::Unvollstaendig
+        } else {
+            Teilnehmerinfo::AktuellVollstaendig
+        };
         Ok(Teilnehmerlage {
             teilnehmende,
             liste_aus_termin: true,
+            teilnehmerinfo,
         })
     }
 
-    /// Gespeicherte Bestätigung der Besprechung; ein unlesbarer Wert zählt als keine.
+    /// Gespeicherte Bestätigung der Besprechung; ein unlesbarer Wert oder eine andere
+    /// Schemaversion des Fingerabdrucks zählt als keine.
     pub fn ki_bestaetigung(&self, meeting_id: &str) -> Result<Option<Bestaetigung>> {
         let conn = self.get_connection()?;
-        let row: Option<(String, String)> = conn
+        let row: Option<(String, String, i64)> = conn
             .query_row(
-                "SELECT einstufung, fingerabdruck FROM meeting_ai_confirmations WHERE meeting_id = ?1",
+                "SELECT einstufung, fingerabdruck, fp_version FROM meeting_ai_confirmations
+                  WHERE meeting_id = ?1",
                 params![meeting_id],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()?;
-        Ok(row.and_then(|(e, f)| {
+        let row = row.filter(|(_, _, v)| *v == i64::from(FINGERABDRUCK_VERSION));
+        Ok(row.and_then(|(e, f, _)| {
             einstufung_aus_text(&e).map(|einstufung| Bestaetigung {
                 einstufung,
                 fingerabdruck: f,
@@ -132,12 +158,13 @@ impl MeetingStore {
         Self::ensure_meeting_is_live(&tx, meeting_id)?;
         tx.execute(
             "INSERT OR REPLACE INTO meeting_ai_confirmations
-               (meeting_id, einstufung, fingerabdruck, confirmed_at)
-             VALUES (?1, ?2, ?3, ?4)",
+               (meeting_id, einstufung, fingerabdruck, fp_version, confirmed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
                 meeting_id,
                 einstufung_text(bestaetigung.einstufung),
                 bestaetigung.fingerabdruck,
+                i64::from(FINGERABDRUCK_VERSION),
                 now_ms
             ],
         )?;
@@ -213,6 +240,7 @@ impl KiSperre {
                     cloud_bei_externen: *cloud_bei_externen,
                     teilnehmende: lage.teilnehmende,
                     liste_aus_termin: lage.liste_aus_termin,
+                    teilnehmerinfo: lage.teilnehmerinfo,
                     eigene_domaenen: eigene_domaenen.clone(),
                     bestaetigung: store.ki_bestaetigung(meeting_id)?,
                 }))

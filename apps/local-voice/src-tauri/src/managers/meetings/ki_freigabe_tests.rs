@@ -42,12 +42,17 @@ fn termin(attendees: Vec<Attendee>) -> CalEvent {
     }
 }
 
+/// Abgleich nach dem Ende des Termins (Teilnehmerstand aktuell).
 fn meta(has_attendee_data: bool) -> SyncMeta<'static> {
+    meta_um(has_attendee_data, T1 + 3_600_000)
+}
+
+fn meta_um(has_attendee_data: bool, now_ms: i64) -> SyncMeta<'static> {
     SyncMeta {
         has_attendee_data,
         etag: None,
         last_modified: None,
-        now_ms: 2_000,
+        now_ms,
     }
 }
 
@@ -245,8 +250,73 @@ fn unlesbarer_wert_zaehlt_als_keine_bestaetigung() {
     let conn = s.get_connection().unwrap();
     assert!(conn
         .execute(
-            "INSERT INTO meeting_ai_confirmations VALUES (?1, 'irgendwas', 'x', 1)",
+            "INSERT INTO meeting_ai_confirmations VALUES (?1, 'irgendwas', 'x', 2, 1)",
             params![id],
         )
         .is_err());
+}
+
+#[test]
+fn liste_ohne_abgleich_nach_dem_ende_ist_veraltet_und_gesperrt() {
+    let (_d, s, id) = besprechung(intern_liste(), true);
+    let fp = stand(&s, &sperre(), &id).unwrap().ergebnis.fingerabdruck;
+    bestaetigen(&s, &sperre(), &id, Einstufung::Intern, &fp, 5_000).unwrap();
+    assert!(sperre().sichtbar(&s, &id));
+    // Letzter erfolgreicher Abgleich VOR dem Ende des Termins: Stand nicht belegt.
+    s.calendar_replace_events("src1", &[termin(intern_liste())], &meta_um(true, T1))
+        .unwrap();
+    assert_eq!(
+        s.ki_teilnehmerlage(&id).unwrap().teilnehmerinfo,
+        Teilnehmerinfo::Veraltet
+    );
+    assert!(!sperre().sichtbar(&s, &id));
+    let mit_externen = KiSperre::Pruefen {
+        kundenprofil_nur_lokal: false,
+        cloud_bei_externen: true,
+        eigene_domaenen: vec!["example.org".into()],
+    };
+    assert!(!mit_externen.sichtbar(&s, &id));
+}
+
+#[test]
+fn liste_an_der_importgrenze_ist_unvollstaendig() {
+    let viele: Vec<Attendee> = (0..TEILNEHMER_IMPORTGRENZE)
+        .map(|i| teilnehmer(Some(&format!("p{i}@example.org")), None))
+        .collect();
+    let (_d, s, id) = besprechung(viele, true);
+    assert_eq!(
+        s.ki_teilnehmerlage(&id).unwrap().teilnehmerinfo,
+        Teilnehmerinfo::Unvollstaendig
+    );
+    let fp = stand(&s, &sperre(), &id).unwrap().ergebnis.fingerabdruck;
+    bestaetigen(&s, &sperre(), &id, Einstufung::Intern, &fp, 5_000).unwrap();
+    assert!(!sperre().sichtbar(&s, &id));
+}
+
+#[test]
+fn ohne_termin_ist_der_teilnehmerstand_unbekannt() {
+    let (_d, s) = store_mit_quelle();
+    let m = s
+        .create_meeting("Spontan", MeetingSource::Live, Some(1))
+        .unwrap();
+    assert_eq!(
+        s.ki_teilnehmerlage(&m.id).unwrap().teilnehmerinfo,
+        Teilnehmerinfo::Unbekannt
+    );
+}
+
+#[test]
+fn bestaetigung_mit_anderer_schemaversion_zaehlt_nicht() {
+    let (_d, s, id) = besprechung(intern_liste(), true);
+    let fp = stand(&s, &sperre(), &id).unwrap().ergebnis.fingerabdruck;
+    bestaetigen(&s, &sperre(), &id, Einstufung::Intern, &fp, 5_000).unwrap();
+    assert!(sperre().sichtbar(&s, &id));
+    let conn = s.get_connection().unwrap();
+    conn.execute(
+        "UPDATE meeting_ai_confirmations SET fp_version = 1 WHERE meeting_id = ?1",
+        params![id],
+    )
+    .unwrap();
+    assert!(s.ki_bestaetigung(&id).unwrap().is_none());
+    assert!(!sperre().sichtbar(&s, &id));
 }

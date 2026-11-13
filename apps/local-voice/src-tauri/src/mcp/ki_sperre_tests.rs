@@ -84,7 +84,7 @@ fn verknuepfen(fx: &Fx, meeting: &str, uid: &str, emails: &[&str], bestaetigt: O
                 has_attendee_data: true,
                 etag: None,
                 last_modified: None,
-                now_ms: 2_000,
+                now_ms: T1 + 3_600_000, // Abgleich nach dem Ende: Teilnehmerstand aktuell
             },
         )
         .unwrap();

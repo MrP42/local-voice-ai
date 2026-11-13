@@ -14210,11 +14210,16 @@ export type SpeakersChanged = { meeting_id: string }
 /**
  * Warum eine Verarbeitung gesperrt ist. Die App zeigt alle Gründe, nicht nur den ersten.
  */
-export type Sperrgrund = "assistent_aus" | "aufbewahrung_offen" | "freigabe_offen" | "freigabe_abgelehnt" | "kundenprofil_nur_lokal" | "profil_nur_lokal" | "anbieter_nicht_freigegeben" | "cloud_nicht_gewaehlt" | "einstufung_unbestaetigt" | "einstufung_veraltet" | "teilnehmende_unbekannt" | 
+export type Sperrgrund = "assistent_aus" | "aufbewahrung_offen" | "freigabe_offen" | "freigabe_abgelehnt" | 
+/**
+ * Freigabe für eine frühere Runde erteilt (Person hinzu, entfernt, ersetzt oder später
+ * eingetreten): Pause bis zur erneuten Freigabe, auch lokal.
+ */
+"freigabe_veraltet" | "kundenprofil_nur_lokal" | "profil_nur_lokal" | "anbieter_nicht_freigegeben" | "cloud_nicht_gewaehlt" | "einstufung_unbestaetigt" | "einstufung_veraltet" | "teilnehmende_unbekannt" | 
 /**
  * Liste nicht aus einem Termin (Ad-hoc): sperrt die Cloud immer.
  */
-"liste_ohne_termin" | "teilnehmende_extern"
+"liste_ohne_termin" | "teilnehmende_extern" | "teilnehmerinfo_unvollstaendig" | "teilnehmerinfo_veraltet" | "teilnehmerinfo_unbekannt"
 /**
  * Eine Kopplungsanfrage, die auf die Bestätigung wartet.
  */

@@ -5160,6 +5160,9 @@
           "einstufung_veraltet": "Teilnehmende oder Domänen haben sich geändert, bitte neu bestätigen",
           "teilnehmende_unbekannt": "unbekannte Teilnehmende",
           "liste_ohne_termin": "kein Termin mit Teilnehmenden",
+          "teilnehmerinfo_veraltet": "Kalender seit dem Ende der Besprechung nicht abgeglichen",
+          "teilnehmerinfo_unvollstaendig": "Teilnehmerliste möglicherweise gekürzt",
+          "teilnehmerinfo_unbekannt": "Stand der Teilnehmerliste unbekannt",
           "teilnehmende_extern": "Externe dabei, „Cloud-Modelle in Besprechungen mit Externen“ ist aus"
         },
         "confirmIntern": "Als intern freigeben",

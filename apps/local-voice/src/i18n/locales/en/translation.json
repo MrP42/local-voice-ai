@@ -5160,6 +5160,9 @@
           "einstufung_veraltet": "attendees or domains changed, please confirm again",
           "teilnehmende_unbekannt": "unknown attendees",
           "liste_ohne_termin": "no calendar event with attendees",
+          "teilnehmerinfo_veraltet": "calendar not synced since the meeting ended",
+          "teilnehmerinfo_unvollstaendig": "attendee list may be truncated",
+          "teilnehmerinfo_unbekannt": "state of the attendee list unknown",
           "teilnehmende_extern": "external attendees, \"Cloud models in meetings with external participants\" is off"
         },
         "confirmIntern": "Release as internal",
