@@ -587,18 +587,22 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
   );
 
   /**
-   * Eingefügten Text bereinigen: sichert vorher die Rohfassung (Seitenzustand,
-   * `onPasteRecord`), ersetzt dann `[start, end)` durch die bereinigte Fassung
-   * (über `execInsert`, Strg+Z bleibt ein Schritt) und meldet die Anzahl der
-   * Änderungen mit „Rückgängig“. Eine ausstehende Einfügung verändert nur ihr
-   * ursprüngliches Dokument: nach dem Sichern müssen Dokument (`docKey`),
-   * Editor und Textstand noch dieselben sein, sonst wird nichts eingefügt
-   * (Hinweis; die Rohfassung bleibt gesichert). Der Rückgängig-Hinweis gilt nur
-   * für diese Einfügung und nur, solange der Editor GENAU den Text von direkt
-   * nach dem Einfügen enthält. Ist der Eintrag zu groß, lässt sich die
-   * Rohfassung nicht sichern oder ist die Grenze der Rohfassungen erreicht
-   * (`full`, Hinweis mit Weg zum Aufräumen, nichts wird verdrängt), wird der
-   * Rohtext unverändert eingefügt.
+   * Eingefügten Text bereinigen. Ein abgefangenes Einfügen endet nie ohne
+   * eingefügten Text UND ohne gesicherte Rohfassung, deshalb in dieser Reihenfolge:
+   * 1. Sofort (noch im Ereignis) kommt der ROHTEXT nach `[start, end)`. Er steht
+   *    damit im Ursprungsdokument und geht mit dessen Autosave nie verloren,
+   *    auch nicht bei Seitenwechsel, Tippen oder Fehlern.
+   * 2. Danach wird die Rohfassung gesichert (Seitenzustand, `onPasteRecord`).
+   * 3. Nur bei `saved`, gleichem Dokument und gleicher textarea und wenn an
+   *    `[start, start + Rohtext.length)` noch GENAU der Rohtext steht, ersetzt
+   *    `execInsert` ihn durch die bereinigte Fassung (Hinweis mit „Rückgängig“;
+   *    Strg+Z macht zuerst die Bereinigung rückgängig). Der Rückgängig-Hinweis
+   *    gilt nur für diese Einfügung und nur, solange der Editor GENAU den Text
+   *    von direkt nach dem Bereinigen enthält.
+   * 4. Sonst bleibt der Rohtext stehen, mit Hinweis: zu groß, Grenze der
+   *    Rohfassungen erreicht (`full`, mit Weg zum Aufräumen, nichts wird
+   *    verdrängt), Sichern gescheitert, oder gesichert, aber der Text inzwischen
+   *    geändert (nicht bereinigt).
    */
   const insertCleaned = useCallback(
     async (
@@ -608,13 +612,14 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
       raw: string,
       result: PasteCleanResult,
     ) => {
-      const base = valueRef.current;
       const doc = docKeyRef.current;
       const original = raw.replace(/\r\n?/g, "\n");
       const cleaned = result.text;
+      const rawEnd = start + original.length;
+      execInsert(ta, start, end, original);
       // Scheitert irgendein Schritt der Sicherung (Prüfsumme, Schreiben), gilt die
-      // Rohfassung als nicht gesichert: das Einfügen ist schon abgefangen, also
-      // kommt der Rohtext unverändert hinein, mit Hinweis (nie stilles Nichts).
+      // Rohfassung als nicht gesichert: der Rohtext steht schon im Dokument, mit
+      // Hinweis (nie stilles Nichts).
       let tooLarge = false;
       let recorded: PasteRecordResult = "failed";
       try {
@@ -632,22 +637,27 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
       } catch {
         recorded = "failed";
       }
-      if (taRef.current !== ta || docKeyRef.current !== doc) {
-        toast(t("tts.editorMenu.pasteAbortedPage"));
+      if (tooLarge) {
+        toast(t("tts.editorMenu.pasteTooLarge"));
         return;
       }
-      if (valueRef.current !== base) {
-        toast(t("tts.editorMenu.pasteAbortedChanged"));
+      if (recorded === "full") {
+        noteFull();
         return;
       }
-      if (tooLarge || recorded !== "saved") {
-        execInsert(ta, start, end, original);
-        if (tooLarge) toast(t("tts.editorMenu.pasteTooLarge"));
-        else if (recorded === "full") noteFull();
-        else toast.error(t("tts.editorMenu.pasteNotSaved"));
+      if (recorded !== "saved") {
+        toast.error(t("tts.editorMenu.pasteNotSaved"));
         return;
       }
-      execInsert(ta, start, end, cleaned);
+      const intact =
+        taRef.current === ta &&
+        docKeyRef.current === doc &&
+        valueRef.current.slice(start, rawEnd) === original;
+      if (!intact) {
+        toast(t("tts.editorMenu.pasteNotCleaned"));
+        return;
+      }
+      execInsert(ta, start, rawEnd, cleaned);
       // Stand direkt nach dem Einfügen (valueRef folgt dem input-Ereignis sofort).
       const after = valueRef.current;
       const to = start + cleaned.length;
@@ -690,8 +700,9 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
   );
 
   /**
-   * Einfügen übernehmen: `true`, wenn der Editor es selbst erledigt (bereinigt,
-   * asynchron nach dem Sichern der Rohfassung), `false`, wenn der Aufrufer den
+   * Einfügen übernehmen: `true`, wenn der Editor es selbst erledigt (fügt den
+   * Rohtext sofort ein und bereinigt ihn nach dem Sichern der Rohfassung),
+   * `false`, wenn der Aufrufer den
    * Text unverändert einfügen soll (nichts zu bereinigen, Schalter aus, zu groß).
    * Bereinigt wird genau einmal je Einfügung.
    */

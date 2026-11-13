@@ -1311,13 +1311,24 @@ export const TtsSettings = () => {
   const savePending = useRef(false);
   // Arbeitsstand sichern — gebuendelt, eine halbe Sekunde nach der letzten
   // Aenderung. Jeder Tastendruck einzeln waere ein Schreibzugriff zu viel.
+  /** Ausstehendes Sichern der zuletzt bearbeiteten Seite (innerhalb der halben Sekunde). */
+  const pendingSave = useRef<{ page: string; run: () => void } | null>(null);
   useEffect(() => {
+    // Seitenwechsel innerhalb der Wartezeit: der Stand der verlassenen Seite
+    // (mit dem Text, der gerade eingefügt wurde) wird sofort gesichert, mit dem
+    // Zustand DIESES Renders (also der alten Seite), statt zu verfallen.
+    const pending = pendingSave.current;
+    if (pending && pending.page !== activePage) {
+      pendingSave.current = null;
+      pending.run();
+    }
     if (!activePage || !pageLoaded.current) return;
     savePending.current = true;
-    const handle = window.setTimeout(() => {
+    const run = () => {
+      pendingSave.current = null;
       void savePageState(activePage, pageStateJson())
         .finally(() => {
-          savePending.current = false;
+          if (activePage === activePageRef.current) savePending.current = false;
         })
         // Die Seitenliste zeigt Vorschau und Zeitpunkt — die stammen aus
         // genau dieser Datei und sollen nicht erst beim naechsten Start
@@ -1331,7 +1342,9 @@ export const TtsSettings = () => {
           () =>
             toast.error(t("tts.pageSaveFailed"), { id: "page-save-failed" }),
         );
-    }, 500);
+    };
+    pendingSave.current = { page: activePage, run };
+    const handle = window.setTimeout(run, 500);
     return () => window.clearTimeout(handle);
   }, [
     activePage,

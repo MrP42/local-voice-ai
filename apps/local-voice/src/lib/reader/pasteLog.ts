@@ -269,10 +269,14 @@ function parseEntry(value: unknown): PasteLogEntry | null {
 
 /**
  * `einfuegungen` aus dem Seitenzustand lesen; fehlt das Feld, ist das
- * Protokoll leer. Die Grenzen gelten auch hier (ein anderes Gerät oder eine
- * ältere Fassung kann mehr gespeichert haben): übergroße Einträge verlieren
- * Roh- und bereinigte Fassung, danach fallen die ältesten Einträge, bis der
- * Gesamtumfang passt.
+ * Protokoll leer. Gültige Einträge werden NICHT nach Anzahl oder
+ * Gesamtumfang gekürzt (ein anderes Gerät oder eine ältere Fassung kann mehr
+ * gespeichert haben): es geht nichts still verloren, neue Einfügungen gelten
+ * dann als „voll“ (siehe {@link appendPasteEntry}). Ein Speicherschutz ist hier
+ * nicht nötig, die Datei ist beim Aufruf schon ganz gelesen und als JSON
+ * geparst. Nur die Einzelgrenze bleibt: ein übergroßer Eintrag verliert Roh-
+ * und bereinigte Fassung (er bleibt als „zu groß“ mit Prüfsumme und Größe
+ * sichtbar); Ungültiges wird verworfen.
  */
 export function parsePasteLog(value: unknown): PasteLogEntry[] {
   if (!Array.isArray(value)) return [];

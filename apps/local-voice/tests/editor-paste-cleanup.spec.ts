@@ -241,6 +241,32 @@ async function paste(
   }, text);
 }
 
+/** Zwei Einfügungen im selben Ereignis-Tick (überlappen, bevor die erste fertig ist). */
+async function pasteTwice(
+  editor: ReturnType<Page["locator"]>,
+  first: string,
+  second: string,
+) {
+  await editor.focus();
+  await editor.evaluate(
+    (el: HTMLTextAreaElement, values: string[]) => {
+      el.setSelectionRange(el.value.length, el.value.length);
+      for (const value of values) {
+        const data = new DataTransfer();
+        data.setData("text/plain", value);
+        el.dispatchEvent(
+          new ClipboardEvent("paste", {
+            clipboardData: data,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      }
+    },
+    [first, second],
+  );
+}
+
 /** Gespeicherter Seitenzustand der Seite „p1“ (state.json). */
 const savedState = (page: Page) =>
   page.evaluate(() => {
@@ -272,11 +298,16 @@ test("pasted text is cleaned, a notice appears and undo restores the original", 
   await expect(editor).toHaveValue(`Vorher. ${DIRTY}`);
 });
 
-test("ctrl+z after a cleaned paste still works", async ({ page }) => {
+test("ctrl+z after a cleaned paste still works: first the cleanup, then the paste", async ({
+  page,
+}) => {
   const editor = await openEditor(page);
   await paste(editor, DIRTY);
   await expect(editor).toHaveValue(`Vorher. ${CLEAN}`);
   await editor.focus();
+  // Der Rohtext wird sofort eingefügt, die Bereinigung ist ein eigener Schritt.
+  await page.keyboard.press("Control+z");
+  await expect(editor).toHaveValue(`Vorher. ${DIRTY}`);
   await page.keyboard.press("Control+z");
   await expect(editor).toHaveValue("Vorher. ");
 });
@@ -374,6 +405,8 @@ test("empty result, ctrl+z, then the notice button inserts nothing and says so",
   await expect(toast(page)).toContainText("Beim Einfügen bereinigt:");
   await editor.focus();
   await page.keyboard.press("Control+z");
+  await expect(editor).toHaveValue("Drucken\nTeilen");
+  await page.keyboard.press("Control+z");
   await expect(editor).toHaveValue("Alt");
   await undoNotice(page).evaluate((el: HTMLElement) => el.click());
   await expect(toast(page).last()).toContainText(
@@ -428,7 +461,11 @@ test("redo after ctrl+z brings the cleaned text back", async ({ page }) => {
   await expect(editor).toHaveValue(`Vorher. ${CLEAN}`);
   await editor.focus();
   await page.keyboard.press("Control+z");
+  await expect(editor).toHaveValue(`Vorher. ${DIRTY}`);
+  await page.keyboard.press("Control+z");
   await expect(editor).toHaveValue("Vorher. ");
+  await page.keyboard.press("Control+Shift+z");
+  await expect(editor).toHaveValue(`Vorher. ${DIRTY}`);
   await page.keyboard.press("Control+Shift+z");
   await expect(editor).toHaveValue(`Vorher. ${CLEAN}`);
   await page.keyboard.press("Control+z");
@@ -641,7 +678,7 @@ const SECOND = [
   "Seite 2 von 9",
 ].join("\n");
 
-test("a pending paste does not touch another page after a page switch", async ({
+test("a page switch while the raw text is being saved: the raw text stays in the original page, the new page is untouched", async ({
   page,
 }) => {
   await page.addInitScript(() => {
@@ -658,54 +695,85 @@ test("a pending paste does not touch another page after a page switch", async ({
     (window as unknown as { __saveDelay: number }).__saveDelay = 1500;
   });
   expect(await paste(editor, DIRTY)).toBe(true);
+  // Der Rohtext steht sofort im Dokument, ungereinigt.
+  await expect(editor).toHaveValue(`Vorher. ${DIRTY}`);
   await page.getByText("Das Wintermärchen", { exact: true }).click();
-  await expect(toast(page).last()).toContainText(
-    "Einfügen abgebrochen: Seite gewechselt.",
-    { timeout: 15_000 },
-  );
-  // Nichts wurde eingefügt: p2 hat keinen Text und kein Protokoll.
+  await expect(toast(page).last()).toContainText("Nicht bereinigt", {
+    timeout: 15_000,
+  });
+  // Seite 2 bekam nichts.
   const p2 = await page.evaluate(() => sessionStorage.getItem("__ps_p2"));
   expect(p2 === null || !p2.includes("Telefonanlage")).toBe(true);
-  // Die Rohfassung blieb bei der Seite des Einfügens gesichert, der Text dort unverändert.
+  // Seite 1: Rohtext im Text (Autosave der Ursprungsseite) UND Rohfassung gesichert.
   await expect
-    .poll(async () => {
-      const state = (await savedState(page)) as {
-        text: string;
-        einfuegungen?: { roh: string }[];
-      };
-      return JSON.stringify([
-        state.text,
-        state.einfuegungen?.map((e) => e.roh),
-      ]);
-    })
-    .toBe(JSON.stringify(["Vorher. ", [DIRTY]]));
+    .poll(
+      async () => {
+        const state = (await savedState(page)) as {
+          text: string;
+          einfuegungen?: { roh: string }[];
+        };
+        return JSON.stringify([
+          state.text,
+          state.einfuegungen?.map((e) => e.roh),
+        ]);
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(JSON.stringify([`Vorher. ${DIRTY}`, [DIRTY]]));
 });
 
-test("two simultaneous pastes keep both raw entries; only the first is inserted", async ({
+test("a page switch while saving the raw text fails: the raw text still stays in the original page, the new page is untouched", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as unknown as { __pagesList: unknown }).__pagesList = [
+      { id: "p1", title: "Der Sturm" },
+      { id: "p2", title: "Das Wintermärchen" },
+    ];
+  });
+  const editor = await openEditor(page);
+  await expect
+    .poll(async () => ((await savedState(page)) as { text: string })?.text)
+    .toBe("Vorher. ");
+  await page.evaluate(() => {
+    const w = window as unknown as { __saveDelay: number; __failSave: boolean };
+    w.__saveDelay = 1500;
+    w.__failSave = true;
+  });
+  expect(await paste(editor, DIRTY)).toBe(true);
+  await expect(editor).toHaveValue(`Vorher. ${DIRTY}`);
+  await page.getByText("Das Wintermärchen", { exact: true }).click();
+  await expect(toast(page).last()).toContainText("ließ sich nicht sichern", {
+    timeout: 15_000,
+  });
+  // Erst jetzt darf der Autosave der Ursprungsseite wieder schreiben.
+  await page.evaluate(() => {
+    (window as unknown as { __failSave: boolean }).__failSave = false;
+  });
+  const p2 = await page.evaluate(() => sessionStorage.getItem("__ps_p2"));
+  expect(p2 === null || !p2.includes("Telefonanlage")).toBe(true);
+  await expect
+    .poll(
+      async () =>
+        JSON.stringify(
+          ((await savedState(page)) as { text: string; einfuegungen?: unknown })
+            ?.text,
+        ),
+      { timeout: 15_000 },
+    )
+    .toBe(JSON.stringify(`Vorher. ${DIRTY}`));
+  const state = (await savedState(page)) as { einfuegungen?: unknown[] };
+  expect(state.einfuegungen ?? []).toEqual([]);
+});
+
+test("two simultaneous pastes keep both raw entries; the first is cleaned, the second stays raw (its range moved)", async ({
   page,
 }) => {
   const editor = await openEditor(page, "");
   await page.evaluate(() => {
     (window as unknown as { __saveDelay: number }).__saveDelay = 300;
   });
-  await editor.focus();
-  await editor.evaluate(
-    (el: HTMLTextAreaElement, values: string[]) => {
-      el.setSelectionRange(el.value.length, el.value.length);
-      for (const value of values) {
-        const data = new DataTransfer();
-        data.setData("text/plain", value);
-        el.dispatchEvent(
-          new ClipboardEvent("paste", {
-            clipboardData: data,
-            bubbles: true,
-            cancelable: true,
-          }),
-        );
-      }
-    },
-    [DIRTY, SECOND],
-  );
+  await pasteTwice(editor, DIRTY, SECOND);
   await expect
     .poll(async () => {
       const state = (await savedState(page)) as {
@@ -714,10 +782,11 @@ test("two simultaneous pastes keep both raw entries; only the first is inserted"
       return JSON.stringify(state?.einfuegungen?.map((e) => e.roh));
     })
     .toBe(JSON.stringify([DIRTY, SECOND]));
-  await expect(editor).toHaveValue(CLEAN);
-  await expect(
-    toast(page).filter({ hasText: "Einfügen abgebrochen" }),
-  ).toHaveCount(1);
+  // Beide Texte stehen im Dokument: der erste bereinigt, der zweite roh.
+  await expect(editor).toHaveValue(CLEAN + SECOND);
+  await expect(toast(page).filter({ hasText: "Nicht bereinigt" })).toHaveCount(
+    1,
+  );
 });
 
 test("limits count bytes: ä text is too large as an entry although short in characters", async ({
@@ -1209,7 +1278,7 @@ test("an autosave queued behind a raw-text write never overwrites it, even after
       },
       { timeout: 15_000 },
     )
-    .toBe(JSON.stringify(["Vorher. X", [DIRTY]]));
+    .toBe(JSON.stringify([`Vorher. ${DIRTY}X`, [DIRTY]]));
 });
 
 test("an entry without checksum but with raw text is damaged, restore stays locked", async ({
@@ -1900,7 +1969,16 @@ test("a full log does not block pasting text that needs no cleanup, and deleting
   page,
 }) => {
   const { editor, many } = await openFullLog(page);
-  expect(await paste(editor, "Nur ein sauberer Satz.")).toBe(false);
+  // Echtes Strg+V mit der Systemzwischenablage (kein synthetisches Ereignis): der
+  // Editor muss den sauberen Text durchlassen, der Browser fügt ihn nativ ein.
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.evaluate(() =>
+    navigator.clipboard.writeText("Nur ein sauberer Satz."),
+  );
+  await editor.focus();
+  await editor.press("Control+End");
+  await page.keyboard.press("Control+v");
+  await expect(editor).toHaveValue("Vorher. Nur ein sauberer Satz.");
   await expect(toast(page)).toHaveCount(0);
   // Aufräumen über den Dialog: ein Eintrag weg, die nächste Einfügung wird wieder bereinigt.
   await openLog(page);
@@ -1912,14 +1990,103 @@ test("a full log does not block pasting text that needs no cleanup, and deleting
   await expect(page.getByTestId("paste-log-entry")).toHaveCount(19);
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toBeHidden();
-  const before = (await editor.inputValue()).length;
   expect(await paste(editor, DIRTY)).toBe(true);
-  await expect
-    .poll(async () => (await editor.inputValue()).length)
-    .toBeGreaterThan(before);
+  await expect(editor).toHaveValue(`Vorher. Nur ein sauberer Satz.${CLEAN}`);
   await expect(toast(page).last()).toContainText("Beim Einfügen bereinigt:");
   await expect.poll(async () => (await savedRohs(page)).length).toBe(20);
   const rohs = await savedRohs(page);
   expect(rohs.slice(0, 19)).toEqual(many.slice(0, 19).map((e) => e.roh));
   expect(rohs[19]).toBe(DIRTY);
+});
+
+// -- Ein abgefangenes Einfügen endet nie ohne Text UND ohne Rohfassung (lva#548) --
+
+/** Dokument-Hilfe: kommt `needle` im Text genau `count`-mal vor? */
+const occurrences = (text: string, needle: string) =>
+  text.split(needle).length - 1;
+
+/** Seite mit `n` gesicherten Einfügungen, Text „“ (leer). */
+async function openWithEntries(page: Page, n: number) {
+  const many = Array.from({ length: n }, (_, i) => entryFor(i + 1));
+  const editor = await openSeeded(page, {
+    text: "",
+    tab: "original",
+    einfuegungen: many,
+  });
+  await expect(editor).toHaveValue("");
+  return { editor, many };
+}
+
+test("two overlapping pastes at 19 entries: the second gets `full`, both texts end up in the document, the file loses nothing", async ({
+  page,
+}) => {
+  const { editor, many } = await openWithEntries(page, 19);
+  await pasteTwice(editor, DIRTY, SECOND);
+  // Beide Texte stehen sofort im Dokument (roh), keiner geht verloren.
+  await expect.poll(() => editor.inputValue()).toContain("Zweiter Absatz");
+  await expect.poll(() => editor.inputValue()).toContain("Neue Telefonanlage");
+  await expect.poll(async () => (await savedRohs(page)).length).toBe(20);
+  // Genau eine Rohfassung kam dazu, die 19 alten sind unverändert.
+  const rohs = await savedRohs(page);
+  expect(rohs.slice(0, 19)).toEqual(many.map((e) => e.roh));
+  expect([DIRTY, SECOND]).toContain(rohs[19]);
+  // Die zweite Einfügung bekam „voll“ und blieb roh im Dokument.
+  await expect(toast(page).last()).toContainText("Rohfassungen voll");
+  const value = await editor.inputValue();
+  expect(occurrences(value, "Zweiter Absatz")).toBe(1);
+  expect(occurrences(value, "Neue Telefonanlage")).toBe(1);
+  // Der gesicherte Text wurde bereinigt, der mit „voll“ steht noch roh da.
+  const unsaved = rohs[19] === DIRTY ? SECOND : DIRTY;
+  expect(value).toContain(unsaved);
+});
+
+test("two overlapping pastes at 20 entries: both are `full`, both stay raw in the document, the file is unchanged", async ({
+  page,
+}) => {
+  const { editor, many } = await openWithEntries(page, 20);
+  await pasteTwice(editor, DIRTY, SECOND);
+  await expect(editor).toHaveValue(DIRTY + SECOND);
+  await expect(toast(page).last()).toContainText("Rohfassungen voll");
+  // Zeit lassen, falls doch noch etwas geschrieben würde.
+  await page.waitForTimeout(500);
+  expect(await savedRohs(page)).toEqual(many.map((e) => e.roh));
+  await expect(editor).toHaveValue(DIRTY + SECOND);
+});
+
+test("`full` while typing during the wait: the raw text is in the document and the typed text is kept", async ({
+  page,
+}) => {
+  const { editor, many } = await openWithEntries(page, 20);
+  await page.evaluate(() => {
+    (window as unknown as { __loadDelay: Record<string, number> }).__loadDelay =
+      { p1: 1500 };
+  });
+  expect(await paste(editor, DIRTY)).toBe(true);
+  // Die Kette wartet 1,5 s auf die Datei; währenddessen wird sofort getippt
+  // (der Rohtext steht schon im Dokument, der Cursor dahinter).
+  await page.keyboard.type(" Tipp");
+  await expect(toast(page).last()).toContainText("Rohfassungen voll", {
+    timeout: 15_000,
+  });
+  await expect(editor).toHaveValue(`${DIRTY} Tipp`);
+  expect(await savedRohs(page)).toEqual(many.map((e) => e.roh));
+});
+
+test("saved while typing in front of the paste during the wait: not cleaned, raw text and typed text both stay", async ({
+  page,
+}) => {
+  const editor = await openEditor(page, "Anfang ");
+  await page.evaluate(() => {
+    (window as unknown as { __saveDelay: number }).__saveDelay = 1000;
+  });
+  expect(await paste(editor, DIRTY)).toBe(true);
+  await editor.focus();
+  await page.keyboard.press("Control+Home");
+  await page.keyboard.type("Vorne ");
+  await expect(toast(page).last()).toContainText("Nicht bereinigt", {
+    timeout: 15_000,
+  });
+  await expect(editor).toHaveValue(`Vorne Anfang ${DIRTY}`);
+  await expect.poll(async () => (await savedRohs(page)).length).toBe(1);
+  expect((await savedRohs(page))[0]).toBe(DIRTY);
 });
