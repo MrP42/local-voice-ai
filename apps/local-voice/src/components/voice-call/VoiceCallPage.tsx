@@ -99,6 +99,7 @@ export const VoiceCallPage: React.FC = () => {
   const textBusy = useVoiceCallStore((s) => s.textBusy);
   const toolStatus = useVoiceCallStore((s) => s.toolStatus);
   const denkenLive = useVoiceCallStore((s) => s.denken);
+  const auftrag = useVoiceCallStore((s) => s.auftrag);
   const activeLlm = useActiveLlm();
   // Denk-Anzeige nur, solange nach der letzten Äußerung noch keine Antwort steht.
   // Hat der Sofort-Sprecher weitergesprochen, steht sie unter seiner Zeile, bis der Denker liefert.
@@ -110,6 +111,15 @@ export const VoiceCallPage: React.FC = () => {
         !letzteZeile.final &&
         (textBusy || state !== "idle")
       : letzteZeile?.role === "user" && (textBusy || state === "thinking"));
+  // Offener Auftrag (Denker im Hintergrund): eine Anzeige unter der letzten Nachricht. Die des laufenden
+  // Schritts hat Vorrang; der Auftrag erscheint wieder, wenn der Vordergrund frei ist.
+  const denkenAnzeige = denkenLive
+    ? denkSichtbar
+      ? denkenLive
+      : null
+    : auftrag && state !== "idle"
+      ? auftrag
+      : null;
   // Das Modell gehört zum Denkprozess: es bleibt an der Antwort, auch wenn später ein anderes aktiv ist.
   const denkModell = useVoiceCallStore((s) => s.denkModell);
   const denkSeit = denkenLive?.seit;
@@ -610,7 +620,7 @@ export const VoiceCallPage: React.FC = () => {
             active={inCall}
             greeting={switching || guideOpen ? undefined : greeting}
             toolStatus={toolStatus}
-            denken={denkSichtbar ? denkenLive : null}
+            denken={denkenAnzeige}
             modell={activeLlm.label}
             notice={notice}
             onOpenSettings={() => store.getState().openSettings("models")}
