@@ -24,6 +24,7 @@ use tauri::{AppHandle, Emitter, Manager};
 // downloads instead of re-implementing it — see `download::HttpDownloadEvent`
 // and `ModelManager::download_http_resumable_with_events`.
 pub(crate) mod download;
+mod netz_wege;
 
 use download::{HttpDownloadOutcome, DOWNLOAD_STALL_TIMEOUT};
 
@@ -2034,7 +2035,30 @@ impl ModelManager {
         // the known-compatible request pattern.
         const ATTEMPT_STREAMS: [usize; 4] = [4, 1, 1, 1];
         let mut attempt: usize = 1;
+        // lva#573: Verlangt das System für Hugging Face einen Proxy aus PAC,
+        // Auto-Erkennung oder eigener Einstellung, kann hf-hub (eigener Client
+        // ohne PAC) ihn nicht nutzen: dann direkt über den proxyfähigen Downloader.
+        let hf_url = netz_wege::hf_resolve_url(&repo_id, &revision, &filename);
+        let hf_weg = crate::netz::proxy::weg_fuer_async(&hf_url).await;
         let hf_error = loop {
+            if let crate::netz::proxy::Weg::Ueber(_) = &hf_weg {
+                info!(
+                    "HF download of {} via {} (system proxy)",
+                    model_id,
+                    hf_weg.beschreibung()
+                );
+                match self
+                    .download_hf_direkt(&model_id, &filename, &hf_url, cancel_token.clone())
+                    .await
+                {
+                    Ok(true) => break None,
+                    Ok(false) => {
+                        info!("HF download cancelled for: {}", model_id);
+                        return Ok(());
+                    }
+                    Err(e) => break Some(e),
+                }
+            }
             let stream_count = ATTEMPT_STREAMS[attempt - 1];
             info!(
                 "HF download attempt {}/{} for {} using {} concurrent stream(s)",

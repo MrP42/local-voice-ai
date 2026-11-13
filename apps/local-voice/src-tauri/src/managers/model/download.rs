@@ -260,7 +260,9 @@ impl ModelManager {
             info!("Starting fresh download of {} from {}", model_id, url);
         }
 
-        let client = reqwest::Client::builder()
+        // Proxy wie Windows (PAC/Auto-Erkennung, eigene Einstellung), lva#573.
+        let client = crate::netz::proxy::client_fuer(url)
+            .await
             .connect_timeout(HTTP_CONNECT_TIMEOUT)
             .redirect(if auth.is_some() {
                 reqwest::redirect::Policy::none()

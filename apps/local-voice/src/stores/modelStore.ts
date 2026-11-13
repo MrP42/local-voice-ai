@@ -4,6 +4,7 @@ import { produce } from "immer";
 import { listen } from "@tauri-apps/api/event";
 import { commands, type ModelInfo } from "@/bindings";
 import { toast } from "sonner";
+import i18n from "@/i18n";
 
 interface DownloadProgress {
   model_id: string;
@@ -321,6 +322,7 @@ export const useModelStore = create<ModelsStore>()(
 
       listen<string>("model-download-complete", (event) => {
         const modelId = event.payload;
+        toast.dismiss(`model-download-waiting-${modelId}`);
         set(
           produce((state) => {
             delete state.downloadingModels[modelId];
@@ -332,22 +334,77 @@ export const useModelStore = create<ModelsStore>()(
         get().loadModels();
       });
 
-      listen<{ model_id: string; error: string }>(
-        "model-download-failed",
-        (event) => {
-          const { model_id: modelId, error } = event.payload;
-          set(
-            produce((state) => {
-              delete state.downloadingModels[modelId];
-              delete state.verifyingModels[modelId];
-              delete state.downloadProgress[modelId];
-              delete state.downloadStats[modelId];
-              state.error = error;
+      listen<{
+        model_id: string;
+        error: string;
+        kind?: string;
+        detail?: string;
+      }>("model-download-failed", (event) => {
+        const { model_id: modelId, error, kind, detail } = event.payload;
+        set(
+          produce((state) => {
+            delete state.downloadingModels[modelId];
+            delete state.verifyingModels[modelId];
+            delete state.downloadProgress[modelId];
+            delete state.downloadStats[modelId];
+            state.error = error;
+          }),
+        );
+        toast.dismiss(`model-download-waiting-${modelId}`);
+        // lva#573: verständliche Meldung; den Rohfehler nur auf Klick.
+        const message =
+          kind && kind !== "other"
+            ? i18n.t(`modelSelector.download.fault.${kind}`, {
+                defaultValue: error,
+              })
+            : error;
+        toast.error(message, {
+          duration: 15000,
+          action:
+            detail && detail !== message
+              ? {
+                  label: i18n.t("modelSelector.download.details"),
+                  onClick: () =>
+                    toast(i18n.t("modelSelector.download.detailsTitle"), {
+                      description: detail,
+                      duration: 60000,
+                    }),
+                }
+              : undefined,
+        });
+      });
+
+      // lva#573: Netz weg — der Download wartet und versucht es selbst erneut.
+      listen<{
+        model_id: string;
+        kind: string;
+        message: string;
+        retry_in_secs: number;
+        attempt: number;
+        max_attempts: number;
+      }>("model-download-waiting", (event) => {
+        const p = event.payload;
+        set(
+          produce((state) => {
+            state.downloadingModels[p.model_id] = true;
+            delete state.verifyingModels[p.model_id];
+          }),
+        );
+        toast.warning(
+          i18n.t(`modelSelector.download.fault.${p.kind}`, {
+            defaultValue: p.message,
+          }),
+          {
+            id: `model-download-waiting-${p.model_id}`,
+            description: i18n.t("modelSelector.download.waiting", {
+              seconds: p.retry_in_secs,
+              attempt: p.attempt,
+              max: p.max_attempts,
             }),
-          );
-          toast.error(error);
-        },
-      );
+            duration: (p.retry_in_secs + 5) * 1000,
+          },
+        );
+      });
 
       listen<string>("model-verification-started", (event) => {
         const modelId = event.payload;
@@ -401,6 +458,7 @@ export const useModelStore = create<ModelsStore>()(
 
       listen<string>("model-download-cancelled", (event) => {
         const modelId = event.payload;
+        toast.dismiss(`model-download-waiting-${modelId}`);
         set(
           produce((state) => {
             delete state.downloadingModels[modelId];

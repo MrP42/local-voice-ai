@@ -44,21 +44,35 @@ pub async fn download_model(
     model_id: String,
 ) -> Result<(), String> {
     let result = model_manager
-        .download_model(&model_id)
+        .download_model_mit_warten(&model_id)
         .await
-        .map_err(|e| e.to_string());
+        .map_err(|e| format!("{:#}", e));
 
-    if let Err(ref error) = result {
-        // Log as well as emit: the toast is transient, and failed downloads have
-        // historically been undiagnosable because logs showed nothing (#1579).
-        error!("Model download failed for {}: {}", model_id, error);
-        let _ = app_handle.emit(
-            "model-download-failed",
-            serde_json::json!({ "model_id": &model_id, "error": error }),
-        );
+    match result {
+        Ok(()) => Ok(()),
+        Err(detail) => {
+            // Log as well as emit: the toast is transient, and failed downloads have
+            // historically been undiagnosable because logs showed nothing (#1579).
+            error!("Model download failed for {}: {}", model_id, detail);
+            // lva#573: verständliche Meldung statt Rohfehler; Rohtext nur als Details.
+            let art = crate::netz::fehler::einordnen(&detail);
+            let meldung = if art.ist_netz() {
+                art.meldung().to_string()
+            } else {
+                detail.clone()
+            };
+            let _ = app_handle.emit(
+                "model-download-failed",
+                serde_json::json!({
+                    "model_id": &model_id,
+                    "error": &meldung,
+                    "kind": art.code(),
+                    "detail": &detail,
+                }),
+            );
+            Err(meldung)
+        }
     }
-
-    result
 }
 
 #[tauri::command]
