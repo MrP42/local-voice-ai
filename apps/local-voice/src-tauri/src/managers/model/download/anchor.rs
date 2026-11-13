@@ -26,7 +26,8 @@
 //! `symlink_metadata` des Namens (Link, Ordner, Geraet: Ablehnung), nach dem Oeffnen
 //! die Pruefung des Handles (normale Datei, kein Reparse-Punkt, zum Schreiben nicht
 //! mehrfach verlinkt) und der erneute Vergleich Name gegen Handle (Unix: Geraet und
-//! Inode; Windows: Art und Reparse-Attribut), BEVOR irgendetwas geaendert wird. Ein
+//! Inode; Windows: Art, Reparse-Attribut sowie Datentraeger und Dateiindex ueber ein
+//! zweites Oeffnen des Namens), BEVOR irgendetwas geaendert wird. Ein
 //! Abschneiden geschieht nie beim Oeffnen, sondern erst danach (`set_len`).
 //!
 //! Grenze, ehrlich: `cap-std` folgt einem Link INNERHALB des Ordners (zeigt er hinaus,
@@ -100,6 +101,37 @@ fn entry(dir: &Dir, name: &str) -> io::Result<Option<Entry>> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e),
     }
+}
+
+/// Zeigt der Name `name` auf genau die Datei hinter `info`? Unter Unix beantwortet
+/// das schon [`Entry::is_the_file`] (Geraet und Inode aus `symlink_metadata`).
+#[cfg(not(windows))]
+fn names_handle(_dir: &Dir, _name: &str, _info: &safe::FileInfo) -> io::Result<bool> {
+    Ok(true)
+}
+
+/// Zeigt der Name `name` auf genau die Datei hinter `info`? Unter Windows kennt
+/// `symlink_metadata` keinen Dateiindex. Deshalb wird der Name ein zweites Mal
+/// geoeffnet (nur lesend, ohne einem Reparse-Punkt zu folgen, alles geteilt) und
+/// Datentraeger und Dateiindex beider Handles verglichen. Fehlt der Name, ist die
+/// Antwort nein.
+#[cfg(windows)]
+fn names_handle(dir: &Dir, name: &str, info: &safe::FileInfo) -> io::Result<bool> {
+    use cap_std::fs::OpenOptionsExt;
+    const SHARE_ALL: u32 = 0x0000_0007;
+    const OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .share_mode(SHARE_ALL)
+        .custom_flags(OPEN_REPARSE_POINT);
+    let other = match dir.open_with(name, &options) {
+        Ok(f) => f.into_std(),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e),
+    };
+    let found = file_info(&other)?;
+    Ok(!found.reparse && found.is_file && (found.volume, found.index) == (info.volume, info.index))
 }
 
 fn dir_info(dir: &Dir) -> io::Result<safe::FileInfo> {
@@ -305,7 +337,7 @@ impl Anchor {
             return Err(safe::refusal());
         }
         match entry(self.dir(), name)? {
-            Some(e) if e.is_the_file(&info) => Ok(file),
+            Some(e) if e.is_the_file(&info) && names_handle(self.dir(), name, &info)? => Ok(file),
             _ => Err(safe::refusal()),
         }
     }
@@ -330,7 +362,10 @@ impl Anchor {
     pub(crate) fn names(&self, name: &str, file: &File) -> io::Result<bool> {
         plain(name)?;
         let info = file_info(file)?;
-        Ok(entry(self.dir(), name)?.is_some_and(|e| e.is_the_file(&info)))
+        Ok(
+            entry(self.dir(), name)?.is_some_and(|e| e.is_the_file(&info))
+                && names_handle(self.dir(), name, &info)?,
+        )
     }
 
     /// Loescht die normale Datei `name`; fehlt sie, ist das kein Fehler. Ein Link oder
