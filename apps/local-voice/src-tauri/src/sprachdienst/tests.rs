@@ -1227,6 +1227,168 @@ async fn abbrechen_beendet_den_strom_sofort_und_unterdrueckt_das_ergebnis() {
     assert!(matches!(k.steuer().await, AnApp::Status { .. }));
 }
 
+// --- Späte Nachrichten beendeter Ströme (lva#585) ----------------------------------------------------
+
+fn sprechen_op() -> Operation {
+    Operation::Sprechen {
+        text: "Guten Tag".into(),
+        stimme: Some("provider:phonon:anton".into()),
+    }
+}
+
+/// Wartet, bis der Dienst alle bisherigen Nachrichten verarbeitet hat: `ausliefern` schreibt vor
+/// jedem Lesen alles Wartende, eine unerwartete Antwort oder Audio stünde also vor der Antwort auf
+/// `status`. Kommt zuerst etwas anderes, schlägt der Test fehl. Kein Warten auf die Uhr.
+async fn nichts_davor(k: &mut Kunde) {
+    k.senden(&AnDienst::Status {}).await;
+    let m = k.steuer().await;
+    assert!(matches!(m, AnApp::Status { .. }), "{m:?}");
+}
+
+/// Sprechstrom bis `fertig` durchspielen; danach ist die Nummer beendet.
+async fn sprechstrom_zu_ende(k: &mut Kunde, strom: u32) {
+    k.start(strom, sprechen_op(), Souveraenitaet::NurLokal)
+        .await;
+    k.senden(&AnDienst::Guthaben { strom, rahmen: 5 }).await;
+    loop {
+        let r = k.rahmen().await.expect("Leitung zu");
+        match r.art {
+            Art::AudioHeraus => assert_eq!(r.strom, strom),
+            Art::Steuer => {
+                let m: AnApp = serde_json::from_slice(&r.nutzlast).unwrap();
+                assert!(
+                    matches!(m, AnApp::Fertig { strom: s } if s == strom),
+                    "{m:?}"
+                );
+                return;
+            }
+            Art::AudioHinein => panic!("falsche Richtung"),
+        }
+    }
+}
+
+/// Zweiter, offener Sprechstrom mit Guthaben 0: Das erste Häppchen ist unterwegs und gezählt, die
+/// übrigen warten auf Guthaben der App. Jede Gutschrift, die irrtümlich bei ihm landet, würde sofort
+/// Audio auslösen.
+async fn zweiter_strom_offen(k: &mut Kunde, strom: u32) {
+    k.start(strom, sprechen_op(), Souveraenitaet::NurLokal)
+        .await;
+    k.senden(&AnDienst::Guthaben { strom, rahmen: 1 }).await;
+    let r = k.rahmen().await.expect("Leitung zu");
+    assert_eq!((r.art, r.strom), (Art::AudioHeraus, strom));
+}
+
+/// Der zweite Strom hat genau das Guthaben, das ihm die App gegeben hat, und arbeitet zu Ende.
+async fn zweiter_strom_unberuehrt(k: &mut Kunde, strom: u32) {
+    nichts_davor(k).await;
+    k.senden(&AnDienst::Guthaben { strom, rahmen: 1 }).await;
+    let r = k.rahmen().await.expect("Leitung zu");
+    assert_eq!((r.art, r.strom), (Art::AudioHeraus, strom));
+    nichts_davor(k).await;
+    k.senden(&AnDienst::Guthaben { strom, rahmen: 5 }).await;
+    let mut audio = 0;
+    loop {
+        let r = k.rahmen().await.expect("Leitung zu");
+        match r.art {
+            Art::AudioHeraus => audio += 1,
+            Art::Steuer => {
+                let m: AnApp = serde_json::from_slice(&r.nutzlast).unwrap();
+                assert!(
+                    matches!(m, AnApp::Fertig { strom: s } if s == strom),
+                    "{m:?}"
+                );
+                break;
+            }
+            Art::AudioHinein => panic!("falsche Richtung"),
+        }
+    }
+    assert_eq!(audio, 1, "von drei Häppchen fehlte nur noch das letzte");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn spaetes_guthaben_nach_fertig_wird_still_verworfen() {
+    let st = stand();
+    let z = st.gekoppelt(&[Recht::Sprechen]);
+    let mut k = st.verbinden();
+    k.anmelden(&z).await;
+    sprechstrom_zu_ende(&mut k, 1).await;
+    zweiter_strom_offen(&mut k, 2).await;
+    // Das `guthaben` der App kreuzt sich mit dem `fertig` des Dienstes.
+    k.senden(&AnDienst::Guthaben {
+        strom: 1,
+        rahmen: 5,
+    })
+    .await;
+    zweiter_strom_unberuehrt(&mut k, 2).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn spaetes_ende_nach_abgebrochen_wird_still_verworfen() {
+    let st = stand();
+    let z = st.gekoppelt(&[Recht::Hoeren, Recht::Sprechen]);
+    let mut k = st.verbinden();
+    k.anmelden(&z).await;
+    k.start(1, Operation::Erkennen, Souveraenitaet::NurLokal)
+        .await;
+    k.guthaben_erwarten(1).await;
+    k.senden(&AnDienst::Abbrechen { strom: 1 }).await;
+    assert_eq!(k.fehler().await, (1, code::ABGEBROCHEN.into()));
+    zweiter_strom_offen(&mut k, 2).await;
+    // Das `ende` der App kreuzt sich mit dem `fehler abgebrochen`.
+    k.senden(&AnDienst::Ende { strom: 1 }).await;
+    zweiter_strom_unberuehrt(&mut k, 2).await;
+    assert!(
+        st.engine.erkannt.lock().unwrap().is_empty(),
+        "das späte ende löst keine Erkennung aus"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn start_mit_beendeter_nummer_wird_nur_fuer_den_strom_abgewiesen() {
+    let st = stand();
+    let z = st.gekoppelt(&[Recht::Hoeren, Recht::Sprechen]);
+    let mut k = st.verbinden();
+    k.anmelden(&z).await;
+    sprechstrom_zu_ende(&mut k, 1).await;
+    zweiter_strom_offen(&mut k, 2).await;
+
+    // Genau ein `fehler ungueltig` auf Strom 1; danach kommt nichts mehr (kein Startguthaben).
+    k.start(1, Operation::Erkennen, Souveraenitaet::NurLokal)
+        .await;
+    assert_eq!(k.fehler().await, (1, code::UNGUELTIG.into()));
+    nichts_davor(&mut k).await;
+
+    // Späte Nachrichten der alten Nummer werden weiter verworfen.
+    k.senden(&AnDienst::Guthaben {
+        strom: 1,
+        rahmen: 5,
+    })
+    .await;
+    k.senden(&AnDienst::Ende { strom: 1 }).await;
+    nichts_davor(&mut k).await;
+
+    // Eine frische Nummer geht, der zweite Strom ist unberührt.
+    k.start(3, Operation::Erkennen, Souveraenitaet::NurLokal)
+        .await;
+    assert_eq!(k.guthaben_erwarten(3).await, grenzen::GUTHABEN_START);
+    zweiter_strom_unberuehrt(&mut k, 2).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn guthaben_fuer_nie_geoeffneten_strom_beendet_die_verbindung() {
+    let st = stand();
+    let z = st.gekoppelt(&[Recht::Sprechen]);
+    let mut k = st.verbinden();
+    k.anmelden(&z).await;
+    k.senden(&AnDienst::Guthaben {
+        strom: 9,
+        rahmen: 1,
+    })
+    .await;
+    assert_eq!(k.fehler().await, (0, code::STROM_UNBEKANNT.into()));
+    k.leitung_zu().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn souveraenitaet_nur_lokal_verlangt_lokale_engines() {
     let st = stand();

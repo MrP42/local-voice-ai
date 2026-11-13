@@ -16,6 +16,10 @@
 //!   beendet außerdem laufende Verbindungen sofort (`Kontext::verbindungen_beenden`).
 //! - **Audio nach Ende eines Stroms** (etwa nach der Höchstdauer, während noch Rahmen unterwegs
 //!   sind) wird still verworfen; Audio für nie geöffnete Ströme ist `strom_unbekannt`.
+//! - **Späte `ende`/`guthaben` beendeter Ströme** (sie kreuzen sich mit `fertig`, `ergebnis` oder
+//!   `fehler`) werden still verworfen; ein `start` mit einer schon benutzten Nummer wird nur für
+//!   diesen Strom mit `fehler ungueltig` abgewiesen. Für nie geöffnete Ströme bleibt es
+//!   `strom_unbekannt` und beendet die Verbindung (lva#585).
 //! - **Audio heraus** wird als vollständige WAV-Häppchen geliefert (siehe `wav`), `fertig` erst,
 //!   wenn alle Häppchen den Ausgang verlassen haben.
 //!
@@ -38,7 +42,7 @@ use wai_voice_dienst::frame::{Art, Decoder, Rahmen, RahmenFehler, Rolle};
 use wai_voice_dienst::grenzen;
 use wai_voice_dienst::kopplung::DienstSeite;
 use wai_voice_dienst::msg::{
-    code, pruefen, AnApp, AnDienst, Operation, Recht, Sitzung, Souveraenitaet, Wortpaar,
+    code, pruefen, AnApp, AnDienst, Annahme, Operation, Recht, Sitzung, Souveraenitaet, Wortpaar,
 };
 use wai_voice_dienst::PROTOKOLL;
 
@@ -393,6 +397,22 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
         Ok(())
     }
 
+    /// Weist nur den Strom der Nachricht ab: genau ein `fehler`, sonst ändert sich nichts. Weder
+    /// `stroeme` noch `sitzung` noch die Guthaben werden berührt, die Verbindung und alle offenen
+    /// Ströme bleiben. Der Text nennt keine Inhalte.
+    fn strom_abweisen(&mut self, strom: u32, code: &'static str) -> Res {
+        log::info!("sprachdienst: strom abgewiesen strom={strom} code={code}");
+        self.senden(
+            strom,
+            &AnApp::Fehler {
+                strom,
+                code: code.to_string(),
+                nachricht: "Diese Stromnummer wurde in dieser Verbindung schon benutzt."
+                    .to_string(),
+            },
+        )
+    }
+
     fn strom_schliessen(&mut self, strom: u32) {
         if let Some(s) = self.stroeme.remove(&strom) {
             s.abbruch.store(true, Ordering::Release);
@@ -435,8 +455,14 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
             };
             return self.fatal(c, &format!("Ungültiges Feld: {feld}."));
         }
-        if let Err(c) = self.sitzung.annehmen(kopf_strom, &m) {
-            return self.fatal(c, "Die Nachricht passt nicht zum Stand der Verbindung.");
+        match self.sitzung.annehmen(kopf_strom, &m) {
+            Ok(Annahme::Verarbeiten) => {}
+            // Spätes `ende`/`guthaben` eines beendeten Stroms: still übergehen.
+            Ok(Annahme::Verwerfen) => return Ok(()),
+            Ok(Annahme::Abweisen(c)) => return self.strom_abweisen(kopf_strom, c),
+            Err(c) => {
+                return self.fatal(c, "Die Nachricht passt nicht zum Stand der Verbindung.");
+            }
         }
         match m {
             AnDienst::Hallo {
@@ -701,8 +727,14 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
         let Ok(m) = serde_json::from_slice::<AnDienst>(&r.nutzlast) else {
             return Err(UNGUELTIG);
         };
-        if pruefen(&m).is_err() || self.sitzung.annehmen(r.strom, &m).is_err() {
+        if pruefen(&m).is_err() {
             return Err(UNGUELTIG);
+        }
+        // Nur `Verarbeiten` führt weiter; ein verworfener oder abgewiesener Rahmen ist an dieser
+        // Stelle nie der erwartete Schlüssel.
+        match self.sitzung.annehmen(r.strom, &m) {
+            Ok(Annahme::Verarbeiten) => {}
+            Ok(Annahme::Verwerfen) | Ok(Annahme::Abweisen(_)) | Err(_) => return Err(UNGUELTIG),
         }
         match m {
             AnDienst::KopplungSchluessel { app_schluessel } => Ok(app_schluessel),
@@ -885,7 +917,10 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
 
     fn ende(&mut self, strom: u32) -> Res {
         let Some(s) = self.stroeme.get(&strom) else {
-            return self.fatal(code::STROM_UNBEKANNT, "Dieser Strom ist nicht offen.");
+            // Nach `Verarbeiten` ist der Strom in `sitzung` offen; dass er hier fehlt, widerspricht
+            // dem Gleichlauf. Die Verbindung bleibt, die Nachricht wird übergangen.
+            log::warn!("sprachdienst: ende ohne Strom in der Verbindung strom={strom}");
+            return Ok(());
         };
         if !matches!(s.typ, Typ::Erkennen { .. }) {
             return self.strom_fehler(
@@ -948,7 +983,11 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
                 code::UNGUELTIG,
                 "Dieser Strom nimmt kein Guthaben an.",
             ),
-            None => self.fatal(code::STROM_UNBEKANNT, "Dieser Strom ist nicht offen."),
+            None => {
+                // Wie bei `ende`: nach `Verarbeiten` ein innerer Widerspruch, kein Vertragsbruch.
+                log::warn!("sprachdienst: guthaben ohne Strom in der Verbindung strom={strom}");
+                Ok(())
+            }
         }
     }
 
