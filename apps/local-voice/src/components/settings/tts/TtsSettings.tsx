@@ -223,6 +223,7 @@ import {
 } from "@/lib/reader/pasteLog";
 import type { IsbnBook, LibraryBook, TranslateJob } from "@/bindings";
 import { bindPageStateLive, getPageStateStore } from "@/lib/reader/pageStore";
+import { PageSaveError } from "@/lib/reader/pageState";
 import {
   READER_FONTS,
   READER_THEMES,
@@ -451,6 +452,9 @@ export const TtsSettings = () => {
   const pageLoaded = useRef(false);
   /** Zählt fertig geladene Seiten (Buchteile: Weiterlesen nach dem Laden). */
   const [pageLoadTick, setPageLoadTick] = useState(0);
+  /** Zählt Rettungsstände, die beim Laden noch nicht in der Datei standen:
+   *  erzwingt den Lade-Autosave, der sie schreibt. */
+  const [rescueTick, setRescueTick] = useState(0);
   /** Zu welchem Reiter die laufende Sprechsitzung gehoert. Fortsetzen und
    *  Satzspruenge gelten nur fuer sie — ein anderer Reiter startet neu. */
   const sessionTab = SESSION_TAB;
@@ -619,6 +623,9 @@ export const TtsSettings = () => {
    *  Programm hat genau einen Store, auch Bibliothek, Fassungen und „Sprecher
    *  ersetzen“ schreiben darüber. Hier hängt sich die offene Seite ein. */
   const store = getPageStateStore();
+  /** Aktuelle Übersetzungsfunktion für die einmal angehängte Rettungsmeldung. */
+  const tRef = useRef(t);
+  tRef.current = t;
   useLayoutEffect(
     () =>
       bindPageStateLive(
@@ -629,6 +636,26 @@ export const TtsSettings = () => {
         },
         (page, entries) => {
           if (activePageForEvents.current === page) publishLog(entries);
+        },
+        // Ein älterer, nicht gespeicherter Stand wurde verdrängt: als Fassung
+        // gesichert oder nur im Speicher gehalten. Der Nutzer erfährt es.
+        (page, kind) => {
+          const tr = tRef.current;
+          const title =
+            pagesRef.current.find((p) => p.id === page)?.title ?? page;
+          if (kind === "copy")
+            toast.info(
+              tr("tts.pageRescuedCopy", {
+                title,
+                copy: tr("tts.pageUnsavedCopyTitle"),
+              }),
+              { id: `page-rescued:${page}`, duration: 15000 },
+            );
+          else
+            toast.error(tr("tts.pageRescuedHeld", { title }), {
+              id: `page-rescued:${page}`,
+              duration: 20000,
+            });
         },
       ),
     [],
@@ -1248,6 +1275,20 @@ export const TtsSettings = () => {
       setTranslation(null);
       pageLoaded.current = true;
       setPageLoadTick((n) => n + 1);
+      // Ein Rettungsstand steht noch nicht in der Datei: Lade-Autosave jetzt
+      // auslösen (auch wenn sich kein Wert gegenüber der vorigen Seite ändert),
+      // der Snapshot im Store fällt erst nach dem gelungenen Schreiben weg.
+      if (read.unsaved) {
+        setRescueTick((n) => n + 1);
+        toast.info(
+          t("tts.pageRestoredUnsaved", {
+            title:
+              pagesRef.current.find((p) => p.id === activePage)?.title ??
+              activePage,
+          }),
+          { id: `page-restored:${activePage}`, duration: 12000 },
+        );
+      }
     });
     return () => {
       stale = true;
@@ -1347,17 +1388,24 @@ export const TtsSettings = () => {
           // Ein Hinweis, kein Stapel: derselbe ersetzt den vorigen. Eine
           // verlassene Seite wird genannt; ihr Stand bleibt im Store und wird
           // beim nächsten Öffnen der Seite erneut gesichert.
-          () =>
+          (error: unknown) =>
             activePage === activePageRef.current
               ? toast.error(t("tts.pageSaveFailed"), {
                   id: "page-save-failed",
                 })
               : toast.error(
-                  t("tts.pageSaveFailedLeft", {
-                    title:
-                      pagesRef.current.find((p) => p.id === activePage)
-                        ?.title ?? activePage,
-                  }),
+                  // Die Zusage „wird erneut versucht“ nur, wenn der Store den
+                  // Stand dieses Auftrags tatsächlich als Snapshot hält.
+                  t(
+                    error instanceof PageSaveError && error.kept
+                      ? "tts.pageSaveFailedLeft"
+                      : "tts.pageSaveFailedLost",
+                    {
+                      title:
+                        pagesRef.current.find((p) => p.id === activePage)
+                          ?.title ?? activePage,
+                    },
+                  ),
                   { id: `page-save-failed:${activePage}` },
                 ),
         );
@@ -1377,6 +1425,7 @@ export const TtsSettings = () => {
     pageLang,
     translatedLangs,
     autoTagOptions,
+    rescueTick,
   ]);
 
   // Sekundenzähler nur während des Serverstarts.

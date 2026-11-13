@@ -32,6 +32,11 @@
   "tts": {
     "pageSaveFailed": "The page could not be saved. The action was not carried out.",
     "pageSaveFailedLeft": "The page “{{title}}” could not be saved. It will be tried again the next time the page is opened.",
+    "pageSaveFailedLost": "The page “{{title}}” could not be saved. Its latest state is not secured.",
+    "pageRestoredUnsaved": "The state of the page “{{title}}” had not been saved yet. It was restored and is being saved now.",
+    "pageRescuedCopy": "An older, unsaved state of the page “{{title}}” was secured as the version “{{copy}}”.",
+    "pageRescuedHeld": "An older, unsaved state of the page “{{title}}” could not be secured. It only exists in memory and is lost when the app quits.",
+    "pageUnsavedCopyTitle": "Unsaved state",
     "editorMenu": {
       "label": "Editor menu",
       "find": "Find and replace",
@@ -76,6 +81,8 @@
       "pasteAbortedPage": "Paste cancelled: page changed.",
       "pasteAbortedChanged": "Paste cancelled: the text changed in the meantime. The clipboard is unchanged.",
       "pasteNotCleaned": "The original is saved. Cleanup was skipped because the text has changed in the meantime.",
+      "pasteNotCleanedFocus": "The original is saved. Cleanup was skipped because the editor lost focus in the meantime.",
+      "pasteNotCleanedComposing": "The original is saved. Cleanup was skipped because an input composition is in progress.",
       "pasteNotSaved": "The original could not be saved: text pasted unchanged.",
       "pasteLogItem": "Recent pastes …",
       "pasteLogItemHint": "View, restore or copy the original of earlier pastes",

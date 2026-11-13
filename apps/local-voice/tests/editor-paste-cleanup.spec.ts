@@ -2123,7 +2123,7 @@ test("saved while typing in front of the paste during the wait: not cleaned, raw
   await page.keyboard.press("Control+Home");
   await page.keyboard.type("Vorne ");
   await expect(toast(page).last()).toContainText(
-    "Bereinigung wurde ausgelassen",
+    "weil sich der Text inzwischen geändert hat",
     {
       timeout: 15_000,
     },
@@ -2260,6 +2260,98 @@ test("a failed save of a left page names the page and is tried again when it is 
     .toBe("Vorher. Z");
 });
 
+/** Anzahl der bisherigen Schreibaufträge an die Seitendatei (Aufrufe von page_state_save). */
+const saveCalls = (page: Page) =>
+  page.evaluate(
+    () =>
+      (window as unknown as { __calls: string[] }).__calls.filter(
+        (c) => c === "page_state_save",
+      ).length,
+  );
+
+/** Der nächste Schreibauftrag an die Seitendatei hängt, bis `__release()` ruft. */
+const holdNextSave = (page: Page) =>
+  page.evaluate(() => {
+    const w = window as unknown as {
+      __holdNextSave?: Promise<void>;
+      __release?: () => void;
+    };
+    w.__holdNextSave = new Promise<void>((resolve) => {
+      w.__release = resolve;
+    });
+  });
+
+/** Schreiben scheitern lassen (oder wieder zulassen) und den hängenden Auftrag freigeben. */
+const setFailSave = (page: Page, fail: boolean, release = false) =>
+  page.evaluate(
+    ([f, r]) => {
+      const w = window as unknown as {
+        __failSave: boolean;
+        __release?: () => void;
+      };
+      w.__failSave = f;
+      if (r) w.__release?.();
+    },
+    [fail, release] as const,
+  );
+
+test("an autosave that is already running when the page is left and then fails: the page is named, its text is restored when the page is opened (B3)", async ({
+  page,
+}) => {
+  const { editor } = await openTwoPages(page, "Vorher. ", 0);
+  // Der Lade-Autosave ist durch, bevor der nächste Auftrag gesperrt wird.
+  await expect.poll(() => saveCalls(page)).toBeGreaterThan(0);
+  const before = await saveCalls(page);
+  await holdNextSave(page);
+  await editor.focus();
+  await editor.press("Control+End");
+  await page.keyboard.type("Z");
+  // Der Autosave nach 500 ms läuft und hängt beim Schreiben.
+  await expect.poll(() => saveCalls(page)).toBe(before + 1);
+  // Die Seite wird verlassen, während das Schreiben hängt; danach scheitert es.
+  await gotoPage(page, "Das Wintermärchen");
+  await setFailSave(page, true, true);
+  const left = toast(page).filter({ hasText: "Die Seite „Der Sturm“" });
+  await expect(left).toContainText("erneut versucht");
+  expect(((await savedState(page)) as { text: string }).text).toBe("Vorher. ");
+  // Die Zusage stimmt: beim Öffnen wird der Stand des Auftrags wiederhergestellt.
+  await setFailSave(page, false);
+  await gotoPage(page, "Der Sturm");
+  await expect(editor).toHaveValue("Vorher. Z");
+  await expect
+    .poll(async () => ((await savedState(page)) as { text: string }).text)
+    .toBe("Vorher. Z");
+});
+
+test("the flush of a left page only fails after it is opened again, the retry fails too: the pasted text is shown as an unsaved state, saved, and the full log stays (B1)", async ({
+  page,
+}) => {
+  const { editor, many } = await openTwoPages(page, "Vorher. ", 20);
+  await expect.poll(() => saveCalls(page)).toBeGreaterThan(0);
+  await holdNextSave(page);
+  // Einfügen bei vollem Protokoll: der Rohtext steht im Dokument, nichts wird verdrängt.
+  expect(await paste(editor, DIRTY)).toBe(true);
+  // Verlassen: der Flush hängt beim Schreiben. Wieder öffnen: das Laden wartet.
+  await gotoPage(page, "Das Wintermärchen");
+  await gotoPage(page, "Der Sturm");
+  // Jetzt scheitert der Flush und mit ihm der erneute Versuch.
+  await setFailSave(page, true, true);
+  await expect(editor).toHaveValue(`Vorher. ${DIRTY}`);
+  await expect(
+    toast(page).filter({ hasText: "war noch nicht gespeichert" }),
+  ).toBeVisible();
+  expect(((await savedState(page)) as { text: string }).text).toBe("Vorher. ");
+  // Der Speicher ist wieder da: der Lade-Autosave schreibt den Stand.
+  await setFailSave(page, false);
+  await expect
+    .poll(async () => ((await savedState(page)) as { text: string }).text)
+    .toBe(`Vorher. ${DIRTY}`);
+  expect(await savedRohs(page)).toEqual(many.map((e) => e.roh));
+  const reloaded = await reopenEditor(page);
+  await expect(reloaded).toHaveValue(`Vorher. ${DIRTY}`);
+  expect(await savedRohs(page)).toEqual(many.map((e) => e.roh));
+});
+
 // -- Bereinigen nach dem Warten: IME, Fokus, Auswahl ---------------------------------
 
 test("an IME composition that is active when the wait ends: not cleaned, the raw text stays", async ({
@@ -2276,7 +2368,7 @@ test("an IME composition that is active when the wait ends: not cleaned, the raw
     ),
   );
   await expect(toast(page).last()).toContainText(
-    "Bereinigung wurde ausgelassen",
+    "weil gerade eine Eingabe (Komposition) läuft",
     { timeout: 10_000 },
   );
   await expect(editor).toHaveValue(`Vorher. ${DIRTY}`);
@@ -2296,7 +2388,7 @@ test("the editor lost focus while waiting: not cleaned, focus is not stolen", as
   expect(await paste(editor, DIRTY)).toBe(true);
   await editor.evaluate((el) => (el as HTMLTextAreaElement).blur());
   await expect(toast(page).last()).toContainText(
-    "Bereinigung wurde ausgelassen",
+    "weil der Cursor den Editor inzwischen verlassen hat",
     { timeout: 10_000 },
   );
   await expect(editor).toHaveValue(`Vorher. ${DIRTY}`);

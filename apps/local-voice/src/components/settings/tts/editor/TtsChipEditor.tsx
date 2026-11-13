@@ -601,8 +601,9 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
    *    von direkt nach dem Bereinigen enthält.
    * 4. Sonst bleibt der Rohtext stehen, mit Hinweis: zu groß, Grenze der
    *    Rohfassungen erreicht (`full`, mit Weg zum Aufräumen, nichts wird
-   *    verdrängt), Sichern gescheitert, oder gesichert, aber der Text inzwischen
-   *    geändert (nicht bereinigt).
+   *    verdrängt), Sichern gescheitert, oder gesichert, aber nicht bereinigt,
+   *    mit dem jeweiligen Grund: Text inzwischen geändert, Eingabekomposition
+   *    (IME) läuft, Fokus verloren.
    */
   const insertCleaned = useCallback(
     async (
@@ -653,14 +654,20 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
       // getan hat: andere Seite oder Textarea, geänderter Text, laufende
       // IME-Komposition oder verlorener Fokus (execInsert würde ihn holen)
       // lassen den Rohtext stehen.
-      const intact =
+      const sameText =
         taRef.current === ta &&
         docKeyRef.current === doc &&
-        !composingRef.current &&
-        document.activeElement === ta &&
         valueRef.current.slice(start, rawEnd) === original;
-      if (!intact) {
+      if (!sameText) {
         toast(t("tts.editorMenu.pasteNotCleaned"));
+        return;
+      }
+      if (composingRef.current) {
+        toast(t("tts.editorMenu.pasteNotCleanedComposing"));
+        return;
+      }
+      if (document.activeElement !== ta) {
+        toast(t("tts.editorMenu.pasteNotCleanedFocus"));
         return;
       }
       // Auswahl des Nutzers beibehalten: davor bleibt sie, dahinter rückt sie um
@@ -682,9 +689,24 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
         );
       restoreSelection();
       const cleanedValue = valueRef.current;
+      // Das Neuzeichnen kann die Auswahl zurücksetzen; im nächsten Bild wird sie
+      // deshalb noch einmal gesetzt, aber nur, wenn der Nutzer sie seit dem
+      // Einfügen nicht selbst bewegt hat (Taste, Zeiger, Eingabe) und der Fokus
+      // noch im Editor liegt.
+      let userMoved = false;
+      const noteUserMove = () => {
+        userMoved = true;
+      };
+      const moveEvents = ["keydown", "pointerdown", "beforeinput"] as const;
+      for (const type of moveEvents)
+        ta.addEventListener(type, noteUserMove, { capture: true, once: true });
       window.requestAnimationFrame(() => {
+        for (const type of moveEvents)
+          ta.removeEventListener(type, noteUserMove, { capture: true });
         if (
+          !userMoved &&
           taRef.current === ta &&
+          document.activeElement === ta &&
           valueRef.current === cleanedValue &&
           !composingRef.current
         )

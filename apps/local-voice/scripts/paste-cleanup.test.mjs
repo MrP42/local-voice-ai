@@ -2207,27 +2207,47 @@ function harness(files = {}) {
     holdSave: null,
     holdLoad: null,
     failNextSave: false,
+    /** Anzahl der noch scheiternden Schreibaufträge (zusätzlich zu `failNextSave`). */
+    failSaves: 0,
+    /** Anzahl der noch mit „nicht lesbar“ (null) antwortenden Leseaufträge. */
+    nullLoads: 0,
+    /** Als eigene Fassung gesicherte Texte (`saveCopy`) und gemeldete Rettungen. */
+    copies: [],
+    rescues: [],
+    failCopy: false,
   };
   const io = {
     async load(page) {
       const text = h.files.get(page) ?? "";
       if (h.holdLoad) await h.holdLoad(page);
+      if (h.nullLoads > 0) {
+        h.nullLoads -= 1;
+        return null;
+      }
       return text;
     },
     async save(page, json) {
       if (h.holdSave) await h.holdSave(page, json);
-      if (h.failNextSave) {
-        h.failNextSave = false;
+      if (h.failNextSave || h.failSaves > 0) {
+        if (h.failNextSave) h.failNextSave = false;
+        else h.failSaves -= 1;
         return false;
       }
       h.files.set(page, json);
       h.writes.push([page, json]);
       return true;
     },
+    async saveCopy(page, text) {
+      if (h.failCopy) return false;
+      h.copies.push([page, text]);
+      return true;
+    },
   };
+  h.io = io;
   h.committedEvents = [];
   h.store = createPageStateStore({
     io,
+    onRescue: (page, kind) => h.rescues.push([page, kind]),
     live: {
       // `isActive` kennt nur der alte Store (Gegenprobe); der neue ignoriert es.
       isActive: (page) => h.active === page,
@@ -2780,23 +2800,39 @@ test("pageState: gescheitertes Sichern einer verlassenen Seite: der Snapshot ble
   assert.equal(h.fileState("A").text, "alt");
   const read = await h.store.read("A");
   assert.equal(JSON.parse(read.text).text, "neu beim Verlassen");
+  assert.equal(read.unsaved, false, "der Retry hat geschrieben");
   assert.equal(h.store.hasFailedSave("A"), false);
   assert.equal(h.fileState("A").text, "neu beim Verlassen");
 });
 
-test("pageState: scheitert auch der erneute Versuch, bleibt der Snapshot; ein späteres Sichern ersetzt ihn", async () => {
+test("pageState: scheitert auch der erneute Versuch, liefert read den Snapshot als ungespeicherten Stand (nicht die alte Datei); erst ein echter Lade-Autosave löscht ihn", async () => {
   const h = harness({ A: stateWith({ text: "alt" }) });
   h.failNextSave = true;
   await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
   h.failNextSave = true;
   const first = await h.store.read("A");
-  assert.equal(JSON.parse(first.text).text, "alt");
-  assert.equal(h.store.hasFailedSave("A"), true);
-  // Ein gelungenes Sichern derselben Seite (neuerer Stand) ersetzt den Snapshot.
-  await h.store.save("A", stateWith({ text: "v2" }));
+  assert.equal(
+    JSON.parse(first.text).text,
+    "v1",
+    "der Snapshot, nicht die Datei",
+  );
+  assert.equal(first.unsaved, true);
+  assert.equal(JSON.parse(h.files.get("A")).text, "alt", "Datei unverändert");
+  assert.equal(
+    h.store.hasFailedSave("A"),
+    true,
+    "read allein löscht ihn nicht",
+  );
+  // Die Oberfläche übernimmt den Stand, ist fertig geladen, der Lade-Autosave schreibt.
+  h.active = "A";
+  h.loaded = true;
+  h.uiText = JSON.parse(first.text).text;
+  await h.store.save("A", stateWith({ text: h.uiText }));
   assert.equal(h.store.hasFailedSave("A"), false);
+  assert.equal(h.fileState("A").text, "v1");
   const second = await h.store.read("A");
-  assert.equal(JSON.parse(second.text).text, "v2");
+  assert.equal(JSON.parse(second.text).text, "v1");
+  assert.equal(second.unsaved, false);
 });
 
 test("pageState: scheitert das Sichern der OFFENEN Seite, bleibt kein Snapshot (die Oberfläche hält den Stand)", async () => {
@@ -2806,4 +2842,363 @@ test("pageState: scheitert das Sichern der OFFENEN Seite, bleibt kein Snapshot (
   h.failNextSave = true;
   await assert.rejects(h.store.save("A", stateWith({ text: "x" })));
   assert.equal(h.store.hasFailedSave("A"), false);
+});
+
+// ---------------------------------------------------------------------------
+// lva#548 Fixrunde 3: Retry-Pfad (failedSaves) – Reihenfolge, Laufnummern, eigener Stand
+// ---------------------------------------------------------------------------
+
+const textOf = (json) => JSON.parse(json).text;
+const einmalHalten = (h, kind) => {
+  const held = gate();
+  h[kind] = async () => {
+    h[kind] = null;
+    await held.promise;
+  };
+  return held;
+};
+
+test("pageState B1: Flush scheitert NACH Beginn von read: read wartet zuerst und versucht danach erneut (Datei = Stand des Flush)", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  const held = einmalHalten(h, "holdSave");
+  const flush = h.store.save("A", stateWith({ text: "v1" }));
+  await tick();
+  // Seite wieder öffnen, während der Flush noch hängt: noch kein Fehler bekannt.
+  let reopened = null;
+  const reading = h.store.read("A").then((r) => (reopened = r));
+  await tick();
+  assert.equal(reopened, null, "read wartet auf die Kette der Seite");
+  h.failNextSave = true;
+  held.release();
+  await assert.rejects(flush);
+  const read = await reading;
+  assert.equal(textOf(read.text), "v1", "nicht die alte Datei");
+  assert.equal(read.unsaved, false, "der Retry hat geschrieben");
+  assert.equal(h.fileState("A").text, "v1");
+  assert.equal(h.store.hasFailedSave("A"), false);
+});
+
+test("pageState B1: Flush scheitert nach Beginn von read und auch der Retry: read liefert den Snapshot als ungespeichert", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  const held = einmalHalten(h, "holdSave");
+  const flush = h.store.save("A", stateWith({ text: "v1" }));
+  await tick();
+  const reading = h.store.read("A");
+  await tick();
+  h.failSaves = 2;
+  held.release();
+  await assert.rejects(flush);
+  const read = await reading;
+  assert.equal(textOf(read.text), "v1");
+  assert.equal(read.unsaved, true);
+  assert.equal(h.fileState("A").text, "alt", "Datei unberührt");
+  assert.equal(h.store.hasFailedSave("A"), true);
+});
+
+test("pageState B1: voller Rohfassungsspeicher, Flush und Retry scheitern, Lade-Autosave: der eingefügte Text bleibt in der Datei, die Rohfassungen auch", async () => {
+  const h = harness({ A: stateWith({ einfuegungen: voll() }) });
+  const held = einmalHalten(h, "holdSave");
+  const flush = h.store.save("A", stateWith({ text: "alt + Einfügung" }));
+  await tick();
+  const reading = h.store.read("A");
+  await tick();
+  h.failSaves = 2;
+  held.release();
+  await assert.rejects(flush);
+  const read = await reading;
+  // Die Oberfläche übernimmt, was read liefert; der Lade-Autosave läuft über die Kette.
+  h.active = "A";
+  h.loaded = true;
+  h.uiText = textOf(read.text);
+  await h.store.save("A", stateWith({ text: h.uiText }));
+  assert.equal(h.fileState("A").text, "alt + Einfügung", "Text erhalten");
+  assert.equal(h.fileState("A").einfuegungen.length, PASTE_LOG_MAX_ENTRIES);
+  assert.equal(h.store.hasFailedSave("A"), false);
+  assert.equal(read.unsaved, true);
+  assert.equal(
+    JSON.parse(read.text).einfuegungen.length,
+    PASTE_LOG_MAX_ENTRIES,
+    "die Anzeige zeigt das Protokoll der Datei",
+  );
+});
+
+test("pageState B1: scheitert der Lade-Autosave, bleibt der Snapshot im Speicher, erst das gelungene Schreiben löscht ihn", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failSaves = 2;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  const read = await h.store.read("A");
+  assert.equal(read.unsaved, true);
+  h.active = "A";
+  h.loaded = true;
+  h.uiText = "v1";
+  h.failNextSave = true;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  assert.equal(h.store.hasFailedSave("A"), true, "Fehlschlag löscht nicht");
+  // Seite wieder verlassen und öffnen: der Snapshot wird erneut angeboten.
+  h.active = null;
+  h.loaded = false;
+  const again = await h.store.read("A");
+  assert.equal(again.unsaved, false, "der Retry konnte jetzt schreiben");
+  assert.equal(h.fileState("A").text, "v1");
+  assert.equal(h.store.hasFailedSave("A"), false);
+});
+
+test("pageState B1: read auf der geladenen Seite (KeepAlive) schreibt den Snapshot nicht über den Stand der Oberfläche und liefert die Datei", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failSaves = 2;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  const handed = await h.store.read("A");
+  assert.equal(handed.unsaved, true);
+  h.active = "A";
+  h.loaded = true;
+  h.uiText = "v1 plus getippt";
+  const keep = await h.store.read("A");
+  assert.equal(keep.unsaved, false);
+  assert.equal(textOf(keep.text), "alt");
+  assert.equal(h.writes.length, 0, "nichts geschrieben");
+  assert.equal(h.store.hasFailedSave("A"), true);
+});
+
+test("pageState B1: Retry kann die Datei nicht lesen: read meldet den Lesefehler, der Snapshot bleibt und wird beim nächsten read geschrieben", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failNextSave = true;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  h.nullLoads = 2;
+  assert.equal(await h.store.read("A"), null);
+  assert.equal(h.store.hasFailedSave("A"), true);
+  assert.equal(h.fileState("A").text, "alt");
+  const read = await h.store.read("A");
+  assert.equal(textOf(read.text), "v1");
+  assert.equal(h.fileState("A").text, "v1");
+});
+
+test("pageState B1: read endet auch bei dauerhaftem Schreibfehler (keine Endlosschleife) und liefert jedes Mal den Snapshot", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failSaves = 1000;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  for (let i = 0; i < 3; i += 1) {
+    const read = await h.store.read("A");
+    assert.equal(read.unsaved, true);
+    assert.equal(textOf(read.text), "v1");
+  }
+  assert.equal(h.writes.length, 0);
+});
+
+test("pageState B2: save(v1) scheitert, mutate(v2) gelingt, Wiederöffnen: v2 bleibt in der Datei, v1 wird als eigene Fassung gesichert (kein blindes Zurückschreiben)", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failNextSave = true;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  assert.equal(
+    await h.store.mutate("A", (state) => {
+      state.text = "v2";
+      return true;
+    }),
+    true,
+  );
+  const read = await h.store.read("A");
+  assert.equal(textOf(read.text), "v2");
+  assert.equal(read.unsaved, false);
+  assert.equal(h.fileState("A").text, "v2");
+  assert.deepEqual(h.copies, [["A", "v1"]]);
+  assert.deepEqual(h.rescues, [["A", "copy"]]);
+  assert.equal(h.store.hasFailedSave("A"), false);
+  assert.deepEqual(
+    h.writes.map(([, json]) => textOf(json)),
+    ["v2"],
+    "v1 wurde nie geschrieben",
+  );
+});
+
+test("pageState B2: noch wartendes save(v2) vor dem Öffnen: v2 bleibt, v1 wird gesichert, nicht dahinter eingereiht", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failNextSave = true;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  const held = einmalHalten(h, "holdSave");
+  const second = h.store.save("A", stateWith({ text: "v2" }));
+  await tick();
+  const reading = h.store.read("A");
+  await tick();
+  held.release();
+  await second;
+  const read = await reading;
+  assert.equal(textOf(read.text), "v2");
+  assert.equal(h.fileState("A").text, "v2");
+  assert.deepEqual(h.copies, [["A", "v1"]]);
+  assert.deepEqual(
+    h.writes.map(([, json]) => textOf(json)),
+    ["v2"],
+  );
+});
+
+test("pageState B2: ohne Fassungs-Schreiber bleibt der ältere Stand im Speicher und wird als Konflikt gemeldet; ein späteres read sichert ihn", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  delete h.io.saveCopy;
+  h.failNextSave = true;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  await h.store.mutate("A", (state) => {
+    state.text = "v2";
+    return true;
+  });
+  assert.deepEqual(h.rescues, [["A", "held"]]);
+  assert.deepEqual(h.store.held("A"), ["v1"]);
+  assert.equal(h.fileState("A").text, "v2");
+  // Der Schreiber ist wieder da: das nächste read sichert den gehaltenen Stand.
+  h.io.saveCopy = async (page, text) => {
+    h.copies.push([page, text]);
+    return true;
+  };
+  const read = await h.store.read("A");
+  assert.equal(textOf(read.text), "v2");
+  assert.deepEqual(h.copies, [["A", "v1"]]);
+  assert.deepEqual(h.store.held("A"), []);
+  assert.deepEqual(h.rescues.at(-1), ["A", "copy"]);
+});
+
+test("pageState B2: scheitert das Sichern der Fassung, bleibt der Text im Speicher (held) und die Datei unverändert", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failCopy = true;
+  h.failNextSave = true;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  await h.store.mutate("A", (state) => {
+    state.text = "v2";
+    return true;
+  });
+  assert.deepEqual(h.store.held("A"), ["v1"]);
+  assert.deepEqual(h.copies, []);
+  const read = await h.store.read("A");
+  assert.equal(textOf(read.text), "v2");
+  assert.deepEqual(
+    h.store.held("A"),
+    ["v1"],
+    "bleibt, solange das Sichern scheitert",
+  );
+  h.failCopy = false;
+  await h.store.read("A");
+  assert.deepEqual(h.copies, [["A", "v1"]]);
+  assert.deepEqual(h.store.held("A"), []);
+});
+
+test("pageState B2: ein Snapshot mit demselben Text wie die Datei (oder leer) braucht keine Fassung", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failNextSave = true;
+  await assert.rejects(
+    h.store.save("A", JSON.stringify({ text: "alt", tab: "summary" })),
+  );
+  await h.store.mutate("A", (state) => {
+    state.sourceUrl = "https://example.org";
+    return true;
+  });
+  assert.deepEqual(h.copies, []);
+  assert.deepEqual(h.rescues, []);
+  assert.equal(h.store.hasFailedSave("A"), false);
+  assert.equal(textOf(JSON.stringify(h.fileState("A"))), "alt");
+});
+
+test("pageState B2: ein Protokollschreiben (commitLog) macht den Snapshot nicht veraltet: der Retry schreibt ihn mit dem Protokoll der Datei", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failNextSave = true;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  assert.equal(await h.store.commitLog("A", add(E1)), true);
+  const read = await h.store.read("A");
+  assert.equal(textOf(read.text), "v1");
+  assert.equal(read.unsaved, false);
+  assert.deepEqual(h.rohs("A"), ["eins"]);
+  assert.deepEqual(h.copies, []);
+});
+
+test("pageState B2: ein erfolgreicher save der Oberfläche, die den Snapshot erhalten hat, ersetzt ihn ohne Fassung", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failSaves = 2;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  const handed = await h.store.read("A");
+  assert.equal(handed.unsaved, true);
+  // Oberfläche zeigt v1, der Nutzer tippt weiter, verlässt die Seite: Flush gelingt.
+  await h.store.save("A", stateWith({ text: "v1 und mehr" }));
+  assert.equal(h.fileState("A").text, "v1 und mehr");
+  assert.equal(h.store.hasFailedSave("A"), false);
+  assert.deepEqual(h.copies, []);
+});
+
+test("pageState B2: zwei Flush-Fehler ohne read dazwischen: der ältere Text geht nicht verloren (wird als Fassung gesichert)", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failSaves = 2;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  await assert.rejects(h.store.save("A", stateWith({ text: "v2" })));
+  assert.deepEqual(h.store.held("A"), ["v1"]);
+  const read = await h.store.read("A");
+  assert.equal(textOf(read.text), "v2");
+  assert.equal(h.fileState("A").text, "v2");
+  assert.deepEqual(h.copies, [["A", "v1"]]);
+});
+
+test("pageState B3: Autosave der offenen Seite läuft, Seite wird verlassen, das Schreiben scheitert: der eigene Stand wird Snapshot, die Seite meldet ihn, Wiederöffnen stellt ihn her", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.active = "A";
+  h.loaded = true;
+  h.uiText = "alt + Einfügung";
+  const held = einmalHalten(h, "holdSave");
+  const autosave = h.store.save("A", stateWith({ text: "alt + Einfügung" }));
+  await tick();
+  // Seite verlassen, während das Schreiben hängt.
+  h.active = null;
+  h.loaded = false;
+  held.release();
+  h.failNextSave = true;
+  const error = await autosave.then(
+    () => null,
+    (e) => e,
+  );
+  assert.ok(error, "scheitert");
+  assert.equal(error.kept, true, "ein Snapshot wurde hinterlegt");
+  assert.equal(h.store.hasFailedSave("A"), true);
+  assert.equal(h.fileState("A").text, "alt");
+  h.active = "A";
+  const read = await h.store.read("A");
+  assert.equal(textOf(read.text), "alt + Einfügung");
+  assert.equal(h.fileState("A").text, "alt + Einfügung");
+});
+
+test("pageState B3: der Snapshot ist der eigene geschriebene Stand des Auftrags, nicht der später eingereihte", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.active = "A";
+  h.loaded = true;
+  h.uiText = "Stand des Auftrags";
+  const held = einmalHalten(h, "holdSave");
+  const autosave = h.store.save("A", stateWith({ text: "ignoriert" }));
+  await tick();
+  h.uiText = "später getippt";
+  h.active = null;
+  h.loaded = false;
+  h.failNextSave = true;
+  held.release();
+  await assert.rejects(autosave);
+  const read = await h.store.read("A");
+  assert.equal(textOf(read.text), "Stand des Auftrags");
+});
+
+test("pageState B3: scheitert der Auftrag, während die Seite noch offen ist, bleibt kein Snapshot und keine Zusage (kept: false)", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.active = "A";
+  h.loaded = true;
+  h.failNextSave = true;
+  const error = await h.store.save("A", stateWith({ text: "x" })).then(
+    () => null,
+    (e) => e,
+  );
+  assert.ok(error);
+  assert.equal(error.kept, false);
+  assert.equal(h.store.hasFailedSave("A"), false);
+});
+
+test("pageState B3: Lesefehler im Schreibauftrag einer verlassenen Seite: Snapshot bleibt, Zusage stimmt (kept)", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.nullLoads = 1;
+  const error = await h.store.save("A", stateWith({ text: "v1" })).then(
+    () => null,
+    (e) => e,
+  );
+  assert.equal(error.kept, true);
+  assert.equal(h.store.hasFailedSave("A"), true);
+  const read = await h.store.read("A");
+  assert.equal(textOf(read.text), "v1");
 });
