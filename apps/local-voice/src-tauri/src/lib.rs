@@ -45,6 +45,7 @@ pub mod mcp; // M6-P6e
 mod media;
 mod meeting_prompt; // M5-P5b
 mod memory_guard;
+mod netz; // lva#573: Proxy wie Windows, verständliche Netzfehler
 mod overlay;
 mod paste_guard;
 mod paste_session;
@@ -280,6 +281,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         managers::llm::LlmRuntimeManager::new(app_handle)
             .expect("Failed to initialize LLM runtime manager"),
     );
+    // lva#573: eigener Download-Proxy aus den Einstellungen.
+    netz::proxy::setze_eigenen(settings::get_settings(app_handle).download_proxy.as_deref());
     llm_runtime.set_model_dirs(settings::get_settings(app_handle).llm_model_dirs);
     let llm_server = Arc::new(managers::llm::LocalLlmServer::new());
     managers::llm::install_globals(llm_runtime.clone(), llm_server.clone());
@@ -2162,6 +2165,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             shortcut::change_dictation_audio_setting,
             shortcut::change_dictation_audio_duck_percent_setting,
             shortcut::change_local_update_dir_setting,
+            shortcut::change_download_proxy_setting,
             local_update::local_update_check,
             local_update::local_update_install,
             shortcut::change_append_trailing_space_setting,

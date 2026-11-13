@@ -32,6 +32,26 @@ ManifestDPIAwareness PerMonitorV2
 ${StrCase}
 ${StrLoc}
 
+; --- VORINSTALLIERT --- Installer mit Modellen (lva#574)
+; Nur wenn beim Bau die Umgebungsvariable LVA_VORINSTALLIERT auf eine Nutzlast zeigt, die
+; scripts/build-installer-modelle.ps1 vorbereitet hat (Ordner nemotron\, parakeet\, phonon\ und
+; vorinstalliert.nsh). Ist sie nicht gesetzt (oder leer), entsteht der gewohnte schlanke
+; Installer: keine Komponentenseite, gleicher Inhalt. Ist sie gesetzt, die Nutzlast aber nicht da,
+; bricht der Bau ab, statt still einen Installer ohne Modelle zu erzeugen. Eine ungesetzte
+; Variable bleibt in makensis als Text stehen, daher der Vergleich mit ${U+24}%…%.
+; Der schlanke Installer bleibt Quelle des In-App-Updates (latest.json).
+!if "$%LVA_VORINSTALLIERT%" != "${U+24}%LVA_VORINSTALLIERT%"
+!if "$%LVA_VORINSTALLIERT%" != ""
+  !if /FileExists "$%LVA_VORINSTALLIERT%\vorinstalliert.nsh"
+    !define VORINSTALLIERT "$%LVA_VORINSTALLIERT%"
+    !include "${VORINSTALLIERT}\vorinstalliert.nsh"
+  !else
+    !error "LVA_VORINSTALLIERT ist gesetzt ($%LVA_VORINSTALLIERT%), aber vorinstalliert.nsh fehlt dort. Erst scripts/build-installer-modelle.ps1 laufen lassen oder die Variable entfernen."
+  !endif
+!endif
+!endif
+; --- END VORINSTALLIERT ---
+
 {{#if installer_hooks}}
 !include "{{installer_hooks}}"
 {{/if}}
@@ -149,6 +169,11 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 !define MUI_LANGDLL_REGISTRY_ROOT "HKCU"
 !define MUI_LANGDLL_REGISTRY_KEY "${MANUPRODUCTKEY}"
 !define MUI_LANGDLL_REGISTRY_VALUENAME "Installer Language"
+
+; --- VORINSTALLIERT --- Interface-Einstellung, muss vor der ersten MUI-Seite stehen
+!ifdef VORINSTALLIERT
+  !define MUI_COMPONENTSPAGE_SMALLDESC
+!endif
 
 ; Installer pages, must be ordered as they appear
 ; 1. Welcome Page
@@ -459,6 +484,11 @@ Function PageDiktat
   ${OrIf} $PortableMode = 1
     Abort
   ${EndIf}
+  ; --- VORINSTALLIERT --- Die Komponentenseite ersetzt diese Frage; die gewählten Modelle
+  ; schreiben erststart.ini selbst (Abschnitte unten).
+  !ifdef VORINSTALLIERT
+    Abort
+  !endif
   ; Nur Neuinstallation: vorhandene Installation oder Datei -> überspringen
   ReadRegStr $R0 SHCTX "${UNINSTKEY}" "UninstallString"
   ${If} $R0 != ""
@@ -519,6 +549,15 @@ Var AppStartMenuFolder
 
 ; 6b. Diktatmodell (nur Neuinstallation), nach der Verzeichniswahl
 Page custom PageDiktat PageLeaveDiktat
+
+; --- VORINSTALLIERT --- 6c. Komponenten: Modelle einzeln abwählbar, alle vorausgewählt
+!ifdef VORINSTALLIERT
+  !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
+  !define MUI_PAGE_HEADER_TEXT "Modelle auswählen"
+  !define MUI_PAGE_HEADER_SUBTEXT "Diese Modelle werden ohne Download mitinstalliert."
+  !define MUI_COMPONENTSPAGE_TEXT_TOP "Alle Modelle laufen lokal. Abgewählte Modelle lassen sich später unter Modelle laden."
+  !insertmacro MUI_PAGE_COMPONENTS
+!endif
 
 ; 7. Installation page
 !insertmacro MUI_PAGE_INSTFILES
@@ -676,7 +715,7 @@ Function .onInit
 FunctionEnd
 
 
-Section EarlyChecks
+Section -EarlyChecks
   ; Abort silent installer if downgrades is disabled
   !if "${ALLOWDOWNGRADES}" == "false"
   ${If} ${Silent}
@@ -695,7 +734,7 @@ Section EarlyChecks
 
 SectionEnd
 
-Section WebView2
+Section -WebView2
   ; Check if Webview2 is already installed and skip this section
   ${If} ${RunningX64}
     ReadRegStr $4 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
@@ -787,7 +826,12 @@ Section WebView2
   ${EndIf}
 SectionEnd
 
+!ifdef VORINSTALLIERT
+Section "Local Voice AI (Programm)" SEC_PROGRAMM
+  SectionIn RO
+!else
 Section Install
+!endif
   SetOutPath $INSTDIR
 
   !ifmacrodef NSIS_HOOK_PREINSTALL
@@ -917,6 +961,85 @@ Section Install
   ${EndIf}
 SectionEnd
 
+; --- VORINSTALLIERT --- Modelle direkt in den Datenordner der App, so wie nach einem Download
+; über die Modellseite. Ablage wie in der App: Spracherkennung unter app_data_dir (Roaming),
+; Sprachausgabe unter app_local_data_dir (Local); portabel beides in Data\ neben der EXE
+; (portable.rs). Vorhandene Dateien bleiben unangetastet (SetOverwrite off). Die
+; Deinstallation lässt die Modelle liegen wie geladene Modelle auch; nur „App-Daten löschen“
+; entfernt sie.
+!ifdef VORINSTALLIERT
+Var VorinstAsr
+Var VorinstTts
+
+Function VorinstZiele
+  ${If} $PortableMode = 1
+    StrCpy $VorinstAsr "$INSTDIR\Data"
+    StrCpy $VorinstTts "$INSTDIR\Data"
+  ${Else}
+    ; Datenordner des Kontos, unter dem der Installer läuft (Umgebung des Prozesses), damit
+    ; der Shell-Kontext unverändert bleibt. Wer mit fremden Administrator-Anmeldedaten
+    ; installiert, legt die Modelle in dessen Profil ab; die App lädt sie dann bei Bedarf.
+    ; Bei installMode currentUser (Vorgabe) läuft der Installer ohne Erhöhung als Nutzer.
+    ReadEnvStr $0 APPDATA
+    ReadEnvStr $1 LOCALAPPDATA
+    StrCpy $VorinstAsr "$0\${BUNDLEID}"
+    StrCpy $VorinstTts "$1\${BUNDLEID}"
+  ${EndIf}
+FunctionEnd
+
+; erststart.ini: das erste gewählte Spracherkennungsmodell wird beim ersten Start eingestellt
+; (firstRunSetup.ts). Eine vorhandene Datei bleibt, wie beim schlanken Installer.
+!macro VORINST_DIKTAT id
+  ${IfNot} ${FileExists} "$INSTDIR\erststart.ini"
+    WriteINIStr "$INSTDIR\erststart.ini" "diktat" "modell" "${id}"
+  ${EndIf}
+!macroend
+
+Section "Spracherkennung Nemotron 3.5 ASR Streaming" SEC_NEMOTRON
+  Call VorinstZiele
+  SetOverwrite off
+  SetOutPath "$VorinstAsr\models"
+  File /r "${VORINSTALLIERT}\nemotron\models\*"
+  SetOverwrite on
+  !insertmacro VORINST_DIKTAT "${VORINST_NEMOTRON_ID}"
+  SetOutPath $INSTDIR
+SectionEnd
+
+Section "Spracherkennung Parakeet V3" SEC_PARAKEET
+  Call VorinstZiele
+  SetOverwrite off
+  SetOutPath "$VorinstAsr\models"
+  File /r "${VORINSTALLIERT}\parakeet\models\*"
+  SetOverwrite on
+  !insertmacro VORINST_DIKTAT "${VORINST_PARAKEET_ID}"
+  SetOutPath $INSTDIR
+SectionEnd
+
+Section "${VORINST_PHONON_NAME}" SEC_PHONON
+  Call VorinstZiele
+  SetOverwrite off
+  SetOutPath "$VorinstTts\tts"
+  File /r "${VORINSTALLIERT}\phonon\tts\*"
+  SetOverwrite on
+  SetOutPath $INSTDIR
+SectionEnd
+
+Section -VorinstLizenzen
+  SetOutPath $INSTDIR
+  File "/oname=LIZENZEN-MODELLE.txt" "${VORINSTALLIERT}\LIZENZEN-MODELLE.txt"
+  ; Beide Spracherkennungen abgewählt: beim ersten Start nichts laden, die Person wählt selbst.
+  !insertmacro VORINST_DIKTAT "aus"
+SectionEnd
+
+!insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
+  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_PROGRAMM} "Die App selbst. Immer erforderlich."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_NEMOTRON} "Empfohlen für Diktat und Besprechungen, 28 Sprachen, Live-Text. Lizenz OpenMDW-1.1."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_PARAKEET} "Schnelle Alternative für 25 europäische Sprachen. Lizenz CC BY 4.0."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_PHONON} "${VORINST_PHONON_TEXT}"
+!insertmacro MUI_FUNCTION_DESCRIPTION_END
+!endif
+; --- END VORINSTALLIERT ---
+
 Function .onInstSuccess
   ; Check for `/R` flag only in silent and passive installers because
   ; GUI installer has a toggle for the user to (re)start the app
@@ -991,6 +1114,8 @@ Section Uninstall
   ; --- DIKTATMODELL --- Erststart-Datei nur bei echter Deinstallation entfernen
   ${If} $UpdateMode <> 1
     Delete "$INSTDIR\erststart.ini"
+    ; --- VORINSTALLIERT --- Lizenzliste des Installers mit Modellen (Modelle selbst bleiben)
+    Delete "$INSTDIR\LIZENZEN-MODELLE.txt"
   ${EndIf}
 
   ; Delete uninstaller

@@ -616,6 +616,8 @@
           "phase": {
             "uploading": "Die Aufnahme wird an Gradium übertragen …",
             "waiting": "Gradium erstellt die Stimme …",
+      "waitingTitle": "Keine Verbindung zum Download-Server. Local Voice wartet und versucht es erneut.",
+      "waitingTitleDns": "Hugging Face ist nicht erreichbar (Servername nicht auflösbar). Local Voice wartet und versucht es erneut. Im Firmennetz ggf. Proxy unter Einstellungen › Allgemein eintragen.",
             "downloading": "Die Stimmdatei wird geladen …"
           },
           "overwrite": "Es gibt schon eine eigene Stimme „{{name}}“. Mit „Ersetzen und erstellen“ wird sie überschrieben.",
@@ -1989,6 +1991,20 @@
     }
   },
   "modelSelector": {
+    "download": {
+      "details": "Details",
+      "detailsTitle": "Technische Details",
+      "waiting": "Neuer Versuch in {{seconds}} s ({{attempt}}/{{max}})",
+      "fault": {
+        "dns": "Keine Verbindung zu Hugging Face: Dieser Rechner kann den Servernamen nicht auflösen. Entweder fehlt gerade das Internet, oder das Firmennetz lässt den Zugang nur über einen Proxy zu (Einstellungen › Allgemein › Proxy für Downloads).",
+        "proxyAuth": "Der Proxy verlangt eine Anmeldung, die Local Voice nicht leisten kann. Bitte die IT fragen, ob huggingface.co ohne Anmeldung freigegeben werden kann.",
+        "proxy": "Der Proxy ist nicht erreichbar oder lehnt die Verbindung ab. Bitte die Proxy-Einstellung unter Einstellungen › Allgemein prüfen.",
+        "offline": "Keine Verbindung zum Download-Server. Bitte die Netzwerkverbindung prüfen und den Download erneut starten.",
+        "timeout": "Der Download-Server antwortet nicht. Bitte später erneut versuchen.",
+        "certificate": "Die sichere Verbindung wurde abgelehnt (Zertifikat). Häufig prüft ein Firmenproxy den Datenverkehr; dann muss die IT das Zertifikat auf diesem Rechner hinterlegen.",
+        "blocked": "Das Netzwerk sperrt den Download (Zugriff verweigert). Bitte die IT bitten, huggingface.co freizugeben."
+      }
+    },
     "custom": "Benutzerdefiniert",
     "streaming": "Streaming",
     "active": "Aktiv",
@@ -3058,6 +3074,13 @@
         "choose": "Ordner wählen…",
         "clear": "Entfernen",
         "none": "Kein Ordner gesetzt"
+      },
+      "downloadProxy": {
+        "title": "Proxy für Downloads",
+        "description": "Leer lassen: Local Voice nimmt den Proxy wie Windows (Proxy-Skript bzw. PAC-Datei, automatische Erkennung, Systemproxy). Nur eintragen, wenn Downloads im Firmennetz trotzdem scheitern, z. B. proxy.example.org:8080. „direkt“ lädt ohne Proxy.",
+        "placeholder": "Wie Windows (automatisch)",
+        "save": "Übernehmen",
+        "reset": "Zurücksetzen"
       }
     },
     "llm": {
