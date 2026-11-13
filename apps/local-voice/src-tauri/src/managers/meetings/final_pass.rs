@@ -3485,6 +3485,120 @@ mod tests {
         assert_eq!(snap.segments.iter().map(|s| s.end_ms).max(), Some(9_000));
     }
 
+    /// Die Capture-Seite des Loopbacks bis zum Stopp (lva#538 Runde 4): ein Paket von `seconds`
+    /// Sekunden liegt beim Stopp in der Schlange (der Stopp kommt mit dem ersten Block). Das
+    /// echte `capture_session`, ohne Geraet.
+    fn loopback_session_end(seconds: usize) -> crate::audio_toolkit::audio::loopback::SessionEnd {
+        use crate::audio_toolkit::audio::loopback::{capture_session, LoopbackFeeder, OwnedPacket};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        const ORIGIN: u64 = 10_000_000;
+        let mut packet = Some(OwnedPacket {
+            interleaved: vec![0.5; seconds * 16_000],
+            device_position: 0,
+            qpc: Some(ORIGIN),
+        });
+        let mut source = move || Ok(packet.take());
+        let mut feeder = LoopbackFeeder::new(16_000, 1, Some(ORIGIN));
+        let stop = AtomicBool::new(false);
+        capture_session(
+            &mut source,
+            &mut feeder,
+            &stop,
+            &mut || {},
+            &mut |_: &[i16], _: Option<u64>| stop.store(true, Ordering::Relaxed),
+        )
+    }
+
+    /// lva#538 Runde 4, Befund 4: ein Verlust beim Stopp des Loopbacks bleibt nicht auf der
+    /// Capture-Seite stehen. Kette: ein uebergrosses Paket liegt beim Stopp in der Schlange
+    /// (`capture_session` meldet den Verlust), der Stopp macht daraus einen unvollstaendigen
+    /// Systemkanal (`settle_after_stop`): `audio_incomplete` steht dauerhaft, `capture_open`
+    /// bleibt, und nach dem "Neustart" (Store neu geoeffnet) ersetzt der Enddurchlauf nichts.
+    #[test]
+    fn a_loss_at_loopback_stop_keeps_the_live_transcript_after_a_restart() {
+        let f = fixture(true, MeetingStatus::Processing);
+        let mic = f.meeting_dir.join("mic.wav");
+        let system = f.meeting_dir.join("system.wav");
+        f.store
+            .begin_capture(&f.id, mic.to_str(), system.to_str())
+            .unwrap();
+        f.store
+            .append_delta(
+                &f.id,
+                &TranscriptDelta {
+                    new_segments: vec![seg(2, 0, 6_000, 9_000)],
+                },
+            )
+            .unwrap();
+
+        let end = loopback_session_end(20);
+        assert!(end.error.is_none());
+        assert!(
+            end.audio_lost(),
+            "Voraussetzung: der Abschluss verlor Audio"
+        );
+
+        // Der Stopp: keine Schreibfehler der WAV, aber der Verlust des Loopbacks.
+        let (failed, _plan) = super::super::recorder::settle_after_stop(
+            &f.store,
+            &f.id,
+            Vec::new(),
+            end.audio_lost(),
+            run_plan(LARGE),
+            1,
+        );
+        assert_eq!(failed, vec![1], "der Systemkanal ist unvollstaendig");
+        let meta = f.store.metadata_json(&f.id).unwrap().unwrap();
+        assert_eq!(
+            meta[AUDIO_INCOMPLETE_KEY]["channels"],
+            serde_json::json!([1]),
+            "{meta}"
+        );
+        assert!(
+            meta.get(super::super::store::CAPTURE_OPEN_KEY).is_some(),
+            "der Marker bleibt: die Aufnahme gilt nicht als sauber geschlossen"
+        );
+
+        // Neustart: ein neuer Store auf derselben Datenbank. Der Enddurchlauf ersetzt nichts.
+        let restarted = MeetingStore::open_at(&f._dir.path().join("meetings.db")).unwrap();
+        let mut env = FakeEnv::new();
+        let out = run_job(&restarted, &job(&f, run_plan(LARGE)), &mut env);
+        assert_live_untouched(&f, &env, &out, &["s0", "s1", "s2"]);
+        let snap = restarted.transcript_snapshot(&f.id).unwrap();
+        assert_eq!(snap.epoch, 0, "die Epoche blieb");
+        assert_eq!(snap.segments.iter().map(|s| s.end_ms).max(), Some(9_000));
+    }
+
+    /// Das Gegenstueck zur Kette oben: ein Stopp ohne Verlust (Paket in Groesse der
+    /// Schlangengrenze) laesst den Marker fallen, und der Enddurchlauf ersetzt. Sonst bewiese
+    /// der Test oben nichts.
+    #[test]
+    fn a_lossless_loopback_stop_closes_the_marker_and_the_final_pass_replaces() {
+        let f = fixture(true, MeetingStatus::Processing);
+        let mic = f.meeting_dir.join("mic.wav");
+        let system = f.meeting_dir.join("system.wav");
+        f.store
+            .begin_capture(&f.id, mic.to_str(), system.to_str())
+            .unwrap();
+        let end = loopback_session_end(8);
+        assert!(end.error.is_none() && !end.audio_lost());
+        let (failed, _plan) = super::super::recorder::settle_after_stop(
+            &f.store,
+            &f.id,
+            Vec::new(),
+            end.audio_lost(),
+            run_plan(LARGE),
+            1,
+        );
+        assert!(failed.is_empty());
+        let meta = f.store.metadata_json(&f.id).unwrap().unwrap();
+        assert!(meta.get(AUDIO_INCOMPLETE_KEY).is_none(), "{meta}");
+        assert!(meta.get(super::super::store::CAPTURE_OPEN_KEY).is_none());
+        let mut env = FakeEnv::new();
+        let _ = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        assert!(env.kinds().contains(&"reset"), "der Enddurchlauf ersetzt");
+    }
+
     /// Das Gegenstueck: eine sauber geschlossene Aufnahme laesst den Marker fallen, und der
     /// Enddurchlauf ersetzt wie bisher. Sonst bewiese der Test oben nichts (und die normale
     /// Live-Aufnahme verlore den Enddurchlauf).

@@ -106,6 +106,9 @@ export const installYoutubeMock = async (
       w.__cancelErrorOnce = cancelErrorOnce ?? null;
       w.__rollbackEmits = rollbackEmits;
       w.__holdFinishesOnCancel = holdFinishesOnCancel;
+      // lva#538 (Runde 4): zurueckgehaltene Ladeantworten (`holdLoads`, `releaseHeldLoads`).
+      w.__holdLoads = false;
+      w.__heldLoads = [];
       if (privateOn) w.__settings.meeting_youtube_private = true;
       if (fakePlayer) {
         w.YT = {
@@ -272,6 +275,14 @@ export const installYoutubeMock = async (
           case "meetings_get_segments":
             w.__calls.push({ cmd, args });
             if (w.__ytEmpty && args.meetingId === meetingId) {
+              if (w.__holdLoads) {
+                // Die Antwort traegt den Stand vom ZEITPUNKT DER ANFRAGE und kommt erst mit
+                // `releaseHeldLoads` (eine langsame Antwort des Backends).
+                const snapshot = JSON.parse(JSON.stringify(w.__ytSegments));
+                return new Promise((resolve) => {
+                  w.__heldLoads.push(() => resolve(snapshot));
+                });
+              }
               return w.__ytSegments;
             }
             break;
@@ -412,6 +423,28 @@ export const captureSegment = (
     },
     { meetingId: YT_MEETING_ID, index, text, startMs },
   );
+
+/**
+ * lva#538 (Runde 4): ab jetzt (`on`) werden Antworten von `meetings_get_segments` fuer `y1`
+ * zurueckgehalten, bis `releaseHeldLoads` sie in der Reihenfolge der Anfragen abliefert.
+ */
+export const holdLoads = (page: Page, on: boolean) =>
+  page.evaluate((on) => {
+    (window as any).__holdLoads = on;
+  }, on);
+
+/** So viele Ladeantworten warten gerade. */
+export const heldLoadCount = (page: Page): Promise<number> =>
+  page.evaluate(() => (window as any).__heldLoads.length as number);
+
+/** Liefert alle zurueckgehaltenen Ladeantworten ab; Anzahl der abgelieferten. */
+export const releaseHeldLoads = (page: Page): Promise<number> =>
+  page.evaluate(() => {
+    const w = window as any;
+    const held = (w.__heldLoads as Array<() => void>).splice(0);
+    for (const release of held) release();
+    return held.length;
+  });
 
 /** Aufrufe des falschen YouTube-Players in Reihenfolge. */
 export const playerCalls = (page: Page): Promise<unknown[][]> =>

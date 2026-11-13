@@ -10,6 +10,8 @@ import {
 import { installTauriMock } from "./calendarMock";
 import {
   captureSegment,
+  heldLoadCount,
+  holdLoads,
   installYoutubeMock,
   pasteText,
   playerCalls,
@@ -17,6 +19,7 @@ import {
   YT_CHANNEL,
   YT_ID,
   YT_MEETING_ID,
+  releaseHeldLoads,
   YT_TITLE,
   type YoutubeMockOptions,
 } from "./youtubeMock";
@@ -1015,6 +1018,40 @@ test.describe("Beim Abspielen mitschreiben", () => {
       await dialog.getByTestId("yt-capture-cancel").click();
       await expectCancelled(page);
       await expect(phantom).toHaveCount(0);
+    });
+
+    // lva#538, Runde 4: Rollback, SOFORT ein neuer Start, dann die verspaetete Antwort des
+    // Neuladens nach dem Rollback. Sie traegt den Stand vor dem neuen Satz und darf ihn nicht
+    // wegwischen (Ladevorgang und Ereignisse werden vereinigt); der Phantomsatz des alten
+    // Starts kommt auch nicht zurueck.
+    test("Rollback, sofort neuer Start, verzögerte alte Ladeantwort: der neue Satz bleibt", async ({
+      page,
+    }) => {
+      const dialog = await hangingStart(page, { rollbackEmits: true });
+      await captureSegment(page, 0, PHANTOM);
+      await expect(page.getByText(PHANTOM)).toBeVisible();
+
+      await holdLoads(page, true);
+      await dialog.getByTestId("yt-capture-cancel").click();
+      // Der Abbruch ist durch (Dialog zu, Phantomsatz weg), die Ladeantworten stehen aus.
+      await expect.poll(() => heldLoadCount(page)).toBeGreaterThan(0);
+      await expect(captureDialog(page)).toHaveCount(0);
+      await expect(page.getByText(PHANTOM)).toHaveCount(0);
+
+      // Sofort ein neuer Start; sein Satz kommt an, solange die alte Antwort noch aussteht
+      // (die Liste zeigt in dieser Zeit „wird geladen“, der Satz liegt im Puffer der Ladung).
+      await expect(page.getByTestId("yt-capture")).toBeEnabled();
+      await startCapture(page);
+      await expect.poll(async () => (await calls(page, START)).length).toBe(2);
+      const FRESH = "Satz des neuen Starts.";
+      await captureSegment(page, 0, FRESH);
+
+      // Jetzt erst kommen die alten Antworten an: der neue Satz bleibt, der alte bleibt weg.
+      await holdLoads(page, false);
+      expect(await releaseHeldLoads(page)).toBeGreaterThan(0);
+      await expect.poll(() => heldLoadCount(page)).toBe(0);
+      await expect(page.getByText(FRESH)).toBeVisible();
+      await expect(page.getByText(PHANTOM)).toHaveCount(0);
     });
 
     // Der Abbruch kam erst nach der Veroeffentlichung an: der Start endet mit Erfolg, das
