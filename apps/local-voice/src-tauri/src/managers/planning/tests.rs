@@ -171,8 +171,8 @@ fn planning_steps_follow_the_crate() {
          Planungsschritt anhaengen und diese Zahl anheben"
     );
     assert!(
-        MIGRATIONS.len() >= 18,
-        "Index 16 = Planung, 17 = Kalender-Instanz"
+        MIGRATIONS.len() >= 19,
+        "Index 16 = Planung, 17 = Kalender-Instanz, 18 = Bindungen des Einwilligungs-Tors"
     );
 }
 
@@ -1819,7 +1819,7 @@ fn the_lock_order_check_fires_for_a_join_or_a_model_call_under_the_gate_lock() {
     let store = &f.store;
     let text = paniktext(std::panic::AssertUnwindSafe(|| {
         let _sperre = tor_sperre();
-        let _ = modell_lauf(store, &id, || Ok(()));
+        let _ = modell_lauf(store, &id, |_frei| Ok(()));
     }));
     assert!(text.contains("Modellaufruf unter der Tor-Sperre"), "{text}");
     // Die Panik hat die Sperre freigegeben (Drop beim Abwickeln): der Thread ist wieder frei.
@@ -1846,10 +1846,11 @@ fn a_model_run_checks_the_gate_before_and_after_and_never_holds_the_lock_inside(
     let (p, id) = aufnahme_mit_planung(&f);
     zustimmen(&f, &p.id, "anna@example.com");
     zustimmen(&f, &p.id, "bert@example.org");
+    let _arbeit = Modellarbeit::beginnen(&id);
 
     // Erlaubt: der Aufruf laeuft, und die Sperre ist darin FREI (ein Widerruf kann also
     // waehrend des Modells gespeichert werden, ohne auf es zu warten).
-    let r = modell_lauf(&f.store, &id, || {
+    let r = modell_lauf(&f.store, &id, |_frei| {
         assert!(
             !unter_tor_sperre(),
             "das Modell laeuft nie unter der Sperre"
@@ -1860,7 +1861,7 @@ fn a_model_run_checks_the_gate_before_and_after_and_never_holds_the_lock_inside(
 
     // Widerruf WAEHREND des Aufrufs: der Schreiber kommt durch (kein Deadlock), das Ergebnis wird
     // verworfen.
-    let verworfen = modell_lauf(&f.store, &id, || {
+    let verworfen = modell_lauf(&f.store, &id, |_frei| {
         einwilligung_setzen(&f.store, &widerruf(&p.id, NOW + 1), NOW + 1).unwrap();
         Ok("ergebnis")
     });
@@ -1868,7 +1869,7 @@ fn a_model_run_checks_the_gate_before_and_after_and_never_holds_the_lock_inside(
 
     // Danach ruft niemand mehr das Modell.
     let aufgerufen = AtomicBool::new(false);
-    let r = modell_lauf(&f.store, &id, || {
+    let r = modell_lauf(&f.store, &id, |_frei| {
         aufgerufen.store(true, Ordering::SeqCst);
         Ok(())
     });
@@ -1877,11 +1878,611 @@ fn a_model_run_checks_the_gate_before_and_after_and_never_holds_the_lock_inside(
 
     // Fehler des Aufrufs selbst gehen unveraendert durch; ohne Planung ist alles frei.
     let frei = f.store.create_empty_meeting("Frei", None).unwrap();
+    let _arbeit_frei = Modellarbeit::beginnen(&frei.id);
     assert_eq!(
-        modell_lauf::<()>(&f.store, &frei.id, || Err("kaputt".into())),
+        modell_lauf::<()>(&f.store, &frei.id, |_frei| Err("kaputt".into())),
         Err("kaputt".to_string())
     );
-    assert_eq!(modell_lauf(&f.store, &frei.id, || Ok(1)), Ok(1));
+    assert_eq!(modell_lauf(&f.store, &frei.id, |_frei| Ok(1)), Ok(1));
+}
+
+// ---------------------------------------------------------------------------
+// lva#544, Fixrunde 5: die Durchsetzungspunkte (Modell, Schreiben, Zuordnung)
+// ---------------------------------------------------------------------------
+
+/// Die Nachpruefung laeuft IMMER: auch wenn der Modellaufruf mit einem Fehler oder einer Panik
+/// endet. Ein Widerruf waehrend eines gescheiterten Aufrufs wird damit zur Ablehnung (der
+/// Aufrufer wiederholt nicht und schreibt keine Luecke); ohne Widerruf gehen Fehler und Panik
+/// unveraendert durch.
+#[test]
+fn the_check_after_the_model_call_also_runs_after_an_error_and_after_a_panic() {
+    let f = fix();
+    let (p, id) = aufnahme_mit_planung(&f);
+    zustimmen(&f, &p.id, "anna@example.com");
+    zustimmen(&f, &p.id, "bert@example.org");
+    let _arbeit = Modellarbeit::beginnen(&id);
+
+    // Ohne Widerruf: der Fehler des Aufrufs geht durch, eine Panik ebenso.
+    assert_eq!(
+        modell_lauf::<()>(&f.store, &id, |_frei| Err("kaputt".into())),
+        Err("kaputt".to_string())
+    );
+    let store = &f.store;
+    let text = paniktext(std::panic::AssertUnwindSafe(|| {
+        let _ = modell_lauf::<()>(store, &id, |_frei| panic!("engine exploded"));
+    }));
+    assert!(text.contains("engine exploded"), "{text}");
+    assert!(!unter_tor_sperre());
+
+    // Widerruf im Aufruf, der dann mit einem FEHLER endet: Ablehnung statt Fehler.
+    let r = modell_lauf::<()>(&f.store, &id, |_frei| {
+        einwilligung_setzen(&f.store, &widerruf(&p.id, NOW + 1), NOW + 1).unwrap();
+        Err("kaputt".into())
+    });
+    assert_eq!(r, Err("nur_notizen: abgelehnt".to_string()));
+
+    // Widerruf im Aufruf, der dann mit einer PANIK endet: Ablehnung, keine Panik.
+    zustimmen(&f, &p.id, "bert@example.org");
+    let r = modell_lauf::<()>(&f.store, &id, |_frei| {
+        einwilligung_setzen(&f.store, &widerruf(&p.id, NOW + 2), NOW + 2).unwrap();
+        panic!("engine exploded");
+    });
+    assert_eq!(r, Err("nur_notizen: abgelehnt".to_string()));
+    assert!(!unter_tor_sperre());
+    assert!(ist_ablehnung(&r.unwrap_err()));
+}
+
+/// Eine Freigabe aus dem Tor gilt fuer GENAU EINE Inferenz; nur `modell_lauf` erzeugt sie. Der
+/// benannte Ausweg (Ton ohne Besprechung) ist beliebig oft gueltig.
+#[test]
+fn a_release_from_the_gate_is_good_for_exactly_one_inference() {
+    let f = fix();
+    let id = f.store.create_empty_meeting("x", None).unwrap().id;
+    let _arbeit = Modellarbeit::beginnen(&id);
+    let r = modell_lauf(&f.store, &id, |frei| {
+        assert_eq!(frei.einloesen(), Ok(()));
+        assert_eq!(frei.einloesen(), Err(FREIGABE_VERBRAUCHT.to_string()));
+        assert_eq!(frei.einloesen(), Err(FREIGABE_VERBRAUCHT.to_string()));
+        Ok(())
+    });
+    assert_eq!(r, Ok(()));
+    // Jeder `modell_lauf` gibt eine neue.
+    assert_eq!(modell_lauf(&f.store, &id, |frei| frei.einloesen()), Ok(()));
+    let frei = Freigabe::ohne_besprechung(OhneBesprechung::Aufwaermen);
+    assert_eq!(frei.einloesen(), Ok(()));
+    assert_eq!(frei.einloesen(), Ok(()));
+}
+
+/// Ohne laufende Modellarbeit DIESES Threads fuer DIESE Besprechung gibt es keinen Modellaufruf.
+/// Damit kann kein Pfad ein Modell rufen, dessen Schreiben der Speicher nicht prueft.
+#[test]
+fn a_model_run_needs_model_work_of_this_thread_for_this_meeting() {
+    let f = fix();
+    let a = f.store.create_empty_meeting("a", None).unwrap().id;
+    let b = f.store.create_empty_meeting("b", None).unwrap().id;
+    let aufrufe = std::sync::atomic::AtomicUsize::new(0);
+    let lauf = |id: &str| {
+        modell_lauf(&f.store, id, |_frei| {
+            aufrufe.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })
+    };
+    let ohne = Err("nur_notizen: ohne_modellarbeit".to_string());
+    assert_eq!(lauf(&a), ohne);
+    {
+        let _arbeit_b = Modellarbeit::beginnen(&b);
+        assert_eq!(
+            lauf(&a),
+            ohne,
+            "Modellarbeit fuer eine ANDERE Besprechung zaehlt nicht"
+        );
+        assert_eq!(lauf(&b), Ok(()));
+        {
+            let _innen = Modellarbeit::beginnen(&a);
+            assert!(in_modellarbeit(&a) && in_modellarbeit(&b));
+            assert_eq!(lauf(&a), Ok(()));
+        }
+        assert!(!in_modellarbeit(&a) && in_modellarbeit(&b));
+        // Ein anderer Thread erbt den Abschnitt nicht.
+        let (store, a2, b2) = (&f.store, a.clone(), b.clone());
+        std::thread::scope(|s| {
+            s.spawn(move || {
+                assert!(!in_modellarbeit(&b2));
+                assert_eq!(
+                    modell_lauf(store, &a2, |_frei| Ok(())),
+                    Err("nur_notizen: ohne_modellarbeit".to_string())
+                );
+            });
+        });
+    }
+    assert!(!in_modellarbeit(&b));
+    assert_eq!(lauf(&b), ohne);
+    assert_eq!(aufrufe.load(Ordering::SeqCst), 2);
+}
+
+fn bindungs_zeilen(f: &Fix, meeting_id: &str) -> Vec<(String, String)> {
+    let conn = f.store.get_connection().unwrap();
+    let mut st = conn
+        .prepare(
+            "SELECT plan_id, attendees_json FROM meeting_plan_bindings
+             WHERE meeting_id = ?1 ORDER BY plan_id",
+        )
+        .unwrap();
+    let rows = st
+        .query_map([meeting_id], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap();
+    rows.map(|r| r.unwrap()).collect()
+}
+
+/// Eine WEITERE verknuepfte Planung mit eigenem Termin; die schon gecachten Termine bleiben.
+fn weitere_planung(f: &Fix, uid: &str) -> (Plan, CalEvent) {
+    let (p, e) = uebergeben(&f.store);
+    let mut t = termin(uid, NOW + 5 * D, Some(beschreibung(&e)));
+    t.attendees = vec![person("anna@example.com"), person("bert@example.org")];
+    let mut alle = f.store.calendar_events_between(0, i64::MAX, false).unwrap();
+    alle.push(t.clone());
+    cache(&f.store, &alle);
+    assert_eq!(lauf(&f.store).geaendert, 1);
+    let im_cache = f.store.calendar_event(&t.key).unwrap().unwrap();
+    (p, im_cache)
+}
+
+/// Zuordnung: das bestandene Tor BINDET die gepruefte Planung an die Besprechung. Die Bindung
+/// ueberlebt, dass die Verknuepfung mit dem Termin ersetzt wird (`link_meeting_event` ist ein
+/// `INSERT OR REPLACE`): ein spaeterer Widerruf sperrt weiter. Ohne bestandenes Tor entsteht
+/// keine Bindung.
+#[test]
+fn a_passed_gate_binds_the_plan_and_the_binding_survives_a_replaced_link() {
+    let f = fix();
+    let (p, id) = aufnahme_mit_planung(&f);
+    // Offen: das Tor lehnt ab und bindet nichts.
+    assert_eq!(
+        tor_pruefen_besprechung(&f.store, &id),
+        Err("nur_notizen: offen".to_string())
+    );
+    assert!(
+        bindungs_zeilen(&f, &id).is_empty(),
+        "abgelehnt: keine Bindung"
+    );
+    zustimmen(&f, &p.id, "anna@example.com");
+    zustimmen(&f, &p.id, "bert@example.org");
+    assert_eq!(tor_pruefen_besprechung(&f.store, &id), Ok(()));
+    let zeilen = bindungs_zeilen(&f, &id);
+    assert_eq!(zeilen.len(), 1);
+    assert_eq!(zeilen[0].0, p.id);
+    assert_eq!(zeilen[0].1, r#"["anna@example.com","bert@example.org"]"#);
+    // Zweite Pruefung: dieselbe Bindung, keine zweite Zeile.
+    assert_eq!(tor_pruefen_besprechung(&f.store, &id), Ok(()));
+    assert_eq!(bindungs_zeilen(&f, &id), zeilen);
+
+    // Die Verknuepfung wird ERSETZT (anderer Termin ohne Planung): die laufende Quelle faellt weg.
+    let anderer = fremder_termin(&f, "ohne-planung");
+    f.store
+        .link_meeting_event(&id, &anderer, "prompt", NOW + 1)
+        .unwrap();
+    assert_eq!(
+        start_tor(&f.store, None, Some(&id)),
+        Ok(()),
+        "noch zugestimmt"
+    );
+    einwilligung_setzen(&f.store, &widerruf(&p.id, NOW + 2), NOW + 2).unwrap();
+    assert_eq!(
+        tor_pruefen_besprechung(&f.store, &id),
+        Err("nur_notizen: abgelehnt".to_string()),
+        "die Bindung haelt die Planung an der Besprechung"
+    );
+    let _arbeit = Modellarbeit::beginnen(&id);
+    let aufrufe = std::sync::atomic::AtomicUsize::new(0);
+    let r = modell_lauf(&f.store, &id, |_frei| {
+        aufrufe.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    });
+    assert_eq!(r, Err("nur_notizen: abgelehnt".to_string()));
+    assert_eq!(aufrufe.load(Ordering::SeqCst), 0);
+}
+
+/// Gegenprobe zur Bindung: OHNE sie (die Besprechung wurde nie unter der Planung geprueft)
+/// gaelte nach dem Ersetzen der Verknuepfung nur noch der neue Termin. Genau diese Luecke
+/// schliesst die Bindung beim Start.
+#[test]
+fn without_a_binding_a_replaced_link_would_lose_the_plan() {
+    let f = fix();
+    let (p, id) = aufnahme_mit_planung(&f);
+    zustimmen(&f, &p.id, "anna@example.com");
+    zustimmen(&f, &p.id, "bert@example.org");
+    // Nur die unverriegelte Momentaufnahme: sie bindet nichts.
+    assert_eq!(start_tor(&f.store, None, Some(&id)), Ok(()));
+    assert!(bindungs_zeilen(&f, &id).is_empty());
+    let anderer = fremder_termin(&f, "ohne-planung-2");
+    f.store
+        .link_meeting_event(&id, &anderer, "prompt", NOW + 1)
+        .unwrap();
+    einwilligung_setzen(&f.store, &widerruf(&p.id, NOW + 2), NOW + 2).unwrap();
+    assert_eq!(tor_pruefen_besprechung(&f.store, &id), Ok(()));
+}
+
+/// Start mit ZWEI Quellen (uebergebener Termin mit Planung A, Zieleintrag verknuepft mit Planung
+/// B): beide werden gebunden. `bindung_verwerfen` nimmt nach einem gescheiterten Start nur, was
+/// dieser Start neu gebunden hat.
+#[test]
+fn a_start_binds_every_source_and_a_failed_start_drops_only_its_own_bindings() {
+    let f = fix();
+    let (b, id) = aufnahme_mit_planung(&f);
+    let (a, termin_a) = weitere_planung(&f, "termin-a");
+    for plan in [&a, &b] {
+        zustimmen(&f, &plan.id, "anna@example.com");
+        zustimmen(&f, &plan.id, "bert@example.org");
+    }
+    // B ist schon gebunden (frueher bestandene Pruefung).
+    assert_eq!(tor_pruefen_besprechung(&f.store, &id), Ok(()));
+    assert_eq!(bindungs_zeilen(&f, &id).len(), 1);
+
+    let gebunden = mit_tor(&f.store, Some(&termin_a), Some(&id), |tor| {
+        tor.binden(&f.store, &id)
+    })
+    .unwrap();
+    let plaene: Vec<String> = bindungs_zeilen(&f, &id).into_iter().map(|z| z.0).collect();
+    let mut erwartet = vec![a.id.clone(), b.id.clone()];
+    erwartet.sort();
+    assert_eq!(plaene, erwartet, "beide Planungen gebunden");
+
+    // Gescheiterter Start: nur A (neu) faellt weg, B (aelter) bleibt.
+    bindung_verwerfen(&f.store, gebunden);
+    let plaene: Vec<String> = bindungs_zeilen(&f, &id).into_iter().map(|z| z.0).collect();
+    assert_eq!(plaene, vec![b.id.clone()]);
+}
+
+/// Start in eine NEUE Besprechung aus einem Termin: die Bindung entsteht fuer die neue Zeile
+/// unter der Sperre des Tors, bevor irgendeine Verknuepfung mit dem Termin existiert.
+#[test]
+fn a_start_into_a_new_meeting_binds_the_plan_of_the_event() {
+    let f = fix();
+    let (p, t) = mit_teilnehmenden(&f, "neu");
+    zustimmen(&f, &p.id, "anna@example.com");
+    zustimmen(&f, &p.id, "bert@example.org");
+    let t = f.store.calendar_event(&t.key).unwrap().unwrap();
+    let (id, gebunden) = mit_tor(&f.store, Some(&t), None, |tor| {
+        assert!(unter_tor_sperre());
+        let m = f
+            .store
+            .create_empty_meeting("neu", None)
+            .map_err(|e| e.to_string())?;
+        let g = tor.binden(&f.store, &m.id)?;
+        Ok((m.id, g))
+    })
+    .unwrap();
+    assert_eq!(gebunden.meeting_id(), id);
+    assert_eq!(bindungs_zeilen(&f, &id).len(), 1);
+    assert!(f.store.meeting_calendar_link(&id).unwrap().is_none());
+    // Der wirksame Beginn prueft erneut: nach einem Widerruf wird nie geschaltet.
+    let geschaltet = AtomicBool::new(false);
+    assert_eq!(
+        gebunden.wirksam(&f.store, || geschaltet.store(true, Ordering::SeqCst)),
+        Ok(())
+    );
+    assert!(geschaltet.swap(false, Ordering::SeqCst));
+    einwilligung_setzen(&f.store, &widerruf(&p.id, NOW + 1), NOW + 1).unwrap();
+    assert_eq!(
+        gebunden.wirksam(&f.store, || geschaltet.store(true, Ordering::SeqCst)),
+        Err("nur_notizen: abgelehnt".to_string())
+    );
+    assert!(!geschaltet.load(Ordering::SeqCst));
+    assert_eq!(
+        tor_pruefen_besprechung(&f.store, &id),
+        Err("nur_notizen: abgelehnt".to_string())
+    );
+}
+
+fn start_termin_zeilen(f: &Fix, meeting_id: &str) -> Vec<(String, String)> {
+    let conn = f.store.get_connection().unwrap();
+    let mut st = conn
+        .prepare(
+            "SELECT event_key, uid FROM meeting_start_events
+             WHERE meeting_id = ?1 ORDER BY event_key",
+        )
+        .unwrap();
+    let rows = st
+        .query_map([meeting_id], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap();
+    rows.map(|r| r.unwrap()).collect()
+}
+
+/// Zuordnung, Quelle "Termin des Starts": der Start bindet auch den uebergebenen TERMIN an die
+/// Besprechung, unter der Sperre und vor dem wirksamen Beginn. Eine Planung, die diesem Termin
+/// erst NACH dem Start zugeordnet wird (hier: bevor irgendeine Verknuepfung mit dem Termin
+/// existiert, also in der Zeit bis `finish_start` oder nach dessen Fehler), sperrt den naechsten
+/// Modellaufruf und den wirksamen Beginn. Ohne uebergebenen Termin bleibt alles frei.
+#[test]
+fn a_plan_attached_to_the_start_event_after_the_start_blocks_without_any_link() {
+    let f = fix();
+    // Der Termin steht OHNE Planung im Cache.
+    let mut t = termin("spaeter-geplant", NOW + 2 * D, None);
+    t.attendees = vec![person("anna@example.com"), person("bert@example.org")];
+    cache(&f.store, std::slice::from_ref(&t));
+    let t = f.store.calendar_event(&t.key).unwrap().unwrap();
+    let (id, gebunden) = mit_tor(&f.store, Some(&t), None, |tor| {
+        let m = f
+            .store
+            .create_empty_meeting("neu", None)
+            .map_err(|e| e.to_string())?;
+        let g = tor.binden(&f.store, &m.id)?;
+        Ok((m.id, g))
+    })
+    .unwrap();
+    assert!(
+        bindungs_zeilen(&f, &id).is_empty(),
+        "keine Planung: keine Planungs-Bindung"
+    );
+    assert_eq!(
+        start_termin_zeilen(&f, &id),
+        vec![(t.key.clone(), "spaeter-geplant".to_string())],
+        "der Termin des Starts ist gebunden"
+    );
+    assert!(f.store.meeting_calendar_link(&id).unwrap().is_none());
+    // Gegenprobe: eine Besprechung, die ohne Termin startete.
+    let (ohne, _g) = mit_tor(&f.store, None, None, |tor| {
+        let m = f
+            .store
+            .create_empty_meeting("frei", None)
+            .map_err(|e| e.to_string())?;
+        let g = tor.binden(&f.store, &m.id)?;
+        Ok((m.id, g))
+    })
+    .unwrap();
+    assert!(start_termin_zeilen(&f, &ohne).is_empty());
+
+    let _arbeit = Modellarbeit::beginnen(&id);
+    let _arbeit_ohne = Modellarbeit::beginnen(&ohne);
+    let aufrufe = std::sync::atomic::AtomicUsize::new(0);
+    let block = |id: &str| {
+        modell_lauf(&f.store, id, |_frei| {
+            aufrufe.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })
+    };
+    assert_eq!(block(&id), Ok(()), "noch keine Planung am Termin");
+    assert_eq!(aufrufe.load(Ordering::SeqCst), 1);
+
+    // JETZT bekommt der Termin eine Planung (Einladung im Termin, Abgleich): Einwilligungen offen.
+    let (p, e) = uebergeben(&f.store);
+    let mut mit_block = termin("spaeter-geplant", NOW + 2 * D, Some(beschreibung(&e)));
+    mit_block.attendees = t.attendees.clone();
+    assert_eq!(mit_block.key, t.key);
+    cache(&f.store, std::slice::from_ref(&mit_block));
+    assert_eq!(lauf(&f.store).geaendert, 1);
+    assert_eq!(
+        link(&f.store, &p.id).remote_id.as_deref(),
+        Some("spaeter-geplant")
+    );
+
+    assert_eq!(block(&id), Err("nur_notizen: offen".to_string()));
+    assert_eq!(
+        aufrufe.load(Ordering::SeqCst),
+        1,
+        "kein weiterer Modellaufruf"
+    );
+    assert_eq!(
+        gebunden.wirksam(&f.store, || panic!("darf nie schalten")),
+        Err("nur_notizen: offen".to_string())
+    );
+    assert_eq!(block(&ohne), Ok(()), "ohne Termin gestartet: unberuehrt");
+
+    // Mit Zustimmung aller laeuft es wieder, und die Planung ist dann auch gebunden.
+    zustimmen(&f, &p.id, "anna@example.com");
+    zustimmen(&f, &p.id, "bert@example.org");
+    assert_eq!(block(&id), Ok(()));
+    assert_eq!(bindungs_zeilen(&f, &id).len(), 1);
+}
+
+/// Der gebundene Termin eines Starts ueberlebt eine ersetzte Verknuepfung, faellt nach einem
+/// gescheiterten Start wieder weg (nur der eigene) und geht beim Zusammenfuehren auf das Ziel ueber.
+#[test]
+fn the_start_event_binding_survives_a_replaced_link_and_follows_a_failed_start_and_a_merge() {
+    let f = fix();
+    let mut a = termin("start-a", NOW + 2 * D, None);
+    a.attendees = vec![person("anna@example.com")];
+    let mut b = termin("start-b", NOW + 3 * D, None);
+    b.attendees = vec![person("anna@example.com")];
+    cache(&f.store, &[a.clone(), b.clone()]);
+    let a = f.store.calendar_event(&a.key).unwrap().unwrap();
+    let b = f.store.calendar_event(&b.key).unwrap().unwrap();
+    let id = f.store.create_empty_meeting("Aufnahme", None).unwrap().id;
+
+    // Erster Start unter Termin A; danach ersetzt die Verknuepfung auf B nichts an der Bindung.
+    let _erster = mit_tor(&f.store, Some(&a), Some(&id), |tor| {
+        tor.binden(&f.store, &id)
+    })
+    .unwrap();
+    f.store
+        .link_meeting_event(&id, &b, "prompt", NOW + 1)
+        .unwrap();
+    assert_eq!(start_termin_zeilen(&f, &id).len(), 1);
+    // Zweiter Start unter B scheitert vor der Aufnahme: nur SEINE Zeile faellt weg.
+    let zweiter = mit_tor(&f.store, Some(&b), Some(&id), |tor| {
+        tor.binden(&f.store, &id)
+    })
+    .unwrap();
+    assert_eq!(start_termin_zeilen(&f, &id).len(), 2);
+    bindung_verwerfen(&f.store, zweiter);
+    assert_eq!(
+        start_termin_zeilen(&f, &id),
+        vec![(a.key.clone(), "start-a".to_string())]
+    );
+    // Derselbe Termin noch einmal: keine zweite Zeile, und ein Verwerfen nimmt die alte nicht mit.
+    let wieder = mit_tor(&f.store, Some(&a), Some(&id), |tor| {
+        tor.binden(&f.store, &id)
+    })
+    .unwrap();
+    bindung_verwerfen(&f.store, wieder);
+    assert_eq!(start_termin_zeilen(&f, &id).len(), 1);
+
+    // Zusammenfuehren: der Termin des Teils gilt danach fuer das Ziel.
+    let ziel = f.store.create_empty_meeting("Ziel", None).unwrap().id;
+    {
+        let _sperre = tor_sperre();
+        let conn = f.store.get_connection().unwrap();
+        bindungen_uebertragen(&conn, &ziel, &[], std::slice::from_ref(&id)).unwrap();
+    }
+    assert_eq!(start_termin_zeilen(&f, &ziel), start_termin_zeilen(&f, &id));
+    // Eine Planung, die Termin A spaeter bekommt, sperrt Teil UND Ziel.
+    let (_p, e) = uebergeben(&f.store);
+    let mut a_geplant = termin("start-a", NOW + 2 * D, Some(beschreibung(&e)));
+    a_geplant.attendees = vec![person("anna@example.com")];
+    cache(&f.store, &[a_geplant, b.clone()]);
+    assert_eq!(lauf(&f.store).geaendert, 1);
+    for besprechung in [&id, &ziel] {
+        assert_eq!(
+            tor_pruefen_besprechung(&f.store, besprechung),
+            Err("nur_notizen: offen".to_string())
+        );
+    }
+}
+
+/// Beim Zusammenfuehren geht der Bezug der Teile auf das Ziel ueber, auch der laufende (Termin
+/// des Teils), und eine Person ohne Identitaet faellt dabei nicht still weg.
+#[test]
+fn merging_carries_the_plans_of_the_parts_over_to_the_target() {
+    let f = fix();
+    let (p, teil) = aufnahme_mit_planung(&f);
+    let ziel = f.store.create_empty_meeting("Ziel", None).unwrap().id;
+    assert_eq!(
+        tor_pruefen_besprechung(&f.store, &ziel),
+        Ok(()),
+        "ohne Planung frei"
+    );
+    {
+        let _sperre = tor_sperre();
+        let quellen = bezug_der_besprechung(&f.store, &teil).unwrap();
+        assert_eq!(
+            quellen.len(),
+            1,
+            "der laufende Bezug des Teils (nie gebunden)"
+        );
+        let conn = f.store.get_connection().unwrap();
+        bindungen_uebertragen(&conn, &ziel, &quellen, std::slice::from_ref(&teil)).unwrap();
+    }
+    assert_eq!(bindungs_zeilen(&f, &ziel).len(), 1);
+    assert_eq!(
+        tor_pruefen_besprechung(&f.store, &ziel),
+        Err("nur_notizen: offen".to_string()),
+        "das Ziel steht jetzt unter der Planung des Teils"
+    );
+    zustimmen(&f, &p.id, "anna@example.com");
+    zustimmen(&f, &p.id, "bert@example.org");
+    assert_eq!(tor_pruefen_besprechung(&f.store, &ziel), Ok(()));
+
+    // Eine Person ohne Identitaet bleibt als `unbekannt` stehen und sperrt.
+    let ziel2 = f.store.create_empty_meeting("Ziel 2", None).unwrap().id;
+    {
+        let _sperre = tor_sperre();
+        let conn = f.store.get_connection().unwrap();
+        let quellen = vec![(
+            p.id.clone(),
+            vec!["anna@example.com".to_string(), "ohne adresse".to_string()],
+        )];
+        bindungen_uebertragen(&conn, &ziel2, &quellen, &[]).unwrap();
+    }
+    assert_eq!(
+        bindungs_zeilen(&f, &ziel2)[0].1,
+        r#"["anna@example.com","unbekannt"]"#
+    );
+    assert!(tor_pruefen_besprechung(&f.store, &ziel2).is_err());
+}
+
+/// Anhaengen: ein zum Anhaengen vorgemerkter Teil steht unter den Planungen seines Ziels (sein
+/// Ton laeuft sonst ungeprueft durch das Modell und landet beim Zusammenfuehren im Transkript
+/// der geplanten Besprechung). Ohne Zustimmung laeuft fuer ihn kein Modell und nichts wird
+/// gebunden; mit Zustimmung wird die Planung an den TEIL gebunden und bleibt es, auch wenn die
+/// Vormerkung spaeter faellt.
+#[test]
+fn a_part_marked_for_appending_stands_under_the_plans_of_its_target() {
+    let f = fix();
+    let (p, ziel) = aufnahme_mit_planung(&f);
+    let teil = f
+        .store
+        .queue_enqueue("Teil", "C:/synthetisch/teil.m4a", Some(1))
+        .unwrap()
+        .id;
+    assert_eq!(
+        tor_pruefen_besprechung(&f.store, &teil),
+        Ok(()),
+        "ohne Vormerkung eine eigene Besprechung ohne Planung"
+    );
+    f.store.append_pending_add(&teil, &ziel).unwrap();
+    assert_eq!(
+        tor_pruefen_besprechung(&f.store, &teil),
+        Err("nur_notizen: offen".to_string())
+    );
+    let _arbeit = Modellarbeit::beginnen(&teil);
+    let mut aufrufe = 0;
+    let r = modell_lauf(&f.store, &teil, |_frei| {
+        aufrufe += 1;
+        Ok(())
+    });
+    assert_eq!(r, Err("nur_notizen: offen".to_string()));
+    assert_eq!(aufrufe, 0, "kein Modell ueber den Ton des Teils");
+    assert!(
+        bindungs_zeilen(&f, &teil).is_empty(),
+        "ohne bestandenes Tor wird nichts gebunden"
+    );
+    {
+        // Fuers Zusammenfuehren zaehlt nur der eigene Bezug des Teils (das Ziel hat seinen schon).
+        let _sperre = tor_sperre();
+        assert!(bezug_der_besprechung(&f.store, &teil).unwrap().is_empty());
+    }
+
+    zustimmen(&f, &p.id, "anna@example.com");
+    zustimmen(&f, &p.id, "bert@example.org");
+    let r = modell_lauf(&f.store, &teil, |frei| {
+        frei.einloesen()?;
+        aufrufe += 1;
+        Ok(())
+    });
+    assert_eq!(r, Ok(()));
+    assert_eq!(aufrufe, 1);
+    assert_eq!(
+        bindungs_zeilen(&f, &teil)
+            .iter()
+            .map(|(plan, _)| plan.as_str())
+            .collect::<Vec<_>>(),
+        vec![p.id.as_str()],
+        "die Planung des Ziels ist jetzt an den Teil gebunden"
+    );
+
+    // Der Teil wird doch eine eigene Besprechung: die Bindung bleibt, ein Widerruf sperrt weiter.
+    assert!(f.store.append_pending_remove(&teil).unwrap());
+    einwilligung_setzen(&f.store, &widerruf(&p.id, NOW + 1), NOW + 1).unwrap();
+    assert_eq!(
+        tor_pruefen_besprechung(&f.store, &teil),
+        Err("nur_notizen: abgelehnt".to_string())
+    );
+}
+
+/// Die Tabelle der Bindungen ist eine angehaengte Migration (Index 18): eine frische Datenbank
+/// hat sie, eine geloeschte Planung nimmt ihre Bindungen mit (Fremdschluessel), und eine weich
+/// geloeschte Planung sperrt nicht mehr (wie bei den laufenden Quellen).
+#[test]
+fn the_bindings_table_is_migrated_and_follows_the_plan() {
+    let f = fix();
+    let conn = f.store.get_connection().unwrap();
+    assert!(table_exists(&conn, "meeting_plan_bindings"));
+    assert!(table_exists(&conn, "meeting_start_events"));
+    assert!(user_version(&conn) >= 19);
+    let (p, id) = aufnahme_mit_planung(&f);
+    zustimmen(&f, &p.id, "anna@example.com");
+    zustimmen(&f, &p.id, "bert@example.org");
+    assert_eq!(tor_pruefen_besprechung(&f.store, &id), Ok(()));
+    einwilligung_setzen(&f.store, &widerruf(&p.id, NOW + 1), NOW + 1).unwrap();
+    assert!(tor_pruefen_besprechung(&f.store, &id).is_err());
+    plan_loeschen(&f.store, &p.id, NOW + 2).unwrap();
+    assert_eq!(
+        tor_pruefen_besprechung(&f.store, &id),
+        Ok(()),
+        "weich geloeschte Planung: kein Bezug mehr"
+    );
+    conn.execute("DELETE FROM meeting_plans WHERE id = ?1", [&p.id])
+        .unwrap();
+    assert!(bindungs_zeilen(&f, &id).is_empty(), "ON DELETE CASCADE");
 }
 
 // ---------------------------------------------------------------------------
@@ -2081,6 +2682,32 @@ fn a_refusal_stops_the_retranscription_before_any_job_or_status_change() {
     assert_eq!(f.store.get_meeting(&id).unwrap().unwrap().status, vorher);
 }
 
+/// Sperrordnung: ein Auftrag, der unter der Tor-Sperre entstand und dann doch nicht beginnt (hier
+/// laesst sich die Marke nicht schreiben: die Besprechung gibt es nicht), meldet sein Ende erst
+/// NACH der Sperre. Unter ihr laeuft nur Datenbankarbeit, nie ein Ruf an die Oberflaeche.
+#[test]
+fn a_run_that_cannot_begin_reports_its_end_outside_the_gate_lock() {
+    use crate::managers::meetings::recorder::MeetingEvent;
+    use crate::managers::meetings::{job, retranscribe::begin_run};
+    let f = fix();
+    let id = "lva544-gibt-es-nicht";
+    let gemeldet: Arc<Mutex<Vec<bool>>> = Arc::new(Mutex::new(Vec::new()));
+    let g = Arc::clone(&gemeldet);
+    let emit: job::EmitFn = Arc::new(move |e| {
+        if matches!(e, MeetingEvent::JobEnded { .. }) {
+            g.lock().unwrap().push(unter_tor_sperre());
+        }
+    });
+    let r = begin_run(&f.store, id, None, emit);
+    assert!(r.is_err(), "ohne Besprechung beginnt kein Lauf");
+    assert!(!job::global().is_running(id), "der Auftrag ist wieder frei");
+    assert_eq!(
+        *gemeldet.lock().unwrap(),
+        [false],
+        "genau ein Ende, gemeldet ohne Tor-Sperre"
+    );
+}
+
 #[test]
 fn with_all_consents_the_retranscription_begins_and_without_a_plan_nothing_changes() {
     use crate::managers::meetings::{job, retranscribe::begin_run};
@@ -2130,55 +2757,32 @@ fn a_revocation_after_a_positive_query_blocks_the_retranscription_too() {
 }
 
 #[test]
-fn an_import_into_a_linked_entry_needs_the_consent_before_transcription_begins() {
-    use crate::managers::meetings::import::vor_transkription;
+fn an_import_into_a_linked_entry_needs_the_consent_at_every_model_call() {
+    // Der Import (`import::run_import`) beginnt mit `Modellarbeit` und `tor_pruefen_besprechung`
+    // und schickt danach jeden Versuch eines Blocks durch `modell_lauf`.
     let f = fix();
     let (p, id) = aufnahme_mit_planung(&f);
+    let _arbeit = Modellarbeit::beginnen(&id);
     let begonnen = AtomicBool::new(false);
-    let r = vor_transkription(&f.store, &id, || begonnen.store(true, Ordering::SeqCst));
-    assert_eq!(r, Err("nur_notizen: offen".to_string()));
+    let block = || {
+        modell_lauf(&f.store, &id, |_frei| {
+            begonnen.store(true, Ordering::SeqCst);
+            Ok(())
+        })
+    };
+    assert_eq!(
+        tor_pruefen_besprechung(&f.store, &id),
+        Err("nur_notizen: offen".to_string())
+    );
+    assert_eq!(block(), Err("nur_notizen: offen".to_string()));
     assert!(!begonnen.load(Ordering::SeqCst), "keine Transkription");
     zustimmen(&f, &p.id, "anna@example.com");
     zustimmen(&f, &p.id, "bert@example.org");
-    assert_eq!(
-        vor_transkription(&f.store, &id, || begonnen.store(true, Ordering::SeqCst)),
-        Ok(())
-    );
+    assert_eq!(tor_pruefen_besprechung(&f.store, &id), Ok(()));
+    assert_eq!(block(), Ok(()));
     assert!(begonnen.load(Ordering::SeqCst));
     // Ein frischer Import ohne Zuordnung (Datei ohne Zieleintrag) bleibt wie bisher.
     let frei = f.store.create_empty_meeting("Import", None).unwrap();
-    begonnen.store(false, Ordering::SeqCst);
-    assert_eq!(
-        vor_transkription(&f.store, &frei.id, || begonnen
-            .store(true, Ordering::SeqCst)),
-        Ok(())
-    );
-    assert!(begonnen.load(Ordering::SeqCst));
-}
-
-#[test]
-fn the_final_pass_and_continuing_do_not_transcribe_further_after_a_refusal() {
-    use crate::managers::meetings::final_pass::{FinalPlan, JobSpec, KeepReason};
-    use crate::managers::meetings::recorder::unter_tor;
-    let f = fix();
-    let (p, id) = aufnahme_mit_planung(&f);
-    let auftrag = JobSpec {
-        meeting_id: id.clone(),
-        catch_up_model: Some("modell".into()),
-        plan: FinalPlan::Keep(KeepReason::Off),
-        live_model: Some("live".into()),
-        recover_from: Some("cancelled".into()),
-    };
-    // Offen: gesperrt, das Live-Transkript bleibt, kein Modell laeuft.
-    let gesperrt = unter_tor(&f.store, &auftrag);
-    assert_eq!(gesperrt.plan, FinalPlan::Keep(KeepReason::NoConsent));
-    assert_eq!(gesperrt.catch_up_model, None);
-    assert_eq!(gesperrt.meeting_id, id);
-    assert_eq!(gesperrt.recover_from, auftrag.recover_from);
-    // Alle zugestimmt: der Auftrag bleibt, wie er ist.
-    zustimmen(&f, &p.id, "anna@example.com");
-    zustimmen(&f, &p.id, "bert@example.org");
-    let frei = unter_tor(&f.store, &auftrag);
-    assert_eq!(frei.plan, auftrag.plan);
-    assert_eq!(frei.catch_up_model, auftrag.catch_up_model);
+    let _arbeit_frei = Modellarbeit::beginnen(&frei.id);
+    assert_eq!(modell_lauf(&f.store, &frei.id, |_frei| Ok(7)), Ok(7));
 }

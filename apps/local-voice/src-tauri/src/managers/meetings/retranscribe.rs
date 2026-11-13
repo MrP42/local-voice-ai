@@ -282,8 +282,13 @@ pub(crate) fn begin_run(
     range: Option<TimeRange>,
     emit: job::EmitFn,
 ) -> Result<(job::JobGuard, MeetingStatus), String> {
-    crate::managers::planning::mit_tor_besprechung(store, meeting_id, |_tor| {
-        // P8a: der Auftrag zuerst: gibt es schon einen, geschieht nichts.
+    // Ein Auftrag, der unter der Sperre entstand und dann doch nicht beginnt, endet erst NACH
+    // ihr: sein Ende meldet sich an die Oberflaeche (`JobEnded`), und unter der Tor-Sperre laeuft
+    // nur Datenbankarbeit (Sperrordnung, `managers::planning`).
+    let mut verworfen: Option<job::JobGuard> = None;
+    let begonnen = crate::managers::planning::mit_tor_besprechung(store, meeting_id, |_tor| {
+        // P8a: der Auftrag zuerst: gibt es schon einen, geschieht nichts. (Das Verzeichnis der
+        // Auftraege ist eine Blatt-Sperre: kurz, ohne Warten, nie ueber die Tor-Sperre gehalten.)
         let job = job::global()
             .try_start(meeting_id, emit)
             .map_err(|e| e.to_string())?;
@@ -291,12 +296,22 @@ pub(crate) fn begin_run(
         // unter DIESEM Auftrag abgeschlossen, bevor etwas Neues beginnt; dann die Marke
         // `start` mit dem Stand davor (fuer das Zuruecknehmen). Der Vorstatus kommt aus dem
         // Zustand NACH diesem Abschluss, unter dem Auftrag gelesen.
-        let previous_status = rerun_state::mark_start(store, meeting_id, range)?;
-        store
-            .set_status(meeting_id, MeetingStatus::Processing)
-            .map_err(|e| format!("status_processing_failed: {e}"))?;
-        Ok((job, previous_status))
-    })
+        let markiert = rerun_state::mark_start(store, meeting_id, range).and_then(|previous| {
+            store
+                .set_status(meeting_id, MeetingStatus::Processing)
+                .map_err(|e| format!("status_processing_failed: {e}"))?;
+            Ok(previous)
+        });
+        match markiert {
+            Ok(previous_status) => Ok((job, previous_status)),
+            Err(e) => {
+                verworfen = Some(job);
+                Err(e)
+            }
+        }
+    });
+    drop(verworfen);
+    begonnen
 }
 
 /// lva#523: Endzustand eines Laufs, unter seinem Auftrag.
@@ -409,6 +424,9 @@ fn run_retranscribe(
     range: Option<TimeRange>,
     job: &Arc<JobHandle>,
 ) -> Result<RetranscribeEnd, String> {
+    // lva#544: dieser Thread schickt ab hier Ton der Besprechung durch Modelle und speichert die
+    // Ergebnisse: jede Aenderung am Transkript prueft das Einwilligungs-Tor beim Schreiben.
+    let _arbeit = crate::managers::planning::Modellarbeit::beginnen(meeting_id);
     job.begin_phase(JobPhase::Prepare, 0);
     tm.initiate_model_load_target(target);
 
@@ -519,17 +537,17 @@ fn run_retranscribe(
             .iter()
             .max_by_key(|(s, _)| s.len())
             .map(|(s, _)| s.as_slice());
-        // lva#534: die Probe rechnet ein Modell ueber das Audio: Einwilligungs-Tor davor/danach.
+        // lva#534: die Probe rechnet ein Modell ueber das Audio: Einwilligungs-Tor je Fenster.
         // Eine Ablehnung hier aendert noch nichts (das alte Transkript steht).
-        let probe = crate::managers::planning::modell_lauf(store, meeting_id, || {
-            Ok(super::language_run::prepare(
-                app,
-                tm,
-                longest.unwrap_or(&[]),
-                request,
-                Some(job),
-            ))
-        });
+        let probe = super::language_run::prepare(
+            app,
+            tm,
+            store,
+            meeting_id,
+            longest.unwrap_or(&[]),
+            request,
+            Some(job),
+        );
         match probe {
             Ok(plan) => plan,
             Err(e) => {
@@ -553,21 +571,26 @@ fn run_retranscribe(
         variants::KIND_RETRANSCRIBED
     };
     let result = (move || -> Result<RetranscribeEnd, String> {
-        // B17: das alte Transkript als Fassung sichern, bevor der Lauf in
-        // `transcripts` schreibt.
-        {
-            let mut conn = store
-                .get_connection()
-                .map_err(|e| format!("variants_begin_failed: {e}"))?;
-            variants::begin_rerun(&mut conn, meeting_id)
-                .map_err(|e| format!("variants_begin_failed: {e}"))?;
-        }
-        store
-            .clear_segments(meeting_id)
-            .map_err(|e| format!("clear_segments_failed: {e}"))?;
-        // lva#523: ab hier gehoert die Arbeitskopie (diese Epoche) DIESEM Lauf; erst
-        // jetzt darf ein Stopp oder Absturz sie als neue Abschnitte behalten.
-        rerun_state::mark_running(store, meeting_id, target, kind, range)?;
+        // lva#544: Sichern, Leeren und die Marke `running` sind EIN Schritt unter dem
+        // Einwilligungs-Tor. Lehnt es ab (Widerruf seit dem Beginn), geschieht keiner davon:
+        // Fassungen, Transkript und Marke bleiben, wie sie sind.
+        crate::managers::planning::mit_tor_besprechung(store, meeting_id, |_tor| {
+            // B17: das alte Transkript als Fassung sichern, bevor der Lauf in
+            // `transcripts` schreibt.
+            {
+                let mut conn = store
+                    .get_connection()
+                    .map_err(|e| format!("variants_begin_failed: {e}"))?;
+                variants::begin_rerun(&mut conn, meeting_id)
+                    .map_err(|e| format!("variants_begin_failed: {e}"))?;
+            }
+            store
+                .clear_segments(meeting_id)
+                .map_err(|e| format!("clear_segments_failed: {e}"))?;
+            // lva#523: ab hier gehoert die Arbeitskopie (diese Epoche) DIESEM Lauf; erst
+            // jetzt darf ein Stopp oder Absturz sie als neue Abschnitte behalten.
+            rerun_state::mark_running(store, meeting_id, target, kind, range)
+        })?;
         let _ = (MeetingEvent::Reset {
             meeting_id: meeting_id.to_string(),
         })
@@ -642,7 +665,12 @@ fn run_retranscribe(
         crate::managers::provenance::generation::record_stt(store, run());
         // B17: das Ergebnis wird erst JETZT die neue aktive Fassung.
         // lva#523: Fassung, Marke weg und `ready` in einer Transaktion.
-        let variant_id = rerun_state::complete(store, meeting_id, kind)?;
+        // lva#544: unter dem Einwilligungs-Tor: nach einem Widerruf wird das Ergebnis nie die
+        // aktive Fassung (der Lauf endet als Fehler und wird zurueckgenommen).
+        let variant_id =
+            crate::managers::planning::mit_tor_besprechung(store, meeting_id, |_tor| {
+                rerun_state::complete(store, meeting_id, kind)
+            })?;
         crate::managers::provenance::generation::record_stt_variant(store, &variant_id, run());
         // G5: die gueltige Sprache (Gegenprobe am Text) und das Modell an Besprechung,
         // Transkript und die neue aktive Fassung.

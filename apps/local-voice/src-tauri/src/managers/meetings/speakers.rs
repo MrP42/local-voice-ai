@@ -528,7 +528,15 @@ pub trait ChannelDiarizer {
     /// RAM-Tor VOR dem Einlesen des Kanals; `need_mb` = Modell + Puffer.
     fn check_ram(&mut self, need_mb: u64) -> Result<(), String>;
     /// Turns eines Kanals (16 kHz mono f32), Sprecher 1-basiert.
-    fn diarize(&mut self, channel: u8, pcm: &[f32]) -> Result<Vec<Turn>, DiarizeError>;
+    ///
+    /// lva#544: `frei` ist die Erlaubnis fuer genau DIESEN Modelllauf ueber Ton der Besprechung
+    /// (nur aus `planning::modell_lauf`); die Umsetzung loest sie ein, bevor das Modell rechnet.
+    fn diarize(
+        &mut self,
+        frei: &crate::managers::planning::Freigabe,
+        channel: u8,
+        pcm: &[f32],
+    ) -> Result<Vec<Turn>, DiarizeError>;
     /// Abbruch von aussen (neue Aufnahme, Stopp durch den Nutzer).
     fn cancelled(&self) -> bool {
         false
@@ -725,6 +733,8 @@ pub fn collect_turns(
     diarizer: &mut dyn ChannelDiarizer,
     report: &mut StepReport,
 ) -> Result<Option<TurnSet>, Cancelled> {
+    // lva#544: Modellarbeit ueber Ton dieser Besprechung (je Kanal ein `modell_lauf`).
+    let _arbeit = crate::managers::planning::Modellarbeit::beginnen(&meeting.id);
     let started = Instant::now();
     let (gap_ms, pad_ms) = diarizer.params();
     let mut set = TurnSet {
@@ -859,7 +869,7 @@ pub fn collect_turns(
         let result = crate::managers::planning::modell_lauf_mit(
             store,
             &meeting.id,
-            || diarizer.diarize(channel, &pcm),
+            |frei| diarizer.diarize(frei, channel, &pcm),
             |_| DiarizeError::Cancelled,
         );
         drop(pcm);
@@ -1019,6 +1029,10 @@ fn apply_to_stored_with(
     report: &mut StepReport,
     after_snapshot: &mut dyn FnMut(),
 ) -> ApplyOutcome {
+    // lva#544: Sprecher, Hinweise und geteilte Segmente sind Folgen eines Modelllaufs ueber Ton
+    // der Besprechung. Der Speicher prueft das Einwilligungs-Tor beim Schreiben; ist es zu,
+    // bleibt das Transkript, wie es ist (`Failed`).
+    let _arbeit = crate::managers::planning::Modellarbeit::beginnen(meeting_id);
     for _ in 0..APPLY_ATTEMPTS {
         let snapshot = match store.transcript_snapshot(meeting_id) {
             Ok(s) => s,
@@ -1552,7 +1566,13 @@ mod tests {
             );
             self.ram_error.clone().map_or(Ok(()), Err)
         }
-        fn diarize(&mut self, channel: u8, pcm: &[f32]) -> Result<Vec<Turn>, DiarizeError> {
+        fn diarize(
+            &mut self,
+            frei: &crate::managers::planning::Freigabe,
+            channel: u8,
+            pcm: &[f32],
+        ) -> Result<Vec<Turn>, DiarizeError> {
+            frei.einloesen().map_err(DiarizeError::Run)?;
             assert!(!pcm.is_empty());
             self.calls.borrow_mut().push(channel);
             if let Some(e) = self.run_error {
@@ -1867,7 +1887,12 @@ mod tests {
             fn check_ram(&mut self, _: u64) -> Result<(), String> {
                 Ok(())
             }
-            fn diarize(&mut self, _: u8, _: &[f32]) -> Result<Vec<Turn>, DiarizeError> {
+            fn diarize(
+                &mut self,
+                _: &crate::managers::planning::Freigabe,
+                _: u8,
+                _: &[f32],
+            ) -> Result<Vec<Turn>, DiarizeError> {
                 panic!("nativer Fehler nachgestellt");
             }
         }

@@ -20,7 +20,8 @@ use crate::managers::meetings::store::MeetingStore;
 use crate::managers::meetings::voiceprint::{self, similar, Embedder};
 
 /// Ein geladenes Modell: Abdruck eines Ausschnitts.
-pub type EmbedFn = Box<dyn FnMut(&[f32]) -> Result<Vec<f32>, String>>;
+pub type EmbedFn =
+    Box<dyn FnMut(&crate::managers::planning::Freigabe, &[f32]) -> Result<Vec<f32>, String>>;
 /// Lädt das Modell erst bei Bedarf.
 pub type LoadFn<'a> = &'a mut dyn FnMut() -> Result<EmbedFn, String>;
 
@@ -134,6 +135,13 @@ pub fn voice_matches(
         .map_err(|e| e.to_string())?
         .filter(|m| m.deleted_at.is_none())
         .ok_or_else(|| "meeting_not_found".to_string())?;
+    // lva#544: der Stimmvergleich rechnet ein Modell ueber Ton der Besprechung. Gehoert sie zu
+    // einer Planung ohne Zustimmung aller Anwesenden, gibt es keine Vorschlaege (auch nicht aus
+    // dem Zwischenspeicher); jeder einzelne Abdruck steht zusaetzlich hinter dem Tor.
+    let _arbeit = crate::managers::planning::Modellarbeit::beginnen(meeting_id);
+    if crate::managers::planning::tor_pruefen_besprechung(store, meeting_id).is_err() {
+        return Ok(VoiceMatches::empty("no_consent"));
+    }
     let metadata = store.metadata_json(meeting_id).map_err(|e| e.to_string())?;
     let epoch = store.segment_epoch(meeting_id).map_err(|e| e.to_string())?;
     let hints = store.speaker_hints(meeting_id).map_err(|e| e.to_string())?;
@@ -208,11 +216,20 @@ pub fn voice_matches(
             let Some(m) = model.as_mut() else {
                 return Ok(None);
             };
-            let v = m(part)?;
+            // EIN Abdruck = ein Modellaufruf hinter dem Einwilligungs-Tor (davor und danach).
+            let v =
+                crate::managers::planning::modell_lauf(store, meeting_id, |frei| m(frei, part))?;
             clips.insert(key, v.clone());
             Ok(Some(v))
         };
-        voices.extend(voiceprint::voices_of_channel(*channel, list, &mut embed)?);
+        match voiceprint::voices_of_channel(*channel, list, &mut embed) {
+            Ok(found) => voices.extend(found),
+            // Widerruf waehrend des Laufs: keine Vorschlaege, nichts in den Zwischenspeicher.
+            Err(e) if crate::managers::planning::ist_ablehnung(&e) => {
+                return Ok(VoiceMatches::empty("no_consent"));
+            }
+            Err(e) => return Err(e),
+        }
     }
     if clips.len() != known {
         let mut cache = lock_cache();
@@ -314,7 +331,11 @@ pub async fn meeting_voice_matches(
     tauri::async_runtime::spawn_blocking(move || {
         let mut load = || -> Result<EmbedFn, String> {
             let mut model = Embedder::load(&path)?;
-            Ok(Box::new(move |pcm: &[f32]| model.embed(pcm)))
+            Ok(Box::new(
+                move |frei: &crate::managers::planning::Freigabe, pcm: &[f32]| {
+                    model.embed(frei, pcm)
+                },
+            ))
         };
         voice_matches(&store, &meeting_id, &mut load)
     })

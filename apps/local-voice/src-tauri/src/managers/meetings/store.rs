@@ -141,6 +141,10 @@ pub(crate) static MIGRATIONS: &[M] = &[
     // (RECURRENCE-ID). Nur ADD COLUMN (nullable) und ein Index; vorhandene Zeilen bleiben
     // unveraendert, die Spalte fuellt der naechste Abruf der Quelle.
     M::up(CALENDAR_INSTANCE_MIGRATION),
+    // Besprechungsplanung, Einwilligungs-Tor (lva#544), Index 18: die Bindung von Planungen an
+    // eine Besprechung (`meeting_plan_bindings`). Nur CREATE ... IF NOT EXISTS. Der SQL-Text steht
+    // in `managers::planning` (`BINDUNGEN_MIGRATION`), wo die Tabelle gelesen und geschrieben wird.
+    M::up(crate::managers::planning::BINDUNGEN_MIGRATION),
 ];
 
 /// Index 17: urspruenglicher Beginn der Instanz eines Serientermins (UTC-ms, `NULL` bei einem
@@ -1285,6 +1289,9 @@ impl MeetingStore {
     /// KI-Notizen remember the epoch they were built from, and every source
     /// reference in them points at segment indexes that no longer exist.
     pub fn clear_segments(&self, meeting_id: &str) -> Result<()> {
+        // lva#544: Schreibschutz des Einwilligungs-Tors (nur waehrend Modellarbeit, sonst nichts).
+        let _tor = crate::managers::planning::schreibschutz(self, meeting_id)
+            .map_err(|code| anyhow!(code))?;
         let mut conn = self.get_connection()?;
         let now = Utc::now().timestamp();
         let tx = conn.transaction()?;
@@ -1422,6 +1429,10 @@ impl MeetingStore {
         speakers: Option<&SpeakerWrite>,
     ) -> std::result::Result<u32, ReplaceError> {
         let store_err = |e: &dyn std::fmt::Display| ReplaceError::Store(e.to_string());
+        // lva#544: Schreibschutz des Einwilligungs-Tors (nur waehrend Modellarbeit, sonst nichts).
+        // Segmente, Sprecherzeilen und Hinweise entstehen alle hier.
+        let _tor = crate::managers::planning::schreibschutz(self, meeting_id)
+            .map_err(ReplaceError::Store)?;
         let mut conn = self.get_connection().map_err(|e| store_err(&e))?;
         let now = Utc::now().timestamp();
         // IMMEDIATE: Pruefen und Schreiben ohne fremden Schreiber dazwischen.
@@ -2236,6 +2247,9 @@ impl MeetingStore {
     /// segments into `transcripts.segments_json` so `get_segments` stays a
     /// simple read and later crash-replay can diff deltas against it.
     pub fn append_delta(&self, meeting_id: &str, delta: &TranscriptDelta) -> Result<u64> {
+        // lva#544: Schreibschutz des Einwilligungs-Tors (nur waehrend Modellarbeit, sonst nichts).
+        let _tor = crate::managers::planning::schreibschutz(self, meeting_id)
+            .map_err(|code| anyhow!(code))?;
         let mut conn = self.get_connection()?;
         let now = Utc::now().timestamp();
         let tx = conn.transaction()?;

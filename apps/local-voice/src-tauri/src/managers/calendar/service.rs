@@ -290,7 +290,15 @@ pub fn finish_start(
 ) -> Vec<String> {
     let mut problems = Vec::new();
     if let Some(event) = &plan.event {
-        if let Err(e) = store.link_meeting_event(meeting_id, event, linked_by, now_ms) {
+        // lva#544: die Verknuepfung ist eine Quelle des Einwilligungs-Tors und ERSETZT eine
+        // fruehere (`INSERT OR REPLACE`): geschrieben wird unter der Tor-Sperre, damit keine
+        // Pruefung einen halben Stand sieht. Was beim Start galt, haengt unabhaengig davon als
+        // Bindung an der Besprechung (`meeting_plan_bindings`) und geht hier nicht verloren.
+        let linked = {
+            let _tor = crate::managers::planning::tor_sperre();
+            store.link_meeting_event(meeting_id, event, linked_by, now_ms)
+        };
+        if let Err(e) = linked {
             problems.push(format!("Verknüpfung mit dem Termin: {e}"));
         }
         let attendees: Vec<serde_json::Value> = event

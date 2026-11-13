@@ -15,37 +15,92 @@
 //! Fehler sind die String-Codes des Crates (`plan_nicht_gefunden`, `plan_abgeschlossen`,
 //! `status_uebergang_ungueltig`, ...) plus die der App (siehe Funktionen).
 //!
-//! # Sperrordnung (verbindlich, Fixrunde 3 zu lva#544)
+//! # Klasse und Durchsetzungspunkte (Fixrunde 5 zu lva#544)
+//!
+//! Regel (Konzept 3.5): Ton einer Besprechung, die einer Planung zugeordnet ist, erreicht ein
+//! Modell nur, wenn ALLE Anwesenden nachweislich zugestimmt haben; ein Modellergebnis aendert das
+//! Transkript nur, wenn das beim Schreiben noch gilt. Durchgesetzt wird das an DREI Stellen, nicht
+//! je Ablauf:
+//!
+//! 1. **Zuordnung** ([`BINDUNGEN_MIGRATION`]): jede Planung, unter der eine Aufnahme wirksam
+//!    begann oder ein Modell freigegeben wurde, wird samt der dabei geprueften Anwesenden an die
+//!    Besprechung gebunden (`meeting_plan_bindings`), und ebenso der TERMIN, unter dem eine
+//!    Aufnahme begann (`meeting_start_events`: eine Planung, die ihm erst spaeter zugeordnet
+//!    wird, gilt damit auch ohne Kalender-Verknuepfung). Beides entsteht unter der Tor-Sperre,
+//!    VOR dem wirksamen Beginn ([`TorNachweis::binden`], der Beginn verlangt [`Gebunden`]), und
+//!    geht nie mehr verloren: eine ersetzte Kalender-Verknuepfung (`INSERT OR REPLACE` in
+//!    `link_meeting_event`, erst nach dem Start geschrieben, ein Fehler dort nur eine Warnung),
+//!    ein entfernter Kalender oder ein Zusammenfuehren aendern es nicht. Das Tor prueft immer
+//!    ALLE Quellen zusammen ([`start_bezug`], [`alle_paare`]): Bindungen, den uebergebenen
+//!    Termin, die Termine frueherer Starts, die Kalender-Verknuepfung und
+//!    `meeting_plans.meeting_id`, und fuer einen zum Anhaengen vorgemerkten Teil
+//!    (`meeting_append_pending`) zusaetzlich alle Quellen seiner Zielbesprechung. Sperrt eine
+//!    davon, sperrt das Tor; widerspruechliche Quellen werden nie gegeneinander ausgetauscht.
+//! 2. **Modell** ([`Freigabe`]): jede einzelne Inferenz ueber Ton (Spracherkennung, Sprachprobe,
+//!    Sprechertrennung, Stimmvergleich) verlangt eine `&Freigabe` als Parameter
+//!    (`TranscriptionManager::transcribe_segments*`, `ChannelDiarizer::diarize`,
+//!    `voiceprint::Embedder::embed`). Eine Freigabe gibt es nur aus [`modell_lauf`] (Tor davor UND
+//!    danach, auch nach Fehler und Panik) und sie gilt fuer genau EINEN Aufruf: ein zweiter
+//!    Versuch oder ein weiteres Fenster mit derselben Freigabe scheitert (`freigabe_verbraucht`).
+//!    Fuer Ton, der keiner Besprechung gehoert, gibt es nur den benannten Ausweg
+//!    [`Freigabe::ohne_besprechung`].
+//! 3. **Schreiben** ([`Modellarbeit`], [`schreibschutz`]): `modell_lauf` verlangt eine laufende
+//!    `Modellarbeit` des Threads fuer die Besprechung. Solange sie lebt, prueft der Speicher JEDE
+//!    Aenderung am Transkript dieser Besprechung (Segmente, Sprecher, Hinweise:
+//!    `append_delta`, `replace_segments*`, `update_segments_with_speakers`, `clear_segments`) im
+//!    selben Schritt unter der Tor-Sperre. Ist das Tor zu, wird nichts geschrieben (auch keine
+//!    Luecke). Aktive Fassung, Lauf-Marke und der Status eines Laufs wechseln nur in Schritten,
+//!    die unter [`mit_tor_besprechung`] stehen (`final_pass::run_job`: Vorbereitung;
+//!    `retranscribe`: Beginn, Leeren, Abschluss). Was das Tor beendet, endet FORTSETZBAR, nie als
+//!    erledigt: Nachholen und Recovery `cancelled` ohne Luecke (`final_pass::finish_stopped`), ein
+//!    Import mit Audiodatei ebenso (`import::mark_refused`), eine Neu-Transkription wird
+//!    zurueckgenommen (das vorherige Transkript steht wieder).
+//!
+//! # Sperrordnung (verbindlich)
 //!
 //! Alles, was das Ergebnis des Einwilligungs-Tors beeinflusst oder von ihm abhaengt, laeuft ueber
 //! EINE prozessweite Sperre ([`tor_sperre`]). Damit sie nie zum Deadlock fuehrt, gilt:
 //!
 //! 1. Reihenfolge der Sperren, aussen nach innen, nie umdrehen:
-//!    `Recorder::start_guard` -> `FinalSlot::job` (nur kurz, ohne Warten; nimmt der Start NICHT
-//!    mehr, wenn er die Tor-Sperre haelt) -> **Tor-Sperre** -> Datenbank-Verbindung
-//!    (Schreibsperre `BEGIN IMMEDIATE`). Weitere Sperren kommen nicht hinzu: Zustands-/
-//!    Pipeline-Sperren des Recorders und Sperren des Modell-Managers werden NIE gehalten,
-//!    waehrend die Tor-Sperre genommen wird, und NIE unter ihr genommen.
+//!    `Recorder::start_guard` bzw. `parts::MERGE_LOCK` -> **Tor-Sperre** -> Datenbank-Verbindung
+//!    (Schreibsperre `BEGIN IMMEDIATE`).
 //! 2. Die Tor-Sperre ist die innerste vor der Datenbank. Wer sie haelt, nimmt nur noch die
-//!    Datenbank-Verbindung und wartet NIE auf einen anderen Thread: kein `join`, kein Kanal, keine
-//!    Recorder-Sperre. Einzige, gewollte Ausnahme: der wirksame Beginn einer Aufnahme
-//!    (`Recorder::start_row` im `start` von [`mit_tor`]) wartet hoechstens `LOOPBACK_START_TIMEOUT`
-//!    auf den Start des Systemton-Threads, der keine Planungs-Sperre kennt; dafuer gilt die
-//!    Atomaritaet von Tor und Beginn.
-//! 3. Unter der Sperre laeuft nie ein Modell (Spracherkennung, Sprecher-Modell). Ein Modell
-//!    laeuft zwischen zwei kurzen Pruefungen: [`modell_lauf`] prueft vorher und nachher je unter
-//!    der Sperre, der Aufruf selbst laeuft ohne sie; ein inzwischen geaendertes Tor verwirft das
-//!    Ergebnis.
-//! 4. Wer eine Aufnahme (neu) startet, beendet zuerst (OHNE Tor-Sperre) laufende nachtraegliche
-//!    Laeufe und wartet auf sie; erst dann folgt [`mit_tor`] mit der frischen Pruefung und dem
-//!    wirksamen Beginn. Beginnt zwischen Warten und Tor ein neuer Lauf, merkt der Recorder es
-//!    (`final_gen`) und wiederholt Warten und Tor.
+//!    Datenbank-Verbindung (und kurze Dateiarbeit ohne fremden Thread) und wartet NIE auf einen
+//!    anderen Thread: kein `join`, kein Kanal, keine Sperre des Recorders (`RunCore`), keine des
+//!    Modell-Managers, kein Start von Mikrofon oder Systemton. Der Aufbau einer Aufnahme
+//!    (`Recorder::start_row`) laeuft deshalb NICHT unter ihr: unter der Sperre stehen nur Tor,
+//!    Zeile und Bindung, spaeter der wirksame Beginn ([`Gebunden::wirksam`]: frische Pruefung und
+//!    ein Merker); dazwischen und danach schuetzen Bindung und die Punkte 2 und 3 oben jeden
+//!    Block.
+//!    Erlaubt unter ihr sind sonst nur BLATT-Sperren: kurz, ohne Warten, und nie gehalten,
+//!    waehrend eine andere Sperre genommen wird (also auch nie ueber die Tor-Sperre hinweg). Das
+//!    sind das Verzeichnis der Auftraege (`meetings::job::global()`, in `retranscribe::begin_run`),
+//!    der Weckruf der Import-Warteschlange (`ImportQueue::enqueue`, in
+//!    `parts::enqueue_appended`) und die Sperre des `FinalSlot` selbst (`spawn`, `active`,
+//!    `live_aktiv`); das WARTEN im `FinalSlot` (`live_beginnen`, `wait`) ist dagegen unter der
+//!    Tor-Sperre verboten und geprueft.
+//! 3. Unter der Sperre laeuft nie ein Modell. Ein Modell laeuft zwischen zwei kurzen Pruefungen
+//!    ([`modell_lauf`]); ein inzwischen geaendertes Tor verwirft das Ergebnis.
+//! 4. Wer eine Aufnahme (neu) startet, meldet sie zuerst im `FinalSlot` an (`live_beginnen`): ab
+//!    da beginnt kein nachtraeglicher Lauf mehr mit Modell (er wird abgebrochen geboren), laufende
+//!    werden abgebrochen und mit Frist abgewartet (OHNE Tor-Sperre). Erst dann folgt [`mit_tor`].
 //! 5. Die Sperre ist nicht wiedereintrittsfaehig; ein zweiter Zugriff im selben Thread meldet
 //!    `debug_assert!`.
 //!
-//! Durchgesetzt wird das, wo es der Compiler kann, durch Typen ([`TorNachweis`]: Start ohne Tor
-//! nicht aufrufbar), sonst durch [`ohne_tor_sperre`]: jeder `join` und jeder Modellaufruf ruft den
-//! Pruefpunkt, der in Debug-Laeufen (Tests) bei gehaltener Sperre mit `panic!` abbricht.
+//! Durchgesetzt wird das, wo es der Compiler kann, durch Typen ([`TorNachweis`], [`Gebunden`],
+//! [`Freigabe`]), sonst durch [`ohne_tor_sperre`]: jedes Warten auf den Enddurchlauf
+//! (`FinalSlot::live_beginnen`, `FinalSlot::wait`), jeder Modellaufruf ([`modell_lauf_mit`],
+//! `TranscriptionManager::transcribe_segments_detecting`), das Laden eines Modells
+//! (`initiate_model_load_inner`), jede Sperre des Recorders (`RunCore::publish_started`,
+//! `begin_stop`, `set_paused`), der Aufbau der Aufnahme (`start_row`) und der Start von Mikrofon
+//! und Systemton rufen den Pruefpunkt, der in Debug-Laeufen (Tests) bei gehaltener Sperre mit
+//! `panic!` abbricht.
+//!
+//! Wartezeiten: unter `start_guard` wartet ein Start hoechstens `recorder::CANCEL_WAIT` auf das
+//! Ende eines abgebrochenen Enddurchlaufs (ein laufender Aufruf der Spracherkennung und ein
+//! laufendes Laden lassen sich nicht unterbrechen); danach scheitert der START (`job_busy`),
+//! statt zu haengen. Unter der Tor-Sperre gibt es kein Warten ausser auf die Datenbank
+//! (Busy-Timeout der Verbindung).
 
 pub mod adapter_c;
 
@@ -504,7 +559,9 @@ fn termin_aus_schluessel(
 ///    Cache;
 /// 2. der Termin, mit dem die Zielbesprechung (`target_meeting_id`) ueber `meeting_calendar_links`
 ///    verknuepft ist;
-/// 3. Planungen, die die Zielbesprechung ausdruecklich fuehren (`meeting_plans.meeting_id`).
+/// 3. die Termine, unter denen eine Aufnahme der Zielbesprechung begann
+///    (`meeting_start_events`, [`StartTerminZeile`]);
+/// 4. Planungen, die die Zielbesprechung ausdruecklich fuehren (`meeting_plans.meeting_id`).
 ///
 /// Zu einem Termin gehoert eine Planung, wenn ihre Verknuepfung (Adapter C, `meeting_plan_links`)
 /// dieselbe UID und Instanz traegt. Eine ausdrueckliche `plan_id` beim Start waere dagegen
@@ -512,7 +569,7 @@ fn termin_aus_schluessel(
 ///
 /// Ist ein Termin nicht mehr im Cache (nur noch der Schnappschuss), ist die Instanz unbekannt:
 /// dann zaehlen alle Planungen der UID, und es gibt keine Anwesenden (sperrt). Planungen aus
-/// Quelle 3 werden gegen die Anwesenden ALLER bekannten Termine geprueft (keine: sperrt).
+/// Quelle 4 werden gegen die Anwesenden ALLER bekannten Termine geprueft (keine: sperrt).
 fn start_bezug(
     conn: &Connection,
     store: &MeetingStore,
@@ -542,6 +599,12 @@ fn start_bezug(
                     anwesende: Vec::new(),
                 })),
             }
+        }
+    }
+    if let Some(target) = target_meeting_id {
+        // Termine, unter denen eine Aufnahme dieser Besprechung begann (gebunden beim Start).
+        for t in start_termine(conn, target)? {
+            termin_aus_schluessel(store, &mut termine, &t.key, Some((t.uid, Some(t.instanz))))?;
         }
     }
     let mut plaene: Vec<(String, Vec<String>)> = Vec::new();
@@ -662,19 +725,354 @@ pub fn ohne_tor_sperre(was: &str) {
     }
 }
 
+/// Eine Planung und die Anwesenden, gegen die sie geprueft wird.
+type Paar = (String, Vec<String>);
+
 /// Nachweis, dass das Einwilligungs-Tor fuer diesen Start bestanden wurde und die Sperre noch
-/// gehalten wird. Nur [`mit_tor`] erzeugt ihn; Startfunktionen verlangen ihn als Parameter und
-/// sind damit ohne Tor nicht aufrufbar (Compiler statt Zeichenkettenpruefung).
+/// gehalten wird. Nur [`mit_tor`] erzeugt ihn. Er traegt die Planungen, gegen die geprueft wurde:
+/// [`TorNachweis::binden`] schreibt sie an die Besprechung, und erst der so entstandene
+/// [`Gebunden`] oeffnet den wirksamen Beginn (Compiler statt Zeichenkettenpruefung).
 pub struct TorNachweis {
+    paare: Vec<Paar>,
+    /// Die Zielbesprechung des Tors und was fuer sie in dieser Pruefung NEU gebunden wurde.
+    ziel: Option<(String, Vec<String>)>,
+    /// Der uebergebene Termin des Starts: er wird mit gebunden ([`START_TERMINE`]), damit auch
+    /// eine Planung gilt, die ihm erst NACH dem Start zugeordnet wird.
+    termin: Option<StartTerminZeile>,
     _nur_hier: (),
 }
 
-/// Fuehrt `start` unter dem Einwilligungs-Tor aus: Sperre nehmen, Tor pruefen
-/// ([`start_tor`], alles frisch aus der Datenbank), dann `start` AUSFUEHREN, waehrend die Sperre
-/// noch gehalten wird. `start` ist die Funktion, die Aufnahme bzw. Transkription wirksam beginnt;
-/// sie darf nicht selbst Planungsfunktionen mit Sperre rufen (die Sperre ist nicht
-/// wiedereintrittsfaehig), nicht auf andere Threads warten und kein Modell laufen lassen
-/// (Sperrordnung). Bei `NurNotizen` wird `start` nie aufgerufen.
+impl TorNachweis {
+    /// Bindet die geprueften Planungen an die Besprechung dieses Starts (unter der noch gehaltenen
+    /// Sperre, VOR dem wirksamen Beginn). Ohne Planung entsteht keine Zeile; den Nachweis gibt es
+    /// trotzdem. Scheitert das Schreiben, gibt es keinen Nachweis und damit keinen Beginn.
+    pub fn binden(&self, store: &MeetingStore, meeting_id: &str) -> Res<Gebunden> {
+        let conn = verbindung(store)?;
+        let neu = match &self.ziel {
+            Some((ziel, neu)) if ziel == meeting_id => neu.clone(),
+            _ => binden(&conn, meeting_id, &self.paare)?,
+        };
+        let termin_neu = match &self.termin {
+            Some(t) if termin_binden(&conn, meeting_id, t)? => Some(t.key.clone()),
+            _ => None,
+        };
+        Ok(Gebunden {
+            meeting_id: meeting_id.to_string(),
+            neu,
+            termin_neu,
+            _nur_hier: (),
+        })
+    }
+}
+
+/// Nachweis, dass die Planungen des Starts an die Besprechung gebunden sind
+/// (`meeting_plan_bindings`). Nur [`TorNachweis::binden`] erzeugt ihn; der wirksame Beginn einer
+/// Aufnahme (`Recorder::start_row`) verlangt ihn. Er gilt ueber die Sperre hinaus: ab der Bindung
+/// prueft jeder Modellaufruf und jedes Schreiben das Tor mit diesen Planungen.
+pub struct Gebunden {
+    meeting_id: String,
+    /// Planungen, die dieser Start neu gebunden hat (fuer [`bindung_verwerfen`]).
+    neu: Vec<String>,
+    /// Der Termin, den dieser Start neu gebunden hat (Schluessel; fuer [`bindung_verwerfen`]).
+    termin_neu: Option<String>,
+    _nur_hier: (),
+}
+
+impl Gebunden {
+    pub fn meeting_id(&self) -> &str {
+        &self.meeting_id
+    }
+
+    /// Der WIRKSAME Beginn der Aufnahme: nimmt die Tor-Sperre, prueft das Tor fuer die gebundene
+    /// Besprechung noch einmal frisch und ruft, wenn es besteht, `schalten` unter der Sperre.
+    /// Zwischen der Bindung (unter der ersten Sperre) und hier baut der Start Dateien, Pipeline
+    /// und Captures OHNE Sperre auf; ein Widerruf in dieser Zeit gewinnt hier (`Err`, `schalten`
+    /// laeuft nie), ein spaeterer wartet bis nach `schalten` und trifft den naechsten
+    /// Modellaufruf. `schalten` legt nur einen Merker um: keine Sperre, kein Warten, kein Modell.
+    pub fn wirksam(&self, store: &MeetingStore, schalten: impl FnOnce()) -> Res<()> {
+        let _sperre = tor_sperre();
+        tor_paare(store, None, Some(&self.meeting_id))?;
+        schalten();
+        Ok(())
+    }
+}
+
+/// Der Start ist gescheitert, bevor Ton aufgenommen wurde: die Bindungen, die ER angelegt hat,
+/// fallen wieder weg (aeltere bleiben). Ein Fehler hier laesst die Bindung stehen (sperrend).
+pub fn bindung_verwerfen(store: &MeetingStore, gebunden: Gebunden) {
+    if gebunden.neu.is_empty() && gebunden.termin_neu.is_none() {
+        return;
+    }
+    let _sperre = tor_sperre();
+    let Ok(conn) = verbindung(store) else { return };
+    for plan_id in &gebunden.neu {
+        let _ = conn.execute(
+            "DELETE FROM meeting_plan_bindings WHERE meeting_id = ?1 AND plan_id = ?2",
+            params![gebunden.meeting_id, plan_id],
+        );
+    }
+    if let Some(key) = &gebunden.termin_neu {
+        let _ = conn.execute(
+            "DELETE FROM meeting_start_events WHERE meeting_id = ?1 AND event_key = ?2",
+            params![gebunden.meeting_id, key],
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Zuordnung: Bindung von Planungen an eine Besprechung
+// ---------------------------------------------------------------------------
+
+/// Migration Index 18 der Besprechungs-Datenbank: welche Planungen fuer eine Besprechung gelten,
+/// seit unter ihnen eine Aufnahme begann oder ein Modell freigegeben wurde, und gegen welche
+/// Anwesenden dabei geprueft wurde. Mehrere Planungen je Besprechung sind moeglich (uebergebener
+/// Termin UND Termin des Zieleintrags, zusammengefuehrte Teile). `meeting_id` hat bewusst keinen
+/// Fremdschluessel: die Bindung ueberlebt den Papierkorb der Besprechung. Nur CREATE.
+pub(crate) const BINDUNGEN_MIGRATION: &str = "CREATE TABLE IF NOT EXISTS meeting_plan_bindings (
+        meeting_id TEXT NOT NULL,
+        plan_id TEXT NOT NULL REFERENCES meeting_plans(id) ON DELETE CASCADE,
+        attendees_json TEXT NOT NULL DEFAULT '[]',
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (meeting_id, plan_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_meeting_plan_bindings_plan
+        ON meeting_plan_bindings(plan_id);
+    CREATE TABLE IF NOT EXISTS meeting_start_events (
+        meeting_id TEXT NOT NULL,
+        event_key TEXT NOT NULL,
+        uid TEXT NOT NULL,
+        instance_start INTEGER,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (meeting_id, event_key)
+    );";
+
+/// Ein Termin, unter dem eine Aufnahme der Besprechung begann (`meeting_start_events`, Teil von
+/// [`BINDUNGEN_MIGRATION`]): Schluessel im Kalender-Cache, UID und Instanz (`None` =
+/// Einzeltermin). Anders als die Verknuepfung `meeting_calendar_links` (eine je Besprechung,
+/// `INSERT OR REPLACE`, erst NACH dem Start geschrieben, ein Fehler dort ist nur eine Warnung)
+/// entsteht die Zeile unter der Tor-Sperre VOR dem wirksamen Beginn und wird nie ersetzt. Das Tor
+/// liest sie als Quelle wie die Verknuepfung: eine Planung, die dem Termin erst nach dem Start
+/// zugeordnet wird, gilt damit ab ihrer Zuordnung fuer die Besprechung.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct StartTerminZeile {
+    key: String,
+    uid: String,
+    instanz: Option<i64>,
+}
+
+/// Bindet den Termin des Starts an die Besprechung. `true`: die Zeile ist neu. Nur unter der
+/// Tor-Sperre.
+fn termin_binden(conn: &Connection, meeting_id: &str, t: &StartTerminZeile) -> Res<bool> {
+    let neu = conn
+        .execute(
+            "INSERT OR IGNORE INTO meeting_start_events
+               (meeting_id, event_key, uid, instance_start, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                meeting_id,
+                t.key,
+                t.uid,
+                t.instanz,
+                chrono::Utc::now().timestamp_millis()
+            ],
+        )
+        .map_err(sql)?;
+    Ok(neu > 0)
+}
+
+/// Die Termine, unter denen Aufnahmen der Besprechung begannen.
+fn start_termine(conn: &Connection, meeting_id: &str) -> Res<Vec<StartTerminZeile>> {
+    let mut st = conn
+        .prepare(
+            "SELECT event_key, uid, instance_start FROM meeting_start_events
+             WHERE meeting_id = ?1 ORDER BY event_key",
+        )
+        .map_err(sql)?;
+    let rows = st
+        .query_map([meeting_id], |r| {
+            Ok(StartTerminZeile {
+                key: r.get(0)?,
+                uid: r.get(1)?,
+                instanz: r.get(2)?,
+            })
+        })
+        .map_err(sql)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(sql)
+}
+
+/// Die an die Besprechung gebundenen, nicht geloeschten Planungen mit ihren Anwesenden.
+fn bindungen(conn: &Connection, meeting_id: &str) -> Res<Vec<Paar>> {
+    let mut st = conn
+        .prepare(
+            "SELECT b.plan_id, b.attendees_json FROM meeting_plan_bindings b
+             JOIN meeting_plans p ON p.id = b.plan_id
+             WHERE b.meeting_id = ?1 AND p.deleted_at IS NULL
+             ORDER BY b.plan_id",
+        )
+        .map_err(sql)?;
+    let rows = st
+        .query_map([meeting_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })
+        .map_err(sql)?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (plan_id, json) = row.map_err(sql)?;
+        // Eine unlesbare Liste gilt als leer: ohne Anwesende sperrt das Tor.
+        let anwesende: Vec<String> = serde_json::from_str(&json).unwrap_or_default();
+        out.push((plan_id, anwesende));
+    }
+    Ok(out)
+}
+
+/// Schreibt die Bindung jeder Planung aus `paare` an die Besprechung. Die Anwesenden einer schon
+/// gebundenen Planung werden VEREINIGT (wer einmal als anwesend geprueft wurde, bleibt es), als
+/// Identitaeten; eine Person OHNE Identitaet bleibt als `unbekannt` stehen und sperrt weiter (nach
+/// bestandenem Tor gibt es keine; beim Zusammenfuehren darf sie nicht still wegfallen). Gibt die
+/// NEU gebundenen Planungen zurueck. Nur unter der Tor-Sperre.
+fn binden(conn: &Connection, meeting_id: &str, paare: &[Paar]) -> Res<Vec<String>> {
+    let jetzt = chrono::Utc::now().timestamp_millis();
+    let mut neu = Vec::new();
+    for (plan_id, anwesende) in paare {
+        let alt: Option<String> = {
+            use rusqlite::OptionalExtension;
+            conn.query_row(
+                "SELECT attendees_json FROM meeting_plan_bindings
+                 WHERE meeting_id = ?1 AND plan_id = ?2",
+                params![meeting_id, plan_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(sql)?
+        };
+        let mut liste: Vec<String> = alt
+            .as_deref()
+            .and_then(|j| serde_json::from_str(j).ok())
+            .unwrap_or_default();
+        let vorher = liste.len();
+        for person in anwesende
+            .iter()
+            .map(|a| consent::identitaet(a).unwrap_or_else(|| consent::UNBEKANNT.to_string()))
+        {
+            if !liste.contains(&person) {
+                liste.push(person);
+            }
+        }
+        if alt.is_some() && liste.len() == vorher {
+            continue;
+        }
+        let json = serde_json::to_string(&liste).map_err(|e| format!("sql: {e}"))?;
+        conn.execute(
+            "INSERT INTO meeting_plan_bindings (meeting_id, plan_id, attendees_json, created_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(meeting_id, plan_id) DO UPDATE SET attendees_json = excluded.attendees_json",
+            params![meeting_id, plan_id, json, jetzt],
+        )
+        .map_err(sql)?;
+        if alt.is_none() && !neu.contains(plan_id) {
+            neu.push(plan_id.clone());
+        }
+    }
+    Ok(neu)
+}
+
+/// Zusammenfuehren mehrerer Besprechungen (`parts::apply_merge`): was fuer einen Teil gilt, gilt
+/// danach fuer das Ziel. `quellen` sind die Planungen jedes Teils, VOR der Transaktion gelesen
+/// ([`bezug_der_besprechung`]); geschrieben wird in der Transaktion der Zusammenfuehrung. Der
+/// Aufrufer haelt die Tor-Sperre.
+pub(crate) fn bindungen_uebertragen(
+    conn: &Connection,
+    ziel: &str,
+    quellen: &[Paar],
+    teile: &[String],
+) -> Res<()> {
+    binden(conn, ziel, quellen)?;
+    // Auch die Termine der Starts gehen mit: eine Planung, die einem davon spaeter zugeordnet
+    // wird, gilt dann fuer das Ziel.
+    for teil in teile {
+        conn.execute(
+            "INSERT OR IGNORE INTO meeting_start_events
+               (meeting_id, event_key, uid, instance_start, created_at)
+             SELECT ?1, event_key, uid, instance_start, created_at
+             FROM meeting_start_events WHERE meeting_id = ?2",
+            params![ziel, teil],
+        )
+        .map_err(sql)?;
+    }
+    Ok(())
+}
+
+/// Alle Planungen, die JETZT fuer die Besprechung selbst gelten (Bindungen und laufende Quellen),
+/// mit ihren Anwesenden, ohne Pruefung der Einwilligungen. Der Aufrufer haelt die Tor-Sperre.
+/// Ohne die Planungen eines Anhaenge-Ziels: die hat das Ziel schon selbst, und was unter ihnen
+/// fuer den Teil freigegeben wurde, steht in dessen Bindungen.
+pub(crate) fn bezug_der_besprechung(store: &MeetingStore, meeting_id: &str) -> Res<Vec<Paar>> {
+    let conn = verbindung(store)?;
+    eigene_paare(&conn, store, None, Some(meeting_id))
+}
+
+fn alle_paare(
+    conn: &Connection,
+    store: &MeetingStore,
+    event: Option<&crate::managers::calendar::model::CalEvent>,
+    target_meeting_id: Option<&str>,
+) -> Res<Vec<Paar>> {
+    let mut paare = eigene_paare(conn, store, event, target_meeting_id)?;
+    // Ein zum Anhaengen vorgemerkter Teil wird Teil seiner Zielbesprechung: bis dahin gelten fuer
+    // ihn AUCH deren Planungen (sonst liefe sein Ton ungeprueft durch das Modell und landete beim
+    // Zusammenfuehren im Transkript der geplanten Besprechung). Eine Ebene genuegt: ein wartender
+    // Teil nimmt selbst keine Teile an (`meetings_append_files`).
+    if let Some(ziel) = target_meeting_id
+        .map(|teil| anhaenge_ziel(conn, teil))
+        .transpose()?
+        .flatten()
+    {
+        for paar in eigene_paare(conn, store, None, Some(&ziel))? {
+            if !paare.contains(&paar) {
+                paare.push(paar);
+            }
+        }
+    }
+    Ok(paare)
+}
+
+/// Die Planungen EINER Besprechung: laufende Quellen ([`start_bezug`]) und Bindungen.
+fn eigene_paare(
+    conn: &Connection,
+    store: &MeetingStore,
+    event: Option<&crate::managers::calendar::model::CalEvent>,
+    target_meeting_id: Option<&str>,
+) -> Res<Vec<Paar>> {
+    let mut paare = start_bezug(conn, store, event, target_meeting_id)?.plaene;
+    if let Some(target) = target_meeting_id {
+        for paar in bindungen(conn, target)? {
+            if !paare.contains(&paar) {
+                paare.push(paar);
+            }
+        }
+    }
+    Ok(paare)
+}
+
+/// Die Besprechung, an die `meeting_id` angehaengt werden soll (`meeting_append_pending`).
+fn anhaenge_ziel(conn: &Connection, meeting_id: &str) -> Res<Option<String>> {
+    use rusqlite::OptionalExtension;
+    conn.query_row(
+        "SELECT target_id FROM meeting_append_pending WHERE meeting_id = ?1",
+        [meeting_id],
+        |r| r.get::<_, String>(0),
+    )
+    .optional()
+    .map_err(sql)
+}
+
+/// Fuehrt `start` unter dem Einwilligungs-Tor aus: Sperre nehmen, Tor pruefen (alles frisch aus
+/// der Datenbank), bestandene Planungen an die Zielbesprechung binden, dann `start` AUSFUEHREN,
+/// waehrend die Sperre noch gehalten wird. `start` schreibt nur in die Datenbank (Zeile anlegen,
+/// [`TorNachweis::binden`], Marke, Status): es darf nicht selbst Planungsfunktionen mit Sperre
+/// rufen (die Sperre ist nicht wiedereintrittsfaehig), nicht auf andere Threads warten, keine
+/// Sperre von Recorder oder Modell-Manager nehmen und kein Modell laufen lassen (Sperrordnung).
+/// Bei `NurNotizen` wird `start` nie aufgerufen.
 pub fn mit_tor<T>(
     store: &MeetingStore,
     event: Option<&crate::managers::calendar::model::CalEvent>,
@@ -682,8 +1080,17 @@ pub fn mit_tor<T>(
     start: impl FnOnce(&TorNachweis) -> Res<T>,
 ) -> Res<T> {
     let _sperre = tor_sperre();
-    start_tor(store, event, target_meeting_id)?;
-    start(&TorNachweis { _nur_hier: () })
+    let (paare, neu) = tor_und_binden(store, event, target_meeting_id)?;
+    start(&TorNachweis {
+        paare,
+        ziel: target_meeting_id.map(|t| (t.to_string(), neu)),
+        termin: event.map(|e| StartTerminZeile {
+            key: e.key.clone(),
+            uid: e.uid.clone(),
+            instanz: e.instance_start,
+        }),
+        _nur_hier: (),
+    })
 }
 
 /// [`mit_tor`] fuer eine vorhandene Besprechung (nachtraegliche Transkription, Import in einen
@@ -696,26 +1103,176 @@ pub fn mit_tor_besprechung<T>(
     mit_tor(store, None, Some(meeting_id), start)
 }
 
-/// Prueft das Tor fuer eine vorhandene Besprechung unter der Sperre (kurz, ohne etwas zu starten).
+/// Prueft das Tor fuer eine vorhandene Besprechung unter der Sperre (kurz, ohne etwas zu starten)
+/// und bindet bestandene Planungen an sie.
 pub fn tor_pruefen_besprechung(store: &MeetingStore, meeting_id: &str) -> Res<()> {
     let _sperre = tor_sperre();
-    start_tor(store, None, Some(meeting_id))
+    tor_und_binden(store, None, Some(meeting_id)).map(|_| ())
 }
 
-/// EIN Modellaufruf ueber Ton dieser Besprechung (Spracherkennung je Block bzw. Lauf,
-/// Sprecher-Modell). Das Tor wird VOR dem Aufruf unter der Sperre geprueft; die Sperre ist beim
-/// Aufruf selbst frei (ein Modell darf nie unter ihr laufen, sonst stuende jeder Widerruf bis zum
-/// Ende der Erkennung). Danach wird das Tor unter der Sperre erneut geprueft: hat sich die Lage
-/// inzwischen geaendert (Widerruf, Planungs-/Terminwechsel, neuer Kalenderstand), wird das Ergebnis
-/// verworfen (`Err`, der Aufrufer speichert nichts und ruft nicht weiter). Fehler:
-/// `nur_notizen: <grund>`; Fehler des Aufrufs selbst gehen unveraendert durch.
+/// Tor pruefen und, wenn es besteht, die geprueften Planungen an die Zielbesprechung binden.
+/// Gibt die geprueften Paare und die NEU gebundenen Planungen zurueck. Nur unter der Tor-Sperre.
+/// Gebunden wird nur nach bestandenem Tor: eine Planung, unter der nie eine Aufnahme begann und
+/// nie ein Modell lief, haengt der Besprechung nicht dauerhaft an.
+fn tor_und_binden(
+    store: &MeetingStore,
+    event: Option<&crate::managers::calendar::model::CalEvent>,
+    target_meeting_id: Option<&str>,
+) -> Res<(Vec<Paar>, Vec<String>)> {
+    debug_assert!(unter_tor_sperre(), "Bindung nur unter der Tor-Sperre");
+    let paare = tor_paare(store, event, target_meeting_id)?;
+    let neu = match target_meeting_id {
+        Some(target) if !paare.is_empty() => binden(&verbindung(store)?, target, &paare)?,
+        _ => Vec::new(),
+    };
+    Ok((paare, neu))
+}
+
+// ---------------------------------------------------------------------------
+// Modellebene: Freigabe je Inferenz
+// ---------------------------------------------------------------------------
+
+/// Ton, der KEINER Besprechung gehoert und deshalb ohne Einwilligungs-Tor an ein Modell darf. Jede
+/// Stelle ist hier benannt; eine neue braucht einen neuen Eintrag (und damit eine Begruendung).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OhneBesprechung {
+    /// Eine Sekunde Stille nach dem Laden eines Modells (GPU-Pipelines anlegen, Ergebnis verworfen).
+    Aufwaermen,
+    /// Abgleich eines Hoerbuchs mit seinem Text (`hoersync_live`): eine Mediendatei, kein Gespraech.
+    Hoerbuch,
+}
+
+/// Die Erlaubnis fuer GENAU EINE Inferenz ueber Ton. Jede Funktion, die ein Modell ueber Ton
+/// rechnen laesst, verlangt sie als Parameter und loest sie ein ([`Freigabe::einloesen`]). Fuer
+/// Ton einer Besprechung entsteht sie nur in [`modell_lauf`] bzw. [`modell_lauf_mit`] (Tor davor
+/// und danach); ein zweiter Aufruf mit derselben Freigabe (Wiederholung, weiteres Fenster)
+/// scheitert. Nicht kopierbar, nicht zwischen Threads teilbar.
+pub struct Freigabe {
+    /// `true`: Freigabe aus dem Tor, gilt fuer einen Aufruf.
+    einmalig: bool,
+    verbraucht: std::cell::Cell<bool>,
+}
+
+/// Fehlercode einer zum zweiten Mal eingeloesten Freigabe.
+pub const FREIGABE_VERBRAUCHT: &str = "freigabe_verbraucht";
+
+impl Freigabe {
+    /// Freigabe fuer Ton, der keiner Besprechung gehoert (benannter Ausweg, beliebig oft gueltig).
+    pub fn ohne_besprechung(_zweck: OhneBesprechung) -> Self {
+        Self {
+            einmalig: false,
+            verbraucht: std::cell::Cell::new(false),
+        }
+    }
+
+    fn fuer_einen_aufruf() -> Self {
+        Self {
+            einmalig: true,
+            verbraucht: std::cell::Cell::new(false),
+        }
+    }
+
+    /// Ruft die Inferenz-Funktion als Erstes: die Freigabe aus dem Tor gilt genau einmal.
+    pub fn einloesen(&self) -> Res<()> {
+        if self.einmalig && self.verbraucht.replace(true) {
+            return Err(FREIGABE_VERBRAUCHT.to_string());
+        }
+        Ok(())
+    }
+
+    /// Eine Freigabe wie aus dem Tor, fuer Tests von Inferenz-Funktionen ohne Datenbank.
+    #[cfg(test)]
+    pub(crate) fn fuer_test() -> Self {
+        Self::fuer_einen_aufruf()
+    }
+}
+
+std::thread_local! {
+    /// Besprechungen, fuer die DIESER Thread gerade Modellarbeit leistet (Stapel).
+    static MODELLARBEIT: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Ein Abschnitt, in dem dieser Thread Ton einer Besprechung durch ein Modell schickt und die
+/// Ergebnisse speichert (Live-Worker, Enddurchlauf, Nachholen, Import, Neu-Transkription,
+/// Sprechertrennung, Stimmvergleich). Solange er lebt:
+///
+/// - [`modell_lauf`] ist fuer diese Besprechung erlaubt (ohne ihn: `nur_notizen: ohne_modellarbeit`);
+/// - der Speicher prueft JEDE Aenderung am Transkript dieser Besprechung aus diesem Thread unter
+///   der Tor-Sperre ([`schreibschutz`]).
+///
+/// Er gehoert dem Thread, der ihn begonnen hat (nicht `Send`), und darf verschachtelt werden.
+pub struct Modellarbeit {
+    meeting_id: String,
+    _nicht_send: std::marker::PhantomData<*const ()>,
+}
+
+impl Modellarbeit {
+    pub fn beginnen(meeting_id: &str) -> Self {
+        MODELLARBEIT.with(|m| m.borrow_mut().push(meeting_id.to_string()));
+        Self {
+            meeting_id: meeting_id.to_string(),
+            _nicht_send: std::marker::PhantomData,
+        }
+    }
+}
+
+impl Drop for Modellarbeit {
+    fn drop(&mut self) {
+        MODELLARBEIT.with(|m| {
+            let mut m = m.borrow_mut();
+            if let Some(i) = m.iter().rposition(|id| *id == self.meeting_id) {
+                m.remove(i);
+            }
+        });
+    }
+}
+
+/// Leistet dieser Thread gerade Modellarbeit fuer die Besprechung?
+pub fn in_modellarbeit(meeting_id: &str) -> bool {
+    MODELLARBEIT.with(|m| m.borrow().iter().any(|id| id == meeting_id))
+}
+
+/// Schreibschutz des Speichers (Schreibebene): ruft JEDER Schreiber des Transkripts
+/// (`MeetingStore::append_delta`, `write_transcript`, `clear_segments`) als Erstes. Leistet der
+/// Thread Modellarbeit fuer die Besprechung, wird das Tor JETZT unter der Sperre geprueft und die
+/// Sperre bis zum Ende des Schreibens gehalten (Rueckgabe): zwischen Pruefung und Schreiben kann
+/// kein Widerruf liegen. Ist das Tor zu: `Err("nur_notizen: ...")`, nichts wird geschrieben.
+/// Ausserhalb von Modellarbeit (Korrektur von Hand, Untertitel-Import, Zuschnitt) geschieht nichts.
+pub(crate) fn schreibschutz(store: &MeetingStore, meeting_id: &str) -> Res<Option<TorSperre>> {
+    if !in_modellarbeit(meeting_id) {
+        return Ok(None);
+    }
+    if unter_tor_sperre() {
+        // Der Thread haelt die Sperre schon (Schritt unter `mit_tor_besprechung`): frisch pruefen.
+        tor_paare(store, None, Some(meeting_id))?;
+        return Ok(None);
+    }
+    let sperre = tor_sperre();
+    tor_und_binden(store, None, Some(meeting_id))?;
+    Ok(Some(sperre))
+}
+
+/// EIN Modellaufruf ueber Ton dieser Besprechung (Spracherkennung je Versuch und Block,
+/// Sprachprobe je Fenster, Sprecher-Modell je Kanal, Stimmvergleich je Ausschnitt). Das Tor wird
+/// VOR dem Aufruf unter der Sperre geprueft; die Sperre ist beim Aufruf selbst frei (ein Modell
+/// darf nie unter ihr laufen, sonst stuende jeder Widerruf bis zum Ende der Erkennung). `call`
+/// bekommt die [`Freigabe`] fuer genau eine Inferenz. Danach wird das Tor unter der Sperre erneut
+/// geprueft, IMMER: auch wenn `call` mit einem Fehler oder einer Panik endete. Hat sich die Lage
+/// inzwischen geaendert (Widerruf, Planungs-/Terminwechsel, neuer Kalenderstand), gewinnt die
+/// Ablehnung: Ergebnis, Fehler oder Panik werden verworfen (`Err`, der Aufrufer speichert nichts,
+/// wiederholt nicht und schreibt keine Luecke). Fehler: `nur_notizen: <grund>`; sonst gehen Fehler
+/// und Panik des Aufrufs unveraendert durch.
+///
+/// Voraussetzung ist eine laufende [`Modellarbeit`] des Threads fuer die Besprechung, sonst
+/// `nur_notizen: ohne_modellarbeit` ohne Aufruf.
 ///
 /// Warum kein Zaehler je Planung: das erneute Lesen nach dem Aufruf ist die staerkere Pruefung
-/// (sie sieht auch Aenderungen anderer Verbindungen und Prozesse) und braucht keine Migration.
+/// (sie sieht auch Aenderungen anderer Verbindungen und Prozesse).
 pub fn modell_lauf<T>(
     store: &MeetingStore,
     meeting_id: &str,
-    call: impl FnOnce() -> Res<T>,
+    call: impl FnOnce(&Freigabe) -> Res<T>,
 ) -> Res<T> {
     modell_lauf_mit(store, meeting_id, call, |code| code)
 }
@@ -725,14 +1282,23 @@ pub fn modell_lauf<T>(
 pub fn modell_lauf_mit<T, E>(
     store: &MeetingStore,
     meeting_id: &str,
-    call: impl FnOnce() -> Result<T, E>,
+    call: impl FnOnce(&Freigabe) -> Result<T, E>,
     abgelehnt: impl Fn(String) -> E,
 ) -> Result<T, E> {
     ohne_tor_sperre("Modellaufruf");
+    if !in_modellarbeit(meeting_id) {
+        return Err(abgelehnt("nur_notizen: ohne_modellarbeit".to_string()));
+    }
     tor_pruefen_besprechung(store, meeting_id).map_err(&abgelehnt)?;
-    let out = call()?;
-    tor_pruefen_besprechung(store, meeting_id).map_err(&abgelehnt)?;
-    Ok(out)
+    let frei = Freigabe::fuer_einen_aufruf();
+    let ergebnis = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| call(&frei)));
+    // Die Nachpruefung laeuft IMMER, auch nach Fehler und Panik des Aufrufs.
+    let danach = tor_pruefen_besprechung(store, meeting_id);
+    match (ergebnis, danach) {
+        (_, Err(code)) => Err(abgelehnt(code)),
+        (Ok(ergebnis), Ok(())) => ergebnis,
+        (Err(panik), Ok(())) => std::panic::resume_unwind(panik),
+    }
 }
 
 /// Ist `fehler` die Ablehnung des Tors (`nur_notizen: ...`)?
@@ -744,23 +1310,32 @@ pub fn ist_ablehnung(fehler: &str) -> bool {
 /// Live-Transkription (und vor jeder nachtraeglichen Transkription) und liest dabei alles frisch
 /// aus der Datenbank: Einwilligungen, Termin und Teilnehmende (ein Widerruf zwischen einer
 /// Abfrage per [`start_modus`] und dem Start wirkt damit). Allein ohne Sperre ist das nur eine
-/// Momentaufnahme; atomar mit dem Start ist es nur ueber [`mit_tor`]. Gehoert die Besprechung zu
-/// keiner Planung, passiert nichts. Sonst muss JEDE zugehoerige Planung gegen JEDE Anwesendenliste
-/// [`StartModus::MitTranskription`] ergeben (siehe [`start_bezug`]); bei `NurNotizen` startet
-/// nichts (kein Ton, keine Transkription) und der Fehler ist `nur_notizen: <grund>`
-/// (`nicht_geplant`, `abgelehnt` oder `offen`; nie Namen). Personen ohne Identitaet und fehlende
-/// Anwesende sperren.
+/// Momentaufnahme (und bindet nichts); atomar mit dem Start ist es nur ueber [`mit_tor`]. Gehoert
+/// die Besprechung zu keiner Planung, passiert nichts. Sonst muss JEDE zugehoerige Planung gegen
+/// JEDE Anwesendenliste [`StartModus::MitTranskription`] ergeben (Bindungen und [`start_bezug`]);
+/// bei `NurNotizen` startet nichts (kein Ton, keine Transkription) und der Fehler ist
+/// `nur_notizen: <grund>` (`nicht_geplant`, `abgelehnt` oder `offen`; nie Namen). Personen ohne
+/// Identitaet und fehlende Anwesende sperren.
 pub fn start_tor(
     store: &MeetingStore,
     event: Option<&crate::managers::calendar::model::CalEvent>,
     target_meeting_id: Option<&str>,
 ) -> Res<()> {
+    tor_paare(store, event, target_meeting_id).map(|_| ())
+}
+
+/// Die Pruefung von [`start_tor`]; gibt die bestandenen Paare (Planung, Anwesende) zurueck.
+fn tor_paare(
+    store: &MeetingStore,
+    event: Option<&crate::managers::calendar::model::CalEvent>,
+    target_meeting_id: Option<&str>,
+) -> Res<Vec<Paar>> {
     let mut conn = verbindung(store)?;
     let tx = conn
         .transaction_with_behavior(TransactionBehavior::Deferred)
         .map_err(sql)?;
-    let bezug = start_bezug(&tx, store, event, target_meeting_id)?;
-    for (plan_id, anwesende) in &bezug.plaene {
+    let paare = alle_paare(&tx, store, event, target_meeting_id)?;
+    for (plan_id, anwesende) in &paare {
         let plan = plan_holen(&tx, plan_id)?;
         let einwilligungen = plan_store::einwilligungen(&tx, plan_id)?;
         match consent::start_modus(
@@ -786,5 +1361,6 @@ pub fn start_tor(
             }
         }
     }
-    Ok(())
+    drop(tx);
+    Ok(paare)
 }
