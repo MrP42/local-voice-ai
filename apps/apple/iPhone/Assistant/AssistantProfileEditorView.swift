@@ -45,6 +45,7 @@ enum AssistantProfileProblem {
         case .tooMany: return "Es sind höchstens 200 Assistenten möglich. Lösche zuerst einen."
         case .tooLarge: return "Der Assistent ist zu groß zum Sichern."
         case .reservedId, .notFound: return "Der Assistent konnte nicht gesichert werden."
+        case .occupied: return "Unter dieser Kennung liegt schon eine Datei, die sich nicht lesen lässt. Sie bleibt unverändert."
         case .writeFailed: return "Der Assistent konnte nicht gesichert werden. Prüfe den freien Speicher."
         }
     }
