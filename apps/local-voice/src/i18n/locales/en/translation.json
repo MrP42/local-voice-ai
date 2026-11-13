@@ -30,6 +30,7 @@
     "ariaLabel": "Main navigation"
   },
   "tts": {
+    "pageSaveFailed": "The page could not be saved. The action was not carried out.",
     "editorMenu": {
       "label": "Editor menu",
       "find": "Find and replace",
@@ -61,6 +62,57 @@
       "cleanupNothing": "Nothing to clean up.",
       "cleanupDone_one": "{{count}} spot cleaned up.",
       "cleanupDone_other": "{{count}} spots cleaned up.",
+      "pasteCleanup": "Clean up automatically when pasting",
+      "pasteCleanupHint": "Remove page numbers, headers and footers, web page controls and invisible characters from pasted text; undo from the notice or with Ctrl+Z",
+      "pasteCleaned_one": "Cleaned up while pasting: {{count}} change",
+      "pasteCleaned_other": "Cleaned up while pasting: {{count}} changes",
+      "pasteUndo": "Undo",
+      "pasteUndoStale": "Undo is no longer possible: the text has changed since.",
+      "pasteKeep": "The originals of the last 20 pastes are saved with the page on this device until you delete them.",
+      "pasteTooLarge": "Text too large to clean up (over 2 MB): pasted unchanged, without original.",
+      "pasteAbortedPage": "Paste cancelled: page changed.",
+      "pasteAbortedChanged": "Paste cancelled: the text changed in the meantime. The original is under Clean up > Recent pastes.",
+      "pasteNotSaved": "The original could not be saved: text pasted unchanged.",
+      "pasteLogItem": "Recent pastes …",
+      "pasteLogItemHint": "View, restore or copy the original of earlier pastes",
+      "pasteLog": {
+        "title": "Recent pastes",
+        "empty": "No paste has been cleaned up yet.",
+        "restore": "Restore original",
+        "copy": "Copy original",
+        "copied": "Original copied.",
+        "restored": "Original restored.",
+        "close": "Close",
+        "delete": "Delete",
+        "deleted": "Original deleted.",
+        "deleteAll": "Delete all originals",
+        "deleteAllTitle": "Delete all originals?",
+        "deleteAllBody": "The saved originals of this page are removed for good. The text in the editor stays as it is.",
+        "deleteAllYes": "Delete",
+        "deleteAllNo": "Cancel",
+        "allDeleted": "All originals deleted.",
+        "list": "Pastes, newest first",
+        "changes_one": "{{count}} change",
+        "changes_other": "{{count}} changes",
+        "tooLarge": "Too large to clean up ({{size}} MB): pasted unchanged, no original saved.",
+        "reason": {
+          "checking": "Checking the checksum … restoring and copying are disabled until it is done.",
+          "damaged": "Damaged: the checksum does not match the saved original or is missing. Restoring is disabled; copying stays possible, but the content may be faulty.",
+          "unverifiable": "Cannot be verified: the checksum could not be computed here (WebCrypto is missing or the check failed). Restoring is disabled; copying stays possible.",
+          "empty": "The cleaned text was empty. The place cannot be found; please copy the original.",
+          "missing": "The cleaned text is no longer in the text unchanged.",
+          "ambiguous": "The cleaned text occurs more than once in the text."
+        },
+        "rules": {
+          "control": "Invisible characters",
+          "pageNumbers": "Page numbers",
+          "repeated": "Headers and footers",
+          "webNoise": "Web page controls",
+          "fragments": "Line breaks",
+          "spaces": "Spaces",
+          "blankLines": "Blank lines"
+        }
+      },
       "rules": {
         "all": "All rules",
         "allHint": "Timestamps, broken lines, spaces and paragraphs in one step",
@@ -8513,6 +8565,7 @@
       "missing": "Transcription not found",
       "missingParts": "Some parts have no transcription job: the audiobook cannot be transcribed completely.",
       "emptyTranscript": "The transcript is empty.",
+      "pageNotWritten": "The book's page could not be written.",
       "unknownDuration": "The duration of an earlier part is unknown; the text cannot be appended."
     },
     "back": "Library",
