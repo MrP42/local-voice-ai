@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://local-voice.invalid/schemas/lva.schnittstellen/1.json",
   "title": "Schnittstellen-Verzeichnis",
-  "description": "Dokumentation der STRUKTUR des Schnittstellen-Verzeichnisses lva.schnittstellen/1 (Arbeitsname); es wird nicht zur Laufzeit ausgewertet. Maßgeblich ist die Prüfung in den Kernen, die Fehler mit Pfad und Code liefert. Nicht in JSON Schema ausdrückbar und nur dort geprüft: eindeutige id je Verzeichnis, eindeutige Parameternamen und Kopfzeilen ohne Beachtung der Groß-/Kleinschreibung, Trimmen des Namens, ganzzahlige Darstellung (15000.0 wird abgewiesen), die Adressgrammatik (keine Normalisierung, IP-Literale, Ports, Prozent-Kodierung), Übereinstimmung der Platzhalter der Adressvorlage mit den Pfadparametern, min ≤ max, ein Geheimnis-Kopf ungleich einer festen Kopfzeile. Längen zählen in Unicode-Codepunkten. Unbekannte Felder sind überall erlaubt, bleiben erhalten und wirken nicht; eine unbekannte art ist ein Fehler.",
+  "description": "Dokumentation der STRUKTUR des Schnittstellen-Verzeichnisses lva.schnittstellen/1; es wird nicht zur Laufzeit ausgewertet. Maßgeblich ist die Prüfung in den Kernen, die Fehler mit Pfad und Code liefert. Nicht in JSON Schema ausdrückbar und nur dort geprüft: eindeutige id je Verzeichnis, eindeutige Parameternamen und Kopfzeilen ohne Beachtung der Groß-/Kleinschreibung, Trimmen des Namens, ganzzahlige Darstellung (15000.0 wird abgewiesen), die Adressgrammatik (keine Normalisierung, IP-Literale, Ports, Prozent-Kodierung), Übereinstimmung der Platzhalter der Adressvorlage mit den Pfadparametern, min ≤ max, ein Geheimnis-Kopf ungleich einer festen Kopfzeile, eindeutige Kennungen und Adressen der Seiten eines Web-Blocks, die Länge des kodierten Werkzeugnamens (höchstens 64 Zeichen), Optionen eines Pfadparameters nur aus [A-Za-z0-9._~-], und dass alle Schlüssel und Texte nur aus Unicode-Skalarwerten bestehen und kein Objekt einen Schlüssel doppelt enthält. Längen zählen in Unicode-Codepunkten. Unbekannte Felder sind überall erlaubt, bleiben erhalten und wirken nicht; eine unbekannte art ist ein Fehler.",
   "type": "object",
   "required": ["schema", "eintraege"],
   "properties": {
@@ -32,9 +32,8 @@
         "name": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 60,
           "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]*$",
-          "description": "Nach dem Entfernen von Leerzeichen an den Enden 1 bis 60 Codepunkte, ohne Steuerzeichen (U+0000–U+001F, U+007F–U+009F, U+2028, U+2029)."
+          "description": "Nach dem Entfernen von Leerzeichen an den Enden 1 bis 60 Codepunkte, ohne Steuerzeichen (U+0000–U+001F, U+007F–U+009F, U+2028, U+2029). Die Längengrenze nach dem Trimmen prüft allein der Kern; das Schema begrenzt den rohen Text deshalb nicht."
         },
         "beschreibung": {
           "type": "string",
@@ -563,20 +562,16 @@
     },
     "web": {
       "type": "object",
-      "required": ["adressen"],
+      "required": ["seiten"],
       "properties": {
-        "adressen": {
+        "seiten": {
           "type": "array",
           "minItems": 1,
           "maxItems": 16,
-          "uniqueItems": true,
           "items": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 500,
-            "pattern": "^https?://[a-z0-9.:-]+/[A-Za-z0-9._~%/-]*(\\?[A-Za-z0-9._~%=&+-]+)?$"
+            "$ref": "#/$defs/seite"
           },
-          "description": "Vollständige Adressen (Abfrageteil erlaubt), grob vorgeprüft; maßgeblich ist die Adressgrammatik der Kerne."
+          "description": "1 bis 16 Seiten; kennung und adresse je eindeutig. Das Modell sieht nur die Kennungen, nie die Adressen."
         },
         "netz": {
           "enum": ["oeffentlich", "privat", "geraet"],
@@ -587,6 +582,25 @@
           "minimum": 1,
           "maximum": 262144,
           "default": 20480
+        }
+      },
+      "additionalProperties": true
+    },
+    "seite": {
+      "type": "object",
+      "required": ["kennung", "adresse"],
+      "properties": {
+        "kennung": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,31}$",
+          "description": "Auswahlkennung, die das Modell übergibt; im Web-Block eindeutig."
+        },
+        "adresse": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "pattern": "^https?://[a-z0-9.:-]+/[A-Za-z0-9._~%/-]*(\\?[A-Za-z0-9._~%=&+-]+)?$",
+          "description": "Vollständige Adresse (Abfrageteil erlaubt), grob vorgeprüft; maßgeblich ist die Adressgrammatik der Kerne. Im Web-Block eindeutig."
         }
       },
       "additionalProperties": true
