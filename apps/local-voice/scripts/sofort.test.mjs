@@ -513,6 +513,14 @@ function neu(handlers, sofort, optionen = {}) {
     turn.commit();
     return engine.respond(turn, text, 0);
   };
+  /** Wie in der App: ein Fehler beim Antworten meldet sich und beendet den Schritt (`antworteSicher`, `dropTurn`). */
+  const startSicher = (text) => {
+    const turn = engine.newTurn(0, performance.now());
+    engine.turn = turn;
+    turn.committed = true;
+    turn.commit();
+    return engine.antworteSicher(turn, text, 0);
+  };
   /** Gesprochene Äußerung als laufender Schritt (ohne auf das Ende der Antwort zu warten). */
   const startSprache = (text) => {
     const turn = engine.newTurn(0, performance.now());
@@ -557,6 +565,7 @@ function neu(handlers, sofort, optionen = {}) {
     log,
     config,
     start,
+    startSicher,
     startSprache,
     erkenne,
     barge,
@@ -4199,6 +4208,7 @@ async function gewoehnlich({
   frage = FRAGE,
   sprecher,
   ohneDenker = false,
+  sicher = false,
   vorbereiten,
 } = {}) {
   const d = denkerSteuerbar();
@@ -4222,7 +4232,9 @@ async function gewoehnlich({
   vorbereiten?.(t);
   const lauf = sprecher
     ? t.startSprache(frage).fertig
-    : t.start(frage).catch((e) => t.log.errors.push(String(e)));
+    : sicher
+      ? t.startSicher(frage)
+      : t.start(frage).catch((e) => t.log.errors.push(String(e)));
   if (!ohneDenker) assert.equal(await bis(() => d.laeufe.length === 1), true);
   return { d, t, lauf, frei: (satz) => tore.get(satz).frei() };
 }
@@ -5290,15 +5302,18 @@ for (const echt of [false, true]) {
     }));
 }
 
-/** Eine späte Erkennung wirkt nicht: keine Nutzerzeile, kein Modellaufruf, der Zustand bleibt `zustand`. */
-async function ohneWirkung(t, d, nutzer, zustand) {
+/**
+ * Eine späte Erkennung wirkt nicht: keine Nutzerzeile, kein Modellaufruf, der Zustand bleibt `zustand`, und es gibt
+ * keine weitere Fehlermeldung als die `fehler` erwarteten.
+ */
+async function ohneWirkung(t, d, nutzer, zustand, fehler = 0) {
   await new Promise((r) => setImmediate(r));
   await new Promise((r) => setImmediate(r));
   assert.deepEqual(t.log.user, nutzer, "keine neue Nutzerzeile");
   assert.equal(d.laeufe.length, 1, "keine Modellanfrage");
   assert.equal(t.engine.turn, null);
   assert.equal(t.engine.state, zustand);
-  assert.equal(t.log.errors.length, 0);
+  assert.equal(t.log.errors.length, fehler);
 }
 
 test("H11 Anrufende zwischen Wartegrenze und später Erkennung: die Erkennung beginnt nichts mehr, der Zustand bleibt idle", () =>
@@ -5351,4 +5366,95 @@ test("H11 Auftragskandidat: Anrufende zwischen Wartegrenze und später Erkennung
     assert.deepEqual(t.log.user, nutzer);
     assert.equal(d.laeufe.length, 1);
     assert.equal(t.engine.state, "idle");
+  }));
+
+// -- Runde 10 (Codex R3 zu lva#564) -------------------------------------------------------------------------
+//
+// Fehlerfälle dieser Runde (vor dem Code aufgeschrieben, Status im Bericht):
+//  L1 Nebenläufigkeit: Der Schritt endet mit einem Fehler (Player lehnt Stück 2 ab, `dropTurn`), während die Erkennung
+//     der Unterbrechung noch läuft (Pause weg, Schritt weg, `holdRun` unverändert). Vor Ablauf der Haltefrist kommt
+//     ein Gesprächswechsel (`resetHistory`): die Erkennung wirkt nicht mehr.
+//  L2 Dasselbe mit Esc (`interrupt`).
+//  L3 Dasselbe mit Anrufende (`stop`): danach bleibt der Zustand idle, keine Fehlermeldung, kein Zuhören.
+//  L4 Dasselbe mit Neustart des Anrufs.
+//  L5 Schutz: Fehlerende ohne Wechsel: die Erkennung gilt weiter, genau ein neuer Schritt (die Äußerung geht nicht
+//     verloren, nur die Fehlermeldung des Fehlers selbst).
+//  Zeit: gesteuerte Uhr, nie weiter als bis zur Haltefrist, also der Weg ohne Frist (`erstes !== "frist"`).
+
+/**
+ * Stück 1 klingt, das Einreihen von Stück 2 hängt, der Nutzer unterbricht (Pause, die Erkennung hängt bis `erkannt()`),
+ * dann lehnt der Player Stück 2 ab: der Schritt endet mit Fehler, Pause und Schritt sind frei, die Erkennung läuft noch.
+ */
+async function fehlerendeBeiErkennung(text) {
+  const { d, t } = await gewoehnlich({ sicher: true });
+  let ablehnen;
+  const einreihen = t.player.enqueue.bind(t.player);
+  t.player.enqueue = (wav, ...rest) =>
+    wav === "wav:Satz zwei."
+      ? new Promise(
+          (_, nein) => (ablehnen = () => nein(new Error("dekodieren"))),
+        )
+      : einreihen(wav, ...rest);
+  d.liefere(0, "Satz eins.", "Satz zwei.");
+  assert.equal(await ersterKlingt(t), true);
+  assert.equal(
+    await bis(() => ablehnen !== undefined),
+    true,
+    "das Einreihen von Stück 2 hängt",
+  );
+  const erkannt = erkennungMitTor(text);
+  t.barge();
+  t.fruehEnde();
+  t.ende();
+  assert.equal(t.engine.held, t.engine.turn, "angehalten, die Erkennung läuft");
+  ablehnen();
+  assert.equal(
+    await bis(() => t.engine.turn === null),
+    true,
+    "der Fehler beendet den Schritt",
+  );
+  assert.equal(t.engine.held, null, "die Pause ist weg");
+  assert.equal(t.log.errors.length, 1, "genau die Fehlermeldung des Fehlers");
+  assert.equal(t.aufrufe("voice_call_transcribe").length, 1);
+  return { d, t, erkannt };
+}
+
+const WECHSEL = {
+  "Gesprächswechsel (resetHistory)": [
+    (t) => t.engine.resetHistory(),
+    "listening",
+  ],
+  "Esc (interrupt)": [(t) => t.engine.interrupt(), "listening"],
+  "Anrufende (stop)": [(t) => t.engine.stop(), "idle"],
+  "Neustart des Anrufs": [(t) => neustart(t), "listening"],
+};
+
+for (const [name, [wechsel, zustand]] of Object.entries(WECHSEL))
+  test(`H12 Fehlerende des Schritts bei laufender Erkennung, dann ${name} vor der Haltefrist: die Erkennung beginnt nichts mehr`, () =>
+    mitUhr(async () => {
+      const { d, t, erkannt } = await fehlerendeBeiErkennung(WETTER);
+      await wechsel(t);
+      erkannt();
+      await ohneWirkung(t, d, [FRAGE], zustand, 1);
+    }));
+
+test("H12 Fehlerende des Schritts bei laufender Erkennung ohne Wechsel: die Erkennung gilt weiter, genau ein neuer Schritt", () =>
+  mitUhr(async () => {
+    const { d, t, erkannt } = await fehlerendeBeiErkennung(WETTER);
+    erkannt();
+    assert.equal(
+      await bis(() => d.laeufe.length === 2),
+      true,
+      "ein neuer Schritt",
+    );
+    assert.deepEqual(t.log.user, [FRAGE, WETTER]);
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.equal(d.laeufe.length, 2, "nicht mehr als ein neuer Schritt");
+    assert.equal(t.log.errors.length, 1, "nur die Meldung des Fehlers");
+    d.liefere(1, "Satz drei.");
+    assert.equal(
+      await bis(() => t.player.gespielt.includes("wav:Satz drei.")),
+      true,
+    );
   }));

@@ -628,9 +628,9 @@ export class VoiceCallEngine {
   /** Zählt Erkennungen im Anhalten: nur die jüngste darf entscheiden. */
   private holdRun = 0;
   /**
-   * Zählt jede neue Lage: eine neue Äußerung (`onSpeechStart`), einen neuen Schritt (`newTurn`) und
-   * jede Erkennung bei angehaltener Antwort (`decideHeld`). Ein spätes Erkennungsergebnis nach der
-   * Frist gilt nur, wenn der Zähler seit dem Start seiner Erkennung gleich geblieben ist (lva#509).
+   * Zählt jede neue Lage: eine neue Äußerung (`onSpeechStart`), einen neuen Schritt (`newTurn`), Esc
+   * (`interrupt`) und jede Erkennung bei angehaltener Antwort (`decideHeld`). Ein Erkennungsergebnis bei
+   * angehaltener Antwort gilt nur, wenn der Zähler seit dem Start seiner Erkennung gleich geblieben ist (lva#509).
    */
   private lage = 0;
   /** Eine Erkennung im Anhalten läuft. */
@@ -1338,18 +1338,18 @@ export class VoiceCallEngine {
         spaet = true;
       }
       erg = await ergebnis;
-      // Das späte Ergebnis gehört zur Lage von damals: hat sich seither etwas getan (neue Äußerung,
-      // neuer Schritt, neue Erkennung), wird es verworfen und bricht nichts ab. Nach dem Auflegen, bei einem Neustart
-      // des Anrufs oder einem Gesprächswechsel gilt es erst recht nicht: ein Timeout hebt die Erkennung auf, das
-      // Ende des Anrufs nicht.
-      if (
-        this.lage !== meineLage ||
-        gespraech !== this.generation ||
-        anruf !== this.startGen ||
-        !this.inCall
-      )
-        return;
     } else erg = erstes;
+    // Das Ergebnis gehört zur Lage von damals, vor wie nach der Frist: hat sich seither etwas getan (neue
+    // Äußerung, neuer Schritt, Esc), wird es verworfen und bricht nichts ab. Nach dem Auflegen, bei einem Neustart
+    // des Anrufs oder einem Gesprächswechsel gilt es erst recht nicht. Ein Timeout oder ein Fehlerende des Schritts
+    // (`dropTurn`) hebt die Erkennung nicht auf, das Ende des Anrufs oder des Gesprächs schon.
+    if (
+      this.lage !== meineLage ||
+      gespraech !== this.generation ||
+      anruf !== this.startGen ||
+      !this.inCall
+    )
+      return;
 
     if (!spaet) {
       // Überholt (der Nutzer sprach weiter) oder abgebrochen: nichts davon gilt mehr. Nur ein vom
