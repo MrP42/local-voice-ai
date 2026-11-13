@@ -411,8 +411,14 @@ interface Turn {
    */
   quellenMelden?: () => void;
   /**
-   * Nachreichen: Wartezeit auf das nächste Stück, seit der Player leer lief, ohne dass die Antwort fertig erzeugt
-   * ist (`warteAufStueck`). Läuft sie ab, endet der Schritt wie bei einem Abbruch.
+   * Stücke, die schon als Satz vorliegen, aber noch nicht im Player sind (Synthese läuft oder steht hinter einer
+   * anderen an). Nur solange etwas offen ist, kann der Player auf ein Stück warten, das ausbleibt (`stueckFrist`);
+   * wartet der Schritt auf das Modell, ist nichts offen, und die Fristen des Modells gelten.
+   */
+  synthOffen: number;
+  /**
+   * Wartezeit auf das nächste Stück (`warteAufStueck`), seit der Player leer lief, obwohl noch ein Stück offen ist.
+   * Läuft sie ab, endet der Schritt wie bei einem Abbruch.
    */
   stueckTimer?: ReturnType<typeof setTimeout>;
 }
@@ -443,10 +449,12 @@ export const TUNING = {
   /** Deckel für den Satzpuffer eines Auftrags (Zeichen); was darüber liegt, wird gezählt und verworfen. */
   auftragMaxZeichen: 20_000,
   /**
-   * Nachreichen: so lange darf die Synthese des nächsten Stücks ausbleiben, nachdem der Player leer lief (ms). Was
-   * schon klingt, wird nie abgeschnitten; ein Stück, das danach nicht kommt, beendet den Schritt wie ein Abbruch.
+   * So lange darf die Synthese eines schon vorliegenden Stücks ausbleiben, nachdem der Player leer lief (ms), beim
+   * gewöhnlichen Schritt wie beim Nachreichen: dieselbe Störung (die Synthese antwortet nicht), dieselbe Lücke im Ton,
+   * darum ein Wert. Was schon klingt, wird nie abgeschnitten; ein Stück, das danach nicht kommt, beendet den Schritt
+   * wie ein Abbruch.
    */
-  nachreichenStueckMaxMs: 10_000,
+  stueckMaxMs: 10_000,
 };
 /** Was ein Häppchen ist: Inhalt (Modell, S0-Antwort), Ansage (Ab S1, Überbrückung) oder feste Vorlage. */
 /** `sofort`: Weitersprechen des Sofort-Sprechers (keine Antwort, schließt keinen ersten Satz). */
@@ -1240,9 +1248,10 @@ export class VoiceCallEngine {
     this.holdBusy = false;
     this.zaehleHaltezeit(turn);
     this.player?.resume();
-    // Setzt die Wiedergabe leer fort (nichts mehr zu spielen), läuft die Wartezeit auf das nächste Stück von neuem:
-    // in der Pause war sie ausgesetzt, und das Fortsetzen meldet nicht in jedem Fall einen Leerlauf.
-    this.pruefeStueckwartezeit(turn);
+    // Setzt die Wiedergabe leer fort (nichts mehr zu spielen), gilt das wie ein Leerlauf des Players: der fertige
+    // Schritt endet, sonst läuft die Wartezeit auf das nächste Stück von neuem. In der Pause war sie ausgesetzt, und
+    // das Fortsetzen meldet nicht in jedem Fall einen Leerlauf (`resume` ohne `onIdle`).
+    if (this.turn === turn && !this.player?.active) this.playerLeer();
     this.setState(this.player?.active ? "speaking" : "listening");
   }
 
@@ -1517,6 +1526,7 @@ export class VoiceCallEngine {
       userText: "",
       pieces: [],
       heard: 0,
+      synthOffen: 0,
       lastSpeechWall,
       startFrame,
     };
@@ -2418,7 +2428,8 @@ export class VoiceCallEngine {
       assistantText += (assistantText ? " " : "") + piece;
       turn.angezeigt = true;
       this.cb.onAssistant(assistantText, false, false);
-      chain = chain.then(async () => {
+      turn.synthOffen++;
+      const schritt = async () => {
         if (dead()) return;
         let wav: string;
         try {
@@ -2436,6 +2447,9 @@ export class VoiceCallEngine {
         if (!ansage && !firstAudioAt) firstAudioAt = performance.now();
         await turn.committedP;
         if (dead()) return;
+        // Das Stück ist da: die Wartezeit auf es (`warteAufStueck`) ist vorbei.
+        clearTimeout(turn.stueckTimer);
+        turn.stueckTimer = undefined;
         if (!turn.audible) {
           turn.audible = true;
           this.player?.rearm();
@@ -2480,7 +2494,10 @@ export class VoiceCallEngine {
           },
         );
         rec.queued = true;
-      });
+      };
+      chain = chain.then(schritt).finally(() => this.stueckFertig(turn));
+      // Ist der Player schon leer (das Modell lieferte später), beginnt die Wartezeit auf dieses Stück jetzt.
+      this.pruefeStueckwartezeit(turn, true);
     };
     // E9: `fertig_ms` erst, wenn der Schritt zu Ende gesprochen ist (`finishTurn`).
     const messenBeiEnde = (stufe: StufeDto | null, modell: boolean) => {
@@ -3197,8 +3214,9 @@ export class VoiceCallEngine {
     const dead = () => turn.cancelled || this.turn !== turn;
     let text = "";
     let kette: Promise<void> = Promise.resolve();
+    turn.synthOffen = a.saetze.length;
     for (const piece of a.saetze) {
-      kette = kette.then(async () => {
+      const schritt = async () => {
         if (dead()) return;
         let wav: string;
         try {
@@ -3248,12 +3266,11 @@ export class VoiceCallEngine {
           },
         );
         rec.queued = true;
-      });
+      };
+      kette = kette.then(schritt).finally(() => this.stueckFertig(turn));
     }
     await kette;
     if (dead()) return;
-    clearTimeout(turn.stueckTimer);
-    turn.stueckTimer = undefined;
     turn.done = true;
     this.pruefeSatzende(turn);
     if (turn.heard === 0) {
@@ -3299,8 +3316,9 @@ export class VoiceCallEngine {
   }
 
   /**
-   * Der Player ist leer gelaufen. Ist die Antwort fertig erzeugt, endet der Schritt. Beim Nachreichen fehlt sonst noch
-   * ein Stück (seine Synthese läuft): länger als `nachreichenStueckMaxMs` wartet der Schritt nicht darauf.
+   * Der Player ist leer (gemeldet oder festgestellt). Ist die Antwort fertig erzeugt, endet der Schritt. Sonst
+   * fehlt noch etwas: liegt ein Stück schon vor (seine Synthese läuft), wartet der Schritt höchstens
+   * `stueckMaxMs` darauf; wartet er nur auf das Modell, gelten dessen Fristen.
    */
   private playerLeer(): void {
     const turn = this.turn;
@@ -3310,34 +3328,47 @@ export class VoiceCallEngine {
   }
 
   /**
-   * Nachreichen mit leerem Player und fehlendem Stück: die Wartezeit läuft (von neuem). Nicht in der Pause
-   * (`held`: die Entscheidung läuft, `releaseHold` nimmt sie danach wieder auf) und nicht bei klingendem Ton.
+   * Läuft die Wartezeit auf das nächste Stück? Nur bei hörbarem Schritt, leerem Player und mindestens einem
+   * offenen Stück; nicht in der Pause (`held`: die Entscheidung läuft, `releaseHold` nimmt sie danach wieder auf) und
+   * nicht bei klingendem Ton. `behalten`: eine schon laufende Wartezeit nicht neu beginnen (ein weiteres Stück
+   * kam hinzu, ohne dass der Player etwas gespielt hat), sonst beginnt sie von neuem.
    */
-  private pruefeStueckwartezeit(turn: Turn): void {
-    if (!turn.nachreichen || !turn.audible || turn.done || turn.cancelled)
+  private pruefeStueckwartezeit(turn: Turn, behalten = false): void {
+    if (!turn.audible || turn.done || turn.cancelled || turn.synthOffen <= 0)
       return;
     if (this.turn !== turn || this.held === turn || this.player?.active) return;
+    if (behalten && turn.stueckTimer !== undefined) return;
     this.warteAufStueck(turn);
+  }
+
+  /** Ein Stück ist erledigt (eingereiht, übersprungen, gescheitert oder verworfen): ohne offenes Stück keine Wartezeit. */
+  private stueckFertig(turn: Turn): void {
+    turn.synthOffen--;
+    if (turn.synthOffen > 0) return;
+    clearTimeout(turn.stueckTimer);
+    turn.stueckTimer = undefined;
   }
 
   private warteAufStueck(turn: Turn): void {
     clearTimeout(turn.stueckTimer);
     turn.stueckTimer = setTimeout(
       () => this.stueckFrist(turn),
-      TUNING.nachreichenStueckMaxMs,
+      TUNING.stueckMaxMs,
     );
   }
 
   /**
-   * Das nächste Stück kam nicht: das Nachreichen endet wie ein Abbruch durch den Nutzer. Das Gehörte bleibt als
-   * unterbrochene Zeile des Auftrags, der Rest ist verworfen, Schritt und Auftrag sind frei; eine späte Synthese
-   * bleibt ohne Wirkung. Bei angehaltener Wiedergabe (Entscheidung läuft) oder neuem Ton läuft nichts ab; die
-   * Pause verbraucht die Wartezeit nur, `releaseHold` und der nächste Leerlauf setzen sie neu an.
+   * Das nächste Stück kam nicht: der Schritt endet wie ein Abbruch durch den Nutzer. Das Gehörte bleibt als
+   * unterbrochene Zeile (beim Nachreichen mit der Kennung des Auftrags), der Rest ist verworfen, der Schritt ist
+   * frei (das Modell wird abgebrochen), eine späte Synthese bleibt ohne Wirkung. Bei angehaltener Wiedergabe
+   * (Entscheidung läuft) oder neuem Ton läuft nichts ab; die Pause verbraucht die Wartezeit nur, `releaseHold` und
+   * der nächste Leerlauf setzen sie neu an.
    */
   private stueckFrist(turn: Turn): void {
     turn.stueckTimer = undefined;
     if (turn.cancelled || turn.done || this.turn !== turn) return;
-    if (this.held === turn || this.player?.active) return;
+    if (turn.synthOffen <= 0 || this.held === turn || this.player?.active)
+      return;
     this.cancelTurn(true);
     if (!this.utt && this.inCall) this.setState("listening");
   }

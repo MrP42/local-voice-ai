@@ -3466,7 +3466,7 @@ test("denkOffenSetzen: klappt die laufende Anzeige, die des Auftrags im Hintergr
 //     (der Nutzer spricht): die Zeile verschwindet, nichts ist gespeichert, kein Verlauf, keine Quellen; ein später
 //     Beginn des Players oder eine späte Synthese bleibt wirkungslos und berührt die Frist des wartenden Auftrags nicht.
 //  H7 Hängende Synthese ab dem zweiten Stück: erster Ton klingt, das nächste Stück kommt nie: nach
-//     `nachreichenStueckMaxMs` (ab Ende des Players) sind Schritt und Auftrag frei, das Gehörte bleibt als
+//     `stueckMaxMs` (ab Ende des Players) sind Schritt und Auftrag frei, das Gehörte bleibt als
 //     unterbrochene Zeile, eine späte Synthese bleibt ohne Wirkung. Klingendes wird nie abgeschnitten, ein
 //     rechtzeitiges Stück läuft weiter, angehaltene Wiedergabe (Entscheidung läuft) und Nutzerunterbrechung sind
 //     keine Zeitüberschreitung.
@@ -3759,18 +3759,18 @@ async function zweitesStueckHaengt() {
   return { ...r, freigeben };
 }
 
-test("H7 hängende Synthese ab dem zweiten Stück: nach nachreichenStueckMaxMs sind Schritt und Auftrag frei, das Gehörte bleibt unterbrochen stehen, die späte Synthese bleibt ohne Wirkung", () =>
+test("H7 hängende Synthese ab dem zweiten Stück: nach stueckMaxMs sind Schritt und Auftrag frei, das Gehörte bleibt unterbrochen stehen, die späte Synthese bleibt ohne Wirkung", () =>
   mitUhr((tick) =>
     ohneStille(async () => {
       const { t, a1, freigeben } = await zweitesStueckHaengt();
       // Solange das erste Stück klingt, läuft keine Wartezeit: nichts wird abgeschnitten, so lange es auch dauert.
-      tick(TUNING.auftragMaxMs + 3 * TUNING.nachreichenStueckMaxMs);
+      tick(TUNING.auftragMaxMs + 3 * TUNING.stueckMaxMs);
       assert.equal(t.engine.turn?.nachreichen?.turnId, a1.id);
       assert.equal(t.engine.turn.cancelled, false);
       assert.ok(t.engine.auftrag && !t.engine.auftrag.verworfen);
       // Das erste Stück ist zu Ende: der Player ist leer, das zweite fehlt.
       t.player.finishPiece();
-      tick(TUNING.nachreichenStueckMaxMs - 1);
+      tick(TUNING.stueckMaxMs - 1);
       assert.equal(t.engine.turn?.nachreichen?.turnId, a1.id, "noch geduldig");
       assert.equal(t.engine.state !== "listening", true);
       tick(1);
@@ -3814,13 +3814,13 @@ test("H7 das zweite Stück kommt vor Ablauf der Wartezeit: das Ergebnis wird gan
     ohneStille(async () => {
       const { t, a1, freigeben } = await zweitesStueckHaengt();
       t.player.finishPiece();
-      tick(TUNING.nachreichenStueckMaxMs - 1);
+      tick(TUNING.stueckMaxMs - 1);
       freigeben("wav:Satz zwei.");
       assert.equal(
         await bis(() => t.player.enqueued.includes("wav:Satz zwei.")),
         true,
       );
-      tick(TUNING.nachreichenStueckMaxMs * 3);
+      tick(TUNING.stueckMaxMs * 3);
       assert.equal(t.engine.turn?.nachreichen?.turnId, a1.id);
       assert.equal(t.engine.turn.cancelled, false, "nicht abgeschnitten");
       t.player.finish();
@@ -3831,7 +3831,7 @@ test("H7 das zweite Stück kommt vor Ablauf der Wartezeit: das Ergebnis wird gan
         interrupted: false,
         auftragVon: a1.id,
       });
-      tick(TUNING.nachreichenStueckMaxMs * 3);
+      tick(TUNING.stueckMaxMs * 3);
       assert.equal(t.log.zeilen.at(-1).interrupted, false);
       assert.equal(t.log.errors.length, 0);
       assert.equal(t.engine.state, "listening");
@@ -3865,7 +3865,7 @@ test("H7 drei Stücke: jedes Stück stellt die Wartezeit neu, nur die Lücke zä
         ["Satz drei.", null],
       ]) {
         t.player.finishPiece();
-        tick(TUNING.nachreichenStueckMaxMs - 1);
+        tick(TUNING.stueckMaxMs - 1);
         assert.equal(t.engine.turn?.nachreichen?.turnId, a1.id);
         assert.equal(await bis(() => gates.has(satz)), true);
         gates.get(satz)();
@@ -3927,7 +3927,7 @@ test("H7 der Player lief leer, während das zweite Stück noch eingereiht wird (
         true,
         "das zweite Stück klingt",
       );
-      tick(TUNING.nachreichenStueckMaxMs * 3);
+      tick(TUNING.stueckMaxMs * 3);
       assert.equal(t.engine.turn?.nachreichen?.turnId, a1.id);
       assert.equal(t.engine.turn.cancelled, false, "nichts abgeschnitten");
       assert.equal(await bis(() => frei["Satz drei."]), true);
@@ -3954,7 +3954,7 @@ test("H7 angehaltene Wiedergabe (die Entscheidung läuft) ist keine Zeitübersch
       t.player.finishPiece();
       t.barge();
       assert.equal(t.engine.held?.nachreichen?.turnId, a1.id, "angehalten");
-      tick(TUNING.nachreichenStueckMaxMs * 3);
+      tick(TUNING.stueckMaxMs * 3);
       assert.equal(t.engine.turn?.nachreichen?.turnId, a1.id);
       assert.equal(t.engine.turn.cancelled, false);
       assert.ok(t.engine.auftrag && !t.engine.auftrag.verworfen);
@@ -3980,7 +3980,7 @@ test("H7 der Nutzer unterbricht in der Wartezeit wie sonst: ein Abbruch, die War
       assert.equal(unterbrochen.length, 1);
       assert.equal(unterbrochen[0].t, "Satz eins.");
       const turn = t.engine.turn;
-      tick(TUNING.nachreichenStueckMaxMs * 3);
+      tick(TUNING.stueckMaxMs * 3);
       assert.equal(t.engine.turn, turn, "der neue Schritt läuft ungestört");
       assert.equal(turn.cancelled, false);
       assert.equal(
@@ -4017,7 +4017,7 @@ async function nachFortsetzungFrei(t, a1, freigeben, tick) {
     "das Nachreichen läuft",
   );
   assert.equal(t.engine.turn.cancelled, false);
-  tick(TUNING.nachreichenStueckMaxMs - 1);
+  tick(TUNING.stueckMaxMs - 1);
   assert.equal(
     t.engine.turn?.nachreichen?.turnId,
     a1.id,
@@ -4086,7 +4086,7 @@ for (const [art, stumm] of PLAYERARTEN) {
         t.barge();
         assert.equal(t.engine.held?.nachreichen?.turnId, a1.id, "angehalten");
         // Die Uhr läuft in der Pause weit über die Frist: keine Zeitüberschreitung.
-        tick(TUNING.nachreichenStueckMaxMs * 3);
+        tick(TUNING.stueckMaxMs * 3);
         assert.equal(t.engine.turn?.nachreichen?.turnId, a1.id);
         assert.equal(t.engine.turn.cancelled, false);
         assert.equal(t.engine.held?.nachreichen?.turnId, a1.id);
@@ -4103,7 +4103,7 @@ for (const [art, stumm] of PLAYERARTEN) {
         t.barge();
         assert.equal(t.engine.held?.nachreichen?.turnId, a1.id, "angehalten");
         t.player.finishPiece();
-        tick(TUNING.nachreichenStueckMaxMs * 3);
+        tick(TUNING.stueckMaxMs * 3);
         assert.equal(t.engine.turn?.nachreichen?.turnId, a1.id);
         assert.equal(t.engine.turn.cancelled, false, "in der Pause nichts");
         t.ende();
@@ -4137,7 +4137,7 @@ for (const [art, stumm] of PLAYERARTEN) {
         await begonnen;
         // Beide Fristen laufen in diesem einen Schritt der Uhr ab (zuerst die der Erkennung, dann die Wartezeit auf das
         // Stück); die Folgen der Erkennungsfrist (Versprechen) kommen erst danach: die Wartezeit lief in der Pause.
-        tick(TUNING.nachreichenStueckMaxMs * 3);
+        tick(TUNING.stueckMaxMs * 3);
         assert.equal(
           t.engine.held?.nachreichen?.turnId,
           a1.id,
@@ -4155,14 +4155,556 @@ test("H8 Pause beginnt bei klingendem Stück und endet vor dessen Ende: die Wied
     ohneStille(async () => {
       const { t, a1, freigeben } = await zweitesStueckHaengt();
       t.barge();
-      tick(TUNING.nachreichenStueckMaxMs * 3);
+      tick(TUNING.stueckMaxMs * 3);
       t.ende();
       assert.equal(t.engine.held, null);
       // Das Stück klingt weiter: auch lange danach wird nichts abgeschnitten.
-      tick(TUNING.nachreichenStueckMaxMs * 3);
+      tick(TUNING.stueckMaxMs * 3);
       assert.equal(t.engine.turn?.nachreichen?.turnId, a1.id);
       assert.equal(t.engine.turn.cancelled, false);
       t.player.finishPiece();
       await nachFortsetzungFrei(t, a1, freigeben, tick);
     }),
   ));
+
+// -- Runde 7 (lva#551: gewöhnlicher Schritt) ----------------------------------------------------------------
+//
+// Fehlerfälle dieser Runde (vor dem Code aufgeschrieben, Status im Bericht):
+//  I1 Nebenläufigkeit / Absturz des Kindprozesses: die Synthese eines Stücks ab dem zweiten antwortet nie (Tor, das
+//     der Test nie oder erst nach Ablauf öffnet). Der gewöhnliche Schritt endet nach `stueckMaxMs` ab Leerlauf des
+//     Players wie ein Abbruch: Gehörtes bleibt als unterbrochene Zeile, Schritt frei, Zustand listening, Denker
+//     abgebrochen, späte Synthese ohne Wirkung. Bei drei Stücken beginnt die Wartezeit bei jedem Leerlauf neu.
+//  I2 Abbruch mitten im Vorgang: der Nutzer unterbricht während der Wartezeit (mit und ohne Pause): mit Pause ist das
+//     Gehörte genau einmal unterbrochen, ohne Pause (nichts zu hören) ersetzt die Äußerung den Schritt wie bisher; der
+//     neue Schritt läuft ungestört, die Frist des alten trifft ihn nicht, seine späte Synthese bleibt ohne Wirkung.
+//  I3 Pause (`held`): die Wartezeit läuft in der Pause nicht ab und geht danach nicht verloren (Player meldet beim
+//     Fortsetzen den Leerlauf oder bleibt stumm; Pause bei leerem Player, bei klingendem Ton mit Ende in der Pause,
+//     bei klingendem Ton, der erst nach der Pause endet).
+//  I4 Dekodier-Race: das Stück ist eingereiht, der Ton hat noch nicht begonnen: kein Ablauf.
+//  I5 Warten auf das Modell: nichts zu synthetisieren, also keine Wartezeit (die Fristen des Modells gelten).
+//  I6 Stummes Fortsetzen: ein fertiger Schritt endet nach der Pause, auch wenn der Player keinen Leerlauf meldet.
+//  I7 Fehlendes Gerät: die Synthese schlägt fehl: ein Fehler, der Schritt endet, später nichts mehr.
+//  I8 Textpfad und Projektgespräch: ohne Synthese kein Hänger (Textpfad); im Projekt dieselbe Kette wie sonst.
+//  Zeit: gesteuerte Uhr, kein abschließendes `interrupt()`, keine begrenzten Wartezeiten für negative Nachweise.
+
+/**
+ * Gewöhnlicher Schritt (kein Sprecher, kein Auftrag): der Denker (`d`) liefert die Sätze als Stücke. Die Synthese der
+ * Sätze in `haengt` antwortet erst mit `frei(satz)`. Der Schritt läuft im Hintergrund (`lauf`).
+ */
+async function gewoehnlich({ haengt = [], optionen, handlers = {} } = {}) {
+  const d = denkerSteuerbar();
+  const tore = new Map(
+    haengt.map((satz) => {
+      let frei;
+      const tor = new Promise((r) => (frei = () => r(`wav:${satz}`)));
+      return [satz, { tor, frei }];
+    }),
+  );
+  const t = neu(
+    {
+      voice_call_chat: d.chat,
+      voice_call_cancel: d.cancel,
+      voice_call_synthesize: ({ text }) => tore.get(text)?.tor ?? `wav:${text}`,
+      ...handlers,
+    },
+    undefined,
+    optionen,
+  );
+  const lauf = t.start(FRAGE).catch((e) => t.log.errors.push(String(e)));
+  assert.equal(await bis(() => d.laeufe.length === 1), true);
+  return { d, t, lauf, frei: (satz) => tore.get(satz).frei() };
+}
+
+/** Wie ein Abbruch durch den Nutzer: das Gehörte (`gehoert`) steht als unterbrochene Zeile, der Schritt ist frei. */
+function wieAbbruch(t, d, gehoert) {
+  assert.equal(t.engine.turn, null, "Schritt frei");
+  assert.equal(t.engine.state, "listening");
+  assert.deepEqual(t.log.zeilen.at(-1), {
+    t: gehoert,
+    final: true,
+    interrupted: true,
+    auftragVon: undefined,
+  });
+  assert.equal(
+    t.log.zeilen.filter((z) => z.interrupted).length,
+    1,
+    "genau eine unterbrochene Zeile",
+  );
+  assert.deepEqual(t.verlauf(), [`user:${FRAGE}`, `assistant:${gehoert} …`]);
+  assert.equal(t.abgebrochen(d.laeufe[0].requestId), 1, "Denker abgebrochen");
+}
+
+/** Die späte Synthese eines verworfenen Schritts bleibt ohne Wirkung (nur Versprechen stehen aus: ein Durchlauf genügt). */
+async function spaeteSynthese(t, frei, satz) {
+  const eingereiht = t.player.enqueued.length;
+  const zeilen = t.log.zeilen.length;
+  const verworfen = t.log.verworfen;
+  frei(satz);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(t.player.enqueued.length, eingereiht, "kein Ton");
+  assert.equal(t.log.zeilen.length, zeilen, "keine neue Zeile");
+  assert.equal(t.log.verworfen, verworfen);
+  assert.equal(t.log.errors.length, 0);
+  assert.equal(t.engine.turn, null);
+}
+
+const ersterKlingt = (t) =>
+  bis(() => t.player.gespielt.includes("wav:Satz eins."));
+
+test("H9 gewöhnlicher Schritt, Synthese ab Stück 2 bleibt aus: nach stueckMaxMs ab Leerlauf ist der Schritt wie bei einem Abbruch frei, die späte Synthese bleibt ohne Wirkung", () =>
+  mitUhr(async (tick) => {
+    const { d, t, frei } = await gewoehnlich({ haengt: ["Satz zwei."] });
+    d.liefere(0, "Satz eins.", "Satz zwei.");
+    assert.equal(await ersterKlingt(t), true);
+    // Solange das erste Stück klingt, läuft keine Wartezeit: nichts wird abgeschnitten, so lange es auch dauert.
+    tick(3 * TUNING.stueckMaxMs);
+    assert.ok(t.engine.turn);
+    assert.equal(t.engine.turn.cancelled, false);
+    // Das erste Stück ist zu Ende: der Player ist leer, das zweite fehlt.
+    t.player.finishPiece();
+    tick(TUNING.stueckMaxMs - 1);
+    assert.ok(t.engine.turn, "noch geduldig");
+    assert.equal(t.engine.turn.cancelled, false);
+    tick(1);
+    wieAbbruch(t, d, "Satz eins.");
+    await spaeteSynthese(t, frei, "Satz zwei.");
+  }));
+
+test("H9 drei Stücke: die Wartezeit beginnt bei jedem Leerlauf neu, ein gerade noch rechtzeitiges Stück verlängert sie nicht", () =>
+  mitUhr(async (tick) => {
+    const { d, t, frei } = await gewoehnlich({
+      haengt: ["Satz zwei.", "Satz drei."],
+    });
+    d.liefere(0, "Satz eins.", "Satz zwei.", "Satz drei.");
+    assert.equal(await ersterKlingt(t), true);
+    t.player.finishPiece();
+    tick(TUNING.stueckMaxMs - 1);
+    assert.ok(t.engine.turn, "Stück zwei: noch geduldig");
+    frei("Satz zwei.");
+    assert.equal(
+      await bis(() => t.player.gespielt.includes("wav:Satz zwei.")),
+      true,
+      "Stück zwei kam gerade noch rechtzeitig",
+    );
+    // Es klingt: auch lange danach wird nichts abgeschnitten, die verbrauchte Zeit zählt nicht mit.
+    tick(3 * TUNING.stueckMaxMs);
+    assert.ok(t.engine.turn);
+    assert.equal(t.engine.turn.cancelled, false);
+    // Stück drei fehlt: die Wartezeit beginnt mit diesem Leerlauf von neuem.
+    t.player.finishPiece();
+    tick(TUNING.stueckMaxMs - 1);
+    assert.ok(t.engine.turn, "Stück drei: noch geduldig");
+    tick(1);
+    wieAbbruch(t, d, "Satz eins. Satz zwei.");
+    await spaeteSynthese(t, frei, "Satz drei.");
+  }));
+
+test("H9 rechtzeitiges Stück (Regression): der Schritt wird vollständig gesprochen und endet regulär, keine unterbrochene Zeile", () =>
+  mitUhr(async (tick) => {
+    const { d, t, frei } = await gewoehnlich({ haengt: ["Satz zwei."] });
+    d.liefere(0, "Satz eins.", "Satz zwei.");
+    assert.equal(await ersterKlingt(t), true);
+    t.player.finishPiece();
+    tick(TUNING.stueckMaxMs - 1);
+    frei("Satz zwei.");
+    assert.equal(
+      await bis(() => t.player.gespielt.includes("wav:Satz zwei.")),
+      true,
+    );
+    assert.equal(
+      await bis(() => t.engine.turn?.done),
+      true,
+      "die Antwort ist fertig erzeugt",
+    );
+    t.player.finishPiece();
+    assert.equal(t.engine.turn, null, "der Schritt ist regulär zu Ende");
+    assert.equal(t.engine.state, "listening");
+    assert.equal(
+      t.log.zeilen.some((z) => z.interrupted),
+      false,
+    );
+    assert.deepEqual(t.log.zeilen.at(-1), {
+      t: "Satz eins. Satz zwei.",
+      final: true,
+      interrupted: false,
+      auftragVon: undefined,
+    });
+    assert.deepEqual(t.verlauf(), [
+      `user:${FRAGE}`,
+      "assistant:Satz eins. Satz zwei.",
+    ]);
+    assert.equal(t.abgebrochen(d.laeufe[0].requestId), 0);
+    assert.equal(t.log.errors.length, 0);
+  }));
+
+test("H9 Warten auf das Modell (kein Stück liegt vor, nichts zu synthetisieren): keine Wartezeit, der Schritt läuft nach langer Lücke weiter", () =>
+  mitUhr(async (tick) => {
+    const { d, t } = await gewoehnlich();
+    const id = d.laeufe[0].requestId;
+    emit({ kind: "sentence", request_id: id, text: "Satz eins." });
+    assert.equal(await ersterKlingt(t), true);
+    t.player.finishPiece();
+    // Das Modell braucht lange: für die Fristen des Modells ist die Engine nicht zuständig.
+    tick(3 * TUNING.stueckMaxMs);
+    assert.ok(t.engine.turn);
+    assert.equal(t.engine.turn.cancelled, false);
+    emit({ kind: "sentence", request_id: id, text: "Satz zwei." });
+    emit({ kind: "done", request_id: id });
+    d.laeufe[0].resolve("Satz eins. Satz zwei.");
+    assert.equal(
+      await bis(() => t.player.gespielt.includes("wav:Satz zwei.")),
+      true,
+    );
+    assert.equal(await bis(() => t.engine.turn?.done), true);
+    t.player.finishPiece();
+    assert.equal(t.engine.turn, null);
+    assert.equal(
+      t.log.zeilen.some((z) => z.interrupted),
+      false,
+    );
+  }));
+
+test("H9 Dekodier-Race: das zweite Stück ist eingereiht, sein Ton hat noch nicht begonnen: kein Ablauf, danach endet der Schritt regulär", () =>
+  mitUhr(async (tick) => {
+    const { d, t, frei } = await gewoehnlich({ haengt: ["Satz zwei."] });
+    d.liefere(0, "Satz eins.", "Satz zwei.");
+    assert.equal(await ersterKlingt(t), true);
+    t.player.finishPiece();
+    tick(TUNING.stueckMaxMs - 1);
+    // Der Ton des nächsten Stücks beginnt erst auf `audioStart()` (der Player dekodiert noch).
+    t.player.deferStart = true;
+    frei("Satz zwei.");
+    assert.equal(
+      await bis(() => t.player.enqueued.includes("wav:Satz zwei.")),
+      true,
+    );
+    assert.equal(await bis(() => t.engine.turn?.done), true);
+    tick(3 * TUNING.stueckMaxMs);
+    assert.ok(t.engine.turn, "eingereiht: nichts läuft ab");
+    assert.equal(t.engine.turn.cancelled, false);
+    t.player.deferStart = false;
+    t.player.audioStart();
+    assert.equal(t.player.gespielt.includes("wav:Satz zwei."), true);
+    t.player.finishPiece();
+    assert.equal(t.engine.turn, null);
+    assert.equal(
+      t.log.zeilen.some((z) => z.interrupted),
+      false,
+    );
+  }));
+
+for (const [art, stumm] of PLAYERARTEN) {
+  const aufbauen = async () => {
+    const r = await gewoehnlich({ haengt: ["Satz zwei."] });
+    if (stumm) fortsetzenStumm(r.t);
+    r.d.liefere(0, "Satz eins.", "Satz zwei.");
+    assert.equal(await ersterKlingt(r.t), true);
+    return r;
+  };
+  /** Nach der Pause: die Wartezeit beginnt von neuem, danach ist der Schritt wie bei einem Abbruch frei. */
+  const nachPause = async (t, d, frei, tick) => {
+    assert.equal(t.engine.held, null, "die Pause ist beendet");
+    assert.ok(t.engine.turn);
+    assert.equal(t.engine.turn.cancelled, false);
+    tick(TUNING.stueckMaxMs - 1);
+    assert.ok(t.engine.turn, "die Wartezeit läuft von neuem, noch geduldig");
+    tick(1);
+    wieAbbruch(t, d, "Satz eins.");
+    await spaeteSynthese(t, frei, "Satz zwei.");
+  };
+
+  test(`H9 Pause bei leerem Player (Wartezeit läuft), Fortsetzung ohne Erkennung (${art}): in der Pause läuft nichts ab, danach ist die Wartezeit wieder begrenzt`, () =>
+    mitUhr(async (tick) => {
+      const { d, t, frei } = await aufbauen();
+      t.player.finishPiece();
+      t.barge();
+      assert.equal(t.engine.held, t.engine.turn, "angehalten");
+      // Die Uhr läuft in der Pause weit über die Frist: keine Zeitüberschreitung.
+      tick(3 * TUNING.stueckMaxMs);
+      assert.ok(t.engine.turn);
+      assert.equal(t.engine.turn.cancelled, false);
+      t.ende();
+      await nachPause(t, d, frei, tick);
+    }));
+
+  test(`H9 Pause beginnt bei klingendem Stück, dieses endet in der Pause (${art}): die Wartezeit ist nach der Pause wieder begrenzt`, () =>
+    mitUhr(async (tick) => {
+      const { d, t, frei } = await aufbauen();
+      t.barge();
+      assert.equal(t.engine.held, t.engine.turn, "angehalten");
+      t.player.finishPiece();
+      tick(3 * TUNING.stueckMaxMs);
+      assert.ok(t.engine.turn, "in der Pause nichts");
+      assert.equal(t.engine.turn.cancelled, false);
+      t.ende();
+      await nachPause(t, d, frei, tick);
+    }));
+
+  test(`H9 Pause beginnt bei klingendem Stück und endet vor dessen Ende (${art}): die Wiedergabe geht weiter, erst ihr Ende startet die Wartezeit`, () =>
+    mitUhr(async (tick) => {
+      const { d, t, frei } = await aufbauen();
+      t.barge();
+      tick(3 * TUNING.stueckMaxMs);
+      t.ende();
+      assert.equal(t.engine.held, null);
+      // Das Stück klingt weiter: auch lange danach wird nichts abgeschnitten.
+      tick(3 * TUNING.stueckMaxMs);
+      assert.ok(t.engine.turn);
+      assert.equal(t.engine.turn.cancelled, false);
+      t.player.finishPiece();
+      await nachPause(t, d, frei, tick);
+    }));
+
+  test(`H9 stummes Fortsetzen: ein fertiger Schritt endet nach der Pause auch ohne Leerlaufmeldung des Players (${art})`, () =>
+    mitUhr(async (tick) => {
+      const { d, t } = await gewoehnlich();
+      if (stumm) fortsetzenStumm(t);
+      d.liefere(0, "Satz eins.");
+      assert.equal(await ersterKlingt(t), true);
+      assert.equal(
+        await bis(() => t.engine.turn?.done),
+        true,
+        "die Antwort ist fertig erzeugt",
+      );
+      t.barge();
+      assert.equal(t.engine.held, t.engine.turn, "angehalten");
+      // Das letzte Stück endet in der Pause: ein angehaltener Schritt endet nicht von selbst.
+      t.player.finishPiece();
+      tick(3 * TUNING.stueckMaxMs);
+      assert.ok(t.engine.turn, "angehalten: kein Ende");
+      t.ende();
+      assert.equal(t.engine.held, null);
+      assert.equal(t.engine.turn, null, "der fertige Schritt ist zu Ende");
+      assert.equal(t.engine.state, "listening");
+      assert.deepEqual(
+        t.log.zeilen.filter((z) => z.final),
+        [
+          {
+            t: "Satz eins.",
+            final: true,
+            interrupted: false,
+            auftragVon: undefined,
+          },
+        ],
+        "genau eine Schlusszeile",
+      );
+      assert.deepEqual(t.verlauf(), [`user:${FRAGE}`, "assistant:Satz eins."]);
+      assert.equal(t.abgebrochen(d.laeufe[0].requestId), 0);
+    }));
+}
+
+for (const mitBarge of [true, false]) {
+  test(`H9 Unterbrechung während der Wartezeit (${mitBarge ? "mit Pause" : "ohne Pause"}): eine unterbrochene Zeile, der neue Schritt läuft ungestört, die Frist des alten trifft ihn nicht`, () =>
+    mitUhr(async (tick) => {
+      const { d, t, frei } = await gewoehnlich({ haengt: ["Satz zwei."] });
+      d.liefere(0, "Satz eins.", "Satz zwei.");
+      assert.equal(await ersterKlingt(t), true);
+      t.player.finishPiece();
+      // Die Wartezeit ist fast abgelaufen, da redet der Nutzer.
+      tick(TUNING.stueckMaxMs - 1);
+      t.aeussere(WETTER, { mitBarge });
+      assert.equal(
+        await bis(() => d.laeufe.length === 2),
+        true,
+        "der neue Schritt fragt den Denker",
+      );
+      const turn = t.engine.turn;
+      assert.ok(turn);
+      assert.equal(turn.cancelled, false);
+      // Die Frist des alten Schritts wäre hier lange abgelaufen; der neue wartet noch auf den Denker (nichts klingt).
+      tick(3 * TUNING.stueckMaxMs);
+      assert.equal(t.engine.turn, turn, "der neue Schritt läuft ungestört");
+      assert.equal(turn.cancelled, false);
+      d.liefere(1, "Satz drei.");
+      assert.equal(
+        await bis(() => t.player.gespielt.includes("wav:Satz drei.")),
+        true,
+      );
+      // Mit Pause ist das Gehörte unterbrochen; ohne Pause (nichts war zu hören) ersetzt die Äußerung den Schritt.
+      const erwartet = mitBarge ? ["Satz eins."] : [];
+      assert.deepEqual(
+        t.log.zeilen.filter((z) => z.interrupted).map((z) => z.t),
+        erwartet,
+      );
+      assert.equal(t.abgebrochen(d.laeufe[0].requestId), 1);
+      // Die späte Synthese des alten Schritts bleibt ohne Wirkung.
+      const eingereiht = t.player.enqueued.length;
+      frei("Satz zwei.");
+      await new Promise((r) => setImmediate(r));
+      assert.equal(t.player.enqueued.length, eingereiht, "kein Ton");
+      assert.equal(t.engine.turn, turn);
+      assert.equal(await bis(() => t.engine.turn?.done), true);
+      t.player.finishPiece();
+      assert.equal(t.engine.turn, null, "der neue Schritt endet regulär");
+      assert.deepEqual(
+        t.log.zeilen.filter((z) => z.interrupted).map((z) => z.t),
+        erwartet,
+        "keine zweite unterbrochene Zeile",
+      );
+      assert.equal(t.log.errors.length, 0);
+    }));
+}
+
+test("H9 Synthese des zweiten Stücks schlägt fehl (kein Gerät): ein Fehler, der Schritt endet, später läuft nichts mehr ab", () =>
+  mitUhr(async (tick) => {
+    let scheitern;
+    const kaputt = new Promise((_, r) => (scheitern = r));
+    const { d, t } = await gewoehnlich({
+      handlers: {
+        voice_call_synthesize: ({ text }) =>
+          text === "Satz zwei." ? kaputt : `wav:${text}`,
+      },
+    });
+    d.liefere(0, "Satz eins.", "Satz zwei.");
+    assert.equal(await ersterKlingt(t), true);
+    assert.equal(
+      await bis(() =>
+        t
+          .aufrufe("voice_call_synthesize")
+          .some((c) => c.args.text === "Satz zwei."),
+      ),
+      true,
+    );
+    t.player.finishPiece();
+    scheitern(new Error("Stimme nicht verfügbar"));
+    assert.equal(
+      await bis(() => t.engine.turn === null),
+      true,
+      "der Schritt endet",
+    );
+    tick(3 * TUNING.stueckMaxMs);
+    assert.equal(t.log.errors.length, 1, "genau ein Fehler");
+    assert.equal(t.engine.turn, null);
+    assert.equal(t.engine.state, "listening");
+    assert.equal(
+      t.log.zeilen.some((z) => z.interrupted),
+      false,
+      "kein Abbruch durch die Wartezeit",
+    );
+  }));
+
+test("H9 Projektgespräch: dieselbe Kette, die Synthese bleibt aus, der Schritt endet nach stueckMaxMs wie bei einem Abbruch", () =>
+  mitUhr(async (tick) => {
+    const { d, t, frei } = await gewoehnlich({
+      haengt: ["Satz zwei."],
+      optionen: { projekt: { id: "p1", stand: 1 } },
+    });
+    d.liefere(0, "Satz eins.", "Satz zwei.");
+    assert.equal(await ersterKlingt(t), true);
+    t.player.finishPiece();
+    tick(TUNING.stueckMaxMs - 1);
+    assert.ok(t.engine.turn, "noch geduldig");
+    tick(1);
+    assert.equal(t.engine.turn, null, "Schritt frei");
+    assert.equal(t.engine.state, "listening");
+    assert.equal(t.abgebrochen(d.laeufe[0].requestId), 1);
+    const zeilen = t.log.zeilen.length;
+    const eingereiht = t.player.enqueued.length;
+    frei("Satz zwei.");
+    await new Promise((r) => setImmediate(r));
+    assert.equal(t.player.enqueued.length, eingereiht);
+    assert.equal(t.log.zeilen.length, zeilen);
+    assert.equal(t.log.errors.length, 0);
+  }));
+
+test("H9 Textpfad ohne Anruf: keine Synthese, ein hängendes Synthesegerät hält den Schritt nicht auf", async () => {
+  const t = neu(
+    {
+      voice_call_chat: denker(5, "Satz eins.", "Satz zwei."),
+      voice_call_synthesize: () => new Promise(() => undefined),
+    },
+    undefined,
+  );
+  t.engine.state = "idle";
+  await t.engine.sendText(FRAGE);
+  assert.equal(t.aufrufe("voice_call_synthesize").length, 0);
+  assert.equal(t.engine.turn, null);
+  assert.equal(t.log.errors.length, 0);
+  assert.equal(t.log.assistant.at(-1).t, "Satz eins. Satz zwei.");
+});
+
+test("H9 ein weiteres Stück vom Modell verlängert die laufende Wartezeit nicht", () =>
+  mitUhr(async (tick) => {
+    const { d, t, frei } = await gewoehnlich({ haengt: ["Satz zwei."] });
+    const satz = (text) =>
+      emit({ kind: "sentence", request_id: d.laeufe[0].requestId, text });
+    satz("Satz eins.");
+    satz("Satz zwei.");
+    assert.equal(await ersterKlingt(t), true);
+    t.player.finishPiece();
+    tick(TUNING.stueckMaxMs - 5);
+    // Das Modell liefert weiter, Stück zwei hängt noch: die Wartezeit läuft vom Leerlauf an, nicht vom neuen Stück.
+    satz("Satz drei.");
+    tick(4);
+    assert.ok(t.engine.turn, "noch geduldig");
+    tick(1);
+    wieAbbruch(t, d, "Satz eins.");
+    await spaeteSynthese(t, frei, "Satz zwei.");
+  }));
+
+test("H9 das Modell liefert das nächste Stück erst nach dem Leerlauf, seine Synthese bleibt aus: die Wartezeit beginnt mit dem Stück", () =>
+  mitUhr(async (tick) => {
+    const { d, t, frei } = await gewoehnlich({ haengt: ["Satz zwei."] });
+    const satz = (text) =>
+      emit({ kind: "sentence", request_id: d.laeufe[0].requestId, text });
+    satz("Satz eins.");
+    assert.equal(await ersterKlingt(t), true);
+    t.player.finishPiece();
+    tick(3 * TUNING.stueckMaxMs);
+    assert.ok(t.engine.turn, "das Modell ist langsam: nichts läuft ab");
+    assert.equal(t.engine.turn.cancelled, false);
+    // Der Player ist längst leer und meldet nichts mehr: das neue Stück beginnt die Wartezeit selbst.
+    satz("Satz zwei.");
+    tick(TUNING.stueckMaxMs - 1);
+    assert.ok(t.engine.turn, "noch geduldig");
+    tick(1);
+    wieAbbruch(t, d, "Satz eins.");
+    await spaeteSynthese(t, frei, "Satz zwei.");
+  }));
+
+test("H9 Synthese eines Stücks schlägt fehl, das Modell liefert später weiter: die Wartezeit erlischt mit dem gescheiterten Stück, der Schritt läuft regulär weiter", () =>
+  mitUhr(async (tick) => {
+    let scheitern;
+    const kaputt = new Promise((_, r) => (scheitern = r));
+    const { d, t } = await gewoehnlich({
+      handlers: {
+        voice_call_synthesize: ({ text }) =>
+          text === "Satz zwei." ? kaputt : `wav:${text}`,
+      },
+    });
+    const id = d.laeufe[0].requestId;
+    const satz = (text) => emit({ kind: "sentence", request_id: id, text });
+    satz("Satz eins.");
+    satz("Satz zwei.");
+    assert.equal(await ersterKlingt(t), true);
+    assert.equal(
+      await bis(() =>
+        t
+          .aufrufe("voice_call_synthesize")
+          .some((c) => c.args.text === "Satz zwei."),
+      ),
+      true,
+    );
+    t.player.finishPiece();
+    scheitern(new Error("Stimme nicht verfügbar"));
+    assert.equal(await bis(() => t.log.errors.length === 1), true);
+    // Nichts liegt mehr vor, das Modell ist langsam: die Fristen des Modells gelten, keine der Engine.
+    tick(3 * TUNING.stueckMaxMs);
+    assert.ok(t.engine.turn);
+    assert.equal(t.engine.turn.cancelled, false);
+    satz("Satz drei.");
+    emit({ kind: "done", request_id: id });
+    d.laeufe[0].resolve("Satz eins. Satz zwei. Satz drei.");
+    assert.equal(
+      await bis(() => t.player.gespielt.includes("wav:Satz drei.")),
+      true,
+    );
+    assert.equal(await bis(() => t.engine.turn?.done), true);
+    t.player.finishPiece();
+    assert.equal(t.engine.turn, null);
+    assert.equal(
+      t.log.zeilen.some((z) => z.interrupted),
+      false,
+    );
+    assert.equal(t.log.errors.length, 1);
+  }));
