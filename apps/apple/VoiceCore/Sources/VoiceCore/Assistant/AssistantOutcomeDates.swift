@@ -145,11 +145,15 @@ public enum AssistantOutcomeText {
         return string(c[start..<end])
     }
 
-    /// Fasst Leerraum zu einem Leerzeichen zusammen und kappt die Enden (einzeilige Texte im Prompt).
+    /// Leerraum der Normalisierung plus die Zeilentrenner U+0085, U+2028 und U+2029.
+    private static let lineBreaks: Set<UInt32> = whitespace.union([0x85, 0x2028, 0x2029])
+
+    /// Fasst Leerraum und Zeilentrenner (U+0009–U+000D, U+0020, U+0085, U+00A0, U+2028, U+2029) zu einem Leerzeichen zusammen und
+    /// kappt die Enden (einzeilige Texte im Prompt).
     static func singleLine(_ s: String) -> String {
         var out: [UInt32] = []
         for c in scalars(s) {
-            if whitespace.contains(c) {
+            if lineBreaks.contains(c) {
                 if let last = out.last, last != 0x20 { out.append(0x20) }
             } else {
                 out.append(c)
@@ -180,16 +184,20 @@ public enum AssistantOutcomeText {
         return false
     }
 
-    private static func isLetter(_ c: UInt32) -> Bool {
-        (c >= 0x61 && c <= 0x7A) || c == 0xE4 || c == 0xF6 || c == 0xFC || c == 0xDF
+    /// Wortzeichen eines normalisierten Textes: `a–z`, `0–9` und jeder Codepunkt ab U+0080 außer U+00A0–U+00BF (Zeichen und
+    /// Satzzeichen des Latin-1-Blocks) und U+2000–U+206F (allgemeine Zeichensetzung). Alles andere trennt Wörter.
+    static func isWordScalar(_ c: UInt32) -> Bool {
+        if (0x61...0x7A).contains(c) || (0x30...0x39).contains(c) { return true }
+        if c < 0x80 { return false }
+        return !(0xA0...0xBF).contains(c) && !(0x2000...0x206F).contains(c)
     }
 
-    /// Wörter eines normalisierten Textes: Folgen aus `a–z ä ö ü ß`.
+    /// Wörter eines normalisierten Textes: maximale Folgen von Wortzeichen.
     static func words(_ normalized: [UInt32]) -> [String] {
         var out: [String] = []
         var current: [UInt32] = []
         for c in normalized {
-            if isLetter(c) {
+            if isWordScalar(c) {
                 current.append(c)
             } else if !current.isEmpty {
                 out.append(string(current))
@@ -200,9 +208,46 @@ public enum AssistantOutcomeText {
         return out
     }
 
-    /// Zerlegt an Leerzeichen (leere Teile entfallen).
-    static func tokens(_ normalized: [UInt32]) -> [String] {
-        normalized.split(separator: 0x20, omittingEmptySubsequences: true).map { string($0) }
+    /// Zerlegt an Leerzeichen (leere Teile entfallen), höchstens `limit` Teile.
+    static func tokens(_ normalized: [UInt32], limit: Int = Int.max) -> [String] {
+        var out: [String] = []
+        var start = 0
+        var i = 0
+        while i <= normalized.count, out.count < limit {
+            if i == normalized.count || normalized[i] == 0x20 {
+                if i > start { out.append(string(normalized[start..<i])) }
+                start = i + 1
+            }
+            i += 1
+        }
+        return out
+    }
+
+    /// Steht `needle` als ganze Wortfolge in `haystack`? Wie ein zusammenhängender Teil, aber vor einem Treffer, der mit einem
+    /// Wortzeichen beginnt, und nach einem, der mit einem endet, steht kein Wortzeichen (`ja` steht nicht in `jahr`).
+    static func containsWordSequence(_ haystack: [UInt32], _ needle: [UInt32]) -> Bool {
+        guard let first = needle.first, let last = needle.last, needle.count <= haystack.count else { return false }
+        let leadWord = isWordScalar(first)
+        let trailWord = isWordScalar(last)
+        var fail = [Int](repeating: 0, count: needle.count)
+        var k = 0
+        for i in 1..<max(needle.count, 1) {
+            while k > 0, needle[i] != needle[k] { k = fail[k - 1] }
+            if needle[i] == needle[k] { k += 1 }
+            fail[i] = k
+        }
+        k = 0
+        for (index, c) in haystack.enumerated() {
+            while k > 0, c != needle[k] { k = fail[k - 1] }
+            if c == needle[k] { k += 1 }
+            guard k == needle.count else { continue }
+            let start = index + 1 - needle.count
+            let beforeOK = !leadWord || start == 0 || !isWordScalar(haystack[start - 1])
+            let afterOK = !trailWord || index + 1 >= haystack.count || !isWordScalar(haystack[index + 1])
+            if beforeOK && afterOK { return true }
+            k = fail[k - 1]
+        }
+        return false
     }
 
     // MARK: Zahlwörter
@@ -238,6 +283,38 @@ public enum AssistantOutcomeText {
         return f.isEmpty ? wholeText : wholeText + "." + String(decoding: f, as: UTF8.self)
     }
 
+    /// Kanonische Schreibweise: optionales `-`, Ganzzahlteil ohne führende Nullen (`0` allein bleibt), optional `.` und
+    /// Nachkommastellen (unverändert). Ein `-` vor einem Betrag aus lauter Nullen entfällt (`-0` wird `0`).
+    private static func canonicalNumber(sign: String, whole: [UInt8], fraction: [UInt8]) -> String {
+        var w = whole[...]
+        while w.count > 1, w.first == 0x30 { w = w.dropFirst() }
+        let zero = w.count == 1 && w.first == 0x30 && fraction.allSatisfy { $0 == 0x30 }
+        let wholeText = String(decoding: w, as: UTF8.self)
+        let fractionText = fraction.isEmpty ? "" : "." + String(decoding: fraction, as: UTF8.self)
+        return (zero ? "" : sign) + wholeText + fractionText
+    }
+
+    /// Ist `s` die kanonische Schreibweise einer Zahl (siehe `readNumber`)?
+    static func isCanonicalNumber(_ s: String) -> Bool {
+        let b = Array(s.utf8)
+        let negative = b.first == 0x2D
+        var i = negative ? 1 : 0
+        let wholeStart = i
+        while i < b.count, (0x30...0x39).contains(b[i]) { i += 1 }
+        let whole = b[wholeStart..<i]
+        guard !whole.isEmpty, whole.count == 1 || whole.first != 0x30 else { return false }
+        var fraction: ArraySlice<UInt8> = []
+        if i < b.count {
+            guard b[i] == 0x2E else { return false }
+            let fractionStart = i + 1
+            i = fractionStart
+            while i < b.count, (0x30...0x39).contains(b[i]) { i += 1 }
+            fraction = b[fractionStart..<i]
+            guard !fraction.isEmpty, i == b.count else { return false }
+        }
+        return !(negative && whole.count == 1 && whole.first == 0x30 && fraction.allSatisfy { $0 == 0x30 })
+    }
+
     /// Ziffernfolgen, getrennt durch einzelne Zeichen aus `separators`; `nil`, wenn der Text nicht genau so aufgebaut ist.
     private static func digitGroups(_ b: [UInt8], separators: Set<UInt8>) -> (groups: [[UInt8]], separators: [UInt8])? {
         var groups: [[UInt8]] = []
@@ -259,8 +336,8 @@ public enum AssistantOutcomeText {
         return (groups, seps)
     }
 
-    /// Kanonische Schreibweise einer Zahl als Text (Punkt als Dezimaltrenner, ohne Tausenderzeichen) und ihre Vergleichsform.
-    /// Gelesen werden `-?\d+`, `-?\d+[.,]\d+`, `1.250,50`, `1,250.50` und Zahlwörter null bis zwölf; sonst `nil`.
+    /// Kanonische Schreibweise einer Zahl als Text (Punkt als Dezimaltrenner, ohne Tausenderzeichen, ohne führende Nullen) und
+    /// ihre Vergleichsform. Gelesen werden `-?\d+`, `-?\d+[.,]\d+`, `1.250,50`, `1,250.50` und Zahlwörter null bis zwölf; sonst `nil`.
     static func readNumber(_ s: String) -> (canonical: String, comparable: String)? {
         let trimmed = trimWhitespace(s)
         let all = Array(trimmed.utf8)
@@ -270,8 +347,7 @@ public enum AssistantOutcomeText {
         if let parsed = digitGroups(body, separators: [dot, comma]), parsed.groups.count <= 2 {
             let whole = parsed.groups[0]
             let fraction = parsed.groups.count == 2 ? parsed.groups[1] : []
-            let text = String(decoding: whole, as: UTF8.self) + (fraction.isEmpty ? "" : "." + String(decoding: fraction, as: UTF8.self))
-            return (sign + text, comparable(whole, fraction))
+            return (canonicalNumber(sign: sign, whole: whole, fraction: fraction), comparable(whole, fraction))
         }
         // Gruppierte Schreibweisen: `1.250,50` (Punkt-Gruppen, Komma-Bruch) und `1,250.50` (umgekehrt)
         for (group, decimal) in [(dot, comma), (comma, dot)] {
@@ -281,8 +357,7 @@ public enum AssistantOutcomeText {
             guard s.last == decimal, s.dropLast().allSatisfy({ $0 == group }) else { continue }
             guard (1...3).contains(g[0].count), g[1..<(g.count - 1)].allSatisfy({ $0.count == 3 }) else { continue }
             let whole = g[0..<(g.count - 1)].flatMap { $0 }
-            let text = sign + String(decoding: whole, as: UTF8.self) + "." + String(decoding: g[g.count - 1], as: UTF8.self)
-            return (text, comparable(whole, g[g.count - 1]))
+            return (canonicalNumber(sign: sign, whole: whole, fraction: g[g.count - 1]), comparable(whole, g[g.count - 1]))
         }
         if sign.isEmpty, let n = numberWord(normalize(trimmed)) { return (String(n), String(n)) }
         return nil
@@ -502,21 +577,110 @@ public enum AssistantOutcomeDates {
         return dateWithMonthName(tokens, today)
     }
 
-    /// `deadlines(in:today:)` untersucht höchstens die ersten so vielen Wörter des Textes.
+    /// Die Fristsuche untersucht höchstens die ersten so vielen Wörter eines Textes.
     public static let maxDeadlineWords = 1024
 
-    /// Alle Tage, die eine Folge von bis zu 6 Wörtern des Textes als Frist auflöst; Reihenfolge des Auftretens, ohne Wiederholung.
-    /// Untersucht werden höchstens die ersten `maxDeadlineWords` Wörter.
-    public static func deadlines(in text: String, today: AssistantOutcomeDate) -> [String] {
-        let tokens = Array(T.tokens(T.normalizedScalars(text)).prefix(maxDeadlineWords))
-        var out: [String] = []
-        for i in 0..<tokens.count {
-            var n = 1
-            while n <= 6, i + n <= tokens.count {
-                if let d = deadline(tokens[i..<(i + n)].joined(separator: " "), today: today), !out.contains(where: { T.same($0, d) }) { out.append(d) }
-                n += 1
+    /// Größtes Fenster (in Wörtern), das die Fristauflösung betrachtet.
+    public static let maxDeadlineWindow = 6
+
+    /// Wörter, die einen Tag verschieben oder näher bestimmen, ohne dass die feste Liste der Fristauflösung sie mit dem Tag
+    /// zusammen auflöst: `nächsten`/`kommenden`/`next` und `übernächsten` in allen Formen, Einheiten (`Tag`, `Woche`, `Monat`,
+    /// `Jahr` und englisch). Dazu zählt `in`, wenn eine Zahl oder ein Zahlwort folgt.
+    private static let modifiers: [String] = next + afterNext + [
+        "nächste", "naechste", "nächstes", "naechstes", "nächstem", "naechstem", "kommende", "kommender", "kommendes", "kommendem",
+        "übernächste", "uebernaechste", "übernächstes", "uebernaechstes", "übernächstem", "uebernaechstem",
+        "monat", "monate", "monaten", "monats", "month", "months", "jahr", "jahre", "jahren", "jahres", "year", "years",
+    ] + dayUnits + weekUnits
+
+    /// Ein maximaler Fristausdruck: Wörter `start` bis `start + length`, der Tag und ob ihn ein nicht aufgelöstes Modifikatorwort
+    /// begleitet.
+    struct DeadlineMatch {
+        var start: Int
+        var length: Int
+        var day: String
+        var unsafe: Bool
+    }
+
+    private static func isModifier(_ tokens: [String], _ i: Int) -> Bool {
+        if isIn(modifiers, tokens[i]) { return true }
+        guard T.same(tokens[i], "in"), i + 1 < tokens.count else { return false }
+        return T.onlyDigits(Array(tokens[i + 1].utf8)) || T.numberWord(tokens[i + 1]) != nil
+    }
+
+    /// Wörter eines Textes für die Fristsuche (normalisiert, an Leerzeichen getrennt, höchstens `maxDeadlineWords`).
+    static func words(of text: String) -> [String] {
+        T.tokens(T.normalizedScalars(text), limit: maxDeadlineWords)
+    }
+
+    /// Die maximalen Fristausdrücke der Wörter eines normalisierten Textes: von links nach rechts, an jeder Wortposition das
+    /// längste Fenster (bis `maxDeadlineWindow` Wörter), das die Fristauflösung auflöst; die Wörter des Treffers sind verbraucht,
+    /// Treffer überlappen nie. `unsafe` ist ein Treffer, wenn unmittelbar davor oder danach ein Modifikatorwort steht, das zu
+    /// keinem Treffer gehört (`Montag übernächste Woche`: der Tag allein wäre falsch).
+    static func maximalDeadlines(_ words: [String], today: AssistantOutcomeDate) -> [DeadlineMatch] {
+        let tokens = Array(words.prefix(maxDeadlineWords))
+        var matches: [DeadlineMatch] = []
+        var used = [Bool](repeating: false, count: tokens.count)
+        var i = 0
+        while i < tokens.count {
+            var found: (length: Int, day: String)?
+            var n = min(maxDeadlineWindow, tokens.count - i)
+            while n >= 1 {
+                if let day = deadline(tokens[i..<(i + n)].joined(separator: " "), today: today) {
+                    found = (n, day)
+                    break
+                }
+                n -= 1
             }
+            guard let found else {
+                i += 1
+                continue
+            }
+            matches.append(DeadlineMatch(start: i, length: found.length, day: found.day, unsafe: false))
+            for j in i..<(i + found.length) { used[j] = true }
+            i += found.length
+        }
+        for index in matches.indices {
+            let before = matches[index].start - 1
+            let after = matches[index].start + matches[index].length
+            matches[index].unsafe = (before >= 0 && !used[before] && isModifier(tokens, before))
+                || (after < tokens.count && !used[after] && isModifier(tokens, after))
+        }
+        return matches
+    }
+
+    /// Alle Tage, die die maximalen, sicheren Fristausdrücke eines Textes auflösen (siehe `maximalDeadlines`); Reihenfolge des
+    /// Auftretens, ohne Wiederholung. Untersucht werden höchstens die ersten `maxDeadlineWords` Wörter.
+    public static func deadlines(in text: String, today: AssistantOutcomeDate) -> [String] {
+        var out: [String] = []
+        for match in maximalDeadlines(words(of: text), today: today) where !match.unsafe {
+            if !out.contains(where: { T.same($0, match.day) }) { out.append(match.day) }
         }
         return out
+    }
+
+    /// Der eine Tag, den ein Beleg eindeutig nennt, sonst `nil`: Der Beleg hat mindestens einen maximalen Fristausdruck, keiner
+    /// ist unsicher, und alle lösen auf denselben Tag auf.
+    public static func coveredDeadline(in text: String, today: AssistantOutcomeDate) -> String? {
+        let matches = maximalDeadlines(words(of: text), today: today)
+        guard let first = matches.first, !matches.contains(where: { $0.unsafe }) else { return nil }
+        return matches.allSatisfy { T.same($0.day, first.day) } ? first.day : nil
+    }
+
+    /// Ohne führende Vorsätze (`am`, `bis`, `zum`, …; solange mehr als ein Wort bleibt).
+    private static func withoutPrefixes(_ tokens: ArraySlice<String>) -> ArraySlice<String> {
+        var rest = tokens
+        while rest.count > 1, let first = rest.first, isIn(prefixes, first) { rest = rest.dropFirst() }
+        return rest
+    }
+
+    /// Steht `expression` (normalisiert, bis auf führende Vorsätze) als ganzer, sicherer, maximaler Fristausdruck in den
+    /// Treffern eines Textes, dessen Wörter `words` sind?
+    static func isMaximalExpression(_ expression: [String], in words: [String], matches: [DeadlineMatch]) -> Bool {
+        let core = withoutPrefixes(expression[...])
+        return matches.contains { match in
+            if match.unsafe { return false }
+            let own = withoutPrefixes(words[match.start..<(match.start + match.length)])
+            return own.count == core.count && zip(own, core).allSatisfy { T.same($0, $1) }
+        }
     }
 }

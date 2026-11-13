@@ -156,11 +156,17 @@ export function kappeLeerraum(s: string): string {
   return ausCodepunkten(c, start, ende);
 }
 
-/** Fasst Leerraum zu einem Leerzeichen zusammen und kappt die Enden (für einzeilige Texte im Prompt). */
+/** Zeilentrenner, die im Prompt nie stehen dürfen: Leerraum der Normalisierung plus U+0085, U+2028, U+2029. */
+const ZEILENTRENNER = new Set([...LEERRAUM, 0x85, 0x2028, 0x2029]);
+
+/**
+ * Fasst Leerraum und Zeilentrenner (U+0009–U+000D, U+0020, U+0085, U+00A0, U+2028, U+2029) zu einem Leerzeichen zusammen und kappt
+ * die Enden (für einzeilige Texte im Prompt).
+ */
 export function einzeilig(s: string): string {
   const aus: number[] = [];
   for (const c of codepunkte(s)) {
-    if (LEERRAUM.has(c)) {
+    if (ZEILENTRENNER.has(c)) {
       if (aus.length > 0 && aus[aus.length - 1] !== 0x20) aus.push(0x20);
     } else {
       aus.push(c);
@@ -170,20 +176,25 @@ export function einzeilig(s: string): string {
   return ausCodepunkten(aus);
 }
 
-const istBuchstabe = (c: number) =>
-  (c >= 0x61 && c <= 0x7a) ||
-  c === 0xe4 ||
-  c === 0xf6 ||
-  c === 0xfc ||
-  c === 0xdf;
 const istZiffer = (c: number) => c >= 0x30 && c <= 0x39;
 
-/** Wörter eines normalisierten Textes: Folgen aus `a–z ä ö ü ß`. */
+/**
+ * Wortzeichen eines normalisierten Textes: `a–z`, `0–9` und jeder Codepunkt ab U+0080 außer U+00A0–U+00BF (Zeichen und Satzzeichen
+ * des Latin-1-Blocks) und U+2000–U+206F (allgemeine Zeichensetzung). Alles andere trennt Wörter.
+ */
+export function istWortzeichen(c: number): boolean {
+  if (c >= 0x61 && c <= 0x7a) return true;
+  if (istZiffer(c)) return true;
+  if (c < 0x80) return false;
+  return !(c >= 0xa0 && c <= 0xbf) && !(c >= 0x2000 && c <= 0x206f);
+}
+
+/** Wörter eines normalisierten Textes: maximale Folgen von Wortzeichen. */
 export function woerter(normalisiert: string): string[] {
   const aus: string[] = [];
   let aktuell: number[] = [];
   for (const c of codepunkte(normalisiert)) {
-    if (istBuchstabe(c)) {
+    if (istWortzeichen(c)) {
       aktuell.push(c);
     } else if (aktuell.length > 0) {
       aus.push(ausCodepunkten(aktuell));
@@ -488,26 +499,170 @@ export function frist(ausdruck: string, heute: Datum): string | null {
   return datumMitMonatsname(tokens, heute);
 }
 
-/** `fristenIn` untersucht höchstens die ersten so vielen Wörter des Textes. */
+/** Fristsuche untersucht höchstens die ersten so vielen Wörter eines Textes. */
 export const MAX_FRIST_WOERTER = 1024;
 
+/** Größtes Fenster (in Wörtern), das die Fristauflösung betrachtet. */
+export const MAX_FRIST_FENSTER = 6;
+
 /**
- * Alle Tage, die eine Folge von bis zu 6 Wörtern des (normalisierten) Textes als Frist auflöst; Reihenfolge des Auftretens, ohne
- * Wiederholung. Untersucht werden höchstens die ersten `MAX_FRIST_WOERTER` Wörter.
+ * Wörter, die einen Tag verschieben oder näher bestimmen, ohne dass die feste Liste der Fristauflösung sie mit dem Tag zusammen
+ * auflöst: `nächsten`/`kommenden`/`next` und `übernächsten` in allen Formen, Einheiten (`Tag`, `Woche`, `Monat`, `Jahr` und
+ * englisch). Dazu zählt `in`, wenn eine Zahl oder ein Zahlwort folgt.
+ */
+const MODIFIKATOREN = new Set([
+  ...NAECHSTE,
+  ...UEBERNAECHSTE,
+  "nächste",
+  "naechste",
+  "nächstes",
+  "naechstes",
+  "nächstem",
+  "naechstem",
+  "kommende",
+  "kommender",
+  "kommendes",
+  "kommendem",
+  "übernächste",
+  "uebernaechste",
+  "übernächstes",
+  "uebernaechstes",
+  "übernächstem",
+  "uebernaechstem",
+  ...TAGE_EINHEIT,
+  ...WOCHEN_EINHEIT,
+  "monat",
+  "monate",
+  "monaten",
+  "monats",
+  "month",
+  "months",
+  "jahr",
+  "jahre",
+  "jahren",
+  "jahres",
+  "year",
+  "years",
+]);
+
+/** Ein maximaler Fristausdruck: Wörter `von` bis `von + laenge`, der Tag und ob ihn ein nicht aufgelöstes Modifikatorwort begleitet. */
+export type FristTreffer = {
+  von: number;
+  laenge: number;
+  tag: string;
+  unsicher: boolean;
+};
+
+function istModifikator(tokens: readonly string[], i: number): boolean {
+  const t = tokens[i];
+  if (MODIFIKATOREN.has(t)) return true;
+  if (t !== "in" || i + 1 >= tokens.length) return false;
+  const n = tokens[i + 1];
+  return nurZiffern(n) || zahlwort(n) !== null;
+}
+
+/**
+ * Die maximalen Fristausdrücke der Wörter eines normalisierten Textes: von links nach rechts, an jeder Wortposition das längste
+ * Fenster (bis `MAX_FRIST_FENSTER` Wörter), das die Fristauflösung auflöst; die Wörter des Treffers sind verbraucht, Treffer
+ * überlappen nie. `unsicher` ist ein Treffer, wenn unmittelbar davor oder danach ein Modifikatorwort steht, das zu keinem Treffer
+ * gehört (`Montag übernächste Woche`: der Tag allein wäre falsch).
+ */
+export function maximaleFristen(
+  woerter: readonly string[],
+  heute: Datum,
+): FristTreffer[] {
+  const tokens = woerter.slice(0, MAX_FRIST_WOERTER);
+  const treffer: FristTreffer[] = [];
+  const belegt = new Array<boolean>(tokens.length).fill(false);
+  let i = 0;
+  while (i < tokens.length) {
+    let laenge = 0;
+    let tag: string | null = null;
+    for (
+      let n = Math.min(MAX_FRIST_FENSTER, tokens.length - i);
+      n >= 1;
+      n -= 1
+    ) {
+      tag = frist(tokens.slice(i, i + n).join(" "), heute);
+      if (tag !== null) {
+        laenge = n;
+        break;
+      }
+    }
+    if (tag === null) {
+      i += 1;
+      continue;
+    }
+    treffer.push({ von: i, laenge, tag, unsicher: false });
+    for (let j = i; j < i + laenge; j += 1) belegt[j] = true;
+    i += laenge;
+  }
+  for (const t of treffer) {
+    const davor = t.von - 1;
+    const danach = t.von + t.laenge;
+    t.unsicher =
+      (davor >= 0 && !belegt[davor] && istModifikator(tokens, davor)) ||
+      (danach < tokens.length &&
+        !belegt[danach] &&
+        istModifikator(tokens, danach));
+  }
+  return treffer;
+}
+
+/** Wörter eines Textes für die Fristsuche (normalisiert, an Leerzeichen getrennt, höchstens `MAX_FRIST_WOERTER`). */
+export function fristWoerter(text: string): string[] {
+  return normalisiere(text)
+    .split(" ", MAX_FRIST_WOERTER)
+    .filter((t) => t !== "");
+}
+
+/**
+ * Alle Tage, die die maximalen, sicheren Fristausdrücke eines Textes auflösen (siehe `maximaleFristen`); Reihenfolge des
+ * Auftretens, ohne Wiederholung. Untersucht werden höchstens die ersten `MAX_FRIST_WOERTER` Wörter.
  */
 export function fristenIn(text: string, heute: Datum): string[] {
-  const tokens = normalisiere(text)
-    .split(" ")
-    .filter((t) => t !== "")
-    .slice(0, MAX_FRIST_WOERTER);
   const aus: string[] = [];
-  for (let i = 0; i < tokens.length; i += 1) {
-    for (let n = 1; n <= 6 && i + n <= tokens.length; n += 1) {
-      const d = frist(tokens.slice(i, i + n).join(" "), heute);
-      if (d !== null && !aus.includes(d)) aus.push(d);
-    }
+  for (const t of maximaleFristen(fristWoerter(text), heute)) {
+    if (!t.unsicher && !aus.includes(t.tag)) aus.push(t.tag);
   }
   return aus;
+}
+
+/**
+ * Der eine Tag, den ein Beleg eindeutig nennt, sonst `null`: Der Beleg hat mindestens einen maximalen Fristausdruck, keiner ist
+ * unsicher, und alle lösen auf denselben Tag auf.
+ */
+export function fristDeckung(text: string, heute: Datum): string | null {
+  const treffer = maximaleFristen(fristWoerter(text), heute);
+  if (treffer.length === 0 || treffer.some((t) => t.unsicher)) return null;
+  const tag = treffer[0].tag;
+  return treffer.every((t) => t.tag === tag) ? tag : null;
+}
+
+/** Ohne führende Vorsätze (`am`, `bis`, `zum`, …; solange mehr als ein Wort bleibt). */
+function ohneVorsaetze(tokens: readonly string[]): readonly string[] {
+  let ab = 0;
+  while (tokens.length - ab > 1 && VORSAETZE.has(tokens[ab])) ab += 1;
+  return tokens.slice(ab);
+}
+
+/**
+ * Steht `ausdruck` (normalisiert, bis auf führende Vorsätze) als ganzer, sicherer, maximaler Fristausdruck in den Treffern eines
+ * Textes, dessen Wörter `woerter` sind?
+ */
+export function istMaximalerAusdruck(
+  ausdruck: readonly string[],
+  woerter: readonly string[],
+  treffer: readonly FristTreffer[],
+): boolean {
+  const kern = ohneVorsaetze(ausdruck);
+  return treffer.some((t) => {
+    if (t.unsicher) return false;
+    const eigene = ohneVorsaetze(woerter.slice(t.von, t.von + t.laenge));
+    return (
+      eigene.length === kern.length && eigene.every((w, i) => w === kern[i])
+    );
+  });
 }
 
 // ---------------------------------------------------------------- Zahlen
@@ -520,8 +675,29 @@ function vergleichsform(ganz: string, bruch: string): string {
 }
 
 /**
- * Kanonische Schreibweise einer Zahl als Text (Punkt als Dezimaltrenner, ohne Tausenderzeichen) und ihre Vergleichsform.
- * Gelesen werden `-?\d+`, `-?\d+[.,]\d+`, `1.250,50`, `1,250.50` und Zahlwörter null bis zwölf; sonst `null`.
+ * Kanonische Schreibweise: optionales `-`, Ganzzahlteil ohne führende Nullen (`0` allein bleibt), optional `.` und Nachkommastellen
+ * (unverändert). Ein `-` vor einem Betrag aus lauter Nullen entfällt (`-0` wird `0`).
+ */
+function kanonischeZahl(
+  vorzeichen: string,
+  ganz: string,
+  bruch: string,
+): string {
+  const g = ganz.replace(/^0+(?=[0-9])/, "");
+  const betragNull = g === "0" && /^0*$/.test(bruch);
+  return `${betragNull ? "" : vorzeichen}${g}${bruch === "" ? "" : `.${bruch}`}`;
+}
+
+/** Ist `s` die kanonische Schreibweise einer Zahl (siehe `liesZahl`)? Höchstens 500 Zeichen prüft der Aufrufer. */
+export function istKanonischeZahl(s: string): boolean {
+  const m = /^(-?)(0|[1-9][0-9]*)(?:\.([0-9]+))?$/.exec(s);
+  if (m === null) return false;
+  return !(m[1] === "-" && m[2] === "0" && /^0*$/.test(m[3] ?? ""));
+}
+
+/**
+ * Kanonische Schreibweise einer Zahl als Text (Punkt als Dezimaltrenner, ohne Tausenderzeichen, ohne führende Nullen) und ihre
+ * Vergleichsform. Gelesen werden `-?\d+`, `-?\d+[.,]\d+`, `1.250,50`, `1,250.50` und Zahlwörter null bis zwölf; sonst `null`.
  */
 export function liesZahl(
   s: string,
@@ -533,7 +709,7 @@ export function liesZahl(
   if (einfach) {
     const bruch = einfach[2] ?? "";
     return {
-      kanonisch: `${vorzeichen}${einfach[1]}${bruch === "" ? "" : `.${bruch}`}`,
+      kanonisch: kanonischeZahl(vorzeichen, einfach[1], bruch),
       vergleich: vergleichsform(einfach[1], bruch),
     };
   }
@@ -541,7 +717,7 @@ export function liesZahl(
   if (deutsch) {
     const ganz = deutsch[1].replace(/\./g, "");
     return {
-      kanonisch: `${vorzeichen}${ganz}.${deutsch[2]}`,
+      kanonisch: kanonischeZahl(vorzeichen, ganz, deutsch[2]),
       vergleich: vergleichsform(ganz, deutsch[2]),
     };
   }
@@ -549,7 +725,7 @@ export function liesZahl(
   if (englisch) {
     const ganz = englisch[1].replace(/,/g, "");
     return {
-      kanonisch: `${vorzeichen}${ganz}.${englisch[2]}`,
+      kanonisch: kanonischeZahl(vorzeichen, ganz, englisch[2]),
       vergleich: vergleichsform(ganz, englisch[2]),
     };
   }
@@ -623,4 +799,39 @@ function zahlKandidaten(gruppen: string[], trenner: number[]): string[] {
 /** Hat der normalisierte Text ein Zahlwort (null bis zwölf), das für `zahl` steht? */
 export function hatZahlwort(normalisiert: string, zahl: number): boolean {
   return woerter(normalisiert).some((w) => zahlwort(w) === zahl);
+}
+
+/**
+ * Steht `nadel` als ganze Wortfolge in `heuhaufen` (beide normalisiert)? Wie ein Teilstring, aber vor einem Treffer, der mit einem
+ * Wortzeichen beginnt, und nach einem, der mit einem endet, steht kein Wortzeichen (`ja` steht nicht in `jahr`).
+ */
+export function enthaeltWortfolge(heuhaufen: string, nadel: string): boolean {
+  if (nadel === "") return false;
+  const c = codepunkte(nadel);
+  const vorn = istWortzeichen(c[0]);
+  const hinten = istWortzeichen(c[c.length - 1]);
+  let ab = 0;
+  for (;;) {
+    const i = heuhaufen.indexOf(nadel, ab);
+    if (i < 0) return false;
+    const ende = i + nadel.length;
+    const davorOk =
+      !vorn || i === 0 || !istWortzeichen(codepunktVor(heuhaufen, i));
+    const danachOk =
+      !hinten ||
+      ende >= heuhaufen.length ||
+      !istWortzeichen(heuhaufen.codePointAt(ende)!);
+    if (davorOk && danachOk) return true;
+    ab = i + 1;
+  }
+}
+
+/** Der Codepunkt, der unmittelbar vor der Einheit `i` endet. */
+function codepunktVor(s: string, i: number): number {
+  const tief = s.charCodeAt(i - 1);
+  if (tief >= 0xdc00 && tief <= 0xdfff && i >= 2) {
+    const hoch = s.charCodeAt(i - 2);
+    if (hoch >= 0xd800 && hoch <= 0xdbff) return s.codePointAt(i - 2)!;
+  }
+  return tief;
 }

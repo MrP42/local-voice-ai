@@ -19,6 +19,7 @@ const {
   kodiereAuswertung,
   parseAuswertung,
   frist,
+  fristDeckung,
   fristenIn,
   normalisiere,
   gespraechZeilen,
@@ -35,6 +36,10 @@ const stand = JSON.parse(
   readFileSync(path.join(GEMEINSAM, "auswertung-pruefstaende.json"), "utf8"),
 );
 
+/** Pfade bestehen nur aus Namen des Formats und Indizes. */
+const PFAD_MUSTER =
+  /^(|(felder|aufgaben|offene_fragen)(\[[0-9]+\])?(\.(wert|beleg|beitrag|status|text|frist_text))?|zusammenfassung)$/;
+
 function rohAus(fall) {
   if (fall.roh_teile === undefined) return fall.roh;
   return fall.roh_teile.map((t) => t.text.repeat(t.anzahl)).join("");
@@ -49,7 +54,9 @@ function profilAus(daten) {
 test("Prüfstände: Umfang und jeder Hinweis-Code kommt vor", () => {
   assert.ok(stand.auswerten.length >= 12);
   assert.ok(stand.frist.length >= 40);
-  assert.ok(stand.prompt.length >= 6);
+  assert.ok(stand.prompt.length >= 10);
+  assert.ok(stand.lesen_ok.length >= 40);
+  assert.ok(stand.fristen_in.length >= 20);
   const codes = new Set(
     stand.auswerten.flatMap((f) =>
       (f.erwartet.hinweise ?? []).map((h) => h.code),
@@ -88,6 +95,16 @@ for (const fall of stand.auswerten) {
     }
     for (const a of r.ergebnis.aufgaben) {
       assert.ok(normiert[a.beitrag - 1].includes(normalisiere(a.beleg)));
+      assert.equal(a.frist === null, a.fristBeitrag === null);
+      if (a.fristBeitrag !== null) {
+        assert.ok(
+          normiert[a.fristBeitrag - 1].includes(normalisiere(a.fristText)),
+        );
+      }
+    }
+    // Kein Hinweis-Pfad trägt Inhalt: nur Namen des Formats und Indizes.
+    for (const h of r.hinweise) {
+      assert.match(h.pfad, PFAD_MUSTER, h.pfad);
     }
   });
 }
@@ -126,6 +143,21 @@ for (const fall of stand.prompt) {
     );
     assert.equal(p.text, fall.erwartet.text);
     assert.equal(p.gekuerzt, fall.erwartet.gekuerzt);
+  });
+}
+
+for (const fall of stand.lesen_ok) {
+  test(`parseAuswertung gelingt: ${fall.name}`, () => {
+    const r = parseAuswertung(fall.kodiert);
+    assert.equal(r.ok, true, JSON.stringify(r.fehler));
+    assert.equal(kodiereAuswertung(r.ergebnis), fall.kodiert);
+  });
+}
+
+for (const fall of stand.fristen_in) {
+  test(`fristenIn: "${fall.text}"`, () => {
+    assert.deepEqual(fristenIn(fall.text, fall.heute), fall.erwartet.tage);
+    assert.equal(fristDeckung(fall.text, fall.heute), fall.erwartet.deckung);
   });
 }
 
@@ -501,5 +533,284 @@ test("entfernePraefix: Beitragsnummer, Rolle, englische Rollen, kein Präfix", (
       text: unveraendert,
       beitrag: null,
     });
+  }
+});
+
+// ------------------------------------------------------------------ Invarianten
+
+function pruefeRundreise(ergebnis, was) {
+  const text = kodiereAuswertung(ergebnis);
+  const r = parseAuswertung(text);
+  assert.equal(r.ok, true, `${was}: ${JSON.stringify(r.fehler)}`);
+  assert.equal(kodiereAuswertung(r.ergebnis), text, was);
+}
+
+test("Invariante: parse(encode(auswerten(…))) gelingt für alle Prüfstandsfälle und kodiert bytegleich zurück", () => {
+  let gezaehlt = 0;
+  for (const fall of stand.auswerten) {
+    const r = auswerten(
+      profilAus(fall.profil),
+      fall.verlauf,
+      rohAus(fall),
+      fall.heute,
+      { erstellt: fall.erstellt, gekuerzt: fall.gekuerzt },
+    );
+    if (!r.ok) continue;
+    pruefeRundreise(r.ergebnis, fall.name);
+    gezaehlt += 1;
+  }
+  assert.ok(gezaehlt >= 40);
+});
+
+test("Invariante: auch bei Extremwerten bleibt jedes Ergebnisfeld lesbar (zufällige Antworten)", () => {
+  const profil = profilAus({
+    schema: "lva.assistent/1",
+    id: "eigen-aaaaaaaaaaaa",
+    name: "T",
+    auswertung: {
+      zusammenfassung: true,
+      aufgaben: true,
+      felder: [
+        { name: "a", typ: "text" },
+        { name: "b", typ: "zahl" },
+        { name: "c", typ: "datum" },
+        { name: "d", typ: "auswahl", optionen: ["ja", "nein"] },
+        { name: "e", typ: "zahl" },
+      ],
+    },
+  });
+  const verlauf = [
+    { rolle: "nutzer", text: "Es geht um 5 Dinge, 0001 Stück, ja gerne." },
+    {
+      rolle: "assistent",
+      text: "Gut, übernächsten Montag oder Montag in zwei Wochen?",
+    },
+    { rolle: "nutzer", text: "Hallo, morgen ist das Jahr 2027 und eins." },
+  ];
+  const lang = (z, n) => z.repeat(n);
+  const werte = [
+    "5",
+    "0001",
+    "-0",
+    "00.50",
+    "1e5",
+    "NaN",
+    "eins",
+    "ja",
+    "Jahr",
+    "morgen",
+    "2026-11-14",
+    "2026-02-30",
+    "übernächsten Montag",
+    "Montag in zwei Wochen",
+    "12,5",
+    "1.250,50",
+    "",
+    "  ",
+    lang("0", 500) + "1",
+    lang("0", 501) + "1",
+    lang("9", 600),
+    "-" + lang("0", 499) + "5",
+    lang("1", 501),
+    lang("ä", 501),
+    "x" + lang(" ", 600) + "y",
+    lang("😀", 520),
+    "-" + lang("0", 700),
+  ];
+  const belege = [
+    "Es geht um 5 Dinge",
+    "0001 Stück",
+    "ja gerne",
+    "übernächsten Montag",
+    "Montag in zwei Wochen",
+    "Hallo",
+    "eins",
+    "morgen ist das Jahr 2027",
+    "erfunden",
+    "",
+    "[3] Nutzer: Hallo",
+    "Assistent: Gut",
+    lang("Hallo ", 200),
+  ];
+  const fristTexte = [
+    "Montag",
+    "morgen",
+    "übernächsten Montag",
+    "heute",
+    "",
+    lang("x", 150),
+    "in zwei Wochen",
+    "Jahr",
+  ];
+  const langtexte = [
+    "t",
+    lang("Satz eins. ", 100),
+    lang("ä", 400),
+    lang("😀", 1300),
+    "  ",
+    "",
+  ];
+  const erstellt = [
+    undefined,
+    "",
+    "heute",
+    "2026-02-30T10:00:00Z",
+    "2026-11-13T10:00:00Z",
+    "2026-11-13T25:00:00Z",
+  ];
+  let z = 11;
+  const zufall = (n) => {
+    z = (z * 1103515245 + 12345) % 2147483648;
+    return Math.floor(z / 65536) % n;
+  };
+  const wahl = (liste) => liste[zufall(liste.length)];
+  const stati = ["klar", "unklar", "nicht_genannt", undefined, "?"];
+  for (let lauf = 0; lauf < 600; lauf += 1) {
+    const felder = ["a", "b", "c", "d", "e"].map((name) => ({
+      name,
+      status: wahl(stati),
+      wert: wahl(werte),
+      beleg: wahl(belege),
+      beitrag: wahl([1, 2, 3, 4, 0, null, "2"]),
+    }));
+    const aufgaben = Array.from({ length: zufall(4) }, () => ({
+      text: wahl(langtexte),
+      frist_text: wahl(fristTexte),
+      beleg: wahl(belege),
+      beitrag: wahl([1, 2, 3, 9]),
+    }));
+    const roh = JSON.stringify({
+      felder,
+      aufgaben,
+      zusammenfassung: wahl(langtexte),
+      offene_fragen: [wahl(langtexte), wahl(langtexte)],
+    });
+    const r = auswerten(profil, verlauf, roh, heuteFix, {
+      erstellt: wahl(erstellt),
+      gekuerzt: zufall(2) === 0,
+    });
+    assert.equal(r.ok, true);
+    pruefeLaengen(r.ergebnis);
+    pruefeRundreise(r.ergebnis, `Lauf ${lauf}`);
+    for (const h of r.hinweise) assert.match(h.pfad, PFAD_MUSTER);
+  }
+});
+
+test("Hinweise: kein Pfad trägt einen unbekannten Schlüssel (Wurzel, Feld, Aufgabe)", () => {
+  const profil = profilAus({
+    schema: "lva.assistent/1",
+    id: "eigen-aaaaaaaaaaaa",
+    name: "T",
+    auswertung: {
+      aufgaben: true,
+      felder: [{ name: "iban_de00", typ: "text" }],
+    },
+  });
+  const geheim = { token_abc123: 1, passwort: 2, iban_de00: 3, Zusatz: 4 };
+  const roh = JSON.stringify({
+    ...geheim,
+    felder: [
+      {
+        name: "iban_de00",
+        status: "klar",
+        wert: "A",
+        beleg: "A",
+        beitrag: 1,
+        ...geheim,
+      },
+      { name: "token_abc123", ...geheim },
+    ],
+    aufgaben: [{ text: "t", beleg: "A", beitrag: 1, ...geheim }],
+  });
+  const r = auswerten(profil, [{ rolle: "nutzer", text: "A" }], roh, heuteFix);
+  assert.equal(r.ok, true);
+  const alle = JSON.stringify(r.hinweise);
+  for (const wort of ["token_abc123", "passwort", "iban_de00", "Zusatz"]) {
+    assert.ok(!alle.includes(wort), wort);
+  }
+  assert.deepEqual(r.hinweise, [
+    { pfad: "", code: "unbekannt" },
+    { pfad: "aufgaben[0]", code: "unbekannt" },
+    { pfad: "felder[0]", code: "unbekannt" },
+    { pfad: "felder[1]", code: "unbekannt" },
+  ]);
+});
+
+test("Zahl: 500 Nullen und eine 1 ergeben die kanonische Zahl 1, die Rundreise gelingt", () => {
+  const profil = profilAus({
+    schema: "lva.assistent/1",
+    id: "eigen-aaaaaaaaaaaa",
+    name: "T",
+    auswertung: { felder: [{ name: "n", typ: "zahl" }] },
+  });
+  const roh = JSON.stringify({
+    felder: [
+      {
+        name: "n",
+        status: "klar",
+        wert: "0".repeat(500) + "1",
+        beleg: "eins",
+        beitrag: 1,
+      },
+    ],
+  });
+  const r = auswerten(
+    profil,
+    [{ rolle: "nutzer", text: "eins" }],
+    roh,
+    heuteFix,
+  );
+  assert.equal(r.ergebnis.felder[0].wert, "1");
+  assert.equal(r.ergebnis.felder[0].status, "klar");
+  pruefeRundreise(r.ergebnis, "500 Nullen");
+});
+
+test("Prompt: keine Zeilentrenner aus Beiträgen oder Profiltexten bleiben im Prompt", () => {
+  const profil = profilAus({
+    schema: "lva.assistent/1",
+    id: "eigen-aaaaaaaaaaaa",
+    name: "T",
+    auswertung: {
+      felder: [
+        {
+          name: "a",
+          beschreibung: "x\u2028y\u0085z\u2029w\rv",
+          typ: "auswahl",
+          optionen: ['a"b', "c\u2028d"],
+        },
+      ],
+    },
+  });
+  const p = auswertungPrompt(
+    profil,
+    [{ rolle: "nutzer", text: "1\u20282\u00853\u20294\r5\n6" }],
+    heuteFix,
+    100000,
+  );
+  const nachGespraech = p.text.slice(p.text.indexOf("Gespräch:\n") + 10);
+  assert.equal(nachGespraech, "[1] Nutzer: 1 2 3 4 5 6");
+  for (const c of ["\u2028", "\u0085", "\u2029", "\r"])
+    assert.ok(!p.text.includes(c));
+  assert.ok(p.text.includes('"a\'b", "c d"'));
+});
+
+test("erstellt: ein ungültiger Wert gilt als nicht gesetzt", () => {
+  for (const [wert, erwartet] of [
+    ["2026-11-13T10:00:00Z", "2026-11-13T10:00:00Z"],
+    ["2026-11-13T10:00:00", ""],
+    ["2026-02-30T10:00:00Z", ""],
+    ["2026-11-13T24:00:00Z", ""],
+    ["heute", ""],
+    ["", ""],
+  ]) {
+    const r = auswerten(
+      leeresProfil(),
+      [{ rolle: "nutzer", text: "Hallo" }],
+      '{"offene_fragen":[]}',
+      heuteFix,
+      { erstellt: wert },
+    );
+    assert.equal(r.ergebnis.erstellt, erwartet, wert);
+    pruefeRundreise(r.ergebnis, wert);
   }
 });
