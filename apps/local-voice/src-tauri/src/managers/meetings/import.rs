@@ -735,10 +735,12 @@ pub(super) type EinVersuch<'a> = dyn FnMut(&crate::managers::planning::Freigabe,
 /// rechnet GENAU EINEN Versuch mit der Freigabe dieses Versuchs (Tests zaehlen hier), und
 /// `vor_wiederholung` laeuft zwischen zwei Versuchen (Modell neu anfordern).
 ///
-/// Jeder Versuch steht fuer sich hinter dem Einwilligungs-Tor (`planning::modell_lauf`: Pruefung
-/// davor und danach, auch nach einem Fehler des Versuchs). Lehnt das Tor ab (vor dem ersten
-/// Versuch, waehrend eines Versuchs oder zwischen zweien), endet der Block mit
-/// `Err("nur_notizen: ...")`: kein weiterer Versuch, kein Platzhalter.
+/// Jeder Versuch steht fuer sich hinter dem Einwilligungs-Tor (`planning::modell_versuch`:
+/// Pruefung davor und danach, auch nach einem Fehler des Versuchs). Gibt das Tor nicht frei (vor
+/// dem ersten Versuch, waehrend eines Versuchs oder zwischen zweien; Ablehnung ODER das Tor liess
+/// sich nicht pruefen, etwa ein Datenbankfehler), endet der Block mit `Err("nur_notizen: ...")`:
+/// kein weiterer Versuch, kein Platzhalter. Wiederholt und als Luecke vermerkt wird nur ein
+/// Fehler des Modells; die Unterscheidung ist der TYP des Fehlers (`planning::LaufFehler`).
 pub(super) fn block_mit_wiederholung(
     store: &MeetingStore,
     meeting_id: &str,
@@ -748,12 +750,14 @@ pub(super) fn block_mit_wiederholung(
 ) -> Result<Vec<crate::managers::transcription::TimedSegment>, String> {
     let mut last_error = String::new();
     for attempt in 1..=CHUNK_ATTEMPTS {
-        let lauf =
-            crate::managers::planning::modell_lauf(store, meeting_id, |frei| einmal(frei, chunk));
+        use crate::managers::planning::LaufFehler;
+        let lauf = crate::managers::planning::modell_versuch(store, meeting_id, |frei| {
+            einmal(frei, chunk)
+        });
         match lauf {
             Ok(timed) => return Ok(timed),
-            Err(e) if crate::managers::planning::ist_ablehnung(&e) => return Err(e),
-            Err(e) => {
+            Err(LaufFehler::Tor(tor)) => return Err(tor.code()),
+            Err(LaufFehler::Aufruf(e)) => {
                 last_error = e;
                 log::warn!(
                     "meetings: Block bei {} ms nicht transkribiert (Versuch {attempt} von {CHUNK_ATTEMPTS}): {last_error}",
@@ -2091,6 +2095,36 @@ Guten Tag.
         assert_eq!(pausen, 0, "kein Nachladen fuer einen zweiten Versuch");
         assert!(store.get_segments(&m.id).unwrap().is_empty());
         assert_eq!(platzhalter(&store, &m.id), 0, "keine Luecke");
+    }
+
+    /// R5-3 (Import): das Tor laesst sich vor dem ersten Versuch nicht LESEN (Datenbankfehler,
+    /// injiziert fuer genau einen Lesevorgang). Das ist kein Modellfehler: kein Versuch, keine
+    /// Wiederholung, keine Pause zum Nachladen, kein Platzhalter, nichts gespeichert. Mit der
+    /// Datenbank wieder da laeuft derselbe Ablauf durch.
+    #[test]
+    fn a_gate_that_cannot_be_read_ends_the_import_without_retry_or_gap() {
+        use crate::managers::planning::{testhilfe as th, TOR_STOERUNG};
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+        let m = store.create_empty_meeting("Import", None).unwrap();
+        let _ = th::plan_fuer_besprechung(&store, &m.id, "u-i5", true);
+        TOR_STOERUNG.with(|c| c.set(1));
+        let (r, aufrufe, pausen) = lauf_mit(&store, &m.id, 130, |_| Ok(one_segment("hallo")));
+        assert_eq!(r.err(), Some("nur_notizen: tor_nicht_pruefbar".to_string()));
+        assert_eq!(TOR_STOERUNG.with(|c| c.get()), 0, "genau ein Lesevorgang");
+        assert_eq!(
+            (aufrufe, pausen),
+            (0, 0),
+            "kein Versuch, keine Wiederholung"
+        );
+        assert!(store.get_segments(&m.id).unwrap().is_empty());
+        assert_eq!(platzhalter(&store, &m.id), 0, "keine Luecke");
+
+        let (r, aufrufe, _) = lauf_mit(&store, &m.id, 130, |_| Ok(one_segment("hallo")));
+        assert!(r.is_ok());
+        assert!(aufrufe >= 1);
+        assert!(!store.get_segments(&m.id).unwrap().is_empty());
+        assert_eq!(platzhalter(&store, &m.id), 0);
     }
 
     /// R4-2, Gegenprobe: ohne Widerruf wird ein gescheiterter Versuch wiederholt (mit eigener

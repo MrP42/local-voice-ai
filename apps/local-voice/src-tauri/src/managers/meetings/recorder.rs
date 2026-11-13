@@ -602,9 +602,27 @@ impl FinalSlot {
     /// ausser der ist schon gesetzt: der Vorgaenger endet dann von selbst, und der neue Auftrag
     /// soll nicht mit ihm sterben. Ist eine Aufnahme angemeldet, ist der Merker des neuen Auftrags
     /// von Geburt an gesetzt.
+    ///
+    /// Entsteht der Thread nicht (Fehler), bleibt der Vorgaenger MIT seinem Merker im Platz: der
+    /// Start einer Aufnahme bricht ihn weiter ab und wartet ihn ab ([`FinalSlot::live_beginnen`]).
     pub(crate) fn spawn(
         &self,
         body: impl FnOnce(Option<std::thread::JoinHandle<()>>, Arc<AtomicBool>) + Send + 'static,
+    ) -> std::io::Result<()> {
+        self.spawn_mit(body, |lauf| {
+            std::thread::Builder::new()
+                .name("meeting-final-pass".to_string())
+                .spawn(lauf)
+        })
+    }
+
+    /// [`FinalSlot::spawn`] mit dem Threadstart als Parameter (Tests lassen ihn scheitern).
+    fn spawn_mit(
+        &self,
+        body: impl FnOnce(Option<std::thread::JoinHandle<()>>, Arc<AtomicBool>) + Send + 'static,
+        starten: impl FnOnce(
+            Box<dyn FnOnce() + Send + 'static>,
+        ) -> std::io::Result<std::thread::JoinHandle<()>>,
     ) -> std::io::Result<()> {
         let mut slot = self.state();
         let previous = slot.job.take().and_then(|p| {
@@ -616,20 +634,40 @@ impl FinalSlot {
             }
         });
         let live = slot.live > 0;
-        let (cancel, previous_handle) = match previous {
-            Some(p) if !live && !p.cancel.load(Ordering::Acquire) => (p.cancel, Some(p.handle)),
-            Some(p) => (Arc::new(AtomicBool::new(live)), Some(p.handle)),
-            None => (Arc::new(AtomicBool::new(live)), None),
+        let cancel = match &previous {
+            Some(p) if !live && !p.cancel.load(Ordering::Acquire) => Arc::clone(&p.cancel),
+            _ => Arc::new(AtomicBool::new(live)),
         };
         if live {
             info!("meetings: a recording is live - the new final pass job starts cancelled");
         }
+        // Der Vorgaenger geht NICHT in die Closure des neuen Threads (scheiterte der Start, fiele
+        // er mit ihr und liefe unverfolgt weiter): sein Handle liegt in einer Uebergabe, aus der
+        // es der neue Thread als Erstes nimmt, und sein Merker bleibt hier.
+        let (previous_cancel, previous_handle) = match previous {
+            Some(p) => (Some(p.cancel), Some(p.handle)),
+            None => (None, None),
+        };
+        let uebergabe = Arc::new(Mutex::new(previous_handle));
+        let im_thread = Arc::clone(&uebergabe);
         let job_cancel = Arc::clone(&cancel);
-        let handle = std::thread::Builder::new()
-            .name("meeting-final-pass".to_string())
-            .spawn(move || body(previous_handle, job_cancel))?;
-        slot.job = Some(FinalJobHandle { cancel, handle });
-        Ok(())
+        let gestartet = starten(Box::new(move || {
+            let vorher = im_thread.lock().unwrap_or_else(|e| e.into_inner()).take();
+            body(vorher, job_cancel)
+        }));
+        match gestartet {
+            Ok(handle) => {
+                slot.job = Some(FinalJobHandle { cancel, handle });
+                Ok(())
+            }
+            Err(e) => {
+                let vorher = uebergabe.lock().unwrap_or_else(|e| e.into_inner()).take();
+                if let (Some(handle), Some(cancel)) = (vorher, previous_cancel) {
+                    slot.job = Some(FinalJobHandle { cancel, handle });
+                }
+                Err(e)
+            }
+        }
     }
 
     /// Ein Thread laeuft (nicht nur: ein Handle liegt da).
@@ -2587,6 +2625,106 @@ mod tests {
             })
             .unwrap();
             let live = slot.live_beginnen().unwrap();
+            assert!(!slot.active() && slot.live_aktiv());
+            drop(live);
+        }
+
+        /// R5-1: scheitert der Threadstart eines neuen Auftrags, bleibt der laufende Vorgaenger im
+        /// Platz (mit seinem Abbruch-Merker). Der Start einer Aufnahme bricht ihn ab und wartet
+        /// sein Ende ab, bevor das Tor betreten wird und die Aufnahme beginnt; vorher laeuft
+        /// nichts von ihr. Der Vorgaenger haengt an einem Kanal (wie ein Modellaufruf, der sich
+        /// nicht unterbrechen laesst); die Reihenfolge steht im Protokoll, keine Zeitmessung.
+        #[test]
+        fn a_failed_thread_start_keeps_the_running_final_pass_tracked() {
+            let (_dir, store) = store();
+            let slot = Arc::new(FinalSlot::default());
+            let log: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+            let (weiter_tx, weiter_rx) = mpsc::channel::<()>();
+            let (merker_tx, merker_rx) = mpsc::channel::<Arc<AtomicBool>>();
+            let l = Arc::clone(&log);
+            slot.spawn(move |_vorher, cancel| {
+                let _ = merker_tx.send(Arc::clone(&cancel));
+                let _ = weiter_rx.recv();
+                l.lock().unwrap().push(if cancel.load(Ordering::Acquire) {
+                    "vorgaenger_abgebrochen_beendet"
+                } else {
+                    "vorgaenger_ohne_abbruch_beendet"
+                });
+            })
+            .unwrap();
+            let merker = merker_rx.recv().unwrap();
+
+            // Der naechste Auftrag entsteht nicht: der Threadstart scheitert.
+            let nie = Arc::new(AtomicBool::new(false));
+            let lief = Arc::clone(&nie);
+            let r = slot.spawn_mit(
+                move |_vorher, _cancel| lief.store(true, Ordering::Release),
+                |_lauf| Err(std::io::Error::other("kein Thread (injiziert)")),
+            );
+            assert!(r.is_err());
+            assert!(
+                slot.active(),
+                "der Vorgaenger steht weiter im Platz (sonst liefe er unverfolgt neben der Aufnahme)"
+            );
+            assert!(
+                !merker.load(Ordering::Acquire),
+                "der gescheiterte Start bricht nichts ab"
+            );
+
+            // Start einer Aufnahme: bricht den Vorgaenger ab und wartet auf sein Ende.
+            let (fertig_tx, fertig_rx) = mpsc::channel();
+            let (s2, st2, l1, l2) = (
+                Arc::clone(&slot),
+                Arc::clone(&store),
+                Arc::clone(&log),
+                Arc::clone(&log),
+            );
+            let start = std::thread::spawn(move || {
+                let r = s2.start_unter_tor(
+                    &st2,
+                    None,
+                    None,
+                    move || l1.lock().unwrap().push("abbruch_abgewartet"),
+                    move |_tor| {
+                        l2.lock().unwrap().push("aufnahme_beginnt");
+                        Ok(())
+                    },
+                );
+                let _ = fertig_tx.send(r.map(|((), live)| live));
+            });
+            // Der Start hat den Vorgaenger gefunden: dessen Merker ist gesetzt. (Die Frist ist nur
+            // ein Netz gegen ein Haengen, kein Beweis.)
+            let netz = Instant::now() + Duration::from_secs(60);
+            while !merker.load(Ordering::Acquire) {
+                assert!(
+                    Instant::now() < netz,
+                    "der Start sieht den Vorgaenger nicht"
+                );
+                std::thread::yield_now();
+            }
+            // Solange der Vorgaenger haengt, steht er im Platz und der Start wartet: nichts von
+            // der Aufnahme ist gelaufen.
+            assert!(slot.active());
+            assert!(log.lock().unwrap().is_empty(), "{:?}", log.lock().unwrap());
+
+            weiter_tx.send(()).unwrap();
+            let live = fertig_rx
+                .recv_timeout(Duration::from_secs(60))
+                .expect("der Start endet nicht")
+                .expect("der Start gelingt");
+            start.join().unwrap();
+            assert_eq!(
+                *log.lock().unwrap(),
+                [
+                    "vorgaenger_abgebrochen_beendet",
+                    "abbruch_abgewartet",
+                    "aufnahme_beginnt"
+                ]
+            );
+            assert!(
+                !nie.load(Ordering::Acquire),
+                "der gescheiterte Auftrag lief nie"
+            );
             assert!(!slot.active() && slot.live_aktiv());
             drop(live);
         }

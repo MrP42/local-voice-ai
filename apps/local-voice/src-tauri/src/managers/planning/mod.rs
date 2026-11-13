@@ -43,7 +43,11 @@
 //!    danach, auch nach Fehler und Panik) und sie gilt fuer genau EINEN Aufruf: ein zweiter
 //!    Versuch oder ein weiteres Fenster mit derselben Freigabe scheitert (`freigabe_verbraucht`).
 //!    Fuer Ton, der keiner Besprechung gehoert, gibt es nur den benannten Ausweg
-//!    [`Freigabe::ohne_besprechung`].
+//!    [`Freigabe::ohne_besprechung`]. Das Tor sperrt auch, wenn es sich NICHT PRUEFEN laesst
+//!    (Datenbankfehler): [`TorFehler`] kennt nur "abgelehnt" und "nicht pruefbar", beides ist
+//!    nach aussen der Code `nur_notizen: ...`. Wer einen Modellaufruf wiederholt, bekommt die
+//!    Ursache als Typ ([`modell_versuch`], [`LaufFehler`]): wiederholt und als Luecke vermerkt
+//!    wird nur ein Fehler des Aufrufs, nie einer des Tors.
 //! 3. **Schreiben** ([`Modellarbeit`], [`schreibschutz`]): `modell_lauf` verlangt eine laufende
 //!    `Modellarbeit` des Threads fuer die Besprechung. Solange sie lebt, prueft der Speicher JEDE
 //!    Aenderung am Transkript dieser Besprechung (Segmente, Sprecher, Hinweise:
@@ -791,7 +795,7 @@ impl Gebunden {
     /// Modellaufruf. `schalten` legt nur einen Merker um: keine Sperre, kein Warten, kein Modell.
     pub fn wirksam(&self, store: &MeetingStore, schalten: impl FnOnce()) -> Res<()> {
         let _sperre = tor_sperre();
-        tor_paare(store, None, Some(&self.meeting_id))?;
+        tor_paare(store, None, Some(&self.meeting_id)).map_err(|e| e.code())?;
         schalten();
         Ok(())
     }
@@ -1080,7 +1084,7 @@ pub fn mit_tor<T>(
     start: impl FnOnce(&TorNachweis) -> Res<T>,
 ) -> Res<T> {
     let _sperre = tor_sperre();
-    let (paare, neu) = tor_und_binden(store, event, target_meeting_id)?;
+    let (paare, neu) = tor_und_binden(store, event, target_meeting_id).map_err(|e| e.code())?;
     start(&TorNachweis {
         paare,
         ziel: target_meeting_id.map(|t| (t.to_string(), neu)),
@@ -1106,6 +1110,11 @@ pub fn mit_tor_besprechung<T>(
 /// Prueft das Tor fuer eine vorhandene Besprechung unter der Sperre (kurz, ohne etwas zu starten)
 /// und bindet bestandene Planungen an sie.
 pub fn tor_pruefen_besprechung(store: &MeetingStore, meeting_id: &str) -> Res<()> {
+    tor_pruefen_typ(store, meeting_id).map_err(|e| e.code())
+}
+
+/// [`tor_pruefen_besprechung`] mit dem Fehler als Typ ([`TorFehler`]).
+fn tor_pruefen_typ(store: &MeetingStore, meeting_id: &str) -> Result<(), TorFehler> {
     let _sperre = tor_sperre();
     tor_und_binden(store, None, Some(meeting_id)).map(|_| ())
 }
@@ -1118,14 +1127,65 @@ fn tor_und_binden(
     store: &MeetingStore,
     event: Option<&crate::managers::calendar::model::CalEvent>,
     target_meeting_id: Option<&str>,
-) -> Res<(Vec<Paar>, Vec<String>)> {
+) -> Result<(Vec<Paar>, Vec<String>), TorFehler> {
     debug_assert!(unter_tor_sperre(), "Bindung nur unter der Tor-Sperre");
     let paare = tor_paare(store, event, target_meeting_id)?;
     let neu = match target_meeting_id {
-        Some(target) if !paare.is_empty() => binden(&verbindung(store)?, target, &paare)?,
+        // Laesst sich nicht binden, gilt das Tor als nicht bestanden (die Zuordnung waere sonst
+        // nicht dauerhaft).
+        Some(target) if !paare.is_empty() => verbindung(store)
+            .and_then(|conn| binden(&conn, target, &paare))
+            .map_err(TorFehler::nicht_pruefbar)?,
         _ => Vec::new(),
     };
     Ok((paare, neu))
+}
+
+/// Warum das Einwilligungs-Tor nicht bestanden ist. Es gibt genau zwei Gruende, und BEIDE sperren
+/// (fail-closed): die Regel lehnt ab, oder das Tor liess sich nicht pruefen (Datenbankfehler).
+/// Nach aussen ist beides derselbe Code `nur_notizen: <grund>` ([`TorFehler::code`]): ein Fehler
+/// des Tors ist damit nie mit einem Fehler des Modells zu verwechseln (kein erneuter Versuch,
+/// kein Luecken-Platzhalter, der Rest bleibt fortsetzbar).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TorFehler {
+    /// Die Regel lehnt ab: `nicht_geplant`, `abgelehnt`, `offen` oder `ohne_modellarbeit`.
+    Abgelehnt(&'static str),
+    /// Das Tor liess sich nicht pruefen. Die Ursache steht nur im Log, nie im Code.
+    NichtPruefbar,
+}
+
+impl TorFehler {
+    /// Ein Fehler beim Lesen oder Binden: die Ursache ins Log (nie Inhalte: es ist der Fehlertext
+    /// der Datenbank), nach aussen nur `NichtPruefbar`.
+    fn nicht_pruefbar(ursache: String) -> Self {
+        log::warn!("planning: Einwilligungs-Tor nicht pruefbar - gesperrt ({ursache})");
+        Self::NichtPruefbar
+    }
+
+    /// Der Code fuer Befehle und Ereignisse: immer `nur_notizen: <grund>` ([`ist_ablehnung`]).
+    pub fn code(&self) -> String {
+        match self {
+            Self::Abgelehnt(grund) => format!("nur_notizen: {grund}"),
+            Self::NichtPruefbar => "nur_notizen: tor_nicht_pruefbar".to_string(),
+        }
+    }
+}
+
+/// Das Ende EINES Modellversuchs hinter dem Tor ([`modell_versuch`]), nach der Ursache getrennt:
+/// nur ein Fehler des Aufrufs darf wiederholt oder als Luecke vermerkt werden.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LaufFehler {
+    /// Das Tor hat nicht freigegeben (Ablehnung ODER nicht pruefbar): Schluss, nichts schreiben.
+    Tor(TorFehler),
+    /// Der Aufruf selbst ist gescheitert (Modell, Engine).
+    Aufruf(String),
+}
+
+#[cfg(test)]
+std::thread_local! {
+    /// Testhaken: so viele naechste Lesevorgaenge des Tors scheitern in DIESEM Thread wie bei
+    /// einem Datenbankfehler; danach ist "die Datenbank wieder da".
+    pub(crate) static TOR_STOERUNG: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
 // ---------------------------------------------------------------------------
@@ -1245,11 +1305,11 @@ pub(crate) fn schreibschutz(store: &MeetingStore, meeting_id: &str) -> Res<Optio
     }
     if unter_tor_sperre() {
         // Der Thread haelt die Sperre schon (Schritt unter `mit_tor_besprechung`): frisch pruefen.
-        tor_paare(store, None, Some(meeting_id))?;
+        tor_paare(store, None, Some(meeting_id)).map_err(|e| e.code())?;
         return Ok(None);
     }
     let sperre = tor_sperre();
-    tor_und_binden(store, None, Some(meeting_id))?;
+    tor_und_binden(store, None, Some(meeting_id)).map_err(|e| e.code())?;
     Ok(Some(sperre))
 }
 
@@ -1274,34 +1334,53 @@ pub fn modell_lauf<T>(
     meeting_id: &str,
     call: impl FnOnce(&Freigabe) -> Res<T>,
 ) -> Res<T> {
-    modell_lauf_mit(store, meeting_id, call, |code| code)
+    modell_lauf_mit(store, meeting_id, call, |tor| tor.code())
 }
 
-/// [`modell_lauf`] fuer Aufrufe mit eigenem Fehlertyp: `abgelehnt` macht aus dem Code des Tors
-/// (`nur_notizen: <grund>`) den Fehler des Aufrufers.
+/// [`modell_lauf`] fuer Schleifen mit Wiederholung (Spracherkennung je Block): der Fehler sagt als
+/// TYP, ob das Tor nicht freigab ([`LaufFehler::Tor`]: Ablehnung oder nicht pruefbar, also
+/// Schluss) oder der Aufruf scheiterte ([`LaufFehler::Aufruf`]: darf wiederholt werden). Wer
+/// wiederholt, entscheidet damit nie am Text eines Fehlers.
+pub fn modell_versuch<T>(
+    store: &MeetingStore,
+    meeting_id: &str,
+    call: impl FnOnce(&Freigabe) -> Res<T>,
+) -> Result<T, LaufFehler> {
+    modell_lauf_mit(
+        store,
+        meeting_id,
+        |frei| call(frei).map_err(LaufFehler::Aufruf),
+        LaufFehler::Tor,
+    )
+}
+
+/// [`modell_lauf`] fuer Aufrufe mit eigenem Fehlertyp: `gesperrt` macht aus dem Fehler des Tors
+/// ([`TorFehler`]: Ablehnung oder nicht pruefbar) den Fehler des Aufrufers.
 pub fn modell_lauf_mit<T, E>(
     store: &MeetingStore,
     meeting_id: &str,
     call: impl FnOnce(&Freigabe) -> Result<T, E>,
-    abgelehnt: impl Fn(String) -> E,
+    gesperrt: impl Fn(TorFehler) -> E,
 ) -> Result<T, E> {
     ohne_tor_sperre("Modellaufruf");
     if !in_modellarbeit(meeting_id) {
-        return Err(abgelehnt("nur_notizen: ohne_modellarbeit".to_string()));
+        return Err(gesperrt(TorFehler::Abgelehnt("ohne_modellarbeit")));
     }
-    tor_pruefen_besprechung(store, meeting_id).map_err(&abgelehnt)?;
+    tor_pruefen_typ(store, meeting_id).map_err(&gesperrt)?;
     let frei = Freigabe::fuer_einen_aufruf();
     let ergebnis = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| call(&frei)));
     // Die Nachpruefung laeuft IMMER, auch nach Fehler und Panik des Aufrufs.
-    let danach = tor_pruefen_besprechung(store, meeting_id);
+    let danach = tor_pruefen_typ(store, meeting_id);
     match (ergebnis, danach) {
-        (_, Err(code)) => Err(abgelehnt(code)),
+        (_, Err(tor)) => Err(gesperrt(tor)),
         (Ok(ergebnis), Ok(())) => ergebnis,
         (Err(panik), Ok(())) => std::panic::resume_unwind(panik),
     }
 }
 
-/// Ist `fehler` die Ablehnung des Tors (`nur_notizen: ...`)?
+/// Ist `fehler` der Code des Tors (`nur_notizen: ...`)? Jeder Fehler des Tors traegt ihn
+/// ([`TorFehler::code`]), auch ein Datenbankfehler beim Pruefen: an den Grenzen, an denen Fehler
+/// nur noch Codes sind (Befehle, Ereignisse, Fehler des Speichers), ist das die Erkennung.
 pub fn ist_ablehnung(fehler: &str) -> bool {
     fehler.starts_with("nur_notizen")
 }
@@ -1321,20 +1400,56 @@ pub fn start_tor(
     event: Option<&crate::managers::calendar::model::CalEvent>,
     target_meeting_id: Option<&str>,
 ) -> Res<()> {
-    tor_paare(store, event, target_meeting_id).map(|_| ())
+    tor_paare(store, event, target_meeting_id)
+        .map(|_| ())
+        .map_err(|e| e.code())
 }
 
 /// Die Pruefung von [`start_tor`]; gibt die bestandenen Paare (Planung, Anwesende) zurueck.
+/// Jeder Fehler beim Lesen (Datenbank, fehlende Planung) sperrt: [`TorFehler::NichtPruefbar`].
 fn tor_paare(
     store: &MeetingStore,
     event: Option<&crate::managers::calendar::model::CalEvent>,
     target_meeting_id: Option<&str>,
-) -> Res<Vec<Paar>> {
+) -> Result<Vec<Paar>, TorFehler> {
+    #[cfg(test)]
+    {
+        let gestoert = TOR_STOERUNG.with(|c| {
+            let n = c.get();
+            c.set(n.saturating_sub(1));
+            n > 0
+        });
+        if gestoert {
+            return Err(TorFehler::nicht_pruefbar("sql: injiziert (Test)".into()));
+        }
+    }
+    let gelesen = tor_lesen(store, event, target_meeting_id).map_err(TorFehler::nicht_pruefbar)?;
+    match gelesen.grund {
+        Some(grund) => Err(TorFehler::Abgelehnt(grund)),
+        None => Ok(gelesen.paare),
+    }
+}
+
+/// Was [`tor_lesen`] in EINER Lesetransaktion gefunden hat.
+struct TorLesung {
+    paare: Vec<Paar>,
+    /// Der Grund der ersten Planung, die nicht `MitTranskription` ergibt.
+    grund: Option<&'static str>,
+}
+
+/// Liest alles, was das Tor braucht, frisch aus der Datenbank. `Err` ist hier IMMER ein Fehler
+/// beim Lesen, nie die Entscheidung der Regel (die steht in [`TorLesung::grund`]).
+fn tor_lesen(
+    store: &MeetingStore,
+    event: Option<&crate::managers::calendar::model::CalEvent>,
+    target_meeting_id: Option<&str>,
+) -> Res<TorLesung> {
     let mut conn = verbindung(store)?;
     let tx = conn
         .transaction_with_behavior(TransactionBehavior::Deferred)
         .map_err(sql)?;
     let paare = alle_paare(&tx, store, event, target_meeting_id)?;
+    let mut grund = None;
     for (plan_id, anwesende) in &paare {
         let plan = plan_holen(&tx, plan_id)?;
         let einwilligungen = plan_store::einwilligungen(&tx, plan_id)?;
@@ -1350,17 +1465,17 @@ fn tor_paare(
                 abgelehnt,
                 ..
             } => {
-                let grund = if nicht_geplant {
+                grund = Some(if nicht_geplant {
                     "nicht_geplant"
                 } else if !abgelehnt.is_empty() {
                     "abgelehnt"
                 } else {
                     "offen"
-                };
-                return Err(format!("nur_notizen: {grund}"));
+                });
+                break;
             }
         }
     }
     drop(tx);
-    Ok(paare)
+    Ok(TorLesung { paare, grund })
 }

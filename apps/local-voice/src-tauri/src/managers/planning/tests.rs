@@ -2389,6 +2389,184 @@ fn merging_carries_the_plans_of_the_parts_over_to_the_target() {
     assert!(tor_pruefen_besprechung(&f.store, &ziel2).is_err());
 }
 
+/// R5-3, der Durchsetzungspunkt: laesst sich das Tor nicht pruefen (hier ein ECHTER
+/// Datenbankfehler: die Tabelle der Bindungen ist nicht lesbar), sperrt es wie eine Ablehnung.
+/// Jeder Weg liefert den Code des Tors (`nur_notizen: tor_nicht_pruefbar`), nie den Fehlertext der
+/// Datenbank, und fuer Schleifen mit Wiederholung ist es als TYP ein Fehler des Tors
+/// (`LaufFehler::Tor`), nie einer des Aufrufs. Nichts startet, kein Modell laeuft, nichts wird
+/// geschrieben; ist die Datenbank wieder da, geht alles wieder.
+#[test]
+fn a_gate_that_cannot_be_checked_refuses_everywhere_and_is_never_a_model_error() {
+    let f = fix();
+    let (p, id) = aufnahme_mit_planung(&f);
+    zustimmen(&f, &p.id, "anna@example.com");
+    zustimmen(&f, &p.id, "bert@example.org");
+    assert_eq!(tor_pruefen_besprechung(&f.store, &id), Ok(()));
+    let conn = f.store.get_connection().unwrap();
+    let code = Err("nur_notizen: tor_nicht_pruefbar".to_string());
+    let _arbeit = Modellarbeit::beginnen(&id);
+    let delta = || crate::managers::meetings::store::TranscriptDelta {
+        new_segments: vec![crate::managers::meetings::store::StoredSegment {
+            segment_index: 0,
+            text: "Guten Tag".into(),
+            start_ms: 0,
+            end_ms: 900,
+            channel: 0,
+            speaker_index: None,
+            words: None,
+        }],
+    };
+
+    conn.execute_batch("ALTER TABLE meeting_plan_bindings RENAME TO bindungen_weg")
+        .unwrap();
+    assert_eq!(tor_pruefen_besprechung(&f.store, &id), code);
+    assert_eq!(start_tor(&f.store, None, Some(&id)), code);
+    let mut gestartet = false;
+    let r = mit_tor_besprechung(&f.store, &id, |_tor| {
+        gestartet = true;
+        Ok(())
+    });
+    assert_eq!(r, code);
+    assert!(!gestartet, "nichts startet");
+    let mut aufrufe = 0;
+    let r = modell_versuch(&f.store, &id, |_frei| {
+        aufrufe += 1;
+        Ok(())
+    });
+    assert_eq!(r, Err(LaufFehler::Tor(TorFehler::NichtPruefbar)));
+    assert_eq!(modell_lauf(&f.store, &id, |_frei| Ok(())), code);
+    assert_eq!(aufrufe, 0, "kein Modell");
+    let geschrieben = f.store.append_delta(&id, &delta());
+    assert!(
+        ist_ablehnung(&geschrieben.unwrap_err().to_string()),
+        "der Schreibschutz sperrt mit dem Code des Tors"
+    );
+    assert!(f.store.get_segments(&id).unwrap().is_empty());
+
+    // Die Datenbank ist wieder da.
+    conn.execute_batch("ALTER TABLE bindungen_weg RENAME TO meeting_plan_bindings")
+        .unwrap();
+    assert_eq!(tor_pruefen_besprechung(&f.store, &id), Ok(()));
+    // Ein Fehler des AUFRUFS bleibt einer des Aufrufs (er darf wiederholt werden) ...
+    let r: Result<(), LaufFehler> = modell_versuch(&f.store, &id, |frei| {
+        frei.einloesen()?;
+        Err("boom".to_string())
+    });
+    assert_eq!(r, Err(LaufFehler::Aufruf("boom".to_string())));
+    // ... ausser das Tor ist NACH dem Aufruf nicht pruefbar: dann gewinnt das Tor, auch ueber
+    // ein Ergebnis (ein Lesevorgang gestoert: die Nachpruefung).
+    let r = modell_versuch(&f.store, &id, |frei| {
+        frei.einloesen()?;
+        TOR_STOERUNG.with(|c| c.set(1));
+        Ok(7)
+    });
+    assert_eq!(r, Err(LaufFehler::Tor(TorFehler::NichtPruefbar)));
+    assert_eq!(TOR_STOERUNG.with(|c| c.get()), 0);
+    assert_eq!(modell_versuch(&f.store, &id, |_frei| Ok(7)), Ok(7));
+    assert!(f.store.append_delta(&id, &delta()).is_ok());
+}
+
+/// R5-Hinweis Migration: eine BEFUELLTE Datenbank auf dem Stand vor den Bindungen (Index 0 bis
+/// 17, mit Besprechungen, einer Planung samt Einwilligung und Kalenderdaten) bekommt die beiden
+/// neuen Tabellen leer dazu; jede Altzeile bleibt byte-gleich. Das Tor entscheidet danach ueber
+/// die alten Daten (geplante Besprechung ohne Anwesende: gesperrt, nichts gebunden; ungeplante:
+/// frei), und ein zweiter Start aendert nichts.
+#[test]
+fn a_filled_database_is_upgraded_to_the_bindings_migration_and_keeps_old_data() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("meetings.db");
+    let alt = 18;
+    let plan_id = "01JABCDEFGHJKMNPQRSTVWXYZ0";
+    {
+        let mut conn = Connection::open(&path).unwrap();
+        Migrations::new(MIGRATIONS[..alt].to_vec())
+            .to_latest(&mut conn)
+            .unwrap();
+        assert_eq!(user_version(&conn), alt as i64);
+        assert!(table_exists(&conn, "meeting_plans"), "Planung ist schon da");
+        assert!(!table_exists(&conn, "meeting_plan_bindings"));
+        assert!(!table_exists(&conn, "meeting_start_events"));
+        for (id, titel) in [("m1", "Geplant"), ("m2", "Ungeplant")] {
+            conn.execute(
+                "INSERT INTO meetings (id, title, status, source, created_at, updated_at)
+                 VALUES (?1, ?2, 'ready', 'live', 1, 1)",
+                [id, titel],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO calendar_sources (id, kind, label, created_at, updated_at)
+             VALUES ('s1', 'ics', 'Kalender', 1, 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO calendar_events (key, source_id, uid, title, starts_at, ends_at, description,
+                fetched_at)
+             VALUES ('s1:u1:5', 's1', 'u1', 'Alt', 5, 6, 'Text', 1)",
+            [],
+        )
+        .unwrap();
+        plan_store::plan_anlegen(&conn, plan_id, &eingabe(), &Regeln::default(), NOW).unwrap();
+        plan_store::plan_besprechung_setzen(&conn, plan_id, Some("m1"), NOW).unwrap();
+        plan_store::einwilligung_setzen(
+            &conn,
+            &Consent {
+                plan_id: plan_id.into(),
+                person: "anna@example.com".into(),
+                state: ConsentState::Zugestimmt,
+                channel: Some(ConsentChannel::Einladung),
+                recorded_at: Some(NOW),
+            },
+            NOW,
+        )
+        .unwrap();
+    }
+    let alte_tabellen = [
+        "meetings",
+        "calendar_sources",
+        "calendar_events",
+        "meeting_plans",
+        "meeting_plan_consents",
+        "meeting_plan_consent_log",
+    ];
+    let vorher: Vec<(&str, Vec<String>)> = {
+        let conn = Connection::open(&path).unwrap();
+        alte_tabellen.iter().map(|t| (*t, dump(&conn, t))).collect()
+    };
+    for (t, zeilen) in &vorher {
+        assert!(!zeilen.is_empty(), "{t} ist befuellt");
+    }
+
+    let s = MeetingStore::open_at(&path).unwrap();
+    let conn = s.get_connection().unwrap();
+    assert_eq!(user_version(&conn), MIGRATIONS.len() as i64);
+    for t in ["meeting_plan_bindings", "meeting_start_events"] {
+        assert!(table_exists(&conn, t), "{t}");
+        assert_eq!(dump(&conn, t), Vec::<String>::new(), "{t} startet leer");
+    }
+    for (t, zeilen) in &vorher {
+        assert_eq!(&dump(&conn, t), zeilen, "{t} bleibt unveraendert");
+    }
+    // Das Tor arbeitet auf den alten Daten: die Planung fuehrt `m1` ausdruecklich, Anwesende
+    // sind keine bekannt (gesperrt, nichts gebunden); `m2` gehoert zu keiner Planung.
+    assert!(ist_ablehnung(
+        &tor_pruefen_besprechung(&s, "m1").unwrap_err()
+    ));
+    assert_eq!(tor_pruefen_besprechung(&s, "m2"), Ok(()));
+    assert_eq!(dump(&conn, "meeting_plan_bindings"), Vec::<String>::new());
+    drop(conn);
+
+    // Zweiter Start: nichts mehr zu tun, nichts aendert sich.
+    drop(s);
+    let s2 = MeetingStore::open_at(&path).unwrap();
+    let conn = s2.get_connection().unwrap();
+    assert_eq!(user_version(&conn), MIGRATIONS.len() as i64);
+    for (t, zeilen) in &vorher {
+        assert_eq!(&dump(&conn, t), zeilen, "{t} bleibt unveraendert");
+    }
+}
+
 /// Anhaengen: ein zum Anhaengen vorgemerkter Teil steht unter den Planungen seines Ziels (sein
 /// Ton laeuft sonst ungeprueft durch das Modell und landet beim Zusammenfuehren im Transkript
 /// der geplanten Besprechung). Ohne Zustimmung laeuft fuer ihn kein Modell und nichts wird

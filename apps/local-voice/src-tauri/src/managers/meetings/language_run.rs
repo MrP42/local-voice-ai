@@ -165,8 +165,10 @@ pub(crate) fn probe_mit(
     let _arbeit = crate::managers::planning::Modellarbeit::beginnen(meeting_id);
     let mut result = ProbeResult::default();
     for window in windows {
-        let lauf =
-            crate::managers::planning::modell_lauf(store, meeting_id, |frei| fenster(frei, window));
+        use crate::managers::planning::LaufFehler;
+        let lauf = crate::managers::planning::modell_versuch(store, meeting_id, |frei| {
+            fenster(frei, window)
+        });
         match lauf {
             Ok((segments, detected)) => {
                 result.native.push(detected);
@@ -175,8 +177,9 @@ pub(crate) fn probe_mit(
                     result.text.push(' ');
                 }
             }
-            Err(e) if crate::managers::planning::ist_ablehnung(&e) => return Err(e),
-            Err(e) => {
+            // Das Tor gab nicht frei (Ablehnung oder nicht pruefbar): kein weiteres Fenster.
+            Err(LaufFehler::Tor(tor)) => return Err(tor.code()),
+            Err(LaufFehler::Aufruf(e)) => {
                 warn!("meetings: language probe window failed: {e}");
                 result.native.push(None);
             }

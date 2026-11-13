@@ -428,13 +428,16 @@ fn gated_transcribe(
         if env.cancelled() {
             return Err("cancelled".into());
         }
-        let lauf = crate::managers::planning::modell_lauf(store, meeting_id, |frei| {
+        use crate::managers::planning::LaufFehler;
+        let lauf = crate::managers::planning::modell_versuch(store, meeting_id, |frei| {
             env.transcribe(frei, model_id, chunk)
         });
         match lauf {
             Ok(timed) => return Ok(timed),
-            Err(e) if crate::managers::planning::ist_ablehnung(&e) => return Err(e),
-            Err(e) => last = e,
+            // Das Tor gab nicht frei (Ablehnung ODER nicht pruefbar, etwa ein Datenbankfehler):
+            // kein weiterer Versuch. Wiederholt wird nur ein Fehler des Modells (Typ, nicht Text).
+            Err(LaufFehler::Tor(tor)) => return Err(tor.code()),
+            Err(LaufFehler::Aufruf(e)) => last = e,
         }
     }
     Err(last)
@@ -983,7 +986,10 @@ fn catch_up(
             // Kein Platzhalter: der Rest bleibt offen fuer den naechsten Versuch.
             return CatchUp::Failed;
         }
-        // Rest als Luecke markieren (Muster `import.rs`).
+        // Rest als Luecke markieren (Muster `import.rs`). lva#544: die Luecke gilt spaeter als
+        // "erledigt". Verweigert der Schreibschutz des Tors sie (Widerruf seit dem Beginn, etwa
+        // waehrend eines gescheiterten Ladens), ist der Rest NICHT erledigt: abgelehnt, also
+        // fortsetzbar, ohne Luecke.
         let gap = StoredSegment {
             segment_index: next_index,
             text: super::import::gap_placeholder(done_ms, total_ms),
@@ -1006,6 +1012,10 @@ fn catch_up(
                     meeting_id: meeting.id.clone(),
                     appended: vec![gap],
                 });
+            }
+            Err(e) if crate::managers::planning::ist_ablehnung(&e.to_string()) => {
+                warn!("meetings: catch-up gap marker refused by the consent gate");
+                return CatchUp::Rejected;
             }
             Err(e) => warn!("meetings: catch-up gap marker not stored: {e}"),
         }
@@ -2057,6 +2067,40 @@ impl AppDiarizer {
     }
 }
 
+/// Laesst `inferenz` laufen und daneben einen Waechter-Thread, der `abbrechen` ruft, sobald
+/// `stop` wahr wird (Abbruch der Engine, Stopp des Nutzers). Der Waechter endet IMMER mit der
+/// Inferenz, auch wenn sie mit einer Panik endet: der Abschlussmerker faellt im `Drop` (RAII),
+/// also auch beim Abwickeln. Sonst wartete `thread::scope` beim Abwickeln fuer immer auf den
+/// Waechter, und der Auftrag hinge, statt mit dem Fehler zurueckzukehren (lva#544, Fixrunde 6).
+/// Die Panik selbst geht unveraendert an den Aufrufer.
+fn mit_abbruchwaechter<T>(
+    stop: impl Fn() -> bool + Sync,
+    abbrechen: impl Fn() + Sync,
+    poll: std::time::Duration,
+    inferenz: impl FnOnce() -> T,
+) -> T {
+    struct Fertig<'a>(&'a AtomicBool);
+    impl Drop for Fertig<'_> {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+    let done = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            while !done.load(Ordering::Acquire) {
+                if stop() {
+                    abbrechen();
+                    break;
+                }
+                std::thread::sleep(poll);
+            }
+        });
+        let _fertig = Fertig(&done);
+        inferenz()
+    })
+}
+
 impl ChannelDiarizer for AppDiarizer {
     fn model_name(&self) -> String {
         speakers::HINTS_MODEL_NAME.to_string()
@@ -2097,23 +2141,14 @@ impl ChannelDiarizer for AppDiarizer {
         let mut params = DiarizeParams::new(&self.model_path);
         params.threads = self.threads;
         params.cancel = Some(token.clone());
-        let done = AtomicBool::new(false);
         let cancel = &self.cancel;
         let job = self.job.as_ref();
-        std::thread::scope(|scope| {
-            scope.spawn(|| {
-                while !done.load(Ordering::Relaxed) {
-                    if cancel.load(Ordering::Relaxed) || job.is_some_and(|j| j.is_stopped()) {
-                        token.cancel();
-                        break;
-                    }
-                    std::thread::sleep(CANCEL_POLL);
-                }
-            });
-            let result = diarizer.diarize(pcm, &params);
-            done.store(true, Ordering::Relaxed);
-            result
-        })
+        mit_abbruchwaechter(
+            || cancel.load(Ordering::Relaxed) || job.is_some_and(|j| j.is_stopped()),
+            || token.cancel(),
+            CANCEL_POLL,
+            || diarizer.diarize(pcm, &params),
+        )
     }
 
     fn cancelled(&self) -> bool {
@@ -2574,6 +2609,9 @@ mod tests {
         log: Rc<RefCell<Vec<String>>>,
         unavailable: Option<&'static str>,
         panic: bool,
+        /// lva#544: die Inferenz laeuft im Waechter-Ablauf der Produktion
+        /// (`mit_abbruchwaechter`, wie in `AppDiarizer::diarize`).
+        waechter: bool,
         runs: Rc<RefCell<usize>>,
     }
 
@@ -2597,10 +2635,23 @@ mod tests {
             frei.einloesen().map_err(DiarizeError::Run)?;
             self.log.borrow_mut().push(format!("diarize:{channel}"));
             *self.runs.borrow_mut() += 1;
-            if self.panic {
-                panic!("diarizer exploded");
+            let panic = self.panic;
+            let turns = self.turns.get(&channel).cloned().unwrap_or_default();
+            let inferenz = move || {
+                if panic {
+                    panic!("diarizer exploded");
+                }
+                Ok(turns)
+            };
+            if self.waechter {
+                return mit_abbruchwaechter(
+                    || false,
+                    || {},
+                    std::time::Duration::from_millis(1),
+                    inferenz,
+                );
             }
-            Ok(self.turns.get(&channel).cloned().unwrap_or_default())
+            inferenz()
         }
         fn release(&mut self) {
             self.log.borrow_mut().push("release".into());
@@ -2612,6 +2663,8 @@ mod tests {
         events: Vec<MeetingEvent>,
         cancel_after: Option<usize>,
         fail_load: Option<KeepReason>,
+        /// lva#544: laeuft zu Beginn jedes Ladens (auch eines, das dann scheitert).
+        on_load: Option<Box<dyn FnMut()>>,
         fail_transcribe: bool,
         panic_transcribe: bool,
         empty: bool,
@@ -2644,6 +2697,7 @@ mod tests {
                 events: Vec::new(),
                 cancel_after: None,
                 fail_load: None,
+                on_load: None,
                 fail_transcribe: false,
                 panic_transcribe: false,
                 empty: false,
@@ -2671,6 +2725,7 @@ mod tests {
                 log: Rc::clone(&self.log),
                 unavailable: None,
                 panic: false,
+                waechter: false,
                 runs: Rc::clone(&runs),
             });
             (self, runs)
@@ -2703,6 +2758,9 @@ mod tests {
 
     impl FinalEnv for FakeEnv {
         fn load(&mut self, model_id: &str) -> Result<u64, KeepReason> {
+            if let Some(f) = self.on_load.as_mut() {
+                f();
+            }
             if let Some(r) = self.fail_load {
                 return Err(r);
             }
@@ -5167,6 +5225,204 @@ mod tests {
                 store.get_meeting(&leer.id).unwrap().unwrap().status,
                 "failed"
             );
+        }
+
+        /// R5-2: das Laden des Modells scheitert, und waehrenddessen widerruft eine Person. Der
+        /// Luecken-Marker fuer den Rest wird vom Schreibschutz des Tors verworfen. Das ist kein
+        /// erledigtes Nachholen: kein Modellaufruf, Segmente unveraendert, keine Luecke, Status
+        /// `cancelled`, kein `TranscriptFinal`; nach der Zustimmung holt "Fortsetzen" den Rest
+        /// wirklich nach. EINE Spur (wie ein Import): es gibt danach keine weitere Spur, deren
+        /// Pruefung vor dem Laden die Ablehnung ohnehin bemerkte; der verworfene Marker ist die
+        /// einzige Stelle, an der sie auffaellt.
+        #[test]
+        fn a_gap_marker_refused_by_the_gate_leaves_the_catch_up_resumable() {
+            let f = fixture(false, MeetingStatus::Processing);
+            let (p, _) = th::plan_fuer_besprechung(&f.store, &f.id, "u-r5-2", true);
+            let before = texte(&f);
+            let mut spec = job(&f, FinalPlan::Keep(KeepReason::CpuOnly));
+            spec.catch_up_model = Some("meeting-model".into());
+            spec.recover_from = Some("processing".into());
+            let mut env = FakeEnv::new();
+            env.fail_load = Some(KeepReason::LoadFailed);
+            let mut widerruf = widerruf_im_aufruf(&f, &p.id, 1).unwrap();
+            let geladen = Rc::new(RefCell::new(0usize));
+            let zaehler = Rc::clone(&geladen);
+            env.on_load = Some(Box::new(move || {
+                *zaehler.borrow_mut() += 1;
+                let n = *zaehler.borrow();
+                widerruf(n);
+            }));
+            let out = run_job(&f.store, &spec, &mut env);
+            assert_eq!(
+                *geladen.borrow(),
+                1,
+                "genau ein Ladeversuch (er scheiterte, dabei der Widerruf)"
+            );
+            assert_eq!(env.calls, 0, "kein Modellaufruf");
+            assert_eq!(out.report.catch_up_gaps, 0);
+            assert_eq!(out.report.catch_up_segments, 0);
+            assert_eq!(texte(&f), before, "Segmente unveraendert");
+            keine_luecke(&f);
+            assert_eq!(out.report.kept, Some(KeepReason::NoConsent));
+            assert_eq!(
+                f.store.get_meeting(&f.id).unwrap().unwrap().status,
+                "cancelled",
+                "fortsetzbar, nicht erledigt"
+            );
+            assert!(!env.kinds().contains(&"final"), "kein TranscriptFinal");
+
+            // Nach der Zustimmung holt "Fortsetzen" den Rest nach.
+            crate::managers::planning::einwilligung_setzen(
+                &f.store,
+                &th::zustimmung(&p.id, th::BERT),
+                th::NOW + 9,
+            )
+            .unwrap();
+            spec.recover_from = Some("cancelled".into());
+            let mut env = FakeEnv::new();
+            let out = run_job(&f.store, &spec, &mut env);
+            assert_eq!(
+                out.report.catch_up_segments, 1,
+                "die zweite Aeusserung der Spur"
+            );
+            assert_eq!(out.report.catch_up_gaps, 0);
+            keine_luecke(&f);
+            assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
+        }
+
+        /// R5-3: das Tor laesst sich vor einem Modellaufruf nicht LESEN (Datenbankfehler,
+        /// injiziert fuer genau einen Lesevorgang; beim naechsten Schreiben ist die Datenbank
+        /// wieder da). Das ist kein Modellfehler: kein erneuter Versuch (also kein einziger
+        /// Modellaufruf, obwohl drei Versuche erlaubt waeren), keine neuen Segmente, keine Luecke,
+        /// fortsetzbar; "Fortsetzen" holt den Rest danach nach.
+        #[test]
+        fn a_gate_that_cannot_be_read_stops_the_catch_up_without_retry_or_gap() {
+            use crate::managers::planning::TOR_STOERUNG;
+            let f = fixture(true, MeetingStatus::Processing);
+            let _ = th::plan_fuer_besprechung(&f.store, &f.id, "u-r5-3", true);
+            let before = texte(&f);
+            let mut spec = job(&f, FinalPlan::Keep(KeepReason::CpuOnly));
+            spec.catch_up_model = Some("meeting-model".into());
+            spec.recover_from = Some("processing".into());
+            let mut env = FakeEnv::new();
+            env.attempts = 3;
+            // Nach dem Laden (alle Pruefungen davor bestanden): der naechste Lesevorgang des Tors
+            // ist der vor dem ersten Modellversuch.
+            env.on_load = Some(Box::new(|| TOR_STOERUNG.with(|c| c.set(1))));
+            let out = run_job(&f.store, &spec, &mut env);
+            assert_eq!(env.loads.len(), 1);
+            assert_eq!(
+                TOR_STOERUNG.with(|c| c.get()),
+                0,
+                "die Stoerung traf genau einen Lesevorgang: die Datenbank ist wieder da"
+            );
+            assert_eq!(env.calls, 0, "kein Modellaufruf, auch kein zweiter Versuch");
+            assert_eq!(out.report.catch_up_gaps, 0);
+            assert_eq!(out.report.catch_up_segments, 0);
+            assert_eq!(texte(&f), before, "keine neuen Segmente");
+            keine_luecke(&f);
+            assert_eq!(
+                f.store.get_meeting(&f.id).unwrap().unwrap().status,
+                "cancelled",
+                "fortsetzbar"
+            );
+            assert!(!env.kinds().contains(&"final"), "kein TranscriptFinal");
+
+            spec.recover_from = Some("cancelled".into());
+            let mut env = FakeEnv::new();
+            let out = run_job(&f.store, &spec, &mut env);
+            assert_eq!(
+                out.report.catch_up_segments, 2,
+                "je Kanal die zweite Aeusserung"
+            );
+            assert_eq!(out.report.catch_up_gaps, 0);
+            keine_luecke(&f);
+            assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
+        }
+
+        /// R5-4: der Waechter des Sprecher-Modells (`mit_abbruchwaechter`, derselbe Ablauf wie in
+        /// `AppDiarizer::diarize`) endet auch, wenn die Inferenz mit einer Panik endet. Die
+        /// Inferenz wartet, bis der Waechter laeuft (Kanal), und panikt dann; die Rueckkehr von
+        /// `mit_abbruchwaechter` heisst, dass der Waechter beendet ist (`thread::scope` wartet
+        /// auf ihn). Der Thread drumherum und die Frist sind nur das Netz gegen ein Haengen.
+        #[test]
+        fn the_watchdog_ends_when_the_inference_panics() {
+            use std::sync::mpsc;
+            let (fertig_tx, fertig_rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                let (laeuft_tx, laeuft_rx) = mpsc::channel::<()>();
+                let laeuft_tx = std::sync::Mutex::new(laeuft_tx);
+                let abgebrochen = AtomicBool::new(false);
+                let r = catch_unwind(AssertUnwindSafe(|| {
+                    mit_abbruchwaechter(
+                        || {
+                            let _ = laeuft_tx.lock().unwrap().send(());
+                            false
+                        },
+                        || abgebrochen.store(true, Ordering::Release),
+                        std::time::Duration::from_millis(1),
+                        || -> Result<Vec<Turn>, DiarizeError> {
+                            laeuft_rx.recv().unwrap();
+                            panic!("inference exploded");
+                        },
+                    )
+                }));
+                let _ = fertig_tx.send((r.is_err(), abgebrochen.load(Ordering::Acquire)));
+            });
+            let (panik, abgebrochen) = fertig_rx
+                .recv_timeout(std::time::Duration::from_secs(60))
+                .expect("der Waechter haelt den Auftrag fest (Panik ohne Abschlussmerker)");
+            assert!(panik, "die Panik geht an den Aufrufer");
+            assert!(!abgebrochen, "niemand hat abgebrochen");
+
+            // Gegenprobe: ohne Panik laeuft die Inferenz durch, und ein Stopp wird weitergereicht.
+            let gestoppt = AtomicBool::new(false);
+            let (stopp_tx, stopp_rx) = mpsc::channel::<()>();
+            let stopp_tx = std::sync::Mutex::new(stopp_tx);
+            let wert = mit_abbruchwaechter(
+                || true,
+                || {
+                    gestoppt.store(true, Ordering::Release);
+                    let _ = stopp_tx.lock().unwrap().send(());
+                },
+                std::time::Duration::from_millis(1),
+                || {
+                    stopp_rx.recv().unwrap();
+                    7
+                },
+            );
+            assert_eq!(wert, 7);
+            assert!(gestoppt.load(Ordering::Acquire));
+        }
+
+        /// R5-4, der Auftrag: ein Sprecher-Modell, dessen Inferenz im Waechter-Ablauf der
+        /// Produktion panikt, haelt `run_job` nicht fest. Der Auftrag kehrt zurueck, der
+        /// Sprecher-Schritt ist als abgebrochen vermerkt, das Transkript bleibt ohne Sprecher.
+        #[test]
+        fn a_panicking_speaker_inference_under_the_watchdog_returns_the_job() {
+            use std::sync::mpsc;
+            let (fertig_tx, fertig_rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                let f = fixture(true, MeetingStatus::Processing);
+                let (mut env, runs) = FakeEnv::new().with_turns(&two_speakers());
+                let diar = env.diar.as_mut().unwrap();
+                diar.panic = true;
+                diar.waechter = true;
+                let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+                let _ = fertig_tx.send((
+                    *runs.borrow(),
+                    out.report.speakers.as_ref().map(|s| s.state.clone()),
+                    f.store.get_meeting(&f.id).unwrap().unwrap().status,
+                    f.store.speaker_hints(&f.id).unwrap().is_none(),
+                ));
+            });
+            let (laeufe, schritt, status, ohne_hinweise) = fertig_rx
+                .recv_timeout(std::time::Duration::from_secs(60))
+                .expect("der Auftrag haengt am Waechter des Sprecher-Modells");
+            assert_eq!(laeufe, 1, "die Inferenz lief (und panikte)");
+            assert_eq!(schritt.as_deref(), Some("aborted"));
+            assert_eq!(status, "ready");
+            assert!(ohne_hinweise);
         }
 
         /// Durchsetzungspunkt Modellebene: `FinalEnv::transcribe` und `ChannelDiarizer::diarize`
