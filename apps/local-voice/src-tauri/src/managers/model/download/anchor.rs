@@ -115,6 +115,12 @@
 //!   Handle benennt ([`Anchor::names`]); sonst Ablehnung, und der Fehlerweg raeumt nichts
 //!   weiter ab (kein Loeschen, kein Verschieben). Handle-gebundene Veroeffentlichung
 //!   (`O_TMPFILE`/`linkat`, unter Windows Umbenennen ueber das Handle): lva#570.
+//!   AUSNAHME vom Erkennen: das Zurueckziehen eines Graphen (`withdraw_graph` in
+//!   `commands/meeting_diarization.rs`, im Bereitstellungsschritt 2 und in der
+//!   Abschlusspruefung) loescht oder benennt ueber den Namen um, ohne Handle und ohne
+//!   Nachpruefung. Eine dort eingeschobene normale Datei wird unbemerkt geloescht oder
+//!   als `.partial` abgelegt (und kann eine vorhandene Teildatei ersetzen); dafuer gibt
+//!   es kein `unsafe_path`. Erkannt wird nur in `fetch_one`.
 //!   Unveraendert: ausserhalb des Modellordners wird nichts angefasst, und der Lader
 //!   bekommt nie ungepruefte Bytes.
 //!
@@ -677,9 +683,12 @@ impl Anchor {
     /// Umbenannt wird ueber NAMEN, nicht ueber ein Handle: wer zwischen der Pruefung und
     /// dem Umbenennen eine andere normale Datei unter `from` schiebt, sieht sie unter `to`
     /// landen und ein vorhandenes `to` ersetzen. Das verhindert diese Funktion nicht
-    /// (gelockerter Schutz, siehe Modulkopf, lva#570); der Aufrufer prueft danach mit
-    /// [`Anchor::names`], ob `to` noch die Datei seines Handles ist, und das Handle darf
-    /// dafuer waehrend des Umbenennens offen bleiben.
+    /// (gelockerter Schutz, siehe Modulkopf, lva#570). Diese Funktion selbst prueft
+    /// danach NICHTS. Erkannt wird ein solcher Tausch nur dort, wo der Aufrufer ein Handle
+    /// der Quelle haelt und danach mit [`Anchor::names`] vergleicht: das tut allein das
+    /// Veroeffentlichen einer Teildatei (`fetch_one` in `commands::meeting_diarization`).
+    /// Das Zurueckziehen des Graphen (`withdraw_graph` dort) haelt kein Handle und prueft
+    /// nicht: ein dort untergeschobener Graph wird unbemerkt verschoben.
     pub(crate) fn rename_over(&self, from: &str, to: &str) -> io::Result<()> {
         if self.plain_len(from)?.is_none() {
             return Err(io::Error::from(io::ErrorKind::NotFound));
@@ -724,6 +733,9 @@ pub(crate) enum Point {
     /// umbenannt (`fetch_one`): hier laesst sich die Teildatei noch tauschen, ohne dass
     /// die Pruefung davor es sieht.
     BeforeRename,
+    /// Unmittelbar bevor der Graph zurueckgezogen wird (nach der Zustandspruefung, vor dem
+    /// namensgebundenen Loeschen oder Umbenennen).
+    BeforeWithdraw,
     /// Alle Dateien sind geoeffnet, noch keine gelesen.
     Opened,
     /// Die Datei mit diesem Index ist gelesen und gehasht.

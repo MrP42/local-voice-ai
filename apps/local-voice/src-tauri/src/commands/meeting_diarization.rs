@@ -338,7 +338,20 @@ async fn verify_all(
 /// fehlende Rechte), den Eintrag selbst entfernen ([`Anchor::unlink`]: ein Link
 /// verschwindet, sein Ziel bleibt). Scheitert auch das, ist es ein Fehler: der
 /// Aufrufer meldet dann keinen Erfolg. Alles ueber den Anker, nie ueber einen Pfad.
+///
+/// Ausnahme vom Erkennen (gelockerter Schutz, lva#570): hier wird ueber den NAMEN
+/// geloescht, umbenannt und notfalls entfernt, ohne Handle und ohne Nachpruefung. Der
+/// Zustand `state` stammt aus einer frueheren Pruefung. Schiebt ein gleichberechtigter
+/// Prozess danach eine andere normale Datei unter den Namen des Graphen, trifft der
+/// Eingriff diese Datei: sie wird geloescht (Zustand ungueltig) oder als `.partial`
+/// abgelegt und ersetzt dabei eine vorhandene Teildatei (Zustand gueltig oder
+/// unbekannt). Das wird NICHT erkannt, es gibt dafuer kein `unsafe_path`. Geladen wird
+/// sie trotzdem nie ungeprueft: die Teildatei prueft der Downloader, den Bestand der
+/// Lader.
 fn withdraw_graph(anchor: &Anchor, name: &str, state: Option<FileState>) -> Result<(), String> {
+    if state != Some(FileState::Missing) {
+        anchor::fire(anchor.root(), anchor::Point::BeforeWithdraw);
+    }
     match state {
         Some(FileState::Missing) => Ok(()),
         Some(FileState::Invalid) => anchor.remove(name).map_err(|e| io_msg(&e)),
@@ -2000,6 +2013,114 @@ mod tests {
             );
         }
 
+        /// Ausnahme vom Erkennen, ehrlich geprueft: der Graph wird NACH der
+        /// Zustandspruefung und unmittelbar VOR dem Zurueckziehen
+        /// (`Point::BeforeWithdraw`) gegen eine fremde normale Datei getauscht.
+        /// `withdraw_graph` arbeitet ueber den Namen und prueft nicht nach: die fremde
+        /// Datei wird als `.partial` abgelegt, der Tausch wird NICHT als `unsafe_path`
+        /// gemeldet. Abschlusspruefung (`confirm`): die Gewichte sind ungueltig, der
+        /// Graph gilt als gueltig und wird zurueckgezogen.
+        #[tokio::test]
+        async fn a_graph_swapped_right_before_it_is_withdrawn_in_confirm_is_moved_unnoticed() {
+            const REPLACEMENT: &[u8] = b"fremde-datei-statt-graph";
+            let dir = tempfile::tempdir().unwrap();
+            let server = serve(both_routes()).await;
+            let files = rebase(two_files(&server, None), dir.path());
+            let swapped = Arc::new(AtomicBool::new(false));
+            let guard = anchor::hook::set(dir.path(), {
+                let (dir, weights) = (dir.path().to_path_buf(), files[1].1.clone());
+                let swapped = swapped.clone();
+                let spoiled = AtomicBool::new(false);
+                move |point| match point {
+                    // Die Abschlusspruefung soll scheitern: Gewichte verfaelschen, sobald
+                    // der Graph gelesen ist.
+                    anchor::Point::Checked(0) if !spoiled.swap(true, Ordering::SeqCst) => {
+                        std::fs::write(&weights, same_size_wrong()).unwrap();
+                    }
+                    anchor::Point::BeforeWithdraw if !swapped.load(Ordering::SeqCst) => {
+                        let graph = dir.join("model.onnx");
+                        let done = std::fs::rename(&graph, dir.join("model.onnx.alt")).is_ok()
+                            && std::fs::write(&graph, REPLACEMENT).is_ok();
+                        swapped.store(done, Ordering::SeqCst);
+                    }
+                    _ => {}
+                }
+            });
+
+            let out = provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {}).await;
+            drop(guard);
+
+            assert_eq!(out.unwrap_err(), "verification_failed");
+            if !swapped.load(Ordering::SeqCst) {
+                swap_must_have_happened();
+                return;
+            }
+            let mut expected = vec![
+                ("model.onnx.alt".to_string(), Some(GRAPH.to_vec())),
+                ("model.onnx.partial".to_string(), Some(REPLACEMENT.to_vec())),
+                ("model.onnx_data".to_string(), Some(same_size_wrong())),
+            ];
+            expected.sort();
+            assert_eq!(tree(dir.path()), expected);
+            assert!(!looks_complete(&files));
+        }
+
+        /// Dieselbe Ausnahme im Bereitstellungsschritt 2: der Bestand hat einen gueltigen
+        /// Graphen neben ungueltigen Gewichten, der Graph wird vor dem Nachladen beiseite
+        /// gelegt. Wird er unmittelbar davor getauscht, wandert die fremde Datei als
+        /// `.partial` beiseite; kein `unsafe_path`. Der Downloader verwirft sie (Groesse
+        /// und SHA-256 passen nicht), holt den Graphen neu, und die Abschlusspruefung
+        /// bestaetigt den Bestand: `Done`. Die fremde Datei wird nie zum Graphen, ihr
+        /// Inhalt ist aber verloren.
+        #[tokio::test]
+        async fn a_graph_swapped_right_before_it_is_set_aside_in_step_two_is_moved_unnoticed() {
+            const REPLACEMENT: &[u8] = b"fremde-datei-statt-graph";
+            let dir = tempfile::tempdir().unwrap();
+            let server = serve(both_routes()).await;
+            let files = rebase(two_files(&server, None), dir.path());
+            install(&files);
+            std::fs::write(&files[1].1, same_size_wrong()).unwrap();
+            let swapped = Arc::new(AtomicBool::new(false));
+            let guard = anchor::hook::set(dir.path(), {
+                let dir = dir.path().to_path_buf();
+                let swapped = swapped.clone();
+                move |point| {
+                    if point != anchor::Point::BeforeWithdraw || swapped.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    let graph = dir.join("model.onnx");
+                    let done = std::fs::rename(&graph, dir.join("model.onnx.alt")).is_ok()
+                        && std::fs::write(&graph, REPLACEMENT).is_ok();
+                    swapped.store(done, Ordering::SeqCst);
+                }
+            });
+
+            let out = provision(dir.path(), "t", &files, &CancellationToken::new(), &|_| {}).await;
+            drop(guard);
+
+            if !swapped.load(Ordering::SeqCst) {
+                swap_must_have_happened();
+                return;
+            }
+            // Kein `unsafe_path`: der Tausch bleibt unbemerkt. Die fremde Datei lag als
+            // `.partial`, der Downloader hat sie verworfen und den Graphen neu geholt;
+            // der urspruengliche Graph liegt unberuehrt unter dem fremden Namen.
+            assert!(matches!(out, Ok(Fetch::Done)), "{out:?}");
+            let mut expected = vec![
+                ("model.onnx".to_string(), Some(GRAPH.to_vec())),
+                ("model.onnx.alt".to_string(), Some(GRAPH.to_vec())),
+                ("model.onnx_data".to_string(), Some(WEIGHTS.to_vec())),
+            ];
+            expected.sort();
+            assert_eq!(tree(dir.path()), expected);
+            assert!(looks_complete(&files));
+            assert_eq!(
+                *server.requests.lock().unwrap(),
+                ["/model.onnx_data", "/model.onnx"],
+                "Gewichte und Graph werden neu geholt"
+            );
+        }
+
         /// Gelockerter Schutz, ehrlich geprueft: die Teildatei wird NACH bestandener
         /// Namenspruefung und unmittelbar VOR dem Umbenennen (`Point::BeforeRename`)
         /// gegen eine fremde normale Datei getauscht. Das Umbenennen ist dann nicht
@@ -2102,16 +2223,29 @@ mod tests {
                     "der Fehlerweg hat etwas angefasst ({what})"
                 );
                 assert!(!looks_complete(&files), "{what}");
-                assert!(
-                    OnnxBlockModel::load_verified(
-                        &anchor_of(dir.path()),
-                        loader_wanted(&files),
-                        dir.path(),
-                        1
-                    )
-                    .is_err(),
-                    "der Lader haette ablehnen muessen ({what})"
-                );
+                // Der Lader lehnt mit dem erwarteten Grund ab. Liegt die fremde Datei unter
+                // dem Namen des Graphen, stimmt ihre Groesse nicht mit dem Katalog; liegt
+                // sie unter dem Namen der Gewichte, fehlt der Graph (das meldet der Lader
+                // zuerst).
+                match OnnxBlockModel::load_verified(
+                    &anchor_of(dir.path()),
+                    loader_wanted(&files),
+                    dir.path(),
+                    1,
+                ) {
+                    Err(DiarizeError::Load(msg)) if graph => {
+                        assert!(
+                            msg.contains(&format!("Groesse {} statt", REPLACEMENT.len())),
+                            "{msg} ({what})"
+                        );
+                        assert!(msg.contains("model.onnx"), "{msg} ({what})");
+                    }
+                    Err(DiarizeError::ModelMissing(path)) if !graph => {
+                        assert_eq!(path, dir.path().join("model.onnx"), "{what}");
+                    }
+                    Err(other) => panic!("unerwarteter Fehler: {other} ({what})"),
+                    Ok(_) => panic!("der Lader haette ablehnen muessen ({what})"),
+                }
             }
         }
 

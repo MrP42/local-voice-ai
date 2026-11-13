@@ -147,8 +147,12 @@ catalog name and can replace an existing target. The write handle stays open acr
 the catalog name must name exactly that handle afterwards; a mismatch is `unsafe_path`, no `Done`,
 and the error path removes and moves nothing further (no withdrawing of the graph, no unlink). A
 failed or cancelled fetch never deletes anything by name, not even an empty `.partial`: that name
-may by now hold someone else's file. Unchanged: nothing outside the model folder is touched, and
-the loader never receives unverified bytes. On Windows the write handle is opened with
+may by now hold someone else's file. Exception to the detection: withdrawing a graph
+(`withdraw_graph`, in provisioning step 2 and after a failed final check) deletes or renames by
+name without a handle and without a check afterwards. A regular file slipped under the graph's
+name right before that is deleted or set aside as `.partial` (replacing an existing partial
+file) unnoticed, with no `unsafe_path`; detection exists only in `fetch_one`. Unchanged: nothing
+outside the model folder is touched, and the loader never receives unverified bytes. On Windows the write handle is opened with
 `FILE_SHARE_READ | WRITE | DELETE` so the app's own rename is not blocked; that is no protection
 against a swap. Tests that could hang (a FIFO slipped in under a name) run in a child process
 with a hard deadline (`download/childtest.rs`), never in a thread that cannot be stopped.
