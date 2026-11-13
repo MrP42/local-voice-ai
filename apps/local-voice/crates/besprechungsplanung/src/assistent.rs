@@ -67,7 +67,11 @@ pub struct EinstufungsErgebnis {
 /// keine gültige ASCII-Domäne ist (nur `a-z0-9-` je Teil, kein leerer Teil, Teil nicht
 /// mit `-` am Rand, mindestens zwei Teile).
 pub fn domaene_normalisieren(s: &str) -> Option<String> {
-    let t = s.trim().trim_start_matches('@').trim().to_lowercase();
+    let t = s.trim().trim_start_matches('@').trim();
+    if !t.is_ascii() {
+        return None;
+    }
+    let t = t.to_ascii_lowercase();
     let teile: Vec<&str> = t.split('.').collect();
     let ok = teile.len() >= 2
         && teile.iter().all(|teil| {
@@ -105,6 +109,20 @@ const OEFFENTLICHE_DOMAENEN: &[&str] = &[
     "tutanota.de",
     "vodafone.de",
     "web.de",
+    "bluewin.ch",
+    "email.de",
+    "fastmail.com",
+    "gmx.li",
+    "qq.com",
+    "rocketmail.com",
+    "co.com",
+    "eu.org",
+    "uk.com",
+    "us.com",
+    "amazonaws.com",
+    "cloudfront.net",
+    "firebaseapp.com",
+    "web.app",
     // Hosting: jede Subdomäne gehört jemand anderem.
     "azurewebsites.net",
     "blogspot.com",
@@ -139,8 +157,8 @@ const OEFFENTLICHE_MARKEN: &[&str] = &[
 /// Zweite Ebenen unter Länderendungen, unter denen fremde Firmen registrieren
 /// (`co.uk`, `co.at`, `com.au`, `or.at`, `gv.at` …).
 const ZWEITE_EBENEN: &[&str] = &[
-    "ac", "co", "com", "edu", "go", "gob", "gov", "gv", "ltd", "ne", "net", "nom", "or", "org",
-    "plc",
+    "ac", "co", "com", "edu", "go", "gob", "gov", "gv", "ltd", "me", "ne", "net", "nom", "or",
+    "org", "plc", "sch",
 ];
 
 /// Ist `d` ein Länder-Suffix wie `co.at` (zwei Teile, Landesendung, bekannte zweite Ebene)?
@@ -506,12 +524,21 @@ pub fn pruefen(a: &Anfrage) -> Entscheidung {
         if !a.cloud_fuer_besprechung {
             gruende.push(Sperrgrund::CloudNichtGewaehlt);
         }
+        // Eine Bestätigung muss zur aktuellen Liste passen und darf nicht lockerer sein als
+        // die berechnete Einstufung; eine Bestätigung „unbekannt“ sperrt wie eine berechnete.
+        let mut unbekannt_bestaetigt = false;
         match &a.bestaetigung {
             None => gruende.push(Sperrgrund::EinstufungUnbestaetigt),
             Some(b) if b.fingerabdruck != einstufung.fingerabdruck => {
                 gruende.push(Sperrgrund::EinstufungVeraltet)
             }
-            Some(_) => {}
+            Some(b)
+                if b.einstufung == Einstufung::Intern
+                    && einstufung.einstufung != Einstufung::Intern =>
+            {
+                gruende.push(Sperrgrund::EinstufungUnbestaetigt)
+            }
+            Some(b) => unbekannt_bestaetigt = b.einstufung == Einstufung::Unbekannt,
         }
         // Unbekannte und Ad-hoc sperren immer, auch neben Externen: „Cloud bei Externen“
         // lockert nur, was belegt extern ist.
@@ -519,6 +546,7 @@ pub fn pruefen(a: &Anfrage) -> Entscheidung {
             gruende.push(Sperrgrund::ListeOhneTermin);
         }
         if einstufung.ohne_adresse > 0
+            || unbekannt_bestaetigt
             || (einstufung.einstufung == Einstufung::Unbekannt && einstufung.aus_termin)
         {
             gruende.push(Sperrgrund::TeilnehmendeUnbekannt);

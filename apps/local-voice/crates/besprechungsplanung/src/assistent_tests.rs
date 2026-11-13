@@ -263,7 +263,10 @@ fn unbekannt_sperrt_cloud_auch_mit_einstellung_fuer_externe() {
     });
     assert_eq!(
         gruende(&pruefen(&a)),
-        vec![Sperrgrund::TeilnehmendeUnbekannt]
+        vec![
+            Sperrgrund::EinstufungUnbestaetigt,
+            Sperrgrund::TeilnehmendeUnbekannt
+        ]
     );
 }
 
@@ -411,7 +414,10 @@ fn mehrfachadresse_sperrt_cloud_trotz_bestaetigung() {
     });
     assert_eq!(
         gruende(&pruefen(&a)),
-        vec![Sperrgrund::TeilnehmendeUnbekannt]
+        vec![
+            Sperrgrund::EinstufungUnbestaetigt,
+            Sperrgrund::TeilnehmendeUnbekannt
+        ]
     );
 }
 
@@ -438,7 +444,13 @@ fn ad_hoc_liste_ist_nie_intern_und_sperrt_cloud() {
         einstufung: Einstufung::Intern,
         fingerabdruck: fp(&a),
     });
-    assert_eq!(gruende(&pruefen(&a)), vec![Sperrgrund::ListeOhneTermin]);
+    assert_eq!(
+        gruende(&pruefen(&a)),
+        vec![
+            Sperrgrund::EinstufungUnbestaetigt,
+            Sperrgrund::ListeOhneTermin
+        ]
+    );
     // Auch mit „Cloud bei Externen“ und Externen in der Ad-hoc-Liste.
     a.cloud_bei_externen = true;
     a.teilnehmende = liste(&["a@example.org", "x@example.com"]);
@@ -580,4 +592,82 @@ fn laender_suffixe_sind_nie_eigen_auch_nicht_mit_stern() {
 fn stern_eintrag_gilt_auch_fuer_die_basisdomaene() {
     let e = einstufen(&liste(&["a@example.org"]), &liste(&["*.example.org"]), true);
     assert_eq!(e.einstufung, Einstufung::Intern);
+}
+
+// -- Fixrunde 3 ------------------------------------------------------------------
+
+#[test]
+fn bestaetigung_unbekannt_sperrt_cloud_und_mcp() {
+    let mut a = offen_intern(Quelle::Cloud);
+    a.teilnehmende = liste(&["a@example.org"]);
+    a.bestaetigung = Some(Bestaetigung {
+        einstufung: Einstufung::Unbekannt,
+        fingerabdruck: fp(&a),
+    });
+    assert_eq!(
+        gruende(&pruefen(&a)),
+        vec![Sperrgrund::TeilnehmendeUnbekannt]
+    );
+    a.quelle = Quelle::Lokal;
+    a.pfad = Pfad::Mcp;
+    assert_eq!(
+        gruende(&pruefen(&a)),
+        vec![Sperrgrund::TeilnehmendeUnbekannt]
+    );
+    // Neben Externen mit „Cloud bei Externen“: weiter gesperrt.
+    let mut b = offen_intern(Quelle::Cloud);
+    b.cloud_bei_externen = true;
+    b.teilnehmende = liste(&["a@example.org", "x@example.com"]);
+    b.bestaetigung = Some(Bestaetigung {
+        einstufung: Einstufung::Unbekannt,
+        fingerabdruck: fp(&b),
+    });
+    assert_eq!(
+        gruende(&pruefen(&b)),
+        vec![Sperrgrund::TeilnehmendeUnbekannt]
+    );
+}
+
+#[test]
+fn bestaetigung_lockerer_als_berechnet_gilt_als_unbestaetigt() {
+    let mut a = offen_intern(Quelle::Cloud);
+    a.cloud_bei_externen = true;
+    a.teilnehmende = liste(&["a@example.org", "x@example.com"]);
+    a.bestaetigung = Some(Bestaetigung {
+        einstufung: Einstufung::Intern,
+        fingerabdruck: fp(&a),
+    });
+    assert_eq!(
+        gruende(&pruefen(&a)),
+        vec![Sperrgrund::EinstufungUnbestaetigt]
+    );
+}
+
+#[test]
+fn weitere_oeffentliche_domaenen_und_suffixe_sind_nie_eigen() {
+    let v = eigene_domaenen_vorschlag(&liste(&[
+        "ich@bluewin.ch",
+        "ich@email.de",
+        "ich@fastmail.com",
+        "ich@qq.com",
+        "ich@rocketmail.com",
+    ]));
+    assert!(v.is_empty(), "{v:?}");
+    for (eigen, adresse) in [
+        ("*.me.uk", "fremd@x.me.uk"),
+        ("*.sch.uk", "fremd@x.sch.uk"),
+        ("*.uk.com", "fremd@x.uk.com"),
+        ("*.co.com", "fremd@x.co.com"),
+        ("*.eu.org", "fremd@x.eu.org"),
+        ("*.web.app", "fremd@x.web.app"),
+        ("*.amazonaws.com", "fremd@x.amazonaws.com"),
+    ] {
+        let e = einstufen(&liste(&[adresse]), &liste(&[eigen]), true);
+        assert_ne!(e.einstufung, Einstufung::Intern, "{eigen:?}");
+    }
+}
+
+#[test]
+fn nicht_ascii_in_eigenen_domaenen_ist_ungueltig() {
+    assert_eq!(domaene_normalisieren("\u{212A}example.org"), None);
 }
