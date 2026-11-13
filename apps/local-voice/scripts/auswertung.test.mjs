@@ -333,6 +333,25 @@ test("fundstellen: nur an Wortgrenzen, überlappende Vorkommen, höchstens so vi
   assert.deepEqual(fundstellen("abc", "", 5), []);
 });
 
+test("fristenIn: Grenzmatrix um das 1024. Wort", () => {
+  const heute = { jahr: 2026, monat: 11, tag: 13 };
+  const lang = "spätestens bis zum Ende der Woche und den zwei Tagen danach";
+  const dahinter = " neutral".repeat(20);
+  for (let start = 1019; start <= 1029; start += 1) {
+    const davor = "wort ".repeat(start - 1);
+    const erwartet = start <= 1024 ? ["2026-11-20"] : [];
+    const ort = `Beginn im ${start}. Wort`;
+    assert.deepEqual(fristenIn(davor + "bis Freitag", heute), erwartet, ort);
+    assert.deepEqual(
+      fristenIn(davor + "bis Freitag" + dahinter, heute),
+      erwartet,
+      ort,
+    );
+    assert.deepEqual(fristenIn(davor + lang, heute), [], ort);
+    assert.deepEqual(fristenIn(davor + lang + dahinter, heute), [], ort);
+  }
+});
+
 test("fristenIn: findet Ausdrücke in Sätzen", () => {
   const heute = { jahr: 2026, monat: 11, tag: 13 };
   assert.deepEqual(
