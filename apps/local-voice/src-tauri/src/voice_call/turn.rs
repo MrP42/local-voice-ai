@@ -71,6 +71,17 @@ pub fn sovereignty_allows(stufe: &str, cloud: bool, countries: &[String]) -> Res
 }
 
 /// Anbieter, Modell und Schlüssel zu einer Modellkennung unter einer Souveränitätsstufe.
+/// Souveraenitaetsstufe, die tatsaechlich gilt: geschuetzte Inhalte und der Sofort-Sprecher laufen
+/// immer nur lokal, gleich was die Oberflaeche verlangt (der Sprecher kennt nur Verlauf und Frage,
+/// aber auch das verlaesst den Rechner nicht).
+fn wirksame_stufe<'a>(stufe: &'a str, geschuetzt: bool, nur_sprecher: bool) -> &'a str {
+    if geschuetzt || nur_sprecher {
+        "nur_lokal"
+    } else {
+        stufe
+    }
+}
+
 fn resolve(
     settings: &AppSettings,
     model_id: &str,
@@ -101,6 +112,9 @@ fn resolve(
     crate::managers::meetings::llm_call::resolve_provider(&chosen)
 }
 
+/// Fehler, wenn der Sofort-Sprecher in einem Projekt- oder Notizbuchgespraech gefragt wird.
+pub const SOFORT_GESPERRT: &str = "sofort_gesperrt";
+
 /// Ein Durchgang eines Modells als roher Textstrom (Ereignisse `delta`, am Ende `usage`).
 #[tauri::command]
 #[specta::specta]
@@ -114,7 +128,11 @@ pub async fn voice_call_turn(
     for_function: Option<String>,
     conversation_id: Option<String>,
     expected_stand: Option<String>,
+    nur_sprecher: Option<bool>,
 ) -> Result<String, String> {
+    // Sofort-Sprecher (lva#485): kennt nur Verlauf und Frage. Er laeuft nie in einem Projekt- oder
+    // Notizbuchgespraech, merkt keine Ausgabe (die Antwort gehoert dem Denker) und zeigt keinen Denktext.
+    let nur_sprecher = nur_sprecher.unwrap_or(false);
     // Ein vorgezogener Abbruch wird zuerst eingelöst, auch wenn unten etwas scheitert.
     if EARLY_CANCELS
         .lock()
@@ -128,6 +146,9 @@ pub async fn voice_call_turn(
     // kommt aus dem Tor. Die Souveränitätsstufe prüft vorab dieselbe Regel wie im gewöhnlichen Weg
     // (Länder der Verbindung); das Tor bestimmt das Ziel danach selbst aus der Konfiguration.
     if let Some(projekt) = super::projekt::bindung(&app, conversation_id.as_deref()).await? {
+        if nur_sprecher {
+            return Err(SOFORT_GESPERRT.to_string());
+        }
         let settings = crate::settings::get_settings(&app);
         resolve(&settings, &model_id, &stufe, for_function.as_deref())?;
         let gespraech = conversation_id.unwrap_or_default();
@@ -151,16 +172,15 @@ pub async fn voice_call_turn(
     if pruefung.gesperrt {
         return Err(schutz::UNGESICHERT.to_string());
     }
+    if nur_sprecher && pruefung.geschuetzt {
+        return Err(SOFORT_GESPERRT.to_string());
+    }
     let messages = pruefung.nachrichten.clone();
     // ADR-0028 E4: Einstufung in Rust vor jedem Modellaufruf (Sprecher und Denker).
     let sprache = crate::assistent::sprache_der_app(&app);
     tor::vor_nachrichten(&messages, sprache, conversation_id.as_deref())?;
     let settings = crate::settings::get_settings(&app);
-    let stufe_wirksam = if pruefung.geschuetzt {
-        "nur_lokal"
-    } else {
-        stufe.as_str()
-    };
+    let stufe_wirksam = wirksame_stufe(&stufe, pruefung.geschuetzt, nur_sprecher);
     let (provider, model, api_key) =
         resolve(&settings, &model_id, stufe_wirksam, for_function.as_deref()).map_err(|e| {
             if pruefung.geschuetzt && e.contains("nicht zulässig") {
@@ -170,7 +190,9 @@ pub async fn voice_call_turn(
             }
         })?;
     // Belegregel (E4.2) fuer JEDEN Durchgang, gleich welche Funktion: was Rust Richtung Oberflaeche
-    // verlaesst (Deltas, Rueckgabewert), geht durch das Tor. Belege sind die Werkzeugergebnisse, die
+    // verlaesst (Deltas, Rueckgabewert), geht durch das Tor. Ausnahme: der Denktext des Modells
+    // (Ereignis `reasoning`, `super::denksenke`) ist keine Aussage, nur Anzeige, und nie bei
+    // geschuetzten Inhalten. Belege sind die Werkzeugergebnisse, die
     // Rust selbst geliefert hat; ausgenommen sind nur voll gueltige Werkzeugaufrufe.
     let (strom, messages) = tor::orchestrator_tor(
         messages,
@@ -219,13 +241,16 @@ pub async fn voice_call_turn(
         }
     };
     let (result, captured) = usage::with_capture(async {
-        let call = llm_client::send_chat_completion_stream(
-            Purpose::Chat,
-            &provider,
-            api_key,
-            &model,
-            messages,
-            &on_delta,
+        let call = llm_client::mit_denksenke(
+            super::denksenke(&app, &request_id, pruefung.geschuetzt || nur_sprecher),
+            llm_client::send_chat_completion_stream(
+                Purpose::Chat,
+                &provider,
+                api_key,
+                &model,
+                messages,
+                &on_delta,
+            ),
         );
         let result = tokio::select! {
             r = call => Some(r),
@@ -285,7 +310,9 @@ pub async fn voice_call_turn(
                 );
                 return Err(schutz::UNGESICHERT.to_string());
             }
-            tor::ausgabe_merken(conversation_id.as_deref(), &prosa);
+            if !nur_sprecher {
+                tor::ausgabe_merken(conversation_id.as_deref(), &prosa);
+            }
             Ok(ausgabe)
         }
         Some(Err(e)) => {
@@ -301,6 +328,30 @@ pub async fn voice_call_turn(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn der_sofort_sprecher_und_geschuetzte_inhalte_bleiben_lokal() {
+        use super::{sovereignty_allows, wirksame_stufe};
+        assert_eq!(wirksame_stufe("frei", false, false), "frei");
+        assert_eq!(wirksame_stufe("frei", false, true), "nur_lokal");
+        assert_eq!(wirksame_stufe("eu", true, false), "nur_lokal");
+        // Ein Cloudmodell scheitert damit vor dem Versand, auch bei freier Stufe des Aufrufs.
+        assert!(sovereignty_allows(wirksame_stufe("frei", false, true), true, &[]).is_err());
+        assert!(sovereignty_allows(wirksame_stufe("frei", false, false), true, &[]).is_ok());
+    }
+
+    #[test]
+    fn voice_call_turn_nimmt_die_wirksame_stufe_fuer_die_aufloesung() {
+        let quelle = include_str!("turn.rs");
+        let rumpf = &quelle[quelle.find("pub async fn voice_call_turn(").unwrap()..];
+        let stufe = rumpf
+            .find("wirksame_stufe(&stufe, pruefung.geschuetzt, nur_sprecher)")
+            .expect("wirksame Stufe fehlt");
+        let aufloesung = rumpf
+            .find("resolve(&settings, &model_id, stufe_wirksam")
+            .unwrap();
+        assert!(stufe < aufloesung);
+    }
+
     use super::*;
 
     fn c(list: &[&str]) -> Vec<String> {

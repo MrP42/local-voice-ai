@@ -206,6 +206,9 @@ private final class AssistantRun {
     var thinkingWaitsForFinal = false
     let text: String
     let afterInterruption: Bool
+    /// Begrüßung des Assistenten (lva#556): ein Lauf ohne Modell, ohne Frage und ohne Verlaufsbeitrag; `text` ist dann leer.
+    let greeting: String?
+    var isGreeting: Bool { greeting != nil }
     var task: Task<Void, Never>?
     var committed = false
     var abandoned = false
@@ -250,9 +253,10 @@ private final class AssistantRun {
     /// Zahl der Sätze, deren Anzeige im Protokoll schon steht (kein zweiter Anzeige-Commit nach Zurückstufen und Nachreichen).
     var displayMarked = 0
 
-    init(text: String, afterInterruption: Bool) {
+    init(text: String, afterInterruption: Bool, greeting: String? = nil) {
         self.text = text
         self.afterInterruption = afterInterruption
+        self.greeting = greeting
     }
 
     /// Puffert ein `progress`-Ereignis vor dem nächsten Satz. Der Rohtext des Denkers (`draft`) ist kumulativ: Ein noch nicht angewendeter
@@ -323,7 +327,8 @@ final class AssistantController: ObservableObject {
     /// Sprechpause (Äußerungsende nach Inhalt, gestreckt oder gekürzt); wirkt auf die Richtlinie.
     @Published private(set) var pause = AssistantController.storedPause
     /// Antwortstil: `natural` (frei formuliert, Suche im Hintergrund) oder `verbatim` (nur wörtliche Auszüge). Wirkt ab der nächsten
-    /// Anfrage; die Sitzung wird dazu neu aufgebaut, sobald nichts läuft.
+    /// Anfrage; die Sitzung wird dazu neu aufgebaut, sobald nichts läuft. Ist ein Assistent außer „Alles“ gewählt, ist es sein Stil
+    /// (`syncBehavior`), sonst die Einstellung des Nutzers; ebenso `pause` und `bargeIn`.
     @Published private(set) var style = AssistantController.storedStyle
     /// Die Antwort wird zurückgehalten, weil der Nutzer spricht, und kommt nicht weiter: Hinweis mit „Antwort jetzt hören“
     /// (`releaseHold()`), bei `recognition` auch „Verwerfen“ (`discardHeldAnswer()`). `nil`, solange nichts hängt.
@@ -338,6 +343,13 @@ final class AssistantController: ObservableObject {
     @Published private(set) var loading = false
     /// Bereiche, die der Assistent im aktuellen Modus (lokal oder Cloud) nutzen darf.
     @Published private(set) var areas: Set<AssistantArea> = []
+    /// Der Assistent, mit dem die laufende Sitzung gebaut ist (lva#556); `nil` bei „Alles“ (das Gespräch läuft wie bisher).
+    @Published private(set) var activeProfile: AssistantProfile?
+    /// Die Begrüßung des Assistenten am Beginn des Gesprächs, wie sie angezeigt wird (Kennzeichnung „Begrüßung“). Kein Beitrag im Verlauf:
+    /// Sie wird nicht gespeichert und kommt nie in den Prompt; ein neues Gespräch löscht sie.
+    @Published private(set) var greeting: String?
+    /// „Anhören“ im Editor läuft (`previewSpeech`).
+    @Published private(set) var previewing = false
     @Published private(set) var overflowCount = 0
     @Published var consentRequest: AssistantConsentRequest?
     let meter = AssistantLevelMeter()
@@ -350,7 +362,7 @@ final class AssistantController: ObservableObject {
     /// `--assistant-demo-thinking` zeigen die Ansicht wie mit geladenem Modell, auch im Simulator ohne Systemmodell.)
     var canSend: Bool {
         #if DEBUG
-        if Self.demoReady || Self.demoThinking { return true }
+        if Self.demoReady || Self.demoThinking || Self.demoAssistant { return true }
         #endif
         return session != nil
     }
@@ -368,6 +380,7 @@ final class AssistantController: ObservableObject {
     private var areaChain: Task<Void, Never>?
     private var grantingConsent = false
     private let hub = AssistantSources.shared
+    private let profiles = AssistantProfiles.shared
     private var engine = AssistantEngine.unavailable("")
     private var session: AssistantSession?
     private var policy = DuplexTurnPolicy()
@@ -412,9 +425,16 @@ final class AssistantController: ObservableObject {
     /// Die Antwort ist zurückgehalten (Richtlinie: `holdAnswer` bis `releaseAnswer`/Abbruch/Ende); der Sprecher ist dann gehalten. Der
     /// Sprecher vergisst das Halten bei `begin()`/`stop()`; die Steuerung setzt es nach `begin()` wieder (`deliver`).
     private var holdActive = false
-    /// Stil, mit dem die laufende Sitzung gebaut ist (ihre Konfiguration ist unveränderlich); weicht er von `style` ab, wird sie neu gebaut.
-    private var appliedStyle = AssistantController.storedStyle
+    /// Stil und Assistent, mit denen die laufende Sitzung gebaut ist (ihre Konfiguration ist unveränderlich); weicht das von `wantedSetup`
+    /// ab, wird sie neu gebaut. `profile == nil`: „Alles“.
+    private struct SessionSetup: Equatable {
+        var style: AssistantStyle
+        var profile: AssistantProfile?
+    }
+    private var appliedSetup = SessionSetup(style: AssistantController.storedStyle, profile: nil)
     private var refreshingSession = false
+    /// Die Begrüßung dieses Gesprächs ist schon ausgegeben (oder entfällt); ein neues Gespräch und das Schließen setzen sie zurück.
+    private var greeted = false
     /// Die Sprechpause wurde geändert, während eine Antwort lief: Die Richtlinie wird nach deren Ende neu gebaut (ihr Zustand ginge sonst verloren).
     private var policyStale = false
     private var bag: Set<AnyCancellable> = []
@@ -422,6 +442,11 @@ final class AssistantController: ObservableObject {
     private var overflowShown = false
 
     init() {
+        // Vorgaben des gewählten Assistenten gelten schon vor dem ersten Aufbau der Sitzung (nur Werte, keine Sitzung zum Umbauen).
+        let behavior = behaviorValues()
+        style = behavior.style
+        pause = behavior.pause
+        bargeIn = behavior.bargeIn
         hub.$progress.receive(on: RunLoop.main).sink { [weak self] value in
             MainActor.assumeIsolated { self?.preparing = value }
         }.store(in: &bag)
@@ -476,16 +501,26 @@ final class AssistantController: ObservableObject {
     static let demoLegacy = ProcessInfo.processInfo.arguments.contains("--assistant-demo-legacy")
     static let demoReady = ProcessInfo.processInfo.arguments.contains("--assistant-demo-ready")
     static let demoThinking = ProcessInfo.processInfo.arguments.contains("--assistant-demo-thinking")
+    /// Assistenten (lva#556): `--assistant-demo-profiles` öffnet das Blatt „Assistenten“ mit zwei eigenen, erfundenen Assistenten neben den
+    /// Vorlagen (einer davon aktiv), `--assistant-demo-profile-editor` den Editor mit einem erfundenen Assistenten samt Vorschau der
+    /// Begrüßung, `--assistant-demo-greeting` das Gespräch mit angezeigter Begrüßung und dem Chip „Assistent: …“. Alle wie
+    /// `--assistant-demo-ready` (Ansicht wie mit geladenem Modell, Stil „Natürlich“), ohne Modell, Mikrofon, Stimme, Speicher und Protokoll;
+    /// die Assistenten liegen nur im Speicher (`AssistantProfiles.demo`).
+    static let demoProfiles = ProcessInfo.processInfo.arguments.contains("--assistant-demo-profiles")
+    static let demoProfileEditor = ProcessInfo.processInfo.arguments.contains("--assistant-demo-profile-editor")
+    static let demoGreeting = ProcessInfo.processInfo.arguments.contains("--assistant-demo-greeting")
+    static let demoAssistant = demoProfiles || demoProfileEditor || demoGreeting
     static let demoQuote = demoMulti || demoLocked || demoAudit || demoInterrupted || demoLegacy || demoReady || demoThinking
-        || ProcessInfo.processInfo.arguments.contains("--assistant-demo-quote")
+        || demoAssistant || ProcessInfo.processInfo.arguments.contains("--assistant-demo-quote")
 
     private func showDemo() {
         opened = true
         historyLoaded = true
         notice = Self.demoAudit ? Self.auditUnavailableNotice() : nil
         releaseAlert = Self.demoLocked ? Self.releaseLockedNotice : nil
-        if Self.demoReady || Self.demoThinking {
+        if Self.demoReady || Self.demoThinking || Self.demoAssistant {
             showDemoLive()
+            if Self.demoAssistant { showDemoAssistant() }
             return
         }
         if Self.demoLegacy {
@@ -524,6 +559,19 @@ final class AssistantController: ObservableObject {
                                              "2 Auszüge: Gartenplanung 2026, Einkaufsliste Beet"],
                                      draft: "Du wolltest im März die Hochbeete")
         phase = .thinking
+    }
+
+    /// Assistenten-Beispielzustände: Vorgaben des (im Speicher gewählten) Assistenten, Sitzungsstand `activeProfile` und bei
+    /// `--assistant-demo-greeting` die aufgelöste Begrüßung als angezeigter Beitrag. Es gibt keine Sitzung, die umzubauen wäre.
+    private func showDemoAssistant() {
+        let behavior = behaviorValues()
+        style = behavior.style
+        pause = behavior.pause
+        bargeIn = behavior.bargeIn
+        activeProfile = profiles.isEverything ? nil : profiles.active
+        guard Self.demoGreeting, let profile = activeProfile else { return }
+        let spoken = AssistantProfileText.spokenGreeting(profile, values: AssistantPlaceholderValues(date: Date(), name: nil))
+        greeting = spoken.isEmpty ? nil : spoken.text
     }
 
     /// Ein gespeicherter Block der Beispielrunde (`isBlock: true`: ganz, unverändert, zitierbar).
@@ -689,6 +737,7 @@ final class AssistantController: ObservableObject {
         phase = .listening
         finishStart(mine)
         announce("Gespräch gestartet. Ich höre zu.")
+        greetIfNew()
     }
 
     /// „Kein Modell verfügbar.“ kurz, mit zwei Wegen heraus. Eine Zeile Ursache nur, wenn sie zutrifft und hilft: das
@@ -709,6 +758,7 @@ final class AssistantController: ObservableObject {
     func end() {
         guard opened || running || starting else { return }
         opened = false
+        greeted = false
         generation += 1
         starting = false
         loading = false
@@ -735,6 +785,7 @@ final class AssistantController: ObservableObject {
         discardSpeculation()
         // `stop()` löscht auch das Halten des Sprechers; der Zustand der Steuerung und der Hinweis folgen.
         speaker.stop()
+        previewing = false
         clearHold()
         speaker.conversationMode = false
         running = false
@@ -825,12 +876,16 @@ final class AssistantController: ObservableObject {
         if let model = built.model {
             // Die Zustimmung zum Cloud-Ziel kommt aus der Zustandsdatei (für lokale Modelle ohne Belang). Der Kern lässt ein
             // Cloud-Modell ohne Zustimmung gar nicht erst laufen (`consentRequired`).
-            let next = AssistantSession(model: model, knowledge: kn, config: built.sessionConfig(style: style), history: history, audit: audit,
+            // Nach dem letzten Wartepunkt: Stil und Assistent stehen jetzt fest und gehören zusammen in die Sitzung.
+            let setup = wantedSetup
+            let next = AssistantSession(model: model, knowledge: kn.withCeiling(setup.profile?.areaCeiling),
+                                        config: built.sessionConfig(style: setup.style, profile: setup.profile), history: history, audit: audit,
                                         cloudConsent: false, releaseStore: releaseStore, cloudTarget: built.target?.id)
             observeRelease(of: next)
             speaker.gate = next.playbackGate
             session = next
-            appliedStyle = style
+            appliedSetup = setup
+            activeProfile = setup.profile
             // Ein Lesen für Bereiche und Zustimmung (nicht mehrere Lesungen, zwischen denen sich der Stand ändern kann).
             let effective = next.effectiveState
             areas = effective.areas
@@ -913,7 +968,7 @@ final class AssistantController: ObservableObject {
     /// Sitzung ab, wird sie mit derselben Engine, demselben Verlauf und denselben Freigaben neu aufgebaut, sobald nichts läuft; der
     /// Anstoß kommt bei der Änderung und am Ende jeder Antwort. Bis dahin gilt der bisherige Stil.
     private func refreshSessionStyle() {
-        guard session != nil, appliedStyle != style, !refreshingSession else { return }
+        guard session != nil, appliedSetup != wantedSetup, !refreshingSession else { return }
         refreshingSession = true
         Task { [weak self] in
             await self?.installSessionForStyle()
@@ -926,7 +981,7 @@ final class AssistantController: ObservableObject {
     /// sie, und es wird nach kurzer Pause noch einmal versucht (höchstens dreimal; danach bleibt es für das Ende der nächsten Antwort).
     private func installSessionForStyle() async {
         for attempt in 0..<3 {
-            guard let old = session, let model = engine.model, appliedStyle != style else { return }
+            guard let old = session, let model = engine.model, appliedSetup != wantedSetup else { return }
             if attempt > 0 { try? await Task.sleep(for: .milliseconds(250)) }
             let built = engine
             let waiting = chain
@@ -936,12 +991,15 @@ final class AssistantController: ObservableObject {
             guard session === old, chain == waiting, current == nil, job == nil, speculation == nil, mergePrefix.isEmpty,
                   consentRequest == nil, clearRequested == clearDone else { continue }
             old.setReleaseObserver(nil)
-            let next = AssistantSession(model: model, knowledge: knowledge, config: built.sessionConfig(style: style), history: stored,
+            let setup = wantedSetup
+            let next = AssistantSession(model: model, knowledge: knowledge.withCeiling(setup.profile?.areaCeiling),
+                                        config: built.sessionConfig(style: setup.style, profile: setup.profile), history: stored,
                                         audit: audit, cloudConsent: false, releaseStore: releaseStore, cloudTarget: built.target?.id)
             observeRelease(of: next)
             speaker.gate = next.playbackGate
             session = next
-            appliedStyle = style
+            appliedSetup = setup
+            activeProfile = setup.profile
             areas = next.effectiveAreas
             refreshReleaseAlert()
             return
@@ -1098,6 +1156,7 @@ final class AssistantController: ObservableObject {
 
     /// Sprechpause (Kurz, Normal, Lang): streckt oder kürzt alle Fristen, nach denen eine Äußerung als beendet gilt.
     func setPause(_ value: AssistantPauseSetting) {
+        guard profiles.isEverything else { return }   // vom Assistenten vorgegeben (Ansicht „Optionen“ zeigt es nur an)
         UserDefaults.standard.set(value.rawValue, forKey: Self.pauseKey)
         guard value != pause else { return }
         pause = value
@@ -1106,6 +1165,7 @@ final class AssistantController: ObservableObject {
 
     /// Antwortstil. Wirkt ab der nächsten Anfrage.
     func setStyle(_ value: AssistantStyle) {
+        guard profiles.isEverything else { return }
         UserDefaults.standard.set(value.rawValue, forKey: Self.styleKey)
         guard value != style else { return }
         style = value
@@ -1115,10 +1175,159 @@ final class AssistantController: ObservableObject {
     }
 
     func setBargeIn(_ on: Bool) {
+        guard profiles.isEverything else { return }
         UserDefaults.standard.set(on, forKey: Self.bargeInKey)
         bargeIn = on
         rebuildPolicy()
         if on { releaseAutoMute() } else if phase == .thinking || phase == .speaking { autoMuted = true; updateMute() }
+    }
+
+    // MARK: Assistenten (lva#556)
+
+    /// Stil, Sprechpause und „Beim Antworten zuhören“: bei „Alles“ die Einstellungen des Nutzers, sonst die Vorgaben des Assistenten
+    /// (`verhalten`: Stil, Sprechpause, unterbrechen). `nachfrage_stille_s` wird nur gespeichert, hier nicht ausgeführt.
+    private func behaviorValues() -> (style: AssistantStyle, pause: AssistantPauseSetting, bargeIn: Bool) {
+        guard !profiles.isEverything else { return (Self.storedStyle, Self.storedPause, Self.storedBargeIn) }
+        let behavior = profiles.active.behavior
+        let pause: AssistantPauseSetting
+        switch behavior.pause {
+        case .short: pause = .short
+        case .normal: pause = .normal
+        case .long: pause = .long
+        }
+        return (behavior.style == .natural ? .natural : .verbatim, pause, behavior.interruptible)
+    }
+
+    /// Der gewählte Assistent samt Stil; `profile == nil` bei „Alles“. Daran misst sich, ob die Sitzung neu gebaut werden muss.
+    private var wantedSetup: SessionSetup {
+        SessionSetup(style: style, profile: profiles.isEverything ? nil : profiles.active)
+    }
+
+    /// Gleicht Stil, Sprechpause und „Beim Antworten zuhören“ mit dem gewählten Assistenten ab (wie ihre Setter, aber ohne etwas zu
+    /// speichern: Die Einstellungen des Nutzers bleiben, wie sie sind, und gelten wieder bei „Alles“). Die Sitzung wird neu gebaut,
+    /// sobald nichts läuft (`refreshSessionStyle`).
+    private func syncBehavior() {
+        let wanted = behaviorValues()
+        if wanted.pause != pause {
+            pause = wanted.pause
+            applyPolicyConfig()
+        }
+        if wanted.bargeIn != bargeIn {
+            bargeIn = wanted.bargeIn
+            rebuildPolicy()
+            if bargeIn { releaseAutoMute() } else if phase == .thinking || phase == .speaking { autoMuted = true; updateMute() }
+        }
+        if wanted.style != style {
+            style = wanted.style
+            cancelJob()
+        }
+        refreshSessionStyle()
+    }
+
+    /// Zeichen der Anweisungen, die für das aktuelle Modell in den Prompt kommen (`AssistantProfile.roleBudget`); der Editor zeigt es an.
+    var roleBudgetChars: Int { AssistantProfile.roleBudget(contextTokens: engine.config.contextTokens) }
+
+    /// „Anhören“ im Editor: spricht den Text mit der eingestellten Stimme, über denselben Sprecher wie die Antworten (kein zweiter
+    /// Ausgabeweg). Das Mikrofon ist währenddessen stumm (sonst hörte das Gespräch die Vorschau als Frage); danach gilt der übliche Nachhall
+    /// (`releaseAutoMute`). Läuft eine Antwort oder ein Suchauftrag, geschieht nichts. Der Text ist nur ein Satz des Nutzers aus seinem
+    /// Profil: Er geht an kein Modell, in keine Sitzung, kein Protokoll.
+    func previewSpeech(_ text: String) {
+        guard current == nil, job == nil, !text.isEmpty else { return }
+        previewing = true
+        autoMuted = true
+        updateMute()
+        speaker.conversationMode = running
+        speaker.voiceID = VoiceModel.shared.selectedVoiceID
+        speaker.begin(language: .de)
+        speaker.enqueue(text)
+        speaker.endOfInput()
+    }
+
+    func stopPreview() {
+        guard previewing else { return }
+        speaker.stop()
+        previewEnded()
+    }
+
+    private func previewEnded() {
+        previewing = false
+        releaseAutoMute()
+    }
+
+    /// Es gibt ein Gespräch, das ein Wechsel des Assistenten beendet (Beiträge oder eine laufende Frage): die Ansicht fragt dann vorher.
+    var hasConversation: Bool { !turns.isEmpty || currentUser != nil }
+
+    /// Die Bereiche, aus denen der Assistent wirklich antwortet: freigegeben (Menü) UND vom Assistenten gewollt. Das Profil öffnet nie
+    /// mehr, als freigegeben ist, und ändert die Freigabe nicht.
+    var usableAreas: Set<AssistantArea> {
+        guard let activeProfile else { return areas }
+        return Set(activeProfile.effectiveAreas(released: areas))
+    }
+
+    /// Wählt einen anderen Assistenten; damit beginnt ein neues Gespräch (der bisherige Verlauf wird gelöscht, die Ansicht hat vorher
+    /// gefragt), mit Begrüßung, wenn der Assistent eine hat.
+    func selectAssistant(_ id: String) {
+        guard id != profiles.active.id else { return }
+        guard profiles.select(id) else {
+            notice = AssistantNotice(text: "Die Auswahl des Assistenten konnte nicht gesichert werden.", action: nil)
+            return
+        }
+        assistantChanged()
+    }
+
+    /// Löscht einen eigenen Assistenten. War er aktiv, gilt „Alles“, und das Gespräch beginnt neu (wie bei einem Wechsel).
+    func deleteAssistant(_ id: String) {
+        let wasActive = profiles.active.id == id
+        guard profiles.delete(id) else {
+            notice = AssistantNotice(text: "Der Assistent konnte nicht gelöscht werden.", action: nil)
+            return
+        }
+        if wasActive { assistantChanged() }
+    }
+
+    /// Der aktive Assistent wurde im Editor gesichert: Vorgaben und Anweisungen gelten ab der nächsten Anfrage (die Sitzung wird neu
+    /// gebaut, sobald nichts läuft); das Gespräch läuft weiter, die Begrüßung kommt nicht noch einmal.
+    func activeAssistantEdited() {
+        syncBehavior()
+    }
+
+    /// Ein anderer Assistent ist gewählt: neues Gespräch, Vorgaben übernehmen, Sitzung mit dem neuen Assistenten bauen, dann begrüßen.
+    private func assistantChanged() {
+        newConversation(greet: false)
+        syncBehavior()
+        Task { [weak self] in
+            guard let self else { return }
+            // Läuft schon ein Umbau (z. B. durch `syncBehavior`), erst dessen Ende abwarten, dann prüfen und begrüßen.
+            var waited = 0
+            while self.refreshingSession, waited < 20 {
+                try? await Task.sleep(for: .milliseconds(100))
+                waited += 1
+            }
+            if !self.refreshingSession {
+                self.refreshingSession = true
+                await self.installSessionForStyle()
+                self.refreshingSession = false
+            }
+            self.greetIfNew()
+        }
+    }
+
+    /// Begrüßung am Beginn eines neuen Gesprächs: der Satz aus dem Profil, Platzhalter aufgelöst (ohne bekannten Namen entfällt `{{name}}`),
+    /// durch den Kern als feste Ansage (`AssistantRequest.greeting`: kein Modell, kein Abruf, kein Beitrag im Verlauf). Er läuft über
+    /// denselben Weg wie jede Ausgabe (Anzeige mit Kennzeichnung „Begrüßung“, Stimme, Unterbrechen, Echo-Erkennung der Richtlinie);
+    /// es gibt keinen zweiten Ausgabeweg. Nur einmal je Gespräch, nur mit Sitzung nach dem gewählten Assistenten, und bei einem
+    /// Cloud-Ziel nur mit Zustimmung (sonst käme die Abfrage vor dem ersten Wort des Nutzers).
+    private func greetIfNew() {
+        guard running, !greeted, session != nil, current == nil, turns.isEmpty, currentUser == nil, appliedSetup == wantedSetup,
+              let profile = appliedSetup.profile else { return }
+        greeted = true
+        if let target = engine.target, !AssistantConsent.isGranted(target, areas: areas) { return }
+        let values = AssistantPlaceholderValues(date: Date(), name: engine.config.userName)
+        let spoken = AssistantProfileText.spokenGreeting(profile, values: values)
+        guard !spoken.isEmpty else { return }
+        let run = makeRun(text: "", afterInterruption: false, greeting: spoken.text)
+        run.endedAtMs = nowMs
+        beginAnswer(run)
     }
 
     /// Entzug (Bereich, Cloud-Zustimmung) mitten in der Antwort: Sprache stoppt, das bisher Gesprochene steht als
@@ -1278,8 +1487,10 @@ final class AssistantController: ObservableObject {
     /// Neues Gespräch: Verlauf löschen (Sitzung und Datei). In fester Reihenfolge in der Kette: laufende Antwort abbrechen,
     /// Sitzung leeren, Anzeige leeren, Datei über `saveChain` löschen. Frühere Aufträge der Kette (Abbruch, Abschluss) sehen
     /// `clearRequested != clearDone` und bringen den alten Verlauf nicht zurück.
-    func newConversation() {
+    func newConversation(greet: Bool = true) {
         clearRequested += 1
+        greeting = nil
+        greeted = false
         if current != nil { cancelAnswer(merge: true) }
         cancelJob()
         mergePrefix = ""
@@ -1306,6 +1517,8 @@ final class AssistantController: ObservableObject {
             self.deleteStoredHistory()
         }
         announce("Neues Gespräch.")
+        // Der Lauf der Begrüßung wartet in der Kette auf das Leeren der Sitzung (`makeRun`).
+        if greet { greetIfNew() }
     }
 
     // MARK: Hören (Listener → Policy)
@@ -1548,9 +1761,10 @@ final class AssistantController: ObservableObject {
             mergePrefix = run.text
             currentUser = nil
             liveParts = []
-            watchMerge(run.text)
+            if !run.text.isEmpty { watchMerge(run.text) }
         } else {
-            interruptedPending = true
+            // Die Unterbrechung der Begrüßung ist keine unterbrochene Antwort auf eine Frage (kein Hinweissatz in der nächsten Anfrage).
+            interruptedPending = !run.isGreeting
         }
         phase = running ? .hearing : .idle
         enqueue { [weak self] in
@@ -1633,8 +1847,8 @@ final class AssistantController: ObservableObject {
         send(text: text)
     }
 
-    private func makeRun(text: String, afterInterruption: Bool) -> AssistantRun {
-        let run = AssistantRun(text: text, afterInterruption: afterInterruption)
+    private func makeRun(text: String, afterInterruption: Bool, greeting: String? = nil) -> AssistantRun {
+        let run = AssistantRun(text: text, afterInterruption: afterInterruption, greeting: greeting)
         guard let session else { run.abandoned = true; return run }
         let waiting = chain
         // Besteht ein Suchauftrag, erfährt der Sprecher der neuen Anfrage davon (Stil `natural`; `verbatim` ignoriert es).
@@ -1642,6 +1856,7 @@ final class AssistantController: ObservableObject {
         run.pending = pending
         var request = AssistantRequest(requestId: run.id, text: text, afterInterruption: afterInterruption)
         request.pending = pending
+        request.greeting = greeting
         run.task = Task { [weak self] in
             await waiting?.value
             guard !run.abandoned else { return }
@@ -1689,20 +1904,25 @@ final class AssistantController: ObservableObject {
             }
             return
         }
+        // Eine Vorschau („Anhören“ im Editor) endet, sobald eine Antwort beginnt (derselbe Sprecher).
+        if previewing { stopPreview() }
         run.committed = true
         // Stil `natural`: Ab jetzt zählt die Äußerung als Frage (Zeitgeber der Ansagen bei langsamer Antwort); bei Vorarbeit erst hier,
         // nicht schon beim Start der Vorarbeit. Ohne Wirkung im Stil `verbatim`. Aus jedem Thread, ohne Warten.
-        session?.noteCommitted(requestId: run.id)
-        beginLatency(run)
+        // Die Begrüßung ist keine Frage: keine Ansage-Uhr, keine Latenzmessung, keine Frage in der Anzeige, kein Nachdenken.
+        if !run.isGreeting {
+            session?.noteCommitted(requestId: run.id)
+            beginLatency(run)
+        }
         current = run
         currentRunID = run.id
-        currentUser = run.text
+        currentUser = run.isGreeting ? nil : run.text
         liveParts = []
         firstSoundMs = nil
-        phase = .thinking
+        phase = run.isGreeting ? .speaking : .thinking
         // Die Denk-Anzeige gehört zu dieser Anfrage; der Stand der vorigen wird ersetzt. Gepufferter Fortschritt der Vorarbeit folgt in `deliver`.
         // Besteht ein Suchauftrag, gehört sie ihm: Die Zwischenantwort setzt sie nicht zurück.
-        if job == nil { thinking = AssistantThinking(active: true, steps: [], draft: "") }
+        if job == nil, !run.isGreeting { thinking = AssistantThinking(active: true, steps: [], draft: "") }
         _ = policy.feed(.answerStarted(requestId: run.id))
         if !bargeIn { autoMuted = true; updateMute() }
         deliver(run)
@@ -1874,11 +2094,11 @@ final class AssistantController: ObservableObject {
                         stopForRevocation(Self.revokedText, retry: run.text)
                         return
                     }
-                    showLive(sentence)
+                    showLive(sentence, of: run)
                     run.latency.markVisible()
                     if !run.thinkingWaitsForFinal, ownsThinking(run) { deactivateThinking() }
                 } else {
-                    switch commitOutput(run, index, .display, { showLive(sentence) }) {
+                    switch commitOutput(run, index, .display, { showLive(sentence, of: run) }) {
                     case .done:
                         run.latency.markVisible()
                         // Ein angezeigter Antwortsatz beendet das Denken, außer es läuft eine Suche und `composing` fehlt noch
@@ -1934,7 +2154,12 @@ final class AssistantController: ObservableObject {
     /// (Anführungszeichen setzt die Ansicht), ein Satz ohne Quelle (feste Antwort, Bestandsangabe) seine Kennzeichnung. Die
     /// Zuordnung steht im Kern (`AssistantTurnPart.append`), dieselbe wie beim Beitrag im Verlauf. Verworfene Sätze und Ansagen
     /// kommen nie hierher.
-    private func showLive(_ sentence: AssistantRun.Sentence) {
+    private func showLive(_ sentence: AssistantRun.Sentence, of run: AssistantRun) {
+        // Die Begrüßung steht nicht unter den Abschnitten der Antwort, sondern für sich am Anfang des Gesprächs (`greeting`).
+        if run.isGreeting {
+            greeting = sentence.text
+            return
+        }
         AssistantTurnPart.append(to: &liveParts, text: sentence.text, status: sentence.status, quote: sentence.quote, sources: sentence.sources)
     }
 
@@ -2319,6 +2544,10 @@ final class AssistantController: ObservableObject {
     }
 
     private func speakerIdle() {
+        if previewing, current == nil {
+            previewEnded()
+            return
+        }
         guard let run = current, run.inputEnded else { return }
         // Suchauftrag: Der Zwischensatz ist ausgesprochen; die Antwort ist nicht zu Ende, nur der Vordergrund wird frei.
         if run.limit != nil {
@@ -2348,7 +2577,8 @@ final class AssistantController: ObservableObject {
         // ganz gesprochen wurden.
         let spoken: AssistantSpokenUnits = failure == nil && !run.tailCut ? .all : run.spokenUnits
         let keep = failure != nil && spoken == .nothing
-        if let failure { showFailure(failure, run: run) }
+        // Die Begrüßung hat keine Frage zum erneuten Senden: ein Fehler dort bleibt still (Protokollfehler meldet `auditResult`).
+        if let failure, !run.isGreeting { showFailure(failure, run: run) }
         enqueue { [weak self] in
             // Für JEDE Anfrage entsteht ein Protokolleintrag, auch bei Fehler ohne Gesprochenes; einen Beitrag im Verlauf
             // schreibt der Kern nur für tatsächlich Gesprochenes und nur bei noch gültiger Generation.

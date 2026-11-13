@@ -13,16 +13,23 @@ public actor AssistantKnowledge {
     private let sources: [any AssistantSource]
     /// Der feste Anfangswert der Bereiche (nie verändert; die Freigabe lebt in der Ordnung, nicht hier).
     public nonisolated let areas: Set<AssistantArea>
+    /// Obergrenze der Bereiche (lva#556, Assistenten-Profil): nie mehr als diese, was immer die Sitzung als freigegeben übergibt. Fest wie
+    /// `areas`, nie verändert; `nil`: keine Obergrenze (alle bisherigen Aufrufer). Wirkt in Abruf, Bestand und Prüfung gleichermaßen.
+    /// Nötig, weil die Sitzung ihre Bereiche aus der Freigabe (Zustandsdatei) liest und `areas` nur der Anfangswert ist: Das Profil
+    /// schränkt die Freigabe ein, es öffnet nie etwas und ändert die Freigabe selbst nicht.
+    public nonisolated let ceiling: Set<AssistantArea>?
 
     /// Höchstens so viele Auszüge je Element im Gesamtergebnis (wie im Index).
     static let perItemCap = 3
     /// Ein Auszug unter dieser Länge wird nicht mehr gekürzt aufgenommen, sondern weggelassen.
     static let minClipChars = 200
 
-    public init(corpus: AssistantCorpus, sources: [any AssistantSource] = [], areas: Set<AssistantArea> = Set(AssistantArea.allCases)) {
+    public init(corpus: AssistantCorpus, sources: [any AssistantSource] = [], areas: Set<AssistantArea> = Set(AssistantArea.allCases),
+                ceiling: Set<AssistantArea>? = nil) {
         self.corpus = corpus
         self.sources = sources
         self.areas = areas
+        self.ceiling = ceiling
     }
 
     /// Baut den Bestand neu (Klasse B): ersetzt den Index durch genau diese Dokumente.
@@ -32,11 +39,23 @@ public actor AssistantKnowledge {
 
     /// Dasselbe Wissen (Index und Quellen) mit anderen Anfangsbereichen: ein neues Objekt, nie eine Änderung dieses.
     public nonisolated func withAreas(_ areas: Set<AssistantArea>) -> AssistantKnowledge {
-        AssistantKnowledge(corpus: corpus, sources: sources, areas: areas)
+        AssistantKnowledge(corpus: corpus, sources: sources, areas: areas, ceiling: ceiling)
     }
 
-    /// Der Anfangswert der Bereiche, ohne Aktor-Sprung (Anfangsstand einer Sitzung ohne Zustandsdatei).
-    public nonisolated var currentAreas: Set<AssistantArea> { areas }
+    /// Dasselbe Wissen mit anderer Obergrenze (`nil`: keine); die Anfangsbereiche bleiben.
+    public nonisolated func withCeiling(_ ceiling: Set<AssistantArea>?) -> AssistantKnowledge {
+        AssistantKnowledge(corpus: corpus, sources: sources, areas: areas, ceiling: ceiling)
+    }
+
+    /// Der Anfangswert der Bereiche, ohne Aktor-Sprung (Anfangsstand einer Sitzung ohne Zustandsdatei), höchstens die Obergrenze.
+    public nonisolated var currentAreas: Set<AssistantArea> { capped(areas) }
+
+    /// Die Bereiche, mit denen eine Anfrage wirklich arbeitet: die übergebenen (sonst die Anfangsbereiche), höchstens die Obergrenze.
+    nonisolated func capped(_ requested: Set<AssistantArea>?) -> Set<AssistantArea> {
+        let base = requested ?? areas
+        guard let ceiling else { return base }
+        return base.intersection(ceiling)
+    }
 
     // MARK: Bestand
 
@@ -45,7 +64,7 @@ public actor AssistantKnowledge {
 
     /// Titel aller Elemente der freigegebenen Bereiche, ohne Doppelte (für die Eigendatenprüfung von Frage und Satz).
     public func inventoryTitles(areas: Set<AssistantArea>? = nil) async -> [String] {
-        let active = areas ?? self.areas
+        let active = capped(areas)
         var seen = Set<String>()
         var out: [String] = []
         for area in AssistantArea.allCases where active.contains(area) {
@@ -119,7 +138,7 @@ public actor AssistantKnowledge {
     /// freigegeben ist. Die Bereiche gehen ins Protokoll.
     public func inventoryGroups(question: String, areas: Set<AssistantArea>? = nil) async -> [(area: AssistantArea, statements: [String])] {
         let wanted = Self.inventoryAreas(for: question)
-        let active = areas ?? self.areas
+        let active = capped(areas)
         var out: [(area: AssistantArea, statements: [String])] = []
         for area in AssistantArea.allCases where active.contains(area) && (wanted?.contains(area) ?? true) {
             out.append((area, Self.statements(area: area, items: await items(in: area))))
@@ -134,7 +153,7 @@ public actor AssistantKnowledge {
     /// Abruf für die Prüfung eines Satzes ohne Quelle: der SATZ ist die Anfrage, über alle freigegebenen Bereiche, ohne Vorfrage
     /// und ohne die Sonderbehandlung von Bestandsfragen, mit großzügiger Obergrenze. Nur zum Verwerfen, nie zum Zitieren.
     public func probe(sentence: String, areas: Set<AssistantArea>? = nil) async -> [AssistantPassage] {
-        let active = areas ?? self.areas
+        let active = capped(areas)
         let trimmed = sentence.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !active.isEmpty else { return [] }
         var found = await corpus.search(trimmed, previous: nil, areas: active, limit: Self.probeLimit)
@@ -152,7 +171,7 @@ public actor AssistantKnowledge {
     /// Scores sind je Bereich auf 0…1 normiert (beste Stelle des Bereichs = 1), damit Bereiche vergleichbar werden.
     public func retrieve(question: String, previous: String?, limit: Int, maxChars: Int,
                          areas: Set<AssistantArea>? = nil) async -> [AssistantPassage] {
-        let active = areas ?? self.areas
+        let active = capped(areas)
         guard limit > 0, maxChars > 0, !active.isEmpty else { return [] }
         let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !Self.isInventoryQuestion(trimmed) else { return [] }

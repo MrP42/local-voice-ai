@@ -23,6 +23,10 @@ const ERSATZ = new Map([
   [path.join(SRC, "stores/settingsStore.ts"), stub("settingsStore.ts")],
   [path.join(SRC, "stores/complianceStore.ts"), stub("complianceStore.ts")],
   [path.join(SRC, "i18n/index.ts"), stub("i18n.ts")],
+  [
+    path.join(SRC, "components/settings/meetings/DocUsageLine.tsx"),
+    stub("docUsageLine.ts"),
+  ],
 ]);
 
 const ENDUNGEN = ["", ".ts", ".tsx", "/index.ts"];
@@ -53,5 +57,17 @@ export async function resolve(specifier, context, next) {
   return {
     url: pathToFileURL(ERSATZ.get(gefunden) ?? gefunden).href,
     shortCircuit: true,
+  };
+}
+
+// Der Gesprächsspeicher liest `import.meta.env.DEV` (Vite); unter Node gibt es das nicht: im Test gilt „DEV“, damit
+// er seine Engine als `window.__voiceCallEngine` herausgibt (wie in der Entwicklung für die Oberflächentests).
+export async function load(url, context, next) {
+  const geladen = await next(url, context);
+  if (!url.endsWith("/stores/voiceCallStore.ts") || geladen.source == null)
+    return geladen;
+  return {
+    ...geladen,
+    source: String(geladen.source).replaceAll("import.meta.env.DEV", "true"),
   };
 }

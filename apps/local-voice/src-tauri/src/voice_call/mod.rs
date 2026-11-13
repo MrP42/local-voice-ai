@@ -50,6 +50,36 @@ use crate::managers::usage::{self, CapturedCall, Purpose};
 /// Name des Ereignisses, über das Antwortstücke zum Frontend laufen.
 pub const EVENT: &str = "voice-call";
 
+/// Hoechstens so viele Zeichen Denktext je Anfrage gehen an die Oberflaeche.
+pub const DENKEN_MAX_ZEICHEN: usize = 16 * 1024;
+
+/// Denktext des Modells als Ereignis `{kind: "reasoning", request_id, text}` (lva#485): nur fuer
+/// die Denk-Anzeige, nie gesprochen, nie Antwort oder Verlauf. Keine Senke bei Notizbuchdaten
+/// (`geschuetzt`): dort verlaesst vor dem Vermerk nichts Rust.
+pub(crate) fn denksenke(
+    app: &AppHandle,
+    request_id: &str,
+    geschuetzt: bool,
+) -> Option<llm_client::DenkSenke> {
+    if geschuetzt {
+        return None;
+    }
+    let (app, request_id) = (app.clone(), request_id.to_string());
+    let gesendet = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    Some(Arc::new(move |text: &str| {
+        let n = text.chars().count();
+        let vorher = gesendet.fetch_add(n, std::sync::atomic::Ordering::SeqCst);
+        if vorher >= DENKEN_MAX_ZEICHEN {
+            return;
+        }
+        let text: String = text.chars().take(DENKEN_MAX_ZEICHEN - vorher).collect();
+        let _ = app.emit(
+            EVENT,
+            serde_json::json!({"kind": "reasoning", "request_id": request_id, "text": text}),
+        );
+    }))
+}
+
 static CANCELS: Lazy<Mutex<HashMap<String, Arc<Notify>>>> = Lazy::new(Default::default);
 /// Abbrüche, die vor dem Start ihrer Anfrage eintrafen (IPC-Reihenfolge ist nicht garantiert).
 static EARLY_CANCELS: Lazy<Mutex<std::collections::HashSet<String>>> = Lazy::new(Default::default);
@@ -626,14 +656,17 @@ pub async fn voice_call_chat(
     // zeigt Token und Kosten. Gelesen wird innerhalb des Bereichs, auch nach
     // dem Abbruch (dann ist nur der Verbrauch bis dahin gebucht, falls überhaupt).
     let (result, captured) = usage::with_capture(async {
-        let call = llm_client::send_chat_completion_stream_routed(
-            Purpose::Chat,
-            &provider,
-            api_key,
-            &model,
-            messages,
-            &on_delta,
-            pinned_local.as_deref(),
+        let call = llm_client::mit_denksenke(
+            denksenke(&app, &request_id, pruefung.geschuetzt),
+            llm_client::send_chat_completion_stream_routed(
+                Purpose::Chat,
+                &provider,
+                api_key,
+                &model,
+                messages,
+                &on_delta,
+                pinned_local.as_deref(),
+            ),
         );
         // Abbruch zuerst prüfen: ein schon vorliegender Abbruch verhindert
         // den Versand, statt mit ihm zu wetteifern.
