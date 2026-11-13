@@ -15,6 +15,7 @@ struct AssistantConversationView: View {
     @ObservedObject private var relays = BookTalkRelayStore.shared
     @ObservedObject private var endpoints = AssistantEndpointStore.shared
     @ObservedObject private var hub = AssistantSources.shared
+    @ObservedObject private var profiles = AssistantProfiles.shared
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -29,6 +30,14 @@ struct AssistantConversationView: View {
     @State private var showLocalModels = false
     @State private var showAreas = false
     @State private var showOptions = false
+    /// Blatt „Assistenten“ (lva#556) und der Editor, der aus „Optionen“ heraus aufgeht (Assistent bearbeiten, Vorlage kopieren).
+    @State private var showProfiles = false
+    @State private var optionsEditor: AssistantEditorTarget?
+    @State private var optionsFailure: String?
+    #if DEBUG
+    /// `--assistant-demo-profile-editor`: der Editor mit dem erfundenen Assistenten, direkt beim Öffnen.
+    @State private var demoEditor: AssistantEditorTarget?
+    #endif
     @State private var thinkingOpen = false
     /// Messwerte: nicht veröffentlicht, deshalb beim Anzeigen und nach dem Zurücksetzen neu gelesen.
     @State private var latency = ""
@@ -50,6 +59,10 @@ struct AssistantConversationView: View {
                 .sheet(isPresented: $showLocalModels, onDismiss: localModelsClosed) { ModelPanel(model: VoiceModel.shared) }
                 .sheet(isPresented: $showAreas) { areasSheet }
                 .sheet(isPresented: $showOptions) { optionsSheet }
+                .sheet(isPresented: $showProfiles) { AssistantProfilesView(close: { showProfiles = false }) }
+                #if DEBUG
+                .sheet(item: $demoEditor) { target in AssistantProfileEditorView(target: target, close: { demoEditor = nil }) }
+                #endif
             Divider()
             bottom
                 .confirmationDialog("Modell auswählen", isPresented: $showModelChoice, titleVisibility: .visible) { modelChoiceButtons }
@@ -58,6 +71,10 @@ struct AssistantConversationView: View {
         .task {
             gemmaReady = AssistantEngine.gemmaInstalled()
             await talk.start()
+            #if DEBUG
+            if AssistantController.demoProfiles { showProfiles = true }
+            if AssistantController.demoProfileEditor { demoEditor = AssistantEditorTarget(profile: AssistantProfiles.demoFront) }
+            #endif
         }
         .task { await relays.refresh() }
         .onDisappear { talk.end() }
@@ -154,6 +171,8 @@ struct AssistantConversationView: View {
     private var optionsSheet: some View {
         NavigationStack {
             List {
+                if !profiles.isEverything { assistantGivenSection }
+
                 Section {
                     Picker("Antwortstil", selection: Binding(get: { talk.style }, set: { talk.setStyle($0) })) {
                         Text("Natürlich").tag(AssistantStyle.natural)
@@ -161,6 +180,7 @@ struct AssistantConversationView: View {
                     }
                     .pickerStyle(.inline)
                     .labelsHidden()   // die Abschnittsüberschrift trägt die Beschriftung; sonst steht sie als eigene Zeile doppelt
+                    .disabled(!profiles.isEverything)
                     .accessibilityIdentifier("assistantStylePicker")
                 } header: {
                     Text("Antwortstil")
@@ -174,6 +194,7 @@ struct AssistantConversationView: View {
                     }
                     .pickerStyle(.inline)
                     .labelsHidden()   // die Abschnittsüberschrift trägt die Beschriftung; sonst steht sie als eigene Zeile doppelt
+                    .disabled(!profiles.isEverything)
                     .accessibilityIdentifier("assistantPausePicker")
                 } header: {
                     Text("Sprechpause")
@@ -183,6 +204,8 @@ struct AssistantConversationView: View {
 
                 Section {
                     Toggle("Beim Antworten zuhören", isOn: Binding(get: { talk.bargeIn }, set: { talk.setBargeIn($0) }))
+                        .disabled(!profiles.isEverything)
+                        .accessibilityIdentifier("assistantBargeInToggle")
                 } footer: {
                     Text("Du kannst die Antwort mit deiner Stimme unterbrechen.")
                 }
@@ -212,8 +235,38 @@ struct AssistantConversationView: View {
                 ToolbarItem(placement: .confirmationAction) { Button("Fertig") { showOptions = false }.accessibilityIdentifier("assistantOptionsDone") }
             }
             .onAppear { latency = talk.latencyText }
+            .sheet(item: $optionsEditor) { target in AssistantProfileEditorView(target: target, close: { optionsEditor = nil }) }
+            .alert("Nicht möglich", isPresented: Binding(get: { optionsFailure != nil }, set: { if !$0 { optionsFailure = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(optionsFailure ?? "")
+            }
         }
         .accessibilityIdentifier("assistantOptionsSheet")
+    }
+
+    /// Bei einem Assistenten außer „Alles“ sind Antwortstil, Sprechpause und „Beim Antworten zuhören“ seine Vorgaben: Die Optionen zeigen sie
+    /// nur an. Der Knopf führt zum Editor (eigener Assistent) oder legt von der Vorlage eine eigene Kopie an, die sich bearbeiten lässt.
+    private var assistantGivenSection: some View {
+        let profile = profiles.active
+        let template = AssistantProfiles.isTemplate(profile)
+        return Section {
+            Label("Vom Assistenten ‚\(profile.name)‘ vorgegeben.", systemImage: "person.crop.circle")
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("assistantProfileGivenNote")
+            Button(template ? "Als eigenen Assistenten kopieren" : "Assistent bearbeiten") {
+                if template {
+                    switch profiles.copy(profile) {
+                    case .success(let copy): optionsEditor = AssistantEditorTarget(profile: copy)
+                    case .failure(let error): optionsFailure = AssistantProfileProblem.sentence(for: error)
+                    }
+                } else {
+                    optionsEditor = AssistantEditorTarget(profile: profile)
+                }
+            }
+            .frame(minHeight: 44)
+            .accessibilityIdentifier("assistantProfileGivenEdit")
+        }
     }
 
     private var styleExplanation: String {
@@ -303,10 +356,38 @@ struct AssistantConversationView: View {
             .accessibilityHint("Beendet das Gespräch")
             .accessibilityIdentifier("assistantClose")
             Spacer(minLength: 8)
-            if !accessible { modelMenu }
+            if !accessible {
+                assistantChip
+                modelMenu.layoutPriority(1)
+            }
             optionsMenu
         }
         .padding(.horizontal, 8).padding(.top, 4)
+    }
+
+    /// Assistent-Chip (lva#556): „Assistent: <Name>“ in einer Zeile (zu langer Name wird gekürzt), mindestens 44 pt hoch und etwa 96 pt
+    /// breit. Antippen öffnet das Blatt „Assistenten“.
+    private var assistantChip: some View {
+        let name = profiles.active.name
+        return Button { showProfiles = true } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "person.crop.circle").font(.body)
+                Text("Assistent: \(name)")
+                    .font(.footnote)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                if accessible { Spacer(minLength: 0) }
+            }
+            .foregroundStyle(VoicePalette.text)
+            .padding(.horizontal, 10).padding(.vertical, accessible ? 8 : 0)
+            .frame(minWidth: 96, maxWidth: accessible ? .infinity : 200, minHeight: 44, alignment: .leading)
+            .overlay(RoundedRectangle(cornerRadius: 22).stroke(VoicePalette.border, lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: 22))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Assistent: \(name)")
+        .accessibilityHint("Öffnet die Liste der Assistenten")
+        .accessibilityIdentifier("assistantProfileChip")
     }
 
     /// Modellchip: „Lokal“ oder „Cloud“ und der Name des Modells; das Menü wählt das Modell.
@@ -412,6 +493,7 @@ struct AssistantConversationView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     if accessible {
+                        assistantChip
                         modelMenu
                         stateBlock
                     }
@@ -425,6 +507,7 @@ struct AssistantConversationView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if showsIntro { intro }
+                    if let greeting = talk.greeting { greetingBubble(greeting) }
                     ForEach(Array(talk.turns.enumerated()), id: \.offset) { index, turn in turnView(turn).id(Self.turnID(index)) }
                     backgroundExchange.id(Self.backgroundID)
                     currentExchange.id(Self.currentID)
@@ -600,6 +683,20 @@ struct AssistantConversationView: View {
                 userBubble(turn.user)
                 assistantBubble(parts: parts, interrupted: turn.interrupted, sources: turn.sources)
             }
+        }
+    }
+
+    /// Die Begrüßung des Assistenten am Anfang des Gesprächs: ein Beitrag der KI mit der Kennzeichnung „Begrüßung“ (nicht „Frei formuliert“),
+    /// nie im Verlauf und nie im Prompt.
+    private func greetingBubble(_ text: String) -> some View {
+        let part = AssistantTurnPart(text: text, unsourced: false, note: AssistantTurnPart.greetingNote)
+        return HStack(spacing: 0) {
+            partView(part)
+                .padding(12)
+                .background(AssistantColors.card, in: RoundedRectangle(cornerRadius: 16))
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("assistantProfileGreetingBubble")
+            Spacer(minLength: 24)
         }
     }
 
@@ -900,7 +997,7 @@ struct AssistantConversationView: View {
 
     private var sourcesLine: String {
         if noModel { return "Wähle ein Modell, um zu sprechen." }
-        let list = AssistantAreaSettings.list(talk.areas)
+        let list = AssistantAreaSettings.list(talk.usableAreas)
         guard !list.isEmpty else { return "Keine Quellen aktiv" }
         return "\(talk.isCloud ? "Cloud" : "Lokal") · Quellen: \(list)"
     }

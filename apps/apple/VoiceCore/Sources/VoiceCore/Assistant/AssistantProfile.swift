@@ -528,7 +528,7 @@ public struct AssistantProfile: Equatable, Sendable {
 
 extension AssistantProfile {
     /// Abbildung der Profil-Schlüssel auf die Bereiche des iPhone; übrige Schlüssel haben dort keine Wirkung.
-    static let areaMapping: [(key: String, area: AssistantArea)] = [
+    public static let areaMapping: [(key: String, area: AssistantArea)] = [
         ("buecher", .books), ("besprechungen", .transcripts), ("ablage", .files), ("sprachnotizen", .notes),
     ]
 

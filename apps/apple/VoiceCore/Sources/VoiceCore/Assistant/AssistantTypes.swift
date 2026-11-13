@@ -317,6 +317,9 @@ public struct AssistantTurnPart: Sendable, Equatable, Codable {
     /// Daten am Beitrag, `AssistantTurn.sources`). Die Marke macht den Abschnitt anzeigbar (`isMarked`); wie die App sie zeigt, ist
     /// ihre Sache (`isFreeform`).
     public static let conversationNote = "Frei formuliert"
+    /// Kennzeichnung der Begrüßung eines Assistenten-Profils (lva#556): ein Satz des Nutzers aus seinem Profil, keine Antwort des Modells
+    /// und keine Aussage über seine Inhalte. Die Begrüßung steht nie im Verlauf; die Ansicht der Steuerung zeigt sie mit dieser Marke.
+    public static let greetingNote = "Begrüßung"
     public static let summaryNote = "Zusammengefasst aus deinen Inhalten"
 
     public init(text: String, unsourced: Bool, quote: Bool = false, source: String? = nil, note: String? = nil) {
@@ -514,11 +517,19 @@ public struct AssistantConfig: Sendable {
     /// Stil `natural`, erzwungene Suche bei direktem Inhaltsbezug: So lange (ab Start des Sprecher-Aufrufs) wartet der Kern auf den einen
     /// Zwischensatz des Sprechers; danach beginnt die Daten-Phase ohne Satz. Negativ: keine Frist (Ende des Sprecher-Stroms).
     public var forcedSpeakerMs: Int
+    /// Rollenblock des gewählten Assistenten-Profils (`AssistantProfileText.roleBlock`, lva#556). Leer (Standard) heißt: kein Profil, alle
+    /// Anweisungen bleiben Zeichen für Zeichen, wie sie waren. Nicht leer, steht er in JEDER Anweisung (Sprecher, Denker, Datenrunde,
+    /// Allgemeinrunde) nach den beiden Identitätszeilen und vor allen festen Regeln (`AssistantPrompt`); die Regeln folgen unverändert
+    /// danach und gehen jeder Profil-Anweisung vor. Länge: höchstens `AssistantProfile.roleBudget(contextTokens:)` Zeichen (der
+    /// Aufrufer kürzt), das Zeichenbudget für Auszüge und Verlauf zieht ihn ab.
+    public var roleBlock: String
 
     public init(modelLabel: String, isCloud: Bool, contextTokens: Int, maxAnswerTokens: Int, userName: String?, timeout: TimeInterval,
                 allowUnsourced: Bool = false, consentVersion: Int = 0, style: AssistantStyle = .verbatim, bridge: Bool = false,
                 naturalPassageLimit: Int = 4, naturalPassageChars: Int = 2400, naturalMaxSentences: Int = 4,
-                fillers: Bool = false, fillerFirstMs: Int = 1_200, fillerSecondMs: Int = 8_000, forcedSpeakerMs: Int = 2_500) {
+                fillers: Bool = false, fillerFirstMs: Int = 1_200, fillerSecondMs: Int = 8_000, forcedSpeakerMs: Int = 2_500,
+                roleBlock: String = "") {
+        self.roleBlock = roleBlock
         self.forcedSpeakerMs = forcedSpeakerMs
         self.fillers = fillers
         self.fillerFirstMs = fillerFirstMs
@@ -563,12 +574,18 @@ public struct AssistantRequest: Sendable, Equatable {
     public let afterInterruption: Bool
     /// Stil `natural`: ein offener Suchauftrag, der im Hintergrund läuft (Standard: keiner). Der Stil `verbatim` ignoriert ihn.
     public var pending: AssistantPendingSearch?
+    /// Begrüßung eines Assistenten-Profils (lva#556): Ist sie gesetzt, ist die Anfrage keine Frage, sondern die Ansage dieses Satzes
+    /// beim Start eines Gesprächs. Kein Modellaufruf, kein Abruf, kein Beitrag im Verlauf; der Satz geht als Vorlage (`neutral`) durch
+    /// dieselbe Ausgabe wie jeder feste Satz (Protokoll, Wiedergabesperre, Ausgabe-Commit). `text` bleibt leer.
+    public var greeting: String?
 
-    public init(requestId: String, text: String, afterInterruption: Bool = false, pending: AssistantPendingSearch? = nil) {
+    public init(requestId: String, text: String, afterInterruption: Bool = false, pending: AssistantPendingSearch? = nil,
+                greeting: String? = nil) {
         self.requestId = requestId
         self.text = text
         self.afterInterruption = afterInterruption
         self.pending = pending
+        self.greeting = greeting
     }
 }
 

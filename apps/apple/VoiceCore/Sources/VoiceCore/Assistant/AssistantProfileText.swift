@@ -263,3 +263,68 @@ public enum AssistantProfileText {
         return budget
     }
 }
+
+// MARK: - Einhängen ins Gespräch (lva#556, Paket G2)
+
+extension AssistantPlaceholderValues {
+    /// Platzhalterwerte aus einem Zeitpunkt in der Ortszeit des Kalenders (Zeitzone des Kalenders) und dem Namen des Nutzers. Ohne
+    /// bekannten Namen (`nil` oder leer) entfällt `{{name}}`; es wird nie ein Ersatzname eingesetzt. Der Wochentag zählt ab Montag = 1.
+    public init(date: Date, calendar: Calendar = .current, name: String? = nil) {
+        let c = calendar.dateComponents([.year, .month, .day, .weekday, .hour, .minute], from: date)
+        // `Calendar` zählt Sonntag = 1; der Kern Montag = 1 ... Sonntag = 7.
+        let weekday = ((c.weekday ?? 2) + 5) % 7 + 1
+        self.init(name: name, year: c.year ?? 1970, month: c.month ?? 1, day: c.day ?? 1, weekday: weekday,
+                  hour: c.hour ?? 0, minute: c.minute ?? 0)
+    }
+}
+
+/// Die gesprochene Begrüßung eines Profils: der aufgelöste Text und ob er ein Stoppwort der Richtlinie enthält.
+public struct AssistantGreeting: Equatable, Sendable {
+    /// Aufgelöster Text; leer heißt: keine Begrüßung (leere Vorgabe, oder nach dem Auflösen blieb nichts).
+    public let text: String
+    /// Unbekannte, nicht leere Platzhalter (Hinweis für den Editor).
+    public let unknownPlaceholders: [String]
+    /// Der Text enthält ein Wort aus `AssistantNatural.stoppWords` (stopp, stop, halt, warte, moment; normalisiert). Das Mikrofon kann die
+    /// eigene Begrüßung dann als Stoppbefehl hören und sie abbrechen (die Richtlinie wertet eine kurze Äußerung mit Stoppwort als Stopp):
+    /// Der Editor warnt davor, die Begrüßung wird trotzdem ausgegeben.
+    public let containsStopWord: Bool
+
+    public var isEmpty: Bool { text.isEmpty }
+}
+
+extension AssistantProfileText {
+    /// Die Begrüßung des Profils für dieses Gespräch: Platzhalter aufgelöst (`resolve`, mit Kalenderwerten und Name), leer → keine
+    /// Begrüßung, dazu die Prüfung auf Stoppwörter wie bei allen festen Ansagen der App (`AssistantNatural.stoppWords`, wortweise nach
+    /// `AssistantGrounding.normalize`, auch als Wortteil nicht gezählt: „Haltung“ ist kein Stoppwort).
+    public static func spokenGreeting(_ profile: AssistantProfile, values: AssistantPlaceholderValues) -> AssistantGreeting {
+        let resolved = greeting(profile, values: values)
+        let words = Set(AssistantGrounding.normalize(resolved.text).split(separator: " ").map(String.init))
+        return AssistantGreeting(text: resolved.text, unknownPlaceholders: resolved.unknown,
+                                 containsStopWord: !words.isDisjoint(with: AssistantNatural.stoppWords))
+    }
+
+    /// Der Rollenblock für ein Modell mit `contextTokens` Kontext: die Anweisungen des Profils, gekürzt auf `AssistantProfile.roleBudget`.
+    public static func roleBlock(_ profile: AssistantProfile, values: AssistantPlaceholderValues, contextTokens: Int) -> AssistantRoleBlock {
+        roleBlock(profile, values: values, budgetChars: AssistantProfile.roleBudget(contextTokens: contextTokens))
+    }
+}
+
+extension AssistantProfile {
+    /// Höchstzahl Zeichen der Profil-Anweisungen im Prompt für ein Modell mit `contextTokens` Kontext. Der Prompt rechnet mit etwa
+    /// 3 Zeichen je Token (`AssistantPrompt.charsPerToken`). Formel:
+    /// - bis 4096 Token (Apple-Systemmodell, 4096 Token): fest 1200 Zeichen, damit nach Anweisung, Antwortreserve und Rollenblock noch Platz für
+    ///   Verlauf und Auszüge bleibt (der Rollenblock zählt zur Anweisung und geht vom Budget ab);
+    /// - darüber: 60 % des Kontexts in Zeichen (`contextTokens * 3 / 5`), höchstens 8000 (die Obergrenze der Anweisungen im Schema).
+    /// Gemma (12288 Token) ergibt 7372, Cloud-Modelle ab etwa 13400 Token die vollen 8000.
+    public static func roleBudget(contextTokens: Int) -> Int {
+        if contextTokens <= 4096 { return 1200 }
+        return min(8000, contextTokens * 3 / 5)
+    }
+
+    /// Obergrenze der Bereiche des Profils für das Wissen der Sitzung (`AssistantKnowledge.ceiling`): die Bereiche, die das Profil
+    /// überhaupt will (`effectiveAreas(released:)` mit allen Bereichen als freigegeben). Die Freigaben der Zustandsdatei bleiben die
+    /// Quelle dessen, was erlaubt ist; das Profil schränkt nur ein. Das Wissen schneidet die Freigabe der Anfrage mit dieser Menge.
+    public var areaCeiling: Set<AssistantArea> {
+        Set(effectiveAreas(released: Set(AssistantArea.allCases)))
+    }
+}
