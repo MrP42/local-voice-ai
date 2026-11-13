@@ -4746,9 +4746,11 @@ async meetingDiarizationModelStatus() : Promise<Result<DiarizationModelStatus, s
 }
 },
 /**
- * Laedt das Modell, nur auf Knopfdruck (oder `--provision`). Fortschritt
- * ueber `model-download-progress`, Ende ueber `model-download-complete`.
- * Wirkt ab der naechsten Sprechertrennung (Stopp, Import, Neu-Transkription).
+ * Laedt das Standardmodell (Sortformer), nur auf Knopfdruck (oder
+ * `--provision`). Eine vorhandene Datei wird vorher nach Groesse und SHA-256
+ * geprueft und bei Abweichung ersetzt. Fortschritt ueber
+ * `model-download-progress`, Ende ueber `model-download-complete`. Wirkt ab der
+ * naechsten Sprechertrennung (Stopp, Import, Neu-Transkription).
  */
 async meetingDiarizationModelDownload() : Promise<Result<null, string>> {
     try {
