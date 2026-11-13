@@ -2125,6 +2125,17 @@ async changeLocalUpdateDirSetting(dir: string | null) : Promise<Result<null, str
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * lva#573: Proxy für Modell-Downloads setzen (leer = wie Windows).
+ */
+async changeDownloadProxySetting(proxy: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_download_proxy_setting", { proxy }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async localUpdateCheck() : Promise<Result<LocalUpdate | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("local_update_check") };
@@ -9319,7 +9330,12 @@ bindings?: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk?: boolean
  * Ordner, in dem die App nach neueren Installern sucht (lokale
  * Abnahmestaende ohne GitHub-Signatur). `None` = aus.
  */
-local_update_dir?: string | null; show_whats_new_on_update?: boolean; 
+local_update_dir?: string | null; 
+/**
+ * lva#573: Proxy für Modell-Downloads (`host:port`, `http://host:port`
+ * oder `direkt`). `None` = wie Windows (PAC/Auto-Erkennung, Systemproxy).
+ */
+download_proxy?: string | null; show_whats_new_on_update?: boolean; 
 /**
  * The app version whose What's New the user has already seen. Fresh installs
  * default to the current version (nothing is "new" to them). Existing users
