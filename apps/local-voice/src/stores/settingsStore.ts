@@ -321,6 +321,10 @@ const settingUpdaters: {
     commands.changeMeetingMcpEnabledSetting(value as boolean),
   meeting_mcp_include_transcript: (value) =>
     commands.changeMeetingMcpIncludeTranscriptSetting(value as boolean),
+  // G9a-2 (lva#578): „Eigene Domänen“ speichert MeetingAiReleaseSettings selbst (Rückgabe der
+  // abgelehnten Einträge); hier nur der Schalter.
+  meeting_cloud_with_externals: (value) =>
+    commands.changeMeetingCloudWithExternalsSetting(value as boolean),
   // Sprachgespräch Stufe 2
   // lva#485: Ein Fehler des Kerns muss werfen, sonst bliebe der nicht gespeicherte Wert sichtbar
   // (und „Zugriff auf alle Inhalte“ meldete Erfolg).

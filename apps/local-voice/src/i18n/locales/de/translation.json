@@ -5126,7 +5126,51 @@
       },
       "copy": "Kopieren",
       "copied": "Kopiert.",
-      "copyFailed": "Kopieren nicht möglich – bitte den Text markieren."
+      "copyFailed": "Kopieren nicht möglich – bitte den Text markieren.",
+      "release": {
+        "title": "Freigabe für KI-Clients",
+        "description": "KI-Clients (MCP-Server, Agenten, Sprachgespräch) sehen nur Besprechungen, die du hier freigibst. Grundlage sind die Teilnehmenden laut verknüpftem Termin und deine eigenen Domänen. Ältere Besprechungen sind deshalb zunächst nicht sichtbar.",
+        "ownDomains": "Eigene Domänen",
+        "ownDomainsDescription": "Adressen dieser Domänen gelten als intern. „example.org“ gilt genau, „*.example.org“ auch für Subdomänen. Öffentliche Mail-Dienste und Länder-Endungen wie „co.at“ werden nie übernommen. Jede Änderung hebt bestehende Freigaben auf.",
+        "ownDomainsPlaceholder": "example.org, *.example.org",
+        "ownDomainsSave": "Speichern",
+        "ownDomainsSaved": "Gespeichert.",
+        "ownDomainsRejected": "Nicht übernommen: {{list}}",
+        "ownDomainsSuggest": "Vorschlag aus meinen E-Mail-Adressen",
+        "ownDomainsSuggestNone": "Kein Vorschlag: keine eigene Adresse mit Firmendomäne hinterlegt.",
+        "ownDomainsSuggestHint": "Vorschlag eingetragen. Bitte prüfen und speichern.",
+        "cloudWithExternals": "Cloud-Modelle in Besprechungen mit Externen",
+        "cloudWithExternalsDescription": "Auch Besprechungen, die du als „mit Externen“ bestätigt hast, gehen an KI-Clients. Standardmäßig aus. Besprechungen mit unbekannten Teilnehmenden bleiben immer gesperrt.",
+        "status": {
+          "allowedIntern": "Freigegeben (intern)",
+          "allowedExtern": "Freigegeben (mit Externen)",
+          "blocked": "Gesperrt"
+        },
+        "list": {
+          "noEvent": "Kein verknüpfter Termin mit Teilnehmenden: die Besprechung bleibt gesperrt.",
+          "intern": "Laut Termin nur interne Teilnehmende.",
+          "extern": "Laut Termin mit Externen: {{list}}",
+          "unknown_one": "Laut Termin {{count}} Person ohne verwertbare Adresse.",
+          "unknown_other": "Laut Termin {{count}} Personen ohne verwertbare Adresse.",
+          "noDomains": "Keine eigenen Domänen hinterlegt (Integrationen › Lokaler MCP-Server)."
+        },
+        "reasons": {
+          "kundenprofil_nur_lokal": "Kundenprofil „nur lokal“",
+          "einstufung_unbestaetigt": "noch nicht bestätigt",
+          "einstufung_veraltet": "Teilnehmende oder Domänen haben sich geändert, bitte neu bestätigen",
+          "teilnehmende_unbekannt": "unbekannte Teilnehmende",
+          "liste_ohne_termin": "kein Termin mit Teilnehmenden",
+          "teilnehmende_extern": "Externe dabei, „Cloud-Modelle in Besprechungen mit Externen“ ist aus"
+        },
+        "confirmIntern": "Als intern freigeben",
+        "confirmExtern": "Mit Externen bestätigen",
+        "revoke": "Freigabe zurücknehmen",
+        "errors": {
+          "ki_freigabe_veraltet": "Die Teilnehmenden haben sich gerade geändert. Bitte erneut prüfen.",
+          "ki_freigabe_nicht_intern": "Die Teilnehmenden sind nicht alle intern.",
+          "generic": "Die Freigabe konnte nicht gespeichert werden."
+        }
+      }
     },
     "recipes": {
       "bar": "Recipes",

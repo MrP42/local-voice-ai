@@ -1059,6 +1059,15 @@ pub struct AppSettings {
     /// Treffer aus dem Transkript)? Nur wirksam mit `meeting_mcp_enabled`.
     #[serde(default = "default_true")]
     pub meeting_mcp_include_transcript: bool,
+    /// G9a-2 (lva#578, ADR-0031 E2.6): Eigene Domänen. `example.org` gilt genau,
+    /// `*.example.org` auch für Subdomänen. Ohne Eintrag ist keine Besprechung intern, KI-Clients
+    /// (MCP, Agentenbrücke) sehen dann nur Besprechungen, die als extern bestätigt sind und nur
+    /// mit `meeting_cloud_with_externals`. Der MCP-Server liest den Schlüssel selbst.
+    #[serde(default)]
+    pub meeting_own_domains: Vec<String>,
+    /// G9a-2: „Cloud-Modelle in Besprechungen mit Externen“. Standard AUS.
+    #[serde(default)]
+    pub meeting_cloud_with_externals: bool,
     /// ADR-0028 A2 (E4): Ansagen und S0-Vorlagen der Oberflaeche (lokale Einstufung S0-S3).
     /// Standard AN. Steuert NUR die Oberflaeche; das Tor vor dem Modellaufruf (Rust,
     /// `assistent::tor`) bleibt immer aktiv.
@@ -2025,6 +2034,8 @@ pub fn get_default_settings() -> AppSettings {
         meeting_reminder_all_events: false,
         meeting_mcp_enabled: false,
         meeting_mcp_include_transcript: true,
+        meeting_own_domains: Vec::new(),
+        meeting_cloud_with_externals: false,
         assistent_einstufung_aktiv: true,
         voice_call_read_transcripts: false,
         voice_call_knowledge: Vec::new(),
@@ -4027,6 +4038,18 @@ mod tests {
         .unwrap();
         assert_eq!(chosen.meeting_reminder_lead_s, 0);
         assert!(chosen.meeting_reminder_all_events);
+    }
+
+    /// G9a-2: eigene Domänen leer und „Cloud bei Externen“ aus, auch bei älterer settings.json.
+    #[test]
+    fn meeting_own_domains_and_cloud_with_externals_are_strict_by_default() {
+        let d = get_default_settings();
+        assert!(d.meeting_own_domains.is_empty());
+        assert!(!d.meeting_cloud_with_externals);
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert!(old.meeting_own_domains.is_empty());
+        assert!(!old.meeting_cloud_with_externals);
     }
 
     /// M6-P6e: der lokale MCP-Server ist ohne Zutun AUS (auch bei einer

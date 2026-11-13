@@ -16,6 +16,11 @@
 //!   Zeichen, Besprechungstext 120 000 Zeichen).
 //! - Ein Fehler beschreibt die Ursache und den naechsten Schritt, enthaelt aber
 //!   nie Inhalte (keine Texte aus Transkript oder Notizen).
+//! - G9a-2 (lva#578, ADR-0031 E2.8): ein KI-Client sieht nur Besprechungen, die
+//!   [`KiSperre`] freigibt (Liste aus dem Termin, bestaetigte Einstufung). Gesperrte
+//!   Besprechungen fehlen in Liste, Suche und Gesamtzahl; ein Abruf per ID meldet
+//!   dasselbe wie eine unbekannte ID (keine Bestaetigung, dass es sie gibt). Das
+//!   Kundenprofil „nur lokal“ sperrt alle Werkzeuge.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -27,6 +32,7 @@ use serde_json::{json, Value};
 use crate::managers::meetings::export::{
     build_bundle, bundle_to_markdown, ExportParticipant, ExportParts,
 };
+use crate::managers::meetings::ki_freigabe::KiSperre;
 use crate::managers::meetings::llm_call::duration_label;
 use crate::managers::meetings::notes::model::{ActionItem, STATUS_DONE};
 use crate::managers::meetings::search::chunking::{query_terms, ChunkSource};
@@ -85,7 +91,18 @@ pub struct Backend<'a> {
     /// Zeichen je Seite von `get_transcript` (Standard [`TRANSCRIPT_PAGE_CHARS`]; die Sprachbruecke
     /// nimmt kleinere Seiten, damit eine Seite samt `next_cursor` vollstaendig beim Modell ankommt).
     pub transcript_page_chars: usize,
+    /// G9a-2: welche Besprechungen ein KI-Client sehen darf; bei jedem Aufruf frisch gelesen.
+    pub ki_sperre: &'a KiSperre,
 }
+
+/// Kundenprofil „nur lokal“: nichts geht an KI-Clients.
+const LOCAL_ONLY_HINT: &str = "Das Kundenprofil in Local Voice AI ist „nur lokal“: Besprechungen \
+    werden nicht an KI-Clients weitergegeben. Das Profil stellt der Nutzer unter Einstellungen > \
+    KI-Modelle & Anbieter > Regeln um.";
+
+/// Hinweis in Liste und Suche: es kann Besprechungen geben, die (noch) nicht freigegeben sind.
+const GATE_NOTE: &str = "Sichtbar sind nur Besprechungen, die der Nutzer in Local Voice AI für \
+    KI-Clients freigegeben hat (Teilnehmende laut Termin, Einstufung bestätigt).";
 
 fn read_only_annotations() -> Value {
     json!({
@@ -233,6 +250,9 @@ pub fn is_known(name: &str) -> bool {
 
 /// Fuehrt ein Werkzeug aus. `name` ist vorher mit [`is_known`] geprueft.
 pub fn call(name: &str, args: &Value, backend: &Backend) -> ToolOutcome {
+    if backend.ki_sperre.ganz_gesperrt() {
+        return ToolOutcome::error(LOCAL_ONLY_HINT);
+    }
     let outcome = match name {
         "list_meetings" => list_meetings(args, backend),
         "search_meetings" => search_meetings(args, backend),
@@ -369,12 +389,17 @@ const NO_DATABASE_NOTE: &str =
 
 fn not_found(id: &str) -> ToolOutcome {
     ToolOutcome::error(format!(
-        "Besprechung nicht gefunden (ID: {id}). IDs liefern list_meetings und search_meetings."
+        "Besprechung nicht gefunden oder nicht für KI-Clients freigegeben (ID: {id}). IDs liefern \
+         list_meetings und search_meetings."
     ))
 }
 
-/// Die lebende, FERTIGE Besprechung oder ein Fehlertext.
-fn ready_meeting(store: &MeetingStore, id: &str) -> Res<Meeting> {
+/// Die lebende, FERTIGE, fuer KI-Clients freigegebene Besprechung oder ein Fehlertext. Eine
+/// gesperrte Besprechung meldet dasselbe wie eine unbekannte (auch nicht ihren Status).
+fn ready_meeting(store: &MeetingStore, id: &str, backend: &Backend) -> Res<Meeting> {
+    if !backend.ki_sperre.sichtbar(store, id) {
+        return Err(not_found(id));
+    }
     match store.get_meeting(id) {
         Ok(Some(m)) if m.status == "ready" => Ok(m),
         Ok(Some(m)) => Err(ToolOutcome::error(format!(
@@ -470,7 +495,7 @@ fn get_provenance(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
             "entries": [], "note": NO_DATABASE_NOTE
         })));
     };
-    ready_meeting(&store, id)?;
+    ready_meeting(&store, id, backend)?;
     let conn = store.get_connection().map_err(|e| store_error(&e))?;
     let docs = store.get_documents(id).map_err(|e| store_error(&e))?;
     let wanted = |name: &str| part.is_none_or(|p| p == name);
@@ -541,6 +566,10 @@ fn list_meetings(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
             event_uid: None,
         })
         .map_err(|e| store_error(&e))?;
+    let ids: Vec<&String> = ids
+        .iter()
+        .filter(|id| backend.ki_sperre.sichtbar(&store, id))
+        .collect();
     let total = ids.len();
     let mut meetings = Vec::new();
     for id in ids.iter().take(limit as usize) {
@@ -548,9 +577,13 @@ fn list_meetings(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
             meetings.push(meeting_json(&meeting));
         }
     }
-    Ok(ToolOutcome::json(json!({
+    let mut out = json!({
         "meetings": meetings, "returned": meetings.len(), "total": total
-    })))
+    });
+    if backend.ki_sperre.prueft() {
+        out["note"] = json!(GATE_NOTE);
+    }
+    Ok(ToolOutcome::json(out))
 }
 
 // ---------------------------------------------------------------------------
@@ -603,6 +636,7 @@ fn search_meetings(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
         .items
         .iter()
         .filter(|item| item.meeting.status == "ready")
+        .filter(|item| backend.ki_sperre.sichtbar(&store, &item.meeting.id))
         // Ohne Transkript-Freigabe kein Treffer, dessen bester Chunk das Transkript ist
         // (D5: auch nicht der Text einer Folie, er stammt aus derselben Aufnahme).
         .filter(|item| {
@@ -625,6 +659,9 @@ fn search_meetings(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
         })
         .collect();
     let mut notes: Vec<String> = Vec::new();
+    if backend.ki_sperre.prueft() {
+        notes.push(GATE_NOTE.to_string());
+    }
     if !backend.include_transcript {
         notes.push(
             "Transkript-Freigabe aus: Treffer im Transkript werden nicht angezeigt.".to_string(),
@@ -735,7 +772,7 @@ fn get_meeting(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
     let Some(store) = open(backend)? else {
         return Err(not_found(id));
     };
-    let meeting = ready_meeting(&store, id)?;
+    let meeting = ready_meeting(&store, id, backend)?;
     let mut bundle = build_bundle(&store, id).map_err(|e| db_error(&e))?;
     bundle.participants = store
         .meeting_participant_rows(id)
@@ -893,7 +930,7 @@ fn get_transcript(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
     let Some(store) = open(backend)? else {
         return Err(not_found(id));
     };
-    let meeting = ready_meeting(&store, id)?;
+    let meeting = ready_meeting(&store, id, backend)?;
     let text = transcript_text(&store, id)?;
     let (page, next, total) =
         page_text(&text, cursor, backend.transcript_page_chars).map_err(ToolOutcome::error)?;

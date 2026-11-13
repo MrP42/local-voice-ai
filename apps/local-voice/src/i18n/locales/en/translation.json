@@ -5126,7 +5126,51 @@
       },
       "copy": "Copy",
       "copied": "Copied.",
-      "copyFailed": "Could not copy – please select the text."
+      "copyFailed": "Could not copy – please select the text.",
+      "release": {
+        "title": "Release for AI clients",
+        "description": "AI clients (MCP server, agents, voice call) only see meetings you release here. The basis is the attendee list of the linked calendar event and your own domains. Older meetings are therefore hidden at first.",
+        "ownDomains": "Own domains",
+        "ownDomainsDescription": "Addresses in these domains count as internal. \"example.org\" matches exactly, \"*.example.org\" also matches subdomains. Public mail services and country suffixes such as \"co.at\" are never accepted. Every change revokes existing releases.",
+        "ownDomainsPlaceholder": "example.org, *.example.org",
+        "ownDomainsSave": "Save",
+        "ownDomainsSaved": "Saved.",
+        "ownDomainsRejected": "Not accepted: {{list}}",
+        "ownDomainsSuggest": "Suggest from my e-mail addresses",
+        "ownDomainsSuggestNone": "No suggestion: no own address with a company domain is set.",
+        "ownDomainsSuggestHint": "Suggestion filled in. Please check and save.",
+        "cloudWithExternals": "Cloud models in meetings with external participants",
+        "cloudWithExternalsDescription": "Meetings you confirmed as \"with external participants\" also go to AI clients. Off by default. Meetings with unknown participants always stay blocked.",
+        "status": {
+          "allowedIntern": "Released (internal)",
+          "allowedExtern": "Released (with external participants)",
+          "blocked": "Blocked"
+        },
+        "list": {
+          "noEvent": "No linked calendar event with attendees: the meeting stays blocked.",
+          "intern": "According to the event, internal attendees only.",
+          "extern": "According to the event, with external attendees: {{list}}",
+          "unknown_one": "According to the event, {{count}} person without a usable address.",
+          "unknown_other": "According to the event, {{count}} people without a usable address.",
+          "noDomains": "No own domains set (Integrations › Local MCP server)."
+        },
+        "reasons": {
+          "kundenprofil_nur_lokal": "customer profile \"local only\"",
+          "einstufung_unbestaetigt": "not confirmed yet",
+          "einstufung_veraltet": "attendees or domains changed, please confirm again",
+          "teilnehmende_unbekannt": "unknown attendees",
+          "liste_ohne_termin": "no calendar event with attendees",
+          "teilnehmende_extern": "external attendees, \"Cloud models in meetings with external participants\" is off"
+        },
+        "confirmIntern": "Release as internal",
+        "confirmExtern": "Confirm with external participants",
+        "revoke": "Revoke release",
+        "errors": {
+          "ki_freigabe_veraltet": "The attendees just changed. Please check again.",
+          "ki_freigabe_nicht_intern": "Not all attendees are internal.",
+          "generic": "The release could not be saved."
+        }
+      }
     },
     "recipes": {
       "bar": "Recipes",

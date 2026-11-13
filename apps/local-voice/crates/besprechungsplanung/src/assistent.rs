@@ -209,6 +209,35 @@ fn eigene_eintraege(eigene_domaenen: &[String]) -> Vec<EigeneDomaene> {
     out
 }
 
+/// Ergebnis von [`eigene_domaenen_bereinigen`].
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+pub struct EigeneDomaenenBereinigt {
+    /// Wirksame Einträge, normalisiert (`example.org`, `*.example.org`), sortiert, ohne Doppelte.
+    pub gueltig: Vec<String>,
+    /// Eingaben, die nie als eigen gelten (ungültig, öffentliche Mail-/Hosting-Domäne,
+    /// Länder-Suffix), unverändert zum Anzeigen.
+    pub abgelehnt: Vec<String>,
+}
+
+/// Bereinigt die Einstellung „Eigene Domänen“ vor dem Speichern; leere Zeilen fallen weg.
+pub fn eigene_domaenen_bereinigen(eingaben: &[String]) -> EigeneDomaenenBereinigt {
+    let mut out = EigeneDomaenenBereinigt::default();
+    for e in eingaben {
+        if e.trim().is_empty() {
+            continue;
+        }
+        match eigene_eintraege(std::slice::from_ref(e)).into_iter().next() {
+            Some(d) if d.mit_subdomaenen => out.gueltig.push(format!("*.{}", d.domaene)),
+            Some(d) => out.gueltig.push(d.domaene),
+            None => out.abgelehnt.push(e.trim().to_string()),
+        }
+    }
+    out.gueltig.sort();
+    out.gueltig.dedup();
+    out
+}
+
 /// Vorschlag für „Eigene Domänen“ aus den eigenen Adressen (`meeting_self_emails`). Nur zum
 /// Anzeigen; die App übernimmt ihn erst nach Bestätigung. Öffentliche Mail-Domänen fallen weg.
 pub fn eigene_domaenen_vorschlag(eigene_adressen: &[String]) -> Vec<String> {
@@ -464,7 +493,9 @@ pub enum Sperrgrund {
 /// Ergebnis von [`pruefen`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "specta", derive(specta::Type))]
-#[serde(tag = "ergebnis", rename_all = "snake_case")]
+// Der Typname ist in den TS-Bindungen schon vergeben (`sprachdienst`); `rename` ändert am JSON
+// nichts (intern getaggtes Enum).
+#[serde(tag = "ergebnis", rename_all = "snake_case", rename = "AssistentEntscheidung")]
 pub enum Entscheidung {
     Erlaubt {
         /// Wirksame Einstufung (die strengere aus Berechnung und Bestätigung).
@@ -492,6 +523,47 @@ fn wirksame_einstufung(
             ergebnis.einstufung.max(b.einstufung)
         }
         _ => ergebnis.einstufung,
+    }
+}
+
+/// Sperrgründe aus Teilnehmerliste und Bestätigung, gemeinsam für [`pruefen`] (Cloud- und
+/// MCP-Zweig) und [`pruefen_mcp_ausgabe`].
+fn teilnehmer_gruende(
+    einstufung: &EinstufungsErgebnis,
+    wirksam: Einstufung,
+    bestaetigung: Option<&Bestaetigung>,
+    cloud_bei_externen: bool,
+    gruende: &mut Vec<Sperrgrund>,
+) {
+    // Eine Bestätigung muss zur aktuellen Liste passen und darf nicht lockerer sein als
+    // die berechnete Einstufung; eine Bestätigung „unbekannt“ sperrt wie eine berechnete.
+    let mut unbekannt_bestaetigt = false;
+    match bestaetigung {
+        None => gruende.push(Sperrgrund::EinstufungUnbestaetigt),
+        Some(b) if b.fingerabdruck != einstufung.fingerabdruck => {
+            gruende.push(Sperrgrund::EinstufungVeraltet)
+        }
+        Some(b)
+            if b.einstufung == Einstufung::Intern
+                && einstufung.einstufung != Einstufung::Intern =>
+        {
+            gruende.push(Sperrgrund::EinstufungUnbestaetigt)
+        }
+        Some(b) => unbekannt_bestaetigt = b.einstufung == Einstufung::Unbekannt,
+    }
+    // Unbekannte und Ad-hoc sperren immer, auch neben Externen: „Cloud bei Externen“
+    // lockert nur, was belegt extern ist.
+    if !einstufung.aus_termin {
+        gruende.push(Sperrgrund::ListeOhneTermin);
+    }
+    if einstufung.ohne_adresse > 0
+        || unbekannt_bestaetigt
+        || (einstufung.einstufung == Einstufung::Unbekannt && einstufung.aus_termin)
+    {
+        gruende.push(Sperrgrund::TeilnehmendeUnbekannt);
+    }
+    if wirksam == Einstufung::Extern && !cloud_bei_externen {
+        gruende.push(Sperrgrund::TeilnehmendeExtern);
     }
 }
 
@@ -524,37 +596,57 @@ pub fn pruefen(a: &Anfrage) -> Entscheidung {
         if !a.cloud_fuer_besprechung {
             gruende.push(Sperrgrund::CloudNichtGewaehlt);
         }
-        // Eine Bestätigung muss zur aktuellen Liste passen und darf nicht lockerer sein als
-        // die berechnete Einstufung; eine Bestätigung „unbekannt“ sperrt wie eine berechnete.
-        let mut unbekannt_bestaetigt = false;
-        match &a.bestaetigung {
-            None => gruende.push(Sperrgrund::EinstufungUnbestaetigt),
-            Some(b) if b.fingerabdruck != einstufung.fingerabdruck => {
-                gruende.push(Sperrgrund::EinstufungVeraltet)
-            }
-            Some(b)
-                if b.einstufung == Einstufung::Intern
-                    && einstufung.einstufung != Einstufung::Intern =>
-            {
-                gruende.push(Sperrgrund::EinstufungUnbestaetigt)
-            }
-            Some(b) => unbekannt_bestaetigt = b.einstufung == Einstufung::Unbekannt,
-        }
-        // Unbekannte und Ad-hoc sperren immer, auch neben Externen: „Cloud bei Externen“
-        // lockert nur, was belegt extern ist.
-        if !einstufung.aus_termin {
-            gruende.push(Sperrgrund::ListeOhneTermin);
-        }
-        if einstufung.ohne_adresse > 0
-            || unbekannt_bestaetigt
-            || (einstufung.einstufung == Einstufung::Unbekannt && einstufung.aus_termin)
-        {
-            gruende.push(Sperrgrund::TeilnehmendeUnbekannt);
-        }
-        if wirksam == Einstufung::Extern && !a.cloud_bei_externen {
-            gruende.push(Sperrgrund::TeilnehmendeExtern);
-        }
+        teilnehmer_gruende(
+            &einstufung,
+            wirksam,
+            a.bestaetigung.as_ref(),
+            a.cloud_bei_externen,
+            &mut gruende,
+        );
     }
+    if gruende.is_empty() {
+        Entscheidung::Erlaubt {
+            einstufung: wirksam,
+        }
+    } else {
+        Entscheidung::Gesperrt { gruende }
+    }
+}
+
+/// Prüfung der MCP-Ausgabe einer einzelnen Besprechung, UNABHÄNGIG vom Schalter „Assistent in
+/// der Besprechung“ (G9a-2, Auflage B1): Solange der lokale MCP-Server an ist, ist er der
+/// Hauptabflusspfad für alle Besprechungen, auch alte. Darum gelten hier nur die Sperren, die
+/// den Abfluss betreffen (Kundenprofil, Teilnehmende, Bestätigung), nicht Schalter,
+/// Aufbewahrung und Freigabe des Assistenten.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+pub struct McpAnfrage {
+    /// Kundenprofil „nur lokal“: MCP-Ausgabe ganz gesperrt.
+    pub kundenprofil_nur_lokal: bool,
+    /// Einstellung „Cloud-Modelle in Besprechungen mit Externen“.
+    pub cloud_bei_externen: bool,
+    pub teilnehmende: Vec<String>,
+    pub liste_aus_termin: bool,
+    pub eigene_domaenen: Vec<String>,
+    /// Gespeicherte Bestätigung DIESER Besprechung (`None`: keine, also gesperrt).
+    pub bestaetigung: Option<Bestaetigung>,
+}
+
+/// Entscheidet, ob ein MCP-Client Inhalte oder Metadaten dieser Besprechung sehen darf.
+pub fn pruefen_mcp_ausgabe(a: &McpAnfrage) -> Entscheidung {
+    let mut gruende = Vec::new();
+    if a.kundenprofil_nur_lokal {
+        gruende.push(Sperrgrund::KundenprofilNurLokal);
+    }
+    let einstufung = einstufen(&a.teilnehmende, &a.eigene_domaenen, a.liste_aus_termin);
+    let wirksam = wirksame_einstufung(&einstufung, a.bestaetigung.as_ref());
+    teilnehmer_gruende(
+        &einstufung,
+        wirksam,
+        a.bestaetigung.as_ref(),
+        a.cloud_bei_externen,
+        &mut gruende,
+    );
     if gruende.is_empty() {
         Entscheidung::Erlaubt {
             einstufung: wirksam,

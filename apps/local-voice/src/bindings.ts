@@ -5502,6 +5502,75 @@ async meetingMcpInfo() : Promise<Result<McpInfo, string>> {
 }
 },
 /**
+ * Stand der Freigabe einer Besprechung fuer KI-Clients (Einstufung, Bestaetigung, Entscheidung).
+ */
+async meetingAiReleaseStatus(meetingId: string) : Promise<Result<KiFreigabeStand, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_ai_release_status", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bestaetigt die Einstufung fuer GENAU diese Besprechung und diese Teilnehmerliste. Fehler
+ * `ki_freigabe_veraltet` (Liste oder Domaenen haben sich geaendert, neu laden) oder
+ * `ki_freigabe_nicht_intern` (die Liste ist nicht intern). Wird sofort gespeichert.
+ */
+async meetingAiReleaseConfirm(meetingId: string, einstufung: Einstufung, fingerabdruck: string) : Promise<Result<KiFreigabeStand, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_ai_release_confirm", { meetingId, einstufung, fingerabdruck }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Nimmt die Freigabe zurueck; KI-Clients sehen die Besprechung ab dem naechsten Abruf nicht mehr.
+ */
+async meetingAiReleaseRevoke(meetingId: string) : Promise<Result<KiFreigabeStand, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_ai_release_revoke", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Eigene Domänen“ speichern: nur die wirksamen Eintraege; die abgelehnten gehen zur Anzeige
+ * zurueck. Jede Aenderung macht vorhandene Bestaetigungen ungueltig (Fingerabdruck).
+ */
+async changeMeetingOwnDomainsSetting(domains: string[]) : Promise<Result<EigeneDomaenenBereinigt, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_own_domains_setting", { domains }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Vorschlag aus „Meine E-Mail-Adressen“; wird nie ohne Bestaetigung des Nutzers uebernommen.
+ */
+async meetingOwnDomainsSuggestion() : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_own_domains_suggestion") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Cloud-Modelle in Besprechungen mit Externen“ (Standard aus).
+ */
+async changeMeetingCloudWithExternalsSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_cloud_with_externals_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Legt einen Zugang an. Das Token steht NUR in dieser Antwort (gespeichert wird sein Hash);
  * der Nutzer traegt es in den Agenten ein. `integration_id` `None`: die Agent-Integration
  * „Externe Agenten“ (wird bei Bedarf angelegt).
@@ -9823,6 +9892,17 @@ meeting_mcp_enabled?: boolean;
  */
 meeting_mcp_include_transcript?: boolean; 
 /**
+ * G9a-2 (lva#578, ADR-0031 E2.6): Eigene Domänen. `example.org` gilt genau,
+ * `*.example.org` auch für Subdomänen. Ohne Eintrag ist keine Besprechung intern, KI-Clients
+ * (MCP, Agentenbrücke) sehen dann nur Besprechungen, die als extern bestätigt sind und nur
+ * mit `meeting_cloud_with_externals`. Der MCP-Server liest den Schlüssel selbst.
+ */
+meeting_own_domains?: string[]; 
+/**
+ * G9a-2: „Cloud-Modelle in Besprechungen mit Externen“. Standard AUS.
+ */
+meeting_cloud_with_externals?: boolean; 
+/**
  * ADR-0028 A2 (E4): Ansagen und S0-Vorlagen der Oberflaeche (lokale Einstufung S0-S3).
  * Standard AN. Steuert NUR die Oberflaeche; das Tor vor dem Modellaufruf (Rust,
  * `assistent::tor`) bleibt immer aktiv.
@@ -9928,6 +10008,10 @@ reasons: string[];
  * Woher die Angaben stammen (URL) und wann sie geprueft wurden.
  */
 sources: string[]; checked: string | null }
+/**
+ * Ergebnis von [`pruefen`].
+ */
+export type AssistentEntscheidung = { ergebnis: "erlaubt"; einstufung: Einstufung } | { ergebnis: "gesperrt"; gruende: Sperrgrund[] }
 export type Attendee = { 
 /**
  * Klein geschrieben, ohne `mailto:`; `None`, wenn die Quelle keine
@@ -10146,6 +10230,19 @@ export type AvailableAccelerators = { transcribe: string[]; ort: string[]; gpu_d
  * dem eingebauten Satz.
  */
 export type Avatar = { kind: "image"; file: string } | { kind: "icon"; name: string }
+/**
+ * Bestätigung der Einstufung durch den Nutzer beim Start oder nach einem Wechsel.
+ */
+export type Bestaetigung = { 
+/**
+ * Vom Nutzer bestätigte Einstufung; zählt nur, wenn sie nicht lockerer ist als die
+ * berechnete.
+ */
+einstufung: Einstufung; 
+/**
+ * Fingerabdruck der Teilnehmerliste zum Zeitpunkt der Bestätigung.
+ */
+fingerabdruck: string }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
 /**
  * Warum die Vorschau (noch) nicht freigegeben ist.
@@ -11178,6 +11275,19 @@ audio_paths: string[] }
  */
 export type EditionTombstone = { id: string; removed_ms: number }
 /**
+ * Ergebnis von [`eigene_domaenen_bereinigen`].
+ */
+export type EigeneDomaenenBereinigt = { 
+/**
+ * Wirksame Einträge, normalisiert (`example.org`, `*.example.org`), sortiert, ohne Doppelte.
+ */
+gueltig: string[]; 
+/**
+ * Eingaben, die nie als eigen gelten (ungültig, öffentliche Mail-/Hosting-Domäne,
+ * Länder-Suffix), unverändert zum Anzeigen.
+ */
+abgelehnt: string[] }
+/**
  * Der fertige Einladungstext.
  */
 export type Einladung = { html: string; text: string; 
@@ -11185,6 +11295,24 @@ export type Einladung = { html: string; text: string;
  * Pruefsumme des Blocks (aus `text`), fuer `meeting_plan_links.body_hash`.
  */
 block_hash: string }
+/**
+ * Einstufung einer Besprechung nach ihren Teilnehmenden. Die Reihenfolge der Varianten
+ * ist die Strenge: ein größerer Wert ist strenger.
+ */
+export type Einstufung = 
+/**
+ * Alle Teilnehmenden haben eine Adresse aus den eigenen Domänen (laut Einladung).
+ */
+"intern" | 
+/**
+ * Mindestens eine Person ohne verwertbare Adresse, Liste nicht aus einem Termin
+ * (Ad-hoc), leere Liste oder keine eigenen Domänen hinterlegt.
+ */
+"unbekannt" | 
+/**
+ * Mindestens eine Adresse außerhalb der eigenen Domänen.
+ */
+"extern"
 /**
  * Ergebnis der Einstufung (Vertragstyp `Einstufung` des Kerns).
  */
@@ -11201,6 +11329,26 @@ ansage: string | null;
  * Vorlagenantwort bei S0.
  */
 antwort: string | null }
+/**
+ * Ergebnis von [`einstufen`].
+ */
+export type EinstufungsErgebnis = { einstufung: Einstufung; 
+/**
+ * Adressen außerhalb der eigenen Domänen (normalisiert, ohne Doppelte).
+ */
+externe: string[]; 
+/**
+ * Zahl der Teilnehmenden ohne verwertbare Adresse.
+ */
+ohne_adresse: number; 
+/**
+ * Liste stammt aus einem Termin (sonst Ad-hoc: nie belegt intern).
+ */
+aus_termin: boolean; 
+/**
+ * Fingerabdruck der Teilnehmerliste, an den eine Bestätigung gebunden wird.
+ */
+fingerabdruck: string }
 /**
  * Eintrag des Projektordners. Ohne Leserecht fehlen `title` und `subtitle` (`available` = false).
  */
@@ -11791,6 +11939,14 @@ usage?: KiUsage | null;
  * Dokumenten und Importen.
  */
 language?: string | null }
+/**
+ * Stand der Freigabe für die Oberfläche.
+ */
+export type KiFreigabeStand = { ergebnis: EinstufungsErgebnis; bestaetigung: Bestaetigung | null; 
+/**
+ * Entscheidung für KI-Clients mit den aktuellen Einstellungen.
+ */
+entscheidung: AssistentEntscheidung }
 export type KiStufe = "an" | "aus" | "gesperrt"
 /**
  * Warum die Freigabe unklar ist.
@@ -14051,6 +14207,14 @@ undoable: boolean }
  * Ansichten laden Segmente und Sprecher neu.
  */
 export type SpeakersChanged = { meeting_id: string }
+/**
+ * Warum eine Verarbeitung gesperrt ist. Die App zeigt alle Gründe, nicht nur den ersten.
+ */
+export type Sperrgrund = "assistent_aus" | "aufbewahrung_offen" | "freigabe_offen" | "freigabe_abgelehnt" | "kundenprofil_nur_lokal" | "profil_nur_lokal" | "anbieter_nicht_freigegeben" | "cloud_nicht_gewaehlt" | "einstufung_unbestaetigt" | "einstufung_veraltet" | "teilnehmende_unbekannt" | 
+/**
+ * Liste nicht aus einem Termin (Ad-hoc): sperrt die Cloud immer.
+ */
+"liste_ohne_termin" | "teilnehmende_extern"
 /**
  * Eine Kopplungsanfrage, die auf die Bestätigung wartet.
  */

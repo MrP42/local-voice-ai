@@ -2499,6 +2499,12 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::meeting_mcp::change_meeting_mcp_enabled_setting,
             commands::meeting_mcp::change_meeting_mcp_include_transcript_setting,
             commands::meeting_mcp::meeting_mcp_info,
+            commands::meeting_mcp::meeting_ai_release_status,
+            commands::meeting_mcp::meeting_ai_release_confirm,
+            commands::meeting_mcp::meeting_ai_release_revoke,
+            commands::meeting_mcp::change_meeting_own_domains_setting,
+            commands::meeting_mcp::meeting_own_domains_suggestion,
+            commands::meeting_mcp::change_meeting_cloud_with_externals_setting,
             // A7: Agentenbruecke (Zugaenge, Werkzeugrechte, Zustand)
             commands::agent_bridge::agent_client_create,
             commands::agent_bridge::agent_client_list,

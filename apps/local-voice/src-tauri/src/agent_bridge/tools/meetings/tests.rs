@@ -52,6 +52,10 @@ impl Host for MeetHost {
     fn voice_transcript_shared(&self) -> bool {
         self.voice_transcript
     }
+
+    fn ki_sperre(&self) -> crate::managers::meetings::ki_freigabe::KiSperre {
+        crate::managers::meetings::ki_freigabe::KiSperre::Offen
+    }
 }
 
 fn segment(index: u32, start_ms: u64, text: &str) -> StoredSegment {
