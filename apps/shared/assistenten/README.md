@@ -9,6 +9,8 @@ Werkzeuge, Variablen-Extraktion. Dieses Verzeichnis ist die gemeinsame Quelle de
 | `assistent.schema.json` | JSON Schema (Draft 2020-12): beschreibt die **Struktur**, nur Dokumentation. Maßgeblich ist die Prüfung im Kern (von Hand); sie verlangt zusätzlich: keine Steuerzeichen im Namen, Trimmen des Namens, ganzzahlige Darstellung (`5.0` wird abgewiesen), vorbehaltene Ids, Gerätenamen als Id, vollständig lesbare unbekannte Felder |
 | `vorlagen.json` | die 15 eingebauten Vorlagen (Liste von Profilen, kanonisch geschrieben) |
 | `pruefstaende.json` | gemeinsame Fälle, die **beide** Kerne mit identischem Ergebnis bestehen |
+| `auswertung.schema.json` | JSON Schema des Ergebnisses `lva.auswertung/1` (Dokumentation), siehe Abschnitt „Auswertung“ |
+| `auswertung-pruefstaende.json` | gemeinsame Fälle der Auswertung (Erdung, Fristauflösung, Prompt) |
 | `README.md` | diese Beschreibung |
 
 Kerne: `apps/apple/VoiceCore/Sources/VoiceCore/Assistant/AssistantProfile*.swift` und
@@ -261,3 +263,395 @@ nicht aus einem der Kerne. Der Swift-Test und der Node-Test lesen **dieselbe Dat
 vergleicht über `Array(text.utf8)`, nicht über `String ==`). Neu erzeugen ist nicht vorgesehen; ein neuer Fall kommt von Hand
 hinzu und muss in beiden Kernen grün sein. Nur in TypeScript prüfbar (Swift-Strings kennen keine einzelnen Surrogate und das
 JSON hier keine ungültigen Zahlen): einzelne Surrogate und sehr große Eingaben (`push(...feld)`) stehen im Node-Test.
+
+## Auswertung (`lva.auswertung/1`)
+
+Am Gesprächsende wertet ein Modell das Gespräch nach dem Profil (`auswertung`) aus. Der gemeinsame Kern (Paket G5, #559) ist
+**reine Logik ohne Oberfläche, ohne Modellaufruf, ohne Speicher und ohne Folgeaktionen**: Er baut den Prompt, liest die Rohantwort
+tolerant, **prüft die belegbaren Angaben gegen das Gespräch** und kodiert das Ergebnis. Was der Kern prüft und was nicht, steht im
+Abschnitt „Was geprüft ist und was nicht“; kurz: Feldwerte, Zitate und Fristdaten sind im Gespräch belegt, Aufgabentext, die
+Zuordnung einer Frist zu einer Aufgabe, Zusammenfassung und offene Fragen sind Formulierungen des Modells. Kerne:
+`apps/apple/VoiceCore/Sources/VoiceCore/Assistant/AssistantOutcome.swift` (Typen, Kodierung, Prüfung, Erdung),
+`AssistantOutcomePrompt.swift` (Prompt, Gesprächsfassung), `AssistantOutcomeDates.swift` (Normalisierung, Zahlen, Fristauflösung)
+und am PC `assistenten/auswertung.ts`, `auswertungFrist.ts`. Dateien dieses Verzeichnisses dazu: `auswertung.schema.json`
+(Dokumentation) und `auswertung-pruefstaende.json` (gemeinsame Fälle; beide Kerne vergleichen bytegenau).
+
+### Ablauf (drei reine Funktionen)
+
+| Schritt | Swift | TypeScript |
+|---|---|---|
+| Prompt | `AssistantOutcome.prompt(profile:turns:today:budgetChars:)` → `{text, truncated}` | `auswertungPrompt(profil, verlauf, heute, budgetZeichen)` → `{text, gekuerzt}` |
+| Auswerten | `AssistantOutcome.evaluate(profile:turns:raw:today:created:truncated:)` → `Result<{outcome, hints}, .json>` | `auswerten(profil, verlauf, rohantwort, heute, {erstellt, gekuerzt})` → `{ok, ergebnis, hinweise}` oder `{ok: false, fehler: "json"}` |
+| Kodieren / Lesen | `outcome.encode()` / `AssistantOutcome.parse(json:)` | `kodiereAuswertung(e)` / `parseAuswertung(text)` |
+| Frist | `AssistantOutcomeDates.deadline(_:today:)` | `frist(ausdruck, heute)` |
+| Frist im Beleg (Kontext des Beitrags) | `AssistantOutcomeDates.contextDeadline(_:start:end:today:)` | `fristDeckungImKontext(beitragNorm, start, ende, heute)` |
+
+`verlauf` ist die Liste der Beiträge `{rolle: nutzer|assistent, text}`; die Nummer eines Beitrags ist seine Position ab 1. `heute`
+sind Jahr, Monat, Tag des Gesprächs (keine Zeitzonenlogik). `erstellt` (ISO-8601 UTC `JJJJ-MM-TTThh:mm:ssZ` mit gültigem Kalendertag
+und gültiger Uhrzeit) und `gekuerzt` (aus dem Prompt) setzt der Aufrufer, der Kern kennt weder Uhr noch Prompt-Aufruf. Ohne Angabe
+**und bei einem Wert, der kein gültiger Zeitstempel ist**, bleibt `erstellt` leer (`""`); `gekuerzt` ist ohne Angabe falsch. Damit besteht
+`parse(encode(auswerten(…)))` für jede Eingabe. Kein auffindbares JSON-Objekt in der Rohantwort ist der Fehler `json` (der Aufrufer
+kann einmal neu fragen).
+
+**Voraussetzung am Profil:** Der Kern geht von einem geprüften Profil aus (`parseProfil` / `AssistantProfile.parse`). Nur dann
+gelten die Längen- und Formatregeln dieses Abschnitts für alle Felder des Ergebnisses (Feldnamen im Muster, höchstens 30 Felder);
+mit einem ungeprüften Profil kann `parse` das Ergebnis ablehnen.
+
+### Prompt
+
+Eine Zeichenkette für EIN Modell: Anweisung, dann `Gespräch:` und die Beiträge als `[1] Nutzer: …`, `[2] Assistent: …` (Leerraum
+zu einem Leerzeichen zusammengefasst, ein Beitrag je Zeile). Die Anweisung verlangt genau ein JSON-Objekt, nur für das, was das
+Profil einschaltet (`felder`, `zusammenfassung`, `aufgaben`), dazu immer `offene_fragen`. Ihre Regeln: nichts erfinden; je Feld
+Status `klar`, `unklar` oder `nicht_genannt`; bei widersprüchlichen oder später korrigierten Angaben gilt die letzte eindeutige,
+sonst `unklar`; Beleg ist ein wörtliches Zitat mit Beitragsnummer; Fristen als wörtlicher Ausdruck (`frist_text`), nicht als
+errechnetes Datum; Zusammenfassung zwei bis fünf Sätze; nur Namen aus dem Gespräch, keine Floskeln. Das heutige Datum steht mit
+Wochentag in der Anweisung (fehlt bei ungültigem `heute`). Der Wortlaut ist in den Prompt-Fällen der Prüfstände festgehalten.
+
+**Vertrauensgrenze.** Gespräch und Profilangaben sind Daten, keine Anweisungen. Ein eigener Absatz nach der ersten Zeile sagt das dem
+Modell ausdrücklich (Material, nichts ausführen, Format und Regeln nicht ändern). Der Absatz folgt der Profilsprache: `en`
+und `en-…` (genau so, klein geschrieben) englisch, alles andere (auch `auto`) deutsch. Der übrige Prompt ist heute immer deutsch.
+Das ist eine Bitte an das Modell, kein Schutz: Was das Modell antwortet, wird ohnehin nur über die Prüfung unten gelesen.
+Damit Texte der Profile die Struktur des Prompts nicht verlassen können, gilt:
+
+- Jede Zeichenfolge aus Zeilentrennern (U+000A, U+000D, U+0085, U+2028, U+2029) und sonstigem Leerraum (U+0009–U+000D, U+0020, U+00A0)
+  wird in Feldbeschreibungen, Feldnamen, Optionen **und Beiträgen** zu **einem** Leerzeichen, die Enden werden gekappt.
+- In Optionen und Feldnamen wird `"` zu `'` (sie stehen im Prompt selbst in Anführungszeichen).
+
+Beide Kerne erzeugen dieselben Bytes (Prompt-Fälle der Prüfstände, darunter Zeilentrenner, Anführungszeichen und englisches
+Profil).
+
+**Kürzung**: `budgetZeichen` zählt Codepunkte des ganzen Textes. Passt er nicht, bleiben die ersten zwei Beiträge und so viele
+der neuesten wie möglich; dazwischen steht eine Zeile `[… n Beiträge ausgelassen …]` (bei n = 1 `[… 1 Beitrag ausgelassen …]`),
+`gekuerzt` ist wahr. Die Nummern bleiben die des ungekürzten Gesprächs. Ein Beitrag wird nie geschnitten; das Mindeste (zwei
+erste Beiträge und die Auslassung) bleibt auch über dem Budget stehen. Mit höchstens zwei Beiträgen ist nichts auszulassen
+(`gekuerzt` falsch). Ein negatives Budget zählt als 0.
+
+### Ergebnis
+
+Schlüssel deutsch, kanonisch kodiert wie das Profil (sortiert, 2 Leerzeichen, `\n` am Ende, bytegleich in beiden Kernen).
+
+| Feld | Regel |
+|---|---|
+| `schema` | genau `"lva.auswertung/1"` (sonst `schema_unbekannt` / `schema_neuer`) |
+| `assistent` | Id des Profils |
+| `erstellt` | `""` oder `JJJJ-MM-TTThh:mm:ssZ` (gültiger Zeitstempel) |
+| `gekuerzt` | bool |
+| `zusammenfassung` | 0..1200; leer, wenn das Profil keine will |
+| `felder` | alle Felder des Profils in dessen Reihenfolge: `{name, typ, status, wert, beleg, beitrag}`; `wert`, `beleg` Text oder `null` (je ≤ 500, `beleg` nicht leer), `beitrag` Zahl ab 1 oder `null` |
+| `aufgaben` | höchstens 20: `{text 1..300, frist, frist_text ≤ 100, frist_beitrag, beleg 1..500, beitrag}`; `frist` `JJJJ-MM-TT` oder `null`; `frist_beitrag` Zahl ab 1 oder `null` (genau dann `null`, wenn `frist` `null` ist) |
+| `offene_fragen` | höchstens 10 Texte je 1..300 |
+
+**Format-Änderung gegenüber dem ersten Stand dieses Pakets:** Aufgaben haben den neuen Schlüssel `frist_beitrag` (Pflicht, Zahl ab 1
+oder `null`), und es gibt den neuen Hinweiscode `frist_fremder_beitrag`. Es gab noch keine Ablage und keinen Aufrufer; ältere
+Kodierungen ohne `frist_beitrag` lesen sich als Fehler `fehlt`.
+
+Werte stehen kanonisch als Text:
+
+- `zahl`: ein optionales `-`, der Ganzzahlteil **ohne führende Nullen** (`0` allein bleibt), optional `.` und mindestens eine Nachkommastelle
+  (unverändert, auch nachlaufende Nullen); Punkt als Dezimaltrenner, keine Tausenderzeichen, kein `+`, kein `-0` (auch nicht `-0.0`: das
+  Minus entfällt, wenn der Betrag null ist). Die Ziffernzahl ist nur durch die 500 Zeichen des Wertes begrenzt: Eine Zahl, deren kanonische
+  Schreibweise länger als 500 Zeichen wäre, ist keine gültige Zahl (Status `unklar`, Hinweis `typ`), sie wird nie gekürzt. 500 Nullen und
+  eine 1 (`000…01`) sind kanonisch die `1`.
+- `datum`: `JJJJ-MM-TT` als gültiger Kalendertag.
+- `auswahl`: genau eine der `optionen` des Profils.
+- `text`: höchstens 500 Codepunkte.
+
+`nicht_genannt` hat `wert`, `beleg` und `beitrag` `null`; `klar` hat einen `wert`.
+
+**`parse` ist strenger als die Rohantwort-Prüfung und strenger als das Schema.** `parse` prüft dieses Format mit Pfad und Code wie das
+Profil (`fehlt`, `typ`, `laenge`, `muster`, `wert`, `zu_viele`, `doppelt`, `schema_unbekannt`, `schema_neuer`, `json`); unbekannte Schlüssel
+werden verworfen, nichts wird repariert. Was `parse` über die Typen hinaus verlangt:
+
+- `klar` braucht einen Wert, und der muss zum Typ **kanonisch** sein: `zahl` nach der Regel oben, `datum` als gültiger Kalendertag (Code
+  `muster`); `text` und `auswahl` nicht leer. Die Optionen einer `auswahl` kennt `parse` nicht (das Ergebnis trägt das Profil nicht); wer
+  sie hat, prüft `wert` selbst. `unklar` darf einen unkanonischen Wert tragen (er ist dann Text des Modells).
+- `nicht_genannt` hat `wert`, `beleg` und `beitrag` `null` (sonst Code `wert` am Feld).
+- Ein Wert (nicht `nicht_genannt`) braucht einen `beleg`; `beleg` und `beitrag` stehen zusammen oder fehlen zusammen (Code `wert`); ein leerer
+  `beleg` ist `laenge`.
+- `beitrag` und `frist_beitrag` sind ganze Zahlen ab 1 mit höchstens 9 Ziffern (sonst `typ` oder `wert`); dass der Beitrag im Gespräch
+  vorkommt, prüft `parse` nicht (es kennt das Gespräch nicht).
+- Feldnamen: Muster `^[a-z][a-z0-9_]{0,39}$` (`muster`), nicht doppelt (`doppelt`).
+- `frist` ein gültiger Kalendertag (`muster`); ein gesetztes `frist` braucht ein nicht leeres `frist_text`; `frist` und `frist_beitrag` sind
+  beide `null` oder beide gesetzt (Code `wert`).
+- `erstellt` leer oder ein gültiger Zeitstempel (`muster`); `offene_fragen` je 1..300.
+
+Das Schema (`auswertung.schema.json`) bildet davon alles ab, was JSON Schema ausdrücken kann (Abhängigkeiten zwischen Status, Wert, Beleg,
+Beitrag, Frist und `frist_beitrag`, Zahlmuster, Längen, Grenzen der Beitragsnummern ab 1). Längen (`maxLength`) zählen dort wie in den Kernen
+in Unicode-Codepunkten. Nicht abbildbar und deshalb nur im Leser: gültiger Kalendertag und Jahresbereich, eindeutige Feldnamen.
+
+**Beitragsnummern und Gespräch.** Der Leser kennt das Gespräch nicht und prüft Beitragsnummern nur auf `1` bis `999999999`. Dass sie im
+Gespräch liegen, prüft der Aufrufer, der Ergebnis und Gespräch zusammen hat. `auswerten` selbst liefert nur Nummern innerhalb des
+Gesprächs (jedes `beitrag` und `frist_beitrag` liegt zwischen 1 und der Anzahl der Beiträge); beide Tests prüfen das über alle
+Auswertungsfälle und die zufälligen Läufe.
+
+### Normalisierung für Vergleiche
+
+Alle Vergleiche mit dem Gespräch laufen auf dem **normalisierten** Text, gemeinsam festgelegt:
+
+1. Kleinschreibung, je Codepunkt (`ΑΣ` wird `ασ`, `İ` wird `i̇`; keine Kontextregeln).
+2. Anführungszeichen überall entfernen: `" ' ` ´ „ “ ” ‚ ‘ ’ « » ‹ ›`.
+3. Leerraum (U+0009–U+000D, U+0020, U+00A0) zu einem Leerzeichen zusammenfassen.
+4. Leerraum und Satzzeichen an den Rändern entfernen: `. , ; : ! ? … ( ) [ ] { } - – —`. Innen bleiben Satzzeichen stehen.
+
+**Fundstelle.** Eine Fundstelle des normalisierten Belegs im normalisierten Beitrag ist ein zusammenhängendes Vorkommen (Codepunkte), das
+**an Wortgrenzen** beginnt und endet: Beginnt der Beleg mit einem Wortzeichen, steht davor im Beitrag der Textanfang oder kein Wortzeichen;
+endet er mit einem, steht danach das Textende oder kein Wortzeichen (Wortzeichen siehe unten). Vorkommen dürfen überlappen. „Der Beleg steht im
+Beitrag“ heißt: mindestens eine Fundstelle. Ein Treffer mitten im Wort ist keine (`Ja` nicht in `Jahr`, `Montag` nicht in `Montagmorgen`). Ein
+Beleg, der normalisiert leer ist, steht nirgends. Das gilt für Feld-Belege, Aufgaben-Belege und `frist_text`; ohne Fundstelle gilt wie bei fehlendem
+Beleg `beleg_fehlt`.
+
+**Wortgrenzen.** Wo unten „ganzes Wort“ oder „ganze Wortfolge“ steht, gilt: Wortzeichen sind `a–z`, `0–9` und jeder Codepunkt ab U+0080 außer
+U+00A0–U+00BF (Latin-1-Zeichen und -Satzzeichen) und U+2000–U+206F (allgemeine Zeichensetzung); alles andere trennt Wörter. Eine
+Wortfolge steht in einem Text, wenn sie als Teil des Textes vorkommt und davor und danach kein Wortzeichen anschließt, wo sie selbst mit
+einem Wortzeichen beginnt bzw. endet (`ja` steht nicht in `jahr`, `ja` steht in `ja, gern`).
+
+**Unicode: kein Zusammensetzen, keine kanonische Gleichheit.** Verglichen wird immer Codepunkt für Codepunkt (Swift: UTF-8-Bytes
+bzw. Skalar-Folgen, nie `String ==`, das kanonisch äquivalente Texte gleichsetzt; die Swift-Tests vergleichen Texte nur über
+`assertSameBytes`, und `==` auf den Ergebnistypen ist byteweise). `é` (U+00E9) und `e` + U+0301 sind **verschiedene**
+Texte: Ein Beleg in der einen Form steht nicht in einem Beitrag in der anderen, ein Feldname oder eine Auswahloption in der einen
+Form ist nicht die der anderen Form (Feld: `unbekannt`, Auswahl außerhalb der Optionen: `unklar`, Hinweis `wert`), ebenso `ü` und `u` + U+0308
+in der Fristauflösung (`übermorgen` gilt, `u` + U+0308 + `bermorgen` nicht). Das ist gewollt: Ein Beleg, der nicht bytegleich im
+Gespräch steht, ist kein Beleg. Fälle in `auswertung-pruefstaende.json` (Profil P7, Gespräch C7, `normalisierung`, `frist`) und
+ein Gegentest im Swift-Test.
+
+### Rohantwort lesen
+
+Das **erste ausbalancierte, gültige JSON-Objekt** im Text zählt, auch in Code-Zäunen oder mit Text davor und danach. Von jedem `{`
+aus wird die schließende Klammer gesucht (Zeichenketten und Escapes beachtet). Gibt es keine, geht die Suche beim nächsten `{`
+weiter. Gibt es eine, der Text dazwischen ist aber kein gültiges JSON (strenger Leser wie beim Profil), geht die Suche **hinter**
+der Klammer weiter (innere Objekte eines kaputten äußeren zählen nicht). Nichts gefunden: Fehler `json`.
+
+**Obergrenzen gegen manipulierte Rohantworten** (gleich in beiden Kernen):
+
+- Eine Rohantwort mit mehr als **262144 Codepunkten** (`MAX_ROHANTWORT` / `AssistantOutcome.maxRaw`; gezählt in Codepunkten, nicht in
+  UTF-16-Einheiten) ist der Fehler `json`, ohne dass weiter gesucht oder gelesen wird. Genau 262144 werden gelesen.
+- **Tiefe:** der strenge Leser (wie beim Profil) erlaubt höchstens 64 Ebenen; ein Objekt mit 65 ist ungültig, die Suche geht
+  dahinter weiter.
+- **Nicht quadratisch:** Ein `{`, zu dem es keine schließende Klammer gibt, zählt als offener Start. Der 17. offene Start beendet die
+  Suche mit `json` (`MAX_OFFENE_STARTS` / `AssistantOutcome.maxOpenStarts` = 16 sind erlaubt). Ausbalancierte, aber ungültige Objekte
+  werden überlesen, die Suche geht hinter ihnen weiter. 200000 `{` oder 80000 mal `{,}` enden als `json`; mit echtem Objekt dahinter wird das
+  echte gefunden. Die Tests in beiden Kernen setzen dafür großzügige Zeitgrenzen (30 s je Fall, 60 s für die Reihe). Eine
+  Laufzeitzusage gibt es nicht; die Grenzen sollen nur quadratisches Verhalten erkennen.
+- Große Gespräche und lange Zeichenketten lösen keine Ausnahme aus: Ketten werden in Blöcken zu Texten zusammengesetzt
+  (`ausCodepunkten`, 8192 je Block), nie über `fromCodePoint(...x)` oder `push(...x)` mit datenabhängiger Länge. Belege, Werte,
+  Aufgabentexte usw. halten ihre Längenregeln auch bei Millionen Zeichen im Gespräch oder 500000 Beiträgen ein.
+
+### Was geprüft ist und was nicht
+
+Der Kern bürgt **nicht** dafür, dass jede Angabe stimmt. Er prüft, was sich mechanisch gegen den Text des Gesprächs prüfen lässt:
+
+| Angabe | Zustand |
+|---|---|
+| Feldwert (`wert`) | **im Gespräch belegt:** durch den Beleg **im Kontext seines Beitrags** gedeckt (Regeln unten), sonst Status `unklar` |
+| Beleg (Zitat) | **im Gespräch belegt:** hat eine Fundstelle an Wortgrenzen in einem Beitrag, sonst verworfen |
+| Frist (`frist`, `frist_text`) | **im Gespräch belegt:** `frist_text` steht an einer Fundstelle als ganzer, sicherer, inklusionsmaximaler Fristausdruck in einem Beitrag, `frist` ist seine Auflösung, `frist_beitrag` nennt den Beitrag |
+| Aufgabentext (`text`) | **nicht prüfbar:** Formulierung des Modells; geprüft ist nur der Beleg der Aufgabe |
+| Zuordnung der Frist zur Aufgabe | **nicht prüfbar:** Die Frist steht im Gespräch, ob sie zu *dieser* Aufgabe gehört, weiß nur das Modell. Steht sie in einem anderen Beitrag als der Beleg der Aufgabe, meldet der Kern `frist_fremder_beitrag` |
+| Zusammenfassung, offene Fragen | **nicht prüfbar:** Formulierungen des Modells |
+
+Jede Oberfläche, die das Ergebnis zeigt, muss deshalb Aufgabentext, Zusammenfassung und offene Fragen als Text des Modells kennzeichnen
+und je Aufgabe Beleg und Fristquelle (Beitrag, in dem `frist_text` steht) zeigen; sie darf diese Angaben nicht als geprüft darstellen. Auch
+bei geprüften Angaben bleibt eine Grenze: Ein Textwert ist durch einen Beleg gedeckt, wenn er im Zitat steht, auch wenn das Zitat etwas
+anderes meint (ein `Hallo` im Beleg deckt den Textwert `Hallo`, ob es die Antwort auf die Frage des Feldes ist, prüft niemand).
+
+### Erdung im Code (Abnahme: erfundene Feldwerte und Fristdaten = 0)
+
+Gelesen werden je Feld `name`, `status`, `wert` (Text oder Zahl als Originaltext, an den Enden von Leerraum befreit),
+`beleg`, `beitrag` (Zahl oder Ziffernfolge). Dann, in dieser Reihenfolge:
+
+1. **Status.** Fehlt er oder ist er ungültig, gilt `klar` mit Wert, sonst `nicht_genannt` (Hinweis `fehlt` bzw. `wert`/`typ`).
+   `nicht_genannt` verwirft Wert und Beleg. `klar` ohne Wert wird `nicht_genannt`. `unklar` ohne Wert und ohne Beleg bleibt `unklar`.
+2. **Beleg.** Jeder Wert braucht einen Beleg. Ein **Beitragspräfix** am Anfang des Belegs wird vor dem Vergleich abgestreift und
+   nicht gespeichert: optional `[N]` (1 bis 6 Ziffern), optional ein Rollenwort `Nutzer`, `Assistent`, `User`, `Assistant` (Groß-/Kleinschreibung
+   gleich) mit Doppelpunkt, Leerraum dazwischen frei (`[3] Nutzer: …`, `Nutzer: …`, `[3] …`, `Assistant: …`). Ein anderes Wort vor dem
+   Doppelpunkt (`Chef: …`) ist kein Präfix. Nennt die Antwort keinen `beitrag`, gilt die Nummer des Präfixes. Hat der Beleg im angegebenen Beitrag keine Fundstelle, wird der erste Beitrag
+   gesucht, in dem er eine hat, und `beitrag` korrigiert (kein Hinweis). Hat er in keinem Beitrag des **ungekürzten** Gesprächs
+   eine Fundstelle oder fehlt er: Feld `nicht_genannt`, `wert`, `beleg`, `beitrag` `null`, Hinweis `beleg_fehlt`. Belege länger als 500
+   Codepunkte werden hart gekürzt (Hinweis `laenge`; ein Anfang bleibt ein Teil des Originals).
+3. **Typ.** `zahl`: `-?\d+`, `-?\d+[.,]\d+`, `1.250,50`, `1,250.50` oder ein Zahlwort null bis zwölf; kanonisch nach der Regel oben (führende
+   Nullen entfallen, kein `-0`). `datum`: `JJJJ-MM-TT` mit gültigem Kalendertag, sonst wird der Wert als Ausdruck durch die Fristauflösung
+   gelesen. `auswahl`: genau eine Option, sonst gleich nach Normalisierung (die Option in ihrer Schreibweise gilt). `text`: höchstens
+   500 Codepunkte (sonst hart gekürzt, Hinweis `laenge`). Nicht lesbare Zahl, Zahl über 500 Zeichen oder ungültiges Datum: Status `unklar`,
+   Wert als Text erhalten (≤ 500), Hinweis `typ`. Auswahl außerhalb der Optionen: `unklar`, Wert erhalten, Hinweis `wert`.
+4. **Deckung im Kontext des Beitrags.** Ist der Wert durch den Beleg nicht gedeckt, wird der Status `unklar` (Wert bleibt, Hinweis
+   `wert_nicht_im_beleg`). Das Modell wählt den Belegausschnitt selbst, darum zählt, was der **Beitrag um den Beleg herum** sagt: `Montag` als
+   Beleg im Beitrag `übernächsten Montag` deckt den 23., nicht den 16. Geprüft werden die Fundstellen des Belegs im Beitrag, auf den sich
+   `beitrag` bezieht.
+   - `text`: der normalisierte Wert ist Teil des normalisierten Belegs (Teilstring, keine Wortgrenze). Der Beleg selbst hat eine Fundstelle.
+   - `auswahl`: die Option (normalisiert) steht im Beleg als ganze Wortfolge (der Beleg hat eine Fundstelle: `Ja` in `Jahr` ist keine).
+   - `zahl`: an **jeder** Fundstelle (mindestens eine, **höchstens 16**; mehr: nicht gedeckt) deckt ein Zahl-Token den Wert. Zahl-Token entstehen
+     im Kontext des Beitrags (Nachbarschaft, siehe unten): Ziffernfolgen, durch ein einzelnes `.` oder `,` zwischen Ziffern verbunden, werden
+     als Dezimalzahl oder mit Tausenderpunkt gelesen; Vorzeichen zählen nicht; `1.250,50` ist `1250.5`. Gedeckt ist eine Fundstelle, wenn ein
+     Token, das sie schneidet, den Wert hat, **oder** ein Zahlwort null bis zwölf (de/en, die `ein`-Formen als 1) als **ganzes Wort** in der
+     Fundstelle für genau diesen Wert steht. Der Beleg `12` in `12,5 Liter` ergibt das Token `12,5` und deckt 12 nicht, der Beleg `250` in
+     `1.250,50` deckt 250 nicht, `12,5 Liter` deckt 12.5; mehrere verschiedene Zahlen im Beleg bleiben erlaubt.
+   - `datum`: an **jeder** Fundstelle (mindestens eine, **höchstens 16**; mehr: nicht gedeckt) gilt: Unter den inklusionsmaximalen Fristausdrücken der
+     Nachbarschaft, die die Fundstelle schneiden (siehe „Fristauflösung“), ist mindestens einer, keiner ist unsicher, und alle lösen auf genau
+     den Wert auf. Das ersetzt das gierige Zerlegen von links nach rechts; die Menge der Ausdrücke hängt nicht von der Suchrichtung ab, und
+     überlappende maximale Ausdrücke mit verschiedenen Tagen decken nichts.
+
+   **Nachbarschaft** (für `zahl` und `datum`): die Wörter (an Leerzeichen getrennt) des normalisierten Beitrags, die die Fundstelle berühren,
+   plus **12 ganze Wörter** (`KONTEXT_WOERTER`) davor und danach. Je Seite werden höchstens **400 Codepunkte** (`KONTEXT_CODEPUNKTE`) gelesen.
+   Reichen sie nicht für 12 Wörter und geht der Beitrag weiter, endet die Nachbarschaft am letzten ganzen Wort, das gelesen wurde (ein
+   angeschnittenes Wort entfällt); steckt schon das Wort an der Fundstelle in der Grenze fest (kein Leerzeichen gelesen), gibt es keine
+   Nachbarschaft und der Wert ist nicht gedeckt (`wert_nicht_im_beleg`). Jede Seite merkt sich, ob sie gekürzt ist (durch die Wortgrenze oder
+   die Codepunktgrenze) oder ob dort der Beitrag endet; ein Beitrag, der früher beginnt oder endet, braucht weniger Wörter. Für `datum`
+   gilt bei Kürzung die Rand-Regel (`FRIST_RAND`, siehe „Fristauflösung“); für `zahl` genügt das Wort an der Fundstelle, denn ein Zahl-Token
+   liegt innerhalb eines Wortes. Der Aufwand je Fundstelle hängt nicht von der Länge des Beitrags ab; nur die Suche nach den Fundstellen
+   liest den Beitrag, linear. Es gibt keine Grenze von 1024 Wörtern für die Deckung.
+5. **Status am Ende.** `klar` nur, wenn das Modell `klar` meldete und Typ und Deckung stimmen; sonst `unklar`.
+
+**Felder der Antwort.** Nur Felder des Profils zählen; der erste Eintrag je Name gilt (weitere: `doppelt`, unbekannte
+Namen: `unbekannt`). Fehlende Felder sind `nicht_genannt` (kein Hinweis). Das Ergebnis hat immer alle Felder in Profilreihenfolge.
+
+**Aufgaben.** Nur wenn das Profil sie will (sonst Hinweis `unbekannt` am Schlüssel, falls die Liste nicht leer ist). Eine Aufgabe
+ohne Text (`fehlt`) oder ohne Beleg im Gespräch (`beleg_fehlt`) wird verworfen; `beitrag` wird wie bei Feldern korrigiert. Mehr als 20: die
+ersten 20, Hinweis `zu_viele`. Text über 300: am Satzende gekürzt, sonst hart (`laenge`). Die **Frist** einer Aufgabe:
+
+1. `frist_text` (≤ 100) muss (normalisiert) irgendwo im Gespräch eine Fundstelle an Wortgrenzen haben, sonst wird er geleert (Hinweis `beleg_fehlt` am `frist_text`; die
+   Aufgabe bleibt, `frist` und `frist_beitrag` sind `null`).
+2. Löst die Fristauflösung `frist_text` nicht auf, bleibt der Text stehen, `frist` und `frist_beitrag` sind `null` (kein Hinweis).
+3. Sonst muss `frist_text` an einer seiner ersten 16 Fundstellen in einem Beitrag als **ganzer, sicherer, inklusionsmaximaler
+   Fristausdruck** stehen: Ein inklusionsmaximales Fenster der Nachbarschaft umfasst die Fundstelle, ist sicher und ist, bis auf führende Vorsätze
+   wie `bis`, wortgleich mit `frist_text`. Nur solche gültigen Fundstellen zählen, andere werden übergangen (`Montag` in `übernächsten Montag`,
+   `29 Februar` in `29 Februar 2027`). Gesucht wird zuerst im Beitrag des Aufgabenbelegs, dann nach Abstand der Beiträge (kleinster Abstand
+   zuerst, bei Gleichstand der spätere). Gefunden: `frist` ist die Auflösung, `frist_beitrag` der Beitrag. Steht er nicht im Beitrag des
+   Aufgabenbelegs, sondern in einem anderen, kommt der Hinweis `frist_fremder_beitrag` am `frist_text`. Nicht gefunden: `frist` und
+   `frist_beitrag` `null`, der Text bleibt, Hinweis `wert_nicht_im_beleg` am `frist_text`.
+
+**Zusammenfassung** nur, wenn das Profil sie will (sonst `unbekannt`); über 1200 Codepunkte am letzten Satzende (`.`, `!`, `?` vor
+Leerraum oder Textende) gekürzt, sonst hart (`laenge`). **Offene Fragen:** leere entfallen, über 300 gekürzt wie oben, mehr als 10
+(`zu_viele`) abgeschnitten.
+
+**Hinweise** sind `[{pfad, code}]`, nach Pfad und Code sortiert (Codepunkte), ohne Wiederholung, Codes `beleg_fehlt`,
+`wert_nicht_im_beleg`, `typ`, `wert`, `unbekannt`, `doppelt`, `laenge`, `fehlt`, `zu_viele`, `frist_fremder_beitrag`. Pfade: `felder[2].wert`,
+`aufgaben[1].beleg`, `aufgaben[0].frist_text`, `offene_fragen`; Indizes bei Feldern des Profils sind die des Profils, bei `unbekannt`/`doppelt`/`typ`
+eines Roheintrags die der Rohliste. **Pfade und Codes tragen nie Inhalt des Modells:** Ein Pfad besteht nur aus den eigenen Namen des Formats
+(`felder`, `aufgaben`, `wert`, `beleg`, `beitrag`, `frist_text`, `offene_fragen`, …) und Indizes, nie aus einem Schlüssel oder Wert der Antwort. Es
+gibt deshalb kein Namensmuster `^[a-z][a-z0-9_]{0,39}$` für Pfade. Unbekannte Schlüssel der Antwort (oberste Ebene, Feld- und
+Aufgabeneinträge) werden verworfen und mit **einem** Hinweis `unbekannt` am Pfad des Elternknotens gemeldet (`felder[1]`, `aufgaben[0]`, `""`
+für die Wurzel), egal wie viele unbekannte Schlüssel dort stehen und wie sie heißen. Die Auswertung schreibt **nie in Logs**; Hinweise tragen
+nur Pfad und Code.
+
+### Fristauflösung
+
+`frist(ausdruck, heute)` → `JJJJ-MM-TT` oder `null`, aus einer festen Liste, deutsch und englisch. Der Ausdruck wird normalisiert;
+führende Vorsätze `am`, `bis`, `zum`, `zur`, `spätestens`, `by`, `until`, `on` entfallen (solange mehr als ein Wort bleibt).
+`heute` muss ein gültiger Kalendertag der Jahre 1000–9999 sein, sonst `null`. Wochentag zählt Montag = 1 wie bei den Platzhaltern.
+
+| Ausdruck | Ergebnis |
+|---|---|
+| `heute`, `today` / `morgen`, `tomorrow` / `übermorgen` (`uebermorgen`), `day after tomorrow` | heute / +1 / +2 Tage |
+| Wochentag allein, `nächsten`/`nächster`/`kommenden`/`next` + Wochentag | der nächste solche Tag **nach** heute (1–7 Tage) |
+| `übernächsten`/`übernächster` + Wochentag | eine Woche später |
+| `in N Tagen/Wochen`, `in N days/weeks` | N Zahl (höchstens 3 Ziffern) oder Zahlwort null bis zwölf (`ein`-Formen = 1) |
+| `nächste Woche`, `next week` | Montag der Folgewoche |
+| `Ende der Woche`, `end of the week` (auch `Ende dieser Woche`, `end of this week`) | Freitag der laufenden Woche; am Samstag und Sonntag der der folgenden |
+| `Ende des Monats`, `end of the month` (auch `Ende dieses Monats`, `end of this month`) | letzter Tag des Monats von heute |
+| `14.11.`, `14.11`, `14.11.2026` | Tag.Monat ohne Jahr: nächstes Vorkommen ab heute (heute zählt); mit vierstelligem Jahr genau dieser Tag |
+| `14. November`, `14 November [2026]`, `14th of November`, `November 14[th][, 2026]` | wie oben, Monatsnamen deutsch und englisch (ausgeschrieben, auch `maerz`) |
+| `2026-11-14` | genau dieser Tag |
+
+Alles andere ist `null` (`gestern`, `nächsten Monat`, `Nov 14`, `in dreizehn Tagen`, zweistellige Jahre …); dann bleibt `frist_text`
+stehen und `frist` ist `null`. Ungültige Tage (`31.4.`, `29.2.2027`) sind `null`; `29.2.` ohne Jahr sucht das nächste Schaltjahr
+(höchstens 8 Jahre voraus). Bleiben nach den Vorsätzen mehr als 6 Wörter, ist das Ergebnis `null`. Satzzeichen **innerhalb** eines
+Ausdrucks bleiben stehen und verhindern die Auflösung (`in 3, Tagen` löst nicht auf); am Rand eines Ausdrucks werden sie entfernt
+(`Montag,` und `übernächsten Montag,` lösen auf). Datumsangaben ohne Jahr meinen „ab heute“; `heute` sollte darum der Tag
+des Gesprächs sein.
+
+**Inklusionsmaximale Ausdrücke.** Ein Fenster ist eine Folge von höchstens `MAX_FRIST_FENSTER` = 6 aufeinanderfolgenden Wörtern des
+normalisierten Textes (an Leerzeichen getrennt), das die Fristauflösung auflöst. Wo ein Beleg, ein `frist_text` oder ein Text auf Fristen
+untersucht wird, gilt:
+
+- **Inklusionsmaximal.** Unter den auflösenden Fenstern bleiben die übrig, die kein längeres auflösendes Fenster von höchstens 6 Wörtern
+  enthält, auch wenn dieses die untersuchte Stelle verlässt. Treffer können überlappen und auf verschiedene Tage auflösen. `Montag` in
+  `übernächsten Montag` ist nie ein eigener Treffer, `14 November` in `14 November 2027` auch nicht. (Das frühere gierige Zerlegen von links
+  nach rechts entfällt: Es hing von der Suchrichtung und vom Ausschnitt ab.)
+- **Datumsbestandteil-Nachbarschaft.** Ein Treffer ist **unsicher** (deckt nichts, liefert keine Aufgabenfrist), wenn das Wort direkt davor oder
+  direkt danach ein Datumsbestandteil ist, der nicht zum Fenster gehört. Datumsbestandteile sind:
+  - **immer** jedes Wort aus dem festen Wortschatz der Fristauflösung außer den Zahlwörtern: Wochentage, Monatsnamen, `heute`, `today`, `morgen`,
+    `tomorrow`, `übermorgen`, `uebermorgen`, `ende`, `end`, `dieser`, `dieses`, `this`, die Modifikatoren `nächste(n/r/s/m)`, `kommende(n/r/s/m)`,
+    `next`, `übernächste(n/r/s/m)` jeweils auch in `ae`-Schreibweise und die Einheiten `Tag(e/en)`, `day(s)`, `Woche(n)`, `week(s)`, `Monat(e/en/s)`,
+    `month(s)`, `Jahr(e/en/es)`, `year(s)`;
+  - **immer** ein reines Zifferntoken (Ziffernfolgen, durch je ein `.`, `,`, `-` oder `/` verbunden: `14`, `14.11.`, `1.250,50`, `2026-11-14`);
+  - ein **Zahlwort** (`null`, `zero`, `ein`, `eins`, `eine`, `einen`, `einem`, `einer`, `eines`, `one`, `zwei`, `two`, `drei`, `three`, `vier`, `four`,
+    `fünf`/`fuenf`, `five`, `sechs`, `six`, `sieben`, `seven`, `acht`, `eight`, `neun`, `nine`, `zehn`, `ten`, `elf`, `eleven`, `zwölf`/`zwoelf`,
+    `twelve`) **nur dann**, wenn das nächste Wort in derselben Richtung (vom Fenster aus also das übernächste) zum Wortschatz oben gehört oder ein
+    Zifferntoken ist: `Montag zwei Wochen später`, `Montag drei Tage danach` sind unsicher; `Montag zwei Personen`, `Dienstag eine Agenda`,
+    `Freitag einen Bericht`, `bis Freitag einen Bericht`, `am Montag eine Rechnung`, `by Friday one page` bleiben sicher;
+  - `in`, wenn eine Ziffernfolge oder ein Zahlwort folgt, das nach der vorigen Regel zählt (`in zwei Wochen`, `in 3 Tagen`; `Freitag in einem Meeting`
+    bleibt sicher).
+  Satzzeichen an den Rändern des Nachbarworts zählen nicht (`Montag,`). Führende Vorsätze (`am`, `bis`, `zum`, `zur`, `spätestens`, `spaetestens`,
+  `by`, `until`, `on`) und `hh:mm` sind keine Datumsbestandteile.
+- **Ausnahme Uhrzeit.** Ein Zahlwort oder Zifferntoken direkt **danach** zählt nicht, wenn ihm `uhr`, `h`, `oclock` (`o'clock` wird beim Normalisieren zu
+  `oclock`), `am` oder `pm` folgt. `Montag 10 Uhr`, `Montag zehn Uhr`, `am 14.11. um 10 Uhr` und `Montag 10:30` bleiben sicher.
+- **Verbinder und Verneiner.** Ein Treffer ist ebenfalls unsicher, wenn das Wort direkt danach oder direkt davor (führende Vorsätze wie `am`,
+  `bis`, `zum`, `zur`, `spätestens`, `by`, `until`, `on` übersprungen) einer dieser Verbinder oder Verneiner ist: `oder`, `bzw`, `beziehungsweise`,
+  `entweder`, `weder`, `noch`, `nicht`, `kein`, `keine`, `keinen`, `keinem`, `keiner`, `statt`, `anstatt`, `außer`, `ausser`, `or`, `either`,
+  `neither`, `nor`, `not`, `no`, `instead`, `except`. `Montag oder Dienstag` (Beleg `Montag` wie `Dienstag`), `nicht am Montag`, `Montag oder so`
+  decken nichts; in `nicht Montag, sondern Dienstag` deckt der Beleg `Dienstag` den Tag, der Beleg `Montag` nicht (`sondern` steht nicht in der
+  Liste). `Montag und Dienstag` gehört nicht hierher, sondern zu den Brückenwörtern (nächster Punkt).
+- **Brückenwörter.** Ein Treffer ist auch unsicher, wenn hinter ihm (oder vor ihm) nach **höchstens 2 Brückenwörtern** ein Datumsbestandteil steht, also
+  `Montag bis Freitag`, `am Montag im Mai`, `Montag den 14. Dezember`, `Montag und Dienstag`, `Monday through Friday`, `Monday to Friday`,
+  `bis Freitag in einer Woche` (Beleg jeweils nur das erste Datumswort: unklar). Die Brückenwörter sind eine eigene feste Menge (nach dem Entfernen der Randzeichen), die die führenden Vorsätze einschließt:
+  `am`, `an`, `bis`, `zum`, `zur`, `spätestens`, `spaetestens`, `im`, `in`, `den`, `dem`, `der`, `des`, `vom`, `von`, `ab`, `um`, `gegen`, `und`,
+  `sowie`, `by`, `until`, `till`, `on`, `to`, `through`, `thru`, `and`, `of`, `the`, `at`, `from` (TS `BRUECKEN`, Swift `bridges`; Grenze
+  `MAX_BRUECKEN` / `maxBridges` = 2). Gesucht wird in beiden Richtungen; das erreichte Wort wird wie ein direktes Nachbarwort geprüft
+  (Zahlwort-Bedingung und Uhrzeit-Ausnahme gelten also weiter): `Montag um 10 Uhr`, `Montag gegen 9 Uhr`, `Monday at 10 am`, `bis Freitag in einer Mail`,
+  `Montag und zwei Personen`, `am Montag am Abend bitte`, `Send me on Monday a report` bleiben sicher. Folgen mehr als 2 Brückenwörter, wird nicht
+  weitergesucht. Wegen `und` decken `Montag und Dienstag` und `14.11. und übermorgen` keinen der Tage, auch wenn beide zugesagt sind; das ist
+  bewusst konservativ.
+- **Rand bei Kürzung (`FRIST_RAND` = 5).** Die Nachbarschaftsprüfung liest hinter einem Fenster höchstens 5 Wörter: bis zu 2 Brückenwörter, `in`,
+  ein Zahlwort und dessen Folgewort. Ein längeres auflösendes Fenster (höchstens 6 Wörter) reicht ebenfalls höchstens 5 Wörter über ein kürzeres
+  hinaus. Davor gilt es symmetrisch. Ist die untersuchte Wortliste **hinten** (**vorn**) abgeschnitten und liegen hinter (vor) einem Fenster weniger
+  als 5 Wörter, ist das Fenster **unsicher**: Fehlender Folgekontext umgeht die Prüfung nicht (`spätestens bis zum Ende der Woche und den zwei`
+  mit fehlendem `Tagen` hinten ist unsicher). Läuft das Überspringen der führenden Vorsätze bei der Verbinderprüfung über den Anfang einer vorn
+  abgeschnittenen Liste hinaus, ist das Fenster ebenfalls unsicher. Am echten Anfang oder Ende des Textes gilt die Regel nicht (`Wir kommen Montag
+  zwei` bleibt sicher). Mit 12 Wörtern Nachbarschaft bleibt bei gewöhnlichem Text genug Rand; erst lange Wörter (Codepunktgrenze) kürzen so
+  weit, dass ein Fenster unsicher wird (Prüfstand: 450 Zeichen langes Wort vor oder hinter dem Beleg). Zwei Zahlen beschreiben die Grenzen:
+  `KONTEXT_WOERTER` = 12 je Seite für Beiträge, bei `fristenIn` eine Lesegrenze von 1024 + 5 + 5 = 1034 Wörtern (siehe unten).
+- **Was der Kern prüft und was nicht.** Der Kern prüft, dass der Tag **an der zitierten Stelle wörtlich genannt** ist und dass kein Datumsbestandteil
+  dazugehört, den der Beleg abschneidet. Geprüft wird nur: das direkt benachbarte Wort, höchstens 2 Brückenwörter dahinter oder davor, ein
+  Verbinder oder Verneiner direkt daneben und längere auflösende Ausdrücke, die die Fundstelle enthalten. Das Umfeld (12 Wörter, 400 Codepunkte)
+  dient nur dazu, diese Muster und längere Ausdrücke zu sehen; der Kern sucht darin nicht allgemein nach widersprechenden Datumswörtern. Ob
+  der Tag **gemeint oder zugesagt** ist, prüft er nicht, soweit die Verneinung oder Alternative nicht direkt neben dem Ausdruck steht
+  (`Montag passt nicht`, `Montag geht leider nicht`, `Montag? Lieber nicht` bleiben `klar`, wenn der Beleg die Verneinung nicht zitiert und
+  kein Verbinder direkt anschließt). **Dokumentierte Grenze:** `Montag bitte im Mai` (Beleg `Montag`, Wert 2026-11-16) bleibt `klar`, weil
+  ein Füllwort (`bitte`) die Brückensuche unterbricht; Prüfstand „Dokumentierte Grenze“.
+- **Konservative Grenzen** (bewusst: ein falsches `klar` ist schlimmer als ein falsches `unklar`): zwei Ausdrücke direkt nebeneinander (`Montag, 14.11.`,
+  `Montag in zwei Wochen`, `morgen morgen`, `morgen, spätestens Montag`) machen sich gegenseitig unsicher; ein Zifferntoken neben dem
+  Ausdruck (`am 14.11. 3 Personen`) macht ihn unsicher; `14 November 27` und `29 Februar 2027` werden nie zu `14 November` bzw. `29 Februar`
+  (2028-02-29) verkürzt, weil danach eine Ziffernfolge steht; `Mai`/`May` und `March` sind auch im Fließtext Monatsnamen; ein Zahlwort, dem ein
+  Datumswort folgt, macht den Ausdruck unsicher, auch wenn es kein Datum meint (`Montag zwei Tage Urlaub`); ein Füllwort zwischen Ausdruck und
+  Brückenwort lässt die Brückensuche enden (`Montag bitte im Mai` bleibt `klar`, siehe oben).
+- **Strenge Mehrtagsregel.** Beleg und Kontext decken einen Tag nur, wenn es mindestens einen maximalen Ausdruck gibt, keiner unsicher ist und alle
+  auf denselben Tag auflösen (`Montag und Dienstag`, `14.11. oder 15.11.` decken keinen Tag, auch nicht den ersten; bei `Montag und Dienstag` greift schon die Brückenregel).
+- **Grenze von 1024 Wörtern (nur `fristenIn` / `AssistantOutcomeDates.deadlines(in:today:)`).** Untersucht werden Ausdrücke, die in den ersten
+  `MAX_FRIST_WOERTER` = 1024 Wörtern beginnen. Gelesen werden höchstens **1034** Wörter (1024 + 5 + `FRIST_RAND` 5: ein Fenster beginnt im
+  1024. Wort, reicht höchstens 5 weiter und hat dahinter 5 Wörter Rand). Geht der Text über das Gelesene hinaus, gilt die Rand-Regel (hinter dem
+  Fenster mindestens 5 gelesene Wörter, sonst unsicher; bei dieser Lesegrenze trifft das kein Fenster, das in den ersten 1024 Wörtern beginnt);
+  endet der Text, gelten die normalen Regeln. Ein Treffer an der Grenze gilt also nie stillschweigend als sicher: 1023 Füllwörter, dann
+  `spätestens bis zum Ende der Woche und den zwei Tagen danach`: kein Ergebnis (`Tagen` ist gelesen); 1023 Füllwörter und `bis Freitag`, mit oder
+  ohne weitere Füllwörter dahinter: der 20.11.2026; 1022 Füllwörter, dann `14 November 27`: kein Ergebnis. `fristenIn` liefert die Tage
+  der sicheren maximalen Ausdrücke in der Reihenfolge des Auftretens ohne Wiederholung. Die Deckung im Kontext (TS `fristDeckungImKontext`, Swift
+  `AssistantOutcomeDates.contextDeadline`, jeweils für eine Spanne des normalisierten Beitrags) liest lokal und hat diese Grenze nicht.
+
+Diese Regeln gelten gleich für `datum`-Felder (Deckung) und für `frist_text` der Aufgaben (Suche).
+
+### Prüfstände
+
+`auswertung-pruefstaende.json` hat die Abschnitte `auswerten` (Profil, Verlauf, `heute`, Rohantwort, optional `erstellt` und
+`gekuerzt`; erwartet `{ok, kodiert, hinweise}` oder `{ok: false, fehler: "json"}`; statt `roh` darf `roh_teile` stehen, eine Liste
+aus `{text, anzahl}`, deren Teile `anzahl`-mal wiederholt und hintereinandergesetzt die Rohantwort ergeben, damit Fälle an den Grenzen
+klein bleiben), `frist` (Ausdruck, `heute`, erwartet Datum oder `null`), `fristen_in` (Text, `heute`, erwartet die Tage der sicheren
+maximalen Treffer und den Tag, den der ganze Text als Beleg im Kontext nennt), `normalisierung`, `lesen_fehler` (Eingabe für `parse`, erwartete Fehlerliste),
+`lesen_ok` (kodierte Ergebnisse, die `parse` annehmen muss) und `prompt` (Profil, Verlauf, `heute`, Budget,
+erwartet Text und `gekuerzt`, bytegleich). Alle Gespräche sind erfunden. Die erwarteten `kodiert`-Texte der `auswerten`-Fälle stammen
+aus Pythons `json`-Modul (die Erwartungen sind von Hand als Daten geschrieben); die Prompt-Texte stammen aus der TypeScript-Fassung und
+wurden von der Swift-Fassung unabhängig bestätigt. Ein neuer Fall kommt von Hand hinzu, die erwartete Ausgabe wird je Fall begründet
+hergeleitet, und er muss in beiden Kernen grün sein. Zusätzlich prüfen beide Tests die **Invariante** `parse(encode(auswerten(…)))` für
+jeden Fall und jede Randform (extreme Werte, 500 Nullen und eine 1, lange Texte), dass jede Beitragsnummer des Ergebnisses im Gespräch liegt
+und dass die Hinweispfade nur aus eigenen Namen und Indizes bestehen (kein Schlüssel der Antwort). Die zufälligen Läufe nutzen in beiden
+Tests denselben ganzzahligen 32-Bit-Zufallserzeuger (`Math.imul` und `>>> 0` in JavaScript, `&*` und `&+` auf `UInt32` in Swift; je ein Test
+prüft die ersten Zahlen gegen eine unabhängig berechnete Folge), sodass beide Kerne dieselben Eingaben sehen; die Ergebnisse der zufälligen Läufe sind nicht
+als Bytes festgehalten, geprüft werden Eigenschaften.
