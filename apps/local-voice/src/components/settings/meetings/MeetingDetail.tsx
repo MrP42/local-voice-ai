@@ -51,7 +51,7 @@ import { SpeakerSharesTable } from "./SpeakerSharesTable";
 import { SpeakerSuggestionHints } from "./SpeakerSuggestionHints";
 import { useNameSuggestions } from "./useNameSuggestions";
 import { useSettings } from "@/hooks/useSettings";
-import { translateMeetingError } from "./meetingErrors";
+import { deleteErrorText, translateMeetingError } from "./meetingErrors";
 import { enhanceErrorText, SOURCE_HIGHLIGHT_MS } from "@/lib/meetingNotes";
 import { minutesErrorCode, minutesErrorDetail } from "@/lib/meetingMinutes";
 import { notifyMeetingsChanged } from "@/lib/meetingsBus";
@@ -94,7 +94,7 @@ import { SlideViewer } from "./slides/SlideViewer";
 import { SlidesPanel } from "./slides/SlidesPanel";
 import { startSlideDetection } from "./slides/useSlidesBackground";
 import { useMeetingSlides } from "./slides/useMeetingSlides";
-import { useYoutubeSource } from "./youtube/useYoutubeSource";
+import { useYoutubeSource, YOUTUBE_SOURCE } from "./youtube/useYoutubeSource";
 import { CompareView } from "./variants/CompareView";
 import { ProvenanceArea } from "./variants/ProvenanceArea";
 import { VariantChip } from "./variants/VariantChip";
@@ -120,12 +120,16 @@ const formatMmSs = (ms: number) => {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 };
 
-const channelLabelKey = (channel: number) => {
+const channelLabelKey = (channel: number, source: string) => {
   switch (channel) {
     case 0:
       return "meetings.live.me";
+    // #537: bei einer YouTube-Besprechung ist der Systemton die ganze Aufnahme,
+    // keine "Gegenseite".
     case 1:
-      return "meetings.live.remote";
+      return source === "youtube"
+        ? "meetings.live.mixed"
+        : "meetings.live.remote";
     default:
       return "meetings.live.mixed";
   }
@@ -366,9 +370,19 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   // Umsetzung ein, das Transkript bleibt unveraendert.
   // Eine YouTube-Besprechung hat statt des Audios den YouTube-Player (#66).
   const youtube = useYoutubeSource(meeting);
+  // #537/lva#538: hat die YouTube-Besprechung eine eigene Aufnahme (Mitschnitt beim
+  // Abspielen), liegen die Zeitmarken auf der Zeitachse DER AUFNAHME, nicht der
+  // Videozeit: Pausen, Werbung und Suchsprünge verschieben beide gegeneinander. Ein
+  // Sprung in den YouTube-Player träfe dann die falsche Stelle; die Zeitmarken spielen
+  // deshalb die Aufnahme ab (solange sie läuft, gibt es noch nichts zu spielen).
+  const recordedFromPlayback = youtube.source !== null && hasAudio;
   const player =
-    youtube.player ??
-    audioTranscriptPlayer(micPlayerRef, systemPlayerRef, hasAudio);
+    (!recordedFromPlayback && youtube.player) ||
+    audioTranscriptPlayer(
+      micPlayerRef,
+      systemPlayerRef,
+      hasAudio && !(recordedFromPlayback && live),
+    );
   // D4: die aktuelle Folie folgt der Abspielzeit des Audios; der Zustand springt
   // nur bei einem Folienwechsel um, nicht bei jedem Zeitschritt.
   const onPlayTime = useCallback((seconds: number) => {
@@ -859,7 +873,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     setDeleteOpen(false);
     const result = await commands.meetingsDelete(meetingId);
     if (result.status === "error") {
-      toast.error(t("meetings.errors.deleteFailed"));
+      toast.error(deleteErrorText(result.error, t));
       return;
     }
     notifyMeetingsChanged();
@@ -938,7 +952,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     if (whole?.display_name) return whole.display_name;
     return channel === 0 && selfName !== ""
       ? selfName
-      : t(channelLabelKey(channel));
+      : t(channelLabelKey(channel, meeting.source));
   };
   const whoLabel = (segment: StoredSegment) =>
     speakerOf(segment)?.label ?? channelLabel(segment.channel);
@@ -1151,6 +1165,22 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   const showChip =
     variants.length > 1 || (youtube.source !== null && variants.length > 0);
 
+  /**
+   * Leeres Transkript: die Zeitangabe der Live-Ansicht gilt nur, solange wirklich
+   * aufgenommen wird. Eine YouTube-Besprechung ohne Aufnahme verweist auf das
+   * Mitschreiben beim Abspielen (#537); alles andere bekommt einen Text ohne
+   * Zeitversprechen.
+   */
+  const emptyTranscriptText = emptyEntry
+    ? t("meetings.empty.transcriptEmpty")
+    : live
+      ? t("meetings.live.empty")
+      : meeting.source === YOUTUBE_SOURCE && !growing && !hasAudio
+        ? t("meetings.live.emptyYoutube")
+        : transcribing
+          ? t("meetings.live.emptyProcessing")
+          : t("meetings.live.emptyNeutral");
+
   /** Fassungs-Chip: gilt fuer Transkript und Vergleich, deshalb ueber beiden Reitern. */
   const variantRow = showChip && (
     <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -1176,7 +1206,15 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         <YoutubeTranscriptTools
           meetingId={meetingId}
           busy={growing}
+          hasTranscript={segments.length > 0}
+          hasAudio={hasAudio}
           onChanged={() => loadSegments()}
+          onCaptureStarted={(started) => {
+            // Der Eintrag ist jetzt eine laufende Aufnahme: die Seite zeigt sie
+            // sofort (Status, Live-Ansicht), ohne auf die Liste zu warten.
+            onMeetingChange(started);
+            return youtube.playFromStart();
+          }}
         />
       )}
       {growing && (
@@ -1239,11 +1277,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
           {t("meetings.list.loading")}
         </p>
       ) : segments.length === 0 ? (
-        <p className="text-sm text-text/60">
-          {emptyEntry
-            ? t("meetings.empty.transcriptEmpty")
-            : t("meetings.live.empty")}
-        </p>
+        <p className="text-sm text-text/60">{emptyTranscriptText}</p>
       ) : (
         <ProvenanceArea
           subject={{

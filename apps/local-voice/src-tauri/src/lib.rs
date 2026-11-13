@@ -2247,6 +2247,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::history::update_recording_retention_period,
             commands::meetings::meetings_start,
             commands::meetings::meetings_create_empty, // G1 (#70)
+            commands::meetings::meetings_start_playback_capture, // #537
+            commands::meetings::meetings_cancel_start, // lva#538
             commands::meetings::meetings_pause,
             commands::meetings::meetings_resume,
             commands::meetings::meetings_stop,
@@ -4966,8 +4968,10 @@ fn run_headless_eval_diarization(app: &AppHandle, args: &CliArgs, dir: &std::pat
     managers::transcription::init_transcribe_backend();
     let params = diarize::DiarizeParams::new(&model_path);
     eprintln!(
-        "eval-diarization: Modell {} ({} Threads)",
+        "eval-diarization: Modell {} ({}, {} Threads)",
         model_path.display(),
+        diarize::engine::EngineKind::of_path(&model_path)
+            .map_or("unbekannter Dateityp", |k| k.label()),
         params.threads
     );
     let (code, payload) = match diarize::Diarizer::load(&model_path, params.threads) {

@@ -96,6 +96,42 @@ impl WatchConfig {
     }
 }
 
+impl WatchConfig {
+    /// #537: ein Kanal, der in dieser Aufnahme nicht existiert (Mitschnitt des
+    /// Systemtons ohne Mikrofon): kein Block kommt je an, und das waere sonst
+    /// nach 8 s ein Dauer-Fehlalarm "Mikrofon liefert keine Daten".
+    pub fn off() -> Self {
+        Self {
+            no_data_ms: None,
+            digital_zero_ms: None,
+            silent_ms: None,
+            clip_window_ms: None,
+            overflow_hold_ms: 0,
+            ..Self::mic()
+        }
+    }
+
+    /// #537: der Systemton ist die EINZIGE Quelle des Mitschnitts. Anders als in
+    /// einer Besprechung ist dauernde Stille hier ein Fehler des Nutzers (das
+    /// Video laeuft nicht, ist stumm oder spielt auf einem anderen Geraet). Weil
+    /// Windows bei Stille gar keine Pakete liefert, zaehlt die Wanduhr:
+    /// `NoData` nach 30 s ohne Paket (plus Anlaufzeit), `DigitalZero`/`Silent`
+    /// nach 30 s Pakete ohne Pegel. Jede Meldung nimmt der Kanal mit `Recovered`
+    /// zurueck, sobald wieder Ton kommt.
+    pub fn playback() -> Self {
+        Self {
+            no_data_ms: Some(PLAYBACK_QUIET_MS),
+            digital_zero_ms: Some(PLAYBACK_QUIET_MS),
+            silent_ms: Some(PLAYBACK_QUIET_MS),
+            ..Self::loopback()
+        }
+    }
+}
+
+/// So lange darf der Systemton beim Mitschnitt still sein, bevor die
+/// Oberflaeche nachfragt, ob das Video laeuft.
+pub const PLAYBACK_QUIET_MS: u64 = 30_000;
+
 /// Kennzahlen eines Blocks (i16 mono). Nur Zahlen, nie Inhalt.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct BlockStats {
@@ -497,6 +533,53 @@ mod tests {
         assert_eq!(w.on_tick(wall + 3_000), Some(HealthState::NoData));
         let back = feed(&mut w, &mut { wall + 3_100 }, 30, &silence());
         assert_eq!(states(&back), vec![HealthState::Recovered]);
+    }
+
+    #[test]
+    fn a_channel_that_is_switched_off_never_reports_anything() {
+        let mut w = SignalWatch::new(WatchConfig::off(), 0);
+        // Kein Block, Stunden Wanduhr: kein `NoData` (das Mikrofon gibt es nicht).
+        assert_eq!(w.on_tick(10 * 3_600_000), None);
+        // Und kame doch ein Block, wuerde auch Stille oder Uebersteuerung schweigen.
+        let mut wall = 0;
+        assert!(feed(&mut w, &mut wall, 60_000, &silence()).is_empty());
+        assert!(feed(&mut w, &mut wall, 10_000, &clipped(BLOCK)).is_empty());
+        assert!(feed(&mut w, &mut wall, 1_000, &quiet_noise()).is_empty());
+    }
+
+    #[test]
+    fn a_playback_capture_asks_after_thirty_quiet_seconds_and_recovers_with_sound() {
+        // Nichts kommt: nach Anlaufzeit + 30 s `NoData`.
+        let mut w = SignalWatch::new(WatchConfig::playback(), 0);
+        assert_eq!(w.on_tick(PLAYBACK_QUIET_MS), None, "noch in der Anlaufzeit");
+        assert_eq!(
+            w.on_tick(PLAYBACK_QUIET_MS + 5_000),
+            Some(HealthState::NoData)
+        );
+        let mut wall = PLAYBACK_QUIET_MS + 5_000;
+        let back = feed(&mut w, &mut wall, 30, &quiet_noise());
+        assert_eq!(states(&back), vec![HealthState::Recovered]);
+
+        // Pakete aus Nullen (stummgeschaltetes Video): nach 30 s `DigitalZero`,
+        // nicht davor.
+        let mut w = SignalWatch::new(WatchConfig::playback(), 0);
+        let mut wall = 0;
+        assert!(feed(&mut w, &mut wall, 29_000, &silence()).is_empty());
+        let hit = feed(&mut w, &mut wall, 2_000, &silence());
+        assert_eq!(states(&hit), vec![HealthState::DigitalZero]);
+        // Ton kommt: die Stille-Meldung geht erst nach einem ganzen hoerbaren
+        // Sekundenfenster (`DigitalZero` weicht `Silent`, dann `Recovered`).
+        let back = feed(&mut w, &mut wall, 1_200, &quiet_noise());
+        assert_eq!(
+            states(&back),
+            vec![HealthState::Silent, HealthState::Recovered]
+        );
+
+        // Ein hoerbares Video meldet nie etwas.
+        let mut w = SignalWatch::new(WatchConfig::playback(), 0);
+        let mut wall = 0;
+        assert!(feed(&mut w, &mut wall, 120_000, &quiet_noise()).is_empty());
+        assert_eq!(w.on_tick(wall + 1_000), None);
     }
 
     #[test]
