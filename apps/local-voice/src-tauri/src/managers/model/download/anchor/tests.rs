@@ -691,6 +691,70 @@ fn a_file_replaced_by_a_link_just_before_it_is_opened_is_refused_and_nothing_is_
     }
 }
 
+/// Die Datei wird UNMITTELBAR vor dem Oeffnen weg benannt, und an ihrem Namen liegt eine
+/// FIFO ohne Gegenseite. Ohne `O_NONBLOCK` haengt schon das Oeffnen, die Pruefung der Art
+/// wird nie erreicht. Erwartet: Ablehnung binnen kurzer Zeit, fuer Lesen und Schreiben.
+/// Der Aufruf laeuft in einem eigenen Thread mit Frist; haengt er, gibt der Test ihn
+/// frei (Gegenseite oeffnen) und schlaegt fehl.
+#[cfg(unix)]
+#[test]
+fn a_file_replaced_by_a_fifo_just_before_it_is_opened_is_refused_without_hanging() {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::OpenOptionsExt;
+    const NAME: &str = "model.onnx_data";
+    for op in ["read", "partial"] {
+        let dir = TempDir::new().unwrap();
+        let anchor = Arc::new(open(dir.path(), &["m"]));
+        let folder = dir.path().join("m");
+        write(&folder.join(NAME), b"echt");
+        let swapped = Arc::new(AtomicBool::new(false));
+        let _hook = {
+            let (folder, swapped) = (folder.clone(), swapped.clone());
+            hook::set(anchor.root(), move |point| {
+                if point != Point::BeforeFile || swapped.load(Ordering::SeqCst) {
+                    return;
+                }
+                let name = folder.join(NAME);
+                std::fs::rename(&name, folder.join("echt.alt")).unwrap();
+                let raw = std::ffi::CString::new(name.as_os_str().as_bytes()).unwrap();
+                // SAFETY: `raw` ist ein gueltiger, nullterminierter Pfad.
+                assert_eq!(unsafe { libc::mkfifo(raw.as_ptr(), 0o600) }, 0);
+                swapped.store(true, Ordering::SeqCst);
+            })
+        };
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = {
+            let anchor = anchor.clone();
+            std::thread::spawn(move || {
+                let result = match op {
+                    "read" => anchor.open_read(NAME),
+                    _ => anchor.open_partial(NAME),
+                };
+                let _ = tx.send(result);
+            })
+        };
+        let result = match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+            Ok(result) => result,
+            Err(_) => {
+                // Gegenseite oeffnen, damit der haengende Thread endet.
+                let _ = std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .custom_flags(libc::O_NONBLOCK)
+                    .open(folder.join(NAME));
+                let _ = worker.join();
+                panic!("Oeffnen haengt an der FIFO (op={op})");
+            }
+        };
+        worker.join().unwrap();
+
+        assert!(swapped.load(Ordering::SeqCst), "kein Tausch (op={op})");
+        assert_refused(result);
+        assert_eq!(read(&folder.join("echt.alt")), b"echt", "op={op}");
+    }
+}
+
 /// `no_follow` allein (ohne ein von Hand gesetztes `O_NOFOLLOW`) lehnt einen Link im
 /// letzten Stueck ab, auch mit `create` und Schreiben, und legt hinter ihm nichts an. Das
 /// ist die Naht zu `cap-std`: ohne sie folgt es dem Link dort, wo es von Hand aufloest.

@@ -565,7 +565,10 @@ impl Anchor {
         #[cfg(unix)]
         {
             use cap_std::fs::OpenOptionsExt;
-            options.custom_flags(libc::O_NOFOLLOW);
+            // O_NONBLOCK: liegt am Namen inzwischen eine FIFO ohne Gegenseite, kehrt das
+            // Oeffnen sofort zurueck, statt zu haengen; die Pruefung der Art am Handle
+            // lehnt sie danach ab. Fuer normale Dateien aendert das Flag nichts.
+            options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
         }
         #[cfg(windows)]
         {

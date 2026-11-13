@@ -122,7 +122,9 @@ fn options() -> OpenOptions {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW);
+        // O_NONBLOCK: eine FIFO am Namen laesst das Oeffnen nicht haengen; `checked`
+        // lehnt sie am Handle ab. Fuer normale Dateien aendert das Flag nichts.
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
     }
     #[cfg(windows)]
     {
