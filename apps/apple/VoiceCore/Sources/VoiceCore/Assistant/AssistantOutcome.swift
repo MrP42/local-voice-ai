@@ -411,17 +411,9 @@ struct AssistantOutcomeGrounding {
     typealias T = AssistantOutcomeText
     typealias Code = AssistantOutcomeHint.Code
 
-    /// Wörter und maximale Fristausdrücke eines Beitrags.
-    struct TurnDeadlines {
-        let words: [String]
-        let matches: [AssistantOutcomeDates.DeadlineMatch]
-    }
-
     let normalized: [[UInt32]]
     let today: AssistantOutcomeDate
     private(set) var hints: [AssistantOutcomeHint] = []
-    /// Je Beitrag (Nummer ab 1) bei Bedarf berechnet.
-    private var deadlineCache: [Int: TurnDeadlines] = [:]
 
     init(turns: [AssistantOutcomeTurn], today: AssistantOutcomeDate) {
         self.normalized = turns.map { T.normalizedScalars($0.text) }
@@ -585,12 +577,13 @@ struct AssistantOutcomeGrounding {
         return (short, !T.same(short, stripped.text), turn)
     }
 
-    /// Nummer des Beitrags, in dem der (normalisierte) Beleg steht: der angegebene, sonst der erste, der ihn enthält.
+    /// Nummer des Beitrags, in dem der (normalisierte) Beleg steht: der angegebene, sonst der erste, der ihn enthält. „Steht“ heißt:
+    /// mit mindestens einer Fundstelle an Wortgrenzen (`Ja` steht nicht in `Jahr`).
     private func locate(_ quote: String, _ turn: Int?) -> Int? {
         let needle = T.normalizedScalars(quote)
         if needle.isEmpty { return nil }
-        if let turn, turn >= 1, turn <= normalized.count, T.contains(normalized[turn - 1], needle) { return turn }
-        return normalized.firstIndex { T.contains($0, needle) }.map { $0 + 1 }
+        if let turn, turn >= 1, turn <= normalized.count, T.containsWordSequence(normalized[turn - 1], needle) { return turn }
+        return normalized.firstIndex { T.containsWordSequence($0, needle) }.map { $0 + 1 }
     }
 
     /// Erste `max` Codepunkte, Leerraum am Ende entfernt.
@@ -627,9 +620,10 @@ struct AssistantOutcomeGrounding {
         var covered: Bool
     }
 
-    /// Kanonischer Wert nach Typ und ob der Beleg ihn deckt (siehe README).
-    private mutating func canonical(_ f: AssistantProfile.Field, _ rawValue: String, _ quote: String, _ path: String) -> Canonical {
+    /// Kanonischer Wert nach Typ und ob der Beleg ihn im Beitrag `turn` deckt (siehe README).
+    private mutating func canonical(_ f: AssistantProfile.Field, _ rawValue: String, _ quote: String, _ turn: Int, _ path: String) -> Canonical {
         let quoteNormalized = T.normalizedScalars(quote)
+        let turnNormalized = normalized[turn - 1]
         func failure(_ code: Code, _ g: inout AssistantOutcomeGrounding) -> Canonical {
             g.add(path, code)
             return Canonical(value: AssistantOutcomeGrounding.cutHard(rawValue, AssistantOutcome.maxValue), typeIssue: code, covered: false)
@@ -644,15 +638,12 @@ struct AssistantOutcomeGrounding {
             guard let number = T.readNumber(rawValue), number.canonical.utf8.count <= AssistantOutcome.maxValue else {
                 return failure(.type, &self)
             }
-            let digits = Array(number.comparable.utf8)
-            let whole = T.onlyDigits(digits) && digits.count <= 2 && T.int(digits) <= 12
-            let covered = T.numbers(in: quoteNormalized).contains { T.same($0, number.comparable) }
-                || (whole && T.hasNumberWord(quoteNormalized, T.int(digits)))
+            let covered = AssistantOutcomeDates.numberCovered(turnNormalized, quote: quoteNormalized, comparable: number.comparable)
             return Canonical(value: number.canonical, typeIssue: nil, covered: covered)
         case .date:
             let direct = AssistantOutcomeDate.parseISO(rawValue)?.formatted
             guard let text = direct ?? AssistantOutcomeDates.deadline(rawValue, today: today) else { return failure(.type, &self) }
-            let covered = AssistantOutcomeDates.coveredDeadline(in: quote, today: today).map { T.same($0, text) } ?? false
+            let covered = AssistantOutcomeDates.deadlineCovered(turnNormalized, quote: quoteNormalized, day: text, today: today)
             return Canonical(value: text, typeIssue: nil, covered: covered)
         case .choice:
             let n = T.normalizedScalars(rawValue)
@@ -701,7 +692,7 @@ struct AssistantOutcomeGrounding {
             unclear.turn = turn
             return unclear
         }
-        let c = canonical(f, rawValue, quote, path + ".wert")
+        let c = canonical(f, rawValue, quote, turn, path + ".wert")
         if c.typeIssue == nil, !c.covered { add(path + ".wert", .valueNotInQuote) }
         let clear = status == .clear && c.typeIssue == nil && c.covered
         return AssistantOutcome.Field(name: f.name, kind: f.kind, status: clear ? .clear : .unclear, value: c.value, quote: quote, turn: turn)
@@ -736,32 +727,21 @@ struct AssistantOutcomeGrounding {
 
     // MARK: Aufgaben, Zusammenfassung, Fragen
 
-    /// Maximale Fristausdrücke des Beitrags `turn` (ab 1), höchstens die ersten `maxDeadlineWords` Wörter; je Beitrag einmal berechnet.
-    private mutating func deadlines(of turn: Int) -> TurnDeadlines {
-        if let cached = deadlineCache[turn] { return cached }
-        let tokens = T.tokens(normalized[turn - 1], limit: AssistantOutcomeDates.maxDeadlineWords)
-        let result = TurnDeadlines(words: tokens, matches: AssistantOutcomeDates.maximalDeadlines(tokens, today: today))
-        deadlineCache[turn] = result
-        return result
-    }
-
-    private mutating func deadlineFits(_ turn: Int, _ needle: [UInt32], _ expression: [String]) -> Bool {
-        if !T.contains(normalized[turn - 1], needle) { return false }
-        let d = deadlines(of: turn)
-        return AssistantOutcomeDates.isMaximalExpression(expression, in: d.words, matches: d.matches)
-    }
-
-    /// Der Beitrag, in dem `dueText` als ganzer, sicherer, maximaler Fristausdruck steht: zuerst der Beitrag des Aufgabenbelegs
-    /// (`origin`), dann der nächstgelegene (kleinster Abstand, bei Gleichstand der spätere); sonst `nil`.
-    private mutating func searchDeadline(_ dueText: String, _ origin: Int) -> Int? {
+    /// Der Beitrag, in dem `dueText` als ganzer, sicherer, inklusionsmaximaler Fristausdruck steht (an einer der ersten Fundstellen
+    /// an Wortgrenzen): zuerst der Beitrag des Aufgabenbelegs (`origin`), dann der nächstgelegene (kleinster Abstand, bei
+    /// Gleichstand der spätere); sonst `nil`.
+    private func searchDeadline(_ dueText: String, _ origin: Int) -> Int? {
         let needle = T.normalizedScalars(dueText)
-        let expression = AssistantOutcomeDates.words(of: dueText)
-        if deadlineFits(origin, needle, expression) { return origin }
+        let expression = T.tokens(needle, limit: AssistantOutcomeDates.maxDeadlineWords + AssistantOutcomeDates.maxDeadlineWindow)
+        func deadlineFits(_ turn: Int) -> Bool {
+            AssistantOutcomeDates.containsDeadlineExpression(normalized[turn - 1], text: needle, expression: expression, today: today)
+        }
+        if deadlineFits(origin) { return origin }
         let count = normalized.count
         var distance = 1
         while origin - distance >= 1 || origin + distance <= count {
-            if origin + distance <= count, deadlineFits(origin + distance, needle, expression) { return origin + distance }
-            if origin - distance >= 1, deadlineFits(origin - distance, needle, expression) { return origin - distance }
+            if origin + distance <= count, deadlineFits(origin + distance) { return origin + distance }
+            if origin - distance >= 1, deadlineFits(origin - distance) { return origin - distance }
             distance += 1
         }
         return nil
@@ -772,7 +752,7 @@ struct AssistantOutcomeGrounding {
         guard let rawDue else { return ("", nil, nil) }
         let text = AssistantOutcomeGrounding.cutHard(rawDue, AssistantOutcome.maxDueText)
         let needle = T.normalizedScalars(text)
-        if needle.isEmpty || !normalized.contains(where: { T.contains($0, needle) }) {
+        if needle.isEmpty || !normalized.contains(where: { T.containsWordSequence($0, needle) }) {
             add(path, .quoteMissing)
             return ("", nil, nil)
         }

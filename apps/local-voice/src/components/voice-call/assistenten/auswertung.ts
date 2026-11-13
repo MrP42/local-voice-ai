@@ -28,27 +28,24 @@ import {
 } from "./profil";
 import {
   type Datum,
-  type FristTreffer,
   ausCodepunkten,
   einzeilig,
+  enthaeltFristAusdruck,
   enthaeltWortfolge,
   frist,
-  fristDeckung,
+  fristGedeckt,
   fristWoerter,
-  MAX_FRIST_WOERTER,
   formatiereDatum,
-  hatZahlwort,
+  fundstellen,
   istGueltigesDatum,
   istKanonischeZahl,
   istLeerraum,
-  istMaximalerAusdruck,
   kappeLeerraum,
   liesZahl,
-  maximaleFristen,
   normalisiere,
   parseIsoDatum,
   wochentag,
-  zahlenIn,
+  zahlGedeckt,
 } from "./auswertungFrist";
 import { istEnglisch } from "./text";
 
@@ -408,15 +405,12 @@ class Hinweise {
   }
 }
 
-type BeitragFristen = { woerter: string[]; treffer: FristTreffer[] };
-
 type Kontext = {
   /** Normalisierte Beiträge des ungekürzten Gesprächs. */
   normiert: string[];
   heute: Datum;
   h: Hinweise;
   /** Maximale Fristausdrücke je Beitrag (Nummer ab 1), bei Bedarf berechnet. */
-  fristen: Map<number, BeitragFristen>;
 };
 
 /**
@@ -526,7 +520,15 @@ function liesBeleg(
   return { text: kurz, gekappt: kurz !== ohne.text, beitrag };
 }
 
-/** Nummer des Beitrags, in dem der (normalisierte) Beleg steht: der angegebene, sonst der erste, der ihn enthält. */
+/** Hat `n` in `beitrag` (beide normalisiert) eine Fundstelle an Wortgrenzen? Der schnelle Teilstring-Test kommt zuerst. */
+function steht(beitrag: string, n: string): boolean {
+  return beitrag.includes(n) && fundstellen(beitrag, n, 1).length > 0;
+}
+
+/**
+ * Nummer des Beitrags, in dem der (normalisierte) Beleg steht: der angegebene, sonst der erste, der ihn enthält. „Steht“ heißt:
+ * mit mindestens einer Fundstelle an Wortgrenzen (`Ja` steht nicht in `Jahr`).
+ */
 function findeBeleg(
   beleg: string,
   beitrag: number | null,
@@ -535,9 +537,9 @@ function findeBeleg(
   const n = normalisiere(beleg);
   if (n === "") return null;
   if (beitrag !== null && beitrag >= 1 && beitrag <= k.normiert.length) {
-    if (k.normiert[beitrag - 1].includes(n)) return beitrag;
+    if (steht(k.normiert[beitrag - 1], n)) return beitrag;
   }
-  const i = k.normiert.findIndex((t) => t.includes(n));
+  const i = k.normiert.findIndex((t) => steht(t, n));
   return i < 0 ? null : i + 1;
 }
 
@@ -558,15 +560,17 @@ type Kanonisch = {
   gedeckt: boolean;
 };
 
-/** Kanonischer Wert nach Typ und ob der Beleg ihn deckt (siehe README). */
+/** Kanonischer Wert nach Typ und ob der Beleg ihn im Beitrag `ort` deckt (siehe README). */
 function kanonisch(
   f: AuswertungFeld,
   rohWert: string,
   beleg: string,
+  ort: number,
   k: Kontext,
   pfad: string,
 ): Kanonisch {
   const nBeleg = normalisiere(beleg);
+  const beitrag = k.normiert[ort - 1];
   const fehler = (code: HinweisCode): Kanonisch => {
     k.h.melde(pfad, code);
     return {
@@ -585,12 +589,11 @@ function kanonisch(
     case "zahl": {
       const z = liesZahl(rohWert);
       if (z === null || z.kanonisch.length > MAX_WERT) return fehler("typ");
-      const ganz =
-        /^[0-9]{1,2}$/.test(z.vergleich) && Number(z.vergleich) <= 12;
-      const gedeckt =
-        zahlenIn(nBeleg).includes(z.vergleich) ||
-        (ganz && hatZahlwort(nBeleg, Number(z.vergleich)));
-      return { wert: z.kanonisch, typfehler: null, gedeckt };
+      return {
+        wert: z.kanonisch,
+        typfehler: null,
+        gedeckt: zahlGedeckt(beitrag, nBeleg, z.vergleich),
+      };
     }
     case "datum": {
       const direkt = parseIsoDatum(rohWert);
@@ -599,7 +602,7 @@ function kanonisch(
       return {
         wert: text,
         typfehler: null,
-        gedeckt: fristDeckung(beleg, k.heute) === text,
+        gedeckt: fristGedeckt(beitrag, nBeleg, text, k.heute),
       };
     }
     case "auswahl": {
@@ -673,7 +676,7 @@ function werteFeld(
   if (rohWert === null) {
     return { ...leeresFeld(f), status: "unklar", beleg, beitrag: ort };
   }
-  const c = kanonisch(f, rohWert, beleg, k, `${pfad}.wert`);
+  const c = kanonisch(f, rohWert, beleg, ort, k, `${pfad}.wert`);
   if (c.typfehler === null && !c.gedeckt)
     k.h.melde(`${pfad}.wert`, "wert_nicht_im_beleg");
   const klar = status === "klar" && c.typfehler === null && c.gedeckt;
@@ -732,30 +735,20 @@ function werteFelder(
 
 // ---------------------------------------------------------------- Aufgaben, Zusammenfassung, Fragen
 
-/** Maximale Fristausdrücke des Beitrags `nr` (ab 1), höchstens die ersten `MAX_FRIST_WOERTER` Wörter; je Beitrag einmal berechnet. */
-function fristenVon(nr: number, k: Kontext): BeitragFristen {
-  let e = k.fristen.get(nr);
-  if (e === undefined) {
-    const woerter = k.normiert[nr - 1]
-      .split(" ", MAX_FRIST_WOERTER)
-      .filter((w) => w !== "");
-    e = { woerter, treffer: maximaleFristen(woerter, k.heute) };
-    k.fristen.set(nr, e);
-  }
-  return e;
-}
-
 /**
- * Der Beitrag, in dem `fristText` als ganzer, sicherer, maximaler Fristausdruck steht: zuerst der Beitrag des Aufgabenbelegs
- * (`ort`), dann der nächstgelegene (kleinster Abstand, bei Gleichstand der spätere); sonst `null`.
+ * Der Beitrag, in dem `fristText` als ganzer, sicherer, inklusionsmaximaler Fristausdruck steht (an einer der ersten Fundstellen an
+ * Wortgrenzen): zuerst der Beitrag des Aufgabenbelegs (`ort`), dann der nächstgelegene (kleinster Abstand, bei Gleichstand der
+ * spätere); sonst `null`.
  */
 function sucheFrist(fristText: string, ort: number, k: Kontext): number | null {
   const n = normalisiere(fristText);
   const ausdruck = fristWoerter(fristText);
   const passt = (nr: number) => {
-    if (!k.normiert[nr - 1].includes(n)) return false;
-    const e = fristenVon(nr, k);
-    return istMaximalerAusdruck(ausdruck, e.woerter, e.treffer);
+    const beitrag = k.normiert[nr - 1];
+    return (
+      beitrag.includes(n) &&
+      enthaeltFristAusdruck(beitrag, n, ausdruck, k.heute)
+    );
   };
   if (passt(ort)) return ort;
   const anzahl = k.normiert.length;
@@ -778,7 +771,7 @@ function werteFrist(
   if (rohFrist === null) return { text: "", tag: null, beitrag: null };
   const text = kappeHart(rohFrist, MAX_FRIST_TEXT);
   const n = normalisiere(text);
-  if (n === "" || !k.normiert.some((t) => t.includes(n))) {
+  if (n === "" || !k.normiert.some((t) => steht(t, n))) {
     k.h.melde(pfad, "beleg_fehlt");
     return { text: "", tag: null, beitrag: null };
   }
@@ -945,7 +938,6 @@ export function auswerten(
     normiert: verlauf.map((b) => normalisiere(b.text)),
     heute,
     h,
-    fristen: new Map(),
   };
   meldeUnbekannte(
     wurzel,

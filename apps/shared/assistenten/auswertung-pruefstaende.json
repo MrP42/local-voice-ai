@@ -3910,6 +3910,1445 @@
         "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [],\n  \"erstellt\": \"\",\n  \"felder\": [],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [\n    \"Wer?\"\n  ],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
         "hinweise": []
       }
+    },
+    {
+      "name": "Kontext: Beleg „Montag“ im Beitrag „übernächsten Montag“ deckt den 23., nicht den 16.",
+      "profil": {
+        "schema": "lva.assistent/1",
+        "id": "eigen-aaaaaaaaaaaa",
+        "name": "Prüfer",
+        "sprache": "de",
+        "auswertung": {
+          "zusammenfassung": false,
+          "aufgaben": false,
+          "felder": [
+            {
+              "name": "falsch",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "richtig",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            }
+          ]
+        }
+      },
+      "verlauf": [
+        {
+          "rolle": "nutzer",
+          "text": "Wir treffen uns übernächsten Montag im Büro."
+        }
+      ],
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "roh": "{\"felder\": [{\"name\": \"falsch\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 1}, {\"name\": \"richtig\", \"status\": \"klar\", \"wert\": \"2026-11-23\", \"beleg\": \"Montag\", \"beitrag\": 1}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [],\n  \"erstellt\": \"\",\n  \"felder\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"Montag\",\n      \"name\": \"falsch\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"Montag\",\n      \"name\": \"richtig\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-23\"\n    }\n  ],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
+        "hinweise": [
+          {
+            "pfad": "felder[0].wert",
+            "code": "wert_nicht_im_beleg"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Kontext: Beleg „14 November“ im Beitrag „14 November 2027“ deckt 2027, nicht 2026",
+      "profil": {
+        "schema": "lva.assistent/1",
+        "id": "eigen-aaaaaaaaaaaa",
+        "name": "Prüfer",
+        "sprache": "de",
+        "auswertung": {
+          "zusammenfassung": false,
+          "aufgaben": false,
+          "felder": [
+            {
+              "name": "falsch",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "richtig",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            }
+          ]
+        }
+      },
+      "verlauf": [
+        {
+          "rolle": "nutzer",
+          "text": "Der Termin ist am 14 November 2027 geplant."
+        }
+      ],
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "roh": "{\"felder\": [{\"name\": \"falsch\", \"status\": \"klar\", \"wert\": \"2026-11-14\", \"beleg\": \"14 November\", \"beitrag\": 1}, {\"name\": \"richtig\", \"status\": \"klar\", \"wert\": \"2027-11-14\", \"beleg\": \"14 November\", \"beitrag\": 1}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [],\n  \"erstellt\": \"\",\n  \"felder\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"14 November\",\n      \"name\": \"falsch\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-14\"\n    },\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"14 November\",\n      \"name\": \"richtig\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2027-11-14\"\n    }\n  ],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
+        "hinweise": [
+          {
+            "pfad": "felder[0].wert",
+            "code": "wert_nicht_im_beleg"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Kontext: Beleg „Montag“ mit zwei Fundstellen und verschiedenen Tagen deckt keinen Wert",
+      "profil": {
+        "schema": "lva.assistent/1",
+        "id": "eigen-aaaaaaaaaaaa",
+        "name": "Prüfer",
+        "sprache": "de",
+        "auswertung": {
+          "zusammenfassung": false,
+          "aufgaben": false,
+          "felder": [
+            {
+              "name": "erster",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "zweiter",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            }
+          ]
+        }
+      },
+      "verlauf": [
+        {
+          "rolle": "nutzer",
+          "text": "Montag passt nicht, lieber übernächsten Montag."
+        }
+      ],
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "roh": "{\"felder\": [{\"name\": \"erster\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 1}, {\"name\": \"zweiter\", \"status\": \"klar\", \"wert\": \"2026-11-23\", \"beleg\": \"Montag\", \"beitrag\": 1}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [],\n  \"erstellt\": \"\",\n  \"felder\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"Montag\",\n      \"name\": \"erster\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"Montag\",\n      \"name\": \"zweiter\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-23\"\n    }\n  ],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
+        "hinweise": [
+          {
+            "pfad": "felder[0].wert",
+            "code": "wert_nicht_im_beleg"
+          },
+          {
+            "pfad": "felder[1].wert",
+            "code": "wert_nicht_im_beleg"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Beleg nur an Wortgrenzen: „Ja“ in „Jahr“ und „Montag“ in „Montagmorgen“ sind keine Fundstellen",
+      "profil": {
+        "schema": "lva.assistent/1",
+        "id": "eigen-aaaaaaaaaaaa",
+        "name": "Prüfer",
+        "sprache": "de",
+        "auswertung": {
+          "zusammenfassung": false,
+          "aufgaben": false,
+          "felder": [
+            {
+              "name": "wahl",
+              "beschreibung": "",
+              "typ": "auswahl",
+              "optionen": [
+                "ja",
+                "nein"
+              ]
+            },
+            {
+              "name": "termin",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            }
+          ]
+        }
+      },
+      "verlauf": [
+        {
+          "rolle": "nutzer",
+          "text": "Das Jahr ist neu."
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Wir kommen Montagmorgen."
+        }
+      ],
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "roh": "{\"felder\": [{\"name\": \"wahl\", \"status\": \"klar\", \"wert\": \"ja\", \"beleg\": \"Ja\", \"beitrag\": 1}, {\"name\": \"termin\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 2}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [],\n  \"erstellt\": \"\",\n  \"felder\": [\n    {\n      \"beitrag\": null,\n      \"beleg\": null,\n      \"name\": \"wahl\",\n      \"status\": \"nicht_genannt\",\n      \"typ\": \"auswahl\",\n      \"wert\": null\n    },\n    {\n      \"beitrag\": null,\n      \"beleg\": null,\n      \"name\": \"termin\",\n      \"status\": \"nicht_genannt\",\n      \"typ\": \"datum\",\n      \"wert\": null\n    }\n  ],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
+        "hinweise": [
+          {
+            "pfad": "felder[0].beleg",
+            "code": "beleg_fehlt"
+          },
+          {
+            "pfad": "felder[1].beleg",
+            "code": "beleg_fehlt"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Kontext: eine Ziffernfolge im Beleg ist Teil der längeren Zahl des Beitrags",
+      "profil": {
+        "schema": "lva.assistent/1",
+        "id": "eigen-aaaaaaaaaaaa",
+        "name": "Prüfer",
+        "sprache": "de",
+        "auswertung": {
+          "zusammenfassung": false,
+          "aufgaben": false,
+          "felder": [
+            {
+              "name": "a",
+              "beschreibung": "",
+              "typ": "zahl",
+              "optionen": []
+            },
+            {
+              "name": "b",
+              "beschreibung": "",
+              "typ": "zahl",
+              "optionen": []
+            },
+            {
+              "name": "c",
+              "beschreibung": "",
+              "typ": "zahl",
+              "optionen": []
+            },
+            {
+              "name": "d",
+              "beschreibung": "",
+              "typ": "zahl",
+              "optionen": []
+            }
+          ]
+        }
+      },
+      "verlauf": [
+        {
+          "rolle": "nutzer",
+          "text": "Es sind 12,5 Liter nötig."
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Das kostet 1.250,50 Euro."
+        }
+      ],
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "roh": "{\"felder\": [{\"name\": \"a\", \"status\": \"klar\", \"wert\": \"12\", \"beleg\": \"12\", \"beitrag\": 1}, {\"name\": \"b\", \"status\": \"klar\", \"wert\": \"12.5\", \"beleg\": \"12,5 Liter\", \"beitrag\": 1}, {\"name\": \"c\", \"status\": \"klar\", \"wert\": \"250\", \"beleg\": \"250\", \"beitrag\": 2}, {\"name\": \"d\", \"status\": \"klar\", \"wert\": \"1250.5\", \"beleg\": \"1.250,50 Euro\", \"beitrag\": 2}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [],\n  \"erstellt\": \"\",\n  \"felder\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"12\",\n      \"name\": \"a\",\n      \"status\": \"unklar\",\n      \"typ\": \"zahl\",\n      \"wert\": \"12\"\n    },\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"12,5 Liter\",\n      \"name\": \"b\",\n      \"status\": \"klar\",\n      \"typ\": \"zahl\",\n      \"wert\": \"12.5\"\n    },\n    {\n      \"beitrag\": 2,\n      \"beleg\": \"250\",\n      \"name\": \"c\",\n      \"status\": \"unklar\",\n      \"typ\": \"zahl\",\n      \"wert\": \"250\"\n    },\n    {\n      \"beitrag\": 2,\n      \"beleg\": \"1.250,50 Euro\",\n      \"name\": \"d\",\n      \"status\": \"klar\",\n      \"typ\": \"zahl\",\n      \"wert\": \"1250.5\"\n    }\n  ],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
+        "hinweise": [
+          {
+            "pfad": "felder[0].wert",
+            "code": "wert_nicht_im_beleg"
+          },
+          {
+            "pfad": "felder[2].wert",
+            "code": "wert_nicht_im_beleg"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Datum: „29 Februar 2027“ wird nicht zu „29 Februar“ (2028-02-29) verkürzt, auch nicht als frist_text",
+      "profil": {
+        "schema": "lva.assistent/1",
+        "id": "eigen-aaaaaaaaaaaa",
+        "name": "Prüfer",
+        "sprache": "de",
+        "auswertung": {
+          "zusammenfassung": false,
+          "aufgaben": true,
+          "felder": [
+            {
+              "name": "termin",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            }
+          ]
+        }
+      },
+      "verlauf": [
+        {
+          "rolle": "nutzer",
+          "text": "Wir treffen uns am 29 Februar 2027 im Büro."
+        }
+      ],
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "roh": "{\"felder\": [{\"name\": \"termin\", \"status\": \"klar\", \"wert\": \"2028-02-29\", \"beleg\": \"29 Februar 2027\", \"beitrag\": 1}], \"aufgaben\": [{\"text\": \"Treffen\", \"frist_text\": \"29 Februar\", \"beleg\": \"Wir treffen uns am 29 Februar 2027 im Büro\", \"beitrag\": 1}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"Wir treffen uns am 29 Februar 2027 im Büro\",\n      \"frist\": null,\n      \"frist_beitrag\": null,\n      \"frist_text\": \"29 Februar\",\n      \"text\": \"Treffen\"\n    }\n  ],\n  \"erstellt\": \"\",\n  \"felder\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"29 Februar 2027\",\n      \"name\": \"termin\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2028-02-29\"\n    }\n  ],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
+        "hinweise": [
+          {
+            "pfad": "aufgaben[0].frist_text",
+            "code": "wert_nicht_im_beleg"
+          },
+          {
+            "pfad": "felder[0].wert",
+            "code": "wert_nicht_im_beleg"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Datum: „14 November 27“ wird nicht zu „14 November“ verkürzt, auch nicht als frist_text",
+      "profil": {
+        "schema": "lva.assistent/1",
+        "id": "eigen-aaaaaaaaaaaa",
+        "name": "Prüfer",
+        "sprache": "de",
+        "auswertung": {
+          "zusammenfassung": false,
+          "aufgaben": true,
+          "felder": [
+            {
+              "name": "termin",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            }
+          ]
+        }
+      },
+      "verlauf": [
+        {
+          "rolle": "nutzer",
+          "text": "Bis 14 November 27 bitte."
+        }
+      ],
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "roh": "{\"felder\": [{\"name\": \"termin\", \"status\": \"klar\", \"wert\": \"2026-11-14\", \"beleg\": \"14 November 27\", \"beitrag\": 1}], \"aufgaben\": [{\"text\": \"Liefern\", \"frist_text\": \"14 November\", \"beleg\": \"Bis 14 November 27 bitte\", \"beitrag\": 1}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"Bis 14 November 27 bitte\",\n      \"frist\": null,\n      \"frist_beitrag\": null,\n      \"frist_text\": \"14 November\",\n      \"text\": \"Liefern\"\n    }\n  ],\n  \"erstellt\": \"\",\n  \"felder\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"14 November 27\",\n      \"name\": \"termin\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-14\"\n    }\n  ],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
+        "hinweise": [
+          {
+            "pfad": "aufgaben[0].frist_text",
+            "code": "wert_nicht_im_beleg"
+          },
+          {
+            "pfad": "felder[0].wert",
+            "code": "wert_nicht_im_beleg"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Uhrzeit und Zahlwort ohne Datumswort dahinter („zwei Personen“, „eine Agenda“) lassen den Ausdruck sicher",
+      "profil": {
+        "schema": "lva.assistent/1",
+        "id": "eigen-aaaaaaaaaaaa",
+        "name": "Prüfer",
+        "sprache": "de",
+        "auswertung": {
+          "zusammenfassung": false,
+          "aufgaben": false,
+          "felder": [
+            {
+              "name": "a",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "b",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "c",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "d",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "e",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "f",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            }
+          ]
+        }
+      },
+      "verlauf": [
+        {
+          "rolle": "nutzer",
+          "text": "Montag 10 Uhr passt."
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Montag zehn Uhr passt."
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Wir sehen uns am 14.11. um 10 Uhr."
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Montag 10:30 passt."
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Montag zwei Personen kommen."
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Bis Montag eine Agenda bitte."
+        }
+      ],
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "roh": "{\"felder\": [{\"name\": \"a\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 1}, {\"name\": \"b\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 2}, {\"name\": \"c\", \"status\": \"klar\", \"wert\": \"2026-11-14\", \"beleg\": \"am 14.11.\", \"beitrag\": 3}, {\"name\": \"d\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 4}, {\"name\": \"e\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 5}, {\"name\": \"f\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 6}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [],\n  \"erstellt\": \"\",\n  \"felder\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"Montag\",\n      \"name\": \"a\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 2,\n      \"beleg\": \"Montag\",\n      \"name\": \"b\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 3,\n      \"beleg\": \"am 14.11.\",\n      \"name\": \"c\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-14\"\n    },\n    {\n      \"beitrag\": 4,\n      \"beleg\": \"Montag\",\n      \"name\": \"d\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 5,\n      \"beleg\": \"Montag\",\n      \"name\": \"e\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 6,\n      \"beleg\": \"Montag\",\n      \"name\": \"f\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    }\n  ],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
+        "hinweise": []
+      }
+    },
+    {
+      "name": "Kontext: 14 November weit hinten im Beitrag, Nachbar „27“ macht unsicher, „2027“ verschiebt den Tag",
+      "profil": {
+        "schema": "lva.assistent/1",
+        "id": "eigen-aaaaaaaaaaaa",
+        "name": "Prüfer",
+        "sprache": "de",
+        "auswertung": {
+          "zusammenfassung": false,
+          "aufgaben": false,
+          "felder": [
+            {
+              "name": "a",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "b",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "c",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            }
+          ]
+        }
+      },
+      "verlauf": [
+        {
+          "rolle": "nutzer",
+          "text": "wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort 14 November 27"
+        },
+        {
+          "rolle": "nutzer",
+          "text": "wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort 14 November 2027"
+        }
+      ],
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "roh": "{\"felder\": [{\"name\": \"a\", \"status\": \"klar\", \"wert\": \"2026-11-14\", \"beleg\": \"14 November\", \"beitrag\": 1}, {\"name\": \"b\", \"status\": \"klar\", \"wert\": \"2026-11-14\", \"beleg\": \"14 November\", \"beitrag\": 2}, {\"name\": \"c\", \"status\": \"klar\", \"wert\": \"2027-11-14\", \"beleg\": \"14 November\", \"beitrag\": 2}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [],\n  \"erstellt\": \"\",\n  \"felder\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"14 November\",\n      \"name\": \"a\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-14\"\n    },\n    {\n      \"beitrag\": 2,\n      \"beleg\": \"14 November\",\n      \"name\": \"b\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-14\"\n    },\n    {\n      \"beitrag\": 2,\n      \"beleg\": \"14 November\",\n      \"name\": \"c\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2027-11-14\"\n    }\n  ],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
+        "hinweise": [
+          {
+            "pfad": "felder[0].wert",
+            "code": "wert_nicht_im_beleg"
+          },
+          {
+            "pfad": "felder[1].wert",
+            "code": "wert_nicht_im_beleg"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Fundstellen: 16 gleiche Fundstellen sind gedeckt, 17 nicht",
+      "profil": {
+        "schema": "lva.assistent/1",
+        "id": "eigen-aaaaaaaaaaaa",
+        "name": "Prüfer",
+        "sprache": "de",
+        "auswertung": {
+          "zusammenfassung": false,
+          "aufgaben": false,
+          "felder": [
+            {
+              "name": "a",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "b",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            }
+          ]
+        }
+      },
+      "verlauf": [
+        {
+          "rolle": "nutzer",
+          "text": "Montag passt. Montag passt. Montag passt. Montag passt. Montag passt. Montag passt. Montag passt. Montag passt. Montag passt. Montag passt. Montag passt. Montag passt. Montag passt. Montag passt. Montag passt. Montag passt. "
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Montag passt. Montag passt. Montag passt. Montag passt. Montag passt. Montag passt. Montag passt. Montag passt. Montag passt. Montag passt. Montag passt. Montag passt. Montag passt. Montag passt. Montag passt. Montag passt. Montag passt. "
+        }
+      ],
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "roh": "{\"felder\": [{\"name\": \"a\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 1}, {\"name\": \"b\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 2}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [],\n  \"erstellt\": \"\",\n  \"felder\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"Montag\",\n      \"name\": \"a\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 2,\n      \"beleg\": \"Montag\",\n      \"name\": \"b\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    }\n  ],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
+        "hinweise": [
+          {
+            "pfad": "felder[1].wert",
+            "code": "wert_nicht_im_beleg"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Aufgaben: Beleg und frist_text „Montag“ in „Montagmorgen“ sind keine Fundstellen",
+      "profil": {
+        "schema": "lva.assistent/1",
+        "id": "eigen-aaaaaaaaaaaa",
+        "name": "Prüfer",
+        "sprache": "de",
+        "auswertung": {
+          "zusammenfassung": false,
+          "aufgaben": true,
+          "felder": []
+        }
+      },
+      "verlauf": [
+        {
+          "rolle": "nutzer",
+          "text": "Bitte das Protokoll schicken, Treffen ist Montagmorgen."
+        }
+      ],
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "roh": "{\"aufgaben\": [{\"text\": \"Protokoll\", \"frist_text\": \"Montag\", \"beleg\": \"Bitte das Protokoll schicken\", \"beitrag\": 1}, {\"text\": \"Treffen\", \"frist_text\": \"\", \"beleg\": \"Montag\", \"beitrag\": 1}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"Bitte das Protokoll schicken\",\n      \"frist\": null,\n      \"frist_beitrag\": null,\n      \"frist_text\": \"\",\n      \"text\": \"Protokoll\"\n    }\n  ],\n  \"erstellt\": \"\",\n  \"felder\": [],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
+        "hinweise": [
+          {
+            "pfad": "aufgaben[0].frist_text",
+            "code": "beleg_fehlt"
+          },
+          {
+            "pfad": "aufgaben[1].beleg",
+            "code": "beleg_fehlt"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Aufgaben: „bis Montag 10 Uhr“ und „Dienstag zwei Personen“ ergeben beide die Frist",
+      "profil": {
+        "schema": "lva.assistent/1",
+        "id": "eigen-aaaaaaaaaaaa",
+        "name": "Prüfer",
+        "sprache": "de",
+        "auswertung": {
+          "zusammenfassung": false,
+          "aufgaben": true,
+          "felder": []
+        }
+      },
+      "verlauf": [
+        {
+          "rolle": "nutzer",
+          "text": "Bitte bis Montag 10 Uhr senden."
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Dienstag zwei Personen kommen."
+        }
+      ],
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "roh": "{\"aufgaben\": [{\"text\": \"Senden\", \"frist_text\": \"bis Montag\", \"beleg\": \"Bitte bis Montag 10 Uhr senden\", \"beitrag\": 1}, {\"text\": \"Kommen\", \"frist_text\": \"Dienstag\", \"beleg\": \"Dienstag zwei Personen kommen\", \"beitrag\": 2}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"Bitte bis Montag 10 Uhr senden\",\n      \"frist\": \"2026-11-16\",\n      \"frist_beitrag\": 1,\n      \"frist_text\": \"bis Montag\",\n      \"text\": \"Senden\"\n    },\n    {\n      \"beitrag\": 2,\n      \"beleg\": \"Dienstag zwei Personen kommen\",\n      \"frist\": \"2026-11-17\",\n      \"frist_beitrag\": 2,\n      \"frist_text\": \"Dienstag\",\n      \"text\": \"Kommen\"\n    }\n  ],\n  \"erstellt\": \"\",\n  \"felder\": [],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
+        "hinweise": []
+      }
+    },
+    {
+      "name": "Auswahl: die Option „ja“ ist in „Jahr ja“ als ganzes Wort gedeckt, in „Jahr“ nicht",
+      "profil": {
+        "schema": "lva.assistent/1",
+        "id": "eigen-aaaaaaaaaaaa",
+        "name": "Prüfer",
+        "sprache": "de",
+        "auswertung": {
+          "zusammenfassung": false,
+          "aufgaben": false,
+          "felder": [
+            {
+              "name": "a",
+              "beschreibung": "",
+              "typ": "auswahl",
+              "optionen": [
+                "ja",
+                "nein"
+              ]
+            },
+            {
+              "name": "b",
+              "beschreibung": "",
+              "typ": "auswahl",
+              "optionen": [
+                "ja",
+                "nein"
+              ]
+            }
+          ]
+        }
+      },
+      "verlauf": [
+        {
+          "rolle": "nutzer",
+          "text": "Dieses Jahr ja, nächstes Jahr nein."
+        }
+      ],
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "roh": "{\"felder\": [{\"name\": \"a\", \"status\": \"klar\", \"wert\": \"ja\", \"beleg\": \"Jahr ja\", \"beitrag\": 1}, {\"name\": \"b\", \"status\": \"klar\", \"wert\": \"ja\", \"beleg\": \"nächstes Jahr\", \"beitrag\": 1}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [],\n  \"erstellt\": \"\",\n  \"felder\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"Jahr ja\",\n      \"name\": \"a\",\n      \"status\": \"klar\",\n      \"typ\": \"auswahl\",\n      \"wert\": \"ja\"\n    },\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"nächstes Jahr\",\n      \"name\": \"b\",\n      \"status\": \"unklar\",\n      \"typ\": \"auswahl\",\n      \"wert\": \"ja\"\n    }\n  ],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
+        "hinweise": [
+          {
+            "pfad": "felder[1].wert",
+            "code": "wert_nicht_im_beleg"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Kontext: ein 450 Zeichen langes Wort vor dem Beleg macht die Nachbarschaft unlesbar (nicht gedeckt)",
+      "profil": {
+        "schema": "lva.assistent/1",
+        "id": "eigen-aaaaaaaaaaaa",
+        "name": "Prüfer",
+        "sprache": "de",
+        "auswertung": {
+          "zusammenfassung": false,
+          "aufgaben": false,
+          "felder": [
+            {
+              "name": "a",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            }
+          ]
+        }
+      },
+      "verlauf": [
+        {
+          "rolle": "nutzer",
+          "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa Montag passt."
+        }
+      ],
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "roh": "{\"felder\": [{\"name\": \"a\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 1}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [],\n  \"erstellt\": \"\",\n  \"felder\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"Montag\",\n      \"name\": \"a\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    }\n  ],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
+        "hinweise": [
+          {
+            "pfad": "felder[0].wert",
+            "code": "wert_nicht_im_beleg"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Kontext: ein 450 Zeichen langes Wort nach dem Beleg macht die Nachbarschaft unlesbar (nicht gedeckt)",
+      "profil": {
+        "schema": "lva.assistent/1",
+        "id": "eigen-aaaaaaaaaaaa",
+        "name": "Prüfer",
+        "sprache": "de",
+        "auswertung": {
+          "zusammenfassung": false,
+          "aufgaben": false,
+          "felder": [
+            {
+              "name": "a",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            }
+          ]
+        }
+      },
+      "verlauf": [
+        {
+          "rolle": "nutzer",
+          "text": "Montag bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      ],
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "roh": "{\"felder\": [{\"name\": \"a\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 1}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [],\n  \"erstellt\": \"\",\n  \"felder\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"Montag\",\n      \"name\": \"a\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    }\n  ],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
+        "hinweise": [
+          {
+            "pfad": "felder[0].wert",
+            "code": "wert_nicht_im_beleg"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Kontext: ein 300 Zeichen langes Wort vor dem Beleg, der Beitrag beginnt dort: gedeckt",
+      "profil": {
+        "schema": "lva.assistent/1",
+        "id": "eigen-aaaaaaaaaaaa",
+        "name": "Prüfer",
+        "sprache": "de",
+        "auswertung": {
+          "zusammenfassung": false,
+          "aufgaben": false,
+          "felder": [
+            {
+              "name": "a",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            }
+          ]
+        }
+      },
+      "verlauf": [
+        {
+          "rolle": "nutzer",
+          "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa Montag passt."
+        }
+      ],
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "roh": "{\"felder\": [{\"name\": \"a\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 1}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [],\n  \"erstellt\": \"\",\n  \"felder\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"Montag\",\n      \"name\": \"a\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    }\n  ],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
+        "hinweise": []
+      }
+    },
+    {
+      "name": "Text: der Wert „Sonne“ ist Teilzeichenkette des Belegs „Sonnenhof“, der an Wortgrenzen im Beitrag steht",
+      "profil": {
+        "schema": "lva.assistent/1",
+        "id": "eigen-aaaaaaaaaaaa",
+        "name": "Prüfer",
+        "sprache": "de",
+        "auswertung": {
+          "zusammenfassung": false,
+          "aufgaben": false,
+          "felder": [
+            {
+              "name": "name",
+              "beschreibung": "",
+              "typ": "text",
+              "optionen": []
+            }
+          ]
+        }
+      },
+      "verlauf": [
+        {
+          "rolle": "nutzer",
+          "text": "Das Projekt Sonnenhof beginnt."
+        }
+      ],
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "roh": "{\"felder\": [{\"name\": \"name\", \"status\": \"klar\", \"wert\": \"Sonne\", \"beleg\": \"Sonnenhof\", \"beitrag\": 1}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [],\n  \"erstellt\": \"\",\n  \"felder\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"Sonnenhof\",\n      \"name\": \"name\",\n      \"status\": \"klar\",\n      \"typ\": \"text\",\n      \"wert\": \"Sonne\"\n    }\n  ],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
+        "hinweise": []
+      }
+    },
+    {
+      "name": "Zahlwort neben der Frist: „einen Bericht“, „eine Rechnung“, „one page“, „eine Agenda“ sicher, „zwei Wochen“ und „drei Tage“ unsicher",
+      "profil": {
+        "schema": "lva.assistent/1",
+        "id": "eigen-aaaaaaaaaaaa",
+        "name": "Prüfer",
+        "sprache": "de",
+        "auswertung": {
+          "zusammenfassung": false,
+          "aufgaben": false,
+          "felder": [
+            {
+              "name": "a",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "b",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "c",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "d",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "e",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "f",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            }
+          ]
+        }
+      },
+      "verlauf": [
+        {
+          "rolle": "nutzer",
+          "text": "Schick mir bis Freitag einen Bericht."
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Wir brauchen am Montag eine Rechnung."
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Send it by Friday one page."
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Dienstag eine Agenda bitte."
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Montag zwei Wochen später."
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Montag drei Tage danach."
+        }
+      ],
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "roh": "{\"felder\": [{\"name\": \"a\", \"status\": \"klar\", \"wert\": \"2026-11-20\", \"beleg\": \"Freitag\", \"beitrag\": 1}, {\"name\": \"b\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 2}, {\"name\": \"c\", \"status\": \"klar\", \"wert\": \"2026-11-20\", \"beleg\": \"Friday\", \"beitrag\": 3}, {\"name\": \"d\", \"status\": \"klar\", \"wert\": \"2026-11-17\", \"beleg\": \"Dienstag\", \"beitrag\": 4}, {\"name\": \"e\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 5}, {\"name\": \"f\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 6}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [],\n  \"erstellt\": \"\",\n  \"felder\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"Freitag\",\n      \"name\": \"a\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-20\"\n    },\n    {\n      \"beitrag\": 2,\n      \"beleg\": \"Montag\",\n      \"name\": \"b\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 3,\n      \"beleg\": \"Friday\",\n      \"name\": \"c\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-20\"\n    },\n    {\n      \"beitrag\": 4,\n      \"beleg\": \"Dienstag\",\n      \"name\": \"d\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-17\"\n    },\n    {\n      \"beitrag\": 5,\n      \"beleg\": \"Montag\",\n      \"name\": \"e\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 6,\n      \"beleg\": \"Montag\",\n      \"name\": \"f\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    }\n  ],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
+        "hinweise": [
+          {
+            "pfad": "felder[4].wert",
+            "code": "wert_nicht_im_beleg"
+          },
+          {
+            "pfad": "felder[5].wert",
+            "code": "wert_nicht_im_beleg"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Verbinder: „Montag oder Dienstag“, „nicht am Montag“, „nicht Montag, sondern Dienstag“, „Montag oder so“, „Montag und Dienstag“ (Brückenwort)",
+      "profil": {
+        "schema": "lva.assistent/1",
+        "id": "eigen-aaaaaaaaaaaa",
+        "name": "Prüfer",
+        "sprache": "de",
+        "auswertung": {
+          "zusammenfassung": false,
+          "aufgaben": false,
+          "felder": [
+            {
+              "name": "a",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "b",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "c",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "d",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "e",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "f",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "g",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            }
+          ]
+        }
+      },
+      "verlauf": [
+        {
+          "rolle": "nutzer",
+          "text": "Montag oder Dienstag passt."
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Das geht nicht am Montag."
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Nicht Montag, sondern Dienstag."
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Montag oder so."
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Montag und Dienstag passen."
+        }
+      ],
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "roh": "{\"felder\": [{\"name\": \"a\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 1}, {\"name\": \"b\", \"status\": \"klar\", \"wert\": \"2026-11-17\", \"beleg\": \"Dienstag\", \"beitrag\": 1}, {\"name\": \"c\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 2}, {\"name\": \"d\", \"status\": \"klar\", \"wert\": \"2026-11-17\", \"beleg\": \"Dienstag\", \"beitrag\": 3}, {\"name\": \"e\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 3}, {\"name\": \"f\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 4}, {\"name\": \"g\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 5}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [],\n  \"erstellt\": \"\",\n  \"felder\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"Montag\",\n      \"name\": \"a\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"Dienstag\",\n      \"name\": \"b\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-17\"\n    },\n    {\n      \"beitrag\": 2,\n      \"beleg\": \"Montag\",\n      \"name\": \"c\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 3,\n      \"beleg\": \"Dienstag\",\n      \"name\": \"d\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-17\"\n    },\n    {\n      \"beitrag\": 3,\n      \"beleg\": \"Montag\",\n      \"name\": \"e\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 4,\n      \"beleg\": \"Montag\",\n      \"name\": \"f\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 5,\n      \"beleg\": \"Montag\",\n      \"name\": \"g\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    }\n  ],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
+        "hinweise": [
+          {
+            "pfad": "felder[0].wert",
+            "code": "wert_nicht_im_beleg"
+          },
+          {
+            "pfad": "felder[1].wert",
+            "code": "wert_nicht_im_beleg"
+          },
+          {
+            "pfad": "felder[2].wert",
+            "code": "wert_nicht_im_beleg"
+          },
+          {
+            "pfad": "felder[4].wert",
+            "code": "wert_nicht_im_beleg"
+          },
+          {
+            "pfad": "felder[5].wert",
+            "code": "wert_nicht_im_beleg"
+          },
+          {
+            "pfad": "felder[6].wert",
+            "code": "wert_nicht_im_beleg"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Aufgaben: „bis Freitag einen Bericht“ ergibt die Frist, „Montag oder Dienstag“ und „Montag zwei Wochen später“ nicht",
+      "profil": {
+        "schema": "lva.assistent/1",
+        "id": "eigen-aaaaaaaaaaaa",
+        "name": "Prüfer",
+        "sprache": "de",
+        "auswertung": {
+          "zusammenfassung": false,
+          "aufgaben": true,
+          "felder": []
+        }
+      },
+      "verlauf": [
+        {
+          "rolle": "nutzer",
+          "text": "Schick mir bis Freitag einen Bericht."
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Montag oder Dienstag gibt es Kuchen."
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Montag zwei Wochen später prüfen wir es."
+        }
+      ],
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "roh": "{\"aufgaben\": [{\"text\": \"Bericht schicken\", \"frist_text\": \"bis Freitag\", \"beleg\": \"Schick mir bis Freitag einen Bericht\", \"beitrag\": 1}, {\"text\": \"Kuchen\", \"frist_text\": \"Montag\", \"beleg\": \"Montag oder Dienstag gibt es Kuchen\", \"beitrag\": 2}, {\"text\": \"Prüfen\", \"frist_text\": \"Montag\", \"beleg\": \"Montag zwei Wochen später prüfen wir es\", \"beitrag\": 3}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"Schick mir bis Freitag einen Bericht\",\n      \"frist\": \"2026-11-20\",\n      \"frist_beitrag\": 1,\n      \"frist_text\": \"bis Freitag\",\n      \"text\": \"Bericht schicken\"\n    },\n    {\n      \"beitrag\": 2,\n      \"beleg\": \"Montag oder Dienstag gibt es Kuchen\",\n      \"frist\": null,\n      \"frist_beitrag\": null,\n      \"frist_text\": \"Montag\",\n      \"text\": \"Kuchen\"\n    },\n    {\n      \"beitrag\": 3,\n      \"beleg\": \"Montag zwei Wochen später prüfen wir es\",\n      \"frist\": null,\n      \"frist_beitrag\": null,\n      \"frist_text\": \"Montag\",\n      \"text\": \"Prüfen\"\n    }\n  ],\n  \"erstellt\": \"\",\n  \"felder\": [],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
+        "hinweise": [
+          {
+            "pfad": "aufgaben[1].frist_text",
+            "code": "wert_nicht_im_beleg"
+          },
+          {
+            "pfad": "aufgaben[2].frist_text",
+            "code": "wert_nicht_im_beleg"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Brückenwörter: Bereiche und nachgestellte Datumsteile („Montag bis Freitag“, „Montag im Mai“, „Montag und Dienstag“) decken den Tag nicht",
+      "profil": {
+        "schema": "lva.assistent/1",
+        "id": "eigen-aaaaaaaaaaaa",
+        "name": "Prüfer",
+        "sprache": "de",
+        "auswertung": {
+          "zusammenfassung": false,
+          "aufgaben": false,
+          "felder": [
+            {
+              "name": "a",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "b",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "c",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "d",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "e",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "f",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "g",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "h",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            }
+          ]
+        }
+      },
+      "verlauf": [
+        {
+          "rolle": "nutzer",
+          "text": "Wir sind Montag bis Freitag da."
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Das passt am Montag im Mai."
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Montag den 14. Dezember"
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Montag und Dienstag"
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Monday through Friday"
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Monday to Friday"
+        },
+        {
+          "rolle": "nutzer",
+          "text": "bis Freitag in einer Woche"
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Von Montag bis Freitag"
+        }
+      ],
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "roh": "{\"felder\": [{\"name\": \"a\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 1}, {\"name\": \"b\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 2}, {\"name\": \"c\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 3}, {\"name\": \"d\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 4}, {\"name\": \"e\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Monday\", \"beitrag\": 5}, {\"name\": \"f\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Monday\", \"beitrag\": 6}, {\"name\": \"g\", \"status\": \"klar\", \"wert\": \"2026-11-20\", \"beleg\": \"bis Freitag\", \"beitrag\": 7}, {\"name\": \"h\", \"status\": \"klar\", \"wert\": \"2026-11-20\", \"beleg\": \"bis Freitag\", \"beitrag\": 8}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [],\n  \"erstellt\": \"\",\n  \"felder\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"Montag\",\n      \"name\": \"a\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 2,\n      \"beleg\": \"Montag\",\n      \"name\": \"b\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 3,\n      \"beleg\": \"Montag\",\n      \"name\": \"c\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 4,\n      \"beleg\": \"Montag\",\n      \"name\": \"d\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 5,\n      \"beleg\": \"Monday\",\n      \"name\": \"e\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 6,\n      \"beleg\": \"Monday\",\n      \"name\": \"f\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 7,\n      \"beleg\": \"bis Freitag\",\n      \"name\": \"g\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-20\"\n    },\n    {\n      \"beitrag\": 8,\n      \"beleg\": \"bis Freitag\",\n      \"name\": \"h\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-20\"\n    }\n  ],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
+        "hinweise": [
+          {
+            "pfad": "felder[0].wert",
+            "code": "wert_nicht_im_beleg"
+          },
+          {
+            "pfad": "felder[1].wert",
+            "code": "wert_nicht_im_beleg"
+          },
+          {
+            "pfad": "felder[2].wert",
+            "code": "wert_nicht_im_beleg"
+          },
+          {
+            "pfad": "felder[3].wert",
+            "code": "wert_nicht_im_beleg"
+          },
+          {
+            "pfad": "felder[4].wert",
+            "code": "wert_nicht_im_beleg"
+          },
+          {
+            "pfad": "felder[5].wert",
+            "code": "wert_nicht_im_beleg"
+          },
+          {
+            "pfad": "felder[6].wert",
+            "code": "wert_nicht_im_beleg"
+          },
+          {
+            "pfad": "felder[7].wert",
+            "code": "wert_nicht_im_beleg"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Brückenwörter: Uhrzeit, Zahlwort ohne Datumswort und Wörter ohne Datumsbezug hinter Brückenwörtern lassen den Tag klar",
+      "profil": {
+        "schema": "lva.assistent/1",
+        "id": "eigen-aaaaaaaaaaaa",
+        "name": "Prüfer",
+        "sprache": "de",
+        "auswertung": {
+          "zusammenfassung": false,
+          "aufgaben": false,
+          "felder": [
+            {
+              "name": "a",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "b",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "c",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "d",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "e",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "f",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "g",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "h",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "i",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "j",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "k",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "l",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "m",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "n",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            }
+          ]
+        }
+      },
+      "verlauf": [
+        {
+          "rolle": "nutzer",
+          "text": "Schick mir bis Freitag einen Bericht."
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Ich brauche am Montag eine Rechnung."
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Wir kommen Montag zwei Personen."
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Montag 10 Uhr passt"
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Montag um 10 Uhr"
+        },
+        {
+          "rolle": "nutzer",
+          "text": "am Montag am Abend bitte"
+        },
+        {
+          "rolle": "nutzer",
+          "text": "bis Freitag am besten einen Bericht"
+        },
+        {
+          "rolle": "nutzer",
+          "text": "bis Freitag in einer Mail"
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Ja, Montag passt mir gut."
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Send me on Monday a report"
+        },
+        {
+          "rolle": "nutzer",
+          "text": "by Friday one page"
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Montag gegen 9 Uhr"
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Monday at 10 am"
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Montag und zwei Personen"
+        }
+      ],
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "roh": "{\"felder\": [{\"name\": \"a\", \"status\": \"klar\", \"wert\": \"2026-11-20\", \"beleg\": \"bis Freitag\", \"beitrag\": 1}, {\"name\": \"b\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 2}, {\"name\": \"c\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 3}, {\"name\": \"d\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 4}, {\"name\": \"e\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 5}, {\"name\": \"f\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"am Montag\", \"beitrag\": 6}, {\"name\": \"g\", \"status\": \"klar\", \"wert\": \"2026-11-20\", \"beleg\": \"bis Freitag\", \"beitrag\": 7}, {\"name\": \"h\", \"status\": \"klar\", \"wert\": \"2026-11-20\", \"beleg\": \"bis Freitag\", \"beitrag\": 8}, {\"name\": \"i\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 9}, {\"name\": \"j\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Monday\", \"beitrag\": 10}, {\"name\": \"k\", \"status\": \"klar\", \"wert\": \"2026-11-20\", \"beleg\": \"by Friday\", \"beitrag\": 11}, {\"name\": \"l\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 12}, {\"name\": \"m\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Monday\", \"beitrag\": 13}, {\"name\": \"n\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 14}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [],\n  \"erstellt\": \"\",\n  \"felder\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"bis Freitag\",\n      \"name\": \"a\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-20\"\n    },\n    {\n      \"beitrag\": 2,\n      \"beleg\": \"Montag\",\n      \"name\": \"b\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 3,\n      \"beleg\": \"Montag\",\n      \"name\": \"c\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 4,\n      \"beleg\": \"Montag\",\n      \"name\": \"d\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 5,\n      \"beleg\": \"Montag\",\n      \"name\": \"e\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 6,\n      \"beleg\": \"am Montag\",\n      \"name\": \"f\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 7,\n      \"beleg\": \"bis Freitag\",\n      \"name\": \"g\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-20\"\n    },\n    {\n      \"beitrag\": 8,\n      \"beleg\": \"bis Freitag\",\n      \"name\": \"h\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-20\"\n    },\n    {\n      \"beitrag\": 9,\n      \"beleg\": \"Montag\",\n      \"name\": \"i\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 10,\n      \"beleg\": \"Monday\",\n      \"name\": \"j\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 11,\n      \"beleg\": \"by Friday\",\n      \"name\": \"k\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-20\"\n    },\n    {\n      \"beitrag\": 12,\n      \"beleg\": \"Montag\",\n      \"name\": \"l\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 13,\n      \"beleg\": \"Monday\",\n      \"name\": \"m\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 14,\n      \"beleg\": \"Montag\",\n      \"name\": \"n\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    }\n  ],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
+        "hinweise": []
+      }
     }
   ],
   "frist": [
@@ -7210,10 +8649,7 @@
         "tag": 13
       },
       "erwartet": {
-        "tage": [
-          "2026-11-14",
-          "2026-11-15"
-        ],
+        "tage": [],
         "deckung": null
       }
     },
@@ -7295,10 +8731,7 @@
         "tag": 13
       },
       "erwartet": {
-        "tage": [
-          "2026-11-16",
-          "2026-11-27"
-        ],
+        "tage": [],
         "deckung": null
       }
     },
@@ -7370,10 +8803,7 @@
         "tag": 13
       },
       "erwartet": {
-        "tage": [
-          "2026-12-04",
-          "2026-11-16"
-        ],
+        "tage": [],
         "deckung": null
       }
     },
@@ -7399,10 +8829,8 @@
         "tag": 13
       },
       "erwartet": {
-        "tage": [
-          "2026-11-14"
-        ],
-        "deckung": "2026-11-14"
+        "tage": [],
+        "deckung": null
       }
     },
     {
@@ -7413,10 +8841,7 @@
         "tag": 13
       },
       "erwartet": {
-        "tage": [
-          "2026-11-13",
-          "2026-11-14"
-        ],
+        "tage": [],
         "deckung": null
       }
     },
@@ -7442,9 +8867,7 @@
         "tag": 13
       },
       "erwartet": {
-        "tage": [
-          "2026-11-14"
-        ],
+        "tage": [],
         "deckung": null
       }
     },
@@ -7482,6 +8905,659 @@
       "erwartet": {
         "tage": [],
         "deckung": null
+      }
+    },
+    {
+      "text": "Montag 10 Uhr",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-16"
+        ],
+        "deckung": "2026-11-16"
+      }
+    },
+    {
+      "text": "Montag zehn Uhr",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-16"
+        ],
+        "deckung": "2026-11-16"
+      }
+    },
+    {
+      "text": "am 14.11. um 10 Uhr",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-14"
+        ],
+        "deckung": "2026-11-14"
+      }
+    },
+    {
+      "text": "Montag 10:30",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-16"
+        ],
+        "deckung": "2026-11-16"
+      }
+    },
+    {
+      "text": "Montag zwei Personen",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-16"
+        ],
+        "deckung": "2026-11-16"
+      }
+    },
+    {
+      "text": "Bis Montag eine Agenda",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-16"
+        ],
+        "deckung": "2026-11-16"
+      }
+    },
+    {
+      "text": "29 Februar 2027",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "14 November 27",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "Montag passt nicht, lieber übernächsten Montag",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-16",
+          "2026-11-23"
+        ],
+        "deckung": null
+      }
+    },
+    {
+      "text": "Montag, 14.11.",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort 14 November 27",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort 14 November 2027",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2027-11-14"
+        ],
+        "deckung": "2027-11-14"
+      }
+    },
+    {
+      "text": "Schick mir bis Freitag einen Bericht",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-20"
+        ],
+        "deckung": "2026-11-20"
+      }
+    },
+    {
+      "text": "Wir brauchen am Montag eine Rechnung",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-16"
+        ],
+        "deckung": "2026-11-16"
+      }
+    },
+    {
+      "text": "by Friday one page",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-20"
+        ],
+        "deckung": "2026-11-20"
+      }
+    },
+    {
+      "text": "Dienstag eine Agenda",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-17"
+        ],
+        "deckung": "2026-11-17"
+      }
+    },
+    {
+      "text": "Freitag einen Bericht",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-20"
+        ],
+        "deckung": "2026-11-20"
+      }
+    },
+    {
+      "text": "Freitag in einem Meeting",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-20"
+        ],
+        "deckung": "2026-11-20"
+      }
+    },
+    {
+      "text": "Montag zwei Wochen später",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "Montag drei Tage danach",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "Montag zwei 14.11.",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "am 14.11. 3 Personen",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "morgen, spätestens Montag",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "Montag oder Dienstag",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "nicht am Montag",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "nicht Montag, sondern Dienstag",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-17"
+        ],
+        "deckung": null
+      }
+    },
+    {
+      "text": "Montag oder so",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "Montag und Dienstag",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "Wir treffen uns entweder Montag",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "weder Montag noch Dienstag",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "Monday or Tuesday",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "not by Friday",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "Wir sind Montag bis Freitag da.",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "Das passt am Montag im Mai.",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "Montag den 14. Dezember",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "Monday through Friday",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "Monday to Friday",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "bis Freitag in einer Woche",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "von Montag bis Freitag",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "Ich brauche am Montag eine Rechnung.",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-16"
+        ],
+        "deckung": "2026-11-16"
+      }
+    },
+    {
+      "text": "Wir kommen Montag zwei Personen.",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-16"
+        ],
+        "deckung": "2026-11-16"
+      }
+    },
+    {
+      "text": "Montag um 10 Uhr",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-16"
+        ],
+        "deckung": "2026-11-16"
+      }
+    },
+    {
+      "text": "Montag gegen 9 Uhr",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-16"
+        ],
+        "deckung": "2026-11-16"
+      }
+    },
+    {
+      "text": "Monday at 10 am",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-16"
+        ],
+        "deckung": "2026-11-16"
+      }
+    },
+    {
+      "text": "am Montag am Abend bitte",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-16"
+        ],
+        "deckung": "2026-11-16"
+      }
+    },
+    {
+      "text": "bis Freitag am besten einen Bericht",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-20"
+        ],
+        "deckung": "2026-11-20"
+      }
+    },
+    {
+      "text": "bis Freitag in einer Mail",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-20"
+        ],
+        "deckung": "2026-11-20"
+      }
+    },
+    {
+      "text": "Montag und zwei Personen",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-16"
+        ],
+        "deckung": "2026-11-16"
+      }
+    },
+    {
+      "text": "Ja, Montag passt mir gut.",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-16"
+        ],
+        "deckung": "2026-11-16"
+      }
+    },
+    {
+      "text": "Send me on Monday a report",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-16"
+        ],
+        "deckung": "2026-11-16"
       }
     }
   ]

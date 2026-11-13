@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://local-voice.invalid/schemas/lva.auswertung/1.json",
   "title": "Auswertung am Gesprächsende",
-  "description": "Dokumentation des Ergebnisses lva.auswertung/1. Die beiden Kerne (Swift und TypeScript) prüfen von Hand und liefern Fehler mit Pfad und Code; dieses Schema beschreibt dasselbe und wird nicht zur Laufzeit ausgewertet. Der Leser der Kerne ist strenger als dieses Schema: Er prüft zusätzlich gültige Kalendertage (frist, datum, erstellt), eindeutige Feldnamen, kanonische Zahlen bis 500 Zeichen und dass Beitragsnummern nicht über das Gespräch hinausgehen (das Schema kennt das Gespräch nicht). Längen zählen in Unicode-Codepunkten, nicht in UTF-16-Einheiten. Unbekannte Schlüssel werden beim Lesen verworfen.",
+  "description": "Dokumentation des Ergebnisses lva.auswertung/1. Die beiden Kerne (Swift und TypeScript) prüfen von Hand und liefern Fehler mit Pfad und Code; dieses Schema beschreibt dasselbe und wird nicht zur Laufzeit ausgewertet. Der Leser der Kerne ist strenger als dieses Schema: Er prüft zusätzlich gültige Kalendertage (frist, datum, erstellt), eindeutige Feldnamen, kanonische Zahlen bis 500 Zeichen und Beitragsnummern von 1 bis 999999999. Dass eine Beitragsnummer im Gespräch liegt, prüft der Leser nicht: Er kennt das Gespräch nicht, das ist die Prüfung des Aufrufers, der Ergebnis und Gespräch hat. Die Auswertung selbst (auswerten) liefert nur Nummern innerhalb des Gesprächs. maxLength zählt wie in den Kernen Unicode-Codepunkte, nicht UTF-16-Einheiten. Unbekannte Schlüssel werden beim Lesen verworfen.",
   "type": "object",
   "required": [
     "schema",

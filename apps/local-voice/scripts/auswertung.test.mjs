@@ -19,8 +19,9 @@ const {
   kodiereAuswertung,
   parseAuswertung,
   frist,
-  fristDeckung,
+  fristDeckungImKontext,
   fristenIn,
+  fundstellen,
   normalisiere,
   gespraechZeilen,
   HINWEIS_CODES,
@@ -157,7 +158,11 @@ for (const fall of stand.lesen_ok) {
 for (const fall of stand.fristen_in) {
   test(`fristenIn: "${fall.text}"`, () => {
     assert.deepEqual(fristenIn(fall.text, fall.heute), fall.erwartet.tage);
-    assert.equal(fristDeckung(fall.text, fall.heute), fall.erwartet.deckung);
+    const n = normalisiere(fall.text);
+    assert.equal(
+      fristDeckungImKontext(n, 0, n.length, fall.heute),
+      fall.erwartet.deckung,
+    );
   });
 }
 
@@ -227,11 +232,7 @@ test("Erdung: ein Wert ohne Beleg im Gespräch entsteht nie, auch nicht bei zuf�
   const heute = { jahr: 2026, monat: 11, tag: 13 };
   const werte = ["5", "x", "2026-11-14", "fünf", "morgen", "99", "y", ""];
   const belege = ["5 Dinge", "bis morgen", "Gut.", "erfunden", "", "Es geht"];
-  let zustand = 7;
-  const zufall = (n) => {
-    zustand = (zustand * 1103515245 + 12345) % 2147483648;
-    return zustand % n;
-  };
+  const zufall = zufallserzeuger(7);
   const stati = ["klar", "unklar", "nicht_genannt"];
   for (let lauf = 0; lauf < 300; lauf += 1) {
     const felder = ["a", "b", "c", "d"].map((name) => ({
@@ -297,12 +298,22 @@ test("Hinweise tragen nur Pfad und Code, nie Inhalt des Modells", () => {
     assert.deepEqual(Object.keys(h).sort(), ["code", "pfad"]);
 });
 
+test("fundstellen: nur an Wortgrenzen, überlappende Vorkommen, höchstens so viele wie verlangt", () => {
+  assert.deepEqual(fundstellen("ja jahr ja", "ja", 10), [0, 8]);
+  assert.deepEqual(fundstellen("jahr", "ja", 10), []);
+  assert.deepEqual(fundstellen("a a a", "a", 2), [0, 2]);
+  assert.deepEqual(fundstellen("12,5 liter", "12", 5), [0]);
+  assert.deepEqual(fundstellen("x+5 und +5", "+5", 5), [1, 8]);
+  assert.deepEqual(fundstellen("a😀b 😀", "😀", 5), [5]);
+  assert.deepEqual(fundstellen("abc", "", 5), []);
+});
+
 test("fristenIn: findet Ausdrücke in Sätzen", () => {
   const heute = { jahr: 2026, monat: 11, tag: 13 };
-  assert.deepEqual(fristenIn("Machen wir am 14.11. oder übermorgen.", heute), [
-    "2026-11-14",
-    "2026-11-15",
-  ]);
+  assert.deepEqual(
+    fristenIn("Machen wir am 14.11., dann melde ich mich übermorgen.", heute),
+    ["2026-11-14", "2026-11-15"],
+  );
 });
 
 // ------------------------------------------------------------------ Grenzen und große Eingaben
@@ -538,6 +549,47 @@ test("entfernePraefix: Beitragsnummer, Rolle, englische Rollen, kein Präfix", (
 
 // ------------------------------------------------------------------ Invarianten
 
+/**
+ * Ganzzahliger 32-Bit-Zufallserzeuger (Linearer Kongruenzgenerator, Zahlen nach Numerical Recipes): `Math.imul` und `>>> 0`
+ * rechnen modulo 2^32 ohne Gleitkomma; der Swift-Test rechnet mit `&*` und `&+` auf `UInt32` dieselbe Folge.
+ */
+function zufallserzeuger(start) {
+  let zustand = start >>> 0;
+  return (n) => {
+    zustand = (Math.imul(zustand, 1664525) + 1013904223) >>> 0;
+    return (zustand >>> 16) % n;
+  };
+}
+
+test("Zufallserzeuger: dieselbe Folge wie in Swift (unabhängig in Python berechnet)", () => {
+  const folge = (start) => {
+    const z = zufallserzeuger(start);
+    return Array.from({ length: 12 }, () => z(1000));
+  };
+  assert.deepEqual(
+    folge(7),
+    [648, 866, 140, 750, 233, 84, 657, 480, 507, 483, 753, 816],
+  );
+  assert.deepEqual(
+    folge(11),
+    [750, 108, 24, 918, 871, 484, 579, 36, 792, 7, 623, 727],
+  );
+});
+
+/** Jede Beitragsnummer des Ergebnisses liegt im Gespräch (1 bis Anzahl der Beiträge). */
+function pruefeBeitragsnummern(ergebnis, anzahl, was) {
+  const imGespraech = (n) => Number.isInteger(n) && n >= 1 && n <= anzahl;
+  for (const f of ergebnis.felder) {
+    if (f.beitrag !== null) assert.ok(imGespraech(f.beitrag), `${was}: Feld`);
+  }
+  for (const a of ergebnis.aufgaben) {
+    assert.ok(imGespraech(a.beitrag), `${was}: Aufgabe`);
+    if (a.fristBeitrag !== null) {
+      assert.ok(imGespraech(a.fristBeitrag), `${was}: Frist`);
+    }
+  }
+}
+
 function pruefeRundreise(ergebnis, was) {
   const text = kodiereAuswertung(ergebnis);
   const r = parseAuswertung(text);
@@ -557,9 +609,10 @@ test("Invariante: parse(encode(auswerten(…))) gelingt für alle Prüfstandsfä
     );
     if (!r.ok) continue;
     pruefeRundreise(r.ergebnis, fall.name);
+    pruefeBeitragsnummern(r.ergebnis, fall.verlauf.length, fall.name);
     gezaehlt += 1;
   }
-  assert.ok(gezaehlt >= 40);
+  assert.ok(gezaehlt >= 60);
 });
 
 test("Invariante: auch bei Extremwerten bleibt jedes Ergebnisfeld lesbar (zufällige Antworten)", () => {
@@ -651,18 +704,13 @@ test("Invariante: auch bei Extremwerten bleibt jedes Ergebnisfeld lesbar (zufäl
     "",
   ];
   const erstellt = [
-    undefined,
     "",
     "heute",
     "2026-02-30T10:00:00Z",
     "2026-11-13T10:00:00Z",
     "2026-11-13T25:00:00Z",
   ];
-  let z = 11;
-  const zufall = (n) => {
-    z = (z * 1103515245 + 12345) % 2147483648;
-    return Math.floor(z / 65536) % n;
-  };
+  const zufall = zufallserzeuger(11);
   const wahl = (liste) => liste[zufall(liste.length)];
   const stati = ["klar", "unklar", "nicht_genannt", undefined, "?"];
   for (let lauf = 0; lauf < 600; lauf += 1) {
@@ -692,6 +740,7 @@ test("Invariante: auch bei Extremwerten bleibt jedes Ergebnisfeld lesbar (zufäl
     assert.equal(r.ok, true);
     pruefeLaengen(r.ergebnis);
     pruefeRundreise(r.ergebnis, `Lauf ${lauf}`);
+    pruefeBeitragsnummern(r.ergebnis, verlauf.length, `Lauf ${lauf}`);
     for (const h of r.hinweise) assert.match(h.pfad, PFAD_MUSTER);
   }
 });

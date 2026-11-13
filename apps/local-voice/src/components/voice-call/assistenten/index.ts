@@ -78,17 +78,24 @@ export type {
   Rolle,
 } from "./auswertung";
 export {
+  KONTEXT_CODEPUNKTE,
+  KONTEXT_WOERTER,
+  MAX_BRUECKEN,
   MAX_FRIST_FENSTER,
   MAX_FRIST_WOERTER,
+  MAX_FUNDSTELLEN,
   ausCodepunkten,
   enthaeltWortfolge,
   formatiereDatum,
   frist,
-  fristDeckung,
+  fristDeckungImKontext,
   fristenIn,
+  fristGedeckt,
+  fundstellen,
   istKanonischeZahl,
   maximaleFristen,
   normalisiere,
   wochentag,
+  zahlGedeckt,
 } from "./auswertungFrist";
 export type { Datum, FristTreffer } from "./auswertungFrist";

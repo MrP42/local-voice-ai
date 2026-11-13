@@ -8,6 +8,11 @@ import Foundation
 public struct AssistantOutcomePrompt: Equatable, Sendable {
     public let text: String
     public let truncated: Bool
+
+    /// Byteweise (UTF-8), nicht kanonisch äquivalent wie das synthetisierte `String ==`.
+    public static func == (a: AssistantOutcomePrompt, b: AssistantOutcomePrompt) -> Bool {
+        a.truncated == b.truncated && AssistantExact.equal(a.text, b.text)
+    }
 }
 
 extension AssistantOutcome {

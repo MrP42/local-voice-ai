@@ -499,18 +499,26 @@ export function frist(ausdruck: string, heute: Datum): string | null {
   return datumMitMonatsname(tokens, heute);
 }
 
-/** Fristsuche untersucht höchstens die ersten so vielen Wörter eines Textes. */
+/** `fristenIn` untersucht Ausdrücke, die in den ersten so vielen Wörtern eines Textes beginnen. */
 export const MAX_FRIST_WOERTER = 1024;
 
 /** Größtes Fenster (in Wörtern), das die Fristauflösung betrachtet. */
 export const MAX_FRIST_FENSTER = 6;
 
+/** Höchstens so viele Fundstellen eines Belegs in einem Beitrag werden für die Deckung geprüft; mehr: nicht gedeckt. */
+export const MAX_FUNDSTELLEN = 16;
+
+/** Nachbarschaft einer Fundstelle: so viele Wörter davor und danach gehören zum Kontext. */
+export const KONTEXT_WOERTER = 8;
+
+/** Dafür werden je Seite höchstens so viele Codepunkte gelesen; reicht das nicht und der Beitrag geht weiter: nicht gedeckt. */
+export const KONTEXT_CODEPUNKTE = 400;
+
 /**
- * Wörter, die einen Tag verschieben oder näher bestimmen, ohne dass die feste Liste der Fristauflösung sie mit dem Tag zusammen
- * auflöst: `nächsten`/`kommenden`/`next` und `übernächsten` in allen Formen, Einheiten (`Tag`, `Woche`, `Monat`, `Jahr` und
- * englisch). Dazu zählt `in`, wenn eine Zahl oder ein Zahlwort folgt.
+ * Wörter, die einen Tag verschieben oder näher bestimmen: `nächsten`/`kommenden`/`next` und `übernächsten` in allen Formen, die
+ * Einheiten `Tag`, `Woche`, `Monat`, `Jahr` (deutsch und englisch, alle Formen der Liste).
  */
-const MODIFIKATOREN = new Set([
+const MODIFIKATOREN = [
   ...NAECHSTE,
   ...UEBERNAECHSTE,
   "nächste",
@@ -543,9 +551,201 @@ const MODIFIKATOREN = new Set([
   "jahres",
   "year",
   "years",
+];
+
+/**
+ * Der feste Wortschatz der Fristauflösung (Datumsbestandteile) ohne Zahlwörter: Wochentage, Monate, Tagesworte, Modifikatoren und
+ * Einheiten. Führende Vorsätze (`am`, `bis`, …) gehören nicht dazu. Zahlwörter (null bis zwölf, `ein`-Formen, `one`) zählen nur
+ * unter der Bedingung von `istDatumsbestandteil`.
+ */
+const DATUMSWOERTER = new Set<string>([
+  ...Object.keys(WOCHENTAGE),
+  ...Object.keys(MONATE),
+  ...MODIFIKATOREN,
+  "heute",
+  "today",
+  "morgen",
+  "tomorrow",
+  "übermorgen",
+  "uebermorgen",
+  "ende",
+  "end",
+  "dieser",
+  "dieses",
+  "this",
 ]);
 
-/** Ein maximaler Fristausdruck: Wörter `von` bis `von + laenge`, der Tag und ob ihn ein nicht aufgelöstes Modifikatorwort begleitet. */
+/**
+ * Verbinder und Verneiner: Steht einer direkt hinter einem Fristausdruck (oder direkt davor, führende Vorsätze übersprungen), ist
+ * der Tag womöglich nicht gemeint (`Montag oder Dienstag`, `nicht am Montag`).
+ */
+const VERBINDER = new Set<string>([
+  "oder",
+  "bzw",
+  "beziehungsweise",
+  "entweder",
+  "weder",
+  "noch",
+  "nicht",
+  "kein",
+  "keine",
+  "keinen",
+  "keinem",
+  "keiner",
+  "statt",
+  "anstatt",
+  "außer",
+  "ausser",
+  "or",
+  "either",
+  "neither",
+  "nor",
+  "not",
+  "no",
+  "instead",
+  "except",
+]);
+
+/** Wörter hinter einer Zahl, die sie zur Uhrzeit machen (`10 Uhr`, `10 am`); `o'clock` steht normalisiert als `oclock` da. */
+const UHRZEIT_NACH = new Set(["uhr", "h", "oclock", "am", "pm"]);
+
+/** Ein Wort ohne die Satzzeichen an seinen Rändern (dieselbe Menge wie bei der Normalisierung). */
+function ohneRand(t: string): string {
+  let von = 0;
+  let bis = t.length;
+  while (von < bis && RAND.has(t.charCodeAt(von))) von += 1;
+  while (bis > von && RAND.has(t.charCodeAt(bis - 1))) bis -= 1;
+  return t.slice(von, bis);
+}
+
+/** Reines Zifferntoken: Ziffernfolgen, durch je ein `.`, `,`, `-` oder `/` verbunden (`14`, `14.11.`, `1.250,50`, `2026-11-14`). */
+function istZifferntoken(t: string): boolean {
+  return /^[0-9]+(?:[.,/-][0-9]+)*$/.test(t);
+}
+
+/**
+ * Ist das Wort `i` ein Datumsbestandteil des Ausdrucks, an dessen Rand es steht (`danach`: rechts davon, sonst links davon)?
+ * - Wörter des festen Wortschatzes (Wochentag, Monat, Modifikator, Einheit, Tagesworte): immer.
+ * - Reine Zifferntoken (`14`, `14.11.`): immer.
+ * - Zahlwörter (`zwei`, `eine`, `one`): nur, wenn das nächste Wort in derselben Richtung (vom Ausdruck aus das übernächste) zum
+ *   Wortschatz gehört oder ein Zifferntoken ist (`Montag zwei Wochen`); `Montag zwei Personen`, `Freitag einen Bericht` bleiben sicher.
+ * - `in` vor einer Ziffernfolge oder vor einem Zahlwort, das selbst zählt (`in zwei Wochen`).
+ * Ausnahme Uhrzeit: Ein Zahlwort oder Zifferntoken **hinter** dem Ausdruck zählt nicht, wenn `uhr`, `h`, `oclock`, `am` oder `pm`
+ * folgt (`Montag 10 Uhr`); `hh:mm` ist kein Zifferntoken.
+ */
+function istDatumsbestandteil(
+  tokens: readonly string[],
+  i: number,
+  danach: boolean,
+): boolean {
+  const t = ohneRand(tokens[i]);
+  if (t === "") return false;
+  const richtung = danach ? 1 : -1;
+  const wort = (k: number): string | null =>
+    k >= 0 && k < tokens.length ? ohneRand(tokens[k]) : null;
+  const zaehltAlsZahl = (k: number, rich: number): boolean => {
+    const w = wort(k);
+    if (w === null || w === "") return false;
+    if (istZifferntoken(w)) return true;
+    if (zahlwort(w) === null) return false;
+    const n = wort(k + rich);
+    return n !== null && (DATUMSWOERTER.has(n) || istZifferntoken(n));
+  };
+  const zahl = zahlwort(t) !== null || istZifferntoken(t);
+  if (zahl && danach && UHRZEIT_NACH.has(wort(i + 1) ?? "")) return false;
+  if (istZifferntoken(t) || DATUMSWOERTER.has(t)) return true;
+  if (zahlwort(t) !== null) return zaehltAlsZahl(i, richtung);
+  if (t !== "in") return false;
+  const n = wort(i + 1);
+  return n !== null && (nurZiffern(n) || zaehltAlsZahl(i + 1, 1));
+}
+
+/**
+ * Steht direkt hinter dem Ausdruck (Wörter `von` bis `bis` einschließlich) oder direkt davor (führende Vorsätze übersprungen) ein
+ * Verbinder oder Verneiner?
+ */
+function hatVerbinder(
+  tokens: readonly string[],
+  von: number,
+  bis: number,
+): boolean {
+  if (bis + 1 < tokens.length && VERBINDER.has(ohneRand(tokens[bis + 1]))) {
+    return true;
+  }
+  let davor = von - 1;
+  while (davor >= 0 && VORSAETZE.has(ohneRand(tokens[davor]))) davor -= 1;
+  return davor >= 0 && VERBINDER.has(ohneRand(tokens[davor]));
+}
+
+/**
+ * Brückenwörter: Wörter zwischen einem Fristausdruck und einem weiteren Datumsbestandteil (`Montag bis Freitag`, `am Montag im Mai`,
+ * `Montag den 14. Dezember`, `Montag und Dienstag`). Eine eigene Menge; sie schließt die führenden Vorsätze ein.
+ */
+const BRUECKEN = new Set<string>([
+  "am",
+  "an",
+  "bis",
+  "zum",
+  "zur",
+  "spätestens",
+  "spaetestens",
+  "im",
+  "in",
+  "den",
+  "dem",
+  "der",
+  "des",
+  "vom",
+  "von",
+  "ab",
+  "um",
+  "gegen",
+  "und",
+  "sowie",
+  "by",
+  "until",
+  "till",
+  "on",
+  "to",
+  "through",
+  "thru",
+  "and",
+  "of",
+  "the",
+  "at",
+  "from",
+]);
+
+/** Höchstens so viele Brückenwörter werden zwischen Ausdruck und Datumsbestandteil übersprungen. */
+export const MAX_BRUECKEN = 2;
+
+/**
+ * Steht hinter (`danach`) oder vor dem Ausdruck, nach 1 bis `MAX_BRUECKEN` übersprungenen Brückenwörtern, ein Datumsbestandteil?
+ * `i` ist das erste Wort neben dem Ausdruck in dieser Richtung. Das direkte Nachbarwort (kein Brückenwort übersprungen) prüft
+ * `istDatumsbestandteil` selbst. Die Uhrzeit-Ausnahme gilt auch hinter Brückenwörtern (`Montag um 10 Uhr`).
+ */
+function bruecke(
+  tokens: readonly string[],
+  i: number,
+  danach: boolean,
+): boolean {
+  const schritt = danach ? 1 : -1;
+  let k = i;
+  let uebersprungen = 0;
+  while (
+    uebersprungen < MAX_BRUECKEN &&
+    k >= 0 &&
+    k < tokens.length &&
+    BRUECKEN.has(ohneRand(tokens[k]))
+  ) {
+    k += schritt;
+    uebersprungen += 1;
+  }
+  if (uebersprungen === 0 || k < 0 || k >= tokens.length) return false;
+  return istDatumsbestandteil(tokens, k, danach);
+}
+
+/** Ein inklusionsmaximaler Fristausdruck: Wörter `von` bis `von + laenge`, der Tag und ob ihn ein Datumsbestandteil begleitet. */
 export type FristTreffer = {
   von: number;
   laenge: number;
@@ -553,90 +753,86 @@ export type FristTreffer = {
   unsicher: boolean;
 };
 
-function istModifikator(tokens: readonly string[], i: number): boolean {
-  const t = tokens[i];
-  if (MODIFIKATOREN.has(t)) return true;
-  if (t !== "in" || i + 1 >= tokens.length) return false;
-  const n = tokens[i + 1];
-  return nurZiffern(n) || zahlwort(n) !== null;
-}
-
 /**
- * Die maximalen Fristausdrücke der Wörter eines normalisierten Textes: von links nach rechts, an jeder Wortposition das längste
- * Fenster (bis `MAX_FRIST_FENSTER` Wörter), das die Fristauflösung auflöst; die Wörter des Treffers sind verbraucht, Treffer
- * überlappen nie. `unsicher` ist ein Treffer, wenn unmittelbar davor oder danach ein Modifikatorwort steht, das zu keinem Treffer
- * gehört (`Montag übernächste Woche`: der Tag allein wäre falsch).
+ * Die inklusionsmaximalen Fristausdrücke unter den Wörtern `tokens`, die die Wörter `p` bis `q` (einschließlich) schneiden:
+ * Unter allen Fenstern von höchstens `MAX_FRIST_FENSTER` Wörtern, die die Fristauflösung auflöst, bleiben die übrig, die kein
+ * längeres auflösendes Fenster enthält (egal, ob es `p..q` verlässt). Reihenfolge: nach Anfang, bei gleichem Anfang kürzere zuerst.
+ * `unsicher` ist ein Treffer, wenn das Wort direkt davor oder direkt danach ein Datumsbestandteil ist (siehe `istDatumsbestandteil`)
+ * oder direkt daneben ein Verbinder oder Verneiner steht (siehe `hatVerbinder`) oder nach höchstens
+ * `MAX_BRUECKEN` Brückenwörtern ein Datumsbestandteil folgt (siehe `bruecke`).
+ * Die Treffer können überlappen und auf verschiedene Tage auflösen; die Zerlegung hängt nicht von der Suchrichtung ab.
  */
 export function maximaleFristen(
-  woerter: readonly string[],
+  tokens: readonly string[],
+  p: number,
+  q: number,
   heute: Datum,
 ): FristTreffer[] {
-  const tokens = woerter.slice(0, MAX_FRIST_WOERTER);
-  const treffer: FristTreffer[] = [];
-  const belegt = new Array<boolean>(tokens.length).fill(false);
-  let i = 0;
-  while (i < tokens.length) {
-    let laenge = 0;
-    let tag: string | null = null;
-    for (
-      let n = Math.min(MAX_FRIST_FENSTER, tokens.length - i);
-      n >= 1;
-      n -= 1
-    ) {
-      tag = frist(tokens.slice(i, i + n).join(" "), heute);
-      if (tag !== null) {
-        laenge = n;
-        break;
+  const schluessel = (i: number, n: number) => i * (MAX_FRIST_FENSTER + 1) + n;
+  const aufgeloest = new Map<number, string>();
+  const reihe: { von: number; laenge: number; tag: string }[] = [];
+  const von0 = Math.max(0, p - (MAX_FRIST_FENSTER - 1));
+  for (let i = von0; i <= q && i < tokens.length; i += 1) {
+    const hoechstens = Math.min(MAX_FRIST_FENSTER, tokens.length - i);
+    for (let n = 1; n <= hoechstens; n += 1) {
+      if (i + n - 1 < p) continue;
+      const tag = frist(tokens.slice(i, i + n).join(" "), heute);
+      if (tag === null) continue;
+      aufgeloest.set(schluessel(i, n), tag);
+      reihe.push({ von: i, laenge: n, tag });
+    }
+  }
+  const enthalten = (i: number, n: number): boolean => {
+    for (let m = n + 1; m <= MAX_FRIST_FENSTER; m += 1) {
+      for (let j = Math.max(0, i + n - m); j <= i; j += 1) {
+        if (aufgeloest.has(schluessel(j, m))) return true;
       }
     }
-    if (tag === null) {
-      i += 1;
-      continue;
-    }
-    treffer.push({ von: i, laenge, tag, unsicher: false });
-    for (let j = i; j < i + laenge; j += 1) belegt[j] = true;
-    i += laenge;
-  }
-  for (const t of treffer) {
+    return false;
+  };
+  const aus: FristTreffer[] = [];
+  for (const t of reihe) {
+    if (enthalten(t.von, t.laenge)) continue;
     const davor = t.von - 1;
     const danach = t.von + t.laenge;
-    t.unsicher =
-      (davor >= 0 && !belegt[davor] && istModifikator(tokens, davor)) ||
-      (danach < tokens.length &&
-        !belegt[danach] &&
-        istModifikator(tokens, danach));
-  }
-  return treffer;
-}
-
-/** Wörter eines Textes für die Fristsuche (normalisiert, an Leerzeichen getrennt, höchstens `MAX_FRIST_WOERTER`). */
-export function fristWoerter(text: string): string[] {
-  return normalisiere(text)
-    .split(" ", MAX_FRIST_WOERTER)
-    .filter((t) => t !== "");
-}
-
-/**
- * Alle Tage, die die maximalen, sicheren Fristausdrücke eines Textes auflösen (siehe `maximaleFristen`); Reihenfolge des
- * Auftretens, ohne Wiederholung. Untersucht werden höchstens die ersten `MAX_FRIST_WOERTER` Wörter.
- */
-export function fristenIn(text: string, heute: Datum): string[] {
-  const aus: string[] = [];
-  for (const t of maximaleFristen(fristWoerter(text), heute)) {
-    if (!t.unsicher && !aus.includes(t.tag)) aus.push(t.tag);
+    aus.push({
+      ...t,
+      unsicher:
+        (davor >= 0 && istDatumsbestandteil(tokens, davor, false)) ||
+        (danach < tokens.length &&
+          istDatumsbestandteil(tokens, danach, true)) ||
+        hatVerbinder(tokens, t.von, danach - 1) ||
+        bruecke(tokens, davor, false) ||
+        bruecke(tokens, danach, true),
+    });
   }
   return aus;
 }
 
 /**
- * Der eine Tag, den ein Beleg eindeutig nennt, sonst `null`: Der Beleg hat mindestens einen maximalen Fristausdruck, keiner ist
- * unsicher, und alle lösen auf denselben Tag auf.
+ * Wörter eines Textes für die Fristsuche (normalisiert, an Leerzeichen getrennt); bis zu `MAX_FRIST_FENSTER + MAX_BRUECKEN` über die
+ * Grenze hinaus, damit das Nachbarwort und die Brückenwörter dahinter eines Treffers an der Grenze gelesen werden.
  */
-export function fristDeckung(text: string, heute: Datum): string | null {
-  const treffer = maximaleFristen(fristWoerter(text), heute);
-  if (treffer.length === 0 || treffer.some((t) => t.unsicher)) return null;
-  const tag = treffer[0].tag;
-  return treffer.every((t) => t.tag === tag) ? tag : null;
+export function fristWoerter(text: string): string[] {
+  return normalisiere(text)
+    .split(" ", MAX_FRIST_WOERTER + MAX_FRIST_FENSTER + MAX_BRUECKEN)
+    .filter((t) => t !== "");
+}
+
+/**
+ * Alle Tage, die die inklusionsmaximalen, sicheren Fristausdrücke eines Textes auflösen; Reihenfolge des Auftretens, ohne
+ * Wiederholung. Untersucht werden Ausdrücke, die in den ersten `MAX_FRIST_WOERTER` Wörtern beginnen; ob ein Treffer an dieser Grenze
+ * sicher ist, entscheidet das Wort dahinter (gelesen wird über die Grenze hinaus).
+ */
+export function fristenIn(text: string, heute: Datum): string[] {
+  const tokens = fristWoerter(text);
+  if (tokens.length === 0) return [];
+  const aus: string[] = [];
+  const q = Math.min(MAX_FRIST_WOERTER, tokens.length) - 1;
+  for (const t of maximaleFristen(tokens, 0, q, heute)) {
+    if (!t.unsicher && !aus.includes(t.tag)) aus.push(t.tag);
+  }
+  return aus;
 }
 
 /** Ohne führende Vorsätze (`am`, `bis`, `zum`, …; solange mehr als ein Wort bleibt). */
@@ -646,23 +842,194 @@ function ohneVorsaetze(tokens: readonly string[]): readonly string[] {
   return tokens.slice(ab);
 }
 
+/** Einheitenbreite des Codepunkts `c` in einem JavaScript-Text. */
+const breite = (c: number): number => (c > 0xffff ? 2 : 1);
+
 /**
- * Steht `ausdruck` (normalisiert, bis auf führende Vorsätze) als ganzer, sicherer, maximaler Fristausdruck in den Treffern eines
- * Textes, dessen Wörter `woerter` sind?
+ * Die Fundstellen von `nadel` in `heuhaufen` (beide normalisiert): die Anfänge (Einheiten) aller Vorkommen, die an Wortgrenzen
+ * beginnen und enden (vor einem Vorkommen, das mit einem Wortzeichen beginnt, und nach einem, das mit einem endet, steht kein
+ * Wortzeichen; `ja` hat in `jahr` keine Fundstelle). Aufsteigend, höchstens `grenze` Stück; Vorkommen dürfen überlappen.
  */
-export function istMaximalerAusdruck(
-  ausdruck: readonly string[],
-  woerter: readonly string[],
-  treffer: readonly FristTreffer[],
+export function fundstellen(
+  heuhaufen: string,
+  nadel: string,
+  grenze: number,
+): number[] {
+  const aus: number[] = [];
+  if (nadel === "" || grenze <= 0) return aus;
+  const erster = nadel.codePointAt(0)!;
+  const letzter = codepunktVor(nadel, nadel.length);
+  const vorn = istWortzeichen(erster);
+  const hinten = istWortzeichen(letzter);
+  let ab = 0;
+  for (;;) {
+    const i = heuhaufen.indexOf(nadel, ab);
+    if (i < 0) return aus;
+    const ende = i + nadel.length;
+    const davorOk =
+      !vorn || i === 0 || !istWortzeichen(codepunktVor(heuhaufen, i));
+    const danachOk =
+      !hinten ||
+      ende >= heuhaufen.length ||
+      !istWortzeichen(heuhaufen.codePointAt(ende)!);
+    if (davorOk && danachOk) {
+      aus.push(i);
+      if (aus.length >= grenze) return aus;
+    }
+    ab = i + 1;
+  }
+}
+
+/** Die Wörter (an Leerzeichen getrennt) der Nachbarschaft einer Fundstelle und die Nummern der Wörter, die sie berühren. */
+type Nachbarschaft = { tokens: string[]; p: number; q: number };
+
+/**
+ * Die Nachbarschaft der Spanne `start`..`ende` (Einheiten) im normalisierten `beitrag`: die Wörter, die die Spanne berühren, plus
+ * `KONTEXT_WOERTER` ganze Wörter davor und danach. Je Seite werden höchstens `KONTEXT_CODEPUNKTE` Codepunkte gelesen; findet
+ * sich darin nicht die Grenze zum neunten Wort (und der Beitrag ist dort nicht zu Ende), gibt es keine Nachbarschaft (`null`).
+ */
+function nachbarschaft(
+  beitrag: string,
+  start: number,
+  ende: number,
+): { von: number; bis: number } | null {
+  let i = start;
+  let gelesen = 0;
+  let leer = 0;
+  let von = -1;
+  while (i > 0 && gelesen < KONTEXT_CODEPUNKTE) {
+    const c = codepunktVor(beitrag, i);
+    i -= breite(c);
+    gelesen += 1;
+    if (c === 0x20) {
+      leer += 1;
+      if (leer === KONTEXT_WOERTER + 1) {
+        von = i + 1;
+        break;
+      }
+    }
+  }
+  if (von < 0) {
+    if (i > 0) return null;
+    von = 0;
+  }
+  i = ende;
+  gelesen = 0;
+  leer = 0;
+  let bis = -1;
+  while (i < beitrag.length && gelesen < KONTEXT_CODEPUNKTE) {
+    const c = beitrag.codePointAt(i)!;
+    i += breite(c);
+    gelesen += 1;
+    if (c === 0x20) {
+      leer += 1;
+      if (leer === KONTEXT_WOERTER + 1) {
+        bis = i - 1;
+        break;
+      }
+    }
+  }
+  if (bis < 0) {
+    if (i < beitrag.length) return null;
+    bis = beitrag.length;
+  }
+  return { von, bis };
+}
+
+function woerterDerNachbarschaft(
+  beitrag: string,
+  start: number,
+  ende: number,
+): Nachbarschaft | null {
+  const grenzen = nachbarschaft(beitrag, start, ende);
+  if (grenzen === null) return null;
+  const tokens = beitrag.slice(grenzen.von, grenzen.bis).split(" ");
+  let p = -1;
+  let q = -1;
+  let anfang = grenzen.von;
+  tokens.forEach((t, i) => {
+    const schluss = anfang + t.length;
+    if (schluss > start && anfang < ende) {
+      if (p < 0) p = i;
+      q = i;
+    }
+    anfang = schluss + 1;
+  });
+  return p < 0 ? null : { tokens, p, q };
+}
+
+/**
+ * Der eine Tag, den die Spanne `start`..`ende` (Einheiten) des normalisierten `beitrag` im Kontext nennt, sonst `null`: Unter den
+ * inklusionsmaximalen Fristausdrücken der Nachbarschaft, die die Spanne schneiden, ist mindestens einer, keiner ist unsicher, und alle
+ * lösen auf denselben Tag auf.
+ */
+export function fristDeckungImKontext(
+  beitrag: string,
+  start: number,
+  ende: number,
+  heute: Datum,
+): string | null {
+  const n = woerterDerNachbarschaft(beitrag, start, ende);
+  if (n === null) return null;
+  const treffer = maximaleFristen(n.tokens, n.p, n.q, heute);
+  if (treffer.length === 0 || treffer.some((t) => t.unsicher)) return null;
+  const tag = treffer[0].tag;
+  return treffer.every((t) => t.tag === tag) ? tag : null;
+}
+
+/**
+ * Nennt der Beleg `beleg` (normalisiert) im normalisierten `beitrag` den Tag `tag`? An allen Fundstellen (mindestens eine,
+ * höchstens `MAX_FUNDSTELLEN`) muss `fristDeckungImKontext` genau diesen Tag liefern.
+ */
+export function fristGedeckt(
+  beitrag: string,
+  beleg: string,
+  tag: string,
+  heute: Datum,
 ): boolean {
+  const stellen = fundstellen(beitrag, beleg, MAX_FUNDSTELLEN + 1);
+  if (stellen.length === 0 || stellen.length > MAX_FUNDSTELLEN) return false;
+  return stellen.every(
+    (s) => fristDeckungImKontext(beitrag, s, s + beleg.length, heute) === tag,
+  );
+}
+
+/**
+ * Steht der Ausdruck `ausdruck` (normalisierte Wörter, bis auf führende Vorsätze) an der Fundstelle `start`..`ende` des normalisierten
+ * `beitrag` als ganzer, sicherer, inklusionsmaximaler Fristausdruck?
+ */
+export function istFristFundstelle(
+  beitrag: string,
+  start: number,
+  ende: number,
+  ausdruck: readonly string[],
+  heute: Datum,
+): boolean {
+  const n = woerterDerNachbarschaft(beitrag, start, ende);
+  if (n === null) return false;
   const kern = ohneVorsaetze(ausdruck);
-  return treffer.some((t) => {
-    if (t.unsicher) return false;
-    const eigene = ohneVorsaetze(woerter.slice(t.von, t.von + t.laenge));
+  return maximaleFristen(n.tokens, n.p, n.q, heute).some((t) => {
+    if (t.unsicher || t.von > n.p || t.von + t.laenge - 1 < n.q) return false;
+    const eigene = ohneVorsaetze(n.tokens.slice(t.von, t.von + t.laenge));
     return (
       eigene.length === kern.length && eigene.every((w, i) => w === kern[i])
     );
   });
+}
+
+/**
+ * Steht `ausdruck` (Wörter eines `frist_text`) in `beitrag` an einer der ersten `MAX_FUNDSTELLEN` Fundstellen von `text` (normalisiert)
+ * als ganzer, sicherer, inklusionsmaximaler Fristausdruck?
+ */
+export function enthaeltFristAusdruck(
+  beitrag: string,
+  text: string,
+  ausdruck: readonly string[],
+  heute: Datum,
+): boolean {
+  return fundstellen(beitrag, text, MAX_FUNDSTELLEN).some((s) =>
+    istFristFundstelle(beitrag, s, s + text.length, ausdruck, heute),
+  );
 }
 
 // ---------------------------------------------------------------- Zahlen
@@ -735,16 +1102,19 @@ export function liesZahl(
   return null;
 }
 
-/** Vergleichsformen der Zahlen eines normalisierten Textes (Ziffernfolgen, durch ein einzelnes `.` oder `,` zwischen Ziffern verbunden). */
-export function zahlenIn(normalisiert: string): string[] {
-  const c = codepunkte(normalisiert);
-  const aus: string[] = [];
+/** Ein Zahl-Token eines Textes (Codepunkte `von` bis `bis`): Ziffernfolgen, durch einzelne `.` oder `,` zwischen Ziffern verbunden. */
+type ZahlToken = { von: number; bis: number; formen: string[] };
+
+/** Die Zahl-Token eines normalisierten Textes mit ihren Vergleichsformen (leer, wenn die Folge keine Zahl ergibt, etwa `1.2.3`). */
+function zahlTokens(c: readonly number[]): ZahlToken[] {
+  const aus: ZahlToken[] = [];
   let i = 0;
   while (i < c.length) {
     if (!istZiffer(c[i])) {
       i += 1;
       continue;
     }
+    const von = i;
     const gruppen: string[] = [];
     const trenner: number[] = [];
     for (;;) {
@@ -763,9 +1133,7 @@ export function zahlenIn(normalisiert: string): string[] {
         break;
       }
     }
-    for (const form of zahlKandidaten(gruppen, trenner)) {
-      if (!aus.includes(form)) aus.push(form);
-    }
+    aus.push({ von, bis: i, formen: zahlKandidaten(gruppen, trenner) });
   }
   return aus;
 }
@@ -796,9 +1164,62 @@ function zahlKandidaten(gruppen: string[], trenner: number[]): string[] {
   return aus;
 }
 
-/** Hat der normalisierte Text ein Zahlwort (null bis zwölf), das für `zahl` steht? */
-export function hatZahlwort(normalisiert: string, zahl: number): boolean {
-  return woerter(normalisiert).some((w) => zahlwort(w) === zahl);
+/**
+ * Deckt die Spanne `start`..`ende` (Einheiten) des normalisierten `beitrag` im Kontext die Zahl mit der Vergleichsform `vergleich`?
+ * Ein Zahl-Token, das die Spanne schneidet, wird in der Nachbarschaft gebildet (der Beleg `12` in `12,5 Liter` ergibt das Token
+ * `12,5` und deckt 12 nicht); gedeckt ist, wenn eines dieser Token den Wert hat oder ein Zahlwort null bis zwölf als ganzes Wort in der
+ * Spanne für ihn steht.
+ */
+function zahlDeckungImKontext(
+  beitrag: string,
+  start: number,
+  ende: number,
+  vergleich: string,
+): boolean {
+  const grenzen = nachbarschaft(beitrag, start, ende);
+  if (grenzen === null) return false;
+  const c = codepunkte(beitrag.slice(grenzen.von, grenzen.bis));
+  const s = codepunkte(beitrag.slice(grenzen.von, start)).length;
+  const e = s + codepunkte(beitrag.slice(start, ende)).length;
+  const schneidet = (von: number, bis: number) => von < e && bis > s;
+  if (
+    zahlTokens(c).some(
+      (t) => schneidet(t.von, t.bis) && t.formen.includes(vergleich),
+    )
+  ) {
+    return true;
+  }
+  if (!/^[0-9]{1,2}$/.test(vergleich) || Number(vergleich) > 12) return false;
+  const zahl = Number(vergleich);
+  let i = 0;
+  while (i < c.length) {
+    if (!istWortzeichen(c[i])) {
+      i += 1;
+      continue;
+    }
+    let j = i;
+    while (j < c.length && istWortzeichen(c[j])) j += 1;
+    if (schneidet(i, j) && zahlwort(ausCodepunkten(c, i, j)) === zahl)
+      return true;
+    i = j;
+  }
+  return false;
+}
+
+/**
+ * Nennt der Beleg `beleg` (normalisiert) im normalisierten `beitrag` die Zahl mit der Vergleichsform `vergleich`? An allen Fundstellen
+ * (mindestens eine, höchstens `MAX_FUNDSTELLEN`) muss `zahlDeckungImKontext` gelten.
+ */
+export function zahlGedeckt(
+  beitrag: string,
+  beleg: string,
+  vergleich: string,
+): boolean {
+  const stellen = fundstellen(beitrag, beleg, MAX_FUNDSTELLEN + 1);
+  if (stellen.length === 0 || stellen.length > MAX_FUNDSTELLEN) return false;
+  return stellen.every((s) =>
+    zahlDeckungImKontext(beitrag, s, s + beleg.length, vergleich),
+  );
 }
 
 /**
@@ -806,24 +1227,7 @@ export function hatZahlwort(normalisiert: string, zahl: number): boolean {
  * Wortzeichen beginnt, und nach einem, der mit einem endet, steht kein Wortzeichen (`ja` steht nicht in `jahr`).
  */
 export function enthaeltWortfolge(heuhaufen: string, nadel: string): boolean {
-  if (nadel === "") return false;
-  const c = codepunkte(nadel);
-  const vorn = istWortzeichen(c[0]);
-  const hinten = istWortzeichen(c[c.length - 1]);
-  let ab = 0;
-  for (;;) {
-    const i = heuhaufen.indexOf(nadel, ab);
-    if (i < 0) return false;
-    const ende = i + nadel.length;
-    const davorOk =
-      !vorn || i === 0 || !istWortzeichen(codepunktVor(heuhaufen, i));
-    const danachOk =
-      !hinten ||
-      ende >= heuhaufen.length ||
-      !istWortzeichen(heuhaufen.codePointAt(ende)!);
-    if (davorOk && danachOk) return true;
-    ab = i + 1;
-  }
+  return fundstellen(heuhaufen, nadel, 1).length > 0;
 }
 
 /** Der Codepunkt, der unmittelbar vor der Einheit `i` endet. */

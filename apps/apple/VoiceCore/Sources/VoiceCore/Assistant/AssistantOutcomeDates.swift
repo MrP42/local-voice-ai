@@ -223,10 +223,11 @@ public enum AssistantOutcomeText {
         return out
     }
 
-    /// Steht `needle` als ganze Wortfolge in `haystack`? Wie ein zusammenhängender Teil, aber vor einem Treffer, der mit einem
-    /// Wortzeichen beginnt, und nach einem, der mit einem endet, steht kein Wortzeichen (`ja` steht nicht in `jahr`).
-    static func containsWordSequence(_ haystack: [UInt32], _ needle: [UInt32]) -> Bool {
-        guard let first = needle.first, let last = needle.last, needle.count <= haystack.count else { return false }
+    /// Die Fundstellen von `needle` in `haystack` (beide normalisiert): die Anfänge aller Vorkommen, die an Wortgrenzen beginnen
+    /// und enden (vor einem Vorkommen, das mit einem Wortzeichen beginnt, und nach einem, das mit einem endet, steht kein
+    /// Wortzeichen; `ja` hat in `jahr` keine Fundstelle). Aufsteigend, höchstens `limit` Stück; Vorkommen dürfen überlappen.
+    static func occurrences(of needle: [UInt32], in haystack: [UInt32], limit: Int) -> [Int] {
+        guard let first = needle.first, let last = needle.last, needle.count <= haystack.count, limit > 0 else { return [] }
         let leadWord = isWordScalar(first)
         let trailWord = isWordScalar(last)
         var fail = [Int](repeating: 0, count: needle.count)
@@ -236,6 +237,7 @@ public enum AssistantOutcomeText {
             if needle[i] == needle[k] { k += 1 }
             fail[i] = k
         }
+        var out: [Int] = []
         k = 0
         for (index, c) in haystack.enumerated() {
             while k > 0, c != needle[k] { k = fail[k - 1] }
@@ -244,10 +246,67 @@ public enum AssistantOutcomeText {
             let start = index + 1 - needle.count
             let beforeOK = !leadWord || start == 0 || !isWordScalar(haystack[start - 1])
             let afterOK = !trailWord || index + 1 >= haystack.count || !isWordScalar(haystack[index + 1])
-            if beforeOK && afterOK { return true }
+            if beforeOK && afterOK {
+                out.append(start)
+                if out.count >= limit { return out }
+            }
             k = fail[k - 1]
         }
-        return false
+        return out
+    }
+
+    /// Steht `needle` als ganze Wortfolge in `haystack`? Wie ein zusammenhängender Teil, aber vor einem Treffer, der mit einem
+    /// Wortzeichen beginnt, und nach einem, der mit einem endet, steht kein Wortzeichen (`ja` steht nicht in `jahr`).
+    static func containsWordSequence(_ haystack: [UInt32], _ needle: [UInt32]) -> Bool {
+        !occurrences(of: needle, in: haystack, limit: 1).isEmpty
+    }
+
+    /// Ein Satzzeichen, das die Normalisierung an den Rändern entfernt.
+    static func isEdge(_ c: UInt32) -> Bool { edge.contains(c) }
+
+    /// Die Grenzen der Nachbarschaft der Spanne `start..<end`: bis zu `words` ganze Wörter (an Leerzeichen getrennt) davor und
+    /// danach; je Seite werden höchstens `limit` Codepunkte gelesen. Reicht das nicht und der Text geht dort weiter: `nil`.
+    static func neighbourhood(_ c: [UInt32], start: Int, end: Int, words: Int, limit: Int) -> Range<Int>? {
+        var i = start
+        var read = 0
+        var spaces = 0
+        var from = -1
+        while i > 0, read < limit {
+            i -= 1
+            read += 1
+            if c[i] == 0x20 {
+                spaces += 1
+                if spaces == words + 1 {
+                    from = i + 1
+                    break
+                }
+            }
+        }
+        if from < 0 {
+            if i > 0 { return nil }
+            from = 0
+        }
+        i = end
+        read = 0
+        spaces = 0
+        var to = -1
+        while i < c.count, read < limit {
+            let x = c[i]
+            i += 1
+            read += 1
+            if x == 0x20 {
+                spaces += 1
+                if spaces == words + 1 {
+                    to = i - 1
+                    break
+                }
+            }
+        }
+        if to < 0 {
+            if i < c.count { return nil }
+            to = c.count
+        }
+        return from..<to
     }
 
     // MARK: Zahlwörter
@@ -264,11 +323,6 @@ public enum AssistantOutcomeText {
 
     static func numberWord(_ word: String) -> Int? {
         numberWords.first { same($0.0, word) }?.1
-    }
-
-    /// Hat der normalisierte Text ein Zahlwort (null bis zwölf), das für `number` steht?
-    static func hasNumberWord(_ normalized: [UInt32], _ number: Int) -> Bool {
-        words(normalized).contains { numberWord($0) == number }
     }
 
     // MARK: Zahlen
@@ -363,11 +417,16 @@ public enum AssistantOutcomeText {
         return nil
     }
 
-    /// Vergleichsformen der Zahlen eines normalisierten Textes (Ziffernfolgen, durch ein einzelnes `.` oder `,` zwischen Ziffern
-    /// verbunden).
-    static func numbers(in normalized: [UInt32]) -> [String] {
-        let c = normalized
-        var out: [String] = []
+    /// Ein Zahl-Token eines Textes (Codepunkte `start..<end`): Ziffernfolgen, durch einzelne `.` oder `,` zwischen Ziffern verbunden.
+    struct NumberToken {
+        var start: Int
+        var end: Int
+        var forms: [String]
+    }
+
+    /// Die Zahl-Token eines normalisierten Textes mit ihren Vergleichsformen (leer, wenn die Folge keine Zahl ergibt, etwa `1.2.3`).
+    static func numberTokens(_ c: [UInt32]) -> [NumberToken] {
+        var out: [NumberToken] = []
         var i = 0
         func isDigit(_ x: UInt32) -> Bool { x >= 0x30 && x <= 0x39 }
         while i < c.count {
@@ -375,6 +434,7 @@ public enum AssistantOutcomeText {
                 i += 1
                 continue
             }
+            let start = i
             var groups: [[UInt8]] = []
             var seps: [UInt32] = []
             while true {
@@ -389,9 +449,38 @@ public enum AssistantOutcomeText {
                     break
                 }
             }
-            for form in candidates(groups, seps) where !out.contains(where: { same($0, form) }) { out.append(form) }
+            out.append(NumberToken(start: start, end: i, forms: candidates(groups, seps)))
         }
         return out
+    }
+
+    /// Deckt die Spanne `start..<end` des normalisierten `turn` im Kontext die Zahl mit der Vergleichsform `comparable`? Ein
+    /// Zahl-Token, das die Spanne schneidet, wird in der Nachbarschaft gebildet (der Beleg `12` in `12,5 Liter` ergibt das Token
+    /// `12,5` und deckt 12 nicht); gedeckt ist, wenn eines dieser Token den Wert hat oder ein Zahlwort null bis zwölf als ganzes
+    /// Wort in der Spanne für ihn steht.
+    static func numberCovered(_ turn: [UInt32], start: Int, end: Int, comparable cmp: String) -> Bool {
+        guard let range = neighbourhood(turn, start: start, end: end, words: AssistantOutcomeDates.contextWords, limit: AssistantOutcomeDates.contextScalars) else {
+            return false
+        }
+        let c = Array(turn[range])
+        let s = start - range.lowerBound
+        let e = end - range.lowerBound
+        if numberTokens(c).contains(where: { $0.start < e && $0.end > s && $0.forms.contains { same($0, cmp) } }) { return true }
+        let digits = Array(cmp.utf8)
+        guard onlyDigits(digits), digits.count <= 2, int(digits) <= 12 else { return false }
+        let value = int(digits)
+        var i = 0
+        while i < c.count {
+            if !isWordScalar(c[i]) {
+                i += 1
+                continue
+            }
+            var j = i
+            while j < c.count, isWordScalar(c[j]) { j += 1 }
+            if i < e, j > s, numberWord(string(c[i..<j])) == value { return true }
+            i = j
+        }
+        return false
     }
 
     private static func candidates(_ groups: [[UInt8]], _ seps: [UInt32]) -> [String] {
@@ -577,22 +666,131 @@ public enum AssistantOutcomeDates {
         return dateWithMonthName(tokens, today)
     }
 
-    /// Die Fristsuche untersucht höchstens die ersten so vielen Wörter eines Textes.
+    /// `deadlines(in:)` untersucht Ausdrücke, die in den ersten so vielen Wörtern eines Textes beginnen.
     public static let maxDeadlineWords = 1024
 
     /// Größtes Fenster (in Wörtern), das die Fristauflösung betrachtet.
     public static let maxDeadlineWindow = 6
 
-    /// Wörter, die einen Tag verschieben oder näher bestimmen, ohne dass die feste Liste der Fristauflösung sie mit dem Tag
-    /// zusammen auflöst: `nächsten`/`kommenden`/`next` und `übernächsten` in allen Formen, Einheiten (`Tag`, `Woche`, `Monat`,
-    /// `Jahr` und englisch). Dazu zählt `in`, wenn eine Zahl oder ein Zahlwort folgt.
+    /// Höchstens so viele Fundstellen eines Belegs in einem Beitrag werden für die Deckung geprüft; mehr: nicht gedeckt.
+    public static let maxOccurrences = 16
+
+    /// Nachbarschaft einer Fundstelle: so viele Wörter davor und danach gehören zum Kontext.
+    public static let contextWords = 8
+
+    /// Dafür werden je Seite höchstens so viele Codepunkte gelesen; reicht das nicht und der Beitrag geht weiter: nicht gedeckt.
+    public static let contextScalars = 400
+
+    /// Wörter, die einen Tag verschieben oder näher bestimmen: `nächsten`/`kommenden`/`next` und `übernächsten` in allen Formen,
+    /// die Einheiten `Tag`, `Woche`, `Monat`, `Jahr` (deutsch und englisch, alle Formen der Liste).
     private static let modifiers: [String] = next + afterNext + [
         "nächste", "naechste", "nächstes", "naechstes", "nächstem", "naechstem", "kommende", "kommender", "kommendes", "kommendem",
         "übernächste", "uebernaechste", "übernächstes", "uebernaechstes", "übernächstem", "uebernaechstem",
         "monat", "monate", "monaten", "monats", "month", "months", "jahr", "jahre", "jahren", "jahres", "year", "years",
     ] + dayUnits + weekUnits
 
-    /// Ein maximaler Fristausdruck: Wörter `start` bis `start + length`, der Tag und ob ihn ein nicht aufgelöstes Modifikatorwort
+    /// Der feste Wortschatz der Fristauflösung (Datumsbestandteile) ohne Zahlwörter: Wochentage, Monate, Tagesworte, Modifikatoren
+    /// und Einheiten. Führende Vorsätze (`am`, `bis`, …) gehören nicht dazu. Zahlwörter (null bis zwölf, `ein`-Formen, `one`)
+    /// zählen nur unter der Bedingung von `isDateComponent`.
+    private static let dateWords: [String] = weekdays.map(\.0) + months.map(\.0) + modifiers + [
+        "heute", "today", "morgen", "tomorrow", "übermorgen", "uebermorgen", "ende", "end", "dieser", "dieses", "this",
+    ]
+
+    /// Wörter hinter einer Zahl, die sie zur Uhrzeit machen (`10 Uhr`, `10 am`); `o'clock` steht normalisiert als `oclock` da.
+    private static let timeAfter = ["uhr", "h", "oclock", "am", "pm"]
+
+    /// Ein Wort ohne die Satzzeichen an seinen Rändern (dieselbe Menge wie bei der Normalisierung).
+    private static func withoutEdge(_ token: String) -> String {
+        let c = T.scalars(token)
+        var from = 0
+        var to = c.count
+        while from < to, T.isEdge(c[from]) { from += 1 }
+        while to > from, T.isEdge(c[to - 1]) { to -= 1 }
+        return T.string(c[from..<to])
+    }
+
+    /// Reines Zifferntoken: Ziffernfolgen, durch je ein `.`, `,`, `-` oder `/` verbunden (`14`, `14.11.`, `1.250,50`, `2026-11-14`).
+    private static func isDigitToken(_ token: String) -> Bool {
+        let c = T.scalars(token)
+        func isDigit(_ x: UInt32) -> Bool { x >= 0x30 && x <= 0x39 }
+        var i = 0
+        while true {
+            let start = i
+            while i < c.count, isDigit(c[i]) { i += 1 }
+            if i == start { return false }
+            if i == c.count { return true }
+            guard c[i] == 0x2E || c[i] == 0x2C || c[i] == 0x2D || c[i] == 0x2F else { return false }
+            i += 1
+        }
+    }
+
+    /// Verbinder und Verneiner: Steht einer direkt hinter einem Fristausdruck (oder direkt davor, führende Vorsätze übersprungen),
+    /// ist der Tag womöglich nicht gemeint (`Montag oder Dienstag`, `nicht am Montag`).
+    private static let connectors = [
+        "oder", "bzw", "beziehungsweise", "entweder", "weder", "noch", "nicht", "kein", "keine", "keinen", "keinem", "keiner",
+        "statt", "anstatt", "außer", "ausser", "or", "either", "neither", "nor", "not", "no", "instead", "except",
+    ]
+
+    /// Ist das Wort `i` ein Datumsbestandteil des Ausdrucks, an dessen Rand es steht (`after`: rechts davon, sonst links davon)?
+    /// - Wörter des festen Wortschatzes (Wochentag, Monat, Modifikator, Einheit, Tagesworte): immer.
+    /// - Reine Zifferntoken (`14`, `14.11.`): immer.
+    /// - Zahlwörter (`zwei`, `eine`, `one`): nur, wenn das nächste Wort in derselben Richtung (vom Ausdruck aus das übernächste)
+    ///   zum Wortschatz gehört oder ein Zifferntoken ist (`Montag zwei Wochen`); `Montag zwei Personen` bleibt sicher.
+    /// - `in` vor einer Ziffernfolge oder vor einem Zahlwort, das selbst zählt (`in zwei Wochen`).
+    /// Ausnahme Uhrzeit: Ein Zahlwort oder Zifferntoken **hinter** dem Ausdruck zählt nicht, wenn `uhr`, `h`, `oclock`, `am` oder
+    /// `pm` folgt (`Montag 10 Uhr`); `hh:mm` ist kein Zifferntoken.
+    private static func isDateComponent(_ tokens: [String], _ i: Int, after: Bool) -> Bool {
+        let t = withoutEdge(tokens[i])
+        if t.isEmpty { return false }
+        func word(_ k: Int) -> String? { k >= 0 && k < tokens.count ? withoutEdge(tokens[k]) : nil }
+        func countsAsNumber(_ k: Int, _ step: Int) -> Bool {
+            guard let w = word(k), !w.isEmpty else { return false }
+            if isDigitToken(w) { return true }
+            guard T.numberWord(w) != nil, let n = word(k + step) else { return false }
+            return isDigitToken(n) || isIn(dateWords, n)
+        }
+        let isNumber = T.numberWord(t) != nil || isDigitToken(t)
+        if isNumber, after, let n = word(i + 1), isIn(timeAfter, n) { return false }
+        if isDigitToken(t) || isIn(dateWords, t) { return true }
+        if T.numberWord(t) != nil { return countsAsNumber(i, after ? 1 : -1) }
+        guard T.same(t, "in"), let n = word(i + 1) else { return false }
+        return T.onlyDigits(Array(n.utf8)) || countsAsNumber(i + 1, 1)
+    }
+
+    /// Steht direkt hinter dem Ausdruck (Wörter `start` bis `end` einschließlich) oder direkt davor (führende Vorsätze
+    /// übersprungen) ein Verbinder oder Verneiner?
+    private static func hasConnector(_ tokens: [String], start: Int, end: Int) -> Bool {
+        if end + 1 < tokens.count, isIn(connectors, withoutEdge(tokens[end + 1])) { return true }
+        var before = start - 1
+        while before >= 0, isIn(prefixes, withoutEdge(tokens[before])) { before -= 1 }
+        return before >= 0 && isIn(connectors, withoutEdge(tokens[before]))
+    }
+
+    /// Brückenwörter: Wörter zwischen einem Fristausdruck und einem weiteren Datumsbestandteil (`Montag bis Freitag`, `am Montag im
+    /// Mai`, `Montag den 14. Dezember`, `Montag und Dienstag`). Eine eigene Menge; sie schließt die führenden Vorsätze ein.
+    private static let bridges = [
+        "am", "an", "bis", "zum", "zur", "spätestens", "spaetestens", "im", "in", "den", "dem", "der", "des", "vom", "von", "ab", "um", "gegen", "und", "sowie", "by", "until", "till", "on", "to", "through", "thru", "and", "of", "the", "at", "from",
+    ]
+
+    /// Höchstens so viele Brückenwörter werden zwischen Ausdruck und Datumsbestandteil übersprungen.
+    public static let maxBridges = 2
+
+    /// Steht hinter (`after`) oder vor dem Ausdruck, nach 1 bis `maxBridges` übersprungenen Brückenwörtern, ein Datumsbestandteil?
+    /// `i` ist das erste Wort neben dem Ausdruck in dieser Richtung. Das direkte Nachbarwort (kein Brückenwort übersprungen)
+    /// prüft `isDateComponent` selbst. Die Uhrzeit-Ausnahme gilt auch hinter Brückenwörtern (`Montag um 10 Uhr`).
+    private static func bridge(_ tokens: [String], _ i: Int, after: Bool) -> Bool {
+        let step = after ? 1 : -1
+        var k = i
+        var skipped = 0
+        while skipped < maxBridges, k >= 0, k < tokens.count, isIn(bridges, withoutEdge(tokens[k])) {
+            k += step
+            skipped += 1
+        }
+        if skipped == 0 || k < 0 || k >= tokens.count { return false }
+        return isDateComponent(tokens, k, after: after)
+    }
+
+    /// Ein inklusionsmaximaler Fristausdruck: Wörter `start` bis `start + length`, der Tag und ob ihn ein Datumsbestandteil
     /// begleitet.
     struct DeadlineMatch {
         var start: Int
@@ -601,69 +799,68 @@ public enum AssistantOutcomeDates {
         var unsafe: Bool
     }
 
-    private static func isModifier(_ tokens: [String], _ i: Int) -> Bool {
-        if isIn(modifiers, tokens[i]) { return true }
-        guard T.same(tokens[i], "in"), i + 1 < tokens.count else { return false }
-        return T.onlyDigits(Array(tokens[i + 1].utf8)) || T.numberWord(tokens[i + 1]) != nil
-    }
-
-    /// Wörter eines Textes für die Fristsuche (normalisiert, an Leerzeichen getrennt, höchstens `maxDeadlineWords`).
-    static func words(of text: String) -> [String] {
-        T.tokens(T.normalizedScalars(text), limit: maxDeadlineWords)
-    }
-
-    /// Die maximalen Fristausdrücke der Wörter eines normalisierten Textes: von links nach rechts, an jeder Wortposition das
-    /// längste Fenster (bis `maxDeadlineWindow` Wörter), das die Fristauflösung auflöst; die Wörter des Treffers sind verbraucht,
-    /// Treffer überlappen nie. `unsafe` ist ein Treffer, wenn unmittelbar davor oder danach ein Modifikatorwort steht, das zu
-    /// keinem Treffer gehört (`Montag übernächste Woche`: der Tag allein wäre falsch).
-    static func maximalDeadlines(_ words: [String], today: AssistantOutcomeDate) -> [DeadlineMatch] {
-        let tokens = Array(words.prefix(maxDeadlineWords))
-        var matches: [DeadlineMatch] = []
-        var used = [Bool](repeating: false, count: tokens.count)
-        var i = 0
-        while i < tokens.count {
-            var found: (length: Int, day: String)?
-            var n = min(maxDeadlineWindow, tokens.count - i)
-            while n >= 1 {
-                if let day = deadline(tokens[i..<(i + n)].joined(separator: " "), today: today) {
-                    found = (n, day)
-                    break
+    /// Die inklusionsmaximalen Fristausdrücke unter den Wörtern `tokens`, die die Wörter `p` bis `q` (einschließlich) schneiden:
+    /// Unter allen Fenstern von höchstens `maxDeadlineWindow` Wörtern, die die Fristauflösung auflöst, bleiben die übrig, die kein
+    /// längeres auflösendes Fenster enthält (egal, ob es `p...q` verlässt). Reihenfolge: nach Anfang, bei gleichem Anfang kürzere
+    /// zuerst. `unsafe` ist ein Treffer, wenn das Wort direkt davor oder direkt danach ein Datumsbestandteil ist (`isDateComponent`)
+    /// oder direkt daneben ein Verbinder oder Verneiner steht (`hasConnector`) oder nach höchstens
+    /// `maxBridges` Brückenwörtern ein Datumsbestandteil folgt (`bridge`). Die Treffer
+    /// können überlappen und auf verschiedene Tage auflösen; die Zerlegung hängt nicht von der Suchrichtung ab.
+    static func maximalDeadlines(_ tokens: [String], from p: Int, to q: Int, today: AssistantOutcomeDate) -> [DeadlineMatch] {
+        let width = maxDeadlineWindow + 1
+        var resolved = Set<Int>()
+        var order: [(start: Int, length: Int, day: String)] = []
+        var i = max(0, p - (maxDeadlineWindow - 1))
+        while i <= q, i < tokens.count {
+            let most = min(maxDeadlineWindow, tokens.count - i)
+            var n = 1
+            while n <= most {
+                if i + n - 1 >= p, let day = deadline(tokens[i..<(i + n)].joined(separator: " "), today: today) {
+                    resolved.insert(i * width + n)
+                    order.append((i, n, day))
                 }
-                n -= 1
+                n += 1
             }
-            guard let found else {
-                i += 1
-                continue
+            i += 1
+        }
+        func contained(_ i: Int, _ n: Int) -> Bool {
+            var m = n + 1
+            while m <= maxDeadlineWindow {
+                var j = max(0, i + n - m)
+                while j <= i {
+                    if resolved.contains(j * width + m) { return true }
+                    j += 1
+                }
+                m += 1
             }
-            matches.append(DeadlineMatch(start: i, length: found.length, day: found.day, unsafe: false))
-            for j in i..<(i + found.length) { used[j] = true }
-            i += found.length
+            return false
         }
-        for index in matches.indices {
-            let before = matches[index].start - 1
-            let after = matches[index].start + matches[index].length
-            matches[index].unsafe = (before >= 0 && !used[before] && isModifier(tokens, before))
-                || (after < tokens.count && !used[after] && isModifier(tokens, after))
-        }
-        return matches
-    }
-
-    /// Alle Tage, die die maximalen, sicheren Fristausdrücke eines Textes auflösen (siehe `maximalDeadlines`); Reihenfolge des
-    /// Auftretens, ohne Wiederholung. Untersucht werden höchstens die ersten `maxDeadlineWords` Wörter.
-    public static func deadlines(in text: String, today: AssistantOutcomeDate) -> [String] {
-        var out: [String] = []
-        for match in maximalDeadlines(words(of: text), today: today) where !match.unsafe {
-            if !out.contains(where: { T.same($0, match.day) }) { out.append(match.day) }
+        var out: [DeadlineMatch] = []
+        for item in order where !contained(item.start, item.length) {
+            let before = item.start - 1
+            let after = item.start + item.length
+            let unsafe = (before >= 0 && isDateComponent(tokens, before, after: false))
+                || (after < tokens.count && isDateComponent(tokens, after, after: true))
+                || hasConnector(tokens, start: item.start, end: after - 1)
+                || bridge(tokens, before, after: false)
+                || bridge(tokens, after, after: true)
+            out.append(DeadlineMatch(start: item.start, length: item.length, day: item.day, unsafe: unsafe))
         }
         return out
     }
 
-    /// Der eine Tag, den ein Beleg eindeutig nennt, sonst `nil`: Der Beleg hat mindestens einen maximalen Fristausdruck, keiner
-    /// ist unsicher, und alle lösen auf denselben Tag auf.
-    public static func coveredDeadline(in text: String, today: AssistantOutcomeDate) -> String? {
-        let matches = maximalDeadlines(words(of: text), today: today)
-        guard let first = matches.first, !matches.contains(where: { $0.unsafe }) else { return nil }
-        return matches.allSatisfy { T.same($0.day, first.day) } ? first.day : nil
+    /// Alle Tage, die die inklusionsmaximalen, sicheren Fristausdrücke eines Textes auflösen; Reihenfolge des Auftretens, ohne
+    /// Wiederholung. Untersucht werden Ausdrücke, die in den ersten `maxDeadlineWords` Wörtern beginnen; ob ein Treffer an dieser
+    /// Grenze sicher ist, entscheidet das Wort dahinter (gelesen wird über die Grenze hinaus).
+    public static func deadlines(in text: String, today: AssistantOutcomeDate) -> [String] {
+        let tokens = T.tokens(T.normalizedScalars(text), limit: maxDeadlineWords + maxDeadlineWindow + maxBridges)
+        if tokens.isEmpty { return [] }
+        var out: [String] = []
+        let q = min(maxDeadlineWords, tokens.count) - 1
+        for match in maximalDeadlines(tokens, from: 0, to: q, today: today) where !match.unsafe {
+            if !out.contains(where: { T.same($0, match.day) }) { out.append(match.day) }
+        }
+        return out
     }
 
     /// Ohne führende Vorsätze (`am`, `bis`, `zum`, …; solange mehr als ein Wort bleibt).
@@ -673,14 +870,81 @@ public enum AssistantOutcomeDates {
         return rest
     }
 
-    /// Steht `expression` (normalisiert, bis auf führende Vorsätze) als ganzer, sicherer, maximaler Fristausdruck in den
-    /// Treffern eines Textes, dessen Wörter `words` sind?
-    static func isMaximalExpression(_ expression: [String], in words: [String], matches: [DeadlineMatch]) -> Bool {
+    /// Die Wörter der Nachbarschaft einer Fundstelle und die Nummern der Wörter, die sie berühren.
+    struct Neighbourhood {
+        var tokens: [String]
+        var p: Int
+        var q: Int
+    }
+
+    /// Die Nachbarschaft der Spanne `start..<end` im normalisierten `turn`: die Wörter, die die Spanne berühren, plus
+    /// `contextWords` ganze Wörter davor und danach. Je Seite werden höchstens `contextScalars` Codepunkte gelesen; findet sich
+    /// darin nicht die Grenze zum neunten Wort (und der Beitrag ist dort nicht zu Ende), gibt es keine Nachbarschaft (`nil`).
+    static func neighbourhood(_ turn: [UInt32], start: Int, end: Int) -> Neighbourhood? {
+        guard let range = T.neighbourhood(turn, start: start, end: end, words: contextWords, limit: contextScalars) else { return nil }
+        var tokens: [String] = []
+        var p = -1
+        var q = -1
+        var cursor = range.lowerBound
+        while true {
+            var stop = cursor
+            while stop < range.upperBound, turn[stop] != 0x20 { stop += 1 }
+            if stop > start, cursor < end {
+                if p < 0 { p = tokens.count }
+                q = tokens.count
+            }
+            tokens.append(T.string(turn[cursor..<stop]))
+            if stop >= range.upperBound { break }
+            cursor = stop + 1
+        }
+        return p < 0 ? nil : Neighbourhood(tokens: tokens, p: p, q: q)
+    }
+
+    /// Der eine Tag, den die Spanne `start..<end` des normalisierten `turn` im Kontext nennt, sonst `nil`: Unter den
+    /// inklusionsmaximalen Fristausdrücken der Nachbarschaft, die die Spanne schneiden, ist mindestens einer, keiner ist unsicher, und
+    /// alle lösen auf denselben Tag auf.
+    static func contextDeadline(_ turn: [UInt32], start: Int, end: Int, today: AssistantOutcomeDate) -> String? {
+        guard let n = neighbourhood(turn, start: start, end: end) else { return nil }
+        let matches = maximalDeadlines(n.tokens, from: n.p, to: n.q, today: today)
+        guard let first = matches.first, !matches.contains(where: { $0.unsafe }) else { return nil }
+        return matches.allSatisfy { T.same($0.day, first.day) } ? first.day : nil
+    }
+
+    /// Nennt der Beleg `quote` (normalisiert) im normalisierten `turn` den Tag `day`? An allen Fundstellen (mindestens eine, höchstens
+    /// `maxOccurrences`) muss `contextDeadline` genau diesen Tag liefern.
+    static func deadlineCovered(_ turn: [UInt32], quote: [UInt32], day: String, today: AssistantOutcomeDate) -> Bool {
+        let spots = T.occurrences(of: quote, in: turn, limit: maxOccurrences + 1)
+        if spots.isEmpty || spots.count > maxOccurrences { return false }
+        return spots.allSatisfy { start in
+            contextDeadline(turn, start: start, end: start + quote.count, today: today).map { T.same($0, day) } ?? false
+        }
+    }
+
+    /// Nennt der Beleg `quote` (normalisiert) im normalisierten `turn` die Zahl mit der Vergleichsform `comparable`? An allen
+    /// Fundstellen (mindestens eine, höchstens `maxOccurrences`) muss `T.numberCovered` gelten.
+    static func numberCovered(_ turn: [UInt32], quote: [UInt32], comparable: String) -> Bool {
+        let spots = T.occurrences(of: quote, in: turn, limit: maxOccurrences + 1)
+        if spots.isEmpty || spots.count > maxOccurrences { return false }
+        return spots.allSatisfy { T.numberCovered(turn, start: $0, end: $0 + quote.count, comparable: comparable) }
+    }
+
+    /// Steht `expression` (Wörter eines `frist_text`, bis auf führende Vorsätze) an der Fundstelle `start..<end` des normalisierten
+    /// `turn` als ganzer, sicherer, inklusionsmaximaler Fristausdruck?
+    static func isDeadlineOccurrence(_ turn: [UInt32], start: Int, end: Int, expression: [String], today: AssistantOutcomeDate) -> Bool {
+        guard let n = neighbourhood(turn, start: start, end: end) else { return false }
         let core = withoutPrefixes(expression[...])
-        return matches.contains { match in
-            if match.unsafe { return false }
-            let own = withoutPrefixes(words[match.start..<(match.start + match.length)])
+        return maximalDeadlines(n.tokens, from: n.p, to: n.q, today: today).contains { match in
+            if match.unsafe || match.start > n.p || match.start + match.length - 1 < n.q { return false }
+            let own = withoutPrefixes(n.tokens[match.start..<(match.start + match.length)])
             return own.count == core.count && zip(own, core).allSatisfy { T.same($0, $1) }
+        }
+    }
+
+    /// Steht `expression` in `turn` an einer der ersten `maxOccurrences` Fundstellen von `text` (normalisiert) als ganzer, sicherer,
+    /// inklusionsmaximaler Fristausdruck?
+    static func containsDeadlineExpression(_ turn: [UInt32], text: [UInt32], expression: [String], today: AssistantOutcomeDate) -> Bool {
+        T.occurrences(of: text, in: turn, limit: maxOccurrences).contains {
+            isDeadlineOccurrence(turn, start: $0, end: $0 + text.count, expression: expression, today: today)
         }
     }
 }

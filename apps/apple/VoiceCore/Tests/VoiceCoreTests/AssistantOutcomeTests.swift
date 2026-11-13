@@ -56,6 +56,19 @@ private func outcomeRaw(_ c: AssistantJSON) -> String {
     return c["roh"]?.string ?? ""
 }
 
+/// Ganzzahliger 32-Bit-Zufallserzeuger (Linearer Kongruenzgenerator, Zahlen nach Numerical Recipes): `&*` und `&+` rechnen modulo
+/// 2^32. Der Node-Test rechnet mit `Math.imul` und `>>> 0` dieselbe Folge.
+private struct OutcomeRandom {
+    var state: UInt32
+
+    init(seed: UInt32) { state = seed }
+
+    mutating func next(_ n: Int) -> Int {
+        state = state &* 1_664_525 &+ 1_013_904_223
+        return Int((state >> 16) % UInt32(n))
+    }
+}
+
 final class AssistantOutcomeTests: XCTestCase {
     private let shared = AssistantSharedFiles.tree("auswertung-pruefstaende.json")
     private let today = AssistantOutcomeDate(year: 2026, month: 11, day: 13)
@@ -187,7 +200,8 @@ final class AssistantOutcomeTests: XCTestCase {
             let d = outcomeDate(c["heute"])
             let expected = c["erwartet"]
             assertSameBytes(AssistantOutcomeDates.deadlines(in: text, today: d), expected?["tage"]?.strings ?? [], text)
-            assertSameBytes(AssistantOutcomeDates.coveredDeadline(in: text, today: d), expected?["deckung"]?.string, text)
+            let scalars = AssistantOutcomeText.normalizedScalars(text)
+            assertSameBytes(AssistantOutcomeDates.contextDeadline(scalars, start: 0, end: scalars.count, today: d), expected?["deckung"]?.string, text)
         }
     }
 
@@ -269,11 +283,8 @@ final class AssistantOutcomeTests: XCTestCase {
         let values = ["5", "x", "2026-11-14", "fünf", "morgen", "99", "y", ""]
         let quotes = ["5 Dinge", "bis morgen", "Gut.", "erfunden", "", "Es geht"]
         let stati = ["klar", "unklar", "nicht_genannt"]
-        var state = 7
-        func random(_ n: Int) -> Int {
-            state = (state * 1_103_515_245 + 12345) % 2_147_483_648
-            return state % n
-        }
+        var generator = OutcomeRandom(seed: 7)
+        func random(_ n: Int) -> Int { generator.next(n) }
         func object(_ members: [(String, AssistantJSON)]) -> AssistantJSON { .object(members.map { AssistantJSONMember($0.0, $0.1) }) }
         for _ in 0..<300 {
             let fields = ["a", "b", "c", "d"].map { name in
@@ -319,7 +330,7 @@ final class AssistantOutcomeTests: XCTestCase {
     }
 
     func testDeadlinesInSentences() {
-        assertSameBytes(AssistantOutcomeDates.deadlines(in: "Machen wir am 14.11. oder übermorgen.", today: today), ["2026-11-14", "2026-11-15"])
+        assertSameBytes(AssistantOutcomeDates.deadlines(in: "Machen wir am 14.11., dann melde ich mich übermorgen.", today: today), ["2026-11-14", "2026-11-15"])
     }
 
     func testWeekdayAndCalendarArithmetic() {
@@ -536,6 +547,26 @@ final class AssistantOutcomeTests: XCTestCase {
         XCTAssertTrue(again == outcome, what, file: file, line: line)
     }
 
+    /// Jede Beitragsnummer des Ergebnisses liegt im Gespräch (1 bis Anzahl der Beiträge).
+    private func assertTurnNumbers(_ outcome: AssistantOutcome, _ count: Int, _ what: String, file: StaticString = #filePath, line: UInt = #line) {
+        for f in outcome.fields {
+            if let turn = f.turn { XCTAssertTrue(turn >= 1 && turn <= count, "\(what): Feld", file: file, line: line) }
+        }
+        for t in outcome.tasks {
+            XCTAssertTrue(t.turn >= 1 && t.turn <= count, "\(what): Aufgabe", file: file, line: line)
+            if let due = t.dueTurn { XCTAssertTrue(due >= 1 && due <= count, "\(what): Frist", file: file, line: line) }
+        }
+    }
+
+    func testRandomGeneratorGivesTheSameSequenceAsTheNodeTest() {
+        func sequence(_ seed: UInt32) -> [Int] {
+            var g = OutcomeRandom(seed: seed)
+            return (0..<12).map { _ in g.next(1000) }
+        }
+        XCTAssertEqual(sequence(7), [648, 866, 140, 750, 233, 84, 657, 480, 507, 483, 753, 816])
+        XCTAssertEqual(sequence(11), [750, 108, 24, 918, 871, 484, 579, 36, 792, 7, 623, 727])
+    }
+
     func testInvariantRoundTripForAllSharedCases() {
         var counted = 0
         for c in shared["auswerten"]?.items ?? [] {
@@ -545,9 +576,10 @@ final class AssistantOutcomeTests: XCTestCase {
             )
             guard case .success(let evaluation) = result else { continue }
             assertRoundTrip(evaluation.outcome, c["name"]?.string ?? "?")
+            assertTurnNumbers(evaluation.outcome, outcomeTurns(c["verlauf"]).count, c["name"]?.string ?? "?")
             counted += 1
         }
-        XCTAssertGreaterThanOrEqual(counted, 40)
+        XCTAssertGreaterThanOrEqual(counted, 60)
     }
 
     private func profileField(_ name: String, _ kind: String, options: [String] = []) -> AssistantJSON {
@@ -584,19 +616,17 @@ final class AssistantOutcomeTests: XCTestCase {
         let dueTexts = ["Montag", "morgen", "übernächsten Montag", "heute", "", long("x", 150), "in zwei Wochen", "Jahr"]
         let longTexts = ["t", long("Satz eins. ", 100), long("ä", 400), long("😀", 1300), "  ", ""]
         let created = ["", "heute", "2026-02-30T10:00:00Z", "2026-11-13T10:00:00Z", "2026-11-13T25:00:00Z"]
-        var state = 11
-        func random(_ n: Int) -> Int {
-            state = (state * 1_103_515_245 + 12345) % 2_147_483_648
-            return (state / 65536) % n
-        }
+        var generator = OutcomeRandom(seed: 11)
+        func random(_ n: Int) -> Int { generator.next(n) }
         func pick<T>(_ list: [T]) -> T { list[random(list.count)] }
         func object(_ members: [(String, AssistantJSON)]) -> AssistantJSON { .object(members.map { AssistantJSONMember($0.0, $0.1) }) }
         let statuses: [String?] = ["klar", "unklar", "nicht_genannt", nil, "?"]
         let turnValues: [AssistantJSON] = [.integer(1), .integer(2), .integer(3), .integer(4), .integer(0), .null, .string("2")]
         for run in 0..<600 {
             let fields = ["a", "b", "c", "d", "e"].map { name -> AssistantJSON in
+                let status = pick(statuses)
                 var members: [(String, AssistantJSON)] = [("name", .string(name)), ("wert", .string(pick(values))), ("beleg", .string(pick(quotes))), ("beitrag", pick(turnValues))]
-                if let status = pick(statuses) { members.append(("status", .string(status))) }
+                if let status { members.append(("status", .string(status))) }
                 return object(members)
             }
             let tasks = (0..<random(4)).map { _ in
@@ -612,6 +642,7 @@ final class AssistantOutcomeTests: XCTestCase {
             }
             checkLengths(evaluation.outcome)
             assertRoundTrip(evaluation.outcome, "Lauf \(run)")
+            assertTurnNumbers(evaluation.outcome, turns.count, "Lauf \(run)")
             for hint in evaluation.hints { XCTAssertTrue(isFormatPath(hint.path), hint.path) }
         }
     }
@@ -732,6 +763,24 @@ final class AssistantOutcomeTests: XCTestCase {
         assertRoundTrip(b, "e + U+0301")
         XCTAssertFalse(AssistantOutcomeHint(path: "a\u{E9}", code: .type) == AssistantOutcomeHint(path: "ae\u{301}", code: .type))
         XCTAssertFalse(AssistantOutcomeTurn(role: .user, text: composed) == AssistantOutcomeTurn(role: .user, text: decomposed))
+        let pa = AssistantOutcome.prompt(profile: simpleProfile(), turns: [AssistantOutcomeTurn(role: .user, text: composed)], today: today, budgetChars: 100_000)
+        let pb = AssistantOutcome.prompt(profile: simpleProfile(), turns: [AssistantOutcomeTurn(role: .user, text: decomposed)], today: today, budgetChars: 100_000)
+        XCTAssertTrue(pa == pa)
+        XCTAssertFalse(pa == pb, "der Prompt vergleicht byteweise")
+    }
+
+    func testOccurrencesAtWordBoundaries() {
+        typealias T = AssistantOutcomeText
+        func spots(_ haystack: String, _ needle: String, _ limit: Int) -> [Int] {
+            T.occurrences(of: T.scalars(needle), in: T.scalars(haystack), limit: limit)
+        }
+        XCTAssertEqual(spots("ja jahr ja", "ja", 10), [0, 8])
+        XCTAssertEqual(spots("jahr", "ja", 10), [])
+        XCTAssertEqual(spots("a a a", "a", 2), [0, 2])
+        XCTAssertEqual(spots("12,5 liter", "12", 5), [0])
+        XCTAssertEqual(spots("x+5 und +5", "+5", 5), [1, 8])
+        XCTAssertEqual(spots("a😀b 😀", "😀", 5), [4])
+        XCTAssertEqual(spots("abc", "", 5), [])
     }
 
     func testManyHintsAreDeduplicatedWithoutQuadraticWork() {
