@@ -3991,3 +3991,178 @@ test("H7 der Nutzer unterbricht in der Wartezeit wie sonst: ein Abbruch, die War
       );
     }),
   ));
+
+// -- Runde 6 (Codex R4 zu lva#547) ----------------------------------------------------------------------
+//
+// Fehlerfälle dieser Runde (vor dem Code aufgeschrieben, Status im Bericht):
+//  H8 Abbruch mitten im Vorgang / Nebenläufigkeit: Pause (Halten durch Barge-in) und Wartezeit auf das nächste
+//     Stück. Die Wartezeit darf während der Pause nicht ablaufen, danach aber nie verloren sein:
+//     a) die Pause beginnt, wenn der Player schon leer ist (Wartezeit läuft), die Uhr läuft über die Frist, die
+//        Pause endet ohne Erkennung (`releaseHold`), die Folgesynthese bleibt ungelöst: danach sind Turn und Auftrag
+//        nach der Wartezeit frei, die Zeile ist genau einmal unterbrochen, eine späte Synthese bleibt wirkungslos;
+//     b) die Pause beginnt, solange noch Ton läuft (keine Wartezeit), das Stück endet während der Pause;
+//     c) die Pause beginnt bei laufendem Ton, die Wiedergabe geht nach der Pause weiter und endet erst danach;
+//     d) die Pause endet über die Frist der Erkennung (`holdSttMaxMs`, späte Auswertung) statt über das Ende der Äußerung.
+//     Zeit: gesteuerte Uhr, kein abschließendes `interrupt()`, kein begrenztes Warten für negative Nachweise.
+
+/**
+ * Pause bei hängender Folgesynthese, Fortsetzung ohne Erkennung (die Äußerung endet, ohne dass erkannt wird):
+ * danach sind Turn und Auftrag nach der Wartezeit frei. Gemeinsame Prüfung nach der Fortsetzung.
+ */
+async function nachFortsetzungFrei(t, a1, freigeben, tick) {
+  assert.equal(t.engine.held, null, "die Pause ist beendet");
+  assert.equal(
+    t.engine.turn?.nachreichen?.turnId,
+    a1.id,
+    "das Nachreichen läuft",
+  );
+  assert.equal(t.engine.turn.cancelled, false);
+  tick(TUNING.nachreichenStueckMaxMs - 1);
+  assert.equal(
+    t.engine.turn?.nachreichen?.turnId,
+    a1.id,
+    "die Wartezeit läuft von neuem, noch geduldig",
+  );
+  tick(1);
+  assert.equal(t.engine.turn, null, "Turn frei");
+  assert.equal(t.engine.auftrag, null, "Auftrag frei");
+  assert.equal(t.engine.state, "listening");
+  assert.equal(
+    t.log.zeilen.filter((z) => z.auftragVon === a1.id && z.interrupted).length,
+    1,
+    "die gehörte Zeile ist genau einmal unterbrochen",
+  );
+  assert.deepEqual(t.log.zeilen.at(-1), {
+    t: "Satz eins.",
+    final: true,
+    interrupted: true,
+    auftragVon: a1.id,
+  });
+  const zeilen = t.log.zeilen.length;
+  const verworfen = t.log.verworfen;
+  freigeben("wav:Satz zwei.");
+  // Nur Folgen von Versprechen stehen aus (kein Zeitgeber, kein E/A): ein Durchlauf der Ereignisschleife leert sie.
+  await new Promise((r) => setImmediate(r));
+  assert.equal(t.player.enqueued.includes("wav:Satz zwei."), false);
+  assert.equal(t.log.zeilen.length, zeilen, "späte Synthese: keine neue Zeile");
+  assert.equal(t.log.verworfen, verworfen);
+  assert.equal(t.log.errors.length, 0);
+  assert.equal(t.engine.turn, null);
+}
+
+/**
+ * Ein Player, der das Fortsetzen einer leeren Wiedergabe nicht als Leerlauf meldet (dokumentiert ist es anders; die
+ * Engine darf sich darauf nicht allein verlassen).
+ */
+function fortsetzenStumm(t) {
+  const fortsetzen = t.player.resume.bind(t.player);
+  t.player.resume = () => {
+    const leerlauf = t.player.onIdle;
+    t.player.onIdle = undefined;
+    try {
+      fortsetzen();
+    } finally {
+      t.player.onIdle = leerlauf;
+    }
+  };
+}
+
+const PLAYERARTEN = [
+  ["der Player meldet beim Fortsetzen den Leerlauf", false],
+  ["der Player bleibt beim Fortsetzen stumm", true],
+];
+for (const [art, stumm] of PLAYERARTEN) {
+  const aufbauen = async () => {
+    const r = await zweitesStueckHaengt();
+    if (stumm) fortsetzenStumm(r.t);
+    return r;
+  };
+
+  test(`H8 Pause bei leerem Player (Wartezeit läuft), Fortsetzung ohne Erkennung, Folgesynthese bleibt aus (${art}): danach ist die Wartezeit wieder begrenzt, Turn und Auftrag frei`, () =>
+    mitUhr((tick) =>
+      ohneStille(async () => {
+        const { t, a1, freigeben } = await aufbauen();
+        t.player.finishPiece();
+        t.barge();
+        assert.equal(t.engine.held?.nachreichen?.turnId, a1.id, "angehalten");
+        // Die Uhr läuft in der Pause weit über die Frist: keine Zeitüberschreitung.
+        tick(TUNING.nachreichenStueckMaxMs * 3);
+        assert.equal(t.engine.turn?.nachreichen?.turnId, a1.id);
+        assert.equal(t.engine.turn.cancelled, false);
+        assert.equal(t.engine.held?.nachreichen?.turnId, a1.id);
+        // Die Äußerung endet, bevor erkannt wurde: die Wiedergabe läuft weiter (leer).
+        t.ende();
+        await nachFortsetzungFrei(t, a1, freigeben, tick);
+      }),
+    ));
+
+  test(`H8 Pause beginnt bei klingendem Stück, dieses endet in der Pause, Fortsetzung ohne Erkennung (${art}): die Wartezeit ist danach wieder begrenzt`, () =>
+    mitUhr((tick) =>
+      ohneStille(async () => {
+        const { t, a1, freigeben } = await aufbauen();
+        t.barge();
+        assert.equal(t.engine.held?.nachreichen?.turnId, a1.id, "angehalten");
+        t.player.finishPiece();
+        tick(TUNING.nachreichenStueckMaxMs * 3);
+        assert.equal(t.engine.turn?.nachreichen?.turnId, a1.id);
+        assert.equal(t.engine.turn.cancelled, false, "in der Pause nichts");
+        t.ende();
+        await nachFortsetzungFrei(t, a1, freigeben, tick);
+      }),
+    ));
+
+  test(`H8 Pause endet über die Frist der Erkennung (späte Auswertung), die Folgesynthese bleibt aus (${art}): die Wartezeit ist danach wieder begrenzt`, () =>
+    mitUhr((tick) =>
+      ohneStille(async () => {
+        const { t, a1, freigeben } = await aufbauen();
+        t.player.finishPiece();
+        // Die Erkennung antwortet nie (Tor), die Äußerung endet: die Pause wartet auf `holdSttMaxMs`.
+        let erkennungBegonnen;
+        const begonnen = new Promise((r) => (erkennungBegonnen = r));
+        tauri.handlers.voice_call_transcribe = () => {
+          erkennungBegonnen();
+          return new Promise(() => undefined);
+        };
+        let pauseBeendet;
+        const beendet = new Promise((r) => (pauseBeendet = r));
+        const fortsetzen = t.engine.releaseHold.bind(t.engine);
+        t.engine.releaseHold = () => {
+          fortsetzen();
+          pauseBeendet();
+        };
+        t.barge();
+        t.fruehEnde();
+        t.ende();
+        assert.equal(t.engine.held?.nachreichen?.turnId, a1.id, "angehalten");
+        await begonnen;
+        // Beide Fristen laufen in diesem einen Schritt der Uhr ab (zuerst die der Erkennung, dann die Wartezeit auf das
+        // Stück); die Folgen der Erkennungsfrist (Versprechen) kommen erst danach: die Wartezeit lief in der Pause.
+        tick(TUNING.nachreichenStueckMaxMs * 3);
+        assert.equal(
+          t.engine.held?.nachreichen?.turnId,
+          a1.id,
+          "die Wartezeit lief ab, während die Pause noch galt",
+        );
+        await beendet;
+        assert.equal(t.engine.held, null, "Pause über die Frist beendet");
+        await nachFortsetzungFrei(t, a1, freigeben, tick);
+      }),
+    ));
+}
+
+test("H8 Pause beginnt bei klingendem Stück und endet vor dessen Ende: die Wiedergabe geht weiter, erst ihr Ende startet die Wartezeit", () =>
+  mitUhr((tick) =>
+    ohneStille(async () => {
+      const { t, a1, freigeben } = await zweitesStueckHaengt();
+      t.barge();
+      tick(TUNING.nachreichenStueckMaxMs * 3);
+      t.ende();
+      assert.equal(t.engine.held, null);
+      // Das Stück klingt weiter: auch lange danach wird nichts abgeschnitten.
+      tick(TUNING.nachreichenStueckMaxMs * 3);
+      assert.equal(t.engine.turn?.nachreichen?.turnId, a1.id);
+      assert.equal(t.engine.turn.cancelled, false);
+      t.player.finishPiece();
+      await nachFortsetzungFrei(t, a1, freigeben, tick);
+    }),
+  ));

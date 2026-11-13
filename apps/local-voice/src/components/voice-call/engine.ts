@@ -1240,6 +1240,9 @@ export class VoiceCallEngine {
     this.holdBusy = false;
     this.zaehleHaltezeit(turn);
     this.player?.resume();
+    // Setzt die Wiedergabe leer fort (nichts mehr zu spielen), läuft die Wartezeit auf das nächste Stück von neuem:
+    // in der Pause war sie ausgesetzt, und das Fortsetzen meldet nicht in jedem Fall einen Leerlauf.
+    this.pruefeStueckwartezeit(turn);
     this.setState(this.player?.active ? "speaking" : "listening");
   }
 
@@ -3303,7 +3306,18 @@ export class VoiceCallEngine {
     const turn = this.turn;
     if (!turn?.audible) return;
     if (turn.done) this.finishTurn();
-    else if (turn.nachreichen) this.warteAufStueck(turn);
+    else this.pruefeStueckwartezeit(turn);
+  }
+
+  /**
+   * Nachreichen mit leerem Player und fehlendem Stück: die Wartezeit läuft (von neuem). Nicht in der Pause
+   * (`held`: die Entscheidung läuft, `releaseHold` nimmt sie danach wieder auf) und nicht bei klingendem Ton.
+   */
+  private pruefeStueckwartezeit(turn: Turn): void {
+    if (!turn.nachreichen || !turn.audible || turn.done || turn.cancelled)
+      return;
+    if (this.turn !== turn || this.held === turn || this.player?.active) return;
+    this.warteAufStueck(turn);
   }
 
   private warteAufStueck(turn: Turn): void {
@@ -3317,7 +3331,8 @@ export class VoiceCallEngine {
   /**
    * Das nächste Stück kam nicht: das Nachreichen endet wie ein Abbruch durch den Nutzer. Das Gehörte bleibt als
    * unterbrochene Zeile des Auftrags, der Rest ist verworfen, Schritt und Auftrag sind frei; eine späte Synthese
-   * bleibt ohne Wirkung. Bei angehaltener Wiedergabe (Entscheidung läuft) oder neuem Ton läuft nichts ab.
+   * bleibt ohne Wirkung. Bei angehaltener Wiedergabe (Entscheidung läuft) oder neuem Ton läuft nichts ab; die
+   * Pause verbraucht die Wartezeit nur, `releaseHold` und der nächste Leerlauf setzen sie neu an.
    */
   private stueckFrist(turn: Turn): void {
     turn.stueckTimer = undefined;
