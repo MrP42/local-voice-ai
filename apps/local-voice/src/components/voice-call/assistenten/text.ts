@@ -5,6 +5,14 @@
  */
 import { codepunkte, kappeLeerzeichen, type Profil } from "./profil";
 
+/**
+ * Hängt `quelle` an `ziel` an. Bewusst eine Schleife: `ziel.push(...quelle)` übergibt jedes Element als Argument und wirft bei
+ * datenabhängig langen Feldern (einige Hunderttausend Einträge) einen `RangeError`.
+ */
+function haengeAn(ziel: number[], quelle: readonly number[]): void {
+  for (let i = 0; i < quelle.length; i += 1) ziel.push(quelle[i]);
+}
+
 /** Kalenderfelder und Werte für die Platzhalter. Keine Zeitzonenlogik: der Aufrufer liefert die Ortszeit des Nutzers. */
 export type PlatzhalterWerte = {
   /** Name des Nutzers; leer oder `null` heißt: kein Name (es wird nie ein Ersatzname eingesetzt). */
@@ -167,6 +175,7 @@ export function loesePlatzhalter(
   const s = codepunkte(vorlage);
   const aus: number[] = [];
   const unbekannt: string[] = [];
+  const unbekanntGesehen = new Set<string>();
   let entfernt = false;
   let i = 0;
   while (i < s.length) {
@@ -193,13 +202,15 @@ export function loesePlatzhalter(
     }
     const gekappt = wert === null ? "" : kappeLeerzeichen(wert);
     if (gekappt !== "") {
-      aus.push(...codepunkte(gekappt));
+      haengeAn(aus, codepunkte(gekappt));
     } else {
       entferneTrenner(aus);
       aus.push(MARKE);
       entfernt = true;
-      if (!bekannt && schluessel !== "" && !unbekannt.includes(schluessel))
+      if (!bekannt && schluessel !== "" && !unbekanntGesehen.has(schluessel)) {
+        unbekanntGesehen.add(schluessel);
         unbekannt.push(schluessel);
+      }
     }
     i = ende + 2;
   }
@@ -251,7 +262,8 @@ function bereinige(tokens: number[]): string {
         break;
     }
     if (!satz.includes(MARKE)) {
-      ergebnis.push(...vorspann, ...satz);
+      haengeAn(ergebnis, vorspann);
+      haengeAn(ergebnis, satz);
       continue;
     }
     let k = 0;
@@ -271,11 +283,9 @@ function bereinige(tokens: number[]): string {
         const gross = codepunkte(
           String.fromCodePoint(behalten[index]).toUpperCase(),
         );
-        behalten = [
-          ...behalten.slice(0, index),
-          ...gross,
-          ...behalten.slice(index + 1),
-        ];
+        behalten = behalten
+          .slice(0, index)
+          .concat(gross, behalten.slice(index + 1));
       }
     }
     const zusammen: number[] = [];
@@ -283,7 +293,8 @@ function bereinige(tokens: number[]): string {
       if (!(t === 0x20 && zusammen[zusammen.length - 1] === 0x20))
         zusammen.push(t);
     }
-    ergebnis.push(...vorspann, ...zusammen);
+    haengeAn(ergebnis, vorspann);
+    haengeAn(ergebnis, zusammen);
   }
   return alsText(kappeLeerraum(ergebnis));
 }
