@@ -2030,11 +2030,14 @@ mod tests {
             let guard = anchor::hook::set(dir.path(), {
                 let (dir, weights) = (dir.path().to_path_buf(), files[1].1.clone());
                 let swapped = swapped.clone();
-                let spoiled = AtomicBool::new(false);
+                let renames = AtomicUsize::new(0);
                 move |point| match point {
-                    // Die Abschlusspruefung soll scheitern: Gewichte verfaelschen, sobald
-                    // der Graph gelesen ist.
-                    anchor::Point::Checked(0) if !spoiled.swap(true, Ordering::SeqCst) => {
+                    // Die Abschlusspruefung soll scheitern: die schon veroeffentlichten
+                    // Gewichte verfaelschen, unmittelbar bevor der Graph veroeffentlicht
+                    // wird (das zweite Umbenennen). Zu diesem Zeitpunkt haelt niemand die
+                    // Gewichte offen, das Schreiben gelingt also auch unter Windows (dort
+                    // haelt die Pruefung ihre Dateien mit `FILE_SHARE_READ` allein).
+                    anchor::Point::BeforeRename if renames.fetch_add(1, Ordering::SeqCst) == 1 => {
                         std::fs::write(&weights, same_size_wrong()).unwrap();
                     }
                     anchor::Point::BeforeWithdraw if !swapped.load(Ordering::SeqCst) => {
