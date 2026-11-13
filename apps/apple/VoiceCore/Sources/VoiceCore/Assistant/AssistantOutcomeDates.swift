@@ -265,48 +265,69 @@ public enum AssistantOutcomeText {
     static func isEdge(_ c: UInt32) -> Bool { edge.contains(c) }
 
     /// Die Grenzen der Nachbarschaft der Spanne `start..<end`: bis zu `words` ganze Wörter (an Leerzeichen getrennt) davor und
-    /// danach; je Seite werden höchstens `limit` Codepunkte gelesen. Reicht das nicht und der Text geht dort weiter: `nil`.
-    static func neighbourhood(_ c: [UInt32], start: Int, end: Int, words: Int, limit: Int) -> Range<Int>? {
+    /// danach; je Seite werden höchstens `limit` Codepunkte gelesen. Findet sich darin nicht die Grenze zum `words + 1`-ten Wort und
+    /// der Text geht weiter, endet die Nachbarschaft am letzten ganzen Wort, das gelesen wurde. `front`/`back` melden, ob die Seite
+    /// gekürzt ist (durch die Wortgrenze oder die Codepunktgrenze) oder ob dort der Text endet. Steckt das Wort an der Spanne selbst
+    /// in der Grenze fest (kein Leerzeichen gelesen): `nil`.
+    static func neighbourhood(_ c: [UInt32], start: Int, end: Int, words: Int, limit: Int) -> (range: Range<Int>, front: Bool, back: Bool)? {
         var i = start
         var read = 0
         var spaces = 0
         var from = -1
+        var outermost = -1
+        var front = false
         while i > 0, read < limit {
             i -= 1
             read += 1
             if c[i] == 0x20 {
                 spaces += 1
+                outermost = i
                 if spaces == words + 1 {
                     from = i + 1
+                    front = true
                     break
                 }
             }
         }
         if from < 0 {
-            if i > 0 { return nil }
-            from = 0
+            if i > 0 {
+                if outermost < 0 { return nil }
+                from = outermost + 1
+                front = true
+            } else {
+                from = 0
+            }
         }
         i = end
         read = 0
         spaces = 0
+        outermost = -1
         var to = -1
+        var back = false
         while i < c.count, read < limit {
             let x = c[i]
             i += 1
             read += 1
             if x == 0x20 {
                 spaces += 1
+                outermost = i - 1
                 if spaces == words + 1 {
                     to = i - 1
+                    back = true
                     break
                 }
             }
         }
         if to < 0 {
-            if i < c.count { return nil }
-            to = c.count
+            if i < c.count {
+                if outermost < 0 { return nil }
+                to = outermost
+                back = true
+            } else {
+                to = c.count
+            }
         }
-        return from..<to
+        return (from..<to, front, back)
     }
 
     // MARK: Zahlwörter
@@ -459,9 +480,10 @@ public enum AssistantOutcomeText {
     /// `12,5` und deckt 12 nicht); gedeckt ist, wenn eines dieser Token den Wert hat oder ein Zahlwort null bis zwölf als ganzes
     /// Wort in der Spanne für ihn steht.
     static func numberCovered(_ turn: [UInt32], start: Int, end: Int, comparable cmp: String) -> Bool {
-        guard let range = neighbourhood(turn, start: start, end: end, words: AssistantOutcomeDates.contextWords, limit: AssistantOutcomeDates.contextScalars) else {
+        guard let found = neighbourhood(turn, start: start, end: end, words: AssistantOutcomeDates.contextWords, limit: AssistantOutcomeDates.contextScalars) else {
             return false
         }
+        let range = found.range
         let c = Array(turn[range])
         let s = start - range.lowerBound
         let e = end - range.lowerBound
@@ -675,10 +697,23 @@ public enum AssistantOutcomeDates {
     /// Höchstens so viele Fundstellen eines Belegs in einem Beitrag werden für die Deckung geprüft; mehr: nicht gedeckt.
     public static let maxOccurrences = 16
 
-    /// Nachbarschaft einer Fundstelle: so viele Wörter davor und danach gehören zum Kontext.
-    public static let contextWords = 8
+    /// Rand eines Fensters: So viele Wörter müssen hinter (und vor) einem Fenster gelesen sein, damit seine Nachbarschaftsprüfung
+    /// vollständig ist, sofern die Wortliste dort abgeschnitten ist. Hinter einem Fenster liest die Prüfung höchstens 5 Wörter: bis
+    /// zu 2 Brückenwörter, `in`, ein Zahlwort und dessen Folgewort. Ein längeres auflösendes Fenster (höchstens 6 Wörter) reicht
+    /// ebenfalls höchstens 5 Wörter über ein kürzeres hinaus. Davor gilt es symmetrisch. Am echten Ende des Textes gilt der Rand nicht.
+    public static let deadlineMargin = 5
 
-    /// Dafür werden je Seite höchstens so viele Codepunkte gelesen; reicht das nicht und der Beitrag geht weiter: nicht gedeckt.
+    /// `deadlines(in:)` liest höchstens so viele Wörter: Fenster beginnen in den ersten 1024, reichen höchstens 5 weiter, dahinter
+    /// 5 Wörter Rand.
+    public static let deadlineReadLimit = maxDeadlineWords + (maxDeadlineWindow - 1) + deadlineMargin
+
+    /// Nachbarschaft einer Fundstelle: so viele Wörter davor und danach gehören zum Kontext (ein Fenster, das die Fundstelle
+    /// schneidet, reicht bis zu 5 Wörter über sie hinaus und hat dann noch `deadlineMargin` Wörter Rand).
+    public static let contextWords = 12
+
+    /// Dafür werden je Seite höchstens so viele Codepunkte gelesen. Reicht das nicht und der Beitrag geht weiter, endet die
+    /// Nachbarschaft am letzten ganzen Wort davor und gilt als abgeschnitten (siehe `deadlineMargin`); steckt schon das Wort an der
+    /// Fundstelle darin fest, gibt es keine Nachbarschaft.
     public static let contextScalars = 400
 
     /// Wörter, die einen Tag verschieben oder näher bestimmen: `nächsten`/`kommenden`/`next` und `übernächsten` in allen Formen,
@@ -758,12 +793,14 @@ public enum AssistantOutcomeDates {
     }
 
     /// Steht direkt hinter dem Ausdruck (Wörter `start` bis `end` einschließlich) oder direkt davor (führende Vorsätze
-    /// übersprungen) ein Verbinder oder Verneiner?
-    private static func hasConnector(_ tokens: [String], start: Int, end: Int) -> Bool {
+    /// übersprungen) ein Verbinder oder Verneiner? Läuft das Überspringen der Vorsätze über den Anfang einer vorn abgeschnittenen
+    /// Liste hinaus, fehlt das Wort davor: unsicher.
+    private static func hasConnector(_ tokens: [String], start: Int, end: Int, truncatedFront: Bool) -> Bool {
         if end + 1 < tokens.count, isIn(connectors, withoutEdge(tokens[end + 1])) { return true }
         var before = start - 1
         while before >= 0, isIn(prefixes, withoutEdge(tokens[before])) { before -= 1 }
-        return before >= 0 && isIn(connectors, withoutEdge(tokens[before]))
+        if before < 0 { return truncatedFront }
+        return isIn(connectors, withoutEdge(tokens[before]))
     }
 
     /// Brückenwörter: Wörter zwischen einem Fristausdruck und einem weiteren Datumsbestandteil (`Montag bis Freitag`, `am Montag im
@@ -804,9 +841,14 @@ public enum AssistantOutcomeDates {
     /// längeres auflösendes Fenster enthält (egal, ob es `p...q` verlässt). Reihenfolge: nach Anfang, bei gleichem Anfang kürzere
     /// zuerst. `unsafe` ist ein Treffer, wenn das Wort direkt davor oder direkt danach ein Datumsbestandteil ist (`isDateComponent`)
     /// oder direkt daneben ein Verbinder oder Verneiner steht (`hasConnector`) oder nach höchstens
-    /// `maxBridges` Brückenwörtern ein Datumsbestandteil folgt (`bridge`). Die Treffer
+    /// `maxBridges` Brückenwörtern ein Datumsbestandteil folgt (`bridge`). Ist die Wortliste hinten (vorn) abgeschnitten und liegen
+    /// hinter (vor) dem Treffer weniger als `deadlineMargin` Wörter, ist er ebenfalls unsicher: Das fehlende Folgewort darf die
+    /// Prüfung nicht umgehen. Am echten Textende (beide Angaben falsch) gilt das nicht. Die Treffer
     /// können überlappen und auf verschiedene Tage auflösen; die Zerlegung hängt nicht von der Suchrichtung ab.
-    static func maximalDeadlines(_ tokens: [String], from p: Int, to q: Int, today: AssistantOutcomeDate) -> [DeadlineMatch] {
+    static func maximalDeadlines(
+        _ tokens: [String], from p: Int, to q: Int, today: AssistantOutcomeDate,
+        truncatedFront: Bool = false, truncatedBack: Bool = false
+    ) -> [DeadlineMatch] {
         let width = maxDeadlineWindow + 1
         var resolved = Set<Int>()
         var order: [(start: Int, length: Int, day: String)] = []
@@ -841,23 +883,28 @@ public enum AssistantOutcomeDates {
             let after = item.start + item.length
             let unsafe = (before >= 0 && isDateComponent(tokens, before, after: false))
                 || (after < tokens.count && isDateComponent(tokens, after, after: true))
-                || hasConnector(tokens, start: item.start, end: after - 1)
+                || hasConnector(tokens, start: item.start, end: after - 1, truncatedFront: truncatedFront)
                 || bridge(tokens, before, after: false)
                 || bridge(tokens, after, after: true)
+                || (truncatedBack && tokens.count - after < deadlineMargin)
+                || (truncatedFront && item.start < deadlineMargin)
             out.append(DeadlineMatch(start: item.start, length: item.length, day: item.day, unsafe: unsafe))
         }
         return out
     }
 
     /// Alle Tage, die die inklusionsmaximalen, sicheren Fristausdrücke eines Textes auflösen; Reihenfolge des Auftretens, ohne
-    /// Wiederholung. Untersucht werden Ausdrücke, die in den ersten `maxDeadlineWords` Wörtern beginnen; ob ein Treffer an dieser
-    /// Grenze sicher ist, entscheidet das Wort dahinter (gelesen wird über die Grenze hinaus).
+    /// Wiederholung. Untersucht werden Ausdrücke, die in den ersten `maxDeadlineWords` Wörtern beginnen; gelesen werden bis zu
+    /// `deadlineMargin` Wörter dahinter. Geht der Text über das Gelesene hinaus, ist ein Treffer mit weniger als `deadlineMargin`
+    /// Wörtern dahinter unsicher; am echten Textende gelten die normalen Regeln.
     public static func deadlines(in text: String, today: AssistantOutcomeDate) -> [String] {
-        let tokens = T.tokens(T.normalizedScalars(text), limit: maxDeadlineWords + maxDeadlineWindow + maxBridges)
+        let all = T.tokens(T.normalizedScalars(text), limit: deadlineReadLimit + 1)
+        let more = all.count > deadlineReadLimit
+        let tokens = more ? Array(all.prefix(deadlineReadLimit)) : all
         if tokens.isEmpty { return [] }
         var out: [String] = []
         let q = min(maxDeadlineWords, tokens.count) - 1
-        for match in maximalDeadlines(tokens, from: 0, to: q, today: today) where !match.unsafe {
+        for match in maximalDeadlines(tokens, from: 0, to: q, today: today, truncatedBack: more) where !match.unsafe {
             if !out.contains(where: { T.same($0, match.day) }) { out.append(match.day) }
         }
         return out
@@ -875,13 +922,18 @@ public enum AssistantOutcomeDates {
         var tokens: [String]
         var p: Int
         var q: Int
+        var truncatedFront: Bool
+        var truncatedBack: Bool
     }
 
     /// Die Nachbarschaft der Spanne `start..<end` im normalisierten `turn`: die Wörter, die die Spanne berühren, plus
-    /// `contextWords` ganze Wörter davor und danach. Je Seite werden höchstens `contextScalars` Codepunkte gelesen; findet sich
-    /// darin nicht die Grenze zum neunten Wort (und der Beitrag ist dort nicht zu Ende), gibt es keine Nachbarschaft (`nil`).
+    /// `contextWords` ganze Wörter davor und danach. Je Seite werden höchstens `contextScalars` Codepunkte gelesen. Findet sich
+    /// darin nicht die Grenze zum 13. Wort und der Beitrag geht weiter, endet die Nachbarschaft am letzten ganzen Wort, das
+    /// gelesen wurde. Jede Seite meldet, ob sie gekürzt ist oder ob dort der Beitrag endet. Steckt das Wort an der Spanne selbst
+    /// in der Grenze fest, gibt es keine Nachbarschaft (`nil`).
     static func neighbourhood(_ turn: [UInt32], start: Int, end: Int) -> Neighbourhood? {
-        guard let range = T.neighbourhood(turn, start: start, end: end, words: contextWords, limit: contextScalars) else { return nil }
+        guard let found = T.neighbourhood(turn, start: start, end: end, words: contextWords, limit: contextScalars) else { return nil }
+        let range = found.range
         var tokens: [String] = []
         var p = -1
         var q = -1
@@ -897,7 +949,7 @@ public enum AssistantOutcomeDates {
             if stop >= range.upperBound { break }
             cursor = stop + 1
         }
-        return p < 0 ? nil : Neighbourhood(tokens: tokens, p: p, q: q)
+        return p < 0 ? nil : Neighbourhood(tokens: tokens, p: p, q: q, truncatedFront: found.front, truncatedBack: found.back)
     }
 
     /// Der eine Tag, den die Spanne `start..<end` des normalisierten `turn` im Kontext nennt, sonst `nil`: Unter den
@@ -905,7 +957,7 @@ public enum AssistantOutcomeDates {
     /// alle lösen auf denselben Tag auf.
     static func contextDeadline(_ turn: [UInt32], start: Int, end: Int, today: AssistantOutcomeDate) -> String? {
         guard let n = neighbourhood(turn, start: start, end: end) else { return nil }
-        let matches = maximalDeadlines(n.tokens, from: n.p, to: n.q, today: today)
+        let matches = maximalDeadlines(n.tokens, from: n.p, to: n.q, today: today, truncatedFront: n.truncatedFront, truncatedBack: n.truncatedBack)
         guard let first = matches.first, !matches.contains(where: { $0.unsafe }) else { return nil }
         return matches.allSatisfy { T.same($0.day, first.day) } ? first.day : nil
     }
@@ -933,7 +985,7 @@ public enum AssistantOutcomeDates {
     static func isDeadlineOccurrence(_ turn: [UInt32], start: Int, end: Int, expression: [String], today: AssistantOutcomeDate) -> Bool {
         guard let n = neighbourhood(turn, start: start, end: end) else { return false }
         let core = withoutPrefixes(expression[...])
-        return maximalDeadlines(n.tokens, from: n.p, to: n.q, today: today).contains { match in
+        return maximalDeadlines(n.tokens, from: n.p, to: n.q, today: today, truncatedFront: n.truncatedFront, truncatedBack: n.truncatedBack).contains { match in
             if match.unsafe || match.start > n.p || match.start + match.length - 1 < n.q { return false }
             let own = withoutPrefixes(n.tokens[match.start..<(match.start + match.length)])
             return own.count == core.count && zip(own, core).allSatisfy { T.same($0, $1) }

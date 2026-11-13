@@ -5349,6 +5349,184 @@
         "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [],\n  \"erstellt\": \"\",\n  \"felder\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"bis Freitag\",\n      \"name\": \"a\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-20\"\n    },\n    {\n      \"beitrag\": 2,\n      \"beleg\": \"Montag\",\n      \"name\": \"b\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 3,\n      \"beleg\": \"Montag\",\n      \"name\": \"c\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 4,\n      \"beleg\": \"Montag\",\n      \"name\": \"d\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 5,\n      \"beleg\": \"Montag\",\n      \"name\": \"e\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 6,\n      \"beleg\": \"am Montag\",\n      \"name\": \"f\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 7,\n      \"beleg\": \"bis Freitag\",\n      \"name\": \"g\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-20\"\n    },\n    {\n      \"beitrag\": 8,\n      \"beleg\": \"bis Freitag\",\n      \"name\": \"h\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-20\"\n    },\n    {\n      \"beitrag\": 9,\n      \"beleg\": \"Montag\",\n      \"name\": \"i\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 10,\n      \"beleg\": \"Monday\",\n      \"name\": \"j\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 11,\n      \"beleg\": \"by Friday\",\n      \"name\": \"k\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-20\"\n    },\n    {\n      \"beitrag\": 12,\n      \"beleg\": \"Montag\",\n      \"name\": \"l\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 13,\n      \"beleg\": \"Monday\",\n      \"name\": \"m\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 14,\n      \"beleg\": \"Montag\",\n      \"name\": \"n\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    }\n  ],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
         "hinweise": []
       }
+    },
+    {
+      "name": "Kontext: „zwei Tagen“ hinter „Ende der Woche und den“ macht „spätestens“ unsicher, „zwei Kollegen“ nicht",
+      "profil": {
+        "schema": "lva.assistent/1",
+        "id": "eigen-aaaaaaaaaaaa",
+        "name": "Prüfer",
+        "sprache": "de",
+        "auswertung": {
+          "zusammenfassung": false,
+          "aufgaben": false,
+          "felder": [
+            {
+              "name": "a",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "b",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "c",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            }
+          ]
+        }
+      },
+      "verlauf": [
+        {
+          "rolle": "nutzer",
+          "text": "spätestens bis zum Ende der Woche und den zwei Tagen danach"
+        },
+        {
+          "rolle": "nutzer",
+          "text": "spätestens bis zum Ende der Woche"
+        },
+        {
+          "rolle": "nutzer",
+          "text": "spätestens bis zum Ende der Woche und den zwei Kollegen danach"
+        }
+      ],
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "roh": "{\"felder\": [{\"name\": \"a\", \"status\": \"klar\", \"wert\": \"2026-11-13\", \"beleg\": \"spätestens\", \"beitrag\": 1}, {\"name\": \"b\", \"status\": \"klar\", \"wert\": \"2026-11-13\", \"beleg\": \"spätestens\", \"beitrag\": 2}, {\"name\": \"c\", \"status\": \"klar\", \"wert\": \"2026-11-13\", \"beleg\": \"spätestens\", \"beitrag\": 3}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [],\n  \"erstellt\": \"\",\n  \"felder\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"spätestens\",\n      \"name\": \"a\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-13\"\n    },\n    {\n      \"beitrag\": 2,\n      \"beleg\": \"spätestens\",\n      \"name\": \"b\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-13\"\n    },\n    {\n      \"beitrag\": 3,\n      \"beleg\": \"spätestens\",\n      \"name\": \"c\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-13\"\n    }\n  ],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
+        "hinweise": [
+          {
+            "pfad": "felder[0].wert",
+            "code": "wert_nicht_im_beleg"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Kontext: die Codepunktgrenze kürzt die Nachbarschaft vorn und hinten; weniger als 5 Wörter Rand sind unsicher, 5 genügen",
+      "profil": {
+        "schema": "lva.assistent/1",
+        "id": "eigen-aaaaaaaaaaaa",
+        "name": "Prüfer",
+        "sprache": "de",
+        "auswertung": {
+          "zusammenfassung": false,
+          "aufgaben": false,
+          "felder": [
+            {
+              "name": "a",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "b",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "c",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            },
+            {
+              "name": "d",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            }
+          ]
+        }
+      },
+      "verlauf": [
+        {
+          "rolle": "nutzer",
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx aa bb cc Montag"
+        },
+        {
+          "rolle": "nutzer",
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx aa bb cc dd ee Montag"
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Montag aa bb cc xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "rolle": "nutzer",
+          "text": "Montag aa bb cc dd ee xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        }
+      ],
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "roh": "{\"felder\": [{\"name\": \"a\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 1}, {\"name\": \"b\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 2}, {\"name\": \"c\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 3}, {\"name\": \"d\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 4}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [],\n  \"erstellt\": \"\",\n  \"felder\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"Montag\",\n      \"name\": \"a\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 2,\n      \"beleg\": \"Montag\",\n      \"name\": \"b\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 3,\n      \"beleg\": \"Montag\",\n      \"name\": \"c\",\n      \"status\": \"unklar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    },\n    {\n      \"beitrag\": 4,\n      \"beleg\": \"Montag\",\n      \"name\": \"d\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    }\n  ],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
+        "hinweise": [
+          {
+            "pfad": "felder[0].wert",
+            "code": "wert_nicht_im_beleg"
+          },
+          {
+            "pfad": "felder[2].wert",
+            "code": "wert_nicht_im_beleg"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Dokumentierte Grenze: „Montag bitte im Mai“ bleibt klar (ein Füllwort unterbricht die Brückenwörter)",
+      "profil": {
+        "schema": "lva.assistent/1",
+        "id": "eigen-aaaaaaaaaaaa",
+        "name": "Prüfer",
+        "sprache": "de",
+        "auswertung": {
+          "zusammenfassung": false,
+          "aufgaben": false,
+          "felder": [
+            {
+              "name": "a",
+              "beschreibung": "",
+              "typ": "datum",
+              "optionen": []
+            }
+          ]
+        }
+      },
+      "verlauf": [
+        {
+          "rolle": "nutzer",
+          "text": "Montag bitte im Mai"
+        }
+      ],
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "roh": "{\"felder\": [{\"name\": \"a\", \"status\": \"klar\", \"wert\": \"2026-11-16\", \"beleg\": \"Montag\", \"beitrag\": 1}]}",
+      "erwartet": {
+        "ok": true,
+        "kodiert": "{\n  \"assistent\": \"eigen-aaaaaaaaaaaa\",\n  \"aufgaben\": [],\n  \"erstellt\": \"\",\n  \"felder\": [\n    {\n      \"beitrag\": 1,\n      \"beleg\": \"Montag\",\n      \"name\": \"a\",\n      \"status\": \"klar\",\n      \"typ\": \"datum\",\n      \"wert\": \"2026-11-16\"\n    }\n  ],\n  \"gekuerzt\": false,\n  \"offene_fragen\": [],\n  \"schema\": \"lva.auswertung/1\",\n  \"zusammenfassung\": \"\"\n}\n",
+        "hinweise": []
+      }
     }
   ],
   "frist": [
@@ -9548,6 +9726,140 @@
     },
     {
       "text": "Send me on Monday a report",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-16"
+        ],
+        "deckung": "2026-11-16"
+      }
+    },
+    {
+      "text": "spätestens bis zum Ende der Woche und den zwei Tagen danach",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "spätestens bis zum Ende der Woche",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-13"
+        ],
+        "deckung": "2026-11-13"
+      }
+    },
+    {
+      "text": "spätestens bis zum Ende der Woche und den zwei Kollegen danach",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-13"
+        ],
+        "deckung": "2026-11-13"
+      }
+    },
+    {
+      "text": "Montag bitte im Mai",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-16"
+        ],
+        "deckung": "2026-11-16"
+      }
+    },
+    {
+      "text": "wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort spätestens bis zum Ende der Woche und den zwei Tagen danach",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort spätestens bis zum Ende der Woche",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-13"
+        ],
+        "deckung": "2026-11-13"
+      }
+    },
+    {
+      "text": "wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort bis Freitag",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-20"
+        ],
+        "deckung": "2026-11-20"
+      }
+    },
+    {
+      "text": "wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort bis Freitag wort wort wort wort wort wort wort wort wort wort",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [
+          "2026-11-20"
+        ],
+        "deckung": "2026-11-20"
+      }
+    },
+    {
+      "text": "wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort spätestens bis zum Ende der Woche und den zwei Tagen danach mehr",
+      "heute": {
+        "jahr": 2026,
+        "monat": 11,
+        "tag": 13
+      },
+      "erwartet": {
+        "tage": [],
+        "deckung": null
+      }
+    },
+    {
+      "text": "Wir kommen Montag zwei",
       "heute": {
         "jahr": 2026,
         "monat": 11,

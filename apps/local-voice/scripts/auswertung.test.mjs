@@ -22,6 +22,8 @@ const {
   fristDeckungImKontext,
   fristenIn,
   fundstellen,
+  maximaleFristen,
+  FRIST_RAND,
   normalisiere,
   gespraechZeilen,
   HINWEIS_CODES,
@@ -296,6 +298,29 @@ test("Hinweise tragen nur Pfad und Code, nie Inhalt des Modells", () => {
   assert.ok(!JSON.stringify(r.hinweise).toLowerCase().includes("geheim-"));
   for (const h of r.hinweise)
     assert.deepEqual(Object.keys(h).sort(), ["code", "pfad"]);
+});
+
+test("maximaleFristen: eine abgeschnittene Wortliste lässt fehlenden Folgekontext nicht als sicher gelten", () => {
+  const heute = { jahr: 2026, monat: 11, tag: 13 };
+  const woerter = ["spätestens", "bis", "zum", "ende", "der", "woche", "und"];
+  const unsicher = (liste, abgeschnitten) =>
+    maximaleFristen(liste, 0, 5, heute, abgeschnitten).map((t) => t.unsicher);
+  assert.equal(FRIST_RAND, 5);
+  // am echten Textende gelten die normalen Regeln
+  assert.deepEqual(unsicher(woerter, undefined), [false]);
+  assert.deepEqual(unsicher(woerter, { vorn: false, hinten: false }), [false]);
+  // hinten abgeschnitten, weniger als FRIST_RAND Wörter dahinter: unsicher
+  assert.deepEqual(unsicher(woerter, { vorn: false, hinten: true }), [true]);
+  // vorn abgeschnitten, weniger als FRIST_RAND Wörter davor: unsicher
+  assert.deepEqual(unsicher(woerter, { vorn: true, hinten: false }), [true]);
+  // genug Rand: sicher, auch wenn die Liste abgeschnitten ist
+  const vorn = ["a1", "a2", "a3", "a4", "a5"];
+  const lang = [...vorn, ...woerter, "b1", "b2", "b3", "b4"];
+  const t = maximaleFristen(lang, 5, 10, heute, { vorn: true, hinten: true });
+  assert.deepEqual(
+    t.map((x) => x.unsicher),
+    [false],
+  );
 });
 
 test("fundstellen: nur an Wortgrenzen, überlappende Vorkommen, höchstens so viele wie verlangt", () => {

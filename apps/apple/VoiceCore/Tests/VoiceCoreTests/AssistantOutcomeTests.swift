@@ -769,6 +769,20 @@ final class AssistantOutcomeTests: XCTestCase {
         XCTAssertFalse(pa == pb, "der Prompt vergleicht byteweise")
     }
 
+    func testTruncatedWordListsNeverCountAsSafeWithoutTheirMargin() {
+        typealias D = AssistantOutcomeDates
+        let words = ["spätestens", "bis", "zum", "ende", "der", "woche", "und"]
+        func unsafe(_ list: [String], from p: Int, to q: Int, front: Bool, back: Bool) -> [Bool] {
+            D.maximalDeadlines(list, from: p, to: q, today: today, truncatedFront: front, truncatedBack: back).map(\.unsafe)
+        }
+        XCTAssertEqual(D.deadlineMargin, 5)
+        XCTAssertEqual(unsafe(words, from: 0, to: 5, front: false, back: false), [false])
+        XCTAssertEqual(unsafe(words, from: 0, to: 5, front: false, back: true), [true])
+        XCTAssertEqual(unsafe(words, from: 0, to: 5, front: true, back: false), [true])
+        let long = ["a1", "a2", "a3", "a4", "a5"] + words + ["b1", "b2", "b3", "b4"]
+        XCTAssertEqual(unsafe(long, from: 5, to: 10, front: true, back: true), [false])
+    }
+
     func testOccurrencesAtWordBoundaries() {
         typealias T = AssistantOutcomeText
         func spots(_ haystack: String, _ needle: String, _ limit: Int) -> [Int] {

@@ -475,7 +475,7 @@ Gelesen werden je Feld `name`, `status`, `wert` (Text oder Zahl als Originaltext
    Wert als Text erhalten (≤ 500), Hinweis `typ`. Auswahl außerhalb der Optionen: `unklar`, Wert erhalten, Hinweis `wert`.
 4. **Deckung im Kontext des Beitrags.** Ist der Wert durch den Beleg nicht gedeckt, wird der Status `unklar` (Wert bleibt, Hinweis
    `wert_nicht_im_beleg`). Das Modell wählt den Belegausschnitt selbst, darum zählt, was der **Beitrag um den Beleg herum** sagt: `Montag` als
-   Beleg im Beitrag `übernächsten Montag` deckt den 16., nicht den 23. Geprüft werden die Fundstellen des Belegs im Beitrag, auf den sich
+   Beleg im Beitrag `übernächsten Montag` deckt den 23., nicht den 16. Geprüft werden die Fundstellen des Belegs im Beitrag, auf den sich
    `beitrag` bezieht.
    - `text`: der normalisierte Wert ist Teil des normalisierten Belegs (Teilstring, keine Wortgrenze). Der Beleg selbst hat eine Fundstelle.
    - `auswahl`: die Option (normalisiert) steht im Beleg als ganze Wortfolge (der Beleg hat eine Fundstelle: `Ja` in `Jahr` ist keine).
@@ -491,9 +491,13 @@ Gelesen werden je Feld `name`, `status`, `wert` (Text oder Zahl als Originaltext
      überlappende maximale Ausdrücke mit verschiedenen Tagen decken nichts.
 
    **Nachbarschaft** (für `zahl` und `datum`): die Wörter (an Leerzeichen getrennt) des normalisierten Beitrags, die die Fundstelle berühren,
-   plus **8 ganze Wörter** davor und danach. Je Seite werden höchstens **400 Codepunkte** gelesen. Reicht das nicht für 8 Wörter und ist der Beitrag
-   dort nicht zu Ende, gibt es keine Nachbarschaft und der Wert ist nicht gedeckt (`wert_nicht_im_beleg`); ein Beitrag, der früher beginnt oder
-   endet, braucht weniger Wörter. Der Aufwand je Fundstelle hängt nicht von der Länge des Beitrags ab; nur die Suche nach den Fundstellen
+   plus **12 ganze Wörter** (`KONTEXT_WOERTER`) davor und danach. Je Seite werden höchstens **400 Codepunkte** (`KONTEXT_CODEPUNKTE`) gelesen.
+   Reichen sie nicht für 12 Wörter und geht der Beitrag weiter, endet die Nachbarschaft am letzten ganzen Wort, das gelesen wurde (ein
+   angeschnittenes Wort entfällt); steckt schon das Wort an der Fundstelle in der Grenze fest (kein Leerzeichen gelesen), gibt es keine
+   Nachbarschaft und der Wert ist nicht gedeckt (`wert_nicht_im_beleg`). Jede Seite merkt sich, ob sie gekürzt ist (durch die Wortgrenze oder
+   die Codepunktgrenze) oder ob dort der Beitrag endet; ein Beitrag, der früher beginnt oder endet, braucht weniger Wörter. Für `datum`
+   gilt bei Kürzung die Rand-Regel (`FRIST_RAND`, siehe „Fristauflösung“); für `zahl` genügt das Wort an der Fundstelle, denn ein Zahl-Token
+   liegt innerhalb eines Wortes. Der Aufwand je Fundstelle hängt nicht von der Länge des Beitrags ab; nur die Suche nach den Fundstellen
    liest den Beitrag, linear. Es gibt keine Grenze von 1024 Wörtern für die Deckung.
 5. **Status am Ende.** `klar` nur, wenn das Modell `klar` meldete und Typ und Deckung stimmen; sonst `unklar`.
 
@@ -542,8 +546,8 @@ führende Vorsätze `am`, `bis`, `zum`, `zur`, `spätestens`, `by`, `until`, `on
 | `übernächsten`/`übernächster` + Wochentag | eine Woche später |
 | `in N Tagen/Wochen`, `in N days/weeks` | N Zahl (höchstens 3 Ziffern) oder Zahlwort null bis zwölf (`ein`-Formen = 1) |
 | `nächste Woche`, `next week` | Montag der Folgewoche |
-| `Ende der Woche`, `end of the week` (auch `dieser`/`this`) | Freitag der laufenden Woche; am Samstag und Sonntag der der folgenden |
-| `Ende des Monats`, `end of the month` (auch `dieses`/`this`) | letzter Tag des Monats von heute |
+| `Ende der Woche`, `end of the week` (auch `Ende dieser Woche`, `end of this week`) | Freitag der laufenden Woche; am Samstag und Sonntag der der folgenden |
+| `Ende des Monats`, `end of the month` (auch `Ende dieses Monats`, `end of this month`) | letzter Tag des Monats von heute |
 | `14.11.`, `14.11`, `14.11.2026` | Tag.Monat ohne Jahr: nächstes Vorkommen ab heute (heute zählt); mit vierstelligem Jahr genau dieser Tag |
 | `14. November`, `14 November [2026]`, `14th of November`, `November 14[th][, 2026]` | wie oben, Monatsnamen deutsch und englisch (ausgeschrieben, auch `maerz`) |
 | `2026-11-14` | genau dieser Tag |
@@ -597,20 +601,38 @@ untersucht wird, gilt:
   `Montag und zwei Personen`, `am Montag am Abend bitte`, `Send me on Monday a report` bleiben sicher. Folgen mehr als 2 Brückenwörter, wird nicht
   weitergesucht. Wegen `und` decken `Montag und Dienstag` und `14.11. und übermorgen` keinen der Tage, auch wenn beide zugesagt sind; das ist
   bewusst konservativ.
-- **Was der Kern prüft und was nicht.** Der Kern prüft, dass der Tag **an der zitierten Stelle wörtlich genannt** ist, ohne
-  widersprechende Datumswörter im Umfeld von 8 Wörtern. Ob der Tag **gemeint oder zugesagt** ist, prüft er nicht, soweit die Verneinung oder Alternative nicht direkt neben dem
-  Ausdruck steht (`Montag passt nicht`, `Montag geht leider nicht`, `Montag? Lieber nicht` bleiben `klar`, wenn der Beleg die Verneinung nicht
-  zitiert und kein Verbinder direkt anschließt).
+- **Rand bei Kürzung (`FRIST_RAND` = 5).** Die Nachbarschaftsprüfung liest hinter einem Fenster höchstens 5 Wörter: bis zu 2 Brückenwörter, `in`,
+  ein Zahlwort und dessen Folgewort. Ein längeres auflösendes Fenster (höchstens 6 Wörter) reicht ebenfalls höchstens 5 Wörter über ein kürzeres
+  hinaus. Davor gilt es symmetrisch. Ist die untersuchte Wortliste **hinten** (**vorn**) abgeschnitten und liegen hinter (vor) einem Fenster weniger
+  als 5 Wörter, ist das Fenster **unsicher**: Fehlender Folgekontext umgeht die Prüfung nicht (`spätestens bis zum Ende der Woche und den zwei`
+  mit fehlendem `Tagen` hinten ist unsicher). Läuft das Überspringen der führenden Vorsätze bei der Verbinderprüfung über den Anfang einer vorn
+  abgeschnittenen Liste hinaus, ist das Fenster ebenfalls unsicher. Am echten Anfang oder Ende des Textes gilt die Regel nicht (`Wir kommen Montag
+  zwei` bleibt sicher). Mit 12 Wörtern Nachbarschaft bleibt bei gewöhnlichem Text genug Rand; erst lange Wörter (Codepunktgrenze) kürzen so
+  weit, dass ein Fenster unsicher wird (Prüfstand: 450 Zeichen langes Wort vor oder hinter dem Beleg). Zwei Zahlen beschreiben die Grenzen:
+  `KONTEXT_WOERTER` = 12 je Seite für Beiträge, bei `fristenIn` eine Lesegrenze von 1024 + 5 + 5 = 1034 Wörtern (siehe unten).
+- **Was der Kern prüft und was nicht.** Der Kern prüft, dass der Tag **an der zitierten Stelle wörtlich genannt** ist und dass kein Datumsbestandteil
+  dazugehört, den der Beleg abschneidet. Geprüft wird nur: das direkt benachbarte Wort, höchstens 2 Brückenwörter dahinter oder davor, ein
+  Verbinder oder Verneiner direkt daneben und längere auflösende Ausdrücke, die die Fundstelle enthalten. Das Umfeld (12 Wörter, 400 Codepunkte)
+  dient nur dazu, diese Muster und längere Ausdrücke zu sehen; der Kern sucht darin nicht allgemein nach widersprechenden Datumswörtern. Ob
+  der Tag **gemeint oder zugesagt** ist, prüft er nicht, soweit die Verneinung oder Alternative nicht direkt neben dem Ausdruck steht
+  (`Montag passt nicht`, `Montag geht leider nicht`, `Montag? Lieber nicht` bleiben `klar`, wenn der Beleg die Verneinung nicht zitiert und
+  kein Verbinder direkt anschließt). **Dokumentierte Grenze:** `Montag bitte im Mai` (Beleg `Montag`, Wert 2026-11-16) bleibt `klar`, weil
+  ein Füllwort (`bitte`) die Brückensuche unterbricht; Prüfstand „Dokumentierte Grenze“.
 - **Konservative Grenzen** (bewusst: ein falsches `klar` ist schlimmer als ein falsches `unklar`): zwei Ausdrücke direkt nebeneinander (`Montag, 14.11.`,
   `Montag in zwei Wochen`, `morgen morgen`, `morgen, spätestens Montag`) machen sich gegenseitig unsicher; ein Zifferntoken neben dem
   Ausdruck (`am 14.11. 3 Personen`) macht ihn unsicher; `14 November 27` und `29 Februar 2027` werden nie zu `14 November` bzw. `29 Februar`
   (2028-02-29) verkürzt, weil danach eine Ziffernfolge steht; `Mai`/`May` und `March` sind auch im Fließtext Monatsnamen; ein Zahlwort, dem ein
-  Datumswort folgt, macht den Ausdruck unsicher, auch wenn es kein Datum meint (`Montag zwei Tage Urlaub`).
+  Datumswort folgt, macht den Ausdruck unsicher, auch wenn es kein Datum meint (`Montag zwei Tage Urlaub`); ein Füllwort zwischen Ausdruck und
+  Brückenwort lässt die Brückensuche enden (`Montag bitte im Mai` bleibt `klar`, siehe oben).
 - **Strenge Mehrtagsregel.** Beleg und Kontext decken einen Tag nur, wenn es mindestens einen maximalen Ausdruck gibt, keiner unsicher ist und alle
   auf denselben Tag auflösen (`Montag und Dienstag`, `14.11. oder 15.11.` decken keinen Tag, auch nicht den ersten; bei `Montag und Dienstag` greift schon die Brückenregel).
-- **Grenze von 1024 Wörtern (nur `fristenIn` / `AssistantOutcomeDates.deadlines(in:today:)`).** Es werden Ausdrücke untersucht, die in den ersten
-  `MAX_FRIST_WOERTER` = 1024 Wörtern beginnen; gelesen werden bis zu 8 Wörter (6 plus 2 Brückenwörter) darüber hinaus, damit ein Treffer an der Grenze mit dem Wort dahinter
-  und den Brückenwörtern danach geprüft wird und nie stillschweigend als sicher gilt (1022 Füllwörter, dann `14 November 27`: kein Ergebnis). `fristenIn` liefert die Tage
+- **Grenze von 1024 Wörtern (nur `fristenIn` / `AssistantOutcomeDates.deadlines(in:today:)`).** Untersucht werden Ausdrücke, die in den ersten
+  `MAX_FRIST_WOERTER` = 1024 Wörtern beginnen. Gelesen werden höchstens **1034** Wörter (1024 + 5 + `FRIST_RAND` 5: ein Fenster beginnt im
+  1024. Wort, reicht höchstens 5 weiter und hat dahinter 5 Wörter Rand). Geht der Text über das Gelesene hinaus, gilt die Rand-Regel (hinter dem
+  Fenster mindestens 5 gelesene Wörter, sonst unsicher; bei dieser Lesegrenze trifft das kein Fenster, das in den ersten 1024 Wörtern beginnt);
+  endet der Text, gelten die normalen Regeln. Ein Treffer an der Grenze gilt also nie stillschweigend als sicher: 1023 Füllwörter, dann
+  `spätestens bis zum Ende der Woche und den zwei Tagen danach`: kein Ergebnis (`Tagen` ist gelesen); 1023 Füllwörter und `bis Freitag`, mit oder
+  ohne weitere Füllwörter dahinter: der 20.11.2026; 1022 Füllwörter, dann `14 November 27`: kein Ergebnis. `fristenIn` liefert die Tage
   der sicheren maximalen Ausdrücke in der Reihenfolge des Auftretens ohne Wiederholung. Die Deckung im Kontext (TS `fristDeckungImKontext`, Swift
   `AssistantOutcomeDates.contextDeadline`, jeweils für eine Spanne des normalisierten Beitrags) liest lokal und hat diese Grenze nicht.
 

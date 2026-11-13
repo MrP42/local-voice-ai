@@ -78,6 +78,7 @@ export type {
   Rolle,
 } from "./auswertung";
 export {
+  FRIST_RAND,
   KONTEXT_CODEPUNKTE,
   KONTEXT_WOERTER,
   MAX_BRUECKEN,
@@ -98,4 +99,4 @@ export {
   wochentag,
   zahlGedeckt,
 } from "./auswertungFrist";
-export type { Datum, FristTreffer } from "./auswertungFrist";
+export type { Abgeschnitten, Datum, FristTreffer } from "./auswertungFrist";

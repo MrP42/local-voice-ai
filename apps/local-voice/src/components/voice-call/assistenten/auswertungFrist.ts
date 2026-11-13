@@ -508,11 +508,33 @@ export const MAX_FRIST_FENSTER = 6;
 /** Höchstens so viele Fundstellen eines Belegs in einem Beitrag werden für die Deckung geprüft; mehr: nicht gedeckt. */
 export const MAX_FUNDSTELLEN = 16;
 
-/** Nachbarschaft einer Fundstelle: so viele Wörter davor und danach gehören zum Kontext. */
-export const KONTEXT_WOERTER = 8;
+/**
+ * Rand eines Fensters: So viele Wörter müssen hinter (und vor) einem Fenster gelesen sein, damit seine Nachbarschaftsprüfung
+ * vollständig ist, sofern die Wortliste dort abgeschnitten ist. Hinter einem Fenster liest die Prüfung höchstens 5 Wörter: bis zu
+ * 2 Brückenwörter, `in`, ein Zahlwort und dessen Folgewort. Ein längeres auflösendes Fenster (höchstens 6 Wörter) reicht ebenfalls
+ * höchstens 5 Wörter über ein kürzeres hinaus. Davor gilt es symmetrisch. Am echten Ende des Textes gilt der Rand nicht.
+ */
+export const FRIST_RAND = 5;
 
-/** Dafür werden je Seite höchstens so viele Codepunkte gelesen; reicht das nicht und der Beitrag geht weiter: nicht gedeckt. */
+/**
+ * Nachbarschaft einer Fundstelle: so viele Wörter davor und danach gehören zum Kontext (ein Fenster, das die Fundstelle schneidet,
+ * reicht bis zu 5 Wörter über sie hinaus und hat dann noch `FRIST_RAND` Wörter Rand).
+ */
+export const KONTEXT_WOERTER = 12;
+
+/**
+ * Dafür werden je Seite höchstens so viele Codepunkte gelesen. Reicht das nicht und der Beitrag geht weiter, endet die
+ * Nachbarschaft am letzten ganzen Wort davor und gilt als abgeschnitten (siehe `FRIST_RAND`); steckt schon das Wort an der
+ * Fundstelle darin fest, gibt es keine Nachbarschaft.
+ */
 export const KONTEXT_CODEPUNKTE = 400;
+
+/** `fristenIn` liest höchstens so viele Wörter: Fenster beginnen in den ersten 1024, reichen höchstens 5 weiter, dahinter 5 Wörter Rand. */
+const FRIST_LESEGRENZE =
+  MAX_FRIST_WOERTER + (MAX_FRIST_FENSTER - 1) + FRIST_RAND;
+
+/** Ob die Wortliste vorn oder hinten abgeschnitten ist (der Text geht dort weiter). */
+export type Abgeschnitten = { vorn: boolean; hinten: boolean };
 
 /**
  * Wörter, die einen Tag verschieben oder näher bestimmen: `nächsten`/`kommenden`/`next` und `übernächsten` in allen Formen, die
@@ -662,19 +684,22 @@ function istDatumsbestandteil(
 
 /**
  * Steht direkt hinter dem Ausdruck (Wörter `von` bis `bis` einschließlich) oder direkt davor (führende Vorsätze übersprungen) ein
- * Verbinder oder Verneiner?
+ * Verbinder oder Verneiner? Läuft das Überspringen der Vorsätze über den Anfang einer vorn abgeschnittenen Liste hinaus, fehlt das
+ * Wort davor: unsicher.
  */
 function hatVerbinder(
   tokens: readonly string[],
   von: number,
   bis: number,
+  vornAbgeschnitten: boolean,
 ): boolean {
   if (bis + 1 < tokens.length && VERBINDER.has(ohneRand(tokens[bis + 1]))) {
     return true;
   }
   let davor = von - 1;
   while (davor >= 0 && VORSAETZE.has(ohneRand(tokens[davor]))) davor -= 1;
-  return davor >= 0 && VERBINDER.has(ohneRand(tokens[davor]));
+  if (davor < 0) return vornAbgeschnitten;
+  return VERBINDER.has(ohneRand(tokens[davor]));
 }
 
 /**
@@ -759,7 +784,9 @@ export type FristTreffer = {
  * längeres auflösendes Fenster enthält (egal, ob es `p..q` verlässt). Reihenfolge: nach Anfang, bei gleichem Anfang kürzere zuerst.
  * `unsicher` ist ein Treffer, wenn das Wort direkt davor oder direkt danach ein Datumsbestandteil ist (siehe `istDatumsbestandteil`)
  * oder direkt daneben ein Verbinder oder Verneiner steht (siehe `hatVerbinder`) oder nach höchstens
- * `MAX_BRUECKEN` Brückenwörtern ein Datumsbestandteil folgt (siehe `bruecke`).
+ * `MAX_BRUECKEN` Brückenwörtern ein Datumsbestandteil folgt (siehe `bruecke`). Ist die Wortliste hinten (vorn) abgeschnitten und
+ * liegen hinter (vor) dem Treffer weniger als `FRIST_RAND` Wörter, ist er ebenfalls unsicher: Das fehlende Folgewort darf die Prüfung
+ * nicht umgehen. Am echten Textende (`abgeschnitten` falsch) gilt das nicht.
  * Die Treffer können überlappen und auf verschiedene Tage auflösen; die Zerlegung hängt nicht von der Suchrichtung ab.
  */
 export function maximaleFristen(
@@ -767,6 +794,7 @@ export function maximaleFristen(
   p: number,
   q: number,
   heute: Datum,
+  abgeschnitten: Abgeschnitten = { vorn: false, hinten: false },
 ): FristTreffer[] {
   const schluessel = (i: number, n: number) => i * (MAX_FRIST_FENSTER + 1) + n;
   const aufgeloest = new Map<number, string>();
@@ -801,35 +829,48 @@ export function maximaleFristen(
         (davor >= 0 && istDatumsbestandteil(tokens, davor, false)) ||
         (danach < tokens.length &&
           istDatumsbestandteil(tokens, danach, true)) ||
-        hatVerbinder(tokens, t.von, danach - 1) ||
+        hatVerbinder(tokens, t.von, danach - 1, abgeschnitten.vorn) ||
         bruecke(tokens, davor, false) ||
-        bruecke(tokens, danach, true),
+        bruecke(tokens, danach, true) ||
+        (abgeschnitten.hinten && tokens.length - danach < FRIST_RAND) ||
+        (abgeschnitten.vorn && t.von < FRIST_RAND),
     });
   }
   return aus;
 }
 
+/** Die Wörter eines Textes für die Fristsuche (höchstens `FRIST_LESEGRENZE`) und ob der Text danach weitergeht. */
+function lesen(text: string): { tokens: string[]; hinten: boolean } {
+  const alle = normalisiere(text)
+    .split(" ", FRIST_LESEGRENZE + 1)
+    .filter((t) => t !== "");
+  const hinten = alle.length > FRIST_LESEGRENZE;
+  return { tokens: hinten ? alle.slice(0, FRIST_LESEGRENZE) : alle, hinten };
+}
+
 /**
- * Wörter eines Textes für die Fristsuche (normalisiert, an Leerzeichen getrennt); bis zu `MAX_FRIST_FENSTER + MAX_BRUECKEN` über die
- * Grenze hinaus, damit das Nachbarwort und die Brückenwörter dahinter eines Treffers an der Grenze gelesen werden.
+ * Wörter eines Textes für die Fristsuche (normalisiert, an Leerzeichen getrennt); höchstens `MAX_FRIST_WOERTER` plus 5 (längstes
+ * Fenster) plus `FRIST_RAND`: Fenster beginnen in den ersten 1024 Wörtern und haben dahinter noch den Rand.
  */
 export function fristWoerter(text: string): string[] {
-  return normalisiere(text)
-    .split(" ", MAX_FRIST_WOERTER + MAX_FRIST_FENSTER + MAX_BRUECKEN)
-    .filter((t) => t !== "");
+  return lesen(text).tokens;
 }
 
 /**
  * Alle Tage, die die inklusionsmaximalen, sicheren Fristausdrücke eines Textes auflösen; Reihenfolge des Auftretens, ohne
- * Wiederholung. Untersucht werden Ausdrücke, die in den ersten `MAX_FRIST_WOERTER` Wörtern beginnen; ob ein Treffer an dieser Grenze
- * sicher ist, entscheidet das Wort dahinter (gelesen wird über die Grenze hinaus).
+ * Wiederholung. Untersucht werden Ausdrücke, die in den ersten `MAX_FRIST_WOERTER` Wörtern beginnen; gelesen werden bis zu
+ * `FRIST_RAND` Wörter dahinter. Geht der Text über das Gelesene hinaus, ist ein Treffer mit weniger als `FRIST_RAND` Wörtern dahinter
+ * unsicher; am echten Textende gelten die normalen Regeln.
  */
 export function fristenIn(text: string, heute: Datum): string[] {
-  const tokens = fristWoerter(text);
+  const { tokens, hinten } = lesen(text);
   if (tokens.length === 0) return [];
   const aus: string[] = [];
   const q = Math.min(MAX_FRIST_WOERTER, tokens.length) - 1;
-  for (const t of maximaleFristen(tokens, 0, q, heute)) {
+  for (const t of maximaleFristen(tokens, 0, q, heute, {
+    vorn: false,
+    hinten,
+  })) {
     if (!t.unsicher && !aus.includes(t.tag)) aus.push(t.tag);
   }
   return aus;
@@ -880,60 +921,88 @@ export function fundstellen(
   }
 }
 
-/** Die Wörter (an Leerzeichen getrennt) der Nachbarschaft einer Fundstelle und die Nummern der Wörter, die sie berühren. */
-type Nachbarschaft = { tokens: string[]; p: number; q: number };
+/** Die Wörter (an Leerzeichen getrennt) der Nachbarschaft einer Fundstelle, die Nummern der Wörter, die sie berühren, und die Kürzung. */
+type Nachbarschaft = {
+  tokens: string[];
+  p: number;
+  q: number;
+  abgeschnitten: Abgeschnitten;
+};
+
+/** Die Grenzen (Einheiten) einer Nachbarschaft und ob sie vorn oder hinten gekürzt ist, der Beitrag also dort weitergeht. */
+type Grenzen = { von: number; bis: number } & Abgeschnitten;
 
 /**
  * Die Nachbarschaft der Spanne `start`..`ende` (Einheiten) im normalisierten `beitrag`: die Wörter, die die Spanne berühren, plus
- * `KONTEXT_WOERTER` ganze Wörter davor und danach. Je Seite werden höchstens `KONTEXT_CODEPUNKTE` Codepunkte gelesen; findet
- * sich darin nicht die Grenze zum neunten Wort (und der Beitrag ist dort nicht zu Ende), gibt es keine Nachbarschaft (`null`).
+ * `KONTEXT_WOERTER` ganze Wörter davor und danach. Je Seite werden höchstens `KONTEXT_CODEPUNKTE` Codepunkte gelesen. Findet sich
+ * darin nicht die Grenze zum 13. Wort und der Beitrag geht weiter, endet die Nachbarschaft am letzten ganzen Wort, das gelesen wurde.
+ * Jede Seite meldet, ob sie gekürzt ist (durch die Wortgrenze oder die Codepunktgrenze) oder ob dort der Beitrag endet. Steckt das
+ * Wort an der Spanne selbst in der Grenze fest (kein Leerzeichen gelesen), gibt es keine Nachbarschaft (`null`).
  */
 function nachbarschaft(
   beitrag: string,
   start: number,
   ende: number,
-): { von: number; bis: number } | null {
+): Grenzen | null {
   let i = start;
   let gelesen = 0;
   let leer = 0;
   let von = -1;
+  let aeusserstes = -1;
+  let vorn = false;
   while (i > 0 && gelesen < KONTEXT_CODEPUNKTE) {
     const c = codepunktVor(beitrag, i);
     i -= breite(c);
     gelesen += 1;
     if (c === 0x20) {
       leer += 1;
+      aeusserstes = i;
       if (leer === KONTEXT_WOERTER + 1) {
         von = i + 1;
+        vorn = true;
         break;
       }
     }
   }
   if (von < 0) {
-    if (i > 0) return null;
-    von = 0;
+    if (i > 0) {
+      if (aeusserstes < 0) return null;
+      von = aeusserstes + 1;
+      vorn = true;
+    } else {
+      von = 0;
+    }
   }
   i = ende;
   gelesen = 0;
   leer = 0;
   let bis = -1;
+  let hinten = false;
+  aeusserstes = -1;
   while (i < beitrag.length && gelesen < KONTEXT_CODEPUNKTE) {
     const c = beitrag.codePointAt(i)!;
     i += breite(c);
     gelesen += 1;
     if (c === 0x20) {
       leer += 1;
+      aeusserstes = i - 1;
       if (leer === KONTEXT_WOERTER + 1) {
         bis = i - 1;
+        hinten = true;
         break;
       }
     }
   }
   if (bis < 0) {
-    if (i < beitrag.length) return null;
-    bis = beitrag.length;
+    if (i < beitrag.length) {
+      if (aeusserstes < 0) return null;
+      bis = aeusserstes;
+      hinten = true;
+    } else {
+      bis = beitrag.length;
+    }
   }
-  return { von, bis };
+  return { von, bis, vorn, hinten };
 }
 
 function woerterDerNachbarschaft(
@@ -955,7 +1024,14 @@ function woerterDerNachbarschaft(
     }
     anfang = schluss + 1;
   });
-  return p < 0 ? null : { tokens, p, q };
+  return p < 0
+    ? null
+    : {
+        tokens,
+        p,
+        q,
+        abgeschnitten: { vorn: grenzen.vorn, hinten: grenzen.hinten },
+      };
 }
 
 /**
@@ -971,7 +1047,7 @@ export function fristDeckungImKontext(
 ): string | null {
   const n = woerterDerNachbarschaft(beitrag, start, ende);
   if (n === null) return null;
-  const treffer = maximaleFristen(n.tokens, n.p, n.q, heute);
+  const treffer = maximaleFristen(n.tokens, n.p, n.q, heute, n.abgeschnitten);
   if (treffer.length === 0 || treffer.some((t) => t.unsicher)) return null;
   const tag = treffer[0].tag;
   return treffer.every((t) => t.tag === tag) ? tag : null;
@@ -1008,13 +1084,15 @@ export function istFristFundstelle(
   const n = woerterDerNachbarschaft(beitrag, start, ende);
   if (n === null) return false;
   const kern = ohneVorsaetze(ausdruck);
-  return maximaleFristen(n.tokens, n.p, n.q, heute).some((t) => {
-    if (t.unsicher || t.von > n.p || t.von + t.laenge - 1 < n.q) return false;
-    const eigene = ohneVorsaetze(n.tokens.slice(t.von, t.von + t.laenge));
-    return (
-      eigene.length === kern.length && eigene.every((w, i) => w === kern[i])
-    );
-  });
+  return maximaleFristen(n.tokens, n.p, n.q, heute, n.abgeschnitten).some(
+    (t) => {
+      if (t.unsicher || t.von > n.p || t.von + t.laenge - 1 < n.q) return false;
+      const eigene = ohneVorsaetze(n.tokens.slice(t.von, t.von + t.laenge));
+      return (
+        eigene.length === kern.length && eigene.every((w, i) => w === kern[i])
+      );
+    },
+  );
 }
 
 /**
