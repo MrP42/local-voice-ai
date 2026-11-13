@@ -27,9 +27,10 @@ on:
     inputs:
       repack_tag:
         description: >-
-          Nur die portablen ZIPs eines bestehenden Releases neu bauen und ersetzen
-          (z. B. app-v0.23.0). Baut die EXE aus diesem Tag, nimmt das Packskript aus dem
-          gestarteten Zweig; Installer und latest.json bleiben unberuehrt.
+          Nur die portablen ZIPs und den Installer mit Modellen eines bestehenden Releases neu
+          bauen und ersetzen (z. B. app-v0.23.0). Baut die EXE aus diesem Tag, nimmt Packskripte
+          und Installer-Vorlage aus dem gestarteten Zweig; der schlanke Installer und
+          latest.json bleiben unberuehrt.
         required: false
         default: ""
 
@@ -74,7 +75,8 @@ jobs:
           FIX_SHA="$(git rev-parse HEAD)"
           git checkout --quiet "refs/tags/$REPACK_TAG"
           git checkout "$FIX_SHA" -- apps/local-voice/scripts/build-portable-zip.ps1 \
-            apps/local-voice/scripts/release-body.md apps/local-voice/src-tauri/portable
+            apps/local-voice/scripts/release-body.md apps/local-voice/src-tauri/portable \
+            apps/local-voice/scripts/build-installer-modelle.ps1 apps/local-voice/src-tauri/nsis
           git status --short
 
       - name: Read version from tauri.conf.json
@@ -275,6 +277,43 @@ jobs:
               if ($LASTEXITCODE -ne 0) { throw "gh release delete-asset failed" }
             }
           }
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
+      # Installer mit Modellen (lva#574): Nemotron 3.5 ASR, Parakeet V3 und Phonon (DE+EN mit
+      # allen Stimmen) als abwaehlbare Komponenten, ohne Download nach der Installation. Dieselbe
+      # Vorlage (nsis/installer.nsi) baut mit LVA_VORINSTALLIERT die Komponentenseite ein. Der
+      # schlanke Installer oben bleibt Quelle von latest.json: In-App-Updates laden weiter nur
+      # die App (~150 MB), die Modelle im Datenordner bleiben. Daher hier ohne Updater-Artefakte.
+      # continue-on-error wie bei den ZIPs: ein Fehler darf das Release nicht verhindern.
+      - name: Build installer with models
+        continue-on-error: ${{ inputs.repack_tag == '' }}
+        shell: pwsh
+        run: |
+          $env:TMP = $env:RUNNER_TEMP; $env:TEMP = $env:RUNNER_TEMP
+          $payload = Join-Path $env:RUNNER_TEMP 'vorinstalliert'
+          ./scripts/build-installer-modelle.ps1 -RequireHfToken -SmokeTest -OutDir $payload
+          $conf = Join-Path $env:RUNNER_TEMP 'ohne-updater.conf.json'
+          [System.IO.File]::WriteAllText($conf, '{"bundle":{"createUpdaterArtifacts":false}}')
+          $env:LVA_VORINSTALLIERT = $payload
+          pnpm tauri build --features gpu-vulkan --bundles nsis --config $conf
+          if ($LASTEXITCODE -ne 0) { throw "tauri build (Installer mit Modellen) fehlgeschlagen" }
+          $version = "${{ steps.version.outputs.version }}"
+          $setup = Get-ChildItem src-tauri/target/release/bundle/nsis -File -Filter "*_${version}_x64-setup.exe" | Select-Object -First 1
+          if (-not $setup) { throw "Installer mit Modellen nicht gefunden" }
+          # NSIS-Grenze 2 GB, GitHub 2 GiB je Datei: mit Reserve pruefen.
+          if ($setup.Length -ge [int64](1.95 * 1GB)) { throw ("Installer mit Modellen zu gross: {0:N0} MB" -f ($setup.Length / 1MB)) }
+          $out = Join-Path $env:RUNNER_TEMP 'installer-modelle'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $name = "LocalVoiceAI_${version}_x64-setup-mit-modellen.exe"
+          $target = Join-Path $out $name
+          Copy-Item $setup.FullName $target
+          $hash = (Get-FileHash $target -Algorithm SHA256).Hash.ToLowerInvariant()
+          [System.IO.File]::WriteAllText("$target.sha256", "$hash  $name`n", [System.Text.Encoding]::ASCII)
+          Write-Host ("Installer mit Modellen: {0} ({1:N0} MB)" -f $name, ($setup.Length / 1MB))
+          gh release upload "app-v$version" $target "$target.sha256" --clobber --repo "$env:GITHUB_REPOSITORY"
+          if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}

@@ -63,8 +63,14 @@ const setupDictation = async (): Promise<boolean> => {
   const model = models.find((m) => m.id === id);
   if (!model) return false;
   // Liegt schon ein anderes Diktatmodell vor (z. B. Einstellungen nicht lesbar, Onboarding
-  // abgebrochen), nichts erzwingen: der Nutzer wählt selbst.
-  if (models.some((m) => m.is_downloaded && m.id !== id)) return false;
+  // abgebrochen), nichts erzwingen: der Nutzer wählt selbst. Ist das gewünschte Modell selbst
+  // schon da (Installer mit Modellen, lva#574, bringt neben Nemotron auch Parakeet mit), wird
+  // es ohne Download eingestellt.
+  if (
+    !model.is_downloaded &&
+    models.some((m) => m.is_downloaded && m.id !== id)
+  )
+    return false;
 
   useIntroTourStore.getState().setPendingModel(id);
   if (!model.is_downloaded) download(id);
