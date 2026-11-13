@@ -1,7 +1,9 @@
 # Seitenzustand: Versionen und Textkonflikte (lva#546, lva#545)
 
-Stand 13.11.2026, **Fassung 3** (Codex R1 auf 1a73dbf0 und R2 auf 3497db88: je „tragfähig NEIN“, Grundmodell
-geeignet; alle Blocker und Hinweise beider Runden sind eingearbeitet, Zuordnung in §10; dazu lva#572 in Paket C).
+Stand 13.11.2026, **Fassung 4** (Codex R1 1a73dbf0, R2 3497db88, R3 ea71365c: je „tragfähig NEIN“, Grundmodell
+geeignet; R3: A und B ohne Blocker, vier Blocker nur in Paket C; alle eingearbeitet, Zuordnung in §10).
+**Abnahme getrennt:** A und B sind unabhängig von C abnehmbar und umsetzbar (§7); Paket C (§4 Fall 2, §4.1,
+lva#572) bekommt vor seiner Umsetzung eine eigene Entwurfsabnahme.
 Basis `main` ccb97418 (nach #549).
 Vorbedingung für Stufe I2 des Inhalte-Moduls (`2026-11-12-inhalte-modul.md` §3.1, §13). Ziel: Das Modell für alle
 Schreiber von `state.json` wird **einmal** festgelegt, damit es am Stück prüfbar ist.
@@ -55,7 +57,7 @@ Regeln in Anführungszeichen sind wörtlich aus Codex R1 übernommen („akzepti
   Export (§2.3).
 - **V10 – Lesefehler.** „Lesefehler stoppen den jeweiligen Schreibvorgang; Eingaben bleiben erhalten, der Fehler
   wird sichtbar und die Wiederaufnahme ist definiert.“ Ladefehler und Fehler der offenen Seite: §3.2.
-- **V11 – Quelllöschen.** „Automatisches Quelllöschen darf keine seit dem Zusammenführungsstand hinzugekommenen,
+- **V11 – Quelllöschen (Paket C).** „Automatisches Quelllöschen darf keine seit dem Zusammenführungsstand hinzugekommenen,
   nicht übernommenen Inhalte entfernen.“ (§4 Fall 3).
 - **V12 – Größe.** `page_state_save` lehnt mehr als `MAX_STATE_BYTES` = 64 MiB UTF-8-Bytes ab, die Datei bleibt.
   Lesen und Exportieren haben keine Grenze; bestehende größere Dateien bleiben lesbar und exportierbar. Größtes
@@ -74,7 +76,7 @@ Regeln in Anführungszeichen sind wörtlich aus Codex R1 übernommen („akzepti
   veraltete Basis (`stale`) geführt (§2.8, §3.1).
 - **V17 – Rettung beider Textfelder.** „Ungesicherte Werte beider ausdrücklich geschützten Textfelder bleiben beim
   Verwerfen eines Snapshots erhalten.“ Gemeint sind `text` und `summary`; die Herkunft steht im Titel der Fassung.
-- **V18 – Ablage verändert nichts.** „Wiederherstellbares Entfernen verändert oder überschreibt keine vorhandene
+- **V18 – Ablage verändert nichts (Paket C).** „Wiederherstellbares Entfernen verändert oder überschreibt keine vorhandene
   Projektdatei.“ (`pages_retire`, §4 Fall 3).
 
 ## 2 Versionsmodell
@@ -260,7 +262,7 @@ offen, ihr Marker bleibt). Nach B gilt V1–V7 für die offene Seite, nach C fü
   neu `tts.pageUnsavedSummaryCopyTitle` („Nicht gespeicherte Zusammenfassung“; de/en, übrige Sprachen wie der
   vorbestehende `tts.*`-Rückstand).
 - Neu: `refresh(page)` (Kettenauftrag, schreibt nie), Rückrufe `onSaved(page, {used: PageBase, base: PageBase})`
-  und `onAdopt(page, {from: string, to: string, base: PageBase})`, `onUnreadable(page)`.
+  und `onAdopt(page, {from: string, to: string, base: PageBase, written: boolean})`, `onUnreadable(page)`.
   `bindPageStateLive(view, { onCommit, onRescue, onSaved, onAdopt, onUnreadable })`.
 - `mark`/`changedSince` (Anzeige des Protokolls) bleiben.
 
@@ -293,7 +295,9 @@ Seitenzustand. Rückrufe für eine andere als die aktive Seite werden verworfen 
   von `local` und `pageBase = base` in **einem** Handler setzen (`applyPageState`, aus dem Lade-Handler
   Z. 1173–1278 herausgezogen; Ansichtsfelder bleiben die der Oberfläche). Mit Textkonflikt (Eingabe genau in der
   fremd geänderten Stelle während des Auftrags, oder Konflikt in `summary`): **nichts** übernehmen und im selben
-  Handler `pageBase = {...pageBase, stale: true}` setzen – Zustand **„geschrieben, aber nicht übernommen“**. Der
+  Handler `pageBase = {...pageBase, stale: true}` setzen – Zustand **„geschrieben, aber nicht übernommen“** –,
+  **aber nur, wenn die Übernahme aus einem Schreiben stammt** (`Adoption.written = true`; Speichern). Stammt sie
+  aus `refresh` (`written = false`), wird bei lokalem Konflikt nichts übernommen und **kein** `stale` gesetzt. Der
   nächste Speichervorgang mischt `TEXT_FIELDS` nur über die Identitäten (§2.4): Die Oberfläche gewinnt, der
   Dateiwert (der die schon eingemischten Änderungen enthält) wird vorher gesichert, nichts wird doppelt angewendet
   (V16). Das kann eine inhaltlich überflüssige Fassung erzeugen, nie einen Verlust. Danach `onAdopt` mit neuer
@@ -345,48 +349,78 @@ Seitenzustand. Rückrufe für eine andere als die aktive Seite werden verworfen 
 6. **#545 Lesefehler.** Alt: `""` → Oberfläche lädt „leer“ (inkl. Altbestands-Import), der Lade-Autosave
    überschreibt Text und `einfuegungen`. Neu: §3.2, §2.3.
 
-### 4.1 Zusammenführen mit Wiederaufnahme (lva#572, Paket C)
+### 4.1 Zusammenführen mit Wiederaufnahme (lva#572, Paket C – Entwurfsstand, eigene Abnahme vor Umsetzung)
 
-Regeln aus lva#572 (wörtlich): „Seit dem Zusammenführungsstand hinzugekommene Inhalte dürfen nicht ungeprüft
-überschrieben werden.“ – „Automatisches Quelllöschen darf keine nicht übernommenen Änderungen vernichten.“ –
-„Text und Zeitachse bleiben konsistent; Teilfehler haben einen definierten sicheren Wiederaufnahmeweg.“
+Regeln (wörtlich aus lva#572 und Codex R3, als Invarianten **C1–C5** dieses Pakets):
+- **C1** „Seit dem Zusammenführungsstand hinzugekommene Inhalte dürfen nicht ungeprüft überschrieben werden.“
+- **C2** „Automatisches Quelllöschen darf keine nicht übernommenen Änderungen vernichten.“
+- **C3** „Text und Zeitachse bleiben konsistent; Teilfehler haben einen definierten sicheren Wiederaufnahmeweg.“
+- **C4** „Ein zugesagter Wiederaufnahme- oder Sicherungsweg verfügt dauerhaft über die dafür benötigten Inhalte.“
+- **C5** „Eine Zeitachse wird nur zusammen mit dem Textstand als gültig übernommen, für den sie gilt.“
+- **C6** „Ein laufender Zusammenführungsauftrag darf seine Wiederaufnahmeinformationen nicht durch einen anderen
+  Auftrag oder einen veralteten Übergang verlieren.“
 
-1. **Lesen** (kein Schreiben): je Teilseite Text und Version. Schemaregel: `text` fehlt → leerer Teil; `text`
-   kein String, Lesefehler oder nicht interpretierbar → **Abbruch vor allem**. Rohtext-Altformat → Text = Rohtext
-   (§2.3). Leeres `sync` (heute `merge.ts` Z. 257, `joined = null`): Zusammenführen der Audiodateien wie heute,
-   aber kein Textschritt und **keine** Quellseite mit Transkript wird entfernt (Meldung).
-2. **Neue Zielseite** (Ziel ohne Transkript): sofort anlegen (`fresh_unused_id`, CAS gegen `EMPTY_VERSION`, noch
-   leer bis Schritt 4). Fehler → Abbruch, nichts geändert.
-3. **Kernaufruf** `library_merge_audio(target, sources, replace, title, pending)`: Audio, Titel (bisher eigenes
-   `librarySave` davor) und `merge_pending` in **einem** atomaren Schreiben von `buch.json`. `merge_pending`
-   (schemafrei für Rust, `Option<serde_json::Value>`): `{ target_page, pieces: [{page_id, version, heading,
-   offset_ms, sync}], joined_sha, sync, retire: [{page_id, version}] }`. `joined_sha` = SHA-256 des
-   gemeinsamen Texts. Fehler → nichts geändert, eine in Schritt 2 angelegte Seite wird wieder entfernt
-   (unveröffentlicht, `pages_delete` zulässig).
-4. **Text** (Kettenauftrag der Zielseite, CAS): frisch lesen. `sha256(T.text) = joined_sha` → Schritt erledigt
-   (Wiederholung). Sonst Version = gelesene Version des Zielteils → gemeinsamen Text schreiben (`expected` = diese
-   Version). Sonst (Ziel inzwischen geändert) → gemeinsamen Text aus den **frischen** Texten aller Teile neu bauen,
-   zuerst `merge_pending` (neues `joined_sha`, `sync`, Versionen) per `librarySave` fortschreiben, dann schreiben.
-   Unlesbar → Schritt scheitert, `merge_pending` bleibt (V10), kein Überschreiben. Nach dem Schreiben vermerkt ein
-   `librarySave` `merge_pending.text_done = <geschriebene Version>`; ab dann wird Schritt 4 nie wiederholt.
-   **Neubau nur im ersten Lauf:** Findet eine Wiederaufnahme das Ziel weder in der gelesenen Version noch mit
-   `joined_sha` noch mit `text_done` (Absturz zwischen Schreiben und Vermerk, danach bearbeitet), wird nichts
-   neu gebaut (sonst stünde der gemeinsame Text doppelt darin): Meldung „Zielseite inzwischen geändert“, die
-   Buchkarte bietet „Ohne Text abschließen“ – gemeinsamer Text als Fassung (`saveCopy`), `merge_pending` leer,
-   Textzeiger und `sync` bleiben wie vor dem Zusammenführen.
-5. **Abschluss**: ein `librarySave` setzt Textzeiger und `audio.sync = merge_pending.sync` und
-   `merge_pending = null` – Text und Zeitachse werden damit in einem Schreiben gültig.
-6. **Quellen und alter Transkripttext**: `pages_retire(id, version)` je Eintrag aus `retire` (Version aus dem
-   letzten Bau). Ergebnis je Seite wird ausgewertet: entfernt / geändert (bleibt Seite, Meldung) / Fehler (bleibt,
-   Meldung). Kein Fehler wird ignoriert.
+**Journal** `merge_pending` in `buch.json` des Ziels (V15 betrifft nur `state.json`):
+`{ job, phase, target_page, pieces: [{page_id, version, text_sha, sync}], joined_sha, retire: [{page_id, version}] }`.
+`job` ist eine zufällige Auftragskennung, `phase` ∈ `audio_done` → `text_written` → `aufraeumen`. Fehlt ein
+Pflichtwert oder ist er ungültig: sichtbar anhalten („Zusammenführen unterbrochen“), nichts entfernen.
 
-**Wiederaufnahme:** Ein Buch mit `merge_pending` ist „Zusammenführen nicht abgeschlossen“. Beim Laden der
-Bibliothek (`useLibrary`, `reload`) laufen Schritte 4–6 erneut; sie sind über `joined_sha` und CAS wiederholbar
-ohne Doppeltext. Nach 3 Fehlschlägen (Muster `MAX_FAILURES`) zeigt die Buchkarte „Zusammenführen fortsetzen“.
-Es gibt **keine Rückabwicklung des Audio-Merges** (der Kern ersetzt Dateien atomar und endgültig); der sichere
-Weg nach Schritt 3 ist ausschließlich vorwärts. Vor Schritt 3 ist nichts geändert. `library_save` übernimmt
-`merge_pending` aus der Datei, wenn die Eingabe das Feld nicht nennt (doppelte Option), damit andere Speicherwege
-die Wiederaufnahme nicht still löschen; nur Schritt 5 setzt es ausdrücklich auf `null`.
+**Dauerhafte Inhalte (C4):** Vor Schritt 3 legt der Kern den Auftragsordner `library/<ziel>/merge/<job>/` an:
+`teile/<page_id>.txt` (Text jedes Teils, wie gelesen), `joined.txt` (gemeinsamer Text), `sync.json` (gemeinsame
+Zeitachse), alle per `write_atomic`, `text_sha`/`joined_sha` über diese Dateien. Lebensdauer: bis das Journal
+gelöscht wird (Ende von `aufraeumen` oder „Ohne Text abschließen“); erst dann wird der Ordner entfernt.
+Scheitert das Entfernen, räumt der nächste Bibliotheksladevorgang Auftragsordner ohne Journal auf.
+
+**Journalübergänge (C6)** nur über gesperrte Kernbefehle (Buchsperre, Reihenfolge aus `pages.rs`):
+- `library_merge_audio(target, sources, replace, title, job, journal)` – lehnt mit `merge:busy` ab, wenn das Buch
+  schon ein `merge_pending` hat (höchstens ein laufender Merge je Buch);
+- `library_merge_step(book, job, from_phase, to_phase, patch)` – nur wenn `job` und `phase` passen, sonst
+  `merge:stale` (der Aufrufer bricht ab und lädt neu); `patch` darf nur `target_page`, `pieces`, `joined_sha`,
+  `retire` und `audio.sync`/Textzeiger in der Phase `aufraeumen` setzen;
+- `library_merge_abandon(book, job)` – „Ohne Text abschließen“ (unten).
+`library_save` (generisch) **ignoriert** ein mitgesendetes `merge_pending` und behält immer den Dateiwert; nur die
+drei Befehle ändern es.
+
+**Ablauf**
+1. **Lesen** (kein Schreiben): je Teil Text, Version, `sync`. Schemaregel: `text` fehlt → leerer Teil; kein
+   String, Lesefehler oder nicht interpretierbar → Abbruch vor allem; Rohtext-Altformat → Text = Rohtext (§2.3).
+   Leeres gemeinsames `sync` (heute `merge.ts` Z. 257): Audio wie heute, kein Textschritt, keine
+   Transkriptquelle in `retire` (Meldung).
+2. **Auftragsordner** schreiben (oben). Fehler → Abbruch, nichts geändert (Ordner ohne Journal wird aufgeräumt).
+3. **Kernaufruf**: Audio, Titel, Journal (`phase = audio_done`) **und `audio.sync = []`** in einem atomaren
+   Schreiben. Die alte Zeitachse wird damit nie am neuen Audio veröffentlicht (C3); bis `aufraeumen` gibt es
+   keine Text-Audio-Zuordnung (Mitlesen/Sprung zur Textstelle aus, Buchkarte „Zusammenführen läuft“).
+   `retire` enthält nie `target_page` (Kern prüft). Fehler → nichts geändert.
+4. **Text** (Kettenauftrag, CAS), Phase `audio_done`:
+   - Ziel ohne Transkript: `pages_create` und sofort `library_merge_step(…, patch: target_page)`; erst danach
+     Text schreiben. Ein Absturz dazwischen hinterlässt höchstens eine leere, indexierte Seite (gemeldet); ein
+     unbedingtes `pages_delete` gibt es nicht.
+   - Frisch lesen. `sha256(T.text) = joined_sha` → geschrieben (Wiederholung). Version = gelesene Version des
+     Zielteils → `joined.txt` schreiben (`expected` = diese Version).
+   - Sonst **nur im ersten Lauf desselben Prozesses** (Auftrag `job` noch im Speicher): Neubau aus den frischen
+     Texten; **für jeden Teil, dessen Text nicht mehr seinem `text_sha` entspricht, entfällt seine Zeitachse**
+     (C5; `joinTranscripts` verschiebt nur die Stützpunkte unveränderter Teile). Neue Dateien im Auftragsordner,
+     dann `library_merge_step(audio_done → audio_done, patch: pieces, joined_sha, retire)`, dann schreiben.
+   - In einer Wiederaufnahme (neuer Prozess oder anderes Fenster) mit verändertem Ziel: kein Neubau, Meldung,
+     Angebot „Ohne Text abschließen“.
+   - Danach `library_merge_step(audio_done → text_written)`.
+5. **Zeitachse veröffentlichen**: `library_merge_step(text_written → aufraeumen, patch: Textzeiger,
+   audio.sync = sync.json)` – Text und Zeitachse werden in einem Schreiben gültig.
+6. **Aufräumen** (Phase `aufraeumen`): `pages_retire(id, version)` je `retire`-Eintrag; jeder erledigte oder als
+   „geändert, bleibt“ gemeldete Eintrag wird per `library_merge_step(aufraeumen → aufraeumen, patch: retire)`
+   entfernt. Leere Liste → Journal löschen, Auftragsordner entfernen. Erhaltene, geänderte Quellen bleiben
+   normale Seiten mit Meldung; ihr Aufräumen ist danach Sache des Nutzers.
+
+**Wiederaufnahme:** Beim Laden der Bibliothek (`useLibrary`, `reload`) läuft für jedes Buch mit Journal der
+Schritt seiner Phase erneut; alle Inhalte kommen aus dem Auftragsordner (C4), nicht aus flüchtigen Variablen.
+Konkurrierende Läufe (zwei Fenster, Vordergrund + Wiederaufnahme) scheitern am bedingten Übergang (`merge:stale`)
+bzw. am Seiten-CAS und laden neu. Nach 3 Fehlschlägen (Muster `MAX_FAILURES`) zeigt die Buchkarte
+„Zusammenführen fortsetzen“ und „Ohne Text abschließen“. Den Audio-Merge abzuwickeln ist nicht vorgesehen.
+
+**„Ohne Text abschließen“** (`library_merge_abandon`, nur in `audio_done`/`text_written`): `joined.txt` als Fassung
+der Zielseite sichern (`saveCopy`; scheitert das → Abbruch, Journal bleibt), Textzeiger unverändert,
+**`audio.sync` bleibt leer** (keine Zuordnung, nie die alte Zeitachse), `retire` verworfen (Quellen bleiben),
+Journal gelöscht, Auftragsordner entfernt.
 
 **`pages_retire(id, expected) -> Result<Retired, String>`** (Rust, unter Bibliotheks- und Seitensperre in der
 Reihenfolge aus `pages.rs`): (a) `state.json`-Version ≠ `expected` → `page_state:conflict`, nichts geändert;
@@ -396,7 +430,8 @@ Reihenfolge aus `pages.rs`): (a) `state.json`-Version ≠ `expected` → `page_s
 (d) Ordner verschieben; Fehler → Begleitdatei entfernen, Meldung; (e) Indexeintrag entfernen; Fehler → Ordner
 zurückschieben, Begleitdatei entfernen, Meldung; scheitert auch das, nennt die Meldung beide Pfade (sichtbare
 Teilwirkung, keine Daten weg). Der Ordner bleibt vollständig (Titeländerungen, neue Projektdateien).
-`pages_delete` bleibt für das Löschen durch den Nutzer unverändert.
+`pages_retire` ersetzt für automatisches Entfernen jedes `pages_delete`; `pages_delete` bleibt für das Löschen
+durch den Nutzer unverändert.
 
 ## 5 Zustände und Übergänge (eine Seite)
 
@@ -416,7 +451,7 @@ Teilwirkung, keine Daten weg). Der Ordner bleibt vollständig (Titeländerungen,
 | geändert | Speichern | gelungen, Eingabe während des Auftrags | `onSaved`/`onAdopt`, Eingabe bleibt | geändert |
 | geändert | Speichern | gelungen, `onAdopt` lokal im Textkonflikt | nichts übernehmen, `stale` setzen | geschrieben, nicht übernommen |
 | geschrieben, nicht übernommen | Speichern | – | `TEXT_FIELDS` nur über Identitäten; Dateiwert sichern, Oberfläche schreiben, `onAdopt` | synchron, nur ohne weitere Eingabe |
-| geschrieben, nicht übernommen | `refresh`-Auslöser | – | keine Übernahme (Identitätsregel ergibt Konflikt), Autosave anstoßen | unverändert |
+| geschrieben, nicht übernommen | `refresh`-Auslöser | – | Mischung mit Identitätsregel; ganze Übernahme nur ohne Textkonflikt (dann neue Basis ohne `stale`), sonst nichts übernehmen und Autosave anstoßen | synchron bzw. unverändert |
 | geändert | Speichern | Textkonflikt | `lost` sichern, Oberflächentext schreiben, `onAdopt` | synchron, nur ohne weitere Eingabe |
 | geändert | Speichern | Rust `conflict` | frisch lesen, neu mischen (≤ 3, Sicherung dedupliziert) | wie oben / Fehler |
 | geändert | Speichern | Schreibfehler | `PageSaveError`, Meldung, Oberfläche hält Stand | geändert |
@@ -438,7 +473,8 @@ müssen rot werden (im PR protokolliert, nicht eingecheckt).
 Fehler beim Lesen (Verzeichnis namens `state.json`) → Datei unverändert; Fehler beim Temp-Schreiben und beim
 Ersetzen **nach** erfolgreichem Lesen und Vergleich über die Naht `write_state_with` (`replace` meldet Fehler)
 → Datei bytegleich, keine Temp-Datei übrig; `fresh_unused_id_with` mit festgehaltener Uhr und belegter Kennung →
-nie eine vorhandene Kennung (Konfliktkopie, Paketimport, `pages_create`); kein UTF-8 → `unreadable`; Rohtext und Parsefehler → Rohbytes-Konfliktkopie bytegleich;
+nie eine vorhandene Kennung (Konfliktkopie, Paketimport, `pages_create`); `write_atomic` selbst: Ersetzen
+scheitert (Ziel ist Verzeichnis) → Temp-Datei entfernt, Ziel unverändert; kein UTF-8 → `unreadable`; Rohtext und Parsefehler → Rohbytes-Konfliktkopie bytegleich;
 nur `einfuegungen` lokal geändert → Konfliktkopie; Größe Grenze−1/Grenze/Grenze+1 in Bytes mit Mehrbytezeichen
 an der Grenze; `EMPTY_VERSION` = SHA-256(""); unlesbare Datei auch mit `expected=None` nicht überschrieben;
 `collect` hält unlesbare Seite zurück. Mutation: Versionsvergleich oder Fehlerweitergabe in `write_state`
@@ -466,29 +502,46 @@ Dateifelder durch Oberflächenwerte ersetzen. Playwright: Attrappe in `editor-pa
 vorherige Eingabe bleibt; `sync-changed` mit geändertem Speicher → Übernahme; Textkonflikt →
 `book_ai_document_import` mit Dateitext, Datei = Editor.
 
-**C (Node + Playwright `library.spec.ts`, Rust für `pages_retire` und `merge_pending`):** Fremdänderung vor
+**C (vorläufig, Teil der eigenen C-Abnahme; Node, Playwright `library.spec.ts`, Rust):** Fremdänderung vor
 Rollback → bleibt; unsauberer Rollback → kein zweiter Anhang (auch nach CAS-Wiederholung). Zusammenführen
-(lva#572): Ziel nach dem Lesen geändert → im gemeinsamen Text, `merge_pending` vorher fortgeschrieben; Quelle nach
-dem Lesen geändert → bleibt Seite; Teilseite unlesbar oder `text` kein String → Abbruch vor dem Audio-Merge,
-nichts geändert; leeres `sync` → keine Transkriptquelle entfernt; Fehler an **jedem** Schritt 2–6 (Seite anlegen,
-Kernaufruf, Fortschreiben von `merge_pending`, Textschreiben, letztes `librarySave`, `pages_retire`) und danach
-erneuter Lauf → Endzustand konsistent (Text und `sync` passen, `merge_pending` leer), kein Doppeltext, keine
-Quelle vor Schritt 5 entfernt; Abbruch zwischen Textschreiben und `text_done`, danach Bearbeitung des Ziels →
-Wiederaufnahme baut nicht neu, kein Doppeltext, „Ohne Text abschließen“ sichert den gemeinsamen Text; anderer `librarySave`-Weg ohne Feld lässt `merge_pending` stehen.
-`pages_retire`: vorhandene `titel.txt` im Seitenordner → bytegleich erhalten (V18); Begleitdatei-Name belegt →
-anderer Name, nie Überschreiben; Fehler bei Begleitdatei, Verschieben und Indexspeicherung → je sichtbare
-Meldung, Ordner vollständig auffindbar; Titel/Projektdatei nach dem Lesen geändert → im `_geloescht`-Ordner
-vollständig. Mutation: Versionsvergleich in `pages_retire`, `create_new` der Begleitdatei, `joined_sha`-Prüfung
-oder Abbruch bei Teilfehler entfernen. Beide Marker fallen ohne Änderung der Erwartungen;
-`grep -rn "lva#546" tests` → leer.
+(lva#572), jeweils mit **neu erzeugter Store-/Prozessinstanz** für jede Wiederaufnahme (keine flüchtigen
+Variablen): Fehler an jedem Schritt 2–6 und danach Wiederaufnahme → Endzustand konsistent, kein Doppeltext,
+keine Quelle vor Phase `aufraeumen` entfernt; zwischen Schritt 3 und 5 ist `audio.sync` leer (nie alte
+Zeitachse am neuen Audio); Wiederaufnahme mit inzwischen geänderten Quellen → Inhalte aus dem Auftragsordner,
+geänderte Quellen bleiben Seiten; „Ohne Text abschließen“ → `joined.txt` als Fassung, `audio.sync` leer;
+Texteingabe vor einem Stützpunkt eines Teils zwischen Lesen und Neubau → Stützpunkte dieses Teils entfallen,
+die übrigen passen (C5); Ziel nach dem Lesen geändert (erster Lauf) → im gemeinsamen Text; Teilseite unlesbar
+oder `text` kein String → Abbruch vor dem Audio-Merge; leeres `sync` → keine Transkriptquelle entfernt;
+**Journalrennen** mit Barrieren: zwei Fenster starten denselben Merge → genau einer, der andere `merge:busy`;
+Vordergrund und Wiederaufnahme im selben Schritt → genau ein Übergang, der andere `merge:stale`; veraltetes
+`library_merge_step` und generisches `library_save` mit altem `merge_pending` → Journal unverändert; Journal mit
+fehlendem Pflichtwert → Anhalten, nichts entfernt; `retire` mit Zielseite → vom Kern abgewiesen.
+`pages_retire`: vorhandene `titel.txt` im Seitenordner bytegleich (V18); Begleitdatei-Name belegt → anderer
+Name; Fehler bei Begleitdatei, Verschieben, Indexspeicherung → je sichtbare Meldung, Ordner auffindbar.
+Mutation: Journalbedingung (`job`/`phase`), Leeren von `audio.sync` in Schritt 3, Entfallen der Teil-Zeitachse,
+Versionsvergleich in `pages_retire`, `create_new` entfernen → rot. Die Tauri-Attrappe in `library.spec.ts`
+bekommt die neuen Befehle; beide Marker fallen ohne Änderung der Erwartungen; `grep -rn "lva#546" tests` → leer.
 
 ## 7 Paketschnitt
 
 | PR | Scope | hängt ab |
 |---|---|---|
-| **A – #545, Dekodierung, Rust-CAS** (M) | `read_state_bytes`, `write_state`, `state_version`, `EMPTY_VERSION`, `MAX_STATE_BYTES`; `page_state_load` Fehler statt leer; `page_state_save(…, expected)`; alle Rust-Schreiber über `write_state` (§2.6); `pages_differ` erweitert; Rohbytes-Konfliktkopie; `collect` hält Unlesbares zurück; Export bricht ab; Store-Aufträge mit `expected` + Wiederholung (ohne Oberflächenbasis); Neuanlagen mit `EMPTY_VERSION`; Ladefehler-Zustand; `bindings.ts` neu (`cargo run --example bindings_export -- ../src/bindings.ts`). **Garantie nach A:** wie §2.6 „Übergang“. | – |
-| **B – Basis, Mischung, Übernahme** (L) | `pageMerge.ts`; `pageState.ts` §2.8 inkl. Ablösung von `seq`/`known`; `pageStore.ts`; `TtsSettings` (`pageBase`, `applyPageState`, Übernahme, Zustand „Datei unlesbar“, `refresh`-Auslöser); Attrappe mit CAS. **Garantie nach B:** Fälle 1, 4, 5 geschlossen. | A |
-| **C – veraltete Eingaben der Bibliothek, lva#572** (M–L) | Rollback (§4 Fall 2); Zusammenführen nach §4.1 (schließt **lva#572** mit): Zielschreiben per CAS gegen die gelesene Version mit Neubau aus frischen Teilen, `pages_retire` für Quellen und alten Transkripttext, Wiederaufnahme über `merge_pending` (Kernaufruf schreibt Audio, Titel und `merge_pending` atomar; Abschluss-`librarySave` setzt Text, `sync` und löscht `merge_pending` in einem Schreiben); keine Rückabwicklung des Audio-Merges, nur vorwärts. **Garantie nach C:** alle Fälle, V11, V18, lva#572. | B (`mergeState`) |
+| **A – #545, Dekodierung, Rust-CAS** (M) | `read_state_bytes`, `write_state`, `write_state_with`, `state_version`, `EMPTY_VERSION`, `MAX_STATE_BYTES`, `fresh_unused_id`; `page_state_load` Fehler statt leer; `page_state_save(…, expected)`; alle Rust-Schreiber über `write_state` (§2.6); `pages_differ` erweitert; Rohbytes-Konfliktkopie; `collect` hält Unlesbares zurück; Export bricht ab; Store-Aufträge mit `expected` + Wiederholung (ohne Oberflächenbasis); Neuanlagen mit `EMPTY_VERSION` (in `merge.ts` nur dieses Argument); Ladefehler-Zustand; `bindings.ts` neu (`cargo run --example bindings_export -- ../src/bindings.ts`). **Garantie nach A:** wie §2.6 „Übergang“. | – |
+| **B – Basis, Mischung, Übernahme** (L) | `pageMerge.ts`; `pageState.ts` §2.8 inkl. Ablösung von `seq`/`known`; `pageStore.ts`; `TtsSettings` (`pageBase`, `applyPageState`, Übernahme, Zustand „Datei unlesbar“, `refresh`-Auslöser); Attrappe mit CAS. **Garantie nach B:** Fälle 1, 4, 5 geschlossen; V1–V10, V12–V17. | A |
+| **C – Bibliothek mit veralteten Eingaben, lva#572** (L) | Rollback (§4 Fall 2); Zusammenführen nach §4.1 (Auftragsordner, Journal mit bedingten Übergängen, `audio.sync` leer bis zur Veröffentlichung, Teil-Zeitachsen nur mit ihrem Text, `pages_retire`, Wiederaufnahme, „Ohne Text abschließen“). **Garantie nach C:** Fälle 2, 3, V11, V18, C1–C6, lva#572. **Vor Umsetzung: eigene Entwurfsabnahme (lva#572).** | A, B (nur Schnittstellen unten) |
+
+**Unabhängigkeit:** A und B berühren weder `useLibrary.ts`-Rollback noch den Ablauf von `merge.ts` (A ändert dort
+nur das CAS-Argument der Neuanlage) noch `library.rs`; sie sind ohne C vollständig umsetzbar und abnehmbar. Die
+Marker der Fälle 2 und 3 bleiben bis C stehen. Geprüfte Abhängigkeiten: B braucht von A `expected`/Ergebniscodes
+von `page_state_save` und `EMPTY_VERSION`; sonst nichts. Keine Invariante von A/B verweist auf §4.1.
+
+**Schnittstelle, die C von A/B nutzt (in A/B festzuschreiben, in C nur zu verwenden):**
+- A: `write_state`/`page_state_save(id, state, expected)` mit Codes `page_state:conflict|unreadable|too_large`;
+  `state_version`/`EMPTY_VERSION`; `read_state_bytes` und Dekodierungsregel §2.3; `fresh_unused_id`;
+  `write_atomic` (Auftragsordner); Sperrreihenfolge aus `pages.rs`.
+- B: `mergeState`/`MergeResult.conflicts` mit `prefer`, `view`, `fields` (§2.4); `store.mutate` mit CAS-Wiederholung
+  und frischem Stand (V14); `PageSaveError`; `sha256Hex`; `secureText`/`io.saveCopy(page, value, field)`.
+- Ändert C an einer dieser Schnittstellen etwas, ist das eine Änderung an A/B mit eigener Abnahme.
 
 ## 8 Risiken
 
@@ -517,7 +570,7 @@ oder Abbruch bei Teilfehler entfernen. Beide Marker fallen ohne Änderung der Er
 | E7 | `write_state` wird in I2 auch für `inhalt/aktuell.json` genutzt (Revision dort ebenfalls Hash) | Empfehlung |
 | E8 | Ansichtsfelder `tab`, `kiDoc` führt die Oberfläche; beim Sync dürfen nur sie ungesichert verloren gehen. `kiDoc` ist ausschließlich die Kennung des geöffneten KI-Dokuments (`TtsSettings.pageStateJson`: `kiDoc: openDocId`); Inhalt und Bearbeitungen liegen in `ki/dokumente/` und sind keine Ansichtsdaten | tragfähig (R2) |
 | E9 | V14 konservativ: keine Basisnachführung, Wiederholung gegen alte Basis = Konflikt mit Sicherung (`stale`) | gewählt |
-| E10 | Zusammenführen ohne Rückabwicklung des Audio-Merges, Wiederaufnahme nur vorwärts über `merge_pending` (Alternative: neue Seite + Zeigerwechsel – bricht die Erwartung des bestehenden Tests „Zusammenführen: …behält ihren Text“ und verliert Seitenkennung, Lesezeichen und Textstelle) | Empfehlung |
+| E10 | Zusammenführen ohne Rückabwicklung des Audio-Merges, Wiederaufnahme nur vorwärts über Journal + Auftragsordner (§4.1) (Alternative: neue Seite + Zeigerwechsel – bricht die Erwartung des bestehenden Tests „Zusammenführen: …behält ihren Text“ und verliert Seitenkennung, Lesezeichen und Textstelle) | Empfehlung |
 
 ## 10 Codex → Änderung
 
@@ -559,3 +612,18 @@ oder Abbruch bei Teilfehler entfernen. Beide Marker fallen ohne Änderung der Er
 | E8 `kiDoc` | §9 E8 (nur Kennung, Inhalt in `ki/dokumente/`) |
 | B testbar je Paket | §6 A/B/C ergänzt |
 | Auftrag: lva#572 in Paket C | §4 Fall 3 und §4.1 (CAS-Zielschreiben, `pages_retire`, Wiederaufnahme `merge_pending`); §6 C; §7 C; E10 |
+
+### Codex R3 → Änderung
+
+| Codex R3 | Änderung (Abschnitt) |
+|---|---|
+| B1 Journal ohne Inhalte | C4 (Regel wörtlich); §4.1 „Dauerhafte Inhalte“: Auftragsordner `merge/<job>/` mit Teil-Snapshots, `joined.txt`, `sync.json`, Lebensdauer/Freigabe; Wiederaufnahme liest nur von dort; Test mit neuer Prozessinstanz und geänderten Quellen §6 C |
+| B2 „Ohne Text abschließen“ inkonsistent | C3 (Regel wörtlich); §4.1 Schritt 3 `audio.sync = []` atomar mit dem Audio-Merge, Zuordnung bis `aufraeumen` gesperrt; Abschluss ohne Text lässt `sync` leer; Tests §6 C |
+| B3 veraltete Teil-Zeitachse | C5 (Regel wörtlich); §4.1 Schritt 4: Zeitachse eines Teils entfällt, wenn sein Text nicht mehr `text_sha` entspricht; Test „Eingabe vor Stützpunkt“ §6 C |
+| B4 Journal ohne Rennschutz | C6 (Regel wörtlich); §4.1 „Journalübergänge“: `merge:busy`, `library_merge_step` mit `job`/`phase`, `library_save` ignoriert `merge_pending`; Journalrennen §6 C |
+| H `stale`-Zeile, `refresh`-Herkunft | §3.1 `Adoption.written`, `stale` nur bei Übernahme aus Schreiben; §5 Zeile „geschrieben, nicht übernommen + refresh“ |
+| H Aufräumen nach Abschluss | §4.1 Phase `aufraeumen`: Journal bleibt bis `retire` leer, Restliste per Übergang |
+| H Löschvertrag, Zielseite | §4.1: kein unbedingtes `pages_delete` (neue Zielseite erst nach Audio-Merge, Kennung sofort im Journal); `retire` ohne Zielseite (Kernprüfung); `pages_retire` ersetzt automatisches Löschen |
+| H Journal-Pflichtwerte | §4.1 „Journal“: fehlend/ungültig → sichtbar anhalten, nichts entfernen |
+| H `write_atomic` selbst prüfen | §6 A |
+| Paketschnitt: C noch nicht abnehmbar | Kopf; §7: A/B unabhängig von C, Schnittstelle festgeschrieben, C mit eigener Entwurfsabnahme (lva#572) |
