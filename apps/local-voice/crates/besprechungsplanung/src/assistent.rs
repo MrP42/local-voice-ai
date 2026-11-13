@@ -11,8 +11,11 @@
 //!   freigegeben ist UND die Cloud für diese Besprechung ausdrücklich gewählt wurde.
 //! - Einstufung der Teilnehmenden: Extern vor Unbekannt vor Intern. Unbekannt sperrt die
 //!   Cloud immer; Extern nur mit der Einstellung „Cloud-Modelle in Besprechungen mit
-//!   Externen“. Intern braucht eine Bestätigung, die zur AKTUELLEN Teilnehmerliste passt
-//!   (Fingerabdruck); jede Änderung der Liste macht sie ungültig.
+//!   Externen“. Intern braucht eine Bestätigung, die zur AKTUELLEN Teilnehmerliste und den
+//!   aktuellen eigenen Domänen passt (Fingerabdruck); jede Änderung macht sie ungültig.
+//!   [`pruefen`] stuft selbst ein und vertraut keiner mitgelieferten Einstufung.
+//! - Eigene Domänen gelten genau; Subdomänen nur mit Eintrag `*.example.org`. Ungültige
+//!   Domänen und öffentliche Mail-Domänen zählen nie als eigen.
 //! - Eine Bestätigung kann die berechnete Einstufung nur verschärfen, nie lockern
 //!   (Unbekannt lässt sich nicht als „intern“ bestätigen).
 //! - Es gibt keinen automatischen Wechsel in die Cloud: fehlt eine zulässige Quelle,
@@ -51,55 +54,124 @@ pub struct EinstufungsErgebnis {
 }
 
 /// Normalisiert eine Domänenangabe (`@Example.ORG ` → `example.org`); `None`, wenn sie
-/// keine Domäne ist.
+/// keine gültige ASCII-Domäne ist (nur `a-z0-9-` je Teil, kein leerer Teil, Teil nicht
+/// mit `-` am Rand, mindestens zwei Teile).
 pub fn domaene_normalisieren(s: &str) -> Option<String> {
     let t = s.trim().trim_start_matches('@').trim().to_lowercase();
-    let ok = t.contains('.')
-        && !t.starts_with('.')
-        && !t.ends_with('.')
-        && !t.contains("..")
-        && t.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.');
+    let teile: Vec<&str> = t.split('.').collect();
+    let ok = teile.len() >= 2
+        && teile.iter().all(|teil| {
+            !teil.is_empty()
+                && teil.len() <= 63
+                && !teil.starts_with('-')
+                && !teil.ends_with('-')
+                && teil.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        });
     ok.then_some(t)
 }
 
-/// Vorschlag für „Eigene Domänen“ aus den eigenen Adressen (`meeting_self_emails`).
+/// Öffentliche Mail- und Hosting-Domänen: als eigene Domäne nie zulässig, weil sonst jede
+/// fremde Adresse dort als intern gälte. Keine vollständige Liste; im Zweifel trägt der
+/// Nutzer die Domäne von Hand ein, und diese Liste lehnt nur das Offensichtliche ab.
+const OEFFENTLICHE_DOMAENEN: &[&str] = &[
+    "aol.com",
+    "gmail.com",
+    "googlemail.com",
+    "gmx.at",
+    "gmx.ch",
+    "gmx.de",
+    "gmx.net",
+    "hotmail.com",
+    "hotmail.de",
+    "icloud.com",
+    "live.com",
+    "live.de",
+    "mac.com",
+    "mail.de",
+    "mailbox.org",
+    "me.com",
+    "msn.com",
+    "outlook.com",
+    "outlook.de",
+    "posteo.de",
+    "proton.me",
+    "protonmail.com",
+    "t-online.de",
+    "web.de",
+    "yahoo.com",
+    "yahoo.de",
+    "freenet.de",
+    "github.io",
+    "co.uk",
+    "com.au",
+];
+
+/// Ist `d` (normalisiert) als eigene Domäne zulässig?
+fn als_eigene_zulaessig(d: &str) -> bool {
+    !OEFFENTLICHE_DOMAENEN.contains(&d)
+}
+
+/// Ein Eintrag der Einstellung „Eigene Domänen“: `example.org` gilt nur genau, `*.example.org`
+/// zusätzlich für alle Subdomänen (ADR-0031 E2.6: „steht in der Einstellung“).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct EigeneDomaene {
+    domaene: String,
+    mit_subdomaenen: bool,
+}
+
+fn eigene_eintraege(eigene_domaenen: &[String]) -> Vec<EigeneDomaene> {
+    let mut out: Vec<EigeneDomaene> = eigene_domaenen
+        .iter()
+        .filter_map(|e| {
+            let t = e.trim();
+            let (rest, sub) = match t.strip_prefix("*.") {
+                Some(r) => (r, true),
+                None => (t, false),
+            };
+            let d = domaene_normalisieren(rest)?;
+            als_eigene_zulaessig(&d).then_some(EigeneDomaene {
+                domaene: d,
+                mit_subdomaenen: sub,
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| (&a.domaene, a.mit_subdomaenen).cmp(&(&b.domaene, b.mit_subdomaenen)));
+    out.dedup();
+    out
+}
+
+/// Vorschlag für „Eigene Domänen“ aus den eigenen Adressen (`meeting_self_emails`). Nur zum
+/// Anzeigen; die App übernimmt ihn erst nach Bestätigung. Öffentliche Mail-Domänen fallen weg.
 pub fn eigene_domaenen_vorschlag(eigene_adressen: &[String]) -> Vec<String> {
     let mut out: Vec<String> = eigene_adressen
         .iter()
         .filter_map(|a| identitaet(a))
         .filter_map(|p| p.split_once('@').map(|(_, d)| d.to_string()))
         .filter_map(|d| domaene_normalisieren(&d))
+        .filter(|d| als_eigene_zulaessig(d))
         .collect();
     out.sort();
     out.dedup();
     out
 }
 
-/// Gehört `domaene` zu einer der eigenen Domänen (gleich oder Subdomäne)?
-fn ist_eigen(domaene: &str, eigene: &[String]) -> bool {
+/// Gehört `domaene` zu einem Eintrag der eigenen Domänen?
+fn ist_eigen(domaene: &str, eigene: &[EigeneDomaene]) -> bool {
     eigene.iter().any(|e| {
-        domaene == e
-            || domaene
-                .strip_suffix(e.as_str())
-                .is_some_and(|rest| rest.ends_with('.'))
+        domaene == e.domaene
+            || (e.mit_subdomaenen
+                && domaene
+                    .strip_suffix(e.domaene.as_str())
+                    .is_some_and(|rest| rest.len() > 1 && rest.ends_with('.')))
     })
 }
 
-/// FNV-1a (64 Bit) als Hex: stabil über Versionen und Plattformen, ohne Abhängigkeit.
-fn fnv1a_hex(text: &str) -> String {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in text.as_bytes() {
-        h ^= u64::from(*b);
-        h = h.wrapping_mul(0x0100_0000_01b3);
-    }
-    format!("{h:016x}")
-}
-
-/// Fingerabdruck einer Teilnehmerliste: Reihenfolge und Schreibweise egal, jede
-/// hinzugekommene oder entfernte Person ändert ihn. Personen ohne Identität zählen
+/// Fingerabdruck (SHA-256, Hex) einer Teilnehmerliste zusammen mit den wirksamen eigenen
+/// Domänen: Reihenfolge und Schreibweise egal; jede hinzugekommene oder entfernte Person
+/// und jede Änderung der eigenen Domänen ändert ihn. Personen ohne Identität zählen
 /// einzeln mit (zwei Unbekannte sind nicht eine).
-pub fn fingerabdruck(teilnehmende: &[String]) -> String {
+pub fn fingerabdruck(teilnehmende: &[String], eigene_domaenen: &[String]) -> String {
+    use sha2::{Digest, Sha256};
     let mut bekannt: Vec<String> = Vec::new();
     let mut unbekannt = 0usize;
     for t in teilnehmende {
@@ -110,23 +182,43 @@ pub fn fingerabdruck(teilnehmende: &[String]) -> String {
     }
     bekannt.sort();
     bekannt.dedup();
-    fnv1a_hex(&format!("{}|?{unbekannt}", bekannt.join(";")))
+    let eigene: Vec<String> = eigene_eintraege(eigene_domaenen)
+        .into_iter()
+        .map(|e| {
+            if e.mit_subdomaenen {
+                format!("*.{}", e.domaene)
+            } else {
+                e.domaene
+            }
+        })
+        .collect();
+    let mut h = Sha256::new();
+    h.update(b"lva-g9-teilnehmende-v1\n");
+    for p in &bekannt {
+        h.update(p.as_bytes());
+        h.update(b"\n");
+    }
+    h.update(format!("?{unbekannt}\n#").as_bytes());
+    for e in &eigene {
+        h.update(e.as_bytes());
+        h.update(b"\n");
+    }
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Stuft eine Besprechung nach ihrer Teilnehmerliste ein (laut Einladung, nicht laut
 /// tatsächlicher Anwesenheit).
 pub fn einstufen(teilnehmende: &[String], eigene_domaenen: &[String]) -> EinstufungsErgebnis {
-    let eigene: Vec<String> = eigene_domaenen
-        .iter()
-        .filter_map(|d| domaene_normalisieren(d))
-        .collect();
+    let eigene = eigene_eintraege(eigene_domaenen);
     let mut externe: Vec<String> = Vec::new();
     let mut ohne_adresse: u32 = 0;
     let mut intern_gesehen = false;
     for t in teilnehmende {
-        let domaene =
-            identitaet(t).and_then(|p| p.split_once('@').map(|(_, d)| (p.clone(), d.to_string())));
-        match domaene {
+        let adresse = identitaet(t).and_then(|p| {
+            let d = p.split_once('@').map(|(_, d)| d.to_string())?;
+            domaene_normalisieren(&d).map(|d| (p.clone(), d))
+        });
+        match adresse {
             None => ohne_adresse += 1,
             Some((p, d)) => {
                 if eigene.is_empty() {
@@ -152,7 +244,7 @@ pub fn einstufen(teilnehmende: &[String], eigene_domaenen: &[String]) -> Einstuf
         einstufung,
         externe,
         ohne_adresse,
-        fingerabdruck: fingerabdruck(teilnehmende),
+        fingerabdruck: fingerabdruck(teilnehmende, eigene_domaenen),
     }
 }
 
@@ -207,8 +299,10 @@ pub struct Anfrage {
     pub cloud_fuer_besprechung: bool,
     /// Einstellung „Cloud-Modelle in Besprechungen mit Externen“ (Standard aus).
     pub cloud_bei_externen: bool,
-    /// Aktuelle Einstufung aus [`einstufen`].
-    pub einstufung: EinstufungsErgebnis,
+    /// Aktuelle Teilnehmerliste (laut Einladung oder Planung); [`pruefen`] stuft selbst ein.
+    pub teilnehmende: Vec<String>,
+    /// Einstellung „Eigene Domänen“ (`example.org` genau, `*.example.org` mit Subdomänen).
+    pub eigene_domaenen: Vec<String>,
     pub bestaetigung: Option<Bestaetigung>,
 }
 
@@ -253,7 +347,7 @@ impl Entscheidung {
 
 /// Wirksame Einstufung: die strengere aus Berechnung und gültiger Bestätigung. Eine
 /// Bestätigung zu einer anderen Teilnehmerliste zählt nicht.
-pub fn wirksame_einstufung(
+fn wirksame_einstufung(
     ergebnis: &EinstufungsErgebnis,
     bestaetigung: Option<&Bestaetigung>,
 ) -> Einstufung {
@@ -279,7 +373,8 @@ pub fn pruefen(a: &Anfrage) -> Entscheidung {
         Freigabe::Offen => gruende.push(Sperrgrund::FreigabeOffen),
         Freigabe::Abgelehnt => gruende.push(Sperrgrund::FreigabeAbgelehnt),
     }
-    let wirksam = wirksame_einstufung(&a.einstufung, a.bestaetigung.as_ref());
+    let einstufung = einstufen(&a.teilnehmende, &a.eigene_domaenen);
+    let wirksam = wirksame_einstufung(&einstufung, a.bestaetigung.as_ref());
     if a.quelle == Quelle::Cloud {
         if a.kundenprofil_nur_lokal {
             gruende.push(Sperrgrund::KundenprofilNurLokal);
@@ -295,7 +390,7 @@ pub fn pruefen(a: &Anfrage) -> Entscheidung {
         }
         match &a.bestaetigung {
             None => gruende.push(Sperrgrund::EinstufungUnbestaetigt),
-            Some(b) if b.fingerabdruck != a.einstufung.fingerabdruck => {
+            Some(b) if b.fingerabdruck != einstufung.fingerabdruck => {
                 gruende.push(Sperrgrund::EinstufungVeraltet)
             }
             Some(_) => {}
