@@ -2214,6 +2214,8 @@ function harness(files = {}) {
     /** Als eigene Fassung gesicherte Texte (`saveCopy`) und gemeldete Rettungen. */
     copies: [],
     rescues: [],
+    /** Anzahl gehaltener Texte der Seite zum Zeitpunkt jeder Rettungsmeldung. */
+    heldAtRescue: [],
     failCopy: false,
   };
   const io = {
@@ -2247,7 +2249,10 @@ function harness(files = {}) {
   h.committedEvents = [];
   h.store = createPageStateStore({
     io,
-    onRescue: (page, kind) => h.rescues.push([page, kind]),
+    onRescue: (page, kind) => {
+      h.rescues.push([page, kind]);
+      h.heldAtRescue.push(h.store.held(page).length);
+    },
     live: {
       // `isActive` kennt nur der alte Store (Gegenprobe); der neue ignoriert es.
       isActive: (page) => h.active === page,
@@ -3265,4 +3270,160 @@ test("pageState B3: Lesefehler im Schreibauftrag einer verlassenen Seite: Snapsh
   assert.equal(h.store.hasFailedSave("A"), true);
   const read = await h.store.read("A");
   assert.equal(textOf(read.text), "v1");
+});
+
+// ---------------------------------------------------------------------------
+// lva#548 Fixrunde 5: neuerer Dateistand nach ausgehändigtem Snapshot (mutate)
+// ---------------------------------------------------------------------------
+
+/** Snapshot v1 ausgehändigt (Flush und Retry scheitern), Oberfläche zeigt v1 und
+ *  ist geladen. Datei: „alt“. */
+async function snapshotHandedOut(h) {
+  h.failSaves = 2;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  const handed = await h.store.read("A");
+  assert.equal(handed.unsaved, true);
+  assert.equal(textOf(handed.text), "v1");
+  h.active = "A";
+  h.loaded = true;
+  h.uiText = "v1";
+  return handed;
+}
+
+const setText = (text) => (state) => {
+  state.text = text;
+  return true;
+};
+
+test("pageState R5: mutate(v2) NACH der Ausgabe, Lade-Autosave scheitert, KeepAlive, erfolgreicher Autosave, Neuöffnen: beide Texte bleiben (Datei v1, Fassung v2)", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  await snapshotHandedOut(h);
+  // Der Lade-Autosave der Oberfläche scheitert.
+  h.failNextSave = true;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  // Fremdschreiber (Bibliothek) schreibt erfolgreich v2.
+  assert.equal(await h.store.mutate("A", setText("v2")), true);
+  assert.equal(h.fileState("A").text, "v2");
+  // KeepAlive: der Snapshot bleibt Stand der Oberfläche, die Datei bleibt v2.
+  const keep = await h.store.read("A");
+  assert.equal(keep.unsaved, true);
+  assert.equal(textOf(keep.text), "v1");
+  assert.equal(h.fileState("A").text, "v2", "read schreibt nichts");
+  assert.deepEqual(h.copies, []);
+  // Der angestoßene Autosave gelingt: v1 in der Datei, v2 vorher als Fassung gesichert.
+  await h.store.save("A", stateWith({ text: "v1" }));
+  assert.equal(h.fileState("A").text, "v1");
+  assert.deepEqual(h.copies, [["A", "v2"]]);
+  assert.deepEqual(h.rescues, [["A", "copy"]]);
+  assert.equal(h.store.hasFailedSave("A"), false);
+  // Neuöffnen: v1; v2 nicht noch einmal gesichert.
+  h.active = null;
+  h.loaded = false;
+  const reopened = await h.store.read("A");
+  assert.equal(reopened.unsaved, false);
+  assert.equal(textOf(reopened.text), "v1");
+  assert.deepEqual(h.copies, [["A", "v2"]]);
+});
+
+test("pageState R5: dieselbe Reihenfolge mit Gates (Lade-Autosave hängt, mutate(v2) steht dahinter, Autosave scheitert, mutate gelingt): beide Texte bleiben", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  await snapshotHandedOut(h);
+  const held = einmalHalten(h, "holdSave");
+  const autosave = h.store.save("A", stateWith({ text: "v1" }));
+  await tick();
+  const mutating = h.store.mutate("A", setText("v2"));
+  await tick();
+  h.failNextSave = true;
+  held.release();
+  await assert.rejects(autosave);
+  assert.equal(await mutating, true);
+  assert.equal(h.fileState("A").text, "v2");
+  const keep = await h.store.read("A");
+  assert.equal(textOf(keep.text), "v1");
+  assert.equal(keep.unsaved, true);
+  await h.store.save("A", stateWith({ text: "v1" }));
+  assert.equal(h.fileState("A").text, "v1");
+  assert.deepEqual(h.copies, [["A", "v2"]]);
+  const reopened = await h.store.read("A");
+  assert.equal(textOf(reopened.text), "v1");
+  assert.equal(h.store.hasFailedSave("A"), false);
+});
+
+test("pageState R5: auch der direkte Autosave ohne Bereichswechsel verdrängt v2 nicht still", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  await snapshotHandedOut(h);
+  assert.equal(await h.store.mutate("A", setText("v2")), true);
+  h.uiText = "v1 plus getippt";
+  await h.store.save("A", stateWith({ text: h.uiText }));
+  assert.equal(h.fileState("A").text, "v1 plus getippt");
+  assert.deepEqual(h.copies, [["A", "v2"]]);
+});
+
+test("pageState R5: scheitert das Sichern der Fassung für v2, bleibt v2 im Speicher und wird gemeldet; die Datei bekommt trotzdem den Oberflächentext", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  await snapshotHandedOut(h);
+  assert.equal(await h.store.mutate("A", setText("v2")), true);
+  h.failCopy = true;
+  await h.store.save("A", stateWith({ text: "v1" }));
+  assert.equal(h.fileState("A").text, "v1");
+  assert.deepEqual(h.store.held("A"), ["v2"]);
+  assert.deepEqual(h.rescues, [["A", "held"]]);
+});
+
+test("pageState R5: ein mutate, das den Text nicht ändert (nur Nebenfeld), braucht keine Fassung", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  await snapshotHandedOut(h);
+  assert.equal(
+    await h.store.mutate("A", (state) => {
+      state.sourceUrl = "https://example.org";
+      return true;
+    }),
+    true,
+  );
+  await h.store.save("A", stateWith({ text: "v1" }));
+  assert.equal(h.fileState("A").text, "v1");
+  assert.deepEqual(h.copies, []);
+  assert.deepEqual(h.rescues, []);
+});
+
+test("pageState R5: Datei war beim Scheitern nicht lesbar (Basis unbekannt): ein abweichender Dateitext wird vorsichtshalber gesichert", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.nullLoads = 1;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  h.failNextSave = true;
+  const handed = await h.store.read("A");
+  assert.equal(handed.unsaved, true);
+  h.active = "A";
+  h.loaded = true;
+  h.uiText = "v1";
+  assert.equal(await h.store.mutate("A", setText("v2")), true);
+  await h.store.save("A", stateWith({ text: "v1" }));
+  assert.equal(h.fileState("A").text, "v1");
+  assert.deepEqual(h.copies, [["A", "v2"]]);
+});
+
+test("pageState R5: die Meldung sieht den Endstand: eine gelungene Kopie neben einem weiter gehaltenen Text meldet zuletzt „held“, mit dem Bestand nach dem Sichern", async () => {
+  const h = harness({ A: stateWith({ text: "alt" }) });
+  h.failSaves = 3;
+  await assert.rejects(h.store.save("A", stateWith({ text: "v1" })));
+  await assert.rejects(h.store.save("A", stateWith({ text: "v2" })));
+  await assert.rejects(h.store.save("A", stateWith({ text: "v3" })));
+  assert.deepEqual(h.store.held("A"), ["v1", "v2"]);
+  h.rescues.length = 0;
+  h.heldAtRescue.length = 0;
+  // Nur v1 lässt sich sichern, v2 nicht.
+  h.io.saveCopy = async (page, text) => {
+    if (text === "v2") return false;
+    h.copies.push([page, text]);
+    return true;
+  };
+  const read = await h.store.read("A");
+  assert.equal(textOf(read.text), "v3");
+  assert.deepEqual(h.copies, [["A", "v1"]]);
+  assert.deepEqual(h.rescues, [
+    ["A", "copy"],
+    ["A", "held"],
+  ]);
+  assert.deepEqual(h.heldAtRescue, [1, 1], "Bestand nach dem Sichern");
+  assert.deepEqual(h.store.held("A"), ["v2"]);
 });

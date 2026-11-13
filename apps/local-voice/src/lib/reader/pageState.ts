@@ -121,6 +121,10 @@ interface FailedSave {
   seq: number;
   /** `read` hat ihn der Oberfläche als ungespeicherten Stand geliefert. */
   handedOut: boolean;
+  /** Text der Datei, der berücksichtigt ist: der, auf dem der Snapshot beruht
+   *  (beim Scheitern gelesen; `null`, wenn die Datei nicht lesbar war), oder ein
+   *  schon gesicherter. Nur ein davon abweichender Dateitext gilt als neuer. */
+  known: string | null;
 }
 
 /** Wie oft `read` einen Snapshot erneut versucht (jeder höchstens einmal). */
@@ -265,19 +269,30 @@ export function createPageStateStore(options: PageStateStoreOptions) {
     const list = heldTexts.get(page);
     if (!list) return;
     const left: string[] = [];
+    let copied = 0;
     for (const text of list) {
       const ok = io.saveCopy
         ? await io.saveCopy(page, text).catch(() => false)
         : false;
-      if (ok) options.onRescue?.(page, "copy");
+      if (ok) copied += 1;
       else left.push(text);
     }
-    if (left.length === 0) {
-      heldTexts.delete(page);
-      return;
-    }
-    heldTexts.set(page, left);
-    options.onRescue?.(page, "held");
+    // Erst den Bestand setzen, dann melden: eine Meldung sieht den Endstand
+    // (`held`), und die Warnung über übrig gebliebene Texte kommt zuletzt.
+    if (left.length === 0) heldTexts.delete(page);
+    else heldTexts.set(page, left);
+    if (copied > 0) options.onRescue?.(page, "copy");
+    if (left.length > 0) options.onRescue?.(page, "held");
+  }
+
+  /** Text als eigene Fassung sichern; gelingt das nicht, im Speicher halten und
+   *  melden. Die Datei bleibt unberührt. */
+  async function secureText(page: string, text: string): Promise<void> {
+    const ok = io.saveCopy
+      ? await io.saveCopy(page, text).catch(() => false)
+      : false;
+    if (ok) options.onRescue?.(page, "copy");
+    else hold(page, text);
   }
 
   /**
@@ -294,26 +309,58 @@ export function createPageStateStore(options: PageStateStoreOptions) {
     if (failedSaves.get(page) === entry) failedSaves.delete(page);
     const own = textField(entry.snapshot);
     if (own.trim() === "" || own === textField(fileText)) return;
-    const ok = io.saveCopy
-      ? await io.saveCopy(page, own).catch(() => false)
-      : false;
-    if (ok) {
-      options.onRescue?.(page, "copy");
+    await secureText(page, own);
+  }
+
+  /**
+   * Die Oberfläche hält einen ausgehändigten, ungespeicherten Snapshot, während
+   * die Datei inzwischen einen NEUEREN Stand hat (ein `mutate` ist nach dem
+   * Scheitern gelungen, z. B. Bibliothek). Ihr nächstes `save` (Lade-Autosave,
+   * Export, KI-Dokument) überschreibt die Datei mit dem Stand der Oberfläche:
+   * deren eigener, noch ungesicherter Text hat Vorrang, wie beim Übernehmen nach
+   * KeepAlive. Damit der Dateitext dabei nicht still verschwindet, wird er vorher
+   * als eigene Fassung gesichert (sonst gehalten und gemeldet). Beide Texte
+   * bleiben erhalten. Gleiche oder bekannte Texte brauchen nichts.
+   */
+  async function secureOverwrittenFile(
+    page: string,
+    fileText: string,
+    built: string,
+  ): Promise<void> {
+    const entry = failedSaves.get(page);
+    if (!entry?.handedOut) return;
+    if ((lastWrite.get(page) ?? 0) <= entry.seq) return;
+    const onFile = textField(fileText);
+    if (
+      onFile.trim() === "" ||
+      onFile === entry.known ||
+      onFile === textField(built)
+    )
       return;
-    }
-    hold(page, own);
+    entry.known = onFile;
+    await secureText(page, onFile);
   }
 
   /** Rettungssnapshot für `page` hinterlegen. Ein noch nicht angezeigter älterer
    *  Snapshot mit anderem Text wird dabei nicht verdrängt, sondern gehalten. */
-  function keep(page: string, built: string, seq: number): void {
+  function keep(
+    page: string,
+    built: string,
+    seq: number,
+    base: string | null,
+  ): void {
     const older = failedSaves.get(page);
     if (older && !older.handedOut) {
       const olderText = textField(older.snapshot);
       if (olderText.trim() !== "" && olderText !== textField(built))
         hold(page, olderText);
     }
-    failedSaves.set(page, { snapshot: built, seq, handedOut: false });
+    failedSaves.set(page, {
+      snapshot: built,
+      seq,
+      handedOut: false,
+      known: base,
+    });
   }
 
   /**
@@ -363,6 +410,9 @@ export function createPageStateStore(options: PageStateStoreOptions) {
         fileText = await io.load(page);
         if (fileText === null) throw new Error("page state not read");
         built = openAtEnqueue && live.isLive(page) ? live.build() : snapshot;
+        await secureOverwrittenFile(page, fileText, built).catch(
+          () => undefined,
+        );
         if (!(await io.save(page, withFileLog(built, fileText))))
           throw new Error("page state not saved");
       } catch (error) {
@@ -375,7 +425,8 @@ export function createPageStateStore(options: PageStateStoreOptions) {
         return;
       }
       const kept = !openAtEnqueue || !live.isLive(page);
-      if (kept) keep(page, built, seq);
+      if (kept)
+        keep(page, built, seq, fileText === null ? null : textField(fileText));
       throw new PageSaveError(
         failure instanceof Error ? failure.message : "page state not saved",
         kept,

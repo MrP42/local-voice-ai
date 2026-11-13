@@ -79,6 +79,7 @@ test.beforeEach(async ({ page }) => {
             const w = window as unknown as {
               __failSave?: boolean;
               __saveDelay?: number;
+              __failedSaves?: Record<string, number>;
             };
             if (w.__saveDelay)
               await new Promise((r) => setTimeout(r, w.__saveDelay));
@@ -91,7 +92,12 @@ test.beforeEach(async ({ page }) => {
               ).__holdNextSave = undefined;
               await hold;
             }
-            if (w.__failSave) throw "disk full";
+            if (w.__failSave) {
+              // Zählt die gescheiterten Schreibaufträge je Seite (Tests warten darauf).
+              const failed = (w.__failedSaves ??= {});
+              failed[String(args?.id)] = (failed[String(args?.id)] ?? 0) + 1;
+              throw "disk full";
+            }
             sessionStorage.setItem(`__ps_${args?.id}`, String(args?.state));
             return null;
           }
@@ -116,6 +122,9 @@ test.beforeEach(async ({ page }) => {
             return stored;
           }
           if (cmd === "book_ai_document_import") {
+            // Übernommene Texte merken (Fassungen, z. B. gerettete Stände).
+            const w = window as unknown as { __imports?: string[] };
+            (w.__imports ??= []).push(String(args?.text));
             const delay = (window as unknown as { __importDelay?: number })
               .__importDelay;
             if (delay) await new Promise((r) => setTimeout(r, delay));
@@ -2269,6 +2278,21 @@ const saveCalls = (page: Page) =>
       ).length,
   );
 
+/** Gescheiterte Schreibaufträge an die Datei der Seite `id` bisher. */
+const failedSaveCount = (page: Page, id: string) =>
+  page.evaluate(
+    (key) =>
+      (window as unknown as { __failedSaves?: Record<string, number> })
+        .__failedSaves?.[key] ?? 0,
+    id,
+  );
+
+/** Als Fassung übernommene Texte (book_ai_document_import) bisher. */
+const importedTexts = (page: Page) =>
+  page.evaluate(
+    () => (window as unknown as { __imports?: string[] }).__imports ?? [],
+  );
+
 /** Der nächste Schreibauftrag an die Seitendatei hängt, bis `__release()` ruft. */
 const holdNextSave = (page: Page) =>
   page.evaluate(() => {
@@ -2369,8 +2393,12 @@ test("a restored unsaved text survives an app-section round trip (KeepAlive): th
   await expect(
     toast(page).filter({ hasText: "war noch nicht gespeichert" }),
   ).toBeVisible();
-  // Auch der Lade-Autosave scheitert (die Seite bleibt offen, Datei = „Vorher. “).
-  await page.waitForTimeout(1500);
+  // Auch der Lade-Autosave scheitert (die Seite bleibt offen, Datei = „Vorher. “):
+  // Flush, erneuter Versuch und Lade-Autosave sind drei gescheiterte Aufträge.
+  await expect
+    .poll(() => failedSaveCount(page, "p1"))
+    .toBeGreaterThanOrEqual(3);
+  const failedBefore = await failedSaveCount(page, "p1");
   expect(((await savedState(page)) as { text: string }).text).toBe("Vorher. ");
   // App-Bereich wechseln und zurück: Vorlesen bleibt eingehängt (KeepAlive).
   const nav = page.getByRole("navigation");
@@ -2381,9 +2409,11 @@ test("a restored unsaved text survives an app-section round trip (KeepAlive): th
   };
   await roundTrip();
   // Nicht die ältere Datei: der wiederhergestellte Text bleibt (auch nach dem
-  // angestoßenen, wieder scheiternden Autosave).
+  // angestoßenen, wieder scheiternden Autosave: vierter gescheiterter Auftrag).
   await expect(editor).toHaveValue("Vorher. Z");
-  await page.waitForTimeout(800);
+  await expect
+    .poll(() => failedSaveCount(page, "p1"))
+    .toBeGreaterThan(failedBefore);
   await expect(editor).toHaveValue("Vorher. Z");
   expect(((await savedState(page)) as { text: string }).text).toBe("Vorher. ");
   // Der Speicher ist wieder da: der nächste Wechsel stößt den Autosave an, er schreibt den Text.
@@ -2402,6 +2432,62 @@ test("a restored unsaved text survives an app-section round trip (KeepAlive): th
     .toBe("Vorher. ZY");
   const reloaded = await reopenEditor(page);
   await expect(reloaded).toHaveValue("Vorher. ZY");
+});
+
+test("a newer text written by another writer after the unsaved text was restored is not overwritten silently: it is secured as a version before the autosave writes the restored text (R5)", async ({
+  page,
+}) => {
+  const { editor } = await openTwoPages(page, "Vorher. ", 0);
+  await expect.poll(() => saveCalls(page)).toBeGreaterThan(0);
+  await holdNextSave(page);
+  await editor.focus();
+  await editor.press("Control+End");
+  await page.keyboard.type("Z");
+  // Verlassen (der Flush hängt), wieder öffnen; Flush, Retry und Lade-Autosave scheitern.
+  await gotoPage(page, "Das Wintermärchen");
+  await gotoPage(page, "Der Sturm");
+  await setFailSave(page, true, true);
+  await expect(editor).toHaveValue("Vorher. Z");
+  await expect
+    .poll(() => failedSaveCount(page, "p1"))
+    .toBeGreaterThanOrEqual(3);
+  // Der Speicher ist wieder da. Ein anderer Schreiber (Bibliothek, über denselben
+  // Store des Programms) schreibt einen neueren Text in die Datei.
+  await setFailSave(page, false);
+  const written = await page.evaluate(async () => {
+    const mod = await import("/src/lib/reader/pageStore.ts");
+    return mod.getPageStateStore().mutate("p1", (state) => {
+      state.text = "Fremd geändert. ";
+      return true;
+    });
+  });
+  expect(written).toBe(true);
+  expect(((await savedState(page)) as { text: string }).text).toBe(
+    "Fremd geändert. ",
+  );
+  // Bereichswechsel und zurück: die Oberfläche behält ihren Text, der Autosave
+  // schreibt ihn; der Fremdtext wird vorher als Fassung gesichert.
+  const nav = page.getByRole("navigation");
+  await nav.getByRole("button", { name: "Verlauf", exact: true }).click();
+  await nav.getByRole("button", { name: "Vorlesen", exact: true }).click();
+  await expect(editor).toHaveValue("Vorher. Z");
+  await expect
+    .poll(async () => ((await savedState(page)) as { text: string }).text)
+    .toBe("Vorher. Z");
+  expect(await importedTexts(page)).toEqual(["Fremd geändert. "]);
+  await expect(
+    toast(page).filter({ hasText: "wurde als Fassung" }),
+  ).toBeVisible();
+  // Ein weiterer Bereichswechsel: nichts mehr offen, die Fassung wird nicht noch
+  // einmal angelegt, der Text bleibt.
+  await nav.getByRole("button", { name: "Verlauf", exact: true }).click();
+  await nav.getByRole("button", { name: "Vorlesen", exact: true }).click();
+  await expect(editor).toHaveValue("Vorher. Z");
+  expect(await importedTexts(page)).toEqual(["Fremd geändert. "]);
+  // Neuöffnen (Neustart): die Datei hält den Text der Oberfläche.
+  const reloaded = await reopenEditor(page);
+  await expect(reloaded).toHaveValue("Vorher. Z");
+  expect(((await savedState(page)) as { text: string }).text).toBe("Vorher. Z");
 });
 
 // -- Bereinigen nach dem Warten: IME, Fokus, Auswahl ---------------------------------

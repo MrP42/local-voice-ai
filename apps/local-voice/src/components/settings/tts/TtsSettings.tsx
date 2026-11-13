@@ -643,7 +643,9 @@ export const TtsSettings = () => {
           const tr = tRef.current;
           const title =
             pagesRef.current.find((p) => p.id === page)?.title ?? page;
-          if (kind === "copy")
+          // Eine gelungene Kopie ersetzt keine Warnung über weiter nur im
+          // Speicher gehaltene Texte derselben Seite: Status nach dem Bestand.
+          if (kind === "copy" && store.held(page).length === 0)
             toast.info(
               tr("tts.pageRescuedCopy", {
                 title,
