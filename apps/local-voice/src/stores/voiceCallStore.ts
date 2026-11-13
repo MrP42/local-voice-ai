@@ -25,6 +25,7 @@ import {
   type ProjektBindung,
   type ProjektHinweis,
 } from "@/components/voice-call/projekt";
+import { denkOffenSetzen, mitQuellen } from "@/stores/voiceLines";
 import {
   LOCAL_USER_ID,
   MAX_ENTRY_CHARS,
@@ -131,6 +132,16 @@ export interface VoiceLine {
   attachments?: HistoryAttachment[];
   /** Denkprozess vor dieser Antwort (nur in der laufenden Sitzung, nicht gespeichert). */
   denken?: Denkprozess;
+  /**
+   * Die Frage gehört zu einem offenen Auftrag (Denker läuft im Hintergrund weiter): eine neue Äußerung
+   * ersetzt sie nicht (nur in der laufenden Sitzung, nicht gespeichert).
+   */
+  fest?: boolean;
+  /**
+   * Die Zeile ist das Ergebnis eines Auftrags (Kennung des Auftrags in der Engine): Quellen und spätere
+   * Meldungen finden sie darüber, nicht über ihre Lage (nur in der laufenden Sitzung, nicht gespeichert).
+   */
+  auftragVon?: string;
 }
 
 /**
@@ -140,6 +151,8 @@ export interface VoiceLine {
 export type DenkSchritt =
   | { art: "text"; text: string }
   | { art: "sofort"; modell: string }
+  /** Offener Auftrag: die ursprüngliche Frage, an der der Denker im Hintergrund weiterarbeitet. */
+  | { art: "auftrag"; frage: string }
   | { art: "werkzeug"; name: string }
   | { art: "kontext"; treffer: number };
 
@@ -357,6 +370,11 @@ interface VoiceCallStore {
   notice: Extract<CallStatus, { kind: "notice" }>["code"] | null;
   /** Laufender Denkprozess bis zur ersten Antwort (graue Denk-Anzeige unter der letzten Nachricht). */
   denken: Denkprozess | null;
+  /**
+   * Offener Auftrag: der Denkprozess eines Schritts, dessen Denker im Hintergrund weiterläuft, während der
+   * Vordergrund etwas anderes tut (höchstens einer). Die Anzeige zeigt ihn, solange kein `denken` läuft.
+   */
+  auftrag: Denkprozess | null;
   metrics: TurnMetrics[];
   lines: VoiceLine[];
   usage: CallUsage;
@@ -515,7 +533,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
           }
           // Endet ein Hauptgespräch (auch durch einen Fehler), die letzte Zeile mitspeichern.
           const wasMain = get().mainCall;
-          set({ state, mainCall: false, denken: null });
+          set({ state, mainCall: false, denken: null, auftrag: null });
           if (wasMain) flushLines(true);
         },
         // Der Pegel läuft am Store vorbei: 50 Bilder je Sekunde gehören nicht in den Zustand.
@@ -535,7 +553,11 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
               !kept[kept.length - 1].final
             )
               kept.pop();
-            if (kept.length && kept[kept.length - 1].role === "user")
+            if (
+              kept.length &&
+              kept[kept.length - 1].role === "user" &&
+              !kept[kept.length - 1].fest
+            )
               kept.pop();
             return {
               lines: [
@@ -554,7 +576,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
             };
           });
         },
-        onAssistant: (text, final, interrupted) => {
+        onAssistant: (text, final, interrupted, auftragVon) => {
           const last = get().lines[get().lines.length - 1];
           if (
             final &&
@@ -600,6 +622,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
                     text,
                     final,
                     interrupted,
+                    ...(auftragVon ? { auftragVon } : {}),
                     ...(denken ? { denken } : {}),
                   },
                 ],
@@ -616,6 +639,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
                   interrupted,
                   at: Date.now(),
                   mode: callRunning(s.state) ? "spoken" : "typed",
+                  ...(auftragVon ? { auftragVon } : {}),
                   ...(denken ? { denken } : {}),
                 },
               ],
@@ -639,29 +663,11 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
           set((s) => ({
             metrics: s.metrics.filter((m) => m.turnId !== turnId),
           })),
-        onCitations: (turnId, hits) =>
+        // Das Ergebnis eines Auftrags findet seine Zeile über `auftragVon` (stabile Kennung), nicht über ihre Lage.
+        onCitations: (turnId, hits, nachgereicht) =>
           set((s) => {
-            if (hits.length === 0) return {};
-            const at = s.lines.findIndex(
-              (l) => l.role === "user" && l.turnId === turnId,
-            );
-            if (at < 0) return {};
-            const i = s.lines.findIndex(
-              (l, j) => j > at && l.role === "assistant",
-            );
-            if (i < 0) return {};
-            const lines = [...s.lines];
-            lines[i] = {
-              ...lines[i],
-              sources: hits.map((h) => ({
-                k: h.k,
-                kind: h.kind,
-                title: h.title,
-                page: h.jump.page,
-                jump: h.jump,
-              })),
-            };
-            return { lines };
+            const lines = mitQuellen(s.lines, turnId, hits, nachgereicht);
+            return lines ? { lines } : {};
           }),
         onError: (error) => set({ error, denken: null }),
         projekt: (): ProjektBindung | null => {
@@ -683,7 +689,21 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
           await persistChain;
           return get().conversationId;
         },
-        onStatus: (status) => {
+        onStatus: (status, auftrag) => {
+          // Werkzeug des Denkers im Hintergrund: nur ein Schritt seiner Anzeige, nie die Statuszeile des
+          // Vordergrunds.
+          if (auftrag) {
+            if (status?.kind === "tool")
+              set((s) => ({
+                auftrag: s.auftrag
+                  ? denkSchritt(s.auftrag, {
+                      art: "werkzeug",
+                      name: status.tool,
+                    })
+                  : null,
+              }));
+            return;
+          }
           if (status === null) set({ toolStatus: null });
           else if (status.kind === "tool")
             set((s) => ({
@@ -707,14 +727,65 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
             );
             return;
           }
+          if (e.art === "auftrag") {
+            // Der Denker läuft ohne Vordergrund weiter: seine Anzeige wechselt in den Hintergrund, die Frage
+            // bleibt stehen (eine neue Äußerung ersetzt sie nicht).
+            set((s) => {
+              let lines = s.lines.map((l) =>
+                l.role === "user" && l.turnId === e.turnId
+                  ? { ...l, fest: true }
+                  : l,
+              );
+              // Der Prozess ist die laufende Anzeige oder, hat der Denker schon geliefert (noch nichts
+              // zu hören), schon an die Antwortzeile gewandert: dann von dort zurückholen.
+              let prozess =
+                s.denken?.turnId === e.turnId ? s.denken : undefined;
+              const i = lines.length - 1;
+              if (
+                !prozess &&
+                lines[i]?.role === "assistant" &&
+                lines[i].denken?.turnId === e.turnId
+              ) {
+                prozess = lines[i].denken;
+                lines = lines.map((l, j) =>
+                  j === i ? { ...l, denken: undefined } : l,
+                );
+              }
+              if (!prozess) return { lines };
+              return {
+                lines,
+                denken: s.denken?.turnId === e.turnId ? null : s.denken,
+                auftrag: denkSchritt(
+                  { ...prozess, ms: undefined, zwischen: false, weiter: false },
+                  { art: "auftrag", frage: e.frage },
+                ),
+              };
+            });
+            return;
+          }
+          if (e.art === "vordergrund") {
+            // Der Auftrag wird nachgereicht: seine Anzeige ist wieder die des Vordergrunds und hängt gleich
+            // an der Antwortzeile.
+            set((s) =>
+              s.auftrag?.turnId === e.turnId && !s.denken
+                ? { denken: s.auftrag, auftrag: null }
+                : {},
+            );
+            return;
+          }
           if (e.art === "ende") {
-            set((s) => (s.denken?.turnId === e.turnId ? { denken: null } : {}));
+            set((s) => ({
+              ...(s.denken?.turnId === e.turnId ? { denken: null } : {}),
+              ...(s.auftrag?.turnId === e.turnId ? { auftrag: null } : {}),
+            }));
             return;
           }
           if (e.art === "gedanke") {
             // Denktext läuft auch nach der ersten Antwortzeile weiter (Werkzeugrunden): dann an den
-            // Denkprozess der letzten Antwort.
+            // Denkprozess der letzten Antwort. Mit `turnId` eines offenen Auftrags: an dessen Anzeige.
             set((s) => {
+              if (e.turnId && s.auftrag?.turnId === e.turnId)
+                return { auftrag: denkText(s.auftrag, e.text) };
               if (s.denken) return { denken: denkText(s.denken, e.text) };
               const i = s.lines.length - 1;
               const last = s.lines[i];
@@ -729,9 +800,15 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
             e.art === "sofort"
               ? { art: "sofort", modell: e.modell }
               : { art: "text", text: e.text };
-          set((s) =>
-            s.denken ? { denken: denkSchritt(s.denken, schritt) } : {},
-          );
+          set((s) => {
+            if (
+              e.art === "schritt" &&
+              e.turnId &&
+              s.auftrag?.turnId === e.turnId
+            )
+              return { auftrag: denkSchritt(s.auftrag, schritt) };
+            return s.denken ? { denken: denkSchritt(s.denken, schritt) } : {};
+          });
         },
         onContextTiming: (turnId, _retrieveMs, _promptMs, hits) =>
           set((s) =>
@@ -904,6 +981,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
       toolStatus: null,
       notice: null,
       denken: null,
+      auftrag: null,
       ready: get().state === "idle" ? null : get().ready,
     });
   };
@@ -973,6 +1051,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
     toolStatus: null,
     notice: null,
     denken: null,
+    auftrag: null,
     metrics: [],
     lines: [],
     usage: EMPTY_USAGE,
@@ -1094,17 +1173,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
       await sendFeedback(heard, next);
     },
 
-    denkOffen: (seit, offen) =>
-      set((s) => ({
-        denken: s.denken?.seit === seit ? { ...s.denken, offen } : s.denken,
-        lines: s.lines.some((l) => l.denken?.seit === seit)
-          ? s.lines.map((l) =>
-              l.denken?.seit === seit
-                ? { ...l, denken: { ...l.denken, offen } }
-                : l,
-            )
-          : s.lines,
-      })),
+    denkOffen: (seit, offen) => set((s) => denkOffenSetzen(s, seit, offen)),
     denkModell: (modell) =>
       set((s) =>
         s.denken && s.denken.modell !== modell
