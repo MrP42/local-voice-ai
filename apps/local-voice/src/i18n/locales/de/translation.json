@@ -7728,6 +7728,23 @@
       "effort": "Denktiefe",
       "allSettings": "Alle Modelle …"
     },
+    "assistant": {
+      "title": "Assistent wählen",
+      "aria": "Assistent: {{name}}",
+      "ariaProjekt": "Assistent: {{name}} (gilt im Projektgespräch nicht)",
+      "projekt": "Im Projektgespräch gilt der Assistent nicht.",
+      "all": "Alles",
+      "groupAll": "Standard",
+      "groupTemplates": "Vorlagen",
+      "groupOwn": "Eigene Assistenten",
+      "switched": "Neues Gespräch mit dem Assistenten {{name}}.",
+      "loadFailed": "Deine eigenen Assistenten lassen sich nicht lesen. Es gibt nur die Vorlagen.",
+      "rejected_one": "{{count}} Datei ist ungültig und wird nicht benutzt.",
+      "rejected_other": "{{count}} Dateien sind ungültig und werden nicht benutzt.",
+      "saveFailed": "Die Auswahl ließ sich nicht speichern. Der Assistent bleibt, wie er war.",
+      "saveOccupied": "Die Auswahl lässt sich nicht speichern: Die Datei aktiv.json ist anderweitig belegt. Der Assistent bleibt, wie er war.",
+      "saveReadFailed": "Die Auswahl lässt sich nicht speichern, weil deine Assistenten nicht lesbar sind."
+    },
     "options": {
       "label": "Gesprächsoptionen",
       "knowledge": "Wissen"

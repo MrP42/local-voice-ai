@@ -2400,6 +2400,13 @@ fn specta_builder() -> Builder<tauri::Wry> {
             voice_call::turn::voice_call_turn,
             voice_call::voice_call_cancel,
             voice_call::voice_call_synthesize,
+            // lva#556 (G2): Speicher der eigenen Assistenten-Profile (Dateien, nicht Inhalt)
+            voice_call::assistenten::voice_assistants_list,
+            voice_call::assistenten::voice_assistant_read,
+            voice_call::assistenten::voice_assistant_save,
+            voice_call::assistenten::voice_assistant_delete,
+            voice_call::assistenten::voice_assistant_active_get,
+            voice_call::assistenten::voice_assistant_active_set,
             overlay::voice_call_overlay,
             conversations::conversations_list,
             conversations::conversation_get,

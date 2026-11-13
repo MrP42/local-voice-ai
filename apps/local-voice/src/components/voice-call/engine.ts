@@ -13,10 +13,20 @@ import { TurnTaker, type TurnConfig, DEFAULT_TURN_CONFIG } from "./turnTaking";
 import {
   DEFAULT_ORCHESTRATION,
   OrchestrationSession,
+  type AssistentSicht,
   type CallStatus,
   type OrchestrationConfig,
   type Prepared,
 } from "./orchestration";
+import {
+  begrenzung,
+  hatAbrufBereich,
+  mitRolle,
+  rolle as rollenblockFuer,
+  wirksamerTurn,
+  type AssistentWirkung,
+} from "./profil/wirkung";
+import type { PlatzhalterWerte } from "./assistenten";
 import { COMPLIANCE_CHANGED } from "@/stores/complianceStore";
 import {
   GlobalContext,
@@ -697,6 +707,51 @@ export class VoiceCallEngine {
     this.globalContext.clear();
   }
 
+  /**
+   * Der gewählte Assistent (lva#556); `null` mit „Alles“ und ohne Auswahl: dann gilt, was die Nutzereinstellungen sagen,
+   * und nichts ändert sich gegenüber früher. Wirkt auf den Rollenblock im Prompt (Sprecher, Denker, Sofort-Sprecher), die
+   * Begrenzung der Bereiche, Sprechpause und Unterbrechen. Im Buch-Gespräch (eigene Seite) und im Projektgespräch gilt er
+   * für Rolle und Wissen nicht: dort bestimmen eigene Regeln, was die KI sagt und kennt (Sprechpause und Unterbrechen
+   * gelten überall, sie gehören zur Stimme, nicht zum Inhalt).
+   */
+  private assistent: AssistentWirkung | null = null;
+  /** Werte der Platzhalter; gelesen, wenn ein Gespräch beginnt (`resetHistory`) oder der Assistent wechselt. */
+  private rolleWerte: PlatzhalterWerte | null = null;
+
+  /**
+   * Setzt den Assistenten (`null`: keiner). Der nächste Schritt baut den Orchestrator mit Rolle und Begrenzung neu; ein
+   * offener Auftrag fällt weg (er gehört zur alten Rolle), vorbereiteter Abrufkontext auch. Der Wechsel in der
+   * Oberfläche beginnt ein neues Gespräch, der Verlauf bleibt dabei nicht stehen.
+   */
+  setAssistent(a: AssistentWirkung | null): void {
+    this.assistent = a;
+    this.rolleWerte = a ? a.werte() : null;
+    this.taker.config = wirksamerTurn(this.cfg.turn, a);
+    this.globalContext.clear();
+    this.invalidiere(true);
+  }
+
+  /**
+   * Liest die Werte der Platzhalter neu (der Name wird erst bekannt, wenn das Konto geladen ist, oder ändert sich); wirkt
+   * ab dem nächsten Schritt. Ohne Assistent tut es nichts.
+   */
+  werteNeu(): void {
+    if (!this.assistent) return;
+    this.rolleWerte = this.assistent.werte();
+    this.invalidiere(false);
+  }
+
+  /** Was der Assistent am nächsten Schritt ändert (für die Orchestrierung); `null` ohne Assistent. */
+  private assistentSicht(): AssistentSicht | null {
+    const a = this.assistent;
+    if (!a) return null;
+    const werte = (this.rolleWerte ??= a.werte());
+    return {
+      rolle: (budgetZeichen) => rollenblockFuer(a, werte, budgetZeichen),
+      grenze: begrenzung(a),
+    };
+  }
+
   /** Die Buch-Seite antwortet (gesetzt und nicht auf „allgemein“ gewechselt). */
   private get bookSide(): ChatSide | null {
     return this.generalMode ? null : this.sideOverride;
@@ -756,6 +811,9 @@ export class VoiceCallEngine {
     if (this.projekt()) return null;
     if (side || this.bookSide || !this.speakerLocal) return null;
     if (!this.globalContextOn()) return null;
+    // Der Assistent kann die Bereiche begrenzen: bleibt keiner mit Abrufindex, gibt es keinen Abruf; sonst schneidet Rust.
+    const grenze = begrenzung(this.assistent);
+    if (!hatAbrufBereich(grenze)) return null;
     const conversationId = (await this.cb.conversationId?.()) ?? null;
     const ctx =
       (await this.globalContext.take(turnId, text)) ??
@@ -764,6 +822,7 @@ export class VoiceCallEngine {
         transcript: text,
         previous: this.lastUserText(),
         conversationId,
+        grenze,
       }));
     if (ctx)
       this.cb.onContextTiming?.(
@@ -825,6 +884,8 @@ export class VoiceCallEngine {
     this.generation++;
     this.verwerfeAuftrag();
     this.session.invalidate();
+    // Datum und Uhrzeit der Rolle gelten ab dem Beginn des Gesprächs.
+    this.rolleWerte = this.assistent ? this.assistent.werte() : null;
     this.cancelText(false);
     this.cancelTurn(false);
     this.carry = undefined;
@@ -936,7 +997,7 @@ export class VoiceCallEngine {
       JSON.stringify(cfg.orchestration);
     this.cfg = cfg;
     this.invalidiere(wechsel);
-    this.taker.config = cfg.turn;
+    this.taker.config = wirksamerTurn(cfg.turn, this.assistent);
   }
 
   /**
@@ -1792,6 +1853,7 @@ export class VoiceCallEngine {
     return this.session.prepare({
       ...this.cfg.orchestration,
       systemPrompt: this.cfg.systemPrompt,
+      assistent: this.assistentSicht(),
     });
   }
 
@@ -1953,6 +2015,8 @@ export class VoiceCallEngine {
     tot: () => boolean;
     sagen: (text: string, weiter: boolean) => void;
     denkerAbbrechen: () => void;
+    /** Rollenblock des gewählten Assistenten (steht vor den Regeln des Sofort-Sprechers); leer ohne Assistent. */
+    rolle?: string;
     /**
      * Offener Auftrag: der Sprecher bekommt zusätzlich den Block „offener Suchauftrag“ und entscheidet mit
      * „ANTWORT“ (der Auftrag bleibt), „SUCHE“ oder „ABBRUCH“ (`verwerfen` räumt den alten Auftrag ab).
@@ -2030,9 +2094,12 @@ export class VoiceCallEngine {
       {
         role: "system",
         // Der Block „offener Suchauftrag“ geht nur an dieses lokale Modell, nie an den Denker.
-        content: o.auftrag
-          ? `${sofortPrompt(sprache)}\n\n${auftragsBlock(o.auftrag.frage, o.auftrag.ergebnisDa, sprache)}`
-          : sofortPrompt(sprache),
+        content: mitRolle(
+          o.rolle ?? "",
+          o.auftrag
+            ? `${sofortPrompt(sprache)}\n\n${auftragsBlock(o.auftrag.frage, o.auftrag.ergebnisDa, sprache)}`
+            : sofortPrompt(sprache),
+        ),
       },
       ...this.plainHistory(false)
         .filter((m) => m.role === "user" || m.role === "assistant")
@@ -2173,7 +2240,8 @@ export class VoiceCallEngine {
         this.cb.onAssistant(run.partial, true, false);
         return;
       }
-      const { side, blocked, systemPrompt, sofort } = await this.orchestrate();
+      const { side, blocked, systemPrompt, sofort, sofortRolle } =
+        await this.orchestrate();
       if (stale() || blocked) return;
       // Ab S1: die Ansage ist nur ein Schritt der Denk-Anzeige, nie Chat oder Stimme.
       if (plan.kind === "ansage") this.denkSchritt(plan.absicht, plan.text);
@@ -2181,6 +2249,7 @@ export class VoiceCallEngine {
       let denkerLaeuft = false;
       const sofortLauf = this.sofortStarten({
         model: sofort,
+        rolle: sofortRolle,
         text,
         id,
         datenAbsicht: plan.kind === "ansage" && plan.absicht !== "allgemein",
@@ -2626,7 +2695,8 @@ export class VoiceCallEngine {
       return;
     }
 
-    const { side, blocked, systemPrompt, sofort } = await this.orchestrate();
+    const { side, blocked, systemPrompt, sofort, sofortRolle } =
+      await this.orchestrate();
     if (dead()) return;
     // Ab S1: die Ansage ist nur ein Schritt der Denk-Anzeige, nie Chat oder Stimme.
     if (plan.kind === "ansage" && !blocked)
@@ -2643,6 +2713,7 @@ export class VoiceCallEngine {
     let denkerLaeuft = false;
     const sofortLauf = this.sofortStarten({
       model: sprecherModell,
+      rolle: sofortRolle,
       text,
       id: turn.id,
       datenAbsicht: plan.kind === "ansage" && plan.absicht !== "allgemein",

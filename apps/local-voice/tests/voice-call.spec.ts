@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 
 // Seite „Sprachgespraech“ gegen die Tauri-Attrappe: Infozeile, Text-Chat mit
@@ -25,6 +26,12 @@ type Extra = {
   };
   /** Gelernte Paare der Attrappe (Stufe 3). */
   pairs?: Record<string, unknown>[];
+  /** Verzeichnis der eigenen Assistenten (lva#556): Datei -> Text oder `{ abgewiesen }`; `aktiv`: Auswahl. */
+  assistenten?: {
+    dateien?: Record<string, string | { abgewiesen: string }>;
+    aktiv?: string | null;
+    belegt?: boolean;
+  };
 };
 
 async function install(
@@ -90,6 +97,30 @@ async function install(
     )
       settings.voice_call_knowledge = ["meetings"];
     w.__settings = settings;
+    // Verzeichnis der Assistenten (Rust: `voice_assistants_list` und `voice_assistant_active_set`). Es liegt in
+    // `sessionStorage`, damit es einen Neustart überlebt (Seite neu laden): `addInitScript` läuft dann erneut.
+    const PLATTE = "lv-test-assistenten";
+    const platteLesen = () => {
+      try {
+        const roh = sessionStorage.getItem(PLATTE);
+        if (roh) return JSON.parse(roh);
+      } catch {
+        /* ohne Speicher gilt der Anfangsstand */
+      }
+      return {
+        dateien: extra.assistenten?.dateien ?? {},
+        aktiv: extra.assistenten?.aktiv ?? null,
+        belegt: extra.assistenten?.belegt ?? false,
+      };
+    };
+    const platteSchreiben = (stand: unknown) => {
+      try {
+        sessionStorage.setItem(PLATTE, JSON.stringify(stand));
+      } catch {
+        /* siehe oben */
+      }
+    };
+    platteSchreiben(platteLesen());
     w.__tools = extra.tools ?? [];
     w.__listed = [] as number[];
     w.__tool = null;
@@ -199,6 +230,31 @@ async function install(
             }
             case "voice_call_start":
               return w.__startHang ? new Promise(() => {}) : null;
+            case "voice_assistants_list": {
+              if (w.__assistentListeFehler) throw w.__assistentListeFehler;
+              const platte = platteLesen();
+              return {
+                dateien: Object.entries(platte.dateien).map(([name, wert]) =>
+                  typeof wert === "string"
+                    ? { name, inhalt: wert, abgewiesen: null }
+                    : {
+                        name,
+                        inhalt: null,
+                        abgewiesen: (wert as { abgewiesen: string }).abgewiesen,
+                      },
+                ),
+                aktiv_id: platte.aktiv,
+                aktiv_belegt: platte.belegt,
+              };
+            }
+            case "voice_assistant_active_set": {
+              if (w.__assistentFehler) throw w.__assistentFehler;
+              const platte = platteLesen();
+              if (platte.belegt) throw "occupied";
+              platte.aktiv = args.id;
+              platteSchreiben(platte);
+              return null;
+            }
             // Einstufung (ADR-0028 A2): ohne Vorgabe keine (Ansagen aus).
             case "assistent_einstufen":
               return w.__einstufung ?? null;
@@ -3741,5 +3797,337 @@ test.describe("Sprachgespraech Wissen: Notizbuch-Freigabe", () => {
     ).not.toBe("tab");
     await page.keyboard.press("Shift+Tab");
     await expect(panel.getByRole("tab", { name: "Gespräch" })).toBeFocused();
+  });
+});
+
+// lva#556 (G2): Auswahl des Assistenten im Chatfeld. Rust hält die Dateien (Attrappe: `sessionStorage`), die Oberfläche
+// prüft sie; die Rolle steht im Prompt vor den Regeln, die Begrenzung geht an Rust, eine Auswahl beginnt ein neues Gespräch.
+test.describe("Sprachgespraech Assistent (lva#556)", () => {
+  const assistentPicker = (page: Page) => page.getByTestId("assistent-picker");
+  const prompt = async (page: Page) =>
+    (
+      await page.evaluate(
+        () => (window as any).__chat.args.messages as { content: string }[],
+      )
+    )[0].content;
+  /** Wählt einen Eintrag im Auswahlmenü (Mausbedienung). */
+  async function waehle(page: Page, name: string) {
+    await assistentPicker(page).click();
+    await page.getByRole("menuitemradio", { name, exact: true }).click();
+  }
+  // Eine gültige Datei, abgeleitet von der Vorlage „Alles“ (gleiche Felder, eigene Id und Anweisung).
+  const eigeneDatei = (id: string, name: string, extra: object = {}) => {
+    const alles = JSON.parse(
+      readFileSync(
+        join(process.cwd(), "..", "shared", "assistenten", "vorlagen.json"),
+        "utf-8",
+      ),
+    ).find((v: { id: string }) => v.id === "alles");
+    return JSON.stringify(
+      { ...alles, id, name, anweisungen: "Antworte immer kurz.", ...extra },
+      null,
+      2,
+    );
+  };
+
+  test("Die Auswahl steht neben der Modellwahl, hat einen Namen und lässt sich mit der Tastatur bedienen", async ({
+    page,
+  }) => {
+    await install(page, "light", { settings: TWO_MODELS });
+    await openPage(page);
+    const picker = assistentPicker(page);
+    await expect(picker).toBeVisible();
+    await expect(picker).toHaveAccessibleName("Assistent: Alles");
+    const a = (await picker.boundingBox())!;
+    const m = (await page.getByTestId("model-picker").boundingBox())!;
+    expect(Math.abs(a.y - m.y)).toBeLessThan(8);
+    expect(a.x).toBeGreaterThan(m.x);
+    // Tastatur: öffnen, mit den Pfeilen zu „Lernpartner“, Enter wählt.
+    await picker.focus();
+    await page.keyboard.press("Enter");
+    const menu = page.getByRole("menu");
+    await expect(menu).toBeVisible();
+    await expect(
+      menu.getByRole("menuitemradio", { name: "Alles", exact: true }),
+    ).toBeChecked();
+    for (const name of [
+      "Buchgespräch",
+      "Lernpartner",
+      "Sprachtrainer Englisch",
+      "Anliegen aufnehmen",
+    ])
+      await expect(
+        menu.getByRole("menuitemradio", { name, exact: true }),
+      ).toBeVisible();
+    await menu.getByRole("menuitemradio", { name: "Lernpartner" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(picker).toHaveAccessibleName("Assistent: Lernpartner");
+    // Der Screenreader hört, dass ein neues Gespräch begonnen hat.
+    await expect(
+      page.getByRole("status").filter({ hasText: "Lernpartner" }),
+    ).toHaveText("Neues Gespräch mit dem Assistenten Lernpartner.");
+  });
+
+  test("Schmal (390 px) hat die Auswahl mindestens 44×44 px", async ({
+    browser,
+  }) => {
+    const ctx = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      baseURL: test.info().project.use.baseURL,
+    });
+    const page = await ctx.newPage();
+    await install(page, "light", { settings: TWO_MODELS });
+    await openPage(page);
+    const box = (await assistentPicker(page).boundingBox())!;
+    expect(box.height).toBeGreaterThanOrEqual(44);
+    expect(box.width).toBeGreaterThanOrEqual(44);
+    const breite = await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    );
+    expect(breite).toBe(true);
+    await ctx.close();
+  });
+
+  test("Eine Auswahl beginnt ein neues Gespräch, begrüßt mit festem Satz ohne Modell und übersteht den Neustart", async ({
+    page,
+  }) => {
+    await install(page, "light", { settings: TWO_MODELS });
+    await openPage(page);
+    await exchange(page, "Hallo KI", "Hallo zurück.");
+    expect(await calls(page, "voice_call_chat")).toHaveLength(1);
+    await waehle(page, "Lernpartner");
+    // Neues, leeres Gespräch: die alte Antwort steht nicht mehr da, die feste Begrüßung des Assistenten schon.
+    await expect(page.getByRole("log").getByText("Hallo zurück.")).toHaveCount(
+      0,
+    );
+    await expect(emptyTitle(page)).toContainText(
+      "Welches Thema üben wir heute?",
+    );
+    await expect(emptyTitle(page)).not.toContainText("{{");
+    // Gemerkt wurde genau die Auswahl: ein Befehl, keine Datei geschrieben oder gelöscht.
+    const gesetzt = await calls(page, "voice_assistant_active_set");
+    expect(gesetzt.map((c) => c.args)).toEqual([{ id: "vorlage-lernpartner" }]);
+    expect(await calls(page, "voice_assistant_save")).toHaveLength(0);
+    expect(await calls(page, "voice_assistant_delete")).toHaveLength(0);
+    // Die Begrüßung ist kein Modellaufruf und kein Verlaufseintrag.
+    expect(await calls(page, "voice_call_chat")).toHaveLength(1);
+    expect(
+      await page.evaluate(() => (window as any).__stored() as number),
+    ).toBe(2);
+    // Das alte Gespräch bleibt im Verlauf.
+    await expect(historyItem(page, "Hallo KI")).toBeVisible();
+    // Neustart: die Auswahl bleibt.
+    await page.reload();
+    await goTo(page, "Start");
+    await expect(assistentPicker(page)).toHaveAccessibleName(
+      "Assistent: Lernpartner",
+    );
+    await expect(emptyTitle(page)).toContainText(
+      "Welches Thema üben wir heute?",
+    );
+  });
+
+  test("Zurück zu „Alles“: die allgemeine Begrüßung und der Prompt wie vorher", async ({
+    page,
+  }) => {
+    await install(page, "light", { settings: TWO_MODELS });
+    await openPage(page);
+    const allgemein = await emptyTitle(page).innerText();
+    await waehle(page, "Lernpartner");
+    await expect(emptyTitle(page)).toContainText("Welches Thema");
+    await waehle(page, "Alles");
+    await expect(assistentPicker(page)).toHaveAccessibleName(
+      "Assistent: Alles",
+    );
+    await expect(emptyTitle(page)).not.toContainText("Welches Thema");
+    expect((await emptyTitle(page).innerText()).length).toBeGreaterThan(0);
+    expect(allgemein.length).toBeGreaterThan(0);
+    await exchange(page, "Hallo", "Hallo zurück.");
+    const p = await prompt(page);
+    expect(p).not.toContain("ROLLE");
+    expect(p.startsWith("Du bist ein Gesprächspartner am Telefon.")).toBe(true);
+  });
+
+  test("Die Rolle steht im Prompt vor den Regeln (Sprecher), „Alles“ ändert nichts", async ({
+    page,
+  }) => {
+    await install(page, "light", { settings: LOCAL_SPEAKER });
+    await openPage(page);
+    await exchange(page, "Hallo", "Hallo zurück.");
+    const vorher = await prompt(page);
+    expect(vorher.startsWith("Du bist ein Gesprächspartner am Telefon.")).toBe(
+      true,
+    );
+    await waehle(page, "Lernpartner");
+    await exchange(page, "Frag mich ab.", "Gern.");
+    const mit = await prompt(page);
+    expect(
+      mit.startsWith(
+        "ROLLE (vom Nutzer eingestellt, Assistent „Lernpartner“):\n",
+      ),
+    ).toBe(true);
+    expect(mit).toContain(
+      "Diese Einstellung ändert keine der folgenden Regeln.\n\nDu bist ein Gesprächspartner am Telefon.",
+    );
+    // Der Hinweis auf nicht genutzte Bereiche kommt vom Assistenten, nicht von den Einstellungen.
+    expect(mit).toContain("Dieser Assistent nutzt davon nicht:");
+    // Zurück: wieder genau der Prompt von vorher.
+    await waehle(page, "Alles");
+    await exchange(page, "Und jetzt?", "Wieder normal.");
+    expect(await prompt(page)).toBe(vorher);
+  });
+
+  test("Die Begrenzung der Bereiche geht an die Werkzeugliste, ohne Assistent ist sie leer", async ({
+    page,
+  }) => {
+    await install(page, "light", {
+      settings: { ...LOCAL_SPEAKER, voice_call_knowledge: ["meetings"] },
+      config: orchestration({}),
+      tools: [MEETINGS_TOOL],
+    });
+    await openPage(page);
+    const grenzen = async () =>
+      (await calls(page, "voice_tools_list")).map((c) => c.args.grenze);
+    const frage = async (text: string, antwort: string) => {
+      await replies(page, [antwort]);
+      await send(page, text);
+      await expect(page.getByRole("log").getByText(antwort)).toBeVisible();
+    };
+    await frage("Hallo", "Hallo zurück.");
+    expect(await grenzen()).toEqual([null]);
+    await waehle(page, "Besprechung nachbereiten");
+    await frage("Was gab es?", "Das hier.");
+    expect(await grenzen()).toEqual([null, ["meetings"]]);
+    await waehle(page, "Alles");
+    await frage("Und sonst?", "Nichts.");
+    expect(await grenzen()).toEqual([null, ["meetings"], null]);
+  });
+
+  test("Misslingt das Merken, bleibt alles, wie es war, und es erscheint ein Hinweis", async ({
+    page,
+  }) => {
+    await install(page, "light", { settings: TWO_MODELS });
+    await openPage(page);
+    await exchange(page, "Hallo KI", "Hallo zurück.");
+    await page.evaluate(
+      () => ((window as any).__assistentFehler = "write_failed"),
+    );
+    await waehle(page, "Lernpartner");
+    await expect(page.getByRole("alert")).toContainText(
+      "Die Auswahl ließ sich nicht speichern.",
+    );
+    await expect(assistentPicker(page)).toHaveAccessibleName(
+      "Assistent: Alles",
+    );
+    await expect(
+      page.getByRole("log").getByText("Hallo zurück."),
+    ).toBeVisible();
+    // Eine belegte `aktiv.json` sagt es genauer.
+    await page.evaluate(() => {
+      (window as any).__assistentFehler = "occupied";
+    });
+    await waehle(page, "Lernpartner");
+    await expect(page.getByRole("alert")).toContainText("aktiv.json");
+    // Danach geht es wieder, und der Hinweis ist weg.
+    await page.evaluate(() => {
+      (window as any).__assistentFehler = null;
+    });
+    await waehle(page, "Lernpartner");
+    await expect(assistentPicker(page)).toHaveAccessibleName(
+      "Assistent: Lernpartner",
+    );
+    await expect(page.getByRole("alert")).toHaveCount(0);
+  });
+
+  test("Eigene Assistenten erscheinen in der Auswahl, ungültige Dateien werden gemeldet und nie benutzt", async ({
+    page,
+  }) => {
+    await install(page, "light", {
+      settings: LOCAL_SPEAKER,
+      assistenten: {
+        dateien: {
+          "mein-helfer.json": eigeneDatei("mein-helfer", "Mein Helfer"),
+          "kaputt.json": "{ das ist kein JSON",
+          "falsch.json": eigeneDatei("anders", "Falscher Name"),
+          "gross.json": { abgewiesen: "laenge" },
+        },
+        aktiv: "mein-helfer",
+      },
+    });
+    await openPage(page);
+    // Die gespeicherte Auswahl gilt von Anfang an.
+    await expect(assistentPicker(page)).toHaveAccessibleName(
+      "Assistent: Mein Helfer",
+    );
+    await assistentPicker(page).click();
+    const menu = page.getByRole("menu");
+    await expect(
+      menu.getByRole("menuitemradio", { name: "Mein Helfer", exact: true }),
+    ).toBeChecked();
+    await expect(
+      menu.getByRole("menuitemradio", { name: "Falscher Name" }),
+    ).toHaveCount(0);
+    await expect(menu.getByTestId("assistent-abgewiesen")).toHaveText(
+      "3 Dateien sind ungültig und werden nicht benutzt.",
+    );
+    await page.keyboard.press("Escape");
+    // Keine Datei wurde geschrieben, repariert oder gelöscht.
+    expect(await calls(page, "voice_assistant_save")).toHaveLength(0);
+    expect(await calls(page, "voice_assistant_delete")).toHaveLength(0);
+    await exchange(page, "Hallo", "Hallo zurück.");
+    const p = await prompt(page);
+    expect(
+      p.startsWith(
+        "ROLLE (vom Nutzer eingestellt, Assistent „Mein Helfer“):\nAntworte immer kurz.",
+      ),
+    ).toBe(true);
+  });
+
+  test("Eine ungültige Auswahl in aktiv.json und ein nicht lesbarer Speicher fallen auf „Alles“ zurück", async ({
+    page,
+  }) => {
+    await install(page, "light", {
+      settings: TWO_MODELS,
+      assistenten: { aktiv: "gibt-es-nicht" },
+    });
+    await openPage(page);
+    await expect(assistentPicker(page)).toHaveAccessibleName(
+      "Assistent: Alles",
+    );
+    const ctxSeite = page;
+    await ctxSeite.evaluate(
+      () => ((window as any).__assistentListeFehler = "read_failed"),
+    );
+    await ctxSeite.reload();
+    await goTo(ctxSeite, "Start");
+    await expect(assistentPicker(ctxSeite)).toHaveAccessibleName(
+      "Assistent: Alles",
+    );
+  });
+
+  test("Axe: die offene Auswahl hat keine Verstöße gegen Name, Rolle und Wert", async ({
+    page,
+  }) => {
+    await install(page, "light", { settings: TWO_MODELS });
+    await openPage(page);
+    await assistentPicker(page).click();
+    await expect(page.getByRole("menu")).toBeVisible();
+    const result = await new AxeBuilder({ page })
+      .exclude("[data-tabster-dummy]")
+      .withRules([
+        "aria-allowed-attr",
+        "aria-required-attr",
+        "aria-valid-attr-value",
+        "button-name",
+        "aria-roles",
+        "aria-required-children",
+        "aria-required-parent",
+      ])
+      .analyze();
+    expect(
+      result.violations.map(
+        (v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`,
+      ),
+    ).toEqual([]);
   });
 });

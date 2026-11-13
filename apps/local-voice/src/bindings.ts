@@ -4491,6 +4491,73 @@ async voiceCallSynthesize(text: string, requestId: string | null) : Promise<Resu
 }
 },
 /**
+ * Alle Dateien der eigenen Assistenten mit Text und aktiver Auswahl in einem Zug.
+ */
+async voiceAssistantsList() : Promise<Result<AssistentenListe, AssistentenFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_assistants_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eine Datei nach Id (`None`, wenn es sie für den Speicher nicht gibt).
+ */
+async voiceAssistantRead(id: string) : Promise<Result<AssistentenDatei | null, AssistentenFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_assistant_read", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Speichert den Text eines eigenen Assistenten atomar. `ersetzt`: der Text, den die Oberfläche geprüft hat
+ * und der überschrieben werden soll (`null` = neue Datei).
+ */
+async voiceAssistantSave(id: string, inhalt: string, ersetzt: string | null) : Promise<Result<null, AssistentenFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_assistant_save", { id, inhalt, ersetzt }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Löscht einen eigenen Assistenten, wenn die Datei noch genau `erwartet` enthält.
+ */
+async voiceAssistantDelete(id: string, erwartet: string) : Promise<Result<null, AssistentenFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_assistant_delete", { id, erwartet }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die aktive Auswahl (`aktiv.json`).
+ */
+async voiceAssistantActiveGet() : Promise<Result<AssistentenAktiv, AssistentenFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_assistant_active_get") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Wählt einen Assistenten als aktiv (nur `aktiv.json` wird geschrieben).
+ */
+async voiceAssistantActiveSet(id: string) : Promise<Result<null, AssistentenFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_assistant_active_set", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Status des Sprachgespraechs im Overlay, wie beim Diktat: Hoert zu, Hoert,
  * Denkt nach, Spricht. `None` blendet es aus (nur, wenn es ein Gespraech zeigt).
  * Das Hauptfenster ruft das auf, auch wenn es verborgen ist.
@@ -5557,11 +5624,12 @@ async agentBridgeStatus() : Promise<BridgeStatus> {
     return await TAURI_INVOKE("agent_bridge_status");
 },
 /**
- * Die lesenden Werkzeuge, die das Sprachgespräch jetzt benutzen darf (nach den Bereichen).
+ * Die lesenden Werkzeuge, die das Sprachgespräch jetzt benutzen darf (nach den Bereichen). `grenze`: die Bereiche
+ * des gewählten Assistenten (nur schneiden, nie öffnen), `None` ohne Begrenzung.
  */
-async voiceToolsList() : Promise<Result<VoiceToolInfo[], string>> {
+async voiceToolsList(grenze: string[] | null) : Promise<Result<VoiceToolInfo[], string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("voice_tools_list") };
+    return { status: "ok", data: await TAURI_INVOKE("voice_tools_list", { grenze }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -5618,11 +5686,11 @@ async voiceNotebookOutline() : Promise<Result<NotebookOutline[], string>> {
  * Ruft ein lesendes Werkzeug (Bereich frei, Audit über das Tor). `args` ist ein JSON-Objekt als
  * Text, `conversation_id` das laufende Gespräch (es bleibt den Gesprächswerkzeugen verborgen). Die
  * Antwort ist der JSON-Text des Ergebnisses; eine zu lange Antwort wird nie still gekürzt, sondern
- * abgelehnt.
+ * abgelehnt. `grenze`: wie bei `voice_tools_list` (ein Werkzeug außerhalb der Begrenzung ist „nicht freigegeben“).
  */
-async voiceToolCall(name: string, args: string, conversationId: string | null) : Promise<Result<string, string>> {
+async voiceToolCall(name: string, args: string, conversationId: string | null, grenze: string[] | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("voice_tool_call", { name, args, conversationId }) };
+    return { status: "ok", data: await TAURI_INVOKE("voice_tool_call", { name, args, conversationId, grenze }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -9182,6 +9250,27 @@ abgetastet: number;
  * Unterordner (sortiert), auch leere; nur Pfade relativ zum verknüpften Ordner.
  */
 unterordner: AblageUnterordner[] }
+/**
+ * Warum eine Datei nicht als Text geliefert wird. Die Namen entsprechen den Fehlercodes der Profilprüfung
+ * (`json`, `laenge`, `zu_viele`, `wert`); der Pfad ist immer `""`.
+ */
+export type Abweisung = 
+/**
+ * Kein Text: Symlink, FIFO, Socket, Gerät, nicht lesbar oder kein gültiges UTF-8.
+ */
+"json" | 
+/**
+ * Größer als 256 KiB (nicht gelesen).
+ */
+"laenge" | 
+/**
+ * Jenseits der ersten 200 Namen (nicht gelesen).
+ */
+"zu_viele" | 
+/**
+ * Nur für `aktiv.json`: belegt, also kein Auswahldokument.
+ */
+"wert"
 export type AccountState = "not_configured" | "no_capabilities" | "needs_sign_in" | "needs_consent" | "ready"
 /**
  * Eine Aufgabe (Zeile in `action_items`). `assignee_label` ist Freitext, die
@@ -9279,7 +9368,13 @@ conversation_id: string | null;
 /**
  * Bücher (Seiten-Ids) mit ausdrücklicher Ganzes-Buch-Freigabe.
  */
-whole_books?: string[] }
+whole_books?: string[]; 
+/**
+ * Begrenzung der Bereiche für diese Anfrage (Schlüssel wie `voice_call_knowledge`, vom gewählten Assistenten,
+ * lva#556). Sie schneidet nur: die Freigabe der Einstellungen gilt weiter, die Begrenzung öffnet nie mehr.
+ * `None`: nicht begrenzt.
+ */
+area_cap?: string[] | null }
 /**
  * Zustand für die Oberfläche (Infozeile, Einstellungen).
  */
@@ -9912,6 +10007,80 @@ reasons: string[];
  * Woher die Angaben stammen (URL) und wann sie geprueft wurden.
  */
 sources: string[]; checked: string | null }
+/**
+ * Die aktive Auswahl allein.
+ */
+export type AssistentenAktiv = { id: string | null; belegt: boolean }
+/**
+ * Eine Datei des Verzeichnisses: der Text (unverändert, nicht kodiert) oder der Grund, warum es keinen gibt.
+ */
+export type AssistentenDatei = { 
+/**
+ * Dateiname mit Endung (`eigen-abc.json`).
+ */
+name: string; 
+/**
+ * Der Text der Datei, wenn sie gelesen wurde.
+ */
+inhalt: string | null; 
+/**
+ * Der Grund, wenn nicht.
+ */
+abgewiesen: Abweisung | null }
+/**
+ * Fehler der Befehle. Ein Fehler ändert nie etwas am Verzeichnis.
+ */
+export type AssistentenFehler = 
+/**
+ * Die Id verletzt das Muster oder ist ein Windows-Gerätename.
+ */
+"invalid_id" | 
+/**
+ * Vorbehaltene Id (`alles`, `aktiv`, `vorlage-…`): nicht zu speichern, zu löschen oder als Datei zu lesen.
+ */
+"reserved_id" | 
+/**
+ * Es gibt die Datei (für den Speicher) nicht.
+ */
+"not_found" | 
+/**
+ * Der Text ist größer als 256 KiB.
+ */
+"too_large" | 
+/**
+ * Schon 200 Dateien im Verzeichnis.
+ */
+"too_many" | 
+/**
+ * Unter dieser Id liegt etwas, das nicht der erwartete eigene Stand ist (abgewiesene Datei, fremde
+ * Änderung, jenseits der Auswahl, belegte `aktiv.json`). Es wird nichts verändert.
+ */
+"occupied" | 
+/**
+ * Schreiben oder Löschen ist fehlgeschlagen (Datenträger voll, gesperrt, kein Zugriff). Der alte
+ * Stand bleibt.
+ */
+"write_failed" | 
+/**
+ * Das Verzeichnis ließ sich nicht lesen.
+ */
+"read_failed"
+/**
+ * Alles, was im Verzeichnis liegt, in einem Zug (unter der Sperre, also ein stimmiger Stand).
+ */
+export type AssistentenListe = { 
+/**
+ * Die Dateien, nach Bytes des Namens sortiert; eine belegte `aktiv.json` (kein Verzeichnis) steht am Ende.
+ */
+dateien: AssistentenDatei[]; 
+/**
+ * Die Id in `aktiv.json`, wenn sie ein Auswahldokument ist (ob es das Profil gibt, prüft TypeScript).
+ */
+aktiv_id: string | null; 
+/**
+ * `aktiv.json` ist belegt (kein Auswahldokument): `voice_assistant_active_set` meldet `occupied`.
+ */
+aktiv_belegt: boolean }
 export type Attendee = { 
 /**
  * Klein geschrieben, ohne `mailto:`; `None`, wenn die Quelle keine

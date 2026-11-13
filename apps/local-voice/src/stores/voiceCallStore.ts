@@ -27,6 +27,11 @@ import {
 } from "@/components/voice-call/projekt";
 import { denkOffenSetzen, mitQuellen } from "@/stores/voiceLines";
 import {
+  aktuelleWirkung,
+  useAssistentStore,
+  wirkungSignatur,
+} from "@/stores/assistentStore";
+import {
   LOCAL_USER_ID,
   MAX_ENTRY_CHARS,
   VOICEBOT_ID,
@@ -434,6 +439,11 @@ interface VoiceCallStore {
   /** Leeres Gespräch; gespeichert wird erst beim ersten Beitrag. */
   newConversation: () => Promise<void>;
   /**
+   * Wählt einen Assistenten (lva#556) und beginnt ein neues, leeres Gespräch: ein laufender Anruf endet, der Verlauf
+   * bleibt als eigenes Gespräch gespeichert. Scheitert das Merken der Auswahl, ändert sich nichts (`false`).
+   */
+  assistentWechseln: (id: string) => Promise<boolean>;
+  /**
    * Leeres Gespräch im Projekt. Es wird sofort angelegt, damit Rust die Bindung aus dem Speicher
    * kennt, bevor die erste Frage geht. `stand`: Stand der Auswahl, den die Person gerade sieht.
    */
@@ -519,6 +529,9 @@ let listRun = 0;
 const inflight = new Set<number>();
 /** Verbrauch je Zeile, damit ein erneuter Versuch ihn nicht verliert. */
 const lineUsage = new Map<number, CallUsageEvent | null>();
+
+/** Der Assistent, der an der Engine anliegt (`wirkungSignatur`), damit ein unverändertes Neuladen sie nicht anfasst. */
+let engineAssistent = "";
 
 export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
   const getEngine = (): VoiceCallEngine => {
@@ -829,6 +842,10 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
       get().config,
     );
     engine.setMuted(get().muted);
+    // Der gewählte Assistent gilt von Anfang an; „Alles“ ist kein Eingriff.
+    engineAssistent = wirkungSignatur(useAssistentStore.getState().assistenten);
+    const wirkung = aktuelleWirkung();
+    if (wirkung) engine.setAssistent(wirkung);
     if (import.meta.env.DEV)
       (window as unknown as { __voiceCallEngine?: unknown }).__voiceCallEngine =
         engine;
@@ -1096,6 +1113,10 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
 
     startCall: async () => {
       if (get().state !== "idle" || get().switching) return;
+      // Der Assistent steht fest, bevor das erste Wort fällt (nach dem Laden ist das kein Warten).
+      const bereit = useAssistentStore.getState().bereit();
+      if (bereit) await bereit;
+      if (get().state !== "idle" || get().switching) return;
       set({ error: null });
       try {
         set({ ready: await getEngine().start() });
@@ -1115,6 +1136,11 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
     sendText: async (text, display, attachments) => {
       const clean = text.trim();
       if (!clean || get().switching) return;
+      const bereit = useAssistentStore.getState().bereit();
+      if (bereit) {
+        await bereit;
+        if (get().switching) return;
+      }
       const e = getEngine();
       set({ error: null });
       typedNext = true;
@@ -1193,6 +1219,15 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
       flushLines(true);
       engine?.resetHistory();
       switchTo({ id: null, titled: false }, null, [], EMPTY_USAGE);
+    },
+
+    assistentWechseln: async (id) => {
+      if (get().switching) return false;
+      const ok = await useAssistentStore.getState().waehlen(id);
+      if (!ok) return false;
+      // Die Engine folgt der Auswahl (siehe Abo unten); das neue Gespräch beginnt mit Rolle und Begrüßung des neuen Assistenten.
+      await get().newConversation();
+      return true;
     },
 
     newProjectConversation: async (projectId, stand) => {
@@ -1378,4 +1413,17 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
       if (wasOpen) await startFreshMain();
     },
   };
+});
+
+// Die Auswahl des Assistenten (und der Name für die Platzhalter) folgt der Engine, auch wenn sie erst nach dem Start
+// des Gesprächs ankommt (Laden, Konto). Eine unveränderte Auswahl fasst die Engine nicht an.
+let letzterName = useAssistentStore.getState().name;
+useAssistentStore.subscribe((zustand) => {
+  if (!engine) return;
+  const signatur = wirkungSignatur(zustand.assistenten);
+  if (signatur !== engineAssistent) {
+    engineAssistent = signatur;
+    engine.setAssistent(aktuelleWirkung(zustand));
+  } else if (zustand.name !== letzterName) engine.werteNeu();
+  letzterName = zustand.name;
 });

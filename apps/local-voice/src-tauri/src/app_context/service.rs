@@ -100,6 +100,11 @@ pub struct AppContextRequest {
     /// Bücher (Seiten-Ids) mit ausdrücklicher Ganzes-Buch-Freigabe.
     #[serde(default)]
     pub whole_books: Vec<String>,
+    /// Begrenzung der Bereiche für diese Anfrage (Schlüssel wie `voice_call_knowledge`, vom gewählten Assistenten,
+    /// lva#556). Sie schneidet nur: die Freigabe der Einstellungen gilt weiter, die Begrenzung öffnet nie mehr.
+    /// `None`: nicht begrenzt.
+    #[serde(default)]
+    pub area_cap: Option<Vec<String>>,
 }
 
 fn kind_of(area: Area) -> Option<SourceKind> {
@@ -115,6 +120,25 @@ fn kind_of(area: Area) -> Option<SourceKind> {
         // eigene Indexquelle erst mit Spec lva#398 §3.4; bis dahin nur Werkzeuge.
         Area::Transcripts | Area::Calendar | Area::Notebook => None,
     }
+}
+
+/// Schneidet die freigegebenen Quellen mit der Begrenzung einer Anfrage (`None`: unverändert, leer: nichts).
+pub(crate) fn begrenze_quellen(
+    allowed: HashSet<SourceKind>,
+    cap: Option<&[String]>,
+) -> HashSet<SourceKind> {
+    let Some(keys) = cap else {
+        return allowed;
+    };
+    let erlaubt: HashSet<SourceKind> = Areas::from_settings(keys, true)
+        .granted()
+        .into_iter()
+        .filter_map(kind_of)
+        .collect();
+    allowed
+        .into_iter()
+        .filter(|k| erlaubt.contains(k))
+        .collect()
 }
 
 /// Die freigegebenen Quellen (leer, wenn der Schalter aus ist).
@@ -733,7 +757,8 @@ fn retrieve_blocking(app: &AppHandle, req: &AppContextRequest) -> Result<Context
     let (v_start, settings) =
         berechtigung::global().lesen_mit(|| crate::settings::get_settings(app));
     apply_grants(&settings);
-    let allowed = allowed_kinds(&settings);
+    // Die Begrenzung des Assistenten wirkt nur auf diese Anfrage; die Freigabe (und damit der Index) bleibt, wie sie ist.
+    let allowed = begrenze_quellen(allowed_kinds(&settings), req.area_cap.as_deref());
     if allowed.is_empty() {
         return Ok(ContextHits {
             epoch: index_read().epoch(),
@@ -1053,6 +1078,73 @@ mod grant_tests {
     fn belegmarken_erkennen() {
         assert!(super::super::prompt::has_marker("Bis März [Q2]."));
         assert!(!super::super::prompt::has_marker("Kein [Qx] und [Q] Beleg"));
+    }
+}
+
+#[cfg(test)]
+mod begrenzung_tests {
+    //! lva#556: die Begrenzung des gewählten Assistenten schneidet die Quellen einer Anfrage, öffnet aber nie mehr.
+    use super::*;
+
+    fn keys(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn frei() -> HashSet<SourceKind> {
+        let mut s = crate::settings::get_default_settings();
+        s.voice_global_context_enabled = true;
+        s.voice_call_knowledge = keys(&["meetings", "dictations", "conversations", "books", "tts"]);
+        s.voice_call_read_transcripts = true;
+        allowed_kinds(&s)
+    }
+
+    #[test]
+    fn ohne_begrenzung_bleibt_alles() {
+        assert_eq!(begrenze_quellen(frei(), None), frei());
+    }
+
+    #[test]
+    fn begrenzung_schneidet_auf_die_gewollten_quellen() {
+        let k = begrenze_quellen(frei(), Some(&keys(&["meetings", "books"])));
+        let erwartet: HashSet<SourceKind> = [SourceKind::Meeting, SourceKind::Book].into();
+        assert_eq!(k, erwartet);
+    }
+
+    #[test]
+    fn begrenzung_oeffnet_nie_mehr_als_freigegeben() {
+        // Gewollt, aber nicht freigegeben: Notizen, KI-Dokumente und Termine zählen hier nicht.
+        let k = begrenze_quellen(
+            frei(),
+            Some(&keys(&[
+                "book_notes",
+                "ki_docs",
+                "calendar",
+                "notebook",
+                "meetings",
+            ])),
+        );
+        let erwartet: HashSet<SourceKind> = [SourceKind::Meeting].into();
+        assert_eq!(k, erwartet);
+        // Nichts freigegeben: auch eine breite Begrenzung öffnet nichts.
+        assert!(begrenze_quellen(HashSet::new(), Some(&keys(&["meetings", "books"]))).is_empty());
+    }
+
+    #[test]
+    fn leere_oder_fremde_begrenzung_schliesst_alles_aus() {
+        assert!(begrenze_quellen(frei(), Some(&[])).is_empty());
+        assert!(begrenze_quellen(frei(), Some(&keys(&["alles", "Meetings", ""]))).is_empty());
+        // Bereiche ohne Abrufindex (Termine, Notizbuch) ergeben keine Quelle.
+        assert!(begrenze_quellen(frei(), Some(&keys(&["calendar", "notebook"]))).is_empty());
+    }
+
+    #[test]
+    fn die_anfrage_ohne_begrenzung_liest_sich_wie_zuvor() {
+        // Ein älterer Aufrufer sendet kein `area_cap`: das Feld hat einen Standard.
+        let r: AppContextRequest =
+            serde_json::from_str(r#"{"question":"Wer?","previous":null,"conversation_id":null}"#)
+                .unwrap();
+        assert_eq!(r.area_cap, None);
+        assert!(r.whole_books.is_empty());
     }
 }
 
