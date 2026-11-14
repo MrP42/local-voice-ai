@@ -231,9 +231,17 @@ fn should_suppress_final_paste(source: TranscriptionSource, stream_injected_any:
     source == TranscriptionSource::Segmenter || stream_injected_any
 }
 
-async fn post_process_transcription(settings: &AppSettings, transcription: &str) -> Option<String> {
-    // Modelle je Funktion: die Nachbearbeitung nutzt ihr eigenes Modell, falls gewaehlt.
-    let settings = &settings.for_function(crate::settings::FN_DICTATION_REFINE);
+/// Was die Nachbearbeitung braucht, um einen Anbieter zu fragen.
+struct PostProcessSetup {
+    provider: crate::settings::PostProcessProvider,
+    model: String,
+    prompt: String,
+}
+
+/// Ist die Nachbearbeitung fuer diesen Text eingerichtet? `None` heisst "wird
+/// uebersprungen" (leerer Text, kein Anbieter, kein Modell, kein Prompt) und ist
+/// kein Fehler. `settings` ist schon die Sicht der Funktion (`for_function`).
+fn post_process_setup(settings: &AppSettings, transcription: &str) -> Option<PostProcessSetup> {
     if is_blank_transcription(transcription) {
         debug!("Post-processing skipped because the transcription is empty");
         return None;
@@ -288,6 +296,22 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
         debug!("Post-processing skipped because the selected prompt is empty");
         return None;
     }
+
+    Some(PostProcessSetup {
+        provider,
+        model,
+        prompt,
+    })
+}
+
+async fn post_process_transcription(settings: &AppSettings, transcription: &str) -> Option<String> {
+    // Modelle je Funktion: die Nachbearbeitung nutzt ihr eigenes Modell, falls gewaehlt.
+    let settings = &settings.for_function(crate::settings::FN_DICTATION_REFINE);
+    let PostProcessSetup {
+        provider,
+        model,
+        prompt,
+    } = post_process_setup(settings, transcription)?;
 
     debug!(
         "Starting LLM post-processing with provider '{}' (model: {})",
@@ -525,6 +549,15 @@ pub(crate) struct ProcessedTranscription {
     pub final_text: String,
     pub post_processed_text: Option<String>,
     pub post_process_prompt: Option<String>,
+    /// Die Nachbearbeitung war verlangt und eingerichtet, lieferte aber nichts
+    /// (Anbieterfehler, leere Antwort). Nicht gesetzt, wenn sie nur uebersprungen
+    /// wurde (nicht verlangt oder nicht eingerichtet).
+    pub post_process_failed: bool,
+}
+
+/// Siehe [`ProcessedTranscription::post_process_failed`].
+fn post_process_failed(requested: bool, set_up: bool, delivered: bool) -> bool {
+    requested && set_up && !delivered
 }
 
 /// Resolve the persisted language *intent* into the language the currently-loaded
@@ -532,12 +565,21 @@ pub(crate) struct ProcessedTranscription {
 /// paths apply (see [`crate::managers::model::effective_language`]). Post-processing
 /// resolves it independently so it agrees with the language the transcription ran
 /// in, without threading a value through the pipeline.
-fn resolve_effective_language(app: &AppHandle, settings: &AppSettings) -> String {
+fn resolve_effective_language(
+    app: &AppHandle,
+    settings: &AppSettings,
+    ran_with: Option<&str>,
+) -> String {
     let tm = app.state::<Arc<TranscriptionManager>>();
     let model_manager = app.state::<Arc<ModelManager>>();
-    let active_model = tm
-        .get_current_model()
-        .unwrap_or_else(|| settings.selected_model.clone());
+    // `ran_with`: der Lauf rechnete mit einer eigenen Engine (genaues Modell,
+    // lva#579); dann zaehlt deren Modell, nicht das gerade geladene Diktatmodell.
+    let active_model = match ran_with {
+        Some(id) => id.to_string(),
+        None => tm
+            .get_current_model()
+            .unwrap_or_else(|| settings.selected_model.clone()),
+    };
     match model_manager.get_model_info(&active_model) {
         Some(info) => crate::managers::model::effective_language(
             &settings.selected_language,
@@ -553,6 +595,17 @@ pub(crate) async fn process_transcription_output(
     transcription: &str,
     post_process: bool,
 ) -> ProcessedTranscription {
+    process_transcription_output_for_model(app, transcription, post_process, None).await
+}
+
+/// Wie [`process_transcription_output`]; `ran_with` nennt das Modell, mit dem die
+/// Transkription tatsaechlich lief, wenn es nicht das geladene Diktatmodell war.
+pub(crate) async fn process_transcription_output_for_model(
+    app: &AppHandle,
+    transcription: &str,
+    post_process: bool,
+    ran_with: Option<&str>,
+) -> ProcessedTranscription {
     let settings = get_settings(app);
     let mut final_text = transcription.to_string();
     let mut post_processed_text: Option<String> = None;
@@ -561,15 +614,23 @@ pub(crate) async fn process_transcription_output(
     // Resolve the language the transcription actually ran in (the persisted
     // intent coerced against the loaded model's capabilities) so OpenCC keys off
     // the effective language rather than a possibly-stale intent.
-    let effective_language = resolve_effective_language(app, &settings);
+    let effective_language = resolve_effective_language(app, &settings, ran_with);
     if let Some(converted_text) =
         maybe_convert_chinese_variant(&effective_language, transcription).await
     {
         final_text = converted_text;
     }
 
+    let mut failed = false;
     if post_process {
-        if let Some(processed_text) = post_process_transcription(&settings, &final_text).await {
+        let set_up = post_process_setup(
+            &settings.for_function(crate::settings::FN_DICTATION_REFINE),
+            &final_text,
+        )
+        .is_some();
+        let result = post_process_transcription(&settings, &final_text).await;
+        failed = post_process_failed(true, set_up, result.is_some());
+        if let Some(processed_text) = result {
             post_processed_text = Some(processed_text.clone());
             final_text = processed_text;
 
@@ -591,6 +652,7 @@ pub(crate) async fn process_transcription_output(
         final_text,
         post_processed_text,
         post_process_prompt,
+        post_process_failed: failed,
     }
 }
 
@@ -1332,6 +1394,37 @@ mod tests {
     use std::sync::Arc;
     use std::thread;
     use std::time::Duration;
+
+    #[test]
+    fn a_skipped_post_processing_is_not_a_failed_one() {
+        use super::{post_process_failed, post_process_setup};
+        // Verlangt und eingerichtet, aber nichts geliefert: Fehler.
+        assert!(post_process_failed(true, true, false));
+        // Geliefert, nicht eingerichtet oder nicht verlangt: kein Fehler.
+        assert!(!post_process_failed(true, true, true));
+        assert!(!post_process_failed(true, false, false));
+        assert!(!post_process_failed(false, true, false));
+
+        // "Eingerichtet" haengt an Anbieter, Modell und Prompt, und am Text.
+        let mut s = crate::settings::get_default_settings();
+        s.post_process_selected_prompt_id = None;
+        assert!(post_process_setup(&s, "Text").is_none(), "kein Prompt");
+        let provider = s.post_process_providers[0].id.clone();
+        s.post_process_provider_id = provider.clone();
+        s.post_process_models.insert(provider, "modell".into());
+        s.post_process_prompts = vec![crate::settings::LLMPrompt {
+            id: "p".into(),
+            name: "P".into(),
+            prompt: "Bitte glaetten.".into(),
+        }];
+        s.post_process_selected_prompt_id = Some("p".into());
+        let setup = post_process_setup(&s, "Text").expect("eingerichtet");
+        assert_eq!(setup.model, "modell");
+        assert_eq!(setup.prompt, "Bitte glaetten.");
+        assert!(post_process_setup(&s, "   ").is_none(), "leerer Text");
+        s.post_process_models.clear();
+        assert!(post_process_setup(&s, "Text").is_none(), "kein Modell");
+    }
 
     #[test]
     fn voice_call_ignores_key_repeat_but_not_a_later_press() {

@@ -2806,6 +2806,12 @@
       },
       "disabledHint": "Die Nachbearbeitung ist aus. Einschalten, damit ein Sprachmodell diktierten Text aufräumt — und um den Anbieter zu wählen, den auch die Besprechungsprotokolle nutzen."
     },
+    "accurateModel": {
+      "title": "Genaues Modell für schwierige Aufnahmen",
+      "description": "Ein zweites Modell für einzelne Aufnahmen, die das Diktatmodell falsch verstanden hat. Im Verlauf lässt sich eine Aufnahme damit erneut transkribieren. Dafür wird das Modell zusätzlich zum Diktatmodell geladen und danach wieder freigegeben; das Diktatmodell bleibt, wie es ist. Vor dem Start wird geprüft, ob gerade diktiert, aufgenommen oder eine Besprechung verarbeitet wird; dann startet der Lauf nicht. Das ist eine Prüfung, keine Sperre: Beginnst du kurz danach oder während des Laufs zu diktieren, läuft er weiter, und das Diktat kann langsamer reagieren. Wählbar ist jedes installierte Modell, auch eigene Whisper-Dateien (.bin oder .gguf) im Modellordner.",
+      "none": "Keines",
+      "notInstalled": "{{model}} (nicht installiert)"
+    },
     "history": {
       "title": "Verlauf",
       "openFolder": "Aufnahmeordner öffnen",
@@ -2818,6 +2824,16 @@
       "deleteError": "Eintrag konnte nicht gelöscht werden. Bitte versuche es erneut.",
       "retranscribe": "Erneut transkribieren",
       "retranscribeError": "Erneute Transkription fehlgeschlagen. Bitte versuche es erneut.",
+      "retranscribeAccurate": "Mit genauem Modell erneut transkribieren",
+      "accurateUnset": "Es ist kein genaues Modell eingerichtet. Wähle eines unter Einstellungen > Eingabe.",
+      "accurateMissing": "Das genaue Modell ist nicht mehr installiert. Wähle unter Einstellungen > Eingabe ein anderes.",
+      "accurateMemory": "Zu wenig freier Speicher, um das genaue Modell neben dem Diktatmodell zu laden. Schließe andere Programme oder wähle ein kleineres Modell.",
+      "accurateLive": "Gerade wird diktiert, aufgenommen, ein Modell geladen oder eine Besprechung verarbeitet. Das genaue Modell wurde deshalb nicht gestartet. Bitte danach erneut versuchen.",
+      "accurateBusy": "Das genaue Modell arbeitet gerade an einer anderen Aufnahme. Bitte warten, bis sie fertig ist.",
+      "accurateLoadFailed": "Das genaue Modell ließ sich nicht laden. Die Aufnahme blieb unverändert. Die Ursache steht in der Protokolldatei.",
+      "accuratePostProcessFailed": "Die Nachbearbeitung ist fehlgeschlagen. Die Aufnahme blieb unverändert.",
+      "retryBusy": "Diese Aufnahme wird bereits erneut transkribiert.",
+      "entryChanged": "Die Aufnahme wurde inzwischen geändert oder gelöscht. Das Ergebnis wurde verworfen.",
       "transcribing": "Transkribiere...",
       "transcriptionFailed": "Transkription fehlgeschlagen. Du kannst über das Wiederholen-Symbol erneut transkribieren."
     },
@@ -7806,6 +7822,8 @@
       "chipCount_other": "{{level}} · {{count}} Bereiche",
       "level": "Souveränität",
       "knowledge": "Wissen",
+      "titleAssistent": "Freigegeben: {{frei}}. Der Assistent „{{name}}“ nutzt davon {{count}}.",
+      "vomAssistentAusgelassen": "vom Assistenten nicht genutzt",
       "allSettings": "Alle Einstellungen …"
     },
     "model": {
@@ -7815,6 +7833,29 @@
       "models": "Modell",
       "effort": "Denktiefe",
       "allSettings": "Alle Modelle …"
+    },
+    "assistant": {
+      "title": "Assistent wählen",
+      "aria": "Assistent: {{name}}",
+      "ariaProjekt": "Assistent: {{name}} (gilt im Projektgespräch nicht)",
+      "ariaSpaeter": "Assistent: {{name}} (gilt ab dem nächsten Gespräch)",
+      "spaeter": "Diese Auswahl gilt ab dem nächsten Gespräch. Das laufende behält seinen Assistenten.",
+      "projekt": "Im Projektgespräch gilt der Assistent nicht.",
+      "all": "Alles",
+      "groupAll": "Standard",
+      "groupTemplates": "Vorlagen",
+      "groupOwn": "Eigene Assistenten",
+      "switched": "Neues Gespräch mit dem Assistenten {{name}}.",
+      "loadFailed": "Deine eigenen Assistenten lassen sich nicht lesen. Solange das so ist, lässt sich der Assistent nicht wechseln; es gilt „Alles“.",
+      "loadUnsafe": "Der Ordner deiner Assistenten ist eine Verknüpfung auf einen anderen Ordner und wird aus Sicherheitsgründen nicht benutzt. Solange das so ist, lässt sich der Assistent nicht wechseln; es gilt „Alles“.",
+      "loadFailedSpaeter": "Deine eigenen Assistenten lassen sich nicht lesen. Solange das so ist, lässt sich der Assistent nicht wechseln. Das laufende Gespräch behält seinen Assistenten; ab dem nächsten gilt „Alles“.",
+      "loadUnsafeSpaeter": "Der Ordner deiner Assistenten ist eine Verknüpfung auf einen anderen Ordner und wird aus Sicherheitsgründen nicht benutzt. Solange das so ist, lässt sich der Assistent nicht wechseln. Das laufende Gespräch behält seinen Assistenten; ab dem nächsten gilt „Alles“.",
+      "rejected_one": "{{count}} Datei ist ungültig und wird nicht benutzt.",
+      "rejected_other": "{{count}} Dateien sind ungültig und werden nicht benutzt.",
+      "saveFailed": "Die Auswahl ließ sich nicht speichern. Der Assistent bleibt, wie er war.",
+      "saveOccupied": "Die Auswahl lässt sich nicht speichern: Die Datei aktiv.json ist anderweitig belegt. Der Assistent bleibt, wie er war.",
+      "saveReadFailed": "Die Auswahl lässt sich nicht speichern, weil deine Assistenten nicht lesbar sind.",
+      "saveUnsafe": "Die Auswahl lässt sich nicht speichern: Der Ordner deiner Assistenten ist eine Verknüpfung auf einen anderen Ordner und wird aus Sicherheitsgründen nicht benutzt."
     },
     "options": {
       "label": "Gesprächsoptionen",

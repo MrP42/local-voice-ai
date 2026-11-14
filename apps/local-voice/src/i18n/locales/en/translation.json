@@ -2806,6 +2806,12 @@
       },
       "disabledHint": "Post-processing is off. Turn it on to have a language model clean up dictated text — and to pick the provider that meeting minutes use."
     },
+    "accurateModel": {
+      "title": "Accurate model for difficult recordings",
+      "description": "A second model for single recordings the dictation model got wrong. In the history, a recording can be transcribed again with it. The model is loaded in addition to the dictation model and released afterwards; the dictation model stays as it is. Before the run starts, the app checks whether you are dictating, recording, or a meeting is being processed; if so, the run does not start. This is a check, not a lock: if you start dictating shortly afterwards or while it runs, the run continues and dictation may respond more slowly. Any installed model can be chosen, including your own Whisper files (.bin or .gguf) in the model folder.",
+      "none": "None",
+      "notInstalled": "{{model}} (not installed)"
+    },
     "history": {
       "title": "History",
       "openFolder": "Open Recordings Folder",
@@ -2818,6 +2824,16 @@
       "deleteError": "Failed to delete entry. Please try again.",
       "retranscribe": "Re-transcribe",
       "retranscribeError": "Failed to re-transcribe. Please try again.",
+      "retranscribeAccurate": "Re-transcribe with the accurate model",
+      "accurateUnset": "No accurate model is set. Choose one under Settings > Input.",
+      "accurateMissing": "The accurate model is not installed any more. Choose another one under Settings > Input.",
+      "accurateMemory": "Not enough free memory to load the accurate model next to the dictation model. Close other programs or pick a smaller model.",
+      "accurateLive": "Dictation, a recording, a model load or meeting processing is in progress. The accurate model was therefore not started. Please try again afterwards.",
+      "accurateBusy": "The accurate model is working on another recording. Please wait until it has finished.",
+      "accurateLoadFailed": "The accurate model could not be loaded. The recording was left unchanged. The log file has the cause.",
+      "accuratePostProcessFailed": "Post-processing failed. The recording was left unchanged.",
+      "retryBusy": "This recording is already being transcribed again.",
+      "entryChanged": "The recording was changed or deleted in the meantime. The result was discarded.",
       "transcribing": "Transcribing...",
       "transcriptionFailed": "Transcription failed. You can re-transcribe using the retry icon."
     },
@@ -7806,6 +7822,8 @@
       "chipCount_other": "{{level}} · {{count}} areas",
       "level": "Sovereignty",
       "knowledge": "Knowledge",
+      "titleAssistent": "Shared: {{frei}}. The assistant “{{name}}” uses {{count}} of them.",
+      "vomAssistentAusgelassen": "not used by the assistant",
       "allSettings": "All settings …"
     },
     "model": {
@@ -7815,6 +7833,29 @@
       "models": "Model",
       "effort": "Reasoning effort",
       "allSettings": "All models …"
+    },
+    "assistant": {
+      "title": "Choose assistant",
+      "aria": "Assistant: {{name}}",
+      "ariaProjekt": "Assistant: {{name}} (does not apply in a project conversation)",
+      "ariaSpaeter": "Assistant: {{name}} (applies from the next conversation)",
+      "spaeter": "This choice applies from the next conversation. The current one keeps its assistant.",
+      "projekt": "In a project conversation the assistant does not apply.",
+      "all": "Everything",
+      "groupAll": "Default",
+      "groupTemplates": "Templates",
+      "groupOwn": "My assistants",
+      "switched": "New conversation with assistant {{name}}.",
+      "loadFailed": "Your own assistants cannot be read. Until that is fixed the assistant cannot be changed; Everything applies.",
+      "loadUnsafe": "The folder of your assistants is a link to another folder and is not used for security reasons. Until that is fixed the assistant cannot be changed; Everything applies.",
+      "loadFailedSpaeter": "Your own assistants cannot be read. Until that is fixed the assistant cannot be changed. The current conversation keeps its assistant; from the next one Everything applies.",
+      "loadUnsafeSpaeter": "The folder of your assistants is a link to another folder and is not used for security reasons. Until that is fixed the assistant cannot be changed. The current conversation keeps its assistant; from the next one Everything applies.",
+      "rejected_one": "{{count}} file is invalid and is not used.",
+      "rejected_other": "{{count}} files are invalid and are not used.",
+      "saveFailed": "The choice could not be saved. The assistant stays as it was.",
+      "saveOccupied": "The choice cannot be saved: the file aktiv.json is in use by something else. The assistant stays as it was.",
+      "saveReadFailed": "The choice cannot be saved because your assistants cannot be read.",
+      "saveUnsafe": "The choice cannot be saved: the folder of your assistants is a link to another folder and is not used for security reasons."
     },
     "options": {
       "label": "Conversation options",

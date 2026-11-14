@@ -1226,7 +1226,15 @@ fn run_request(
         let loaded = tm.load_extra_engine(&model_id, threads);
         engine_ready.signal();
         match loaded {
-            Ok(engine) => Some(bind_extra_engine(engine)),
+            Ok(engine) => match bind_extra_engine(engine) {
+                Ok(binding) => Some(binding),
+                // Dieser Thread haelt schon eine eigene Engine (darf nicht vorkommen):
+                // der Lauf beginnt nicht, die Datei wartet wieder.
+                Err(_) => {
+                    drop(job);
+                    return RunOutcome::Deferred("engine: already bound".to_string());
+                }
+            },
             Err(e) => {
                 drop(job);
                 return RunOutcome::Deferred(format!("engine: {e}"));
@@ -1386,6 +1394,11 @@ impl ImportQueue {
             recording,
             shared_busy,
             extra_gate: Arc::new(move || {
+                // lva#579: ein genauer Lauf haelt ein zweites Modell im Speicher; bis
+                // er endet, kommt keine weitere eigene Engine dazu.
+                if crate::managers::accurate_run::active() {
+                    return false;
+                }
                 let settings = crate::settings::get_settings(&gate_app);
                 let (size_mb, gpu_model) = gate_tm.meeting_model_footprint(&settings);
                 let hw = super::final_pass::probe_hardware(&gate_app);

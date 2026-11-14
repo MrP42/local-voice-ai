@@ -12,6 +12,7 @@ import { ShortcutInput } from "../ShortcutInput";
 import { PushToTalk } from "../PushToTalk";
 import { VoiceActivityDetection } from "../VoiceActivityDetection";
 import { CustomWords } from "../CustomWords";
+import { AccurateModelSetting } from "../AccurateModelSetting";
 import { AppendTrailingSpace } from "../AppendTrailingSpace";
 import { PasteMethodSetting } from "../PasteMethod";
 import { TypingToolSetting } from "../TypingTool";
@@ -74,6 +75,7 @@ export const DictationTab: React.FC = () => {
       <SettingsGroup title={t("settings.advanced.groups.transcription")}>
         <VoiceActivityDetection descriptionMode="tooltip" grouped={true} />
         <CustomWords descriptionMode="tooltip" grouped />
+        <AccurateModelSetting />
         <AppendTrailingSpace descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
 

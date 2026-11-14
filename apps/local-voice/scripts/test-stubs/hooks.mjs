@@ -1,6 +1,7 @@
 // Lader für scripts/assistent-engine.test.mjs: löst den Alias `@/` auf, ergänzt `.ts` und ersetzt
 // Tauri, Audio und Orchestrierung durch Attrappen (die Engine selbst läuft unverändert).
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import * as modul from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -40,6 +41,17 @@ function datei(basis) {
 }
 
 export async function resolve(specifier, context, next) {
+  // `…orchestration.ts?echt`: die echte Orchestrierung statt der Attrappe (für Tests, die `prepare` selbst prüfen).
+  if (specifier.endsWith("?echt") && context.parentURL?.startsWith("file:")) {
+    const ohne = specifier.slice(0, -"?echt".length);
+    const echt = datei(
+      ohne.startsWith("@/")
+        ? path.join(SRC, ohne.slice(2))
+        : path.resolve(path.dirname(fileURLToPath(context.parentURL)), ohne),
+    );
+    if (echt)
+      return { url: pathToFileURL(echt).href + "?echt", shortCircuit: true };
+  }
   if (PAKETE[specifier])
     return { url: pathToFileURL(PAKETE[specifier]).href, shortCircuit: true };
   let basis = null;
@@ -63,6 +75,17 @@ export async function resolve(specifier, context, next) {
 // Der Gesprächsspeicher liest `import.meta.env.DEV` (Vite); unter Node gibt es das nicht: im Test gilt „DEV“, damit
 // er seine Engine als `window.__voiceCallEngine` herausgibt (wie in der Entwicklung für die Oberflächentests).
 export async function load(url, context, next) {
+  // Die echte Orchestrierung (`?echt`) hat Parameter-Eigenschaften, die Node nur mit „transform“ versteht
+  // (`module.stripTypeScriptTypes`, Node >= 22.13; Tests, die sie brauchen, prüfen das vorher).
+  if (url.endsWith("?echt") && typeof modul.stripTypeScriptTypes === "function")
+    return {
+      format: "module",
+      shortCircuit: true,
+      source: modul.stripTypeScriptTypes(
+        readFileSync(fileURLToPath(url), "utf8"),
+        { mode: "transform" },
+      ),
+    };
   const geladen = await next(url, context);
   if (!url.endsWith("/stores/voiceCallStore.ts") || geladen.source == null)
     return geladen;

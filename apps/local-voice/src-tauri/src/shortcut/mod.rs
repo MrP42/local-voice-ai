@@ -605,6 +605,16 @@ pub fn change_meeting_model_setting(app: AppHandle, model: Option<String>) -> Re
     Ok(())
 }
 
+/// Genaues Modell fuer schwierige Aufnahmen (`accurate_model`); leer = keines.
+#[tauri::command]
+#[specta::specta]
+pub fn change_accurate_model_setting(app: AppHandle, model: Option<String>) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.accurate_model = model.filter(|m| !m.trim().is_empty());
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 // M1-P1f
 #[tauri::command]
 #[specta::specta]

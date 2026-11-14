@@ -20,6 +20,7 @@
 //! Command-Schicht (specta) und ist für Gesprächslängen von Sekunden klein genug.
 //! Texte und Audio stehen nie im Log.
 
+pub mod assistenten;
 pub mod projekt;
 pub mod sentences;
 pub mod turn;

@@ -927,6 +927,11 @@ pub struct AppSettings {
     /// profitieren von Batch-Modellen (z. B. Parakeet V3).
     #[serde(default)]
     pub meeting_model: Option<String>,
+    /// Genaues Modell fuer schwierige Aufnahmen: damit laesst sich ein einzelner
+    /// Verlaufseintrag erneut transkribieren, waehrend das Diktatmodell
+    /// (`selected_model`) geladen bleibt. None/leer = nicht eingerichtet.
+    #[serde(default)]
+    pub accurate_model: Option<String>,
     /// M1-P1f: Systemton (Loopback) ist beim Start einer Besprechung
     /// vorangehakt. Die Oberflaeche merkt sich die letzte Wahl hier; ohne den
     /// Schluessel (aeltere settings.json) gilt `true`.
@@ -2009,6 +2014,7 @@ pub fn get_default_settings() -> AppSettings {
         meeting_audio_retention: default_meeting_audio_retention(),
         meeting_language: default_meeting_language(),
         meeting_model: None,
+        accurate_model: None,
         meeting_capture_system: true,
         meeting_auto_enhance: true,
         meeting_default_template_id: None,
@@ -3836,6 +3842,17 @@ mod tests {
         // Referenz. Die Vorgabe nimmt ihn ab; wer lieber selbst schreibt,
         // schaltet ihn aus.
         assert!(get_default_settings().tts_reference_auto_transcribe);
+    }
+
+    #[test]
+    fn an_old_settings_file_has_no_accurate_model() {
+        // lva#579: aeltere Dateien kennen den Schluessel nicht; das heisst "nicht
+        // eingerichtet", nie ein Ladefehler.
+        let parsed: AppSettings = serde_json::from_str(r#"{"tts_voice": null}"#).unwrap();
+        assert_eq!(parsed.accurate_model, None);
+        let set: AppSettings =
+            serde_json::from_str(r#"{"accurate_model": "whisper-large-v3"}"#).unwrap();
+        assert_eq!(set.accurate_model.as_deref(), Some("whisper-large-v3"));
     }
 
     #[test]

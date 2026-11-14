@@ -2,8 +2,9 @@
 """wai-voice-dienst aus dem WAI-SDK in Local Voice AI übernehmen (Vendoring, ADR-0021 Paket S2).
 
 Quelle:   https://github.com/MrP42/wai-sdk, Pfad crates/wai-voice-dienst
-Commit:   e624d851 (origin/main nach Merge von PR #994: `willkommen` mit
-          Gegenbeweis, `hallo.zufall` und Kopplung mit Schluesselaustausch/Vergleichscode). Vorher a624d690, 6ecea3ad und
+Commit:   c51d643e (origin/main nach Merge von PR #1137: späte ende/guthaben beendeter Ströme verwerfen,
+          start mit beendeter Nummer nur für den Strom abweisen). Vorher e624d851 (PR #994: `willkommen` mit
+          Gegenbeweis, `hallo.zufall` und Kopplung mit Schluesselaustausch/Vergleichscode), a624d690, 6ecea3ad und
           249a4db3 (origin/main, #985). Der volle Commit steht in VENDOR.toml.
 Ziel:     apps/local-voice/src-tauri/vendor/wai-voice-dienst/
 
@@ -39,7 +40,7 @@ ZIEL = WURZEL / "src-tauri" / "vendor" / "wai-voice-dienst"
 QUELLE = "crates/wai-voice-dienst"
 UEBERNOMMEN = ("src/",)
 VENDOR_DATEI = "VENDOR.toml"
-STANDARD_REV = "e624d851"
+STANDARD_REV = "c51d643e"
 REPO = "https://github.com/MrP42/wai-sdk"
 # Versionen, die Local Voice AI schon nutzt (src-tauri/Cargo.toml und Cargo.lock). Sie ersetzen die
 # Workspace-Versionen des SDK, damit im Lock nichts Zweites entsteht.
