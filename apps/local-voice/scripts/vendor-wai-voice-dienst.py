@@ -164,6 +164,16 @@ def ist_optional(a: object) -> bool:
     return isinstance(a, dict) and a.get("optional") is True
 
 
+def feature_name_gueltig(name: str) -> bool:
+    """Cargos Regel für Featurenamen: Anfang XID_Start, Ziffer oder `_`; danach XID_Continue, `-`, `+`, `.`."""
+    if not name:
+        return False
+    anfang, rest = name[0], name[1:]
+    if not (anfang == "_" or anfang in "0123456789" or anfang.isidentifier()):
+        return False
+    return all(z in "-+." or ("a" + z).isidentifier() for z in rest)
+
+
 def pruefe_features(features: dict, alle: dict[str, list[object]]) -> None:
     """Jeder Eintrag eines Features muss auf etwas zeigen, das die erzeugte Datei auch enthält.
 
@@ -175,7 +185,10 @@ def pruefe_features(features: dict, alle: dict[str, list[object]]) -> None:
     - `dep:x` und `x?/f` verlangen ein optionales `x`; `x/f` verlangt nur, dass es `x` gibt.
     - Ein bloßer Name ist ein Feature oder das implizite Feature einer optionalen Abhängigkeit. Dieses gibt es
       nur, solange **kein** Feature `dep:x` nennt.
-    - Heißt ein Feature wie eine optionale Abhängigkeit, muss irgendein Feature sie mit `dep:x` einschalten.
+    - Heißt ein Feature wie eine optionale Abhängigkeit, verdeckt es deren implizites Feature. Dann muss
+      irgendein Feature die Abhängigkeit nennen: mit `dep:x`, `x/f` oder `x?/f`.
+    - Ein Verweis hat höchstens einen Schrägstrich.
+    - Ein Featurename beginnt mit einem Buchstaben, einer Ziffer oder `_`; danach sind auch `-`, `+`, `.` erlaubt.
 
     Strenger als Cargo an einer Stelle: Testabhängigkeiten zählen nicht, weil die Kopie sie nicht enthält.
     """
@@ -183,10 +196,14 @@ def pruefe_features(features: dict, alle: dict[str, list[object]]) -> None:
         eintraege = features[feature]
         if not isinstance(eintraege, list) or not all(isinstance(e, str) for e in eintraege):
             raise abbruch(f"Feature {feature!r} ist keine Liste von Texten")
-        if "/" in feature or feature.startswith("dep:"):
+        if feature.startswith("dep:") or not feature_name_gueltig(feature):
             raise abbruch(f"Feature {feature!r} hat einen Namen, den Cargo nicht annimmt")
     optional = {n for n, erkl in alle.items() if any(ist_optional(e) for e in erkl)}
     mit_dep = {e[4:] for eintraege in features.values() for e in eintraege if e.startswith("dep:")}
+    # Was irgendein Feature als Abhängigkeit nennt: `dep:x`, `x/f` und `x?/f`.
+    genannt = mit_dep | {
+        e.partition("/")[0].removesuffix("?") for eintraege in features.values() for e in eintraege if "/" in e
+    }
     for feature in sorted(features):
         for e in features[feature]:
             if e.startswith("dep:"):
@@ -196,7 +213,9 @@ def pruefe_features(features: dict, alle: dict[str, list[object]]) -> None:
                 if name not in optional:
                     raise abbruch(f"Feature {feature!r} schaltet {e!r} ein, aber {name!r} ist keine optionale Abhängigkeit")
             elif "/" in e:
-                name, _, _ = e.partition("/")
+                name, _, rest = e.partition("/")
+                if "/" in rest:
+                    raise abbruch(f"Feature {feature!r} nennt {e!r} mit mehr als einem Schrägstrich")
                 schwach = name.endswith("?")
                 name = name.removesuffix("?")
                 if name not in alle or (schwach and name not in optional):
@@ -210,10 +229,10 @@ def pruefe_features(features: dict, alle: dict[str, list[object]]) -> None:
                 )
             elif e not in optional:
                 raise abbruch(f"Feature {feature!r} verweist auf {e!r}; das ist weder ein Feature noch eine optionale Abhängigkeit")
-    for name in sorted(optional & set(features) - mit_dep):
+    for name in sorted((optional & set(features)) - genannt):
         raise abbruch(
-            f"Die optionale Abhängigkeit {name!r} wird von keinem Feature eingeschaltet: Das Feature {name!r} "
-            f"verdeckt ihr gleichnamiges, und keines nennt 'dep:{name}'"
+            f"Die optionale Abhängigkeit {name!r} wird von keinem Feature genannt: Das Feature {name!r} "
+            f"verdeckt ihr gleichnamiges, und keines nennt 'dep:{name}', '{name}/…' oder '{name}?/…'"
         )
 
 
