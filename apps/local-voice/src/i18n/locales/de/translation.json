@@ -7836,6 +7836,7 @@
     },
     "assistant": {
       "title": "Assistent wählen",
+      "manage": "Assistenten verwalten …",
       "aria": "Assistent: {{name}}",
       "ariaProjekt": "Assistent: {{name}} (gilt im Projektgespräch nicht)",
       "ariaSpaeter": "Assistent: {{name}} (gilt ab dem nächsten Gespräch)",
@@ -9965,6 +9966,359 @@
       "datei_im_papierkorb": "Die Datei liegt im Papierkorb.",
       "ausnahme_klasse": "Cloud-Ausnahmen gibt es nur für vertrauliche Ordner.",
       "anbieter_nicht_zugelassen": "Dieser Anbieter ist für vertrauliche Ordner nicht zugelassen."
+    }
+  },
+  "assistenten": {
+    "titel": "Assistenten",
+    "seitenbeschreibung": "Assistenten verwalten: Vorlagen ansehen und kopieren, eigene Assistenten anlegen, bearbeiten, exportieren und importieren.",
+    "zurueck": "Zur Liste",
+    "laedt": "Assistenten werden geladen …",
+    "waehle": "Wähle links einen Assistenten, um ihn anzusehen oder zu bearbeiten.",
+    "leer": "(leer)",
+    "ja": "Ja",
+    "nein": "Nein",
+    "kopie": "Kopie",
+    "zaehler": "{{n}} / {{max}}",
+    "ladefehler": {
+      "titel": "Deine Assistenten lassen sich nicht lesen"
+    },
+    "liste": {
+      "label": "Assistenten",
+      "eigene": "Eigene Assistenten",
+      "vorlagen": "Vorlagen",
+      "abgewiesen": "Ungültige Dateien",
+      "keine": "Du hast noch keine eigenen Assistenten. Lege einen neuen an oder kopiere eine Vorlage.",
+      "gewaehlt": "Gewählt",
+      "ungespeichert": "Ungespeichert",
+      "ungueltig": "Ungültig",
+      "aktionen": "Aktionen für {{name}}"
+    },
+    "aktion": {
+      "alsEigenen": "Als eigenen kopieren",
+      "kopieren": "Kopieren",
+      "umbenennen": "Umbenennen",
+      "exportieren": "Exportieren",
+      "loeschen": "Löschen",
+      "verwenden": "Im Gespräch verwenden",
+      "speichern": "Speichern",
+      "verwerfen": "Änderungen verwerfen",
+      "importieren": "Importieren",
+      "neu": "Neuer Assistent"
+    },
+    "name": {
+      "label": "Name",
+      "zuLang": "Der Name darf höchstens {{max}} Zeichen lang sein."
+    },
+    "dialog": {
+      "schliessen": "Schließen",
+      "abbrechen": "Abbrechen",
+      "neuTitel": "Neuer Assistent",
+      "neuHinweis": "Gib dem Assistenten einen Namen. Rolle, Begrüßung und Wissen stellst du danach im Editor ein.",
+      "neuBestaetigen": "Anlegen",
+      "kopieTitel": "„{{name}}“ kopieren",
+      "kopieHinweis": "Die Kopie gehört dir und lässt sich bearbeiten. Das Original bleibt unverändert.",
+      "kopieGespeichert": "Kopiert wird der gespeicherte Stand; ungespeicherte Änderungen im Editor sind nicht dabei.",
+      "kopieBestaetigen": "Kopieren",
+      "umbenennenTitel": "„{{name}}“ umbenennen",
+      "umbenennenHinweis": "Nur der Name ändert sich; die Kennung (der Dateiname) bleibt.",
+      "umbenennenBestaetigen": "Umbenennen",
+      "alsKopieTitel": "Als Kopie speichern",
+      "alsKopieHinweis": "Dein Entwurf wird als neuer Assistent gespeichert. Die Datei des ursprünglichen Assistenten bleibt, wie sie jetzt ist."
+    },
+    "fehler": {
+      "invalid_id": "Die Kennung ist nicht zulässig.",
+      "reserved_id": "Die Kennung ist für die App reserviert.",
+      "not_found": "Den Assistenten gibt es nicht mehr.",
+      "too_large": "Die Datei ist größer als 256 KiB.",
+      "too_many": "Es gibt schon 200 Assistenten; mehr nimmt der Speicher nicht an.",
+      "occupied": "Die Datei hat sich inzwischen geändert oder ist belegt. Es wurde nichts überschrieben.",
+      "write_failed": "Das Schreiben ist gescheitert (Datenträger voll oder nicht beschreibbar). Die vorhandene Datei bleibt unverändert.",
+      "read_failed": "Der Ordner der Assistenten ist nicht lesbar.",
+      "unsafe_path": "Der Ordner der Assistenten ist eine Verknüpfung auf einen anderen Ordner und wird aus Sicherheitsgründen nicht benutzt.",
+      "ungueltig": "Die Eingaben bestehen die Prüfung nicht.",
+      "abgewiesen": "Die Datei ist kein gültiger Assistent. Es wurde nichts angelegt.",
+      "zu_gross": "Die Datei ist größer als 256 KiB und wird nicht gelesen.",
+      "leer": "Die Datei ist leer.",
+      "bom": "Die Datei beginnt mit einer Byte-Order-Marke (BOM). Der Assistent muss ohne BOM als UTF-8 gespeichert sein. Es wurde nichts angelegt.",
+      "kein_utf8": "Die Datei ist kein gültiger UTF-8-Text. Es wurde nichts angelegt."
+    },
+    "code": {
+      "fehlt": "fehlt",
+      "typ": "hat den falschen Typ",
+      "laenge": "hat eine unzulässige Länge",
+      "muster": "enthält nicht erlaubte Zeichen",
+      "wert": "hat einen nicht erlaubten Wert",
+      "zu_viele": "hat zu viele Einträge",
+      "doppelt": "kommt doppelt vor",
+      "schema_unbekannt": "hat ein unbekanntes Format",
+      "schema_neuer": "stammt aus einer neueren Version der App",
+      "json": "ist kein gültiges JSON oder enthält nicht erlaubte Zeichen"
+    },
+    "pfad": {
+      "datei": "Datei",
+      "schema": "Format",
+      "id": "Kennung",
+      "name": "Name",
+      "beschreibung": "Beschreibung",
+      "anweisungen": "Anweisungen",
+      "begruessung": "Begrüßung",
+      "sprache": "Sprache",
+      "stimme": "Stimme",
+      "verhalten": "Verhalten",
+      "verhalten_stil": "Sprechstil",
+      "verhalten_sprechpause": "Sprechpause",
+      "verhalten_unterbrechen": "Unterbrechen",
+      "verhalten_nachfrage_stille_s": "Nachfrage bei Stille",
+      "wissen": "Wissen",
+      "aussprache": "Aussprache",
+      "aussprache_regel": "Regel {{n}}",
+      "aussprache_wort": "Wort",
+      "aussprache_aussprache": "Aussprache"
+    },
+    "fehlerFeld": {
+      "name": {
+        "laenge": "Der Name muss 1 bis {{max}} Zeichen lang sein.",
+        "muster": "Der Name enthält nicht erlaubte Zeichen."
+      },
+      "beschreibung": {
+        "laenge": "Die Beschreibung darf höchstens {{max}} Zeichen lang sein."
+      },
+      "anweisungen": {
+        "laenge": "Die Anweisungen dürfen höchstens {{max}} Zeichen lang sein."
+      },
+      "begruessung": {
+        "laenge": "Die Begrüßung darf höchstens {{max}} Zeichen lang sein."
+      }
+    },
+    "meldung": {
+      "angelegt": "„{{name}}“ ist angelegt.",
+      "kopiert": "„{{name}}“ ist kopiert.",
+      "umbenannt": "Umbenannt in „{{name}}“.",
+      "gespeichert": "„{{name}}“ ist gespeichert.",
+      "geloescht": "„{{name}}“ ist gelöscht.",
+      "importiert": "„{{name}}“ ist importiert.",
+      "exportiert": "„{{name}}“ ist exportiert.",
+      "importiertNeueId": "„{{name}}“ ist importiert, mit einer neuen Kennung",
+      "importiertNeueIdZeile": "Die Kennung „{{alt}}“ war schon vergeben; der Assistent liegt jetzt unter „{{neu}}“. Nichts wurde überschrieben.",
+      "neuFehler": "Der Assistent ließ sich nicht anlegen",
+      "kopierenFehler": "„{{name}}“ ließ sich nicht kopieren",
+      "umbenennenFehler": "Das Umbenennen ist gescheitert",
+      "loeschenFehler": "„{{name}}“ ließ sich nicht löschen",
+      "importFehler": "„{{name}}“ ließ sich nicht importieren",
+      "exportFehler": "„{{name}}“ ließ sich nicht exportieren",
+      "verwendenFehler": "Der Assistent ließ sich nicht wählen",
+      "schliessen": "Meldung schließen"
+    },
+    "export": {
+      "filter": "Assistent (JSON)"
+    },
+    "abschnitt": {
+      "allgemein": "Allgemein",
+      "anweisungen": "Rolle und Anweisungen",
+      "begruessung": "Begrüßung",
+      "stimme": "Sprache und Stimme",
+      "verhalten": "Gesprächsverhalten",
+      "wissen": "Wissen",
+      "aussprache": "Aussprache"
+    },
+    "beschreibung": {
+      "label": "Beschreibung",
+      "hinweis": "Ein Satz, der in der Liste unter dem Namen steht."
+    },
+    "anweisungen": {
+      "label": "Anweisungen",
+      "hinweis": "Welche Rolle die KI spielt und wie sie antwortet. Ein Modell mit kleinem Kontext bekommt höchstens die ersten {{klein}} Zeichen, größere Modelle mehr. Das Wichtigste gehört an den Anfang.",
+      "ueberKlein": "Über {{klein}} Zeichen (nach dem Einsetzen der Platzhalter): Kleine Modelle bekommen nur den Anfang, gekürzt am letzten Absatz."
+    },
+    "platzhalter": {
+      "gruppe": "Platzhalter einfügen",
+      "hilfe": "Platzhalter setzt das Gespräch zu Beginn ein, mit den Werten von heute.",
+      "einfuegen": "Platzhalter für {{name}} einfügen",
+      "unbekannt": "Unbekannte Platzhalter entfallen im Gespräch: {{namen}}",
+      "namen": {
+        "name": "den Namen",
+        "tageszeit": "die Tageszeit",
+        "datum": "das Datum",
+        "wochentag": "den Wochentag",
+        "uhrzeit": "die Uhrzeit"
+      }
+    },
+    "begruessung": {
+      "label": "Begrüßung",
+      "hinweis": "Der erste Satz, wenn ein neues Gespräch beginnt. Leer lassen, wenn der Assistent nichts sagen soll. Platzhalter sind erlaubt.",
+      "vorschau": "Vorschau mit den Werten von heute:",
+      "keine": "(keine Begrüßung)",
+      "ohneName": "Im Konto ist kein Name hinterlegt; der Platzhalter für den Namen entfällt dann im Gespräch.",
+      "anhoeren": "Begrüßung anhören",
+      "hoerHinweis": "Die Hörprobe spricht mit der Stimme aus den Einstellungen, wie das Gespräch selbst."
+    },
+    "hoerprobe": {
+      "laedt": "Wird erzeugt …",
+      "stopp": "Anhalten",
+      "beispiel": "Hallo, so klingt meine Stimme.",
+      "fehler": {
+        "leer": "Es gibt nichts zu sprechen.",
+        "gespraech": "Während eines Gesprächs gibt es keine Hörprobe.",
+        "synthese": "Die Hörprobe ließ sich nicht erzeugen. Prüfe die Sprachausgabe in den Einstellungen.",
+        "wiedergabe": "Die Hörprobe ließ sich nicht abspielen."
+      }
+    },
+    "sprache": {
+      "label": "Sprache",
+      "hinweis": "Bestimmt, in welcher Sprache die Platzhalter (Tageszeit, Datum, Wochentag) eingesetzt werden. In welcher Sprache die KI antwortet, bestimmen die Anweisungen.",
+      "auto": "Automatisch"
+    },
+    "stimme": {
+      "label": "Stimme",
+      "hinweis": "Eine Stimme dieses PCs. „Standardstimme“ nimmt die Stimme aus den Einstellungen.",
+      "standard": "Standardstimme",
+      "nichtVorhanden": "{{name}} (auf diesem PC nicht vorhanden)",
+      "anhoeren": "Probe anhören",
+      "probeStandard": "Die Probe spricht mit der Stimme aus den Einstellungen.",
+      "probeStimme": "Probe mit der gewählten Stimme.",
+      "ohneWirkung": "Beides wird mit dem Assistenten gespeichert. Im Gespräch auf diesem PC spricht heute die Stimme aus den Einstellungen; die Sprache wirkt auf die Platzhalter."
+    },
+    "verhalten": {
+      "ohneWirkung": "Wird gespeichert; im Gespräch auf diesem PC wirkt es noch nicht.",
+      "stil": {
+        "label": "Sprechstil",
+        "hinweis": "Natürlich: die Antwort klingt gesprochen. Wörtlich: Texte werden möglichst unverändert gesprochen.",
+        "natuerlich": "Natürlich",
+        "woertlich": "Wörtlich"
+      },
+      "pause": {
+        "label": "Sprechpause",
+        "hinweis": "Wie lange der Assistent wartet, bevor er antwortet.",
+        "kurz": "Kurz",
+        "normal": "Normal",
+        "lang": "Lang"
+      },
+      "unterbrechen": {
+        "label": "Unterbrechen erlauben",
+        "hinweis": "Wenn du sprichst, während der Assistent spricht, hält er an."
+      },
+      "nachfrage": {
+        "label": "Nachfrage bei Stille",
+        "hinweis": "Nach so vielen Sekunden Stille fragt der Assistent nach, zum Beispiel {{vorschlag}} Sekunden.",
+        "aus": "Aus",
+        "sekunden_one": "{{count}} Sekunde",
+        "sekunden_other": "{{count}} Sekunden"
+      }
+    },
+    "wissen": {
+      "regel": "Das Profil begrenzt nur. Was die Einstellungen nicht freigeben, öffnet der Assistent nie.",
+      "alle": {
+        "label": "Alle freigegebenen Bereiche",
+        "hinweis": "Der Assistent darf alles nachschlagen, was in den Einstellungen freigegeben ist."
+      },
+      "gruppe": "Wissensbereiche des Assistenten",
+      "bereich": {
+        "buecher": "Bücher",
+        "buchnotizen": "Buchnotizen",
+        "ki_dokumente": "KI-Dokumente",
+        "besprechungen": "Besprechungen",
+        "sprachnotizen": "Diktate",
+        "ablage": "Ablage",
+        "gespraeche": "Frühere Gespräche",
+        "kalender": "Termine",
+        "vorlesen": "Vorlesen",
+        "notizbuch": "Notizbuch"
+      },
+      "status": {
+        "wirkt": "Wirkt im Gespräch",
+        "freigegeben": "Freigegeben, nicht gewählt",
+        "nichtFreigegeben": "In den Einstellungen nicht freigegeben",
+        "ohneWirkung": "Auf diesem PC ohne Wirkung"
+      },
+      "summe": "{{wirksam}} von {{frei}} freigegebenen Bereichen wirken im Gespräch.",
+      "kontexte_one": "{{count}} verknüpfter Kontext bleibt erhalten; er wird hier nicht angezeigt.",
+      "kontexte_other": "{{count}} verknüpfte Kontexte bleiben erhalten; sie werden hier nicht angezeigt."
+    },
+    "aussprache": {
+      "beschreibung": "Wie ein Wort gesprochen werden soll: Namen, Abkürzungen oder Fachwörter.",
+      "hinweis": "Jede Regel besteht aus einem Wort und der Aussprache dafür. Es zählt genau, was du schreibst: Groß- und Kleinschreibung, keine Wortgrenzen („Rad“ trifft auch in „Radio“). Treffen an einer Stelle mehrere Wörter zu, gilt das längste. Ein Wort darf nur einmal vorkommen.",
+      "leer": "Noch keine Regeln.",
+      "liste": "Ausspracheregeln",
+      "zaehler": "{{n}} von {{max}} Regeln",
+      "wort": {
+        "label": "Wort",
+        "beispiel": "z. B. SQL"
+      },
+      "aussprache": {
+        "label": "Aussprache",
+        "beispiel": "z. B. Siekwel"
+      },
+      "zeile": "Regel {{n}}",
+      "hoch": "Regel {{n}} nach oben",
+      "runter": "Regel {{n}} nach unten",
+      "entfernen": "Regel {{n}} entfernen",
+      "hinzu": "Regel hinzufügen",
+      "hinzuHinweis": "Wort und Aussprache je 1 bis {{max}} Zeichen.",
+      "voll": "Mehr als {{max}} Regeln nimmt das Profil nicht an.",
+      "unvollstaendig": "Jede Regel braucht ein Wort und eine Aussprache. Fülle leere Regeln aus oder entferne sie, sonst lässt sich nicht speichern.",
+      "angesagt": {
+        "hinzu": "Regel {{n}} hinzugefügt",
+        "entfernt": "Regel {{n}} entfernt",
+        "verschoben": "Regel {{n}} steht jetzt an Stelle {{stelle}}"
+      },
+      "fehler": {
+        "laenge": "Hier sind 1 bis {{max}} Zeichen nötig.",
+        "muster": "Steuer- und Richtungszeichen sowie < > [ ] sind nicht erlaubt.",
+        "doppelt": "Dieses Wort hat schon eine Regel davor.",
+        "liste": {
+          "zu_viele": "Es sind mehr als {{max}} Regeln; entferne einige."
+        }
+      }
+    },
+    "konflikt": {
+      "titel": "Die Datei hat sich geändert",
+      "text": "Dieser Assistent wurde geändert, während du ihn bearbeitet hast. Deine Änderungen sind noch da, wurden aber nicht gespeichert, damit nichts überschrieben wird.",
+      "fehltTitel": "Die Datei gibt es nicht mehr",
+      "fehltText": "Dieser Assistent wurde gelöscht oder verschoben, während du ihn bearbeitet hast. Deine Änderungen sind noch da.",
+      "alsKopie": "Als Kopie speichern",
+      "neuLaden": "Neu laden und Änderungen verwerfen"
+    },
+    "restfehler": {
+      "titel": "Diese Angaben sind nicht gültig"
+    },
+    "leiste": {
+      "label": "Speichern",
+      "ungespeichert": "Ungespeicherte Änderungen",
+      "gespeichert": "Alles gespeichert",
+      "abNaechstem": "Gilt für den gewählten Assistenten ab dem nächsten Gespräch.",
+      "fehler_one": "{{count}} Angabe ist nicht gültig.",
+      "fehler_other": "{{count}} Angaben sind nicht gültig."
+    },
+    "kopf": {
+      "eigen": "Eigener Assistent",
+      "gewaehlt": "Eigener Assistent, im Gespräch gewählt",
+      "vorlage": "Vorlage, nur zum Ansehen",
+      "vorlageGewaehlt": "Vorlage, im Gespräch gewählt",
+      "verwendenGesperrt": "Nicht möglich, solange die Assistenten nicht lesbar sind.",
+      "verwendenGespraech": "Nicht möglich, solange ein Gespräch läuft: Es würde enden.",
+      "verwendenUngespeichert": "Erst speichern: Das Gespräch nimmt den gespeicherten Stand."
+    },
+    "loeschen": {
+      "titel": "„{{name}}“ löschen?",
+      "text": "Der Assistent wird endgültig gelöscht. Das lässt sich nicht rückgängig machen; vorher kannst du ihn exportieren.",
+      "gewaehlt": "Er ist im Gespräch gewählt. Danach gilt wieder „Alles“.",
+      "entwurf": "Ungespeicherte Änderungen gehen verloren."
+    },
+    "wechsel": {
+      "titel": "Ungespeicherte Änderungen",
+      "text": "Dieser Assistent hat Änderungen, die nicht gespeichert sind. Beim Wechsel gehen sie verloren.",
+      "verwerfen": "Änderungen verwerfen",
+      "weiter": "Weiter bearbeiten"
+    },
+    "verwerfen": {
+      "titel": "Änderungen verwerfen?",
+      "text": "Alle Änderungen seit dem letzten Speichern gehen verloren."
+    },
+    "abgewiesen": {
+      "kopf": "Ungültige Datei",
+      "titel": "Diese Datei wird nicht geladen",
+      "text": "Der Ordner der Assistenten enthält eine Datei, die die Prüfung nicht besteht:",
+      "unberuehrt": "Die Datei bleibt, wie sie ist: Die App ändert, repariert oder löscht sie nie. Korrigiere sie im Ordner oder entferne sie dort selbst."
     }
   }
 }

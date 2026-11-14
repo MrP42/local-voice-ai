@@ -31,6 +31,13 @@
 //! Alle Schreib- und Leseschritte laufen unter einer gemeinsamen Sperre (ein Prozess, ein
 //! Verzeichnis); zwei Programme am selben Verzeichnis sind nicht vorgesehen (README: „Ein Schreiber
 //! je Verzeichnis“). Inhalte stehen nie im Log.
+//!
+//! Grenze des Vergleich-und-Tauschs: Er ist **nur innerhalb dieses Prozesses atomar**. Die Sperre
+//! (`SPERRE`) liegt vom Vergleich des Dateiinhalts bis nach dem Umbenennen; zwei Befehle der App können
+//! sich also nicht dazwischenschieben. Ein anderer Prozess (zweite App-Instanz, ein Abgleichsprogramm,
+//! ein Editor des Benutzers) kennt diese Sperre nicht: er kann zwischen Vergleich und Umbenennen
+//! schreiben, und das Umbenennen ersetzt dann seine Änderung. Das Dateisystem bietet hier keinen
+//! prozessübergreifenden Vergleich-und-Tausch; die Regel „Ein Schreiber je Verzeichnis“ ersetzt ihn.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -299,8 +306,36 @@ enum AktivZustand {
     Belegt { verzeichnis: bool },
 }
 
+/// So viele Namen probiert das Anlegen einer Hilfsdatei, wenn der gewählte schon vergeben ist.
+const HILFS_VERSUCHE: usize = 16;
+
+/// Legt eine neue Hilfsdatei `verzeichnis/<vorsatz>-<Prozessnummer>-<Zähler>.tmp` an und liefert Pfad und Datei.
+/// Der Name ist vergeben, wenn dort schon eine Datei liegt (der Rest eines früheren Laufs mit derselben Prozessnummer,
+/// eine fremde Datei): sie gehört nicht diesem Aufruf und wird **nie** angefasst, gelöscht oder überschrieben (`create_new`);
+/// es kommt der nächste Zähler, höchstens `HILFS_VERSUCHE` mal, dann `AlreadyExists`. Jeder andere Fehler kommt sofort
+/// zurück. Wer die Datei bekommt, hat sie selbst angelegt und räumt sie bei einem Fehler auf; sonst gibt es nichts aufzuräumen.
+fn hilfsdatei_anlegen(
+    verzeichnis: &Path,
+    vorsatz: &str,
+    zaehler: &AtomicU64,
+) -> io::Result<(PathBuf, File)> {
+    for _ in 0..HILFS_VERSUCHE {
+        let pfad = verzeichnis.join(format!(
+            "{vorsatz}-{}-{}.tmp",
+            std::process::id(),
+            zaehler.fetch_add(1, Ordering::Relaxed)
+        ));
+        match OpenOptions::new().write(true).create_new(true).open(&pfad) {
+            Ok(datei) => return Ok((pfad, datei)),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(io::Error::from(io::ErrorKind::AlreadyExists))
+}
+
 /// Schreibt `bytes` atomar nach `verzeichnis/name`: Hilfsdatei im selben Verzeichnis, `fsync`, Umbenennen.
-/// Bei jedem Fehler wird die Hilfsdatei entfernt und das Ziel nicht angefasst. `schreiber` ist der
+/// Bei jedem Fehler wird die selbst angelegte Hilfsdatei entfernt und das Ziel nicht angefasst. `schreiber` ist der
 /// Schreibschritt (im Test ein Schreiber, der „Datenträger voll“ oder einen Abbruch mitten im Schreiben nachstellt).
 fn schreibe_atomar_mit(
     verzeichnis: &Path,
@@ -308,22 +343,26 @@ fn schreibe_atomar_mit(
     bytes: &[u8],
     schreiber: &dyn Fn(&mut File, &[u8]) -> io::Result<()>,
 ) -> Result<(), AssistentenFehler> {
+    schreibe_atomar_mit_zaehler(verzeichnis, name, bytes, schreiber, &ZAEHLER)
+}
+
+/// Wie `schreibe_atomar_mit`, mit eigenem Zähler für die Namen der Hilfsdateien (im Test für Namensstöße).
+fn schreibe_atomar_mit_zaehler(
+    verzeichnis: &Path,
+    name: &str,
+    bytes: &[u8],
+    schreiber: &dyn Fn(&mut File, &[u8]) -> io::Result<()>,
+    zaehler: &AtomicU64,
+) -> Result<(), AssistentenFehler> {
     wurzel_pruefen(verzeichnis)?;
     fs::create_dir_all(verzeichnis).map_err(|_| AssistentenFehler::WriteFailed)?;
     // Noch einmal nach dem Anlegen: erst jetzt steht fest, dass die Hilfsdatei in einem echten Verzeichnis entsteht.
     wurzel_pruefen(verzeichnis)?;
-    let hilfsname = format!(
-        ".lva-{}-{}.tmp",
-        std::process::id(),
-        ZAEHLER.fetch_add(1, Ordering::Relaxed)
-    );
-    let hilfsdatei = verzeichnis.join(hilfsname);
+    // Scheitert schon das Anlegen (auch an einem vergebenen Namen), gibt es nichts Eigenes zu entfernen.
+    let (hilfsdatei, mut datei) = hilfsdatei_anlegen(verzeichnis, ".lva", zaehler)
+        .map_err(|_| AssistentenFehler::WriteFailed)?;
     let ziel = verzeichnis.join(name);
     let ergebnis = (|| -> io::Result<()> {
-        let mut datei = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&hilfsdatei)?;
         schreiber(&mut datei, bytes)?;
         datei.sync_all()?;
         drop(datei);
@@ -336,6 +375,70 @@ fn schreibe_atomar_mit(
     #[cfg(unix)]
     if let Ok(verz) = File::open(verzeichnis) {
         let _ = verz.sync_all();
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------- Export
+
+/// Schreibt `inhalt` (die Bytes eines Profils, wie TypeScript sie kodiert) in die Datei, die die Person im
+/// Speichern-Dialog gewählt hat (G2 Teil 2: Export). Atomar wie der Speicher: Hilfsdatei im selben Verzeichnis,
+/// `fsync`, Umbenennen; bei jedem Fehler bleibt das Ziel, wie es war, und die selbst angelegte Hilfsdatei wird entfernt
+/// (eine schon vorhandene gleichen Namens nie, siehe `hilfsdatei_anlegen`). Das Ziel muss
+/// ein absoluter Pfad auf `.json` sein und darf kein Verzeichnis und kein Link sein; der Text höchstens 256 KiB.
+/// Fehler sind `TooLarge` und `WriteFailed` (alles Übrige: kein brauchbares Ziel, Datenträger voll, gesperrt).
+/// `schreiber` ist der Schreibschritt (im Test ein Schreiber, der „Datenträger voll“ nachstellt).
+fn exportiere_mit(
+    pfad: &Path,
+    inhalt: &str,
+    schreiber: &dyn Fn(&mut File, &[u8]) -> io::Result<()>,
+) -> Result<(), AssistentenFehler> {
+    exportiere_mit_zaehler(pfad, inhalt, schreiber, &ZAEHLER)
+}
+
+/// Wie `exportiere_mit`, mit eigenem Zähler für die Namen der Hilfsdateien (im Test für Namensstöße). Eine Hilfsdatei, die
+/// es schon gibt, gehört nicht dem Export: sie bleibt unberührt, der Export nimmt den nächsten Namen (`hilfsdatei_anlegen`).
+fn exportiere_mit_zaehler(
+    pfad: &Path,
+    inhalt: &str,
+    schreiber: &dyn Fn(&mut File, &[u8]) -> io::Result<()>,
+    zaehler: &AtomicU64,
+) -> Result<(), AssistentenFehler> {
+    if inhalt.len() > MAX_BYTES {
+        return Err(AssistentenFehler::TooLarge);
+    }
+    let endet_auf_json = pfad
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("json"));
+    let Some(verzeichnis) = pfad.parent() else {
+        return Err(AssistentenFehler::WriteFailed);
+    };
+    if pfad.file_name().is_none() || !pfad.is_absolute() || !endet_auf_json {
+        return Err(AssistentenFehler::WriteFailed);
+    }
+    // Ein vorhandenes Ziel muss eine gewöhnliche Datei sein: ein Verzeichnis, einen Link oder ein Gerät überschreibt der
+    // Export nie (das Umbenennen träte sonst an dessen Stelle).
+    match fs::symlink_metadata(pfad) {
+        Ok(m) if !m.file_type().is_file() || ist_verlinkt(&m) => {
+            return Err(AssistentenFehler::WriteFailed)
+        }
+        Ok(_) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(_) => return Err(AssistentenFehler::WriteFailed),
+    }
+    // Scheitert schon das Anlegen (auch an einem vergebenen Namen), gibt es nichts Eigenes zu entfernen.
+    let (hilfsdatei, mut datei) = hilfsdatei_anlegen(verzeichnis, ".lva-export", zaehler)
+        .map_err(|_| AssistentenFehler::WriteFailed)?;
+    let ergebnis = (|| -> io::Result<()> {
+        schreiber(&mut datei, inhalt.as_bytes())?;
+        datei.sync_all()?;
+        drop(datei);
+        fs::rename(&hilfsdatei, pfad)
+    })();
+    if ergebnis.is_err() {
+        let _ = fs::remove_file(&hilfsdatei);
+        return Err(AssistentenFehler::WriteFailed);
     }
     Ok(())
 }
@@ -685,6 +788,18 @@ pub async fn voice_assistant_delete(
     erwartet: String,
 ) -> Result<(), AssistentenFehler> {
     blockierend(&app, move |s| s.loeschen(&id, &erwartet)).await
+}
+
+/// Schreibt einen Assistenten als Datei an den Ort, den die Person im Speichern-Dialog gewählt hat (Export). Die
+/// Bytes liefert die Oberfläche (`kodiereProfil`); es wird nichts im Verzeichnis der Assistenten verändert.
+#[tauri::command]
+#[specta::specta]
+pub async fn voice_assistant_export(path: String, inhalt: String) -> Result<(), AssistentenFehler> {
+    tauri::async_runtime::spawn_blocking(move || {
+        exportiere_mit(Path::new(&path), &inhalt, &|d, b| d.write_all(b))
+    })
+    .await
+    .map_err(|_| AssistentenFehler::WriteFailed)?
 }
 
 /// Die aktive Auswahl (`aktiv.json`).
@@ -1892,5 +2007,292 @@ mod tests {
         let a = s.aktiv().unwrap();
         assert!(matches!(a.id.as_deref(), Some("alles") | Some("eigen-a")));
         assert!(hilfsdateien(&s).is_empty());
+    }
+
+    // ------------------------------------------------------------ Export
+
+    fn exportziel(t: &TempDir, name: &str) -> PathBuf {
+        t.path().join(name)
+    }
+
+    fn tmp_reste(t: &TempDir) -> Vec<String> {
+        fs::read_dir(t.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect()
+    }
+
+    fn exportiere(pfad: &Path, inhalt: &str) -> Result<(), AssistentenFehler> {
+        exportiere_mit(pfad, inhalt, &|d, b| d.write_all(b))
+    }
+
+    #[test]
+    fn export_schreibt_die_bytes_unveraendert_und_ersetzt_eine_vorhandene_datei() {
+        let t = tempfile::tempdir().unwrap();
+        let ziel = exportziel(&t, "mein-coach.json");
+        let text = profil("mein-coach");
+        exportiere(&ziel, &text).unwrap();
+        assert_eq!(fs::read(&ziel).unwrap(), text.as_bytes());
+        // Die Person hat im Dialog „Ersetzen“ gewählt: die Datei bekommt den neuen Inhalt, ganz oder gar nicht.
+        let neu = profil("anders");
+        exportiere(&ziel, &neu).unwrap();
+        assert_eq!(fs::read(&ziel).unwrap(), neu.as_bytes());
+        assert!(tmp_reste(&t).is_empty());
+        // Endung in anderer Schreibweise, Umlaute im Namen.
+        exportiere(&exportziel(&t, "Übung.JSON"), &text).unwrap();
+        assert!(exportziel(&t, "Übung.JSON").is_file());
+    }
+
+    #[test]
+    fn export_lehnt_unbrauchbare_ziele_ab_und_laesst_alles_wie_es_war() {
+        let t = tempfile::tempdir().unwrap();
+        let text = profil("a");
+        // Falsche Endung, relativer Pfad, kein Dateiname, fehlendes Verzeichnis.
+        assert_eq!(
+            exportiere(&exportziel(&t, "a.txt"), &text),
+            Err(AssistentenFehler::WriteFailed)
+        );
+        assert_eq!(
+            exportiere(Path::new("a.json"), &text),
+            Err(AssistentenFehler::WriteFailed)
+        );
+        assert_eq!(
+            exportiere(Path::new("/"), &text),
+            Err(AssistentenFehler::WriteFailed)
+        );
+        assert_eq!(
+            exportiere(&t.path().join("fehlt").join("a.json"), &text),
+            Err(AssistentenFehler::WriteFailed)
+        );
+        // Ein Verzeichnis namens `a.json` wird nicht überschrieben.
+        let verz = exportziel(&t, "dir.json");
+        fs::create_dir(&verz).unwrap();
+        assert_eq!(
+            exportiere(&verz, &text),
+            Err(AssistentenFehler::WriteFailed)
+        );
+        assert!(verz.is_dir());
+        assert!(tmp_reste(&t).is_empty());
+        assert!(!exportziel(&t, "a.txt").exists());
+    }
+
+    #[test]
+    fn export_ueber_256_kib_wird_abgelehnt() {
+        let t = tempfile::tempdir().unwrap();
+        let ziel = exportziel(&t, "gross.json");
+        let zu_gross = "x".repeat(MAX_BYTES + 1);
+        assert_eq!(
+            exportiere(&ziel, &zu_gross),
+            Err(AssistentenFehler::TooLarge)
+        );
+        assert!(!ziel.exists());
+        let genau = "x".repeat(MAX_BYTES);
+        exportiere(&ziel, &genau).unwrap();
+        assert_eq!(fs::metadata(&ziel).unwrap().len() as usize, MAX_BYTES);
+    }
+
+    #[test]
+    fn export_datentraeger_voll_laesst_die_alte_datei_und_keine_hilfsdatei() {
+        let t = tempfile::tempdir().unwrap();
+        let ziel = exportziel(&t, "a.json");
+        let alt = profil("alt");
+        exportiere(&ziel, &alt).unwrap();
+        // Ein Schreiber, der nach der Hälfte „Datenträger voll“ (ENOSPC) meldet.
+        let voll = |d: &mut File, b: &[u8]| -> io::Result<()> {
+            d.write_all(&b[..b.len() / 2])?;
+            Err(io::Error::from_raw_os_error(28))
+        };
+        assert_eq!(
+            exportiere_mit(&ziel, &profil("neu"), &voll),
+            Err(AssistentenFehler::WriteFailed)
+        );
+        assert_eq!(fs::read(&ziel).unwrap(), alt.as_bytes());
+        assert!(tmp_reste(&t).is_empty());
+        // Auch ohne vorhandenes Ziel entsteht keine halbe Datei.
+        let neu_ziel = exportziel(&t, "neu.json");
+        assert_eq!(
+            exportiere_mit(&neu_ziel, &profil("neu"), &voll),
+            Err(AssistentenFehler::WriteFailed)
+        );
+        assert!(!neu_ziel.exists());
+        assert!(tmp_reste(&t).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn export_ueberschreibt_keinen_link() {
+        let t = tempfile::tempdir().unwrap();
+        let echt = exportziel(&t, "echt.json");
+        fs::write(&echt, b"fremd").unwrap();
+        let link = exportziel(&t, "link.json");
+        std::os::unix::fs::symlink(&echt, &link).unwrap();
+        assert_eq!(
+            exportiere(&link, &profil("a")),
+            Err(AssistentenFehler::WriteFailed)
+        );
+        assert_eq!(fs::read(&echt).unwrap(), b"fremd");
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+
+    #[test]
+    fn export_parallel_zum_selben_ziel_hinterlaesst_eine_ganze_datei() {
+        let t = tempfile::tempdir().unwrap();
+        let ziel = exportziel(&t, "a.json");
+        let texte: Vec<String> = (0..8).map(|k| profil(&format!("p{k}"))).collect();
+        let handles: Vec<_> = texte
+            .iter()
+            .cloned()
+            .map(|text| {
+                let ziel = ziel.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..20 {
+                        let _ = exportiere(&ziel, &text);
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        let gelesen = fs::read_to_string(&ziel).unwrap();
+        assert!(
+            texte.contains(&gelesen),
+            "die Datei ist immer ein ganzer Text"
+        );
+        assert!(tmp_reste(&t).is_empty());
+    }
+
+    // ------------------------------------------------------------ Hilfsdateien: fremde bleiben unberührt
+
+    /// Legt eine fremde Hilfsdatei unter genau dem Namen an, den der Zähler als Nächstes vergeben würde.
+    fn fremde_hilfsdatei(verzeichnis: &Path, vorsatz: &str, nr: u64, inhalt: &[u8]) -> PathBuf {
+        let pfad = verzeichnis.join(format!("{vorsatz}-{}-{nr}.tmp", std::process::id()));
+        fs::write(&pfad, inhalt).unwrap();
+        pfad
+    }
+
+    #[test]
+    fn hilfsdatei_anlegen_nimmt_den_naechsten_zaehler_und_laesst_die_fremde_unberuehrt() {
+        let t = tempfile::tempdir().unwrap();
+        let zaehler = AtomicU64::new(5);
+        let fremd = fremde_hilfsdatei(t.path(), ".lva", 5, b"fremd");
+        let (pfad, _datei) = hilfsdatei_anlegen(t.path(), ".lva", &zaehler).unwrap();
+        assert_ne!(pfad, fremd);
+        assert!(pfad.to_string_lossy().ends_with("-6.tmp"));
+        assert_eq!(fs::read(&fremd).unwrap(), b"fremd");
+    }
+
+    #[test]
+    fn hilfsdatei_anlegen_gibt_nach_den_versuchen_auf_und_loescht_nichts() {
+        let t = tempfile::tempdir().unwrap();
+        let zaehler = AtomicU64::new(0);
+        let fremde: Vec<PathBuf> = (0..HILFS_VERSUCHE as u64 + 3)
+            .map(|n| fremde_hilfsdatei(t.path(), ".lva", n, format!("fremd{n}").as_bytes()))
+            .collect();
+        let fehler = hilfsdatei_anlegen(t.path(), ".lva", &zaehler).unwrap_err();
+        assert_eq!(fehler.kind(), io::ErrorKind::AlreadyExists);
+        // Es wurde begrenzt probiert, nicht endlos.
+        assert_eq!(zaehler.load(Ordering::Relaxed), HILFS_VERSUCHE as u64);
+        for (n, f) in fremde.iter().enumerate() {
+            assert_eq!(fs::read(f).unwrap(), format!("fremd{n}").as_bytes());
+        }
+    }
+
+    #[test]
+    fn export_mit_vergebener_hilfsdatei_nimmt_einen_anderen_namen_und_laesst_die_fremde_stehen() {
+        let t = tempfile::tempdir().unwrap();
+        let zaehler = AtomicU64::new(0);
+        let fremd = fremde_hilfsdatei(t.path(), ".lva-export", 0, b"fremd");
+        let ziel = exportziel(&t, "a.json");
+        let text = profil("a");
+        exportiere_mit_zaehler(&ziel, &text, &|d, b| d.write_all(b), &zaehler).unwrap();
+        assert_eq!(fs::read(&ziel).unwrap(), text.as_bytes());
+        assert_eq!(fs::read(&fremd).unwrap(), b"fremd");
+        assert_eq!(
+            tmp_reste(&t),
+            vec![fremd.file_name().unwrap().to_string_lossy().into_owned()]
+        );
+    }
+
+    #[test]
+    fn export_wenn_alle_namen_vergeben_sind_scheitert_ohne_etwas_zu_loeschen_oder_zu_aendern() {
+        let t = tempfile::tempdir().unwrap();
+        let zaehler = AtomicU64::new(0);
+        let fremde: Vec<PathBuf> = (0..HILFS_VERSUCHE as u64)
+            .map(|n| fremde_hilfsdatei(t.path(), ".lva-export", n, format!("fremd{n}").as_bytes()))
+            .collect();
+        let ziel = exportziel(&t, "a.json");
+        let alt = profil("alt");
+        fs::write(&ziel, &alt).unwrap();
+        assert_eq!(
+            exportiere_mit_zaehler(&ziel, &profil("neu"), &|d, b| d.write_all(b), &zaehler),
+            Err(AssistentenFehler::WriteFailed)
+        );
+        assert_eq!(fs::read(&ziel).unwrap(), alt.as_bytes());
+        for (n, f) in fremde.iter().enumerate() {
+            assert_eq!(fs::read(f).unwrap(), format!("fremd{n}").as_bytes());
+        }
+        assert_eq!(tmp_reste(&t).len(), fremde.len());
+    }
+
+    #[test]
+    fn export_schreibfehler_raeumt_nur_die_eigene_hilfsdatei_auf() {
+        let t = tempfile::tempdir().unwrap();
+        let zaehler = AtomicU64::new(0);
+        let fremd = fremde_hilfsdatei(t.path(), ".lva-export", 0, b"fremd");
+        let voll = |d: &mut File, b: &[u8]| -> io::Result<()> {
+            d.write_all(&b[..b.len() / 2])?;
+            Err(io::Error::from_raw_os_error(28))
+        };
+        let ziel = exportziel(&t, "a.json");
+        assert_eq!(
+            exportiere_mit_zaehler(&ziel, &profil("a"), &voll, &zaehler),
+            Err(AssistentenFehler::WriteFailed)
+        );
+        assert!(!ziel.exists());
+        assert_eq!(fs::read(&fremd).unwrap(), b"fremd");
+        assert_eq!(tmp_reste(&t).len(), 1, "nur die fremde Datei ist übrig");
+    }
+
+    #[test]
+    fn speichern_mit_vergebener_hilfsdatei_nimmt_einen_anderen_namen_und_laesst_die_fremde_stehen()
+    {
+        let t = tempfile::tempdir().unwrap();
+        let zaehler = AtomicU64::new(0);
+        let fremd = fremde_hilfsdatei(t.path(), ".lva", 0, b"fremd");
+        schreibe_atomar_mit_zaehler(
+            t.path(),
+            "eigen-a.json",
+            b"{}",
+            &|d, b| d.write_all(b),
+            &zaehler,
+        )
+        .unwrap();
+        assert_eq!(fs::read(t.path().join("eigen-a.json")).unwrap(), b"{}");
+        assert_eq!(fs::read(&fremd).unwrap(), b"fremd");
+        // Wenn gar kein Name frei ist, bleibt das Ziel, wie es war, und nichts Fremdes verschwindet.
+        let alle = AtomicU64::new(100);
+        let fremde: Vec<PathBuf> = (100..100 + HILFS_VERSUCHE as u64)
+            .map(|n| fremde_hilfsdatei(t.path(), ".lva", n, b"fremd"))
+            .collect();
+        assert_eq!(
+            schreibe_atomar_mit_zaehler(
+                t.path(),
+                "eigen-a.json",
+                b"neu",
+                &|d, b| d.write_all(b),
+                &alle
+            ),
+            Err(AssistentenFehler::WriteFailed)
+        );
+        assert_eq!(fs::read(t.path().join("eigen-a.json")).unwrap(), b"{}");
+        for f in fremde {
+            assert_eq!(fs::read(f).unwrap(), b"fremd");
+        }
     }
 }

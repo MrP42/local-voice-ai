@@ -2423,6 +2423,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             voice_call::assistenten::voice_assistant_delete,
             voice_call::assistenten::voice_assistant_active_get,
             voice_call::assistenten::voice_assistant_active_set,
+            voice_call::assistenten::voice_assistant_export,
             overlay::voice_call_overlay,
             conversations::conversations_list,
             conversations::conversation_get,

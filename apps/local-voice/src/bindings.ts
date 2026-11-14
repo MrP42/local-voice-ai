@@ -4512,6 +4512,9 @@ async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: st
 },
 /**
  * Bricht eine laufende Antwort ab (Unterbrechen durch den Sprecher).
+ * 
+ * Ohne laufenden Durchgang (`CANCELS`) und ohne laufende Synthese wird der Abbruch vorgemerkt: er
+ * gilt dem Start, der noch folgt (`voice_call_chat`, `voice_call_turn`, `voice_call_synthesize`).
  */
 async voiceCallCancel(requestId: string) : Promise<boolean> {
     return await TAURI_INVOKE("voice_call_cancel", { requestId });
@@ -4589,6 +4592,18 @@ async voiceAssistantActiveGet() : Promise<Result<AssistentenAktiv, AssistentenFe
 async voiceAssistantActiveSet(id: string) : Promise<Result<null, AssistentenFehler>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("voice_assistant_active_set", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Schreibt einen Assistenten als Datei an den Ort, den die Person im Speichern-Dialog gewählt hat (Export). Die
+ * Bytes liefert die Oberfläche (`kodiereProfil`); es wird nichts im Verzeichnis der Assistenten verändert.
+ */
+async voiceAssistantExport(path: string, inhalt: string) : Promise<Result<null, AssistentenFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_assistant_export", { path, inhalt }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

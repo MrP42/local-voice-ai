@@ -7836,6 +7836,7 @@
     },
     "assistant": {
       "title": "Choose assistant",
+      "manage": "Manage assistants …",
       "aria": "Assistant: {{name}}",
       "ariaProjekt": "Assistant: {{name}} (does not apply in a project conversation)",
       "ariaSpaeter": "Assistant: {{name}} (applies from the next conversation)",
@@ -9965,6 +9966,359 @@
       "datei_im_papierkorb": "The file is in the trash.",
       "ausnahme_klasse": "Cloud exceptions exist only for confidential folders.",
       "anbieter_nicht_zugelassen": "This provider is not approved for confidential folders."
+    }
+  },
+  "assistenten": {
+    "titel": "Assistants",
+    "seitenbeschreibung": "Manage assistants: view and copy templates, create, edit, export and import your own assistants.",
+    "zurueck": "Back to list",
+    "laedt": "Loading assistants …",
+    "waehle": "Choose an assistant on the left to view or edit it.",
+    "leer": "(empty)",
+    "ja": "Yes",
+    "nein": "No",
+    "kopie": "Copy",
+    "zaehler": "{{n}} / {{max}}",
+    "ladefehler": {
+      "titel": "Your assistants cannot be read"
+    },
+    "liste": {
+      "label": "Assistants",
+      "eigene": "Your assistants",
+      "vorlagen": "Templates",
+      "abgewiesen": "Invalid files",
+      "keine": "You have no assistants of your own yet. Create a new one or copy a template.",
+      "gewaehlt": "Selected",
+      "ungespeichert": "Unsaved",
+      "ungueltig": "Invalid",
+      "aktionen": "Actions for {{name}}"
+    },
+    "aktion": {
+      "alsEigenen": "Copy as your own",
+      "kopieren": "Copy",
+      "umbenennen": "Rename",
+      "exportieren": "Export",
+      "loeschen": "Delete",
+      "verwenden": "Use in conversation",
+      "speichern": "Save",
+      "verwerfen": "Discard changes",
+      "importieren": "Import",
+      "neu": "New assistant"
+    },
+    "name": {
+      "label": "Name",
+      "zuLang": "The name may be at most {{max}} characters long."
+    },
+    "dialog": {
+      "schliessen": "Close",
+      "abbrechen": "Cancel",
+      "neuTitel": "New assistant",
+      "neuHinweis": "Give the assistant a name. You set role, greeting and knowledge afterwards in the editor.",
+      "neuBestaetigen": "Create",
+      "kopieTitel": "Copy “{{name}}”",
+      "kopieHinweis": "The copy is yours and can be edited. The original stays unchanged.",
+      "kopieGespeichert": "The saved version is copied; unsaved changes in the editor are not included.",
+      "kopieBestaetigen": "Copy",
+      "umbenennenTitel": "Rename “{{name}}”",
+      "umbenennenHinweis": "Only the name changes; the ID (the file name) stays.",
+      "umbenennenBestaetigen": "Rename",
+      "alsKopieTitel": "Save as copy",
+      "alsKopieHinweis": "Your draft is saved as a new assistant. The file of the original assistant stays as it is now."
+    },
+    "fehler": {
+      "invalid_id": "The ID is not allowed.",
+      "reserved_id": "The ID is reserved for the app.",
+      "not_found": "The assistant no longer exists.",
+      "too_large": "The file is larger than 256 KiB.",
+      "too_many": "There are already 200 assistants; the store accepts no more.",
+      "occupied": "The file has changed in the meantime or is in use. Nothing was overwritten.",
+      "write_failed": "Writing failed (disk full or not writable). The existing file is unchanged.",
+      "read_failed": "The assistants folder cannot be read.",
+      "unsafe_path": "The assistants folder is a link to another folder and is not used for safety reasons.",
+      "ungueltig": "The input does not pass the check.",
+      "abgewiesen": "The file is not a valid assistant. Nothing was created.",
+      "zu_gross": "The file is larger than 256 KiB and is not read.",
+      "leer": "The file is empty.",
+      "bom": "The file starts with a byte order mark (BOM). The assistant must be saved as UTF-8 without a BOM. Nothing was created.",
+      "kein_utf8": "The file is not valid UTF-8 text. Nothing was created."
+    },
+    "code": {
+      "fehlt": "is missing",
+      "typ": "has the wrong type",
+      "laenge": "has an invalid length",
+      "muster": "contains characters that are not allowed",
+      "wert": "has a value that is not allowed",
+      "zu_viele": "has too many entries",
+      "doppelt": "appears twice",
+      "schema_unbekannt": "has an unknown format",
+      "schema_neuer": "comes from a newer version of the app",
+      "json": "is not valid JSON or contains characters that are not allowed"
+    },
+    "pfad": {
+      "datei": "File",
+      "schema": "Format",
+      "id": "ID",
+      "name": "Name",
+      "beschreibung": "Description",
+      "anweisungen": "Instructions",
+      "begruessung": "Greeting",
+      "sprache": "Language",
+      "stimme": "Voice",
+      "verhalten": "Behavior",
+      "verhalten_stil": "Speaking style",
+      "verhalten_sprechpause": "Pause before replying",
+      "verhalten_unterbrechen": "Interrupting",
+      "verhalten_nachfrage_stille_s": "Prompt after silence",
+      "wissen": "Knowledge",
+      "aussprache": "Pronunciation",
+      "aussprache_regel": "Rule {{n}}",
+      "aussprache_wort": "Word",
+      "aussprache_aussprache": "Pronunciation"
+    },
+    "fehlerFeld": {
+      "name": {
+        "laenge": "The name must be 1 to {{max}} characters long.",
+        "muster": "The name contains characters that are not allowed."
+      },
+      "beschreibung": {
+        "laenge": "The description may be at most {{max}} characters long."
+      },
+      "anweisungen": {
+        "laenge": "The instructions may be at most {{max}} characters long."
+      },
+      "begruessung": {
+        "laenge": "The greeting may be at most {{max}} characters long."
+      }
+    },
+    "meldung": {
+      "angelegt": "“{{name}}” was created.",
+      "kopiert": "“{{name}}” was copied.",
+      "umbenannt": "Renamed to “{{name}}”.",
+      "gespeichert": "“{{name}}” was saved.",
+      "geloescht": "“{{name}}” was deleted.",
+      "importiert": "“{{name}}” was imported.",
+      "exportiert": "“{{name}}” was exported.",
+      "importiertNeueId": "“{{name}}” was imported with a new ID",
+      "importiertNeueIdZeile": "The ID “{{alt}}” was already taken; the assistant is now stored as “{{neu}}”. Nothing was overwritten.",
+      "neuFehler": "The assistant could not be created",
+      "kopierenFehler": "“{{name}}” could not be copied",
+      "umbenennenFehler": "Renaming failed",
+      "loeschenFehler": "“{{name}}” could not be deleted",
+      "importFehler": "“{{name}}” could not be imported",
+      "exportFehler": "“{{name}}” could not be exported",
+      "verwendenFehler": "The assistant could not be selected",
+      "schliessen": "Close message"
+    },
+    "export": {
+      "filter": "Assistant (JSON)"
+    },
+    "abschnitt": {
+      "allgemein": "General",
+      "anweisungen": "Role and instructions",
+      "begruessung": "Greeting",
+      "stimme": "Language and voice",
+      "verhalten": "Conversation behavior",
+      "wissen": "Knowledge",
+      "aussprache": "Pronunciation"
+    },
+    "beschreibung": {
+      "label": "Description",
+      "hinweis": "One sentence shown below the name in the list."
+    },
+    "anweisungen": {
+      "label": "Instructions",
+      "hinweis": "Which role the AI plays and how it answers. A model with a small context gets at most the first {{klein}} characters, larger models more. Put the most important things first.",
+      "ueberKlein": "Over {{klein}} characters (after the placeholders are filled in): small models only get the beginning, cut at the last paragraph."
+    },
+    "platzhalter": {
+      "gruppe": "Insert placeholder",
+      "hilfe": "The conversation fills in placeholders at its start, with today’s values.",
+      "einfuegen": "Insert placeholder for {{name}}",
+      "unbekannt": "Unknown placeholders are dropped in the conversation: {{namen}}",
+      "namen": {
+        "name": "the name",
+        "tageszeit": "the time of day",
+        "datum": "the date",
+        "wochentag": "the weekday",
+        "uhrzeit": "the time"
+      }
+    },
+    "begruessung": {
+      "label": "Greeting",
+      "hinweis": "The first sentence when a new conversation starts. Leave empty if the assistant should say nothing. Placeholders are allowed.",
+      "vorschau": "Preview with today’s values:",
+      "keine": "(no greeting)",
+      "ohneName": "No name is set in the account; the name placeholder is dropped in the conversation.",
+      "anhoeren": "Listen to greeting",
+      "hoerHinweis": "The preview uses the voice from the settings, like the conversation itself."
+    },
+    "hoerprobe": {
+      "laedt": "Generating …",
+      "stopp": "Stop",
+      "beispiel": "Hello, this is how my voice sounds.",
+      "fehler": {
+        "leer": "There is nothing to say.",
+        "gespraech": "There is no preview during a conversation.",
+        "synthese": "The preview could not be generated. Check speech output in the settings.",
+        "wiedergabe": "The preview could not be played."
+      }
+    },
+    "sprache": {
+      "label": "Language",
+      "hinweis": "Sets the language in which the placeholders (time of day, date, weekday) are filled in. The language of the AI’s answers is set by the instructions.",
+      "auto": "Automatic"
+    },
+    "stimme": {
+      "label": "Voice",
+      "hinweis": "A voice on this PC. “Default voice” uses the voice from the settings.",
+      "standard": "Default voice",
+      "nichtVorhanden": "{{name}} (not available on this PC)",
+      "anhoeren": "Listen to sample",
+      "probeStandard": "The sample uses the voice from the settings.",
+      "probeStimme": "Sample with the selected voice.",
+      "ohneWirkung": "Both are saved with the assistant. In conversations on this PC today the voice from the settings speaks; the language affects the placeholders."
+    },
+    "verhalten": {
+      "ohneWirkung": "Saved, but does not take effect in conversations on this PC yet.",
+      "stil": {
+        "label": "Speaking style",
+        "hinweis": "Natural: the answer sounds spoken. Literal: text is spoken as unchanged as possible.",
+        "natuerlich": "Natural",
+        "woertlich": "Literal"
+      },
+      "pause": {
+        "label": "Pause before replying",
+        "hinweis": "How long the assistant waits before it answers.",
+        "kurz": "Short",
+        "normal": "Normal",
+        "lang": "Long"
+      },
+      "unterbrechen": {
+        "label": "Allow interrupting",
+        "hinweis": "If you speak while the assistant is speaking, it stops."
+      },
+      "nachfrage": {
+        "label": "Prompt after silence",
+        "hinweis": "After this many seconds of silence the assistant asks whether you are still there, for example {{vorschlag}} seconds.",
+        "aus": "Off",
+        "sekunden_one": "{{count}} second",
+        "sekunden_other": "{{count}} seconds"
+      }
+    },
+    "wissen": {
+      "regel": "The profile only restricts. What the settings do not release, the assistant never opens.",
+      "alle": {
+        "label": "All released areas",
+        "hinweis": "The assistant may look up everything that is released in the settings."
+      },
+      "gruppe": "Knowledge areas of the assistant",
+      "bereich": {
+        "buecher": "Books",
+        "buchnotizen": "Book notes",
+        "ki_dokumente": "AI documents",
+        "besprechungen": "Meetings",
+        "sprachnotizen": "Dictations",
+        "ablage": "Filing",
+        "gespraeche": "Earlier conversations",
+        "kalender": "Appointments",
+        "vorlesen": "Read aloud",
+        "notizbuch": "Notebook"
+      },
+      "status": {
+        "wirkt": "Active in conversation",
+        "freigegeben": "Released, not selected",
+        "nichtFreigegeben": "Not released in the settings",
+        "ohneWirkung": "No effect on this PC"
+      },
+      "summe": "{{wirksam}} of {{frei}} released areas are active in the conversation.",
+      "kontexte_one": "{{count}} linked context is kept; it is not shown here.",
+      "kontexte_other": "{{count}} linked contexts are kept; they are not shown here."
+    },
+    "aussprache": {
+      "beschreibung": "How a word should be pronounced: names, abbreviations or technical terms.",
+      "hinweis": "Each rule is a word and how to pronounce it. Matching is exact: upper and lower case count, and there are no word boundaries (“Rad” also matches inside “Radio”). If several words match at one place, the longest one wins. A word may appear only once.",
+      "leer": "No rules yet.",
+      "liste": "Pronunciation rules",
+      "zaehler": "{{n}} of {{max}} rules",
+      "wort": {
+        "label": "Word",
+        "beispiel": "e.g. SQL"
+      },
+      "aussprache": {
+        "label": "Pronunciation",
+        "beispiel": "e.g. sequel"
+      },
+      "zeile": "Rule {{n}}",
+      "hoch": "Move rule {{n}} up",
+      "runter": "Move rule {{n}} down",
+      "entfernen": "Remove rule {{n}}",
+      "hinzu": "Add rule",
+      "hinzuHinweis": "Word and pronunciation: 1 to {{max}} characters each.",
+      "voll": "The profile takes at most {{max}} rules.",
+      "unvollstaendig": "Every rule needs a word and a pronunciation. Fill in empty rules or remove them, otherwise saving is not possible.",
+      "angesagt": {
+        "hinzu": "Rule {{n}} added",
+        "entfernt": "Rule {{n}} removed",
+        "verschoben": "Rule {{n}} is now at position {{stelle}}"
+      },
+      "fehler": {
+        "laenge": "1 to {{max}} characters are needed here.",
+        "muster": "Control and direction characters and < > [ ] are not allowed.",
+        "doppelt": "This word already has a rule above.",
+        "liste": {
+          "zu_viele": "There are more than {{max}} rules; remove some."
+        }
+      }
+    },
+    "konflikt": {
+      "titel": "The file has changed",
+      "text": "This assistant was changed while you were editing it. Your changes are still here but were not saved, so nothing is overwritten.",
+      "fehltTitel": "The file no longer exists",
+      "fehltText": "This assistant was deleted or moved while you were editing it. Your changes are still here.",
+      "alsKopie": "Save as copy",
+      "neuLaden": "Reload and discard changes"
+    },
+    "restfehler": {
+      "titel": "These entries are not valid"
+    },
+    "leiste": {
+      "label": "Save",
+      "ungespeichert": "Unsaved changes",
+      "gespeichert": "Everything saved",
+      "abNaechstem": "For the selected assistant this applies from the next conversation.",
+      "fehler_one": "{{count}} entry is not valid.",
+      "fehler_other": "{{count}} entries are not valid."
+    },
+    "kopf": {
+      "eigen": "Your assistant",
+      "gewaehlt": "Your assistant, selected in conversation",
+      "vorlage": "Template, view only",
+      "vorlageGewaehlt": "Template, selected in conversation",
+      "verwendenGesperrt": "Not possible while the assistants cannot be read.",
+      "verwendenGespraech": "Not possible while a conversation is running: it would end.",
+      "verwendenUngespeichert": "Save first: the conversation uses the saved version."
+    },
+    "loeschen": {
+      "titel": "Delete “{{name}}”?",
+      "text": "The assistant is deleted permanently. This cannot be undone; you can export it first.",
+      "gewaehlt": "It is selected in the conversation. Afterwards “All” applies again.",
+      "entwurf": "Unsaved changes are lost."
+    },
+    "wechsel": {
+      "titel": "Unsaved changes",
+      "text": "This assistant has changes that are not saved. They are lost if you switch.",
+      "verwerfen": "Discard changes",
+      "weiter": "Keep editing"
+    },
+    "verwerfen": {
+      "titel": "Discard changes?",
+      "text": "All changes since the last save are lost."
+    },
+    "abgewiesen": {
+      "kopf": "Invalid file",
+      "titel": "This file is not loaded",
+      "text": "The assistants folder contains a file that does not pass the check:",
+      "unberuehrt": "The file stays as it is: the app never changes, repairs or deletes it. Correct it in the folder or remove it there yourself."
     }
   }
 }
