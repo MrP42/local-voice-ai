@@ -434,7 +434,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
         let undo = PhoneLibrary.SwitchUndo(bookId: raw.id, fromEdition: fromId,
                                            fromPosition: ReadingPositionRef(key: sourceKey, unit: fromMedium.unit, offset: offset),
                                            targetKey: plan.position.key, targetRecord: library.record(plan.position.key), wasPlaying: wasPlaying)
-        guard let changed = library.writeSwitch(bookId: raw.id, plan: plan, length: toChapters.length) else {
+        let stamp: (hash: String, edition: String?)? = toMedium == .text ? (hash: LiveTranslationSupport.sourceHash(targetText), edition: view.editionId) : nil
+        guard let changed = library.writeSwitch(bookId: raw.id, plan: plan, length: toChapters.length, stamp: stamp) else {
             error = "Der Sprachwechsel konnte nicht gespeichert werden."
             return
         }

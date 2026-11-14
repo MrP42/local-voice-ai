@@ -937,10 +937,86 @@ final class LivePositionMigrationTests: XCTestCase {
         merged = LibraryProgress.merge(older, foreign)   // `older` ist hier der neuere
         XCTAssertEqual(merged.heard, [[0, 10]])
         XCTAssertEqual(merged.sourceHash, "h1")
-        // Andere Fassung ohne Hash-Angabe auf einer Seite: nicht trennbar, bleibt verträglich.
+        // Ungestempelt zählt im Rohtext, gestempelt im normalisierten: gemischt keine Vereinigung, nur der neuere Stand.
         let plain = ProgressRecord(offset: 50, length: 100, heard: [[45, 50]], updated: 9)
-        XCTAssertEqual(LibraryProgress.merge(a, plain).heard, [[0, 10], [45, 50]])
+        XCTAssertEqual(LibraryProgress.merge(a, plain).heard, [[45, 50]])
+        XCTAssertNil(LibraryProgress.merge(a, plain).sourceHash)
+        var plainOld = plain; plainOld.updated = 0
+        XCTAssertEqual(LibraryProgress.merge(a, plainOld).heard, [[0, 10]])
         XCTAssertFalse(a.sameText(as: foreign))
-        XCTAssertTrue(a.sameText(as: plain))
+        XCTAssertFalse(a.sameText(as: plain))
+        // Zwei ungestempelte Stände bleiben vereinbar.
+        let plain2 = ProgressRecord(offset: 80, length: 100, heard: [[70, 80]], updated: 10)
+        XCTAssertTrue(plain.sameText(as: plain2))
+        XCTAssertEqual(LibraryProgress.merge(plain, plain2).heard, [[45, 50], [70, 80]])
+    }
+}
+
+/// Codex R8: ein Schreibweg, Lesepfade ohne Rohtext, lange Grapheme, harte Eingaben.
+final class LiveCoordinatesTests: XCTestCase {
+    func testStampedIsTheOneWayToStamp() {
+        let rec = ProgressRecord(offset: 5, anchor: "a", length: 9, heard: [[0, 5]], updated: 3, finished: true, unit: .chars)
+        let out = rec.stamped(hash: "h", edition: "ed")
+        XCTAssertEqual(out.sourceHash, "h")
+        XCTAssertEqual(out.sourceEdition, "ed")
+        var back = out; back.sourceHash = nil; back.sourceEdition = nil
+        XCTAssertEqual(back, rec)   // sonst unverändert
+        XCTAssertNil(rec.stamped(hash: "h", edition: nil).sourceEdition)
+    }
+
+    func testReadOnlyCoordinatesForBookTalkAndAssistant() throws {
+        let raw = "Eins.\r\n\r\nZwei.\r\n"
+        let map = try XCTUnwrap(TextOffsetMap(raw: raw))
+        let text = LiveTranslation.hashInput(raw)
+        let two = Double((raw as NSString).range(of: "Zwei").location)
+        let legacy = ProgressRecord(offset: two, length: 99, heard: [[0, two]], updated: 1, frontier: two)
+        // Ungestempelt: im Rohtext gezählt, umgerechnet.
+        let converted = try XCTUnwrap(PositionMigration.coordinates(of: legacy, hash: "h", map: map, length: text.utf16.count))
+        XCTAssertEqual(converted.frontier, Double((text as NSString).range(of: "Zwei").location))
+        XCTAssertEqual(converted.sourceHash, "h")
+        // Gleicher Hash: unverändert; anderer Hash oder keine Abbildung: unbekannt.
+        let current = legacy.stamped(hash: "h", edition: nil)
+        XCTAssertEqual(PositionMigration.coordinates(of: current, hash: "h", map: nil, length: 1), current)
+        XCTAssertNil(PositionMigration.coordinates(of: current, hash: "other", map: map, length: 1))
+        XCTAssertNil(PositionMigration.coordinates(of: legacy, hash: "h", map: nil, length: 1))
+        XCTAssertNil(PositionMigration.coordinates(of: nil, hash: "h", map: map, length: 1))
+        // Die Lesegrenze zeigt auf den Satz im normalisierten Text.
+        XCTAssertEqual(LibraryProgress.frontier(text: converted, audio: nil, map: nil), (text as NSString).range(of: "Zwei").location)
+    }
+
+    func testInnerOffsetsOfLongGraphemesJumpToTheirStart() throws {
+        // Familien-Emoji (7 Skalare, 8 UTF-16-Einheiten), Flagge (4 Einheiten), Surrogatpaar, Zeichen mit zwei Akzenten.
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}"
+        let flag = "\u{1F1E9}\u{1F1EA}"
+        let raw = "A\(family)B\(flag)C\u{1F600}Da\u{0323}\u{0302}E\n"
+        let map = try XCTUnwrap(TextOffsetMap(raw: raw))
+        XCTAssertFalse(map.isIdentity)   // a + zwei Akzente wird zu einem Zeichen
+        let ns = raw as NSString
+        let famStart = ns.range(of: family).location
+        for inner in 1..<family.utf16.count { XCTAssertEqual(map.normalized(famStart + inner), map.normalized(famStart), "Emoji \(inner)") }
+        let flagStart = ns.range(of: flag).location
+        for inner in 1..<flag.utf16.count { XCTAssertEqual(map.normalized(flagStart + inner), map.normalized(flagStart)) }
+        let faceStart = ns.range(of: "\u{1F600}").location
+        XCTAssertEqual(map.normalized(faceStart + 1), map.normalized(faceStart))
+        // Mit Änderung im selben Text (CRLF) bleibt es gleich: nach dem Cluster geht es weiter.
+        let mixed = try XCTUnwrap(TextOffsetMap(raw: "X\r\n\(family)Y"))
+        let ms = ("X\r\n\(family)Y" as NSString)
+        let start = ms.range(of: family).location
+        XCTAssertEqual(mixed.normalized(start), 2)
+        XCTAssertEqual(mixed.normalized(start + 3), 2)
+        XCTAssertEqual(mixed.normalized(start + family.utf16.count), 2 + family.utf16.count)
+    }
+
+    func testHardInputsNeverCrashAndClamp() throws {
+        let map = try XCTUnwrap(TextOffsetMap(raw: "A\r\nB"))
+        XCTAssertEqual(map.normalized(Double.nan), 0)
+        XCTAssertEqual(map.normalized(-Double.infinity), 0)
+        XCTAssertEqual(map.normalized(Double.infinity), Double(map.normalizedLength))
+        XCTAssertEqual(map.normalized(1e300), Double(map.normalizedLength))
+        XCTAssertEqual(map.normalized(Int.max), map.normalizedLength)
+        XCTAssertEqual(map.normalized(Int.min), 0)
+        let ascii = try XCTUnwrap(TextOffsetMap(raw: "abc\n"))
+        XCTAssertEqual(ascii.normalized(Double.greatestFiniteMagnitude), 4)
+        XCTAssertEqual(ascii.normalized(2.9), 2)
     }
 }

@@ -186,12 +186,24 @@ public struct ProgressRecord: Codable, Equatable, Sendable {
         self.read = read; self.updated = updated; self.finished = finished; self.unit = unit; self.frontier = frontier
         self.sourceEdition = sourceEdition; self.sourceHash = sourceHash
     }
-    /// Beziehen sich beide Datensätze auf denselben Text? Nein, wenn beide einen Hash tragen und er abweicht, oder
-    /// (bei gleichem Hash nicht nötig) beide eine Fassung nennen und sie abweicht. Ohne Stempel: verträglich.
+    /// Beziehen sich beide Datensätze auf dieselben Koordinaten? Mit Stempel zählt der Hash. Ein Datensatz ohne Stempel
+    /// zählt im Rohtext, ein gestempelter im normalisierten Text (Spez §7.3): gemischt sind sie nicht vereinbar,
+    /// zwei ungestempelte schon.
     public func sameText(as other: ProgressRecord) -> Bool {
-        if let a = sourceHash, let b = other.sourceHash { return a == b }
-        if let a = sourceEdition, let b = other.sourceEdition { return a == b }
-        return true
+        switch (sourceHash, other.sourceHash) {
+        case let (a?, b?): return a == b
+        case (nil, nil): return true
+        default: return false
+        }
+    }
+
+    /// Datensatz in den Koordinaten des normalisierten Texts mit Quellhash und Quellfassung. Jeder Schreibweg, der
+    /// Stellen im normalisierten Text speichert, stempelt über diese eine Stelle.
+    public func stamped(hash: String, edition: String?) -> ProgressRecord {
+        var out = self
+        out.sourceHash = hash
+        out.sourceEdition = edition
+        return out
     }
 
     enum CodingKeys: String, CodingKey {
@@ -251,8 +263,8 @@ public enum LibraryProgress {
     public static func merge(_ a: ProgressRecord, _ b: ProgressRecord) -> ProgressRecord {
         let (older, newer) = a.updated >= b.updated ? (b, a) : (a, b)
         // Bereiche und Stand gehören zu einem Text: Verschiedene Textstände (Hash oder Fassung) laufen nicht
-        // zusammen, es gilt der neuere Datensatz allein. Ein Datensatz ohne Stempel (PC, Altbestand) gilt als
-        // verträglich; beim Öffnen wird er auf den Stempel des Texts gebracht (`PositionMigration`).
+        // zusammen, es gilt der neuere Datensatz allein; ebenso ungestempelt (Rohtext) gegen gestempelt (normalisiert).
+        // Ein ungestempelter Stand wird beim Öffnen auf den Text umgerechnet (`PositionMigration`).
         if !older.sameText(as: newer) { return newer }
         var merged = newer
         if merged.anchor == nil { merged.anchor = older.anchor }

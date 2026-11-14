@@ -384,7 +384,9 @@ final class PhoneLibrary: ObservableObject {
     /// `text:<seite>:original`, nie unter der Buchkennung. Liefert das Buch (Regal-Stand) oder `nil`, wenn die
     /// Fassung nicht lebt. Gehörte und gelesene Bereiche bleiben; die Stelle zählt nicht als gehört.
     @discardableResult
-    func writeSwitch(bookId: String, plan: SwitchPlan, length: Double) -> LibraryBook? {
+    /// `stamp`: Quellhash und -fassung des Zieltexts. Die Stelle steht im normalisierten Text; jeder Schreibweg mit
+    /// solchen Koordinaten stempelt (`ProgressRecord.stamped`), sonst würde sie beim Öffnen als Rohtext gelesen.
+    func writeSwitch(bookId: String, plan: SwitchPlan, length: Double, stamp: (hash: String, edition: String?)? = nil) -> LibraryBook? {
         guard let raw = rawBook(bookId) else { return nil }
         let now = Self.nowMs()
         guard let changed = raw.settingReading(edition: plan.to, position: plan.position, device: Self.deviceTag, now: now),
@@ -396,6 +398,7 @@ final class PhoneLibrary: ObservableObject {
         rec.anchor = nil
         rec.finished = nil  // eine als fertig markierte Zielfassung beginnt an der Zielstelle
         rec.updated = now
+        if plan.toMedium == .text, let stamp { rec = rec.stamped(hash: stamp.hash, edition: stamp.edition) }
         put(plan.position.key, rec)
         touch(changed)
         return changed
