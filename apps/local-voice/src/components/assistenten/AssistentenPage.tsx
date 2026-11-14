@@ -25,6 +25,7 @@ import { AssistentEditor } from "./AssistentEditor";
 import { AssistentenListe } from "./AssistentenListe";
 import { BestaetigenDialog, NameDialog } from "./Dialoge";
 import { fehlerZeilen, grundText } from "./fehler";
+import { stoppeHoerproben } from "./useHoerprobe";
 import { useVerwaltung } from "./useVerwaltung";
 import "./assistenten.css";
 
@@ -103,6 +104,9 @@ export const AssistentenPage: React.FC = () => {
     void useAssistentStore.getState().laden(true);
   }, []);
 
+  // Beim Verlassen der Seite endet jede Hörprobe (auch eine noch laufende Synthese) und die Stimmenvorschau.
+  useEffect(() => stoppeHoerproben, []);
+
   // Den Entwurf mit dem Speicher abgleichen: anlegen, wenn ein eigener Assistent offen ist; übernehmen, wenn die Datei
   // sich ändert, ohne dass der Entwurf Änderungen hat; sonst Konflikt. Ist der Speicher nicht lesbar, folgt daraus nichts
   // (kein Eintrag „verschwindet“, kein Entwurf geht verloren).
@@ -176,6 +180,7 @@ export const AssistentenPage: React.FC = () => {
    */
   const wechsle = (ziel: Eintrag | null, behalte = false) => {
     const ed = useAssistentEditStore.getState();
+    stoppeHoerproben();
     ed.setzeEntwurf(null);
     ed.oeffne(ziel);
     setSpeicherFehler(null);
@@ -213,7 +218,7 @@ export const AssistentenPage: React.FC = () => {
     } catch {
       eigeneSpeicherung.current = null;
     }
-    const r = await verw.speichern(e.id, profil);
+    const r = await verw.speichern(e.id, profil, e.basis.text);
     if (!r.ok) {
       eigeneSpeicherung.current = null;
       setSpeicherFehler(satz(t, r));

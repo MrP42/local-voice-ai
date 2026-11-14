@@ -16,6 +16,10 @@
  *  5. Datei ist inzwischen anders, gelöscht oder belegt: `occupied` und `not_found` kommen unverändert zurück. Beim Anlegen
  *     mit selbst gewählter Id (Neu, Kopie, Import) wird nach `occupied` neu gelesen und mit der nächsten freien Id wiederholt
  *     (höchstens `VERSUCHE` mal), damit ein Abgleich im selben Moment weder überschrieben noch als Fehler gezeigt wird.
+ *  6. Entwurf auf altem Stand: wartet „Speichern“ auf ein Nachladen und die Datei hat sich inzwischen geändert, kennt der
+ *     Speicher schon den fremden Text. Verglichen wird deshalb gegen die Originalbytes, auf denen der Entwurf begann
+ *     (`erwartet` bei `ueberschreibe`), und diese gehen als Bedingung bis zum Schreibbefehl: Konflikt (`occupied`), nichts
+ *     wird geschrieben, die fremde Änderung bleibt.
  */
 import { ALLES_ID, kodiereProfil, pruefeProfil } from "../assistenten";
 import type { Profil, ProfilErgebnis, ProfilFehler } from "../assistenten";
@@ -40,7 +44,11 @@ export type Fehlergrund =
   /** Import: die Datei ist größer als 256 KiB. */
   | "zu_gross"
   /** Import: die Datei ist leer. */
-  | "leer";
+  | "leer"
+  /** Import: die Datei beginnt mit einer Byte-Order-Marke (UTF-8-BOM); der Kern schreibt und liest keine. */
+  | "bom"
+  /** Import: die Datei ist kein gültiges UTF-8. */
+  | "kein_utf8";
 
 export type Misserfolg = {
   ok: false;
@@ -132,14 +140,22 @@ export async function legeNeuAn<T extends object = object>(
 
 /**
  * Speichert die geänderte Fassung eines eigenen Assistenten. Die Id ändert sich nie. Überschrieben wird nur, wenn die Datei
- * noch genau den Text hat, den der Stand `a` kennt (sonst `occupied`: jemand war schneller). Ändert sich nichts, wird nichts
- * geschrieben.
+ * noch genau den Text hat, auf dem die Änderung begann (sonst `occupied`: jemand war schneller). Ändert sich nichts, wird
+ * nichts geschrieben.
+ *
+ * `erwartet` ist der Text der Datei, auf dem der Entwurf begann (die Originalbytes der Basis). Er ist die Vergleichsbasis,
+ * nicht der Stand des Speichers zum Zeitpunkt des Schreibens: wartet der Vorgang auf ein Nachladen und die Datei hat sich
+ * inzwischen geändert, wäre der Stand `a` schon der fremde, und der alte Entwurf überschriebe die fremde Änderung. So
+ * kommt es zum Konflikt, nichts wird geschrieben, und `erwartet` geht als Bedingung bis zum Schreibbefehl (Rust vergleicht
+ * noch einmal gegen die Datei selbst). Ohne `erwartet` (Umbenennen aus der Liste) gilt der Stand `a`, auf dem der Vorgang
+ * selbst aufbaut.
  */
 export async function ueberschreibe(
   z: Zugriff,
   a: Assistenten,
   id: string,
   neu: Profil,
+  erwartet?: string,
 ): Promise<Ausgang> {
   const kein = ohneSpeicher(a);
   if (kein) return kein;
@@ -149,8 +165,10 @@ export async function ueberschreibe(
   const vor = vorbereiten(neu);
   if ("ok" in vor) return vor;
   if (vor.text === alt.text) return { ok: true };
+  const basis = erwartet ?? alt.text;
+  if (basis !== alt.text) return nein("occupied");
   try {
-    await z.speichern(id, vor.text, alt.text);
+    await z.speichern(id, vor.text, basis);
   } catch (e) {
     return ausFehler(e);
   }

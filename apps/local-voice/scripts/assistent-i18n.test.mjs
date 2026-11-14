@@ -112,6 +112,8 @@ test("i18n: dynamische Schlüssel sind für alle ihre Werte übersetzt", () => {
       "abgewiesen",
       "zu_gross",
       "leer",
+      "bom",
+      "kein_utf8",
     ].map((c) => `assistenten.fehler.${c}`),
     "assistenten.hoerprobe.fehler.${grund}": [
       "leer",

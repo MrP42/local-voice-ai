@@ -9973,7 +9973,9 @@
       "ungueltig": "The input does not pass the check.",
       "abgewiesen": "The file is not a valid assistant. Nothing was created.",
       "zu_gross": "The file is larger than 256 KiB and is not read.",
-      "leer": "The file is empty."
+      "leer": "The file is empty.",
+      "bom": "The file starts with a byte order mark (BOM). The assistant must be saved as UTF-8 without a BOM. Nothing was created.",
+      "kein_utf8": "The file is not valid UTF-8 text. Nothing was created."
     },
     "code": {
       "fehlt": "is missing",

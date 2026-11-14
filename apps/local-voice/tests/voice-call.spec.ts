@@ -306,29 +306,54 @@ async function install(
               if (w.__exportFehler) throw w.__exportFehler;
               w.__exportiert = { path: args.path, inhalt: args.inhalt };
               return null;
-            // Hörprobe im Editor: eine halbe Zehntelsekunde Stille als WAV.
+            // Hörprobe im Editor: eine halbe Zehntelsekunde Stille als WAV. `__syntheseWarte`: jede Synthese bleibt
+            // offen (`__synthesen`: { args, ok, nein }), bis der Test sie beendet oder `voice_call_cancel` sie mit
+            // „abgebrochen“ abbricht, wie der Sprachdienst es tut.
             case "voice_call_synthesize": {
               if (w.__syntheseFehler) throw w.__syntheseFehler;
-              const n = 400;
-              const bytes = new Uint8Array(44 + n);
-              const v = new DataView(bytes.buffer);
-              const text = (o: number, t: string) =>
-                [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
-              text(0, "RIFF");
-              v.setUint32(4, 36 + n, true);
-              text(8, "WAVEfmt ");
-              v.setUint32(16, 16, true);
-              v.setUint16(20, 1, true);
-              v.setUint16(22, 1, true);
-              v.setUint32(24, 8000, true);
-              v.setUint32(28, 8000, true);
-              v.setUint16(32, 1, true);
-              v.setUint16(34, 8, true);
-              text(36, "data");
-              v.setUint32(40, n, true);
-              bytes.fill(128, 44);
-              return btoa(String.fromCharCode(...bytes));
+              const stille = () => {
+                const n = 400;
+                const bytes = new Uint8Array(44 + n);
+                const v = new DataView(bytes.buffer);
+                const text = (o: number, t: string) =>
+                  [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+                text(0, "RIFF");
+                v.setUint32(4, 36 + n, true);
+                text(8, "WAVEfmt ");
+                v.setUint32(16, 16, true);
+                v.setUint16(20, 1, true);
+                v.setUint16(22, 1, true);
+                v.setUint32(24, 8000, true);
+                v.setUint32(28, 8000, true);
+                v.setUint16(32, 1, true);
+                v.setUint16(34, 8, true);
+                text(36, "data");
+                v.setUint32(40, n, true);
+                bytes.fill(128, 44);
+                return btoa(String.fromCharCode(...bytes));
+              };
+              if (w.__syntheseWarte)
+                return new Promise((ok, nein) => {
+                  (w.__synthesen ??= []).push({
+                    args,
+                    ok: () => ok(stille()),
+                    nein,
+                  });
+                });
+              return stille();
             }
+            // Stimmenvorschau (VoicePreviewButton): `__demoHalten` lässt die Erzeugung offen (`__demoFertig()` beendet sie).
+            case "tts_voice_demo_cached":
+              return w.__demoZwischengespeichert
+                ? { wav_path: "/tmp/demo.wav", transcript: "Demo" }
+                : null;
+            case "tts_voice_demo":
+              if (w.__demoHalten)
+                return new Promise((ok) => {
+                  w.__demoFertig = () =>
+                    ok({ wav_path: "/tmp/demo.wav", transcript: "Demo" });
+                });
+              return { wav_path: "/tmp/demo.wav", transcript: "Demo" };
             case "tts_list_voice_infos":
               return w.__stimmen ?? [];
             // Einstufung (ADR-0028 A2): ohne Vorgabe keine (Ansagen aus).
@@ -340,6 +365,14 @@ async function install(
               });
             case "voice_call_cancel":
               w.__hung?.get(args.requestId)?.("");
+              (w.__synthesen ?? [])
+                .filter(
+                  (x: { args: { requestId?: string } }) =>
+                    x.args.requestId === args.requestId,
+                )
+                .forEach((x: { nein: (e: string) => void }) =>
+                  x.nein("abgebrochen"),
+                );
               return false;
             case "voice_tools_list": {
               const granted = (
@@ -4801,6 +4834,61 @@ test.describe("Seite Assistenten (lva#556 Teil 2)", () => {
     ]);
   });
 
+  test("Import: eine Datei mit BOM und ungültiges UTF-8 werden mit Grund abgelehnt, nichts wird angelegt oder repariert; Umlaute und Emoji bleiben", async ({
+    page,
+  }) => {
+    await start(page);
+    const eingabe = page.getByTestId("assistent-import-datei");
+    const meldung = page.getByTestId("assistent-meldung");
+    const bytes = (...teile: (string | number[])[]) =>
+      Buffer.concat(
+        teile.map((t) =>
+          typeof t === "string" ? Buffer.from(t) : Buffer.from(t),
+        ),
+      );
+    const datei = (name: string, buffer: Buffer) => ({
+      name,
+      mimeType: "application/json",
+      buffer,
+    });
+    const gueltig = eigeneDatei("mit-bom", "Mit BOM");
+
+    // Ein gültiger Assistent, dem eine UTF-8-BOM vorangeht: abgelehnt, mit Grund (File.text() hätte sie still entfernt).
+    await eingabe.setInputFiles(
+      datei("bom.json", bytes([0xef, 0xbb, 0xbf], gueltig)),
+    );
+    await expect(meldung).toHaveAttribute("role", "alert");
+    await expect(meldung).toContainText(
+      "„bom.json“ ließ sich nicht importieren",
+    );
+    await expect(meldung).toContainText("Byte-Order-Marke");
+    // Ungültiges UTF-8 mitten im Namen: abgelehnt, nicht mit U+FFFD „repariert“.
+    const i = gueltig.indexOf("Mit BOM");
+    await eingabe.setInputFiles(
+      datei(
+        "latin.json",
+        bytes(gueltig.slice(0, i), "Ab", [0xc3, 0x28], gueltig.slice(i + 7)),
+      ),
+    );
+    await expect(meldung).toContainText(
+      "„latin.json“ ließ sich nicht importieren",
+    );
+    await expect(meldung).toContainText("kein gültiger UTF-8-Text");
+    expect(await speicherAufrufe(page)).toHaveLength(0);
+    expect((await stand(page)).dateien).toEqual({});
+
+    // Gültig mit Umlauten und Emoji: kommt Zeichen für Zeichen an.
+    await eingabe.setInputFiles(
+      datei("schoen.json", bytes(eigeneDatei("schoen", "Größe 😀 Übung"))),
+    );
+    await expect(page.getByTestId("assistent-editor-titel")).toHaveText(
+      "Größe 😀 Übung",
+    );
+    expect(JSON.parse((await stand(page)).dateien["schoen.json"]).name).toBe(
+      "Größe 😀 Übung",
+    );
+  });
+
   test("Ungültige Dateien stehen in ihrer Gruppe, zeigen die Fehler und werden nie angefasst", async ({
     page,
   }) => {
@@ -4985,6 +5073,236 @@ test.describe("Seite Assistenten (lva#556 Teil 2)", () => {
     // Ohne Begrüßung gibt es nichts zu hören.
     await page.getByTestId("assistent-begruessung").fill("");
     await expect(knopf).toHaveAttribute("aria-disabled", "true");
+  });
+
+  /** Die Anfragen der Synthese (`voice_call_synthesize`) und die Abbrüche (`voice_call_cancel`), jeweils mit ihrer Id. */
+  const syntheseIds = async (page: Page) =>
+    (await calls(page, "voice_call_synthesize")).map(
+      (c) => c.args.requestId as string,
+    );
+  const abbruchIds = async (page: Page) =>
+    (await calls(page, "voice_call_cancel")).map(
+      (c) => c.args.requestId as string,
+    );
+  const proben = (page: Page) => ({
+    begruessung: page.getByTestId("assistent-begruessung-hoeren"),
+    stimme: page.getByTestId("assistent-stimme-hoeren"),
+  });
+
+  test("Hörprobe: eine zweite Hörprobe stoppt die erste und bricht deren Synthese ab, Stopp storniert die Anfrage", async ({
+    page,
+  }) => {
+    await start(page, ZWEI);
+    await oeffneEintrag(page, "helfer-a");
+    await page.evaluate(() => ((window as any).__syntheseWarte = true));
+    await page.getByTestId("assistent-begruessung").fill("Hallo Welt.");
+    const { begruessung, stimme } = proben(page);
+
+    await begruessung.click();
+    await expect.poll(async () => (await syntheseIds(page)).length).toBe(1);
+    const erste = (await syntheseIds(page))[0];
+    expect(erste).toBeTruthy();
+    await expect(begruessung).toContainText("Wird erzeugt");
+
+    // Die zweite Hörprobe (anderer Knopf): die erste Anfrage wird abgebrochen, nicht nur ignoriert.
+    await stimme.click();
+    await expect.poll(async () => (await syntheseIds(page)).length).toBe(2);
+    const zweite = (await syntheseIds(page))[1];
+    expect(zweite).toBeTruthy();
+    expect(zweite).not.toBe(erste);
+    await expect.poll(() => abbruchIds(page)).toEqual([erste]);
+    await expect(begruessung).toContainText("Begrüßung anhören");
+    await expect(stimme).toContainText("Wird erzeugt");
+    // Der Abbruch der ersten meldet dem Knopf der zweiten keinen Fehler.
+    await expect(
+      page.getByTestId("assistent-begruessung-hoeren-meldung"),
+    ).toHaveText("");
+    await expect(
+      page.getByTestId("assistent-stimme-hoeren-meldung"),
+    ).toHaveText("");
+
+    // Stopp während der Synthese storniert die Anfrage.
+    await stimme.click();
+    await expect.poll(() => abbruchIds(page)).toEqual([erste, zweite]);
+    await expect(stimme).toContainText("Probe anhören");
+    expect(await syntheseIds(page)).toHaveLength(2);
+  });
+
+  test("Hörprobe: beginnt ein Gespräch, wird die Synthese abgebrochen, die Knöpfe sind gesperrt und es wird nichts mehr gespielt", async ({
+    page,
+  }) => {
+    await fakeMicrophone(page);
+    await page.addInitScript(() => {
+      const w = window as any;
+      // Der Start des Gesprächs bleibt offen: das Gespräch läuft dann (Zustand nicht „idle“), ohne echten Sprachdienst.
+      w.__startHang = true;
+      w.__abgespielt = 0;
+      const echt = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function () {
+        w.__abgespielt += 1;
+        return echt.call(this);
+      };
+    });
+    await start(page, ZWEI);
+    await oeffneEintrag(page, "helfer-a");
+    await page.evaluate(() => ((window as any).__syntheseWarte = true));
+    await page.getByTestId("assistent-begruessung").fill("Hallo Welt.");
+    const { begruessung, stimme } = proben(page);
+    await begruessung.click();
+    await expect.poll(async () => (await syntheseIds(page)).length).toBe(1);
+    const id = (await syntheseIds(page))[0];
+
+    // Das Gespräch beginnt (Telefon in der Fußleiste).
+    await page.locator(".workspace-status [data-call-button]").click();
+    await expect(
+      page.locator(".workspace-status [data-call-button]"),
+    ).not.toHaveAttribute("data-state", "idle");
+    await expect.poll(() => abbruchIds(page)).toContain(id);
+    await expect(begruessung).toHaveAttribute("aria-disabled", "true");
+    await expect(stimme).toHaveAttribute("aria-disabled", "true");
+    await expect(
+      page.getByTestId("assistent-begruessung-hoeren-meldung"),
+    ).toContainText("Während eines Gesprächs");
+    // Die Synthese kommt trotzdem noch zurück: gespielt wird nichts.
+    await page.evaluate(() =>
+      (window as any).__synthesen.forEach((x: { ok: () => void }) => x.ok()),
+    );
+    await page.waitForTimeout(150);
+    expect(await page.evaluate(() => (window as any).__abgespielt)).toBe(0);
+    // Ein Klick auf einen gesperrten Knopf startet keine neue Synthese.
+    await begruessung.click({ force: true });
+    expect(await syntheseIds(page)).toHaveLength(1);
+  });
+
+  test("Hörprobe: der Wechsel des Eintrags und das Verlassen der Seite brechen die laufende Synthese ab", async ({
+    page,
+  }) => {
+    // Beide Einträge haben eine Begrüßung: ohne ungespeicherte Änderung wechselt die Seite ohne Rückfrage.
+    await start(page, {
+      assistenten: {
+        dateien: {
+          "helfer-a.json": eigeneDatei("helfer-a", "Helfer A", {
+            begruessung: "Hallo Welt.",
+          }),
+          "helfer-b.json": eigeneDatei("helfer-b", "Helfer B", {
+            begruessung: "Guten Tag.",
+          }),
+        },
+        aktiv: null,
+      },
+    });
+    await oeffneEintrag(page, "helfer-a");
+    await page.evaluate(() => ((window as any).__syntheseWarte = true));
+    await page.getByTestId("assistent-begruessung-hoeren").click();
+    await expect.poll(async () => (await syntheseIds(page)).length).toBe(1);
+    const erste = (await syntheseIds(page))[0];
+    // Ein anderer Eintrag: die Hörprobe des alten gehört nicht mehr dazu.
+    await oeffneEintrag(page, "helfer-b");
+    await expect.poll(() => abbruchIds(page)).toEqual([erste]);
+    // Und noch einmal beim Verlassen der Seite.
+    await page.getByTestId("assistent-begruessung-hoeren").click();
+    await expect.poll(async () => (await syntheseIds(page)).length).toBe(2);
+    const zweite = (await syntheseIds(page))[1];
+    await goTo(page, "Verlauf");
+    await expect.poll(() => abbruchIds(page)).toEqual([erste, zweite]);
+  });
+
+  test("Stimmenvorschau im Editor: im Gespräch gesperrt, eine laufende Erzeugung spielt danach nicht, und sie stoppt die Hörprobe", async ({
+    page,
+  }) => {
+    await fakeMicrophone(page);
+    await page.addInitScript(() => {
+      const w = window as any;
+      // Der Start des Gesprächs bleibt offen: das Gespräch läuft dann (Zustand nicht „idle“), ohne echten Sprachdienst.
+      w.__startHang = true;
+      w.__abgespielt = 0;
+      const echt = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function () {
+        w.__abgespielt += 1;
+        return echt.call(this);
+      };
+      w.__stimmen = [
+        { id: "anton", meta: { display_name: "Anton" }, origin: "builtin" },
+      ];
+    });
+    await install(page, "light", {
+      settings: TWO_MODELS,
+      assistenten: {
+        dateien: {
+          "helfer-a.json": eigeneDatei("helfer-a", "Helfer A", {
+            stimme: "anton",
+            begruessung: "Hallo.",
+          }),
+        },
+        aktiv: null,
+      },
+    });
+    await openPage(page);
+    await oeffneVerwaltung(page);
+    await oeffneEintrag(page, "helfer-a");
+    const vorschau = page.getByRole("button", {
+      name: "Hörprobe erzeugen",
+      exact: true,
+    });
+    await expect(vorschau).toBeVisible();
+
+    // Die Erzeugung läuft, ein Gespräch beginnt: danach wird nichts abgespielt.
+    await page.evaluate(() => {
+      (window as any).__demoHalten = true;
+    });
+    await vorschau.click();
+    await expect(
+      page.getByRole("button", { name: "Wird erzeugt…", exact: true }),
+    ).toBeVisible();
+    await page.locator(".workspace-status [data-call-button]").click();
+    await expect(
+      page.locator(".workspace-status [data-call-button]"),
+    ).not.toHaveAttribute("data-state", "idle");
+    await page.evaluate(() => (window as any).__demoFertig());
+    await page.waitForTimeout(150);
+    expect(await page.evaluate(() => (window as any).__abgespielt)).toBe(0);
+    // Gesperrt, mit dem Grund in Worten.
+    await expect(
+      page.getByTestId("assistent-stimme-vorschau-meldung"),
+    ).toContainText("Während eines Gesprächs");
+    await expect(
+      page.getByRole("button", { name: /^Hörprobe/ }),
+    ).toBeDisabled();
+  });
+
+  test("Stimmenvorschau im Editor: ein Klick darauf beendet eine laufende Hörprobe und bricht deren Synthese ab", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      (window as any).__stimmen = [
+        { id: "anton", meta: { display_name: "Anton" }, origin: "builtin" },
+      ];
+      (window as any).__demoZwischengespeichert = true;
+    });
+    await install(page, "light", {
+      settings: TWO_MODELS,
+      assistenten: {
+        dateien: {
+          "helfer-a.json": eigeneDatei("helfer-a", "Helfer A", {
+            stimme: "anton",
+            begruessung: "Hallo Welt.",
+          }),
+        },
+        aktiv: null,
+      },
+    });
+    await openPage(page);
+    await oeffneVerwaltung(page);
+    await oeffneEintrag(page, "helfer-a");
+    await page.evaluate(() => ((window as any).__syntheseWarte = true));
+    await page.getByTestId("assistent-begruessung-hoeren").click();
+    await expect.poll(async () => (await syntheseIds(page)).length).toBe(1);
+    const id = (await syntheseIds(page))[0];
+    await page.getByRole("button", { name: "Hörprobe", exact: true }).click();
+    await expect.poll(() => abbruchIds(page)).toEqual([id]);
+    await expect(
+      page.getByTestId("assistent-begruessung-hoeren"),
+    ).toContainText("Begrüßung anhören");
   });
 
   test("Stimme: gespeicherte Stimmen werden angeboten, eine fehlende bleibt erhalten und wird so benannt", async ({

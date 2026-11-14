@@ -22,6 +22,13 @@ interface VoicePreviewButtonProps {
   voiceId: string;
   refreshKey?: string | number;
   className?: string;
+  /**
+   * Die Vorschau ist gesperrt (etwa weil ein Gespraech laeuft: Sprachdienst und Ausgabe gehoeren dann dem Gespraech): der
+   * Knopf ist aus, und eine Vorschau, die noch erzeugt wird, spielt danach nicht mehr. Ohne Angabe nie gesperrt.
+   */
+  gesperrt?: boolean;
+  /** Der Nutzer startet eine Vorschau (Klick auf „Erzeugen“ oder „Abspielen“), noch bevor etwas erzeugt oder gespielt wird. */
+  beiStart?: () => void;
 }
 
 // Eine Hoerprobe zur Zeit: ein neuer Klick stoppt die laufende.
@@ -35,10 +42,15 @@ const stopCurrent = () => {
   }
 };
 
+/** Haelt die laufende Vorschau an (von aussen, etwa wenn ein Gespraech beginnt oder eine andere Hoerprobe startet). */
+export const stoppeVorschau = stopCurrent;
+
 export const VoicePreviewButton = ({
   voiceId,
   refreshKey,
   className = "",
+  gesperrt = false,
+  beiStart,
 }: VoicePreviewButtonProps) => {
   const { t } = useTranslation();
   const [cached, setCached] = useState<VoiceSample | null>(null);
@@ -46,6 +58,10 @@ export const VoicePreviewButton = ({
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Fuer das Ende einer Erzeugung: Sperre und Einhaengen gelten zu dem Zeitpunkt, an dem sie fertig wird, nicht beim Klick.
+  const gesperrtRef = useRef(gesperrt);
+  gesperrtRef.current = gesperrt;
+  const lebtRef = useRef(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -57,12 +73,13 @@ export const VoicePreviewButton = ({
     };
   }, [voiceId, refreshKey]);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    lebtRef.current = true;
+    return () => {
+      lebtRef.current = false;
       if (current?.audio === audioRef.current) stopCurrent();
-    },
-    [],
-  );
+    };
+  }, []);
 
   const play = (sample: VoiceSample) => {
     stopCurrent();
@@ -85,6 +102,8 @@ export const VoicePreviewButton = ({
       stopCurrent();
       return;
     }
+    if (gesperrtRef.current) return;
+    beiStart?.();
     if (cached) {
       play(cached);
       return;
@@ -97,6 +116,9 @@ export const VoicePreviewButton = ({
       return;
     }
     setCached(result.data);
+    // Hat sich unterdessen ein Gespraech gestartet oder wurde die Ansicht verlassen, bleibt es still (die Vorschau liegt dann
+    // zwischengespeichert bereit).
+    if (gesperrtRef.current || !lebtRef.current) return;
     play(result.data);
   };
 
@@ -115,7 +137,7 @@ export const VoicePreviewButton = ({
       size="sm"
       variant={playing ? "primary" : "secondary"}
       onClick={() => void onClick()}
-      disabled={generating}
+      disabled={generating || (gesperrt && !playing)}
       title={hint}
       aria-label={label}
       className={`shrink-0 ${error ? "text-red-400" : ""} ${className}`}

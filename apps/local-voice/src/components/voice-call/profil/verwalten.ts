@@ -165,6 +165,41 @@ export type ImportErgebnis =
 
 const BYTES = new TextEncoder();
 
+/** Warum Dateibytes nicht als Text gelten: zu groß, mit Byte-Order-Marke (BOM) oder kein gültiges UTF-8. */
+export type DekodierGrund = "zu_gross" | "bom" | "kein_utf8";
+
+export type Dekodiert =
+  | { ok: true; text: string }
+  | { ok: false; grund: DekodierGrund; fehler: ProfilFehler[] };
+
+/**
+ * Macht aus den Bytes einer Datei den Text, den der Kern prüft, ohne etwas zu reparieren: `File.text()` würde eine BOM
+ * stillschweigend entfernen und ungültiges UTF-8 durch U+FFFD ersetzen, die Datei würde dann als etwas gelesen, das sie
+ * nicht ist. Hier gilt: mehr als 256 KiB wird nicht gelesen (`zu_gross`), eine UTF-8-BOM am Anfang wird ausdrücklich
+ * abgelehnt (`bom`; der Kern schreibt und liest keine), ungültiges UTF-8 wird abgelehnt (`kein_utf8`). Alles andere kommt
+ * Zeichen für Zeichen unverändert durch.
+ */
+export function dekodiereDatei(bytes: Uint8Array): Dekodiert {
+  if (bytes.length > MAX_DATEI_BYTES)
+    return { ok: false, grund: "zu_gross", fehler: [] };
+  if (
+    bytes.length >= 3 &&
+    bytes[0] === 0xef &&
+    bytes[1] === 0xbb &&
+    bytes[2] === 0xbf
+  )
+    return { ok: false, grund: "bom", fehler: [] };
+  try {
+    const text = new TextDecoder("utf-8", {
+      fatal: true,
+      ignoreBOM: true,
+    }).decode(bytes);
+    return { ok: true, text };
+  } catch {
+    return { ok: false, grund: "kein_utf8", fehler: [] };
+  }
+}
+
 /**
  * Liest ein Profil aus Dateitext. Der Kern prüft streng (`parseProfil`); jede Abweisung kommt als Liste zurück, nichts wird
  * repariert. Ist die Id belegt (eigener Assistent, abgewiesene Datei), vorbehalten (Vorlage, `vorlage-…`, `aktiv`) oder ein

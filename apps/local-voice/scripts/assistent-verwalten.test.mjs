@@ -1297,12 +1297,20 @@ function hoerAttrappe() {
     synthFehler: null,
     spielFehler: null,
     offen: [],
+    anfragen: [],
+    abgebrochen: [],
+    abbruchFehler: null,
   };
   const abhaengig = {
     gespraechLaeuft: () => a.laeuft,
-    synthese: (text) =>
+    abbrechen: (anfrage) => {
+      a.abgebrochen.push(anfrage);
+      if (a.abbruchFehler) throw a.abbruchFehler;
+    },
+    synthese: (text, anfrage) =>
       new Promise((ok, nein) => {
         a.synthesen.push(text);
+        a.anfragen.push(anfrage);
         const schritt = {
           ok: () => ok(`wav:${text}`),
           nein: (e) => nein(e),
@@ -1428,4 +1436,413 @@ test("Hörprobe: beginnt ein Gespräch während der Synthese, wird nicht abgespi
   await lauf;
   assert.deepEqual(a.gespielt, []);
   assert.deepEqual(h.zustand, { art: "fehler", grund: "gespraech" });
+});
+
+// ===================================================================== Fixrunde 1 (lva#598): Vergleichsbasis beim Speichern
+
+test("Überschreiben: Vergleichsbasis ist der Text, auf dem der Entwurf begann, nicht der neuere Stand des Speichers", async () => {
+  const t0 = eigenerText("eigen-a");
+  const s = rust({ dateien: { "eigen-a.json": t0 } });
+  const a0 = await lade(s);
+  const entwurf = { ...a0.eigene[0].profil, anweisungen: "Mein Entwurf." };
+  // Ein anderer Zugang speichert; der Speicher kennt schon den neuen Stand (das Nachladen war schneller als der Entwurf).
+  const fremd = eigenerText("eigen-a", (p) => ({
+    ...p,
+    beschreibung: "fremd",
+  }));
+  s.dateien.set("eigen-a.json", fremd);
+  const a1 = await lade(s);
+  s.log.length = 0;
+  const r = await verwaltung.ueberschreibe(
+    s.zugriff,
+    a1,
+    "eigen-a",
+    entwurf,
+    t0,
+  );
+  assert.deepEqual([r.ok, r.grund], [false, "occupied"]);
+  assert.equal(
+    s.dateien.get("eigen-a.json"),
+    fremd,
+    "die fremde Änderung bleibt",
+  );
+  assert.deepEqual(s.log, [], "nichts geschrieben, nicht einmal versucht");
+  // Ohne Basis (Umbenennen baut auf dem Stand auf, den der Vorgang selbst liest) gilt wie bisher der Stand des Speichers.
+  const ohne = await verwaltung.ueberschreibe(s.zugriff, a1, "eigen-a", {
+    ...a1.eigene[0].profil,
+    beschreibung: "mit Stand",
+  });
+  assert.equal(ohne.ok, true);
+});
+
+test("Überschreiben: stimmt die Basis, geht sie als Bedingung bis zum Schreibbefehl; ändert sich die Datei dazwischen, gibt es einen Konflikt", async () => {
+  const t0 = eigenerText("eigen-a");
+  const s = rust({ dateien: { "eigen-a.json": t0 } });
+  const a = await lade(s);
+  const entwurf = { ...a.eigene[0].profil, anweisungen: "Mein Entwurf." };
+  const bedingungen = [];
+  const zugriff = {
+    ...s.zugriff,
+    speichern: (id, inhalt, ersetzt) => {
+      bedingungen.push(ersetzt);
+      return s.zugriff.speichern(id, inhalt, ersetzt);
+    },
+  };
+  // Zwischen Vergleich und Schreiben schreibt ein anderer Zugang: Rust meldet `occupied`, nichts geht verloren.
+  const dazwischen = eigenerText("eigen-a", (p) => ({
+    ...p,
+    beschreibung: "dazwischen",
+  }));
+  s.vorSpeichern = () => s.dateien.set("eigen-a.json", dazwischen);
+  const r = await verwaltung.ueberschreibe(zugriff, a, "eigen-a", entwurf, t0);
+  assert.deepEqual([r.ok, r.grund], [false, "occupied"]);
+  assert.equal(s.dateien.get("eigen-a.json"), dazwischen);
+  assert.deepEqual(
+    bedingungen,
+    [t0],
+    "der Schreibbefehl bekam die Originalbytes des Entwurfs",
+  );
+  // Ohne dazwischenkommende Änderung gelingt es.
+  s.vorSpeichern = null;
+  s.dateien.set("eigen-a.json", t0);
+  const ok = await verwaltung.ueberschreibe(zugriff, a, "eigen-a", entwurf, t0);
+  assert.equal(ok.ok, true);
+  assert.equal(s.dateien.get("eigen-a.json"), kodiereProfil(entwurf));
+});
+
+test("Store: wartet das Speichern auf ein Nachladen, überschreibt der alte Entwurf die fremde Änderung nicht", async () => {
+  frischerStore();
+  const t0 = eigenerText("eigen-a");
+  const s = rust({ dateien: { "eigen-a.json": t0 } });
+  const st = useAssistentStore.getState();
+  await st.laden(true);
+  const basis = useAssistentStore.getState().assistenten.eigene[0];
+  const entwurf = { ...basis.profil, anweisungen: "Mein Entwurf." };
+  // Die Datei ändert sich außerhalb; ein Nachladen läuft noch, während „Speichern“ gedrückt wird.
+  const fremd = eigenerText("eigen-a", (p) => ({
+    ...p,
+    beschreibung: "fremd",
+  }));
+  s.dateien.set("eigen-a.json", fremd);
+  s.verzoegerung = 15;
+  const laden = st.laden(true);
+  s.log.length = 0;
+  const r = await st.schreiben((z, a) =>
+    verwaltung.ueberschreibe(z, a, "eigen-a", entwurf, basis.text),
+  );
+  await laden;
+  assert.deepEqual([r.ok, r.grund], [false, "occupied"]);
+  assert.equal(s.dateien.get("eigen-a.json"), fremd);
+  assert.equal(s.log.filter((x) => x.startsWith("save:")).length, 0);
+  // Der Stand des Speichers ist danach der fremde: dort setzt die Oberfläche den Konflikt.
+  assert.equal(useAssistentStore.getState().assistenten.eigene[0].text, fremd);
+});
+
+// ===================================================================== Fixrunde 1 (lva#598): Dateibytes lesen, nichts reparieren
+
+const baytes = (...teile) =>
+  Uint8Array.from(
+    teile.flatMap((t) =>
+      typeof t === "string" ? [...new TextEncoder().encode(t)] : t,
+    ),
+  );
+const BOM = [0xef, 0xbb, 0xbf];
+
+test("Import: eine Datei mit BOM wird abgelehnt, auch wenn der Rest ein gültiger Assistent ist", () => {
+  const text = eigenerText("eigen-a");
+  const r = verwalten.dekodiereDatei(baytes(BOM, text));
+  assert.deepEqual([r.ok, r.grund, r.fehler], [false, "bom", []]);
+  // Nur die BOM: ebenfalls abgelehnt (nicht als „leer“ durchgewunken).
+  assert.equal(verwalten.dekodiereDatei(baytes(BOM)).grund, "bom");
+  // Eine BOM mitten im Text ist keine BOM der Datei: der Kern entscheidet (U+FEFF steht im JSON-Text nicht als Leerraum).
+  const mitten = verwalten.dekodiereDatei(baytes("{", BOM, "}"));
+  assert.equal(mitten.ok, true);
+  assert.equal(parseProfil(mitten.text).ok, false);
+});
+
+test("Import: ungültiges UTF-8 wird abgelehnt und nie durch U+FFFD ersetzt", () => {
+  for (const kaputt of [
+    [0xc3, 0x28], // zweites Byte keine Fortsetzung
+    [0xff, 0xfe], // nie gültig
+    [0xe2, 0x82], // abgeschnittene Folge
+    [0x80], // Fortsetzung ohne Anfang
+    [0xed, 0xa0, 0x80], // einzelner Surrogat
+    [0xc0, 0xaf], // überlange Kodierung
+  ]) {
+    const r = verwalten.dekodiereDatei(baytes('{"name":"', kaputt, '"}'));
+    assert.deepEqual([r.ok, r.grund], [false, "kein_utf8"], kaputt.join(","));
+  }
+});
+
+test("Import: gültiger Text kommt Zeichen für Zeichen unverändert durch (Umlaute, Emoji, leer, Obergrenze)", () => {
+  const text = eigenerText("eigen-a", (p) => ({
+    ...p,
+    anweisungen: "Größe, Übung: 😀 日本語",
+  }));
+  const r = verwalten.dekodiereDatei(baytes(text));
+  assert.equal(r.ok, true);
+  assert.equal(r.text, text);
+  assert.equal(parseProfil(r.text).ok, true);
+  // Leere Datei: Text ist leer; „leer“ meldet danach das Importieren.
+  const leer = verwalten.dekodiereDatei(new Uint8Array(0));
+  assert.deepEqual([leer.ok, leer.text], [true, ""]);
+  const a = verwalten.importieren(leer.text, { eigene: [], abgewiesen: [] });
+  assert.equal(a.grund, "leer");
+  // Genau 256 KiB werden gelesen, ein Byte mehr nicht.
+  assert.equal(
+    verwalten.dekodiereDatei(new Uint8Array(MAX_BYTES).fill(0x20)).ok,
+    true,
+  );
+  assert.equal(
+    verwalten.dekodiereDatei(new Uint8Array(MAX_BYTES + 1).fill(0x20)).grund,
+    "zu_gross",
+  );
+});
+
+// ===================================================================== Fixrunde 1 (lva#598): Hörprobe stornieren, ein Besitzer
+
+test("Hörprobe: Stopp während der Synthese bricht genau diese Anfrage ab, ein spätes Ergebnis spielt nie", async () => {
+  const a = hoerAttrappe();
+  a.automatisch = false;
+  const h = new hoerprobe.Hoerprobe(a.abhaengig);
+  const lauf = h.starte("Hallo");
+  await settle();
+  assert.equal(a.anfragen.length, 1);
+  assert.ok(typeof a.anfragen[0] === "string" && a.anfragen[0] !== "");
+  h.stopp();
+  assert.deepEqual(a.abgebrochen, [a.anfragen[0]]);
+  a.offen[0].ok();
+  await lauf;
+  assert.deepEqual(a.gespielt, []);
+  assert.deepEqual(h.zustand, { art: "bereit" });
+});
+
+test("Hörprobe: eine neue Hörprobe bricht die laufende Synthese der alten ab und nimmt eine andere Anfrage", async () => {
+  const a = hoerAttrappe();
+  a.automatisch = false;
+  const h = new hoerprobe.Hoerprobe(a.abhaengig);
+  const erste = h.starte("Erste");
+  await settle();
+  const zweite = h.starte("Zweite");
+  await settle();
+  assert.equal(a.anfragen.length, 2);
+  assert.notEqual(a.anfragen[0], a.anfragen[1]);
+  assert.deepEqual(
+    a.abgebrochen,
+    [a.anfragen[0]],
+    "nur die erste wurde abgebrochen",
+  );
+  a.offen[0].nein(new Error("abgebrochen"));
+  await erste;
+  assert.deepEqual(
+    h.zustand,
+    { art: "laedt" },
+    "der Abbruch der alten setzt keinen Fehler für die neue",
+  );
+  a.offen[1].ok();
+  await settle();
+  a.gespielt[0].w.fertig();
+  await zweite;
+  assert.deepEqual(h.zustand, { art: "bereit" });
+});
+
+test("Hörprobe: nach fertiger Synthese gibt es keinen Abbruch mehr, Stopp hält nur die Wiedergabe an", async () => {
+  const a = hoerAttrappe();
+  const h = new hoerprobe.Hoerprobe(a.abhaengig);
+  const lauf = h.starte("Hallo");
+  await settle();
+  assert.equal(a.gespielt.length, 1);
+  h.stopp();
+  await lauf;
+  assert.equal(a.gestoppt, 1);
+  assert.deepEqual(
+    a.abgebrochen,
+    [],
+    "kein Abbruch ohne laufende Anfrage (er bliebe im Sprachdienst liegen)",
+  );
+  // Auch nach einem Fehler der Synthese und nach Ende der Wiedergabe: nichts abzubrechen.
+  a.synthFehler = new Error("boom");
+  await h.starte("Nochmal");
+  h.stopp();
+  assert.deepEqual(a.abgebrochen, []);
+});
+
+test("Hörprobe: scheitert der Abbruch selbst (Befehl wirft oder wird abgelehnt), bleibt der Zustand heil", async () => {
+  const a = hoerAttrappe();
+  a.automatisch = false;
+  a.abbruchFehler = new Error("Sprachdienst weg");
+  const h = new hoerprobe.Hoerprobe(a.abhaengig);
+  const lauf = h.starte("Hallo");
+  await settle();
+  h.stopp();
+  assert.deepEqual(a.abgebrochen.length, 1);
+  a.offen[0].ok();
+  await lauf;
+  assert.deepEqual(h.zustand, { art: "bereit" });
+  // Asynchron abgelehnter Abbruch: keine unbehandelte Zurückweisung.
+  const b = hoerAttrappe();
+  b.automatisch = false;
+  b.abhaengig.abbrechen = (anfrage) => {
+    b.abgebrochen.push(anfrage);
+    return Promise.reject(new Error("abgelehnt"));
+  };
+  const h2 = new hoerprobe.Hoerprobe(b.abhaengig);
+  const lauf2 = h2.starte("Hallo");
+  await settle();
+  h2.stopp();
+  await settle(10);
+  b.offen[0].ok();
+  await lauf2;
+  assert.deepEqual(h2.zustand, { art: "bereit" });
+});
+
+test("Hörprobe: Anfrage-Ids sind über Instanzen einmalig", async () => {
+  const a = hoerAttrappe();
+  a.automatisch = false;
+  const h1 = new hoerprobe.Hoerprobe(a.abhaengig);
+  const h2 = new hoerprobe.Hoerprobe(a.abhaengig);
+  void h1.starte("a");
+  void h2.starte("b");
+  await settle();
+  assert.equal(new Set(a.anfragen).size, 2);
+  h1.stopp();
+  h2.stopp();
+});
+
+/** Der Besitzer mit einer Attrappe und zwei „fremden“ Wiedergaben (der Stimmenvorschau). */
+function besitzerAttrappe() {
+  const a = hoerAttrappe();
+  a.fremdGestoppt = 0;
+  a.besitzer = new hoerprobe.HoerprobeBesitzer(a.abhaengig, [
+    () => {
+      a.fremdGestoppt++;
+    },
+  ]);
+  return a;
+}
+
+test("Besitzer: eine zweite Hörprobe (anderer Knopf) stoppt die erste, es klingt immer nur eine", async () => {
+  const a = besitzerAttrappe();
+  const b = a.besitzer;
+  const stande = [];
+  b.abonniere(() => stande.push(`${b.stand.quelle}:${b.stand.zustand.art}`));
+  const erste = b.spiele("begruessung", "Guten Morgen");
+  await settle();
+  assert.deepEqual(b.stand, {
+    quelle: "begruessung",
+    zustand: { art: "spielt" },
+  });
+  const zweite = b.spiele("stimme", "Probe");
+  await settle();
+  // Die erste Wiedergabe wurde angehalten, die zweite läuft; der Stand gehört dem zweiten Knopf.
+  assert.equal(a.gestoppt, 1);
+  assert.equal(a.gespielt.length, 2);
+  assert.deepEqual(b.stand, { quelle: "stimme", zustand: { art: "spielt" } });
+  await erste;
+  assert.deepEqual(b.stand, { quelle: "stimme", zustand: { art: "spielt" } });
+  assert.ok(!stande.includes("begruessung:bereit"), stande.join(" "));
+  a.gespielt[1].w.fertig();
+  await zweite;
+  assert.deepEqual(b.stand, { quelle: null, zustand: { art: "bereit" } });
+});
+
+test("Besitzer: eine zweite Hörprobe während der Synthese bricht die erste Anfrage ab", async () => {
+  const a = besitzerAttrappe();
+  a.automatisch = false;
+  const b = a.besitzer;
+  void b.spiele("begruessung", "Guten Morgen");
+  await settle();
+  void b.spiele("stimme", "Probe");
+  await settle();
+  assert.deepEqual(a.abgebrochen, [a.anfragen[0]]);
+  assert.deepEqual(b.stand, { quelle: "stimme", zustand: { art: "laedt" } });
+  b.stopp();
+  assert.deepEqual(
+    a.abgebrochen,
+    [a.anfragen[0], a.anfragen[1]],
+    "Stopp storniert die laufende Anfrage",
+  );
+  assert.deepEqual(b.stand, { quelle: null, zustand: { art: "bereit" } });
+});
+
+test("Besitzer: eine Hörprobe stoppt fremde Wiedergaben, und eine fremde stoppt die Hörprobe", async () => {
+  const a = besitzerAttrappe();
+  const b = a.besitzer;
+  void b.spiele("begruessung", "Hallo");
+  await settle();
+  assert.equal(
+    a.fremdGestoppt,
+    1,
+    "vor der Hörprobe wird die Stimmenvorschau gestoppt",
+  );
+  b.fremdeBeginnt();
+  assert.equal(a.gestoppt, 1);
+  assert.deepEqual(b.stand, { quelle: null, zustand: { art: "bereit" } });
+  assert.equal(
+    a.fremdGestoppt,
+    1,
+    "die fremde Wiedergabe, die gerade begann, wird nicht gestoppt",
+  );
+});
+
+test("Besitzer: Beginn eines Gesprächs stoppt Hörprobe (auch die Synthese) und fremde Wiedergaben", async () => {
+  const a = besitzerAttrappe();
+  a.automatisch = false;
+  const b = a.besitzer;
+  void b.spiele("begruessung", "Hallo");
+  await settle();
+  a.laeuft = true;
+  b.gespraechBegonnen();
+  assert.deepEqual(a.abgebrochen, [a.anfragen[0]]);
+  assert.equal(
+    a.fremdGestoppt,
+    2,
+    "einmal vor dem Start, einmal bei Gesprächsbeginn",
+  );
+  a.offen[0].ok();
+  await settle();
+  assert.deepEqual(a.gespielt, []);
+  assert.deepEqual(b.stand, { quelle: null, zustand: { art: "bereit" } });
+  // Während des Gesprächs gibt es keine Hörprobe.
+  await b.spiele("stimme", "Probe");
+  assert.deepEqual(b.stand, {
+    quelle: "stimme",
+    zustand: { art: "fehler", grund: "gespraech" },
+  });
+  assert.equal(a.synthesen.length, 1);
+});
+
+test("Besitzer: ein Knopf, der verschwindet, stoppt nur die eigene Hörprobe", async () => {
+  const a = besitzerAttrappe();
+  const b = a.besitzer;
+  void b.spiele("begruessung", "Hallo");
+  await settle();
+  b.stoppFuer("stimme");
+  assert.deepEqual(b.stand, {
+    quelle: "begruessung",
+    zustand: { art: "spielt" },
+  });
+  assert.equal(a.gestoppt, 0);
+  b.stoppFuer("begruessung");
+  assert.deepEqual(b.stand, { quelle: null, zustand: { art: "bereit" } });
+  assert.equal(a.gestoppt, 1);
+});
+
+test("Besitzer: der Stand ändert sich nur, wenn sich etwas ändert, und Abmelden wirkt", async () => {
+  const a = besitzerAttrappe();
+  const b = a.besitzer;
+  let n = 0;
+  const ab = b.abonniere(() => n++);
+  const vorher = b.stand;
+  b.stopp();
+  b.stopp();
+  assert.equal(b.stand, vorher, "gleicher Stand, gleiche Referenz");
+  assert.equal(n, 0);
+  void b.spiele("stimme", "x");
+  await settle();
+  assert.ok(n >= 2);
+  const gezaehlt = n;
+  ab();
+  b.stopp();
+  assert.equal(n, gezaehlt);
 });

@@ -52,7 +52,7 @@ import { AssistentMenue } from "./AssistentMenue";
 import { Aussprache } from "./Aussprache";
 import { useSprachName } from "./anzeige";
 import { fehlerZeile } from "./fehler";
-import { useHoerprobe } from "./useHoerprobe";
+import { useHoerprobe, useVorschauKoordination } from "./useHoerprobe";
 
 /** Der Eintrag „Standardstimme“ der Auswahl (ein leerer Wert ließe sich in der Liste nicht als gewählt zeigen). */
 const STANDARD_STIMME = "__standard__";
@@ -146,7 +146,7 @@ const HoerprobeKnopf: React.FC<{
   testId: string;
 }> = ({ text, label, testId }) => {
   const { t } = useTranslation();
-  const h = useHoerprobe();
+  const h = useHoerprobe(testId);
   const laedt = h.zustand.art === "laedt";
   const spielt = h.zustand.art === "spielt";
   const fehler = h.zustand.art === "fehler" ? h.zustand.grund : null;
@@ -276,6 +276,7 @@ export const AssistentEditor: React.FC<Props> = ({
   const gespraechLaeuft = useVoiceCallStore((s) => s.state !== "idle");
   const { areas: freigegeben } = useKnowledge();
   const stimmen = useStimmen();
+  const vorschau = useVorschauKoordination();
   const anweisungenRef = useRef<HTMLTextAreaElement>(null);
   const [werte, setWerte] = useState<PlatzhalterWerte>(() =>
     werteJetzt(kontoName),
@@ -727,9 +728,22 @@ export const AssistentEditor: React.FC<Props> = ({
           <div className="lv-asst-block">
             {stimmeVorhanden && p.stimme ? (
               <div className="flex flex-wrap items-center gap-2">
-                <VoicePreviewButton voiceId={p.stimme} />
-                <span className="lv-asst-hinweis">
-                  {t("assistenten.stimme.probeStimme")}
+                <VoicePreviewButton
+                  voiceId={p.stimme}
+                  gesperrt={vorschau.gesperrt}
+                  beiStart={vorschau.beiStart}
+                />
+                <span
+                  className={
+                    vorschau.gesperrt
+                      ? "lv-asst-fehlerzeile"
+                      : "lv-asst-hinweis"
+                  }
+                  data-testid="assistent-stimme-vorschau-meldung"
+                >
+                  {vorschau.gesperrt
+                    ? t("assistenten.hoerprobe.fehler.gespraech")
+                    : t("assistenten.stimme.probeStimme")}
                 </span>
               </div>
             ) : (

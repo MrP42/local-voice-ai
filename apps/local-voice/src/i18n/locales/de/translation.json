@@ -9973,7 +9973,9 @@
       "ungueltig": "Die Eingaben bestehen die Prüfung nicht.",
       "abgewiesen": "Die Datei ist kein gültiger Assistent. Es wurde nichts angelegt.",
       "zu_gross": "Die Datei ist größer als 256 KiB und wird nicht gelesen.",
-      "leer": "Die Datei ist leer."
+      "leer": "Die Datei ist leer.",
+      "bom": "Die Datei beginnt mit einer Byte-Order-Marke (BOM). Der Assistent muss ohne BOM als UTF-8 gespeichert sein. Es wurde nichts angelegt.",
+      "kein_utf8": "Die Datei ist kein gültiger UTF-8-Text. Es wurde nichts angelegt."
     },
     "code": {
       "fehlt": "fehlt",

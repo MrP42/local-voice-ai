@@ -22,6 +22,7 @@ import {
 } from "@/components/voice-call/profil/verwaltung";
 import {
   MAX_DATEI_BYTES,
+  dekodiereDatei,
   exportieren as baueAusgabe,
   importieren as liesImport,
   kopieren as kopiere,
@@ -143,13 +144,17 @@ export function useVerwaltung() {
     [lauf, t, zeigeFehler],
   );
 
-  /** Speichert den Entwurf. Fehler zeigt der Editor selbst (am Feld, als Konflikt); hier bleibt es bei der Rückgabe. */
+  /**
+   * Speichert den Entwurf. `basisText` sind die Originalbytes der Datei, auf denen der Entwurf begann: gespeichert wird nur,
+   * wenn die Datei noch genau so ist (sonst Konflikt, nichts wird geschrieben), auch wenn der Speicher bis zum Schreiben
+   * schon einen neueren Stand kennt. Fehler zeigt der Editor selbst (am Feld, als Konflikt); hier bleibt es bei der Rückgabe.
+   */
   const speichern = useCallback(
-    (id: string, entwurf: Profil): Promise<Vorgang> =>
+    (id: string, entwurf: Profil, basisText: string): Promise<Vorgang> =>
       lauf(async () => {
         const r = await useAssistentStore
           .getState()
-          .schreiben((z, a) => ueberschreibe(z, a, id, entwurf));
+          .schreiben((z, a) => ueberschreibe(z, a, id, entwurf, basisText));
         if (r.ok) {
           setMeldung(null);
           toast.success(
@@ -189,14 +194,22 @@ export function useVerwaltung() {
           zeigeFehler("assistenten.meldung.importFehler", m, datei.name);
           return m;
         }
-        let text: string;
+        // Bytes lesen und selbst dekodieren: `File.text()` entfernte eine BOM und ersetzte ungültiges UTF-8 durch U+FFFD.
+        let gelesen: Uint8Array;
         try {
-          text = await datei.text();
+          gelesen = new Uint8Array(await datei.arrayBuffer());
         } catch {
           const m = nein("read_failed");
           zeigeFehler("assistenten.meldung.importFehler", m, datei.name);
           return m;
         }
+        const dekodiert = dekodiereDatei(gelesen);
+        if (!dekodiert.ok) {
+          const m = nein(dekodiert.grund);
+          zeigeFehler("assistenten.meldung.importFehler", m, datei.name);
+          return m;
+        }
+        const text = dekodiert.text;
         let hinweis: { ursprungsId: string; idGeaendert: boolean } | null =
           null;
         const r = await useAssistentStore
