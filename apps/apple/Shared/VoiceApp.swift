@@ -84,6 +84,7 @@ private struct VoiceHome: View {
     /// Abschnitt „Gespräch“ auf „Sprechen“: zu Beginn zugeklappt.
     @State private var conversationExpanded = false
     @FocusState private var searchFocused: Bool
+    @Environment(\.scenePhase) private var scenePhase
     #if DEBUG
     @State private var tab = ProcessInfo.processInfo.arguments.contains("--meeting-import-probe") ? 2
         : ProcessInfo.processInfo.arguments.contains("--library-tab") ? 3
@@ -196,6 +197,15 @@ private struct VoiceHome: View {
         .onOpenURL { url in
             showAssistant = false
             if url.isFileURL { IncomingFiles.shared.add(url); tab = 2 } else { PairingFlow.shared.open(url) }
+        }
+        // Text oder Bilder aus dem Teilen-Menü: zur Bibliothek wechseln, dort öffnet das Prüfblatt.
+        // Gespräch und Player-Vollbild schließen dafür (sie lägen über dem Blatt); die Wiedergabe läuft weiter.
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            guard phase == .active, TextIntakeModel.shared.draft == nil, TextIntakeModel.shared.hasPendingShares else { return }
+            showAssistant = false
+            LibraryPlayback.shared.presented = false
+            tab = 3
+            Task { await TextIntakeModel.shared.takeFromInbox() }
         }
         #endif
     }
