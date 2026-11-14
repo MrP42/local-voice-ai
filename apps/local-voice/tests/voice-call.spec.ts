@@ -270,6 +270,67 @@ async function install(
               platteSchreiben(platte);
               return null;
             }
+            // lva#556 Teil 2: Schreiben, Löschen und Exportieren der eigenen Assistenten, mit den Regeln von Rust
+            // (`voice_call/assistenten.rs`): neu nur, wenn es die Datei nicht gibt (`occupied`), überschreiben und
+            // löschen nur mit dem bekannten alten Text (`occupied`, `not_found`), höchstens 200 Dateien.
+            case "voice_assistant_save": {
+              if (w.__assistentSchreibFehler) throw w.__assistentSchreibFehler;
+              const platte = platteLesen();
+              const datei = `${args.id}.json`;
+              if (args.ersetzt === null || args.ersetzt === undefined) {
+                if (datei in platte.dateien) throw "occupied";
+                if (Object.keys(platte.dateien).length >= 200) throw "too_many";
+              } else {
+                if (!(datei in platte.dateien)) throw "not_found";
+                if (platte.dateien[datei] !== args.ersetzt) throw "occupied";
+              }
+              platte.dateien[datei] = args.inhalt;
+              platteSchreiben(platte);
+              return null;
+            }
+            case "voice_assistant_delete": {
+              if (w.__assistentSchreibFehler) throw w.__assistentSchreibFehler;
+              const platte = platteLesen();
+              const datei = `${args.id}.json`;
+              if (!(datei in platte.dateien)) throw "not_found";
+              if (platte.dateien[datei] !== args.erwartet) throw "occupied";
+              delete platte.dateien[datei];
+              platteSchreiben(platte);
+              return null;
+            }
+            case "plugin:dialog|save":
+              return w.__speichernZiel === undefined
+                ? "/tmp/assistent-export.json"
+                : w.__speichernZiel;
+            case "voice_assistant_export":
+              if (w.__exportFehler) throw w.__exportFehler;
+              w.__exportiert = { path: args.path, inhalt: args.inhalt };
+              return null;
+            // Hörprobe im Editor: eine halbe Zehntelsekunde Stille als WAV.
+            case "voice_call_synthesize": {
+              if (w.__syntheseFehler) throw w.__syntheseFehler;
+              const n = 400;
+              const bytes = new Uint8Array(44 + n);
+              const v = new DataView(bytes.buffer);
+              const text = (o: number, t: string) =>
+                [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+              text(0, "RIFF");
+              v.setUint32(4, 36 + n, true);
+              text(8, "WAVEfmt ");
+              v.setUint32(16, 16, true);
+              v.setUint16(20, 1, true);
+              v.setUint16(22, 1, true);
+              v.setUint32(24, 8000, true);
+              v.setUint32(28, 8000, true);
+              v.setUint16(32, 1, true);
+              v.setUint16(34, 8, true);
+              text(36, "data");
+              v.setUint32(40, n, true);
+              bytes.fill(128, 44);
+              return btoa(String.fromCharCode(...bytes));
+            }
+            case "tts_list_voice_infos":
+              return w.__stimmen ?? [];
             // Einstufung (ADR-0028 A2): ohne Vorgabe keine (Ansagen aus).
             case "assistent_einstufen":
               return w.__einstufung ?? null;
@@ -541,7 +602,6 @@ async function install(
             case "pages_list":
             case "page_files":
             case "tts_list_voices":
-            case "tts_list_voice_infos":
             case "llm_ps":
             case "tts_reading_list":
             case "tts_list_downloads":
@@ -4367,5 +4427,1408 @@ test.describe("Sprachgespraech Assistent (lva#556)", () => {
         (v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`,
       ),
     ).toEqual([]);
+  });
+});
+
+// lva#556 G2 Teil 2: die Seite „Assistenten“ (Liste, Editor, Import und Export) gegen die Tauri-Attrappe, die das Verzeichnis
+// mit den Regeln von Rust nachbildet (`voice_assistant_save` und `voice_assistant_delete` nur mit dem bekannten alten Text).
+test.describe("Seite Assistenten (lva#556 Teil 2)", () => {
+  const picker = (page: Page) => page.getByTestId("assistent-picker");
+  const seite = (page: Page) => page.getByTestId("assistenten-seite");
+  const liste = (page: Page) => page.getByTestId("assistenten-liste");
+  // Mit lokalem Sprecher läuft das Gespräch über `voice_call_turn`: die erste Nachricht des letzten Aufrufs ist der Prompt.
+  const prompt = async (page: Page) => {
+    const turns = await calls(page, "voice_call_turn");
+    return (turns[turns.length - 1].args.messages as { content: string }[])[0]
+      .content;
+  };
+
+  /** Öffnet die Seite wie ein Mensch: Auswahl des Assistenten im Chat, „Assistenten verwalten …“. */
+  async function oeffneVerwaltung(page: Page) {
+    await picker(page).click();
+    await page
+      .getByRole("menuitem", { name: "Assistenten verwalten …", exact: true })
+      .click();
+    await expect(seite(page)).toBeVisible();
+  }
+  async function start(page: Page, extra: Extra = {}) {
+    await install(page, "light", { settings: TWO_MODELS, ...extra });
+    await openPage(page);
+    await oeffneVerwaltung(page);
+  }
+  const eigeneDatei = (id: string, name: string, extra: object = {}) => {
+    const alles = JSON.parse(
+      readFileSync(
+        join(process.cwd(), "..", "shared", "assistenten", "vorlagen.json"),
+        "utf-8",
+      ),
+    ).find((v: { id: string }) => v.id === "alles");
+    return JSON.stringify(
+      { ...alles, id, name, anweisungen: "Antworte immer kurz.", ...extra },
+      null,
+      2,
+    );
+  };
+  const ZWEI = {
+    assistenten: {
+      dateien: {
+        "helfer-a.json": eigeneDatei("helfer-a", "Helfer A", {
+          beschreibung: "Der erste Helfer.",
+        }),
+        "helfer-b.json": eigeneDatei("helfer-b", "Helfer B"),
+      },
+      aktiv: null,
+    },
+  };
+  const speicherAufrufe = (page: Page) => calls(page, "voice_assistant_save");
+  const zeile = (page: Page, id: string) =>
+    page.getByTestId(`assistent-zeile-${id}`);
+  const oeffneEintrag = (page: Page, id: string) =>
+    page.getByTestId(`assistent-oeffnen-${id}`).click();
+  const menue = async (page: Page, id: string, eintrag: string) => {
+    await page.getByTestId(`assistent-menue-${id}`).click();
+    await page.getByRole("menuitem", { name: eintrag, exact: true }).click();
+  };
+  const status = (page: Page) => page.getByTestId("assistent-status");
+  const dialogName = (page: Page, name: string | RegExp) =>
+    page.getByRole("dialog", { name });
+  const stand = (page: Page) =>
+    page.evaluate(() =>
+      JSON.parse(sessionStorage.getItem("lv-test-assistenten")!),
+    );
+
+  test("Anlegen, bearbeiten, speichern, im Gespräch verwenden und Neustart: Rolle, Begrüßung und Wissen wirken, der Assistent bleibt gewählt", async ({
+    page,
+  }) => {
+    await install(page, "light", {
+      settings: { ...LOCAL_SPEAKER, voice_call_knowledge: ["meetings"] },
+      config: orchestration({}),
+      tools: [MEETINGS_TOOL],
+    });
+    await openPage(page);
+    await oeffneVerwaltung(page);
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Assistenten" }),
+    ).toHaveCount(1);
+    await expect(page.getByTestId("assistenten-leer")).toHaveText(
+      "Du hast noch keine eigenen Assistenten. Lege einen neuen an oder kopiere eine Vorlage.",
+    );
+
+    // Anlegen.
+    await page.getByTestId("assistent-neu").click();
+    const neu = dialogName(page, "Neuer Assistent");
+    await neu.getByRole("textbox", { name: "Name" }).fill("Mein Coach");
+    await neu.getByTestId("assistent-dialog-bestaetigen").click();
+    await expect(page.getByTestId("assistent-editor-titel")).toHaveText(
+      "Mein Coach",
+    );
+    let saves = await speicherAufrufe(page);
+    expect(saves).toHaveLength(1);
+    expect(saves[0].args).toMatchObject({ id: "mein-coach", ersetzt: null });
+
+    // Bearbeiten.
+    await page.getByTestId("assistent-beschreibung").fill("Kurz und klar.");
+    await page
+      .getByTestId("assistent-anweisungen")
+      .fill("Antworte immer in drei Sätzen.");
+    await expect(page.getByTestId("assistent-anweisungen-zaehler")).toHaveText(
+      "30 / 8000",
+    );
+    await page
+      .getByTestId("assistent-begruessung")
+      .fill("Hallo, ich bin dein Coach.");
+    await expect(page.getByTestId("assistent-begruessung-vorschau")).toHaveText(
+      "Hallo, ich bin dein Coach.",
+    );
+    await page.getByRole("checkbox", { name: "Besprechungen" }).check();
+    await expect(page.getByTestId("assistent-wissen-summe")).toHaveText(
+      "1 von 1 freigegebenen Bereichen wirken im Gespräch.",
+    );
+    await expect(status(page)).toContainText("Ungespeicherte Änderungen");
+    await expect(page.getByTestId("assistent-marke-entwurf")).toHaveText(
+      "Ungespeichert",
+    );
+
+    // Speichern: überschrieben wird nur mit dem bekannten alten Text.
+    await page.getByTestId("assistent-speichern").click();
+    await expect(status(page)).toContainText("Alles gespeichert");
+    saves = await speicherAufrufe(page);
+    expect(saves).toHaveLength(2);
+    expect(saves[1].args.ersetzt).toBe(saves[0].args.inhalt);
+    expect(saves[1].args.inhalt).toContain("Antworte immer in drei Sätzen.");
+    expect(saves[1].args.inhalt).toContain("Hallo, ich bin dein Coach.");
+    expect(saves[1].args.inhalt).toContain("besprechungen");
+    await expect(page.getByTestId("assistent-marke-entwurf")).toHaveCount(0);
+
+    // Im Gespräch verwenden: ein neues Gespräch mit Begrüßung, Rolle und begrenztem Wissen.
+    await page.getByTestId("assistent-verwenden").click();
+    await expect(picker(page)).toHaveAccessibleName("Assistent: Mein Coach");
+    await expect(emptyTitle(page)).toContainText("Hallo, ich bin dein Coach.");
+    await replies(page, ["Gern, kurz."]);
+    await send(page, "Was gab es?");
+    await expect(page.getByRole("log").getByText("Gern, kurz.")).toBeVisible();
+    expect(
+      (await prompt(page)).startsWith(
+        "ROLLE (vom Nutzer eingestellt, Assistent „Mein Coach“):\nAntworte immer in drei Sätzen.",
+      ),
+    ).toBe(true);
+    const grenzen = (await calls(page, "voice_tools_list")).map(
+      (c) => c.args.grenze,
+    );
+    expect(grenzen[grenzen.length - 1]).toEqual(["meetings"]);
+
+    // Neustart: Auswahl und Datei bleiben, der Editor zeigt, was gespeichert ist.
+    await page.reload();
+    await goTo(page, "Start");
+    await expect(picker(page)).toHaveAccessibleName("Assistent: Mein Coach");
+    await expect(emptyTitle(page)).toContainText("Hallo, ich bin dein Coach.");
+    await oeffneVerwaltung(page);
+    await expect(
+      zeile(page, "mein-coach").getByTestId("assistent-marke-gewaehlt"),
+    ).toHaveText("Gewählt");
+    await oeffneEintrag(page, "mein-coach");
+    await expect(page.getByTestId("assistent-name")).toHaveValue("Mein Coach");
+    await expect(page.getByTestId("assistent-anweisungen")).toHaveValue(
+      "Antworte immer in drei Sätzen.",
+    );
+    await expect(
+      page.getByRole("checkbox", { name: "Besprechungen" }),
+    ).toBeChecked();
+  });
+
+  test("Eine Vorlage lässt sich ansehen, nicht ändern, und als eigenen Assistenten kopieren", async ({
+    page,
+  }) => {
+    await start(page);
+    await oeffneEintrag(page, "vorlage-lernpartner");
+    const ansicht = page.getByTestId("assistent-vorlage");
+    await expect(
+      ansicht.getByRole("heading", { level: 2, name: "Lernpartner" }),
+    ).toBeVisible();
+    await expect(ansicht.getByRole("textbox")).toHaveCount(0);
+    await expect(
+      ansicht.getByTestId("assistent-vorlage-anweisungen"),
+    ).not.toBeEmpty();
+    // Die Vorlage hat kein Menü mit „Löschen“ oder „Umbenennen“.
+    await page.getByTestId("assistent-vorlage-menue").click();
+    await expect(page.getByRole("menuitem", { name: "Löschen" })).toHaveCount(
+      0,
+    );
+    await expect(
+      page.getByRole("menuitem", { name: "Umbenennen" }),
+    ).toHaveCount(0);
+    await page.keyboard.press("Escape");
+
+    await ansicht.getByTestId("assistent-vorlage-kopieren").click();
+    const d = dialogName(page, "„Lernpartner“ kopieren");
+    await expect(d.getByRole("textbox", { name: "Name" })).toHaveValue(
+      "Lernpartner (Kopie)",
+    );
+    await d.getByTestId("assistent-dialog-bestaetigen").click();
+    await expect(page.getByTestId("assistent-editor-titel")).toHaveText(
+      "Lernpartner (Kopie)",
+    );
+    const saves = await speicherAufrufe(page);
+    expect(saves).toHaveLength(1);
+    expect(saves[0].args.id).toMatch(/^lernpartner-kopie/);
+    expect(saves[0].args.ersetzt).toBeNull();
+    // Die Kopie trägt die Rolle der Vorlage; die Vorlage selbst wurde nie geschrieben.
+    expect(JSON.parse(saves[0].args.inhalt).anweisungen).toContain("");
+    expect(saves.some((c) => String(c.args.id).startsWith("vorlage-"))).toBe(
+      false,
+    );
+  });
+
+  test("Umbenennen ändert nur den Namen, Löschen fragt zuerst, der gewählte Assistent fällt auf „Alles“", async ({
+    page,
+  }) => {
+    await start(page, {
+      assistenten: { ...ZWEI.assistenten, aktiv: "helfer-a" },
+    });
+    await expect(
+      zeile(page, "helfer-a").getByTestId("assistent-marke-gewaehlt"),
+    ).toBeVisible();
+    const vorher = (await stand(page)).dateien["helfer-a.json"] as string;
+
+    await menue(page, "helfer-a", "Umbenennen");
+    const d = dialogName(page, "„Helfer A“ umbenennen");
+    await d.getByRole("textbox", { name: "Name" }).fill("Helfer Alpha");
+    await d.getByTestId("assistent-dialog-bestaetigen").click();
+    await expect(zeile(page, "helfer-a")).toContainText("Helfer Alpha");
+    const saves = await speicherAufrufe(page);
+    expect(saves).toHaveLength(1);
+    expect(saves[0].args).toMatchObject({ id: "helfer-a", ersetzt: vorher });
+    expect(JSON.parse(saves[0].args.inhalt)).toMatchObject({
+      id: "helfer-a",
+      name: "Helfer Alpha",
+      beschreibung: "Der erste Helfer.",
+    });
+
+    // Löschen: die Rückfrage beginnt beim sicheren Knopf, „Abbrechen“ lässt alles.
+    await menue(page, "helfer-a", "Löschen");
+    const frage = page.getByTestId("assistent-loeschen");
+    await expect(frage).toContainText("Er ist im Gespräch gewählt");
+    await expect(
+      page.getByTestId("assistent-loeschen-abbrechen"),
+    ).toBeFocused();
+    await page.getByTestId("assistent-loeschen-abbrechen").click();
+    expect(await calls(page, "voice_assistant_delete")).toHaveLength(0);
+    await expect(zeile(page, "helfer-a")).toBeVisible();
+
+    await menue(page, "helfer-a", "Löschen");
+    await page.getByTestId("assistent-loeschen-bestaetigen").click();
+    await expect(zeile(page, "helfer-a")).toHaveCount(0);
+    const befehle = (
+      await page.evaluate(() => (window as any).__calls as Call[])
+    ).map((c) => `${c.cmd}:${JSON.stringify(c.args.id ?? "")}`);
+    const wahl = befehle.indexOf('voice_assistant_active_set:"alles"');
+    const weg = befehle.indexOf('voice_assistant_delete:"helfer-a"');
+    expect(wahl).toBeGreaterThanOrEqual(0);
+    expect(weg).toBeGreaterThan(wahl);
+    expect((await stand(page)).aktiv).toBe("alles");
+    expect(Object.keys((await stand(page)).dateien)).toEqual(["helfer-b.json"]);
+    await goTo(page, "Start");
+    await expect(picker(page)).toHaveAccessibleName("Assistent: Alles");
+  });
+
+  test("Export schreibt genau die Bytes des Formats, Abbruch und Fehler werden gesagt", async ({
+    page,
+  }) => {
+    await start(page, ZWEI);
+    await menue(page, "helfer-b", "Exportieren");
+    await expect(page.getByText("„Helfer B“ ist exportiert.")).toBeVisible();
+    const aus = await page.evaluate(() => (window as any).__exportiert);
+    expect(aus.path).toBe("/tmp/assistent-export.json");
+    expect(JSON.parse(aus.inhalt)).toMatchObject({
+      id: "helfer-b",
+      name: "Helfer B",
+    });
+    // Die Datei aus dem Export lässt sich wieder einlesen: kanonisch und ohne Verlust.
+    expect(aus.inhalt.endsWith("\n")).toBe(true);
+
+    // Abbruch im Speichern-Dialog: kein Befehl, keine Meldung.
+    await page.evaluate(() => ((window as any).__speichernZiel = null));
+    const vorher = (await calls(page, "voice_assistant_export")).length;
+    await menue(page, "helfer-b", "Exportieren");
+    await page.waitForTimeout(200);
+    expect(await calls(page, "voice_assistant_export")).toHaveLength(vorher);
+    await expect(page.getByTestId("assistent-meldung")).toHaveCount(0);
+
+    // Fehler beim Schreiben: eine Meldung mit Grund, nichts bleibt verborgen.
+    await page.evaluate(() => {
+      (window as any).__speichernZiel = "/tmp/x.json";
+      (window as any).__exportFehler = "write_failed";
+    });
+    await menue(page, "helfer-b", "Exportieren");
+    const meldung = page.getByTestId("assistent-meldung");
+    await expect(meldung).toHaveAttribute("role", "alert");
+    await expect(meldung).toContainText(
+      "„Helfer B“ ließ sich nicht exportieren",
+    );
+    await expect(meldung).toContainText("Das Schreiben ist gescheitert");
+    await page.getByTestId("assistent-meldung-schliessen").click();
+    await expect(meldung).toHaveCount(0);
+  });
+
+  test("Import: gültige Dateien werden angelegt, Kennungen kollidieren nie, ungültige werden als Liste abgewiesen und nichts wird repariert", async ({
+    page,
+  }) => {
+    await start(page);
+    const eingabe = page.getByTestId("assistent-import-datei");
+    const datei = (name: string, inhalt: string) => ({
+      name,
+      mimeType: "application/json",
+      buffer: Buffer.from(inhalt),
+    });
+
+    await eingabe.setInputFiles(
+      datei("neu.json", eigeneDatei("neu-hier", "Neu Hier")),
+    );
+    await expect(page.getByTestId("assistent-editor-titel")).toHaveText(
+      "Neu Hier",
+    );
+    let saves = await speicherAufrufe(page);
+    expect(saves).toHaveLength(1);
+    expect(saves[0].args).toMatchObject({ id: "neu-hier", ersetzt: null });
+
+    // Dieselbe Kennung noch einmal: eine neue Kennung, der Hinweis sagt es, die vorhandene Datei bleibt.
+    const erste = (await stand(page)).dateien["neu-hier.json"];
+    await eingabe.setInputFiles(
+      datei("neu.json", eigeneDatei("neu-hier", "Neu Hier 2")),
+    );
+    await expect(page.getByTestId("assistent-editor-titel")).toHaveText(
+      "Neu Hier 2",
+    );
+    saves = await speicherAufrufe(page);
+    expect(saves).toHaveLength(2);
+    expect(saves[1].args.id).not.toBe("neu-hier");
+    expect(saves[1].args.id).toMatch(/^neu-hier/);
+    expect(saves[1].args.ersetzt).toBeNull();
+    const hinweis = page.getByTestId("assistent-meldung");
+    await expect(hinweis).toHaveAttribute("role", "status");
+    await expect(hinweis).toContainText("mit einer neuen Kennung");
+    expect((await stand(page)).dateien["neu-hier.json"]).toBe(erste);
+
+    // Ungültig: Name zu lang. Fehlerliste mit Feld, nichts geschrieben.
+    await eingabe.setInputFiles(
+      datei("lang.json", eigeneDatei("lang", "x".repeat(61))),
+    );
+    const fehler = page.getByTestId("assistent-meldung");
+    await expect(fehler).toHaveAttribute("role", "alert");
+    await expect(fehler).toContainText(
+      "„lang.json“ ließ sich nicht importieren",
+    );
+    await expect(fehler).toContainText("Name: hat eine unzulässige Länge");
+    // Kein JSON.
+    await eingabe.setInputFiles(datei("kaputt.json", "{ das ist kein JSON"));
+    await expect(fehler).toContainText(
+      "„kaputt.json“ ließ sich nicht importieren",
+    );
+    await expect(fehler).toContainText("kein gültiges JSON");
+    // Leer.
+    await eingabe.setInputFiles(datei("leer.json", ""));
+    await expect(fehler).toContainText("Die Datei ist leer.");
+    // Zu groß: wird gar nicht erst angenommen.
+    await eingabe.setInputFiles(
+      datei("gross.json", `{"x":"${"a".repeat(300 * 1024)}"}`),
+    );
+    await expect(fehler).toContainText("größer als 256 KiB");
+
+    expect(await speicherAufrufe(page)).toHaveLength(2);
+    expect(Object.keys((await stand(page)).dateien).sort()).toEqual([
+      "neu-hier-2.json",
+      "neu-hier.json",
+    ]);
+  });
+
+  test("Ungültige Dateien stehen in ihrer Gruppe, zeigen die Fehler und werden nie angefasst", async ({
+    page,
+  }) => {
+    await start(page, {
+      assistenten: {
+        dateien: {
+          "helfer-a.json": eigeneDatei("helfer-a", "Helfer A"),
+          "kaputt.json": "{ das ist kein JSON",
+          "falsch.json": eigeneDatei("anders", "Falscher Name"),
+        },
+        aktiv: null,
+      },
+    });
+    const gruppe = liste(page).getByRole("region", {
+      name: "Ungültige Dateien",
+    });
+    await expect(gruppe).toBeVisible();
+    await expect(gruppe.getByRole("listitem")).toHaveCount(2);
+    await gruppe.getByRole("button", { name: /kaputt/ }).click();
+    const ansicht = page.getByTestId("assistent-abgewiesen-ansicht");
+    await expect(ansicht).toContainText("Diese Datei wird nicht geladen");
+    await expect(page.getByTestId("assistent-abgewiesen-fehler")).toContainText(
+      "kein gültiges JSON",
+    );
+    await expect(ansicht).toContainText(
+      "Die App ändert, repariert oder löscht sie nie",
+    );
+    await expect(ansicht.getByRole("textbox")).toHaveCount(0);
+    expect(await speicherAufrufe(page)).toHaveLength(0);
+    expect(await calls(page, "voice_assistant_delete")).toHaveLength(0);
+    const stand1 = await stand(page);
+    expect(stand1.dateien["kaputt.json"]).toBe("{ das ist kein JSON");
+  });
+
+  test("Ungespeicherte Änderungen werden nie still verworfen: der Wechsel fragt, ein Schreibfehler lässt den Entwurf stehen", async ({
+    page,
+  }) => {
+    await start(page, ZWEI);
+    await oeffneEintrag(page, "helfer-a");
+    const beschreibung = page.getByTestId("assistent-beschreibung");
+    await beschreibung.fill("Geändert.");
+    await expect(page.getByTestId("assistent-marke-entwurf")).toBeVisible();
+
+    // Wechsel: die Rückfrage beginnt beim sicheren Knopf; „Weiter bearbeiten“ bleibt im Entwurf.
+    await oeffneEintrag(page, "helfer-b");
+    const frage = page.getByTestId("assistent-wechsel");
+    await expect(frage).toContainText("gehen sie verloren");
+    await expect(page.getByTestId("assistent-wechsel-abbrechen")).toBeFocused();
+    await page.getByTestId("assistent-wechsel-abbrechen").click();
+    await expect(page.getByTestId("assistent-editor-titel")).toHaveText(
+      "Helfer A",
+    );
+    await expect(beschreibung).toHaveValue("Geändert.");
+
+    // Der Entwurf überlebt den Wechsel in einen anderen Bereich der App.
+    await goTo(page, "Start");
+    await oeffneVerwaltung(page);
+    await expect(page.getByTestId("assistent-beschreibung")).toHaveValue(
+      "Geändert.",
+    );
+
+    // Schreibfehler: der Grund steht in der Leiste, der Entwurf bleibt, die Datei ist unverändert.
+    const vorher = (await stand(page)).dateien["helfer-a.json"];
+    await page.evaluate(
+      () => ((window as any).__assistentSchreibFehler = "write_failed"),
+    );
+    await page.getByTestId("assistent-speichern").click();
+    await expect(page.getByTestId("assistent-speicherfehler")).toContainText(
+      "Das Schreiben ist gescheitert",
+    );
+    await expect(page.getByTestId("assistent-beschreibung")).toHaveValue(
+      "Geändert.",
+    );
+    expect((await stand(page)).dateien["helfer-a.json"]).toBe(vorher);
+    await page.evaluate(
+      () => ((window as any).__assistentSchreibFehler = null),
+    );
+    await page.getByTestId("assistent-speichern").click();
+    await expect(status(page)).toContainText("Alles gespeichert");
+    expect(
+      JSON.parse((await stand(page)).dateien["helfer-a.json"]).beschreibung,
+    ).toBe("Geändert.");
+
+    // Jetzt ohne Änderungen: der Wechsel fragt nicht.
+    await oeffneEintrag(page, "helfer-b");
+    await expect(page.getByTestId("assistent-editor-titel")).toHaveText(
+      "Helfer B",
+    );
+  });
+
+  test("Hat sich die Datei unter dem Editor geändert, gibt es einen Konflikt: nichts wird überschrieben, der Entwurf lässt sich als Kopie sichern", async ({
+    page,
+  }) => {
+    await start(page, ZWEI);
+    await oeffneEintrag(page, "helfer-a");
+    await page.getByTestId("assistent-beschreibung").fill("Meine Fassung.");
+    // Ein anderer Zugang (Abgleich, zweites Fenster) ändert die Datei.
+    const fremd = eigeneDatei("helfer-a", "Helfer A", {
+      beschreibung: "Fremde Fassung.",
+    });
+    await page.evaluate((text) => {
+      const s = JSON.parse(sessionStorage.getItem("lv-test-assistenten")!);
+      s.dateien["helfer-a.json"] = text;
+      sessionStorage.setItem("lv-test-assistenten", JSON.stringify(s));
+    }, fremd);
+    await page.getByTestId("assistent-speichern").click();
+    const konflikt = page.getByTestId("assistent-konflikt");
+    await expect(konflikt).toBeVisible();
+    await expect(konflikt).toContainText("Die Datei hat sich geändert");
+    await expect(page.getByTestId("assistent-speichern")).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    await expect(page.getByTestId("assistent-beschreibung")).toHaveValue(
+      "Meine Fassung.",
+    );
+    expect((await stand(page)).dateien["helfer-a.json"]).toBe(fremd);
+
+    await page.getByTestId("assistent-konflikt-kopie").click();
+    const d = dialogName(page, "Als Kopie speichern");
+    await expect(d.getByRole("textbox", { name: "Name" })).toHaveValue(
+      "Helfer A (Kopie)",
+    );
+    await d.getByTestId("assistent-dialog-bestaetigen").click();
+    await expect(page.getByTestId("assistent-editor-titel")).toHaveText(
+      "Helfer A (Kopie)",
+    );
+    await expect(page.getByTestId("assistent-beschreibung")).toHaveValue(
+      "Meine Fassung.",
+    );
+    // Die fremde Fassung ist unberührt, die Kopie hat meine.
+    const s = await stand(page);
+    expect(s.dateien["helfer-a.json"]).toBe(fremd);
+    expect(JSON.parse(s.dateien["helfer-a-kopie.json"]).beschreibung).toBe(
+      "Meine Fassung.",
+    );
+  });
+
+  test("Neu laden nach einem Konflikt übernimmt die Datei und verwirft den Entwurf", async ({
+    page,
+  }) => {
+    await start(page, ZWEI);
+    await oeffneEintrag(page, "helfer-a");
+    await page.getByTestId("assistent-beschreibung").fill("Meine Fassung.");
+    await page.evaluate(
+      (text) => {
+        const s = JSON.parse(sessionStorage.getItem("lv-test-assistenten")!);
+        s.dateien["helfer-a.json"] = text;
+        sessionStorage.setItem("lv-test-assistenten", JSON.stringify(s));
+      },
+      eigeneDatei("helfer-a", "Helfer A", { beschreibung: "Fremde Fassung." }),
+    );
+    await page.getByTestId("assistent-speichern").click();
+    await expect(page.getByTestId("assistent-konflikt")).toBeVisible();
+    await page.getByTestId("assistent-konflikt-neuladen").click();
+    await expect(page.getByTestId("assistent-konflikt")).toHaveCount(0);
+    await expect(page.getByTestId("assistent-beschreibung")).toHaveValue(
+      "Fremde Fassung.",
+    );
+  });
+
+  test("Die Hörprobe nutzt die Sprachausgabe und sagt einen Fehler in Worten", async ({
+    page,
+  }) => {
+    await start(page, ZWEI);
+    await oeffneEintrag(page, "helfer-a");
+    await page.getByTestId("assistent-begruessung").fill("Hallo Welt.");
+    const knopf = page.getByTestId("assistent-begruessung-hoeren");
+    await knopf.click();
+    await expect
+      .poll(async () => (await calls(page, "voice_call_synthesize")).length)
+      .toBe(1);
+    expect((await calls(page, "voice_call_synthesize"))[0].args.text).toBe(
+      "Hallo Welt.",
+    );
+    await expect(knopf).toContainText("Begrüßung anhören");
+    await page.evaluate(() => ((window as any).__syntheseFehler = "boom"));
+    await knopf.click();
+    await expect(
+      page.getByTestId("assistent-begruessung-hoeren-meldung"),
+    ).toContainText("Die Hörprobe ließ sich nicht erzeugen");
+    // Ohne Begrüßung gibt es nichts zu hören.
+    await page.getByTestId("assistent-begruessung").fill("");
+    await expect(knopf).toHaveAttribute("aria-disabled", "true");
+  });
+
+  test("Stimme: gespeicherte Stimmen werden angeboten, eine fehlende bleibt erhalten und wird so benannt", async ({
+    page,
+  }) => {
+    await install(page, "light", {
+      settings: TWO_MODELS,
+      assistenten: {
+        dateien: {
+          "helfer-a.json": eigeneDatei("helfer-a", "Helfer A", {
+            stimme: "unbekannte-stimme",
+          }),
+        },
+        aktiv: null,
+      },
+    });
+    await page.addInitScript(() => {
+      (window as any).__stimmen = [
+        { id: "anton", meta: { display_name: "Anton" }, origin: "builtin" },
+      ];
+    });
+    await openPage(page);
+    await oeffneVerwaltung(page);
+    await oeffneEintrag(page, "helfer-a");
+    const stimme = page.getByRole("combobox", { name: "Stimme", exact: true });
+    await expect(stimme).toContainText(
+      "unbekannte-stimme (auf diesem PC nicht vorhanden)",
+    );
+    await stimme.click();
+    await page.getByRole("option", { name: "Anton" }).click();
+    await expect(status(page)).toContainText("Ungespeicherte Änderungen");
+    await page.getByTestId("assistent-speichern").click();
+    await expect(status(page)).toContainText("Alles gespeichert");
+    expect(
+      JSON.parse((await stand(page)).dateien["helfer-a.json"]).stimme,
+    ).toBe("anton");
+  });
+
+  test("Unbekannte Felder der Datei bleiben beim Speichern erhalten", async ({
+    page,
+  }) => {
+    await start(page, {
+      assistenten: {
+        dateien: {
+          "helfer-a.json": eigeneDatei("helfer-a", "Helfer A", {
+            zukunft: { nummer: 12345678901234, liste: [1, 2, 3] },
+          }),
+        },
+        aktiv: null,
+      },
+    });
+    await oeffneEintrag(page, "helfer-a");
+    await page.getByTestId("assistent-beschreibung").fill("Neu.");
+    await page.getByTestId("assistent-speichern").click();
+    await expect(status(page)).toContainText("Alles gespeichert");
+    const text = (await stand(page)).dateien["helfer-a.json"] as string;
+    expect(text).toContain('"zukunft"');
+    expect(text).toContain("12345678901234");
+    expect(JSON.parse(text).beschreibung).toBe("Neu.");
+  });
+
+  test("Eingaben außerhalb der Grenzen werden gezeigt, nie gekürzt, und sperren das Speichern", async ({
+    page,
+  }) => {
+    await start(page, ZWEI);
+    await oeffneEintrag(page, "helfer-a");
+    const lang = "a".repeat(8001);
+    await page.getByTestId("assistent-anweisungen").fill(lang);
+    await expect(page.getByTestId("assistent-anweisungen-zaehler")).toHaveText(
+      "8001 / 8000",
+    );
+    await expect(page.getByTestId("assistent-feld-anweisungen")).toContainText(
+      "höchstens 8000 Zeichen",
+    );
+    await expect(page.getByTestId("assistent-anweisungen")).toHaveValue(lang);
+    await expect(page.getByTestId("assistent-speichern")).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    await page.getByTestId("assistent-speichern").click({ force: true });
+    expect(await speicherAufrufe(page)).toHaveLength(0);
+    // Über dem Budget kleiner Modelle (1200) gibt es einen Hinweis, aber keinen Fehler.
+    await page.getByTestId("assistent-anweisungen").fill("b".repeat(1300));
+    await expect(page.getByTestId("assistent-budget-hinweis")).toBeVisible();
+    await expect(page.getByTestId("assistent-speichern")).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    // Name leer: Fehler am Feld.
+    await page.getByTestId("assistent-name").fill("   ");
+    await expect(page.getByTestId("assistent-feld-name")).toContainText(
+      "Der Name muss 1 bis 60 Zeichen lang sein.",
+    );
+    await expect(page.getByTestId("assistent-speichern")).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  });
+
+  test("Platzhalter lassen sich an der Stelle des Cursors einfügen", async ({
+    page,
+  }) => {
+    await start(page, ZWEI);
+    await oeffneEintrag(page, "helfer-a");
+    const feld = page.getByTestId("assistent-anweisungen");
+    await feld.fill("Sprich mit  an.");
+    await feld.evaluate((el: HTMLTextAreaElement) => {
+      el.focus();
+      el.setSelectionRange(11, 11);
+    });
+    await page.getByTestId("assistent-platzhalter-name").click();
+    await expect(feld).toHaveValue("Sprich mit {{name}} an.");
+    await expect(
+      page.getByRole("button", { name: "Platzhalter für den Namen einfügen" }),
+    ).toBeVisible();
+  });
+
+  test("Tastatur und Screenreader: jedes Feld hat einen Namen, die Liste ist mit Tab und Eingabe bedienbar", async ({
+    page,
+  }) => {
+    await start(page, ZWEI);
+    // Liste: Zeile und Menü sind Knöpfe, die Eingabetaste öffnet, Esc schließt das Menü und gibt den Fokus zurück.
+    const zeileA = page.getByTestId("assistent-oeffnen-helfer-a");
+    await zeileA.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("assistent-editor-titel")).toHaveText(
+      "Helfer A",
+    );
+    await expect(zeileA).toHaveAttribute("aria-current", "true");
+    const menueKnopf = page.getByTestId("assistent-menue-helfer-a");
+    await expect(menueKnopf).toHaveAccessibleName("Aktionen für Helfer A");
+    await menueKnopf.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("menu")).toBeVisible();
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await expect(menueKnopf).toBeFocused();
+
+    const editor = page.getByTestId("assistent-editor");
+    for (const [rolle, name] of [
+      ["textbox", "Name"],
+      ["textbox", "Beschreibung"],
+      ["textbox", "Anweisungen"],
+      ["textbox", "Begrüßung"],
+      ["combobox", "Sprache"],
+      ["combobox", "Stimme"],
+      ["combobox", "Sprechstil"],
+      ["combobox", "Sprechpause"],
+      ["combobox", "Nachfrage bei Stille"],
+      ["switch", "Unterbrechen erlauben"],
+      ["switch", "Alle freigegebenen Bereiche"],
+      ["button", "Speichern"],
+      ["button", "Änderungen verwerfen"],
+      ["button", "Im Gespräch verwenden"],
+    ] as const)
+      await expect(
+        editor.getByRole(rolle, { name, exact: true }),
+        `${rolle} ${name}`,
+      ).toBeVisible();
+    await expect(
+      editor.getByRole("group", { name: "Wissensbereiche des Assistenten" }),
+    ).toBeVisible();
+    // Der Zähler steht als Text da (nicht nur als Farbe).
+    await expect(page.getByTestId("assistent-anweisungen-zaehler")).toHaveText(
+      "20 / 8000",
+    );
+    // Der Status der Leiste wird angesagt.
+    await expect(status(page)).toHaveAttribute("role", "status");
+  });
+
+  for (const theme of ["light", "dark"] as const) {
+    test(`Axe (${theme}): Liste und Editor haben keine Verstöße gegen Name, Rolle, Wert und Kontrast`, async ({
+      page,
+    }) => {
+      await install(page, theme, { settings: TWO_MODELS, ...ZWEI });
+      await openPage(page);
+      await oeffneVerwaltung(page);
+      await oeffneEintrag(page, "helfer-a");
+      await expect(page.getByTestId("assistent-editor")).toBeVisible();
+      const result = await new AxeBuilder({ page })
+        .include('[data-testid="assistenten-seite"]')
+        .exclude("[data-tabster-dummy]")
+        .withRules([
+          "aria-allowed-attr",
+          "aria-required-attr",
+          "aria-valid-attr-value",
+          "button-name",
+          "label",
+          "aria-roles",
+          "aria-required-children",
+          "aria-required-parent",
+          "heading-order",
+          "color-contrast",
+          "duplicate-id-aria",
+        ])
+        .analyze();
+      expect(
+        result.violations.map(
+          (v) =>
+            `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`,
+        ),
+      ).toEqual([]);
+    });
+  }
+
+  test("Schmal (390 px): eine Spalte, Ziele mindestens 44 px, keine waagerechte Bildlaufleiste, Zurück zur Liste", async ({
+    browser,
+  }) => {
+    const ctx = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      baseURL: test.info().project.use.baseURL,
+      hasTouch: true,
+    });
+    const page = await ctx.newPage();
+    await install(page, "light", { settings: TWO_MODELS, ...ZWEI });
+    await openPage(page);
+    await oeffneVerwaltung(page);
+    const keineLeiste = () =>
+      page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      );
+    // Liste: die Ansicht ist verborgen, Zeilen und Menüs sind groß genug.
+    await expect(page.getByTestId("assistent-leer")).toBeHidden();
+    const hoehe = async (id: string) =>
+      (await page.getByTestId(id).boundingBox())!.height;
+    expect(await hoehe("assistent-oeffnen-helfer-a")).toBeGreaterThanOrEqual(
+      44,
+    );
+    const menueBox = (await page
+      .getByTestId("assistent-menue-helfer-a")
+      .boundingBox())!;
+    expect(menueBox.width).toBeGreaterThanOrEqual(44);
+    expect(menueBox.height).toBeGreaterThanOrEqual(44);
+    expect(await hoehe("assistent-neu")).toBeGreaterThanOrEqual(44);
+    expect(await hoehe("assistent-importieren")).toBeGreaterThanOrEqual(44);
+    expect(await keineLeiste()).toBe(true);
+
+    await oeffneEintrag(page, "helfer-a");
+    await expect(liste(page)).toBeHidden();
+    await expect(page.getByTestId("assistent-editor")).toBeVisible();
+    expect(await hoehe("assistent-speichern")).toBeGreaterThanOrEqual(44);
+    expect(await hoehe("assistent-zurueck")).toBeGreaterThanOrEqual(44);
+    expect(await keineLeiste()).toBe(true);
+    // Wissen: Bezeichnung und Status eines Bereichs überlappen sich nicht (der lange Status bricht um).
+    const ueberlappt = await page.evaluate(
+      () =>
+        [...document.querySelectorAll(".lv-asst-bereich")].filter((zeile) => {
+          const text = zeile.querySelector(".lv-asst-bereich__text")!;
+          const status = zeile.querySelector(".lv-asst-bereich__status")!;
+          return (
+            text.scrollWidth > text.clientWidth + 1 ||
+            text.getBoundingClientRect().right >
+              status.getBoundingClientRect().left + 0.5
+          );
+        }).length,
+    );
+    expect(ueberlappt).toBe(0);
+    for (const id of ["assistent-beschreibung", "assistent-anweisungen"])
+      expect(await hoehe(id)).toBeGreaterThanOrEqual(44);
+    // Das Namensfeld: die Umrandung (das Feld im Rahmen) ist mindestens 44 px hoch.
+    const namensfeld = (await page
+      .getByTestId("assistent-feld-name")
+      .locator(".lv-input")
+      .boundingBox())!;
+    expect(namensfeld.height).toBeGreaterThanOrEqual(44);
+    await page.getByTestId("assistent-zurueck").click();
+    await expect(liste(page)).toBeVisible();
+    await expect(page.getByTestId("assistent-editor")).toHaveCount(0);
+    await ctx.close();
+  });
+
+  test("Ein Gespräch läuft: „Im Gespräch verwenden“ ist gesperrt und nennt den Grund", async ({
+    page,
+  }) => {
+    await start(page, ZWEI);
+    await oeffneEintrag(page, "vorlage-lernpartner");
+    await expect(page.getByTestId("assistent-verwenden")).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    await oeffneEintrag(page, "helfer-a");
+    // Ungespeichert: erst speichern.
+    await page.getByTestId("assistent-beschreibung").fill("x");
+    const knopf = page.getByTestId("assistent-verwenden");
+    await expect(knopf).toHaveAttribute("aria-disabled", "true");
+    await expect(page.getByTestId("assistent-verwenden-grund")).toContainText(
+      "Erst speichern",
+    );
+    await expect(knopf).toHaveAccessibleDescription(/Erst speichern/);
+  });
+
+  // ---------------------------------------------------------------- Aussprache (Feld des Profils, Kern lva#592)
+  const wort = (page: Page, i: number) =>
+    page.getByTestId(`assistent-aussprache-wort-${i}`);
+  const aussprache = (page: Page, i: number) =>
+    page.getByTestId(`assistent-aussprache-aussprache-${i}`);
+  const hinzu = (page: Page) => page.getByTestId("assistent-aussprache-hinzu");
+  const regelZaehler = (page: Page) =>
+    page.getByTestId("assistent-aussprache-zaehler");
+  const speichern = (page: Page) => page.getByTestId("assistent-speichern");
+  const gespeichert = async (page: Page, datei = "helfer-a.json") =>
+    JSON.parse((await stand(page)).dateien[datei]);
+  const regel = (w: string, a: string, extra: object = {}) => ({
+    wort: w,
+    aussprache: a,
+    ...extra,
+  });
+  const mitRegeln = (liste: object[], extra: object = {}) => ({
+    assistenten: {
+      dateien: {
+        "helfer-a.json": eigeneDatei("helfer-a", "Helfer A", {
+          aussprache: liste,
+          ...extra,
+        }),
+      },
+      aktiv: null,
+    },
+  });
+
+  test("Aussprache: Regeln anlegen, ordnen, prüfen, speichern, Neustart, alle entfernen: das Feld fehlt dann, nie []", async ({
+    page,
+  }) => {
+    await start(page, ZWEI);
+    await oeffneEintrag(page, "helfer-a");
+    await expect(regelZaehler(page)).toHaveText("0 von 50 Regeln");
+    await expect(page.getByTestId("assistent-aussprache-leer")).toBeVisible();
+
+    // Eine neue Regel: der Fokus geht ins Wort; eine frische Zeile ist noch nicht „falsch“, speichern geht aber erst gefüllt.
+    await hinzu(page).click();
+    await expect(wort(page, 0)).toBeFocused();
+    await expect(regelZaehler(page)).toHaveText("1 von 50 Regeln");
+    await expect(
+      page.getByTestId("assistent-aussprache-wort-fehler-0"),
+    ).toHaveCount(0);
+    await expect(page.getByTestId("assistent-aussprache-offen")).toBeVisible();
+    await expect(speichern(page)).toHaveAttribute("aria-disabled", "true");
+    await expect(status(page)).toContainText("2 Angaben sind nicht gültig.");
+    // Das Feld verlassen, ohne etwas einzutragen: jetzt sagt es, was fehlt.
+    await wort(page, 0).focus();
+    await aussprache(page, 0).focus();
+    await expect(
+      page.getByTestId("assistent-aussprache-wort-fehler-0"),
+    ).toHaveText("Hier sind 1 bis 60 Zeichen nötig.");
+
+    await wort(page, 0).fill("SQL");
+    await aussprache(page, 0).fill("Siekwel");
+    await expect(
+      page.getByTestId("assistent-aussprache-wort-fehler-0"),
+    ).toHaveCount(0);
+    await expect(page.getByTestId("assistent-aussprache-offen")).toHaveCount(0);
+    await expect(speichern(page)).not.toHaveAttribute("aria-disabled", "true");
+
+    // Eine zweite, danach nach oben: der Fokus bleibt auf dem Knopf, der Zähler stimmt, die Reihenfolge ist die der Liste.
+    await hinzu(page).click();
+    await wort(page, 1).fill("Wolff.ai");
+    await aussprache(page, 1).fill("Wolf Punkt A I");
+    await page.getByTestId("assistent-aussprache-hoch-1").click();
+    await expect(wort(page, 0)).toHaveValue("Wolff.ai");
+    await expect(wort(page, 1)).toHaveValue("SQL");
+    await expect(page.getByTestId("assistent-aussprache-hoch-0")).toBeFocused();
+    await expect(
+      page.getByTestId("assistent-aussprache-hoch-0"),
+    ).toHaveAttribute("aria-disabled", "true");
+    await expect(
+      page.getByTestId("assistent-aussprache-runter-1"),
+    ).toHaveAttribute("aria-disabled", "true");
+    await expect(page.getByTestId("assistent-aussprache-angesagt")).toHaveText(
+      "Regel 2 steht jetzt an Stelle 1",
+    );
+
+    // Fehler des Kerns je Zeile: Dublette, Klammern, Länge; gespeichert wird nichts, solange einer offen ist.
+    await hinzu(page).click();
+    await wort(page, 2).fill("SQL");
+    await aussprache(page, 2).fill("noch einmal");
+    await expect(
+      page.getByTestId("assistent-aussprache-wort-fehler-2"),
+    ).toHaveText("Dieses Wort hat schon eine Regel davor.");
+    await expect(speichern(page)).toHaveAttribute("aria-disabled", "true");
+    await expect(status(page)).toContainText("1 Angabe ist nicht gültig.");
+    await wort(page, 2).fill("[lachen]");
+    await expect(
+      page.getByTestId("assistent-aussprache-wort-fehler-2"),
+    ).toHaveText(
+      "Steuer- und Richtungszeichen sowie < > [ ] sind nicht erlaubt.",
+    );
+    await expect(wort(page, 2)).toHaveAttribute("aria-invalid", "true");
+    await wort(page, 2).fill("x".repeat(61));
+    await expect(
+      page.getByTestId("assistent-aussprache-wort-fehler-2"),
+    ).toHaveText("Hier sind 1 bis 60 Zeichen nötig.");
+    await aussprache(page, 2).fill("a<b");
+    await expect(
+      page.getByTestId("assistent-aussprache-aussprache-fehler-2"),
+    ).toHaveText(
+      "Steuer- und Richtungszeichen sowie < > [ ] sind nicht erlaubt.",
+    );
+    // Entfernen: der Fokus geht auf die Zeile davor, der Rest ist wieder gültig.
+    await page.getByTestId("assistent-aussprache-entfernen-2").click();
+    await expect(regelZaehler(page)).toHaveText("2 von 50 Regeln");
+    await expect(wort(page, 1)).toBeFocused();
+    await expect(speichern(page)).not.toHaveAttribute("aria-disabled", "true");
+
+    // Speichern: genau die beiden Regeln in dieser Reihenfolge, sonst nichts Neues.
+    const vorher = await gespeichert(page);
+    expect(Object.hasOwn(vorher, "aussprache")).toBe(false);
+    await speichern(page).click();
+    await expect(status(page)).toContainText("Alles gespeichert");
+    expect((await gespeichert(page)).aussprache).toEqual([
+      regel("Wolff.ai", "Wolf Punkt A I"),
+      regel("SQL", "Siekwel"),
+    ]);
+
+    // Neustart: die Regeln stehen in der Datei und im Editor.
+    await page.reload();
+    await goTo(page, "Start");
+    await oeffneVerwaltung(page);
+    await oeffneEintrag(page, "helfer-a");
+    await expect(regelZaehler(page)).toHaveText("2 von 50 Regeln");
+    await expect(wort(page, 0)).toHaveValue("Wolff.ai");
+    await expect(aussprache(page, 1)).toHaveValue("Siekwel");
+
+    // Alle entfernen: der Fokus geht auf „Regel hinzufügen“, und die Datei hat das Feld nicht mehr (nie `[]`).
+    await page.getByTestId("assistent-aussprache-entfernen-0").click();
+    await page.getByTestId("assistent-aussprache-entfernen-0").click();
+    await expect(regelZaehler(page)).toHaveText("0 von 50 Regeln");
+    await expect(page.getByTestId("assistent-aussprache-leer")).toBeVisible();
+    await expect(hinzu(page)).toBeFocused();
+    await speichern(page).click();
+    await expect(status(page)).toContainText("Alles gespeichert");
+    const text = (await stand(page)).dateien["helfer-a.json"] as string;
+    expect(text).not.toContain("aussprache");
+    expect(text).not.toMatch(/"aussprache"\s*:\s*\[\s*\]/);
+    expect(Object.hasOwn(JSON.parse(text), "aussprache")).toBe(false);
+  });
+
+  test("Aussprache: ohne Eingriff in die Regeln bleibt das Feld weg; eine leere Liste aus der Datei wird nie wieder als [] geschrieben", async ({
+    page,
+  }) => {
+    await start(page, ZWEI);
+    await oeffneEintrag(page, "helfer-a");
+    await page.getByTestId("assistent-beschreibung").fill("Neu beschrieben.");
+    await speichern(page).click();
+    await expect(status(page)).toContainText("Alles gespeichert");
+    const gespeichertA = (await stand(page)).dateien["helfer-a.json"] as string;
+    expect(gespeichertA).toContain("Neu beschrieben.");
+    expect(gespeichertA).not.toContain("aussprache");
+
+    // Eine Datei mit leerer Liste: öffnen ist keine Änderung, mit einer anderen Änderung fällt das Feld weg.
+    await page.getByTestId("assistent-zurueck").click();
+    await page.evaluate(() => {
+      const s = JSON.parse(sessionStorage.getItem("lv-test-assistenten")!);
+      const b = JSON.parse(s.dateien["helfer-b.json"]);
+      b.aussprache = [];
+      s.dateien["helfer-b.json"] = JSON.stringify(b, null, 2);
+      sessionStorage.setItem("lv-test-assistenten", JSON.stringify(s));
+    });
+    await page.reload();
+    await goTo(page, "Start");
+    await oeffneVerwaltung(page);
+    await oeffneEintrag(page, "helfer-b");
+    await expect(regelZaehler(page)).toHaveText("0 von 50 Regeln");
+    await expect(status(page)).toContainText("Alles gespeichert");
+    await expect(speichern(page)).toHaveAttribute("aria-disabled", "true");
+    await page
+      .getByTestId("assistent-beschreibung")
+      .fill("Mit anderer Änderung.");
+    await speichern(page).click();
+    await expect(status(page)).toContainText("Alles gespeichert");
+    const b = (await stand(page)).dateien["helfer-b.json"] as string;
+    expect(b).toContain("Mit anderer Änderung.");
+    expect(b).not.toContain("aussprache");
+  });
+
+  test("Aussprache: unbekannte Felder (einer Regel und des Profils), die Reihenfolge und alle Werte bleiben beim Speichern, wie sie waren", async ({
+    page,
+  }) => {
+    await start(
+      page,
+      mitRegeln(
+        [
+          regel("SQL", "Siekwel", { notiz: { von: "Anna", n: 2.5 } }),
+          regel("BU", "Be-urlaubung"),
+          regel("Wolff.ai", "Wolf Punkt A I", { notiz: "bleibt" }),
+        ],
+        { zukunft: [1, 2.5, null] },
+      ),
+    );
+    await oeffneEintrag(page, "helfer-a");
+    await expect(regelZaehler(page)).toHaveText("3 von 50 Regeln");
+    await page.getByTestId("assistent-beschreibung").fill("Nur dies.");
+    await speichern(page).click();
+    await expect(status(page)).toContainText("Alles gespeichert");
+    let d = await gespeichert(page);
+    expect(d.beschreibung).toBe("Nur dies.");
+    expect(d.zukunft).toEqual([1, 2.5, null]);
+    expect(d.aussprache).toEqual([
+      regel("SQL", "Siekwel", { notiz: { von: "Anna", n: 2.5 } }),
+      regel("BU", "Be-urlaubung"),
+      regel("Wolff.ai", "Wolf Punkt A I", { notiz: "bleibt" }),
+    ]);
+    // Eine Regel ändern und eine andere verschieben: die Notizen gehen mit ihren Regeln.
+    await aussprache(page, 1).fill("Be Urlaubung");
+    await page.getByTestId("assistent-aussprache-runter-0").click();
+    await expect(wort(page, 0)).toHaveValue("BU");
+    await expect(wort(page, 1)).toHaveValue("SQL");
+    await speichern(page).click();
+    await expect(status(page)).toContainText("Alles gespeichert");
+    d = await gespeichert(page);
+    expect(d.aussprache).toEqual([
+      regel("BU", "Be Urlaubung"),
+      regel("SQL", "Siekwel", { notiz: { von: "Anna", n: 2.5 } }),
+      regel("Wolff.ai", "Wolf Punkt A I", { notiz: "bleibt" }),
+    ]);
+    expect(d.zukunft).toEqual([1, 2.5, null]);
+  });
+
+  test("Aussprache: höchstens 50 Regeln, die 51. lässt sich nicht anlegen und der Grund steht da", async ({
+    page,
+  }) => {
+    const neunundvierzig = Array.from({ length: 49 }, (_, i) =>
+      regel(`wort${i}`, `aussprache ${i}`),
+    );
+    await start(page, mitRegeln(neunundvierzig));
+    await oeffneEintrag(page, "helfer-a");
+    await expect(regelZaehler(page)).toHaveText("49 von 50 Regeln");
+    await expect(hinzu(page)).not.toHaveAttribute("aria-disabled", "true");
+    await hinzu(page).click();
+    await wort(page, 49).fill("letztes");
+    await aussprache(page, 49).fill("das letzte");
+    await expect(regelZaehler(page)).toHaveText("50 von 50 Regeln");
+    await expect(hinzu(page)).toHaveAttribute("aria-disabled", "true");
+    await expect(page.getByTestId("assistent-aussprache-voll")).toHaveText(
+      "Mehr als 50 Regeln nimmt das Profil nicht an.",
+    );
+    await expect(hinzu(page)).toHaveAccessibleDescription(
+      "Mehr als 50 Regeln nimmt das Profil nicht an.",
+    );
+    await hinzu(page).click({ force: true });
+    await expect(regelZaehler(page)).toHaveText("50 von 50 Regeln");
+    await expect(page.getByTestId("assistent-aussprache-zeile-50")).toHaveCount(
+      0,
+    );
+    // Speichern geht mit genau 50, danach ist Platz, sobald eine entfernt ist.
+    await speichern(page).click();
+    await expect(status(page)).toContainText("Alles gespeichert");
+    expect((await gespeichert(page)).aussprache).toHaveLength(50);
+    await page.getByTestId("assistent-aussprache-entfernen-10").click();
+    await expect(hinzu(page)).not.toHaveAttribute("aria-disabled", "true");
+    await expect(regelZaehler(page)).toHaveText("49 von 50 Regeln");
+  });
+
+  test("Aussprache: ungültige Regeln in einer Datei werden beim Import mit Regel und Feld abgewiesen, nichts wird repariert", async ({
+    page,
+  }) => {
+    await start(page);
+    const eingabe = page.getByTestId("assistent-import-datei");
+    await eingabe.setInputFiles({
+      name: "regeln.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(
+        eigeneDatei("regeln", "Regeln", {
+          aussprache: [
+            regel("gut", "gut"),
+            regel("[lachen]", "x"),
+            regel("gut", "doppelt"),
+          ],
+        }),
+      ),
+    });
+    const fehler = page.getByTestId("assistent-meldung");
+    await expect(fehler).toHaveAttribute("role", "alert");
+    await expect(fehler).toContainText(
+      "„regeln.json“ ließ sich nicht importieren",
+    );
+    await expect(fehler).toContainText(
+      "Aussprache, Regel 2, Wort: enthält nicht erlaubte Zeichen",
+    );
+    await expect(fehler).toContainText(
+      "Aussprache, Regel 3, Wort: kommt doppelt vor",
+    );
+    expect(await speicherAufrufe(page)).toHaveLength(0);
+    // Eine gültige Datei mit Regeln wird angelegt und zeigt sie.
+    await eingabe.setInputFiles({
+      name: "gut.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(
+        eigeneDatei("gut", "Gut", {
+          aussprache: [regel("SQL", "Siekwel")],
+        }),
+      ),
+    });
+    await expect(page.getByTestId("assistent-editor-titel")).toHaveText("Gut");
+    await expect(regelZaehler(page)).toHaveText("1 von 50 Regeln");
+    await expect(wort(page, 0)).toHaveValue("SQL");
+  });
+
+  test("Aussprache: Tastatur und Vorleseprogramm: jedes Feld hat einen Namen mit der Regel, die Knöpfe sind erreichbar, Fehler hängen am Feld", async ({
+    page,
+  }) => {
+    await start(
+      page,
+      mitRegeln([regel("SQL", "Siekwel"), regel("BU", "Be-urlaubung")]),
+    );
+    await oeffneEintrag(page, "helfer-a");
+    await expect(wort(page, 1)).toHaveAccessibleName("Wort Regel 2");
+    await expect(aussprache(page, 1)).toHaveAccessibleName(
+      "Aussprache Regel 2",
+    );
+    await expect(
+      page.getByTestId("assistent-aussprache-liste"),
+    ).toHaveAccessibleName("Ausspracheregeln");
+    await expect(
+      page.getByTestId("assistent-aussprache-hoch-1"),
+    ).toHaveAccessibleName("Regel 2 nach oben");
+    await expect(
+      page.getByTestId("assistent-aussprache-entfernen-0"),
+    ).toHaveAccessibleName("Regel 1 entfernen");
+    // Nur mit der Tastatur: Tab von der Aussprache der ersten Regel geht über ihre Knöpfe in die zweite Regel.
+    await aussprache(page, 0).focus();
+    await page.keyboard.press("Tab");
+    await expect(page.getByTestId("assistent-aussprache-hoch-0")).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(
+      page.getByTestId("assistent-aussprache-runter-0"),
+    ).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(wort(page, 0)).toHaveValue("BU");
+    await expect(
+      page.getByTestId("assistent-aussprache-runter-1"),
+    ).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(page.getByTestId("assistent-aussprache-hoch-1")).toBeFocused();
+    // Ein Fehler hängt per aria-describedby am Feld.
+    await wort(page, 0).fill("a>b");
+    await expect(wort(page, 0)).toHaveAttribute("aria-invalid", "true");
+    await expect(wort(page, 0)).toHaveAccessibleDescription(
+      "Steuer- und Richtungszeichen sowie < > [ ] sind nicht erlaubt.",
+    );
+    // Die Liste ist eine Liste (Vorleseprogramme sagen „Liste mit 2 Einträgen“).
+    await expect(
+      page.getByTestId("assistent-aussprache-liste").getByRole("listitem"),
+    ).toHaveCount(2);
+  });
+
+  for (const theme of ["light", "dark"] as const) {
+    test(`Axe (${theme}): der Abschnitt Aussprache mit Regeln und einem Fehler hat keine Verstöße`, async ({
+      page,
+    }) => {
+      await install(page, theme, {
+        settings: TWO_MODELS,
+        ...mitRegeln([regel("SQL", "Siekwel"), regel("BU", "Be-urlaubung")]),
+      });
+      await openPage(page);
+      await oeffneVerwaltung(page);
+      await oeffneEintrag(page, "helfer-a");
+      await wort(page, 1).fill("SQL");
+      await expect(
+        page.getByTestId("assistent-aussprache-wort-fehler-1"),
+      ).toBeVisible();
+      const result = await new AxeBuilder({ page })
+        .include('[data-testid="assistent-aussprache"]')
+        .exclude("[data-tabster-dummy]")
+        .withRules([
+          "aria-allowed-attr",
+          "aria-required-attr",
+          "aria-valid-attr-value",
+          "button-name",
+          "label",
+          "aria-roles",
+          "aria-required-children",
+          "aria-required-parent",
+          "color-contrast",
+          "duplicate-id-aria",
+          "listitem",
+          "list",
+        ])
+        .analyze();
+      expect(
+        result.violations.map(
+          (v) =>
+            `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`,
+        ),
+      ).toEqual([]);
+    });
+  }
+
+  test("Aussprache: schmal (390 px) stehen die Felder einer Regel untereinander, alle Ziele sind mindestens 44 px, keine waagerechte Bildlaufleiste; breit stehen sie nebeneinander", async ({
+    browser,
+  }) => {
+    const ctx = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      baseURL: test.info().project.use.baseURL,
+      hasTouch: true,
+    });
+    const page = await ctx.newPage();
+    await install(page, "light", {
+      settings: TWO_MODELS,
+      ...mitRegeln([regel("SQL", "Siekwel"), regel("BU", "Be-urlaubung")]),
+    });
+    await openPage(page);
+    await oeffneVerwaltung(page);
+    await oeffneEintrag(page, "helfer-a");
+    await expect(page.getByTestId("assistent-aussprache")).toBeVisible();
+    const box = async (id: string) =>
+      (await page.getByTestId(id).boundingBox())!;
+    for (const id of [
+      "assistent-aussprache-hoch-1",
+      "assistent-aussprache-runter-0",
+      "assistent-aussprache-entfernen-0",
+    ]) {
+      const b = await box(id);
+      expect(b.width, id).toBeGreaterThanOrEqual(44);
+      expect(b.height, id).toBeGreaterThanOrEqual(44);
+    }
+    expect(
+      (await box("assistent-aussprache-hinzu")).height,
+    ).toBeGreaterThanOrEqual(44);
+    for (const id of [
+      "assistent-aussprache-wort-0",
+      "assistent-aussprache-aussprache-0",
+    ]) {
+      const feld = (await page
+        .getByTestId(id)
+        .locator("xpath=ancestor::*[contains(@class,'lv-input')][1]")
+        .boundingBox())!;
+      expect(feld.height, id).toBeGreaterThanOrEqual(44);
+    }
+    // Untereinander: das Aussprache-Feld liegt unter dem Wort-Feld.
+    const w = await box("assistent-aussprache-wort-0");
+    const a = await box("assistent-aussprache-aussprache-0");
+    expect(a.y).toBeGreaterThan(w.y + w.height - 1);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    // Breit: nebeneinander, mit Spaltenköpfen.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const w2 = await box("assistent-aussprache-wort-0");
+    const a2 = await box("assistent-aussprache-aussprache-0");
+    expect(a2.x).toBeGreaterThan(w2.x + w2.width - 1);
+    expect(Math.abs(a2.y - w2.y)).toBeLessThan(4);
+    await ctx.close();
+  });
+});
+
+test.describe("Seite Assistenten Abnahmebilder @screenshots", () => {
+  test("hell und dunkel, breit und schmal", async ({ browser }) => {
+    test.skip(!SHOTS, "nur für Abnahmebilder (SCREENS_DIR)");
+    mkdirSync(SHOTS, { recursive: true });
+    const eigene = (id: string, name: string, extra: object = {}) => {
+      const alles = JSON.parse(
+        readFileSync(
+          join(process.cwd(), "..", "shared", "assistenten", "vorlagen.json"),
+          "utf-8",
+        ),
+      ).find((v: { id: string }) => v.id === "alles");
+      return JSON.stringify({ ...alles, id, name, ...extra }, null, 2);
+    };
+    const dateien = {
+      "kundenservice.json": eigene("kundenservice", "Kundenservice", {
+        beschreibung: "Freundlich, kurz, mit Blick auf offene Anliegen.",
+        anweisungen:
+          "Du bist die Stimme unseres Kundenservice. Begrüße freundlich, frage nach dem Anliegen und fasse am Ende kurz zusammen, was vereinbart wurde.\n\nAntworte in zwei bis drei Sätzen und ohne Fachbegriffe.",
+        begruessung: "Guten {{tageszeit}}, hier ist der Kundenservice.",
+        aussprache: [
+          { wort: "SQL", aussprache: "Siekwel" },
+          { wort: "Wolff.ai", aussprache: "Wolf Punkt A I" },
+          { wort: "DSGVO", aussprache: "Daten Schutz Grund Verordnung" },
+        ],
+        verhalten: {
+          stil: "natuerlich",
+          sprechpause: "lang",
+          unterbrechen: true,
+          nachfrage_stille_s: 15,
+        },
+        wissen: {
+          alle_bereiche: false,
+          bereiche: ["besprechungen", "kalender"],
+          modus: "alles",
+          kontexte: [],
+        },
+      }),
+      "recherche.json": eigene("recherche", "Recherche-Assistent", {
+        beschreibung: "Sucht in Büchern und Notizen.",
+      }),
+      "kaputt.json": "{ das ist kein JSON",
+    };
+    const shoot = async (
+      theme: "light" | "dark",
+      size: { width: number; height: number },
+      name: string,
+    ) => {
+      const ctx = await browser.newContext({
+        viewport: size,
+        baseURL: test.info().project.use.baseURL,
+      });
+      const page = await ctx.newPage();
+      await install(page, theme, {
+        settings: {
+          ...TWO_MODELS,
+          voice_call_knowledge: ["meetings", "calendar", "dictations"],
+        },
+        assistenten: { dateien, aktiv: "kundenservice" },
+      });
+      await openPage(page);
+      await picker(page).click();
+      await page
+        .getByRole("menuitem", { name: "Assistenten verwalten …", exact: true })
+        .click();
+      await expect(page.getByTestId("assistenten-seite")).toBeVisible();
+      await page.screenshot({ path: `${SHOTS}/assistenten-liste-${name}.png` });
+      await page.getByTestId("assistent-oeffnen-kundenservice").click();
+      await expect(page.getByTestId("assistent-editor")).toBeVisible();
+      await page.screenshot({
+        path: `${SHOTS}/assistenten-editor-${name}.png`,
+      });
+      await page.getByTestId("assistent-aussprache").scrollIntoViewIfNeeded();
+      await page.screenshot({
+        path: `${SHOTS}/assistenten-editor-unten-${name}.png`,
+      });
+      // Eine neue Regel mit Fehlern: Dublette und nicht erlaubte Zeichen stehen an der Zeile.
+      await page.getByTestId("assistent-aussprache-hinzu").click();
+      await page.getByTestId("assistent-aussprache-wort-3").fill("SQL");
+      await page
+        .getByTestId("assistent-aussprache-aussprache-3")
+        .fill("[lachen]");
+      await expect(
+        page.getByTestId("assistent-aussprache-wort-fehler-3"),
+      ).toBeVisible();
+      // Mittig, damit die Fehlertexte nicht hinter der Speicherleiste unten stehen.
+      await page
+        .getByTestId("assistent-aussprache-zeile-3")
+        .evaluate((el) => el.scrollIntoView({ block: "center" }));
+      await page.screenshot({
+        path: `${SHOTS}/assistenten-aussprache-fehler-${name}.png`,
+      });
+      await ctx.close();
+    };
+    const picker = (page: Page) => page.getByTestId("assistent-picker");
+    await shoot("light", { width: 1440, height: 900 }, "hell-1440");
+    await shoot("dark", { width: 1440, height: 900 }, "dunkel-1440");
+    await shoot("light", { width: 390, height: 844 }, "hell-390");
+    await shoot("dark", { width: 390, height: 844 }, "dunkel-390");
   });
 });

@@ -11,7 +11,7 @@ import {
   MenuTrigger,
   MenuDivider,
 } from "@fluentui/react-components";
-import { ChevronDown, Clock, UserRound } from "lucide-react";
+import { ChevronDown, Clock, UserRound, UserRoundCog } from "lucide-react";
 import { useAssistentStore } from "@/stores/assistentStore";
 import { useVoiceCallStore } from "@/stores/voiceCallStore";
 import { useGeltenderAssistent } from "./profil/gilt";
@@ -61,6 +61,14 @@ export const AssistentPicker: React.FC<{ gesperrt?: boolean }> = ({
   const eintrag = "max-sm:!min-h-[44px]";
   const vorlagen = VORLAGEN.filter((p) => p.id !== ALLES_ID);
   const eigene = assistenten.eigene.map((e) => e.profil);
+
+  // Die Seite „Assistenten“ (lva#556): Liste, Editor, Import und Export; sie ist kein Eintrag der Seitenleiste.
+  const verwalten = () => {
+    setOffen(false);
+    window.dispatchEvent(
+      new CustomEvent("lv-navigate", { detail: { section: "assistenten" } }),
+    );
+  };
 
   const waehlen = (id: string) => {
     if (id === aktiv.id) return;
@@ -190,6 +198,15 @@ export const AssistentPicker: React.FC<{ gesperrt?: boolean }> = ({
                 </MenuGroup>
               </>
             )}
+            <MenuDivider />
+            <MenuItem
+              icon={<UserRoundCog size={16} aria-hidden="true" />}
+              className={eintrag}
+              onClick={verwalten}
+              data-testid="assistent-verwalten"
+            >
+              {t("voiceCall.assistant.manage")}
+            </MenuItem>
             {(ladefehler || assistenten.abgewiesen.length > 0) && (
               <>
                 <MenuDivider />

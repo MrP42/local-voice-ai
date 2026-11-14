@@ -22,6 +22,7 @@ import {
   FolderArchive,
   Folder,
   UserRound,
+  UserRoundCog,
   X,
 } from "lucide-react";
 import {
@@ -38,6 +39,7 @@ import { KontoProfilSeite } from "./konto/KontoProfilSeite";
 import { LibraryPage } from "./library/LibraryPage";
 import { AblagePage } from "./ablage/AblagePage";
 import { ProjektePage } from "./projekte/ProjektePage";
+import { AssistentenPage } from "./assistenten/AssistentenPage";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
 
@@ -125,6 +127,13 @@ export const SECTIONS_CONFIG = {
     labelKey: "sidebar.settings",
     icon: Cog,
     component: AppSettings,
+  },
+  // lva#556 (G2 Teil 2): Assistenten verwalten und bearbeiten. Wie „Mein Profil“ kein Eintrag der Seitenleiste: die Seite
+  // öffnet aus der Auswahl des Assistenten im Gespräch („Assistenten verwalten …“).
+  assistenten: {
+    labelKey: "assistenten.titel",
+    icon: UserRoundCog,
+    component: AssistentenPage,
   },
   // ADR-0024: „Mein Profil“ öffnet über das Profilmenü oben rechts; die Seitenleiste
   // listet sie bewusst nicht (PRIMARY/UTILITIES nennen ihre Einträge einzeln).

@@ -340,6 +340,65 @@ fn schreibe_atomar_mit(
     Ok(())
 }
 
+// ---------------------------------------------------------------- Export
+
+/// Schreibt `inhalt` (die Bytes eines Profils, wie TypeScript sie kodiert) in die Datei, die die Person im
+/// Speichern-Dialog gewählt hat (G2 Teil 2: Export). Atomar wie der Speicher: Hilfsdatei im selben Verzeichnis,
+/// `fsync`, Umbenennen; bei jedem Fehler bleibt das Ziel, wie es war, und die Hilfsdatei wird entfernt. Das Ziel muss
+/// ein absoluter Pfad auf `.json` sein und darf kein Verzeichnis und kein Link sein; der Text höchstens 256 KiB.
+/// Fehler sind `TooLarge` und `WriteFailed` (alles Übrige: kein brauchbares Ziel, Datenträger voll, gesperrt).
+/// `schreiber` ist der Schreibschritt (im Test ein Schreiber, der „Datenträger voll“ nachstellt).
+fn exportiere_mit(
+    pfad: &Path,
+    inhalt: &str,
+    schreiber: &dyn Fn(&mut File, &[u8]) -> io::Result<()>,
+) -> Result<(), AssistentenFehler> {
+    if inhalt.len() > MAX_BYTES {
+        return Err(AssistentenFehler::TooLarge);
+    }
+    let endet_auf_json = pfad
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("json"));
+    let Some(verzeichnis) = pfad.parent() else {
+        return Err(AssistentenFehler::WriteFailed);
+    };
+    if pfad.file_name().is_none() || !pfad.is_absolute() || !endet_auf_json {
+        return Err(AssistentenFehler::WriteFailed);
+    }
+    // Ein vorhandenes Ziel muss eine gewöhnliche Datei sein: ein Verzeichnis, einen Link oder ein Gerät überschreibt der
+    // Export nie (das Umbenennen träte sonst an dessen Stelle).
+    match fs::symlink_metadata(pfad) {
+        Ok(m) if !m.file_type().is_file() || ist_verlinkt(&m) => {
+            return Err(AssistentenFehler::WriteFailed)
+        }
+        Ok(_) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(_) => return Err(AssistentenFehler::WriteFailed),
+    }
+    let hilfsname = format!(
+        ".lva-export-{}-{}.tmp",
+        std::process::id(),
+        ZAEHLER.fetch_add(1, Ordering::Relaxed)
+    );
+    let hilfsdatei = verzeichnis.join(hilfsname);
+    let ergebnis = (|| -> io::Result<()> {
+        let mut datei = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&hilfsdatei)?;
+        schreiber(&mut datei, inhalt.as_bytes())?;
+        datei.sync_all()?;
+        drop(datei);
+        fs::rename(&hilfsdatei, pfad)
+    })();
+    if ergebnis.is_err() {
+        let _ = fs::remove_file(&hilfsdatei);
+        return Err(AssistentenFehler::WriteFailed);
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------- Speicher
 
 /// Der Speicher eines Verzeichnisses. Die Befehle benutzen `<App-Datenpfad>/assistenten`.
@@ -685,6 +744,18 @@ pub async fn voice_assistant_delete(
     erwartet: String,
 ) -> Result<(), AssistentenFehler> {
     blockierend(&app, move |s| s.loeschen(&id, &erwartet)).await
+}
+
+/// Schreibt einen Assistenten als Datei an den Ort, den die Person im Speichern-Dialog gewählt hat (Export). Die
+/// Bytes liefert die Oberfläche (`kodiereProfil`); es wird nichts im Verzeichnis der Assistenten verändert.
+#[tauri::command]
+#[specta::specta]
+pub async fn voice_assistant_export(path: String, inhalt: String) -> Result<(), AssistentenFehler> {
+    tauri::async_runtime::spawn_blocking(move || {
+        exportiere_mit(Path::new(&path), &inhalt, &|d, b| d.write_all(b))
+    })
+    .await
+    .map_err(|_| AssistentenFehler::WriteFailed)?
 }
 
 /// Die aktive Auswahl (`aktiv.json`).
@@ -1892,5 +1963,151 @@ mod tests {
         let a = s.aktiv().unwrap();
         assert!(matches!(a.id.as_deref(), Some("alles") | Some("eigen-a")));
         assert!(hilfsdateien(&s).is_empty());
+    }
+
+    // ------------------------------------------------------------ Export
+
+    fn exportziel(t: &TempDir, name: &str) -> PathBuf {
+        t.path().join(name)
+    }
+
+    fn tmp_reste(t: &TempDir) -> Vec<String> {
+        fs::read_dir(t.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect()
+    }
+
+    fn exportiere(pfad: &Path, inhalt: &str) -> Result<(), AssistentenFehler> {
+        exportiere_mit(pfad, inhalt, &|d, b| d.write_all(b))
+    }
+
+    #[test]
+    fn export_schreibt_die_bytes_unveraendert_und_ersetzt_eine_vorhandene_datei() {
+        let t = tempfile::tempdir().unwrap();
+        let ziel = exportziel(&t, "mein-coach.json");
+        let text = profil("mein-coach");
+        exportiere(&ziel, &text).unwrap();
+        assert_eq!(fs::read(&ziel).unwrap(), text.as_bytes());
+        // Die Person hat im Dialog „Ersetzen“ gewählt: die Datei bekommt den neuen Inhalt, ganz oder gar nicht.
+        let neu = profil("anders");
+        exportiere(&ziel, &neu).unwrap();
+        assert_eq!(fs::read(&ziel).unwrap(), neu.as_bytes());
+        assert!(tmp_reste(&t).is_empty());
+        // Endung in anderer Schreibweise, Umlaute im Namen.
+        exportiere(&exportziel(&t, "Übung.JSON"), &text).unwrap();
+        assert!(exportziel(&t, "Übung.JSON").is_file());
+    }
+
+    #[test]
+    fn export_lehnt_unbrauchbare_ziele_ab_und_laesst_alles_wie_es_war() {
+        let t = tempfile::tempdir().unwrap();
+        let text = profil("a");
+        // Falsche Endung, relativer Pfad, kein Dateiname, fehlendes Verzeichnis.
+        assert_eq!(
+            exportiere(&exportziel(&t, "a.txt"), &text),
+            Err(AssistentenFehler::WriteFailed)
+        );
+        assert_eq!(
+            exportiere(Path::new("a.json"), &text),
+            Err(AssistentenFehler::WriteFailed)
+        );
+        assert_eq!(
+            exportiere(Path::new("/"), &text),
+            Err(AssistentenFehler::WriteFailed)
+        );
+        assert_eq!(
+            exportiere(&t.path().join("fehlt").join("a.json"), &text),
+            Err(AssistentenFehler::WriteFailed)
+        );
+        // Ein Verzeichnis namens `a.json` wird nicht überschrieben.
+        let verz = exportziel(&t, "dir.json");
+        fs::create_dir(&verz).unwrap();
+        assert_eq!(exportiere(&verz, &text), Err(AssistentenFehler::WriteFailed));
+        assert!(verz.is_dir());
+        assert!(tmp_reste(&t).is_empty());
+        assert!(!exportziel(&t, "a.txt").exists());
+    }
+
+    #[test]
+    fn export_ueber_256_kib_wird_abgelehnt() {
+        let t = tempfile::tempdir().unwrap();
+        let ziel = exportziel(&t, "gross.json");
+        let zu_gross = "x".repeat(MAX_BYTES + 1);
+        assert_eq!(exportiere(&ziel, &zu_gross), Err(AssistentenFehler::TooLarge));
+        assert!(!ziel.exists());
+        let genau = "x".repeat(MAX_BYTES);
+        exportiere(&ziel, &genau).unwrap();
+        assert_eq!(fs::metadata(&ziel).unwrap().len() as usize, MAX_BYTES);
+    }
+
+    #[test]
+    fn export_datentraeger_voll_laesst_die_alte_datei_und_keine_hilfsdatei() {
+        let t = tempfile::tempdir().unwrap();
+        let ziel = exportziel(&t, "a.json");
+        let alt = profil("alt");
+        exportiere(&ziel, &alt).unwrap();
+        // Ein Schreiber, der nach der Hälfte „Datenträger voll“ (ENOSPC) meldet.
+        let voll = |d: &mut File, b: &[u8]| -> io::Result<()> {
+            d.write_all(&b[..b.len() / 2])?;
+            Err(io::Error::from_raw_os_error(28))
+        };
+        assert_eq!(
+            exportiere_mit(&ziel, &profil("neu"), &voll),
+            Err(AssistentenFehler::WriteFailed)
+        );
+        assert_eq!(fs::read(&ziel).unwrap(), alt.as_bytes());
+        assert!(tmp_reste(&t).is_empty());
+        // Auch ohne vorhandenes Ziel entsteht keine halbe Datei.
+        let neu_ziel = exportziel(&t, "neu.json");
+        assert_eq!(
+            exportiere_mit(&neu_ziel, &profil("neu"), &voll),
+            Err(AssistentenFehler::WriteFailed)
+        );
+        assert!(!neu_ziel.exists());
+        assert!(tmp_reste(&t).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn export_ueberschreibt_keinen_link() {
+        let t = tempfile::tempdir().unwrap();
+        let echt = exportziel(&t, "echt.json");
+        fs::write(&echt, b"fremd").unwrap();
+        let link = exportziel(&t, "link.json");
+        std::os::unix::fs::symlink(&echt, &link).unwrap();
+        assert_eq!(
+            exportiere(&link, &profil("a")),
+            Err(AssistentenFehler::WriteFailed)
+        );
+        assert_eq!(fs::read(&echt).unwrap(), b"fremd");
+        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+    }
+
+    #[test]
+    fn export_parallel_zum_selben_ziel_hinterlaesst_eine_ganze_datei() {
+        let t = tempfile::tempdir().unwrap();
+        let ziel = exportziel(&t, "a.json");
+        let texte: Vec<String> = (0..8).map(|k| profil(&format!("p{k}"))).collect();
+        let handles: Vec<_> = texte
+            .iter()
+            .cloned()
+            .map(|text| {
+                let ziel = ziel.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..20 {
+                        let _ = exportiere(&ziel, &text);
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        let gelesen = fs::read_to_string(&ziel).unwrap();
+        assert!(texte.contains(&gelesen), "die Datei ist immer ein ganzer Text");
+        assert!(tmp_reste(&t).is_empty());
     }
 }

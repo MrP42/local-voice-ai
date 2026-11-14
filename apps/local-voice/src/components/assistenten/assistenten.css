@@ -1,0 +1,452 @@
+/* Seite „Assistenten“ (lva#556, G2 Teil 2): Liste links, Ansicht rechts; schmal eine Spalte (Liste oder Ansicht). Farben aus den
+   Fluent-Tokens der App (hell und dunkel), Ziele mindestens 44 px. */
+.lv-asst {
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+  min-width: 0;
+}
+.lv-asst__liste,
+.lv-asst__detail {
+  min-width: 0;
+}
+@media (max-width: 767px) {
+  .lv-asst {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .lv-asst[data-ansicht="editor"] > .lv-asst__liste {
+    display: none;
+  }
+  .lv-asst[data-ansicht="liste"] > .lv-asst__detail {
+    display: none;
+  }
+}
+@media (min-width: 768px) {
+  .lv-asst__zurueck {
+    display: none;
+  }
+}
+
+/* ---- Liste ---- */
+.lv-asst-gruppe {
+  margin-block-end: 16px;
+}
+.lv-asst-gruppe__titel {
+  margin: 0 0 4px;
+  padding-inline: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted, var(--colorNeutralForeground3));
+}
+.lv-asst-gruppe ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.lv-asst-zeile {
+  display: flex;
+  align-items: stretch;
+  border-radius: 8px;
+  border: 1px solid transparent;
+}
+.lv-asst-zeile[data-offen="true"] {
+  background: var(--colorNeutralBackground1Selected);
+  border-color: var(--colorNeutralStroke2);
+}
+.lv-asst-zeile:hover {
+  background: var(--colorNeutralBackground1Hover);
+}
+.lv-asst-zeile__haupt {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+}
+.lv-asst-zeile__haupt:focus-visible,
+.lv-asst-zeile__menue:focus-visible {
+  outline: 2px solid var(--colorStrokeFocus2, currentColor);
+  outline-offset: -2px;
+}
+.lv-asst-zeile__kopf {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.lv-asst-zeile__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lv-asst-zeile__beschreibung {
+  font-size: 12px;
+  color: var(--color-text-muted, var(--colorNeutralForeground3));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lv-asst-zeile__menue {
+  flex: none;
+  width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.lv-asst-marke {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  background: var(--colorBrandBackground2, rgba(0, 0, 0, 0.08));
+  color: var(--colorBrandForeground2, inherit);
+}
+.lv-asst-marke[data-art="warn"] {
+  background: var(--colorPaletteMarigoldBackground2, rgba(255, 170, 0, 0.2));
+  color: var(--colorPaletteMarigoldForeground2, inherit);
+}
+
+/* ---- Ansicht ---- */
+.lv-asst-kopf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-block-end: 12px;
+}
+.lv-asst-kopf__titel {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+.lv-asst-kopf__titel h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.lv-asst-kopf__titel p {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--color-text-muted, var(--colorNeutralForeground3));
+}
+.lv-asst-kopf__aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.lv-asst-abschnitte {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.lv-asst-block {
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.lv-asst-feld {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.lv-asst-feld__beschriftung {
+  font-size: 14px;
+  font-weight: 600;
+}
+.lv-asst-feld__zeile {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.lv-asst-hinweis {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-muted, var(--colorNeutralForeground3));
+}
+.lv-asst-fehlerzeile {
+  margin: 0;
+  font-size: 12px;
+  color: var(--colorPaletteRedForeground1, #b10e1c);
+}
+.lv-asst-zaehler {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted, var(--colorNeutralForeground3));
+}
+.lv-asst-zaehler[data-stand="warn"] {
+  color: var(--colorPaletteMarigoldForeground1, #8a5a00);
+}
+.lv-asst-zaehler[data-stand="fehler"] {
+  color: var(--colorPaletteRedForeground1, #b10e1c);
+  font-weight: 600;
+}
+.lv-asst-platzhalter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.lv-asst-platzhalter code {
+  font-size: 12px;
+}
+.lv-asst-vorschau {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--colorNeutralBackground3);
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.lv-asst-text {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--colorNeutralBackground3);
+  font: inherit;
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.lv-asst-bereich {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  cursor: pointer;
+}
+.lv-asst-bereich__text {
+  flex: 1 1 0;
+  min-width: 4.5rem;
+  font-size: 14px;
+}
+.lv-asst-bereich__status {
+  flex: 0 1 auto;
+  max-width: 50%;
+  text-align: end;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  color: var(--color-text-muted, var(--colorNeutralForeground3));
+}
+.lv-asst-bereich__status[data-wirkt="ja"] {
+  color: var(--colorPaletteGreenForeground1, #107c10);
+}
+.lv-asst-leiste {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--colorNeutralStroke2);
+  border-radius: 8px;
+  background: var(--colorNeutralBackground1);
+  box-shadow: var(--shadow8);
+}
+.lv-asst-leiste__status {
+  flex: 1 1 10rem;
+  min-width: 0;
+  font-size: 13px;
+}
+.lv-asst-leiste__status[data-stand="ungespeichert"] {
+  font-weight: 600;
+}
+/* ---- Ausspracheregeln: Tabelle Wort / Aussprache; schmal stehen die Felder einer Regel untereinander ---- */
+.lv-asst-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+.lv-asst-tabelle {
+  container-type: inline-size;
+  min-width: 0;
+}
+.lv-asst-regeln__kopf {
+  display: none;
+}
+.lv-asst-regeln {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.lv-asst-regel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--colorNeutralStroke2);
+  border-radius: 8px;
+}
+.lv-asst-regel__feld {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.lv-asst-regel__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted, var(--colorNeutralForeground3));
+}
+.lv-asst-regel__aktionen {
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+}
+.lv-asst-regel__zeile {
+  grid-column: 1 / -1;
+}
+@container (min-width: 34rem) {
+  .lv-asst-regeln__kopf,
+  .lv-asst-regel {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+    column-gap: 12px;
+  }
+  .lv-asst-regeln__kopf {
+    padding: 0 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--color-text-muted, var(--colorNeutralForeground3));
+  }
+  .lv-asst-regeln__kopf span:last-child {
+    min-width: 6.5rem;
+  }
+  .lv-asst-regeln {
+    gap: 6px;
+  }
+  .lv-asst-regel {
+    align-items: start;
+    padding: 6px 12px;
+  }
+  /* Die Spaltenköpfe ersetzen die Beschriftung je Zeile; sie bleibt für Vorleseprogramme. */
+  .lv-asst-regel__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .lv-asst-regel__aktionen {
+    justify-content: flex-start;
+    min-width: 6.5rem;
+  }
+}
+.lv-asst-leer {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--color-text-muted, var(--colorNeutralForeground3));
+  font-size: 14px;
+}
+.lv-asst-meldung {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--colorNeutralStroke2);
+  background: var(--colorNeutralBackground3);
+  font-size: 13px;
+}
+.lv-asst-meldung[data-art="fehler"] {
+  border-color: var(--colorPaletteRedBorder2, #d13438);
+}
+.lv-asst-meldung__kopf {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.lv-asst-meldung ul {
+  margin: 0;
+  padding-inline-start: 20px;
+}
+.lv-asst-meldung h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.lv-asst-dl {
+  display: grid;
+  grid-template-columns: minmax(8rem, max-content) minmax(0, 1fr);
+  gap: 6px 16px;
+  margin: 0;
+  font-size: 14px;
+}
+.lv-asst-dl dt {
+  color: var(--color-text-muted, var(--colorNeutralForeground3));
+}
+.lv-asst-dl dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 479px) {
+  .lv-asst-dl {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .lv-asst-dl dd {
+    margin-block-end: 8px;
+  }
+}
+
+/* Schmal stehen die Knöpfe der Seite („Neuer Assistent“, „Importieren“) über dem Inhalt statt in der Titelleiste: 44 px. */
+@media (max-width: 767px) {
+  .lv-asst-aktion {
+    min-height: 44px;
+  }
+}
+
+/* Touch und schmale Ansicht: Eingaben und Knöpfe der Seite mindestens 44 px (die Auswahllisten regelt fluent-bridge.css). */
+@media (pointer: coarse), (max-width: 639px) {
+  .lv-asst .lv-btn,
+  .lv-asst .lv-input {
+    min-height: 44px;
+  }
+  .lv-asst .lv-input input {
+    min-height: 42px;
+  }
+  .lv-asst-regel__aktionen .lv-btn {
+    min-width: 44px;
+  }
+}

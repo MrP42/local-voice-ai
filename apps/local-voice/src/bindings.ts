@@ -4595,6 +4595,18 @@ async voiceAssistantActiveSet(id: string) : Promise<Result<null, AssistentenFehl
 }
 },
 /**
+ * Schreibt einen Assistenten als Datei an den Ort, den die Person im Speichern-Dialog gewählt hat (Export). Die
+ * Bytes liefert die Oberfläche (`kodiereProfil`); es wird nichts im Verzeichnis der Assistenten verändert.
+ */
+async voiceAssistantExport(path: string, inhalt: string) : Promise<Result<null, AssistentenFehler>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_assistant_export", { path, inhalt }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Status des Sprachgespraechs im Overlay, wie beim Diktat: Hoert zu, Hoert,
  * Denkt nach, Spricht. `None` blendet es aus (nur, wenn es ein Gespraech zeigt).
  * Das Hauptfenster ruft das auf, auch wenn es verborgen ist.
