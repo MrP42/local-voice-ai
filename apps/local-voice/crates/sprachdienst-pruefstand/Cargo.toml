@@ -1,0 +1,26 @@
+[package]
+name = "sprachdienst-pruefstand"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Pruefstand: fuehrt die Tests des Sprachdienstes ohne den Bau der App aus (Linux, macOS). Bindet die Originalquellen aus src-tauri ein, enthaelt selbst keinen Dienstcode."
+
+# Jede Zeile hier steht genauso in src-tauri/Cargo.toml (gleiche Art, Version, Features, Quelle).
+# Der Test `waechter::abhaengigkeiten_folgen_der_app` liest beide Dateien ueber `cargo metadata`
+# und vergleicht alle Abhaengigkeiten, nicht nur eine Liste.
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4.25"
+tokio = { version = "1.43.0", features = ["net", "io-util", "sync", "time", "macros", "rt"] }
+sha2 = "0.10"
+hmac = "0.12"
+rand = "0.8"
+wai-voice-dienst = { path = "../../src-tauri/vendor/wai-voice-dienst" }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1.43.0", features = ["macros", "net", "io-util", "sync", "time", "rt-multi-thread"] }
+
+[workspace]
