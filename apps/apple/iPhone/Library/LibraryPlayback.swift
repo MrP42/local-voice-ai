@@ -108,6 +108,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// genau diesen Text. Dazu die Quellfassung.
     private var textHash: String?
     private var textSourceEdition: String?
+    /// Rohtext → normalisierter Text: für Zeitachse (`audio.sync`) und alte Stände, die im Rohtext zählen.
+    private var textMap: TextOffsetMap?
 
     private let library: PhoneLibrary
     private var player: AVPlayer?
@@ -239,8 +241,11 @@ final class LibraryPlayback: NSObject, ObservableObject {
     var followMap: FollowMap? {
         guard let book, let audio = book.audio, !text.isEmpty else { return nil }
         if mode == .audiobook, let followCache { return followCache }
-        return FollowMap(sync: audio.sync, textLength: Double(text.utf16.count), totalMs: totalMs)
+        return FollowMap(sync: syncPoints(audio), textLength: Double(text.utf16.count), totalMs: totalMs)
     }
+
+    /// Stützpunkte der Zeitachse im normalisierten Text (am PC im Rohtext gemessen).
+    private func syncPoints(_ audio: LibraryAudioVersion) -> [LibrarySyncPoint] { textMap?.syncPoints(audio.sync) ?? audio.sync }
 
     // MARK: Einheits-Player
 
@@ -418,7 +423,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
             length = Double(text.utf16.count)
         }
         let fromChapters = fromMedium == .audio ? library.audioChapterList(current) : EditionSwitch.textChapters(text)
-        let toChapters = toMedium == .audio ? library.audioChapterList(view) : EditionSwitch.textChapters(Self.normalizedText(library.text(view)))
+        // Zieltext in Koordinaten des normalisierten Texts: Kapitel, Stelle und gespeicherter Stand der Zielfassung.
+        let targetText = toMedium == .audio ? "" : LiveTranslation.hashInput(library.text(view) ?? "")
+        if toMedium == .text { alignTextRecord(view, raw: library.text(view) ?? "", text: targetText, edition: view.editionId) }
+        let toChapters = toMedium == .audio ? library.audioChapterList(view) : EditionSwitch.textChapters(targetText)
         let toKey = toMedium == .audio ? library.audioKey(view) : library.textKey(view)
         let plan = EditionSwitch.plan(editions: editions, from: fromId, to: editionId, fromMedium: fromMedium, toMedium: toMedium,
                                       fromChapters: fromChapters, toChapters: toChapters, toKey: toKey, offset: offset, length: length)
@@ -536,14 +544,17 @@ final class LibraryPlayback: NSObject, ObservableObject {
         self.book = book; mode = .audiobook
         self.urls = files; tracks = all
         totalMs = audio.totalDurationMs ?? tracks.reduce(0) { $0 + ($1.durationMs ?? 0) }
-        // Offsets und Absätze immer am normalisierten Text (Spez §7.3), auch für die Übergabe an Live.
-        text = Self.normalizedText(library.text(book))
+        // Offsets und Absätze immer am normalisierten Text (Spez §7.3), auch für die Übergabe an Live. Die Zeitachse
+        // wird mit derselben Abbildung umgerechnet; geht das nicht sicher, bleibt der Rohtext (dann passt die Achse).
+        let raw = library.text(book) ?? ""
+        textMap = raw.isEmpty ? nil : TextOffsetMap(raw: raw)
+        text = textMap == nil ? raw : LiveTranslation.hashInput(raw)
         textHash = nil
         paragraphs = LibraryText.paragraphs(text)
         // Für „Ab hier in … vorlesen“ aus dem Hörbuch (lva#358).
         resolveLiveSource(book)
         sentenceCache = [:]
-        followCache = text.isEmpty ? nil : FollowMap(sync: audio.sync, textLength: Double(text.utf16.count), totalMs: totalMs)
+        followCache = text.isEmpty ? nil : FollowMap(sync: syncPoints(audio), textLength: Double(text.utf16.count), totalMs: totalMs)
         loadInfo(book)
         let start = library.record(library.audioKey(book))?.offset ?? 0
         lastSavedMs = start
@@ -638,12 +649,13 @@ final class LibraryPlayback: NSObject, ObservableObject {
             textHash = LiveTranslationSupport.sourceHash(text)
             textSourceEdition = book.editionId ?? library.rawBook(book.id).flatMap { BookEditions(book: $0).readingEdition?.id }
             paragraphs = LibraryText.paragraphs(text)
+            textMap = TextOffsetMap(raw: rawText)
             sentenceCache = [:]
             followCache = nil
             // Ohne gemerkte Stelle beim ersten Inhalt beginnen, nicht bei Titelei,
             // Inhaltsverzeichnis oder Impressum (wie am Desktop, lva#295).
             let readPreface = UserDefaults.standard.object(forKey: BookStart.readPrefaceKey) as? Bool ?? true
-            let offset = library.record(library.textKey(book))?.offset
+            let offset = alignedTextRecord(book, raw: rawText)?.offset
                 ?? Double(BookStart.start(text, readPreface: readPreface).offset)
             let index = LibraryText.paragraphIndex(paragraphs, at: offset)
             move(to: Cursor(paragraph: index, sentence: 0))
@@ -669,6 +681,27 @@ final class LibraryPlayback: NSObject, ObservableObject {
             return
         }
         if autoplay { play() }
+    }
+
+    /// Gespeicherter Stand des offenen Texts in den Koordinaten des normalisierten Texts (`current`: Hash, Abbildung
+    /// und Absätze des offenen Texts wiederverwenden).
+    private func alignedTextRecord(_ book: LibraryBook, raw: String) -> ProgressRecord? {
+        alignTextRecord(book, raw: raw, text: text, edition: textSourceEdition, current: true)
+    }
+
+    /// Stand des Texts `book` in die Koordinaten des normalisierten Texts bringen (Spez §4.1/§7.3). Ohne Stempel zählt
+    /// er im Rohtext und wird umgerechnet, bei anderem Hash wird auf den Absatzbeginn geklemmt (VoiceCore
+    /// `PositionMigration`). Gestempelt und zurückgeschrieben wird erst nach der Umrechnung.
+    @discardableResult
+    private func alignTextRecord(_ book: LibraryBook, raw: String, text: String, edition: String?,
+                                 current: Bool = false) -> ProgressRecord? {
+        let key = library.textKey(book)
+        guard let stored = library.record(key), !text.isEmpty else { return library.record(key) }
+        let result = PositionMigration.align(stored, hash: current ? (textHash ?? LiveTranslationSupport.sourceHash(text)) : LiveTranslationSupport.sourceHash(text),
+                                             edition: edition, map: current ? textMap : TextOffsetMap(raw: raw),
+                                             length: text.utf16.count, paragraphs: current ? paragraphs : LibraryText.paragraphs(text))
+        if result.outcome != .current { library.put(key, result.record) }
+        return result.record
     }
 
     private var phononVoice: String? { phononFailed ? nil : PhononEngine.voiceName(voiceIdentifier) }
@@ -816,12 +849,6 @@ final class LibraryPlayback: NSObject, ObservableObject {
     }
 
     // MARK: Live-Übersetzung (lva#358)
-
-    /// Text für Absätze und Offsets: normalisiert wie im Hashvertrag; ein fehlender oder leerer Text bleibt leer.
-    private static func normalizedText(_ raw: String?) -> String {
-        guard let raw, !raw.isEmpty else { return "" }
-        return LiveTranslation.hashInput(raw)
-    }
 
     private static func liveKey(_ id: String) -> String { "lva.player.live.\(id)" }
     /// Je Sprachfassung (lva#344): die bestätigte Sprache einer Fassung gilt nicht für die andere.

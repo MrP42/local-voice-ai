@@ -663,3 +663,117 @@ public enum LiveLoadFailure: Equatable, Sendable {
         return offline.contains { $0.rawValue == ns.code } ? .offline : .other
     }
 }
+
+/// Abbildung von UTF-16-Stellen im eingelesenen Rohtext auf den normalisierten Text (`LiveTranslation.hashInput`,
+/// Spez §4.1/§7.3): BOM fällt weg, CRLF und CR werden zu LF, NFD wird zu NFC. Deterministisch und monoton.
+/// Die Abbildung arbeitet auf Graphemen: Eine Stelle mitten in CRLF oder in einer Zeichenfolge aus Grundzeichen und
+/// Akzent springt auf den Beginn dieses Graphems (wie „Satz wiederholen“). Stellen hinter dem Textende werden auf
+/// das Ende des normalisierten Texts geklemmt.
+/// `init?` liefert `nil`, wenn sich die Länge nicht sicher herleiten lässt (Summe der Grapheme weicht von der
+/// Länge des normalisierten Gesamttexts ab); dann darf nichts umgerechnet werden.
+public struct TextOffsetMap: Equatable, Sendable {
+    /// Rohtext und normalisierter Text sind Byte für Byte gleich.
+    public let isIdentity: Bool
+    /// Länge (UTF-16) des normalisierten Texts mit Schluss-LF.
+    public let normalizedLength: Int
+    private let rawStarts: [Int]
+    private let rawEnds: [Int]
+    private let normStarts: [Int]
+    /// Verschiebung (normalisiert − roh) nach dem jeweiligen Abschnitt.
+    private let deltas: [Int]
+
+    public init?(raw: String) {
+        let normalized = LiveTranslation.hashInput(raw)
+        normalizedLength = normalized.utf16.count
+        if raw.utf8.elementsEqual(normalized.utf8) {
+            isIdentity = true
+            rawStarts = []; rawEnds = []; normStarts = []; deltas = []
+            return
+        }
+        isIdentity = false
+        var starts: [Int] = [], ends: [Int] = [], normStartList: [Int] = [], deltaList: [Int] = []
+        var rawPos = 0, normPos = 0, first = true
+        for ch in raw {
+            let rawLen = ch.utf16.count
+            var normLen: Int
+            if first, ch == "\u{FEFF}" { normLen = 0 }
+            else if let a = ch.asciiValue, a != 13, a != 10 || ch.utf16.count == 1 { normLen = 1 }
+            else { normLen = Self.clusterLength(ch) }
+            first = false
+            if normLen != rawLen {
+                starts.append(rawPos); ends.append(rawPos + rawLen); normStartList.append(normPos)
+                deltaList.append(normPos + normLen - (rawPos + rawLen))
+            }
+            rawPos += rawLen; normPos += normLen
+        }
+        // Beweis: Gesamtlänge des normalisierten Texts ohne Schluss-LF-Korrektur muss stimmen.
+        guard normPos == LiveTranslation.normalizedSource(raw).utf16.count else { return nil }
+        rawStarts = starts; rawEnds = ends; normStarts = normStartList; deltas = deltaList
+    }
+
+    private static func clusterLength(_ ch: Character) -> Int {
+        String(ch).precomposedStringWithCanonicalMapping
+            .replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n").utf16.count
+    }
+
+    /// Stelle im normalisierten Text für die Rohstelle `rawOffset`.
+    public func normalized(_ rawOffset: Int) -> Int {
+        let o = max(0, rawOffset)
+        guard !isIdentity else { return min(o, normalizedLength) }
+        var lo = 0, hi = rawStarts.count - 1, k = -1
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+            if rawStarts[mid] < o { k = mid; lo = mid + 1 } else { hi = mid - 1 }
+        }
+        let mapped: Int
+        if k < 0 { mapped = o }
+        else if o < rawEnds[k] { mapped = normStarts[k] }
+        else { mapped = o + deltas[k] }
+        return min(max(0, mapped), normalizedLength)
+    }
+
+    public func normalized(_ rawOffset: Double) -> Double {
+        guard rawOffset.isFinite else { return rawOffset }
+        return Double(normalized(Int(max(0, rawOffset).rounded(.down))))
+    }
+
+    /// Stützpunkte der Zeitachse (`chars` im Rohtext) für den normalisierten Text; `ms` bleibt.
+    public func syncPoints(_ points: [LibrarySyncPoint]) -> [LibrarySyncPoint] {
+        isIdentity ? points : points.map { LibrarySyncPoint(chars: normalized($0.chars), ms: $0.ms) }
+    }
+}
+
+/// Fortschritt eines Texts beim Öffnen auf die Koordinaten des normalisierten Texts bringen (Spez §4.1, §7.3).
+/// Ein Datensatz ohne `source_hash` stammt aus der Zeit vor dem Positionsvertrag oder vom PC und zählt im Rohtext;
+/// ein anderer Hash gehört zu anderem Text und lässt sich nicht umrechnen. Gestempelt wird erst, wenn die Umrechnung
+/// gelungen ist oder bewusst auf einen Absatzbeginn geklemmt wurde.
+public enum PositionMigration {
+    public enum Outcome: Equatable, Sendable {
+        /// Stand passt schon (gleicher Hash).
+        case current
+        /// Aus Rohtext-Koordinaten umgerechnet und gestempelt.
+        case converted
+        /// Nicht sicher umrechenbar: Stelle auf den Absatzbeginn geklemmt, Bereiche verworfen, gestempelt.
+        case clamped
+    }
+
+    public static func align(_ rec: ProgressRecord, hash: String, edition: String?, map: TextOffsetMap?,
+                             length: Int, paragraphs: [TextParagraph]) -> (record: ProgressRecord, outcome: Outcome) {
+        if let stamped = rec.sourceHash, stamped == hash { return (rec, .current) }
+        var out = rec
+        out.sourceHash = hash
+        out.sourceEdition = edition
+        out.length = Double(length)
+        if rec.sourceHash == nil, let map {
+            out.offset = map.normalized(rec.offset)
+            out.heard = LibraryProgress.mergeRanges(rec.heard.map { $0.map { map.normalized($0) } })
+            out.read = LibraryProgress.mergeRanges(rec.read.map { $0.map { map.normalized($0) } })
+            out.frontier = rec.frontier.map { map.normalized($0) }
+            return (out, .converted)
+        }
+        let clamped = min(max(0, rec.offset.isFinite ? rec.offset : 0), Double(max(0, length - 1)))
+        out.offset = paragraphs.isEmpty ? 0 : Double(paragraphs[LibraryText.paragraphIndex(paragraphs, at: clamped)].start)
+        out.heard = []; out.read = []; out.frontier = nil; out.finished = nil; out.anchor = nil
+        return (out, .clamped)
+    }
+}

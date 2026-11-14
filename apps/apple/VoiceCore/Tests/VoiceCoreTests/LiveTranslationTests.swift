@@ -789,3 +789,158 @@ final class LiveRoundSixTests: XCTestCase {
         XCTAssertEqual(LiveLoadFailure.classify(Boom()), .other)
     }
 }
+
+/// Codex R7: alte Stände (Rohtext-Koordinaten) werden beim Öffnen auf den normalisierten Text umgerechnet,
+/// fremde Hashes klemmen, Bereiche verschiedener Textstände laufen nicht zusammen, die Zeitachse folgt dem Text.
+final class LivePositionMigrationTests: XCTestCase {
+    /// Rohtext mit BOM, CRLF, einzelnem CR und NFD-Zeichen (o + Trema, e + Akut).
+    private let raw = "\u{FEFF}Eins ko\u{0308}nnen.\r\nZwei.\r\n\r\nDrei Cafe\u{0301} da.\rVier.\r\n\r\nEnde.\n\n"
+
+    private func utf16Location(_ text: String, of needle: String) -> Int { (text as NSString).range(of: needle).location }
+
+    func testMapSendsEverySentenceStartToTheSameSentenceStart() throws {
+        let map = try XCTUnwrap(TextOffsetMap(raw: raw))
+        XCTAssertFalse(map.isIdentity)
+        let normalized = LiveTranslation.hashInput(raw)
+        XCTAssertEqual(map.normalizedLength, normalized.utf16.count)
+        for word in ["Eins", "Zwei.", "Drei", "da.", "Vier.", "Ende."] {
+            XCTAssertEqual(map.normalized(utf16Location(raw, of: word)), utf16Location(normalized, of: word), word)
+        }
+    }
+
+    func testMapIsMonotoneAndStaysInsideTheText() throws {
+        let map = try XCTUnwrap(TextOffsetMap(raw: raw))
+        var last = 0
+        for o in 0...(raw.utf16.count + 5) {
+            let n = map.normalized(o)
+            XCTAssertGreaterThanOrEqual(n, last, "Rohstelle \(o)")
+            XCTAssertLessThanOrEqual(n, map.normalizedLength)
+            last = n
+        }
+        XCTAssertEqual(map.normalized(-3), 0)
+        XCTAssertEqual(map.normalized(raw.utf16.count + 100), map.normalizedLength)
+    }
+
+    func testMiddleOfClusterJumpsToItsStart() throws {
+        let map = try XCTUnwrap(TextOffsetMap(raw: "A\r\nB"))
+        // Zwischen CR und LF: Beginn des Zeilenumbruchs; dahinter das B.
+        XCTAssertEqual(map.normalized(1), 1)
+        XCTAssertEqual(map.normalized(2), 1)
+        XCTAssertEqual(map.normalized(3), 2)
+        let nfd = try XCTUnwrap(TextOffsetMap(raw: "Cafe\u{0301}!"))
+        XCTAssertEqual(nfd.normalized(3), 3)   // vor e
+        XCTAssertEqual(nfd.normalized(4), 3)   // zwischen e und Akut: Beginn des Zeichens
+        XCTAssertEqual(nfd.normalized(5), 4)   // hinter dem Akut
+        let bom = try XCTUnwrap(TextOffsetMap(raw: "\u{FEFF}Hi"))
+        XCTAssertEqual(bom.normalized(0), 0)
+        XCTAssertEqual(bom.normalized(1), 0)
+        XCTAssertEqual(bom.normalized(2), 1)
+    }
+
+    func testIdentityAndTrailingNewlines() throws {
+        let same = try XCTUnwrap(TextOffsetMap(raw: "Ein Satz.\n"))
+        XCTAssertTrue(same.isIdentity)
+        XCTAssertEqual(same.normalized(4), 4)
+        XCTAssertEqual(same.normalized(99), 10)
+        // Fehlendes Schluss-LF und mehrere: Stellen im Rest klemmen auf das Ende.
+        let noEnd = try XCTUnwrap(TextOffsetMap(raw: "Ein Satz."))
+        XCTAssertEqual(noEnd.normalizedLength, 10)
+        XCTAssertEqual(noEnd.normalized(9), 9)
+        let many = try XCTUnwrap(TextOffsetMap(raw: "a\n\n\n"))
+        XCTAssertEqual(many.normalizedLength, 2)
+        XCTAssertEqual(many.normalized(3), 2)
+    }
+
+    func testSyncPointsFollowTheText() throws {
+        let map = try XCTUnwrap(TextOffsetMap(raw: raw))
+        let points = [LibrarySyncPoint(chars: 0, ms: 0), LibrarySyncPoint(chars: Double(utf16Location(raw, of: "Drei")), ms: 5000),
+                      LibrarySyncPoint(chars: Double(utf16Location(raw, of: "Ende.")), ms: 9000)]
+        let out = map.syncPoints(points)
+        let normalized = LiveTranslation.hashInput(raw)
+        XCTAssertEqual(out.map(\.ms), [0, 5000, 9000])
+        XCTAssertEqual(out[1].chars, Double(utf16Location(normalized, of: "Drei")))
+        XCTAssertEqual(out[2].chars, Double(utf16Location(normalized, of: "Ende.")))
+        // Gleicher Text: Punkte bleiben.
+        XCTAssertEqual(TextOffsetMap(raw: "x\n")?.syncPoints(points), points)
+    }
+
+    private func legacy(offset: Double, heard: [ProgressRange] = [], frontier: Double? = nil) -> ProgressRecord {
+        ProgressRecord(offset: offset, anchor: "x", length: 999, heard: heard, read: [], updated: 7, finished: true, unit: .chars, frontier: frontier)
+    }
+
+    func testLegacyRecordIsConvertedAndStampedOnlyAfterwards() throws {
+        let map = try XCTUnwrap(TextOffsetMap(raw: raw))
+        let text = LiveTranslation.hashInput(raw)
+        let paragraphs = LibraryText.paragraphs(text)
+        let drei = Double(utf16Location(raw, of: "Drei"))
+        let rec = legacy(offset: drei, heard: [[0, drei]], frontier: drei)
+        let result = PositionMigration.align(rec, hash: "h1", edition: "ed", map: map, length: text.utf16.count, paragraphs: paragraphs)
+        XCTAssertEqual(result.outcome, .converted)
+        let want = Double(utf16Location(text, of: "Drei"))
+        XCTAssertEqual(result.record.offset, want)
+        XCTAssertEqual(result.record.frontier, want)
+        XCTAssertEqual(result.record.heard, [[0, want]])
+        XCTAssertEqual(result.record.length, Double(text.utf16.count))
+        XCTAssertEqual(result.record.sourceHash, "h1")
+        XCTAssertEqual(result.record.sourceEdition, "ed")
+        XCTAssertEqual(result.record.finished, true)
+        XCTAssertEqual(result.record.updated, 7)
+    }
+
+    func testIdenticalTextLegacyRecordKeepsCoordinatesAndGetsStamp() throws {
+        let map = try XCTUnwrap(TextOffsetMap(raw: "Eins.\n\nZwei.\n"))
+        let paragraphs = LibraryText.paragraphs("Eins.\n\nZwei.\n")
+        let result = PositionMigration.align(legacy(offset: 7), hash: "h", edition: nil, map: map, length: 13, paragraphs: paragraphs)
+        XCTAssertEqual(result.outcome, .converted)
+        XCTAssertEqual(result.record.offset, 7)
+        XCTAssertEqual(result.record.sourceHash, "h")
+    }
+
+    func testCurrentHashIsLeftAlone() {
+        let rec = ProgressRecord(offset: 5, length: 20, updated: 1, sourceEdition: "ed", sourceHash: "h")
+        let result = PositionMigration.align(rec, hash: "h", edition: "ed", map: nil, length: 20, paragraphs: [])
+        XCTAssertEqual(result.outcome, .current)
+        XCTAssertEqual(result.record, rec)
+    }
+
+    func testUnknownCoordinatesClampToParagraphStartAndDropRanges() {
+        let text = "Eins eins.\n\nZwei zwei zwei.\n"
+        let paragraphs = LibraryText.paragraphs(text)
+        // Fremder Hash: andere Textfassung.
+        let foreign = ProgressRecord(offset: 17, anchor: "a", length: 500, heard: [[0, 17]], updated: 3, finished: true,
+                                     frontier: 17, sourceEdition: "other", sourceHash: "zzz")
+        var result = PositionMigration.align(foreign, hash: "h", edition: "ed", map: nil, length: text.utf16.count, paragraphs: paragraphs)
+        XCTAssertEqual(result.outcome, .clamped)
+        XCTAssertEqual(result.record.offset, 12)   // Beginn des zweiten Absatzes
+        XCTAssertTrue(result.record.heard.isEmpty)
+        XCTAssertNil(result.record.frontier)
+        XCTAssertNil(result.record.finished)
+        XCTAssertEqual(result.record.sourceHash, "h")
+        // Kein Stempel und keine sichere Abbildung: ebenso.
+        result = PositionMigration.align(legacy(offset: 9999, heard: [[0, 50]]), hash: "h", edition: nil, map: nil,
+                                         length: text.utf16.count, paragraphs: paragraphs)
+        XCTAssertEqual(result.outcome, .clamped)
+        XCTAssertEqual(result.record.offset, 12)
+        XCTAssertTrue(result.record.heard.isEmpty)
+    }
+
+    func testMergeKeepsRangesOnlyOfCompatibleTexts() {
+        let a = ProgressRecord(offset: 10, length: 100, heard: [[0, 10]], updated: 1, frontier: 10, sourceEdition: "e", sourceHash: "h1")
+        let sameText = ProgressRecord(offset: 30, length: 100, heard: [[20, 30]], updated: 2, frontier: 30, sourceEdition: "e", sourceHash: "h1")
+        XCTAssertEqual(LibraryProgress.merge(a, sameText).heard, [[0, 10], [20, 30]])
+        // Anderer Hash: nur der neuere Stand, keine fremden Bereiche, keine fremde Lesegrenze, kein fremdes „fertig“.
+        var foreign = ProgressRecord(offset: 40, length: 100, heard: [[35, 40]], updated: 3, sourceEdition: "e", sourceHash: "h2")
+        var merged = LibraryProgress.merge(a, foreign)
+        XCTAssertEqual(merged, foreign)
+        foreign.updated = 0
+        var older = a; older.finished = true; older.updated = 5
+        merged = LibraryProgress.merge(older, foreign)   // `older` ist hier der neuere
+        XCTAssertEqual(merged.heard, [[0, 10]])
+        XCTAssertEqual(merged.sourceHash, "h1")
+        // Andere Fassung ohne Hash-Angabe auf einer Seite: nicht trennbar, bleibt verträglich.
+        let plain = ProgressRecord(offset: 50, length: 100, heard: [[45, 50]], updated: 9)
+        XCTAssertEqual(LibraryProgress.merge(a, plain).heard, [[0, 10], [45, 50]])
+        XCTAssertFalse(a.sameText(as: foreign))
+        XCTAssertTrue(a.sameText(as: plain))
+    }
+}
