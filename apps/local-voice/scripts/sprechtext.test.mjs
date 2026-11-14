@@ -666,13 +666,29 @@ test("MARKER (lva#607): gleiche Treffer samt Indizes wie die alte Regex, linear 
     "ä",
     "😀",
   ];
-  // Deterministisch (lineare Kongruenz), kein Zufall: gleiche Proben bei jedem Lauf.
-  let zustand = 12345;
+  // xorshift32 mit exakter 32-Bit-Arithmetik, deterministisch; die hohen Bits entscheiden.
+  let zustand = 2463534242;
   const zufall = (n) => {
-    zustand = (zustand * 1103515245 + 12345) % 2147483648;
-    return zustand % n;
+    zustand ^= zustand << 13;
+    zustand >>>= 0;
+    zustand ^= zustand >>> 17;
+    zustand ^= zustand << 5;
+    zustand >>>= 0;
+    return Math.floor((zustand / 4294967296) * n);
   };
-  const proben = ["", "[Q1]", "  [Q3]", "a  b [Q1]   ", "[Q1]  [Q2]x"];
+  // Feste Proben für die kritischen Fälle, damit sie nie vom Generator abhängen.
+  const proben = [
+    "",
+    "[Q1]",
+    "  [Q3]",
+    "a  b [Q1]   ",
+    "[Q1]  [Q2]x",
+    "x\n\t [Q12]\ty",
+    "a [Q1]",
+    "a 　[Q7]b",
+    "kein Treffer [Q] [Qx]  ",
+    "\n\n[Q1]\n[Q2]",
+  ];
   for (let i = 0; i < 20000; i += 1) {
     let s = "";
     const laenge = 1 + zufall(14);
@@ -680,6 +696,13 @@ test("MARKER (lva#607): gleiche Treffer samt Indizes wie die alte Regex, linear 
       s += bausteine[zufall(bausteine.length)];
     }
     proben.push(s);
+  }
+  assert.ok(new Set(proben).size > 15000, "Proben ausreichend verschieden");
+  for (const z of ["\n", "\t", " ", " ", "　", "[Q1]"]) {
+    assert.ok(
+      proben.slice(10).some((p) => p.includes(z)),
+      `Generator erzeugt ${JSON.stringify(z)}`,
+    );
   }
   for (const p of proben) {
     assert.deepEqual(treffer(NEU, p), treffer(ALT, p), JSON.stringify(p));
