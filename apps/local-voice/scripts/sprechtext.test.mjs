@@ -642,3 +642,87 @@ test("Quelltext: beide Aufrufer von `voice_call_synthesize` gehen über `sprecht
     assert.match(block, /\.\.\.\(teile \? \{ teile \} : \{\}\),/);
   }
 });
+
+test("MARKER (lva#607): gleiche Treffer samt Indizes wie die alte Regex, linear bei langen Leerraumfolgen", () => {
+  const ALT = /\s*\[Q\d+\]/g;
+  const NEU = /(?<!\s)\s*\[Q\d+\]/g;
+  const treffer = (re, s) =>
+    [...s.matchAll(re)].map((m) => [m.index, m[0].length]);
+  const bausteine = [
+    " ",
+    "  ",
+    "\n",
+    "\t",
+    " ",
+    " ",
+    "　",
+    "[Q1]",
+    "[Q23]",
+    "[Q]",
+    "[Qx]",
+    "[Q",
+    "]",
+    "a",
+    "ä",
+    "😀",
+  ];
+  // xorshift32 mit exakter 32-Bit-Arithmetik, deterministisch; die hohen Bits entscheiden.
+  let zustand = 2463534242;
+  const zufall = (n) => {
+    zustand ^= zustand << 13;
+    zustand >>>= 0;
+    zustand ^= zustand >>> 17;
+    zustand ^= zustand << 5;
+    zustand >>>= 0;
+    return Math.floor((zustand / 4294967296) * n);
+  };
+  // Feste Proben für die kritischen Fälle, damit sie nie vom Generator abhängen.
+  const proben = [
+    "",
+    "[Q1]",
+    "  [Q3]",
+    "a  b [Q1]   ",
+    "[Q1]  [Q2]x",
+    "x\n\t [Q12]\ty",
+    "a [Q1]",
+    "a 　[Q7]b",
+    "kein Treffer [Q] [Qx]  ",
+    "\n\n[Q1]\n[Q2]",
+  ];
+  for (let i = 0; i < 20000; i += 1) {
+    let s = "";
+    const laenge = 1 + zufall(14);
+    for (let k = 0; k < laenge; k += 1) {
+      s += bausteine[zufall(bausteine.length)];
+    }
+    proben.push(s);
+  }
+  assert.ok(new Set(proben).size > 15000, "Proben ausreichend verschieden");
+  for (const z of ["\n", "\t", " ", " ", "　", "[Q1]"]) {
+    assert.ok(
+      proben.slice(10).some((p) => p.includes(z)),
+      `Generator erzeugt ${JSON.stringify(z)}`,
+    );
+  }
+  for (const p of proben) {
+    assert.deepEqual(treffer(NEU, p), treffer(ALT, p), JSON.stringify(p));
+    assert.equal(speakable(p), p.replace(ALT, ""), JSON.stringify(p));
+  }
+  // Skalierung: je Größe das Minimum aus mehreren Läufen (robust gegen einzelne Unterbrechungen).
+  const minimum = (n) => {
+    const s = " ".repeat(n) + "x";
+    speakable(s);
+    let best = Infinity;
+    for (let i = 0; i < 7; i += 1) {
+      const t0 = performance.now();
+      speakable(s);
+      best = Math.min(best, performance.now() - t0);
+    }
+    return best;
+  };
+  const klein = Math.max(minimum(20000), 0.5);
+  const gross = minimum(80000);
+  // Linear: Faktor 4 in der Größe; quadratisch wäre Faktor 16 (alte Regex: etwa 400 ms bei 40 000).
+  assert.ok(gross <= klein * 8, `nicht linear: ${klein} -> ${gross} ms`);
+  assert.ok(gross < 250, `80000 Leerzeichen: ${gross} ms`);
+});

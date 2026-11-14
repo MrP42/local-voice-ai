@@ -154,6 +154,10 @@ struct LibraryShelf: View {
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var importing = false
     @State private var showSync = false
+    /// Text einfügen, aus Fotos oder per Scan lesen (TextIntakeViews.swift).
+    @State private var pickingPhotos = false
+    @State private var scanning = false
+    @ObservedObject var intake = TextIntakeModel.shared
     @ObservedObject var sync = LibrarySync.shared
 
     // Fortschritt des Buchs = Fortschritt der zuletzt aktiven Sprachfassung (lva#344).
@@ -284,8 +288,11 @@ struct LibraryShelf: View {
                     ContentUnavailableView {
                         Label("Noch keine Bücher", systemImage: "books.vertical")
                     } description: {
-                        Text("Füge EPUB, PDF, TXT oder ein Hörbuch (MP3, M4A, M4B) aus der Dateien-App hinzu. Mehrere Audiodateien zusammen werden ein Hörbuch mit Teilen.")
-                    } actions: { Button("Buch hinzufügen") { importing = true }.buttonStyle(.borderedProminent) }
+                        Text("Füge EPUB, PDF, TXT oder ein Hörbuch (MP3, M4A, M4B) aus der Dateien-App hinzu. Mehrere Audiodateien zusammen werden ein Hörbuch mit Teilen. Text kannst du auch einfügen oder aus Fotos und Scans lesen lassen.")
+                    } actions: {
+                        Button("Buch hinzufügen") { importing = true }.buttonStyle(.borderedProminent)
+                        Button("Text einfügen") { intake.startEmpty() }.buttonStyle(.bordered)
+                    }
                 }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 12, alignment: .top)], alignment: .leading, spacing: 16) {
                     ForEach(shown) { book in
@@ -296,6 +303,7 @@ struct LibraryShelf: View {
                 }
                 if library.importing { ProgressView("Importiere …") }
                 if let error = library.error { Text(error).font(.footnote).foregroundStyle(.red) }
+                if intake.draft == nil, let error = intake.error { Text(error).font(.footnote).foregroundStyle(VoicePalette.danger) }
             }.padding(16)
         }
         .modifier(MiniPlayerClearance())
@@ -303,7 +311,13 @@ struct LibraryShelf: View {
         .navigationTitle("Bibliothek")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Buch oder Hörbuch hinzufügen", systemImage: "plus") { importing = true }.accessibilityIdentifier("libraryAdd")
+                Menu {
+                    TextIntakeMenuItems(importingFiles: $importing, pickingPhotos: $pickingPhotos, scanning: $scanning)
+                } label: {
+                    Label("Hinzufügen", systemImage: "plus")
+                }
+                .accessibilityLabel("Buch, Hörbuch oder Text hinzufügen")
+                .accessibilityIdentifier("libraryAdd")
             }
             ToolbarItem(placement: .topBarTrailing) { SettingsButton() }
             ToolbarItem(placement: .topBarLeading) {
@@ -312,9 +326,17 @@ struct LibraryShelf: View {
                 }.accessibilityLabel("Konto und Sync: \(sync.status)")
             }
         }
-        .fileImporter(isPresented: $importing, allowedContentTypes: PhoneLibrary.importTypes, allowsMultipleSelection: true) { result in
-            if case .success(let urls) = result { Task { await library.importFiles(urls); await sync.run(); if await library.fillMissingCovers() { await sync.run() } } }
+        .fileImporter(isPresented: $importing, allowedContentTypes: PhoneLibrary.importTypes + [.image], allowsMultipleSelection: true) { result in
+            guard case .success(let all) = result else { return }
+            // Bilder gehen in die Texterkennung und danach ins Prüfblatt; alles andere wie bisher in die Bibliothek.
+            let images = all.filter(TextIntakeModel.isImage), urls = all.filter { !TextIntakeModel.isImage($0) }
+            if !images.isEmpty {
+                let ticket = intake.ticket()
+                Task { await intake.recognize(images.map { .file($0, scoped: true) }, source: "Bilddatei (Texterkennung)", ticket: ticket) }
+            }
+            if !urls.isEmpty { Task { await library.importFiles(urls); await sync.run(); if await library.fillMissingCovers() { await sync.run() } } }
         }
+        .modifier(TextIntakeSources(pickingPhotos: $pickingPhotos, scanning: $scanning))
         .refreshable { await sync.run(); library.reload(); if await library.fillMissingCovers() { await sync.run() } }
         .task { await sync.run(); if await library.fillMissingCovers() { await sync.run() } }
         .sheet(isPresented: $showSync) { LibrarySyncSheet() }

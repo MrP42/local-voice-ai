@@ -225,7 +225,8 @@ export function modeSwitchReply(mode: TalkMode, german: boolean): string {
     : "Okay, back to the book only.";
 }
 
-const MARKER = /\s*\[Q\d+\]/g;
+// Start nur am Beginn einer Leerraumfolge `(?<!\s)`: gleiche Treffer, aber linear statt quadratisch bei langen Leerraumfolgen (lva#607).
+const MARKER = /(?<!\s)\s*\[Q\d+\]/g;
 
 /** Belegmarken `[Qk]` für die Stimme entfernen (angezeigt, nicht gesprochen). */
 export function speakable(sentence: string): string {
