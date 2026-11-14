@@ -22,7 +22,7 @@ final class ShareViewController: UIViewController {
         // Ohne Aufnahme: Text und Bilder zum Vorlesen.
         if media.isEmpty, all.contains(where: Self.isReadable) { return depositReadable(all.filter(Self.isReadable)) }
         guard all.count == 1, let provider = media.first else {
-            return finish(error: media.isEmpty ? "Diese Freigabe enthält keine Audio- oder Videodatei." : "Bitte genau eine Aufnahme teilen.")
+            return finish(error: media.isEmpty ? "Diese Freigabe enthält keine Audio- oder Videodatei." : "Bitte genau eine Aufnahme teilen, oder nur Text und Bilder zum Vorlesen.")
         }
         let name = provider.suggestedName ?? "Aufnahme"
         show(ImportConsentView(fileName: name, channel: .import,
@@ -64,13 +64,20 @@ final class ShareViewController: UIViewController {
     private func depositReadable(_ providers: [NSItemProvider]) {
         show(ProgressView("Wird an Local Voice übergeben …").padding())
         Task { @MainActor in
+            // Bilder als Dateikopien in einen eigenen Zwischenordner: Die Extension hat wenig Speicher,
+            // deshalb wird kein Bild ganz geladen. Der Ordner verschwindet am Ende in jedem Fall.
+            let temp = FileManager.default.temporaryDirectory.appendingPathComponent("vorlesen-\(UUID().uuidString)", isDirectory: true)
+            defer { try? FileManager.default.removeItem(at: temp) }
+            try? FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
             var texts: [String] = []
-            var images: [Data] = []
+            var images: [URL] = []
             var skipped = 0
             for provider in providers {
                 if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
-                    if images.count < TextInbox.maxImages, let data = await Self.loadData(provider, .image), data.count <= TextInbox.maxImageBytes {
-                        images.append(data)
+                    let target = temp.appendingPathComponent(String(format: "bild-%03d", images.count + 1))
+                    if images.count < TextInbox.maxImages, await Self.copyImage(provider, to: target),
+                       let size = TextInbox.fileSize(target), size <= TextInbox.maxImageBytes {
+                        images.append(target)
                     } else { skipped += 1 }
                 } else if let text = await Self.loadText(provider) {
                     texts.append(text)
@@ -79,18 +86,34 @@ final class ShareViewController: UIViewController {
             let message: String?
             do {
                 guard let root = TextInbox.sharedRoot() else { throw CocoaError(.fileNoSuchFile) }
-                try TextInbox(root: root).deposit(text: texts.joined(separator: "\n\n"), images: images, source: "Teilen-Menü")
+                try TextInbox(root: root).deposit(text: texts.joined(separator: "\n\n"), imageFiles: images, source: "Teilen-Menü")
                 message = nil
             } catch TextInbox.Failure.empty {
-                message = "In dieser Freigabe wurde kein Text und kein Bild gefunden."
+                message = "In dieser Freigabe wurde kein Text und kein lesbares Bild gefunden."
             } catch TextInbox.Failure.tooLarge {
-                message = "Der Text ist zu groß."
+                message = "Der Text oder ein Bild ist zu groß."
+            } catch CocoaError.fileNoSuchFile {
+                message = "Local Voice ist nicht vollständig eingerichtet. Bitte die App einmal öffnen."
             } catch {
                 message = "Konnte nicht übergeben werden. Bitte freien Speicher prüfen."
             }
             let note = skipped > 0 ? " \(skipped) Bild(er) wurden ausgelassen (höchstens \(TextInbox.maxImages), je bis 40 MB)." : ""
             finish(error: message, success: "In Local Voice übernommen. Öffne Local Voice, um den Text zu prüfen und vorlesen zu lassen." + note)
         }
+    }
+
+    /// Bild als Datei kopieren; die URL des Anbieters gilt nur im Rückruf. Anbieter ohne Dateifassung
+    /// (Bild nur im Speicher, z. B. aus einem Bildschirmfoto-Editor) liefern Daten, die direkt geschrieben werden.
+    private static func copyImage(_ provider: NSItemProvider, to target: URL) async -> Bool {
+        let copied: Bool = await withCheckedContinuation { continuation in
+            _ = provider.loadFileRepresentation(for: .image, openInPlace: false) { url, _, _ in
+                guard let url else { return continuation.resume(returning: false) }
+                continuation.resume(returning: (try? FileManager.default.copyItem(at: url, to: target)) != nil)
+            }
+        }
+        if copied { return true }
+        guard let data = await loadData(provider, .image) else { return false }
+        return (try? data.write(to: target)) != nil
     }
 
     private static func loadData(_ provider: NSItemProvider, _ type: UTType) async -> Data? {

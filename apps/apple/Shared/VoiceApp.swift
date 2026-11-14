@@ -200,12 +200,19 @@ private struct VoiceHome: View {
         }
         // Text oder Bilder aus dem Teilen-Menü: zur Bibliothek wechseln, dort öffnet das Prüfblatt.
         // Gespräch und Player-Vollbild schließen dafür (sie lägen über dem Blatt); die Wiedergabe läuft weiter.
+        // Das Blatt hängt an der Tab-Leiste und erscheint erst, wenn die geschlossenen Vollbilder ganz weg sind
+        // (eine Präsentation während einer Ausblendung verwirft UIKit).
+        .modifier(TextIntakeHost())
         .onChange(of: scenePhase, initial: true) { _, phase in
             guard phase == .active, TextIntakeModel.shared.draft == nil, TextIntakeModel.shared.hasPendingShares else { return }
             showAssistant = false
+            settings.shown = false
             LibraryPlayback.shared.presented = false
             tab = 3
-            Task { await TextIntakeModel.shared.takeFromInbox() }
+            Task {
+                try? await Task.sleep(for: .milliseconds(700))
+                await TextIntakeModel.shared.takeFromInbox()
+            }
         }
         #endif
     }

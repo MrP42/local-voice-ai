@@ -712,9 +712,14 @@ final class PhoneLibrary: ObservableObject {
             case "epub": return try BookText.epub(data)
             case "pdf":
                 guard let pdf = PDFDocument(data: data) else { throw BookTextError.corrupt("PDF") }
-                var pages = (0..<pdf.pageCount).compactMap { pdf.page(at: $0)?.string?.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
-                // Gescanntes PDF ohne Textschicht: Seiten lokal per Texterkennung lesen (Apple Vision, kein Netz).
-                if pages.isEmpty { pages = try ImageTextReader.pages(ofScannedPDF: pdf) }
+                // Seiten ohne Textschicht (Scan, auch einzelne Seiten in gemischten PDFs) lokal per
+                // Texterkennung lesen (Apple Vision, kein Netz). Leere Seiten fallen weg.
+                let pages = try (0..<pdf.pageCount).compactMap { i -> String? in
+                    guard let page = pdf.page(at: i) else { return nil }
+                    let layer = page.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    let text = layer.isEmpty ? try ImageTextReader.text(ofScannedPage: page) : layer
+                    return text.isEmpty ? nil : text
+                }
                 guard !pages.isEmpty else { throw BookTextError.empty }
                 let attrs = pdf.documentAttributes
                 // Erste Seite als Titelbild; PDFs tragen kein eigenes Cover.

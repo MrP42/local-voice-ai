@@ -119,10 +119,19 @@ final class TextIntakeTests: XCTestCase {
         return url
     }
 
+    private func imageFile(_ bytes: [UInt8]) throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("bild-\(UUID().uuidString)")
+        try Data(bytes).write(to: url)
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        return url
+    }
+
     func testInboxRoundTripOldestFirst() throws {
         let inbox = TextInbox(root: try tempRoot())
-        let second = try inbox.deposit(text: "Zweiter", images: [], source: "Teilen-Menü", now: Date(timeIntervalSince1970: 200))
-        let first = try inbox.deposit(text: nil, images: [Data([1, 2, 3])], source: nil, now: Date(timeIntervalSince1970: 100))
+        let source = try imageFile([1, 2, 3])
+        let second = try inbox.deposit(text: "Zweiter", imageFiles: [], source: "Teilen-Menü", now: Date(timeIntervalSince1970: 200))
+        let first = try inbox.deposit(text: nil, imageFiles: [source], source: nil, now: Date(timeIntervalSince1970: 100))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path), "Quelle bleibt; der Eingang hat eine Kopie")
         let items = inbox.pending()
         XCTAssertEqual(items.map(\.id), [first, second])
         XCTAssertEqual(items[0].images.count, 1)
@@ -136,9 +145,12 @@ final class TextIntakeTests: XCTestCase {
 
     func testInboxRejectsEmptyAndTooMany() throws {
         let inbox = TextInbox(root: try tempRoot())
-        XCTAssertThrowsError(try inbox.deposit(text: "  \n", images: [], source: nil)) { XCTAssertEqual($0 as? TextInbox.Failure, .empty) }
-        let many = Array(repeating: Data([0]), count: TextInbox.maxImages + 1)
-        XCTAssertThrowsError(try inbox.deposit(text: nil, images: many, source: nil)) { XCTAssertEqual($0 as? TextInbox.Failure, .tooManyImages) }
+        XCTAssertThrowsError(try inbox.deposit(text: "  \n", imageFiles: [], source: nil)) { XCTAssertEqual($0 as? TextInbox.Failure, .empty) }
+        let one = try imageFile([0])
+        let many = Array(repeating: one, count: TextInbox.maxImages + 1)
+        XCTAssertThrowsError(try inbox.deposit(text: nil, imageFiles: many, source: nil)) { XCTAssertEqual($0 as? TextInbox.Failure, .tooManyImages) }
+        let missing = FileManager.default.temporaryDirectory.appendingPathComponent("fehlt-\(UUID().uuidString)")
+        XCTAssertThrowsError(try inbox.deposit(text: "x", imageFiles: [missing], source: nil)) { XCTAssertEqual($0 as? TextInbox.Failure, .tooLarge) }
         XCTAssertTrue(inbox.pending().isEmpty)
     }
 

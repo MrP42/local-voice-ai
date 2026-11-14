@@ -303,7 +303,7 @@ struct LibraryShelf: View {
                 }
                 if library.importing { ProgressView("Importiere …") }
                 if let error = library.error { Text(error).font(.footnote).foregroundStyle(.red) }
-                if intake.draft == nil, let error = intake.error { Text(error).font(.footnote).foregroundStyle(.red) }
+                if intake.draft == nil, let error = intake.error { Text(error).font(.footnote).foregroundStyle(VoicePalette.danger) }
             }.padding(16)
         }
         .modifier(MiniPlayerClearance())
@@ -330,10 +330,10 @@ struct LibraryShelf: View {
             guard case .success(let all) = result else { return }
             // Bilder gehen in die Texterkennung und danach ins Prüfblatt; alles andere wie bisher in die Bibliothek.
             let images = all.filter(TextIntakeModel.isImage), urls = all.filter { !TextIntakeModel.isImage($0) }
-            if !images.isEmpty { Task { await intake.recognize(TextIntakeModel.readImageFiles(images), source: "Bilddatei (Texterkennung)") } }
+            if !images.isEmpty { Task { await intake.recognize(await TextIntakeModel.readImageFiles(images), source: "Bilddatei (Texterkennung)", requested: images.count) } }
             if !urls.isEmpty { Task { await library.importFiles(urls); await sync.run(); if await library.fillMissingCovers() { await sync.run() } } }
         }
-        .modifier(TextIntakePresenter(pickingPhotos: $pickingPhotos, scanning: $scanning))
+        .modifier(TextIntakeSources(pickingPhotos: $pickingPhotos, scanning: $scanning))
         .refreshable { await sync.run(); library.reload(); if await library.fillMissingCovers() { await sync.run() } }
         .task { await sync.run(); if await library.fillMissingCovers() { await sync.run() } }
         .sheet(isPresented: $showSync) { LibrarySyncSheet() }

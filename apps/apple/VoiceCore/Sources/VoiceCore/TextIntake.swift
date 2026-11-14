@@ -177,14 +177,17 @@ public struct TextInbox: Sendable {
         #endif
     }
 
-    /// Legt einen Eingang an. `source`: Anzeigename der Herkunft (z. B. „Teilen-Menü“), kein Inhalt.
+    /// Legt einen Eingang an. Bilder als Dateien, die kopiert werden (die Share-Extension hat wenig
+    /// Speicher; nichts wird ganz in den Arbeitsspeicher geladen). `source`: Anzeigename der Herkunft
+    /// (z. B. „Teilen-Menü“), kein Inhalt.
     @discardableResult
-    public func deposit(text: String?, images: [Data], source: String?, now: Date = Date()) throws -> String {
+    public func deposit(text: String?, imageFiles images: [URL], source: String?, now: Date = Date()) throws -> String {
         let text = text?.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasText = !(text ?? "").isEmpty
         guard hasText || !images.isEmpty else { throw Failure.empty }
         guard images.count <= Self.maxImages else { throw Failure.tooManyImages }
-        guard images.allSatisfy({ $0.count <= Self.maxImageBytes }), (text?.utf8.count ?? 0) <= Self.maxTextBytes else { throw Failure.tooLarge }
+        guard images.allSatisfy({ Self.fileSize($0).map { $0 <= Self.maxImageBytes } ?? false }),
+              (text?.utf8.count ?? 0) <= Self.maxTextBytes else { throw Failure.tooLarge }
         let fm = FileManager.default
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
         let id = "\(Int((now.timeIntervalSince1970 * 1000).rounded()))-\(UUID().uuidString.prefix(8).lowercased())"
@@ -192,9 +195,9 @@ public struct TextInbox: Sendable {
         try fm.createDirectory(at: staging, withIntermediateDirectories: true)
         do {
             var names: [String] = []
-            for (i, data) in images.enumerated() {
+            for (i, file) in images.enumerated() {
                 let name = String(format: "bild-%03d", i + 1)
-                try data.write(to: staging.appendingPathComponent(name), options: .atomic)
+                try fm.copyItem(at: file, to: staging.appendingPathComponent(name))
                 names.append(name)
             }
             if hasText, let text { try Data(text.utf8).write(to: staging.appendingPathComponent("text.txt"), options: .atomic) }
@@ -206,6 +209,13 @@ public struct TextInbox: Sendable {
             throw error
         }
         return id
+    }
+
+    /// Größe einer regulären Datei; `nil` für Ordner, Verknüpfungen und Unlesbares.
+    public static func fileSize(_ url: URL) -> Int? {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              attrs[.type] as? FileAttributeType == .typeRegular else { return nil }
+        return (attrs[.size] as? NSNumber)?.intValue
     }
 
     /// Fertige Eingänge, älteste zuerst. Unlesbare Eingänge und Staging-Reste werden übergangen.
