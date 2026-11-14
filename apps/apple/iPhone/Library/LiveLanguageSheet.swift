@@ -68,7 +68,13 @@ struct LiveBadge: View {
     }
 
     func refresh() async {
-        for lang in languages() { states[lang.code] = await playback.liveLanguageState(lang.code) }
+        let source = playback.liveSource
+        var fresh: [String: LiveLanguageState] = [:]
+        for lang in languages() {
+            fresh[lang.code] = await playback.liveLanguageState(lang.code)
+            guard !Task.isCancelled, playback.liveSource == source else { return }
+        }
+        if states != fresh { states = fresh }
     }
 
     /// `true`, wenn gleich umgestellt wurde (Blatt schließen); sonst läuft das Laden des Pakets.
