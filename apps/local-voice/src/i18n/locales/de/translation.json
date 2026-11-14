@@ -7767,6 +7767,8 @@
       "switched": "Neues Gespräch mit dem Assistenten {{name}}.",
       "loadFailed": "Deine eigenen Assistenten lassen sich nicht lesen. Solange das so ist, lässt sich der Assistent nicht wechseln; es gilt „Alles“.",
       "loadUnsafe": "Der Ordner deiner Assistenten ist eine Verknüpfung auf einen anderen Ordner und wird aus Sicherheitsgründen nicht benutzt. Solange das so ist, lässt sich der Assistent nicht wechseln; es gilt „Alles“.",
+      "loadFailedSpaeter": "Deine eigenen Assistenten lassen sich nicht lesen. Solange das so ist, lässt sich der Assistent nicht wechseln. Das laufende Gespräch behält seinen Assistenten; ab dem nächsten gilt „Alles“.",
+      "loadUnsafeSpaeter": "Der Ordner deiner Assistenten ist eine Verknüpfung auf einen anderen Ordner und wird aus Sicherheitsgründen nicht benutzt. Solange das so ist, lässt sich der Assistent nicht wechseln. Das laufende Gespräch behält seinen Assistenten; ab dem nächsten gilt „Alles“.",
       "rejected_one": "{{count}} Datei ist ungültig und wird nicht benutzt.",
       "rejected_other": "{{count}} Dateien sind ungültig und werden nicht benutzt.",
       "saveFailed": "Die Auswahl ließ sich nicht speichern. Der Assistent bleibt, wie er war.",

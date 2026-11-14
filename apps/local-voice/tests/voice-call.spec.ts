@@ -4278,6 +4278,71 @@ test.describe("Sprachgespraech Assistent (lva#556)", () => {
     });
   }
 
+  for (const [fehler, text] of [
+    ["read_failed", "lassen sich nicht lesen"],
+    ["unsafe_path", "Verknüpfung auf einen anderen Ordner"],
+  ] as const) {
+    test(`Scheitert das Nachladen (${fehler}) in einem Gespräch mit Assistent, behält es seine Rolle und die Meldung sagt „ab dem nächsten Gespräch“ (M2)`, async ({
+      page,
+    }) => {
+      await install(page, "light", {
+        settings: {
+          ...LOCAL_SPEAKER,
+          voice_call_knowledge: ["meetings", "dictations", "calendar"],
+        },
+        assistenten: { aktiv: "vorlage-besprechung-nachbereiten" },
+      });
+      await openPage(page);
+      await exchange(page, "Hallo", "Hallo zurück.");
+      const rolle =
+        "ROLLE (vom Nutzer eingestellt, Assistent „Besprechung nachbereiten“):\n";
+      expect((await prompt(page)).startsWith(rolle)).toBe(true);
+      const chip = permissionChip(page);
+      await expect(chip).toContainText("1 Bereich");
+      // Beim Öffnen der Seite lädt sie die Assistenten neu: jetzt scheitert das Lesen.
+      await page.evaluate(
+        (f) => ((window as any).__assistentListeFehler = f),
+        fehler,
+      );
+      await goTo(page, "Verlauf");
+      await goTo(page, "Start");
+      const picker = assistentPicker(page);
+      await expect(picker).toHaveAccessibleName(
+        "Assistent: Alles (gilt ab dem nächsten Gespräch)",
+      );
+      await picker.click();
+      const meldung = page
+        .getByRole("menu")
+        .getByTestId("assistent-ladefehler");
+      await expect(meldung).toContainText(text);
+      // Keine Behauptung, „Alles“ gelte schon: das laufende Gespräch behält seinen Assistenten.
+      await expect(meldung).not.toContainText("es gilt „Alles“");
+      await expect(meldung).toContainText(
+        "Das laufende Gespräch behält seinen Assistenten; ab dem nächsten gilt „Alles“.",
+      );
+      await page.keyboard.press("Escape");
+      // Der Chip zeigt weiter, was der Assistent des Gesprächs wirklich nutzt, und die Rolle bleibt im Prompt.
+      await expect(chip).toContainText("1 Bereich");
+      await expect(chip).toHaveAttribute(
+        "title",
+        "Freigegeben: 3. Der Assistent „Besprechung nachbereiten“ nutzt davon 1.",
+      );
+      await exchange(page, "Und weiter?", "Noch mit Rolle.");
+      expect((await prompt(page)).startsWith(rolle)).toBe(true);
+      // Das nächste Gespräch beginnt mit „Alles“: Meldung ohne Zusatz, Chip mit allem Freigegebenen, keine Rolle.
+      await newChat(page).click();
+      await expect(picker).toHaveAccessibleName("Assistent: Alles");
+      await expect(chip).toContainText("3 Bereiche");
+      await picker.click();
+      await expect(
+        page.getByRole("menu").getByTestId("assistent-ladefehler"),
+      ).toContainText("es gilt „Alles“");
+      await page.keyboard.press("Escape");
+      await exchange(page, "Neu?", "Ohne Rolle.");
+      expect(await prompt(page)).not.toContain("ROLLE");
+    });
+  }
+
   test("Axe: die offene Auswahl hat keine Verstöße gegen Name, Rolle und Wert", async ({
     page,
   }) => {

@@ -182,6 +182,15 @@ fn dateiname(id: &str) -> String {
 
 // ---------------------------------------------------------------- Dateien
 
+/// `FILE_ATTRIBUTE_REPARSE_POINT` (Windows): Symlink, Junction und jeder andere Reparse-Punkt.
+const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+
+/// Trägt das Attributwort einer Windows-Datei das Merkmal „Reparse-Punkt“?
+#[cfg_attr(not(windows), allow(dead_code))]
+fn ist_reparse_punkt(attribute: u32) -> bool {
+    attribute & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
 /// Ist der Eintrag ein Link auf etwas anderes: ein Symlink, unter Windows jeder Reparse-Punkt (auch eine Junction,
 /// die `is_symlink` je nach Rust-Version nicht meldet)?
 fn ist_verlinkt(meta: &fs::Metadata) -> bool {
@@ -191,8 +200,7 @@ fn ist_verlinkt(meta: &fs::Metadata) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
-        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        if ist_reparse_punkt(meta.file_attributes()) {
             return true;
         }
     }
@@ -218,9 +226,11 @@ enum Art {
     Anderes,
 }
 
-/// Art des Eintrags, ohne Symlinks zu verfolgen. Ein Fehler außer „fehlt“ gilt als „anderes“ (wird nie gelesen).
+/// Art des Eintrags, ohne Links zu verfolgen. Ein Link (Symlink, unter Windows jeder Reparse-Punkt, auch bei einer
+/// einzelnen Profildatei) und ein Fehler außer „fehlt“ gelten als „anderes“ (wird nie gelesen oder überschrieben).
 fn art(pfad: &Path) -> Art {
     match fs::symlink_metadata(pfad) {
+        Ok(m) if ist_verlinkt(&m) => Art::Anderes,
         Ok(m) if m.file_type().is_file() => Art::Regulaer,
         Ok(m) if m.file_type().is_dir() => Art::Verzeichnis,
         Ok(_) => Art::Anderes,
@@ -1243,6 +1253,59 @@ mod tests {
             .is_symlink());
         assert_eq!(fs::read(&draussen).unwrap(), text.as_bytes());
         assert!(s.pfad("ordner-d.json").is_dir());
+    }
+
+    /// R2: das Merkmal „Reparse-Punkt“ wird aus dem Attributwort gelesen (auf jedem System prüfbar; unter Windows
+    /// entscheidet es zusätzlich zu `is_symlink` über Links, etwa bei Reparse-Punkten ohne Symlink-Kennung).
+    #[test]
+    fn reparse_merkmal_kommt_aus_dem_attributwort() {
+        assert!(ist_reparse_punkt(0x400));
+        assert!(ist_reparse_punkt(0x400 | 0x20));
+        assert!(ist_reparse_punkt(0x400 | 0x10));
+        assert!(!ist_reparse_punkt(0));
+        assert!(!ist_reparse_punkt(0x20)); // ARCHIVE
+        assert!(!ist_reparse_punkt(0x10)); // DIRECTORY
+        assert!(!ist_reparse_punkt(0x2000_0000 | 0x800)); // andere Merkmale (z. B. komprimiert)
+    }
+
+    /// R2: Eine einzelne Profildatei, die ein Reparse-Punkt ist (Datei-Symlink), wird nie gelesen, überschrieben,
+    /// gelöscht oder gewählt, und das Ziel bleibt unverändert. Das Anlegen eines Datei-Symlinks braucht unter Windows
+    /// Rechte (Entwicklermodus); fehlen sie, meldet der Test das und endet, statt etwas Falsches zu belegen.
+    #[cfg(windows)]
+    #[test]
+    fn datei_symlink_als_profil_wird_unter_windows_abgewiesen() {
+        let (t, s) = werkstatt();
+        fs::create_dir_all(&s.verzeichnis).unwrap();
+        let draussen = t.path().join("draussen.json");
+        let text = profil("link-a");
+        fs::write(&draussen, &text).unwrap();
+        if let Err(e) = std::os::windows::fs::symlink_file(&draussen, s.pfad("link-a.json")) {
+            eprintln!("Datei-Symlink nicht angelegt (Rechte fehlen?): {e}");
+            return;
+        }
+        assert!(ist_verlinkt(
+            &fs::symlink_metadata(s.pfad("link-a.json")).unwrap()
+        ));
+        let l = s.liste().unwrap();
+        assert_eq!(datei(&l, "link-a.json").abgewiesen, Some(Abweisung::Json));
+        assert_eq!(datei(&l, "link-a.json").inhalt, None);
+        assert_eq!(
+            s.lesen("link-a").unwrap().unwrap().abgewiesen,
+            Some(Abweisung::Json)
+        );
+        assert_eq!(
+            s.speichern("link-a", &profil("link-a"), Some(&text)),
+            Err(AssistentenFehler::Occupied)
+        );
+        assert_eq!(
+            s.loeschen("link-a", &text),
+            Err(AssistentenFehler::NotFound)
+        );
+        assert_eq!(s.waehlen("link-a"), Err(AssistentenFehler::NotFound));
+        assert_eq!(fs::read(&draussen).unwrap(), text.as_bytes());
+        assert!(ist_verlinkt(
+            &fs::symlink_metadata(s.pfad("link-a.json")).unwrap()
+        ));
     }
 
     // ------------------------------------------------------------ Verlinktes Verzeichnis

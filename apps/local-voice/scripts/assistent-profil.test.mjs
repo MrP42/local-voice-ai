@@ -1263,8 +1263,6 @@ test("Engine: eine Auswahl, die nach dem Beginn des Gesprächs eintrifft, gilt e
   assert.equal(t.log.stand.at(-1).ausstehend, false);
   await t.start("Eins.");
   const takt = { ...turnVon(t.engine) };
-  let werteGelesen = 0;
-  const w0 = t.engine.werteNeu.bind(t.engine);
   assert.equal(t.engine.setAssistent(bn), false, "das Gespräch läuft schon");
   assert.equal(t.log.stand.at(-1).gilt, lp);
   assert.equal(t.log.stand.at(-1).ausstehend, true);
@@ -1284,8 +1282,6 @@ test("Engine: eine Auswahl, die nach dem Beginn des Gesprächs eintrifft, gilt e
   const werte0 = t.engine.rolleWerte;
   t.engine.werteNeu();
   assert.equal(t.engine.rolleWerte, werte0);
-  assert.equal(werteGelesen, 0);
-  void w0;
   // Ein neues Gespräch übernimmt die wartende Auswahl.
   t.engine.resetHistory();
   assert.equal(t.log.stand.at(-1).gilt, bn);
@@ -1370,6 +1366,98 @@ test("Engine: ein leerer Anruf, der ohne ein Wort endete, hat kein Gespräch beg
   assert.equal(t.log.errors.length, 0);
 });
 
+/** Ein Assistent, dessen Anweisungen Name und Uhrzeit nennen; `stand` ist ein Beutel, den der Test ändert. */
+function mitUhrzeit(id, stand) {
+  const profil = {
+    ...vorlage(id),
+    anweisungen: "Es ist {{uhrzeit}} Uhr, du sprichst mit {{name}}.",
+  };
+  return wirkung.wirkungFuer(profil, () =>
+    wirkung.werteJetzt(stand.name, stand.jetzt),
+  );
+}
+
+test("Engine: eine wartende Auswahl nach einem leeren Anruf bekommt Name und Uhrzeit vom Beginn des neuen Gesprächs (M1)", async () => {
+  const stand = { name: "Anna", jetzt: new Date(2026, 10, 13, 9, 5) };
+  const a = mitUhrzeit("vorlage-lernpartner", stand);
+  const b = mitUhrzeit("vorlage-tagesrueckblick", stand);
+  const t = neu();
+  t.engine.setAssistent(a);
+  t.engine.state = "listening";
+  assert.equal(t.engine.setAssistent(b), false, "ein Anruf läuft");
+  // Während des leeren Anrufs ändern sich Name und Uhrzeit: das Gespräch (ohne ein Wort) behält die alten Werte.
+  stand.name = "Berta";
+  stand.jetzt = new Date(2026, 10, 13, 17, 42);
+  t.engine.werteNeu();
+  assert.equal(t.engine.rolleWerte.name, "Anna");
+  // Der Anruf endet leer, ein Text beginnt das Gespräch: B gilt mit den Werten von jetzt.
+  t.engine.state = "idle";
+  await t.engine.sendText("Hallo");
+  assert.equal(t.engine.assistent, b);
+  const rolle = t.preps.at(-1).assistent.rolle(1200).text;
+  assert.match(rolle, /Es ist 17:42 Uhr, du sprichst mit Berta\./);
+  assert.doesNotMatch(rolle, /Anna|09:05/);
+  assert.equal(t.log.errors.length, 0);
+});
+
+test("Engine: ohne wartende Auswahl liest ein Gespräch nach einem leeren Anruf Name und Uhrzeit neu (M1)", async () => {
+  const stand = { name: "Anna", jetzt: new Date(2026, 10, 13, 9, 5) };
+  const a = mitUhrzeit("vorlage-lernpartner", stand);
+  const t = neu();
+  t.engine.setAssistent(a);
+  t.engine.state = "listening";
+  stand.name = "Berta";
+  stand.jetzt = new Date(2026, 10, 13, 17, 42);
+  t.engine.werteNeu();
+  assert.equal(t.engine.rolleWerte.name, "Anna", "im Anruf bleibt es dabei");
+  t.engine.state = "idle";
+  await t.engine.sendText("Hallo");
+  const rolle = t.preps.at(-1).assistent.rolle(1200).text;
+  assert.match(rolle, /Es ist 17:42 Uhr, du sprichst mit Berta\./);
+  // Ab dem ersten Wort gelten die Werte vom Beginn: eine spätere Änderung wirkt erst im nächsten Gespräch.
+  stand.name = "Clara";
+  stand.jetzt = new Date(2026, 10, 13, 18, 1);
+  t.engine.werteNeu();
+  await t.start("Weiter.");
+  assert.match(
+    t.preps.at(-1).assistent.rolle(1200).text,
+    /Es ist 17:42 Uhr, du sprichst mit Berta\./,
+  );
+  t.engine.resetHistory();
+  await t.start("Neu.");
+  assert.match(
+    t.preps.at(-1).assistent.rolle(1200).text,
+    /Es ist 18:01 Uhr, du sprichst mit Clara\./,
+  );
+  assert.equal(t.log.errors.length, 0);
+});
+
+test("Engine: jede Stelle, an der ein Assistent gilt, liest Name und Uhrzeit neu (M1)", async () => {
+  const stand = { name: "Anna", jetzt: new Date(2026, 10, 13, 9, 5) };
+  const a = mitUhrzeit("vorlage-lernpartner", stand);
+  const b = mitUhrzeit("vorlage-tagesrueckblick", stand);
+  const gelesen = (t) => t.engine.rolleWerte;
+  const t = neu();
+  // Sofort (kein Gespräch): beim Setzen.
+  t.engine.setAssistent(a);
+  assert.equal(gelesen(t).name, "Anna");
+  // Wartende Auswahl, die über ein neues Gespräch (`resetHistory`) gilt.
+  t.engine.state = "listening";
+  t.engine.setAssistent(b);
+  stand.name = "Berta";
+  t.engine.resetHistory();
+  assert.equal(t.engine.assistent, b);
+  assert.equal(gelesen(t).name, "Berta");
+  // Wartende Auswahl, die über den Beginn ohne Verlauf gilt.
+  t.engine.setAssistent(a);
+  stand.name = "Clara";
+  t.engine.state = "idle";
+  await t.engine.sendText("Hallo");
+  assert.equal(t.engine.assistent, a);
+  assert.equal(gelesen(t).name, "Clara");
+  assert.equal(t.log.errors.length, 0);
+});
+
 test("Engine: die Werte der Platzhalter gelten ab dem Beginn des Gesprächs, nicht je Schritt", async () => {
   let n = 0;
   const w = () => (
@@ -1415,8 +1503,11 @@ test("Engine: ein Wechsel des Assistenten verwirft vorbereiteten Abrufkontext un
 
 const { useVoiceCallStore: store } =
   await import("../src/stores/voiceCallStore.ts");
-const { useAssistentStore: assistenten, LADEN_WARTEZEIT_MS } =
-  await import("../src/stores/assistentStore.ts");
+const {
+  useAssistentStore: assistenten,
+  LADEN_WARTEZEIT_MS,
+  aktuelleWirkung,
+} = await import("../src/stores/assistentStore.ts");
 
 let speicherLauf = 0;
 const gespeichert = [];
@@ -1811,6 +1902,70 @@ test("Speicher: ein nachgeladener, geänderter Text des aktiven Assistenten gilt
   await store.getState().sendText("Dritte Frage");
   assert.match(preps.at(-1).assistent.rolle(1200).text, /Neu\./);
   assert.doesNotMatch(preps.at(-1).assistent.rolle(1200).text, /Alt\./);
+  await engine.dispose();
+});
+
+for (const fehler of ["read_failed", "unsafe_path"]) {
+  test(`Speicher: scheitert das Nachladen (${fehler}) in einem Gespräch mit Assistent, behält es Rolle und Begrenzung, „Alles“ gilt erst im nächsten (M2)`, async () => {
+    const { s, engine } = await speicherNeu({
+      aktiv: "vorlage-besprechung-nachbereiten",
+    });
+    const preps = [];
+    tauri.prepare = (cfg) => {
+      preps.push(cfg);
+      return { side: null, blocked: false, systemPrompt: cfg.systemPrompt };
+    };
+    await store.getState().sendText("Erste Frage");
+    assert.match(
+      preps.at(-1).assistent.rolle(1200).text,
+      /Besprechung nachbereiten/,
+    );
+    s.listeFehler = fehler;
+    await assistenten.getState().laden();
+    const geladen = assistenten.getState().assistenten;
+    assert.equal(geladen.ladefehler, fehler);
+    assert.equal(geladen.aktivId, "alles", "die Auswahl ist „Alles“");
+    // Der Stand für die Anzeige: ausstehend, und es gilt weiter der Assistent des Gesprächs (Chip und Picker folgen dem).
+    const stand = store.getState().assistentStand;
+    assert.equal(stand.ausstehend, true);
+    assert.equal(stand.gilt?.profil.id, "vorlage-besprechung-nachbereiten");
+    const anzeige = wirkung.geltender(false, stand, aktuelleWirkung());
+    assert.equal(anzeige.ausstehend, true);
+    assert.equal(
+      anzeige.wirkung?.profil.id,
+      "vorlage-besprechung-nachbereiten",
+    );
+    // Die Engine gilt, was die Anzeige sagt: Rolle und Begrenzung des laufenden Gesprächs bleiben.
+    await store.getState().sendText("Zweite Frage");
+    assert.match(
+      preps.at(-1).assistent.rolle(1200).text,
+      /Besprechung nachbereiten/,
+    );
+    assert.deepEqual(preps.at(-1).assistent.grenze, ["meetings"]);
+    // Das nächste Gespräch: „Alles“ (Anzeige, Engine und Prompt stimmen überein).
+    await store.getState().newConversation();
+    const danach = store.getState().assistentStand;
+    assert.equal(danach.ausstehend, false);
+    assert.equal(danach.gilt, null);
+    assert.equal(engine.assistent, null);
+    await store.getState().sendText("Dritte Frage");
+    assert.equal(preps.at(-1).assistent ?? null, null);
+    await engine.dispose();
+  });
+}
+
+test("Speicher: gelingt das Lesen wieder, bevor das nächste Gespräch beginnt, entfällt das Vermerkte (M2)", async () => {
+  const { s, engine } = await speicherNeu({ aktiv: "vorlage-lernpartner" });
+  await store.getState().sendText("Erste Frage");
+  s.listeFehler = "read_failed";
+  await assistenten.getState().laden();
+  assert.equal(store.getState().assistentStand.ausstehend, true);
+  s.listeFehler = null;
+  await assistenten.getState().laden();
+  assert.equal(assistenten.getState().assistenten.ladefehler, null);
+  const stand = store.getState().assistentStand;
+  assert.equal(stand.ausstehend, false);
+  assert.equal(stand.gilt?.profil.id, "vorlage-lernpartner");
   await engine.dispose();
 });
 

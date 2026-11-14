@@ -7767,6 +7767,8 @@
       "switched": "New conversation with assistant {{name}}.",
       "loadFailed": "Your own assistants cannot be read. Until that is fixed the assistant cannot be changed; Everything applies.",
       "loadUnsafe": "The folder of your assistants is a link to another folder and is not used for security reasons. Until that is fixed the assistant cannot be changed; Everything applies.",
+      "loadFailedSpaeter": "Your own assistants cannot be read. Until that is fixed the assistant cannot be changed. The current conversation keeps its assistant; from the next one Everything applies.",
+      "loadUnsafeSpaeter": "The folder of your assistants is a link to another folder and is not used for security reasons. Until that is fixed the assistant cannot be changed. The current conversation keeps its assistant; from the next one Everything applies.",
       "rejected_one": "{{count}} file is invalid and is not used.",
       "rejected_other": "{{count}} files are invalid and are not used.",
       "saveFailed": "The choice could not be saved. The assistant stays as it was.",

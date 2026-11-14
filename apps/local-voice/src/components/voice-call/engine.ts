@@ -737,7 +737,7 @@ export class VoiceCallEngine {
    */
   private assistentAusstehend: { wirkung: AssistentWirkung | null } | null =
     null;
-  /** Werte der Platzhalter; gelesen, wenn ein Gespräch beginnt (`resetHistory`) oder der Assistent wechselt. */
+  /** Werte der Platzhalter; gelesen, wenn ein Gespräch beginnt (`resetHistory`, Anruf oder Text ohne Verlauf) oder der Assistent wechselt. */
   private rolleWerte: PlatzhalterWerte | null = null;
 
   /**
@@ -817,6 +817,9 @@ export class VoiceCallEngine {
     const { wirkung } = this.assistentAusstehend;
     this.assistentAusstehend = null;
     this.assistent = wirkung;
+    // Die Werte der Platzhalter gehören zum neuen Assistenten und gelten ab jetzt: nicht die des alten Stands (ein leerer
+    // Anruf, nach dem Name oder Uhrzeit sich geändert haben, läuft ohne `resetHistory` hierher).
+    this.rolleWerte = wirkung ? wirkung.werte() : null;
     this.turnNeu();
     this.session.invalidate();
     this.globalContext.clear();
@@ -825,10 +828,13 @@ export class VoiceCallEngine {
 
   /**
    * Ein Anruf oder Text beginnt ohne Verlauf (etwa nach einem leeren Anruf, der beendet wurde, bevor etwas gesagt war): dann
-   * hat noch kein Gespräch begonnen, und eine wartende Auswahl gilt.
+   * hat noch kein Gespräch begonnen. Eine wartende Auswahl gilt, und Name, Datum und Uhrzeit der Rolle werden neu gelesen
+   * (auch ohne wartende Auswahl: während des leeren Anrufs durften sie sich nicht ändern, jetzt beginnt das Gespräch).
    */
   private leereAuswahlUebernehmen(): void {
-    if (!this.gespraechBegonnen) this.ausstehendUebernehmen();
+    if (this.gespraechBegonnen) return;
+    if (this.assistentAusstehend) this.ausstehendUebernehmen();
+    else this.werteNeu();
   }
 
   /**

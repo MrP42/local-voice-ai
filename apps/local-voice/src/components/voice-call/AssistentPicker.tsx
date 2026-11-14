@@ -46,9 +46,15 @@ export const AssistentPicker: React.FC<{ gesperrt?: boolean }> = ({
   // Chatkopf ist knapp); der Name steht immer in der Beschriftung für den Screenreader.
   const gewaehlt = aktiv.id !== ALLES_ID;
   const ladefehler = assistenten.ladefehler !== null;
-  // Ein Link statt des Ordners der Assistenten wird nie benutzt; der Text sagt es genauer als „nicht lesbar“.
-  const ladeText =
-    assistenten.ladefehler === "unsafe_path"
+  // Ein Link statt des Ordners der Assistenten wird nie benutzt; der Text sagt es genauer als „nicht lesbar“. Scheitert das
+  // Laden in einem Gespräch mit Assistent, behält es seinen Assistenten und „Alles“ gilt erst ab dem nächsten (`spaeter`):
+  // die Meldung sagt nicht, dass „Alles“ schon gilt, wenn es nicht stimmt.
+  const unsicher = assistenten.ladefehler === "unsafe_path";
+  const ladeText = spaeter
+    ? unsicher
+      ? "voiceCall.assistant.loadUnsafeSpaeter"
+      : "voiceCall.assistant.loadFailedSpaeter"
+    : unsicher
       ? "voiceCall.assistant.loadUnsafe"
       : "voiceCall.assistant.loadFailed";
   // Auf dem Telefon sind auch die Einträge des Menüs mindestens 44 px hoch.
