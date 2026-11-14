@@ -162,8 +162,8 @@ pub trait FreigabeQuelle: versiegelt::Versiegelt + Send + Sync {
 ///
 /// Kein `Clone`, `Copy`, `Default`, `Serialize`, `Deserialize`; Felder privat; nur im Prüfer
 /// ausstellbar; nur innerhalb von `llm_versand` sichtbar. Der Beweis der fehlenden Traits steht
-/// in den Tests dieses Moduls (Compile-Zeit), die Compile-fail-Proben von außen folgen mit
-/// Teilpaket 4.
+/// in den Tests dieses Moduls (Compile-Zeit); die Proben mit Fehlercode (privat, kein `clone()`,
+/// Verbrauch beim Einlösen) stehen in `zusicherungen` und `sonden/` (Teilpaket 4).
 pub(super) struct Versandfreigabe {
     ziel: Ziel,
     quellen: [u8; 32],

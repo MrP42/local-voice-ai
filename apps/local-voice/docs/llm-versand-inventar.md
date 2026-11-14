@@ -1,4 +1,4 @@
-# Inventar der Modellaufrufe (lva#604, Teilpaket 1; Stand nach Teilpaket 3 in Abschnitt I)
+# Inventar der Modellaufrufe (lva#604, Teilpaket 1; Stand nach Teilpaket 3 in Abschnitt I, Compile-Zeit-Zusicherungen in Abschnitt J)
 
 Stand: Basis `4ba8f873` (main), Zweig `feat/601-cloud-sperre`. Alle Pfade relativ zu
 `apps/local-voice/src-tauri/`. Zeilennummern gelten für diese Basis; wohin die Wege in Teilpaket 3
@@ -238,3 +238,47 @@ Alle ohne Besprechungsinhalt; #601 sichert sie per Architekturtest.
   Bildserver auf Loopback und verbraucht nichts.
 - Roh-Fehlertexte der CLI in `cli_roh` (Buch-Gespräch, Probelauf) bleiben, wie sie waren; dort geht
   kein Besprechungsinhalt hinein.
+
+## J. Compile-Zeit-Zusicherungen (Teilpaket 4)
+
+Was der Versandvertrag **verbietet**, ist mit dem Fehlercode des Compilers belegt, nicht nur damit,
+dass etwas nicht übersetzt. Mechanismus und Begründung stehen in der Moduldoku von `llm_versand`
+(Abschnitt „Compile-Zeit-Zusicherungen“) und im Kopf von `src/llm_versand/zusicherungen.rs`.
+
+**Warum keine `compile_fail`-Doctests:** `mod llm_versand;` ist in `lib.rs` privat, Doctests sind
+externe Crates und sähen immer nur „Modul privat“; eine positive Kontrolle ist dort unmöglich. Auf
+stabilem Rust (1.97) prüft `rustdoc` den Fehlercode hinter `compile_fail,E…` nicht (gemessen: ein
+Snippet mit `E0599` besteht unter `compile_fail,E0603`). `trybuild` wäre eine neue Abhängigkeit und
+ebenfalls ein externes Crate. Gewählt ist deshalb: Proben **im** Crate (`src/llm_versand/sonden/`,
+nur mit `--cfg lva_sonde`), übersetzt vom Test `zusicherungen::compile_zeit_zusicherungen` per
+`cargo rustc --lib --profile check`, ausgewertet über die JSON-Diagnosen. Jede Probe hat einen
+Verstoß und daneben denselben Code ohne ihn (positive Kontrolle); jede Probe meldet im Kontrolllauf
+eine Marke, damit sie nicht aus Versehen nie übersetzt wurde.
+
+| Probe | Code | Zusicherung |
+|---|---|---|
+| `aussen_e0603_transport` | E0603 | Rohtransport `llm_versand::transport` von außen (aus `crate::managers::llm`) unerreichbar |
+| `aussen_e0603_versand` | E0603 | `llm_versand::versand` privat, nur `versenden` reexportiert |
+| `aussen_e0603_freigabe` | E0603 | `Versandfreigabe` von außen nicht benennbar |
+| `aussen_e0603_ausstellen` | E0603 | `freigabe_ausstellen` von außen unerreichbar |
+| `aussen_e0599_quellen_default` | E0599 | `Quellen::default()` gibt es nicht |
+| `innen_e0603_cli` | E0603 | `transport::cli` auch in `llm_versand` privat (nur `cli_roh`) |
+| `innen_e0603_pruefer_app` | E0603 | `pruefer::app` privat (nur der Reexport) |
+| `innen_e0624_ausstellen` | E0624 | `Versandfreigabe::ausstellen` privat im Prüfer |
+| `innen_e0451_literal` | E0451 | Felder der `Versandfreigabe` privat, kein Struktur-Literal |
+| `innen_e0599_klon` | E0599 | `Versandfreigabe` hat kein `clone()` |
+| `innen_e0599_default` | E0599 | `Versandfreigabe` hat kein `Default` |
+| `innen_e0382_zweimal` | E0382 | eingelöste Freigabe ist verbraucht (zweites Einlösen) |
+| `innen_e0382_kopie` | E0382 | `Versandfreigabe` ist nicht `Copy` |
+
+Läufe: `kontrolle` (alles ohne Verstoß muss übersetzen), `aufloesung` (E0603), `typ` (E0599, E0624),
+`feld` (E0451), `ausleihe` (E0382). Getrennt, weil `rustc` je Phase abbricht (Besitzfehler kommen erst
+nach fehlerfreier Typprüfung). Ein Fehler in einer fremden Datei oder mit anderem Code lässt den Lauf
+scheitern. Zusätzlich ohne Prozess bei jedem Testbuild: `Versandfreigabe` ohne `Clone`, `Copy`,
+`Default`, `Serialize`, `Deserialize` (Tests in `pruefer`), `Quellen` ohne `Default`.
+
+**Betrieb:** Der Probentest dauert beim ersten Lauf gut zwei Minuten, danach je Lauf etwa 15 bis 20
+Sekunden. Er überschreibt die Prüfartefakte (`cargo check`) des Crates in `target`; der nächste
+`cargo check`/`clippy` übersetzt das Crate einmal neu. `LVA_SONDEN_UEBERSPRINGEN=1` lässt ihn aus (wird
+gemeldet). Der Schalter `lva_sonde` hängt in `src/llm_versand/mod.rs` und `src/managers/llm/mod.rs`
+(je eine `cfg`-Zeile, dort auch `#![allow(unexpected_cfgs)]`); ein normaler Build übersetzt nichts davon.

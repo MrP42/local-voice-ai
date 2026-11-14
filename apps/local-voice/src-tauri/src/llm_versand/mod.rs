@@ -24,6 +24,7 @@
 //! | `versand` | privat (Reexport) | [`versenden`], [`mit_wiederholung`], Fallbacks, Streamingpuffer, Buchung |
 //! | [`uebergang`] | öffentlich, `#[deprecated]` | Fassade mit den heutigen Signaturen, bis lva#601 |
 //! | `transport` | **privat** | Rohtransport (HTTP, CLI, Bild, Ollama, Modellliste) |
+//! | `sonden`, `zusicherungen` | nur `--cfg lva_sonde` bzw. `cfg(test)` | Proben und Test der Compile-Zeit-Zusicherungen (Teilpaket 4) |
 //!
 //! Die Sichtbarkeit setzt der Compiler: in `transport` ist höchstens `pub(super)` erlaubt, es
 //! gibt keine Reexporte. `pub(super)` wirkt relativ zum tatsächlichen Modul: in
@@ -82,6 +83,42 @@
 //! Abschlussvergleich an den Rückruf gegeben; Statusereignisse ohne Inhalt sind erlaubt. Lokale
 //! Ziele und `keine()` streamen wie bisher.
 //!
+//! # Compile-Zeit-Zusicherungen (Teilpaket 4)
+//!
+//! Dass etwas **nicht übersetzbar** ist, ist Teil des Vertrags. Die Proben dafür stehen in
+//! `sonden/` und werden vom Test `zusicherungen::compile_zeit_zusicherungen` mit dem Compiler
+//! dieses Crates übersetzt (`cargo rustc --lib --profile check -- --cfg lva_sonde`); geprüft wird
+//! je Probe der **Fehlercode**, nicht nur das Scheitern. Jede Probe hat daneben denselben Code
+//! ohne Verstoß, der übersetzen muss (positive Kontrolle, Kontrollmarke je Probe).
+//!
+//! `compile_fail`-Doctests taugen hier nicht: `llm_versand` ist in `lib.rs` privat und Doctests
+//! sind externe Crates, der Fehler wäre immer „Modul privat“ und eine Kontrolle unmöglich; auf
+//! stabilem Rust prüft `rustdoc` den Fehlercode außerdem nicht (gemessen: `compile_fail,E0603`
+//! besteht auch bei einem Snippet, das `E0599` meldet). Einzelheiten stehen im Kopf von
+//! `zusicherungen.rs`.
+//!
+//! | Probe | Code | Zusicherung |
+//! |---|---|---|
+//! | `aussen_e0603_transport` | E0603 | `llm_versand::transport` ist von außen (auch aus `crate::managers::llm`) nicht erreichbar |
+//! | `aussen_e0603_versand` | E0603 | `llm_versand::versand` ist privat, nur `versenden` ist reexportiert |
+//! | `aussen_e0603_freigabe` | E0603 | `Versandfreigabe` ist von außen nicht benennbar |
+//! | `aussen_e0603_ausstellen` | E0603 | `freigabe_ausstellen` ist von außen nicht erreichbar |
+//! | `aussen_e0599_quellen_default` | E0599 | `Quellen` hat kein `default()` |
+//! | `innen_e0603_cli` | E0603 | `transport::cli` ist auch innerhalb von `llm_versand` privat (nur `cli_roh`) |
+//! | `innen_e0603_pruefer_app` | E0603 | `pruefer::app` ist privat (nur der Reexport) |
+//! | `innen_e0624_ausstellen` | E0624 | `Versandfreigabe::ausstellen` ist privat im Prüfer |
+//! | `innen_e0451_literal` | E0451 | die Felder von `Versandfreigabe` sind privat (kein Struktur-Literal) |
+//! | `innen_e0599_klon` | E0599 | `Versandfreigabe` hat kein `clone()` |
+//! | `innen_e0599_default` | E0599 | `Versandfreigabe` hat kein `Default` |
+//! | `innen_e0382_zweimal` | E0382 | eine eingelöste Freigabe ist verbraucht (zweites Einlösen) |
+//! | `innen_e0382_kopie` | E0382 | `Versandfreigabe` ist nicht `Copy` (Weitergabe verbraucht sie) |
+//!
+//! Ohne Prozess und bei jedem Testbuild zusätzlich: `Versandfreigabe` ohne `Clone`, `Copy`,
+//! `Default`, `Serialize`, `Deserialize` (Tests in `pruefer`) und `Quellen` ohne `Default`
+//! (`zusicherungen::quellen_hat_kein_default`). Auswertung und Probentabelle sind mit
+//! künstlichen Diagnosen getestet. Der Lauf überschreibt die Prüfartefakte des Crates in
+//! `target` (der nächste `cargo check` übersetzt neu); `LVA_SONDEN_UEBERSPRINGEN=1` lässt ihn aus.
+//!
 //! # Übergang zu lva#601
 //!
 //! Besprechungspfade werden **nicht** als `keine()` umetikettiert. Die Übergangsfassade
@@ -91,7 +128,7 @@
 //! Fassade; erst dann ist der Schutz flächendeckend.
 // `versenden`, `mit_wiederholung` und die Reexporte benutzt erst lva#601 (bis dahin geht alles über
 // die Übergangsfassade). Mit der Verdrahtung entfällt diese Ausnahme.
-#![allow(dead_code, unused_imports)]
+#![allow(dead_code, unused_imports, unexpected_cfgs)]
 
 pub mod anfrage;
 pub mod fehler;
@@ -100,10 +137,15 @@ pub mod quellen;
 pub mod uebergang;
 pub mod ziel;
 
+// Compile-Zeit-Proben: nur unter `--cfg lva_sonde`, siehe `sonden/mod.rs` (Teilpaket 4).
+#[cfg(lva_sonde)]
+mod sonden;
 #[cfg(test)]
 mod testhaken;
 #[cfg(test)]
 mod testhilfe;
+#[cfg(test)]
+mod zusicherungen;
 
 // Privat und ohne Reexport: nur `llm_versand` selbst erreicht den Rohtransport.
 mod transport;

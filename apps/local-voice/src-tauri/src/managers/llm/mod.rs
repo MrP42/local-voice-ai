@@ -5,6 +5,8 @@
 //! holt, startet und beendet. Muster wie bei der Piper-Laufzeit
 //! (`managers::tts::models`): Katalogeintrag je Plattform, Download mit
 //! Pruefsumme, entpacken, aufloesen.
+// `lva_sonde` ist ein Probenschalter (lva#604 TP4), den Cargo nicht kennt.
+#![allow(unexpected_cfgs)]
 
 pub mod app_usage;
 pub mod cli;
@@ -20,6 +22,12 @@ pub mod runtime;
 pub mod server;
 pub mod updates;
 pub mod vision;
+
+// lva#604 TP4: Proben von außerhalb von `llm_versand` (Dateien in `llm_versand/sonden/aussen`), nur
+// unter `--cfg lva_sonde`.
+#[cfg(lva_sonde)]
+#[path = "../../llm_versand/sonden/aussen/mod.rs"]
+mod versand_sonden;
 
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
