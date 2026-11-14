@@ -1,0 +1,877 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Assistenten – Vorschau</title>
+<style>
+/* Statische Vorschau der Seite „Assistenten“ (lva#556, G2 Teil 2). Eine Datei, keine Abhängigkeiten, hell und dunkel,
+   breit und 390 px. Farben und Abstände folgen den Fluent-2-Tokens der App; die Schriftart ist Segoe UI (Windows), sonst die
+   Systemschrift. Die Seite selbst reagiert auf die Breite ihres Rahmens (Container), nicht auf das Fenster, damit die Vorschau
+   beide Breiten nebeneinander zeigen kann. */
+:root {
+  --bg: #f5f5f5;
+  --surface: #ffffff;
+  --surface-2: #fafafa;
+  --surface-3: #f0f0f0;
+  --stroke: #e0e0e0;
+  --stroke-strong: #c7c7c7;
+  --text: #242424;
+  --muted: #616161;
+  --brand: #0f6cbd;
+  --brand-hover: #115ea3;
+  --brand-fg: #ffffff;
+  --brand-bg: #ebf3fc;
+  --brand-text: #0f548c;
+  --selected: #ebf3fc;
+  --hover: #f0f0f0;
+  --warn-bg: #fff4ce;
+  --warn-fg: #6d5700;
+  --danger: #b10e1c;
+  --danger-border: #d13438;
+  --ok: #107c10;
+  --focus: #0f6cbd;
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.14);
+}
+:root[data-theme="dark"] {
+  --bg: #141414;
+  --surface: #292929;
+  --surface-2: #1f1f1f;
+  --surface-3: #333333;
+  --stroke: #424242;
+  --stroke-strong: #5c5c5c;
+  --text: #ffffff;
+  --muted: #b3b3b3;
+  --brand: #479ef5;
+  --brand-hover: #62abf5;
+  --brand-fg: #0a0a0a;
+  --brand-bg: #112a45;
+  --brand-text: #8fc7ff;
+  --selected: #1c3a5c;
+  --hover: #333333;
+  --warn-bg: #4a3b00;
+  --warn-fg: #ffd966;
+  --danger: #ff8a93;
+  --danger-border: #dc626d;
+  --ok: #6ccb6c;
+  --focus: #62abf5;
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+* { box-sizing: border-box; }
+html { color-scheme: light dark; }
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+}
+button, input, textarea, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* ---------- Steuerung der Vorschau (gehört nicht zur App) ---------- */
+.vorschau-leiste {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center;
+  padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--stroke);
+  font-size: 13px;
+}
+.vorschau-leiste h1 { margin: 0; font-size: 14px; font-weight: 600; margin-inline-end: 8px; }
+.gruppe { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 100%; }
+.gruppe > span { color: var(--muted); }
+.seg { display: inline-flex; flex-wrap: wrap; max-width: 100%; border: 1px solid var(--stroke-strong); border-radius: 6px; overflow: hidden; }
+.seg button {
+  border: 0; background: transparent; padding: 0 12px; min-height: 32px; cursor: pointer;
+  border-inline-end: 1px solid var(--stroke);
+}
+.seg button:last-child { border-inline-end: 0; }
+.seg button[aria-pressed="true"] { background: var(--brand-bg); color: var(--brand-text); font-weight: 600; }
+.seg button:hover { background: var(--hover); }
+.seg button[aria-pressed="true"]:hover { background: var(--brand-bg); }
+.bühne { padding: 20px 16px 48px; display: flex; justify-content: center; }
+
+/* ---------- Rahmen der App ---------- */
+.rahmen {
+  container-type: inline-size; container-name: app;
+  width: min(1280px, 100%);
+  background: var(--bg);
+  border: 1px solid var(--stroke);
+  border-radius: 10px; overflow: hidden;
+  box-shadow: var(--shadow);
+}
+.rahmen[data-breite="telefon"] { width: 390px; max-width: 100%; }
+.titelleiste {
+  display: flex; align-items: center; gap: 8px;
+  min-height: 44px; padding: 0 12px; background: var(--surface-2); border-bottom: 1px solid var(--stroke);
+}
+.titelleiste .hamburger { display: none; }
+.titelleiste .titel { font-weight: 600; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.titel-aktionen { display: flex; gap: 6px; align-items: center; }
+.info {
+  display: inline-grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 6px;
+  background: transparent; cursor: pointer; color: var(--muted);
+}
+.info:hover { background: var(--hover); }
+.fenster { display: grid; grid-template-columns: 216px minmax(0, 1fr); min-height: 760px; }
+.nav { background: var(--surface-2); border-inline-end: 1px solid var(--stroke); padding: 8px; display: flex; flex-direction: column; gap: 2px; }
+.nav a {
+  display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 10px; border-radius: 6px;
+  color: var(--text); text-decoration: none;
+}
+.nav a:hover { background: var(--hover); }
+.nav svg { width: 18px; height: 18px; flex: none; }
+.nav .unten { margin-top: auto; border-top: 1px solid var(--stroke); padding-top: 8px; }
+.inhalt { padding: 16px; min-width: 0; }
+.innen { max-width: 1024px; margin: 0 auto; }
+@container app (max-width: 767px) {
+  .fenster { grid-template-columns: minmax(0, 1fr); min-height: 720px; }
+  .nav { display: none; }
+  .titelleiste .hamburger { display: inline-grid; }
+  .titel-aktionen.in-titel { display: none; }
+  .inhalt { padding: 12px; }
+}
+.aktionen-zeile { display: none; gap: 8px; margin-block-end: 12px; }
+@container app (max-width: 767px) { .aktionen-zeile { display: flex; } }
+
+/* ---------- Knöpfe, Felder ---------- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 32px; padding: 0 12px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--stroke-strong); background: var(--surface); color: var(--text); font-weight: 600;
+}
+.btn:hover { background: var(--hover); }
+.btn.klein { min-height: 28px; padding: 0 10px; font-size: 13px; }
+.btn.primaer { background: var(--brand); border-color: var(--brand); color: var(--brand-fg); }
+.btn.primaer:hover { background: var(--brand-hover); border-color: var(--brand-hover); }
+.btn.leise { background: transparent; border-color: transparent; }
+.btn.leise:hover { background: var(--hover); }
+.btn[aria-disabled="true"] { opacity: 0.5; cursor: not-allowed; }
+.btn svg { width: 14px; height: 14px; }
+@container app (max-width: 767px) {
+  .btn { min-height: 44px; }
+  .btn.klein { min-height: 44px; }
+}
+input[type="text"], textarea, .auswahl {
+  width: 100%; border: 1px solid var(--stroke-strong); border-bottom-color: var(--text);
+  border-radius: 6px; background: var(--surface); padding: 6px 10px; min-height: 32px;
+}
+textarea { resize: vertical; min-height: 64px; line-height: 1.45; }
+@container app (max-width: 767px) { input[type="text"], .auswahl { min-height: 44px; } textarea { min-height: 64px; } }
+.auswahl { display: inline-flex; align-items: center; justify-content: space-between; gap: 8px; width: auto; min-width: 12rem; cursor: pointer; text-align: start; }
+.auswahl svg { width: 12px; height: 12px; color: var(--muted); }
+
+/* ---------- Seite ---------- */
+.lv-asst { display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); gap: 16px; align-items: start; min-width: 0; }
+.lv-asst > * { min-width: 0; }
+@container app (max-width: 767px) {
+  .lv-asst { grid-template-columns: minmax(0, 1fr); }
+  .lv-asst[data-ansicht="editor"] > .liste { display: none; }
+  .lv-asst[data-ansicht="liste"] > .detail { display: none; }
+}
+@container app (min-width: 768px) { .zurueck { display: none; } }
+.gruppe-liste { margin-block-end: 16px; }
+.gruppe-liste h2 { margin: 0 0 4px; padding-inline: 10px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.gruppe-liste ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.zeile { display: flex; align-items: stretch; border-radius: 8px; border: 1px solid transparent; }
+.zeile[data-offen="true"] { background: var(--selected); border-color: var(--stroke); }
+.zeile:hover { background: var(--hover); }
+.zeile[data-offen="true"]:hover { background: var(--selected); }
+.zeile .haupt {
+  flex: 1; min-width: 0; min-height: 44px; padding: 6px 10px; border: 0; border-radius: 8px; background: transparent;
+  text-align: start; cursor: pointer; display: flex; flex-direction: column; justify-content: center; gap: 1px;
+}
+.zeile .kopf { display: flex; align-items: center; gap: 6px; min-width: 0; font-weight: 600; }
+.zeile .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.zeile .beschr { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.zeile .menue { flex: none; width: 44px; min-height: 44px; display: inline-grid; place-items: center; border: 0; border-radius: 8px; background: transparent; cursor: pointer; }
+.zeile .menue:hover { background: var(--surface-3); }
+.marke { flex: none; padding: 0 6px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 18px; background: var(--brand-bg); color: var(--brand-text); }
+.marke.warn { background: var(--warn-bg); color: var(--warn-fg); }
+.leer-hinweis { margin: 0; padding-inline: 10px; font-size: 12px; color: var(--muted); }
+
+.kopf-bereich { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-block-end: 12px; }
+.kopf-bereich .t { flex: 1 1 12rem; min-width: 0; }
+.kopf-bereich h2 { margin: 0; font-size: 18px; font-weight: 600; overflow-wrap: anywhere; }
+.kopf-bereich p { margin: 2px 0 0; font-size: 13px; color: var(--muted); }
+.kopf-bereich .a { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.abschnitte { display: flex; flex-direction: column; gap: 16px; }
+.gruppe-titel { padding: 0 16px; }
+.gruppe-titel h3 { margin: 0; font-size: 12px; font-weight: 600; color: var(--muted); }
+.gruppe-titel p { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+.karte { margin-block-start: 6px; background: var(--surface); border: 1px solid var(--stroke); border-radius: 8px; }
+.karte > * + * { border-top: 1px solid var(--stroke); }
+.block { padding: 12px 16px; display: flex; flex-direction: column; gap: 14px; }
+.feld { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.feld .zeile-f { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.feld label, .beschriftung { font-weight: 600; }
+.hinweis { margin: 0; font-size: 12px; color: var(--muted); }
+.zaehler { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); }
+.zaehler[data-stand="warn"] { color: var(--warn-fg); }
+.zaehler[data-stand="fehler"] { color: var(--danger); font-weight: 600; }
+.fehler-zeile { margin: 0; font-size: 12px; color: var(--danger); }
+.einstellung { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 16px; min-height: 52px; }
+.einstellung .text { min-width: 0; }
+.einstellung .text b { display: block; font-weight: 600; }
+.einstellung .text span { display: block; font-size: 12px; color: var(--muted); }
+@container app (max-width: 767px) { .einstellung { flex-direction: column; align-items: stretch; gap: 8px; } .auswahl { width: 100%; } }
+.platzhalter { display: flex; flex-wrap: wrap; gap: 6px; }
+.platzhalter code { font-size: 12px; }
+.vorschau-text { margin: 0; padding: 8px 10px; border-radius: 6px; background: var(--surface-3); font-size: 13px; }
+.hoer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.bereich { display: flex; align-items: center; gap: 10px; min-height: 44px; cursor: pointer; }
+.bereich input { width: 18px; height: 18px; accent-color: var(--brand); flex: none; }
+.bereich .tx { flex: 1 1 0; min-width: 4.5rem; }
+.bereich .st { flex: 0 1 auto; max-width: 50%; text-align: end; overflow-wrap: anywhere; font-size: 12px; color: var(--muted); }
+.bereich .st.wirkt { color: var(--ok); }
+.schalter { position: relative; width: 40px; height: 20px; flex: none; }
+.schalter input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.schalter .spur { position: absolute; inset: 0; border-radius: 999px; border: 1px solid var(--stroke-strong); background: var(--surface); transition: background 0.1s; }
+.schalter .knauf { position: absolute; top: 4px; inset-inline-start: 4px; width: 10px; height: 10px; border-radius: 50%; background: var(--text); opacity: 0.7; transition: transform 0.1s; }
+.schalter input:checked ~ .spur { background: var(--brand); border-color: var(--brand); }
+.schalter input:checked ~ .knauf { transform: translateX(20px); background: var(--brand-fg); opacity: 1; }
+.schalter input:focus-visible ~ .spur { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* Ausspracheregeln: Tabelle Wort / Aussprache; schmal stehen die Felder einer Regel untereinander */
+.tabelle { container-type: inline-size; container-name: tab; min-width: 0; }
+.tabelle .kopfzeile { display: none; }
+.regeln { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.regel { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 10px 12px; border: 1px solid var(--stroke); border-radius: 8px; }
+.regel .rf { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.regel .rf label { font-size: 12px; font-weight: 600; color: var(--muted); }
+.regel .rf input[aria-invalid="true"] { border-color: var(--danger); border-bottom-color: var(--danger); }
+.regel .rakt { display: flex; justify-content: flex-end; gap: 2px; }
+.btn.icon { width: 32px; min-width: 32px; padding: 0; }
+.btn.icon svg { width: 16px; height: 16px; }
+@container app (max-width: 767px) { .btn.icon { width: 44px; min-width: 44px; } }
+@container tab (min-width: 34rem) {
+  .tabelle .kopfzeile, .regel { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; column-gap: 12px; }
+  .tabelle .kopfzeile { padding: 0 12px 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  .tabelle .kopfzeile span:last-child { min-width: 6.5rem; }
+  .regeln { gap: 6px; }
+  .regel { align-items: start; padding: 6px 12px; }
+  .regel .rf label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .regel .rakt { justify-content: flex-start; min-width: 6.5rem; }
+}
+.meldung { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--stroke); background: var(--surface-3); font-size: 13px; }
+.meldung.fehler { border-color: var(--danger-border); }
+.meldung h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.meldung p { margin: 0; }
+.meldung ul { margin: 0; padding-inline-start: 20px; }
+.meldung .knoepfe { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 4px; }
+.leiste {
+  position: sticky; bottom: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  padding: 10px 12px; border: 1px solid var(--stroke); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow);
+}
+.leiste .status { flex: 1 1 10rem; min-width: 0; font-size: 13px; }
+.leiste .status[data-stand="ungespeichert"] { font-weight: 600; }
+dl.daten { display: grid; grid-template-columns: minmax(8rem, max-content) minmax(0, 1fr); gap: 6px 16px; margin: 0; }
+dl.daten dt { color: var(--muted); }
+dl.daten dd { margin: 0; overflow-wrap: anywhere; }
+@container app (max-width: 479px) { dl.daten { grid-template-columns: minmax(0, 1fr); gap: 0; } dl.daten dd { margin-block-end: 8px; } }
+pre.text { margin: 0; padding: 8px 10px; border-radius: 6px; background: var(--surface-3); font: inherit; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.hidden { display: none !important; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<div class="vorschau-leiste" role="toolbar" aria-label="Steuerung der Vorschau">
+  <h1>Vorschau: Seite „Assistenten“</h1>
+  <div class="gruppe"><span id="l-theme">Farbschema</span>
+    <div class="seg" role="group" aria-labelledby="l-theme">
+      <button type="button" data-theme-wahl="light" aria-pressed="false">Hell</button>
+      <button type="button" data-theme-wahl="dark" aria-pressed="false">Dunkel</button>
+    </div>
+  </div>
+  <div class="gruppe"><span id="l-breite">Breite</span>
+    <div class="seg" role="group" aria-labelledby="l-breite">
+      <button type="button" data-breite-wahl="breit" aria-pressed="true">Breit</button>
+      <button type="button" data-breite-wahl="telefon" aria-pressed="false">Telefon (390 px)</button>
+    </div>
+  </div>
+  <div class="gruppe"><span id="l-ansicht">Rechts geöffnet</span>
+    <div class="seg" role="group" aria-labelledby="l-ansicht">
+      <button type="button" data-ansicht-wahl="editor" aria-pressed="true">Editor</button>
+      <button type="button" data-ansicht-wahl="konflikt" aria-pressed="false">Konflikt</button>
+      <button type="button" data-ansicht-wahl="vorlage" aria-pressed="false">Vorlage</button>
+      <button type="button" data-ansicht-wahl="abgewiesen" aria-pressed="false">Ungültige Datei</button>
+      <button type="button" data-ansicht-wahl="import" aria-pressed="false">Import-Fehler</button>
+    </div>
+  </div>
+</div>
+
+<div class="bühne">
+<div class="rahmen" id="rahmen" data-breite="breit">
+
+  <!-- Titelleiste mit den Aktionen der Seite (schmal: über dem Inhalt) -->
+  <div class="titelleiste">
+    <button class="info hamburger" type="button" aria-label="Menü öffnen">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+    <span class="titel">Assistenten</span>
+    <div class="titel-aktionen in-titel">
+      <button class="info" type="button" aria-label="Info zur Seite" title="Assistenten verwalten: Vorlagen ansehen und kopieren, eigene Assistenten anlegen, bearbeiten, exportieren und importieren.">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>
+      </button>
+      <button class="btn klein" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 15V4M8 8l4-4 4 4M5 15v4h14v-4"/></svg>Importieren</button>
+      <button class="btn klein primaer" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Neuer Assistent</button>
+    </div>
+  </div>
+
+  <div class="fenster">
+    <nav class="nav" aria-label="Hauptnavigation">
+      <a href="#" aria-label="Start"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"/></svg>Start</a>
+      <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5M12 8v4l3 2"/></svg>Verlauf</a>
+      <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.5-3.5 3-5.5 6.5-5.5s6 2 6.5 5.5M16 5a3.5 3.5 0 0 1 0 7M18 14.8c2 .6 3.2 2.2 3.5 5.2"/></svg>Aufnahmen</a>
+      <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9zM16 8.5a5 5 0 0 1 0 7"/></svg>Vorlesen</a>
+      <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M5 4h10a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3zM5 17a3 3 0 0 1 3-3h10"/></svg>Bibliothek</a>
+      <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Projekte</a>
+      <div class="unten"><a href="#" aria-label="Profil"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c.6-4 3.8-6 8-6s7.4 2 8 6"/></svg>Konto</a></div>
+    </nav>
+
+    <main class="inhalt">
+      <div class="innen">
+        <div class="aktionen-zeile">
+          <button class="btn klein" type="button">Importieren</button>
+          <button class="btn klein primaer" type="button">Neuer Assistent</button>
+        </div>
+
+        <!-- Meldung zum Import (Fehlerliste), nichts wird repariert -->
+        <div class="meldung fehler hidden" id="import-fehler" role="alert" style="margin-block-end:12px">
+          <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
+            <h3>„lang.json“ ließ sich nicht importieren</h3>
+            <button class="btn klein leise" type="button" aria-label="Meldung schließen" style="min-width:28px;padding:0 6px">×</button>
+          </div>
+          <ul>
+            <li>Die Datei ist kein gültiger Assistent. Es wurde nichts angelegt.</li>
+            <li>Name: hat eine unzulässige Länge</li>
+            <li>Sprache: enthält nicht erlaubte Zeichen</li>
+          </ul>
+        </div>
+
+        <div class="lv-asst" id="seite" data-ansicht="editor">
+          <!-- ===== Liste ===== -->
+          <div class="liste">
+            <nav aria-label="Assistenten">
+              <section class="gruppe-liste" aria-labelledby="g-eigene">
+                <h2 id="g-eigene">Eigene Assistenten</h2>
+                <ul>
+                  <li class="zeile" data-offen="true" data-eintrag="editor">
+                    <button class="haupt" type="button" aria-current="true">
+                      <span class="kopf"><span class="name">Kundenservice</span><span class="marke">Gewählt</span><span class="marke warn" id="marke-entwurf">Ungespeichert</span></span>
+                      <span class="beschr">Freundlich, kurz, mit Blick auf offene Anliegen.</span>
+                    </button>
+                    <button class="menue" type="button" aria-label="Aktionen für Kundenservice"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
+                  </li>
+                  <li class="zeile" data-eintrag="editor">
+                    <button class="haupt" type="button">
+                      <span class="kopf"><span class="name">Recherche-Assistent</span></span>
+                      <span class="beschr">Sucht in Büchern und Notizen.</span>
+                    </button>
+                    <button class="menue" type="button" aria-label="Aktionen für Recherche-Assistent"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
+                  </li>
+                </ul>
+              </section>
+              <section class="gruppe-liste" aria-labelledby="g-vorlagen">
+                <h2 id="g-vorlagen">Vorlagen</h2>
+                <ul>
+                  <li class="zeile" data-eintrag="vorlage">
+                    <button class="haupt" type="button"><span class="kopf"><span class="name">Buchgespräch</span></span><span class="beschr">Über ein Buch sprechen, mit Zitaten.</span></button>
+                    <button class="menue" type="button" aria-label="Aktionen für Buchgespräch"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
+                  </li>
+                  <li class="zeile" data-eintrag="vorlage">
+                    <button class="haupt" type="button"><span class="kopf"><span class="name">Lernpartner</span></span><span class="beschr">Fragt dich ab und erklärt Fehler.</span></button>
+                    <button class="menue" type="button" aria-label="Aktionen für Lernpartner"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
+                  </li>
+                  <li class="zeile" data-eintrag="vorlage">
+                    <button class="haupt" type="button"><span class="kopf"><span class="name">Sprachtrainer Englisch</span></span><span class="beschr">Übt Englisch im Gespräch.</span></button>
+                    <button class="menue" type="button" aria-label="Aktionen für Sprachtrainer Englisch"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
+                  </li>
+                  <li class="zeile" data-eintrag="vorlage">
+                    <button class="haupt" type="button"><span class="kopf"><span class="name">Besprechung nachbereiten</span></span><span class="beschr">Arbeitet Besprechungen auf.</span></button>
+                    <button class="menue" type="button" aria-label="Aktionen für Besprechung nachbereiten"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
+                  </li>
+                </ul>
+              </section>
+              <section class="gruppe-liste" aria-labelledby="g-ung">
+                <h2 id="g-ung">Ungültige Dateien</h2>
+                <ul>
+                  <li class="zeile" data-eintrag="abgewiesen">
+                    <button class="haupt" type="button"><span class="kopf"><span class="name">kaputt.json</span><span class="marke warn">Ungültig</span></span></button>
+                  </li>
+                </ul>
+              </section>
+            </nav>
+          </div>
+
+          <!-- ===== Rechts ===== -->
+          <div class="detail">
+
+            <!-- ---- Editor ---- -->
+            <article class="ansicht" id="v-editor" aria-labelledby="t-editor">
+              <header class="kopf-bereich">
+                <button class="btn klein leise zurueck" type="button" data-zurueck>← Zur Liste</button>
+                <div class="t">
+                  <h2 id="t-editor">Kundenservice</h2>
+                  <p>Eigener Assistent, im Gespräch gewählt</p>
+                  <p class="hinweis" id="verwenden-grund">Erst speichern: Das Gespräch nimmt den gespeicherten Stand.</p>
+                </div>
+                <div class="a">
+                  <button class="btn klein" type="button" aria-disabled="true" aria-describedby="verwenden-grund">Im Gespräch verwenden</button>
+                  <button class="btn klein" type="button" aria-label="Aktionen für Kundenservice"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
+                </div>
+              </header>
+
+              <div class="meldung fehler hidden" id="konflikt" role="alert" style="margin-block-end:16px">
+                <h3>Die Datei hat sich geändert</h3>
+                <p>Dieser Assistent wurde geändert, während du ihn bearbeitet hast. Deine Änderungen sind noch da, wurden aber nicht gespeichert, damit nichts überschrieben wird.</p>
+                <div class="knoepfe">
+                  <button class="btn klein primaer" type="button">Als Kopie speichern</button>
+                  <button class="btn klein" type="button">Neu laden und Änderungen verwerfen</button>
+                </div>
+              </div>
+
+              <div class="abschnitte">
+                <section aria-labelledby="a-allg">
+                  <div class="gruppe-titel"><h3 id="a-allg">Allgemein</h3></div>
+                  <div class="karte"><div class="block">
+                    <div class="feld">
+                      <div class="zeile-f"><label for="f-name">Name</label><span class="zaehler">12 / 60</span></div>
+                      <input id="f-name" type="text" value="Kundenservice" autocomplete="off">
+                    </div>
+                    <div class="feld">
+                      <div class="zeile-f"><label for="f-besch">Beschreibung</label><span class="zaehler">49 / 200</span></div>
+                      <p class="hinweis" id="h-besch">Ein Satz, der in der Liste unter dem Namen steht.</p>
+                      <textarea id="f-besch" rows="2" aria-describedby="h-besch">Freundlich, kurz, mit Blick auf offene Anliegen.</textarea>
+                    </div>
+                  </div></div>
+                </section>
+
+                <section aria-labelledby="a-anw">
+                  <div class="gruppe-titel"><h3 id="a-anw">Rolle und Anweisungen</h3></div>
+                  <div class="karte"><div class="block">
+                    <div class="feld">
+                      <div class="zeile-f"><label for="f-anw">Anweisungen</label><span class="zaehler" id="zaehler" data-stand="ok">0 / 8000</span></div>
+                      <p class="hinweis" id="h-anw">Welche Rolle die KI spielt und wie sie antwortet. Ein Modell mit kleinem Kontext bekommt höchstens die ersten 1200 Zeichen, größere Modelle mehr. Das Wichtigste gehört an den Anfang.</p>
+                      <textarea id="f-anw" rows="9" aria-describedby="h-anw">Du bist die Stimme unseres Kundenservice. Begrüße freundlich, frage nach dem Anliegen und fasse am Ende kurz zusammen, was vereinbart wurde.
+
+Sprich {{name}} mit Namen an, wenn er bekannt ist. Antworte in zwei bis drei Sätzen und ohne Fachbegriffe.</textarea>
+                      <p class="hinweis hidden" id="budget-hinweis">Über 1200 Zeichen (nach dem Einsetzen der Platzhalter): Kleine Modelle bekommen nur den Anfang, gekürzt am letzten Absatz.</p>
+                    </div>
+                    <div role="group" aria-label="Platzhalter einfügen" style="display:flex;flex-direction:column;gap:4px">
+                      <p class="hinweis">Platzhalter setzt das Gespräch zu Beginn ein, mit den Werten von heute.</p>
+                      <div class="platzhalter">
+                        <button class="btn klein" type="button" data-ph="name" aria-label="Platzhalter für den Namen einfügen"><code>{{name}}</code></button>
+                        <button class="btn klein" type="button" data-ph="tageszeit" aria-label="Platzhalter für die Tageszeit einfügen"><code>{{tageszeit}}</code></button>
+                        <button class="btn klein" type="button" data-ph="datum" aria-label="Platzhalter für das Datum einfügen"><code>{{datum}}</code></button>
+                        <button class="btn klein" type="button" data-ph="wochentag" aria-label="Platzhalter für den Wochentag einfügen"><code>{{wochentag}}</code></button>
+                        <button class="btn klein" type="button" data-ph="uhrzeit" aria-label="Platzhalter für die Uhrzeit einfügen"><code>{{uhrzeit}}</code></button>
+                      </div>
+                    </div>
+                  </div></div>
+                </section>
+
+                <section aria-labelledby="a-gruss">
+                  <div class="gruppe-titel"><h3 id="a-gruss">Begrüßung</h3></div>
+                  <div class="karte"><div class="block">
+                    <div class="feld">
+                      <div class="zeile-f"><label for="f-gruss">Begrüßung</label><span class="zaehler">49 / 300</span></div>
+                      <p class="hinweis" id="h-gruss">Der erste Satz, wenn ein neues Gespräch beginnt. Leer lassen, wenn der Assistent nichts sagen soll. Platzhalter sind erlaubt.</p>
+                      <textarea id="f-gruss" rows="3" aria-describedby="h-gruss">Guten {{tageszeit}}, hier ist der Kundenservice.</textarea>
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:4px">
+                      <p class="hinweis">Vorschau mit den Werten von heute:</p>
+                      <p class="vorschau-text">Guten Morgen, hier ist der Kundenservice.</p>
+                    </div>
+                    <div class="hoer">
+                      <button class="btn klein" type="button" id="hoer-1"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 5v14l12-7z"/></svg><span>Begrüßung anhören</span></button>
+                      <span class="hinweis" id="hoer-meldung"></span>
+                    </div>
+                    <p class="hinweis">Die Hörprobe spricht mit der Stimme aus den Einstellungen, wie das Gespräch selbst.</p>
+                  </div></div>
+                </section>
+
+                <section aria-labelledby="a-stimme">
+                  <div class="gruppe-titel"><h3 id="a-stimme">Sprache und Stimme</h3><p>Beides wird mit dem Assistenten gespeichert. Im Gespräch auf diesem PC spricht heute die Stimme aus den Einstellungen; die Sprache wirkt auf die Platzhalter.</p></div>
+                  <div class="karte">
+                    <div class="einstellung">
+                      <div class="text"><b>Sprache</b><span>Bestimmt, in welcher Sprache die Platzhalter (Tageszeit, Datum, Wochentag) eingesetzt werden. In welcher Sprache die KI antwortet, bestimmen die Anweisungen.</span></div>
+                      <button class="auswahl" type="button" role="combobox" aria-label="Sprache" aria-expanded="false">Deutsch<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+                    </div>
+                    <div class="einstellung">
+                      <div class="text"><b>Stimme</b><span>Eine Stimme dieses PCs. „Standardstimme“ nimmt die Stimme aus den Einstellungen.</span></div>
+                      <button class="auswahl" type="button" role="combobox" aria-label="Stimme" aria-expanded="false">Standardstimme<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+                    </div>
+                    <div class="block">
+                      <div class="hoer">
+                        <button class="btn klein" type="button"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 5v14l12-7z"/></svg>Probe anhören</button>
+                      </div>
+                      <p class="hinweis">Die Probe spricht mit der Stimme aus den Einstellungen.</p>
+                    </div>
+                  </div>
+                </section>
+
+                <section aria-labelledby="a-verh">
+                  <div class="gruppe-titel"><h3 id="a-verh">Gesprächsverhalten</h3></div>
+                  <div class="karte">
+                    <div class="einstellung">
+                      <div class="text"><b>Sprechstil</b><span>Natürlich: die Antwort klingt gesprochen. Wörtlich: Texte werden möglichst unverändert gesprochen. Wird gespeichert; im Gespräch auf diesem PC wirkt es noch nicht.</span></div>
+                      <button class="auswahl" type="button" role="combobox" aria-label="Sprechstil" aria-expanded="false">Natürlich<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+                    </div>
+                    <div class="einstellung">
+                      <div class="text"><b>Sprechpause</b><span>Wie lange der Assistent wartet, bevor er antwortet.</span></div>
+                      <button class="auswahl" type="button" role="combobox" aria-label="Sprechpause" aria-expanded="false">Lang<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+                    </div>
+                    <div class="einstellung">
+                      <div class="text"><b>Unterbrechen erlauben</b><span>Wenn du sprichst, während der Assistent spricht, hält er an.</span></div>
+                      <label class="schalter"><input type="checkbox" role="switch" checked aria-label="Unterbrechen erlauben"><span class="spur"></span><span class="knauf"></span></label>
+                    </div>
+                    <div class="einstellung">
+                      <div class="text"><b>Nachfrage bei Stille</b><span>Nach so vielen Sekunden Stille fragt der Assistent nach, zum Beispiel 15 Sekunden. Wird gespeichert; im Gespräch auf diesem PC wirkt es noch nicht.</span></div>
+                      <button class="auswahl" type="button" role="combobox" aria-label="Nachfrage bei Stille" aria-expanded="false">15 Sekunden<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+                    </div>
+                  </div>
+                </section>
+
+                <section aria-labelledby="a-wissen">
+                  <div class="gruppe-titel"><h3 id="a-wissen">Wissen</h3><p>Das Profil begrenzt nur. Was die Einstellungen nicht freigeben, öffnet der Assistent nie.</p></div>
+                  <div class="karte">
+                    <div class="einstellung">
+                      <div class="text"><b>Alle freigegebenen Bereiche</b><span>Der Assistent darf alles nachschlagen, was in den Einstellungen freigegeben ist.</span></div>
+                      <label class="schalter"><input type="checkbox" role="switch" id="alle" aria-label="Alle freigegebenen Bereiche"><span class="spur"></span><span class="knauf"></span></label>
+                    </div>
+                    <div class="block" role="group" aria-label="Wissensbereiche des Assistenten" style="gap:0">
+                      <label class="bereich"><input type="checkbox" data-bereich="besprechungen" checked aria-label="Besprechungen"><span class="tx">Besprechungen</span><span class="st wirkt" data-st>Wirkt im Gespräch</span></label>
+                      <label class="bereich"><input type="checkbox" data-bereich="kalender" checked aria-label="Termine"><span class="tx">Termine</span><span class="st wirkt" data-st>Wirkt im Gespräch</span></label>
+                      <label class="bereich"><input type="checkbox" data-bereich="sprachnotizen" aria-label="Diktate"><span class="tx">Diktate</span><span class="st" data-st>Freigegeben, nicht gewählt</span></label>
+                      <label class="bereich"><input type="checkbox" data-bereich="gespraeche" aria-label="Frühere Gespräche"><span class="tx">Frühere Gespräche</span><span class="st" data-st>Freigegeben, nicht gewählt</span></label>
+                      <label class="bereich"><input type="checkbox" data-bereich="buecher" aria-label="Bücher"><span class="tx">Bücher</span><span class="st" data-st>In den Einstellungen nicht freigegeben</span></label>
+                      <label class="bereich"><input type="checkbox" data-bereich="vorlesen" aria-label="Vorlesen"><span class="tx">Vorlesen</span><span class="st" data-st>In den Einstellungen nicht freigegeben</span></label>
+                      <label class="bereich"><input type="checkbox" data-bereich="notizbuch" aria-label="Notizbuch"><span class="tx">Notizbuch</span><span class="st" data-st>Auf diesem PC ohne Wirkung</span></label>
+                      <p class="hinweis" role="status" id="summe" style="margin-block-start:6px">2 von 5 freigegebenen Bereichen wirken im Gespräch.</p>
+                    </div>
+                  </div>
+                </section>
+
+                <section aria-labelledby="a-aus" data-testid="aussprache">
+                  <div class="gruppe-titel"><h3 id="a-aus">Aussprache</h3><p>Wie ein Wort gesprochen werden soll: Namen, Abkürzungen oder Fachwörter.</p></div>
+                  <div class="karte">
+                    <div class="block">
+                      <div class="zeile-f">
+                        <p class="hinweis" style="flex:1 1 14rem;min-width:0">Jede Regel besteht aus einem Wort und der Aussprache dafür. Es zählt genau, was du schreibst: Groß- und Kleinschreibung, keine Wortgrenzen („Rad“ trifft auch in „Radio“). Treffen an einer Stelle mehrere Wörter zu, gilt das längste. Ein Wort darf nur einmal vorkommen.</p>
+                        <span class="zaehler" id="regel-zaehler" data-stand="ok">3 von 50 Regeln</span>
+                      </div>
+                      <div class="tabelle">
+                        <div class="kopfzeile" aria-hidden="true"><span>Wort</span><span>Aussprache</span><span></span></div>
+                        <ol class="regeln" id="regeln" aria-label="Ausspracheregeln"></ol>
+                      </div>
+                      <p class="hinweis hidden" id="regel-offen">Jede Regel braucht ein Wort und eine Aussprache. Fülle leere Regeln aus oder entferne sie, sonst lässt sich nicht speichern.</p>
+                      <div class="hoer">
+                        <button class="btn klein" type="button" id="regel-hinzu" aria-describedby="regel-hinzu-hinweis"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Regel hinzufügen</button>
+                        <span class="hinweis" id="regel-hinzu-hinweis">Wort und Aussprache je 1 bis 60 Zeichen.</span>
+                      </div>
+                      <p class="sr-only" role="status" id="regel-angesagt"></p>
+                    </div>
+                  </div>
+                </section>
+              </div>
+
+              <div class="leiste" role="group" aria-label="Speichern" style="margin-block-start:16px">
+                <div class="status" id="status" data-stand="ungespeichert" role="status">
+                  <span id="status-text">Ungespeicherte Änderungen</span>
+                  <span class="hinweis" style="display:block">Gilt für den gewählten Assistenten ab dem nächsten Gespräch.</span>
+                  <span class="fehler-zeile hidden" id="status-fehler" style="display:block"></span>
+                </div>
+                <button class="btn primaer" type="button" id="speichern">Speichern</button>
+                <button class="btn" type="button" id="verwerfen">Änderungen verwerfen</button>
+              </div>
+            </article>
+
+            <!-- ---- Vorlage ---- -->
+            <article class="ansicht hidden" id="v-vorlage" aria-labelledby="t-vorlage">
+              <header class="kopf-bereich">
+                <button class="btn klein leise zurueck" type="button" data-zurueck>← Zur Liste</button>
+                <div class="t"><h2 id="t-vorlage">Lernpartner</h2><p>Vorlage, nur zum Ansehen</p></div>
+                <div class="a">
+                  <button class="btn klein primaer" type="button">Als eigenen kopieren</button>
+                  <button class="btn klein" type="button">Im Gespräch verwenden</button>
+                  <button class="btn klein" type="button" aria-label="Aktionen für Lernpartner"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
+                </div>
+              </header>
+              <div class="abschnitte">
+                <section aria-labelledby="vv1"><div class="gruppe-titel"><h3 id="vv1">Allgemein</h3></div>
+                  <div class="karte"><div class="block"><dl class="daten"><dt>Name</dt><dd>Lernpartner</dd><dt>Beschreibung</dt><dd>Fragt dich ab und erklärt Fehler.</dd></dl></div></div></section>
+                <section aria-labelledby="vv2"><div class="gruppe-titel"><h3 id="vv2">Rolle und Anweisungen</h3></div>
+                  <div class="karte"><div class="block"><p class="hinweis">412 / 8000</p><pre class="text">Du bist ein geduldiger Lernpartner. Frage das Thema ab, stelle eine Frage nach der anderen und erkläre Fehler freundlich.
+
+Beginne mit einer leichten Frage und steigere den Schwierigkeitsgrad nur, wenn die Antworten stimmen.</pre></div></div></section>
+                <section aria-labelledby="vv3"><div class="gruppe-titel"><h3 id="vv3">Begrüßung</h3></div>
+                  <div class="karte"><div class="block"><p class="vorschau-text">Welches Thema üben wir heute?</p></div></div></section>
+                <section aria-labelledby="vv4"><div class="gruppe-titel"><h3 id="vv4">Gesprächsverhalten</h3></div>
+                  <div class="karte"><div class="block"><dl class="daten"><dt>Sprechstil</dt><dd>Natürlich</dd><dt>Sprechpause</dt><dd>Normal</dd><dt>Unterbrechen erlauben</dt><dd>Ja</dd><dt>Nachfrage bei Stille</dt><dd>Aus</dd></dl></div></div></section>
+                <section aria-labelledby="vv5"><div class="gruppe-titel"><h3 id="vv5">Wissen</h3><p>Das Profil begrenzt nur. Was die Einstellungen nicht freigeben, öffnet der Assistent nie.</p></div>
+                  <div class="karte"><div class="block"><ul style="margin:0;padding-inline-start:20px"><li>Frühere Gespräche</li><li>Diktate</li></ul><p class="hinweis">2 von 5 freigegebenen Bereichen wirken im Gespräch.</p></div></div></section>
+              </div>
+            </article>
+
+            <!-- ---- Ungültige Datei ---- -->
+            <article class="ansicht hidden" id="v-abgewiesen" aria-labelledby="t-abg">
+              <header class="kopf-bereich">
+                <button class="btn klein leise zurueck" type="button" data-zurueck>← Zur Liste</button>
+                <div class="t"><h2 id="t-abg">kaputt.json</h2><p>Ungültige Datei</p></div>
+              </header>
+              <div class="meldung fehler">
+                <h3>Diese Datei wird nicht geladen</h3>
+                <p>Der Ordner der Assistenten enthält eine Datei, die die Prüfung nicht besteht:</p>
+                <ul><li>Datei: ist kein gültiges JSON oder enthält nicht erlaubte Zeichen</li></ul>
+                <p class="hinweis">Die Datei bleibt, wie sie ist: Die App ändert, repariert oder löscht sie nie. Korrigiere sie im Ordner oder entferne sie dort selbst.</p>
+              </div>
+            </article>
+
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+</div>
+
+<script>
+(function () {
+  var wurzel = document.documentElement;
+  var rahmen = document.getElementById("rahmen");
+  var seite = document.getElementById("seite");
+  var sys = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  var aktuell = { theme: sys, breite: "breit", ansicht: "editor" };
+
+  function druecke(selektor, attr, wert) {
+    document.querySelectorAll(selektor).forEach(function (b) {
+      b.setAttribute("aria-pressed", b.getAttribute(attr) === wert ? "true" : "false");
+    });
+  }
+  function setzeTheme(t) { aktuell.theme = t; wurzel.setAttribute("data-theme", t); druecke("[data-theme-wahl]", "data-theme-wahl", t); }
+  function setzeBreite(b) { aktuell.breite = b; rahmen.setAttribute("data-breite", b); druecke("[data-breite-wahl]", "data-breite-wahl", b); }
+
+  function zeige(art) {
+    ["editor", "vorlage", "abgewiesen"].forEach(function (n) {
+      document.getElementById("v-" + n).classList.toggle("hidden", n !== art);
+    });
+    var zeilen = document.querySelectorAll(".zeile");
+    zeilen.forEach(function (z) { z.removeAttribute("data-offen"); var h = z.querySelector(".haupt"); if (h) h.removeAttribute("aria-current"); });
+    var ziel = { editor: 0, vorlage: 3, abgewiesen: 6 }[art];
+    var z = zeilen[ziel];
+    if (z) { z.setAttribute("data-offen", "true"); var h = z.querySelector(".haupt"); if (h) h.setAttribute("aria-current", "true"); }
+  }
+  var offeneFehler = 0;
+  function aktualisiereSpeichern() {
+    var speichern = document.getElementById("speichern");
+    speichern.setAttribute("aria-disabled", aktuell.ansicht === "konflikt" || offeneFehler > 0 ? "true" : "false");
+    var f = document.getElementById("status-fehler");
+    f.classList.toggle("hidden", offeneFehler === 0);
+    f.textContent = offeneFehler === 1 ? "1 Angabe ist nicht gültig." : offeneFehler + " Angaben sind nicht gültig.";
+  }
+  function setzeAnsicht(a) {
+    aktuell.ansicht = a;
+    druecke("[data-ansicht-wahl]", "data-ansicht-wahl", a);
+    var art = a === "konflikt" || a === "import" ? "editor" : a;
+    zeige(art);
+    document.getElementById("konflikt").classList.toggle("hidden", a !== "konflikt");
+    document.getElementById("import-fehler").classList.toggle("hidden", a !== "import");
+    seite.setAttribute("data-ansicht", "editor");
+    aktualisiereSpeichern();
+  }
+
+  document.querySelectorAll("[data-theme-wahl]").forEach(function (b) { b.addEventListener("click", function () { setzeTheme(b.getAttribute("data-theme-wahl")); }); });
+  document.querySelectorAll("[data-breite-wahl]").forEach(function (b) { b.addEventListener("click", function () { setzeBreite(b.getAttribute("data-breite-wahl")); }); });
+  document.querySelectorAll("[data-ansicht-wahl]").forEach(function (b) { b.addEventListener("click", function () { setzeAnsicht(b.getAttribute("data-ansicht-wahl")); }); });
+
+  // Liste: ein Klick öffnet den Eintrag (Telefon: die Ansicht ersetzt die Liste), „Zur Liste“ geht zurück.
+  document.querySelectorAll(".zeile .haupt").forEach(function (h, i) {
+    h.addEventListener("click", function () {
+      var art = h.parentElement.getAttribute("data-eintrag");
+      setzeAnsicht(art === "editor" ? "editor" : art);
+      seite.setAttribute("data-ansicht", "editor");
+    });
+  });
+  document.querySelectorAll("[data-zurueck]").forEach(function (b) { b.addEventListener("click", function () { seite.setAttribute("data-ansicht", "liste"); }); });
+
+  // Zähler der Anweisungen: Unicode-Zeichen wie im Kern; Hinweis über 1200, Fehler über 8000.
+  var anw = document.getElementById("f-anw");
+  var zaehler = document.getElementById("zaehler");
+  var budget = document.getElementById("budget-hinweis");
+  function zaehle() {
+    var n = Array.from(anw.value).length;
+    zaehler.textContent = n + " / 8000";
+    zaehler.setAttribute("data-stand", n > 8000 ? "fehler" : n > 1200 ? "warn" : "ok");
+    budget.classList.toggle("hidden", !(n > 1200 && n <= 8000));
+  }
+  anw.addEventListener("input", zaehle);
+  zaehle();
+
+  document.querySelectorAll("[data-ph]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var marke = "{{" + b.getAttribute("data-ph") + "}}";
+      var von = anw.selectionStart, bis = anw.selectionEnd;
+      anw.value = anw.value.slice(0, von) + marke + anw.value.slice(bis);
+      anw.focus(); anw.setSelectionRange(von + marke.length, von + marke.length);
+      zaehle();
+    });
+  });
+
+  // Wissen: Summe der wirkenden Bereiche (nur freigegebene zählen).
+  var freigegeben = { besprechungen: 1, kalender: 1, sprachnotizen: 1, gespraeche: 1 };
+  var alle = document.getElementById("alle");
+  function summe() {
+    var wirkt = 0;
+    document.querySelectorAll("[data-bereich]").forEach(function (c) {
+      var k = c.getAttribute("data-bereich");
+      var st = c.parentElement.querySelector("[data-st]");
+      c.disabled = alle.checked;
+      var gewollt = alle.checked || c.checked;
+      if (c.checked !== gewollt) c.checked = gewollt;
+      if (!(k in freigegeben)) return;
+      st.classList.toggle("wirkt", gewollt);
+      st.textContent = gewollt ? "Wirkt im Gespräch" : "Freigegeben, nicht gewählt";
+      if (gewollt) wirkt += 1;
+    });
+    document.getElementById("summe").textContent = wirkt + " von 4 freigegebenen Bereichen wirken im Gespräch.";
+  }
+  document.querySelectorAll("[data-bereich]").forEach(function (c) { c.addEventListener("change", summe); });
+  alle.addEventListener("change", summe);
+  summe();
+
+  // Hörprobe: nur die Bedienung (hier ohne Ton).
+  var hoer = document.getElementById("hoer-1");
+  hoer.addEventListener("click", function () {
+    var t = hoer.querySelector("span");
+    t.textContent = "Wird erzeugt …";
+    setTimeout(function () { t.textContent = "Anhalten"; }, 600);
+    setTimeout(function () { t.textContent = "Begrüßung anhören"; }, 2200);
+  });
+
+  // Ausspracheregeln: Liste ändern, Fehler je Zeile wie die Prüfung des Kerns (Länge 1 bis 60 in Unicode-Zeichen, keine
+  // Steuer-/Richtungszeichen und keine < > [ ], kein Wort doppelt, höchstens 50 Regeln).
+  var regeln = [
+    { wort: "SQL", aussprache: "Siekwel" },
+    { wort: "Wolff.ai", aussprache: "Wolf Punkt A I" },
+    { wort: "DSGVO", aussprache: "Daten Schutz Grund Verordnung" },
+    { wort: "SQL", aussprache: "[lachen]" }
+  ];
+  var beruehrt = {};
+  var ICON = {
+    hoch: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>',
+    runter: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg>',
+    weg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>'
+  };
+  function befund(wert) {
+    var n = Array.from(wert).length, aus = [];
+    var verboten = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069<>\[\]]/.test(wert);
+    if (n < 1 || n > 60) aus.push("laenge");
+    if (verboten) aus.push("muster");
+    return aus;
+  }
+  var TEXT = { laenge: "Hier sind 1 bis 60 Zeichen nötig.", muster: "Steuer- und Richtungszeichen sowie < > [ ] sind nicht erlaubt.", doppelt: "Dieses Wort hat schon eine Regel davor." };
+  function esc(t) { return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+  var zeichnet = false;
+  function zeichneRegeln() {
+    var offen = 0, leer = 0, gesehen = {};
+    var html = regeln.map(function (r, i) {
+      var n = i + 1;
+      var cw = befund(r.wort), ca = befund(r.aussprache);
+      // Wie im Kern: ein sauberes Wort, das weiter oben schon vorkommt, ist doppelt; jedes Wort zählt als gesehen.
+      if (cw.length === 0 && Object.prototype.hasOwnProperty.call(gesehen, r.wort)) cw.push("doppelt");
+      gesehen[r.wort] = true;
+      if (r.wort === "" || r.aussprache === "") leer += 1;
+      offen += cw.length + ca.length;
+      var sw = cw.filter(function (c) { return c !== "laenge" || r.wort !== "" || beruehrt[i + ":w"]; });
+      var sa = ca.filter(function (c) { return c !== "laenge" || r.aussprache !== "" || beruehrt[i + ":a"]; });
+      var fw = sw.map(function (c) { return '<p class="fehler-zeile">' + TEXT[c] + "</p>"; }).join("");
+      var fa = sa.map(function (c) { return '<p class="fehler-zeile">' + TEXT[c] + "</p>"; }).join("");
+      return '<li class="regel">' +
+        '<div class="rf"><label for="rw' + i + '">Wort<span class="sr-only"> Regel ' + n + '</span></label><input type="text" id="rw' + i + '" data-i="' + i + '" data-f="wort" value="' + esc(r.wort) + '" placeholder="z. B. SQL" autocomplete="off" spellcheck="false"' + (sw.length ? ' aria-invalid="true"' : "") + ">" + fw + "</div>" +
+        '<div class="rf"><label for="ra' + i + '">Aussprache<span class="sr-only"> Regel ' + n + '</span></label><input type="text" id="ra' + i + '" data-i="' + i + '" data-f="aussprache" value="' + esc(r.aussprache) + '" placeholder="z. B. Siekwel" autocomplete="off" spellcheck="false"' + (sa.length ? ' aria-invalid="true"' : "") + ">" + fa + "</div>" +
+        '<div class="rakt" role="group" aria-label="Regel ' + n + '">' +
+        '<button class="btn leise icon" type="button" data-akt="hoch" data-i="' + i + '" aria-label="Regel ' + n + ' nach oben" title="Regel ' + n + ' nach oben"' + (i === 0 ? ' aria-disabled="true"' : "") + ">" + ICON.hoch + "</button>" +
+        '<button class="btn leise icon" type="button" data-akt="runter" data-i="' + i + '" aria-label="Regel ' + n + ' nach unten" title="Regel ' + n + ' nach unten"' + (i === regeln.length - 1 ? ' aria-disabled="true"' : "") + ">" + ICON.runter + "</button>" +
+        '<button class="btn leise icon" type="button" data-akt="weg" data-i="' + i + '" aria-label="Regel ' + n + ' entfernen" title="Regel ' + n + ' entfernen">' + ICON.weg + "</button>" +
+        "</div></li>";
+    }).join("");
+    zeichnet = true;   // Chrome meldet beim Entfernen des fokussierten Felds ein focusout: das ist kein Verlassen durch die Person
+    document.getElementById("regeln").innerHTML = html;
+    zeichnet = false;
+    var z = document.getElementById("regel-zaehler");
+    z.textContent = regeln.length + " von 50 Regeln";
+    z.setAttribute("data-stand", regeln.length >= 50 ? "warn" : "ok");
+    document.getElementById("regel-offen").classList.toggle("hidden", leer === 0);
+    var voll = regeln.length >= 50;
+    document.getElementById("regel-hinzu").setAttribute("aria-disabled", voll ? "true" : "false");
+    document.getElementById("regel-hinzu-hinweis").textContent = voll ? "Mehr als 50 Regeln nimmt das Profil nicht an." : "Wort und Aussprache je 1 bis 60 Zeichen.";
+    offeneFehler = offen;
+    aktualisiereSpeichern();
+  }
+  function ansage(t) { document.getElementById("regel-angesagt").textContent = t; }
+  document.getElementById("regeln").addEventListener("input", function (e) {
+    var t = e.target; if (t.tagName !== "INPUT") return;
+    var pos = t.selectionStart;
+    regeln[+t.getAttribute("data-i")][t.getAttribute("data-f")] = t.value;
+    zeichneRegeln();
+    var neu = document.getElementById((t.getAttribute("data-f") === "wort" ? "rw" : "ra") + t.getAttribute("data-i"));
+    neu.focus(); neu.setSelectionRange(pos, pos);
+  });
+  document.getElementById("regeln").addEventListener("focusout", function (e) {
+    var t = e.target; if (t.tagName !== "INPUT" || zeichnet) return;
+    var k = t.getAttribute("data-i") + ":" + (t.getAttribute("data-f") === "wort" ? "w" : "a");
+    if (beruehrt[k]) return;
+    beruehrt[k] = true;
+    var ziel = e.relatedTarget;
+    if (ziel && ziel.tagName === "BUTTON") return;   // ein Klick auf die Schaltflächen der Zeile darf nicht durch Neuzeichnen verloren gehen
+    var id = ziel && ziel.id;
+    zeichneRegeln();
+    if (id && document.getElementById(id)) document.getElementById(id).focus();
+  });
+  document.getElementById("regeln").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-akt]"); if (!b || b.getAttribute("aria-disabled") === "true") return;
+    var i = +b.getAttribute("data-i"), akt = b.getAttribute("data-akt");
+    beruehrt = {};
+    if (akt === "weg") {
+      regeln.splice(i, 1); zeichneRegeln(); ansage("Regel " + (i + 1) + " entfernt");
+      var ziel = regeln.length ? document.getElementById("rw" + Math.min(i, regeln.length - 1)) : document.getElementById("regel-hinzu");
+      ziel.focus(); return;
+    }
+    var j = akt === "hoch" ? i - 1 : i + 1;
+    var t = regeln[i]; regeln[i] = regeln[j]; regeln[j] = t;
+    zeichneRegeln(); ansage("Regel " + (i + 1) + " steht jetzt an Stelle " + (j + 1));
+    document.querySelector('button[data-akt="' + akt + '"][data-i="' + j + '"]').focus();
+  });
+  document.getElementById("regel-hinzu").addEventListener("click", function () {
+    if (this.getAttribute("aria-disabled") === "true") return;
+    beruehrt = {};
+    regeln.push({ wort: "", aussprache: "" }); zeichneRegeln(); ansage("Regel " + regeln.length + " hinzugefügt");
+    document.getElementById("rw" + (regeln.length - 1)).focus();
+  });
+  zeichneRegeln();
+
+  document.getElementById("speichern").addEventListener("click", function () {
+    if (this.getAttribute("aria-disabled") === "true") return;
+    document.getElementById("status-text").textContent = "Alles gespeichert";
+    document.getElementById("status").setAttribute("data-stand", "gespeichert");
+    var m = document.getElementById("marke-entwurf"); if (m) m.classList.add("hidden");
+  });
+  ["input", "change"].forEach(function (ev) {
+    document.getElementById("v-editor").addEventListener(ev, function () {
+      document.getElementById("status-text").textContent = "Ungespeicherte Änderungen";
+      document.getElementById("status").setAttribute("data-stand", "ungespeichert");
+      var m = document.getElementById("marke-entwurf"); if (m) m.classList.remove("hidden");
+    });
+  });
+
+  setzeTheme(sys);
+  setzeAnsicht("editor");
+})();
+</script>
+</body>
+</html>
