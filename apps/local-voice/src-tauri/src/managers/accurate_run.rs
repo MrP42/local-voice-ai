@@ -15,9 +15,13 @@
 //!   laufenden genauen Lauf. Er wird nicht abgebrochen und teilt sich Rechenzeit mit
 //!   ihr. Die Oberflaeche sagt das so.
 //! - Das Speicher-Tor ist streng ([`memory_gate`]): unbekannte Modellgroesse oder nicht
-//!   messbarer Speicher oeffnen es nicht, und beim Grafikspeicher zaehlt die Karte mit
-//!   dem WENIGSTEN freien Speicher (welche Karte der Lader nimmt, ist hier nicht
-//!   bekannt).
+//!   messbarer Arbeitsspeicher oeffnen es nicht, und beim Grafikspeicher zaehlt die
+//!   Karte mit dem WENIGSTEN freien Speicher (welche Karte der Lader nimmt, ist hier
+//!   nicht bekannt).
+//! - Die Grafikkarte wird nur benutzt, wenn ihr freier Speicher gemessen ist. Ohne
+//!   Messung (GPU abgeschaltet, kein Geraet gemeldet, Geraet ohne Angabe) laedt der
+//!   genaue Lauf sein Modell ausdruecklich auf der CPU ([`must_load_on_cpu`]); ob eine
+//!   Karte fehlt oder nur die Messung, wird nicht geraten.
 //! - Der freie Speicher wird nicht zweimal zugesagt: Messen, Abziehen aller laufenden
 //!   Ladevorgaenge (Modellwechsel, eigene Engine der Warteschlange), Entscheiden und
 //!   Eintragen geschehen unter einer Sperre ([`crate::managers::engine_ledger`]).
@@ -100,8 +104,7 @@ pub fn memory_gate(size_mb: u64, gpu_model: bool, hw: &Hardware) -> Result<(), &
 
 /// Der Stand des Rechners fuer [`memory_gate`]: wie `final_pass::probe_hardware`,
 /// aber beim Grafikspeicher die Karte mit dem wenigsten freien Speicher, und ohne
-/// Rueckgriff auf Schaetzwerte (nicht Messbares bleibt `None`). Siehe
-/// [`hardware_from`].
+/// Rueckgriff auf Schaetzwerte. Siehe [`hardware_from`].
 pub fn measure(app: &tauri::AppHandle) -> Hardware {
     let settings = crate::settings::get_settings(app);
     let allowed =
@@ -110,49 +113,32 @@ pub fn measure(app: &tauri::AppHandle) -> Hardware {
         .iter()
         .map(|(_, free)| *free)
         .collect();
-    // Zweite, unabhaengige Quelle (Betriebssystem): gibt es eine eigene Grafikkarte?
-    let system_gpu = crate::managers::llm::resources::system_memory()
-        .gpus
-        .iter()
-        .any(|g| !g.shared);
-    hardware_from(
-        allowed,
-        &free,
-        system_gpu,
-        crate::process_guard::available_ram_mb(),
-    )
+    hardware_from(allowed, &free, crate::process_guard::available_ram_mb())
 }
 
-/// Baut den Stand fuer das Tor und haelt drei Faelle auseinander:
-/// - GPU-Nutzung abgeschaltet (`gpu_allowed` = false): der Lader rechnet auf der CPU,
-///   Grafikspeicher spielt keine Rolle (`gpu` = false).
-/// - Keine Grafikkarte: transcribe-cpp meldet kein GPU-Geraet UND das Betriebssystem
-///   kennt keine eigene Grafikkarte (`gpu` = false).
-/// - Messung fehlt: transcribe-cpp meldet kein GPU-Geraet, das Betriebssystem kennt
-///   aber eine Grafikkarte; oder ein gemeldetes Geraet nennt keinen freien Speicher.
-///   Dann ist `gpu` = true und der Grafikspeicher unbekannt: das Tor bleibt fuer
-///   GPU-faehige Modelle zu.
+/// Baut den Stand fuer das Tor. `gpu` ist nur dann `true`, wenn die GPU-Nutzung
+/// erlaubt ist UND der freie Grafikspeicher JEDER gemeldeten Karte gemessen ist.
+/// In jedem anderen Fall (GPU abgeschaltet, kein Geraet gemeldet, ein Geraet ohne
+/// Angabe) ist `gpu` = false, und das heisst hier nicht "es gibt keine Grafikkarte",
+/// sondern: der genaue Lauf darf die Grafikkarte nicht benutzen. Ob eine Karte
+/// fehlt oder nur die Messung, wird nicht geraten. Der Aufrufer MUSS dann auf der
+/// CPU laden ([`must_load_on_cpu`]); das Tor prueft dafuer den Arbeitsspeicher.
 ///
 /// `ram_mb` = 0 heisst nicht messbar.
-pub fn hardware_from(
-    gpu_allowed: bool,
-    transcribe_free_mb: &[u64],
-    system_has_gpu: bool,
-    ram_mb: u64,
-) -> Hardware {
-    let free_ram_mb = (ram_mb > 0).then_some(ram_mb);
-    if !gpu_allowed || (transcribe_free_mb.is_empty() && !system_has_gpu) {
-        return Hardware {
-            gpu: false,
-            free_vram_mb: None,
-            free_ram_mb,
-        };
-    }
+pub fn hardware_from(gpu_allowed: bool, transcribe_free_mb: &[u64], ram_mb: u64) -> Hardware {
+    let free_vram_mb = least_free_vram(transcribe_free_mb);
     Hardware {
-        gpu: true,
-        free_vram_mb: least_free_vram(transcribe_free_mb),
-        free_ram_mb,
+        gpu: gpu_allowed && free_vram_mb.is_some(),
+        free_vram_mb: if gpu_allowed { free_vram_mb } else { None },
+        free_ram_mb: (ram_mb > 0).then_some(ram_mb),
     }
+}
+
+/// Muss der genaue Lauf sein Modell ausdruecklich auf der CPU laden? Ja, sobald der
+/// Stand keinen gemessenen Grafikspeicher ausweist: ohne Messung gibt es keine
+/// Zusage fuer die Grafikkarte, also auch kein Laden dorthin.
+pub fn must_load_on_cpu(hw: &Hardware) -> bool {
+    !(hw.gpu && hw.free_vram_mb.is_some())
 }
 
 /// Der kleinste gemessene freie Grafikspeicher; meldet auch nur EINE Karte nichts
@@ -291,39 +277,44 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_gpu_measurement_is_not_the_same_as_no_gpu() {
+    fn without_a_measured_gpu_the_run_is_admitted_for_the_cpu_only() {
         let size = 1_600;
         let ram = 64_000;
-        let gate = |hw: &Hardware| memory_gate(size, true, hw);
-        // GPU erlaubt, GPU-faehiges Modell, transcribe-cpp liefert keine Werte, das
-        // Betriebssystem kennt aber eine Karte: unbekannt, das Tor bleibt zu.
-        let unknown = hardware_from(true, &[], true, ram);
-        assert!(unknown.gpu);
-        assert_eq!(gate(&unknown), Err(ERR_MEMORY));
-        // Ein Geraet ohne Angabe: ebenfalls unbekannt.
-        assert_eq!(gate(&hardware_from(true, &[0], true, ram)), Err(ERR_MEMORY));
-        assert_eq!(
-            gate(&hardware_from(true, &[0], false, ram)),
-            Err(ERR_MEMORY)
-        );
-        // CPU erzwungen: startet ohne Grafikspeicher-Messung, auch mit Karte.
-        let forced = hardware_from(false, &[], true, ram);
-        assert!(!forced.gpu);
-        assert_eq!(gate(&forced), Ok(()));
-        assert_eq!(gate(&hardware_from(false, &[100], true, ram)), Ok(()));
-        // Rechner ohne Grafikkarte (beide Quellen leer): CPU, startet.
-        assert_eq!(gate(&hardware_from(true, &[], false, ram)), Ok(()));
-        // Gemessen: es zaehlt der Wert.
         let need = vram_gate_mb(size);
-        assert_eq!(gate(&hardware_from(true, &[need], true, ram)), Ok(()));
-        assert_eq!(
-            gate(&hardware_from(true, &[need - 1], true, ram)),
-            Err(ERR_MEMORY)
-        );
-        // Arbeitsspeicher nicht messbar schliesst in jedem Fall.
-        assert_eq!(gate(&hardware_from(false, &[], false, 0)), Err(ERR_MEMORY));
-        // Ein reines CPU-Modell braucht nie eine Grafikspeicher-Messung.
-        assert_eq!(memory_gate(size, false, &unknown), Ok(()));
+        let gate = |hw: &Hardware| memory_gate(size, true, hw);
+
+        // Gemessen: die Grafikkarte darf benutzt werden, es zaehlt der Wert.
+        let measured = hardware_from(true, &[need], ram);
+        assert_eq!(gate(&measured), Ok(()));
+        assert!(!must_load_on_cpu(&measured));
+        let short = hardware_from(true, &[need - 1], ram);
+        assert_eq!(gate(&short), Err(ERR_MEMORY));
+        assert!(!must_load_on_cpu(&short));
+
+        // GPU erlaubt, GPU-faehiges Modell, aber keine Messung: gleich ob kein
+        // Geraet gemeldet wird (Karte fehlt ODER Probe fiel aus) oder ein Geraet
+        // nichts angibt. Zugelassen wird nur der CPU-Ladeweg, nie die Karte.
+        for free in [&[][..], &[0][..], &[need, 0][..]] {
+            let hw = hardware_from(true, free, ram);
+            assert!(must_load_on_cpu(&hw), "{free:?}");
+            assert_eq!(gate(&hw), Ok(()), "{free:?}");
+            // Und fuer die CPU zaehlt der Arbeitsspeicher wie immer.
+            let tight = hardware_from(true, free, ram_gate_mb(size) - 1);
+            assert_eq!(gate(&tight), Err(ERR_MEMORY), "{free:?}");
+            assert_eq!(gate(&hardware_from(true, free, 0)), Err(ERR_MEMORY));
+        }
+
+        // GPU abgeschaltet: CPU, auch wenn eine Karte Speicher meldet.
+        let forced = hardware_from(false, &[need], ram);
+        assert!(must_load_on_cpu(&forced));
+        assert_eq!(forced.free_vram_mb, None);
+        assert_eq!(gate(&forced), Ok(()));
+
+        // Ein von Hand gebauter Stand "GPU ja, Speicher unbekannt" bleibt zu und
+        // verlangt trotzdem die CPU: keine Luecke zwischen Tor und Ladeweg.
+        let odd = hw(Some(ram), true, None);
+        assert_eq!(gate(&odd), Err(ERR_MEMORY));
+        assert!(must_load_on_cpu(&odd));
     }
 
     #[test]

@@ -739,7 +739,11 @@ impl TranscriptionManager {
         let loading_elsewhere_mb = ledger.pending_mb().0.saturating_sub(ledger_mb);
         if let Err(message) = crate::memory_guard::check_before_load_blocking(
             &self.app_handle,
-            model_info.size_mb.saturating_add(loading_elsewhere_mb),
+            // Eigene Dateien ohne Kataloggroesse zaehlen mit ihrer Dateigroesse.
+            model_info
+                .size_mb
+                .max(ledger_mb)
+                .saturating_add(loading_elsewhere_mb),
             credit_mb,
             &model_info.name,
         ) {
@@ -787,6 +791,7 @@ impl TranscriptionManager {
             &model_path,
             device_index,
             None,
+            false,
             &emit_loading_failed,
         )?;
 
@@ -835,6 +840,7 @@ impl TranscriptionManager {
         model_path: &std::path::Path,
         device_index: Option<usize>,
         n_threads: Option<i32>,
+        force_cpu: bool,
         emit_loading_failed: &dyn Fn(&str),
     ) -> Result<LoadedEngine> {
         let loaded_engine = match model_info.engine_type {
@@ -850,7 +856,8 @@ impl TranscriptionManager {
                     })?,
                     None => {
                         let settings = get_settings(&self.app_handle);
-                        let accelerator = settings.transcribe_accelerator;
+                        let accelerator =
+                            accelerator_for_load(settings.transcribe_accelerator, force_cpu);
                         let device =
                             resolve_gpu_device(accelerator, settings.transcribe_gpu_device);
                         // transcribe-cpp 0.2.4: an explicit device must match a
@@ -998,7 +1005,7 @@ impl TranscriptionManager {
         let _pending_load = crate::managers::engine_ledger::global()
             .announce_unless(size_mb, gpu_model, crate::managers::accurate_run::active)
             .ok_or_else(|| anyhow::anyhow!("an accurate run holds the extra engine slot"))?;
-        self.load_extra_engine_unreserved(model_id, n_threads)
+        self.load_extra_engine_unreserved(model_id, n_threads, false)
     }
 
     /// Groesse (MB) und GPU-Faehigkeit eines Modells fuer Speicher-Tor und Buch.
@@ -1026,7 +1033,14 @@ impl TranscriptionManager {
 
     /// Der Ladeschritt von [`Self::load_extra_engine`]; der Aufrufer hat den
     /// Ladevorgang schon im gemeinsamen Buch eingetragen.
-    fn load_extra_engine_unreserved(&self, model_id: &str, n_threads: i32) -> Result<ExtraEngine> {
+    /// `force_cpu`: transcribe-cpp-Modelle ausdruecklich auf der CPU laden, gleich
+    /// was die Einstellung sagt (genauer Lauf ohne gemessenen Grafikspeicher).
+    fn load_extra_engine_unreserved(
+        &self,
+        model_id: &str,
+        n_threads: i32,
+        force_cpu: bool,
+    ) -> Result<ExtraEngine> {
         let model_info = self
             .model_manager
             .get_model_info(model_id)
@@ -1042,6 +1056,7 @@ impl TranscriptionManager {
             &model_path,
             None,
             Some(n_threads.max(1)),
+            force_cpu,
             &|_| {},
         )?;
         info!(
@@ -1100,12 +1115,15 @@ impl TranscriptionManager {
         let (size_mb, gpu_model) = self.load_footprint(model_id);
         // Messen, laufende Ladevorgaenge abziehen, Tor fragen, eintragen: unter
         // einer Sperre des gemeinsamen Buchs.
+        let force_cpu = std::cell::Cell::new(true);
         let pending_load = crate::managers::engine_ledger::global()
             .reserve(
                 size_mb,
                 gpu_model,
                 || run::measure(&self.app_handle),
                 |hw| {
+                    // Ohne gemessenen Grafikspeicher: nur der CPU-Ladeweg.
+                    force_cpu.set(run::must_load_on_cpu(hw));
                     run::memory_gate(size_mb, gpu_model, hw).inspect_err(|_| {
                         warn!(
                             "accurate run '{model_id}': memory gate shut (model {size_mb} MB, free RAM {:?} MB, free VRAM {:?} MB, other loads deducted)",
@@ -1120,7 +1138,7 @@ impl TranscriptionManager {
         admit().map_err(code)?;
         let threads = (crate::process_guard::logical_cpus() / 2).max(1) as i32;
         let engine = self
-            .load_extra_engine_unreserved(model_id, threads)
+            .load_extra_engine_unreserved(model_id, threads, force_cpu.get())
             .map_err(|e| {
                 warn!("accurate run '{model_id}': load failed: {e}");
                 code(run::ERR_LOAD)
@@ -3465,6 +3483,21 @@ fn resolve_device_index(index: usize) -> Result<(Backend, Option<transcribe_cpp:
 /// it is actually registered — otherwise it falls back to `Auto` so the load
 /// never fails outright on a machine without that GPU backend. An emulated x64
 /// process on Windows ARM64 forces strict CPU for every setting.
+/// Die Beschleuniger-Wahl fuer EINEN Ladevorgang: `force_cpu` uebersteuert die
+/// Einstellung (lva#579, genauer Lauf ohne gemessenen Grafikspeicher). Mit `Cpu`
+/// waehlt [`resolve_gpu_device`] kein Geraet und [`select_transcribe_backend`] das
+/// CPU-Backend.
+fn accelerator_for_load(
+    setting: TranscribeAcceleratorSetting,
+    force_cpu: bool,
+) -> TranscribeAcceleratorSetting {
+    if force_cpu {
+        TranscribeAcceleratorSetting::Cpu
+    } else {
+        setting
+    }
+}
+
 fn select_transcribe_backend(setting: TranscribeAcceleratorSetting) -> Backend {
     match effective_transcribe_accelerator(setting, transcribe_gpu_disabled_for_host()) {
         TranscribeAcceleratorSetting::Cpu => Backend::Cpu,
@@ -3914,6 +3947,20 @@ mod tests {
             "mit der Bindung ist auch die Engine frei"
         );
         assert_eq!(bound_model_id(), None);
+    }
+
+    #[test]
+    fn a_forced_cpu_load_never_picks_a_gpu_backend_or_device() {
+        use TranscribeAcceleratorSetting::{Auto, Cpu, Gpu};
+        for setting in [Auto, Cpu, Gpu] {
+            let forced = accelerator_for_load(setting, true);
+            assert_eq!(forced, Cpu, "{setting:?}");
+            assert!(matches!(select_transcribe_backend(forced), Backend::Cpu));
+            // Auch ein gespeichertes GPU-Geraet wird nicht genommen.
+            assert!(resolve_gpu_device(forced, 1).is_none());
+            // Ohne Zwang gilt die Einstellung unveraendert.
+            assert_eq!(accelerator_for_load(setting, false), setting);
+        }
     }
 
     #[test]
