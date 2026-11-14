@@ -21,13 +21,7 @@
 //! Die Proben in diesem Verzeichnis liegen **innerhalb** von `llm_versand` (sehen also alles, was
 //! `pub(super)` ist); die Proben von **außerhalb** liegen in `aussen/` und werden als
 //! `crate::managers::llm::versand_sonden` eingehängt.
-#![allow(
-    unexpected_cfgs,
-    dead_code,
-    unused_imports,
-    unused_variables,
-    unused_must_use
-)]
+#![allow(dead_code, unused_imports, unused_variables, unused_must_use)]
 
 /// Kontrollmarke: der Lauf `kontrolle` meldet sie als Warnung (veraltet) in der Datei der Probe.
 /// Das belegt, dass die Probe tatsächlich übersetzt wurde und nicht nur nie eingebunden war.

@@ -48,13 +48,22 @@
 //! **Prüfartefakte** (`cargo check`) des Crates in `target`; der nächste `cargo check` oder
 //! `clippy` übersetzt das Crate deshalb einmal neu. Testartefakte bleiben unberührt. Wer den
 //! Lauf nicht braucht (etwa bei knappem Platz), setzt `LVA_SONDEN_UEBERSPRINGEN=1`; das Überspringen
-//! wird auf `stderr` gemeldet.
+//! wird auf `stderr` gemeldet. **Nur der Wert `1` überspringt** (`0`, leer oder `true` nicht). Ist
+//! `LVA_TOR=1` oder `CI` (nicht leer) gesetzt, ist das Überspringen ein **Fehler** (Panik mit
+//! Meldung): im Tor und in der CI ist der Lauf der Beweis. Mit `-- --nocapture` meldet der Test je
+//! Lauf Probenzahl, Fehlercodes und Dauer.
 //!
 //! # Zusätzlich ohne Prozess
 //!
 //! `quellen_hat_kein_default` ergänzt die Trait-Beweise des Prüfers (`Versandfreigabe` ohne
 //! `Clone`, `Copy`, `Default`, `Serialize`, `Deserialize`, im Modul `pruefer`) um `Quellen` ohne
 //! `Default`. Sie laufen bei jedem Testbuild und scheitern beim Übersetzen.
+//!
+//! # Der Probenschalter ist deklariert
+//!
+//! `lva_sonde` steht in `Cargo.toml` unter `[lints.rust] unexpected_cfgs` als erlaubter Name
+//! (`check-cfg`); deshalb braucht kein Modul mehr ein `allow(unexpected_cfgs)`, und ein Tippfehler
+//! im Schalternamen bleibt eine Warnung.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -497,19 +506,103 @@ fn auswertung_der_kontrolle_verlangt_jede_marke() {
     assert!(kontrolle_pruefen(&auswerten(false, &ausgabe(&mit_fehler))).is_err());
 }
 
-/// Der echte Lauf: Kontrolle, dann jede Fehlergruppe mit dem Compiler dieses Crates.
+/// Ob der echte Compilerlauf übersprungen wird. Nur `LVA_SONDEN_UEBERSPRINGEN` mit genau dem Wert
+/// `1` überspringt (`0`, leer, `true` usw. tun es nicht). Mit gesetztem `LVA_TOR=1` (das Tor) oder
+/// gesetzter `CI` (nicht leer) ist Überspringen ein Fehler: dort ist der Beweis der Zweck des
+/// Laufs. Reine Funktion der drei Werte, damit der Test keine Prozessumgebung ändern muss.
+fn ueberspringen(
+    sonden: Option<&str>,
+    tor: Option<&str>,
+    ci: Option<&str>,
+) -> Result<bool, String> {
+    if sonden != Some("1") {
+        return Ok(false);
+    }
+    let grund = match (tor, ci) {
+        (Some("1"), _) => "LVA_TOR=1",
+        (_, Some(wert)) if !wert.is_empty() => "CI",
+        _ => return Ok(true),
+    };
+    Err(format!(
+        "LVA_SONDEN_UEBERSPRINGEN=1 ist mit {grund} nicht erlaubt: im Tor und in der CI müssen die \
+         Compile-Zeit-Zusicherungen laufen. Die Variable entfernen."
+    ))
+}
+
+fn umgebung(name: &str) -> Option<String> {
+    std::env::var(name).ok()
+}
+
+/// Der echte Lauf: Kontrolle, dann jede Fehlergruppe mit dem Compiler dieses Crates. Je Lauf
+/// meldet der Test auf `stderr` (sichtbar mit `-- --nocapture`), wie viele Proben er prüfte,
+/// welche Fehlercodes der Compiler lieferte und wie lange er dauerte.
 #[test]
 fn compile_zeit_zusicherungen() {
-    if std::env::var_os("LVA_SONDEN_UEBERSPRINGEN").is_some() {
-        eprintln!("compile_zeit_zusicherungen übersprungen (LVA_SONDEN_UEBERSPRINGEN)");
+    let skip = ueberspringen(
+        umgebung("LVA_SONDEN_UEBERSPRINGEN").as_deref(),
+        umgebung("LVA_TOR").as_deref(),
+        umgebung("CI").as_deref(),
+    )
+    .unwrap_or_else(|meldung| panic!("{meldung}"));
+    if skip {
+        eprintln!("compile_zeit_zusicherungen übersprungen (LVA_SONDEN_UEBERSPRINGEN=1)");
         return;
     }
+    let start = std::time::Instant::now();
     let kontrolle = lauf_starten("kontrolle");
     kontrolle_pruefen(&kontrolle).unwrap_or_else(|fehler| panic!("{fehler}"));
+    eprintln!(
+        "Lauf kontrolle: {} Proben übersetzt, {} Kontrollmarken, 0 Fehler, {:.1?}",
+        SONDEN.len(),
+        kontrolle.kontrollmarken.len(),
+        start.elapsed()
+    );
     for lauf in FEHLERLAEUFE {
+        let beginn = std::time::Instant::now();
         let ergebnis = lauf_starten(lauf);
         fehlerlauf_pruefen(lauf, &ergebnis).unwrap_or_else(|fehler| panic!("{fehler}"));
+        let codes: BTreeSet<&str> = ergebnis.fehler.iter().map(|f| f.code.as_str()).collect();
+        eprintln!(
+            "Lauf {lauf}: {} Proben, {} Fehler, Codes {codes:?}, {:.1?}",
+            proben_des_laufs(lauf).len(),
+            ergebnis.fehler.len(),
+            beginn.elapsed()
+        );
     }
+    eprintln!("Alle Läufe: {:.1?}", start.elapsed());
+}
+
+#[test]
+fn nur_der_wert_eins_ueberspringt_und_tor_und_ci_verbieten_es() {
+    // Nicht gesetzt, 0, leer, true, 2: kein Überspringen.
+    for wert in [
+        None,
+        Some("0"),
+        Some(""),
+        Some("true"),
+        Some("2"),
+        Some("11"),
+    ] {
+        assert_eq!(ueberspringen(wert, None, None), Ok(false), "{wert:?}");
+    }
+    // Genau 1 überspringt, solange weder Tor noch CI gesetzt sind.
+    assert_eq!(ueberspringen(Some("1"), None, None), Ok(true));
+    assert_eq!(ueberspringen(Some("1"), Some("0"), Some("")), Ok(true));
+    // Tor oder CI: Fehler mit klarer Meldung.
+    let tor = ueberspringen(Some("1"), Some("1"), None).unwrap_err();
+    assert!(
+        tor.contains("LVA_TOR=1") && tor.contains("nicht erlaubt"),
+        "{tor}"
+    );
+    for ci in ["true", "1", "false"] {
+        let fehler = ueberspringen(Some("1"), None, Some(ci)).unwrap_err();
+        assert!(
+            fehler.contains("CI") && fehler.contains("nicht erlaubt"),
+            "{fehler}"
+        );
+    }
+    // Ohne Überspringen gibt es auch im Tor nichts zu verbieten.
+    assert_eq!(ueberspringen(Some("0"), Some("1"), Some("true")), Ok(false));
 }
 
 /// Compile-Zeit-Beweis wie im Prüfer: `Quellen` hat kein `Default`. Implementierte es das

@@ -1,6 +1,6 @@
 //! Nähte für Tests des Versands (lva#604, Teilpaket 3). Nur unter `cfg(test)`.
 //!
-//! Vier Stellen lassen sich je Test-Thread ersetzen, weil sie sonst globalen Zustand (Einstellungen,
+//! Fünf Stellen lassen sich je Test-Thread ersetzen, weil sie sonst globalen Zustand (Einstellungen,
 //! Verbrauchsbuch), Prozesse (CLI, npm) oder echtes Netz (Cloud-Ziele) bräuchten:
 //!
 //! - **Regelwerk und Budget** ([`setze_regelwerk`]): zählt die Prüfungen je Versuch und kann sie
@@ -8,6 +8,8 @@
 //!   solange kein Haken gesetzt ist.
 //! - **CLI-Versuch** ([`setze_cli`]): ersetzt den Prozess durch einen Skriptwert je Versuch.
 //! - **Update der Codex-CLI** ([`setze_aktualisierer`]).
+//! - **Routenauflösung** ([`aufloesungen`]): zählt, wie oft die Übergangsfassade die Route eines
+//!   Anbieters auflöst (das kann den lokalen Server starten); die Auflösung selbst läuft echt.
 //! - **Cloud-Proxy** ([`setze_cloud_proxy`]): Cloud-Ziele (kein Loopback) gehen an einen
 //!   Test-Server, ohne TLS und ohne Umgebungsvariablen.
 //!
@@ -39,6 +41,7 @@ struct Haken {
     cli_versuche: usize,
     aktualisierer: Option<Rc<dyn Fn() -> bool>>,
     cloud_proxy: Option<String>,
+    aufloesungen: usize,
 }
 
 thread_local! {
@@ -138,4 +141,14 @@ pub(in crate::llm_versand) fn aktualisieren() -> Option<bool> {
 /// Für `http::client`: der Test-Proxy der Cloud-Ziele, falls gesetzt.
 pub(in crate::llm_versand) fn cloud_proxy() -> Option<String> {
     HAKEN.with(|h| h.borrow().cloud_proxy.clone())
+}
+
+/// Für `uebergang::ziel_aufloesen`: zählt einen Auflösungsversuch.
+pub(in crate::llm_versand) fn aufloesung_zaehlen() {
+    HAKEN.with(|h| h.borrow_mut().aufloesungen += 1);
+}
+
+/// Wie oft die Route seit [`wache`] aufgelöst wurde.
+pub(in crate::llm_versand) fn aufloesungen() -> usize {
+    HAKEN.with(|h| h.borrow().aufloesungen)
 }

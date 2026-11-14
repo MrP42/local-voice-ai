@@ -175,17 +175,8 @@ impl<'a> Lauf<'a> {
         Ok(versuch.map(|(wert, _)| wert))
     }
 
-    /// Regelwerk vor dem Budget: ein gesperrter Anbieter bekommt gar nichts. Beide bei **jedem**
-    /// Versuch; die Verweigerung bleibt ungebucht.
     fn regelwerk_und_budget(&self) -> Result<(), VersandFehler> {
-        #[cfg(test)]
-        if let Some(ergebnis) = testhaken::regelwerk(self.anbieter, self.ziel.modell()) {
-            return ergebnis;
-        }
-        crate::managers::compliance::check_call(self.anbieter)
-            .map_err(|meldung| VersandFehler::Compliance { meldung })?;
-        usage::check_budget(self.anbieter, self.ziel.modell())
-            .map_err(|meldung| VersandFehler::Budget { meldung })
+        regelwerk_und_budget(self.anbieter, self.ziel.modell())
     }
 
     /// Bucht den Aufruf, wenn mindestens ein Versuch ausgeführt wurde.
@@ -207,6 +198,22 @@ impl<'a> Lauf<'a> {
         )
         .await;
     }
+}
+
+/// Regelwerk vor dem Budget: ein gesperrter Anbieter bekommt gar nichts. Beide bei **jedem**
+/// Versuch; die Verweigerung bleibt ungebucht. Die Übergangsfassade ruft sie zusätzlich **vor**
+/// dem Auflösen der Route (das einen lokalen Server starten kann), wie der Aufruf vor lva#604.
+pub(super) fn regelwerk_und_budget(
+    anbieter: &PostProcessProvider,
+    modell: &str,
+) -> Result<(), VersandFehler> {
+    #[cfg(test)]
+    if let Some(ergebnis) = testhaken::regelwerk(anbieter, modell) {
+        return ergebnis;
+    }
+    crate::managers::compliance::check_call(anbieter)
+        .map_err(|meldung| VersandFehler::Compliance { meldung })?;
+    usage::check_budget(anbieter, modell).map_err(|meldung| VersandFehler::Budget { meldung })
 }
 
 /// Ein Stück Inhaltsausgabe in der Reihenfolge seines Eintreffens.

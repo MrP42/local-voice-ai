@@ -8,7 +8,8 @@
 //! `pub(crate)` für diesen Transport).
 //!
 //! Das Verhalten ist unverändert. Roh-Fehlertexte der CLI (`cli_failed: <letzte stderr-Zeile>`)
-//! verlassen dieses Modul nur über [`super::cli_chat`], das sie klassifiziert und verwirft.
+//! verlassen dieses Modul nur über [`super::cli_chat`] und [`super::cli_roh`], die sie
+//! klassifizieren und verwerfen.
 
 use std::path::Path;
 use std::process::{Command, Stdio};

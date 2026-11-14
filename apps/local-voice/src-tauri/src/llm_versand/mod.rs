@@ -117,7 +117,8 @@
 //! `Default`, `Serialize`, `Deserialize` (Tests in `pruefer`) und `Quellen` ohne `Default`
 //! (`zusicherungen::quellen_hat_kein_default`). Auswertung und Probentabelle sind mit
 //! künstlichen Diagnosen getestet. Der Lauf überschreibt die Prüfartefakte des Crates in
-//! `target` (der nächste `cargo check` übersetzt neu); `LVA_SONDEN_UEBERSPRINGEN=1` lässt ihn aus.
+//! `target` (der nächste `cargo check` übersetzt neu); `LVA_SONDEN_UEBERSPRINGEN=1` (nur genau `1`) lässt
+//! ihn aus, ist aber mit `LVA_TOR=1` oder `CI` ein Fehler.
 //!
 //! # Übergang zu lva#601
 //!
@@ -128,7 +129,7 @@
 //! Fassade; erst dann ist der Schutz flächendeckend.
 // `versenden`, `mit_wiederholung` und die Reexporte benutzt erst lva#601 (bis dahin geht alles über
 // die Übergangsfassade). Mit der Verdrahtung entfällt diese Ausnahme.
-#![allow(dead_code, unused_imports, unexpected_cfgs)]
+#![allow(dead_code, unused_imports)]
 
 pub mod anfrage;
 pub mod fehler;

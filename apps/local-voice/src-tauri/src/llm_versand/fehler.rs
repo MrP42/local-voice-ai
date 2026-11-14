@@ -74,6 +74,11 @@ pub mod cli_code {
     /// Vorschau abgelehnt: sonst.
     pub const VORSCHAU_ABGELEHNT: &str = "cli_preview_rejected:llm_failed";
 
+    /// Fester Hinweis an [`FEHLGESCHLAGEN`]: der Fehlertext der CLI nannte das Modell (der Probelauf
+    /// für neue Modelle erkennt daran „Modell nicht vorhanden“). Kein Teil von [`HINWEISE`]: er
+    /// bedeutet nie „vorübergehend“.
+    pub const HINWEIS_MODELL: &str = "Modell nicht verfügbar";
+
     /// Feste Hinweise für vorübergehende Fehler. Aufrufer wiederholen bei diesen Wörtern
     /// (`translator::is_transient_error`); die Liste ist geschlossen und app-eigen.
     pub const HINWEISE: [&str; 8] = [
@@ -113,7 +118,8 @@ pub enum VersandFehler {
         /// Feste Kennung aus [`cli_code`].
         code: &'static str,
         /// Fester app-eigener Hinweis aus [`cli_code::HINWEISE`] (etwa „at capacity“), den
-        /// Aufrufer für „vorübergehend, später erneut“ brauchen; sonst `None`.
+        /// Aufrufer für „vorübergehend, später erneut“ brauchen, oder [`cli_code::HINWEIS_MODELL`];
+        /// sonst `None`.
         hinweis: Option<&'static str>,
     },
     /// Der Anbieter antwortete mit diesem HTTP-Status. Nie mit seinem Antworttext.

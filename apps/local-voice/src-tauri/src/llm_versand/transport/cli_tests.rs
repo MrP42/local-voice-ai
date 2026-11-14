@@ -6,7 +6,9 @@
 #![allow(unused_imports)]
 
 use super::*;
-use crate::managers::llm::cli::tests::{stream_with, GOOD_CLAUDE};
+#[cfg(unix)]
+use crate::managers::llm::cli::tests::stream_with;
+use crate::managers::llm::cli::tests::GOOD_CLAUDE;
 use crate::managers::llm::cli::{find_node, locate};
 use crate::managers::llm::preview::{
     self, binding_for, fixtures, PreviewCheck, PreviewSwitch, Tri,
@@ -94,7 +96,8 @@ impl Fake {
     /// Fake-Programm: antwortet auf `--version`, `exec --help` und
     /// `mcp list`; sonst protokolliert es Argumente, Umgebung, Arbeitsordner
     /// und `CODEX_HOME` in `log.txt`, wartet `sleep` Sekunden, liest stdin,
-    /// legt `finished` an und gibt `reply.txt` aus (Exit-Code aus `exit`).
+    /// legt `finished` an, schreibt `stderr.txt` (falls vorhanden) auf stderr und gibt `reply.txt`
+    /// aus (Exit-Code aus `exit`).
     fn new(reply: &str, help: &str) -> Self {
         use std::os::unix::fs::PermissionsExt;
         preview::TEST_ALLOW_SCRIPT.with(|f| f.set(true));
@@ -124,6 +127,7 @@ esac
 [ -f "$D/sleep" ] && sleep "$(cat "$D/sleep")"
 if [ -f "$D/capture_stdin" ]; then cat > "$D/stdin.txt"; else cat > /dev/null; fi
 touch "$D/finished"
+[ -f "$D/stderr.txt" ] && cat "$D/stderr.txt" >&2
 cat "$D/reply.txt"
 exit "$(cat "$D/exit" 2>/dev/null || echo 0)"
 "#;
@@ -869,4 +873,145 @@ fn switching_the_preview_off_stops_the_call_and_drops_the_result() {
         .unwrap_err();
     assert_eq!(err, "cli_preview_rejected:cancelled:switch_off");
     assert!(f.dir.path().join("finished").exists());
+}
+
+// -- Die rohen CLI-Einstiege geben keinen Fremdtext hinaus (lva#604, Befund Codex-Review) ------
+
+const GEHEIM_STDERR: &str = "GEHEIM-STDERR-4711";
+
+/// Was `cli_roh` aus einem Rohfehler macht: feste Textform, Präfixe und Vorschaucodes bleiben,
+/// kein Fremdtext, und die Aufrufer (Probelauf, Buch-Gespräch) erkennen weiter ihre Fälle.
+#[test]
+fn cli_roh_gibt_nur_feste_texte_mit_erhaltenen_praefixen_hinaus() {
+    use crate::llm_versand::transport::cli_roh::ausgang;
+    use crate::managers::llm::cli::{classify_error, is_cancelled};
+    use crate::managers::llm::updates::{classify_probe, Probe};
+
+    let roh = |text: &str| classify_error(&format!("{text} {GEHEIM_STDERR}"));
+    let faelle: Vec<(Cli, String, &str)> = vec![
+        (Cli::Claude, roh("Please login first"), "cli_not_logged_in:"),
+        (
+            Cli::Claude,
+            roh("usage limit reached"),
+            "cli_limit_reached:",
+        ),
+        (Cli::Claude, roh("boom"), "cli_failed:"),
+        (
+            Cli::Claude,
+            format!("cli_missing: {GEHEIM_STDERR}"),
+            "cli_missing:",
+        ),
+        (
+            Cli::Claude,
+            format!("cli_bad_output: Zeile {GEHEIM_STDERR}"),
+            "cli_bad_output:",
+        ),
+        (
+            Cli::Claude,
+            format!("cli_timeout: {GEHEIM_STDERR}"),
+            "cli_timeout:",
+        ),
+        (
+            Cli::Codex,
+            roh("model not supported when using codex with a chatgpt account"),
+            "cli_model_not_in_plan:",
+        ),
+    ];
+    for (cli, rohfehler, praefix) in faelle {
+        assert!(rohfehler.contains(GEHEIM_STDERR), "Gegenprobe: {rohfehler}");
+        let aus = ausgang(cli, &rohfehler);
+        assert!(aus.starts_with(praefix), "{praefix} fehlt: {aus}");
+        assert!(!aus.contains(GEHEIM_STDERR), "Fremdtext im Fehler: {aus}");
+    }
+    // Zeitlimit: das Wort, an dem die Buch-Gespräch-Zuordnung `timeout` erkennt.
+    assert!(ausgang(Cli::Claude, "cli_timeout: egal").contains("Zeitlimit"));
+    // Abbruch und Vorschaucodes bleiben erkennbar.
+    assert!(is_cancelled(&ausgang(Cli::Claude, "cli_cancelled: egal")));
+    for (roh, code) in [
+        ("cli_preview_rejected:budget:compaction", "budget"),
+        ("cli_preview_rejected:cancelled:switch_off", "cancelled"),
+        ("cli_preview_rejected:llm_failed:model", "llm_failed"),
+    ] {
+        assert_eq!(
+            preview::rejection_code(&ausgang(Cli::Claude, roh)),
+            Some(code),
+            "{roh}"
+        );
+    }
+    // Der Probelauf: ein Modellfehler heißt weiter `Absent`, jeder andere Fehler `Abort`.
+    let modell = ausgang(
+        Cli::Claude,
+        &roh("There is an issue with the selected model"),
+    );
+    assert_eq!(classify_probe(&Err(modell)), Probe::Absent);
+    let sonst = ausgang(Cli::Claude, &roh("boom"));
+    assert_eq!(classify_probe(&Err(sonst)), Probe::Abort);
+    let nicht_im_plan = ausgang(Cli::Claude, "cli_model_not_in_plan: opus");
+    assert_eq!(classify_probe(&Err(nicht_im_plan)), Probe::Absent);
+}
+
+/// Mit einer Fake-CLI, die den Geheimtext auf stderr schreibt und mit Fehlercode endet: der
+/// Fehler der Fassade trägt den Präfix, aber weder er noch das Log den Text. Die Gegenprobe zeigt,
+/// dass der Rohfehler den Text trägt (sonst bewiese der Test nichts).
+#[cfg(unix)]
+#[test]
+fn ein_cli_fehler_der_fassade_traegt_keinen_stderr_text_und_das_log_auch_nicht() {
+    use crate::llm_versand::pruefer::{freigabe_uebergang, quellen_uebergang};
+    use crate::llm_versand::transport::cli_roh;
+    use crate::llm_versand::ziel::Ziel;
+
+    crate::testlog::installieren();
+    let f = claude_fake("");
+    f.set("exit", "1");
+    f.set(
+        "stderr.txt",
+        &format!("authentication failed {GEHEIM_STDERR}\n"),
+    );
+    let roh = call_with_options(
+        Cli::Claude,
+        &f.bin,
+        "sonnet",
+        None,
+        "u",
+        Duration::from_secs(30),
+        &CallOptions::default(),
+    )
+    .unwrap_err();
+    assert!(roh.contains(GEHEIM_STDERR), "Gegenprobe: {roh}");
+
+    let ziel = Ziel::cli("claude_cli", "claude", "sonnet");
+    let fehler = cli_roh::mit_zeitgrenze(
+        freigabe_uebergang(&ziel).freigabe,
+        &ziel,
+        &quellen_uebergang(),
+        Cli::Claude,
+        &f.bin,
+        None,
+        "u",
+        Duration::from_secs(30),
+    )
+    .unwrap_err();
+    assert!(fehler.starts_with("cli_not_logged_in:"), "{fehler}");
+    assert!(!fehler.contains(GEHEIM_STDERR), "{fehler}");
+
+    let fehler = cli_roh::mit_optionen(
+        freigabe_uebergang(&ziel).freigabe,
+        &ziel,
+        &quellen_uebergang(),
+        Cli::Claude,
+        &f.bin,
+        None,
+        "u",
+        Duration::from_secs(30),
+        &CallOptions::default(),
+    )
+    .unwrap_err();
+    assert!(fehler.starts_with("cli_not_logged_in:"), "{fehler}");
+    assert!(!fehler.contains(GEHEIM_STDERR), "{fehler}");
+
+    let zeilen = crate::testlog::zeilen();
+    assert!(
+        zeilen.iter().all(|zeile| !zeile.contains(GEHEIM_STDERR)),
+        "Fremdtext im Log: {zeilen:?}"
+    );
 }

@@ -5,9 +5,6 @@
 //! holt, startet und beendet. Muster wie bei der Piper-Laufzeit
 //! (`managers::tts::models`): Katalogeintrag je Plattform, Download mit
 //! Pruefsumme, entpacken, aufloesen.
-// `lva_sonde` ist ein Probenschalter (lva#604 TP4), den Cargo nicht kennt.
-#![allow(unexpected_cfgs)]
-
 pub mod app_usage;
 pub mod cli;
 pub mod cli_update;

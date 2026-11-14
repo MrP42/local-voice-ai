@@ -32,6 +32,9 @@
 //!
 //! Das Auflösen der Route (der lokale Server wird bei Bedarf gestartet) geschieht **vor** dem
 //! Versand und ist nicht Teil des einen Transportversuchs; der Transport löst sie nie neu auf.
+//! Compliance und Budget laufen deshalb **auch davor** ([`vorpruefung`]), wie im Aufruf vor
+//! lva#604: ein gesperrter oder budgetgesperrter Aufruf startet nie ein lokales Modell. Die
+//! Prüfung je Transportversuch bleibt zusätzlich bestehen.
 #![allow(deprecated)]
 
 use std::path::Path;
@@ -40,8 +43,10 @@ use std::time::Duration;
 use super::anfrage::{Anfrage, ChatInhalt, Inhalt, JsonAntwort};
 use super::fehler::VersandFehler;
 use super::pruefer::{freigabe_uebergang, quellen_uebergang};
+#[cfg(test)]
+use super::testhaken;
 use super::transport::{bild, cli_roh, json, modelle, ollama};
-use super::versand::{ausfuehren, Lauf, Pruefung};
+use super::versand::{ausfuehren, regelwerk_und_budget, Lauf, Pruefung};
 use super::ziel::Ziel;
 use crate::llm_client::{
     ollama_native_url, ChatReply, ImageReply, ReasoningConfig, StreamLimits, StreamMessage,
@@ -122,10 +127,19 @@ pub const AUFRUFER: &[Aufrufer] = &[
     aufrufer("shortcut/mod.rs", "E4", Besprechung::Nein),
 ];
 
+/// Regelwerk vor dem Budget, **bevor** die Route aufgelöst wird: wie der Aufruf vor lva#604 darf
+/// ein verweigerter Aufruf nicht einmal den lokalen Server starten. Die Verweigerung bleibt
+/// ungebucht und kommt in der alten Textform (die Meldung der Prüfung) zurück.
+fn vorpruefung(provider: &PostProcessProvider, model: &str) -> Result<(), String> {
+    regelwerk_und_budget(provider, model).map_err(|fehler| fehler.alte_textform())
+}
+
 /// Die aufgelöste Route zum Anbieter: CLI-Anbieter ohne Netz, sonst die Adresse, die der
 /// Anbieter **jetzt** trägt (für den lokalen Anbieter die des laufenden Servers; er wird bei
 /// Bedarf gestartet).
 async fn ziel_aufloesen(provider: &PostProcessProvider, model: &str) -> Result<Ziel, String> {
+    #[cfg(test)]
+    testhaken::aufloesung_zaehlen();
     if Cli::from_base_url(&provider.base_url).is_some() {
         return Ok(Ziel::aus_provider(provider, model));
     }
@@ -203,6 +217,7 @@ pub async fn send_chat_completion_checked(
     reasoning_effort: Option<String>,
     reasoning: Option<ReasoningConfig>,
 ) -> Result<ChatReply, String> {
+    vorpruefung(provider, model)?;
     let ziel = ziel_aufloesen(provider, model).await?;
     let anfrage = Anfrage {
         zweck: purpose,
@@ -311,6 +326,7 @@ async fn strom_kern(
     limits: &StreamLimits,
     pinned_local: Option<&str>,
 ) -> Result<String, String> {
+    vorpruefung(provider, model)?;
     let ziel = match pinned_local {
         Some(adresse) => {
             if !crate::managers::llm::is_local(provider) {
@@ -519,7 +535,11 @@ pub fn cli_mit_optionen(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
     use super::*;
+    use crate::llm_versand::testhilfe::{anbieter, mock, RohAntwort};
 
     fn quelltext_dateien(wurzel: &Path, treffer: &mut Vec<std::path::PathBuf>) {
         let Ok(eintraege) = std::fs::read_dir(wurzel) else {
@@ -592,6 +612,152 @@ mod tests {
             .is_err());
         let freigabe = freigabe_uebergang(&ziel).freigabe;
         assert!(freigabe.einloesen(&ziel, &quellen_uebergang()).is_ok());
+    }
+
+    /// Zählt die Prüfungen und verweigert höchstens eine (`"compliance"` oder `"budget"`).
+    fn regelwerk(verweigert: Option<&'static str>) -> Rc<RefCell<Vec<&'static str>>> {
+        let geprueft = Rc::new(RefCell::new(Vec::new()));
+        let gemerkt = Rc::clone(&geprueft);
+        testhaken::setze_regelwerk(move |art, _anbieter, _modell| {
+            gemerkt.borrow_mut().push(art);
+            match verweigert == Some(art) {
+                true => Err(format!("{art} verweigert")),
+                false => Ok(()),
+            }
+        });
+        geprueft
+    }
+
+    fn nachrichten() -> Vec<StreamMessage> {
+        vec![StreamMessage::new("user", "Frage")]
+    }
+
+    #[tokio::test]
+    async fn ein_budgetgesperrter_chat_loest_die_route_nicht_auf() {
+        let _wache = testhaken::wache();
+        let geprueft = regelwerk(Some("budget"));
+        let anbieter = anbieter("custom", "http://cloud.example/v1");
+
+        let ergebnis = send_chat_completion_checked(
+            Purpose::Chat,
+            &anbieter,
+            String::new(),
+            "m",
+            "Frage".into(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+
+        assert_eq!(ergebnis.unwrap_err(), "budget verweigert");
+        assert_eq!(testhaken::aufloesungen(), 0, "die Route blieb unaufgelöst");
+        assert_eq!(*geprueft.borrow(), ["compliance", "budget"]);
+    }
+
+    #[tokio::test]
+    async fn ein_gesperrter_anbieter_wird_vor_dem_budget_und_der_route_abgelehnt() {
+        let _wache = testhaken::wache();
+        let geprueft = regelwerk(Some("compliance"));
+        let anbieter = anbieter("custom", "http://cloud.example/v1");
+
+        let ergebnis = send_chat_completion(
+            Purpose::Chat,
+            &anbieter,
+            String::new(),
+            "m",
+            "Frage".into(),
+            None,
+            None,
+        )
+        .await;
+
+        assert_eq!(ergebnis.unwrap_err(), "compliance verweigert");
+        assert_eq!(testhaken::aufloesungen(), 0);
+        assert_eq!(
+            *geprueft.borrow(),
+            ["compliance"],
+            "Budget nie vor Regelwerk"
+        );
+    }
+
+    #[tokio::test]
+    async fn ein_budgetgesperrter_strom_loest_die_route_nicht_auf() {
+        let _wache = testhaken::wache();
+        let geprueft = regelwerk(Some("budget"));
+        let anbieter = anbieter("custom", "http://cloud.example/v1");
+        let ausgabe = std::sync::Mutex::new(String::new());
+        let on_delta = |stueck: &str| ausgabe.lock().unwrap().push_str(stueck);
+
+        let ergebnis = send_chat_completion_stream(
+            Purpose::Chat,
+            &anbieter,
+            String::new(),
+            "m",
+            nachrichten(),
+            &on_delta,
+        )
+        .await;
+
+        assert_eq!(ergebnis.unwrap_err(), "budget verweigert");
+        assert_eq!(testhaken::aufloesungen(), 0);
+        assert_eq!(*geprueft.borrow(), ["compliance", "budget"]);
+        assert!(ausgabe.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn auch_der_gebundene_lokale_strom_prueft_vor_allem_anderen() {
+        let _wache = testhaken::wache();
+        regelwerk(Some("compliance"));
+        // Kein lokaler Anbieter: ohne Regelwerk käme "Kontext nur an das eingebaute lokale
+        // Modell"; die Verweigerung des Regelwerks geht voraus, wie vor lva#604.
+        let anbieter = anbieter("custom", "http://cloud.example/v1");
+
+        let ergebnis = send_chat_completion_stream_routed(
+            Purpose::Chat,
+            &anbieter,
+            String::new(),
+            "m",
+            nachrichten(),
+            &|_: &str| {},
+            Some("http://127.0.0.1:1/v1"),
+        )
+        .await;
+
+        assert_eq!(ergebnis.unwrap_err(), "compliance verweigert");
+        assert_eq!(testhaken::aufloesungen(), 0);
+    }
+
+    #[tokio::test]
+    async fn nach_bestandener_vorpruefung_wird_aufgeloest_und_je_versuch_erneut_geprueft() {
+        let _wache = testhaken::wache();
+        let geprueft = regelwerk(None);
+        let server = mock(|_| RohAntwort::json("Antwort", "stop", 3, 2)).await;
+        let anbieter = anbieter("custom", &server.basis());
+
+        let antwort = send_chat_completion_checked(
+            Purpose::Chat,
+            &anbieter,
+            String::new(),
+            "m",
+            "Frage".into(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("Antwort");
+
+        assert_eq!(antwort.content.as_deref(), Some("Antwort"));
+        assert_eq!(testhaken::aufloesungen(), 1);
+        assert_eq!(server.treffer(), 1);
+        assert_eq!(
+            *geprueft.borrow(),
+            ["compliance", "budget", "compliance", "budget"],
+            "Vorprüfung vor der Route, danach die Prüfung des Versuchs"
+        );
     }
 
     #[test]

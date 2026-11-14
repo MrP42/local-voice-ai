@@ -44,10 +44,18 @@ use crate::settings::PostProcessProvider;
 
 /// Die CLI-Einstiege für die rohen Aufrufer ohne Besprechungsinhalt (Buch-Gespräch, Probelauf).
 /// Die Implementierung bleibt privat in [`cli`]; hier stehen nur die Durchreichen.
+///
+/// Auch diese Ausgänge geben **keinen Fremdtext** hinaus: der Fehler der CLI (`cli_failed:
+/// <letzte stderr-Zeile>`) wird wie im Chatweg klassifiziert ([`cli_chat::klassifiziere`]) und
+/// in der festen Textform [`VersandFehler::alte_textform`] geliefert. Die Präfixe und
+/// Vorschaucodes bleiben (`cli_not_logged_in:`, `cli_timeout:`, `cli_cancelled:`,
+/// `cli_preview_rejected:…`), der Text dahinter ist app-eigen.
 pub(super) mod cli_roh {
     use std::path::Path;
     use std::time::Duration;
 
+    use super::cli_chat::klassifiziere;
+    use crate::llm_versand::fehler::cli_code;
     use crate::llm_versand::fehler::VersandFehler;
     use crate::llm_versand::pruefer::Versandfreigabe;
     use crate::llm_versand::quellen::Quellen;
@@ -68,6 +76,7 @@ pub(super) mod cli_roh {
     ) -> Result<CliReply, String> {
         einloesen(freigabe, ziel, quellen)?;
         super::cli::call_with_timeout(cli, binary, ziel.modell(), system, user, timeout)
+            .map_err(|fehler| ausgang(cli, &fehler))
     }
 
     /// Wie `cli::call_with_options`, gegen das gebundene Ziel. Blockiert.
@@ -85,6 +94,26 @@ pub(super) mod cli_roh {
     ) -> Result<CliReply, String> {
         einloesen(freigabe, ziel, quellen)?;
         super::cli::call_with_options(cli, binary, ziel.modell(), system, user, timeout, opts)
+            .map_err(|fehler| ausgang(cli, &fehler))
+    }
+
+    /// Die feste Textform eines CLI-Fehlers, ohne dessen Text. Ein `cli_failed`, dessen Text das
+    /// Modell nennt, trägt [`cli_code::HINWEIS_MODELL`]: der Probelauf neuer Modelle liest daran
+    /// „Modell nicht vorhanden“ (früher `cli_failed` samt Wort „model“ im Rohtext).
+    pub(in crate::llm_versand) fn ausgang(cli: Cli, fehler: &str) -> String {
+        let klassifiziert = match klassifiziere(cli, fehler) {
+            VersandFehler::Cli { code, .. }
+                if code == cli_code::FEHLGESCHLAGEN
+                    && fehler.to_ascii_lowercase().contains("model") =>
+            {
+                VersandFehler::Cli {
+                    code,
+                    hinweis: Some(cli_code::HINWEIS_MODELL),
+                }
+            }
+            sonst => sonst,
+        };
+        klassifiziert.alte_textform()
     }
 
     fn einloesen(freigabe: Versandfreigabe, ziel: &Ziel, quellen: &Quellen) -> Result<(), String> {

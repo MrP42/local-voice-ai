@@ -217,11 +217,19 @@ Alle ohne Besprechungsinhalt; #601 sichert sie per Architekturtest.
 2. **Lokale Route ohne Proxy**, auch ohne den aus der Umgebung (Loopback-Ziele, auch im Agenten, bei
    Einbettungen und Tokenzählung); Cloud-Ziele wie bisher mit dem Umgebungsproxy.
 3. **Compliance und Budget bei jedem Versuch**, auch bei lokalen Zielen, den Rückfällen (Strom ohne
-   Strom, CLI nach dem Update) und beim nativen Ollama.
+   Strom, CLI nach dem Update) und beim nativen Ollama. Die Vorprüfung vor dem Auflösen der Route
+   (die einen lokalen Server starten kann) bleibt **zusätzlich** erhalten, wie vor lva#604: ein
+   gesperrter oder budgetgesperrter Aufruf startet nie ein lokales Modell.
 4. **Kein Anbieter- und kein CLI-Text** in Fehlern und im Log. Die Aufrufer bekommen weiter ihre
    Textform (`VersandFehler::alte_textform`: `API request failed with status N`, `HTTP request
    failed`, `cli_*:`-Präfixe, Kontextüberlauf-Marken, `Zeitlimit`, `server_crashed:`), aber ohne
-   den Text des Anbieters. Bild-Fehler tragen keinen Antworttext mehr; Verbindungsfehler des
+   den Text des Anbieters. Das gilt auch für die rohen CLI-Einstiege `cli_roh` (Buch-Gespräch,
+   Probelauf): ihr Fehler (`cli_failed: <letzte stderr-Zeile>`) wird wie im Chatweg klassifiziert;
+   Präfixe und Vorschaucodes bleiben, der Text dahinter ist fest. Ein `cli_failed`, dessen Text das
+   Modell nannte, trägt den festen Hinweis `Modell nicht verfügbar` (der Probelauf erkennt daran
+   weiter „Modell nicht vorhanden“). Folge: ein CLI-Zeitlimit enthält jetzt das Wort `Zeitlimit`
+   (vorher nicht), die Buch-Gespräch-Fehlerzuordnung liefert dafür `timeout`. Bild-Fehler tragen
+   keinen Antworttext mehr; Verbindungsfehler des
    Agenten und der Einbettungen tragen nur noch eine feste Meldung bzw. `embedding_http: <Code>`.
 5. **Agent**: ein Kontextüberlauf wird an denselben Marken erkannt wie im Chat (etwas mehr als die
    zwei früheren: etwa `context length`, `too many tokens`).
@@ -236,8 +244,6 @@ Alle ohne Besprechungsinhalt; #601 sichert sie per Architekturtest.
   (latente Eigenheit, nicht Teil dieses Pakets).
 - Der Bildweg bleibt ohne Compliance und Budget (Befund F.3): er geht nur an den eingebauten
   Bildserver auf Loopback und verbraucht nichts.
-- Roh-Fehlertexte der CLI in `cli_roh` (Buch-Gespräch, Probelauf) bleiben, wie sie waren; dort geht
-  kein Besprechungsinhalt hinein.
 
 ## J. Compile-Zeit-Zusicherungen (Teilpaket 4)
 
@@ -280,5 +286,9 @@ scheitern. Zusätzlich ohne Prozess bei jedem Testbuild: `Versandfreigabe` ohne 
 **Betrieb:** Der Probentest dauert beim ersten Lauf gut zwei Minuten, danach je Lauf etwa 15 bis 20
 Sekunden. Er überschreibt die Prüfartefakte (`cargo check`) des Crates in `target`; der nächste
 `cargo check`/`clippy` übersetzt das Crate einmal neu. `LVA_SONDEN_UEBERSPRINGEN=1` lässt ihn aus (wird
-gemeldet). Der Schalter `lva_sonde` hängt in `src/llm_versand/mod.rs` und `src/managers/llm/mod.rs`
-(je eine `cfg`-Zeile, dort auch `#![allow(unexpected_cfgs)]`); ein normaler Build übersetzt nichts davon.
+gemeldet); **nur der Wert `1` überspringt** (`0`, leer, `true` nicht), und ist `LVA_TOR=1` oder `CI`
+gesetzt, ist das Überspringen ein **Fehler** (Panik mit Meldung). Mit `-- --nocapture` meldet der Test je
+Lauf Probenzahl, Fehlercodes und Dauer. Der Schalter `lva_sonde` hängt in `src/llm_versand/mod.rs` und
+`src/managers/llm/mod.rs` (je eine `cfg`-Zeile) und ist in `Cargo.toml` unter `[lints.rust]
+unexpected_cfgs` als einziger erlaubter Name deklariert (`check-cfg`); kein Modul trägt mehr ein
+`allow(unexpected_cfgs)`. Ein normaler Build übersetzt nichts davon.
