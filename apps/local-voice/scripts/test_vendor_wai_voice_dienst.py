@@ -450,7 +450,8 @@ class ManifestTest(unittest.TestCase):
 
 def git(ordner: Path, *argumente: str) -> str:
     fest = ["-c", "user.name=Test", "-c", "user.email=test@example.org", "-c", "commit.gpgsign=false", "-c", "core.autocrlf=false"]
-    r = subprocess.run(["git", "-C", str(ordner), *fest, *argumente], capture_output=True, text=True)
+    # git und cargo schreiben UTF-8. Ohne `encoding` nähme Python die Locale, unter Windows cp1252.
+    r = subprocess.run(["git", "-C", str(ordner), *fest, *argumente], capture_output=True, text=True, encoding="utf-8")
     if r.returncode != 0:
         raise AssertionError(f"git {argumente}: {r.stderr}")
     return r.stdout.strip()
@@ -531,6 +532,7 @@ class DurchlaufTest(unittest.TestCase):
             ["cargo", "metadata", "--no-deps", "--offline", "--format-version", "1", "--manifest-path", str(v.ZIEL / "Cargo.toml")],
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
         self.assertEqual(r.returncode, 0, r.stderr)
         paket = json.loads(r.stdout)["packages"][0]
@@ -558,14 +560,20 @@ class CargoVergleichTest(unittest.TestCase):
             ["cargo", "metadata", "--no-deps", "--offline", "--format-version", "1", "--manifest-path", str(self.tmp / "Cargo.toml")],
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
 
     def nimmt_an(self, manifest: str) -> bool:
-        """Cargos Urteil über ein Manifest. Scheitert Cargo an etwas anderem (Toolchain, Umgebung), ist das kein Urteil."""
+        """Cargos Urteil über ein Manifest.
+
+        Grobe Umgebungsfehler (kein Exit 101, etwa ein rustup ohne Toolchain) lassen den Test scheitern, statt als
+        Ablehnung zu zählen. Mehr leistet die Unterscheidung nicht: Auch ein Zugriffs- oder Umgebungsfehler kann
+        mit 101 enden und die Datei nennen. Cargo ist hier weder auf eine Version festgelegt noch von der
+        Konfiguration des Rechners isoliert.
+        """
         r = self.cargo(manifest)
         if r.returncode == 0:
             return True
-        # Cargo selbst endet mit 101 und nennt die Datei; ein rustup ohne Toolchain etwa endet mit 1.
         if r.returncode != 101 or "Cargo.toml" not in r.stderr:
             self.fail(f"cargo metadata lief nicht (Exit {r.returncode}):\n{r.stderr}")
         return False
