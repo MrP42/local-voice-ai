@@ -17,7 +17,8 @@ Die vendorten Dateien werden nie von Hand geändert; Anpassungen gehören ins SD
 Was aus der `Cargo.toml` der Crate wird (Funktion `manifest`, Tests in scripts/test_vendor_wai_voice_dienst.py):
 übernommen werden `[package]` (nur die bekannten Felder), `[dependencies]`, `[target.<ziel>.dependencies]` und
 `[features]`, jeweils nach Namen sortiert und mit `optional = true`, wo die Quelle es setzt. Bewusst ausgelassen
-werden `[dev-dependencies]` (auch unter einem Ziel) und `[lints]`, siehe AUSGELASSEN. Jede andere Tabelle, jedes
+werden `[dev-dependencies]` (auch unter einem Ziel) und `[lints]`, siehe AUSGELASSEN; `VENDOR.toml` nennt, was
+bei der Übernahme ausgelassen wurde. Jede andere Tabelle, jedes
 unbekannte Feld in `[package]` und jede Abhängigkeit, die nicht in ERLAUBT steht oder nicht von crates.io kommt,
 bricht mit einer Meldung ab; still fällt nichts weg. Ein Feature, das auf etwas zeigt, das die erzeugte Datei
 nicht enthält, bricht ebenfalls ab. Bei einem Abbruch bleibt die vorhandene Kopie unverändert.
@@ -62,13 +63,14 @@ ERLAUBT = {"serde", "serde_json", "sha2", "thiserror", "ring"}
 # Tabellen der Quelle, die bewusst nicht in die vendorte Kopie kommen. Jede andere unbekannte Tabelle bricht ab.
 AUSGELASSEN = {
     "dev-dependencies": "die Tests der Crate werden nicht übernommen ([lib] test = false)",
-    "lints": "ändert nur die Meldungen des Compilers, nicht den erzeugten Code",
+    "lints": "betrifft nur Prüfungen des Compilers, nicht den erzeugten Code; ein deny oder forbid der Quelle gilt in der Kopie also nicht",
 }
 # Was [package] der Quelle nennen darf. Anderes (build, links, readme …) hieße, dass Dateien oder Verhalten
 # fehlen, die das Skript nicht mitbringt.
 PAKET_FELDER = {"name", "version", "edition", "rust-version", "license", "publish", "description"}
 # Angaben einer Abhängigkeit, die eine Version von crates.io beschreiben. `workspace` ist vorher aufgelöst.
-ABHAENGIGKEIT_FELDER = {"version", "features", "default-features", "optional", "package"}
+ABHAENGIGKEIT_REIHENFOLGE = ("version", "package", "features", "default-features", "optional")
+ABHAENGIGKEIT_FELDER = set(ABHAENGIGKEIT_REIHENFOLGE)
 
 
 def git(sdk: Path, *argumente: str) -> bytes:
@@ -141,6 +143,13 @@ def abhaengigkeit(name: str, eigen: object, workspace: dict) -> object:
         basis["version"] = LVA_VERSIONEN[paket]
     if not isinstance(basis.get("version"), str):
         raise abbruch(f"Abhängigkeit {name!r} hat keine Version")
+    if "features" in basis:
+        f = basis["features"]
+        if not isinstance(f, list) or not all(isinstance(x, str) for x in f):
+            raise abbruch(f"Abhängigkeit {name!r}: features ist keine Liste von Texten")
+        basis["features"] = sorted(set(f))
+    # Feste Reihenfolge der Felder, damit die Ausgabe nicht an der Schreibweise der Quelle hängt.
+    basis = {k: basis[k] for k in ABHAENGIGKEIT_REIHENFOLGE if k in basis}
     return basis["version"] if list(basis) == ["version"] else basis
 
 
@@ -160,16 +169,30 @@ def pruefe_features(features: dict, alle: dict[str, list[object]]) -> None:
 
     `alle` nennt je Abhängigkeit ihre Erklärungen aus `[dependencies]` und den Zieltabellen. Cargo meldet
     dieselben Fehler erst beim Bauen in Local Voice AI; hier fallen sie beim Übernehmen auf, mit dem Namen des
-    Features.
+    Features. Die Regeln folgen Cargo (Gegenprobe im Test, der Cargo dieselben Fälle vorlegt):
+
+    - Eine Abhängigkeit ist optional, sobald **eine** ihrer Erklärungen `optional = true` setzt.
+    - `dep:x` und `x?/f` verlangen ein optionales `x`; `x/f` verlangt nur, dass es `x` gibt.
+    - Ein bloßer Name ist ein Feature oder das implizite Feature einer optionalen Abhängigkeit. Dieses gibt es
+      nur, solange **kein** Feature `dep:x` nennt.
+    - Heißt ein Feature wie eine optionale Abhängigkeit, muss irgendein Feature sie mit `dep:x` einschalten.
+
+    Strenger als Cargo an einer Stelle: Testabhängigkeiten zählen nicht, weil die Kopie sie nicht enthält.
     """
-    optional = {n for n, erkl in alle.items() if all(ist_optional(e) for e in erkl)}
     for feature in sorted(features):
         eintraege = features[feature]
         if not isinstance(eintraege, list) or not all(isinstance(e, str) for e in eintraege):
             raise abbruch(f"Feature {feature!r} ist keine Liste von Texten")
-        for e in eintraege:
+        if "/" in feature or feature.startswith("dep:"):
+            raise abbruch(f"Feature {feature!r} hat einen Namen, den Cargo nicht annimmt")
+    optional = {n for n, erkl in alle.items() if any(ist_optional(e) for e in erkl)}
+    mit_dep = {e[4:] for eintraege in features.values() for e in eintraege if e.startswith("dep:")}
+    for feature in sorted(features):
+        for e in features[feature]:
             if e.startswith("dep:"):
                 name = e[4:]
+                if "/" in name:
+                    raise abbruch(f"Feature {feature!r} nennt {e!r} mit `dep:` und `/` zugleich")
                 if name not in optional:
                     raise abbruch(f"Feature {feature!r} schaltet {e!r} ein, aber {name!r} ist keine optionale Abhängigkeit")
             elif "/" in e:
@@ -178,8 +201,20 @@ def pruefe_features(features: dict, alle: dict[str, list[object]]) -> None:
                 name = name.removesuffix("?")
                 if name not in alle or (schwach and name not in optional):
                     raise abbruch(f"Feature {feature!r} verweist mit {e!r} auf eine Abhängigkeit, die es so nicht gibt")
-            elif e not in features and e not in optional:
+            elif e in features:
+                continue
+            elif e in optional and e in mit_dep:
+                raise abbruch(
+                    f"Feature {feature!r} verweist auf {e!r}; die optionale Abhängigkeit hat kein gleichnamiges "
+                    f"Feature, weil ein Feature sie mit 'dep:{e}' einschaltet"
+                )
+            elif e not in optional:
                 raise abbruch(f"Feature {feature!r} verweist auf {e!r}; das ist weder ein Feature noch eine optionale Abhängigkeit")
+    for name in sorted(optional & set(features) - mit_dep):
+        raise abbruch(
+            f"Die optionale Abhängigkeit {name!r} wird von keinem Feature eingeschaltet: Das Feature {name!r} "
+            f"verdeckt ihr gleichnamiges, und keines nennt 'dep:{name}'"
+        )
 
 
 def geerbt(p: dict, ws_paket: dict, feld: str) -> object | None:
@@ -271,9 +306,24 @@ def manifest(paket: dict, ws: dict, commit: str) -> str:
     return "\n\n".join("\n".join(a) for a in abschnitte) + "\n"
 
 
-def cargo_toml(sdk: Path, commit: str) -> bytes:
+def ausgelassene_tabellen(paket: dict) -> list[str]:
+    """Die Tabellen der Quelle, die `manifest` bewusst nicht übernimmt, so wie sie in `VENDOR.toml` stehen."""
+    aus = [f"[{t}]" for t in sorted(paket) if t in AUSGELASSEN]
+    ziele = paket.get("target", {})
+    for ziel in sorted(ziele) if isinstance(ziele, dict) else []:
+        inhalt = ziele[ziel] if isinstance(ziele[ziel], dict) else {}
+        aus += [f"[target.{toml_schluessel(ziel)}.{t}]" for t in sorted(inhalt) if t in AUSGELASSEN]
+    return aus
+
+
+def quell_manifest(sdk: Path, commit: str) -> tuple[dict, dict]:
     ws = tomllib.loads(git(sdk, "show", f"{commit}:Cargo.toml").decode("utf-8"))["workspace"]
     paket = tomllib.loads(git(sdk, "show", f"{commit}:{QUELLE}/Cargo.toml").decode("utf-8"))
+    return paket, ws
+
+
+def cargo_toml(sdk: Path, commit: str) -> bytes:
+    paket, ws = quell_manifest(sdk, commit)
     return manifest(paket, ws, commit).encode("utf-8")
 
 
@@ -335,7 +385,7 @@ def uebernehmen(sdk: Path, rev: str) -> int:
         f'commit = "{commit}"\n'
         f'commit_datum = "{datum}"\n'
         f'uebernommen_am = "{dt.date.today().isoformat()}"\n'
-        'ausgelassen = ["Tests im SDK-Arbeitsbaum"]\n',
+        f'ausgelassen = {toml_wert(["Tests im SDK-Arbeitsbaum"] + ausgelassene_tabellen(quell_manifest(sdk, commit)[0]))}\n',
         encoding="utf-8",
         newline="\n",
     )

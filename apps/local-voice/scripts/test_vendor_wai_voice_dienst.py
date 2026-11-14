@@ -129,13 +129,56 @@ MIT_FEATURES_ERWARTET = (
 libc = { version = "0.2", optional = true }
 
 [target."cfg(windows)".dependencies]
-windows-sys = { version = "0.60", optional = true, features = ["Win32_Foundation", "Win32_System_Pipes"] }
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_System_Pipes"], optional = true }
 
 [features]
 lokal = ["dep:libc", "dep:windows-sys"]
 nachbau = []
 """
 )
+
+
+# Feature-Verweise: (Name, Rest der Cargo.toml, nimmt Cargo das an?). Der Manifest-Test verlangt vom Skript
+# dasselbe Urteil, der Cargo-Test legt jede Zeile Cargo selbst vor. Erhoben mit cargo 1.97.
+OPT = 'serde = { version = "1", optional = true }\n'
+HALB = "[dependencies]\nserde = \"1\"\n[target.'cfg(unix)'.dependencies]\n" + OPT + "[features]\n"
+FEST = '[dependencies]\nserde = "1"\n[features]\n'
+FREI = "[dependencies]\n" + OPT + "[features]\n"
+OHNE = "[dependencies]\n[features]\n"
+UMBENANNT = '[dependencies]\ns = { package = "serde", version = "1", optional = true }\n[features]\n'
+FEATURE_FAELLE = [
+    ("optional: dep:", FREI + 'a = ["dep:serde"]\n', True),
+    ("optional: schwacher Verweis", FREI + 'a = ["serde?/rc"]\n', True),
+    ("optional: implizites Feature", FREI + 'a = ["serde"]\n', True),
+    ("optional: von keinem Feature genannt", FREI + "a = []\n", True),
+    ("in einer von zwei Tabellen optional: dep:", HALB + 'a = ["dep:serde"]\n', True),
+    ("in einer von zwei Tabellen optional: schwacher Verweis", HALB + 'a = ["serde?/rc"]\n', True),
+    ("in einer von zwei Tabellen optional: implizites Feature", HALB + 'a = ["serde"]\n', True),
+    ("nicht optional: dep:", FEST + 'a = ["dep:serde"]\n', False),
+    ("nicht optional: schwacher Verweis", FEST + 'a = ["serde?/rc"]\n', False),
+    ("nicht optional: bloßer Name", FEST + 'a = ["serde"]\n', False),
+    ("nicht optional: Feature der Abhängigkeit", FEST + 'a = ["serde/rc"]\n', True),
+    ("nicht optional: Feature gleichen Namens", FEST + "serde = []\n", True),
+    ("dep: unterdrückt das implizite Feature", FREI + 'a = ["dep:serde"]\nb = ["serde"]\n', False),
+    ("dep: unterdrückt es auch im selben Feature", FREI + 'a = ["dep:serde", "serde"]\n', False),
+    ("eigenes Feature gleichen Namens mit dep:", FREI + 'serde = ["dep:serde"]\nb = ["serde"]\n', True),
+    ("eigenes Feature gleichen Namens ohne dep:", FREI + "serde = []\n", False),
+    ("eigenes Feature gleichen Namens, dep: in einem anderen", FREI + 'serde = []\nb = ["dep:serde"]\n', True),
+    ("Feature der Abhängigkeit trotz dep: anderswo", FREI + 'a = ["dep:serde"]\nb = ["serde/rc"]\n', True),
+    ("schwacher Verweis trotz dep: anderswo", FREI + 'a = ["dep:serde"]\nb = ["serde?/rc"]\n', True),
+    ("Feature der Abhängigkeit, die auch ein Feature ist", FREI + 'serde = ["dep:serde"]\na = ["serde/rc"]\n', True),
+    ("Feature nennt ein anderes", OHNE + 'a = ["b"]\nb = []\n', True),
+    ("Feature nennt sich selbst", OHNE + 'a = ["a"]\n', True),
+    ("unbekannter Name", OHNE + 'a = ["fehlt"]\n', False),
+    ("leerer Eintrag", OHNE + 'a = [""]\n', False),
+    ("Feature einer unbekannten Abhängigkeit", OHNE + 'a = ["fehlt/x"]\n', False),
+    ("dep: auf Unbekanntes", OHNE + 'a = ["dep:fehlt"]\n', False),
+    ("dep: und / zugleich", FREI + 'a = ["dep:serde/rc"]\n', False),
+    ("Featurename mit /", OHNE + '"a/b" = []\n', False),
+    ("Featurename mit dep:", OHNE + '"dep:a" = []\n', False),
+    ("umbenannt: dep: nennt den Schlüssel", UMBENANNT + 'a = ["dep:s"]\n', True),
+    ("umbenannt: dep: nennt den Paketnamen", UMBENANNT + 'a = ["dep:serde"]\n', False),
+]
 
 
 def erzeuge(paket: str, workspace: str = WORKSPACE) -> str:
@@ -207,15 +250,15 @@ class ManifestTest(unittest.TestCase):
     def test_leere_tabelle_features_schreibt_keinen_abschnitt(self):
         self.assertEqual(erzeuge(HEUTE + "\n[features]\n"), HEUTE_ERWARTET)
 
-    def test_feature_verweise_muessen_auf_vorhandenes_zeigen(self):
-        gut = PAKET + (
-            "[dependencies]\nserde = { workspace = true, optional = true }\nthiserror.workspace = true\n"
-            '[features]\na = ["dep:serde", "serde?/rc", "thiserror/std", "b"]\nb = []\nc = ["serde"]\n'
-        )
-        self.assertEqual(
-            tomllib.loads(erzeuge(gut))["features"],
-            {"a": ["b", "dep:serde", "serde?/rc", "thiserror/std"], "b": [], "c": ["serde"]},
-        )
+    def test_feature_verweise_urteilt_wie_in_der_tabelle(self):
+        for name, fragment, gueltig in FEATURE_FAELLE:
+            with self.subTest(name):
+                if gueltig:
+                    tomllib.loads(erzeuge(PAKET + fragment))
+                else:
+                    self.abbruch(PAKET + fragment, "crates/wai-voice-dienst/Cargo.toml")
+
+    def test_feature_verweise_nennen_feature_und_ursache(self):
         fall = lambda eintrag: HEUTE + f'\n[features]\nx = ["{eintrag}"]\n'  # noqa: E731
         self.abbruch(fall("dep:serde"), "Feature 'x'", "'dep:serde'", "keine optionale Abhängigkeit")
         self.abbruch(fall("dep:fehlt"), "Feature 'x'", "'fehlt' ist keine optionale Abhängigkeit")
@@ -223,11 +266,17 @@ class ManifestTest(unittest.TestCase):
         self.abbruch(fall("serde?/rc"), "Feature 'x'", "'serde?/rc'")
         self.abbruch(fall("fehlt"), "Feature 'x'", "'fehlt'", "weder ein Feature noch eine optionale Abhängigkeit")
         self.abbruch(fall("serde"), "Feature 'x'", "'serde'")
-        # In einer Tabelle optional, in einer anderen nicht: gilt nicht als optional.
-        halb = HEUTE + "\n[features]\nx = [\"dep:serde\"]\n[target.'cfg(unix)'.dependencies]\nserde = { workspace = true, optional = true }\n"
-        self.abbruch(halb, "Feature 'x'", "'serde' ist keine optionale Abhängigkeit")
         self.abbruch(HEUTE + '\n[features]\nx = "serde"\n', "Feature 'x' ist keine Liste")
         self.abbruch(HEUTE + "\n[features]\nx = [1]\n", "Feature 'x' ist keine Liste")
+        optional = PAKET + '[dependencies]\nserde = { version = "1", optional = true }\n[features]\n'
+        self.abbruch(optional + 'a = ["dep:serde"]\nb = ["serde"]\n', "Feature 'b'", "'serde'", "'dep:serde'")
+        self.abbruch(optional + "serde = []\n", "optionale Abhängigkeit 'serde'", "'dep:serde'")
+        self.abbruch(optional + 'a = ["dep:serde/rc"]\n', "Feature 'a'", "'dep:serde/rc'", "`dep:` und `/` zugleich")
+
+    def test_testabhaengigkeiten_zaehlen_fuer_features_nicht(self):
+        # Cargo nimmt das an; die Kopie enthält die Testabhängigkeit aber nicht, also wäre der Verweis dort leer.
+        quelle = PAKET + '[dependencies]\n[dev-dependencies]\nserde = "1"\n[features]\na = ["serde/rc"]\n'
+        self.abbruch(quelle, "Feature 'a'", "'serde/rc'")
 
     def test_feature_das_eine_nicht_erlaubte_abhaengigkeit_einschaltet_scheitert_an_erlaubt(self):
         quelle = HEUTE + '\nfremd = { version = "1", optional = true }\n\n[features]\nx = ["dep:fremd"]\n'
@@ -253,6 +302,17 @@ class ManifestTest(unittest.TestCase):
                 "sha2": {"version": "0.10", "optional": True},
             },
         )
+
+    def test_felder_und_features_einer_abhaengigkeit_haengen_nicht_an_der_schreibweise_der_quelle(self):
+        a = PAKET + '[dependencies]\nserde = { optional = true, features = ["rc", "derive", "rc"], default-features = false, version = "1" }\n'
+        b = PAKET + '[dependencies]\nserde = { version = "1", default-features = false, features = ["derive", "rc"], optional = true }\n'
+        c = PAKET + '[dependencies]\nserde = { workspace = true, optional = true, default-features = false, features = ["rc"] }\n'
+        zeile = 'serde = { version = "1", features = ["derive", "rc"], default-features = false, optional = true }'
+        for quelle in (a, b, c):
+            self.assertIn(f"\n[dependencies]\n{zeile}\n", erzeuge(quelle))
+        alias = erzeuge(PAKET + '[dependencies]\nhash = { optional = true, package = "sha2", version = "0.11" }\n')
+        self.assertIn('\nhash = { version = "0.10", package = "sha2", optional = true }\n', alias)
+        self.abbruch(PAKET + '[dependencies]\nserde = { version = "1", features = "derive" }\n', "'serde'", "features")
 
     def test_abhaengigkeiten_sind_nach_namen_sortiert(self):
         paket = PAKET + '[dependencies]\nthiserror = "2"\nring = "0.17"\nserde_json = "1"\n'
@@ -305,6 +365,14 @@ class ManifestTest(unittest.TestCase):
         self.abbruch(PAKET + "[dependencies]\nserde = { optional = true }\n", "'serde'", "keine Version")
         self.abbruch(PAKET + "[dependencies]\nring.workspace = true\n", "'ring'", "Workspace")
         self.abbruch(PAKET + "[dependencies]\nserde = 1\n", "'serde'")
+
+    def test_ausgelassene_tabellen_werden_benannt(self):
+        self.assertEqual(v.ausgelassene_tabellen(tomllib.loads(HEUTE)), [])
+        quelle = MIT_FEATURES + '\n[lints.rust]\nunsafe_code = "forbid"\n'
+        self.assertEqual(
+            v.ausgelassene_tabellen(tomllib.loads(quelle)),
+            ["[dev-dependencies]", "[lints]", '[target."cfg(unix)".dev-dependencies]', '[target."cfg(windows)".dev-dependencies]'],
+        )
 
     # ---- unbekannte Tabellen und Felder
 
@@ -403,7 +471,12 @@ class DurchlaufTest(unittest.TestCase):
             self.assertEqual(sorted(p.name for p in (v.ZIEL / "src").iterdir()), ["lib.rs", "lokal.rs"])
             erzeugt = (v.ZIEL / "Cargo.toml").read_text(encoding="utf-8")
             self.assertEqual(erzeugt, MIT_FEATURES_ERWARTET.replace(COMMIT[:12], commit[:12]))
-            self.assertEqual(tomllib.loads((v.ZIEL / "VENDOR.toml").read_text(encoding="utf-8"))["commit"], commit)
+            vermerk = tomllib.loads((v.ZIEL / "VENDOR.toml").read_text(encoding="utf-8"))
+            self.assertEqual(vermerk["commit"], commit)
+            self.assertEqual(
+                vermerk["ausgelassen"],
+                ["Tests im SDK-Arbeitsbaum", "[dev-dependencies]", '[target."cfg(unix)".dev-dependencies]', '[target."cfg(windows)".dev-dependencies]'],
+            )
             self.assertEqual(self.still(v.pruefen, self.sdk)[0], 0)
 
             # Wer [features] von Hand aus der Kopie nimmt, fällt bei --check auf.
@@ -440,6 +513,46 @@ class DurchlaufTest(unittest.TestCase):
         ziele = {(d["name"], d["target"], d["optional"]) for d in paket["dependencies"] if d["target"]}
         self.assertEqual(ziele, {("libc", "cfg(unix)", True), ("windows-sys", "cfg(windows)", True)})
         self.assertEqual(sorted(d["name"] for d in paket["dependencies"] if d["kind"] == "dev"), [])
+
+
+@unittest.skipUnless(shutil.which("cargo"), "cargo fehlt")
+class CargoVergleichTest(unittest.TestCase):
+    """Legt Cargo jede Zeile aus FEATURE_FAELLE vor: Die Tabelle, nach der das Skript urteilt, stimmt mit Cargo."""
+
+    KOPF = '[package]\nname = "probe"\nversion = "0.1.0"\nedition = "2021"\n'
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="vendor-cargo-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        (self.tmp / "src").mkdir()
+        (self.tmp / "src" / "lib.rs").write_text("", encoding="utf-8")
+
+    def cargo(self, manifest: str) -> subprocess.CompletedProcess:
+        (self.tmp / "Cargo.toml").write_text(manifest, encoding="utf-8", newline="\n")
+        return subprocess.run(
+            ["cargo", "metadata", "--no-deps", "--offline", "--format-version", "1", "--manifest-path", str(self.tmp / "Cargo.toml")],
+            capture_output=True,
+            text=True,
+        )
+
+    def features(self, manifest: str) -> dict[str, list[str]]:
+        """Die Features, wie Cargo sie liest, samt der impliziten Features optionaler Abhängigkeiten."""
+        r = self.cargo(manifest)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return {k: sorted(v) for k, v in json.loads(r.stdout)["packages"][0]["features"].items()}
+
+    def test_cargo_urteilt_ueber_jeden_feature_fall_wie_die_tabelle(self):
+        for name, fragment, gueltig in FEATURE_FAELLE:
+            with self.subTest(name):
+                r = self.cargo(self.KOPF + fragment)
+                self.assertEqual(r.returncode == 0, gueltig, r.stderr)
+
+    def test_cargo_liest_aus_der_ausgabe_dieselben_features_wie_aus_der_quelle(self):
+        for name, fragment, gueltig in FEATURE_FAELLE:
+            if not gueltig:
+                continue
+            with self.subTest(name):
+                self.assertEqual(self.features(erzeuge(PAKET + fragment)), self.features(self.KOPF + fragment))
 
 
 if __name__ == "__main__":
