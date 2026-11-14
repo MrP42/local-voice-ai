@@ -5,7 +5,7 @@ Führt die Tests des Sprachdienstes aus, ohne die App zu bauen. Gedacht für Lin
 fehlen (Cloud-Sitzungen).
 
 ```bash
-cargo test --manifest-path apps/local-voice/crates/sprachdienst-pruefstand/Cargo.toml
+cargo test --locked --manifest-path apps/local-voice/crates/sprachdienst-pruefstand/Cargo.toml
 ```
 
 ## Was hier geprüft wird
@@ -24,7 +24,7 @@ Der Prüfstand ersetzt das Rust-Tor im App-Crate nicht. Er weicht in diesen Punk
 | `sprachdienst/app.rs` (Engines, Ereignisse, Fenster)                 | gebaut                 | nicht eingebunden                           |
 | `sprachdienst/pipe.rs` (Windows-Pipe, DACL, Prüfung der Gegenstelle) | gebaut unter Windows   | nicht eingebunden                           |
 | Betriebssystem                                                       | Windows, macOS, Linux  | nur Unix (unter Windows ist das Crate leer) |
-| Abhängigkeiten                                                       | `src-tauri/Cargo.toml` | eigene Liste, nur was der Dienst braucht    |
+| Abhängigkeiten                                                       | `src-tauri/Cargo.toml` | Teilmenge davon, zeilengleich (Wächter)     |
 | Features und `cfg` der App                                           | wirksam                | nicht vorhanden                             |
 | Übrige Module der App                                                | im selben Crate        | fehlen; ein Zugriff darauf baut hier nicht  |
 
@@ -33,18 +33,66 @@ ihre Tests bestehen. Es sagt nichts über die Anbindung an die App und nichts ü
 
 ## Wächter gegen Drift
 
-Drei Tests in `src/lib.rs` (`waechter::…`) prüfen nicht den Dienst, sondern den Prüfstand:
+Die Tests in `src/waechter.rs` prüfen nicht den Dienst, sondern den Prüfstand. Jeder Wächter ist
+eine reine Funktion, die Abweichungen als Text liefert, dazu ein Test gegen die echten Dateien und
+eine Gegenprobe mit erfundenen Eingaben (`gegenprobe_…`), die bei jedem Lauf belegt, dass die
+Abweichung auch gemeldet wird.
 
-- `module_folgen_dem_dienst`: `sprachdienst/mod.rs` der App und der Spiegel hier nennen dieselben
-  Module, ausgenommen `app` und `pipe`. Ein neues Modul im Dienst macht den Test rot, bis es hier
-  eingebunden oder bewusst ausgenommen ist.
-- `abhaengigkeiten_folgen_der_app`: Jede Abhängigkeit hier fordert eine Version an, die auch
-  `src-tauri/Cargo.toml` anfordert.
-- `sperrdatei_folgt_der_app`: Jede Paketversion in `Cargo.lock` hier steht auch in
-  `src-tauri/Cargo.lock`.
+- `module_folgen_dem_dienst`: Der Spiegel `src/sprachdienst/mod.rs` wird aus
+  `sprachdienst/mod.rs` der App **abgeleitet** und muss dem Ergebnis genau gleichen: je Modul
+  dieselbe Sichtbarkeit, dieselbe Bedingung (`cfg(unix)` entfällt, weil das ganze Crate darunter
+  steht) und der `#[path]` zur gleichnamigen Originaldatei. Rot wird der Test bei einer Umlenkung
+  auf eine andere Datei, einem anderen `cfg`, einem fehlenden oder zusätzlichen Modul und bei jeder
+  Zeile, die keine Modulzeile ist, im Spiegel wie im Original. Trägt ein Modul im Original ein
+  Attribut, das der Prüfstand nicht abbildet (etwa `cfg(feature = …)`), ist das ebenfalls rot.
+- `wurzel_ist_unveraendert`: `src/lib.rs` enthält nur `#![cfg(unix)]` und die drei Modulzeilen.
+- `einbindung_in_der_app_ist_unveraendert`: Die App bindet `sprachdienst` weiter ohne Bedingung
+  und `testlog` nur für Tests ein.
+- `abhaengigkeiten_folgen_der_app`: Beide `Cargo.toml` werden von Cargo selbst gelesen
+  (`cargo metadata --no-deps`). **Jede** Abhängigkeit des Prüfstands, auch eine neu eingetragene,
+  muss in der App mit derselben Art (normal, `dev`, `build`) genau einmal stehen und in
+  Anforderung, Quelle (Register oder Pfad), Features, Standard-Features, Umbenennung, `optional`
+  und Zielbedingung übereinstimmen. Eigene Features hat der Prüfstand nicht.
+- `sperrdatei_folgt_der_app`: Jedes Paket in `Cargo.lock` hier steht mit derselben Version,
+  **Quelle und Prüfsumme** in `src-tauri/Cargo.lock` und hängt dort von mindestens denselben
+  Paketen ab.
 
-Ist der dritte Test rot, weil sich die Sperrdatei der App geändert hat, die Sperrdatei hier neu
-ableiten (Cargo streicht alles, was der Prüfstand nicht braucht, und behält die Versionen):
+Beabsichtigte Unterschiede, die die Wächter nicht melden: Der Prüfstand lässt `app` und `pipe`
+aus und nennt nur einen Teil der Abhängigkeiten der App. Weitere sind nicht vorgesehen; wer einen
+braucht, trägt ihn im Wächter ein und oben in die Tabelle.
+
+### Was die Wächter nicht leisten
+
+- **Änderungen an der Modulwurzel des Dienstes brauchen weiterhin ein Review.** Der Wächter
+  erkennt, dass sich `sprachdienst/mod.rs` in einer Form geändert hat, die der Spiegel nicht
+  abbildet. Ob der Prüfstand danach noch dasselbe prüft wie die App, entscheidet ein Mensch.
+- Der Spiegel **ersetzt** die Modulwurzel: Was dort außer Modulzeilen stünde, gäbe es hier nicht.
+  Heute steht dort nichts anderes, und der Wächter meldet, sobald sich das ändert.
+- Die Wächter vergleichen Erklärungen. Welche Features Cargo in der App am Ende einschaltet (dort
+  schalten andere Pakete weitere Features derselben Abhängigkeiten ein), bildet der Prüfstand
+  nicht nach. Deshalb bleibt das Rust-Tor im App-Crate maßgeblich.
+- Die Modulzeilen werden zeilenweise gelesen, nicht mit einem Rust-Parser. Der Leser versteht nur
+  Kommentarzeilen, einzeilige Attribute und `mod x;` / `pub mod x;` und meldet alles andere.
+
+## Tor für Änderungen am Prüfstand
+
+Wer den Prüfstand selbst ändert, belegt zwei Läufe:
+
+```bash
+# unter Linux oder macOS
+cargo test --locked --manifest-path apps/local-voice/crates/sprachdienst-pruefstand/Cargo.toml
+# dort, wo die App baut (Windows)
+cargo check --locked --tests --manifest-path apps/local-voice/src-tauri/Cargo.toml
+```
+
+Der zweite Lauf prüft auch den Testcode der App (`cfg(test)`), den ein gewöhnliches `cargo check`
+auslässt.
+
+## Sperrdatei neu ableiten
+
+Ist `sperrdatei_folgt_der_app` rot, weil sich die Sperrdatei der App geändert hat, die Sperrdatei
+hier neu ableiten (Cargo streicht alles, was der Prüfstand nicht braucht, und behält Versionen,
+Quellen und Prüfsummen):
 
 ```bash
 cd apps/local-voice/crates/sprachdienst-pruefstand

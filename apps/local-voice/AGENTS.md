@@ -57,7 +57,7 @@ For detailed platform-specific build setup, see [BUILD.md](BUILD.md).
 **Sprachdienst tests without building the app (Linux, macOS):**
 
 ```bash
-cargo test --manifest-path crates/sprachdienst-pruefstand/Cargo.toml
+cargo test --locked --manifest-path crates/sprachdienst-pruefstand/Cargo.toml
 ```
 
 The crate `crates/sprachdienst-pruefstand` holds no service code; it includes the original files of
