@@ -54,8 +54,10 @@ Abweichung auch gemeldet wird.
   Anforderung, Quelle (Register oder Pfad), Features, Standard-Features, Umbenennung, `optional`
   und Zielbedingung übereinstimmen. Eigene Features hat der Prüfstand nicht.
 - `sperrdatei_folgt_der_app`: Jedes Paket in `Cargo.lock` hier steht mit derselben Version,
-  **Quelle und Prüfsumme** in `src-tauri/Cargo.lock` und hängt dort von mindestens denselben
-  Paketen ab.
+  **Quelle und Prüfsumme** in `src-tauri/Cargo.lock`. Seine Kanten werden in jeder Datei zur vollen
+  Identität des Ziels aufgelöst (Name, Version, Quelle) und müssen auch in der App so bestehen:
+  Zeigt ein Paket hier auf `b 1` und in der App auf `b 2`, ist das rot, auch wenn die App beide
+  Versionen sperrt.
 
 Beabsichtigte Unterschiede, die die Wächter nicht melden: Der Prüfstand lässt `app` und `pipe`
 aus und nennt nur einen Teil der Abhängigkeiten der App. Weitere sind nicht vorgesehen; wer einen
@@ -87,6 +89,13 @@ cargo check --locked --tests --manifest-path apps/local-voice/src-tauri/Cargo.to
 
 Der zweite Lauf prüft auch den Testcode der App (`cfg(test)`), den ein gewöhnliches `cargo check`
 auslässt.
+
+Der Beleg des ersten Laufs nennt die Wächter **einzeln** (`cargo test --locked … waechter` listet
+sie): `module_folgen_dem_dienst`, `wurzel_ist_unveraendert`, `einbindung_in_der_app_ist_unveraendert`,
+`abhaengigkeiten_folgen_der_app`, `sperrdatei_folgt_der_app` und die drei `gegenprobe_…`. Eine
+bloße Gesamtzahl genügt nicht: Die Wächter stehen selbst unter `#[cfg(test)] mod waechter;` in
+`src/lib.rs`. Wer diese Bedingung abschaltet, schaltet auch den Test ab, der die Wurzel prüft; das
+fällt nur auf, wenn die Namen im Beleg fehlen.
 
 ## Sperrdatei neu ableiten
 
