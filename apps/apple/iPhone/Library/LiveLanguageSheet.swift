@@ -37,6 +37,17 @@ struct LiveStatusLine: View {
     }
 }
 
+/// Kennzeichnung für maschinell übersetzten Text auf dunklem Grund (Mini-Player, Spez §6); im Player steht sie in
+/// `LiveStatusLine`.
+struct LiveBadge: View {
+    var body: some View {
+        Label("Live übersetzt · auf dem iPhone", systemImage: "translate")
+            .font(.caption2.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.7)
+            .foregroundStyle(.white.opacity(0.85))
+            .accessibilityShowsLargeContentViewer { Label("Live übersetzt · auf dem iPhone", systemImage: "translate") }
+    }
+}
+
 /// Zustand der Live-Auswahl. Liegt beim Blatt, damit `.task` und `.translationTask` genau einmal an der `List`
 /// hängen (an einer `Section` verteilten sie sich auf die Zeilen und rissen beim Scrollen ab).
 @MainActor final class LiveLanguageModel: ObservableObject {
@@ -83,16 +94,19 @@ struct LiveStatusLine: View {
             try await session.prepareTranslation()
             await refresh()
             if states[code] == .installed { apply(code); return true }
-            message = "Die Sprache ist noch nicht geladen. Bitte erneut versuchen."
-        } catch is CancellationError {
-            message = "Laden abgelehnt. Die Sprache bleibt ungeladen."
+            message = "Das Sprachpaket fehlt noch. Bitte erneut versuchen."
         } catch {
-            // Getrennte Fehlerpfade (Spez §3): nach dem Fehler den Paketstatus neu lesen.
-            await refresh()
-            switch states[code] ?? .unknown {
-            case .unsupported: message = "Diese Sprache ist auf diesem iPhone nicht verfügbar."
-            case .installed: apply(code); return true
-            default: message = "Laden fehlgeschlagen. Zum Laden ist eine Internetverbindung nötig."
+            // Getrennte Fehlerpfade (Spez §3): abgelehnt, kein Netz, sonst Paketstatus neu lesen.
+            switch LiveLoadFailure.classify(error) {
+            case .declined: message = "Laden abgelehnt. Die Sprache bleibt ungeladen."
+            case .offline: message = "Zum Laden ist eine Verbindung nötig. Bitte erneut versuchen."
+            case .other:
+                await refresh()
+                switch states[code] ?? .unknown {
+                case .unsupported: message = "Diese Sprache ist auf diesem iPhone nicht verfügbar."
+                case .installed: apply(code); return true
+                default: message = "Laden fehlgeschlagen. Bitte erneut versuchen."
+                }
             }
         }
         return false

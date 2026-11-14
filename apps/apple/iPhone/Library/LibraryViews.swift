@@ -848,11 +848,9 @@ struct LibraryMiniPlayer: View {
                     LibraryCover(title: playback.title, compact: true, image: playback.book.flatMap { PhoneLibrary.shared.coverThumbnail($0) })
                         .frame(width: 32, height: 44)
                     VStack(alignment: .leading, spacing: 1) {
-                        HStack(spacing: 4) {
-                            // Kennzeichnung im Mini-Player (Spez §6): der Satz darunter ist live übersetzt.
-                            if playback.liveTarget != nil { Image(systemName: "translate").font(.caption).foregroundStyle(.white.opacity(0.85)) }
-                            Text(playback.title).font(.subheadline.weight(.semibold)).lineLimit(1).foregroundStyle(.white)
-                        }
+                        Text(playback.title).font(.subheadline.weight(.semibold)).lineLimit(1).foregroundStyle(.white)
+                        // Übersetzter Text ist immer gekennzeichnet (Spez §6).
+                        if playback.mode == .readAloud, playback.liveTarget != nil { LiveBadge() }
                         if !playback.preparing, let sentence = playback.currentSentence {
                             SentenceParts(text: sentence).accessibilityHidden(true)
                         } else {

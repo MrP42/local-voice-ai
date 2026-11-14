@@ -45,7 +45,8 @@ enum LiveTranslationSupport {
         return recognizer.dominantLanguage.map { LiveTranslation.base($0.rawValue) }
     }
 
-    /// Quellhash nach Hashvertrag (Spez §7.3): normalisierter Text, SHA-256 hex.
+    /// Quellhash nach Hashvertrag (Spez §7.3): normalisierter Text (`LiveTranslation.normalized`), SHA-256 hex.
+    /// Der Player bildet seine Offsets am selben normalisierten Text.
     static func sourceHash(_ text: String) -> String {
         let t = LiveTranslation.hashInput(text)
         return SHA256.hash(data: Data(t.utf8)).map { String(format: "%02x", $0) }.joined()

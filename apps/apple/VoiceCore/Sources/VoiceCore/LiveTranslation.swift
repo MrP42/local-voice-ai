@@ -30,7 +30,7 @@ public enum LiveTranslationError: Error, Equatable {
 
 public enum LiveTranslation {
     /// Textnormalisierung des Hashvertrags (Spez §7.3) ohne den Schluss-Zeilenumbruch: NFC, Zeilenenden `\n`, kein
-    /// BOM. Offsets des Live-Fortschritts beziehen sich auf diesen Text (Spez §4.1), daher liest der Player ihn so ein.
+    /// BOM. Zwischenschritt von `hashInput`; der Player liest den Text mit `hashInput` ein.
     public static func normalizedSource(_ text: String) -> String {
         var t = text.precomposedStringWithCanonicalMapping
             .replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
@@ -38,7 +38,8 @@ public enum LiveTranslation {
         return t
     }
 
-    /// Bytes für `source_hash`: normalisierter Text mit genau einem abschließenden `\n` (Spez §7.3).
+    /// Normalisierter Text mit genau einem abschließenden `\n` (Spez §7.3): die Bytes für `source_hash` und zugleich der
+    /// Text, auf den sich alle Offsets beziehen (Spez §4.1/§4.2, Länge `Q`). Idempotent.
     public static func hashInput(_ text: String) -> String {
         var t = normalizedSource(text)
         while t.hasSuffix("\n\n") { t.removeLast() }
@@ -378,7 +379,11 @@ public enum LiveLanguages {
 /// begrenzt wie der Pipeline-Speicher und mit Epoche, damit Ergebnisse aus der Zeit vor einem Sprung oder
 /// Sprachwechsel nicht mehr hineinkommen.
 public struct LiveMirror: Sendable {
-    public struct Slot: Hashable, Sendable { public let paragraph: Int; public let sentence: Int }
+    public struct Slot: Hashable, Sendable {
+        public let paragraph: Int
+        public let sentence: Int
+        public init(paragraph: Int, sentence: Int) { self.paragraph = paragraph; self.sentence = sentence }
+    }
     public let limit: Int
     public private(set) var epoch = 0
     private var texts: [Int: [Int: String]] = [:]
@@ -622,5 +627,39 @@ public enum LiveJumpPlan: Equatable, Sendable {
 
     public static func decide(busy: Bool, autoplay: Bool) -> LiveJumpPlan {
         busy || autoplay ? .speakHere : .discardAndPrepare
+    }
+}
+
+/// Pause oder Unterbrechung beim Vorlesen (Spez §4.1): Im Original hält der Ton an und setzt fort. Live wird der Ton
+/// verworfen, denn „Weiter“ wiederholt den Satz vom Beginn (Phonon wie Systemstimme); der Stand bleibt am Satzbeginn.
+public enum LivePausePlan: Equatable, Sendable {
+    /// Ton anhalten, Weiter setzt den Ton fort.
+    case holdAudio
+    /// Ton verwerfen, Weiter spricht den hörbaren Satz neu.
+    case restartSentence
+
+    public static func decide(live: Bool) -> LivePausePlan { live ? .restartSentence : .holdAudio }
+}
+
+/// Unterlauf wieder aufheben (Spez §4): Trifft die Übersetzung des hängenden Satzes nachträglich ein und liegt sie
+/// im Spiegel, ist der Hinweis „Original weiterlesen“ überholt.
+public enum LiveStall {
+    public static func clears(stalled: LiveMirror.Slot?, arrived: LiveMirror.Slot, mirrorHasText: Bool) -> Bool {
+        mirrorHasText && stalled == arrived
+    }
+}
+
+/// Warum das Laden eines Sprachpakets scheiterte (Spez §3): abgelehnt, kein Netz oder sonst.
+public enum LiveLoadFailure: Equatable, Sendable {
+    case declined, offline, other
+
+    public static func classify(_ error: any Error) -> LiveLoadFailure {
+        if error is CancellationError { return .declined }
+        let ns = error as NSError
+        if ns.domain == NSCocoaErrorDomain, ns.code == NSUserCancelledError { return .declined }
+        guard ns.domain == NSURLErrorDomain else { return .other }
+        let offline: [URLError.Code] = [.notConnectedToInternet, .networkConnectionLost, .dataNotAllowed, .internationalRoamingOff,
+                                        .timedOut, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed]
+        return offline.contains { $0.rawValue == ns.code } ? .offline : .other
     }
 }

@@ -102,6 +102,12 @@ final class LibraryPlayback: NSObject, ObservableObject {
     /// Die Systemstimme spricht gerade einen einzelnen übersetzten Satz.
     private var liveUtterance = false
     private var liveSystemTask: Task<Void, Never>?
+    /// Satz, an dem die Übersetzung hängt (Unterlauf oder Fehler); kommt er nachträglich an, verschwindet der Hinweis.
+    private var liveStalledSlot: LiveMirror.Slot?
+    /// `source_hash` des vorgelesenen Texts (Spez §7.3), einmal beim Öffnen berechnet; alle Offsets beziehen sich auf
+    /// genau diesen Text. Dazu die Quellfassung.
+    private var textHash: String?
+    private var textSourceEdition: String?
 
     private let library: PhoneLibrary
     private var player: AVPlayer?
@@ -114,8 +120,6 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private var sleepTimer: Timer?
     private let synth = AVSpeechSynthesizer()
     private var text = ""
-    /// `source_hash` des vorgelesenen Texts (Spez §7.3), einmal beim Öffnen berechnet.
-    private var textHash: String?
     private var remoteReady = false
     /// Gerade gesprochene Äußerung; Rückmeldungen älterer werden verworfen.
     private var currentUtterance: AVSpeechUtterance?
@@ -193,6 +197,12 @@ final class LibraryPlayback: NSObject, ObservableObject {
         if liveTarget != nil, let t = liveMirror.peek(paragraph: paragraphIndex, sentence: sentenceIndex) { return t }
         let text = paragraphs[paragraphIndex].text as NSString
         return NSMaxRange(range) <= text.length ? text.substring(with: range) : nil
+    }
+    /// Übersetzter Satz für Sperrbildschirm und Steuerzentrale; nie das Original mit der Zielsprache gemischt.
+    private var liveNowPlayingSentence: String? {
+        guard liveTarget != nil, let t = liveMirror.peek(paragraph: paragraphIndex, sentence: sentenceIndex) else { return nil }
+        let line = t.trimmingCharacters(in: .whitespacesAndNewlines)
+        return line.isEmpty ? nil : String(line.prefix(200))
     }
     /// Läuft oder ist auf dem Weg dorthin.
     var busy: Bool { playing || preparing }
@@ -408,7 +418,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
             length = Double(text.utf16.count)
         }
         let fromChapters = fromMedium == .audio ? library.audioChapterList(current) : EditionSwitch.textChapters(text)
-        let toChapters = toMedium == .audio ? library.audioChapterList(view) : EditionSwitch.textChapters(library.text(view) ?? "")
+        let toChapters = toMedium == .audio ? library.audioChapterList(view) : EditionSwitch.textChapters(Self.normalizedText(library.text(view)))
         let toKey = toMedium == .audio ? library.audioKey(view) : library.textKey(view)
         let plan = EditionSwitch.plan(editions: editions, from: fromId, to: editionId, fromMedium: fromMedium, toMedium: toMedium,
                                       fromChapters: fromChapters, toChapters: toChapters, toKey: toKey, offset: offset, length: length)
@@ -526,7 +536,9 @@ final class LibraryPlayback: NSObject, ObservableObject {
         self.book = book; mode = .audiobook
         self.urls = files; tracks = all
         totalMs = audio.totalDurationMs ?? tracks.reduce(0) { $0 + ($1.durationMs ?? 0) }
-        text = library.text(book) ?? ""
+        // Offsets und Absätze immer am normalisierten Text (Spez §7.3), auch für die Übergabe an Live.
+        text = Self.normalizedText(library.text(book))
+        textHash = nil
         paragraphs = LibraryText.paragraphs(text)
         // Für „Ab hier in … vorlesen“ aus dem Hörbuch (lva#358).
         resolveLiveSource(book)
@@ -615,14 +627,16 @@ final class LibraryPlayback: NSObject, ObservableObject {
     func openReadAloud(_ book: LibraryBook, autoplay: Bool = false, fromParagraph: Int? = nil) {
         if self.book?.id != book.id || mode != .readAloud {
             stop()
-            guard let raw = library.text(book) else { error = "Der Text ist nicht auf dem iPhone."; return }
+            guard let rawText = library.text(book) else { error = "Der Text ist nicht auf dem iPhone."; return }
             phononFailed = false
             resetLive()
             self.book = book; mode = .readAloud
-            // Offsets am normalisierten Text, passend zum Quellhash (Spez §4.1/§7.3).
-            let text = LiveTranslation.normalizedSource(raw)
+            // Offsets, Absätze und Quellhash beruhen auf demselben normalisierten Text mit genau einem Schluss-\n
+            // (Spez §4.1, §7.3).
+            let text = LiveTranslation.hashInput(rawText)
             self.text = text
             textHash = LiveTranslationSupport.sourceHash(text)
+            textSourceEdition = book.editionId ?? library.rawBook(book.id).flatMap { BookEditions(book: $0).readingEdition?.id }
             paragraphs = LibraryText.paragraphs(text)
             sentenceCache = [:]
             followCache = nil
@@ -803,6 +817,12 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     // MARK: Live-Übersetzung (lva#358)
 
+    /// Text für Absätze und Offsets: normalisiert wie im Hashvertrag; ein fehlender oder leerer Text bleibt leer.
+    private static func normalizedText(_ raw: String?) -> String {
+        guard let raw, !raw.isEmpty else { return "" }
+        return LiveTranslation.hashInput(raw)
+    }
+
     private static func liveKey(_ id: String) -> String { "lva.player.live.\(id)" }
     /// Je Sprachfassung (lva#344): die bestätigte Sprache einer Fassung gilt nicht für die andere.
     private static func liveSourceKey(_ book: LibraryBook) -> String {
@@ -811,6 +831,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     private func resetLive() {
         livePipeline = nil; liveTarget = nil; liveState = .off; liveMirror.reset(); liveRequested = []
+        liveStalledSlot = nil
         liveSwitch = LiveSwitch(); liveUtterance = false
         liveSource = nil; liveSourceConfirmed = false; liveSourceDeclared = false
         liveSystemTask?.cancel(); liveSystemTask = nil
@@ -896,7 +917,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private func applyLive(_ config: LiveConfig?) {
         guard let book else { return }
         if let old = livePipeline { Task { await old.cancelPending() } }  // alter Übersetzer, keine Konkurrenz zum neuen
-        liveMirror.reset(); liveRequested = []; liveRevision += 1
+        liveMirror.reset(); liveRequested = []; liveStalledSlot = nil; liveRevision += 1
         if let config, #available(iOS 26.0, *) {
             liveTarget = config.target
             livePipeline = LivePipeline(translator: AppleLiveTranslator(source: config.source, target: config.target), book: book.id,
@@ -944,6 +965,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         guard livePipeline != nil else { return }
         liveMirror.advance()
         liveRequested = []
+        clearLiveStall()  // der Hinweis gehörte zur alten Stelle
     }
 
     /// Vorlauf ab `c` anstoßen und fertige Sätze für Anzeige und Sprechen spiegeln.
@@ -972,10 +994,23 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private func storeLive(_ text: String, _ unit: LiveUnit, epoch: Int) -> Bool {
         guard liveMirror.store(text, paragraph: unit.paragraph, sentence: unit.sentences.lowerBound, epoch: epoch) else { return false }
         liveRevision += 1
+        // Die Übersetzung des hängenden Satzes kam nachträglich an (nach dem Unterlauf): Hinweis zurücknehmen.
+        let arrived = LiveMirror.Slot(paragraph: unit.paragraph, sentence: unit.sentences.lowerBound)
+        if LiveStall.clears(stalled: liveStalledSlot, arrived: arrived,
+                            mirrorHasText: liveMirror.peek(paragraph: arrived.paragraph, sentence: arrived.sentence) != nil) {
+            clearLiveStall()
+        }
         // Kalter Start: sobald einer der nächsten Sätze übersetzt ist, Phonon schon vorbereiten.
         let slot = Cursor(paragraph: unit.paragraph, sentence: unit.sentences.lowerBound)
         if mode == .readAloud, !busy, phononVoice != nil, upcomingCursors(3).contains(slot) { prepareLiveVoice() }
+        if mode == .readAloud, upcomingCursors(1).contains(slot) { updateNowPlaying() }
         return true
+    }
+
+    /// Unterlauf oder Fehler aufheben (`.stalled` und „Original weiterlesen“ verschwinden).
+    private func clearLiveStall() {
+        liveStalledSlot = nil
+        if case .stalled = liveState { liveState = .ready }
     }
 
     /// Hörbarer Satz und die folgenden.
@@ -1005,8 +1040,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         let epoch = liveMirror.epoch
         liveFill(from: c)
         if let hit = liveMirror.text(paragraph: c.paragraph, sentence: c.sentence) {
-            // Kam die Übersetzung nach einem Unterlauf doch noch: Hinweis und „Original weiterlesen“ ausblenden.
-            if liveState != .ready { liveState = .ready }
+            if liveStalledSlot == LiveMirror.Slot(paragraph: c.paragraph, sentence: c.sentence) { clearLiveStall() }
             return hit
         }
         guard let unit = liveUnits(c.paragraph).first(where: { $0.sentences.lowerBound == c.sentence }) else { return nil }
@@ -1017,13 +1051,16 @@ final class LibraryPlayback: NSObject, ObservableObject {
         switch outcome {
         case .text(let t):
             storeLive(t, unit, epoch: epoch)
+            liveStalledSlot = nil
             liveState = .ready
             return t
         case .cancelled:
             return nil
         case .failed:
+            liveStalledSlot = LiveMirror.Slot(paragraph: c.paragraph, sentence: c.sentence)
             liveState = .stalled("Dieser Satz ließ sich nicht übersetzen. Fehlt das Sprachpaket, bitte unter „Sprache“ laden.")
         case .timedOut:
+            liveStalledSlot = LiveMirror.Slot(paragraph: c.paragraph, sentence: c.sentence)
             liveState = .stalled("Die Übersetzung kommt nicht nach.")
         }
         return nil
@@ -1365,8 +1402,9 @@ final class LibraryPlayback: NSObject, ObservableObject {
         // Ein Sprung ist nicht gelesen: weder Bereiche noch Lesegrenze (Buch-Gespräch) rücken vor.
         if jumped { rec.heard = previous?.heard ?? []; rec.frontier = previous?.frontier; rec.finished = previous?.finished }
         // Positionsvertrag (Spez §4.1): Fassung und Quellhash, auf die sich der Offset bezieht.
-        if mode == .readAloud { rec.sourceEdition = book.editionId; rec.sourceHash = textHash }
         if let heard { rec = LibraryProgress.markHeard(rec, from: Double(heard.lowerBound), to: Double(heard.upperBound)) }
+        // Der Stand bezieht sich auf eine Quellfassung: (source_edition, source_hash, offset), Spez §4.1.
+        if let textHash { rec.sourceHash = textHash; rec.sourceEdition = textSourceEdition }
         library.put(library.textKey(book), rec)
         lastTextSave = Date()
     }
@@ -1390,9 +1428,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         case .audiobook: player?.playImmediately(atRate: rate); playing = true
         case .readAloud:
             if busy { return }
-            // Live: ein unterbrochener Satz wird von vorn wiederholt, nie mitten im Satz fortgesetzt (Spez §4.1).
-            if livePipeline != nil { speakCurrent() }
-            else if phononPaused, PhononEngine.shared.resume() { phononPaused = false; playing = true }
+            if phononPaused, PhononEngine.shared.resume() { phononPaused = false; playing = true }
             else if synth.isPaused, pausedParagraph == paragraphIndex { synth.continueSpeaking(); playing = true }
             else { speakCurrent() }
         case nil: return
@@ -1405,6 +1441,14 @@ final class LibraryPlayback: NSObject, ObservableObject {
         case .audiobook: player?.pause(); saveAudio()
         case .readAloud:
             if preparing { stopPhonon() }  // noch kein Ton: nichts anzuhalten, Weiter beginnt am Satz
+            else if LivePausePlan.decide(live: livePipeline != nil) == .restartSentence {
+                // Live (Spez §4.1): Ton verwerfen, Stand bleibt am Satzbeginn, Weiter wiederholt den Satz. Phonon und
+                // Systemstimme gleich; der Vorlauf wird für den Neustart schon vorbereitet.
+                currentUtterance = nil; liveUtterance = false
+                synth.stopSpeaking(at: .immediate)
+                discardPausedSpeech()
+                prepareVoice()
+            }
             else if phononTask != nil { PhononEngine.shared.pause(); phononPaused = true }
             else { synth.pauseSpeaking(at: .word); pausedParagraph = paragraphIndex }
         case nil: break
@@ -1538,10 +1582,13 @@ final class LibraryPlayback: NSObject, ObservableObject {
                 info[MPNowPlayingInfoPropertyChapterCount] = c.count
             }
         }
-        // Live: Sperrbildschirm zeigt den übersetzten Satz und die Kennzeichnung (Spez §6).
+        // Live (Spez §6): Sperrbildschirm zeigt den übersetzten Satz und die Kennzeichnung als maschinell übersetzt.
         if mode == .readAloud, let target = liveTarget {
-            if let sentence = currentSentence { info[MPMediaItemPropertyTitle] = sentence }
-            info[MPMediaItemPropertyArtist] = "\(book.title) · Live übersetzt in \(LiveLanguages.name(target))"
+            if let sentence = liveNowPlayingSentence {
+                info[MPMediaItemPropertyTitle] = sentence
+                info[MPMediaItemPropertyAlbumTitle] = book.title
+            }
+            info[MPMediaItemPropertyArtist] = "Live übersetzt in \(LiveLanguages.name(target)) · auf dem iPhone"
         }
         if let art = nowPlayingArtwork(book) { info[MPMediaItemPropertyArtwork] = art }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info

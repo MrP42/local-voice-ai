@@ -712,3 +712,80 @@ final class LiveSourceNormalizationTests: XCTestCase {
         XCTAssertNil(old.sourceHash)
     }
 }
+
+/// Codex R6: Offsets und Hash beruhen auf demselben normalisierten Text, Pause live wiederholt den Satz,
+/// Unterlauf-Hinweis verschwindet, wenn die Übersetzung nachkommt, Ladefehler sind unterscheidbar.
+final class LiveRoundSixTests: XCTestCase {
+    func testHashInputFollowsHashContractEdgeCases() {
+        // CRLF, einzelnes CR, BOM, NFD-Umlaut, fehlender bzw. mehrfacher Schluss-Zeilenumbruch.
+        XCTAssertEqual(LiveTranslation.hashInput("\u{FEFF}Hallo\r\nWelt\rEnde"), "Hallo\nWelt\nEnde\n")
+        XCTAssertEqual(LiveTranslation.hashInput("a\n\n\n"), "a\n")
+        XCTAssertEqual(LiveTranslation.hashInput("a"), "a\n")
+        XCTAssertEqual(LiveTranslation.hashInput(""), "\n")
+        // Swift vergleicht Strings kanonisch äquivalent; deshalb die Bytes prüfen.
+        XCTAssertEqual(Array(LiveTranslation.hashInput("U\u{0308}ber").utf8), Array("\u{00DC}ber\n".utf8))
+        // Leerzeichen im Zeileninneren bleiben, idempotent.
+        let once = LiveTranslation.hashInput("x  y \r\nz")
+        XCTAssertEqual(once, "x  y \nz\n")
+        XCTAssertEqual(LiveTranslation.hashInput(once), once)
+    }
+
+    /// Absatzgrenzen und UTF-16-Offsets entstehen am normalisierten Text: mit CRLF fände `LibraryText.paragraphs`
+    /// am Rohtext keinen Absatz, und die Offsets passten nicht zum Hash.
+    func testOffsetsComeFromNormalizedText() {
+        let raw = "Eins.\r\n\r\nZwei."
+        XCTAssertEqual(LibraryText.paragraphs(raw).count, 1)
+        let text = LiveTranslation.hashInput(raw)
+        let paragraphs = LibraryText.paragraphs(text)
+        XCTAssertEqual(paragraphs.count, 2)
+        XCTAssertEqual(paragraphs[1].start, 7)
+        XCTAssertEqual((text as NSString).substring(with: NSRange(location: paragraphs[1].start, length: 5)), "Zwei.")
+    }
+
+    func testProgressCarriesSourceStamp() throws {
+        var rec = ProgressRecord(offset: 130, length: 500, updated: 5, unit: .chars, sourceEdition: "ed-en", sourceHash: "ab12")
+        let data = try JSONEncoder().encode(rec)
+        let json = try XCTUnwrap(String(data: data, encoding: .utf8))
+        XCTAssertTrue(json.contains("\"source_hash\":\"ab12\""))
+        XCTAssertTrue(json.contains("\"source_edition\":\"ed-en\""))
+        XCTAssertEqual(try JSONDecoder().decode(ProgressRecord.self, from: data), rec)
+        // Altbestand ohne Felder bleibt lesbar; Fehlformen fallen auf nil.
+        let old = try JSONDecoder().decode(ProgressRecord.self, from: Data(#"{"offset":1,"source_hash":7}"#.utf8))
+        XCTAssertNil(old.sourceHash)
+        XCTAssertNil(old.sourceEdition)
+        // Zusammenführen: Hash gehört zur Stelle des neueren Datensatzes.
+        let newer = ProgressRecord(offset: 200, length: 500, updated: 9, sourceHash: "cd34")
+        rec.updated = 1
+        XCTAssertEqual(LibraryProgress.merge(rec, newer).sourceHash, "cd34")
+    }
+
+    func testPauseLiveRestartsSentenceOriginalKeepsAudio() {
+        XCTAssertEqual(LivePausePlan.decide(live: true), .restartSentence)
+        XCTAssertEqual(LivePausePlan.decide(live: false), .holdAudio)
+        // Stand bleibt am Satzbeginn, Weiter beginnt dort.
+        let p = LiveProgress(at: 100)
+        XCTAssertEqual(p.resumeOffset(), 100)
+    }
+
+    func testStallClearsOnlyWhenCurrentSentenceArrives() {
+        let stuck = LiveMirror.Slot(paragraph: 2, sentence: 1)
+        XCTAssertTrue(LiveStall.clears(stalled: stuck, arrived: stuck, mirrorHasText: true))
+        XCTAssertFalse(LiveStall.clears(stalled: stuck, arrived: stuck, mirrorHasText: false))
+        XCTAssertFalse(LiveStall.clears(stalled: stuck, arrived: LiveMirror.Slot(paragraph: 2, sentence: 2), mirrorHasText: true))
+        XCTAssertFalse(LiveStall.clears(stalled: nil, arrived: stuck, mirrorHasText: true))
+        // Mit dem Spiegel: nach store() liegt der Text vor.
+        var mirror = LiveMirror()
+        XCTAssertNil(mirror.peek(paragraph: 2, sentence: 1))
+        mirror.store("DE:x", paragraph: 2, sentence: 1, epoch: mirror.epoch)
+        XCTAssertTrue(LiveStall.clears(stalled: stuck, arrived: stuck, mirrorHasText: mirror.peek(paragraph: 2, sentence: 1) != nil))
+    }
+
+    func testLoadFailuresAreTold() {
+        XCTAssertEqual(LiveLoadFailure.classify(CancellationError()), .declined)
+        XCTAssertEqual(LiveLoadFailure.classify(CocoaError(.userCancelled)), .declined)
+        XCTAssertEqual(LiveLoadFailure.classify(URLError(.notConnectedToInternet)), .offline)
+        XCTAssertEqual(LiveLoadFailure.classify(URLError(.timedOut)), .offline)
+        XCTAssertEqual(LiveLoadFailure.classify(URLError(.badServerResponse)), .other)
+        XCTAssertEqual(LiveLoadFailure.classify(Boom()), .other)
+    }
+}
