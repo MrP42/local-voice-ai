@@ -1,7 +1,8 @@
-# Inventar der Modellaufrufe (lva#604, Teilpaket 1)
+# Inventar der Modellaufrufe (lva#604, Teilpaket 1; Stand nach Teilpaket 3 in Abschnitt I)
 
 Stand: Basis `4ba8f873` (main), Zweig `feat/601-cloud-sperre`. Alle Pfade relativ zu
-`apps/local-voice/src-tauri/`. Zeilennummern gelten für diese Basis und wandern mit Teilpaket 3.
+`apps/local-voice/src-tauri/`. Zeilennummern gelten für diese Basis; wohin die Wege in Teilpaket 3
+gewandert sind und was bewusst draußen blieb, steht in Abschnitt I.
 Erhoben per `grep` über `src/` und `vendor/` (Suchbegriffe: `reqwest::Client`, `.post(`, `.send()`,
 `chat/completions`, `/api/chat`, `/api/generate`, `/embeddings`, `audio/speech`, `Command::new`,
 `llm_client::`, `cli::call*`) und durch Lesen jeder Treffer.
@@ -124,11 +125,20 @@ Diese Stellen laufen ebenfalls über die Fassade, brauchen aber kein `Gesperrt`.
 6. **`Url`-Fallen**: `cli://localhost` wird von der `url`-Kiste als Hostname `localhost` gelesen;
    das `Ziel` erlaubt `Lokal` darum nur für `http`/`https`.
 
-## G. Aufruferliste der Übergangsfassade (Vorentwurf für TP3)
+## G. Aufruferliste der Übergangsfassade (Stand Teilpaket 3)
 
-**Mit Besprechungsinhalt (ja)**: B1 (`llm_call.rs:397`, damit B2–B7), B8, B9, B10, B11, B12, B13, E1.
-**Möglich**: C1–C4, E7 (Entscheidung offen).
-**Ohne Besprechungsinhalt**: D1–D12, E2–E6, E8.
+Maßgeblich ist die Konstante `llm_versand::uebergang::AUFRUFER` (Datei, Inventarnummer,
+Einstufung); der Test `aufruferliste_ist_vollstaendig` hält sie mit dem Quelltext zusammen (jede
+Datei außerhalb von `llm_versand`, die `llm_versand::uebergang` benutzt, steht dort, und jede
+Zeile dort benutzt sie).
+
+**Mit Besprechungsinhalt (ja)**: B1 (`managers/meetings/llm_call.rs`, damit B2–B7), B8
+(`followup.rs`), B9 (`chat/controller.rs`), B10 (`summarizer.rs`), B11 (`agent/runtime.rs`), B12
+(`managers/meetings/search/embed.rs`), B13 (`managers/llm/mod.rs`, `tokenize_count`), E1
+(`slides/vision.rs`).
+**Möglich**: C1–C4 (`projekte/zustand.rs`, `voice_call/{turn,mod,projekt}.rs`), E7 (Entscheidung offen).
+**Ohne Besprechungsinhalt**: D1–D4, D6, D8, D9, D11, E2, E4 über die Fassade; D5, D7, D10, D12,
+E3, E5, E6, E8 bleiben außerhalb (siehe I.2).
 Die Fassade deckt B, C und D; A8/A9/E4 laufen über `transport`.
 
 ## H. Überschneidungen mit offenen PRs (geprüft am 14.11.2026)
@@ -156,3 +166,75 @@ und in `mcp/mod.rs` nur `read_ki_sperre`: Die Funktion ist in `read_ki_sperre_le
 Folgerung: **Teilpaket 1 ist mit allen vier PRs konfliktfrei.** Für TP3 vorher erneut prüfen
 (`chat/controller.rs`, `followup.rs`, `notes/enhance.rs` mit #430; `voice_call/mod.rs` mit #600) und
 die Merge-Reihenfolge mit dem Planer klären. #505 muss nach seinem Merge in dieses Inventar.
+
+## I. Stand nach Teilpaket 3
+
+### I.1 Wohin die Wege gewandert sind
+
+Alles unter `src/llm_versand/`; `transport/` ist privat (`pub(super)`, keine Reexporte).
+
+| # | Neuer Ort | Anmerkung |
+|---|---|---|
+| A1 | `transport/http.rs` `chat_einmal`; Ablauf in `versand.rs` `chat` | ein Versuch an das gebundene `Ziel`, Route wird nicht neu aufgelöst |
+| A2 | `transport/http.rs` `strom`; Puffer in `versand.rs` (`Versuchsausgabe`) | bei Cloud mit Quellen ungleich `keine()` alle Deltas und Denktexte erst nach R3 |
+| A3 | `transport/http.rs` `ohne_strom`; neuer Versuch in `versand.rs` `strom` | eigene Prüfung, eigene Compliance/Budget, nach `Gesperrt` kein Rückfall |
+| A4 | `transport/cli_chat.rs` `einmal`; Neuversuch und Update in `versand.rs` `cli_lauf` | höchstens ein Update je Aufruf, jeder Neuversuch neu geprüft |
+| A5 | `transport/cli.rs` (samt Vorschauprüfung und Tests) | aus `managers/llm/cli.rs` verschoben; dort bleiben Argumentaufbau, Parser, Klassifikation |
+| A6 | `transport/ollama.rs` `nativ` | Zielart aus dem Host, kein `contains("localhost")` mehr; kein Redirect; lokal ohne Proxy |
+| A7 | `transport/bild.rs` `senden` | weiterhin ohne Compliance/Budget (nur eingebauter Bildserver, kein Verbrauch) |
+| A8 | `transport/modelle.rs` `liste` | |
+| A9 | `transport/ollama.rs` `entladen` | |
+| B11 | `transport/json.rs` `post` über `uebergang::json_post` | Compliance prüft der Aufrufer wie bisher; Überlauf als Marke statt Fehlertext |
+| B12 | `transport/json.rs` `post` | Loopback; weiterhin weder Compliance noch Budget (kein Modellaufruf) |
+| B13 | `transport/json.rs` `post` | Loopback |
+
+`llm_client.rs` enthält nur noch Typen, SSE-Dekoder, Aufruf-Kontexte der CLI (`CLI_*`,
+`DENK_SENKE`) und reine Helfer, **keinen** Netzzugriff. `versenden` ist der einzige Einstieg mit
+Vertrag; die Übergangsfassade (`uebergang`, G) gibt den Aufrufern bis #601 ihre alten
+Signaturen und ist **kein** Schutz.
+
+### I.2 Wege mit eigenem Transport, die nicht umgezogen sind
+
+Alle ohne Besprechungsinhalt; #601 sichert sie per Architekturtest.
+
+| # | Stelle | Grund, warum sie bleibt |
+|---|---|---|
+| D5 | `book_ai/talk/adapter.rs` (`HttpModel`) | Buchtext, kein Besprechungsinhalt. Der Weg folgt weiterhin Redirects und dem Umgebungsproxy. **Offen**: in #601 entscheiden, ob er für einen vollständigen Zaun umzieht |
+| D7 | `book_ai/talk/count.rs` | Buchtext; nur eingebauter Server (`/props`, `/apply-template`, `/tokenize`) |
+| D10 | `refinement/ollama.rs` | Diktattext; eigener Client mit `no_proxy`; kein Besprechungsbezug. **Offen**: kein Redirect-Verbot dort |
+| D12 | `agent/eval.rs` | Auswertungswerkzeug mit synthetischen Daten, nur gegen einen lokalen Server; in der App nicht erreichbar |
+| E2 | `commands/tts.rs` (`llm_ps`, Aufwärmen) | Verwaltung von Ollama, leere Anfragen; dieselbe schwache Adressprüfung wie früher A6 (`contains`) |
+| E3 | `voice_call/mod.rs` (`warm_speaker`) | Anfrage ohne Text |
+| E5 | `managers/llm/server.rs`, `mod.rs` (`/slots`), `estimate.rs` | Zustand des lokalen Servers, Größenabfrage am Modell-Hub; kein Inhalt |
+| E6 | `managers/llm/cli.rs` (Statusabfrage, `--help`) | kein Modellaufruf |
+| E7 | `managers/tts/**` | Sprachausgabe; Entscheidung für #601 (gleichwertig einbeziehen oder ausklammern) |
+| E8 | `vendor/wai-providers/src/openai.rs` | wird vom App-Code nicht benutzt |
+
+### I.3 Erlaubte Verhaltensänderungen (konkret)
+
+1. **Kein Redirect** für jedes Ziel im Rohtransport (früher folgten Cloud-Wege und natives Ollama,
+   Bild, `ollama_unload`, Agent, Einbettungen und Tokenzählung Weiterleitungen).
+2. **Lokale Route ohne Proxy**, auch ohne den aus der Umgebung (Loopback-Ziele, auch im Agenten, bei
+   Einbettungen und Tokenzählung); Cloud-Ziele wie bisher mit dem Umgebungsproxy.
+3. **Compliance und Budget bei jedem Versuch**, auch bei lokalen Zielen, den Rückfällen (Strom ohne
+   Strom, CLI nach dem Update) und beim nativen Ollama.
+4. **Kein Anbieter- und kein CLI-Text** in Fehlern und im Log. Die Aufrufer bekommen weiter ihre
+   Textform (`VersandFehler::alte_textform`: `API request failed with status N`, `HTTP request
+   failed`, `cli_*:`-Präfixe, Kontextüberlauf-Marken, `Zeitlimit`, `server_crashed:`), aber ohne
+   den Text des Anbieters. Bild-Fehler tragen keinen Antworttext mehr; Verbindungsfehler des
+   Agenten und der Einbettungen tragen nur noch eine feste Meldung bzw. `embedding_http: <Code>`.
+5. **Agent**: ein Kontextüberlauf wird an denselben Marken erkannt wie im Chat (etwas mehr als die
+   zwei früheren: etwa `context length`, `too many tokens`).
+6. **Natives Ollama und `ollama_unload`**: Zielart aus dem geparsten Host statt
+   `contains("localhost")`.
+7. **`Ziel`-Wächter**: eine Anfrage, deren Anbieter-ID nicht die des Ziels ist, ist `Gesperrt`
+   (`ziel_gewechselt`).
+
+### I.4 Bewusst unverändert
+
+- `call_cli` fällt wie bisher durch, wenn ein CLI-Anbieter ohne bekannte CLI konfiguriert ist
+  (latente Eigenheit, nicht Teil dieses Pakets).
+- Der Bildweg bleibt ohne Compliance und Budget (Befund F.3): er geht nur an den eingebauten
+  Bildserver auf Loopback und verbraucht nichts.
+- Roh-Fehlertexte der CLI in `cli_roh` (Buch-Gespräch, Probelauf) bleiben, wie sie waren; dort geht
+  kein Besprechungsinhalt hinein.

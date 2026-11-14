@@ -50,6 +50,44 @@ pub mod grund {
     pub const QUELLEN_GEWECHSELT: &str = "quellen_gewechselt";
 }
 
+/// Feste Codes der CLI-Fehler ([`VersandFehler::Cli`]). Das sind die Präfixe, an denen
+/// Aufrufer die Fehlerart heute erkennen (`managers::llm::cli::classify_error`).
+pub mod cli_code {
+    /// Nicht angemeldet.
+    pub const NICHT_ANGEMELDET: &str = "cli_not_logged_in";
+    /// Nutzungsgrenze erreicht.
+    pub const LIMIT: &str = "cli_limit_reached";
+    /// Sonstiger Fehler der CLI.
+    pub const FEHLGESCHLAGEN: &str = "cli_failed";
+    /// CLI nicht installiert oder nicht startbar.
+    pub const FEHLT: &str = "cli_missing";
+    /// Antwort ohne gültige Nutzungsangabe oder nicht lesbar.
+    pub const AUSGABE: &str = "cli_bad_output";
+    /// Modell nicht angenommen (bei Codex als [`super::VersandFehler::CliUpdate`]).
+    pub const MODELL: &str = "cli_model_not_in_plan";
+    /// Zeitgrenze der CLI.
+    pub const ZEIT: &str = "cli_timeout";
+    /// Vorschau abgelehnt: Budget.
+    pub const VORSCHAU_BUDGET: &str = "cli_preview_rejected:budget";
+    /// Vorschau abgelehnt: Schalter aus oder abgebrochen.
+    pub const VORSCHAU_ABGEBROCHEN: &str = "cli_preview_rejected:cancelled";
+    /// Vorschau abgelehnt: sonst.
+    pub const VORSCHAU_ABGELEHNT: &str = "cli_preview_rejected:llm_failed";
+
+    /// Feste Hinweise für vorübergehende Fehler. Aufrufer wiederholen bei diesen Wörtern
+    /// (`translator::is_transient_error`); die Liste ist geschlossen und app-eigen.
+    pub const HINWEISE: [&str; 8] = [
+        "at capacity",
+        "overloaded",
+        "rate limit",
+        "rate_limit",
+        "429",
+        "503",
+        "try again",
+        "temporarily",
+    ];
+}
+
 /// Alle Fehler, die ein Versand liefern kann.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VersandFehler {
@@ -68,10 +106,25 @@ pub enum VersandFehler {
     Abgebrochen,
     /// Die CLI ist zu alt und muss aktualisiert werden.
     CliUpdate,
+    /// Die CLI meldete einen Fehler. Nur ihr app-eigener Code (und höchstens ein fester
+    /// Hinweis aus einer geschlossenen Liste), **nie ihr Text**: der Text der CLI ist Fremdtext
+    /// und wird im Transport klassifiziert und dann verworfen.
+    Cli {
+        /// Feste Kennung aus [`cli_code`].
+        code: &'static str,
+        /// Fester app-eigener Hinweis aus [`cli_code::HINWEISE`] (etwa „at capacity“), den
+        /// Aufrufer für „vorübergehend, später erneut“ brauchen; sonst `None`.
+        hinweis: Option<&'static str>,
+    },
     /// Der Anbieter antwortete mit diesem HTTP-Status. Nie mit seinem Antworttext.
     Http { status: u16 },
-    /// Verbindungsfehler, Protokollfehler, nicht lesbare Antwort. Ohne Anbietertext.
+    /// Die Verbindung kam nicht zustande oder riss beim Senden ab. Ohne Anbietertext.
     Transport,
+    /// Die Verbindung stand, die Antwort war aber nicht verwertbar: nicht lesbar, Strom
+    /// abgebrochen oder ohne Abschluss, Zeile oder Antwort zu lang, Fehlerereignis im Strom.
+    /// Ohne Anbietertext. (Getrennt von `Transport`, weil Aufrufer „kein Netz“ von „Modell
+    /// lieferte Unbrauchbares“ unterscheiden: `managers::meetings::chat::controller`.)
+    Protokoll,
     /// Die Zeit für den Aufruf ist abgelaufen.
     Zeitueberschreitung,
     /// Das harte Monatsbudget ist erreicht (app-eigene Meldung, kein Anbietertext).
@@ -104,6 +157,36 @@ impl VersandFehler {
         matches!(self, Self::Gesperrt { .. })
     }
 
+    /// Lohnt ein erneuter Aufruf mit derselben Anfrage (neuer Versuch mit eigener Prüfung)?
+    ///
+    /// Ja bei Fehlern, die der Anbieter beim nächsten Mal nicht mehr haben muss: unbrauchbare
+    /// Antwort oder ungültiges JSON, Verbindung, Zeit, `408`/`429`/`5xx` und ein vorübergehender
+    /// CLI-Fehler (fester Hinweis). **Nie** bei [`Gesperrt`](Self::Gesperrt) (terminal), Abbruch,
+    /// Budget, Compliance, Kontextüberlauf (kleinerer Prompt statt derselbe), Speichermangel,
+    /// Absturz und CLI-Update (das erledigt `versenden` selbst als eigenen Versuch). Der `match`
+    /// ist erschöpfend: eine neue Variante verlangt eine Entscheidung.
+    pub fn ist_wiederholbar(&self) -> bool {
+        match self {
+            Self::UngueltigesJson
+            | Self::Protokoll
+            | Self::Transport
+            | Self::Zeitueberschreitung => true,
+            Self::Http { status } => matches!(*status, 408 | 429) || *status >= 500,
+            Self::Cli {
+                hinweis: Some(_), ..
+            } => true,
+            Self::Cli { hinweis: None, .. }
+            | Self::Kontextueberlauf
+            | Self::ZuWenigRam
+            | Self::Absturz
+            | Self::Abgebrochen
+            | Self::CliUpdate
+            | Self::Budget { .. }
+            | Self::Compliance { .. }
+            | Self::Gesperrt { .. } => false,
+        }
+    }
+
     /// Stabile Kennung der Fehlerart ohne Zahlen und Meldungen; für Zähler und Logzeilen.
     pub fn code(&self) -> &'static str {
         match self {
@@ -113,12 +196,64 @@ impl VersandFehler {
             Self::Absturz => "absturz",
             Self::Abgebrochen => "abgebrochen",
             Self::CliUpdate => "cli_update",
+            Self::Cli { .. } => "cli",
             Self::Http { .. } => "http",
             Self::Transport => "transport",
+            Self::Protokoll => "protokoll",
             Self::Zeitueberschreitung => "zeitueberschreitung",
             Self::Budget { .. } => "budget",
             Self::Compliance { .. } => "compliance",
             Self::Gesperrt { code, .. } => code,
+        }
+    }
+}
+
+impl VersandFehler {
+    /// **Übergang bis lva#601:** die Textform, an der die bestehenden Aufrufer Fehlerarten
+    /// erkennen (Präfixe und Marken wie `HTTP request failed`, `API request failed with status`,
+    /// `exceed_context_size`, `cli_not_logged_in:`, `Zeitlimit`). Sie ist **app-eigen**: nie
+    /// Text eines Anbieters oder einer CLI, nur feste Wörter und Zahlen. Die Übergangsfassade
+    /// und das Verbrauchs-Ledger benutzen sie; mit #601 lesen die Aufrufer den Typ.
+    pub(in crate::llm_versand) fn alte_textform(&self) -> String {
+        match self {
+            Self::Kontextueberlauf => "API request failed with status 400 Bad Request \
+                (exceed_context_size_error: context length exceeded)"
+                .to_string(),
+            Self::UngueltigesJson => "Antwort kein gültiges JSON".to_string(),
+            Self::ZuWenigRam => "Zu wenig freier Arbeitsspeicher für das lokale Modell".to_string(),
+            Self::Absturz => "server_crashed: Das lokale Sprachmodell ist abgestürzt.".to_string(),
+            Self::Abgebrochen => "cli_cancelled: Der Aufruf wurde abgebrochen".to_string(),
+            Self::CliUpdate => "cli_model_not_in_plan: Dieses Modell nimmt der Server von der \
+                installierten Codex-CLI nicht an. Meist hilft ein Update: npm i -g \
+                @openai/codex@latest, oder den offiziellen Installer erneut ausfuehren"
+                .to_string(),
+            Self::Cli { code, hinweis } => {
+                let text = match *code {
+                    cli_code::NICHT_ANGEMELDET => "Bei der CLI ist keine Anmeldung vorhanden",
+                    cli_code::LIMIT => "Die Nutzungsgrenze der CLI ist erreicht",
+                    cli_code::FEHLT => "Die CLI des Anbieters ist nicht installiert",
+                    cli_code::AUSGABE => "Die Antwort der CLI war nicht verwertbar",
+                    cli_code::MODELL => "Dieses Modell nimmt die CLI nicht an",
+                    cli_code::ZEIT => "Zeitlimit der CLI überschritten",
+                    c if c.starts_with("cli_preview_rejected:") => "siehe_audit",
+                    _ => "Die CLI meldete einen Fehler",
+                };
+                match hinweis {
+                    Some(hinweis) => format!("{code}: {text} ({hinweis})"),
+                    None => format!("{code}: {text}"),
+                }
+            }
+            Self::Http { status } => {
+                let status = reqwest::StatusCode::from_u16(*status)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|_| status.to_string());
+                format!("API request failed with status {status}")
+            }
+            Self::Transport => "HTTP request failed: keine Verbindung".to_string(),
+            Self::Protokoll => "Antwort des Anbieters nicht verwertbar".to_string(),
+            Self::Zeitueberschreitung => "Zeitlimit überschritten".to_string(),
+            Self::Budget { meldung } | Self::Compliance { meldung } => meldung.clone(),
+            Self::Gesperrt { code, grund } => format!("{code}:{grund}"),
         }
     }
 }
@@ -131,6 +266,14 @@ impl fmt::Display for VersandFehler {
             Self::Http { status } => write!(f, "http:{status}"),
             Self::Budget { meldung } | Self::Compliance { meldung } => f.write_str(meldung),
             Self::Gesperrt { code, grund } => write!(f, "{code}:{grund}"),
+            Self::Cli {
+                code,
+                hinweis: Some(hinweis),
+            } => write!(f, "{code}:{hinweis}"),
+            Self::Cli {
+                code,
+                hinweis: None,
+            } => f.write_str(code),
             sonst => f.write_str(sonst.code()),
         }
     }
@@ -152,8 +295,13 @@ mod tests {
             VersandFehler::Absturz,
             VersandFehler::Abgebrochen,
             VersandFehler::CliUpdate,
+            VersandFehler::Cli {
+                code: cli_code::FEHLGESCHLAGEN,
+                hinweis: None,
+            },
             VersandFehler::Http { status: 400 },
             VersandFehler::Transport,
+            VersandFehler::Protokoll,
             VersandFehler::Zeitueberschreitung,
             VersandFehler::Budget {
                 meldung: "Budget erreicht".into(),
@@ -171,8 +319,10 @@ mod tests {
                 | VersandFehler::Absturz
                 | VersandFehler::Abgebrochen
                 | VersandFehler::CliUpdate
+                | VersandFehler::Cli { .. }
                 | VersandFehler::Http { .. }
                 | VersandFehler::Transport
+                | VersandFehler::Protokoll
                 | VersandFehler::Zeitueberschreitung
                 | VersandFehler::Budget { .. }
                 | VersandFehler::Compliance { .. }
@@ -243,6 +393,73 @@ mod tests {
             .to_string(),
             "Budget erreicht"
         );
+    }
+
+    #[test]
+    fn wiederholbar_ist_nie_terminal_und_nie_budget_oder_compliance() {
+        for fehler in alle() {
+            if fehler.is_terminal() {
+                assert!(!fehler.ist_wiederholbar(), "{fehler}");
+            }
+            if matches!(
+                fehler,
+                VersandFehler::Budget { .. }
+                    | VersandFehler::Compliance { .. }
+                    | VersandFehler::Abgebrochen
+                    | VersandFehler::Kontextueberlauf
+            ) {
+                assert!(!fehler.ist_wiederholbar(), "{fehler}");
+            }
+        }
+        for status in [408, 429, 500, 503] {
+            assert!(
+                VersandFehler::Http { status }.ist_wiederholbar(),
+                "{status}"
+            );
+        }
+        for status in [400, 401, 404] {
+            assert!(
+                !VersandFehler::Http { status }.ist_wiederholbar(),
+                "{status}"
+            );
+        }
+        assert!(VersandFehler::UngueltigesJson.ist_wiederholbar());
+        assert!(VersandFehler::Cli {
+            code: cli_code::FEHLGESCHLAGEN,
+            hinweis: Some("at capacity")
+        }
+        .ist_wiederholbar());
+        assert!(!VersandFehler::Cli {
+            code: cli_code::NICHT_ANGEMELDET,
+            hinweis: None
+        }
+        .ist_wiederholbar());
+    }
+
+    #[test]
+    fn cli_fehler_tragen_code_und_hoechstens_einen_festen_hinweis() {
+        assert_eq!(
+            VersandFehler::Cli {
+                code: cli_code::NICHT_ANGEMELDET,
+                hinweis: None
+            }
+            .to_string(),
+            "cli_not_logged_in"
+        );
+        assert_eq!(
+            VersandFehler::Cli {
+                code: cli_code::FEHLGESCHLAGEN,
+                hinweis: Some("at capacity")
+            }
+            .to_string(),
+            "cli_failed:at capacity"
+        );
+        assert!(!VersandFehler::Cli {
+            code: cli_code::LIMIT,
+            hinweis: None
+        }
+        .is_terminal());
+        assert!(cli_code::HINWEISE.iter().all(|h| !h.is_empty()));
     }
 
     #[test]

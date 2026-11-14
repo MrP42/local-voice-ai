@@ -458,8 +458,9 @@ pub fn run_probes(
 
 /// Der echte Probeaufruf: ein winziger Auftrag an die CLI, isoliert wie jeder
 /// andere Aufruf der App (kein Nutzerkontext, keine Werkzeuge, kein MCP).
+#[allow(deprecated)]
 pub fn probe_claude(binary: &Path, model: &str) -> Result<(), String> {
-    cli::call_with_timeout(
+    crate::llm_versand::uebergang::cli_mit_zeitgrenze(
         Cli::Claude,
         binary,
         &format!("{model}@low"),

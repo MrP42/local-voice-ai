@@ -526,6 +526,7 @@ fn strip_code_fence(raw: &str) -> &str {
     body.trim_end().trim_end_matches("```").trim()
 }
 
+#[allow(deprecated)]
 pub async fn generate(
     settings: &AppSettings,
     template_body: &str,
@@ -561,7 +562,7 @@ pub async fn generate(
     } else {
         options.language.trim()
     };
-    let response = crate::llm_client::send_chat_completion_with_schema(
+    let response = crate::llm_versand::uebergang::send_chat_completion_with_schema(
         crate::managers::usage::Purpose::Summary,
         &provider,
         api_key,

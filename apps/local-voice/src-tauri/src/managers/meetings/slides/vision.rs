@@ -168,12 +168,13 @@ impl Default for LocalVision {
     }
 }
 
-/// Fehlertext von `llm_client::post_image_prompt` -> Fehlerart.
+/// Fehlertext von `crate::llm_versand::uebergang::post_image_prompt` -> Fehlerart.
 fn map_request_error(text: String) -> VisionError {
     VisionError::Request(text)
 }
 
 impl VisionBackend for LocalVision {
+    #[allow(deprecated)]
     fn ask(&self, image: &Path, prompt: &str, max_tokens: u32) -> Result<VisionReply, VisionError> {
         // Der Folienauftrag laeuft auf einem Blocking-Thread (`spawn_blocking`): dort ist
         // `block_on` erlaubt.
@@ -181,10 +182,15 @@ impl VisionBackend for LocalVision {
             let base = crate::managers::llm::ensure_local_vision(&self.model)
                 .await
                 .map_err(VisionError::Unavailable)?;
-            let reply =
-                crate::llm_client::post_image_prompt(&base, &self.model, image, prompt, max_tokens)
-                    .await
-                    .map_err(map_request_error)?;
+            let reply = crate::llm_versand::uebergang::post_image_prompt(
+                &base,
+                &self.model,
+                image,
+                prompt,
+                max_tokens,
+            )
+            .await
+            .map_err(map_request_error)?;
             Ok(VisionReply {
                 text: reply.content,
                 truncated: reply.truncated,
@@ -981,6 +987,7 @@ mod tests {
     }
 
     impl VisionBackend for DirectVision {
+        #[allow(deprecated)]
         fn ask(
             &self,
             image: &Path,
@@ -994,7 +1001,7 @@ mod tests {
                     .enable_all()
                     .build()
                     .unwrap()
-                    .block_on(crate::llm_client::post_image_prompt(
+                    .block_on(crate::llm_versand::uebergang::post_image_prompt(
                         &base, "gemma", &image, &prompt, max_tokens,
                     ))
             })

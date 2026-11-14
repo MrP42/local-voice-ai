@@ -523,6 +523,7 @@ pub async fn voice_call_transcribe(app: AppHandle, pcm16_b64: String) -> Result<
 /// der Aufruf mit `Ok` und leerem Text.
 #[tauri::command]
 #[specta::specta]
+#[allow(deprecated)]
 pub async fn voice_call_chat(
     app: AppHandle,
     request_id: String,
@@ -703,7 +704,7 @@ pub async fn voice_call_chat(
     let (result, captured) = usage::with_capture(async {
         let call = llm_client::mit_denksenke(
             denksenke(&app, &request_id, pruefung.geschuetzt),
-            llm_client::send_chat_completion_stream_routed(
+            crate::llm_versand::uebergang::send_chat_completion_stream_routed(
                 Purpose::Chat,
                 &provider,
                 api_key,

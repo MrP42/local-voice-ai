@@ -224,7 +224,7 @@ impl fmt::Debug for Geprueft {
 
 /// Muss die Besprechungsprüfung laufen? Nur bei einem Cloud-Ziel **und** Quellen ungleich
 /// `keine()`.
-fn besprechung_zu_pruefen(ziel: &Ziel, quellen: &Quellen) -> bool {
+pub(super) fn besprechung_zu_pruefen(ziel: &Ziel, quellen: &Quellen) -> bool {
     !ziel.ist_lokal() && !quellen.ist_keine()
 }
 
@@ -291,6 +291,30 @@ pub(super) fn freigabe_ausstellen(
         }
     }
     Err(VersandFehler::gesperrt(grund::PRUEFVERSUCHE_ERSCHOEPFT))
+}
+
+/// Die Herkunft, an die die Übergangsfassade ihre Freigabe bindet: **unbestimmt**, weil die
+/// Fassade sie nicht kennt (nicht `keine()`: das wäre die Behauptung, es gehe kein
+/// Besprechungsinhalt hinaus). Die Fassade wertet sie nie aus; sie ist nur der Fingerabdruck, den
+/// der Transport beim Einlösen wiederfinden muss.
+pub(super) fn quellen_uebergang() -> Quellen {
+    Quellen::unbestimmt()
+}
+
+/// **Übergang bis lva#601:** stellt die Freigabe für die Übergangsfassade
+/// ([`uebergang`](super::uebergang)) aus, **ohne** Besprechungsprüfung und ohne einen Lesezugriff.
+///
+/// Das ist ausdrücklich kein Urteil „kein Besprechungsinhalt“ und keine Umetikettierung der
+/// Aufrufer als `keine()`: die Fassade hat heute keine Herkunftsangabe und verhält sich wie vor
+/// diesem Modul (Compliance und Budget, ein Transport, kein Abschlussvergleich); gebunden wird
+/// an [`quellen_uebergang`] (unbestimmt). Die Freigabe ist an das Ziel gebunden, damit der
+/// Transport einheitlich nur mit einer besitzenden Freigabe erreichbar bleibt. Mit lva#601
+/// entfällt diese Funktion zusammen mit der Fassade; `versenden` ruft sie nie.
+pub(super) fn freigabe_uebergang(ziel: &Ziel) -> Geprueft {
+    Geprueft {
+        freigabe: Versandfreigabe::ausstellen(ziel, &quellen_uebergang()),
+        r2: None,
+    }
 }
 
 /// Schritt 6 des Vertrags: Abschlussvergleich. Liest R3 frisch und vergleicht mit `r2`, dem Stand

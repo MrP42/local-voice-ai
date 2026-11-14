@@ -142,6 +142,7 @@ pub fn llm_set_active_model(app: AppHandle, id: Option<String>) -> Result<(), St
 /// Die Modelle, die ein Anbieter ueber seine Verbindung anbietet -- zum
 /// Freigeben. Spricht die Vorlage der Verbindung an, aber mit deren Adresse
 /// und Schluessel, damit zwei Konten derselben Art getrennt bleiben.
+#[allow(deprecated)]
 pub(crate) async fn offered_models(
     s: &AppSettings,
     connection: &LlmConnection,
@@ -162,7 +163,7 @@ pub(crate) async fn offered_models(
         .get(&connection.id)
         .cloned()
         .unwrap_or_default();
-    crate::llm_client::fetch_models(&provider, api_key).await
+    crate::llm_versand::uebergang::fetch_models(&provider, api_key).await
 }
 
 #[tauri::command]

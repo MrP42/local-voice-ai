@@ -39,7 +39,7 @@ use super::{mark_context, unmark_context, usage_payload, VoiceCallMessage};
 use super::{CANCELLED, CANCELS, EVENT};
 use crate::assistent::tor::{self, Ausgabetor, StromTor};
 use crate::conversations::store::{ConversationStore, ProjectBinding};
-use crate::llm_client::{self, StreamMessage};
+use crate::llm_client::StreamMessage;
 use crate::managers::usage::{self, Purpose};
 use crate::projekte::tor::{
     Abbruch, Bindung, Nachricht, ProjektTor, PromptTeile, Rolle, Versandauftrag, Weg, Ziel,
@@ -200,6 +200,7 @@ pub struct LlmWeg;
 
 #[async_trait]
 impl Modellweg for LlmWeg {
+    #[allow(deprecated)]
     async fn senden(
         &self,
         ziel: &Ziel,
@@ -207,7 +208,7 @@ impl Modellweg for LlmWeg {
         on_delta: &(dyn for<'a> Fn(&'a str) + Send + Sync),
     ) -> Result<String, String> {
         let adresse = sendeadresse(ziel)?;
-        llm_client::send_chat_completion_stream_routed(
+        crate::llm_versand::uebergang::send_chat_completion_stream_routed(
             Purpose::Chat,
             &ziel.provider,
             ziel.schluessel.clone().unwrap_or_default(),

@@ -22,7 +22,7 @@
 //!   gemeldetes Modell EXAKT das gemessene, Kompaktierung und Abschneiden
 //!   je Tri-State ([`Tri`]) „nein“ (und der Ereignisvertrag der Version
 //!   belegt), Eingabe + Ausgabe <= Kontext. Sonst wird der Text nie an
-//!   Oberflaeche oder Sprache gegeben (Aufrufer: `cli::call_with_options`).
+//!   Oberflaeche oder Sprache gegeben (Aufrufer: `llm_versand::transport::cli`, früher `cli::call_with_options`).
 //! * Bindung: gebunden wird die installierte ORIGINALDATEI (keine Kopie). Alle
 //!   Starts der Vorschau, auch `--version`, laufen ueber [`Pinned`]: Datei
 //!   offen halten, Hash aus dem Handle, Start ueber das Handle. Windows:

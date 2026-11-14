@@ -380,6 +380,7 @@ pub struct SemanticRetry {
 /// Hinweistext wiederholt. Transportfehler kommen sofort zurueck — dafuer ist
 /// `retry_chunk` zustaendig. Die Closures sind `Sync`, damit das Future
 /// `Send` bleibt (Tauri-Commands verlangen es).
+#[allow(deprecated)]
 pub async fn ask_json<T: DeserializeOwned>(
     settings: &AppSettings,
     opts: &AskOptions<'_>,
@@ -394,7 +395,7 @@ pub async fn ask_json<T: DeserializeOwned>(
     let mut prompt = user_prompt.to_string();
     let mut last_error = String::new();
     for attempt in 0..JSON_ATTEMPTS {
-        let reply = crate::llm_client::send_chat_completion_checked(
+        let reply = crate::llm_versand::uebergang::send_chat_completion_checked(
             opts.purpose,
             &provider,
             api_key.clone(),

@@ -4,12 +4,13 @@
 //! unmittelbar an der Versandgrenze, ob Inhalt an das **konkret aufgelöste** Ziel gehen darf.
 //! Jeder Transportversuch braucht eine eigene Prüfung.
 //!
-//! **Stand: Teilpaket 2 (rein additiv, kein Verhalten ändert sich).** Das Modul ist eingebunden
-//! und übersetzt, wird aber noch von keiner Stelle benutzt. Es enthält den Modulbaum, die
-//! Typen ([`Quellen`], [`Ziel`], [`VersandFehler`]), die Bindung der einmaligen Freigabe an
-//! Ziel und Quellen und den Prüfer (R1, Quellenprüfung, R2 und der Abschlussvergleich R3,
-//! samt der App-Lesequelle [`pruefer::AppFreigabeQuelle`]); den Transport gibt es erst mit
-//! Teilpaket 3. Alle Modellpfade stehen in `apps/local-voice/docs/llm-versand-inventar.md`.
+//! **Stand: Teilpaket 3 (Kapselung, Einzeltransport, Übergangsfassade).** Der Rohtransport
+//! (HTTP, CLI, Bild, Ollama, Modellliste) ist aus `llm_client` und `managers::llm::cli` hierher
+//! **verschoben**; `llm_client` hält nur noch Typen und Hilfen ohne Netz. [`versenden`] ist die
+//! einzige Versandoperation mit Prüfung. Die bestehenden Aufrufer gehen bis lva#601 über die
+//! Übergangsfassade [`uebergang`] (heutige Signaturen, `#[deprecated]`), die **keinen** Schutz
+//! des Versandvertrags bietet. Alle Modellpfade stehen in
+//! `apps/local-voice/docs/llm-versand-inventar.md`.
 //!
 //! # Modulbaum und Sichtbarkeit
 //!
@@ -19,7 +20,10 @@
 //! | [`ziel`] | öffentlich | [`Ziel`], [`ZielArt`]: aufgelöstes Ziel, Art abgeleitet |
 //! | [`pruefer`] | öffentlich | Prüfer, versiegelte [`FreigabeQuelle`] (App-Quelle), `Versandfreigabe` (nur intern) |
 //! | [`fehler`] | öffentlich | [`VersandFehler`] mit dem terminalen `Gesperrt` |
-//! | `transport` | **privat** | Rohtransport (HTTP, CLI, Bild), ab Teilpaket 3 |
+//! | [`anfrage`] | öffentlich | [`Anfrage`], [`Inhalt`], [`ChatInhalt`], [`Antwort`] |
+//! | `versand` | privat (Reexport) | [`versenden`], [`mit_wiederholung`], Fallbacks, Streamingpuffer, Buchung |
+//! | [`uebergang`] | öffentlich, `#[deprecated]` | Fassade mit den heutigen Signaturen, bis lva#601 |
+//! | `transport` | **privat** | Rohtransport (HTTP, CLI, Bild, Ollama, Modellliste) |
 //!
 //! Die Sichtbarkeit setzt der Compiler: in `transport` ist höchstens `pub(super)` erlaubt, es
 //! gibt keine Reexporte. `pub(super)` wirkt relativ zum tatsächlichen Modul: in
@@ -29,9 +33,10 @@
 //!
 //! # Vertrag: `versenden`
 //!
-//! Die einzige Versandoperation (ab Teilpaket 2/3) hat die Form
+//! Die einzige Versandoperation hat die Form
 //! `versenden(quelle, ziel, quellen, anfrage) -> Result<Antwort, VersandFehler>`. Prüfung und
-//! Senden sind gekapselt, nach dem Vorbild `mcp/tools.rs:310–319`.
+//! Senden sind gekapselt, nach dem Vorbild `mcp/tools.rs:310–319`. Ablauf, Fallbacks,
+//! Streamingpuffer und Buchung stehen in [`versand`](self::versand).
 //!
 //! Bei einem **Cloud-Ziel** und `Quellen` ungleich `keine()`:
 //!
@@ -72,32 +77,41 @@
 //!
 //! [`VersandFehler`] trägt nie Anbieter- oder Besprechungstext, nur Codes, Zahlen und app-eigene
 //! Meldungen; `Gesperrt` ist terminal (nie wiederholen, nie in Chunks zerlegen, nie reparieren,
-//! kein Fallback). Bei Cloud-Zielen mit `Quellen` ungleich `keine()` werden ab Teilpaket 3 alle
+//! kein Fallback). Bei Cloud-Zielen mit `Quellen` ungleich `keine()` werden alle
 //! Inhaltsausgaben (Deltas, Denktexte, auch CLI-Denktexte) gepuffert und erst nach bestandenem
 //! Abschlussvergleich an den Rückruf gegeben; Statusereignisse ohne Inhalt sind erlaubt. Lokale
 //! Ziele und `keine()` streamen wie bisher.
 //!
 //! # Übergang zu lva#601
 //!
-//! Besprechungspfade werden **nicht** als `keine()` umetikettiert. Ab Teilpaket 3 gibt es eine
-//! Übergangsfassade `uebergang` mit den heutigen Signaturen und dem bisherigen Verhalten
+//! Besprechungspfade werden **nicht** als `keine()` umetikettiert. Die Übergangsfassade
+//! [`uebergang`] hat die heutigen Signaturen und das bisherige Verhalten
 //! (`#[deprecated(note = "entfällt mit #601")]`); ihre vollständige Aufruferliste (mit und ohne
-//! Besprechungsinhalt) steht im Inventar. lva#601 entfernt die Fassade; erst dann ist der
-//! Schutz flächendeckend.
-// Teilpaket 1 bindet das Modul nur ein; benutzt wird es erst ab Teilpaket 2/3 (nichts davon ist
-// bis dahin erreichbar, auch die Reexporte nicht). Mit der Verdrahtung (lva#601) entfällt diese
-// Ausnahme.
+//! Besprechungsinhalt) ist [`uebergang::AUFRUFER`] und steht im Inventar. lva#601 entfernt die
+//! Fassade; erst dann ist der Schutz flächendeckend.
+// `versenden`, `mit_wiederholung` und die Reexporte benutzt erst lva#601 (bis dahin geht alles über
+// die Übergangsfassade). Mit der Verdrahtung entfällt diese Ausnahme.
 #![allow(dead_code, unused_imports)]
 
+pub mod anfrage;
 pub mod fehler;
 pub mod pruefer;
 pub mod quellen;
+pub mod uebergang;
 pub mod ziel;
+
+#[cfg(test)]
+mod testhaken;
+#[cfg(test)]
+mod testhilfe;
 
 // Privat und ohne Reexport: nur `llm_versand` selbst erreicht den Rohtransport.
 mod transport;
+mod versand;
 
+pub use anfrage::{Anfrage, Antwort, ChatInhalt, Inhalt, JsonAntwort};
 pub use fehler::{VersandFehler, CODE_BESPRECHUNG_CLOUD_GESPERRT};
 pub use pruefer::{AppFreigabeQuelle, FreigabeQuelle};
 pub use quellen::Quellen;
+pub use versand::{mit_wiederholung, versenden};
 pub use ziel::{Ziel, ZielArt};
