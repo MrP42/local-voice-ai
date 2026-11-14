@@ -7,6 +7,7 @@ import SwiftUI
 struct BookPlayerScreen: View {
     @ObservedObject var playback = LibraryPlayback.shared
     @ObservedObject var look = ReaderAppearance.shared
+    @Environment(\.scenePhase) private var scenePhase
     @State private var chaptersShown = false
     @State private var infoShown = false
     /// Inhalt und Suche im Textbuch (lva#476); `found` ist die zuletzt aufgeschlagene Fundstelle.
@@ -55,6 +56,21 @@ struct BookPlayerScreen: View {
         }
         .overlay(alignment: .bottom) { LanguageNoticeBar() }
         .animation(.easeInOut(duration: 0.2), value: playback.languageNotice?.id)
+        .onAppear { updateReaderReason() }
+        .onChange(of: playback.presented) { _, _ in updateReaderReason() }
+        .onChange(of: scenePhase) { _, _ in updateReaderReason() }
+        .onChange(of: surface) { _, _ in updateReaderReason() }
+        .onChange(of: playback.playing) { _, _ in updateReaderReason() }
+        .onDisappear { IdleTimerGuard.shared.set(.reader, active: false) }
+    }
+
+    private func updateReaderReason() {
+        IdleTimerGuard.shared.set(.reader, active: readerReasonActive(
+            presented: playback.presented,
+            sceneActive: scenePhase == .active,
+            surface: surface,
+            playing: playback.playing
+        ))
     }
 
     private var subtitle: String {
