@@ -2313,6 +2313,17 @@ async changeMeetingModelSetting(model: string | null) : Promise<Result<null, str
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Genaues Modell fuer schwierige Aufnahmen (`accurate_model`); leer = keines.
+ */
+async changeAccurateModelSetting(model: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_accurate_model_setting", { model }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeMeetingCaptureSystemSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_meeting_capture_system_setting", { enabled }) };
@@ -2765,6 +2776,21 @@ async deleteHistoryEntry(id: number) : Promise<Result<null, string>> {
 async retryHistoryEntryTranscription(id: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("retry_history_entry_transcription", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Wie [`retry_history_entry_transcription`], aber mit dem genauen Modell
+ * (`accurate_model`). Der Lauf rechnet mit einer eigenen Engine; das Diktatmodell
+ * bleibt, wie es ist. Fehlercodes: `accurate_model_unset`, die Codes aus
+ * `managers::accurate_run` (`accurate_model_live`, `_busy`, `_missing`, `_memory`,
+ * `_load_failed`), `accurate_post_process_failed`, `retry_busy`, `entry_changed`.
+ */
+async retryHistoryEntryWithAccurateModel(id: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("retry_history_entry_with_accurate_model", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -9665,6 +9691,12 @@ meeting_language?: string;
  * profitieren von Batch-Modellen (z. B. Parakeet V3).
  */
 meeting_model?: string | null; 
+/**
+ * Genaues Modell fuer schwierige Aufnahmen: damit laesst sich ein einzelner
+ * Verlaufseintrag erneut transkribieren, waehrend das Diktatmodell
+ * (`selected_model`) geladen bleibt. None/leer = nicht eingerichtet.
+ */
+accurate_model?: string | null; 
 /**
  * M1-P1f: Systemton (Loopback) ist beim Start einer Besprechung
  * vorangehakt. Die Oberflaeche merkt sich die letzte Wahl hier; ohne den

@@ -52,6 +52,9 @@ pub enum HistoryUpdatePayload {
     Toggled { id: i64 },
 }
 
+/// Fehlercode: der Eintrag wurde seit dem Lesen geaendert oder geloescht.
+pub const ENTRY_CHANGED: &str = "entry_changed";
+
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub struct HistoryEntry {
     pub id: i64,
@@ -280,42 +283,35 @@ impl HistoryManager {
     }
 
     /// Update an existing history entry with new transcription results (used by retry).
-    pub fn update_transcription(
+    /// Ersetzt Transkript und Nachbearbeitung eines Eintrags, aber nur, wenn er noch
+    /// so dasteht, wie der Aufrufer ihn VOR seinem Lauf gelesen hat (`seen`). Hat
+    /// inzwischen ein anderer Lauf geschrieben oder ist der Eintrag geloescht, bleibt
+    /// alles unveraendert und der Fehler lautet `entry_changed` (lva#579): ein
+    /// verspaetetes Ergebnis ueberschreibt kein neueres und legt nichts wieder an.
+    pub fn update_transcription_if_unchanged(
         &self,
-        id: i64,
+        seen: &HistoryEntry,
         transcription_text: String,
         post_processed_text: Option<String>,
         post_process_prompt: Option<String>,
     ) -> Result<HistoryEntry> {
         let conn = self.get_connection()?;
-        let updated = conn.execute(
-            "UPDATE transcription_history
-             SET transcription_text = ?1,
-                 post_processed_text = ?2,
-                 post_process_prompt = ?3
-             WHERE id = ?4",
-            params![
-                transcription_text,
-                post_processed_text,
-                post_process_prompt,
-                id
-            ],
-        )?;
-
-        if updated == 0 {
-            return Err(anyhow!("History entry {} not found", id));
+        if !Self::replace_transcription_if_unchanged(
+            &conn,
+            seen,
+            &transcription_text,
+            post_processed_text.as_deref(),
+            post_process_prompt.as_deref(),
+        )? {
+            return Err(anyhow!(ENTRY_CHANGED));
         }
-
-        let entry = conn
-            .query_row(
-                "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested
-                 FROM transcription_history WHERE id = ?1",
-                params![id],
-                Self::map_history_entry,
-            )?;
-
-        debug!("Updated transcription for history entry {}", id);
-
+        let entry = conn.query_row(
+            "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested
+             FROM transcription_history WHERE id = ?1",
+            params![seen.id],
+            Self::map_history_entry,
+        )?;
+        debug!("Updated transcription for history entry {}", seen.id);
         if let Err(e) = (HistoryUpdatePayload::Updated {
             entry: entry.clone(),
         })
@@ -323,8 +319,38 @@ impl HistoryManager {
         {
             error!("Failed to emit history-updated event: {}", e);
         }
-
         Ok(entry)
+    }
+
+    /// Der Schreibschritt von [`Self::update_transcription_if_unchanged`]: `true`,
+    /// wenn genau der gesehene Stand ersetzt wurde. `IS` vergleicht auch NULL.
+    fn replace_transcription_if_unchanged(
+        conn: &Connection,
+        seen: &HistoryEntry,
+        transcription_text: &str,
+        post_processed_text: Option<&str>,
+        post_process_prompt: Option<&str>,
+    ) -> rusqlite::Result<bool> {
+        let updated = conn.execute(
+            "UPDATE transcription_history
+             SET transcription_text = ?1,
+                 post_processed_text = ?2,
+                 post_process_prompt = ?3
+             WHERE id = ?4
+               AND transcription_text IS ?5
+               AND post_processed_text IS ?6
+               AND post_process_prompt IS ?7",
+            params![
+                transcription_text,
+                post_processed_text,
+                post_process_prompt,
+                seen.id,
+                seen.transcription_text,
+                seen.post_processed_text,
+                seen.post_process_prompt,
+            ],
+        )?;
+        Ok(updated == 1)
     }
 
     pub fn cleanup_old_entries(&self) -> Result<()> {
@@ -733,6 +759,68 @@ mod tests {
             ],
         )
         .expect("insert history entry");
+    }
+
+    fn entry(conn: &Connection, id: i64) -> Option<HistoryEntry> {
+        conn.query_row(
+            "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested
+             FROM transcription_history WHERE id = ?1",
+            params![id],
+            HistoryManager::map_history_entry,
+        )
+        .optional()
+        .expect("read entry")
+    }
+
+    #[test]
+    fn a_late_result_never_overwrites_a_newer_one() {
+        // Lauf A und Lauf B lesen denselben Stand; B schreibt zuerst.
+        let conn = setup_conn();
+        insert_entry(&conn, 100, "alt", Some("alt, bearbeitet"));
+        let seen = entry(&conn, 1).unwrap();
+        assert!(HistoryManager::replace_transcription_if_unchanged(
+            &conn, &seen, "von B", None, None
+        )
+        .unwrap());
+        // A kommt spaeter mit dem alten Stand: nichts wird geschrieben.
+        assert!(!HistoryManager::replace_transcription_if_unchanged(
+            &conn,
+            &seen,
+            "von A",
+            Some("A bearbeitet"),
+            Some("Prompt")
+        )
+        .unwrap());
+        let now = entry(&conn, 1).unwrap();
+        assert_eq!(now.transcription_text, "von B");
+        assert_eq!(now.post_processed_text, None);
+        // Mit dem frischen Stand geht es wieder (NULL wird als gleich erkannt).
+        assert!(HistoryManager::replace_transcription_if_unchanged(
+            &conn,
+            &now,
+            "neu",
+            Some("neu bearbeitet"),
+            Some("Prompt")
+        )
+        .unwrap());
+        assert_eq!(
+            entry(&conn, 1).unwrap().post_processed_text.as_deref(),
+            Some("neu bearbeitet")
+        );
+    }
+
+    #[test]
+    fn a_result_for_a_deleted_entry_is_dropped_and_restores_nothing() {
+        let conn = setup_conn();
+        insert_entry(&conn, 100, "alt", None);
+        let seen = entry(&conn, 1).unwrap();
+        conn.execute("DELETE FROM transcription_history WHERE id = 1", [])
+            .unwrap();
+        assert!(!HistoryManager::replace_transcription_if_unchanged(
+            &conn, &seen, "spaet", None, None
+        )
+        .unwrap());
+        assert!(entry(&conn, 1).is_none());
     }
 
     #[test]
