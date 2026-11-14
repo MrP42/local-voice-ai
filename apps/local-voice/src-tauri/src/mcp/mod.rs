@@ -506,7 +506,7 @@ impl Server {
         // Bei JEDEM Aufruf frisch: Ein- und Ausschalten wirkt ohne Neustart des
         // Servers, und ein Ausschalten sperrt sofort auch eine laufende Sitzung.
         let settings = read_settings(&self.config.settings_path);
-        let ki_sperre = self.ki_sperre();
+        let ki_quelle = || self.ki_sperre();
         let outcome = if settings.enabled {
             tools::call(
                 name,
@@ -516,7 +516,7 @@ impl Server {
                     busy_timeout: self.config.busy_timeout,
                     include_transcript: settings.include_transcript,
                     transcript_page_chars: tools::TRANSCRIPT_PAGE_CHARS,
-                    ki_sperre: &ki_sperre,
+                    ki_quelle: &ki_quelle,
                 },
             )
         } else {

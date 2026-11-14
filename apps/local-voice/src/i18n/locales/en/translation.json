@@ -5168,12 +5168,27 @@
         "confirmIntern": "Release as internal",
         "confirmExtern": "Confirm with external participants",
         "revoke": "Revoke release",
-        "informed": "The participants have been informed that content of this meeting may go to AI clients.",
-        "loadFailed": "The release state could not be loaded. The meeting stays blocked for AI clients.",
+        "informed": "Participants have been informed about the purpose, recipients, cloud use and retention of sharing with AI clients.",
+        "legalBasis": "Legal basis",
+        "legalBasisChoose": "Please choose",
+        "legalBasisOptions": {
+          "einwilligung": "Consent (Art. 6(1)(a) GDPR)",
+          "vertrag": "Contract (Art. 6(1)(b) GDPR)",
+          "rechtliche_pflicht": "Legal obligation (Art. 6(1)(c) GDPR)",
+          "oeffentliche_aufgabe": "Public task (Art. 6(1)(e) GDPR)",
+          "berechtigtes_interesse": "Legitimate interest (Art. 6(1)(f) GDPR)",
+          "kollektivvereinbarung": "Works or service agreement"
+        },
+        "legalBasisHint": "The app does not check the legal basis; it records what you base the release on.",
+        "consentPresent": "Consent of all participants has been obtained (a notice does not replace it).",
+        "loadFailed": "The release status could not be loaded. The current status is unknown.",
         "errors": {
           "ki_freigabe_veraltet": "The attendees just changed. Please check again.",
           "ki_freigabe_nicht_intern": "Not all attendees are internal.",
           "ki_freigabe_ohne_information": "Please confirm first that the participants have been informed.",
+          "ki_freigabe_ohne_rechtsgrundlage": "Please choose the legal basis.",
+          "ki_freigabe_ohne_einwilligung": "For consent, please confirm that it has been obtained from everyone.",
+          "ki_freigabe_richtlinie_fehlt": "The release settings have not been applied yet. Please restart Local Voice AI.",
           "generic": "The release could not be saved."
         }
       }

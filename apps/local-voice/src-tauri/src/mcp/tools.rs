@@ -32,7 +32,7 @@ use serde_json::{json, Value};
 use crate::managers::meetings::export::{
     build_bundle, bundle_to_markdown, ExportParticipant, ExportParts,
 };
-use crate::managers::meetings::ki_freigabe::{KiLage, KiSperre};
+use crate::managers::meetings::ki_freigabe::KiSperre;
 use crate::managers::meetings::llm_call::duration_label;
 use crate::managers::meetings::notes::model::{ActionItem, STATUS_DONE};
 use crate::managers::meetings::search::chunking::{query_terms, ChunkSource};
@@ -91,8 +91,23 @@ pub struct Backend<'a> {
     /// Zeichen je Seite von `get_transcript` (Standard [`TRANSCRIPT_PAGE_CHARS`]; die Sprachbruecke
     /// nimmt kleinere Seiten, damit eine Seite samt `next_cursor` vollstaendig beim Modell ankommt).
     pub transcript_page_chars: usize,
-    /// G9a-2: welche Besprechungen ein KI-Client sehen darf; bei jedem Aufruf frisch gelesen.
-    pub ki_sperre: &'a KiSperre,
+    /// G9a-2: liest die Richtlinie aus den Einstellungen FRISCH (MCP-Server: Datei, App: Speicher).
+    /// [`call`] ruft sie am Anfang und am Linearisierungspunkt auf, nie nur einmal.
+    pub ki_quelle: &'a dyn Fn() -> KiSperre,
+}
+
+/// Ein Aufruf mit der zu seinem Beginn festgestellten Sperre. Die Werkzeuge sehen über `Deref`
+/// das [`Backend`] und lesen die Sperre nur hier, nie aus einer zweiten Quelle.
+struct Innen<'a> {
+    b: &'a Backend<'a>,
+    ki_sperre: KiSperre,
+}
+
+impl<'a> std::ops::Deref for Innen<'a> {
+    type Target = Backend<'a>;
+    fn deref(&self) -> &Backend<'a> {
+        self.b
+    }
 }
 
 /// Kundenprofil „nur lokal“: nichts geht an KI-Clients.
@@ -249,42 +264,91 @@ pub fn is_known(name: &str) -> bool {
 }
 
 /// Fuehrt ein Werkzeug aus. `name` ist vorher mit [`is_known`] geprueft.
-pub fn call(name: &str, args: &Value, backend: &Backend) -> ToolOutcome {
-    if backend.ki_sperre.ganz_gesperrt() {
-        return ToolOutcome::error(LOCAL_ONLY_HINT);
-    }
-    let outcome = match name {
-        "list_meetings" => list_meetings(args, backend),
-        "search_meetings" => search_meetings(args, backend),
-        "get_meeting" => single(args, backend, get_meeting),
-        "get_transcript" => single(args, backend, get_transcript),
-        "get_provenance" => single(args, backend, get_provenance),
-        other => Err(ToolOutcome::error(format!("Unbekanntes Werkzeug: {other}"))),
-    };
-    outcome.unwrap_or_else(|e| e)
+/// Die Freigabe-Einstellungen sind zwischen Datei und Datenbank nicht abgeglichen (eine Änderung
+/// ist unterwegs, oder Local Voice AI lief seit dem Update noch nicht).
+const POLICY_SYNC_HINT: &str = "Die Freigabe-Einstellungen für KI-Clients werden gerade \
+    umgestellt oder sind noch nicht übernommen. Bitte kurz warten und erneut fragen; hilft das \
+    nicht, Local Voice AI einmal starten.";
+
+/// Die Freigabegrundlage hat sich während jedes Versuchs geändert.
+const CHANGED_HINT: &str = "Die Freigaben für KI-Clients haben sich während der Abfrage \
+    geändert. Bitte erneut fragen.";
+
+/// Versuche je Aufruf, bevor [`CHANGED_HINT`] kommt.
+const VERSUCHE: usize = 3;
+
+/// Stand am Anfang und am Linearisierungspunkt eines Aufrufs.
+#[derive(PartialEq)]
+struct Lauf {
+    /// Revision der Freigabegrundlage; `None` ohne Datenbank.
+    rev: Option<i64>,
+    sperre: KiSperre,
 }
 
-/// Werkzeug für EINE Besprechung: Stand vor dem Lesen festhalten, nach dem Lesen der Inhalte
-/// nachprüfen (Codex #583, Blocker 2). Ändert sich zwischendurch die Teilnehmerliste, die
-/// Bestätigung oder die Freigabe, geht die gelesene Ausgabe nicht hinaus.
-fn single(
-    args: &Value,
-    backend: &Backend,
-    tool: fn(&Value, &Backend) -> Res<ToolOutcome>,
-) -> Res<ToolOutcome> {
-    let id = req_id(args)?;
+/// Liest Richtlinie (frisch aus der Quelle) und Datenbankstand (Revision und Spiegel in einer
+/// Lesetransaktion). Weichen Quelle und Spiegel ab, gibt es keine Ausgabe.
+fn lauf_lesen(backend: &Backend) -> Res<Lauf> {
+    let quelle = (backend.ki_quelle)();
     let Some(store) = open(backend)? else {
-        return tool(args, backend);
+        return Ok(Lauf {
+            rev: None,
+            sperre: quelle,
+        });
     };
-    let Some(vorher) = backend.ki_sperre.freigegeben(&store, id) else {
-        return Err(not_found(id));
-    };
-    let out = tool(args, backend)?;
-    if out.is_error || backend.ki_sperre.unveraendert(&store, id, &vorher) {
-        Ok(out)
-    } else {
-        Err(not_found(id))
+    let stand = store.ki_stand().map_err(|e| store_error(&e))?;
+    let sperre = quelle
+        .abgleichen(stand.richtlinie.as_ref())
+        .ok_or_else(|| ToolOutcome::error(POLICY_SYNC_HINT))?;
+    Ok(Lauf {
+        rev: Some(stand.rev),
+        sperre,
+    })
+}
+
+/// Ein Werkzeugaufruf, linearisiert (Codex #583, Fixrunde 2):
+///
+/// 1. Anfang: Richtlinie und Revision der Freigabegrundlage lesen.
+/// 2. Das Werkzeug prüft jede Besprechung mit dieser Richtlinie und liest die Nutzlast.
+/// 3. **Linearisierungspunkt**: Richtlinie und Revision erneut lesen. Nur wenn beide gleich
+///    sind, geht die Antwort hinaus. Die Revision steigt bei JEDER Änderung an Bestätigungen,
+///    Richtlinienspiegel, Terminen, Teilnehmenden, Quellen und Verknüpfungen und sinkt nie;
+///    gleiche Revision heißt also: zwischen 1 und 3 hat sich an der Freigabegrundlage nichts
+///    geändert, auch nicht hin und zurück. Jede Prüfung in 2 sah darum den Stand von 1.
+///
+/// Was nach dem Linearisierungspunkt festgeschrieben wird, gilt als nach der Antwort geschehen
+/// (bereits versandte Daten lassen sich nicht zurückholen, ADR-0031). Bei einer Änderung
+/// verwirft der Aufruf seine Ausgabe vollständig (auch ganze Listen) und versucht es neu.
+pub fn call(name: &str, args: &Value, backend: &Backend) -> ToolOutcome {
+    for _ in 0..VERSUCHE {
+        let anfang = match lauf_lesen(backend) {
+            Ok(l) => l,
+            Err(e) => return e,
+        };
+        if anfang.sperre.ganz_gesperrt() {
+            return ToolOutcome::error(LOCAL_ONLY_HINT);
+        }
+        let innen = Innen {
+            b: backend,
+            ki_sperre: anfang.sperre.clone(),
+        };
+        let outcome = match name {
+            "list_meetings" => list_meetings(args, &innen),
+            "search_meetings" => search_meetings(args, &innen),
+            "get_meeting" => get_meeting(args, &innen),
+            "get_transcript" => get_transcript(args, &innen),
+            "get_provenance" => get_provenance(args, &innen),
+            other => return ToolOutcome::error(format!("Unbekanntes Werkzeug: {other}")),
+        }
+        .unwrap_or_else(|e| e);
+        #[cfg(test)]
+        crate::managers::meetings::ki_freigabe::barriere_ausloesen();
+        match lauf_lesen(backend) {
+            Ok(ende) if ende == anfang => return outcome,
+            Ok(_) => continue,
+            Err(e) => return e,
+        }
     }
+    ToolOutcome::error(CHANGED_HINT)
 }
 
 // ---------------------------------------------------------------------------
@@ -419,7 +483,7 @@ fn not_found(id: &str) -> ToolOutcome {
 
 /// Die lebende, FERTIGE, fuer KI-Clients freigegebene Besprechung oder ein Fehlertext. Eine
 /// gesperrte Besprechung meldet dasselbe wie eine unbekannte (auch nicht ihren Status).
-fn ready_meeting(store: &MeetingStore, id: &str, backend: &Backend) -> Res<Meeting> {
+fn ready_meeting(store: &MeetingStore, id: &str, backend: &Innen) -> Res<Meeting> {
     if !backend.ki_sperre.sichtbar(store, id) {
         return Err(not_found(id));
     }
@@ -502,7 +566,7 @@ fn provenance_json(part: &str, e: &ProvenanceEntry) -> Value {
     })
 }
 
-fn get_provenance(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
+fn get_provenance(args: &Value, backend: &Innen) -> Res<ToolOutcome> {
     let id = req_id(args)?;
     let part = opt_str(args, "part")?;
     if let Some(p) = part {
@@ -556,7 +620,7 @@ fn get_provenance(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
 // list_meetings
 // ---------------------------------------------------------------------------
 
-fn list_meetings(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
+fn list_meetings(args: &Value, backend: &Innen) -> Res<ToolOutcome> {
     let from = time_arg(args, "from", false)?;
     let to = time_arg(args, "to", true)?;
     let person = opt_str(args, "person")?;
@@ -589,24 +653,15 @@ fn list_meetings(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
             event_uid: None,
         })
         .map_err(|e| store_error(&e))?;
-    let ids: Vec<(&String, KiLage)> = ids
+    let ids: Vec<&String> = ids
         .iter()
-        .filter_map(|id| backend.ki_sperre.freigegeben(&store, id).map(|l| (id, l)))
+        .filter(|id| backend.ki_sperre.sichtbar(&store, id))
         .collect();
-    let mut total = ids.len();
-    let mut gelesen = Vec::new();
-    for (id, vorher) in ids.iter().take(limit as usize) {
-        if let Some(meeting) = store.get_meeting(id).map_err(|e| store_error(&e))? {
-            gelesen.push((*id, vorher, meeting_json(&meeting)));
-        }
-    }
-    // Nachprüfung nach dem Lesen: geänderte oder widerrufene Besprechungen fallen heraus.
+    let total = ids.len();
     let mut meetings = Vec::new();
-    for (id, vorher, value) in gelesen {
-        if backend.ki_sperre.unveraendert(&store, id, vorher) {
-            meetings.push(value);
-        } else {
-            total -= 1;
+    for id in ids.iter().take(limit as usize) {
+        if let Some(meeting) = store.get_meeting(id).map_err(|e| store_error(&e))? {
+            meetings.push(meeting_json(&meeting));
         }
     }
     let mut out = json!({
@@ -632,7 +687,7 @@ fn plain_snippet(html: &str) -> String {
         .replace("&amp;", "&")
 }
 
-fn search_meetings(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
+fn search_meetings(args: &Value, backend: &Innen) -> Res<ToolOutcome> {
     let query = req_str(args, "query")?;
     if query.chars().count() > MAX_QUERY_CHARS {
         return Err(arg_error(format!(
@@ -668,15 +723,10 @@ fn search_meetings(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
         .items
         .iter()
         .filter(|item| item.meeting.status == "ready")
-        .filter_map(|item| {
-            backend
-                .ki_sperre
-                .freigegeben(&store, &item.meeting.id)
-                .map(|l| (item, l))
-        })
+        .filter(|item| backend.ki_sperre.sichtbar(&store, &item.meeting.id))
         // Ohne Transkript-Freigabe kein Treffer, dessen bester Chunk das Transkript ist
         // (D5: auch nicht der Text einer Folie, er stammt aus derselben Aufnahme).
-        .filter(|(item, _)| {
+        .filter(|item| {
             backend.include_transcript
                 || !matches!(
                     item.hit_source,
@@ -685,21 +735,15 @@ fn search_meetings(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
         })
         .collect();
     let more = visible.len() > limit;
-    let gelesen: Vec<(&str, &KiLage, Value)> = visible
+    let meetings: Vec<Value> = visible
         .iter()
         .take(limit)
-        .map(|(item, l)| {
+        .map(|item| {
             let mut value = meeting_json(&item.meeting);
             value["snippet"] = json!(item.snippet.as_deref().map(plain_snippet));
             value["hit_source"] = json!(item.hit_source.map(ChunkSource::as_str));
-            (item.meeting.id.as_str(), l, value)
+            value
         })
-        .collect();
-    // Nachprüfung nach dem Lesen (wie list_meetings).
-    let meetings: Vec<Value> = gelesen
-        .into_iter()
-        .filter(|(id, l, _)| backend.ki_sperre.unveraendert(&store, id, l))
-        .map(|(_, _, v)| v)
         .collect();
     let mut notes: Vec<String> = Vec::new();
     if backend.ki_sperre.prueft() {
@@ -809,7 +853,7 @@ fn cap_text(text: String, max: usize) -> String {
     format!("{}\n\n[Text gekürzt.]", &cut[..end])
 }
 
-fn get_meeting(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
+fn get_meeting(args: &Value, backend: &Innen) -> Res<ToolOutcome> {
     let id = req_id(args)?;
     let parts = parts_arg(args)?;
     let Some(store) = open(backend)? else {
@@ -960,7 +1004,7 @@ pub(crate) fn transcript_text(store: &MeetingStore, id: &str) -> Res<String> {
     Ok(out)
 }
 
-fn get_transcript(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
+fn get_transcript(args: &Value, backend: &Innen) -> Res<ToolOutcome> {
     let id = req_id(args)?;
     let cursor = cursor_arg(args)?;
     if !backend.include_transcript {

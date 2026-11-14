@@ -1,18 +1,33 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { commands, type KiFreigabeStand } from "@/bindings";
+import {
+  commands,
+  type KiFreigabeStand,
+  type Rechtsgrundlage,
+} from "@/bindings";
 import { Button } from "../../ui/Button";
+import { Select } from "../../ui/Select";
 
 /**
  * G9a-2 (lva#578, ADR-0031 E2.6–E2.8): Freigabe EINER Besprechung für KI-Clients in den
  * Details. Zeigt die Einstufung laut Termin und die Gründe einer Sperre; bestätigt wird nur
  * diese Besprechung mit dieser Teilnehmerliste (keine Sammelbestätigung). „Als intern
- * freigeben“ gibt es nur, wenn die Liste intern ist. Bestätigen setzt die Erklärung voraus,
- * dass die Teilnehmenden über die Weitergabe an KI-Clients informiert sind.
+ * freigeben“ gibt es nur, wenn die Liste intern ist. Bestätigen setzt den Nachweis nach
+ * ADR-0031 E2 Nr. 7 voraus: Information der Teilnehmenden, gewählte Rechtsgrundlage und bei
+ * Einwilligung deren Vorliegen.
  *
  * Nebenläufigkeit (Codex #583): Beim Wechsel der Besprechung wird der alte Stand verworfen;
  * eine verspätete Antwort einer früheren Anfrage überschreibt nie den neuen Stand.
  */
+const LEGAL_BASES: Rechtsgrundlage[] = [
+  "einwilligung",
+  "vertrag",
+  "rechtliche_pflicht",
+  "oeffentliche_aufgabe",
+  "berechtigtes_interesse",
+  "kollektivvereinbarung",
+];
+
 export const MeetingAiRelease: React.FC<{ meetingId: string }> = ({
   meetingId,
 }) => {
@@ -22,6 +37,8 @@ export const MeetingAiRelease: React.FC<{ meetingId: string }> = ({
   const [loadFailed, setLoadFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [informed, setInformed] = useState(false);
+  const [basis, setBasis] = useState<Rechtsgrundlage | "">("");
+  const [consent, setConsent] = useState(false);
   // Jede Anfrage bekommt eine Nummer; nur die Antwort der jüngsten gilt.
   const generation = useRef(0);
 
@@ -49,6 +66,8 @@ export const MeetingAiRelease: React.FC<{ meetingId: string }> = ({
     setError(null);
     setLoadFailed(false);
     setInformed(false);
+    setBasis("");
+    setConsent(false);
     void load();
   }, [load]);
 
@@ -73,7 +92,10 @@ export const MeetingAiRelease: React.FC<{ meetingId: string }> = ({
   const errorText = (code: string) =>
     code === "ki_freigabe_veraltet" ||
     code === "ki_freigabe_nicht_intern" ||
-    code === "ki_freigabe_ohne_information"
+    code === "ki_freigabe_ohne_information" ||
+    code === "ki_freigabe_ohne_rechtsgrundlage" ||
+    code === "ki_freigabe_ohne_einwilligung" ||
+    code === "ki_freigabe_richtlinie_fehlt"
       ? t(`meetings.mcp.release.errors.${code}`)
       : t("meetings.mcp.release.errors.generic");
 
@@ -110,9 +132,15 @@ export const MeetingAiRelease: React.FC<{ meetingId: string }> = ({
         meetingId,
         einstufung,
         ergebnis.fingerabdruck,
-        informed,
+        {
+          informiert: informed,
+          rechtsgrundlage: basis === "" ? null : basis,
+          einwilligungen_liegen_vor: basis === "einwilligung" && consent,
+        },
       ),
     );
+  const ready =
+    informed && basis !== "" && (basis !== "einwilligung" || consent);
   const canConfirm =
     ergebnis.aus_termin &&
     (ergebnis.einstufung === "intern" || ergebnis.einstufung === "extern");
@@ -177,12 +205,48 @@ export const MeetingAiRelease: React.FC<{ meetingId: string }> = ({
           <span>{t("meetings.mcp.release.informed")}</span>
         </label>
       )}
+      {canConfirm && (
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-2 text-text/80">
+            <span>{t("meetings.mcp.release.legalBasis")}</span>
+            <div className="min-w-64" data-testid="ai-release-basis">
+              <Select
+                value={basis === "" ? null : basis}
+                options={LEGAL_BASES.map((b) => ({
+                  value: b,
+                  label: t(`meetings.mcp.release.legalBasisOptions.${b}`),
+                }))}
+                isClearable={false}
+                menuPortal
+                placeholder={t("meetings.mcp.release.legalBasisChoose")}
+                ariaLabel={t("meetings.mcp.release.legalBasis")}
+                onChange={(v) => setBasis((v as Rechtsgrundlage | null) ?? "")}
+              />
+            </div>
+          </div>
+          <p className="text-xs text-text/60">
+            {t("meetings.mcp.release.legalBasisHint")}
+          </p>
+          {basis === "einwilligung" && (
+            <label className="flex items-start gap-2 text-text/80">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={consent}
+                onChange={(e) => setConsent(e.target.checked)}
+                data-testid="ai-release-consent"
+              />
+              <span>{t("meetings.mcp.release.consentPresent")}</span>
+            </label>
+          )}
+        </div>
+      )}
       <div className="flex flex-wrap gap-2">
         {ergebnis.aus_termin && ergebnis.einstufung === "intern" && (
           <Button
             size="sm"
             variant="secondary"
-            disabled={busy || !informed}
+            disabled={busy || !ready}
             onClick={() => void confirm("intern")}
             data-testid="ai-release-confirm-intern"
           >
@@ -193,7 +257,7 @@ export const MeetingAiRelease: React.FC<{ meetingId: string }> = ({
           <Button
             size="sm"
             variant="secondary"
-            disabled={busy || !informed}
+            disabled={busy || !ready}
             onClick={() => void confirm("extern")}
             data-testid="ai-release-confirm-extern"
           >

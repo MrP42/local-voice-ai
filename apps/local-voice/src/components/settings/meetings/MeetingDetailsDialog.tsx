@@ -323,7 +323,7 @@ export const MeetingDetailsDialog: React.FC<MeetingDetailsDialogProps> = ({
           {
             key: "ai-release",
             label: t("meetings.mcp.release.title"),
-            value: <MeetingAiRelease meetingId={meeting.id} />,
+            value: <MeetingAiRelease key={meeting.id} meetingId={meeting.id} />,
           },
         ]
       : []),

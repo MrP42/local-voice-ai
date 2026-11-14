@@ -5168,12 +5168,27 @@
         "confirmIntern": "Als intern freigeben",
         "confirmExtern": "Mit Externen bestätigen",
         "revoke": "Freigabe zurücknehmen",
-        "informed": "Die Teilnehmenden sind darüber informiert, dass Inhalte dieser Besprechung an KI-Clients gehen können.",
-        "loadFailed": "Der Freigabestand ließ sich nicht laden. Die Besprechung bleibt für KI-Clients gesperrt.",
+        "informed": "Die Teilnehmenden sind über Zweck, Empfänger, Cloud-Nutzung und Speicherdauer der Weitergabe an KI-Clients informiert.",
+        "legalBasis": "Rechtsgrundlage",
+        "legalBasisChoose": "Bitte wählen",
+        "legalBasisOptions": {
+          "einwilligung": "Einwilligung (Art. 6 Abs. 1 lit. a DSGVO)",
+          "vertrag": "Vertrag (Art. 6 Abs. 1 lit. b DSGVO)",
+          "rechtliche_pflicht": "Rechtliche Pflicht (Art. 6 Abs. 1 lit. c DSGVO)",
+          "oeffentliche_aufgabe": "Öffentliche Aufgabe (Art. 6 Abs. 1 lit. e DSGVO)",
+          "berechtigtes_interesse": "Berechtigtes Interesse (Art. 6 Abs. 1 lit. f DSGVO)",
+          "kollektivvereinbarung": "Dienst- oder Betriebsvereinbarung"
+        },
+        "legalBasisHint": "Die App prüft die Rechtsgrundlage nicht; sie hält fest, worauf du die Freigabe stützt.",
+        "consentPresent": "Die Einwilligungen aller Teilnehmenden liegen vor (ein Hinweis ersetzt sie nicht).",
+        "loadFailed": "Der Freigabestand ließ sich nicht laden. Der aktuelle Status ist unbekannt.",
         "errors": {
           "ki_freigabe_veraltet": "Die Teilnehmenden haben sich gerade geändert. Bitte erneut prüfen.",
           "ki_freigabe_nicht_intern": "Die Teilnehmenden sind nicht alle intern.",
           "ki_freigabe_ohne_information": "Bitte zuerst bestätigen, dass die Teilnehmenden informiert sind.",
+          "ki_freigabe_ohne_rechtsgrundlage": "Bitte die Rechtsgrundlage wählen.",
+          "ki_freigabe_ohne_einwilligung": "Bei Einwilligung bitte bestätigen, dass sie von allen vorliegt.",
+          "ki_freigabe_richtlinie_fehlt": "Die Freigabe-Einstellungen sind noch nicht übernommen. Bitte Local Voice AI neu starten.",
           "generic": "Die Freigabe konnte nicht gespeichert werden."
         }
       }

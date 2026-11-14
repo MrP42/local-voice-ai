@@ -340,6 +340,15 @@ fn with_the_real_gate_an_unconfirmed_meeting_stays_hidden() {
             echte_sperre: true,
         }),
     );
+    // Richtlinienspiegel wie in der App (sonst gibt der Server gar nichts aus).
+    r.tools
+        .store
+        .ki_richtlinie_setzen(&crate::managers::meetings::ki_freigabe::Richtlinie {
+            nur_lokal: false,
+            cloud_bei_externen: false,
+            eigene_domaenen: vec!["example.org".into()],
+        })
+        .unwrap();
     let ctx = ctx_of("agent-1");
     let list = tools.call(&ctx, "meetings_list", &json!({})).unwrap();
     assert_eq!(list["meetings"], json!([]));
@@ -359,21 +368,48 @@ fn with_the_real_gate_an_unconfirmed_meeting_stays_hidden() {
 /// vorhandenen Besprechung entgegen; ihre Inhalte erreicht nur das gesperrte Lesen.
 #[test]
 fn no_writing_tool_takes_an_existing_meeting() {
+    // Rekursiv über alle Schemas (auch verschachtelte Objekte und Listen): kein schreibendes
+    // Werkzeug hat ein Feld, das eine Besprechung benennt. `run_workflow` nimmt freie `vars`;
+    // dass daraus kein Besprechungsbezug wird, belegt
+    // `workflows::trigger::manual::tests::an_agent_start_never_carries_a_meeting_into_the_run`.
+    fn felder(schema: &Value, pfad: &str, out: &mut Vec<String>) {
+        if let Some(props) = schema.get("properties").and_then(Value::as_object) {
+            for (key, sub) in props {
+                out.push(format!("{pfad}{key}"));
+                felder(sub, &format!("{pfad}{key}."), out);
+            }
+        }
+        if let Some(items) = schema.get("items") {
+            felder(items, &format!("{pfad}[]."), out);
+        }
+        for k in ["anyOf", "oneOf", "allOf"] {
+            for sub in schema
+                .get(k)
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                felder(sub, pfad, out);
+            }
+        }
+    }
+    let mut geprueft = 0;
     for spec in crate::agent_bridge::tools::all_specs() {
         let entry = catalog::find(&spec.name).expect("im Katalog");
         if entry.capability.access() == Access::Read {
             continue;
         }
-        let props = spec.input_schema["properties"]
-            .as_object()
-            .cloned()
-            .unwrap_or_default();
-        for key in props.keys() {
+        let mut alle = Vec::new();
+        felder(&spec.input_schema, "", &mut alle);
+        for feld in &alle {
+            let letzter = feld.rsplit('.').next().unwrap_or(feld).to_lowercase();
             assert!(
-                !matches!(key.as_str(), "meeting_id" | "meeting" | "meetings" | "meeting_ids"),
-                "{}: {key}",
+                !letzter.contains("meeting") && !letzter.contains("besprechung"),
+                "{}: {feld}",
                 spec.name
             );
         }
+        geprueft += 1;
     }
+    assert!(geprueft >= 5, "die schreibenden Werkzeuge wurden geprüft");
 }

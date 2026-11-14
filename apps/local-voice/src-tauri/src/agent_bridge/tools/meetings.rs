@@ -148,7 +148,7 @@ impl AppTools {
         let voice = ctx.client_id == CALLER_TAG;
         // G9a-2: auch das Sprachgespraech und externe Agenten sehen nur freigegebene Besprechungen
         // (die App weiss nicht, wo das Modell des Agenten rechnet).
-        let ki_sperre = self.host.ki_sperre();
+        let ki_quelle = || self.host.ki_sperre();
         let backend = Backend {
             db_path: self.store.db_path(),
             busy_timeout: READ_BUSY_TIMEOUT,
@@ -162,7 +162,7 @@ impl AppTools {
             } else {
                 mcp_tools::TRANSCRIPT_PAGE_CHARS
             },
-            ki_sperre: &ki_sperre,
+            ki_quelle: &ki_quelle,
         };
         let outcome = mcp_tools::call(mcp_tool, &Value::Object(args), &backend);
         if outcome.is_error {

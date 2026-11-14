@@ -69,13 +69,23 @@ use besprechungsplanung::assistent::{
 };
 use tauri::Manager;
 
-use crate::managers::meetings::ki_freigabe::{self, KiFreigabeStand, KiSperre};
+use crate::managers::meetings::ki_freigabe::{
+    self, Freigabenachweis, KiFreigabeStand, KiSperre, Richtlinie,
+};
 use crate::managers::meetings::store::MeetingStore;
 
 fn store_of(app: &tauri::AppHandle) -> Result<Arc<MeetingStore>, String> {
     app.try_state::<Arc<MeetingStore>>()
         .map(|state| Arc::clone(&state))
         .ok_or_else(|| "meetings_unavailable".to_string())
+}
+
+/// Richtlinienspiegel vor dem Schreiben der Einstellungen (Fehler an die Oberflaeche).
+fn spiegeln(app: &tauri::AppHandle, s: &settings::AppSettings) -> Result<(), String> {
+    store_of(app)?
+        .ki_richtlinie_setzen(&Richtlinie::aus_einstellungen(s))
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 fn sperre_of(app: &tauri::AppHandle) -> KiSperre {
@@ -94,10 +104,10 @@ pub fn meeting_ai_release_status(
 }
 
 /// Bestaetigt die Einstufung fuer GENAU diese Besprechung und diese Teilnehmerliste. Fehler
-/// `ki_freigabe_veraltet` (Liste oder Domaenen haben sich geaendert, neu laden) oder
-/// `ki_freigabe_nicht_intern` (die Liste ist nicht intern). `informiert`: Der Nutzer bestätigt,
-/// dass die Teilnehmenden über die Weitergabe an KI-Clients informiert sind; ohne das Fehler
-/// `ki_freigabe_ohne_information`. Wird sofort gespeichert.
+/// `ki_freigabe_veraltet` (Liste oder Domaenen haben sich geaendert, neu laden),
+/// `ki_freigabe_nicht_intern` (die Liste ist nicht intern), `ki_freigabe_ohne_information`,
+/// `ki_freigabe_ohne_rechtsgrundlage`, `ki_freigabe_ohne_einwilligung` (Nachweis nach ADR-0031
+/// E2 Nr. 7 unvollstaendig) oder `ki_freigabe_richtlinie_fehlt`. Wird sofort gespeichert.
 #[tauri::command]
 #[specta::specta]
 pub fn meeting_ai_release_confirm(
@@ -105,7 +115,7 @@ pub fn meeting_ai_release_confirm(
     meeting_id: String,
     einstufung: Einstufung,
     fingerabdruck: String,
-    informiert: bool,
+    nachweis: Freigabenachweis,
 ) -> Result<KiFreigabeStand, String> {
     let store = store_of(&app)?;
     ki_freigabe::bestaetigen(
@@ -114,7 +124,7 @@ pub fn meeting_ai_release_confirm(
         &meeting_id,
         einstufung,
         &fingerabdruck,
-        informiert,
+        &nachweis,
         chrono::Utc::now().timestamp_millis(),
     )
     .map_err(|e| e.to_string())
@@ -135,8 +145,9 @@ pub fn meeting_ai_release_revoke(
 }
 
 /// „Eigene Domänen“ speichern: nur die wirksamen Eintraege; die abgelehnten gehen zur Anzeige
-/// zurueck. Jede wirksame Aenderung LOESCHT alle Bestaetigungen (vor dem Speichern), damit eine
-/// Rueckkehr zu den alten Domaenen keine alte Freigabe reaktiviert (Codex #583).
+/// zurueck. Erst der Richtlinienspiegel (eine Schreibtransaktion, die bei geaenderten Domaenen
+/// ALLE Bestaetigungen loescht), dann die Einstellungsdatei. Schlaegt der Spiegel fehl, bleibt
+/// alles beim Alten (Fehler an die Oberflaeche); dazwischen gibt der MCP-Server nichts aus.
 #[tauri::command]
 #[specta::specta]
 pub fn change_meeting_own_domains_setting(
@@ -145,12 +156,8 @@ pub fn change_meeting_own_domains_setting(
 ) -> Result<EigeneDomaenenBereinigt, String> {
     let bereinigt = eigene_domaenen_bereinigen(&domains);
     let mut s = settings::get_settings(&app);
-    if s.meeting_own_domains != bereinigt.gueltig {
-        store_of(&app)?
-            .ki_bestaetigungen_alle_entfernen()
-            .map_err(|e| e.to_string())?;
-    }
     s.meeting_own_domains = bereinigt.gueltig.clone();
+    spiegeln(&app, &s)?;
     settings::write_settings(&app, s);
     Ok(bereinigt)
 }
@@ -173,6 +180,7 @@ pub fn change_meeting_cloud_with_externals_setting(
 ) -> Result<(), String> {
     let mut s = settings::get_settings(&app);
     s.meeting_cloud_with_externals = enabled;
+    spiegeln(&app, &s)?;
     settings::write_settings(&app, s);
     Ok(())
 }

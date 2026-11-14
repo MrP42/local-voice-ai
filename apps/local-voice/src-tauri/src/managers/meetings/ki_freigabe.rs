@@ -7,10 +7,16 @@
 //! für GENAU diese Besprechung und diese Liste bestätigt. Das gilt unabhängig vom Schalter
 //! „Assistent in der Besprechung“ (Auflage B1) und auch für Altbestand (B2).
 //!
-//! Nachweis der Information (Codex #583): Eine Bestätigung setzt voraus, dass der Nutzer
-//! erklärt, die Teilnehmenden über die Weitergabe an KI-Clients informiert zu haben
-//! (`informiert = 1`, sonst `ki_freigabe_ohne_information`). Die Rechtsgrundlage selbst
-//! bleibt beim Nutzer; die App hält nur diese Erklärung je Besprechung fest.
+//! Nachweis (ADR-0031 E2 Nr. 7, Codex #583): Eine Bestätigung setzt voraus, dass der Nutzer
+//! erklärt, die Teilnehmenden informiert zu haben, und die geprüfte Rechtsgrundlage wählt; bei
+//! Einwilligung zusätzlich, dass sie von allen vorliegt (sonst `ki_freigabe_ohne_information`,
+//! `ki_freigabe_ohne_rechtsgrundlage`, `ki_freigabe_ohne_einwilligung`). Die rechtliche Prüfung
+//! selbst bleibt beim Nutzer; die App hält Erklärung und Grundlage je Besprechung fest.
+//!
+//! Linearisierung (Codex #583 Fixrunde 2): Eine monotone Revision (`meeting_ai_revision`, per
+//! Trigger) und ein Spiegel der Richtlinie (`meeting_ai_policy`) erlauben `mcp::tools::call`,
+//! am Ende eines Aufrufs zu prüfen, dass sich seit dem Anfang nichts an der Freigabegrundlage
+//! geändert hat.
 //!
 //! Speicherung (Auflage B3): eine Zeile je Besprechung in `meeting_ai_confirmations`. Keine
 //! Zeile heißt unbestätigt, also gesperrt; es gibt keine Rückfüllung. Gespeichert werden
@@ -46,6 +52,162 @@ pub(crate) const KI_FREIGABE_MIGRATION: &str =
       informiert INTEGER NOT NULL CHECK (informiert = 1),
       confirmed_at INTEGER NOT NULL);";
 
+/// Migration (Index 20, Codex #583 Fixrunde 2): Revision, Richtlinienspiegel, Rechtsgrundlage.
+///
+/// - `meeting_ai_revision`: EIN Zähler, den Trigger bei JEDER Änderung an der Freigabegrundlage
+///   erhöhen (Bestätigungen, Richtlinie, Termine, Teilnehmende, Quellen, Verknüpfungen). Er
+///   sinkt nie; darum erkennt ein Vorher-/Nachher-Vergleich auch A → B → A.
+/// - `meeting_ai_policy`: Spiegel der Richtlinie aus den Einstellungen (Kundenprofil, „Cloud bei
+///   Externen“, eigene Domänen). Die App schreibt ihn bei jeder Einstellungsänderung; der
+///   MCP-Server gibt nur aus, wenn Spiegel und Einstellungsdatei übereinstimmen.
+/// - Rechtsgrundlage je Bestätigung (ADR-0031 E2 Nr. 7). Altzeilen ohne sie zählen nicht.
+pub(crate) const KI_REVISION_MIGRATION: &str = "
+    CREATE TABLE IF NOT EXISTS meeting_ai_revision (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      rev INTEGER NOT NULL);
+    INSERT OR IGNORE INTO meeting_ai_revision (id, rev) VALUES (1, 0);
+    CREATE TABLE IF NOT EXISTS meeting_ai_policy (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      nur_lokal INTEGER NOT NULL CHECK (nur_lokal IN (0, 1)),
+      cloud_bei_externen INTEGER NOT NULL CHECK (cloud_bei_externen IN (0, 1)),
+      eigene_domaenen TEXT NOT NULL);
+    ALTER TABLE meeting_ai_confirmations ADD COLUMN rechtsgrundlage TEXT;
+    ALTER TABLE meeting_ai_confirmations ADD COLUMN einwilligungen_belegt INTEGER NOT NULL DEFAULT 0;
+    CREATE TRIGGER IF NOT EXISTS ai_rev_conf_i AFTER INSERT ON meeting_ai_confirmations
+      BEGIN UPDATE meeting_ai_revision SET rev = rev + 1 WHERE id = 1; END;
+    CREATE TRIGGER IF NOT EXISTS ai_rev_conf_u AFTER UPDATE ON meeting_ai_confirmations
+      BEGIN UPDATE meeting_ai_revision SET rev = rev + 1 WHERE id = 1; END;
+    CREATE TRIGGER IF NOT EXISTS ai_rev_conf_d AFTER DELETE ON meeting_ai_confirmations
+      BEGIN UPDATE meeting_ai_revision SET rev = rev + 1 WHERE id = 1; END;
+    CREATE TRIGGER IF NOT EXISTS ai_rev_pol_i AFTER INSERT ON meeting_ai_policy
+      BEGIN UPDATE meeting_ai_revision SET rev = rev + 1 WHERE id = 1; END;
+    CREATE TRIGGER IF NOT EXISTS ai_rev_pol_u AFTER UPDATE ON meeting_ai_policy
+      BEGIN UPDATE meeting_ai_revision SET rev = rev + 1 WHERE id = 1; END;
+    CREATE TRIGGER IF NOT EXISTS ai_rev_pol_d AFTER DELETE ON meeting_ai_policy
+      BEGIN UPDATE meeting_ai_revision SET rev = rev + 1 WHERE id = 1; END;
+    CREATE TRIGGER IF NOT EXISTS ai_rev_link_i AFTER INSERT ON meeting_calendar_links
+      BEGIN UPDATE meeting_ai_revision SET rev = rev + 1 WHERE id = 1; END;
+    CREATE TRIGGER IF NOT EXISTS ai_rev_link_u AFTER UPDATE ON meeting_calendar_links
+      BEGIN UPDATE meeting_ai_revision SET rev = rev + 1 WHERE id = 1; END;
+    CREATE TRIGGER IF NOT EXISTS ai_rev_link_d AFTER DELETE ON meeting_calendar_links
+      BEGIN UPDATE meeting_ai_revision SET rev = rev + 1 WHERE id = 1; END;
+    CREATE TRIGGER IF NOT EXISTS ai_rev_ev_i AFTER INSERT ON calendar_events
+      BEGIN UPDATE meeting_ai_revision SET rev = rev + 1 WHERE id = 1; END;
+    CREATE TRIGGER IF NOT EXISTS ai_rev_ev_u AFTER UPDATE ON calendar_events
+      BEGIN UPDATE meeting_ai_revision SET rev = rev + 1 WHERE id = 1; END;
+    CREATE TRIGGER IF NOT EXISTS ai_rev_ev_d AFTER DELETE ON calendar_events
+      BEGIN UPDATE meeting_ai_revision SET rev = rev + 1 WHERE id = 1; END;
+    CREATE TRIGGER IF NOT EXISTS ai_rev_att_i AFTER INSERT ON calendar_event_attendees
+      BEGIN UPDATE meeting_ai_revision SET rev = rev + 1 WHERE id = 1; END;
+    CREATE TRIGGER IF NOT EXISTS ai_rev_att_u AFTER UPDATE ON calendar_event_attendees
+      BEGIN UPDATE meeting_ai_revision SET rev = rev + 1 WHERE id = 1; END;
+    CREATE TRIGGER IF NOT EXISTS ai_rev_att_d AFTER DELETE ON calendar_event_attendees
+      BEGIN UPDATE meeting_ai_revision SET rev = rev + 1 WHERE id = 1; END;
+    CREATE TRIGGER IF NOT EXISTS ai_rev_src_i AFTER INSERT ON calendar_sources
+      BEGIN UPDATE meeting_ai_revision SET rev = rev + 1 WHERE id = 1; END;
+    CREATE TRIGGER IF NOT EXISTS ai_rev_src_u AFTER UPDATE ON calendar_sources
+      BEGIN UPDATE meeting_ai_revision SET rev = rev + 1 WHERE id = 1; END;
+    CREATE TRIGGER IF NOT EXISTS ai_rev_src_d AFTER DELETE ON calendar_sources
+      BEGIN UPDATE meeting_ai_revision SET rev = rev + 1 WHERE id = 1; END;";
+
+/// Rechtsgrundlage der Weitergabe an KI-Clients (ADR-0031 E2 Nr. 7). Die App prüft sie nicht
+/// rechtlich; sie hält fest, auf welche geprüfte Grundlage der Nutzer die Freigabe stützt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum Rechtsgrundlage {
+    /// Art. 6 Abs. 1 lit. a DSGVO; nur mit [`Freigabenachweis::einwilligungen_liegen_vor`].
+    Einwilligung,
+    /// Art. 6 Abs. 1 lit. b DSGVO.
+    Vertrag,
+    /// Art. 6 Abs. 1 lit. c DSGVO.
+    RechtlichePflicht,
+    /// Art. 6 Abs. 1 lit. e DSGVO (öffentliche Aufgabe).
+    OeffentlicheAufgabe,
+    /// Art. 6 Abs. 1 lit. f DSGVO.
+    BerechtigtesInteresse,
+    /// Dienst- oder Betriebsvereinbarung (Beschäftigte, LDSG BW bzw. § 26 BDSG).
+    Kollektivvereinbarung,
+}
+
+impl Rechtsgrundlage {
+    fn text(self) -> &'static str {
+        match self {
+            Rechtsgrundlage::Einwilligung => "einwilligung",
+            Rechtsgrundlage::Vertrag => "vertrag",
+            Rechtsgrundlage::RechtlichePflicht => "rechtliche_pflicht",
+            Rechtsgrundlage::OeffentlicheAufgabe => "oeffentliche_aufgabe",
+            Rechtsgrundlage::BerechtigtesInteresse => "berechtigtes_interesse",
+            Rechtsgrundlage::Kollektivvereinbarung => "kollektivvereinbarung",
+        }
+    }
+
+    fn aus_text(s: &str) -> Option<Self> {
+        [
+            Rechtsgrundlage::Einwilligung,
+            Rechtsgrundlage::Vertrag,
+            Rechtsgrundlage::RechtlichePflicht,
+            Rechtsgrundlage::OeffentlicheAufgabe,
+            Rechtsgrundlage::BerechtigtesInteresse,
+            Rechtsgrundlage::Kollektivvereinbarung,
+        ]
+        .into_iter()
+        .find(|r| r.text() == s)
+    }
+}
+
+/// Was der Nutzer mit der Bestätigung erklärt (ADR-0031 E2 Nr. 7).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct Freigabenachweis {
+    /// Die Teilnehmenden sind über Zweck, Empfänger, Cloud-Nutzung und Speicherdauer informiert.
+    pub informiert: bool,
+    /// Die geprüfte Rechtsgrundlage; ohne sie keine Freigabe.
+    pub rechtsgrundlage: Option<Rechtsgrundlage>,
+    /// Bei Einwilligung: Sie liegt von allen Teilnehmenden vor (ein Hinweis ersetzt sie nicht).
+    pub einwilligungen_liegen_vor: bool,
+}
+
+impl Freigabenachweis {
+    /// Die Grundlage, wenn der Nachweis vollständig ist; sonst der Fehlercode.
+    fn pruefen(&self) -> Result<Rechtsgrundlage> {
+        if !self.informiert {
+            return Err(anyhow!("ki_freigabe_ohne_information"));
+        }
+        let grundlage = self
+            .rechtsgrundlage
+            .ok_or_else(|| anyhow!("ki_freigabe_ohne_rechtsgrundlage"))?;
+        if grundlage == Rechtsgrundlage::Einwilligung && !self.einwilligungen_liegen_vor {
+            return Err(anyhow!("ki_freigabe_ohne_einwilligung"));
+        }
+        Ok(grundlage)
+    }
+}
+
+/// Richtlinie für KI-Clients, wie sie im Spiegel `meeting_ai_policy` steht.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Richtlinie {
+    pub nur_lokal: bool,
+    pub cloud_bei_externen: bool,
+    pub eigene_domaenen: Vec<String>,
+}
+
+impl Richtlinie {
+    pub fn aus_einstellungen(s: &crate::settings::AppSettings) -> Self {
+        Richtlinie {
+            nur_lokal: s.compliance_profile
+                == crate::managers::compliance::ComplianceProfile::LocalOnly,
+            cloud_bei_externen: s.meeting_cloud_with_externals,
+            eigene_domaenen: s.meeting_own_domains.clone(),
+        }
+    }
+}
+
+/// Revision und Richtlinienspiegel aus EINEM Datenbankstand.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KiStand {
+    pub rev: i64,
+    pub richtlinie: Option<Richtlinie>,
+}
+
 /// Importgrenze der Teilnehmerliste je Termin (`calendar::ics` und `calendar::graph`). Eine
 /// Liste dieser Länge kann gekürzt sein und gilt als unvollständig.
 const TEILNEHMER_IMPORTGRENZE: usize = 500;
@@ -73,9 +235,19 @@ pub struct KiLage {
 
 #[cfg(test)]
 thread_local! {
-    /// Testbarriere: läuft in [`KiSperre::unveraendert`] zwischen Ausgabe und Nachprüfung.
+    /// Testbarriere: läuft in `mcp::tools::call` nach dem Lesen der Nutzlast und vor der
+    /// abschließenden Prüfung (dem Linearisierungspunkt).
     pub(crate) static VOR_NACHPRUEFUNG: std::cell::RefCell<Option<Box<dyn Fn()>>> =
         std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
+pub(crate) fn barriere_ausloesen() {
+    VOR_NACHPRUEFUNG.with(|h| {
+        if let Some(f) = h.borrow().as_ref() {
+            f()
+        }
+    });
 }
 
 fn einstufung_text(e: Einstufung) -> &'static str {
@@ -171,16 +343,25 @@ impl MeetingStore {
         conn: &rusqlite::Connection,
         meeting_id: &str,
     ) -> Result<Option<Bestaetigung>> {
-        let row: Option<(String, String, i64)> = conn
+        let row: Option<(String, String, i64, Option<String>, i64)> = conn
             .query_row(
-                "SELECT einstufung, fingerabdruck, fp_version FROM meeting_ai_confirmations
-                  WHERE meeting_id = ?1",
+                "SELECT einstufung, fingerabdruck, fp_version, rechtsgrundlage, einwilligungen_belegt
+                   FROM meeting_ai_confirmations WHERE meeting_id = ?1",
                 params![meeting_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             )
             .optional()?;
-        let row = row.filter(|(_, _, v)| *v == i64::from(FINGERABDRUCK_VERSION));
-        Ok(row.and_then(|(e, f, _)| {
+        // Zählt nur mit passender Schemaversion und vollständigem Nachweis (Rechtsgrundlage,
+        // bei Einwilligung deren Vorliegen); eine Altzeile ohne Rechtsgrundlage zählt nicht.
+        let row = row.filter(|(_, _, v, grund, belegt)| {
+            *v == i64::from(FINGERABDRUCK_VERSION)
+                && match grund.as_deref().and_then(Rechtsgrundlage::aus_text) {
+                    Some(Rechtsgrundlage::Einwilligung) => *belegt == 1,
+                    Some(_) => true,
+                    None => false,
+                }
+        });
+        Ok(row.and_then(|(e, f, ..)| {
             einstufung_aus_text(&e).map(|einstufung| Bestaetigung {
                 einstufung,
                 fingerabdruck: f,
@@ -188,37 +369,69 @@ impl MeetingStore {
         }))
     }
 
-    /// Speichert die Bestätigung sofort (ersetzt eine vorhandene). Nur für lebende Besprechungen.
-    pub fn ki_bestaetigung_setzen(
-        &self,
-        meeting_id: &str,
-        bestaetigung: &Bestaetigung,
-        now_ms: i64,
-    ) -> Result<()> {
+    /// Revision und Richtlinienspiegel aus einem Datenbankstand (Lesetransaktion).
+    pub fn ki_stand(&self) -> Result<KiStand> {
+        let conn = self.get_connection()?;
+        let tx = conn.unchecked_transaction()?;
+        let rev: i64 = tx.query_row(
+            "SELECT rev FROM meeting_ai_revision WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )?;
+        let richtlinie = Self::ki_richtlinie_in(&tx)?;
+        tx.commit()?;
+        Ok(KiStand { rev, richtlinie })
+    }
+
+    fn ki_richtlinie_in(conn: &rusqlite::Connection) -> Result<Option<Richtlinie>> {
+        let row: Option<(bool, bool, String)> = conn
+            .query_row(
+                "SELECT nur_lokal, cloud_bei_externen, eigene_domaenen FROM meeting_ai_policy
+                  WHERE id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?;
+        // Ein unlesbarer Spiegel zählt wie keiner (gesperrt).
+        Ok(row.and_then(|(nur_lokal, cloud_bei_externen, domaenen)| {
+            serde_json::from_str::<Vec<String>>(&domaenen)
+                .ok()
+                .map(|eigene_domaenen| Richtlinie {
+                    nur_lokal,
+                    cloud_bei_externen,
+                    eigene_domaenen,
+                })
+        }))
+    }
+
+    /// Schreibt den Richtlinienspiegel in EINER Schreibtransaktion. Ändern sich dabei die eigenen
+    /// Domänen, werden im selben Zug ALLE Bestätigungen gelöscht (eine Rückkehr zu alten Domänen
+    /// reaktiviert nichts). Unverändert: kein Schreiben, keine neue Revision. `true`, wenn sich
+    /// der Spiegel geändert hat.
+    pub fn ki_richtlinie_setzen(&self, neu: &Richtlinie) -> Result<bool> {
         let mut conn = self.get_connection()?;
         let tx = Self::write_tx(&mut conn)?;
-        Self::ensure_meeting_is_live(&tx, meeting_id)?;
+        let alt = Self::ki_richtlinie_in(&tx)?;
+        if alt.as_ref() == Some(neu) {
+            return Ok(false);
+        }
+        if alt.as_ref().map(|a| &a.eigene_domaenen) != Some(&neu.eigene_domaenen) {
+            tx.execute("DELETE FROM meeting_ai_confirmations", [])?;
+        }
         tx.execute(
-            "INSERT OR REPLACE INTO meeting_ai_confirmations
-               (meeting_id, einstufung, fingerabdruck, fp_version, informiert, confirmed_at)
-             VALUES (?1, ?2, ?3, ?4, 1, ?5)",
+            "INSERT INTO meeting_ai_policy (id, nur_lokal, cloud_bei_externen, eigene_domaenen)
+             VALUES (1, ?1, ?2, ?3)
+             ON CONFLICT(id) DO UPDATE SET nur_lokal = excluded.nur_lokal,
+               cloud_bei_externen = excluded.cloud_bei_externen,
+               eigene_domaenen = excluded.eigene_domaenen",
             params![
-                meeting_id,
-                einstufung_text(bestaetigung.einstufung),
-                bestaetigung.fingerabdruck,
-                i64::from(FINGERABDRUCK_VERSION),
-                now_ms
+                neu.nur_lokal,
+                neu.cloud_bei_externen,
+                serde_json::to_string(&neu.eigene_domaenen)?
             ],
         )?;
         tx.commit()?;
-        Ok(())
-    }
-
-    /// Hebt ALLE Bestätigungen auf (nach einer Änderung der eigenen Domänen): Sie werden
-    /// gelöscht, nicht nur unpassend, damit eine Rückkehr zu alten Domänen nichts reaktiviert.
-    pub fn ki_bestaetigungen_alle_entfernen(&self) -> Result<usize> {
-        let conn = self.get_connection()?;
-        Ok(conn.execute("DELETE FROM meeting_ai_confirmations", [])?)
+        Ok(true)
     }
 
     /// Nimmt die Bestätigung zurück (Besprechung wieder gesperrt).
@@ -303,29 +516,38 @@ impl KiSperre {
         Ok(self.entscheiden(&store.ki_lage(meeting_id)?))
     }
 
-    /// Der geprüfte Stand, wenn ein KI-Client die Besprechung sehen darf; ein Lesefehler
-    /// sperrt. Den Stand braucht [`Self::unveraendert`] nach dem Lesen der Inhalte.
-    pub fn freigegeben(&self, store: &MeetingStore, meeting_id: &str) -> Option<KiLage> {
-        let l = store.ki_lage(meeting_id).ok()?;
-        self.entscheiden(&l).erlaubt().then_some(l)
-    }
-
     /// `true`, wenn ein KI-Client die Besprechung sehen darf; ein Lesefehler sperrt.
     pub fn sichtbar(&self, store: &MeetingStore, meeting_id: &str) -> bool {
-        self.freigegeben(store, meeting_id).is_some()
+        store
+            .ki_lage(meeting_id)
+            .is_ok_and(|l| self.entscheiden(&l).erlaubt())
     }
 
-    /// Nachprüfung NACH dem Lesen der Inhalte (Codex #583, Blocker 2): Nur wenn der Stand
-    /// unverändert und weiter freigegeben ist, darf die Ausgabe hinaus. Eine Kalenderänderung
-    /// oder ein Widerruf zwischen Prüfung und Ausgabe sperrt so die bereits gelesene Ausgabe.
-    pub fn unveraendert(&self, store: &MeetingStore, meeting_id: &str, vorher: &KiLage) -> bool {
-        #[cfg(test)]
-        VOR_NACHPRUEFUNG.with(|h| {
-            if let Some(f) = h.borrow().as_ref() {
-                f()
-            }
-        });
-        self.freigegeben(store, meeting_id).as_ref() == Some(vorher)
+    /// Die Richtlinie dieser Sperre (die Testvariante hat keine).
+    pub fn richtlinie(&self) -> Option<Richtlinie> {
+        match self {
+            KiSperre::Pruefen {
+                kundenprofil_nur_lokal,
+                cloud_bei_externen,
+                eigene_domaenen,
+            } => Some(Richtlinie {
+                nur_lokal: *kundenprofil_nur_lokal,
+                cloud_bei_externen: *cloud_bei_externen,
+                eigene_domaenen: eigene_domaenen.clone(),
+            }),
+            #[cfg(test)]
+            KiSperre::Offen => None,
+        }
+    }
+
+    /// Abgleich mit dem Spiegel in der Datenbank (Codex #583 Fixrunde 2): Nur wenn beide
+    /// übereinstimmen, gilt die Sperre; fehlt der Spiegel oder weicht er ab (eine Änderung ist
+    /// gerade unterwegs, oder sein Schreiben schlug fehl), gibt es KEINE Ausgabe (`None`).
+    pub fn abgleichen(&self, spiegel: Option<&Richtlinie>) -> Option<KiSperre> {
+        match self.richtlinie() {
+            None => Some(self.clone()),
+            Some(r) => (spiegel == Some(&r)).then(|| self.clone()),
+        }
     }
 }
 
@@ -356,35 +578,57 @@ pub fn stand(store: &MeetingStore, sperre: &KiSperre, meeting_id: &str) -> Resul
     })
 }
 
-/// Bestätigt die Einstufung. Sie muss zur AKTUELLEN Liste passen (Fingerabdruck) und darf
-/// nicht lockerer sein als die berechnete: „intern“ nur, wenn die Liste intern ist.
+/// Bestätigt die Einstufung. Prüfung und Speichern laufen in EINER Schreibtransaktion gegen den
+/// Richtlinienspiegel der Datenbank (Codex #583 Fixrunde 2): Ein gleichzeitiger Wechsel der
+/// eigenen Domänen ist entweder vorher festgeschrieben (dann gilt er hier) oder er löscht diese
+/// Bestätigung danach. Die Einstufung muss zur AKTUELLEN Liste passen (Fingerabdruck) und darf
+/// nicht lockerer sein als die berechnete: „intern“ nur, wenn die Liste intern ist. Der
+/// Nachweis (Information, Rechtsgrundlage, bei Einwilligung deren Vorliegen) ist Pflicht.
 pub fn bestaetigen(
     store: &MeetingStore,
     sperre: &KiSperre,
     meeting_id: &str,
     einstufung: Einstufung,
     fingerabdruck: &str,
-    informiert: bool,
+    nachweis: &Freigabenachweis,
     now_ms: i64,
 ) -> Result<KiFreigabeStand> {
-    if !informiert {
-        return Err(anyhow!("ki_freigabe_ohne_information"));
+    let grundlage = nachweis.pruefen()?;
+    {
+        let mut conn = store.get_connection()?;
+        let tx = MeetingStore::write_tx(&mut conn)?;
+        MeetingStore::ensure_meeting_is_live(&tx, meeting_id)?;
+        let richtlinie = MeetingStore::ki_richtlinie_in(&tx)?
+            .ok_or_else(|| anyhow!("ki_freigabe_richtlinie_fehlt"))?;
+        let lage = MeetingStore::ki_teilnehmerlage_in(&tx, meeting_id)?;
+        let ergebnis = einstufen(
+            &lage.teilnehmende,
+            &richtlinie.eigene_domaenen,
+            lage.liste_aus_termin,
+        );
+        if ergebnis.fingerabdruck != fingerabdruck {
+            return Err(anyhow!("ki_freigabe_veraltet"));
+        }
+        if einstufung == Einstufung::Intern && ergebnis.einstufung != Einstufung::Intern {
+            return Err(anyhow!("ki_freigabe_nicht_intern"));
+        }
+        tx.execute(
+            "INSERT OR REPLACE INTO meeting_ai_confirmations
+               (meeting_id, einstufung, fingerabdruck, fp_version, informiert, confirmed_at,
+                rechtsgrundlage, einwilligungen_belegt)
+             VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7)",
+            params![
+                meeting_id,
+                einstufung_text(einstufung),
+                fingerabdruck,
+                i64::from(FINGERABDRUCK_VERSION),
+                now_ms,
+                grundlage.text(),
+                nachweis.einwilligungen_liegen_vor && grundlage == Rechtsgrundlage::Einwilligung,
+            ],
+        )?;
+        tx.commit()?;
     }
-    let aktuell = stand(store, sperre, meeting_id)?;
-    if aktuell.ergebnis.fingerabdruck != fingerabdruck {
-        return Err(anyhow!("ki_freigabe_veraltet"));
-    }
-    if einstufung == Einstufung::Intern && aktuell.ergebnis.einstufung != Einstufung::Intern {
-        return Err(anyhow!("ki_freigabe_nicht_intern"));
-    }
-    store.ki_bestaetigung_setzen(
-        meeting_id,
-        &Bestaetigung {
-            einstufung,
-            fingerabdruck: fingerabdruck.to_string(),
-        },
-        now_ms,
-    )?;
     stand(store, sperre, meeting_id)
 }
 

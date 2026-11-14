@@ -26,6 +26,15 @@ const shoot = async (page: Page, name: string) => {
 
 const FP = "f".repeat(64);
 
+/** Rechtsgrundlage im Freigabe-Feld wählen (Liste hängt an `document.body`). */
+const grundlage = async (page: Page, name: string) => {
+  await page
+    .getByTestId("details-ai-release")
+    .getByRole("combobox", { name: /Rechtsgrundlage/ })
+    .click();
+  await page.getByRole("option", { name: new RegExp(name) }).click();
+};
+
 /** Attrappe der G9a-2-Commands; `stand` ist der Zustand je Besprechung. */
 const installReleaseCommands = async (
   page: Page,
@@ -34,6 +43,10 @@ const installReleaseCommands = async (
     externe?: string[];
     ohne?: number;
     statusFails?: boolean;
+    /** Diese Besprechungen sind beim Start schon freigegeben. */
+    vorab?: string[];
+    /** Statusabruf dieser Besprechung wartet, bis `__weiter()` aufgerufen wird. */
+    verzoegert?: string;
   },
 ) => {
   await page.addInitScript((cfg) => {
@@ -44,6 +57,15 @@ const installReleaseCommands = async (
     w.__settings.meeting_cloud_with_externals = false;
     // Bestätigung JE Besprechung, damit ein Fehler über Besprechungen hinweg auffällt.
     w.__bestaetigungen = {};
+    for (const id of cfg.vorab ?? []) {
+      w.__bestaetigungen[id] = {
+        einstufung: "intern",
+        fingerabdruck: "f".repeat(64),
+      };
+    }
+    let weiter: () => void = () => {};
+    const sperre = new Promise<void>((r) => (weiter = r));
+    w.__weiter = () => weiter();
     const stand = (id: string) => {
       const extern = cfg.einstufung === "extern";
       const b = w.__bestaetigungen[id] ?? null;
@@ -87,10 +109,27 @@ const installReleaseCommands = async (
         case "meeting_ai_release_status":
           w.__calls.push({ cmd, args });
           if (cfg.statusFails) throw "meetings_unavailable";
+          if (cfg.verzoegert === args.meetingId) {
+            await sperre;
+            // Verspätete Antwort: behauptet „freigegeben“, darf aber nirgends ankommen.
+            return {
+              ...stand(args.meetingId as string),
+              entscheidung: { ergebnis: "erlaubt", einstufung: "intern" },
+            };
+          }
           return stand(args.meetingId as string);
         case "meeting_ai_release_confirm":
           w.__calls.push({ cmd, args });
-          if (args.informiert !== true) throw "ki_freigabe_ohne_information";
+          {
+            const n = args.nachweis as any;
+            if (n?.informiert !== true) throw "ki_freigabe_ohne_information";
+            if (!n.rechtsgrundlage) throw "ki_freigabe_ohne_rechtsgrundlage";
+            if (
+              n.rechtsgrundlage === "einwilligung" &&
+              !n.einwilligungen_liegen_vor
+            )
+              throw "ki_freigabe_ohne_einwilligung";
+          }
           w.__bestaetigungen[args.meetingId as string] = {
             einstufung: args.einstufung,
             fingerabdruck: args.fingerabdruck,
@@ -164,14 +203,15 @@ test.describe("Eingaben unter dem MCP-Schalter", () => {
 
   test("Cloud bei Externen ist aus und schaltbar", async ({ page }) => {
     await setup(page);
-    const toggle = page
-      .getByText("Cloud-Modelle in Besprechungen mit Externen", {
-        exact: true,
-      })
-      .locator("xpath=ancestor::div[.//input[@type='checkbox']][1]")
-      .locator("input[type=checkbox]");
+    // Zugänglicher Name und echte Tastatur (kein DOM-Klick).
+    const toggle = page.getByRole("switch", {
+      name: "Cloud-Modelle in Besprechungen mit Externen",
+      exact: true,
+    });
     await expect(toggle).not.toBeChecked();
-    await toggle.evaluate((el) => (el as HTMLInputElement).click());
+    await toggle.focus();
+    await page.keyboard.press("Space");
+    await expect(toggle).toBeChecked();
     await expect
       .poll(
         async () =>
@@ -207,7 +247,7 @@ test.describe("Freigabe einer Besprechung in den Details", () => {
       "Laut Termin nur interne Teilnehmende.",
     );
     await expect(row.getByTestId("ai-release-confirm-extern")).toHaveCount(0);
-    // Ohne Erklärung zur Information kein Bestätigen.
+    // Ohne Information und Rechtsgrundlage kein Bestätigen.
     const confirmIntern = row.getByRole("button", {
       name: "Als intern freigeben",
     });
@@ -218,6 +258,17 @@ test.describe("Freigabe einer Besprechung in den Details", () => {
     await informed.focus();
     await page.keyboard.press("Space");
     await expect(informed).toBeChecked();
+    await expect(confirmIntern).toBeDisabled();
+    const basis = row.getByRole("combobox", { name: /Rechtsgrundlage/ });
+    await basis.focus();
+    await page.keyboard.type("Einwilligung");
+    await page.keyboard.press("Enter");
+    // Einwilligung: erst mit „liegt vor“.
+    await expect(confirmIntern).toBeDisabled();
+    const consent = row.getByRole("checkbox", { name: /Einwilligungen/ });
+    await consent.focus();
+    await page.keyboard.press("Space");
+    await expect(confirmIntern).toBeEnabled();
     await confirmIntern.focus();
     await page.keyboard.press("Enter");
     await expect(row.getByTestId("ai-release-status")).toHaveText(
@@ -228,7 +279,11 @@ test.describe("Freigabe einer Besprechung in den Details", () => {
       meetingId: "m2",
       einstufung: "intern",
       fingerabdruck: FP,
-      informiert: true,
+      nachweis: {
+        informiert: true,
+        rechtsgrundlage: "einwilligung",
+        einwilligungen_liegen_vor: true,
+      },
     });
     await shoot(page, "03-details-freigegeben");
     await row.getByTestId("ai-release-revoke").click();
@@ -250,6 +305,7 @@ test.describe("Freigabe einer Besprechung in den Details", () => {
     );
     await expect(row.getByTestId("ai-release-confirm-intern")).toHaveCount(0);
     await row.getByRole("checkbox", { name: /informiert/ }).check();
+    await grundlage(page, "Öffentliche Aufgabe");
     await row.getByTestId("ai-release-confirm-extern").click();
     await expect(row.getByTestId("ai-release-status")).toHaveText("Gesperrt");
     await expect(row.getByTestId("ai-release-reasons")).toContainText(
@@ -274,6 +330,47 @@ test.describe("Freigabe einer Besprechung in den Details", () => {
     ).toHaveText("Gesperrt");
   });
 
+  test("Ladefehler bei bestehender Freigabe: Status unbekannt, nicht „gesperrt“", async ({
+    page,
+  }) => {
+    await installLiveMock(page);
+    await installReleaseCommands(page, {
+      einstufung: "intern",
+      statusFails: true,
+      vorab: ["m2"],
+    });
+    await open(page);
+    const row = dialog(page).getByTestId("details-ai-release");
+    await expect(row.getByRole("alert")).toHaveText(
+      "Der Freigabestand ließ sich nicht laden. Der aktuelle Status ist unbekannt.",
+    );
+    await expect(row).not.toContainText("gesperrt");
+  });
+
+  test("verspätete Antwort einer anderen Besprechung kommt nicht an", async ({
+    page,
+  }) => {
+    await installLiveMock(page);
+    await installReleaseCommands(page, {
+      einstufung: "intern",
+      verzoegert: "m2",
+    });
+    await open(page);
+    // m2 wartet noch; Dialog schließen und m1 öffnen.
+    await page.keyboard.press("Escape");
+    await expect(dialog(page)).toHaveCount(0);
+    await pickMeeting(page, "m1");
+    await page.getByTestId("meeting-details-open").click();
+    const row = dialog(page).getByTestId("details-ai-release");
+    await expect(row.getByTestId("ai-release-status")).toHaveText("Gesperrt");
+    await page.evaluate(() => (window as any).__weiter());
+    await expect
+      .poll(async () => (await calls(page, "meeting_ai_release_status")).length)
+      .toBeGreaterThanOrEqual(2);
+    await page.waitForTimeout(100);
+    await expect(row.getByTestId("ai-release-status")).toHaveText("Gesperrt");
+  });
+
   test("Ladefehler wird angezeigt, nichts ist freigegeben", async ({
     page,
   }) => {
@@ -294,6 +391,7 @@ test.describe("Freigabe einer Besprechung in den Details", () => {
     await open(page);
     const row = dialog(page).getByTestId("details-ai-release");
     await row.getByRole("checkbox", { name: /informiert/ }).check();
+    await grundlage(page, "Vertrag");
     await row.getByTestId("ai-release-confirm-intern").click();
     await expect(row.getByTestId("ai-release-status")).toHaveText(
       "Freigegeben (intern)",
@@ -312,5 +410,36 @@ test.describe("Freigabe einer Besprechung in den Details", () => {
     expect(
       status.map((c: { args: { meetingId: string } }) => c.args.meetingId),
     ).toContain("m1");
+  });
+});
+
+// Englische Oberfläche: dieselben Bedienwege mit englischen Texten.
+test.describe("Release in English", () => {
+  test.use({ locale: "en-US" });
+  const dialog = (page: Page) => page.getByRole("dialog");
+
+  test("internal: needs information and legal basis", async ({ page }) => {
+    await installLiveMock(page);
+    await installReleaseCommands(page, { einstufung: "intern" });
+    await page.addInitScript(() => {
+      (window as any).__settings.app_language = "en";
+    });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/");
+    await page.getByRole("button", { name: "Recordings", exact: true }).click();
+    await page.getByTestId("rec-content").waitFor();
+    await pickMeeting(page, "m2");
+    await page.getByTestId("meeting-details-open").click();
+    const row = dialog(page).getByTestId("details-ai-release");
+    await expect(row.getByTestId("ai-release-status")).toHaveText("Blocked");
+    const confirm = row.getByTestId("ai-release-confirm-intern");
+    await expect(confirm).toBeDisabled();
+    await row.getByRole("checkbox", { name: /informed/ }).check();
+    await row.getByRole("combobox", { name: /Legal basis/ }).click();
+    await page.getByRole("option", { name: /Legitimate interest/ }).click();
+    await confirm.click();
+    await expect(row.getByTestId("ai-release-status")).toHaveText(
+      "Released (internal)",
+    );
   });
 });

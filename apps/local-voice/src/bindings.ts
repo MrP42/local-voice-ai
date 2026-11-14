@@ -5514,14 +5514,14 @@ async meetingAiReleaseStatus(meetingId: string) : Promise<Result<KiFreigabeStand
 },
 /**
  * Bestaetigt die Einstufung fuer GENAU diese Besprechung und diese Teilnehmerliste. Fehler
- * `ki_freigabe_veraltet` (Liste oder Domaenen haben sich geaendert, neu laden) oder
- * `ki_freigabe_nicht_intern` (die Liste ist nicht intern). `informiert`: Der Nutzer bestätigt,
- * dass die Teilnehmenden über die Weitergabe an KI-Clients informiert sind; ohne das Fehler
- * `ki_freigabe_ohne_information`. Wird sofort gespeichert.
+ * `ki_freigabe_veraltet` (Liste oder Domaenen haben sich geaendert, neu laden),
+ * `ki_freigabe_nicht_intern` (die Liste ist nicht intern), `ki_freigabe_ohne_information`,
+ * `ki_freigabe_ohne_rechtsgrundlage`, `ki_freigabe_ohne_einwilligung` (Nachweis nach ADR-0031
+ * E2 Nr. 7 unvollstaendig) oder `ki_freigabe_richtlinie_fehlt`. Wird sofort gespeichert.
  */
-async meetingAiReleaseConfirm(meetingId: string, einstufung: Einstufung, fingerabdruck: string, informiert: boolean) : Promise<Result<KiFreigabeStand, string>> {
+async meetingAiReleaseConfirm(meetingId: string, einstufung: Einstufung, fingerabdruck: string, nachweis: Freigabenachweis) : Promise<Result<KiFreigabeStand, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meeting_ai_release_confirm", { meetingId, einstufung, fingerabdruck, informiert }) };
+    return { status: "ok", data: await TAURI_INVOKE("meeting_ai_release_confirm", { meetingId, einstufung, fingerabdruck, nachweis }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -5540,8 +5540,9 @@ async meetingAiReleaseRevoke(meetingId: string) : Promise<Result<KiFreigabeStand
 },
 /**
  * „Eigene Domänen“ speichern: nur die wirksamen Eintraege; die abgelehnten gehen zur Anzeige
- * zurueck. Jede wirksame Aenderung LOESCHT alle Bestaetigungen (vor dem Speichern), damit eine
- * Rueckkehr zu den alten Domaenen keine alte Freigabe reaktiviert (Codex #583).
+ * zurueck. Erst der Richtlinienspiegel (eine Schreibtransaktion, die bei geaenderten Domaenen
+ * ALLE Bestaetigungen loescht), dann die Einstellungsdatei. Schlaegt der Spiegel fehl, bleibt
+ * alles beim Alten (Fehler an die Oberflaeche); dazwischen gibt der MCP-Server nichts aus.
  */
 async changeMeetingOwnDomainsSetting(domains: string[]) : Promise<Result<EigeneDomaenenBereinigt, string>> {
     try {
@@ -11605,6 +11606,22 @@ export type FreigabeZeile = { id: string; text: string;
  */
 hintClass: string | null }
 /**
+ * Was der Nutzer mit der Bestätigung erklärt (ADR-0031 E2 Nr. 7).
+ */
+export type Freigabenachweis = { 
+/**
+ * Die Teilnehmenden sind über Zweck, Empfänger, Cloud-Nutzung und Speicherdauer informiert.
+ */
+informiert: boolean; 
+/**
+ * Die geprüfte Rechtsgrundlage; ohne sie keine Freigabe.
+ */
+rechtsgrundlage: Rechtsgrundlage | null; 
+/**
+ * Bei Einwilligung: Sie liegt von allen Teilnehmenden vor (ein Hinweis ersetzt sie nicht).
+ */
+einwilligungen_liegen_vor: boolean }
+/**
  * Modell einer Funktion (Modelle je Funktion, Vorschlag E1, 01.11.2026). Leere
  * `model_id` = das Standardmodell (`llm_active_model_id`) gilt.
  */
@@ -13899,6 +13916,35 @@ searxngUrl: string | null;
  * Darf die anfragende Person die Suchadresse aendern (nur Administration).
  */
 canConfigure: boolean }
+/**
+ * Rechtsgrundlage der Weitergabe an KI-Clients (ADR-0031 E2 Nr. 7). Die App prüft sie nicht
+ * rechtlich; sie hält fest, auf welche geprüfte Grundlage der Nutzer die Freigabe stützt.
+ */
+export type Rechtsgrundlage = 
+/**
+ * Art. 6 Abs. 1 lit. a DSGVO; nur mit [`Freigabenachweis::einwilligungen_liegen_vor`].
+ */
+"einwilligung" | 
+/**
+ * Art. 6 Abs. 1 lit. b DSGVO.
+ */
+"vertrag" | 
+/**
+ * Art. 6 Abs. 1 lit. c DSGVO.
+ */
+"rechtliche_pflicht" | 
+/**
+ * Art. 6 Abs. 1 lit. e DSGVO (öffentliche Aufgabe).
+ */
+"oeffentliche_aufgabe" | 
+/**
+ * Art. 6 Abs. 1 lit. f DSGVO.
+ */
+"berechtigtes_interesse" | 
+/**
+ * Dienst- oder Betriebsvereinbarung (Beschäftigte, LDSG BW bzw. § 26 BDSG).
+ */
+"kollektivvereinbarung"
 /**
  * Aufruf eines Recipes: ID (`builtin:<key>` oder eigene) und Werte der
  * Variablen nach Name. Werte fuer `folder` sind Ordner-IDs, fuer `meeting`

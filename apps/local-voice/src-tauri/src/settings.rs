@@ -2723,6 +2723,19 @@ fn schreibe_unter_sperre(app: &AppHandle, mut settings: AppSettings, erweitern: 
     if let Some(e) = error {
         log::error!("{e}");
     }
+    // G9a-2 (Codex #583 Fixrunde 2): Richtlinie fuer KI-Clients zuerst in den Spiegel der
+    // Besprechungsdatenbank. Weichen Spiegel und Datei ab (auch wenn das hier fehlschlaegt),
+    // gibt der MCP-Server nichts aus; unveraendert schreibt der Spiegel nichts.
+    if let Some(store) = tauri::Manager::try_state::<
+        std::sync::Arc<crate::managers::meetings::store::MeetingStore>,
+    >(app)
+    {
+        if let Err(e) = store.ki_richtlinie_setzen(
+            &crate::managers::meetings::ki_freigabe::Richtlinie::aus_einstellungen(&settings),
+        ) {
+            log::error!("Richtlinienspiegel fuer KI-Clients nicht geschrieben: {e}");
+        }
+    }
     // Erst speichern, dann die Version veroeffentlichen (Sperre haelt der Aufrufer; Reihenfolge der
     // Sperren: `app_context::berechtigung`).
     crate::app_context::berechtigung::global().schreiben_mit(

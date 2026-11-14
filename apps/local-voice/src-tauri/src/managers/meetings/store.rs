@@ -155,6 +155,10 @@ pub(crate) static MIGRATIONS: &[M] = &[
     // KI-Clients (`meeting_ai_confirmations`). Nur CREATE ... IF NOT EXISTS, keine Rueckfuellung:
     // keine Zeile heisst unbestaetigt. Der SQL-Text steht in `ki_freigabe.rs`.
     M::up(super::ki_freigabe::KI_FREIGABE_MIGRATION),
+    // G9a-2 Fixrunde 2 (Codex #583), Index 20: monotone Revision der Freigabegrundlage (Trigger),
+    // Richtlinienspiegel `meeting_ai_policy`, Rechtsgrundlage je Bestaetigung (Altzeilen ohne sie
+    // zaehlen nicht). Additiv; der SQL-Text steht in `ki_freigabe.rs`.
+    M::up(super::ki_freigabe::KI_REVISION_MIGRATION),
 ];
 
 /// Index 17: urspruenglicher Beginn der Instanz eines Serientermins (UTC-ms, `NULL` bei einem

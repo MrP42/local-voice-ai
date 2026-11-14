@@ -547,15 +547,17 @@ impl KnowledgeSource for AppKnowledge {
         };
         // Dieselbe Logik und Grenzen wie `meetings_list` (nur fertige Besprechungen, G9a-2: nur
         // fuer KI-Clients freigegebene).
-        let ki_sperre = crate::managers::meetings::ki_freigabe::KiSperre::aus_einstellungen(
-            &crate::settings::get_settings(&self.app),
-        );
+        let ki_quelle = || {
+            crate::managers::meetings::ki_freigabe::KiSperre::aus_einstellungen(
+                &crate::settings::get_settings(&self.app),
+            )
+        };
         let backend = Backend {
             db_path: self.store.db_path(),
             busy_timeout: READ_BUSY_TIMEOUT,
             include_transcript: false,
             transcript_page_chars: voice::VOICE_PAGE_CHARS,
-            ki_sperre: &ki_sperre,
+            ki_quelle: &ki_quelle,
         };
         let args = json!({ "from": iso(from_ms), "to": iso(to_ms - 1), "limit": limit });
         let outcome = mcp_tools::call("list_meetings", &args, &backend);
