@@ -69,23 +69,13 @@ use besprechungsplanung::assistent::{
 };
 use tauri::Manager;
 
-use crate::managers::meetings::ki_freigabe::{
-    self, Freigabenachweis, KiFreigabeStand, KiSperre, Richtlinie,
-};
+use crate::managers::meetings::ki_freigabe::{self, Freigabenachweis, KiFreigabeStand, KiSperre};
 use crate::managers::meetings::store::MeetingStore;
 
 fn store_of(app: &tauri::AppHandle) -> Result<Arc<MeetingStore>, String> {
     app.try_state::<Arc<MeetingStore>>()
         .map(|state| Arc::clone(&state))
         .ok_or_else(|| "meetings_unavailable".to_string())
-}
-
-/// Richtlinienspiegel vor dem Schreiben der Einstellungen (Fehler an die Oberflaeche).
-fn spiegeln(app: &tauri::AppHandle, s: &settings::AppSettings) -> Result<(), String> {
-    store_of(app)?
-        .ki_richtlinie_setzen(&Richtlinie::aus_einstellungen(s))
-        .map(|_| ())
-        .map_err(|e| e.to_string())
 }
 
 fn sperre_of(app: &tauri::AppHandle) -> KiSperre {
@@ -154,11 +144,10 @@ pub fn change_meeting_own_domains_setting(
     app: tauri::AppHandle,
     domains: Vec<String>,
 ) -> Result<EigeneDomaenenBereinigt, String> {
+    store_of(&app)?;
     let bereinigt = eigene_domaenen_bereinigen(&domains);
-    let mut s = settings::get_settings(&app);
-    s.meeting_own_domains = bereinigt.gueltig.clone();
-    spiegeln(&app, &s)?;
-    settings::write_settings(&app, s);
+    let gueltig = bereinigt.gueltig.clone();
+    settings::richtlinie_aendern(&app, |s| s.meeting_own_domains = gueltig)?;
     Ok(bereinigt)
 }
 
@@ -178,11 +167,8 @@ pub fn change_meeting_cloud_with_externals_setting(
     app: tauri::AppHandle,
     enabled: bool,
 ) -> Result<(), String> {
-    let mut s = settings::get_settings(&app);
-    s.meeting_cloud_with_externals = enabled;
-    spiegeln(&app, &s)?;
-    settings::write_settings(&app, s);
-    Ok(())
+    store_of(&app)?;
+    settings::richtlinie_aendern(&app, |s| s.meeting_cloud_with_externals = enabled)
 }
 
 #[cfg(test)]

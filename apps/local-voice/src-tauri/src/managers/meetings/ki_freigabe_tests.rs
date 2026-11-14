@@ -715,3 +715,83 @@ fn sperre_gilt_nur_mit_gleichem_spiegel() {
     anders.nur_lokal = true;
     assert_eq!(sperre().abgleichen(Some(&anders)), None);
 }
+
+/// Codex #583 Fixrunde 3: Upgrade einer belegten Datenbank vom Stand nach Migration 19 (Bestätigung
+/// ohne Rechtsgrundlage, Termin, Verknüpfung) auf Migration 20. Die Daten bleiben, die alte
+/// Bestätigung zählt aber nicht mehr (fail closed), bis sie mit Nachweis erneuert wird; Revision
+/// und Trigger arbeiten ab dem Upgrade.
+#[test]
+fn upgrade_von_stand_19_behaelt_daten_und_sperrt_die_alte_bestaetigung() {
+    use crate::managers::meetings::store::MIGRATIONS;
+    let (dir, s, id) = besprechung(intern_liste(), true);
+    let fp = stand(&s, &sperre(), &id).unwrap().ergebnis.fingerabdruck;
+    let pfad = dir.path().join("meetings.db");
+    drop(s);
+    // Stand 19 herstellen: alles aus Migration 20 entfernen, alte Bestätigung wie damals.
+    {
+        let conn = rusqlite::Connection::open(&pfad).unwrap();
+        let trigger: Vec<String> = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'ai_rev_%'")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(trigger.len(), 18);
+        for t in &trigger {
+            conn.execute_batch(&format!("DROP TRIGGER {t};")).unwrap();
+        }
+        conn.execute_batch(
+            "DROP TABLE meeting_ai_revision;
+             DROP TABLE meeting_ai_policy;
+             ALTER TABLE meeting_ai_confirmations DROP COLUMN einwilligungen_belegt;
+             ALTER TABLE meeting_ai_confirmations DROP COLUMN rechtsgrundlage;",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO meeting_ai_confirmations
+               (meeting_id, einstufung, fingerabdruck, fp_version, informiert, confirmed_at)
+             VALUES (?1, 'intern', ?2, ?3, 1, 4000)",
+            params![id, fp, i64::from(FINGERABDRUCK_VERSION)],
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", (MIGRATIONS.len() - 1) as i64)
+            .unwrap();
+    }
+    let s = MeetingStore::open_at(&pfad).unwrap();
+    let conn = s.get_connection().unwrap();
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, MIGRATIONS.len() as i64);
+    // Daten bleiben: Besprechung, Verknüpfung, Bestätigungszeile (ohne Rechtsgrundlage).
+    let (zeilen, grundlage): (i64, Option<String>) = conn
+        .query_row(
+            "SELECT COUNT(*), MAX(rechtsgrundlage) FROM meeting_ai_confirmations WHERE meeting_id = ?1",
+            params![id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((zeilen, grundlage), (1, None));
+    assert!(s.get_meeting(&id).unwrap().is_some());
+    // Ohne Spiegel keine Ausgabe; mit Spiegel zählt die alte Bestätigung trotzdem nicht.
+    assert!(s.ki_stand().unwrap().richtlinie.is_none());
+    s.ki_richtlinie_setzen(&sperre().richtlinie().unwrap())
+        .unwrap();
+    assert!(s.ki_bestaetigung(&id).unwrap().is_none());
+    assert!(!sperre().sichtbar(&s, &id));
+    // Revision und Trigger arbeiten: erneuern mit Nachweis erhöht sie und gibt frei.
+    let vorher = rev(&s);
+    bestaetigen(
+        &s,
+        &sperre(),
+        &id,
+        Einstufung::Intern,
+        &fp,
+        &nachweis(),
+        5_000,
+    )
+    .unwrap();
+    assert!(rev(&s) > vorher);
+    assert!(sperre().sichtbar(&s, &id));
+}

@@ -136,6 +136,20 @@ fn forward_integer(
 }
 
 impl AppTools {
+    /// G9a-2 (Codex #583 Fixrunde 3): sind alle `ids` fuer KI-Clients freigegeben? Gleiche Pruefung
+    /// und Linearisierung wie die Besprechungs-Werkzeuge ([`mcp_tools::alle_freigegeben`]).
+    pub(super) fn besprechungen_freigegeben(&self, ids: &[String]) -> bool {
+        let ki_quelle = || self.host.ki_sperre();
+        let backend = Backend {
+            db_path: self.store.db_path(),
+            busy_timeout: READ_BUSY_TIMEOUT,
+            include_transcript: false,
+            transcript_page_chars: mcp_tools::TRANSCRIPT_PAGE_CHARS,
+            ki_quelle: &ki_quelle,
+        };
+        mcp_tools::alle_freigegeben(ids, &backend)
+    }
+
     /// Liest ueber die Logik des lokalen MCP-Servers; ein Fehlertext wird zum Werkzeugfehler.
     fn read_meetings(
         &self,

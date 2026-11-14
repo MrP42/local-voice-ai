@@ -351,6 +351,32 @@ pub fn call(name: &str, args: &Value, backend: &Backend) -> ToolOutcome {
     ToolOutcome::error(CHANGED_HINT)
 }
 
+/// Fuer Ausgaben ausserhalb der fuenf Werkzeuge, die sich auf Besprechungen beziehen (Laufprotokoll
+/// der Agentenbruecke, `get_run`; Codex #583 Fixrunde 3): sind ALLE `ids` freigegeben? Linearisiert
+/// wie [`call`]: die Entscheidung gilt nur, wenn Richtlinie und Revision am Linearisierungspunkt
+/// gleich sind wie am Anfang. Ohne Datenbank, bei „nur lokal“, abweichendem Spiegel und jedem
+/// anderen Zweifel: `false`.
+pub fn alle_freigegeben(ids: &[String], backend: &Backend) -> bool {
+    for _ in 0..VERSUCHE {
+        let Ok(anfang) = lauf_lesen(backend) else {
+            return false;
+        };
+        let erlaubt = !anfang.sperre.ganz_gesperrt()
+            && match open(backend) {
+                Ok(Some(store)) => ids.iter().all(|id| anfang.sperre.sichtbar(&store, id)),
+                _ => false,
+            };
+        #[cfg(test)]
+        crate::managers::meetings::ki_freigabe::barriere_ausloesen();
+        match lauf_lesen(backend) {
+            Ok(ende) if ende == anfang => return erlaubt,
+            Ok(_) => continue,
+            Err(_) => return false,
+        }
+    }
+    false
+}
+
 // ---------------------------------------------------------------------------
 // Argumente
 // ---------------------------------------------------------------------------

@@ -112,6 +112,7 @@ const installReleaseCommands = async (
           if (cfg.verzoegert === args.meetingId) {
             await sperre;
             // Verspätete Antwort: behauptet „freigegeben“, darf aber nirgends ankommen.
+            w.__verspaetetGeliefert = true;
             return {
               ...stand(args.meetingId as string),
               entscheidung: { ergebnis: "erlaubt", einstufung: "intern" },
@@ -367,8 +368,19 @@ test.describe("Freigabe einer Besprechung in den Details", () => {
     await expect
       .poll(async () => (await calls(page, "meeting_ai_release_status")).length)
       .toBeGreaterThanOrEqual(2);
-    await page.waitForTimeout(100);
+    // Ohne feste Wartezeit: erst ist die verspätete Antwort nachweislich zurückgegeben, dann
+    // laufen zwei Bildwechsel, in denen React einen daraus folgenden Zustand gezeichnet hätte.
+    await page.waitForFunction(
+      () => (window as any).__verspaetetGeliefert === true,
+    );
+    await page.evaluate(
+      () =>
+        new Promise<void>((r) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => r())),
+        ),
+    );
     await expect(row.getByTestId("ai-release-status")).toHaveText("Gesperrt");
+    await expect(row).not.toContainText("Freigegeben");
   });
 
   test("Ladefehler wird angezeigt, nichts ist freigegeben", async ({

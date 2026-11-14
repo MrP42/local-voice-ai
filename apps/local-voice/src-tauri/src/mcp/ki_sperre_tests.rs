@@ -657,3 +657,127 @@ fn freigegebene_besprechung_enthaelt_nichts_aus_einer_gesperrten() {
     let (text, _) = fx.tool("get_transcript", json!({ "id": fx.a }));
     assert!(!text.contains("Workshop Einkauf"), "{text}");
 }
+
+// ---------------------------------------------------------------------------
+// Codex #583 Fixrunde 3: Einstellungen der App
+// ---------------------------------------------------------------------------
+
+fn datei(fx: &Fx) -> Value {
+    let pfad = config_in(fx.dir.path()).settings_path;
+    serde_json::from_str::<Value>(&std::fs::read_to_string(pfad).unwrap()).unwrap()["settings"]
+        .clone()
+}
+
+/// Schreibt wie die App: erst den Richtlinienspiegel, dann die Datei.
+fn app_schreibt(fx: &Fx, s: &crate::settings::AppSettings) {
+    fx.store
+        .ki_richtlinie_setzen(&ki_freigabe::Richtlinie::aus_einstellungen(s))
+        .unwrap();
+    std::fs::write(
+        config_in(fx.dir.path()).settings_path,
+        json!({ "settings": s }).to_string(),
+    )
+    .unwrap();
+}
+
+/// M1: Ein anderer Einstellungsbefehl liest (Cloud an, Profil EU) und haelt an. Der Nutzer
+/// schraenkt ein, vollstaendig gespeichert (Spiegel und Datei). Dann schreibt der alte Befehl seine
+/// Gesamtkopie ueber den allgemeinen Schreibpfad (`settings::schreibstand`, wie `write_settings`
+/// und `try_write_settings`). Die vorhandene Freigabe bleibt gesperrt. Gegenprobe: ohne das
+/// Festhalten der Richtlinie (Schreibart der Richtlinie selbst) waere sie wieder offen.
+#[test]
+fn veraltete_gesamtkopie_nimmt_keine_einschraenkung_zurueck() {
+    use crate::settings::{aus_gespeichertem, schreibstand, Schreibart};
+    for (art, einschraenkung, waere_offen) in [
+        (
+            "cloud_aus",
+            json!({ "meeting_cloud_with_externals": false }),
+            true,
+        ),
+        (
+            "nur_lokal",
+            json!({ "meeting_cloud_with_externals": true, "compliance_profile": "local_only" }),
+            true,
+        ),
+        (
+            "domaenen",
+            json!({ "meeting_cloud_with_externals": true, "meeting_own_domains": ["example.net"] }),
+            // Domaenenwechsel loescht alle Bestaetigungen: auch ohne Schutz nichts mehr offen.
+            false,
+        ),
+    ] {
+        for schutz in [true, false] {
+            let fx = freigegeben(true);
+            assert!(a_abrufen(&fx, "get_meeting").0.is_some(), "{art}");
+            // 1. Der andere Befehl liest und haelt an.
+            let (veraltet, _) = aus_gespeichertem(&datei(&fx));
+            assert!(veraltet.meeting_cloud_with_externals);
+            // 2. Die Einschraenkung wird vollstaendig gespeichert.
+            einstellen(&fx, einschraenkung.clone());
+            assert!(a_abrufen(&fx, "get_meeting").0.is_none(), "{art}");
+            // 3. Der alte Befehl setzt fort und schreibt seine Gesamtkopie.
+            let schreibart = if schutz {
+                Schreibart::Allgemein
+            } else {
+                Schreibart::Richtlinie
+            };
+            let geschrieben = schreibstand(Some(&datei(&fx)), veraltet, schreibart);
+            app_schreibt(&fx, &geschrieben);
+            let (drin, text) = a_abrufen(&fx, "get_meeting");
+            if schutz {
+                assert!(drin.is_none(), "{art}: {text}");
+                let r = read_ki_sperre(&config_in(fx.dir.path()).settings_path)
+                    .richtlinie()
+                    .unwrap();
+                let erwartet = match art {
+                    "cloud_aus" => !r.cloud_bei_externen,
+                    "nur_lokal" => r.nur_lokal,
+                    _ => r.eigene_domaenen == vec!["example.net".to_string()],
+                };
+                assert!(erwartet, "{art}: {r:?}");
+            } else {
+                assert_eq!(drin.is_some(), waere_offen, "{art} ohne Schutz: {text}");
+            }
+        }
+    }
+}
+
+/// M3: Steht in der Datei ein unbekanntes Kundenprofil (oder `null`), repariert die App es beim
+/// Laden zu „nur lokal“, nicht zu `eu`, und uebernimmt das in den Spiegel. Gegenprobe ueber den
+/// tatsaechlichen Abruf einer vorhandenen Freigabe: sie bleibt gesperrt. Ohne Schluessel gilt `eu`.
+#[test]
+fn unbekanntes_kundenprofil_bleibt_nach_dem_laden_der_app_gesperrt() {
+    use crate::managers::compliance::ComplianceProfile;
+    for wert in [json!("eu_plus"), Value::Null] {
+        let fx = freigegeben(false);
+        assert!(a_abrufen(&fx, "get_meeting").0.is_some());
+        settings(fx.dir.path(), json!({ "compliance_profile": wert.clone() }));
+        // Die App laedt: Reparatur, Spiegel, Zurueckschreiben (wie `settings::get_settings`).
+        let (geladen, repariert) = crate::settings::aus_gespeichertem(&datei(&fx));
+        assert!(repariert, "{wert}");
+        assert_eq!(
+            geladen.compliance_profile,
+            ComplianceProfile::LocalOnly,
+            "{wert}"
+        );
+        app_schreibt(&fx, &geladen);
+        let (drin, text) = a_abrufen(&fx, "get_meeting");
+        assert!(drin.is_none(), "{wert}: {text}");
+        assert!(text.contains("nur lokal"), "{wert}: {text}");
+        // Ein spaeterer allgemeiner Schreibvorgang lockert das nicht wieder.
+        let mut spaeter = geladen.clone();
+        spaeter.compliance_profile = ComplianceProfile::Eu;
+        let geschrieben = crate::settings::schreibstand(
+            Some(&datei(&fx)),
+            spaeter,
+            crate::settings::Schreibart::Allgemein,
+        );
+        assert_eq!(geschrieben.compliance_profile, ComplianceProfile::LocalOnly);
+    }
+    // Gegenprobe: ein fehlender Schluessel (Altbestand) ist `eu`, die Freigabe wirkt.
+    let fx = freigegeben(false);
+    let (geladen, _) = crate::settings::aus_gespeichertem(&datei(&fx));
+    assert_eq!(geladen.compliance_profile, ComplianceProfile::Eu);
+    app_schreibt(&fx, &geladen);
+    assert!(a_abrufen(&fx, "get_meeting").0.is_some());
+}
