@@ -133,13 +133,21 @@ _SURROGAT_RE = re.compile(r"[\ud800-\udfff]")
 
 
 def _hat_surrogat(wert):
-    """Enthaelt ein Schluessel oder Textwert (auf jeder Ebene) ein ungepaartes Surrogat (U+D800..U+DFFF)?"""
-    if isinstance(wert, str):
-        return _SURROGAT_RE.search(wert) is not None
-    if isinstance(wert, list):
-        return any(_hat_surrogat(x) for x in wert)
-    if isinstance(wert, dict):
-        return any(_hat_surrogat(k) or _hat_surrogat(v) for k, v in wert.items())
+    """Enthaelt ein Schluessel oder Textwert (auf jeder Ebene) ein ungepaartes Surrogat (U+D800..U+DFFF)?
+    Ohne Rekursion: die Pruefung darf an keiner Tiefe scheitern."""
+    stapel = [wert]
+    while stapel:
+        v = stapel.pop()
+        if isinstance(v, str):
+            if _SURROGAT_RE.search(v) is not None:
+                return True
+        elif isinstance(v, list):
+            stapel.extend(v)
+        elif isinstance(v, dict):
+            for k, x in v.items():
+                if _SURROGAT_RE.search(k) is not None:
+                    return True
+                stapel.append(x)
     return False
 
 
@@ -150,20 +158,29 @@ def lies_json(text, max_ebenen=MAX_EBENEN):
     try:
         wert = json.loads(text, object_pairs_hook=_paare, parse_float=_zahl_token, parse_constant=_verbiete_konstante)
     except (ValueError, RecursionError):
+        # Auch ein Text, der fuer den Parser selbst zu tief ist, ist unlesbar und kein Absturz.
         return False, None
-    if max_ebenen is not None and _tiefe(wert) > max_ebenen:
+    if max_ebenen is not None and _zu_tief(wert, max_ebenen):
         return False, None
     if _hat_surrogat(wert):
         return False, None
     return True, wert
 
 
-def _tiefe(v, e=0):
-    if isinstance(v, list):
-        return max([e + 1] + [_tiefe(x, e + 1) for x in v])
-    if isinstance(v, dict):
-        return max([e + 1] + [_tiefe(x, e + 1) for x in v.values()])
-    return e
+def _zu_tief(wert, max_ebenen):
+    """Hat der Wert mehr als max_ebenen Ebenen (ein Skalar hat 0, jede Liste und jedes Objekt eine mehr)?
+    Ohne Rekursion und mit Abbruch an der Grenze: Ein beliebig tiefer Wert wird abgewiesen, ohne dass die
+    Pruefung selbst an der Tiefe scheitert."""
+    stapel = [(wert, 0)]
+    while stapel:
+        v, e = stapel.pop()
+        if isinstance(v, (list, dict)):
+            e += 1
+            if e > max_ebenen:
+                return True
+            for x in (v if isinstance(v, list) else v.values()):
+                stapel.append((x, e))
+    return False
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -1008,21 +1025,49 @@ def prozent_kodiere(s):
     return "".join(teile)
 
 
+def _dezimal_teile(v):
+    """Zerlegt einen endlichen Dezimalwert in (negativ, Ziffern ohne Endnullen, Exponent), sonst None. Der Wert
+    ist Ziffern mal 10 hoch Exponent; null ist ((0,), 0). Reine Zerlegung, keine Dezimalarithmetik: abs(),
+    Vergleiche mit Rundung oder to_integral_value() haengen am Rechenkontext und koennen bei grossem Exponenten
+    eine Ausnahme ausloesen (decimal.Overflow)."""
+    if not v.is_finite():
+        return None
+    negativ, ziffern, exponent = v.as_tuple()
+    ende = len(ziffern)
+    while ende > 1 and ziffern[ende - 1] == 0:
+        ende -= 1
+        exponent += 1
+    if ende == 1 and ziffern[0] == 0:
+        return False, (0,), 0
+    return bool(negativ), ziffern[:ende], exponent
+
+
+def _dezimal_ganzzahlig(v):
+    """Ist der exakte Dezimalwert ganzzahlig? Entschieden am Exponenten nach dem Streichen der Endnullen."""
+    teile = _dezimal_teile(v)
+    return teile is not None and teile[2] >= 0
+
+
 def _als_ganzzahl(v):
-    """Ganzzahl nur, wenn der exakte Dezimalwert des Zahlentokens ganzzahlig ist und in +-(2^53-1) liegt."""
+    """Ganzzahl nur, wenn der exakte Dezimalwert des Zahlentokens ganzzahlig ist und in +-(2^53-1) liegt.
+    Entschieden an Ziffern und Exponent; eine Zehnerpotenz wird erst gebildet, wenn die Stellenzahl feststeht
+    (hoechstens 16), nie in Abhaengigkeit von einem beliebig grossen Exponenten."""
     if isinstance(v, bool):
         return None
     if isinstance(v, int):
-        n = v
-    elif isinstance(v, decimal.Decimal):
-        if not v.is_finite() or abs(v) > MAX_GANZ or v != v.to_integral_value():
-            return None
-        n = int(v)
-    else:
+        return v if -MAX_GANZ <= v <= MAX_GANZ else None
+    if not isinstance(v, decimal.Decimal):
         return None
-    if abs(n) > MAX_GANZ:
+    teile = _dezimal_teile(v)
+    if teile is None:
         return None
-    return n
+    negativ, ziffern, exponent = teile
+    if exponent < 0 or len(ziffern) + exponent > len(str(MAX_GANZ)):
+        return None
+    n = int("".join(map(str, ziffern))) * 10 ** exponent
+    if n > MAX_GANZ:
+        return None
+    return -n if negativ else n
 
 
 def _fe(code, parameter=None):
@@ -1470,7 +1515,7 @@ def _typ_passt(t, v):
         return v is None
     if t == "integer":
         if isinstance(v, decimal.Decimal):
-            return v.is_finite() and v == v.to_integral_value()
+            return _dezimal_ganzzahlig(v)
         return _ist_ganz(v) or (isinstance(v, float) and v == math.floor(v))
     if t == "number":
         return (isinstance(v, (int, float, decimal.Decimal))) and not isinstance(v, bool)
@@ -1890,7 +1935,7 @@ def pruefe_alles(daten, schema):
         try:
             ab = fn(faelle, schema)
         except Exception as e:  # noqa: BLE001 - eine Ausnahme im Abschnitt ist selbst eine Abweichung
-            ab = [("(Abschnitt)", "Ausnahme %s: %s" % (type(e).__name__, e))]
+            ab = _abbruch_eingrenzen(fn, faelle, schema, e)
         doppelte = {n for n in namen if namen.count(n) > 1}
         for n in sorted(doppelte):
             ab.append((n, "Fallname doppelt"))
@@ -1900,6 +1945,23 @@ def pruefe_alles(daten, schema):
         for n, text in ab:
             zeilen.append("  ABWEICHUNG [%s] %s: %s" % (name, n, text))
     return gesamt, abweichungen, zeilen
+
+
+def _abbruch_eingrenzen(fn, faelle, schema, ausnahme):
+    """Ein Abschnitt ist mit einer Ausnahme abgebrochen. Jeden Fall einzeln pruefen, damit die Meldung die Faelle
+    nennt, an denen es liegt, und die uebrigen Faelle trotzdem gewertet werden. Bricht einzeln kein Fall ab, bleibt
+    es bei einer Meldung fuer den ganzen Abschnitt."""
+    ab = []
+    abbrueche = 0
+    for fall in faelle:
+        try:
+            ab.extend(fn([fall], schema))
+        except Exception as e:  # noqa: BLE001
+            abbrueche += 1
+            ab.append((fall.get("name", "?"), "Ausnahme %s: %s" % (type(e).__name__, e)))
+    if not abbrueche:
+        return [("(Abschnitt)", "Ausnahme %s: %s" % (type(ausnahme).__name__, ausnahme))]
+    return ab
 
 
 def main():

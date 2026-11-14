@@ -802,7 +802,9 @@ Objekt **denselben Schlüssel zweimal** enthält (auf jeder Ebene; verglichen wi
 Skalarwerte kennen (`serde_json`, Swift), weisen einen Text mit ungepaartem Surrogat ganz ab und können die Stelle nicht nennen, andere ersetzen es still; doppelte Schlüssel würden je Parser
 verschiedene Werte binden (der erste oder der letzte) und damit verschiedene Argumente. Ein unlesbarer Text ist nie ein Teilerfolg: beim Verzeichnis ist es derselbe Fehler wie bei jedem unlesbaren
 Rohtext (`json` mit Pfad `""`), bei den Argumenten des Modells `argumente_typ` mit `parameter: null`, bei `kanonisch` und `bindung` ein Lesefehler (`kanonisch`: `{"fehler": "json"}`,
-`bindung`: `argumente_typ`). Eine Ausnahme gibt es dafür nie. Die Prüfstände halten solche Eingaben nur als **Rohtext** (ein JSON-Text in einer Zeichenkette, der Backslash steht dort verdoppelt),
+`bindung`: `argumente_typ`). Eine Ausnahme gibt es dafür nie. Das gilt auch für die **Tiefe**: Ein Text mit mehr als 64 Ebenen ist unlesbar, gleich wie tief er ist. Die Tiefenprüfung darf nicht selbst an der Tiefe scheitern (keine Rekursion ohne
+Grenze, kein Stapelüberlauf, kein Abbruch der Laufzeit): Sie bricht an der Grenze ab oder läuft ohne Rekursion, und ein Text, den schon der Parser wegen seiner Tiefe abweist, ist ebenso unlesbar. Die Prüfstände enthalten dafür Texte mit 65, 600 und
+5000 Ebenen. Die Prüfstände halten Eingaben mit ungepaartem Surrogat oder doppeltem Schlüssel nur als **Rohtext** (ein JSON-Text in einer Zeichenkette, der Backslash steht dort verdoppelt),
 denn die Prüfstandsdatei selbst darf auf Dateiebene nie ein ungepaartes Surrogat und nie einen doppelten Schlüssel enthalten (Rust und Swift lesen sie); der Referenzprüfer prüft das beim Laden.
 Fehlt `schema`, ist es kein Text oder weder die Fassung 1 noch eine neuere, kommt **nur dieser eine Fehler** am Pfad `schema` (`fehlt`, `typ`, `schema_neuer` für
 `lva.schnittstellen/<n>` mit n ohne führende Null und n > 1, sonst `schema_unbekannt`); der Rest wird nicht geprüft. Sonst werden alle Fehler gesammelt, **nach `pfad`, dann `code` sortiert
@@ -898,7 +900,11 @@ Sonst `ok`. **Begründung:** `privat` lässt bewusst keine öffentliche Adresse 
 - `privat` erreicht alles im eigenen Netz, auch Verwaltungsdienste dort (zum Beispiel `100.100.100.200`, `fd00:ec2::254`). Link-lokale Metadatendienste (`169.254.169.254`) bleiben in **jedem** Modus gesperrt.
 - Das Modell liefert nie Schema, Host oder Port, nur die deklarierten Parameter (bei `web` eine Auswahlkennung). Die **Positivliste** sind die Adressen der Einträge.
 - **Kein impliziter Proxy:** System- und Umgebungsproxys (`HTTP_PROXY`, Systemeinstellung, automatische Konfiguration) werden für Schnittstellen in Version 1 **nicht** benutzt. Kann das Gerät den
-  Namen nicht selbst auflösen, ist das Ergebnis `netzfehler`. Alternative Verbindungsziele (zum Beispiel `Alt-Svc`, Protokollwechsel) sind nur zu einer **geprüften** Adresse erlaubt.
+  Namen nicht selbst auflösen, ist das Ergebnis `netzfehler`.
+- **Keine alternativen Verbindungsziele in Version 1:** Jede Anfrage geht an die **ursprüngliche Autorität** des Eintrags, das heißt an Host **und Port** aus seiner Adresse, über die geprüfte Adresse, mit der TLS-Identität dieses Hostnamens.
+  Ein `Alt-Svc`-Kopf der Antwort wird nicht ausgewertet und nicht gespeichert (auch nicht für spätere Aufrufe), ein `ALTSVC`-Rahmen wird übergangen, HTTP/3 wird nicht über eine Ankündigung gewählt, und ein `Upgrade` auf ein anderes Protokoll wird nicht
+  ausgeführt. Eine geprüfte IP-Adresse allein erlaubt keinen anderen Port: Ein anderer Port ist ein anderer Dienst und weder vom Eintrag noch vom `ziel` der Bindung gedeckt. Die Aushandlung von HTTP/1.1 oder HTTP/2 auf **derselben** Verbindung (ALPN) ist
+  kein alternatives Ziel. Abnahmeprobe unter „Abnahmeproben der Anbindung“.
 - Der Web-Abruf lädt **keine Unterressourcen**, führt **kein Skript** aus und folgt **keinem Meta-Refresh** (wie jede Weiterleitung wäre das ein ungeprüftes Ziel).
 
 ### Anfrage bauen
@@ -914,7 +920,7 @@ folgen mit der Umsetzung. Zerlegt in `pruefeArgumente(eintrag, argumente)` → d
    - fehlt und `pflicht` → `argument_fehlt`; ein fehlender optionaler Parameter wird weggelassen; `null` als Wert ist `argument_typ`.
    - falscher JSON-Typ → `argument_typ`.
    - `text`: mehr Codepunkte als `max_zeichen` → `argument_laenge`; enthält U+0000..U+001F oder U+007F → `argument_wert` (**Ausnahme:** bei `ort: koerper` sind U+000A und U+0009 erlaubt).
-   - `ganzzahl`: ein Zahlentoken, dessen **exakter Dezimalwert** ganzzahlig ist und in ±(2^53−1) liegt (`1.0`, `1e2` und `10e-1` sind ganzzahlig und gelten als `1`, `100` und `1`; `1.0000000000000000001`, `9007199254740993`, `1e400` und `0.5` nicht); entschieden wird am Token und nie am Gleitkommawert, den ein Parser daraus macht; ein Exponent beliebiger Größe darf die Prüfung nicht aufhalten (die Entscheidung fällt an Ziffern und Exponent, ohne eine Zehnerpotenz auszurechnen: `1e99999999999999999999` und `1e-99999999999999999999` sind `argument_typ`, `0e5` ist `0`); ein Wahrheitswert oder ein Text ist keine Zahl; sonst `argument_typ`; außerhalb `min`/`max` → `argument_wert`.
+   - `ganzzahl`: ein Zahlentoken, dessen **exakter Dezimalwert** ganzzahlig ist und in ±(2^53−1) liegt (`1.0`, `1e2` und `10e-1` sind ganzzahlig und gelten als `1`, `100` und `1`; `1.0000000000000000001`, `9007199254740993`, `1e400` und `0.5` nicht); entschieden wird am Token und nie am Gleitkommawert, den ein Parser daraus macht; ein Exponent beliebiger Größe darf die Prüfung weder aufhalten noch abbrechen (die Entscheidung fällt an Vorzeichen, Ziffern und Exponent des Tokens, ohne eine Zehnerpotenz auszurechnen, deren Größe vom Exponenten abhängt, und ohne Dezimalarithmetik, die von einem Rechenkontext mit Exponentengrenze abhängt: `1e1000000`, `-1e1000000`, `1e-1000000`, `1e99999999999999999999` und `1e-99999999999999999999` sind `argument_typ`, `0e5` und `0e1000000` sind `0`; Regel: Endnullen der Ziffernfolge in den Exponenten ziehen; ist die Ziffernfolge dann `0`, ist der Wert `0`; ist der Exponent negativ, ist der Wert nicht ganzzahlig; haben Ziffern und Exponent zusammen mehr als 16 Stellen, liegt er außerhalb); ein Wahrheitswert oder ein Text ist keine Zahl; sonst `argument_typ`; außerhalb `min`/`max` → `argument_wert`.
    - `wahrheitswert`: nur `true`/`false`.
    - `auswahl`: ein Text, der genau (Bytes) einer Option gleicht; sonst `argument_wert` (Nicht-Text: `argument_typ`).
    - **danach, für den Text jedes Typs** (also `text` und `auswahl`; bei `ganzzahl` und `wahrheitswert` kann die Regel nicht greifen): bei `ort: pfad` darf der Text nur aus `[A-Za-z0-9._~-]` bestehen, muss mindestens ein Zeichen haben und darf nicht `.` und nicht `..` sein, sonst `argument_wert` (die Länge wird vorher geprüft).
@@ -1110,9 +1116,26 @@ Prosa, normativ:
   Nach der Frage wird nichts neu gebaut.
 - Reihenfolge bei `schreibend`: Bestätigung einholen (`frage`, `ja`), Namen auflösen und `pruefeNetz` anwenden, Verbindung aufbauen (TCP und TLS), **dann** `einloesen` und **unmittelbar** absenden, beides als **ein unteilbarer
   Schritt**. Läuft die Frist während der Auflösung oder des Verbindungsaufbaus ab, wird nichts gesendet (Ergebnisart `bestaetigung_abgelaufen`).
-- `ja` und `nein` gelten nur für die Frage, die zu **Beginn** der Äußerung des Menschen offen war; eine Äußerung, die vor der Frage begann, zählt nicht (Anforderung an die Anbindung, im Automaten nicht prüfbar).
+- **Zuordnung einer Äußerung zur Frage:** `ja` gilt nur für dieselbe bei Äußerungsbeginn **offene** Frage; `nein` gilt für dieselbe bei Äußerungsbeginn **vorhandene** Frage, ob offen oder schon bestätigt. Eine Äußerung, die vor der Frage
+  begann, zählt für diese Frage nicht. Damit bleibt der Widerruf möglich, solange nicht abgesendet ist: Ein `nein`, das nach dem `ja` beginnt (auch während Namensauflösung oder Verbindungsaufbau), erreicht den Automaten und verwirft die
+  bestätigte Frage (siehe „Bestätigung“: `nein` nach `bestaetigt`). Dies ist eine Anforderung an die Anbindung; der Automat prüft sie nicht, die Abnahmeprobe steht unter „Abnahmeproben der Anbindung“.
 - Vor jedem Aufruf: Eintrag suchen (`nicht_vorhanden`; der Werkzeugname wird mit `kennung` zurückgeführt), Argumente prüfen und Anfrage bauen (`abgelehnt`), bei `schreibend` die Bestätigung einholen (`bestaetigung_*`), Namen auflösen und
   `pruefeNetz` anwenden (`adresse_abgewiesen`, `netzfehler`), Verbindung aufbauen, absenden. Danach Antwort lesen und `rahme` anwenden, Protokollzeile schreiben, Meldung oder gerahmte Daten an das Modell geben.
+
+### Abnahmeproben der Anbindung
+
+Diese Regeln liegen außerhalb der reinen Funktionen. Die Prüfstände und der Referenzprüfer können sie nicht belegen; jede Umsetzung weist sie mit einem eigenen Test nach (Attrappen für Namensauflösung, Verbindung und Uhr), bevor Schnittstellen im
+Gespräch eingeschaltet werden:
+
+| Probe | Ablauf | Erwartung |
+|---|---|---|
+| Widerruf nach Bestätigung | `frage`, `ja`, die Verbindung wird aufgebaut (Auflösung oder TLS hängt), eine **neue** Äußerung `nein` beginnt | nichts wird gesendet; Ergebnisart `bestaetigung_abgelehnt` |
+| Äußerung vor der Frage | eine Äußerung beginnt, **danach** wird die Frage gestellt, die Äußerung endet als `ja` | die Frage bleibt offen, nichts wird gesendet |
+| Äußerung zu einer früheren Frage | Frage A, eine Äußerung beginnt, Frage B ersetzt A, die Äußerung endet als `ja` oder `nein` | B bleibt offen und unberührt |
+| Alternatives Ziel | geprüftes Ziel `host:443`; die Antwort bietet per `Alt-Svc` dieselbe IP-Adresse auf einem anderen Port an; zweiter Aufruf | auch der zweite Aufruf geht an `host:443`; zum anderen Port wird nie verbunden |
+| Bindung an die geprüfte Adresse | die Auflösung liefert beim ersten Mal eine erlaubte, bei jeder weiteren eine gesperrte Adresse | genau eine Auflösung; verbunden wird mit der geprüften Adresse |
+| Unteilbares Einlösen | die Frist läuft während des Verbindungsaufbaus ab | nichts wird gesendet; Ergebnisart `bestaetigung_abgelaufen` |
+| Bytegleichheit der Bindung | Abschnitt `bindung` gegen `approvals::args_hash` | jeder Hash gleich (siehe „Offene Punkte“) |
 
 ### Auslegungen
 
@@ -1200,5 +1223,10 @@ würde Rust und Swift ganz abweisen und ist deshalb ein Fehler. Ungepaarte Surro
 
 `PYTHONDONTWRITEBYTECODE=1 python3 apps/shared/assistenten/mutationen_schnittstellen.py` fragt, ob ein falscher Kern auffiele: Das Skript lädt den Referenzprüfer als Modul, ersetzt nacheinander je eine Funktion oder Konstante durch eine absichtlich falsche Fassung
 (Mutation, zum Beispiel der alte Werkzeugname mit `.` → `_`, ausgeschaltete Surrogat- oder Duplikatprüfung, Pfadzeichenprüfung aus, Adressen in der Auswahl von `seite`, Sortierung nach UTF-16, fehlendes Längenpräfix, Frist 30001, `nein` ohne Verwerfen einer bestätigten Frage,
-Marken-Kollision aus, `privat` erlaubt Öffentliches, IPv4-mapped übergangen), lässt `pruefe_alles` laufen und verlangt je Mutation mindestens eine Abweichung. Die Ausgabe je Mutation ist `rot` (erkannt) oder `ÜBERLEBT`; der Exitcode ist 1, sobald eine Mutation überlebt
-(eine Lücke in den Prüfständen: dann einen Fall von Hand ergänzen), und 2, wenn der unveränderte Prüfer nicht grün ist. Das Skript ändert keine Datei und legt keinen Bytecode an.
+Marken-Kollision aus, `privat` erlaubt Öffentliches, IPv4-mapped übergangen), lässt `pruefe_alles` laufen und verlangt je Mutation mindestens eine Abweichung. Die Ausgabe je Mutation ist `rot` (mindestens ein Fall mit falschem Ergebnis), `rot/Abbruch` (erkannt nur dadurch, dass die Prüfung einzelner Fälle mit einer
+Ausnahme abbricht; das belegt den Absturz, aber keinen Fall mit falschem Ergebnis) oder `ÜBERLEBT`; die Schlusszeile nennt die Zahl der Mutationen der zweiten Art. Der Exitcode ist 1, sobald eine Mutation überlebt
+(eine Lücke in den Prüfständen: dann einen Fall von Hand ergänzen), und 2, wenn der unveränderte Prüfer nicht grün ist. Das Skript ändert keine Datei und legt keinen Bytecode an. Bricht ein Abschnitt des Referenzprüfers mit einer Ausnahme ab, prüft
+`pruefe_alles` seine Fälle einzeln nach und nennt die Fälle, an denen es liegt; die übrigen Fälle werden trotzdem gewertet.
+
+**Was der Mutationstest nicht belegt:** Er zeigt, dass die Prüfstände die eingebauten Regressionen des Referenzprüfers bemerken. Er sagt nichts über die Wirkung der Systemtexte auf ein Modell (verglichen wird der Wortlaut), nichts über die Regeln der
+Anbindung (Bindung an die geprüfte Adresse, unteilbares Einlösen, Zuordnung der Äußerung, alternative Ziele; siehe „Abnahmeproben der Anbindung“) und nichts über die Gleichheit mit dem Rust-Kern.

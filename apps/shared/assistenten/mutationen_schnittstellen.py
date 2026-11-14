@@ -172,7 +172,7 @@ def ganz_variante(P, modus):
                 return None
             return n if abs(n) <= P.MAX_GANZ else None
         if modus == "bruch" and isinstance(v, decimal.Decimal):
-            if not v.is_finite() or abs(v) > P.MAX_GANZ:
+            if not v.is_finite() or v.copy_abs() > P.MAX_GANZ:
                 return None
             return int(v)
         return orig(v)
@@ -397,6 +397,76 @@ def _(P, e):
 @mut("ganzzahl: Bruch wird abgeschnitten", "Strenger Leser")
 def _(P, e):
     e.setze(P, "_als_ganzzahl", ganz_variante(P, "bruch"))
+
+
+@mut("ganzzahl: Betrag und Ganzzahligkeit über Dezimalarithmetik im Rechenkontext", "Strenger Leser")
+def _(P, e):
+    # Der Stand vor der Korrektur: abs() rechnet im Kontext und bricht bei grossem Exponenten ab (decimal.Overflow).
+    def als_ganzzahl(v):
+        if isinstance(v, bool):
+            return None
+        if isinstance(v, int):
+            n = v
+        elif isinstance(v, decimal.Decimal):
+            if not v.is_finite() or abs(v) > P.MAX_GANZ or v != v.to_integral_value():
+                return None
+            n = int(v)
+        else:
+            return None
+        return n if abs(n) <= P.MAX_GANZ else None
+    e.setze(P, "_als_ganzzahl", als_ganzzahl)
+
+
+@mut("ganzzahl: grosser Exponent gilt als null", "Strenger Leser")
+def _(P, e):
+    orig = P._als_ganzzahl
+
+    def als_ganzzahl(v):
+        if isinstance(v, decimal.Decimal) and v.is_finite() and abs(v.as_tuple().exponent) > 400:
+            return 0
+        return orig(v)
+    e.setze(P, "_als_ganzzahl", als_ganzzahl)
+
+
+@mut("ganzzahl: null mit grossem Exponenten wird abgelehnt", "Strenger Leser")
+def _(P, e):
+    orig = P._als_ganzzahl
+
+    def als_ganzzahl(v):
+        if isinstance(v, decimal.Decimal) and v.is_finite() and abs(v.as_tuple().exponent) > 400:
+            return None
+        return orig(v)
+    e.setze(P, "_als_ganzzahl", als_ganzzahl)
+
+
+@mut("ganzzahl: Stellengrenze um eine Stelle zu weit (1e16 gilt)", "Strenger Leser")
+def _(P, e):
+    orig = P._als_ganzzahl
+
+    def als_ganzzahl(v):
+        if isinstance(v, decimal.Decimal) and v == decimal.Decimal(10) ** 16:
+            return 10 ** 16
+        return orig(v)
+    e.setze(P, "_als_ganzzahl", als_ganzzahl)
+
+
+@mut("leser: Tiefenprüfung scheitert selbst an der Tiefe (wie eine rekursive Prüfung)", "Strenger Leser")
+def _(P, e):
+    # Eine rekursive Tiefenpruefung bricht je nach Laufzeit ab einigen hundert Ebenen ab; hier fest ab 500,
+    # damit die Mutation nicht von der Python-Version abhaengt.
+    orig = P._zu_tief
+
+    def zu_tief(wert, max_ebenen):
+        if orig(wert, 500):
+            raise RecursionError("Tiefenpruefung")
+        return orig(wert, max_ebenen)
+    e.setze(P, "_zu_tief", zu_tief)
+
+
+@mut("leser: Grenze der Tiefe um eine Ebene zu weit, auch im Argumenttext", "Strenger Leser")
+def _(P, e):
+    orig = P._zu_tief
+    e.setze(P, "_zu_tief", lambda wert, max_ebenen: orig(wert, max_ebenen + 1))
 
 
 @mut("ganzzahl: Wahrheitswert zählt als Zahl", "Strenger Leser")
@@ -770,6 +840,16 @@ def abschnitte_der_zeilen(zeilen):
     return gefunden
 
 
+def regulaere_abweichungen(zeilen):
+    """Zahl der Abweichungen mit einem falschen Ergebnis. Nicht gezaehlt: Faelle oder Abschnitte, deren Pruefung mit
+    einer Ausnahme abbricht."""
+    n = 0
+    for z in zeilen:
+        if re.match(r"\s+ABWEICHUNG \[", z) and ": Ausnahme " not in z:
+            n += 1
+    return n
+
+
 def main():
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -796,6 +876,7 @@ def main():
         print("FEHLER: Mutationsnamen doppelt: %s" % ", ".join(doppelt))
         return 2
     ueberlebt = 0
+    nur_abbruch = []
     for name, gruppe, fn in MUTATIONEN:
         e = Eingriff()
         try:
@@ -803,12 +884,19 @@ def main():
             try:
                 _, ab, zeilen = P.pruefe_alles(daten, schema)
                 grund = "%d Abweichungen in %s" % (ab, ", ".join(abschnitte_der_zeilen(zeilen)) or "-")
+                regulaer = regulaere_abweichungen(zeilen)
             except Exception as ex:  # noqa: BLE001 - eine Ausnahme der Mutation gilt als erkannt
                 ab = 1
+                regulaer = 0
                 grund = "Ausnahme %s" % type(ex).__name__
         finally:
             e.zurueck()
-        if ab:
+        if ab and not regulaer:
+            # Erkannt nur dadurch, dass die Pruefung einzelner Faelle (oder der ganze Lauf) abbricht: Das belegt
+            # den Absturz, aber keinen Fall mit falschem Ergebnis.
+            nur_abbruch.append(name)
+            print("rot/Abbruch [%s] %s (%s)" % (gruppe, name, grund))
+        elif ab:
             print("rot        [%s] %s (%s)" % (gruppe, name, grund))
         else:
             ueberlebt += 1
@@ -817,7 +905,8 @@ def main():
     if ueberlebt:
         print("Mutationstest: ROT (%d Mutationen überlebt: Lücke in den Prüfständen)" % ueberlebt)
         return 1
-    print("Mutationstest: GRÜN (alle %d Mutationen erkannt)" % len(MUTATIONEN))
+    print("Mutationstest: GRÜN (alle %d Mutationen erkannt, davon %d nur durch Abbruch statt durch einen Fall mit "
+          "falschem Ergebnis)" % (len(MUTATIONEN), len(nur_abbruch)))
     return 0
 
 
