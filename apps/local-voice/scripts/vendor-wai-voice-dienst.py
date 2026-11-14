@@ -14,12 +14,22 @@ werden auf konkrete Versionen aufgelöst, passend zu dem, was Local Voice AI sch
 0.11 des SDK-Workspace; thiserror 2, serde 1, serde_json 1). Es kommt KEINE neue externe Abhängigkeit dazu (ring steht schon im Lock).
 Die vendorten Dateien werden nie von Hand geändert; Anpassungen gehören ins SDK.
 
+Was aus der `Cargo.toml` der Crate wird (Funktion `manifest`, Tests in scripts/test_vendor_wai_voice_dienst.py):
+übernommen werden `[package]` (nur die bekannten Felder), `[dependencies]`, `[target.<ziel>.dependencies]` und
+`[features]`, jeweils nach Namen sortiert und mit `optional = true`, wo die Quelle es setzt. Bewusst ausgelassen
+werden `[dev-dependencies]` (auch unter einem Ziel) und `[lints]`, siehe AUSGELASSEN. Jede andere Tabelle, jedes
+unbekannte Feld in `[package]` und jede Abhängigkeit, die nicht in ERLAUBT steht oder nicht von crates.io kommt,
+bricht mit einer Meldung ab; still fällt nichts weg. Ein Feature, das auf etwas zeigt, das die erzeugte Datei
+nicht enthält, bricht ebenfalls ab. Bei einem Abbruch bleibt die vorhandene Kopie unverändert.
+
     python3 scripts/vendor-wai-voice-dienst.py [<wai-sdk-pfad>] [--commit <rev>]   übernehmen
     python3 scripts/vendor-wai-voice-dienst.py [<wai-sdk-pfad>] --check            Ordner gegen den gepinnten Commit prüfen
 
 Der SDK-Pfad kommt aus dem Argument oder der Umgebungsvariablen WAI_SDK. Gelesen wird nur per `git`, der
 Arbeitsbaum des SDK wird nicht angefasst. `--check` liest den Commit aus `VENDOR.toml` und endet mit Exit 1,
 wenn der Ordner (samt erzeugter Cargo.toml) vom Inhalt dieses Commits abweicht.
+
+    python3 scripts/test_vendor_wai_voice_dienst.py                                Tests des Skripts (offline)
 """
 
 from __future__ import annotations
@@ -49,6 +59,16 @@ LVA_VERSIONEN = {"sha2": "0.10"}
 # ring (0.17, Apache-2.0 AND ISC) steht schon im Cargo.lock von Local Voice AI (rustls); es kommt
 # nichts Neues dazu. Genutzt fuer X25519 und HKDF der Kopplung.
 ERLAUBT = {"serde", "serde_json", "sha2", "thiserror", "ring"}
+# Tabellen der Quelle, die bewusst nicht in die vendorte Kopie kommen. Jede andere unbekannte Tabelle bricht ab.
+AUSGELASSEN = {
+    "dev-dependencies": "die Tests der Crate werden nicht übernommen ([lib] test = false)",
+    "lints": "ändert nur die Meldungen des Compilers, nicht den erzeugten Code",
+}
+# Was [package] der Quelle nennen darf. Anderes (build, links, readme …) hieße, dass Dateien oder Verhalten
+# fehlen, die das Skript nicht mitbringt.
+PAKET_FELDER = {"name", "version", "edition", "rust-version", "license", "publish", "description"}
+# Angaben einer Abhängigkeit, die eine Version von crates.io beschreiben. `workspace` ist vorher aufgelöst.
+ABHAENGIGKEIT_FELDER = {"version", "features", "default-features", "optional", "package"}
 
 
 def git(sdk: Path, *argumente: str) -> bytes:
@@ -58,23 +78,41 @@ def git(sdk: Path, *argumente: str) -> bytes:
     return r.stdout
 
 
+def abbruch(text: str) -> SystemExit:
+    return SystemExit(f"{QUELLE}/Cargo.toml: {text}")
+
+
+def toml_schluessel(k: str) -> str:
+    """Ein Schlüssel für Tabellenkopf oder Zuweisung: blank, wenn TOML das erlaubt, sonst in Anführungszeichen."""
+    if k and all(z.isascii() and (z.isalnum() or z in "_-") for z in k):
+        return k
+    return toml_wert(k)
+
+
 def toml_wert(w: object) -> str:
     if isinstance(w, bool):
         return "true" if w else "false"
     if isinstance(w, str):
+        if any(ord(z) < 0x20 or ord(z) == 0x7F for z in w):
+            raise SystemExit(f"TOML-Wert mit Steuerzeichen nicht unterstützt: {w!r}")
         return '"' + w.replace("\\", "\\\\").replace('"', '\\"') + '"'
     if isinstance(w, list):
         return "[" + ", ".join(toml_wert(x) for x in w) + "]"
     if isinstance(w, dict):
-        return "{ " + ", ".join(f"{k} = {toml_wert(v)}" for k, v in w.items()) + " }"
+        return "{ " + ", ".join(f"{toml_schluessel(k)} = {toml_wert(v)}" for k, v in w.items()) + " }"
     raise SystemExit(f"TOML-Wert nicht unterstützt: {w!r}")
 
 
 def abhaengigkeit(name: str, eigen: object, workspace: dict) -> object:
-    """Löst `workspace = true` gegen [workspace.dependencies] auf; zusätzliche Features werden vereinigt."""
-    if name not in ERLAUBT:
-        raise SystemExit(f"Neue Abhängigkeit {name!r} in {QUELLE}: erst Lizenz prüfen und melden, dann ERLAUBT erweitern")
-    if isinstance(eigen, dict) and eigen.get("workspace"):
+    """Löst `workspace = true` gegen [workspace.dependencies] auf; zusätzliche Features werden vereinigt.
+
+    Geprüft wird der **Name des Pakets**, nicht der Schlüssel: `serde = { package = "anderes" }` scheitert an
+    ERLAUBT. Übrig bleiben nur Angaben, die eine Version von crates.io beschreiben; `path`, `git` und andere
+    Quellen brechen ab, weil die vendorte Kopie sie nicht mitbringt.
+    """
+    if isinstance(eigen, dict) and eigen.get("workspace") is True:
+        if name not in workspace:
+            raise abbruch(f"Abhängigkeit {name!r} erbt vom Workspace, steht dort aber nicht")
         basis = workspace[name]
         basis = {"version": basis} if isinstance(basis, str) else dict(basis)
         for k, v in eigen.items():
@@ -84,40 +122,159 @@ def abhaengigkeit(name: str, eigen: object, workspace: dict) -> object:
                 basis["features"] = sorted(set(basis.get("features", [])) | set(v))
             else:
                 basis[k] = v
-        basis.pop("path", None)
     elif isinstance(eigen, str):
         basis = {"version": eigen}
+    elif isinstance(eigen, dict):
+        basis = dict(eigen)
     else:
-        basis = dict(eigen)  # type: ignore[arg-type]
-    if name in LVA_VERSIONEN:
-        basis["version"] = LVA_VERSIONEN[name]
+        raise abbruch(f"Abhängigkeit {name!r} hat eine Form, die das Skript nicht kennt: {eigen!r}")
+    paket = basis.get("package", name)
+    if paket not in ERLAUBT:
+        raise SystemExit(f"Neue Abhängigkeit {paket!r} in {QUELLE}: erst Lizenz prüfen und melden, dann ERLAUBT erweitern")
+    fremd = sorted(set(basis) - ABHAENGIGKEIT_FELDER)
+    if fremd:
+        raise abbruch(
+            f"Abhängigkeit {name!r} nutzt {', '.join(fremd)}; übernommen werden nur Versionen von crates.io "
+            f"({', '.join(sorted(ABHAENGIGKEIT_FELDER))})"
+        )
+    if paket in LVA_VERSIONEN:
+        basis["version"] = LVA_VERSIONEN[paket]
+    if not isinstance(basis.get("version"), str):
+        raise abbruch(f"Abhängigkeit {name!r} hat keine Version")
     return basis["version"] if list(basis) == ["version"] else basis
+
+
+def abhaengigkeiten(tabelle: object, workspace: dict, wo: str) -> dict[str, object]:
+    """Eine Abhängigkeitstabelle der Quelle, aufgelöst und nach Namen sortiert."""
+    if not isinstance(tabelle, dict):
+        raise abbruch(f"[{wo}] ist keine Tabelle")
+    return {name: abhaengigkeit(name, tabelle[name], workspace) for name in sorted(tabelle)}
+
+
+def ist_optional(a: object) -> bool:
+    return isinstance(a, dict) and a.get("optional") is True
+
+
+def pruefe_features(features: dict, alle: dict[str, list[object]]) -> None:
+    """Jeder Eintrag eines Features muss auf etwas zeigen, das die erzeugte Datei auch enthält.
+
+    `alle` nennt je Abhängigkeit ihre Erklärungen aus `[dependencies]` und den Zieltabellen. Cargo meldet
+    dieselben Fehler erst beim Bauen in Local Voice AI; hier fallen sie beim Übernehmen auf, mit dem Namen des
+    Features.
+    """
+    optional = {n for n, erkl in alle.items() if all(ist_optional(e) for e in erkl)}
+    for feature in sorted(features):
+        eintraege = features[feature]
+        if not isinstance(eintraege, list) or not all(isinstance(e, str) for e in eintraege):
+            raise abbruch(f"Feature {feature!r} ist keine Liste von Texten")
+        for e in eintraege:
+            if e.startswith("dep:"):
+                name = e[4:]
+                if name not in optional:
+                    raise abbruch(f"Feature {feature!r} schaltet {e!r} ein, aber {name!r} ist keine optionale Abhängigkeit")
+            elif "/" in e:
+                name, _, _ = e.partition("/")
+                schwach = name.endswith("?")
+                name = name.removesuffix("?")
+                if name not in alle or (schwach and name not in optional):
+                    raise abbruch(f"Feature {feature!r} verweist mit {e!r} auf eine Abhängigkeit, die es so nicht gibt")
+            elif e not in features and e not in optional:
+                raise abbruch(f"Feature {feature!r} verweist auf {e!r}; das ist weder ein Feature noch eine optionale Abhängigkeit")
+
+
+def geerbt(p: dict, ws_paket: dict, feld: str) -> object | None:
+    """Ein Feld aus [package]: eigener Wert oder, bei `feld.workspace = true`, der aus [workspace.package]."""
+    if feld not in p:
+        return None
+    w = p[feld]
+    if isinstance(w, dict):
+        if w != {"workspace": True} or feld not in ws_paket:
+            raise abbruch(f"[package] {feld} = {w!r} lässt sich nicht auflösen")
+        return ws_paket[feld]
+    return w
+
+
+def manifest(paket: dict, ws: dict, commit: str) -> str:
+    """Die `Cargo.toml` der vendorten Kopie aus der `Cargo.toml` der Crate und der des Workspace.
+
+    Reine Funktion. Jede Tabelle der Quelle wird übernommen, bewusst ausgelassen (AUSGELASSEN) oder bricht mit
+    einer Meldung ab; still fällt nichts weg. Reihenfolge der Ausgabe: `[package]`, `[lib]`, `[dependencies]`,
+    Zieltabellen nach Ziel sortiert, `[features]`; Abhängigkeiten und Features nach Namen sortiert.
+    """
+    ws_paket = ws.get("package", {})
+    ws_abh = ws.get("dependencies", {})
+    for tabelle in paket:
+        if tabelle in AUSGELASSEN or tabelle in ("package", "dependencies", "target", "features"):
+            continue
+        raise abbruch(
+            f"Tabelle [{tabelle}] wird nicht unterstützt. Im Skript entscheiden, ob sie übernommen oder "
+            "ausgelassen wird (AUSGELASSEN), statt sie still fallen zu lassen"
+        )
+    p = paket.get("package")
+    if not isinstance(p, dict):
+        raise abbruch("[package] fehlt")
+    fremd = sorted(set(p) - PAKET_FELDER)
+    if fremd:
+        raise abbruch(
+            f"[package] nennt {', '.join(fremd)}; das Skript kennt nur {', '.join(sorted(PAKET_FELDER))}. "
+            "Im Skript entscheiden, was damit geschieht"
+        )
+    kopf = [
+        f"# Erzeugt von scripts/vendor-wai-voice-dienst.py aus {REPO} ({QUELLE}, Commit {commit[:12]}). Nicht von Hand ändern.",
+        "[package]",
+    ]
+    for feld in ("name", "version", "edition", "rust-version", "license", "publish", "description"):
+        if feld == "publish":
+            kopf.append("publish = false")
+            continue
+        wert = geerbt(p, ws_paket, feld)
+        if wert is None:
+            if feld in ("name", "version", "edition"):
+                raise abbruch(f"[package] {feld} fehlt")
+            continue
+        kopf.append(f"{feld} = {toml_wert(wert)}")
+    abschnitte = [kopf, ["[lib]", "test = false", "doctest = false"]]
+
+    def tabelle_schreiben(kopfzeile: str, eintraege: dict[str, object]) -> None:
+        abschnitte.append([kopfzeile] + [f"{toml_schluessel(n)} = {toml_wert(w)}" for n, w in eintraege.items()])
+
+    alle: dict[str, list[object]] = {}
+
+    def merken(eintraege: dict[str, object]) -> dict[str, object]:
+        for n, w in eintraege.items():
+            alle.setdefault(n, []).append(w)
+        return eintraege
+
+    tabelle_schreiben("[dependencies]", merken(abhaengigkeiten(paket.get("dependencies", {}), ws_abh, "dependencies")))
+    ziele = paket.get("target", {})
+    if not isinstance(ziele, dict):
+        raise abbruch("[target] ist keine Tabelle")
+    for ziel in sorted(ziele):
+        inhalt = ziele[ziel]
+        if not isinstance(inhalt, dict):
+            raise abbruch(f"[target.{ziel}] ist keine Tabelle")
+        for tabelle in inhalt:
+            if tabelle != "dependencies" and tabelle not in AUSGELASSEN:
+                raise abbruch(
+                    f"Tabelle [target.{toml_schluessel(ziel)}.{tabelle}] wird nicht unterstützt. Im Skript "
+                    "entscheiden, ob sie übernommen oder ausgelassen wird, statt sie still fallen zu lassen"
+                )
+        if inhalt.get("dependencies"):
+            wo = f"target.{toml_schluessel(ziel)}.dependencies"
+            tabelle_schreiben(f"[{wo}]", merken(abhaengigkeiten(inhalt["dependencies"], ws_abh, wo)))
+    features = paket.get("features", {})
+    if not isinstance(features, dict):
+        raise abbruch("[features] ist keine Tabelle")
+    pruefe_features(features, alle)
+    if features:
+        tabelle_schreiben("[features]", {f: sorted(features[f]) for f in sorted(features)})
+    return "\n\n".join("\n".join(a) for a in abschnitte) + "\n"
 
 
 def cargo_toml(sdk: Path, commit: str) -> bytes:
     ws = tomllib.loads(git(sdk, "show", f"{commit}:Cargo.toml").decode("utf-8"))["workspace"]
     paket = tomllib.loads(git(sdk, "show", f"{commit}:{QUELLE}/Cargo.toml").decode("utf-8"))
-    p = paket["package"]
-    zeilen = [
-        f"# Erzeugt von scripts/vendor-wai-voice-dienst.py aus {REPO} ({QUELLE}, Commit {commit[:12]}). Nicht von Hand ändern.",
-        "[package]",
-        f'name = {toml_wert(p["name"])}',
-        f'version = {toml_wert(p["version"])}',
-        f'edition = {toml_wert(ws["package"]["edition"])}',
-        f'rust-version = {toml_wert(ws["package"]["rust-version"])}',
-        f'license = {toml_wert(ws["package"]["license"])}',
-        "publish = false",
-        f'description = {toml_wert(p["description"])}',
-        "",
-        "[lib]",
-        "test = false",
-        "doctest = false",
-        "",
-        "[dependencies]",
-    ]
-    for name, eigen in paket.get("dependencies", {}).items():
-        zeilen.append(f"{name} = {toml_wert(abhaengigkeit(name, eigen, ws['dependencies']))}")
-    return ("\n".join(zeilen) + "\n").encode("utf-8")
+    return manifest(paket, ws, commit).encode("utf-8")
 
 
 def dateien_aus_commit(sdk: Path, commit: str) -> dict[str, bytes]:
