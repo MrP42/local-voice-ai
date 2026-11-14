@@ -23,7 +23,10 @@
   }
 }
 @media (min-width: 768px) {
-  .lv-asst__zurueck {
+  /* Zwei Spalten: Liste und Ansicht stehen nebeneinander, „Zur Liste“ ist überflüssig. Der Fluent-Button setzt
+     `display: inline-flex` über eine eigene Klasse gleicher Spezifität, die später im Dokument steht und eine
+     einzelne Klasse hier überstimmt; der Anker `.lv-asst` macht die Regel spezifischer. */
+  .lv-asst .lv-asst__zurueck {
     display: none;
   }
 }

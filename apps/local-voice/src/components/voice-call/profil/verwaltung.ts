@@ -20,6 +20,11 @@
  *     Speicher schon den fremden Text. Verglichen wird deshalb gegen die Originalbytes, auf denen der Entwurf begann
  *     (`erwartet` bei `ueberschreibe`), und diese gehen als Bedingung bis zum Schreibbefehl: Konflikt (`occupied`), nichts
  *     wird geschrieben, die fremde Änderung bleibt.
+ *
+ * Grenze dieses Schutzes: Der Vergleich ist nur **innerhalb des Prozesses** atomar (Rust hält eine Sperre vom Vergleich
+ * bis nach dem Umbenennen), nicht prozessübergreifend im Dateisystem. Ein anderer Prozess am selben Verzeichnis (zweite
+ * Instanz, Abgleich, Editor) kann zwischen Vergleich und Umbenennen schreiben und wird dabei überschrieben; dagegen gilt
+ * die Regel „Ein Schreiber je Verzeichnis“ (`apps/shared/assistenten/README.md`), nicht diese Bedingung.
  */
 import { ALLES_ID, kodiereProfil, pruefeProfil } from "../assistenten";
 import type { Profil, ProfilErgebnis, ProfilFehler } from "../assistenten";

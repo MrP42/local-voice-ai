@@ -31,6 +31,13 @@
 //! Alle Schreib- und Leseschritte laufen unter einer gemeinsamen Sperre (ein Prozess, ein
 //! Verzeichnis); zwei Programme am selben Verzeichnis sind nicht vorgesehen (README: „Ein Schreiber
 //! je Verzeichnis“). Inhalte stehen nie im Log.
+//!
+//! Grenze des Vergleich-und-Tauschs: Er ist **nur innerhalb dieses Prozesses atomar**. Die Sperre
+//! (`SPERRE`) liegt vom Vergleich des Dateiinhalts bis nach dem Umbenennen; zwei Befehle der App können
+//! sich also nicht dazwischenschieben. Ein anderer Prozess (zweite App-Instanz, ein Abgleichsprogramm,
+//! ein Editor des Benutzers) kennt diese Sperre nicht: er kann zwischen Vergleich und Umbenennen
+//! schreiben, und das Umbenennen ersetzt dann seine Änderung. Das Dateisystem bietet hier keinen
+//! prozessübergreifenden Vergleich-und-Tausch; die Regel „Ein Schreiber je Verzeichnis“ ersetzt ihn.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};

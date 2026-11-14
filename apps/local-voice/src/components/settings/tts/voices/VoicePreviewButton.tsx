@@ -34,7 +34,16 @@ interface VoicePreviewButtonProps {
 // Eine Hoerprobe zur Zeit: ein neuer Klick stoppt die laufende.
 let current: { audio: HTMLAudioElement; stop: () => void } | null = null;
 
+/**
+ * Generation der Vorschauen. Eine Erzeugung merkt sich beim Start die Generation und spielt nach ihrem Ende nur, wenn
+ * sie unverändert ist. Jedes Anhalten (auch ohne laufende Wiedergabe: gerade das ist der Fall einer noch offenen
+ * Erzeugung), jede andere Vorschau und der Beginn einer Sperre erhöhen sie: ein einmal überholtes Ergebnis bleibt es
+ * dauerhaft, auch wenn die Sperre (ein Gespräch) bis zum Ende der Erzeugung wieder aufgehoben ist.
+ */
+let generation = 0;
+
 const stopCurrent = () => {
+  generation += 1;
   if (current) {
     current.audio.pause();
     current.stop();
@@ -62,6 +71,11 @@ export const VoicePreviewButton = ({
   const gesperrtRef = useRef(gesperrt);
   gesperrtRef.current = gesperrt;
   const lebtRef = useRef(true);
+
+  // Beginnt die Sperre, ist jede noch offene Erzeugung überholt (auch wenn die Sperre vor ihrem Ende wieder fällt).
+  useEffect(() => {
+    if (gesperrt) generation += 1;
+  }, [gesperrt]);
 
   useEffect(() => {
     let cancelled = false;
@@ -109,6 +123,8 @@ export const VoicePreviewButton = ({
       return;
     }
     setGenerating(true);
+    // Nach `beiStart`: was dort angehalten wurde, gehört nicht zu dieser Erzeugung.
+    const meine = ++generation;
     const result = await commands.ttsVoiceDemo(voiceId);
     setGenerating(false);
     if (result.status === "error") {
@@ -116,9 +132,10 @@ export const VoicePreviewButton = ({
       return;
     }
     setCached(result.data);
-    // Hat sich unterdessen ein Gespraech gestartet oder wurde die Ansicht verlassen, bleibt es still (die Vorschau liegt dann
+    // Wurde die Erzeugung unterdessen überholt (angehalten, eine andere Hörprobe oder Vorschau gestartet, ein Gespraech
+    // begonnen, auch wenn es schon wieder zu Ende ist) oder die Ansicht verlassen, bleibt es still (die Vorschau liegt dann
     // zwischengespeichert bereit).
-    if (gesperrtRef.current || !lebtRef.current) return;
+    if (meine !== generation || gesperrtRef.current || !lebtRef.current) return;
     play(result.data);
   };
 

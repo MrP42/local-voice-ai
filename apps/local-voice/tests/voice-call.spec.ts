@@ -5305,6 +5305,102 @@ test.describe("Seite Assistenten (lva#556 Teil 2)", () => {
     ).toContainText("Begrüßung anhören");
   });
 
+  /**
+   * Eine Stimmenvorschau, deren Erzeugung offen gehalten wird (`__demoHalten`); gezählt wird nur ihr eigenes Abspielen
+   * (`__demoGespielt`: die Datei `demo.wav`), nicht das der Hörprobe.
+   */
+  const mitOffenerVorschau = async (page: Page, extra?: () => void) => {
+    await page.addInitScript(() => {
+      const w = window as any;
+      w.__demoGespielt = 0;
+      const echt = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function () {
+        if (String(this.src).includes("demo.wav")) w.__demoGespielt += 1;
+        return echt.call(this);
+      };
+      w.__stimmen = [
+        { id: "anton", meta: { display_name: "Anton" }, origin: "builtin" },
+      ];
+    });
+    if (extra) await page.addInitScript(extra);
+    await install(page, "light", {
+      settings: TWO_MODELS,
+      assistenten: {
+        dateien: {
+          "helfer-a.json": eigeneDatei("helfer-a", "Helfer A", {
+            stimme: "anton",
+            begruessung: "Hallo Welt.",
+          }),
+        },
+        aktiv: null,
+      },
+    });
+    await openPage(page);
+    await oeffneVerwaltung(page);
+    await oeffneEintrag(page, "helfer-a");
+    await page.evaluate(() => ((window as any).__demoHalten = true));
+    const vorschau = page.getByRole("button", {
+      name: "Hörprobe erzeugen",
+      exact: true,
+    });
+    await expect(vorschau).toBeVisible();
+    await vorschau.click();
+    await expect(
+      page.getByRole("button", { name: "Wird erzeugt…", exact: true }),
+    ).toBeVisible();
+  };
+  const demoGespielt = (page: Page) =>
+    page.evaluate(() => (window as any).__demoGespielt as number);
+
+  test("Stimmenvorschau im Editor: eine offene Erzeugung spielt nicht, wenn eine Hörprobe sie überholt hat", async ({
+    page,
+  }) => {
+    await mitOffenerVorschau(page);
+    // Eine Hörprobe beginnt, während die Vorschau noch erzeugt wird (es läuft noch nichts, das sich anhalten ließe).
+    await page.getByTestId("assistent-begruessung-hoeren").click();
+    await expect.poll(async () => (await syntheseIds(page)).length).toBe(1);
+    await page.evaluate(() => (window as any).__demoFertig());
+    // Die Erzeugung ist fertig (die Vorschau liegt bereit), gespielt wird sie nicht mehr.
+    await expect(
+      page.getByRole("button", { name: "Hörprobe", exact: true }),
+    ).toBeVisible();
+    await page.waitForTimeout(200);
+    expect(await demoGespielt(page)).toBe(0);
+  });
+
+  test("Stimmenvorschau im Editor: eine offene Erzeugung spielt auch nicht, wenn das Gespräch inzwischen wieder zu Ende ist", async ({
+    page,
+  }) => {
+    await fakeMicrophone(page);
+    await mitOffenerVorschau(page, () => {
+      // Der Start bleibt offen; das Gespräch endet durch erneutes Antippen des Telefons.
+      (window as any).__startHang = true;
+    });
+    const telefon = page.locator(".workspace-status [data-call-button]");
+    await telefon.click();
+    await expect(telefon).not.toHaveAttribute("data-state", "idle");
+    await expect(
+      page.getByRole("button", { name: /^Hörprobe|Wird erzeugt/ }),
+    ).toBeDisabled();
+    await telefon.click();
+    await expect(telefon).toHaveAttribute("data-state", "idle");
+    // Nichts sperrt mehr: gerade dann darf die überholte Erzeugung nicht spielen.
+    await page.evaluate(() => (window as any).__demoFertig());
+    await expect(
+      page.getByRole("button", { name: "Hörprobe", exact: true }),
+    ).toBeEnabled();
+    await page.waitForTimeout(200);
+    expect(await demoGespielt(page)).toBe(0);
+  });
+
+  test("Stimmenvorschau im Editor: ohne Eingriff spielt die Erzeugung nach ihrem Ende", async ({
+    page,
+  }) => {
+    await mitOffenerVorschau(page);
+    await page.evaluate(() => (window as any).__demoFertig());
+    await expect.poll(() => demoGespielt(page)).toBe(1);
+  });
+
   test("Stimme: gespeicherte Stimmen werden angeboten, eine fehlende bleibt erhalten und wird so benannt", async ({
     page,
   }) => {
@@ -5575,6 +5671,52 @@ test.describe("Seite Assistenten (lva#556 Teil 2)", () => {
     await ctx.close();
   });
 
+  for (const [breite, zweiSpalten] of [
+    [1440, true],
+    [768, true],
+    [767, false],
+    [390, false],
+  ] as const) {
+    test(`„Zur Liste“ gibt es nur, wenn die Liste verborgen ist (${breite} px: ${zweiSpalten ? "zwei Spalten, ausgeblendet" : "eine Spalte, sichtbar"})`, async ({
+      browser,
+    }) => {
+      const ctx = await browser.newContext({
+        viewport: { width: breite, height: 900 },
+        baseURL: test.info().project.use.baseURL,
+      });
+      const page = await ctx.newPage();
+      await install(page, "light", { settings: TWO_MODELS, ...ZWEI });
+      await openPage(page);
+      await oeffneVerwaltung(page);
+      // Eigener Assistent (Editor) und Vorlage (Ansicht): beide Köpfe tragen den Knopf.
+      for (const [eintrag, ansicht] of [
+        ["helfer-a", "assistent-editor"],
+        ["vorlage-lernpartner", "assistent-vorlage"],
+      ]) {
+        await oeffneEintrag(page, eintrag);
+        await expect(page.getByTestId(ansicht)).toBeVisible();
+        const zurueck = page.getByTestId("assistent-zurueck");
+        if (zweiSpalten) {
+          // Liste und Ansicht stehen nebeneinander: der Weg zurück wäre überflüssig.
+          await expect(liste(page)).toBeVisible();
+          await expect(zurueck).toBeHidden();
+          await expect(zurueck).toHaveCSS("display", "none");
+        } else {
+          await expect(liste(page)).toBeHidden();
+          await expect(zurueck).toBeVisible();
+          await zurueck.click();
+          await expect(liste(page)).toBeVisible();
+        }
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= window.innerWidth,
+          ),
+        ).toBe(true);
+      }
+      await ctx.close();
+    });
+  }
+
   test("Ein Gespräch läuft: „Im Gespräch verwenden“ ist gesperrt und nennt den Grund", async ({
     page,
   }) => {
@@ -5752,7 +5894,7 @@ test.describe("Seite Assistenten (lva#556 Teil 2)", () => {
     expect(gespeichertA).not.toContain("aussprache");
 
     // Eine Datei mit leerer Liste: öffnen ist keine Änderung, mit einer anderen Änderung fällt das Feld weg.
-    await page.getByTestId("assistent-zurueck").click();
+    // (Breit stehen Liste und Editor nebeneinander, „Zur Liste“ gibt es dort nicht; der Neustart unten genügt.)
     await page.evaluate(() => {
       const s = JSON.parse(sessionStorage.getItem("lv-test-assistenten")!);
       const b = JSON.parse(s.dateien["helfer-b.json"]);
