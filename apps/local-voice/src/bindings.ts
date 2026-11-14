@@ -4521,10 +4521,17 @@ async voiceCallCancel(requestId: string) : Promise<boolean> {
 },
 /**
  * Ein Häppchen mit der eingestellten Stimme zu WAV (Base64).
+ * 
+ * `teile`: optional der Text in Stücken, `ersetzt: true` für die vom Frontend nach den Aussprache-Regeln
+ * eingesetzten Stücke. Diese bleiben in der Aufbereitung unangetastet (keine Abkürzungs-, Datums-,
+ * Lexikon- oder Punktregel); Marken wie `[lachen]` werden auch über Stückgrenzen hinweg erkannt und
+ * gehen vor. Fehlt `teile`, läuft der Text wie bisher durch die gewöhnliche Aufbereitung.
+ * Mit `teile` gelten Grenzen (höchstens 4096 Stücke, höchstens 64 KiB Text); eine Überschreitung ist ein Fehler
+ * ohne Textinhalt, noch vor Anmeldung und Synthese.
  */
-async voiceCallSynthesize(text: string, requestId: string | null) : Promise<Result<string, string>> {
+async voiceCallSynthesize(text: string, requestId: string | null, teile: AusspracheTeil[] | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("voice_call_synthesize", { text, requestId }) };
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_synthesize", { text, requestId, teile }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -10371,6 +10378,11 @@ export type AuditEntry = { id: number; ts: number; caller: string; integration_i
  * `ok`, `denied`, `error` oder `pending`.
  */
 outcome: string; detail_json: string | null }
+/**
+ * Ein Stück des Sprechtexts: unveränderter Text oder die Aussprache eines Treffers. Dieselbe Form
+ * liefert `zerlegeAussprache` im Frontend.
+ */
+export type AusspracheTeil = { text: string; ersetzt: boolean }
 /**
  * Wie sich der Dienst anmeldet. Das Geheimnis steht immer im Fach `token`.
  */
